@@ -5,6 +5,7 @@ import { ViewSidebar } from "./ViewSidebar";
 import "./MissionManager.css";
 import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { DashboardWindowSurfaceRoot } from "../context/DashboardWindowManagerContext";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -5688,7 +5689,9 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
 
   return (
     <>
-      <div
+      <DashboardWindowSurfaceRoot
+        logicalId="mission-manager"
+        group="dialog"
         className="mission-manager-overlay open"
         onClick={(e) => e.target === e.currentTarget && onClose()}
         data-testid="mission-manager-overlay"
@@ -5696,7 +5699,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
         aria-modal="true"
       >
         {manager}
-      </div>
+      </DashboardWindowSurfaceRoot>
       {interviewModal}
       {milestoneSliceInterviewModal}
     </>

@@ -135,7 +135,6 @@ interface AppModalsProps {
     setColorTheme: (theme: ColorTheme) => void;
     setDashboardFontScalePct: (scalePct: number) => void;
     setShadcnCustomColors: (colors: Record<string, string>) => void;
-    setQuickChatButtonModeImmediate: (mode: "floating" | "footer" | "off") => void;
     setChatMessageLayoutImmediate: (layout: ChatMessageLayout) => void;
     setOpenTasksInRightSidebarImmediate: (enabled: boolean) => void;
     setOpenMobileTasksInPopupImmediate: (enabled: boolean) => void;
@@ -448,7 +447,6 @@ export function AppModals({
               resolvedThemeMode={settings.resolvedThemeMode}
               onDashboardFontScaleChange={settings.setDashboardFontScalePct}
               onShadcnCustomColorsChange={settings.setShadcnCustomColors}
-              onQuickChatButtonModeChange={settings.setQuickChatButtonModeImmediate}
               chatMessageLayout={settings.chatMessageLayout}
               onChatMessageLayoutChange={settings.setChatMessageLayoutImmediate}
               openTasksInRightSidebar={settings.openTasksInRightSidebar}

@@ -296,16 +296,6 @@ describe("SettingsModal", () => {
       });
     });
 
-    it("reports Quick Chat launcher changes immediately before save", async () => {
-      const onQuickChatButtonModeChange = vi.fn();
-      renderModal({ initialSection: "general", onQuickChatButtonModeChange });
-      await waitForSettingsModalReady();
-
-      await settingsModalUser.selectOptions(screen.getByLabelText("Quick Chat launcher"), "footer");
-
-      expect(onQuickChatButtonModeChange).toHaveBeenCalledWith("footer");
-    });
-
     it("reorders, adds, and removes mobile quick actions before save", async () => {
       const onMobileNavPrimaryItemsChange = vi.fn();
       renderModal({ initialSection: "general", onMobileNavPrimaryItemsChange });
@@ -359,14 +349,6 @@ describe("SettingsModal", () => {
         value: 14,
         scope: "project",
         expectedKey: "chatAutoCleanupDays",
-      },
-      {
-        section: "General · Project",
-        label: "Close Quick Chat on outside click",
-        kind: "checkbox",
-        value: false,
-        scope: "project",
-        expectedKey: "quickChatCloseOnOutsideClick",
       },
       {
         section: "General · Project",

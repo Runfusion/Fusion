@@ -343,22 +343,22 @@ describe("GlobalSettingsStore", () => {
     it("round-trips dashboard keyboard shortcuts including disabled values", async () => {
       await store.init();
 
-      await store.updateSettings({ dashboardKeyboardShortcuts: { quickChat: "", terminal: "Alt+T" } });
+      await store.updateSettings({ dashboardKeyboardShortcuts: { toggleModalVisibility: "", terminal: "Alt+T" } });
 
       const settings = await store.getSettings();
-      expect(settings.dashboardKeyboardShortcuts).toEqual({ quickChat: "", terminal: "Alt+T" });
+      expect(settings.dashboardKeyboardShortcuts).toEqual({ toggleModalVisibility: "", terminal: "Alt+T" });
     });
 
     it("restores dashboard keyboard shortcut defaults when cleared", async () => {
       await store.init();
-      await store.updateSettings({ dashboardKeyboardShortcuts: { quickChat: "Meta+K", terminal: "" } });
+      await store.updateSettings({ dashboardKeyboardShortcuts: { toggleModalVisibility: "Meta+K", terminal: "" } });
 
       // @ts-expect-error - null is intentionally used to clear field (null-as-delete)
       await store.updateSettings({ dashboardKeyboardShortcuts: null });
 
       const settings = await store.getSettings();
       expect(settings.dashboardKeyboardShortcuts).toEqual({
-        quickChat: "Space",
+        toggleModalVisibility: "",
         terminal: "Ctrl+`",
         openFiles: "Ctrl+E",
         openSettings: "Ctrl+,",

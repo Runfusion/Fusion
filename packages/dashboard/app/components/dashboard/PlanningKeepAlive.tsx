@@ -9,8 +9,8 @@ import type { ModalManager, DetailTaskTab } from "../../hooks/useModalManager";
 import type { TaskView } from "../../hooks/useViewState";
 
 /*
-FNXC:PlanningKeepAlive 2026-07-22-12:30:
-FN remount-churn fix R5: the embedded Planning Mode view previously lived inside MainContent's pure taskView switch, so every sidebar navigation destroyed the whole interview (ViewState, conversation, streaming output, draft edits, scroll). This host renders the planning subtree as a kept-alive sibling of MainContent inside .project-content: App mounts it after Planning's first open for the current project (everOpened latch mirroring Quick Chat's quickChatEverOpenedProjectId) and it then stays mounted, hidden via KeepAliveView's out-of-flow visibility contract whenever another view is active.
+FNXC:PlanningKeepAlive 2026-09-14-11:35:
+Planning Mode lives as a kept-alive sibling of MainContent so navigation preserves interview state, streaming output, draft edits, and scroll. App mounts it after first use for the current project, then KeepAliveView hides it out of flow whenever another view is active.
 - `active` (taskView === "planning") gates PlanningModeModal's background work (session-list SSE, recovery poll, elapsed ticker) while hidden per R8.
 - The header WorkflowSwitcher portal renders only while active so a hidden Planning view never occupies the shared Header slot.
 - App keys this host by project id + modalManager.planningEntryGeneration: project switches and payload-carrying entry points (initial-plan handoff, resume session) remount with fresh-open semantics, while plain navigation restores the live instance (R10 — explicit handoffs keep their pre-keep-alive reset behavior).

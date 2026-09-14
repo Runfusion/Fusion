@@ -72,7 +72,7 @@ describe("settings defaults invariants", () => {
 
   it("defaults dashboard keyboard shortcuts globally", () => {
     expect(DEFAULT_GLOBAL_SETTINGS.dashboardKeyboardShortcuts).toEqual({
-      quickChat: "Space",
+      toggleModalVisibility: "",
       terminal: "Ctrl+`",
       openFiles: "Ctrl+E",
       openSettings: "Ctrl+,",
@@ -296,17 +296,11 @@ describe("settings defaults invariants", () => {
     });
   });
 
-  describe("quickChatCloseOnOutsideClick default", () => {
-    it("keeps Quick Chat outside-click dismissal explicitly true in project defaults", () => {
-      expect(DEFAULT_PROJECT_SETTINGS.quickChatCloseOnOutsideClick).toBe(true);
-      expect("quickChatCloseOnOutsideClick" in DEFAULT_PROJECT_SETTINGS).toBe(true);
-      expect(PROJECT_SETTINGS_KEYS).toContain("quickChatCloseOnOutsideClick");
-    });
-
-    it("keeps quickChatCloseOnOutsideClick project-scoped only", () => {
-      expect("quickChatCloseOnOutsideClick" in DEFAULT_GLOBAL_SETTINGS).toBe(false);
-      expect(GLOBAL_SETTINGS_KEYS).not.toContain("quickChatCloseOnOutsideClick");
-    });
+  it("retires project-level Quick Chat preferences", () => {
+    for (const key of ["quickChatButtonMode", "quickChatCloseOnOutsideClick", "showQuickChatFAB"]) {
+      expect(Object.hasOwn(DEFAULT_PROJECT_SETTINGS, key)).toBe(false);
+      expect(PROJECT_SETTINGS_KEYS).not.toContain(key);
+    }
   });
 
   describe("dismissModalsOnOutsideClick default", () => {

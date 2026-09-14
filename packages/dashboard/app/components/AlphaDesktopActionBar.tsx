@@ -7,6 +7,8 @@ import { useExecutorStats } from "../hooks/useExecutorStats";
 import { EngineControlMenu } from "./EngineControlMenu";
 import type { DashboardNavigationEntry } from "./dashboardNavigationEntries";
 import "./AlphaDesktopActionBar.css";
+import { useDashboardWindowLandmark } from "../context/DashboardWindowManagerContext";
+import { DashboardWindowVisibilityToggle } from "./DashboardWindowVisibilityToggle";
 
 export interface AlphaDesktopActionBarProps {
   entries: readonly DashboardNavigationEntry[];
@@ -22,6 +24,7 @@ const MORE_MENU_CLOSE_GRACE_MS = 150;
 export function AlphaDesktopActionBar({ entries, activeId, tasks, projectId, columnFlagsByTaskId, onToggleTerminal }: AlphaDesktopActionBarProps) {
   /* FNXC:AlphaNavigation 2026-09-12-00:36: Alpha navigation labels, including its overflow trigger and landmark, must use the shared locale catalog rather than English-only literals. */
   const { t } = useTranslation("app");
+  const dashboardWindowFooterRef = useDashboardWindowLandmark("footer");
   const [overflowOpen, setOverflowOpen] = useState(false);
   const overflowRef = useRef<HTMLDivElement>(null);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -79,7 +82,7 @@ export function AlphaDesktopActionBar({ entries, activeId, tasks, projectId, col
   FNXC:AlphaDesktopNavigation 2026-09-13-02:40:
   The wide Alpha footer shared by tablet and desktop keeps capacity at the far left, navigation in the middle, and its optional Terminal action immediately left of the single retained Settings action. Scripts remain on their existing owners, and omitting both right-side actions must leave no empty action-group shell.
   */
-  return <nav className="alpha-desktop-action-bar" aria-label={t("nav.primaryNavAriaLabel", "Primary navigation")} data-testid="alpha-desktop-action-bar">
+  return <nav ref={dashboardWindowFooterRef} className="alpha-desktop-action-bar" aria-label={t("nav.primaryNavAriaLabel", "Primary navigation")} data-testid="alpha-desktop-action-bar">
     <div className="alpha-desktop-action-bar__capacity"><EngineControlMenu projectId={projectId} triggerContent={<span data-testid="alpha-desktop-capacity-count">{capacityText}</span>} triggerLabel={capacityLabel} /></div>
     <div className="alpha-desktop-action-bar__center"><div className="alpha-desktop-action-bar__scroller">{direct.map((entry) => renderButton(entry))}</div>
     {overflow.length ? <div
@@ -101,5 +104,6 @@ export function AlphaDesktopActionBar({ entries, activeId, tasks, projectId, col
       </button> : null}
       {settings ? renderButton(settings) : null}
     </div> : null}
+    <DashboardWindowVisibilityToggle />
   </nav>;
 }

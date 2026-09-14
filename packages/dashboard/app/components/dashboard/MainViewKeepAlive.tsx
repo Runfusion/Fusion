@@ -32,6 +32,7 @@ export interface MainViewKeepAliveProps {
   mainContentProps: MainContentProps;
   alphaMobileDrawer?: {
     activeId: Exclude<KeepAliveMainViewId, "board"> | null;
+    backgroundActive?: boolean;
     title: string;
     onClose: () => void;
   };
@@ -280,7 +281,6 @@ function renderChatSubtree(props: MainContentProps, active: boolean) {
     addToast,
     experimentalFeatures,
     chatComposerPrefill,
-    setQuickChatOpen,
     onOpenSessionInNewWindow,
     onSendAsReport,
   } = props;
@@ -294,7 +294,6 @@ function renderChatSubtree(props: MainContentProps, active: boolean) {
           experimentalFeatures={experimentalFeatures}
           initialComposerDraft={chatComposerPrefill?.text}
           initialComposerDraftNonce={chatComposerPrefill?.nonce}
-          onPopOut={() => setQuickChatOpen(true)}
           onOpenSessionInNewWindow={onOpenSessionInNewWindow}
           onSendAsReport={onSendAsReport}
           findActive={active}
@@ -345,7 +344,7 @@ export function MainViewKeepAlive({ activeId, mountedIds, projectKey, mainConten
     <>
       {mountedIds.map((id) => {
         const isDrawerView = alphaMobileDrawer !== undefined && id !== "board";
-        const isActive = activeId === id || (alphaMobileDrawer !== undefined && id === "board");
+        const isActive = activeId === id || (alphaMobileDrawer !== undefined && alphaMobileDrawer.backgroundActive !== false && id === "board");
         const subtree = (
           <KeepAliveView key={`${projectKey}:${id}`} hidden={!isActive} testId={`${id}-keep-alive`}>
             {renderMainViewSubtree(id, mainContentProps, isActive, handleOpenHistory, handleOpenRefine, handleReviseTask)}
@@ -360,6 +359,7 @@ export function MainViewKeepAlive({ activeId, mountedIds, projectKey, mainConten
             onClose={alphaMobileDrawer.onClose}
             keepMounted
             testId={`alpha-mobile-drawer-${id}`}
+            surfaceGroup={id === "chat" ? "chat" : undefined}
             contentOwnsHeader
             contentOwnsScroll
           >

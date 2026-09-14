@@ -49,10 +49,10 @@ export function assertRenderedModalTouchGeometry(windowKey: string, dragHandle: 
   expect(Number.parseFloat(panel.style.left)).not.toBe(initialLeft);
   expect(Number.parseFloat(panel.style.width)).toBeGreaterThan(initialWidth);
   const persisted = JSON.parse(localStorage.getItem(`floating-window:${windowKey}`) ?? "{}");
-  expect(persisted.position.x).toBeGreaterThanOrEqual(16);
-  expect(persisted.position.y).toBeGreaterThanOrEqual(16);
-  expect(persisted.size.width).toBeLessThanOrEqual(window.innerWidth - 32);
-  expect(persisted.size.height).toBeLessThanOrEqual(window.innerHeight - 32);
+  expect(persisted.position.x).toBeGreaterThanOrEqual(0);
+  expect(persisted.position.y).toBeGreaterThanOrEqual(0);
+  expect(persisted.size.width).toBeLessThanOrEqual(window.innerWidth);
+  expect(persisted.size.height).toBeLessThanOrEqual(window.innerHeight);
 }
 
 type ModalMount = () => RenderResult;
@@ -99,10 +99,10 @@ export function assertModalGeometryRecoveryAndSheetContracts(windowKey: string, 
   }));
   rendered = mount();
   const restoredPanel = screen.getByTestId(`floating-window-${windowKey}`);
-  expect(Number.parseFloat(restoredPanel.style.left)).toBeGreaterThanOrEqual(16);
-  expect(Number.parseFloat(restoredPanel.style.top)).toBeGreaterThanOrEqual(16);
-  expect(Number.parseFloat(restoredPanel.style.width)).toBeLessThanOrEqual(window.innerWidth - 32);
-  expect(Number.parseFloat(restoredPanel.style.height)).toBeLessThanOrEqual(window.innerHeight - 32);
+  expect(Number.parseFloat(restoredPanel.style.left)).toBeGreaterThanOrEqual(0);
+  expect(Number.parseFloat(restoredPanel.style.top)).toBeGreaterThanOrEqual(0);
+  expect(Number.parseFloat(restoredPanel.style.width)).toBeLessThanOrEqual(window.innerWidth);
+  expect(Number.parseFloat(restoredPanel.style.height)).toBeLessThanOrEqual(window.innerHeight);
   rendered.unmount();
 
   for (const mode of ["phone", "short"] as const) {

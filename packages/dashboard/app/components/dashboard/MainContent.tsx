@@ -260,7 +260,6 @@ export function MainContent(props: MainContentProps) {
   shadcnCustomColors,
   setShadcnCustomColors,
   resolvedThemeMode,
-  setQuickChatButtonModeImmediate,
   setChatMessageLayoutImmediate,
   setOpenTasksInRightSidebarImmediate,
   setOpenMobileTasksInPopupImmediate,
@@ -462,8 +461,12 @@ export function MainContent(props: MainContentProps) {
 
   const projectKey = currentProject?.id ?? "all-projects";
   const alphaMobileDrawerEnabled = isMobile && viewMode === "project" && currentProject !== null;
+  /*
+  FNXC:ChatSurfaceUnification 2026-09-14-11:35:
+  `taskView="chat"` owns only the mobile drawer. Wide shells exclude Chat from the main keep-alive tree so a restored route or breakpoint transition cannot mount a second primary Chat behind the registry-backed window.
+  */
   const selectedKeepAliveId: KeepAliveMainViewId | null = isKeepAliveMainViewId(taskView)
-    ? taskView
+    ? taskView === "chat" && !alphaMobileDrawerEnabled ? null : taskView
     : taskView === "task-detail" && mainPanelDetailTask === null
       ? "board"
       : null;
@@ -471,7 +474,10 @@ export function MainContent(props: MainContentProps) {
   const [keepAliveViews, setKeepAliveViews] = useState<{ projectKey: string; ids: KeepAliveMainViewId[] }>(
     () => ({ projectKey, ids: [] }),
   );
-  const previousIds = keepAliveViews.projectKey === projectKey ? keepAliveViews.ids : [];
+  const storedKeepAliveIds = keepAliveViews.projectKey === projectKey ? keepAliveViews.ids : [];
+  const previousIds = !alphaMobileDrawerEnabled && storedKeepAliveIds.includes("chat")
+    ? storedKeepAliveIds.filter((id) => id !== "chat")
+    : storedKeepAliveIds;
   const requiredKeepAliveIds = [
     ...(alphaMobileDrawerEnabled ? ["board" as const] : []),
     ...(selectedKeepAliveId ? [selectedKeepAliveId] : []),
@@ -491,6 +497,11 @@ export function MainContent(props: MainContentProps) {
   The overview and backend-error pages must deactivate retained views as well as hide them.
   Fold that early-hide condition into activeId here, rather than passing a second visibility input,
   so a hidden Board cannot retain the shared header slot and hidden Chat cannot mark messages read.
+
+  FNXC:ChatSurfaceUnification 2026-09-14-12:57:
+  Keep the mobile-drawer wrapper mounted across an early error so Chat state and DOM identity survive,
+  but explicitly deactivate its Board background. A live drawer needs Board beneath it; an overview
+  or connection error must instead release Board's shared header without reparenting retained Chat.
   */
   const activeKeepAliveId = earlyHidden ? null : selectedKeepAliveId;
   const closeAlphaMobileDrawer = () => {
@@ -513,6 +524,7 @@ export function MainContent(props: MainContentProps) {
       mainContentProps={props}
       alphaMobileDrawer={alphaMobileDrawerEnabled ? {
         activeId: modalManager.detailTask ? null : taskView === "list" || taskView === "chat" ? taskView : null,
+        backgroundActive: !earlyHidden,
         title: alphaDrawerTitle,
         onClose: closeAlphaMobileDrawer,
       } : undefined}
@@ -563,7 +575,6 @@ export function MainContent(props: MainContentProps) {
             resolvedThemeMode={resolvedThemeMode}
             onDashboardFontScaleChange={setDashboardFontScalePct}
             onShadcnCustomColorsChange={setShadcnCustomColors}
-            onQuickChatButtonModeChange={setQuickChatButtonModeImmediate}
             chatMessageLayout={chatMessageLayout}
             onChatMessageLayoutChange={setChatMessageLayoutImmediate}
             openTasksInRightSidebar={openTasksInRightSidebar}

@@ -84,12 +84,11 @@ function TestRightDock(props: Omit<RightDockProps, "pinned" | "onTogglePin" | "s
 }
 
 /*
-FNXC:Navigation 2026-06-22-16:00:
-The right dock is an all-inline tools rail sourced from STATIC_OVERFLOW_VIEW_ENTRIES. Todos is plugin-provided, so it appears only in the project-enabled plugin view list rather than as a static entry.
+FNXC:ChatSurfaceUnification 2026-09-14-11:35:
+The dock rail is registry-sourced. Chat is a launcher button rather than an inline tab; Todos remains plugin-provided and appears only when the project enables its view.
 */
 const toolTabIds = [
   "right-dock-tab-files",
-  "right-dock-tab-chat",
   "right-dock-tab-activity-log",
   "right-dock-tab-git-manager",
   "right-dock-tab-devserver",
@@ -484,6 +483,7 @@ describe("RightDock", () => {
     expect(screen.queryByTestId("right-dock-tab-tasks")).toBeNull();
     expect(screen.getByTestId("right-dock-tab-files")).toHaveAttribute("aria-label", "Files");
     expect(screen.getByTestId("right-dock-tab-chat")).toHaveAttribute("aria-label", "Chat");
+    expect(screen.getByTestId("right-dock-tab-chat")).not.toHaveAttribute("role", "tab");
     expect(screen.getByTestId("right-dock-tab-activity-log")).toHaveAttribute("aria-label", "Activity Log");
     expect(screen.getByTestId("right-dock-tab-git-manager")).toHaveAttribute("aria-label", "Git Manager");
     expect(screen.getByTestId("right-dock-tab-devserver")).toHaveAttribute("aria-label", "Dev Server");
@@ -503,7 +503,6 @@ describe("RightDock", () => {
     render(<TestRightDock open={true} renderProps={renderProps} />);
     expect(screen.getAllByRole("tab").map((tab) => tab.getAttribute("data-testid"))).toEqual([
       "right-dock-tab-files",
-      "right-dock-tab-chat",
       "right-dock-tab-activity-log",
       "right-dock-tab-git-manager",
       "right-dock-tab-secrets",
@@ -524,19 +523,21 @@ describe("RightDock", () => {
     expect(screen.getByTestId("right-dock-body")).toBeInTheDocument();
   });
 
-  it("disables Chat expansion only for the explicit Alpha desktop host", () => {
+  it("launches the same Chat expansion in Alpha and standard hosts without restoring Chat inline", () => {
     window.localStorage.setItem(RIGHT_DOCK_VIEW_STORAGE_KEY, "chat");
     const onExpand = vi.fn();
     const { rerender } = render(<TestRightDock open renderProps={{ ...renderProps, hostMode: "alpha-desktop" }} visibilityOptions={{ hostMode: "alpha-desktop" }} onExpand={onExpand} />);
-    expect(screen.getByTestId("right-dock-tab-chat")).toHaveAttribute("aria-selected", "true");
-    expect(screen.queryByTestId("right-dock-expand")).toBeNull();
+    expect(screen.getByTestId("right-dock-tab-chat")).not.toHaveAttribute("aria-selected");
+    expect(screen.getByRole("tabpanel", { name: "Files" })).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("right-dock-tab-chat"));
+    expect(onExpand).toHaveBeenLastCalledWith("chat");
 
     rerender(<TestRightDock open renderProps={{ ...renderProps, hostMode: "standard" }} visibilityOptions={{ hostMode: "standard" }} onExpand={onExpand} />);
-    fireEvent.click(screen.getByTestId("right-dock-expand"));
-    expect(onExpand).toHaveBeenCalledWith("chat");
+    fireEvent.click(screen.getByTestId("right-dock-tab-chat"));
+    expect(onExpand).toHaveBeenCalledTimes(2);
 
     const modal = render(<RightDockExpandModal viewKey="chat" renderProps={{ ...renderProps, hostMode: "alpha-desktop" }} visibilityOptions={{ hostMode: "alpha-desktop" }} onClose={vi.fn()} />);
-    expect(screen.queryByTestId("right-dock-expand-modal")).toBeNull();
+    expect(screen.getByTestId("right-dock-expand-modal")).toBeInTheDocument();
     modal.unmount();
   });
 

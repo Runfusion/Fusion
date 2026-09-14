@@ -1254,10 +1254,8 @@
     "cancel": "취소",
     "cancelButton": "취소",
     "clearConversationFailed": "대화 초기화 실패",
-    "closeQuickChat": "빠른 채팅 닫기",
     "openInNewWindow": "",
     "windowOpen": "열림",
-    "windowMinimized": "최소화됨",
     "conversationArchived": "대화가 보관되었습니다",
     "conversationDeleted": "대화가 삭제되었습니다",
     "conversationName": "",
@@ -1314,7 +1312,6 @@
     "noRoomsYet": "아직 방이 없습니다.",
     "noSkillsAvailable": "사용 가능한 스킬 없음",
     "noSkillsFound": "스킬을 찾을 수 없습니다",
-    "openQuickChat": "빠른 채팅 열기",
     "preserveToStash": "",
     "preserveToStashDone": "",
     "preserveToStashFailed": "",
@@ -1341,7 +1338,6 @@
     "forcePending": "대기 메시지 강제 전송",
     "forcePendingShort": "강제 전송",
     "pendingEditEmpty": "대기 메시지는 비워 둘 수 없습니다",
-    "quickChatTitle": "빠른 채팅",
     "relativeTimeDays_one": "",
     "relativeTimeDays_other": "",
     "relativeTimeHours_one": "",
@@ -1431,8 +1427,6 @@
     "agentRepliesFailed": "일부 에이전트가 응답하지 못했습니다: {{agents}}",
     "noDefaultModelConfigured": "대화를 만들기 전에 설정에서 기본 채팅 모델을 구성하세요.",
     "newChatOpenInNewWindowHint": "",
-    "minimizeAllChats": "모든 채팅 최소화",
-    "restoreAllChats": "모든 채팅 복원",
     "slashSuggestions": "슬래시 제안",
     "loadingSlashSuggestions": "제안 불러오는 중…",
     "snippetSuggestion": "저장된 프롬프트 삽입",
@@ -5265,14 +5259,6 @@
       "urlValid": "기본 URL은 유효한 URL이어야 합니다."
     }
   },
-  "quickChat": {
-    "errorAttachmentsBeforeSession": "채팅 세션이 준비되기 전에 첨부 파일을 보낼 수 없습니다",
-    "errorAttachmentsWhileStreaming": "응답이 스트리밍 중인 동안 첨부 파일을 보낼 수 없습니다",
-    "errorGettingResponse": "응답 가져오기 실패",
-    "errorInitializingChat": "채팅 초기화 실패",
-    "errorRefreshingSessions": "채팅 세션 새로 고침 실패",
-    "errorStartingNewChat": "새 채팅 시작 실패"
-  },
   "reliability": {
     "bouncedEntered": "{{bounced}}개 반환 / {{entered}}개 진입 (최근 {{days}}일)",
     "countingSince": "{{date}}부터 집계 중",
@@ -6101,7 +6087,6 @@
       "searchTheTrackingRepoForLikelyDuplicatesBefore": "",
       "settingsSaved": "설정이 저장되었습니다",
       "showCapacityRiskBanner": "",
-      "showQuickChatButton": "",
       "showTheFloatingChatButtonInTheDashboard": "",
       "taskPrefix": "",
       "todoThreshold": "",
@@ -6125,12 +6110,10 @@
       "aiUndoTaskWorkflowHelp": "",
       "workspaceModeHint": "",
       "allowAbsoluteFileBrowserPathsHint": "",
-      "quickChatLauncherHint": "",
       "showTaskChatsInCommonFeedHint": "",
       "whenEnabledImportedGitHubIssuesUseTheirSource": "",
       "gitLabEnabledHint": "",
       "allowEphemeralAgentsToCreateTasksHint": "",
-      "quickChatCloseOnOutsideClickHint": "",
       "builtinWorkflowAtLeastOneEnabled": "",
       "disabledFusionWorkflowsAreHiddenFromWorkflow": "",
       "autoTranslateImportedIssues": "",
@@ -9950,5 +9933,9 @@
     "selectHint": "Select an item to edit it",
     "exportJson": "Export JSON",
     "exportPng": "Export PNG"
+  },
+  "windows": {
+    "hide": "모든 창 숨기기",
+    "restore": "창 복원"
   }
 }

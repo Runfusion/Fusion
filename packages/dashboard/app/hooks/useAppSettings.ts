@@ -6,7 +6,6 @@ import type { ModelPricingOverrides } from "../../../core/src/ai/model-pricing";
 import { DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS, resolveDashboardKeyboardShortcuts, type DashboardKeyboardShortcutMap } from "../utils/keyboardShortcuts";
 import { normalizeChatSubmitOnEnterMode, type ChatSubmitOnEnterMode } from "../context/ChatSubmitOnEnterContext";
 
-export type QuickChatButtonMode = "floating" | "footer" | "off";
 export type ChatMessageLayout = "bubbles" | "full-width";
 export type PlanApprovalMode = NonNullable<ProjectSettings["planApprovalMode"]>;
 
@@ -46,15 +45,12 @@ export interface UseAppSettingsResult {
   modelPricingOverrides?: ModelPricingOverrides;
   taskDetailChatFirst: boolean;
   chatMessageLayout: ChatMessageLayout;
-  quickChatButtonMode: QuickChatButtonMode;
   mobileNavPrimaryItems: string[];
-  quickChatCloseOnOutsideClick: boolean;
   dashboardKeyboardShortcuts: Required<DashboardKeyboardShortcutMap>;
   dismissModalsOnOutsideClick: boolean;
   quickAddSubmitOnEnter: boolean;
   chatSubmitOnEnter: ChatSubmitOnEnterMode;
   skipConfirmationDialogs: boolean;
-  showQuickChatFAB: boolean;
   maxTotalRetriesBeforeFail: number;
   prAuthAvailable: boolean;
   settingsLoaded: boolean;
@@ -67,8 +63,6 @@ export interface UseAppSettingsResult {
   togglePlanAutoApprove: () => Promise<void>;
   toggleGlobalPause: () => Promise<void>;
   toggleEnginePause: () => Promise<void>;
-  toggleShowQuickChatFAB: () => Promise<void>;
-  setQuickChatButtonModeImmediate: (mode: QuickChatButtonMode) => void;
   setChatMessageLayoutImmediate: (layout: ChatMessageLayout) => void;
   setOpenTasksInRightSidebarImmediate: (enabled: boolean) => void;
   setOpenMobileTasksInPopupImmediate: (enabled: boolean) => void;
@@ -114,15 +108,12 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
   const [modelPricingOverrides, setModelPricingOverrides] = useState<ModelPricingOverrides | undefined>(undefined);
   const [taskDetailChatFirst, setTaskDetailChatFirst] = useState(false);
   const [chatMessageLayout, setChatMessageLayout] = useState<ChatMessageLayout>("bubbles");
-  const [quickChatButtonMode, setQuickChatButtonMode] = useState<QuickChatButtonMode>("off");
   const [mobileNavPrimaryItems, setMobileNavPrimaryItems] = useState<string[]>(() => resolveMobileNavPrimaryItems().primaryItems);
-  const [quickChatCloseOnOutsideClick, setQuickChatCloseOnOutsideClick] = useState(true);
   const [dashboardKeyboardShortcuts, setDashboardKeyboardShortcuts] = useState<Required<DashboardKeyboardShortcutMap>>(DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS);
   const [dismissModalsOnOutsideClick, setDismissModalsOnOutsideClick] = useState(false);
   const [quickAddSubmitOnEnter, setQuickAddSubmitOnEnter] = useState(true);
   const [chatSubmitOnEnter, setChatSubmitOnEnter] = useState<ChatSubmitOnEnterMode>("auto");
   const [skipConfirmationDialogs, setSkipConfirmationDialogs] = useState(false);
-  const [showQuickChatFAB, setShowQuickChatFAB] = useState(false);
   const [maxTotalRetriesBeforeFail, setMaxTotalRetriesBeforeFail] = useState(25);
   const [prAuthAvailable, setPrAuthAvailable] = useState(false);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
@@ -183,21 +174,12 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
       setStaleHighFanoutBlockerAgeThresholdMs(
         settings.staleHighFanoutBlockerAgeThresholdMs ?? 2 * 60 * 60 * 1000,
       );
-      const nextQuickChatButtonMode: QuickChatButtonMode =
-        settings.quickChatButtonMode === "floating" || settings.quickChatButtonMode === "footer" || settings.quickChatButtonMode === "off"
-          ? settings.quickChatButtonMode
-          : settings.showQuickChatFAB === true
-            ? "floating"
-            : "off";
-      setQuickChatButtonMode(nextQuickChatButtonMode);
       setMobileNavPrimaryItems(resolveMobileNavPrimaryItems(settings).primaryItems);
-      setQuickChatCloseOnOutsideClick(settings.quickChatCloseOnOutsideClick !== false);
       setDashboardKeyboardShortcuts(resolveDashboardKeyboardShortcuts((settings as GlobalSettings).dashboardKeyboardShortcuts));
       setDismissModalsOnOutsideClick(settings.dismissModalsOnOutsideClick === true);
       setQuickAddSubmitOnEnter(settings.quickAddSubmitOnEnter !== false);
       setChatSubmitOnEnter(normalizeChatSubmitOnEnterMode(settings.chatSubmitOnEnter));
       setSkipConfirmationDialogs(settings.skipConfirmationDialogs === true);
-      setShowQuickChatFAB(nextQuickChatButtonMode === "floating");
       setMaxTotalRetriesBeforeFail(settings.maxTotalRetriesBeforeFail ?? 25);
       setCapacityRiskBannerEnabled(settings.capacityRiskBannerEnabled === true);
       setCapacityRiskTodoThreshold(settings.capacityRiskTodoThreshold ?? 20);
@@ -243,7 +225,6 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     setModelPricingOverrides(undefined);
     setTaskDetailChatFirst(false);
     setChatMessageLayout("bubbles");
-    setQuickChatCloseOnOutsideClick(true);
     setDashboardKeyboardShortcuts(DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS);
     setDismissModalsOnOutsideClick(false);
     setPlanApprovalMode("workflow");
@@ -319,28 +300,6 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     }
   }, [enginePaused, projectId]);
 
-  const toggleShowQuickChatFAB = useCallback(async () => {
-    const next = !showQuickChatFAB;
-    setShowQuickChatFAB(next);
-    setQuickChatButtonMode(next ? "floating" : "off");
-
-    try {
-      await updateSettings({ quickChatButtonMode: next ? "floating" : "off", showQuickChatFAB: next }, projectId);
-    } catch {
-      setShowQuickChatFAB(!next);
-      setQuickChatButtonMode(!next ? "floating" : "off");
-    }
-  }, [showQuickChatFAB, projectId]);
-
-  const setQuickChatButtonModeImmediate = useCallback((mode: QuickChatButtonMode) => {
-    /*
-    FNXC:QuickChat 2026-06-22-18:55:
-    The Quick Chat launcher setting must move the visible launcher immediately between floating FAB, footer button, and off while Settings is still open. Persistence still flows through SettingsModal save; this mirrors the pending selection in the app shell.
-    */
-    setQuickChatButtonMode(mode);
-    setShowQuickChatFAB(mode === "floating");
-  }, []);
-
   const setChatMessageLayoutImmediate = useCallback((layout: ChatMessageLayout) => {
     /*
     FNXC:LiveAppearanceSettings 2026-08-19-18:07:
@@ -402,15 +361,12 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     modelPricingOverrides,
     taskDetailChatFirst,
     chatMessageLayout,
-    quickChatButtonMode,
     mobileNavPrimaryItems,
-    quickChatCloseOnOutsideClick,
     dashboardKeyboardShortcuts,
     dismissModalsOnOutsideClick,
     quickAddSubmitOnEnter,
     chatSubmitOnEnter,
     skipConfirmationDialogs,
-    showQuickChatFAB,
     maxTotalRetriesBeforeFail,
     prAuthAvailable,
     settingsLoaded,
@@ -423,8 +379,6 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     togglePlanAutoApprove,
     toggleGlobalPause,
     toggleEnginePause,
-    toggleShowQuickChatFAB,
-    setQuickChatButtonModeImmediate,
     setChatMessageLayoutImmediate,
     setOpenTasksInRightSidebarImmediate,
     setOpenMobileTasksInPopupImmediate,

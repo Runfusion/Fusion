@@ -53,7 +53,9 @@ describe("AlphaDesktopActionBar", () => {
 
   it("affiche le footer principal sans les destinations du dock ou de Done", () => {
     render(<AlphaDesktopActionBar entries={entries()} activeId="board" tasks={[]} />);
-    expect(screen.getByTestId("alpha-desktop-action-bar")).toBeInTheDocument();
+    const footer = screen.getByTestId("alpha-desktop-action-bar");
+    expect(footer).toBeInTheDocument();
+    expect(footer.lastElementChild).toHaveClass("dashboard-window-visibility-toggle__placeholder");
     expect(screen.getByTestId("alpha-desktop-nav-board")).toHaveAttribute("aria-current", "page");
     expect(screen.queryByTestId("alpha-desktop-nav-new-task")).toBeNull();
     expect(screen.getByTestId("alpha-desktop-capacity-count")).toHaveTextContent("0 / 4");
@@ -195,8 +197,9 @@ describe("AlphaDesktopActionBar", () => {
     vi.useFakeTimers();
     const view = render(<AlphaDesktopActionBar entries={entries()} activeId="board" tasks={[]} />);
     fireEvent.pointerEnter(screen.getByTestId("alpha-desktop-nav-more"));
+    const infrastructureTimerCount = vi.getTimerCount();
     fireEvent.pointerLeave(screen.getByRole("menu").parentElement!);
-    expect(vi.getTimerCount()).toBe(1);
+    expect(vi.getTimerCount()).toBe(infrastructureTimerCount + 1);
     view.unmount();
     expect(vi.getTimerCount()).toBe(0);
   });

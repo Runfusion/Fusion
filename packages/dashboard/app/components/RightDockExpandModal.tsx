@@ -20,6 +20,7 @@ export interface RightDockExpandModalProps {
   visibilityOptions?: OverflowViewVisibilityOptions;
   onClose: () => void;
   returnFocusRef?: RefObject<HTMLElement | null>;
+  raiseToFrontSignal?: number;
 }
 
 /*
@@ -38,6 +39,7 @@ export function RightDockExpandModal({
   visibilityOptions = {},
   onClose,
   returnFocusRef,
+  raiseToFrontSignal,
 }: RightDockExpandModalProps) {
   const { t } = useTranslation("app");
   const resolvedEntry = viewKey ? findOverflowViewEntry(viewKey, visibilityOptions) : undefined;
@@ -82,6 +84,8 @@ export function RightDockExpandModal({
       ariaLabel={expandedViewLabel}
       className="modal right-dock-expand-modal right-dock-expand-modal--floating"
       testId="right-dock-expand-modal"
+      raiseToFrontSignal={raiseToFrontSignal}
+      surfaceGroup={entry.key === "chat" ? "chat" : undefined}
     >
       {/*
       FNXC:StandardizedViewLayout 2026-09-13-20:32:

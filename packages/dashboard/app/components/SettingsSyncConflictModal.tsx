@@ -2,6 +2,7 @@ import { ViewHeader } from "./ViewHeader";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import "./SettingsSyncConflictModal.css";
+import { DashboardWindowSurfaceRoot } from "../context/DashboardWindowManagerContext";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -216,7 +217,7 @@ export function SettingsSyncConflictModal({
   }
 
   return (
-    <div className="modal-overlay open" onClick={onClose}>
+    <DashboardWindowSurfaceRoot logicalId="settings-sync-conflict" group="dialog" className="modal-overlay open" onClick={onClose}>
       <div
         className="modal modal-lg settings-sync-conflict-modal"
         onClick={(event) => event.stopPropagation()}
@@ -336,6 +337,6 @@ export function SettingsSyncConflictModal({
           </button>
         </div>
       </div>
-    </div>
+    </DashboardWindowSurfaceRoot>
   );
 }

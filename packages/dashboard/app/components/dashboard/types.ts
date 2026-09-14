@@ -37,7 +37,6 @@ import type { FusionShellApi } from "../../types/native-shell";
 import type { DetailTaskOpenOptions, DetailTaskTab, ModalManager } from "../../hooks/useModalManager";
 import type { PluginTaskView, TaskView, ViewMode } from "../../hooks/useViewState";
 import type { ToastType } from "../../hooks/useToast";
-import type { QuickChatButtonMode } from "../../hooks/useAppSettings";
 import type { UseNotesController } from "../../hooks/useNotes";
 import type { UseRemoteNodeDataResult } from "../../hooks/useRemoteNodeData";
 import type { SectionId } from "../SettingsModal";
@@ -104,7 +103,6 @@ export interface MainContentProps {
   shadcnCustomColors: Record<string, string>;
   setShadcnCustomColors: (colors: Record<string, string>) => void;
   resolvedThemeMode: "dark" | "light";
-  setQuickChatButtonModeImmediate: (mode: QuickChatButtonMode) => void;
   setMobileNavPrimaryItemsImmediate: (items: string[]) => void;
   reopenOnboardingWithNav: () => void;
   viewMode: ViewMode;
@@ -153,7 +151,6 @@ export interface MainContentProps {
   setChatMessageLayoutImmediate: (layout: "bubbles" | "full-width") => void;
   skillsEnabled: boolean;
   experimentalFeatures: Record<string, boolean>;
-  setQuickChatOpen: Dispatch<SetStateAction<boolean>>;
   onOpenSessionInNewWindow?: (session: ChatSessionInfo) => void;
   /** Optional so existing MainContent callers preserve their unseeded Chat behavior. */
   chatComposerPrefill?: { text: string; nonce: number } | null;

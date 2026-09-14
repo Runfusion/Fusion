@@ -1,11 +1,6 @@
 /*
-FNXC:ChatWindows 2026-08-21-18:24:
-FN-116 keeps secondary Quick Chats in App memory and keys them by project and session.
-Reopening a conversation refreshes its snapshot without cloning its independent window.
-
-FNXC:ChatWindows 2026-08-23-03:33:
-FN-169 requires refreshed entries to signal focus because their FloatingWindow remains mounted.
-A monotonically increasing nonce re-raises the existing window without reordering the Escape stack.
+FNXC:ChatWindows 2026-09-14-11:35:
+Detached Direct conversations remain keyed by project and session. Reopening refreshes and focuses the same persistent FloatingWindow; global window visibility, rather than chat-only minimization, owns temporary presentation state.
 */
 import { useCallback, useState } from "react";
 import type { ChatSessionInfo } from "./useChat";
@@ -17,11 +12,6 @@ export interface PoppedOutChatEntry {
   focusNonce: number;
   /** Stable per-project cascade slot used to visibly separate stacked chat windows. */
   cascadeSlot: number;
-  /**
-   * FNXC:ChatWindows 2026-09-02-05:24:
-   * A minimized secondary chat stays mounted and hidden so its geometry, transcript, scroll position, and draft survive restoration.
-   */
-  minimized: boolean;
 }
 
 export interface UsePoppedOutChatsResult {
@@ -29,8 +19,6 @@ export interface UsePoppedOutChatsResult {
   popOut: (projectId: string, session: ChatSessionInfo) => void;
   close: (projectId: string, sessionId: string) => void;
   closeAll: () => void;
-  minimizeAll: () => void;
-  restoreAll: () => void;
 }
 
 export function usePoppedOutChats(): UsePoppedOutChatsResult {
@@ -47,7 +35,7 @@ export function usePoppedOutChats(): UsePoppedOutChatsResult {
       if (index === -1) {
         const occupiedSlots = new Set(current.filter((entry) => entry.projectId === projectId).map((entry) => entry.cascadeSlot));
         const cascadeSlot = Array.from({ length: current.length + 1 }, (_, slot) => slot).find((slot) => !occupiedSlots.has(slot)) ?? current.length;
-        return [...current, { projectId, session, focusNonce: 1, cascadeSlot, minimized: false }];
+        return [...current, { projectId, session, focusNonce: 1, cascadeSlot }];
       }
       const refreshed = [...current];
       const previous = refreshed[index];
@@ -56,7 +44,6 @@ export function usePoppedOutChats(): UsePoppedOutChatsResult {
         session,
         focusNonce: previous.focusNonce + 1,
         cascadeSlot: previous.cascadeSlot,
-        minimized: false,
       };
       return refreshed;
     });
@@ -67,12 +54,6 @@ export function usePoppedOutChats(): UsePoppedOutChatsResult {
   }, []);
 
   const closeAll = useCallback(() => setEntries([]), []);
-  const minimizeAll = useCallback(() => {
-    setEntries((current) => current.map((entry) => ({ ...entry, minimized: true })));
-  }, []);
-  const restoreAll = useCallback(() => {
-    setEntries((current) => current.map((entry) => ({ ...entry, minimized: false })));
-  }, []);
 
-  return { entries, popOut, close, closeAll, minimizeAll, restoreAll };
+  return { entries, popOut, close, closeAll };
 }

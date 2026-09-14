@@ -6,6 +6,7 @@ import { fetchTasks } from "../api";
 import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
 import type { ResearchRunDetail } from "../research-types";
 import "./ResearchTaskActionModal.css";
+import { DashboardWindowSurfaceRoot } from "../context/DashboardWindowManagerContext";
 
 type Mode = "create" | "enrich";
 
@@ -100,7 +101,7 @@ export function ResearchTaskActionModal({ open, mode, run, finding, projectId, o
   if (!open) return null;
 
   return (
-    <div className="modal-overlay open" role="presentation" onClick={onClose}>
+    <DashboardWindowSurfaceRoot logicalId={`research-task-${mode}`} group="dialog" className="modal-overlay open" role="presentation" onClick={onClose}>
       <div className="modal modal-lg research-task-action-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
         {/* FNXC:StandardizedViewLayout 2026-09-13-21:49: Shared dialog chrome; `.modal-header` stays for the drag handle selector. */}
         <ViewHeader
@@ -179,6 +180,6 @@ export function ResearchTaskActionModal({ open, mode, run, finding, projectId, o
           </button>
         </div>
       </div>
-    </div>
+    </DashboardWindowSurfaceRoot>
   );
 }

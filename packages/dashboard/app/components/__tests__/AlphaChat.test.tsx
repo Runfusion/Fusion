@@ -7,7 +7,7 @@ import { AlphaProvider, AlphaBoundary } from "../../context/AlphaContext";
 import { AlphaTextArea } from "../alpha-ui";
 import { StandardChatActionButton } from "../StandardChatSurface";
 import { ChatView } from "../ChatView";
-import { PoppedOutChatWindows, QuickChatWindow } from "../PoppedOutChatWindows";
+import { PoppedOutChatWindows } from "../PoppedOutChatWindows";
 import { STATIC_OVERFLOW_VIEW_ENTRIES } from "../overflowViewRegistry";
 import { readAppFile } from "../../test/cssFixture";
 import {
@@ -15,7 +15,6 @@ import {
   defaultChatState,
   installChatViewEnv,
   mockViewportMode,
-  openFirstConversation,
   renderWithAct,
   setupMockChat,
   setupMockRooms,
@@ -150,8 +149,8 @@ describe("homemade Alpha Chat", () => {
     restoreViewport();
   });
 
-  it.each(["quick-chat", "popped-out", "right-dock", "right-dock-expanded"] as const)(
-    "mounts the real %s host and opens its homemade Alpha conversation menu",
+  it.each(["popped-out", "right-dock-expanded"] as const)(
+    "mounts the real %s host through homemade Alpha",
     async (host) => {
       setupMockChat({
         ...defaultChatState,
@@ -162,21 +161,10 @@ describe("homemade Alpha Chat", () => {
       setupMockRooms();
       localStorage.clear();
 
-      if (host === "quick-chat") {
-        await renderWithAct(
-          <QuickChatWindow
-            projectId="project-alpha"
-            hidden={false}
-            closeOnOutsidePointerDown={false}
-            addToast={vi.fn()}
-            experimentalFeatures={{}}
-            onClose={vi.fn()}
-          />,
-        );
-      } else if (host === "popped-out") {
+      if (host === "popped-out") {
         await renderWithAct(
           <PoppedOutChatWindows
-            entries={[{ projectId: "project-alpha", session: activeSessionFixture, focusNonce: 1, cascadeSlot: 0, minimized: false }]}
+            entries={[{ projectId: "project-alpha", session: activeSessionFixture, focusNonce: 1, cascadeSlot: 0 }]}
             projectId="project-alpha"
             addToast={vi.fn()}
             experimentalFeatures={{}}
@@ -184,37 +172,22 @@ describe("homemade Alpha Chat", () => {
             onOpenSessionInNewWindow={vi.fn()}
           />,
         );
-      } else {
-        const chatEntry = STATIC_OVERFLOW_VIEW_ENTRIES.find((entry) => entry.key === "chat");
-        await renderWithAct(<>{chatEntry?.render?.({
-          projectId: "project-alpha",
-          addToast: vi.fn(),
-          experimentalFeatures: {},
-          surface: host === "right-dock" ? "dock" : "expand",
-          dockWidth: host === "right-dock" ? 480 : undefined,
-        })}</>);
-      }
-
-      if (host === "popped-out") {
         expect(screen.queryByTestId(`chat-session-${activeSessionFixture.id}`)).toBeNull();
         expect(document.querySelector(".chat-sidebar")).toBeNull();
-        expect(screen.queryByTestId("chat-back-btn")).toBeNull();
         expect(screen.queryByTestId("chat-new-btn")).toBeNull();
-        expect(screen.queryByTestId("chat-thread-title-switcher")).toBeNull();
         expect(screen.getByTestId("chat-modal-close")).toBeInTheDocument();
         return;
       }
+
+      const chatEntry = STATIC_OVERFLOW_VIEW_ENTRIES.find((entry) => entry.key === "chat");
+      await renderWithAct(<>{chatEntry?.render?.({
+        projectId: "project-alpha",
+        addToast: vi.fn(),
+        experimentalFeatures: {},
+        surface: "expand",
+      })}</>);
       expect(await screen.findByTestId(`chat-session-${activeSessionFixture.id}`)).toBeInTheDocument();
       expect(document.querySelector('[data-alpha-ui="button"]')).not.toBeNull();
-      if (host === "quick-chat") {
-        const floatingChat = document.querySelector(".floating-window--chat .chat-view--floating");
-        expect(floatingChat?.children[0]).toHaveClass("view-header");
-        expect(floatingChat?.children[1]).toHaveClass("view-layout__body");
-        expect(floatingChat?.children[1]?.querySelector(".chat-view__body")).not.toBeNull();
-        expect(floatingChat?.querySelectorAll('[data-testid="chat-modal-close"]')).toHaveLength(1);
-        expect(floatingChat?.querySelector('[data-testid="chat-modal-close"]')).toHaveClass("modal-close");
-        expect(document.querySelector(".floating-window--chat .floating-window__close")).toBeNull();
-      }
       fireEvent.click(screen.getByTestId("chat-session-menu-btn"));
       expect(await screen.findByRole("menu", { name: "Conversation actions" })).toHaveAttribute("data-alpha-ui", "menu");
       fireEvent.click(screen.getByTestId("chat-context-rename"));
@@ -224,120 +197,25 @@ describe("homemade Alpha Chat", () => {
   );
 
   it.each([
-    ["quick-chat", "desktop", "empty"],
-    ["quick-chat", "desktop", "populated"],
-    ["quick-chat", "desktop", "streaming"],
-    ["quick-chat", "mobile", "empty"],
-    ["quick-chat", "mobile", "populated"],
-    ["quick-chat", "mobile", "streaming"],
-    ["popped-out", "desktop", "empty"],
-    ["popped-out", "desktop", "populated"],
-    ["popped-out", "desktop", "streaming"],
-    ["popped-out", "mobile", "empty"],
-    ["popped-out", "mobile", "populated"],
-    ["popped-out", "mobile", "streaming"],
-  ] as const)("keeps the real %s History-style shell in %s for %s content", async (host, viewport, state) => {
-    const restoreViewport = mockViewportMode(viewport);
-    const populated = state !== "empty";
-    const dedicated = host === "popped-out";
-    setupMockChat({
-      ...defaultChatState,
-      sessions: populated || dedicated ? [activeSessionFixture] : [],
-      filteredSessions: populated || dedicated ? [activeSessionFixture] : [],
-      activeSession: populated || dedicated ? activeSessionFixture : null,
-      isStreaming: state === "streaming",
-      streamingText: state === "streaming" ? "Réponse en cours" : "",
-    });
-    setupMockRooms();
-    localStorage.clear();
-
-    try {
-      if (host === "quick-chat") {
-        await renderWithAct(
-          <QuickChatWindow
-            projectId="project-alpha"
-            hidden={false}
-            closeOnOutsidePointerDown={false}
-            addToast={vi.fn()}
-            experimentalFeatures={{}}
-            onClose={vi.fn()}
-          />,
-        );
-      } else {
-        await renderWithAct(
-          <PoppedOutChatWindows
-            entries={[{ projectId: "project-alpha", session: activeSessionFixture, focusNonce: 1, cascadeSlot: 0, minimized: false }]}
-            projectId="project-alpha"
-            addToast={vi.fn()}
-            experimentalFeatures={{}}
-            onClose={vi.fn()}
-            onOpenSessionInNewWindow={vi.fn()}
-          />,
-        );
-      }
-
-      const floatingChat = document.querySelector<HTMLElement>(".floating-window--chat .chat-view--floating");
-      expect(floatingChat).not.toBeNull();
-      expect(floatingChat?.children[0]).toHaveClass("view-header");
-      expect(floatingChat?.children[1]).toHaveClass("view-layout__body");
-        expect(floatingChat?.children[1]?.querySelector(".chat-view__body")).not.toBeNull();
-      expect(floatingChat?.querySelectorAll('[data-testid="chat-modal-close"]')).toHaveLength(1);
-      expect(document.querySelector(".floating-window--chat .floating-window__close")).toBeNull();
-      if (viewport === "mobile") {
-        expect(window.innerWidth).toBe(375);
-        expect(floatingChat).toHaveClass("chat-view--floating");
-      }
-      if (dedicated) {
-        expect(document.querySelector(".chat-sidebar")).toBeNull();
-        expect(screen.queryByTestId(`chat-session-${activeSessionFixture.id}`)).toBeNull();
-        expect(document.querySelector(".chat-thread")).toBeInTheDocument();
-      } else if (!populated) {
-        expect(screen.getByText("No conversations yet")).toBeInTheDocument();
-      } else {
-        expect(screen.getByTestId(`chat-session-${activeSessionFixture.id}`)).toBeInTheDocument();
-      }
-      if (state === "streaming") {
-        if (!dedicated) await openFirstConversation();
-        expect(await screen.findByTestId("chat-message-__streaming__")).toHaveTextContent("Réponse en cours");
-      }
-    } finally {
-      restoreViewport();
-    }
-  });
-
-  it.each([
-    ["quick-chat", "desktop"],
-    ["quick-chat", "mobile"],
-    ["popped-out", "desktop"],
-    ["popped-out", "mobile"],
-  ] as const)("keeps the real %s mounted with stable geometry while hidden on %s", async (host, viewport) => {
+    ["desktop", "populated"],
+    ["desktop", "streaming"],
+    ["mobile", "populated"],
+    ["mobile", "streaming"],
+  ] as const)("keeps a detached conversation in its real %s shell for %s content", async (viewport, state) => {
     const restoreViewport = mockViewportMode(viewport);
     setupMockChat({
       ...defaultChatState,
       sessions: [activeSessionFixture],
       filteredSessions: [activeSessionFixture],
       activeSession: activeSessionFixture,
-      isStreaming: true,
-      streamingText: "Réponse persistante",
+      isStreaming: state === "streaming",
+      streamingText: state === "streaming" ? "Réponse en cours" : "",
     });
     setupMockRooms();
-    localStorage.clear();
-    const onClose = vi.fn();
-
-    const view = host === "quick-chat"
-      ? await renderWithAct(
-        <QuickChatWindow
-          projectId="project-alpha"
-          hidden={false}
-          closeOnOutsidePointerDown={false}
-          addToast={vi.fn()}
-          experimentalFeatures={{}}
-          onClose={onClose}
-        />,
-      )
-      : await renderWithAct(
+    try {
+      await renderWithAct(
         <PoppedOutChatWindows
-          entries={[{ projectId: "project-alpha", session: activeSessionFixture, focusNonce: 3, cascadeSlot: 1, minimized: false }]}
+          entries={[{ projectId: "project-alpha", session: activeSessionFixture, focusNonce: 1, cascadeSlot: 0 }]}
           projectId="project-alpha"
           addToast={vi.fn()}
           experimentalFeatures={{}}
@@ -345,73 +223,16 @@ describe("homemade Alpha Chat", () => {
           onOpenSessionInNewWindow={vi.fn()}
         />,
       );
-    const windowKey = host === "quick-chat" ? "chat-modal" : `chat-window-project-alpha-${activeSessionFixture.id}`;
-    const overlay = screen.getByTestId(`floating-window-overlay-${windowKey}`);
-    const panel = screen.getByTestId(`floating-window-${windowKey}`);
-    const chat = panel.querySelector(".chat-view--floating");
-    const geometry = { left: panel.style.left, top: panel.style.top, width: panel.style.width, height: panel.style.height };
-
-    if (host === "quick-chat") {
-      view.rerender(
-        <QuickChatWindow
-          projectId="project-alpha"
-          hidden
-          closeOnOutsidePointerDown={false}
-          addToast={vi.fn()}
-          experimentalFeatures={{}}
-          onClose={onClose}
-        />,
-      );
-    } else {
-      view.rerender(
-        <PoppedOutChatWindows
-          entries={[{ projectId: "project-alpha", session: activeSessionFixture, focusNonce: 3, cascadeSlot: 1, minimized: true }]}
-          projectId="project-alpha"
-          addToast={vi.fn()}
-          experimentalFeatures={{}}
-          onClose={vi.fn()}
-          onOpenSessionInNewWindow={vi.fn()}
-        />,
-      );
+      const floatingChat = document.querySelector<HTMLElement>(".floating-window--chat .chat-view--floating");
+      expect(floatingChat).not.toBeNull();
+      expect(document.querySelector(".chat-sidebar")).toBeNull();
+      expect(document.querySelector(".chat-thread")).toBeInTheDocument();
+      if (state === "streaming") {
+        expect(await screen.findByTestId("chat-message-__streaming__")).toHaveTextContent("Réponse en cours");
+      }
+    } finally {
+      restoreViewport();
     }
-
-    expect(screen.getByTestId(`floating-window-overlay-${windowKey}`)).toBe(overlay);
-    expect(screen.getByTestId(`floating-window-${windowKey}`)).toBe(panel);
-    expect(panel.querySelector(".chat-view--floating")).toBe(chat);
-    expect(overlay).toHaveClass("floating-window-overlay--hidden");
-    expect(overlay).toHaveAttribute("aria-hidden", "true");
-    expect({ left: panel.style.left, top: panel.style.top, width: panel.style.width, height: panel.style.height }).toEqual(geometry);
-    expect(chat?.querySelectorAll('[data-testid="chat-modal-close"]')).toHaveLength(1);
-
-    if (host === "quick-chat") {
-      view.rerender(
-        <QuickChatWindow
-          projectId="project-alpha"
-          hidden={false}
-          closeOnOutsidePointerDown={false}
-          addToast={vi.fn()}
-          experimentalFeatures={{}}
-          onClose={onClose}
-        />,
-      );
-    } else {
-      view.rerender(
-        <PoppedOutChatWindows
-          entries={[{ projectId: "project-alpha", session: activeSessionFixture, focusNonce: 3, cascadeSlot: 1, minimized: false }]}
-          projectId="project-alpha"
-          addToast={vi.fn()}
-          experimentalFeatures={{}}
-          onClose={vi.fn()}
-          onOpenSessionInNewWindow={vi.fn()}
-        />,
-      );
-    }
-    expect(screen.getByTestId(`floating-window-overlay-${windowKey}`)).toBe(overlay);
-    expect(screen.getByTestId(`floating-window-${windowKey}`)).toBe(panel);
-    expect(panel.querySelector(".chat-view--floating")).toBe(chat);
-    expect(overlay).not.toHaveClass("floating-window-overlay--hidden");
-    expect({ left: panel.style.left, top: panel.style.top, width: panel.style.width, height: panel.style.height }).toEqual(geometry);
-    restoreViewport();
   });
 
   it("pins the floating Chat header and History-matched content paint by contract", () => {

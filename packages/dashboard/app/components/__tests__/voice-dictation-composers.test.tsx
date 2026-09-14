@@ -12,7 +12,6 @@ import { TaskChatTab } from "../TaskChatTab";
 import { PlanningModeModal, QuestionForm, SummaryView } from "../PlanningModeModal";
 import { StandardChatMessageItem } from "../StandardChatSurface";
 import { ChatView } from "../ChatView";
-import { QuickChatFAB } from "../QuickChatFAB";
 import { ToastProvider } from "../../hooks/useToast";
 import { NavigationHistoryProvider } from "../../hooks/useNavigationHistory";
 
@@ -87,15 +86,6 @@ function ControlledTaskForm() {
   return <TaskForm {...formProps} description={description} onDescriptionChange={setDescription} />;
 }
 
-/** Mirrors App's FAB → full ChatView handoff so this test exercises the reachable shared composer. */
-function QuickChatVoicePath() {
-  const [open, setOpen] = useState(false);
-  return <>
-    <QuickChatFAB open={open} onToggle={() => setOpen((current) => !current)} />
-    {open && <ChatView projectId="project-1" addToast={vi.fn()} floating />}
-  </>;
-}
-
 function ControlledSummaryView() {
   const [summary, setSummary] = useState({ title: "Voice", description: "before-after", priority: "normal", suggestedDependencies: [] } as any);
   return <SummaryView projectId="project-1" summary={summary} historyEntries={[]} onSummaryChange={setSummary} tasks={[]} branchMode="project-default" branchName="" baseBranch="main" onBranchModeChange={vi.fn()} onBranchNameChange={vi.fn()} onBaseBranchChange={vi.fn()} onCreateTask={vi.fn()} onBreakIntoTasks={vi.fn()} isCreatingTask={false} isStartingBreakdown={false} isRefiningSummary={false} />;
@@ -125,7 +115,6 @@ function openDirectThread() {
 const primarySurfaceRenders = [
   { name: "ChatView primary composer", render: () => { const result = render(<ChatView projectId="project-1" addToast={vi.fn()} />); openDirectThread(); return result; } },
   { name: "StandardChatSurface correction composer", render: () => { const result = render(<StandardChatMessageItem message={{ id: "message-1", role: "user", content: "Populated", createdAt: "2026-07-24T00:00:00.000Z" } as any} forcePlain={false} agentName="Agent" hideAssistantIdentity={false} showAssistantModelTag={false} activeSessionId="session-1" canEdit onEditMessage={vi.fn()} />); fireEvent.click(screen.getByRole("button", { name: /edit/i })); return result; } },
-  { name: "QuickChatFAB-opened shared ChatView composer", render: () => { const result = render(<QuickChatVoicePath />); fireEvent.click(screen.getByTestId("quick-chat-fab")); openDirectThread(); return result; } },
   { name: "ComposeChatPanel request composer", render: () => render(<ComposeChatPanel embeds={[]} draftBody="" onUseDraft={vi.fn()} onClose={vi.fn()} />) },
   { name: "TaskPlannerChatTab composer", render: () => render(<ToastProvider><NavigationHistoryProvider value={{ pushNav: vi.fn(), removeNav: vi.fn() } as any}><TaskPlannerChatTab task={taskWithComment()} active taskChatModel={{ provider: "mock", modelId: "mock" }} addToast={vi.fn()} /></NavigationHistoryProvider></ToastProvider>) },
   { name: "TaskChatTab composer", render: () => render(<TaskChatTab task={taskWithComment()} active projectId="project-1" addToast={vi.fn()} />) },
@@ -178,13 +167,6 @@ describe("voice dictation composer inventory", () => {
     }
     expect(voiceProjectIds).toContain("project-1");
     expect(voiceProjectIds).toContain(undefined);
-  });
-
-  it("opens the reachable shared ChatView composer from QuickChatFAB", () => {
-    render(<QuickChatVoicePath />);
-    fireEvent.click(screen.getByTestId("quick-chat-fab"));
-    openDirectThread();
-    expect(screen.getByRole("button", { name: "Start voice dictation" })).toBeInTheDocument();
   });
 
   it("opens and dictates into the reachable PlanningModeModal refinement editor", async () => {

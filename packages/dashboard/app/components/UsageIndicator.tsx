@@ -1,4 +1,5 @@
 import { ViewHeader } from "./ViewHeader";
+import { DashboardWindowSurfaceRoot } from "../context/DashboardWindowManagerContext";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import type { CSSProperties, DragEvent } from "react";
@@ -1044,20 +1045,20 @@ export function UsageIndicator({ isOpen, onClose, projectId, anchorRect, present
 
   if (showDesktopPopover) {
     return (
-      <>
+      <DashboardWindowSurfaceRoot logicalId="usage" group="dialog" className="dashboard-window-surface-root--contents">
         <div
           className="usage-popover-backdrop"
           onClick={onClose}
           data-testid="usage-modal-overlay"
         />
         {usageContent}
-      </>
+      </DashboardWindowSurfaceRoot>
     );
   }
 
   return (
-    <div className="modal-overlay open usage-modal-overlay" onClick={handleOverlayClick} data-testid="usage-modal-overlay">
+    <DashboardWindowSurfaceRoot logicalId="usage" group="dialog" className="modal-overlay open usage-modal-overlay" onClick={handleOverlayClick} data-testid="usage-modal-overlay">
       {usageContent}
-    </div>
+    </DashboardWindowSurfaceRoot>
   );
 }

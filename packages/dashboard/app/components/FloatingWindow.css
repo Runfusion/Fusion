@@ -2,8 +2,8 @@
 FNXC:FloatingWindow 2026-06-22-20:45:
 FloatingWindow is a non-blocking floating window (generalized from RightDockExpandModal). The overlay is a full-viewport, transparent, NON-dimming, NON-blurring, click-through layer: `pointer-events: none` lets every click pass through to the app and to other windows behind it. Only the panel re-enables `pointer-events: auto`. Multiple overlays/panels coexist with no mutual blocking — z-stacking is driven by inline `z-index` from the component's per-window counter.
 
-FNXC:FloatingWindow 2026-06-27-00:00:
-Click-through overlays cannot implement backdrop clicks in CSS/DOM structure. Outside-click dismissal is therefore a component-level opt-in document listener for transient windows such as Quick Chat; persistent task and terminal pop-outs keep the default non-dismissable page-click behavior.
+FNXC:FloatingWindow 2026-09-14-11:35:
+Click-through overlays cannot implement backdrop clicks in CSS alone. Outside dismissal is therefore an explicit component-level document listener; persistent task, Chat, and terminal pop-outs keep the default non-dismissable page-click behavior.
 */
 .floating-window-overlay {
   position: fixed;
@@ -14,11 +14,8 @@ Click-through overlays cannot implement backdrop clicks in CSS/DOM structure. Ou
 }
 
 /*
-FNXC:FloatingWindow 2026-07-18-14:05:
-FN-8340 resolves #2114: Quick Chat minimize must retain its desktop window and ≤768px full-screen
-sheet in the layout tree. `visibility: hidden` removes paint while preserving child geometry and
-message-list scroll state; `pointer-events: none` keeps the already click-through overlay inert.
-Never replace this with `display: none`, which collapses layout and makes reopening visibly reflow.
+FNXC:FloatingWindowVisibility 2026-09-14-11:35:
+Retained local/global window hiding uses `visibility` to remove paint while preserving child geometry and scroll, plus pointer suppression for inertness. Never replace this with `display: none`, which collapses layout and makes restoration reflow.
 */
 /*
 FNXC:ModalTouchGeometry 2026-07-26-19:46:
@@ -49,8 +46,8 @@ Floating panel positioned by state-driven inline `left/top/width/height` and sta
   flex-direction: column;
   min-width: calc(var(--space-2xl) * 7.5);
   min-height: calc(var(--space-2xl) * 5.83);
-  max-width: calc(100vw - (var(--space-lg) * 2));
-  max-height: calc(100dvh - (var(--space-lg) * 2));
+  max-width: 100vw;
+  max-height: 100dvh;
   overflow: hidden;
   background: var(--surface);
   border: thin solid var(--border);
@@ -258,8 +255,8 @@ FNXC:ModalTouchGeometry 2026-07-26-12:19:
 Phone sheets are strictly below 768px. At exactly 768px this query must not match so
 `isTabletTouchViewport` can expose the active tablet touch targets without a cascade conflict.
 
-FNXC:ChatModal 2026-06-22-14:49:
-On mobile/narrow app viewports, opening Quick Chat should present the full Chat modal as a full-screen sheet instead of a small draggable desktop window. Scope this to the chat FloatingWindow and override the inline desktop geometry only at the mobile breakpoint; desktop pop-out behavior remains movable/resizable.
+FNXC:ChatWindows 2026-09-14-11:35:
+A detached conversation becomes a full-screen sheet on narrow viewports rather than retaining desktop drag geometry. Scope this to Chat FloatingWindows; desktop detached windows remain movable and resizable.
 */
 /*
 FNXC:TaskDetailLayout 2026-08-17-23:47:

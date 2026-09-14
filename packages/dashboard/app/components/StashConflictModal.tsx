@@ -6,6 +6,7 @@ import { ApiRequestError, api } from "../api";
 import { useFileBrowser } from "../context/FileBrowserContext";
 import { copyTextToClipboard } from "../utils/copyToClipboard";
 import "./StashConflictModal.css";
+import { DashboardWindowSurfaceRoot } from "../context/DashboardWindowManagerContext";
 
 interface ResolveResponse {
   remainingConflicts: string[];
@@ -234,7 +235,7 @@ export default function StashConflictModal({
   };
 
   return (
-    <div className="modal-overlay open" role="dialog" aria-modal="true" aria-labelledby="stash-conflict-modal-title">
+    <DashboardWindowSurfaceRoot logicalId="stash-conflict" group="dialog" className="modal-overlay open" role="dialog" aria-modal="true" aria-labelledby="stash-conflict-modal-title">
       <div className="modal stash-conflict-modal" ref={modalRef} tabIndex={-1}>
         {/* FNXC:StandardizedViewLayout 2026-09-13-21:49: Shared chrome; this recovery dialog deliberately exits through its own explicit actions only. */}
         <ViewHeader
@@ -301,6 +302,6 @@ export default function StashConflictModal({
           </div>
         </div>
       </div>
-    </div>
+    </DashboardWindowSurfaceRoot>
   );
 }

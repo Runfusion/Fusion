@@ -1254,10 +1254,8 @@
     "cancel": "Annuler",
     "cancelButton": "Annuler",
     "clearConversationFailed": "Échec de l'effacement de la conversation",
-    "closeQuickChat": "Fermer le chat rapide",
     "openInNewWindow": "Ouvrir dans une nouvelle fenêtre",
     "windowOpen": "Ouvert",
-    "windowMinimized": "Réduit",
     "conversationArchived": "Conversation archivée",
     "conversationDeleted": "Conversation supprimée",
     "conversationName": "",
@@ -1315,7 +1313,6 @@
     "noRoomsYet": "Aucun salon pour l'instant.",
     "noSkillsAvailable": "Aucune compétence disponible",
     "noSkillsFound": "Aucune compétence trouvée",
-    "openQuickChat": "Ouvrir le chat rapide",
     "preserveToStash": "",
     "preserveToStashDone": "",
     "preserveToStashFailed": "",
@@ -1342,7 +1339,6 @@
     "forcePending": "Forcer l’envoi du message en attente",
     "forcePendingShort": "Forcer l’envoi",
     "pendingEditEmpty": "Les messages en attente ne peuvent pas être vides",
-    "quickChatTitle": "Chat rapide",
     "relativeTimeDays_one": "",
     "relativeTimeDays_other": "",
     "relativeTimeHours_one": "",
@@ -1431,8 +1427,6 @@
     "quoteMessage": "Citer le message",
     "agentRepliesFailed": "Certains agents n’ont pas pu répondre : {{agents}}",
     "noDefaultModelConfigured": "Configurez un modèle de chat par défaut dans les Paramètres avant de créer une conversation.",
-    "minimizeAllChats": "Réduire tous les chats",
-    "restoreAllChats": "Restaurer tous les chats",
     "slashSuggestions": "Suggestions de barre oblique",
     "loadingSlashSuggestions": "Chargement des suggestions…",
     "snippetSuggestion": "Insérer le prompt enregistré",
@@ -5266,14 +5260,6 @@
       "urlValid": "L'URL de base doit être une URL valide."
     }
   },
-  "quickChat": {
-    "errorAttachmentsBeforeSession": "Impossible d'envoyer des pièces jointes avant que la session de chat soit prête",
-    "errorAttachmentsWhileStreaming": "Impossible d'envoyer des pièces jointes pendant qu'une réponse est en cours de diffusion",
-    "errorGettingResponse": "Impossible d'obtenir une réponse",
-    "errorInitializingChat": "Impossible d'initialiser le chat",
-    "errorRefreshingSessions": "Impossible de rafraîchir les sessions de chat",
-    "errorStartingNewChat": "Impossible de démarrer un nouveau chat"
-  },
   "reliability": {
     "bouncedEntered": "{{bounced}} rejetés / {{entered}} entrés ({{days}} derniers jours)",
     "countingSince": "Comptage depuis {{date}}",
@@ -6120,7 +6106,6 @@
       "searchTheTrackingRepoForLikelyDuplicatesBefore": "",
       "settingsSaved": "Paramètres enregistrés",
       "showCapacityRiskBanner": "",
-      "showQuickChatButton": "",
       "showTheFloatingChatButtonInTheDashboard": "",
       "taskPrefix": "",
       "todoThreshold": "",
@@ -6144,12 +6129,10 @@
       "aiUndoTaskWorkflowHelp": "",
       "workspaceModeHint": "",
       "allowAbsoluteFileBrowserPathsHint": "",
-      "quickChatLauncherHint": "",
       "showTaskChatsInCommonFeedHint": "",
       "whenEnabledImportedGitHubIssuesUseTheirSource": "",
       "gitLabEnabledHint": "",
       "allowEphemeralAgentsToCreateTasksHint": "",
-      "quickChatCloseOnOutsideClickHint": "",
       "disabledFusionWorkflowsAreHiddenFromWorkflow": "",
       "builtinWorkflowAtLeastOneEnabled": "",
       "autoTranslateImportedIssues": "",
@@ -9951,5 +9934,9 @@
     "selectHint": "Select an item to edit it",
     "exportJson": "Export JSON",
     "exportPng": "Export PNG"
+  },
+  "windows": {
+    "hide": "Masquer toutes les fenêtres",
+    "restore": "Restaurer les fenêtres"
   }
 }

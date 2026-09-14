@@ -4,6 +4,7 @@ import { isCompleteColumnRole, isReviewColumnRole } from "../utils/columnRoles";
 import "./WorkflowResultsTab.css";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { DashboardWindowSurfaceRoot } from "../context/DashboardWindowManagerContext";
 
 /*
 FNXC:i18n-Localize 2026-06-20-00:00:
@@ -1345,7 +1346,9 @@ export function WorkflowResultsTab({
         const phase = (result.phase || "pre-merge") as "pre-merge" | "post-merge";
 
         return (
-          <div
+          <DashboardWindowSurfaceRoot
+            logicalId={`workflow-output-${result.workflowStepId}`}
+            group="dialog"
             className="workflow-output-modal-overlay"
             onClick={(e) => {
               if (e.target === e.currentTarget) closeExpandedView();
@@ -1404,7 +1407,7 @@ export function WorkflowResultsTab({
                 </div>
               </div>
             </div>
-          </div>
+          </DashboardWindowSurfaceRoot>
         );
       })()}
     </div>

@@ -544,7 +544,7 @@ export function renderStandardAssistantContent(content: string, forcePlain: bool
 /**
  * FNXC:VoiceInput 2026-07-25-04:15:
  * Mount dictation only while the correction textarea is open. Message rows must not each poll
- * voice availability while merely rendering history; this editor remains the shared Quick Chat path.
+ * voice availability while merely rendering history; this editor remains shared by every Chat host.
  */
 function StandardChatMessageEditComposer({
   value,

@@ -532,7 +532,6 @@ describe("FloatingWindow", () => {
       ".artifacts-gallery-viewer-header",
       ".right-dock-expand-modal__header--draggable",
       ".new-task-modal__header--draggable",
-      ".quick-chat-fab",
     ]) {
       expect(cssRuleContaining(allAppCss, selector, "touch-action: none;"), selector).toContain("touch-action: none;");
     }
@@ -954,7 +953,7 @@ describe("FloatingWindow", () => {
     const panel = screen.getByTestId("floating-window-persisted");
     expect(panel.style.width).toBe("700px");
     expect(panel.style.height).toBe("500px");
-    expect(panel.style.top).toBe("16px");
+    expect(panel.style.top).toBe("0px");
     expect(Number.parseFloat(panel.style.left)).toBeLessThan(window.innerWidth);
   });
 
@@ -1146,7 +1145,7 @@ describe("FloatingWindow", () => {
       offset: { x: FLOATING_WINDOW_CASCADE_STEP_PX * 2, y: FLOATING_WINDOW_CASCADE_STEP_PX * 2 },
       size: { width: 600, height: 400 },
     });
-    expect(resolveFloatingWindowCascade({ x: 408, y: 192 }, { width: 600, height: 560 }, minSize, 1)).toEqual({
+    expect(resolveFloatingWindowCascade({ x: 424, y: 208 }, { width: 600, height: 560 }, minSize, 1)).toEqual({
       offset: { x: -FLOATING_WINDOW_CASCADE_STEP_PX, y: -FLOATING_WINDOW_CASCADE_STEP_PX },
       size: { width: 600, height: 560 },
     });
@@ -1178,8 +1177,8 @@ describe("FloatingWindow", () => {
       expect(base.style.height).toBe("868px");
       expect(offset.style.left).toBe(`${16 + FLOATING_WINDOW_CASCADE_STEP_PX}px`);
       expect(offset.style.top).toBe(`${16 + FLOATING_WINDOW_CASCADE_STEP_PX}px`);
-      expect(offset.style.width).toBe(`${1408 - FLOATING_WINDOW_CASCADE_STEP_PX}px`);
-      expect(offset.style.height).toBe(`${868 - FLOATING_WINDOW_CASCADE_STEP_PX}px`);
+      expect(offset.style.width).toBe(`${1408 - (FLOATING_WINDOW_CASCADE_STEP_PX - 16)}px`);
+      expect(offset.style.height).toBe(`${868 - (FLOATING_WINDOW_CASCADE_STEP_PX - 16)}px`);
       expect(JSON.parse(localStorage.getItem(key) ?? "{}")).toEqual(baseGeometry);
       unmount();
 
@@ -1187,8 +1186,8 @@ describe("FloatingWindow", () => {
       const remount = screen.getByTestId("floating-window-cascade-offset-remount");
       expect(remount.style.left).toBe(`${16 + FLOATING_WINDOW_CASCADE_STEP_PX}px`);
       expect(remount.style.top).toBe(`${16 + FLOATING_WINDOW_CASCADE_STEP_PX}px`);
-      expect(remount.style.width).toBe(`${1408 - FLOATING_WINDOW_CASCADE_STEP_PX}px`);
-      expect(remount.style.height).toBe(`${868 - FLOATING_WINDOW_CASCADE_STEP_PX}px`);
+      expect(remount.style.width).toBe(`${1408 - (FLOATING_WINDOW_CASCADE_STEP_PX - 16)}px`);
+      expect(remount.style.height).toBe(`${868 - (FLOATING_WINDOW_CASCADE_STEP_PX - 16)}px`);
       expect(JSON.parse(localStorage.getItem(key) ?? "{}")).toEqual(baseGeometry);
     } finally {
       if (width) Object.defineProperty(window, "innerWidth", width);
@@ -1210,11 +1209,11 @@ describe("FloatingWindow", () => {
 
       const panel = screen.getByTestId("floating-window-cascade-slot-change");
       expect(panel.style.left).toBe(`${16 + FLOATING_WINDOW_CASCADE_STEP_PX}px`);
-      expect(panel.style.width).toBe(`${1408 - FLOATING_WINDOW_CASCADE_STEP_PX}px`);
+      expect(panel.style.width).toBe(`${1408 - (FLOATING_WINDOW_CASCADE_STEP_PX - 16)}px`);
 
       rerender(<FloatingWindow windowKey="cascade-slot-change" title="Offset" onClose={() => {}} persistGeometryKey={key} cascadeOffsetIndex={2} minSize={minSize}><div /></FloatingWindow>);
       expect(panel.style.left).toBe(`${16 + FLOATING_WINDOW_CASCADE_STEP_PX * 2}px`);
-      expect(panel.style.width).toBe(`${1408 - FLOATING_WINDOW_CASCADE_STEP_PX * 2}px`);
+      expect(panel.style.width).toBe(`${1408 - (FLOATING_WINDOW_CASCADE_STEP_PX * 2 - 16)}px`);
       expect(JSON.parse(localStorage.getItem(key) ?? "{}")).toEqual(baseGeometry);
     } finally {
       if (width) Object.defineProperty(window, "innerWidth", width);
@@ -1247,12 +1246,12 @@ describe("FloatingWindow", () => {
 
   it("flips a cascade toward the viewport when its base is pinned at the far edge", () => {
     const key = "floating-window:cascade-edge";
-    localStorage.setItem(key, JSON.stringify({ size: { width: 600, height: 560 }, position: { x: 408, y: 192 } }));
+    localStorage.setItem(key, JSON.stringify({ size: { width: 600, height: 560 }, position: { x: 424, y: 208 } }));
 
     render(<FloatingWindow windowKey="cascade-edge" title="Edge" onClose={() => {}} persistGeometryKey={key} cascadeOffsetIndex={1}><div /></FloatingWindow>);
 
-    expect(screen.getByTestId("floating-window-cascade-edge").style.left).toBe(`${408 - FLOATING_WINDOW_CASCADE_STEP_PX}px`);
-    expect(screen.getByTestId("floating-window-cascade-edge").style.top).toBe(`${192 - FLOATING_WINDOW_CASCADE_STEP_PX}px`);
+    expect(screen.getByTestId("floating-window-cascade-edge").style.left).toBe(`${424 - FLOATING_WINDOW_CASCADE_STEP_PX}px`);
+    expect(screen.getByTestId("floating-window-cascade-edge").style.top).toBe(`${208 - FLOATING_WINDOW_CASCADE_STEP_PX}px`);
   });
 
   it("suppresses cascade offsets in a full-screen sheet", () => {
@@ -1458,16 +1457,16 @@ describe("FloatingWindow", () => {
 
     const panel = expectFloatingWindowStructure(windowKey);
     expect(screen.getByTestId(`floating-window-overlay-${windowKey}`)).toHaveAttribute("aria-label", `${windowKey} dialog`);
-    expect(Number.parseInt(panel.style.left, 10)).toBeGreaterThanOrEqual(16);
-    expect(Number.parseInt(panel.style.top, 10)).toBeGreaterThanOrEqual(16);
+    expect(Number.parseInt(panel.style.left, 10)).toBeGreaterThanOrEqual(0);
+    expect(Number.parseInt(panel.style.top, 10)).toBeGreaterThanOrEqual(0);
 
     dragWithTouch(screen.getByText(`Drag ${windowKey}`));
     resizeWithTouch(screen.getByTestId("floating-window-resize-se"));
     const persisted = JSON.parse(localStorage.getItem(geometryKey) ?? "{}");
-    expect(persisted.position.x).toBeGreaterThanOrEqual(16);
-    expect(persisted.position.y).toBeGreaterThanOrEqual(16);
-    expect(persisted.size.width).toBeLessThanOrEqual(window.innerWidth - 32);
-    expect(persisted.size.height).toBeLessThanOrEqual(window.innerHeight - 32);
+    expect(persisted.position.x).toBeGreaterThanOrEqual(0);
+    expect(persisted.position.y).toBeGreaterThanOrEqual(0);
+    expect(persisted.size.width).toBeLessThanOrEqual(window.innerWidth);
+    expect(persisted.size.height).toBeLessThanOrEqual(window.innerHeight);
     unmount();
   });
 

@@ -20,6 +20,7 @@ import { getPluginNavIcon } from "./pluginNavIcon";
 import { TaskSearchInput } from "./TaskSearchInput";
 import type { ShellHostContext } from "../shell-host";
 import { ViewActionButton } from "./ViewActionButton";
+import { useDashboardWindowLandmark } from "../context/DashboardWindowManagerContext";
 export { resolveReportContextRefs } from "../utils/reportContextRefs";
 
 export { useViewportMode };
@@ -444,9 +445,10 @@ export function Header({
   }, [onSearchChange]);
 
   const isDesktopShell = shellHost.kind === "desktop-shell";
+  const dashboardWindowHeaderRef = useDashboardWindowLandmark("header");
 
   return (
-    <div className="header-wrapper">
+    <div className="header-wrapper" ref={dashboardWindowHeaderRef}>
       <header className="header" data-shell-kind={shellHost.kind}>
         <div className="header-left">
           <div className="header-brand">

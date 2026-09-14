@@ -5,6 +5,7 @@ import { BUILTIN_AGENT_PROMPTS, PROMPT_KEY_CATALOG } from "../utils/builtinPromp
 import type { AgentPromptTemplate, AgentPromptsConfig, AgentCapability } from "@fusion/core";
 import type { PromptKey } from "@fusion/core";
 import { Plus, Pencil, Trash2, BookOpen, Users, Settings2, ChevronDown, ChevronUp, Maximize2, Minimize2 } from "lucide-react";
+import { DashboardWindowSurfaceRoot } from "../context/DashboardWindowManagerContext";
 
 /**
  * Props for the AgentPromptsManager component.
@@ -752,8 +753,10 @@ export function AgentPromptsManager({
             </div>
 
             {fullscreenTemplate && (
-              <div
+              <DashboardWindowSurfaceRoot
                 ref={fullscreenViewContainerRef}
+                logicalId={`prompt-override-${fullscreenTemplate.id}`}
+                group="dialog"
                 className="prompt-override-fullscreen"
                 role="dialog"
                 aria-modal="true"
@@ -785,7 +788,7 @@ export function AgentPromptsManager({
                   </button>
                 </div>
                 <pre className="prompt-template-fullscreen-pre">{fullscreenTemplate.prompt}</pre>
-              </div>
+              </DashboardWindowSurfaceRoot>
             )}
           </div>
         )}

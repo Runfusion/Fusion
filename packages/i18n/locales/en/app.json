@@ -1264,10 +1264,8 @@
     "cancel": "Cancel",
     "cancelButton": "Cancel",
     "clearConversationFailed": "Failed to clear conversation",
-    "closeQuickChat": "Close quick chat",
     "openInNewWindow": "Open in new window",
     "windowOpen": "Open",
-    "windowMinimized": "Minimized",
     "conversationArchived": "Conversation archived",
     "conversationDeleted": "Conversation deleted",
     "conversationIdCopied": "Conversation ID copied",
@@ -1333,7 +1331,6 @@
     "noRoomsYet": "No rooms yet.",
     "noSkillsAvailable": "No skills available",
     "noSkillsFound": "No skills found",
-    "openQuickChat": "Open quick chat",
     "preserveToStash": "Preserve to Stash",
     "preserveToStashDone": "Uploaded {{uploaded}} messages to Stash ({{skipped}} already stored)",
     "preserveToStashFailed": "Stash upload failed: {{error}}",
@@ -1362,7 +1359,6 @@
     "forcePending": "Force send queued message",
     "forcePendingShort": "Force send",
     "pendingEditEmpty": "Queued messages cannot be empty",
-    "quickChatTitle": "Quick Chat",
     "relativeTimeDays_one": "{{count}}d ago",
     "relativeTimeDays_other": "{{count}}d ago",
     "relativeTimeHours_one": "{{count}}h ago",
@@ -1445,8 +1441,6 @@
     "currentModelTarget": "Current model: {{model}}",
     "currentDefaultTarget": "Using the default chat target",
     "restore": "Restore",
-    "minimizeAllChats": "Minimize all chats",
-    "restoreAllChats": "Restore all chats",
     "slashSuggestions": "Slash suggestions",
     "loadingSlashSuggestions": "Loading suggestions…",
     "snippetSuggestion": "Insert saved prompt",
@@ -5292,14 +5286,6 @@
       "urlValid": "Base URL must be a valid URL."
     }
   },
-  "quickChat": {
-    "errorAttachmentsBeforeSession": "Cannot send attachments before chat session is ready",
-    "errorAttachmentsWhileStreaming": "Cannot send attachments while a response is streaming",
-    "errorGettingResponse": "Failed to get response",
-    "errorInitializingChat": "Failed to initialize chat",
-    "errorRefreshingSessions": "Failed to refresh chat sessions",
-    "errorStartingNewChat": "Failed to start a new chat"
-  },
   "reliability": {
     "bouncedEntered": "{{bounced}} bounced / {{entered}} entered (last {{days}}d)",
     "countingSince": "Counting since {{date}}",
@@ -5936,7 +5922,7 @@
       "chatMessageLayout": "Conversation layout",
       "chatMessageLayoutBubbles": "Bubbles",
       "chatMessageLayoutFullWidth": "Full width",
-      "chatMessageLayoutHelp": "Choose Bubbles or Full width for normal Chat, Quick Chat, dock Chat, task Activity, and Planner Chat. Project-scoped; default: Bubbles."
+      "chatMessageLayoutHelp": "Choose Bubbles or Full width for Chat windows, task Activity, and Planner Chat. Project-scoped; default: Bubbles."
     },
     "auth": {
       "apiKeyCleared": "API key cleared",
@@ -6169,7 +6155,6 @@
       "searchTheTrackingRepoForLikelyDuplicatesBefore": " Search the tracking repo for likely duplicates before opening a new issue ",
       "settingsSaved": "Settings saved",
       "showCapacityRiskBanner": " Show capacity risk banner ",
-      "showQuickChatButton": " Show quick chat button ",
       "showTheFloatingChatButtonInTheDashboard": "Show the floating chat button in the dashboard. Chat is still accessible from the Chat tab in the mobile navigation.",
       "taskPrefix": "Task Prefix",
       "todoThreshold": "Todo threshold",
@@ -6194,7 +6179,6 @@
       "workflowsOrChangelogModeWhenContributorsShouldUpdate": " workflows, or changelog mode when contributors should update an existing changelog file. Default: off. ",
       "workspaceModeHint": "Enabling detects git sub-repositories and requires at least one; it creates .fusion/workspace.json. Disabling removes .fusion/workspace.json and returns to single-repo mode. No default — unset (disabled).",
       "allowAbsoluteFileBrowserPathsHint": "When enabled, slash-prefixed paths such as /tmp can be opened in the workspace file browser. Windows drive-letter paths remain blocked, and other path validators are unchanged. Default: disabled.",
-      "quickChatLauncherHint": "Choose whether Quick Chat opens from the draggable floating button, a footer button beside Terminal, or stays hidden. Default: off (hidden).",
       "showTaskChatsInCommonFeedHint": "When enabled, populated task-detail Chat conversations appear in the common Direct feed. Empty task chats stay hidden. Default: disabled.",
       "whenEnabledImportedGitHubIssuesUseTheirSource": "When enabled, GitHub issue imports become tracked tasks that adopt the source issue. This does not turn GitHub tracking on for ordinary new tasks. Default: disabled.",
       "autoTranslateImportedIssues": "Auto-translate imported issues",
@@ -6209,7 +6193,6 @@
       "ephemeralAgentTaskCreationPolicyAllow": "Allow",
       "ephemeralAgentTaskCreationPolicyUponValidation": "Upon validation",
       "ephemeralAgentTaskCreationPolicyDeny": "Deny",
-      "quickChatCloseOnOutsideClickHint": "When enabled, clicking outside the Quick Chat window closes it. Disable to keep it open until you close it explicitly. Default: enabled.",
       "disabledFusionWorkflowsAreHiddenFromWorkflow": "Disabled Fusion workflows are hidden from workflow pickers. Existing tasks that already use one continue to resolve. Default: all built-in workflows enabled (unset).",
       "builtinWorkflowAtLeastOneEnabled": "At least one built-in workflow must remain enabled.",
       "aiUndoTaskWorkflow": "AI-undo task workflow",
@@ -9949,5 +9932,9 @@
     "selectHint": "Select an item to edit it",
     "exportJson": "Export JSON",
     "exportPng": "Export PNG"
+  },
+  "windows": {
+    "hide": "Hide all windows",
+    "restore": "Restore windows"
   }
 }

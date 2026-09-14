@@ -5,6 +5,7 @@ import { api } from "../api";
 import { useConfirm } from "../hooks/useConfirm";
 import { LoadingSpinner } from "./LoadingSpinner";
 import "./StashRecoveryView.css";
+import { DashboardWindowSurfaceRoot } from "../context/DashboardWindowManagerContext";
 
 type RecordItem = {
   sha: string;
@@ -121,7 +122,7 @@ export function StashRecoveryView() {
         </section>
       ))}
       {diffState && (
-        <div className="modal-overlay open" onClick={() => setDiffState(null)}>
+        <DashboardWindowSurfaceRoot logicalId={`stash-recovery-diff-${diffState.sha}`} group="dialog" className="modal-overlay open" onClick={() => setDiffState(null)}>
           <div className="modal stash-recovery-diff-modal" role="dialog" aria-modal="true" aria-label={t("stashRecovery.diffDialogLabel", "Diff for {{sha}}", { sha: diffState.sha })} onClick={(event) => event.stopPropagation()}>
             {/* FNXC:StandardizedViewLayout 2026-09-13-21:49: Shared chrome for the nested diff dialog; its close still only dismisses the diff. */}
             <ViewHeader
@@ -143,7 +144,7 @@ export function StashRecoveryView() {
               <button className="btn" onClick={() => setDiffState(null)}>{t("actions.close", "Close")}</button>
             </div>
           </div>
-        </div>
+        </DashboardWindowSurfaceRoot>
       )}
     </div>
   );

@@ -37,6 +37,7 @@ import { useWorkspaces } from "../hooks/useWorkspaces";
 import { getViewportMode, isMobileViewport } from "../hooks/useViewportMode";
 import { useDrawerDismissGesture } from "../hooks/useDrawerDismissGesture";
 import { FloatingWindow, FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT } from "./FloatingWindow";
+import { DashboardWindowSurfaceRoot } from "../context/DashboardWindowManagerContext";
 import { ModalCloseButton } from "./ModalCloseButton";
 import { ViewDrawerHandle } from "./ViewDrawer";
 import { ViewLayoutContent, ViewLayoutFooter, ViewLayoutHeader } from "./ViewLayout";
@@ -3398,7 +3399,9 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
 
   // Docked and mobile terminal presentations retain their established overlay host.
   return createPortal(
-    <div
+    <DashboardWindowSurfaceRoot
+      logicalId={`terminal-${projectId ?? "default"}-${isDockedMode ? "docked" : "mobile"}`}
+      group="drawer"
       className={overlayClassName}
       onMouseDown={handleOverlayMouseDown}
       onMouseUp={handleOverlayMouseUp}
@@ -3410,7 +3413,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
       } as CSSProperties}
     >
       {terminalPanel}
-    </div>,
+    </DashboardWindowSurfaceRoot>,
     document.body,
   );
 }

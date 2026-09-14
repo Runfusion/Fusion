@@ -95,7 +95,7 @@ describe("ChatView popped-out conversation contract", () => {
     expect(document.querySelector(".chat-sidebar")).toBeNull();
   });
 
-  it("surligne indépendamment toutes les fenêtres ouvertes dans la liste Alpha", async () => {
+  it("projects every existing detached conversation from the open-window identity set", async () => {
     const second = { ...activeSessionFixture, id: "session-002", title: "Deuxième chat" };
     const third = { ...activeSessionFixture, id: "session-003", title: "Troisième chat" };
     const sessions = [activeSessionFixture, second, third];
@@ -106,10 +106,7 @@ describe("ChatView popped-out conversation contract", () => {
         projectId="proj-123"
         addToast={addToast}
         listOnly
-        openChatWindows={new Map([
-          [activeSessionFixture.id, "open"],
-          [second.id, "open"],
-        ])}
+        openChatWindows={new Set([activeSessionFixture.id, second.id])}
       />,
     );
 
@@ -128,17 +125,14 @@ describe("ChatView popped-out conversation contract", () => {
         projectId="proj-123"
         addToast={addToast}
         listOnly
-        openChatWindows={new Map([
-          [activeSessionFixture.id, "minimized"],
-          [second.id, "open"],
-        ])}
+        openChatWindows={new Set([second.id])}
       />,
     );
     expect(firstRow).not.toHaveClass("chat-session-item--window-open");
     expect(secondRow).toHaveClass("chat-session-item--window-open");
-    expect(screen.getByTestId(`chat-session-window-state-${activeSessionFixture.id}`)).toHaveTextContent("Minimized");
+    expect(screen.queryByTestId(`chat-session-window-state-${activeSessionFixture.id}`)).toBeNull();
 
-    rerender(<ChatView projectId="proj-123" addToast={addToast} listOnly openChatWindows={new Map()} />);
+    rerender(<ChatView projectId="proj-123" addToast={addToast} listOnly openChatWindows={new Set()} />);
     expect(firstRow).not.toHaveClass("chat-session-item--window-open");
     expect(secondRow).not.toHaveClass("chat-session-item--window-open");
     expect(screen.queryByTestId(`chat-session-window-state-${activeSessionFixture.id}`)).toBeNull();
@@ -152,7 +146,7 @@ describe("ChatView popped-out conversation contract", () => {
     { host: "desktop large", viewport: "desktop" as const, compactLayout: false, measuredWidth: 1200 },
     { host: "compact", viewport: "desktop" as const, compactLayout: true, measuredWidth: 360 },
     { host: "mobile", viewport: "mobile" as const, compactLayout: false, measuredWidth: 375 },
-  ])("conserve le surlignage de sélection dans l’hôte standard $host", async ({ viewport, compactLayout, measuredWidth }) => {
+  ])("sépare la sélection de l’état de fenêtre détachée dans l’hôte $host", async ({ viewport, compactLayout, measuredWidth }) => {
     const viewportSpy = mockViewportMode(viewport);
     const rectSpy = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
       x: 0, y: 0, width: measuredWidth, height: 800, top: 0, right: measuredWidth, bottom: 800, left: 0, toJSON: () => ({}),
@@ -167,7 +161,7 @@ describe("ChatView popped-out conversation contract", () => {
           addToast={vi.fn()}
           compactLayout={compactLayout}
           persistChatPreferences={false}
-          openChatWindows={new Map([[openButNotSelected.id, "open"]])}
+          openChatWindows={new Set([openButNotSelected.id])}
         />,
       );
 
@@ -176,8 +170,8 @@ describe("ChatView popped-out conversation contract", () => {
       expect(selectedRow).toHaveClass("chat-session-item--active");
       expect(selectedRow).not.toHaveClass("chat-session-item--window-open");
       expect(openButNotSelectedRow).not.toHaveClass("chat-session-item--active");
-      expect(openButNotSelectedRow).not.toHaveClass("chat-session-item--window-open");
-      expect(screen.queryByTestId(`chat-session-window-state-${openButNotSelected.id}`)).toBeNull();
+      expect(openButNotSelectedRow).toHaveClass("chat-session-item--window-open");
+      expect(screen.getByTestId(`chat-session-window-state-${openButNotSelected.id}`)).toHaveTextContent("Open");
     } finally {
       rectSpy.mockRestore();
       viewportSpy.mockRestore();

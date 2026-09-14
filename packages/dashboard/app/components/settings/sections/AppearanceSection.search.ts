@@ -21,7 +21,7 @@ export const appearanceSearchEntries: SettingsSearchEntry[] = [
     labelFallback: "Conversation layout",
     helpKey: "settings.appearance.chatMessageLayoutHelp",
     helpFallback:
-      "Choose Bubbles or Full width for normal Chat, Quick Chat, dock Chat, task Activity, and Planner Chat. Project-scoped; default: Bubbles.",
+      "Choose Bubbles or Full width for Chat, task Activity, and Planner Chat. Project-scoped; default: Bubbles.",
   },
   {
     sectionId: "appearance",

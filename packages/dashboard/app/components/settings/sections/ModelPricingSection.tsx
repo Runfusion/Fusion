@@ -8,6 +8,7 @@ import { SettingsHelpTip } from "../SettingsHelpTip";
 import type { ToastType } from "../../../hooks/useToast";
 import type { SetSettingsForm, SettingsFormState } from "./context";
 import "./ModelPricingSection.css";
+import { DashboardWindowSurfaceRoot } from "../../../context/DashboardWindowManagerContext";
 
 interface PricingFetchResponse {
   count: number;
@@ -169,7 +170,7 @@ export function ModelPricingSection({ form, setForm, addToast, projectId }: Mode
     if (!tableOpen) return null;
 
     return (
-      <div className="modal-overlay open" onClick={handleOverlayClick} role="dialog" aria-modal="true" aria-labelledby="model-pricing-table-title" data-testid="model-pricing-table-modal">
+      <DashboardWindowSurfaceRoot logicalId="model-pricing-table" group="dialog" className="modal-overlay open" onClick={handleOverlayClick} role="dialog" aria-modal="true" aria-labelledby="model-pricing-table-title" data-testid="model-pricing-table-modal">
         <div className="modal modal-lg model-pricing-modal">
           {/* FNXC:StandardizedViewLayout 2026-09-13-21:49: The pricing table dialog shares the canonical header; its subtitle stays part of the header identity. */}
           <ViewHeader
@@ -229,7 +230,7 @@ export function ModelPricingSection({ form, setForm, addToast, projectId }: Mode
             </div>
           </div>
         </div>
-      </div>
+      </DashboardWindowSurfaceRoot>
     );
   };
 

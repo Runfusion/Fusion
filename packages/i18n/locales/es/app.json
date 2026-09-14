@@ -1254,10 +1254,8 @@
     "cancel": "Cancelar",
     "cancelButton": "Cancelar",
     "clearConversationFailed": "Error al borrar la conversación",
-    "closeQuickChat": "Cerrar chat rápido",
     "openInNewWindow": "",
     "windowOpen": "Abierto",
-    "windowMinimized": "Minimizado",
     "conversationArchived": "Conversación archivada",
     "conversationDeleted": "Conversación eliminada",
     "conversationName": "",
@@ -1314,7 +1312,6 @@
     "noRoomsYet": "Aún no hay canales.",
     "noSkillsAvailable": "No hay habilidades disponibles",
     "noSkillsFound": "No se encontraron habilidades",
-    "openQuickChat": "Abrir chat rápido",
     "preserveToStash": "",
     "preserveToStashDone": "",
     "preserveToStashFailed": "",
@@ -1341,7 +1338,6 @@
     "forcePending": "Forzar envío del mensaje en cola",
     "forcePendingShort": "Forzar envío",
     "pendingEditEmpty": "Los mensajes en cola no pueden estar vacíos",
-    "quickChatTitle": "Chat rápido",
     "relativeTimeDays_one": "",
     "relativeTimeDays_other": "",
     "relativeTimeHours_one": "",
@@ -1431,8 +1427,6 @@
     "agentRepliesFailed": "Algunos agentes no pudieron responder: {{agents}}",
     "noDefaultModelConfigured": "Configura un modelo de chat predeterminado en Ajustes antes de crear una conversación.",
     "newChatOpenInNewWindowHint": "",
-    "minimizeAllChats": "Minimizar todos los chats",
-    "restoreAllChats": "Restaurar todos los chats",
     "slashSuggestions": "Sugerencias de barra",
     "loadingSlashSuggestions": "Cargando sugerencias…",
     "snippetSuggestion": "Insertar prompt guardado",
@@ -5266,14 +5260,6 @@
       "urlValid": "La URL base debe ser una URL válida."
     }
   },
-  "quickChat": {
-    "errorAttachmentsBeforeSession": "No se pueden enviar archivos adjuntos antes de que la sesión de chat esté lista",
-    "errorAttachmentsWhileStreaming": "No se pueden enviar archivos adjuntos mientras se transmite una respuesta",
-    "errorGettingResponse": "Error al obtener respuesta",
-    "errorInitializingChat": "Error al inicializar el chat",
-    "errorRefreshingSessions": "Error al actualizar sesiones de chat",
-    "errorStartingNewChat": "Error al iniciar un nuevo chat"
-  },
   "reliability": {
     "bouncedEntered": "{{bounced}} rechazados / {{entered}} ingresados (últimos {{days}} días)",
     "countingSince": "Contando desde {{date}}",
@@ -6102,7 +6088,6 @@
       "searchTheTrackingRepoForLikelyDuplicatesBefore": "",
       "settingsSaved": "Configuración guardada",
       "showCapacityRiskBanner": "",
-      "showQuickChatButton": "",
       "showTheFloatingChatButtonInTheDashboard": "",
       "taskPrefix": "",
       "todoThreshold": "",
@@ -6126,12 +6111,10 @@
       "aiUndoTaskWorkflowHelp": "",
       "workspaceModeHint": "",
       "allowAbsoluteFileBrowserPathsHint": "",
-      "quickChatLauncherHint": "",
       "showTaskChatsInCommonFeedHint": "",
       "whenEnabledImportedGitHubIssuesUseTheirSource": "",
       "gitLabEnabledHint": "",
       "allowEphemeralAgentsToCreateTasksHint": "",
-      "quickChatCloseOnOutsideClickHint": "",
       "disabledFusionWorkflowsAreHiddenFromWorkflow": "",
       "builtinWorkflowAtLeastOneEnabled": "",
       "autoTranslateImportedIssues": "",
@@ -9951,5 +9934,9 @@
     "selectHint": "Select an item to edit it",
     "exportJson": "Export JSON",
     "exportPng": "Export PNG"
+  },
+  "windows": {
+    "hide": "Ocultar todas las ventanas",
+    "restore": "Restaurar ventanas"
   }
 }

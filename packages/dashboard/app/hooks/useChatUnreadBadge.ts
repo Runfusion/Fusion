@@ -1,6 +1,6 @@
 /*
-FNXC:ChatBadge 2026-06-24-00:00:
-Header/mobile-nav unread indicator for assistant chat responses. Set when an assistant message arrives over SSE while the user is not viewing chat, and cleared when the chat view (or quick-chat window) opens. Extracted verbatim from AppInner.
+FNXC:ChatBadge 2026-09-14-11:35:
+Header/mobile-nav unread state follows effective Chat visibility rather than a route boolean. Any canonical or detached visible Chat surface clears and suppresses the badge; globally hidden windows remain unread-eligible.
 
 FNXC:ChatBadge 2026-07-01-00:00:
 Task-detail planner chats use synthetic `task-planner:<taskId>` direct sessions that are hidden from the common Chat feed unless the project explicitly opts them back in. Ignore planner assistant events only while the SSE visibility metadata says that planner session is absent from global Chat, so opt-in shared-feed projects still get normal unread badges.
@@ -10,7 +10,6 @@ import { useEffect, useRef, useState } from "react";
 import type { ChatRoomMessage } from "@fusion/core";
 import { fetchChatSessions } from "../api";
 import { subscribeSse } from "../sse-bus";
-import type { TaskView } from "./useViewState";
 
 const TASK_PLANNER_CHAT_AGENT_ID_PREFIX = "task-planner:";
 
@@ -39,8 +38,7 @@ function isHiddenTaskPlannerChatMessage(payload: ChatMessageAddedPayload): boole
 }
 
 export interface UseChatUnreadBadgeOptions {
-  taskView: TaskView;
-  quickChatOpen: boolean;
+  primaryHostActive: boolean;
 }
 
 export interface UseChatUnreadBadgeResult {
@@ -49,23 +47,23 @@ export interface UseChatUnreadBadgeResult {
 
 export function useChatUnreadBadge(
   currentProjectId: string | undefined,
-  { taskView, quickChatOpen }: UseChatUnreadBadgeOptions,
+  { primaryHostActive }: UseChatUnreadBadgeOptions,
 ): UseChatUnreadBadgeResult {
   const [chatHasUnreadResponse, setChatHasUnreadResponse] = useState(false);
   /*
   FNXC:ChatBadge 2026-07-26-14:38:
   Watermark for missed-event recovery: the ISO instant at which chat was last known to be fully read
-  (mount, or whenever the badge is cleared by opening chat/quick-chat). Anything the server reports
+  (mount, or whenever the badge is cleared by revealing any Chat surface). Anything the server reports
   as newer than this while chat is closed is unread.
   */
   const lastReadAtRef = useRef<string>(new Date().toISOString());
 
   useEffect(() => {
-    if (taskView === "chat" || quickChatOpen) {
+    if (primaryHostActive) {
       lastReadAtRef.current = new Date().toISOString();
       setChatHasUnreadResponse(false);
     }
-  }, [quickChatOpen, taskView]);
+  }, [primaryHostActive]);
 
   useEffect(() => {
     const params = new URLSearchParams();
@@ -87,11 +85,10 @@ export function useChatUnreadBadge(
     behavior of the event path rather than over-badging).
     */
     const resyncUnreadBadge = () => {
-      if (taskView === "chat" || quickChatOpen) return;
+      if (primaryHostActive) return;
       void fetchChatSessions(currentProjectId)
         .then((data) => {
-          // `disposed` covers a taskView/quickChatOpen change too: both are effect deps, so opening
-          // chat tears this subscription down before the response can land.
+          // `disposed` also fences visibility changes, so revealing Chat cannot accept a stale closed-host response.
           if (disposed) return;
           const watermark = lastReadAtRef.current;
           const hasNewer = data.sessions.some((session) => {
@@ -115,7 +112,7 @@ export function useChatUnreadBadge(
             const payload = JSON.parse(event.data) as ChatMessageAddedPayload;
             if (payload.role !== "assistant") return;
             if (isHiddenTaskPlannerChatMessage(payload)) return;
-            if (taskView === "chat" || quickChatOpen) return;
+            if (primaryHostActive) return;
             if (payload.projectId && currentProjectId && payload.projectId !== currentProjectId) return;
             setChatHasUnreadResponse(true);
           } catch {
@@ -126,7 +123,7 @@ export function useChatUnreadBadge(
           try {
             const payload = JSON.parse(event.data) as ChatRoomMessage & { projectId?: string | null };
             if (payload.role === "user") return;
-            if (taskView === "chat" || quickChatOpen) return;
+            if (primaryHostActive) return;
             if (payload.projectId && currentProjectId && payload.projectId !== currentProjectId) return;
             setChatHasUnreadResponse(true);
           } catch {
@@ -140,7 +137,7 @@ export function useChatUnreadBadge(
       disposed = true;
       unsubscribe();
     };
-  }, [currentProjectId, quickChatOpen, taskView]);
+  }, [currentProjectId, primaryHostActive]);
 
   return { chatHasUnreadResponse };
 }

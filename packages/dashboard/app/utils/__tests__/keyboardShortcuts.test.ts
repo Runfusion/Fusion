@@ -19,7 +19,7 @@ function keydown(init: KeyboardEventInit): KeyboardEvent {
 describe("keyboard shortcut utilities", () => {
   it("normalizes defaults, Space, Escape, modifiers, and disabled values", () => {
     expect(DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS).toEqual({
-      quickChat: "Space",
+      toggleModalVisibility: "",
       terminal: "Ctrl+`",
       openFiles: "Ctrl+E",
       openSettings: "Ctrl+,",
@@ -37,15 +37,15 @@ describe("keyboard shortcut utilities", () => {
     expect(normalizeKeyboardShortcut("Ctrl+Alt").valid).toBe(false);
     expect(normalizeKeyboardShortcut("Ctrl+Ctrl+K").valid).toBe(false);
     expect(normalizeKeyboardShortcut("Ctrl+K+P").valid).toBe(false);
-    expect(describeShortcutValidation({ quickChat: "Ctrl+Alt", terminal: "Ctrl+`" })).toContain("Quick Chat shortcut is invalid");
+    expect(describeShortcutValidation({ toggleModalVisibility: "Ctrl+Alt", terminal: "Ctrl+`" })).toContain("Toggle Modal Visibility shortcut is invalid");
   });
 
   it("detects duplicate populated shortcut combinations while ignoring disabled actions", () => {
-    expect(findShortcutConflicts({ quickChat: "Ctrl+K", terminal: "Control+k" })).toEqual([
-      { shortcut: "Ctrl+K", actions: ["quickChat", "terminal"], labels: ["Quick Chat", "Terminal"] },
+    expect(findShortcutConflicts({ toggleModalVisibility: "Ctrl+K", terminal: "Control+k" })).toEqual([
+      { shortcut: "Ctrl+K", actions: ["toggleModalVisibility", "terminal"], labels: ["Toggle Modal Visibility", "Terminal"] },
     ]);
-    expect(findShortcutConflicts({ quickChat: "", terminal: "" })).toEqual([]);
-    expect(describeShortcutValidation({ quickChat: "Ctrl+K", terminal: "Control+k" })).toContain("both use Ctrl+K");
+    expect(findShortcutConflicts({ toggleModalVisibility: "", terminal: "" })).toEqual([]);
+    expect(describeShortcutValidation({ toggleModalVisibility: "Ctrl+K", terminal: "Control+k" })).toContain("both use Ctrl+K");
   });
 
   it("matches printable, Space, Escape, and modifier keydown events", () => {
@@ -60,9 +60,9 @@ describe("keyboard shortcut utilities", () => {
 
   it("resolves missing settings to documented defaults", () => {
     expect(resolveDashboardKeyboardShortcuts(undefined)).toEqual(DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS);
-    expect(resolveDashboardKeyboardShortcuts({ quickChat: "", terminal: "Alt+T" })).toEqual({
+    expect(resolveDashboardKeyboardShortcuts({ toggleModalVisibility: "", terminal: "Alt+T" })).toEqual({
       ...DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS,
-      quickChat: "",
+      toggleModalVisibility: "",
       terminal: "Alt+T",
     });
   });

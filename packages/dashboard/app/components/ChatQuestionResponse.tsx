@@ -22,7 +22,7 @@ export interface ChatQuestionResponseProps {
 /**
  * FNXC:ChatQuestionResponse 2026-06-16-19:25:
  * In-chat question tools need an attractive shared answer affordance for single-select, multi-select, free-text, and confirm prompts.
- * Historical or already-answered messages must render read-only so old assistant questions do not keep duplicate live input boxes in regular chat or quick chat.
+ * Historical or already-answered messages must render read-only so old assistant questions do not keep duplicate live input boxes in the Chat window, the mobile Chat drawer, or a detached conversation.
  */
 export function ChatQuestionResponse({
   parsed,

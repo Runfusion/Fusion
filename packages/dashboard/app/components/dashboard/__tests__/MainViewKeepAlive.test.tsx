@@ -102,7 +102,6 @@ function mainContentProps(): MainContentProps {
     filteredBoardTasks: [],
     remoteData: { tasks: [] },
     addToast: vi.fn(),
-    setQuickChatOpen: vi.fn(),
   } as unknown as MainContentProps;
 }
 
@@ -261,7 +260,7 @@ describe("MainViewKeepAlive", () => {
     slot.remove();
   });
 
-  it("keeps the production Chat and workflow-header host census explicit", () => {
+  it("keeps the canonical Chat and workflow-header host census explicit", () => {
     const sourceFiles = productionAppSourceFiles();
     const chatHosts = sourceFiles
       .filter((file) => readAppFile(file).includes("<ChatView"))
@@ -286,7 +285,10 @@ describe("MainViewKeepAlive", () => {
       "components/ListView.tsx",
     ]);
 
-    const quickChatHost = readAppFile("App.tsx");
-    expect(quickChatHost).toContain("hidden={!quickChatOpen}");
+    const mainContent = readAppFile("components/dashboard/MainContent.tsx");
+    expect(mainContent).toContain('taskView === "chat" && !alphaMobileDrawerEnabled ? null : taskView');
+    expect(mainContent).toContain('storedKeepAliveIds.filter((id) => id !== "chat")');
+    const registry = readAppFile("components/overflowViewRegistry.tsx");
+    expect(registry).toContain("isInline: () => false");
   });
 });

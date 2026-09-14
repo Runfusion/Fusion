@@ -135,7 +135,6 @@ function mainContentProps(overrides: Partial<MainContentProps> = {}): MainConten
     filteredBoardTasks: [],
     workflowSteps: [],
     remoteData: { tasks: [] } as MainContentProps["remoteData"],
-    setQuickChatOpen: vi.fn(),
     capacityRiskBannerEnabled: false,
     capacityRiskDismissed: false,
     capacityRiskSignal: { level: "low", reasons: [] } as MainContentProps["capacityRiskSignal"],
@@ -280,8 +279,8 @@ describe("MainContent main-view keep alive", () => {
   it.each([
     { name: "an empty Board", tasks: [] as Task[] },
     { name: "a populated Board", tasks: [taskFixture("task-populated")] },
-  ])("keeps the production $name mounted while resetting its lanes across Board to Chat to Board navigation", async ({ tasks }) => {
-    const result = render(<MainContent {...mainContentProps({ taskView: "board", tasks, filteredBoardTasks: tasks })} />);
+  ])("keeps the production $name mounted with its lanes behind the mobile Chat drawer", async ({ tasks }) => {
+    const result = render(<MainContent {...mainContentProps({ taskView: "board", isMobile: true, tasks, filteredBoardTasks: tasks })} />);
     await waitFor(() => expect(document.getElementById("board")).not.toBeNull());
     const board = boardRoot();
     const column = board.querySelector<HTMLElement>(".column-body");
@@ -289,18 +288,18 @@ describe("MainContent main-view keep alive", () => {
     board.scrollLeft = 124;
     column!.scrollTop = 48;
 
-    result.rerender(<MainContent {...mainContentProps({ taskView: "chat", tasks, filteredBoardTasks: tasks })} />);
+    result.rerender(<MainContent {...mainContentProps({ taskView: "chat", isMobile: true, tasks, filteredBoardTasks: tasks })} />);
     await waitFor(() => expect(document.querySelector(".chat-view")).not.toBeNull());
-    result.rerender(<MainContent {...mainContentProps({ taskView: "board", tasks, filteredBoardTasks: tasks })} />);
+    result.rerender(<MainContent {...mainContentProps({ taskView: "board", isMobile: true, tasks, filteredBoardTasks: tasks })} />);
 
     expect(boardRoot()).toBe(board);
     expect(board.querySelector(".column-body")).toBe(column);
     expect(board.scrollLeft).toBe(124);
-    expect(column!.scrollTop).toBe(0);
+    expect(column!.scrollTop).toBe(48);
   });
 
-  it("keeps the production Chat composer and transcript position across Chat to Board to Chat", async () => {
-    const result = render(<MainContent {...mainContentProps({ taskView: "chat" })} />);
+  it("keeps the production mobile Chat composer and transcript position across Chat to Board to Chat", async () => {
+    const result = render(<MainContent {...mainContentProps({ taskView: "chat", isMobile: true })} />);
     const input = await openProductionChatComposer();
     const chat = chatRoot();
     const messages = chat.querySelector<HTMLElement>(".chat-messages");
@@ -313,9 +312,9 @@ describe("MainContent main-view keep alive", () => {
     messages!.scrollTop = 91;
     fireEvent.scroll(messages!);
 
-    result.rerender(<MainContent {...mainContentProps({ taskView: "board" })} />);
+    result.rerender(<MainContent {...mainContentProps({ taskView: "board", isMobile: true })} />);
     await waitFor(() => expect(document.getElementById("board")).not.toBeNull());
-    result.rerender(<MainContent {...mainContentProps({ taskView: "chat" })} />);
+    result.rerender(<MainContent {...mainContentProps({ taskView: "chat", isMobile: true })} />);
 
     expect(chatRoot()).toBe(chat);
     expect(chat.querySelector(".chat-messages")).toBe(messages);
@@ -445,7 +444,7 @@ describe("MainContent main-view keep alive", () => {
     expect(input).toHaveFocus();
     expect(input.closest(".alpha-mobile-drawer__panel")).toBe(dialog);
     expect(screen.getByTestId("chat-new-btn")).toBeVisible();
-    expect(screen.getByTestId("chat-pop-out")).toBeVisible();
+    expect(screen.queryByTestId("chat-pop-out")).toBeNull();
     expect(input).toBeVisible();
     expect(input).not.toBeDisabled();
   });
@@ -457,32 +456,37 @@ describe("MainContent main-view keep alive", () => {
   });
 
   it.each([
-    { name: "projects overview", props: { viewMode: "overview" as const }, page: "project-overview" },
-    { name: "backend connection error", props: { showBackendConnectionErrorPage: true }, page: "connection-error" },
-  ])("keeps production Board and Chat mounted but inert behind the $name", async ({ props, page }) => {
+    { name: "projects overview", props: { viewMode: "overview" as const }, page: "project-overview", retainsChat: false },
+    { name: "backend connection error", props: { showBackendConnectionErrorPage: true }, page: "connection-error", retainsChat: true },
+  ])("keeps prior production views inert behind the $name", async ({ props, page, retainsChat }) => {
     const slot = addHeaderSlot();
-    const result = render(<MainContent {...mainContentProps({ taskView: "board" })} />);
+    const result = render(<MainContent {...mainContentProps({ taskView: "board", isMobile: true })} />);
     await waitFor(() => expect(document.getElementById("board")).not.toBeNull());
     const board = boardRoot();
     board.scrollLeft = 88;
 
-    result.rerender(<MainContent {...mainContentProps({ taskView: "chat" })} />);
+    result.rerender(<MainContent {...mainContentProps({ taskView: "chat", isMobile: true })} />);
     const input = await openProductionChatComposer();
     const chat = chatRoot();
     fireEvent.change(input, { target: { value: "Do not lose this" } });
     markRead.mockClear();
     configureProductionChat("arrived-while-hidden");
 
-    result.rerender(<MainContent {...mainContentProps({ taskView: "chat", ...props })} />);
+    result.rerender(<MainContent {...mainContentProps({ taskView: "chat", isMobile: true, ...props })} />);
 
     await screen.findByTestId(page);
     await waitFor(() => expect(slot).toBeEmptyDOMElement());
     expect(boardRoot()).toBe(board);
-    expect(chatRoot()).toBe(chat);
     expect(board.scrollLeft).toBe(88);
-    expect(input).toHaveValue("Do not lose this");
     expect(screen.getByTestId("board-keep-alive")).toHaveAttribute("aria-hidden", "true");
-    expect(screen.getByTestId("chat-keep-alive")).toHaveAttribute("aria-hidden", "true");
+    if (retainsChat) {
+      expect(chatRoot()).toBe(chat);
+      expect(input).toHaveValue("Do not lose this");
+      expect(screen.getByTestId("chat-keep-alive")).toHaveAttribute("aria-hidden", "true");
+    } else {
+      expect(document.querySelector(".chat-view")).toBeNull();
+      expect(screen.queryByTestId("chat-keep-alive")).toBeNull();
+    }
     expect(markRead).not.toHaveBeenCalled();
   });
 

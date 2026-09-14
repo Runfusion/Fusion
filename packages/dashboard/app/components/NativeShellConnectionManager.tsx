@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { FusionShellApi, ShellConnectionProfile, ShellConnectionState } from "../types/native-shell";
 import "./NativeShellConnectionManager.css";
+import { DashboardWindowSurfaceRoot } from "../context/DashboardWindowManagerContext";
 
 interface NativeShellConnectionManagerProps {
   open: boolean;
@@ -117,7 +118,7 @@ export function NativeShellConnectionManager({ open, shellApi, shellState, onClo
   };
 
   return (
-    <div className="modal-overlay open">
+    <DashboardWindowSurfaceRoot logicalId="native-shell-connection-manager" group="dialog" className="modal-overlay open">
       <div className="modal native-shell-connection-manager" role="dialog" aria-label={t("shell.connectionManagerLabel", "Connection Manager")}>
         {/* FNXC:StandardizedViewLayout 2026-09-13-21:49: Shared dialog chrome for the connection manager. */}
         <ViewHeader
@@ -269,6 +270,6 @@ export function NativeShellConnectionManager({ open, shellApi, shellState, onClo
           )}
         </div>
       </div>
-    </div>
+    </DashboardWindowSurfaceRoot>
   );
 }

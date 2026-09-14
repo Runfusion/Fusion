@@ -1,4 +1,4 @@
-import { act, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import type { ChatSession } from "@fusion/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -85,6 +85,11 @@ function IntegrationProviders({ children }: { children: React.ReactNode }) {
   return <NavigationHistoryProvider value={navigation}>{children}</NavigationHistoryProvider>;
 }
 
+function openConversationInDedicatedWindow(row: HTMLElement) {
+  fireEvent.click(within(row).getByTestId("chat-session-menu-btn"));
+  fireEvent.click(screen.getByTestId("chat-context-open-window"));
+}
+
 function controllerInput(hostMode: "alpha-desktop" | "standard"): Omit<RightDockControllerInput,
   "projectId" | "onOpenSessionInNewWindow" | "openChatWindows" | "onOpenNote"
 > {
@@ -129,15 +134,16 @@ function AppCompositionHarness({
     noteWindowProps: { addToast: vi.fn() },
   });
   return <ConfirmDialogProvider>
+    <button type="button" data-testid="integration-toggle-dock" onClick={composition.rightDock.toggle}>Toggle dock</button>
     {composition.rightDock.dock}
+    {composition.rightDock.modal}
     {composition.windows}
-    <button type="button" data-testid="minimize-chats" onClick={owner.chats.minimizeAll}>minimize</button>
   </ConfirmDialogProvider>;
 }
 
 /*
-FNXC:AlphaDesktopRightDock 2026-09-12-04:56:
-Cette intégration exerce ensemble le propriétaire App et le vrai useChat : la création list-only publie d’abord la ligne locale puis ouvre la fenêtre, les événements serveur actualisent la même ligne, et les badges ouvert/minimisé restent strictement projetés dans le projet courant. Elle couvre aussi le refus sans projet utilisé par les hôtes standard avant résolution.
+FNXC:ChatSurfaceUnification 2026-09-14-11:35:
+This integration exercises the real registry launcher, canonical expanded Chat, and App-owned detached conversations together. Alpha and standard wide hosts share the same window path; existing conversation identities remain project-scoped without a chat-only presentation state.
 */
 describe("App Alpha desktop right-dock window ownership", () => {
   beforeEach(() => {
@@ -171,12 +177,15 @@ describe("App Alpha desktop right-dock window ownership", () => {
     localStorage.setItem(RIGHT_DOCK_VIEW_STORAGE_KEY, "chat");
     render(<IntegrationProviders><AppCompositionHarness projectId="project-a" /></IntegrationProviders>);
 
+    expect(screen.queryByTestId(`chat-session-${existing.id}`)).toBeNull();
+    fireEvent.click(screen.getByTestId("right-dock-tab-chat"));
+    expect(await screen.findByTestId("right-dock-expand-modal")).toBeInTheDocument();
     const firstRow = await screen.findByTestId(`chat-session-${existing.id}`);
     const secondRow = screen.getByTestId(`chat-session-${second.id}`);
     const thirdRow = screen.getByTestId(`chat-session-${third.id}`);
     expect(screen.queryByTestId(`chat-session-window-state-${existing.id}`)).toBeNull();
-    fireEvent.click(firstRow);
-    fireEvent.click(secondRow);
+    openConversationInDedicatedWindow(firstRow);
+    openConversationInDedicatedWindow(secondRow);
     await waitFor(() => {
       expect(firstRow).toHaveClass("chat-session-item--window-open");
       expect(secondRow).toHaveClass("chat-session-item--window-open");
@@ -187,19 +196,7 @@ describe("App Alpha desktop right-dock window ownership", () => {
     expect(screen.getAllByTestId(`floating-window-chat-window-project-a-${existing.id}`)).toHaveLength(1);
     expect(screen.getAllByTestId(`floating-window-chat-window-project-a-${second.id}`)).toHaveLength(1);
 
-    fireEvent.click(firstRow);
-    expect(screen.getAllByTestId(`floating-window-chat-window-project-a-${existing.id}`)).toHaveLength(1);
-
-    fireEvent.click(screen.getByTestId("minimize-chats"));
-    expect(firstRow).not.toHaveClass("chat-session-item--window-open");
-    expect(secondRow).not.toHaveClass("chat-session-item--window-open");
-    expect(screen.getByTestId(`chat-session-window-state-${existing.id}`)).toHaveTextContent("Minimized");
-    expect(screen.getByTestId(`chat-session-window-state-${second.id}`)).toHaveTextContent("Minimized");
-
-    fireEvent.click(screen.getByTestId(`chat-session-${existing.id}`));
-    expect(screen.getByTestId(`chat-session-${existing.id}`)).toHaveClass("chat-session-item--window-open");
-    expect(secondRow).not.toHaveClass("chat-session-item--window-open");
-    expect(screen.getByTestId(`chat-session-window-state-${existing.id}`)).toHaveTextContent("Open");
+    openConversationInDedicatedWindow(firstRow);
     expect(screen.getAllByTestId(`floating-window-chat-window-project-a-${existing.id}`)).toHaveLength(1);
 
     fireEvent.click(screen.getByTestId(`floating-window-chat-window-project-a-${existing.id}`).querySelector<HTMLElement>("[data-testid='chat-modal-close']")!);
@@ -209,7 +206,8 @@ describe("App Alpha desktop right-dock window ownership", () => {
     const created = session("chat-created", "project-a", "Conversation créée", "2026-09-12T03:00:00.000Z");
     api.createChatSession.mockResolvedValue({ session: created });
     fireEvent.click(screen.getByTestId("chat-new-btn"));
-    expect(await screen.findByTestId(`chat-session-${created.id}`)).toBeInTheDocument();
+    const createdRow = await screen.findByTestId(`chat-session-${created.id}`);
+    openConversationInDedicatedWindow(createdRow);
     expect(screen.getByTestId(`chat-session-window-state-${created.id}`)).toHaveTextContent("Open");
     expect(screen.getByTestId(`chat-session-${created.id}`)).toHaveClass("chat-session-item--window-open");
     expect(screen.getByTestId(`floating-window-chat-window-project-a-${created.id}`)).toBeInTheDocument();
@@ -239,30 +237,37 @@ describe("App Alpha desktop right-dock window ownership", () => {
     localStorage.setItem(RIGHT_DOCK_VIEW_STORAGE_KEY, "chat");
     const view = render(<IntegrationProviders><AppCompositionHarness projectId="project-a" /></IntegrationProviders>);
 
-    fireEvent.click(await screen.findByTestId(`chat-session-${first.id}`));
+    fireEvent.click(screen.getByTestId("right-dock-tab-chat"));
+    openConversationInDedicatedWindow(await screen.findByTestId(`chat-session-${first.id}`));
     expect(await screen.findByTestId("floating-window-chat-window-project-a-same-id")).toBeInTheDocument();
 
     view.rerender(<IntegrationProviders><AppCompositionHarness projectId="project-b" /></IntegrationProviders>);
+    await waitFor(() => expect(screen.queryByTestId("right-dock-expand-modal")).toBeNull());
+    fireEvent.click(screen.getByTestId("integration-toggle-dock"));
+    fireEvent.click(screen.getByTestId("right-dock-tab-chat"));
     expect(await screen.findByText("Projet B")).toBeInTheDocument();
     expect(screen.queryByTestId("floating-window-chat-window-project-a-same-id")).toBeNull();
     expect(screen.queryByTestId(`chat-session-window-state-${second.id}`)).toBeNull();
-    fireEvent.click(screen.getByTestId(`chat-session-${second.id}`));
+    openConversationInDedicatedWindow(screen.getByTestId(`chat-session-${second.id}`));
     expect(await screen.findByTestId("floating-window-chat-window-project-b-same-id")).toBeInTheDocument();
   });
 
-  it("conserve le Chat standard comme navigation interne sans fenêtre dédiée", async () => {
+  it("routes the standard wide host through the same canonical expanded window", async () => {
     const existing = session("chat-standard", "project-a", "Conversation standard", "2026-09-12T01:00:00.000Z");
     api.fetchChatSessions.mockResolvedValue({ sessions: [existing] });
     localStorage.setItem(RIGHT_DOCK_VIEW_STORAGE_KEY, "chat");
     render(<IntegrationProviders><AppCompositionHarness projectId="project-a" hostMode="standard" /></IntegrationProviders>);
 
-    fireEvent.click(await screen.findByTestId(`chat-session-${existing.id}`));
-    expect(await screen.findByTestId("chat-back-btn")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("right-dock-tab-chat"));
+    expect(await screen.findByTestId("right-dock-expand-modal")).toBeInTheDocument();
+    const row = await screen.findByTestId(`chat-session-${existing.id}`);
+    fireEvent.click(row);
+    await waitFor(() => expect(row).toHaveClass("chat-session-item--active"));
+    expect(await screen.findByTestId("chat-input")).toBeInTheDocument();
     expect(screen.queryByTestId(`floating-window-chat-window-project-a-${existing.id}`)).toBeNull();
-    expect(screen.queryByTestId(`chat-session-window-state-${existing.id}`)).toBeNull();
   });
 
-  it("synchronise création, événement, déduplication et état minimisé dans le projet courant", async () => {
+  it("synchronizes creation, events, deduplication, and open identity in the current project", async () => {
     const created = session("chat-shared", "project-a", "Nouvelle conversation", "2026-09-12T01:00:00.000Z");
     api.createChatSession.mockResolvedValue({ session: created });
     const { result } = renderHook(() => useProductionOwnership("project-a"));
@@ -276,7 +281,7 @@ describe("App Alpha desktop right-dock window ownership", () => {
 
     expect(result.current.chat.sessions.map((item) => item.id)).toEqual([created.id]);
     expect(result.current.windows.chats.entries).toHaveLength(1);
-    expect(result.current.windows.openChatWindows.get(created.id)).toBe("open");
+    expect(result.current.windows.openChatWindows.has(created.id)).toBe(true);
 
     const updated = session(created.id, "project-a", "Conversation alimentée", "2026-09-12T02:00:00.000Z");
     act(() => sse.handlers["chat:session:updated"]?.({ data: JSON.stringify(updated) } as MessageEvent));
@@ -286,10 +291,9 @@ describe("App Alpha desktop right-dock window ownership", () => {
     expect(result.current.windows.chats.entries).toHaveLength(1);
     expect(result.current.windows.chats.entries[0]).toMatchObject({ focusNonce: 2, session: { title: updated.title } });
 
-    act(() => result.current.windows.chats.minimizeAll());
-    expect(result.current.windows.openChatWindows.get(created.id)).toBe("minimized");
     act(() => result.current.windows.openSessionInNewWindow(result.current.chat.sessions[0]));
-    expect(result.current.windows.openChatWindows.get(created.id)).toBe("open");
+    expect(result.current.windows.openChatWindows.has(created.id)).toBe(true);
+    expect(result.current.windows.chats.entries[0].focusNonce).toBe(3);
   });
 
   it("isole les fenêtres entre projets et refuse les ouvertures sans projet", () => {
@@ -305,7 +309,7 @@ describe("App Alpha desktop right-dock window ownership", () => {
       result.current.openSessionInNewWindow(first);
       result.current.openNoteInWindow(noteA);
     });
-    expect(result.current.openChatWindows.get(first.id)).toBe("open");
+    expect(result.current.openChatWindows.has(first.id)).toBe(true);
 
     rerender({ projectId: "project-b" });
     expect(result.current.openChatWindows.size).toBe(0);
@@ -321,7 +325,7 @@ describe("App Alpha desktop right-dock window ownership", () => {
       "project-a:Note A",
       "project-b:Note B",
     ]);
-    expect(result.current.openChatWindows.get(second.id)).toBe("open");
+    expect(result.current.openChatWindows.has(second.id)).toBe(true);
 
     rerender({ projectId: undefined });
     act(() => {

@@ -75,7 +75,7 @@ function buildSettings() {
     webhookEnabled: false,
     experimentalFeatures: {},
     dashboardKeyboardShortcuts: {
-      quickChat: "Space",
+      toggleModalVisibility: "",
       terminal: "Ctrl+`",
       openFiles: "Ctrl+E",
       openSettings: "Ctrl+,",
@@ -92,10 +92,10 @@ describe("SettingsModal Keyboard Shortcuts section", () => {
     mockFetchSettingsByScope.mockResolvedValue({ global: buildSettings(), project: {} });
   });
 
-  it("renders all six actions with their documented defaults, grouped by category", async () => {
+  it("renders all six actions with modal visibility disabled by default, grouped by category", async () => {
     render(<SettingsModal onClose={() => {}} addToast={() => {}} initialSection="keyboard-shortcuts" />);
 
-    expect(await screen.findByRole("textbox", { name: "Quick Chat" })).toHaveValue("Space");
+    expect(await screen.findByRole("textbox", { name: "Toggle Modal Visibility" })).toHaveValue("");
     expect(screen.getByRole("textbox", { name: "Terminal" })).toHaveValue("Ctrl+`");
     expect(screen.getByRole("textbox", { name: "Open Files" })).toHaveValue("Ctrl+E");
     expect(screen.getByRole("textbox", { name: "Open Settings" })).toHaveValue("Ctrl+,");

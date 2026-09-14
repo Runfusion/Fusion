@@ -9,6 +9,7 @@ import { CustomModelDropdown } from "./CustomModelDropdown";
 import { Brain } from "lucide-react";
 import { LoadingSpinner } from "./LoadingSpinner";
 import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
+import { DashboardWindowSurfaceRoot } from "../context/DashboardWindowManagerContext";
 
 const PRESET_OPTION_SEPARATOR = "──────────";
 
@@ -207,7 +208,7 @@ export function ModelSelectionModal({
   const hasMergerOverride = Boolean(mergerValue);
 
   return (
-    <div className="modal-overlay open" {...overlayDismiss} role="dialog" aria-modal="true" data-testid="model-selection-modal">
+    <DashboardWindowSurfaceRoot logicalId="model-selection" group="dialog" className="modal-overlay open" {...overlayDismiss} role="dialog" aria-modal="true" data-testid="model-selection-modal">
       <div className="modal modal-lg">
         {/* FNXC:StandardizedViewLayout 2026-09-13-21:49: Shared dialog chrome owns the icon, title, and canonical close. */}
         <ViewHeader
@@ -391,6 +392,6 @@ export function ModelSelectionModal({
           )}
         </div>
       </div>
-    </div>
+    </DashboardWindowSurfaceRoot>
   );
 }

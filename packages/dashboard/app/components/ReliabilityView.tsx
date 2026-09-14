@@ -6,6 +6,7 @@ import { api, withProjectId } from "../api/legacy";
 import { LineChart, PieChart } from "./command-center/charts/recharts";
 import type { LineChartSeries, PieChartDatum } from "./command-center/charts/recharts";
 import "./ReliabilityView.css";
+import { DashboardWindowSurfaceRoot } from "../context/DashboardWindowManagerContext";
 
 type ReliabilityResponse = {
   windowDays: number;
@@ -254,7 +255,7 @@ export function ReliabilityView({ projectId }: { projectId?: string } = {}) {
       </div>
 
       {showResetConfirm ? (
-        <div className="modal-overlay open" role="presentation">
+        <DashboardWindowSurfaceRoot logicalId="reliability-reset" group="dialog" className="modal-overlay open" role="presentation">
           <div className="modal" role="dialog" aria-modal="true" aria-labelledby="reliability-reset-title">
             {/* FNXC:StandardizedViewLayout 2026-09-13-21:49: Shared chrome for the inline reset confirmation; Cancel/Reset stay its only exits. */}
             <ViewHeader className="modal-header" titleId="reliability-reset-title" title={t("reliability.resetModal.title", "Reset reliability stats?")} />
@@ -274,7 +275,7 @@ export function ReliabilityView({ projectId }: { projectId?: string } = {}) {
               </button>
             </div>
           </div>
-        </div>
+        </DashboardWindowSurfaceRoot>
       ) : null}
     </section>
   );

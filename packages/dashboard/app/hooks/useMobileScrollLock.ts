@@ -170,7 +170,7 @@ export function _resetLockState(): void {
 // collapse the keyboard the instant it opens (no visible jump, because the
 // dashboard's base layout is already at scrollY 0).
 //
-// This variant mirrors the QuickChat overlay's proven approach: lock
+// This variant mirrors the canonical mobile-drawer approach: lock
 // `overflow: hidden` on <html>/<body> and snap scroll to the top, WITHOUT
 // touching `position`. No position change → iOS keeps the input focused, so
 // the keyboard stays up. Independent ref-count from the modal lock so the two

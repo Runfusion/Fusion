@@ -41,6 +41,7 @@ import { useNodes } from "../hooks/useNodes";
 import { useViewportMode } from "../hooks/useViewportMode";
 import { useAgentsMapCache } from "../hooks/useAgentsMapCache";
 import { FloatingWindow } from "./FloatingWindow";
+import { DashboardWindowSurfaceRoot } from "../context/DashboardWindowManagerContext";
 import { resolveQuickAddStartInitialColumn, resolveQuickAddStartTargetColumn, resolveQuickAddStartWorkflowTarget, validateQuickAddStartWorkflow, workflowSupportsQuickAddStart, type ValidatedQuickAddWorkflow } from "../utils/quickAddStart";
 
 type NewTaskCreateInput = Omit<CreateTaskInput, "branchSelection"> & {
@@ -1320,11 +1321,11 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
 
   return createPortal(
     <>
-      <div className="modal-overlay open new-task-modal-overlay" onKeyDown={handleKeyDown} role="dialog" aria-modal="true" aria-label={t("newTaskModal.title", "New Task")} data-testid="new-task-modal-overlay" style={keyboardStyle}>
+      <DashboardWindowSurfaceRoot logicalId="new-task-mobile" group="drawer" className="modal-overlay open new-task-modal-overlay" onKeyDown={handleKeyDown} role="dialog" aria-modal="true" aria-label={t("newTaskModal.title", "New Task")} data-testid="new-task-modal-overlay" style={keyboardStyle}>
         <div className="modal modal-lg new-task-modal" style={keyboardStyle}>
           {taskFormContents}
         </div>
-      </div>
+      </DashboardWindowSurfaceRoot>
       {duplicateWarning}
     </>,
     document.body,

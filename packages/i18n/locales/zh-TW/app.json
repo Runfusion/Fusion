@@ -1254,10 +1254,8 @@
     "cancel": "取消",
     "cancelButton": "取消",
     "clearConversationFailed": "清除對話失敗",
-    "closeQuickChat": "關閉快速聊天",
     "openInNewWindow": "",
     "windowOpen": "已開啟",
-    "windowMinimized": "已最小化",
     "conversationArchived": "對話已封存",
     "conversationDeleted": "對話已刪除",
     "conversationName": "",
@@ -1314,7 +1312,6 @@
     "noRoomsYet": "目前無頻道。",
     "noSkillsAvailable": "暫無可用技能",
     "noSkillsFound": "找不到技能",
-    "openQuickChat": "開啟快速聊天",
     "preserveToStash": "",
     "preserveToStashDone": "",
     "preserveToStashFailed": "",
@@ -1341,7 +1338,6 @@
     "forcePending": "強制傳送待傳送訊息",
     "forcePendingShort": "強制傳送",
     "pendingEditEmpty": "待傳送訊息不能為空",
-    "quickChatTitle": "快速聊天",
     "relativeTimeDays_one": "",
     "relativeTimeDays_other": "",
     "relativeTimeHours_one": "",
@@ -1431,8 +1427,6 @@
     "agentRepliesFailed": "部分代理無法回覆：{{agents}}",
     "noDefaultModelConfigured": "請先在設定中設定預設聊天模型，再建立對話。",
     "newChatOpenInNewWindowHint": "",
-    "minimizeAllChats": "最小化所有聊天",
-    "restoreAllChats": "還原所有聊天",
     "slashSuggestions": "斜線建議",
     "loadingSlashSuggestions": "正在載入建議…",
     "snippetSuggestion": "插入已儲存的提示詞",
@@ -5265,14 +5259,6 @@
       "urlValid": "基礎URL必須是有效的URL。"
     }
   },
-  "quickChat": {
-    "errorAttachmentsBeforeSession": "在聊天工作階段準備好之前無法傳送附件",
-    "errorAttachmentsWhileStreaming": "在串流回應時無法傳送附件",
-    "errorGettingResponse": "無法取得回應",
-    "errorInitializingChat": "初始化聊天失敗",
-    "errorRefreshingSessions": "重新整理聊天工作階段失敗",
-    "errorStartingNewChat": "啟動新聊天失敗"
-  },
   "reliability": {
     "bouncedEntered": "{{bounced}} 跳出 / {{entered}} 進入（最近 {{days}} 天）",
     "countingSince": "自 {{date}} 起計數",
@@ -6101,7 +6087,6 @@
       "searchTheTrackingRepoForLikelyDuplicatesBefore": "",
       "settingsSaved": "設定已儲存",
       "showCapacityRiskBanner": "",
-      "showQuickChatButton": "",
       "showTheFloatingChatButtonInTheDashboard": "",
       "taskPrefix": "",
       "todoThreshold": "",
@@ -6125,12 +6110,10 @@
       "aiUndoTaskWorkflowHelp": "",
       "workspaceModeHint": "",
       "allowAbsoluteFileBrowserPathsHint": "",
-      "quickChatLauncherHint": "",
       "showTaskChatsInCommonFeedHint": "",
       "whenEnabledImportedGitHubIssuesUseTheirSource": "",
       "gitLabEnabledHint": "",
       "allowEphemeralAgentsToCreateTasksHint": "",
-      "quickChatCloseOnOutsideClickHint": "",
       "disabledFusionWorkflowsAreHiddenFromWorkflow": "",
       "builtinWorkflowAtLeastOneEnabled": "",
       "autoTranslateImportedIssues": "",
@@ -9950,5 +9933,9 @@
     "selectHint": "Select an item to edit it",
     "exportJson": "Export JSON",
     "exportPng": "Export PNG"
+  },
+  "windows": {
+    "hide": "隱藏所有視窗",
+    "restore": "還原視窗"
   }
 }

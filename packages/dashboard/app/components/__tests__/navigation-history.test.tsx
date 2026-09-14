@@ -272,9 +272,6 @@ vi.mock("../../components/EvalsView", () => ({
 }));
 
 
-vi.mock("../../components/QuickChatFAB", () => ({
-  QuickChatFAB: () => null,
-}));
 
 vi.mock("../../components/ScriptsModal", () => ({
   ScriptsModal: ({ isOpen }: { isOpen: boolean }) =>

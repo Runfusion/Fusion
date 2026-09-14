@@ -648,8 +648,6 @@ interface SettingsModalProps {
   onDashboardFontScaleChange?: (scalePct: number) => void;
   /** Called when shadcn-custom color overrides change */
   onShadcnCustomColorsChange?: (colors: Record<string, string>) => void;
-  /** Mirrors pending Quick Chat launcher changes into the app shell immediately. */
-  onQuickChatButtonModeChange?: (mode: "floating" | "footer" | "off") => void;
   /** Mirrors the pending project conversation layout into mounted chat surfaces immediately. */
   chatMessageLayout?: ChatMessageLayout;
   onChatMessageLayoutChange?: (layout: ChatMessageLayout) => void;
@@ -928,7 +926,6 @@ export function SettingsModal({
   resolvedThemeMode,
   onDashboardFontScaleChange,
   onShadcnCustomColorsChange,
-  onQuickChatButtonModeChange,
   chatMessageLayout = "bubbles",
   onChatMessageLayoutChange,
   openTasksInRightSidebar,
@@ -3492,7 +3489,7 @@ export function SettingsModal({
         githubTrackingDefaultRepo: formSnapshot.githubTrackingDefaultRepo?.trim() || undefined,
         /*
         FNXC:DashboardShortcuts 2026-07-04-00:00:
-        FN-7553 normalizes every declared shortcut action (derived from resolveDashboardKeyboardShortcuts' key set) on save, not just quickChat/terminal, so newly-added actions get the same trim/normalize-before-persist treatment.
+        Normalize every declared shortcut action from the resolver's key set on save so newly added actions receive the same trim-before-persist treatment.
         */
         dashboardKeyboardShortcuts: Object.fromEntries(
           (Object.entries(resolveDashboardKeyboardShortcuts(formSnapshot.dashboardKeyboardShortcuts)) as [DashboardShortcutAction, string][])
@@ -4062,7 +4059,6 @@ export function SettingsModal({
             addToast={addToast}
             prefixError={prefixError}
             setPrefixError={setPrefixError}
-            onQuickChatButtonModeChange={onQuickChatButtonModeChange}
             onMobileNavPrimaryItemsChange={onMobileNavPrimaryItemsChange}
           />
         );

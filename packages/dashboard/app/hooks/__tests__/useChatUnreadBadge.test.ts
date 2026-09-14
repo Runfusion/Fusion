@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderHook, act } from "@testing-library/react";
-import type { TaskView } from "../useViewState";
 
 const { handlers } = vi.hoisted(() => ({
   handlers: {} as Record<string, (e: MessageEvent) => void>,
@@ -28,7 +27,7 @@ describe("useChatUnreadBadge", () => {
 
   it("marks unread on an assistant message while not viewing chat", () => {
     const { result } = renderHook(() =>
-      useChatUnreadBadge(undefined, { taskView: "board", quickChatOpen: false }),
+      useChatUnreadBadge(undefined, { primaryHostActive: false }),
     );
 
     act(() => {
@@ -40,7 +39,7 @@ describe("useChatUnreadBadge", () => {
 
   it("ignores planner assistant messages hidden from the global Chat feed", () => {
     const { result } = renderHook(() =>
-      useChatUnreadBadge(undefined, { taskView: "board", quickChatOpen: false }),
+      useChatUnreadBadge(undefined, { primaryHostActive: false }),
     );
 
     act(() => {
@@ -54,7 +53,7 @@ describe("useChatUnreadBadge", () => {
 
   it("ignores planner assistant messages when session metadata carries the synthetic agent id", () => {
     const { result } = renderHook(() =>
-      useChatUnreadBadge(undefined, { taskView: "board", quickChatOpen: false }),
+      useChatUnreadBadge(undefined, { primaryHostActive: false }),
     );
 
     act(() => {
@@ -68,7 +67,7 @@ describe("useChatUnreadBadge", () => {
 
   it("marks unread for planner assistant messages visible in the common Chat feed", () => {
     const { result } = renderHook(() =>
-      useChatUnreadBadge(undefined, { taskView: "board", quickChatOpen: false }),
+      useChatUnreadBadge(undefined, { primaryHostActive: false }),
     );
 
     act(() => {
@@ -87,7 +86,7 @@ describe("useChatUnreadBadge", () => {
 
   it("ignores planner user messages", () => {
     const { result } = renderHook(() =>
-      useChatUnreadBadge(undefined, { taskView: "board", quickChatOpen: false }),
+      useChatUnreadBadge(undefined, { primaryHostActive: false }),
     );
 
     act(() => {
@@ -101,7 +100,7 @@ describe("useChatUnreadBadge", () => {
 
   it("ignores user-role messages", () => {
     const { result } = renderHook(() =>
-      useChatUnreadBadge(undefined, { taskView: "board", quickChatOpen: false }),
+      useChatUnreadBadge(undefined, { primaryHostActive: false }),
     );
 
     act(() => {
@@ -111,9 +110,9 @@ describe("useChatUnreadBadge", () => {
     expect(result.current.chatHasUnreadResponse).toBe(false);
   });
 
-  it("ignores assistant messages while the chat view is open", () => {
+  it("ignores assistant messages while the canonical Chat surface is visible", () => {
     const { result } = renderHook(() =>
-      useChatUnreadBadge(undefined, { taskView: "chat", quickChatOpen: false }),
+      useChatUnreadBadge(undefined, { primaryHostActive: true }),
     );
 
     act(() => {
@@ -123,9 +122,9 @@ describe("useChatUnreadBadge", () => {
     expect(result.current.chatHasUnreadResponse).toBe(false);
   });
 
-  it("ignores assistant messages while quick chat is open", () => {
+  it("ignores assistant messages while a detached Chat surface is visible", () => {
     const { result } = renderHook(() =>
-      useChatUnreadBadge(undefined, { taskView: "board", quickChatOpen: true }),
+      useChatUnreadBadge(undefined, { primaryHostActive: true }),
     );
 
     act(() => {
@@ -135,11 +134,11 @@ describe("useChatUnreadBadge", () => {
     expect(result.current.chatHasUnreadResponse).toBe(false);
   });
 
-  it("clears the unread flag once the chat view opens", () => {
+  it("clears the unread flag once any Chat surface becomes visible", () => {
     const { result, rerender } = renderHook(
-      ({ taskView }: { taskView: TaskView }) =>
-        useChatUnreadBadge(undefined, { taskView, quickChatOpen: false }),
-      { initialProps: { taskView: "board" } },
+      ({ primaryHostActive }: { primaryHostActive: boolean }) =>
+        useChatUnreadBadge(undefined, { primaryHostActive }),
+      { initialProps: { primaryHostActive: false } },
     );
 
     act(() => {
@@ -147,12 +146,12 @@ describe("useChatUnreadBadge", () => {
     });
     expect(result.current.chatHasUnreadResponse).toBe(true);
 
-    rerender({ taskView: "chat" });
+    rerender({ primaryHostActive: true });
     expect(result.current.chatHasUnreadResponse).toBe(false);
   });
   it("marks unread on a non-user chat:room:message:added", () => {
     const { result } = renderHook(() =>
-      useChatUnreadBadge(undefined, { taskView: "board", quickChatOpen: false }),
+      useChatUnreadBadge(undefined, { primaryHostActive: false }),
     );
 
     act(() => {
@@ -164,7 +163,7 @@ describe("useChatUnreadBadge", () => {
 
   it("ignores user-role chat:room:message:added events", () => {
     const { result } = renderHook(() =>
-      useChatUnreadBadge(undefined, { taskView: "board", quickChatOpen: false }),
+      useChatUnreadBadge(undefined, { primaryHostActive: false }),
     );
 
     act(() => {
@@ -176,7 +175,7 @@ describe("useChatUnreadBadge", () => {
 
   it("marks unread for assistant messages scoped to the current project", () => {
     const { result } = renderHook(() =>
-      useChatUnreadBadge("p1", { taskView: "board", quickChatOpen: false }),
+      useChatUnreadBadge("p1", { primaryHostActive: false }),
     );
 
     act(() => {
@@ -188,7 +187,7 @@ describe("useChatUnreadBadge", () => {
 
   it("ignores assistant messages scoped to a different project", () => {
     const { result } = renderHook(() =>
-      useChatUnreadBadge("p1", { taskView: "board", quickChatOpen: false }),
+      useChatUnreadBadge("p1", { primaryHostActive: false }),
     );
 
     act(() => {
@@ -199,7 +198,7 @@ describe("useChatUnreadBadge", () => {
   });
   it("marks unread for assistant chat:room:message:added events scoped to the current project", () => {
     const { result } = renderHook(() =>
-      useChatUnreadBadge("p1", { taskView: "board", quickChatOpen: false }),
+      useChatUnreadBadge("p1", { primaryHostActive: false }),
     );
 
     act(() => {
@@ -211,7 +210,7 @@ describe("useChatUnreadBadge", () => {
 
   it("ignores assistant chat:room:message:added events scoped to a different project", () => {
     const { result } = renderHook(() =>
-      useChatUnreadBadge("p1", { taskView: "board", quickChatOpen: false }),
+      useChatUnreadBadge("p1", { primaryHostActive: false }),
     );
 
     act(() => {
@@ -223,7 +222,7 @@ describe("useChatUnreadBadge", () => {
 
   it("ignores malformed unread event payloads", () => {
     const { result } = renderHook(() =>
-      useChatUnreadBadge(undefined, { taskView: "board", quickChatOpen: false }),
+      useChatUnreadBadge(undefined, { primaryHostActive: false }),
     );
 
     act(() => {

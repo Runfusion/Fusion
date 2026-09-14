@@ -7,6 +7,7 @@ import { OAuthManualCodeForm } from "./OAuthManualCodeForm";
 import { LoginInstructions } from "./LoginInstructions";
 import { nextFloatingZ } from "./floatingWindowStack";
 import "./ProviderLoginDialog.css";
+import { DashboardWindowSurfaceRoot } from "../context/DashboardWindowManagerContext";
 
 /*
 FNXC:ProviderAuth 2026-08-18-03:05:
@@ -91,7 +92,10 @@ export function ProviderLoginDialog({
     phase === "submitting" ? STEP_STATE.active : phase === "succeeded" ? STEP_STATE.done : STEP_STATE.idle;
 
   return createPortal(
-    <div
+    <DashboardWindowSurfaceRoot
+      logicalId={`provider-login-${providerName}`}
+      group="dialog"
+      stackOrder={overlayZ}
       className="modal-overlay open provider-login-dialog-overlay"
       style={overlayZ === undefined ? undefined : { zIndex: overlayZ }}
       data-testid={testId}
@@ -200,7 +204,7 @@ export function ProviderLoginDialog({
           </button>
         </div>
       </div>
-    </div>,
+    </DashboardWindowSurfaceRoot>,
     document.body,
   );
 }

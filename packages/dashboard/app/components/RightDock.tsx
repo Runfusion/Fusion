@@ -7,11 +7,13 @@ import {
   getVisibleOverflowViewEntries,
   isOverflowViewKeyVisible,
   isOverflowViewEntryExpandable,
+  isOverflowViewEntryInline,
   type OverflowViewKey,
   type OverflowViewRenderProps,
   type OverflowViewVisibilityOptions,
 } from "./overflowViewRegistry";
 import "./RightDock.css";
+import { useDashboardWindowLandmark } from "../context/DashboardWindowManagerContext";
 
 export const RIGHT_DOCK_DEFAULT_WIDTH = 360;
 export const RIGHT_DOCK_MIN_WIDTH = 280;
@@ -76,7 +78,7 @@ export function persistRightDockPinned(pinned: boolean): void {
 
 function isInlineOverflowViewKey(key: string, options: OverflowViewVisibilityOptions): key is OverflowViewKey {
   const entry = findOverflowViewEntry(key as OverflowViewKey, options);
-  return Boolean(entry?.render);
+  return isOverflowViewEntryInline(entry, options);
 }
 
 export function readStoredRightDockView(options: OverflowViewVisibilityOptions): OverflowViewKey {
@@ -150,6 +152,7 @@ export function RightDock({
   onSelectKey,
 }: RightDockProps) {
   const { t } = useTranslation("app");
+  const dashboardWindowDockRef = useDashboardWindowLandmark("right-dock");
   const entries = useMemo(() => getVisibleOverflowViewEntries(visibilityOptions), [visibilityOptions]);
   const [width, setWidth] = useState(readStoredRightDockWidth);
   /*
@@ -165,9 +168,10 @@ export function RightDock({
     }
   }, [onSelectKey, selectedKey, visibilityOptions]);
 
-  const selectedEntry = (findOverflowViewEntry(selectedKey, visibilityOptions)?.render
-    ? findOverflowViewEntry(selectedKey, visibilityOptions)
-    : findOverflowViewEntry("files", visibilityOptions)) ?? entries.find((entry) => entry.render);
+  const selectedCandidate = findOverflowViewEntry(selectedKey, visibilityOptions);
+  const selectedEntry = (isOverflowViewEntryInline(selectedCandidate, visibilityOptions)
+    ? selectedCandidate
+    : findOverflowViewEntry("files", visibilityOptions)) ?? entries.find((entry) => isOverflowViewEntryInline(entry, visibilityOptions));
 
   const selectEntry = useCallback((key: OverflowViewKey) => {
     const entry = findOverflowViewEntry(key, visibilityOptions);
@@ -176,9 +180,13 @@ export function RightDock({
       return;
     }
     if (!entry?.render) return;
+    if (!isOverflowViewEntryInline(entry, visibilityOptions)) {
+      if (isOverflowViewEntryExpandable(entry, visibilityOptions)) onExpand?.(entry.key);
+      return;
+    }
     /* FNXC:RightDockTasks 2026-09-12-01:35: Tool selection remains independent from the temporary task-detail layer; returning from detail reveals the newly selected tool. */
     onSelectKey(key);
-  }, [onSelectKey, renderProps, visibilityOptions]);
+  }, [onExpand, onSelectKey, renderProps, visibilityOptions]);
 
   const handleResizeStart = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -259,6 +267,7 @@ export function RightDock({
 
   return (
     <aside
+      ref={dashboardWindowDockRef}
       className={`right-dock${open ? "" : " right-dock--collapsed"}${footerVisible ? " right-dock--with-footer" : ""}${pinned ? " right-dock--pinned" : ""}`}
       style={dockWidth ? { width: dockWidth } : undefined}
       aria-label={t("rightDock.label", "Right dock")}
@@ -283,7 +292,8 @@ export function RightDock({
         <div className="right-dock__tabs" role="tablist" aria-label={t("rightDock.views", "Right dock views")}>
           {entries.map((entry) => {
             const Icon = entry.icon;
-            const selected = Boolean(entry.render && entry.key === selectedEntry.key);
+            const inline = isOverflowViewEntryInline(entry, visibilityOptions);
+            const selected = inline && entry.key === selectedEntry.key;
             return (
               <button
                 key={entry.key}
@@ -291,8 +301,8 @@ export function RightDock({
                 className={`btn-icon right-dock__tab${selected ? " right-dock__tab--active" : ""}`}
                 aria-label={entry.label}
                 title={entry.label}
-                aria-selected={selected}
-                role="tab"
+                aria-selected={inline ? selected : undefined}
+                role={inline ? "tab" : undefined}
                 data-testid={entry.testId}
                 onClick={() => selectEntry(entry.key)}
               >

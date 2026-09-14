@@ -6,6 +6,7 @@ import { ViewHeader } from "./ViewHeader";
 import { ViewActionButton } from "./ViewActionButton";
 import { copyTextToClipboard } from "../utils/copyToClipboard";
 import { withProjectId } from "../api/client/health";
+import { DashboardWindowSurfaceRoot } from "../context/DashboardWindowManagerContext";
 
 type ToastKind = "info" | "success" | "error";
 type SecretScope = "project" | "global";
@@ -470,7 +471,7 @@ export const SecretsView = ({ addToast, projectId }: SecretsViewProps) => {
       </article>
 
       {syncModalOpen ? (
-        <div className="modal-overlay open" role="presentation">
+        <DashboardWindowSurfaceRoot logicalId="secret-sync-passphrase" group="dialog" className="modal-overlay open" role="presentation">
           <div className="modal" role="dialog" aria-modal="true" aria-label={syncPassphraseConfigured ? t("secrets.rotateSyncPassphraseModalTitle", "Rotate sync passphrase") : t("secrets.setSyncPassphraseModalTitle", "Set sync passphrase")}>
             {/* FNXC:StandardizedViewLayout 2026-09-13-21:49: Nested secret dialogs share the canonical header. */}
             <ViewHeader
@@ -487,11 +488,11 @@ export const SecretsView = ({ addToast, projectId }: SecretsViewProps) => {
             </div>
             <div className="modal-actions"><div className="modal-actions-right"><button className="btn" onClick={closeSyncModal}>{t("secrets.cancelBtn", "Cancel")}</button><button className="btn btn-primary" onClick={() => void submitSyncPassphrase()} disabled={!syncPassphraseMatches || syncSaving}>{syncPassphraseConfigured ? t("secrets.rotateSyncPassphrase", "Rotate") : t("secrets.setPassphrase", "Set passphrase")}</button></div></div>
           </div>
-        </div>
+        </DashboardWindowSurfaceRoot>
       ) : null}
 
       {showModal ? (
-        <div className="modal-overlay open" role="presentation">
+        <DashboardWindowSurfaceRoot logicalId={editing ? "edit-secret" : "add-secret"} group="dialog" className="modal-overlay open" role="presentation">
           <div className="modal" role="dialog" aria-modal="true" aria-label={editing ? t("secrets.editSecretModalTitle", "Edit secret") : t("secrets.addSecretModalTitle", "Add secret")}>
             <ViewHeader
               className="modal-header"
@@ -512,7 +513,7 @@ export const SecretsView = ({ addToast, projectId }: SecretsViewProps) => {
             </div>
             <div className="modal-actions"><div className="modal-actions-right"><button className="btn" onClick={() => setShowModal(false)}>{t("secrets.cancelBtn", "Cancel")}</button><button className="btn btn-primary" onClick={() => void submit()}>{editing ? t("secrets.saveBtn", "Save") : t("secrets.createBtn", "Create")}</button></div></div>
           </div>
-        </div>
+        </DashboardWindowSurfaceRoot>
       ) : null}
     </section>
   );

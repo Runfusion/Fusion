@@ -63,7 +63,7 @@ describe("ChatView shared sidebar layout", () => {
     } finally { restore(); }
   });
 
-  it("keeps a wide Quick Chat on the shared sidebar without persisting ephemeral preferences", async () => {
+  it("keeps a wide floating Chat window on the shared sidebar without persisting ephemeral preferences", async () => {
     const bounds = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ width: 1000 } as DOMRect);
     try {
       const view = await renderSelected({ floating: true, persistChatPreferences: false });

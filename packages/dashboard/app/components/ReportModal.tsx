@@ -6,6 +6,7 @@ import type { ReportActionType, ReportTarget } from "@fusion/core";
 import { reportAttachment, reportDraft, reportFile, reportHelp } from "../api";
 import { captureScreenshot as captureScreen, getRecentActivity, recordActivity } from "../utils/report-capture";
 import "./ReportModal.css";
+import { DashboardWindowSurfaceRoot } from "../context/DashboardWindowManagerContext";
 
 const prompts: Record<ReportActionType, string> = { bug: "What went wrong?", feedback: "What would you like to share?", idea: "What would you like Fusion to do?", help: "What would you like help with?" };
 
@@ -77,7 +78,7 @@ setResult(await reportFile({ actionType, targetType, report: result.report, endo
       setError("We could not send your report. Your draft is still here; try again.");
     } finally { setBusy(false); }
   };
-  return <div className="report-modal-backdrop" role="presentation"><section className="card report-modal" role="dialog" aria-modal="true" aria-label={`${actionType} report`}>
+  return <DashboardWindowSurfaceRoot logicalId={`report-${actionType}`} group="dialog" className="report-modal-backdrop" role="presentation"><section className="card report-modal" role="dialog" aria-modal="true" aria-label={`${actionType} report`}>
     {/*
     FNXC:StandardizedViewLayout 2026-09-13-22:40:
     FN-379 remediation: reporting owns the canonical header instead of a floating close control plus a
@@ -135,5 +136,5 @@ setResult(await reportFile({ actionType, targetType, report: result.report, endo
       <p role="alert">{result.message}</p>
       <button className="btn btn-secondary" type="button" onClick={() => { setResult(undefined); setError(undefined); }}>{t("report.returnToPrompt", "Return to prompt")}</button>
     </>}
-  </section></div>;
+  </section></DashboardWindowSurfaceRoot>;
 }

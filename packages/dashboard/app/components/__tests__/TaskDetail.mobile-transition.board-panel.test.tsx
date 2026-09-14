@@ -186,7 +186,6 @@ vi.mock("../../components/PlanningModeModal", () => ({ PlanningModeModal: () => 
 vi.mock("../../components/AgentsView", () => ({ AgentsView: () => <div data-testid="agents-view">Agents</div> }));
 vi.mock("../../components/ResearchView", () => ({ ResearchView: () => <div data-testid="research-view">Research</div> }));
 vi.mock("../../components/EvalsView", () => ({ EvalsView: () => <div data-testid="evals-view">Evals</div> }));
-vi.mock("../../components/QuickChatFAB", () => ({ QuickChatFAB: () => null }));
 vi.mock("../../components/ScriptsModal", () => ({ ScriptsModal: () => null }));
 vi.mock("../../components/TerminalModal", () => ({ TerminalModal: () => null }));
 vi.mock("../../components/FileBrowser", () => ({ FileBrowserModal: () => null }));

@@ -1264,10 +1264,8 @@
     "cancel": "Cancelar",
     "cancelButton": "Cancelar",
     "clearConversationFailed": "Falha ao limpar a conversa",
-    "closeQuickChat": "Fechar chat rápido",
     "openInNewWindow": "",
     "windowOpen": "Aberto",
-    "windowMinimized": "Minimizado",
     "conversationArchived": "Conversa arquivada",
     "conversationDeleted": "Conversa excluída",
     "conversationName": "Nome da conversa",
@@ -1330,7 +1328,6 @@
     "noRoomsYet": "Ainda não há salas.",
     "noSkillsAvailable": "Nenhuma habilidade disponível",
     "noSkillsFound": "Nenhuma habilidade encontrada",
-    "openQuickChat": "Abrir chat rápido",
     "preserveToStash": "",
     "preserveToStashDone": "",
     "preserveToStashFailed": "",
@@ -1357,7 +1354,6 @@
     "forcePending": "Forçar envio da mensagem na fila",
     "forcePendingShort": "Forçar envio",
     "pendingEditEmpty": "Mensagens na fila não podem ficar vazias",
-    "quickChatTitle": "Chat rápido",
     "relativeTimeDays_one": "há {{count}}d",
     "relativeTimeDays_other": "há {{count}}d",
     "relativeTimeHours_one": "há {{count}}h",
@@ -1441,8 +1437,6 @@
     "agentRepliesFailed": "Alguns agentes não puderam responder: {{agents}}",
     "noDefaultModelConfigured": "Configure um modelo de chat padrão nas Configurações antes de criar uma conversa.",
     "newChatOpenInNewWindowHint": "",
-    "minimizeAllChats": "Minimizar todos os chats",
-    "restoreAllChats": "Restaurar todos os chats",
     "slashSuggestions": "Sugestões de barra",
     "loadingSlashSuggestions": "Carregando sugestões…",
     "snippetSuggestion": "Inserir prompt salvo",
@@ -5276,14 +5270,6 @@
       "urlValid": "A URL base deve ser uma URL válida."
     }
   },
-  "quickChat": {
-    "errorAttachmentsBeforeSession": "Não é possível enviar anexos antes que a sessão de chat esteja pronta",
-    "errorAttachmentsWhileStreaming": "Não é possível enviar anexos enquanto uma resposta está sendo transmitida",
-    "errorGettingResponse": "Falha ao obter resposta",
-    "errorInitializingChat": "Falha ao inicializar o chat",
-    "errorRefreshingSessions": "Falha ao atualizar sessões de chat",
-    "errorStartingNewChat": "Falha ao iniciar um novo chat"
-  },
   "reliability": {
     "bouncedEntered": "{{bounced}} devolvidas / {{entered}} entradas (últimos {{days}}d)",
     "countingSince": "Contando desde {{date}}",
@@ -6096,7 +6082,6 @@
       "searchTheTrackingRepoForLikelyDuplicatesBefore": " Buscar no repositório de rastreamento por possíveis duplicatas antes de abrir uma nova issue ",
       "settingsSaved": "Configurações salvas",
       "showCapacityRiskBanner": " Mostrar banner de risco de capacidade ",
-      "showQuickChatButton": " Mostrar botão de chat rápido ",
       "showTheFloatingChatButtonInTheDashboard": "Mostrar o botão flutuante de chat no painel. O chat continua acessível pela aba Chat na navegação móvel.",
       "taskPrefix": "Prefixo da tarefa",
       "todoThreshold": "Limite de tarefas a fazer",
@@ -6121,7 +6106,6 @@
       "workflowsOrChangelogModeWhenContributorsShouldUpdate": " fluxos de trabalho, ou o modo changelog quando contribuidores devem atualizar um changelog existente. Padrão: desativado. ",
       "workspaceModeHint": "Quando ativado, a raiz do projeto é tratada como um workspace contendo múltiplos subrepositórios git. As tarefas são executadas por subrepositório, e nenhum repositório git é criado na raiz. Desative para projetos de repositório único. Sem padrão — não definido (desativado).",
       "allowAbsoluteFileBrowserPathsHint": "Quando ativado, caminhos com barra inicial como /tmp podem ser abertos no navegador de arquivos do workspace. Caminhos com letra de unidade do Windows continuam bloqueados, e os demais validadores de caminho permanecem inalterados. Padrão: desativado.",
-      "quickChatLauncherHint": "Escolha se o Chat Rápido abre pelo botão flutuante arrastável, por um botão no rodapé ao lado de Terminal, ou permanece oculto. Padrão: desativado (oculto).",
       "showTaskChatsInCommonFeedHint": "Quando ativado, conversas de chat com conteúdo nos detalhes da tarefa aparecem no feed comum Direto. Chats de tarefa vazios permanecem ocultos. Padrão: desativado.",
       "whenEnabledImportedGitHubIssuesUseTheirSource": "Quando ativado, issues importadas do GitHub tornam-se tarefas rastreadas que adotam a issue de origem. Isso não ativa o rastreamento do GitHub para novas tarefas comuns. Padrão: desativado.",
       "autoTranslateImportedIssues": "Traduzir automaticamente issues importadas",
@@ -6136,7 +6120,6 @@
       "ephemeralAgentTaskCreationPolicyAllow": "Permitir",
       "ephemeralAgentTaskCreationPolicyUponValidation": "Após validação",
       "ephemeralAgentTaskCreationPolicyDeny": "Negar",
-      "quickChatCloseOnOutsideClickHint": "Quando ativado, clicar fora da janela do Chat Rápido a fecha. Desative para mantê-la aberta até que você a feche explicitamente. Padrão: ativado.",
       "disabledFusionWorkflowsAreHiddenFromWorkflow": "Fluxos de trabalho do Fusion desativados ficam ocultos nos seletores de fluxo de trabalho. Tarefas existentes que já usam um deles continuam sendo processadas normalmente. Padrão: todos os fluxos de trabalho integrados ativados (não definido).",
       "builtinWorkflowAtLeastOneEnabled": "",
       "aiUndoTaskWorkflow": "Fluxo de trabalho de tarefas de reversão por IA",
@@ -9951,5 +9934,9 @@
     "selectHint": "Select an item to edit it",
     "exportJson": "Export JSON",
     "exportPng": "Export PNG"
+  },
+  "windows": {
+    "hide": "Ocultar todas as janelas",
+    "restore": "Restaurar janelas"
   }
 }

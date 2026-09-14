@@ -15,6 +15,7 @@ import type { GithubIssueAction, Task, TaskDetail, WorkflowStep } from "@fusion/
 import type { PluginDashboardViewEntry } from "../api";
 import type { ToastType } from "../hooks/useToast";
 import type { ChatSessionInfo } from "../hooks/useChat";
+import type { ChatReportHandoff } from "./chatReportHandoff";
 import { buildPluginTaskViewId } from "../plugins/pluginViewRegistry";
 import { PluginDashboardViewHost } from "../plugins/PluginDashboardViewHost";
 import type { DetailTaskTab, PluginDashboardViewContext } from "../plugins/types";
@@ -78,7 +79,9 @@ export interface OverflowViewRenderProps {
   onOpenSettings?: (section?: string) => void;
   onOpenTaskDetail?: (taskId: string) => void;
   onOpenSessionInNewWindow?: (session: ChatSessionInfo) => void;
-  openChatWindows?: ReadonlyMap<string, "open" | "minimized">;
+  openChatWindows?: ReadonlySet<string>;
+  chatComposerPrefill?: { text: string; nonce: number } | null;
+  onSendAsReport?: (handoff: ChatReportHandoff) => void;
   /** Opens New Task with a reverted source task's original description. */
   onReviseTask?: (task: Task | TaskDetail) => void;
   onUpdateTask?: (id: string, updates: { title?: string; description?: string; dependencies?: string[]; dismissNearDuplicate?: boolean; githubTracking?: { enabled?: boolean } }) => Promise<Task>;
@@ -118,6 +121,8 @@ export interface OverflowViewEntry {
   render?: (props: OverflowViewRenderProps) => ReactNode;
   onActivate?: (props: OverflowViewRenderProps) => void;
   isVisible?: (options: OverflowViewVisibilityOptions) => boolean;
+  /** Whether this entry may own the inline dock body; launcher-only entries still keep `render` for their expand window. */
+  isInline?: (options: OverflowViewVisibilityOptions) => boolean;
   isExpandable?: (options: OverflowViewVisibilityOptions) => boolean;
 }
 
@@ -129,12 +134,6 @@ export interface OverflowViewVisibilityOptions {
   /** FN-382: true only where the host actually supplies the List surface, i.e. the non-mobile dock. */
   listViewAvailable?: boolean;
 }
-
-/*
-FNXC:RightDockChat 2026-06-27-23:12:
-ChatView shares one full-pane list/detail flow across dock widths, so compact dock hosts retain the narrow-layout signal only for surrounding chat chrome. The expanded pop-out keeps the same navigation contract.
-*/
-const RIGHT_DOCK_CHAT_COMPACT_MAX_WIDTH = 768;
 
 function wrapOverflowView(node: ReactNode): ReactNode {
   return (
@@ -169,19 +168,16 @@ export const STATIC_OVERFLOW_VIEW_ENTRIES: readonly OverflowViewEntry[] = [
     render: (props) => wrapOverflowView(<DockFilesView projectId={props.projectId} openFile={props.openFile} />),
   },
   /*
-  FNXC:Navigation 2026-06-27-00:00:
-  The right dock hosts the full ChatView as an always-visible inline tool so the compact dock body and the floating expand modal reuse the same conversational surface without adding another navigation destination.
-  */
-  /*
-  FNXC:AlphaDesktopRightDock 2026-09-11-21:48:
-  Only the explicit Alpha desktop host turns Chat into a list-only window launcher and disables generic expansion. Standard tablet, desktop, floating, and absent-host callers retain the existing list/detail contract.
+  FNXC:ChatSurfaceUnification 2026-09-14-11:35:
+  Chat is a launcher-only dock entry on every desktop/tablet shell, including Alpha. The registry's one real render function owns the expanded window; no inline dock Chat or parallel primary renderer may mount beside it.
   */
   {
     key: "chat",
     label: "Chat",
     icon: MessageSquare,
     testId: "right-dock-tab-chat",
-    isExpandable: (options) => options.hostMode !== "alpha-desktop",
+    isInline: () => false,
+    isExpandable: () => true,
     render: (props) => wrapOverflowView(
       <ChatView
         projectId={props.projectId}
@@ -189,8 +185,9 @@ export const STATIC_OVERFLOW_VIEW_ENTRIES: readonly OverflowViewEntry[] = [
         experimentalFeatures={{ ...(props.experimentalFeatures ?? {}) }}
         onOpenSessionInNewWindow={props.onOpenSessionInNewWindow}
         openChatWindows={props.openChatWindows}
-        listOnly={props.hostMode === "alpha-desktop"}
-        compactLayout={props.surface === "dock" && (props.dockWidth ?? RIGHT_DOCK_CHAT_COMPACT_MAX_WIDTH) <= RIGHT_DOCK_CHAT_COMPACT_MAX_WIDTH}
+        initialComposerDraft={props.chatComposerPrefill?.text}
+        initialComposerDraftNonce={props.chatComposerPrefill?.nonce}
+        onSendAsReport={props.onSendAsReport}
       />,
     ),
   },
@@ -338,6 +335,10 @@ export function findOverflowViewEntry(key: OverflowViewKey, options: OverflowVie
 
 export function isOverflowViewKeyVisible(key: string, options: OverflowViewVisibilityOptions = {}): key is OverflowViewKey {
   return getVisibleOverflowViewEntries(options).some((entry) => entry.key === key);
+}
+
+export function isOverflowViewEntryInline(entry: OverflowViewEntry | undefined, options: OverflowViewVisibilityOptions = {}): boolean {
+  return Boolean(entry?.render && (entry.isInline?.(options) ?? true));
 }
 
 export function isOverflowViewEntryExpandable(entry: OverflowViewEntry | undefined, options: OverflowViewVisibilityOptions = {}): boolean {

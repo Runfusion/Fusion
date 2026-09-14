@@ -81,6 +81,7 @@ import { buildChatReportHandoff, type ChatReportHandoff } from "./chatReportHand
 import { matchChatCommand, filterChatCommands, getSlashTriggerMatch, selectChatCommands, type ChatCommand } from "./chat-commands";
 import { applySnippetToDraft, filterChatSnippets, matchStandaloneSnippetInvocation } from "./chat-snippets";
 import { useChatMessageLayout } from "../context/ChatMessageLayoutContext";
+import { useDashboardWindowSurfaceActivity } from "../context/DashboardWindowManagerContext";
 import { useChatEnterSubmits } from "../context/ChatSubmitOnEnterContext";
 import {
   createChatInputAutosizeController,
@@ -124,10 +125,7 @@ export interface ChatViewProps {
   addToast: (msg: string, type?: "success" | "error" | "warning") => void;
   experimentalFeatures?: Record<string, boolean>;
   floating?: boolean;
-  /**
-   * FNXC:ChatFind 2026-08-21-16:44:
-   * A retained-but-hidden Quick Chat must release document Find ownership; visible hosts retain the default.
-   */
+  /** Whether this host may own document Find; managed window visibility is composed automatically. */
   findActive?: boolean;
   /*
   FNXC:MainViewKeepAlive 2026-08-30-19:05:
@@ -144,14 +142,14 @@ export interface ChatViewProps {
   compactLayout?: boolean;
   /** Keeps this host on the conversation list and delegates every open/create to a chat window. */
   listOnly?: boolean;
-  /** Project-scoped state of dedicated windows, keyed by conversation id. */
-  openChatWindows?: ReadonlyMap<string, "open" | "minimized">;
+  /** Project-scoped identities of conversations already open in dedicated windows. */
+  openChatWindows?: ReadonlySet<string>;
   /** Locks this host to initialDirectSession and removes every cross-conversation navigation control. */
   dedicatedConversation?: boolean;
   onPopOut?: () => void;
   onMaximize?: () => void;
   onClose?: () => void;
-  /** Opens this exact active Direct session in a separate in-app Quick Chat. */
+  /** Opens or focuses this exact Direct session in a separate in-app window. */
   onOpenSessionInNewWindow?: (session: ChatSessionInfo) => void;
   /** Secondary windows start in Direct and keep selection/scope storage private. */
   initialDirectSession?: ChatSessionInfo;
@@ -360,8 +358,11 @@ function ChatDialogBackdrop({ children, onClose }: { children: React.ReactElemen
 
 type CopyFeedbackState = "success" | "error" | null;
 
-function ChatViewContent({ projectId, addToast, floating = false, compactLayout = false, listOnly = false, openChatWindows, dedicatedConversation = false, findActive = true, active = true, onPopOut, onMaximize, onClose, onOpenSessionInNewWindow, initialDirectSession, initialDirectSessionNonce, persistChatPreferences = true, chatCommandContext, initialComposerDraft, initialComposerDraftNonce, onSendAsReport }: ChatViewProps) {
+function ChatViewContent({ projectId, addToast, floating = false, compactLayout = false, listOnly = false, openChatWindows, dedicatedConversation = false, findActive: hostFindActive = true, active: hostActive = true, onPopOut, onMaximize, onClose, onOpenSessionInNewWindow, initialDirectSession, initialDirectSessionNonce, persistChatPreferences = true, chatCommandContext, initialComposerDraft, initialComposerDraftNonce, onSendAsReport }: ChatViewProps) {
   const { t } = useTranslation("app");
+  const managedSurfaceActive = useDashboardWindowSurfaceActivity();
+  const active = hostActive && managedSurfaceActive;
+  const findActive = hostFindActive && managedSurfaceActive;
   const chatMessageLayout = useChatMessageLayout();
   const enterSubmits = useChatEnterSubmits();
   useEffect(() => {
@@ -725,7 +726,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
   const chatThreadRef = useRef<HTMLDivElement | null>(null);
   const clippedMessageFrameRef = useRef<number | null>(null);
   const [topClippedMessageIds, setTopClippedMessageIds] = useState<Set<string>>(() => new Set());
-  // FN-5365: mirror QuickChat's mid-dismiss suppress gate so transient
+  // FN-5365: suppress transient visualViewport shrink samples so
   // visualViewport shrink samples do not jerk the chat thread/composer.
   const suppressVvShrinkRef = useRef(false);
   const suppressVvShrinkTimeoutRef = useRef<number | null>(null);
@@ -743,8 +744,8 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
   const mentionCursorPosRef = useRef(0);
   const copyFeedbackTimeoutsRef = useRef<Map<string, number>>(new Map());
   /*
-  FNXC:ChatSendDedupe 2026-06-17-08:36:
-  FN-6576 refines FN-6563 by matching QuickChatFAB's two-latch touch contract: pointerdown/touchstart claim a per-input-task gesture so one mobile tap sends exactly once, while the separate 700ms latch is consumed only by a trailing click. A suppressed iOS click must never leave the long latch blocking the next tap; a send-to-stop DOM swap must consume the trailing click without swallowing a genuine later stop tap.
+  FNXC:ChatSendDedupe 2026-09-14-11:35:
+  Pointerdown/touchstart claim one composer gesture so a mobile tap sends exactly once; a separate trailing-click latch cannot swallow a later stop tap when Send changes to Stop.
   */
   const mode = useViewportMode();
   const isMobile = mode === "mobile";
@@ -2258,7 +2259,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
     const cursorPos = textarea.selectionStart ?? nextValue.length;
 
     // Resize BEFORE the state update so the textarea grows in the same frame
-    // the user typed in (matches QuickChat). Doing it after setMessageInput
+    // the user typed in. Doing it after setMessageInput
     // works in tests but can lose the height in production because React 18
     // batches the state update and the controlled-component value reset can
     // happen before our direct DOM height assignment lands.
@@ -2385,7 +2386,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
     // event fires while iOS is still raising the soft keyboard, and iOS treats
     // a programmatic scroll mid-raise as a reason to abort it — the keyboard
     // opens then immediately dismisses, so the input can't be typed in. This
-    // mirrors QuickChatFAB's handleInputFocus, which does not scroll and works.
+    // matches the proven composer focus path, which does not scroll during keyboard raise.
     // Drift is instead reset on blur (see handleInputBlur), so by the time this
     // focus runs the document is already at scrollY 0.
   }, []);
@@ -2616,8 +2617,8 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
   const suppressComposerFocus = isMobile || isTabletTouchViewport(mode);
 
   /*
-  FNXC:ChatComposerFocus 2026-09-01-01:04:
-  Opening or creating a conversation must put the caret in its composer so operators can type immediately without a mouse click. `findActive` is the focus-ownership gate because a retained-but-hidden Quick Chat stays mounted and portaled; reopening it onto an existing thread is itself an open.
+  FNXC:ChatComposerFocus 2026-09-14-11:35:
+  Opening or creating a conversation puts the caret in its composer. Managed activity and `findActive` gate focus ownership because retained canonical and detached hosts stay mounted while presentation-hidden.
 
   Phone and touch-tablet hosts deliberately keep focus off the composer: an unsolicited software keyboard would cover a freshly opened thread, and programmatic focus without a user gesture cannot reliably raise the iOS keyboard. Record the thread before that suppression so a later viewport or orientation change cannot retroactively steal focus.
   */
@@ -2811,8 +2812,8 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
 
   // The model tag is already visible in the thread header — repeating it on
   // every assistant message is noise. Keep it suppressed for regular chat
-  // (real agent name is the identity); QuickChat already collapses the tag
-  // because its `agentName` IS the model tag, so the per-message slot was
+  // (real agent name is the identity); compact hosts already collapse the tag
+  // because their `agentName` is the model tag, so the per-message slot was
   // always empty there too.
   const showAssistantModelTag = false;
 
@@ -3465,7 +3466,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
                   FNXC:ChatPinned 2026-07-19-00:00:
                   Direct conversation pins must be two explicit sections on every session-list surface.
                   Do not flatten Recent rows beneath Pinned: labels and wrappers make the pin boundary
-                  clear for desktop, mobile, full Chat, and Quick Chat (all share this component).
+                  clear in canonical and detached Chat hosts because all share this component.
                   */}
                   {[
                     { id: "pinned", label: t("chat.pinned", "Pinned"), testId: "chat-pinned-divider", sessions: pinnedFilteredSessions },
@@ -3476,11 +3477,10 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
                       {group.sessions.map((session) => {
                   const isSelected = activeSession?.id === session.id;
                   /*
-                  FNXC:ChatWindows 2026-09-12-23:47:
-                  Chaque fenêtre visible du dock Alpha doit surligner sa propre ligne, indépendamment de l’unique sélection interne. Cet état appartient exclusivement au mode listOnly : une fenêtre minimisée ou absente n’est pas surlignée, et les hôtes Chat standard ignorent la map de fenêtres pour conserver leur sélection unique.
+                  FNXC:ChatWindows 2026-09-14-11:35:
+                  The project-scoped set records only whether a dedicated conversation window exists; the global window registry owns temporary presentation independently.
                   */
-                  const windowState = listOnly && !showArchivedSessions ? openChatWindows?.get(session.id) : undefined;
-                  const isWindowOpen = windowState === "open";
+                  const isWindowOpen = !showArchivedSessions && (openChatWindows?.has(session.id) ?? false);
                   const isActive = listOnly ? false : isSelected;
                   const showUnreadDot = !isSelected && isUnread("direct", session.id, session.lastMessageAt ?? session.updatedAt);
                   const sessionResolvedModel = resolveSessionProvider(
@@ -3536,8 +3536,8 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
                           />
                         ) : null}
                       </div>
-                      {windowState ? <span className="chat-session-window-state" data-testid={`chat-session-window-state-${session.id}`}>
-                        {windowState === "minimized" ? t("chat.windowMinimized", "Minimized") : t("chat.windowOpen", "Open")}
+                      {isWindowOpen ? <span className="chat-session-window-state" data-testid={`chat-session-window-state-${session.id}`}>
+                        {t("chat.windowOpen", "Open")}
                       </span> : null}
                       <div className="chat-session-preview">
                         {session.lastMessagePreview || t("chat.noMessages", "No messages")}

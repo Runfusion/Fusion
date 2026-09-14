@@ -3022,6 +3022,19 @@ The supported plugin overlay mount spans the viewport in the root stacking conte
   pointer-events: none;
 }
 
+/*
+FNXC:DashboardWindowVisibility 2026-09-14-10:52:
+Every declaratively registered modal host remains mounted while a global snapshot is hidden. The shared marker removes it from paint, hit testing, and accessibility interaction without changing owner visibility, geometry, or stack order.
+*/
+[data-dashboard-window-globally-hidden="true"] {
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+.dashboard-window-surface-root--contents {
+  display: contents;
+}
+
 /* === Toasts === */
 /*
 FNXC:ToastTheming 2026-06-21-00:00:

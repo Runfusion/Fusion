@@ -59,7 +59,6 @@ function chatEntry(id: string, cascadeSlot: number) {
     session: { ...activeSessionFixture, id, title: `Conversation ${id}` },
     focusNonce: 1,
     cascadeSlot,
-    minimized: false,
   };
 }
 

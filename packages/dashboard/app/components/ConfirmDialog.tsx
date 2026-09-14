@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import type { ConfirmOptions } from "../hooks/useConfirm";
 import { nextFloatingZ } from "./floatingWindowStack";
 import "./ConfirmDialog.css";
+import { useDashboardWindowSurface } from "../context/DashboardWindowManagerContext";
 
 const OPENING_GESTURE_SETTLE_MS = 500;
 
@@ -45,6 +46,14 @@ export function ConfirmDialog({
   const backdropPressStartedHereRef = useRef(false);
   const backdropPressStartedAtRef = useRef(0);
   const openedAtRef = useRef(0);
+  const windowSurface = useDashboardWindowSurface({
+    logicalId: "confirm-dialog",
+    group: "dialog",
+    locallyVisible: isOpen && Boolean(options),
+    stackOrder: overlayZ,
+  });
+  const surfaceActiveRef = useRef(windowSurface.surfaceActive);
+  surfaceActiveRef.current = windowSurface.surfaceActive;
   useLayoutEffect(() => {
     if (isOpen) {
       openedAtRef.current = Date.now();
@@ -79,20 +88,20 @@ export function ConfirmDialog({
     backdropPressStartedHereRef.current = false;
     backdropPressStartedAtRef.current = 0;
     const wasPostOpenPress = pressStartedAt - openedAtRef.current >= OPENING_GESTURE_SETTLE_MS;
-    if (startedOnBackdrop && wasPostOpenPress && event.target === event.currentTarget) {
+    if (surfaceActiveRef.current && startedOnBackdrop && wasPostOpenPress && event.target === event.currentTarget) {
       onCancel();
     }
   };
 
   useEffect(() => {
-    if (!isOpen) {
+    if (!isOpen || !surfaceActiveRef.current) {
       return;
     }
 
     cancelButtonRef.current?.focus();
 
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
+      if (surfaceActiveRef.current && event.key === "Escape") {
         event.preventDefault();
         onCancel();
       }
@@ -108,11 +117,16 @@ export function ConfirmDialog({
 
   return createPortal(
     <div
+      ref={windowSurface.rootRef}
       className="modal-overlay open confirm-dialog-overlay"
-      onPointerDown={recordBackdropPress}
-      onMouseDown={recordBackdropPress}
-      onTouchStart={recordBackdropPress}
-      onClick={dismissFromBackdropClick}
+      aria-hidden={windowSurface.surfaceAttributes["aria-hidden"]}
+      inert={windowSurface.surfaceAttributes.inert}
+      data-dashboard-window-surface={windowSurface.surfaceAttributes["data-dashboard-window-surface"]}
+      data-dashboard-window-globally-hidden={windowSurface.surfaceAttributes["data-dashboard-window-globally-hidden"]}
+      onPointerDown={windowSurface.surfaceActive ? recordBackdropPress : undefined}
+      onMouseDown={windowSurface.surfaceActive ? recordBackdropPress : undefined}
+      onTouchStart={windowSurface.surfaceActive ? recordBackdropPress : undefined}
+      onClick={windowSurface.surfaceActive ? dismissFromBackdropClick : undefined}
       style={overlayZ ? { zIndex: overlayZ } : undefined}
     >
       <div

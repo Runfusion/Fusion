@@ -23,6 +23,7 @@ import {
 } from "@xyflow/react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
+import { DashboardWindowSurfaceRoot } from "../context/DashboardWindowManagerContext";
 import { Plus, Trash2, Save, MessageSquare, Terminal, Shield, GitMerge, Loader2, HelpCircle, PauseCircle, Split, Merge, Repeat, ToggleRight, ClipboardCheck, ListChecks, Code2, Bell, LayoutGrid, Workflow, Download, Upload, ChevronDown, ChevronRight, Library, Sparkles, Maximize2, Minimize2, DoorOpen } from "lucide-react";
 import type { WorkflowDefinition, WorkflowIrColumn, TraitViolation, WorkflowStepTemplate, WorkflowIrNodeKind } from "@fusion/core";
 import { getErrorMessage, analyzeWorkflowLifecycle } from "@fusion/core";
@@ -603,7 +604,7 @@ function CreateWorkflowDialog({
   const firstYoursIndex = templates.findIndex((tmpl) => tmpl.id !== null && !tmpl.builtin);
 
   return (
-    <div className="modal-overlay open wf-create-overlay" {...overlayProps}>
+    <DashboardWindowSurfaceRoot logicalId="workflow-create" group="dialog" className="modal-overlay open wf-create-overlay" {...overlayProps}>
       <div
         className="modal wf-create-modal"
         data-testid="wf-create-dialog"
@@ -805,7 +806,7 @@ function CreateWorkflowDialog({
           </div>
         </form>
       </div>
-    </div>
+    </DashboardWindowSurfaceRoot>
   );
 }
 

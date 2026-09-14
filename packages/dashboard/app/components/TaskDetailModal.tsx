@@ -771,7 +771,6 @@ function getProvenanceLabel(task: Task | TaskDetail, options: ProvenanceLabelOpt
     case "dashboard_ui":
       return { label: tr ? tr("taskDetail.provenance.dashboard", "Dashboard") : "Dashboard" };
     case "quick_chat":
-      return { label: tr ? tr("taskDetail.provenance.quickChat", "Quick Chat") : "Quick Chat" };
     case "chat_session":
       return { label: tr ? tr("taskDetail.provenance.chatSession", "Chat Session") : "Chat Session" };
     case "agent_heartbeat": {
@@ -949,8 +948,8 @@ export function TaskDetailContent({
   const [tabFooterTarget, setTabFooterTarget] = useState<HTMLDivElement | null>(null);
 
   /*
-  FNXC:TaskDetailTabKeepAlive 2026-07-22-12:55:
-  FN remount-churn fix R6: the Terminal, Worktree-terminal, and Planner-chat tab bodies previously lived in the mutually-exclusive activeTab ternary, so every tab flip disposed the xterm instance, closed the terminal WebSocket, and discarded the planner composer/scroll. After a tab's first open (per-tab latch, mirroring Quick Chat's everOpened gate) its body stays mounted as a hidden KeepAliveView sibling of the ternary. The latches are scoped to one task id: switching tasks (or closing the detail) resets them so terminals fully unmount and dispose exactly as before — keep-alive covers tab switching within ONE open task detail only (R10).
+  FNXC:TaskDetailTabKeepAlive 2026-09-14-11:35:
+  Terminal, worktree-terminal, and planner-chat bodies stay mounted after first use so tab changes preserve xterm, WebSocket, composer, and scroll state. Per-tab latches are scoped to one task and reset when detail ownership changes.
   */
   const [keepAliveTabs, setKeepAliveTabs] = useState({ taskId: task.id, activityLive: false, plannerChat: false, terminal: false, worktreeTerminal: false });
   if (keepAliveTabs.taskId !== task.id) {
@@ -7244,7 +7243,7 @@ export function TaskDetailModal({ onClose, alphaMobileDrawer = false, ...props }
       hideHeader
       dragHandleSelector=".task-detail-content > .modal-header"
       className="floating-window--task-detail"
-      /* FNXC:ModalTouchGeometry 2026-07-26-19:05: Task Detail shares its layer with Quick Chat and pop-outs so interaction order remains coordinated by floatingWindowStack. */
+      /* FNXC:ModalTouchGeometry 2026-09-14-11:35: Task Detail shares its layer with Chat work windows so interaction order remains coordinated by floatingWindowStack. */
       layer="task-detail"
       defaultSize={{ width: 800, height: 680 }}
       minSize={{ width: 480, height: 480 }}

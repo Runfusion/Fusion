@@ -486,7 +486,7 @@ vi.mock("../../components/ChatView", async (importOriginal) => {
     ChatView: (props: Parameters<typeof actual.ChatView>[0]) => {
       if (appChatTestControl.renderProductionView) return <actual.ChatView {...props} />;
       return (
-        <div className="chat-view" data-testid={props.floating ? "quick-chat-host" : "main-chat-host"}>
+        <div className="chat-view" data-testid={props.floating ? "detached-chat-host" : "canonical-chat-host"}>
           <header className="view-header"><h2>Chat</h2><button type="button">New Chat</button><button type="button" aria-label="Pop out chat">Pop out</button></header>
           <button type="button" data-testid="app-chat-session-fixture">Conversation fixture</button>
           <textarea className="chat-input" data-testid="chat-input" aria-label="Message" />
@@ -511,10 +511,6 @@ vi.mock("../../components/DashboardLoader", async (importOriginal) => {
     },
   };
 });
-
-vi.mock("../../components/QuickChatFAB", () => ({
-  QuickChatFAB: ({ onToggle }: { onToggle: () => void }) => <button type="button" data-testid="quick-chat-fab-host" onClick={onToggle}>Quick Chat</button>,
-}));
 
 vi.mock("../../components/SetupWizardModal", () => ({
   SetupWizardModal: () => <div className="modal-overlay open">Welcome to Fusion</div>,
@@ -1250,14 +1246,19 @@ beforeEach(() => {
 });
 
 describe("official dashboard design production wiring", () => {
-  it("keeps Quick Chat available under the official design", async () => {
+  it("opens Chat through the canonical wide registry window without a parallel page host", async () => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    localStorage.setItem("fusion:right-dock-open", "true");
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
       experimentalFeatures: { ...defaultSettings.experimentalFeatures },
     });
     render(<App />);
-    fireEvent.click(await screen.findByTestId("quick-chat-fab-host"));
-    expect(await screen.findByTestId("quick-chat-host")).toBeInTheDocument();
+    fireEvent.click(await screen.findByTestId("right-dock-tab-chat"));
+    expect(await screen.findByTestId("right-dock-expand-modal")).toBeInTheDocument();
+    expect(await screen.findAllByTestId("canonical-chat-host")).toHaveLength(1);
+    expect(screen.queryByTestId("chat-keep-alive")).toBeNull();
+    expect(screen.queryByTestId("detached-chat-host")).toBeNull();
   });
 
   /*
@@ -1460,20 +1461,18 @@ describe("official dashboard design production wiring", () => {
     expect(document.querySelector(".executor-status-bar")).toBeNull();
     expect(document.querySelector(".mobile-nav-bar")).toBeNull();
 
-    fireEvent.click(await screen.findByTestId("right-dock-tab-chat"));
     const dock = screen.getByTestId("right-dock");
     expect(dock).toHaveClass("right-dock--with-footer");
     expect(within(dock).queryByTestId("right-dock-tab-notes")).toBeNull();
-    expect(within(dock).getByTestId("right-dock-expand")).toBeInTheDocument();
+    fireEvent.click(await within(dock).findByTestId("right-dock-tab-chat"));
 
-    fireEvent.click(await within(dock).findByTestId(`chat-session-${appChatSession.id}`));
-    expect(await within(dock).findByText("Bonjour")).toBeInTheDocument();
-    expect(dock.querySelector(".chat-thread")).not.toBeNull();
-    expect(screen.queryByTestId(`floating-window-overlay-chat-window-${DEFAULT_PROJECT_ID}-${appChatSession.id}`)).toBeNull();
-
-    fireEvent.click(within(dock).getByTestId("right-dock-expand"));
     const expandedChat = await screen.findByTestId("right-dock-expand-modal");
-    expect(expandedChat.querySelector(".chat-view")).not.toBeNull();
+    expect(expandedChat.querySelectorAll(".chat-view")).toHaveLength(1);
+    expect(screen.queryByTestId("right-dock")).toBeNull();
+    fireEvent.click(await within(expandedChat).findByTestId(`chat-session-${appChatSession.id}`));
+    expect(await within(expandedChat).findByText("Bonjour")).toBeInTheDocument();
+    expect(expandedChat.querySelector(".chat-thread")).not.toBeNull();
+    expect(screen.queryByTestId(`floating-window-overlay-chat-window-${DEFAULT_PROJECT_ID}-${appChatSession.id}`)).toBeNull();
   });
 
   it("removes the Alpha footer and all footer reservations only on mobile", async () => {
@@ -1990,7 +1989,9 @@ describe("official dashboard design production wiring", () => {
     expect(dialog).toContainElement(document.querySelector(".chat-view"));
     expect(Array.from(dialog.querySelectorAll("h1,h2,h3")).filter((heading) => heading.textContent === "Chat" && !heading.classList.contains("visually-hidden"))).toHaveLength(1);
     expect(within(dialog).getByTestId("chat-new-btn")).toBeEnabled();
-    expect(within(dialog).getByTestId("chat-pop-out")).toBeEnabled();
+    /* The phone drawer is the only Chat host on mobile: no whole-view pop-out and no floating window shell. */
+    expect(within(dialog).queryByTestId("chat-pop-out")).toBeNull();
+    expect(within(dialog).queryByLabelText("Pop out chat")).toBeNull();
     expect(within(dialog).queryByRole("button", { name: "Close" })).toBeNull();
     expect(dialog.querySelectorAll(".alpha-mobile-drawer__handle-target")).toHaveLength(1);
     expect(input).toHaveClass("chat-input-textarea");
@@ -2080,7 +2081,7 @@ describe("official dashboard design production wiring", () => {
     expect(screen.queryByTestId("mobile-nav-tab-tasks")).toBeNull();
   });
 
-  it("remplace les deux barres et héberge Chat liste-seule et Notes inline", async () => {
+  it("uses the canonical Chat window while retaining Notes inline", async () => {
     mockUseViewportMode.mockReturnValue("desktop");
     configureProductionAppChat();
     localStorage.setItem("fusion:right-dock-open", "true");
@@ -2100,13 +2101,14 @@ describe("official dashboard design production wiring", () => {
     expect(screen.queryByTestId("alpha-desktop-nav-notes")).toBeNull();
 
     fireEvent.click(await screen.findByTestId("right-dock-tab-chat"));
-    expect(screen.queryByTestId("right-dock-expand")).toBeNull();
-    fireEvent.click(await within(screen.getByTestId("right-dock")).findByTestId(`chat-session-${appChatSession.id}`));
-    const chatWindow = await screen.findByTestId(`floating-window-overlay-chat-window-${DEFAULT_PROJECT_ID}-${appChatSession.id}`);
-    fireEvent.click(within(screen.getByTestId("right-dock")).getByTestId(`chat-session-${appChatSession.id}`));
-    expect(screen.getAllByTestId(`floating-window-overlay-chat-window-${DEFAULT_PROJECT_ID}-${appChatSession.id}`)).toEqual([chatWindow]);
+    const chatWindow = await screen.findByTestId("right-dock-expand-modal");
+    await waitFor(() => expect(chatWindow.querySelectorAll(".chat-view")).toHaveLength(1));
+    expect(document.querySelectorAll(".chat-view")).toHaveLength(1);
+    expect(screen.queryByTestId("right-dock")).toBeNull();
+    fireEvent.click(screen.getByTestId("floating-window-close-right-dock-chat"));
+    fireEvent.click(screen.getByTestId("header-right-dock-toggle"));
 
-    fireEvent.click(screen.getByTestId("right-dock-tab-notes"));
+    fireEvent.click(await screen.findByTestId("right-dock-tab-notes"));
     expect(screen.queryByTestId("right-dock-expand")).toBeNull();
     expect(await within(screen.getByTestId("right-dock")).findByText("Note Alpha")).toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: "Notes" })).toBeNull();
@@ -2747,11 +2749,21 @@ describe("App chat unread response indicator", () => {
       expect(mockSubscribeSse).toHaveBeenCalled();
     });
 
-    const chatSubscriptionCall = mockSubscribeSse.mock.calls.find(
+    return latestChatEvents();
+  };
+
+  /*
+  FNXC:ChatBadge 2026-09-14-12:57:
+  The unread subscription re-registers whenever effective Chat visibility changes, so a test that keeps the
+  first handler set would dispatch into a closure that still believes Chat is closed. Always read the latest
+  registration before dispatching an event that must respect the current surface state.
+  */
+  const latestChatEvents = () => {
+    const chatSubscriptionCalls = mockSubscribeSse.mock.calls.filter(
       ([url, sub]) => String(url).startsWith("/api/events") && typeof (sub as { events?: Record<string, unknown> })?.events?.["chat:message:added"] === "function",
     );
 
-    return (chatSubscriptionCall?.[1] as {
+    return (chatSubscriptionCalls.at(-1)?.[1] as {
       events: Record<string, (event: MessageEvent) => void>;
     }).events;
   };
@@ -2895,13 +2907,15 @@ describe("App chat unread response indicator", () => {
     });
 
     fireEvent.click(screen.getByTestId("sidebar-nav-chat"));
+    expect(await screen.findByTestId("right-dock-expand-modal")).toBeInTheDocument();
 
     await waitFor(() => {
       expect(chatUnreadDot()).toBeNull();
     });
 
+    const eventsWhileChatVisible = latestChatEvents();
     await act(async () => {
-      events["chat:room:message:added"](
+      eventsWhileChatVisible["chat:room:message:added"](
         new MessageEvent("chat:room:message:added", {
           data: JSON.stringify({ role: "assistant", roomId: "room-1", id: "msg-4", content: "while-open", createdAt: new Date().toISOString() }),
         }),
@@ -4348,7 +4362,12 @@ describe("App view switching", () => {
     localStorage.removeItem(taskViewStorageKey());
   });
 
-  it("project switch renders and restores each project's own scoped main view", async () => {
+  /*
+  FNXC:ChatSurfaceUnification 2026-09-14-12:57:
+  A restored wide `chat` selection is consumed once into the canonical window, so the page selection settles on
+  Board while the launcher entry stays non-active. Ordinary page destinations remain project-scoped and restored.
+  */
+  it("project switch consumes a restored wide Chat selection and restores ordinary page views", async () => {
     const projectA = { id: "proj_a", name: "Project A", path: "/a", status: "active" as const, isolationMode: "in-process" as const, createdAt: "", updatedAt: "" };
     const projectB = { id: "proj_b", name: "Project B", path: "/b", status: "active" as const, isolationMode: "in-process" as const, createdAt: "", updatedAt: "" };
 
@@ -4358,21 +4377,23 @@ describe("App view switching", () => {
     mockCurrentProjectState.currentProject = projectA;
 
     const view = render(<App />);
-    await waitFor(() => expect(screen.getByTestId("fb-probe-chat")).toBeTruthy());
-    expect(screen.getByTestId("sidebar-nav-chat").className).toContain("active");
-    expect(localStorage.getItem("kb:proj_a:kb-dashboard-task-view")).toBe("chat");
+    expect(await screen.findByTestId("right-dock-expand-modal")).toBeInTheDocument();
+    expect(screen.getByTestId("fb-probe-chat")).toBeTruthy();
+    expect(screen.getByTestId("sidebar-nav-chat").className).not.toContain("active");
+    await waitFor(() => expect(localStorage.getItem("kb:proj_a:kb-dashboard-task-view")).toBe("board"));
 
     mockCurrentProjectState.currentProject = projectB;
     view.rerender(<App />);
     await waitFor(() => expect(document.querySelector(".insights-view")).toBeTruthy());
     expect(screen.getByTestId("sidebar-nav-insights").className).toContain("active");
+    expect(screen.queryByTestId("right-dock-expand-modal")).toBeNull();
     expect(localStorage.getItem("kb:proj_b:kb-dashboard-task-view")).toBe("insights");
 
     mockCurrentProjectState.currentProject = projectA;
     view.rerender(<App />);
-    await waitFor(() => expect(screen.getByTestId("fb-probe-chat")).toBeTruthy());
-    expect(screen.getByTestId("sidebar-nav-chat").className).toContain("active");
-    expect(localStorage.getItem("kb:proj_a:kb-dashboard-task-view")).toBe("chat");
+    await waitFor(() => expect(screen.getByTestId("sidebar-nav-board").className).toContain("active"));
+    expect(screen.queryByTestId("right-dock-expand-modal")).toBeNull();
+    expect(localStorage.getItem("kb:proj_a:kb-dashboard-task-view")).toBe("board");
     expect(localStorage.getItem("kb:proj_b:kb-dashboard-task-view")).toBe("insights");
   });
 

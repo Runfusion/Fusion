@@ -1,9 +1,9 @@
 /*
 FNXC:DashboardShortcuts 2026-07-04-00:00:
-FN-7553 adds four more configurable actions (openFiles, openSettings, openCommandCenter, newTask) on top of the FN-7494/FN-7507 base (quickChat, terminal). Every helper below (resolve/conflict/validate) derives its action list from DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS' keys instead of a hardcoded pair, so future actions only need an entry in the three maps below plus a category assignment.
+The generic modal-visibility action is disabled by default so the dashboard never assigns window policy without an explicit operator binding. Every helper below derives its action list from DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS rather than a hardcoded list.
 */
 export type DashboardShortcutAction =
-  | "quickChat"
+  | "toggleModalVisibility"
   | "terminal"
   | "openFiles"
   | "openSettings"
@@ -17,7 +17,7 @@ FNXC:DashboardShortcuts 2026-07-04-00:00:
 New defaults were chosen to avoid colliding with the existing Space/Ctrl+` bindings and with each other: Ctrl+E (open Files), Ctrl+, (open Settings, mirrors the common OS/app "preferences" comma-accelerator), Ctrl+K (open Command Center, the conventional command-palette binding), Ctrl+Shift+N (new Task, avoids the browser-reserved plain Ctrl+N "new window").
 */
 export const DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS: Required<DashboardKeyboardShortcutMap> = {
-  quickChat: "Space",
+  toggleModalVisibility: "",
   terminal: "Ctrl+`",
   openFiles: "Ctrl+E",
   openSettings: "Ctrl+,",
@@ -26,7 +26,7 @@ export const DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS: Required<DashboardKeyboardSho
 };
 
 const ACTION_LABELS: Record<DashboardShortcutAction, string> = {
-  quickChat: "Quick Chat",
+  toggleModalVisibility: "Toggle Modal Visibility",
   terminal: "Terminal",
   openFiles: "Open Files",
   openSettings: "Open Settings",
@@ -45,7 +45,7 @@ FNXC:DashboardShortcuts 2026-07-04-00:00:
 Category grouping backs the dedicated Keyboard Shortcuts settings section (FN-7553) so actions render under headings instead of one flat list. This is UI-only metadata; resolution/conflict/validation logic never depends on category membership.
 */
 export const SHORTCUT_CATEGORIES: DashboardShortcutCategory[] = [
-  { id: "communication", label: "Communication", actions: ["quickChat"] },
+  { id: "communication", label: "Communication", actions: ["toggleModalVisibility"] },
   { id: "workspace", label: "Workspace", actions: ["terminal", "openFiles"] },
   { id: "navigation", label: "Navigation", actions: ["openCommandCenter", "openSettings"] },
   { id: "tasks", label: "Tasks", actions: ["newTask"] },
@@ -172,8 +172,8 @@ export function findShortcutConflicts(shortcuts: DashboardKeyboardShortcutMap): 
 }
 
 /*
-FNXC:DashboardShortcuts 2026-07-04-00:00:
-Space and interface-opening shortcuts must ignore both text-entry and interactive controls so they do not steal typing or button/menu activation. Escape uses the narrower text-entry guard so document-level popup dismissal still works from ordinary controls while editors and terminal input keep ownership.
+FNXC:DashboardShortcuts 2026-09-14-11:35:
+Text-entry targets protect every dashboard shortcut so editors and terminals retain typed keys. Ordinary interactive controls protect interface-opening actions, while FN-390's global visibility action intentionally runs first so its second keypress works from the focused footer toggle; Escape also uses only the text-entry guard.
 */
 const TEXT_ENTRY_SHORTCUT_TARGET_SELECTOR = "input, textarea, select, [contenteditable=''], [contenteditable='true'], [role='textbox'], [data-shortcuts-ignore='true']";
 const INTERACTIVE_SHORTCUT_TARGET_SELECTOR = `${TEXT_ENTRY_SHORTCUT_TARGET_SELECTOR}, button, a[href], summary, [role='button'], [role='link'], [role='checkbox'], [role='radio'], [role='switch'], [role='tab'], [role='menuitem']`;

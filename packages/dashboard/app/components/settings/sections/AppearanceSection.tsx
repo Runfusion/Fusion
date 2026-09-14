@@ -61,7 +61,7 @@ export function AppearanceSection({ form, setForm, themeMode, colorTheme, dashbo
         descriptor={{
           key: "chatMessageLayout",
           label: t("settings.appearance.chatMessageLayout", "Conversation layout"),
-          help: t("settings.appearance.chatMessageLayoutHelp", "Choose Bubbles or Full width for normal Chat, Quick Chat, dock Chat, task Activity, and Planner Chat. Project-scoped; default: Bubbles."),
+          help: t("settings.appearance.chatMessageLayoutHelp", "Choose Bubbles or Full width for Chat, task Activity, and Planner Chat. Project-scoped; default: Bubbles."),
           scope: "project",
           options: [
             { value: "bubbles", label: t("settings.appearance.chatMessageLayoutBubbles", "Bubbles") },

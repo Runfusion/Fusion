@@ -150,7 +150,6 @@ function mainContentProps(overrides: Partial<MainContentProps> = {}): MainConten
     filteredBoardTasks: [],
     workflowSteps: [],
     remoteData: { tasks: [] } as MainContentProps["remoteData"],
-    setQuickChatOpen: vi.fn(),
     capacityRiskBannerEnabled: false,
     capacityRiskDismissed: false,
     capacityRiskSignal: { level: "low", reasons: [] } as MainContentProps["capacityRiskSignal"],

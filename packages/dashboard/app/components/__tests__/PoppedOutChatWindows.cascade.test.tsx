@@ -19,7 +19,6 @@ const entry = (id: string, cascadeSlot: number, projectId = "project-a") => ({
   },
   focusNonce: 1,
   cascadeSlot,
-  minimized: false,
 });
 
 describe("PoppedOutChatWindows cascade", () => {
@@ -45,6 +44,7 @@ describe("PoppedOutChatWindows cascade", () => {
 
     const first = screen.getByTestId("floating-window-chat-window-project-a-first");
     const second = screen.getByTestId("floating-window-chat-window-project-a-second");
+    expect(first.style.left).toBe("120px");
     expect(Number.parseFloat(second.style.left) - Number.parseFloat(first.style.left)).toBe(FLOATING_WINDOW_CASCADE_STEP_PX);
     expect(Number.parseFloat(second.style.top) - Number.parseFloat(first.style.top)).toBe(FLOATING_WINDOW_CASCADE_STEP_PX);
     expect(second.style.left).not.toBe(first.style.left);
@@ -74,8 +74,8 @@ describe("PoppedOutChatWindows cascade", () => {
     const second = screen.getByTestId("floating-window-chat-window-project-a-second");
     expect(first.style.left).not.toBe(second.style.left);
     expect(first.style.top).not.toBe(second.style.top);
-    expect(first.style.width).toBe(`${1408 - FLOATING_WINDOW_CASCADE_STEP_PX}px`);
-    expect(second.style.width).toBe(`${1408 - FLOATING_WINDOW_CASCADE_STEP_PX * 2}px`);
+    expect(first.style.width).toBe("1408px");
+    expect(second.style.width).toBe(`${1440 - (16 + FLOATING_WINDOW_CASCADE_STEP_PX)}px`);
     expect(JSON.parse(localStorage.getItem("kb-dashboard-chat-floating-window") ?? "{}")).toEqual(baseGeometry);
   });
 
@@ -93,6 +93,6 @@ describe("PoppedOutChatWindows cascade", () => {
       />,
     );
     expect(screen.queryByTestId("floating-window-chat-window-project-b-hidden")).toBeNull();
-    expect(screen.getByTestId("floating-window-chat-window-project-a-visible").style.left).toBe(`${120 + FLOATING_WINDOW_CASCADE_STEP_PX * 2}px`);
+    expect(screen.getByTestId("floating-window-chat-window-project-a-visible").style.left).toBe(`${120 + FLOATING_WINDOW_CASCADE_STEP_PX}px`);
   });
 });

@@ -1,0 +1,42 @@
+/*
+FNXC:DashboardWindowVisibility 2026-09-14-10:52:
+The placeholder owns footer layout while the body portal follows its painted rectangle above the live dashboard z ceiling. The full-screen host never accepts pointers; only its token-styled control is interactive.
+*/
+#dashboard-window-toggle-root {
+  position: fixed;
+  inset: 0;
+  z-index: calc(var(--fusion-max-z) + 2);
+  pointer-events: none;
+}
+
+.dashboard-window-visibility-toggle__placeholder {
+  display: block;
+  align-self: stretch;
+  flex: 0 0 var(--touch-target-min-size);
+  min-inline-size: var(--touch-target-min-size);
+  border-inline-start: thin solid var(--border);
+}
+
+.dashboard-window-visibility-toggle__button {
+  position: absolute;
+  inset-inline-start: var(--dashboard-window-toggle-left);
+  inset-block-start: var(--dashboard-window-toggle-top);
+  inline-size: var(--dashboard-window-toggle-width);
+  block-size: var(--dashboard-window-toggle-height);
+  min-inline-size: 0;
+  min-block-size: 0;
+  border-radius: 0;
+  pointer-events: auto;
+}
+
+.dashboard-window-visibility-toggle__button svg {
+  inline-size: var(--icon-size-sm);
+  block-size: var(--icon-size-sm);
+}
+
+@media (max-width: 768px) {
+  #dashboard-window-toggle-root,
+  .dashboard-window-visibility-toggle__placeholder {
+    display: none;
+  }
+}

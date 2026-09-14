@@ -5,6 +5,7 @@ import { AlertCircle, Check, Copy, ExternalLink } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
 import { copyTextToClipboard } from "../utils/copyToClipboard";
+import { DashboardWindowSurfaceRoot } from "../context/DashboardWindowManagerContext";
 
 const DEFAULT_ISSUE_URL = "https://github.com/Runfusion/Fusion/issues/new";
 
@@ -63,7 +64,7 @@ export function AgentErrorDetailsModal({ open, onClose, errorText, issueContext 
   }
 
   return (
-    <div className="modal-overlay open" {...overlayDismissProps} role="dialog" aria-modal="true" aria-label={t("agentError.dialogLabel", "Agent error details")}>
+    <DashboardWindowSurfaceRoot logicalId="agent-error-details" group="dialog" className="modal-overlay open" {...overlayDismissProps} role="dialog" aria-modal="true" aria-label={t("agentError.dialogLabel", "Agent error details")}>
       <div className="modal agent-error-modal">
         {/* FNXC:StandardizedViewLayout 2026-09-13-21:49: Shared dialog chrome; the alert icon stays with the shared title. */}
         <ViewHeader
@@ -108,7 +109,7 @@ export function AgentErrorDetailsModal({ open, onClose, errorText, issueContext 
           </a>
         </div>
       </div>
-    </div>
+    </DashboardWindowSurfaceRoot>
   );
 }
 

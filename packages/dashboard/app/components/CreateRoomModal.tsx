@@ -54,9 +54,8 @@ export function CreateRoomModal({ isOpen, onClose, onCreate, projectId, existing
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const agentLoadEpochRef = useRef(0);
   /*
-  FNXC:ModalTouchGeometry 2026-07-26-19:25:
-  Create Room is a blocking child of Quick Chat. The shared utility layer now claims its fresh
-  portal z-index on every mount, keeping this dialog above Chat without a bespoke overlay counter.
+  FNXC:ModalTouchGeometry 2026-09-14-11:35:
+  Create Room is a blocking child of Chat. The shared utility layer claims a fresh portal z-index on mount, keeping this dialog above its canonical or detached host without a bespoke counter.
   */
 
   useEffect(() => {

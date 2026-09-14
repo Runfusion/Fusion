@@ -23,6 +23,7 @@ import { SkillMultiselect } from "./SkillMultiselect";
 import { AgentAvatar } from "./AgentAvatar";
 import { ExperimentalAgentOnboardingModal } from "./ExperimentalAgentOnboardingModal";
 import { useFavorites } from "../hooks/useFavorites";
+import { DashboardWindowSurfaceRoot } from "../context/DashboardWindowManagerContext";
 import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
 
 export interface NewAgentDialogProps {
@@ -425,7 +426,7 @@ export function NewAgentDialog({
   // mobile (the header isn't taller than the dialog top — it's just stacked
   // above it because the dialog couldn't escape its container).
   return createPortal(
-    <div className="agent-dialog-overlay" {...overlayDismiss}>
+    <DashboardWindowSurfaceRoot logicalId="new-agent" group="dialog" className="agent-dialog-overlay" {...overlayDismiss}>
       <div className="agent-dialog" role="dialog" aria-modal="true" aria-label={t("agents.dialogAriaLabel", "Create new agent")}>
         {/*
         FNXC:StandardizedViewLayout 2026-09-13-22:40:
@@ -930,7 +931,7 @@ export function NewAgentDialog({
         existingAgents={existingAgents}
         mode="create"
       />
-    </div>,
+    </DashboardWindowSurfaceRoot>,
     document.body,
   );
 }

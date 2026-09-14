@@ -16,6 +16,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { useAlphaSurface } from "../../context/AlphaContext";
+import { useDashboardWindowSurface } from "../../context/DashboardWindowManagerContext";
 
 type AlphaButtonProps = ButtonHTMLAttributes<HTMLButtonElement>;
 type AlphaInputProps = InputHTMLAttributes<HTMLInputElement>;
@@ -182,26 +183,69 @@ export const AlphaMenuItem = forwardRef<HTMLButtonElement, AlphaMenuItemProps>(f
   return <button ref={ref} type="button" role="menuitem" tabIndex={alpha ? -1 : tabIndex} {...alphaMarker(alpha, "menu-item")} {...props}>{children}</button>;
 });
 
-function useEscape(onClose?: () => void) {
+function useEscape(onClose?: () => void, active = true) {
+  const activeRef = useRef(active);
+  activeRef.current = active;
   useEffect(() => {
     if (!onClose) return;
-    const close = (event: globalThis.KeyboardEvent) => { if (event.key === "Escape") onClose(); };
+    const close = (event: globalThis.KeyboardEvent) => { if (activeRef.current && event.key === "Escape") onClose(); };
     document.addEventListener("keydown", close);
     return () => document.removeEventListener("keydown", close);
   }, [onClose]);
 }
 
+/*
+FNXC:DashboardWindowVisibility 2026-09-14-10:52:
+Alpha dialog backdrops are first-class managed surfaces. Global hiding retains their trees but disables Escape and backdrop dismissal; popovers and collection surfaces remain intentionally outside the snapshot registry.
+*/
 export function AlphaDialogBackdrop({ children, overlayClassName, labelledBy, onClose, overlayProps }: { children: ReactElement<HTMLAttributes<HTMLElement>>; overlayClassName?: string; labelledBy?: string; onClose?: () => void; overlayProps?: HTMLAttributes<HTMLDivElement> }) {
   const alpha = useAlphaSurface();
-  useEscape(onClose);
-  const dialog = <div className={overlayClassName} role="presentation" {...(alpha ? { "data-alpha-ui": "dialog-backdrop", "data-alpha-portal": "true" } : {})} onMouseDown={(event) => { overlayProps?.onMouseDown?.(event); if (event.target === event.currentTarget) onClose?.(); }} {...overlayProps}>{cloneElement(children, { role: "dialog", "aria-modal": true, "aria-labelledby": labelledBy ?? children.props["aria-labelledby"], ...(alpha ? { "data-alpha-ui": "dialog" } : {}) })}</div>;
+  const windowSurface = useDashboardWindowSurface({ logicalId: labelledBy ?? "alpha-dialog", group: "dialog", locallyVisible: true });
+  useEscape(onClose, windowSurface.surfaceActive);
+  const dialog = (
+    <div
+      {...overlayProps}
+      ref={windowSurface.rootRef}
+      className={overlayClassName}
+      role="presentation"
+      aria-hidden={windowSurface.surfaceAttributes["aria-hidden"]}
+      inert={windowSurface.surfaceAttributes.inert}
+      data-dashboard-window-surface={windowSurface.surfaceAttributes["data-dashboard-window-surface"]}
+      data-dashboard-window-globally-hidden={windowSurface.surfaceAttributes["data-dashboard-window-globally-hidden"]}
+      {...(alpha ? { "data-alpha-ui": "dialog-backdrop", "data-alpha-portal": "true" } : {})}
+      onMouseDown={(event) => {
+        if (!windowSurface.surfaceActive) return;
+        overlayProps?.onMouseDown?.(event);
+        if (event.target === event.currentTarget) onClose?.();
+      }}
+    >
+      {cloneElement(children, { role: "dialog", "aria-modal": true, "aria-labelledby": labelledBy ?? children.props["aria-labelledby"], ...(alpha ? { "data-alpha-ui": "dialog" } : {}) })}
+    </div>
+  );
   return alpha && typeof document !== "undefined" ? createPortal(dialog, document.body) : dialog;
 }
 
 export function AlphaDialog({ children, className, overlayClassName, labelledBy, onClose }: { children: ReactNode; className?: string; overlayClassName?: string; labelledBy?: string; onClose?: () => void }) {
   const alpha = useAlphaSurface();
-  useEscape(onClose);
-  const dialog = <div className={overlayClassName} role="presentation" {...(alpha ? { "data-alpha-ui": "dialog-backdrop", "data-alpha-portal": "true" } : {})} onMouseDown={(event) => { if (event.target === event.currentTarget) onClose?.(); }}><div className={className} role="dialog" aria-modal="true" aria-labelledby={labelledBy} {...alphaMarker(alpha, "dialog")}>{children}</div></div>;
+  const windowSurface = useDashboardWindowSurface({ logicalId: labelledBy ?? "alpha-dialog", group: "dialog", locallyVisible: true });
+  useEscape(onClose, windowSurface.surfaceActive);
+  const dialog = (
+    <div
+      ref={windowSurface.rootRef}
+      className={overlayClassName}
+      role="presentation"
+      aria-hidden={windowSurface.surfaceAttributes["aria-hidden"]}
+      inert={windowSurface.surfaceAttributes.inert}
+      data-dashboard-window-surface={windowSurface.surfaceAttributes["data-dashboard-window-surface"]}
+      data-dashboard-window-globally-hidden={windowSurface.surfaceAttributes["data-dashboard-window-globally-hidden"]}
+      {...(alpha ? { "data-alpha-ui": "dialog-backdrop", "data-alpha-portal": "true" } : {})}
+      onMouseDown={(event) => {
+        if (windowSurface.surfaceActive && event.target === event.currentTarget) onClose?.();
+      }}
+    >
+      <div className={className} role="dialog" aria-modal="true" aria-labelledby={labelledBy} {...alphaMarker(alpha, "dialog")}>{children}</div>
+    </div>
+  );
   return alpha && typeof document !== "undefined" ? createPortal(dialog, document.body) : dialog;
 }
 

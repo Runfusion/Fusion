@@ -6,6 +6,7 @@ import type { BranchGroupSummary } from "../api";
 import { ApiRequestError, apiAbandonBranchGroup, apiAssignTaskBranchGroup, apiGetBranchGroup, apiPromoteBranchGroup } from "../api";
 import { subscribeSse } from "../sse-bus";
 import { BRANCH_GROUP_REFRESH_TASK_EVENTS, shouldRefreshBranchGroupForTaskEvent } from "../utils/branchGroupSse";
+import { DashboardWindowSurfaceRoot } from "../context/DashboardWindowManagerContext";
 
 interface BranchGroupCardProps {
   groupId: string;
@@ -246,7 +247,7 @@ export function BranchGroupCard({ groupId, taskId, projectId, onBranchGroupReset
         </div>
       )}
       {confirmPromotion && (
-        <div className="branch-group-card-confirm-backdrop" role="presentation">
+        <DashboardWindowSurfaceRoot logicalId={`branch-group-promotion-${group.id}`} group="dialog" className="branch-group-card-confirm-backdrop" role="presentation">
           <section className="card branch-group-card-confirm" role="dialog" aria-modal="true" aria-label={t("branchGroup.confirmPromotion", "Confirm group promotion")}>
             <h3>{t("branchGroup.confirmPromotion", "Confirm group promotion")}</h3>
             <p>{group.prState === "none"
@@ -285,7 +286,7 @@ export function BranchGroupCard({ groupId, taskId, projectId, onBranchGroupReset
               </button>
             </div>
           </section>
-        </div>
+        </DashboardWindowSurfaceRoot>
       )}
     </section>
   );

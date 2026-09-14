@@ -1268,7 +1268,6 @@ export default interface Resources {
       "cancelButton": "Cancel",
       "cancelPendingEdit": "Cancel queued message edit",
       "clearConversationFailed": "Failed to clear conversation",
-      "closeQuickChat": "Close quick chat",
       "contextWindowAria": "Estimated {{used}} of {{total}} context tokens",
       "contextWindowMeasuredAria": "Session context {{used}} of {{total}} tokens ({{percent}}%), provider-reported input and output",
       "contextWindowPendingAria": "Session context unknown until the next reply — {{total}} token window",
@@ -1333,7 +1332,6 @@ export default interface Resources {
       "messageRoomPlaceholder": "Message #{{name}}",
       "messageSentButReplyFailed": "Message sent, but assistant reply failed",
       "messageSentButReplyFailedDetail": "Message sent, but assistant reply failed: {{detail}}",
-      "minimizeAllChats": "Minimize all chats",
       "modeAgent": "Agent",
       "modeModel": "Model",
       "modelAgentSection": "Model / Agent",
@@ -1356,7 +1354,6 @@ export default interface Resources {
       "noSkillsAvailable": "No skills available",
       "noSkillsFound": "No skills found",
       "openInNewWindow": "Open in new window",
-      "openQuickChat": "Open quick chat",
       "pendingEditEmpty": "Queued messages cannot be empty",
       "pendingHeading": "Pending messages",
       "pendingLabel": "Pending messages",
@@ -1377,7 +1374,6 @@ export default interface Resources {
       "questionSubmittedAnswerLabel": "Submitted answer",
       "questionTextPlaceholder": "Type your answer here…",
       "queuedMessage": "Queued: {{preview}}",
-      "quickChatTitle": "Quick Chat",
       "quoteMessage": "Quote message",
       "recent": "Recent",
       "relativeTimeDays_one": "{{count}}d ago",
@@ -1405,7 +1401,6 @@ export default interface Resources {
       "responseCopied": "Response copied",
       "responseFailed": "Response failed",
       "restore": "Restore",
-      "restoreAllChats": "Restore all chats",
       "roomMemberCount_one": "{{count}} member",
       "roomMemberCount_other": "{{count}} members",
       "roomsGroupLabel": "Rooms",
@@ -1449,7 +1444,6 @@ export default interface Resources {
       "typeMessage": "Type a message...",
       "unreadMessages": "Unread messages",
       "untitledSession": "Untitled",
-      "windowMinimized": "Minimized",
       "windowOpen": "Open",
       "workingStatus": "Working…",
       "you": "You"
@@ -5420,14 +5414,6 @@ export default interface Resources {
         "urlValid": "Base URL must be a valid URL."
       }
     },
-    "quickChat": {
-      "errorAttachmentsBeforeSession": "Cannot send attachments before chat session is ready",
-      "errorAttachmentsWhileStreaming": "Cannot send attachments while a response is streaming",
-      "errorGettingResponse": "Failed to get response",
-      "errorInitializingChat": "Failed to initialize chat",
-      "errorRefreshingSessions": "Failed to refresh chat sessions",
-      "errorStartingNewChat": "Failed to start a new chat"
-    },
     "recommendations": {
       "count": "Showing {{shown}} of {{total}} source tasks",
       "createError": "Could not create task. Try again.",
@@ -6081,7 +6067,7 @@ export default interface Resources {
         "chatMessageLayout": "Conversation layout",
         "chatMessageLayoutBubbles": "Bubbles",
         "chatMessageLayoutFullWidth": "Full width",
-        "chatMessageLayoutHelp": "Choose Bubbles or Full width for normal Chat, Quick Chat, dock Chat, task Activity, and Planner Chat. Project-scoped; default: Bubbles.",
+        "chatMessageLayoutHelp": "Choose Bubbles or Full width for Chat windows, task Activity, and Planner Chat. Project-scoped; default: Bubbles.",
         "hideAISessionNotificationBanners": "Hide AI session notification banners",
         "language": "Language",
         "languageAuto": "Auto",
@@ -6344,8 +6330,6 @@ export default interface Resources {
         "prefixForNewTaskIDsEGKB": "Prefix for new task IDs (e.g. KB, PROJ). No default — unset.",
         "prefixMustBe110UppercaseLetters": "Prefix must be 1–10 uppercase letters",
         "projectDefaultTrackingRepo": "Project default tracking repo",
-        "quickChatCloseOnOutsideClickHint": "When enabled, clicking outside the Quick Chat window closes it. Disable to keep it open until you close it explicitly. Default: enabled.",
-        "quickChatLauncherHint": "Choose whether Quick Chat opens from the draggable floating button, a footer button beside Terminal, or stays hidden. Default: off (hidden).",
         "recentVerbatimRoomMessages": "Recent verbatim room messages",
         "refinementTaskWorkflow": "Refinement task workflow",
         "refinementTaskWorkflowHelp": "Workflow applied to refinement tasks — the follow-up card spawned from a done or in-review task plus your feedback. Choose \"Selected workflow\" to follow your current board workflow (falling back to the project default workflow). No default — unset means Selected workflow.",
@@ -6393,7 +6377,6 @@ export default interface Resources {
         "selectNavItem": "Choose a destination",
         "settingsSaved": "Settings saved",
         "showCapacityRiskBanner": " Show capacity risk banner ",
-        "showQuickChatButton": " Show quick chat button ",
         "showTaskChatsInCommonFeedHint": "When enabled, populated task-detail Chat conversations appear in the common Direct feed. Empty task chats stay hidden. Default: disabled.",
         "showTheFloatingChatButtonInTheDashboard": "Show the floating chat button in the dashboard. Chat is still accessible from the Chat tab in the mobile navigation.",
         "taskCreateWorkflow": "CLI/agent-created task workflow",
@@ -9443,6 +9426,10 @@ export default interface Resources {
       "title": "Whiteboard title",
       "tools": "Whiteboard tools",
       "unsaved": "Unsaved"
+    },
+    "windows": {
+      "hide": "Hide all windows",
+      "restore": "Restore windows"
     },
     "workflow": {
       "advisoryExplanation": "Advisory workflow steps flagged non-blocking improvements:",

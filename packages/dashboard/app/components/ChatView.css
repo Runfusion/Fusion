@@ -1,8 +1,8 @@
 /* ── Chat View ─────────────────────────────────────────────────────────────── */
 
 /*
-FNXC:ModalChrome 2026-09-11-23:35:
-FN-351 gives Quick Chat and detached conversations the History shell contract: one fixed shared header followed by a flex body painted with the same content-background token. Internal list, thread, streaming, and composer surfaces retain their own semantics.
+FNXC:ModalChrome 2026-09-14-11:35:
+Canonical and detached Chat surfaces use the History shell contract: one fixed shared header followed by a flex body painted with the content-background token. Internal list, thread, streaming, and composer semantics remain shared.
 */
 .chat-view {
   container: chat-view / inline-size;
@@ -513,10 +513,8 @@ FN-068 keeps the floating Chat ViewHeader as the only visible modal header and d
 }
 
 /*
-FNXC:QuickChat 2026-07-24-00:00:
-Tablet Quick Chat keeps its delegated ViewHeader drag handle but needs a modestly taller touch target
-than canonical desktop chrome. Scope the token-based height to the movable tablet band so phone sheets,
-desktop geometry, and every other ViewHeader consumer remain unchanged.
+FNXC:ChatWindows 2026-09-14-11:35:
+A detached tablet Chat keeps its delegated ViewHeader drag handle with a taller touch target. Scope the token height to the movable tablet band so phone sheets, desktop geometry, and other ViewHeader consumers remain unchanged.
 */
 @media (min-width: 769px) and (max-width: 1024px) and (min-height: 481px) {
   .chat-view--floating .view-header {
@@ -695,8 +693,8 @@ The transcript keeps every loaded message reachable while mounting only a viewpo
 }
 
 /*
-FNXC:ChatMessageLayout 2026-08-24-03:34:
-Full-width conversation mode is scoped to the ChatView root so direct Chat, CLI transcripts, Quick Chat, and dock hosts share one override while the default bubble selectors remain unchanged. Stretch the message blocks, not their shared StandardChatSurface markup, so streaming, failures, tools, thinking, and attachments retain their existing semantics.
+FNXC:ChatMessageLayout 2026-09-14-11:35:
+Full-width mode is scoped to ChatView so canonical, detached, and CLI transcripts share one override. Stretch message blocks rather than StandardChatSurface markup so streams, failures, tools, thinking, and attachments retain semantics.
 */
 .chat-view--full-width .chat-message,
 .chat-view--full-width .chat-message--user,
@@ -721,8 +719,8 @@ Full-width conversation mode is scoped to the ChatView root so direct Chat, CLI 
 FNXC:ChatView 2026-07-22-00:00:
 The Latest button is centered with transform: translateX(-50%), so the global .btn:active { transform: scale(0.97) } rule must not replace that transform wholesale — doing so shifted the button half its width sideways on mousedown, out from under the cursor mid-click. Compose both transforms on :active instead (same fix as .devserver-log-viewer__new-logs-button).
 
-FNXC:ChatView 2026-07-23-18:15:
-Compose-on-:active was still fragile: same specificity as `.btn:active` can lose the cascade war (SelectionCommentPopover regressed the same way), and the shared `.btn { transition: transform }` made any transform churn feel like the chip jumps when the cursor moves near/over it in Quick Chat and full Chat. Center with left/right + margin-inline auto + width: fit-content so positioning no longer owns `transform`. Global `.btn:active` scale then applies in place around the geometric center without a sideways teleport. Covers session + room jump buttons (shared class), floating Quick Chat, main Chat view, and mobile.
+FNXC:ChatView 2026-09-14-11:35:
+Center the Latest chip with inline margins rather than a positioning transform so global active scaling cannot move it sideways under the cursor. The shared class covers session and room threads in canonical, detached, and mobile hosts.
 */
 .chat-jump-to-latest {
   position: absolute;
@@ -754,11 +752,8 @@ Compose-on-:active was still fragile: same specificity as `.btn:active` can lose
 }
 
 /*
-FNXC:ChatView 2026-06-23-11:40:
-Tablet Chat View has enough message-pane width for assistant prose, markdown, tool output, failure details, and attachments, so agent-side bubbles need a wider reading measure than the shared desktop/user cap. Use the ChatView container width instead of the viewport so floating Quick Chat and other narrow hosts keep their bounded bubble layout.
-
-FNXC:ChatView 2026-07-15-00:00:
-FN-8028 widens the tablet agent-side cap from 88% to 92% for a slightly wider reading measure while keeping it container-keyed, so Quick Chat and the right dock remain bounded by their narrow-host rule.
+FNXC:ChatView 2026-09-14-11:35:
+Tablet-width Chat can widen assistant prose and tool output while narrow detached hosts remain bounded. Key the reading measure to the ChatView container rather than the viewport.
 */
 @container chat-view (min-width: 48.0625rem) and (max-width: 64rem) {
   .chat-message--assistant,
@@ -769,8 +764,8 @@ FN-8028 widens the tablet agent-side cap from 88% to 92% for a slightly wider re
 }
 
 /*
-FNXC:ChatView 2026-06-28-14:47:
-Narrow chat hosts need full-width bubbles for prose, code, tool output, failures, streams, and attachments in already-constrained columns. Key this to the ChatView container width, not the viewport, so Quick Chat popups and the right dock on desktop viewports match phone-width Chat View behavior.
+FNXC:ChatView 2026-09-14-11:35:
+Narrow Chat hosts need full-width bubbles for prose, code, tools, failures, streams, and attachments. Key this to container width so detached windows and phone drawers share the constrained layout.
 */
 @container chat-view (max-width: 30rem) {
   .chat-message {

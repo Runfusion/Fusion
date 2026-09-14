@@ -196,7 +196,7 @@ describe("ChatView content search", () => {
     hybridView.unmount();
   });
 
-  it("uses one activated visible host and releases ownership when retained Quick Chat hides", async () => {
+  it("uses one activated visible host and releases ownership when that retained host becomes inactive", async () => {
     setupMockChat({ sessions: [activeSessionFixture], filteredSessions: [activeSessionFixture] });
     const first = await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
     const second = await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} floating />);

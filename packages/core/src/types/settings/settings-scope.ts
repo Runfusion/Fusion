@@ -258,12 +258,12 @@ export interface McpServersSettings {
 }
 
 /*
-FNXC:DashboardShortcuts 2026-07-04-00:00:
-FN-7553 adds four more configurable actions on top of the FN-7494/FN-7507 base (quickChat, terminal), each reusing an existing App navigation handler (no new nav destinations). All fields share blank-to-disable semantics: an empty string disables that action's runtime listener.
+FNXC:DashboardShortcuts 2026-09-14-10:42:
+FN-390 replaces the Quick Chat-specific binding with a generic modal-visibility callback that is disabled by default. All fields share blank-to-disable semantics: an empty string disables that action's runtime listener.
 */
 export interface DashboardKeyboardShortcuts {
-  /** Opens the dashboard Quick Chat surface. Empty string disables this shortcut. Default: "Space". */
-  quickChat?: string;
+  /** Toggles the app-selected dashboard modal surface. Empty string disables this shortcut. Default: empty. */
+  toggleModalVisibility?: string;
   /** Opens or toggles the dashboard Terminal surface. Empty string disables this shortcut. Default: "Ctrl+`". */
   terminal?: string;
   /** Opens the dashboard Files browser. Empty string disables this shortcut. Default: "Ctrl+E". */
@@ -344,8 +344,8 @@ export interface GlobalSettings {
   /** When false, fn dashboard and fn serve skip automatic mDNS/DNS-SD LAN discovery. Default: true (FN-8202 opt-out). */
   localNetworkDiscoveryEnabled?: boolean;
   /**
-   * FNXC:DashboardShortcuts 2026-07-04-00:00:
-   * Dashboard keyboard shortcuts are global operator preferences because they control browser UI affordances, not project execution policy. Defaults keep Space for Quick Chat and Ctrl+` for Terminal; blank values intentionally disable an action.
+   * FNXC:DashboardShortcuts 2026-09-14-10:42:
+   * FN-390 keeps dashboard keyboard shortcuts global and makes modal visibility generic and disabled by default. Ctrl+` retains the Terminal default; blank values intentionally disable an action.
    */
   dashboardKeyboardShortcuts?: DashboardKeyboardShortcuts;
   /**
@@ -2437,8 +2437,6 @@ export interface ProjectSettings {
    *  - "always": Always handoff after completion (not implemented, reserved for future)
    */
   reviewHandoffPolicy?: "disabled" | "comment-triggered" | "always";
-  /** Quick Chat launcher placement. "floating" shows the draggable FAB, "footer" shows a footer button, "off" hides both. */
-  quickChatButtonMode?: "floating" | "footer" | "off";
   /*
    * FNXC:Navigation 2026-07-17-00:00:
    * Ordered quick-action ids shown before the always-present mobile More tab. Only command-center,
@@ -2446,14 +2444,6 @@ export interface ProjectSettings {
    * default order, invalid/overflow-only ids (including more) are ignored, and omitted ids stay in More.
    */
   mobileNavPrimaryItems?: string[];
-  /**
-   * FNXC:ChatModal 2026-06-28-00:00:
-   * Outside-click dismissal of Quick Chat is now user-configurable; default true preserves the prior always-on behavior from FN-7152.
-   * When true (default), the Quick Chat floating window closes when the user clicks outside it. Set false to keep it open until explicitly closed.
-   */
-  quickChatCloseOnOutsideClick?: boolean;
-  /** Legacy Quick Chat FAB toggle. Prefer quickChatButtonMode for new callers. */
-  showQuickChatFAB?: boolean;
   /**
    * FNXC:ChatModal 2026-07-01-00:00:
    * Task planner sessions (`task-planner:<taskId>`) are hidden from the common Chat feed by default to keep task-detail planning conversations out of Direct chat clutter. Operators can opt back into the previous shared-feed behavior with this project setting.

@@ -59,46 +59,6 @@ FN-6887 makes the footer status bar the canonical desktop/tablet terminal launch
   flex-shrink: 0;
 }
 
-.executor-status-bar__segment--quick-chat-launcher {
-  flex-shrink: 0;
-}
-
-.executor-status-bar__footer-launcher {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-xs);
-  min-height: calc(var(--space-lg) + var(--space-xs));
-  padding: 0 var(--space-xs);
-  border: none;
-  background: transparent;
-  /*
-   * FNXC:FooterLaunchers 2026-06-24-00:00:
-   * Quick Chat and Terminal are peer footer launchers. Pin both to the footer's compact UI font and color token so switching the launcher location does not make one control read heavier or dimmer than the other.
-   */
-  color: inherit;
-  font-family: var(--font-primary);
-  font-size: inherit;
-  font-weight: 500;
-  line-height: 1;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.executor-status-bar__footer-launcher:hover {
-  color: var(--text);
-}
-
-.executor-status-bar__footer-launcher:hover span {
-  text-decoration: underline;
-  text-underline-offset: calc(var(--space-xs) / 2);
-}
-
-.executor-status-bar__footer-launcher:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring-strong);
-  border-radius: var(--radius-sm);
-}
-
 /*
 FNXC:StuckTagRemoval 2026-08-17-22:30: Operator removed stuck-task tagging from the dashboard; engine recovery sweeps still consume taskStuckTimeoutMs server-side.
 */

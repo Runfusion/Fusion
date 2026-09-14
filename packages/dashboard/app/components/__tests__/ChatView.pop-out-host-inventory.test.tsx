@@ -12,13 +12,8 @@ function productionAppSourceFiles(): string[] {
 
 describe("ChatView pop-out host inventory", () => {
   /*
-  FNXC:ChatWindows 2026-08-23-03:33:
-  FN-169 uses this source census to prevent a new ChatView host from silently omitting the
-  pop-out trigger. The menu remains owned by ChatView rather than being duplicated by a host.
-
-  FNXC:MainViewKeepAlive 2026-08-30-19:05:
-  Embedded Chat now mounts through the retained main-view registry rather than MainContent's
-  exclusive switch, so this inventory protects the new host's pop-out wiring.
+  FNXC:ChatSurfaceUnification 2026-09-14-11:35:
+  The source census prevents a new ChatView host from omitting detached-conversation routing. Only the mobile keep-alive owner, expanded registry renderer, and detached window renderer are valid production mounts.
 
   FNXC:DashboardTests 2026-09-01-00:46:
   Static host discovery must use the module-relative dashboard fixture helpers so root-anchored
@@ -26,18 +21,18 @@ describe("ChatView pop-out host inventory", () => {
   */
   it("keeps all production ChatView hosts wired to the pop-out trigger", () => {
     const sourceFiles = productionAppSourceFiles();
-    const mounts = sourceFiles.filter((file) => readAppFile(file).includes("<ChatView"));
-    expect(mounts).toEqual(["App.tsx", "components/PoppedOutChatWindows.tsx", "components/dashboard/MainViewKeepAlive.tsx", "components/overflowViewRegistry.tsx"]);
+    /* `<ChatViewContent` is ChatView's own internal body, so match the exported element itself. */
+    const mounts = sourceFiles.filter((file) => /<ChatView[\s/>]/.test(readAppFile(file)));
+    expect(mounts).toEqual(["components/PoppedOutChatWindows.tsx", "components/dashboard/MainViewKeepAlive.tsx", "components/overflowViewRegistry.tsx"]);
     for (const file of mounts) expect(readAppFile(file)).toContain("onOpenSessionInNewWindow");
 
     const popOut = readAppFile("components/PoppedOutChatWindows.tsx");
     expect(popOut).toContain("initialDirectSession={entry.session}");
     expect(popOut).toContain("initialDirectSessionNonce={entry.focusNonce}");
     expect(popOut).toContain("raiseToFrontSignal={entry.focusNonce}");
-    expect(popOut).toContain("cascadeOffsetIndex={entry.cascadeSlot + 1}");
-    expect(popOut).toContain("hidden={entry.minimized}");
-    expect(popOut).toContain("active={!entry.minimized}");
-    expect(popOut).toContain("findActive={!entry.minimized}");
+    expect(popOut).toContain("cascadeOffsetIndex={entry.cascadeSlot}");
+    expect(popOut).toContain('surfaceGroup="chat"');
+    expect(popOut).not.toContain("hidden={entry.");
     const chatView = readAppFile("components/ChatView.tsx");
     const affordanceFiles = sourceFiles.filter((file) => readAppFile(file).includes("chat-context-open-window"));
     expect(affordanceFiles).toEqual(["components/ChatView.tsx"]);
@@ -51,7 +46,11 @@ describe("ChatView pop-out host inventory", () => {
     for (const testId of ["chat-new-btn", "chat-new-btn-empty"]) {
       const testIdPosition = chatView.indexOf(`data-testid="${testId}"`);
       expect(testIdPosition).toBeGreaterThanOrEqual(0);
-      const buttonStart = chatView.lastIndexOf("<button", testIdPosition);
+      /* Chat's shared header uses the reusable action primitives, so accept any of the button elements it renders. */
+      const buttonStart = Math.max(
+        ...["<button", "<AlphaButton", "<ViewActionButton"].map((element) => chatView.lastIndexOf(element, testIdPosition)),
+      );
+      expect(buttonStart).toBeGreaterThanOrEqual(0);
       expect(chatView.slice(buttonStart, testIdPosition)).toContain("onClick={handleNewChat}");
     }
   });

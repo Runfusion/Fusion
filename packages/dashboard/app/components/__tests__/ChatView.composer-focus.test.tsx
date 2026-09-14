@@ -259,7 +259,7 @@ describe("ChatView composer focus when a conversation opens", () => {
   });
 
   it.each([
-    ["floating Quick Chat", { floating: true }],
+    ["detached floating Chat", { floating: true }],
     ["compact right-dock Chat", { compactLayout: true }],
   ])("focuses the composer in the %s pointer host", async (_name, props) => {
     const { current } = setupListedConversation();
@@ -450,7 +450,7 @@ describe("ChatView composer focus when a conversation opens", () => {
     expect(wrapper?.querySelectorAll(":scope > button")).toHaveLength(0);
   });
 
-  it("keeps a retained hidden Quick Chat from stealing focus and focuses it when shown", async () => {
+  it("keeps a retained inactive Chat host from stealing focus and focuses it when activated", async () => {
     const current = session("session-001");
     setupMockChat({ activeSession: current, sessions: [current], filteredSessions: [current], messages: [message(current.id)] });
     const view = await renderWithAct(

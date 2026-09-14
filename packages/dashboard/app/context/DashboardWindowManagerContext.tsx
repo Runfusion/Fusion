@@ -1,0 +1,560 @@
+import {
+  createContext,
+  forwardRef,
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type HTMLAttributes,
+  type ReactNode,
+  type RefCallback,
+} from "react";
+
+/*
+FNXC:DashboardWindowManager 2026-09-14-10:48:
+Dashboard windows share one declarative owner for shell geometry and temporary desktop visibility. Landmarks register through explicit refs and surfaces through opaque mount tokens; runtime class scans would miss portaled/plugin surfaces and would collapse duplicate logical ids.
+
+The global hide action is presentation-only. It snapshots mounted, locally visible tokens and makes those roots inert without invoking close callbacks, changing geometry, claiming a new stack layer, or unmounting children. A second action restores only captured tokens that still exist; a newly opened surface consumes the old snapshot first so it can never debut invisibly.
+*/
+
+export interface DashboardWindowBounds {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+  width: number;
+  height: number;
+}
+
+export type DashboardWindowLandmark = "header" | "footer" | "right-dock";
+export type DashboardWindowSurfaceGroup = "window" | "dialog" | "drawer" | "plugin" | "chat";
+export type DashboardWindowSurfaceToken = symbol;
+
+interface DashboardWindowSurfaceRecord {
+  token: DashboardWindowSurfaceToken;
+  logicalId: string;
+  group: DashboardWindowSurfaceGroup;
+  root: HTMLElement | null;
+  locallyVisible: boolean;
+  stackOrder: number;
+}
+
+export interface DashboardWindowSurfaceOptions {
+  logicalId: string;
+  group?: DashboardWindowSurfaceGroup;
+  locallyVisible?: boolean;
+  stackOrder?: number;
+}
+
+export interface DashboardWindowSurfaceBinding {
+  rootRef: RefCallback<HTMLElement>;
+  globallyHidden: boolean;
+  surfaceActive: boolean;
+  surfaceAttributes: {
+    "aria-hidden"?: boolean;
+    "data-dashboard-window-surface": string;
+    "data-dashboard-window-globally-hidden"?: "true";
+    inert?: boolean;
+  };
+}
+
+interface DashboardWindowManagerValue {
+  availableBounds: DashboardWindowBounds;
+  headerRef: RefCallback<HTMLElement>;
+  footerRef: RefCallback<HTMLElement>;
+  rightDockRef: RefCallback<HTMLElement>;
+  upsertSurface: (surface: DashboardWindowSurfaceRecord) => void;
+  removeSurface: (token: DashboardWindowSurfaceToken) => void;
+  isSurfaceHidden: (token: DashboardWindowSurfaceToken) => boolean;
+  isGroupVisible: (group: DashboardWindowSurfaceGroup) => boolean;
+  toggleVisibility: () => void;
+  hiddenSnapshotActive: boolean;
+  visibleSurfaceCount: number;
+  toggleControlRef: RefCallback<HTMLButtonElement>;
+  resetScope: (scopeKey: string | null | undefined) => void;
+}
+
+const DashboardWindowManagerContext = createContext<DashboardWindowManagerValue | null>(null);
+const DashboardWindowSurfaceActivityContext = createContext(true);
+const EMPTY_HIDDEN_TOKENS: ReadonlySet<DashboardWindowSurfaceToken> = new Set();
+const NOOP_ELEMENT_REF: RefCallback<HTMLElement> = () => {};
+let cachedViewportBounds: DashboardWindowBounds | undefined;
+
+function finite(value: number): boolean {
+  return Number.isFinite(value);
+}
+
+function viewportBounds(): DashboardWindowBounds {
+  const right = typeof window === "undefined" || !finite(window.innerWidth) ? 0 : Math.max(0, window.innerWidth);
+  const bottom = typeof window === "undefined" || !finite(window.innerHeight) ? 0 : Math.max(0, window.innerHeight);
+  if (cachedViewportBounds?.right === right && cachedViewportBounds.bottom === bottom) return cachedViewportBounds;
+  cachedViewportBounds = { left: 0, top: 0, right, bottom, width: right, height: bottom };
+  return cachedViewportBounds;
+}
+
+function validRect(node: HTMLElement | null): DOMRect | null {
+  if (!node || !node.isConnected) return null;
+  const rect = node.getBoundingClientRect();
+  if (![rect.left, rect.top, rect.right, rect.bottom, rect.width, rect.height].every(finite)) return null;
+  if (rect.right < rect.left || rect.bottom < rect.top || rect.width < 0 || rect.height < 0) return null;
+  return rect;
+}
+
+export function resolveDashboardWindowBounds(input: {
+  viewportWidth: number;
+  viewportHeight: number;
+  headerRect?: Pick<DOMRect, "bottom"> | null;
+  footerRect?: Pick<DOMRect, "top"> | null;
+  rightDockRect?: Pick<DOMRect, "left"> | null;
+}): DashboardWindowBounds {
+  const rightEdge = finite(input.viewportWidth) ? Math.max(0, input.viewportWidth) : 0;
+  const bottomEdge = finite(input.viewportHeight) ? Math.max(0, input.viewportHeight) : 0;
+  const top = input.headerRect && finite(input.headerRect.bottom)
+    ? Math.min(bottomEdge, Math.max(0, input.headerRect.bottom))
+    : 0;
+  const bottom = input.footerRect && finite(input.footerRect.top)
+    ? Math.min(bottomEdge, Math.max(top, input.footerRect.top))
+    : bottomEdge;
+  const right = input.rightDockRect && finite(input.rightDockRect.left)
+    ? Math.min(rightEdge, Math.max(0, input.rightDockRect.left))
+    : rightEdge;
+  return {
+    left: 0,
+    top,
+    right,
+    bottom,
+    width: Math.max(0, right),
+    height: Math.max(0, bottom - top),
+  };
+}
+
+function isFocusable(element: HTMLElement): boolean {
+  if (!element.isConnected || element.hidden || element.getAttribute("aria-hidden") === "true") return false;
+  if (element.matches(":disabled, [inert], [inert] *")) return false;
+  const tabIndex = element.getAttribute("tabindex");
+  return tabIndex !== "-1";
+}
+
+function focusFirstAvailable(root: HTMLElement): boolean {
+  const candidate = root.querySelector<HTMLElement>(
+    'button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])',
+  );
+  if (candidate && isFocusable(candidate)) {
+    candidate.focus();
+    return true;
+  }
+  if (isFocusable(root)) {
+    root.focus();
+    return true;
+  }
+  return false;
+}
+
+function scheduleAfterPaint(callback: () => void): () => void {
+  if (typeof requestAnimationFrame === "function") {
+    const frame = requestAnimationFrame(callback);
+    return () => cancelAnimationFrame(frame);
+  }
+  const timer = globalThis.setTimeout(callback, 0);
+  return () => globalThis.clearTimeout(timer);
+}
+
+export interface DashboardWindowManagerProviderProps {
+  children: ReactNode;
+}
+
+export function DashboardWindowManagerProvider({ children }: DashboardWindowManagerProviderProps) {
+  const landmarksRef = useRef<Record<DashboardWindowLandmark, HTMLElement | null>>({
+    header: null,
+    footer: null,
+    "right-dock": null,
+  });
+  const surfacesRef = useRef(new Map<DashboardWindowSurfaceToken, DashboardWindowSurfaceRecord>());
+  const hiddenSnapshotRef = useRef<Set<DashboardWindowSurfaceToken> | null>(null);
+  const focusedBeforeHideRef = useRef<HTMLElement | null>(null);
+  const toggleControlElementRef = useRef<HTMLButtonElement | null>(null);
+  const scopeKeyRef = useRef<string | null | undefined>(undefined);
+  const observerRef = useRef<ResizeObserver | null>(null);
+  const measureFrameRef = useRef<number | null>(null);
+  const focusCleanupRef = useRef<(() => void) | null>(null);
+  const [availableBounds, setAvailableBounds] = useState<DashboardWindowBounds>(viewportBounds);
+  const [surfaceRevision, setSurfaceRevision] = useState(0);
+  const [hiddenTokens, setHiddenTokens] = useState<ReadonlySet<DashboardWindowSurfaceToken>>(EMPTY_HIDDEN_TOKENS);
+
+  const measure = useCallback(() => {
+    measureFrameRef.current = null;
+    const viewport = viewportBounds();
+    const headerRect = validRect(landmarksRef.current.header);
+    const footerRect = validRect(landmarksRef.current.footer);
+    const rightDockRect = validRect(landmarksRef.current["right-dock"]);
+    const next = resolveDashboardWindowBounds({
+      viewportWidth: viewport.right,
+      viewportHeight: viewport.bottom,
+      headerRect,
+      footerRect,
+      rightDockRect,
+    });
+    setAvailableBounds((current) => (
+      current.left === next.left
+      && current.top === next.top
+      && current.right === next.right
+      && current.bottom === next.bottom
+      && current.width === next.width
+      && current.height === next.height
+        ? current
+        : next
+    ));
+  }, []);
+
+  const scheduleMeasure = useCallback(() => {
+    if (measureFrameRef.current !== null) return;
+    if (typeof requestAnimationFrame === "function") {
+      measureFrameRef.current = requestAnimationFrame(measure);
+    } else {
+      measure();
+    }
+  }, [measure]);
+
+  useLayoutEffect(() => {
+    measure();
+    const observer = typeof ResizeObserver === "function" ? new ResizeObserver(scheduleMeasure) : null;
+    observerRef.current = observer;
+    for (const node of Object.values(landmarksRef.current)) {
+      if (node) observer?.observe(node);
+    }
+    window.addEventListener("resize", scheduleMeasure);
+    return () => {
+      window.removeEventListener("resize", scheduleMeasure);
+      observer?.disconnect();
+      observerRef.current = null;
+      if (measureFrameRef.current !== null) cancelAnimationFrame(measureFrameRef.current);
+      measureFrameRef.current = null;
+    };
+  }, [measure, scheduleMeasure]);
+
+  useEffect(() => () => focusCleanupRef.current?.(), []);
+
+  useEffect(() => {
+    if (hiddenTokens.size === 0) return;
+    const containHiddenSurfaceEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    };
+    document.addEventListener("keydown", containHiddenSurfaceEscape, true);
+    return () => document.removeEventListener("keydown", containHiddenSurfaceEscape, true);
+  }, [hiddenTokens]);
+
+  const setLandmark = useCallback((kind: DashboardWindowLandmark, node: HTMLElement | null) => {
+    const previous = landmarksRef.current[kind];
+    if (previous === node) return;
+    if (previous) observerRef.current?.unobserve(previous);
+    landmarksRef.current[kind] = node;
+    if (node) observerRef.current?.observe(node);
+    scheduleMeasure();
+  }, [scheduleMeasure]);
+
+  const headerRef = useCallback<RefCallback<HTMLElement>>((node) => setLandmark("header", node), [setLandmark]);
+  const footerRef = useCallback<RefCallback<HTMLElement>>((node) => setLandmark("footer", node), [setLandmark]);
+  const rightDockRef = useCallback<RefCallback<HTMLElement>>((node) => setLandmark("right-dock", node), [setLandmark]);
+  const toggleControlRef = useCallback<RefCallback<HTMLButtonElement>>((node) => {
+    toggleControlElementRef.current = node;
+  }, []);
+
+  const restoreFocus = useCallback((capturedTokens: ReadonlySet<DashboardWindowSurfaceToken>) => {
+    focusCleanupRef.current?.();
+    focusCleanupRef.current = scheduleAfterPaint(() => {
+      focusCleanupRef.current = null;
+      const prior = focusedBeforeHideRef.current;
+      focusedBeforeHideRef.current = null;
+      if (prior && isFocusable(prior)) {
+        const belongsToRestoredSurface = [...capturedTokens].some((token) => {
+          const surface = surfacesRef.current.get(token);
+          return Boolean(surface?.root?.contains(prior) && surface.locallyVisible);
+        });
+        if (belongsToRestoredSurface) {
+          prior.focus();
+          return;
+        }
+      }
+      const topmost = [...capturedTokens]
+        .map((token) => surfacesRef.current.get(token))
+        .filter((surface): surface is DashboardWindowSurfaceRecord => Boolean(surface?.root && surface.locallyVisible))
+        .sort((a, b) => b.stackOrder - a.stackOrder)[0];
+      if (topmost?.root && focusFirstAvailable(topmost.root)) return;
+      toggleControlElementRef.current?.focus();
+    });
+  }, []);
+
+  const consumeSnapshot = useCallback(() => {
+    const snapshot = hiddenSnapshotRef.current;
+    if (!snapshot) return;
+    hiddenSnapshotRef.current = null;
+    setHiddenTokens(EMPTY_HIDDEN_TOKENS);
+    restoreFocus(snapshot);
+  }, [restoreFocus]);
+
+  const upsertSurface = useCallback((surface: DashboardWindowSurfaceRecord) => {
+    const previous = surfacesRef.current.get(surface.token);
+    const changed = !previous
+      || previous.logicalId !== surface.logicalId
+      || previous.group !== surface.group
+      || previous.root !== surface.root
+      || previous.locallyVisible !== surface.locallyVisible
+      || previous.stackOrder !== surface.stackOrder;
+    if (!changed) return;
+    surfacesRef.current.set(surface.token, surface);
+    setSurfaceRevision((revision) => revision + 1);
+
+    const snapshot = hiddenSnapshotRef.current;
+    if (snapshot && surface.root && surface.locallyVisible && !snapshot.has(surface.token)) {
+      consumeSnapshot();
+    }
+  }, [consumeSnapshot]);
+
+  const removeSurface = useCallback((token: DashboardWindowSurfaceToken) => {
+    if (!surfacesRef.current.delete(token)) return;
+    const snapshot = hiddenSnapshotRef.current;
+    if (snapshot?.delete(token)) {
+      if (snapshot.size === 0) {
+        hiddenSnapshotRef.current = null;
+        setHiddenTokens(EMPTY_HIDDEN_TOKENS);
+        focusedBeforeHideRef.current = null;
+      } else {
+        setHiddenTokens(new Set(snapshot));
+      }
+    }
+    setSurfaceRevision((revision) => revision + 1);
+  }, []);
+
+  const toggleVisibility = useCallback(() => {
+    if (hiddenSnapshotRef.current) {
+      consumeSnapshot();
+      return;
+    }
+    const visibleTokens = [...surfacesRef.current.values()]
+      .filter((surface) => surface.root && surface.locallyVisible)
+      .map((surface) => surface.token);
+    if (visibleTokens.length === 0) return;
+    focusedBeforeHideRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const snapshot = new Set(visibleTokens);
+    hiddenSnapshotRef.current = snapshot;
+    setHiddenTokens(snapshot);
+    focusCleanupRef.current?.();
+    focusCleanupRef.current = scheduleAfterPaint(() => {
+      focusCleanupRef.current = null;
+      toggleControlElementRef.current?.focus();
+    });
+  }, [consumeSnapshot]);
+
+  const resetScope = useCallback((scopeKey: string | null | undefined) => {
+    if (scopeKeyRef.current === scopeKey) return;
+    scopeKeyRef.current = scopeKey;
+    hiddenSnapshotRef.current = null;
+    focusedBeforeHideRef.current = null;
+    setHiddenTokens(EMPTY_HIDDEN_TOKENS);
+  }, []);
+
+  const isSurfaceHidden = useCallback((token: DashboardWindowSurfaceToken) => hiddenTokens.has(token), [hiddenTokens]);
+  const isGroupVisible = useCallback((group: DashboardWindowSurfaceGroup) => {
+    void surfaceRevision;
+    return [...surfacesRef.current.values()].some((surface) => (
+      surface.group === group
+      && Boolean(surface.root)
+      && surface.locallyVisible
+      && !hiddenTokens.has(surface.token)
+    ));
+  }, [hiddenTokens, surfaceRevision]);
+  const hiddenSnapshotActive = hiddenTokens.size > 0;
+  const visibleSurfaceCount = useMemo(() => {
+    void surfaceRevision;
+    let count = 0;
+    for (const surface of surfacesRef.current.values()) {
+      if (surface.root && surface.locallyVisible && !hiddenTokens.has(surface.token)) count += 1;
+    }
+    return count;
+  }, [hiddenTokens, surfaceRevision]);
+
+  const value = useMemo<DashboardWindowManagerValue>(() => ({
+    availableBounds,
+    headerRef,
+    footerRef,
+    rightDockRef,
+    upsertSurface,
+    removeSurface,
+    isSurfaceHidden,
+    isGroupVisible,
+    toggleVisibility,
+    hiddenSnapshotActive,
+    visibleSurfaceCount,
+    toggleControlRef,
+    resetScope,
+  }), [
+    availableBounds,
+    footerRef,
+    headerRef,
+    hiddenSnapshotActive,
+    isGroupVisible,
+    isSurfaceHidden,
+    removeSurface,
+    resetScope,
+    rightDockRef,
+    toggleControlRef,
+    toggleVisibility,
+    upsertSurface,
+    visibleSurfaceCount,
+  ]);
+
+  return <DashboardWindowManagerContext.Provider value={value}>{children}</DashboardWindowManagerContext.Provider>;
+}
+
+export function useDashboardWindowManager(): DashboardWindowManagerValue | null {
+  return useContext(DashboardWindowManagerContext);
+}
+
+export function useDashboardWindowBounds(): DashboardWindowBounds {
+  return useContext(DashboardWindowManagerContext)?.availableBounds ?? viewportBounds();
+}
+
+/*
+FNXC:DashboardWindowVisibility 2026-09-14-11:35:
+Managed descendants receive presentation activity through React context, not DOM discovery. Expensive readers, focus ownership, and unread acknowledgements can therefore stop while their retained window or drawer is globally hidden.
+*/
+export function DashboardWindowSurfaceActivityProvider({ active, children }: { active: boolean; children: ReactNode }) {
+  const parentActive = useContext(DashboardWindowSurfaceActivityContext);
+  return <DashboardWindowSurfaceActivityContext.Provider value={parentActive && active}>{children}</DashboardWindowSurfaceActivityContext.Provider>;
+}
+
+export function useDashboardWindowSurfaceActivity(): boolean {
+  return useContext(DashboardWindowSurfaceActivityContext);
+}
+
+export function useDashboardWindowGroupVisible(group: DashboardWindowSurfaceGroup): boolean {
+  return useContext(DashboardWindowManagerContext)?.isGroupVisible(group) ?? false;
+}
+
+export interface DashboardWindowVisibilityController {
+  hiddenSnapshotActive: boolean;
+  visibleSurfaceCount: number;
+  toggleVisibility: () => void;
+  toggleControlRef: RefCallback<HTMLButtonElement>;
+}
+
+export function useDashboardWindowVisibility(): DashboardWindowVisibilityController | null {
+  const manager = useContext(DashboardWindowManagerContext);
+  if (!manager) return null;
+  return {
+    hiddenSnapshotActive: manager.hiddenSnapshotActive,
+    visibleSurfaceCount: manager.visibleSurfaceCount,
+    toggleVisibility: manager.toggleVisibility,
+    toggleControlRef: manager.toggleControlRef,
+  };
+}
+
+export function DashboardWindowManagerScope({ scopeKey }: { scopeKey: string | null | undefined }) {
+  const resetScope = useContext(DashboardWindowManagerContext)?.resetScope;
+  useLayoutEffect(() => resetScope?.(scopeKey), [resetScope, scopeKey]);
+  return null;
+}
+
+export function useDashboardWindowLandmark(kind: DashboardWindowLandmark): RefCallback<HTMLElement> {
+  const manager = useContext(DashboardWindowManagerContext);
+  if (!manager) return NOOP_ELEMENT_REF;
+  if (kind === "header") return manager.headerRef;
+  if (kind === "footer") return manager.footerRef;
+  return manager.rightDockRef;
+}
+
+export function useDashboardWindowManagerScope(scopeKey: string | null | undefined): void {
+  const resetScope = useContext(DashboardWindowManagerContext)?.resetScope;
+  useLayoutEffect(() => {
+    resetScope?.(scopeKey);
+  }, [resetScope, scopeKey]);
+}
+
+export type DashboardWindowSurfaceRootProps = HTMLAttributes<HTMLDivElement> & DashboardWindowSurfaceOptions;
+
+/*
+FNXC:DashboardWindowVisibility 2026-09-14-10:52:
+Direct modal roots use the same declarative token contract as shared window primitives without adding a layout wrapper. Local aria/inert state is composed with, never overwritten by, the temporary global snapshot.
+*/
+export const DashboardWindowSurfaceRoot = forwardRef<HTMLDivElement, DashboardWindowSurfaceRootProps>(function DashboardWindowSurfaceRoot({
+  logicalId,
+  group,
+  locallyVisible,
+  stackOrder,
+  children,
+  ...props
+}, forwardedRef) {
+  const surface = useDashboardWindowSurface({ logicalId, group, locallyVisible, stackOrder });
+  const setRoot = useCallback((node: HTMLDivElement | null) => {
+    surface.rootRef(node);
+    if (typeof forwardedRef === "function") forwardedRef(node);
+    else if (forwardedRef) forwardedRef.current = node;
+  }, [forwardedRef, surface.rootRef]);
+  const locallyHidden = props["aria-hidden"] === true || props.inert === true;
+  return (
+    <div
+      {...props}
+      ref={setRoot}
+      aria-hidden={locallyHidden || surface.globallyHidden || undefined}
+      inert={locallyHidden || surface.globallyHidden || undefined}
+      data-dashboard-window-surface={surface.surfaceAttributes["data-dashboard-window-surface"]}
+      data-dashboard-window-globally-hidden={surface.surfaceAttributes["data-dashboard-window-globally-hidden"]}
+    >
+      <DashboardWindowSurfaceActivityProvider active={surface.surfaceActive}>
+        {children}
+      </DashboardWindowSurfaceActivityProvider>
+    </div>
+  );
+});
+
+export function useDashboardWindowSurface(options: DashboardWindowSurfaceOptions): DashboardWindowSurfaceBinding {
+  const manager = useContext(DashboardWindowManagerContext);
+  const upsertSurface = manager?.upsertSurface;
+  const removeSurface = manager?.removeSurface;
+  const tokenRef = useRef<DashboardWindowSurfaceToken>(Symbol(options.logicalId));
+  const rootRefValue = useRef<HTMLElement | null>(null);
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
+
+  const publish = useCallback((root = rootRefValue.current) => {
+    if (!upsertSurface) return;
+    const current = optionsRef.current;
+    upsertSurface({
+      token: tokenRef.current,
+      logicalId: current.logicalId,
+      group: current.group ?? "dialog",
+      root,
+      locallyVisible: current.locallyVisible ?? true,
+      stackOrder: Number.isFinite(current.stackOrder) ? current.stackOrder ?? 0 : 0,
+    });
+  }, [upsertSurface]);
+
+  const rootRef = useCallback<RefCallback<HTMLElement>>((node) => {
+    rootRefValue.current = node;
+    publish(node);
+  }, [publish]);
+
+  useLayoutEffect(() => {
+    publish();
+  });
+  useLayoutEffect(() => () => removeSurface?.(tokenRef.current), [removeSurface]);
+
+  const globallyHidden = manager?.isSurfaceHidden(tokenRef.current) ?? false;
+  const locallyVisible = options.locallyVisible ?? true;
+  return {
+    rootRef,
+    globallyHidden,
+    surfaceActive: locallyVisible && !globallyHidden,
+    surfaceAttributes: {
+      "data-dashboard-window-surface": options.logicalId,
+      "data-dashboard-window-globally-hidden": globallyHidden ? "true" : undefined,
+      "aria-hidden": globallyHidden || undefined,
+      inert: globallyHidden || undefined,
+    },
+  };
+}

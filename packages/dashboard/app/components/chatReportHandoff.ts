@@ -18,13 +18,12 @@ export interface ChatMailReportRouting {
 }
 
 /**
- * FNXC:StructuralMail 2026-08-09-11:59:
- * App owns report handoff navigation and Quick Chat dismissal. Keep that stateful seam reusable by
- * the real routing test so it cannot drift into a test-only approximation of the production chain.
+ * FNXC:StructuralMail 2026-09-14-11:35:
+ * App owns report navigation and closes only the canonical primary Chat host after handoff. Detached conversations remain open; this reusable seam keeps production and routing tests aligned.
  */
 export function useChatMailReportRouting(
   navigateToMailbox: () => void,
-  closeQuickChat: () => void,
+  closePrimaryChatHost: () => void,
 ): ChatMailReportRouting {
   const [mailComposerPrefill, setMailComposerPrefill] = useState<(ChatReportHandoff & { nonce: number }) | null>(null);
   const nonceRef = useRef(0);
@@ -33,8 +32,8 @@ export function useChatMailReportRouting(
     nonceRef.current = nonce;
     setMailComposerPrefill({ ...handoff, nonce });
     navigateToMailbox();
-    closeQuickChat();
-  }, [closeQuickChat, navigateToMailbox]);
+    closePrimaryChatHost();
+  }, [closePrimaryChatHost, navigateToMailbox]);
   return { mailComposerPrefill, onSendAsReport };
 }
 

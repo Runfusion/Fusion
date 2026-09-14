@@ -30,32 +30,32 @@ function press(init: KeyboardEventInit, target: Document | HTMLElement = documen
 }
 
 describe("App dashboard keyboard shortcuts", () => {
-  it("opens Quick Chat with the default Space binding from document focus", () => {
-    const toggleQuickChat = vi.fn();
+  it("keeps modal visibility disabled until an operator assigns a binding", () => {
+    const toggleModalVisibility = vi.fn();
 
     renderHook(() => useDashboardKeyboardShortcuts({
-      ...baseHandlers(), toggleQuickChat, toggleTerminal: vi.fn() }));
+      ...baseHandlers(), toggleModalVisibility, toggleTerminal: vi.fn() }));
     const event = press({ key: " " });
 
-    expect(toggleQuickChat).toHaveBeenCalledTimes(1);
-    expect(event.defaultPrevented).toBe(true);
+    expect(toggleModalVisibility).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(false);
   });
 
-  it("dispatches every default shortcut twice so App toggle callbacks own both directions", () => {
-    const toggleQuickChat = vi.fn();
+  it("dispatches every configured shortcut twice so App toggle callbacks own both directions", () => {
+    const toggleModalVisibility = vi.fn();
     const toggleTerminal = vi.fn();
     const handlers = {
-      toggleQuickChat,
+      toggleModalVisibility,
       toggleTerminal,
       toggleFiles: vi.fn(),
       toggleSettings: vi.fn(),
       toggleCommandCenter: vi.fn(),
       toggleNewTask: vi.fn(),
     };
-    renderHook(() => useDashboardKeyboardShortcuts(handlers));
+    renderHook(() => useDashboardKeyboardShortcuts({ ...handlers, shortcuts: { toggleModalVisibility: "Alt+M" } }));
 
     const bindings: KeyboardEventInit[] = [
-      { key: " " },
+      { key: "m", altKey: true },
       { key: "`", ctrlKey: true },
       { key: "e", ctrlKey: true },
       { key: ",", ctrlKey: true },
@@ -73,18 +73,18 @@ describe("App dashboard keyboard shortcuts", () => {
   });
 
   it("uses configured Terminal bindings and leaves disabled bindings inert", () => {
-    const toggleQuickChat = vi.fn();
+    const toggleModalVisibility = vi.fn();
     const toggleTerminal = vi.fn();
 
     renderHook(() => useDashboardKeyboardShortcuts({
       ...baseHandlers(),
-      shortcuts: { quickChat: "", terminal: "Alt+T" },
-      toggleQuickChat,
+      shortcuts: { toggleModalVisibility: "", terminal: "Alt+T" },
+      toggleModalVisibility,
       toggleTerminal,
     }));
 
     const disabledQuickChatEvent = press({ key: " " });
-    expect(toggleQuickChat).not.toHaveBeenCalled();
+    expect(toggleModalVisibility).not.toHaveBeenCalled();
     expect(disabledQuickChatEvent.defaultPrevented).toBe(false);
 
     const terminalEvent = press({ key: "t", altKey: true });
@@ -93,14 +93,14 @@ describe("App dashboard keyboard shortcuts", () => {
   });
 
   it("does not capture Space or Escape while an editable field owns the key", () => {
-    const toggleQuickChat = vi.fn();
+    const toggleModalVisibility = vi.fn();
     const closeTopmostPopup = vi.fn(() => true);
     const input = document.createElement("input");
     document.body.append(input);
 
     renderHook(() => useDashboardKeyboardShortcuts({
       ...baseHandlers(),
-      toggleQuickChat,
+      toggleModalVisibility,
       toggleTerminal: vi.fn(),
       closeTopmostPopup,
     }));
@@ -109,7 +109,7 @@ describe("App dashboard keyboard shortcuts", () => {
     const spaceEvent = press({ key: " " }, input);
     const escapeEvent = press({ key: "Escape" }, input);
 
-    expect(toggleQuickChat).not.toHaveBeenCalled();
+    expect(toggleModalVisibility).not.toHaveBeenCalled();
     expect(closeTopmostPopup).not.toHaveBeenCalled();
     expect(spaceEvent.defaultPrevented).toBe(false);
     expect(escapeEvent.defaultPrevented).toBe(false);
@@ -117,13 +117,36 @@ describe("App dashboard keyboard shortcuts", () => {
     input.remove();
   });
 
+  it("restores modal visibility from the footer button while other shortcuts remain control-safe", () => {
+    const toggleModalVisibility = vi.fn();
+    const toggleTerminal = vi.fn();
+    const button = document.createElement("button");
+    document.body.append(button);
+    button.focus();
+
+    renderHook(() => useDashboardKeyboardShortcuts({
+      ...baseHandlers(),
+      shortcuts: { toggleModalVisibility: "Alt+M" },
+      toggleModalVisibility,
+      toggleTerminal,
+    }));
+
+    const visibilityEvent = press({ key: "m", altKey: true }, button);
+    press({ key: "`", ctrlKey: true }, button);
+
+    expect(toggleModalVisibility).toHaveBeenCalledTimes(1);
+    expect(visibilityEvent.defaultPrevented).toBe(true);
+    expect(toggleTerminal).not.toHaveBeenCalled();
+    button.remove();
+  });
+
   it("lets nested handlers keep default-prevented shortcut events", () => {
-    const toggleQuickChat = vi.fn();
+    const toggleModalVisibility = vi.fn();
     const closeTopmostPopup = vi.fn(() => true);
 
     renderHook(() => useDashboardKeyboardShortcuts({
       ...baseHandlers(),
-      toggleQuickChat,
+      toggleModalVisibility,
       toggleTerminal: vi.fn(),
       closeTopmostPopup,
     }));
@@ -136,148 +159,80 @@ describe("App dashboard keyboard shortcuts", () => {
     Object.defineProperty(menuEscape, "defaultPrevented", { value: true });
     document.dispatchEvent(menuEscape);
 
-    expect(toggleQuickChat).not.toHaveBeenCalled();
+    expect(toggleModalVisibility).not.toHaveBeenCalled();
     expect(closeTopmostPopup).not.toHaveBeenCalled();
   });
 
-  /*
-  FNXC:DashboardShortcuts 2026-08-23-22:55:
-  FN-116 added popped-out Quick Chats as their own shell tier, so the Escape order is
-  popped-out task → popped-out chat → Quick Chat → terminal → topmost open modal. Every state
-  fixture must carry `poppedOutChatEntries`, and the chat tier gets its own step below.
-  */
-  it("closes exactly one topmost App popup per Escape in shell order", () => {
+  it("closes exactly one visible App popup per Escape in shell order", () => {
     const closePoppedOutTask = vi.fn();
     const closePoppedOutChat = vi.fn();
-    const closeQuickChat = vi.fn();
     const closeTerminal = vi.fn();
     const closeSettings = vi.fn();
-    const closeTaskDetail = vi.fn();
-    const handlers = { closePoppedOutTask, closePoppedOutChat, closeQuickChat, closeTerminal };
+    const closePrimaryChat = vi.fn();
+    const handlers = { closePoppedOutTask, closePoppedOutChat, closeTerminal };
 
-    expect(closeTopmostDashboardPopupForShortcut(
-      {
-        // FN-8016: explicit globally-visible opt-out can expose both same-id entries;
-        // Escape must preserve origin identity and close only the topmost one.
-        poppedOutTaskEntries: [{ task: { id: "FN-1" }, originTaskView: "board" }, { task: { id: "FN-1" }, originTaskView: "planning" }],
-        poppedOutChatEntries: [{ projectId: "proj-1", session: { id: "chat-1" }, minimized: false }],
-
-        quickChatOpen: true,
-        terminalOpen: true,
-        modalClosers: [[true, closeSettings], [true, closeTaskDetail]],
-      } as never,
-      handlers,
-    )).toBe(true);
+    expect(closeTopmostDashboardPopupForShortcut({
+      poppedOutTaskEntries: [
+        { task: { id: "FN-1" }, originTaskView: "board" },
+        { task: { id: "FN-1" }, originTaskView: "planning" },
+      ],
+      poppedOutChatEntries: [{ projectId: "proj-1", session: { id: "chat-1" } }],
+      terminalOpen: true,
+      modalClosers: [[true, closePrimaryChat], [true, closeSettings]],
+    } as never, handlers)).toBe(true);
     expect(closePoppedOutTask).toHaveBeenCalledWith("FN-1", "planning");
     expect(closePoppedOutChat).not.toHaveBeenCalled();
-    expect(closeQuickChat).not.toHaveBeenCalled();
-    expect(closeTerminal).not.toHaveBeenCalled();
-    expect(closeSettings).not.toHaveBeenCalled();
 
-    expect(closeTopmostDashboardPopupForShortcut(
-      {
-        poppedOutTaskEntries: [],
-        poppedOutChatEntries: [{ projectId: "proj-1", session: { id: "chat-1" }, minimized: false }, { projectId: "proj-2", session: { id: "chat-2" }, minimized: false }],
-        quickChatOpen: true,
-        terminalOpen: true,
-        modalClosers: [[true, closeSettings]],
-      } as never,
-      handlers,
-    )).toBe(true);
+    expect(closeTopmostDashboardPopupForShortcut({
+      poppedOutTaskEntries: [],
+      poppedOutChatEntries: [
+        { projectId: "proj-1", session: { id: "chat-1" } },
+        { projectId: "proj-2", session: { id: "chat-2" } },
+      ],
+      terminalOpen: true,
+      modalClosers: [[true, closePrimaryChat]],
+    }, handlers)).toBe(true);
     expect(closePoppedOutChat).toHaveBeenCalledWith("proj-2", "chat-2");
-    expect(closePoppedOutChat).toHaveBeenCalledTimes(1);
-    expect(closeQuickChat).not.toHaveBeenCalled();
 
-    expect(closeTopmostDashboardPopupForShortcut(
-      { poppedOutTaskEntries: [], poppedOutChatEntries: [], quickChatOpen: true, terminalOpen: true, modalClosers: [[true, closeSettings]] } as never,
-      handlers,
-
-    )).toBe(true);
-    expect(closeQuickChat).toHaveBeenCalledTimes(1);
-    expect(closeTerminal).not.toHaveBeenCalled();
-
-    expect(closeTopmostDashboardPopupForShortcut(
-      { poppedOutTaskEntries: [], poppedOutChatEntries: [], quickChatOpen: false, terminalOpen: true, modalClosers: [[true, closeSettings]] } as never,
-      handlers,
-
-    )).toBe(true);
+    expect(closeTopmostDashboardPopupForShortcut({
+      poppedOutTaskEntries: [],
+      poppedOutChatEntries: [],
+      terminalOpen: true,
+      modalClosers: [[true, closePrimaryChat]],
+    }, handlers)).toBe(true);
     expect(closeTerminal).toHaveBeenCalledTimes(1);
+    expect(closePrimaryChat).not.toHaveBeenCalled();
+
+    expect(closeTopmostDashboardPopupForShortcut({
+      poppedOutTaskEntries: [],
+      poppedOutChatEntries: [],
+      terminalOpen: false,
+      modalClosers: [[true, closePrimaryChat], [true, closeSettings]],
+    }, handlers)).toBe(true);
+    expect(closePrimaryChat).toHaveBeenCalledTimes(1);
     expect(closeSettings).not.toHaveBeenCalled();
 
-    expect(closeTopmostDashboardPopupForShortcut(
-      { poppedOutTaskEntries: [], poppedOutChatEntries: [], quickChatOpen: false, terminalOpen: false, modalClosers: [[false, closeSettings], [true, closeTaskDetail]] } as never,
-      handlers,
-
-    )).toBe(true);
-    expect(closeTaskDetail).toHaveBeenCalledTimes(1);
+    expect(closeTopmostDashboardPopupForShortcut({
+      poppedOutTaskEntries: [],
+      poppedOutChatEntries: [],
+      windowsGloballyHidden: true,
+      terminalOpen: true,
+      modalClosers: [[true, closeSettings]],
+    }, handlers)).toBe(false);
     expect(closeSettings).not.toHaveBeenCalled();
-
-    expect(closeTopmostDashboardPopupForShortcut(
-      { poppedOutTaskEntries: [], poppedOutChatEntries: [], quickChatOpen: false, terminalOpen: false, modalClosers: [[false, closeSettings]] } as never,
-      handlers,
-
-    )).toBe(false);
   });
 
-  it("skips minimized chats and closes the last visible chat before Quick Chat", () => {
-    const closePoppedOutChat = vi.fn();
-    const closeQuickChat = vi.fn();
-    const handlers = {
-      closePoppedOutTask: vi.fn(),
-      closePoppedOutChat,
-      closeQuickChat,
-      closeTerminal: vi.fn(),
-    };
-
-    expect(closeTopmostDashboardPopupForShortcut(
-      {
-        poppedOutTaskEntries: [],
-        poppedOutChatEntries: [
-          { projectId: "project", session: { id: "a" }, minimized: true },
-          { projectId: "project", session: { id: "b" }, minimized: true },
-        ],
-        quickChatOpen: true,
-        terminalOpen: false,
-        modalClosers: [],
-      } as never,
-      handlers,
-    )).toBe(true);
-    expect(closeQuickChat).toHaveBeenCalledTimes(1);
-    expect(closePoppedOutChat).not.toHaveBeenCalled();
-
-    expect(closeTopmostDashboardPopupForShortcut(
-      {
-        poppedOutTaskEntries: [],
-        poppedOutChatEntries: [
-          { projectId: "project", session: { id: "visible" }, minimized: false },
-          { projectId: "project", session: { id: "hidden" }, minimized: true },
-        ],
-        quickChatOpen: true,
-        terminalOpen: false,
-        modalClosers: [],
-      } as never,
-      handlers,
-    )).toBe(true);
-    expect(closePoppedOutChat).toHaveBeenCalledTimes(1);
-    expect(closePoppedOutChat).toHaveBeenCalledWith("project", "visible");
-    expect(closeQuickChat).toHaveBeenCalledTimes(1);
-  });
-
-  /*
-  FNXC:DashboardShortcuts 2026-08-23-03:33:
-  FN-169 re-raises an existing chat rather than reordering it, so Escape must retain insertion
-  order and close the last independently opened chat.
-  */
-  it("keeps Escape ordering when a popped-out chat is re-raised", () => {
+  it("keeps insertion Escape ordering when an existing detached chat is focused", () => {
     const { result } = renderHook(() => usePoppedOutChats());
     const session = (id: string) => ({ id, agentId: "agent", title: id, status: "active" as const, createdAt: "2026-08-23T00:00:00.000Z", updatedAt: "2026-08-23T00:00:00.000Z" });
     act(() => result.current.popOut("project", session("a")));
     act(() => result.current.popOut("project", session("b")));
     act(() => result.current.popOut("project", session("a")));
     const closePoppedOutChat = vi.fn();
+
     expect(closeTopmostDashboardPopupForShortcut(
-      { poppedOutTaskEntries: [], poppedOutChatEntries: result.current.entries, quickChatOpen: false, terminalOpen: false, modalClosers: [] },
-      { closePoppedOutTask: vi.fn(), closePoppedOutChat, closeQuickChat: vi.fn(), closeTerminal: vi.fn() },
+      { poppedOutTaskEntries: [], poppedOutChatEntries: result.current.entries, terminalOpen: false, modalClosers: [] },
+      { closePoppedOutTask: vi.fn(), closePoppedOutChat, closeTerminal: vi.fn() },
     )).toBe(true);
     expect(closePoppedOutChat).toHaveBeenCalledWith("project", "b");
   });
@@ -291,8 +246,8 @@ describe("App dashboard keyboard shortcuts", () => {
 
     const closePoppedOutNote = vi.fn();
     expect(closeTopmostDashboardPopupForShortcut(
-      { poppedOutTaskEntries: [], poppedOutChatEntries: [], poppedOutNoteEntries: result.current.entries, quickChatOpen: false, terminalOpen: false, modalClosers: [] },
-      { closePoppedOutTask: vi.fn(), closePoppedOutChat: vi.fn(), closePoppedOutNote, closeQuickChat: vi.fn(), closeTerminal: vi.fn() },
+      { poppedOutTaskEntries: [], poppedOutChatEntries: [], poppedOutNoteEntries: result.current.entries, terminalOpen: false, modalClosers: [] },
+      { closePoppedOutTask: vi.fn(), closePoppedOutChat: vi.fn(), closePoppedOutNote, closeTerminal: vi.fn() },
     )).toBe(true);
     expect(closePoppedOutNote).toHaveBeenCalledWith("project", "a");
   });
@@ -304,7 +259,7 @@ describe("App dashboard keyboard shortcuts", () => {
 
     renderHook(() => useDashboardKeyboardShortcuts({
       ...baseHandlers(),
-      toggleQuickChat: vi.fn(),
+      toggleModalVisibility: vi.fn(),
       toggleTerminal: vi.fn(),
       closeTopmostPopup,
     }));
@@ -325,7 +280,7 @@ describe("App dashboard keyboard shortcuts", () => {
     document.body.append(input);
 
     renderHook(() => useDashboardKeyboardShortcuts({
-      toggleQuickChat: vi.fn(),
+      toggleModalVisibility: vi.fn(),
       toggleTerminal: vi.fn(),
       toggleFiles,
       toggleSettings,
@@ -358,16 +313,16 @@ describe("App dashboard keyboard shortcuts", () => {
   });
 
   it("keeps invalid bindings inert without preventing their key event", () => {
-    const toggleQuickChat = vi.fn();
+    const toggleModalVisibility = vi.fn();
     renderHook(() => useDashboardKeyboardShortcuts({
       ...baseHandlers(),
-      shortcuts: { quickChat: "Ctrl+Alt" },
-      toggleQuickChat,
+      shortcuts: { toggleModalVisibility: "Ctrl+Alt" },
+      toggleModalVisibility,
       toggleTerminal: vi.fn(),
     }));
 
     const event = press({ key: "a", ctrlKey: true, altKey: true });
-    expect(toggleQuickChat).not.toHaveBeenCalled();
+    expect(toggleModalVisibility).not.toHaveBeenCalled();
     expect(event.defaultPrevented).toBe(false);
   });
 

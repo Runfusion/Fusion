@@ -4,6 +4,11 @@ import { useDrawerDismissGesture } from "../hooks/useDrawerDismissGesture";
 import { ViewDrawerHandle } from "./ViewDrawer";
 import { ViewLayoutContent, ViewLayoutHeader } from "./ViewLayout";
 import "./AlphaMobileDrawer.css";
+import {
+  DashboardWindowSurfaceActivityProvider,
+  useDashboardWindowSurface,
+  type DashboardWindowSurfaceGroup,
+} from "../context/DashboardWindowManagerContext";
 
 export interface AlphaMobileDrawerProps {
   open: boolean;
@@ -13,6 +18,8 @@ export interface AlphaMobileDrawerProps {
   className?: string;
   keepMounted?: boolean;
   testId?: string;
+  /** Semantic group used by shared visibility/read-state consumers. */
+  surfaceGroup?: DashboardWindowSurfaceGroup;
   /**
    * When true, the hosted view owns the visible heading row and the drawer only
    * contributes an accessible dialog name plus its close control.
@@ -72,25 +79,43 @@ export function AlphaMobileDrawer({
   className,
   keepMounted = false,
   testId = "alpha-mobile-drawer",
+  surfaceGroup,
   contentOwnsHeader = false,
   contentOwnsScroll = false,
 }: AlphaMobileDrawerProps) {
   const panelRef = useRef<HTMLElement | null>(null);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
+  const windowSurface = useDashboardWindowSurface({
+    logicalId: testId,
+    group: surfaceGroup ?? "drawer",
+    locallyVisible: open,
+  });
+  const surfaceActiveRef = useRef(windowSurface.surfaceActive);
+  surfaceActiveRef.current = windowSurface.surfaceActive;
   const dismissHandleProps = useDrawerDismissGesture({
-    enabled: open,
+    enabled: open && windowSurface.surfaceActive,
     open,
     panelRef,
     onDismiss: onClose,
   });
 
+  /*
+  FNXC:DashboardWindowVisibility 2026-09-14-10:52:
+  Opening a drawer still claims initial focus, but a manager hide/restore cycle must not replay autofocus over the manager's captured target. Interaction listeners are independently removed while the retained drawer is globally hidden.
+  */
   useEffect(() => {
-    if (!open) return;
+    if (!open || !surfaceActiveRef.current) return;
     const priorFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const panel = panelRef.current;
-    panel?.focus();
+    panelRef.current?.focus();
+    return () => {
+      if (priorFocus?.isConnected) priorFocus.focus();
+    };
+  }, [open]);
 
+  useEffect(() => {
+    if (!open || !windowSurface.surfaceActive) return;
+    const panel = panelRef.current;
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
@@ -116,21 +141,22 @@ export function AlphaMobileDrawer({
     };
 
     document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("keydown", handleKeyDown);
-      priorFocus?.focus();
-    };
-  }, [open]);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [open, windowSurface.surfaceActive]);
 
   if (!open && !keepMounted) return null;
 
   return createPortal(
     <div
+      ref={windowSurface.rootRef}
       className={`alpha-mobile-drawer${open ? " alpha-mobile-drawer--open" : " alpha-mobile-drawer--hidden"}${className ? ` ${className}` : ""}`}
       data-testid={testId}
-      aria-hidden={!open || undefined}
+      aria-hidden={!open || windowSurface.globallyHidden || undefined}
+      inert={!open || windowSurface.globallyHidden || undefined}
+      data-dashboard-window-surface={windowSurface.surfaceAttributes["data-dashboard-window-surface"]}
+      data-dashboard-window-globally-hidden={windowSurface.surfaceAttributes["data-dashboard-window-globally-hidden"]}
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
+        if (windowSurface.surfaceActive && event.target === event.currentTarget) onClose();
       }}
     >
       <section
@@ -150,7 +176,11 @@ export function AlphaMobileDrawer({
             <h2 id={`${testId}-title`} className="alpha-mobile-drawer__title">{title}</h2>
           </ViewLayoutHeader>
         )}
-        <ViewLayoutContent className="alpha-mobile-drawer__body">{children}</ViewLayoutContent>
+        <ViewLayoutContent className="alpha-mobile-drawer__body">
+          <DashboardWindowSurfaceActivityProvider active={windowSurface.surfaceActive}>
+            {children}
+          </DashboardWindowSurfaceActivityProvider>
+        </ViewLayoutContent>
       </section>
     </div>,
     document.body,

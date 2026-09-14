@@ -121,7 +121,7 @@ import { useAgentsMapCache } from "./useAgentsMapCache";
 export interface UseChatOptions {
   /** Forces a window-local Direct selection instead of restoring the shared host selection. */
   initialSession?: ChatSessionInfo;
-  /** Secondary Quick Chats must never rewrite the ordinary host's session preference. */
+  /** Detached conversations must never rewrite the canonical host's session preference. */
   persistActiveSession?: boolean;
 }
 
@@ -708,9 +708,8 @@ export function useChat(
     if (hasRestoredActiveSessionRef.current) return;
 
     /*
-    FNXC:ChatWindows 2026-08-21-18:24:
-    A secondary Quick Chat owns an explicit session and must not let a stale ordinary-host
-    preference replace it. Its later selections stay local when persistence is disabled.
+    FNXC:ChatWindows 2026-09-14-11:35:
+    A detached conversation owns an explicit session and must not let a stale canonical-host preference replace it. Its later selections stay local when persistence is disabled.
     */
     if (initialSession) {
       hasRestoredActiveSessionRef.current = true;

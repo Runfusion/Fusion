@@ -97,30 +97,6 @@ export const generalSearchEntries: SettingsSearchEntry[] = [
   },
   {
     sectionId: "general",
-    key: "quickChatButtonMode",
-    labelKey: "settings.general.quickChatLauncher",
-    labelFallback: "Quick Chat launcher",
-    helpKey: "settings.general.quickChatLauncherHint",
-    helpFallback:
-      "Choose whether Quick Chat opens from the draggable floating button, a footer button beside Terminal, or stays hidden. Default: off (hidden).",
-    /*
-    FNXC:SettingsSearch 2026-07-15-17:35:
-    "FAB" is indexed as a keyword rather than left to the copy: the legacy stored key is `showQuickChatFAB`, so operators and older docs still call this the Quick Chat FAB even though the label never says it.
-    */
-    keywords: ["FAB", "floating action button"],
-  },
-  {
-    sectionId: "general",
-    key: "quickChatCloseOnOutsideClick",
-    labelKey: "settings.general.quickChatCloseOnOutsideClick",
-    labelFallback: "Close Quick Chat on outside click",
-    helpKey: "settings.general.quickChatCloseOnOutsideClickHint",
-    helpFallback:
-      "When enabled, clicking outside the Quick Chat window closes it. Disable to keep it open until you close it explicitly. Default: enabled.",
-    keywords: ["dismiss", "backdrop"],
-  },
-  {
-    sectionId: "general",
     key: "showTaskChatsInCommonFeed",
     labelKey: "settings.general.showTaskChatsInCommonFeed",
     labelFallback: "Show task chats in common Chat feed",

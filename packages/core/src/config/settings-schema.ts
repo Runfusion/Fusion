@@ -200,11 +200,11 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   */
   localNetworkDiscoveryEnabled: true,
   /*
-  FNXC:DashboardShortcuts 2026-07-04-00:00:
-  Global dashboard shortcuts must hydrate with documented safe defaults even when old settings files are missing the object. Space opens Quick Chat; Ctrl+` opens Terminal without colliding with common browser find/search accelerators. FN-7553 adds openFiles (Ctrl+E), openSettings (Ctrl+,), openCommandCenter (Ctrl+K), and newTask (Ctrl+Shift+N) — chosen to avoid colliding with the base two or each other. Empty strings are preserved so operators can disable an action.
+  FNXC:DashboardShortcuts 2026-09-14-10:42:
+  FN-390 makes modal visibility a generic, explicitly configured action. Its empty default prevents a dashboard modal from being chosen implicitly; the remaining documented shortcuts retain their existing defaults. Empty strings are preserved so operators can disable any action.
   */
   dashboardKeyboardShortcuts: {
-    quickChat: "Space",
+    toggleModalVisibility: "",
     terminal: "Ctrl+`",
     openFiles: "Ctrl+E",
     openSettings: "Ctrl+,",
@@ -985,14 +985,7 @@ export const DEFAULT_PROJECT_SETTINGS = {
   reflectionIntervalMs: 3_600_000,
   reflectionAfterTask: true,
   // reviewHandoffPolicy MOVED to workflow settings (U4) — see MOVED_SETTINGS_KEYS.
-  quickChatButtonMode: "off",
   mobileNavPrimaryItems: ["command-center", "tasks", "agents", "missions", "chat", "mailbox"],
-  /*
-  FNXC:ChatModal 2026-06-28-00:00:
-  Quick Chat outside-click dismissal remains default-on for upgrades, but it is now a project setting so operators can disable accidental board-click closes.
-  */
-  quickChatCloseOnOutsideClick: true,
-  showQuickChatFAB: false,
   /*
   FNXC:ChatModal 2026-07-01-00:00:
   Task-scoped planner chats stay available from each task's Chat tab, but the common Chat feed hides them by default. This project-level opt-in preserves the previous populated-task-chat feed behavior only for operators who request it.

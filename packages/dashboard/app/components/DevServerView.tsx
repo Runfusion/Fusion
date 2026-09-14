@@ -14,6 +14,7 @@ import { usePreviewEmbed } from "../hooks/usePreviewEmbed";
 import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
 import type { ToastType } from "../hooks/useToast";
 import { DevServerLogViewer } from "./DevServerLogViewer";
+import { DashboardWindowSurfaceRoot } from "../context/DashboardWindowManagerContext";
 import { PreviewIframe } from "./PreviewIframe";
 import { recordResumeEvent } from "../utils/resumeInstrumentation";
 import { ViewHeader } from "./ViewHeader";
@@ -993,7 +994,7 @@ export function DevServerView({ addToast, projectId, tasks, columnFlagsByTaskId 
       )}
 
       {isNarrowRightDockPreviewMode && isPreviewModalOpen && (
-        <div className="modal-overlay open devserver-preview-modal-overlay" {...previewModalOverlayDismissProps}>
+        <DashboardWindowSurfaceRoot logicalId="devserver-preview" group="dialog" className="modal-overlay open devserver-preview-modal-overlay" {...previewModalOverlayDismissProps}>
           <div
             className="modal devserver-preview-modal"
             role="dialog"
@@ -1022,7 +1023,7 @@ export function DevServerView({ addToast, projectId, tasks, columnFlagsByTaskId 
               {renderPreviewContent()}
             </div>
           </div>
-        </div>
+        </DashboardWindowSurfaceRoot>
       )}
     </div>
   );

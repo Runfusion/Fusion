@@ -6,7 +6,7 @@ import {
   type FloatingWindowSize,
 } from "../FloatingWindow";
 
-const VIEWPORT_PADDING = 16;
+const VIEWPORT_EDGE = 0;
 const originalViewport = {
   width: Object.getOwnPropertyDescriptor(window, "innerWidth"),
   height: Object.getOwnPropertyDescriptor(window, "innerHeight"),
@@ -76,10 +76,10 @@ describe("resolveFloatingWindowCascade", () => {
       expect(Math.max(Math.abs(offset.x), Math.abs(offset.y))).toBeGreaterThanOrEqual(FLOATING_WINDOW_CASCADE_STEP_PX);
       expect(cascadedSize.width).toBeGreaterThanOrEqual(minSize.width);
       expect(cascadedSize.height).toBeGreaterThanOrEqual(minSize.height);
-      expect(base.x + offset.x).toBeGreaterThanOrEqual(VIEWPORT_PADDING);
-      expect(base.y + offset.y).toBeGreaterThanOrEqual(VIEWPORT_PADDING);
-      expect(base.x + offset.x + cascadedSize.width).toBeLessThanOrEqual(viewport.width - VIEWPORT_PADDING);
-      expect(base.y + offset.y + cascadedSize.height).toBeLessThanOrEqual(viewport.height - VIEWPORT_PADDING);
+      expect(base.x + offset.x).toBeGreaterThanOrEqual(VIEWPORT_EDGE);
+      expect(base.y + offset.y).toBeGreaterThanOrEqual(VIEWPORT_EDGE);
+      expect(base.x + offset.x + cascadedSize.width).toBeLessThanOrEqual(viewport.width);
+      expect(base.y + offset.y + cascadedSize.height).toBeLessThanOrEqual(viewport.height);
     }
 
     expect(new Set(cascades.map(({ offset, size: cascadedSize }) => JSON.stringify({ offset, size: cascadedSize })))).toHaveLength(cascades.length);
