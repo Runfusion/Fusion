@@ -3606,20 +3606,6 @@ export class ChatManager {
       if (contextTruncationNotice) {
         assistantMetadata.contextTruncation = contextTruncationNotice;
       }
-      /*
-      FNXC:ChatOutputBudget 2026-08-20-20:17 (RUFU-144):
-      A turn can end with stopReason "length" and NO visible content: the model spent the
-      entire maxTokens budget on thinking and was truncated before emitting any output
-      tokens, so the persisted assistant message is empty. Without an explicit marker the
-      UI shows a blank bubble and the user sees "thinking…" with no answer and no
-      explanation (the RUFU-144 complaint). Persist `budgetExhausted: true` exactly when
-      stopReason "length" is proven on the final assistant message AND the visible
-      content is empty; it is never set for failure turns (the failureInfo path) or
-      non-empty content, and the dashboard renders an inline notice from it.
-      */
-      if (lastMessage?.stopReason === "length" && finalResponseText.trim().length === 0) {
-        assistantMetadata.budgetExhausted = true;
-      }
       const usageSnapshot = await readChatSessionUsageSnapshot(agentResult.session);
       if (usageSnapshot.contextUsage) {
         assistantMetadata.contextUsage = usageSnapshot.contextUsage;
