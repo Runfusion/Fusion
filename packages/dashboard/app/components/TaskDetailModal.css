@@ -1243,8 +1243,20 @@ Expanded Planner Chat reserves the narrow task-detail surface for the conversati
 FNXC:TaskDetailShell 2026-09-12-02:34:
 Chat et Activity Live publient leurs contrôles dans l'unique footer direct du shell. Le transcript garde ainsi seul la responsabilité du scroll, tandis que Feed et Raw ne montent aucun footer vide.
 */
-.task-detail-chat-footer {
-  display: block;
+/*
+FNXC:TaskDetailShell 2026-09-14-03:31:
+The selector carries BOTH classes on purpose. `.modal-actions` in styles.css is `display: flex` with the default row
+direction, and main.tsx evaluates App (hence every component stylesheet) before styles.css, so an equal-specificity
+`.task-detail-chat-footer` rule loses the cascade and the footer silently became a row: the pending-message queue
+rendered to the LEFT of the composer instead of stacked above it. Two classes win regardless of injection order, and
+the stack direction is stated explicitly rather than inherited from a block-layout assumption.
+*/
+.modal-actions.task-detail-chat-footer {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: var(--space-sm);
 }
 
 .task-detail-chat-footer > * {

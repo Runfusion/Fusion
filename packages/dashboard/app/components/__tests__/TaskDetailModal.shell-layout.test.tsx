@@ -11,6 +11,7 @@ import {
   setupTaskDetailModalHooks,
 } from "./TaskDetailModal.test-helpers";
 import { TaskDetailContent, TaskDetailModal } from "../TaskDetailModal";
+import { loadAllAppCss } from "../../test/cssFixture";
 import {
   AppTaskPopoutContent,
   AppTaskPopoutWindow,
@@ -173,6 +174,30 @@ describe("Task Detail canonical shell", () => {
     expect(screen.queryByTestId("task-detail-chat-footer")).toBeNull();
     expect(surface.querySelector(".modal-header h1, .modal-header h2, .modal-header h3")).toBeNull();
     expect(surface.querySelector(".modal-header")).not.toHaveTextContent(sharedProps.task.title ?? "");
+  });
+
+  /*
+  Le footer de Chat empile ses enfants. `.modal-actions` (styles.css) est `display: flex` en direction ligne et est
+  injecté APRèS les feuilles de composants, donc une règle à une seule classe perd la cascade et la file des messages
+  en attente se retrouve à GAUCHE du compositeur au lieu d'être au-dessus. La règle gagnante doit donc porter les deux
+  classes et déclarer explicitement la colonne.
+  */
+  it("empile la file d'attente au-dessus du compositeur dans le footer de Chat", () => {
+    const css = loadAllAppCss();
+    const footerRule = css.match(/\.modal-actions\.task-detail-chat-footer\s*\{([^}]*)\}/)?.[1] ?? "";
+
+    expect(footerRule).toContain("display: flex");
+    expect(footerRule).toContain("flex-direction: column");
+    expect(footerRule).toContain("align-items: stretch");
+
+    // Une règle à classe unique ne suffit pas : elle serait écrasée par .modal-actions.
+    const singleClassRule = css.match(/(?<![.\w-])\.task-detail-chat-footer\s*\{([^}]*)\}/)?.[1] ?? "";
+    expect(singleClassRule).not.toContain("display: block");
+
+    const view = render(<TaskDetailContent {...sharedProps} embedded onRequestClose={noop} initialTab="planner-chat" />);
+    const chatFooter = screen.getByTestId("task-detail-chat-footer");
+    expect(chatFooter).toHaveClass("modal-actions", "task-detail-chat-footer");
+    view.unmount();
   });
 
   it("laisse Chat direct même lorsque Définition possède des données globales", () => {
