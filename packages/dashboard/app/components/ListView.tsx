@@ -2432,7 +2432,7 @@ export function ListView({
     looked healthy. That cost five days of App.test.tsx being red and two wrong root causes. Wait on
     this marker instead — it exists only when the list actually has lanes to draw.
     */
-    <div className={`list-view${useSinglePaneList ? " list-view--single-pane" : ""}`} data-testid="list-view-body">
+    <div className={`list-view${useSinglePaneList ? " list-view--single-pane list-view--cards" : ""}`} data-testid="list-view-body">
       {/* FNXC:StandardizedViewActions 2026-09-13-21:43: List keeps workflow-aware task creation, bulk mode, and view options in one canonical header; mobile hides action labels visually while preserving the same callbacks and accessible names. */}
       <ViewHeader icon={ListChecks} title={t("listView.title", "List View")} actions={renderPrimaryActionCluster()} />
       {contextMenuState && hasContextMenuActions && createPortal(
