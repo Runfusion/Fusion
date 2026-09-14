@@ -107,7 +107,13 @@ describe("ListView active keep-alive gate", () => {
     expect(source).toContain("return active && workflowControlsInHeader && headerWorkflowSlot");
   });
 
-  it("runs the production mobile List Quick Entry as Alpha and starts only at the 500ms boundary", async () => {
+  /*
+  FN-384 replaced the old "a short release creates nothing" rule with "a short release is an ordinary Save", and this
+  test still encoded the superseded contract. The 500ms start boundary itself is covered by the QuickEntryBox suite
+  ("starts exactly once at the 500ms %s boundary", "runs hold-to-Start from the collapsed List host"); what belongs
+  here is that the production List host mounts the shared Alpha composer and honours that gesture contract.
+  */
+  it("runs the production mobile List Quick Entry as the shared Alpha composer", async () => {
     const restoreViewport = mockViewport("mobile");
     vi.useFakeTimers();
     const onQuickCreate = vi.fn().mockResolvedValue(undefined);
@@ -133,21 +139,11 @@ describe("ListView active keep-alive gate", () => {
       fireEvent.click(save);
       await act(async () => Promise.resolve());
 
-      expect(onQuickCreate).not.toHaveBeenCalled();
-      expect(onMoveTask).not.toHaveBeenCalled();
-
-      fireEvent.pointerDown(save, { pointerId: 32, pointerType: "mouse", button: 0, isPrimary: true });
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(500);
-      });
-
+      // FN-384: a release before the 500ms threshold is an ordinary Save, not a no-op.
       expect(onQuickCreate).toHaveBeenCalledTimes(1);
-      expect(onQuickCreate).toHaveBeenCalledWith(expect.objectContaining({
-        description: "List Alpha task",
-        workflowId: "builtin:coding-ideas-v2",
-        column: "todo",
-      }));
+      expect(onQuickCreate).toHaveBeenCalledWith(expect.objectContaining({ description: "List Alpha task" }));
       expect(onMoveTask).not.toHaveBeenCalled();
+      expect(screen.getByTestId("quick-entry-input")).toHaveValue("");
     } finally {
       view.unmount();
       vi.clearAllTimers();

@@ -2544,9 +2544,13 @@ export function ListView({
                 workflowOptions={workflowMode ? workflowOptions : undefined}
                 defaultWorkflowId={workflowMode ? createTargetWorkflowId ?? boardWorkflows?.defaultWorkflowId ?? null : undefined}
                 projectId={projectId}
+                /*
+                FNXC:QuickEntry 2026-09-14-03:31:
+                List instantiates the SAME Quick Entry as the Board: same disclosure defaults, same textarea growth,
+                same gestures. The former compact `singleLine`/`defaultExpanded={false}` variant made one composer
+                behave two ways depending on its host and is deleted.
+                */
                 autoExpand={false}
-                defaultExpanded={false}
-                singleLine /* FNXC:QuickEntry 2026-06-22-19:25: List view uses the compact single-line quick-add so the box stays one line tall. */
                 favoriteProviders={favoriteProviders}
                 favoriteModels={favoriteModels}
                 onToggleFavorite={onToggleFavorite}

@@ -87,10 +87,12 @@ interface QuickEntryBoxProps {
   */
   defaultExpanded?: boolean;
   /*
-  FNXC:QuickEntry 2026-06-22-19:25:
-  List view renders quick-add as a COMPACT single-line input so the box isn't tall. When true, the textarea stays one line: isExpanded initializes false, focus does NOT auto-expand it, and auto-resize-to-scrollHeight is short-circuited (capped to the one-line min-height). Board/columns omit singleLine, preserving the tall 80px + auto-grow behavior. singleLine governs only textarea height, not the disclosure/controls panel (which List already collapses via defaultExpanded={false}).
+  FNXC:QuickEntry 2026-09-14-03:31:
+  The `singleLine` compact variant is REMOVED. It existed only for List, and made the same composer look and behave
+  differently depending on where it was mounted: one-line textarea, no auto-grow, no expand on focus, no expand on
+  Shift+Enter. List and Board now instantiate this component with the same contract, so there is one Quick Entry
+  presentation everywhere.
   */
-  singleLine?: boolean;
   /** Explicit override of the global Enter-submit preference. */
   submitOnEnter?: boolean;
   /**
@@ -162,7 +164,7 @@ function hasMeaningfulNodeChoice(nodes: NodeInfo[]): boolean {
   return nodes.length > 1 || nodes.some((node) => node.type !== "local");
 }
 
-export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], availableModels, workflowId, workflowOptions, defaultWorkflowId, projectId, autoExpand = true, defaultExpanded = true, singleLine = false, submitOnEnter, favoriteProviders: parentFavoriteProviders, favoriteModels: parentFavoriteModels, onToggleFavorite: parentToggleFavorite, onToggleModelFavorite: parentToggleModelFavorite, onOpenTask }: QuickEntryBoxProps) {
+export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], availableModels, workflowId, workflowOptions, defaultWorkflowId, projectId, autoExpand = true, defaultExpanded = true, submitOnEnter, favoriteProviders: parentFavoriteProviders, favoriteModels: parentFavoriteModels, onToggleFavorite: parentToggleFavorite, onToggleModelFavorite: parentToggleModelFavorite, onOpenTask }: QuickEntryBoxProps) {
   const { t } = useTranslation("app");
   const alphaActive = useAlphaSurface();
   const contextSubmitOnEnter = useQuickAddSubmitOnEnter();
@@ -175,8 +177,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   // isExpanded controls textarea height styling (auto-resize)
-  // FNXC:QuickEntry 2026-06-22-19:25: singleLine (List view) starts collapsed so the textarea is one line, not the tall 80px variant.
-  const [isExpanded, setIsExpanded] = useState(!singleLine);
+  const [isExpanded, setIsExpanded] = useState(true);
   // isDisclosureExpanded controls visibility of advanced options (Deps, Models, etc.).
   /*
   FNXC:AlphaQuickEntry 2026-09-11-00:30:
@@ -647,12 +648,11 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
   }, []);
 
   // Resize when description changes (not in fullscreen mode since CSS handles it)
-  // FNXC:QuickEntry 2026-06-22-19:25: singleLine (List view) must stay one line — skip auto-resize-to-scrollHeight so the textarea never grows tall with content; CSS clamps it to the one-line height.
   useEffect(() => {
-    if (isExpanded && !singleLine) {
+    if (isExpanded) {
       autoResize();
     }
-  }, [description, isExpanded, autoResize, singleLine]);
+  }, [description, isExpanded, autoResize]);
 
   /*
   FNXC:QuickEntryFocus 2026-06-25-00:00:
@@ -1109,10 +1109,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
         if (e.shiftKey) {
           // Allow Shift+Enter to insert a newline in any quick-entry state
           // Don't prevent default - let the newline be inserted
-          // FNXC:QuickEntry 2026-06-22-19:25: singleLine (List view) stays one line even on Shift+Enter — do not expand the textarea.
-          if (!singleLine) {
-            setIsExpanded(true);
-          }
+          setIsExpanded(true);
           return;
         }
         if (duplicateMatches || submitInFlightRef.current) {
@@ -1203,7 +1200,6 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
       setIsDisclosureExpanded,
       duplicateMatches,
       enterSubmits,
-      singleLine,
     ],
   );
 
@@ -1217,11 +1213,10 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
 
   const handleFocus = useCallback(() => {
     // Auto-expand on focus when autoExpand prop is true (default)
-    // FNXC:QuickEntry 2026-06-22-19:25: never auto-expand the textarea on focus when singleLine (List view) — it must stay one line.
-    if (autoExpand && !singleLine) {
+    if (autoExpand) {
       setIsExpanded(true);
     }
-  }, [autoExpand, singleLine]);
+  }, [autoExpand]);
 
   const toggleDep = useCallback((id: string) => {
     setDependencies((prev) =>
@@ -1850,7 +1845,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
   return (
     <>
       <div
-        className={`quick-entry-box ${isDisclosureExpanded ? "quick-entry-box--expanded" : "quick-entry-box--collapsed"}${singleLine ? " quick-entry--single-line" : ""}${isFileDragOver ? " quick-entry-box--drag-over" : ""}`}
+        className={`quick-entry-box ${isDisclosureExpanded ? "quick-entry-box--expanded" : "quick-entry-box--collapsed"}${isFileDragOver ? " quick-entry-box--drag-over" : ""}`}
         data-testid="quick-entry-box"
         onDragEnter={handleDragEnter}
         onDragOver={handleDragOver}
@@ -1869,7 +1864,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
           <div className="quick-entry-textarea-wrap">
             <AlphaTextArea
               ref={textareaRef}
-              className={`quick-entry-input ${isExpanded && !singleLine ? "quick-entry-input--expanded" : ""}`}
+              className={`quick-entry-input ${isExpanded ? "quick-entry-input--expanded" : ""}`}
               placeholder={isSubmitting ? t("tasks.creating", "Creating...") : t("tasks.addTaskPlaceholder", "Add a task...")}
               value={description}
               onChange={(e) => setDescription(e.target.value)}
@@ -1879,7 +1874,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
               onBlur={handleBlur}
               disabled={isSubmitting || isDisabled}
               data-testid="quick-entry-input"
-              rows={singleLine ? 1 : 2}
+              rows={2}
               aria-controls="quick-entry-controls"
               aria-expanded={isDisclosureExpanded}
             />
