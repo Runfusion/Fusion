@@ -8,6 +8,9 @@ Fusion needs one canonical user-facing guide for the dashboard WorkflowNodeEdito
 
 FNXC:WorkflowEditorDocs 2026-06-29-16:18:
 The editor guide must describe the current authored surface as one contract shared by dashboard and agent tools: graph nodes, columns/traits, fields, settings definitions/values, AI design, import/export, mobile destinations, and built-in prompt overrides without implying built-in topology edits are allowed.
+
+FNXC:WorkflowModelOwnership 2026-09-14-19:11:
+The workflow editor owns workflow-specific settings. Project and global Default/role model selections stay in their own Settings scopes and must never be persisted against whichever workflow happens to be the project default.
 -->
 
 The workflow editor is Fusion's visual workflow authoring surface in the dashboard. It uses the `@xyflow/react` canvas to view built-in lifecycle workflows and create or edit custom workflow definitions backed by Fusion's [Workflow IR](./workflow-steps.md#workflow-ir-v1). The graph you see is the same policy model the runtime uses for task lifecycle routing: nodes describe work or control-flow boundaries, edges describe how execution moves between them, and side panels declare workflow-specific columns, task fields, and typed workflow settings.
@@ -22,7 +25,7 @@ The shipped dashboard opens the same workflow editor from four places:
 - **Compact/mobile header overflow:** when the header collapses, open the overflow menu and choose **Workflows**.
 - **Mobile bottom navigation:** open **More** and choose **Workflows**.
 - **Task detail modal:** open a task, select the **Workflow** tab, and use **Edit workflow** to open the editor with that task's workflow context.
-- **Settings moved-setting stubs:** settings sections whose policy moved into workflow settings show an **Open workflow settings** redirect. It closes Settings and opens the workflow editor with the **Settings** panel selected for the active project's default workflow.
+- **Settings moved-setting stubs:** settings sections whose policy belongs to a workflow show an **Open workflow settings** redirect. It closes Settings and opens the workflow editor with the **Settings** panel selected. Project/global model settings remain in the main Settings modal.
 
 These entry points do not create different workflow formats. Desktop and mobile render different layouts for the same workflow definition.
 
@@ -134,7 +137,7 @@ The **Settings** panel has two tabs:
 - **Definitions:** edit the workflow's setting schema — id, name, type, default, enum options, description, and widget. This tab is read-only for built-in workflows and editable for custom workflows. Declarations save with the workflow IR through the editor's normal **Save** action.
 - **Values:** edit per-project values for the currently open workflow. Values are writable even for built-in workflows. This is where operators override built-in Plan Review/spec and Code Review revision loops (`planReviewMaxRevisions`, `codeReviewMaxRevisions`) without duplicating the read-only workflow; empty values use the workflow's authored default, non-negative integers cap attempts, and `0` disables automatic revision for that path. Plan Review remains unbounded behind its separate replan cap; standard built-in Code Review allows three remediation rounds, while Compound Engineering authors a two-pass cap. Edits batch locally and commit through the tab's dedicated **Save values** action, separate from the workflow IR save.
 
-Resolution is `stored value ?? declaration default`. Stored values that no longer validate against the current declaration are treated as orphaned and dropped from the effective settings the engine reads. The Values tab exposes provider/model lane pairs with the same model dropdown used elsewhere in Settings, while custom settings use controls based on their declared type. See [Settings Reference → Workflow Settings](./settings-reference.md#workflow-settings) for moved settings, model lane hierarchy, export behavior, and sync posture.
+Resolution for ordinary workflow settings is `stored value ?? declaration default`. Stored values that no longer validate against the current declaration are treated as orphaned and dropped from the effective settings the engine reads. The Values tab exposes workflow-specific Planner, Executor, Reviewer, and Merger provider/model overrides—with their fallback, Thinking Level, and Credential instance companions—using the shared model dropdown. They apply only to tasks selecting this workflow. Project and global role models are not workflow values and are configured in the main Settings modal. Effective role selection resolves task → selected workflow → project role → global role → project Default → global Default. See [Settings Reference → Workflow Settings](./settings-reference.md#workflow-settings) for export behavior and sync posture.
 
 ## Templates and reusable pieces
 

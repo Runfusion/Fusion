@@ -98,11 +98,11 @@ pgDescribe("refineTask / duplicateTask backend mode (PostgreSQL)", () => {
   it("routes Coding (Ideas) refinements to Planning and preserves selection and seed", async () => {
     const h = await makeHarness();
     try {
-      await h.store.updateSettings({ refinementTaskWorkflowId: "builtin:coding-ideas-v2" } as never);
+      await h.store.updateSettings({ refinementTaskWorkflowId: "builtin:coding-ideas" } as never);
       const source = await h.store.createTask({
         title: "Ideas source",
         description: "Completed work selected in Coding (Ideas)",
-        workflowId: "builtin:coding-ideas-v2",
+        workflowId: "builtin:coding-ideas",
         column: "done",
       } as never);
 
@@ -116,7 +116,7 @@ pgDescribe("refineTask / duplicateTask backend mode (PostgreSQL)", () => {
       expect(fetched.sourceParentTaskId).toBe(source.id);
       expect(fetched.dependencies).toEqual([source.id]);
       expect(await h.store.getTaskWorkflowSelectionAsync(refined.id)).toMatchObject({
-        workflowId: "builtin:coding-ideas-v2",
+        workflowId: "builtin:coding-ideas",
       });
       expect(prompt).toBe(buildRefinementSeedPrompt(refined.title ?? refined.id, refined.description));
     } finally {

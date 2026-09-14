@@ -17,10 +17,10 @@
  * `reopen-trailing`). The task bounced back to implementation with ZERO pending steps, the foreach
  * answered `already-expanded`, and the card walked on to Code Review with the failing command
  * unaddressed — the verification result was measured, reported, and then silently discarded.
- * Measured on builtin:coding-ideas-v2, the only built-in that selects `none`.
+ * Measured on builtin:coding-ideas, the only built-in that selects `none`.
  *
- * FNXC:WorkflowSuccession 2026-09-06-02:15:
- * FN-297 retires the earlier Ideas catalog entry. The surviving Coding (Ideas) workflow keeps
+ * FNXC:WorkflowIdentity 2026-09-14-19:06:
+A built-in revision retains its original identity. Migration 0079 converges persisted references before catalog reads, so selection, configuration and capacity use the same raw workflow id without redirects.
  * `stepReopenPolicy: none`, while Coding (Auto) continues through the default stepwise
  * `reopen-trailing` path; comments and recovery routing must not treat the composition-only base
  * IR as another offered workflow.

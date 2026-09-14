@@ -774,24 +774,13 @@ describe("SettingsModal", () => {
       expect(screen.queryByText("Title, commit message, and GitHub tracking issue summarization model")).not.toBeInTheDocument();
     });
 
-    it("does not show a moved-to-workflow note for the summarizer model when GitHub tracking defaults are on", async () => {
-      mockFetchSettings.mockResolvedValueOnce({
-        ...defaultSettings,
-        githubTrackingEnabledByDefault: true,
-      });
-
-      renderModal({ initialSection: "models" });
+    it("keeps workflow-owned model controls off the Project Models page", async () => {
+      renderModal({ initialSection: "project-models" });
       await waitForSettingsModalReady();
 
-      await settingsModalUser.click(screen.getByRole("button", { name: "Models · Project" }));
-
-      expect(screen.queryByText(/model used for summarization now lives on the workflow/i)).not.toBeInTheDocument();
-      // FNXC:ProjectModels 2026-07-24-03:10: #2400 (e514e134d) replaced the
-      // per-phase moved-to-workflow NOTE with a real editable "Project workflow
-      // model lanes" section; assert the editor heading instead of the old copy.
-      /* FNXC:ProjectModels 2026-08-23-21:20: the editor's heading is now "Workflow lanes" inside the stable `project-models-workflow-lanes` region. */
-      expect(screen.getByTestId("project-models-workflow-lanes")).toBeInTheDocument();
-      expect(screen.getByRole("heading", { name: "Workflow lanes" })).toBeInTheDocument();
+      expect(screen.queryByTestId("project-models-workflow-lanes")).not.toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "Workflow lanes" })).not.toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Token Cap" })).toBeInTheDocument();
     });
 
     it("picks a project repo suggestion and preserves label association", async () => {

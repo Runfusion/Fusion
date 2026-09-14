@@ -417,6 +417,7 @@ export { BUILTIN_LEAD_GENERATION_WORKFLOW_IR } from "./workflows/builtin-lead-ge
 export {
   BUILTIN_WORKFLOW_SETTINGS,
   BUILTIN_MOVED_WORKFLOW_SETTINGS,
+  BUILTIN_WORKFLOW_MODEL_LANE_SETTINGS,
   BUILTIN_TRIAGE_POLICY_SETTINGS,
   BUILTIN_OVERSIGHT_SETTINGS,
   DEFAULT_MAX_POST_REVIEW_FIXES,
@@ -698,12 +699,11 @@ export {
   stepToFragmentIr,
   layoutForIr,
 } from "./workflows/workflow-steps-to-ir.js";
-export { DEPRECATED_BUILTIN_WORKFLOW_IDS, RETIRED_BUILTIN_WORKFLOW_SUCCESSORS } from "./types.js";
+export { DEPRECATED_BUILTIN_WORKFLOW_IDS } from "./types.js";
 export {
   BUILTIN_WORKFLOWS,
   BUILTIN_WORKFLOW_ID_PREFIX,
   getBuiltinWorkflow,
-  resolveRetiredBuiltinWorkflowId,
   getRequiredPluginIdForBuiltinWorkflow,
   isBuiltinWorkflowId,
   isBuiltinWorkflowPluginGated,
@@ -777,7 +777,6 @@ export {
   resolveEffectiveSettings,
   resolveEffectiveSettingsDetailed,
   resolveEffectiveSettingsDetailedById,
-  resolveProjectWorkflowModelLaneBaseline,
   resolveEffectiveSettingsById,
   resolveOptionalReviewRevisionBudget,
   resolveEffectivePlannerOversightLevel,

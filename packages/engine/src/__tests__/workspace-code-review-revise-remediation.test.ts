@@ -68,7 +68,7 @@ describe("review remediation gate identity", () => {
 
   it("refuses a reporting-only optional group through the requester and records the refusal", async () => {
     const { task, store, deps, appendReviewRemediationSteps } = routingHarness();
-    store.getTaskWorkflowSelectionAsync.mockResolvedValue({ workflowId: "builtin:coding-ideas-v2" });
+    store.getTaskWorkflowSelectionAsync.mockResolvedValue({ workflowId: "builtin:coding-ideas" });
     Object.assign(store, {
       getWorkflowDefinition: vi.fn(async (id: string) => {
         const workflow = getBuiltinWorkflow(id);

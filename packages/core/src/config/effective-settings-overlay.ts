@@ -7,17 +7,20 @@ export interface WorkflowSettingsOverlayInput {
 
 /**
  * FNXC:ModelResolution 2026-06-27-10:52:
- * Per-task workflow setting values and the project workflow-lane baseline share one overlay rule. The resolver presents project model lanes as stored flat values and retains lower-precedence selected-workflow lanes in `selectedWorkflowModelLanes`; other stored workflow values remain flat. Stored flat values override base settings while declaration defaults only fill missing base keys.
+ * Workflow policy uses stored overrides and declaration-default fill semantics. Model lanes remain an isolated, higher-precedence workflow tier; project model lanes never come from a workflow row.
+ * FNXC:ModelResolution 2026-09-14-19:06:
+ * Recomposition replaces the previous workflow tier, including an empty tier, so switching workflows cannot retain an unrelated workflow's models.
  */
 export function applyWorkflowSettingsOverlay<T extends Partial<Settings>>(
   base: T,
   detailed: WorkflowSettingsOverlayInput,
 ): T {
   const merged: Record<string, unknown> = { ...base };
+  delete merged.selectedWorkflowModelLanes;
   for (const key of Object.keys(detailed.effective)) {
     const value = detailed.effective[key];
     if (value === undefined) continue;
-    if (detailed.storedKeys.has(key)) {
+    if (key === "selectedWorkflowModelLanes" || detailed.storedKeys.has(key)) {
       merged[key] = value;
     } else if (merged[key] === undefined) {
       merged[key] = value;

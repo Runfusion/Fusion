@@ -517,8 +517,8 @@ Title summarization is owned by project/global Settings → Project Models, not 
 FNXC:Settings-ThinkingLevel 2026-07-10-12:03:
 Workflow Values renders thinking controls inline with declared primary and fallback model lanes. The companion setting ids are excluded from generic enum rendering so operators get one inherit/override/reset affordance and undeclared lanes leave no empty control shell.
 
-FNXC:SettingsModels 2026-07-16-00:00:
-FN-8169 requires each workflow fallback lane to render directly under its primary lane so operators configure a model and its retry model together. Keep this catalog interleaved while preserving every lane key and declaration filter.
+FNXC:SettingsModels 2026-09-14-19:05:
+Workflow Values exposes Planner, Executor, Reviewer, and Merger in pipeline order, with each role's fallback directly below its primary. Default remains a project/global concept; workflow policy and all non-model values remain unchanged.
 */
 export const WORKFLOW_MODEL_LANE_CATALOG: WorkflowModelLanePair[] = [
   {
@@ -527,8 +527,8 @@ export const WORKFLOW_MODEL_LANE_CATALOG: WorkflowModelLanePair[] = [
     modelId: "planningModelId",
     thinkingId: "planningThinkingLevel",
     credentialInstanceId: "planningCredentialInstanceId",
-    label: "Plan/Triage Model",
-    help: "Provider and model used when planning or triaging tasks. Leave unset to inherit from the default lane.",
+    label: "Planner Model",
+    help: "Provider and model used when planning or triaging tasks. Leave unset to inherit from the project lane.",
   },
   {
     id: "planning-fallback",
@@ -536,8 +536,8 @@ export const WORKFLOW_MODEL_LANE_CATALOG: WorkflowModelLanePair[] = [
     modelId: "planningFallbackModelId",
     thinkingId: "planningFallbackThinkingLevel",
     credentialInstanceId: "planningFallbackCredentialInstanceId",
-    label: "Planning Fallback Model",
-    help: "Fallback provider and model used when the primary Plan/Triage model cannot be used.",
+    label: "Planner Fallback Model",
+    help: "Fallback provider and model used when the primary Planner model cannot be used.",
   },
   {
     id: "execution",
@@ -546,7 +546,7 @@ export const WORKFLOW_MODEL_LANE_CATALOG: WorkflowModelLanePair[] = [
     thinkingId: "executionThinkingLevel",
     credentialInstanceId: "executionCredentialInstanceId",
     label: "Executor Model",
-    help: "Provider and model used by task implementation agents. Leave unset to inherit from the default lane.",
+    help: "Provider and model used by task implementation agents. Leave unset to inherit from the project lane.",
   },
   {
     id: "execution-fallback",
@@ -564,7 +564,7 @@ export const WORKFLOW_MODEL_LANE_CATALOG: WorkflowModelLanePair[] = [
     thinkingId: "validatorThinkingLevel",
     credentialInstanceId: "validatorCredentialInstanceId",
     label: "Reviewer Model",
-    help: "Provider and model used by review and validation agents. Leave unset to inherit from the default lane.",
+    help: "Provider and model used by review and validation agents. Leave unset to inherit from the project lane.",
   },
   {
     id: "validator-fallback",
@@ -574,6 +574,24 @@ export const WORKFLOW_MODEL_LANE_CATALOG: WorkflowModelLanePair[] = [
     credentialInstanceId: "validatorFallbackCredentialInstanceId",
     label: "Reviewer Fallback Model",
     help: "Fallback provider and model used when the primary Reviewer model cannot be used.",
+  },
+  {
+    id: "merger",
+    providerId: "mergerProvider",
+    modelId: "mergerModelId",
+    thinkingId: "mergerThinkingLevel",
+    credentialInstanceId: "mergerCredentialInstanceId",
+    label: "Merger Model",
+    help: "Provider and model used by merger agents. Leave unset to inherit from the project lane.",
+  },
+  {
+    id: "merger-fallback",
+    providerId: "mergerFallbackProvider",
+    modelId: "mergerFallbackModelId",
+    thinkingId: "mergerFallbackThinkingLevel",
+    credentialInstanceId: "mergerFallbackCredentialInstanceId",
+    label: "Merger Fallback Model",
+    help: "Fallback provider and model used when the primary Merger model cannot be used.",
   },
 ];
 
@@ -620,8 +638,16 @@ function ValuesTab({
       WORKFLOW_MODEL_LANE_CATALOG.filter((pair) => {
         const provider = settingsById.get(pair.providerId);
         const model = settingsById.get(pair.modelId);
+        return provider?.type === "string" && model?.type === "string";
+      }).map((pair) => {
+        // FNXC:WorkflowModels 2026-09-14-19:06: Custom workflows may declare only a model pair; never offer or save undeclared companions.
         const thinking = pair.thinkingId ? settingsById.get(pair.thinkingId) : undefined;
-        return provider?.type === "string" && model?.type === "string" && (!pair.thinkingId || thinking?.type === "enum" || thinking?.type === "string");
+        const credential = pair.credentialInstanceId ? settingsById.get(pair.credentialInstanceId) : undefined;
+        return {
+          ...pair,
+          thinkingId: thinking?.type === "enum" || thinking?.type === "string" ? pair.thinkingId : undefined,
+          credentialInstanceId: credential?.type === "string" ? pair.credentialInstanceId : undefined,
+        };
       }),
     [settingsById],
   );
@@ -864,7 +890,7 @@ function ValuesTab({
             value={value}
             onChange={(next) => setModelPairValue(pair, next)}
             credentialInstanceId={credentialInstanceId}
-            onCredentialInstanceChange={(value) => setModelPairCredentialInstanceValue(pair, value)}
+            onCredentialInstanceChange={pair.credentialInstanceId ? (value) => setModelPairCredentialInstanceValue(pair, value) : undefined}
             placeholder={t("workflowSettings.selectModel", "Select a model…")}
             defaultOptionLabel={t("workflowSettings.useInheritedModel", "Use inherited/default model")}
             disabled={dropdownDisabled}

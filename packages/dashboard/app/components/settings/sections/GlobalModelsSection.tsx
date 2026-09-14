@@ -45,6 +45,10 @@ export interface GlobalModelsSectionProps extends SectionBaseProps {
     addToast: (message: string, type?: ToastType) => void;
     projectId?: string;
 }
+/*
+FNXC:GlobalModels 2026-09-14-19:05:
+Global model settings mirror the pipeline order Default, Planner, Executor, Reviewer, Merger. Every role owns a fallback model, credential, and thinking selection directly below its primary before non-pipeline model options.
+*/
 export function GlobalModelsSection({ form, setForm, availableModels, modelsLoading, globalModelLanes, getLaneThinkingValue, updateLaneThinkingValue, resetLaneThinkingValue, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, addToast, projectId, }: GlobalModelsSectionProps) {
     const { t } = useTranslation("app");
     const selectedValue = form.defaultProvider && form.defaultModelId
@@ -154,7 +158,14 @@ export function GlobalModelsSection({ form, setForm, availableModels, modelsLoad
                 const thinkingValue = getLaneThinkingValue(lane);
                 const credentialInstanceKey = GLOBAL_LANE_CREDENTIAL_INSTANCE_KEYS[lane.laneId];
                 const credentialInstanceId = credentialInstanceKey ? form[credentialInstanceKey] as string | undefined : undefined;
-                return (<div className="form-group" key={`global-${lane.laneId}`} data-settings-key={lane.globalModelKey}>
+                const fallbackProvider = lane.globalFallbackProviderKey ? form[lane.globalFallbackProviderKey as keyof Settings] as string | undefined : undefined;
+                const fallbackModel = lane.globalFallbackModelKey ? form[lane.globalFallbackModelKey as keyof Settings] as string | undefined : undefined;
+                const fallbackValue = fallbackProvider && fallbackModel ? `${fallbackProvider}/${fallbackModel}` : "";
+                const fallbackThinking = lane.globalFallbackThinkingKey ? form[lane.globalFallbackThinkingKey as keyof Settings] as string | undefined : undefined;
+                const fallbackCredentialKey = `${lane.laneId}GlobalFallbackCredentialInstanceId` as keyof Settings;
+                const fallbackCredentialInstanceId = form[fallbackCredentialKey] as string | undefined;
+                return (<div key={`global-${lane.laneId}`}>
+                <div className="form-group" data-settings-key={lane.globalModelKey}>
                 {/* FNXC:SettingsHelp 2026-07-15-21:40: A global lane row is plain label + picker + one help string (unlike the project lanes, which add an inherited/override badge and a resolved fallback chain), so its helper text hangs off the shared "?" like every other row in this section. */}
                 <div className="settings-field-label-row">
                   <label htmlFor={`global-${lane.laneId}-model`}>{lane.label}</label>
@@ -180,6 +191,21 @@ export function GlobalModelsSection({ form, setForm, availableModels, modelsLoad
                             ...(credentialInstanceKey ? { [credentialInstanceKey]: undefined } : {}),
                         }));
                     }} credentialInstanceId={credentialInstanceId} onCredentialInstanceChange={credentialInstanceKey ? (instanceId) => setForm((f) => ({ ...f, [credentialInstanceKey]: instanceId || undefined })) : undefined} placeholder={t("settings.globalModels.useDefault", "Use default")} favoriteProviders={favoriteProviders} onToggleFavorite={onToggleFavorite} favoriteModels={favoriteModels} onToggleModelFavorite={onToggleModelFavorite} showThinkingLevel={Boolean(lane.globalThinkingKey)} thinkingLevel={thinkingValue} onThinkingLevelChange={(level) => updateLaneThinkingValue(lane, level)} defaultThinkingLevel={form.defaultThinkingLevel}/>
+              </div>
+              {lane.globalFallbackProviderKey && lane.globalFallbackModelKey ? (<div className="form-group" data-settings-key={lane.globalFallbackModelKey}>
+                <div className="settings-field-label-row">
+                  <label htmlFor={`global-${lane.laneId}-fallback-model`}>{lane.label.replace(/ Model$/, "")} {t("settings.models.fallbackModel", "Fallback Model")}</label>
+                  <SettingsHelpTip settingKey={`global-${lane.laneId}-fallback-model`}>{t("settings.models.roleFallbackHelp", "Used when this role's primary model encounters a retryable provider error.")}</SettingsHelpTip>
+                </div>
+                <CustomModelDropdown id={`global-${lane.laneId}-fallback-model`} label={`${lane.label} fallback`} models={availableModels} value={fallbackValue} onChange={(selected) => {
+                  if (!selected) {
+                    setForm((f) => ({ ...f, [lane.globalFallbackProviderKey!]: undefined, [lane.globalFallbackModelKey!]: undefined, ...(lane.globalFallbackThinkingKey ? { [lane.globalFallbackThinkingKey]: undefined } : {}), [fallbackCredentialKey]: undefined }));
+                    return;
+                  }
+                  const slashIdx = selected.indexOf("/");
+                  setForm((f) => ({ ...f, [lane.globalFallbackProviderKey!]: selected.slice(0, slashIdx), [lane.globalFallbackModelKey!]: selected.slice(slashIdx + 1), [fallbackCredentialKey]: undefined }));
+                }} credentialInstanceId={fallbackCredentialInstanceId} onCredentialInstanceChange={(instanceId) => setForm((f) => ({ ...f, [fallbackCredentialKey]: instanceId || undefined }))} placeholder={t("settings.globalModels.noFallback", "No fallback")} favoriteProviders={favoriteProviders} onToggleFavorite={onToggleFavorite} favoriteModels={favoriteModels} onToggleModelFavorite={onToggleModelFavorite} showThinkingLevel={Boolean(lane.globalFallbackThinkingKey)} thinkingLevel={fallbackThinking || ""} onThinkingLevelChange={lane.globalFallbackThinkingKey ? (level) => setForm((f) => ({ ...f, [lane.globalFallbackThinkingKey!]: level || undefined })) : undefined} defaultThinkingLevel={form.defaultThinkingLevel}/>
+              </div>) : null}
               </div>);
             })}
         </>)}

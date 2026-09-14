@@ -5365,7 +5365,7 @@ describe("QuickEntryBox", () => {
   */
   describe("Quick Add Start button", () => {
     const ideasWorkflow = {
-      id: "builtin:coding-ideas-v2",
+      id: "builtin:coding-ideas",
       name: "Coding (Ideas)",
       columns: [
         { id: "ideas", name: "Ideas", flags: { hold: true } },
@@ -5515,7 +5515,7 @@ describe("QuickEntryBox", () => {
       await waitFor(() => expect(onCreate).toHaveBeenCalled());
       expect(onMoveTask).not.toHaveBeenCalled();
 
-      rerender(<QuickEntryBox onCreate={onCreate} onMoveTask={onMoveTask} addToast={vi.fn()} workflowId="builtin:coding-ideas-v2" workflowOptions={[{ ...ideasWorkflow, columns: [] }]} />);
+      rerender(<QuickEntryBox onCreate={onCreate} onMoveTask={onMoveTask} addToast={vi.fn()} workflowId="builtin:coding-ideas" workflowOptions={[{ ...ideasWorkflow, columns: [] }]} />);
       fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Malformed" } });
       expect(screen.queryByTestId("quick-entry-save-start")).toBeNull();
     });
@@ -5544,7 +5544,7 @@ describe("QuickEntryBox", () => {
 
   describe("Alpha Save hold-to-Start", () => {
     const ideasWorkflow = {
-      id: "builtin:coding-ideas-v2",
+      id: "builtin:coding-ideas",
       name: "Coding (Ideas)",
       columns: [
         { id: "ideas", name: "Ideas", flags: { hold: true } },

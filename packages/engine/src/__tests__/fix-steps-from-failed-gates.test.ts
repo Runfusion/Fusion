@@ -48,7 +48,7 @@ const PROMPT = [
  The workflow is SELECTED by id and resolved through the real built-in registry, because that is what
  decides the bounce shape — injecting an IR object here would be resolved away and prove nothing.
 */
-function harness(workflowId = "builtin:coding-ideas-v2") {
+function harness(workflowId = "builtin:coding-ideas") {
   const task = {
     id: "FN-VR-2",
     column: "in-progress",
@@ -362,7 +362,7 @@ describe("fix steps appear on the card when a gate fails", () => {
   });
 
   it("derives named remediation for the surviving Coding (Ideas) workflow", async () => {
-    const { deps, task, pending } = harness("builtin:coding-ideas-v2");
+    const { deps, task, pending } = harness("builtin:coding-ideas");
 
     await requestPreMergeOptionalStepFix(deps as never, task.id, task, {
       stepName: "Code Review",

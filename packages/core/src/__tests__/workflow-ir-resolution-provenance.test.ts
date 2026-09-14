@@ -82,19 +82,19 @@ describe("workflow IR resolution provenance", () => {
     }
   });
 
-  it("resolves a retired built-in through the successor configuration namespace", async () => {
+  it("resolves the published revision through its original configuration namespace", async () => {
     const getWorkflowPromptOverridesAsync = vi.fn(async () => ({}));
     const resolved = await resolveWorkflowIrForTaskWithProvenance({
       getTaskWorkflowSelectionAsync: async () => ({ workflowId: "builtin:coding-ideas", stepIds: [] }),
       getTaskWorkflowSelection: () => ({ workflowId: "builtin:coding-ideas", stepIds: [] }),
       getWorkflowDefinition: async () => undefined,
-      getWorkflowSettingsProjectId: () => "project-successor",
+      getWorkflowSettingsProjectId: () => "project-canonical",
       getWorkflowPromptOverridesAsync,
-    } as never, "FN-retired");
+    } as never, "FN-canonical");
 
     expect(resolved.source).toBe("selection");
     expect(resolved.ir).toEqual(BUILTIN_CODING_IDEAS_V2_WORKFLOW_IR);
-    expect(getWorkflowPromptOverridesAsync).toHaveBeenCalledWith("builtin:coding-ideas-v2", "project-successor");
+    expect(getWorkflowPromptOverridesAsync).toHaveBeenCalledWith("builtin:coding-ideas", "project-canonical");
   });
 
   it("shares the caller-owned IR cache — one definition read per workflow", async () => {

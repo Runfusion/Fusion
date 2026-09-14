@@ -34,7 +34,7 @@ const IR = BUILTIN_CODING_IDEAS_V2_WORKFLOW_IR;
 
 function stepsForeach(): WorkflowIrNode {
   const node = IR.nodes.find((candidate) => candidate.id === "steps" && candidate.kind === "foreach");
-  if (!node) throw new Error("builtin:coding-ideas-v2 must contain its steps foreach");
+  if (!node) throw new Error("builtin:coding-ideas must contain its steps foreach");
   return node;
 }
 

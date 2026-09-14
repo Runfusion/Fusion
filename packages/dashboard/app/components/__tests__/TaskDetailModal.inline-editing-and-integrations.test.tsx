@@ -3591,9 +3591,9 @@ describe("TaskDetailModal footer quick-action parity (FN-8194)", () => {
       defaultWorkflowId: "builtin:coding",
       workflows: [
         { id: "builtin:coding", name: "Coding", columns: [{ id: "done", name: "Done", flags: {} }] },
-        { id: "builtin:coding-ideas-v2", name: "Coding (Ideas)", columns: [{ id: "done", name: "Done", flags: {} }] },
+        { id: "builtin:coding-ideas", name: "Coding (Ideas)", columns: [{ id: "done", name: "Done", flags: {} }] },
       ],
-      taskWorkflowIds: { "FN-ideas-workflow": "builtin:coding-ideas-v2" },
+      taskWorkflowIds: { "FN-ideas-workflow": "builtin:coding-ideas" },
     });
 
     renderDetail(makeTask({ id: "FN-ideas-workflow", column: "done", githubTracking: { enabled: false } }));

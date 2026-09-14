@@ -9,21 +9,16 @@
  * control — i.e. no `form.<movedKey>` read and no `<movedKey>:` write inside a
  * `setForm`/`setPresetDraft`-shaped object literal.
  *
- * The intentional exceptions are the redirect stubs and the `MODEL_LANES`
- * descriptor table, which only NAMES the keys (as `projectProviderKey` /
- * `projectModelKey` string literals) so the surviving "default" lane can be
- * rendered — those are not form bindings. We therefore match the precise binding
- * shapes (`form.<key>` and `<key>:`) and explicitly allow descriptor mentions.
+ * The intentional exceptions are redirect stubs and descriptor tables, which
+ * only NAME keys as string values. We therefore match precise form-binding
+ * shapes (`form.<key>` and `<key>:`), not descriptive text.
+ *
+ * FNXC:ProjectModels 2026-09-14-19:24:
+ * Pipeline role lanes are no longer moved keys: project Settings and workflow Values are separate authorities for the same role vocabulary. Keep the role-key assertion separate from the source census so adding legitimate project controls cannot be mistaken for resurrecting a retired moved setting.
  */
 import { describe, it, expect } from "vitest";
-import { readdirSync, readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
 import { MOVED_SETTINGS_KEYS } from "@fusion/core";
-
-const here = dirname(fileURLToPath(import.meta.url));
-const componentsDir = join(here, "..", "components");
-const sectionsDir = join(componentsDir, "settings", "sections");
+import { listComponentFiles, readAppFile } from "../test/cssFixture";
 
 /**
  * Files that compose the modal's editable surface: the shell plus every
@@ -31,12 +26,9 @@ const sectionsDir = join(componentsDir, "settings", "sections");
  * directory (not a hardcoded list) so a newly added section is swept
  * automatically and a moved-key binding cannot slip in unnoticed.
  */
-const SURFACE_FILES = [
-  { dir: componentsDir, file: "SettingsModal.tsx" },
-  ...readdirSync(sectionsDir)
-    .filter((name) => name.endsWith(".tsx"))
-    .map((file) => ({ dir: sectionsDir, file })),
-];
+const SURFACE_FILES = listComponentFiles().filter(
+  (file) => file === "SettingsModal.tsx" || (file.startsWith("settings/sections/") && !file.includes("/__tests__/")),
+);
 
 /**
  * Keys that are also legitimately referenced as nested object properties on
@@ -44,16 +36,38 @@ const SURFACE_FILES = [
  * field that is NOT the top-level project setting). For these we only forbid the
  * `form.<key>` read shape, which unambiguously binds the project setting.
  */
-const PRESET_NESTED_KEYS = new Set([
-  "validatorProvider",
-  "validatorModelId",
-  // FNXC:SettingsCredentialInstance 2026-08-01-17:06: Validator instance selection is valid only inside a model preset; the form-read guard remains active for its workflow-owned top-level setting.
-  "validatorCredentialInstanceId",
-]);
+const PRESET_NESTED_KEYS = new Set<string>();
+
+const PROJECT_ROLE_SETTING_KEYS = [
+  "planningProvider", "planningModelId", "planningThinkingLevel", "planningCredentialInstanceId",
+  "planningFallbackProvider", "planningFallbackModelId", "planningFallbackThinkingLevel", "planningFallbackCredentialInstanceId",
+  "executionProvider", "executionModelId", "executionThinkingLevel", "executionCredentialInstanceId",
+  "executionFallbackProvider", "executionFallbackModelId", "executionFallbackThinkingLevel", "executionFallbackCredentialInstanceId",
+  "validatorProvider", "validatorModelId", "validatorThinkingLevel", "validatorCredentialInstanceId",
+  "validatorFallbackProvider", "validatorFallbackModelId", "validatorFallbackThinkingLevel", "validatorFallbackCredentialInstanceId",
+  "mergerProvider", "mergerModelId", "mergerThinkingLevel", "mergerCredentialInstanceId",
+  "mergerFallbackProvider", "mergerFallbackModelId", "mergerFallbackThinkingLevel", "mergerFallbackCredentialInstanceId",
+] as const;
 
 describe("SettingsModal moved-key removal sweep", () => {
-  for (const { dir, file } of SURFACE_FILES) {
-    const source = readFileSync(join(dir, file), "utf8");
+  it("contains no workflow-owned model persistence or residual project workflow-lane controls", () => {
+    const removed = ["workflow-model-lane-", "project-models-workflow-lanes", "workflowLanesSubheading", "WORKFLOW_MODEL_PAIRS", "registerWorkflowLaneSaver", "WorkflowLaneFlushRejection", "onWorkflowLanesChange", "settings.movedStub.modelLanes", "theseProjectOverridesApplyToTheActiveDefault"];
+    for (const file of listComponentFiles().filter((file) => !file.split("/").includes("__tests__"))) {
+      const source = readAppFile(`components/${file}`);
+      for (const token of removed) expect(source, `${file}: ${token}`).not.toContain(token);
+    }
+    const english = JSON.parse(readAppFile("../../i18n/locales/en/app.json"));
+    expect(english.settings.movedStub.modelLanes).toBeUndefined();
+    expect(english.settings.projectModels.workflowLanesSubheading).toBeUndefined();
+    expect(english.settings.projectModels.theseProjectOverridesApplyToTheActiveDefault).toBeUndefined();
+    expect(english.settings.models.roleFallbackHelp).toBeTruthy();
+  });
+  it("keeps project role model lanes out of the historical moved-key tombstone", () => {
+    for (const key of PROJECT_ROLE_SETTING_KEYS) expect(MOVED_SETTINGS_KEYS).not.toContain(key);
+  });
+
+  for (const file of SURFACE_FILES) {
+    const source = readAppFile(`components/${file}`);
 
     for (const key of MOVED_SETTINGS_KEYS) {
       it(`${file} does not read form.${key}`, () => {

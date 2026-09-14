@@ -2013,7 +2013,7 @@ function TaskCardComponent({
   FNXC:TaskCardWorkflowProgress 2026-08-25-01:10:
   The review lane shows its breakdown too. FN-7676 hid it in Planning because enumerated steps are a
   premature planning artifact there — that reasoning does not extend to in-review, where a
-  review-column workflow such as builtin:coding-ideas-v2 runs Verification, Documentation & Delivery
+  review-column workflow such as builtin:coding-ideas runs Verification, Documentation & Delivery
   and Code Review as real, advancing work. The card already resolves the FULL pipeline once it
   reaches that lane; this gate then suppressed the rendering of what it had just computed, so the
   operator saw nothing for the stage those gates were promoted into. Resolved by TRAIT, not by the

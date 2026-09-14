@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 
 import { resolveExecutionSettingsModel, type Settings } from "@fusion/core";
-import { mergeEffectiveSettings, mergeProjectWorkflowModelLaneBaseline } from "../project/effective-settings.js";
+import { mergeEffectiveSettings } from "../project/effective-settings.js";
 
 const PROJECT = "proj-1";
 
@@ -15,9 +15,7 @@ function makeStore(values?: Record<string, unknown>) {
 }
 
 /**
- * KTD-7 model-lane chain, pinned AFTER the entry merge. The chain reads
- * `settings.executionProvider` (Project Models baseline) → global lane →
- * selected-workflow value → project/global default.
+ * Model-lane chain after workflow overlay: selected workflow → project → global → default.
  */
 describe("model-lane resolution after effective-settings merge (KTD-7)", () => {
   it("project workflow baseline set → wins over global lane and defaults", async () => {
@@ -35,7 +33,7 @@ describe("model-lane resolution after effective-settings merge (KTD-7)", () => {
     expect(resolveExecutionSettingsModel(merged)).toEqual({ provider: "wf-prov", modelId: "wf-model" });
   });
 
-  it("global lane wins over a non-default selected workflow value when the project baseline is empty", async () => {
+  it("a non-default selected workflow wins over project and global lanes", async () => {
     const store = {
       getTaskWorkflowSelection: vi.fn(() => ({ workflowId: "wf-custom", stepIds: [] })),
       getDefaultWorkflowId: vi.fn(async () => "builtin:coding"),
@@ -60,27 +58,25 @@ describe("model-lane resolution after effective-settings merge (KTD-7)", () => {
       getWorkflowSettingsProjectId: vi.fn(() => PROJECT),
     };
     const merged = await mergeEffectiveSettings(store as any, { id: "t1" }, {
+      executionProvider: "project-prov",
+      executionModelId: "project-model",
       executionGlobalProvider: "global-prov",
       executionGlobalModelId: "global-model",
     } as unknown as Settings);
 
-    expect(resolveExecutionSettingsModel(merged)).toEqual({ provider: "global-prov", modelId: "global-model" });
+    expect(resolveExecutionSettingsModel(merged)).toEqual({ provider: "workflow-prov", modelId: "workflow-model" });
     expect(merged.selectedWorkflowModelLanes).toMatchObject({ executionProvider: "workflow-prov", executionModelId: "workflow-model" });
   });
 
-  it("loads the project workflow baseline for model sessions without a task", async () => {
-    const store = {
-      getDefaultWorkflowId: vi.fn(async () => "builtin:coding"),
-      getWorkflowDefinition: vi.fn(async () => undefined),
-      getWorkflowSettingValues: vi.fn(() => ({ executionProvider: "project-prov", executionModelId: "project-model" })),
-      getWorkflowSettingsProjectId: vi.fn(() => PROJECT),
-    };
-    const merged = await mergeProjectWorkflowModelLaneBaseline(store as any, {
+  it("reads project lanes directly when no selected workflow overlay is present", () => {
+    const settings = {
+      executionProvider: "project-prov",
+      executionModelId: "project-model",
       executionGlobalProvider: "global-prov",
       executionGlobalModelId: "global-model",
-    } as unknown as Settings);
+    } as unknown as Settings;
 
-    expect(resolveExecutionSettingsModel(merged)).toEqual({ provider: "project-prov", modelId: "project-model" });
+    expect(resolveExecutionSettingsModel(settings)).toEqual({ provider: "project-prov", modelId: "project-model" });
   });
 
   it("workflow lane empty → falls through to the global lane", async () => {

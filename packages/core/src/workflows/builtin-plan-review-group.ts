@@ -75,7 +75,7 @@ FNXC:ReviewGatedPlanning 2026-08-24-06:30:
 Setting `requireImplementationOnlySteps` on an ALREADY-BUILT plan-review node is inert: the prompt
 is assembled here, so a later `template.nodes[0].config.requireImplementationOnlySteps = true`
 changes a flag no engine code reads and leaves the reviewer prompt without its criterion. Both
-builtin:review-gated-coding and builtin:coding-ideas-v2 did exactly that. Derived workflows that
+builtin:review-gated-coding and builtin:coding-ideas did exactly that. Derived workflows that
 clone a base IR must call this instead so the prompt and the flag stay together.
 */
 export function applyImplementationOnlyStepReview(node: WorkflowIrNode): void {

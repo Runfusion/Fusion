@@ -182,7 +182,7 @@ describe("review arbitration fence", () => {
     const appendReviewRemediationSteps = vi.fn(async () => "appended" as const);
     const store = {
       getSettings: vi.fn(async () => ({ reviewArbitrationEnabled: true })),
-      getTaskWorkflowSelection: vi.fn(async () => ({ workflowId: "builtin:coding-ideas-v2" })),
+      getTaskWorkflowSelection: vi.fn(async () => ({ workflowId: "builtin:coding-ideas" })),
       getWorkflowDefinition: vi.fn(async () => undefined),
       getWorkflowSettingValues: vi.fn(async () => ({})),
       getWorkflowSettingsProjectId: vi.fn(() => undefined),
@@ -226,7 +226,7 @@ describe("review arbitration fence", () => {
     const sendTaskBackForFix = vi.fn(async () => undefined);
     const store = {
       getSettings: vi.fn(async () => ({ reviewArbitrationEnabled: true })),
-      getTaskWorkflowSelection: vi.fn(async () => ({ workflowId: "builtin:coding-ideas-v2" })),
+      getTaskWorkflowSelection: vi.fn(async () => ({ workflowId: "builtin:coding-ideas" })),
       getWorkflowDefinition: vi.fn(async () => undefined),
       getWorkflowSettingValues: vi.fn(async () => ({})),
       getWorkflowSettingsProjectId: vi.fn(() => undefined),

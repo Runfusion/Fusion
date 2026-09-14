@@ -215,6 +215,19 @@ describe("SettingsModal", () => {
   });
 
   describe("Project Models", () => {
+    it("orders global pipeline roles and places each fallback directly below its primary", async () => {
+      mockFetchModels.mockResolvedValue({ models: MODEL_FIXTURE, favoriteProviders: [], favoriteModels: [] });
+      renderModal({ initialSection: "global-models" });
+      await waitForSettingsModalReady();
+
+      const labels = ["Default Model", "Planner Model", "Planner Fallback Model", "Executor Model", "Executor Fallback Model", "Reviewer Model", "Reviewer Fallback Model", "Merger Model", "Merger Fallback Model"];
+      await screen.findByLabelText("Default Model");
+      const controls = labels.map((label) => screen.getByLabelText(label));
+      for (let index = 1; index < controls.length; index += 1) {
+        expect(controls[index - 1].compareDocumentPosition(controls[index]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      }
+    });
+
     it("renders the Fast & Cheap Model lane with its help in Global and Project Models", async () => {
       mockFetchModels.mockResolvedValue({
         models: MODEL_FIXTURE,
@@ -439,7 +452,7 @@ describe("SettingsModal", () => {
 
       expect(screen.getByText(/The Project Default Model is the fallback for this project/i)).toBeInTheDocument();
 
-      const defaultSection = screen.getByLabelText("Project Default Model").closest(".form-group");
+      const defaultSection = screen.getByLabelText("Default Model").closest(".form-group");
       expect(defaultSection).toBeTruthy();
       expect(within(defaultSection as HTMLElement).getByText("Inherited (Global)")).toBeInTheDocument();
     });
@@ -468,7 +481,7 @@ describe("SettingsModal", () => {
       await waitForSettingsModalReady();
 
       await settingsModalUser.click(screen.getByRole("button", { name: "Models · Project" }));
-      await settingsModalUser.click(screen.getByLabelText("Project Default Model"));
+      await settingsModalUser.click(screen.getByLabelText("Default Model"));
       // FNXC:SettingsModalTests 2026-08-16-03:46: the picker is already open; the item click is the mutating edit, so it runs under fake timers and the 500ms auto-save debounce is flushed on the fake clock (FN-2707).
       vi.useFakeTimers();
       fireEvent.click(screen.getByText("GPT-4o"));
@@ -492,376 +505,23 @@ describe("SettingsModal", () => {
       }
     });
 
-    const declaredWorkflowModelSettings = (ids: string[]) => ids.map((id) => ({ id, name: id, type: id.endsWith("ThinkingLevel") ? "enum" as const : "string" as const, options: id.endsWith("ThinkingLevel") ? [{ value: "high", label: "High" }] : undefined }));
-    const primaryWorkflowModelSettingIds = [
-      "planningProvider",
-      "planningModelId",
-      "planningThinkingLevel",
-      "executionProvider",
-      "executionModelId",
-      "executionThinkingLevel",
-      "validatorProvider",
-      "validatorModelId",
-      "validatorThinkingLevel",
-    ];
-    const fallbackWorkflowModelSettingIds = [
-      "planningFallbackProvider",
-      "planningFallbackModelId",
-      "planningFallbackThinkingLevel",
-      "validatorFallbackProvider",
-      "validatorFallbackModelId",
-      "validatorFallbackThinkingLevel",
-    ];
-
-    async function setupWorkflowModelLaneTest({
-      stored = {},
-      effective = {},
-      renderProps = {},
-      settingIds = [...primaryWorkflowModelSettingIds, ...fallbackWorkflowModelSettingIds],
-      models = MODEL_FIXTURE,
-    }: {
-      stored?: Record<string, unknown>;
-      effective?: Record<string, unknown>;
-      renderProps?: Partial<ComponentProps<typeof SettingsModal>>;
-      settingIds?: string[];
-      models?: typeof MODEL_FIXTURE;
-    } = {}) {
-      mockFetchSettings.mockResolvedValue({
-        ...defaultSettings,
-        defaultWorkflowId: "workflow-custom",
-      });
-      mockFetchSettingsByScope.mockResolvedValue({
-        global: defaultSettings,
-        project: { defaultWorkflowId: "workflow-custom" },
-      });
-      mockFetchModels.mockResolvedValue({
-        models,
-        favoriteProviders: [],
-        favoriteModels: [],
-      });
-      mockFetchWorkflow.mockResolvedValue({
-        id: "workflow-custom",
-        name: "Workflow Custom",
-        description: "",
-        kind: "workflow",
-        ir: {
-          version: "v2",
-          name: "Workflow Custom",
-          columns: [],
-          nodes: [],
-          edges: [],
-          settings: declaredWorkflowModelSettings(settingIds),
-        },
-        layout: {},
-        createdAt: "2026-01-01T00:00:00.000Z",
-        updatedAt: "2026-01-01T00:00:00.000Z",
-      });
-      mockFetchWorkflowSettingValues.mockResolvedValue({
-        stored,
-        effective,
-        orphaned: [],
-      });
-
-      renderModal({ initialSection: "project-models", projectId: "proj-1", ...renderProps });
+    it("keeps workflow persistence out of Project Models and renders pipeline roles in order", async () => {
+      mockFetchModels.mockResolvedValue({ models: MODEL_FIXTURE, favoriteProviders: [], favoriteModels: [] });
+      renderModal({ initialSection: "project-models", projectId: "proj-1" });
       await waitForSettingsModalReady();
 
-      await waitFor(() => {
-        expect(mockFetchWorkflow).toHaveBeenCalledWith("workflow-custom", "proj-1");
-        expect(mockFetchWorkflowSettingValues).toHaveBeenCalledWith("workflow-custom", "proj-1");
-      });
-    }
-
-    it("renders only advanced workflow actions inside the default workflow lane section", async () => {
-      const onOpenWorkflowSettings = vi.fn();
-      await setupWorkflowModelLaneTest({ renderProps: { onOpenWorkflowSettings } });
-
-      const workflowHeading = screen.getByRole("heading", { name: "Workflow lanes" });
-      const advancedButton = screen.getByRole("button", { name: "Advanced workflow policy" });
-      const actionRow = advancedButton.closest(".settings-model-lane-actions");
-      const presetsHeading = screen.getByRole("heading", { name: "Model Presets" });
-
-      expect(screen.queryByTestId("save-workflow-model-lanes")).not.toBeInTheDocument();
-      expect(screen.queryByRole("button", { name: "Save workflow models" })).not.toBeInTheDocument();
-      expect(actionRow).toBeInTheDocument();
-      expect(actionRow).toHaveAttribute("aria-label", "Default workflow model lane actions");
-      expect(within(actionRow as HTMLElement).getByRole("button", { name: "Advanced workflow policy" })).toBeInTheDocument();
-      expect(workflowHeading.compareDocumentPosition(actionRow as HTMLElement) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-      expect((actionRow as HTMLElement).compareDocumentPosition(presetsHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    });
-
-    it.each([
-      ["Plan/Triage Model", { planningProvider: "openai", planningModelId: "gpt-4o" }],
-      ["Executor Model", { executionProvider: "openai", executionModelId: "gpt-4o" }],
-      ["Reviewer Model", { validatorProvider: "openai", validatorModelId: "gpt-4o" }],
-    ])("auto-saves %s edits without closing Settings", async (laneLabel, expectedPatch) => {
-      mockUpdateWorkflowSettingValues.mockResolvedValue({
-        stored: expectedPatch,
-        effective: expectedPatch,
-        orphaned: [],
-      });
-      const onClose = vi.fn();
-      await setupWorkflowModelLaneTest({ renderProps: { onClose } });
-
-      await settingsModalUser.click(screen.getByLabelText(laneLabel));
-      await settingsModalUser.click(await screen.findByText("GPT-4o"));
-
-      await waitFor(() => {
-        expect(mockUpdateWorkflowSettingValues).toHaveBeenCalledWith(
-          "workflow-custom",
-          expectedPatch,
-          "proj-1",
-        );
-      });
-      expect(onClose).not.toHaveBeenCalled();
-    });
-
-    it("flushes a pending workflow lane edit when Settings closes", async () => {
-      const expectedPatch = { planningProvider: "openai", planningModelId: "gpt-4o" };
-      const onClose = vi.fn();
-      mockUpdateWorkflowSettingValues.mockResolvedValue({ stored: expectedPatch, effective: expectedPatch, orphaned: [] });
-      await setupWorkflowModelLaneTest({ renderProps: { onClose } });
-
-      await settingsModalUser.click(screen.getByLabelText("Plan/Triage Model"));
-      await settingsModalUser.click(await screen.findByText("GPT-4o"));
-      // FNXC:SettingsModalTests 2026-07-27-17:20: scoped footer-close selector avoids the whole-tree accessible-name walk of getAllByRole({ name: "Close" }).
-      await settingsModalUser.click(document.querySelector(".modal-actions-right button") as HTMLButtonElement);
-
-      await waitFor(() => expect(mockUpdateWorkflowSettingValues).toHaveBeenCalledWith("workflow-custom", expectedPatch, "proj-1"));
-      expect(onClose).toHaveBeenCalledTimes(1);
-    });
-
-    it("renders saved workflow model lane values as project overrides after reload", async () => {
-      const expectedPatch = { planningProvider: "openai", planningModelId: "gpt-4o" };
-      mockUpdateWorkflowSettingValues.mockResolvedValue({
-        stored: expectedPatch,
-        effective: expectedPatch,
-        orphaned: [],
-      });
-      await setupWorkflowModelLaneTest();
-
-      await settingsModalUser.click(screen.getByLabelText("Plan/Triage Model"));
-      const laneOption = await screen.findByText("GPT-4o");
-      vi.useFakeTimers();
-      fireEvent.click(laneOption);
-      await flushSettingsAutoSave();
-      vi.useRealTimers();
-      expect(mockUpdateWorkflowSettingValues).toHaveBeenCalledWith("workflow-custom", expectedPatch, "proj-1");
-
-      cleanup();
-      mockFetchWorkflow.mockClear();
-      mockFetchWorkflowSettingValues.mockClear();
-      mockUpdateWorkflowSettingValues.mockClear();
-      await setupWorkflowModelLaneTest({ stored: expectedPatch, effective: expectedPatch });
-
-      const lane = screen.getByTestId("workflow-model-lane-planning");
-      expect(within(lane).getByText("Project baseline")).toBeInTheDocument();
-      expect(within(lane).getByText("GPT-4o")).toBeInTheDocument();
-      expect(screen.getByTestId("workflow-model-lane-execution")).toHaveTextContent("Inherited (Workflow)");
-    });
-
-    it("renders fallback workflow model lanes only when the default workflow declares them", async () => {
-      await setupWorkflowModelLaneTest();
-
-      expect(screen.getByTestId("workflow-model-lane-planning-fallback")).toBeInTheDocument();
-      expect(screen.getByTestId("workflow-model-lane-validator-fallback")).toBeInTheDocument();
-      expect(screen.getByTestId("project-model-lane-title-summarizer-fallback")).toBeInTheDocument();
-
-      cleanup();
-      mockFetchWorkflow.mockClear();
-      mockFetchWorkflowSettingValues.mockClear();
-      mockUpdateWorkflowSettingValues.mockClear();
-      await setupWorkflowModelLaneTest({ settingIds: primaryWorkflowModelSettingIds });
-
-      expect(screen.queryByTestId("workflow-model-lane-planning-fallback")).not.toBeInTheDocument();
-      expect(screen.queryByTestId("workflow-model-lane-validator-fallback")).not.toBeInTheDocument();
-      expect(screen.getByTestId("project-model-lane-title-summarizer-fallback")).toBeInTheDocument();
-      expect(screen.queryByText("Planning Fallback Model")).not.toBeInTheDocument();
-      expect(screen.queryByText("Reviewer Fallback Model")).not.toBeInTheDocument();
-    });
-
-    it("auto-saves fallback workflow model lane edits", async () => {
-      const expectedPatch = { planningFallbackProvider: "openai", planningFallbackModelId: "gpt-4o" };
-      mockUpdateWorkflowSettingValues.mockResolvedValue({
-        stored: expectedPatch,
-        effective: expectedPatch,
-        orphaned: [],
-      });
-      const onClose = vi.fn();
-      await setupWorkflowModelLaneTest({ renderProps: { onClose } });
-
-      await settingsModalUser.click(screen.getByLabelText("Planning Fallback Model"));
-      await settingsModalUser.click(await screen.findByText("GPT-4o"));
-
-      await waitFor(() => {
-        expect(mockUpdateWorkflowSettingValues).toHaveBeenCalledWith(
-          "workflow-custom",
-          expectedPatch,
-          "proj-1",
-        );
-      });
-      expect(onClose).not.toHaveBeenCalled();
-    });
-
-    it("auto-saves fallback workflow model lane resets as null patches", async () => {
-      await setupWorkflowModelLaneTest({
-        stored: { validatorFallbackProvider: "anthropic", validatorFallbackModelId: "claude-sonnet-4-5" },
-        effective: { validatorFallbackProvider: "anthropic", validatorFallbackModelId: "claude-sonnet-4-5" },
-      });
-
-      const lane = screen.getByTestId("workflow-model-lane-validator-fallback");
-      expect(within(lane).getByText("Project baseline")).toBeInTheDocument();
-      await settingsModalUser.click(within(lane).getByRole("button", { name: "Reset" }));
-
-      await waitFor(() => {
-        expect(mockUpdateWorkflowSettingValues).toHaveBeenCalledWith(
-          "workflow-custom",
-          { validatorFallbackProvider: null, validatorFallbackModelId: null, validatorFallbackThinkingLevel: null },
-          "proj-1",
-        );
-      });
-    });
-
-    it("shows inherited fallback badges without Reset when no project override is stored", async () => {
-      await setupWorkflowModelLaneTest();
-
-      const lane = screen.getByTestId("workflow-model-lane-planning-fallback");
-      expect(within(lane).getByText("Inherited (Workflow)")).toBeInTheDocument();
-      expect(within(lane).queryByRole("button", { name: "Reset" })).not.toBeInTheDocument();
-    });
-
-    it("does not write workflow settings when the primary Save has no pending workflow edits", async () => {
-      const onClose = vi.fn();
-      await setupWorkflowModelLaneTest({ renderProps: { onClose } });
-
-
-      await waitFor(() => {
-        expect(onClose).not.toHaveBeenCalled();
-      });
-      expect(mockUpdateWorkflowSettingValues).not.toHaveBeenCalled();
-    });
-
-    it("flushes pending workflow lane edits when Project Models unmounts", async () => {
-      const expectedPatch = { planningProvider: "openai", planningModelId: "gpt-4o" };
-      mockUpdateWorkflowSettingValues.mockResolvedValue({
-        stored: expectedPatch,
-        effective: expectedPatch,
-        orphaned: [],
-      });
-      const onClose = vi.fn();
-      await setupWorkflowModelLaneTest({ renderProps: { onClose } });
-
-      await settingsModalUser.click(screen.getByLabelText("Plan/Triage Model"));
-      await settingsModalUser.click(await screen.findByText("GPT-4o"));
-      expect(within(screen.getByTestId("workflow-model-lane-planning")).getByText("GPT-4o")).toBeInTheDocument();
-
-      await settingsModalUser.click(screen.getByRole("button", { name: "General · Global" }));
-      await waitFor(() => {
-        expect(screen.queryByTestId("workflow-model-lane-planning")).not.toBeInTheDocument();
-      });
-
-      await waitFor(() => {
-        expect(mockUpdateWorkflowSettingValues).toHaveBeenCalledWith(
-          "workflow-custom",
-          expectedPatch,
-          "proj-1",
-        );
-      });
-      expect(onClose).not.toHaveBeenCalled();
-    });
-
-    it("auto-saves workflow model lane resets as null patches", async () => {
-      await setupWorkflowModelLaneTest({
-        stored: { executionProvider: "anthropic", executionModelId: "claude-sonnet-4-5" },
-        effective: { executionProvider: "anthropic", executionModelId: "claude-sonnet-4-5" },
-      });
-
-      const lane = screen.getByTestId("workflow-model-lane-execution");
-      await settingsModalUser.click(within(lane).getByRole("button", { name: "Reset" }));
-
-      await waitFor(() => {
-        expect(mockUpdateWorkflowSettingValues).toHaveBeenCalledWith(
-          "workflow-custom",
-          { executionProvider: null, executionModelId: null, executionThinkingLevel: null },
-          "proj-1",
-        );
-      });
-    });
-
-    it("falls back to builtin workflow values when the configured default workflow is stale", async () => {
-      mockFetchWorkflowSettingValues
-        .mockRejectedValueOnce(new ApiRequestError("not found", 404))
-        .mockResolvedValueOnce({ stored: {}, effective: {}, orphaned: [] });
-      mockUpdateWorkflowSettingValues.mockResolvedValue({
-        stored: { planningProvider: "openai", planningModelId: "gpt-4o" },
-        effective: { planningProvider: "openai", planningModelId: "gpt-4o" },
-        orphaned: [],
-      });
-      await setupWorkflowModelLaneTest();
-
-      await waitFor(() => {
-        expect(mockFetchWorkflowSettingValues).toHaveBeenLastCalledWith("builtin:coding", "proj-1");
-      });
-
-      await settingsModalUser.click(screen.getByLabelText("Plan/Triage Model"));
-      await settingsModalUser.click(await screen.findByText("GPT-4o"));
-
-      await waitFor(() => {
-        expect(mockUpdateWorkflowSettingValues).toHaveBeenCalledWith(
-          "builtin:coding",
-          { planningProvider: "openai", planningModelId: "gpt-4o" },
-          "proj-1",
-        );
-      });
-    });
-
-    it("shows typed workflow model lane rejections without closing or clearing pending edits", async () => {
-      const addToast = vi.fn();
-      const onClose = vi.fn();
-      mockUpdateWorkflowSettingValues.mockRejectedValueOnce(
-        new ApiRequestError("rejected", 400, {
-          rejections: [{ code: "unknown-setting", settingId: "planningProvider", message: "planningProvider is not declared" }],
-        }),
-      );
-      await setupWorkflowModelLaneTest({ renderProps: { addToast, onClose } });
-
-      await settingsModalUser.click(screen.getByLabelText("Plan/Triage Model"));
-      await settingsModalUser.click(await screen.findByText("GPT-4o"));
-
-      await waitFor(() => {
-        expect(screen.getByTestId("workflow-model-lane-error-planning")).toHaveTextContent("planningProvider is not declared");
-      });
-      expect(onClose).not.toHaveBeenCalled();
-      expect(addToast).not.toHaveBeenCalledWith("Settings saved", "success");
-      expect(within(screen.getByTestId("workflow-model-lane-planning")).getByText("GPT-4o")).toBeInTheDocument();
-    });
-
-    it("shows the existing workflow model-lane empty state when no models are available", async () => {
-      await setupWorkflowModelLaneTest({ models: [] });
-
-      expect(screen.getByText(/No models available. Configure authentication before selecting workflow model lanes./i)).toBeInTheDocument();
-      expect(screen.queryByTestId("workflow-model-lane-planning-fallback")).not.toBeInTheDocument();
-      expect(screen.queryByTestId("workflow-model-lane-validator-fallback")).not.toBeInTheDocument();
-    });
-
-    it("does not fetch or write workflow model lanes without an active project", async () => {
-      mockFetchModels.mockResolvedValue({
-        models: MODEL_FIXTURE,
-        favoriteProviders: [],
-        favoriteModels: [],
-      });
-
-      renderModal({ initialSection: "project-models" });
-      await waitForSettingsModalReady();
-
-      expect(screen.getByText(/Open a project to edit workflow model lanes/i)).toBeInTheDocument();
+      expect(screen.queryByText("Workflow lanes")).not.toBeInTheDocument();
       expect(mockFetchWorkflowSettingValues).not.toHaveBeenCalled();
-      expect(screen.queryByTestId("save-workflow-model-lanes")).not.toBeInTheDocument();
-
-      expect(mockUpdateWorkflowSettingValues).not.toHaveBeenCalled();
+      const labels = ["Default Model", "Planner Model", "Executor Model", "Reviewer Model", "Merger Model"];
+      const controls = labels.map((label) => screen.getByLabelText(label));
+      for (let index = 1; index < controls.length; index += 1) {
+        expect(controls[index - 1].compareDocumentPosition(controls[index]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      }
     });
+
   });
 
-  describe("settings header actions", () => {
+    describe("settings header actions", () => {
     it("renders Help, Discord (hardened), and GitHub star controls", async () => {
       renderModal();
       await waitForSettingsModalReady();

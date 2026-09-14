@@ -92,8 +92,8 @@ vi.mock("../QuickEntryBox", () => ({
     };
 
     const selectedWorkflow = workflowOptions?.find((option) => option.id === selectedWorkflowId);
-    const showStart = selectedWorkflowId === "builtin:coding-ideas-v2"
-      || defaultWorkflowId === "builtin:coding-ideas-v2"
+    const showStart = selectedWorkflowId === "builtin:coding-ideas"
+      || defaultWorkflowId === "builtin:coding-ideas"
       || selectedWorkflow?.columns?.[0]?.flags?.manualIntake === true;
 
     const handoff = (callback?: (description: string, workflowId?: string | null) => void) => {
@@ -150,7 +150,7 @@ vi.mock("../QuickEntryBox", () => ({
             Save
           </button>
           {showStart && (
-            <button type="button" data-testid="quick-entry-start" onClick={() => void onCreate?.({ description: "Started task", workflowId: "builtin:coding-ideas-v2", column: "todo" })}>
+            <button type="button" data-testid="quick-entry-start" onClick={() => void onCreate?.({ description: "Started task", workflowId: "builtin:coding-ideas", column: "todo" })}>
               Start
             </button>
           )}

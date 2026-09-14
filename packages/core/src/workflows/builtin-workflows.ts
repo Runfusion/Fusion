@@ -18,7 +18,7 @@ import {
   codeReviewRemediationNode,
   planReplanNode,
 } from "./builtin-workflow-remediation-nodes.js";
-import { DEPRECATED_BUILTIN_WORKFLOW_IDS, RETIRED_BUILTIN_WORKFLOW_SUCCESSORS } from "../types.js";
+import { DEPRECATED_BUILTIN_WORKFLOW_IDS } from "../types.js";
 import type { WorkflowDefinition } from "./workflow-definition-types.js";
 import type { WorkflowIr, WorkflowIrColumn, WorkflowIrNode } from "./workflow-ir-types.js";
 import { parseWorkflowIr } from "./workflow-ir.js";
@@ -30,10 +30,6 @@ export function isBuiltinWorkflowId(id: string): boolean {
   return id.startsWith(BUILTIN_WORKFLOW_ID_PREFIX);
 }
 
-/** Resolve a retired built-in identity to the catalog definition that succeeds it. */
-export function resolveRetiredBuiltinWorkflowId(id: string): string {
-  return RETIRED_BUILTIN_WORKFLOW_SUCCESSORS.get(id) ?? id;
-}
 
 const PLUGIN_GATED_BUILTIN_WORKFLOWS: ReadonlyMap<string, string> = new Map([
   ["builtin:compound-engineering", "fusion-plugin-compound-engineering"],
@@ -83,8 +79,8 @@ export function defaultEnabledBuiltinWorkflowIds(): string[] {
 }
 
 /*
-FNXC:WorkflowSuccession 2026-09-06-02:15:
-Persisted activation lists remain operator-owned and may carry a retired id. Resolve succession only for catalog membership while retaining the raw duplicate guard, so an old+successor pair remains valid but a literal duplicate is still rejected.
+FNXC:WorkflowIdentity 2026-09-14-19:06:
+A built-in revision retains its original identity. Migration 0079 converges persisted references before catalog reads, so selection, configuration and capacity use the same raw workflow id without redirects.
 */
 /** Validate the shape and catalog membership of a persisted enablement list. */
 export function validateEnabledBuiltinWorkflowIds(value: unknown): asserts value is string[] | null | undefined {
@@ -97,7 +93,7 @@ export function validateEnabledBuiltinWorkflowIds(value: unknown): asserts value
   }
   const seen = new Set<string>();
   for (const rawId of value) {
-    if (typeof rawId !== "string" || !isBuiltinWorkflowToggleEligible(resolveRetiredBuiltinWorkflowId(rawId))) {
+    if (typeof rawId !== "string" || !isBuiltinWorkflowToggleEligible(rawId)) {
       throw new Error(`enabledBuiltinWorkflowIds contains an unknown, deprecated, fragment, or invalid workflow id: ${String(rawId)}`);
     }
     if (seen.has(rawId)) {
@@ -111,7 +107,7 @@ export function validateEnabledBuiltinWorkflowIds(value: unknown): asserts value
 export function effectiveEnabledBuiltinWorkflowIds(enabledIds?: readonly string[]): string[] {
   const configured = enabledIds === undefined
     ? new Set(defaultEnabledBuiltinWorkflowIds())
-    : new Set(enabledIds.map(resolveRetiredBuiltinWorkflowId));
+    : new Set(enabledIds);
   return toggleEligibleBuiltinWorkflowIds().filter((id) => configured.has(id));
 }
 
@@ -126,12 +122,12 @@ export function resolveEffectiveDefaultWorkflowId(
   enabledIds?: readonly string[],
 ): string {
   /*
-  FNXC:WorkflowSuccession 2026-09-06-02:15:
-  Canonicalize the configured default once before both return branches, so a persisted retired id resolves to its enabled successor rather than escaping as an absent catalog identity.
+  FNXC:WorkflowIdentity 2026-09-14-19:06:
+A built-in revision retains its original identity. Migration 0079 converges persisted references before catalog reads, so selection, configuration and capacity use the same raw workflow id without redirects.
   */
   const enabled = effectiveEnabledBuiltinWorkflowIds(enabledIds);
   const requested = configuredWorkflowId?.trim();
-  const configured = requested ? resolveRetiredBuiltinWorkflowId(requested) : requested;
+  const configured = requested ? requested : requested;
   if (configured && !isBuiltinWorkflowId(configured)) return configured;
   if (configured && enabled.includes(configured)) return configured;
   return enabled[0] ?? defaultEnabledBuiltinWorkflowIds()[0] ?? DEFAULT_WORKFLOW_ID;
@@ -228,14 +224,14 @@ function ceManualPrReviewOptionalGroupNode(column: string): WorkflowIrNode {
 }
 
 /*
-FNXC:WorkflowSuccession 2026-09-06-02:15:
-Catalog filtering compares canonical identities on both sides. A project whose stored activation list names only a retired id must still be offered its successor, while the retired entry itself stays absent from the catalog.
+FNXC:WorkflowIdentity 2026-09-14-19:06:
+A built-in revision retains its original identity. Migration 0079 converges persisted references before catalog reads, so selection, configuration and capacity use the same raw workflow id without redirects.
 */
 export function isBuiltinWorkflowEnabled(id: string, enabledIds?: readonly string[]): boolean {
   if (!isBuiltinWorkflowId(id)) return true;
   if (!enabledIds) return true;
-  const canonicalId = resolveRetiredBuiltinWorkflowId(id);
-  return enabledIds.some((enabledId) => resolveRetiredBuiltinWorkflowId(enabledId) === canonicalId);
+  const canonicalId = id;
+  return enabledIds.some((enabledId) => enabledId === canonicalId);
 }
 
 // Stable timestamp so built-ins round-trip deterministically.
@@ -568,6 +564,8 @@ export const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
     updatedAt: BUILTIN_TS,
   },
   /*
+   * FNXC:WorkflowIdentity 2026-09-14-19:06:
+   * V2 is a revision of this workflow, never a second identity. Republishing updates the existing definition.
    * FNXC:CodingIdeasV2Workflow 2026-08-26-05:56:
    * Same Ideas board as builtin:coding-ideas, with one rule: in-review NEVER writes code.
    * Implementation and its tests finish in `in-progress` — the executor's own final verification
@@ -579,7 +577,7 @@ export const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
    * keeps positioning ghosts.
    */
   {
-    id: "builtin:coding-ideas-v2",
+    id: "builtin:coding-ideas",
     name: "Coding (Ideas)",
     description:
       "Capture-first coding pipeline with a read-only review lane: park ideas in a manual intake, plan, implement and test per step, then review, document, and merge.",
@@ -985,11 +983,11 @@ export const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
 const BUILTIN_BY_ID = new Map(BUILTIN_WORKFLOWS.map((wf) => [wf.id, wf]));
 
 /*
-FNXC:WorkflowSuccession 2026-09-06-02:15:
-Direct reads accept retired built-in ids but return the successor definition unchanged, including its canonical id. No synthetic catalog entry is created, so compatibility cannot make the retired workflow offered again.
+FNXC:WorkflowIdentity 2026-09-14-19:06:
+A built-in revision retains its original identity. Migration 0079 converges persisted references before catalog reads, so selection, configuration and capacity use the same raw workflow id without redirects.
 */
 export function getBuiltinWorkflow(id: string): WorkflowDefinition | undefined {
-  return BUILTIN_BY_ID.get(resolveRetiredBuiltinWorkflowId(id));
+  return BUILTIN_BY_ID.get(id);
 }
 
 /** The operator-facing default workflow id used when a task has no

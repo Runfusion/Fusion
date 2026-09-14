@@ -34,7 +34,7 @@ vi.mock("../WorktreeGroup", () => ({
 vi.mock("../QuickEntryBox", () => ({
   QuickEntryBox: ({ favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, autoExpand, onCreate, onMoveTask, workflowId, workflowOptions }: { favoriteProviders?: string[]; favoriteModels?: string[]; onToggleFavorite?: (provider: string) => void; onToggleModelFavorite?: (modelId: string) => void; autoExpand?: boolean; onCreate?: (input: { description: string; workflowId?: string; column?: string }) => void; onMoveTask?: (id: string, column: string) => Promise<unknown>; workflowId?: string; workflowOptions?: { id: string; columns?: { flags?: { manualIntake?: boolean } }[] }[] }) => {
     const selectedWorkflow = workflowOptions?.find((option) => option.id === workflowId);
-    const showStart = workflowId === "builtin:coding-ideas-v2" || selectedWorkflow?.columns?.[0]?.flags?.manualIntake === true;
+    const showStart = workflowId === "builtin:coding-ideas" || selectedWorkflow?.columns?.[0]?.flags?.manualIntake === true;
     return (
     <div
       data-testid="quick-entry-box"
@@ -45,7 +45,7 @@ vi.mock("../QuickEntryBox", () => ({
       data-auto-expand={autoExpand === false ? "false" : "true"}
     >
       <button type="button" onClick={() => onCreate?.({ description: "Quick task" })}>create</button>
-      {showStart && <button type="button" data-testid="quick-entry-start" onClick={() => onCreate?.({ description: "Started task", workflowId: "builtin:coding-ideas-v2", column: "todo" })}>start</button>}
+      {showStart && <button type="button" data-testid="quick-entry-start" onClick={() => onCreate?.({ description: "Started task", workflowId: "builtin:coding-ideas", column: "todo" })}>start</button>}
       <button type="button" data-testid="quick-entry-move" onClick={() => void onMoveTask?.("FN-created", "todo")}>move</button>
     </div>
     );
@@ -671,13 +671,13 @@ describe("Column QuickEntryBox", () => {
 
   it("preserves the explicit Coding Ideas Start column in workflow mode", async () => {
     const onQuickCreate = vi.fn().mockResolvedValue({});
-    render(<Column {...defaultProps} column="ideas" workflowMode workflowId="builtin:coding-ideas-v2" workflowOptions={[{ id: "builtin:coding-ideas-v2", name: "Coding (Ideas)", columns: [{ id: "ideas", name: "Ideas", flags: { intake: true, hold: true, manualIntake: true } }] }]} tasks={[]} onQuickCreate={onQuickCreate} />);
+    render(<Column {...defaultProps} column="ideas" workflowMode workflowId="builtin:coding-ideas" workflowOptions={[{ id: "builtin:coding-ideas", name: "Coding (Ideas)", columns: [{ id: "ideas", name: "Ideas", flags: { intake: true, hold: true, manualIntake: true } }] }]} tasks={[]} onQuickCreate={onQuickCreate} />);
 
     fireEvent.click(screen.getByTestId("quick-entry-start"));
 
     await waitFor(() => expect(onQuickCreate).toHaveBeenCalledWith({
       description: "Started task",
-      workflowId: "builtin:coding-ideas-v2",
+      workflowId: "builtin:coding-ideas",
       column: "todo",
     }));
   });

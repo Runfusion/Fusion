@@ -307,7 +307,7 @@ export function getRunningOptionalGateBadge(
   FNXC:TaskCardOptionalGateBadge 2026-08-25-02:10:
   Badge whatever review-lane gate is RUNNING, instead of a closed list of three ids. The old test
   named `code-review`, `browser-verification` and `post-merge-verification` explicitly, so a
-  workflow that adds gates — builtin:coding-ideas-v2 runs Verification and Documentation & Delivery
+  workflow that adds gates — builtin:coding-ideas runs Verification and Documentation & Delivery
   in review — showed no badge at all for them: the operator watched an apparently idle card until
   "Merging" appeared at the very end. The running gate's own state is the signal; a hardcoded id
   list can only ever describe the gates that existed when it was written.

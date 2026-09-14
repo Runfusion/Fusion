@@ -45,7 +45,7 @@ describeIfReady("pipeline smoke: multi-repository workspace", () => {
   });
 
   it("drives a workspace task through the review-column gates to a merge", async () => {
-    const task = await harness.createPipelineTask("builtin:coding-ideas-v2", {
+    const task = await harness.createPipelineTask("builtin:coding-ideas", {
       idPrefix: "WS",
       initialColumn: "hold",
       repositoryScope: ["repo1"],
@@ -65,7 +65,7 @@ describeIfReady("pipeline smoke: multi-repository workspace", () => {
   });
 
   it("merges the MULT-040 shape after Code Review publishes evidence for both modified repositories", async () => {
-    const task = await harness.createPipelineTask("builtin:coding-ideas-v2", {
+    const task = await harness.createPipelineTask("builtin:coding-ideas", {
       idPrefix: "WS-BOTH",
       initialColumn: "hold",
       repositoryScope: ["repo1", "repo2"],

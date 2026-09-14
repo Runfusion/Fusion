@@ -121,6 +121,7 @@ import {
   WHITEBOARDS_SCHEMA_VERSION,
   OVERLAP_WAIT_REPAIR_REQUIRED_PHASE_VERSION,
   OVERLAP_REVALIDATION_DRAIN_VERSION,
+  WORKFLOW_IDENTITY_AND_MODEL_LANES_VERSION,
 } from "../../postgres/schema-applier.js";
 import { ProjectPartitionRekeyError, rekeyFallbackProjectPartition } from "../../postgres/migration-stamping.js";
 import type { PluginSchemaInitHook } from "../../postgres/plugin-schema-hook.js";
@@ -182,7 +183,8 @@ describe("schema-applier: immutable migration identities", () => {
     expect(WHITEBOARDS_SCHEMA_VERSION).toBe("0076");
     expect(OVERLAP_WAIT_REPAIR_REQUIRED_PHASE_VERSION).toBe("0077");
     expect(OVERLAP_REVALIDATION_DRAIN_VERSION).toBe("0078");
-    expect(SCHEMA_BASELINE_VERSION).toBe("0078");
+    expect(WORKFLOW_IDENTITY_AND_MODEL_LANES_VERSION).toBe("0079");
+    expect(SCHEMA_BASELINE_VERSION).toBe("0079");
   });
 
   it("keeps monitor and approval isolation assigned to version 0003", () => {
@@ -744,8 +746,11 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
 
     FNXC:WhiteboardAlpha 2026-09-10-05:42:
     Subsequent core migrations add step reports, patchnode, project notes, overlap waits, and Whiteboard heads/revisions, bringing the current project total to 120.
+
+    FNXC:WorkflowIdentity 2026-09-14-19:06:
+    Migration 0079 adds separate recovery archives for displaced workflow settings and prompt overrides, bringing the project total to 122.
     */
-    expect(bySchema.project).toBe(120);
+    expect(bySchema.project).toBe(122);
     /*
     FNXC:CapacityModel 2026-07-29-08:10 (drop the cross-project cap — table half):
     17, not 18: `central.global_concurrency` is dropped by migration 0037. A fresh
@@ -1935,6 +1940,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       WHITEBOARDS_SCHEMA_VERSION,
       OVERLAP_WAIT_REPAIR_REQUIRED_PHASE_VERSION,
       OVERLAP_REVALIDATION_DRAIN_VERSION,
+      WORKFLOW_IDENTITY_AND_MODEL_LANES_VERSION,
     ]);
     expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
   });
@@ -2039,6 +2045,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       WHITEBOARDS_SCHEMA_VERSION,
       OVERLAP_WAIT_REPAIR_REQUIRED_PHASE_VERSION,
       OVERLAP_REVALIDATION_DRAIN_VERSION,
+      WORKFLOW_IDENTITY_AND_MODEL_LANES_VERSION,
     ]);
   });
 
@@ -2276,6 +2283,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       WHITEBOARDS_SCHEMA_VERSION,
       OVERLAP_WAIT_REPAIR_REQUIRED_PHASE_VERSION,
       OVERLAP_REVALIDATION_DRAIN_VERSION,
+      WORKFLOW_IDENTITY_AND_MODEL_LANES_VERSION,
     ]);
   });
 
@@ -2394,6 +2402,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       WHITEBOARDS_SCHEMA_VERSION,
       OVERLAP_WAIT_REPAIR_REQUIRED_PHASE_VERSION,
       OVERLAP_REVALIDATION_DRAIN_VERSION,
+      WORKFLOW_IDENTITY_AND_MODEL_LANES_VERSION,
     ]);
   });
 
@@ -2512,6 +2521,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       WHITEBOARDS_SCHEMA_VERSION,
       OVERLAP_WAIT_REPAIR_REQUIRED_PHASE_VERSION,
       OVERLAP_REVALIDATION_DRAIN_VERSION,
+      WORKFLOW_IDENTITY_AND_MODEL_LANES_VERSION,
     ]);
   });
 });

@@ -54,6 +54,8 @@ const DELETED_FILES = [
  * understanding, which is how the machinery came back the first time.
  */
 const DELETED_SYMBOLS: Array<{ symbol: string; why: string }> = [
+  { symbol: "RETIRED_BUILTIN_WORKFLOW_SUCCESSORS", why: "FN-393 revisions retain one identity; migration converges persisted references" },
+  { symbol: "resolveRetiredBuiltinWorkflowId", why: "FN-393 removes redirects and split settings namespaces" },
   // Pre-graph cutover-readiness gating (workflow-cutover.ts).
   { symbol: "WORKFLOW_INTERPRETER_AUTHORITATIVE_FLAG", why: "the cutover it gated has happened; the graph is unconditionally authoritative" },
   { symbol: "evaluateInterpreterCutoverReadiness", why: "readiness evaluator for a completed cutover" },

@@ -29,7 +29,6 @@ import {
 import type { DashboardKeyboardShortcutMap } from "../utils/keyboardShortcuts";
 import { normalizeChatMessageLayout, type ChatMessageLayout } from "../hooks/useAppSettings";
 import { SettingsHelpTip } from "./settings/SettingsHelpTip";
-import type { SectionSaveHandler } from "./settings/sections/context";
 import { AppearanceSection } from "./settings/sections/AppearanceSection";
 import { ExperimentalSection } from "./settings/sections/ExperimentalSection";
 import { NodeSyncSection } from "./settings/sections/NodeSyncSection";
@@ -49,7 +48,7 @@ import {
 import { SecretsSection } from "./settings/sections/SecretsSection";
 import { PromptsSection } from "./settings/sections/PromptsSection";
 import { GeneralSection } from "./settings/sections/GeneralSection";
-import { ProjectModelsSection, WorkflowLaneFlushRejection } from "./settings/sections/ProjectModelsSection";
+import { ProjectModelsSection } from "./settings/sections/ProjectModelsSection";
 import { SchedulingSection } from "./settings/sections/SchedulingSection";
 import { CliBinarySection } from "./settings/sections/CliBinarySection";
 import { ScheduledEvalsSection } from "./settings/sections/ScheduledEvalsSection";
@@ -957,28 +956,6 @@ export function SettingsModal({
       } as CSSProperties)
     : {};
   const settingsContentRef = useRef<HTMLDivElement>(null);
-  const workflowLaneSaverRef = useRef<SectionSaveHandler | null>(null);
-  /*
-  FNXC:SettingsAutoSave 2026-07-20-01:00:
-  Workflow lane edits live outside the shared Settings form. Track their revision
-  alongside form dirtiness so Option 1 auto-save and every close path flush them
-  too; a completion only clears the revision it actually persisted.
-  */
-  const workflowLaneRevisionRef = useRef(0);
-  const [workflowLanesDirty, setWorkflowLanesDirty] = useState(false);
-  const markWorkflowLanesDirty = useCallback(() => {
-    workflowLaneRevisionRef.current += 1;
-    setWorkflowLanesDirty(true);
-  }, []);
-  const registerWorkflowLaneSaver = useCallback((saver: SectionSaveHandler | null) => {
-    /*
-    FNXC:ProjectModelsWorkflowLanes 2026-07-14-09:07:
-    Project Models workflow lane edits are workflow setting-values, not normal project settings. Keep the latest saver registered across section unmounts so auto-save and close flushing retain project-scoped workflow overrides after navigation.
-    */
-    if (saver) {
-      workflowLaneSaverRef.current = saver;
-    }
-  }, []);
   // FNXC:ModalTouchGeometry 2026-07-26-14:10: FloatingWindow owns movable, clamped geometry for the modal branch; the embedded Settings view remains an inline, chrome-free destination.
   const sessionBannersHidden = useSessionBannersHidden();
   const [form, setForm] = useState<SettingsFormState>({
@@ -2988,16 +2965,22 @@ export function SettingsModal({
     globalProviderKey: keyof GlobalSettings;
     globalModelKey: keyof GlobalSettings;
     globalThinkingKey?: keyof GlobalSettings;
+    globalFallbackProviderKey?: keyof GlobalSettings;
+    globalFallbackModelKey?: keyof GlobalSettings;
+    globalFallbackThinkingKey?: keyof GlobalSettings;
     projectProviderKey: keyof Settings;
     projectModelKey: keyof Settings;
     projectThinkingKey?: keyof Settings;
+    projectFallbackProviderKey?: keyof Settings;
+    projectFallbackModelKey?: keyof Settings;
+    projectFallbackThinkingKey?: keyof Settings;
     helperText: string;
     fallbackOrder: string;
   }
 
   /*
-  FNXC:Settings-MergerModel 2026-07-13-07:52:
-  MODEL_LANES drives Global Models + Project Models pickers. Merger is a sixth dedicated lane (project-scoped like summarization, not workflow-moved) so conflict/merge agents can use a different model from executor/planner/reviewer without a separate settings surface.
+  FNXC:Settings-MergerModel 2026-09-14-19:06:
+  MODEL_LANES orders Global and Project Models as Default, Planner, Executor, Reviewer, Merger. Each role has an independent scoped primary/fallback block; workflow overrides are edited on the workflow itself.
   */
   /** All model lanes with their global and project override keys */
   const MODEL_LANES: ModelLane[] = [
@@ -3009,19 +2992,80 @@ export function SettingsModal({
       projectProviderKey: "defaultProviderOverride",
       projectModelKey: "defaultModelIdOverride",
       projectThinkingKey: "defaultThinkingLevelOverride",
-      helperText: "Default AI model used for task execution when no per-task override is set.",
+      helperText: "Default AI model used when no task, workflow, project or global role model is configured.",
       fallbackOrder: "Project override → Global default lane → Automatic resolution",
     },
     {
+      laneId: "planning",
+      label: "Planner Model",
+      globalProviderKey: "planningGlobalProvider",
+      globalModelKey: "planningGlobalModelId",
+      globalThinkingKey: "planningGlobalThinkingLevel",
+      globalFallbackProviderKey: "planningGlobalFallbackProvider",
+      globalFallbackModelKey: "planningGlobalFallbackModelId",
+      globalFallbackThinkingKey: "planningGlobalFallbackThinkingLevel",
+      projectProviderKey: "planningProvider",
+      projectModelKey: "planningModelId",
+      projectThinkingKey: "planningThinkingLevel",
+      projectFallbackProviderKey: "planningFallbackProvider",
+      projectFallbackModelKey: "planningFallbackModelId",
+      projectFallbackThinkingKey: "planningFallbackThinkingLevel",
+      helperText: "AI model used for task planning.",
+      fallbackOrder: "Task → Workflow lane → Project override → Global Planner → Project Default → Global Default",
+    },
+    {
       laneId: "execution",
-      label: "Execution Model",
+      label: "Executor Model",
       globalProviderKey: "executionGlobalProvider",
       globalModelKey: "executionGlobalModelId",
       globalThinkingKey: "executionGlobalThinkingLevel",
+      globalFallbackProviderKey: "executionGlobalFallbackProvider",
+      globalFallbackModelKey: "executionGlobalFallbackModelId",
+      globalFallbackThinkingKey: "executionGlobalFallbackThinkingLevel",
       projectProviderKey: "executionProvider",
       projectModelKey: "executionModelId",
+      projectThinkingKey: "executionThinkingLevel",
+      projectFallbackProviderKey: "executionFallbackProvider",
+      projectFallbackModelKey: "executionFallbackModelId",
+      projectFallbackThinkingKey: "executionFallbackThinkingLevel",
       helperText: "AI model used for task implementation (executor agent).",
-      fallbackOrder: "Project override → Global execution lane → Global default lane → Automatic resolution",
+      fallbackOrder: "Task → Workflow lane → Project override → Global Executor → Project Default → Global Default",
+    },
+    {
+      laneId: "validator",
+      label: "Reviewer Model",
+      globalProviderKey: "validatorGlobalProvider",
+      globalModelKey: "validatorGlobalModelId",
+      globalThinkingKey: "validatorGlobalThinkingLevel",
+      globalFallbackProviderKey: "validatorGlobalFallbackProvider",
+      globalFallbackModelKey: "validatorGlobalFallbackModelId",
+      globalFallbackThinkingKey: "validatorGlobalFallbackThinkingLevel",
+      projectProviderKey: "validatorProvider",
+      projectModelKey: "validatorModelId",
+      projectThinkingKey: "validatorThinkingLevel",
+      projectFallbackProviderKey: "validatorFallbackProvider",
+      projectFallbackModelKey: "validatorFallbackModelId",
+      projectFallbackThinkingKey: "validatorFallbackThinkingLevel",
+      helperText: "AI model used for code and specification review.",
+      fallbackOrder: "Task → Workflow lane → Project override → Global Reviewer → Project Default → Global Default",
+    },
+    {
+      laneId: "merger",
+      label: "Merger Model",
+      globalProviderKey: "mergerGlobalProvider",
+      globalModelKey: "mergerGlobalModelId",
+      globalThinkingKey: "mergerGlobalThinkingLevel",
+      globalFallbackProviderKey: "mergerGlobalFallbackProvider",
+      globalFallbackModelKey: "mergerGlobalFallbackModelId",
+      globalFallbackThinkingKey: "mergerGlobalFallbackThinkingLevel",
+      projectProviderKey: "mergerProvider",
+      projectModelKey: "mergerModelId",
+      projectThinkingKey: "mergerThinkingLevel",
+      projectFallbackProviderKey: "mergerFallbackProvider",
+      projectFallbackModelKey: "mergerFallbackModelId",
+      projectFallbackThinkingKey: "mergerFallbackThinkingLevel",
+      helperText: "AI model used for merger sessions.",
+      fallbackOrder: "Task → Workflow lane → Project override → Global Merger → Project Default → Global Default",
     },
     /*
     FNXC:FastModeModel 2026-08-29-02:43:
@@ -3038,40 +3082,6 @@ export function SettingsModal({
       projectThinkingKey: "fastCheapThinkingLevel",
       helperText: t("settings.globalModels.fastAndCheapModelHelp", "Select a cheap model here for quick edits. It is used for Fast Mode when creating a task."),
       fallbackOrder: "Project override → Global Fast & Cheap lane → Execution lane → Project default lane → Global default lane → Automatic resolution",
-    },
-    {
-      laneId: "planning",
-      label: "Planning Model",
-      globalProviderKey: "planningGlobalProvider",
-      globalModelKey: "planningGlobalModelId",
-      globalThinkingKey: "planningGlobalThinkingLevel",
-      projectProviderKey: "planningProvider",
-      projectModelKey: "planningModelId",
-      helperText: "AI model used for task planning.",
-      fallbackOrder: "Project override → Global planning lane → Global default lane → Automatic resolution",
-    },
-    {
-      laneId: "validator",
-      label: "Reviewer Model",
-      globalProviderKey: "validatorGlobalProvider",
-      globalModelKey: "validatorGlobalModelId",
-      globalThinkingKey: "validatorGlobalThinkingLevel",
-      projectProviderKey: "validatorProvider",
-      projectModelKey: "validatorModelId",
-      helperText: "AI model used for code and specification review.",
-      fallbackOrder: "Project override → Global reviewer lane → Global default lane → Automatic resolution",
-    },
-    {
-      laneId: "merger",
-      label: "Merger Model",
-      globalProviderKey: "mergerGlobalProvider",
-      globalModelKey: "mergerGlobalModelId",
-      globalThinkingKey: "mergerGlobalThinkingLevel",
-      projectProviderKey: "mergerProvider",
-      projectModelKey: "mergerModelId",
-      projectThinkingKey: "mergerThinkingLevel",
-      helperText: "AI model used for merge conflict resolution, clean-room merge, stash-conflict recovery, and related merger agent sessions.",
-      fallbackOrder: "Project override → Global merger lane → Project default lane → Global default lane → Automatic resolution",
     },
     {
       laneId: "summarization",
@@ -3405,7 +3415,6 @@ export function SettingsModal({
     const initialScopedValuesSnapshot = initialScopedValues;
     const activeSectionSnapshot = activeSection;
     const globalGitlabSettingsSnapshot = globalGitlabSettings;
-    const workflowLaneRevisionSnapshot = workflowLaneRevisionRef.current;
     const limits = formSnapshot.researchSettings?.limits;
     if (limits?.maxConcurrentRuns !== undefined && (!Number.isFinite(limits.maxConcurrentRuns) || limits.maxConcurrentRuns < 1)) {
       setResearchLimitError("Research max concurrent runs must be at least 1.");
@@ -3569,8 +3578,6 @@ export function SettingsModal({
         Object.keys(projectPatch).length > 0 ? updateSettings(projectPatch, projectId) : Promise.resolve(),
       ]);
 
-      await workflowLaneSaverRef.current?.();
-
       /*
       FNXC:SettingsBackups 2026-08-13-23:51:
       Saving database-backup settings can register or reschedule the central
@@ -3579,11 +3586,6 @@ export function SettingsModal({
       */
       if (Object.keys(globalPatch).some((key) => key.startsWith("autoBackup"))) {
         void fetchBackups(projectId).then(setBackupInfo).catch(() => setBackupInfo(null));
-      }
-
-      // Only clear workflow-lane dirtiness when no newer lane edit arrived.
-      if (workflowLaneRevisionRef.current === workflowLaneRevisionSnapshot) {
-        setWorkflowLanesDirty(false);
       }
 
       // Quiet state feedback avoids a toast for each debounced edit.
@@ -3620,7 +3622,6 @@ export function SettingsModal({
       return true;
     } catch (err) {
       lastPersistSucceededRef.current = false;
-      if (err instanceof WorkflowLaneFlushRejection) return false;
       setAutoSaveStatus("error");
       addToast(getErrorMessage(err), "error");
       return false;
@@ -3649,11 +3650,10 @@ export function SettingsModal({
         project: resolveScopedMcpSettings("project", scopedSettings),
       } : undefined,
     });
-    return Object.keys(globalPatch).length > 0 || Object.keys(projectPatch).length > 0
-      || workflowLanesDirty;
-  }, [form, globalGitlabSettings, initialScopedValues, initialValues, scopedSettings, activeSection, workflowLanesDirty]);
+    return Object.keys(globalPatch).length > 0 || Object.keys(projectPatch).length > 0;
+  }, [form, globalGitlabSettings, initialScopedValues, initialValues, scopedSettings, activeSection]);
 
-  const autoSaveSnapshot = useMemo(() => JSON.stringify({ form, scopedSettings, globalGitlabSettings, workflowLaneRevision: workflowLaneRevisionRef.current }), [form, globalGitlabSettings, scopedSettings, workflowLanesDirty]);
+  const autoSaveSnapshot = useMemo(() => JSON.stringify({ form, scopedSettings, globalGitlabSettings }), [form, globalGitlabSettings, scopedSettings]);
   const hasAutoSaveChange = autoSaveActivationSnapshotRef.current !== null
     && autoSaveActivationSnapshotRef.current !== autoSaveSnapshot;
   latestAutoSaveStateRef.current = { dirty: settingsDirty, changed: hasAutoSaveChange };
@@ -3686,7 +3686,7 @@ export function SettingsModal({
     return () => {
       if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     };
-  }, [loading, autoSaveReady, hasAutoSaveChange, settingsDirty, prefixError, presetDraft, form, scopedSettings, globalGitlabSettings, workflowLanesDirty, activeSection]);
+  }, [loading, autoSaveReady, hasAutoSaveChange, settingsDirty, prefixError, presetDraft, form, scopedSettings, globalGitlabSettings, activeSection]);
 
   const requestClose = useCallback(async () => {
     if (autoSaveTimerRef.current) {
@@ -4158,10 +4158,6 @@ export function SettingsModal({
             form={form}
             setForm={setForm}
             projectId={projectId}
-            addToast={addToast}
-            onOpenWorkflowSettings={onOpenWorkflowSettings}
-            registerWorkflowLaneSaver={registerWorkflowLaneSaver}
-            onWorkflowLanesChange={markWorkflowLanesDirty}
             models={{
               modelLanes: MODEL_LANES,
               getLaneStatus,

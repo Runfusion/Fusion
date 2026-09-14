@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { GLOBAL_SETTINGS_KEYS, PROJECT_SETTINGS_KEYS } from "@fusion/core";
+import { globalModelsSearchEntries } from "../sections/GlobalModelsSection.search";
 import {
   ALL_PROJECT_RESET_KEYS,
   EXCLUDED_RESET_SECTIONS,
@@ -232,6 +233,24 @@ describe("settings section-keys registry", () => {
     expect(new Set(entry.keys)).toEqual(
       new Set(["themeMode", "colorTheme", "dashboardFontScalePct", "shadcnCustomColors"]),
     );
+  });
+
+  it("Project Models reset owns every project role primary and fallback companion", () => {
+    const keys = new Set(getSectionKeyEntry("project-models")!.keys);
+    for (const role of ["planning", "execution", "validator", "merger"]) {
+      for (const suffix of ["Provider", "ModelId", "CredentialInstanceId", "ThinkingLevel"]) {
+        expect(keys.has(`${role}${suffix}`), `${role}${suffix}`).toBe(true);
+        expect(keys.has(`${role}Fallback${suffix}`), `${role}Fallback${suffix}`).toBe(true);
+      }
+    }
+  });
+
+  it("indexes every global role primary and fallback model anchor", () => {
+    const keys = new Set(globalModelsSearchEntries.map((entry) => entry.key));
+    for (const role of ["planning", "execution", "validator", "merger"]) {
+      expect(keys.has(`${role}GlobalModelId`)).toBe(true);
+      expect(keys.has(`${role}GlobalFallbackModelId`)).toBe(true);
+    }
   });
 
   it("ALL_PROJECT_RESET_KEYS contains only project keys and never global-only keys", () => {

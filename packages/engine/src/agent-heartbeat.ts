@@ -59,7 +59,7 @@ import { resolveHeartbeatPromptTemplate, resolveHeartbeatScopeDisciplineMode, se
 import { buildPromptLayers, collapsePromptLayers } from "./execution/prompt-layers.js";
 import { resolveAndEmitGoalContext } from "./goals/goal-injection-diagnostics.js";
 import { createLogger, heartbeatLog, formatError } from "./logger.js";
-import { mergeEffectiveSettings, mergeProjectWorkflowModelLaneBaseline } from "./project/effective-settings.js";
+import { mergeEffectiveSettings } from "./project/effective-settings.js";
 import {
   extractConcurrentSoftDeleteRaceDetails,
   isConcurrentSoftDeleteRaceError,
@@ -3147,9 +3147,14 @@ export class HeartbeatMonitor {
         }
 
         const heartbeatBaseSettings = heartbeatModelSettings ?? ({} as Settings);
+        /*
+        FNXC:ModelResolution 2026-09-14-19:07:
+        Idle heartbeats consume project role lanes directly from project settings. Only a heartbeat
+        attached to a task overlays that task's selected workflow tier.
+        */
         heartbeatModelSettings = taskDetail
           ? await mergeEffectiveSettings(taskStore, taskDetail, heartbeatBaseSettings)
-          : await mergeProjectWorkflowModelLaneBaseline(taskStore, heartbeatBaseSettings);
+          : heartbeatBaseSettings;
         /*
         FNXC:AgentModelInheritance 2026-08-09-22:38:
         A model-less durable workflow role agent inherits its own role lane rather than always

@@ -227,7 +227,15 @@ export const BUILTIN_MOVED_WORKFLOW_SETTINGS: WorkflowSettingDefinition[] = [
   // catalog-shrink rule they stay plain project settings and are NOT moved to
   // workflow settings. `reflectionEnabled` is kept because executor.ts reads it
   // (gate for reflection tools).
+];
 
+/*
+ * FNXC:ModelResolution 2026-09-14-19:07:
+ * Role model lanes remain workflow-declared but are no longer part of the U4 moved-key catalog.
+ * This lets the same keys persist independently at project scope instead of storing project choices
+ * under a workflow identity. Workflow values stay isolated in selectedWorkflowModelLanes at runtime.
+ */
+export const BUILTIN_WORKFLOW_MODEL_LANE_SETTINGS: WorkflowSettingDefinition[] = [
   /*
    * FNXC:CredentialInstanceSelection 2026-08-01-05:38:
    * Workflow lanes persist optional credential-instance ids beside their provider/model pairs.
@@ -401,6 +409,56 @@ export const BUILTIN_MOVED_WORKFLOW_SETTINGS: WorkflowSettingDefinition[] = [
     type: "enum",
     options: THINKING_LEVELS.map((level) => ({ value: level, label: level })),
     description: "Thinking effort for the validator fallback model. Empty inherits from the task or default thinking level.",
+  },
+  {
+    id: "mergerProvider",
+    name: "Merger provider",
+    type: "string",
+    description: "Provider for the merger phase. Empty inherits from the project lane.",
+  },
+  {
+    id: "mergerCredentialInstanceId",
+    name: "Merger credential instance",
+    type: "string",
+    description: "Optional credential instance for the merger model pair.",
+  },
+  {
+    id: "mergerModelId",
+    name: "Merger model",
+    type: "string",
+    description: "Model id for the merger phase. Empty inherits from the project lane.",
+  },
+  {
+    id: "mergerThinkingLevel",
+    name: "Merger thinking level",
+    type: "enum",
+    options: THINKING_LEVELS.map((level) => ({ value: level, label: level })),
+    description: "Thinking effort for the merger phase. Empty inherits from the project lane.",
+  },
+  {
+    id: "mergerFallbackProvider",
+    name: "Merger fallback provider",
+    type: "string",
+    description: "Fallback provider for the merger phase.",
+  },
+  {
+    id: "mergerFallbackCredentialInstanceId",
+    name: "Merger fallback credential instance",
+    type: "string",
+    description: "Optional credential instance for the merger fallback model pair.",
+  },
+  {
+    id: "mergerFallbackModelId",
+    name: "Merger fallback model",
+    type: "string",
+    description: "Fallback model id for the merger phase.",
+  },
+  {
+    id: "mergerFallbackThinkingLevel",
+    name: "Merger fallback thinking level",
+    type: "enum",
+    options: THINKING_LEVELS.map((level) => ({ value: level, label: level })),
+    description: "Thinking effort for the merger fallback model. Empty inherits from the project or global fallback lane.",
   },
 ];
 
@@ -765,6 +823,7 @@ export const BUILTIN_OVERSIGHT_SETTINGS: WorkflowSettingDefinition[] = [
 
 export const BUILTIN_WORKFLOW_SETTINGS: WorkflowSettingDefinition[] = [
   ...BUILTIN_MOVED_WORKFLOW_SETTINGS,
+  ...BUILTIN_WORKFLOW_MODEL_LANE_SETTINGS,
   ...BUILTIN_TRIAGE_POLICY_SETTINGS,
   ...BUILTIN_REVIEW_REVISION_SETTINGS,
   ...BUILTIN_OVERSIGHT_SETTINGS,

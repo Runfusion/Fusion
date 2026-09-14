@@ -108,7 +108,7 @@ describe("review-lane recommendation projection", () => {
   this change repairs. Asserting the wiring here is what makes the parser above meaningful.
   */
   it("wires Documentation to both durable channels and to no tool at all", () => {
-    const template = getBuiltinWorkflow("builtin:coding-ideas-v2")?.ir.nodes
+    const template = getBuiltinWorkflow("builtin:coding-ideas")?.ir.nodes
       .find((node) => node.id === "documentation-delivery")?.config?.template as
       { nodes?: Array<{ id: string; config?: Record<string, unknown> }> } | undefined;
     const config = template?.nodes?.find((node) => node.id === "documentation-delivery-step")?.config ?? {};

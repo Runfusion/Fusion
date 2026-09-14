@@ -104,11 +104,11 @@ describe("buildBoardWorkflowsPayload disabled built-ins", () => {
   });
 });
 
-describe("buildBoardWorkflowsPayload retired workflow succession", () => {
-  it("projects legacy and successor selections into one Ideas lane", async () => {
+describe("buildBoardWorkflowsPayload stable workflow identity", () => {
+  it("projects migrated selections into one Ideas lane", async () => {
     const persisted = new Map([
       ["FN-OLD", { workflowId: "builtin:coding-ideas", stepIds: ["plan-review"] }],
-      ["FN-NEW", { workflowId: "builtin:coding-ideas-v2", stepIds: ["code-review"] }],
+      ["FN-NEW", { workflowId: "builtin:coding-ideas", stepIds: ["code-review"] }],
     ]);
     const getTaskWorkflowSelectionAsync = vi.fn(async (taskId: string) => {
       const row = persisted.get(taskId);
@@ -120,7 +120,7 @@ describe("buildBoardWorkflowsPayload retired workflow succession", () => {
         }),
       };
       return getTaskWorkflowSelectionAsyncImpl({
-        asyncLayer: { projectId: "board-successor", db },
+        asyncLayer: { projectId: "board-canonical", db },
       } as never, taskId);
     });
     const store = {
@@ -132,14 +132,14 @@ describe("buildBoardWorkflowsPayload retired workflow succession", () => {
     };
 
     const payload = await buildBoardWorkflowsPayload(store as never, ["FN-OLD", "FN-NEW"]);
-    const ideas = payload.workflows.filter((workflow) => workflow.id === "builtin:coding-ideas-v2");
+    const ideas = payload.workflows.filter((workflow) => workflow.id === "builtin:coding-ideas");
 
     expect(ideas).toHaveLength(1);
     expect(ideas[0]?.name).toBe("Coding (Ideas)");
     expect(payload.workflows.filter((workflow) => workflow.name === "Coding (Ideas)")).toHaveLength(1);
     expect(payload.taskWorkflowIds).toMatchObject({
-      "FN-OLD": "builtin:coding-ideas-v2",
-      "FN-NEW": "builtin:coding-ideas-v2",
+      "FN-OLD": "builtin:coding-ideas",
+      "FN-NEW": "builtin:coding-ideas",
     });
   });
 });

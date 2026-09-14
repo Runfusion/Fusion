@@ -24,7 +24,6 @@
 import {
   applyWorkflowSettingsOverlay,
   resolveEffectiveSettingsDetailed,
-  resolveProjectWorkflowModelLaneBaseline,
   type Settings,
   type TaskStore,
 } from "@fusion/core";
@@ -43,7 +42,6 @@ export interface EffectiveSettingsTask {
 export async function mergeEffectiveSettings<T extends Partial<Settings>>(
   store: Pick<
     TaskStore,
-    | "getDefaultWorkflowId"
     | "getTaskWorkflowSelection"
     | "getTaskWorkflowSelectionAsync"
     | "getWorkflowDefinition"
@@ -57,29 +55,6 @@ export async function mergeEffectiveSettings<T extends Partial<Settings>>(
     const detailed = await resolveEffectiveSettingsDetailed(
       store as Parameters<typeof resolveEffectiveSettingsDetailed>[0],
       task,
-    );
-    return applyWorkflowSettingsOverlay(base, detailed);
-  } catch {
-    return base;
-  }
-}
-
-/** Merge the Project Models workflow-lane baseline when no task-selected
- * workflow exists, such as scheduled AI prompts and idle heartbeats. */
-export async function mergeProjectWorkflowModelLaneBaseline<T extends Partial<Settings>>(
-  store: Pick<
-    TaskStore,
-    | "getDefaultWorkflowId"
-    | "getWorkflowDefinition"
-    | "getWorkflowSettingValues"
-    | "getWorkflowSettingsProjectId"
-  >,
-  base: T,
-): Promise<T> {
-  try {
-    const detailed = await resolveProjectWorkflowModelLaneBaseline(
-      store as Parameters<typeof resolveProjectWorkflowModelLaneBaseline>[0],
-      store.getWorkflowSettingsProjectId(),
     );
     return applyWorkflowSettingsOverlay(base, detailed);
   } catch {

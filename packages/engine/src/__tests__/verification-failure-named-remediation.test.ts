@@ -6,7 +6,7 @@ work to do. These tests pin which bounce shape each `stepReopenPolicy` gets, bec
 interchangeable and picking the wrong one silently discards the measurement:
 
   - `reopen-trailing` is retained by builtin:coding and by the composition-base IR asserted below.
-  - `none` (builtin:coding-ideas-v2) forbids reopening, so remediation must ARRIVE as appended steps.
+  - `none` (builtin:coding-ideas) forbids reopening, so remediation must ARRIVE as appended steps.
 
 The defect: `none` reached `sendTaskBackForFix` all the same, which reopens nothing under that
 policy. The card bounced to implementation with zero pending steps, the foreach answered

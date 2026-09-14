@@ -14,7 +14,7 @@
  * stays separate by design.
  */
 
-import { getBuiltinWorkflow, isBuiltinWorkflowId, resolveDefaultWorkflowIr, resolveRetiredBuiltinWorkflowId } from "./builtin-workflows.js";
+import { getBuiltinWorkflow, isBuiltinWorkflowId, resolveDefaultWorkflowIr } from "./builtin-workflows.js";
 import { parseWorkflowIr, serializeWorkflowIr } from "./workflow-ir.js";
 import { applyPromptOverridesToIr } from "./workflow-prompt-overrides.js";
 import type { WorkflowIr } from "./workflow-ir-types.js";
@@ -223,7 +223,7 @@ export async function resolveWorkflowIrById(
   irCache?: Map<string, WorkflowIr>,
   definitionReadTally?: WorkflowDefinitionReadTally,
 ): Promise<WorkflowIr> {
-  const workflowId = resolveRetiredBuiltinWorkflowId(requestedWorkflowId);
+  const workflowId = requestedWorkflowId;
   let projectId: string | undefined;
   try { projectId = store.getWorkflowSettingsProjectId?.(); } catch { projectId = undefined; }
   const cacheKey = projectId ? `${workflowId}\u0000${projectId}` : workflowId;

@@ -24,9 +24,15 @@ export interface ModelLane {
   globalProviderKey: keyof GlobalSettings;
   globalModelKey: keyof GlobalSettings;
   globalThinkingKey?: keyof GlobalSettings;
+  globalFallbackProviderKey?: keyof GlobalSettings;
+  globalFallbackModelKey?: keyof GlobalSettings;
+  globalFallbackThinkingKey?: keyof GlobalSettings;
   projectProviderKey: keyof Settings;
   projectModelKey: keyof Settings;
   projectThinkingKey?: keyof Settings;
+  projectFallbackProviderKey?: keyof Settings;
+  projectFallbackModelKey?: keyof Settings;
+  projectFallbackThinkingKey?: keyof Settings;
   helperText: string;
   fallbackOrder: string;
 }
@@ -43,9 +49,6 @@ export type SettingsFormState = Settings & {
 export type SetSettingsForm = (
   updater: SettingsFormState | ((prev: SettingsFormState) => SettingsFormState),
 ) => void;
-
-/** Async callback registered by a section when it owns a shell-triggered save side effect. */
-export type SectionSaveHandler = () => Promise<void>;
 
 /** Props every extracted section receives. */
 export interface SectionBaseProps {

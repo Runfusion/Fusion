@@ -4,11 +4,32 @@
  * FNXC:SettingsSearch 2026-07-15-17:35:
  * One entry per descriptor row the section renders, co-located so a setting and its index entry change in the same edit. Labels and help mirror the section's `t()` calls verbatim: the index matches on the copy operators actually read, so a paraphrase here would make search miss the words on screen.
  * This section is the reason the index was rewritten. Operators searched "summarize" and Project Models did not surface, because the old index was a hand-written keyword list per nav entry; it was patched twice (FN-7907, then again 2026-07-14) and still only covered whatever someone had thought to type. `autoSummarizeTitles` now carries NO keywords on purpose — "Auto-summarize" is in its own label and "summarization" in its help, and both are indexed automatically. Adding "summarize" back as a keyword would restate the label and re-create the list that rotted.
- * Absent by design: the model-lane pickers, the Chat default target picker, preset CRUD and its per-size grid, and the workflow lane rows. They are bespoke widgets, not descriptor rows — there is no `data-settings-key` anchor for a result to jump to.
+ * Pipeline role model and fallback pickers are indexed explicitly because they expose stable `data-settings-key` anchors. Absent by design: the Chat default target picker, preset CRUD and its per-size grid, and other bespoke model rows without a searchable anchor.
  */
 import type { SettingsSearchEntry } from "../search/types";
 
 export const projectModelsSearchEntries: SettingsSearchEntry[] = [
+  ...(["planning", "execution", "validator", "merger"] as const).flatMap((role) => {
+    const labels = { planning: "Planner", execution: "Executor", validator: "Reviewer", merger: "Merger" } as const;
+    return [
+      {
+        sectionId: "project-models",
+        key: `${role}ModelId`,
+        labelKey: `settings.projectModels.${role}Model`,
+        labelFallback: `${labels[role]} Model`,
+        helpFallback: `Project model used by the ${labels[role].toLowerCase()} role.`,
+        keywords: [role, "model", "project"],
+      },
+      {
+        sectionId: "project-models",
+        key: `${role}FallbackModelId`,
+        labelKey: `settings.projectModels.${role}FallbackModel`,
+        labelFallback: `${labels[role]} Fallback Model`,
+        helpFallback: `Retry model used when the ${labels[role].toLowerCase()} role's primary model is unavailable.`,
+        keywords: [role, "fallback", "retry", "model"],
+      },
+    ];
+  }),
   {
     sectionId: "project-models",
     key: "executorEscalationModel",

@@ -248,7 +248,7 @@ describe("built-in workflows", () => {
   /*
   FNXC:WorkflowCompletion 2026-08-25-10:20:
   The invariant is that every built-in PRODUCES a card summary, not that it owns a node called
-  `completion-summary`. `builtin:coding-ideas-v2` folds the summary into its Documentation milestone,
+  `completion-summary`. `builtin:coding-ideas` folds the summary into its Documentation milestone,
   writing it in the same pass as the delivery note and saving a model call per card. Pinning the node
   id would have forced a second read-only session that exists only to satisfy a test.
   What must NOT weaken: a workflow with neither a summary node nor a summary-writing milestone still
@@ -292,7 +292,7 @@ describe("built-in workflows", () => {
       FNXC:WorkflowCatalog 2026-09-06-02:15:
       The surviving Coding (Ideas) workflow derives from a reduced composition with no post-merge verification. Its own review lane is where verification is judged; adding a post-merge node would re-open checks after the merge that review already covered.
       */
-      if (workflow.id === "builtin:coding-ideas-v2") continue;
+      if (workflow.id === "builtin:coding-ideas") continue;
       const mergeNode = workflow.ir.nodes.find((node) => node.id === "merge-attempt" || node.id === "merge");
       if (!mergeNode) continue;
 
@@ -477,31 +477,32 @@ describe("built-in workflows", () => {
     );
   });
 
-  it("retires the old Ideas catalog entry while resolving it to the renamed successor", () => {
-    expect(BUILTIN_WORKFLOWS.some((workflow) => workflow.id === "builtin:coding-ideas")).toBe(false);
+  it("publishes the current revision under one stable Ideas identity", () => {
+    expect(BUILTIN_WORKFLOWS.filter((workflow) => workflow.id === "builtin:coding-ideas")).toHaveLength(1);
+    expect(getBuiltinWorkflow("builtin:coding-ideas-v2")).toBeUndefined();
     expect(getBuiltinWorkflow("builtin:coding")?.name).toBe("Coding (Auto)");
-    expect(getBuiltinWorkflow("builtin:coding-ideas-v2")?.name).toBe("Coding (Ideas)");
-    expect(getBuiltinWorkflow("builtin:coding-ideas")?.id).toBe("builtin:coding-ideas-v2");
+    expect(getBuiltinWorkflow("builtin:coding-ideas")?.name).toBe("Coding (Ideas)");
+    expect(getBuiltinWorkflow("builtin:coding-ideas")?.id).toBe("builtin:coding-ideas");
     expect(BUILTIN_WORKFLOWS.some((workflow) => workflow.name.includes("V2"))).toBe(false);
   });
 
-  it("keeps retired activation and default settings compatible without re-offering the old id", () => {
+  it("uses the canonical identity for activation and defaults", () => {
     expect(() => validateEnabledBuiltinWorkflowIds(["builtin:coding-ideas"])).not.toThrow();
-    expect(() => validateEnabledBuiltinWorkflowIds(["builtin:coding-ideas", "builtin:coding-ideas-v2"])).not.toThrow();
-    expect(() => validateEnabledBuiltinWorkflowIds(["builtin:coding-ideas-v2", "builtin:coding-ideas-v2"])).toThrow(/duplicate/);
+    expect(() => validateEnabledBuiltinWorkflowIds(["builtin:coding-ideas-v2"])).toThrow();
+    expect(() => validateEnabledBuiltinWorkflowIds(["builtin:coding-ideas", "builtin:coding-ideas"])).toThrow(/duplicate/);
 
     for (const configured of [
       ["builtin:coding-ideas"],
-      ["builtin:coding-ideas", "builtin:coding-ideas-v2"],
+      ["builtin:coding-ideas", "builtin:coding"],
     ]) {
       const effective = effectiveEnabledBuiltinWorkflowIds(configured);
-      expect(effective.filter((id) => id === "builtin:coding-ideas-v2")).toHaveLength(1);
+      expect(effective.filter((id) => id === "builtin:coding-ideas")).toHaveLength(1);
     }
 
-    expect(resolveEffectiveDefaultWorkflowId("builtin:coding-ideas", undefined)).toBe("builtin:coding-ideas-v2");
-    expect(isBuiltinWorkflowToggleEligible("builtin:coding-ideas")).toBe(false);
-    expect(toggleEligibleBuiltinWorkflowIds()).not.toContain("builtin:coding-ideas");
-    expect(isBuiltinWorkflowEnabled("builtin:coding-ideas-v2", ["builtin:coding-ideas"])).toBe(true);
+    expect(resolveEffectiveDefaultWorkflowId("builtin:coding-ideas", undefined)).toBe("builtin:coding-ideas");
+    expect(isBuiltinWorkflowToggleEligible("builtin:coding-ideas")).toBe(true);
+    expect(toggleEligibleBuiltinWorkflowIds()).toContain("builtin:coding-ideas");
+    expect(isBuiltinWorkflowEnabled("builtin:coding-ideas", ["builtin:coding-ideas"])).toBe(true);
   });
 
   it("orders builtin:brainstorming's ask-user/exit-gate loop ahead of the plan/execute spine", () => {
@@ -813,7 +814,7 @@ describe("built-in workflows", () => {
     expect(ir.settings).toEqual(BUILTIN_WORKFLOW_SETTINGS);
     expect(ir.settings?.find((setting) => setting.id === "planReviewMaxRevisions")).toMatchObject({
       type: "number",
-      description: expect.stringMatching(/unbounded/i),
+      description: expect.stringMatching(/finite safety backstop/i),
     });
     expect(ir.settings?.find((setting) => setting.id === "codeReviewMaxRevisions")).toMatchObject({
       type: "number",
@@ -939,7 +940,7 @@ describe("built-in workflows", () => {
     expect(defaultEnabledBuiltinWorkflowIds()).toContain("builtin:marketing");
     expect(defaultEnabledBuiltinWorkflowIds()).not.toContain("builtin:compound-engineering");
     expect(defaultEnabledBuiltinWorkflowIds()).not.toContain("builtin:brainstorming");
-    expect(defaultEnabledBuiltinWorkflowIds()).toContain("builtin:coding-ideas-v2");
+    expect(defaultEnabledBuiltinWorkflowIds()).toContain("builtin:coding-ideas");
     expect(defaultEnabledBuiltinWorkflowIds()).not.toContain("builtin:pr-workflow");
     expect(getBuiltinWorkflow("builtin:pr-workflow")!.kind).toBe("fragment");
     expect(defaultEnabledBuiltinWorkflowIds().length).toBeGreaterThanOrEqual(5);
@@ -949,7 +950,7 @@ describe("built-in workflows", () => {
     */
     expect(defaultEnabledBuiltinWorkflowIds().slice(0, 5)).toEqual([
       "builtin:coding",
-      "builtin:coding-ideas-v2",
+      "builtin:coding-ideas",
       "builtin:legacy-coding",
       "builtin:quick-fix",
       "builtin:review-heavy",

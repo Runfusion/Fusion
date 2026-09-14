@@ -3,6 +3,7 @@ import {
   BUILTIN_CODING_IDEAS_V2_WORKFLOW_IR,
   BUILTIN_CODING_IDEAS_WORKFLOW_IR,
   resolveStepReopenPolicy,
+  ABSOLUTE_MAX_AUTOMATIC_REVIEW_REVISIONS,
   planRemediationPlacement,
   type Task,
   type TaskStep,
@@ -56,7 +57,7 @@ function failedReviewTask(overrides: Partial<Task> = {}): Task {
   } as Task;
 }
 
-function createRecoveryHarness(workflowId: "builtin:coding-ideas-v2" | "builtin:coding") {
+function createRecoveryHarness(workflowId: "builtin:coding-ideas" | "builtin:coding") {
   const row = failedReviewTask();
   const calls: string[] = [];
   let bounce: Promise<unknown> | undefined;
@@ -155,14 +156,14 @@ describe("FN-267 review remediation precedes review-to-WIP movement", () => {
     }
   });
   it("reproduces the FN-264 none-policy empty bounce until recovery appends named remediation", async () => {
-    const harness = createRecoveryHarness("builtin:coding-ideas-v2");
+    const harness = createRecoveryHarness("builtin:coding-ideas");
     expect(resolveStepReopenPolicy(BUILTIN_CODING_IDEAS_V2_WORKFLOW_IR)).toBe("none");
 
     await recoverFailedPreMergeWorkflowStep({
       store: harness.store as never,
       getRunContextFor: () => undefined,
       resolveFailedPreMergeWorkflowStepBudget: vi.fn(async () => ({
-        unbounded: true, max: Infinity, label: "unbounded", key: "code-review", attempts: 0,
+        unbounded: true, max: ABSOLUTE_MAX_AUTOMATIC_REVIEW_REVISIONS, label: "unbounded", key: "code-review", attempts: 0,
       })),
       appendReviewRemediationSteps: harness.append,
       sendTaskBackForFix: harness.sendBack,
@@ -186,14 +187,14 @@ describe("FN-267 review remediation precedes review-to-WIP movement", () => {
   });
 
   it("returns an incomplete Code Review REVISE to WIP with a deterministic Fix step", async () => {
-    const harness = createRecoveryHarness("builtin:coding-ideas-v2");
+    const harness = createRecoveryHarness("builtin:coding-ideas");
     harness.row.workflowStepResults![0]!.findings = [];
 
     await recoverFailedPreMergeWorkflowStep({
       store: harness.store as never,
       getRunContextFor: () => undefined,
       resolveFailedPreMergeWorkflowStepBudget: vi.fn(async () => ({
-        unbounded: true, max: Infinity, label: "unbounded", key: "code-review", attempts: 0,
+        unbounded: true, max: ABSOLUTE_MAX_AUTOMATIC_REVIEW_REVISIONS, label: "unbounded", key: "code-review", attempts: 0,
       })),
       appendReviewRemediationSteps: harness.append,
       sendTaskBackForFix: harness.sendBack,
@@ -223,7 +224,7 @@ describe("FN-267 review remediation precedes review-to-WIP movement", () => {
   deliberately spends the full chain on the sentinel.
   */
   it("writes the real fallback Fix step and reaches WIP for an empty-diff REVISE with no findings", async () => {
-    const harness = createRecoveryHarness("builtin:coding-ideas-v2");
+    const harness = createRecoveryHarness("builtin:coding-ideas");
     harness.row.workflowStepResults![0]!.reviewInputFingerprint = EMPTY_REVIEW_DIFF_FINGERPRINT;
     harness.row.workflowStepResults![0]!.findings = [];
 
@@ -231,7 +232,7 @@ describe("FN-267 review remediation precedes review-to-WIP movement", () => {
       store: harness.store as never,
       getRunContextFor: () => undefined,
       resolveFailedPreMergeWorkflowStepBudget: vi.fn(async () => ({
-        unbounded: true, max: Infinity, label: "unbounded", key: "code-review", attempts: 0,
+        unbounded: true, max: ABSOLUTE_MAX_AUTOMATIC_REVIEW_REVISIONS, label: "unbounded", key: "code-review", attempts: 0,
       })),
       appendReviewRemediationSteps: harness.append,
       sendTaskBackForFix: harness.sendBack,
@@ -263,7 +264,7 @@ describe("FN-267 review remediation precedes review-to-WIP movement", () => {
       store: harness.store as never,
       getRunContextFor: () => undefined,
       resolveFailedPreMergeWorkflowStepBudget: vi.fn(async () => ({
-        unbounded: true, max: Infinity, label: "unbounded", key: "code-review", attempts: 0,
+        unbounded: true, max: ABSOLUTE_MAX_AUTOMATIC_REVIEW_REVISIONS, label: "unbounded", key: "code-review", attempts: 0,
       })),
       appendReviewRemediationSteps: harness.append,
       sendTaskBackForFix: harness.sendBack,

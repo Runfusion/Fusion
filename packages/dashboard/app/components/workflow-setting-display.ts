@@ -71,6 +71,26 @@ const DISPLAY: Record<string, WorkflowSettingDisplay> = {
     group: "models",
     label: "Reviewer fallback model",
   },
+  /*
+   * FNXC:WorkflowSettings 2026-09-14-19:24:
+   * Merger is a workflow-overridable pipeline role alongside Planner, Executor, and Reviewer. Classify both model pairs in Models so the interleaved lane catalog renders them instead of leaking their declarations into Advanced as generic text fields.
+   */
+  mergerProvider: {
+    group: "models",
+    label: "Merger provider",
+  },
+  mergerModelId: {
+    group: "models",
+    label: "Merger model",
+  },
+  mergerFallbackProvider: {
+    group: "models",
+    label: "Merger fallback provider",
+  },
+  mergerFallbackModelId: {
+    group: "models",
+    label: "Merger fallback model",
+  },
   requirePrApproval: {
     group: "review",
     label: "Require PR approval",

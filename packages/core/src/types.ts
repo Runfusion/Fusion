@@ -65,7 +65,7 @@ FNXC:WorkflowDeprecation 2026-08-25-14:40:
 builtin:review-gated-coding is DELETED, not deprecated. It shipped with a success path that could
 never complete: `code-review -> documentation-delivery` put a write-capable node after a passed
 review, which `execute-workflow-graph` refuses with `workspace-review-seal-required`, and its plan
-node declared a seam `resolveSeamName` throws on. builtin:coding-ideas-v2 replaces it.
+node declared a seam `resolveSeamName` throws on. builtin:coding-ideas replaces it.
 It was briefly kept as a deprecated id so an existing selection still resolved. That is no longer
 worth its cost: it SHARED the documentation-delivery node with V2, so changing that node for V2
 silently changed this workflow too — a second consumer nobody was maintaining. A task that selected
@@ -77,12 +77,9 @@ export const DEPRECATED_BUILTIN_WORKFLOW_IDS: ReadonlySet<string> = new Set([
 ]);
 
 /*
-FNXC:WorkflowSuccession 2026-09-06-02:15:
-FN-297 removes builtin:coding-ideas from the catalog instead of deprecating it and names builtin:coding-ideas-v2 as its successor. The project default lacks the Ideas column and manual intake, so falling back to it would move existing cards onto a different board. The retired id is read-tolerant and requestable, never offered and never written for task selections or project defaults; enabledBuiltinWorkflowIds is the explicit exception because operator-owned activation lists are understood without being rewritten. Read/write normalization carries this succession without a schema migration, keeping SCHEMA_BASELINE_VERSION unchanged so older Fusion binaries can still open the database.
+FNXC:WorkflowIdentity 2026-09-14-19:06:
+A built-in revision retains its original identity. Migration 0079 converges persisted references before catalog reads, so selection, configuration and capacity use the same raw workflow id without redirects.
 */
-export const RETIRED_BUILTIN_WORKFLOW_SUCCESSORS: ReadonlyMap<string, string> = new Map([
-  ["builtin:coding-ideas", "builtin:coding-ideas-v2"],
-]);
 
 
 /*

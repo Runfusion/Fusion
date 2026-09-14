@@ -115,31 +115,7 @@ type MovedProjectSettingsKey =
   | "reviewConvergenceEscalationModelId"
   | "reviewArbitrationEnabled"
   | "reviewArbitrationProvider"
-  | "reviewArbitrationModelId"
-  | "executionProvider"
-  | "executionCredentialInstanceId"
-  | "executionModelId"
-  | "executionThinkingLevel"
-  | "executionFallbackProvider"
-  | "executionFallbackCredentialInstanceId"
-  | "executionFallbackModelId"
-  | "executionFallbackThinkingLevel"
-  | "planningProvider"
-  | "planningCredentialInstanceId"
-  | "planningModelId"
-  | "planningThinkingLevel"
-  | "planningFallbackProvider"
-  | "planningFallbackCredentialInstanceId"
-  | "planningFallbackModelId"
-  | "planningFallbackThinkingLevel"
-  | "validatorProvider"
-  | "validatorCredentialInstanceId"
-  | "validatorModelId"
-  | "validatorThinkingLevel"
-  | "validatorFallbackProvider"
-  | "validatorFallbackCredentialInstanceId"
-  | "validatorFallbackModelId"
-  | "validatorFallbackThinkingLevel";
+  | "reviewArbitrationModelId";
 
 type NonDefaultProjectSettingsKey = "ephemeralAgentTaskCreationPolicy" | "selectedWorkflowModelLanes";
 type ProjectSettingsSchema = Omit<ProjectSettings, MovedProjectSettingsKey | NonDefaultProjectSettingsKey>;
@@ -367,16 +343,32 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   */
   useOmpCli: undefined,
   ompCliBinaryPath: undefined,
-  // Global baseline lanes for per-role model selection
+  /*
+  FNXC:ModelResolution 2026-09-14-19:07:
+  Each global pipeline role owns a complete primary and fallback lane, including account and
+  thinking companions. The shared fallback remains the final compatibility tier only.
+  */
   executionGlobalProvider: undefined,
   executionGlobalCredentialInstanceId: undefined,
   executionGlobalModelId: undefined,
+  executionGlobalFallbackProvider: undefined,
+  executionGlobalFallbackCredentialInstanceId: undefined,
+  executionGlobalFallbackModelId: undefined,
+  executionGlobalFallbackThinkingLevel: undefined,
   planningGlobalProvider: undefined,
   planningGlobalCredentialInstanceId: undefined,
   planningGlobalModelId: undefined,
+  planningGlobalFallbackProvider: undefined,
+  planningGlobalFallbackCredentialInstanceId: undefined,
+  planningGlobalFallbackModelId: undefined,
+  planningGlobalFallbackThinkingLevel: undefined,
   validatorGlobalProvider: undefined,
   validatorGlobalCredentialInstanceId: undefined,
   validatorGlobalModelId: undefined,
+  validatorGlobalFallbackProvider: undefined,
+  validatorGlobalFallbackCredentialInstanceId: undefined,
+  validatorGlobalFallbackModelId: undefined,
+  validatorGlobalFallbackThinkingLevel: undefined,
   titleSummarizerGlobalProvider: undefined,
   titleSummarizerGlobalCredentialInstanceId: undefined,
   titleSummarizerGlobalModelId: undefined,
@@ -387,6 +379,10 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   mergerGlobalProvider: undefined,
   mergerGlobalCredentialInstanceId: undefined,
   mergerGlobalModelId: undefined,
+  mergerGlobalFallbackProvider: undefined,
+  mergerGlobalFallbackCredentialInstanceId: undefined,
+  mergerGlobalFallbackModelId: undefined,
+  mergerGlobalFallbackThinkingLevel: undefined,
   /*
   FNXC:GitHubImportTranslate 2026-07-15-09:30:
   Global import-translate baseline lane. Undefined falls through to the summarization lane then defaultProvider/defaultModelId at resolve time.
@@ -678,10 +674,37 @@ export const DEFAULT_PROJECT_SETTINGS = {
   commitAuthorEnabled: true,
   commitAuthorName: "Fusion",
   commitAuthorEmail: "noreply@runfusion.ai",
-  // Per-phase model lanes (planning/execution/validator) MOVED to workflow
-  // settings (U4) — see MOVED_SETTINGS_KEYS. The GLOBAL baseline lanes
-  // (executionGlobalProvider etc.) stay global; project default overrides stay.
-  // Project-level default override (NOT moved — stays project-scoped)
+  /*
+  FNXC:ModelResolution 2026-09-14-19:07:
+  Project role lanes are persisted directly with the project. They may share declaration names with
+  workflow lanes, but must never be stored beneath a workflow identity because workflow publication
+  or default-workflow changes cannot be allowed to detach project model choices.
+  */
+  planningProvider: undefined,
+  planningCredentialInstanceId: undefined,
+  planningModelId: undefined,
+  planningThinkingLevel: undefined,
+  planningFallbackProvider: undefined,
+  planningFallbackCredentialInstanceId: undefined,
+  planningFallbackModelId: undefined,
+  planningFallbackThinkingLevel: undefined,
+  executionProvider: undefined,
+  executionCredentialInstanceId: undefined,
+  executionModelId: undefined,
+  executionThinkingLevel: undefined,
+  executionFallbackProvider: undefined,
+  executionFallbackCredentialInstanceId: undefined,
+  executionFallbackModelId: undefined,
+  executionFallbackThinkingLevel: undefined,
+  validatorProvider: undefined,
+  validatorCredentialInstanceId: undefined,
+  validatorModelId: undefined,
+  validatorThinkingLevel: undefined,
+  validatorFallbackProvider: undefined,
+  validatorFallbackCredentialInstanceId: undefined,
+  validatorFallbackModelId: undefined,
+  validatorFallbackThinkingLevel: undefined,
+  // Project-level default override (stays project-scoped)
   defaultProviderOverride: undefined,
   defaultCredentialInstanceIdOverride: undefined,
   defaultModelIdOverride: undefined,

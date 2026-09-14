@@ -21,7 +21,7 @@ import { createFnAgent, promptWithFallback } from "../pi.js";
 import { HybridEvaluatorService } from "../eval/evaluator.js";
 import { buildSessionSkillContextSync } from "../cli-runtime/session-skill-context.js";
 import { resolveMcpServersForStore } from "../mcp/mcp-resolution.js";
-import { mergeEffectiveSettings, mergeProjectWorkflowModelLaneBaseline } from "../project/effective-settings.js";
+import { mergeEffectiveSettings } from "../project/effective-settings.js";
 import { resolveExecutorThinkingLevel } from "../agents/agent-session-helpers.js";
 
 const log = createLogger("cron-runner");
@@ -893,7 +893,7 @@ export class CronRunner {
 
     // Resolve model: step override → project execution lane → global execution lane → selected-workflow lane → project default override → global default
     // FNXC:ModelResolution 2026-06-25-12:00: FN-7039 requires scheduled AI-prompt automation steps to use execution-lane settings before default settings because these steps have no task/runtime model context.
-    const settings = await mergeProjectWorkflowModelLaneBaseline(this.store, await this.store.getSettings());
+    const settings = await this.store.getSettings();
     const defaultModel = resolveExecutionSettingsModel(settings);
     const modelProvider = step.modelProvider?.trim() || defaultModel.provider;
     const modelId = step.modelId?.trim() || defaultModel.modelId;

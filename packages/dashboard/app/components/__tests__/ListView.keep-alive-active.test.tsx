@@ -5,7 +5,7 @@ import { ListView } from "../ListView";
 
 const workflows = [
   {
-    id: "builtin:coding-ideas-v2",
+    id: "builtin:coding-ideas",
     name: "Coding (Ideas)",
     columns: [
       { id: "ideas", name: "Ideas", flags: { hold: true } },

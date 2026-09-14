@@ -1231,6 +1231,26 @@ export const workflowSettings = projectSchema.table("workflow_settings", {
   index("idx_workflow_settings_project").on(t.projectId),
 ]);
 
+/*
+FNXC:WorkflowIdentity 2026-09-14-19:06:
+Built-in identity convergence is intentionally destructive only in the active tables. Preserve every displaced settings payload under a collision-free project-scoped identity so an operator can recover the old values without allowing them to participate in runtime resolution.
+*/
+export const archivedWorkflowSettings = projectSchema.table("archived_workflow_settings", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  archiveId: text("archive_id").notNull(),
+  workflowId: text("workflow_id").notNull(),
+  replacementWorkflowId: text("replacement_workflow_id"),
+  values: jsonb("values").notNull().default({}),
+  sourceUpdatedAt: text("source_updated_at").notNull(),
+  archivedAt: text("archived_at").notNull(),
+  reason: text("reason").notNull(),
+}, (t) => [
+  primaryKey({ columns: [t.projectId, t.workflowId, t.reason, t.archivedAt] }),
+  unique("uq_archived_workflow_settings_episode").on(t.projectId, t.archiveId),
+  check("archived_workflow_settings_reason", sql`${t.reason} IN ('identity-merge-loser', 'model-lane-reset')`),
+  index("idx_archived_workflow_settings_project_workflow").on(t.projectId, t.workflowId),
+]);
+
 export const workflowPromptOverrides = projectSchema.table("workflow_prompt_overrides", {
   workflowId: text("workflow_id").notNull(),
   projectId: text("project_id").notNull(),
@@ -1239,6 +1259,20 @@ export const workflowPromptOverrides = projectSchema.table("workflow_prompt_over
 }, (t) => [
   primaryKey({ columns: [t.workflowId, t.projectId] }),
   index("idx_workflow_prompt_overrides_project").on(t.projectId),
+]);
+
+export const workflowPromptOverridesArchive = projectSchema.table("workflow_prompt_overrides_archive", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  archiveId: text("archive_id").notNull(),
+  workflowId: text("workflow_id").notNull(),
+  replacementWorkflowId: text("replacement_workflow_id"),
+  overrides: jsonb("overrides").notNull().default({}),
+  sourceUpdatedAt: text("source_updated_at").notNull(),
+  archivedAt: text("archived_at").notNull(),
+  reason: text("reason").notNull(),
+}, (t) => [
+  primaryKey({ columns: [t.projectId, t.archiveId] }),
+  index("idx_workflow_prompt_overrides_archive_project_workflow").on(t.projectId, t.workflowId),
 ]);
 
 /*
@@ -2722,6 +2756,7 @@ export const projectTableNames = [
   "agent_config_revisions", "agent_blocked_states", "merge_queue", "merge_requests",
   "completion_handoff_markers", "workflow_work_items", "workflow_run_branches",
   "workflow_run_step_instances", "workflow_settings", "workflow_prompt_overrides",
+  "archived_workflow_settings", "workflow_prompt_overrides_archive",
   "task_documents", "artifacts", "task_document_revisions", "research_runs",
   "research_exports", "research_run_events", "experiment_sessions",
   "experiment_session_records", "eval_runs", "eval_task_results", "eval_run_events",

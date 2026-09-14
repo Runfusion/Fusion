@@ -34,8 +34,10 @@ import type { GlobalSettings, McpServersSettings, Settings } from "@fusion/core"
  *
  * The title-summarizer lane was restored to project settings in FN-5994, so it
  * needs the same changed-only/null-as-delete handling as the project default
- * lane overrides. Execution/planning/validator lanes still live on workflow
- * settings and are filtered out before the project branch is reached.
+ * lane overrides.
+ *
+ * FNXC:ProjectModels 2026-09-14-19:24:
+ * Planner, Executor, Reviewer, and Merger now persist independently at project scope while workflows retain optional overrides. Keep every primary/fallback provider, model, credential, and thinking companion in this list so Settings saves and per-section resets use the project authority rather than dropping an edited companion.
  *
  * FNXC:Settings-ThinkingLevel 2026-07-10-12:10:
  * The project-scoped title-summarizer fallback thinking companion must travel
@@ -59,13 +61,19 @@ import type { GlobalSettings, McpServersSettings, Settings } from "@fusion/core"
  * scope and are gated by GLOBAL_SECTION_KEYS below.
  */
 export const MODEL_LANE_KEYS = [
-  "defaultProviderOverride", "defaultModelIdOverride",
-  "titleSummarizerProvider", "titleSummarizerModelId",
-  "titleSummarizerFallbackProvider", "titleSummarizerFallbackModelId", "titleSummarizerFallbackThinkingLevel",
-  "mergerProvider", "mergerModelId", "mergerThinkingLevel",
-  "mergerFallbackProvider", "mergerFallbackModelId", "mergerFallbackThinkingLevel",
+  "defaultProviderOverride", "defaultModelIdOverride", "defaultCredentialInstanceIdOverride", "defaultThinkingLevelOverride",
+  "planningProvider", "planningModelId", "planningCredentialInstanceId", "planningThinkingLevel",
+  "planningFallbackProvider", "planningFallbackModelId", "planningFallbackCredentialInstanceId", "planningFallbackThinkingLevel",
+  "executionProvider", "executionModelId", "executionCredentialInstanceId", "executionThinkingLevel",
+  "executionFallbackProvider", "executionFallbackModelId", "executionFallbackCredentialInstanceId", "executionFallbackThinkingLevel",
+  "validatorProvider", "validatorModelId", "validatorCredentialInstanceId", "validatorThinkingLevel",
+  "validatorFallbackProvider", "validatorFallbackModelId", "validatorFallbackCredentialInstanceId", "validatorFallbackThinkingLevel",
+  "mergerProvider", "mergerModelId", "mergerCredentialInstanceId", "mergerThinkingLevel",
+  "mergerFallbackProvider", "mergerFallbackModelId", "mergerFallbackCredentialInstanceId", "mergerFallbackThinkingLevel",
+  "titleSummarizerProvider", "titleSummarizerModelId", "titleSummarizerCredentialInstanceId", "titleSummarizerThinkingLevel",
+  "titleSummarizerFallbackProvider", "titleSummarizerFallbackModelId", "titleSummarizerFallbackCredentialInstanceId", "titleSummarizerFallbackThinkingLevel",
   "githubImportAutoTranslate", "importTranslateTargetLocale",
-  "importTranslateProvider", "importTranslateModelId", "importTranslateThinkingLevel",
+  "importTranslateProvider", "importTranslateModelId", "importTranslateCredentialInstanceId", "importTranslateThinkingLevel",
   "fastCheapProvider", "fastCheapModelId", "fastCheapCredentialInstanceId", "fastCheapThinkingLevel",
 ] as const;
 
@@ -219,8 +227,10 @@ export const GLOBAL_SECTION_KEYS: Record<string, ReadonlySet<string>> = {
   "global-models": new Set([
     "defaultProvider",
     "defaultModelId",
+    "defaultCredentialInstanceId",
     "fallbackProvider",
     "fallbackModelId",
+    "fallbackCredentialInstanceId",
     "fallbackThinkingLevel",
     "defaultThinkingLevel",
     "modelRouterEnabled",
@@ -238,15 +248,40 @@ export const GLOBAL_SECTION_KEYS: Record<string, ReadonlySet<string>> = {
     "orcarouterModelSync",
     "executionGlobalProvider",
     "executionGlobalModelId",
+    "executionGlobalCredentialInstanceId",
+    "executionGlobalThinkingLevel",
+    "executionGlobalFallbackProvider",
+    "executionGlobalFallbackModelId",
+    "executionGlobalFallbackThinkingLevel",
+    "executionGlobalFallbackCredentialInstanceId",
     "planningGlobalProvider",
     "planningGlobalModelId",
+    "planningGlobalCredentialInstanceId",
+    "planningGlobalThinkingLevel",
+    "planningGlobalFallbackProvider",
+    "planningGlobalFallbackModelId",
+    "planningGlobalFallbackThinkingLevel",
+    "planningGlobalFallbackCredentialInstanceId",
     "validatorGlobalProvider",
     "validatorGlobalModelId",
+    "validatorGlobalCredentialInstanceId",
+    "validatorGlobalThinkingLevel",
+    "validatorGlobalFallbackProvider",
+    "validatorGlobalFallbackModelId",
+    "validatorGlobalFallbackThinkingLevel",
+    "validatorGlobalFallbackCredentialInstanceId",
     "titleSummarizerGlobalProvider",
     "titleSummarizerGlobalModelId",
+    "titleSummarizerGlobalCredentialInstanceId",
+    "titleSummarizerGlobalThinkingLevel",
     "mergerGlobalProvider",
     "mergerGlobalModelId",
+    "mergerGlobalCredentialInstanceId",
     "mergerGlobalThinkingLevel",
+    "mergerGlobalFallbackProvider",
+    "mergerGlobalFallbackModelId",
+    "mergerGlobalFallbackThinkingLevel",
+    "mergerGlobalFallbackCredentialInstanceId",
     /*
     FNXC:GitHubImportTranslate 2026-07-15-09:30:
     The import-translate GLOBAL lane keys must be section-allowlisted in both Models
@@ -255,13 +290,16 @@ export const GLOBAL_SECTION_KEYS: Record<string, ReadonlySet<string>> = {
     */
     "importTranslateGlobalProvider",
     "importTranslateGlobalModelId",
+    "importTranslateGlobalCredentialInstanceId",
     "importTranslateGlobalThinkingLevel",
   ]),
   "project-models": new Set([
     "defaultProvider",
     "defaultModelId",
+    "defaultCredentialInstanceId",
     "fallbackProvider",
     "fallbackModelId",
+    "fallbackCredentialInstanceId",
     "fallbackThinkingLevel",
     "defaultThinkingLevel",
     "modelRouterEnabled",
@@ -279,17 +317,43 @@ export const GLOBAL_SECTION_KEYS: Record<string, ReadonlySet<string>> = {
     "orcarouterModelSync",
     "executionGlobalProvider",
     "executionGlobalModelId",
+    "executionGlobalCredentialInstanceId",
+    "executionGlobalThinkingLevel",
+    "executionGlobalFallbackProvider",
+    "executionGlobalFallbackModelId",
+    "executionGlobalFallbackThinkingLevel",
+    "executionGlobalFallbackCredentialInstanceId",
     "planningGlobalProvider",
     "planningGlobalModelId",
+    "planningGlobalCredentialInstanceId",
+    "planningGlobalThinkingLevel",
+    "planningGlobalFallbackProvider",
+    "planningGlobalFallbackModelId",
+    "planningGlobalFallbackThinkingLevel",
+    "planningGlobalFallbackCredentialInstanceId",
     "validatorGlobalProvider",
     "validatorGlobalModelId",
+    "validatorGlobalCredentialInstanceId",
+    "validatorGlobalThinkingLevel",
+    "validatorGlobalFallbackProvider",
+    "validatorGlobalFallbackModelId",
+    "validatorGlobalFallbackThinkingLevel",
+    "validatorGlobalFallbackCredentialInstanceId",
     "titleSummarizerGlobalProvider",
     "titleSummarizerGlobalModelId",
+    "titleSummarizerGlobalCredentialInstanceId",
+    "titleSummarizerGlobalThinkingLevel",
     "mergerGlobalProvider",
     "mergerGlobalModelId",
+    "mergerGlobalCredentialInstanceId",
     "mergerGlobalThinkingLevel",
+    "mergerGlobalFallbackProvider",
+    "mergerGlobalFallbackModelId",
+    "mergerGlobalFallbackThinkingLevel",
+    "mergerGlobalFallbackCredentialInstanceId",
     "importTranslateGlobalProvider",
     "importTranslateGlobalModelId",
+    "importTranslateGlobalCredentialInstanceId",
     "importTranslateGlobalThinkingLevel",
   ]),
   "node-sync": new Set([

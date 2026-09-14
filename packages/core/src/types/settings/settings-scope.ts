@@ -738,6 +738,11 @@ export interface GlobalSettings {
   /** Global baseline AI model ID for task execution.
    *  Must be set together with `executionGlobalProvider`. */
   executionGlobalModelId?: string;
+  /** Per-role global executor fallback pair and thinking effort. */
+  executionGlobalFallbackProvider?: string;
+  executionGlobalFallbackCredentialInstanceId?: string;
+  executionGlobalFallbackModelId?: string;
+  executionGlobalFallbackThinkingLevel?: ThinkingLevel;
   /** Global baseline AI model provider for planning/triage (specification) agent.
    *  This is the global lane that project-level `planningProvider` can override.
    *  Must be set together with `planningGlobalModelId`. Falls back to
@@ -748,6 +753,11 @@ export interface GlobalSettings {
   /** Global baseline AI model ID for planning/triage.
    *  Must be set together with `planningGlobalProvider`. */
   planningGlobalModelId?: string;
+  /** Per-role global planner fallback pair and thinking effort. */
+  planningGlobalFallbackProvider?: string;
+  planningGlobalFallbackCredentialInstanceId?: string;
+  planningGlobalFallbackModelId?: string;
+  planningGlobalFallbackThinkingLevel?: ThinkingLevel;
   /** Global baseline AI model provider for validator/reviewer agent.
    *  This is the global lane that project-level `validatorProvider` can override.
    *  Must be set together with `validatorGlobalModelId`. Falls back to
@@ -758,6 +768,11 @@ export interface GlobalSettings {
   /** Global baseline AI model ID for validator/reviewer.
    *  Must be set together with `validatorGlobalProvider`. */
   validatorGlobalModelId?: string;
+  /** Per-role global reviewer fallback pair and thinking effort. */
+  validatorGlobalFallbackProvider?: string;
+  validatorGlobalFallbackCredentialInstanceId?: string;
+  validatorGlobalFallbackModelId?: string;
+  validatorGlobalFallbackThinkingLevel?: ThinkingLevel;
   /** Global baseline AI model provider for title summarization.
    *  This is the global lane that project-level `titleSummarizerProvider` can override.
    *  Must be set together with `titleSummarizerGlobalModelId`. Falls back to
@@ -781,6 +796,11 @@ export interface GlobalSettings {
   /** Global baseline AI model ID for merger agent sessions.
    *  Must be set together with `mergerGlobalProvider`. */
   mergerGlobalModelId?: string;
+  /** Per-role global merger fallback pair and thinking effort. */
+  mergerGlobalFallbackProvider?: string;
+  mergerGlobalFallbackCredentialInstanceId?: string;
+  mergerGlobalFallbackModelId?: string;
+  mergerGlobalFallbackThinkingLevel?: ThinkingLevel;
   /*
   FNXC:GitHubImportTranslate 2026-07-15-09:30:
   Global baseline translate lane. Import auto-translation runs one short readonly call per issue, so operators typically pin a cheap/fast model here rather than inheriting the executor/planner model.
@@ -1111,8 +1131,8 @@ export interface ProjectSettings {
   defaultWorkflowId?: string;
   /**
    * Runtime-only model lanes from the task's selected workflow. They are kept
-   * separate from the project baseline so model resolution can enforce task →
-   * project → global → workflow precedence. This field is never persisted as a
+   * separate from project settings so model resolution can enforce task →
+   * workflow → project → global precedence. This field is never persisted as a
    * project setting.
    *
    * FNXC:CodeOrganization 2026-07-22-00:30:

@@ -22,7 +22,6 @@
 
 import {
   DEFAULT_PROJECT_SETTINGS,
-  RETIRED_BUILTIN_WORKFLOW_SUCCESSORS,
   type Settings,
 } from "../types.js";
 import type { WorkflowIr, WorkflowIrV2, WorkflowIrColumn } from "./workflow-ir-types.js";
@@ -160,12 +159,12 @@ RESOLVE AN IR (as `scheduler.ts` does). This is a bucketing key that deliberatel
 cannot collide with any workflow id. Using either one in the other's role is the
 bug this function exists to make unspellable.
 
-FNXC:WorkflowSuccession 2026-09-06-02:54:
-Capacity is keyed by durable workflow identity, so historical selections must join their named successor's pool. Canonicalizing in this shared resolver keeps move candidates, synchronous counters, asynchronous transaction counters, and scheduler snapshots from treating one workflow as two independent capacity budgets.
+FNXC:WorkflowIdentity 2026-09-14-19:06:
+A built-in revision retains its original identity. Migration 0079 converges persisted references before catalog reads, so selection, configuration and capacity use the same raw workflow id without redirects.
 */
 export function resolveCapacityPoolId(selectionWorkflowId: string | null | undefined): string {
   const poolId = selectionWorkflowId ?? DEFAULT_WORKFLOW_POOL_ID;
-  return RETIRED_BUILTIN_WORKFLOW_SUCCESSORS.get(poolId) ?? poolId;
+  return poolId;
 }
 
 /** Resolved capacity configuration for a single column. */

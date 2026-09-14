@@ -866,14 +866,14 @@ function isTaskDescriptionEditableColumn(column: ColumnId, flags?: TaskContextMe
   return isDescriptionEditableColumnRole(flags, column);
 }
 const GITHUB_TRACKING_EDITABLE_COLUMNS: Set<ColumnId> = new Set<ColumnId>(["triage", "todo", "in-progress", "in-review", "ideas"]);
-const CODING_IDEAS_WORKFLOW_ID = "builtin:coding-ideas-v2";
+const CODING_IDEAS_WORKFLOW_ID = "builtin:coding-ideas";
 
 /*
 FNXC:GitHubTracking 2026-07-22-00:46:
 Ideas tasks must be able to opt into or out of GitHub tracking before planning, whether they remain in the Ideas intake column or have advanced in Coding (Ideas). Use the resolved workflow ID rather than its display name so localized names and arbitrary custom workflows cannot gain this editing capability.
 
-FNXC:WorkflowSuccession 2026-09-06-02:15:
-The GitHub-tracking exception follows the surviving builtin:coding-ideas-v2 identity. Authoritative selection reads canonicalize retired rows before this UI sees them, so the removed id needs no second affordance branch.
+FNXC:WorkflowIdentity 2026-09-14-19:06:
+A built-in revision retains its original identity. Migration 0079 converges persisted references before catalog reads, so selection, configuration and capacity use the same raw workflow id without redirects.
 */
 /*
 FNXC:WorkflowResolvedColumns 2026-07-31-23:59:
