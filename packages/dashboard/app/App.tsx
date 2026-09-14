@@ -165,6 +165,7 @@ const EvalsView = lazy(() => import("./components/EvalsView").then((m) => ({ def
 const ChatView = lazy(() => import("./components/ChatView").then((m) => ({ default: m.ChatView })));
 
 const SkillsView = lazy(() => import("./components/SkillsView").then((m) => ({ default: m.SkillsView })));
+const SnippetsView = lazy(() => import("./components/SnippetsView").then((m) => ({ default: m.SnippetsView })));
 const MemoryView = lazy(() => import("./components/MemoryView").then((m) => ({ default: m.MemoryView })));
 const SecretsView = lazy(() => import("./components/SecretsView").then((m) => ({ default: m.SecretsView })));
 const CommandCenter = lazy(() => import("./components/command-center/CommandCenter").then((m) => ({ default: m.CommandCenter })));
@@ -209,6 +210,7 @@ function prefetchLazyViews() {
     void import("./components/ChatView");
 
     void import("./components/SkillsView");
+    void import("./components/SnippetsView");
     void import("./components/MemoryView");
     void import("./components/SecretsView");
     void import("./components/command-center/CommandCenter");
@@ -2187,6 +2189,7 @@ function AppInner() {
     ResearchView,
     SecretsView,
     SkillsView,
+    SnippetsView,
     _AutomationsView,
     _ImportTasksView,
     _SettingsView,

@@ -363,6 +363,7 @@ export function MainContent(props: MainContentProps) {
   ResearchView,
   SecretsView,
   SkillsView,
+  SnippetsView,
   _AutomationsView,
   _ImportTasksView,
   _SettingsView,
@@ -715,6 +716,24 @@ export function MainContent(props: MainContentProps) {
             projectId={currentProject?.id}
             onClose={() => handleChangeTaskView("board")}
           />
+        </Suspense>
+      </PageErrorBoundary>
+    );
+  }
+
+  /*
+  FNXC:SnippetsDestination 2026-09-14-04:12:
+  Snippets is its own destination beside Skills, gated by the same feature flag: both are chat/skill authoring tools
+  and neither should appear when that capability is off.
+  */
+  if (taskView === "snippets") {
+    if (!settingsLoaded || !skillsEnabled) {
+      return null;
+    }
+    return (
+      <PageErrorBoundary>
+        <Suspense fallback={null}>
+          <SnippetsView onClose={() => handleChangeTaskView("board")} />
         </Suspense>
       </PageErrorBoundary>
     );
