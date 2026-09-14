@@ -42,7 +42,7 @@ function renderBoardSubtree(
   props: MainContentProps,
   active: boolean,
   onOpenHistory: () => void,
-  onOpenRefine: NonNullable<ComponentProps<typeof Board>["onOpenRefine"]>,
+  onRefinementCreated: NonNullable<ComponentProps<typeof Board>["onRefinementCreated"]>,
   onReviseTask: NonNullable<ComponentProps<typeof Board>["onReviseTask"]>,
 ) {
   const {
@@ -126,7 +126,7 @@ function renderBoardSubtree(
         onMoveTask={moveTask}
         onPauseTask={pauseTask}
         onOpenDetail={openBoardTaskDetail}
-        onOpenRefine={onOpenRefine}
+        onRefinementCreated={onRefinementCreated}
         onOpenGroupModal={openGroupModalWithNav}
         addToast={addToast}
         onQuickCreate={handleBoardQuickCreate}
@@ -185,7 +185,11 @@ function renderBoardSubtree(
   );
 }
 
-function renderListSubtree(props: MainContentProps, active: boolean) {
+function renderListSubtree(
+  props: MainContentProps,
+  active: boolean,
+  onRefinementCreated: NonNullable<ComponentProps<typeof Board>["onRefinementCreated"]>,
+) {
   const {
     isRemote,
     remoteData,
@@ -243,6 +247,7 @@ function renderListSubtree(props: MainContentProps, active: boolean) {
         onMergeTask={mergeTask}
         onResetTask={resetTask}
         onDuplicateTask={duplicateTask}
+        onRefinementCreated={onRefinementCreated}
         onOpenDetail={(task, options) => openDetailTask(task, undefined, options)}
         onPopOut={popOutTaskDetail}
         addToast={addToast}
@@ -309,14 +314,14 @@ function renderMainViewSubtree(
   props: MainContentProps,
   active: boolean,
   onOpenHistory: () => void,
-  onOpenRefine: NonNullable<ComponentProps<typeof Board>["onOpenRefine"]>,
+  onRefinementCreated: NonNullable<ComponentProps<typeof Board>["onRefinementCreated"]>,
   onReviseTask: NonNullable<ComponentProps<typeof Board>["onReviseTask"]>,
 ) {
   switch (id) {
     case "board":
-      return renderBoardSubtree(props, active, onOpenHistory, onOpenRefine, onReviseTask);
+      return renderBoardSubtree(props, active, onOpenHistory, onRefinementCreated, onReviseTask);
     case "list":
-      return renderListSubtree(props, active);
+      return renderListSubtree(props, active, onRefinementCreated);
     case "chat":
       return renderChatSubtree(props, active);
   }
@@ -333,8 +338,13 @@ export function MainViewKeepAlive({ activeId, mountedIds, projectKey, mainConten
   const handleOpenHistory = useCallback(() => {
     mainContentPropsRef.current.handleChangeTaskView("patchnode");
   }, []);
-  const handleOpenRefine = useCallback<NonNullable<ComponentProps<typeof Board>["onOpenRefine"]>>((task) => {
-    mainContentPropsRef.current.openDetailTask(task, undefined, { initialAction: "refine" });
+  /*
+  FNXC:TaskRefine 2026-09-14-22:23:
+  FN-400: this host no longer routes Refine anywhere. The card and the list row own the standalone composer, and this
+  retained host only forwards the created child into shared board state through a stable callback.
+  */
+  const handleRefinementCreated = useCallback<NonNullable<ComponentProps<typeof Board>["onRefinementCreated"]>>((task) => {
+    mainContentPropsRef.current.ingestCreatedTasks([task]);
   }, []);
   const handleReviseTask = useCallback<NonNullable<ComponentProps<typeof Board>["onReviseTask"]>>((task) => {
     mainContentPropsRef.current.modalManager.openNewTaskWithDescription(task.description);
@@ -347,7 +357,7 @@ export function MainViewKeepAlive({ activeId, mountedIds, projectKey, mainConten
         const isActive = activeId === id || (alphaMobileDrawer !== undefined && alphaMobileDrawer.backgroundActive !== false && id === "board");
         const subtree = (
           <KeepAliveView key={`${projectKey}:${id}`} hidden={!isActive} testId={`${id}-keep-alive`}>
-            {renderMainViewSubtree(id, mainContentProps, isActive, handleOpenHistory, handleOpenRefine, handleReviseTask)}
+            {renderMainViewSubtree(id, mainContentProps, isActive, handleOpenHistory, handleRefinementCreated, handleReviseTask)}
           </KeepAliveView>
         );
         if (!isDrawerView) return subtree;

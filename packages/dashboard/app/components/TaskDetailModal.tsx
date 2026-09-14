@@ -1,4 +1,3 @@
-import { ViewHeader } from "./ViewHeader";
 import { ModalCloseButton } from "./ModalCloseButton";
 import "./TaskDetailModal.css";
 import React, { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -13,9 +12,10 @@ import { mergeTaskSnapshot } from "../hooks/useTasks";
 import { dismissAiMergeReviewFinding } from "../api/tasks/tasks-lifecycle";
 import { FloatingWindow } from "./FloatingWindow";
 import { ExternalBlockNotice } from "./TaskCard";
+import { TaskRefineDialog } from "./TaskRefineDialog";
 import { TaskResetDialog } from "./TaskResetDialog";
 import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
-import { useModalDismissPreference, useOverlayDismiss } from "../hooks/useOverlayDismiss";
+import { useModalDismissPreference } from "../hooks/useOverlayDismiss";
 import { useColumnLabel } from "../i18n/labels";
 import type { DetailTaskTab } from "../hooks/useModalManager";
 import ReactMarkdown from "react-markdown";
@@ -48,7 +48,7 @@ import {
 import { getTaskTitleDisplayText } from "../utils/taskTitleDisplay";
 import { extractTaskProductSummary } from "../utils/taskPlanSummary";
 import { resolveEffectiveAutoMerge } from "../../../core/src/merge/task-merge";
-import { uploadAttachment, deleteAttachment, updateTask, repairOverlapBlocker, fetchOverlapBlockerReport, fetchTaskDetail, fetchTaskPrompt, fetchSpecLock, fetchTaskVerificationRequest, fetchSettings, fetchTaskEffectiveSettings, fetchGlobalSettings, requestSpecRevision, rebuildTaskSpec, approvePlan, rejectPlan, refineTask, fetchWorkflowResults, assignTask, fetchAgents, fetchAgent, refreshPrStatus, fetchBoardWorkflows, updateTaskCustomFields, fetchWorkflowSettingValues, nudgeOverseer, stopOverseer, explainOverseer, fetchModels, fetchNodes, api } from "../api";
+import { uploadAttachment, deleteAttachment, updateTask, repairOverlapBlocker, fetchOverlapBlockerReport, fetchTaskDetail, fetchTaskPrompt, fetchSpecLock, fetchTaskVerificationRequest, fetchSettings, fetchTaskEffectiveSettings, fetchGlobalSettings, requestSpecRevision, rebuildTaskSpec, approvePlan, rejectPlan, fetchWorkflowResults, assignTask, fetchAgents, fetchAgent, refreshPrStatus, fetchBoardWorkflows, updateTaskCustomFields, fetchWorkflowSettingValues, nudgeOverseer, stopOverseer, explainOverseer, fetchModels, fetchNodes, api } from "../api";
 import type { RevertTaskOptions, RevertTaskResult, ModelInfo, NodeInfo, SpecLockResponse, TaskOverlapBlockerReport } from "../api";
 import type { BoardWorkflowsPayload, WorkflowFieldDefinition, CustomFieldRejection } from "../api";
 import { WorkflowIcon } from "./WorkflowIcon";
@@ -68,7 +68,7 @@ import { PlannerInterventionTimeline } from "./PlannerInterventionTimeline";
 import { TaskComments } from "./TaskComments";
 import { TaskChatTab } from "./TaskChatTab";
 import { AlphaBoundary } from "../context/AlphaContext";
-import { AlphaButton, AlphaDialogBackdrop, AlphaInput, AlphaMenu, AlphaMenuItem, AlphaPortalSurface, AlphaSelect, AlphaSurface, AlphaTextArea } from "./alpha-ui";
+import { AlphaButton, AlphaInput, AlphaMenu, AlphaMenuItem, AlphaPortalSurface, AlphaSelect, AlphaSurface, AlphaTextArea } from "./alpha-ui";
 import { TaskPlannerChatTab } from "./TaskPlannerChatTab";
 import { TaskReviewTab } from "./TaskReviewTab";
 import { TaskChangesTab } from "./TaskChangesTab";
@@ -118,7 +118,6 @@ import { TaskContextMenu, buildTaskActionMenuModel, getTaskPrAutomationLabel } f
 import type { TaskContextMenuColumnFlags, TaskContextMenuColumnMetadata, TaskMenuItemDescriptor } from "./TaskContextMenu";
 import { FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT } from "./FloatingWindow";
 import { useFileBrowser } from "../context/FileBrowserContext";
-import type { DetailTaskInitialActionRequest } from "../hooks/useModalManager";
 
 /*
 FNXC:TaskMessageLength 2026-08-29-08:02:
@@ -543,8 +542,6 @@ export interface TaskDetailModalProps {
   onOpenWorkflowEditor?: () => void;
   /** Open the modal with this tab active instead of the default done-aware landing view. */
   initialTab?: TabId;
-  /** One-shot action the detail surface should perform after opening. */
-  initialAction?: DetailTaskInitialActionRequest | null;
   /** Mobile-only header affordance mode. */
   mobileHeaderMode?: "close" | "back";
   /** Project setting: true restores Chat-first tab order/default; false or missing uses Activity-first. */
@@ -940,7 +937,6 @@ export function TaskDetailContent({
    * The Activity tab is still addressed as `chat` internally so existing callers and deep links do not break; the visible Chat tab uses `planner-chat` and only becomes the omitted non-done default when taskDetailChatFirst is true.
    */
   initialTab,
-  initialAction,
   taskDetailChatFirst = false,
   mobileHeaderMode: _mobileHeaderMode = "close",
   embedded = false,
@@ -1722,9 +1718,6 @@ export function TaskDetailContent({
       highlighted.scrollIntoView({ block: "nearest", behavior: "smooth" });
     }
   }, [activeTab, activitySegment, highlightStallCode]);
-  const [refineFeedback, setRefineFeedback] = useState("");
-  const [isRefining, setIsRefining] = useState(false);
-
   // Edit mode state
   const [isEditing, setIsEditing] = useState(false);
   const [showFailureRetryPicker, setShowFailureRetryPicker] = useState(false);
@@ -3685,19 +3678,15 @@ export function TaskDetailContent({
     }
   }, [isPlanApprovalPending, task.id, projectId, requestClose, addToast, confirm, t]);
 
+  /*
+  FNXC:TaskRefine 2026-09-14-22:23:
+  FN-400: this surface only owns the Refine entry of its own header Actions menu. Card and list-row menus host the
+  shared standalone dialog themselves, so Refine no longer opens a task record; the one-shot `initialAction` deep link
+  that existed solely to carry that hand-off is deleted.
+  */
   const handleOpenRefineModal = useCallback(() => {
     setShowRefineModal(true);
-    setRefineFeedback("");
   }, []);
-
-  useEffect(() => {
-    if (initialAction?.action !== "refine") return;
-    /*
-    FNXC:DoneTaskRefine 2026-07-01-00:00:
-    Done-task card/list right-click and long-press menus route Refine through Task Detail so operators get the existing feedback composer, validation, toasts, and refineTask submission instead of a dead menu item or an immediate API call.
-    */
-    handleOpenRefineModal();
-  }, [handleOpenRefineModal, initialAction?.action, initialAction?.requestId]);
 
   // Helper to close the retained header Actions overflow after an action.
   const closeMenus = useCallback(() => {
@@ -3735,41 +3724,7 @@ export function TaskDetailContent({
 
   const handleCloseRefineModal = useCallback(() => {
     setShowRefineModal(false);
-    setRefineFeedback("");
-    setIsRefining(false);
   }, []);
-  /*
-  FNXC:TaskDetailRefine 2026-07-12-00:00:
-  The nested refine overlay must use the shared overlay-dismiss contract so the click/touch sequence that opens Refine never self-dismisses the freshly mounted composer, and so backdrop presses honor the global default-off modal-dismiss preference like every other dashboard modal.
-  */
-  const refineOverlayDismissProps = useOverlayDismiss(handleCloseRefineModal);
-
-  const handleSubmitRefine = useCallback(async () => {
-    if (!refineFeedback.trim()) {
-      addToast(t("taskDetail.refine.feedbackRequired", "Please enter feedback describing what needs refinement"), "error");
-      return;
-    }
-    if (refineFeedback.length > MAX_TASK_MESSAGE_LENGTH) {
-      addToast(t("taskDetail.refine.feedbackTooLong", "Feedback must be {{max}} characters or less", { max: MAX_TASK_MESSAGE_LENGTH }), "error");
-      return;
-    }
-    setIsRefining(true);
-    try {
-      const newTask = await refineTask(task.id, refineFeedback.trim(), projectId);
-      /*
-      FNXC:TaskRefinementBoardVisibility 2026-08-20-20:43:
-      The returned child enters shared board state before this source detail closes, rather than
-      relying on delayed SSE delivery. Its server-selected column must remain untouched here.
-      */
-      onRefinementCreated?.(newTask);
-      addToast(t("taskDetail.refine.taskCreated", "Refinement task created: {{id}}", { id: newTask.id }), "success");
-      requestClose();
-    } catch (err) {
-      addToast(getErrorMessage(err), "error");
-    } finally {
-      setIsRefining(false);
-    }
-  }, [task.id, refineFeedback, addToast, onRefinementCreated, projectId, requestClose]);
 
   const uploadFile = useCallback(async (file: File) => {
     setUploading(true);
@@ -7179,55 +7134,14 @@ export function TaskDetailContent({
         />
       )}
       {showRefineModal && (
-          <AlphaDialogBackdrop
-            overlayClassName="modal-overlay open detail-refine-overlay"
-            labelledBy="task-detail-refine-title"
-            overlayProps={refineOverlayDismissProps}
-          >
-            <div className="modal detail-refine-modal">
-              {/* FNXC:StandardizedViewLayout 2026-09-13-21:49: The nested Refine dialog shares the canonical header instead of a local title row. */}
-              <ViewHeader
-                className="modal-header"
-                headingLevel={3}
-                titleId="task-detail-refine-title"
-                title={t("taskDetail.refine.modalTitle", "Refine")}
-                onClose={handleCloseRefineModal}
-                closeButtonProps={{ "aria-label": t("common.close", "Close") }}
-              />
-              <div className="detail-body">
-                  <p className="detail-refine-help">
-                    {t("taskDetail.refine.help", "Describe what needs to be refined or improved...")}
-                  </p>
-                  <AlphaTextArea
-                    className="detail-refine-textarea"
-                    value={refineFeedback}
-                    onChange={(e) => setRefineFeedback(e.target.value)}
-                    placeholder={t("taskDetail.refine.placeholder", "Enter your feedback here...")}
-                    rows={6}
-                    maxLength={MAX_TASK_MESSAGE_LENGTH}
-                    autoFocus
-                  />
-                  <div className="detail-refine-input-group">
-                    <div className="detail-refine-char-count">
-                      {t("taskDetail.refine.charCount", "{{count}}/{{max}} characters", { count: refineFeedback.length, max: MAX_TASK_MESSAGE_LENGTH })}
-                    </div>
-                    <AlphaButton
-                      className="btn btn-primary btn-sm"
-                      onClick={handleSubmitRefine}
-                      disabled={!refineFeedback.trim() || isRefining}
-                    >
-                      {isRefining ? t("taskDetail.refine.creating", "Creating...") : t("taskDetail.refine.createBtn", "Create Refinement Task")}
-                    </AlphaButton>
-                  </div>
-              </div>
-              <div className="modal-actions">
-                <AlphaButton className="btn btn-sm" onClick={handleCloseRefineModal} disabled={isRefining}>
-                  {t("common.cancel", "Cancel")}
-                </AlphaButton>
-              </div>
-            </div>
-          </AlphaDialogBackdrop>
-        )}
+        <TaskRefineDialog
+          taskId={task.id}
+          projectId={projectId}
+          addToast={addToast}
+          onRefinementCreated={onRefinementCreated}
+          onClose={handleCloseRefineModal}
+        />
+      )}
         {selectedSourceAgentId && (
           <Suspense fallback={null}>
             <AgentDetailView

@@ -67,10 +67,15 @@ FN-392: every consumer of the shared Alpha dialog primitive inherits one portal,
 layer claim. Enumerating them makes a new child dialog a conscious addition instead of a surface that silently reverts
 to a static CSS z-index under its own parent window.
 */
+/*
+FNXC:TaskRefine 2026-09-14-22:23:
+FN-400: TaskDetailModal no longer builds a dialog itself — its Refine composer became the standalone
+TaskRefineDialog, which the card and the list row host directly instead of opening a task record.
+*/
 const sharedDialogPrimitiveConsumers = [
   "ChatView.tsx",
   "DuplicateWarningModal.tsx",
-  "TaskDetailModal.tsx",
+  "TaskRefineDialog.tsx",
   "TaskResetDialog.tsx",
 ] as const;
 

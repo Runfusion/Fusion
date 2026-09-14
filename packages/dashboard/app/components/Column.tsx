@@ -136,7 +136,8 @@ interface ColumnProps {
   onDuplicateTask?: (id: string, options?: { workflowId?: string }) => Promise<Task>;
   onMergeTask?: (id: string) => Promise<MergeResult>;
   onOpenDetail: (task: Task | TaskDetail) => void;
-  onOpenRefine?: (task: Task | TaskDetail) => void;
+  /** App-owned ingestion seam for a refinement created from a card's own Refine dialog. */
+  onRefinementCreated?: (task: Task) => void;
   onOpenGroupModal?: (groupId: string) => void;
   addToast: (message: string, type?: ToastType) => void;
   onQuickCreate?: (input: TaskCreateInput) => Promise<Task | void>;
@@ -238,7 +239,7 @@ interface ColumnProps {
   onOpenHistory?: () => void;
 }
 
-function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeGrouping, onOpenHistory, onMoveTask, onPauseTask, onUnpauseTask, onResetTask, onDuplicateTask, onMergeTask, onOpenDetail, onOpenRefine, onOpenGroupModal, addToast, onQuickCreate, autoMerge, mergeStrategy = "direct", onToggleAutoMerge, planAutoApproveEnabled, onTogglePlanAutoApprove, globalPaused, onUpdateTask, onRetryTask, onOpenChatWithPrefill, onRevertTask, onReviseTask, onDeleteTask, sortMode, onSortModeChange, doneSortMode, onDoneSortModeChange, totalTaskCount, serverHasMore, serverLoadingMore, serverPaginationError, serverProgressKey, paginationCollectionKey, paginationActive = true, onLoadMoreServer, onRetryServer, allTasks, availableModels, onPlanningMode, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, isSearchActive, onOpenMission, lastFetchTimeMs, taskCardFieldDefs, taskWorkflowBadges, blockerFanoutMap, prAuthAvailable, holdTaskIds, workflowMode, workflowId, workflowOptions, defaultWorkflowId, columnDisplayName, columnDescription, columnFlags, workflowContextMenuColumns, taskContextMenuColumnsByTaskId }: ColumnProps) {
+function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeGrouping, onOpenHistory, onMoveTask, onPauseTask, onUnpauseTask, onResetTask, onDuplicateTask, onMergeTask, onOpenDetail, onRefinementCreated, onOpenGroupModal, addToast, onQuickCreate, autoMerge, mergeStrategy = "direct", onToggleAutoMerge, planAutoApproveEnabled, onTogglePlanAutoApprove, globalPaused, onUpdateTask, onRetryTask, onOpenChatWithPrefill, onRevertTask, onReviseTask, onDeleteTask, sortMode, onSortModeChange, doneSortMode, onDoneSortModeChange, totalTaskCount, serverHasMore, serverLoadingMore, serverPaginationError, serverProgressKey, paginationCollectionKey, paginationActive = true, onLoadMoreServer, onRetryServer, allTasks, availableModels, onPlanningMode, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, isSearchActive, onOpenMission, lastFetchTimeMs, taskCardFieldDefs, taskWorkflowBadges, blockerFanoutMap, prAuthAvailable, holdTaskIds, workflowMode, workflowId, workflowOptions, defaultWorkflowId, columnDisplayName, columnDescription, columnFlags, workflowContextMenuColumns, taskContextMenuColumnsByTaskId }: ColumnProps) {
   const { t } = useTranslation("app");
   // Anchor the board.rejection.* catalog keys for the i18next extractor (it
   // scopes `t` to the useTranslation binding, so the shared translateRejection
@@ -777,7 +778,7 @@ function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeG
                   queuedTasks={group.queuedTasks}
                   projectId={projectId}
                   onOpenDetail={onOpenDetail}
-                  onOpenRefine={onOpenRefine}
+                  onRefinementCreated={onRefinementCreated}
                   onPlanningMode={onPlanningMode}
                   workflowId={workflowMode ? workflowId : undefined}
                   onMoveTask={onMoveTask}
@@ -822,7 +823,7 @@ function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeG
                   onOpenDetail={onOpenDetail}
                   onPlanningMode={onPlanningMode}
                   planningWorkflowId={workflowMode ? workflowId : taskWorkflowBadges?.get(task.id)?.workflowId ?? null}
-                  onOpenRefine={onOpenRefine}
+                  onRefinementCreated={onRefinementCreated}
                   onOpenGroupModal={onOpenGroupModal}
                   addToast={addToast}
                   globalPaused={globalPaused}

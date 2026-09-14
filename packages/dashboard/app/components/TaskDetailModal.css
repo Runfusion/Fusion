@@ -1506,24 +1506,10 @@ html[data-viewport-mode="mobile"] .task-detail-modal--mobile-transition {
 }
 
 /*
-FNXC:DialogStacking 2026-09-14-17:46:
-FN-392: the Refine overlay is body-portaled, so a static z-index put it under the floating Task Detail window that
-opened it. The shared Alpha dialog primitive now supplies the live layer inline; this rule keeps only its presentation.
+FNXC:TaskRefine 2026-09-14-22:23:
+FN-400: the Refine composer left this stylesheet entirely. It is now the standalone TaskRefineDialog, owned by the
+card, the list row, and this surface's own Actions menu, with its own centred and deliberately unpainted overlay.
 */
-.detail-refine-overlay {
-  position: fixed;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: color-mix(in srgb, var(--bg) 70%, transparent);
-}
-
-.detail-refine-modal {
-  max-width: min(90vw, calc(var(--space-2xl) * 16));
-  width: 90%;
-  margin: 0;
-}
 
 /*
 FNXC:TaskDetail 2026-06-22-18:40:
@@ -1586,40 +1572,6 @@ The desktop Board-panel Back to board affordance sits at the far right of the gr
   right: 0;
   bottom: auto;
   left: auto;
-}
-
-.detail-refine-title {
-  margin: 0;
-}
-
-.detail-refine-help {
-  margin-bottom: var(--space-md);
-  opacity: 0.8;
-}
-
-.detail-refine-textarea {
-  width: 100%;
-  min-height: 120px;
-  padding: var(--space-md);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  color: var(--text);
-  font-size: 14px;
-  resize: vertical;
-}
-
-.detail-refine-input-group {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-top: var(--space-sm);
-  gap: var(--space-sm);
-}
-
-.detail-refine-char-count {
-  font-size: 12px;
-  opacity: 0.6;
 }
 
 .task-changes-state {
@@ -3037,23 +2989,6 @@ Feed's copy and expansion actions share one tokenized overlay group so the bound
     flex-shrink: 0;
   }
 
-  .detail-refine-overlay {
-    align-items: stretch;
-    justify-content: stretch;
-  }
-
-  .detail-refine-modal {
-    width: 100%;
-    max-width: 100%;
-    max-height: 100dvh;
-    border-radius: 0;
-    border: none;
-  }
-
-  .detail-refine-textarea {
-    font-size: 16px;
-  }
-
   .modal-edit-form .form-group {
     padding: 0;
   }
@@ -3582,7 +3517,7 @@ Les pills Alpha occupent l’espace intérieur disponible dans chaque hôte sans
   color: var(--alpha-neutral-foreground);
 }
 
-[data-alpha-surface="true"] :is(.modal-edit-input, .modal-edit-textarea, .detail-refine-textarea, .task-form input, .task-form textarea, .task-form select) {
+[data-alpha-surface="true"] :is(.modal-edit-input, .modal-edit-textarea, .task-form input, .task-form textarea, .task-form select) {
   min-inline-size: 0;
   max-inline-size: 100%;
   background: var(--alpha-neutral-surface);
@@ -3601,13 +3536,6 @@ Les pills Alpha occupent l’espace intérieur disponible dans chaque hôte sans
 [data-alpha-surface="true"] .detail-actions-menu,
 [data-alpha-portal="true"].activity-view-menu {
   background: var(--alpha-neutral-surface);
-  border-color: var(--alpha-neutral-border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-lg);
-}
-
-[data-alpha-portal="true"].detail-refine-overlay .detail-refine-modal {
-  background: var(--alpha-neutral-background);
   border-color: var(--alpha-neutral-border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-lg);

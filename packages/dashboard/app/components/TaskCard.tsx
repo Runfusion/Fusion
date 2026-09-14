@@ -26,6 +26,7 @@ import { GitHubBadge } from "./GitHubBadge";
 import { GitLabBadge } from "./GitLabBadge";
 import { RuntimeFallbackBadge } from "./RuntimeFallbackBadge";
 import { PrCreateModal } from "./PrCreateModal";
+import { TaskRefineDialog } from "./TaskRefineDialog";
 import { TaskResetDialog } from "./TaskResetDialog";
 import { ProviderIcon } from "./ProviderIcon";
 import { PluginSlot } from "./PluginSlot";
@@ -832,7 +833,12 @@ interface TaskCardProps {
   onPlanningMode?: (initialPlan: string, workflowId?: string | null) => void;
   /** Workflow selection to preserve when Planning Mode is launched from workflow-aware board cards. */
   planningWorkflowId?: string | null;
-  onOpenRefine?: (task: Task | TaskDetail) => void;
+  /*
+  FNXC:TaskRefine 2026-09-14-22:23:
+  FN-400: the card owns the Refine composer directly, exactly as it owns the Reset dialog. It reports the created child
+  through this callback instead of bubbling the intent up to a host that would open the full task record first.
+  */
+  onRefinementCreated?: (task: Task) => void;
   onOpenGroupModal?: (groupId: string) => void;
   addToast: (message: string, type?: ToastType) => void;
   globalPaused?: boolean;
@@ -1076,7 +1082,7 @@ function areTaskCardPropsEqual(previous: TaskCardProps, next: TaskCardProps): bo
     previous.onDuplicateTask === next.onDuplicateTask &&
     previous.onMergeTask === next.onMergeTask &&
     previous.onOpenDetailWithTab === next.onOpenDetailWithTab &&
-    previous.onOpenRefine === next.onOpenRefine &&
+    previous.onRefinementCreated === next.onRefinementCreated &&
     previous.onOpenMission === next.onOpenMission &&
     previous.onMoveTask === next.onMoveTask &&
     previous.fanout?.totalCount === next.fanout?.totalCount &&
@@ -1206,7 +1212,7 @@ function TaskCardComponent({
   onOpenDetail,
   onPlanningMode,
   planningWorkflowId,
-  onOpenRefine,
+  onRefinementCreated,
   onOpenGroupModal,
   addToast,
   globalPaused,
@@ -1243,6 +1249,7 @@ function TaskCardComponent({
   const columnLabel = useColumnLabel();
   const [fileDragOver, setFileDragOver] = useState(false);
   const [showResetDialog, setShowResetDialog] = useState(false);
+  const [showRefineDialog, setShowRefineDialog] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [editDescription, setEditDescription] = useState(task.description || "");
   /*
@@ -2822,6 +2829,10 @@ function TaskCardComponent({
     if (onResetTask) setShowResetDialog(true);
   }, [onResetTask]);
 
+  const handleTaskActionRefine = useCallback(() => {
+    setShowRefineDialog(true);
+  }, []);
+
   const handleTaskActionDuplicate = useCallback(async () => {
     if (!onDuplicateTask) return;
     await runDuplicateTaskAction({
@@ -2914,7 +2925,7 @@ function TaskCardComponent({
     onDelete: onDeleteTask ? handleTaskActionDelete : undefined,
     onDuplicate: onDuplicateTask ? handleTaskActionDuplicate : undefined,
     onPlan: onPlanningMode ? handleTaskActionPlan : undefined,
-    onOpenRefine: onOpenRefine ? () => onOpenRefine(task) : undefined,
+    onOpenRefine: handleTaskActionRefine,
     onRetry: onRetryTask ? handleTaskActionRetry : undefined,
     onReset: onResetTask ? handleTaskActionReset : undefined,
     onTogglePause: (isPaused ? onUnpauseTask : onPauseTask) ? handleTaskActionTogglePause : undefined,
@@ -2946,7 +2957,7 @@ function TaskCardComponent({
     onUpdateTask,
     onOpenDetail,
     onPlanningMode,
-    onOpenRefine,
+    handleTaskActionRefine,
     onPauseTask,
     onUnpauseTask,
     task,
@@ -2955,7 +2966,8 @@ function TaskCardComponent({
     task.prInfo,
   ]);
   const contextMenuActions = useMemo<TaskMenuItemDescriptor[]>(() => {
-    if (!onDeleteTask && !onRevertTask && !onDuplicateTask && !onRetryTask && !onResetTask && !onPauseTask && !onUnpauseTask && !onMergeTask && !onPlanningMode && !onOpenRefine && !onUpdateTask) {
+    /* FNXC:TaskRefine 2026-09-14-22:23: FN-400 — Refine is always available on a complete card because the card hosts the dialog itself. */
+    if (!isCompleteColumn && !onDeleteTask && !onRevertTask && !onDuplicateTask && !onRetryTask && !onResetTask && !onPauseTask && !onUnpauseTask && !onMergeTask && !onPlanningMode && !onUpdateTask) {
       return [];
     }
     const actions: TaskMenuItemDescriptor[] = [...taskActionMenuModel.actions];
@@ -2977,7 +2989,7 @@ function TaskCardComponent({
       actions.push({ id: taskActionMenuModel.reviewAction.id, label: taskActionMenuModel.reviewAction.label, disabled: taskActionMenuModel.reviewAction.disabled, onSelect: taskActionMenuModel.reviewAction.onSelect });
     }
     return actions.filter((action) => "items" in action || action.tone === "note" || action.disabled === true || Boolean(action.onSelect));
-  }, [handleTaskActionRevert, isCompleteColumn, isRevertable, onDeleteTask, onDuplicateTask, onMergeTask, onPlanningMode, onOpenRefine, onPauseTask, onResetTask, onRetryTask, onRevertTask, onUnpauseTask, onUpdateTask, taskActionMenuModel.actions, taskActionMenuModel.reviewAction]);
+  }, [handleTaskActionRevert, isCompleteColumn, isRevertable, onDeleteTask, onDuplicateTask, onMergeTask, onPlanningMode, onPauseTask, onResetTask, onRetryTask, onRevertTask, onUnpauseTask, onUpdateTask, taskActionMenuModel.actions, taskActionMenuModel.reviewAction]);
   const hasContextMenuActions = contextMenuActions.length > 0;
 
   const closeContextMenu = useCallback(() => {
@@ -4403,6 +4415,15 @@ function TaskCardComponent({
           onReset={onResetTask}
           addToast={addToast}
           onClose={() => setShowResetDialog(false)}
+        />
+      )}
+      {showRefineDialog && (
+        <TaskRefineDialog
+          taskId={task.id}
+          projectId={projectId}
+          addToast={addToast}
+          onRefinementCreated={onRefinementCreated}
+          onClose={() => setShowRefineDialog(false)}
         />
       )}
       {(showCreatePrQuickAction || isPrCreateOpen) && (

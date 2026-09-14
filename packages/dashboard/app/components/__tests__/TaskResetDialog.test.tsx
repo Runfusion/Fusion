@@ -201,6 +201,28 @@ describe("TaskResetDialog", () => {
     }
   });
 
+  /*
+  FNXC:TaskReset 2026-09-14-22:23:
+  FN-400 symptom: the shared `.modal-overlay` top padding pushed this "centred" confirmation below the viewport centre,
+  and the mobile fullscreen block stretched it into a sheet. No browser automation exists here, so the geometry
+  contract is pinned as CSS text; the shared cross-dialog version lives in TaskRefineDialog.test.tsx.
+  */
+  it("centres the overlay exactly in the viewport and paints nothing behind it", () => {
+    const css = readAppFile("components/TaskResetDialog.css");
+    const rule = css.match(/\.modal-overlay\.task-reset-overlay\s*\{[^}]*\}/)![0];
+
+    expect(rule).toContain("align-items: center;");
+    expect(rule).toContain("justify-content: center;");
+    expect(rule).toContain("padding-top: 0;");
+    expect(rule).toContain("--overlay-padding-top: 0;");
+    expect(rule.match(/background:[^;]*;/g)).toEqual(["background: transparent;"]);
+
+    const mobileBlock = css.slice(css.indexOf("@media (max-width: 768px)"));
+    expect(mobileBlock).toContain(".modal-overlay.task-reset-overlay");
+    expect(mobileBlock).toContain("align-items: center;");
+    expect(mobileBlock).toContain(".modal.task-reset-dialog");
+  });
+
   it("keeps responsive CSS token-only apart from the canonical breakpoint", () => {
     const css = readAppFile("components/TaskResetDialog.css");
     expect(css).toContain("@media (max-width: 768px)");

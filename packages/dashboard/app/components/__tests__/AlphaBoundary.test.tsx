@@ -157,7 +157,7 @@ describe("homemade Alpha surface boundary", () => {
     const boardOwners = [
       "Board.tsx", "Column.tsx", "TaskCard.tsx", "WorktreeGroup.tsx", "QuickEntryBox.tsx",
       "TaskContextMenu.tsx", "WorkflowSwitcher.tsx", "WorkflowOptionalStepsDropdown.tsx",
-      "CustomModelDropdown.tsx", "DuplicateWarningModal.tsx", "TaskResetDialog.tsx", "PrCreateModal.tsx",
+      "CustomModelDropdown.tsx", "DuplicateWarningModal.tsx", "TaskRefineDialog.tsx", "TaskResetDialog.tsx", "PrCreateModal.tsx",
     ];
     const chatOwners = [
       ...listComponentFiles().filter((file) => /^Chat.*\.tsx$/.test(file) && !file.includes("/__tests__/")),

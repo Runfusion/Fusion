@@ -2,8 +2,21 @@
 FNXC:TaskReset 2026-08-28-16:31:
 The editable reset request reuses shared modal and button primitives. Scoped token-only layout keeps the destructive warning readable and gives both mobile actions full-width touch targets without changing global modal behavior.
 */
-.task-reset-overlay {
+/*
+FNXC:TaskReset 2026-09-14-22:23:
+FN-400: the shared `.modal-overlay` offsets dialogs by `var(--overlay-padding-top, 10vh)`, so this confirmation sat
+below the true viewport centre, and the mobile fullscreen block flipped it to `align-items: stretch`. Both are
+neutralised here, scoped to this dialog. The overlay stays explicitly unpainted so no veil covers the board behind it.
+*/
+.modal-overlay.task-reset-overlay {
+  display: flex;
   align-items: center;
+  justify-content: center;
+  --overlay-padding-top: 0;
+  padding-top: 0;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .task-reset-dialog__body {
@@ -42,6 +55,26 @@ The editable reset request reuses shared modal and button primitives. Scoped tok
 }
 
 @media (max-width: 768px) {
+  /*
+  FNXC:TaskReset 2026-09-14-22:23:
+  The narrow-viewport modal reset stretches every overlay into a borderless full-height sheet. Reset stays a centred
+  bounded card instead, kept clear of the notch and home indicator by the safe-area insets.
+  */
+  .modal-overlay.task-reset-overlay {
+    align-items: center;
+    justify-content: center;
+    padding-top: 0;
+  }
+
+  .modal.task-reset-dialog {
+    inline-size: auto;
+    max-inline-size: calc(100vw - var(--space-lg) * 2);
+    block-size: auto;
+    max-block-size: calc(100dvh - var(--space-lg) * 2 - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+    overflow-y: auto;
+    border-radius: var(--radius-lg);
+  }
+
   .task-reset-dialog__actions {
     flex-direction: column-reverse;
   }

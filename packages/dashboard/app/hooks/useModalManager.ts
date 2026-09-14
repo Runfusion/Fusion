@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { Task, TaskDetail } from "@fusion/core";
 import type { SectionId } from "../components/SettingsModal";
@@ -36,16 +36,15 @@ export type DetailTaskTab =
   | "retries";
 
 export type DetailTaskOrigin = "list-mobile";
-export type DetailTaskInitialAction = "refine";
 
+/*
+FNXC:TaskRefine 2026-09-14-22:23:
+FN-400: the one-shot `initialAction` deep link existed only so a card or list row could open a task record purely to
+reach its Refine composer. Both surfaces now host the standalone TaskRefineDialog themselves, so opening a detail view
+no longer carries a deferred action.
+*/
 export interface DetailTaskOpenOptions {
   origin?: DetailTaskOrigin;
-  initialAction?: DetailTaskInitialAction;
-}
-
-export interface DetailTaskInitialActionRequest {
-  action: DetailTaskInitialAction;
-  requestId: number;
 }
 
 interface UseModalManagerOptions {
@@ -74,7 +73,6 @@ export interface ModalManager {
   // Can be Task (optimistic open) or TaskDetail (full data with prompt)
   detailTask: (Task | TaskDetail) | null;
   detailTaskInitialTab: DetailTaskTab | undefined;
-  detailTaskInitialAction: DetailTaskInitialActionRequest | null;
   detailTaskOrigin: DetailTaskOrigin | null;
   groupModalGroupId: string | null;
   settingsOpen: boolean;
@@ -226,12 +224,6 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
    * Store omitted task-detail tabs as `undefined` so done tasks can resolve the implicit landing tab to Summary without stealing explicit Chat requests.
    */
   const [detailTaskInitialTab, setDetailTaskInitialTab] = useState<DetailTaskTab | undefined>(undefined);
-  /*
-  FNXC:DoneTaskRefine 2026-07-01-00:00:
-  Done-task card/list context menus must open the existing Task Detail refinement modal after right-click or long-press. Store refinement as a one-shot action request with a monotonically increasing id so selecting Refine again for an already-open task reopens the composer without duplicating API/form logic outside TaskDetailContent.
-  */
-  const [detailTaskInitialAction, setDetailTaskInitialAction] = useState<DetailTaskInitialActionRequest | null>(null);
-  const detailTaskInitialActionRequestIdRef = useRef(0);
   const [detailTaskOrigin, setDetailTaskOrigin] = useState<DetailTaskOrigin | null>(null);
   const [groupModalGroupId, setGroupModalGroupId] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -366,13 +358,11 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
   ) => {
     setDetailTask(task);
     setDetailTaskInitialTab(initialTab);
-    setDetailTaskInitialAction(options?.initialAction ? { action: options.initialAction, requestId: detailTaskInitialActionRequestIdRef.current += 1 } : null);
     setDetailTaskOrigin(options?.origin ?? null);
   }, []);
   const openDetailWithChangesTab = useCallback((task: Task | TaskDetail) => {
     setDetailTask(task);
     setDetailTaskInitialTab("changes");
-    setDetailTaskInitialAction(null);
     setDetailTaskOrigin(null);
   }, []);
   /*
@@ -389,7 +379,6 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
   }, []);
   const closeDetailTask = useCallback(() => {
     setDetailTask(null);
-    setDetailTaskInitialAction(null);
     setDetailTaskOrigin(null);
   }, []);
 
@@ -507,7 +496,6 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
   const closeProjectScopedModals = useCallback(() => {
     setDetailTask(null);
     setDetailTaskInitialTab(undefined);
-    setDetailTaskInitialAction(null);
     setDetailTaskOrigin(null);
     setGroupModalGroupId(null);
     setNewTaskModalOpen(false);
@@ -568,7 +556,6 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
     planningEntryGeneration,
     detailTask,
     detailTaskInitialTab,
-    detailTaskInitialAction,
     detailTaskOrigin,
     groupModalGroupId,
     settingsOpen,

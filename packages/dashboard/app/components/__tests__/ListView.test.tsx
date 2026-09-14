@@ -1299,8 +1299,15 @@ describe("ListView", () => {
     expect(screen.getByRole("menuitem", { name: "Refine" })).toBeInTheDocument();
     expect(onOpenDetail).not.toHaveBeenCalled();
 
+    /*
+    FNXC:TaskRefine 2026-09-14-22:23:
+    FN-400: Refine opens the row's own standalone composer. It must NOT open the task record, which is the symptom
+    being fixed — the record used to mount first and stack the composer on top of it behind a painted veil.
+    */
     fireEvent.click(screen.getByRole("menuitem", { name: "Refine" }));
-    expect(onOpenDetail).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-004" }), { origin: undefined, initialAction: "refine" });
+    expect(screen.getByTestId("task-refine-dialog")).toBeInTheDocument();
+    expect(onOpenDetail).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("task-refine-cancel"));
 
     fireEvent.contextMenu(document.querySelector('.list-row[data-id="FN-004"]') as HTMLElement, { clientX: 40, clientY: 50 });
     expect(screen.queryByRole("menuitem", { name: "Archive" })).not.toBeInTheDocument();
@@ -1588,7 +1595,8 @@ describe("ListView", () => {
     fireEvent.contextMenu(row, { clientX: 40, clientY: 50 });
     fireEvent.click(screen.getByRole("menuitem", { name: "Refine" }));
 
-    expect(onOpenDetail).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-012" }), { origin: undefined, initialAction: "refine" });
+    expect(screen.getByTestId("task-refine-dialog")).toBeInTheDocument();
+    expect(onOpenDetail).not.toHaveBeenCalled();
     viewportSpy.mockRestore();
   });
 
@@ -1760,8 +1768,8 @@ describe("ListView", () => {
     });
     fireEvent.pointerUp(screen.getByRole("menuitem", { name: "Refine" }), { pointerType: "touch", pointerId: 2 });
 
-    expect(onOpenDetail).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-011" }), { origin: "list-mobile", initialAction: "refine" });
-    expect(onOpenDetail).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("task-refine-dialog")).toBeInTheDocument();
+    expect(onOpenDetail).not.toHaveBeenCalled();
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
     viewportSpy.mockRestore();
     vi.useRealTimers();

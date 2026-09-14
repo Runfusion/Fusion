@@ -1404,7 +1404,12 @@ describe("TaskDetailModal", () => {
 
       fireEvent.click(screen.getByRole("menuitem", { name: "Refine" }));
 
-      expect(screen.getByText("Refine", { selector: "h3" })).toBeTruthy();
+      /*
+      FNXC:TaskRefine 2026-09-14-22:23:
+      FN-400: pre-existing broken assertion repaired. The canonical ViewHeader renders its title inside a span, so a
+      direct-text `h3` query could never match; query the level-3 heading role instead.
+      */
+      expect(screen.getByRole("heading", { level: 3, name: "Refine" })).toBeTruthy();
       expect(screen.getByPlaceholderText("Enter your feedback here...")).toBeTruthy();
     });
 
@@ -1563,11 +1568,16 @@ describe("TaskDetailModal", () => {
       expect(refineTask).not.toHaveBeenCalled();
     });
 
-    it("opens the refine composer from an initial action request", () => {
+    /*
+    FNXC:TaskRefine 2026-09-14-22:23:
+    FN-400 removed the one-shot detail-open refine deep link; a card or list row now hosts the composer itself. What
+    survives here is the surface's own header Actions entry.
+    */
+    it("opens the refine composer from its own header Actions entry", () => {
       render(
         <TaskDetailModal
           task={makeTask({ id: "FN-001", column: "done" })}
-          initialAction={{ action: "refine", requestId: 1 }}
+          initialTab="definition"
           onClose={noop}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
@@ -1576,7 +1586,10 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      expect(screen.getByText("Refine", { selector: "h3" })).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Actions" }));
+      fireEvent.click(screen.getByRole("menuitem", { name: "Refine" }));
+
+      expect(screen.getByRole("heading", { level: 3, name: "Refine" })).toBeInTheDocument();
       expect(screen.getByPlaceholderText("Enter your feedback here...")).toBeInTheDocument();
     });
 
@@ -1610,11 +1623,17 @@ describe("TaskDetailModal", () => {
 
       fireEvent.click(screen.getByText("Create Refinement Task"));
 
+      /*
+      FNXC:TaskRefine 2026-09-14-22:23:
+      FN-400: a successful refinement closes the composer only. The record stays open because the standalone dialog no
+      longer owns the surface that hosts it — a card or list row hosting the same dialog has no record to close.
+      */
       await waitFor(() => {
         expect(refineTask).toHaveBeenCalledWith("FN-001", "Need to add more tests", undefined);
         expect(addToast).toHaveBeenCalledWith("Refinement task created: FN-002", "success");
-        expect(onClose).toHaveBeenCalled();
       });
+      await waitFor(() => expect(screen.queryByTestId("task-refine-dialog")).not.toBeInTheDocument());
+      expect(onClose).not.toHaveBeenCalled();
     });
 
     it("preserves non-default workflow context when closing after refinement success", async () => {
@@ -1659,8 +1678,9 @@ describe("TaskDetailModal", () => {
       await waitFor(() => {
         expect(refineTask).toHaveBeenCalledWith("FN-001", "Keep the same workflow lane", "project-1");
         expect(addToast).toHaveBeenCalledWith("Refinement task created: FN-003", "success");
-        expect(onClose).toHaveBeenCalled();
       });
+      await waitFor(() => expect(screen.queryByTestId("task-refine-dialog")).not.toBeInTheDocument());
+      expect(onClose).not.toHaveBeenCalled();
       expect(onTaskUpdated).not.toHaveBeenCalled();
       expect(readBoardWorkflowSelection("project-1")).toBe("WF-active");
       expect(readBoardWorkflowSelection("project-1")).not.toBe("builtin:coding");
@@ -1722,15 +1742,15 @@ describe("TaskDetailModal", () => {
       // Click Refine from the dropdown
       fireEvent.click(screen.getByRole("menuitem", { name: "Refine" }));
 
-      // The submit button should be inside .detail-refine-input-group (the input area)
-      const inputGroup = document.querySelector(".detail-refine-input-group");
+      // The submit button should be inside the composer's input group (the input area)
+      const inputGroup = document.querySelector(".task-refine-dialog__input-group");
       expect(inputGroup).toBeTruthy();
       const submitButton = inputGroup!.querySelector("button.btn-primary");
       expect(submitButton).toBeTruthy();
       expect(submitButton!.textContent).toBe("Create Refinement Task");
 
       // The submit button should NOT be in the footer .modal-actions
-      const modalActions = document.querySelector(".detail-refine-modal .modal-actions");
+      const modalActions = document.querySelector(".task-refine-dialog .modal-actions");
       expect(modalActions).toBeTruthy();
       expect(modalActions!.querySelector("button.btn-primary")).toBeNull();
     });
@@ -1788,8 +1808,8 @@ describe("TaskDetailModal", () => {
       // Click Refine from the dropdown
       fireEvent.click(screen.getByRole("menuitem", { name: "Refine" }));
 
-      const inputGroup = document.querySelector(".detail-refine-input-group")!;
-      expect(inputGroup.querySelector(".detail-refine-char-count")).toBeTruthy();
+      const inputGroup = document.querySelector(".task-refine-dialog__input-group")!;
+      expect(inputGroup.querySelector(".task-refine-dialog__char-count")).toBeTruthy();
       expect(inputGroup.querySelector("button.btn-primary")).toBeTruthy();
     });
   });

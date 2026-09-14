@@ -315,7 +315,6 @@ export function AppModals({
       const previousDetailTask = modalManager.detailTask;
       const previousDetailTab = modalManager.detailTaskInitialTab;
       const previousDetailOrigin = modalManager.detailTaskOrigin;
-      const previousDetailAction = modalManager.detailTaskInitialAction;
       const previousNavClose = detailNavCloseRef.current;
 
       modalManager.openDetailTask(task, tab, options);
@@ -327,9 +326,7 @@ export function AppModals({
           modalManager.openDetailTask(
             previousDetailTask,
             previousDetailTab,
-            previousDetailOrigin || previousDetailAction
-              ? { origin: previousDetailOrigin ?? undefined, initialAction: previousDetailAction?.action }
-              : undefined,
+            previousDetailOrigin ? { origin: previousDetailOrigin } : undefined,
           );
           return;
         }
@@ -406,7 +403,6 @@ export function AppModals({
             taskDetailChatFirst={settings.taskDetailChatFirst}
             onOpenWorkflowEditor={() => modalManager.openWorkflowEditor()}
             initialTab={modalManager.detailTaskInitialTab}
-            initialAction={modalManager.detailTaskInitialAction}
           />
         </ModalErrorBoundary>
       )}

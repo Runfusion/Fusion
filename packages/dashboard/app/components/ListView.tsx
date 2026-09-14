@@ -11,6 +11,7 @@ import { isCompleteColumnRole, isIntakeColumnRole, isPreImplementationColumnRole
 import { batchUpdateTaskModels, fetchNodes, refreshPrStatus, updateTask } from "../api";
 import { ExternalBlockNotice, PlanApprovalNotice } from "./TaskCard";
 import { PrCreateModal } from "./PrCreateModal";
+import { TaskRefineDialog } from "./TaskRefineDialog";
 import { TaskResetDialog } from "./TaskResetDialog";
 import type { BoardWorkflowColumn, BoardWorkflowsPayload, ModelInfo, NodeInfo, RevertTaskOptions, RevertTaskResult } from "../api";
 import { CustomModelDropdown } from "./CustomModelDropdown";
@@ -230,7 +231,8 @@ interface ListViewProps {
   onMergeTask: (id: string) => Promise<MergeResult>;
   onResetTask?: (id: string, options?: { description?: string }) => Promise<Task>;
   onDuplicateTask?: (id: string, options?: { workflowId?: string }) => Promise<Task>;
-  /** App-owned ingestion seam for successful split-detail refinements. */
+  /** App-owned ingestion seam for successful refinements created from a row's own Refine dialog. */
+  onRefinementCreated?: (task: Task) => void;
   onOpenDetail: (task: Task | TaskDetail, options?: DetailTaskOpenOptions) => void;
   /*
   FNXC:FloatingWindow 2026-06-22-20:45:
@@ -360,6 +362,7 @@ export function ListView({
   onMergeTask,
   onResetTask,
   onDuplicateTask,
+  onRefinementCreated,
   onPopOut,
   openMobileTasksInPopup = false,
   onOpenDetail,
@@ -399,6 +402,12 @@ export function ListView({
   const [contextMenuState, setContextMenuState] = useState<ListContextMenuState>(null);
   const [prCreateState, setPrCreateState] = useState<ListPrCreateState>(null);
   const [resetDialogTask, setResetDialogTask] = useState<Task | null>(null);
+  /*
+  FNXC:TaskRefine 2026-09-14-22:23:
+  FN-400: the row hosts the Refine composer itself, like the Reset dialog beside it. Refine used to reopen the whole
+  task record through the detail-open deep link, which is exactly the behaviour being removed.
+  */
+  const [refineDialogTask, setRefineDialogTask] = useState<Task | null>(null);
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressStartRef = useRef<{ x: number; y: number; pointerId: number } | null>(null);
@@ -1716,7 +1725,7 @@ export function ListView({
           loadBoardWorkflows: () => boardWorkflows,
         });
       } : undefined,
-      onOpenRefine: () => onOpenDetail(task, { origin: useSinglePaneList ? "list-mobile" : undefined, initialAction: "refine" }),
+      onOpenRefine: () => setRefineDialogTask(task),
       onRetry: onRetryTask ? async () => {
         const copy = resolveRetryStageCopy(t, getTaskColumnFlags(task), task.column);
         const confirmed = await confirm({
@@ -2254,6 +2263,15 @@ export function ListView({
           />
         </div>,
         document.body,
+      )}
+      {refineDialogTask && (
+        <TaskRefineDialog
+          taskId={refineDialogTask.id}
+          projectId={projectId}
+          addToast={addToast}
+          onRefinementCreated={onRefinementCreated}
+          onClose={() => setRefineDialogTask(null)}
+        />
       )}
       {resetDialogTask && onResetTask && (
         <TaskResetDialog

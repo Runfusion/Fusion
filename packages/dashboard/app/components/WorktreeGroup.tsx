@@ -21,7 +21,8 @@ interface WorktreeGroupProps {
   onOpenDetail: (task: Task | TaskDetail) => void;
   onPlanningMode?: (initialPlan: string, workflowId?: string | null) => void;
   workflowId?: string | null;
-  onOpenRefine?: (task: Task | TaskDetail) => void;
+  /** App-owned ingestion seam for a refinement created from a card's own Refine dialog. */
+  onRefinementCreated?: (task: Task) => void;
   onMoveTask?: (id: string, column: ColumnId, optionsOrPosition?: { preserveProgress?: boolean; expectedColumn?: string } | number) => Promise<Task>;
   addToast: (message: string, type?: ToastType) => void;
   globalPaused?: boolean;
@@ -76,7 +77,7 @@ function WorktreeGroupComponent({
   onOpenDetail,
   onPlanningMode,
   workflowId,
-  onOpenRefine,
+  onRefinementCreated,
   onMoveTask,
   addToast,
   globalPaused,
@@ -145,7 +146,7 @@ function WorktreeGroupComponent({
           onOpenDetail={onOpenDetail}
           onPlanningMode={onPlanningMode}
           planningWorkflowId={getTaskPlanningWorkflowId(task)}
-          onOpenRefine={onOpenRefine}
+          onRefinementCreated={onRefinementCreated}
           onMoveTask={onMoveTask}
           taskColumnFlags={getTaskColumnFlags(task)}
           taskMoveColumns={getTaskContextMenuColumns(task)}
@@ -182,7 +183,7 @@ function WorktreeGroupComponent({
           onOpenDetail={onOpenDetail}
           onPlanningMode={onPlanningMode}
           planningWorkflowId={getTaskPlanningWorkflowId(task)}
-          onOpenRefine={onOpenRefine}
+          onRefinementCreated={onRefinementCreated}
           onMoveTask={onMoveTask}
           taskColumnFlags={getTaskColumnFlags(task)}
           taskMoveColumns={getTaskContextMenuColumns(task)}

@@ -33,6 +33,7 @@ describe("TaskContextMenu shared task action model", () => {
     const onTogglePause = vi.fn();
     expect(actionIds(makeTask({ column: "triage" }), { onRetry, onTogglePause })).toEqual(["retry", "pause", "delete"]);
     expect(buildTaskActionMenuModel({ task: makeTask({ column: "triage" }), t, onRetry, onTogglePause }).shouldShowActionsMenu).toBe(true);
+    /* FNXC:TaskRefine 2026-09-14-22:23: FN-400 — hosts now pass a local dialog trigger here rather than a detail-open route. */
     expect(actionIds(makeTask({ column: "in-review" }), { onRetry, onReset: vi.fn(), onOpenRefine: vi.fn(), onTogglePause })).toEqual(["refine", "retry", "pause", "reset", "delete"]);
     expect(actionIds(makeTask({ column: "done" }), { onRetry, onReset: vi.fn(), onOpenRefine: vi.fn() })).toEqual(["refine", "delete"]);
   });

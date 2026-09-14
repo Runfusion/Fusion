@@ -117,6 +117,8 @@ vi.mock("../../api", () => ({
   fetchAgents: vi.fn(),
   rebuildTaskSpec: vi.fn(),
   refreshPrStatus: vi.fn(),
+  /* FNXC:TaskRefine 2026-09-14-22:23: FN-400 — the card now hosts the standalone Refine composer, which submits through this export. */
+  refineTask: vi.fn(),
   fetchBoardWorkflows: vi.fn().mockResolvedValue({ flagEnabled: true, defaultWorkflowId: "wf-a", workflows: [], taskWorkflowIds: {} }),
   // FNXC:PlannerOversight 2026-07-04-13:00: tests that pass a `workflowBadge`
   // prop trigger the FN-7516 workflow-effective-oversight fetch effect; mock
@@ -930,7 +932,6 @@ describe("TaskCard", () => {
   it("opens the board card context menu from keyboard as a viewport portal, selects an action, and closes", async () => {
     const cleanupGeometry = mockBoardContextMenuGeometry();
     const onOpenDetail = vi.fn();
-    const onOpenRefine = vi.fn();
     try {
       render(
         <div className="column" style={{ overflow: "hidden" }}>
@@ -938,7 +939,6 @@ describe("TaskCard", () => {
             <TaskCard
               task={makeTask({ column: "done", status: "done" as any })}
               onOpenDetail={onOpenDetail}
-              onOpenRefine={onOpenRefine}
               addToast={noop}
             />
           </div>
@@ -952,7 +952,8 @@ describe("TaskCard", () => {
       expectBoardContextMenuPortaled();
       fireEvent.click(screen.getByRole("menuitem", { name: "Refine" }));
 
-      expect(onOpenRefine).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-001" }));
+      /* FNXC:TaskRefine 2026-09-14-22:23: FN-400 — Refine opens the card's own composer, never the task record. */
+      expect(screen.getByTestId("task-refine-dialog")).toBeInTheDocument();
       expect(screen.queryByRole("menu")).not.toBeInTheDocument();
       expect(onOpenDetail).not.toHaveBeenCalled();
     } finally {
@@ -960,14 +961,12 @@ describe("TaskCard", () => {
     }
   });
 
-  it("shows refine for a done card context menu and routes to the refinement opener", () => {
+  it("shows refine for a done card context menu and opens the standalone composer", () => {
     const onOpenDetail = vi.fn();
-    const onOpenRefine = vi.fn();
     render(
       <TaskCard
         task={makeTask({ column: "done", status: "done" as any })}
         onOpenDetail={onOpenDetail}
-        onOpenRefine={onOpenRefine}
         addToast={noop}
         onDeleteTask={vi.fn()}
       />,
@@ -976,20 +975,18 @@ describe("TaskCard", () => {
     fireEvent.contextMenu(document.querySelector(".card")!, { clientX: 24, clientY: 28 });
     fireEvent.click(screen.getByRole("menuitem", { name: "Refine" }));
 
-    expect(onOpenRefine).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-001" }));
+    expect(screen.getByTestId("task-refine-dialog")).toBeInTheDocument();
     expect(onOpenDetail).not.toHaveBeenCalled();
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
   });
 
   it("shows refine for custom complete cards on touch long-press", () => {
     vi.useFakeTimers();
-    const onOpenRefine = vi.fn();
     render(
       <TaskCard
         task={makeTask({ column: "complete" as any, status: "done" as any })}
         taskColumnFlags={{ complete: true }}
         onOpenDetail={noop}
-        onOpenRefine={onOpenRefine}
         addToast={noop}
         onDeleteTask={vi.fn()}
       />,
@@ -1000,10 +997,15 @@ describe("TaskCard", () => {
     act(() => vi.advanceTimersByTime(550));
 
     fireEvent.click(screen.getByRole("menuitem", { name: "Refine" }));
-    expect(onOpenRefine).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-001" }));
+    expect(screen.getByTestId("task-refine-dialog")).toBeInTheDocument();
   });
 
-   it("omits refine without a real modal callback and offers PR status actions from the board context menu", async () => {
+   /*
+   FNXC:TaskRefine 2026-09-14-22:23:
+   FN-400 replaced this case's subject: Refine no longer depends on a caller-supplied opener, because the card owns the
+   composer. A review card therefore always offers Refine, alongside its PR status actions.
+   */
+   it("offers refine and PR status actions on a review card from the board context menu", async () => {
     const onOpenDetail = vi.fn();
     vi.mocked(refreshPrStatus).mockResolvedValueOnce({} as any);
     render(
@@ -1021,8 +1023,9 @@ describe("TaskCard", () => {
     );
 
     fireEvent.contextMenu(document.querySelector(".card")!, { clientX: 24, clientY: 28 });
-    expect(screen.queryByRole("menuitem", { name: "Refine" })).not.toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Refine" })).toBeInTheDocument();
     expect(onOpenDetail).not.toHaveBeenCalled();
+    fireEvent.keyDown(document, { key: "Escape" });
 
     fireEvent.contextMenu(document.querySelector(".card")!, { clientX: 24, clientY: 28 });
     fireEvent.click(screen.getByRole("menuitem", { name: "Check PR Status" }));
@@ -1648,10 +1651,15 @@ describe("TaskCard", () => {
     expect(screen.queryByLabelText("Delete task")).toBeNull();
   });
 
-  it("renders no action-menu shell when neither done action is available", () => {
+  /*
+  FNXC:TaskRefine 2026-09-14-22:23:
+  FN-400 narrowed this case's subject: a complete card now always offers Refine because it hosts that composer itself,
+  so the empty-shell contract only holds for a card with no available action at all.
+  */
+  it("renders no action-menu shell when no action is available", () => {
     const { container } = render(
       <TaskCard
-        task={makeTask({ column: "done", mergeDetails: undefined })}
+        task={makeTask({ column: "in-progress", mergeDetails: undefined })}
         onOpenDetail={noop}
         addToast={noop}
       />,
@@ -1660,6 +1668,20 @@ describe("TaskCard", () => {
     expect(screen.queryByRole("button", { name: "Actions" })).toBeNull();
     expect(container.querySelector(".card-done-actions")).toBeNull();
     expect(screen.queryByTestId("card-menu-btn-FN-001")).toBeNull();
+  });
+
+  it("still offers Refine on a handler-free complete card because the card owns that dialog", () => {
+    render(
+      <TaskCard
+        task={makeTask({ column: "done", status: "done" as any, mergeDetails: undefined })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    fireEvent.contextMenu(document.querySelector(".card")!, { clientX: 24, clientY: 28 });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Refine" }));
+    expect(screen.getByTestId("task-refine-dialog")).toBeInTheDocument();
   });
 
   /*

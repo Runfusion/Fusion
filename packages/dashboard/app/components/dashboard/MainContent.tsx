@@ -162,6 +162,7 @@ export function MainContentListView(props: AppMainPanelTaskDetailMainContentProp
     mergeTask,
     resetTask,
     duplicateTask,
+    ingestCreatedTasks,
     openDetailTask,
     popOutTaskDetail,
     addToast,
@@ -197,6 +198,8 @@ export function MainContentListView(props: AppMainPanelTaskDetailMainContentProp
         onMergeTask={mergeTask}
         onResetTask={resetTask}
         onDuplicateTask={duplicateTask}
+        /* FNXC:TaskRefine 2026-09-14-22:23: FN-400 — the row hosts its own Refine composer; only the created child comes back up. */
+        onRefinementCreated={(task) => ingestCreatedTasks([task])}
         onOpenDetail={(task, options) => openDetailTask(task, undefined, options)}
         onPopOut={popOutTaskDetail}
         addToast={addToast}

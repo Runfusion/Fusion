@@ -94,6 +94,7 @@ const INVENTORY: InventoryRow[] = [
   { destination: "Settings sync conflicts", producer: "components/SettingsSyncConflictModal.tsx", scenario: "components/__tests__/view-layout-dialogs.test.tsx", requires: ["ViewHeader"] },
   { destination: "Stash conflicts", producer: "components/StashConflictModal.tsx", scenario: "components/__tests__/view-layout-dialogs.test.tsx", requires: ["ViewHeader"] },
   { destination: "Stash recovery", producer: "components/StashRecoveryView.tsx", scenario: "components/__tests__/view-layout-dialogs.test.tsx", requires: ["ViewHeader"] },
+  { destination: "Task refine", producer: "components/TaskRefineDialog.tsx", scenario: "components/__tests__/view-layout-dialogs.test.tsx", requires: ["ViewHeader"] },
   { destination: "Task reset", producer: "components/TaskResetDialog.tsx", scenario: "components/__tests__/view-layout-dialogs.test.tsx", requires: ["ViewHeader"] },
   { destination: "Usage", producer: "components/UsageIndicator.tsx", scenario: "components/__tests__/view-layout-dialogs.test.tsx", requires: ["ViewHeader"] },
   { destination: "Workflow results output", producer: "components/WorkflowResultsTab.tsx", scenario: "components/__tests__/view-layout-dialogs.test.tsx", requires: ["ViewHeader"] },
