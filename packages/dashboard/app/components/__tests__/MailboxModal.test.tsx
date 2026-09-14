@@ -1082,24 +1082,27 @@ describe("MailboxModal", () => {
     }
   });
 
-  it("shows compose button in Agents tab", async () => {
+  it("keeps exactly one header-owned compose control in the Agents tab", async () => {
     render(<MailboxModal {...defaultProps} />);
     fireEvent.click(screen.getByTestId("mailbox-tab-agents"));
     await waitFor(() => {
-      expect(screen.getByTestId("mailbox-compose-btn")).toBeDefined();
+      expect(screen.getByTestId("mailbox-header-compose")).toBeDefined();
     });
 
-    const agentsComposeButton = screen.getByTestId("mailbox-compose-btn");
-    expect(agentsComposeButton).toHaveClass("btn", "btn-sm", "btn-secondary", "mailbox-compose-btn");
+    // The Agents pane no longer paints its own Compose button beside the scope picker.
+    expect(screen.queryByTestId("mailbox-compose-btn")).toBeNull();
+    const header = document.querySelector(".view-header");
+    expect(header?.contains(screen.getByTestId("mailbox-header-compose"))).toBe(true);
+    expect(header?.contains(screen.getByTestId("mailbox-agent-select"))).toBe(true);
   });
 
   it("compose opened from Agents tab with All agents selected shows recipient select", async () => {
     render(<MailboxModal {...defaultProps} />);
     fireEvent.click(screen.getByTestId("mailbox-tab-agents"));
     await waitFor(() => {
-      expect(screen.getByTestId("mailbox-compose-btn")).toBeDefined();
+      expect(screen.getByTestId("mailbox-header-compose")).toBeDefined();
     });
-    fireEvent.click(screen.getByTestId("mailbox-compose-btn"));
+    fireEvent.click(screen.getByTestId("mailbox-header-compose"));
     await waitFor(() => {
       expect(screen.getByTestId("message-composer")).toBeDefined();
     });
@@ -1127,7 +1130,7 @@ describe("MailboxModal", () => {
       expect(mockFetchAgentMailbox).toHaveBeenCalledWith("agent-001", undefined);
     });
     // Click compose
-    fireEvent.click(screen.getByTestId("mailbox-compose-btn"));
+    fireEvent.click(screen.getByTestId("mailbox-header-compose"));
     await waitFor(() => {
       expect(screen.getByTestId("message-composer")).toBeDefined();
     });
@@ -1147,7 +1150,7 @@ describe("MailboxModal", () => {
       expect(mockFetchAgentMailbox).toHaveBeenCalledWith("agent-001", undefined);
     });
     // Open compose (pre-filled)
-    fireEvent.click(screen.getByTestId("mailbox-compose-btn"));
+    fireEvent.click(screen.getByTestId("mailbox-header-compose"));
     await waitFor(() => {
       expect(screen.getByTestId("message-composer")).toBeDefined();
     });

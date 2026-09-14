@@ -2100,8 +2100,10 @@ describe("MailboxView", () => {
         fireEvent.click(screen.getByTestId("mailbox-tab-agents"));
       });
 
+      // Compose exists once, in the owning header; the Agents tab no longer paints its own copy.
+      expect(screen.queryByTestId("mailbox-compose-btn")).toBeNull();
       await act(async () => {
-        fireEvent.click(screen.getByTestId("mailbox-compose-btn"));
+        fireEvent.click(screen.getByTestId("mailbox-header-compose"));
       });
 
       await waitFor(() => {
@@ -2163,15 +2165,19 @@ describe("MailboxView", () => {
         expect(mockFetchAgentMailbox).toHaveBeenCalledWith("agent-001", undefined);
       });
 
-      // Sub-tabs should be visible
+      // Sub-tabs should be visible, and they are scope controls owned by the header.
       await waitFor(() => {
         expect(screen.getByTestId("mailbox-agent-subtabs")).toBeDefined();
         expect(screen.getByTestId("mailbox-agent-subtab-inbox")).toBeDefined();
         expect(screen.getByTestId("mailbox-agent-subtab-outbox")).toBeDefined();
       });
 
-      const agentsComposeButton = screen.getByTestId("mailbox-compose-btn");
-      expect(agentsComposeButton).toHaveClass("btn", "btn-sm", "btn-secondary", "mailbox-compose-btn");
+      const header = document.querySelector(".view-header");
+      expect(header?.contains(screen.getByTestId("mailbox-agent-subtabs"))).toBe(true);
+      expect(header?.contains(screen.getByTestId("mailbox-agent-select"))).toBe(true);
+      // One compose control only, and it is the shared header action.
+      expect(screen.queryByTestId("mailbox-compose-btn")).toBeNull();
+      expect(header?.contains(screen.getByTestId("mailbox-header-compose"))).toBe(true);
     });
 
     it("shows agent sender names in agent inbox rows", async () => {
