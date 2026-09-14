@@ -107,13 +107,19 @@ The embedded planning header must be a visual SIBLING of MissionManager's inline
 - gap icon<->title: var(--space-sm) (= 8px), identical to .mission-manager__header-title. Scoped to the embedded planning header so the shared .detail-title-row (TaskDetailModal) keeps its own 10px gap.
 */
 /* FNXC:ViewHeader 2026-06-23-04:15: Pin canonical --view-header-min-height (≈61px border-box) + box-sizing + vertical centering so embedded Planning's header matches the shared ViewHeader/Missions height exactly. */
+/*
+FNXC:StandardizedViewLayout 2026-09-14-05:58:
+Planning's header is a full-width bar over BOTH the session rail and the interview, exactly like Mailbox and Agents.
+It kept `border-bottom: none` from its modal past, so the title row bled into the panes below and the destination did
+not read as header-over-content the way every other collection does.
+*/
 .planning-modal--embedded .modal-header--embedded {
   box-sizing: border-box;
   align-items: center;
   min-height: var(--view-header-min-height);
   padding: var(--space-lg) var(--space-xl);
   background: var(--surface);
-  border-bottom: none;
+  border-bottom: var(--btn-border-width) solid var(--border);
 }
 
 .planning-modal--embedded .modal-header--embedded .detail-title-row {
