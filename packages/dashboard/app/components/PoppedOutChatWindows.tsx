@@ -25,8 +25,8 @@ export interface PoppedOutChatWindowsProps {
 
 export function PoppedOutChatWindows({ entries, projectId, addToast, experimentalFeatures, onClose, onOpenSessionInNewWindow, onSendAsReport }: PoppedOutChatWindowsProps) {
   /*
-  FNXC:ChatWindows 2026-09-14-11:35:
-  The first detached conversation owns cascade slot zero so its persisted base geometry is not given an invisible extra offset.
+  FNXC:ChatWindows 2026-09-14-22:36:
+  FN-394 removed Chat's own cascade bookkeeping and its durable geometry. Every detached conversation opens at the standard Chat size, centred, and the shared window manager decides whether an untouched neighbour earns one cascade offset — the same rule as every other dashboard window.
   */
   return entries.filter((entry) => entry.projectId === projectId).map((entry) => (
     <FloatingWindow
@@ -40,8 +40,6 @@ export function PoppedOutChatWindows({ entries, projectId, addToast, experimenta
       layer="task-detail"
       suspendGeometryPersistenceOnMobile
       suspendGeometryPersistenceOnShortViewport
-      persistGeometryKey="kb-dashboard-chat-floating-window"
-      cascadeOffsetIndex={entry.cascadeSlot}
       defaultSize={{ width: 980, height: 680 }}
       minSize={{ width: 300, height: 420 }}
       ariaLabel={entry.session.title || "Chat"}

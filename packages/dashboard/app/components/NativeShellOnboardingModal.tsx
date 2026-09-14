@@ -47,7 +47,7 @@ export function NativeShellOnboardingModal({ open, shellApi, shellState, onCompl
   }
 
   return (
-    <FloatingWindow windowKey="native-shell-onboarding" modal title={t("onboarding.welcome", "Welcome to Fusion")} ariaLabel={t("onboarding.welcome", "Welcome to Fusion")} onClose={() => {}} hideHeader dragHandleSelector=".native-shell-onboarding-modal .modal-header" className="floating-window--native-shell-onboarding" defaultSize={{ width: 640, height: 560 }} minSize={{ width: 400, height: 320 }} persistGeometryKey="floating-window:native-shell-onboarding" suspendGeometryPersistenceOnMobile suspendGeometryPersistenceOnShortViewport>
+    <FloatingWindow windowKey="native-shell-onboarding" modal title={t("onboarding.welcome", "Welcome to Fusion")} ariaLabel={t("onboarding.welcome", "Welcome to Fusion")} onClose={() => {}} hideHeader dragHandleSelector=".native-shell-onboarding-modal .modal-header" className="floating-window--native-shell-onboarding" defaultSize={{ width: 640, height: 560 }} minSize={{ width: 400, height: 320 }} suspendGeometryPersistenceOnMobile suspendGeometryPersistenceOnShortViewport>
       {/* FNXC:ModalTouchGeometry 2026-07-26-16:22: Connection onboarding is blocking, so its shared geometry deliberately has no outside or Escape dismissal. */}
       <div className="modal native-shell-onboarding-modal">
         {/*

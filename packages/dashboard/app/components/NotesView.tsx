@@ -22,7 +22,7 @@ export interface NotesViewProps {
   onOpenNote?: (note: ProjectNoteSummary) => void;
   onChanged?: () => void;
   registerGuard?: (guard: () => boolean | Promise<boolean>, onAccepted?: () => void) => () => void;
-  floating?: { onClose: () => void; onActivate?: () => void; raiseToFrontSignal?: number; cascadeSlot?: number; registerGuard?: (guard: () => boolean | Promise<boolean>, onAccepted?: () => void) => () => void };
+  floating?: { onClose: () => void; onActivate?: () => void; raiseToFrontSignal?: number; registerGuard?: (guard: () => boolean | Promise<boolean>, onAccepted?: () => void) => () => void };
 }
 
 /*
@@ -142,5 +142,5 @@ export function NotesView({ projectId, addToast, controller, compact = false, li
     </ViewLayout>
   </section>;
   if (!floating) return content;
-  return <FloatingWindow title={notes.draftTitle || t("nav.notes", "Notes")} ariaLabel={notes.draftTitle || t("nav.notes", "Notes")} onClose={() => void requestFloatingClose()} windowKey={dedicatedNoteId ? `note-${projectId}-${dedicatedNoteId}` : "notes-view"} persistGeometryKey="floating-window:notes-view" hideHeader dragHandleSelector=".view-header" minSize={{ width: 360, height: 280 }} cascadeOffsetIndex={(floating.cascadeSlot ?? 0) + 1} raiseToFrontSignal={floating.raiseToFrontSignal}><div onPointerDown={floating.onActivate} onFocusCapture={floating.onActivate}>{content}</div></FloatingWindow>;
+  return <FloatingWindow title={notes.draftTitle || t("nav.notes", "Notes")} ariaLabel={notes.draftTitle || t("nav.notes", "Notes")} onClose={() => void requestFloatingClose()} windowKey={dedicatedNoteId ? `note-${projectId}-${dedicatedNoteId}` : "notes-view"} hideHeader dragHandleSelector=".view-header" minSize={{ width: 360, height: 280 }} raiseToFrontSignal={floating.raiseToFrontSignal}><div onPointerDown={floating.onActivate} onFocusCapture={floating.onActivate}>{content}</div></FloatingWindow>;
 }

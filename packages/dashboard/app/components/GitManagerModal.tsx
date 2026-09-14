@@ -1396,7 +1396,6 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
       className="floating-window--git-manager"
       defaultSize={{ width: Math.min(window.innerWidth * 0.95, 1400), height: window.innerHeight * 0.92 }}
       minSize={{ width: 360, height: 280 }}
-      persistGeometryKey="floating-window:git-manager"
       suspendGeometryPersistenceOnMobile
       suspendGeometryPersistenceOnShortViewport
       /* FNXC:ModalTouchGeometry 2026-07-26-16:10: Git Manager keeps the global default-off backdrop preference; FloatingWindow's guarded pointer listener preserves drag-safe outside dismissal. */

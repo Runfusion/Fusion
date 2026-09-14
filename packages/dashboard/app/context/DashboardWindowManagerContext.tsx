@@ -29,7 +29,14 @@ export interface DashboardWindowBounds {
   height: number;
 }
 
-export type DashboardWindowLandmark = "header" | "footer" | "right-dock";
+/*
+FNXC:DashboardWindowBounds 2026-09-14-21:10:
+FN-394 adds the left navigation as a measured landmark. A window's work area is the rectangle between
+the header and the active footer, minus every side panel that actually occupies width. A collapsed,
+unmounted, or zero-width panel reserves nothing, so closing a sidebar immediately widens snapped
+windows and reopening it re-splits them symmetrically. The shell itself is never auto-closed.
+*/
+export type DashboardWindowLandmark = "header" | "footer" | "right-dock" | "left-nav";
 export type DashboardWindowSurfaceGroup = "window" | "dialog" | "drawer" | "plugin" | "chat";
 export type DashboardWindowSurfaceToken = symbol;
 
@@ -50,6 +57,8 @@ export interface DashboardWindowSurfaceOptions {
 }
 
 export interface DashboardWindowSurfaceBinding {
+  /** Opaque per-instance identity. Shared window state (cascade cohort, visibility snapshot) is keyed by it. */
+  token: DashboardWindowSurfaceToken;
   rootRef: RefCallback<HTMLElement>;
   globallyHidden: boolean;
   surfaceActive: boolean;
@@ -66,6 +75,9 @@ interface DashboardWindowManagerValue {
   headerRef: RefCallback<HTMLElement>;
   footerRef: RefCallback<HTMLElement>;
   rightDockRef: RefCallback<HTMLElement>;
+  leftNavRef: RefCallback<HTMLElement>;
+  reserveCascadeSlot: (token: DashboardWindowSurfaceToken) => number;
+  releaseCascadeSlot: (token: DashboardWindowSurfaceToken) => void;
   upsertSurface: (surface: DashboardWindowSurfaceRecord) => void;
   removeSurface: (token: DashboardWindowSurfaceToken) => void;
   isSurfaceHidden: (token: DashboardWindowSurfaceToken) => boolean;
@@ -115,6 +127,7 @@ export function resolveDashboardWindowBounds(input: {
   headerRect?: Pick<DOMRect, "bottom"> | null;
   footerRect?: Pick<DOMRect, "top"> | null;
   rightDockRect?: Pick<DOMRect, "left"> | null;
+  leftNavRect?: Pick<DOMRect, "right" | "width"> | null;
 }): DashboardWindowBounds {
   const rightEdge = finite(input.viewportWidth) ? Math.max(0, input.viewportWidth) : 0;
   const bottomEdge = finite(input.viewportHeight) ? Math.max(0, input.viewportHeight) : 0;
@@ -127,12 +140,19 @@ export function resolveDashboardWindowBounds(input: {
   const right = input.rightDockRect && finite(input.rightDockRect.left)
     ? Math.min(rightEdge, Math.max(0, input.rightDockRect.left))
     : rightEdge;
+  // A left panel only reserves width when it actually occupies some; a zero-width or invalid rect is ignored.
+  const left = input.leftNavRect
+    && finite(input.leftNavRect.right)
+    && finite(input.leftNavRect.width)
+    && input.leftNavRect.width > 0
+    ? Math.min(right, Math.max(0, input.leftNavRect.right))
+    : 0;
   return {
-    left: 0,
+    left,
     top,
     right,
     bottom,
-    width: Math.max(0, right),
+    width: Math.max(0, right - left),
     height: Math.max(0, bottom - top),
   };
 }
@@ -177,7 +197,16 @@ export function DashboardWindowManagerProvider({ children }: DashboardWindowMana
     header: null,
     footer: null,
     "right-dock": null,
+    "left-nav": null,
   });
+  /*
+  FNXC:FloatingWindowCascade 2026-09-14-21:10:
+  FN-394 replaces the chat-only cascade with ONE cohort shared by every window type. Membership is keyed
+  by the opaque per-instance surface token — never by logical id or storage key — so two windows with the
+  same logical id, or a StrictMode remount, each resolve their own slot without leaking a phantom
+  reservation. A window leaves the cohort as soon as the operator really moves, resizes, or snaps it.
+  */
+  const cascadeSlotsRef = useRef(new Map<DashboardWindowSurfaceToken, number>());
   const surfacesRef = useRef(new Map<DashboardWindowSurfaceToken, DashboardWindowSurfaceRecord>());
   const hiddenSnapshotRef = useRef<Set<DashboardWindowSurfaceToken> | null>(null);
   const focusedBeforeHideRef = useRef<HTMLElement | null>(null);
@@ -185,6 +214,7 @@ export function DashboardWindowManagerProvider({ children }: DashboardWindowMana
   const scopeKeyRef = useRef<string | null | undefined>(undefined);
   const observerRef = useRef<ResizeObserver | null>(null);
   const measureFrameRef = useRef<number | null>(null);
+  const measurePendingRef = useRef(false);
   const focusCleanupRef = useRef<(() => void) | null>(null);
   const focusRestoringRef = useRef(false);
   const [availableBounds, setAvailableBounds] = useState<DashboardWindowBounds>(viewportBounds);
@@ -193,16 +223,19 @@ export function DashboardWindowManagerProvider({ children }: DashboardWindowMana
 
   const measure = useCallback(() => {
     measureFrameRef.current = null;
+    measurePendingRef.current = false;
     const viewport = viewportBounds();
     const headerRect = validRect(landmarksRef.current.header);
     const footerRect = validRect(landmarksRef.current.footer);
     const rightDockRect = validRect(landmarksRef.current["right-dock"]);
+    const leftNavRect = validRect(landmarksRef.current["left-nav"]);
     const next = resolveDashboardWindowBounds({
       viewportWidth: viewport.right,
       viewportHeight: viewport.bottom,
       headerRect,
       footerRect,
       rightDockRect,
+      leftNavRect,
     });
     setAvailableBounds((current) => (
       current.left === next.left
@@ -216,13 +249,25 @@ export function DashboardWindowManagerProvider({ children }: DashboardWindowMana
     ));
   }, []);
 
+  /*
+  FNXC:DashboardWindowBounds 2026-09-14-21:10:
+  Coalescing tracks a PENDING flag rather than the frame handle alone: an environment whose
+  `requestAnimationFrame` runs its callback synchronously would otherwise store a handle for a frame that
+  already ran, leaving the coalescer permanently "busy" and freezing every later landmark measurement.
+  */
   const scheduleMeasure = useCallback(() => {
-    if (measureFrameRef.current !== null) return;
-    if (typeof requestAnimationFrame === "function") {
-      measureFrameRef.current = requestAnimationFrame(measure);
-    } else {
+    if (measurePendingRef.current) return;
+    if (typeof requestAnimationFrame !== "function") {
       measure();
+      return;
     }
+    measurePendingRef.current = true;
+    const frame = requestAnimationFrame(() => {
+      measurePendingRef.current = false;
+      measureFrameRef.current = null;
+      measure();
+    });
+    if (measurePendingRef.current) measureFrameRef.current = frame;
   }, [measure]);
 
   useLayoutEffect(() => {
@@ -239,6 +284,7 @@ export function DashboardWindowManagerProvider({ children }: DashboardWindowMana
       observerRef.current = null;
       if (measureFrameRef.current !== null) cancelAnimationFrame(measureFrameRef.current);
       measureFrameRef.current = null;
+      measurePendingRef.current = false;
     };
   }, [measure, scheduleMeasure]);
 
@@ -272,6 +318,22 @@ export function DashboardWindowManagerProvider({ children }: DashboardWindowMana
   const headerRef = useCallback<RefCallback<HTMLElement>>((node) => setLandmark("header", node), [setLandmark]);
   const footerRef = useCallback<RefCallback<HTMLElement>>((node) => setLandmark("footer", node), [setLandmark]);
   const rightDockRef = useCallback<RefCallback<HTMLElement>>((node) => setLandmark("right-dock", node), [setLandmark]);
+  const leftNavRef = useCallback<RefCallback<HTMLElement>>((node) => setLandmark("left-nav", node), [setLandmark]);
+
+  /** Idempotent per token: the first free slot is reserved once and returned unchanged on every later call. */
+  const reserveCascadeSlot = useCallback((token: DashboardWindowSurfaceToken) => {
+    const existing = cascadeSlotsRef.current.get(token);
+    if (existing !== undefined) return existing;
+    const taken = new Set(cascadeSlotsRef.current.values());
+    let slot = 0;
+    while (taken.has(slot)) slot += 1;
+    cascadeSlotsRef.current.set(token, slot);
+    return slot;
+  }, []);
+
+  const releaseCascadeSlot = useCallback((token: DashboardWindowSurfaceToken) => {
+    cascadeSlotsRef.current.delete(token);
+  }, []);
   const toggleControlRef = useCallback<RefCallback<HTMLButtonElement>>((node) => {
     toggleControlElementRef.current = node;
   }, []);
@@ -339,6 +401,7 @@ export function DashboardWindowManagerProvider({ children }: DashboardWindowMana
   }, [consumeSnapshot]);
 
   const removeSurface = useCallback((token: DashboardWindowSurfaceToken) => {
+    cascadeSlotsRef.current.delete(token);
     if (!surfacesRef.current.delete(token)) return;
     const snapshot = hiddenSnapshotRef.current;
     if (snapshot?.delete(token)) {
@@ -376,6 +439,7 @@ export function DashboardWindowManagerProvider({ children }: DashboardWindowMana
   const resetScope = useCallback((scopeKey: string | null | undefined) => {
     if (scopeKeyRef.current === scopeKey) return;
     scopeKeyRef.current = scopeKey;
+    cascadeSlotsRef.current.clear();
     hiddenSnapshotRef.current = null;
     focusedBeforeHideRef.current = null;
     focusCleanupRef.current?.();
@@ -409,6 +473,9 @@ export function DashboardWindowManagerProvider({ children }: DashboardWindowMana
     headerRef,
     footerRef,
     rightDockRef,
+    leftNavRef,
+    reserveCascadeSlot,
+    releaseCascadeSlot,
     upsertSurface,
     removeSurface,
     isSurfaceHidden,
@@ -427,6 +494,9 @@ export function DashboardWindowManagerProvider({ children }: DashboardWindowMana
     isFocusRestoring,
     isGroupVisible,
     isSurfaceHidden,
+    leftNavRef,
+    reserveCascadeSlot,
+    releaseCascadeSlot,
     removeSurface,
     resetScope,
     rightDockRef,
@@ -493,7 +563,37 @@ export function useDashboardWindowLandmark(kind: DashboardWindowLandmark): RefCa
   if (!manager) return NOOP_ELEMENT_REF;
   if (kind === "header") return manager.headerRef;
   if (kind === "footer") return manager.footerRef;
+  if (kind === "left-nav") return manager.leftNavRef;
   return manager.rightDockRef;
+}
+
+export interface DashboardWindowCascadeController {
+  /** Reserve (idempotently) this instance's slot in the pristine-window cohort. */
+  reserve: (token: DashboardWindowSurfaceToken) => number;
+  /** Leave the cohort — called once the operator really moves, resizes, or snaps the window. */
+  release: (token: DashboardWindowSurfaceToken) => void;
+}
+
+const STANDALONE_CASCADE: DashboardWindowCascadeController = { reserve: () => 0, release: () => {} };
+
+/*
+FNXC:FloatingWindowCascade 2026-09-14-21:10:
+Outside a provider there is no cohort, so a standalone window (tests, embedded hosts) always opens
+exactly centered rather than inheriting a foreign offset.
+*/
+export function useDashboardWindowCascade(): DashboardWindowCascadeController {
+  const manager = useContext(DashboardWindowManagerContext);
+  const reserve = manager?.reserveCascadeSlot;
+  const release = manager?.releaseCascadeSlot;
+  /*
+  The controller identity must depend ONLY on the two stable callbacks, never on the manager value
+  object: that object is rebuilt whenever bounds or the surface revision change, and a new identity here
+  would re-run every window's mount effect, re-reserving slots and resetting geometry mid-session.
+  */
+  return useMemo(
+    () => (reserve && release ? { reserve, release } : STANDALONE_CASCADE),
+    [release, reserve],
+  );
 }
 
 const NEVER_RESTORING = () => false;
@@ -586,6 +686,7 @@ export function useDashboardWindowSurface(options: DashboardWindowSurfaceOptions
   const globallyHidden = manager?.isSurfaceHidden(tokenRef.current) ?? false;
   const locallyVisible = options.locallyVisible ?? true;
   return {
+    token: tokenRef.current,
     rootRef,
     globallyHidden,
     surfaceActive: locallyVisible && !globallyHidden,

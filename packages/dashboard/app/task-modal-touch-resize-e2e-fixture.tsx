@@ -335,7 +335,6 @@ function TaskDetailResizeHarness() {
     className="floating-window--task-detail"
     defaultSize={{ width: 560, height: 480 }}
     minSize={{ width: 320, height: 240 }}
-    persistGeometryKey="floating-window:task-detail"
     suspendGeometryPersistenceOnMobile
     layer="task-detail"
     testId="task-detail-modal-overlay"
@@ -357,7 +356,6 @@ function FloatingWindowHarness() {
     defaultSize={{ width: 560, height: 480 }}
     defaultPosition={{ x: 80, y: 80 }}
     minSize={{ width: 320, height: 240 }}
-    persistGeometryKey="fusion:fn-8605-floating"
     suspendGeometryPersistenceOnMobile
   >
     <div>{t("fixture.floatingTaskDetailBody", "Floating task detail body")}</div>
@@ -377,7 +375,6 @@ function HeaderlessFloatingWindowHarness() {
     defaultSize={{ width: 560, height: 480 }}
     defaultPosition={{ x: 80, y: 80 }}
     minSize={{ width: 320, height: 240 }}
-    persistGeometryKey="fusion:fn-8605-headerless-floating"
     suspendGeometryPersistenceOnMobile
   >
     <div className="fn-8605-delegated-drag-handle">{t("fixture.headerlessTaskDetail", "Headerless task detail")}
@@ -405,7 +402,6 @@ function GenericFloatingWindowHarness() {
     defaultSize={{ width: 560, height: 480 }}
     defaultPosition={{ x: 80, y: 80 }}
     minSize={{ width: 320, height: 240 }}
-    persistGeometryKey="fusion:fn-8612-generic-floating"
     suspendGeometryPersistenceOnMobile
   >
     <div className="fn-8612-generic-drag-handle">{t("fixture.genericWindowHeader", "Generic window header")}</div>

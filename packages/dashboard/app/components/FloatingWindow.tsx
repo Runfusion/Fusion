@@ -9,6 +9,7 @@ import {
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
+  type TouchEvent as ReactTouchEvent,
 } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
@@ -23,11 +24,37 @@ import { ViewLayoutContent, ViewLayoutHeader } from "./ViewLayout";
 import {
   DashboardWindowSurfaceActivityProvider,
   useDashboardWindowBounds,
+  useDashboardWindowCascade,
   useDashboardWindowFocusRestoring,
   useDashboardWindowSurface,
-  type DashboardWindowBounds,
   type DashboardWindowSurfaceGroup,
 } from "../context/DashboardWindowManagerContext";
+import {
+  FLOATING_WINDOW_DETACH_PX,
+  FLOATING_WINDOW_DRAG_THRESHOLD_PX,
+  clampFloatingWindowPosition,
+  clampFloatingWindowSize,
+  detectSnapZone,
+  resolveDetachedRect,
+  resolveOpeningRect,
+  resolveSnapRect,
+  type FloatingWindowPosition,
+  type FloatingWindowRect,
+  type FloatingWindowSize,
+  type FloatingWindowSnapMode,
+} from "./floatingWindowGeometry";
+
+export {
+  FLOATING_WINDOW_CASCADE_STEP_PX,
+  clampFloatingWindowPosition,
+  clampFloatingWindowSize,
+} from "./floatingWindowGeometry";
+export type {
+  FloatingWindowPosition,
+  FloatingWindowRect,
+  FloatingWindowSize,
+  FloatingWindowSnapMode,
+} from "./floatingWindowGeometry";
 
 /*
 FNXC:FloatingWindow 2026-06-22-20:45:
@@ -35,16 +62,6 @@ FloatingWindow is the REUSABLE non-blocking floating window. It generalizes the 
 
 MULTI-WINDOW STACKING: a module-level z-index counter (`topZ`) hands each window a fresh z on mount and on every panel pointerdown/focus, so the most recently interacted-with window floats to the front. All overlays are click-through; only the panels capture pointer events, so every open FloatingWindow is independently movable and none blocks the page behind it.
 */
-
-export interface FloatingWindowSize {
-  width: number;
-  height: number;
-}
-
-export interface FloatingWindowPosition {
-  x: number;
-  y: number;
-}
 
 export interface FloatingWindowProps {
   title: ReactNode;
@@ -62,13 +79,26 @@ export interface FloatingWindowProps {
   hideHeader?: boolean;
   dragHandleSelector?: string;
   className?: string;
-  /** Optional localStorage key used to restore the last clamped position and size. */
+  /*
+  FNXC:FloatingWindowDialogHosts 2026-09-14-22:36:
+  FN-394 re-hosts the formerly static dashboard dialogs here. Their identity class used to live on their
+  own overlay element (backdrop CSS, breakpoint padding). Forwarding it to the shared overlay keeps that
+  styling and those host selectors valid WITHOUT re-introducing a second overlay/portal per dialog.
+  */
+  overlayClassName?: string;
+  /*
+  FNXC:FloatingWindowGeometry 2026-09-14-21:10:
+  FN-394 retires durable geometry. Every opening is standard-sized and centred, so this key is accepted
+  for source compatibility and deliberately ignored: nothing is read from or written to storage. Any
+  historical values simply stay untouched in `localStorage` (no global purge, other preferences intact).
+  @deprecated ignored since FN-394.
+  */
   persistGeometryKey?: string;
   /*
-  FNXC:FloatingWindow 2026-08-23-04:29:
-  Stacked callers can request a presentation-only cascade without changing the shared canonical
-  geometry. The persisted base remains un-cascaded, so reopening a window never walks it across
-  the viewport.
+  FNXC:FloatingWindowCascade 2026-09-14-21:10:
+  FN-394 moves cascade ownership into the shared window manager, which allocates one slot per pristine
+  window instance across ALL types. Caller-supplied indexes are ignored.
+  @deprecated ignored since FN-394.
   */
   cascadeOffsetIndex?: number;
   /** Skip desktop geometry restoration/writes while this caller renders as a full-screen mobile sheet. */
@@ -77,11 +107,18 @@ export interface FloatingWindowProps {
   suspendGeometryPersistenceOnShortViewport?: boolean;
   /** Opt-in outside-pointer dismissal for modal owners that preserve backdrop dismissal; persistent pop-outs omit it. */
   closeOnOutsidePointerDown?: boolean;
-  /** Mouse-only handlers for hosts whose historical backdrop dismissal cannot use pointer-down semantics. */
+  /*
+  FNXC:FloatingWindowDialogHosts 2026-09-14-22:36:
+  Mouse-only handlers for hosts whose historical backdrop dismissal cannot use pointer-down semantics. FN-394
+  also forwards the paired touch handlers, because `useOverlayDismiss` pairs a touch start and release on the
+  backdrop; dropping them would silently delete touch backdrop dismissal from every re-hosted dialog.
+  */
   backdropMouseHandlers?: {
     onMouseDown?: (event: ReactMouseEvent<HTMLDivElement>) => void;
     onMouseUp?: (event: ReactMouseEvent<HTMLDivElement>) => void;
     onClick?: (event: ReactMouseEvent<HTMLDivElement>) => void;
+    onTouchStart?: (event: ReactTouchEvent<HTMLDivElement>) => void;
+    onTouchEnd?: (event: ReactTouchEvent<HTMLDivElement>) => void;
   };
   /** Render as a blocking dialog instead of the default coexisting utility window. */
   modal?: boolean;
@@ -108,8 +145,6 @@ export interface FloatingWindowProps {
   ariaLabelledBy?: string;
 }
 
-const DEFAULT_WIDTH = 720;
-const DEFAULT_HEIGHT = 560;
 const DEFAULT_MIN_WIDTH = 360;
 const DEFAULT_MIN_HEIGHT = 280;
 
@@ -121,7 +156,6 @@ Z-index now comes from the SHARED `floatingWindowStack` module (`nextFloatingZ`/
 type ResizeDirection = "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
 const RESIZE_DIRECTIONS: ResizeDirection[] = ["n", "s", "e", "w", "ne", "nw", "se", "sw"];
 export const FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT = "fusion:floating-window-geometry-change";
-export const FLOATING_WINDOW_CASCADE_STEP_PX = 28;
 
 /*
 FNXC:ModalTouchGeometry 2026-07-27-12:00:
@@ -132,179 +166,6 @@ FNXC:FloatingWindow 2026-09-14-11:35:
 Outside-pointer dismissal treats body-portaled controls as logical window children. Keep this selector aligned with shared model, thinking, agent, dependency, node, and priority portals so interacting with a child never dismisses its owner.
 */
 
-/** Hash a windowKey into a small bounded cascade index so stacked default windows do not perfectly overlap. */
-function cascadeIndexFor(windowKey: string): number {
-  let hash = 0;
-  for (let i = 0; i < windowKey.length; i += 1) {
-    hash = (hash * 31 + windowKey.charCodeAt(i)) | 0;
-  }
-  return Math.abs(hash) % 6;
-}
-
-/*
-FNXC:FloatingWindowBounds 2026-09-14-10:50:
-Window geometry is constrained by the live dashboard work area rather than an artificial viewport gutter. Size is clamped before position, and a work area smaller than the caller's declared minimum wins so no window can overlap shell landmarks.
-*/
-export function clampFloatingWindowSize(
-  size: FloatingWindowSize,
-  minSize: FloatingWindowSize,
-  bounds: DashboardWindowBounds,
-): FloatingWindowSize {
-  return {
-    width: Math.min(Math.max(0, size.width, minSize.width), Math.max(0, bounds.width)),
-    height: Math.min(Math.max(0, size.height, minSize.height), Math.max(0, bounds.height)),
-  };
-}
-
-export function clampFloatingWindowPosition(
-  position: FloatingWindowPosition,
-  size: FloatingWindowSize,
-  bounds: DashboardWindowBounds,
-): FloatingWindowPosition {
-  return {
-    x: Math.min(Math.max(position.x, bounds.left), Math.max(bounds.left, bounds.right - size.width)),
-    y: Math.min(Math.max(position.y, bounds.top), Math.max(bounds.top, bounds.bottom - size.height)),
-  };
-}
-
-export interface FloatingWindowCascade {
-  offset: FloatingWindowPosition;
-  size: FloatingWindowSize;
-}
-
-interface FloatingWindowCascadeAxis {
-  offset: number;
-  size: number;
-}
-
-function resolveFloatingWindowCascadeAxis(
-  base: number,
-  size: number,
-  minSize: number,
-  lowerBound: number,
-  upperBound: number,
-  distance: number,
-): FloatingWindowCascadeAxis {
-  const maximumPosition = Math.max(lowerBound, upperBound - size);
-  const forwardTravel = Math.max(0, Math.min(base + distance, maximumPosition) - base);
-  const backwardTravel = Math.max(0, base - Math.max(base - distance, lowerBound));
-  const effectiveMinimum = Math.min(minSize, Math.max(0, upperBound - lowerBound));
-  const availableReduction = Math.max(0, size - effectiveMinimum);
-
-  if (forwardTravel > 0) {
-    const reduction = Math.min(distance - forwardTravel, availableReduction);
-    return { offset: forwardTravel + reduction, size: size - reduction };
-  }
-
-  if (backwardTravel >= distance) {
-    return { offset: -distance, size };
-  }
-
-  const reduction = Math.min(distance, availableReduction);
-  if (reduction > 0) {
-    return { offset: reduction, size: size - reduction };
-  }
-
-  return { offset: -backwardTravel, size };
-}
-
-/*
-FNXC:FloatingWindow 2026-08-27-09:18:
-FN-193 requires stacked chat windows to remain visibly separated even when their shared base nearly fills the viewport. Preserve the existing forward-first and far-edge backward behavior, but shrink only the presented dimension when its requested forward travel is clamped; persistence restores the un-cascaded, un-shrunk base.
-*/
-export function resolveFloatingWindowCascade(
-  base: FloatingWindowPosition,
-  size: FloatingWindowSize,
-  minSize: FloatingWindowSize,
-  cascadeIndex: number,
-  bounds: DashboardWindowBounds = {
-    left: 0,
-    top: 0,
-    right: typeof window === "undefined" ? size.width : window.innerWidth,
-    bottom: typeof window === "undefined" ? size.height : window.innerHeight,
-    width: typeof window === "undefined" ? size.width : window.innerWidth,
-    height: typeof window === "undefined" ? size.height : window.innerHeight,
-  },
-): FloatingWindowCascade {
-  const unchanged = (): FloatingWindowCascade => ({ offset: { x: 0, y: 0 }, size });
-  if (
-    !Number.isFinite(cascadeIndex)
-    || cascadeIndex <= 0
-    || !Number.isFinite(base.x)
-    || !Number.isFinite(base.y)
-    || !Number.isFinite(size.width)
-    || !Number.isFinite(size.height)
-    || !Number.isFinite(minSize.width)
-    || !Number.isFinite(minSize.height)
-    || !Number.isFinite(bounds.left)
-    || !Number.isFinite(bounds.top)
-    || !Number.isFinite(bounds.right)
-    || !Number.isFinite(bounds.bottom)
-  ) return unchanged();
-
-  const distance = cascadeIndex * FLOATING_WINDOW_CASCADE_STEP_PX;
-  const horizontal = resolveFloatingWindowCascadeAxis(base.x, size.width, minSize.width, bounds.left, bounds.right, distance);
-  const vertical = resolveFloatingWindowCascadeAxis(base.y, size.height, minSize.height, bounds.top, bounds.bottom, distance);
-  return {
-    offset: { x: horizontal.offset, y: vertical.offset },
-    size: { width: horizontal.size, height: vertical.size },
-  };
-}
-
-/*
-FNXC:FloatingWindow 2026-06-22-20:45:
-Default position cascades by windowKey so opening several windows in a row visibly offsets each one from a roughly-centered origin instead of stacking them pixel-perfect on top of one another.
-*/
-function defaultPositionFor(
-  windowKey: string,
-  size: FloatingWindowSize,
-  bounds: DashboardWindowBounds,
-): FloatingWindowPosition {
-  const cascade = cascadeIndexFor(windowKey) * FLOATING_WINDOW_CASCADE_STEP_PX;
-  return clampFloatingWindowPosition(
-    {
-      x: bounds.left + (bounds.width - size.width) / 2 + cascade,
-      y: bounds.top + (bounds.height - size.height) / 2 + cascade,
-    },
-    size,
-    bounds,
-  );
-}
-
-interface PersistedFloatingWindowGeometry {
-  size?: Partial<FloatingWindowSize>;
-  position?: Partial<FloatingWindowPosition>;
-}
-
-function readPersistedGeometry(
-  persistGeometryKey: string | undefined,
-  fallbackSize: FloatingWindowSize,
-  fallbackPosition: FloatingWindowPosition,
-  minSize: FloatingWindowSize,
-  bounds: DashboardWindowBounds,
-): { size: FloatingWindowSize; position: FloatingWindowPosition } {
-  if (!persistGeometryKey || typeof window === "undefined") {
-    return { size: fallbackSize, position: fallbackPosition };
-  }
-
-  try {
-    const raw = localStorage.getItem(persistGeometryKey);
-    if (!raw) return { size: fallbackSize, position: fallbackPosition };
-    const parsed = JSON.parse(raw) as PersistedFloatingWindowGeometry;
-    const persistedSize = {
-      width: typeof parsed.size?.width === "number" ? parsed.size.width : fallbackSize.width,
-      height: typeof parsed.size?.height === "number" ? parsed.size.height : fallbackSize.height,
-    };
-    const size = clampFloatingWindowSize(persistedSize, minSize, bounds);
-    const persistedPosition = {
-      x: typeof parsed.position?.x === "number" ? parsed.position.x : fallbackPosition.x,
-      y: typeof parsed.position?.y === "number" ? parsed.position.y : fallbackPosition.y,
-    };
-    return { size, position: clampFloatingWindowPosition(persistedPosition, size, bounds) };
-  } catch {
-    return { size: fallbackSize, position: fallbackPosition };
-  }
-}
 
 export function FloatingWindow({
   title,
@@ -317,8 +178,10 @@ export function FloatingWindow({
   hideHeader = false,
   dragHandleSelector,
   className,
-  persistGeometryKey,
-  cascadeOffsetIndex = 0,
+  overlayClassName,
+  // FN-394: accepted for source compatibility and intentionally unused; see the prop documentation above.
+  persistGeometryKey: _persistGeometryKey,
+  cascadeOffsetIndex: _cascadeOffsetIndex,
   suspendGeometryPersistenceOnMobile = false,
   suspendGeometryPersistenceOnShortViewport = false,
   closeOnOutsidePointerDown = false,
@@ -375,83 +238,121 @@ export function FloatingWindow({
     && document.documentElement.dataset.alphaMobileDrawers === "true"
     && !alphaDrawerExcluded;
   const effectiveModal = modal || alphaMobileDrawer;
-  const initialGeometry = useRef<{ size: FloatingWindowSize; position: FloatingWindowPosition } | null>(null);
-  const cascadeOffsetRef = useRef<FloatingWindowPosition>({ x: 0, y: 0 });
-  const cascadeSizeReductionRef = useRef<FloatingWindowSize>({ width: 0, height: 0 });
   /*
   FNXC:ModalGeometryPersistence 2026-07-16-00:40:
-  Opt-in sheet callers leave desktop geometry untouched at `max-width: 768px`. Most wide, short
-  landscape phones remain movable FloatingWindows and must restore geometry; Artifact Gallery opts
-  into its separate `max-height: 480px` full-screen-sheet CSS breakpoint as well.
+  Opt-in sheet callers present as a full-screen sheet at `max-width: 768px`. Most wide, short landscape
+  phones remain movable FloatingWindows; Artifact Gallery opts into the separate `max-height: 480px`
+  full-screen-sheet breakpoint as well.
+
+  FNXC:FloatingWindowSnap 2026-09-14-21:10:
+  FN-394: a sheet presentation exposes no window geometry at all — no drag, no resize handles, and no
+  snap zones, because a half-width column is unusable at that size. Returning to a desktop viewport
+  restores the floating rect this instance already holds in memory.
   */
-  const geometryPersistenceSuspended = alphaMobileDrawer || (suspendGeometryPersistenceOnMobile && (
+  const sheetPresentation = alphaMobileDrawer || (suspendGeometryPersistenceOnMobile && (
     isFullScreenSheetViewport() || (suspendGeometryPersistenceOnShortViewport && isShortViewport())
   ));
 
-  const applyCascadeOffset = (geometry: { size: FloatingWindowSize; position: FloatingWindowPosition }) => {
-    const cascade = geometryPersistenceSuspended
-      ? { offset: { x: 0, y: 0 }, size: geometry.size }
-      : resolveFloatingWindowCascade(geometry.position, geometry.size, resolvedMinSize, cascadeOffsetIndex, availableBounds);
-    cascadeOffsetRef.current = cascade.offset;
-    cascadeSizeReductionRef.current = {
-      width: geometry.size.width - cascade.size.width,
-      height: geometry.size.height - cascade.size.height,
-    };
-    return {
-      size: cascade.size,
-      position: { x: geometry.position.x + cascade.offset.x, y: geometry.position.y + cascade.offset.y },
-    };
-  };
+  /*
+  FNXC:FloatingWindowCascade 2026-09-14-21:10:
+  FN-394: cascade membership is keyed by an opaque per-instance token, never by `windowKey` or a storage
+  key, so two windows sharing a logical id each get their own slot and a StrictMode remount reuses one.
+  */
+  const cascade = useDashboardWindowCascade();
+  const instanceTokenRef = useRef<symbol>(Symbol(windowKey));
+  const cascadeSlotRef = useRef(0);
+  const userAdjustedRef = useRef(false);
 
-  if (!initialGeometry.current) {
-    const fallbackSize = clampFloatingWindowSize(defaultSize ?? { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT }, resolvedMinSize, availableBounds);
-    const fallbackPosition = defaultPosition
-      ? clampFloatingWindowPosition(defaultPosition, fallbackSize, availableBounds)
-      : defaultPositionFor(windowKey, fallbackSize, availableBounds);
-    const baseGeometry = geometryPersistenceSuspended
-      ? { size: fallbackSize, position: fallbackPosition }
-      : readPersistedGeometry(persistGeometryKey, fallbackSize, fallbackPosition, resolvedMinSize, availableBounds);
-    initialGeometry.current = applyCascadeOffset(baseGeometry);
-  }
+  const openingRect = useMemo(
+    () => resolveOpeningRect({ defaultSize, defaultPosition, minSize: resolvedMinSize, bounds: availableBounds, cascadeSlot: 0 }),
+    // Opening geometry is captured once per identity; later bounds changes clamp instead of re-opening.
+    [windowKey],
+  );
 
-  const [size, setSize] = useState<FloatingWindowSize>(() => initialGeometry.current!.size);
-  const [position, setPosition] = useState<FloatingWindowPosition>(() => initialGeometry.current!.position);
-  const geometryIdentityRef = useRef({ windowKey, persistGeometryKey, cascadeOffsetIndex });
+  const [size, setSize] = useState<FloatingWindowSize>(() => openingRect.size);
+  const [position, setPosition] = useState<FloatingWindowPosition>(() => openingRect.position);
+  const [snapMode, setSnapMode] = useState<FloatingWindowSnapMode>("floating");
+  const [snapPreview, setSnapPreview] = useState<FloatingWindowSnapMode | null>(null);
+  /** Floating rect captured before the FIRST snap; left → right → maximized never overwrites it. */
+  const floatingRectRef = useRef<FloatingWindowRect>(openingRect);
+  const snapModeRef = useRef<FloatingWindowSnapMode>("floating");
+  snapModeRef.current = snapMode;
+  const boundsRef = useRef(availableBounds);
+  boundsRef.current = availableBounds;
+  const geometryRef = useRef<FloatingWindowRect>({ position, size });
+  geometryRef.current = { position, size };
+
+  const applyRect = useCallback((rect: FloatingWindowRect) => {
+    setSize((current) => (current.width === rect.size.width && current.height === rect.size.height ? current : rect.size));
+    setPosition((current) => (current.x === rect.position.x && current.y === rect.position.y ? current : rect.position));
+  }, []);
 
   /*
-  FNXC:ModalTouchGeometry 2026-07-27-20:00:
-  A project-scoped floating host can stay mounted while its window/storage identity changes.
-  Reload that identity's geometry before passive persistence runs so Terminal never copies one
-  project's geometry into another project's key.
+  FNXC:FloatingWindowGeometry 2026-09-14-21:10:
+  FN-394: a real user gesture removes this window from the pristine cascade cohort, freeing its slot for
+  the next opening. Automatic re-clamping caused by shell or viewport changes is NOT a user gesture.
   */
-  useLayoutEffect(() => {
-    const previousIdentity = geometryIdentityRef.current;
-    if (
-      previousIdentity.windowKey === windowKey
-      && previousIdentity.persistGeometryKey === persistGeometryKey
-      && previousIdentity.cascadeOffsetIndex === cascadeOffsetIndex
-    ) return;
+  const markUserAdjusted = useCallback(() => {
+    if (userAdjustedRef.current) return;
+    userAdjustedRef.current = true;
+    cascade.release(instanceTokenRef.current);
+  }, [cascade]);
 
-    const fallbackSize = clampFloatingWindowSize(defaultSize ?? { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT }, resolvedMinSize, availableBounds);
-    const fallbackPosition = defaultPosition
-      ? clampFloatingWindowPosition(defaultPosition, fallbackSize, availableBounds)
-      : defaultPositionFor(windowKey, fallbackSize, availableBounds);
-    const baseGeometry = geometryPersistenceSuspended
-      ? { size: fallbackSize, position: fallbackPosition }
-      : readPersistedGeometry(persistGeometryKey, fallbackSize, fallbackPosition, resolvedMinSize, availableBounds);
-    const nextGeometry = applyCascadeOffset(baseGeometry);
-    geometryIdentityRef.current = { windowKey, persistGeometryKey, cascadeOffsetIndex };
-    initialGeometry.current = nextGeometry;
-    setSize(nextGeometry.size);
-    setPosition(nextGeometry.position);
-  }, [availableBounds, cascadeOffsetIndex, defaultPosition, defaultSize, geometryPersistenceSuspended, persistGeometryKey, resolvedMinSize, windowKey]);
+  const openStandard = useCallback((slot: number) => {
+    const rect = resolveOpeningRect({
+      defaultSize,
+      defaultPosition,
+      minSize: resolvedMinSize,
+      bounds: boundsRef.current,
+      cascadeSlot: slot,
+    });
+    floatingRectRef.current = rect;
+    snapModeRef.current = "floating";
+    setSnapMode("floating");
+    applyRect(rect);
+  }, [applyRect, defaultPosition, defaultSize, resolvedMinSize]);
+  const openStandardRef = useRef(openStandard);
+  openStandardRef.current = openStandard;
 
   /*
-  FNXC:FloatingWindowBounds 2026-09-14-10:52:
-  A mounted window reacts to shell landmark, dock-width, footer-variant, and viewport changes immediately. Re-clamp size first and then position; the resulting geometry may follow the existing persistence path, while global visibility changes never enter this effect.
+  FNXC:FloatingWindowCascade 2026-09-14-21:10:
+  FN-394: the slot is reserved in layout (before paint), never during render, and released on unmount,
+  scope reset, or a real gesture. A window replaced in place (new `windowKey`) is a NEW opening and
+  restarts at its standard size; merely raising or re-rendering an existing instance changes nothing.
   */
   useLayoutEffect(() => {
-    if (geometryPersistenceSuspended) return;
+    const token = Symbol(windowKey);
+    instanceTokenRef.current = token;
+    userAdjustedRef.current = false;
+    const slot = sheetPresentation ? 0 : cascade.reserve(token);
+    cascadeSlotRef.current = slot;
+    openStandardRef.current(slot);
+    return () => cascade.release(token);
+  }, [cascade, windowKey]);
+
+  /*
+  FNXC:FloatingWindowBounds 2026-09-14-21:10:
+  A mounted window reacts to shell landmark, dock-width, footer-variant, and viewport changes
+  immediately. A snapped window re-derives its rect from the LIVE work area — so closing a sidebar
+  widens both halves at once — while a floating window is only re-clamped. Global visibility changes
+  never enter this effect, and neither path marks the window as user-adjusted.
+  */
+  useLayoutEffect(() => {
+    if (sheetPresentation) return;
+    if (snapMode !== "floating") {
+      const snapped = resolveSnapRect(snapMode, availableBounds);
+      if (snapped) applyRect(snapped);
+      return;
+    }
+    /*
+    A window the operator has never touched is still "just opened": when landmarks appear late or the
+    shell resizes, it re-resolves its standard, centred, cascaded geometry against the new work area
+    instead of drifting. Once really moved, resized, or snapped, only clamping applies.
+    */
+    if (!userAdjustedRef.current) {
+      openStandardRef.current(cascadeSlotRef.current);
+      return;
+    }
     setSize((currentSize) => {
       const nextSize = clampFloatingWindowSize(currentSize, resolvedMinSize, availableBounds);
       setPosition((currentPosition) => {
@@ -464,7 +365,24 @@ export function FloatingWindow({
         ? currentSize
         : nextSize;
     });
-  }, [availableBounds, geometryPersistenceSuspended, resolvedMinSize]);
+  }, [applyRect, availableBounds, resolvedMinSize, sheetPresentation, snapMode]);
+
+  /*
+  FNXC:FloatingWindowSnap 2026-09-14-21:10:
+  Applying a zone records the pre-snap floating rect exactly once, so a window can travel left → right →
+  maximized and still restore the size it had before it ever snapped. Zones are never exclusive: any
+  number of windows may occupy the same half or fill the work area.
+  */
+  const applySnapMode = useCallback((mode: FloatingWindowSnapMode) => {
+    if (mode === "floating") return;
+    if (snapModeRef.current === "floating") floatingRectRef.current = geometryRef.current;
+    const rect = resolveSnapRect(mode, boundsRef.current);
+    if (!rect) return;
+    markUserAdjusted();
+    snapModeRef.current = mode;
+    setSnapMode(mode);
+    applyRect(rect);
+  }, [applyRect, markUserAdjusted]);
 
   const claimFrontZ = useCallback(() => (layer === "task-detail" ? nextTaskDetailFloatingZ() : nextFloatingZ()), [layer]);
   const readCurrentZ = useCallback(() => (layer === "task-detail" ? currentTaskDetailFloatingZ() : currentFloatingZ()), [layer]);
@@ -554,7 +472,7 @@ export function FloatingWindow({
       suspended; CSS alone cannot prevent the panel-level pointer handler from receiving touches.
       */
       /* FNXC:ModalTouchGeometry 2026-07-26-14:20: Delegated headers commonly contain links (for example Settings' GitHub/Discord actions), which must retain native activation rather than starting a window drag. */
-      if (!windowSurface.surfaceActive || geometryPersistenceSuspended || (event.target as HTMLElement).closest("button, a, input, select, textarea, [contenteditable=\"true\"], [role=\"button\"], [role=\"link\"]")) return;
+      if (!windowSurface.surfaceActive || sheetPresentation || (event.target as HTMLElement).closest("button, a, input, select, textarea, [contenteditable=\"true\"], [role=\"button\"], [role=\"link\"]")) return;
       event.preventDefault();
       event.stopPropagation();
       /*
@@ -570,35 +488,136 @@ export function FloatingWindow({
       captureTarget.setPointerCapture?.(pointerId);
       const startX = event.clientX;
       const startY = event.clientY;
-      const startPosition = position;
-      const currentSize = size;
+      const gestureStartMode = snapModeRef.current;
+      const gestureStartRect = geometryRef.current;
       const previousUserSelect = document.body.style.userSelect;
       document.body.style.userSelect = "none";
 
-      let latest = startPosition;
+      /*
+      FNXC:FloatingWindowSnap 2026-09-14-21:10:
+      One gesture owns four behaviors, in this order:
+      1. Below the 6px threshold the gesture stays a CLICK: no geometry change, no cascade exit.
+      2. A snapped window stays pinned until the pointer travels 24px DOWN; that detaches it back to the
+         pre-snap floating rect, re-anchored under the pointer, and the drag continues from there.
+      3. Inside a 24px edge band the matching zone is PREVIEWED only; the mode is applied on pointerup.
+      4. `pointercancel` / lost capture validates nothing and returns to the pre-gesture geometry.
+      */
+      let anchorX = startX;
+      let anchorY = startY;
+      let basePosition = gestureStartRect.position;
+      let activeSize = gestureStartRect.size;
+      let detached = gestureStartMode === "floating";
+      let moved = false;
+      /*
+      FNXC:FloatingWindowSnap 2026-09-14-22:36:
+      A maximized window's header sits ON the top band, so the 24px downward detach can finish with the pointer still
+      inside that band and instantly re-arm the very mode it just left — the window would never come loose. After a
+      detach the ABANDONED mode stays disarmed until the pointer leaves its band; carrying the window straight to a
+      DIFFERENT zone (left to right, side to top) keeps working in the same gesture.
+      */
+      let disarmedZone: FloatingWindowSnapMode | null = null;
+      let previewZone: FloatingWindowSnapMode | null = null;
+      let latest = basePosition;
       let frame = 0;
+
+      const setPreview = (zone: FloatingWindowSnapMode | null) => {
+        if (previewZone === zone) return;
+        previewZone = zone;
+        setSnapPreview(zone);
+      };
 
       const handlePointerMove = (moveEvent: PointerEvent) => {
         if (moveEvent.pointerId !== pointerId) return;
         moveEvent.preventDefault();
-        latest = { x: startPosition.x + moveEvent.clientX - startX, y: startPosition.y + moveEvent.clientY - startY };
+        const bounds = boundsRef.current;
+        if (!detached) {
+          if (moveEvent.clientY - startY < FLOATING_WINDOW_DETACH_PX) {
+            /*
+            A snapped window stays pinned, but the operator may still carry it to ANOTHER zone: once past
+            the click threshold, a different armed zone is previewed and applied on release. Only the
+            documented downward gesture below detaches it back to its floating rect.
+            */
+            if (Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) < FLOATING_WINDOW_DRAG_THRESHOLD_PX) return;
+            const zone = detectSnapZone({ x: moveEvent.clientX, y: moveEvent.clientY }, bounds);
+            if (zone && zone !== snapModeRef.current) {
+              moved = true;
+              setPreview(zone);
+            } else {
+              setPreview(null);
+            }
+            return;
+          }
+          const restored = resolveDetachedRect(
+            floatingRectRef.current,
+            { x: moveEvent.clientX, y: moveEvent.clientY },
+            resolvedMinSize,
+            bounds,
+          );
+          detached = true;
+          moved = true;
+          activeSize = restored.size;
+          basePosition = restored.position;
+          anchorX = moveEvent.clientX;
+          anchorY = moveEvent.clientY;
+          latest = restored.position;
+          markUserAdjusted();
+          snapModeRef.current = "floating";
+          setSnapMode("floating");
+          applyRect(restored);
+          disarmedZone = gestureStartMode === "floating" ? null : gestureStartMode;
+          // Fall through: the very event that detached the window may already sit inside another band.
+        }
+        if (!moved && Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) < FLOATING_WINDOW_DRAG_THRESHOLD_PX) return;
+        moved = true;
+        markUserAdjusted();
+        latest = { x: basePosition.x + moveEvent.clientX - anchorX, y: basePosition.y + moveEvent.clientY - anchorY };
+        const zone = detectSnapZone({ x: moveEvent.clientX, y: moveEvent.clientY }, bounds);
+        if (disarmedZone !== null && zone === disarmedZone) {
+          setPreview(null);
+        } else {
+          disarmedZone = null;
+          setPreview(zone);
+        }
         if (frame) return;
         frame = requestAnimationFrame(() => {
           frame = 0;
-          setPosition(clampFloatingWindowPosition(latest, currentSize, availableBounds));
+          setPosition(clampFloatingWindowPosition(latest, activeSize, boundsRef.current));
         });
       };
       const detachListeners = () => {
         captureTarget.releasePointerCapture?.(pointerId);
         captureTarget.removeEventListener("pointermove", handlePointerMove);
         captureTarget.removeEventListener("pointerup", handlePointerUp);
-        captureTarget.removeEventListener("pointercancel", handlePointerUp);
+        captureTarget.removeEventListener("pointercancel", handlePointerCancel);
       };
       function handlePointerUp(upEvent: PointerEvent) {
         if (upEvent.pointerId !== pointerId) return;
         upEvent.preventDefault();
         if (frame) cancelAnimationFrame(frame);
-        setPosition(clampFloatingWindowPosition(latest, currentSize, availableBounds));
+        const committedZone = previewZone;
+        setPreview(null);
+        if (moved) {
+          if (committedZone) applySnapMode(committedZone);
+          else setPosition(clampFloatingWindowPosition(latest, activeSize, boundsRef.current));
+        }
+        document.body.style.userSelect = previousUserSelect;
+        detachListeners();
+        dragTeardownRef.current = null;
+      }
+      function handlePointerCancel(cancelEvent: PointerEvent) {
+        if (cancelEvent.pointerId !== pointerId) return;
+        if (frame) cancelAnimationFrame(frame);
+        setPreview(null);
+        // An interrupted gesture validates nothing: restore the pre-gesture placement inside live bounds.
+        snapModeRef.current = gestureStartMode;
+        setSnapMode(gestureStartMode);
+        const restored = gestureStartMode === "floating"
+          ? gestureStartRect
+          : resolveSnapRect(gestureStartMode, boundsRef.current) ?? gestureStartRect;
+        applyRect({
+          size: clampFloatingWindowSize(restored.size, resolvedMinSize, boundsRef.current),
+          position: clampFloatingWindowPosition(restored.position, restored.size, boundsRef.current),
+        });
         document.body.style.userSelect = previousUserSelect;
         detachListeners();
         dragTeardownRef.current = null;
@@ -606,6 +625,7 @@ export function FloatingWindow({
 
       dragTeardownRef.current = () => {
         if (frame) cancelAnimationFrame(frame);
+        setPreview(null);
         document.body.style.userSelect = previousUserSelect;
         detachListeners();
         dragTeardownRef.current = null;
@@ -613,9 +633,9 @@ export function FloatingWindow({
 
       captureTarget.addEventListener("pointermove", handlePointerMove);
       captureTarget.addEventListener("pointerup", handlePointerUp);
-      captureTarget.addEventListener("pointercancel", handlePointerUp);
+      captureTarget.addEventListener("pointercancel", handlePointerCancel);
     },
-    [availableBounds, bringToFront, geometryPersistenceSuspended, position, size, windowSurface.surfaceActive]
+    [applyRect, applySnapMode, bringToFront, markUserAdjusted, resolvedMinSize, sheetPresentation, windowSurface.surfaceActive]
   );
 
   const handlePanelPointerDown = useCallback(
@@ -663,8 +683,8 @@ export function FloatingWindow({
       captureTarget.setPointerCapture?.(pointerId);
       const startX = event.clientX;
       const startY = event.clientY;
-      const startSize = size;
-      const startPosition = position;
+      const startSize = geometryRef.current.size;
+      const startPosition = geometryRef.current.position;
       const previousUserSelect = document.body.style.userSelect;
       document.body.style.userSelect = "none";
 
@@ -675,6 +695,8 @@ export function FloatingWindow({
       const handlePointerMove = (moveEvent: PointerEvent) => {
         if (moveEvent.pointerId !== pointerId) return;
         moveEvent.preventDefault();
+        // A resize is a real user gesture: the window leaves the pristine cascade cohort.
+        markUserAdjusted();
         const dx = moveEvent.clientX - startX;
         const dy = moveEvent.clientY - startY;
         const nextSize = clampFloatingWindowSize(
@@ -726,7 +748,7 @@ export function FloatingWindow({
       captureTarget.addEventListener("pointerup", handlePointerUp);
       captureTarget.addEventListener("pointercancel", handlePointerUp);
     },
-    [availableBounds, bringToFront, position, resolvedMinSize, size, windowSurface.surfaceActive]
+    [availableBounds, bringToFront, markUserAdjusted, resolvedMinSize, windowSurface.surfaceActive]
   );
 
   // FNXC:FloatingWindow 2026-06-22-20:45: Run any active drag/resize teardown on unmount so captured-element listeners + a pending rAF never outlive the window.
@@ -793,32 +815,12 @@ export function FloatingWindow({
   }, [closeOnOutsidePointerDown, effectiveHidden, onClose]);
 
   /*
-  FNXC:FloatingWindow 2026-08-23-04:29:
-  Persist the un-cascaded base rather than a stacked presentation position. Shared chat windows can
-  then retain one stable geometry while each visible panel applies its own offset.
-
-  FNXC:FloatingWindow 2026-08-27-09:18:
-  FN-193 also re-expands a cascade-shrunk presentation size before saving. The shared desktop base must never progressively shrink just because several chat windows opened near a viewport edge.
-
-  FNXC:FloatingWindowGeometry 2026-09-14-11:35:
-  Persisted desktop geometry restores into the current live shell bounds. Persistence remains generic and opt-in so each owner controls whether geometry is shared or isolated.
+  FNXC:FloatingWindowGeometry 2026-09-14-21:10:
+  FN-394 DELETED durable window geometry. A window's size and position belong to its current opening
+  only: nothing is written to or read from storage, so a new window can never inherit the size or place
+  of a previous session, of another window, or of an occupied snap zone. Historical keys are left
+  untouched in storage (no global purge) and other preferences and drafts are unaffected.
   */
-  useEffect(() => {
-    if (hidden || globallyHiddenRef.current || !persistGeometryKey || typeof window === "undefined" || geometryPersistenceSuspended) return;
-    try {
-      const canonicalSize = clampFloatingWindowSize({
-        width: size.width + cascadeSizeReductionRef.current.width,
-        height: size.height + cascadeSizeReductionRef.current.height,
-      }, resolvedMinSize, availableBounds);
-      const canonicalPosition = clampFloatingWindowPosition({
-        x: position.x - cascadeOffsetRef.current.x,
-        y: position.y - cascadeOffsetRef.current.y,
-      }, canonicalSize, availableBounds);
-      localStorage.setItem(persistGeometryKey, JSON.stringify({ size: canonicalSize, position: canonicalPosition }));
-    } catch {
-      // Ignore storage failures; geometry persistence is a convenience only.
-    }
-  }, [availableBounds, geometryPersistenceSuspended, hidden, persistGeometryKey, position, resolvedMinSize, size]);
 
   /*
   FNXC:ModalTouchGeometry 2026-07-26-18:42:
@@ -835,6 +837,15 @@ export function FloatingWindow({
   A local hide, an ordinary mount, and any later real interaction keep their existing behavior.
   */
   const restoringFromGlobalHideRef = useRef(false);
+  /*
+  FNXC:FloatingWindowDialogHosts 2026-09-14-22:36:
+  The modal focus boundary must be installed ONCE per visible mounting, not on every render. Hosts pass an inline
+  `onClose` arrow, so depending on its identity re-ran this effect on each keystroke: the cleanup restored the prior
+  focus and the effect re-focused the panel, which destroyed typing in a hosted form after the first character.
+  Read the latest handler through a ref instead.
+  */
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   useEffect(() => {
     if (!effectiveModal || effectiveHidden || typeof document === "undefined") {
       if (globallyHiddenRef.current) restoringFromGlobalHideRef.current = true;
@@ -844,15 +855,47 @@ export function FloatingWindow({
     restoringFromGlobalHideRef.current = false;
     const panel = panelRef.current;
     const priorFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    if (!skipAutoFocus) panel?.focus();
+    /* FNXC:FloatingWindowDialogHosts 2026-09-14-22:36: a hosted dialog may autofocus its own first control; only claim focus for the panel when the window does not already own it, so an `autoFocus` field is not defeated by the boundary. */
+    if (!skipAutoFocus && !(panel && panel.contains(document.activeElement))) panel?.focus();
+    /*
+    FNXC:FloatingWindowDialogHosts 2026-09-14-22:36:
+    Every modal window installs a DOCUMENT keydown listener, so with several of them open an Escape press reached all
+    of them and closed the whole pile (a confirmation raised over an editor closed both). The keyboard boundary belongs
+    to the FRONTMOST visible modal window only: highest `z-index`, later DOM order breaking a tie.
+    */
+    const ownsKeyboardBoundary = () => {
+      const overlay = panelRef.current?.parentElement;
+      if (!overlay || typeof document === "undefined") return true;
+      const candidates = Array.from(document.querySelectorAll<HTMLElement>(".floating-window-overlay--modal"))
+        .filter((element) => !element.classList.contains("floating-window-overlay--hidden"));
+      if (candidates.length <= 1) return true;
+      const front = candidates.reduce((best, element) => (
+        (Number.parseInt(element.style.zIndex || "0", 10) || 0) >= (Number.parseInt(best.style.zIndex || "0", 10) || 0) ? element : best
+      ), candidates[0]!);
+      return front === overlay;
+    };
+    /*
+    FNXC:FloatingWindowDialogHosts 2026-09-14-22:36:
+    A key pressed inside ANOTHER window belongs to that window, never to this one. Without this check an Escape typed
+    in the workflow editor closed the create dialog stacked above it.
+    */
+    const eventBelongsToAnotherWindow = (event: KeyboardEvent) => {
+      const overlay = panelRef.current?.parentElement;
+      const target = event.target;
+      if (!overlay || !(target instanceof Node)) return false;
+      if (overlay.contains(target)) return false;
+      const owner = target instanceof Element ? target.closest(".floating-window-overlay") : null;
+      return Boolean(owner) && owner !== overlay;
+    };
     const onKeyDown = (event: KeyboardEvent) => {
+      if (eventBelongsToAnotherWindow(event) || !ownsKeyboardBoundary()) return;
       /*
       FNXC:AlphaMobileDrawer 2026-09-11-02:01:
       An Alpha mobile FloatingWindow has no close button, so its modal keyboard boundary must retain Escape as a secondary recovery path alongside handle drag and backdrop dismissal.
       */
       if (event.key === "Escape") {
         event.preventDefault();
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (event.key !== "Tab" || !panel) return;
@@ -870,7 +913,7 @@ export function FloatingWindow({
       document.removeEventListener("keydown", onKeyDown);
       if (!globallyHiddenRef.current) priorFocus?.focus();
     };
-  }, [effectiveHidden, effectiveModal, onClose]);
+  }, [effectiveHidden, effectiveModal]);
 
   const panelStyle = {
     left: `${position.x}px`,
@@ -879,6 +922,14 @@ export function FloatingWindow({
     height: `${size.height}px`,
     zIndex,
   } as CSSProperties;
+
+  /*
+  FNXC:FloatingWindowSnap 2026-09-14-21:10:
+  The preview is pure paint: it is `aria-hidden`, never focusable, and `pointer-events: none`, so it can
+  neither receive a click nor intercept the gesture that armed it. It is rendered only while a zone is
+  armed and is discarded on pointerup, pointercancel, hide, and unmount.
+  */
+  const previewRect = snapPreview ? resolveSnapRect(snapPreview, availableBounds) : null;
 
   /*
   FNXC:FloatingWindow 2026-06-22-21:10:
@@ -890,7 +941,7 @@ export function FloatingWindow({
   return createPortal(
     <div
       ref={windowSurface.rootRef}
-      className={`floating-window-overlay${effectiveModal ? " floating-window-overlay--modal" : ""}${alphaMobileDrawer ? " floating-window-overlay--alpha-mobile-drawer" : ""}${effectiveHidden ? " floating-window-overlay--hidden" : ""}`}
+      className={`floating-window-overlay${effectiveModal ? " floating-window-overlay--modal" : ""}${alphaMobileDrawer ? " floating-window-overlay--alpha-mobile-drawer" : ""}${effectiveHidden ? " floating-window-overlay--hidden" : ""}${overlayClassName ? ` ${overlayClassName}` : ""}`}
       role="dialog"
       aria-modal={effectiveModal ? "true" : "false"}
       aria-hidden={effectiveHidden || undefined}
@@ -907,13 +958,31 @@ export function FloatingWindow({
       }}
       onMouseUp={effectiveHidden ? undefined : backdropMouseHandlers?.onMouseUp}
       onClick={effectiveHidden ? undefined : backdropMouseHandlers?.onClick}
+      onTouchStart={effectiveHidden ? undefined : backdropMouseHandlers?.onTouchStart}
+      onTouchEnd={effectiveHidden ? undefined : backdropMouseHandlers?.onTouchEnd}
       // FNXC:ModalTouchGeometry 2026-07-27-12:00: FN-8619 keeps Agent Detail's paired mouse-only backdrop contract at the shared modal backdrop; this deliberately does not alter pointer-down dismissal.
       // FNXC:FloatingWindow 2026-06-22-23:00: The z-index MUST live on the position:fixed overlay (which creates a stacking context), not the panel. A panel z-index is trapped inside the overlay's context and loses to page elements that are stacking contexts in body's context (e.g. the right dock at position:absolute z-index:20). With z on the overlay, the whole window sits at the shared floating band in body's stacking context and reliably paints above page content + tap-to-front reorders correctly.
       style={{ zIndex }}
     >
+      {previewRect && (
+        <div
+          className={`floating-window__snap-preview floating-window__snap-preview--${snapPreview}`}
+          data-testid={`floating-window-snap-preview-${windowKey}`}
+          data-snap-zone={snapPreview ?? undefined}
+          aria-hidden
+          style={{
+            left: `${previewRect.position.x}px`,
+            top: `${previewRect.position.y}px`,
+            width: `${previewRect.size.width}px`,
+            height: `${previewRect.size.height}px`,
+            zIndex,
+          }}
+        />
+      )}
       <div
         ref={panelRef}
-        className={`floating-window${hideHeader ? " floating-window--headerless" : ""}${hasTabletTouchGeometry ? " floating-window--touch-geometry" : ""}${isTabletViewportMode ? " floating-window--tablet-viewport" : ""}${alphaMobileDrawer ? " floating-window--alpha-mobile-drawer" : ""}${className ? ` ${className}` : ""}`}
+        data-snap-mode={snapMode}
+        className={`floating-window${hideHeader ? " floating-window--headerless" : ""}${hasTabletTouchGeometry ? " floating-window--touch-geometry" : ""}${isTabletViewportMode ? " floating-window--tablet-viewport" : ""}${alphaMobileDrawer ? " floating-window--alpha-mobile-drawer" : ""}${snapMode === "floating" ? "" : ` floating-window--snapped floating-window--snap-${snapMode}`}${className ? ` ${className}` : ""}`}
         style={panelStyle}
         data-testid={`floating-window-${windowKey}`}
         onPointerDownCapture={windowSurface.surfaceActive ? bringToFront : undefined}
@@ -937,7 +1006,12 @@ export function FloatingWindow({
         {alphaMobileDrawer && (
           <ViewDrawerHandle className="floating-window__drawer-handle-target" barClassName="floating-window__drawer-handle" />
         )}
-        {!geometryPersistenceSuspended && RESIZE_DIRECTIONS.map((direction) => (
+        {/*
+        FNXC:FloatingWindowSnap 2026-09-14-21:10:
+        A snapped window owns the full half or the full work area, so free resizing is meaningless there:
+        the handles are REMOVED from the accessibility tree, not merely hidden, and detaching restores them.
+        */}
+        {!sheetPresentation && snapMode === "floating" && RESIZE_DIRECTIONS.map((direction) => (
           <div
             key={direction}
             className={`floating-window__resize-handle floating-window__resize-handle--${direction}`}

@@ -4,7 +4,7 @@ import { isCompleteColumnRole, isReviewColumnRole } from "../utils/columnRoles";
 import "./WorkflowResultsTab.css";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { DashboardWindowSurfaceRoot } from "../context/DashboardWindowManagerContext";
+import { FloatingWindow } from "./FloatingWindow";
 
 /*
 FNXC:i18n-Localize 2026-06-20-00:00:
@@ -1344,16 +1344,26 @@ export function WorkflowResultsTab({
         const phase = (result.phase || "pre-merge") as "pre-merge" | "post-merge";
 
         return (
-          <DashboardWindowSurfaceRoot
-            logicalId={`workflow-output-${result.workflowStepId}`}
-            group="dialog"
-            className="workflow-output-modal-overlay"
-            onClick={(e) => {
-              if (e.target === e.currentTarget) closeExpandedView();
-            }}
-            data-testid="workflow-output-modal"
+          /* FNXC:FloatingWindowDialogHosts 2026-09-14-22:36: FN-394 hosts the expanded workflow output in the shared window so a long report can be snapped to a half or to the whole work area. */
+          <FloatingWindow
+            windowKey={`workflow-output-${result.workflowStepId}`}
+            modal
+            hideHeader
+            surfaceGroup="dialog"
+            title={result.workflowStepName}
+            ariaLabel={result.workflowStepName}
+            onClose={closeExpandedView}
+            dragHandleSelector=".workflow-output-modal .workflow-output-modal-header"
+            className="floating-window--dialog floating-window--workflow-output"
+            overlayClassName="workflow-output-modal-overlay"
+            testId="workflow-output-modal"
+            defaultSize={{ width: 900, height: 660 }}
+            minSize={{ width: 320, height: 280 }}
+            suspendGeometryPersistenceOnMobile
+            suspendGeometryPersistenceOnShortViewport
+            backdropMouseHandlers={{ onClick: (event) => { if (event.target === event.currentTarget) closeExpandedView(); } }}
           >
-            <div className="workflow-output-modal" role="dialog" aria-modal="true">
+            <div className="workflow-output-modal">
               {/*
               FNXC:StandardizedViewLayout 2026-09-13-21:49:
               The expanded workflow output dialog uses the shared header: rich step identity plus the phase badge as
@@ -1405,7 +1415,7 @@ export function WorkflowResultsTab({
                 </div>
               </div>
             </div>
-          </DashboardWindowSurfaceRoot>
+          </FloatingWindow>
         );
       })()}
     </div>

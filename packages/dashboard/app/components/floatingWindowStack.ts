@@ -6,7 +6,15 @@ FNXC:FloatingWindow 2026-06-22-22:30:
 Base band sits at 10100+ — ABOVE the page overlay/popover band (log viewer, workflow-editor modal, selection popover, static fullscreen fallbacks at z 10000-10001) so a utility floating window the user is dragging is never painted over by those. Transient top-right toasts are bumped to 10500 (styles.css) so system feedback still shows above a dragged utility window. The workflow prompt fullscreen overlay is itself a floating utility surface and claims `nextFloatingZ()` when opened, because a static z 10000 fallback is hidden by the workflow editor's full-screen mobile FloatingWindow sheet. The counter is module-level and intentionally monotonic: it only ever climbs, which is fine for a session-length dashboard. All floating overlays are `pointer-events: none` (click-through) so raising panels into this shared band never traps clicks on the page behind them. CRITICAL: every floating modal must be portaled to document.body so this shared z is compared in ONE root stacking context (an inline panel cannot beat siblings outside its own context no matter its z).
 
 FNXC:TaskPopupLayer 2026-09-14-11:35:
-Task-detail and Chat work windows are interaction-stack peers in this lower board-layer band: the most recently mounted or engaged peer is on top. Terminal, Files, New Task, and other utilities keep the separate higher band.
+Task-detail and Chat work windows are interaction-stack peers: the most recently mounted or engaged peer is on top.
+
+FNXC:FloatingWindowStack 2026-09-14-21:10:
+FN-394 merges the former lower task/Chat band into this ONE counter. A newly opened window must appear in
+front of every other window whatever its type and whatever placement the others hold (snapped column,
+filled work area, or floating), which a permanently lower band made impossible. The task-detail entry
+points are kept as named aliases so existing callers and their contracts continue to compile, but there
+are no longer two competing counters. `--fusion-max-z` still follows the single ceiling, so the plugin
+layer stays above every dashboard-managed window.
 
 FNXC:PluginOverlayLayering 2026-07-23-01:21:
 Plugins need a stable layer above every dashboard-managed utility window even though this stack is
@@ -20,7 +28,6 @@ utility claims can grow past the dashboard's static layers.
 export const FUSION_MAX_Z_FLOOR = 11001;
 
 let topZ = 10100;
-let taskDetailTopZ = 220;
 let lastSyncedFusionMaxZ: number | undefined;
 
 /** Publish the current dashboard-managed z-index ceiling to `--fusion-max-z` on `:root`, skipping redundant writes. No-op outside a DOM. */
@@ -48,12 +55,12 @@ export function currentFloatingZ(): number {
   return topZ;
 }
 
-/** Claim the front of the task/detail Chat peer stack. Monotonic for the dashboard session. */
+/** Claim the front of the shared window stack from a task/Chat work surface. Alias of `nextFloatingZ` since FN-394. */
 export function nextTaskDetailFloatingZ(): number {
-  return ++taskDetailTopZ;
+  return nextFloatingZ();
 }
 
-/** Current top of the task-popup peer stack (read-only). */
+/** Current top of the shared window stack, read from a task/Chat work surface. Alias of `currentFloatingZ` since FN-394. */
 export function currentTaskDetailFloatingZ(): number {
-  return taskDetailTopZ;
+  return currentFloatingZ();
 }

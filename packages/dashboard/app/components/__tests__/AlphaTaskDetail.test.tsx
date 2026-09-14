@@ -171,7 +171,6 @@ function AppPopoutStateHost() {
         liveTasks={[hostTask]}
         isVisible={() => true}
         onCloseTask={popouts.close}
-        persistGeometryKey="floating-window:task-detail"
         windowProps={sharedProps}
       />
     </>

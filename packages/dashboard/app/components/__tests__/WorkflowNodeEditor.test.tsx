@@ -128,7 +128,11 @@ function expectPromptOverlayAboveWorkflowWindow() {
   const promptOverlay = getPromptFullscreenOverlay();
   expect(workflowWindow).toBeInTheDocument();
   expect(promptOverlay).toBeInTheDocument();
-  expect(zIndexOf(promptOverlay!)).toBeGreaterThan(zIndexOf(workflowWindow!));
+  // FN-394: the expanded prompt editor is hosted by its own FloatingWindow, so the stack order lives on that window's overlay.
+  const promptWindow = document.body.querySelector('[data-testid="floating-window-overlay-workflow-prompt-fullscreen"]') as HTMLElement | null;
+  expect(promptWindow).toBeInTheDocument();
+  expect(promptWindow!).toContainElement(promptOverlay!);
+  expect(zIndexOf(promptWindow!)).toBeGreaterThan(zIndexOf(workflowWindow!));
 }
 
 function defineElementMetric(element: Element, property: "clientWidth" | "scrollWidth", value: number) {
@@ -1730,7 +1734,10 @@ describe("WorkflowNodeEditor — embedded presentation", () => {
 
     const fullscreenPromptEditor = getPromptFullscreenOverlay();
     expect(fullscreenPromptEditor).toBeInTheDocument();
-    expect(zIndexOf(fullscreenPromptEditor!)).toBeGreaterThan(10000);
+    // FN-394: the expanded editor is its own window, so its claimed stack order lives on that window's overlay.
+    const promptWindow = document.body.querySelector('[data-testid="floating-window-overlay-workflow-prompt-fullscreen"]') as HTMLElement | null;
+    expect(promptWindow).toBeInTheDocument();
+    expect(zIndexOf(promptWindow!)).toBeGreaterThan(10000);
   });
 
   it("does not dismiss on Escape in embedded mode", async () => {

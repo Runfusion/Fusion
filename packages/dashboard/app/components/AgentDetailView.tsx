@@ -909,7 +909,6 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
         Legacy Agent Detail stored only size, while FloatingWindow requires size plus position.
         Use a new key for a deliberate one-time geometry reset rather than restoring an ambiguous partial payload.
         */
-        persistGeometryKey={`floating-window:${floatingWindowKey}`}
         suspendGeometryPersistenceOnMobile
         suspendGeometryPersistenceOnShortViewport
         /*
@@ -1326,7 +1325,6 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
       defaultSize={{ width: 608, height: 640 }}
       minSize={{ width: 400, height: 320 }}
       /* FNXC:ModalTouchGeometry 2026-07-26-19:05: The legacy size-only key is deliberately replaced by FloatingWindow geometry, causing one intentional reset per user. */
-      persistGeometryKey={`floating-window:${floatingWindowKey}`}
       suspendGeometryPersistenceOnMobile
       suspendGeometryPersistenceOnShortViewport
       /* FNXC:ModalTouchGeometry 2026-07-26-19:05: Preserve Agent Detail's unconditional paired mouse-only dismissal instead of broader pointer-down/touch dismissal. */

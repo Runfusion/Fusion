@@ -5,7 +5,7 @@ import { ViewSidebar } from "./ViewSidebar";
 import "./MissionManager.css";
 import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { DashboardWindowSurfaceRoot } from "../context/DashboardWindowManagerContext";
+import { FloatingWindow } from "./FloatingWindow";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -5558,9 +5558,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
     <div
       ref={modalRef}
       className={`mission-manager mission-manager--desktop${isInline ? " mission-manager--inline" : ""}`}
-      role={isInline ? undefined : "dialog"}
-      aria-modal={isInline ? undefined : true}
-      aria-label={isInline ? undefined : t("missions.missionManagerAriaLabel", "Mission Manager")}
+      /* FNXC:FloatingWindowDialogHosts 2026-09-14-22:36: the hosting window owns the dialog role and name, so this shell never declares a second nested dialog. */
       data-testid="mission-manager-dialog"
     >
       {/*
@@ -5699,17 +5697,27 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
 
   return (
     <>
-      <DashboardWindowSurfaceRoot
-        logicalId="mission-manager"
-        group="dialog"
-        className="mission-manager-overlay open"
-        onClick={(e) => e.target === e.currentTarget && onClose()}
-        data-testid="mission-manager-overlay"
-        role="dialog"
-        aria-modal="true"
+      {/* FNXC:FloatingWindowDialogHosts 2026-09-14-22:36: FN-394 hosts the Missions dialog in the shared window; its inline destination stays a plain embedded view. */}
+      <FloatingWindow
+        windowKey="mission-manager"
+        modal
+        hideHeader
+        surfaceGroup="dialog"
+        title={t("missions.title", "Missions")}
+        ariaLabel={t("missions.missionManagerAriaLabel", "Mission Manager")}
+        onClose={onClose}
+        dragHandleSelector=".mission-manager .view-header"
+        className="floating-window--dialog floating-window--mission-manager"
+        overlayClassName="mission-manager-overlay"
+        testId="mission-manager-overlay"
+        defaultSize={{ width: 1000, height: 700 }}
+        minSize={{ width: 360, height: 300 }}
+        suspendGeometryPersistenceOnMobile
+        suspendGeometryPersistenceOnShortViewport
+        backdropMouseHandlers={{ onClick: (event) => { if (event.target === event.currentTarget) onClose(); } }}
       >
         {managerBody}
-      </DashboardWindowSurfaceRoot>
+      </FloatingWindow>
       {milestoneSliceInterviewModal}
     </>
   );

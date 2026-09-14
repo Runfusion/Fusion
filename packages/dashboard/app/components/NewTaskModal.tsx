@@ -1306,7 +1306,6 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
           minSize={{ width: NEW_TASK_MIN_WIDTH, height: NEW_TASK_MIN_HEIGHT }}
           hideHeader
           dragHandleSelector=".new-task-modal__header--draggable"
-          persistGeometryKey="fusion:new-task-modal-geometry"
           suspendGeometryPersistenceOnMobile
           suspendGeometryPersistenceOnShortViewport
           ariaLabel={t("newTaskModal.title", "New Task")}

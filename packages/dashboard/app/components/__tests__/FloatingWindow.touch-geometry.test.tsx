@@ -127,7 +127,8 @@ describe("FloatingWindow tablet touch geometry", () => {
     expect(releasePointerCapture).toHaveBeenCalledWith(1);
     expect(panel.style.width).toBe("360px");
     expect(panel.style.height).toBe("280px");
-    expect(JSON.parse(localStorage.getItem("fusion:resize") ?? "{}")).toMatchObject({ size: { width: 360, height: 280 } });
+    // FN-394: the clamped result lives in the rendered rectangle only; nothing is written to storage.
+    expect(localStorage.getItem("fusion:resize")).toBeNull();
   });
 
   it("tears down a cancelled touch drag without retaining selection suppression", () => {

@@ -2,7 +2,6 @@ import { render, screen, fireEvent, within } from "@testing-library/react";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import type { Task } from "@fusion/core";
-import { TASK_DETAIL_FLOATING_GEOMETRY_KEY } from "../App";
 import {
   AppTaskPopoutWindows,
   useAppPoppedOutTaskState,
@@ -69,7 +68,6 @@ function CrossViewHarness({ projectKey = "project-a" }: { projectKey?: string })
         entries={entries}
         liveTasks={entries.map((entry) => entry.task)}
         onCloseTask={close}
-        persistGeometryKey={TASK_DETAIL_FLOATING_GEOMETRY_KEY}
         windowProps={{ addToast: vi.fn(), onDeleteTask: vi.fn(), onMergeTask: vi.fn() } as never}
       />
       <footer><DashboardWindowVisibilityToggle /></footer>

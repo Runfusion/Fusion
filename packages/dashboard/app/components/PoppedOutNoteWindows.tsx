@@ -21,7 +21,6 @@ export function PoppedOutNoteWindows({ entries, projectId, addToast, onClose, on
       floating={{
         onClose: () => onClose(entry.projectId, entry.note.id),
         raiseToFrontSignal: entry.focusNonce,
-        cascadeSlot: entry.cascadeSlot,
         registerGuard: registerGuard ? (guard, onAccepted) => registerGuard(entry.projectId, entry.note.id, guard, onAccepted) : undefined,
       }}
     />

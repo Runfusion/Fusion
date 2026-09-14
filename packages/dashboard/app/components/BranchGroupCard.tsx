@@ -6,7 +6,7 @@ import type { BranchGroupSummary } from "../api";
 import { ApiRequestError, apiAbandonBranchGroup, apiAssignTaskBranchGroup, apiGetBranchGroup, apiPromoteBranchGroup } from "../api";
 import { subscribeSse } from "../sse-bus";
 import { BRANCH_GROUP_REFRESH_TASK_EVENTS, shouldRefreshBranchGroupForTaskEvent } from "../utils/branchGroupSse";
-import { DashboardWindowSurfaceRoot } from "../context/DashboardWindowManagerContext";
+import { FloatingWindow } from "./FloatingWindow";
 
 interface BranchGroupCardProps {
   groupId: string;
@@ -247,9 +247,25 @@ export function BranchGroupCard({ groupId, taskId, projectId, onBranchGroupReset
         </div>
       )}
       {confirmPromotion && (
-        <DashboardWindowSurfaceRoot logicalId={`branch-group-promotion-${group.id}`} group="dialog" className="branch-group-card-confirm-backdrop" role="presentation">
-          <section className="card branch-group-card-confirm" role="dialog" aria-modal="true" aria-label={t("branchGroup.confirmPromotion", "Confirm group promotion")}>
-            <h3>{t("branchGroup.confirmPromotion", "Confirm group promotion")}</h3>
+        /* FNXC:FloatingWindowDialogHosts 2026-09-14-22:36: FN-394 hosts the promotion confirmation in the shared window; it stays blocking and still requires an explicit Cancel or promotion. */
+        <FloatingWindow
+          windowKey={`branch-group-promotion-${group.id}`}
+          modal
+          hideHeader
+          surfaceGroup="dialog"
+          title={t("branchGroup.confirmPromotion", "Confirm group promotion")}
+          ariaLabel={t("branchGroup.confirmPromotion", "Confirm group promotion")}
+          onClose={() => setConfirmPromotion(false)}
+          dragHandleSelector=".branch-group-card-confirm > h3"
+          className="floating-window--dialog floating-window--branch-group-promotion"
+          overlayClassName="branch-group-card-confirm-backdrop"
+          defaultSize={{ width: 640, height: 520 }}
+          minSize={{ width: 320, height: 240 }}
+          suspendGeometryPersistenceOnMobile
+          suspendGeometryPersistenceOnShortViewport
+        >
+          <section className="card branch-group-card-confirm">
+            <h3 className="branch-group-card-confirm__title">{t("branchGroup.confirmPromotion", "Confirm group promotion")}</h3>
             <p>{group.prState === "none"
               ? t("branchGroup.confirmOpenPr", "Review landed member advisories before opening the group pull request.")
               : t("branchGroup.confirmMerge", "Review landed member advisories before merging this group.")}</p>
@@ -286,7 +302,7 @@ export function BranchGroupCard({ groupId, taskId, projectId, onBranchGroupReset
               </button>
             </div>
           </section>
-        </DashboardWindowSurfaceRoot>
+        </FloatingWindow>
       )}
     </section>
   );

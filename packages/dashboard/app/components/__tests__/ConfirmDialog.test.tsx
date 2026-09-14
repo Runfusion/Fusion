@@ -94,11 +94,11 @@ describe("ConfirmDialog", () => {
       />,
     );
 
-    // FNXC: ConfirmDialog portals to document.body, so query from document (not the render container).
-    const overlay = document.querySelector(".modal-overlay");
+    // FNXC: the confirmation is hosted by FloatingWindow, which portals to document.body and keeps the dialog's identity class on the shared backdrop.
+    const overlay = document.querySelector(".confirm-dialog-overlay");
     expect(overlay).toBeTruthy();
     vi.advanceTimersByTime(500);
-    fireEvent.pointerDown(overlay as Element, { pointerType: "mouse", isPrimary: true });
+    fireEvent.mouseDown(overlay as Element);
     fireEvent.click(overlay as Element);
     expect(onCancel).toHaveBeenCalledTimes(1);
   });

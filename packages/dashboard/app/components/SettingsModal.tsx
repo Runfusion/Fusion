@@ -4514,7 +4514,6 @@ export function SettingsModal({
       className="floating-window--settings"
       defaultSize={{ width: 1100, height: 720 }}
       minSize={{ width: 520, height: 480 }}
-      persistGeometryKey="floating-window:settings"
       suspendGeometryPersistenceOnMobile
       suspendGeometryPersistenceOnShortViewport
       closeOnOutsidePointerDown={overlayDismissEnabled}

@@ -30,7 +30,8 @@ describe("ChatView pop-out host inventory", () => {
     expect(popOut).toContain("initialDirectSession={entry.session}");
     expect(popOut).toContain("initialDirectSessionNonce={entry.focusNonce}");
     expect(popOut).toContain("raiseToFrontSignal={entry.focusNonce}");
-    expect(popOut).toContain("cascadeOffsetIndex={entry.cascadeSlot}");
+    // FN-394: window separation is owned by the shared window-manager cohort, not by a chat-only slot.
+    expect(popOut).not.toContain("cascadeOffsetIndex");
     expect(popOut).toContain('surfaceGroup="chat"');
     expect(popOut).not.toContain("hidden={entry.");
     const chatView = readAppFile("components/ChatView.tsx");

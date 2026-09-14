@@ -202,7 +202,6 @@ export function CreateRoomModal({ isOpen, onClose, onCreate, projectId, existing
       className="floating-window--create-room"
       defaultSize={{ width: 640, height: 640 }}
       minSize={{ width: 360, height: 400 }}
-      persistGeometryKey="floating-window:create-room"
       suspendGeometryPersistenceOnMobile
       suspendGeometryPersistenceOnShortViewport
       closeOnOutsidePointerDown

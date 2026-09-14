@@ -1,13 +1,25 @@
-import { render, screen } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { DashboardWindowManagerProvider } from "../../context/DashboardWindowManagerContext";
 import { FLOATING_WINDOW_CASCADE_STEP_PX } from "../FloatingWindow";
 import { PoppedOutChatWindows } from "../PoppedOutChatWindows";
+
+/*
+FNXC:ChatWindows 2026-09-14-23:38:
+FN-394 removed Chat's private cascade slot and its durable geometry key, so this suite now asserts the
+SHARED window contract on detached conversations: every chat window opens at the standard Chat size,
+centred in the live work area, ignoring any previously stored geometry; a second still-pristine window
+is only DISPLACED by one shared cascade step (never shrunk); and windows of other projects stay unrendered.
+*/
 
 vi.mock("../ChatView", () => ({
   ChatView: ({ initialDirectSession }: { initialDirectSession: { id: string } }) => <div>{initialDirectSession.id}</div>,
 }));
 
-const entry = (id: string, cascadeSlot: number, projectId = "project-a") => ({
+const CHAT_WIDTH = 980;
+const CHAT_HEIGHT = 680;
+
+const entry = (id: string, projectId = "project-a") => ({
   projectId,
   session: {
     id,
@@ -18,81 +30,93 @@ const entry = (id: string, cascadeSlot: number, projectId = "project-a") => ({
     updatedAt: "2026-08-23T00:00:00.000Z",
   },
   focusNonce: 1,
-  cascadeSlot,
 });
+
+function renderWindows(entries: ReturnType<typeof entry>[]) {
+  return render(
+    <DashboardWindowManagerProvider>
+      <PoppedOutChatWindows
+        entries={entries}
+        projectId="project-a"
+        addToast={vi.fn()}
+        onClose={vi.fn()}
+        onOpenSessionInNewWindow={vi.fn()}
+      />
+    </DashboardWindowManagerProvider>,
+  );
+}
+
+function rectOf(panel: HTMLElement) {
+  return {
+    left: Number.parseFloat(panel.style.left),
+    top: Number.parseFloat(panel.style.top),
+    width: Number.parseFloat(panel.style.width),
+    height: Number.parseFloat(panel.style.height),
+  };
+}
 
 describe("PoppedOutChatWindows cascade", () => {
   beforeEach(() => {
     localStorage.clear();
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 1600 });
     Object.defineProperty(window, "innerHeight", { configurable: true, value: 1000 });
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { callback(0); return 1; });
+    vi.stubGlobal("cancelAnimationFrame", () => {});
   });
 
-  it("offsets stacked chat windows from their shared persisted geometry", () => {
-    localStorage.setItem("kb-dashboard-chat-floating-window", JSON.stringify({
-      size: { width: 900, height: 620 }, position: { x: 120, y: 96 },
-    }));
-    render(
-      <PoppedOutChatWindows
-        entries={[entry("first", 0), entry("second", 1)]}
-        projectId="project-a"
-        addToast={vi.fn()}
-        onClose={vi.fn()}
-        onOpenSessionInNewWindow={vi.fn()}
-      />,
-    );
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it("opens stacked chat windows centered and displaces the second by one shared cascade step", async () => {
+    renderWindows([entry("first"), entry("second")]);
 
     const first = screen.getByTestId("floating-window-chat-window-project-a-first");
     const second = screen.getByTestId("floating-window-chat-window-project-a-second");
-    expect(first.style.left).toBe("120px");
-    expect(Number.parseFloat(second.style.left) - Number.parseFloat(first.style.left)).toBe(FLOATING_WINDOW_CASCADE_STEP_PX);
-    expect(Number.parseFloat(second.style.top) - Number.parseFloat(first.style.top)).toBe(FLOATING_WINDOW_CASCADE_STEP_PX);
-    expect(second.style.left).not.toBe(first.style.left);
-    expect(second.style.top).not.toBe(first.style.top);
+    await waitFor(() => expect(Number.parseFloat(second.style.width)).toBe(CHAT_WIDTH));
+
+    expect(rectOf(first)).toEqual({
+      left: (window.innerWidth - CHAT_WIDTH) / 2,
+      top: (window.innerHeight - CHAT_HEIGHT) / 2,
+      width: CHAT_WIDTH,
+      height: CHAT_HEIGHT,
+    });
+    // The cascade only moves the second window: it keeps the full standard Chat size.
+    expect(rectOf(second)).toEqual({
+      left: (window.innerWidth - CHAT_WIDTH) / 2 + FLOATING_WINDOW_CASCADE_STEP_PX,
+      top: (window.innerHeight - CHAT_HEIGHT) / 2 + FLOATING_WINDOW_CASCADE_STEP_PX,
+      width: CHAT_WIDTH,
+      height: CHAT_HEIGHT,
+    });
   });
 
-  it("separates near-viewport chat windows without persisting their shrunken presentation geometry", () => {
-    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1440 });
-    Object.defineProperty(window, "innerHeight", { configurable: true, value: 900 });
-    const baseGeometry = {
-      size: { width: 1408, height: 868 },
-      position: { x: 16, y: 16 },
-    };
-    localStorage.setItem("kb-dashboard-chat-floating-window", JSON.stringify(baseGeometry));
+  it("ignores previously stored chat geometry and never persists a new one", async () => {
+    localStorage.setItem("kb-dashboard-chat-floating-window", JSON.stringify({
+      size: { width: 420, height: 300 }, position: { x: 12, y: 18 },
+    }));
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
 
-    render(
-      <PoppedOutChatWindows
-        entries={[entry("first", 0), entry("second", 1)]}
-        projectId="project-a"
-        addToast={vi.fn()}
-        onClose={vi.fn()}
-        onOpenSessionInNewWindow={vi.fn()}
-      />,
-    );
+    renderWindows([entry("first")]);
 
     const first = screen.getByTestId("floating-window-chat-window-project-a-first");
-    const second = screen.getByTestId("floating-window-chat-window-project-a-second");
-    expect(first.style.left).not.toBe(second.style.left);
-    expect(first.style.top).not.toBe(second.style.top);
-    expect(first.style.width).toBe("1408px");
-    expect(second.style.width).toBe(`${1440 - (16 + FLOATING_WINDOW_CASCADE_STEP_PX)}px`);
-    expect(JSON.parse(localStorage.getItem("kb-dashboard-chat-floating-window") ?? "{}")).toEqual(baseGeometry);
+    await waitFor(() => expect(Number.parseFloat(first.style.width)).toBe(CHAT_WIDTH));
+    expect(rectOf(first)).toEqual({
+      left: (window.innerWidth - CHAT_WIDTH) / 2,
+      top: (window.innerHeight - CHAT_HEIGHT) / 2,
+      width: CHAT_WIDTH,
+      height: CHAT_HEIGHT,
+    });
+    expect(setItem.mock.calls.some(([key]) => String(key).includes("chat-floating-window"))).toBe(false);
+    setItem.mockRestore();
   });
 
-  it("filters another project while preserving the surviving slot offset", () => {
-    localStorage.setItem("kb-dashboard-chat-floating-window", JSON.stringify({
-      size: { width: 900, height: 620 }, position: { x: 120, y: 96 },
-    }));
-    render(
-      <PoppedOutChatWindows
-        entries={[entry("visible", 1), entry("hidden", 0, "project-b")]}
-        projectId="project-a"
-        addToast={vi.fn()}
-        onClose={vi.fn()}
-        onOpenSessionInNewWindow={vi.fn()}
-      />,
-    );
+  it("filters another project while keeping the surviving window centered", async () => {
+    renderWindows([entry("visible"), entry("hidden", "project-b")]);
+
     expect(screen.queryByTestId("floating-window-chat-window-project-b-hidden")).toBeNull();
-    expect(screen.getByTestId("floating-window-chat-window-project-a-visible").style.left).toBe(`${120 + FLOATING_WINDOW_CASCADE_STEP_PX}px`);
+    const visible = screen.getByTestId("floating-window-chat-window-project-a-visible");
+    await waitFor(() => expect(Number.parseFloat(visible.style.width)).toBe(CHAT_WIDTH));
+    expect(rectOf(visible).left).toBe((window.innerWidth - CHAT_WIDTH) / 2);
   });
 });

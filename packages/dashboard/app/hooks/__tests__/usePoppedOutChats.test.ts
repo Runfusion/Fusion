@@ -21,9 +21,8 @@ describe("usePoppedOutChats", () => {
     expect(result.current.entries[0]).toMatchObject({
       session: { title: "refreshed" },
       focusNonce: firstNonce + 1,
-      cascadeSlot: 0,
     });
-    expect(result.current.entries[1]).toMatchObject({ focusNonce: 1, cascadeSlot: 1 });
+    expect(result.current.entries[1]).toMatchObject({ focusNonce: 1 });
   });
 
   it("keeps equal session ids independent across projects", () => {
@@ -62,18 +61,19 @@ describe("usePoppedOutChats", () => {
     expect(result.current.entries[1].composerPrefill).toBeUndefined();
   });
 
-  it("closes precisely, reuses the released cascade slot, and closes all", () => {
+  /* FNXC:ChatWindows 2026-09-14-21:10: FN-394 moved window separation to the shared window-manager cohort, so entries no longer carry a chat-only cascade slot; only identity and closing remain this hook.s concern. */
+  it("closes precisely and closes all", () => {
     const { result } = renderHook(() => usePoppedOutChats());
     act(() => result.current.popOut("project-a", session("same")));
     act(() => result.current.popOut("project-a", session("other")));
     act(() => result.current.popOut("project-b", session("same")));
 
     act(() => result.current.close("project-a", "other"));
-    expect(result.current.entries.map((entry) => [entry.projectId, entry.session.id, entry.cascadeSlot]))
-      .toEqual([["project-a", "same", 0], ["project-b", "same", 0]]);
+    expect(result.current.entries.map((entry) => [entry.projectId, entry.session.id]))
+      .toEqual([["project-a", "same"], ["project-b", "same"]]);
 
     act(() => result.current.popOut("project-a", session("replacement")));
-    expect(result.current.entries.find((entry) => entry.session.id === "replacement")).toMatchObject({ cascadeSlot: 1 });
+    expect(result.current.entries.find((entry) => entry.session.id === "replacement")).toMatchObject({ focusNonce: 1 });
 
     act(() => result.current.closeAll());
     expect(result.current.entries).toEqual([]);

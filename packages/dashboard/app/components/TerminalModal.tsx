@@ -3357,7 +3357,6 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
       minSize={{ width: TERMINAL_FLOAT_MIN_WIDTH, height: TERMINAL_FLOAT_MIN_HEIGHT }}
       hideHeader
       dragHandleSelector=".terminal-header"
-      persistGeometryKey={`fusion:terminal-float-geometry-${projectId ?? "default"}`}
       suspendGeometryPersistenceOnMobile
       suspendGeometryPersistenceOnShortViewport
       ariaLabel={t("terminal.title", "Terminal")}

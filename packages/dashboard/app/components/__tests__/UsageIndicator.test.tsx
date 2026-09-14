@@ -587,13 +587,15 @@ describe("UsageIndicator", () => {
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} anchorRect={null} />);
 
+    // FN-394: the non-anchored presentation is hosted by the shared window, which keeps the usage identity class on its backdrop.
     const overlay = screen.getByTestId("usage-modal-overlay");
     const modal = screen.getByTestId("usage-modal") as HTMLElement;
-    expect(overlay).toHaveClass("modal-overlay", "open", "usage-modal-overlay");
+    expect(overlay).toHaveClass("floating-window-overlay", "floating-window-overlay--modal", "usage-modal-overlay");
+    expect(screen.getByTestId("floating-window-usage")).toBeInTheDocument();
     expect(modal).toHaveClass("modal");
     expect(modal).not.toHaveClass("usage-modal--popover");
     expect(modal.style.top).toBe("");
-    expect(modal.parentElement).toBe(overlay);
+    expect(overlay).toContainElement(modal);
   });
 
   it("uses the top-aligned mobile sheet surface instead of the desktop popover", () => {

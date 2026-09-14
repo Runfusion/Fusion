@@ -7,7 +7,7 @@ import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
 import { getTaskTitleDisplayText } from "../utils/taskTitleDisplay";
 import type { ResearchRunDetail } from "../research-types";
 import "./ResearchTaskActionModal.css";
-import { DashboardWindowSurfaceRoot } from "../context/DashboardWindowManagerContext";
+import { FloatingWindow } from "./FloatingWindow";
 
 type Mode = "create" | "enrich";
 
@@ -102,8 +102,24 @@ export function ResearchTaskActionModal({ open, mode, run, finding, projectId, o
   if (!open) return null;
 
   return (
-    <DashboardWindowSurfaceRoot logicalId={`research-task-${mode}`} group="dialog" className="modal-overlay open" role="presentation" onClick={onClose}>
-      <div className="modal modal-lg research-task-action-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+    /* FNXC:FloatingWindowDialogHosts 2026-09-14-22:36: FN-394 hosts this decision dialog in the shared window; the backdrop click keeps its historical dismissal. */
+    <FloatingWindow
+      windowKey={`research-task-${mode}`}
+      modal
+      hideHeader
+      surfaceGroup="dialog"
+      title={mode === "create" ? t("research.createTaskTitle", "Create task from finding") : t("research.enrichTaskTitle", "Enrich existing task")}
+      ariaLabel={mode === "create" ? t("research.createTaskTitle", "Create task from finding") : t("research.enrichTaskTitle", "Enrich existing task")}
+      onClose={onClose}
+      dragHandleSelector=".research-task-action-modal .modal-header"
+      className="floating-window--dialog floating-window--research-task-action"
+      defaultSize={{ width: 720, height: 560 }}
+      minSize={{ width: 320, height: 260 }}
+      suspendGeometryPersistenceOnMobile
+      suspendGeometryPersistenceOnShortViewport
+      backdropMouseHandlers={{ onClick: (event) => { if (event.target === event.currentTarget) onClose(); } }}
+    >
+      <div className="modal modal-lg research-task-action-modal" onClick={(event) => event.stopPropagation()}>
         {/* FNXC:StandardizedViewLayout 2026-09-13-21:49: Shared dialog chrome; `.modal-header` stays for the drag handle selector. */}
         <ViewHeader
           className="modal-header"
@@ -182,6 +198,6 @@ export function ResearchTaskActionModal({ open, mode, run, finding, projectId, o
           </button>
         </div>
       </div>
-    </DashboardWindowSurfaceRoot>
+    </FloatingWindow>
   );
 }

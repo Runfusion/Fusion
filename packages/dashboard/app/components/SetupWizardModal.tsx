@@ -437,7 +437,6 @@ export function SetupWizardModal({
       className="floating-window--setup-wizard"
       defaultSize={{ width: 760, height: 680 }}
       minSize={{ width: 480, height: 360 }}
-      persistGeometryKey="floating-window:setup-wizard"
       suspendGeometryPersistenceOnMobile
       suspendGeometryPersistenceOnShortViewport
     >

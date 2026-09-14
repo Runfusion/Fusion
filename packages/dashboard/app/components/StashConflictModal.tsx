@@ -6,7 +6,7 @@ import { ApiRequestError, api } from "../api";
 import { useFileBrowser } from "../context/FileBrowserContext";
 import { copyTextToClipboard } from "../utils/copyToClipboard";
 import "./StashConflictModal.css";
-import { DashboardWindowSurfaceRoot } from "../context/DashboardWindowManagerContext";
+import { FloatingWindow } from "./FloatingWindow";
 
 interface ResolveResponse {
   remainingConflicts: string[];
@@ -235,7 +235,23 @@ export default function StashConflictModal({
   };
 
   return (
-    <DashboardWindowSurfaceRoot logicalId="stash-conflict" group="dialog" className="modal-overlay open" role="dialog" aria-modal="true" aria-labelledby="stash-conflict-modal-title">
+    /* FNXC:FloatingWindowDialogHosts 2026-09-14-22:36: FN-394 hosts this recovery dialog in the shared window; it stays blocking and still exits only through its own explicit actions. */
+    <FloatingWindow
+      windowKey="stash-conflict"
+      modal
+      hideHeader
+      surfaceGroup="dialog"
+      title={t("git.stashConflict.title", "Resolve auto-stash conflicts")}
+      ariaLabelledBy="stash-conflict-modal-title"
+      /* FNXC:FloatingWindowDialogHosts 2026-09-14-22:36: this recovery dialog has never had an implicit exit, so the shared window's Escape/close path is deliberately inert here; the operator still resolves or drops the stash explicitly. */
+      onClose={() => {}}
+      dragHandleSelector=".stash-conflict-modal .modal-header"
+      className="floating-window--dialog floating-window--stash-conflict"
+      defaultSize={{ width: 720, height: 600 }}
+      minSize={{ width: 320, height: 280 }}
+      suspendGeometryPersistenceOnMobile
+      suspendGeometryPersistenceOnShortViewport
+    >
       <div className="modal stash-conflict-modal" ref={modalRef} tabIndex={-1}>
         {/* FNXC:StandardizedViewLayout 2026-09-13-21:49: Shared chrome; this recovery dialog deliberately exits through its own explicit actions only. */}
         <ViewHeader
@@ -302,6 +318,6 @@ export default function StashConflictModal({
           </div>
         </div>
       </div>
-    </DashboardWindowSurfaceRoot>
+    </FloatingWindow>
   );
 }

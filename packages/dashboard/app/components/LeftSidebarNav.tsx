@@ -34,6 +34,7 @@ import { getPluginDashboardViewNavIcon } from "./pluginNavIcon";
 import { GithubIcon } from "./GithubIcon";
 import { getDashboardViewLabel } from "../../src/shared/dashboard-views";
 import { buildDashboardNavigationEntries } from "./dashboardNavigationEntries";
+import { useDashboardWindowLandmark } from "../context/DashboardWindowManagerContext";
 
 export interface LeftSidebarExperimentalFeatures {
   insights?: boolean;
@@ -176,6 +177,13 @@ export function LeftSidebarNav({
   footerVisible = false,
 }: LeftSidebarNavProps) {
   const { t } = useTranslation("app");
+  /*
+  FNXC:DashboardWindowBounds 2026-09-14-21:10:
+  FN-394: the sidebar declares its own right edge so dashboard windows treat it as shell, not content.
+  Collapsing, resizing, or unmounting it re-measures immediately and snapped columns re-split; the
+  sidebar itself is never closed to make room for a window.
+  */
+  const dashboardWindowLeftNavRef = useDashboardWindowLandmark("left-nav");
   const [sidebarWidth, setSidebarWidth] = useState(readStoredSidebarWidth);
   const [isCollapsed, setIsCollapsed] = useState(readStoredCollapsed);
   /*
@@ -496,6 +504,7 @@ export function LeftSidebarNav({
 
   return (
     <aside
+      ref={dashboardWindowLeftNavRef}
       className={`left-sidebar-nav${isCollapsed ? " left-sidebar-nav--collapsed" : ""}${footerVisible ? " left-sidebar-nav--with-footer" : ""}`}
       data-testid="left-sidebar-nav"
       aria-label={t("nav.sidebarAriaLabel", "Sidebar navigation")}

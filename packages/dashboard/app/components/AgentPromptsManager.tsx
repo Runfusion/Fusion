@@ -5,7 +5,7 @@ import { BUILTIN_AGENT_PROMPTS, PROMPT_KEY_CATALOG } from "../utils/builtinPromp
 import type { AgentPromptTemplate, AgentPromptsConfig, AgentCapability } from "@fusion/core";
 import type { PromptKey } from "@fusion/core";
 import { Plus, Pencil, Trash2, BookOpen, Users, Settings2, ChevronDown, ChevronUp, Maximize2, Minimize2 } from "lucide-react";
-import { DashboardWindowSurfaceRoot } from "../context/DashboardWindowManagerContext";
+import { FloatingWindow } from "./FloatingWindow";
 
 /**
  * Props for the AgentPromptsManager component.
@@ -753,21 +753,23 @@ export function AgentPromptsManager({
             </div>
 
             {fullscreenTemplate && (
-              <DashboardWindowSurfaceRoot
-                ref={fullscreenViewContainerRef}
-                logicalId={`prompt-override-${fullscreenTemplate.id}`}
-                group="dialog"
-                className="prompt-override-fullscreen"
-                role="dialog"
-                aria-modal="true"
-                tabIndex={-1}
-                onKeyDown={(e) => {
-                  if (e.key === "Escape") {
-                    e.preventDefault();
-                    setFullscreenViewTemplate(null);
-                  }
-                }}
+              /* FNXC:FloatingWindowDialogHosts 2026-09-14-22:36: FN-394 hosts the expanded prompt view in the shared window; it opens standard-sized and centred and can be snapped like any other dialog. */
+              <FloatingWindow
+                windowKey={`prompt-override-${fullscreenTemplate.id}`}
+                modal
+                hideHeader
+                surfaceGroup="dialog"
+                title={fullscreenTemplate.name}
+                ariaLabel={fullscreenTemplate.name}
+                onClose={() => setFullscreenViewTemplate(null)}
+                dragHandleSelector=".prompt-override-fullscreen .prompt-override-fullscreen-header"
+                className="floating-window--dialog floating-window--prompt-override"
+                defaultSize={{ width: 900, height: 660 }}
+                minSize={{ width: 320, height: 280 }}
+                suspendGeometryPersistenceOnMobile
+                suspendGeometryPersistenceOnShortViewport
               >
+              <div className="prompt-override-fullscreen" ref={fullscreenViewContainerRef} tabIndex={-1}>
                 <div className="prompt-override-fullscreen-header">
                   <div className="prompt-override-fullscreen-title">
                     {fullscreenTemplate.name}
@@ -788,7 +790,8 @@ export function AgentPromptsManager({
                   </button>
                 </div>
                 <pre className="prompt-template-fullscreen-pre">{fullscreenTemplate.prompt}</pre>
-              </DashboardWindowSurfaceRoot>
+              </div>
+              </FloatingWindow>
             )}
           </div>
         )}

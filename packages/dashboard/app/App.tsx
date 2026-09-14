@@ -157,7 +157,6 @@ import "./components/ChatView.css";
 import { useChatMailReportRouting } from "./components/chatReportHandoff";
 
 const IS_TEST_ENV = import.meta.env.MODE === "test";
-export const TASK_DETAIL_FLOATING_GEOMETRY_KEY = "floating-window:task-detail";
 
 const AgentsView = lazy(() => import("./components/AgentsView").then((m) => ({ default: m.AgentsView })));
 const NotesView = lazy(() => import("./components/NotesView").then((m) => ({ default: m.NotesView })));
@@ -2619,11 +2618,11 @@ function AppInner() {
       FNXC:TaskDetail 2026-06-22-12:20:
       Task pop-outs use TaskDetailContent's own gray header as the only visible header, matching the one-header fixed task modal while keeping FloatingWindow drag/resize. The generic Maximize title chrome is hidden; close now lives beside edit inside the task header.
 
-      FNXC:TaskPopupGeometry 2026-07-03-00:00:
-      Every task-detail FloatingWindow keeps its per-task windowKey for DOM identity, dedupe, cascade fallback, and z-index independence, but all task-detail popups share one persisted geometry key so operators do not resize or reposition the popup between tasks.
+      FNXC:TaskPopupGeometry 2026-09-14-22:36:
+      Every task-detail FloatingWindow keeps its per-task windowKey for DOM identity, dedupe, and z-index independence. FN-394 deleted durable window geometry: a task popup is NOT restored from a stored rectangle and no longer shares one with the other task popups. Each opening is its own — standard size, centred in the live work area — with separation supplied only by the shared manager-owned cascade of untouched windows.
 
-      FNXC:TaskPopupLayer 2026-09-14-11:35:
-      Task-detail and Chat windows share the task-detail interaction stack, so pointer/focus raises whichever overlapping work surface the operator engages. Utility windows retain their higher independent band.
+      FNXC:TaskPopupLayer 2026-09-14-22:36:
+      Task-detail, Chat, and utility windows share ONE stack since FN-394, so a newly opened window of any type comes in front and pointer/focus raises whichever surface the operator engages.
 
       FNXC:TaskWindowIdentity 2026-09-14-17:46:
       FN-392: every entry renders one window keyed by task id, and a view change mutates nothing here. The embedded task
@@ -2635,7 +2634,6 @@ function AppInner() {
         entries={poppedOutTaskEntries}
         liveTasks={tasks}
         onCloseTask={closePoppedOutTaskWithNav}
-        persistGeometryKey={TASK_DETAIL_FLOATING_GEOMETRY_KEY}
         windowProps={{
           projectId: currentProject?.id,
           tasks,

@@ -1,13 +1,10 @@
 import { ViewHeader } from "./ViewHeader";
-import { useLayoutEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { createPortal } from "react-dom";
 import { CheckCircle2, ExternalLink, Loader2 } from "lucide-react";
 import { OAuthManualCodeForm } from "./OAuthManualCodeForm";
 import { LoginInstructions } from "./LoginInstructions";
-import { nextFloatingZ } from "./floatingWindowStack";
 import "./ProviderLoginDialog.css";
-import { DashboardWindowSurfaceRoot } from "../context/DashboardWindowManagerContext";
+import { FloatingWindow } from "./FloatingWindow";
 
 /*
 FNXC:ProviderAuth 2026-08-18-03:05:
@@ -73,15 +70,10 @@ export function ProviderLoginDialog({
   const { t } = useTranslation("app");
   /*
   FNXC:ProviderAuth 2026-08-18-04:20:
-  Claim the top of the shared floating stack ONCE on open, the same way ConfirmDialog does. The first
-  version called `nextFloatingZ()` inline in the parent's JSX, which re-claimed on every render of a
-  modal that re-renders on a 2s auth poll — a side effect during render, and a number that changed
-  underneath the host window instead of settling above it.
+  Claim the top of the shared floating stack ONCE on open. FN-394 delegates that claim to FloatingWindow,
+  which raises a newly opened window above every other window regardless of type and never re-claims on
+  the 2s auth poll re-render.
   */
-  const [overlayZ, setOverlayZ] = useState<number | undefined>(undefined);
-  useLayoutEffect(() => {
-    setOverlayZ(nextFloatingZ());
-  }, []);
 
   if (typeof document === "undefined") {
     return null;
@@ -91,29 +83,43 @@ export function ProviderLoginDialog({
   const exchangeState =
     phase === "submitting" ? STEP_STATE.active : phase === "succeeded" ? STEP_STATE.done : STEP_STATE.idle;
 
-  return createPortal(
-    <DashboardWindowSurfaceRoot
-      logicalId={`provider-login-${providerName}`}
-      group="dialog"
-      stackOrder={overlayZ}
-      className="modal-overlay open provider-login-dialog-overlay"
-      style={overlayZ === undefined ? undefined : { zIndex: overlayZ }}
-      data-testid={testId}
-      /*
-      FNXC:ProviderAuth 2026-08-18-04:20:
-      STOP REACT-TREE PROPAGATION. A portal moves the DOM node to <body> but NOT the React tree, so
-      events raised in here still bubble to whatever rendered it. This dialog is rendered by a
-      component hosted in a FloatingWindow, and that window raises itself to a fresh `nextFloatingZ()`
-      on every pointerdown/focus it sees — so each click INSIDE this dialog lifted the window above
-      it, and the next click landed on the window instead ("it keeps getting covered by the onboarding
-      dialog, any click goes to the dialog below"). The parent also renders this outside its
-      FloatingWindow subtree; this guard keeps the contract if that ever changes.
-      */
-      onPointerDown={(event) => event.stopPropagation()}
-      onMouseDown={(event) => event.stopPropagation()}
-      onFocus={(event) => event.stopPropagation()}
+  /*
+  FNXC:FloatingWindowDialogHosts 2026-09-14-22:36:
+  FN-394 hosts the provider sign-in in the shared FloatingWindow as a BLOCKING window, so the OAuth
+  protection is unchanged: it still covers the app, still owns its own focus boundary, and snapping or
+  moving another window can never implicitly cancel or approve a sign-in.
+  */
+  return (
+    <FloatingWindow
+      windowKey={`provider-login-${providerName}`}
+      modal
+      hideHeader
+      surfaceGroup="dialog"
+      title={t("providerLogin.signingInTo", "Signing in to {{provider}}", { provider: providerName })}
+      ariaLabel={t("providerLogin.signingInTo", "Signing in to {{provider}}", { provider: providerName })}
+      onClose={onCancel}
+      dragHandleSelector=".provider-login-dialog .modal-header"
+      className="floating-window--dialog floating-window--provider-login"
+      overlayClassName="provider-login-dialog-overlay"
+      defaultSize={{ width: 560, height: 520 }}
+      minSize={{ width: 320, height: 240 }}
+      suspendGeometryPersistenceOnMobile
+      suspendGeometryPersistenceOnShortViewport
+      testId={testId}
     >
-      <div className="modal provider-login-dialog" role="dialog" aria-modal="true" aria-label={t("providerLogin.signingInTo", "Signing in to {{provider}}", { provider: providerName })}>
+      <div className="modal provider-login-dialog">
+        {/*
+        FNXC:ProviderAuth 2026-08-18-04:20:
+        A portal moves the DOM node to <body> but NOT the React tree, so a click inside this dialog used to
+        bubble to the FloatingWindow that rendered it and lift that window above this static dialog ("any
+        click goes to the dialog below").
+
+        FNXC:FloatingWindowDialogHosts 2026-09-14-22:36:
+        FN-394 makes the sign-in its own window, so it claims the top of the shared stack itself and a pointer
+        press here raises THIS window last (its capture handler runs after its ancestors'). The former
+        stop-propagation guard is gone because it also swallowed the delegated header drag, which would have
+        made this the only dialog that cannot be moved or snapped.
+        */}
         {/* FNXC:StandardizedViewLayout 2026-09-13-21:49: Shared dialog chrome; the cancel-login exit keeps its own label and behaviour. */}
         <ViewHeader
           className="modal-header"
@@ -204,7 +210,6 @@ export function ProviderLoginDialog({
           </button>
         </div>
       </div>
-    </DashboardWindowSurfaceRoot>,
-    document.body,
+    </FloatingWindow>
   );
 }

@@ -345,6 +345,24 @@ all floating affordances so persisted desktop geometry cannot imply a draggable 
   border-radius: inherit;
 }
 
+/*
+FNXC:FloatingWindowDialogHosts 2026-09-14-22:36:
+FN-394 gives every formerly static dashboard dialog ONE shared host class instead of a per-dialog
+selector list. The dialog body owns the window rectangle so its inner `.modal`/`.card`/`.agent-dialog`
+shell stretches to the window the operator snapped or resized, and its content keeps scrolling.
+*/
+.floating-window--dialog .floating-window__body {
+  overflow: hidden;
+}
+
+.floating-window--dialog .floating-window__body > * {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  border-radius: inherit;
+}
+
 @media (max-width: 767.98px), (max-height: 480px) {
   /*
   FNXC:FloatingWindow 2026-08-18-00:26:
@@ -405,6 +423,8 @@ all floating affordances so persisted desktop geometry cannot imply a draggable 
   .floating-window--settings,
   .floating-window--planning-mode,
   .floating-window--create-room,
+  /* FNXC:FloatingWindowDialogHosts 2026-09-14-22:36: FN-394's re-hosted dialogs share the sheet contract through one class. */
+  .floating-window--dialog,
   .floating-window--chat {
     inset: 0 !important;
     width: 100vw !important;
@@ -448,6 +468,7 @@ all floating affordances so persisted desktop geometry cannot imply a draggable 
   .floating-window--settings .floating-window__resize-handle,
   .floating-window--planning-mode .floating-window__resize-handle,
   .floating-window--create-room .floating-window__resize-handle,
+  .floating-window--dialog .floating-window__resize-handle,
   .floating-window--chat .floating-window__resize-handle {
     display: none;
   }
@@ -716,4 +737,48 @@ html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] .floating-wi
   padding-block-end: var(--mobile-nav-alpha-system-offset);
   overflow: auto;
   overscroll-behavior: contain;
+}
+
+/*
+FNXC:FloatingWindowSnap 2026-09-14-21:10:
+FN-394 snapped placement. A snapped window fills exactly the rectangle computed from the live work area,
+so the panel's floating minimums must not fight it: a half-width column may legitimately be narrower
+than the floating minimum and the body stays scrollable instead of overflowing the shell.
+*/
+.floating-window--snapped {
+  min-width: 0;
+  min-height: 0;
+  border-radius: var(--radius-md);
+}
+
+/*
+FNXC:FloatingWindowSnap 2026-09-14-21:10:
+The drop preview is paint-only: `pointer-events: none` plus `aria-hidden` in the component means it can
+never take focus, swallow the drag, or be clicked. It reuses existing accent/surface tokens so every
+theme renders it consistently, and its fade is disabled under `prefers-reduced-motion`.
+*/
+.floating-window__snap-preview {
+  position: fixed;
+  pointer-events: none;
+  border: thin solid var(--accent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  box-shadow: var(--shadow-md);
+  animation: floating-window-snap-preview-in var(--duration-fast) ease-out;
+}
+
+@keyframes floating-window-snap-preview-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .floating-window__snap-preview {
+    animation: none;
+  }
 }

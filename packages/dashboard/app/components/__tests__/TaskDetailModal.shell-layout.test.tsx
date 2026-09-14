@@ -66,7 +66,6 @@ const titleFreeHostCases = [
         task={task}
         hidden={false}
         onRemoveWindow={noop}
-        persistGeometryKey="task-detail-host-matrix-popout"
       />
     ),
   },

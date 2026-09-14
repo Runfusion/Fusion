@@ -95,7 +95,6 @@ export function AppTaskPopoutContent({ onRemoveWindow, active, ...props }: AppTa
 
 export interface AppTaskPopoutWindowProps extends Omit<AppTaskPopoutContentProps, "onRemoveWindow"> {
   onRemoveWindow: () => void;
-  persistGeometryKey: string;
   /** Raises the existing window when its owner refreshes the entry in place. */
   raiseToFrontSignal?: number;
 }
@@ -110,7 +109,12 @@ FN-392: the window key, React key, and DOM identity are the task id alone, so on
 across every view of the project. Nothing here derives visibility from the current view: only the global visibility
 manager and the owner's own close path may hide or remove this window.
 */
-export function AppTaskPopoutWindow({ task, onRemoveWindow, persistGeometryKey, raiseToFrontSignal, ...props }: AppTaskPopoutWindowProps) {
+/*
+FNXC:TaskWindowIdentity 2026-09-14-21:10:
+FN-394: task pop-outs no longer share a persisted geometry key. Each window opens at the standard task
+size, centred in the live work area, so two task windows never inherit one another's size or place.
+*/
+export function AppTaskPopoutWindow({ task, onRemoveWindow, raiseToFrontSignal, ...props }: AppTaskPopoutWindowProps) {
   const { t } = useTranslation("app");
   const accessibleName = t("taskDetail.accessibleName", "Task detail");
   return (
@@ -124,7 +128,6 @@ export function AppTaskPopoutWindow({ task, onRemoveWindow, persistGeometryKey, 
       dragHandleSelector=".task-detail-content--embedded > .modal-header"
       className="floating-window--task-detail"
       suspendGeometryPersistenceOnMobile
-      persistGeometryKey={persistGeometryKey}
       layer="task-detail"
     >
       <AppTaskPopoutContent {...props} task={task} onRemoveWindow={onRemoveWindow} />
@@ -212,8 +215,7 @@ export interface AppTaskPopoutWindowsProps {
   entries: PoppedOutTaskEntry[];
   liveTasks: Array<Task | TaskDetail>;
   onCloseTask: (taskId: string) => void;
-  persistGeometryKey: string;
-  windowProps: Omit<AppTaskPopoutWindowProps, "task" | "initialTab" | "onRemoveWindow" | "persistGeometryKey" | "raiseToFrontSignal" | "active">;
+  windowProps: Omit<AppTaskPopoutWindowProps, "task" | "initialTab" | "onRemoveWindow" | "raiseToFrontSignal" | "active">;
 }
 
 /*
@@ -225,7 +227,7 @@ FN-392: one entry renders one window keyed by task id, with no view-derived visi
 window manager through `AppTaskPopoutContent`, so a hidden window still suspends polling and pasting while a mere view
 change never interrupts its content, terminal, or local state.
 */
-export function AppTaskPopoutWindows({ entries, liveTasks, onCloseTask, persistGeometryKey, windowProps }: AppTaskPopoutWindowsProps) {
+export function AppTaskPopoutWindows({ entries, liveTasks, onCloseTask, windowProps }: AppTaskPopoutWindowsProps) {
   return entries.map(({ task: snapshot, initialTab, focusNonce }) => {
     const current = liveTasks.find((candidate) => candidate.id === snapshot.id);
     const task = current ? mergeTaskSnapshot(snapshot, current) : snapshot;
@@ -236,7 +238,6 @@ export function AppTaskPopoutWindows({ entries, liveTasks, onCloseTask, persistG
         task={task}
         initialTab={initialTab}
         raiseToFrontSignal={focusNonce}
-        persistGeometryKey={persistGeometryKey}
         onRemoveWindow={() => onCloseTask(snapshot.id)}
       />
     );

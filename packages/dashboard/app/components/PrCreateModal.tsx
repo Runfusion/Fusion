@@ -559,11 +559,10 @@ export function PrCreateModal({
       minSize={{ width: 480, height: 420 }}
       /* FNXC:ModalGeometryPersistence 2026-07-15-19:30: Create PR becomes a ≤768px sheet, so its desktop floating geometry remains intact across mobile opens. */
       suspendGeometryPersistenceOnMobile
-      persistGeometryKey="floating-window:pr-create"
     >
       {/**
        * FNXC:PrCreateModal 2026-06-27-00:00:
-       * FN-7170 moves Create PR onto the shared FloatingWindow shell so it matches Plan Mission, Automations, and New Task: desktop users can drag the embedded modal header and resize from every FloatingWindow edge/corner, mobile stays full-screen through CSS, and geometry persists with persistGeometryKey="floating-window:pr-create". Overlay click-to-dismiss is intentionally dropped because FloatingWindow is non-blocking/click-through; close remains available via X, Cancel, and Escape.
+       * FN-7170 moves Create PR onto the shared FloatingWindow shell so it matches Plan Mission, Automations, and New Task: desktop users can drag the embedded modal header and resize from every FloatingWindow edge/corner, mobile stays full-screen through CSS; geometry is no longer persisted since FN-394 (2026-09-14-21:10), so every open is standard-sized and centred. Overlay click-to-dismiss is intentionally dropped because FloatingWindow is non-blocking/click-through; close remains available via X, Cancel, and Escape.
        *
        * FNXC:PrCreateModal 2026-06-27-23:48:
        * Do not reintroduce a naive overlay onClick target check here. Before FloatingWindow, self-removing buttons and resize-grip releases could retarget synthesized clicks to the backdrop and close the dialog; the floating shell avoids that footgun by having no backdrop-dismiss path for Create PR.

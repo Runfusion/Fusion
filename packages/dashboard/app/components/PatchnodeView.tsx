@@ -174,5 +174,5 @@ export function PatchnodeView({ projectId, onOpenTaskDetail, floating }: Patchno
     </ViewLayout>
   );
   if (!floating) return content;
-  return <FloatingWindow title={t("patchnode.title", "History")} ariaLabel={t("patchnode.title", "History")} onClose={() => void floating.onClose()} windowKey="history-view" persistGeometryKey="floating-window:history-view" hideHeader dragHandleSelector=".view-header" minSize={{ width: 360, height: 280 }} raiseToFrontSignal={floating.raiseToFrontSignal}><div onPointerDown={floating.onActivate} onFocusCapture={floating.onActivate}>{content}</div></FloatingWindow>;
+  return <FloatingWindow title={t("patchnode.title", "History")} ariaLabel={t("patchnode.title", "History")} onClose={() => void floating.onClose()} windowKey="history-view" hideHeader dragHandleSelector=".view-header" minSize={{ width: 360, height: 280 }} raiseToFrontSignal={floating.raiseToFrontSignal}><div onPointerDown={floating.onActivate} onFocusCapture={floating.onActivate}>{content}</div></FloatingWindow>;
 }

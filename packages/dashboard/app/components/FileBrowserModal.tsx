@@ -301,7 +301,6 @@ export function FileBrowserModal({
       minSize={{ width: 360, height: 420 }}
       /* FNXC:ModalGeometryPersistence 2026-07-15-19:30: File Browser is a ≤768px full-screen sheet; preserve its desktop position and size for movable reopen. */
       suspendGeometryPersistenceOnMobile
-      persistGeometryKey="fusion:files-modal-window"
     >
       {/*
        * FNXC:FileBrowser 2026-06-22-15:22:

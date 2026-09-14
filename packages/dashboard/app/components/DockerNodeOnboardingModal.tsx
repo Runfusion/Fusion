@@ -213,7 +213,7 @@ export function DockerNodeOnboardingModal({ isOpen, onClose, onSubmit, addToast:
   if (!isOpen) return null;
 
   return (
-    <FloatingWindow windowKey="docker-node-onboarding" modal title={t("docker.titles.provisionNode", "Provision Docker Node")} ariaLabel={t("docker.ariaLabels.modal", "Docker node onboarding")} onClose={() => { if (!submitting) closeModal(); }} hideHeader dragHandleSelector=".docker-onboarding .modal-header" className="floating-window--docker-node-onboarding" defaultSize={{ width: 720, height: 640 }} minSize={{ width: 420, height: 320 }} persistGeometryKey="floating-window:docker-node-onboarding" suspendGeometryPersistenceOnMobile suspendGeometryPersistenceOnShortViewport closeOnOutsidePointerDown>
+    <FloatingWindow windowKey="docker-node-onboarding" modal title={t("docker.titles.provisionNode", "Provision Docker Node")} ariaLabel={t("docker.ariaLabels.modal", "Docker node onboarding")} onClose={() => { if (!submitting) closeModal(); }} hideHeader dragHandleSelector=".docker-onboarding .modal-header" className="floating-window--docker-node-onboarding" defaultSize={{ width: 720, height: 640 }} minSize={{ width: 420, height: 320 }} suspendGeometryPersistenceOnMobile suspendGeometryPersistenceOnShortViewport closeOnOutsidePointerDown>
       {/* FNXC:ModalTouchGeometry 2026-07-26-16:22: Provisioning retains outside dismissal only before submit; the guarded host close protects an in-flight node creation. */}
       <div className="modal docker-onboarding">
         {/* FNXC:StandardizedViewLayout 2026-09-13-21:49: Shared dialog chrome; `.modal-header` stays for the drag handle selector. */}

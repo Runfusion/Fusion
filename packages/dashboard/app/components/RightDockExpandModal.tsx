@@ -78,7 +78,6 @@ export function RightDockExpandModal({
       minSize={{ width: EXPAND_MIN_WIDTH, height: EXPAND_MIN_HEIGHT }}
       hideHeader
       dragHandleSelector=".right-dock-expand-modal__header"
-      persistGeometryKey="fusion:right-dock-expand-modal-geometry"
       suspendGeometryPersistenceOnMobile
       suspendGeometryPersistenceOnShortViewport
       ariaLabel={expandedViewLabel}

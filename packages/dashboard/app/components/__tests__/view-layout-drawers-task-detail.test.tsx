@@ -104,7 +104,7 @@ describe("shared drawer and Task Detail view layout", () => {
       <ListSplitTaskDetailHost key="list" {...sharedProps} onClearSelection={onClose} onPopOut={onPopOut} />,
       <RightDockTaskDetailHost key="dock" {...sharedProps} onCloseDock={onClose} onPopOut={onPopOut} />,
       <TaskDetailModal key="drawer" {...sharedProps} onClose={onClose} onPopOut={onPopOut} alphaMobileDrawer />,
-      <AppTaskPopoutWindow key="popout" {...sharedProps} hidden={false} onRemoveWindow={onClose} onPopOut={onPopOut} persistGeometryKey="fn-379-popout" />,
+      <AppTaskPopoutWindow key="popout" {...sharedProps} hidden={false} onRemoveWindow={onClose} onPopOut={onPopOut} />,
     ];
 
     for (const host of hosts) {

@@ -15,7 +15,7 @@ import { usePreviewEmbed } from "../hooks/usePreviewEmbed";
 import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
 import type { ToastType } from "../hooks/useToast";
 import { DevServerLogViewer } from "./DevServerLogViewer";
-import { DashboardWindowSurfaceRoot } from "../context/DashboardWindowManagerContext";
+import { FloatingWindow } from "./FloatingWindow";
 import { PreviewIframe } from "./PreviewIframe";
 import { recordResumeEvent } from "../utils/resumeInstrumentation";
 import { ViewHeader } from "./ViewHeader";
@@ -996,12 +996,26 @@ export function DevServerView({ addToast, projectId, tasks, columnFlagsByTaskId 
       )}
 
       {isNarrowRightDockPreviewMode && isPreviewModalOpen && (
-        <DashboardWindowSurfaceRoot logicalId="devserver-preview" group="dialog" className="modal-overlay open devserver-preview-modal-overlay" {...previewModalOverlayDismissProps}>
+        /* FNXC:FloatingWindowDialogHosts 2026-09-14-22:36: FN-394 hosts the narrow-dock preview in the shared window so it can be snapped beside the board instead of being a fixed overlay. */
+        <FloatingWindow
+          windowKey="devserver-preview"
+          modal
+          hideHeader
+          surfaceGroup="dialog"
+          title={t("devserver.preview", "Preview")}
+          ariaLabelledBy="devserver-preview-modal-title"
+          onClose={closePreviewModal}
+          dragHandleSelector=".devserver-preview-modal .devserver-preview-modal__titlebar"
+          className="floating-window--dialog floating-window--devserver-preview"
+          overlayClassName="devserver-preview-modal-overlay"
+          defaultSize={{ width: 820, height: 620 }}
+          minSize={{ width: 320, height: 260 }}
+          suspendGeometryPersistenceOnMobile
+          suspendGeometryPersistenceOnShortViewport
+          backdropMouseHandlers={previewModalOverlayDismissProps}
+        >
           <div
             className="modal devserver-preview-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="devserver-preview-modal-title"
             tabIndex={-1}
             ref={previewModalRef}
             data-testid="devserver-preview-modal"
@@ -1025,7 +1039,7 @@ export function DevServerView({ addToast, projectId, tasks, columnFlagsByTaskId 
               {renderPreviewContent()}
             </div>
           </div>
-        </DashboardWindowSurfaceRoot>
+        </FloatingWindow>
       )}
     </div>
   );

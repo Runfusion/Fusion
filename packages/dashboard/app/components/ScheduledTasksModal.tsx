@@ -589,7 +589,6 @@ export function ScheduledTasksModal({ onClose, addToast, projectId, presentation
       */
       suspendGeometryPersistenceOnMobile
       suspendGeometryPersistenceOnShortViewport
-      persistGeometryKey="floating-window:automation"
     >
       {/**
        * FNXC:Automations 2026-06-26-00:00:

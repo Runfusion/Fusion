@@ -1,0 +1,240 @@
+import { cleanup, render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { DashboardWindowManagerProvider, useDashboardWindowLandmark } from "../../context/DashboardWindowManagerContext";
+import { FLOATING_WINDOW_CASCADE_STEP_PX, FloatingWindow } from "../FloatingWindow";
+
+/*
+FNXC:FloatingWindowGeometry 2026-09-14-21:10:
+FN-394 opening policy, asserted on the RENDERED rectangle of real windows rather than on helper return
+values: every window opens at its OWN standard size, centred in the live work area, uninfluenced by
+storage, by another window's placement, or by an occupied snap zone. The one exception is the shared
+cohort of still-pristine floating windows, which step by 28px and NEVER shrink to make room.
+*/
+
+const HEADER_HEIGHT = 64;
+const FOOTER_HEIGHT = 36;
+
+function domRect(value: { left: number; top: number; right: number; bottom: number; width: number; height: number }): DOMRect {
+  return { ...value, x: value.left, y: value.top, toJSON: () => ({}) } as DOMRect;
+}
+
+function Landmarks() {
+  const headerRef = useDashboardWindowLandmark("header");
+  const footerRef = useDashboardWindowLandmark("footer");
+  return (
+    <>
+      <header ref={headerRef} data-landmark="header" />
+      <footer ref={footerRef} data-landmark="footer" />
+    </>
+  );
+}
+
+function rectOf(panel: HTMLElement) {
+  return {
+    left: Number.parseFloat(panel.style.left),
+    top: Number.parseFloat(panel.style.top),
+    width: Number.parseFloat(panel.style.width),
+    height: Number.parseFloat(panel.style.height),
+  };
+}
+
+function expectCentered(panel: HTMLElement, size: { width: number; height: number }) {
+  const rect = rectOf(panel);
+  expect(rect.width).toBe(size.width);
+  expect(rect.height).toBe(size.height);
+  expect(rect.left).toBe((window.innerWidth - size.width) / 2);
+  expect(rect.top).toBe(HEADER_HEIGHT + (window.innerHeight - HEADER_HEIGHT - FOOTER_HEIGHT - size.height) / 2);
+}
+
+function prepareCapture(target: HTMLElement) {
+  Object.defineProperty(target, "setPointerCapture", { configurable: true, value: vi.fn() });
+  Object.defineProperty(target, "releasePointerCapture", { configurable: true, value: vi.fn() });
+}
+
+function dragBy(handle: HTMLElement, dx: number, dy: number, pointerId = 1) {
+  prepareCapture(handle);
+  fireEvent.pointerDown(handle, { pointerId, clientX: 400, clientY: 300, button: 0 });
+  fireEvent.pointerMove(handle, { pointerId, clientX: 400 + dx, clientY: 300 + dy });
+  fireEvent.pointerUp(handle, { pointerId, clientX: 400 + dx, clientY: 300 + dy });
+}
+
+describe("FloatingWindow opening policy", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 1280 });
+    Object.defineProperty(window, "innerHeight", { configurable: true, writable: true, value: 800 });
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { callback(0); return 1; });
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      const name = this.dataset.landmark;
+      if (name === "header") return domRect({ left: 0, top: 0, right: window.innerWidth, bottom: HEADER_HEIGHT, width: window.innerWidth, height: HEADER_HEIGHT });
+      if (name === "footer") {
+        return domRect({ left: 0, top: window.innerHeight - FOOTER_HEIGHT, right: window.innerWidth, bottom: window.innerHeight, width: window.innerWidth, height: FOOTER_HEIGHT });
+      }
+      return domRect({ left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 });
+    });
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("opens the first window centered at its own standard size", async () => {
+    render(
+      <DashboardWindowManagerProvider>
+        <Landmarks />
+        <FloatingWindow windowKey="alpha" title="Alpha" onClose={() => {}} defaultSize={{ width: 600, height: 400 }}>body</FloatingWindow>
+      </DashboardWindowManagerProvider>,
+    );
+    const panel = screen.getByTestId("floating-window-alpha");
+    await waitFor(() => expect(Number.parseFloat(panel.style.width)).toBe(600));
+    expectCentered(panel, { width: 600, height: 400 });
+  });
+
+  it("offsets a second pristine window of another type by one shared cascade step, keeping each own size", async () => {
+    render(
+      <DashboardWindowManagerProvider>
+        <Landmarks />
+        <FloatingWindow windowKey="alpha" title="Alpha" onClose={() => {}} defaultSize={{ width: 600, height: 400 }}>a</FloatingWindow>
+        <FloatingWindow windowKey="beta" title="Beta" onClose={() => {}} defaultSize={{ width: 820, height: 520 }}>b</FloatingWindow>
+      </DashboardWindowManagerProvider>,
+    );
+    const alpha = screen.getByTestId("floating-window-alpha");
+    const beta = screen.getByTestId("floating-window-beta");
+    await waitFor(() => expect(Number.parseFloat(beta.style.width)).toBe(820));
+
+    expectCentered(alpha, { width: 600, height: 400 });
+    // Beta keeps its own standard size — the cascade only displaces it.
+    const betaRect = rectOf(beta);
+    expect(betaRect.width).toBe(820);
+    expect(betaRect.height).toBe(520);
+    expect(betaRect.left).toBe((window.innerWidth - 820) / 2 + FLOATING_WINDOW_CASCADE_STEP_PX);
+    expect(betaRect.top).toBe(HEADER_HEIGHT + (window.innerHeight - HEADER_HEIGHT - FOOTER_HEIGHT - 520) / 2 + FLOATING_WINDOW_CASCADE_STEP_PX);
+  });
+
+  it("ignores prefilled, invalid, and failing storage and never writes geometry", async () => {
+    localStorage.setItem("floating-window:alpha", JSON.stringify({ size: { width: 250, height: 180 }, position: { x: 4, y: 900 } }));
+    localStorage.setItem("kb-dashboard-chat-floating-window", "not-json");
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
+
+    render(
+      <DashboardWindowManagerProvider>
+        <Landmarks />
+        <FloatingWindow windowKey="alpha" title="Alpha" onClose={() => {}} defaultSize={{ width: 600, height: 400 }} persistGeometryKey="floating-window:alpha">body</FloatingWindow>
+      </DashboardWindowManagerProvider>,
+    );
+    const panel = screen.getByTestId("floating-window-alpha");
+    await waitFor(() => expect(Number.parseFloat(panel.style.width)).toBe(600));
+    expectCentered(panel, { width: 600, height: 400 });
+
+    dragBy(screen.getByTestId("floating-window-drag-handle-alpha"), 120, 90);
+    expect(rectOf(panel).left).not.toBe((window.innerWidth - 600) / 2);
+    expect(setItem).not.toHaveBeenCalledWith("floating-window:alpha", expect.any(String));
+    // Historical values stay untouched in storage; no global purge.
+    expect(localStorage.getItem("floating-window:alpha")).toContain("250");
+  });
+
+  it("centers a newly opened window once every earlier window has really been moved", async () => {
+    const { rerender } = render(
+      <DashboardWindowManagerProvider>
+        <Landmarks />
+        <FloatingWindow windowKey="alpha" title="Alpha" onClose={() => {}} defaultSize={{ width: 600, height: 400 }}>a</FloatingWindow>
+      </DashboardWindowManagerProvider>,
+    );
+    const alpha = screen.getByTestId("floating-window-alpha");
+    await waitFor(() => expect(Number.parseFloat(alpha.style.width)).toBe(600));
+    dragBy(screen.getByTestId("floating-window-drag-handle-alpha"), 150, 100);
+
+    rerender(
+      <DashboardWindowManagerProvider>
+        <Landmarks />
+        <FloatingWindow windowKey="alpha" title="Alpha" onClose={() => {}} defaultSize={{ width: 600, height: 400 }}>a</FloatingWindow>
+        <FloatingWindow windowKey="beta" title="Beta" onClose={() => {}} defaultSize={{ width: 600, height: 400 }}>b</FloatingWindow>
+      </DashboardWindowManagerProvider>,
+    );
+    const beta = screen.getByTestId("floating-window-beta");
+    await waitFor(() => expect(Number.parseFloat(beta.style.width)).toBe(600));
+    // Alpha left the pristine cohort when it was dragged, freeing slot 0 for Beta.
+    expectCentered(beta, { width: 600, height: 400 });
+  });
+
+  it("returns to the standard size and center after a real close and reopen", async () => {
+    const { rerender } = render(
+      <DashboardWindowManagerProvider>
+        <Landmarks />
+        <FloatingWindow windowKey="alpha" title="Alpha" onClose={() => {}} defaultSize={{ width: 600, height: 400 }}>a</FloatingWindow>
+      </DashboardWindowManagerProvider>,
+    );
+    await waitFor(() => expect(Number.parseFloat(screen.getByTestId("floating-window-alpha").style.width)).toBe(600));
+    dragBy(screen.getByTestId("floating-window-drag-handle-alpha"), 200, 140);
+
+    rerender(<DashboardWindowManagerProvider><Landmarks /></DashboardWindowManagerProvider>);
+    expect(screen.queryByTestId("floating-window-alpha")).not.toBeInTheDocument();
+
+    rerender(
+      <DashboardWindowManagerProvider>
+        <Landmarks />
+        <FloatingWindow windowKey="alpha" title="Alpha" onClose={() => {}} defaultSize={{ width: 600, height: 400 }}>a</FloatingWindow>
+      </DashboardWindowManagerProvider>,
+    );
+    const reopened = screen.getByTestId("floating-window-alpha");
+    await waitFor(() => expect(Number.parseFloat(reopened.style.width)).toBe(600));
+    expectCentered(reopened, { width: 600, height: 400 });
+  });
+
+  it("clamps the cascade instead of shrinking a window when the work area is tight", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 640 });
+    Object.defineProperty(window, "innerHeight", { configurable: true, writable: true, value: 420 });
+    render(
+      <DashboardWindowManagerProvider>
+        <Landmarks />
+        <FloatingWindow windowKey="alpha" title="Alpha" onClose={() => {}} defaultSize={{ width: 640, height: 320 }}>a</FloatingWindow>
+        <FloatingWindow windowKey="beta" title="Beta" onClose={() => {}} defaultSize={{ width: 640, height: 320 }}>b</FloatingWindow>
+      </DashboardWindowManagerProvider>,
+    );
+    const beta = screen.getByTestId("floating-window-beta");
+    await waitFor(() => expect(Number.parseFloat(beta.style.width)).toBe(640));
+    // Overlap is preferred over any size reduction.
+    expect(rectOf(beta).height).toBe(320);
+  });
+
+  it("does not mark a window as user-adjusted when the shell resizes it", async () => {
+    const { rerender } = render(
+      <DashboardWindowManagerProvider>
+        <Landmarks />
+        <FloatingWindow windowKey="alpha" title="Alpha" onClose={() => {}} defaultSize={{ width: 600, height: 400 }}>a</FloatingWindow>
+      </DashboardWindowManagerProvider>,
+    );
+    await waitFor(() => expect(Number.parseFloat(screen.getByTestId("floating-window-alpha").style.width)).toBe(600));
+
+    Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 1000 });
+    fireEvent(window, new Event("resize"));
+
+    rerender(
+      <DashboardWindowManagerProvider>
+        <Landmarks />
+        <FloatingWindow windowKey="alpha" title="Alpha" onClose={() => {}} defaultSize={{ width: 600, height: 400 }}>a</FloatingWindow>
+        <FloatingWindow windowKey="beta" title="Beta" onClose={() => {}} defaultSize={{ width: 600, height: 400 }}>b</FloatingWindow>
+      </DashboardWindowManagerProvider>,
+    );
+    const beta = screen.getByTestId("floating-window-beta");
+    await waitFor(() => expect(Number.parseFloat(beta.style.width)).toBe(600));
+    // Alpha is still pristine, so Beta must take the cascaded slot rather than the centre.
+    expect(rectOf(beta).left).toBe((window.innerWidth - 600) / 2 + FLOATING_WINDOW_CASCADE_STEP_PX);
+  });
+
+  it("gives two windows sharing one logical id two distinct slots", async () => {
+    render(
+      <DashboardWindowManagerProvider>
+        <Landmarks />
+        <FloatingWindow windowKey="same" title="One" onClose={() => {}} defaultSize={{ width: 600, height: 400 }}>a</FloatingWindow>
+        <FloatingWindow windowKey="same" title="Two" onClose={() => {}} defaultSize={{ width: 600, height: 400 }}>b</FloatingWindow>
+      </DashboardWindowManagerProvider>,
+    );
+    const panels = screen.getAllByTestId("floating-window-same");
+    await waitFor(() => expect(Number.parseFloat(panels[1].style.left)).not.toBe(Number.parseFloat(panels[0].style.left)));
+    expect(Number.parseFloat(panels[1].style.left) - Number.parseFloat(panels[0].style.left)).toBe(FLOATING_WINDOW_CASCADE_STEP_PX);
+  });
+});

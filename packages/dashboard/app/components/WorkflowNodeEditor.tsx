@@ -21,9 +21,7 @@ import {
   type Edge as FlowEdge,
   type EdgeChange,
 } from "@xyflow/react";
-import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import { DashboardWindowSurfaceRoot } from "../context/DashboardWindowManagerContext";
 import { Plus, Trash2, Save, MessageSquare, Terminal, Shield, GitMerge, Loader2, HelpCircle, PauseCircle, Split, Merge, Repeat, ToggleRight, ClipboardCheck, ListChecks, Code2, Bell, LayoutGrid, Workflow, Download, Upload, ChevronDown, ChevronRight, Library, Sparkles, Maximize2, Minimize2, DoorOpen } from "lucide-react";
 import type { WorkflowDefinition, WorkflowIrColumn, TraitViolation, WorkflowStepTemplate, WorkflowIrNodeKind } from "@fusion/core";
 import { getErrorMessage, analyzeWorkflowLifecycle } from "@fusion/core";
@@ -114,7 +112,6 @@ import { WorkflowSettingsPanel } from "./WorkflowSettingsPanel";
 import type { WorkflowFieldDefinition, WorkflowSettingDefinition } from "../api";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { FloatingWindow } from "./FloatingWindow";
-import { nextFloatingZ } from "./floatingWindowStack";
 import { MobileWorkflowGraphView } from "./MobileWorkflowGraphView";
 import {
   buildMobileWorkflowGraph,
@@ -604,13 +601,27 @@ function CreateWorkflowDialog({
   const firstYoursIndex = templates.findIndex((tmpl) => tmpl.id !== null && !tmpl.builtin);
 
   return (
-    <DashboardWindowSurfaceRoot logicalId="workflow-create" group="dialog" className="modal-overlay open wf-create-overlay" {...overlayProps}>
+    /* FNXC:FloatingWindowDialogHosts 2026-09-14-22:36: FN-394 hosts workflow creation in the shared window, like every other dashboard dialog. */
+    <FloatingWindow
+      windowKey="workflow-create"
+      modal
+      hideHeader
+      surfaceGroup="dialog"
+      title={t("workflows.createTitle", "New workflow")}
+      ariaLabel={t("workflows.createTitle", "New workflow")}
+      onClose={onClose}
+      dragHandleSelector=".wf-create-modal .modal-header"
+      className="floating-window--dialog floating-window--workflow-create"
+      overlayClassName="wf-create-overlay"
+      defaultSize={{ width: 720, height: 600 }}
+      minSize={{ width: 320, height: 280 }}
+      suspendGeometryPersistenceOnMobile
+      suspendGeometryPersistenceOnShortViewport
+      backdropMouseHandlers={overlayProps}
+    >
       <div
         className="modal wf-create-modal"
         data-testid="wf-create-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-label={t("workflows.createTitle", "New workflow")}
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => {
           if (e.key === "Escape") {
@@ -806,7 +817,7 @@ function CreateWorkflowDialog({
           </div>
         </form>
       </div>
-    </DashboardWindowSurfaceRoot>
+    </FloatingWindow>
   );
 }
 
@@ -2404,29 +2415,15 @@ function InnerEditor({
   const mobileNodeDetailStage = isMobileMode && selectedNodeHasInspector && !inspectorCollapsed;
   const mobileEdgeDetailStage = isMobileMode && selectedEdge !== null;
   const [isPromptExpanded, setIsPromptExpanded] = useState(false);
-  const [promptFullscreenZ, setPromptFullscreenZ] = useState<number | null>(null);
+  /* FNXC:FloatingWindowDialogHosts 2026-09-14-22:36: the shared window now claims the stack order for the expanded prompt editor, so no local z-index state remains. */
   const handleTogglePromptExpand = useCallback(() => {
-    if (isPromptExpanded) {
-      setIsPromptExpanded(false);
-      setPromptFullscreenZ(null);
-      return;
-    }
-    setPromptFullscreenZ(nextFloatingZ());
-    setIsPromptExpanded(true);
-  }, [isPromptExpanded]);
-  useEffect(() => {
-    if (!isPromptExpanded) {
-      if (promptFullscreenZ !== null) setPromptFullscreenZ(null);
-      return;
-    }
-    if (promptFullscreenZ === null) setPromptFullscreenZ(nextFloatingZ());
-  }, [isPromptExpanded, promptFullscreenZ]);
+    setIsPromptExpanded((expanded) => !expanded);
+  }, []);
   const handlePromptFullscreenKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
     if (!isPromptExpanded || e.key !== "Escape") return;
     e.preventDefault();
     e.stopPropagation();
     setIsPromptExpanded(false);
-    setPromptFullscreenZ(null);
   }, [isPromptExpanded]);
   const selectedNodePromptValue =
     selectedNode && (selectedNode.data.kind === "prompt" || selectedNode.data.kind === "gate")
@@ -2734,14 +2731,33 @@ function InnerEditor({
 
   /*
   FNXC:WorkflowEditor 2026-07-12-00:00:
-  The fullscreen prompt editor is portaled beside the FloatingWindow that launched it, so it must claim a fresh shared floating-stack z-index when opened. A static z-index of 10000 is below the workflow editor's 10100+ full-screen mobile FloatingWindow sheet and makes the mobile Expand button appear inert because the sheet covers the overlay.
+  The expanded prompt editor opens beside the FloatingWindow that launched it and must sit above it.
+
+  FNXC:FloatingWindowDialogHosts 2026-09-14-22:36:
+  FN-394 hosts it in the shared FloatingWindow, which owns the body portal and raises a newly opened window above
+  every other window regardless of type. The expanded editor therefore snaps and restores like any other dialog
+  instead of being a fixed full-screen overlay.
   */
   const promptFullscreenOverlay =
     isPromptExpanded && (selectedNode?.data.kind === "prompt" || selectedNode?.data.kind === "gate")
-      ? createPortal(
+      ? (
+          <FloatingWindow
+            windowKey="workflow-prompt-fullscreen"
+            modal
+            hideHeader
+            surfaceGroup="dialog"
+            title={t("workflowEditor.editingPrompt", "Editing Prompt")}
+            ariaLabel={t("workflowEditor.editingPrompt", "Editing Prompt")}
+            onClose={handleTogglePromptExpand}
+            dragHandleSelector=".wf-prompt-editor--fullscreen .wf-prompt-fullscreen-header"
+            className="floating-window--dialog floating-window--workflow-prompt"
+            defaultSize={{ width: 900, height: 660 }}
+            minSize={{ width: 320, height: 280 }}
+            suspendGeometryPersistenceOnMobile
+            suspendGeometryPersistenceOnShortViewport
+          >
           <div
             className="wf-prompt-editor wf-prompt-editor--fullscreen"
-            style={promptFullscreenZ !== null ? { zIndex: promptFullscreenZ } : undefined}
             onKeyDown={handlePromptFullscreenKeyDown}
           >
             <div className="wf-prompt-fullscreen-header">
@@ -2786,8 +2802,8 @@ function InnerEditor({
                 </button>
               </div>
             ) : null}
-          </div>,
-          document.body,
+          </div>
+          </FloatingWindow>
         )
       : null;
 
@@ -5657,7 +5673,6 @@ function InnerEditor({
           minSize={{ width: 640, height: 480 }}
           /* FNXC:ModalGeometryPersistence 2026-07-15-19:30: The workflow editor becomes a ≤768px full-screen sheet, so retain desktop geometry without replaying or writing it on the sheet. */
           suspendGeometryPersistenceOnMobile
-          persistGeometryKey="fusion:workflow-node-editor-floating-geometry"
         >
           {modalElement}
         </FloatingWindow>

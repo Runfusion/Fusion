@@ -14,7 +14,7 @@ structural: it protects the shared host and explicit presentation gates without 
 duplicated modal fixtures for every surface.
 */
 describe("complex modal presentation contract", () => {
-  it("keeps each floating complex modal on FloatingWindow with persisted geometry", () => {
+  it("keeps each floating complex modal on FloatingWindow without durable geometry", () => {
     const floatingSurfaces = [
       ["CreateRoomModal", "floating-window:create-room"],
       ["AgentDetailView", "floating-window:${floatingWindowKey}"],
@@ -23,11 +23,15 @@ describe("complex modal presentation contract", () => {
       ["RightDockExpandModal", "fusion:right-dock-expand-modal-geometry"],
     ] as const;
 
-    for (const [surface, geometryKey] of floatingSurfaces) {
+    /*
+    FNXC:FloatingWindowGeometry 2026-09-14-21:10:
+    FN-394 deleted durable window geometry: these surfaces must still be hosted by FloatingWindow, but
+    none of them may declare a geometry key, since every opening is standard-sized and centred.
+    */
+    for (const [surface] of floatingSurfaces) {
       const source = component(surface);
       expect(source, surface).toContain("<FloatingWindow");
-      expect(source, surface).toContain("persistGeometryKey");
-      expect(source, surface).toContain(geometryKey);
+      expect(source, surface).not.toContain("persistGeometryKey");
     }
   });
 
@@ -64,7 +68,8 @@ describe("complex modal presentation contract", () => {
     }
 
     expect(currentGuide).toContain("Supported presentation exceptions");
-    expect(currentGuide).toContain("floating-window:create-room");
+    // FN-394: durable geometry keys were deleted; the guide must state that no host declares one.
+    expect(currentGuide).toContain("declare **no** geometry key");
     expect(currentGuide).toContain("`closeOnOutsidePointerDown` defaults **off**");
     expect(currentGuide).toContain("TerminalModal");
     expect(currentGuide).toContain("AgentDetailView");

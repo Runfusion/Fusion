@@ -11,6 +11,7 @@ import { ViewLayoutContent, ViewLayoutFooter, ViewLayoutHeader } from "./ViewLay
 import { mergeTaskSnapshot } from "../hooks/useTasks";
 import { dismissAiMergeReviewFinding } from "../api/tasks/tasks-lifecycle";
 import { FloatingWindow } from "./FloatingWindow";
+import { currentFloatingZ } from "./floatingWindowStack";
 import { ExternalBlockNotice } from "./TaskCard";
 import { TaskRefineDialog } from "./TaskRefineDialog";
 import { TaskResetDialog } from "./TaskResetDialog";
@@ -4840,10 +4841,16 @@ export function TaskDetailContent({
     }
 
     return createPortal(
+      /*
+      FNXC:FloatingWindowDialogHosts 2026-09-14-22:36:
+      FN-394 merged the task and utility window bands into one stack, so a static menu z-index can now sit BELOW its
+      own window. This body-portaled menu therefore claims a live layer just above the current front window instead.
+      */
       <AlphaPortalSurface
         ref={activityViewMenuRef}
         className="activity-view-menu"
         style={{
+          zIndex: currentFloatingZ() + 1,
           top: activityViewMenuPosition.top,
           left: activityViewMenuPosition.left,
           minWidth: activityViewMenuPosition.minWidth,
@@ -7215,7 +7222,6 @@ export function TaskDetailModal({ onClose, alphaMobileDrawer = false, ...props }
       defaultSize={{ width: 800, height: 680 }}
       minSize={{ width: 480, height: 480 }}
       /* FNXC:ModalTouchGeometry 2026-07-26-19:05: Replace legacy size-only persistence with complete geometry and suspend it for phone and short sheet layouts. */
-      persistGeometryKey="floating-window:task-detail"
       suspendGeometryPersistenceOnMobile
       suspendGeometryPersistenceOnShortViewport
       /* FNXC:ModalTouchGeometry 2026-07-26-19:05: Keep outside dismissal preference-gated; unconditional pointer-down would regress the default-off contract. */

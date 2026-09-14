@@ -9,7 +9,7 @@ import { CustomModelDropdown } from "./CustomModelDropdown";
 import { Brain } from "lucide-react";
 import { LoadingSpinner } from "./LoadingSpinner";
 import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
-import { DashboardWindowSurfaceRoot } from "../context/DashboardWindowManagerContext";
+import { FloatingWindow } from "./FloatingWindow";
 
 const PRESET_OPTION_SEPARATOR = "──────────";
 
@@ -208,8 +208,25 @@ export function ModelSelectionModal({
   const hasMergerOverride = Boolean(mergerValue);
 
   return (
-    <DashboardWindowSurfaceRoot logicalId="model-selection" group="dialog" className="modal-overlay open" {...overlayDismiss} role="dialog" aria-modal="true" data-testid="model-selection-modal">
-      <div className="modal modal-lg">
+    /* FNXC:FloatingWindowDialogHosts 2026-09-14-22:36: FN-394 shares one window mechanic across every dashboard dialog: standard centred opening, edge/top snapping, and restore. */
+    <FloatingWindow
+      windowKey="model-selection"
+      modal
+      hideHeader
+      surfaceGroup="dialog"
+      title={t("modelSelection.title", "Select Models")}
+      ariaLabel={t("modelSelection.title", "Select Models")}
+      onClose={onClose}
+      dragHandleSelector=".model-selection-dialog .modal-header"
+      className="floating-window--dialog floating-window--model-selection"
+      defaultSize={{ width: 880, height: 640 }}
+      minSize={{ width: 360, height: 280 }}
+      suspendGeometryPersistenceOnMobile
+      suspendGeometryPersistenceOnShortViewport
+      testId="model-selection-modal"
+      backdropMouseHandlers={overlayDismiss}
+    >
+      <div className="modal modal-lg model-selection-dialog">
         {/* FNXC:StandardizedViewLayout 2026-09-13-21:49: Shared dialog chrome owns the icon, title, and canonical close. */}
         <ViewHeader
           className="modal-header"
@@ -392,6 +409,6 @@ export function ModelSelectionModal({
           )}
         </div>
       </div>
-    </DashboardWindowSurfaceRoot>
+    </FloatingWindow>
   );
 }

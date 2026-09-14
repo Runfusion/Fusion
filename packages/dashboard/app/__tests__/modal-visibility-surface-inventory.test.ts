@@ -7,11 +7,13 @@ const managedPortalPrimitives = [
   "alpha-ui/AlphaPrimitives.tsx",
 ] as const;
 
+/*
+FNXC:FloatingWindowDialogHosts 2026-09-14-22:36:
+FN-394 re-hosted the confirmation, provider sign-in, agent-creation, and workflow-creation dialogs in the shared
+FloatingWindow, which owns the single portal for them. They are therefore no longer their own portal roots.
+*/
 const modalPortalRoots = [
-  "ConfirmDialog.tsx",
-  "NewAgentDialog.tsx",
   "NewTaskModal.tsx",
-  "ProviderLoginDialog.tsx",
   "TaskDetailModal.tsx",
   "TerminalModal.tsx",
 ] as const;
@@ -56,7 +58,7 @@ const nonModalPortalExclusions = [
   "TaskCard.tsx",
   "TaskChatTab.tsx",
   "TaskPlannerChatTab.tsx",
-  "WorkflowNodeEditor.tsx",
+  /* FNXC:FloatingWindowDialogHosts 2026-09-14-22:36: FN-394 moved the workflow editor's last portal (the expanded prompt editor) into the shared window, so this file portals nothing itself. */
   "WorkflowOptionalStepsDropdown.tsx",
   "WorkflowSwitcher.tsx",
 ] as const;

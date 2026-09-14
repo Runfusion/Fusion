@@ -3524,7 +3524,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       className="floating-window--planning-mode"
       defaultSize={{ width: Math.min(window.innerWidth * 0.95, 1200), height: window.innerHeight * 0.85 }}
       minSize={{ width: 360, height: 480 }}
-      persistGeometryKey="floating-window:planning-mode"
       suspendGeometryPersistenceOnMobile
       suspendGeometryPersistenceOnShortViewport
       closeOnOutsidePointerDown

@@ -6,7 +6,7 @@ import { ViewHeader } from "./ViewHeader";
 import { ViewActionButton } from "./ViewActionButton";
 import { copyTextToClipboard } from "../utils/copyToClipboard";
 import { withProjectId } from "../api/client/health";
-import { DashboardWindowSurfaceRoot } from "../context/DashboardWindowManagerContext";
+import { FloatingWindow } from "./FloatingWindow";
 
 type ToastKind = "info" | "success" | "error";
 type SecretScope = "project" | "global";
@@ -471,8 +471,23 @@ export const SecretsView = ({ addToast, projectId }: SecretsViewProps) => {
       </article>
 
       {syncModalOpen ? (
-        <DashboardWindowSurfaceRoot logicalId="secret-sync-passphrase" group="dialog" className="modal-overlay open" role="presentation">
-          <div className="modal" role="dialog" aria-modal="true" aria-label={syncPassphraseConfigured ? t("secrets.rotateSyncPassphraseModalTitle", "Rotate sync passphrase") : t("secrets.setSyncPassphraseModalTitle", "Set sync passphrase")}>
+        /* FNXC:FloatingWindowDialogHosts 2026-09-14-22:36: FN-394 hosts the secret dialogs in the shared window; their inputs keep their DOM identity across a move, a snap, and a restore. */
+        <FloatingWindow
+          windowKey="secret-sync-passphrase"
+          modal
+          hideHeader
+          surfaceGroup="dialog"
+          title={syncPassphraseConfigured ? t("secrets.rotateSyncPassphraseModalTitle", "Rotate sync passphrase") : t("secrets.setSyncPassphraseModalTitle", "Set sync passphrase")}
+          ariaLabel={syncPassphraseConfigured ? t("secrets.rotateSyncPassphraseModalTitle", "Rotate sync passphrase") : t("secrets.setSyncPassphraseModalTitle", "Set sync passphrase")}
+          onClose={closeSyncModal}
+          dragHandleSelector=".secrets-sync-modal .modal-header"
+          className="floating-window--dialog floating-window--secret-sync-passphrase"
+          defaultSize={{ width: 560, height: 420 }}
+          minSize={{ width: 320, height: 240 }}
+          suspendGeometryPersistenceOnMobile
+          suspendGeometryPersistenceOnShortViewport
+        >
+          <div className="modal secrets-sync-modal">
             {/* FNXC:StandardizedViewLayout 2026-09-13-21:49: Nested secret dialogs share the canonical header. */}
             <ViewHeader
               className="modal-header"
@@ -488,12 +503,26 @@ export const SecretsView = ({ addToast, projectId }: SecretsViewProps) => {
             </div>
             <div className="modal-actions"><div className="modal-actions-right"><button className="btn" onClick={closeSyncModal}>{t("secrets.cancelBtn", "Cancel")}</button><button className="btn btn-primary" onClick={() => void submitSyncPassphrase()} disabled={!syncPassphraseMatches || syncSaving}>{syncPassphraseConfigured ? t("secrets.rotateSyncPassphrase", "Rotate") : t("secrets.setPassphrase", "Set passphrase")}</button></div></div>
           </div>
-        </DashboardWindowSurfaceRoot>
+        </FloatingWindow>
       ) : null}
 
       {showModal ? (
-        <DashboardWindowSurfaceRoot logicalId={editing ? "edit-secret" : "add-secret"} group="dialog" className="modal-overlay open" role="presentation">
-          <div className="modal" role="dialog" aria-modal="true" aria-label={editing ? t("secrets.editSecretModalTitle", "Edit secret") : t("secrets.addSecretModalTitle", "Add secret")}>
+        <FloatingWindow
+          windowKey={editing ? "edit-secret" : "add-secret"}
+          modal
+          hideHeader
+          surfaceGroup="dialog"
+          title={editing ? t("secrets.editSecretModalTitle", "Edit secret") : t("secrets.addSecretModalTitle", "Add secret")}
+          ariaLabel={editing ? t("secrets.editSecretModalTitle", "Edit secret") : t("secrets.addSecretModalTitle", "Add secret")}
+          onClose={() => setShowModal(false)}
+          dragHandleSelector=".secrets-edit-modal .modal-header"
+          className="floating-window--dialog floating-window--secret-edit"
+          defaultSize={{ width: 640, height: 600 }}
+          minSize={{ width: 320, height: 280 }}
+          suspendGeometryPersistenceOnMobile
+          suspendGeometryPersistenceOnShortViewport
+        >
+          <div className="modal secrets-edit-modal">
             <ViewHeader
               className="modal-header"
               headingLevel={3}
@@ -513,7 +542,7 @@ export const SecretsView = ({ addToast, projectId }: SecretsViewProps) => {
             </div>
             <div className="modal-actions"><div className="modal-actions-right"><button className="btn" onClick={() => setShowModal(false)}>{t("secrets.cancelBtn", "Cancel")}</button><button className="btn btn-primary" onClick={() => void submit()}>{editing ? t("secrets.saveBtn", "Save") : t("secrets.createBtn", "Create")}</button></div></div>
           </div>
-        </DashboardWindowSurfaceRoot>
+        </FloatingWindow>
       ) : null}
     </section>
   );
