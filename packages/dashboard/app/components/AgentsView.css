@@ -234,9 +234,15 @@ The former scoped overrides (.agents-view .view-header padding/border/background
   align-self: flex-start;
 }
 
+/*
+FNXC:StandardizedViewSidebar 2026-09-14-03:12:
+The rail is one ViewSidebar element that owns its own width and separator, so the host is a plain flex row. The former
+three-track grid ([rail][handle][detail]) outlived the standalone handle FN-379 deleted: with only two children left,
+the detail pane landed in the token-thin middle track and rendered crushed while the real content column stayed empty.
+*/
 .agents-split-layout {
-  display: grid;
-  grid-template-columns: minmax(calc(var(--space-xl) * 11 + var(--space-xs)), calc(var(--space-xl) * 13 + var(--space-lg))) var(--space-sm) minmax(0, 1fr);
+  display: flex;
+  flex-direction: row;
   gap: 0;
   flex: 1;
   min-height: 0;
@@ -250,42 +256,14 @@ The former scoped overrides (.agents-view .view-header padding/border/background
   flex-direction: column;
 }
 
-.agents-split-resize-handle {
-  position: relative;
-  width: var(--space-sm);
-  min-width: var(--space-sm);
-  cursor: col-resize;
-  background: transparent;
-  touch-action: none;
-  transition: background var(--transition-fast);
-}
-
 /*
-FNXC:AgentsView 2026-06-20-00:00:
-The resize affordance must match MissionManager's accessible split-pane handle while preserving a token-only, no-mobile-shell layout.
-The base grid keeps a token-sized handle column as the no-JS fallback, while the React inline grid width owns desktop/tablet persistence.
+FNXC:AgentsView 2026-09-14-03:12:
+The bespoke .agents-split-resize-handle element and its grid column are gone: ViewSidebar owns the accessible resize
+separator for every destination. Its orphaned rules are removed with it rather than left styling nothing.
 */
-.agents-split-resize-handle::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 50%;
-  width: var(--space-xs);
-  transform: translateX(-50%);
-}
-
-.agents-split-resize-handle:hover::before,
-.agents-split-resize-handle:active::before {
-  background: color-mix(in srgb, var(--todo) 30%, transparent);
-}
-
-.agents-split-resize-handle:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring-strong);
-}
-
 .agents-split-detail {
+  flex: 1;
+  min-inline-size: 0;
   min-height: 0;
   overflow: hidden;
   display: flex;
@@ -1624,10 +1602,6 @@ AgentsView uses the measured SVG overlay as the single connector system so paren
   }
 
   .agents-split-sidebar--hidden-mobile {
-    display: none;
-  }
-
-  .agents-split-resize-handle {
     display: none;
   }
 

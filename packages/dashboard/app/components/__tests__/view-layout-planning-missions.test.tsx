@@ -104,6 +104,20 @@ describe("standardized Planning and Missions layouts", () => {
     expect(screen.getByTestId("view-layout-content").closest(".view-layout")).toHaveAttribute("data-mobile-pane", "list");
   });
 
+  it("opens desktop Planning on the session rail with no interview panes", async () => {
+    // Nothing is selected on entry, so the content area shows the single intake pane:
+    // no question/plan workspace is mounted beside the rail.
+    savePlanningActiveSession("session-implicit", "project-1");
+    const { container } = renderPlanning();
+    await waitFor(() => expect(api.fetchAiSessions).toHaveBeenCalled());
+
+    expect(container.querySelector("[data-testid='planning-sidebar']")).toBeTruthy();
+    expect(container.querySelector("[data-testid='planning-workspace']")).toBeNull();
+    expect(container.querySelector("[data-testid='planning-question-pane']")).toBeNull();
+    expect(container.querySelector("[data-testid='planning-plan-pane']")).toBeNull();
+    expect(container.querySelector(".planning-initial")).toBeTruthy();
+  });
+
   it("opens phone Planning detail for an explicit resume handoff and uses the shared back control", async () => {
     vi.mocked(viewport.useViewportMode).mockReturnValue("mobile");
     vi.mocked(api.fetchAiSession).mockResolvedValue({
