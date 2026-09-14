@@ -48,7 +48,8 @@ const INVENTORY: InventoryRow[] = [
   { destination: "Memory", producer: "components/MemoryView.tsx", scenario: "components/__tests__/MemoryView.test.tsx", requires: ["ViewLayout", "ViewHeader"] },
   { destination: "Patchnode", producer: "components/PatchnodeView.tsx", scenario: "components/__tests__/PatchnodeView.test.tsx", requires: ["ViewLayout", "ViewHeader"] },
   { destination: "Projects", producer: "components/ProjectOverview.tsx", scenario: "components/__tests__/view-layout-specialized.test.tsx", requires: ["ViewHeader", "ViewActionButton"] },
-  { destination: "List", producer: "components/ListView.tsx", scenario: "components/__tests__/view-layout-specialized.test.tsx", requires: ["ViewHeader", "ViewSidebar", "ViewActionButton"] },
+  /* FN-382: List renders its rows directly — no collection rail — so ViewSidebar is not part of its contract. */
+  { destination: "List", producer: "components/ListView.tsx", scenario: "components/__tests__/view-layout-specialized.test.tsx", requires: ["ViewHeader", "ViewActionButton"] },
   { destination: "Dashboard (Command Center)", producer: "components/command-center/CommandCenter.tsx", scenario: "components/command-center/__tests__/CommandCenter.test.tsx", requires: ["ViewLayout", "ViewHeader", "ViewSidebar"] },
   { destination: "Ideation", producer: "components/command-center/IdeationPanel.tsx", scenario: "components/command-center/__tests__/IdeationPanel.test.tsx", requires: ["ViewLayout", "ViewHeader", "ViewSidebar", "ViewActionButton"] },
   { destination: "Nodes", producer: "components/NodesView.tsx", scenario: "components/__tests__/NodesView.test.tsx", requires: ["ViewLayout", "ViewHeader", "ViewSidebar", "ViewActionButton"] },

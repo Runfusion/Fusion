@@ -780,6 +780,12 @@ describe("ListView unmapped-workflow self-heal", () => {
   });
 });
 
+/*
+List renders its rows directly: the collection rail beside an embedded task-detail pane is a deliberately removed
+affordance, and the cases that drove that shell — split chrome, sidebar resize and persistence, embedded selection
+and its local patches, width-based detail routing — are deleted with it. Opening a row now always hands the task to
+the host's own detail layer, which each host's own suite covers.
+*/
 describe("ListView", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -1178,28 +1184,6 @@ describe("ListView", () => {
     expect(screen.getByText("FN-002")).toBeDefined();
   });
 
-  it("updates selectedTaskId on desktop row click and mounts embedded detail", async () => {
-    const viewportSpy = mockDesktopViewport();
-    const tasks = [createMockTask({ id: "FN-001", title: "Test Task" })];
-    const mockOnOpenDetail = vi.fn();
-    const onPopOut = vi.fn();
-
-    renderListView({ tasks, onOpenDetail: mockOnOpenDetail, onPopOut });
-
-    const row = screen.getByText("FN-001").closest("tr");
-    fireEvent.click(row!);
-
-    expect(mockOnOpenDetail).not.toHaveBeenCalled();
-    expect(onPopOut).not.toHaveBeenCalled();
-    expect(localStorage.getItem(scopedStorageKey("kb-dashboard-list-selected-task"))).toBe("FN-001");
-    expect(row?.className).toContain("list-row--selected");
-    await waitFor(() => {
-      expect(screen.getByTestId("list-split-detail-content")).toBeInTheDocument();
-      expect(screen.getByTestId("task-detail-content")).toHaveTextContent("FN-001");
-    });
-    expect(fetchTaskDetail).not.toHaveBeenCalled();
-    viewportSpy.mockRestore();
-  });
 
   it("routes desktop List row clicks and keyboard opens to the task popup when enabled", () => {
     const viewportSpy = mockDesktopViewport();
@@ -1226,23 +1210,6 @@ describe("ListView", () => {
     viewportSpy.mockRestore();
   });
 
-  it("falls back to desktop docked detail when popup routing is enabled without onPopOut", async () => {
-    const viewportSpy = mockDesktopViewport();
-    const tasks = [createMockTask({ id: "FN-001", title: "Test Task" })];
-    const onOpenDetail = vi.fn();
-
-    renderListView({ tasks, onOpenDetail, openMobileTasksInPopup: true });
-
-    const row = screen.getByText("FN-001").closest("tr") as HTMLElement;
-    fireEvent.click(row);
-
-    expect(onOpenDetail).not.toHaveBeenCalled();
-    expect(localStorage.getItem(scopedStorageKey("kb-dashboard-list-selected-task"))).toBe("FN-001");
-    await waitFor(() => {
-      expect(screen.getByTestId("list-split-detail-content")).toBeInTheDocument();
-    });
-    viewportSpy.mockRestore();
-  });
 
   it("calls onOpenDetail on mobile row click", () => {
     const viewportSpy = mockMobileViewport();
@@ -2392,66 +2359,7 @@ describe("ListView", () => {
     }
   });
 
-  it("keeps embedded selection visible when filters hide the selected row", async () => {
-    const viewportSpy = mockDesktopViewport();
-    const tasks = [
-      createMockTask({ id: "FN-001", title: "Alpha Task" }),
-      createMockTask({ id: "FN-002", title: "Beta Task" }),
-    ];
 
-    const { rerender } = renderListView({ tasks, searchQuery: "Alpha" });
-
-    fireEvent.click(screen.getByText("FN-001").closest("tr")!);
-
-    await waitFor(() => {
-      expect(screen.getByTestId("list-split-detail-content")).toBeInTheDocument();
-    });
-
-    rerender(
-      <ListView
-        tasks={tasks}
-        onMoveTask={vi.fn(async () => createMockTask())}
-        onRetryTask={vi.fn(async () => createMockTask())}
-        onDeleteTask={vi.fn(async () => createMockTask())}
-        onMergeTask={vi.fn(async () => ({ merged: false }))}
-        onResetTask={vi.fn(async () => createMockTask())}
-        onDuplicateTask={vi.fn(async () => createMockTask())}
-        onOpenDetail={vi.fn()}
-        addToast={mockAddToast}
-        projectId={TEST_PROJECT_ID}
-        searchQuery="Beta"
-      />,
-    );
-
-    expect(document.querySelector('tr[data-id="FN-001"]')).toBeNull();
-    expect(screen.getByTestId("list-split-detail-content")).toBeInTheDocument();
-    viewportSpy.mockRestore();
-  });
-
-  it("keeps dependency navigation inline in embedded detail on desktop", async () => {
-    const viewportSpy = mockDesktopViewport();
-    const tasks = [createMockTask({ id: "FN-001", title: "Parent Task", dependencies: ["FN-002"] })];
-    const mockOnOpenDetail = vi.fn();
-
-    renderListView({ tasks, onOpenDetail: mockOnOpenDetail });
-
-    fireEvent.click(screen.getByText("FN-001").closest("tr")!);
-
-    await waitFor(() => {
-      expect(screen.getByRole("link", { name: /FN-002/ })).toBeInTheDocument();
-    });
-
-    fireEvent.click(screen.getByRole("link", { name: /FN-002/ }));
-
-    await waitFor(() => {
-      expect(localStorage.getItem(scopedStorageKey("kb-dashboard-list-selected-task"))).toBe("FN-002");
-      expect(screen.getByTestId("task-detail-content")).toHaveTextContent("FN-002");
-    });
-
-    expect(fetchTaskDetail).not.toHaveBeenCalled();
-    expect(mockOnOpenDetail).not.toHaveBeenCalled();
-    viewportSpy.mockRestore();
-  });
 
   it("keeps selectedTaskIds and selectedTaskId as separate persisted state", async () => {
     const viewportSpy = mockDesktopViewport();
@@ -2484,162 +2392,12 @@ describe("ListView", () => {
     viewportSpy.mockRestore();
   });
 
-  it("renders desktop split-pane shell with resize handle and empty detail state", () => {
-    const viewportSpy = mockDesktopViewport();
-    const tasks = [createMockTask({ id: "FN-001", title: "Task" })];
 
-    renderListView({ tasks });
 
-    expect(screen.getByTestId("list-split-layout")).toBeInTheDocument();
-    expect(screen.getByTestId("list-split-sidebar")).toBeInTheDocument();
-    expect(screen.getByTestId("list-split-resize-handle")).toBeInTheDocument();
-    expect(screen.getByTestId("list-split-detail")).toBeInTheDocument();
-    expect(screen.getByText("Select a task to view details")).toBeInTheDocument();
-    viewportSpy.mockRestore();
-  });
 
-  it("applies id-less local split-detail patches and ignores foreign ids", async () => {
-    const viewportSpy = mockDesktopViewport();
-    const tasks = [createMockTask({ id: "FN-001", title: "Original split title" })];
-    renderListView({ tasks });
 
-    fireEvent.click(screen.getByText("FN-001").closest("tr")!);
-    expect(await screen.findByTestId("task-detail-content")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Patch split without id" }));
-    expect(screen.getByTestId("split-detail-title")).toHaveTextContent("renamed");
 
-    fireEvent.click(screen.getByRole("button", { name: "Patch split foreign id" }));
-    expect(screen.getByTestId("split-detail-title")).toHaveTextContent("renamed");
-    viewportSpy.mockRestore();
-  });
-
-  it("clears the desktop split-detail shell when embedded detail requests close", async () => {
-    const viewportSpy = mockDesktopViewport();
-    const tasks = [createMockTask({ id: "FN-001", title: "Task" })];
-
-    renderListView({ tasks });
-
-    fireEvent.click(screen.getByText("FN-001").closest("tr")!);
-    expect(await screen.findByTestId("task-detail-content")).toHaveTextContent("FN-001");
-
-    fireEvent.click(screen.getByRole("button", { name: "Close detail" }));
-
-    await waitFor(() => {
-      expect(screen.queryByTestId("task-detail-content")).toBeNull();
-      expect(screen.getByText("Select a task to view details")).toBeInTheDocument();
-      expect(localStorage.getItem(scopedStorageKey("kb-dashboard-list-selected-task"))).toBeNull();
-    });
-    viewportSpy.mockRestore();
-  });
-
-  it("reloads persisted sidebar width when projectId changes", () => {
-    const viewportSpy = mockDesktopViewport();
-    const clientWidthSpy = vi.spyOn(window.HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
-    localStorage.setItem(scopedKey("kb-dashboard-view-sidebar-width", "project-a"), "300");
-    localStorage.setItem(scopedKey("kb-dashboard-view-sidebar-width", "project-b"), "460");
-    const tasks = [createMockTask({ id: "FN-001", title: "Task" })];
-
-    const { rerender } = render(
-      <ViewLayoutProvider projectId="project-a">
-        <ListView
-          tasks={tasks}
-          onMoveTask={vi.fn()}
-          onOpenDetail={vi.fn()}
-          addToast={mockAddToast}
-          projectId="project-a"
-        />
-      </ViewLayoutProvider>,
-    );
-
-    expect(screen.getByTestId("list-split-sidebar").closest(".view-sidebar")).toHaveStyle({ "--view-sidebar-current-width": "300px" });
-
-    rerender(
-      <ViewLayoutProvider projectId="project-b">
-        <ListView
-          tasks={tasks}
-          onMoveTask={vi.fn()}
-          onOpenDetail={vi.fn()}
-          addToast={mockAddToast}
-          projectId="project-b"
-        />
-      </ViewLayoutProvider>,
-    );
-
-    expect(screen.getByTestId("list-split-sidebar").closest(".view-sidebar")).toHaveStyle({ "--view-sidebar-current-width": "460px" });
-    clientWidthSpy.mockRestore();
-    viewportSpy.mockRestore();
-  });
-
-  it("supports keyboard resizing on the desktop split-pane handle", async () => {
-    const viewportSpy = mockDesktopViewport();
-    const clientWidthSpy = vi.spyOn(window.HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
-    // The shared preference clamps every destination to its canonical minimum.
-    localStorage.setItem(scopedStorageKey("kb-dashboard-view-sidebar-width"), "40");
-    const tasks = [createMockTask({ id: "FN-001", title: "Task" })];
-
-    renderListView({ tasks });
-    await waitFor(() => expect(screen.getByTestId("list-split-sidebar").closest(".view-sidebar")).toHaveStyle({ "--view-sidebar-current-width": "220px" }));
-
-    const handle = screen.getByTestId("list-split-resize-handle");
-    const startWidth = Number(handle.getAttribute("aria-valuenow"));
-
-    expect(handle).toHaveAttribute("tabindex", "0");
-    expect(handle).toHaveAttribute("aria-valuemin", "220");
-    expect(handle).toHaveAttribute("aria-valuemax", "560");
-
-    fireEvent.keyDown(handle, { key: "ArrowRight" });
-    expect(Number(handle.getAttribute("aria-valuenow"))).toBeGreaterThan(startWidth);
-    fireEvent.keyDown(handle, { key: "Home" });
-    expect(handle).toHaveAttribute("aria-valuenow", "220");
-    expect(screen.getByTestId("list-split-sidebar").closest(".view-sidebar")).toHaveStyle({ "--view-sidebar-current-width": "220px" });
-    clientWidthSpy.mockRestore();
-    viewportSpy.mockRestore();
-  });
-
-  it("resizes the desktop split sidebar by dragging the handle (pointer)", async () => {
-    // FNXC:ListView 2026-06-22-18:00: Regression guard — dragging the resize handle must change the
-    // sidebar width live and not collapse to the min when the container measures non-zero.
-    const viewportSpy = mockDesktopViewport();
-    const rectSpy = vi
-      .spyOn(window.HTMLElement.prototype, "getBoundingClientRect")
-      .mockReturnValue({ left: 0, width: 1000, top: 0, right: 1000, bottom: 300, height: 300, x: 0, y: 0, toJSON() {} } as DOMRect);
-    const cwSpy = vi.spyOn(window.HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
-    localStorage.setItem(scopedStorageKey("kb-dashboard-view-sidebar-width"), "300");
-    const tasks = [createMockTask({ id: "FN-001", title: "Task" })];
-
-    renderListView({ tasks });
-    await waitFor(() => expect(screen.getByTestId("list-split-sidebar").closest(".view-sidebar")).toHaveStyle({ "--view-sidebar-current-width": "300px" }));
-
-    const handle = screen.getByTestId("list-split-resize-handle");
-    // Narrow the pane.
-    fireEvent.pointerDown(handle, { clientX: 300, pointerId: 1 });
-    fireEvent.pointerMove(document, { clientX: 250, pointerId: 1 });
-    await waitFor(() => expect(screen.getByTestId("list-split-sidebar").closest(".view-sidebar")).toHaveStyle({ "--view-sidebar-current-width": "250px" }));
-    // Widen the pane.
-    fireEvent.pointerMove(document, { clientX: 420, pointerId: 1 });
-    await waitFor(() => expect(screen.getByTestId("list-split-sidebar").closest(".view-sidebar")).toHaveStyle({ "--view-sidebar-current-width": "420px" }));
-    fireEvent.pointerUp(document, { pointerId: 1 });
-
-    rectSpy.mockRestore();
-    cwSpy.mockRestore();
-    viewportSpy.mockRestore();
-  });
-
-  it("does not collapse the split sidebar to the min when the container width is unmeasurable", async () => {
-    // The canonical preference is independent from a temporarily unmeasurable List host.
-    const viewportSpy = mockDesktopViewport();
-    const cwSpy = vi.spyOn(window.HTMLElement.prototype, "clientWidth", "get").mockReturnValue(0);
-    localStorage.setItem(scopedStorageKey("kb-dashboard-view-sidebar-width"), "300");
-    const tasks = [createMockTask({ id: "FN-001", title: "Task" })];
-
-    renderListView({ tasks });
-    await new Promise((resolve) => setTimeout(resolve, 60));
-    expect(screen.getByTestId("list-split-sidebar").closest(".view-sidebar")).toHaveStyle({ "--view-sidebar-current-width": "300px" });
-
-    cwSpy.mockRestore();
-    viewportSpy.mockRestore();
-  });
 
   it("does not render split-pane structure on mobile", () => {
     const viewportSpy = mockMobileViewport();
@@ -2653,42 +2411,6 @@ describe("ListView", () => {
     viewportSpy.mockRestore();
   });
 
-  it("uses measured List width rather than tablet viewport classification for detail routing", async () => {
-    const viewportSpy = mockTabletViewport();
-    const resizeObserver = installControlledResizeObserver();
-    const task = createMockTask({ id: "FN-8754", title: "Measured tablet task" });
-    const onOpenDetail = vi.fn();
-
-    try {
-      renderListView({ tasks: [task], onOpenDetail });
-
-      // The constrained control remains the existing card/modal route.
-      await act(async () => resizeObserver.resize(LIST_MINIMUM_SPLIT_LAYOUT_WIDTH - 1));
-      const constrainedCard = document.querySelector('.list-card[data-id="FN-8754"]') as HTMLElement;
-      fireEvent.keyDown(constrainedCard, { key: "Enter" });
-      expect(onOpenDetail).toHaveBeenCalledWith(task, { origin: "list-mobile" });
-      expect(screen.queryByTestId("list-split-detail")).toBeNull();
-
-      onOpenDetail.mockClear();
-      // At the named usable boundary, the same tablet surface owns the existing split detail.
-      await act(async () => resizeObserver.resize(LIST_MINIMUM_SPLIT_LAYOUT_WIDTH));
-      const boundaryRow = document.querySelector('tr[data-id="FN-8754"]') as HTMLElement;
-      fireEvent.keyDown(boundaryRow, { key: " " });
-      expect(onOpenDetail).not.toHaveBeenCalled();
-      expect(screen.getAllByTestId("list-split-detail-content")).toHaveLength(1);
-      expect(screen.getByTestId("task-detail-content")).toHaveTextContent("FN-8754");
-      expect(screen.getByTestId("list-split-resize-handle")).toHaveAttribute("role", "separator");
-
-      // Above the boundary pointer opens use that same single embedded host.
-      await act(async () => resizeObserver.resize(LIST_MINIMUM_SPLIT_LAYOUT_WIDTH + 1));
-      fireEvent.click(document.querySelector('tr[data-id="FN-8754"]') as HTMLElement);
-      expect(onOpenDetail).not.toHaveBeenCalled();
-      expect(screen.getAllByTestId("list-split-detail-content")).toHaveLength(1);
-    } finally {
-      resizeObserver.restore();
-      viewportSpy.mockRestore();
-    }
-  });
 
   it("routes a constrained desktop List surface through the modal without split chrome", async () => {
     const viewportSpy = mockDesktopViewport();
@@ -2751,33 +2473,6 @@ describe("ListView", () => {
     }
   });
 
-  it("removes and restores split chrome across List width transitions without opening a modal", async () => {
-    const viewportSpy = mockTabletViewport();
-    const resizeObserver = installControlledResizeObserver();
-    const task = createMockTask({ id: "FN-8754-resize", title: "Resize task" });
-    const onOpenDetail = vi.fn();
-
-    try {
-      renderListView({ tasks: [task], onOpenDetail });
-      await act(async () => resizeObserver.resize(LIST_MINIMUM_SPLIT_LAYOUT_WIDTH + 1));
-      fireEvent.click(document.querySelector('tr[data-id="FN-8754-resize"]') as HTMLElement);
-      expect(screen.getByTestId("task-detail-content")).toHaveTextContent("FN-8754-resize");
-
-      await act(async () => resizeObserver.resize(LIST_MINIMUM_SPLIT_LAYOUT_WIDTH - 1));
-      expect(screen.queryByTestId("list-split-detail")).toBeNull();
-      expect(screen.queryByTestId("list-split-resize-handle")).toBeNull();
-      expect(onOpenDetail).not.toHaveBeenCalled();
-      expect(localStorage.getItem(scopedStorageKey("kb-dashboard-list-selected-task"))).toBe("FN-8754-resize");
-
-      await act(async () => resizeObserver.resize(LIST_MINIMUM_SPLIT_LAYOUT_WIDTH + 1));
-      expect(screen.getAllByTestId("list-split-detail-content")).toHaveLength(1);
-      expect(screen.getByTestId("task-detail-content")).toHaveTextContent("FN-8754-resize");
-      expect(onOpenDetail).not.toHaveBeenCalled();
-    } finally {
-      resizeObserver.restore();
-      viewportSpy.mockRestore();
-    }
-  });
 
   it("renders tablet List view as a single full-width pane without split chrome", () => {
     const viewportSpy = mockTabletViewport();

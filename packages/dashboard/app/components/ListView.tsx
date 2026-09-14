@@ -8,8 +8,7 @@ import { DEFAULT_COLUMN, THINKING_LEVELS, getErrorMessage, isColumn, sortTasksFo
 import { resolveEffectiveAutoMerge } from "../../../core/src/merge/task-merge";
 import { useColumnLabel } from "../i18n/labels";
 import { isCompleteColumnRole, isIntakeColumnRole, isPreImplementationColumnRole, isReviewColumnRole, isWipColumnRole } from "../utils/columnRoles";
-import { batchUpdateTaskModels, fetchNodes, fetchTaskDetail, refreshPrStatus, updateTask } from "../api";
-import { ListSplitTaskDetailHost } from "./TaskDetailHostBoundaries";
+import { batchUpdateTaskModels, fetchNodes, refreshPrStatus, updateTask } from "../api";
 import { ExternalBlockNotice, PlanApprovalNotice } from "./TaskCard";
 import { PrCreateModal } from "./PrCreateModal";
 import { TaskResetDialog } from "./TaskResetDialog";
@@ -22,7 +21,6 @@ import type { ToastType } from "../hooks/useToast";
 import { useViewportMode } from "../hooks/useViewportMode";
 import { useVirtualizedList } from "../hooks/useVirtualizedList";
 import { useAutoPaginationSentinel } from "../hooks/useAutoPaginationSentinel";
-import { applyLocalTaskPatch, mergeTaskSnapshot } from "../hooks/useTasks";
 import { getScopedItem, removeScopedItem, setScopedItem } from "../utils/projectStorage";
 import { ALL_WORKFLOWS_BOARD_VIEW_ID } from "../utils/boardWorkflowSelection";
 import {
@@ -37,14 +35,13 @@ import { isReviewBudgetExhaustedApproval } from "../utils/reviewBudgetApproval";
 import { useConfirm } from "../hooks/useConfirm";
 import { extractDependencyDeleteConflict, extractLineageDeleteConflict } from "../utils/taskDelete";
 import { WorkflowSwitcher } from "./WorkflowSwitcher";
-import { ViewSidebar } from "./ViewSidebar";
 import { ViewActionButton } from "./ViewActionButton";
 import { ViewHeader } from "./ViewHeader";
 import { computeWorkflowStatusCounts } from "./workflowStatusCounts";
 import { useBoardWorkflows } from "../hooks/useBoardWorkflows";
 import { useUnmappedWorkflowRefetch } from "../hooks/useUnmappedWorkflowRefetch";
 import { TaskContextMenu, buildTaskActionMenuModel, getTaskPrAutomationLabel, type TaskContextMenuColumnMetadata, type TaskMenuItemDescriptor } from "./TaskContextMenu";
-import type { DetailTaskOpenOptions, DetailTaskTab } from "../hooks/useModalManager";
+import type { DetailTaskOpenOptions } from "../hooks/useModalManager";
 import { isTaskReverted } from "../utils/taskRevert";
 import { getTaskTitleDisplay } from "../utils/taskTitleDisplay";
 import { runDuplicateTaskAction } from "../utils/duplicateTaskAction";
@@ -234,7 +231,6 @@ interface ListViewProps {
   onResetTask?: (id: string, options?: { description?: string }) => Promise<Task>;
   onDuplicateTask?: (id: string, options?: { workflowId?: string }) => Promise<Task>;
   /** App-owned ingestion seam for successful split-detail refinements. */
-  onRefinementCreated?: (task: Task) => void;
   onOpenDetail: (task: Task | TaskDetail, options?: DetailTaskOpenOptions) => void;
   /*
   FNXC:FloatingWindow 2026-06-22-20:45:
@@ -279,9 +275,7 @@ interface ListViewProps {
   onRetryCurrentTasks?: () => Promise<void>;
   /** Timestamp (ms) when task data was last confirmed fresh from the server. */
   lastFetchTimeMs?: number;
-  prAuthAvailable?: boolean;
   autoMerge?: boolean;
-  taskDetailChatFirst?: boolean;
   /** Project merge strategy so list context menus match Task Detail before a PR exists. */
   mergeStrategy?: string;
   onOpenWorkflowEditor?: (workflowId?: string) => void;
@@ -366,7 +360,6 @@ export function ListView({
   onMergeTask,
   onResetTask,
   onDuplicateTask,
-  onRefinementCreated,
   onPopOut,
   openMobileTasksInPopup = false,
   onOpenDetail,
@@ -390,9 +383,7 @@ export function ListView({
   onLoadMoreCurrentTasks,
   onRetryCurrentTasks,
   lastFetchTimeMs,
-  prAuthAvailable,
   autoMerge,
-  taskDetailChatFirst = false,
   mergeStrategy = "direct",
   onOpenWorkflowEditor,
   onCreateWorkflow,
@@ -505,11 +496,6 @@ export function ListView({
   const [bulkEditEnabled, setBulkEditEnabled] = useState(false);
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(() => readSelectedTaskIds(projectId));
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(() => readSelectedTaskId(projectId));
-  const [selectedTaskSnapshot, setSelectedTaskSnapshot] = useState<Task | TaskDetail | null>(() => {
-    const persistedSelection = readSelectedTaskId(projectId);
-    return persistedSelection ? tasks.find((task) => task.id === persistedSelection) ?? null : null;
-  });
-  const [selectedTaskInitialTab, setSelectedTaskInitialTab] = useState<DetailTaskTab | undefined>();
   const splitLayoutRef = useRef<HTMLDivElement>(null);
   const [splitLayoutContainer, setSplitLayoutContainer] = useState<HTMLDivElement | null>(null);
   const setSplitLayoutRef = useCallback((node: HTMLDivElement | null) => {
@@ -529,10 +515,7 @@ export function ListView({
     setSelectedTaskIds(readSelectedTaskIds(projectId));
     const persistedSelection = readSelectedTaskId(projectId);
     setSelectedTaskId(persistedSelection);
-    setSelectedTaskSnapshot(
-      persistedSelection ? tasks.find((task) => task.id === persistedSelection) ?? null : null,
-    );
-  }, [projectId, tasks]);
+  }, [projectId]);
 
   // Persist selection to localStorage
   useEffect(() => {
@@ -550,24 +533,6 @@ export function ListView({
 
     removeScopedItem("kb-dashboard-list-selected-task", projectId);
   }, [projectId, selectedTaskId]);
-
-  useEffect(() => {
-    if (!selectedTaskId) {
-      setSelectedTaskSnapshot(null);
-      return;
-    }
-
-    const liveTask = tasks.find((task) => task.id === selectedTaskId);
-    if (!liveTask) return;
-
-    setSelectedTaskSnapshot((previous) => {
-      if (!previous || previous.id !== selectedTaskId) {
-        return liveTask;
-      }
-      if (previous === liveTask) return previous;
-      return mergeTaskSnapshot(previous, liveTask);
-    });
-  }, [selectedTaskId, tasks]);
 
   useLayoutEffect(() => {
     if (!splitLayoutContainer) return;
@@ -960,10 +925,6 @@ export function ListView({
       }
       return next;
     });
-  }, []);
-
-  const clearColumnFilter = useCallback(() => {
-    setSelectedColumn(null);
   }, []);
 
   const groupedTasks = useMemo(() => {
@@ -1706,8 +1667,6 @@ export function ListView({
     try {
       const updatedTask = await updateTask(task.id, { githubTracking: { enabled: true } }, projectId);
       onTasksUpdated?.([updatedTask]);
-      // FNXC:TaskDetailStateStability 2026-08-09-07:13: updateTask returns a full Task with an id, so this PATCH-response sink intentionally keeps strict identity matching while applying local-patch semantics.
-      setSelectedTaskSnapshot((previous) => previous?.id === updatedTask.id ? applyLocalTaskPatch(previous, updatedTask) : previous);
       addToast(t("taskDetail.githubTracking.issueCreationRequested", "Requested GitHub tracking issue creation"), "info");
     } catch (err) {
       addToast(t("taskDetail.updateFailed", "Failed to update {{id}}: {{error}}", { id: task.id, error: getErrorMessage(err) }), "error");
@@ -1947,14 +1906,13 @@ export function ListView({
         onPopOut(task);
         return;
       }
-      if (useSinglePaneList) {
-        onOpenDetail(task, { origin: "list-mobile" });
-        return;
-      }
-
+      /*
+      FNXC:ListNoSidePanel 2026-09-14-07:20:
+      No embedded pane to select into: a row always hands the task to the host's detail owner and keeps the row
+      highlighted through selectedTaskId.
+      */
       setSelectedTaskId(task.id);
-      setSelectedTaskSnapshot(task);
-      setSelectedTaskInitialTab(undefined);
+      onOpenDetail(task, useSinglePaneList ? { origin: "list-mobile" } : undefined);
     },
     [closeContextMenu, onOpenDetail, onPopOut, openMobileTasksInPopup, useSinglePaneList]
   );
@@ -1980,81 +1938,7 @@ export function ListView({
     );
   }, [handleRowClick, openContextMenuAt]);
 
-  // Debounce detail fetches so rapid keyboard/mouse navigation through a
-  // long task list doesn't issue a heavy /tasks/:id request (with log +
-  // comments) per row. Only the task the user lands on triggers a fetch.
-  const detailFetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const detailFetchTargetRef = useRef<string | null>(null);
 
-  useEffect(() => {
-    return () => {
-      if (detailFetchTimerRef.current) {
-        clearTimeout(detailFetchTimerRef.current);
-      }
-    };
-  }, []);
-
-  const closeEmbeddedTaskDetail = useCallback(() => {
-    /*
-    FNXC:TaskDetailDelete 2026-07-01-09:46:
-    List split-detail is an embedded TaskDetailContent host, so optimistic delete close must clear the selected task synchronously and remove the persisted selection before the delete request settles. Clear any pending detail fetch so a delayed response cannot resurrect the closed split panel.
-    */
-    detailFetchTargetRef.current = null;
-    if (detailFetchTimerRef.current) {
-      clearTimeout(detailFetchTimerRef.current);
-      detailFetchTimerRef.current = null;
-    }
-    setSelectedTaskId(null);
-    setSelectedTaskSnapshot(null);
-    setSelectedTaskInitialTab(undefined);
-  }, []);
-
-  /*
-  FNXC:SharedBranchPromotionAdvisories 2026-08-08-02:16:
-  FN-8823 Review links can originate inside List's embedded task detail. Retain
-  their requested tab while swapping to the landed member instead of its default.
-  */
-  const handleEmbeddedOpenDetail = useCallback((nextTask: Task | TaskDetail, initialTab?: DetailTaskTab) => {
-    setSelectedTaskId(nextTask.id);
-    setSelectedTaskSnapshot(nextTask);
-    setSelectedTaskInitialTab(initialTab);
-
-    if ("prompt" in nextTask) {
-      detailFetchTargetRef.current = null;
-      if (detailFetchTimerRef.current) {
-        clearTimeout(detailFetchTimerRef.current);
-        detailFetchTimerRef.current = null;
-      }
-      return;
-    }
-
-    detailFetchTargetRef.current = nextTask.id;
-    if (detailFetchTimerRef.current) {
-      clearTimeout(detailFetchTimerRef.current);
-    }
-    detailFetchTimerRef.current = setTimeout(() => {
-      detailFetchTimerRef.current = null;
-      const targetId = detailFetchTargetRef.current;
-      if (targetId !== nextTask.id) {
-        return;
-      }
-      fetchTaskDetail(nextTask.id, projectId)
-        .then((detail) => {
-          if (detailFetchTargetRef.current !== detail.id) {
-            return;
-          }
-          setSelectedTaskSnapshot((previous) => {
-            if (!previous || previous.id !== detail.id) {
-              return previous;
-            }
-            return mergeTaskSnapshot(previous, detail, { fullSnapshot: true });
-          });
-        })
-        .catch(() => {
-          // Keep optimistic inline selection when detail fetch fails.
-        });
-    }, 200);
-  }, [projectId]);
 
   const getSortIcon = (field: SortField) => {
     if (!sortField || sortField !== field) return <ArrowUpDown size={14} className="sort-icon" />;
@@ -2384,10 +2268,32 @@ export function ListView({
           addToast={addToast}
         />
       )}
-      {useSinglePaneList && (
+      {/*
+      FNXC:ListNoSidePanel 2026-09-14-07:20:
+      One toolbar for every host. The selector and the state chips used to live in a desktop-only rail beside the
+      table; with the rail gone this row is the single place that carries them, so a wide host cannot end up with no
+      selector at all.
+      */}
+      {(
         <>
           <div className="list-toolbar">
             {renderWorkflowSelector()}
+            <div className="list-toolbar-chips">
+              {selectedColumn ? (
+                <button className="btn btn-sm" onClick={() => setSelectedColumn(null)} aria-label={t("listView.clearColumnFilter", "Clear column filter")}>
+                  {t("listView.filterChip", "Filter: {{column}}", { column: getListColumnLabel(selectedColumn) })}
+                </button>
+              ) : null}
+              {hideDoneTasks ? <span className="list-sidebar-chip">{t("listView.doneHiddenChip", "Done hidden")}</span> : null}
+              {staleOnlyFilter ? <span className="list-sidebar-chip">{t("listView.staleOnly", "Stale only")}</span> : null}
+              {stalePausedReviewOnlyFilter ? <span className="list-sidebar-chip">{t("listView.stalePausedReview", "Stale paused review")}</span> : null}
+              {bulkEditEnabled ? <span className="list-sidebar-chip">{t("listView.bulkEdit", "Bulk edit")}</span> : null}
+              {bulkEditEnabled && selectedTaskIds.size > 0 ? (
+                <button className="btn btn-sm" onClick={clearSelection}>
+                  {t("listView.selectedCount", "{{count}} selected", { count: selectedTaskIds.size })}
+                </button>
+              ) : null}
+            </div>
           </div>
           {viewOptionsOpen ? (
             <div className="list-toolbar-mobile-options">{renderViewOptionsPanel("list-view-options-panel-mobile")}</div>
@@ -2408,49 +2314,13 @@ export function ListView({
       )}
 
       <div className="list-table-container" ref={listScrollRef} onScroll={virtualList.onScroll}>
-        <div className={useSinglePaneList ? "" : "list-split-layout"} data-testid={useSinglePaneList ? undefined : "list-split-layout"} ref={setSplitLayoutRef}>
-          <ViewSidebar
-            ariaLabel={t("listView.taskListLabel", "Task list")}
-            resizeLabel={t("listView.resizeSidebar", "Resize task list sidebar")}
-            hostIdentity="list-main"
-            mobile={useSinglePaneList}
-            resizable={!useSinglePaneList}
-            className={useSinglePaneList ? "list-single-pane-sidebar" : "list-split-sidebar"}
-            panelClassName={useSinglePaneList ? undefined : "list-split-sidebar__panel"}
-            panelTestId={useSinglePaneList ? undefined : "list-split-sidebar"}
-            separatorTestId="list-split-resize-handle"
-          >
-            {!useSinglePaneList && (
-              <aside className="list-sidebar-controls" aria-label={t("listView.listControlsLabel", "List controls")}>
-                {/*
-                FNXC:ListView 2026-06-23-23:42:
-                The List view top controls should not show the aggregate task count. Keep only action groups and state chips near quick-add; section/drop-zone counts remain lower in the list where they are contextual.
-                */}
-                <div className="list-sidebar-controls__header">
-                  {renderWorkflowSelector()}
-                  <div className="list-sidebar-summary-chips">
-                    {selectedColumn ? (
-                      <button className="btn btn-sm" onClick={clearColumnFilter} aria-label={t("listView.clearColumnFilter", "Clear column filter")}>
-                        {t("listView.filterChip", "Filter: {{column}}", { column: getListColumnLabel(selectedColumn) })}
-                      </button>
-                    ) : null}
-                    {hideDoneTasks ? <span className="list-sidebar-chip">{t("listView.doneHiddenChip", "Done hidden")}</span> : null}
-                    {staleOnlyFilter ? <span className="list-sidebar-chip">{t("listView.staleOnly", "Stale only")}</span> : null}
-                    {stalePausedReviewOnlyFilter ? <span className="list-sidebar-chip">{t("listView.stalePausedReview", "Stale paused review")}</span> : null}
-                    {bulkEditEnabled ? (
-                      <span className="list-sidebar-chip">{t("listView.bulkEdit", "Bulk edit")}</span>
-                    ) : null}
-                    {bulkEditEnabled && selectedTaskIds.size > 0 ? (
-                      <button className="btn btn-sm" onClick={clearSelection}>
-                        {t("listView.selectedCount", "{{count}} selected", { count: selectedTaskIds.size })}
-                      </button>
-                    ) : null}
-                  </div>
-                </div>
-                {viewOptionsOpen && renderViewOptionsPanel("list-view-options-panel")}
-                {bulkEditEnabled && selectedTaskIds.size > 0 ? renderBulkEditToolbars() : null}
-              </aside>
-            )}
+        {/*
+        FNXC:ListNoSidePanel 2026-09-14-07:20:
+        The list renders DIRECTLY. It used to wrap itself in a collection rail beside an embedded detail pane — a rail
+        holding a table, plus a second task-detail host competing with whatever detail layer the host already owns.
+        Every host (right dock, phone drawer, modal) owns that layer, so a row hands the task to it instead.
+        */}
+        <div className="list-direct-body" ref={setSplitLayoutRef}>
             {/*
             FNXC:ListNoQuickEntry 2026-09-14-06:40:
             List has no composer of its own. Creation belongs to the header New Task action and to the Board column
@@ -3009,54 +2879,6 @@ export function ListView({
               ) : null}
             </div>
           ) : null}
-          </ViewSidebar>
-          {!useSinglePaneList && (
-              <div className="list-split-detail" data-testid="list-split-detail">
-                {!selectedTaskSnapshot ? (
-                  <div className="list-split-detail-empty">
-                    <p>{t("listView.selectTaskPrompt", "Select a task to view details")}</p>
-                  </div>
-                ) : (
-                  <ListSplitTaskDetailHost
-                      task={selectedTaskSnapshot}
-                      projectId={projectId}
-                      tasks={tasks}
-                      globalPaused={globalPaused}
-                      initialTab={selectedTaskInitialTab}
-                      onClearSelection={closeEmbeddedTaskDetail}
-                      onOpenDetail={handleEmbeddedOpenDetail}
-                      /* FNXC:TaskRevert 2026-08-01-20:27: Split detail receives the list recovery callback so reverted tasks remain revisable here. */
-                      onReviseTask={onReviseTask}
-                      onDeleteTask={onDeleteTask}
-                      onMergeTask={onMergeTask}
-                      onRetryTask={onRetryTask}
-                      onOpenChatWithPrefill={onOpenChatWithPrefill}
-                      onPauseTask={onPauseTask}
-                      onUnpauseTask={onUnpauseTask}
-                      onResetTask={onResetTask}
-                      onDuplicateTask={onDuplicateTask}
-                      onPopOut={onPopOut ? () => onPopOut(selectedTaskSnapshot) : undefined}
-                      /*
-                      FNXC:TaskDetailStateStability 2026-08-09-07:13:
-                      Locally-authored split-detail patches accept an absent id and use applyLocalTaskPatch.
-                      Live board, SSE, and fetch snapshots remain on mergeTaskSnapshot so server clock
-                      arbitration continues to protect lifecycle state outside this local callback.
-                      */
-                      onRefinementCreated={onRefinementCreated}
-                      onTaskUpdated={(updatedTask) => {
-                        setSelectedTaskSnapshot((previous) => {
-                          if (!previous || (updatedTask.id !== undefined && updatedTask.id !== previous.id)) return previous;
-                          return applyLocalTaskPatch(previous, { ...updatedTask, id: previous.id });
-                        });
-                      }}
-                      addToast={addToast}
-                      prAuthAvailable={prAuthAvailable}
-                      autoMergeEnabled={autoMerge}
-                      taskDetailChatFirst={taskDetailChatFirst}
-                    />
-                )}
-              </div>
-          )}
         </div>
       </div>
     </div>

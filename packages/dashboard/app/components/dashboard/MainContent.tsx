@@ -162,7 +162,6 @@ export function MainContentListView(props: AppMainPanelTaskDetailMainContentProp
     mergeTask,
     resetTask,
     duplicateTask,
-    ingestCreatedTasks,
     openDetailTask,
     popOutTaskDetail,
     addToast,
@@ -176,10 +175,8 @@ export function MainContentListView(props: AppMainPanelTaskDetailMainContentProp
     handleToggleModelFavorite,
     searchQuery,
     lastFetchTimeMs,
-    prAuthAvailable,
     autoMerge,
     openMobileTasksInPopup,
-    taskDetailChatFirst,
     mergeStrategy,
     openWorkflowEditorWithNav,
     openCreateWorkflowWithNav,
@@ -200,7 +197,6 @@ export function MainContentListView(props: AppMainPanelTaskDetailMainContentProp
         onMergeTask={mergeTask}
         onResetTask={resetTask}
         onDuplicateTask={duplicateTask}
-        onRefinementCreated={(task) => ingestCreatedTasks([task])}
         onOpenDetail={(task, options) => openDetailTask(task, undefined, options)}
         onPopOut={popOutTaskDetail}
         addToast={addToast}
@@ -214,10 +210,8 @@ export function MainContentListView(props: AppMainPanelTaskDetailMainContentProp
         onToggleModelFavorite={handleToggleModelFavorite}
         searchQuery={searchQuery}
         lastFetchTimeMs={lastFetchTimeMs}
-        prAuthAvailable={prAuthAvailable}
         autoMerge={autoMerge}
         openMobileTasksInPopup={openMobileTasksInPopup}
-        taskDetailChatFirst={taskDetailChatFirst}
         mergeStrategy={mergeStrategy}
         onOpenWorkflowEditor={openWorkflowEditorWithNav}
         onCreateWorkflow={openCreateWorkflowWithNav}
