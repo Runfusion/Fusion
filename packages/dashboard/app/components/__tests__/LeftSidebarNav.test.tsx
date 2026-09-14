@@ -155,7 +155,6 @@ describe("LeftSidebarNav", () => {
 
     for (const testId of [
       "sidebar-nav-board",
-      "sidebar-nav-list",
       "sidebar-nav-command-center",
       "sidebar-nav-agents",
       "sidebar-nav-chat",
@@ -179,7 +178,7 @@ describe("LeftSidebarNav", () => {
       expect(screen.getByTestId(testId)).toBeDefined();
     }
 
-    expect(screen.getByTestId("sidebar-nav-skills")).toHaveTextContent("Skills & Snippets");
+    expect(screen.getByTestId("sidebar-nav-skills")).toHaveTextContent("Skills");
     expect(screen.getByTestId("sidebar-nav-planning")).toHaveTextContent("Planning");
     expect(screen.getByTestId("sidebar-nav-import-tasks")).toHaveTextContent("Import Tasks");
     expect(screen.queryByTestId("sidebar-nav-stash-recovery")).toBeNull();
@@ -217,7 +216,6 @@ describe("LeftSidebarNav", () => {
     const orderedTestIds = [
       "sidebar-nav-command-center",
       "sidebar-nav-board",
-      "sidebar-nav-list",
       "sidebar-nav-planning",
       "sidebar-nav-missions",
       "sidebar-nav-agents",
@@ -238,7 +236,7 @@ describe("LeftSidebarNav", () => {
     expect(orderedIndices).toEqual([...orderedIndices].sort((a, b) => a - b));
     expect(orderedIndices.every((index) => index >= 0)).toBe(true);
     expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-command-center"))).toBeLessThan(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-agents")));
-    expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-planning"))).toBe(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-list")) + 1);
+    expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-planning"))).toBe(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-board")) + 1);
     expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-missions"))).toBe(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-planning")) + 1);
     expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-agents"))).toBe(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-missions")) + 1);
     expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-skills"))).toBe(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-mailbox")) + 1);
@@ -321,7 +319,8 @@ describe("LeftSidebarNav", () => {
 
     expect(screen.getByTestId("left-sidebar-nav")).toHaveStyle({ width: "224px", minWidth: "224px" });
     expect(screen.getByTestId("sidebar-nav-board")).toHaveAccessibleName("Board");
-    expect(screen.getByTestId("sidebar-nav-list")).toHaveAccessibleName("List");
+    // FN-382: List is a right-dock tool on this host, so the rail offers no List page.
+    expect(screen.queryByTestId("sidebar-nav-list")).toBeNull();
     expect(screen.getByTestId("sidebar-nav-agents")).toHaveAccessibleName("Agents");
     expect(screen.getByTestId("sidebar-nav-missions")).toHaveAccessibleName("Missions");
     expect(screen.queryByRole("button", { name: /view$/i })).toBeNull();
@@ -610,9 +609,6 @@ describe("LeftSidebarNav", () => {
   it("routes clicks to view changes and settings callback without Secrets/Todos shortcuts", () => {
     const onOpenSettings = vi.fn();
     const { onChangeView } = renderSidebar({ todosEnabled: true, onOpenSettings });
-
-    fireEvent.click(screen.getByTestId("sidebar-nav-list"));
-    expect(onChangeView).toHaveBeenCalledWith("list");
 
     fireEvent.click(screen.getByTestId("sidebar-nav-planning"));
     expect(onChangeView).toHaveBeenCalledWith("planning");

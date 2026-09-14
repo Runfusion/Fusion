@@ -10,7 +10,7 @@ import type { RevertTaskOptions, RevertTaskResult } from "../api";
 import { TaskCard } from "./TaskCard";
 import { RightDockTaskDetailHost } from "./TaskDetailHostBoundaries";
 import { mergeTaskSnapshot } from "../hooks/useTasks";
-import { RightDock, persistRightDockOpen, persistRightDockPinned, readStoredRightDockOpen, readStoredRightDockPinned } from "./RightDock";
+import { RightDock, persistRightDockOpen, persistRightDockPinned, persistRightDockViewSelection, readStoredRightDockOpen, readStoredRightDockPinned, readStoredRightDockView } from "./RightDock";
 import { RightDockExpandModal } from "./RightDockExpandModal";
 import type { OverflowViewKey, OverflowViewRenderProps, OverflowViewVisibilityOptions } from "./overflowViewRegistry";
 
@@ -79,6 +79,8 @@ export interface RightDockController {
   modal: ReactNode;
   openTaskInDock: (task: Task | TaskDetail) => void;
   closeDockTask: () => void;
+  /** FN-382: select a dock tool from outside the dock (non-mobile List navigation). */
+  selectView: (key: OverflowViewKey) => void;
 }
 
 /*
@@ -96,6 +98,16 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
   */
   const [pinned, setPinned] = useState(readStoredRightDockPinned);
   const [expandedView, setExpandedView] = useState<OverflowViewKey | null>(null);
+  /*
+  FNXC:ListInRightDock 2026-09-14-04:42:
+  FN-382: the selected tool lives here so an outside caller (non-mobile List navigation) can open one. Persistence
+  keeps the dock storage key and its Files fallback unchanged.
+  */
+  const [selectedKey, setSelectedKey] = useState<OverflowViewKey>(() => readStoredRightDockView(input.visibilityOptions));
+  const selectView = useCallback((key: OverflowViewKey) => {
+    setSelectedKey(key);
+    persistRightDockViewSelection(key);
+  }, []);
   const [dockTaskSnapshot, setDockTaskSnapshot] = useState<{
     projectId: string | undefined;
     task: Task | TaskDetail;
@@ -285,7 +297,8 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
     togglePin,
     openTaskInDock,
     closeDockTask,
-    dock: input.active ? <RightDock open={open} renderProps={renderProps} visibilityOptions={input.visibilityOptions} footerVisible={input.footerVisible} pinned={pinned} onTogglePin={togglePin} onExpand={handleExpand} dockTask={resolvedDockTask} dockTaskContent={dockTaskContent} onCloseDockTask={closeDockTask} /> : null,
+    selectView,
+    dock: input.active ? <RightDock selectedKey={selectedKey} onSelectKey={selectView} open={open} renderProps={renderProps} visibilityOptions={input.visibilityOptions} footerVisible={input.footerVisible} pinned={pinned} onTogglePin={togglePin} onExpand={handleExpand} dockTask={resolvedDockTask} dockTaskContent={dockTaskContent} onCloseDockTask={closeDockTask} /> : null,
     modal: input.active ? <RightDockExpandModal viewKey={expandedView} renderProps={renderProps} visibilityOptions={input.visibilityOptions} onClose={() => setExpandedView(null)} /> : null,
   };
 }

@@ -737,15 +737,22 @@ export function Header({
             >
               <LayoutGrid size={16} />
             </button>
-            <button
-              className={`view-toggle-btn${view === "list" ? " active" : ""}`}
-              onClick={() => onChangeView("list")}
-              title={t("header.listView", "List view")}
-              aria-label={t("header.listView", "List view")}
-              aria-pressed={view === "list"}
-            >
-              <List size={16} />
-            </button>
+            {/*
+            FNXC:ListInRightDock 2026-09-14-04:42:
+            FN-382: on a phone the toggle still switches to the List page; on tablet and desktop List lives in the
+            right dock, so the toggle would either duplicate that tool or navigate away from the current destination.
+            */}
+            {isMobile ? (
+              <button
+                className={`view-toggle-btn${view === "list" ? " active" : ""}`}
+                onClick={() => onChangeView("list")}
+                title={t("header.listView", "List view")}
+                aria-label={t("header.listView", "List view")}
+                aria-pressed={view === "list"}
+              >
+                <List size={16} />
+              </button>
+            ) : null}
             {showAgentsTab && (
               <button
                 className={`view-toggle-btn${view === "agents" ? " active" : ""}`}

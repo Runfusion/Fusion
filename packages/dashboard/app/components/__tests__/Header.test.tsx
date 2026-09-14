@@ -285,8 +285,18 @@ describe("Header", () => {
       expect(screen.queryByTitle("List view")).toBeNull();
     });
 
+    /*
+    FN-382: List is a right-dock tool on tablet and desktop, so the toggle offers Board only there. The phone keeps
+    both buttons because it keeps the dedicated List page.
+    */
     it("renders view toggle when onChangeView is provided", () => {
       renderHeader({ onChangeView: noop });
+      expect(screen.getByTitle("Board view")).toBeDefined();
+      expect(screen.queryByTitle("List view")).toBeNull();
+    });
+
+    it("keeps the List toggle on the phone host", () => {
+      renderHeader({ onChangeView: noop }, "mobile");
       expect(screen.getByTitle("Board view")).toBeDefined();
       expect(screen.getByTitle("List view")).toBeDefined();
     });
@@ -393,7 +403,7 @@ describe("Header", () => {
     });
 
     it("shows board view as active by default", () => {
-      renderHeader({ onChangeView: noop });
+      renderHeader({ onChangeView: noop }, "mobile");
       const boardBtn = screen.getByTitle("Board view");
       const listBtn = screen.getByTitle("List view");
       expect(boardBtn.className).toContain("active");
@@ -401,7 +411,7 @@ describe("Header", () => {
     });
 
     it("shows list view as active when view is 'list'", () => {
-      renderHeader({ onChangeView: noop, view: "list" });
+      renderHeader({ onChangeView: noop, view: "list" }, "mobile");
       const boardBtn = screen.getByTitle("Board view");
       const listBtn = screen.getByTitle("List view");
       expect(boardBtn.className).not.toContain("active");
@@ -417,7 +427,7 @@ describe("Header", () => {
 
     it("calls onChangeView with 'list' when clicking list view button", () => {
       const onChangeView = vi.fn();
-      renderHeader({ onChangeView, view: "board" });
+      renderHeader({ onChangeView, view: "board" }, "mobile");
       fireEvent.click(screen.getByTitle("List view"));
       expect(onChangeView).toHaveBeenCalledWith("list");
     });
@@ -463,7 +473,7 @@ describe("Header", () => {
     });
 
     it("has correct aria attributes for accessibility", () => {
-      renderHeader({ onChangeView: noop, view: "board" });
+      renderHeader({ onChangeView: noop, view: "board" }, "mobile");
       const boardBtn = screen.getByTitle("Board view");
       const listBtn = screen.getByTitle("List view");
       expect(boardBtn.getAttribute("aria-pressed")).toBe("true");

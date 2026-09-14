@@ -8,7 +8,9 @@ describe("dashboardNavigationEntries", () => {
     const entries = buildDashboardNavigationEntries(base);
     expect(entries.every((entry) => ["main-page", "existing-action", "external-owner"].includes(entry.kind))).toBe(true);
     expect(entries.map((entry) => entry.id)).not.toEqual(expect.arrayContaining(["patchnode", "chat", "notes"]));
-    expect(entries.filter((entry) => entry.placement === "direct").map((entry) => entry.id)).toEqual(["command-center", "board", "list", "planning", "missions", "agents", "mailbox"]);
+    // FN-382: List is a right-dock tool on every host that consumes this registry, so it is no longer a page entry.
+    expect(entries.filter((entry) => entry.placement === "direct").map((entry) => entry.id)).toEqual(["command-center", "board", "planning", "missions", "agents", "mailbox"]);
+    expect(entries.some((entry) => entry.id === "list")).toBe(false);
     expect(entries.filter((entry) => entry.kind === "external-owner").map((entry) => entry.id)).toEqual(["dev-server", "secrets", "pull-requests"]);
     expect(entries.find((entry) => entry.id === "settings")?.placement).toBe("external");
     expect(entries.filter((entry) => entry.placement !== "external").every((entry) => typeof entry.onSelect === "function")).toBe(true);

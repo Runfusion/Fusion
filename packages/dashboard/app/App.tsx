@@ -656,7 +656,17 @@ function AppInner() {
       pushNav({ type: "view", revert });
     }
   }, [handleChangeTaskView, taskView, pushNav]);
+  /*
+  FNXC:ListInRightDock 2026-09-14-04:42:
+  FN-382: on every non-mobile host List is a dock tool, not a page. An explicit request for it — sidebar, footer,
+  header toggle, a stored view or a `?view=list` deep link — selects the dock tool and opens the dock, leaving the
+  current destination on screen and writing no navigation entry. Phone hosts are untouched: they keep the dedicated
+  route, both nav producers and the drawer. When the dock is unavailable (no project shell, feature off) the ordinary
+  route still answers, so the destination can never become unreachable.
+  */
+  const listDockRouteRef = useRef<((newView: TaskView) => boolean) | null>(null);
   const handleTaskViewChange = useCallback((newView: TaskView) => {
+    if (listDockRouteRef.current?.(newView)) return;
     if (!alphaPilotRouterRef.current(newView)) commitTaskViewChange(newView);
   }, [commitTaskViewChange]);
 
@@ -1947,6 +1957,13 @@ function AppInner() {
       }),
     },
   });
+
+  listDockRouteRef.current = (newView: TaskView) => {
+    if (newView !== "list" || isMobile || !rightDockActive) return false;
+    rightDock.selectView("list");
+    if (!rightDock.open) rightDock.toggle();
+    return true;
+  };
 
   /*
   FNXC:OpenTasksInRightSidebar 2026-06-28-00:00:

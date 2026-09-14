@@ -50,7 +50,7 @@ describe("FN-379 shared chrome on the auxiliary runtime hosts", () => {
   it("keeps the right dock body on one canonical header with its creation entries inside it", async () => {
     render(
       <ViewLayoutProvider projectId="project-1">
-        <RightDock open renderProps={renderProps} pinned={false} onTogglePin={vi.fn()} />
+        <RightDock open renderProps={renderProps} pinned={false} onTogglePin={vi.fn()} selectedKey="files" onSelectKey={vi.fn()} />
       </ViewLayoutProvider>,
     );
 
