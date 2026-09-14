@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import type { Task, TaskPriority } from "@fusion/core";
 import { fetchTasks } from "../api";
 import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
+import { getTaskTitleDisplayText } from "../utils/taskTitleDisplay";
 import type { ResearchRunDetail } from "../research-types";
 import "./ResearchTaskActionModal.css";
 import { DashboardWindowSurfaceRoot } from "../context/DashboardWindowManagerContext";
@@ -146,8 +147,9 @@ export function ResearchTaskActionModal({ open, mode, run, finding, projectId, o
                 onChange={(event) => setTaskId(event.target.value)}
               />
               <datalist id="research-task-action-task-list">
+                {/* FNXC:TaskTitleDisplay 2026-09-14-17:05: FN-391 — shared label projection so an untitled target task is still selectable by its description prefix. */}
                 {tasks.map((task) => (
-                  <option key={task.id} value={task.id}>{task.title}</option>
+                  <option key={task.id} value={task.id}>{getTaskTitleDisplayText(task)}</option>
                 ))}
               </datalist>
             </label>

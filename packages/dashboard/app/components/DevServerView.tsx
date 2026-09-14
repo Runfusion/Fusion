@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getDevServerState, saveDevServerState } from "../hooks/modalPersistence";
 import { isWipColumnRole } from "../utils/columnRoles";
+import { getTaskTitleDisplayText } from "../utils/taskTitleDisplay";
 import type { RefObject } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
@@ -856,7 +857,8 @@ export function DevServerView({ addToast, projectId, tasks, columnFlagsByTaskId 
               <option value="">{t("devserver.projectRootNoTask", "Project root (no task)")}</option>
               {executingTasks.map((task) => (
                 <option key={task.id} value={task.id}>
-                  {task.title ? `${task.id} — ${task.title}` : task.id}
+                  {/* FNXC:TaskTitleDisplay 2026-09-14-17:05: FN-391 — shared label projection. */}
+                  {`${task.id} — ${getTaskTitleDisplayText(task)}`}
                 </option>
               ))}
             </select>

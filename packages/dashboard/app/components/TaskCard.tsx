@@ -37,7 +37,7 @@ import { useAgentsMapCache } from "../hooks/useAgentsMapCache";
 import { useLiveTimeTicker } from "../hooks/useLiveTimeTicker";
 import {
   isCompleteColumnRole,
-  isFieldEditableColumnRole,
+  isDescriptionEditableColumnRole,
   isPreImplementationColumnRole,
   isReviewColumnRole,
   isWipColumnRole,
@@ -1875,7 +1875,15 @@ function TaskCardComponent({
   and after #2515 the `triage` half was dead weight. `taskColumnFlags` was already in scope here —
   the card simply never asked.
   */
-  const canEdit = isFieldEditableColumnRole(taskColumnFlags, task.column) && !isAgentActive && !isPaused && !queued && onUpdateTask;
+  /*
+  FNXC:TaskDescriptionEditing 2026-09-14-18:25:
+  FN-391: this card's inline editor writes the DESCRIPTION ONLY (see `enterEditMode`, which seeds
+  nothing else), so it follows the narrower manual-intake rule rather than the generic
+  pre-implementation field rule. Once a card has been released, an AI has planned or is executing
+  against that exact text and the pencil disappears — the settings form in Task Detail is still
+  reachable for the other parameters.
+  */
+  const canEdit = isDescriptionEditableColumnRole(taskColumnFlags, task.column) && !isAgentActive && !isPaused && !queued && onUpdateTask;
   const githubTrackedIssue = task.githubTracking?.issue;
   const hasGithubTrackingLink = Boolean(githubTrackedIssue);
   const isGitHubImportedTask = task.sourceType === "github_import";

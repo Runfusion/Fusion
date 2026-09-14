@@ -22,6 +22,7 @@ import { WorkflowOptionalStepsDropdown } from "./WorkflowOptionalStepsDropdown";
 import { WorkflowIcon } from "./WorkflowIcon";
 import { PendingAttachmentPreviews } from "./PendingAttachmentPreviews";
 import { getPriorityColorVar, getPriorityIcon, getPriorityLabel } from "../utils/priorityIndicator";
+import { getTaskTitleDisplayText } from "../utils/taskTitleDisplay";
 import { validateQuickAddStartWorkflow, workflowSupportsQuickAddStart, resolveQuickAddStartInitialColumn, resolveQuickAddStartWorkflowTarget, resolveQuickAddStartTargetColumn, type ValidatedQuickAddWorkflow } from "../utils/quickAddStart";
 import { computeFixedMenuPosition, getLayoutViewportSize } from "../utils/fixedMenuPosition";
 import { isInsidePortaledModelMenu } from "../utils/portalSurfaces";
@@ -2142,7 +2143,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
                         onClick={() => toggleDep(t.id)}
                       >
                         <span className="dep-dropdown-id">{t.id}</span>
-                        <span className="dep-dropdown-title">{truncate(t.title || t.description || t.id, 60)}</span>
+                        <span className="dep-dropdown-title">{truncate(getTaskTitleDisplayText(t), 60)}</span>
                       </div>
                     ))
                   )}

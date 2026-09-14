@@ -39,6 +39,13 @@ const screenshots = path.resolve(process.cwd(), "e2e/__screenshots__/fn-8602");
 const floatingWindowScreenshots = path.resolve(process.cwd(), "e2e/__screenshots__/fn-8605");
 const fn8607Screenshots = path.resolve(process.cwd(), "e2e/__screenshots__/fn-8607");
 const fn376Artifacts = path.resolve(process.cwd(), "../../artifacts/FN-376");
+/*
+FNXC:TaskDetailDefinition 2026-09-14-20:40:
+FN-391 visual evidence of the restructured Definition view, captured from the real Chromium render
+of the canonical modal host at desktop and mobile widths. The assertions above are the contract;
+these images are operator-facing proof of the same run, never a substitute for it.
+*/
+const fn391Artifacts = path.resolve(process.cwd(), "../../artifacts/FN-391");
 const fn115Screenshots = path.resolve(process.cwd(), "e2e/__screenshots__/fn-115");
 const fn349Screenshots = path.resolve(process.cwd(), "e2e/__screenshots__/fn-349");
 const fn367Artifacts = path.resolve(process.cwd(), "../../artifacts/FN-367");
@@ -653,9 +660,20 @@ describe.runIf(executablePath)("Task modal tablet touch resize browser regressio
         if (!host || !detailContent || !header) throw new Error(`${name} did not retain its production host, TaskDetailContent, and shared header`);
         const dialog = detailContent.closest<HTMLElement>("[role='dialog']");
         const definitionSection = detailContent.querySelector<HTMLElement>(".detail-definition-description");
-        const summarizeButton = detailContent.querySelector<HTMLElement>("[data-testid='summarize-title-btn']");
+        /*
+        FNXC:TaskDetailDefinition 2026-09-14-20:35:
+        FN-391 replaced the Summarize action with the restructured Definition view. This probe now
+        measures what the operator actually reads: section ORDER (progress, description, outcome),
+        the collapsed step disclosure, and the bounded description's internal scrolling.
+        */
+        const progressSection = detailContent.querySelector<HTMLElement>(".detail-step-progress");
+        const outcomeSection = detailContent.querySelector<HTMLElement>(".detail-definition-outcome");
+        const descriptionBody = detailContent.querySelector<HTMLElement>("[data-testid='task-detail-definition-description']");
+        const stepToggle = detailContent.querySelector<HTMLButtonElement>("[data-testid='detail-step-list-toggle']");
+        const readPlanButton = [...detailContent.querySelectorAll<HTMLButtonElement>(".detail-read-plan")][0] ?? null;
         const definitionRect = definitionSection?.getBoundingClientRect();
-        const summarizeRect = summarizeButton?.getBoundingClientRect();
+        const outcomeRect = outcomeSection?.getBoundingClientRect();
+        const readPlanRect = readPlanButton?.getBoundingClientRect();
         const labelledBy = dialog?.getAttribute("aria-labelledby")?.trim();
         const labelledName = labelledBy
           ? labelledBy.split(/\s+/).map((id) => document.getElementById(id)?.textContent?.trim() ?? "").filter(Boolean).join(" ")
@@ -689,22 +707,31 @@ describe.runIf(executablePath)("Task modal tablet touch resize browser regressio
           dialogName: dialog?.getAttribute("aria-label")?.trim() || labelledName,
           iconActionMetrics,
           semanticBackMetrics,
-          summarizePresent: Boolean(summarizeButton),
-          summarizeMetrics: summarizeButton && summarizeRect && definitionRect ? {
-            left: summarizeRect.left,
-            right: summarizeRect.right,
-            width: summarizeRect.width,
-            clientWidth: summarizeButton.clientWidth,
-            scrollWidth: summarizeButton.scrollWidth,
-            definitionLeft: definitionRect.left,
-            definitionRight: definitionRect.right,
-            viewportWidth: window.innerWidth,
+          summarizePresent: Boolean(detailContent.querySelector("[data-testid='summarize-title-btn']")),
+          titleInputPresent: Boolean(detailContent.querySelector("#task-form-title")),
+          emptyHeaderShellCount: [...detailContent.querySelectorAll<HTMLElement>(".detail-definition-header button")]
+            .filter((button) => (button.textContent ?? "").trim().length === 0 && button.querySelectorAll("svg").length === 0).length,
+          definitionOrder: {
+            progressTop: progressSection?.getBoundingClientRect().top ?? null,
+            descriptionTop: definitionRect?.top ?? null,
+            outcomeTop: outcomeRect?.top ?? null,
+          },
+          stepToggle: stepToggle ? {
+            expanded: stepToggle.getAttribute("aria-expanded"),
+            controls: stepToggle.getAttribute("aria-controls") ?? "",
+            listPresent: Boolean(detailContent.querySelector(".detail-step-list")),
+            counterVisible: Boolean(detailContent.querySelector(".step-progress-label")?.textContent?.trim()),
+            barVisible: Boolean(detailContent.querySelector(".step-progress-track")),
           } : null,
-          summarizeFitsDefinition: Boolean(definitionRect && summarizeRect
-            && summarizeRect.left >= definitionRect.left
-            && summarizeRect.right <= definitionRect.right + 1
-            && summarizeRect.right <= window.innerWidth + 1
-            && summarizeButton!.scrollWidth <= summarizeButton!.clientWidth + 1),
+          descriptionBounded: descriptionBody ? {
+            scrollHeight: descriptionBody.scrollHeight,
+            clientHeight: descriptionBody.clientHeight,
+            overflowsHost: descriptionBody.getBoundingClientRect().bottom > window.innerHeight + 1,
+          } : null,
+          readPlanFitsOutcome: Boolean(outcomeRect && readPlanRect
+            && readPlanRect.left >= outcomeRect.left - 1
+            && readPlanRect.right <= outcomeRect.right + 1
+            && readPlanRect.right <= window.innerWidth + 1),
         };
       }, { name, hostTestId, expectedTitle });
 
@@ -712,6 +739,14 @@ describe.runIf(executablePath)("Task modal tablet touch resize browser regressio
       if (titleMode === "fit") {
         await mkdir(fn376Artifacts, { recursive: true });
         await page.screenshot({ path: path.join(fn376Artifacts, `${name}-${viewportName}.png`) });
+      }
+      if (titleMode === "fit" && name === "modal" && viewportName === "desktop") {
+        await mkdir(fn391Artifacts, { recursive: true });
+        await page.screenshot({ path: path.join(fn391Artifacts, "task-definition-desktop.png") });
+      }
+      if (titleMode === "fit" && name === "alpha-mobile-drawer") {
+        await mkdir(fn391Artifacts, { recursive: true });
+        await page.screenshot({ path: path.join(fn391Artifacts, "task-definition-mobile.png") });
       }
 
       const expectedTaskId = titleMode === "id" ? "FN-8806" : "FN-TITLE-FLICKER";
@@ -740,11 +775,34 @@ describe.runIf(executablePath)("Task modal tablet touch resize browser regressio
       }
       if (expectedDescription) {
         expect(state.description).toContain(expectedDescription);
-        expect(state.summarizePresent).toBe(true);
-        expect(state.summarizeFitsDefinition, JSON.stringify(state)).toBe(true);
       } else {
         expect(state.description).toContain("(no description)");
-        expect(state.summarizePresent).toBe(false);
+      }
+      /*
+      FNXC:TaskDetailDefinition 2026-09-14-20:35:
+      The FN-391 contract, on the real rendered geometry of every canonical host at every breakpoint:
+      no removed title affordance, no empty action shell, Progress above Description above the
+      product outcome, a collapsed-but-counted step list, a description bounded inside its own
+      scroll region, and Read plan inside the outcome section rather than spilling off screen.
+      */
+      expect(state.summarizePresent).toBe(false);
+      expect(state.titleInputPresent).toBe(false);
+      expect(state.emptyHeaderShellCount, JSON.stringify(state)).toBe(0);
+      expect(state.definitionOrder.progressTop, JSON.stringify(state.definitionOrder)).not.toBeNull();
+      expect(state.definitionOrder.descriptionTop, JSON.stringify(state.definitionOrder)).not.toBeNull();
+      expect(state.definitionOrder.outcomeTop, JSON.stringify(state.definitionOrder)).not.toBeNull();
+      expect(state.definitionOrder.progressTop!, JSON.stringify(state.definitionOrder)).toBeLessThan(state.definitionOrder.descriptionTop!);
+      expect(state.definitionOrder.descriptionTop!, JSON.stringify(state.definitionOrder)).toBeLessThan(state.definitionOrder.outcomeTop!);
+      expect(state.readPlanFitsOutcome, JSON.stringify(state)).toBe(true);
+      if (state.stepToggle) {
+        expect(state.stepToggle.expanded).toBe("false");
+        expect(state.stepToggle.listPresent).toBe(false);
+        expect(state.stepToggle.counterVisible).toBe(true);
+        expect(state.stepToggle.barVisible).toBe(true);
+        expect(state.stepToggle.controls.length).toBeGreaterThan(0);
+      }
+      if (state.descriptionBounded) {
+        expect(state.descriptionBounded.overflowsHost, JSON.stringify(state.descriptionBounded)).toBe(false);
       }
       expect(state.dialogName).toBe(expectsDialogName ? "Task detail" : "");
 
@@ -772,14 +830,15 @@ describe.runIf(executablePath)("Task modal tablet touch resize browser regressio
           activityHeaderHeadingCount,
           editHeaderHeadingCount: detailContent.querySelectorAll(":scope > .modal-header h1, :scope > .modal-header h2, :scope > .modal-header h3").length,
           legacyTitleCount: detailContent.querySelectorAll(".detail-heading-row, .detail-title, .detail-title-control, .detail-title-measurement").length,
-          titleValue: detailContent.querySelector<HTMLInputElement>("#task-form-title")?.value,
+          // FNXC:TaskDetailDefinition 2026-09-14-20:35: FN-391 removed the title input entirely; the description is the only editable text field.
+          titleInputPresent: Boolean(detailContent.querySelector("#task-form-title")),
           descriptionValue: detailContent.querySelector<HTMLTextAreaElement>("#task-form-description")?.value,
         };
       }, { name, hostTestId });
       expect(interaction.activityHeaderHeadingCount).toBe(0);
       expect(interaction.editHeaderHeadingCount).toBe(0);
       expect(interaction.legacyTitleCount).toBe(0);
-      expect(interaction.titleValue).toBe(expectedTitle);
+      expect(interaction.titleInputPresent).toBe(false);
       if (expectedDescription) expect(interaction.descriptionValue).toContain(expectedDescription);
       else expect(interaction.descriptionValue).toBe("");
       await page.close();

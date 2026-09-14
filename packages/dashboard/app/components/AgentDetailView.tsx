@@ -27,6 +27,7 @@ import { AgentLogViewer } from "./AgentLogViewer";
 import { LoadingSpinner } from "./LoadingSpinner";
 import { AgentReflectionsTab } from "./AgentReflectionsTab";
 import { getAgentHealthStatus } from "../utils/agentHealth";
+import { getTaskTitleDisplayText } from "../utils/taskTitleDisplay";
 import type { AgentHealthStatus } from "../utils/agentHealth";
 import { SkillMultiselect } from "./SkillMultiselect";
 import { subscribeSse } from "../sse-bus";
@@ -2597,8 +2598,14 @@ function formatDuration(start: Date, end: Date): string {
   return `${Math.floor(diff / 3600)}h ${Math.floor((diff % 3600) / 60)}m`;
 }
 
+/*
+FNXC:TaskTitleDisplay 2026-09-14-17:05:
+FN-391: the LABEL SOURCE is the shared projection (explicit title in full, else the description's
+exact 220-character prefix, else the ID). The 80-character shortening here stays because it is this
+row's own geometry constraint, applied on top of the canonical text — it is not a second title rule.
+*/
 function truncateTaskLabel(task: Task): string {
-  const source = task.title?.trim() || task.description?.trim() || task.id;
+  const source = getTaskTitleDisplayText(task);
   return source.length > 80 ? `${source.slice(0, 77)}...` : source;
 }
 
@@ -2677,7 +2684,7 @@ function TasksTab({
               } as Record<string, string>)[task.column] ?? task.column
             }</span>
           </div>
-          <div className="agent-task-title" title={task.title || task.description || task.id}>
+          <div className="agent-task-title" title={getTaskTitleDisplayText(task)}>
             {truncateTaskLabel(task)}
           </div>
           <div className="agent-task-status">

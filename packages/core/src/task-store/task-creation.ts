@@ -338,6 +338,15 @@ export async function createTaskBackendImpl(store: TaskStore, input: TaskCreateI
     The project-scoped autoSummarizeTitles snapshot is the sole automatic eligibility policy.
     Do not reintroduce a description-length branch: every non-empty untitled create follows the
     same setting, while summarize:true remains an explicit per-create force request.
+
+    FNXC:TitleSummarization 2026-09-14-16:20:
+    FN-391 makes this the ONLY writer of a generated title. When the setting is disabled, or the
+    summarizer returns null / rejects / the store closes first, NO durable title is written — the
+    row stays untitled on purpose and the dashboard renders it from its description (exact first
+    220 characters, `getTaskTitleDisplay`). Triage no longer backfills a deterministic title nor
+    copies the PROMPT.md heading, so an untitled row is a stable, re-derivable state rather than a
+    stored guess. An explicit/imported title always wins, including one written while the deferred
+    summary is still in flight (the UPDATE predicate below requires a still-blank title).
     */
     const shouldSummarize =
       !title &&

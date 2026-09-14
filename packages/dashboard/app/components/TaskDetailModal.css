@@ -213,17 +213,10 @@ La synthèse du titre appartient désormais à l’en-tête de la section Descri
 }
 
 /*
-FNXC:TaskDetailHeader 2026-09-13-12:41:
-The icon-and-text Summarize action keeps the shared compact icon-button stack without inheriting a legacy icon-only fixed width. Its full localized label must remain visible beside Description in every narrow Task Detail host.
+FNXC:TaskDetailHeader 2026-09-14-18:30:
+FN-391 removed the Summarize action from the Definition header, so its `.detail-summarize-title-btn`
+base rule and its mobile override are deleted rather than left as orphan selectors.
 */
-.detail-summarize-title-btn.btn.btn-icon.btn-sm {
-  margin-inline-start: auto;
-  align-self: flex-end;
-  flex: 0 0 auto;
-  inline-size: auto;
-  line-height: normal;
-  white-space: nowrap;
-}
 
 .detail-definition-description {
   display: flex;
@@ -235,6 +228,91 @@ The icon-and-text Summarize action keeps the shared compact icon-button stack wi
 .detail-definition-description .markdown-body {
   inline-size: 100%;
   color: var(--text-muted);
+}
+
+/*
+FNXC:TaskDetailDefinition 2026-09-14-20:00:
+FN-391 bounds the read-only description so a long one cannot push Progress or the product outcome
+out of view. `max-block-size` plus internal scrolling keeps the section's height predictable in
+every host (modal, main panel, list split, right dock, drawer, pop-out); the focus ring comes from
+the shared token so the focusable region stays visible to keyboard users.
+*/
+.detail-definition-description-body {
+  max-block-size: var(--task-detail-description-max-block-size, 18rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.detail-definition-description-body:focus-visible {
+  outline: var(--focus-ring-width, var(--border-width)) solid var(--color-primary);
+  outline-offset: var(--space-xs);
+  border-radius: var(--radius-md);
+}
+
+/*
+FNXC:TaskDetailDefinition 2026-09-14-20:00:
+The product-outcome section reuses the Definition header row so its heading and `Read plan` sit on
+one baseline, and reuses the description body's muted markdown treatment.
+*/
+.detail-definition-outcome {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-md);
+  margin-top: var(--space-lg);
+}
+
+.detail-definition-outcome h4 {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+}
+
+.detail-definition-outcome .markdown-body {
+  inline-size: 100%;
+  color: var(--text-muted);
+}
+
+.detail-definition-outcome .markdown-body > :first-child {
+  margin-block-start: 0;
+}
+
+.detail-definition-outcome .markdown-body > :last-child {
+  margin-block-end: 0;
+}
+
+.detail-definition-outcome .detail-definition-header {
+  inline-size: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+/*
+FNXC:TaskDetailDefinition 2026-09-14-20:00:
+The step-list disclosure. Never hides the counter or bar above it — it toggles the list alone.
+*/
+.detail-step-list-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-top: var(--space-sm);
+}
+
+@media (max-width: 768px) {
+  /*
+  FNXC:TaskDetailDefinition 2026-09-14-20:00:
+  A phone has far less vertical room, so the bounded description gets a shorter cap. It still
+  scrolls internally rather than growing, which is what keeps the outcome section reachable.
+  */
+  .detail-definition-description-body {
+    max-block-size: var(--task-detail-description-max-block-size-mobile, 12rem);
+  }
+
+  .detail-definition-outcome .detail-definition-header {
+    flex-wrap: wrap;
+  }
 }
 
 .detail-definition-description .markdown-body > :first-child,
@@ -356,10 +434,6 @@ Task provenance, undo and PR context, timestamps, and workflow identity live tog
 }
 
 @media (max-width: 768px) {
-  .detail-summarize-title-btn {
-    flex-shrink: 0;
-  }
-
   .detail-provenance {
     align-items: center;
   }
@@ -3592,5 +3666,119 @@ Les pills Alpha occupent l’espace intérieur disponible dans chaque hôte sans
     min-inline-size: 0;
     overflow-x: auto;
     padding-block-end: max(var(--alpha-density-2), env(safe-area-inset-bottom));
+  }
+}
+
+/* === Step Progress === */
+/*
+FNXC:TaskDetailDefinition 2026-09-12-22:52:
+La progression de Définition est une liste lisible plutôt qu’une rangée de segments sans libellé. La barre résume l’avancement et chaque ligne conserve nom, origine et statut accessibles avec les couleurs sémantiques existantes.
+*/
+.detail-step-progress {
+  margin-top: var(--space-lg);
+}
+
+.detail-progress-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-md);
+  margin-bottom: var(--space-sm);
+}
+
+.detail-step-progress h4,
+.detail-definition-description h4 {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+}
+
+.step-progress-track {
+  block-size: var(--space-xs);
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--bg-tertiary);
+}
+
+.step-progress-track > span {
+  display: block;
+  block-size: 100%;
+  border-radius: inherit;
+  background: var(--color-success);
+  transition: inline-size var(--transition-normal);
+}
+
+.detail-step-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  margin: var(--space-md) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.detail-step-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm);
+  border-radius: var(--radius-md);
+  color: var(--text);
+}
+
+.detail-step-item:is(:hover, :focus-within) {
+  background: var(--surface-hover);
+}
+
+.detail-step-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: var(--space-lg);
+  block-size: var(--space-lg);
+  border: var(--border-width) solid currentColor;
+  border-radius: var(--radius-sm);
+}
+
+.detail-step-indicator .status-dot {
+  background: currentColor;
+}
+
+.detail-step-name {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
+.detail-step-origin,
+.detail-step-status,
+.step-progress-label {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.detail-step-origin {
+  padding: calc(var(--space-xs) / 2) var(--space-sm);
+  border-radius: var(--radius-pill);
+  background: var(--bg-secondary);
+}
+
+.detail-step-status {
+  min-inline-size: max-content;
+}
+
+.step-progress-empty {
+  color: var(--text-dim);
+  font-size: var(--font-size-sm);
+}
+
+@media (max-width: 768px) {
+  .detail-step-item {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .detail-step-origin {
+    display: none;
   }
 }

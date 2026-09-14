@@ -7018,7 +7018,7 @@ export default interface Resources {
         "useDefault": "Use default",
         "useWorkflowDefault": "Use workflow default",
         "whenEnabledMergeCommitMessagesIncludeAnAI": " When enabled, merge commit messages include an AI-generated subject plus body summary (narrative + bullets + diff-stat) instead of just listing step commit subjects. Uses the title summarization model. Default: enabled. ",
-        "whenEnabledTasksCreatedWithoutATitleBut": " When enabled, every non-empty task description created without a title receives an AI-generated title (max 60 characters). Explicit titles are preserved, and manual or explicit force requests remain available when this is disabled. The same model is also used for merge commit summaries and GitHub tracking issue titles. Default: disabled. ",
+        "whenEnabledTasksCreatedWithoutATitleBut": " When enabled, every non-empty task description created without a title receives an AI-generated title in the language selected above (max 60 characters), whatever the description length. When disabled, no title is stored and cards show the first 220 characters of the description instead. Explicit titles are always preserved. The same model is also used for merge commit summaries and GitHub tracking issue titles. Default: disabled. ",
         "workflowLanesSubheading": "Workflow lanes"
       },
       "prompts": {
@@ -8202,7 +8202,9 @@ export default interface Resources {
       },
       "definition": {
         "descriptionHeading": "Description",
-        "noDescription": "(no description)"
+        "noDescription": "(no description)",
+        "noOutcome": "No plan summary yet — open Read plan for the full specification.",
+        "outcomeHeading": "What this delivers"
       },
       "delete": {
         "actionClosed": "closed",
@@ -8474,8 +8476,10 @@ export default interface Resources {
       "progress": {
         "completedCount": "{{count}}/{{total}} completed",
         "heading": "Progress",
+        "hideSteps": "Hide steps",
         "implementationOrigin": "Implementation",
         "noSteps": "(no steps defined)",
+        "showSteps": "Show steps",
         "status": {
           "advisory": "Completed with feedback",
           "done": "Completed",
@@ -8676,11 +8680,6 @@ export default interface Resources {
         "updated": "Updated"
       },
       "timingEvents": "Timing events",
-      "title": {
-        "summarize": "Summarize",
-        "summarizeFailed": "Failed to summarize title: {{error}}",
-        "summarizeSuccess": "Title updated from description"
-      },
       "tokenTotalsAria": "Task token totals",
       "tokenUsage": "Token Usage",
       "totalExecutionTime": "Total active time",
@@ -8782,6 +8781,7 @@ export default interface Resources {
       "dependenciesSelected_other": "{{count}} selected",
       "descriptionLabel": "Description",
       "descriptionPlaceholder": "What needs to be done?",
+      "descriptionReadOnlyNote": "The description can only be edited while the task is still waiting in its manual intake column.",
       "descriptionRefinedToast": "Description refined with AI",
       "editingDescription": "Editing Description",
       "enterDescriptionFirst": "Enter a description first",
@@ -8843,8 +8843,6 @@ export default interface Resources {
       "thinkingMinimal": "Minimal",
       "thinkingOff": "Off",
       "thinkingXhigh": "Very High",
-      "titleLabel": "Title",
-      "titlePlaceholder": "Task title",
       "useDropdown": "Use dropdown",
       "usingPreset": "Using preset: {{name}}",
       "workflowDefaultBadge": "(default)",

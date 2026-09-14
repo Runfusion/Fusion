@@ -46,6 +46,7 @@ import {
 } from "../api";
 import { subscribeSse } from "../sse-bus";
 import { recordResumeEvent } from "../utils/resumeInstrumentation";
+import { getTaskTitleDisplayText } from "../utils/taskTitleDisplay";
 import { FloatingWindow } from "./FloatingWindow";
 import { useEmbeddedPresentation, type ModalPresentation } from "../hooks/useEmbeddedPresentation";
 import {
@@ -4827,8 +4828,9 @@ export function SummaryView({
                       onChange={() => handleDependencyToggle(task.id)}
                     />
                     <span className="planning-dep-id">{task.id}</span>
+                    {/* FNXC:TaskTitleDisplay 2026-09-14-17:05: FN-391 — shared label projection first; the 30-character shortening is this picker row's own geometry. */}
                     <span className="planning-dep-title">
-                      {task.title || task.description.slice(0, 30)}
+                      {getTaskTitleDisplayText(task).slice(0, 30)}
                     </span>
                   </label>
                 ))}

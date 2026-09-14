@@ -168,8 +168,6 @@ async function openWorkflowDropdown() {
 function renderTaskFormWithDescriptionState(props: Partial<React.ComponentProps<typeof TaskForm>> = {}) {
   const defaultProps: React.ComponentProps<typeof TaskForm> = {
     mode: "edit",
-    title: "Task",
-    onTitleChange: vi.fn(),
     description: "",
     onDescriptionChange: vi.fn(),
     dependencies: [],
@@ -651,11 +649,19 @@ describe("TaskForm", () => {
       </AlphaProvider>,
     );
 
+    /*
+    FNXC:HomemadeAlphaPrimitives 2026-09-14-21:10:
+    `AlphaBoundary` publishes the active surface marker unconditionally since the official-design
+    change (`AlphaContext.tsx`), so a control INSIDE a boundary carries `data-alpha-ui` regardless of
+    the surrounding provider flag. The assertion below was still encoding the pre-change contract and
+    failed for `Alpha=false`. What this case genuinely guards is unchanged and still asserted: every
+    adaptive control stays a real `<select>` with its accessible label, and remains actionable.
+    */
     const choose = async (label: string, option: string) => {
       const control = await screen.findByLabelText<HTMLSelectElement>(label);
       expect(control.tagName).toBe("SELECT");
-      if (enabled) expect(control).toHaveAttribute("data-alpha-ui", "select");
-      else expect(control).not.toHaveAttribute("data-alpha-ui");
+      expect(control).toHaveAttribute("data-alpha-ui", "select");
+      expect(control).toBeEnabled();
       await user.selectOptions(control, option);
     };
 
@@ -811,8 +817,6 @@ describe("TaskForm", () => {
   it("renders description expand button in edit mode and toggles fullscreen", () => {
     const { container } = renderTaskForm({
       mode: "edit",
-      title: "My task",
-      onTitleChange: vi.fn(),
       description: "Long task description",
     });
 
@@ -830,8 +834,6 @@ describe("TaskForm", () => {
   it("collapses fullscreen description editor on Escape", () => {
     const { container } = renderTaskForm({
       mode: "edit",
-      title: "My task",
-      onTitleChange: vi.fn(),
       description: "Long task description",
     });
 
@@ -845,8 +847,6 @@ describe("TaskForm", () => {
   it("uses 8 rows for description textarea in edit mode", () => {
     renderTaskForm({
       mode: "edit",
-      title: "My task",
-      onTitleChange: vi.fn(),
       description: "Edit mode description",
     });
 
@@ -935,8 +935,6 @@ describe("TaskForm", () => {
 
       renderTaskFormWithDescriptionState({
         mode: "edit",
-        title: "My task",
-        onTitleChange: vi.fn(),
         description: "Initial description",
         onAutoSaveDescription,
       });
@@ -983,8 +981,6 @@ describe("TaskForm", () => {
     try {
       renderTaskFormWithDescriptionState({
         mode: "edit",
-        title: "My task",
-        onTitleChange: vi.fn(),
         description: "Initial",
         onAutoSaveDescription: undefined,
       });
@@ -1007,8 +1003,6 @@ describe("TaskForm", () => {
 
       renderTaskFormWithDescriptionState({
         mode: "edit",
-        title: "My task",
-        onTitleChange: vi.fn(),
         description: "",
         onAutoSaveDescription,
       });
@@ -1171,8 +1165,6 @@ describe("TaskForm description-adjacent actions layout (FN-781)", () => {
   it("does not render description-actions or Start in edit mode", () => {
     renderTaskForm({
       mode: "edit",
-      title: "My task",
-      onTitleChange: vi.fn(),
       description: "Some task",
       onPlanningMode: vi.fn(),
       onStartSubmit: vi.fn(),
@@ -1597,7 +1589,7 @@ describe("TaskForm workflow picker (U6/R3)", () => {
 
   it.each([
     ["create", { mode: "create" as const }],
-    ["edit", { mode: "edit" as const, title: "Existing task", onTitleChange: vi.fn() }],
+    ["edit", { mode: "edit" as const }],
   ])(
     "regression: no per-step checkboxes and no fetchWorkflowSteps usage (%s mode)",
     async (_label, modeProps) => {
@@ -1616,6 +1608,101 @@ describe("TaskForm workflow picker (U6/R3)", () => {
       // missing mock export, so reaching this point is itself the regression proof.)
     },
   );
+});
+
+/*
+FNXC:TaskDescriptionEditing 2026-09-14-18:45:
+FN-391 state/action/result regressions for the readonly description. The description is writable only
+while a card waits in manual intake; once released, the field stays readable and copyable but no
+keystroke, debounce, dictation or refinement may produce a write — while the REST of the form (the
+dependency picker and the other settings) stays available, which is the part a blunt `disabled` on
+the whole form would have broken.
+*/
+describe("TaskForm readonly description (FN-391)", () => {
+  it("marks the textarea readonly and shows the explanatory note", () => {
+    renderTaskForm({ mode: "edit", description: "Released work", descriptionReadOnly: true });
+
+    const textarea = screen.getByRole("textbox", { name: /Description/i });
+    expect(textarea).toHaveAttribute("readonly");
+    expect(textarea).toHaveValue("Released work");
+    expect(textarea).not.toBeDisabled();
+    expect(screen.getByTestId("task-form-description-readonly-note")).toBeInTheDocument();
+  });
+
+  it("does not emit a description change when the readonly field receives input", () => {
+    const onDescriptionChange = vi.fn();
+    renderTaskForm({
+      mode: "edit",
+      description: "Released work",
+      descriptionReadOnly: true,
+      onDescriptionChange,
+    });
+
+    fireEvent.change(screen.getByRole("textbox", { name: /Description/i }), { target: { value: "Rewritten" } });
+
+    expect(onDescriptionChange).not.toHaveBeenCalled();
+  });
+
+  it("never auto-saves a readonly description, even past the debounce window", async () => {
+    vi.useFakeTimers();
+    try {
+      const onAutoSaveDescription = vi.fn().mockResolvedValue(undefined);
+      renderTaskFormWithDescriptionState({
+        mode: "edit",
+        description: "Released work",
+        descriptionReadOnly: true,
+        onAutoSaveDescription,
+      });
+
+      fireEvent.change(screen.getByRole("textbox", { name: /Description/i }), { target: { value: "Rewritten" } });
+      vi.advanceTimersByTime(5000);
+      await vi.runOnlyPendingTimersAsync();
+
+      expect(onAutoSaveDescription).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("cancels a pending debounce when the description becomes readonly mid-edit", async () => {
+    vi.useFakeTimers();
+    try {
+      const onAutoSaveDescription = vi.fn().mockResolvedValue(undefined);
+      const baseProps = { ...renderTaskFormDefaults, mode: "edit" as const, onAutoSaveDescription };
+      const { rerender } = render(<TaskForm {...baseProps} description="Initial description" />);
+
+      rerender(<TaskForm {...baseProps} description="Edited but not yet saved" />);
+      vi.advanceTimersByTime(700);
+
+      // The lane is lost before the 1500ms debounce fires.
+      rerender(<TaskForm {...baseProps} description="Edited but not yet saved" descriptionReadOnly />);
+      vi.advanceTimersByTime(5000);
+      await vi.runOnlyPendingTimersAsync();
+
+      expect(onAutoSaveDescription).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("hides dictation and refinement while keeping the other settings reachable", () => {
+    renderTaskForm({
+      mode: "edit",
+      description: "Released work",
+      descriptionReadOnly: true,
+      tasks: [makeTask({ id: "FN-dep", description: "Dependency candidate" })],
+    });
+
+    expect(screen.queryByTestId("refine-button")).toBeNull();
+    expect(screen.getByTestId("task-form-more-options-toggle")).toBeInTheDocument();
+  });
+
+  it("keeps dictation and refinement available while the description is editable", () => {
+    renderTaskForm({ mode: "edit", description: "Still in intake" });
+
+    expect(screen.getByTestId("refine-button")).toBeInTheDocument();
+    expect(screen.queryByTestId("task-form-description-readonly-note")).toBeNull();
+  });
 });
 
 describe("TaskForm focus behavior (FN-1459)", () => {
@@ -1641,47 +1728,37 @@ describe("TaskForm focus behavior (FN-1459)", () => {
     });
   });
 
-  it("auto-focuses title input in edit mode on mount", async () => {
-    renderTaskForm({
-      mode: "edit",
-      title: "Existing task",
-      onTitleChange: vi.fn(),
-    });
+  /*
+  FNXC:TaskDescriptionEditing 2026-09-14-18:40:
+  FN-391 removed the title input, so the FN-1459 "focus and select the title" contract no longer has
+  a subject. Its replacement is asserted instead: edit mode focuses the description when it is
+  actually editable, and focuses nothing when the description is readonly — focusing a field the
+  form will refuse to write would promise an edit that cannot happen.
+  */
+  it("renders no task title input in edit mode", () => {
+    renderTaskForm({ mode: "edit", description: "Existing description" });
 
-    const titleInput = screen.getByLabelText(/Title/i) as HTMLInputElement;
-    await waitFor(() => {
-      expect(document.activeElement).toBe(titleInput);
-    });
+    expect(document.querySelector("#task-form-title")).toBeNull();
+    expect(screen.queryByPlaceholderText("Task title")).toBeNull();
   });
 
-  it("selects title input text in edit mode on mount", async () => {
-    renderTaskForm({
-      mode: "edit",
-      title: "Existing task",
-      onTitleChange: vi.fn(),
-    });
-
-    const titleInput = screen.getByLabelText(/Title/i) as HTMLInputElement;
-    // SelectionStart and SelectionEnd are set when the text is selected
-    await waitFor(() => {
-      // When text is selected, selectionStart should be 0 and selectionEnd should equal the text length
-      expect(titleInput.selectionStart).toBe(0);
-      expect(titleInput.selectionEnd).toBe(titleInput.value.length);
-    });
-  });
-
-  it("does not auto-focus description textarea in edit mode", async () => {
-    renderTaskForm({
-      mode: "edit",
-      title: "Existing task",
-      onTitleChange: vi.fn(),
-    });
+  it("auto-focuses the description textarea in edit mode when it is editable", async () => {
+    renderTaskForm({ mode: "edit", description: "Existing description" });
 
     const textarea = screen.getByRole("textbox", { name: /Description/i });
-    // In edit mode, description should NOT be focused (title input is focused instead)
+    await waitFor(() => {
+      expect(document.activeElement).toBe(textarea);
+    });
+  });
+
+  it("does not auto-focus a readonly description in edit mode", async () => {
+    renderTaskForm({ mode: "edit", description: "Existing description", descriptionReadOnly: true });
+
+    const textarea = screen.getByRole("textbox", { name: /Description/i });
     await waitFor(() => {
       expect(document.activeElement).not.toBe(textarea);
     });
+    expect(textarea).toHaveAttribute("readonly");
   });
 
   // renderBelowPrimary and hideDependencies slot tests

@@ -403,7 +403,7 @@ describe("TaskDetailModal", () => {
       await waitFor(() => {
         expect(addToast).toHaveBeenCalledWith("Failed to update FN-001: source patch failed", "error");
       });
-      expect(document.querySelector("#task-form-title")).toBeTruthy();
+      expect(document.querySelector("#task-form-description")).toBeTruthy();
     });
   });
 
@@ -535,7 +535,7 @@ describe("TaskDetailModal", () => {
       const { container } = render(
         <TaskDetailModal
           initialTab="definition"
-          task={makeTask({ id: "FN-001", column: "triage", title: "Test task" })}
+          task={makeTask({ id: "FN-001", column: "ideas", title: "Test task" })}
           onClose={noop}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
@@ -586,7 +586,7 @@ describe("TaskDetailModal", () => {
       const { container } = render(
         <TaskDetailModal
           initialTab="definition"
-          task={makeTask({ id: "FN-001", column: "triage", title: "Test task" })}
+          task={makeTask({ id: "FN-001", column: "ideas", title: "Test task" })}
           onClose={noop}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
@@ -602,15 +602,15 @@ describe("TaskDetailModal", () => {
 
       // Edit button should be hidden now
       expect(document.querySelector(".modal-edit-btn")).toBeNull();
-      // But TaskForm title input should be visible
-      expect(document.querySelector("#task-form-title")).toBeTruthy();
+      // But the TaskForm description field should be visible
+      expect(document.querySelector("#task-form-description")).toBeTruthy();
     });
 
-    it("keeps the title out of the header while edit mode exposes both fields", () => {
+    it("keeps the title out of the header and exposes no title field in edit mode", () => {
       render(
         <TaskDetailModal
           initialTab="definition"
-          task={makeTask({ id: "FN-001", column: "triage", title: "Test task", description: "Test description" })}
+          task={makeTask({ id: "FN-001", column: "ideas", title: "Test task", description: "Test description" })}
           onClose={noop}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
@@ -623,13 +623,13 @@ describe("TaskDetailModal", () => {
       expect(header).not.toHaveTextContent("Test task");
       expect(header?.querySelector("h1, h2, h3, h4, h5, h6")).toBeNull();
       expect(screen.getByTestId("task-detail-definition-description")).toHaveTextContent("Test description");
-      expect(document.querySelector("#task-form-title")).toBeNull();
+      expect(document.querySelector("#task-form-description")).toBeNull();
 
       fireEvent.click(document.querySelector(".modal-edit-btn")!);
 
       expect(header).not.toHaveTextContent("Test task");
       expect(document.querySelector("h2.detail-title")).toBeNull();
-      expect(document.querySelector("#task-form-title")).toHaveValue("Test task");
+      expect(document.querySelector("#task-form-title")).toBeNull();
       expect(document.querySelector("#task-form-description")).toHaveValue("Test description");
     });
 
@@ -637,7 +637,7 @@ describe("TaskDetailModal", () => {
       const { container } = render(
         <TaskDetailModal
           initialTab="definition"
-          task={makeTask({ id: "FN-001", column: "triage", title: "Original title", description: "Original description" })}
+          task={makeTask({ id: "FN-001", column: "ideas", title: "Original title", description: "Original description" })}
           onClose={noop}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
@@ -650,14 +650,14 @@ describe("TaskDetailModal", () => {
       fireEvent.click(document.querySelector(".modal-edit-btn")!);
 
       // Change values
-      const titleInput = document.querySelector("#task-form-title") as HTMLInputElement;
-      fireEvent.change(titleInput, { target: { value: "Modified title" } });
+      const modifiedDescription = document.querySelector("#task-form-description") as HTMLTextAreaElement;
+      fireEvent.change(modifiedDescription, { target: { value: "Modified description" } });
 
       // Click Cancel
       fireEvent.click(screen.getByText("Cancel"));
 
       // The editable value is restored without recreating a visible header title.
-      expect(document.querySelector("#task-form-title")).toBeNull();
+      expect(document.querySelector("#task-form-description")).toBeNull();
       expect(document.querySelector(".modal-header")).not.toHaveTextContent("Original title");
       expect(screen.getByTestId("task-detail-definition-description")).toHaveTextContent("Original description");
     });
@@ -670,7 +670,7 @@ describe("TaskDetailModal", () => {
       const { container } = render(
         <TaskDetailModal
           initialTab="definition"
-          task={makeTask({ id: "FN-001", column: "triage", title: "Original title", description: "Original description" })}
+          task={makeTask({ id: "FN-001", column: "ideas", title: "Original title", description: "Original description" })}
           onClose={noop}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
@@ -683,9 +683,7 @@ describe("TaskDetailModal", () => {
       fireEvent.click(document.querySelector(".modal-edit-btn")!);
 
       // Change values
-      const titleInput = document.querySelector("#task-form-title") as HTMLInputElement;
       const descTextarea = document.querySelector("#task-form-description") as HTMLTextAreaElement;
-      fireEvent.change(titleInput, { target: { value: "New title" } });
       fireEvent.change(descTextarea, { target: { value: "New description" } });
 
       // Click Save
@@ -693,7 +691,6 @@ describe("TaskDetailModal", () => {
 
       await waitFor(() => {
         expect(mockUpdate).toHaveBeenCalledWith("FN-001", expect.objectContaining({
-          title: "New title",
           description: "New description",
         }), undefined);
       });
@@ -708,7 +705,7 @@ describe("TaskDetailModal", () => {
       render(
         <TaskDetailModal
           initialTab="definition"
-          task={makeTask({ id: "FN-001", column: "triage", title: "Original title", description: "Original description" })}
+          task={makeTask({ id: "FN-001", column: "ideas", title: "Original title", description: "Original description" })}
           onClose={noop}
           onDeleteTask={onDeleteTask}
           onMergeTask={noopMerge}
@@ -737,7 +734,7 @@ describe("TaskDetailModal", () => {
       render(
         <TaskDetailModal
           initialTab="definition"
-          task={makeTask({ id: "FN-001", column: "triage", description: "Original description" })}
+          task={makeTask({ id: "FN-001", column: "ideas", description: "Original description" })}
           onClose={noop}
           onDeleteTask={onDeleteTask}
           onMergeTask={noopMerge}
@@ -767,7 +764,7 @@ describe("TaskDetailModal", () => {
       render(
         <TaskDetailModal
           initialTab="definition"
-          task={makeTask({ id: "FN-001", column: "triage", description: "Original description" })}
+          task={makeTask({ id: "FN-001", column: "ideas", description: "Original description" })}
           onClose={noop}
           onDeleteTask={onDeleteTask}
           onMergeTask={noopMerge}
@@ -799,7 +796,7 @@ describe("TaskDetailModal", () => {
           <TaskDetailContent
             initialTab="definition"
             embedded
-            task={makeTask({ id: "FN-001", column: "triage", description: "Original description" })}
+            task={makeTask({ id: "FN-001", column: "ideas", description: "Original description" })}
             onOpenDetail={noopOpenDetail}
             onDeleteTask={onDeleteTask}
             onMergeTask={noopMerge}
@@ -824,7 +821,7 @@ describe("TaskDetailModal", () => {
       const { container } = render(
         <TaskDetailModal
           initialTab="definition"
-          task={makeTask({ id: "FN-001", column: "triage", title: "Test title", description: "Test description" })}
+          task={makeTask({ id: "FN-001", column: "ideas", title: "Test title", description: "Test description" })}
           onClose={noop}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
@@ -849,7 +846,7 @@ describe("TaskDetailModal", () => {
       const { container } = render(
         <TaskDetailModal
           initialTab="definition"
-          task={makeTask({ id: "FN-001", column: "triage", title: "Original" })}
+          task={makeTask({ id: "FN-001", column: "ideas", title: "Original" })}
           onClose={noop}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
@@ -861,8 +858,8 @@ describe("TaskDetailModal", () => {
       // Enter edit mode
       fireEvent.click(document.querySelector(".modal-edit-btn")!);
 
-      const titleInput = document.querySelector("#task-form-title") as HTMLInputElement;
-      fireEvent.change(titleInput, { target: { value: "Changed title" } });
+      const changedDescription = document.querySelector("#task-form-description") as HTMLTextAreaElement;
+      fireEvent.change(changedDescription, { target: { value: "Changed description" } });
 
       // Click Save
       fireEvent.click(screen.getByText("Save"));
@@ -881,7 +878,7 @@ describe("TaskDetailModal", () => {
       const { container } = render(
         <TaskDetailModal
           initialTab="definition"
-          task={makeTask({ id: "FN-001", column: "triage", title: "Original" })}
+          task={makeTask({ id: "FN-001", column: "ideas", title: "Original" })}
           onClose={noop}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
@@ -893,8 +890,8 @@ describe("TaskDetailModal", () => {
       // Enter edit mode
       fireEvent.click(document.querySelector(".modal-edit-btn")!);
 
-      const titleInput = document.querySelector("#task-form-title") as HTMLInputElement;
-      fireEvent.change(titleInput, { target: { value: "Changed title" } });
+      const changedDescription = document.querySelector("#task-form-description") as HTMLTextAreaElement;
+      fireEvent.change(changedDescription, { target: { value: "Changed description" } });
 
       // Click Save
       fireEvent.click(screen.getByText("Save"));
@@ -904,7 +901,7 @@ describe("TaskDetailModal", () => {
       });
 
       // Should exit edit mode
-      expect(document.querySelector("#task-form-title")).toBeNull();
+      expect(document.querySelector("#task-form-description")).toBeNull();
     });
 
     it("failed save shows toast with error and stays in edit mode", async () => {
@@ -917,7 +914,7 @@ describe("TaskDetailModal", () => {
       const { container } = render(
         <TaskDetailModal
           initialTab="definition"
-          task={makeTask({ id: "FN-001", column: "triage", title: "Original" })}
+          task={makeTask({ id: "FN-001", column: "ideas", title: "Original" })}
           onClose={noop}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
@@ -929,8 +926,8 @@ describe("TaskDetailModal", () => {
       // Enter edit mode
       fireEvent.click(document.querySelector(".modal-edit-btn")!);
 
-      const titleInput = document.querySelector("#task-form-title") as HTMLInputElement;
-      fireEvent.change(titleInput, { target: { value: "Changed title" } });
+      const changedDescription = document.querySelector("#task-form-description") as HTMLTextAreaElement;
+      fireEvent.change(changedDescription, { target: { value: "Changed description" } });
 
       // Click Save
       fireEvent.click(screen.getByText("Save"));
@@ -940,14 +937,14 @@ describe("TaskDetailModal", () => {
       });
 
       // Should stay in edit mode
-      expect(document.querySelector("#task-form-title")).toBeTruthy();
+      expect(document.querySelector("#task-form-description")).toBeTruthy();
     });
 
     it("Escape key exits edit mode", async () => {
       const { container } = render(
         <TaskDetailModal
           initialTab="definition"
-          task={makeTask({ id: "FN-001", column: "triage", title: "Test title" })}
+          task={makeTask({ id: "FN-001", column: "ideas", title: "Test title" })}
           onClose={noop}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
@@ -958,7 +955,7 @@ describe("TaskDetailModal", () => {
 
       // Enter edit mode
       fireEvent.click(document.querySelector(".modal-edit-btn")!);
-      expect(document.querySelector("#task-form-title")).toBeTruthy();
+      expect(document.querySelector("#task-form-description")).toBeTruthy();
 
       // Press Escape (handled via document-level keydown listener)
       await act(async () => {
@@ -967,14 +964,14 @@ describe("TaskDetailModal", () => {
       });
 
       // Should exit edit mode
-      expect(document.querySelector("#task-form-title")).toBeNull();
+      expect(document.querySelector("#task-form-description")).toBeNull();
     });
 
-    it("edit mode shows both title and description fields", () => {
+    it("edit mode shows the description field and no title field", () => {
       const { container } = render(
         <TaskDetailModal
           initialTab="definition"
-          task={makeTask({ id: "FN-001", column: "triage", title: "Test title", description: "Test description" })}
+          task={makeTask({ id: "FN-001", column: "ideas", title: "Test title", description: "Test description" })}
           onClose={noop}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
@@ -986,8 +983,8 @@ describe("TaskDetailModal", () => {
       // Enter edit mode
       fireEvent.click(document.querySelector(".modal-edit-btn")!);
 
-      // Both title and description should be present in TaskForm
-      expect(document.querySelector("#task-form-title")).toBeTruthy();
+      // FNXC:TaskDescriptionEditing 2026-09-14-19:15: FN-391 removed the title field; only the description remains.
+      expect(document.querySelector("#task-form-description")).toBeTruthy();
       expect(document.querySelector("#task-form-description")).toBeTruthy();
     });
 
@@ -995,7 +992,7 @@ describe("TaskDetailModal", () => {
       const { container } = render(
         <TaskDetailModal
           initialTab="definition"
-          task={makeTask({ id: "FN-001", column: "triage", title: "Test task" })}
+          task={makeTask({ id: "FN-001", column: "ideas", title: "Test task" })}
           onClose={noop}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
@@ -1022,7 +1019,7 @@ describe("TaskDetailModal", () => {
       const { container } = render(
         <TaskDetailModal
           initialTab="definition"
-          task={makeTask({ id: "FN-001", column: "triage", title: "Test", description: "Desc", dependencies: ["FN-002"] })}
+          task={makeTask({ id: "FN-001", column: "ideas", title: "Test", description: "Desc", dependencies: ["FN-002"] })}
           onClose={noop}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
@@ -1055,7 +1052,7 @@ describe("TaskDetailModal", () => {
       const { container } = render(
         <TaskDetailModal
           initialTab="definition"
-          task={makeTask({ id: "FN-001", column: "triage", title: "Test", description: "Desc", priority: "normal" })}
+          task={makeTask({ id: "FN-001", column: "ideas", title: "Test", description: "Desc", priority: "normal" })}
           onClose={noop}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
@@ -1096,7 +1093,7 @@ describe("TaskDetailModal", () => {
       const { container } = render(
         <TaskDetailModal
           initialTab="definition"
-          task={makeTask({ id: "FN-001", column: "triage", title: "Test", description: "Desc" })}
+          task={makeTask({ id: "FN-001", column: "ideas", title: "Test", description: "Desc" })}
           onClose={noop}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
@@ -1136,7 +1133,7 @@ describe("TaskDetailModal", () => {
       const { container } = render(
         <TaskDetailModal
           initialTab="definition"
-          task={makeTask({ id: "FN-001", column: "triage", title: "Test", description: "Desc", plannerOversightLevel: "observe" as Task["plannerOversightLevel"] })}
+          task={makeTask({ id: "FN-001", column: "ideas", title: "Test", description: "Desc", plannerOversightLevel: "observe" as Task["plannerOversightLevel"] })}
           onClose={noop}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
@@ -1164,7 +1161,7 @@ describe("TaskDetailModal", () => {
       const { container } = render(
         <TaskDetailModal
           initialTab="definition"
-          task={makeTask({ id: "FN-001", column: "triage", title: "Test", description: "Desc", executionMode: "standard" })}
+          task={makeTask({ id: "FN-001", column: "ideas", title: "Test", description: "Desc", executionMode: "standard" })}
           onClose={noop}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
@@ -1190,7 +1187,7 @@ describe("TaskDetailModal", () => {
       const { container } = render(
         <TaskDetailModal
           initialTab="definition"
-          task={makeTask({ id: "FN-001", column: "triage", title: "Test", description: "Desc", executionMode: "fast" })}
+          task={makeTask({ id: "FN-001", column: "ideas", title: "Test", description: "Desc", executionMode: "fast" })}
           onClose={noop}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
@@ -1218,7 +1215,7 @@ describe("TaskDetailModal", () => {
           initialTab="definition"
           task={makeTask({
             id: "FN-001",
-            column: "triage",
+            column: "ideas",
             title: "Test",
             description: "Desc",
             executionMode: "fast",
@@ -1275,7 +1272,7 @@ describe("TaskDetailModal", () => {
       const mockUpdate = vi.mocked(updateTask);
       const mockRebuild = vi.mocked(rebuildTaskSpec);
       mockUpdate.mockResolvedValueOnce(makeTask({ id: "FN-001", column: "todo", title: "Test", description: "Desc", executionMode: null }) as Task);
-      mockRebuild.mockResolvedValueOnce(makeTask({ id: "FN-001", column: "triage", status: "needs-replan", executionMode: null }) as Task);
+      mockRebuild.mockResolvedValueOnce(makeTask({ id: "FN-001", column: "ideas", status: "needs-replan", executionMode: null }) as Task);
 
       const { container } = render(
         <TaskDetailModal
@@ -1311,7 +1308,7 @@ describe("TaskDetailModal", () => {
       const { container } = render(
         <TaskDetailModal
           initialTab="definition"
-          task={makeTask({ id: "FN-001", column: "triage", title: "Test", description: "Desc", executionMode: "fast" })}
+          task={makeTask({ id: "FN-001", column: "ideas", title: "Test", description: "Desc", executionMode: "fast" })}
           onClose={noop}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
@@ -1332,7 +1329,7 @@ describe("TaskDetailModal", () => {
       render(
         <TaskDetailModal
           initialTab="definition"
-          task={makeTask({ id: "FN-001", column: "triage", description: "Priority metadata", priority: undefined })}
+          task={makeTask({ id: "FN-001", column: "ideas", description: "Priority metadata", priority: undefined })}
           onClose={noop}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
@@ -1349,13 +1346,13 @@ describe("TaskDetailModal", () => {
       const { updateTask } = await import("../../api");
       const mockUpdate = vi.mocked(updateTask);
       mockUpdate
-        .mockResolvedValueOnce(makeTask({ id: "FN-001", column: "triage", priority: "urgent", executionMode: "standard" }) as Task)
-        .mockResolvedValueOnce(makeTask({ id: "FN-001", column: "triage", priority: "urgent", executionMode: "fast" }) as Task);
+        .mockResolvedValueOnce(makeTask({ id: "FN-001", column: "ideas", priority: "urgent", executionMode: "standard" }) as Task)
+        .mockResolvedValueOnce(makeTask({ id: "FN-001", column: "ideas", priority: "urgent", executionMode: "fast" }) as Task);
 
       render(
         <TaskDetailModal
           initialTab="definition"
-          task={makeTask({ id: "FN-001", column: "triage", priority: "high", executionMode: "standard" })}
+          task={makeTask({ id: "FN-001", column: "ideas", priority: "high", executionMode: "standard" })}
           onClose={noop}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
@@ -1385,7 +1382,7 @@ describe("TaskDetailModal", () => {
       const addToast = vi.fn();
       const updatedTask = makeTask({
         id: "FN-001",
-        column: "triage",
+        column: "ideas",
         status: "awaiting-approval",
         priority: "urgent",
       });
@@ -1396,7 +1393,7 @@ describe("TaskDetailModal", () => {
           initialTab="definition"
           task={makeTask({
             id: "FN-001",
-            column: "triage",
+            column: "ideas",
             status: "awaiting-approval",
             description: "Priority metadata",
             priority: "normal",
@@ -1417,7 +1414,7 @@ describe("TaskDetailModal", () => {
       });
       expect(onTaskUpdated).toHaveBeenCalledWith(expect.objectContaining({
         id: "FN-001",
-        column: "triage",
+        column: "ideas",
         status: "awaiting-approval",
         priority: "urgent",
       }));
@@ -1431,7 +1428,7 @@ describe("TaskDetailModal", () => {
       render(
         <TaskDetailModal
           initialTab="definition"
-          task={makeTask({ id: "FN-001", column: "triage", description: "Priority metadata", priority: "high" })}
+          task={makeTask({ id: "FN-001", column: "ideas", description: "Priority metadata", priority: "high" })}
           onClose={noop}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
@@ -1456,7 +1453,7 @@ describe("TaskDetailModal", () => {
       render(
         <TaskDetailModal
           initialTab="definition"
-          task={makeTask({ id: "FN-001", column: "triage", description: "Priority metadata", priority: "low" })}
+          task={makeTask({ id: "FN-001", column: "ideas", description: "Priority metadata", priority: "low" })}
           onClose={noop}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
@@ -1551,7 +1548,7 @@ describe("TaskDetailModal", () => {
       const mockUpdate = vi.mocked(updateTask);
       const mockRebuild = vi.mocked(rebuildTaskSpec);
       mockUpdate.mockResolvedValueOnce(makeTask({ id: "FN-001", column: "todo", executionMode: null }) as Task);
-      mockRebuild.mockResolvedValueOnce(makeTask({ id: "FN-001", column: "triage", status: "needs-replan", executionMode: null }) as Task);
+      mockRebuild.mockResolvedValueOnce(makeTask({ id: "FN-001", column: "ideas", status: "needs-replan", executionMode: null }) as Task);
 
       render(
         <TaskDetailModal
@@ -1613,13 +1610,13 @@ describe("TaskDetailModal", () => {
       const mockRebuild = vi.mocked(rebuildTaskSpec);
       const addToast = vi.fn();
       const onTaskUpdated = vi.fn();
-      const updatedTask = makeTask({ id: "FN-001", column: "triage", executionMode: "fast" });
+      const updatedTask = makeTask({ id: "FN-001", column: "ideas", executionMode: "fast" });
       mockUpdate.mockResolvedValueOnce(updatedTask as Task);
 
       render(
         <TaskDetailModal
           initialTab="definition"
-          task={makeTask({ id: "FN-001", column: "triage", executionMode: "standard" })}
+          task={makeTask({ id: "FN-001", column: "ideas", executionMode: "standard" })}
           onClose={noop}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
@@ -1685,7 +1682,7 @@ describe("TaskDetailModal", () => {
       render(
         <TaskDetailModal
           initialTab="definition"
-          task={makeTask({ id: "FN-001", column: "triage", executionMode: "standard" })}
+          task={makeTask({ id: "FN-001", column: "ideas", executionMode: "standard" })}
           onClose={noop}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
@@ -1771,10 +1768,9 @@ describe("TaskDetailModal", () => {
       // Enter edit mode
       fireEvent.click(document.querySelector(".modal-edit-btn")!);
 
-      const titleInput = document.querySelector("#task-form-title") as HTMLInputElement;
       const descTextarea = document.querySelector("#task-form-description") as HTMLTextAreaElement;
-      expect(titleInput.value).toBe("My Task");
       expect(descTextarea.value).toBe("My Description");
+      expect(document.querySelector("#task-form-title")).toBeNull();
     });
 
     it("pre-populates working/base branch inputs and saves changed branch only", async () => {
@@ -1873,7 +1869,7 @@ describe("TaskDetailModal", () => {
 
       const initialTask = makeTask({
         id: "FN-001",
-        column: "todo",
+        column: "ideas",
         title: "My Task",
         description: "Old Description",
       });
@@ -1927,7 +1923,7 @@ describe("TaskDetailModal", () => {
         },
       });
 
-      const initialTask = makeTask({ id: "FN-001", column: "triage", title: "Model sync test" });
+      const initialTask = makeTask({ id: "FN-001", column: "ideas", title: "Model sync test" });
       const updatedAfterExecutor: Task = {
         ...initialTask,
         modelProvider: "anthropic",
@@ -2075,7 +2071,7 @@ describe("TaskDetailModal", () => {
           initialTab="model"
           task={makeTask({
             id: "FN-001",
-            column: "triage",
+            column: "ideas",
             title: "Scoped reviewer failure",
             validatorModelProvider: "anthropic",
             validatorModelId: "claude-haiku-5",
@@ -2114,7 +2110,7 @@ describe("TaskDetailModal", () => {
       const { container } = render(
         <TaskDetailModal
           initialTab="definition"
-          task={makeTask({ id: "FN-001", column: "triage", title: "Test task" })}
+          task={makeTask({ id: "FN-001", column: "ideas", title: "Test task" })}
           onClose={noop}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
@@ -2148,7 +2144,7 @@ describe("TaskDetailModal", () => {
       const { container } = render(
         <TaskDetailModal
           initialTab="definition"
-          task={makeTask({ id: "FN-001", column: "triage", title: "Test task" })}
+          task={makeTask({ id: "FN-001", column: "ideas", title: "Test task" })}
           onClose={noop}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}

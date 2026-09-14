@@ -26,10 +26,26 @@ describe("TaskDetailModal CSS contract", () => {
     const tab = getCssRuleBlock(css, '[data-alpha-surface="true"] .detail-tab');
     const active = getCssRuleBlock(css, '[data-alpha-surface="true"] .detail-tab-active');
 
+    /*
+    FNXC:TaskDetailStructure 2026-09-14-21:15:
+    The strip is borderless and carries the shared secondary surface token — the pill group reads as
+    one control rather than a bordered toolbar. This assertion previously required a transparent
+    strip, a contract the pill-group design deliberately replaced; what still matters (and is still
+    asserted) is that no border is drawn, the token is a design token, and only the ACTIVE tab is
+    materialized.
+    */
     expect(strip).toContain("border: 0;");
-    expect(strip).toContain("background: transparent;");
+    expect(strip).toContain("background: var(--alpha-neutral-surface-secondary);");
+    expect(strip).not.toMatch(/background:\s*(#|rgb)/i);
     expect(tab).toContain("background: transparent !important;");
-    expect(active).toContain("border-block-end-color: var(--alpha-accent-background);");
+    /*
+    FNXC:TaskDetailStructure 2026-09-14-21:15:
+    The ACTIVE tab is materialized as a raised pill (surface token plus elevation), not an underline.
+    The invariant this case guards is unchanged: exactly the active tab is materialized, it uses
+    design tokens, and it never inverts to the neutral FOREGROUND colour as a background.
+    */
+    expect(active).toContain("background: var(--alpha-neutral-surface) !important;");
+    expect(active).toContain("box-shadow: var(--shadow-sm);");
     expect(active).not.toContain("background: var(--alpha-neutral-foreground)");
   });
 

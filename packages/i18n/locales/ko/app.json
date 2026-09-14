@@ -7973,7 +7973,9 @@
     },
     "definition": {
       "descriptionHeading": "설명",
-      "noDescription": "(설명 없음)"
+      "noDescription": "(설명 없음)",
+      "noOutcome": "아직 계획 요약이 없습니다 — 전체 사양은 계획 읽기에서 확인하세요.",
+      "outcomeHeading": "이 작업의 산출물"
     },
     "description": {
       "showLess": "간략히 보기",
@@ -8160,10 +8162,12 @@
       "updated": "우선순위가 {{priority}}로 업데이트되었습니다"
     },
     "progress": {
-      "heading": "진행 상태",
       "completedCount": "{{count}}/{{total}} 완료",
-      "workflowOrigin": "워크플로 게이트",
+      "heading": "진행 상태",
+      "hideSteps": "단계 숨기기",
       "implementationOrigin": "구현",
+      "noSteps": "(정의된 단계 없음)",
+      "showSteps": "단계 표시",
       "status": {
         "done": "완료",
         "failed": "실패",
@@ -8173,9 +8177,9 @@
         "skipped": "건너뜀",
         "pending": "대기 중"
       },
-      "noSteps": "(정의된 단계 없음)",
       "stepCount_one": "",
-      "stepCount_other": ""
+      "stepCount_other": "",
+      "workflowOrigin": "워크플로 게이트"
     },
     "provenance": {
       "createdBy": "작성자",
@@ -8336,11 +8340,6 @@
       "updated": "업데이트됨"
     },
     "timingEvents": "타이밍 이벤트",
-    "title": {
-      "summarize": "",
-      "summarizeFailed": "",
-      "summarizeSuccess": ""
-    },
     "tokenTotalsAria": "작업 토큰 합계",
     "tokenUsage": "토큰 사용량",
     "totalExecutionTime": "총 활성 시간",
@@ -8531,6 +8530,7 @@
     "dependenciesSelected_other": "",
     "descriptionLabel": "설명",
     "descriptionPlaceholder": "무엇을 해야 하나요?",
+    "descriptionReadOnlyNote": "설명은 작업이 수동 인테이크 칼럼에서 대기하는 동안에만 편집할 수 있습니다.",
     "descriptionRefinedToast": "AI로 설명이 다듬어졌습니다",
     "editingDescription": "설명 편집 중",
     "enterDescriptionFirst": "먼저 설명을 입력해 주세요",
@@ -8592,8 +8592,6 @@
     "thinkingMinimal": "최소",
     "thinkingOff": "끔",
     "thinkingXhigh": "매우 높음",
-    "titleLabel": "제목",
-    "titlePlaceholder": "작업 제목",
     "useDropdown": "드롭다운 사용",
     "usingPreset": "프리셋 사용 중: {{name}}",
     "workflowDefaultBadge": "(기본값)",

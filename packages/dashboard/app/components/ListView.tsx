@@ -1017,7 +1017,13 @@ export function ListView({
         let comparison = 0;
         switch (sortField) {
           case "title":
-            comparison = (a.title || a.description).localeCompare(b.title || b.description);
+            /*
+            FNXC:TaskTitleDisplay 2026-09-14-17:05:
+            FN-391: sort on the SAME text the row renders. Sorting on the raw description while
+            rendering a bounded projection made the visible order look wrong for long descriptions
+            that differ only past the bound.
+            */
+            comparison = getTaskTitleDisplay(a).text.localeCompare(getTaskTitleDisplay(b).text);
             break;
           case "status":
             comparison = (a.status || "").localeCompare(b.status || "");

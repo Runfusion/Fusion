@@ -7973,7 +7973,9 @@
     },
     "definition": {
       "descriptionHeading": "描述",
-      "noDescription": "（无描述）"
+      "noDescription": "（无描述）",
+      "noOutcome": "尚无计划摘要 — 打开“阅读计划”查看完整规范。",
+      "outcomeHeading": "该任务交付的内容"
     },
     "description": {
       "showLess": "显示更少",
@@ -8160,10 +8162,12 @@
       "updated": "优先级已更新为 {{priority}}"
     },
     "progress": {
-      "heading": "进度",
       "completedCount": "已完成 {{count}}/{{total}}",
-      "workflowOrigin": "工作流关卡",
+      "heading": "进度",
+      "hideSteps": "隐藏步骤",
       "implementationOrigin": "实现",
+      "noSteps": "（未定义步骤）",
+      "showSteps": "显示步骤",
       "status": {
         "done": "已完成",
         "failed": "失败",
@@ -8173,9 +8177,9 @@
         "skipped": "已跳过",
         "pending": "待处理"
       },
-      "noSteps": "（未定义步骤）",
       "stepCount_one": "",
-      "stepCount_other": ""
+      "stepCount_other": "",
+      "workflowOrigin": "工作流关卡"
     },
     "provenance": {
       "createdBy": "创建者：",
@@ -8336,11 +8340,6 @@
       "updated": "更新于"
     },
     "timingEvents": "计时事件",
-    "title": {
-      "summarize": "",
-      "summarizeFailed": "",
-      "summarizeSuccess": ""
-    },
     "tokenTotalsAria": "任务 Token 总计",
     "tokenUsage": "Token 使用情况",
     "totalExecutionTime": "总活跃时间",
@@ -8531,6 +8530,7 @@
     "dependenciesSelected_other": "",
     "descriptionLabel": "描述",
     "descriptionPlaceholder": "需要完成什么？",
+    "descriptionReadOnlyNote": "仅当任务仍在其手动收件列中等待时，才能编辑描述。",
     "descriptionRefinedToast": "AI 已优化描述",
     "editingDescription": "正在编辑描述",
     "enterDescriptionFirst": "请先输入描述",
@@ -8592,8 +8592,6 @@
     "thinkingMinimal": "最低",
     "thinkingOff": "关闭",
     "thinkingXhigh": "极高",
-    "titleLabel": "标题",
-    "titlePlaceholder": "任务标题",
     "useDropdown": "使用下拉菜单",
     "usingPreset": "使用预设：{{name}}",
     "workflowDefaultBadge": "（默认）",

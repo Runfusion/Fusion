@@ -5263,23 +5263,29 @@ describe("ListView - Bulk Selection", () => {
   });
 });
 
-describe("ListView titleless display fallback (FN-044)", () => {
-  const description200 = "d".repeat(200);
-  const description201 = "e".repeat(201);
-  const expectedBoundedDescription = description201.slice(0, 197) + "...";
+/*
+FNXC:TaskTitleDisplay 2026-09-14-17:35:
+FN-391: the desktop table and mobile card render the EXACT 220-character description prefix, with no
+ellipsis. Inverted from the FN-044 197+"..." contract rather than relaxed.
+*/
+describe("ListView titleless display fallback (FN-391)", () => {
+  const description220 = "d".repeat(220);
+  const description221 = "e".repeat(221);
+  const expectedBoundedDescription = description221.slice(0, 220);
 
-  it("uses the shared literal-dot fallback in the desktop table and preserves explicit titles", () => {
+  it("uses the exact 220-character fallback in the desktop table and preserves explicit titles", () => {
     const viewportSpy = mockDesktopViewport();
     try {
       const { container, rerender } = renderListView({
-        tasks: [createMockTask({ id: "FN-044-desktop", title: undefined, description: description201 })],
+        tasks: [createMockTask({ id: "FN-044-desktop", title: undefined, description: description221 })],
       });
-      expect(container.querySelector(".list-title-text")).toHaveTextContent(expectedBoundedDescription);
-      expect(container.querySelector(".list-title-text")?.textContent).toHaveLength(200);
+      expect(container.querySelector(".list-title-text")?.textContent).toBe(expectedBoundedDescription);
+      expect(container.querySelector(".list-title-text")?.textContent).toHaveLength(220);
+      expect(container.querySelector(".list-title-text")?.textContent).not.toContain("...");
 
       const explicitTitle = "t".repeat(201);
       rerender(<ListView
-        tasks={[createMockTask({ id: "FN-044-explicit", title: explicitTitle, description: description201 })]}
+        tasks={[createMockTask({ id: "FN-044-explicit", title: explicitTitle, description: description221 })]}
         onMoveTask={vi.fn(async () => createMockTask())}
         onRetryTask={vi.fn(async () => createMockTask())}
         onDeleteTask={vi.fn(async () => createMockTask())}
@@ -5298,16 +5304,16 @@ describe("ListView titleless display fallback (FN-044)", () => {
     }
   });
 
-  it("uses the same fallback in mobile cards, including 200-character and whitespace-title controls", () => {
+  it("uses the same fallback in mobile cards, including 220-character and whitespace-title controls", () => {
     const viewportSpy = mockMobileViewport();
     try {
       const { container, rerender } = renderListView({
-        tasks: [createMockTask({ id: "FN-044-mobile", title: "   ", description: description201 })],
+        tasks: [createMockTask({ id: "FN-044-mobile", title: "   ", description: description221 })],
       });
-      expect(container.querySelector(".list-card-title")).toHaveTextContent(expectedBoundedDescription);
+      expect(container.querySelector(".list-card-title")?.textContent).toBe(expectedBoundedDescription);
 
       rerender(<ListView
-        tasks={[createMockTask({ id: "FN-044-200", title: undefined, description: description200 })]}
+        tasks={[createMockTask({ id: "FN-044-220", title: undefined, description: description220 })]}
         onMoveTask={vi.fn(async () => createMockTask())}
         onRetryTask={vi.fn(async () => createMockTask())}
         onDeleteTask={vi.fn(async () => createMockTask())}
@@ -5320,7 +5326,7 @@ describe("ListView titleless display fallback (FN-044)", () => {
         onNewTask={vi.fn()}
         projectId={TEST_PROJECT_ID}
       />);
-      expect(container.querySelector(".list-card-title")).toHaveTextContent(description200);
+      expect(container.querySelector(".list-card-title")?.textContent).toBe(description220);
     } finally {
       viewportSpy.mockRestore();
     }

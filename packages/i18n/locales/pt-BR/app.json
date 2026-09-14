@@ -6570,7 +6570,7 @@
       "useDefault": "Usar padrão",
       "useWorkflowDefault": "Usar padrão do fluxo de trabalho",
       "whenEnabledMergeCommitMessagesIncludeAnAI": " Quando ativado, as mensagens de commit de merge incluem um assunto gerado por IA além de um resumo no corpo (narrativa + tópicos + estatísticas de diff), em vez de apenas listar os assuntos dos commits das etapas. Usa o modelo de resumo de título. Padrão: ativado. ",
-      "whenEnabledTasksCreatedWithoutATitleBut": " Quando ativado, toda descrição não vazia criada sem título recebe automaticamente um título gerado por IA (máximo de 60 caracteres). Títulos explícitos são preservados e solicitações manuais ou explícitas continuam disponíveis quando desativado. O mesmo modelo também é usado para resumos de commits de merge e títulos de issues de rastreamento do GitHub. Padrão: desativado. ",
+      "whenEnabledTasksCreatedWithoutATitleBut": " Quando ativado, toda descrição não vazia criada sem título recebe automaticamente um título gerado por IA no idioma selecionado acima (máximo de 60 caracteres), qualquer que seja o tamanho da descrição. Quando desativado, nenhum título é armazenado e os cartões mostram os primeiros 220 caracteres da descrição. Títulos explícitos são sempre preservados. O mesmo modelo também é usado para resumos de commits de merge e títulos de issues de rastreamento do GitHub. Padrão: desativado. ",
       "autoSelectModelPresetHint": "Padrão: desativado.",
       "prTitlePromptInstructionsHelp": "Orienta o título gerado por IA ao criar um PR. Deixe em branco para usar o prompt padrão de metadados do PR. Sem padrão — não definido.",
       "prDescriptionPromptInstructionsHelp": "Orienta o resumo, as alterações e as seções de teste gerados por IA ao criar um PR. Deixe em branco para usar o prompt padrão de metadados do PR. Sem padrão — não definido.",
@@ -7984,7 +7984,9 @@
     },
     "definition": {
       "descriptionHeading": "Descrição",
-      "noDescription": "(sem descrição)"
+      "noDescription": "(sem descrição)",
+      "noOutcome": "Ainda não há resumo do plano — abra Ler plano para ver a especificação completa.",
+      "outcomeHeading": "O que esta tarefa entrega"
     },
     "description": {
       "showLess": "Mostrar menos",
@@ -8200,10 +8202,12 @@
       "updated": "Prioridade atualizada para {{priority}}"
     },
     "progress": {
-      "heading": "Progresso",
       "completedCount": "{{count}}/{{total}} concluídas",
-      "workflowOrigin": "Etapa do fluxo de trabalho",
+      "heading": "Progresso",
+      "hideSteps": "Ocultar etapas",
       "implementationOrigin": "Implementação",
+      "noSteps": "(nenhuma etapa definida)",
+      "showSteps": "Mostrar etapas",
       "status": {
         "done": "Concluída",
         "failed": "Falhou",
@@ -8213,9 +8217,9 @@
         "skipped": "Ignorada",
         "pending": "Pendente"
       },
-      "noSteps": "(nenhuma etapa definida)",
       "stepCount_one": "{{count}}/{{total}} etapa",
-      "stepCount_other": "{{count}}/{{total}} etapas"
+      "stepCount_other": "{{count}}/{{total}} etapas",
+      "workflowOrigin": "Etapa do fluxo de trabalho"
     },
     "provenance": {
       "createdBy": "Criado por",
@@ -8379,11 +8383,6 @@
       "updated": "Atualizado"
     },
     "timingEvents": "Eventos de temporização",
-    "title": {
-      "summarize": "Resumir",
-      "summarizeFailed": "Falha ao resumir o título: {{error}}",
-      "summarizeSuccess": "Título atualizado a partir da descrição"
-    },
     "tokenTotalsAria": "Totais de tokens da tarefa",
     "tokenUsage": "Uso de tokens",
     "totalExecutionTime": "Tempo ativo total",
@@ -8542,6 +8541,7 @@
     "dependenciesSelected_other": "{{count}} selecionadas",
     "descriptionLabel": "Descrição",
     "descriptionPlaceholder": "O que precisa ser feito?",
+    "descriptionReadOnlyNote": "A descrição só pode ser editada enquanto a tarefa ainda aguarda em sua coluna de entrada manual.",
     "descriptionRefinedToast": "Descrição refinada com IA",
     "editingDescription": "Editando descrição",
     "enterDescriptionFirst": "Digite uma descrição primeiro",
@@ -8603,8 +8603,6 @@
     "thinkingMinimal": "Mínimo",
     "thinkingOff": "Desativado",
     "thinkingXhigh": "Muito alto",
-    "titleLabel": "Título",
-    "titlePlaceholder": "Título da tarefa",
     "useDropdown": "Usar menu suspenso",
     "usingPreset": "Usando predefinição: {{name}}",
     "workflowDefaultBadge": "(padrão)",

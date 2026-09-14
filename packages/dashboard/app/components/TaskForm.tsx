@@ -7,6 +7,7 @@ import type { ToastType } from "../hooks/useToast";
 import { fetchModels, fetchSettings, fetchWorkflows, fetchWorkflowOptionalSteps, refineText, getRefineErrorMessage, updateGlobalSettings, fetchGlobalSettings, fetchGitBranches, type RefinementType, type ModelInfo, type NodeInfo } from "../api";
 import { WorkflowOptionalStepsDropdown } from "./WorkflowOptionalStepsDropdown";
 import { applyPresetToSelection, getRecommendedPresetForSize } from "../utils/modelPresets";
+import { getTaskTitleDisplayText } from "../utils/taskTitleDisplay";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { NodeHealthDot } from "./NodeHealthDot";
 import { LoadingSpinner } from "./LoadingSpinner";
@@ -81,8 +82,16 @@ export interface TaskFormProps {
   // Core fields
   description: string;
   onDescriptionChange: (value: string) => void;
-  title?: string;
-  onTitleChange?: (value: string) => void;
+  /*
+  FNXC:TaskDescriptionEditing 2026-09-14-18:15:
+  FN-391: the description is READONLY unless the card is still in a manual-intake lane, because once
+  it has been released an AI has planned or is executing against that exact text. The other settings
+  in this form stay editable in their own lanes — this flag governs the description ALONE, so a
+  readonly description never removes dependency, branch, model or workflow-step editing.
+  The title field and its `onTitleChange` callback were removed with FN-391: a task title is written
+  only by the create-time automatic policy.
+  */
+  descriptionReadOnly?: boolean;
 
   // Dependencies
   dependencies: string[];
@@ -223,8 +232,7 @@ export function TaskForm({
   mode,
   description,
   onDescriptionChange,
-  title,
-  onTitleChange,
+  descriptionReadOnly = false,
   dependencies,
   onDependenciesChange,
   branch,
@@ -386,7 +394,6 @@ export function TaskForm({
     element.style.height = `${element.scrollHeight}px`;
   }, []);
   const dictation = useComposerDictation({ textareaRef: descTextareaRef, value: description, onChange: onDescriptionChange, onResize: resizeDescription, projectId });
-  const titleInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const autoSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoSaveStatusTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -631,14 +638,16 @@ export function TaskForm({
     setShowWorkflowDropdown(false);
   }, [moreOptionsOpen]);
 
-  // Auto-select title input text in edit mode (focus is handled by autoFocus)
+  /*
+  FNXC:TaskDescriptionEditing 2026-09-14-18:15:
+  FN-391 replaced the removed title input's autofocus with description focus — but only when the
+  description is actually editable. Focusing a readonly field on open would suggest an edit the form
+  will refuse.
+  */
   useEffect(() => {
-    if (mode !== "edit" || !isActive) return;
-    if (titleInputRef.current) {
-      titleInputRef.current.focus();
-      titleInputRef.current.select();
-    }
-  }, [mode, isActive]);
+    if (mode !== "edit" || !isActive || descriptionReadOnly) return;
+    descTextareaRef.current?.focus();
+  }, [mode, isActive, descriptionReadOnly]);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -682,9 +691,15 @@ export function TaskForm({
     setAutoSaveStatus("idle");
   }, [mode]);
 
-  // Debounced auto-save for edit mode description changes
+  /*
+  FNXC:TaskDescriptionEditing 2026-09-14-18:15:
+  Debounced description auto-save. `descriptionReadOnly` gates the WHOLE effect, so a card that loses
+  its manual-intake lane while an edit is pending cancels the not-yet-fired debounce through this
+  effect's cleanup and never issues the write. A request already accepted by the server is not
+  rolled back — undoing an accepted write would be a second, worse surprise.
+  */
   useEffect(() => {
-    if (mode !== "edit" || !onAutoSaveDescription || !isActive) return;
+    if (mode !== "edit" || descriptionReadOnly || !onAutoSaveDescription || !isActive) return;
 
     const trimmedDescription = description.trim();
     const initialDescription = initialDescriptionRef.current;
@@ -736,7 +751,7 @@ export function TaskForm({
         autoSaveTimeoutRef.current = null;
       }
     };
-  }, [mode, description, onAutoSaveDescription, isActive]);
+  }, [mode, description, descriptionReadOnly, onAutoSaveDescription, isActive]);
 
   useEffect(() => {
     return () => {
@@ -814,9 +829,11 @@ export function TaskForm({
 
   // Auto-resize textarea
   const handleDescriptionInput = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    // FNXC:TaskDescriptionEditing 2026-09-14-18:15: FN-391 — belt-and-braces with `readOnly` so a programmatic change event cannot slip a write through.
+    if (descriptionReadOnly) return;
     onDescriptionChange(e.target.value);
     resizeDescription();
-  }, [onDescriptionChange, resizeDescription]);
+  }, [descriptionReadOnly, onDescriptionChange, resizeDescription]);
 
   const handleToggleDescriptionExpand = useCallback(() => {
     setIsDescriptionExpanded((prev) => !prev);
@@ -953,23 +970,12 @@ export function TaskForm({
       onPaste={handlePaste}
     >
       <div className="task-form-primary-section">
-        {/* Title field (edit mode only) */}
-      {mode === "edit" && onTitleChange && (
-        <div className="form-group">
-          <label htmlFor="task-form-title">{t("taskForm.titleLabel", "Title")}</label>
-          <AlphaInput
-            ref={titleInputRef}
-            autoFocus
-            id="task-form-title"
-            type="text"
-            className="modal-edit-input"
-            placeholder={t("taskForm.titlePlaceholder", "Task title")}
-            value={title || ""}
-            onChange={(e) => onTitleChange(e.target.value)}
-            disabled={disabled}
-          />
-        </div>
-      )}
+      {/*
+      FNXC:TaskDescriptionEditing 2026-09-14-18:15:
+      FN-391 removed the title input that lived here. The task title is not an operator-editable
+      field any more: it is either an explicit title supplied by an integration writer or a title
+      generated once at create time by the automatic policy.
+      */}
 
       {/* Description field */}
       <div className="form-group">
@@ -1001,6 +1007,12 @@ export function TaskForm({
               </AlphaButton>
             </div>
           )}
+          {/*
+          FNXC:TaskDescriptionEditing 2026-09-14-18:15:
+          `readOnly` rather than `disabled`: a released card's description must stay selectable,
+          copyable, scrollable and reachable by keyboard — it is the authoritative statement of the
+          work, and a disabled textarea would hide it from assistive technology and the clipboard.
+          */}
           <AlphaTextArea
             ref={descTextareaRef}
             autoFocus={mode === "create"}
@@ -1009,12 +1021,20 @@ export function TaskForm({
             onChange={handleDescriptionInput}
             placeholder={t("taskForm.descriptionPlaceholder", "What needs to be done?")}
             rows={mode === "edit" ? 8 : 5}
+            readOnly={descriptionReadOnly}
+            aria-readonly={descriptionReadOnly || undefined}
+            data-testid={descriptionReadOnly ? "task-form-description-readonly" : undefined}
             disabled={disabled || isRefining}
           />
-          <MicButton {...dictation.micProps} disabled={disabled || isRefining} />
+          {!descriptionReadOnly && <MicButton {...dictation.micProps} disabled={disabled || isRefining} />}
+          {descriptionReadOnly && (
+            <p className="task-form-description-readonly-note" data-testid="task-form-description-readonly-note">
+              {t("taskForm.descriptionReadOnlyNote", "The description can only be edited while the task is still waiting in its manual intake column.")}
+            </p>
+          )}
           {/* Determine if refine button will be shown — controls expand button placement */}
           {(() => {
-            const showRefineButton = Boolean(description.trim()) && !disabled;
+            const showRefineButton = Boolean(description.trim()) && !disabled && !descriptionReadOnly;
             return (
               <>
                 {!isDescriptionExpanded && (
@@ -1407,7 +1427,7 @@ export function TaskForm({
                     onMouseDown={(e) => e.preventDefault()}
                   >
                     <span className="dep-dropdown-id">{t.id}</span>
-                    <span className="dep-dropdown-title">{truncate(t.title || t.description || t.id, 30)}</span>
+                    <span className="dep-dropdown-title">{truncate(getTaskTitleDisplayText(t), 30)}</span>
                   </div>
                 ))
               )}

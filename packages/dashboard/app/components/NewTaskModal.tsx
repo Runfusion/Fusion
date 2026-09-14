@@ -43,6 +43,7 @@ import { useAgentsMapCache } from "../hooks/useAgentsMapCache";
 import { FloatingWindow } from "./FloatingWindow";
 import { DashboardWindowSurfaceRoot } from "../context/DashboardWindowManagerContext";
 import { resolveQuickAddStartInitialColumn, resolveQuickAddStartTargetColumn, resolveQuickAddStartWorkflowTarget, validateQuickAddStartWorkflow, workflowSupportsQuickAddStart, type ValidatedQuickAddWorkflow } from "../utils/quickAddStart";
+import { getTaskTitleDisplayText } from "../utils/taskTitleDisplay";
 
 type NewTaskCreateInput = Omit<CreateTaskInput, "branchSelection"> & {
   branchSelection?: {
@@ -1077,7 +1078,7 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
                     onMouseDown={(e) => e.preventDefault()}
                   >
                     <span className="dep-dropdown-id">{t.id}</span>
-                    <span className="dep-dropdown-title">{truncate(t.title || t.description || t.id, 30)}</span>
+                    <span className="dep-dropdown-title">{truncate(getTaskTitleDisplayText(t), 30)}</span>
                   </div>
                 ))
               )}

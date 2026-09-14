@@ -868,6 +868,29 @@ describe("QuickEntryBox", () => {
       expect(document.activeElement).not.toBe(textarea);
     });
 
+    /*
+    FNXC:TaskTitleDisplay 2026-09-14-17:45:
+    FN-391: quick entry writes the task's DESCRIPTION. It must never derive an implicit title from a
+    short entry, because that would be a second title writer competing with the create-time policy.
+    */
+    it.each([
+      { label: "a five-word entry", value: "Corriger le bouton de partage" },
+      { label: "a 400-character entry", value: "x".repeat(400) },
+    ])("submits $label as a description with no title", async ({ value }) => {
+      const onCreate = vi.fn().mockResolvedValue(CREATED_TASK);
+      renderQuickEntryBox({ onCreate });
+      const textarea = screen.getByTestId("quick-entry-input") as HTMLTextAreaElement;
+
+      fireEvent.change(textarea, { target: { value } });
+      fireEvent.keyDown(textarea, { key: "Enter" });
+
+      await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+      const payload = onCreate.mock.calls[0]?.[0];
+      expect(payload.description).toBe(value);
+      expect(payload.title).toBeUndefined();
+      await flushPendingTimers();
+    });
+
     it("does not refocus the quick-entry textarea after a successful Enter submission on desktop", async () => {
       mockDesktopViewport();
       const onCreate = vi.fn().mockResolvedValue(CREATED_TASK);

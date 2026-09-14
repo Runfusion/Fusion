@@ -879,11 +879,35 @@ Project settings support reusable model presets:
 
 Users can apply presets at task creation; manual model selection can override them.
 
-## AI Title Summarization
+## Title, description, and definition
 
-`autoSummarizeTitles` is a project-scoped boolean (default `false`) that controls automatic title attempts for every non-empty task description created without a title. When enabled, dashboard/API, direct store, agent, scheduled, signal, and CLI-backed creates use the configured title model regardless of description length. When disabled or unavailable, triage supplies a deterministic title derived from the first meaningful description line (with shared Markdown normalization and a 60-character safety cap), and the planner's normal `# Task: ID - title` heading is written back to project-scoped metadata.
+Fusion distinguishes three separate things:
 
-Explicit titles always win. `summarize:true`, Task Detail **Summarize**, and the explicit summarization endpoint remain available even when automatic mode is disabled. The setting is read as a snapshot for each create: changing it does not rename existing tasks or cancel an already-started attempt. GitHub tracking uses its configured summarizer for any non-empty titleless task and falls back to deterministic description-derived title generation when summarization is unavailable.
+- **Description** — what you actually type in New Task or quick entry. It is the authoritative statement of the work.
+- **Title** — the short label rendered on cards, list rows, search results and pickers.
+- **Definition** — what Task Detail shows: progress, the description, and the plan's product outcome. See the dashboard guide.
+
+Creation surfaces submit a **description only**; they never send an implicit title. API, import, duplication, refinement and integration writers may still supply an explicit title, and an explicit title is never replaced.
+
+### When a title is stored
+
+`autoSummarizeTitles` is a project-scoped boolean (default `false`) and is the **only** writer of a generated title. When enabled, every non-empty untitled create (dashboard/API, direct store, agent, scheduled, signal, CLI-backed) asks the configured title model for a short title, regardless of description length — a five-word description and a 400-character description are both summarized. The AI-authored task language selected directly above the toggle (English / task input language / interface language) is snapshotted before the deferred call and decides the generated title's language.
+
+When the setting is disabled, or generation returns nothing, fails, or is superseded by a title written meanwhile, **no title is stored**. That is the intended resting state, not a defect: an untitled row is rendered from its description by the display fallback below.
+
+Planning never writes a title. Triage does not copy the `# Task: ID - title` heading of `PROMPT.md` onto the task row, and a terminal planning failure no longer backfills a deterministic title — a stored guess is indistinguishable from an operator's explicit title and would permanently shadow the create-time policy. The deterministic first-line helper still supplies the planner with prompt context only.
+
+### How a title is displayed
+
+Every card, list row, search result and task picker resolves its label the same way:
+
+1. a non-blank stored title, rendered in full;
+2. otherwise the **first 220 characters of the description, exactly** — no ellipsis and no added suffix (components may still clamp visually with CSS);
+3. otherwise the task ID.
+
+This projection is display-only and is never persisted. It is also **not retroactive**: titles already stored keep their value and are never cleared or recomputed, because a stored title's provenance (explicit vs. automatic) is not durably distinguishable.
+
+The setting is read as a snapshot for each create: changing it does not rename existing tasks or cancel an already-started attempt. `summarize:true` and the explicit summarization endpoint remain available as integration contracts even when automatic mode is disabled. GitHub tracking uses its configured summarizer for any non-empty titleless task and falls back to deterministic description-derived title generation when summarization is unavailable.
 
 If a configured title summarizer model is stale after a pi upgrade, Fusion logs a warning naming that provider/model and retries once with automatic model resolution before falling back to deterministic title generation. Genuine AI-service failures are not masked by this retry.
 

@@ -4,7 +4,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import type { Task } from "@fusion/core";
 import { TaskSearchInput } from "../TaskSearchInput";
 
-type SearchableTask = Pick<Task, "id" | "title">;
+type SearchableTask = Pick<Task, "id" | "title"> & { description?: string | null };
 
 const tasks: SearchableTask[] = [
   { id: "FN-331", title: "Remove branch filters" },
@@ -200,5 +200,27 @@ describe("TaskSearchInput", () => {
     rerender(<TaskSearchInput query="331" tasks={[{ id: "NEW-331", title: "New result" }]} onSearchChange={onSearchChange} />);
     fireEvent.keyDown(input, { key: "Enter" });
     expect(onSearchChange).not.toHaveBeenCalled();
+  });
+
+  /*
+  FNXC:TaskTitleDisplay 2026-09-14-17:40:
+  FN-391: a titleless suggestion used to render an EMPTY label and an ID-only aria-label, so two hits
+  were indistinguishable. It now shows the shared exact 220-character description projection.
+  */
+  it("renders the bounded description projection for a titleless suggestion", () => {
+    const description = "z".repeat(400);
+    render(<TaskSearchInput query="FN-900" tasks={[{ id: "FN-900", title: undefined, description }]} onSearchChange={vi.fn()} />);
+    fireEvent.focus(screen.getByRole("combobox"));
+
+    const option = screen.getByRole("option");
+    expect(option.querySelector(".task-search-suggestion-title")?.textContent).toBe(description.slice(0, 220));
+    expect(option.getAttribute("aria-label")).toBe(`FN-900: ${description.slice(0, 220)}`);
+  });
+
+  it("falls back to the task ID when a suggestion has neither title nor description", () => {
+    render(<TaskSearchInput query="FN-901" tasks={[{ id: "FN-901", title: "  ", description: "  " }]} onSearchChange={vi.fn()} />);
+    fireEvent.focus(screen.getByRole("combobox"));
+
+    expect(screen.getByRole("option").querySelector(".task-search-suggestion-title")?.textContent).toBe("FN-901");
   });
 });

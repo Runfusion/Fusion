@@ -14,6 +14,7 @@ import { NodeHealthDot } from "./NodeHealthDot";
 import { DuplicateWarningModal } from "./DuplicateWarningModal";
 import { LoadingSpinner } from "./LoadingSpinner";
 import { applyPresetToSelection } from "../utils/modelPresets";
+import { getTaskTitleDisplayText } from "../utils/taskTitleDisplay";
 import { getScopedItem, MAX_PERSISTED_DRAFT_BYTES, removeScopedItem, setScopedItem } from "../utils/projectStorage";
 import { WorkflowSelector } from "./WorkflowSelector";
 import { WorkflowOptionalStepsDropdown } from "./WorkflowOptionalStepsDropdown";
@@ -926,7 +927,7 @@ export function InlineCreateCard({
                           onClick={() => toggleDep(t.id)}
                         >
                           <span className="dep-dropdown-id">{t.id}</span>
-                          <span className="dep-dropdown-title">{truncate(t.title || t.description || t.id, 30)}</span>
+                          <span className="dep-dropdown-title">{truncate(getTaskTitleDisplayText(t), 30)}</span>
                         </div>
                       ))
                     )}

@@ -7992,7 +7992,9 @@
     },
     "definition": {
       "descriptionHeading": "Description",
-      "noDescription": "(aucune description)"
+      "noDescription": "(aucune description)",
+      "noOutcome": "Pas encore de résumé du plan — ouvrez Lire le plan pour la spécification complète.",
+      "outcomeHeading": "Ce que la tâche produit"
     },
     "description": {
       "showLess": "Afficher moins",
@@ -8179,10 +8181,12 @@
       "updated": "Priorité mise à jour : {{priority}}"
     },
     "progress": {
-      "heading": "Progression",
       "completedCount": "{{count}}/{{total}} terminées",
-      "workflowOrigin": "Étape du workflow",
+      "heading": "Progression",
+      "hideSteps": "Masquer les étapes",
       "implementationOrigin": "Implémentation",
+      "noSteps": "(aucune étape définie)",
+      "showSteps": "Afficher les étapes",
       "status": {
         "done": "Terminée",
         "failed": "Échouée",
@@ -8192,9 +8196,9 @@
         "skipped": "Ignorée",
         "pending": "En attente"
       },
-      "noSteps": "(aucune étape définie)",
       "stepCount_one": "",
-      "stepCount_other": ""
+      "stepCount_other": "",
+      "workflowOrigin": "Étape du workflow"
     },
     "provenance": {
       "createdBy": "Créé par",
@@ -8355,11 +8359,6 @@
       "updated": "Mis à jour"
     },
     "timingEvents": "Événements de minutage",
-    "title": {
-      "summarize": "",
-      "summarizeFailed": "",
-      "summarizeSuccess": ""
-    },
     "tokenTotalsAria": "Totaux de tokens de la tâche",
     "tokenUsage": "Utilisation des tokens",
     "totalExecutionTime": "Temps actif total",
@@ -8550,6 +8549,7 @@
     "dependenciesSelected_other": "",
     "descriptionLabel": "Description",
     "descriptionPlaceholder": "Que faut-il faire ?",
+    "descriptionReadOnlyNote": "La description ne peut être modifiée que tant que la tâche attend encore dans sa colonne d'entrée manuelle.",
     "descriptionRefinedToast": "Description affinée avec l'IA",
     "editingDescription": "Modification de la description",
     "enterDescriptionFirst": "Saisissez d'abord une description",
@@ -8611,8 +8611,6 @@
     "thinkingMinimal": "Minimal",
     "thinkingOff": "Désactivé",
     "thinkingXhigh": "Très élevé",
-    "titleLabel": "Titre",
-    "titlePlaceholder": "Titre de la tâche",
     "useDropdown": "Utiliser la liste déroulante",
     "usingPreset": "Préréglage utilisé : {{name}}",
     "workflowDefaultBadge": "(par défaut)",

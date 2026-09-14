@@ -129,6 +129,19 @@ async function cleanupTriageFixtureRoot(rootDir: string | undefined): Promise<vo
   }
 }
 
+/*
+FNXC:TriageTitleFallback 2026-09-14-16:35:
+Shared assertion helper for FN-391: triage must never patch `title` onto a task row. Collecting the
+patches (rather than asserting `not.toHaveBeenCalledWith` per shape) makes a reintroduced writer
+fail with the offending patch visible, whatever value it tried to write.
+*/
+function titlePatchesFor(store: TaskStore, taskId: string): unknown[] {
+  return (store.updateTask as unknown as ReturnType<typeof vi.fn>).mock.calls
+    .filter(([id, patch]: [string, Record<string, unknown> | undefined]) =>
+      id === taskId && patch !== undefined && Object.prototype.hasOwnProperty.call(patch, "title"))
+    .map(([, patch]: [string, Record<string, unknown> | undefined]) => patch);
+}
+
 function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
   let store: Partial<TaskStore>;
   store = {
@@ -3599,7 +3612,14 @@ Apply the scoped implementation changes.
     expect(metadataPatch.intentSignature.filePaths).not.toContain("AtlasNotes.xcodeproj/**");
   });
 
-  it("writes the short deterministic planning title through normal heading finalization", async () => {
+  /*
+  FNXC:TriageTitleFallback 2026-09-14-16:35:
+  FN-391 removed triage's title writers. The deterministic first-line title is still handed to the
+  PLANNER as prompt context, but finalization must not patch `title` onto the task row: the sole
+  generated-title writer is the create-time `autoSummarizeTitles` policy, and an untitled row is
+  rendered from its description by the dashboard display projection.
+  */
+  it("supplies the deterministic planning title as prompt context without writing it to the task row", async () => {
     const description = "Restore the short task title after planning";
     const planningPrompt = buildSpecificationPrompt(
       {
@@ -3644,10 +3664,10 @@ Apply the scoped implementation changes.
     });
 
     expect(recovered).toBe(true);
-    expect(store.updateTask).toHaveBeenCalledWith("FN-001", expect.objectContaining({ title: fallbackTitle }));
+    expect(titlePatchesFor(store, "FN-001")).toEqual([]);
   });
 
-  it("updates malformed metadata title from prompt heading when task ID matches", async () => {
+  it("does not adopt the prompt heading as the task title, even when the stored title is malformed", async () => {
     await writeFile(
       join(rootDir, ".fusion", "tasks", "FN-001", "PROMPT.md"),
       "# Task: FN-001 - Experimental AI Agent Onboarding Flow\n\n**Size:** M\n\n## Review Level: 2\n\nRecovered specification\n\n## Steps\n\n### Step 0: Implement onboarding flow\n\nMake the change.",
@@ -3680,10 +3700,7 @@ Apply the scoped implementation changes.
     });
 
     expect(recovered).toBe(true);
-    expect(store.updateTask).toHaveBeenCalledWith(
-      "FN-001",
-      expect.objectContaining({ title: "Experimental AI Agent Onboarding Flow" }),
-    );
+    expect(titlePatchesFor(store, "FN-001")).toEqual([]);
   });
 
   it("does not overwrite title when heading task ID does not match", async () => {
@@ -5355,7 +5372,14 @@ describe("taskCreate tool model inheritance", () => {
       }));
     });
 
-    it("backfills blank titles when deterministic validation retries are exhausted", async () => {
+    /*
+    FNXC:TriageTitleFallback 2026-09-14-16:35:
+    FN-391 deleted the terminal-failure title backfill. These four cases now assert the inverse
+    contract: every terminal planning failure keeps its status/error/retry invariants AND leaves the
+    row untitled, because a stored deterministic guess is indistinguishable from an explicit title
+    and would permanently shadow the create-time policy. Visibility comes from the display fallback.
+    */
+    it("leaves blank titles untouched when deterministic validation retries are exhausted", async () => {
       const task = {
         id: "FN-7961-DETERMINISTIC",
         title: "",
@@ -5392,12 +5416,10 @@ describe("taskCreate tool model inheritance", () => {
         recoveryRetryCount: null,
         nextRecoveryAt: null,
       });
-      expect(store.updateTask).toHaveBeenCalledWith("FN-7961-DETERMINISTIC", {
-        title: "Backfill blank titles after deterministic prompt",
-      });
+      expect(titlePatchesFor(store, "FN-7961-DETERMINISTIC")).toEqual([]);
     });
 
-    it("backfills blank titles when planner model fallback is exhausted", async () => {
+    it("leaves blank titles untouched when planner model fallback is exhausted", async () => {
       const task = {
         id: "FN-7961-MODEL",
         title: "",
@@ -5442,12 +5464,10 @@ describe("taskCreate tool model inheritance", () => {
         recoveryRetryCount: null,
         nextRecoveryAt: null,
       }));
-      expect(store.updateTask).toHaveBeenCalledWith("FN-7961-MODEL", {
-        title: "Repair blank title rows after planner model fallback",
-      });
+      expect(titlePatchesFor(store, "FN-7961-MODEL")).toEqual([]);
     });
 
-    it("backfills blank titles when operator-actionable provider failures park planning", async () => {
+    it("leaves blank titles untouched when operator-actionable provider failures park planning", async () => {
       const task = {
         id: "FN-7961-OPERATOR",
         title: "",
@@ -5475,12 +5495,10 @@ describe("taskCreate tool model inheritance", () => {
         recoveryRetryCount: null,
         nextRecoveryAt: null,
       });
-      expect(store.updateTask).toHaveBeenCalledWith("FN-7961-OPERATOR", {
-        title: "Show failed tasks when provider credentials are unavailable",
-      });
+      expect(titlePatchesFor(store, "FN-7961-OPERATOR")).toEqual([]);
     });
 
-    it("backfills blank titles when transient retries are exhausted", async () => {
+    it("leaves blank titles untouched when transient retries are exhausted", async () => {
       const task = {
         id: "FN-7961-TRANSIENT",
         title: "",
@@ -5508,9 +5526,7 @@ describe("taskCreate tool model inheritance", () => {
         recoveryRetryCount: null,
         nextRecoveryAt: null,
       });
-      expect(store.updateTask).toHaveBeenCalledWith("FN-7961-TRANSIENT", {
-        title: "Identify failed rows after exhausted transient planning",
-      });
+      expect(titlePatchesFor(store, "FN-7961-TRANSIENT")).toEqual([]);
     });
 
     /*

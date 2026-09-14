@@ -4784,7 +4784,7 @@ describe("TaskCard", () => {
   it("renders edit button inside card-header-actions for editable columns", () => {
     const { container } = render(
       <TaskCard
-        task={makeTask({ column: "todo", size: "S" })}
+        task={makeTask({ column: "ideas" as any, size: "S" })}
         onOpenDetail={noop}
         addToast={noop}
         onUpdateTask={async () => makeTask()}
@@ -8469,7 +8469,8 @@ describe("TaskCard trailing-row layout (FN-8631)", () => {
       expanded.unmount();
 
       const editing = render(
-        <TaskCard task={makeTask({ id: `FN-editing-${width}`, column: "todo" })} onOpenDetail={noop} addToast={noop} onUpdateTask={noop} />,
+        // FNXC:TaskDescriptionEditing 2026-09-14-18:50: FN-391 — the inline editor lives in the manual-intake lane, so this layout probe renders the card there.
+        <TaskCard task={makeTask({ id: `FN-editing-${width}`, column: "ideas" as any })} onOpenDetail={noop} addToast={noop} onUpdateTask={noop} />,
       );
       // Editing returns early with only edit content, so none of the normal trailing rows can leave an empty shell.
       fireEvent.click(editing.container.querySelector(".card-edit-btn") as HTMLButtonElement);
@@ -8490,21 +8491,54 @@ describe("TaskCard trailing-row layout (FN-8631)", () => {
   });
 });
 
-describe("TaskCard field editability resolves column traits (U12 — R8)", () => {
+/*
+FNXC:TaskDescriptionEditing 2026-09-14-18:50:
+FN-391 narrows this card's inline editor — which writes the DESCRIPTION and nothing else — from the
+generic pre-implementation rule to manual intake. The U12/R8 trait-resolution contract is preserved
+(a RENAMED board keeps the affordance, mid-flight and review traits still veto); what changed is
+which trait grants it, so the granting cases are inverted rather than relaxed.
+*/
+describe("TaskCard description editability resolves column traits (FN-391)", () => {
   const EDIT_LABEL = { name: "Edit task" };
 
-  it("renders the edit button for a RENAMED pre-implementation column", () => {
+  it("renders the edit button for a RENAMED manual-intake column", () => {
     render(
       <TaskCard
         task={makeTask({ column: "backlog" as any })}
-        taskColumnFlags={{ intake: true, hold: true }}
+        taskColumnFlags={{ intake: true, manualIntake: true }}
         onUpdateTask={noop}
         onOpenDetail={noop}
         addToast={noop}
       />,
     );
-    // Fails with the hardcoded id set: `backlog` is not in it.
+    // Fails with a hardcoded id set: `backlog` is not in it.
     expect(screen.getByRole("button", EDIT_LABEL)).toBeInTheDocument();
+  });
+
+  it("does NOT render it for an AUTO-triaging intake or hold column", () => {
+    // The narrowing FN-391 adds: once a card is released, planning owns the text it derived from.
+    const auto = render(
+      <TaskCard
+        task={makeTask({ column: "backlog" as any })}
+        taskColumnFlags={{ intake: true }}
+        onUpdateTask={noop}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+    expect(screen.queryByRole("button", EDIT_LABEL)).not.toBeInTheDocument();
+    auto.unmount();
+
+    render(
+      <TaskCard
+        task={makeTask({ column: "waiting" as any })}
+        taskColumnFlags={{ hold: true }}
+        onUpdateTask={noop}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+    expect(screen.queryByRole("button", EDIT_LABEL)).not.toBeInTheDocument();
   });
 
   it("does NOT render it for a resolved mid-flight column", () => {
@@ -8522,12 +8556,12 @@ describe("TaskCard field editability resolves column traits (U12 — R8)", () =>
     expect(screen.queryByRole("button", EDIT_LABEL)).not.toBeInTheDocument();
   });
 
-  it("vetoes editing when a hold column ALSO carries a review trait", () => {
-    // A legal shape a plain `intake || hold` check gets wrong.
+  it("vetoes editing when a manual-intake column ALSO carries a review trait", () => {
+    // A legal shape a plain `manualIntake` check gets wrong.
     render(
       <TaskCard
         task={makeTask({ column: "backlog" as any })}
-        taskColumnFlags={{ hold: true, mergeBlocker: true }}
+        taskColumnFlags={{ manualIntake: true, mergeBlocker: true }}
         onUpdateTask={noop}
         onOpenDetail={noop}
         addToast={noop}
@@ -8536,34 +8570,62 @@ describe("TaskCard field editability resolves column traits (U12 — R8)", () =>
     expect(screen.queryByRole("button", EDIT_LABEL)).not.toBeInTheDocument();
   });
 
-  it("still renders it for a legacy `todo` card with no flags resolved", () => {
-    // The pre-load window, and what every board did before the conversion.
-    render(<TaskCard task={makeTask({ column: "todo" as any })} onUpdateTask={noop} onOpenDetail={noop} addToast={noop} />);
+  it("still renders it for a legacy `ideas` card with no flags resolved", () => {
+    // The pre-load window, and a card stranded in a column its workflow no longer declares.
+    render(<TaskCard task={makeTask({ column: "ideas" as any })} onUpdateTask={noop} onOpenDetail={noop} addToast={noop} />);
     expect(screen.getByRole("button", EDIT_LABEL)).toBeInTheDocument();
+  });
+
+  it("does not render it for a legacy `todo` card with no flags resolved", () => {
+    // `todo` is the merged PLANNING lane: a plan is being written from the description there.
+    render(<TaskCard task={makeTask({ column: "todo" as any })} onUpdateTask={noop} onOpenDetail={noop} addToast={noop} />);
+    expect(screen.queryByRole("button", EDIT_LABEL)).not.toBeInTheDocument();
   });
 });
 
-describe("TaskCard titleless display fallback (FN-044)", () => {
-  const description200 = "d".repeat(200);
-  const description201 = "e".repeat(201);
+/*
+FNXC:TaskTitleDisplay 2026-09-14-17:30:
+FN-391 replaces the FN-044 200-characters-with-ellipsis fallback with an EXACT 220-character
+description prefix. The assertions below are inverted rather than relaxed: the old suffix contract
+is now asserted absent, because a suffix made the rendered label a different string from the
+description prefix it claims to show.
+*/
+describe("TaskCard titleless display fallback (FN-391)", () => {
+  const description220 = "d".repeat(220);
+  const description221 = "e".repeat(221);
+  const description400 = "f".repeat(400);
 
   function cardTitle(container: HTMLElement): HTMLDivElement {
     return container.querySelector(".card-title") as HTMLDivElement;
   }
 
-  it("keeps titleless descriptions through 200 characters unchanged", () => {
-    const { container } = render(<TaskCard task={makeTask({ title: undefined, description: description200 })} onOpenDetail={noop} addToast={noop} />);
-    expect(cardTitle(container)).toHaveTextContent(description200);
+  it("keeps titleless descriptions through 220 characters unchanged", () => {
+    const { container } = render(<TaskCard task={makeTask({ title: undefined, description: description220 })} onOpenDetail={noop} addToast={noop} />);
+    expect(cardTitle(container)).toHaveTextContent(description220);
     expect(cardTitle(container)).not.toHaveClass("card-title--bounded-description");
   });
 
-  it("bounds a 201-character titleless description with literal dots while retaining its full tooltip", () => {
-    const { container } = render(<TaskCard task={makeTask({ title: undefined, description: description201 })} onOpenDetail={noop} addToast={noop} />);
+  it.each([
+    { label: "221 characters", description: description221 },
+    { label: "400 characters", description: description400 },
+  ])("bounds a titleless description of $label to its exact 220-character prefix", ({ description }) => {
+    const { container } = render(<TaskCard task={makeTask({ title: undefined, description })} onOpenDetail={noop} addToast={noop} />);
     const title = cardTitle(container);
-    expect(title).toHaveTextContent(description201.slice(0, 197) + "...");
-    expect(title.textContent).toHaveLength(200);
+    expect(title.textContent).toBe(description.slice(0, 220));
+    expect(title.textContent).toHaveLength(220);
+    expect(title.textContent).not.toContain("...");
+    expect(title.textContent).not.toContain("\u2026");
     expect(title).toHaveClass("card-title--bounded-description");
-    expect(title).toHaveAttribute("title", description201);
+    expect(title).toHaveAttribute("title", description);
+  });
+
+  it("renders distinct IDs when two tasks share one blank description", () => {
+    const first = render(<TaskCard task={makeTask({ id: "FN-dup-a", title: undefined, description: "  " })} onOpenDetail={noop} addToast={noop} />);
+    expect(cardTitle(first.container)).toHaveTextContent("FN-dup-a");
+    first.unmount();
+
+    const second = render(<TaskCard task={makeTask({ id: "FN-dup-b", title: undefined, description: "  " })} onOpenDetail={noop} addToast={noop} />);
+    expect(cardTitle(second.container)).toHaveTextContent("FN-dup-b");
   });
 
   it("uses description or task ID for whitespace-only titles and blank descriptions", () => {
@@ -8577,7 +8639,7 @@ describe("TaskCard titleless display fallback (FN-044)", () => {
 
   it("preserves explicit titles and their existing TaskCard truncation", () => {
     const explicitTitle = "t".repeat(201);
-    const { container } = render(<TaskCard task={makeTask({ title: explicitTitle, description: description201 })} onOpenDetail={noop} addToast={noop} />);
+    const { container } = render(<TaskCard task={makeTask({ title: explicitTitle, description: description221 })} onOpenDetail={noop} addToast={noop} />);
     const title = cardTitle(container);
     expect(title).toHaveTextContent(explicitTitle.slice(0, 140) + "…");
     expect(title).toHaveAttribute("title", explicitTitle);

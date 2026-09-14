@@ -208,14 +208,23 @@ const fixtureDescription = titleMode === "description" ? "A browser description 
 FNXC:TaskDetailStructure 2026-09-12-23:26:
 La fixture Chromium des vrais hôtes contient une description, un PROMPT.md, des étapes de statuts variés et un Feed avec résultat et agent réel afin que les captures Définition, plan et Activity prouvent la hiérarchie livrée plutôt qu’une coquille vide.
 */
+/*
+FNXC:TaskDetailDefinition 2026-09-14-20:45:
+FN-391: the `fit` matrix row is the one that produces the operator-facing screenshots, so it must
+carry REAL Definition content — steps for the collapsed progress disclosure and a plan containing
+`What This Delivers` for the product-outcome section. Capturing an empty shell would prove the
+section order and nothing about what those sections actually render.
+*/
+const hasDefinitionContent = structuredTaskDetail || titleMode === "fit";
+const fixturePlan = "# Task: FN-TITLE-FLICKER - Delivery plan\n\n## What This Delivers\n\n- Operators see progress, description, and the expected outcome in one glance.\n- The complete plan stays one click away behind Read plan.\n\n## Mission\n\nKeep the task detail structure readable in every host.\n\n## Verification\n\n- Inspect Definition\n- Open the full plan\n- Review Activity\n";
 const fixtureTask = {
   id: titleMode === "id" ? "FN-8806" : "FN-TITLE-FLICKER",
   title: fixtureTitle,
   description: fixtureDescription,
   column: showContextualFooter ? "in-review" : "todo",
   status: "pending",
-  prompt: structuredTaskDetail ? "# Delivery plan\n\n## Goal\n\nKeep the task detail structure readable in every host.\n\n## Verification\n\n- Inspect Definition\n- Open the full plan\n- Review Activity" : "",
-  steps: structuredTaskDetail ? [
+  prompt: hasDefinitionContent ? fixturePlan : "",
+  steps: hasDefinitionContent ? [
     { id: 1, name: "Inspect every task detail host", status: "done" },
     { id: 2, name: "Open the full planning document", status: "in-progress" },
     { id: 3, name: "Verify responsive activity logs", status: "pending" },

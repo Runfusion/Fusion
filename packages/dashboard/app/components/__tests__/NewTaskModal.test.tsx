@@ -575,6 +575,29 @@ describe("NewTaskModal", () => {
     expect(Array.from(select.options).map((option) => option.value)).toEqual(["standard", "fast"]);
   });
 
+  /*
+  FNXC:TaskTitleDisplay 2026-09-14-17:45:
+  FN-391: New Task submits a DESCRIPTION, never an implicit title — whether the operator typed five
+  words or 400 characters. The stored title comes only from the create-time automatic policy, so a
+  title sent from here would silently defeat that single writer.
+  */
+  it.each([
+    { label: "a five-word description", value: "Corriger le bouton de partage" },
+    { label: "a 400-character description", value: "x".repeat(400) },
+  ])("submits $label with no title field", async ({ value }) => {
+    const onCreateTask = vi.fn().mockResolvedValue(makeTask("FN-391"));
+    renderNewTaskModal({ onCreateTask, projectId: "project-1" });
+
+    fireEvent.change(screen.getByPlaceholderText("What needs to be done?"), { target: { value } });
+    fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
+
+    await waitFor(() => expect(onCreateTask).toHaveBeenCalledTimes(1));
+    const payload = onCreateTask.mock.calls[0]?.[0];
+    expect(payload.description).toBe(value);
+    expect(payload.title).toBeUndefined();
+    expect(screen.queryByTestId("task-form-title")).toBeNull();
+  });
+
   it("omits plan approval across successive submissions while Fast still toggles", async () => {
     const onCreateTask = vi.fn().mockResolvedValue(makeTask("FN-234"));
     renderNewTaskModal({ onCreateTask, projectId: "project-1" });

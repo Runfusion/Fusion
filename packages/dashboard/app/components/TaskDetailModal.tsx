@@ -4,7 +4,7 @@ import "./TaskDetailModal.css";
 import React, { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import { Pencil, Bot, X, ChevronDown, ChevronRight, GitBranch, ArrowLeft, Loader2, AlertTriangle, Sparkles, Maximize2, Minimize2, Info, Copy, RotateCcw, Trash2, Pause, Play, RefreshCcw, MoreHorizontal, FileText, Check } from "lucide-react";
+import { Pencil, Bot, X, ChevronDown, ChevronRight, GitBranch, ArrowLeft, Loader2, AlertTriangle, Maximize2, Minimize2, Info, Copy, RotateCcw, Trash2, Pause, Play, RefreshCcw, MoreHorizontal, FileText, Check } from "lucide-react";
 import { useViewportMode } from "../hooks/useViewportMode";
 import { AlphaMobileDrawer } from "./AlphaMobileDrawer";
 import { ViewBackButton } from "./ViewActionButton";
@@ -39,13 +39,16 @@ import { isForeignTaskEvent, readTaskEventProjectId } from "../utils/taskEventPr
 import {
   isCompleteColumnRole,
   isHoldColumnRole,
+  isDescriptionEditableColumnRole,
   isFieldEditableColumnRole,
   isPreImplementationColumnRole,
   isReviewColumnRole,
   isWipColumnRole,
 } from "../utils/columnRoles";
+import { getTaskTitleDisplayText } from "../utils/taskTitleDisplay";
+import { extractTaskProductSummary } from "../utils/taskPlanSummary";
 import { resolveEffectiveAutoMerge } from "../../../core/src/merge/task-merge";
-import { uploadAttachment, deleteAttachment, updateTask, repairOverlapBlocker, fetchOverlapBlockerReport, fetchTaskDetail, fetchTaskPrompt, fetchSpecLock, fetchTaskVerificationRequest, fetchSettings, fetchTaskEffectiveSettings, fetchGlobalSettings, requestSpecRevision, rebuildTaskSpec, approvePlan, rejectPlan, refineTask, fetchWorkflowResults, assignTask, fetchAgents, fetchAgent, refreshPrStatus, fetchBoardWorkflows, updateTaskCustomFields, summarizeTitle, fetchWorkflowSettingValues, nudgeOverseer, stopOverseer, explainOverseer, fetchModels, fetchNodes, api } from "../api";
+import { uploadAttachment, deleteAttachment, updateTask, repairOverlapBlocker, fetchOverlapBlockerReport, fetchTaskDetail, fetchTaskPrompt, fetchSpecLock, fetchTaskVerificationRequest, fetchSettings, fetchTaskEffectiveSettings, fetchGlobalSettings, requestSpecRevision, rebuildTaskSpec, approvePlan, rejectPlan, refineTask, fetchWorkflowResults, assignTask, fetchAgents, fetchAgent, refreshPrStatus, fetchBoardWorkflows, updateTaskCustomFields, fetchWorkflowSettingValues, nudgeOverseer, stopOverseer, explainOverseer, fetchModels, fetchNodes, api } from "../api";
 import type { RevertTaskOptions, RevertTaskResult, ModelInfo, NodeInfo, SpecLockResponse, TaskOverlapBlockerReport } from "../api";
 import type { BoardWorkflowsPayload, WorkflowFieldDefinition, CustomFieldRejection } from "../api";
 import { WorkflowIcon } from "./WorkflowIcon";
@@ -852,6 +855,16 @@ function isTaskFieldEditableColumn(column: ColumnId, flags?: TaskContextMenuColu
   */
   return isFieldEditableColumnRole(flags, column);
 }
+
+/*
+FNXC:TaskDescriptionEditing 2026-09-14-18:20:
+FN-391 narrows DESCRIPTION editing to manual intake while every other setting keeps the wider
+pre-implementation rule above. Delegated to the shared role helper so this surface and TaskCard
+cannot drift — the exact failure `isFieldEditableColumnRole` was extracted to prevent.
+*/
+function isTaskDescriptionEditableColumn(column: ColumnId, flags?: TaskContextMenuColumnFlags): boolean {
+  return isDescriptionEditableColumnRole(flags, column);
+}
 const GITHUB_TRACKING_EDITABLE_COLUMNS: Set<ColumnId> = new Set<ColumnId>(["triage", "todo", "in-progress", "in-review", "ideas"]);
 const CODING_IDEAS_WORKFLOW_ID = "builtin:coding-ideas-v2";
 
@@ -1201,6 +1214,18 @@ export function TaskDetailContent({
   const unifiedProgress = useMemo(
     () => getUnifiedTaskProgress(workingTask),
     [workingTask.steps, workingTask.enabledWorkflowSteps, workingTask.workflowStepResults],
+  );
+  /*
+  FNXC:TaskDetailDefinition 2026-09-14-19:50:
+  The product-language outcome is SELECTED from the plan the task already has — no AI call at render
+  time, and no new `Summary` section added to the plan format. It follows the same retention as the
+  full prompt: while `workingTask.prompt` is retained through an empty or degraded refresh, this
+  summary is too, and it can never show the previous task's plan because it derives from the current
+  `workingTask`.
+  */
+  const productSummary = useMemo(
+    () => (workingTask.prompt ? extractTaskProductSummary(workingTask.prompt) : null),
+    [workingTask.prompt],
   );
   const openPromptFile = useCallback(() => {
     fileBrowser?.openFile(`.fusion/tasks/${workingTask.id}/PROMPT.md`, { workspace: "project" });
@@ -1719,7 +1744,12 @@ export function TaskDetailContent({
     setActivityExpanded(false);
   }, [task.id]);
 
-  const [editTitle, setEditTitle] = useState(task.title || "");
+  /*
+  FNXC:TaskDescriptionEditing 2026-09-14-18:10:
+  FN-391 removed the editable title: `editTitle` state, its three resets, its save patch and its
+  TaskForm field are gone. A task's title is written only by the create-time automatic policy, so a
+  manual editor here was a second writer whose value could not be told apart from a generated one.
+  */
   const [editDescription, setEditDescription] = useState(task.description || "");
   const editDescriptionRef = useRef(editDescription);
   editDescriptionRef.current = editDescription;
@@ -1751,7 +1781,7 @@ export function TaskDetailContent({
   const [editSourceIssueUrl, setEditSourceIssueUrl] = useState(task.sourceIssue?.url ?? "");
   const [editPendingImages, setEditPendingImages] = useState<PendingImage[]>([]);
   const [isSaving, setIsSaving] = useState(false);
-  const [isSummarizingTitle, setIsSummarizingTitle] = useState(false);
+
   const [inlinePriority, setInlinePriority] = useState<TaskPriority>(normalizeTaskPriorityValue(task.priority));
   const [isSavingInlinePriority, setIsSavingInlinePriority] = useState(false);
   const [inlineExecutionMode, setInlineExecutionMode] = useState<"standard" | "fast">(normalizeExecutionModeValue(task.executionMode));
@@ -1792,6 +1822,13 @@ export function TaskDetailContent({
   // FNXC:TaskDetailPlan 2026-07-04-00:00: Original prompt is collapsed by default (see render site below); operator must click the chevron toggle to reveal the markdown-rendered text.
   const [originalPromptExpanded, setOriginalPromptExpanded] = useState(false);
   const [planDocumentOpen, setPlanDocumentOpen] = useState(false);
+  /*
+  FNXC:TaskDetailDefinition 2026-09-14-19:50:
+  The step list starts COLLAPSED and stays wherever the operator left it for as long as the same
+  task is open: an SSE tick that refreshes this task must not slam a list the operator just opened.
+  It resets to collapsed only when the task IDENTITY changes (see the effect keyed on task.id).
+  */
+  const [stepListExpanded, setStepListExpanded] = useState(false);
   useEffect(() => {
     setPlanDocumentOpen(false);
   }, [workingTask.id]);
@@ -1920,7 +1957,6 @@ export function TaskDetailContent({
 
   // Reset edit state when task changes
   useEffect(() => {
-    setEditTitle(task.title || "");
     setEditDescription(task.description || "");
     setEditBranch(task.branch ?? "");
     setEditBaseBranch(task.baseBranch ?? "");
@@ -2305,12 +2341,20 @@ export function TaskDetailContent({
     setIsEditingSpec(false);
     setSpecEditContent(workingTask.prompt || "");
     setSpecFeedback("");
+    // FNXC:TaskDetailDefinition 2026-09-14-19:50: FN-391 — a DIFFERENT task opens with its steps collapsed; a refresh of the same task keeps the operator's choice.
+    setStepListExpanded(false);
   }, [task.id]);
 
   // Note: TaskForm handles auto-focus internally via isActive prop
 
   // Check if task can be edited
   const canEdit = isTaskFieldEditableColumn(task.column, detailColumnFlags) && !isSaving;
+  /*
+  FNXC:TaskDescriptionEditing 2026-09-14-18:20:
+  Narrower than `canEdit` on purpose: the settings form stays reachable in its pre-implementation
+  lanes, but the description is writable only while the card waits in manual intake.
+  */
+  const canEditDescription = isTaskDescriptionEditableColumn(task.column, detailColumnFlags) && !isSaving;
   /** The card's column name as its own workflow declares it; `undefined` when unresolved. */
   const workflowColumnDisplayName = workflowMoveMetadata?.moveColumns?.find((column) => column.id === task.column)?.label;
   const canEditGithubTracking = canTaskEditGithubTracking(task.column, taskWorkflowBadge?.id, detailColumnFlags) && !isSaving;
@@ -2355,37 +2399,14 @@ export function TaskDetailContent({
   const showGithubTrackingSpinner = !githubTrackedIssue && (isSavingGithubTracking || githubTrackingDetailPending);
   const effectiveGithubRepoDefault = resolveEffectiveGithubRepoDefault(settings ?? null, globalSettings);
   const githubRepoOverrideTrimmed = githubRepoOverrideDraft.trim();
-  const hasDescriptionForTitleSummary = (task.description ?? "").trim().length > 0;
-  const showSummarizeTitleButton = !isEditing && canEdit && hasDescriptionForTitleSummary;
-
-  const handleSummarizeTitle = useCallback(async () => {
-    if (isSummarizingTitle || isSaving || !hasDescriptionForTitleSummary) return;
-    const requestTaskId = task.id;
-    setIsSummarizingTitle(true);
-    try {
-      const generatedTitle = await summarizeTitle(task.description || "", undefined, undefined, projectId);
-      if (activeTaskIdRef.current !== requestTaskId) {
-        return;
-      }
-      const updatedTask = await updateTask(task.id, { title: generatedTitle }, projectId);
-      if (activeTaskIdRef.current !== requestTaskId) {
-        return;
-      }
-      setFullDetail((prev) => prev
-        ? ({ ...prev, ...updatedTask } as TaskDetail)
-        : (updatedTask as TaskDetail));
-      onTaskUpdated?.(updatedTask);
-      addToast(t("taskDetail.title.summarizeSuccess", "Title updated from description"), "success");
-    } catch (err) {
-      if (activeTaskIdRef.current === requestTaskId) {
-        addToast(t("taskDetail.title.summarizeFailed", "Failed to summarize title: {{error}}", { error: getErrorMessage(err) }), "error");
-      }
-    } finally {
-      if (mountedRef.current && activeTaskIdRef.current === requestTaskId) {
-        setIsSummarizingTitle(false);
-      }
-    }
-  }, [addToast, hasDescriptionForTitleSummary, isSaving, isSummarizingTitle, onTaskUpdated, projectId, t, task.description, task.id]);
+  /*
+  FNXC:TaskDescriptionEditing 2026-09-14-18:10:
+  FN-391 removed the manual Summarize action from Task Detail with its handler, spinner state and
+  toast copy. Generating a title is a create-time policy, not an on-demand per-card action: invoked
+  here it overwrote a title whose provenance nothing else could recover. `POST /api/ai/summarize-title`
+  and its client stay as integration contracts and keep their own route coverage — only the UI
+  affordance is gone.
+  */
 
   const handleToggleGithubTracking = useCallback(async () => {
     if (!canEditGithubTracking || isSavingGithubTracking) return;
@@ -2484,7 +2505,6 @@ export function TaskDetailContent({
   const enterEditMode = useCallback(() => {
     if (!canEdit) return;
     setIsEditing(true);
-    setEditTitle(task.title || "");
     setEditDescription(task.description || "");
     setEditDependencies(task.dependencies || []);
     setEditBranch(task.branch ?? "");
@@ -2517,7 +2537,6 @@ export function TaskDetailContent({
 
   const exitEditMode = useCallback(() => {
     setIsEditing(false);
-    setEditTitle(task.title || "");
     setEditDescription(task.description || "");
     setEditDependencies(task.dependencies || []);
     setEditBranch(task.branch ?? "");
@@ -2549,10 +2568,8 @@ export function TaskDetailContent({
 
   const buildEditUpdates = useCallback((includeDescription: boolean) => {
     const updates: Record<string, unknown> = {};
-    const trimmedTitle = editTitle.trim();
     const trimmedDescription = editDescription.trim();
 
-    if (trimmedTitle && trimmedTitle !== (task.title ?? "")) updates.title = trimmedTitle;
     if (includeDescription && trimmedDescription && trimmedDescription !== (task.description ?? "")) updates.description = trimmedDescription;
     if (!sameStringArray(editDependencies, task.dependencies ?? [])) updates.dependencies = editDependencies;
     if (!sameStringArray(editSelectedWorkflowSteps, task.enabledWorkflowSteps ?? [])) updates.enabledWorkflowSteps = editSelectedWorkflowSteps;
@@ -2640,7 +2657,7 @@ export function TaskDetailContent({
     }
 
     return { updates, error: null as string | null };
-  }, [editBaseBranch, editBranch, editDependencies, editDescription, editExecutionMode, editCredentialInstanceId, editExecutorModel, editNodeId, editPlanningCredentialInstanceId, editPlanningModel, editPriority, editReviewLevel, editSelectedWorkflowSteps, editSourceIssueExternalId, editSourceIssueProvider, editSourceIssueRepository, editSourceIssueUrl, editThinkingLevel, editPlannerOversightLevel, editTitle, editValidatorCredentialInstanceId, editValidatorModel, task]);
+  }, [editBaseBranch, editBranch, editDependencies, editDescription, editExecutionMode, editCredentialInstanceId, editExecutorModel, editNodeId, editPlanningCredentialInstanceId, editPlanningModel, editPriority, editReviewLevel, editSelectedWorkflowSteps, editSourceIssueExternalId, editSourceIssueProvider, editSourceIssueRepository, editSourceIssueUrl, editThinkingLevel, editPlannerOversightLevel, editValidatorCredentialInstanceId, editValidatorModel, task]);
 
   const requestBlankDescriptionDeletion = useCallback(async (descriptionAtRequest: string, force: boolean): Promise<boolean> => {
     if (blankDescriptionDeletePendingRef.current || (!force && lastBlankDescriptionDeleteAttemptRef.current === descriptionAtRequest)) return false;
@@ -2766,7 +2783,6 @@ export function TaskDetailContent({
     };
   }, [
     isEditing,
-    editTitle,
     editDependencies,
     editBranch,
     editBaseBranch,
@@ -4096,7 +4112,8 @@ export function TaskDetailContent({
       const dependentTask = tasks.find((candidate) => candidate.id === dependentId);
       return {
         id: dependentId,
-        label: dependentTask?.title || dependentTask?.description || dependentId,
+        // FNXC:TaskTitleDisplay 2026-09-14-17:05: FN-391 — shared label projection; an unknown dependent still falls back to its ID.
+        label: dependentTask ? getTaskTitleDisplayText(dependentTask) : dependentId,
         stale: staleSet.has(dependentId),
       };
     });
@@ -5392,10 +5409,9 @@ export function TaskDetailContent({
             <div className="modal-edit-form">
               <TaskForm
                 mode="edit"
-                title={editTitle}
-                onTitleChange={setEditTitle}
                 description={editDescription}
                 onDescriptionChange={setEditDescription}
+                descriptionReadOnly={!canEditDescription}
                 dependencies={editDependencies}
                 onDependenciesChange={setEditDependencies}
                 branch={editBranch}
@@ -6136,7 +6152,8 @@ export function TaskDetailContent({
                 {dependencies.map((dep) => {
                   // Look up dependency metadata from tasks prop
                   const depTask = tasks.find((t) => t.id === dep);
-                  const depLabel = depTask?.title || depTask?.description || dep;
+                  // FNXC:TaskTitleDisplay 2026-09-14-17:05: FN-391 — shared label projection.
+                  const depLabel = depTask ? getTaskTitleDisplayText(depTask) : dep;
 
                   return (
                     <li key={dep} className="detail-dep-item">
@@ -6251,7 +6268,7 @@ export function TaskDetailContent({
                           }}
                         >
                           <span className="dep-dropdown-id">{t.id}</span>
-                          <span className="dep-dropdown-title">{truncate(t.title || t.description || t.id, 30)}</span>
+                          <span className="dep-dropdown-title">{truncate(getTaskTitleDisplayText(t), 30)}</span>
                         </div>
                       ))
                     )}
@@ -6841,43 +6858,79 @@ export function TaskDetailContent({
           ) : (
             <>
               {/*
-              FNXC:TaskDetailDefinition 2026-09-13-11:59:
-              La description est la présentation principale de Définition et le header partagé ne répète plus le titre. Le titre reste une donnée éditable dans TaskForm; sa synthèse demeure disponible près de la description lorsque ses préconditions sont remplies.
+              FNXC:TaskDetailDefinition 2026-09-14-19:50:
+              FN-391 reorders Définition into the order an operator actually reads it:
+                1. PROGRESS first — heading, counter and bar are always visible; the step LIST is
+                   collapsed behind a native button so the answer to "where is this?" is one glance
+                   rather than a scroll past a long step list.
+                2. DESCRIPTION second, inside a bounded scrollable region so a long description can
+                   never push the rest of the view off screen.
+                3. PRODUCT OUTCOME third, in plain product language, with `Read plan` beside it so
+                   the FULL technical PROMPT.md is always one click away and never replaced.
               */}
-              <section className="detail-section detail-definition-description" aria-labelledby={`${workingTask.id}-definition-description`}>
-                <div className="detail-source-header detail-definition-header">
-                  <h4 id={`${workingTask.id}-definition-description`}>{t("taskDetail.definition.descriptionHeading", "Description")}</h4>
-                  {showSummarizeTitleButton && (
-                    <AlphaButton
-                      type="button"
-                      className="btn btn-icon btn-sm detail-summarize-title-btn"
-                      onClick={() => void handleSummarizeTitle()}
-                      disabled={isSummarizingTitle || isSaving}
-                      data-testid="summarize-title-btn"
-                    >
-                      {isSummarizingTitle ? <Loader2 size={14} className="spinner" /> : <Sparkles size={14} />}
-                      <span>{t("taskDetail.title.summarize", "Summarize")}</span>
-                    </AlphaButton>
-                  )}
-                </div>
-                {hasOriginalTaskPrompt ? <div className="markdown-body" data-testid="task-detail-definition-description"><ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={sharedRehypePlugins} components={markdownLinkifyComponents}>{originalTaskPrompt}</ReactMarkdown></div> : <div className="detail-empty-inline">{t("taskDetail.definition.noDescription", "(no description)")}</div>}
-                <AlphaButton type="button" className="btn btn-sm detail-read-plan" onClick={() => setPlanDocumentOpen(true)}><FileText size={14} aria-hidden="true" />{t("taskDetail.spec.readPlanBtn", "Read plan")}</AlphaButton>
-              </section>
               <section className="detail-section detail-step-progress" aria-labelledby={`${workingTask.id}-progress-heading`}>
                 <div className="detail-progress-heading"><h4 id={`${workingTask.id}-progress-heading`}>{t("taskDetail.progress.heading", "Progress")}</h4><span className="step-progress-label">{t("taskDetail.progress.completedCount", "{{count}}/{{total}} completed", { count: unifiedProgress.completed, total: unifiedProgress.total })}</span></div>
                 {unifiedProgress.total > 0 ? <>
                   <div className="step-progress-track" role="progressbar" aria-valuemin={0} aria-valuemax={unifiedProgress.total} aria-valuenow={unifiedProgress.completed}><span style={{ inlineSize: `${(unifiedProgress.completed / unifiedProgress.total) * 100}%` }} /></div>
-                  <ol className="detail-step-list">{unifiedProgress.items.map((item) => {
-                    const statusLabel = getStepStatusLabel(item.status, t as TFunction<"app">);
-                    const complete = item.status === "done";
-                    return <li key={item.id} className={`detail-step-item detail-step-item--${item.status}`}>
-                      <span className="detail-step-indicator" style={{ color: getStepStatusColor(item.status) }} aria-hidden="true">{complete ? <Check size={12} /> : <span className="status-dot" />}</span>
-                      <span className="detail-step-name">{item.name}</span>
-                      <span className="detail-step-origin">{item.source === "workflow" ? t("taskDetail.progress.workflowOrigin", "Workflow gate") : t("taskDetail.progress.implementationOrigin", "Implementation")}</span>
-                      <span className="detail-step-status">{statusLabel}</span>
-                    </li>;
-                  })}</ol>
+                  {/*
+                  FNXC:TaskDetailDefinition 2026-09-14-19:50:
+                  The disclosure NEVER hides the counter or the bar — only the per-step list. It is a
+                  real <button> with aria-expanded/aria-controls so keyboard and screen-reader users
+                  get the same affordance, and expanding recomputes nothing: `unifiedProgress` is
+                  already resolved above.
+                  */}
+                  <AlphaButton
+                    type="button"
+                    className="btn btn-sm detail-step-list-toggle"
+                    onClick={() => setStepListExpanded((expanded) => !expanded)}
+                    aria-expanded={stepListExpanded}
+                    aria-controls={`${workingTask.id}-detail-step-list`}
+                    data-testid="detail-step-list-toggle"
+                  >
+                    {stepListExpanded ? <ChevronDown size={14} aria-hidden="true" /> : <ChevronRight size={14} aria-hidden="true" />}
+                    {stepListExpanded
+                      ? t("taskDetail.progress.hideSteps", "Hide steps")
+                      : t("taskDetail.progress.showSteps", "Show steps")}
+                  </AlphaButton>
+                  {stepListExpanded && (
+                    <ol className="detail-step-list" id={`${workingTask.id}-detail-step-list`}>{unifiedProgress.items.map((item) => {
+                      const statusLabel = getStepStatusLabel(item.status, t as TFunction<"app">);
+                      const complete = item.status === "done";
+                      return <li key={item.id} className={`detail-step-item detail-step-item--${item.status}`}>
+                        <span className="detail-step-indicator" style={{ color: getStepStatusColor(item.status) }} aria-hidden="true">{complete ? <Check size={12} /> : <span className="status-dot" />}</span>
+                        <span className="detail-step-name">{item.name}</span>
+                        <span className="detail-step-origin">{item.source === "workflow" ? t("taskDetail.progress.workflowOrigin", "Workflow gate") : t("taskDetail.progress.implementationOrigin", "Implementation")}</span>
+                        <span className="detail-step-status">{statusLabel}</span>
+                      </li>;
+                    })}</ol>
+                  )}
                 </> : <div className="step-progress-empty">{t("taskDetail.progress.noSteps", "(no steps defined)")}</div>}
+              </section>
+              <section className="detail-section detail-definition-description" aria-labelledby={`${workingTask.id}-definition-description`}>
+                <div className="detail-source-header detail-definition-header">
+                  <h4 id={`${workingTask.id}-definition-description`}>{t("taskDetail.definition.descriptionHeading", "Description")}</h4>
+                </div>
+                {/*
+                FNXC:TaskDetailDefinition 2026-09-14-19:50:
+                Bounded and focusable: `tabIndex={0}` with a group role so a keyboard user can reach
+                and scroll a long description that is deliberately capped in height. It is always
+                read-only here — editing goes through the explicit Edit form, and only in manual
+                intake.
+                */}
+                {hasOriginalTaskPrompt
+                  ? <div className="markdown-body detail-definition-description-body" data-testid="task-detail-definition-description" tabIndex={0} role="group" aria-label={t("taskDetail.definition.descriptionHeading", "Description")}><ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={sharedRehypePlugins} components={markdownLinkifyComponents}>{originalTaskPrompt}</ReactMarkdown></div>
+                  : <div className="detail-empty-inline">{t("taskDetail.definition.noDescription", "(no description)")}</div>}
+              </section>
+              <section className="detail-section detail-definition-outcome" aria-labelledby={`${workingTask.id}-definition-outcome`}>
+                <div className="detail-source-header detail-definition-header">
+                  <h4 id={`${workingTask.id}-definition-outcome`}>{t("taskDetail.definition.outcomeHeading", "What this delivers")}</h4>
+                  <AlphaButton type="button" className="btn btn-sm detail-read-plan" onClick={() => setPlanDocumentOpen(true)}><FileText size={14} aria-hidden="true" />{t("taskDetail.spec.readPlanBtn", "Read plan")}</AlphaButton>
+                </div>
+                {detailLoading && !productSummary
+                  ? <div className="detail-empty-inline">{t("taskDetail.spec.loading", "Loading specification…")}</div>
+                  : productSummary
+                    ? <div className="markdown-body detail-definition-outcome-body" data-testid="task-detail-definition-outcome"><ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={sharedRehypePlugins} components={markdownLinkifyComponents}>{productSummary.markdown}</ReactMarkdown></div>
+                    : <div className="detail-empty-inline" data-testid="task-detail-definition-outcome-empty">{t("taskDetail.definition.noOutcome", "No plan summary yet — open Read plan for the full specification.")}</div>}
               </section>
             </>
           )}          </>

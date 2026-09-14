@@ -2650,23 +2650,16 @@ export class TriageProcessor {
     }
   }
 
-  private async backfillBlankTitleAfterTerminalTriageFailure(task: Task): Promise<void> {
-    /*
-    FNXC:TriageTitleFallback 2026-07-14-00:00:
-    Agent-created tasks may begin triage with a blank title because fn_task_create only accepts a description. Terminal planner failures must keep their original failed/error state, but they should best-effort derive a deterministic non-LLM title so dashboard and CLI rows are not permanently invisible.
-    */
-    try {
-      const current = await this.store.getTask(task.id);
-      if (current.title?.trim()) {
-        return;
-      }
-      const fallbackTitle = deriveFallbackTaskTitle(current.description || task.description);
-      await this.store.updateTask(task.id, { title: fallbackTitle });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      planLog.warn(`${task.id}: failed to backfill blank title after terminal triage failure: ${msg}`);
-    }
-  }
+  /*
+  FNXC:TriageTitleFallback 2026-09-14-16:20:
+  FN-391 deletes `backfillBlankTitleAfterTerminalTriageFailure`. A terminal planner failure must not
+  invent a durable task title: the automatic title policy (`autoSummarizeTitles`) at create time is
+  now the ONE writer of a generated title, and an untitled row is rendered from its description by
+  the dashboard display projection (`getTaskTitleDisplay`, 220 exact characters). A deterministic
+  backfill here produced a persisted title indistinguishable from an explicit one, so a later
+  correct policy could never re-derive it. Rows stay visible because the display fallback, not the
+  stored row, supplies the label.
+  */
 
   /**
    * Specify a triage task by spawning an AI agent to generate a PROMPT.md.
@@ -3863,15 +3856,13 @@ export class TriageProcessor {
             const failureMessage = `${failure} after ${MAX_RECOVERY_RETRIES} retries. Retry after adjusting the task prompt or model.`;
             planLog.error(`${task.id} clean planning attempt retry budget exhausted`);
             await this.store.logEntry(task.id, failureMessage);
-            if (await this.updatePlanningStateIfStillCurrent(task, () => ({
+            await this.updatePlanningStateIfStillCurrent(task, () => ({
               status: "failed",
               error: failureMessage,
               recoveryRetryCount: null,
               nextRecoveryAt: null,
               planningFailure: null,
-            }))) {
-              await this.backfillBlankTitleAfterTerminalTriageFailure(task);
-            }
+            }));
             return;
           }
 
@@ -3913,14 +3904,12 @@ export class TriageProcessor {
               task.id,
               failureMessage,
             );
-            if (await this.updatePlanningStateIfStillCurrent(task, {
+            await this.updatePlanningStateIfStillCurrent(task, {
               status: "failed",
               error: failureMessage,
               recoveryRetryCount: null,
               nextRecoveryAt: null,
-            })) {
-              await this.backfillBlankTitleAfterTerminalTriageFailure(task);
-            }
+            });
             return;
           }
 
@@ -4065,7 +4054,6 @@ export class TriageProcessor {
             return false;
           });
           if (!persisted) return;
-          await this.backfillBlankTitleAfterTerminalTriageFailure(task);
           this.options.onSpecifyError?.(task, err);
           return;
         } else if (isOperatorActionableAgentError(errorMessage) && !isTransientError(errorMessage)) {
@@ -4093,7 +4081,6 @@ export class TriageProcessor {
             return false;
           });
           if (!persisted) return;
-          await this.backfillBlankTitleAfterTerminalTriageFailure(task);
           this.options.onSpecifyError?.(task, err instanceof Error ? err : new Error(errorMessage));
           return;
         } else if (isUnavailablePlanLockError(err)) {
@@ -4115,7 +4102,6 @@ export class TriageProcessor {
               return false;
             });
             if (!persisted) return;
-            await this.backfillBlankTitleAfterTerminalTriageFailure(task);
             return;
           }
           const decision = computeRecoveryDecision({ recoveryRetryCount: task.recoveryRetryCount, nextRecoveryAt: task.nextRecoveryAt });
@@ -4150,7 +4136,6 @@ export class TriageProcessor {
             return false;
           });
           if (!persisted) return;
-          await this.backfillBlankTitleAfterTerminalTriageFailure(task);
           return;
         } else if (isPlanningLifecycleLockTransportError(err)) {
           /*
@@ -4198,7 +4183,6 @@ export class TriageProcessor {
             return false;
           });
           if (!persisted) return;
-          await this.backfillBlankTitleAfterTerminalTriageFailure(task);
           return;
         } else if (isTransientError(errorMessage)) {
           // Transient network/infrastructure error — use bounded recovery policy
@@ -4246,7 +4230,6 @@ export class TriageProcessor {
             return false;
           });
           if (!persisted) return;
-          await this.backfillBlankTitleAfterTerminalTriageFailure(task);
           this.options.onSpecifyError?.(task, err instanceof Error ? err : new Error(errorMessage));
           return;
         }
@@ -4330,7 +4313,6 @@ export class TriageProcessor {
           const msg = restoreErr instanceof Error ? restoreErr.message : String(restoreErr);
           planLog.warn(`${task.id}: failed to park task after planning retries exhausted: ${msg}`);
         });
-        await this.backfillBlankTitleAfterTerminalTriageFailure(task);
         this.options.onSpecifyError?.(task, err instanceof Error ? err : new Error(errorMessage));
       }
     } finally {
@@ -5334,15 +5316,14 @@ export class TriageProcessor {
       };
     }
 
-    // Apply non-title metadata first. The title is held back and applied AFTER
-    // the column transition (see below) because store.updateTask regenerates
-    // PROMPT.md when title/description change, and the triage-stub regen path
-    // would overwrite the freshly-written specification while column='triage'.
-    // The store now also guards that regen against real specs, but we keep this
-    // ordering as defense in depth so a future change to the guard can't
-    // resurrect the regression.
-    const promptDeclaredTitle = extractPromptDeclaredTitle(written, task.id);
-    const shouldApplyPromptDeclaredTitle = shouldReplaceTaskTitleFromPrompt(task, promptDeclaredTitle);
+    /*
+    FNXC:TriageTitleFallback 2026-09-14-16:20:
+    FN-391: planning no longer copies the `# Task: FN-NNN - ...` heading of PROMPT.md onto the task
+    row. That heading is documentary plan content authored by the planner in plan language; copying
+    it silently replaced an operator-visible label after the card had already been created, and it
+    competed with the create-time automatic title policy. `resolveSpecificationPromptTitle` still
+    supplies deterministic CONTEXT to the planner prompt, but it is not a writer of the task row.
+    */
 
     /*
     FNXC:Triage 2026-07-30-15:00:
@@ -5596,9 +5577,6 @@ export class TriageProcessor {
          * approval) never survives into this genuinely-manual hold.
          */
         const approvalUpdates: Record<string, unknown> = { status: "awaiting-approval", awaitingApprovalReason: null };
-        if (shouldApplyPromptDeclaredTitle && promptDeclaredTitle) {
-          approvalUpdates.title = promptDeclaredTitle;
-        }
         if (!await this.updatePlanningStateIfStillCurrent(task, approvalUpdates)) return;
         await this.store.logEntry(
           task.id,
@@ -5651,10 +5629,6 @@ export class TriageProcessor {
     FNXC:CodingIdeasWorkflow 2026-07-04-10:35:
     A task planned in place inside the merged "todo" column (Coding (Ideas) and any workflow with a manual intake) is already where it needs to be. Skipping the move avoids a redundant same-column transition that would re-run reset-on-entry and capacity trait hooks on a card that never left the column. Legacy triage tasks (column "triage") still move to "todo" as before.
     */
-    // Apply title while the live row is still planning; a post-release patch can race execution.
-    if (shouldApplyPromptDeclaredTitle && promptDeclaredTitle) {
-      if (!await this.updatePlanningStateIfStillCurrent(task, { title: promptDeclaredTitle })) return;
-    }
 
     /*
     FNXC:WorkflowResolvedColumns 2026-07-31-23:59 (SYNC -> ASYNC — this one is a MOVE TARGET):
@@ -5766,26 +5740,14 @@ function promptDeclaresNoCommitsExpected(text: string): boolean {
   return /^\*\*No commits expected:\*\*\s*(true|yes)\b/im.test(text);
 }
 
-function extractPromptDeclaredTitle(prompt: string, taskId: string): string | null {
-  const headingMatch = prompt.match(/^#\s+Task:\s+([A-Z]+-\d+)\s+-\s+(.+)$/m);
-  if (!headingMatch) return null;
-  const [, headingTaskId, rawTitle] = headingMatch;
-  if (headingTaskId !== taskId) return null;
-
-  const title = rawTitle.trim().replace(/[\s.!?,;:]+$/g, "");
-  if (!title) return null;
-
-  // Conservative guard: do not overwrite metadata with confirmation prose.
-  if (isMalformedTaskTitle(title)) {
-    return null;
-  }
-
-  return title;
-}
-
-function isMalformedTaskTitle(title: string): boolean {
-  return /^created\s+(?:task\s+)?(?:fn-\d+\b|\*\*\s*fn-\d+\s*\*\*)/i.test(title.trim());
-}
+/*
+FNXC:TriageTitleFallback 2026-09-14-16:20:
+FN-391 deleted `extractPromptDeclaredTitle`, `isMalformedTaskTitle`, and
+`shouldReplaceTaskTitleFromPrompt` with their call sites. The PROMPT.md `# Task: FN-NNN - ...`
+heading is documentary plan content, not the task row's label, so nothing reads it back as a
+title writer any more. Re-adding a heading-derived title writer would restore the two-writer
+race this task removed.
+*/
 
 /**
  * Resolve the title shown to the planner for a task that has not received a title yet.
@@ -5806,21 +5768,6 @@ function resolveSpecificationPromptTitle(task: Pick<TaskDetail, "title" | "descr
   }
 
   return "(none)";
-}
-
-function shouldReplaceTaskTitleFromPrompt(task: Task, promptDeclaredTitle: string | null): boolean {
-  if (!promptDeclaredTitle) return false;
-
-  if (
-    task.sourceType === "github_import" &&
-    task.sourceIssue?.provider === "github" &&
-    task.title?.trim() &&
-    !isMalformedTaskTitle(task.title)
-  ) {
-    return false;
-  }
-
-  return true;
 }
 
 /** Content read from an attachment file for inlining in the prompt. */

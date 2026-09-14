@@ -150,7 +150,13 @@ describe("Task Detail canonical shell", () => {
       if (state.title) expect(header).not.toHaveTextContent(state.title);
       fireEvent.click(within(surface!).getByRole("button", { name: "Plan" }));
       fireEvent.click(within(surface!).getByRole("button", { name: "Edit task" }));
-      expect(within(surface!).getByLabelText("Title")).toHaveValue(state.title ?? "");
+      /*
+      FNXC:TaskDescriptionEditing 2026-09-14-19:25:
+      FN-391 removed the title field from the edit form, so the host is title-free in edit mode too —
+      a stronger version of what this case always asserted. The description remains the one editable
+      text field, readonly outside manual intake.
+      */
+      expect(within(surface!).queryByLabelText("Title")).toBeNull();
       expect(within(surface!).getByLabelText("Description")).toHaveValue(state.description ?? "");
       expect(header?.querySelector("h1, h2, h3, h4, h5, h6")).toBeNull();
       view.unmount();

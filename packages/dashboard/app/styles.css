@@ -2760,119 +2760,12 @@ Task cards reuse the compact badge chip dimensions for GitLab links, but stale G
   flex-shrink: 0;
 }
 
-/* === Step Progress === */
 /*
-FNXC:TaskDetailDefinition 2026-09-12-22:52:
-La progression de Définition est une liste lisible plutôt qu’une rangée de segments sans libellé. La barre résume l’avancement et chaque ligne conserve nom, origine et statut accessibles avec les couleurs sémantiques existantes.
+FNXC:TaskDetailDefinition 2026-09-14-20:00:
+FN-391 moved the Task Detail step-progress rules out of this global file and into
+TaskDetailModal.css, where the component's own CSS belongs. Only tokens, primitives and
+cross-component media overrides stay here.
 */
-.detail-step-progress {
-  margin-top: var(--space-lg);
-}
-
-.detail-progress-heading {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-md);
-  margin-bottom: var(--space-sm);
-}
-
-.detail-step-progress h4,
-.detail-definition-description h4 {
-  margin: 0;
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
-  font-weight: 600;
-}
-
-.step-progress-track {
-  block-size: var(--space-xs);
-  overflow: hidden;
-  border-radius: var(--radius-pill);
-  background: var(--bg-tertiary);
-}
-
-.step-progress-track > span {
-  display: block;
-  block-size: 100%;
-  border-radius: inherit;
-  background: var(--color-success);
-  transition: inline-size var(--transition-normal);
-}
-
-.detail-step-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-xs);
-  margin: var(--space-md) 0 0;
-  padding: 0;
-  list-style: none;
-}
-
-.detail-step-item {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
-  align-items: center;
-  gap: var(--space-sm);
-  padding: var(--space-sm);
-  border-radius: var(--radius-md);
-  color: var(--text);
-}
-
-.detail-step-item:is(:hover, :focus-within) {
-  background: var(--surface-hover);
-}
-
-.detail-step-indicator {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  inline-size: var(--space-lg);
-  block-size: var(--space-lg);
-  border: var(--border-width) solid currentColor;
-  border-radius: var(--radius-sm);
-}
-
-.detail-step-indicator .status-dot {
-  background: currentColor;
-}
-
-.detail-step-name {
-  min-inline-size: 0;
-  overflow-wrap: anywhere;
-}
-
-.detail-step-origin,
-.detail-step-status,
-.step-progress-label {
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
-}
-
-.detail-step-origin {
-  padding: calc(var(--space-xs) / 2) var(--space-sm);
-  border-radius: var(--radius-pill);
-  background: var(--bg-secondary);
-}
-
-.detail-step-status {
-  min-inline-size: max-content;
-}
-
-.step-progress-empty {
-  color: var(--text-dim);
-  font-size: var(--font-size-sm);
-}
-
-@media (max-width: 768px) {
-  .detail-step-item {
-    grid-template-columns: auto minmax(0, 1fr) auto;
-  }
-
-  .detail-step-origin {
-    display: none;
-  }
-}
 
 /* === Activity Timeline === */
 /*

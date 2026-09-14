@@ -7974,7 +7974,9 @@
     },
     "definition": {
       "descriptionHeading": "Descripción",
-      "noDescription": "(sin descripción)"
+      "noDescription": "(sin descripción)",
+      "noOutcome": "Aún no hay resumen del plan: abre Leer plan para ver la especificación completa.",
+      "outcomeHeading": "Lo que entrega esta tarea"
     },
     "description": {
       "showLess": "Mostrar menos",
@@ -8161,10 +8163,12 @@
       "updated": "Prioridad actualizada a {{priority}}"
     },
     "progress": {
-      "heading": "Progreso",
       "completedCount": "{{count}}/{{total}} completadas",
-      "workflowOrigin": "Control del flujo de trabajo",
+      "heading": "Progreso",
+      "hideSteps": "Ocultar pasos",
       "implementationOrigin": "Implementación",
+      "noSteps": "(sin pasos definidos)",
+      "showSteps": "Mostrar pasos",
       "status": {
         "done": "Completada",
         "failed": "Fallida",
@@ -8174,9 +8178,9 @@
         "skipped": "Omitida",
         "pending": "Pendiente"
       },
-      "noSteps": "(sin pasos definidos)",
       "stepCount_one": "",
-      "stepCount_other": ""
+      "stepCount_other": "",
+      "workflowOrigin": "Control del flujo de trabajo"
     },
     "provenance": {
       "createdBy": "Creado por",
@@ -8337,11 +8341,6 @@
       "updated": "Actualizado"
     },
     "timingEvents": "Eventos de temporización",
-    "title": {
-      "summarize": "",
-      "summarizeFailed": "",
-      "summarizeSuccess": ""
-    },
     "tokenTotalsAria": "Totales de tokens de la tarea",
     "tokenUsage": "Uso de tokens",
     "totalExecutionTime": "Tiempo activo total",
@@ -8532,6 +8531,7 @@
     "dependenciesSelected_other": "",
     "descriptionLabel": "Descripción",
     "descriptionPlaceholder": "¿Qué hay que hacer?",
+    "descriptionReadOnlyNote": "La descripción solo se puede editar mientras la tarea sigue esperando en su columna de entrada manual.",
     "descriptionRefinedToast": "Descripción refinada con IA",
     "editingDescription": "Editando descripción",
     "enterDescriptionFirst": "Ingresa una descripción primero",
@@ -8593,8 +8593,6 @@
     "thinkingMinimal": "Mínimo",
     "thinkingOff": "Desactivado",
     "thinkingXhigh": "Muy alto",
-    "titleLabel": "Título",
-    "titlePlaceholder": "Título de la tarea",
     "useDropdown": "Usar menú desplegable",
     "usingPreset": "Usando preajuste: {{name}}",
     "workflowDefaultBadge": "(predeterminado)",

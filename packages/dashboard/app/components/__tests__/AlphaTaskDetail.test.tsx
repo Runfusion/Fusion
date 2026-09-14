@@ -195,26 +195,32 @@ describe("homemade Alpha Task Detail", () => {
     const onPopOut = vi.fn();
     const view = render(
       <AlphaProvider enabled>
-        <TaskDetailContent {...sharedProps} embedded task={makeTask({ title: "Initial title", column: "todo" })} onPopOut={onPopOut} />
+        <TaskDetailContent {...sharedProps} embedded task={makeTask({ title: "Initial title", column: "ideas" as any })} onPopOut={onPopOut} />
       </AlphaProvider>,
     );
 
     await user.click(screen.getByRole("button", { name: "Plan" }));
     expect(screen.getByRole("button", { name: "Plan" })).toHaveClass("detail-tab-active");
     await user.click(screen.getByRole("button", { name: "Edit task" }));
-    const title = screen.getByLabelText("Title");
-    await user.clear(title);
-    await user.type(title, "Modern task");
-    expect(title).toHaveFocus();
+    /*
+    FNXC:TaskDescriptionEditing 2026-09-14-19:30:
+    FN-391 removed the title field; the description is the text field whose draft and focus must
+    survive a live rerender. The card is rendered in manual intake so the description is editable.
+    */
+    const description = screen.getByLabelText("Description");
+    await user.clear(description);
+    await user.type(description, "Modern description");
+    expect(description).toHaveFocus();
 
     view.rerender(
       <AlphaProvider enabled>
-        <TaskDetailContent {...sharedProps} embedded task={makeTask({ title: "Initial title", column: "todo", status: "planning", log: [{ timestamp: "2026-01-01T00:00:01Z", action: "Live update" }] })} onPopOut={onPopOut} />
+        <TaskDetailContent {...sharedProps} embedded task={makeTask({ title: "Initial title", column: "ideas" as any, status: "planning", log: [{ timestamp: "2026-01-01T00:00:01Z", action: "Live update" }] })} onPopOut={onPopOut} />
       </AlphaProvider>,
     );
 
-    expect(screen.getByLabelText("Title")).toHaveValue("Modern task");
-    expect(screen.getByLabelText("Title")).toHaveFocus();
+    expect(screen.getByLabelText("Description")).toHaveValue("Modern description");
+    expect(screen.getByLabelText("Description")).toHaveFocus();
+    expect(screen.queryByLabelText("Title")).toBeNull();
     await user.click(screen.getByRole("button", { name: "Pop out" }));
     expect(onPopOut).toHaveBeenCalledTimes(1);
   });
@@ -554,7 +560,8 @@ describe("homemade Alpha Task Detail", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "Edit task" }));
-    expect(screen.getByLabelText("Title")).toHaveAttribute("data-alpha-ui", "input");
+    // FNXC:TaskDescriptionEditing 2026-09-14-19:30: FN-391 — the description textarea is the adaptive text control now that the title field is gone.
+    expect(screen.getByLabelText("Description")).toHaveAttribute("data-alpha-ui", "textarea");
     const alphaSelects = document.querySelectorAll<HTMLSelectElement>("select[data-alpha-ui='select']");
     expect(alphaSelects.length).toBeGreaterThan(0);
     expect(alphaSelects[0]).toBeEnabled();

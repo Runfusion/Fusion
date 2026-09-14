@@ -2051,14 +2051,22 @@ describe("TaskDetailModal", () => {
       await userEvent.click(screen.getByRole("button", { name: "Plan" }));
       await userEvent.click(screen.getByRole("button", { name: "Edit task" }));
       expect(header?.querySelector("h1, h2, h3, h4, h5, h6")).toBeNull();
-      expect(screen.getByLabelText("Title")).toHaveValue(title ?? "");
+      /*
+      FNXC:TaskDescriptionEditing 2026-09-14-19:25:
+      FN-391 removed the title field from edit mode, so the header AND the form are title-free.
+      */
+      expect(screen.queryByLabelText("Title")).toBeNull();
       expect(screen.getByLabelText("Description")).toHaveValue(description ?? "");
       expect(screen.queryByTestId("summarize-title-btn")).toBeNull();
     });
 
-    it("keeps Summarize beside Description without recreating title chrome", async () => {
-      vi.mocked(dashboardApi.summarizeTitle).mockResolvedValueOnce("Generated hidden title");
-      vi.mocked(dashboardApi.updateTask).mockResolvedValueOnce(makeTask({ id: "FN-SUMMARY", title: "Generated hidden title" }));
+    /*
+    FNXC:TaskDescriptionEditing 2026-09-14-19:25:
+    FN-391 removed the Summarize action, so the case that proved it rendered beside Description
+    without recreating title chrome is inverted: the Definition header carries the heading alone and
+    no title write can originate from this surface.
+    */
+    it("keeps the Definition header free of any title action or title chrome", () => {
       render(
         <TaskDetailModal
           initialTab="definition"
@@ -2071,12 +2079,12 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      const summarizeButton = screen.getByTestId("summarize-title-btn");
-      expect(summarizeButton.closest(".detail-definition-header")).toBeInTheDocument();
-      expect(summarizeButton.closest(".modal-header")).toBeNull();
-      await userEvent.click(summarizeButton);
-      await waitFor(() => expect(dashboardApi.updateTask).toHaveBeenCalledWith("FN-SUMMARY", { title: "Generated hidden title" }, undefined));
-      expect(document.querySelector(".modal-header")).not.toHaveTextContent("Generated hidden title");
+      const definitionHeader = document.querySelector(".detail-definition-header");
+      expect(definitionHeader).toBeInTheDocument();
+      expect(definitionHeader!.querySelectorAll("button")).toHaveLength(0);
+      expect(screen.queryByTestId("summarize-title-btn")).toBeNull();
+      expect(dashboardApi.summarizeTitle).not.toHaveBeenCalled();
+      expect(document.querySelector(".modal-header")).not.toHaveTextContent("Existing hidden title");
       expect(document.querySelector(".detail-title, .detail-title-control, .detail-title-measurement")).toBeNull();
     });
 

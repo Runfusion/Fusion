@@ -130,6 +130,7 @@ import {
 import type { AutopilotState, MissionInterviewDraftSummary } from "./mission-types";
 import { readCache, SWR_CACHE_KEYS, writeCache } from "../utils/swrCache";
 import { getRelativeTimeBucket } from "../utils/relativeTimeAgo";
+import { getTaskTitleDisplayText } from "../utils/taskTitleDisplay";
 import { isNativeStructureDragEnabled, serializeNativeStructureRef } from "../utils/nativeStructureDrag";
 
 interface MissionManagerProps {
@@ -5534,7 +5535,8 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                   className="mission-task-suggestions__item"
                   onClick={() => setSelectedTaskId(task.id)}
                 >
-                  {task.id}: {task.title || t("missions.untitled", "Untitled")}
+                  {/* FNXC:TaskTitleDisplay 2026-09-14-17:05: FN-391 — one shared label projection; a titleless task shows its description prefix instead of a generic "Untitled". */}
+                  {task.id}: {getTaskTitleDisplayText(task)}
                 </button>
               ))}
             </div>

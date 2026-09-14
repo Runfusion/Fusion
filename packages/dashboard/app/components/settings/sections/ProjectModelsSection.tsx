@@ -869,7 +869,7 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
         descriptor={{
           key: "autoSummarizeTitles",
           label: t("settings.projectModels.autoSummarizeLongDescriptionsAsTitles", " Auto-summarize task titles "),
-          help: t("settings.projectModels.whenEnabledTasksCreatedWithoutATitleBut", " When enabled, every non-empty task description created without a title receives an AI-generated title (max 60 characters). Explicit titles are preserved, and manual or explicit force requests remain available when this is disabled. The same model is also used for merge commit summaries and GitHub tracking issue titles. Default: disabled. "),
+          help: t("settings.projectModels.whenEnabledTasksCreatedWithoutATitleBut", " When enabled, every non-empty task description created without a title receives an AI-generated title in the language selected above (max 60 characters), whatever the description length. When disabled, no title is stored and cards show the first 220 characters of the description instead. Explicit titles are always preserved. The same model is also used for merge commit summaries and GitHub tracking issue titles. Default: disabled. "),
           scope: "project",
         }}
         value={form.autoSummarizeTitles || false}
