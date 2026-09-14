@@ -65,6 +65,8 @@ export interface RightDockControllerInput {
   autoMerge: boolean;
   taskDetailChatFirst: boolean;
   visibilityOptions: OverflowViewVisibilityOptions;
+  /** FN-382: the owner-supplied List surface rendered as a dock tool on non-mobile hosts. */
+  renderListView?: () => ReactNode;
   footerVisible: boolean;
 }
 
@@ -213,6 +215,7 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
     onOpenGitHubImport: input.onOpenGitHubImport,
     onOpenGitManager: input.onOpenGitManager,
     onOpenSchedules: input.onOpenSchedules,
+    renderListView: input.renderListView,
     onOpenTaskDetail: (taskId: string) => {
       void fetchTaskDetail(taskId, input.projectId)
         .then((task) => input.openDetailTask(task as TaskDetail))

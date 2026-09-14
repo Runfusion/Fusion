@@ -140,6 +140,97 @@ export function AppMainPanelTaskDetailComposition({ state, mainContentProps }: A
   );
 }
 
+/*
+FNXC:ListInRightDock 2026-09-14-03:31:
+FN-382: the List surface is defined ONCE here and mounted by two hosts — the main-content route (phone, and any
+fallback route) and the non-mobile right dock. Extracting it keeps a single wiring of tasks, handlers, workflow
+controls and Quick Entry, so reading or creating a task from the dock cannot drift from the dedicated view.
+*/
+export function MainContentListView(props: AppMainPanelTaskDetailMainContentProps) {
+  const {
+    tasks,
+    isRemote,
+    remoteData,
+    currentProject,
+    moveTask,
+    retryTask,
+    onOpenChatWithPrefill,
+    deleteTask,
+    modalManager,
+    pauseTask,
+    unpauseTask,
+    revertTask,
+    mergeTask,
+    resetTask,
+    duplicateTask,
+    ingestCreatedTasks,
+    openDetailTask,
+    popOutTaskDetail,
+    addToast,
+    globalPaused,
+    openNewTaskWithNav,
+    handleBoardQuickCreate,
+    openPlanningWithInitialPlanWithNav,
+    availableModels,
+    favoriteProviders,
+    favoriteModels,
+    handleToggleFavorite,
+    handleToggleModelFavorite,
+    searchQuery,
+    lastFetchTimeMs,
+    prAuthAvailable,
+    autoMerge,
+    openMobileTasksInPopup,
+    taskDetailChatFirst,
+    mergeStrategy,
+    openWorkflowEditorWithNav,
+    openCreateWorkflowWithNav,
+  } = props;
+
+  return (
+    <PageErrorBoundary>
+      <ListView
+        tasks={isRemote && remoteData.tasks.length > 0 ? remoteData.tasks : tasks}
+        projectId={currentProject?.id}
+        onMoveTask={moveTask}
+        onRetryTask={retryTask}
+        onOpenChatWithPrefill={onOpenChatWithPrefill}
+        onDeleteTask={deleteTask}
+        onReviseTask={(task) => modalManager.openNewTaskWithDescription(task.description)}
+        onPauseTask={pauseTask}
+        onUnpauseTask={unpauseTask}
+        onRevertTask={revertTask}
+        onMergeTask={mergeTask}
+        onResetTask={resetTask}
+        onDuplicateTask={duplicateTask}
+        onRefinementCreated={(task) => ingestCreatedTasks([task])}
+        onOpenDetail={(task, options) => openDetailTask(task, undefined, options)}
+        onPopOut={popOutTaskDetail}
+        addToast={addToast}
+        globalPaused={globalPaused}
+        onNewTask={openNewTaskWithNav}
+        onQuickCreate={handleBoardQuickCreate}
+        onPlanningMode={openPlanningWithInitialPlanWithNav}
+        availableModels={availableModels}
+        favoriteProviders={favoriteProviders}
+        favoriteModels={favoriteModels}
+        onToggleFavorite={handleToggleFavorite}
+        onToggleModelFavorite={handleToggleModelFavorite}
+        searchQuery={searchQuery}
+        lastFetchTimeMs={lastFetchTimeMs}
+        prAuthAvailable={prAuthAvailable}
+        autoMerge={autoMerge}
+        openMobileTasksInPopup={openMobileTasksInPopup}
+        taskDetailChatFirst={taskDetailChatFirst}
+        mergeStrategy={mergeStrategy}
+        onOpenWorkflowEditor={openWorkflowEditorWithNav}
+        onCreateWorkflow={openCreateWorkflowWithNav}
+        workflowControlsInHeader={true}
+      />
+    </PageErrorBoundary>
+  );
+}
+
 export function MainContent(props: MainContentProps) {
   const {
   columnFlagsByTaskId,
@@ -195,7 +286,6 @@ export function MainContent(props: MainContentProps) {
   openFileInBrowser,
   prAuthAvailable,
   autoMerge,
-  mergeStrategy,
   settingsLoaded,
   openTasksInRightSidebar,
   openMobileTasksInPopup,
@@ -241,23 +331,12 @@ export function MainContent(props: MainContentProps) {
   handleGitHubImport,
   devServerEnabled,
   mainPanelDetailTask,
-  moveTask,
   pauseTask,
   openTaskDetailInMainPanel,
-  handleBoardQuickCreate,
-  openNewTaskWithNav,
   globalPaused,
   updateTask,
   retryTask,
-  revertTask,
   deleteTask,
-  searchQuery,
-  availableModels,
-  favoriteProviders,
-  favoriteModels,
-  handleToggleFavorite,
-  handleToggleModelFavorite,
-  lastFetchTimeMs,
   openCreateWorkflowWithNav,
   sidebarActive: _sidebarActive,
   notesController,
@@ -1112,48 +1191,7 @@ export function MainContent(props: MainContentProps) {
     */
     return null;
   }
-  return (
-    <PageErrorBoundary>
-      <ListView
-        tasks={isRemote && remoteData.tasks.length > 0 ? remoteData.tasks : tasks}
-        projectId={currentProject?.id}
-        onMoveTask={moveTask}
-        onRetryTask={retryTask}
-        onOpenChatWithPrefill={onOpenChatWithPrefill}
-        onDeleteTask={deleteTask}
-        onReviseTask={(task) => modalManager.openNewTaskWithDescription(task.description)}
-        onPauseTask={pauseTask}
-        onUnpauseTask={unpauseTask}
-        onRevertTask={revertTask}
-        onMergeTask={mergeTask}
-            onResetTask={resetTask}
-        onDuplicateTask={duplicateTask}
-        onRefinementCreated={(task) => ingestCreatedTasks([task])}
-        onOpenDetail={(task, options) => openDetailTask(task, undefined, options)}
-        onPopOut={popOutTaskDetail}
-        addToast={addToast}
-        globalPaused={globalPaused}
-        onNewTask={openNewTaskWithNav}
-        onQuickCreate={handleBoardQuickCreate}
-        onPlanningMode={openPlanningWithInitialPlanWithNav}
-        availableModels={availableModels}
-        favoriteProviders={favoriteProviders}
-        favoriteModels={favoriteModels}
-        onToggleFavorite={handleToggleFavorite}
-        onToggleModelFavorite={handleToggleModelFavorite}
-        searchQuery={searchQuery}
-        lastFetchTimeMs={lastFetchTimeMs}
-        prAuthAvailable={prAuthAvailable}
-        autoMerge={autoMerge}
-        openMobileTasksInPopup={openMobileTasksInPopup}
-        taskDetailChatFirst={taskDetailChatFirst}
-        mergeStrategy={mergeStrategy}
-        onOpenWorkflowEditor={openWorkflowEditorWithNav}
-        onCreateWorkflow={openCreateWorkflowWithNav}
-        workflowControlsInHeader={true}
-      />
-    </PageErrorBoundary>
-  );
+  return <MainContentListView {...props} />;
   };
 
   const switchView = renderSwitchView();

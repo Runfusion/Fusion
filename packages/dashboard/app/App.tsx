@@ -136,6 +136,7 @@ import { subscribeSse } from "./sse-bus";
 import { AuthTokenRecoveryPage } from "./components/AuthTokenRecoveryPage";
 import {
   AppMainPanelTaskDetailComposition,
+  MainContentListView,
   type AppMainPanelTaskDetailMainContentProps,
 } from "./components/dashboard/MainContent";
 import { PlanningKeepAlive } from "./components/dashboard/PlanningKeepAlive";
@@ -1918,10 +1919,22 @@ function AppInner() {
       () => { if (notesDirtyRef.current) onAccepted?.(); },
     );
   }, [alphaDesktopWindows.registerGuard]);
+  /*
+  FNXC:ListInRightDock 2026-09-14-03:31:
+  FN-382: the dock renders the SAME List surface as the route, so it needs the main-content wiring that is assembled
+  further down this render. A ref keeps the callback identity stable for the memoized dock render props while always
+  reading the current props, and the dock body renders later in the same pass, so it never sees a stale snapshot.
+  */
+  const mainContentPropsRef = useRef<AppMainPanelTaskDetailMainContentProps | null>(null);
+  const renderDockListView = useCallback(
+    () => (mainContentPropsRef.current ? <MainContentListView {...mainContentPropsRef.current} /> : null),
+    [],
+  );
+
   const { rightDock, windows: alphaDesktopRightDockWindows } = useAppAlphaDesktopRightDockComposition({
     projectId: currentProject?.id,
     owner: appRightDockWindows,
-    controllerInput: { active: rightDockActive, addToast, columnFlagsByTaskId: footerColumnFlagsByTaskId, settingsLoaded, researchReadinessVersion, goalAnchorId, tasks: boardSourceTasks, workflowSteps, subscribePluginEvents, openDetailTask: alphaMobileDrawerActive ? openTaskDetailInMainPanel : openDetailTask, notesController, registerNotesGuard: registerAlphaDesktopNotesGuard, openFileInBrowser, onUpdateTask: updateTask, onDeleteTask: deleteTask, onRevertTask: revertTask, onMergeTask: mergeTask, onRetryTask: retryTask, onOpenChatWithPrefill: openChatWithPrefill, onPauseTask: pauseTask, onUnpauseTask: unpauseTask, onBypassReview: bypassReview, onResetTask: resetTask, onDuplicateTask: duplicateTask, onTaskUpdated: (task: Task) => ingestCreatedTasks([task]), openSettings: (section?: string) => openSettingsWithNav(section as SectionId), onOpenUsage: openUsageWithNav, onOpenActivityLog: openActivityLogWithNav, onOpenGitHubImport: openGitHubImportWithNav, onOpenGitManager: openGitManagerWithNav, onOpenSchedules: openSchedulesWithNav, onSendSelectionToTask: modalManager.openNewTaskWithDescription, onCreateTaskFromInsight: handleInsightTaskCreate, onNavigateToMission: handleOpenMission, onTaskCreated: (task: Task) => ingestCreatedTasks([task]), prAuthAvailable, autoMerge, taskDetailChatFirst, visibilityOptions: { hostMode: alphaDesktopNavigationActive ? "alpha-desktop" : "standard", experimentalFeatures: { insights: insightsEnabled, memoryView: memoryEnabled, devServerView: devServerEnabled, researchView: researchEnabled, evalsView: evalsEnabled, goalsView: goalsEnabled }, showSkillsTab: skillsEnabled, pluginDashboardViews }, footerVisible: shellFooterVisible },
+    controllerInput: { active: rightDockActive, addToast, columnFlagsByTaskId: footerColumnFlagsByTaskId, settingsLoaded, researchReadinessVersion, goalAnchorId, tasks: boardSourceTasks, workflowSteps, subscribePluginEvents, openDetailTask: alphaMobileDrawerActive ? openTaskDetailInMainPanel : openDetailTask, notesController, registerNotesGuard: registerAlphaDesktopNotesGuard, openFileInBrowser, onUpdateTask: updateTask, onDeleteTask: deleteTask, onRevertTask: revertTask, onMergeTask: mergeTask, onRetryTask: retryTask, onOpenChatWithPrefill: openChatWithPrefill, onPauseTask: pauseTask, onUnpauseTask: unpauseTask, onBypassReview: bypassReview, onResetTask: resetTask, onDuplicateTask: duplicateTask, onTaskUpdated: (task: Task) => ingestCreatedTasks([task]), openSettings: (section?: string) => openSettingsWithNav(section as SectionId), onOpenUsage: openUsageWithNav, onOpenActivityLog: openActivityLogWithNav, onOpenGitHubImport: openGitHubImportWithNav, onOpenGitManager: openGitManagerWithNav, onOpenSchedules: openSchedulesWithNav, onSendSelectionToTask: modalManager.openNewTaskWithDescription, onCreateTaskFromInsight: handleInsightTaskCreate, onNavigateToMission: handleOpenMission, onTaskCreated: (task: Task) => ingestCreatedTasks([task]), prAuthAvailable, autoMerge, taskDetailChatFirst, renderListView: isMobile ? undefined : renderDockListView, visibilityOptions: { hostMode: alphaDesktopNavigationActive ? "alpha-desktop" : "standard", experimentalFeatures: { insights: insightsEnabled, memoryView: memoryEnabled, devServerView: devServerEnabled, researchView: researchEnabled, evalsView: evalsEnabled, goalsView: goalsEnabled }, showSkillsTab: skillsEnabled, pluginDashboardViews, listViewAvailable: !isMobile }, footerVisible: shellFooterVisible },
     chatWindowProps: { addToast, experimentalFeatures },
     noteWindowProps: {
       addToast,
@@ -2179,6 +2192,7 @@ function AppInner() {
     _SettingsView,
     _WorkflowEditorView,
   };
+  mainContentPropsRef.current = mainContentProps;
 
   const showOnboardingResumeCard = !modalManager.modelOnboardingOpen && isOnboardingResumable();
   const showPostOnboardingRecommendations =

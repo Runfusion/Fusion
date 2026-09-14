@@ -42,10 +42,30 @@ describe("overflowViewRegistry", () => {
       showSkillsTab: true,
     }).map((entry) => entry.key);
 
-    expect(keys).toEqual(STATIC_OVERFLOW_VIEW_ENTRIES.filter((entry) => entry.key !== "notes").map((entry) => entry.key));
+    // `notes` and `list` are host-gated: neither appears without its host opting in.
+    expect(keys).toEqual(STATIC_OVERFLOW_VIEW_ENTRIES.filter((entry) => entry.key !== "notes" && entry.key !== "list").map((entry) => entry.key));
     expect(keys).not.toContain("notes");
+    expect(keys).not.toContain("list");
     for (const key of removedKeys) expect(keys).not.toContain(key);
     for (const key of ["secrets", "pull-requests", "devserver"]) expect(keys).toContain(key);
+  });
+
+  /*
+  FN-382: List is a dock tool only where the host supplies the real List surface — the non-mobile dock. A phone host,
+  or any caller that does not provide the renderer, must not get a tab that could render an empty body.
+  */
+  it("exposes the List tool only when its host supplies the surface, and never expandable", () => {
+    const withoutList = getVisibleOverflowViewEntries({}).map((entry) => entry.key);
+    expect(withoutList).not.toContain("list");
+
+    const entries = getVisibleOverflowViewEntries({ listViewAvailable: true });
+    const list = entries.find((entry) => entry.key === "list");
+    expect(list).toBeDefined();
+    expect(list!.testId).toBe("right-dock-tab-list");
+    expect(list!.isExpandable?.({})).toBe(false);
+
+    // Without a renderer the entry yields nothing rather than an empty panel.
+    expect(list!.render?.({ addToast: () => {}, key: "list" } as never)).toBeNull();
   });
 
   it("adds enabled non-primary plugin views after static tool entries", () => {
