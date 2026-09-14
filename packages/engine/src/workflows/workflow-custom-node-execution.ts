@@ -10,6 +10,7 @@ export interface WorkflowCustomNodeExecutionServiceDeps {
     settings: Settings,
     columnBinding?: WorkflowColumnAgent,
     context?: Record<string, unknown>,
+    signal?: AbortSignal,
   ) => Promise<WorkflowNodeResult>;
   resolveColumnBinding?: (nodeId: string) => WorkflowColumnAgent | undefined;
 }
@@ -25,13 +26,11 @@ export class WorkflowCustomNodeExecutionService {
   public constructor(private readonly deps: WorkflowCustomNodeExecutionServiceDeps) {}
 
   public runner(settings: Settings): WorkflowCustomNodeRunner {
-    return (node, task, context) =>
-      this.deps.execute(
-        node,
-        task,
-        settings,
-        this.deps.resolveColumnBinding?.(node.id),
-        context,
-      );
+    return (node, task, context, signal) => {
+      const columnBinding = this.deps.resolveColumnBinding?.(node.id);
+      return signal
+        ? this.deps.execute(node, task, settings, columnBinding, context, signal)
+        : this.deps.execute(node, task, settings, columnBinding, context);
+    };
   }
 }

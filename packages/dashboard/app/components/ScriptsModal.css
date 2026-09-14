@@ -15,6 +15,35 @@ Non-Command-Center dashboard CSS must use the canonical --text token. The legacy
   overflow-y: auto;
 }
 
+/*
+FNXC:StandardizedViewLayout 2026-09-13-21:49:
+FN-379 makes Scripts a shared list/detail destination. The rail holds the script collection, the content zone holds
+the create/edit form, and both use shared spacing tokens instead of a local modal-only layout.
+*/
+.scripts-modal-list-pane {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+}
+
+.scripts-modal-list-count {
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+}
+
+.scripts-modal-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  padding: var(--space-xl);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  text-align: center;
+}
+
 .scripts-modal-label {
   display: block;
   margin-bottom: var(--space-xs);
@@ -52,16 +81,6 @@ Non-Command-Center dashboard CSS must use the canonical --text token. The legacy
     max-height: none;
     flex: 1;
     min-height: 0;
-  }
-
-  .scripts-modal-list-header {
-    flex-wrap: wrap;
-    gap: var(--space-sm);
-  }
-
-  .scripts-modal-list-header .btn {
-    width: 100%;
-    justify-content: center;
   }
 
   .scripts-modal-form-actions {
@@ -1359,81 +1378,15 @@ when supported, falling back to a min-width media breakpoint, that collapses to 
   border-radius: 0;
 }
 
+/*
+FNXC:AutomationsCollectionLayout 2026-09-13-16:45:
+The shared ViewLayout now owns the fixed header/tabs and list-detail split for both the embedded destination and floating host. Keep this host selector limited to fill geometry so obsolete local margins, grid breakpoints, and root scrolling cannot create a second layout authority.
+*/
 .automations-embedded-view {
-  display: flex;
   flex: 1;
-  flex-direction: column;
-  gap: var(--space-lg);
   min-height: 0;
   inline-size: 100%;
-  /* Enable container-query-driven two-pane breakpoint scoped to the view's own width, not the viewport. */
-  container-type: inline-size;
-  overflow-y: auto;
-}
-
-/*
-FNXC:ViewHeader 2026-06-23-04:15:
-Bring the embedded Automations header to the canonical ViewHeader treatment: edge-to-edge --surface bg without a bottom divider, --space-lg/--space-xl padding, and the shared --view-header-min-height (≈61px border-box) so it matches Agents/Mailbox/Missions exactly. The body rows below carry the horizontal --space-xl inset + a bottom inset (the view itself drops its uniform padding so the header can span edge-to-edge).
-*/
-.automations-embedded-header.cc-header {
-  box-sizing: border-box;
-  min-height: var(--view-header-min-height);
-  padding: var(--space-lg) var(--space-xl);
-  background: var(--surface);
-  border-bottom: none;
-}
-
-/* Canonical --todo leading-icon tint (override Command Center's icon-triage brown) at size 20. */
-.automations-embedded-header .cc-title svg {
-  color: var(--todo);
-}
-
-/* Body rows keep the --space-xl horizontal inset + bottom inset that the now-edge-to-edge header no longer supplies. */
-.automations-embedded-view > :not(.automations-embedded-header) {
-  margin-inline: var(--space-xl);
-}
-
-/*
-FNXC:Automations 2026-06-23-04:45:
-With the header now edge-to-edge and dividerless, the first body row still needs breathing room below the title area instead of reading flush against it. Scoped to the first body row only (the flex gap handles spacing between subsequent rows).
-*/
-.automations-embedded-header + :not(.automations-embedded-header) {
-  margin-top: var(--space-sm);
-}
-
-.automations-embedded-view > :last-child:not(.automations-embedded-header) {
-  margin-bottom: var(--space-lg);
-}
-
-.automations-embedded-view > .scheduling-toolbar {
-  padding-right: 0;
-  padding-left: 0;
-}
-
-/*
-FNXC:Automations 2026-06-24-23:30:
-The embedded single-column Automations list/detail grid must not stretch implicit rows to fill the pane; stretch pushes the selected detail card far below the list row on tall/narrow surfaces. Keep rows content-sized and top-aligned so toolbar, list, and detail stay packed while the wide breakpoint only changes the column template.
-*/
-.automations-two-pane {
-  display: grid;
-  grid-template-columns: 1fr;
-  grid-auto-rows: max-content;
-  align-content: start;
-  align-items: start;
-  gap: var(--space-lg);
-  min-height: 0;
-  flex: 1;
-}
-
-@media (max-width: 768px) {
-  .automations-two-pane {
-    grid-template-columns: 1fr;
-  }
-}
-
-.automations-single-pane {
-  min-height: 0;
-  flex: 1;
+  overflow: hidden;
 }
 
 /* Left list rail */
@@ -1442,6 +1395,7 @@ The embedded single-column Automations list/detail grid must not stretch implici
   flex-direction: column;
   gap: var(--space-xs);
   min-width: 0;
+  padding: var(--space-sm);
 }
 
 .automation-list-row {
@@ -1501,25 +1455,6 @@ instead of resolving to a flat --card with no accent emphasis.
 
 .automations-detail-empty {
   height: 100%;
-}
-
-/* Two columns once the embedded container is wide enough (~900px). */
-@container (min-width: 900px) {
-  .automations-two-pane {
-    grid-template-columns: minmax(0, 18rem) minmax(0, 1fr);
-    align-items: start;
-  }
-}
-
-/*
-Fallback for browsers without container-query support: use a viewport media query. Harmless where container
-queries already apply (the container-query rule above also fires and produces the same two-column layout).
-*/
-@media (min-width: 900px) {
-  .automations-two-pane {
-    grid-template-columns: minmax(0, 18rem) minmax(0, 1fr);
-    align-items: start;
-  }
 }
 
 .activity-log-header {

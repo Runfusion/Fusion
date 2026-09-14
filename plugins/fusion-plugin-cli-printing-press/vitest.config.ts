@@ -36,6 +36,13 @@ export default defineConfig({
       "@fusion/core/task-delete-attribution": fileURLToPath(new URL("../../packages/core/src/task-delete-attribution.ts", import.meta.url)),
       "@fusion/core": fileURLToPath(new URL("../../packages/core/src/index.ts", import.meta.url)),
       "@fusion/plugin-sdk": fileURLToPath(new URL("../../packages/plugin-sdk/src/index.ts", import.meta.url)),
+      /*
+      FNXC:VitestAliases 2026-09-13-22:40:
+      Manage paints the standardized cooperative header through its dashboard subpath; the specific entry must
+      precede the package alias because string aliases match by PREFIX.
+      */
+      "@fusion/dashboard/app/plugins/PluginDashboardViewHeader": fileURLToPath(new URL("../../packages/dashboard/app/plugins/PluginDashboardViewHeader.tsx", import.meta.url)),
+      "@fusion/dashboard/app/plugins/types": fileURLToPath(new URL("../../packages/dashboard/app/plugins/types.ts", import.meta.url)),
       "@fusion/dashboard": fileURLToPath(new URL("../../packages/dashboard/app/index.ts", import.meta.url)),
     },
   },

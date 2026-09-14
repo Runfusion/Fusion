@@ -17,6 +17,7 @@ import {
   Eye,
   EyeOff,
 } from "lucide-react";
+import { PluginDashboardViewHeader } from "@fusion/dashboard/app/plugins/PluginDashboardViewHeader";
 import { getErrorMessage, type Task, type TaskCreateInput, type TodoItem, type TodoList } from "@fusion/core";
 import { createTask, fetchAgents } from "./api.js";
 import type { Agent } from "./api.js";
@@ -373,11 +374,39 @@ export function TodoView({
     }
   }, [projectId, addToast, agents, onTaskCreated, t]);
 
+  const startListCreation = useCallback(() => {
+    resetItemDraftState();
+    setIsAddingList(true);
+    setEditingListId(null);
+  }, [resetItemDraftState]);
+
   /*
   FNXC:Todos 2026-06-22-17:45:
   The redundant "Todos" title + "Manage reusable todo lists" subtitle are removed — Todos lives in the right dock (and left-sidebar nav) which already labels the view, so a repeated in-view header is noise. The list/detail layout owns the full height with no header above it.
+
+  FNXC:StandardizedPluginActions 2026-09-13-22:40:
+  FN-379 gives Todos the cooperative plugin header so list creation exists exactly once, in the canonical
+  header, on every host and viewport. The former sidebar-local add button and the empty-state call to action
+  were competing creation entries with their own shapes; the empty state now only explains the empty list.
   */
-  const header = null;
+  const header = (
+    <PluginDashboardViewHeader
+      icon={ListChecks}
+      title={t("todo.title", "Todos")}
+      actions={(
+        <button
+          type="button"
+          className="btn btn-primary btn-sm view-action-button view-action-button--create view-action-button--mobile-icon-only"
+          onClick={startListCreation}
+          aria-label={t("todo.addList", "Add list")}
+          data-testid="add-list-button"
+        >
+          <Plus size={16} aria-hidden="true" />
+          <span className="view-action-button__label">{t("todo.addList", "Add list")}</span>
+        </button>
+      )}
+    />
+  );
 
   if (loading) {
     return (
@@ -398,19 +427,6 @@ export function TodoView({
         <aside className="todo-view-sidebar" aria-label={t("todo.listsLabel", "Todo lists sidebar")}>
           <div className="todo-sidebar-header">
             <h3 className="todo-sidebar-title">{t("todo.lists", "Lists")}</h3>
-            <button
-              type="button"
-              className="btn btn-sm btn-icon todo-add-list-btn"
-              onClick={() => {
-                resetItemDraftState();
-                setIsAddingList(true);
-                setEditingListId(null);
-              }}
-              aria-label={t("todo.addList", "Add list")}
-              data-testid="add-list-button"
-            >
-              <Plus />
-            </button>
           </div>
 
           {isAddingList && (
@@ -460,16 +476,6 @@ export function TodoView({
             <div className="todo-empty-state">
               <ListChecks aria-hidden="true" />
               <p>{t("todo.noListsEmpty", "No todo lists yet. Create one to get started.")}</p>
-              <button
-                type="button"
-                className="btn btn-sm"
-                onClick={() => {
-                  resetItemDraftState();
-                  setIsAddingList(true);
-                }}
-              >
-                {t("todo.createList", "Create List")}
-              </button>
             </div>
           ) : (
             <div className="todo-list-items" role="list" aria-label={t("todo.todoListsLabel", "Todo lists")}>

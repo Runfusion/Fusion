@@ -187,13 +187,13 @@ describe("Planning Mode initiating prompt history", () => {
     fireEvent.click(screen.getByRole("button", { name: "Close history" }));
 
     view.rerender(<PlanningModeModal {...modalProps} resumeSessionId="session-b-empty" />);
-    await screen.findByText("Session B empty");
+    await screen.findByRole("heading", { name: "Session B empty" });
     expect(within(await openHistory()).queryByTestId("planning-history-initial-prompt")).toBeNull();
     expect(screen.queryByText("Prompt A")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Close history" }));
 
     view.rerender(<PlanningModeModal {...modalProps} resumeSessionId="session-b-prompt" />);
-    await screen.findByText("Session B prompt");
+    await screen.findByRole("heading", { name: "Session B prompt" });
     expect(within(await openHistory()).getByTestId("planning-history-initial-prompt")).toHaveValue("Prompt B");
     expect(screen.queryByText("Prompt A")).toBeNull();
   });

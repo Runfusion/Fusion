@@ -1,3 +1,4 @@
+import { ViewHeader } from "./ViewHeader";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { FusionShellApi, ShellConnectionState } from "../types/native-shell";
@@ -49,9 +50,12 @@ export function NativeShellOnboardingModal({ open, shellApi, shellState, onCompl
     <FloatingWindow windowKey="native-shell-onboarding" modal title={t("onboarding.welcome", "Welcome to Fusion")} ariaLabel={t("onboarding.welcome", "Welcome to Fusion")} onClose={() => {}} hideHeader dragHandleSelector=".native-shell-onboarding-modal .modal-header" className="floating-window--native-shell-onboarding" defaultSize={{ width: 640, height: 560 }} minSize={{ width: 400, height: 320 }} persistGeometryKey="floating-window:native-shell-onboarding" suspendGeometryPersistenceOnMobile suspendGeometryPersistenceOnShortViewport>
       {/* FNXC:ModalTouchGeometry 2026-07-26-16:22: Connection onboarding is blocking, so its shared geometry deliberately has no outside or Escape dismissal. */}
       <div className="modal native-shell-onboarding-modal">
-        <div className="modal-header">
-          <h2>{t("onboarding.welcome", "Welcome to Fusion")}</h2>
-        </div>
+        {/*
+        FNXC:StandardizedViewLayout 2026-09-13-21:49:
+        Shared onboarding chrome. This screen intentionally has no exit control — the operator must choose a mode —
+        so the shared header owns the title only and no close affordance is invented.
+        */}
+        <ViewHeader className="modal-header" title={t("onboarding.welcome", "Welcome to Fusion")} />
         <div className="native-shell-onboarding-body">
           <p>{t("onboarding.description", "Fusion helps you plan, run, and review AI-assisted engineering work.")}</p>
           {isDesktop && (

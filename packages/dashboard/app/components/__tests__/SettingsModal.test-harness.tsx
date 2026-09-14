@@ -7,6 +7,7 @@ import path from "path";
 import { SettingsModal, SETTINGS_AUTOSAVE_DEBOUNCE_MS } from "../SettingsModal";
 import { SETTINGS_SECTION_METADATA } from "../../../src/shared/settings-sections";
 import { __test_clearCache as clearPluginUiSlotsCache } from "../../hooks/usePluginUiSlots";
+import { ViewLayoutProvider } from "../../context/ViewLayoutContext";
 
 /*
 FNXC:DashboardTests 2026-06-25-10:05:
@@ -131,12 +132,14 @@ export const defaultSettings = {
 
 export function renderModal(props: Partial<ComponentProps<typeof SettingsModal>> = {}) {
   return render(
-    <SettingsModal
-      onClose={noop}
-      addToast={noop}
-      initialSection="authentication"
-      {...props}
-    />
+    <ViewLayoutProvider projectId={props.projectId}>
+      <SettingsModal
+        onClose={noop}
+        addToast={noop}
+        initialSection="authentication"
+        {...props}
+      />
+    </ViewLayoutProvider>,
   );
 }
 

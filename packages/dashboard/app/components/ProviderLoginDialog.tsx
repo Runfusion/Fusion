@@ -1,4 +1,4 @@
-import { ModalCloseButton } from "./ModalCloseButton";
+import { ViewHeader } from "./ViewHeader";
 import { useLayoutEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { createPortal } from "react-dom";
@@ -110,10 +110,14 @@ export function ProviderLoginDialog({
       onFocus={(event) => event.stopPropagation()}
     >
       <div className="modal provider-login-dialog" role="dialog" aria-modal="true" aria-label={t("providerLogin.signingInTo", "Signing in to {{provider}}", { provider: providerName })}>
-        <div className="modal-header">
-          <h3>{t("providerLogin.signingInTo", "Signing in to {{provider}}", { provider: providerName })}</h3>
-          <ModalCloseButton onClick={onCancel} aria-label={t("providerLogin.cancel", "Cancel login")} title={t("providerLogin.cancel", "Cancel login")} />
-        </div>
+        {/* FNXC:StandardizedViewLayout 2026-09-13-21:49: Shared dialog chrome; the cancel-login exit keeps its own label and behaviour. */}
+        <ViewHeader
+          className="modal-header"
+          headingLevel={3}
+          title={t("providerLogin.signingInTo", "Signing in to {{provider}}", { provider: providerName })}
+          onClose={onCancel}
+          closeButtonProps={{ "aria-label": t("providerLogin.cancel", "Cancel login"), title: t("providerLogin.cancel", "Cancel login") }}
+        />
 
         <div className="provider-login-dialog__body">
           <ol className="provider-login-dialog__steps">

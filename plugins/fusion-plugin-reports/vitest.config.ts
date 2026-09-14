@@ -37,6 +37,9 @@ export default defineConfig({
       "@fusion/core": fileURLToPath(new URL("../../packages/core/src/index.ts", import.meta.url)),
       // FNXC:Clipboard 2026-07-12-00:00: The reports plugin imports the dashboard clipboard helper through its package subpath export; keep this exact alias ahead of the package root alias so vitest does not collapse the subpath to src/index.ts.
       "@fusion/dashboard/app/utils/copyToClipboard": fileURLToPath(new URL("../../packages/dashboard/app/utils/copyToClipboard.ts", import.meta.url)),
+      // FNXC:VitestAliases 2026-09-13-22:40: Reports paints the standardized cooperative header through its dashboard subpath; keep it ahead of the package alias because string aliases match by PREFIX.
+      "@fusion/dashboard/app/plugins/PluginDashboardViewHeader": fileURLToPath(new URL("../../packages/dashboard/app/plugins/PluginDashboardViewHeader.tsx", import.meta.url)),
+      "@fusion/dashboard/app/plugins/types": fileURLToPath(new URL("../../packages/dashboard/app/plugins/types.ts", import.meta.url)),
       "@fusion/dashboard": fileURLToPath(new URL("../../packages/dashboard/src/index.ts", import.meta.url)),
       "@fusion/plugin-sdk": fileURLToPath(new URL("../../packages/plugin-sdk/src/index.ts", import.meta.url)),
     },

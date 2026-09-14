@@ -1,4 +1,4 @@
-import { ModalCloseButton } from "./ModalCloseButton";
+import { ViewHeader } from "./ViewHeader";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -444,10 +444,14 @@ export function NodeDetailModal({
       <div
         className="modal modal-lg node-detail-modal"
       >
-        <div className="modal-header">
-          <h3>{t("nodes.modalTitle", "Node Details")}</h3>
-          <ModalCloseButton onClick={onClose} aria-label={t("nodes.closeModalAriaLabel", "Close node detail modal")} />
-        </div>
+        {/* FNXC:StandardizedViewLayout 2026-09-13-21:49: Shared dialog chrome; `.modal-header` stays for the drag handle selector. */}
+        <ViewHeader
+          className="modal-header"
+          headingLevel={3}
+          title={t("nodes.modalTitle", "Node Details")}
+          onClose={onClose}
+          closeButtonProps={{ "aria-label": t("nodes.closeModalAriaLabel", "Close node detail modal") }}
+        />
 
         <div className="modal-body node-detail-modal__body">
           <section className="node-detail-modal__section">

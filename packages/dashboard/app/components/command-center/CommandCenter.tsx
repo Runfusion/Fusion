@@ -27,11 +27,15 @@ import { PluginManager } from "../PluginManager";
 import { MissionControlPanel, useLiveSnapshot } from "./MissionControlPanel";
 import { countLiveAgentsWorking, countLiveInProgressTasks } from "./liveSnapshotMetrics";
 import { CommandCenterControls } from "./CommandCenterControls";
+import { ViewHeader } from "../ViewHeader";
+import { ViewLayout, type ViewLayoutMobilePane } from "../ViewLayout";
+import { ViewSidebar } from "../ViewSidebar";
 import { ReliabilityView } from "../ReliabilityView";
 import { NodesView } from "../NodesView";
 import type { ToastType } from "../../hooks/useToast";
 import type { TaskView } from "../../hooks/useViewState";
 import { useVisibilityAwarePoll } from "../../hooks/visibilitySuspension";
+import { useViewportMode } from "../../hooks/useViewportMode";
 import { SdlcFunnel } from "./SdlcFunnel";
 import { inferProviderIconKey } from "../../utils/providerIconKey";
 import { Bar, type BarDatum } from "./charts/Bar";
@@ -593,12 +597,14 @@ export function CommandCenter({
   onOpenTask,
 }: CommandCenterProps = {}) {
   const { t } = useTranslation("app");
+  const viewportMode = useViewportMode();
   const subViews = useSubViews(nodesEnabled);
   /*
   FNXC:CommandCenter 2026-07-22-13:40:
   FN remount-churn fix R12: this view unmounts on navigation by design (no keep-alive), so the active sub-tab and date range restore from per-project persisted state on remount. Persisting follows the getPlanningDescription/GitHub-import precedent in modalPersistence.ts; a stored tab that no longer exists (e.g. nodes disabled) falls back to overview via the guard effect below.
   */
   const [activeTab, setActiveTab] = useState<SubViewId>(() => (getCommandCenterState(projectId)?.activeTab as SubViewId | undefined) ?? "overview");
+  const [mobilePane, setMobilePane] = useState<ViewLayoutMobilePane>("list");
 
   const [range, setRange] = useState<DateRange>(() => getCommandCenterState(projectId)?.range ?? rangeFromPreset(defaultPresets((_k, f) => f)[1]));
 
@@ -609,6 +615,7 @@ export function CommandCenter({
     const stored = getCommandCenterState(projectId);
     setActiveTab((stored?.activeTab as SubViewId | undefined) ?? "overview");
     setRange(stored?.range ?? rangeFromPreset(defaultPresets((_k, f) => f)[1]));
+    setMobilePane("list");
   }, [projectId]);
   useEffect(() => {
     if (persistedProjectRef.current !== projectId) return;
@@ -698,31 +705,58 @@ export function CommandCenter({
     }
   }
 
-  return (
-    <section className="command-center" data-testid="command-center">
-      <header className="cc-header">
-        {/* FNXC:CommandCenter 2026-06-22-01:00: Icon size aligned to 20 to match the shared ViewHeader (cc-header is the model for ViewHeader; title is already 1.125rem with --space-lg padding). */}
-        <h2 className="cc-title">
-          <Gauge size={20} />
-          {t("commandCenter.heading", "Dashboard")}
-        </h2>
-        <CommandCenterSectionNav
-          sections={subViews}
-          activeId={activeTab}
-          onSelect={(id) => setActiveTab(id as SubViewId)}
-        />
-        <DateRangePicker value={range} onChange={setRange} />
-      </header>
+  const activeSectionLabel = subViews.find((view) => view.id === activeTab)?.label ?? activeTab;
 
+  return (
+    <ViewLayout
+      className="command-center"
+      data-testid="command-center"
+      contentOwnsScroll
+      mobilePane={mobilePane}
+      header={(
+        <ViewHeader
+          className="cc-header"
+          icon={Gauge}
+          title={viewportMode === "mobile" && mobilePane === "detail"
+            ? activeSectionLabel
+            : t("commandCenter.heading", "Dashboard")}
+          backAction={viewportMode === "mobile" && mobilePane === "detail" ? {
+            label: t("commandCenter.backToSections", "Back to dashboard sections"),
+            onClick: () => setMobilePane("list"),
+          } : undefined}
+          actions={<DateRangePicker value={range} onChange={setRange} />}
+        />
+      )}
+      sidebar={(
+        <ViewSidebar
+          ariaLabel={t("commandCenter.tablistLabel", "Dashboard sections")}
+          resizeLabel={t("commandCenter.resizeSections", "Resize dashboard sections")}
+          hostIdentity="command-center"
+          mobile={viewportMode === "mobile"}
+          className="cc-sidebar"
+          panelClassName="cc-sidebar__panel"
+        >
+          <CommandCenterSectionNav
+            sections={subViews}
+            activeId={activeTab}
+            variant="rail"
+            onSelect={(id) => {
+              setActiveTab(id as SubViewId);
+              setMobilePane("detail");
+            }}
+          />
+        </ViewSidebar>
+      )}
+    >
       <div
         role="region"
-        aria-label={subViews.find((view) => view.id === activeTab)?.label ?? activeTab}
+        aria-label={activeSectionLabel}
         tabIndex={0}
         className="cc-tabpanel"
         data-testid={`command-center-panel-${activeTab}`}
       >
         {renderActiveTab()}
       </div>
-    </section>
+    </ViewLayout>
   );
 }

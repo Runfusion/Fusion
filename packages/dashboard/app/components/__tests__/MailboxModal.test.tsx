@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { MailboxModal } from "../MailboxModal";
 import * as apiModule from "../../api";
 import * as mobileKeyboardModule from "../../hooks/useMobileKeyboard";
+import * as headerModule from "../Header";
 import type { Agent } from "../../api";
 import type { Message } from "@fusion/core";
 
@@ -38,6 +39,7 @@ vi.mock("../Header", () => ({
 
 // Mock lucide-react icons
 vi.mock("lucide-react", () => ({
+  ChevronLeft: () => <span data-testid="icon-chevron-left">Back</span>,
   X: () => <span data-testid="icon-x">X</span>,
   Mail: () => <span data-testid="icon-mail">Mail</span>,
   Send: () => <svg data-testid="icon-send" />,
@@ -593,7 +595,7 @@ describe("MailboxModal", () => {
     });
 
     const backToListButton = screen.getByTestId("mailbox-back-to-list");
-    expect(backToListButton).toHaveClass("btn", "btn-sm", "btn-secondary");
+    expect(backToListButton).toHaveClass("view-back-button");
 
     fireEvent.click(backToListButton);
     await waitFor(() => {
@@ -987,6 +989,37 @@ describe("MailboxModal", () => {
     expect(headerComposeButton).toHaveClass("btn", "btn-sm", "btn-primary");
   });
 
+  /*
+  FNXC:StandardizedMailboxLayout 2026-09-14-10:24:
+  FN-379 remediation: the floating mailbox hosts the same composer, so on desktop and phone alike it keeps one header
+  carrying the composer identity and a single abandon control; the composer body adds no second header or close.
+  */
+  it.each(["desktop", "mobile"] as const)("gives the %s floating composer one header and one abandon control", async (viewport) => {
+    const viewportMode = vi.mocked(headerModule.useViewportMode);
+    viewportMode.mockImplementation(() => viewport);
+    try {
+      render(<MailboxModal {...defaultProps} />);
+      await waitFor(() => expect(screen.getByTestId("mailbox-header-compose")).toBeDefined());
+
+      fireEvent.click(screen.getByTestId("mailbox-header-compose"));
+      await waitFor(() => expect(screen.getByTestId("message-composer")).toBeDefined());
+
+      const banners = screen.getAllByRole("banner");
+      expect(banners).toHaveLength(1);
+      expect(within(banners[0]).getByText("New Message")).toBeDefined();
+      expect(document.querySelector(".message-composer-header")).toBeNull();
+      expect(screen.queryByTestId("message-composer-cancel")).toBeNull();
+
+      const back = screen.getByTestId("mailbox-back-to-list");
+      expect(within(banners[0]).getByTestId("mailbox-back-to-list")).toBe(back);
+      fireEvent.click(back);
+      await waitFor(() => expect(screen.queryByTestId("message-composer")).toBeNull());
+      expect(mockSendMessage).not.toHaveBeenCalled();
+    } finally {
+      viewportMode.mockImplementation(() => "mobile");
+    }
+  });
+
   it("shows compose button in header on agents tab", async () => {
     render(<MailboxModal {...defaultProps} />);
     fireEvent.click(screen.getByTestId("mailbox-tab-agents"));
@@ -1049,24 +1082,27 @@ describe("MailboxModal", () => {
     }
   });
 
-  it("shows compose button in Agents tab", async () => {
+  it("keeps exactly one header-owned compose control in the Agents tab", async () => {
     render(<MailboxModal {...defaultProps} />);
     fireEvent.click(screen.getByTestId("mailbox-tab-agents"));
     await waitFor(() => {
-      expect(screen.getByTestId("mailbox-compose-btn")).toBeDefined();
+      expect(screen.getByTestId("mailbox-header-compose")).toBeDefined();
     });
 
-    const agentsComposeButton = screen.getByTestId("mailbox-compose-btn");
-    expect(agentsComposeButton).toHaveClass("btn", "btn-sm", "btn-secondary", "mailbox-compose-btn");
+    // The Agents pane no longer paints its own Compose button beside the scope picker.
+    expect(screen.queryByTestId("mailbox-compose-btn")).toBeNull();
+    const header = document.querySelector(".view-header");
+    expect(header?.contains(screen.getByTestId("mailbox-header-compose"))).toBe(true);
+    expect(header?.contains(screen.getByTestId("mailbox-agent-select"))).toBe(true);
   });
 
   it("compose opened from Agents tab with All agents selected shows recipient select", async () => {
     render(<MailboxModal {...defaultProps} />);
     fireEvent.click(screen.getByTestId("mailbox-tab-agents"));
     await waitFor(() => {
-      expect(screen.getByTestId("mailbox-compose-btn")).toBeDefined();
+      expect(screen.getByTestId("mailbox-header-compose")).toBeDefined();
     });
-    fireEvent.click(screen.getByTestId("mailbox-compose-btn"));
+    fireEvent.click(screen.getByTestId("mailbox-header-compose"));
     await waitFor(() => {
       expect(screen.getByTestId("message-composer")).toBeDefined();
     });
@@ -1094,7 +1130,7 @@ describe("MailboxModal", () => {
       expect(mockFetchAgentMailbox).toHaveBeenCalledWith("agent-001", undefined);
     });
     // Click compose
-    fireEvent.click(screen.getByTestId("mailbox-compose-btn"));
+    fireEvent.click(screen.getByTestId("mailbox-header-compose"));
     await waitFor(() => {
       expect(screen.getByTestId("message-composer")).toBeDefined();
     });
@@ -1114,7 +1150,7 @@ describe("MailboxModal", () => {
       expect(mockFetchAgentMailbox).toHaveBeenCalledWith("agent-001", undefined);
     });
     // Open compose (pre-filled)
-    fireEvent.click(screen.getByTestId("mailbox-compose-btn"));
+    fireEvent.click(screen.getByTestId("mailbox-header-compose"));
     await waitFor(() => {
       expect(screen.getByTestId("message-composer")).toBeDefined();
     });
@@ -1445,7 +1481,7 @@ describe("MailboxModal", () => {
       expect(mailboxMobileSection).toMatch(/\.mailbox-modal \.mailbox-header-actions,\s*\.mailbox-view \.mailbox-header-actions\s*\{[^}]*gap:\s*var\(--space-sm\);[^}]*\}/);
       expect(mailboxMobileSection).toMatch(/\.mailbox-modal \.mailbox-header-actions \.btn,[^}]*\.mailbox-view \.mailbox-header-actions \.btn-icon\s*\{[^}]*min-height:\s*2\.25rem;[^}]*\}/);
       expect(mailboxMobileSection).toMatch(/\.mailbox-modal \.mailbox-header-actions \.btn-icon,[^}]*\.mailbox-view \.mailbox-header-actions \.btn-icon\s*\{[^}]*min-width:\s*2\.25rem;[^}]*display:\s*inline-flex;[^}]*\}/);
-      expect(mailboxMobileSection).toMatch(/\.mailbox-modal \.mailbox-header-actions \.modal-close\s*\{[^}]*padding:\s*0;[^}]*border-radius:\s*var\(--radius-sm\);[^}]*\}/);
+      expect(mailboxMobileSection).not.toMatch(/\.mailbox-modal \.mailbox-header-actions \.modal-close\s*\{/);
       expect(mailboxMobileSection).toContain("overflow-x: auto;");
       expect(mailboxMobileSection).toContain("-webkit-overflow-scrolling: touch;");
       expect(mailboxMobileSection).toContain("scrollbar-width: none;");

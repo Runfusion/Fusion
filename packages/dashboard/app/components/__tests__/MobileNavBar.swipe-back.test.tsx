@@ -51,7 +51,12 @@ const createDefaultProps = () => ({
 function AlphaMenuHarness(props: ReturnType<typeof createDefaultProps>) {
   const [open, setOpen] = useState(false);
   useEffect(() => setOpen(true), []);
-  return <MobileNavBar {...props} alphaUpdatesEnabled alphaMenuOpen={open} onAlphaMenuOpenChange={setOpen} />;
+  return <MobileNavBar {...props} alphaMenuOpen={open} onAlphaMenuOpenChange={setOpen} />;
+}
+
+function ControlledMenuHarness(props: ReturnType<typeof createDefaultProps>) {
+  const [open, setOpen] = useState(false);
+  return <MobileNavBar {...props} alphaMenuOpen={open} onAlphaMenuOpenChange={setOpen} />;
 }
 
 function dispatchPopState(navIndex: number) {
@@ -61,7 +66,7 @@ function dispatchPopState(navIndex: number) {
 }
 
 async function openMore() {
-  fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
+  fireEvent.click(screen.getByTestId("alpha-mobile-menu-trigger"));
   await waitFor(() => expect(screen.getByTestId("mobile-more-item-activity")).toBeInTheDocument());
 }
 
@@ -84,7 +89,7 @@ describe("MobileNavBar More sheet navigation history", () => {
   function renderWithHistory(props = createDefaultProps()) {
     const rendered = render(
       <HistoryHarness onReady={(history) => { navigationHistory = history; }}>
-        <MobileNavBar {...props} />
+        <ControlledMenuHarness {...props} />
       </HistoryHarness>,
     );
     return { ...rendered, props };
@@ -118,17 +123,17 @@ describe("MobileNavBar More sheet navigation history", () => {
     expect(container.querySelector(".mobile-more-sheet")).toBeNull();
   });
 
-  it("routes Android native Back through history before dismissing the More sheet", async () => {
+  it("routes Android native Back through history before dismissing the official popover", async () => {
     const { container } = renderWithHistory();
     await openMore();
     const nativeBack = new CustomEvent("fusion:native-back", { cancelable: true });
 
     expect(window.dispatchEvent(nativeBack)).toBe(false);
     expect(window.history.back).toHaveBeenCalledOnce();
-    expect(container.querySelector(".mobile-more-sheet")).not.toBeNull();
+    expect(container.querySelector(".alpha-mobile-navigation-popover")).not.toBeNull();
 
     dispatchPopState(0);
-    await waitFor(() => expect(container.querySelector(".mobile-more-sheet")).toBeNull());
+    await waitFor(() => expect(container.querySelector(".alpha-mobile-navigation-popover")).toBeNull());
   });
 
   async function expectProgrammaticCloseConsumesMoreEntry(close: () => void | Promise<void>) {
@@ -150,10 +155,6 @@ describe("MobileNavBar More sheet navigation history", () => {
     expect(sentinelClose).toHaveBeenCalledOnce();
     rendered.unmount();
   }
-
-  it("consumes the More entry on backdrop close", async () => {
-    await expectProgrammaticCloseConsumesMoreEntry(() => fireEvent.click(document.querySelector(".mobile-more-sheet-backdrop")!));
-  });
 
   it("replaces the More entry before opening Import so delayed Back cannot consume it", async () => {
     const importClose = vi.fn();
@@ -177,18 +178,8 @@ describe("MobileNavBar More sheet navigation history", () => {
     await expectProgrammaticCloseConsumesMoreEntry(() => fireEvent.keyDown(document, { key: "Escape" }));
   });
 
-  it("consumes the More entry on drag dismissal", async () => {
-    await expectProgrammaticCloseConsumesMoreEntry(() => {
-      const sheet = document.querySelector<HTMLDivElement>(".mobile-more-sheet")!;
-      Object.defineProperty(sheet, "getBoundingClientRect", { configurable: true, value: () => ({ height: 400 }) });
-      fireEvent.touchStart(sheet, { touches: [{ clientY: 100 }] });
-      fireEvent.touchMove(sheet, { touches: [{ clientY: 300 }] });
-      fireEvent.touchEnd(sheet, { changedTouches: [{ clientY: 300 }] });
-    });
-  });
-
   it("consumes the More entry when its tab toggles closed", async () => {
-    await expectProgrammaticCloseConsumesMoreEntry(() => fireEvent.click(screen.getByTestId("mobile-nav-tab-more")));
+    await expectProgrammaticCloseConsumesMoreEntry(() => fireEvent.click(screen.getByTestId("alpha-mobile-menu-trigger")));
   });
 
   it("consumes the More entry when a script runs", async () => {
@@ -218,10 +209,10 @@ describe("MobileNavBar More sheet navigation history", () => {
     });
   });
 
-  it("keeps provider-less More-sheet renders functional", async () => {
-    const { container } = render(<MobileNavBar {...createDefaultProps()} />);
+  it("keeps provider-less official popover renders functional", async () => {
+    const { container } = render(<ControlledMenuHarness {...createDefaultProps()} />);
     await openMore();
-    fireEvent.click(document.querySelector(".mobile-more-sheet-backdrop")!);
-    await waitFor(() => expect(container.querySelector(".mobile-more-sheet")).toBeNull());
+    fireEvent.click(screen.getByTestId("alpha-mobile-menu-trigger"));
+    await waitFor(() => expect(container.querySelector(".alpha-mobile-navigation-popover")).toBeNull());
   });
 });

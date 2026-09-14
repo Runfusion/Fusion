@@ -2,7 +2,11 @@ import { useState } from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
+import { readAppFile } from "../../test/cssFixture";
 import { AlphaMobileDrawer } from "../AlphaMobileDrawer";
+
+const drawerCss = readAppFile("components/AlphaMobileDrawer.css");
+const stylesCss = readAppFile("styles.css");
 
 function DrawerHarness({ keepMounted = false }: { keepMounted?: boolean }) {
   const [open, setOpen] = useState(false);
@@ -19,6 +23,13 @@ function DrawerHarness({ keepMounted = false }: { keepMounted?: boolean }) {
 }
 
 describe("AlphaMobileDrawer", () => {
+  it("anime le panneau ouvert depuis le bas et neutralise le mouvement réduit", () => {
+    expect(drawerCss).toMatch(/\.alpha-mobile-drawer--open \.alpha-mobile-drawer__panel\s*\{[^}]*animation: alpha-mobile-drawer-rise-in/);
+    expect(stylesCss).toMatch(/@keyframes alpha-mobile-drawer-rise-in\s*\{[\s\S]*?from\s*\{[^}]*translate: 0 var\(--space-xl\)/);
+    expect(stylesCss).not.toMatch(/@keyframes alpha-mobile-drawer-rise-in\s*\{[\s\S]*?translateX/);
+    expect(drawerCss).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.alpha-mobile-drawer--open \.alpha-mobile-drawer__panel\s*\{[^}]*animation: none/);
+  });
+
   it("rend un drawer borné avec poignée, titre et corps scrollable", async () => {
     render(<DrawerHarness />);
     await userEvent.click(screen.getByRole("button", { name: "Open drawer" }));

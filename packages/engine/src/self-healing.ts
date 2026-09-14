@@ -10080,8 +10080,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
        * FNXC:WorkflowOptionalStepRevisionBudget 2026-06-27-12:34:
        * Self-healing pre-computes the same optional-step budget the live graph seam uses before the synchronous candidate filter runs. The target step is the latest blocking pre-merge failure, matching `recoverFailedPreMergeWorkflowStep`; IR lookup failures fall back to the effective global `maxPostReviewFixes` so older tasks remain recoverable.
        *
-       * FNXC:WorkflowRevisionBudget 2026-09-03-05:40:
-       * Offline recovery shares live execution's workflow-value precedence: explicit `planReviewMaxRevisions`/`codeReviewMaxRevisions` values win, an unset Code Review uses the finite built-in default, Plan Review remains unbounded behind its replan cap, and Browser Verification keeps the existing fallback budget.
+       * FNXC:WorkflowRevisionBudget 2026-09-13-04:34:
+       * Offline recovery shares live execution's workflow-value precedence and absolute safety backstop. Lower workflow/node values win; `"unbounded"` resolves to the finite cap before any restart recovery can schedule work.
        *
        * FNXC:WorkflowRevisionBudget 2026-06-30-22:06:
        * Self-healing uses the same per-step attempt partition as live execution. `postReviewFixCount` remains an aggregate observability counter, but cap exhaustion is computed from prior log markers for the failed workflow step so Plan Review and Code Review budgets do not consume each other.
@@ -10140,7 +10140,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             && hasReviewRemediationAttemptForEpisode(revisionAttemptSource, reviewRemediationEpisodeIdentity(fullTarget))
             && (revisionAttemptSource.steps ?? []).some((step) => step.status === "pending"),
           ),
-          label: budget.unbounded ? "unbounded" : String(budget.max),
+          label: budget.unbounded ? `unbounded (absolute cap ${budget.max})` : String(budget.max),
         });
       }
       const revisionBudgetFor = (taskId: string): { unbounded: boolean; max: number; label: string; key: string; stepName?: string; attempts: number; resumesCommittedRemediation: boolean } => {
@@ -10176,12 +10176,12 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         */
         const definiteEmptyReview = isDefiniteEmptyCodeReviewRevise(latestFailedPreMergeStep(task));
         if (!definiteEmptyReview
-          && !budget.unbounded && (!Number.isFinite(budget.max) || budget.max <= 0)) return false;
+          && (!Number.isFinite(budget.max) || budget.max <= 0)) return false;
         // FNXC:ReviewConvergence 2026-08-22-06:05: exhausted failures must reach the
         // shared ladder in recoverFailedPreMergeWorkflowStep; filtering them here recreates
         // the terminal human-only park FN-149 removes.
         if (!budget.resumesCommittedRemediation
-          && !budget.unbounded && budget.attempts >= budget.max && (task.reviewConvergenceStage ?? 0) >= 3) return false;
+          && budget.attempts >= budget.max && (task.reviewConvergenceStage ?? 0) >= 3) return false;
 
         // Must have a failed pre-merge result and either its singular checkout or the acquired
         // workspace repository checkout selected by structured review evidence.

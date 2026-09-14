@@ -5,8 +5,11 @@ import { describe, expect, it, vi } from "vitest";
 import {
   boardSafeGeometryMatches,
   buildQuickAddSaveFixtures,
+  createProductionAppBoardScenarios,
   createAlphaDrawerProductionFixtureSource,
+  createMobilePillSmokeViewportMetrics,
   createSmokeHtml,
+  mobilePillGeometryMatches,
   prepareBrowserSmoke,
   QUICK_ADD_SAVE_FIXTURE_COUNT,
 } from "../../scripts/browser-layout-smoke.mjs";
@@ -109,7 +112,7 @@ describe("browser layout smoke fixture", () => {
       "alpha-drawer-terminal",
       "alpha-board-fixture",
       "alpha-board-production-root",
-      "alpha-pill",
+      "alpha-pill-production-root",
     ]) {
       expect(html).toContain(`data-smoke="${hook}"`);
     }
@@ -119,6 +122,7 @@ describe("browser layout smoke fixture", () => {
       "AlphaUsageDrawer",
       "AlphaMainContentDrawer",
       "MainViewKeepAlive",
+      "MobileNavBar",
       "TaskDetailModal",
     ]) {
       expect(productionSource).toContain(productionComponent);
@@ -127,6 +131,8 @@ describe("browser layout smoke fixture", () => {
     expect(productionSource).toContain('id: "smoke-chat-session"');
     expect(productionSource).toContain("function ProductionBoardFixture()");
     expect(productionSource).toContain("React.createElement(MainContent, boardProps)");
+    expect(productionSource).toContain("React.createElement(MobileNavBar");
+    expect(productionSource).toContain("__alphaPillProductionFixture");
     expect(productionSource).toContain('currentTasksPaginationError: boardState === "pagination-error"');
     expect(productionSource).toContain('nearDuplicateOf: "FN-DUPLICATE-A"');
     expect(productionSource).not.toContain("board.innerHTML");
@@ -141,7 +147,37 @@ describe("browser layout smoke fixture", () => {
     expect(html).toContain("terminal-modal-overlay");
     expect(html).toContain("project-content--with-alpha-nav");
     expect(html).not.toContain('data-smoke="alpha-board-column"');
-    expect(html).toContain("mobile-nav-bar--alpha");
+    expect(html).not.toContain('<nav class="mobile-nav-bar mobile-nav-bar--alpha"');
+  });
+
+  it("refuse toute pill masquée ou tout popover qui la recouvre", () => {
+    expect(createMobilePillSmokeViewportMetrics(400, true)).toEqual({
+      keyboardOpen: true,
+      keyboardOverlap: 160,
+      viewportHeight: 200,
+      viewportOffsetTop: 40,
+    });
+    expect(createMobilePillSmokeViewportMetrics(400, false)).toEqual({
+      keyboardOpen: false,
+      keyboardOverlap: 0,
+      viewportHeight: null,
+      viewportOffsetTop: 0,
+    });
+
+    const healthy = {
+      pill: { top: 720, bottom: 780 },
+      popover: { top: 120, bottom: 712 },
+      popoverLastItemReachable: true,
+      viewportHeight: 760,
+      viewportOffsetTop: 40,
+      documentOverflowX: 0,
+    };
+    expect(mobilePillGeometryMatches(healthy, 800)).toBe(true);
+    expect(mobilePillGeometryMatches({ ...healthy, pill: { top: 720, bottom: 820 } }, 800)).toBe(false);
+    expect(mobilePillGeometryMatches({ ...healthy, pill: { top: 38, bottom: 98 } }, 800)).toBe(false);
+    expect(mobilePillGeometryMatches({ ...healthy, popover: { top: 38, bottom: 712 } }, 800)).toBe(false);
+    expect(mobilePillGeometryMatches({ ...healthy, popover: { top: 120, bottom: 720 } }, 800)).toBe(false);
+    expect(mobilePillGeometryMatches({ ...healthy, popoverLastItemReachable: false }, 800)).toBe(false);
   });
 
   it.each(["skeleton", "empty", "populated", "duplicated", "pagination-error"])("valide la géométrie symétrique du board pour l’état %s", (state) => {
@@ -156,7 +192,33 @@ describe("browser layout smoke fixture", () => {
       columnBottoms: [796, 796],
       columnHeights: [720, 720],
       columnScrollable: [state === "populated", state === "populated"],
+      lastCardsReachable: [true, true],
+      documentScrollable: false,
     })).toBe(true);
+  });
+
+  it("couvre chaque état non-Alpha sur les vrais modes de viewport et les deux branches workflow", () => {
+    const scenarios = createProductionAppBoardScenarios();
+
+    for (const alpha of ["absent", "false"]) {
+      for (const viewportName of ["desktop", "tablet", "mobile portrait", "mobile short landscape"]) {
+        const viewportScenarios = scenarios.filter((scenario) => scenario.alpha === alpha && scenario.name === viewportName);
+        expect(new Set(viewportScenarios.map((scenario) => scenario.state))).toEqual(new Set(["skeleton", "no-workflow", "empty", "populated", "duplicated"]));
+        for (const state of ["skeleton", "empty", "populated", "duplicated"]) {
+          expect(viewportScenarios.filter((scenario) => scenario.state === state).map((scenario) => scenario.aggregate).sort()).toEqual([false, true]);
+        }
+        expect(viewportScenarios.filter((scenario) => scenario.state === "no-workflow").map((scenario) => scenario.aggregate)).toEqual([false]);
+      }
+    }
+
+    expect(new Set(scenarios.map((scenario) => scenario.expectedMode))).toEqual(new Set(["desktop", "tablet", "mobile"]));
+    expect(scenarios.find((scenario) => scenario.name === "tablet")).toMatchObject({
+      width: 768,
+      expectedMode: "tablet",
+      touch: true,
+      screenWidth: 768,
+      screenHeight: 1024,
+    });
   });
 
   it("refuse une zone morte ou un espacement asymétrique dans la géométrie du board", () => {
@@ -171,6 +233,31 @@ describe("browser layout smoke fixture", () => {
       columnBottoms: [748],
       columnHeights: [672],
       columnScrollable: [true],
+      lastCardsReachable: [true],
+      documentScrollable: false,
+    })).toBe(false);
+  });
+
+  it.each([
+    ["colonne trop courte", { columnBottoms: [760], columnHeights: [684] }],
+    ["colonne sous le footer", { columnBottoms: [820], columnHeights: [744] }],
+    ["scroll porté par le document", { documentScrollable: true }],
+    ["dernière carte inaccessible", { lastCardsReachable: [false] }],
+  ])("refuse %s", (_label, override) => {
+    expect(boardSafeGeometryMatches({
+      state: "populated",
+      boardTop: 64,
+      boardBottom: 808,
+      lowerBoundary: 808,
+      boardPaddingTop: 12,
+      boardPaddingBottom: 12,
+      columnTops: [76],
+      columnBottoms: [796],
+      columnHeights: [720],
+      columnScrollable: [true],
+      lastCardsReachable: [true],
+      documentScrollable: false,
+      ...override,
     })).toBe(false);
   });
 

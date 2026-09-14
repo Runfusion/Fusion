@@ -1,4 +1,5 @@
 export { AgentLogger, type AgentLoggerOptions, summarizeToolArgs } from "./agents/agent-logger.js";
+export { clearWorktreeDependencyDeterministicStop } from "./worktree/worktree-dependency-install.js";
 export { isPlanningResetHoldClearingUpdate, PlanningResetFence, PLANNING_RESET_HOLD_MS } from "./planning-reset-fence.js";
 export { reconcileTaskResetSessionRoot, removeTaskResetWorktree, ResetWorktreeForeignSessionError } from "./worktree/remove-reset-worktree.js";
 export {
@@ -1129,6 +1130,8 @@ export { RemoteNodeRuntime, type RemoteNodeRuntimeConfig } from "./runtimes/remo
 // Hold/release sweep + manual promote (U6/U9). Exported so the dashboard
 // promote endpoint can release a manually-held card via the same authority.
 export {
+  admitTaskToWip,
+  isFirstPlanningToWipAdmission,
   promoteHeldTask,
   evaluateTaskReleaseGate,
   evaluateUnplannedForExecution,
@@ -1138,6 +1141,8 @@ export {
   type HoldReleaseDeps,
   type HoldReleaseResult,
   type SlotReservation,
+  type WipAdmissionResult,
+  type WipAdmissionRejection,
 } from "./execution/hold-release.js";
 export {
   resumeApprovedPlanReviewHandoff,

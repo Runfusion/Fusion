@@ -1,4 +1,7 @@
 import { ModalCloseButton } from "./ModalCloseButton";
+import { ViewHeader } from "./ViewHeader";
+import { ViewActionButton } from "./ViewActionButton";
+import { ViewLayout } from "./ViewLayout";
 import "./MailboxModal.css";
 import { FloatingWindow } from "./FloatingWindow";
 import { useState, useEffect, useCallback, useMemo, useRef, type CSSProperties } from "react";
@@ -864,28 +867,95 @@ export function MailboxModal({
   return (
     <FloatingWindow windowKey="mailbox" title={t("mailbox.title", "Mailbox")} ariaLabel={t("mailbox.title", "Mailbox")} onClose={onClose} hideHeader dragHandleSelector=".mailbox-modal .modal-header" className="floating-window--mailbox" defaultSize={{ width: 860, height: 680 }} minSize={{ width: 480, height: 360 }} persistGeometryKey="floating-window:mailbox" suspendGeometryPersistenceOnMobile suspendGeometryPersistenceOnShortViewport closeOnOutsidePointerDown modal testId="mailbox-modal-overlay">
       {/* FNXC:ModalTouchGeometry 2026-07-26-16:22: Mailbox is a long-lived workspace; preserve outside dismissal and keep keyboard positioning inside the hosted panel. */}
-      <div className="modal modal-lg mailbox-modal" style={containerKeyboardStyle} data-testid="mailbox-modal">
-        {/* Header */}
-        <div className="modal-header mailbox-header">
-          <div className="mailbox-title">
+      <ViewLayout className="modal modal-lg mailbox-modal" style={containerKeyboardStyle} data-testid="mailbox-modal" contentOwnsScroll header={<>
+        {/* FNXC:StandardizedMailboxLayout 2026-09-13-16:55: The floating mailbox shares the same header action and detail-return primitives as the full destination; its long-lived controller and compose draft remain mounted in this host. */}
+        <ViewHeader
+          className="modal-header mailbox-header"
+          backAction={showComposer
+            ? { label: t("actions.cancel", "Cancel"), onClick: handleComposeCancel, "data-testid": "mailbox-back-to-list" }
+            : selectedMessage
+              ? { label: t("mailbox.backButton", "Back"), onClick: handleCloseMessage, "data-testid": "mailbox-back-to-list" }
+              : undefined}
+          /*
+          FNXC:StandardizedMailboxLayout 2026-09-14-10:24:
+          FN-379 remediation: the floating mailbox hosts the same composer, so its identity and abandon action are
+          carried by this single header instead of a second header row inside the composer body.
+          */
+          title={<div className="mailbox-title">
             <Mail size={18} />
-            <span>{t("mailbox.title", "Mailbox")}</span>
+            <span>{showComposer
+              ? (composeReplyContext ? t("composer.replyTitle", "Reply") : t("composer.newMessageTitle", "New Message"))
+              : t("mailbox.title", "Mailbox")}</span>
             {unreadCount > 0 && (
               <span className="mailbox-unread-badge" data-testid="mailbox-unread-badge">
                 {unreadCount}
               </span>
             )}
-          </div>
-          <div className="mailbox-header-actions">
-            <button
-              className="btn btn-sm btn-primary"
+          </div>}
+          actions={<div className="mailbox-header-actions">
+            {/*
+            FNXC:StandardizedMailboxLayout 2026-09-14-03:31:
+            The floating mailbox is a second full implementation of the same destination, so it carries the same
+            contract: scope controls belong to the header, the rail shows only the resulting collection. The inbox
+            scope filter and the Agents scope picker / Inbox-Outbox tabs move here, and the Agents pane's duplicate
+            Compose button is deleted — this header already owns the single creation action.
+            */}
+            {!showComposer && activeTab === "inbox" && (
+              <div className="mailbox-structural-filter" role="group" aria-label={t("mailbox.inboxFilter", "Inbox filter")}>
+                <button type="button" className="btn btn-sm btn-secondary" aria-pressed={structuralFilter === "all"} data-testid="mailbox-structural-filter-all" onClick={() => setStructuralFilter("all")}>{t("mailbox.all", "All")}</button>
+                <button type="button" className="btn btn-sm btn-secondary" aria-pressed={structuralFilter === "structural"} data-testid="mailbox-structural-filter-structural" onClick={() => setStructuralFilter("structural")}>{t("mailbox.reportsApprovals", "Reports & approvals")}</button>
+              </div>
+            )}
+            {!showComposer && activeTab === "agents" && agents.length > 0 && (
+              <div className="mailbox-agents-header" data-testid="mailbox-agent-scope">
+                <div className="mailbox-agents-dropdown">
+                  <select
+                    className="message-composer-select mailbox-agent-select"
+                    value={selectedAgentId}
+                    onChange={(e) => { consumeCurrentDeepLink(); setSelectedAgentId(e.target.value); setAgentSubTab("inbox"); setSelectedMessage(null); }}
+                    data-testid="mailbox-agent-select"
+                  >
+                    <option value={ALL_AGENTS_MAILBOX_ID}>{t("mailbox.allAgentsOption", "All agents")}</option>
+                    {agents.map((agent) => (
+                      <option key={agent.id} value={agent.id}>
+                        {agent.name || agent.id}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {selectedAgentId && selectedAgentId !== ALL_AGENTS_MAILBOX_ID && (
+                  <div className="mailbox-agent-subtabs" data-testid="mailbox-agent-subtabs">
+                    <button
+                      className={`btn btn-sm btn-secondary mailbox-agent-subtab ${agentSubTab === "inbox" ? "active" : ""}`}
+                      onClick={() => { consumeCurrentDeepLink(); setAgentSubTab("inbox"); setSelectedMessage(null); }}
+                      data-testid="mailbox-agent-subtab-inbox"
+                    >
+                      <InboxIcon size={12} />
+                      <span>{t("mailbox.inboxTab", "Inbox")}</span>
+                      {agentMailbox && agentMailbox.unreadCount > 0 && (
+                        <span className="mailbox-tab-badge">{agentMailbox.unreadCount}</span>
+                      )}
+                    </button>
+                    <button
+                      className={`btn btn-sm btn-secondary mailbox-agent-subtab ${agentSubTab === "outbox" ? "active" : ""}`}
+                      onClick={() => { consumeCurrentDeepLink(); setAgentSubTab("outbox"); setSelectedMessage(null); }}
+                      data-testid="mailbox-agent-subtab-outbox"
+                    >
+                      <Send size={12} />
+                      <span>{t("mailbox.outboxTab", "Outbox")}</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+            <ViewActionButton
+              kind="create"
+              icon={MessageSquare}
+              label={t("mailbox.composeButton", "Compose")}
               onClick={handleOpenCompose}
               title={t("mailbox.composeTitle", "Compose message")}
               data-testid="mailbox-header-compose"
-            >
-              <MessageSquare size={14} />
-              <span>{t("mailbox.composeButton", "Compose")}</span>
-            </button>
+            />
             {activeTab === "inbox" && unreadCount > 0 && (
               <button
                 className="btn btn-sm btn-secondary"
@@ -917,8 +987,10 @@ export function MailboxModal({
               title={t("mailbox.closeTitle", "Close")}
               data-testid="mailbox-close"
              />
-          </div>
-        </div>
+          </div>}
+        />
+      </>}
+      >
 
         {/* Tabs */}
         <div className="mailbox-tabs" data-testid="mailbox-tabs">
@@ -963,13 +1035,6 @@ export function MailboxModal({
           {selectedMessage && !showComposer && (
             <div className="mailbox-message-detail" data-testid="mailbox-message-detail" id={`message-${selectedMessage.id}`}>
               <div className="mailbox-message-detail-header">
-                <button
-                  className="btn btn-sm btn-secondary"
-                  onClick={handleCloseMessage}
-                  data-testid="mailbox-back-to-list"
-                >
-                  {t("mailbox.backButton", "← Back")}
-                </button>
                 <div className="mailbox-message-detail-meta">
                   <span className="mailbox-message-type">{messageTypeLabel(selectedMessage.type, t)}</span>
                 <MailboxKindBadge metadata={selectedMessage.metadata} />
@@ -1045,11 +1110,15 @@ export function MailboxModal({
                             env={replyContextEnv}
                           />
                         )}
-                        <MailboxMessageContent
-                          content={msg.content}
-                          className="mailbox-conversation-msg-body"
-                          onOpenTask={onOpenTask}
-                        />
+                        {isTaskCompletionNotice(msg.metadata) ? (
+                          <MailboxTaskCompletion content={msg.content} metadata={msg.metadata} projectId={projectId} onOpenTask={onOpenTask} />
+                        ) : (
+                          <MailboxMessageContent
+                            content={msg.content}
+                            className="mailbox-conversation-msg-body"
+                            onOpenTask={onOpenTask}
+                          />
+                        )}
                         <MailboxStructuralItem metadata={msg.metadata} projectId={projectId} onOpenTask={onOpenTask} addToast={addToast} onDecided={() => { void loadInbox(); }} />
                         {!isTaskCompletionNotice(msg.metadata) && <MailboxRelatedWorkLink
                           metadata={msg.metadata}
@@ -1068,7 +1137,6 @@ export function MailboxModal({
                         />
                         <MailboxNativeStructureEmbeds message={msg} projectId={projectId} onOpen={onOpenNativeStructure} />
                         <MailboxTaskProposal messageId={msg.id} metadata={msg.metadata} projectId={projectId} onOpenTask={onOpenTask} />
-                        <MailboxTaskCompletion metadata={msg.metadata} projectId={projectId} onOpenTask={onOpenTask} />
                         {!isTaskCompletionNotice(msg.metadata) && <MailboxTaskRecommendations metadata={msg.metadata} projectId={projectId} onOpenTask={onOpenTask} />}
                       </div>
                     );
@@ -1088,12 +1156,16 @@ export function MailboxModal({
                       env={replyContextEnv}
                     />
                   )}
-                  <MailboxMessageContent
-                    content={selectedMessage.content}
-                    className="mailbox-message-body"
-                    testId="mailbox-message-body"
-                    onOpenTask={onOpenTask}
-                  />
+                  {isTaskCompletionNotice(selectedMessage.metadata) ? (
+                    <MailboxTaskCompletion content={selectedMessage.content} metadata={selectedMessage.metadata} projectId={projectId} onOpenTask={onOpenTask} />
+                  ) : (
+                    <MailboxMessageContent
+                      content={selectedMessage.content}
+                      className="mailbox-message-body"
+                      testId="mailbox-message-body"
+                      onOpenTask={onOpenTask}
+                    />
+                  )}
                   <MailboxStructuralItem metadata={selectedMessage.metadata} projectId={projectId} onOpenTask={onOpenTask} addToast={addToast} onDecided={() => { void loadInbox(); }} />
                   {!isTaskCompletionNotice(selectedMessage.metadata) && <MailboxRelatedWorkLink
                     metadata={selectedMessage.metadata}
@@ -1112,7 +1184,6 @@ export function MailboxModal({
                   />
                   <MailboxNativeStructureEmbeds message={selectedMessage} projectId={projectId} onOpen={onOpenNativeStructure} />
                   <MailboxTaskProposal messageId={selectedMessage.id} metadata={selectedMessage.metadata} projectId={projectId} onOpenTask={onOpenTask} />
-                  <MailboxTaskCompletion metadata={selectedMessage.metadata} projectId={projectId} onOpenTask={onOpenTask} />
                   {!isTaskCompletionNotice(selectedMessage.metadata) && <MailboxTaskRecommendations metadata={selectedMessage.metadata} projectId={projectId} onOpenTask={onOpenTask} />}
                 </>
               )}
@@ -1151,10 +1222,6 @@ export function MailboxModal({
               )}
               {activeTab === "inbox" && (
                 <div className="mailbox-list" data-testid="mailbox-inbox-list">
-          <div className="mailbox-structural-filter" role="group" aria-label={t("mailbox.inboxFilter", "Inbox filter")}>
-            <button type="button" className="btn btn-sm btn-secondary" aria-pressed={structuralFilter === "all"} data-testid="mailbox-structural-filter-all" onClick={() => setStructuralFilter("all")}>{t("mailbox.all", "All")}</button>
-            <button type="button" className="btn btn-sm btn-secondary" aria-pressed={structuralFilter === "structural"} data-testid="mailbox-structural-filter-structural" onClick={() => setStructuralFilter("structural")}>{t("mailbox.reportsApprovals", "Reports & approvals")}</button>
-          </div>
                   {isLoading && !inbox && <MailboxSkeleton />}
                   {inbox && inbox.messages.length === 0 && (
                     <div className="mailbox-empty" data-testid="mailbox-inbox-empty">
@@ -1240,56 +1307,11 @@ export function MailboxModal({
                     </div>
                   ) : (
                     <>
-                      <div className="mailbox-agents-header">
-                        <div className="mailbox-agents-dropdown">
-                          <select
-                            className="message-composer-select mailbox-agent-select"
-                            value={selectedAgentId}
-                            onChange={(e) => { consumeCurrentDeepLink(); setSelectedAgentId(e.target.value); setAgentSubTab("inbox"); setSelectedMessage(null); }}
-                            data-testid="mailbox-agent-select"
-                          >
-                            <option value={ALL_AGENTS_MAILBOX_ID}>{t("mailbox.allAgentsOption", "All agents")}</option>
-                            {agents.map((agent) => (
-                              <option key={agent.id} value={agent.id}>
-                                {agent.name || agent.id}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                        <button
-                          className="btn btn-sm btn-secondary mailbox-compose-btn"
-                          onClick={handleOpenCompose}
-                          data-testid="mailbox-compose-btn"
-                        >
-                          <MessageSquare size={14} />
-                          <span>{t("mailbox.composeButton", "Compose")}</span>
-                        </button>
-                      </div>
-
-                      {/* Agent Sub-Tabs (Inbox/Outbox) */}
-                      {selectedAgentId && selectedAgentId !== ALL_AGENTS_MAILBOX_ID && (
-                        <div className="mailbox-agent-subtabs" data-testid="mailbox-agent-subtabs">
-                          <button
-                            className={`btn btn-sm btn-secondary mailbox-agent-subtab ${agentSubTab === "inbox" ? "active" : ""}`}
-                            onClick={() => { consumeCurrentDeepLink(); setAgentSubTab("inbox"); setSelectedMessage(null); }}
-                            data-testid="mailbox-agent-subtab-inbox"
-                          >
-                            <InboxIcon size={12} />
-                            <span>{t("mailbox.inboxTab", "Inbox")}</span>
-                            {agentMailbox && agentMailbox.unreadCount > 0 && (
-                              <span className="mailbox-tab-badge">{agentMailbox.unreadCount}</span>
-                            )}
-                          </button>
-                          <button
-                            className={`btn btn-sm btn-secondary mailbox-agent-subtab ${agentSubTab === "outbox" ? "active" : ""}`}
-                            onClick={() => { consumeCurrentDeepLink(); setAgentSubTab("outbox"); setSelectedMessage(null); }}
-                            data-testid="mailbox-agent-subtab-outbox"
-                          >
-                            <Send size={12} />
-                            <span>{t("mailbox.outboxTab", "Outbox")}</span>
-                          </button>
-                        </div>
-                      )}
+                      {/*
+                      FNXC:StandardizedMailboxLayout 2026-09-14-03:31:
+                      The agent scope picker, the Inbox/Outbox scope tabs and the duplicate Compose button used to sit
+                      here, inside the collection. They are header-owned now: this pane renders the message list only.
+                      */}
                       <div className="mailbox-agents-content">
                         {selectedAgentId === ALL_AGENTS_MAILBOX_ID && isLoading && !allAgentsMailbox && <MailboxSkeleton />}
                         {selectedAgentId === ALL_AGENTS_MAILBOX_ID && allAgentsMailbox && allAgentsMailbox.messages.length === 0 && (
@@ -1391,7 +1413,7 @@ export function MailboxModal({
           )}
         </div>
 
-      </div>
+      </ViewLayout>
     </FloatingWindow>
   );
 }

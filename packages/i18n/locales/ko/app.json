@@ -3123,7 +3123,8 @@
     "selectProject": "프로젝트 선택",
     "settings": "설정",
     "showScripts": "스크립트 표시",
-    "skillsView": "스킬 및 스니펫",
+    "skillsView": "스킬",
+    "snippetsView": "스니펫",
     "startAiEngine": "AI 엔진 시작",
     "stashRecoveryView": "스태시 복구",
     "stopAiEngine": "AI 엔진 중지",
@@ -3572,7 +3573,9 @@
     "recommendationsUnavailableTaskReason": "",
     "taskCompletion": "작업 완료",
     "completionImages": "작업 완료 이미지",
-    "completionImage": "작업 완료 이미지"
+    "completionImage": "작업 완료 이미지",
+    "suggestedRecommendations": "제안된 권장 사항",
+    "noSuggestedRecommendations": "제안된 후속 권장 사항이 없습니다."
   },
   "memory": {
     "auditChecksTitle": "감사 검사",
@@ -4375,8 +4378,8 @@
       "local": "로컬 Docker",
       "remote": "원격: {{host}}"
     },
-    "dockerHostLabel": "호스트",
     "dockerHostConfig": "호스트 구성",
+    "dockerHostLabel": "호스트",
     "dockerHostPath": "호스트 경로",
     "dockerHostUrl": "Docker 호스트 URL",
     "dockerLabel": "Docker",
@@ -4510,6 +4513,7 @@
     "sectionProjects": "프로젝트",
     "sectionSettingsSync": "설정 동기화",
     "sectionSyncHistory": "동기화 기록",
+    "selectPrompt": "노드를 선택하면 상태, 프로젝트, 동기화 상태를 확인할 수 있습니다.",
     "startButton": "시작",
     "statusConnecting": "연결 중",
     "statusError": "오류",
@@ -7868,6 +7872,7 @@
     "unavailable": "상세 파일 변경 사항을 사용할 수 없습니다."
   },
   "taskDetail": {
+    "accessibleName": "작업 상세 정보",
     "actions": {
       "menuBtn": "작업",
       "oversightHeading": "",
@@ -7982,6 +7987,10 @@
         "none": "",
         "matches": ""
       }
+    },
+    "definition": {
+      "descriptionHeading": "설명",
+      "noDescription": "(설명 없음)"
     },
     "description": {
       "showLess": "간략히 보기",
@@ -8169,6 +8178,18 @@
     },
     "progress": {
       "heading": "진행 상태",
+      "completedCount": "{{count}}/{{total}} 완료",
+      "workflowOrigin": "워크플로 게이트",
+      "implementationOrigin": "구현",
+      "status": {
+        "done": "완료",
+        "failed": "실패",
+        "advisory": "피드백과 함께 완료",
+        "notRun": "실행 안 함",
+        "running": "진행 중",
+        "skipped": "건너뜀",
+        "pending": "대기 중"
+      },
       "noSteps": "(정의된 단계 없음)",
       "stepCount_one": "",
       "stepCount_other": ""
@@ -8272,6 +8293,7 @@
     "spec": {
       "aiReviseHeading": "AI에 수정 요청",
       "aiReviseHelp": "AI가 이 명세를 개선할 수 있도록 피드백을 제공하세요. 작업이 재계획을 위해 계획 단계로 이동합니다.",
+      "backToDefinition": "정의로 돌아가기",
       "editBtn": "편집",
       "feedbackPlaceholder": "예: '오류 처리에 대한 세부 정보 추가', '더 작은 단계로 분할', 'API 엔드포인트 테스트 포함'...",
       "hintCancel": "취소",
@@ -8279,6 +8301,8 @@
       "loading": "명세 로드 중…",
       "noPrompt": "(프롬프트 없음)",
       "placeholder": "Markdown으로 작업 명세를 입력하세요...",
+      "promptFileName": "PROMPT.md",
+      "readPlanBtn": "계획 읽기",
       "requesting": "요청 중…",
       "requestRevisionBtn": "AI 수정 요청",
       "revisionColumnError": "수정 요청 불가: 작업이 'triage', 'todo', 'in-progress' 또는 'in-review' 컬럼에 있어야 합니다.",
@@ -8308,7 +8332,6 @@
       "model": "모델",
       "pullRequest": "풀 리퀘스트",
       "review": "검토",
-      "reordered": "{{label}} 탭을 {{count}}개 중 {{position}}번째 위치로 이동했습니다",
       "routing": "라우팅",
       "stats": "통계",
       "terminal": "세션",
@@ -8940,8 +8963,8 @@
   },
   "todo": {
     "addItemPlaceholder": "할 일 항목 추가",
-    "allDoneHidden": "",
     "addList": "목록 추가",
+    "allDoneHidden": "",
     "assignAgent": "{{text}}을(를) 에이전트에 할당",
     "cancelItemEdit": "항목 편집 취소",
     "cancelList": "목록 취소",
@@ -8970,8 +8993,8 @@
     "failedToCreateTask": "작업 생성 실패: {{error}}",
     "failedToLoadAgents": "에이전트 불러오기 실패: {{error}}",
     "failedUpdateItem": "항목 업데이트 실패",
-    "hideDone": "",
     "failedUpdateItemToast": "할 일 항목 업데이트에 실패했습니다",
+    "hideDone": "",
     "itemsLabel": "할 일 항목",
     "lists": "목록",
     "listsLabel": "할 일 목록 사이드바",
@@ -8994,6 +9017,7 @@
     "startPlanning": "{{text}}에서 계획 시작",
     "taskCreatedAndAssigned": "{{id}} 생성 후 {{agent}}에 할당됨",
     "taskCreatedFromTodo": "할 일에서 {{id}} 생성됨",
+    "title": "할 일",
     "todoListsLabel": "할 일 목록",
     "todos": "할 일"
   },

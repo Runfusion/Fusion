@@ -9,11 +9,8 @@ FNXC:ViewHeader 2026-06-22-18:00:
 All view headers use Missions' surface background without a dividing line after the header. Sidebar section headers follow the same no-post-header-line rule so the app chrome feels seamless across themes.
 */
 /*
-FNXC:ViewHeader 2026-06-23-04:15:
-Pin a shared min-height (--view-header-min-height ≈ 61px border-box) so headers WITH btn-sm actions and title-only headers render the SAME height. box-sizing:border-box keeps padding+border inside the pinned height; align-items:center vertically centers the title/actions row within it.
-
-FNXC:ViewHeader 2026-06-23-05:00:
-min-height alone let DESKTOP headers whose actions were TALLER than the canonical content row grow past 61px: Skills hit 77 via a 44px `touch-target` close button, Goals 69 via a 36px base `.btn` primary, Agents 65 via the 32px `.view-toggle` segmented switch. The desktop clamping rules below (scoped to the non-mobile breakpoint) pin a FIXED `height` and bound every action child to --view-header-content-row (28px) so tall controls collapse into the canonical row instead of stretching it; align-items:center keeps the 16-18px icons centered and nothing clips. The base rule keeps `min-height` (no fixed height) so the MOBILE breakpoint — where controls intentionally grow to 36px touch targets (see AgentsView.css @media max-width:768px) — can still expand the header instead of clipping those targets.
+FNXC:StandardizedViewHeader 2026-09-13-16:12:
+The shared header reserves enough room for a 44px navigation target before its title without letting legacy action-row clamps shrink that target. Desktop action clusters retain their compact row; phone actions use the common touch target and the header may grow instead of clipping controls.
 */
 .view-header {
   box-sizing: border-box;
@@ -43,7 +40,7 @@ min-height alone let DESKTOP headers whose actions were TALLER than the canonica
   color: var(--todo);
 }
 
-.view-header__title span {
+.view-header__title-content {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -82,7 +79,7 @@ DESKTOP-ONLY canonical-height clamp. The mobile breakpoint is `(max-width: 768px
     white-space: nowrap;
   }
 
-  /* Skills' close button carries `touch-target` (min-height:44px); force it square at the canonical row so it stops stretching the header to 77px. The 16px X icon stays centered and tappable. */
+  /* Legacy touch-target actions remain compact on desktop; the preceding back button is outside this cluster and keeps its full target. */
   .view-header__actions .touch-target {
     min-width: var(--view-header-content-row);
     min-height: var(--view-header-content-row);
@@ -97,5 +94,16 @@ DESKTOP-ONLY canonical-height clamp. The mobile breakpoint is `(max-width: 768px
 
   .view-header__actions .view-toggle .view-toggle-btn {
     height: 100%;
+  }
+}
+
+@media (max-width: 768px), (max-height: 480px) {
+  html:not([data-viewport-mode="tablet"]) .view-header {
+    gap: var(--space-xs);
+    padding-inline: var(--space-md);
+  }
+
+  html:not([data-viewport-mode="tablet"]) .view-header__actions {
+    flex-wrap: nowrap;
   }
 }

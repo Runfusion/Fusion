@@ -334,6 +334,8 @@ interface AgentLogViewerProps {
   totalCount?: number | null;
   /** Shows one explanatory note for visible historical tool rows without saved detail. */
   showMissingDetailHint?: boolean;
+  /** Keeps fullscreen chrome out of phone-owned detail navigation. */
+  allowFullscreen?: boolean;
 }
 
 /**
@@ -365,6 +367,7 @@ export function AgentLogViewer({
   loadingMore = false,
   totalCount = null,
   showMissingDetailHint = false,
+  allowFullscreen = true,
 }: AgentLogViewerProps) {
   const { t } = useTranslation("app");
   const containerRef = useRef<HTMLDivElement>(null);
@@ -610,7 +613,7 @@ export function AgentLogViewer({
       <div className={`agent-log-viewer${isFullscreen ? " agent-log-viewer--fullscreen" : ""}`} data-testid="agent-log-viewer">
         {/* FNXC:TaskDetailActivity 2026-07-01-00:00: Activity → Raw owns one fullscreen affordance through AgentLogViewer even while logs are loading, because TaskDetailModal intentionally omits its Activity-level expand button on Raw to avoid duplicate controls. */}
         <div className="agent-log-empty-header">
-          <div className="agent-log-model-header-toggle">{fullscreenToggle}</div>
+          {allowFullscreen ? <div className="agent-log-model-header-toggle">{fullscreenToggle}</div> : null}
         </div>
         <div className="agent-log-loading" role="status" aria-live="polite">{t("agentLog.loading", "Loading agent logs…")}</div>
       </div>
@@ -622,7 +625,7 @@ export function AgentLogViewer({
       <div className={`agent-log-viewer${isFullscreen ? " agent-log-viewer--fullscreen" : ""}`} data-testid="agent-log-viewer">
         {/* FNXC:TaskDetailActivity 2026-07-01-00:00: Empty Raw logs still expose the single AgentLogViewer fullscreen button so Raw never needs the duplicate Activity expand toggle. */}
         <div className="agent-log-empty-header">
-          <div className="agent-log-model-header-toggle">{fullscreenToggle}</div>
+          {allowFullscreen ? <div className="agent-log-model-header-toggle">{fullscreenToggle}</div> : null}
         </div>
         <div className="agent-log-empty">{t("agentLog.empty", "No agent output yet.")}</div>
       </div>
@@ -678,7 +681,7 @@ export function AgentLogViewer({
           >
             {showToolOutput ? t("agentLog.toolsOn", "Tools: On") : t("agentLog.toolsOff", "Tools: Off")}
           </button>
-          {fullscreenToggle}
+          {allowFullscreen ? fullscreenToggle : null}
         </div>
 
         {modelHeaderExpanded && (
@@ -779,9 +782,13 @@ export function AgentLogViewer({
           if (group.kind === "single") {
             const { entry } = group;
 
+            /*
+            FNXC:TaskDetailActivity 2026-09-12-23:26:
+            Raw conserve ses groupes, sa virtualisation et ses détails complets, mais chaque groupe devient une carte scannable dont la variante sémantique distingue outil, résultat et erreur sans modifier l’ordre du flux.
+            */
             if (entry.type === "tool") {
               return (
-                <div key={group.key} className="agent-log-tool">
+                <div key={group.key} className="agent-log-entry-card agent-log-tool">
                   {agentBadge}
                   <div className="agent-log-tool-title">⚡ {entry.text}<AgentLogTimingLabels entry={entry} /></div>
                   {entry.detail ? <CollapsibleToolDetail detail={entry.detail} type="tool" /> : null}
@@ -791,7 +798,7 @@ export function AgentLogViewer({
 
             if (entry.type === "tool_result") {
               return (
-                <div key={group.key} className="agent-log-tool-result">
+                <div key={group.key} className="agent-log-entry-card agent-log-tool-result">
                   {agentBadge}
                   <div className="agent-log-tool-title">✓ {entry.text}<AgentLogTimingLabels entry={entry} /></div>
                   {entry.detail ? <CollapsibleToolDetail detail={entry.detail} type="tool_result" /> : null}
@@ -801,7 +808,7 @@ export function AgentLogViewer({
 
             if (entry.type === "tool_error") {
               return (
-                <div key={group.key} className="agent-log-tool-error">
+                <div key={group.key} className="agent-log-entry-card agent-log-tool-error">
                   {agentBadge}
                   <div className="agent-log-tool-title">✗ {entry.text}<AgentLogTimingLabels entry={entry} /></div>
                   {entry.detail ? <CollapsibleToolDetail detail={entry.detail} type="tool_error" /> : null}
@@ -816,7 +823,7 @@ export function AgentLogViewer({
 
           if (group.kind === "thinking") {
             return (
-              <div key={group.key} className="agent-log-thinking">
+              <div key={group.key} className="agent-log-entry-card agent-log-thinking">
                 {agentBadge}
                 <AgentLogTimingLabels entry={firstEntry} />
                 <ThinkingTrace text={groupedText} format={renderMarkdown ? "markdown" : "plain"} className={renderMarkdown ? undefined : "agent-log-plain-block"} />
@@ -825,7 +832,7 @@ export function AgentLogViewer({
           }
 
           return (
-            <div key={group.key} className="agent-log-text">
+            <div key={group.key} className="agent-log-entry-card agent-log-text">
               {agentBadge}
               <AgentLogTimingLabels entry={firstEntry} />
               {renderMarkdown ? (

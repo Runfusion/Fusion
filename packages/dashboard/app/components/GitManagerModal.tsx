@@ -1,4 +1,5 @@
-import { ModalCloseButton } from "./ModalCloseButton";
+import { ViewHeader } from "./ViewHeader";
+import { ViewLayoutContent } from "./ViewLayout";
 import "./ScriptsModal.css";
 import { useState, useEffect, useCallback, useRef, useMemo, type CSSProperties } from "react";
 import { useTranslation, Trans } from "react-i18next";
@@ -1402,19 +1403,23 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
       closeOnOutsidePointerDown={dismissOnOutsidePointerDown}
     >
       <div className="modal gm-modal" ref={modalRef} style={keyboardStyle}>
-        <div className="modal-header">
-          <h3>
-            <FolderGit2 size={18} style={{ marginRight: 8, verticalAlign: "middle" }} />
-            {t("git.modalTitle", "Git Manager")}
-          </h3>
-          <div className="gm-header-actions">
-            <ModalCloseButton onClick={handleClose} aria-label={t("git.close", "Close")} />
-          </div>
-        </div>
+        {/*
+        FNXC:StandardizedViewLayout 2026-09-13-22:40:
+        FN-379 classifies Git Manager as a shared-chrome destination. The canonical ViewHeader owns its title and
+        single exit while the section body stays in the bounded content zone, so the embedded dock presentation
+        above and this window presentation frame exactly one header.
+        */}
+        <ViewHeader
+          className="modal-header"
+          icon={FolderGit2}
+          title={t("git.modalTitle", "Git Manager")}
+          onClose={handleClose}
+          closeButtonProps={{ "aria-label": t("git.close", "Close") }}
+        />
 
-        <div className="gm-layout">
+        <ViewLayoutContent className="gm-layout">
         {gitBody}
-        </div>
+        </ViewLayoutContent>
       </div>
     </FloatingWindow>
   );

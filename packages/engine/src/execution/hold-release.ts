@@ -73,6 +73,7 @@ import { emitBoundedRunAudit } from "../util/emit-bounded-run-audit.js";
 import { getPromptPath } from "./spec-staleness.js";
 import { isTaskPlanningOrExecutionLive } from "../agents/planning-execution-liveness.js";
 import { evaluateStrandedHoldContinuation } from "../plan-review-continuation.js";
+import { checkPlanPremises, type PlanPremiseCheckResult } from "./plan-premise-check.js";
 
 // FNXC:StrandedHoldContinuation 2026-07-26-14:15:
 // A genuine stranded-plan fault is warned once per held location; ordinary
@@ -125,9 +126,19 @@ export interface HoldReleaseResult {
   unevaluatedCount?: number;
 }
 
-type IssueReleaseResult =
-  | { released: true }
-  | { released: false; rejection?: "unplanned-for-execution" };
+export type WipAdmissionRejection =
+  | "unplanned-for-execution"
+  | "plan-premise-stale"
+  | "plan-premise-invalid"
+  | "plan-premise-unavailable"
+  | "capacity-exhausted-or-no-slot"
+  | "source-changed";
+
+export type WipAdmissionResult =
+  | { released: true; task: Task }
+  | { released: false; rejection?: WipAdmissionRejection; detail?: string };
+
+type IssueReleaseResult = WipAdmissionResult;
 
 // ── Workflow IR resolution (read-only) ────────────────────────────────────────
 // The selection → builtin/custom → default rule lives in @fusion/core's
@@ -868,6 +879,56 @@ export async function runHoldReleaseSweep(
     inFlightSweepProjects.delete(projectKey);
   }
 }
+export function isFirstPlanningToWipAdmission(ir: WorkflowIr, sourceColumn: string, targetColumn: string): boolean {
+  const source = findColumn(ir, sourceColumn);
+  const target = findColumn(ir, targetColumn);
+  if (!target || resolveColumnFlags(target).countsTowardWip !== true) return false;
+  if (!source) return sourceColumn === "todo" || sourceColumn === "triage";
+  const flags = resolveColumnFlags(source);
+  return flags.hold === true || flags.intake === true || sourceColumn === "todo";
+}
+
+async function publishPremiseReplan(
+  store: TaskStore,
+  taskId: string,
+  expectedColumn: string,
+  expected: "stale" | "invalid-contract",
+): Promise<PlanPremiseCheckResult> {
+  let final: PlanPremiseCheckResult = { outcome: "unavailable", detail: "Plan premise check lost its source-column race" };
+  await store.updateTaskAtomic(taskId, async (live) => {
+    if (live.column !== expectedColumn || live.paused === true || live.userPaused === true) return null;
+    const checked = isFastExecutionMode(live) ? ({ outcome: "satisfied" } as const) : await checkPlanPremises(store, live);
+    final = checked;
+    if (checked.outcome !== expected) return null;
+    return { status: "needs-replan", error: null };
+  });
+  const checked = final as PlanPremiseCheckResult;
+  if ((checked.outcome === "stale" || checked.outcome === "invalid-contract") && checked.outcome === expected) {
+    await store.logEntry(taskId, `Plan premise release gate refused execution: ${checked.detail}`);
+  }
+  return checked;
+}
+
+/*
+FNXC:PlanPremises 2026-09-13-04:01:
+Every first planning/hold-to-WIP public admission uses this release authority. Premises are checked before reservation and again from the live row inside moveTaskIf; stale contracts re-enter the existing needs-replan loop without allocating a worktree or creating validation state.
+*/
+export async function admitTaskToWip(
+  store: TaskStore,
+  deps: HoldReleaseDeps,
+  task: Task,
+  target: string,
+  ir: WorkflowIr,
+  options: {
+    expectedColumn?: string;
+    moveSource?: "scheduler" | "user";
+    workflowMoveSource?: string;
+    preserveProgress?: boolean;
+  } = {},
+): Promise<WipAdmissionResult> {
+  return issueRelease(store, deps, task, target, ir, options);
+}
+
 /**
  * Issue a single release move (`moveSource: "scheduler"`). For releases into a
  * processing (capacity) column the reservation-first ordering (KTD-10) reserves
@@ -881,6 +942,12 @@ async function issueRelease(
   task: Task,
   target: string,
   ir: WorkflowIr,
+  options: {
+    expectedColumn?: string;
+    moveSource?: "scheduler" | "user";
+    workflowMoveSource?: string;
+    preserveProgress?: boolean;
+  } = {},
 ): Promise<IssueReleaseResult> {
   const targetColumn = findColumn(ir, target);
   const targetIsProcessing = targetColumn ? resolveColumnFlags(targetColumn).countsTowardWip === true : false;
@@ -893,6 +960,23 @@ async function issueRelease(
   column; no caller can bypass either gate.
   */
   if (targetIsProcessing) {
+    if (!isFastExecutionMode(task)) {
+      const premiseCheck = await checkPlanPremises(store, task);
+      if (premiseCheck.outcome === "stale" || premiseCheck.outcome === "invalid-contract") {
+        const recorded = await publishPremiseReplan(store, task.id, options.expectedColumn ?? task.column, premiseCheck.outcome);
+        if (recorded.outcome === "unavailable" || recorded.outcome === "satisfied") {
+          return { released: false, rejection: "source-changed", detail: "detail" in recorded ? recorded.detail : "Plan premise changed during release" };
+        }
+        return {
+          released: false,
+          rejection: recorded.outcome === "stale" ? "plan-premise-stale" : "plan-premise-invalid",
+          detail: "detail" in recorded ? recorded.detail : premiseCheck.detail,
+        };
+      }
+      if (premiseCheck.outcome === "unavailable") {
+        return { released: false, rejection: "plan-premise-unavailable", detail: premiseCheck.detail };
+      }
+    }
     const readiness = await evaluateCapacityHoldReadiness(store, deps, task, ir, target);
     if (!readiness.releasable && readiness.kind === "awaiting-approval") {
       schedulerLog.debug(
@@ -923,8 +1007,9 @@ async function issueRelease(
   }
 
   try {
-    const originalColumn = task.column;
+    const originalColumn = options.expectedColumn ?? task.column;
     let liveUnplanned: Task | undefined;
+    let livePremiseFailure: Extract<PlanPremiseCheckResult, { outcome: "stale" | "invalid-contract" | "unavailable" }> | undefined;
     /*
     FNXC:UserPausedDispatch 2026-07-21-21:45:
     Hold release must test the source column and both pause flags under the same task lock as the move. This makes an operator pause win atomically against scheduler dispatch and also replaces event-identity inference for concurrent release attempts.
@@ -952,6 +1037,13 @@ async function issueRelease(
           liveUnplanned = live;
           return false;
         }
+        if (targetIsProcessing && !isFastExecutionMode(live)) {
+          const checked = await checkPlanPremises(store, live);
+          if (checked.outcome !== "satisfied") {
+            livePremiseFailure = checked;
+            return false;
+          }
+        }
         return true;
       },
       {
@@ -961,8 +1053,9 @@ async function issueRelease(
         this authority so the timeline distinguishes its deliberate todo-to-WIP dispatch from an
         unexplained automatic move; plugin move policies receive the same source literal.
         */
-        moveSource: "scheduler",
-        workflowMoveSource: "scheduler-hold-release",
+        moveSource: options.moveSource ?? "scheduler",
+        workflowMoveSource: options.workflowMoveSource ?? "scheduler-hold-release",
+        preserveProgress: options.preserveProgress,
         allocateWorktree:
           targetIsProcessing && deps.allocateWorktree
             ? (reservedNames) => deps.allocateWorktree!(task, reservedNames)
@@ -976,10 +1069,21 @@ async function issueRelease(
         schedulerLog.debug(`Hold release for ${task.id} blocked — card became unplanned before entering processing column ${target}`);
         return { released: false, rejection: "unplanned-for-execution" };
       }
+      if (livePremiseFailure) {
+        if (livePremiseFailure.outcome === "unavailable") {
+          return { released: false, rejection: "plan-premise-unavailable", detail: livePremiseFailure.detail };
+        }
+        const recorded = await publishPremiseReplan(store, task.id, originalColumn, livePremiseFailure.outcome);
+        return {
+          released: false,
+          rejection: recorded.outcome === "stale" ? "plan-premise-stale" : recorded.outcome === "invalid-contract" ? "plan-premise-invalid" : "source-changed",
+          detail: "detail" in recorded ? recorded.detail : livePremiseFailure.detail,
+        };
+      }
       schedulerLog.log(`Hold release for ${task.id} skipped — task became paused or left ${originalColumn}`);
       return { released: false };
     }
-    return { released: true };
+    return { released: true, task: result.task };
   } catch (error) {
     if (error instanceof TransitionRejectionError && error.rejection.code === "capacity-exhausted") {
       // Lost the in-txn race for the slot — release the reservation, stay held.

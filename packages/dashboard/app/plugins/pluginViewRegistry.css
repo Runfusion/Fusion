@@ -1,3 +1,16 @@
+/*
+FNXC:StandardizedPluginViews 2026-09-13-16:50:
+The full-page host is the sole title owner; cooperative plugin headers portal their business controls into this zero-extra-chrome action target rather than being hidden with those controls.
+*/
+.plugin-dashboard-view-layout {
+  min-block-size: 0;
+  block-size: 100%;
+}
+
+.plugin-dashboard-view-layout__actions {
+  display: contents;
+}
+
 .plugin-dashboard-view-missing {
   margin: var(--space-lg);
   padding: var(--space-lg);

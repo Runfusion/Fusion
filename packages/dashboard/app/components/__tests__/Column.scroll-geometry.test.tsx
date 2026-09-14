@@ -76,6 +76,33 @@ describe("Column scroll geometry", () => {
     expect(document.querySelector("[data-virtual-task-row='FN-0']")).not.toBeNull();
   });
 
+  it("enables top following by the complete trait rather than the column id", async () => {
+    vi.stubGlobal("ResizeObserver", undefined);
+    const tasks = Array.from({ length: 100 }, (_, index) => task(index));
+    const completeView = render(<Column {...props} column={"finished" as ColumnType} columnFlags={{ complete: true }} tasks={tasks} />);
+    const completeBody = document.querySelector<HTMLElement>(".column-body")!;
+    Object.defineProperties(completeBody, {
+      clientHeight: { configurable: true, value: 640 },
+      scrollHeight: { configurable: true, value: 32_000 },
+      scrollTop: { configurable: true, writable: true, value: 0 },
+    });
+    fireEvent.scroll(completeBody);
+    completeView.rerender(<Column {...props} column={"finished" as ColumnType} columnFlags={{ complete: true }} tasks={[task(-1), ...tasks]} />);
+    expect(completeBody.scrollTop).toBe(0);
+    completeView.unmount();
+
+    const ordinaryView = render(<Column {...props} column={"reviewed" as ColumnType} columnFlags={{ mergeBlocker: true }} tasks={tasks} />);
+    const ordinaryBody = document.querySelector<HTMLElement>(".column-body")!;
+    Object.defineProperties(ordinaryBody, {
+      clientHeight: { configurable: true, value: 640 },
+      scrollHeight: { configurable: true, value: 32_000 },
+      scrollTop: { configurable: true, writable: true, value: 0 },
+    });
+    fireEvent.scroll(ordinaryBody);
+    ordinaryView.rerender(<Column {...props} column={"reviewed" as ColumnType} columnFlags={{ mergeBlocker: true }} tasks={[task(-1), ...tasks]} />);
+    expect(ordinaryBody.scrollTop).toBe(320);
+  });
+
   it("preserves user scroll across an ordinary task refresh", async () => {
     vi.stubGlobal("ResizeObserver", undefined);
     const tasks = Array.from({ length: 100 }, (_, index) => task(index));

@@ -298,13 +298,12 @@ Write a lean, executable PROMPT.md quickly. Preserve safety gates, but skip heav
 ## Fast-mode priorities
 - Read only source/docs needed for precision; keep prose brief with concrete file paths, commands, and outcomes.
 - Do not expand scope. If work is covered, report the duplicate instead of writing a new spec.
-- Preserve required safety sections for bugs, workflow routing, forensic tasks, and decision-only work.
 
 ## Duplicate check
 Before writing a spec, call \`fn_task_list\` for active work, then call \`fn_task_search\` with \`includeDone: false\` for 2-4 targeted keyword phrases from the title/description, such as file paths, symptoms, and symbols. Do not search completed work for duplicate candidates. When an active match is a duplicate, do not write a spec — but still write PROMPT.md, with its entire contents being the single line \`DUPLICATE: {existing-task-id}\` and nothing else. That file is how the duplicate is recorded; announcing it only in your reply leaves no plan behind and re-plans the task in a loop.
 
 ## Required PROMPT.md shape
-Write PROMPT.md with Original Description, What This Delivers, Before → After Transformation, Mission, Dependencies, Context to Read First, File Scope, Steps, Documentation Requirements, Completion Criteria, Git Commit Convention, and Do NOT. Put \`## Original Description\` immediately after the title/\`Created\`/\`Size\` metadata with the operator's original task description copied **verbatim** (do not paraphrase). Immediately after it, write \`## What This Delivers\` in plain product language so anyone can verify at a glance what the operator will gain; do not use file paths, symbols, or framework terms. Put \`## Before → After Transformation\` next, before \`## Mission\`, with concise Before/After bullets: current state, target state, why it satisfies the user's request at a glance. In \`## Steps\`, every executable heading MUST use \`### Step N: <name>\` (e.g. \`### Step 0: Preflight\`), numbered 0-based from \`### Step 0:\` through \`### Step N-1:\` with no gaps. Do not write bare \`### Preflight\` / \`### Implementation\` headings, and do not add review-level, triage subtask, or proactive subtask headings.
+Write PROMPT.md with Original Description, What This Delivers, Before → After Transformation, Mission, Plan Premises, Dependencies, Context to Read First, File Scope, Steps, Documentation Requirements, Completion Criteria, Git Commit Convention, and Do NOT. Put \`## Original Description\` immediately after the title/\`Created\`/\`Size\` metadata with the operator's original task description copied **verbatim** (do not paraphrase). Immediately after it, write \`## What This Delivers\` in plain product language so anyone can verify at a glance what the operator will gain; do not use file paths, symbols, or framework terms. Put \`## Before → After Transformation\` next, before \`## Mission\`, with concise Before/After bullets: current state, target state, why it satisfies the user's request at a glance. In \`## Steps\`, every executable heading MUST use \`### Step N: <name>\` (e.g. \`### Step 0: Preflight\`), numbered 0-based from \`### Step 0:\` through \`### Step N-1:\` with no gaps. Do not write bare \`### Preflight\` / \`### Implementation\` headings, and do not add review-level, triage subtask, or proactive subtask headings.
 
 ## Surface Enumeration
 For bug fixes and UI-affordance add/remove tasks, the spec MUST include a \`## Surface Enumeration\` section. The workflow Plan Review gate validates this before execution when plan review is enabled.
@@ -398,6 +397,10 @@ Follow this structure exactly:
 ## Mission
 
 {One paragraph: what you're building and why it matters}
+
+## Plan Premises
+
+- {One exact JSON object per bullet. Use only \`{"kind":"file-exists|file-absent","path":"project/relative/path"}\` or \`{"kind":"text-present|text-absent","path":"project/relative/path","literal":"exact non-empty text"}\`. Include one to a few real, atomic implementation assumptions; never prose, commands, globs, regex, goals, or tautologies.}
 
 ## Surface Enumeration
 

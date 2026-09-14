@@ -4,7 +4,7 @@ The run-audit catalogue for the S4 **Reliability, Durability & Observability** d
 
 ## Overlap wait release
 
-`task:overlap-wait-released` is emitted after the transactional overlap receipt becomes ready. Metadata is limited to task/predecessor IDs, episode/common-file counts, and fixed decision/freshness enums; paths, diffs, summaries, prompts, and remote URLs remain in the project-scoped receipt. Emission uses the engine bounded best-effort seam, so absent, throwing, rejecting, hanging, or late-settling sinks cannot alter synchronization, start work, or roll back the owner decision. The receipt plus deduplicated task-log row is the durable diagnostic authority; run-audit is not exactly-once and is never re-emitted by every recovery tick.
+`task:overlap-wait-released` is emitted after the transactional overlap receipt becomes ready. Metadata is limited to task/predecessor IDs, episode/common-file counts, and the fixed `resume`/`briefing` plus freshness enums; paths, diffs, summaries, prompts, and remote URLs remain in the project-scoped receipt. Emission uses the engine bounded best-effort seam, so absent, throwing, rejecting, hanging, or late-settling sinks cannot alter synchronization, validate a plan, start work, or roll back the owner decision. The stateless plan-premise release check and durable receipt—not audit—are authoritative; run-audit is not exactly-once and is never re-emitted by every recovery tick.
 
 ## Status / purpose
 
@@ -114,7 +114,7 @@ All `recordRunAuditEventWithinTransaction(tx, ...)` calls and the `recordRunAudi
 
 ### External block lifecycle
 
-`task:external-block-parked` records a task entering a durable external freeze, and `task:external-block-cleared` records operator Retry publishing its exact resume continuation. Metadata is IDs and fixed classifications only: task id, origin, code, source, column, and resume node id. Raw error prose remains on `Task.externalBlock` and is never copied into run-audit metadata. Both writes use the bounded best-effort emitter and are intentionally outside the curated delivery-pipeline event catalogue.
+`task:external-block-parked` records a task entering a durable external freeze, and `task:external-block-cleared` records operator Retry publishing its exact resume continuation. Metadata is IDs and fixed classifications only: task id, origin, code, source, column, and resume node id. The `project-configuration` origin and `dependency-readiness` source use the same event pair for proven repeating worktree initialization failures. Command strings, diagnostics, repository paths, and worktree-state tokens remain on `Task.externalBlock` or its private worktree record and are never copied into run-audit metadata. Both writes use the bounded best-effort emitter and are intentionally outside the curated delivery-pipeline event catalogue.
 
 `task:step-session-abort-contained` records an interrupted step-session repair that retains the current lifecycle lane, checkout, node, and completed step progress. Its metadata is IDs, counts, and fixed outcomes only: task id, current column, abort trigger, recovery outcome, and completed-step count; it never includes failure text or step names. The executor emits it through the bounded best-effort seam, and it is intentionally outside the curated delivery-pipeline event catalogue.
 

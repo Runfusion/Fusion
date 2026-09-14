@@ -29,15 +29,6 @@ const projects: ProjectInfo[] = [
 
 const leftSidebarNavCss = loadComponentCss("LeftSidebarNav.css");
 const obsoleteCollapseToggleFloatingClass = "left-sidebar-nav__collapse-toggle--" + "floating";
-const newTaskSurfaceEnumeration = [
-  "[x] Components that render the affordance: Grep confirms LeftSidebarNav is the only persistent sidebar renderer and App.tsx mounts it once.",
-  "[x] Providers / execution paths: the click handler invokes the onNewTask prop, which App.tsx binds to openNewTaskWithNav.",
-  "[x] Breakpoints / viewport modes: desktop/tablet render the sidebar CTA; mobile intentionally hides the sidebar so MobileNavBar and board creation remain canonical there.",
-  "[x] Sidebar states: expanded shows icon plus label, collapsed/rail keeps the icon-only button clickable with aria-label and title.",
-  "[x] Data/flag states: leftSidebarNav enabled renders the sidebar CTA, leftSidebarNav false omits the entire sidebar shell via App.tsx, and absent onNewTask omits the CTA shell.",
-  "[x] Leftover shells: the CTA precedes the nav list without displacing nav sections, footer buttons, or the resize handle.",
-];
-
 function getCssRuleBlock(css: string, selector: string) {
   const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const match = css.match(new RegExp(`${escapedSelector}\\s*\\{([^}]*)\\}`));
@@ -136,92 +127,19 @@ describe("LeftSidebarNav", () => {
     expect(onChangeView).toHaveBeenCalledWith("whiteboard");
   });
 
-  it("removes the general History entry only while Alpha is enabled", () => {
-    const legacy = renderSidebar();
-    expect(screen.getByTestId("sidebar-nav-patchnode")).toBeInTheDocument();
-    legacy.unmount();
-
-    renderSidebar({ alphaUpdatesEnabled: true });
+  it("keeps general History out after the official design promotion", () => {
+    renderSidebar();
     expect(screen.queryByTestId("sidebar-nav-patchnode")).toBeNull();
   });
 
-  it("documents and asserts the sidebar New Task surface enumeration", () => {
-    expect(newTaskSurfaceEnumeration).toHaveLength(6);
-    for (const item of newTaskSurfaceEnumeration) {
-      expect(item).toMatch(/^\[x\]/);
-    }
-
-    const singleSidebarRendererMatches = [
-      ...leftSidebarNavCss.matchAll(/\.left-sidebar-nav/g),
-    ];
-    expect(singleSidebarRendererMatches.length).toBeGreaterThan(0);
-  });
-
-  it("renders the New Task CTA in the footer above Collapse and invokes the provided global trigger", () => {
+  it("never duplicates the App-owned New Task action in the navigation footer", () => {
     const onNewTask = vi.fn();
-    renderSidebar({ onNewTask });
-
-    const sidebar = screen.getByTestId("left-sidebar-nav");
-    const newTaskButton = screen.getByTestId("sidebar-nav-new-task");
-    const footer = sidebar.querySelector(".left-sidebar-nav__footer");
-    const collapseToggle = screen.getByTestId("sidebar-nav-collapse-toggle");
-
-    // FNXC:Navigation 2026-06-23-02:30: New Task moved into the footer, directly above Collapse.
-    expect(footer?.contains(newTaskButton)).toBe(true);
-    expect(newTaskButton.nextElementSibling).toBe(collapseToggle);
-    expect(newTaskButton).toHaveAccessibleName("New Task");
-    expect(newTaskButton).toHaveAttribute("title", "New Task");
-    expect(newTaskButton).toHaveTextContent("New Task");
-    expect(newTaskButton.querySelector("svg")).not.toBeNull();
-
-    fireEvent.click(newTaskButton);
-    expect(onNewTask).toHaveBeenCalledOnce();
-    expect(onNewTask).toHaveBeenCalledWith();
-  });
-
-  it("omits the New Task CTA when no trigger prop is provided", () => {
-    const { container } = renderSidebar();
+    const { container } = renderSidebar({ onNewTask });
 
     expect(screen.queryByTestId("sidebar-nav-new-task")).toBeNull();
     expect(container.querySelector(".left-sidebar-nav__new-task")).toBeNull();
-    expect(screen.getByTestId("left-sidebar-nav").children[0]).toBe(screen.getByRole("navigation", { name: "Primary navigation" }));
-  });
-
-  it("keeps the New Task CTA accessible, clickable, centered, and label-hidden in rail mode", () => {
-    const onNewTask = vi.fn();
-    window.localStorage.setItem("fusion:left-sidebar-collapsed", "true");
-    renderSidebar({ onNewTask });
-
-    const sidebar = screen.getByTestId("left-sidebar-nav");
-    const newTaskButton = screen.getByTestId("sidebar-nav-new-task");
-    expect(sidebar).toHaveClass("left-sidebar-nav--collapsed");
-    expect(newTaskButton).toHaveAccessibleName("New Task");
-    expect(newTaskButton).toHaveAttribute("title", "New Task");
-    expect(newTaskButton.querySelector(".left-sidebar-nav__label")).toHaveTextContent("New Task");
-
-    fireEvent.click(newTaskButton);
-    expect(onNewTask).toHaveBeenCalledOnce();
-
-    const newTaskRule = getCssRuleBlock(leftSidebarNavCss, ".left-sidebar-nav__new-task");
-    const collapsedNewTaskRule = getCssRuleBlock(leftSidebarNavCss, ".left-sidebar-nav--collapsed .left-sidebar-nav__new-task");
-    expect(newTaskRule).toContain("justify-content: center");
-    expect(collapsedNewTaskRule).toContain("justify-content: center");
-    expect(leftSidebarNavCss).toMatch(/\.left-sidebar-nav--collapsed \.left-sidebar-nav__label,\s*\.left-sidebar-nav--collapsed \.left-sidebar-nav__badge\s*\{[\s\S]*?display:\s*none;/);
-  });
-
-  it("keeps the New Task CTA styling tokenized without hardcoded px or colors", () => {
-    const newTaskRule = getCssRuleBlock(leftSidebarNavCss, ".left-sidebar-nav__new-task");
-    const hoverRule = getCssRuleBlock(leftSidebarNavCss, ".left-sidebar-nav__new-task:hover,\n.left-sidebar-nav__new-task:focus-visible");
-
-    // FNXC:Navigation 2026-06-23-02:45: New Task moved to the footer — no inset margins so it matches the Collapse/Settings footer items.
-    expect(newTaskRule).toContain("margin: 0");
-    expect(newTaskRule).toContain("border-radius: var(--radius-md)");
-    expect(newTaskRule).toContain("background: var(--accent)");
-    expect(newTaskRule).toContain("color: var(--accent-text)");
-    expect(newTaskRule).not.toMatch(/\d+px/i);
-    expect(newTaskRule).not.toMatch(/#|rgb\(/i);
-    expect(hoverRule).not.toMatch(/\d+px/i);
-    expect(hoverRule).not.toMatch(/#|rgb\(/i);
+    expect(screen.getByTestId("sidebar-nav-collapse-toggle")).toBeInTheDocument();
+    expect(onNewTask).not.toHaveBeenCalled();
   });
 
   it("omits standalone recommendations and artifacts destinations", () => {
@@ -237,8 +155,6 @@ describe("LeftSidebarNav", () => {
 
     for (const testId of [
       "sidebar-nav-board",
-      "sidebar-nav-list",
-      "sidebar-nav-patchnode",
       "sidebar-nav-command-center",
       "sidebar-nav-agents",
       "sidebar-nav-chat",
@@ -262,7 +178,7 @@ describe("LeftSidebarNav", () => {
       expect(screen.getByTestId(testId)).toBeDefined();
     }
 
-    expect(screen.getByTestId("sidebar-nav-skills")).toHaveTextContent("Skills & Snippets");
+    expect(screen.getByTestId("sidebar-nav-skills")).toHaveTextContent("Skills");
     expect(screen.getByTestId("sidebar-nav-planning")).toHaveTextContent("Planning");
     expect(screen.getByTestId("sidebar-nav-import-tasks")).toHaveTextContent("Import Tasks");
     expect(screen.queryByTestId("sidebar-nav-stash-recovery")).toBeNull();
@@ -300,8 +216,6 @@ describe("LeftSidebarNav", () => {
     const orderedTestIds = [
       "sidebar-nav-command-center",
       "sidebar-nav-board",
-      "sidebar-nav-list",
-      "sidebar-nav-patchnode",
       "sidebar-nav-planning",
       "sidebar-nav-missions",
       "sidebar-nav-agents",
@@ -322,8 +236,7 @@ describe("LeftSidebarNav", () => {
     expect(orderedIndices).toEqual([...orderedIndices].sort((a, b) => a - b));
     expect(orderedIndices.every((index) => index >= 0)).toBe(true);
     expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-command-center"))).toBeLessThan(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-agents")));
-    expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-patchnode"))).toBe(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-list")) + 1);
-    expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-planning"))).toBe(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-patchnode")) + 1);
+    expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-planning"))).toBe(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-board")) + 1);
     expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-missions"))).toBe(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-planning")) + 1);
     expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-agents"))).toBe(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-missions")) + 1);
     expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-skills"))).toBe(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-mailbox")) + 1);
@@ -406,7 +319,8 @@ describe("LeftSidebarNav", () => {
 
     expect(screen.getByTestId("left-sidebar-nav")).toHaveStyle({ width: "224px", minWidth: "224px" });
     expect(screen.getByTestId("sidebar-nav-board")).toHaveAccessibleName("Board");
-    expect(screen.getByTestId("sidebar-nav-list")).toHaveAccessibleName("List");
+    // FN-382: List is a right-dock tool on this host, so the rail offers no List page.
+    expect(screen.queryByTestId("sidebar-nav-list")).toBeNull();
     expect(screen.getByTestId("sidebar-nav-agents")).toHaveAccessibleName("Agents");
     expect(screen.getByTestId("sidebar-nav-missions")).toHaveAccessibleName("Missions");
     expect(screen.queryByRole("button", { name: /view$/i })).toBeNull();
@@ -695,9 +609,6 @@ describe("LeftSidebarNav", () => {
   it("routes clicks to view changes and settings callback without Secrets/Todos shortcuts", () => {
     const onOpenSettings = vi.fn();
     const { onChangeView } = renderSidebar({ todosEnabled: true, onOpenSettings });
-
-    fireEvent.click(screen.getByTestId("sidebar-nav-list"));
-    expect(onChangeView).toHaveBeenCalledWith("list");
 
     fireEvent.click(screen.getByTestId("sidebar-nav-planning"));
     expect(onChangeView).toHaveBeenCalledWith("planning");

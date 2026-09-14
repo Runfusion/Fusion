@@ -422,15 +422,25 @@ describe("executor graph execute self-requeue gate", () => {
     await (executor as any).handleGraphFailure(live, {
       disposition: "failed",
       outcome: "failure",
-      visitedNodeIds: ["parse"],
-      context: { "node:parse:value": "parse-error" },
+      visitedNodeIds: ["earlier", "parse"],
+      context: {
+        "node:earlier:error": "stale failure must stay hidden",
+        "node:parse:value": "exception",
+        "node:parse:error": "repair arm did not start",
+      },
     });
 
     expect(store.updateTaskAtomic).toHaveBeenCalledWith(live.id, expect.any(Function), undefined);
     await expect(store.getTask(live.id)).resolves.toEqual(expect.objectContaining({
       status: "failed",
-      error: expect.stringContaining("Workflow graph terminated with failure at node 'parse'"),
+      error: "Workflow graph terminated with failure at node 'parse' (exception): repair arm did not start",
     }));
+    expect(store.logEntry).toHaveBeenCalledWith(
+      live.id,
+      "Workflow graph terminated with failure at node 'parse' (exception): repair arm did not start",
+      undefined,
+      undefined,
+    );
     expect(store.handoffToReview).not.toHaveBeenCalled();
     expect(store.moveTask).not.toHaveBeenCalledWith(live.id, "in-review", expect.anything());
   });

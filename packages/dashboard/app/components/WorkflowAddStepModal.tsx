@@ -5,7 +5,7 @@ import type { WorkflowDefinition, WorkflowStepTemplate } from "@fusion/core";
 import type { WorkflowEditorNodeKind } from "./nodes/WorkflowNodeTypes";
 import { nodeHelpFor } from "./nodes/node-help";
 import { FloatingWindow } from "./FloatingWindow";
-import { ModalCloseButton } from "./ModalCloseButton";
+import { ViewHeader } from "./ViewHeader";
 import "./WorkflowAddStepModal.css";
 
 /*
@@ -158,10 +158,17 @@ export function WorkflowAddStepModal({
       closeOnOutsidePointerDown
     >
       <div className="wf-add-step-dialog">
-        <header className="wf-add-step-header">
-          <h3>{t("workflowNodes.addStepTitle", "Add a step")}</h3>
-          <ModalCloseButton className="wf-add-step-close" aria-label={t("common.close", "Close")} onClick={onClose} />
-        </header>
+        {/*
+        FNXC:StandardizedViewLayout 2026-09-13-22:40:
+        FN-379 remediation: the step picker shares the canonical header rather than its own title row.
+        */}
+        <ViewHeader
+          className="wf-add-step-header"
+          headingLevel={3}
+          title={t("workflowNodes.addStepTitle", "Add a step")}
+          onClose={onClose}
+          closeButtonProps={{ className: "wf-add-step-close", "aria-label": t("common.close", "Close") }}
+        />
         <div className="wf-add-step-search">
           <Search size={14} aria-hidden />
           <input

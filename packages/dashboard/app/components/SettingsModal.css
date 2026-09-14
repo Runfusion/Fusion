@@ -751,55 +751,20 @@ sync so both orientations get the same footer.
 }
 
 /*
-FNXC:SettingsSimplification 2026-07-11-00:42:
-The Settings rail is one navigation surface. The legacy translucent background on both the parent rail and nested section list compounded into a visibly lighter second tone; keep the parent opaque and the nested scroller transparent in every theme.
-
-FNXC:Settings 2026-07-11-18:45:
-FN-7825 removes the hard divider between the Settings rail and content, keeps section rows single-line at the rail's full width, and makes this parent rail the authoritative width owner so the upcoming desktop resize handle can update one CSS custom property without fighting nested sidebar rules.
+FNXC:StandardizedViewLayout 2026-09-13-21:43:
+Settings retains one opaque section-navigation surface, while ViewSidebar owns its width, separator paint, keyboard behavior, and project-scoped persistence. The nested section list stays transparent so themes never compound two rail tones.
 */
 .settings-navigation {
-  --settings-nav-width: calc(var(--space-xl) * 10 + var(--space-sm));
-  width: var(--settings-nav-width);
-  min-width: var(--settings-nav-width);
-  display: flex;
-  flex-direction: column;
   min-height: 0;
   background: var(--surface);
 }
 
+.settings-navigation__panel {
+  overflow: hidden;
+}
+
 .settings-navigation .settings-sidebar {
   background: transparent;
-}
-
-.settings-nav-resize-handle {
-  flex: 0 0 var(--space-xs);
-  margin-inline: calc(var(--space-xs) * -0.5);
-  cursor: col-resize;
-  background: transparent;
-  border: 0;
-  outline: none;
-  position: relative;
-  z-index: 1;
-}
-
-.settings-nav-resize-handle::before {
-  content: "";
-  position: absolute;
-  inset-block: var(--space-sm);
-  inset-inline: calc(50% - (var(--btn-border-width) / 2));
-  width: var(--btn-border-width);
-  border-radius: var(--radius-pill);
-  background: transparent;
-  transition: background var(--transition-fast);
-}
-
-.settings-nav-resize-handle:hover::before,
-.settings-nav-resize-handle:focus-visible::before {
-  background: var(--border);
-}
-
-.settings-nav-resize-handle:focus-visible {
-  box-shadow: var(--focus-ring-strong);
 }
 
 .settings-search {
@@ -2750,14 +2715,11 @@ The header row wraps so the badge drops below the heading on narrow widths inste
   .settings-navigation {
     width: 100%;
     min-width: 0;
+    block-size: auto;
     flex: 0 0 auto;
     border-right: none;
     border-bottom: var(--btn-border-width) solid var(--border);
     background: var(--surface);
-  }
-
-  .settings-nav-resize-handle {
-    display: none;
   }
 
   .settings-search {

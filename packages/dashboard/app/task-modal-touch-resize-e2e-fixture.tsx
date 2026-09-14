@@ -9,7 +9,7 @@ import "./components/FloatingWindow.css";
 import "./alpha-ui.css";
 import { FloatingWindow } from "./components/FloatingWindow";
 import { App } from "./App";
-import { TaskDetailContent } from "./components/TaskDetailModal";
+import { TaskDetailContent, TaskDetailModal } from "./components/TaskDetailModal";
 import { AppModals } from "./components/AppModals";
 import { MainContent } from "./components/dashboard/MainContent";
 import { ListView } from "./components/ListView";
@@ -18,6 +18,7 @@ import { NavigationHistoryProvider } from "./hooks/useNavigationHistory";
 import { NewTaskModal } from "./components/NewTaskModal";
 import { AgentListModal } from "./components/AgentListModal";
 import { SetupWizardModal } from "./components/SetupWizardModal";
+import { SettingsModal } from "./components/SettingsModal";
 import { ConfirmDialogProvider } from "./hooks/useConfirm";
 import { AlphaProvider } from "./context/AlphaContext";
 
@@ -28,8 +29,8 @@ const boardCardClickSurface = surface === "board-card-click-app";
 const preserveDesktopHostDuringViewportProbe = params.get("preserveDesktopHost") === "true";
 if (preserveDesktopHostDuringViewportProbe) {
   /*
-  FNXC:TaskDetailChatGeometry 2026-09-11-18:42:
-  List split, right dock, and pop-out are desktop-only navigation owners, but their mounted Task Detail shell still needs real narrow-viewport CSS coverage. Freeze only the fixture's JavaScript host admission after its 1200px mount so CDP can resize the actual viewport through 768, 390, and 320px without routing away from the host under measurement; CSS media and container queries continue to use the real resized viewport.
+  FNXC:TaskDetailTitleRemoval 2026-09-13-11:59:
+  List split, right dock, and pop-out are desktop-only navigation owners, but their mounted shared header still needs real narrow-viewport CSS coverage. Freeze only JavaScript host admission after desktop mount so CDP can resize the actual viewport without routing away; CSS media and container queries continue to use the resized viewport.
   */
   Object.defineProperty(window, "innerWidth", { configurable: true, get: () => 1200 });
   const nativeMatchMedia = window.matchMedia.bind(window);
@@ -48,6 +49,10 @@ if (preserveDesktopHostDuringViewportProbe) {
       dispatchEvent: () => true,
     };
   };
+  /*
+  FNXC:TaskDetailChatGeometry 2026-09-13-13:09:
+  Desktop-only production hosts also observe their containers before routing responsively. Freeze fixture observer admission after its first real delivery so narrow CSS can be measured on the mounted List split/right-dock/pop-out owner; this observer is host scaffolding and is independent of the removed title clamp.
+  */
   const NativeResizeObserver = window.ResizeObserver;
   window.ResizeObserver = class StableHostResizeObserver implements ResizeObserver {
     private readonly observer: ResizeObserver;
@@ -71,6 +76,7 @@ The browser fixture drives the real Task Detail hosts through both chat surfaces
 const chatKind = params.get("chatKind") === "planner" ? "planner" : "activity";
 const chatState = params.get("chatState") ?? "empty";
 const showContextualFooter = params.get("footer") === "true";
+const structuredTaskDetail = params.get("structured") === "true";
 const taskDetailChatFirst = chatKind === "planner";
 if (params.has("reset")) localStorage.clear();
 
@@ -154,18 +160,18 @@ window.fetch = async (input) => {
         FN-115's production-App Chromium fixture needs measured horizontal overflow at desktop and
         tablet widths, so it supplies enough canonical workflow columns to exercise Board panning.
         */
-        { id: "todo", name: "Todo", flags: {} },
+        { id: "todo", name: "Todo", flags: { hold: true } },
         { id: "in-progress", name: "In progress", flags: {} },
         { id: "in-review", name: "In review", flags: {} },
         { id: "verify", name: "Verify", flags: {} },
         { id: "done", name: "Done", flags: {} },
-      ] : [{ id: "todo", name: "Todo", flags: {} }, { id: "in-progress", name: "In progress", flags: {} }, { id: "in-review", name: "In review", flags: {} }] }] }
+      ] : [{ id: "todo", name: "Todo", flags: { hold: true } }, { id: "in-progress", name: "In progress", flags: {} }, { id: "in-review", name: "In review", flags: {} }] }] }
       : pathname === "/api/tasks/page"
         ? { tasks: [fixtureTask], total: 1, hasMore: false, nextCursor: null }
         : pathname === "/api/tasks/done"
           ? { tasks: [], total: 0, hasMore: false, nextCursor: null }
       : url.includes(`/tasks/${fixtureTask.id}/prompt`)
-        ? { id: fixtureTask.id, prompt: "" }
+        ? { id: fixtureTask.id, prompt: fixtureTask.prompt }
         : pathname === `/api/tasks/${fixtureTask.id}`
           ? fixtureTask
           : pathname === "/api/tasks"
@@ -186,7 +192,9 @@ window.fetch = async (input) => {
                   ? { goals: [] }
         : url.includes("/models")
           ? { models: [], favoriteProviders: [], favoriteModels: [] }
-          : url.includes("/settings") ? { taskPopupsBoardListOnly: false, openMobileTasksInPopup: params.get("openMobileTasksInPopup") === "true", taskDetailChatFirst, experimentalFeatures: { alphaUpdates: params.get("alpha") === "true" } }
+          : pathname === "/api/settings/scopes" ? { global: { experimentalFeatures: {} }, project: {} }
+          : pathname === "/api/settings/global" ? { experimentalFeatures: {} }
+          : url.includes("/settings") ? { taskPopupsBoardListOnly: false, openMobileTasksInPopup: params.get("openMobileTasksInPopup") === "true", taskDetailChatFirst, experimentalFeatures: {} }
             : url.includes("/agents") || url.includes("/nodes") ? []
               : [];
   return new Response(JSON.stringify(payload), { headers: { "content-type": "application/json" } });
@@ -194,18 +202,29 @@ window.fetch = async (input) => {
 
 const fixtureTitle = titleMode === "fit"
   ? "Fitting browser title"
-  : titleMode === "threshold"
-    ? "A threshold title whose real host width crosses the two line clamp"
-    : titleMode === "description" ? undefined : titleMode === "id" ? "" : "A browser measured task title that crosses the two line clamp threshold without changing the operator selected expanded state ".repeat(3);
-const fixtureDescription = titleMode === "description" ? "A browser measured description fallback that crosses the two line clamp threshold without changing the operator selected expanded state ".repeat(3) : titleMode === "id" ? "" : "Fixture description";
+  : titleMode === "description" ? undefined : titleMode === "id" ? "" : "A long editable browser task title that must remain absent from shared header chrome ".repeat(3);
+const fixtureDescription = titleMode === "description" ? "A browser description without a title remains primary Definition content. ".repeat(3) : titleMode === "id" ? "" : "Fixture description";
+/*
+FNXC:TaskDetailStructure 2026-09-12-23:26:
+La fixture Chromium des vrais hôtes contient une description, un PROMPT.md, des étapes de statuts variés et un Feed avec résultat et agent réel afin que les captures Définition, plan et Activity prouvent la hiérarchie livrée plutôt qu’une coquille vide.
+*/
 const fixtureTask = {
   id: titleMode === "id" ? "FN-8806" : "FN-TITLE-FLICKER",
   title: fixtureTitle,
   description: fixtureDescription,
   column: showContextualFooter ? "in-review" : "todo",
   status: "pending",
-  prompt: "",
-  steps: [],
+  prompt: structuredTaskDetail ? "# Delivery plan\n\n## Goal\n\nKeep the task detail structure readable in every host.\n\n## Verification\n\n- Inspect Definition\n- Open the full plan\n- Review Activity" : "",
+  steps: structuredTaskDetail ? [
+    { id: 1, name: "Inspect every task detail host", status: "done" },
+    { id: 2, name: "Open the full planning document", status: "in-progress" },
+    { id: 3, name: "Verify responsive activity logs", status: "pending" },
+  ] : [],
+  log: structuredTaskDetail ? [
+    { timestamp: "2026-09-12T22:30:00.000Z", action: "Started visual verification", outcome: "Desktop definition rendered", runContext: { agentId: "agent-executor" } },
+    { timestamp: "2026-09-12T22:35:00.000Z", action: "Opened the complete plan" },
+    { timestamp: "2026-09-12T22:40:00.000Z", action: "Checked Activity hierarchy", outcome: "Feed remains readable on mobile" },
+  ] : [],
   attachments: [],
   dependencies: [],
   createdAt: "2026-08-05T00:00:00.000Z",
@@ -214,10 +233,8 @@ const fixtureTask = {
 const fixtureColumnFlagsByTaskId = new Map([[fixtureTask.id, { hold: true }]]);
 
 /*
-FNXC:TaskDetailTitle 2026-08-05-18:48:
-The App pop-out browser route hydrates the same project and task caches used after a discarded
-session, so its board card exists on App's first render. This removes timing retries from the
-fixture while App still revalidates the stable mocked API data through its production hooks.
+FNXC:TaskDetailTitleRemoval 2026-09-13-11:59:
+The App pop-out browser route hydrates the same project and task caches used after a discarded session, so its board card exists on first render and the matrix can open the real title-free pop-out path without timing retries.
 */
 if (surface === "task-detail-title-app-floating" || surface === "board-card-click-app") {
   const savedAt = Date.now();
@@ -236,21 +253,16 @@ const detailProps = {
 };
 
 /*
-FNXC:TaskDetailTitle 2026-08-05-17:54:
-The Chromium fixture renders the production TaskDetailModal and embedded TaskDetailContent paths,
-not a title lookalike, so browser geometry can expose control-driven clamp feedback that jsdom does
-not calculate. The adapters keep API data inert while preserving the real heading, observer, and
-accessible control contract.
+FNXC:TaskDetailTitleRemoval 2026-09-13-11:59:
+The Chromium fixture renders production TaskDetailModal and embedded TaskDetailContent paths, not lookalikes, so browser checks can reject any surviving title heading or click target while preserving real Definition and edit behavior.
 */
 const noop = () => undefined;
 const asyncTask = async () => fixtureTask;
 const asyncMerge = async () => ({ success: true } as never);
 
 /*
-FNXC:TaskDetailTitle 2026-08-05-19:01:
-The browser regression must enter each production owner rather than wrapping TaskDetailContent in
-fixture-only geometry. These minimal adapters provide inert dependencies but retain AppModals,
-MainContent, ListView, the right-dock controller, and the task FloatingWindow render paths.
+FNXC:TaskDetailTitleRemoval 2026-09-13-11:59:
+The browser regression enters each production owner rather than wrapping TaskDetailContent in fixture-only geometry. These minimal adapters retain AppModals, MainContent, ListView, the right-dock controller, Alpha drawer, and task FloatingWindow paths.
 */
 function TaskDetailTitleModalHarness() {
   const modalManager = {
@@ -293,6 +305,14 @@ function TaskDetailTitleAppFloatingHarness() {
 
 function TaskDetailTitleEmbeddedHarness() {
   return <div data-testid="title-host-embedded" className="fn-8806-constrained-title-host" style={{ width: "24rem", height: "36rem" }}><TaskDetailContent {...detailProps} embedded /></div>;
+}
+
+/*
+FNXC:TaskDetailTitleRemoval 2026-09-13-11:59:
+The browser matrix mounts Task Detail's real Alpha drawer branch directly so its title-free shared header and stable dialog name are measured alongside the five desktop-owned production hosts.
+*/
+function TaskDetailTitleAlphaDrawerHarness() {
+  return <TaskDetailModal {...detailProps} alphaMobileDrawer onClose={noop} />;
 }
 
 function TaskDetailResizeHarness() {
@@ -386,7 +406,7 @@ function GenericFloatingWindowHarness() {
 
 function Fixture() {
   const appOwnsAlphaBoundary = surface === "task-detail-title-app-floating" || surface === "board-card-click-app";
-  const content = appOwnsAlphaBoundary ? <TaskDetailTitleAppFloatingHarness /> : surface === "agent-list-modal" ? <AgentListModal isOpen onClose={() => undefined} addToast={() => undefined} /> : surface === "setup-wizard-modal" ? <SetupWizardModal onProjectRegistered={() => undefined} onClose={() => undefined} /> : surface === "floating-window" ? <FloatingWindowHarness /> : surface === "floating-window-headerless" ? <HeaderlessFloatingWindowHarness /> : surface === "floating-window-generic" ? <GenericFloatingWindowHarness /> : surface === "task-detail-title-modal" ? <TaskDetailTitleModalHarness /> : surface === "task-detail-title-main-panel" ? <TaskDetailTitleMainPanelHarness /> : surface === "task-detail-title-list" ? <TaskDetailTitleListHarness /> : surface === "task-detail-title-dock" ? <TaskDetailTitleDockHarness /> : surface === "task-detail-title-embedded" ? <TaskDetailTitleEmbeddedHarness /> : surface === "task-detail" ? <TaskDetailResizeHarness /> : <NewTaskModal
+  const content = appOwnsAlphaBoundary ? <TaskDetailTitleAppFloatingHarness /> : surface === "settings-official" ? <SettingsModal onClose={() => undefined} addToast={() => undefined} initialSection="experimental" /> : surface === "agent-list-modal" ? <AgentListModal isOpen onClose={() => undefined} addToast={() => undefined} /> : surface === "setup-wizard-modal" ? <SetupWizardModal onProjectRegistered={() => undefined} onClose={() => undefined} /> : surface === "floating-window" ? <FloatingWindowHarness /> : surface === "floating-window-headerless" ? <HeaderlessFloatingWindowHarness /> : surface === "floating-window-generic" ? <GenericFloatingWindowHarness /> : surface === "task-detail-title-modal" ? <TaskDetailTitleModalHarness /> : surface === "task-detail-title-main-panel" ? <TaskDetailTitleMainPanelHarness /> : surface === "task-detail-title-list" ? <TaskDetailTitleListHarness /> : surface === "task-detail-title-dock" ? <TaskDetailTitleDockHarness /> : surface === "task-detail-title-alpha-drawer" ? <TaskDetailTitleAlphaDrawerHarness /> : surface === "task-detail-title-embedded" ? <TaskDetailTitleEmbeddedHarness /> : surface === "task-detail" ? <TaskDetailResizeHarness /> : <NewTaskModal
     isOpen
     tasks={[]}
     onClose={() => undefined}

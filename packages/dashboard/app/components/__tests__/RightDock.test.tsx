@@ -1,9 +1,13 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import type { OverflowViewKey } from "../overflowViewRegistry";
+import { useCallback, useState } from "react";
 import {
   RightDock,
+  persistRightDockViewSelection,
+  readStoredRightDockView,
   RIGHT_DOCK_OPEN_STORAGE_KEY,
   RIGHT_DOCK_PINNED_STORAGE_KEY,
   RIGHT_DOCK_VIEW_STORAGE_KEY,
@@ -13,8 +17,14 @@ import {
 } from "../RightDock";
 import { RightDockExpandModal } from "../RightDockExpandModal";
 import { useRightDockController, type RightDockControllerInput } from "../useRightDockController";
+import { AppFilesModal, openAppFileInBrowser } from "../AppModals";
+import { useModalManager } from "../../hooks/useModalManager";
 
-const taskDetailRenderSpy = vi.hoisted(() => vi.fn());
+const { taskDetailRenderSpy, fetchWorkspaceFileListMock, fetchWorkspaceFileContentMock } = vi.hoisted(() => ({
+  taskDetailRenderSpy: vi.fn(),
+  fetchWorkspaceFileListMock: vi.fn(),
+  fetchWorkspaceFileContentMock: vi.fn(),
+}));
 
 vi.mock("../TaskDetailModal", () => ({
   TaskDetailContent: ({ task, projectId }: { task: { id: string; title?: string }; projectId?: string }) => {
@@ -35,7 +45,8 @@ vi.mock("../../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../api")>();
   return {
     ...actual,
-    fetchWorkspaceFileList: vi.fn().mockResolvedValue({ entries: [], currentPath: "." }),
+    fetchWorkspaceFileList: fetchWorkspaceFileListMock,
+    fetchWorkspaceFileContent: fetchWorkspaceFileContentMock,
   };
 });
 
@@ -46,8 +57,30 @@ const renderProps = {
 
 const rightDockCss = readFileSync(resolve(__dirname, "../RightDock.css"), "utf8");
 
-function TestRightDock(props: Omit<RightDockProps, "pinned" | "onTogglePin"> & Partial<Pick<RightDockProps, "pinned" | "onTogglePin">>) {
-  return <RightDock pinned={false} onTogglePin={vi.fn()} {...props} />;
+/*
+FN-382: the selected tool is owned OUTSIDE the dock (useRightDockController) so navigation can open one from
+elsewhere. This harness mirrors that owner — initial value read from storage, persisted on change — so these tests
+exercise the real controlled contract rather than a second, dock-local source of truth.
+*/
+function TestRightDock(props: Omit<RightDockProps, "pinned" | "onTogglePin" | "selectedKey" | "onSelectKey"> & Partial<Pick<RightDockProps, "pinned" | "onTogglePin" | "selectedKey" | "onSelectKey">>) {
+  const { selectedKey: controlledKey, onSelectKey, visibilityOptions, ...rest } = props;
+  const [ownedKey, setOwnedKey] = useState<OverflowViewKey>(() => readStoredRightDockView(visibilityOptions ?? {}));
+  const selectedKey = controlledKey ?? ownedKey;
+  const handleSelect = useCallback((key: OverflowViewKey) => {
+    setOwnedKey(key);
+    persistRightDockViewSelection(key);
+    onSelectKey?.(key);
+  }, [onSelectKey]);
+  return (
+    <RightDock
+      pinned={false}
+      onTogglePin={vi.fn()}
+      visibilityOptions={visibilityOptions}
+      selectedKey={selectedKey}
+      onSelectKey={handleSelect}
+      {...rest}
+    />
+  );
 }
 
 /*
@@ -82,6 +115,8 @@ describe("RightDock", () => {
   beforeEach(() => {
     window.localStorage.clear();
     vi.clearAllMocks();
+    fetchWorkspaceFileListMock.mockResolvedValue({ entries: [], currentPath: "." });
+    fetchWorkspaceFileContentMock.mockResolvedValue({ content: "Guide de production", mtime: "2026-09-13T08:37:00Z" });
     // FNXC:Navigation 2026-07-03-09:40: the dock now defaults to HIDDEN, so controller-driven Harness
     // tests below (which exercise open-dock behavior) represent an opted-in operator and must seed the
     // stored "open" preference. Tests that render <RightDock open={...}/> directly are unaffected.
@@ -736,6 +771,72 @@ describe("RightDock", () => {
     // Its own close button still dismisses it.
     fireEvent.click(screen.getByTestId("right-dock-expand-close"));
     expect(screen.queryByTestId("right-dock-expand-modal")).toBeNull();
+  });
+
+  it.each([
+    ["compact", 1024],
+    ["compact", 375],
+    ["expanded", 1024],
+    ["expanded", 375],
+  ] as const)("ouvre depuis l’hôte Files %s à %ipx via la chaîne App sans seconde liste", async (host, width) => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: width });
+    fetchWorkspaceFileListMock.mockResolvedValue({
+      entries: [{ name: "docs/guide.md", type: "file", size: 42, mtime: "2026-09-13T08:37:00Z" }],
+      currentPath: ".",
+    });
+    const pushNav = vi.fn();
+
+    function Harness() {
+      const modalManager = useModalManager({ projectId: "project-1", planningSessions: [] });
+      const controller = useRightDockController({
+        active: true,
+        projectId: "project-1",
+        addToast: vi.fn(),
+        settingsLoaded: true,
+        researchReadinessVersion: 0,
+        tasks: [],
+        workflowSteps: [],
+        subscribePluginEvents: () => () => {},
+        openDetailTask: vi.fn(),
+        openFileInBrowser: (path, opts) => openAppFileInBrowser(modalManager, pushNav, path, opts),
+        openSettings: vi.fn(),
+        onSendSelectionToTask: vi.fn(),
+        onCreateTaskFromInsight: vi.fn(),
+        onNavigateToMission: vi.fn(),
+        onTaskCreated: vi.fn(),
+        prAuthAvailable: false,
+        autoMerge: false,
+        visibilityOptions: {},
+        footerVisible: false,
+      } as unknown as RightDockControllerInput);
+      return (
+        <>
+          {controller.dock}
+          {controller.modal}
+          <AppFilesModal modalManager={modalManager} projectId="project-1" onClose={modalManager.closeFiles} />
+        </>
+      );
+    }
+
+    render(<Harness />);
+    if (host === "expanded") {
+      fireEvent.click(screen.getByTestId("right-dock-expand"));
+    }
+
+    const source = host === "expanded"
+      ? screen.getByTestId("right-dock-expand-body")
+      : screen.getByTestId("right-dock-files-view");
+    fireEvent.click(await within(source).findByText("docs/guide.md"));
+
+    await waitFor(() => expect(screen.getByLabelText("Editor for docs/guide.md")).toBeInTheDocument());
+    expect(fetchWorkspaceFileContentMock).toHaveBeenCalledWith("project", "docs/guide.md", "project-1");
+    expect(pushNav).toHaveBeenCalledWith(expect.objectContaining({ type: "modal" }));
+    const fileModal = document.querySelector(".file-browser-modal");
+    expect(fileModal).toBeInTheDocument();
+    expect(fileModal?.querySelector(".file-browser-sidebar")).not.toBeInTheDocument();
+    expect(fileModal?.querySelector(".file-browser-resize-handle")).not.toBeInTheDocument();
+    expect(fileModal?.querySelector(".file-browser-back-button")).not.toBeInTheDocument();
+    expect(within(source).getByText("docs/guide.md")).toBeInTheDocument();
   });
 
   it("développe la liste Files sans rouvrir une sélection inline obsolète", () => {

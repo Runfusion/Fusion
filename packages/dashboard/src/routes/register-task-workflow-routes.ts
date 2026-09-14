@@ -113,6 +113,8 @@ import {
   planTaskWorktreePath,
   describeFileScopeOverlapBlocker,
   promoteHeldTask,
+  admitTaskToWip,
+  isFirstPlanningToWipAdmission,
   evaluateTaskReleaseGate,
   performTaskRevert,
   revertWorkspaceTask,
@@ -2462,13 +2464,26 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       every workflow-defined column outright — a board built on a custom workflow could not move a
       card into its own `Merging` column, the API answered 400 "Must be one of: triage, todo, ...".
       That is the closed-enum blocker the cutover exists to remove.
-      Resolution failure or a v1 (columnless) IR falls back to the legacy set, so the default
-      workflow and older definitions behave exactly as before.
+      A v1 (columnless) IR falls back to the legacy set, so older definitions behave exactly as
+      before. Workflow resolution itself is fail-closed because without the task's traits this
+      route cannot distinguish a harmless board move from a first admission into execution.
+
+      FNXC:PlanPremises 2026-09-13-05:28:
+      A transient workflow-resolution failure must never downgrade a public move to the legacy raw
+      move path. Refuse retryably before allocation or mutation until the admission can be classified.
       */
       if (typeof column !== "string" || !column) {
         throw badRequest("Invalid column. Expected a non-empty column id.");
       }
-      const moveTargetIr = await resolveWorkflowIrForTask(scopedStore, req.params.id).catch(() => undefined);
+      const moveWorkflow = await resolveWorkflowIrForTaskWithProvenance(scopedStore, req.params.id).catch(() => undefined);
+      if (!moveWorkflow || (moveWorkflow.source === "default" && moveWorkflow.selectionAbsent !== true)) {
+        throw new ApiError(503, "The task workflow is temporarily unavailable. Retry this move.", {
+          code: "workflow-resolution-unavailable",
+          messageKey: "board.rejection.unplannedForExecution",
+          retryable: true,
+        });
+      }
+      const moveTargetIr = moveWorkflow.ir;
       const declaresColumns = Array.isArray((moveTargetIr as { columns?: unknown[] } | undefined)?.columns);
       const columnIsValid = moveTargetIr && declaresColumns
         ? workflowHasColumn(moveTargetIr, column)
@@ -2555,6 +2570,33 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         allocateWorktree,
         moveSource: "user" as const,
       };
+
+      if (targetIsWip && guardTask && moveTargetIr && isFirstPlanningToWipAdmission(moveTargetIr, guardTask.column, column)) {
+        const admission = await admitTaskToWip(
+          scopedStore,
+          { now: () => Date.now(), allocateWorktree: allocateWorktree ? (_task, reservedNames) => allocateWorktree(reservedNames) : undefined },
+          guardTask,
+          column,
+          moveTargetIr,
+          {
+            expectedColumn: expectedColumn ?? guardTask.column,
+            moveSource: "user",
+            workflowMoveSource: "dashboard-plan-premise-release",
+            preserveProgress,
+          },
+        );
+        if (!admission.released) {
+          const retryable = admission.rejection === "plan-premise-unavailable" || admission.rejection === "source-changed";
+          throw new ApiError(409, admission.detail ?? `Execution admission refused: ${admission.rejection ?? "release-gate"}`, {
+            code: admission.rejection ?? "release-gate-refused",
+            messageKey: "board.rejection.unplannedForExecution",
+            retryable,
+          });
+        }
+        res.json(admission.task);
+        return;
+      }
+
       if (expectedColumn === undefined) {
         const task = await scopedStore.moveTask(req.params.id, column as Column, moveOptions);
         res.json(task);

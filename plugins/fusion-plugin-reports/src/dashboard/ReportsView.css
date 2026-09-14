@@ -4,7 +4,6 @@
   gap: var(--space-md);
   padding: var(--space-lg);
 }
-.reports-view-header { display: flex; justify-content: space-between; align-items: center; }
 .reports-filters { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: var(--space-sm); }
 .reports-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: var(--space-md); }
 .reports-list { display: flex; flex-direction: column; gap: var(--space-sm); }

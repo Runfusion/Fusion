@@ -48,9 +48,18 @@ The gray top header band (task id + column badge) was over-padded. Trim its vert
   padding-block: var(--space-sm);
 }
 
+.detail-header-copy {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-inline-size: 0;
+  gap: var(--space-xs);
+}
+
 .detail-title-row {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--space-sm);
 }
 
@@ -194,99 +203,76 @@ Task-detail tabs share the `.detail-body` outer content inset so switching Activ
   min-height: 0;
 }
 
-.detail-title {
-  font-size: 18px;
-  font-weight: 600;
-  margin-bottom: var(--space-md);
-  overflow-wrap: anywhere;
-  word-break: break-word;
-  position: relative;
-}
-
 /*
-FNXC:TaskDetailTitle 2026-08-05-17:54:
-The measured text stays in flow while the interactive overlay changes state, so eligibility has
-one geometry in every task-detail host instead of depending on whether its button is present.
+FNXC:TaskDetailDefinition 2026-09-13-11:59:
+La synthèse du titre appartient désormais à l’en-tête de la section Description, jamais au header permanent de Task Detail. Elle réutilise la pile btn/btn-icon/btn-sm; ce CSS ne conserve que son placement dans la section.
 */
-.detail-title-measurement {
-  display: block;
-}
-
-.detail-title--collapsed .detail-title-measurement {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  overflow: hidden;
-}
-
-/*
-FNXC:TaskDetail 2026-06-22-20:00:
-Summarize-as-title is an in-field affordance, not a separate full-width row: it sits inline with the title, pinned to the far right and bottom of the title area. Use a nowrap flex row where the title flexes to fill and the button is pushed right (margin-left:auto) and bottom-aligned (align-self:flex-end). The button shrinks to its content so it never steals title space.
-*/
-.detail-heading-row {
-  display: flex;
-  align-items: flex-end;
-  flex-wrap: nowrap;
-  gap: var(--space-sm);
-  margin-bottom: var(--space-md);
-}
-
-.detail-heading-row .detail-title {
-  margin-bottom: 0;
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.detail-title-control {
-  display: block;
-  width: 100%;
-  position: absolute;
-  inset: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: transparent;
-  font: inherit;
-  text-align: inherit;
-  cursor: pointer;
-}
-
-.detail-title-control:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring-strong);
-  border-radius: var(--radius-sm);
-}
-
-.detail-summarize-title-btn {
-  display: inline-flex;
+.detail-definition-header {
+  inline-size: 100%;
   align-items: center;
-  gap: var(--space-xs);
-  background: none;
-  border: none;
-  color: var(--text-dim);
-  font-size: 0.8125rem;
-  padding: 0;
-  cursor: pointer;
-  text-align: right;
-  margin-left: auto;
+}
+
+/*
+FNXC:TaskDetailHeader 2026-09-13-12:41:
+The icon-and-text Summarize action keeps the shared compact icon-button stack without inheriting a legacy icon-only fixed width. Its full localized label must remain visible beside Description in every narrow Task Detail host.
+*/
+.detail-summarize-title-btn.btn.btn-icon.btn-sm {
+  margin-inline-start: auto;
   align-self: flex-end;
   flex: 0 0 auto;
+  inline-size: auto;
+  line-height: normal;
   white-space: nowrap;
 }
 
-.detail-summarize-title-btn:hover:not(:disabled) {
-  color: var(--text);
+.detail-definition-description {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-md);
 }
 
-.detail-summarize-title-btn:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring-strong);
+.detail-definition-description .markdown-body {
+  inline-size: 100%;
+  color: var(--text-muted);
 }
 
-.detail-summarize-title-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+.detail-definition-description .markdown-body > :first-child,
+.detail-section--plan-prompt .markdown-body > :first-child {
+  margin-block-start: 0;
+}
+
+.detail-definition-description .markdown-body > :last-child,
+.detail-section--plan-prompt .markdown-body > :last-child {
+  margin-block-end: 0;
+}
+
+.detail-read-plan,
+.detail-plan-back {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.detail-plan-document {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  min-inline-size: 0;
+}
+
+.detail-plan-document-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.detail-plan-back span {
+  font-family: var(--font-mono);
+}
+
+.detail-body--plan-document {
+  padding-block-start: var(--space-md);
 }
 
 /*
@@ -370,14 +356,6 @@ Task provenance, undo and PR context, timestamps, and workflow identity live tog
 }
 
 @media (max-width: 768px) {
-  /*
-  FNXC:TaskDetail 2026-06-22-20:00:
-  Keep summarize-as-title pinned bottom-right inline with the title on mobile too (no wrap to a separate row), matching the desktop in-field affordance.
-  */
-  .detail-heading-row {
-    align-items: flex-end;
-  }
-
   .detail-summarize-title-btn {
     flex-shrink: 0;
   }
@@ -1265,8 +1243,20 @@ Expanded Planner Chat reserves the narrow task-detail surface for the conversati
 FNXC:TaskDetailShell 2026-09-12-02:34:
 Chat et Activity Live publient leurs contrôles dans l'unique footer direct du shell. Le transcript garde ainsi seul la responsabilité du scroll, tandis que Feed et Raw ne montent aucun footer vide.
 */
-.task-detail-chat-footer {
-  display: block;
+/*
+FNXC:TaskDetailShell 2026-09-14-03:31:
+The selector carries BOTH classes on purpose. `.modal-actions` in styles.css is `display: flex` with the default row
+direction, and main.tsx evaluates App (hence every component stylesheet) before styles.css, so an equal-specificity
+`.task-detail-chat-footer` rule loses the cascade and the footer silently became a row: the pending-message queue
+rendered to the LEFT of the composer instead of stacked above it. Two classes win regardless of injection order, and
+the stack direction is stated explicitly rather than inherited from a block-layout assumption.
+*/
+.modal-actions.task-detail-chat-footer {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: var(--space-sm);
 }
 
 .task-detail-chat-footer > * {
@@ -1417,34 +1407,18 @@ that boundary drag and resize, so its inner panel must fill the floating host ra
 }
 
 /*
-FNXC:TaskDetailSwipeBack 2026-07-05-12:30:
-FN-7587 — non-interactive predictive-back polish: a short slide/fade enter animation for the
-mobile list/modal/nested task-detail surface, layered purely on top of the unchanged
-FN-7583/FN-7586 dismissal routing (popstate / fusion:native-back / useNavigationHistory stack).
-Gated to mobile via `.task-detail-modal--mobile-transition` (TaskDetailModal.tsx local resize
-listener); desktop never receives this class. A true finger-tracked interactive predictive-back
-is not feasible from a Capacitor single-page WebView today — see task FN-7587 notes.
+FNXC:MobileDrawerMotion 2026-09-12-20:37:
+Standard mobile Task Detail shares the bottom-edge rise used by Alpha drawers, while the Alpha Task Detail composition leaves motion to its outer shell. The viewport class gate and reduced-motion override preserve desktop, tablet, and motion-sensitive presentations without changing dismissal routing.
+
+FNXC:MobileDrawerMotion 2026-09-12-21:02:
+The canonical viewport-mode attribute keeps standard Task Detail animated on phone-class landscape screens whose CSS width exceeds the portrait breakpoint. Reduced motion remains authoritative for every mobile orientation.
 */
-@media (max-width: 768px) {
-  .task-detail-modal--mobile-transition {
-    animation: task-detail-modal-mobile-slide-fade-in var(--duration-normal) ease-out;
-  }
-}
-
-@keyframes task-detail-modal-mobile-slide-fade-in {
-  from {
-    opacity: 0;
-    transform: translateX(var(--space-xl, 24px));
-  }
-
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
+html[data-viewport-mode="mobile"] .task-detail-modal--mobile-transition {
+  animation: alpha-mobile-drawer-rise-in var(--duration-normal) ease-out;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .task-detail-modal--mobile-transition {
+  html[data-viewport-mode="mobile"] .task-detail-modal--mobile-transition {
     animation: none;
   }
 }
@@ -1520,27 +1494,12 @@ Embedded in the full-width board-card panel the detail content must be width-bou
 }
 
 /*
-FNXC:TaskDetail 2026-06-22-18:40:
-"Back to board" affordance inside the gray header. margin-left:auto pushes it to the far right (across from the task id on the left); it shares the header-actions row but stays pinned right and wraps when space is tight. Theme tokens only.
+FNXC:TaskDetailDrawerNavigation 2026-09-12-20:37:
+The desktop Board-panel Back to board affordance sits at the far right of the gray header and wraps when space is tight. Alpha mobile omits the element entirely, so these token-only styles cannot leave an empty shell.
 */
 .task-detail-header-back-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-xs);
-  margin-left: auto;
-  padding: var(--space-xs) var(--space-sm);
-  font-size: 13px;
-  color: var(--text-muted);
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
+  margin-inline-start: auto;
   white-space: nowrap;
-}
-
-.task-detail-header-back-btn:hover {
-  color: var(--text);
-  background: var(--card-hover);
 }
 
 /* Embedded header overflow opens below its trigger, matching every Task Detail host. */
@@ -2382,8 +2341,8 @@ stretches it on touch layouts, preserving a clear tap target without creating a 
 /* === Modal Edit Mode Styles === */
 
 /*
-FNXC:TaskDetailHeaderActions 2026-09-11-17:35:
-The canonical Task Detail header keeps lifecycle actions, secondary overflow, host utilities, and close/back controls in one non-draggable, wrapping group. Icon-only actions use the shared button geometry and accessible names; danger actions retain a distinct border treatment in addition to their glyph and color.
+FNXC:TaskDetailHeaderActions 2026-09-13-11:59:
+The canonical Task Detail header keeps lifecycle actions, secondary overflow, host utilities, and close/back controls in one non-draggable, wrapping group. Every icon/action control inherits btn/btn-icon/btn-sm geometry and an accessible name; only the semantic mobile Back action stays outside that stack, while danger actions retain a distinct border treatment.
 */
 .modal-header-actions {
   display: flex;
@@ -2397,11 +2356,6 @@ The canonical Task Detail header keeps lifecycle actions, secondary overflow, ho
 .task-detail-header-action {
   flex: 0 0 auto;
   touch-action: manipulation;
-}
-
-.task-detail-header-action svg {
-  width: var(--icon-size-sm);
-  height: var(--icon-size-sm);
 }
 
 .task-detail-header-action--danger {
@@ -2433,33 +2387,6 @@ The canonical Task Detail header keeps lifecycle actions, secondary overflow, ho
 .task-detail-mobile-back svg {
   width: 1em;
   height: 1em;
-}
-
-.modal-edit-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  background: transparent;
-  border: none;
-  border-radius: var(--radius-sm);
-  color: var(--text-muted);
-  cursor: pointer;
-  transition:
-    background var(--transition-fast),
-    color var(--transition-fast);
-}
-
-.modal-edit-btn:hover {
-  background: var(--border);
-  color: var(--text);
-}
-
-.modal-edit-btn:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring-strong);
 }
 
 .modal-edit-form {
@@ -2569,8 +2496,8 @@ FNXC:TaskDetailTabs 2026-06-21-00:00:
 The mobile global `* { touch-action: pan-y; }` lock from FN-6365 prevents horizontal swipe gestures unless each known horizontal scroller opts back into pan-x.
 The overflowing task-detail tab strip must keep horizontal touch panning enabled so conditional and plugin tabs remain reachable on narrow touch viewports (FN-6864), matching the FN-6450 agent-detail tab precedent.
 
-FNXC:TaskDetailTabs 2026-06-22-18:00:
-Remove the divider between the tab selector and the detail area below. Keep the active-tab underline as the only local selection affordance.
+FNXC:TaskDetailTabs 2026-09-12-22:52:
+Task Detail destinations use a pill group on the shared tokenized surface. The selected pill is raised rather than underlined, while overflow, canonical ordering, keyboard focus, mouse drag, and native touch panning retain their existing behavior.
 
 FNXC:TaskDetailTabs 2026-06-25-16:55:
 Task-detail tabs must remain reachable as a one-row horizontal scroller on mobile across the Board modal and List embedded pane. The tab strip is the scroller, opts out of the global mobile pan-y lock with pan-x pan-y, and keeps tab children non-shrinking so conditional and plugin tabs overflow-scroll instead of clipping or compressing.
@@ -2584,9 +2511,9 @@ The tab strip is a fixed shell zone immediately below the canonical header, outs
 .detail-tabs {
   display: flex;
   flex: 0 0 auto;
-  gap: 0;
-  width: 100%;
-  max-inline-size: 100%;
+  gap: var(--space-xs);
+  width: calc(100% - (var(--modal-padding) * 2));
+  max-inline-size: calc(100% - (var(--modal-padding) * 2));
   min-width: 0;
   overflow-x: auto;
   overflow-y: hidden;
@@ -2594,25 +2521,28 @@ The tab strip is a fixed shell zone immediately below the canonical header, outs
   touch-action: pan-x pan-y;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: thin;
-  margin: 0;
-  padding-inline: var(--modal-padding);
+  margin: var(--space-sm) var(--modal-padding);
+  padding: var(--space-xs);
+  border-radius: var(--radius-pill);
+  background: var(--bg-secondary);
 }
 
 .detail-tab {
   flex-shrink: 0;
   touch-action: pan-x pan-y;
   padding: var(--space-sm) var(--space-lg);
-  background: none;
+  background: transparent;
   border: none;
-  border-bottom: 2px solid transparent;
+  border-radius: var(--radius-pill);
   color: var(--text-muted);
   cursor: pointer;
-  font-size: 14px;
-  font-weight: 400;
+  font-size: var(--font-size-sm);
+  font-weight: 500;
   font-family: inherit;
   transition:
     color var(--transition-fast),
-    border-color var(--transition-fast);
+    background-color var(--transition-fast),
+    box-shadow var(--transition-fast);
 }
 
 .detail-tab:hover {
@@ -2621,12 +2551,12 @@ The tab strip is a fixed shell zone immediately below the canonical header, outs
 .detail-tab:focus-visible {
   box-shadow: var(--focus-ring-strong);
   outline: none;
-  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
 }
 
 .detail-tab-active {
-  border-bottom-color: var(--in-progress);
+  background: var(--surface);
   color: var(--text);
+  box-shadow: var(--shadow-sm);
   font-weight: 600;
 }
 
@@ -2929,10 +2859,6 @@ Feed's copy and expansion actions share one tokenized overlay group so the bound
     display: none;
   }
 
-  .detail-title {
-    font-size: 16px;
-  }
-
   /*
   FNXC:TaskDetailModalResponsive 2026-07-22-00:00:
   FN-8492 requires the task-detail footer to keep Actions, Move, and the
@@ -3059,12 +2985,6 @@ Feed's copy and expansion actions share one tokenized overlay group so the bound
     max-height: 200px;
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
-  }
-
-  /* Modal edit button: touch target on mobile */
-  .modal-edit-btn {
-    min-width: 36px;
-    min-height: 36px;
   }
 
   .task-detail-mobile-back {
@@ -3502,14 +3422,21 @@ Alpha Task Detail is one shared, mobile-first surface in modal, drawer, main-pan
   gap: var(--alpha-density-1);
 }
 
-[data-alpha-surface="true"] :is(.modal-edit-btn, .modal-close, .task-detail-header-back-btn) {
-  min-inline-size: var(--alpha-touch-height);
-  min-block-size: var(--alpha-touch-height);
+/*
+FNXC:TaskDetailHeaderActions 2026-09-13-14:21:
+Task Detail's always-active Alpha boundary must preserve one rendered geometry for direct, overflow, edit, pop-out, and close controls. Keep their shared btn-sm dimensions above the mobile breakpoint, then enlarge every header action together to the Alpha touch target; semantic Back controls retain content width while sharing the same height.
+*/
+[data-alpha-surface="true"] :is(.task-detail-header-action, .modal-close, .task-detail-header-back-btn) {
   border-radius: var(--radius-md);
   color: var(--alpha-neutral-muted);
 }
 
-[data-alpha-surface="true"] :is(.modal-edit-btn, .modal-close, .task-detail-header-back-btn):is(:hover, :focus-visible) {
+[data-alpha-surface="true"] .task-detail-header-back-btn {
+  inline-size: auto;
+  line-height: normal;
+}
+
+[data-alpha-surface="true"] :is(.task-detail-header-action, .modal-close, .task-detail-header-back-btn):is(:hover, :focus-visible) {
   background: var(--alpha-neutral-surface-secondary);
   color: var(--alpha-neutral-foreground);
 }
@@ -3520,15 +3447,22 @@ Alpha Task Detail is one shared, mobile-first surface in modal, drawer, main-pan
   padding: var(--alpha-density-3);
 }
 
+/*
+FNXC:TaskDetailStructure 2026-09-12-23:45:
+Les pills Alpha occupent l’espace intérieur disponible dans chaque hôte sans ajouter leurs marges à une largeur déjà égale à 100 %. Le scroller garde ainsi ses onglets hors du débordement de la fiche, y compris en split et dock étroits.
+*/
 [data-alpha-surface="true"] .detail-tabs {
   position: sticky;
   inset-block-start: 0;
   z-index: var(--z-sticky);
   gap: var(--alpha-density-1);
-  margin-block-end: var(--alpha-density-3);
-  padding-inline: var(--alpha-density-3);
-  background: transparent;
+  inline-size: calc(100% - (var(--alpha-density-3) * 2));
+  max-inline-size: calc(100% - (var(--alpha-density-3) * 2));
+  margin: var(--alpha-density-2) var(--alpha-density-3) var(--alpha-density-3);
+  padding: var(--alpha-density-1);
+  background: var(--alpha-neutral-surface-secondary);
   border: 0;
+  border-radius: var(--radius-pill);
   scrollbar-width: none;
 }
 
@@ -3540,8 +3474,7 @@ Alpha Task Detail is one shared, mobile-first surface in modal, drawer, main-pan
   min-block-size: var(--alpha-control-height);
   padding: var(--alpha-density-2) var(--alpha-density-3);
   border: 0;
-  border-block-end: var(--btn-border-width) solid transparent;
-  border-radius: 0;
+  border-radius: var(--radius-pill);
   background: transparent !important;
   color: var(--alpha-neutral-muted) !important;
   white-space: nowrap;
@@ -3553,9 +3486,9 @@ Alpha Task Detail is one shared, mobile-first surface in modal, drawer, main-pan
 }
 
 [data-alpha-surface="true"] .detail-tab-active {
-  border-block-end-color: var(--alpha-accent-background);
-  background: transparent !important;
+  background: var(--alpha-neutral-surface) !important;
   color: var(--alpha-neutral-foreground) !important;
+  box-shadow: var(--shadow-sm);
   font-weight: 600;
 }
 
@@ -3567,7 +3500,7 @@ Alpha Task Detail is one shared, mobile-first surface in modal, drawer, main-pan
   box-shadow: var(--shadow-sm);
 }
 
-[data-alpha-surface="true"] :is(.detail-title, .detail-section h3, .detail-section h4) {
+[data-alpha-surface="true"] :is(.detail-section h3, .detail-section h4) {
   color: var(--alpha-neutral-foreground);
 }
 
@@ -3612,11 +3545,33 @@ Alpha Task Detail is one shared, mobile-first surface in modal, drawer, main-pan
     padding-block: var(--alpha-density-1);
   }
 
+  [data-alpha-surface="true"] :is(.task-detail-header-action, .modal-close, .task-detail-header-back-btn) {
+    min-inline-size: var(--alpha-touch-height);
+    min-block-size: var(--alpha-touch-height);
+  }
+
+  /*
+  FNXC:TaskDetailResponsiveChrome 2026-09-13-22:40:
+  Phone Task Detail adds the shared ChevronLeft before task identity, so the header row must absorb it by
+  letting the action cluster shrink and wrap. Pinning the cluster to its intrinsic width pushed the surface
+  past the viewport and reintroduced horizontal document overflow.
+  */
+  [data-alpha-surface="true"] > .task-detail-content > .modal-header {
+    flex-wrap: wrap;
+  }
+
+  [data-alpha-surface="true"] .modal-header-actions {
+    flex: 0 1 auto;
+    min-inline-size: 0;
+  }
+
   [data-alpha-surface="true"] .detail-body {
     padding: var(--alpha-density-2);
   }
 
   [data-alpha-surface="true"] .detail-tabs {
+    inline-size: 100%;
+    max-inline-size: 100%;
     margin-inline: 0;
     border-inline: 0;
     border-radius: 0;

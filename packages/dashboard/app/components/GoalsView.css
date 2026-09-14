@@ -14,7 +14,7 @@ The title row now comes from the shared .view-header (which supplies the --space
   min-height: 0;
   min-width: 0;
   width: 100%;
-  overflow-y: auto;
+  overflow: hidden;
   -webkit-overflow-scrolling: touch;
 }
 
@@ -38,6 +38,37 @@ Bump the top padding from var(--space-lg) to var(--space-xl) so the first card/w
 .goals-count {
   margin: 0;
   color: var(--text-muted);
+}
+
+/*
+FNXC:GoalsCollectionLayout 2026-09-13-16:29:
+The goal rail uses the shared bounded sidebar while the selected card remains the only detail document. Rows retain status context without copying edit or mission-link controls into a second controller.
+*/
+.goals-sidebar-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-sm);
+}
+
+.goals-sidebar-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-xs);
+  width: 100%;
+  padding: var(--space-sm);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.goals-sidebar-row:hover,
+.goals-sidebar-row.active {
+  background: var(--surface-2);
 }
 
 /*

@@ -3352,7 +3352,8 @@ describe("TaskChatTab", () => {
     const mainContentSource = readFileSync(resolve(__dirname, "../dashboard/MainContent.tsx"), "utf8");
     const hostSource = readFileSync(resolve(__dirname, "../TaskDetailHostBoundaries.tsx"), "utf8");
 
-    expect(listSource).toContain("<ListSplitTaskDetailHost");
+    // FN-382: List delegates to its host's detail layer instead of mounting a split host of its own.
+    expect(listSource).not.toContain("<ListSplitTaskDetailHost");
     expect(hostSource).toContain('className="list-split-detail-content"');
     expect(hostSource).toContain("<TaskDetailContent");
     expect(hostSource).toContain("embedded");

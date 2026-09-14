@@ -1,4 +1,4 @@
-import { ModalCloseButton } from "./ModalCloseButton";
+import { ViewHeader } from "./ViewHeader";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import "./SettingsSyncConflictModal.css";
@@ -224,10 +224,14 @@ export function SettingsSyncConflictModal({
         aria-modal="true"
         aria-label={t("settings.conflictModalTitle", "Resolve Settings Conflicts")}
       >
-        <div className="modal-header">
-          <h3>{t("settings.conflictModalTitle", "Resolve Settings Conflicts")}</h3>
-          <ModalCloseButton onClick={onClose} aria-label={t("settings.closeModal", "Close conflict modal")} />
-        </div>
+        {/* FNXC:StandardizedViewLayout 2026-09-13-21:49: Shared dialog chrome; `.modal-header` stays for the drag handle selector. */}
+        <ViewHeader
+          className="modal-header"
+          headingLevel={3}
+          title={t("settings.conflictModalTitle", "Resolve Settings Conflicts")}
+          onClose={onClose}
+          closeButtonProps={{ "aria-label": t("settings.closeModal", "Close conflict modal") }}
+        />
 
         <div className="modal-body">
           <div className="settings-sync-conflict-modal__conflict-list">

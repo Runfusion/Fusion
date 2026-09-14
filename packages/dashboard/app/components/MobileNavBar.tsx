@@ -1,5 +1,5 @@
 import "./MobileNavBar.css";
-import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import {
   Activity,
   Bot,
@@ -40,9 +40,10 @@ import type { PluginDashboardViewEntry, ScriptEntry } from "../api";
 import { useViewportMode } from "./Header";
 import { NavigationHistoryContext } from "../hooks/useNavigationHistory";
 import type { TaskView } from "../hooks/useViewState";
+import { getMobileKeyboardLayoutViewportHeight } from "../utils/mobileBarKeyboardFlags";
 import { buildPluginTaskViewId, isPluginViewId } from "../plugins/pluginViewRegistry";
 import { getPluginDashboardViewNavIcon } from "./pluginNavIcon";
-import { MOBILE_NAV_SELECTABLE_ITEMS, resolveMobileNavPrimaryItems, type MobileNavSelectableItem } from "../../../core/src/board/mobile-nav-primary-items";
+import { MOBILE_NAV_SELECTABLE_ITEMS, type MobileNavSelectableItem } from "../../../core/src/board/mobile-nav-primary-items";
 
 export interface PublishedMobileNavHeightInput {
   navOffsetHeight: number;
@@ -78,6 +79,50 @@ export function computePublishedMobileNavHeight({
   return Math.max(44, Math.ceil(contentHeight));
 }
 
+export interface MobileNavKeyboardMetrics {
+  keyboardOverlap: number;
+  viewportHeight: number | null;
+  viewportOffsetTop: number;
+}
+
+export function computeMobileNavKeyboardLift({
+  keyboardOpen,
+  keyboardOverlap,
+  viewportHeight,
+  viewportOffsetTop,
+  layoutViewportHeight,
+}: MobileNavKeyboardMetrics & { keyboardOpen: boolean; layoutViewportHeight: number }): number {
+  if (!keyboardOpen || viewportHeight === null) return 0;
+  const visualOcclusion = Math.max(0, layoutViewportHeight - viewportOffsetTop - viewportHeight);
+  return keyboardOverlap > 0 ? Math.min(keyboardOverlap, visualOcclusion) : visualOcclusion;
+}
+
+/*
+FNXC:MobilePillPopover 2026-09-13-10:03:
+The official pill and popover are sibling fixed surfaces, so both receive the complete geometry declaration directly. A root-computed custom-property chain cannot consume a lift overridden only on one sibling; publishing the same local chain keeps their shared edge responsive to every keyboard sample.
+
+FNXC:MobilePillPopover 2026-09-13-10:32:
+A shifted iOS visual viewport moves both its visible top and bottom. Publish that live top offset on both fixed siblings so the popover's CSS height cap cannot place its first controls above the visible viewport while the pill remains correctly lifted above the keyboard.
+*/
+export interface MobileNavGeometryStyle extends CSSProperties {
+  "--mobile-nav-floating-gap": string;
+  "--mobile-nav-keyboard-lift": string;
+  "--mobile-nav-viewport-offset-top": string;
+  "--mobile-nav-pill-bottom": string;
+  "--mobile-nav-popover-bottom": string;
+}
+
+export function createMobileNavGeometryStyle(keyboardLift: number, viewportOffsetTop = 0): MobileNavGeometryStyle {
+  const visibleViewportTop = Number.isFinite(viewportOffsetTop) ? Math.max(0, viewportOffsetTop) : 0;
+  return {
+    "--mobile-nav-floating-gap": "var(--space-sm)",
+    "--mobile-nav-keyboard-lift": `${keyboardLift}px`,
+    "--mobile-nav-viewport-offset-top": `${visibleViewportTop}px`,
+    "--mobile-nav-pill-bottom": "calc(var(--mobile-nav-alpha-system-offset) + var(--mobile-nav-floating-gap) + var(--mobile-nav-keyboard-lift))",
+    "--mobile-nav-popover-bottom": "calc(var(--mobile-nav-pill-bottom) + var(--mobile-nav-pill-height) + var(--space-xs))",
+  };
+}
+
 export interface MobileNavBarProps {
   /** Current task view mode */
   view: TaskView;
@@ -94,6 +139,8 @@ export interface MobileNavBarProps {
   hidden?: boolean;
   /** Whether the on-screen mobile keyboard is open */
   keyboardOpen?: boolean;
+  /** Existing visual-viewport metrics used to lift the official pill without a second observer. */
+  keyboardMetrics?: MobileNavKeyboardMetrics;
   // Navigation handlers
   onOpenSettings?: () => void;
   onOpenActivityLog?: () => void;
@@ -140,10 +187,6 @@ export interface MobileNavBarProps {
   };
   pluginDashboardViews?: PluginDashboardViewEntry[];
   shellConnectionControl?: ReactNode;
-  /** Ordered quick-action tabs; invalid values resolve to the safe default. */
-  mobileNavPrimaryItems?: string[];
-  /** Enables the fixed four-destination Alpha pill and its trailing overflow trigger. */
-  alphaUpdatesEnabled?: boolean;
   /** App-owned open state for the Alpha navigation popover. */
   alphaMenuOpen?: boolean;
   /** Updates the App-owned Alpha popover state. */
@@ -175,6 +218,7 @@ export function MobileNavBar({
   modalOpen = false,
   hidden = false,
   keyboardOpen = false,
+  keyboardMetrics,
   onOpenSettings,
   onOpenActivityLog,
   mailboxUnreadCount = 0,
@@ -200,8 +244,6 @@ export function MobileNavBar({
   experimentalFeatures,
   pluginDashboardViews = [],
   shellConnectionControl,
-  mobileNavPrimaryItems,
-  alphaUpdatesEnabled = false,
   alphaMenuOpen = false,
   onAlphaMenuOpenChange,
 }: MobileNavBarProps) {
@@ -225,8 +267,11 @@ export function MobileNavBar({
   } | null>(null);
   const dragOffsetRef = useRef(0);
   const menuSurfaceRef = useRef<HTMLDivElement | null>(null);
+  /* FN-382/MobileNav: holds the geometry in place for the whole open-menu gesture (see the freeze note below). */
+  const frozenGeometryRef = useRef<MobileNavGeometryStyle | null>(null);
   const menuTriggerRef = useRef<HTMLButtonElement | null>(null);
-  const isMenuOpen = alphaUpdatesEnabled ? alphaMenuOpen : isMoreOpen;
+  const officialDesignEnabled = true;
+  const isMenuOpen = alphaMenuOpen;
 
   /*
   FNXC:AlphaUpdates 2026-09-11-15:01:
@@ -236,7 +281,7 @@ export function MobileNavBar({
     setIsMoreOpen(false);
     setIsScriptsSubmenuOpen(false);
     onAlphaMenuOpenChange?.(false);
-  }, [alphaUpdatesEnabled, mode, onAlphaMenuOpenChange, projectId]);
+  }, [mode, onAlphaMenuOpenChange, projectId]);
 
   const scriptEntries = useMemo(
     () => [...scripts].sort((a, b) => a.name.localeCompare(b.name)),
@@ -276,13 +321,9 @@ export function MobileNavBar({
   const closeMore = useCallback(() => {
     resetSheetDrag();
     setHasSheetDragged(false);
-    if (alphaUpdatesEnabled) {
-      onAlphaMenuOpenChange?.(false);
-      menuTriggerRef.current?.focus();
-    } else {
-      setIsMoreOpen(false);
-    }
-  }, [alphaUpdatesEnabled, onAlphaMenuOpenChange, resetSheetDrag]);
+    onAlphaMenuOpenChange?.(false);
+    menuTriggerRef.current?.focus();
+  }, [onAlphaMenuOpenChange, resetSheetDrag]);
 
   /*
   FNXC:MobileNav 2026-07-16-14:30:
@@ -312,7 +353,7 @@ export function MobileNavBar({
   */
   useEffect(() => {
     const sheet = sheetRef.current;
-    if (alphaUpdatesEnabled || !isMoreOpen || !sheet) return;
+    if (officialDesignEnabled || !isMoreOpen || !sheet) return;
 
     const onTouchMove = (event: TouchEvent) => {
       const drag = sheetDragRef.current;
@@ -332,7 +373,7 @@ export function MobileNavBar({
 
     sheet.addEventListener("touchmove", onTouchMove, { passive: false });
     return () => sheet.removeEventListener("touchmove", onTouchMove);
-  }, [alphaUpdatesEnabled, isMoreOpen]);
+  }, [isMoreOpen, officialDesignEnabled]);
 
   const handleSheetTouchStart = useCallback((event: React.TouchEvent<HTMLDivElement>) => {
     const sheet = sheetRef.current;
@@ -385,9 +426,7 @@ export function MobileNavBar({
   useEffect(() => {
     if (!isMenuOpen) return;
 
-    if (alphaUpdatesEnabled) {
-      menuSurfaceRef.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
-    }
+    menuSurfaceRef.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") dismissMore();
@@ -399,10 +438,24 @@ export function MobileNavBar({
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target instanceof Element ? event.target : null;
       if (
-        !alphaUpdatesEnabled
+        !officialDesignEnabled
         || menuSurfaceRef.current?.contains(event.target as Node)
         || target?.closest(".alpha-mobile-menu-trigger")
       ) return;
+      /*
+      FNXC:MobileNav 2026-09-14-08:05:
+      Geometric fallback for the dismissal guard. On a phone the popover can re-anchor between touchstart and click
+      (URL-bar collapse moves the visual viewport), and DOM containment then reports a press on a menu entry as
+      "outside" — closing the menu with nothing behind it. A press whose coordinates fall inside the popover is a
+      press ON the menu whatever the DOM says, so it never dismisses.
+      */
+      const surface = menuSurfaceRef.current;
+      if (surface) {
+        const rect = surface.getBoundingClientRect();
+        const inside = event.clientX >= rect.left && event.clientX <= rect.right
+          && event.clientY >= rect.top && event.clientY <= rect.bottom;
+        if (inside) return;
+      }
       dismissMore();
     };
 
@@ -412,7 +465,7 @@ export function MobileNavBar({
       document.removeEventListener("keydown", onKeyDown);
       document.removeEventListener("pointerdown", onPointerDown);
     };
-  }, [alphaUpdatesEnabled, dismissMore, isMenuOpen]);
+  }, [dismissMore, isMenuOpen, officialDesignEnabled]);
 
   useLayoutEffect(() => {
     /*
@@ -424,6 +477,7 @@ export function MobileNavBar({
     */
     if (hidden) {
       document.documentElement.style.removeProperty("--mobile-nav-height");
+      document.documentElement.style.removeProperty("--mobile-nav-pill-height");
       return;
     }
 
@@ -443,7 +497,9 @@ export function MobileNavBar({
         tabHeights,
         floatingGap,
       });
+      const pillHeight = Math.max(44, navEl.offsetHeight, ...tabHeights.filter((height) => Number.isFinite(height)));
       document.documentElement.style.setProperty("--mobile-nav-height", `${publishedHeight}px`);
+      document.documentElement.style.setProperty("--mobile-nav-pill-height", `${Math.ceil(pillHeight)}px`);
     };
 
     publishMeasuredHeight();
@@ -459,8 +515,9 @@ export function MobileNavBar({
     return () => {
       observer?.disconnect();
       document.documentElement.style.removeProperty("--mobile-nav-height");
+      document.documentElement.style.removeProperty("--mobile-nav-pill-height");
     };
-  }, [alphaUpdatesEnabled, hidden, modalOpen, mode]);
+  }, [hidden, modalOpen, mode]);
 
   if (mode !== "mobile" || modalOpen || hidden) {
     return null;
@@ -490,7 +547,6 @@ export function MobileNavBar({
     .filter((entry) => !topLevelPluginViewKeys.has(`${entry.pluginId}:${entry.view.viewId}`))
     .sort((a, b) => (a.view.order ?? Number.MAX_SAFE_INTEGER) - (b.view.order ?? Number.MAX_SAFE_INTEGER));
 
-  const { primaryItems, omittedItems } = resolveMobileNavPrimaryItems({ mobileNavPrimaryItems });
   /*
   FNXC:Navigation 2026-07-17-00:00:
   Selectable mobile destinations use one registry so an available destination is rendered exactly once:
@@ -553,11 +609,9 @@ export function MobileNavBar({
   Board is the permanent Alpha mobile background, not a navigation destination. Keep the persisted standard-mobile `tasks` preference intact while excluding Tasks from both Alpha's four direct destinations and its overflow registry.
   */
   const alphaPrimaryItems: MobileNavSelectableItem[] = ["command-center", "planning", "chat", "mailbox"];
-  const effectivePrimaryItems = (alphaUpdatesEnabled ? alphaPrimaryItems : primaryItems)
-    .filter((item) => destinationRegistry[item].isAvailable);
-  const effectiveOmittedItems = (alphaUpdatesEnabled
-    ? MOBILE_NAV_SELECTABLE_ITEMS.filter((item) => !alphaPrimaryItems.includes(item) && item !== "patchnode" && item !== "tasks")
-    : omittedItems)
+  const effectivePrimaryItems = alphaPrimaryItems.filter((item) => destinationRegistry[item].isAvailable);
+  const effectiveOmittedItems = MOBILE_NAV_SELECTABLE_ITEMS
+    .filter((item) => !alphaPrimaryItems.includes(item) && item !== "patchnode" && item !== "tasks")
     .filter((item) => destinationRegistry[item].isAvailable);
   const isMoreActive = effectiveOmittedItems.some((item) => destinationRegistry[item].isActive)
     || view === "graph"
@@ -567,20 +621,46 @@ export function MobileNavBar({
     const destination = destinationRegistry[item];
     const isPrimary = surface === "primary";
     const label = t(destination.labelKey, destination.fallback);
-    if (isPrimary) return <button key={item} type="button" className={`mobile-nav-tab${destination.isActive ? " mobile-nav-tab--active" : ""}`} data-testid={`mobile-nav-tab-${item}`} role={alphaUpdatesEnabled ? undefined : "tab"} aria-label={label} aria-current={alphaUpdatesEnabled && destination.isActive ? "page" : undefined} aria-selected={alphaUpdatesEnabled ? undefined : destination.isActive} onClick={() => destination.navigate("primary")}><span className="mobile-nav-tab-icon-wrapper">{destination.icon}{destination.indicator && <span className="status-dot status-dot--pending mobile-nav-chat-unread-dot" aria-label={destination.indicatorLabel} />}</span>{!alphaUpdatesEnabled && <span className="mobile-nav-tab-label">{label}</span>}{destination.badge && destination.badge > 0 ? <span className="mobile-nav-tab-badge" aria-label={destination.badgeLabel}>{formatCount(destination.badge)}</span> : null}{destination.alpha ? <span className="mobile-nav-tab-badge">{t("common.alpha", "Alpha")}</span> : null}</button>;
+    if (isPrimary) return <button key={item} type="button" className={`mobile-nav-tab${destination.isActive ? " mobile-nav-tab--active" : ""}`} data-testid={`mobile-nav-tab-${item}`} role={undefined} aria-label={label} aria-current={destination.isActive ? "page" : undefined} aria-selected={undefined} onClick={() => destination.navigate("primary")}><span className="mobile-nav-tab-icon-wrapper">{destination.icon}{destination.indicator && <span className="status-dot status-dot--pending mobile-nav-chat-unread-dot" aria-label={destination.indicatorLabel} />}</span>{destination.badge && destination.badge > 0 ? <span className="mobile-nav-tab-badge" aria-label={destination.badgeLabel}>{formatCount(destination.badge)}</span> : null}{destination.alpha ? <span className="mobile-nav-tab-badge">{t("common.alpha", "Alpha")}</span> : null}</button>;
     return <button key={item} type="button" className="mobile-more-item" data-testid={destination.moreTestId} onClick={() => destination.navigate("more")}><span className="mobile-more-item-icon-wrapper">{destination.icon}{destination.indicator && <span className="status-dot status-dot--pending mobile-more-item-icon-dot" aria-label={destination.indicatorLabel} />}</span><span>{label}</span>{destination.badge && destination.badge > 0 ? <span className="mobile-more-item-badge" aria-label={destination.badgeLabel}>{formatCount(destination.badge)}</span> : null}{destination.alpha ? <span className="mobile-more-item-badge">{t("common.alpha", "Alpha")}</span> : null}</button>;
   };
+
+  const keyboardLift = computeMobileNavKeyboardLift({
+    keyboardOpen,
+    keyboardOverlap: keyboardMetrics?.keyboardOverlap ?? 0,
+    viewportHeight: keyboardMetrics?.viewportHeight ?? null,
+    viewportOffsetTop: keyboardMetrics?.viewportOffsetTop ?? 0,
+    layoutViewportHeight: getMobileKeyboardLayoutViewportHeight(),
+  });
+  /*
+  FNXC:MobileNav 2026-09-14-07:48:
+  Freeze the navigation geometry while the popover is open. Its position and max-height are anchored to
+  --mobile-nav-viewport-offset-top and 100dvh, both of which MOVE on a phone as soon as the user scrolls: the browser
+  collapses its URL bar, visualViewport reports a new offset, and the popover re-anchors between touchstart and click.
+  The tap then lands outside the moved surface, the outside-pointerdown guard dismisses the menu, and the destination
+  never opens — which is why only entries reached AFTER scrolling were affected. Holding the last geometry while the
+  menu is open keeps the surface still for the whole gesture; it is released on close, so keyboard lift and safe-area
+  tracking resume untouched everywhere else.
+  */
+  const liveGeometryStyle = createMobileNavGeometryStyle(
+    keyboardLift,
+    keyboardMetrics?.viewportOffsetTop ?? 0,
+  );
+  if (!isMenuOpen) frozenGeometryRef.current = null;
+  else if (!frozenGeometryRef.current) frozenGeometryRef.current = liveGeometryStyle;
+  const mobileNavGeometryStyle = frozenGeometryRef.current ?? liveGeometryStyle;
 
   return (
     <>
       <nav
         ref={navRef}
-        className={`mobile-nav-bar${alphaUpdatesEnabled ? " mobile-nav-bar--alpha" : ""}${footerVisible ? " mobile-nav-bar--with-footer" : ""}${keyboardOpen ? " mobile-nav-bar--keyboard-open" : ""}`}
-        role={alphaUpdatesEnabled ? "navigation" : "tablist"}
+        className={`mobile-nav-bar mobile-nav-bar--alpha${footerVisible ? " mobile-nav-bar--with-footer" : ""}${keyboardOpen ? " mobile-nav-bar--keyboard-open" : ""}`}
+        style={mobileNavGeometryStyle}
+        role="navigation"
         aria-label={t("nav.primaryNavAriaLabel", "Primary navigation")}
       >
         {effectivePrimaryItems.map((item) => renderSelectableItem(item, "primary"))}
-        {!alphaUpdatesEnabled && <button
+        {!officialDesignEnabled && <button
           type="button"
           className={`mobile-nav-tab${view === "list" ? " mobile-nav-tab--active" : ""}`}
           data-testid="mobile-nav-tab-list"
@@ -592,7 +672,7 @@ export function MobileNavBar({
           <span className="mobile-nav-tab-label">{t("nav.list", "List")}</span>
         </button>}
 
-        {!alphaUpdatesEnabled && topLevelPrimaryPluginViews.map((entry) => {
+        {!officialDesignEnabled && topLevelPrimaryPluginViews.map((entry) => {
           const pluginTaskView = buildPluginTaskViewId(entry.pluginId, entry.view.viewId);
           const PluginIcon = getPluginDashboardViewNavIcon(entry);
           return (
@@ -613,7 +693,7 @@ export function MobileNavBar({
           );
         })}
 
-        {alphaUpdatesEnabled && (
+        {officialDesignEnabled && (
           <button
             ref={menuTriggerRef}
             className="alpha-mobile-menu-trigger"
@@ -633,7 +713,7 @@ export function MobileNavBar({
           </button>
         )}
 
-        {!alphaUpdatesEnabled && <button
+        {!officialDesignEnabled && <button
           type="button"
           className={`mobile-nav-tab${isMoreActive ? " mobile-nav-tab--active" : ""}`}
           data-testid="mobile-nav-tab-more"
@@ -659,25 +739,35 @@ export function MobileNavBar({
 
       {isMenuOpen && (
         <>
-          {!alphaUpdatesEnabled && <div
+          {!officialDesignEnabled && <div
             className="mobile-more-sheet-backdrop"
             onClick={() => dismissMore()}
           />}
           <div
             ref={(element) => {
               menuSurfaceRef.current = element;
-              sheetRef.current = alphaUpdatesEnabled ? null : element;
+              sheetRef.current = officialDesignEnabled ? null : element;
             }}
-            id={alphaUpdatesEnabled ? "alpha-mobile-navigation-popover" : undefined}
-            className={alphaUpdatesEnabled ? "alpha-mobile-navigation-popover" : `mobile-more-sheet${isSheetDragging ? " mobile-more-sheet--dragging" : ""}${hasSheetDragged ? " mobile-more-sheet--gesture-ready" : ""}`}
+            id={officialDesignEnabled ? "alpha-mobile-navigation-popover" : undefined}
+            className={officialDesignEnabled ? "alpha-mobile-navigation-popover" : `mobile-more-sheet${isSheetDragging ? " mobile-more-sheet--dragging" : ""}${hasSheetDragged ? " mobile-more-sheet--gesture-ready" : ""}`}
             role="menu"
             aria-label={t("nav.moreSheetTitle", "Navigate")}
-            style={alphaUpdatesEnabled ? undefined : { transform: `translateY(${dragOffset}px)` }}
-            onTouchStart={alphaUpdatesEnabled ? undefined : handleSheetTouchStart}
-            onTouchEnd={alphaUpdatesEnabled ? undefined : finishSheetDrag}
-            onTouchCancel={alphaUpdatesEnabled ? undefined : resetSheetDrag}
+            style={officialDesignEnabled ? mobileNavGeometryStyle : { transform: `translateY(${dragOffset}px)` }}
+            onTouchStart={officialDesignEnabled ? undefined : handleSheetTouchStart}
+            onTouchEnd={officialDesignEnabled ? undefined : finishSheetDrag}
+            onTouchCancel={officialDesignEnabled ? undefined : resetSheetDrag}
+            /*
+            FNXC:MobileNav 2026-09-14-07:02:
+            Selecting an entry that only becomes reachable AFTER scrolling did nothing. The sheet carries a transform
+            open animation, and any state change while it is scrolled can restart that animation: the surface shifts
+            under the finger between touchstart and click, so the tap lands on nothing. `--gesture-ready` already
+            neutralises the animation, but it was armed only by a DRAG, which a plain scroll never performs. Arming it
+            on first scroll settles the surface for every entry below the fold; the flag is idempotent so scrolling
+            does not re-render per event.
+            */
+            onScroll={officialDesignEnabled ? undefined : () => { if (!hasSheetDragged) setHasSheetDragged(true); }}
           >
-            {!alphaUpdatesEnabled && <div className="mobile-more-sheet-handle" aria-hidden="true" />}
+            {!officialDesignEnabled && <div className="mobile-more-sheet-handle" aria-hidden="true" />}
             <div className="mobile-more-sheet-title">{t("nav.moreSheetTitle", "Navigate")}</div>
 
             {shellConnectionControl ? (
@@ -779,7 +869,7 @@ export function MobileNavBar({
 
 
 
-            {alphaUpdatesEnabled && (
+            {officialDesignEnabled && (
               <button type="button" className="mobile-more-item" data-testid="mobile-more-item-list" onClick={() => handleMoreAction(() => onChangeView("list"))}>
                 <List />
                 <span>{t("nav.list", "List")}</span>

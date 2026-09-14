@@ -33,7 +33,7 @@ const lanePayload = {
 };
 
 function board(
-  alphaUpdatesEnabled: boolean,
+  _legacyAlphaValue: boolean,
   tasks: ComponentProps<typeof Board>["tasks"] = [],
   overrides: Partial<ComponentProps<typeof Board>> = {},
 ) {
@@ -51,7 +51,6 @@ function board(
       onToggleAutoMerge={vi.fn()}
       planAutoApproveEnabled={false}
       onTogglePlanAutoApprove={vi.fn()}
-      alphaUpdatesEnabled={alphaUpdatesEnabled}
       {...overrides}
     />
   );
@@ -190,10 +189,10 @@ describe("homemade Alpha Board", () => {
     expect(columnCss).not.toContain("overflow-x: visible");
   });
 
-  it("uses homemade Alpha controls only in Alpha while preserving empty and populated live boards", () => {
+  it("uses official controls while preserving empty and populated live boards", () => {
     const view = render(board(false));
     expect(screen.getByRole("main")).toHaveClass("board");
-    expect(view.container.querySelector("[data-alpha-ui]")).toBeNull();
+    expect(view.container.querySelector('[data-alpha-ui="surface"]')).not.toBeNull();
 
     view.rerender(board(true, [{
       id: "FN-ALPHA",
@@ -214,7 +213,7 @@ describe("homemade Alpha Board", () => {
     expect(screen.getByRole("menu", { name: "Planning column actions" })).toHaveAttribute("data-alpha-ui", "menu");
 
     view.rerender(board(false));
-    expect(view.container.querySelector("[data-alpha-ui]")).toBeNull();
+    expect(view.container.querySelector('[data-alpha-ui="surface"]')).not.toBeNull();
     expect(screen.getByRole("main")).toHaveClass("board");
   });
 });

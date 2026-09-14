@@ -1,4 +1,5 @@
 import { useCallback, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import type { Task, TaskDetail } from "@fusion/core";
 import { mergeTaskSnapshot } from "../hooks/useTasks";
 import { useMainPanelTaskDetail } from "../hooks/useMainPanelTaskDetail";
@@ -34,13 +35,23 @@ export function AppModalTaskDetailHost({ onRemoveNavigation, onCloseDetail, onCl
 export interface MainPanelTaskDetailHostProps extends Omit<TaskDetailContentProps, "embedded" | "onBackToBoard" | "onRequestClose"> {
   onNavigateToBoard: () => void;
   mobileTransition?: boolean;
+  presentation?: "panel" | "drawer";
 }
 
-export function MainPanelTaskDetailHost({ onNavigateToBoard, mobileTransition = false, ...props }: MainPanelTaskDetailHostProps) {
+/*
+FNXC:TaskDetailHostOwnership 2026-09-13-16:30:
+The Board main-panel host passes its navigation owner through the canonical close boundary in every presentation. TaskDetailContent chooses phone back chrome versus desktop/tablet close chrome, so the host never invents a textual return row or a second drawer header.
+*/
+export function MainPanelTaskDetailHost({ onNavigateToBoard, mobileTransition = false, presentation = "panel", ...props }: MainPanelTaskDetailHostProps) {
   return (
     <div className={`task-detail-main-panel${mobileTransition ? " task-detail-main-panel--mobile-transition" : ""}`}>
       <div className="task-detail-main-panel-body">
-        <TaskDetailContent {...props} embedded onBackToBoard={onNavigateToBoard} onRequestClose={onNavigateToBoard} />
+        <TaskDetailContent
+          {...props}
+          embedded
+          onBackToBoard={presentation === "panel" ? onNavigateToBoard : undefined}
+          onRequestClose={onNavigateToBoard}
+        />
       </div>
     </div>
   );
@@ -81,11 +92,18 @@ export interface AppTaskPopoutWindowProps extends Omit<AppTaskPopoutContentProps
   persistGeometryKey: string;
 }
 
+/*
+FNXC:TaskDetailDefinition 2026-09-13-11:59:
+Le pop-out n’a pas de titre visible propre; il partage donc le nom accessible localisé de Task Detail avec la modale et le drawer plutôt que d’utiliser le titre retiré ou seulement l’identifiant de tâche.
+*/
 export function AppTaskPopoutWindow({ task, originTaskView, hidden, onRemoveWindow, persistGeometryKey, ...props }: AppTaskPopoutWindowProps) {
+  const { t } = useTranslation("app");
+  const accessibleName = t("taskDetail.accessibleName", "Task detail");
   return (
     <FloatingWindow
       windowKey={`task-detail-${task.id}-${originTaskView ?? "global"}`}
-      title={task.id}
+      title={accessibleName}
+      ariaLabel={accessibleName}
       hidden={hidden}
       onClose={onRemoveWindow}
       hideHeader

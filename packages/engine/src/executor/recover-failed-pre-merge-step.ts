@@ -228,7 +228,7 @@ export async function recoverFailedPreMergeWorkflowStepDetailed(
     */
     const resumesCommittedRemediation = hasReviewRemediationAttemptForEpisode(liveTask, episodeIdentity)
       && (liveTask.steps ?? []).some((step) => step.status === "pending");
-    if (!resumesCommittedRemediation && !budget.unbounded && (!Number.isFinite(budget.max) || budget.max <= 0)) {
+    if (!resumesCommittedRemediation && (!Number.isFinite(budget.max) || budget.max <= 0)) {
       executorLog.warn(`${liveTask.id}: failed pre-merge step recovery NOT scheduled for "${stepName}" — revision budget is zero/invalid (attempts=${budget.attempts}, max=${String(budget.max)}). Card left parked.`);
       await deps.store.logEntry(
         liveTask.id,
@@ -254,13 +254,13 @@ export async function recoverFailedPreMergeWorkflowStepDetailed(
       }, liveTask.id, {
         kind: "repeat-unchanged", workflowStepId: target.workflowStepId, stepName,
         feedback, findings: target.findings, attempt: budget.attempts,
-        max: budget.unbounded ? undefined : budget.max,
+        max: budget.max,
       });
       return outcome === "escalated" || outcome === "arbitrated"
         ? { kind: "convergence" }
         : { kind: "skipped" };
     }
-    if (!resumesCommittedRemediation && !budget.unbounded && budget.attempts >= budget.max) {
+    if (!resumesCommittedRemediation && budget.attempts >= budget.max) {
       const outcome = await routeReviewConvergenceLadder({
         ...deps,
         getRunContextFor: deps.getRunContextFor ?? (() => undefined),
@@ -305,7 +305,7 @@ export async function recoverFailedPreMergeWorkflowStepDetailed(
           revisionKey: budget.key,
           stepName,
           status: target.status,
-          maxRevisions: budget.unbounded ? "unbounded" : budget.max,
+          maxRevisions: budget.max,
           expectedWorkflowStepId: target.workflowStepId,
           expectedReviewSignature: reviewInputSignature(target),
           expectedReviewEpisodeIdentity: episodeIdentity,
@@ -331,7 +331,7 @@ export async function recoverFailedPreMergeWorkflowStepDetailed(
       `Auto-revived from in-review: pre-merge workflow step "${stepName}" had failed`,
       true,
       false,
-      { attempt: budget.attempts + 1, max: budget.unbounded ? undefined : budget.max },
+      { attempt: budget.attempts + 1, max: budget.max },
       target.findings,
       checkout.persist,
       stepReopenPolicy,
@@ -339,7 +339,7 @@ export async function recoverFailedPreMergeWorkflowStepDetailed(
         revisionKey: budget.key,
         stepName,
         status: target.status ?? "failed",
-        maxRevisions: budget.unbounded ? "unbounded" : budget.max,
+        maxRevisions: budget.max,
         expectedWorkflowStepId: target.workflowStepId ?? stepName,
         expectedReviewSignature: reviewInputSignature(target),
         expectedReviewEpisodeIdentity: episodeIdentity,

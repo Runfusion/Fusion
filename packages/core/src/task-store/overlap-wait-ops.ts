@@ -283,7 +283,7 @@ export async function claimTaskOverlapWaitImpl(store: TaskStore, claim: OverlapW
 
 export async function completeTaskOverlapWaitImpl(
   store: TaskStore,
-  input: { taskId: string; episodeId: string; expectedRevision: number; owner: string; phase?: "ready" | "delivered" | "freshness-pending" | "revalidation-pending" | "repair-required"; receipt: OverlapWaitReceipt; executionIdentity?: OverlapWaitExecutionIdentity },
+  input: { taskId: string; episodeId: string; expectedRevision: number; owner: string; phase?: "ready" | "delivered" | "freshness-pending"; receipt: OverlapWaitReceipt; executionIdentity?: OverlapWaitExecutionIdentity },
 ): Promise<TaskOverlapWait | null> {
   const layer = store.asyncLayer;
   if (!layer) throw new Error("Overlap wait completion requires a PostgreSQL store");

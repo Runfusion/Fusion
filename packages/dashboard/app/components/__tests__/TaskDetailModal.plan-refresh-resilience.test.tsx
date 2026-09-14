@@ -53,11 +53,13 @@ const contentHandlers = {
 };
 
 function expectCompletePlanVisible(): void {
-  const summary = screen.getByTestId("task-detail-plan-summary");
-  expect(summary).toHaveTextContent("The Definition summary stays visible.");
-  expect(summary).toHaveTextContent("the plan disappears");
-  expect(summary).toHaveTextContent("the plan remains");
-  expect(screen.getByTestId("task-detail-plan-details-toggle")).toBeInTheDocument();
+  const readPlan = screen.queryByRole("button", {name: "Read plan"});
+  if (readPlan) fireEvent.click(readPlan);
+  const plan = screen.getByTestId("task-detail-plan-full");
+  expect(plan).toHaveTextContent("The Definition summary stays visible.");
+  expect(plan).toHaveTextContent("the plan disappears");
+  expect(plan).toHaveTextContent("the plan remains");
+  expect(screen.queryByTestId("task-detail-plan-details-toggle")).not.toBeInTheDocument();
   expect(screen.queryByText("(no prompt)")).not.toBeInTheDocument();
 }
 
@@ -124,6 +126,7 @@ describe("TaskDetail Definition plan refresh resilience", () => {
     vi.mocked(dashboardApi.fetchTaskPrompt).mockResolvedValueOnce({id, prompt: "# Short rewritten plan"});
 
     renderContent(makeTask({id, prompt: completePlan}));
+    fireEvent.click(screen.getByRole("button", {name: "Read plan"}));
 
     expect(await screen.findByText("Short rewritten plan")).toBeInTheDocument();
     expect(screen.queryByText("The Definition summary stays visible.")).not.toBeInTheDocument();
@@ -212,6 +215,7 @@ describe("TaskDetail Definition plan refresh resilience", () => {
     vi.mocked(dashboardApi.fetchTaskPrompt).mockResolvedValueOnce({id});
 
     renderContent(makeTask({id, prompt: ""}));
+    fireEvent.click(screen.getByRole("button", {name: "Read plan"}));
 
     expect(await screen.findByText("(no prompt)")).toBeInTheDocument();
     expect(screen.queryByTestId("task-detail-plan-summary")).not.toBeInTheDocument();
@@ -288,10 +292,12 @@ describe("TaskDetail Definition plan refresh resilience", () => {
 
     renderContent(makeTask({id, prompt: completePlan}));
     await waitFor(expectCompletePlanVisible);
+    fireEvent.click(screen.getByRole("button", {name: "Back to definition"}));
     fireEvent.click(screen.getByRole("button", {name: "Activity"}));
     fireEvent.click(await screen.findByRole("menuitem", {name: "Feed"}));
     await waitFor(() => expect(dashboardApi.fetchTaskDetail).toHaveBeenCalledTimes(1));
     fireEvent.click(screen.getByRole("button", {name: "Plan"}));
+    fireEvent.click(screen.getByRole("button", {name: "Read plan"}));
 
     expect(await screen.findByText("(no prompt)")).toBeInTheDocument();
     expect(screen.queryByText("The Definition summary stays visible.")).not.toBeInTheDocument();

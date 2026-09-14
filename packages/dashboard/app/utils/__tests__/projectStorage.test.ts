@@ -90,10 +90,7 @@ describe("projectStorage", () => {
         "kb-dashboard-list-collapsed",
         "kb-dashboard-selected-tasks",
         "kb-dashboard-list-selected-task",
-        "kb-dashboard-list-sidebar-width",
-        "kb-dashboard-mailbox-sidebar-width",
-        "kb-dashboard-agents-sidebar-width",
-        "kb-dashboard-github-import-list-width",
+        "kb-dashboard-view-sidebar-width",
         "kb-dashboard-github-import-state",
         "kb-quick-entry-text",
         "kb-inline-create-text",
@@ -107,7 +104,6 @@ describe("projectStorage", () => {
         "kb-usage-hidden-windows",
         "kb-usage-modal-size",
         "kb-usage-provider-order",
-        "kb-task-detail-tab-order",
         "kb-chat-active-session",
         "kb-capacity-risk-banner-dismissed",
         "kb-github-setup-warning-missing-since",
@@ -117,11 +113,24 @@ describe("projectStorage", () => {
         "fusion-plugin-dependency-graph:positions",
       ]),
     );
-    /*
-    FNXC:ProjectStorage 2026-09-12-02:34:
-    Keep PROJECT_STORAGE_KEYS length lockstep with the source array, including project-isolated Task Detail tab order.
-    */
-    expect(PROJECT_STORAGE_KEYS).toHaveLength(32);
+    expect(PROJECT_STORAGE_KEYS).toHaveLength(28);
+  });
+
+  it("routes every migrated sidebar through the one shared width preference", () => {
+    // The per-view rail widths collapsed into a single shared project-scoped preference.
+    for (const retired of [
+      "kb-dashboard-list-sidebar-width",
+      "kb-dashboard-mailbox-sidebar-width",
+      "kb-dashboard-agents-sidebar-width",
+      "kb-dashboard-github-import-list-width",
+      "fusion:file-browser-sidebar-width",
+      "fusion:settings-nav-width",
+    ]) {
+      expect(PROJECT_STORAGE_KEYS).not.toContain(retired);
+    }
+    expect(PROJECT_STORAGE_KEYS.filter((key) => key.includes("sidebar-width"))).toEqual([
+      "kb-dashboard-view-sidebar-width",
+    ]);
   });
 
   it("getScopedItem returns null when localStorage.getItem is unavailable", () => {

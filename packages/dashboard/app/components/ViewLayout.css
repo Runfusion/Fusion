@@ -1,0 +1,117 @@
+/*
+FNXC:StandardizedViewLayout 2026-09-13-16:12:
+One bounded flex composition prevents phantom page scrollers and keeps contextual footers reachable. Specialized children may own the central scroll chain explicitly; the shell never adds a competing transcript, canvas, terminal, or table scroller.
+*/
+.view-layout {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-inline-size: 0;
+  min-block-size: 0;
+  inline-size: 100%;
+  block-size: 100%;
+  overflow: hidden;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.view-layout__tabs {
+  flex: none;
+  min-inline-size: 0;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scrollbar-width: thin;
+  background: var(--surface);
+}
+
+.view-layout__body {
+  display: flex;
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  min-block-size: 0;
+  overflow: hidden;
+}
+
+.view-layout__sidebar-slot {
+  display: flex;
+  flex: none;
+  min-inline-size: 0;
+  min-block-size: 0;
+}
+
+.view-layout__content {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  min-block-size: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+/*
+FNXC:StandardizedViewLayout 2026-09-14-04:12:
+The direction is explicit and vertical. Before this shell existed, every destination root was its own
+`flex-direction: column` (`.mailbox-view`, the Agent Detail shell, …), so a host could hand the content zone a tab
+row followed by a body and get the expected stack. Adopting the shell with a direction-less `display: flex` silently
+turned those children into a ROW: Mailbox and Agent Detail rendered their tab bars squeezed into a narrow left column
+instead of a line above the content. A single child is unaffected either way; two or more must stack.
+*/
+.view-layout--content-owns-scroll .view-layout__content {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.view-layout__footer {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-sm);
+  min-block-size: var(--touch-target-min-size);
+  padding: var(--space-sm) var(--space-md) max(var(--space-sm), env(safe-area-inset-bottom));
+  border-top: var(--btn-border-width) solid var(--border);
+  background: var(--surface);
+}
+
+/*
+FNXC:StandardizedViewLayout 2026-09-13-22:40:
+The list/detail exclusivity is a PHONE presentation, so it follows the canonical classifier published on
+`<html data-viewport-mode>`, never the raw `(max-height: 480px)` arm alone. A short desktop window, or a desktop
+shrunk by a virtual keyboard, stays desktop: hiding one of its panes would strand the operator's content. Before
+hydration publishes the mode, only the unambiguous narrow-width case falls back to the phone presentation.
+*/
+@media (max-width: 768px), (max-height: 480px) {
+  html[data-viewport-mode="mobile"] .view-layout__body {
+    inline-size: 100%;
+  }
+
+  html[data-viewport-mode="mobile"] .view-layout__sidebar-slot,
+  html[data-viewport-mode="mobile"] .view-layout__content {
+    inline-size: 100%;
+  }
+
+  html[data-viewport-mode="mobile"] .view-layout[data-mobile-pane="list"] .view-layout__content,
+  html[data-viewport-mode="mobile"] .view-layout[data-mobile-pane="detail"] .view-layout__sidebar-slot {
+    display: none;
+  }
+
+  html[data-viewport-mode="mobile"] .view-layout__footer {
+    padding-block-end: max(var(--space-sm), env(safe-area-inset-bottom));
+  }
+}
+
+@media (max-width: 768px) {
+  html:not([data-viewport-mode]) .view-layout__body,
+  html:not([data-viewport-mode]) .view-layout__sidebar-slot,
+  html:not([data-viewport-mode]) .view-layout__content {
+    inline-size: 100%;
+  }
+
+  html:not([data-viewport-mode]) .view-layout[data-mobile-pane="list"] .view-layout__content,
+  html:not([data-viewport-mode]) .view-layout[data-mobile-pane="detail"] .view-layout__sidebar-slot {
+    display: none;
+  }
+
+  html:not([data-viewport-mode]) .view-layout__footer {
+    padding-block-end: max(var(--space-sm), env(safe-area-inset-bottom));
+  }
+}

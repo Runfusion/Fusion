@@ -4,7 +4,10 @@
     "outDir": "dist",
     "rootDir": "src",
     "jsx": "react-jsx",
-    "types": ["node", "vitest/globals"]
+    "types": ["node", "vitest/globals"],
+    "paths": {
+      "@fusion/dashboard/app/plugins/PluginDashboardViewHeader": ["./src/dashboard-interop.d.ts"]
+    }
   },
   "include": ["src/**/*.ts", "src/**/*.tsx"],
   "exclude": ["src/**/*.test.ts", "src/**/__tests__/**"]

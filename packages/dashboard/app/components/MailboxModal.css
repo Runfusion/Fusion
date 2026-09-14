@@ -663,8 +663,15 @@ than overflow the message column. Theme tokens only — no hard-coded colors.
   flex-wrap: wrap;
 }
 
-.mailbox-compose-btn {
-  flex-shrink: 0;
+/*
+FNXC:StandardizedMailboxLayout 2026-09-14-03:31:
+The Agents scope cluster (agent picker + Inbox/Outbox scope tabs) is hosted by the shared ViewHeader, so it drops the
+rail-era divider and vertical inset that separated it from the message list. The duplicate .mailbox-compose-btn rule
+is gone with the second Compose button it styled; the header owns the single creation action.
+*/
+.view-header .mailbox-agent-subtabs {
+  padding: 0;
+  border-bottom: none;
 }
 
 .mailbox-agent-select {
@@ -1060,6 +1067,10 @@ separate approvals Back button outside this header or non-mobile mailbox layouts
     gap: var(--space-sm);
   }
 
+  /*
+  FNXC:ModalChrome 2026-09-13-14:21:
+  Mailbox enlarges every mobile header action through the same minimum target but leaves close-button padding, radius, border, and paint to ModalCloseButton. This preserves one canonical close appearance while keeping the existing touch geometry uniform with adjacent actions.
+  */
   .mailbox-modal .mailbox-header-actions .btn,
   .mailbox-modal .mailbox-header-actions .btn-icon,
   .mailbox-modal .mailbox-header-actions .modal-close,
@@ -1075,11 +1086,6 @@ separate approvals Back button outside this header or non-mobile mailbox layouts
     display: inline-flex;
     align-items: center;
     justify-content: center;
-  }
-
-  .mailbox-modal .mailbox-header-actions .modal-close {
-    padding: 0;
-    border-radius: var(--radius-sm);
   }
 
   .mailbox-modal .mailbox-tabs {
@@ -1310,13 +1316,11 @@ separate approvals Back button outside this header or non-mobile mailbox layouts
   gap: var(--space-lg);
 }
 
-.message-composer-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  font-weight: 600;
-  font-size: 0.95rem;
-}
+/*
+FNXC:StandardizedMailboxLayout 2026-09-14-10:24:
+FN-379 remediation: the composer's local header row was removed, so its rule is deleted rather than left as an
+orphan selector. Its identity and abandon action are painted by the owning ViewHeader.
+*/
 
 .message-composer-body {
   display: flex;

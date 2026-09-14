@@ -4,6 +4,7 @@ import { History, RotateCcw, Search } from "lucide-react";
 import type { PatchnodeDay, PatchnodeEntry } from "@fusion/core";
 import { fetchPatchnode } from "../api";
 import { ViewHeader } from "./ViewHeader";
+import { ViewLayout } from "./ViewLayout";
 import { FloatingWindow } from "./FloatingWindow";
 import { useAutoPaginationSentinel } from "../hooks/useAutoPaginationSentinel";
 import "./PatchnodeView.css";
@@ -106,9 +107,9 @@ export function PatchnodeView({ projectId, onOpenTaskDetail, floating }: Patchno
     }
   };
 
+  /* FNXC:HistoryCollectionLayout 2026-09-13-16:29: History is a read-only chronological collection with no owned detail controller, so it uses the shared bounded shell without inventing a sidebar or create action. */
   const content = (
-    <section className={`patchnode-view${floating ? " patchnode-view--floating" : ""}`} data-testid="patchnode-view" aria-labelledby="patchnode-title">
-      <ViewHeader
+    <ViewLayout className={`patchnode-view${floating ? " patchnode-view--floating" : ""}`} data-testid="patchnode-view" aria-labelledby="patchnode-title" contentOwnsScroll header={<ViewHeader
         icon={History}
         title={t("patchnode.title", "History")}
         titleId="patchnode-title"
@@ -126,7 +127,7 @@ export function PatchnodeView({ projectId, onOpenTaskDetail, floating }: Patchno
             />
           </label>
         )}
-      />
+      />}>
       <div className="patchnode-view__content" ref={contentRef}>
         {loading ? <p className="patchnode-state">{t("patchnode.loading", "Loading History…")}</p> : null}
         {!loading && error ? (
@@ -170,7 +171,7 @@ export function PatchnodeView({ projectId, onOpenTaskDetail, floating }: Patchno
         )) : null}
         {!loading && !error && hasMore ? <div ref={pagination.sentinelRef} className="patchnode-load-more" role="status" aria-live="polite" data-testid="patchnode-auto-pagination-sentinel">{loadingMore ? t("patchnode.loadingMore", "Loading…") : null}</div> : null}
       </div>
-    </section>
+    </ViewLayout>
   );
   if (!floating) return content;
   return <FloatingWindow title={t("patchnode.title", "History")} ariaLabel={t("patchnode.title", "History")} onClose={() => void floating.onClose()} windowKey="history-view" persistGeometryKey="floating-window:history-view" hideHeader dragHandleSelector=".view-header" minSize={{ width: 360, height: 280 }} raiseToFrontSignal={floating.raiseToFrontSignal}><div onPointerDown={floating.onActivate} onFocusCapture={floating.onActivate}>{content}</div></FloatingWindow>;

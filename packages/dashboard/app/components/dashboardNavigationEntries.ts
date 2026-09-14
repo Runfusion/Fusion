@@ -1,6 +1,6 @@
 import type { ComponentType } from "react";
 import type { LucideProps } from "lucide-react";
-import { Bot, Brain, Clock, Gauge, Lightbulb, LayoutGrid, List, Mail, PanelsTopLeft, Search, Settings, Sparkles, Target, Workflow, Zap } from "lucide-react";
+import { Bot, Brain, Clock, Gauge, Lightbulb, LayoutGrid, Mail, PanelsTopLeft, Search, Settings, Sparkles, Target, Type, Workflow, Zap } from "lucide-react";
 import type { PluginDashboardViewEntry } from "../api";
 import type { TaskView } from "../hooks/useViewState";
 import { buildPluginTaskViewId } from "../plugins/pluginViewRegistry";
@@ -47,7 +47,6 @@ export function buildDashboardNavigationEntries(options: DashboardNavigationRegi
   const direct = [
     page("command-center", "Dashboard", "command-center", Gauge, "direct"),
     page("board", "Board", "board", LayoutGrid, "direct"),
-    page("list", "List", "list", List, "direct"),
     page("planning", "Planning", "planning", Lightbulb, "direct"),
     page("missions", "Missions", "missions", Target, "direct"),
     ...(options.showAgents ? [page("agents", "Agents", "agents", Bot, "direct")] : []),
@@ -59,7 +58,8 @@ export function buildDashboardNavigationEntries(options: DashboardNavigationRegi
   });
   const overflow = [
     ...plugins,
-    ...(options.showSkills ? [page("skills", "Skills & Snippets", "skills", Zap)] : []),
+    ...(options.showSkills ? [page("skills", "Skills", "skills", Zap)] : []),
+    ...(options.showSkills ? [page("snippets", "Snippets", "snippets", Type)] : []),
     ...(options.flags?.memory ? [page("memory", "Memory", "memory", Brain)] : []),
     ...(options.flags?.whiteboard ? [page("whiteboard", "Whiteboard", "whiteboard", PanelsTopLeft)] : []),
     ...(options.flags?.goals ? [page("goals", "Goals", "goalsView", Target)] : []),

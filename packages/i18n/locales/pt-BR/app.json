@@ -3133,7 +3133,8 @@
     "selectProject": "Selecionar projeto",
     "settings": "Configurações",
     "showScripts": "Mostrar scripts",
-    "skillsView": "Habilidades e snippets",
+    "skillsView": "Habilidades",
+    "snippetsView": "Trechos",
     "startAiEngine": "Iniciar motor de IA",
     "stashRecoveryView": "Recuperação de stash",
     "stopAiEngine": "Parar motor de IA",
@@ -3583,7 +3584,9 @@
     "recommendationsUnavailableTaskReason": "",
     "taskCompletion": "Conclusão da tarefa",
     "completionImages": "Imagens da conclusão",
-    "completionImage": "Imagem da conclusão"
+    "completionImage": "Imagem da conclusão",
+    "suggestedRecommendations": "Recomendações sugeridas",
+    "noSuggestedRecommendations": "Nenhuma recomendação de acompanhamento foi sugerida."
   },
   "memory": {
     "auditChecksTitle": "Verificações de auditoria",
@@ -4386,8 +4389,8 @@
       "local": "Docker local",
       "remote": "Remoto: {{host}}"
     },
-    "dockerHostLabel": "Host",
     "dockerHostConfig": "Configuração do host",
+    "dockerHostLabel": "Host",
     "dockerHostPath": "Caminho do host",
     "dockerHostUrl": "URL do host do Docker",
     "dockerLabel": "Docker",
@@ -4521,6 +4524,7 @@
     "sectionProjects": "Projetos",
     "sectionSettingsSync": "Sincronização de configurações",
     "sectionSyncHistory": "Histórico de sincronização",
+    "selectPrompt": "Selecione um nó para ver seu status, projetos e sincronização.",
     "startButton": "Iniciar",
     "statusConnecting": "Conectando",
     "statusError": "Erro",
@@ -7879,6 +7883,7 @@
     "unavailable": "Alterações de arquivo detalhadas indisponíveis."
   },
   "taskDetail": {
+    "accessibleName": "Detalhes da tarefa",
     "actions": {
       "menuBtn": "Ações",
       "oversightHeading": "",
@@ -7993,6 +7998,10 @@
         "none": "",
         "matches": ""
       }
+    },
+    "definition": {
+      "descriptionHeading": "Descrição",
+      "noDescription": "(sem descrição)"
     },
     "description": {
       "showLess": "Mostrar menos",
@@ -8209,6 +8218,18 @@
     },
     "progress": {
       "heading": "Progresso",
+      "completedCount": "{{count}}/{{total}} concluídas",
+      "workflowOrigin": "Etapa do fluxo de trabalho",
+      "implementationOrigin": "Implementação",
+      "status": {
+        "done": "Concluída",
+        "failed": "Falhou",
+        "advisory": "Concluída com observações",
+        "notRun": "Não executada",
+        "running": "Em andamento",
+        "skipped": "Ignorada",
+        "pending": "Pendente"
+      },
       "noSteps": "(nenhuma etapa definida)",
       "stepCount_one": "{{count}}/{{total}} etapa",
       "stepCount_other": "{{count}}/{{total}} etapas"
@@ -8312,6 +8333,7 @@
     "spec": {
       "aiReviseHeading": "Pedir à IA para revisar",
       "aiReviseHelp": "Forneça feedback para a IA melhorar esta especificação. A tarefa passará para planejamento para ser replanejada.",
+      "backToDefinition": "Voltar à definição",
       "editBtn": "Editar",
       "feedbackPlaceholder": "ex.: 'Adicione mais detalhes sobre o tratamento de erros', 'Divida isso em etapas menores', 'Inclua testes para os endpoints da API'...",
       "hintCancel": "para cancelar",
@@ -8319,6 +8341,8 @@
       "loading": "Carregando especificação…",
       "noPrompt": "(sem prompt)",
       "placeholder": "Insira a especificação da tarefa em Markdown...",
+      "promptFileName": "PROMPT.md",
+      "readPlanBtn": "Ler o plano",
       "requesting": "Solicitando…",
       "requestRevisionBtn": "Solicitar revisão da IA",
       "revisionColumnError": "Não é possível solicitar revisão: a tarefa deve estar na coluna 'triage', 'todo', 'in-progress' ou 'in-review'.",
@@ -8351,7 +8375,6 @@
       "model": "Modelo",
       "pullRequest": "Pull Request",
       "review": "Revisão",
-      "reordered": "{{label}} movido para a posição {{position}} de {{count}}",
       "routing": "Roteamento",
       "stats": "Estatísticas",
       "summary": "Resumo",
@@ -8981,8 +9004,8 @@
     "failedToCreateTask": "Falha ao criar a tarefa: {{error}}",
     "failedToLoadAgents": "Falha ao carregar os agentes: {{error}}",
     "failedUpdateItem": "Falha ao atualizar o item",
-    "hideDone": "Ocultar concluídos",
     "failedUpdateItemToast": "Falha ao atualizar o item de tarefa",
+    "hideDone": "Ocultar concluídos",
     "itemsLabel": "Itens de tarefas",
     "lists": "Listas",
     "listsLabel": "Barra lateral de listas de tarefas",
@@ -9005,6 +9028,7 @@
     "startPlanning": "Iniciar planejamento a partir de {{text}}",
     "taskCreatedAndAssigned": "{{id}} criada e atribuída a {{agent}}",
     "taskCreatedFromTodo": "{{id}} criada a partir do item",
+    "title": "Tarefas",
     "todoListsLabel": "Listas de tarefas",
     "todos": "Tarefas"
   },

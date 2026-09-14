@@ -4,12 +4,12 @@ import {
   type Task,
   type TaskDetail,
   type WorkflowStep,
-  ALPHA_UPDATES_FLAG,
   WHITEBOARD_VIEW_FLAG,
   isExperimentalFeatureEnabled,
 } from "@fusion/core";
 import { Header, useViewportMode } from "./components/Header";
 import { AlphaProvider } from "./context/AlphaContext";
+import { ViewLayoutProvider } from "./context/ViewLayoutContext";
 import {
   AppTaskPopoutWindows,
   useAppMainPanelTaskDetailState,
@@ -18,7 +18,7 @@ import {
 import { AlphaPlanningDrawer, AlphaProjectsDrawer } from "./components/AlphaMobileDrawer";
 import { PoppedOutChatWindows, QuickChatWindow } from "./components/PoppedOutChatWindows";
 import { PoppedOutNoteWindows } from "./components/PoppedOutNoteWindows";
-import { AppModals } from "./components/AppModals";
+import { AppModals, openAppFileInBrowser } from "./components/AppModals";
 import { DashboardLoader, type DashboardLoaderStage } from "./components/DashboardLoader";
 import { TopProgressBar } from "./components/TopProgressBar";
 import { ExecutorStatusBar } from "./components/ExecutorStatusBar";
@@ -136,6 +136,7 @@ import { subscribeSse } from "./sse-bus";
 import { AuthTokenRecoveryPage } from "./components/AuthTokenRecoveryPage";
 import {
   AppMainPanelTaskDetailComposition,
+  MainContentListView,
   type AppMainPanelTaskDetailMainContentProps,
 } from "./components/dashboard/MainContent";
 import { PlanningKeepAlive } from "./components/dashboard/PlanningKeepAlive";
@@ -164,6 +165,7 @@ const EvalsView = lazy(() => import("./components/EvalsView").then((m) => ({ def
 const ChatView = lazy(() => import("./components/ChatView").then((m) => ({ default: m.ChatView })));
 
 const SkillsView = lazy(() => import("./components/SkillsView").then((m) => ({ default: m.SkillsView })));
+const SnippetsView = lazy(() => import("./components/SnippetsView").then((m) => ({ default: m.SnippetsView })));
 const MemoryView = lazy(() => import("./components/MemoryView").then((m) => ({ default: m.MemoryView })));
 const SecretsView = lazy(() => import("./components/SecretsView").then((m) => ({ default: m.SecretsView })));
 const CommandCenter = lazy(() => import("./components/command-center/CommandCenter").then((m) => ({ default: m.CommandCenter })));
@@ -208,6 +210,7 @@ function prefetchLazyViews() {
     void import("./components/ChatView");
 
     void import("./components/SkillsView");
+    void import("./components/SnippetsView");
     void import("./components/MemoryView");
     void import("./components/SecretsView");
     void import("./components/command-center/CommandCenter");
@@ -233,15 +236,25 @@ export function useMobileBarKeyboardState({
   anyModalOpen: boolean;
   overlayOpen: boolean;
 }) {
-  const { keyboardOpen } = useMobileKeyboard({ enabled: isMobile, allowNonMobileViewport: isMobile });
+  const keyboardMetrics = useMobileKeyboard({ enabled: isMobile, allowNonMobileViewport: isMobile });
   const keyboardFocusPending = useKeyboardFocusPending(isMobile) || false;
+  const navigationViewport = keyboardMetrics.navigationViewport ?? {
+    active: keyboardMetrics.keyboardOpen,
+    keyboardOverlap: keyboardMetrics.keyboardOverlap,
+    viewportHeight: keyboardMetrics.viewportHeight,
+    viewportOffsetTop: keyboardMetrics.viewportOffsetTop,
+  };
   return {
-    keyboardOpen,
+    ...keyboardMetrics,
+    keyboardOverlap: navigationViewport.keyboardOverlap,
+    viewportHeight: navigationViewport.viewportHeight,
+    viewportOffsetTop: navigationViewport.viewportOffsetTop,
     keyboardFocusPending,
     ...computeMobileBarKeyboardFlags({
       isMobile,
-      keyboardOpen,
+      keyboardOpen: keyboardMetrics.keyboardOpen,
       keyboardFocusPending,
+      navigationViewportActive: navigationViewport.active,
       anyModalOpen,
       overlayOpen,
     }),
@@ -643,7 +656,17 @@ function AppInner() {
       pushNav({ type: "view", revert });
     }
   }, [handleChangeTaskView, taskView, pushNav]);
+  /*
+  FNXC:ListInRightDock 2026-09-14-04:42:
+  FN-382: on every non-mobile host List is a dock tool, not a page. An explicit request for it — sidebar, footer,
+  header toggle, a stored view or a `?view=list` deep link — selects the dock tool and opens the dock, leaving the
+  current destination on screen and writing no navigation entry. Phone hosts are untouched: they keep the dedicated
+  route, both nav producers and the drawer. When the dock is unavailable (no project shell, feature off) the ordinary
+  route still answers, so the destination can never become unreachable.
+  */
+  const listDockRouteRef = useRef<((newView: TaskView) => boolean) | null>(null);
   const handleTaskViewChange = useCallback((newView: TaskView) => {
+    if (listDockRouteRef.current?.(newView)) return;
     if (!alphaPilotRouterRef.current(newView)) commitTaskViewChange(newView);
   }, [commitTaskViewChange]);
 
@@ -936,7 +959,14 @@ function AppInner() {
     setQuickChatOpen(true);
   }, []);
 
-  const { footerHidden, navKeyboardOpen, footerKeyboardOpen } = useMobileBarKeyboardState({
+  const {
+    footerHidden,
+    navKeyboardOpen,
+    footerKeyboardOpen,
+    keyboardOverlap,
+    viewportHeight,
+    viewportOffsetTop,
+  } = useMobileBarKeyboardState({
     isMobile,
     anyModalOpen: modalManager.anyModalOpen,
     overlayOpen: isMobile && quickChatOpen,
@@ -955,9 +985,10 @@ function AppInner() {
   // keyboard with no empty gap. This supersedes the earlier Android gate
   // (FN-5707), which kept the footer visible and left a ~80px dead band
   // where the off-screen nav bar's padding remained reserved.
-  // `footerKeyboardOpen` uses the same immediate focus/keyboard trigger as
-  // the nav bar. A footer that remains rendered over a modal must also drop
-  // its bottom reservation on both platforms to avoid a dead band.
+  // `footerKeyboardOpen` uses only the immediate focus/keyboard trigger. A
+  // footer that remains rendered over a modal must also drop its bottom
+  // reservation on both platforms to avoid a dead band; unlike the pill, it
+  // must not inherit the visual viewport's keyboard-dismissal tail.
   const mobileKeyboardOpen = footerHidden;
   const mobileNavKeyboardOpen = navKeyboardOpen;
   // App-level scroll lock for inline editing (TaskCard inline edit, etc.):
@@ -1069,7 +1100,6 @@ function AppInner() {
     taskDetailChatFirst,
     chatMessageLayout,
     quickChatButtonMode,
-    mobileNavPrimaryItems,
     quickChatCloseOnOutsideClick,
     dashboardKeyboardShortcuts,
     dismissModalsOnOutsideClick,
@@ -1153,9 +1183,8 @@ function AppInner() {
   const evalsEnabled = experimentalFeatures.evalsView === true;
   const ideationEnabled = experimentalFeatures.ideationView === true;
   const whiteboardEnabled = isExperimentalFeatureEnabled({ experimentalFeatures }, WHITEBOARD_VIEW_FLAG);
-  /* FNXC:AlphaUpdates 2026-09-09-18:24: Resolve the global Alpha boundary once per settings refresh so every shell surface switches together without mutating saved mobile navigation preferences. */
-  const alphaUpdatesEnabled = isExperimentalFeatureEnabled({ experimentalFeatures }, ALPHA_UPDATES_FLAG);
-  const alphaMobileDrawerActive = alphaUpdatesEnabled && isMobile && viewMode === "project" && Boolean(currentProject);
+  /* FNXC:OfficialDashboardDesign 2026-09-13-00:38: The former Alpha shell is Fusion's unconditional dashboard design; historical alphaUpdates settings never participate in production composition. */
+  const alphaMobileDrawerActive = isMobile && viewMode === "project" && Boolean(currentProject);
 
   /*
   FNXC:AlphaMobileDrawer 2026-09-10-04:41:
@@ -1186,13 +1215,14 @@ function AppInner() {
   /* FNXC:Navigation 2026-06-22-18:00: The right dock panel is no longer experimental or user-toggleable; tablet/desktop project screens always support it regardless of any stale persisted `rightDock` setting. */
   const rightDockEnabled = true;
   const projectShellPresent = viewMode === "project" && !!currentProject;
-  const alphaDesktopNavigationActive = alphaUpdatesEnabled && viewportMode === "desktop" && projectShellPresent;
+  const alphaDesktopNavigationActive = viewportMode === "desktop" && projectShellPresent;
   /*
-  FNXC:AlphaDesktopNavigation 2026-09-11-21:48:
-  Desktop Alpha replaces ExecutorStatusBar with the full-width navigation footer. Tablet Alpha and every standard desktop retain ExecutorStatusBar, while the shared shell reservation remains active for whichever single footer owns the bottom edge.
+  FNXC:AlphaDesktopNavigation 2026-09-13-02:40:
+  Tablet and desktop share the wide Alpha footer, while alphaDesktopNavigationActive remains desktop-only and continues to own sidebar removal, pilot routing, windows, and guards. Mobile keeps its pill, and tablet keeps its compact Header, sidebar, standard right dock, and page routing; only the footer owner broadens here.
   */
-  const executorFooterVisible = projectShellPresent && !alphaDesktopNavigationActive && (!alphaUpdatesEnabled || viewportMode !== "mobile");
-  const shellFooterVisible = executorFooterVisible || alphaDesktopNavigationActive;
+  const alphaWideFooterActive = viewportMode !== "mobile" && projectShellPresent;
+  const executorFooterVisible = projectShellPresent && !alphaWideFooterActive && viewportMode !== "mobile";
+  const shellFooterVisible = executorFooterVisible || alphaWideFooterActive;
   const mobileNavVisible = projectShellPresent;
   /*
   FNXC:AlphaMobileDrawer 2026-09-10-17:16:
@@ -1202,10 +1232,13 @@ function AppInner() {
   /*
   FNXC:AlphaUpdates 2026-09-11-15:01:
   App remains the sole owner of the Alpha popover's accessible open state while MobileNavBar owns both its trailing pill trigger and canonical menu surface. Any shell boundary that removes the pill closes this transient menu; the legacy More drawer remains MobileNavBar-owned.
+
+  FNXC:MobilePillKeyboard 2026-09-13-10:32:
+  Keyboard transitions are no longer shell boundaries because the official pill remains mounted throughout them. Moving focus from a field into the opened menu closes the keyboard, so that metric change must update geometry without immediately dismissing the App-owned popover.
   */
   useEffect(() => {
     setAlphaMenuOpen(false);
-  }, [alphaUpdatesEnabled, currentProject?.id, isMobile, mobileKeyboardOpen, modalManager.anyModalOpen, viewMode]);
+  }, [currentProject?.id, isMobile, modalManager.anyModalOpen, viewMode]);
   const rightDockActive = rightDockEnabled && !isMobile && projectShellPresent;
   const sidebarActive = leftSidebarNavEnabled && !isMobile && projectShellPresent && !alphaDesktopNavigationActive;
   const alphaDesktopWindows = useAlphaDesktopViewWindows({
@@ -1680,8 +1713,7 @@ function AppInner() {
   });
 
   const openFileInBrowser = useCallback((path: string, opts?: { workspace?: string; line?: number; col?: number }) => {
-    modalManager.openFiles(opts?.workspace, path);
-    pushNav({ type: "modal", close: modalManager.closeFiles });
+    openAppFileInBrowser(modalManager, pushNav, path, opts);
   }, [modalManager, pushNav]);
 
   const openActivityLogWithNav = useCallback(() => {
@@ -1899,10 +1931,22 @@ function AppInner() {
       () => { if (notesDirtyRef.current) onAccepted?.(); },
     );
   }, [alphaDesktopWindows.registerGuard]);
+  /*
+  FNXC:ListInRightDock 2026-09-14-03:31:
+  FN-382: the dock renders the SAME List surface as the route, so it needs the main-content wiring that is assembled
+  further down this render. A ref keeps the callback identity stable for the memoized dock render props while always
+  reading the current props, and the dock body renders later in the same pass, so it never sees a stale snapshot.
+  */
+  const mainContentPropsRef = useRef<AppMainPanelTaskDetailMainContentProps | null>(null);
+  const renderDockListView = useCallback(
+    () => (mainContentPropsRef.current ? <MainContentListView {...mainContentPropsRef.current} listHost="dock" /> : null),
+    [],
+  );
+
   const { rightDock, windows: alphaDesktopRightDockWindows } = useAppAlphaDesktopRightDockComposition({
     projectId: currentProject?.id,
     owner: appRightDockWindows,
-    controllerInput: { active: rightDockActive, addToast, columnFlagsByTaskId: footerColumnFlagsByTaskId, settingsLoaded, researchReadinessVersion, goalAnchorId, tasks: boardSourceTasks, workflowSteps, subscribePluginEvents, openDetailTask: alphaMobileDrawerActive ? openTaskDetailInMainPanel : openDetailTask, notesController, registerNotesGuard: registerAlphaDesktopNotesGuard, openFileInBrowser, onUpdateTask: updateTask, onDeleteTask: deleteTask, onRevertTask: revertTask, onMergeTask: mergeTask, onRetryTask: retryTask, onOpenChatWithPrefill: openChatWithPrefill, onPauseTask: pauseTask, onUnpauseTask: unpauseTask, onBypassReview: bypassReview, onResetTask: resetTask, onDuplicateTask: duplicateTask, onTaskUpdated: (task: Task) => ingestCreatedTasks([task]), openSettings: (section?: string) => openSettingsWithNav(section as SectionId), onOpenUsage: openUsageWithNav, onOpenActivityLog: openActivityLogWithNav, onOpenGitHubImport: openGitHubImportWithNav, onOpenGitManager: openGitManagerWithNav, onOpenSchedules: openSchedulesWithNav, onSendSelectionToTask: modalManager.openNewTaskWithDescription, onCreateTaskFromInsight: handleInsightTaskCreate, onNavigateToMission: handleOpenMission, onTaskCreated: (task: Task) => ingestCreatedTasks([task]), prAuthAvailable, autoMerge, taskDetailChatFirst, visibilityOptions: { hostMode: alphaDesktopNavigationActive ? "alpha-desktop" : "standard", experimentalFeatures: { insights: insightsEnabled, memoryView: memoryEnabled, devServerView: devServerEnabled, researchView: researchEnabled, evalsView: evalsEnabled, goalsView: goalsEnabled }, showSkillsTab: skillsEnabled, pluginDashboardViews }, footerVisible: shellFooterVisible },
+    controllerInput: { active: rightDockActive, addToast, columnFlagsByTaskId: footerColumnFlagsByTaskId, settingsLoaded, researchReadinessVersion, goalAnchorId, tasks: boardSourceTasks, workflowSteps, subscribePluginEvents, openDetailTask: alphaMobileDrawerActive ? openTaskDetailInMainPanel : openDetailTask, notesController, registerNotesGuard: registerAlphaDesktopNotesGuard, openFileInBrowser, onUpdateTask: updateTask, onDeleteTask: deleteTask, onRevertTask: revertTask, onMergeTask: mergeTask, onRetryTask: retryTask, onOpenChatWithPrefill: openChatWithPrefill, onPauseTask: pauseTask, onUnpauseTask: unpauseTask, onBypassReview: bypassReview, onResetTask: resetTask, onDuplicateTask: duplicateTask, onTaskUpdated: (task: Task) => ingestCreatedTasks([task]), openSettings: (section?: string) => openSettingsWithNav(section as SectionId), onOpenUsage: openUsageWithNav, onOpenActivityLog: openActivityLogWithNav, onOpenGitHubImport: openGitHubImportWithNav, onOpenGitManager: openGitManagerWithNav, onOpenSchedules: openSchedulesWithNav, onSendSelectionToTask: modalManager.openNewTaskWithDescription, onCreateTaskFromInsight: handleInsightTaskCreate, onNavigateToMission: handleOpenMission, onTaskCreated: (task: Task) => ingestCreatedTasks([task]), prAuthAvailable, autoMerge, taskDetailChatFirst, renderListView: isMobile ? undefined : renderDockListView, visibilityOptions: { hostMode: alphaDesktopNavigationActive ? "alpha-desktop" : "standard", experimentalFeatures: { insights: insightsEnabled, memoryView: memoryEnabled, devServerView: devServerEnabled, researchView: researchEnabled, evalsView: evalsEnabled, goalsView: goalsEnabled }, showSkillsTab: skillsEnabled, pluginDashboardViews, listViewAvailable: !isMobile }, footerVisible: shellFooterVisible },
     chatWindowProps: { addToast, experimentalFeatures },
     noteWindowProps: {
       addToast,
@@ -1913,6 +1957,13 @@ function AppInner() {
       }),
     },
   });
+
+  listDockRouteRef.current = (newView: TaskView) => {
+    if (newView !== "list" || isMobile || !rightDockActive) return false;
+    rightDock.selectView("list");
+    if (!rightDock.open) rightDock.toggle();
+    return true;
+  };
 
   /*
   FNXC:OpenTasksInRightSidebar 2026-06-28-00:00:
@@ -2155,11 +2206,13 @@ function AppInner() {
     ResearchView,
     SecretsView,
     SkillsView,
+    SnippetsView,
     _AutomationsView,
     _ImportTasksView,
     _SettingsView,
     _WorkflowEditorView,
   };
+  mainContentPropsRef.current = mainContentProps;
 
   const showOnboardingResumeCard = !modalManager.modelOnboardingOpen && isOnboardingResumable();
   const showPostOnboardingRecommendations =
@@ -2242,7 +2295,8 @@ function AppInner() {
   });
   const alphaDesktopActiveNavigationId = alphaDesktopWindows.topmost ?? taskView;
   return (
-    <AlphaProvider enabled={alphaUpdatesEnabled}>
+    <AlphaProvider>
+    <ViewLayoutProvider projectId={currentProject?.id}>
     <ConfirmDialogProvider skipConfirmations={skipConfirmationDialogs}>
       <ChatMessageLayoutProvider value={chatMessageLayout}>
       <ChatSubmitOnEnterProvider value={chatSubmitOnEnter}>
@@ -2297,7 +2351,6 @@ function AppInner() {
         onViewAllProjects={handleViewAllProjects}
         projectId={currentProject?.id}
         mobileNavEnabled={isMobile}
-        alphaUpdatesEnabled={alphaUpdatesEnabled}
         leftSidebarNavActive={sidebarActive || alphaDesktopNavigationActive}
         rightDockAvailable={rightDockActive}
         rightDockOpen={rightDock.open}
@@ -2371,12 +2424,11 @@ function AppInner() {
             currentProject={currentProject}
             onSelectProject={handleSelectProject}
             onViewAllProjects={handleViewAllProjects}
-            footerVisible={executorFooterVisible}
-            alphaUpdatesEnabled={alphaUpdatesEnabled}
+            footerVisible={shellFooterVisible}
           />
         )}
         <div
-          className={`project-content${shellFooterVisible && (!isMobile || !mobileKeyboardOpen) ? " project-content--with-footer" : ""}${isMobile && mobileNavVisible && !mobileKeyboardOpen && !alphaUpdatesEnabled ? " project-content--with-mobile-nav" : ""}${isMobile && mobileNavVisible && !mobileKeyboardOpen && !modalManager.anyModalOpen && alphaUpdatesEnabled ? " project-content--with-alpha-nav" : ""}`}
+          className={`project-content${shellFooterVisible && (!isMobile || !mobileKeyboardOpen) ? " project-content--with-footer" : ""}${isMobile && mobileNavVisible && !(modalManager.anyModalOpen || quickChatOpen) ? " project-content--with-alpha-nav" : ""}`}
         >
           <AppMainPanelTaskDetailComposition
             state={mainPanelTaskDetail}
@@ -2408,7 +2460,7 @@ function AppInner() {
           Kept-alive Planning Mode renders as a sibling of the MainContent switch inside .project-content (which is position:relative for the hidden out-of-flow overlay state). Keyed by project id + planningEntryGeneration so project switches and payload-carrying planning entry points remount with fresh-open semantics while plain navigation restores the live instance.
           */}
           {viewMode === "project" && currentProject && planningEverOpenedProjectId === currentProject.id && (
-            alphaUpdatesEnabled && isMobile ? (
+            isMobile ? (
               <AlphaPlanningDrawer
                 open={planningViewActive && !modalManager.detailTask}
                 title={t("nav.planning", "Planning")}
@@ -2450,7 +2502,7 @@ function AppInner() {
         </div>
         {rightDock.dock}
       </div>
-      {alphaDesktopNavigationActive ? <AlphaDesktopActionBar entries={alphaDesktopNavigationEntries} activeId={alphaDesktopActiveNavigationId} tasks={footerTasks} projectId={currentProject?.id} columnFlagsByTaskId={footerColumnFlagsByTaskId} /> : null}
+      {alphaWideFooterActive ? <AlphaDesktopActionBar entries={alphaDesktopNavigationEntries} activeId={alphaDesktopActiveNavigationId} tasks={footerTasks} projectId={currentProject?.id} columnFlagsByTaskId={footerColumnFlagsByTaskId} onToggleTerminal={toggleTerminalWithNav} /> : null}
       {alphaDesktopNavigationActive ? alphaDesktopWindows.windows.filter((entry) => entry.id === "patchnode").map((entry) => (
         <Suspense fallback={null} key={entry.id}>
           <PatchnodeView
@@ -2512,8 +2564,7 @@ function AppInner() {
         hidden={!mobileNavVisible}
         modalOpen={modalManager.anyModalOpen && !alphaSharedModalDrawerOpen}
         keyboardOpen={mobileNavKeyboardOpen}
-        mobileNavPrimaryItems={mobileNavPrimaryItems}
-        alphaUpdatesEnabled={alphaUpdatesEnabled}
+        keyboardMetrics={{ keyboardOverlap, viewportHeight, viewportOffsetTop }}
         alphaMenuOpen={alphaMenuOpen}
         onAlphaMenuOpenChange={setAlphaMenuOpen}
         onOpenSettings={openSettingsWithNav}
@@ -2707,6 +2758,7 @@ function AppInner() {
       </ChatSubmitOnEnterProvider>
       </ChatMessageLayoutProvider>
     </ConfirmDialogProvider>
+    </ViewLayoutProvider>
     </AlphaProvider>
   );
 }

@@ -5,6 +5,7 @@ import type { ColorTheme, Column, MergeResult, Task, TaskCreateInput, ThemeMode,
 import type { UseProjectActionsResult } from "../hooks/useProjectActions";
 import { mergeTaskSnapshot } from "../hooks/useTasks";
 import type { ModalManager } from "../hooks/useModalManager";
+import type { NavEntry } from "../hooks/useNavigationHistory";
 import type { UseTaskHandlersResult } from "../hooks/useTaskHandlers";
 import type { ChatMessageLayout } from "../hooks/useAppSettings";
 import type { Toast, ToastType } from "../hooks/useToast";
@@ -151,6 +152,42 @@ interface AppModalsProps {
   onOpenApprovals?: (approvalId?: string) => void;
   /** Enables planning-style agent onboarding entry points inside setup. */
   agentOnboardingEnabled?: boolean;
+}
+
+export interface AppFilesModalProps {
+  modalManager: ModalManager;
+  projectId?: string;
+  onClose: () => void;
+}
+
+/*
+FNXC:FileBrowser 2026-09-13-08:50:
+App conserve une seule chaîne d’ouverture pour Files : une sélection précise publie son chemin dans le gestionnaire de modales avant qu’AppModals rende la vue directe, tandis qu’une ouverture générale garde un initialFile nul. Le dock compact et son hôte développé doivent appeler cette même frontière afin qu’aucun des deux ne puisse contourner l’état de production.
+*/
+export function openAppFileInBrowser(
+  modalManager: Pick<ModalManager, "openFiles" | "closeFiles">,
+  pushNav: (entry: NavEntry) => void,
+  path: string,
+  opts?: { workspace?: string; line?: number; col?: number },
+) {
+  modalManager.openFiles(opts?.workspace, path);
+  pushNav({ type: "modal", close: modalManager.closeFiles });
+}
+
+/** Production Files bridge shared by AppModals and its dock-to-modal integration tests. */
+export function AppFilesModal({ modalManager, projectId, onClose }: AppFilesModalProps) {
+  if (!modalManager.filesOpen) return null;
+  return (
+    <FileBrowserModal
+      initialWorkspace={modalManager.fileBrowserWorkspace}
+      initialFile={modalManager.fileBrowserInitialFile}
+      isOpen={true}
+      onClose={onClose}
+      onWorkspaceChange={modalManager.setFileWorkspace}
+      projectId={projectId}
+      onSendSelectionToTask={modalManager.openNewTaskWithDescription}
+    />
+  );
 }
 
 export function AppModals({
@@ -465,17 +502,11 @@ export function AppModals({
         projectId={projectId}
       />
 
-      {modalManager.filesOpen && (
-        <FileBrowserModal
-          initialWorkspace={modalManager.fileBrowserWorkspace}
-          initialFile={modalManager.fileBrowserInitialFile}
-          isOpen={true}
-          onClose={closeFilesWithNav}
-          onWorkspaceChange={modalManager.setFileWorkspace}
-          projectId={projectId}
-          onSendSelectionToTask={modalManager.openNewTaskWithDescription}
-        />
-      )}
+      <AppFilesModal
+        modalManager={modalManager}
+        projectId={projectId}
+        onClose={closeFilesWithNav}
+      />
 
       {/*
       FNXC:AlphaMobileDrawer 2026-09-10-16:56:

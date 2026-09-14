@@ -1,4 +1,4 @@
-import { ModalCloseButton } from "./ModalCloseButton";
+import { ViewHeader } from "./ViewHeader";
 import "./TaskResetDialog.css";
 import { AlphaButton, AlphaDialog, AlphaTextArea } from "./alpha-ui";
 
@@ -72,14 +72,15 @@ export function TaskResetDialog({
       onClose={isSubmitting ? undefined : onClose}
     >
       <div data-testid="task-reset-dialog">
-        <div className="modal-header">
-          <h3 id={titleId}>{t("taskDetail.reset.confirmTitle", "Reset this task?")}</h3>
-          <ModalCloseButton
-            onClick={onClose}
-            disabled={isSubmitting}
-            aria-label={t("common.close", "Close")}
-           />
-        </div>
+        {/* FNXC:StandardizedViewLayout 2026-09-13-21:49: Shared confirmation chrome; the only exit stays present and enabled by its own submit guard. */}
+        <ViewHeader
+          className="modal-header"
+          headingLevel={3}
+          titleId={titleId}
+          title={t("taskDetail.reset.confirmTitle", "Reset this task?")}
+          onClose={onClose}
+          closeButtonProps={{ disabled: isSubmitting, "aria-label": t("common.close", "Close") }}
+        />
         <div className="task-reset-dialog__body">
           <p className="task-reset-dialog__warning">
             {t(

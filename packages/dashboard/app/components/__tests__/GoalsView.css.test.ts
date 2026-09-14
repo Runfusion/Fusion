@@ -51,7 +51,8 @@ describe("GoalsView CSS token guardrails", () => {
     expect(goalsCss).not.toMatch(/rgba?\(/g);
     expect(goalsCss).not.toMatch(/\b[1-9]\d*px\b/g);
     expect(goalsViewBlock).toContain("height: 100%");
-    expect(goalsViewBlock).toContain("overflow-y: auto");
+    expect(goalsViewBlock).toContain("overflow: hidden");
+    expect(css).toMatch(/\.view-layout__content\s*\{[^}]*overflow:\s*auto/);
     expect(css).toMatch(/\.goals-[^\n{]*:focus-visible/g);
     expect(css).toMatch(/@media \(max-width: 768px\)[\s\S]*\.goals-/);
   });

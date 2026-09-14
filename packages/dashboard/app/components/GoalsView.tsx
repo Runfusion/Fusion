@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { Goal } from "@fusion/core";
-import { Link, Plus, Sparkles, Target, X } from "lucide-react";
+import { Link, Sparkles, Target, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { draftGoalDescription, getRefineErrorMessage } from "../api";
+import { ViewActionButton } from "./ViewActionButton";
 import { ViewHeader } from "./ViewHeader";
+import { ViewLayout, type ViewLayoutMobilePane } from "./ViewLayout";
+import { ViewSidebar } from "./ViewSidebar";
 import "./GoalsView.css";
 import { isNativeStructureDragEnabled, serializeNativeStructureRef } from "../utils/nativeStructureDrag";
 
@@ -41,6 +44,8 @@ export function GoalsView({ initialGoals, anchorGoalId, projectId, onNavigateToM
   const { t } = useTranslation("app");
   const [goals, setGoals] = useState<Goal[]>(() => initialGoals ?? []);
   const [highlightedGoalId, setHighlightedGoalId] = useState<string | null>(null);
+  const [selectedGoalId, setSelectedGoalId] = useState<string | null>(() => anchorGoalId ?? initialGoals?.[0]?.id ?? null);
+  const [mobilePane, setMobilePane] = useState<ViewLayoutMobilePane>(anchorGoalId ? "detail" : "list");
   const anchorTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [loading, setLoading] = useState<boolean>(initialGoals === undefined);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -205,10 +210,25 @@ export function GoalsView({ initialGoals, anchorGoalId, projectId, onNavigateToM
     };
   }, [anchorGoalId, goals]);
 
+  /*
+  FNXC:GoalsCollectionLayout 2026-09-13-16:29:
+  Goals is one stable collection controller: desktop keeps the goal rail mounted while create, view, and edit occupy the detail pane; phones move list to detail and use the canonical header back action without discarding drafts or link state.
+  */
   function openAddForm() {
     setErrorMessage(null);
     setAddError(null);
     setIsAddFormOpen(true);
+    setMobilePane("detail");
+  }
+
+  function selectGoal(goalId: string) {
+    setSelectedGoalId(goalId);
+    setIsAddFormOpen(false);
+    setMobilePane("detail");
+  }
+
+  function returnToGoalList() {
+    setMobilePane("list");
   }
 
   function openEdit(goal: Goal) {
@@ -231,7 +251,17 @@ export function GoalsView({ initialGoals, anchorGoalId, projectId, onNavigateToM
     setAddDescription("");
     setAddError(null);
     setIsDraftingDescription(false);
+    setMobilePane("list");
   }
+
+  useEffect(() => {
+    if (anchorGoalId && goals.some((goal) => goal.id === anchorGoalId)) {
+      setSelectedGoalId(anchorGoalId);
+      setMobilePane("detail");
+      return;
+    }
+    setSelectedGoalId((current) => current && goals.some((goal) => goal.id === current) ? current : goals[0]?.id ?? null);
+  }, [anchorGoalId, goals]);
 
   async function draftAddGoalDescription() {
     const title = addTitle.trim();
@@ -277,7 +307,9 @@ export function GoalsView({ initialGoals, anchorGoalId, projectId, onNavigateToM
       if (response.ok) {
         const createdGoal = (await response.json()) as Goal;
         setGoals((current) => [...current, createdGoal]);
+        setSelectedGoalId(createdGoal.id);
         closeAddForm();
+        setMobilePane("detail");
         return;
       }
 
@@ -437,29 +469,44 @@ export function GoalsView({ initialGoals, anchorGoalId, projectId, onNavigateToM
     }
   }
 
+  const header = (
+    <ViewHeader
+      icon={Target}
+      title={t("goals.title", "Goals")}
+      backAction={mobilePane === "detail" ? { label: t("actions.back", "Back"), onClick: returnToGoalList } : undefined}
+      actions={(
+        <>
+          <p className="goals-count" data-testid="goals-active-count">
+            {t("goals.activeCount", "{{count}} active goals", { count: activeCount })}
+          </p>
+          <ViewActionButton kind="create" label={t("goals.addGoal", "Add Goal")} onClick={openAddForm} data-testid="goals-add-button" />
+        </>
+      )}
+    />
+  );
+
+  const sidebar = (
+    <ViewSidebar ariaLabel={t("goals.title", "Goals")} panelTestId="goals-sidebar">
+      <div className="goals-sidebar-list" role="listbox">
+        {goals.map((goal) => (
+          <button
+            key={goal.id}
+            type="button"
+            role="option"
+            aria-selected={selectedGoalId === goal.id && !isAddFormOpen}
+            className={`goals-sidebar-row${selectedGoalId === goal.id && !isAddFormOpen ? " active" : ""}`}
+            onClick={() => selectGoal(goal.id)}
+          >
+            <span>{goal.title}</span>
+            <span className="goals-card-status">{goal.status}</span>
+          </button>
+        ))}
+      </div>
+    </ViewSidebar>
+  );
+
   return (
-    <section className="goals-view" data-testid="goals-view">
-      {/*
-      FNXC:Navigation 2026-06-22-01:10:
-      Goals adopts the shared ViewHeader (CC-modeled) for a consistent main-content title row; the Add Goal action and the active-goal count both ride in the header actions cluster so existing behavior and the goals-active-count test hook are preserved.
-      */}
-      <ViewHeader
-        icon={Target}
-        title={t("goals.title", "Goals")}
-        actions={(
-          <>
-            <p className="goals-count" data-testid="goals-active-count">
-              {t("goals.activeCount", "{{count}} active goals", { count: activeCount })}
-            </p>
-            {/* FNXC:Goals 2026-06-22-16:30: Plus icon is sized 18 (was unsized → lucide 24px default) so the Add Goal button matches the height of the Compound Engineering stage-launcher button, which uses an 18px icon on the same .btn base. */}
-            <button type="button" className="btn btn-primary goals-add-button" onClick={openAddForm} data-testid="goals-add-button">
-              <Plus size={18} aria-hidden="true" />
-              {t("goals.addGoal", "Add Goal")}
-            </button>
-          </>
-        )}
-      />
-      {/* FNXC:Navigation 2026-06-22-01:12: Inner content keeps its own horizontal padding via .goals-view__content so it aligns with the ViewHeader inset after the root drops its uniform padding. */}
+    <ViewLayout className="goals-view" data-testid="goals-view" header={header} sidebar={sidebar} mobilePane={mobilePane}>
       <div className="goals-view__content">
 
       {isAddFormOpen ? (
@@ -541,7 +588,7 @@ export function GoalsView({ initialGoals, anchorGoalId, projectId, onNavigateToM
 
       {!loading && goals.length > 0 ? (
         <div className="goals-list" data-testid="goals-list">
-          {goals.map((goal) => (
+          {goals.filter((goal) => goal.id === selectedGoalId).map((goal) => (
             <article
               key={goal.id}
               id={`goal-card-${goal.id}`}
@@ -717,6 +764,6 @@ export function GoalsView({ initialGoals, anchorGoalId, projectId, onNavigateToM
         </div>
       ) : null}
       </div>
-    </section>
+    </ViewLayout>
   );
 }

@@ -11,17 +11,8 @@ for the restart, which is the churn this bound exists to remove.
 export const DEFAULT_PLANNING_TIMEOUT_MS = 5_400_000;
 
 /*
-FNXC:PlanReviewReplan 2026-08-10-18:32:
-Built-in ceiling for consecutive Plan Review REVISE -> replan cycles when the resolved revision budget
-is unbounded, used when the `planReviewReplanCap` workflow value is unset.
-
-15 preserves the ceiling that was ACTUALLY in force before this constant existed. That backstop was
-`PLAN_REVIEW_FEEDBACK_HISTORY_LIMIT` — a bound on how much reviewer PROSE is replayed into the next
-planning prompt, whose own comment states it is "bounded independently of persistence and retry
-accounting". Two unrelated concerns were sharing one number, so trimming the prompt history would have
-silently tightened a safety ceiling. Splitting them is the point; the value is held at 15 so the split
-is a pure re-wiring rather than a silent behavior change. Operators can now lower it, which is what the
-`planReviewReplanCap` setting always claimed to do but never did — nothing read it.
+FNXC:PlanReviewReplan 2026-09-13-04:34:
+`planReviewReplanCap` remains the operator-configurable Plan Review ceiling and 15 remains its legacy fallback. Runtime admission chooses the lower of this value, an explicit revision budget, and the shared absolute review backstop; operators can tighten the policy but cannot raise it above the safety boundary.
 */
 export const DEFAULT_PLAN_REVIEW_REPLAN_CAP = 15;
 import {
@@ -49,7 +40,8 @@ import type { WorkflowSettingDefinition } from "./workflow-ir-types.js";
  *
  * `BUILTIN_REVIEW_REVISION_SETTINGS` is workflow-native review-loop policy.
  * These keys also never lived in project/global settings and intentionally omit
- * declaration defaults: an unset workflow value means unbounded remediation.
+ * declaration defaults: an unset value defers to authored policy, while every
+ * runtime result remains subject to the absolute review safety backstop.
  *
  * `BUILTIN_OVERSIGHT_SETTINGS` is workflow-native planner oversight policy.
  * These keys never lived in project/global settings and must never be added to
@@ -167,15 +159,15 @@ export const BUILTIN_MOVED_WORKFLOW_SETTINGS: WorkflowSettingDefinition[] = [
     name: "Max post-review fixes",
     type: "number",
     /*
-     * FNXC:WorkflowOptionalStepCycle 2026-09-03-05:40:
-     * This global budget remains the fallback for custom optional gates that define neither a workflow setting nor node `maxRevisions`. Standard Code Review now authors a three-round bound, Compound Engineering authors two, and Plan Review remains unbounded behind its separate replan cap.
+     * FNXC:WorkflowOptionalStepCycle 2026-09-13-04:34:
+     * This global budget remains the fallback for custom optional gates that define neither a workflow setting nor node `maxRevisions`. Standard Code Review authors three rounds, Compound Engineering authors two, and every path is clamped by the shared absolute safety backstop.
      *
      * FNXC:WorkflowOptionalStepCycle 2026-07-26-19:35:
      * Raised 3 -> 10 (operator request). Three passes is below the observed convergence length for
      * Browser Verification and custom gates — the gates this fallback actually governs. Exhausting
      * a budget parks the card for a human, so a too-low generic fallback converts "needs another
-     * pass" into operator toil. This is a fallback, not a ceiling: an explicit workflow value or
-     * node `maxRevisions` still wins.
+     * pass" into operator toil. This is a fallback policy value; lower explicit workflow or node
+     * limits win, while the absolute backstop wins over higher values.
      */
     default: 10,
     description: "Maximum automatic fix passes after review/optional-step feedback; the step re-runs each pass until it passes or this budget is exhausted.",
@@ -520,11 +512,11 @@ export const BUILTIN_REVIEW_REVISION_SETTINGS: WorkflowSettingDefinition[] = [
     minimum: 0,
     integer: true,
     /*
-     * FNXC:WorkflowRevisionBudget 2026-06-30-19:45:
-     * Built-in Plan Review/spec remediation is unbounded when this workflow value is unset. Operators can store a non-negative integer per workflow to cap automatic replans, and `0` disables automatic Plan Review revision entirely without duplicating a read-only built-in workflow.
+     * FNXC:WorkflowRevisionBudget 2026-09-13-04:34:
+     * Unset Plan Review policy uses the finite absolute safety backstop. Operators can store a lower non-negative integer, and `0` disables automatic Plan Review revision entirely without duplicating a read-only built-in workflow.
      */
     description:
-      "Maximum automatic Plan Review/spec revision attempts for this workflow. Leave unset for unbounded; set 0 to disable automatic revision.",
+      "Maximum automatic Plan Review/spec revision attempts for this workflow. Leave unset to use the finite safety backstop; set 0 to disable automatic revision.",
   },
   {
     id: "codeReviewMaxRevisions",
@@ -533,8 +525,8 @@ export const BUILTIN_REVIEW_REVISION_SETTINGS: WorkflowSettingDefinition[] = [
     minimum: 0,
     integer: true,
     /*
-     * FNXC:WorkflowRevisionBudget 2026-09-03-05:40:
-     * An unset workflow value defers to the authored Code Review node: standard built-ins allow three remediation passes and Compound Engineering allows two. Operators can store a non-negative integer per workflow to override the authored cap, `0` to disable automatic remediation, or the unbounded sentinel to opt out of the cap.
+     * FNXC:WorkflowRevisionBudget 2026-09-13-04:34:
+     * An unset workflow value defers to the authored Code Review node. Operators can store a lower non-negative integer, `0` to disable automatic remediation, or the unbounded sentinel to use the absolute safety backstop.
      */
     description:
       "Maximum automatic Code Review remediation attempts for this workflow. Leave unset to use the workflow's authored bounded default; set 0 to disable automatic revision.",

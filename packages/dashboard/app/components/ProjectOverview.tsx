@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useEffect } from "react";
-import { Plus, LayoutGrid, Filter, ArrowUpDown, Activity, CheckCircle, AlertCircle, Folder, Inbox, Server } from "lucide-react";
+import { LayoutGrid, Filter, ArrowUpDown, Activity, CheckCircle, AlertCircle, Folder, Inbox, Server } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import "./ProjectOverview.css";
 import type { ProjectInfo, ProjectHealth, NodeInfo, ProjectInfoWithSource, ProjectNodeAvailability } from "../api";
@@ -9,6 +9,7 @@ import { getNodeMappingsForProject, resolveNodeDisplayName } from "../utils/node
 import { ProjectGridSkeleton } from "./ProjectGridSkeleton";
 import { useProjectHealth } from "../hooks/useProjectHealth";
 import { ViewHeader } from "./ViewHeader";
+import { ViewActionButton } from "./ViewActionButton";
 
 export interface ProjectOverviewProps {
   projects: ProjectInfoWithSource[];
@@ -249,13 +250,12 @@ export function ProjectOverview({
       icon={LayoutGrid}
       title={t("dashboard.title", "Project Dashboard")}
       actions={(
-        <button
-          className="btn btn-primary btn-sm project-overview__add-btn"
+        <ViewActionButton
+          className="project-overview__add-btn"
+          kind="create"
+          label={t("projects.addProject", "Add Project")}
           onClick={onAddProject}
-        >
-          <Plus size={14} />
-          {t("projects.addProject", "Add Project")}
-        </button>
+        />
       )}
     />
   );
@@ -272,6 +272,7 @@ export function ProjectOverview({
     );
   }
 
+  // FNXC:StandardizedViewActions 2026-09-13-21:43: Empty projects retain one creation authority in the shared header; the explanatory state must not duplicate that mutation.
   // Empty state when no projects
   if (projects.length === 0) {
     return (
@@ -286,13 +287,6 @@ export function ProjectOverview({
             <p className="project-empty-state__description">
               {t("projects.emptyStateDescription", "Get started by adding your first project. Projects allow you to organize and track tasks across multiple repositories.")}
             </p>
-            <button
-              className="btn btn-primary project-empty-state__cta"
-              onClick={onAddProject}
-            >
-              <Plus size={16} />
-              {t("projects.addFirstProject", "Add Your First Project")}
-            </button>
           </div>
         </div>
       </div>

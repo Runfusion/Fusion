@@ -32,6 +32,53 @@ export function graphFailureErrorTexts(result: WorkflowGraphTaskRunResult): stri
   return texts;
 }
 
+export const MAX_VISIBLE_GRAPH_NODE_ERROR_LENGTH = 1_000;
+
+function failedNodeErrorKeys(nodeId: string): string[] {
+  const keys = [`node:${nodeId}:error`];
+  const groupDelimiter = nodeId.indexOf("::");
+  if (groupDelimiter !== -1) {
+    keys.push(`node:${nodeId.slice(0, groupDelimiter)}:error`);
+    keys.push(`node:${nodeId.slice(groupDelimiter + 2)}:error`);
+    return keys;
+  }
+  const foreachDelimiter = nodeId.indexOf("#");
+  if (foreachDelimiter !== -1) {
+    keys.push(`node:${nodeId.slice(0, foreachDelimiter)}:error`);
+    const templateDelimiter = nodeId.indexOf(":", foreachDelimiter + 1);
+    if (templateDelimiter !== -1) keys.push(`node:${nodeId.slice(templateDelimiter + 1)}:error`);
+  }
+  return keys;
+}
+
+/*
+FNXC:WorkflowDiagnostics 2026-09-13-05:04:
+Terminal graph diagnostics may expose only the failed node's own bounded exception text. Context belongs to the whole graph walk, so scanning every `node:*:error` key can attach a stale earlier failure to the current node and mislead recovery; materialized optional-group and foreach ids use the same direct/container/template identities as recorded node values.
+*/
+export function graphFailureNodeErrorText(result: WorkflowGraphTaskRunResult): string | undefined {
+  if (!result.context) return undefined;
+  const failedNode = result.visitedNodeIds.at(-1);
+  if (!failedNode) return undefined;
+  for (const key of failedNodeErrorKeys(failedNode)) {
+    const raw = result.context[key];
+    if (typeof raw !== "string") continue;
+    const normalized = raw.replace(/\s+/g, " ").trim();
+    if (!normalized) continue;
+    if (normalized.length <= MAX_VISIBLE_GRAPH_NODE_ERROR_LENGTH) return normalized;
+    return `${normalized.slice(0, MAX_VISIBLE_GRAPH_NODE_ERROR_LENGTH - 1).trimEnd()}…`;
+  }
+  return undefined;
+}
+
+export function formatGraphFailureDiagnostic(
+  nodeId: string | undefined,
+  failureValue: string | undefined,
+  nodeError: string | undefined,
+  prefix = "Workflow graph terminated with failure",
+): string {
+  return `${prefix} at node '${nodeId ?? "unknown"}'${failureValue ? ` (${failureValue})` : ""}${nodeError ? `: ${nodeError}` : ""}`;
+}
+
 
 /*
 FNXC:WorkflowExecutionOwnership 2026-07-30-10:10 (U8, PR #2599 review — coderabbit, major):
@@ -121,22 +168,7 @@ export function extractUnusableWorktreeGraphFailure(result: WorkflowGraphTaskRun
   `node:*:error` entry would match a STALE error left by an earlier, already-handled node
   and misroute an unrelated later failure into worktree recovery (greptile PR#2231 P1).
   */
-  const candidateKeys: string[] = [`node:${failedNode}:error`];
-  const groupInstanceDelimiter = failedNode.indexOf("::");
-  if (groupInstanceDelimiter !== -1) {
-    candidateKeys.push(`node:${failedNode.slice(groupInstanceDelimiter + 2)}:error`);
-    candidateKeys.push(`node:${failedNode.slice(0, groupInstanceDelimiter)}:error`);
-  }
-  const foreachInstanceDelimiter = failedNode.indexOf("#");
-  if (foreachInstanceDelimiter !== -1) {
-    candidateKeys.push(`node:${failedNode.slice(0, foreachInstanceDelimiter)}:error`);
-    const instanceRest = failedNode.slice(foreachInstanceDelimiter + 1);
-    const templateDelimiter = instanceRest.indexOf(":");
-    if (templateDelimiter !== -1) {
-      candidateKeys.push(`node:${instanceRest.slice(templateDelimiter + 1)}:error`);
-    }
-  }
-  for (const key of candidateKeys) {
+  for (const key of failedNodeErrorKeys(failedNode)) {
     const value = result.context[key];
     if (typeof value === "string" && isMissingWorktreeSessionStartFailure(value)) return value;
   }

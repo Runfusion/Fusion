@@ -88,24 +88,10 @@ smallest defined token, --space-xs (4px), instead of reintroducing --space-2xs.
 }
 
 /*
-FNXC:QuickEntry 2026-06-22-19:25:
-List view renders quick-add as a COMPACT single-line input so the box isn't tall.
-Clamp the textarea to exactly one line (min-height == max-height == one line), forbid auto-grow/manual resize, and scroll overflow instead of growing.
-Tighten container vertical padding so the overall box is just the one-line input height.
-Board/columns omit `.quick-entry--single-line`, keeping the tall 80px + auto-grow behavior.
+FNXC:QuickEntry 2026-09-14-03:31:
+The List-only one-line clamp rules are deleted with the prop they styled. List and Board render the same composer, so
+a host-specific compact textarea would reintroduce exactly the divergence this deletion closes.
 */
-.quick-entry--single-line {
-  padding-top: var(--space-xs);
-  padding-bottom: var(--space-xs);
-}
-
-.quick-entry-box.quick-entry--single-line .quick-entry-input,
-.quick-entry-box.quick-entry--single-line .quick-entry-input--expanded {
-  min-height: 36px;
-  max-height: 36px;
-  overflow-y: auto;
-  resize: none;
-}
 
 @media (max-width: 768px) {
   .quick-entry-input--expanded {
@@ -949,8 +935,8 @@ shared left/right edges and compact gaps. Keep the centered cluster desktop-only
 }
 
 /*
-FNXC:AlphaQuickEntry 2026-09-12-00:36:
-Alpha Quick Entry is input-first: the immediate attach/status/icon-only Save row remains visible, and routing options appear as a quiet second row only after disclosure. The Save control keeps fixed icon-button metrics while a contained token-colored fill communicates the 1,200ms Start hold without changing row width; List and legacy surfaces retain their existing shells.
+FNXC:AlphaQuickEntry 2026-09-13-15:19:
+Alpha Quick Entry is input-first: the immediate attach/status/icon-only Save row remains visible, and routing options appear as a quiet second row only after disclosure. During the 500ms Start hold, a warning-colored mask rises from the bottom, covers the corresponding portion of Save, and reveals an undistorted Play icon. On mobile, every primary icon action shares the same `--alpha-touch-height` square without imposing that fixed width on text option controls. Desktop/tablet metrics, the List host, legacy controls, and reduced-motion timing remain unchanged.
 */
 [data-alpha-surface="true"] .quick-entry-box {
   padding: var(--alpha-density-2);
@@ -1004,40 +990,40 @@ Alpha Quick Entry is input-first: the immediate attach/status/icon-only Save row
   isolation: isolate;
 }
 
-[data-alpha-surface="true"] .quick-entry-alpha-save > svg {
-  position: relative;
-  z-index: 1;
-}
-
+[data-alpha-surface="true"] .quick-entry-alpha-save-icons,
+[data-alpha-surface="true"] .quick-entry-alpha-save-icon,
 [data-alpha-surface="true"] .quick-entry-alpha-save-progress {
   position: absolute;
   inset: 0;
-  background: var(--color-warning);
-  opacity: 0;
-  transform: scaleX(0);
-  transform-origin: left;
+  display: grid;
+  place-items: center;
   pointer-events: none;
 }
 
-[data-alpha-surface="true"] .quick-entry-alpha-save[data-hold-state="holding"] .quick-entry-alpha-save-progress {
-  opacity: 1;
-  animation: quick-entry-alpha-hold-progress 1200ms linear forwards;
+[data-alpha-surface="true"] .quick-entry-alpha-save-icon--save {
+  z-index: 1;
 }
 
-[data-alpha-surface="true"] .quick-entry-alpha-save[data-hold-state="confirmed"] .quick-entry-alpha-save-progress {
-  opacity: 1;
-  transform: scaleX(1);
+[data-alpha-surface="true"] .quick-entry-alpha-save > .quick-entry-alpha-save-icons > .quick-entry-alpha-save-progress {
+  z-index: 2;
+  background: var(--color-warning);
+  color: var(--provider-icon-contrast);
+  clip-path: inset(100% 0 0 0);
+  transform-origin: bottom;
+}
+
+[data-alpha-surface="true"] .quick-entry-alpha-save[data-hold-state="holding"] .quick-entry-alpha-save-progress {
+  animation: quick-entry-alpha-hold-progress var(--quick-entry-alpha-hold-duration) linear forwards;
 }
 
 @keyframes quick-entry-alpha-hold-progress {
-  to { transform: scaleX(1); }
+  to { clip-path: inset(0 0 0 0); }
 }
 
 @media (prefers-reduced-motion: reduce) {
   [data-alpha-surface="true"] .quick-entry-alpha-save[data-hold-state="holding"] .quick-entry-alpha-save-progress {
     animation: none;
-    opacity: 0.45;
-    transform: scaleX(1);
+    clip-path: inset(50% 0 0 0);
   }
 }
 
@@ -1081,10 +1067,21 @@ Alpha Quick Entry is input-first: the immediate attach/status/icon-only Save row
     max-height: var(--alpha-touch-height);
   }
 
+  [data-alpha-surface="true"] .quick-entry-primary-group .btn-icon {
+    flex: 0 0 var(--alpha-touch-height);
+    width: var(--alpha-touch-height);
+    min-width: var(--alpha-touch-height);
+    max-width: var(--alpha-touch-height);
+    height: var(--alpha-touch-height);
+    min-height: var(--alpha-touch-height);
+    max-height: var(--alpha-touch-height);
+    padding: 0;
+    align-items: center;
+    justify-content: center;
+  }
+
   [data-alpha-surface="true"] .quick-entry-primary-group [data-testid="quick-entry-save"] {
     margin-inline-start: auto;
-    min-width: var(--alpha-touch-height);
-    width: var(--alpha-touch-height);
   }
 }
 

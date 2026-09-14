@@ -16,8 +16,8 @@ vi.mock("lucide-react", () => ({
   Package: ({ size }: { size?: number }) => (
     <span data-testid="icon-package">Package-{size || 16}</span>
   ),
-  Puzzle: ({ size }: { size?: number }) => (
-    <span data-testid="icon-puzzle">Puzzle-{size || 14}</span>
+  Puzzle: ({ size, ...props }: { size?: number; "aria-hidden"?: boolean }) => (
+    <span {...props} data-testid="icon-puzzle">Puzzle-{size || 14}</span>
   ),
   BookOpen: ({ size }: { size?: number }) => (
     <span data-testid="icon-book">BookOpen-{size || 14}</span>

@@ -8,7 +8,7 @@ import {
   type TaskStore,
   type WorkflowWorkItem,
 } from "@fusion/core";
-import { generateSyntheticRunId, resolveColumnResumeNode } from "@fusion/engine";
+import { clearWorktreeDependencyDeterministicStop, generateSyntheticRunId, resolveColumnResumeNode } from "@fusion/engine";
 import { conflict, notFound } from "../api-error.js";
 
 const EXTERNAL_BLOCK_RESUME_RUN_SEGMENT = ":external-block-resume:";
@@ -60,6 +60,14 @@ export async function resumeExternallyBlockedTask(params: {
       : resolveColumnResumeNode(ir, externalBlock.resume.column);
     if (!resumeNode) {
       throw conflict(`External-block Retry cannot resolve a workflow node for column ${externalBlock.resume.column}`);
+    }
+
+    // Dependency readiness blocks are retryable only after their durable repeat stop is cleared.
+    // Clearing is best-effort because a missing worktree must not make the operator Retry unusable.
+    if (externalBlock.source === "dependency-readiness") {
+      for (const worktreePath of [task.worktree, ...Object.values(task.workspaceWorktrees ?? {}).map((entry) => entry?.worktreePath)].filter((value): value is string => Boolean(value))) {
+        try { clearWorktreeDependencyDeterministicStop(worktreePath); } catch { /* scratch record cleanup is non-blocking */ }
+      }
     }
 
     const continuationSequence = existingItems.length;

@@ -5,8 +5,8 @@ import { ModalCloseButton } from "../ModalCloseButton";
 import { FloatingWindow } from "../FloatingWindow";
 
 /*
-FNXC:ModalChromeTests 2026-09-11-23:35:
-The canonical close control is proven through its native contract and the real FloatingWindow host so modal migrations cannot duplicate chrome or lose accessibility and guard semantics.
+FNXC:ModalChromeTests 2026-09-13-11:59:
+The canonical close control is proven through its native contract and the real FloatingWindow host so modal migrations cannot duplicate chrome, drift from compact icon geometry, or lose accessibility and guard semantics.
 */
 describe("ModalCloseButton", () => {
   it("forwards native close-button behavior and renders a decorative icon", () => {
@@ -16,7 +16,7 @@ describe("ModalCloseButton", () => {
 
     const button = screen.getByTestId("close");
     expect(button).toHaveAttribute("type", "button");
-    expect(button).toHaveClass("modal-close", "btn", "btn-icon", "host-close");
+    expect(button).toHaveClass("modal-close", "btn", "btn-icon", "btn-sm", "host-close");
     expect(button).toHaveAccessibleName("Close notes");
     expect(button).toHaveAttribute("title", "Close notes");
     expect(button.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
@@ -36,6 +36,6 @@ describe("ModalCloseButton", () => {
   it("renders exactly one close control in the native FloatingWindow header", () => {
     render(<FloatingWindow title="Utility" onClose={vi.fn()} windowKey="utility"><p>Body</p></FloatingWindow>);
     expect(screen.getAllByTestId("floating-window-close-utility")).toHaveLength(1);
-    expect(screen.getByTestId("floating-window-close-utility")).toHaveClass("modal-close");
+    expect(screen.getByTestId("floating-window-close-utility")).toHaveClass("modal-close", "btn", "btn-icon", "btn-sm");
   });
 });

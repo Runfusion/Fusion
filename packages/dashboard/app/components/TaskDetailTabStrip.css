@@ -1,39 +1,15 @@
 /*
-FNXC:TaskDetailTabs 2026-09-12-02:34:
-La barre d'onglets reste une surface plane sans contour de groupe. Les marqueurs de dépôt utilisent les couleurs et dimensions du système, et les cibles tactiles conservent le défilement horizontal sans drag natif.
+FNXC:TaskDetailTabs 2026-09-12-17:32:
+The tab row keeps native horizontal touch panning and shows closed-hand feedback only after shared mouse-pan intent wins. The panning state temporarily owns cursor and text selection without changing the flat tab treatment or stationary control behavior.
 */
-.task-detail-tab-slot {
-  position: relative;
-  display: flex;
-  flex: 0 0 auto;
-  touch-action: pan-x pan-y;
+.detail-tabs.is-mouse-panning,
+.detail-tabs.is-mouse-panning * {
+  cursor: grabbing !important;
+  user-select: none;
 }
 
-.task-detail-tab-slot--dragging {
-  color: color-mix(in srgb, currentColor 45%, transparent);
-}
-
-.task-detail-tab-slot--drop-before::before,
-.task-detail-tab-slot--drop-after::after {
-  content: "";
-  position: absolute;
-  inset-block: var(--space-xs);
-  inline-size: var(--btn-border-width);
-  border-radius: var(--radius-pill);
-  background: var(--in-progress);
-  pointer-events: none;
-}
-
-.task-detail-tab-slot--drop-before::before {
-  inset-inline-start: 0;
-}
-
-.task-detail-tab-slot--drop-after::after {
-  inset-inline-end: 0;
-}
-
-@media (max-width: 768px), (pointer: coarse) {
-  .task-detail-tab-slot {
+@media (max-width: 768px) {
+  .detail-tabs {
     touch-action: pan-x pan-y;
   }
 }

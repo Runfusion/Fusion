@@ -1,4 +1,4 @@
-import { ModalCloseButton } from "./ModalCloseButton";
+import { ViewHeader } from "./ViewHeader";
 import "./AgentErrorDetailsModal.css";
 import { useMemo, useState } from "react";
 import { AlertCircle, Check, Copy, ExternalLink } from "lucide-react";
@@ -65,13 +65,14 @@ export function AgentErrorDetailsModal({ open, onClose, errorText, issueContext 
   return (
     <div className="modal-overlay open" {...overlayDismissProps} role="dialog" aria-modal="true" aria-label={t("agentError.dialogLabel", "Agent error details")}>
       <div className="modal agent-error-modal">
-        <div className="modal-header">
-          <h2 className="modal-title">
-            <AlertCircle size={16} />
-            {t("agentError.title", "Agent Error Details")}
-          </h2>
-          <ModalCloseButton onClick={onClose} aria-label={t("common.close", "Close")} />
-        </div>
+        {/* FNXC:StandardizedViewLayout 2026-09-13-21:49: Shared dialog chrome; the alert icon stays with the shared title. */}
+        <ViewHeader
+          className="modal-header"
+          icon={AlertCircle}
+          title={t("agentError.title", "Agent Error Details")}
+          onClose={onClose}
+          closeButtonProps={{ "aria-label": t("common.close", "Close") }}
+        />
         <div className="agent-error-modal__content">
           <pre className="agent-error-modal__error">{errorText}</pre>
         </div>

@@ -14,13 +14,17 @@ import { request as REQUEST } from "../../test-request.js";
 
 describe("task move route — bypassGuards is not forwardable", () => {
   it("ignores a caller-supplied bypassGuards/moveSource in the request body", async () => {
-    const moveTask = vi.fn(async (_id: string, column: string, _options?: Record<string, unknown>) => ({
-      id: "FN-001",
-      column,
-      dependencies: [],
-      steps: [],
-      currentStep: 0,
-    }));
+    const current = {
+      id: "FN-001", title: "planned", description: "planned", column: "todo", status: null, executionMode: "fast",
+      dependencies: [], steps: [], currentStep: 0,
+      prompt: '# Planned\n\n## Plan Premises\n\n- {"kind":"file-exists","path":"package.json"}\n',
+    } as never;
+    const moveTask = vi.fn();
+    const moveTaskIf = vi.fn(async (_id: string, column: string, predicate: (live: typeof current) => boolean | Promise<boolean>, options?: Record<string, unknown>) => {
+      if (!(await predicate(current))) return { task: current, moved: false };
+      Object.assign(current, { column });
+      return { task: current, moved: true, options };
+    });
 
     const store: TaskStore = {
       getRootDir: vi.fn(() => process.cwd()),
@@ -31,9 +35,13 @@ describe("task move route — bypassGuards is not forwardable", () => {
       short-circuits instead of calling getPluginStore().
       */
       getProjectScopedPluginMcpServers: vi.fn(async () => []),
-      getTask: vi.fn(async () => ({ id: "FN-001", column: "todo" })),
+      getTask: vi.fn(async () => current),
+      getTaskWorkflowSelection: vi.fn(() => undefined),
       getSettings: vi.fn(async () => ({})),
       moveTask,
+      moveTaskIf,
+      updateTaskAtomic: vi.fn(async (_id, mutate) => { const patch = await mutate(current); if (patch) Object.assign(current, patch); return current; }),
+      logEntry: vi.fn(async () => undefined),
     } as unknown as TaskStore;
 
     const app = express();
@@ -64,8 +72,9 @@ describe("task move route — bypassGuards is not forwardable", () => {
     );
 
     expect(res.status).toBe(200);
-    expect(moveTask).toHaveBeenCalledTimes(1);
-    const passedOptions = moveTask.mock.calls[0][2] as Record<string, unknown> | undefined;
+    expect(moveTask).not.toHaveBeenCalled();
+    expect(moveTaskIf).toHaveBeenCalledTimes(1);
+    const passedOptions = moveTaskIf.mock.calls[0][3] as Record<string, unknown> | undefined;
     // The route constructs its own options; the injected fields must not leak.
     expect(passedOptions?.bypassGuards).toBeUndefined();
     // The route hardcodes moveSource: "user" — the body's "engine" is ignored.
@@ -93,6 +102,7 @@ describe("task move route — the target column must be one the workflow declare
       getRootDir: vi.fn(() => process.cwd()),
       getProjectScopedPluginMcpServers: vi.fn(async () => []),
       getTask: vi.fn(async () => ({ id: "FN-002", column: "todo" })),
+      getTaskWorkflowSelection: vi.fn(() => undefined),
       getSettings: vi.fn(async () => ({})),
       moveTask,
     } as unknown as TaskStore;
@@ -124,6 +134,7 @@ describe("task move route — the target column must be one the workflow declare
       getRootDir: vi.fn(() => process.cwd()),
       getProjectScopedPluginMcpServers: vi.fn(async () => []),
       getTask: vi.fn(async () => ({ id: "FN-003", column: "todo" })),
+      getTaskWorkflowSelection: vi.fn(() => undefined),
       getSettings: vi.fn(async () => ({})),
       moveTask,
     } as unknown as TaskStore;

@@ -523,9 +523,12 @@ export function TaskContextMenu({
         {/*
         FNXC:AlphaCollections 2026-09-10-20:30:
         Alpha task actions share one homemade Alpha menu, and nested groups use Fusion's SubmenuTrigger. React Aria therefore owns arrow traversal, focus entry, and submenu transitions instead of the historical button-query keyboard loop.
+
+        FNXC:TaskDetailFooterActions 2026-09-13-12:59:
+        Alpha menus preserve descriptor order even when non-actionable note rows label an action group. Rendering notes in place keeps Task Detail's Attach → GitHub → Oversight → Priority → Fast contract without making headings focusable or selectable.
         */}
         <AlphaMenu aria-label="Task actions">
-          {actions.filter((item) => !("tone" in item && item.tone === "note")).map((item) => {
+          {actions.map((item) => {
             if ("items" in item) {
               return (
                 <AlphaMenuSubmenu key={item.id} id={item.id} label={item.label} className={`${itemClassName} task-context-menu__submenu-toggle`} menuClassName="task-context-menu__submenu">
@@ -537,12 +540,14 @@ export function TaskContextMenu({
                 </AlphaMenuSubmenu>
               );
             }
+            if (item.tone === "note") {
+              return <span key={item.id} className={`${itemClassName} ${noteItemClassName}`} role="note" data-testid={item.testId}>{item.label}</span>;
+            }
             const classes = [itemClassName];
             if (item.tone === "danger") classes.push(dangerItemClassName);
             return <AlphaMenuItem key={item.id} id={item.id} className={classes.join(" ")} disabled={item.disabled} data-testid={item.testId} aria-pressed={item.pressed} onPointerUp={(event) => handleActionPointerUp(event, item)} onClick={(event) => handleActionClick(event, item)}>{item.label}</AlphaMenuItem>;
           })}
         </AlphaMenu>
-        {actions.filter((item): item is TaskMenuActionDescriptor => "tone" in item && item.tone === "note").map((action) => <span key={action.id} className={`${itemClassName} ${noteItemClassName}`} role="note" data-testid={action.testId}>{action.label}</span>)}
       </div>
     );
   }

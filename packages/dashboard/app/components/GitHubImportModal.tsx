@@ -1,4 +1,4 @@
-import { ModalCloseButton } from "./ModalCloseButton";
+import { ViewHeader } from "./ViewHeader";
 import "./GitHubImportModal.css";
 import { useState, useEffect, useCallback, useContext, useRef, useMemo } from "react";
 import { useTranslation } from "react-i18next";
@@ -1603,28 +1603,27 @@ export function GitHubImportModal({ isOpen, onClose, onImport, onPlanningMode, o
   */
   const inner = (
     <div className={`modal modal-lg github-import-modal${isEmbedded ? " github-import-modal--embedded" : ""}`}>
-      {isEmbedded ? (
-        /*
-        FNXC:RightDockEmbedding 2026-06-22-00:40:
-        Import Tasks is a main-content destination, so its header reads like Command Center (cc-header/cc-title): a plain title row with the GitHub logo and the shared 1.125rem embedded-title font, no modal-header bar or close button. Padding matches the embedded view container.
-        */
-        <header className="github-import-modal__embedded-header">
-          <h2 className="github-import-modal__embedded-title">
-            <GithubIcon size={20} />
-            {t("git.importTasksHeading", "Import Tasks")}
-          </h2>
-        </header>
-      ) : (
-        <div className="modal-header github-import-modal__header">
-          <div>
-            <h3 id="github-import-modal-title">{t("git.importFromGitHub", "Import from GitHub")}</h3>
-            <p className="github-import-modal__subtitle">
-              {t("git.importSubtitle", "Choose a detected remote, load open issues or pull requests, and import one into the board.")}
-            </p>
-          </div>
-          <ModalCloseButton onClick={onClose} aria-label={t("git.closeModalAriaLabel", "Close import modal")} />
-        </div>
-      )}
+      {/*
+      FNXC:StandardizedViewLayout 2026-09-13-21:43:
+      Import Tasks keeps its real full-width candidate list and floating previews rather than inventing a split pane. Embedded and floating hosts share one canonical header; only the floating host adds its required close action.
+      */}
+      <ViewHeader
+        className={isEmbedded ? "github-import-modal__embedded-header" : "modal-header github-import-modal__header"}
+        icon={GithubIcon}
+        titleId="github-import-modal-title"
+        title={(
+          <span className={isEmbedded ? "github-import-modal__embedded-title" : "github-import-modal__title-copy"}>
+            <span>{isEmbedded ? t("git.importTasksHeading", "Import Tasks") : t("git.importFromGitHub", "Import from GitHub")}</span>
+            {!isEmbedded ? (
+              <span className="github-import-modal__subtitle">
+                {t("git.importSubtitle", "Choose a detected remote, load open issues or pull requests, and import one into the board.")}
+              </span>
+            ) : null}
+          </span>
+        )}
+        onClose={isEmbedded ? undefined : onClose}
+        closeButtonProps={{ "aria-label": t("git.closeModalAriaLabel", "Close import modal") }}
+      />
 
         <div className="modal-body github-import-modal__body">
           {/*

@@ -51,12 +51,6 @@ until operators enable this flag. Persisted focus topics remain inert while it i
 */
 export const CHAT_FOCUS_FLAG = "chatFocus" as const;
 
-/*
-FNXC:AlphaUpdates 2026-09-09-18:24:
-Alpha features must preserve the current product experience unless the operator explicitly enables the global Alpha Updates boundary. Missing and false values stay off so future Alpha UI can share one reversible opt-in contract.
-*/
-export const ALPHA_UPDATES_FLAG = "alphaUpdates" as const;
-
 /* FNXC:WhiteboardAlpha 2026-09-10-05:42: Whiteboard remains absent from every route affordance unless this global, default-off Alpha flag is explicitly enabled. */
 export const WHITEBOARD_VIEW_FLAG = "whiteboardView" as const;
 

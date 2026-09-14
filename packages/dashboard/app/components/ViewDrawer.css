@@ -1,0 +1,21 @@
+.view-drawer__handle-target {
+  display: flex;
+  flex: 0 0 var(--touch-target-min-size);
+  align-items: center;
+  justify-content: center;
+  inline-size: 100%;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.view-drawer__handle-target:active {
+  cursor: grabbing;
+}
+
+.view-drawer__handle {
+  inline-size: calc(var(--space-xl) + var(--space-md));
+  block-size: var(--space-xs);
+  border-radius: var(--radius-pill);
+  background: var(--border-strong);
+}

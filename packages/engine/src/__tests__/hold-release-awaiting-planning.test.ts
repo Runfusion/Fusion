@@ -69,9 +69,10 @@ async function makeStore(
   const tasksDir = join(root, "tasks");
   const promptPath = getPromptPath(tasksDir, initial.id);
   await mkdir(join(tasksDir, initial.id), { recursive: true });
+  await writeFile(join(root, "premise-marker"), "planned", "utf8");
   await writeFile(
     promptPath,
-    options.prompt ?? "# Planned\n\n## Mission\nImplement the approved work.\n",
+    options.prompt ?? '# Planned\n\n## Mission\nImplement the approved work.\n\n## Plan Premises\n\n- {"kind":"file-exists","path":"premise-marker"}\n',
     "utf8",
   );
 
@@ -104,6 +105,7 @@ async function makeStore(
     listTasks: vi.fn(async () => [current]),
     getTask: vi.fn(async () => current),
     getTasksDir: () => tasksDir,
+    getRootDir: () => root,
     getTaskWorkflowSelection: vi.fn(() => selection),
     getTaskWorkflowSelectionAsync: vi.fn(async () => selection),
     getTaskWorkflowSelectionsAsync: vi.fn(async () => new Map([[current.id, selection]])),
@@ -113,6 +115,12 @@ async function makeStore(
     checkAndRecordUnplannedExecutionBlock,
     moveTaskIf,
     updateTask,
+    updateTaskAtomic: vi.fn(async (_id: string, mutate: (live: Task) => Partial<Task> | null | Promise<Partial<Task> | null>) => {
+      const patch = await mutate(current);
+      if (patch) Object.assign(current, patch);
+      return current;
+    }),
+    logEntry: vi.fn(async (_id: string, message: string) => { current.log.push({ timestamp: new Date().toISOString(), message } as Task["log"][number]); }),
     recordRunAuditEvent,
   } as unknown as TaskStore;
 

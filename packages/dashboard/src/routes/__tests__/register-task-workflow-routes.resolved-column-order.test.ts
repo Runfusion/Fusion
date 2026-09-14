@@ -56,7 +56,12 @@ function buildStore(options: {
   taskColumn: string;
   workflowId?: string;
   prState?: string | null;
-}): { store: TaskStore; moveTask: ReturnType<typeof vi.fn> } {
+}): { store: TaskStore; moveTask: ReturnType<typeof vi.fn>; moveTaskIf: ReturnType<typeof vi.fn> } {
+  const current = {
+    id: "FN-001", title: "planned", description: "planned", column: options.taskColumn, status: null,
+    dependencies: [], steps: [], currentStep: 0,
+    prompt: '# Planned\n\n## Plan Premises\n\n- {"kind":"file-exists","path":"package.json"}\n',
+  };
   const moveTask = vi.fn(async (_id: string, column: string) => ({
     id: "FN-001",
     column,
@@ -65,10 +70,16 @@ function buildStore(options: {
     currentStep: 0,
   }));
 
+  const moveTaskIf = vi.fn(async (_id: string, column: string, predicate: (live: typeof current) => boolean | Promise<boolean>) => {
+    if (!(await predicate(current))) return { task: current, moved: false };
+    current.column = column;
+    return { task: current, moved: true };
+  });
+
   const store = {
     getRootDir: vi.fn(() => process.cwd()),
     getProjectScopedPluginMcpServers: vi.fn(async () => []),
-    getTask: vi.fn(async () => ({ id: "FN-001", column: options.taskColumn, dependencies: [], steps: [], currentStep: 0 })),
+    getTask: vi.fn(async () => current),
     getSettings: vi.fn(async () => ({})),
     getTaskWorkflowSelection: vi.fn(() => (options.workflowId ? { workflowId: options.workflowId } : undefined)),
     getWorkflowDefinition: vi.fn(async (id: string) => {
@@ -80,9 +91,12 @@ function buildStore(options: {
       options.prState ? { id: "PR-1", state: options.prState, sourceType: "task", sourceId: "FN-001" } : null,
     ),
     moveTask,
+    moveTaskIf,
+    updateTaskAtomic: vi.fn(async (_id: string, mutate: (live: typeof current) => Record<string, unknown> | null | Promise<Record<string, unknown> | null>) => { const patch = await mutate(current); if (patch) Object.assign(current, patch); return current; }),
+    logEntry: vi.fn(async () => undefined),
   } as unknown as TaskStore;
 
-  return { store, moveTask };
+  return { store, moveTask, moveTaskIf };
 }
 
 async function postMove(store: TaskStore, column: string) {
@@ -159,7 +173,7 @@ describe("task move route — open-PR backward guard uses the task's own column 
   });
 
   it("allows a forward move out of a removed source column", async () => {
-    const { store, moveTask } = buildStore({
+    const { store, moveTask, moveTaskIf } = buildStore({
       taskColumn: "todo",
       workflowId: "wf-no-todo",
       prState: "open",
@@ -168,7 +182,8 @@ describe("task move route — open-PR backward guard uses the task's own column 
     const res = await postMove(store, "in-progress");
 
     expect(res.status).toBe(200);
-    expect(moveTask).toHaveBeenCalledTimes(1);
+    expect(moveTask).not.toHaveBeenCalled();
+    expect(moveTaskIf).toHaveBeenCalledTimes(1);
   });
 
   it("still blocks the legacy in-review → in-progress backward move (default workflow)", async () => {

@@ -381,10 +381,11 @@ export class NotificationService {
   }
 
   /**
-   * FNXC:MailboxTaskCompletion 2026-09-09-19:59:
+   * FNXC:MailboxTaskCompletion 2026-09-13-03:42:
    * A completion mail belongs to the post-commit move snapshot, not to fn_task_done or task:merged.
-   * Membership uses every complete-trait column from the task's workflow, and the immutable
-   * taskId/destination/columnMovedAt tuple identifies one durable completion episode.
+   * It is the sole future message for the episode and carries the summary plus durable recommendation
+   * identifiers; optional artifact lookup failure must not suppress that useful recap. Membership uses
+   * every complete-trait column, while taskId/destination/columnMovedAt identifies one durable episode.
    */
   private async writeTaskCompletionMailboxMessage(data: { task: Task; from: Column; to: Column; lanes?: TaskMoveLanes }): Promise<void> {
     try {
@@ -393,9 +394,14 @@ export class NotificationService {
       const sendMessageOnce = this.options.messageStore?.sendMessageOnce;
       if (!sendMessageOnce) return;
 
-      const artifacts = await this.store.getArtifacts?.(data.task.id) ?? [];
-      const imageIds = artifacts.filter((artifact) => artifact.type === "image").map((artifact) => artifact.id);
-      const recommendationIds = (data.task.recommendations ?? []).map((recommendation) => recommendation.id);
+      let artifacts: Artifact[] = [];
+      try {
+        artifacts = await this.store.getArtifacts?.(data.task.id) ?? [];
+      } catch (error) {
+        schedulerLog.debug(`[notify] ${data.task.id} completion artifact lookup failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      const imageIds = [...new Set(artifacts.filter((artifact) => artifact.type === "image").map((artifact) => artifact.id))];
+      const recommendationIds = [...new Set((data.task.recommendations ?? []).map((recommendation) => recommendation.id).filter((id) => id.trim().length > 0))];
       const summary = data.task.summary?.trim() || "Task completed without a summary.";
       await sendMessageOnce.call(this.options.messageStore, {
         fromId: "system",

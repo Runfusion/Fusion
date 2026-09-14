@@ -1,5 +1,6 @@
-import { ModalCloseButton } from "./ModalCloseButton";
-import { useState, useEffect, useCallback, useMemo, useRef, type CSSProperties, type Dispatch, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type SetStateAction } from "react";
+import { ViewHeader } from "./ViewHeader";
+import { ViewSidebar } from "./ViewSidebar";
+import { useState, useEffect, useCallback, useMemo, useRef, type CSSProperties, type Dispatch, type MouseEvent, type ReactNode, type SetStateAction } from "react";
 import { Globe, Folder, GitBranch, Power, RefreshCw, Star, Settings as SettingsIcon, Search, X as SearchToggleCloseIcon } from "lucide-react";
 import {
   getErrorMessage,
@@ -304,11 +305,6 @@ function settingsSearchScrollBehavior(): ScrollBehavior {
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
 }
 
-const SETTINGS_NAV_WIDTH_STORAGE_KEY = "fusion:settings-nav-width";
-const SETTINGS_NAV_DEFAULT_WIDTH = 248;
-const SETTINGS_NAV_MIN_WIDTH = 200;
-const SETTINGS_NAV_MAX_WIDTH = 420;
-
 /*
 FNXC:SettingsSimplification 2026-07-10-23:24:
 Settings opens in a focused mode that omits specialist integration, runtime, diagnostics, and infrastructure sections. The Advanced settings switch restores every section, applies consistently to desktop navigation, mobile navigation, and search, and persists only as a browser-local display preference so it never changes or exports project settings.
@@ -333,20 +329,6 @@ function readAdvancedSettingsPreference(): boolean {
     return localStorage.getItem(ADVANCED_SETTINGS_STORAGE_KEY) === "true";
   } catch {
     return false;
-  }
-}
-
-function clampSettingsNavWidth(width: number): number {
-  if (!Number.isFinite(width)) return SETTINGS_NAV_DEFAULT_WIDTH;
-  return Math.min(SETTINGS_NAV_MAX_WIDTH, Math.max(SETTINGS_NAV_MIN_WIDTH, Math.round(width)));
-}
-
-function readSettingsNavWidthPreference(): number {
-  try {
-    const stored = Number.parseFloat(localStorage.getItem(SETTINGS_NAV_WIDTH_STORAGE_KEY) ?? "");
-    return clampSettingsNavWidth(stored);
-  } catch {
-    return SETTINGS_NAV_DEFAULT_WIDTH;
   }
 }
 
@@ -502,8 +484,6 @@ export const SETTINGS_SECTIONS: SettingsSection[] = SETTINGS_SECTION_METADATA.ma
  *  IMPORTANT: Dev Server is canonically keyed by `devServerView`; `devServer`
  *  is treated as a legacy alias and must never render as a second row. */
 const KNOWN_EXPERIMENTAL_FEATURES: Record<string, string> = {
-  /* FNXC:AlphaUpdates 2026-09-09-18:24: Expose exactly one global, default-off switch as the boundary for every UI explicitly designated Alpha. */
-  alphaUpdates: "Alpha Updates",
   /* FNXC:WhiteboardAlpha 2026-09-10-05:42: The workspace has its own explicit global default-off toggle so enabling unrelated Alpha chrome never exposes Whiteboard. */
   whiteboardView: "Whiteboard Alpha",
   insights: "Insights",
@@ -548,7 +528,9 @@ Chat Rooms, Goals, Memory, Insights, Skills, and Todo graduated from Experimenta
 FNXC:SettingsExperimental 2026-06-26-00:00:
 Remote Access graduated from Experimental — section is always available; stale persisted `remoteAccess` flags are hidden so upgrades cannot disable it.
 */
+/* FNXC:OfficialDashboardDesign 2026-09-13-00:38: Alpha chrome is Fusion's official dashboard design. Keep stale alphaUpdates values persisted but hidden and inert while Whiteboard remains an independent experiment. */
 const HIDDEN_EXPERIMENTAL_FEATURE_KEYS = new Set<string>([
+  "alphaUpdates",
   "chatRooms",
   "goalsView",
   "insights",
@@ -1204,12 +1186,6 @@ export function SettingsModal({
       ? window.matchMedia(MOBILE_SETTINGS_MEDIA_QUERY)?.matches === true
       : false),
   );
-  /**
-   * FNXC:Settings 2026-07-11-18:52:
-   * FN-7825 makes the desktop/tablet Settings rail resizable and persists the chosen width locally. Mobile remains stacked and ignores this inline CSS variable so a desktop-saved width cannot leak into the top-bar layout.
-   */
-  const [settingsNavWidth, setSettingsNavWidth] = useState(() => readSettingsNavWidthPreference());
-  const settingsNavDragRef = useRef<{ startX: number; startWidth: number; previousUserSelect: string } | null>(null);
   const [settingsSearchQuery, setSettingsSearchQuery] = useState("");
   const [showAdvancedSettings, setShowAdvancedSettings] = useState(() => {
     const requestedSection = initialSection === "pi-extensions" ? "plugins" : initialSection;
@@ -1226,16 +1202,6 @@ export function SettingsModal({
     } catch {
       // Storage can be unavailable in private/locked-down browser contexts; the in-session preference still works.
     }
-  }, []);
-  const persistSettingsNavWidth = useCallback((width: number) => {
-    const nextWidth = clampSettingsNavWidth(width);
-    setSettingsNavWidth(nextWidth);
-    try {
-      localStorage.setItem(SETTINGS_NAV_WIDTH_STORAGE_KEY, String(nextWidth));
-    } catch {
-      // Storage can be unavailable in private/locked-down browser contexts; the in-session width still works.
-    }
-    return nextWidth;
   }, []);
   /*
    * FNXC:Settings 2026-07-09-00:00:
@@ -1584,74 +1550,6 @@ export function SettingsModal({
     projectId,
     enabled: activeSection === "memory",
   });
-
-  const settingsNavResizeEnabled = !showMobileSectionPicker;
-  const settingsNavigationStyle = settingsNavResizeEnabled
-    ? ({ "--settings-nav-width": `${settingsNavWidth}px` } as CSSProperties)
-    : undefined;
-
-  const endSettingsNavResize = useCallback((pointerId?: number, target?: EventTarget | null) => {
-    const dragState = settingsNavDragRef.current;
-    if (!dragState) return;
-    document.body.style.userSelect = dragState.previousUserSelect;
-    settingsNavDragRef.current = null;
-    if (typeof pointerId === "number" && target instanceof HTMLElement && typeof target.releasePointerCapture === "function") {
-      try {
-        target.releasePointerCapture(pointerId);
-      } catch {
-        // Pointer capture may already be released by the browser; cleanup is still complete.
-      }
-    }
-  }, []);
-
-  const handleSettingsNavResizePointerMove = useCallback((event: PointerEvent) => {
-    const dragState = settingsNavDragRef.current;
-    if (!dragState) return;
-    event.preventDefault();
-    persistSettingsNavWidth(dragState.startWidth + event.clientX - dragState.startX);
-  }, [persistSettingsNavWidth]);
-
-  const handleSettingsNavResizePointerUp = useCallback((event: PointerEvent) => {
-    endSettingsNavResize(event.pointerId, event.target);
-  }, [endSettingsNavResize]);
-
-  const handleSettingsNavResizePointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!settingsNavResizeEnabled) return;
-    event.preventDefault();
-    event.stopPropagation();
-    if (typeof event.currentTarget.setPointerCapture === "function") {
-      event.currentTarget.setPointerCapture(event.pointerId);
-    }
-    settingsNavDragRef.current = {
-      startX: event.clientX,
-      startWidth: settingsNavWidth,
-      previousUserSelect: document.body.style.userSelect,
-    };
-    document.body.style.userSelect = "none";
-  }, [settingsNavResizeEnabled, settingsNavWidth]);
-
-  const handleSettingsNavResizeKeyDown = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (!settingsNavResizeEnabled) return;
-    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-    event.preventDefault();
-    persistSettingsNavWidth(settingsNavWidth + (event.key === "ArrowRight" ? 16 : -16));
-  }, [persistSettingsNavWidth, settingsNavResizeEnabled, settingsNavWidth]);
-
-  useEffect(() => {
-    if (!settingsNavResizeEnabled) {
-      endSettingsNavResize();
-      return;
-    }
-    document.addEventListener("pointermove", handleSettingsNavResizePointerMove);
-    document.addEventListener("pointerup", handleSettingsNavResizePointerUp);
-    document.addEventListener("pointercancel", handleSettingsNavResizePointerUp);
-    return () => {
-      document.removeEventListener("pointermove", handleSettingsNavResizePointerMove);
-      document.removeEventListener("pointerup", handleSettingsNavResizePointerUp);
-      document.removeEventListener("pointercancel", handleSettingsNavResizePointerUp);
-      endSettingsNavResize();
-    };
-  }, [endSettingsNavResize, handleSettingsNavResizePointerMove, handleSettingsNavResizePointerUp, settingsNavResizeEnabled]);
 
   useEffect(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
@@ -4703,77 +4601,70 @@ export function SettingsModal({
         className={isEmbedded ? "modal modal-lg settings-modal settings-modal--embedded" : "modal modal-lg settings-modal"}
         style={isEmbedded ? undefined : keyboardStyle}
       >
-        <div className={isEmbedded ? "modal-header modal-header--embedded" : "modal-header"}>
-          {/* FNXC:Settings 2026-06-22-01:00: Embedded title gains a Settings icon (size 20, matching the sidebar nav and shared ViewHeader) so the embedded settings panel reads consistently with other main-content destinations; title is already 1.125rem. */}
-          <div className="settings-modal-heading">
-            <h3>
-              {isEmbedded && <SettingsIcon size={20} aria-hidden="true" />}
-              <span>{t("settings.title", "Settings")}</span>
-            </h3>
-          </div>
-          <div className="settings-header-actions">
-            <a
-              href="https://github.com/Runfusion/Fusion"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="settings-github-star-btn"
-              aria-label={t("settings.header.starFusion", "Star Fusion on GitHub")}
-              title={t("settings.header.starFusion", "Star Fusion on GitHub")}
-              onClick={markStarClicked}
-              data-clicked={starClicked ? "true" : "false"}
-            >
-              <span className="settings-github-star-btn__action">
-                <ProviderIcon provider="github" size="sm" />
-                <Star size={11} aria-hidden="true" />
-                {t("settings.header.star", "Star")}
-              </span>
-              {gitHubStarCount !== null && (
-                <span className="settings-github-star-btn__count" aria-label={`${gitHubStarCount.toLocaleString()} stars`}>
-                  {gitHubStarCount >= 1000
-                    ? `${(gitHubStarCount / 1000).toFixed(1)}k`
-                    : gitHubStarCount.toLocaleString()}
+        <ViewHeader
+          className={isEmbedded ? "modal-header modal-header--embedded" : "modal-header"}
+          icon={SettingsIcon}
+          title={t("settings.title", "Settings")}
+          actions={(
+            <div className="settings-header-actions">
+              <a
+                href="https://github.com/Runfusion/Fusion"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="settings-github-star-btn"
+                aria-label={t("settings.header.starFusion", "Star Fusion on GitHub")}
+                title={t("settings.header.starFusion", "Star Fusion on GitHub")}
+                onClick={markStarClicked}
+                data-clicked={starClicked ? "true" : "false"}
+              >
+                <span className="settings-github-star-btn__action">
+                  <ProviderIcon provider="github" size="sm" />
+                  <Star size={11} aria-hidden="true" />
+                  {t("settings.header.star", "Star")}
                 </span>
-              )}
-            </a>
-            <a
-              href="https://discord.gg/ksrfuy7WYR"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="btn btn-sm settings-header-discord-btn"
-              aria-label={t("settings.header.joinDiscord", "Join our Discord")}
-              title={t("settings.header.joinDiscord", "Join our Discord")}
-            >
-              <DiscordIcon size={13} />
-              {t("settings.header.discord", "Discord")}
-            </a>
-          </div>
-          {!isEmbedded && (
-            <ModalCloseButton onClick={() => void requestClose()} aria-label={t("actions.close", "Close")} />
+                {gitHubStarCount !== null ? (
+                  <span className="settings-github-star-btn__count" aria-label={`${gitHubStarCount.toLocaleString()} stars`}>
+                    {gitHubStarCount >= 1000
+                      ? `${(gitHubStarCount / 1000).toFixed(1)}k`
+                      : gitHubStarCount.toLocaleString()}
+                  </span>
+                ) : null}
+              </a>
+              <a
+                href="https://discord.gg/ksrfuy7WYR"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn btn-sm settings-header-discord-btn"
+                aria-label={t("settings.header.joinDiscord", "Join our Discord")}
+                title={t("settings.header.joinDiscord", "Join our Discord")}
+              >
+                <DiscordIcon size={13} />
+                {t("settings.header.discord", "Discord")}
+              </a>
+            </div>
           )}
-          {/*
-            FNXC:Settings 2026-07-07-00:00:
-            Mobile embedded Settings (taskView === "settings", presentation="embedded") has no left sidebar to exit
-            through — only the bottom MobileNavBar — so the header needs an explicit close affordance calling the
-            existing onClose prop (wired to closeSettingsView: modalManager.closeSettings() + back to board + refresh
-            app settings). Desktop/tablet embedded still exit via the sidebar (no button here), and the standalone
-            modal presentation keeps its own `!isEmbedded` `modal-close` button above, untouched and byte-identical.
-          */}
-          {isEmbedded && viewportMode === "mobile" && (
-            <ModalCloseButton
-              className="settings-embedded-mobile-close"
-              onClick={() => void requestClose()}
-              aria-label={t("actions.close", "Close")}
-             />
-          )}
-        </div>
+          onClose={!isEmbedded || viewportMode === "mobile" ? () => void requestClose() : undefined}
+          closeButtonProps={{
+            ...(isEmbedded ? { className: "settings-embedded-mobile-close" } : {}),
+            "aria-label": t("actions.close", "Close"),
+          }}
+        />
         {loading ? (
           <div className="settings-empty-state settings-loading"><LoadingSpinner label={t("settings.loading", "Loading…")} /></div>
         ) : (
           <div className="settings-layout">
-            <aside
+            {/*
+            FNXC:StandardizedViewLayout 2026-09-13-21:43:
+            Settings keeps its existing section/search controller while its desktop and tablet rail uses the same project-scoped width and resize lifecycle as every other full dashboard view. Mobile remains a stacked section picker and cannot persist a competing width.
+            */}
+            <ViewSidebar
+              ariaLabel={t("settings.search.navigationLabel", "Settings navigation")}
+              resizeLabel={t("settings.nav.resize", "Resize settings navigation")}
+              hostIdentity="settings"
+              mobile={showMobileSectionPicker}
               className="settings-navigation"
-              aria-label={t("settings.search.navigationLabel", "Settings navigation")}
-              style={settingsNavigationStyle}
+              panelClassName="settings-navigation__panel"
+              separatorTestId="settings-nav-resize-handle"
             >
               {showMobileSectionPicker && (
                 <div className="settings-mobile-section-picker">
@@ -4996,21 +4887,7 @@ export function SettingsModal({
                   </div>
                 )}
               </nav>
-            </aside>
-            {settingsNavResizeEnabled && (
-              <div
-                className="settings-nav-resize-handle"
-                role="separator"
-                aria-orientation="vertical"
-                aria-label={t("settings.nav.resize", "Resize settings navigation")}
-                aria-valuemin={SETTINGS_NAV_MIN_WIDTH}
-                aria-valuemax={SETTINGS_NAV_MAX_WIDTH}
-                aria-valuenow={settingsNavWidth}
-                tabIndex={0}
-                onPointerDown={handleSettingsNavResizePointerDown}
-                onKeyDown={handleSettingsNavResizeKeyDown}
-              />
-            )}
+            </ViewSidebar>
             <div
               className="settings-content"
               ref={settingsContentRef}
@@ -5147,10 +5024,14 @@ export function SettingsModal({
           aria-label={t("settings.scheduling.browseWorkspacePath", "Browse workspace path")}
         >
           <div className="modal modal-lg settings-overlap-path-picker-modal" onClick={(event) => event.stopPropagation()}>
-            <div className="modal-header">
-              <h3>{t("settings.scheduling.selectIgnoredOverlapPath", "Select ignored overlap path")}</h3>
-              <ModalCloseButton onClick={closeOverlapPathPicker} aria-label={t("actions.close", "Close")} />
-            </div>
+            {/* FNXC:StandardizedViewLayout 2026-09-13-21:49: Settings' nested pickers and confirmations share the canonical header. */}
+            <ViewHeader
+              className="modal-header"
+              headingLevel={3}
+              title={t("settings.scheduling.selectIgnoredOverlapPath", "Select ignored overlap path")}
+              onClose={closeOverlapPathPicker}
+              closeButtonProps={{ "aria-label": t("actions.close", "Close") }}
+            />
             <div className="modal-body settings-overlap-path-picker-body">
               <p className="settings-overlap-path-picker-note">
                 {t("settings.scheduling.overlapPickerNote", "Choose a file to ignore directly, or navigate into a folder and select the current directory.")}
@@ -5199,10 +5080,13 @@ export function SettingsModal({
           aria-label={t("settings.worktrees.browseWorktreesDirectory", "Browse worktrees directory")}
         >
           <div className="modal modal-lg settings-overlap-path-picker-modal" onClick={(event) => event.stopPropagation()}>
-            <div className="modal-header">
-              <h3>{t("settings.worktrees.selectWorktreesDir", "Select worktrees directory")}</h3>
-              <ModalCloseButton onClick={closeWorktreesDirPicker} aria-label={t("actions.close", "Close")} />
-            </div>
+            <ViewHeader
+              className="modal-header"
+              headingLevel={3}
+              title={t("settings.worktrees.selectWorktreesDir", "Select worktrees directory")}
+              onClose={closeWorktreesDirPicker}
+              closeButtonProps={{ "aria-label": t("actions.close", "Close") }}
+            />
             <div className="modal-body settings-overlap-path-picker-body">
               <p className="settings-overlap-path-picker-note">
                 {t("settings.worktrees.worktreesPickerNote", "Navigate to the folder where Fusion should create task worktrees, then select the current directory.")}
@@ -5247,10 +5131,13 @@ export function SettingsModal({
           aria-label={t("settings.worktrees.browseCopyFile", "Browse file to copy into new worktrees")}
         >
           <div className="modal modal-lg settings-overlap-path-picker-modal" onClick={(event) => event.stopPropagation()}>
-            <div className="modal-header">
-              <h3>{t("settings.worktrees.selectCopyFile", "Select file to copy")}</h3>
-              <ModalCloseButton onClick={closeWorktreeCopyFilePicker} aria-label={t("actions.close", "Close")} />
-            </div>
+            <ViewHeader
+              className="modal-header"
+              headingLevel={3}
+              title={t("settings.worktrees.selectCopyFile", "Select file to copy")}
+              onClose={closeWorktreeCopyFilePicker}
+              closeButtonProps={{ "aria-label": t("actions.close", "Close") }}
+            />
             <div className="modal-body settings-overlap-path-picker-body">
               <p className="settings-overlap-path-picker-note">
                 {t("settings.worktrees.copyFilePickerNote", "Choose a repository file to copy into each newly assigned task worktree. Directories are not selected from this picker.")}
@@ -5287,10 +5174,13 @@ export function SettingsModal({
       {importDialogOpen && importPreview && (
         <div className="modal-overlay open" onClick={(e) => e.target === e.currentTarget && setImportDialogOpen(false)} role="dialog" aria-modal="true">
           <div className="modal modal-md">
-            <div className="modal-header">
-              <h3>{t("settings.importExport.importTitle", "Import Settings")}</h3>
-              <ModalCloseButton onClick={() => setImportDialogOpen(false)} aria-label={t("actions.close", "Close")} />
-            </div>
+            <ViewHeader
+              className="modal-header"
+              headingLevel={3}
+              title={t("settings.importExport.importTitle", "Import Settings")}
+              onClose={() => setImportDialogOpen(false)}
+              closeButtonProps={{ "aria-label": t("actions.close", "Close") }}
+            />
             <div className="modal-body">
               <p>{t("settings.importExport.reviewPrompt", "Review the settings to be imported:")}</p>
 
@@ -5383,10 +5273,13 @@ export function SettingsModal({
           data-testid="settings-reset-dialog"
         >
           <div className="modal modal-md settings-reset-dialog" onClick={(event) => event.stopPropagation()}>
-            <div className="modal-header">
-              <h3>{t("settings.reset.dialogTitle", "Reset Settings")}</h3>
-              <ModalCloseButton onClick={closeResetDialog} aria-label={t("actions.close", "Close")} />
-            </div>
+            <ViewHeader
+              className="modal-header"
+              headingLevel={3}
+              title={t("settings.reset.dialogTitle", "Reset Settings")}
+              onClose={closeResetDialog}
+              closeButtonProps={{ "aria-label": t("actions.close", "Close") }}
+            />
             <div className="modal-body">
               <p>{t("settings.reset.dialogBody", "Choose what to reset to its defaults. This cannot be undone.")}</p>
               <div className="settings-reset-dialog__choice">

@@ -100,7 +100,12 @@ describe("PlanningModeModal CSS responsive action contract", () => {
     const css = loadPlanningCss();
     const twoPaneCss = getMediaBlocks(css, DESKTOP_PLANNING_WORKSPACE_QUERY).join("\n");
 
-    expect(findRule(twoPaneCss, ".planning-modal-body--split")).toMatch(/flex-direction\s*:\s*row\s*;/);
+    /*
+    The shell is a ViewLayout: header on top, then a body that owns the rail/content row. Forcing a row on the shell
+    itself laid the header beside the body and left Planning with neither a full-width header nor a visible rail, so
+    the shell must NOT declare a row here.
+    */
+    expect(findRule(twoPaneCss, ".planning-modal-body--split")).toBeUndefined();
     expect(findRule(twoPaneCss, ".planning-modal-body--show-detail .planning-sidebar,\n  .planning-modal-body--show-list .planning-sidebar")).toMatch(/display\s*:\s*flex\s*;/);
     expect(findRule(twoPaneCss, ".planning-modal-body--show-list .planning-detail")).toMatch(/display\s*:\s*flex\s*;/);
 
@@ -223,7 +228,7 @@ describe("PlanningModeModal CSS responsive action contract", () => {
     expect(responsiveCss).not.toMatch(/\.planning-actions\s*>\s*\.planning-plan-actions/);
   });
 
-  it("keeps the mobile sessions list scrolling above the bottom-pinned New session footer", () => {
+  it("keeps the mobile sessions list scrolling with no bottom creation footer", () => {
     const css = loadPlanningCss();
     const mobileShellCss = getMediaBlocks(css, MOBILE_PLANNING_SHELL_QUERY).join("\n");
 
@@ -246,8 +251,7 @@ describe("PlanningModeModal CSS responsive action contract", () => {
     expect(sidebarListRule).toMatch(/min-height\s*:\s*0\s*;/);
     expect(sidebarListRule).toMatch(/overflow-y\s*:\s*auto\s*;/);
 
-    const footerRule = findRule(mobileShellCss, ".planning-modal-body--show-list .planning-sidebar-footer");
-    expect(footerRule).toBeTruthy();
-    expect(footerRule).toMatch(/flex-shrink\s*:\s*0\s*;/);
+    expect(css).not.toMatch(/\.planning-sidebar-footer/);
+    expect(css).not.toMatch(/\.planning-sidebar-resize-handle/);
   });
 });

@@ -9,6 +9,8 @@ import type { ResearchProviderOption } from "../research-types";
 import { ResearchTaskActionModal } from "./ResearchTaskActionModal";
 import { LoadingSpinner } from "./LoadingSpinner";
 import { ViewHeader } from "./ViewHeader";
+import { ViewLayout } from "./ViewLayout";
+import { ViewSidebar } from "./ViewSidebar";
 import type { SectionId } from "./SettingsModal";
 import "./ResearchView.css";
 import { recordResumeEvent } from "../utils/resumeInstrumentation";
@@ -253,21 +255,13 @@ export function ResearchView({ projectId, addToast, onOpenSettings, readinessVer
     }
   };
 
+  /* FNXC:ResearchCollectionLayout 2026-09-13-16:29: Research retains its query/run controller and async stream while the shared bounded shell owns destination header and scrolling; Refresh remains an action, not a false create affordance. */
   return (
-    <section className="research-view" aria-label={t("research.viewLabel", "Research view")}>
-      {/*
-      FNXC:Navigation 2026-06-22-01:10:
-      Research adopts the shared ViewHeader (CC-modeled) for a consistent main-content title row; the Refresh action moves into the header actions cluster and the prior subtitle renders just below the header so the descriptive copy is preserved.
-      */}
-      <ViewHeader
-        icon={Search}
-        title={t("research.title", "Research")}
-        actions={(
-          <button className="btn" type="button" onClick={() => void refresh()}>
-            {t("actions.refresh", "Refresh")}
-          </button>
-        )}
-      />
+    <ViewLayout className="research-view" aria-label={t("research.viewLabel", "Research view")} header={<ViewHeader
+      icon={Search}
+      title={t("research.title", "Research")}
+      actions={<button className="btn" type="button" onClick={() => void refresh()}>{t("actions.refresh", "Refresh")}</button>}
+    />}>
       <p className="research-view__subtitle">{t("research.subtitle", "Cited search and synthesis runs: gather sources, fetch content, and synthesize findings.")}</p>
 
       {setupState ? (
@@ -289,7 +283,7 @@ export function ResearchView({ projectId, addToast, onOpenSettings, readinessVer
       ) : (
       <>
       <div className="research-view__layout">
-        <aside className="research-view__sidebar card">
+        <ViewSidebar className="research-view__sidebar card" ariaLabel={t("research.title", "Research")}>
           <div className="research-view__sidebar-content">
             <div className="research-view__form">
               <div className="form-group">
@@ -359,7 +353,7 @@ export function ResearchView({ projectId, addToast, onOpenSettings, readinessVer
               ))}
             </div>
           </div>
-        </aside>
+        </ViewSidebar>
 
         <div className="research-view__reader card">
           {loading && <p data-testid="research-state-loading"><LoadingSpinner label={t("research.loadingRuns", "Loading research runs…")} /></p>}
@@ -516,6 +510,6 @@ export function ResearchView({ projectId, addToast, onOpenSettings, readinessVer
           />
         );
       })()}
-    </section>
+    </ViewLayout>
   );
 }

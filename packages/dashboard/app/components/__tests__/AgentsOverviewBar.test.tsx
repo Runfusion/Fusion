@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { AgentsOverviewBar } from "../AgentsOverviewBar";
+import { AgentsOverviewBar, AgentsOverviewToggle } from "../AgentsOverviewBar";
 import type { Agent } from "../../api";
 
 vi.mock("lucide-react", async () => {
@@ -45,9 +45,9 @@ describe("AgentsOverviewBar", () => {
       makeAgent("a-4", "running"),
     ];
 
+    // The meta label moved to the header-hosted toggle; the counting contract is unchanged.
     render(
-      <AgentsOverviewBar
-        stats={null}
+      <AgentsOverviewToggle
         activeAgents={agents}
         isOpen={false}
         onToggle={() => {}}
@@ -59,8 +59,7 @@ describe("AgentsOverviewBar", () => {
 
   it("shows zero counts when no agents are active or running", () => {
     render(
-      <AgentsOverviewBar
-        stats={null}
+      <AgentsOverviewToggle
         activeAgents={[]}
         isOpen={false}
         onToggle={() => {}}
@@ -76,7 +75,6 @@ describe("AgentsOverviewBar", () => {
         stats={null}
         activeAgents={[]}
         isOpen
-        onToggle={() => {}}
       />,
     );
 
@@ -90,7 +88,6 @@ describe("AgentsOverviewBar", () => {
         stats={null}
         activeAgents={[]}
         isOpen={false}
-        onToggle={() => {}}
       />,
     );
 

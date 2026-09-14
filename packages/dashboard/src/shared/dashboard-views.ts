@@ -19,6 +19,7 @@ export const DASHBOARD_VIEW_IDS = [
   "goalsView",
   "planning",
   "skills",
+  "snippets",
   "mailbox",
   "insights",
   "memory",
@@ -83,10 +84,12 @@ export const DASHBOARD_VIEWS: readonly DashboardViewMetadata[] = [
   */
   { id: "planning", label: "Planning", labelKey: "nav.planning" },
   /*
-  FNXC:ChatSnippets 2026-09-03-16:32:
-  The existing `skills` route and persistence identity stay stable while every navigation label presents the combined Skills & Snippets destination.
+  FNXC:SnippetsDestination 2026-09-14-04:12:
+  Skills and Snippets are two destinations, each with its own collection rail. The `skills` route keeps its stable id
+  and persistence identity; Snippets gets its own rather than remaining a tab inside it.
   */
-  { id: "skills", label: "Skills & Snippets", labelKey: "header.skillsView" },
+  { id: "skills", label: "Skills", labelKey: "header.skillsView" },
+  { id: "snippets", label: "Snippets", labelKey: "header.snippetsView" },
   /*
   FNXC:MailboxNavigation 2026-09-09-20:02:
   Artifacts and recommendations are mailbox categories rather than standalone dashboard destinations. Legacy persisted and linked ids remain aliases so old navigation state resolves to Mailbox instead of an orphaned route.

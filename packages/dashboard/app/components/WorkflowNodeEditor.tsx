@@ -1,4 +1,8 @@
 import { ModalCloseButton } from "./ModalCloseButton";
+import { ViewActionButton } from "./ViewActionButton";
+import { ViewHeader } from "./ViewHeader";
+import { ViewLayout } from "./ViewLayout";
+import { ViewSidebar } from "./ViewSidebar";
 import "@xyflow/react/dist/style.css";
 import "./WorkflowNodeEditor.css";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -19,7 +23,7 @@ import {
 } from "@xyflow/react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import { Plus, Trash2, Save, MessageSquare, Terminal, Shield, GitMerge, Loader2, HelpCircle, PauseCircle, Split, Merge, Repeat, ToggleRight, ClipboardCheck, ListChecks, Code2, Bell, LayoutGrid, Workflow, Download, Upload, ChevronDown, ChevronRight, ChevronLeft, Library, Sparkles, Maximize2, Minimize2, DoorOpen } from "lucide-react";
+import { Plus, Trash2, Save, MessageSquare, Terminal, Shield, GitMerge, Loader2, HelpCircle, PauseCircle, Split, Merge, Repeat, ToggleRight, ClipboardCheck, ListChecks, Code2, Bell, LayoutGrid, Workflow, Download, Upload, ChevronDown, ChevronRight, Library, Sparkles, Maximize2, Minimize2, DoorOpen } from "lucide-react";
 import type { WorkflowDefinition, WorkflowIrColumn, TraitViolation, WorkflowStepTemplate, WorkflowIrNodeKind } from "@fusion/core";
 import { getErrorMessage, analyzeWorkflowLifecycle } from "@fusion/core";
 import type { WorkflowLifecycleWarning, WorkflowLifecycleWarningCode } from "@fusion/core";
@@ -614,13 +618,14 @@ function CreateWorkflowDialog({
           }
         }}
       >
-        <div className="modal-header">
-          <h3>{t("workflows.createTitle", "New workflow")}</h3>
-          <ModalCloseButton
-            onClick={onClose}
-            aria-label={t("actions.close", "Close")}
-           />
-        </div>
+        {/* FNXC:StandardizedViewLayout 2026-09-13-21:49: The nested create-workflow dialog shares the canonical header. */}
+        <ViewHeader
+          className="modal-header"
+          headingLevel={3}
+          title={t("workflows.createTitle", "New workflow")}
+          onClose={onClose}
+          closeButtonProps={{ "aria-label": t("actions.close", "Close") }}
+        />
         <form onSubmit={handleSubmit}>
           <div className="modal-body">
             {/* U10/R11: AI-design disclosure. Toggling reveals a prompt textarea
@@ -942,27 +947,13 @@ function InnerEditor({
   const [templateConflict, setTemplateConflict] = useState<string | null>(null);
   const canvasNodesMaterializedRef = useRef(false);
 
+  // FNXC:StandardizedViewSidebar 2026-09-13-21:43: The workflow rail remains present on desktop/tablet; only its internal authoring disclosures may collapse, so navigation and the shared resize authority never disappear.
   // U12: the columns/fields authoring panels live in the left sidebar (below the
   // workflow list) as collapsible disclosure sections. Each section's collapsed
   // state persists in localStorage; default expanded.
-  /*
-  FNXC:WorkflowSidebar 2026-06-22-12:00:
-  The workflow view needs the entire left sidebar collapsible, not only its
-  internal column/field/settings groups, so graph editing can use the full
-  canvas width. Persist the shell state and keep a visible restore control in
-  the canvas area when the sidebar is hidden.
-  */
-  const sidebarCollapsedStorageKey = "fusion:wf-left-sidebar-collapsed";
   const columnsCollapsedStorageKey = "fusion:wf-sidebar-columns-collapsed";
   const fieldsCollapsedStorageKey = "fusion:wf-sidebar-fields-collapsed";
   const settingsCollapsedStorageKey = "fusion:wf-sidebar-settings-collapsed";
-  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem(sidebarCollapsedStorageKey) === "1";
-    } catch {
-      return false;
-    }
-  });
   const [columnsCollapsed, setColumnsCollapsed] = useState<boolean>(() => {
     try {
       return localStorage.getItem(columnsCollapsedStorageKey) === "1";
@@ -984,13 +975,6 @@ function InnerEditor({
       return false;
     }
   });
-  useEffect(() => {
-    try {
-      localStorage.setItem(sidebarCollapsedStorageKey, sidebarCollapsed ? "1" : "0");
-    } catch {
-      // localStorage unavailable (private mode / SSR): non-fatal.
-    }
-  }, [sidebarCollapsed]);
   useEffect(() => {
     try {
       localStorage.setItem(columnsCollapsedStorageKey, columnsCollapsed ? "1" : "0");
@@ -2832,51 +2816,48 @@ function InnerEditor({
           requestClose();
         }}
       >
-        <header className="wf-editor-header">
-          {/* FNXC:WorkflowEditorEmbedding 2026-06-22-01:00: Title row aligned to the shared ViewHeader/Command Center metric — a Workflow icon (size 20) + 1.125rem title — so the embedded workflows view reads consistently with other main-content destinations. */}
-          <h2>
-            <Workflow size={20} aria-hidden="true" />
-            <span>{t("workflows.title", "Workflows")}</span>
-          </h2>
-          {/* FNXC:WorkflowEditorEmbedding 2026-06-22-00:00: embedded views keep a
-              Command Center-style header title but drop the modal X close button. */}
-          {!isEmbedded ? (
-            <ModalCloseButton className="wf-editor-close" onClick={requestClose} aria-label={t("workflows.closeEditor", "Close workflow editor")} />
-          ) : null}
-        </header>
-
-
-        <div
+        <ViewLayout
           className={`wf-editor-body${workflowListStageOpen ? " wf-editor-body--list-stage" : " wf-editor-body--editor-stage"}${
             simpleLayoutEnabled ? " wf-editor-body--simple-layout" : ""
           }${simpleViewEnabled ? " wf-editor-body--simple-view" : ""}${mobileNodeDetailStage ? " wf-editor-body--mobile-node-detail" : ""}${
             mobileEdgeDetailStage ? " wf-editor-body--mobile-edge-detail" : ""
-          }${sidebarCollapsed ? " wf-editor-body--sidebar-collapsed" : ""}`}
-        >
-          <aside className="wf-editor-sidebar">
-            <div className="wf-editor-sidebar-head">
-              <button
-                className="wf-editor-new"
-                ref={newWorkflowBtnRef}
-                data-testid="wf-new-workflow"
-                onClick={() => setCreateOpen(true)}
-              >
-                <Plus size={14} /> {t("workflows.newWorkflow", "New workflow")}
-              </button>
-              {!isMobileMode && (
-                <button
-                  type="button"
-                  className="wf-sidebar-shell-toggle"
-                  data-testid="wf-sidebar-collapse"
-                  aria-expanded={!sidebarCollapsed}
-                  aria-label={t("workflows.collapseSidebar", "Collapse workflow sidebar")}
-                  title={t("workflows.collapseSidebar", "Collapse workflow sidebar")}
-                  onClick={() => setSidebarCollapsed(true)}
-                >
-                  <ChevronLeft size={14} aria-hidden />
-                </button>
+          }`}
+          contentOwnsScroll
+          mobilePane={workflowListStageOpen ? "list" : "detail"}
+          header={(
+            <ViewHeader
+              className="wf-editor-header"
+              icon={Workflow}
+              title={t("workflows.title", "Workflows")}
+              backAction={isMobileMode && !workflowListStageOpen ? {
+                label: t("workflows.backToWorkflowList", "Back to workflows"),
+                onClick: () => setWorkflowListStageOpen(true),
+              } : undefined}
+              actions={(
+                <>
+                  <ViewActionButton
+                    className="wf-editor-new"
+                    ref={newWorkflowBtnRef}
+                    data-testid="wf-new-workflow"
+                    kind="create"
+                    label={t("workflows.newWorkflow", "New workflow")}
+                    onClick={() => setCreateOpen(true)}
+                  />
+                  {!isEmbedded ? (
+                    <ModalCloseButton className="wf-editor-close" onClick={requestClose} aria-label={t("workflows.closeEditor", "Close workflow editor")} />
+                  ) : null}
+                </>
               )}
-            </div>
+            />
+          )}
+          sidebar={(
+            <ViewSidebar
+              ariaLabel={t("workflows.workflowList", "Workflows")}
+              resizeLabel={t("workflows.resizeSidebar", "Resize workflow sidebar")}
+              hostIdentity="workflow-editor"
+              mobile={isMobileMode}
+              panelClassName="wf-editor-sidebar"
+            >
             {/* U5/R10: keyboard-accessible import affordance triggering a hidden
                 file input; validation failures render in the persistent inline
                 region below (role="alert"), not a toast. */}
@@ -3026,37 +3007,16 @@ function InnerEditor({
                     are authored as graph-native `optional-group` nodes on the canvas. */}
               </div>
             )}
-          </aside>
-
+            </ViewSidebar>
+          )}
+        >
           <section className="wf-editor-canvas-wrap">
-            <button
-              type="button"
-              className="wf-editor-mobile-back"
-              onClick={() => setWorkflowListStageOpen(true)}
-              aria-label={t("workflows.backToWorkflowList", "Back to workflows")}
-            >
-              <ChevronLeft size={16} />
-              <span>{t("common.back", "Back")}</span>
-            </button>
             {activeWorkflow ? (
               <>
                 {/* Inline name + description strip (KTD-10). Built-ins render as
                     plain text (no click affordance); user-owned workflows are
                     click-to-edit (Enter commits, Escape cancels, blur commits). */}
                 <div className="wf-name-strip">
-                  {sidebarCollapsed && !isMobileMode && (
-                    <button
-                      type="button"
-                      className="wf-sidebar-shell-restore"
-                      data-testid="wf-sidebar-restore"
-                      aria-expanded="false"
-                      aria-label={t("workflows.showSidebar", "Show workflow sidebar")}
-                      title={t("workflows.showSidebar", "Show workflow sidebar")}
-                      onClick={() => setSidebarCollapsed(false)}
-                    >
-                      <ChevronRight size={14} aria-hidden />
-                    </button>
-                  )}
                   <WorkflowIcon workflowId={activeWorkflow.id} icon={icon} decorative />
                   {isBuiltin ? (
                     <span className="wf-workflow-name wf-workflow-name--readonly" data-testid="wf-workflow-name">
@@ -5646,7 +5606,7 @@ function InnerEditor({
               )}
             </aside>
           )}
-        </div>
+        </ViewLayout>
         {createOpen && (
           <CreateWorkflowDialog
             workflows={workflows}

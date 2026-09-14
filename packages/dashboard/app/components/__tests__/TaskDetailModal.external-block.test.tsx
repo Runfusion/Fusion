@@ -31,7 +31,7 @@ describe("Task Detail external Blocked affordance", () => {
   it("mounts the shared notice before the failed-task alert so the identities cannot coexist", () => {
     const source = readAppFile("components/TaskDetailModal.tsx");
     const notice = source.indexOf('<ExternalBlockNotice task={task as Task} variant="detail"');
-    const failure = source.indexOf("{shouldShowTaskFailureAlert && (");
+    const failure = source.indexOf("{activeTab === \"definition\" && shouldShowTaskFailureAlert && (");
     expect(notice).toBeGreaterThan(0);
     expect(failure).toBeGreaterThan(notice);
     expect(source).toContain('const shouldShowTaskFailureAlert = Boolean(task.status === "failed"');

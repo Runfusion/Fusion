@@ -42,6 +42,11 @@ import type { Task } from "@fusion/core";
 
 setupTaskDetailModalHooks();
 
+function openFullPlan(): void {
+  const readPlan = screen.queryByRole("button", { name: "Read plan" });
+  if (readPlan) fireEvent.click(readPlan);
+}
+
 describe("TaskDetailModal", () => {
   /*
   FNXC:TaskDetailStateStability 2026-08-05-02:55:
@@ -80,6 +85,7 @@ describe("TaskDetailModal", () => {
     };
 
     const { rerender } = render(<TaskDetailModal {...props} task={queued} />);
+    openFullPlan();
     expect(document.querySelector(".detail-column-badge")).toHaveClass("badge-in-progress");
 
     rerender(<TaskDetailModal {...props} task={staleTodo} />);
@@ -189,6 +195,7 @@ describe("TaskDetailModal", () => {
     const slimTask = makeTask({ id: "FN-slim-prompt", prompt: undefined }) as Task;
 
     render(<TaskDetailContent embedded active initialTab="definition" task={slimTask} onDeleteTask={noopDelete} onMergeTask={noopMerge} onOpenDetail={noopOpenDetail} addToast={noop} />);
+    openFullPlan();
     await waitFor(() => expect(dashboardApi.fetchTaskPrompt).toHaveBeenCalledWith("FN-slim-prompt", undefined));
 
     await act(async () => {
@@ -398,7 +405,7 @@ describe("TaskDetailModal", () => {
       expect(screen.getAllByTestId("task-detail-workflow-badge")).toHaveLength(1);
       expect(screen.queryByTestId("task-detail-workflow-badge-mobile")).toBeNull();
       expect(document.querySelector(".detail-title-row .detail-workflow-badge")).toBeNull();
-      expect(screen.getByRole("button", { name: "Back to task list" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
     });
   });
 
@@ -436,11 +443,13 @@ describe("TaskDetailModal", () => {
     completed-summary surface retains the same FileBrowser contract.
     */
     await waitFor(() => expect(dashboardApi.fetchTaskPrompt).toHaveBeenCalledWith("FN-099", undefined));
+    openFullPlan();
     const promptLink = await screen.findByRole("button", { name: "packages/dashboard/app/App.tsx:12" });
     expect(screen.queryByRole("button", { name: "packages/dashboard/app/App.tsx:11" })).toBeNull();
     expect(promptLink.closest("code")?.querySelector("button.file-path-link")).toBe(promptLink);
     await userEvent.click(promptLink);
 
+    await userEvent.click(screen.getByRole("button", { name: "Back to definition" }));
     await userEvent.click(screen.getByRole("button", { name: "Summary" }));
     const summaryLink = screen.getByRole("button", { name: "packages/dashboard/app/App.tsx:25:3" });
     expect(summaryLink.closest("code")?.querySelector("button.file-path-link")).toBe(summaryLink);
@@ -476,7 +485,7 @@ describe("TaskDetailModal", () => {
       <FileBrowserProvider openFile={vi.fn()}>
         <TaskDetailModal
           initialTab="definition"
-          task={makeTask({ prompt })}
+          task={makeTask({ description: prompt })}
           onClose={noop}
 
           onDeleteTask={noopDelete}
@@ -1301,7 +1310,7 @@ describe("TaskDetailModal", () => {
     expect(screen.queryByRole("button", { name: "Back to task list" })).toBeNull();
   });
 
-  it("renders mobile back control variant when requested", () => {
+  it("uses physical viewport chrome instead of the obsolete header-mode hint", () => {
     render(
       <TaskDetailModal
         initialTab="definition"
@@ -1316,8 +1325,7 @@ describe("TaskDetailModal", () => {
       />,
     );
 
-    expect(screen.getByRole("button", { name: "Back to task list" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
   });
 
   it("omits close control in embedded mode while rendering shared content", () => {
@@ -1415,10 +1423,10 @@ describe("TaskDetailModal", () => {
       expectNoBranchReattachmentAffordance(container);
     });
 
-    it("keeps the removed mobile rebind action shell absent in narrow task detail rendering", () => {
+    it("keeps the removed rebind action shell absent when legacy mobile intent is supplied", () => {
       const { container } = renderTaskDetail(makeTask({ column: "in-review", branch: null, worktree: null }), "back");
 
-      expect(screen.getByRole("button", { name: "Back to task list" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
       expectNoBranchReattachmentAffordance(container);
     });
 
@@ -1463,7 +1471,7 @@ describe("TaskDetailModal", () => {
   // FNXC:TaskDetailModal 2026-08-15-00:00 (slow-test trim): the markdown-body class shape,
   // heading stripping, and PROMPT.md-heading absence cases were three separate renders of the
   // same prompt-bearing props; merged into one render with all assertions intact.
-  it("strips the leading heading and renders prompt markdown without detail-prompt class or PROMPT.md heading", () => {
+  it("opens the complete prompt markdown with its heading and PROMPT.md back navigation", () => {
     render(
       <TaskDetailModal
         initialTab="definition"
@@ -1477,13 +1485,13 @@ describe("TaskDetailModal", () => {
       />,
     );
 
-    const markdownDiv = document.querySelector(".markdown-body");
-    expect(markdownDiv).toBeTruthy();
-    expect(markdownDiv!.classList.contains("detail-prompt")).toBe(false);
-    // The leading # heading should be stripped (modal has its own header)
-    expect(document.querySelector(".markdown-body h1")).toBeNull();
-    expect(document.querySelector("strong")?.textContent).toBe("bold");
-    expect(screen.queryByText("PROMPT.md")).toBeNull();
+    expect(screen.queryByText("bold")).toBeNull();
+    openFullPlan();
+    const markdownDiv = screen.getByTestId("task-detail-plan-full");
+    expect(markdownDiv.classList.contains("detail-prompt")).toBe(false);
+    expect(within(markdownDiv).getByRole("heading", { level: 1, name: "Hello" })).toBeInTheDocument();
+    expect(within(markdownDiv).getByText("bold")).toBeInTheDocument();
+    expect(screen.getByText("PROMPT.md")).toBeInTheDocument();
   });
 
   it("renders (no prompt) with detail-prompt class when prompt is absent", () => {
@@ -1500,6 +1508,7 @@ describe("TaskDetailModal", () => {
       />,
     );
 
+    openFullPlan();
     const fallback = screen.getByText("(no prompt)");
     expect(fallback).toBeTruthy();
     expect(fallback.classList.contains("detail-prompt")).toBe(true);
@@ -1988,487 +1997,131 @@ describe("TaskDetailModal", () => {
 
   });
 
-  it("shows description exactly once for a task without title", () => {
-    const { container } = render(
-      <TaskDetailModal
-        initialTab="definition"
-        task={makeTask({
-          title: undefined,
-          description: "Fix the login bug",
-          prompt: "# KB-099\n\nFix the login bug\n",
-        })}
-        onClose={noop}
-
-        onDeleteTask={noopDelete}
-        onMergeTask={noopMerge}
-          onOpenDetail={noopOpenDetail}
-        addToast={noop}
-      />,
-    );
-
-    // The heading "FN-099" should be stripped from the markdown
-    const markdownBody = document.querySelector(".markdown-body");
-    expect(markdownBody?.innerHTML).not.toContain("FN-099");
-    // Description appears in the markdown body
-    expect(markdownBody?.textContent).toContain("Fix the login bug");
-    // The detail header shows the ID (not duplicated as markdown heading)
-    expect(document.querySelector(".detail-id")?.textContent).toBe("FN-099");
-    // The h2 title shows description, not the task ID
-    const h2 = document.querySelector("h2.detail-title");
-    expect(h2?.textContent).toBe("Fix the login bug");
-  });
-
-  it("shows the title in <h2> when task.title is set", () => {
-    const { container } = render(
-      <TaskDetailModal
-        initialTab="definition"
-        task={makeTask({
-          title: "Implement dark mode",
-          description: "Add dark mode toggle to the settings page",
-        })}
-        onClose={noop}
-
-        onDeleteTask={noopDelete}
-        onMergeTask={noopMerge}
-          onOpenDetail={noopOpenDetail}
-        addToast={noop}
-      />,
-    );
-
-    const h2 = document.querySelector("h2.detail-title");
-    expect(h2?.textContent).toBe("Implement dark mode");
-  });
-
-  describe("description truncation", () => {
-    let titleScrollHeight = 0;
-    let titleClientHeight = 0;
-    let titleResizeObservers: Array<{ callback: ResizeObserverCallback; disconnected: boolean }> = [];
-    const originalScrollHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight");
-    const originalClientHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
-    const originalResizeObserver = Object.getOwnPropertyDescriptor(globalThis, "ResizeObserver");
-
-    const setTitleLayout = ({ scrollHeight, clientHeight }: { scrollHeight: number; clientHeight: number }) => {
-      titleScrollHeight = scrollHeight;
-      titleClientHeight = clientHeight;
-    };
-
-    const renderDetail = (taskOverrides: Parameters<typeof makeTask>[0] = {}) => render(
-      <TaskDetailModal
-        initialTab="definition"
-        task={makeTask(taskOverrides)}
-        onClose={noop}
-
-        onDeleteTask={noopDelete}
-        onMergeTask={noopMerge}
-        onOpenDetail={noopOpenDetail}
-        addToast={noop}
-      />,
-    );
-
-    const expectNoStandaloneTitleToggle = () => {
-      expect(document.querySelector(".detail-description-toggle")).toBeNull();
-      expect(screen.queryByRole("button", { name: "Show more" })).toBeNull();
-      expect(screen.queryByRole("button", { name: "Show less" })).toBeNull();
-    };
-
-    beforeEach(() => {
-      setTitleLayout({ scrollHeight: 120, clientHeight: 40 });
-      titleResizeObservers = [];
-      Object.defineProperty(globalThis, "ResizeObserver", {
-        configurable: true,
-        value: class TitleResizeObserver {
-          private readonly observation: { callback: ResizeObserverCallback; disconnected: boolean };
-
-          constructor(callback: ResizeObserverCallback) {
-            this.observation = { callback, disconnected: false };
-            titleResizeObservers.push(this.observation);
-          }
-
-          observe() {}
-          unobserve() {}
-          disconnect() { this.observation.disconnected = true; }
-        },
-      });
-      Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
-        configurable: true,
-        get() {
-          return this instanceof HTMLElement && this.classList.contains("detail-title-measurement") ? titleScrollHeight : 0;
-        },
-      });
-      Object.defineProperty(HTMLElement.prototype, "clientHeight", {
-        configurable: true,
-        get() {
-          return this instanceof HTMLElement && this.classList.contains("detail-title-measurement") ? titleClientHeight : 0;
-        },
-      });
-    });
-
-    afterEach(() => {
-      if (originalScrollHeight) {
-        Object.defineProperty(HTMLElement.prototype, "scrollHeight", originalScrollHeight);
-      } else {
-        Reflect.deleteProperty(HTMLElement.prototype, "scrollHeight");
-      }
-      if (originalClientHeight) {
-        Object.defineProperty(HTMLElement.prototype, "clientHeight", originalClientHeight);
-      } else {
-        Reflect.deleteProperty(HTMLElement.prototype, "clientHeight");
-      }
-      if (originalResizeObserver) {
-        Object.defineProperty(globalThis, "ResizeObserver", originalResizeObserver);
-      } else {
-        Reflect.deleteProperty(globalThis, "ResizeObserver");
-      }
-    });
-
-    it("toggles a long triage title directly without a standalone affordance", async () => {
-      /*
-      FNXC:TaskDetailTitle 2026-08-04-18:00:
-      Every TaskDetailModal lifecycle column and title fallback shares this definition header. An overflowed title alone owns expansion for pointer, touch, and keyboard users; short and fallback headings retain no empty control or legacy Show more/Show less shell, while Summarize remains separate.
-      */
-      const longTitle = "Triage title ".repeat(25);
-      renderDetail({
-        column: "triage",
-        title: longTitle,
-        description: "Triage planning context",
-      });
-
-      const h2 = document.querySelector("h2.detail-title");
-      expect(h2?.textContent).toBe(longTitle);
-      expect(h2).toHaveClass("detail-title--collapsed");
-      const titleControl = await screen.findByRole("button", { name: "Expand task title" });
-      expect(titleControl).toHaveAttribute("aria-expanded", "false");
-      expectNoStandaloneTitleToggle();
-
-      await userEvent.click(titleControl);
-
-      expect(document.querySelector("h2.detail-title")?.textContent).toBe(longTitle);
-      expect(document.querySelector("h2.detail-title")).not.toHaveClass("detail-title--collapsed");
-      expect(screen.getByRole("button", { name: "Collapse task title" })).toHaveAttribute("aria-expanded", "true");
-      expectNoStandaloneTitleToggle();
-
-      await userEvent.click(screen.getByRole("button", { name: "Collapse task title" }));
-
-      expect(document.querySelector("h2.detail-title")).toHaveClass("detail-title--collapsed");
-      expect(screen.getByRole("button", { name: "Expand task title" })).toHaveAttribute("aria-expanded", "false");
-      expectNoStandaloneTitleToggle();
-    });
-
-    it("keeps the modal title control stable through repeated resize callbacks after each activation", async () => {
-      const longTitle = "Resize-safe title ".repeat(25);
-      renderDetail({ title: longTitle });
-
-      const titleControl = await screen.findByRole("button", { name: "Expand task title" });
-      const measuredText = document.querySelector(".detail-title-measurement");
-      const collapsedObserver = titleResizeObservers.at(-1);
-      expect(collapsedObserver).toBeDefined();
-      expect(measuredText?.textContent).toBe(longTitle);
-
-      await userEvent.click(titleControl);
-      expect(document.querySelector("h2.detail-title")).not.toHaveClass("detail-title--collapsed");
-      expect(screen.getByRole("button", { name: "Collapse task title" })).toBe(titleControl);
-      expect(titleControl).toHaveAttribute("aria-expanded", "true");
-      expect(document.querySelector(".detail-title-measurement")).toBe(measuredText);
-      expect(document.querySelector("h2.detail-title")?.textContent).toBe(longTitle);
-      expect(collapsedObserver?.disconnected).toBe(true);
-
-      // Delivery can race disconnect; a stale collapsed-layout observer must not reclaim the choice.
-      await act(async () => {
-        for (let index = 0; index < 3; index++) {
-          collapsedObserver?.callback([], {} as ResizeObserver);
-        }
-      });
-      expect(screen.getByRole("button", { name: "Collapse task title" })).toBe(titleControl);
-      expect(titleControl).toHaveAttribute("aria-expanded", "true");
-      expect(screen.getAllByRole("button", { name: "Collapse task title" })).toHaveLength(1);
-
-      await userEvent.click(titleControl);
-      const recollapsedObserver = titleResizeObservers.at(-1);
-      expect(document.querySelector("h2.detail-title")).toHaveClass("detail-title--collapsed");
-      expect(document.querySelector(".detail-title-measurement")).toBe(measuredText);
-      expect(screen.getByRole("button", { name: "Expand task title" })).toBe(titleControl);
-      expect(titleControl).toHaveAttribute("aria-expanded", "false");
-      expect(recollapsedObserver).not.toBe(collapsedObserver);
-
-      await act(async () => {
-        for (let index = 0; index < 3; index++) {
-          recollapsedObserver?.callback([], {} as ResizeObserver);
-        }
-      });
-      expect(document.querySelector("h2.detail-title")).toHaveClass("detail-title--collapsed");
-      expect(screen.getByRole("button", { name: "Expand task title" })).toBe(titleControl);
-      expect(screen.getAllByRole("button", { name: "Expand task title" })).toHaveLength(1);
-      expect(document.querySelector("h2.detail-title")?.textContent).toBe(longTitle);
-      expectNoStandaloneTitleToggle();
-    });
-
-    it("keeps the embedded narrow title choice stable and ignores a switched task's stale observer", async () => {
-      const longTitle = "Embedded mobile title ".repeat(25);
-      const props = {
-        embedded: true,
-        active: true,
-        initialTab: "definition" as const,
-
-        onDeleteTask: noopDelete,
-        onMergeTask: noopMerge,
-        onOpenDetail: noopOpenDetail,
-        addToast: noop,
-      };
-      const originalInnerWidth = window.innerWidth;
-      Object.defineProperty(window, "innerWidth", { configurable: true, value: 375 });
-      const { rerender } = render(<TaskDetailContent {...props} task={makeTask({ id: "FN-EMBEDDED", title: longTitle })} />);
-      fireEvent(window, new Event("resize"));
-
-      const titleControl = await screen.findByRole("button", { name: "Expand task title" });
-      const oldObserver = titleResizeObservers.at(-1);
-      await userEvent.click(titleControl);
-      await act(async () => {
-        oldObserver?.callback([], {} as ResizeObserver);
-        oldObserver?.callback([], {} as ResizeObserver);
-      });
-      expect(document.querySelector("h2.detail-title")).not.toHaveClass("detail-title--collapsed");
-      expect(screen.getByRole("button", { name: "Collapse task title" })).toBe(titleControl);
-
-      setTitleLayout({ scrollHeight: 40, clientHeight: 40 });
-      rerender(<TaskDetailContent {...props} task={makeTask({ id: "FN-EMBEDDED-NEXT", title: "Narrow fitting title" })} />);
-      await act(async () => {});
-      expect(document.querySelector("h2.detail-title")?.textContent).toBe("Narrow fitting title");
-      expect(screen.queryByRole("button", { name: /task title/ })).toBeNull();
-      expect(oldObserver?.disconnected).toBe(true);
-
-      await act(async () => {
-        oldObserver?.callback([], {} as ResizeObserver);
-        oldObserver?.callback([], {} as ResizeObserver);
-      });
-      expect(screen.queryByRole("button", { name: /task title/ })).toBeNull();
-      expectNoStandaloneTitleToggle();
-      Object.defineProperty(window, "innerWidth", { configurable: true, value: originalInnerWidth });
-    });
-
-    it("ignores title observer deliveries while a kept-alive pop-out is hidden", async () => {
-      setTitleLayout({ scrollHeight: 40, clientHeight: 40 });
-      const props = {
-        embedded: true,
-        active: true,
-        initialTab: "definition" as const,
-
-        onDeleteTask: noopDelete,
-        onMergeTask: noopMerge,
-        onOpenDetail: noopOpenDetail,
-        addToast: noop,
-      };
-      const { rerender } = render(<TaskDetailContent {...props} task={makeTask({ id: "FN-HIDDEN", title: "Visibility fenced title" })} />);
-      const visibleObserver = titleResizeObservers.at(-1);
-      expect(screen.queryByRole("button", { name: /task title/ })).toBeNull();
-
-      rerender(<TaskDetailContent {...props} active={false} task={makeTask({ id: "FN-HIDDEN", title: "Visibility fenced title" })} />);
-      expect(visibleObserver?.disconnected).toBe(true);
-      setTitleLayout({ scrollHeight: 120, clientHeight: 40 });
-      await act(async () => {
-        visibleObserver?.callback([], {} as ResizeObserver);
-        visibleObserver?.callback([], {} as ResizeObserver);
-      });
-      expect(screen.queryByRole("button", { name: /task title/ })).toBeNull();
-
-      rerender(<TaskDetailContent {...props} active task={makeTask({ id: "FN-HIDDEN", title: "Visibility fenced title" })} />);
-      expect(await screen.findByRole("button", { name: "Expand task title" })).toHaveAttribute("aria-expanded", "false");
-      expectNoStandaloneTitleToggle();
-    });
-
-    it("supports keyboard activation through the title control", async () => {
-      renderDetail({ title: "Keyboard title ".repeat(25) });
-
-      const titleControl = await screen.findByRole("button", { name: "Expand task title" });
-      titleControl.focus();
-      await userEvent.keyboard("{Enter}");
-
-      expect(document.querySelector("h2.detail-title")).not.toHaveClass("detail-title--collapsed");
-      expect(screen.getByRole("button", { name: "Collapse task title" })).toHaveAttribute("aria-expanded", "true");
-      expectNoStandaloneTitleToggle();
-    });
-
-    it("collapses a long triage description fallback by default when title is missing", async () => {
-      const longDescription = "Triage description ".repeat(20);
-      renderDetail({ column: "triage", title: undefined, description: longDescription });
-
-      const h2 = document.querySelector("h2.detail-title");
-      expect(h2?.textContent).toBe(longDescription);
-      expect(h2).toHaveClass("detail-title--collapsed");
-      expect(await screen.findByRole("button", { name: "Expand task title" })).toHaveAttribute("aria-expanded", "false");
-      expectNoStandaloneTitleToggle();
-    });
-
-    it("uses the title, description, and id fallback chain for the clamped heading", async () => {
-      /*
-      FNXC:TaskDetailModal 2026-07-30-23:20 (#2895 review — the portal defect, at the sites the reported
-      one did not cover):
-
-      CLEANUP BETWEEN RENDERS, NOT A WIDER SELECTOR.
-
-      These queried the render `container`, and the modal PORTALS out of it, so every one returned
-      null. The obvious repair — swap to `document.querySelector` — is wrong here and I watched it
-      fail: this case renders the modal THREE times, the portals accumulate on `document.body`, and a
-      document-wide query returns the FIRST one. The failure moved from "Title wins" to
-      "Description fallback" rather than going away.
-
-      Unmounting between renders makes the document unambiguous, so each assertion reads the render it
-      belongs to. That also matches what the case is actually testing — three independent fallback
-      inputs, not three coexisting modals.
-      */
-      renderDetail({ title: "Title wins", description: "Description loses" });
-      expect(document.querySelector("h2.detail-title")?.textContent).toBe("Title wins");
-      expect(document.querySelector("h2.detail-title")).toHaveClass("detail-title--collapsed");
-      expect(await screen.findByRole("button", { name: "Expand task title" })).toBeInTheDocument();
-      expectNoStandaloneTitleToggle();
-      cleanup();
-
-      setTitleLayout({ scrollHeight: 40, clientHeight: 40 });
-      renderDetail({ title: undefined, description: "Description fallback" });
-      expect(document.querySelector("h2.detail-title")?.textContent).toBe("Description fallback");
-      expect(screen.queryByRole("button", { name: "Expand task title" })).toBeNull();
-      expectNoStandaloneTitleToggle();
-      cleanup();
-
-      renderDetail({ id: "FN-FALLBACK", title: undefined, description: undefined });
-      expect(document.querySelector("h2.detail-title")?.textContent).toBe("FN-FALLBACK");
-      expect(screen.queryByRole("button", { name: "Expand task title" })).toBeNull();
-      expectNoStandaloneTitleToggle();
-    });
-
-    it.each(["todo", "in-progress", "in-review", "done"] as const)(
-      "collapses overflowing non-triage %s titles with a title-owned control",
-      async (column) => {
-        const longTitle = `${column} title `.repeat(25);
-        renderDetail({ column, title: longTitle });
-
-        const h2 = document.querySelector("h2.detail-title");
-        expect(h2?.textContent).toBe(longTitle);
-        expect(h2).toHaveClass("detail-title--collapsed");
-        expect(await screen.findByRole("button", { name: "Expand task title" })).toHaveAttribute("aria-expanded", "false");
-        expectNoStandaloneTitleToggle();
+  describe("title-free Task Detail header", () => {
+    const cases = [
+      {
+        name: "populated title and description",
+        title: "Header title must stay hidden",
+        description: "Definition description remains visible",
       },
-    );
+      {
+        name: "description without title",
+        title: undefined,
+        description: "Description-only task remains readable",
+      },
+      {
+        name: "empty title and description",
+        title: undefined,
+        description: undefined,
+      },
+    ] as const;
 
-    it("does not render an empty title control when the title fits within two lines", () => {
-      setTitleLayout({ scrollHeight: 40, clientHeight: 40 });
-      renderDetail({
-        title: "Short title",
-        description: "This is a longer description that is not shown as the heading while title is present",
-      });
-
-      const h2 = document.querySelector("h2.detail-title");
-      expect(h2?.textContent).toBe("Short title");
-      expect(h2).toHaveClass("detail-title--collapsed");
-      expect(screen.queryByRole("button", { name: "Expand task title" })).toBeNull();
-      expectNoStandaloneTitleToggle();
-    });
-
-    it("resets to collapsed when switching from a non-triage task to a triage task", async () => {
-      const todoDescription = "G".repeat(250);
-      const triageDescription = "H".repeat(250);
-      const { rerender } = render(
-        <TaskDetailModal
-          initialTab="definition"
-          task={makeTask({ id: "FN-TODO", column: "todo", title: undefined, description: todoDescription })}
-          onClose={noop}
-
-          onDeleteTask={noopDelete}
-          onMergeTask={noopMerge}
-          onOpenDetail={noopOpenDetail}
-          addToast={noop}
-        />,
-      );
-
-      await userEvent.click(await screen.findByRole("button", { name: "Expand task title" }));
-      expect(document.querySelector("h2.detail-title")).not.toHaveClass("detail-title--collapsed");
-
-      rerender(
-        <TaskDetailModal
-          initialTab="definition"
-          task={makeTask({ id: "FN-TRIAGE", column: "triage", title: undefined, description: triageDescription })}
-          onClose={noop}
-
-          onDeleteTask={noopDelete}
-          onMergeTask={noopMerge}
-          onOpenDetail={noopOpenDetail}
-          addToast={noop}
-        />,
-      );
-
-      await waitFor(() => {
-        expect(document.querySelector("h2.detail-title")?.textContent).toBe(triageDescription);
-      });
-      expect(document.querySelector("h2.detail-title")).toHaveClass("detail-title--collapsed");
-      expect(screen.getByRole("button", { name: "Expand task title" })).toHaveAttribute("aria-expanded", "false");
-      expectNoStandaloneTitleToggle();
-    });
-
-    it("keeps the editing title form unaffected by the read-only clamp", async () => {
-      const longTitle = "Editable title ".repeat(25);
-      renderDetail({ column: "todo", title: longTitle, description: "Editable description" });
-
-      expect(await screen.findByRole("button", { name: "Expand task title" })).toBeInTheDocument();
-      await userEvent.click(screen.getByRole("button", { name: "Edit task" }));
-
-      expect(document.querySelector("h2.detail-title")).toBeNull();
-      expectNoStandaloneTitleToggle();
-      expect(screen.getByLabelText("Title")).toHaveValue(longTitle);
-    });
-
-    it("keeps the summarize-title affordance distinct from title expansion", async () => {
-      renderDetail({
-        column: "todo",
-        title: "Summarize me ".repeat(25),
-        description: "Description available for summarization",
-      });
-
-      expect(document.querySelector(".detail-heading-row h2.detail-title--collapsed")).toBeInTheDocument();
-      const titleControl = await screen.findByRole("button", { name: "Expand task title" });
-      const summarizeButton = screen.getByTestId("summarize-title-btn");
-      expect(summarizeButton).not.toBe(titleControl);
-      await userEvent.click(summarizeButton);
-      expect(titleControl).toHaveAttribute("aria-expanded", "false");
-      expectNoStandaloneTitleToggle();
-    });
-
-    it("keeps the title out of expanded Activity and available in Definition", async () => {
+    it.each(cases)("keeps the header title-free for $name across tabs and editing", async ({ title, description }) => {
       render(
-        <TaskDetailContent
-          task={makeTask({
-            column: "todo",
-            title: "Chat expanded title ".repeat(25),
-            description: "Description",
-          })}
-
+        <TaskDetailModal
+          initialTab="definition"
+          task={makeTask({ id: "FN-TITLE-FREE", column: "todo", title, description })}
+          onClose={noop}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
           addToast={noop}
-          initialTab="chat"
         />,
       );
 
-      await userEvent.click(screen.getByRole("button", { name: "Expand activity to full modal" }));
+      const dialog = screen.getByRole("dialog", { name: "Task detail" });
+      const header = dialog.querySelector<HTMLElement>(".task-detail-content > .modal-header");
+      expect(header).toBeInTheDocument();
+      expect(header).toHaveTextContent("FN-TITLE-FREE");
+      expect(header?.querySelector("h1, h2, h3, h4, h5, h6")).toBeNull();
+      expect(header?.querySelector(".detail-heading-row, .detail-title, .detail-title-control, .detail-title-measurement")).toBeNull();
+      if (title) expect(header).not.toHaveTextContent(title);
+      if (description) {
+        expect(header).not.toHaveTextContent(description);
+        expect(screen.getByTestId("task-detail-definition-description")).toHaveTextContent(description);
+      } else {
+        expect(screen.getByText("(no description)")).toBeInTheDocument();
+      }
 
-      expect(document.querySelector(".task-detail-content--chat-expanded")).toBeInTheDocument();
-      expect(document.querySelector("h2.detail-title")).toBeNull();
-      expect(screen.queryByRole("button", { name: "Expand task title" })).toBeNull();
+      await userEvent.click(screen.getByRole("button", { name: "Activity" }));
+      expect(header?.querySelector("h1, h2, h3, h4, h5, h6")).toBeNull();
+      if (title) expect(header).not.toHaveTextContent(title);
+      if (description) expect(screen.queryByTestId("task-detail-definition-description")).toBeNull();
 
       await userEvent.click(screen.getByRole("button", { name: "Plan" }));
-      expect(document.querySelector("h2.detail-title")).toHaveClass("detail-title--collapsed");
-      expect(screen.getByText(/Chat expanded title/)).toBeInTheDocument();
-      expectNoStandaloneTitleToggle();
+      await userEvent.click(screen.getByRole("button", { name: "Edit task" }));
+      expect(header?.querySelector("h1, h2, h3, h4, h5, h6")).toBeNull();
+      expect(screen.getByLabelText("Title")).toHaveValue(title ?? "");
+      expect(screen.getByLabelText("Description")).toHaveValue(description ?? "");
+      expect(screen.queryByTestId("summarize-title-btn")).toBeNull();
     });
 
-    it("has desktop and mobile CSS rules that preserve the two-line title clamp", () => {
+    it("keeps Summarize beside Description without recreating title chrome", async () => {
+      vi.mocked(dashboardApi.summarizeTitle).mockResolvedValueOnce("Generated hidden title");
+      vi.mocked(dashboardApi.updateTask).mockResolvedValueOnce(makeTask({ id: "FN-SUMMARY", title: "Generated hidden title" }));
+      render(
+        <TaskDetailModal
+          initialTab="definition"
+          task={makeTask({ id: "FN-SUMMARY", column: "todo", title: "Existing hidden title", description: "Summarize this description" })}
+          onClose={noop}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      const summarizeButton = screen.getByTestId("summarize-title-btn");
+      expect(summarizeButton.closest(".detail-definition-header")).toBeInTheDocument();
+      expect(summarizeButton.closest(".modal-header")).toBeNull();
+      await userEvent.click(summarizeButton);
+      await waitFor(() => expect(dashboardApi.updateTask).toHaveBeenCalledWith("FN-SUMMARY", { title: "Generated hidden title" }, undefined));
+      expect(document.querySelector(".modal-header")).not.toHaveTextContent("Generated hidden title");
+      expect(document.querySelector(".detail-title, .detail-title-control, .detail-title-measurement")).toBeNull();
+    });
+
+    it("renders no Summarize shell without a description or edit permission", () => {
+      const first = render(
+        <TaskDetailContent
+          initialTab="definition"
+          embedded
+          task={makeTask({ id: "FN-NO-DESCRIPTION", column: "todo", title: "Still editable", description: "" })}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+      expect(screen.queryByTestId("summarize-title-btn")).toBeNull();
+      expect(first.container.querySelector(".detail-definition-header")).toHaveTextContent("Description");
+      first.unmount();
+
+      render(
+        <TaskDetailContent
+          initialTab="definition"
+          embedded
+          task={makeTask({ id: "FN-READ-ONLY", column: "in-progress", description: "Read-only description" })}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+      expect(screen.queryByTestId("summarize-title-btn")).toBeNull();
+    });
+
+    it("contains no title clamp selectors after removing the title click target", () => {
       const css = readDashboardStylesSource();
-      expect(css).toContain(".detail-title--collapsed");
-      expectBaseRule(css, ".detail-title--collapsed .detail-title-measurement", "-webkit-line-clamp: 2");
-      expectBaseRule(css, ".detail-title--collapsed .detail-title-measurement", "line-clamp: 2");
-      expectBaseRule(css, ".detail-title-control", "width: 100%");
-      expectBaseRule(css, ".detail-title-control:focus-visible", "box-shadow: var(--focus-ring-strong)");
+      for (const removedSelector of [
+        ".detail-heading-row",
+        ".detail-title {",
+        ".detail-title--collapsed",
+        ".detail-title-measurement",
+        ".detail-title-control",
+      ]) {
+        expect(css).not.toContain(removedSelector);
+      }
       expect(css).toContain("@media (max-width: 768px)");
-      expectBaseRule(css, ".detail-title", "font-size: 16px");
       expect(css).not.toContain(".detail-description-toggle");
     });
   });
@@ -2690,6 +2343,7 @@ describe("TaskDetailModal", () => {
       );
 
       await waitFor(() => expect(mockFetch).toHaveBeenCalledWith("FN-202-rejected", undefined));
+      openFullPlan();
       expect(screen.getByText("Last good prompt")).toBeInTheDocument();
       expect(mockFetch).toHaveBeenCalledTimes(1);
     });
@@ -2727,6 +2381,7 @@ describe("TaskDetailModal", () => {
 
         rerender(<TaskDetailContent {...props} active />);
         await act(async () => {});
+        openFullPlan();
         expect(mockFetch).toHaveBeenCalledTimes(1);
 
         await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
@@ -2775,6 +2430,7 @@ describe("TaskDetailModal", () => {
       rerender(<TaskDetailContent {...sharedProps} task={staleTask} active={false} />);
       rerender(<TaskDetailContent {...sharedProps} task={currentTask} active />);
       await waitFor(() => expect(mockFetch).toHaveBeenCalledWith("FN-current-detail", undefined));
+      openFullPlan();
 
       await act(async () => { resolveCurrentRequest({ id: "FN-current-detail", prompt: "# Current response" }); });
       expect(await screen.findByText("Current response")).toBeInTheDocument();
@@ -2818,9 +2474,10 @@ describe("TaskDetailModal", () => {
         />,
       );
 
+      openFullPlan();
       expect(screen.getByText("Loading specification…")).toBeDefined();
-      // Token stats now live in their own Stats tab — switch to it before
-      // asserting on token-loading text.
+      // Token stats now live in their own Stats tab — return before switching.
+      fireEvent.click(screen.getByRole("button", { name: "Back to definition" }));
       fireEvent.click(screen.getByRole("button", { name: "Stats" }));
       expect(screen.getByText("Execution Timing")).toBeInTheDocument();
       expect(screen.getByText("Execution Details")).toBeInTheDocument();
@@ -2894,7 +2551,8 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      // Initially shows loading
+      // Initially shows loading in the internal plan view.
+      openFullPlan();
       expect(screen.getByText("Loading specification…")).toBeDefined();
 
       // After fetch resolves, spec content appears
@@ -2907,6 +2565,7 @@ describe("TaskDetailModal", () => {
       expect(screen.queryByText("Loading specification…")).toBeNull();
 
       // Token stats live behind the Stats tab now.
+      fireEvent.click(screen.getByRole("button", { name: "Back to definition" }));
       fireEvent.click(screen.getByRole("button", { name: "Stats" }));
       expect(screen.queryByText("Loading token statistics…")).toBeNull();
       expect(screen.getByText("Execution Timing")).toBeInTheDocument();

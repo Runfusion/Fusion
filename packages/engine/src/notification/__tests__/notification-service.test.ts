@@ -111,6 +111,7 @@ describe("NotificationService task completion mailbox", () => {
     });
     expect(sendMessageOnce.mock.calls[0][1]).toBe("task-completion-notice:FN-complete:released:2026-09-09T20:00:00.000Z");
     expect(sendMessageOnce.mock.calls[1][1]).toBe(sendMessageOnce.mock.calls[0][1]);
+    expect(sendMessageOnce.mock.calls.every(([input]) => input.metadata?.kind !== "task-recommendation-notice")).toBe(true);
 
     completed.columnMovedAt = "2026-09-09T21:00:00.000Z";
     store.emit("task:moved", { task: completed, from: "coding", to: "shipped", lanes });

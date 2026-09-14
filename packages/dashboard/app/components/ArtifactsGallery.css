@@ -385,22 +385,10 @@ The artifacts viewer is a headerless FloatingWindow, so this header is the deleg
   cursor: grabbing;
 }
 
-.artifacts-gallery-viewer-title {
-  flex: 1;
-  min-width: 0;
-  margin: 0;
-  font-size: 1rem;
-  font-weight: 700;
-  color: var(--text);
-  overflow-wrap: anywhere;
-}
-
-.artifacts-gallery-viewer-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-xs);
-  flex-shrink: 0;
-}
+/*
+FNXC:StandardizedViewLayout 2026-09-13-22:40:
+FN-379: the shared header owns the viewer title and action cluster; only the grab-cursor chrome stays local.
+*/
 
 .artifacts-gallery-viewer-media-frame {
   display: flex;

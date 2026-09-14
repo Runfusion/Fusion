@@ -1,0 +1,53 @@
+/*
+FNXC:SnippetsDestination 2026-09-14-04:12:
+Snippets is an ordinary collection destination: the saved snippets are the sidebar rail, the editor is the main
+panel. Only the geometry lives here; every row, form, and state style is reused from SkillsView.css so the two
+destinations cannot drift apart visually after the split.
+*/
+.snippets-view__list-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-block-size: 0;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.snippets-view__editor {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-block-size: 0;
+  gap: var(--space-md);
+  padding: var(--space-lg) var(--space-xl);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* The rail rows are buttons here, so the content column keeps list semantics without inheriting button chrome. */
+.snippets-view .skills-view-snippets__item-content {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-xs);
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.snippets-view .skills-view-snippets__item--selected {
+  border-color: var(--accent);
+}
+
+@media (max-width: 768px) {
+  .snippets-view__editor {
+    padding: var(--space-md);
+  }
+}

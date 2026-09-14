@@ -48,6 +48,8 @@ import {
   type WorktreeDependencyReadiness,
 } from "../worktree/worktree-dependency-install.js";
 import { resolveContentReviewInputProof } from "../worktree/review-diff-fingerprint.js";
+import { parkDependencyConfigurationBlock } from "../worktree/dependency-configuration-block.js";
+import { WORKFLOW_DEPENDENCY_CONFIGURATION_BLOCK_VALUE } from "../workflows/workflow-graph-executor.js";
 import { acknowledgeOverlapResumeContext, readOverlapResumeContextDelivery } from "../execution/overlap-resume-context.js";
 
 const WORKFLOW_THINKING_LEVEL_SET: ReadonlySet<string> = new Set(THINKING_LEVELS);
@@ -161,11 +163,19 @@ export function resolveWorkspaceReadOnlyGateRepositoryContext(input: {
     : { resolved: true };
 }
 
+/*
+FNXC:WorktreeDependencies 2026-09-13-08:58:
+A dependency configuration block must retain the executing Plan Review graph node, not an inferred
+or stale task node. Retry publishes a successor at this node, so preserving it prevents an
+operator-configured recovery from resuming an unrelated workflow step.
+*/
 export interface PlanReviewDependencyGateInput {
   task: TaskDetail;
   settings: Settings;
   workspaceConfig: WorkspaceConfig | null | undefined;
   worktreePath: string;
+  /** The executing Plan Review graph node; Retry must resume this exact node. */
+  nodeId: string;
   store: TaskStore;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
   runConfiguredCommand: DependencyCommandRunner;
@@ -177,6 +187,10 @@ interface DependencyGateTarget {
 }
 
 function dependencyGateDetails(target: DependencyGateTarget, readiness: WorktreeDependencyReadiness): string {
+  if (readiness.readiness === "config-blocked" && readiness.deterministicStop) {
+    const stop = readiness.deterministicStop;
+    return `${target.repository}: command \`${stop.command}\` exited with code ${stop.exitCode ?? "unknown"} (${stop.failureCode}); ${stop.diagnostic}. Correct worktreeInitCommand and select Retry.`;
+  }
   if (readiness.readiness === "unrecognized") {
     return `${target.repository}: unrecognized dependency evidence (${readiness.evidence.join(", ")}); resolve it with fn_install_worktree_dependencies.`;
   }
@@ -236,7 +250,7 @@ export async function runPlanReviewDependencyGate(
         taskEnv: process.env,
         logger: executorLog,
       });
-      if (readiness.readiness === "unresolved" || readiness.readiness === "unrecognized") {
+      if (readiness.readiness === "unresolved" || readiness.readiness === "unrecognized" || readiness.readiness === "config-blocked") {
         blocking.push({ target, readiness });
       }
     } catch (error) {
@@ -250,6 +264,21 @@ export async function runPlanReviewDependencyGate(
     }
   }
   if (blocking.length === 0) return null;
+
+  const configurationBlocked = blocking.find(({ readiness }) => readiness.readiness === "config-blocked" && readiness.deterministicStop);
+  if (configurationBlocked?.readiness.deterministicStop) {
+    const stop = configurationBlocked.readiness.deterministicStop;
+    const output = await parkDependencyConfigurationBlock(input.store, {
+      taskId: input.task.id, repository: configurationBlocked.target.repository, command: stop.command,
+      exitCode: stop.exitCode, failureCode: stop.failureCode, diagnostic: stop.diagnostic,
+      nodeId: input.nodeId,
+      getRunContextFor: input.getRunContextFor,
+    });
+    return { outcome: "failure", value: WORKFLOW_DEPENDENCY_CONFIGURATION_BLOCK_VALUE, contextPatch: {
+      output, notes: "Plan Review is suspended until the dependency configuration changes or the operator selects Retry.",
+      findings: [{ severity: "high", title: "Dependency configuration blocked", body: output }],
+    } };
+  }
 
   const lines = ["Dependencies are not installed.", ...blocking.map(({ target, readiness }) => `- ${dependencyGateDetails(target, readiness)}`)];
   const output = lines.join("\n");
@@ -333,7 +362,9 @@ export async function runGraphCustomNode(
   columnBinding?: WorkflowColumnAgent,
   graphContext?: Record<string, unknown>,
   outputLanguage?: ResolvedTaskOutputLanguage,
+  graphSignal?: AbortSignal,
 ): Promise<WorkflowNodeResult> {
+    if (graphSignal?.aborted) return { outcome: "failure", value: "aborted" };
     const cfg = node.config ?? {};
     let live = await deps.store.getTask(nodeTask.id);
 
@@ -607,11 +638,21 @@ export async function runGraphCustomNode(
     compatibility probe remains only for replans that already retain an execution checkout.
     */
     if (isPlanReviewNode) {
+      /*
+      FNXC:WorktreeDependencies 2026-09-13-09:05:
+      A dependency stop raised inside an optional Plan Review template must resume the owning
+      top-level group, not its template child. Only top-level IR nodes are legal continuation
+      targets, so persisting the child would make the operator Retry action unrecoverable.
+      */
+      const dependencyGateNodeId = typeof graphContext?.[WORKFLOW_OPTIONAL_GROUP_CONTEXT_KEY] === "string"
+        ? graphContext[WORKFLOW_OPTIONAL_GROUP_CONTEXT_KEY]
+        : node.id;
       const dependencyGate = await runPlanReviewDependencyGate({
         task: executionTarget,
         settings,
         workspaceConfig,
         worktreePath,
+        nodeId: dependencyGateNodeId,
         store: deps.store,
         getRunContextFor: deps.getRunContextFor,
         runConfiguredCommand: deps.runConfiguredCommand,
@@ -854,6 +895,7 @@ export async function runGraphCustomNode(
     const principalAgentId = typeof graphContext?.["workflow:principal-agent-id"] === "string"
       ? graphContext["workflow:principal-agent-id"]
       : undefined;
+    if (graphSignal?.aborted) return { outcome: "failure", value: "aborted" };
     let outcome: WorkflowStepOutcome;
     if (workspaceConfig && declaredReviewKind === "code") {
       /*
@@ -881,6 +923,14 @@ export async function runGraphCustomNode(
           repoRootDir: join(deps.rootDir, repoRelPath),
         }));
         let aggregate = await reviewWorkspacePerRepo(workspaceReviewTarget, async (repoWorktreePath): Promise<ReviewResult> => {
+          if (graphSignal?.aborted) {
+            return {
+              verdict: "UNAVAILABLE",
+              retryable: false,
+              review: "Workflow graph execution was cancelled before this repository review started.",
+              summary: "Unavailable: workflow graph execution was cancelled",
+            };
+          }
           const repoRelPath = workspaceConfig.repos.find(
             (repository) => workspaceReviewTarget.workspaceWorktrees?.[repository]?.worktreePath === repoWorktreePath,
           );
@@ -931,13 +981,23 @@ export async function runGraphCustomNode(
               unattended,
               principalAgentId,
               outputLanguage,
+              signal: graphSignal,
               sessionBoundary: reviewBoundary,
               ...(repoRelPath ? { dispatchLabel: repoRelPath } : {}),
               ...(repoDiffBaseCommitSha ? { diffBaseCommitSha: repoDiffBaseCommitSha } : {}),
             });
+          if (graphSignal?.aborted) {
+            return {
+              verdict: "UNAVAILABLE",
+              retryable: false,
+              review: "Workflow graph execution was cancelled during this repository review.",
+              summary: "Unavailable: workflow graph execution was cancelled",
+            };
+          }
           await acknowledgeCustomContext();
           return toWorkspaceRepoReviewResult(repoOutcome);
         }, { workspaceRepos: workspaceConfig.repos, workspaceRootDir: deps.rootDir, settings });
+        if (graphSignal?.aborted) return { outcome: "failure", value: "aborted" };
         /*
         FNXC:WorkspaceReviewEvidence 2026-08-29-12:17:
         FN-259 removes this graph branch's duplicate repositoryScope patch. Both workspace review
@@ -995,11 +1055,15 @@ export async function runGraphCustomNode(
       }
     } else {
       const dispatchSingularStep = async (reviewInputFingerprint?: string): Promise<WorkflowStepOutcome> => {
+        if (graphSignal?.aborted) {
+          return { success: false, error: "workflow graph execution cancelled", failureValue: "aborted" };
+        }
         if (mode === "script") {
           if (overlapResumeContext) {
             await deps.store.logEntry(live.id, `Workflow script '${node.id}' received overlap synchronization context`, overlapResumeContext, deps.getRunContextFor(live.id));
           }
           const scriptOutcome = await deps.executeScriptWorkflowStep(live, step, worktreePath, settings, nodeEnv);
+          if (graphSignal?.aborted) return { success: false, error: "workflow graph execution cancelled", failureValue: "aborted" };
           await acknowledgeCustomContext();
           return reviewInputFingerprint === undefined
             ? scriptOutcome
@@ -1009,9 +1073,11 @@ export async function runGraphCustomNode(
           unattended,
           principalAgentId,
           outputLanguage,
+          signal: graphSignal,
           ...(nodeSessionBoundary ? { sessionBoundary: nodeSessionBoundary } : {}),
           ...(reviewInputFingerprint !== undefined ? { reviewInputFingerprint } : {}),
         });
+        if (graphSignal?.aborted) return { success: false, error: "workflow graph execution cancelled", failureValue: "aborted" };
         await acknowledgeCustomContext();
         return workflowOutcome;
       };
@@ -1040,6 +1106,7 @@ export async function runGraphCustomNode(
         outcome = await dispatchSingularStep();
       }
     }
+    if (graphSignal?.aborted) return { outcome: "failure", value: "aborted" };
     /*
      * FNXC:WorkflowReviewFindings 2026-08-05-06:29:
      * Script nodes retain their exit-code verdict semantics, but an explicitly classified review

@@ -38,8 +38,10 @@ declare module "@fusion/dashboard/app/components/TaskCard" {
       id: string,
       updates: { title?: string; description?: string; dependencies?: string[] }
     ) => Promise<Task>;
-    onArchiveTask?: (id: string) => Promise<Task>;
-    onUnarchiveTask?: (id: string) => Promise<Task>;
+    /*
+    FNXC:PluginInteropDrift 2026-09-13-16:30:
+    TaskCard no longer exposes archive or unarchive callbacks. Keep this plugin mirror exact so specialized dashboard work cannot silently preserve removed host actions.
+    */
     onDeleteTask?: (id: string, options?: { removeDependencyReferences?: boolean }) => Promise<Task>;
     onRetryTask?: (id: string) => Promise<Task>;
     onOpenDetailWithTab?: (task: Task | TaskDetail, initialTab: "changes") => void;

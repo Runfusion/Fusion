@@ -100,7 +100,7 @@ describe("homemade Alpha Chat", () => {
     setupMockRooms();
 
     try {
-      const view = await renderWithAct(<ChatView projectId="project-theme" addToast={vi.fn()} experimentalFeatures={{ alphaUpdates: true }} />);
+      const view = await renderWithAct(<ChatView projectId="project-theme" addToast={vi.fn()} experimentalFeatures={{}} />);
       const chat = view.container.querySelector<HTMLElement>(".chat-view");
       const productionButton = view.container.querySelector<HTMLElement>('[data-alpha-ui="button"]');
       expect(chat).not.toBeNull();
@@ -143,7 +143,7 @@ describe("homemade Alpha Chat", () => {
       messages: [{ id: "message-alpha", sessionId: activeSessionFixture.id, role: "assistant", content: "Réponse Alpha", createdAt: "2026-09-10T00:00:00.000Z" }],
     });
     setupMockRooms();
-    const view = await renderWithAct(<ChatView projectId="project-alpha" addToast={vi.fn()} experimentalFeatures={{ alphaUpdates: true }} floating={floating} compactLayout={compactLayout} />);
+    const view = await renderWithAct(<ChatView projectId="project-alpha" addToast={vi.fn()} experimentalFeatures={{}} floating={floating} compactLayout={compactLayout} />);
     expect(view.container.querySelector('[data-alpha-ui="button"]')).not.toBeNull();
     expect(view.container.querySelector('[data-alpha-ui="input"]')).not.toBeNull();
     expect(screen.getByTestId(`chat-session-${activeSessionFixture.id}`)).toBeInTheDocument();
@@ -169,7 +169,7 @@ describe("homemade Alpha Chat", () => {
             hidden={false}
             closeOnOutsidePointerDown={false}
             addToast={vi.fn()}
-            experimentalFeatures={{ alphaUpdates: true }}
+            experimentalFeatures={{}}
             onClose={vi.fn()}
           />,
         );
@@ -179,7 +179,7 @@ describe("homemade Alpha Chat", () => {
             entries={[{ projectId: "project-alpha", session: activeSessionFixture, focusNonce: 1, cascadeSlot: 0, minimized: false }]}
             projectId="project-alpha"
             addToast={vi.fn()}
-            experimentalFeatures={{ alphaUpdates: true }}
+            experimentalFeatures={{}}
             onClose={vi.fn()}
             onOpenSessionInNewWindow={vi.fn()}
           />,
@@ -189,7 +189,7 @@ describe("homemade Alpha Chat", () => {
         await renderWithAct(<>{chatEntry?.render?.({
           projectId: "project-alpha",
           addToast: vi.fn(),
-          experimentalFeatures: { alphaUpdates: true },
+          experimentalFeatures: {},
           surface: host === "right-dock" ? "dock" : "expand",
           dockWidth: host === "right-dock" ? 480 : undefined,
         })}</>);
@@ -209,7 +209,8 @@ describe("homemade Alpha Chat", () => {
       if (host === "quick-chat") {
         const floatingChat = document.querySelector(".floating-window--chat .chat-view--floating");
         expect(floatingChat?.children[0]).toHaveClass("view-header");
-        expect(floatingChat?.children[1]).toHaveClass("chat-view__body");
+        expect(floatingChat?.children[1]).toHaveClass("view-layout__body");
+        expect(floatingChat?.children[1]?.querySelector(".chat-view__body")).not.toBeNull();
         expect(floatingChat?.querySelectorAll('[data-testid="chat-modal-close"]')).toHaveLength(1);
         expect(floatingChat?.querySelector('[data-testid="chat-modal-close"]')).toHaveClass("modal-close");
         expect(document.querySelector(".floating-window--chat .floating-window__close")).toBeNull();
@@ -258,7 +259,7 @@ describe("homemade Alpha Chat", () => {
             hidden={false}
             closeOnOutsidePointerDown={false}
             addToast={vi.fn()}
-            experimentalFeatures={{ alphaUpdates: true }}
+            experimentalFeatures={{}}
             onClose={vi.fn()}
           />,
         );
@@ -268,7 +269,7 @@ describe("homemade Alpha Chat", () => {
             entries={[{ projectId: "project-alpha", session: activeSessionFixture, focusNonce: 1, cascadeSlot: 0, minimized: false }]}
             projectId="project-alpha"
             addToast={vi.fn()}
-            experimentalFeatures={{ alphaUpdates: true }}
+            experimentalFeatures={{}}
             onClose={vi.fn()}
             onOpenSessionInNewWindow={vi.fn()}
           />,
@@ -278,7 +279,8 @@ describe("homemade Alpha Chat", () => {
       const floatingChat = document.querySelector<HTMLElement>(".floating-window--chat .chat-view--floating");
       expect(floatingChat).not.toBeNull();
       expect(floatingChat?.children[0]).toHaveClass("view-header");
-      expect(floatingChat?.children[1]).toHaveClass("chat-view__body");
+      expect(floatingChat?.children[1]).toHaveClass("view-layout__body");
+        expect(floatingChat?.children[1]?.querySelector(".chat-view__body")).not.toBeNull();
       expect(floatingChat?.querySelectorAll('[data-testid="chat-modal-close"]')).toHaveLength(1);
       expect(document.querySelector(".floating-window--chat .floating-window__close")).toBeNull();
       if (viewport === "mobile") {
@@ -329,7 +331,7 @@ describe("homemade Alpha Chat", () => {
           hidden={false}
           closeOnOutsidePointerDown={false}
           addToast={vi.fn()}
-          experimentalFeatures={{ alphaUpdates: true }}
+          experimentalFeatures={{}}
           onClose={onClose}
         />,
       )
@@ -338,7 +340,7 @@ describe("homemade Alpha Chat", () => {
           entries={[{ projectId: "project-alpha", session: activeSessionFixture, focusNonce: 3, cascadeSlot: 1, minimized: false }]}
           projectId="project-alpha"
           addToast={vi.fn()}
-          experimentalFeatures={{ alphaUpdates: true }}
+          experimentalFeatures={{}}
           onClose={vi.fn()}
           onOpenSessionInNewWindow={vi.fn()}
         />,
@@ -356,7 +358,7 @@ describe("homemade Alpha Chat", () => {
           hidden
           closeOnOutsidePointerDown={false}
           addToast={vi.fn()}
-          experimentalFeatures={{ alphaUpdates: true }}
+          experimentalFeatures={{}}
           onClose={onClose}
         />,
       );
@@ -366,7 +368,7 @@ describe("homemade Alpha Chat", () => {
           entries={[{ projectId: "project-alpha", session: activeSessionFixture, focusNonce: 3, cascadeSlot: 1, minimized: true }]}
           projectId="project-alpha"
           addToast={vi.fn()}
-          experimentalFeatures={{ alphaUpdates: true }}
+          experimentalFeatures={{}}
           onClose={vi.fn()}
           onOpenSessionInNewWindow={vi.fn()}
         />,
@@ -388,7 +390,7 @@ describe("homemade Alpha Chat", () => {
           hidden={false}
           closeOnOutsidePointerDown={false}
           addToast={vi.fn()}
-          experimentalFeatures={{ alphaUpdates: true }}
+          experimentalFeatures={{}}
           onClose={onClose}
         />,
       );
@@ -398,7 +400,7 @@ describe("homemade Alpha Chat", () => {
           entries={[{ projectId: "project-alpha", session: activeSessionFixture, focusNonce: 3, cascadeSlot: 1, minimized: false }]}
           projectId="project-alpha"
           addToast={vi.fn()}
-          experimentalFeatures={{ alphaUpdates: true }}
+          experimentalFeatures={{}}
           onClose={vi.fn()}
           onOpenSessionInNewWindow={vi.fn()}
         />,
@@ -432,7 +434,7 @@ describe("homemade Alpha Chat", () => {
       setSessionTags,
     } as never);
     setupMockRooms();
-    await renderWithAct(<ChatView projectId="project-alpha" addToast={vi.fn()} experimentalFeatures={{ alphaUpdates: true }} />);
+    await renderWithAct(<ChatView projectId="project-alpha" addToast={vi.fn()} experimentalFeatures={{}} />);
     fireEvent.click(screen.getByTestId("chat-session-menu-btn"));
     const conversationMenu = screen.getByRole("menu", { name: "Conversation actions" });
     const primaryRename = screen.getByTestId("chat-context-rename");
@@ -475,7 +477,7 @@ describe("homemade Alpha Chat", () => {
       activeSession: activeSessionFixture,
     });
     setupMockRooms();
-    await renderWithAct(<ChatView projectId="project-alpha" addToast={vi.fn()} experimentalFeatures={{ alphaUpdates: true }} />);
+    await renderWithAct(<ChatView projectId="project-alpha" addToast={vi.fn()} experimentalFeatures={{}} />);
     fireEvent.click(screen.getByTestId("chat-session-menu-btn"));
     fireEvent.click(screen.getByTestId("chat-context-rename"));
 
@@ -487,15 +489,15 @@ describe("homemade Alpha Chat", () => {
   it("keeps the empty and loading production ChatView states inside the Alpha boundary", async () => {
     setupMockChat({ ...defaultChatState, sessionsLoading: true });
     setupMockRooms();
-    const view = await renderWithAct(<ChatView projectId="project-alpha" addToast={vi.fn()} experimentalFeatures={{ alphaUpdates: true }} />);
+    const view = await renderWithAct(<ChatView projectId="project-alpha" addToast={vi.fn()} experimentalFeatures={{}} />);
     expect(screen.getByText("Loading...")).toBeInTheDocument();
     expect(view.container.querySelector('[data-alpha-ui="input"]')).not.toBeNull();
   });
 
-  it("switches a mounted composer ON and OFF without losing its draft", () => {
+  it("keeps a mounted official composer active without losing its draft", () => {
     const view = render(<ChatFixture alpha={false} />);
     fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "brouillon conservé" } });
-    expect(view.container.querySelector("[data-alpha-ui]")).toBeNull();
+    expect(view.container.querySelector('[data-alpha-ui="textarea"]')).not.toBeNull();
 
     view.rerender(<ChatFixture alpha />);
     expect(screen.getByLabelText("Composer")).toHaveValue("brouillon conservé");
@@ -504,7 +506,7 @@ describe("homemade Alpha Chat", () => {
 
     view.rerender(<ChatFixture alpha={false} />);
     expect(screen.getByLabelText("Composer")).toHaveValue("brouillon conservé");
-    expect(view.container.querySelector("[data-alpha-ui]")).toBeNull();
+    expect(view.container.querySelector('[data-alpha-ui="textarea"]')).not.toBeNull();
   });
 
   it("renders streaming text, thinking, and an errored tool state through the real Alpha chat tree", async () => {
@@ -519,7 +521,7 @@ describe("homemade Alpha Chat", () => {
       streamingToolCalls: [{ toolName: "verification", status: "completed", isError: true, result: "échec contrôlé" }],
     });
     setupMockRooms();
-    const view = await renderWithAct(<ChatView projectId="project-alpha" addToast={vi.fn()} experimentalFeatures={{ alphaUpdates: true }} />);
+    const view = await renderWithAct(<ChatView projectId="project-alpha" addToast={vi.fn()} experimentalFeatures={{}} />);
     fireEvent.click(screen.getByTestId(`chat-session-${activeSessionFixture.id}`));
 
     expect(await screen.findByText("Réponse en flux")).toBeInTheDocument();

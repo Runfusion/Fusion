@@ -43,6 +43,17 @@ describe("Header CSS", () => {
     expect(taskSearchCss).toMatch(/@media\s*\(max-width:\s*768px\)[\s\S]*?\.task-search-suggestion\s*\{[^}]*min-height:\s*calc\(var\(--space-xl\) \+ var\(--space-xl\)\);/);
   });
 
+  it("anchors Alpha desktop search inline with token-sized dropdown geometry and no overlay selectors", () => {
+    const inline = extractRuleBlock(css, ".header-search--alpha-inline");
+    const suggestions = extractRuleBlock(taskSearchCss, ".task-search-suggestions");
+
+    expect(inline).toContain("flex: 0 1 calc(var(--space-2xl) * 8);");
+    expect(inline).toContain("min-width: calc(var(--space-2xl) * 5);");
+    expect(inline).toContain("max-width: calc(var(--space-2xl) * 10);");
+    expect(suggestions).toContain("inset-block-start: calc(100% + var(--space-xs));");
+    expect(css).not.toContain(".alpha-task-search-overlay");
+  });
+
   it("keeps desktop workflow and search controls on one shrinkable row", () => {
     const actions = extractRuleBlock(css, ".header-actions");
     const slot = extractRuleBlock(css, ".header-workflow-slot");

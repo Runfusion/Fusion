@@ -1,12 +1,15 @@
 import "./NotesView.css";
 import { useCallback, useEffect, useRef } from "react";
 import type { ProjectNoteSummary } from "@fusion/core";
-import { ArrowLeft, Plus, RefreshCw, Save, Search, StickyNote, Trash2 } from "lucide-react";
+import { RefreshCw, Save, Search, StickyNote, Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useConfirm } from "../hooks/useConfirm";
 import { useNotes, type UseNotesController } from "../hooks/useNotes";
 import { FileEditor } from "./FileEditor";
+import { ViewActionButton } from "./ViewActionButton";
 import { ViewHeader } from "./ViewHeader";
+import { ViewLayout } from "./ViewLayout";
+import { ViewSidebar } from "./ViewSidebar";
 import { FloatingWindow } from "./FloatingWindow";
 
 export interface NotesViewProps {
@@ -92,21 +95,20 @@ export function NotesView({ projectId, addToast, controller, compact = false, li
     window.addEventListener("keydown", onKeyDown); return () => window.removeEventListener("keydown", onKeyDown);
   });
 
-  const list = <aside className="notes-list" aria-label={t("notes.list", "Notes list")}>
+  const list = <div className="notes-list">
     <label className="notes-search"><Search aria-hidden="true" /><span className="sr-only">{t("notes.search", "Search notes")}</span><input className="input" type="search" value={notes.search} placeholder={t("notes.search", "Search notes")} onChange={(event) => notes.setSearch(event.target.value)} /></label>
     {notes.loading && !notes.notes.length ? <p className="notes-state">{t("common.loading", "Loading…")}</p> : null}
     {notes.error && !notes.selected ? <div className="notes-state" role="alert"><p>{notes.error}</p><button className="btn" type="button" onClick={() => void notes.loadList(notes.search)}>{t("common.retry", "Retry")}</button></div> : null}
-    {!notes.loading && !notes.error && !notes.notes.length ? <div className="notes-state"><p>{notes.search ? t("notes.noResults", "No notes found") : t("notes.empty", "No notes yet")}</p>{!notes.search ? <button className="btn" type="button" onClick={() => void handleCreate()}>{t("notes.createFirst", "Create your first note")}</button> : null}</div> : null}
+    {!notes.loading && !notes.error && !notes.notes.length ? <div className="notes-state"><p>{notes.search ? t("notes.noResults", "No notes found") : t("notes.empty", "No notes yet")}</p></div> : null}
     <div className="notes-list-items">{notes.notes.map((note) => {
       const isSelected = !listOnly && note.id === activeNoteId;
       return <button key={note.id} type="button" className={`notes-list-item${isSelected ? " notes-list-item--selected" : ""}`} aria-current={isSelected ? "page" : undefined} onClick={() => void handleSelect(note.id)}><strong>{note.title}</strong><time dateTime={note.updatedAt}>{new Date(note.updatedAt).toLocaleString()}</time></button>;
     })}</div>
-  </aside>;
+  </div>;
 
   const detail = <main className="notes-detail">
     {notes.selected ? <>
       <div className="notes-detail-toolbar">
-        {!dedicated ? <button className="btn btn-icon notes-back" type="button" aria-label={t("common.back", "Back")} onClick={() => { void abandon().then((ok) => { if (ok) notes.clearSelection(); }); }}><ArrowLeft aria-hidden="true" /></button> : null}
         <input className="input notes-title" aria-label={t("notes.title", "Note title")} maxLength={200} value={notes.draftTitle} onChange={(event) => notes.setDraftTitle(event.target.value)} />
         <span className="notes-save-state">{notes.dirty ? t("notes.unsaved", "Unsaved changes") : t("notes.savedState", "Saved")}</span>
         <button className="btn" type="button" onClick={() => void handleDelete()}><Trash2 aria-hidden="true" />{t("common.delete", "Delete")}</button>
@@ -118,9 +120,26 @@ export function NotesView({ projectId, addToast, controller, compact = false, li
     </> : notes.error && notes.failedSelectionId ? <div className="notes-state notes-detail-empty" role="alert"><p>{notes.error}</p><button className="btn" type="button" onClick={() => void handleRetry()}>{t("common.retry", "Retry")}</button></div> : <div className="notes-state notes-detail-empty"><StickyNote aria-hidden="true" /><p>{notes.loading ? t("common.loading", "Loading…") : t("notes.select", "Select a note or create a new one")}</p></div>}
   </main>;
 
+  /*
+  FNXC:NotesCollectionLayout 2026-09-13-16:29:
+  The standard Notes destination composes its existing controller through the shared rail and detail shell. Dedicated note windows remain detail-only and keep their independent dirty guard, draft, conflict, save, and floating-window lifecycle.
+  */
+  const header = <ViewHeader
+    icon={StickyNote}
+    title={dedicated ? (notes.draftTitle || t("nav.notes", "Notes")) : t("nav.notes", "Notes")}
+    onClose={floating ? requestFloatingClose : undefined}
+    backAction={!dedicated && notes.selected ? { label: t("common.back", "Back"), onClick: () => { void abandon().then((ok) => { if (ok) notes.clearSelection(); }); } } : undefined}
+    actions={!dedicated ? <ViewActionButton kind="create" label={t("notes.new", "New note")} onClick={() => void handleCreate()} disabled={!projectId || notes.saving} /> : undefined}
+  />;
   const content = <section className={`notes-view${floating ? " notes-view--floating" : ""}${compact ? " notes-view--compact" : ""}${listOnly ? " notes-view--list-only" : ""}${dedicated ? " notes-view--dedicated" : ""}${notes.selected ? " notes-view--detail" : ""}`} aria-label={t("nav.notes", "Notes")}>
-    <ViewHeader icon={StickyNote} title={dedicated ? (notes.draftTitle || t("nav.notes", "Notes")) : t("nav.notes", "Notes")} onClose={floating ? requestFloatingClose : undefined} actions={!dedicated ? <button className="btn btn-primary" type="button" onClick={() => void handleCreate()} disabled={!projectId || notes.saving}><Plus aria-hidden="true" />{t("notes.new", "New note")}</button> : undefined} />
-    <div className="notes-layout">{!dedicated ? list : null}{!listOnly ? detail : null}</div>
+    <ViewLayout
+      header={header}
+      sidebar={!dedicated ? <ViewSidebar ariaLabel={t("notes.list", "Notes list")} resizable={!compact}>{list}</ViewSidebar> : undefined}
+      mobilePane={dedicated || notes.selected ? "detail" : "list"}
+      contentOwnsScroll={!listOnly}
+    >
+      {!listOnly ? detail : <div />}
+    </ViewLayout>
   </section>;
   if (!floating) return content;
   return <FloatingWindow title={notes.draftTitle || t("nav.notes", "Notes")} ariaLabel={notes.draftTitle || t("nav.notes", "Notes")} onClose={() => void requestFloatingClose()} windowKey={dedicatedNoteId ? `note-${projectId}-${dedicatedNoteId}` : "notes-view"} persistGeometryKey="floating-window:notes-view" hideHeader dragHandleSelector=".view-header" minSize={{ width: 360, height: 280 }} cascadeOffsetIndex={(floating.cascadeSlot ?? 0) + 1} raiseToFrontSignal={floating.raiseToFrontSignal}><div onPointerDown={floating.onActivate} onFocusCapture={floating.onActivate}>{content}</div></FloatingWindow>;

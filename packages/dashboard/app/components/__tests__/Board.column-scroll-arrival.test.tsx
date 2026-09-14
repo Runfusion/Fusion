@@ -38,7 +38,7 @@ vi.mock("../PluginSlot", () => ({ PluginSlot: () => null }));
 vi.mock("../../hooks/usePluginUiSlots", () => ({ usePluginUiSlots: () => ({ slots: [], getSlotsForId: () => [], loading: false, error: null }) }));
 vi.mock("../../hooks/useConfirm", () => ({ useConfirm: () => ({ confirm: vi.fn() }) }));
 
-function task(id: string, column: ColumnType): Task {
+function task(id: string, column: ColumnType, timestamp = "2026-01-01T00:00:00.000Z"): Task {
   return {
     id,
     title: id,
@@ -48,8 +48,9 @@ function task(id: string, column: ColumnType): Task {
     steps: [],
     currentStep: 0,
     log: [],
-    createdAt: "2026-01-01T00:00:00.000Z",
-    updatedAt: "2026-01-01T00:00:00.000Z",
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    columnMovedAt: timestamp,
   } as Task;
 }
 
@@ -199,6 +200,61 @@ describe("Board column scroll arrival", () => {
       await Promise.resolve();
     });
     expect(bodies().map((body) => body.scrollTop)).toEqual([0, 0]);
+  });
+
+  it.each([
+    { width: 1_200, aggregate: false },
+    { width: 600, aggregate: false },
+    { width: 1_200, aggregate: true },
+    { width: 600, aggregate: true },
+  ])("keeps a complete lane at the top while preserving lower content at $width px (aggregate=$aggregate)", async ({ width, aggregate }) => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
+    if (aggregate) writeBoardWorkflowSelection(undefined, ALL_WORKFLOWS_BOARD_VIEW_ID);
+    const initial = populatedTasks();
+    const view = render(<Board {...boardProps({ tasks: initial })} />);
+    await waitFor(() => expect(document.querySelector("[data-column='done'] [data-virtual-task-row]")).not.toBeNull());
+
+    const doneBody = document.querySelector<HTMLElement>("[data-column='done'] .column-body")!;
+    setColumnGeometry(doneBody);
+    fireEvent.scroll(doneBody);
+    const latest = task("FN-DONE-LATEST", "done" as ColumnType, "2027-01-01T00:00:00.000Z");
+    view.rerender(<Board {...boardProps({ tasks: [...initial, latest] })} />);
+
+    await waitFor(() => {
+      expect(doneBody.scrollTop).toBe(0);
+      expect(document.querySelector("[data-column='done'] [data-virtual-task-row='FN-DONE-LATEST']")).not.toBeNull();
+    });
+
+    view.rerender(<Board {...boardProps({ tasks: initial })} />);
+    doneBody.scrollTop = 3_200;
+    await act(async () => {
+      fireEvent.scroll(doneBody);
+      await Promise.resolve();
+    });
+    const priorFirstVisible = document.querySelector<HTMLElement>("[data-column='done'] [data-virtual-task-row]")!.dataset.virtualTaskRow!;
+    const nextLatest = task("FN-DONE-NEXT", "done" as ColumnType, "2028-01-01T00:00:00.000Z");
+    view.rerender(<Board {...boardProps({ tasks: [...initial, nextLatest] })} />);
+
+    await waitFor(() => {
+      expect(doneBody.scrollTop).toBe(3_520);
+      expect(document.querySelector(`[data-column='done'] [data-virtual-task-row='${priorFirstVisible}']`)).not.toBeNull();
+    });
+  });
+
+  it.each([false, true])("shows the first complete task when an empty lane receives it (aggregate=%s)", async (aggregate) => {
+    if (aggregate) writeBoardWorkflowSelection(undefined, ALL_WORKFLOWS_BOARD_VIEW_ID);
+    const view = render(<Board {...boardProps({ tasks: [] })} />);
+    await waitFor(() => expect(bodies()).toHaveLength(2));
+    const doneBody = document.querySelector<HTMLElement>("[data-column='done'] .column-body")!;
+    setColumnGeometry(doneBody);
+
+    const first = task("FN-DONE-FIRST", "done" as ColumnType, "2027-01-01T00:00:00.000Z");
+    view.rerender(<Board {...boardProps({ tasks: [first] })} />);
+
+    await waitFor(() => {
+      expect(doneBody.scrollTop).toBe(0);
+      expect(document.querySelector("[data-column='done'] [data-virtual-task-row='FN-DONE-FIRST']")).not.toBeNull();
+    });
   });
 
   it("keeps a legacy replay at zero after delayed real Board and Column hydration", async () => {

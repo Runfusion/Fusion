@@ -131,7 +131,8 @@ it("renders inline mobile back affordance inside detail header when enabled", as
   const header = document.querySelector(".agent-detail-header");
   const identityContainer = header?.querySelector(".agent-detail-identity");
   const actionsContainer = header?.querySelector(".agent-detail-header-actions");
-  expect(identityContainer?.querySelector(".agent-detail-inline-back")).toBeTruthy();
+  expect(header?.querySelector(".view-back-button")).toBeTruthy();
+  expect(identityContainer?.querySelector(".agent-detail-inline-back")).toBeNull();
   expect(actionsContainer?.querySelector('[aria-label="Refresh"]')).toBeTruthy();
   expect(actionsContainer?.querySelector(".agent-detail-mobile-icon-control")).toBeTruthy();
 });

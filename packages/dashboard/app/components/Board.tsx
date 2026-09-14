@@ -123,8 +123,6 @@ interface BoardProps {
   but it must release shared workflow-header ownership until it is the visible main view again.
   */
   active?: boolean;
-  /** Enables Alpha-only complete-column History controls. */
-  alphaUpdatesEnabled?: boolean;
   /** Opens the existing History destination. */
   onOpenHistory?: () => void;
 }
@@ -189,7 +187,7 @@ function BoardWorkflowSkeleton({ empty = false, t }: { empty?: boolean; t: TFunc
   );
 }
 
-function BoardContent({ tasks, projectId, maxConcurrent, maxWorktrees, showWorktreeGrouping, onMoveTask, onPauseTask, onUnpauseTask, onResetTask, onDuplicateTask, onMergeTask, onOpenDetail, onOpenRefine, onOpenGroupModal, addToast, onQuickCreate, onNewTask, autoMerge, mergeStrategy = "direct", onToggleAutoMerge, planAutoApproveEnabled, onTogglePlanAutoApprove, globalPaused, onUpdateTask, onRetryTask, onOpenChatWithPrefill, onRevertTask, onReviseTask, onDeleteTask, onLoadMoreCurrentTasks, currentTasksTotal, currentTasksHasMore, currentTasksLoadingMore, currentTasksPaginationError, currentTasksProgressKey, onRetryCurrentTasks, onLoadMoreCompletedTasks, completedCounts, completedHasMore, completedLoadingMore, completedPaginationError, completedProgressKey, onRetryCompletedTasks, completedSortMode = "completion-date-desc", onCompletedSortModeChange, searchQuery = "", availableModels, onPlanningMode, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, onOpenMission, staleHighFanoutBlockerAgeThresholdMs, lastFetchTimeMs, prAuthAvailable, onOpenWorkflowEditor, onCreateWorkflow, workflowControlsInHeader = false, active = true, alphaUpdatesEnabled = false, onOpenHistory }: BoardProps) {
+function BoardContent({ tasks, projectId, maxConcurrent, maxWorktrees, showWorktreeGrouping, onMoveTask, onPauseTask, onUnpauseTask, onResetTask, onDuplicateTask, onMergeTask, onOpenDetail, onOpenRefine, onOpenGroupModal, addToast, onQuickCreate, onNewTask: _onNewTask, autoMerge, mergeStrategy = "direct", onToggleAutoMerge, planAutoApproveEnabled, onTogglePlanAutoApprove, globalPaused, onUpdateTask, onRetryTask, onOpenChatWithPrefill, onRevertTask, onReviseTask, onDeleteTask, onLoadMoreCurrentTasks, currentTasksTotal, currentTasksHasMore, currentTasksLoadingMore, currentTasksPaginationError, currentTasksProgressKey, onRetryCurrentTasks, onLoadMoreCompletedTasks, completedCounts, completedHasMore, completedLoadingMore, completedPaginationError, completedProgressKey, onRetryCompletedTasks, completedSortMode = "completion-date-desc", onCompletedSortModeChange, searchQuery = "", availableModels, onPlanningMode, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, onOpenMission, staleHighFanoutBlockerAgeThresholdMs, lastFetchTimeMs, prAuthAvailable, onOpenWorkflowEditor, onCreateWorkflow, workflowControlsInHeader = false, active = true, onOpenHistory }: BoardProps) {
   const { t } = useTranslation("app");
   /*
   FNXC:TaskColumnSorting 2026-08-18-21:24:
@@ -237,11 +235,6 @@ function BoardContent({ tasks, projectId, maxConcurrent, maxWorktrees, showWorkt
     setBoardElement((current) => current === element ? current : element);
   }, []);
   const viewportMode = useViewportMode();
-  /*
-  FNXC:MobileTaskNavigation 2026-08-20-05:47:
-  Issue #2226 moves only the mobile full-task modal trigger to Header. Keep intake quick-create props on every viewport so Planning remains an inline composer.
-  */
-  const mobileFullTaskModalHidden = viewportMode === "mobile";
   useColumnScrollSnap(boardElement, { mobileOnly: true });
   useEffect(() => {
     if (!active) return;
@@ -621,10 +614,6 @@ function BoardContent({ tasks, projectId, maxConcurrent, maxWorktrees, showWorkt
       ?? selectedWorkflowColumns[0]?.id;
   }, [selectedWorkflowColumns]);
 
-  const handleSelectedWorkflowNewTask = useCallback(() => {
-    onNewTask(selectedWorkflow?.id);
-  }, [onNewTask, selectedWorkflow?.id]);
-
   const workflowContextMenuColumnsByWorkflowId = useMemo(() => {
     const map = new Map<string, readonly TaskContextMenuColumnMetadata[]>();
     for (const workflow of boardWorkflows?.workflows ?? []) {
@@ -819,10 +808,6 @@ function BoardContent({ tasks, projectId, maxConcurrent, maxWorktrees, showWorkt
     return null;
   }, [boardWorkflows]);
 
-  const handleAggregateWorkflowNewTask = useCallback(() => {
-    onNewTask(aggregateQuickCreateTarget?.workflowId);
-  }, [aggregateQuickCreateTarget?.workflowId, onNewTask]);
-
   const aggregateTasksByColumn = useMemo(() => {
     const grouped: Record<string, Task[]> = {};
     for (const column of aggregateBoardColumns) grouped[column.id] = [];
@@ -977,7 +962,6 @@ function BoardContent({ tasks, projectId, maxConcurrent, maxWorktrees, showWorkt
                   columnDisplayName={columnDef.name}
                   columnDescription={columnDef.description}
                   columnFlags={columnDef.flags}
-                  alphaUpdatesEnabled={alphaUpdatesEnabled}
                   onOpenHistory={onOpenHistory}
                   holdTaskIds={holdTaskIds}
                   taskContextMenuColumnsByTaskId={taskContextMenuColumnsByTaskId}
@@ -1022,7 +1006,7 @@ function BoardContent({ tasks, projectId, maxConcurrent, maxWorktrees, showWorkt
                   mergeStrategy={mergeStrategy}
                   // FNXC:PlanApproval 2026-07-07-00:00: FN-7653 — the plan auto-approve shortcut belongs only to the intake/planning column, never to hold (Todo-like) columns; the built-in Coding workflow's Todo column carries the hold trait and was wrongly receiving this prop pair.
                   {...((columnDef.flags.intake && !columnDef.flags.complete && !columnDef.flags.countsTowardWip && !columnDef.flags.mergeBlocker && !columnDef.flags.humanReview) ? { planAutoApproveEnabled, onTogglePlanAutoApprove } : {})}
-                  {...(isCreateColumn && aggregateQuickCreateTarget ? { workflowId: aggregateQuickCreateTarget.workflowId, workflowOptions, defaultWorkflowId: boardWorkflows?.defaultWorkflowId ?? null, onQuickCreate: handleAggregateWorkflowQuickCreate, ...(!mobileFullTaskModalHidden ? { onNewTask: handleAggregateWorkflowNewTask } : {}) } : {})}
+                  {...(isCreateColumn && aggregateQuickCreateTarget ? { workflowId: aggregateQuickCreateTarget.workflowId, workflowOptions, defaultWorkflowId: boardWorkflows?.defaultWorkflowId ?? null, onQuickCreate: handleAggregateWorkflowQuickCreate } : {})}
                   {...(columnDef.flags.mergeBlocker || columnDef.flags.humanReview ? { onToggleAutoMerge: handleToggleAutoMerge } : {})}
                   {...{ sortMode: laneSortMode, onSortModeChange: laneSortModeChange, doneSortMode: laneSortMode, onDoneSortModeChange: laneSortModeChange }}
                   paginationActive={active}
@@ -1068,7 +1052,6 @@ function BoardContent({ tasks, projectId, maxConcurrent, maxWorktrees, showWorkt
                 columnDisplayName={columnDef.name}
                 columnDescription={columnDef.description}
                 columnFlags={columnDef.flags}
-                alphaUpdatesEnabled={alphaUpdatesEnabled}
                 onOpenHistory={onOpenHistory}
                 holdTaskIds={holdTaskIds}
                 workflowContextMenuColumns={selectedWorkflowContextMenuColumns}
@@ -1112,7 +1095,7 @@ function BoardContent({ tasks, projectId, maxConcurrent, maxWorktrees, showWorkt
                 mergeStrategy={mergeStrategy}
                 // FNXC:PlanApproval 2026-07-07-00:00: FN-7653 — the plan auto-approve shortcut belongs only to the intake/planning column, never to hold (Todo-like) columns; the built-in Coding workflow's Todo column carries the hold trait and was wrongly receiving this prop pair.
                 {...((columnDef.flags.intake && !columnDef.flags.complete && !columnDef.flags.countsTowardWip && !columnDef.flags.mergeBlocker && !columnDef.flags.humanReview) ? { planAutoApproveEnabled, onTogglePlanAutoApprove } : {})}
-                {...(isCreateColumn ? { workflowOptions, defaultWorkflowId: selectedWorkflow.id, onQuickCreate: handleWorkflowQuickCreate, ...(!mobileFullTaskModalHidden ? { onNewTask: handleSelectedWorkflowNewTask } : {}) } : {})}
+                {...(isCreateColumn ? { workflowOptions, defaultWorkflowId: selectedWorkflow.id, onQuickCreate: handleWorkflowQuickCreate } : {})}
                 {...(columnDef.flags.mergeBlocker || columnDef.flags.humanReview ? { onToggleAutoMerge: handleToggleAutoMerge } : {})}
                 {...{ sortMode: laneSortMode, onSortModeChange: laneSortModeChange, doneSortMode: laneSortMode, onDoneSortModeChange: laneSortModeChange }}
                 paginationActive={active}
@@ -1151,7 +1134,7 @@ function BoardContent({ tasks, projectId, maxConcurrent, maxWorktrees, showWorkt
 
 export function Board(props: BoardProps) {
   return (
-    <AlphaBoundary enabled={props.alphaUpdatesEnabled === true}>
+    <AlphaBoundary>
       <BoardContent {...props} />
     </AlphaBoundary>
   );

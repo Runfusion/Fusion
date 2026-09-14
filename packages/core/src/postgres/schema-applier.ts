@@ -85,7 +85,8 @@ touches no data; it must advance in the same change that ships a new migration f
 /* FNXC:PlanApproval 2026-08-28-06:24: advance the ceiling with the per-task approval migration so task reads never precede its column. */
 /* FNXC:PatchnodeLedger 2026-08-28-12:16: the permanent ledger table must exist before TaskStore can commit a completion move atomically with its entry. */
 /* FNXC:ChatSidebarPerf 2026-09-08-04:48: baseline marker includes the chat-message recency index required for index-backed sidebar previews. */
-export const SCHEMA_BASELINE_VERSION = "0076";
+/* FNXC:OverlapWaitSynchronization 2026-09-13-05:10: the ceiling includes the retired-phase drain, so startup completes it before overlap readers run. */
+export const SCHEMA_BASELINE_VERSION = "0078";
 /** FNXC:SymbolLock 2026-07-20-10:00: upgrades need durable task declarations before admission resolves symbols. */
 export const TASK_DECLARED_SYMBOLS_VERSION = "0028";
 const INITIAL_SCHEMA_VERSION = "0000";
@@ -274,6 +275,10 @@ export const PROJECT_NOTES_VERSION = "0074";
 export const OVERLAP_WAIT_SYNC_VERSION = "0075";
 /** FNXC:WhiteboardAlpha 2026-09-10-05:42: Upgraded projects must install both Whiteboard tables before project routes resolve their lazy store. */
 export const WHITEBOARDS_SCHEMA_VERSION = "0076";
+/** FNXC:OverlapWaitSynchronization 2026-09-13-05:10: 0075's phase CHECK omitted `repair-required`, so existing delta REVISE rows can be migrated before the drain retires that phase. */
+export const OVERLAP_WAIT_REPAIR_REQUIRED_PHASE_VERSION = "0077";
+/** FNXC:OverlapWaitSynchronization 2026-09-13-05:10: upgrades drain model-verdict overlap phases after 0077 has made all historical states readable. */
+export const OVERLAP_REVALIDATION_DRAIN_VERSION = "0078";
 
 /** FNXC:MemoryFocus 2026-08-13-15:57: explicit registration prevents the per-conversation memory-focus migration from being skipped. Renumbered to 0060 (FN-9037 took 0059), then 0061, then 0065 (2026-08-20) when the upstream FN-066..FN-094 batch claimed 0061-0064. */
 export const CHAT_SESSION_MEMORY_FOCUS_VERSION = "0066";
@@ -527,7 +532,9 @@ const TASK_PLANNING_FAILURE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0072_fn_9273_
 const CHAT_MESSAGES_SESSION_RECENCY_INDEX_MIGRATION_PATH = join(MIGRATIONS_DIR, "0073_fn_9275_chat_messages_session_recency_index.sql");
 const PROJECT_NOTES_MIGRATION_PATH = join(MIGRATIONS_DIR, "0074_fn_323_project_notes.sql");
 const OVERLAP_WAIT_SYNC_MIGRATION_PATH = join(MIGRATIONS_DIR, "0075_fn_332_overlap_sync.sql");
+const OVERLAP_WAIT_REPAIR_REQUIRED_PHASE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0077_fn_332_overlap_wait_repair_required_phase.sql");
 const WHITEBOARDS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0076_fn_333_whiteboards.sql");
+const OVERLAP_REVALIDATION_DRAIN_MIGRATION_PATH = join(MIGRATIONS_DIR, "0078_fn_375_overlap_revalidation_drain.sql");
 
 /**
  * Ensure the migration bookkeeping table exists. Lives in the public schema so
@@ -674,6 +681,8 @@ export async function applySchemaBaseline(
     const projectNotesAlreadyApplied = applied.includes(PROJECT_NOTES_VERSION);
     const overlapWaitSyncAlreadyApplied = applied.includes(OVERLAP_WAIT_SYNC_VERSION);
     const whiteboardsAlreadyApplied = applied.includes(WHITEBOARDS_SCHEMA_VERSION);
+    const overlapWaitRepairRequiredPhaseAlreadyApplied = applied.includes(OVERLAP_WAIT_REPAIR_REQUIRED_PHASE_VERSION);
+    const overlapRevalidationDrainAlreadyApplied = applied.includes(OVERLAP_REVALIDATION_DRAIN_VERSION);
     assertBinaryNotOlderThanDatabase(applied);
     let schemaChanged = false;
 
@@ -1597,6 +1606,26 @@ export async function applySchemaBaseline(
       await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${OVERLAP_WAIT_SYNC_VERSION}) ON CONFLICT (version) DO NOTHING`);
       schemaChanged = true;
     }
+    /*
+    FNXC:OverlapWaitSynchronization 2026-09-13-05:10:
+    Re-apply whenever the live constraint still rejects `repair-required`, not only when bookkeeping is
+    absent: a project that already recorded 0075 carries the narrow CHECK and would otherwise keep raising
+    on every delta REVISE.
+    */
+    const overlapWaitRepairRequiredPhaseMissing = ((await tx.execute(sql`
+      SELECT to_regclass('project.task_overlap_waits') IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = to_regclass('project.task_overlap_waits')
+          AND conname = 'ck_task_overlap_wait_phase'
+          AND pg_get_constraintdef(oid) LIKE '%repair-required%'
+      ) AS missing
+    `)) as unknown as Array<{ missing: boolean }>)[0]?.missing ?? false;
+    if (!overlapRevalidationDrainAlreadyApplied && (!overlapWaitRepairRequiredPhaseAlreadyApplied || overlapWaitRepairRequiredPhaseMissing)) {
+      const migrationSql = await readFile(OVERLAP_WAIT_REPAIR_REQUIRED_PHASE_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${OVERLAP_WAIT_REPAIR_REQUIRED_PHASE_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
     const whiteboardsMissing = ((await tx.execute(sql`
       SELECT to_regclass('project.tasks') IS NOT NULL AND (to_regclass('project.whiteboards') IS NULL OR to_regclass('project.whiteboard_revisions') IS NULL) AS missing
     `)) as unknown as Array<{ missing: boolean }>)[0]?.missing ?? true;
@@ -1604,6 +1633,22 @@ export async function applySchemaBaseline(
       const migrationSql = await readFile(WHITEBOARDS_MIGRATION_PATH, "utf8");
       await tx.execute(sql.raw(migrationSql));
       await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${WHITEBOARDS_SCHEMA_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    const overlapRevalidationDrainNeeded = ((await tx.execute(sql`
+      SELECT CASE WHEN to_regclass('project.task_overlap_waits') IS NULL THEN false ELSE
+        EXISTS (SELECT 1 FROM project.task_overlap_waits WHERE phase IN ('revalidation-pending', 'repair-required'))
+        OR EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conname = 'ck_task_overlap_wait_phase'
+            AND pg_get_constraintdef(oid) LIKE '%revalidation-pending%'
+        )
+      END AS needed
+    `)) as unknown as Array<{ needed: boolean }>)[0]?.needed ?? true;
+    if (!overlapRevalidationDrainAlreadyApplied || overlapRevalidationDrainNeeded) {
+      const migrationSql = await readFile(OVERLAP_REVALIDATION_DRAIN_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${OVERLAP_REVALIDATION_DRAIN_VERSION}) ON CONFLICT (version) DO NOTHING`);
       schemaChanged = true;
     }
     const patchnodeEntriesMissing = ((await tx.execute(sql`

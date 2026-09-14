@@ -31,6 +31,19 @@ describe("built-in workflow adjacency vs the legacy transition table", () => {
   });
 
   it("covers every legacy column, so a new one cannot slip past this pin", () => {
-    expect(COLUMNS.length).toBe(Object.keys(VALID_TRANSITIONS).length);
+    /*
+    FNXC:TaskArchiveRemoval 2026-09-04-10:36:
+    COLUMNS excludes the historical "archived" soft-delete sentinel, but VALID_TRANSITIONS keeps
+    it as a read-only `archived: []` key. Every real board column must still have a transition
+    entry (a new column with no entry fails here first); the only key not in COLUMNS may be that
+    documented sentinel.
+    */
+    const transitionKeys = Object.keys(VALID_TRANSITIONS);
+    for (const column of COLUMNS) {
+      expect(transitionKeys).toContain(column);
+    }
+    expect(
+      transitionKeys.filter((key) => !(COLUMNS as readonly string[]).includes(key)),
+    ).toEqual(["archived"]);
   });
 });

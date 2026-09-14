@@ -42,17 +42,15 @@
   cursor: grabbing;
 }
 
-.file-browser-header-title {
+.file-browser-modal-header .view-header__title-content {
   display: flex;
   align-items: center;
   gap: var(--space-sm);
-  font-size: calc(var(--space-md) + var(--space-xs) * 0.75);
-  font-weight: 600;
   min-width: 0;
   flex: 1 1 auto;
 }
 
-.file-browser-header-title > span {
+.file-browser-modal-header .view-header__title-content > span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -87,12 +85,15 @@
 }
 
 .file-browser-sidebar {
-  width: calc(var(--space-xl) * 11.667);
-  min-width: calc(var(--space-xl) * 7.5);
-  border-right: calc(var(--space-xs) * 0.25) solid var(--border);
+  min-width: 0;
   display: flex;
   flex-direction: column;
   background: var(--surface);
+}
+
+.file-browser-sidebar__panel {
+  overflow: hidden;
+  border-right: var(--btn-border-width) solid var(--border);
 }
 
 .file-browser-content {
@@ -102,41 +103,6 @@
   overflow: hidden;
   min-width: 0;
   min-height: 0;
-}
-
-.file-browser-resize-handle {
-  position: relative;
-  width: var(--space-sm);
-  flex-shrink: 0;
-  cursor: col-resize;
-  background: transparent;
-  border: none;
-  padding: 0;
-  box-sizing: border-box;
-  touch-action: none;
-  transition: background var(--transition-fast);
-}
-
-.file-browser-resize-handle::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 50%;
-  width: var(--space-xs);
-  transform: translateX(-50%);
-  background: transparent;
-  transition: background var(--transition-fast);
-}
-
-.file-browser-resize-handle:hover::before,
-.file-browser-resize-handle:active::before {
-  background: color-mix(in srgb, var(--todo) 30%, transparent);
-}
-
-.file-browser-resize-handle:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring-strong);
 }
 
 .file-browser {
@@ -567,7 +533,7 @@ Narrow Files windows use the same single-pane list/editor behavior as mobile eve
   gap: var(--space-sm);
 }
 
-.file-browser-modal--narrow .file-browser-header-title {
+.file-browser-modal--narrow .view-header__title-content {
   overflow: hidden;
   min-width: 0;
   flex: 1;
@@ -656,8 +622,12 @@ Narrow Files windows use the same single-pane list/editor behavior as mobile eve
 .file-browser-modal--narrow .file-browser-sidebar {
   width: 100%;
   height: 40%;
+  border-bottom: var(--btn-border-width) solid var(--border);
+}
+
+.file-browser-modal--narrow .file-browser-sidebar__panel {
+  width: 100%;
   border-right: none;
-  border-bottom: calc(var(--space-xs) * 0.25) solid var(--border);
 }
 
 .file-browser-modal--narrow .file-browser-sidebar.mobile {
@@ -680,30 +650,6 @@ Narrow Files windows use the same single-pane list/editor behavior as mobile eve
   display: flex;
   flex: 1;
   height: 100%;
-}
-
-.file-browser-modal--narrow .file-browser-back-button {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-sm);
-  padding: var(--space-xs) var(--space-md);
-  background: transparent;
-  border: calc(var(--space-xs) * 0.25) solid var(--border);
-  border-radius: var(--radius-md);
-  color: var(--text);
-  font-size: calc(var(--space-md) + var(--space-xs) * 0.25);
-  cursor: pointer;
-  transition: background var(--transition-fast);
-  margin-right: var(--space-sm);
-}
-
-.file-browser-modal--narrow .file-browser-back-button:hover {
-  background: var(--card-hover);
-}
-
-.file-browser-modal--narrow .file-browser-back-button:focus {
-  outline: none;
-  box-shadow: var(--focus-ring);
 }
 
 .file-browser-modal--narrow .file-browser-preview {
@@ -781,7 +727,7 @@ Narrow Files windows use the same single-pane list/editor behavior as mobile eve
     background: color-mix(in srgb, var(--text-muted) 44%, transparent);
   }
 
-  .file-browser-header-title {
+  .file-browser-modal-header .view-header__title-content {
     overflow: hidden;
     min-width: 0;
     flex: 1;
@@ -872,12 +818,12 @@ Narrow Files windows use the same single-pane list/editor behavior as mobile eve
   .file-browser-sidebar {
     width: 100%;
     height: 40%;
-    border-right: none;
-    border-bottom: calc(var(--space-xs) * 0.25) solid var(--border);
+    border-bottom: var(--btn-border-width) solid var(--border);
   }
 
-  .file-browser-resize-handle {
-    display: none;
+  .file-browser-sidebar__panel {
+    width: 100%;
+    border-right: none;
   }
 
   /* Mobile two-state view: show only list or editor at a time */
@@ -901,31 +847,6 @@ Narrow Files windows use the same single-pane list/editor behavior as mobile eve
     display: flex;
     flex: 1;
     height: 100%;
-  }
-
-  /* Back button styles */
-  .file-browser-back-button {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-sm);
-    padding: var(--space-xs) var(--space-md);
-    background: transparent;
-    border: calc(var(--space-xs) * 0.25) solid var(--border);
-    border-radius: var(--radius-md);
-    color: var(--text);
-    font-size: calc(var(--space-md) + var(--space-xs) * 0.25);
-    cursor: pointer;
-    transition: background var(--transition-fast);
-    margin-right: var(--space-sm);
-  }
-
-  .file-browser-back-button:hover {
-    background: var(--card-hover);
-  }
-
-  .file-browser-back-button:focus {
-    outline: none;
-    box-shadow: var(--focus-ring);
   }
 
   .file-browser-preview {

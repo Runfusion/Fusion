@@ -43,7 +43,7 @@ describe("utility modal FloatingWindow geometry contract", () => {
     if (fixture.name === "MilestoneSliceInterviewModal") expect(screen.getByTestId("milestone-slice-interview-modal")).toHaveAttribute("role", "dialog");
     expect(screen.getAllByLabelText("Resize floating window")).toHaveLength(8);
     expect(panel.querySelectorAll("[data-resize-hit-target='true']")).toHaveLength(0);
-    const drag = panel.querySelector<HTMLElement>(".modal-header, .agent-dialog-header, .setup-wizard-header") ?? panel;
+    const drag = panel.querySelector<HTMLElement>(".view-header, .modal-header, .agent-dialog-header, .setup-wizard-header") ?? panel;
     const initialPosition = { left: panel.style.left, top: panel.style.top };
     const setCapture = vi.fn();
     Object.defineProperty(panel, "setPointerCapture", { configurable: true, value: setCapture });
@@ -86,7 +86,7 @@ describe("utility modal FloatingWindow geometry contract", () => {
       if (direction.includes("n") || direction.includes("s")) expect(panel.style.height).not.toBe(before.height);
     }
     expect(() => JSON.parse(localStorage.getItem(fixture.key!)!)).not.toThrow();
-    const drag = panel.querySelector<HTMLElement>(".modal-header, .agent-dialog-header, .setup-wizard-header") ?? panel;
+    const drag = panel.querySelector<HTMLElement>(".view-header, .modal-header, .agent-dialog-header, .setup-wizard-header") ?? panel;
     capture(panel);
     fireEvent.pointerDown(drag, { pointerType: "touch", pointerId: 7, clientX: 100, clientY: 100 });
     expect(document.body.style.userSelect).toBe("none");

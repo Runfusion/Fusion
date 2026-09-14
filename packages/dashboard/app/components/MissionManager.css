@@ -44,7 +44,7 @@
   max-width: 100%;
   height: 100%;
   max-height: 100%;
-  overflow-y: auto;
+  overflow: hidden;
   /* Keep pull-down/overscroll inside the Mission view so iOS pull-to-refresh and Android overscroll cannot reload the dashboard or snap the page to the top. */
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
@@ -184,67 +184,25 @@ Title metric matches the shared ViewHeader (1.125rem) so the Missions header rea
   overflow: hidden;
 }
 
+/*
+FNXC:StandardizedMissionLayout 2026-09-13-16:30:
+ViewSidebar owns the shared project width and separator. Mission content fills that rail without publishing a second independent width.
+*/
+.view-sidebar__panel > .mission-manager__sidebar {
+  width: 100%;
+  height: 100%;
+  border-right: 0;
+}
+
 .mission-manager__sidebar {
-  width: calc(var(--space-lg) * 18.75);
+  width: 100%;
   min-width: 0;
-  flex-shrink: 0;
+  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
-  border-right: var(--btn-border-width) solid var(--border);
+  border-right: 0;
   background: var(--surface);
   overflow: hidden;
-}
-
-.mission-manager__sidebar-resize-handle {
-  position: relative;
-  width: var(--space-sm);
-  flex-shrink: 0;
-  cursor: col-resize;
-  background: transparent;
-  touch-action: none;
-  transition: background var(--transition-fast);
-}
-
-.mission-manager__sidebar-resize-handle::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 50%;
-  width: var(--space-xs);
-  transform: translateX(-50%);
-}
-
-.mission-manager__sidebar-resize-handle:hover::before,
-.mission-manager__sidebar-resize-handle:active::before {
-  background: color-mix(in srgb, var(--todo) 30%, transparent);
-}
-
-.mission-manager__sidebar-resize-handle:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring-strong);
-}
-
-/*
-FNXC:MissionsUI 2026-08-16-14:48:
-The desktop CTA bar stays above the scrolling mission list so planning is immediately reachable.
-*/
-.mission-manager__sidebar-cta-bar {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-sm);
-  padding: var(--space-md);
-  border-bottom: var(--btn-border-width) solid var(--border);
-}
-
-.mission-manager__sidebar-cta {
-  width: 100%;
-  min-height: calc(var(--space-lg) * 2 + var(--space-sm));
-  justify-content: center;
-  gap: var(--space-sm);
-  font-size: inherit;
 }
 
 /*
@@ -293,6 +251,49 @@ primary CTA while every production presentation can open the merge-aware form.
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
   padding: var(--space-sm);
+}
+
+.mission-manager__create-menu {
+  position: relative;
+}
+
+.mission-manager__create-menu-popover {
+  position: absolute;
+  z-index: var(--z-popover);
+  inset-block-start: calc(100% + var(--space-xs));
+  inset-inline-end: 0;
+  display: grid;
+  min-inline-size: calc(var(--space-2xl) * 6);
+  padding: var(--space-xs);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+}
+
+.mission-manager__create-menu-popover > button {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  background: transparent;
+  text-align: start;
+  cursor: pointer;
+}
+
+.mission-manager__create-menu-popover > button:hover {
+  background: var(--card-hover);
+}
+
+.mission-list__filters {
+  display: flex;
+  justify-content: flex-end;
+  margin: calc(var(--space-sm) * -1) calc(var(--space-sm) * -1) var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  border-bottom: var(--btn-border-width) solid var(--border);
 }
 
 .mission-manager__detail-pane {

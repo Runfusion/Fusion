@@ -5,6 +5,7 @@ import i18next from "i18next";
 import { loadAllAppCss } from "../../test/cssFixture";
 import { AgentsView } from "../AgentsView";
 import { ToastProvider } from "../../hooks/useToast";
+import { ViewLayoutProvider } from "../../context/ViewLayoutContext";
 import * as apiModule from "../../api";
 import type { Agent, AgentState, AgentCapability, OrgTreeNode } from "../../api";
 import { scopedKey } from "../../utils/projectStorage";
@@ -112,13 +113,17 @@ const mockResizeObserverDisconnect = vi.fn();
 // unconditionally, so every AgentsView mount must be wrapped in a real ToastProvider
 // (see RuntimeFallbackBadge.test.tsx for the reference pattern this replicates).
 function renderView(ui: ReactElement) {
-  return render(<ToastProvider>{ui}</ToastProvider>);
+  return render(
+    <ViewLayoutProvider projectId="proj_123">
+      <ToastProvider>{ui}</ToastProvider>
+    </ViewLayoutProvider>,
+  );
 }
 
 describe("AgentsView", () => {
   const mockAddToast = vi.fn();
   const projectId = "proj_123";
-  const agentsSidebarWidthKey = "kb-dashboard-agents-sidebar-width";
+  const agentsSidebarWidthKey = "kb-dashboard-view-sidebar-width";
 
   const mockAgents: Agent[] = [
     {
@@ -369,17 +374,25 @@ describe("AgentsView", () => {
       });
     });
 
-    it("renders cross-pane overview above split layout", async () => {
+    it("hosts the overview trigger in the header and drops its content above the split layout", async () => {
       const { container } = renderView(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
-        expect(container.querySelector(".agents-overview-bar")).toBeTruthy();
         expect(container.querySelector(".agents-split-layout")).toBeTruthy();
       });
 
-      const overview = container.querySelector(".agents-overview-bar");
+      // The trigger is a header action, and the rail carries the agent collection alone.
+      const trigger = screen.getByTestId("agents-overview-toggle");
+      expect(container.querySelector(".view-header")?.contains(trigger)).toBe(true);
+      expect(container.querySelector("section.agents-overview-bar")).toBeNull();
+
+      fireEvent.click(trigger);
+
+      const overview = container.querySelector("section.agents-overview-bar");
       const splitLayout = container.querySelector(".agents-split-layout");
+      expect(overview).toBeTruthy();
       expect(overview?.nextElementSibling).toBe(splitLayout);
+      expect(overview?.querySelector("button.agents-overview-bar__toggle")).toBeNull();
       const sidebar = container.querySelector(".agents-split-sidebar");
       expect(sidebar).toBeTruthy();
       expect(sidebar?.querySelector(".agents-overview-bar")).toBeNull();
@@ -428,10 +441,10 @@ describe("AgentsView", () => {
       const handle = await screen.findByTestId("agents-sidebar-resize-handle");
       expect(handle).toHaveAttribute("role", "separator");
       expect(handle).toHaveAttribute("aria-orientation", "vertical");
-      expect(handle).toHaveAttribute("aria-valuemin", "260");
-      expect(handle).toHaveAttribute("aria-valuemax", "520");
-      expect(handle).toHaveAttribute("aria-valuenow", "320");
-      expect(container.querySelector<HTMLElement>(".agents-split-layout")?.style.gridTemplateColumns).toBe("320px var(--space-sm) minmax(0, 1fr)");
+      expect(handle).toHaveAttribute("aria-valuemin", "220");
+      expect(handle).toHaveAttribute("aria-valuemax", "560");
+      expect(handle).toHaveAttribute("aria-valuenow", "300");
+      expect(container.querySelector<HTMLElement>(".agents-split-sidebar")?.style.getPropertyValue("--view-sidebar-current-width")).toBe("300px");
     });
 
     it("does not render the resize handle or inline split width on mobile", async () => {
@@ -443,15 +456,15 @@ describe("AgentsView", () => {
       });
 
       expect(screen.queryByTestId("agents-sidebar-resize-handle")).toBeNull();
-      expect(container.querySelector<HTMLElement>(".agents-split-layout")?.style.gridTemplateColumns).toBe("");
+      expect(container.querySelector(".agents-split-sidebar")).toHaveClass("view-sidebar--mobile");
     });
 
     it.each([
-      { label: "no stored value", stored: null, expected: 320 },
+      { label: "no stored value", stored: null, expected: 300 },
       { label: "valid stored value", stored: "410", expected: 410 },
-      { label: "corrupt stored value", stored: "not-a-number", expected: 320 },
-      { label: "above max stored value", stored: "999", expected: 520 },
-      { label: "below min stored value", stored: "10", expected: 260 },
+      { label: "corrupt stored value", stored: "not-a-number", expected: 300 },
+      { label: "above max stored value", stored: "999", expected: 560 },
+      { label: "below min stored value", stored: "10", expected: 220 },
     ])("initializes sidebar width from $label", async ({ stored, expected }) => {
       if (stored !== null) {
         localStorage.setItem(scopedKey(agentsSidebarWidthKey, projectId), stored);
@@ -461,7 +474,7 @@ describe("AgentsView", () => {
 
       const handle = await screen.findByTestId("agents-sidebar-resize-handle");
       expect(handle).toHaveAttribute("aria-valuenow", String(expected));
-      expect(container.querySelector<HTMLElement>(".agents-split-layout")?.style.gridTemplateColumns).toBe(`${expected}px var(--space-sm) minmax(0, 1fr)`);
+      expect(container.querySelector<HTMLElement>(".agents-split-sidebar")?.style.getPropertyValue("--view-sidebar-current-width")).toBe(`${expected}px`);
     });
 
     it("supports keyboard resizing with project-scoped persistence and clamping", async () => {
@@ -470,30 +483,30 @@ describe("AgentsView", () => {
 
       const handle = await screen.findByTestId("agents-sidebar-resize-handle");
 
-      fireEvent.keyDown(handle, { key: "ArrowRight", shiftKey: true });
+      fireEvent.keyDown(handle, { key: "End" });
       await waitFor(() => {
-        expect(handle).toHaveAttribute("aria-valuenow", "520");
-        expect(localStorage.getItem(scopedKey(agentsSidebarWidthKey, projectId))).toBe("520");
+        expect(handle).toHaveAttribute("aria-valuenow", "560");
+        expect(localStorage.getItem(scopedKey(agentsSidebarWidthKey, projectId))).toBe("560");
       });
 
-      fireEvent.keyDown(handle, { key: "ArrowLeft", shiftKey: true });
-      expect(handle).toHaveAttribute("aria-valuenow", "470");
-      expect(localStorage.getItem(scopedKey(agentsSidebarWidthKey, projectId))).toBe("470");
-
       fireEvent.keyDown(handle, { key: "ArrowLeft" });
-      expect(handle).toHaveAttribute("aria-valuenow", "460");
-      expect(localStorage.getItem(scopedKey(agentsSidebarWidthKey, projectId))).toBe("460");
+      expect(handle).toHaveAttribute("aria-valuenow", "544");
+      expect(localStorage.getItem(scopedKey(agentsSidebarWidthKey, projectId))).toBe("544");
+
+      fireEvent.keyDown(handle, { key: "Home" });
+      expect(handle).toHaveAttribute("aria-valuenow", "220");
+      expect(localStorage.getItem(scopedKey(agentsSidebarWidthKey, projectId))).toBe("220");
     });
 
     it("clamps keyboard resizing at the minimum width", async () => {
-      localStorage.setItem(scopedKey(agentsSidebarWidthKey, projectId), "260");
+      localStorage.setItem(scopedKey(agentsSidebarWidthKey, projectId), "220");
       renderView(<AgentsView addToast={mockAddToast} projectId={projectId} />);
 
       const handle = await screen.findByTestId("agents-sidebar-resize-handle");
-      fireEvent.keyDown(handle, { key: "ArrowLeft", shiftKey: true });
+      fireEvent.keyDown(handle, { key: "ArrowLeft" });
 
-      expect(handle).toHaveAttribute("aria-valuenow", "260");
-      expect(localStorage.getItem(scopedKey(agentsSidebarWidthKey, projectId))).toBe("260");
+      expect(handle).toHaveAttribute("aria-valuenow", "220");
+      expect(localStorage.getItem(scopedKey(agentsSidebarWidthKey, projectId))).toBe("220");
     });
 
     it("supports pointer drag resizing with capture, cleanup, persistence, and max clamping", async () => {
@@ -511,14 +524,14 @@ describe("AgentsView", () => {
 
       fireEvent.pointerMove(document, { pointerId: 1, clientX: 400 });
       await waitFor(() => {
-        expect(handle).toHaveAttribute("aria-valuenow", "520");
+        expect(handle).toHaveAttribute("aria-valuenow", "560");
       });
-      expect(container.querySelector<HTMLElement>(".agents-split-layout")?.style.gridTemplateColumns).toBe("520px var(--space-sm) minmax(0, 1fr)");
+      expect(container.querySelector<HTMLElement>(".agents-split-sidebar")?.style.getPropertyValue("--view-sidebar-current-width")).toBe("560px");
 
       fireEvent.pointerUp(document, { pointerId: 1 });
       expect(releasePointerCapture).toHaveBeenCalledWith(1);
       expect(document.body.style.userSelect).toBe("");
-      expect(localStorage.getItem(scopedKey(agentsSidebarWidthKey, projectId))).toBe("520");
+      expect(localStorage.getItem(scopedKey(agentsSidebarWidthKey, projectId))).toBe("560");
     });
 
     it("supports pointer drag resizing with min clamping", async () => {
@@ -529,11 +542,11 @@ describe("AgentsView", () => {
       fireEvent.pointerDown(handle, { pointerId: 2, clientX: 300 });
       fireEvent.pointerMove(document, { pointerId: 2, clientX: 0 });
       await waitFor(() => {
-        expect(handle).toHaveAttribute("aria-valuenow", "260");
+        expect(handle).toHaveAttribute("aria-valuenow", "220");
       });
       fireEvent.pointerUp(document, { pointerId: 2 });
 
-      expect(localStorage.getItem(scopedKey(agentsSidebarWidthKey, projectId))).toBe("260");
+      expect(localStorage.getItem(scopedKey(agentsSidebarWidthKey, projectId))).toBe("220");
     });
 
     it("supports mobile drill-in detail with back navigation", async () => {
@@ -713,12 +726,12 @@ describe("AgentsView", () => {
       const { container } = renderView(<AgentsView addToast={mockAddToast} />);
 
       expect(screen.queryByRole("button", { name: "Import" })).toBeNull();
-      expect(screen.queryByRole("button", { name: "New Agent" })).toBeNull();
+      expect(screen.getByRole("button", { name: "New Agent" })).toHaveClass("view-action-button--mobile-icon-only");
 
       await openControlsPanel();
       expect(container.querySelector(".agents-view-primary-actions--controls-open")).toBeTruthy();
       expect(screen.getByRole("button", { name: "Import" })).toBeTruthy();
-      expect(screen.getByRole("button", { name: "New Agent" })).toBeTruthy();
+      expect(screen.getAllByRole("button", { name: "New Agent" })).toHaveLength(1);
     });
 
     it("closes controls popup on Escape and outside click", async () => {

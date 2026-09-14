@@ -287,11 +287,21 @@ List rows and mobile cards expose the same task lifecycle menu as Board cards fr
 
 /* New class for QuickEntryBox positioned above the table in list view.
    FNXC:ListView 2026-06-23-20:15: Remove the divider above quick-add by eliminating top padding; the controls and quick-add share the same surface without a visible seam. */
+/*
+FNXC:ListQuickEntrySpacing 2026-09-14-05:42:
+The composer sat inside a --space-xl gutter that was sized for a full-width page. In a narrow host (the right dock)
+that gutter ate most of the row while the composer itself already carries its own padding, so the collapsed box read
+as a small field floating in a large empty frame. One modest inset here; the box owns the rest.
+*/
 .list-quick-entry-above-table {
   width: 100%;
-  padding: 0 var(--space-xl) var(--space-md);
+  padding: 0 var(--space-sm) var(--space-sm);
   background: var(--surface);
   border-top: 0;
+}
+
+.list-quick-entry-above-table .quick-entry-box--collapsed {
+  margin-bottom: 0;
 }
 
 .list-quick-entry-above-table .quick-entry-box {
@@ -433,64 +443,38 @@ List rows and mobile cards expose the same task lifecycle menu as Board cards fr
 }
 
 /*
-FNXC:ListView 2026-06-22-00:40:
-Widen the split resize column so the task-list sidebar is easy to grab and drag (the 4px --space-xs target was hard to hit). The handle shows a centered grip line that brightens on hover/focus.
-
-FNXC:ListView 2026-06-22-18:00:
-List view should not show a wide divider gutter. Collapse the grid handle column to zero width and let the transparent resize handle overlap the single 1px sidebar border, preserving a comfortable touch target without making the visible divider wider.
+FNXC:StandardizedViewLayout 2026-09-13-21:43:
+List reuses the canonical sidebar and separator rather than retaining a second width key or pointer controller. The task table remains the rail itself; no second task-list panel is introduced.
 */
 .list-split-layout {
   display: grid;
-  grid-template-columns: auto 0 minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr);
   height: 100%;
   min-height: 0;
 }
 
-/*
-FNXC:SidebarDivider 2026-06-22-18:00:
-The static 1px divider line lives on the sidebar pane's right border while the resize handle column has no visible width. This keeps one normal divider line between the task list and detail pane without a large gutter.
-*/
 .list-split-sidebar {
   min-width: 0;
   min-height: 0;
+  overflow: hidden;
+}
+
+.list-split-sidebar__panel {
   overflow: auto;
-  border-right: 1px solid var(--border);
+  border-right: var(--btn-border-width) solid var(--border);
 }
 
-/*
-FNXC:SidebarDivider 2026-06-22-18:00:
-The List split resize control is a transparent var(--space-sm)-wide drag hit-area that overlaps the single pane border. It tints a narrow centered band only on hover/active/focus, matching the left sidebar handle's "large target, slim visual" behavior without widening the visible divider.
-*/
-.list-split-resize-handle {
-  position: relative;
-  left: calc(var(--space-sm) / -2);
-  width: var(--space-sm);
-  cursor: col-resize;
+.list-single-pane-sidebar {
+  width: 100%;
+  height: auto;
+  overflow: visible;
   background: transparent;
-  touch-action: none;
-  z-index: 2;
-  transition: background var(--transition-fast);
 }
 
-.list-split-resize-handle::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 50%;
-  width: var(--space-xs);
-  transform: translateX(-50%);
-}
-
-.list-split-resize-handle:hover::before,
-.list-split-resize-handle:active::before,
-.list-split-resize-handle:focus-visible::before {
-  background: color-mix(in srgb, var(--todo) 30%, transparent);
-}
-
-.list-split-resize-handle:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring-strong);
+.list-single-pane-sidebar > .view-sidebar__panel {
+  flex: 1;
+  overflow: visible;
+  background: transparent;
 }
 
 /*
@@ -1049,132 +1033,6 @@ can have sufficient room after dashboard chrome is accounted for.
   }
 
   /* Mobile card layout */
-  .list-cards {
-    display: flex;
-    flex-direction: column;
-    width: 100%;
-    padding: var(--space-sm) var(--space-md);
-    padding-bottom: max(var(--space-md), env(safe-area-inset-bottom, 0px));
-  }
-
-  .list-card-section-header {
-    display: flex;
-    align-items: center;
-    gap: var(--space-sm);
-    padding: var(--space-md) var(--space-md) var(--space-sm);
-    cursor: pointer;
-    min-height: 36px;
-    user-select: none;
-    -webkit-tap-highlight-color: transparent;
-  }
-
-  .list-card-section-header:active {
-    opacity: 0.7;
-  }
-
-  .list-card-section-header:focus-visible {
-    outline: 2px solid var(--todo);
-    outline-offset: 1px;
-    border-radius: var(--radius-sm);
-  }
-
-  .list-card {
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    padding: var(--space-md);
-    margin: var(--space-xs) 0;
-    cursor: pointer;
-    transition: background var(--transition-fast), border-color var(--transition-fast);
-    min-height: 36px;
-    position: relative;
-    -webkit-tap-highlight-color: transparent;
-  }
-
-  .list-card:hover {
-    background: var(--card-hover);
-    border-color: var(--text-muted);
-  }
-
-  .list-card:focus-visible {
-    outline: none;
-    box-shadow: var(--focus-ring-strong);
-  }
-
-  .list-card:active {
-    background: var(--surface);
-    transform: scale(0.99);
-  }
-
-  .list-card.agent-active {
-    border-color: var(--in-progress);
-    background: color-mix(in srgb, var(--in-progress) 8%, transparent);
-    box-shadow: inset 0 0 0 calc(var(--space-xs) / 4) var(--in-progress);
-  }
-
-  .list-card-row {
-    display: flex;
-    align-items: center;
-    gap: var(--space-sm);
-  }
-
-  .list-card-row + .list-card-row {
-    margin-top: var(--space-sm);
-  }
-
-  .list-card-id {
-    font-family: var(--font-mono);
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--text-muted);
-    flex-shrink: 0;
-  }
-
-  .list-card-spacer {
-    flex: 1;
-  }
-
-  .list-card-title {
-    font-size: 14px;
-    line-height: 1.4;
-    color: var(--text);
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-    word-break: break-word;
-  }
-
-  .list-card-meta {
-    display: flex;
-    align-items: center;
-    gap: var(--space-sm);
-    flex-wrap: wrap;
-  }
-
-  .list-card-checkbox {
-    position: absolute;
-    top: var(--space-xs);
-    left: var(--space-xs);
-    min-width: 36px;
-    min-height: 36px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .list-card--selectable {
-    padding-left: var(--space-2xl);
-  }
-
-  .list-card-empty {
-    padding: var(--space-lg) var(--space-md);
-    text-align: center;
-    font-size: 13px;
-    color: var(--text-muted);
-    font-style: italic;
-    background: transparent;
-  }
 
   /* Drop zones hidden on mobile — drag not practical on touch */
   .list-drop-zones {
@@ -1338,4 +1196,138 @@ ListView shares the current/search request owner with Board. Its footer renders 
   justify-content: center;
   gap: var(--space-sm);
   color: var(--color-error);
+}
+
+/*
+FNXC:ListCards 2026-09-14-06:24:
+Card geometry follows the RENDER MODE, not the viewport. These rules used to live in a max-width media query, so a
+narrow non-phone host — the right-dock List — rendered card markup with no card styles at all while the phone looked
+correct. The list root carries .list-view--cards whenever it renders cards, and the phone gets them through the same
+class because it is always single-pane.
+*/
+.list-view--cards .list-cards {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  padding: var(--space-sm) var(--space-md);
+  padding-bottom: max(var(--space-md), env(safe-area-inset-bottom, 0px));
+}
+
+.list-view--cards .list-card-section-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-md) var(--space-md) var(--space-sm);
+  cursor: pointer;
+  min-height: 36px;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.list-view--cards .list-card-section-header:active {
+  opacity: 0.7;
+}
+
+.list-view--cards .list-card-section-header:focus-visible {
+  outline: 2px solid var(--todo);
+  outline-offset: 1px;
+  border-radius: var(--radius-sm);
+}
+
+.list-view--cards .list-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+  margin: var(--space-xs) 0;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+  min-height: 36px;
+  position: relative;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.list-view--cards .list-card:hover {
+  background: var(--card-hover);
+  border-color: var(--text-muted);
+}
+
+.list-view--cards .list-card:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.list-view--cards .list-card:active {
+  background: var(--surface);
+  transform: scale(0.99);
+}
+
+.list-view--cards .list-card.agent-active {
+  border-color: var(--in-progress);
+  background: color-mix(in srgb, var(--in-progress) 8%, transparent);
+  box-shadow: inset 0 0 0 calc(var(--space-xs) / 4) var(--in-progress);
+}
+
+.list-view--cards .list-card-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.list-view--cards .list-card-row + .list-card-row {
+  margin-top: var(--space-sm);
+}
+
+.list-view--cards .list-card-id {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.list-view--cards .list-card-spacer {
+  flex: 1;
+}
+
+.list-view--cards .list-card-title {
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--text);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+
+.list-view--cards .list-card-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.list-view--cards .list-card-checkbox {
+  position: absolute;
+  top: var(--space-xs);
+  left: var(--space-xs);
+  min-width: 36px;
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.list-view--cards .list-card--selectable {
+  padding-left: var(--space-2xl);
+}
+
+.list-view--cards .list-card-empty {
+  padding: var(--space-lg) var(--space-md);
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-muted);
+  font-style: italic;
+  background: transparent;
 }

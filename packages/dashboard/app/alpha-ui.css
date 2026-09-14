@@ -1,9 +1,9 @@
 
 /*
-FNXC:HomemadeAlphaLayout 2026-09-11-16:14:
-Alpha boundaries participate in context and token inheritance without creating a box. Board, Chat, and Task Detail therefore retain their canonical flex sizing and scroll owners across feature-flag changes.
+FNXC:HomemadeAlphaLayout 2026-09-12-17:34:
+Alpha boundaries participate in context and token inheritance without creating a box in either feature state. Board, Chat, and Task Detail therefore retain their canonical flex sizing and scroll owners when Alpha is enabled, absent, or explicitly disabled; visual Alpha rules remain scoped to the true value below.
 */
-[data-alpha-surface="true"] {
+[data-alpha-surface] {
   display: contents;
 }
 

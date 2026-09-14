@@ -162,6 +162,15 @@ beforeEach(() => {
   });
 });
 
+/*
+FNXC:StandardizedViewLayout 2026-09-13-20:32:
+Nodes is now a shared list/detail destination: every registered node has a rail row, and the detail card belongs to
+the focused node. Card assertions therefore focus the node they inspect instead of assuming a full grid.
+*/
+function focusNode(name: string) {
+  fireEvent.click(screen.getByRole("option", { name: new RegExp(name) }));
+}
+
 describe("NodesView", () => {
   it("renders docker stat and passes docker data to matching node card", () => {
     mockUseNodes.mockReturnValue(makeUseNodesResult({
@@ -194,6 +203,7 @@ describe("NodesView", () => {
 
     expect(screen.getByTestId("nodes-stat-docker").textContent).toContain("1");
     expect(screen.getAllByText("Docker").length).toBeGreaterThan(0);
+    focusNode("Alpha");
     expect(screen.getByText("runfusion/fusion:latest")).toBeInTheDocument();
   });
 
@@ -226,9 +236,11 @@ describe("NodesView", () => {
 
     render(<NodesView addToast={vi.fn()} onClose={vi.fn()} />);
 
-    // Check node cards are rendered - use the node card class to find elements
-    const nodeCards = document.querySelectorAll(".node-card");
-    expect(nodeCards).toHaveLength(2);
+    // Every registered node owns a rail row; the detail card belongs to the focused node only.
+    expect(screen.getAllByTestId("nodes-rail-item")).toHaveLength(2);
+    expect(document.querySelectorAll(".node-card")).toHaveLength(0);
+    focusNode("Alpha");
+    expect(document.querySelectorAll(".node-card")).toHaveLength(1);
     expect(screen.getByText("2 registered")).toBeDefined();
     expect(screen.getByTestId("nodes-stat-total").textContent).toContain("2");
     expect(screen.getByTestId("nodes-stat-online").textContent).toContain("1");
@@ -245,8 +257,10 @@ describe("NodesView", () => {
 
     render(<NodesView addToast={vi.fn()} onClose={vi.fn()} />);
 
-    expect(screen.getByText("No nodes are registered yet.")).toBeDefined();
-    expect(screen.getByText("Add First Node")).toBeDefined();
+    expect(screen.getAllByText("No nodes are registered yet.").length).toBeGreaterThan(0);
+    // The empty collection keeps the header's single canonical creation entry and grows no competing call to action.
+    expect(screen.queryByText("Add First Node")).toBeNull();
+    expect(document.querySelectorAll(".view-action-button--create")).toHaveLength(1);
 
     // Mesh topology should not be rendered when there are no nodes
     const svg = document.querySelector(".mesh-topology__svg");
@@ -308,6 +322,7 @@ describe("NodesView", () => {
 
     render(<NodesView addToast={vi.fn()} onClose={vi.fn()} />);
 
+    focusNode("Detail Node");
     // Click on the node card (not the topology node)
     const nodeCard = document.querySelector(".node-card");
     expect(nodeCard).toBeInTheDocument();
@@ -335,6 +350,7 @@ describe("NodesView", () => {
 
     render(<NodesView addToast={vi.fn()} onClose={vi.fn()} />);
 
+    focusNode("Local Node");
     // Click on the node card to open detail modal
     const nodeCard = document.querySelector(".node-card");
     expect(nodeCard).toBeInTheDocument();
@@ -471,9 +487,8 @@ describe("NodesView", () => {
       expect(screen.getByTestId("nodes-stat-offline").textContent).toContain("2"); // error + offline
       expect(screen.getByTestId("nodes-stat-remote").textContent).toContain("5");
 
-      // Check 6 node cards are rendered
-      const nodeCards = document.querySelectorAll(".node-card");
-      expect(nodeCards).toHaveLength(6);
+      // Check 6 registered nodes are listed in the shared rail
+      expect(screen.getAllByTestId("nodes-rail-item")).toHaveLength(6);
 
       // Check mesh topology is visible
       const svg = document.querySelector(".mesh-topology__svg");
@@ -501,16 +516,12 @@ describe("NodesView", () => {
       expect(screen.getByText("Gamma Node Rst", { exact: true })).toBeDefined();
       expect(screen.getByText("Delta Node Opq", { exact: true })).toBeDefined();
 
-      // Verify statuses are displayed (check existence)
-      const onlineElements = document.querySelectorAll(".node-card__status--online");
-      const offlineElements = document.querySelectorAll(".node-card__status--offline");
-      const errorElements = document.querySelectorAll(".node-card__status--error");
-      const connectingElements = document.querySelectorAll(".node-card__status--connecting");
-
-      expect(onlineElements.length).toBe(1);
-      expect(offlineElements.length).toBe(1);
-      expect(errorElements.length).toBe(1);
-      expect(connectingElements.length).toBe(1);
+      // Verify statuses are displayed on their rail rows
+      const statuses = screen.getAllByTestId("nodes-rail-item").map((row) => row.getAttribute("data-status"));
+      expect(statuses.filter((status) => status === "online")).toHaveLength(1);
+      expect(statuses.filter((status) => status === "offline")).toHaveLength(1);
+      expect(statuses.filter((status) => status === "error")).toHaveLength(1);
+      expect(statuses.filter((status) => status === "connecting")).toHaveLength(1);
     });
 
     it("shows empty state mesh topology indicator when only local node exists", () => {
@@ -679,6 +690,7 @@ describe("NodesView", () => {
       render(<NodesView addToast={vi.fn()} onClose={vi.fn()} />);
 
       // Remote node card should have sync indicator
+      focusNode("Remote Node");
       const remoteNodeCard = document.querySelector('[data-node-id="node-remote"]');
       expect(remoteNodeCard).toBeInTheDocument();
       const syncIndicator = remoteNodeCard?.querySelector('[data-testid="node-card-sync"]');
@@ -686,6 +698,7 @@ describe("NodesView", () => {
       expect(syncIndicator).toHaveAttribute("data-sync-state", "synced");
 
       // Local node card should not have sync indicator
+      focusNode("Local Node");
       const localNodeCard = document.querySelector('[data-node-id="node-local"]');
       expect(localNodeCard).toBeInTheDocument();
       const localSyncIndicator = localNodeCard?.querySelector('[data-testid="node-card-sync"]');

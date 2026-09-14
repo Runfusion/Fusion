@@ -85,9 +85,15 @@ function getWorkflowIconValue(workflow: WorkflowSwitcherAggregateOption | BoardW
  * Counts are contextual detail, so the collapsed trigger must stay visually and accessibly scoped to the active workflow name plus chevron.
  * Render Plan, Progress, and Review counts only while the dropdown is expanded; option rows keep their count text because the listbox is the comparison surface.
  *
- * FNXC:WorkflowSwitcher 2026-06-20-15:34:
- * Workflow edit and creation affordances moved into the shared dropdown so Board and ListView cannot leave separate toolbar icon shells behind.
- * Each option row owns a sibling edit button, and New workflow remains visible in a non-scrolling footer while long workflow lists scroll.
+ * FNXC:StandardizedViewActions 2026-09-13-21:43:
+ * Workflow row editing remains contextual inside the listbox, and New workflow lives with it in a non-scrolling popover footer.
+ *
+ * FNXC:StandardizedViewActions 2026-09-14-02:47:
+ * FN-379 extracted New workflow into a sibling header action because "every creation entry uses the shared button".
+ * That was the rule applied without judgment: the selector already owns workflow lifecycle, so a second control beside
+ * it duplicates the affordance and pushes a mutation into a row meant for selection. Creation returns INSIDE the
+ * popover footer, where it stays reachable while a long workflow list scrolls. The shared creation contract applies to
+ * a view's primary resource action in its header — not to an action already scoped by its own picker.
  *
  * FNXC:WorkflowSwitcher 2026-06-21-00:00:
  * Opening the dropdown must refresh workflow count data because task-to-workflow assignments do not emit board-workflows invalidation events.

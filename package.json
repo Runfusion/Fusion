@@ -27,6 +27,7 @@
     "check:inert-sync-lanes": "node scripts/check-inert-sync-lane-conversions.mjs",
     "check:fnxc-future-dates": "node scripts/check-fnxc-future-dates.mjs",
     "check:lane-wiring": "node scripts/check-lane-wiring.mjs",
+    "check:plugin-interop": "pnpm check:plugin-interop-drift",
     "check:plugin-interop-drift": "node scripts/check-plugin-interop-drift.mjs",
     "check:runtime-skill-loader-drift": "node scripts/check-runtime-skill-loader-drift.mjs",
     "census:lifecycle-columns": "node scripts/lifecycle-column-census.mjs",

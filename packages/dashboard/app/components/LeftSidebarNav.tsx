@@ -13,13 +13,10 @@ import {
   ChevronRight,
   Clock,
   Gauge,
-  History,
   Lightbulb,
   LayoutGrid,
-  List,
   Mail,
   MessageSquare,
-  Plus,
   PanelsTopLeft,
   Search,
   Settings,
@@ -133,8 +130,6 @@ export interface LeftSidebarNavProps {
   onSelectProject?: (project: ProjectInfo) => void;
   onViewAllProjects?: () => void;
   footerVisible?: boolean;
-  /** Removes general History navigation when Alpha relocates it to complete columns. */
-  alphaUpdatesEnabled?: boolean;
 }
 
 function formatCount(count: number): string {
@@ -179,7 +174,6 @@ export function LeftSidebarNav({
   showAgentsTab = false,
   showSkillsTab = false,
   footerVisible = false,
-  alphaUpdatesEnabled = false,
 }: LeftSidebarNavProps) {
   const { t } = useTranslation("app");
   const [sidebarWidth, setSidebarWidth] = useState(readStoredSidebarWidth);
@@ -246,8 +240,6 @@ export function LeftSidebarNav({
     setSidebarWidth(nextWidth);
     persistSidebarWidth(nextWidth);
   }, [isCollapsed, sidebarWidth]);
-
-  const newTaskLabel = t("nav.newTask", "New Task");
 
   /*
   FNXC:Navigation 2026-06-22-12:00:
@@ -322,24 +314,11 @@ export function LeftSidebarNav({
       testId: "sidebar-nav-board",
       onSelect: () => onChangeView("board"),
     },
-    {
-      id: "list",
-      label: t("nav.list", getDashboardViewLabel("list")),
-      view: "list",
-      isActive: view === "list",
-      icon: List,
-      testId: "sidebar-nav-list",
-      onSelect: () => onChangeView("list"),
-    },
-    ...(!alphaUpdatesEnabled ? [{
-      id: "patchnode",
-      label: t("nav.patchnode", getDashboardViewLabel("patchnode")),
-      view: "patchnode" as TaskView,
-      isActive: view === "patchnode",
-      icon: History,
-      testId: "sidebar-nav-patchnode",
-      onSelect: () => onChangeView("patchnode"),
-    }] : []),
+    /*
+    FNXC:ListInRightDock 2026-09-14-04:42:
+    FN-382: List is a right-dock tool on every non-mobile host, so this rail no longer offers it as a page. The phone
+    navigation keeps both of its List producers.
+    */
     ...(graphPluginEntry ? [mapPluginEntry(graphPluginEntry)] : []),
     /*
     FNXC:Navigation 2026-06-23-01:30:
@@ -527,23 +506,7 @@ export function LeftSidebarNav({
       </nav>
 
       <div className="left-sidebar-nav__footer">
-        {/*
-        FNXC:Navigation 2026-06-23-02:30:
-        New Task now lives in the footer, directly ABOVE Collapse (and Settings), per user request — the primary create action sits with the other persistent footer affordances instead of at the top of the rail.
-        */}
-        {onNewTask ? (
-          <button
-            type="button"
-            className="btn left-sidebar-nav__item left-sidebar-nav__new-task"
-            aria-label={newTaskLabel}
-            title={newTaskLabel}
-            data-testid="sidebar-nav-new-task"
-            onClick={() => onNewTask()}
-          >
-            <Plus size={16} />
-            <span className="left-sidebar-nav__label">{newTaskLabel}</span>
-          </button>
-        ) : null}
+        {/* FNXC:StandardizedViewActions 2026-09-13-21:43: New Task is header-owned; the navigation footer contains navigation chrome only and must never expose a duplicate creation mutation. */}
         {/*
         FNXC:Navigation 2026-06-21-00:00:
         The sidebar collapse affordance belongs in the footer immediately above Settings, using the same row-item visual language. Expanded mode shows the Collapse label, while rail mode relies on the shared label-hiding rule so the button remains icon-only like Settings.

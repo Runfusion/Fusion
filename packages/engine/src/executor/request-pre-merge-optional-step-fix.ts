@@ -2,17 +2,11 @@
  * FNXC:CodeOrganization 2026-08-03-12:20:
  * requestPreMergeOptionalStepFix peeled from TaskExecutor (U4).
  *
- * FNXC:WorkflowOptionalStepFix 2026-06-26-16:35:
- * Inline graph optional-step remediation consumes `postReviewFixCount` BEFORE calling `sendTaskBackForFix`, matching self-healing's budget-first ordering. Persistent optional-step REVISE loops are bounded by the resolved optional-group budget; `"unbounded"` intentionally skips the ceiling check so the step cycles until it returns APPROVE/APPROVE_WITH_NOTES or a human intervenes.
+ * FNXC:WorkflowOptionalStepFix 2026-09-13-04:34:
+ * Inline graph optional-step remediation consumes `postReviewFixCount` before calling `sendTaskBackForFix`, matching self-healing's budget-first ordering. Every persistent optional-step REVISE loop is bounded by the resolved budget; `"unbounded"` removes only a lower configurable limit and never bypasses the shared absolute safety cap.
  *
- * FNXC:PlanReviewReplan 2026-08-10-18:32:
- * PLAN REVIEW IS THE EXCEPTION to the note above: its `"unbounded"` budget is backstopped by
- * `planReviewReplanCap` (default `DEFAULT_PLAN_REVIEW_REPLAN_CAP`), so it parks at
- * `awaiting-approval` rather than cycling until a human notices. Every other optional group still
- * cycles freely when unbounded.
- *
- * FNXC:WorkflowRevisionBudget 2026-09-03-05:40:
- * Live Plan Review/spec and Code Review remediation honor explicit workflow values before node `maxRevisions`. An otherwise-unset Code Review uses the finite built-in default, Plan Review remains unbounded behind its separate replan cap, and Browser Verification keeps the existing `maxPostReviewFixes` fallback unless its node config explicitly changes it.
+ * FNXC:PlanReviewReplan 2026-09-13-04:34:
+ * Plan Review combines its workflow/node budget, `planReviewReplanCap`, and the shared absolute cap by choosing the lowest value. Exhaustion parks visibly before another planner or reviewer dispatch; other review gates use the same finite backstop and remain parked in review.
  *
  * FNXC:ReviewRemediationBudget 2026-09-08-02:13:
  * Live deterministic Verification uses the same advisory-locked work-and-charge publication as Code Review. Resolving its keyed budget before calling the named-remediation producer prevents the legacy no-claim appender path from publishing executable work without an attempt entry and aggregate increment.
@@ -398,22 +392,7 @@ async function requestPreMergeOptionalStepFixInner(
       fallbackMaxRevisions: settings.maxPostReviewFixes ?? DEFAULT_MAX_POST_REVIEW_FIXES,
     });
     const budget = resolveOptionalStepRevisionBudget(maxRevisions, settings.maxPostReviewFixes ?? DEFAULT_MAX_POST_REVIEW_FIXES);
-    if (!budget.unbounded && (!Number.isFinite(budget.max) || budget.max <= 0)) {
-      // FNXC:RemediationVisibility 2026-07-26-19:20 (FN-8596 follow-up): returning false here
-      // makes the graph's plan-replan node fail with `remediation-not-scheduled` and leaves the
-      // card parked in place with nothing scheduled to fix it. Never let that be silent.
-      executorLog.warn(
-        `${taskId}: plan-review remediation NOT scheduled — revision budget is zero/invalid (max=${String(budget.max)}). Card left parked.`,
-      );
-      await deps.store.logEntry(
-        taskId,
-        "Plan Review remediation not scheduled — revision budget zero/invalid",
-        `Step/node: ${info.nodeId ?? info.stepName}\nMaximum revisions: ${String(budget.max)}\nIncrease the Plan Review revision budget and retry the task, or correct the plan manually before retrying.`,
-        deps.getRunContextFor(taskId),
-      );
-      return false;
-    }
-    const revisionKey = optionalStepRevisionKey(info.nodeId ?? "plan-review", info.stepName);
+    const revisionKey = info.nodeId ?? PLAN_REVIEW_GROUP_ID;
     // FNXC:PlanReviewConvergence 2026-08-04-06:35 (FN-8768): The terminal
     // result is persisted before remediation. Budget from the durable raw
     // same-episode count, not the capped prompt history or cross-episode log.
@@ -427,66 +406,32 @@ async function requestPreMergeOptionalStepFixInner(
     );
     const hasEpisodeBoundary = matchingProjection?.supersededAt != null
       || matchingProjection?.priorAttempts?.some((attempt) => attempt.supersededAt != null) === true;
-    const nextCount = currentEpisodeAttemptCount > 0
-      ? currentEpisodeAttemptCount
-      : hasEpisodeBoundary
-        ? 1
-        : countOptionalStepRevisionAttempts(liveTask, revisionKey, info.stepName) + 1;
+    const loggedAttemptCount = countOptionalStepRevisionAttempts(liveTask, revisionKey, info.stepName);
+    const nextCount = hasEpisodeBoundary
+      ? Math.max(1, currentEpisodeAttemptCount)
+      : Math.max(currentEpisodeAttemptCount, loggedAttemptCount + 1);
     const currentCount = nextCount - 1;
-    if (!budget.unbounded && currentCount >= budget.max) {
-      // U3: finite replan budget exhausted → park awaiting-approval (cap park
-      // re-owned from the deleted triage gate), not a silent leave-in-place.
-      const feedbackForPark = info.feedback?.trim()
-        || "Plan Review requested another planning revision but the replan budget is exhausted.";
-      const outcome = await routeReviewConvergenceLadder(deps, taskId, {
-        kind: "plan-review-cap", workflowStepId: info.nodeId, stepName: info.stepName,
-        feedback: feedbackForPark, findings: info.findings, attempt: currentCount, max: budget.max,
-      });
-      if (outcome === "escalated" || outcome === "arbitrated") return true;
-      await deps.parkPlanReviewReplanCapExhausted(taskId, String(budget.max), currentCount, feedbackForPark);
-      return true;
-    }
-    /*
-     * FNXC:PlanReviewReplanCap 2026-07-05-17:28:
-     * FN-7561: an unset Plan Review revision budget resolves to "unbounded" (see FNXC:WorkflowRevisionBudget above), which by design skips the ceiling check — so a task whose planner and reviewer persistently disagree, or whose reviewer keeps hard-failing, replans triage↔plan-review forever, silently burning a triage + review LLM call every cycle (FN-7525 ran 13+ attempts overnight with zero operator visibility). Enforce a finite safety ceiling even when unbounded: once hit, emit a loud
-     * halting log entry and STOP replanning so the gate falls through to a visible failed/parked state a human can act on. Explicit numeric operator budgets are still honored as-is above; this only backstops the unbounded DEFAULT.
-     */
-    /*
-     * FNXC:PlanReviewReplan 2026-08-10-18:32:
-     * The unbounded-default backstop is now the `planReviewReplanCap` workflow setting, not
-     * `PLAN_REVIEW_FEEDBACK_HISTORY_LIMIT`.
-     *
-     * Two bugs in one line. First, `planReviewReplanCap` is operator-facing — declared, validated,
-     * documented in settings-reference.md and editable in the Workflow Editor — and NOTHING read it:
-     * an operator lowering the cap changed nothing. Second, the ceiling it should have been was a
-     * bound on how much reviewer PROSE is replayed into the next planning prompt, whose own comment
-     * says it is "bounded independently of persistence and retry accounting" — so trimming the prompt
-     * history would have silently tightened a safety ceiling, and two unrelated concerns shared one
-     * number. `DEFAULT_PLAN_REVIEW_REPLAN_CAP` holds the previously-effective 15 so splitting them is
-     * a pure re-wiring, not a silent behavior change.
-     *
-     * `0` is honored (park on the first REVISE), which is why the comparison is `>=` against a
-     * possibly-zero cap rather than a truthiness check.
-     */
-    const unboundedReplanCap = typeof settings.planReviewReplanCap === "number"
+    const configuredPlanReplanCap = typeof settings.planReviewReplanCap === "number"
       && Number.isInteger(settings.planReviewReplanCap)
       && settings.planReviewReplanCap >= 0
       ? settings.planReviewReplanCap
       : DEFAULT_PLAN_REVIEW_REPLAN_CAP;
-    if (budget.unbounded && currentCount >= unboundedReplanCap) {
-      // U3: the unbounded-default safety ceiling parks awaiting-approval with the replan-cap reason
-      // (re-owned from the deleted triage gate) so non-convergence surfaces to a human instead of
-      // silently sitting in place.
-      const outcome = await routeReviewConvergenceLadder(deps, taskId, {
-        kind: "plan-review-cap", workflowStepId: info.nodeId, stepName: info.stepName,
-        feedback, findings: info.findings, attempt: currentCount, max: unboundedReplanCap,
-      });
-      if (outcome === "escalated" || outcome === "arbitrated") return true;
-      await deps.parkPlanReviewReplanCapExhausted(taskId, String(unboundedReplanCap), currentCount, feedback);
+    const effectivePlanReplanCap = budget.unbounded
+      ? Math.min(budget.max, configuredPlanReplanCap)
+      : budget.max;
+    if (currentCount >= effectivePlanReplanCap) {
+      const feedbackForPark = info.feedback?.trim()
+        || "Plan Review requested another planning revision but the replan budget is exhausted.";
+      await deps.parkPlanReviewReplanCapExhausted(
+        taskId,
+        String(effectivePlanReplanCap),
+        currentCount,
+        feedbackForPark,
+      );
       return true;
     }
     const totalFixCount = (liveTask.postReviewFixCount ?? 0) + 1;
-    const budgetLabel = budget.unbounded ? "unbounded" : String(budget.max);
+    const budgetLabel = budget.unbounded ? `unbounded (absolute cap ${budget.max})` : String(budget.max);
     await deps.store.updateTask(taskId, { postReviewFixCount: totalFixCount }, deps.getRunContextFor(taskId));
     deps.clearPausedAborted(taskId);
     await deps.store.logEntry(
@@ -604,12 +549,26 @@ async function requestPreMergeOptionalStepFixInner(
         revisionKey,
         stepName: info.stepName,
         status: info.status,
-        maxRevisions: verificationBudget.unbounded ? "unbounded" : verificationBudget.max,
+        maxRevisions: verificationBudget.max,
         expectedWorkflowStepId: info.nodeId,
         runContext: deps.getRunContextFor(taskId),
       },
     });
     if (remediationOutcome === "appended") return true;
+    if (remediationOutcome === "budget-exhausted") {
+      const current = await deps.store.getTask(taskId);
+      const attempts = countOptionalStepRevisionAttempts(current, revisionKey, info.stepName);
+      await routeReviewConvergenceLadder(deps, taskId, {
+        kind: "budget-exhausted",
+        workflowStepId: info.nodeId,
+        stepName: info.stepName,
+        feedback: info.feedback,
+        findings: info.findings,
+        attempt: attempts,
+        max: verificationBudget.max,
+      });
+      return false;
+    }
     if (await closeEmptyReviewContent()) return false;
     return false;
   }
@@ -659,13 +618,13 @@ async function requestPreMergeOptionalStepFixInner(
         stepName: info.stepName,
         feedback: info.feedback,
         findings: info.findings,
-        max: codeReviewBudget.unbounded ? undefined : codeReviewBudget.max,
+        max: codeReviewBudget.max,
       });
       if (outcome === "escalated" || outcome === "arbitrated") return true;
       if (stop.kind === "repeat-unchanged") {
         await deps.store.logEntry(
           taskId,
-          "Code Review did not converge — released as non-blocking",
+          "Code Review did not converge — stopped for operator action",
           `The same Code Review revision was returned twice without a changed review input. Latest feedback:\n${info.feedback}`,
           deps.getRunContextFor(taskId),
         );
@@ -681,7 +640,7 @@ async function requestPreMergeOptionalStepFixInner(
     };
     const stop = repeatedUnchanged
       ? { kind: "repeat-unchanged" as const, attempt: currentCount }
-      : !codeReviewBudget.unbounded && currentCount >= codeReviewBudget.max
+      : currentCount >= codeReviewBudget.max
         ? { kind: "budget-exhausted" as const, attempt: currentCount }
         : undefined;
     if (stop) return routeStop(stop);
@@ -692,7 +651,7 @@ async function requestPreMergeOptionalStepFixInner(
         revisionKey,
         stepName: info.stepName,
         status: info.status,
-        maxRevisions: codeReviewBudget.unbounded ? "unbounded" : codeReviewBudget.max,
+        maxRevisions: codeReviewBudget.max,
         runContext: deps.getRunContextFor(taskId),
       },
     });
@@ -777,20 +736,23 @@ async function requestPreMergeOptionalStepFixInner(
     fallbackMaxRevisions: settings.maxPostReviewFixes ?? DEFAULT_MAX_POST_REVIEW_FIXES,
   });
   const budget = resolveOptionalStepRevisionBudget(maxRevisions, settings.maxPostReviewFixes ?? DEFAULT_MAX_POST_REVIEW_FIXES);
-  if (!budget.unbounded && (!Number.isFinite(budget.max) || budget.max <= 0)) {
+  const revisionKey = optionalStepRevisionKey(info.nodeId, info.stepName);
+  if ((!Number.isFinite(budget.max) || budget.max <= 0)) {
     executorLog.warn(
       `${taskId}: pre-merge remediation NOT scheduled for step "${info.stepName}" — revision budget is zero/invalid (max=${String(budget.max)}). Card left parked.`,
     );
-    await deps.store.logEntry(
-      taskId,
-      "Pre-merge remediation not scheduled — revision budget zero/invalid",
-      `Step/node: ${info.nodeId ?? info.stepName}\nMaximum revisions: ${String(budget.max)}\nIncrease this workflow step's revision budget and retry the task, or use the privileged review bypass only when the failed gate is known to be non-blocking.`,
-      deps.getRunContextFor(taskId),
-    );
+    await routeReviewConvergenceLadder(deps, taskId, {
+      kind: "budget-exhausted",
+      workflowStepId: info.nodeId,
+      stepName: info.stepName,
+      feedback: info.feedback,
+      findings: info.findings,
+      attempt: 0,
+      max: budget.max,
+    });
     return false;
   }
 
-  const revisionKey = optionalStepRevisionKey(info.nodeId, info.stepName);
   /*
   FNXC:RepositoryScope 2026-08-21-01:53:
   Two identical Code Review rejections with unchanged durable review input cannot be repaired by
@@ -825,19 +787,19 @@ async function requestPreMergeOptionalStepFixInner(
     const outcome = await routeReviewConvergenceLadder(deps, taskId, {
       kind: "repeat-unchanged", workflowStepId: info.nodeId, stepName: info.stepName,
       feedback: info.feedback, findings: info.findings, attempt: countOptionalStepRevisionAttempts(liveTask, revisionKey, info.stepName),
-      max: budget.unbounded ? undefined : budget.max,
+      max: budget.max,
     });
     if (outcome === "escalated" || outcome === "arbitrated") return true;
     await deps.store.logEntry(
       taskId,
-      "Code Review did not converge — released as non-blocking",
+      "Code Review did not converge — stopped for operator action",
       `The same Code Review revision was returned twice without a changed review input. Latest feedback:\n${info.feedback}`,
       deps.getRunContextFor(taskId),
     );
     return false;
   }
   const currentCount = countOptionalStepRevisionAttempts(liveTask, revisionKey, info.stepName);
-  if (!budget.unbounded && currentCount >= budget.max) {
+  if (currentCount >= budget.max) {
     const outcome = await routeReviewConvergenceLadder(deps, taskId, {
       kind: "budget-exhausted", workflowStepId: info.nodeId, stepName: info.stepName,
       feedback: info.feedback, findings: info.findings, attempt: currentCount, max: budget.max,
@@ -855,7 +817,7 @@ async function requestPreMergeOptionalStepFixInner(
 
   const nextCount = currentCount + 1;
   const totalFixCount = (liveTask.postReviewFixCount ?? 0) + 1;
-  const budgetLabel = budget.unbounded ? "unbounded" : String(budget.max);
+  const budgetLabel = budget.unbounded ? `unbounded (absolute cap ${budget.max})` : String(budget.max);
   await deps.store.updateTask(taskId, { postReviewFixCount: totalFixCount }, deps.getRunContextFor(taskId));
   await deps.store.logEntry(
     taskId,
@@ -895,7 +857,7 @@ async function requestPreMergeOptionalStepFixInner(
     `Pre-merge optional workflow step "${info.stepName}" requested revision`,
     true,
     false,
-    { attempt: nextCount, max: budget.unbounded ? undefined : budget.max },
+    { attempt: nextCount, max: budget.max },
     info.findings,
   ] as const;
   if (!await holdsClaim()) return false;

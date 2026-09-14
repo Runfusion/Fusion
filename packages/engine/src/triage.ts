@@ -116,7 +116,7 @@ function getPlanningLifecycleLockTransportFailure(task: Task): PlanningLifecycle
 }
 
 /*
-FNXC:PlanReviewReplan 2026-08-10-18:32 (TOMBSTONE — do not re-add):
+FNXC:PlanReviewReplan 2026-09-13-04:34 (TOMBSTONE — do not re-add):
 `PLAN_REVIEW_GATE_REPLAN_CAP = 8` is DELETED. It belonged to the out-of-graph triage Plan Review gate
 (`runPlanReviewBeforeExecution`, itself tombstoned in U10/R4), and it did not survive that deletion as
 working code: nothing read it, and its companion counter `Task.planReviewReplanCount` was persisted,
@@ -126,10 +126,7 @@ loop bounded?" with a confident yes.
 
 The capability was NOT lost, only re-owned. U3 moved the cap-park into the graph, where
 `requestPreMergeOptionalStepFix` enforces it against a per-step budget derived from the persisted
-workflow-step results (`countPlanReviewRevisionAttempts`) rather than a task column:
-  - an explicit finite budget (`planReviewMaxRevisions`, node `maxRevisions`) parks at `budget.max`;
-  - the unbounded default is backstopped at `PLAN_REVIEW_FEEDBACK_HISTORY_LIMIT`;
-both call `parkPlanReviewReplanCapExhausted`, which parks `awaiting-approval` with
+workflow-step results (`countPlanReviewRevisionAttempts`) rather than a task column. The lowest of an explicit budget, `planReviewReplanCap`, and the shared absolute review backstop is authoritative; `"unbounded"` cannot bypass it. Exhaustion calls `parkPlanReviewReplanCapExhausted`, which parks `awaiting-approval` with
 `awaitingApprovalReason: "plan-review-replan-cap"` — the same reason string the dashboard badge,
 detail banner and notifications already key on. That is the live owner; look there, not here.
 
@@ -250,17 +247,20 @@ export function buildPlanningDependencyInstallationInstruction(
   targets: readonly PlanningDependencyInstructionTarget[],
 ): string {
   const blocking = targets.filter((target) =>
-    target.readiness.readiness === "unresolved" || target.readiness.readiness === "unrecognized",
+    target.readiness.readiness === "unresolved" || target.readiness.readiness === "unrecognized" || target.readiness.readiness === "config-blocked",
   );
   if (blocking.length === 0) return "";
   const lines = [
     "## Dependency installation",
     "",
-    "This task already holds an execution checkout from prior work. Resolve every item below through `fn_install_worktree_dependencies`; fresh checkout-free planning defers dependency readiness to execution acquisition.",
+    "This task already holds an execution checkout from prior work. Resolve unresolved installation items through `fn_install_worktree_dependencies`; configuration-blocked items require an operator configuration change and Retry. Fresh checkout-free planning defers dependency readiness to execution acquisition.",
   ];
   for (const target of blocking) {
     const { readiness } = target;
-    if (readiness.readiness === "unresolved") {
+    if (readiness.readiness === "config-blocked" && readiness.deterministicStop) {
+      const stop = readiness.deterministicStop;
+      lines.push(`- \`${target.repository}\`: command \`${stop.command}\` is a proven-repeating configuration failure (${stop.failureCode}). The planner cannot fix it; correct \`worktreeInitCommand\` and use Retry after the environment or configuration changes.`);
+    } else if (readiness.readiness === "unresolved") {
       for (const row of readiness.unresolvedRepos) {
         const entry = readiness.entries.find((candidate) => candidate.ecosystem === row.ecosystem);
         const outcome = entry?.outcome ?? "not yet installed";

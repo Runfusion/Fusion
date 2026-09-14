@@ -107,13 +107,28 @@ The embedded planning header must be a visual SIBLING of MissionManager's inline
 - gap icon<->title: var(--space-sm) (= 8px), identical to .mission-manager__header-title. Scoped to the embedded planning header so the shared .detail-title-row (TaskDetailModal) keeps its own 10px gap.
 */
 /* FNXC:ViewHeader 2026-06-23-04:15: Pin canonical --view-header-min-height (≈61px border-box) + box-sizing + vertical centering so embedded Planning's header matches the shared ViewHeader/Missions height exactly. */
+/*
+FNXC:StandardizedViewLayout 2026-09-14-05:58:
+Planning's header is a full-width bar over BOTH the session rail and the interview, exactly like Mailbox and Agents.
+It kept `border-bottom: none` from its modal past, so the title row bled into the panes below and the destination did
+not read as header-over-content the way every other collection does.
+
+The separator is declared on the LAYOUT, not on the modal wrapper: the embedded destination renders
+`.planning-modal-body > .view-header` and a rule scoped to the modal ancestor alone left the standalone/host cases
+without a bar.
+*/
+.planning-modal-body > .view-header {
+  border-bottom: var(--btn-border-width) solid var(--border);
+  background: var(--surface);
+}
+
 .planning-modal--embedded .modal-header--embedded {
   box-sizing: border-box;
   align-items: center;
   min-height: var(--view-header-min-height);
   padding: var(--space-lg) var(--space-xl);
   background: var(--surface);
-  border-bottom: none;
+  border-bottom: var(--btn-border-width) solid var(--border);
 }
 
 .planning-modal--embedded .modal-header--embedded .detail-title-row {
@@ -204,32 +219,26 @@ The embedded planning header must be a visual SIBLING of MissionManager's inline
   border-bottom: solid var(--btn-border-width) var(--border);
 }
 
+/*
+FNXC:StandardizedViewLayout 2026-09-13-22:40:
+FN-379: the shared header owns the history title row; only its stacked hint keeps local metrics.
+*/
+.planning-history-header .view-header__title-content {
+  overflow: visible;
+  white-space: normal;
+}
+
 .planning-history-heading {
   display: flex;
-  align-items: flex-start;
-  gap: var(--space-md);
+  flex-direction: column;
   min-width: 0;
 }
 
-.planning-history-heading > svg {
-  flex-shrink: 0;
-  margin-top: var(--space-xs);
-  color: var(--todo);
-}
-
-.planning-history-heading h4,
-.planning-history-heading p {
-  margin: 0;
-}
-
-.planning-history-heading h4 {
-  text-wrap: balance;
-}
-
-.planning-history-heading p {
+.planning-history-hint {
   margin-top: var(--space-xs);
   color: var(--text-muted);
   font-size: var(--font-size-sm);
+  font-weight: 400;
   line-height: 1.5;
   text-wrap: pretty;
 }
@@ -282,8 +291,26 @@ The embedded planning header must be a visual SIBLING of MissionManager's inline
   text-wrap: pretty;
 }
 
-.planning-modal-body--split {
-  flex-direction: row;
+/*
+FNXC:StandardizedPlanningLayout 2026-09-13-16:30:
+ViewLayout owns the outer column and its body owns the list/detail row. Planning's business panes fill those shared slots without retaining a second width, divider, or resize authority.
+*/
+.planning-modal-body--split .view-layout__content {
+  position: relative;
+}
+
+.planning-modal-body--split .view-sidebar__panel > .planning-sidebar {
+  width: 100%;
+  height: 100%;
+  border-right: 0;
+}
+
+.planning-sidebar-filter {
+  display: flex;
+  justify-content: flex-end;
+  flex: none;
+  padding: var(--space-sm) var(--space-md);
+  border-bottom: var(--btn-border-width) solid var(--border);
 }
 
 .planning-detail {
@@ -297,67 +324,17 @@ The embedded planning header must be a visual SIBLING of MissionManager's inline
 }
 
 /*
-FNXC:Planning 2026-08-16-14:48:
-Embedded Planning is a real two-pane view mirroring Missions (mission-manager__split): the left sidebar is a full-height flex column (list scrolls, footer pinned to bottom) and the right detail pane fills the remaining width AND height. The sidebar surface/border/width treatment matches mission-manager__sidebar — var(--surface) background, a single border-right divider — so the two views read consistently. The flex chain planning-view -> planning-modal--embedded -> planning-modal-body keeps the whole layout filling the main-content pane to the bottom.
+FNXC:StandardizedViewSidebar 2026-09-13-21:43:
+Planning's session rail is a full-height flex column inside the shared sidebar: the list scrolls beneath its archive filter while the detail pane fills the remaining width and height. Width, separator, and persistence belong to the shared rail authority, so no local geometry or bottom creation footer remains.
 */
 .planning-sidebar {
-  width: calc(var(--space-lg) * 18.75);
-  flex-shrink: 0;
-  border-right: var(--btn-border-width) solid var(--border);
+  flex: 1 1 auto;
+  inline-size: 100%;
   background: var(--surface);
   display: flex;
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
-}
-
-/*
-FNXC:Planning 2026-08-16-14:48:
-Sidebar resize handle — identical treatment to MissionManager's mission-manager__sidebar-resize-handle: a thin (var(--space-sm)) col-resize strip whose ::before center bar tints with var(--todo) on hover/active, plus a focus ring for keyboard resize. touch-action:none keeps the pointer drag from scrolling on trackpads.
-*/
-.planning-sidebar-resize-handle {
-  position: relative;
-  width: var(--space-sm);
-  flex-shrink: 0;
-  cursor: col-resize;
-  background: transparent;
-  touch-action: none;
-  transition: background var(--transition-fast);
-}
-
-.planning-sidebar-resize-handle::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 50%;
-  width: var(--space-xs);
-  transform: translateX(-50%);
-}
-
-.planning-sidebar-resize-handle:hover::before,
-.planning-sidebar-resize-handle:active::before {
-  background: color-mix(in srgb, var(--todo) 30%, transparent);
-}
-
-.planning-sidebar-resize-handle:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring-strong);
-}
-
-/*
-FNXC:Planning 2026-08-16-14:48:
-Planning intentionally retains this bottom-pinned session footer at its current metrics. Missions now uses a top-anchored sidebar CTA, so this footer preserves its own padding, border-top, gap, and column layout for the archived-session link.
-*/
-.planning-sidebar-footer {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  justify-content: center;
-  gap: var(--space-sm);
-  padding: var(--space-md);
-  border-top: var(--btn-border-width) solid var(--border);
-  flex-shrink: 0;
 }
 
 .planning-sidebar-toggle-archived-link {
@@ -700,9 +677,6 @@ Planning intentionally retains this bottom-pinned New session button at its curr
   .planning-sidebar-skeleton-row {
     padding-inline: var(--space-md);
   }
-  .planning-modal-body--show-list .planning-sidebar-footer {
-    flex-shrink: 0;
-  }
   .planning-modal-body--show-detail .planning-sidebar {
     display: none;
   }
@@ -710,7 +684,7 @@ Planning intentionally retains this bottom-pinned New session button at its curr
   FNXC:PlanningModeMobile 2026-07-20-10:30:
   FN-8427 gives session-list mode exclusive ownership of the compact body. JS unmounts
   RunningPlanPane; this selector is a layout backstop for future render paths so session
-  rows stay scrollable above the New session footer instead of sharing height with a plan.
+  rows keep the full compact height instead of sharing it with a plan.
   */
   .planning-modal-body--show-list .planning-detail {
     display: none;
@@ -1401,6 +1375,20 @@ margins so paragraphs and lists do not create unintended gaps.
   margin-left: auto;
 }
 
+/*
+FNXC:StandardizedViewActions 2026-09-14-02:47:
+History sits immediately left of the primary Next action rather than in the view header. The trigger owns the free
+space so the pair stays right-aligned as one cluster, and the primary drops its own auto margin so no gap opens
+between them.
+*/
+.planning-actions .planning-history-trigger {
+  margin-left: auto;
+}
+
+.planning-actions .planning-history-trigger + .planning-actions-primary {
+  margin-left: 0;
+}
+
 .planning-back-btn {
   display: inline-flex;
   align-items: center;
@@ -1705,9 +1693,13 @@ FNXC:PlanningSidebar 2026-09-12-05:41:
 Desktop and tablet keep the session sidebar, resize handle, and detail pane visible together even in a short viewport. These width-gated rules override the short-shell phone paint without removing compact internal form adaptations.
 */
 @media (min-width: 769px) {
-  .planning-modal-body--split {
-    flex-direction: row;
-  }
+  /*
+  FNXC:StandardizedViewLayout 2026-09-14-06:12:
+  This class used to sit on the split CONTAINER that held the session rail beside the interview, so forcing a row was
+  right. It now sits on the shared ViewLayout SHELL, which must stay a column: header on top, then the body that owns
+  the rail/content row. Forcing a row here laid the header beside the body, so Planning showed neither a full-width
+  header nor a left rail. The shell keeps its own direction; only the body is a row.
+  */
 
   .planning-modal-body--show-detail .planning-sidebar,
   .planning-modal-body--show-list .planning-sidebar {

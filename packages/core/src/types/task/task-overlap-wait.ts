@@ -2,13 +2,11 @@ export type OverlapWaitPhase =
   | "observed"
   | "analyzing"
   | "freshness-pending"
-  | "revalidation-pending"
-  | "repair-required"
   | "ready"
   | "delivered"
   | "cancelled";
 
-export type OverlapWaitDecision = "resume" | "briefing" | "revalidate";
+export type OverlapWaitDecision = "resume" | "briefing";
 export type OverlapWaitFreshness = "not-required" | "proven" | "pending" | "conflict" | "unavailable";
 
 export interface OverlapWaitLandedPath {
@@ -50,9 +48,6 @@ export interface OverlapWaitReceipt {
   reason?: string;
   decidedAt: string;
   contextDeliveredAt?: string;
-  revalidationVerdict?: "APPROVE" | "REVISE";
-  invalidatedPromise?: string;
-  revalidationFeedback?: string;
 }
 
 export interface TaskOverlapWait {

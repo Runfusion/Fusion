@@ -91,21 +91,25 @@ export function resolveMaxReworkCycles(raw: unknown): number {
   return Math.max(1, Math.min(MAX_REWORK_CYCLES_CAP, Math.floor(n)));
 }
 
+/** Final safety ceiling shared by Plan Review, Code Review, Browser Verification,
+ * and custom optional review gates, including recovery after restart. */
+export const ABSOLUTE_MAX_AUTOMATIC_REVIEW_REVISIONS = 8;
+
 export interface OptionalStepRevisionBudget {
   unbounded: boolean;
   max: number;
 }
 
 /*
-FNXC:WorkflowOptionalStepRevisionBudget 2026-06-27-12:15:
-Optional-group steps can override the global `maxPostReviewFixes` cycle budget with a per-step non-negative integer or `"unbounded"`. The resolver keeps absent/invalid raw values byte-inert by falling back to the effective global budget, while `"unbounded"` explicitly removes the ceiling so Code Review, Browser Verification, or custom optional gates can cycle until they approve.
+FNXC:WorkflowOptionalStepRevisionBudget 2026-09-13-04:01:
+Every automatic workflow review has a finite safety backstop. Numeric budgets remain stricter; `"unbounded"` means no lower configurable ceiling but still resolves to the absolute cap so restart and recovery paths cannot dispatch an unlimited model loop.
 */
 export function resolveOptionalStepRevisionBudget(
   rawMaxRevisions: unknown,
   fallback: number,
 ): OptionalStepRevisionBudget {
   if (rawMaxRevisions === "unbounded") {
-    return { unbounded: true, max: Number.POSITIVE_INFINITY };
+    return { unbounded: true, max: ABSOLUTE_MAX_AUTOMATIC_REVIEW_REVISIONS };
   }
   if (
     typeof rawMaxRevisions === "number" &&
@@ -113,9 +117,12 @@ export function resolveOptionalStepRevisionBudget(
     Number.isInteger(rawMaxRevisions) &&
     rawMaxRevisions >= 0
   ) {
-    return { unbounded: false, max: rawMaxRevisions };
+    return { unbounded: false, max: Math.min(rawMaxRevisions, ABSOLUTE_MAX_AUTOMATIC_REVIEW_REVISIONS) };
   }
-  return { unbounded: false, max: fallback };
+  const safeFallback = Number.isFinite(fallback) && Number.isInteger(fallback) && fallback >= 0
+    ? fallback
+    : 0;
+  return { unbounded: false, max: Math.min(safeFallback, ABSOLUTE_MAX_AUTOMATIC_REVIEW_REVISIONS) };
 }
 
 /**
@@ -226,11 +233,11 @@ An `optional-group` node is a container (mirroring `foreach`/`loop`) whose `temp
 Enable state reuses the per-task `enabledWorkflowSteps` facet keyed by the group node id, seeded from `defaultOn` at task creation — this replaces the execution-inert declaration-based optional-steps model (`WorkflowOptionalStep`/`optionalSteps`).
 The template itself contains no iteration or internal rework edges (validated in `validateOptionalGroup`). The outer graph may re-enter the group for pre-merge fix/re-review remediation governed by `maxRevisions`.
 
-FNXC:WorkflowOptionalStepRevisionBudget 2026-06-27-12:15:
-Optional-group remediation still runs the template once per graph pass, but workflow authors can set a per-step `maxRevisions` override for the PRE-merge fix→re-review cycle. A non-negative integer caps that optional step against its own review-attempt partition, `"unbounded"` removes the ceiling, and absence preserves the effective global `maxPostReviewFixes` behavior for generic optional gates.
+FNXC:WorkflowOptionalStepRevisionBudget 2026-09-13-04:34:
+Optional-group remediation still runs the template once per graph pass, and workflow authors can set a lower per-step `maxRevisions` override for the PRE-merge fix→re-review cycle. A non-negative integer caps that optional step against its durable review-attempt partition; `"unbounded"` opts out only from a lower configurable ceiling and remains subject to `ABSOLUTE_MAX_AUTOMATIC_REVIEW_REVISIONS`.
 
-FNXC:WorkflowRevisionBudget 2026-09-03-05:40:
-Built-in Plan Review/spec and Code Review groups have workflow-value overrides (`planReviewMaxRevisions`, `codeReviewMaxRevisions`) that resolve before this node config; when those workflow values are unset, the authored node config applies. Plan Review remains unbounded behind its separate replan cap, standard Code Review authors three remediation rounds, and Compound Engineering authors two.
+FNXC:WorkflowRevisionBudget 2026-09-13-04:34:
+Built-in Plan Review/spec and Code Review groups have workflow-value overrides (`planReviewMaxRevisions`, `codeReviewMaxRevisions`) that resolve before this node config. Every resolved value is clamped by the shared finite backstop; authored and operator-configured smaller limits retain precedence.
 */
 /** Config for an `optional-group` container node. `defaultOn` seeds the per-task
  *  enable set at creation; the `template` is the subgraph run once per enabled
@@ -245,11 +252,10 @@ export interface WorkflowOptionalGroupConfig {
   name?: string;
   /**
    * Per-step override for the optional step's PRE-merge fix→re-review cycle. A
-   * non-negative integer caps revisions for this step; `"unbounded"` keeps cycling
-   * until the step returns APPROVE/APPROVE_WITH_NOTES. Plan Review and Code Review
-   * workflow-setting values override this field; absence falls back to the
-   * gate-specific runtime default (unbounded for those built-in reviews, global
-   * fallback for generic optional gates).
+   * non-negative integer caps revisions for this step; `"unbounded"` removes only
+   * a lower configurable cap and still obeys the shared absolute safety ceiling.
+   * Plan Review and Code Review workflow-setting values override this field;
+   * absence falls back to the gate-specific runtime default.
    */
   maxRevisions?: number | "unbounded";
   /*

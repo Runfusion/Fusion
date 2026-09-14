@@ -11,6 +11,7 @@ vi.mock("../../api", async () => ({
 }));
 
 vi.mock("lucide-react", () => ({
+  ChevronLeft: () => <span data-testid="icon-chevron-left" />,
   Link: () => <span data-testid="icon-link" />,
   Plus: () => <span data-testid="icon-plus" />,
   Sparkles: () => <span data-testid="icon-sparkles" />,
@@ -453,7 +454,7 @@ describe("GoalsView", () => {
         }),
       ),
     );
-    expect(await screen.findByText("Created Goal")).toBeInTheDocument();
+    expect(await screen.findByTestId("goal-card-g3")).toHaveTextContent("Created Goal");
     expect(screen.queryByTestId("goals-form-title")).not.toBeInTheDocument();
   });
 
@@ -515,7 +516,7 @@ describe("GoalsView", () => {
         }),
       ),
     );
-    expect(await screen.findByText("Updated")).toBeInTheDocument();
+    expect(await screen.findByTestId("goal-card-g1")).toHaveTextContent("Updated");
     expect(screen.queryByTestId("goal-edit-title-g1")).not.toBeInTheDocument();
   });
 

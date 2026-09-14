@@ -1,61 +1,35 @@
 import { describe, expect, it } from "vitest";
 import { listComponentFiles, readAppFile } from "../../test/cssFixture";
 
+/*
+FNXC:ModalChromeTests 2026-09-14-10:24:
+FN-379 remediation: the mail composer is hosted content, not a chrome owner. Its local header title and X exit were
+removed in favour of the owning Mailbox ViewHeader, so its former internal exemptions are deleted and re-adding a local
+composer close fails this ratchet.
+
+FNXC:ModalChromeTests 2026-09-13-22:40:
+FN-379 remediation: the window-shaped producers (agent creation/import/generation, artifact viewers, onboarding,
+the first-run wizard, reporting, the workflow step picker, the planning history overlay, and the dev-server
+preview window) kept a locally named header row and therefore still imported the primitive directly. They now
+build the shared header, so the census shrinks to the owners that pass a close INTO that header.
+
+FNXC:ModalChromeTests 2026-09-13-21:49:
+FN-379 moved every recorded destination, window, dialog, confirmation, and onboarding surface onto the shared
+ViewHeader, which builds their exit through the canonical primitive on their behalf. Those owners are no longer
+direct importers, so the census shrinks to the remaining surfaces that still construct a close outside a shared
+header; re-adding a local close row to a migrated owner fails this ratchet.
+*/
 const canonicalConsumers = [
-  "ActivityLogModal.tsx",
-  "AddNodeModal.tsx",
   "AgentDetailView.tsx",
-  "AgentErrorDetailsModal.tsx",
-  "AgentGenerationModal.tsx",
-  "AgentImportModal.tsx",
-  "AgentListModal.tsx",
-  "AgentOnboardingModal.tsx",
-  "ArtifactImageViewer.tsx",
-  "ArtifactsGallery.tsx",
-  "ChangesDiffModal.tsx",
-  "ConfirmDialog.tsx",
-  "ConnectNodeModal.tsx",
-  "CreateRoomModal.tsx",
-  "DevServerView.tsx",
-  "DockerNodeOnboardingModal.tsx",
-  "ExperimentalAgentOnboardingModal.tsx",
   "FileBrowserModal.tsx",
   "FloatingWindow.tsx",
-  "GitHubImportModal.tsx",
-  "GitManagerModal.tsx",
-  "GroupTaskModal.tsx",
   "MailboxModal.tsx",
-  "MilestoneSliceInterviewModal.tsx",
-  "MissionInterviewModal.tsx",
-  "MissionManager.tsx",
-  "ModelOnboardingModal.tsx",
-  "ModelSelectionModal.tsx",
-  "NativeShellConnectionManager.tsx",
-  "NewAgentDialog.tsx",
-  "NewTaskModal.tsx",
-  "NodeDetailModal.tsx",
-  "PlanningModeModal.tsx",
-  "PrCreateModal.tsx",
-  "ProviderLoginDialog.tsx",
-  "ReportModal.tsx",
-  "ResearchTaskActionModal.tsx",
   "RightDockExpandModal.tsx",
   "ScheduledTasksModal.tsx",
-  "ScriptsModal.tsx",
-  "SecretsView.tsx",
-  "SettingsModal.tsx",
-  "SettingsSyncConflictModal.tsx",
-  "SetupWizardModal.tsx",
-  "StashRecoveryView.tsx",
   "TaskDetailModal.tsx",
-  "TaskResetDialog.tsx",
   "TerminalModal.tsx",
-  "UsageIndicator.tsx",
   "ViewHeader.tsx",
-  "WorkflowAddStepModal.tsx",
   "WorkflowNodeEditor.tsx",
-  "WorkflowResultsTab.tsx",
-  "settings/sections/ModelPricingSection.tsx",
 ] as const;
 
 function productionComponentSource(file: string) {
@@ -87,16 +61,14 @@ const internalXIconExemptions = [
   "GoalsView.tsx:1",
   "InsightsView.tsx:2",
   "MergeAdvanceNotice.tsx:1",
-  "MessageComposer.tsx:1",
   "MilestoneSliceInterviewModal.tsx:1",
   "MissionInterviewModal.tsx:1",
   "MissionManager.tsx:2",
   "NodeDetailModal.tsx:3",
-  "NodesView.tsx:1",
   "PendingChatMessageQueue.tsx:1",
   "PiExtensionsManager.tsx:1",
   "PlanningModeModal.tsx:1",
-  "PluginManager.tsx:2",
+  "PluginManager.tsx:1",
   "PostOnboardingRecommendations.tsx:1",
   "PrCreateModal.tsx:1",
   "ProjectSelector.tsx:1",
@@ -129,8 +101,6 @@ const internalCloseLabelExemptions = [
   "DirectoryPicker.tsx:1",
   "EngineControlMenu.tsx:1",
   "InsightsView.tsx:1",
-  "MessageComposer.tsx:1",
-  "NodesView.tsx:1",
   "PendingChatMessageQueue.tsx:1",
   "RightDock.tsx:2",
   "SkillsView.tsx:2",
@@ -140,6 +110,9 @@ const internalCloseLabelExemptions = [
 /*
 FNXC:ModalChromeTests 2026-09-12-00:04:
 The modal-close census guards executable JSX constructions rather than comments or import presence alone. Every true modal close owner uses the canonical primitive; exact inventories reserve manual X icons, text glyphs, and Close/Cancel labels for internal search, tag, banner, delete, edit, navigation, and Back actions so a new manual modal close fails the ratchet.
+
+FNXC:ModalChromeTests 2026-09-13-14:21:
+Canonical construction is insufficient when a host stylesheet can repaint or resize the shared button. Model Onboarding must leave all close-button chrome to ModalCloseButton; its stylesheet may arrange the header but cannot target `.modal-close` locally.
 */
 describe("modal close affordance inventory", () => {
   it("keeps the exact production consumer census on the canonical primitive", () => {
@@ -161,7 +134,7 @@ describe("modal close affordance inventory", () => {
     expect(constructionCounts(/<(?:button|AlphaButton)\b[^>]*?aria-label\s*=\s*(?:"[^"]*(?:close|cancel)[^"]*"|\{[^}]*?(?:close|cancel)[^}]*?\})[^>]*>/gis)).toEqual(internalCloseLabelExemptions);
   });
 
-  it("leaves no manual legacy close-class construction except mobile Back navigation", () => {
+  it("leaves no manual legacy close-class construction anywhere", () => {
     const manual = listComponentFiles()
       .filter((file) => !file.startsWith("__tests__/") && file !== "ModalCloseButton.tsx")
       .flatMap((file) => {
@@ -169,8 +142,16 @@ describe("modal close affordance inventory", () => {
         const matches = source.match(/<(?:button|AlphaButton)\b[^>]*className=(?:"[^"]*(?:modal-close|floating-window__close|chat-modal-close|report-modal__close)[^"]*"|\{[^}]*(?:modal-close|floating-window__close|chat-modal-close|report-modal__close)[^}]*\})[^>]*>/gs) ?? [];
         return matches.map((construct) => ({ file, construct: construct.replace(/\s+/g, " ") }));
       });
-    expect(manual).toEqual([
-      expect.objectContaining({ file: "TaskDetailModal.tsx", construct: expect.stringContaining("task-detail-mobile-back") }),
-    ]);
+    expect(manual).toEqual([]);
+  });
+
+  it("leaves host-specific close chrome to the canonical primitive", () => {
+    const modelOnboardingCss = readAppFile("components/ModelOnboardingModal.css")
+      .replace(/\/\*[\s\S]*?\*\//g, "");
+    const mailboxCss = readAppFile("components/MailboxModal.css")
+      .replace(/\/\*[\s\S]*?\*\//g, "");
+
+    expect(modelOnboardingCss).not.toMatch(/\.model-onboarding-header\s+\.modal-close\b/);
+    expect(mailboxCss).not.toMatch(/\.mailbox-modal\s+\.mailbox-header-actions\s+\.modal-close\s*\{/);
   });
 });

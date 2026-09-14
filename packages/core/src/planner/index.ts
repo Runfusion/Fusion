@@ -5,6 +5,7 @@
 export * from "./overseer-advice.js";
 export * from "./overseer-emission-guard.js";
 export * from "./plan-approval.js";
+export * from "./plan-premises.js";
 export * from "./planner-confirmation.js";
 export * from "./planner-intervention.js";
 export * from "./planner-overseer-events.js";

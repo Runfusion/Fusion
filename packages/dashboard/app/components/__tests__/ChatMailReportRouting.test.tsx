@@ -157,7 +157,7 @@ describe("chat-to-mail report routing", () => {
 
     await user.click(await screen.findByTestId("chat-send-as-report-assistant-repeat"));
     await screen.findByTestId("message-composer");
-    await user.click(screen.getByTestId("message-composer-cancel"));
+    await user.click(screen.getByTestId("mailbox-back-to-list"));
     expect(screen.queryByTestId("message-composer")).not.toBeInTheDocument();
 
     await user.click(screen.getByTestId("reopen-quick-chat"));

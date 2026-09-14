@@ -606,8 +606,8 @@ describe("TaskDetailModal", () => {
       expect(document.querySelector("#task-form-title")).toBeTruthy();
     });
 
-    it("entering edit mode shows title input and description textarea", () => {
-      const { container } = render(
+    it("keeps the title out of the header while edit mode exposes both fields", () => {
+      render(
         <TaskDetailModal
           initialTab="definition"
           task={makeTask({ id: "FN-001", column: "triage", title: "Test task", description: "Test description" })}
@@ -619,17 +619,18 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      // Initially shows title as h2
-      expect(document.querySelector("h2.detail-title")).toBeTruthy();
+      const header = document.querySelector(".task-detail-content > .modal-header");
+      expect(header).not.toHaveTextContent("Test task");
+      expect(header?.querySelector("h1, h2, h3, h4, h5, h6")).toBeNull();
+      expect(screen.getByTestId("task-detail-definition-description")).toHaveTextContent("Test description");
       expect(document.querySelector("#task-form-title")).toBeNull();
 
-      // Enter edit mode
       fireEvent.click(document.querySelector(".modal-edit-btn")!);
 
-      // Now shows edit form with TaskForm fields
+      expect(header).not.toHaveTextContent("Test task");
       expect(document.querySelector("h2.detail-title")).toBeNull();
-      expect(document.querySelector("#task-form-title")).toBeTruthy();
-      expect(document.querySelector("#task-form-description")).toBeTruthy();
+      expect(document.querySelector("#task-form-title")).toHaveValue("Test task");
+      expect(document.querySelector("#task-form-description")).toHaveValue("Test description");
     });
 
     it("clicking Cancel exits edit mode without saving", () => {
@@ -655,9 +656,10 @@ describe("TaskDetailModal", () => {
       // Click Cancel
       fireEvent.click(screen.getByText("Cancel"));
 
-      // Should exit edit mode without saving
+      // The editable value is restored without recreating a visible header title.
       expect(document.querySelector("#task-form-title")).toBeNull();
-      expect(document.querySelector("h2.detail-title")?.textContent).toBe("Original title");
+      expect(document.querySelector(".modal-header")).not.toHaveTextContent("Original title");
+      expect(screen.getByTestId("task-detail-definition-description")).toHaveTextContent("Original description");
     });
 
     it("clicking Save calls updateTask with correct parameters", async () => {
@@ -1981,7 +1983,7 @@ describe("TaskDetailModal", () => {
       });
 
       await user.click(screen.getByLabelText("Executor Model"));
-      await user.click(screen.getByText("Claude Sonnet 4.5"));
+      await user.click(screen.getByRole("option", { name: /Claude Sonnet 4\.5/ }));
 
       await waitFor(() => {
         expect(mockUpdateTask).toHaveBeenNthCalledWith(
@@ -2019,7 +2021,7 @@ describe("TaskDetailModal", () => {
 
       await user.keyboard("{Escape}");
       await user.click(screen.getByLabelText("Reviewer Model"));
-      await user.click(screen.getByText("GPT-4o"));
+      await user.click(screen.getByRole("option", { name: /GPT-4o/ }));
 
       await waitFor(() => {
         expect(mockUpdateTask).toHaveBeenNthCalledWith(
@@ -2091,7 +2093,7 @@ describe("TaskDetailModal", () => {
 
       await waitFor(() => expect(screen.getByLabelText("Reviewer Model")).toBeInTheDocument());
       await user.click(screen.getByLabelText("Reviewer Model"));
-      await user.click(await screen.findByText("GPT-4o"));
+      await user.click(await screen.findByRole("option", { name: /GPT-4o/ }));
 
       await waitFor(() => {
         expect(mockUpdateTask).toHaveBeenCalledWith("FN-001", {
@@ -2548,9 +2550,10 @@ describe("TaskDetailModal", () => {
         />,
       );
 
+      fireEvent.click(screen.getByRole("button", { name: "Read plan" }));
       expect(screen.getByText("Loading specification…")).toBeDefined();
-      // Token stats now live in their own Stats tab — switch to it before
-      // asserting on token-loading text.
+      // Return from the Plan document before switching to Stats.
+      fireEvent.click(screen.getByRole("button", { name: "Back to definition" }));
       fireEvent.click(screen.getByRole("button", { name: "Stats" }));
       expect(screen.getByText("Execution Timing")).toBeInTheDocument();
       expect(screen.getByText("Execution Details")).toBeInTheDocument();
@@ -2622,19 +2625,19 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      // Initially shows loading
+      // The complete specification is loaded in the Plan document sub-view.
+      fireEvent.click(screen.getByRole("button", { name: "Read plan" }));
       expect(screen.getByText("Loading specification…")).toBeDefined();
 
-      // After fetch resolves, spec content appears
+      // After fetch resolves, spec content appears in the Plan document rather than the Description markdown.
       await waitFor(() => {
-        const markdownBody = document.querySelector(".markdown-body");
-        expect(markdownBody).toBeTruthy();
+        expect(screen.getByTestId("task-detail-plan-full")).toHaveTextContent("This is the loaded spec content.");
       }, { timeout: 3000 });
 
-      // Loading indicator should be gone
+      // Loading indicator should be gone.
       expect(screen.queryByText("Loading specification…")).toBeNull();
 
-      // Token stats live behind the Stats tab now.
+      fireEvent.click(screen.getByRole("button", { name: "Back to definition" }));
       fireEvent.click(screen.getByRole("button", { name: "Stats" }));
       expect(screen.queryByText("Loading token statistics…")).toBeNull();
       expect(screen.getByText("Execution Timing")).toBeInTheDocument();

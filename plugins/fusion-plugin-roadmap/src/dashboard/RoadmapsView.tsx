@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef } from "react";
+import { PluginDashboardViewHeader } from "@fusion/dashboard/app/plugins/PluginDashboardViewHeader";
 import { Plus, Pencil, Trash2, Check, X, GripVertical, Sparkles, Download, Copy, Loader, ArrowLeft, ChevronUp, Map } from "lucide-react";
 import "./RoadmapsView.css";
 import type { ToastType } from "./types.js";
@@ -273,7 +274,6 @@ function MobileRoadmapList({
   roadmaps,
   selectedRoadmapId,
   onSelect,
-  onCreate,
   onEdit,
   onDelete,
   onExport,
@@ -284,7 +284,6 @@ function MobileRoadmapList({
   roadmaps: Roadmap[];
   selectedRoadmapId: string | null;
   onSelect: (id: string) => void;
-  onCreate: () => void;
   onEdit: (roadmap: Roadmap) => void;
   onDelete: (roadmapId: string) => void;
   onExport: (roadmap: Roadmap) => void;
@@ -294,21 +293,6 @@ function MobileRoadmapList({
 }) {
   return (
     <div className="roadmaps-view__mobile-list" data-testid="roadmaps-view__mobile-list">
-      <div className="roadmaps-view__mobile-list-header">
-        <h2 className="roadmaps-view__mobile-list-title">Roadmaps</h2>
-        {!showCreateForm && (
-          <button
-            className="roadmaps-view__mobile-add-btn"
-            onClick={onCreate}
-            title="Create roadmap"
-            aria-label="Create roadmap"
-            data-testid="mobile-create-roadmap-btn"
-          >
-            <Plus size={18} />
-          </button>
-        )}
-      </div>
-
       {showCreateForm && (
         <div className="roadmaps-view__mobile-create-form">
           <CreateRoadmapForm onSave={onSaveCreate} onCancel={onCancelCreate} />
@@ -317,11 +301,7 @@ function MobileRoadmapList({
 
       {roadmaps.length === 0 && !showCreateForm ? (
         <div className="roadmaps-view__mobile-empty">
-          <p>No roadmaps yet.</p>
-          <button className="btn btn-primary btn-sm" onClick={onCreate}>
-            <Plus size={14} />
-            <span>Create Roadmap</span>
-          </button>
+          <p>No roadmaps yet. Use the header action to create one.</p>
         </div>
       ) : (
         <div className="roadmaps-view__mobile-list-items">
@@ -2125,12 +2105,7 @@ export function RoadmapsView({ projectId, addToast, beginNativeStructureDrag }: 
   if (loading && roadmaps.length === 0) {
     return (
       <div className="roadmaps-view roadmaps-view--loading">
-        <div className="roadmaps-view__top-header">
-          <h2 className="roadmaps-view__top-title">
-            <Map size={20} />
-            <span>Roadmaps</span>
-          </h2>
-        </div>
+        <PluginDashboardViewHeader icon={Map} title="Roadmaps" />
         <div className="roadmaps-view__loading-state">Loading roadmaps...</div>
       </div>
     );
@@ -2139,12 +2114,7 @@ export function RoadmapsView({ projectId, addToast, beginNativeStructureDrag }: 
   if (error && roadmaps.length === 0) {
     return (
       <div className="roadmaps-view roadmaps-view--error">
-        <div className="roadmaps-view__top-header">
-          <h2 className="roadmaps-view__top-title">
-            <Map size={20} />
-            <span>Roadmaps</span>
-          </h2>
-        </div>
+        <PluginDashboardViewHeader icon={Map} title="Roadmaps" />
         <div className="roadmaps-view__error-state">
           <p>Failed to load roadmaps</p>
           <p className="roadmaps-view__error-msg">{error.message}</p>
@@ -2156,15 +2126,27 @@ export function RoadmapsView({ projectId, addToast, beginNativeStructureDrag }: 
   return (
     <div className="roadmaps-view">
       {/*
-      FNXC:Roadmaps 2026-06-22-18:00:
-      Plugin Roadmaps needs the same top chrome as built-in dashboard views: full-width surface header, todo-tinted icon, canonical padding, and no divider before the scrollable body. The internal roadmap sidebar stays below this header so Roadmaps aligns with Artifacts/Skills/Missions while preserving its own list/detail workflow.
+      FNXC:Roadmaps 2026-09-13-16:50:
+      Roadmaps uses the cooperative plugin header so standalone hosts receive canonical chrome and the full-page host remains the sole title owner. Creation stays in that header on every viewport while the existing roadmap controller, list/detail body, and mobile back flow remain plugin-owned.
       */}
-      <div className="roadmaps-view__top-header">
-        <h2 className="roadmaps-view__top-title">
-          <Map size={20} />
-          <span>Roadmaps</span>
-        </h2>
-      </div>
+      <PluginDashboardViewHeader
+        icon={Map}
+        title="Roadmaps"
+        actions={(
+          <button
+            className="btn btn-primary btn-sm view-action-button view-action-button--mobile-icon-only"
+            onClick={() => {
+              if (isMobile) setMobileShowCreateForm(true);
+              else setCreateForm({ type: "roadmap", title: "", description: "" });
+            }}
+            aria-label="Create roadmap"
+            data-testid="create-roadmap-header-btn"
+          >
+            <Plus size={16} aria-hidden="true" />
+            <span className="view-action-button__label">Create roadmap</span>
+          </button>
+        )}
+      />
       <div className="roadmaps-view__body">
         {/* Mobile Roadmap List (shown when mobile and no roadmap selected) */}
         {isMobile && !effectiveSelectedRoadmapId && (
@@ -2172,7 +2154,6 @@ export function RoadmapsView({ projectId, addToast, beginNativeStructureDrag }: 
             roadmaps={roadmaps}
             selectedRoadmapId={effectiveSelectedRoadmapId}
             onSelect={(id) => selectRoadmap(id)}
-            onCreate={() => setMobileShowCreateForm(true)}
             onEdit={handleStartRoadmapEdit}
             onDelete={handleDeleteRoadmap}
             onExport={(roadmap) => handleOpenHandoffModal(roadmap.id, roadmap.title)}
@@ -2190,15 +2171,6 @@ export function RoadmapsView({ projectId, addToast, beginNativeStructureDrag }: 
           <aside className="roadmaps-view__sidebar" aria-label="Roadmaps">
             <div className="roadmaps-view__sidebar-header">
               <h2 className="roadmaps-view__sidebar-title">Roadmaps</h2>
-              <button
-                className="roadmaps-view__add-btn"
-                onClick={() => setCreateForm({ type: "roadmap", title: "", description: "" })}
-                title="Create roadmap"
-                aria-label="Create roadmap"
-                data-testid="create-roadmap-btn"
-              >
-                <Plus size={16} />
-              </button>
             </div>
 
           {createForm.type === "roadmap" && (

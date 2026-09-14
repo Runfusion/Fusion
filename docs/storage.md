@@ -6,7 +6,7 @@ See the [2026-07-14 PostgreSQL runtime cutover review](./postgres-migration-revi
 
 ## Overlap wait synchronization episodes
 
-File-scope contention keeps its durable synchronization obligation in `project.task_overlap_waits`, independently of the transient `tasks.overlap_blocked_by` display marker. Each row is partitioned by `(project_id, task_id, episode_id)`, snapshots the predecessor identity, and advances through explicit observation, freshness, revalidation, authorization, and context-delivery phases with revision/owner compare-and-set fencing. Clearing or replacing the marker therefore cannot erase an unconsumed predecessor; Reset cancels active generations in the same task-locked publication transaction.
+File-scope contention keeps its durable synchronization obligation in `project.task_overlap_waits`, independently of the transient `tasks.overlap_blocked_by` display marker. Each row is partitioned by `(project_id, task_id, episode_id)`, snapshots the predecessor identity, and advances through observation, freshness, ready, delivery, or cancellation phases with revision/owner compare-and-set fencing. Clearing or replacing the marker therefore cannot erase an unconsumed predecessor; Reset cancels active generations in the same task-locked publication transaction. The obsolete model-verdict phases are drained to `ready` by migration 0077 without deleting delivery proof.
 
 Receipts contain the deterministic decision and delivery/freshness references. They are authoritative after restart; the task log and best-effort run audit are diagnostic projections, not alternate state. The owner task uses a composite foreign key, while predecessor identity intentionally remains after predecessor archival or deletion.
 

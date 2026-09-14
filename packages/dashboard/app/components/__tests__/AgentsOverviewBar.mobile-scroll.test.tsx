@@ -12,7 +12,7 @@ vi.mock("../../hooks/useAgentActivity", () => ({
 vi.mock("../RuntimeFallbackBadge", () => ({ RuntimeFallbackBadge: () => null }));
 vi.mock("../AgentTaskBadge", () => ({ AgentTaskBadge: () => null }));
 
-import { AgentsOverviewBar } from "../AgentsOverviewBar";
+import { AgentsOverviewBar, AgentsOverviewToggle } from "../AgentsOverviewBar";
 
 function makeAgent(id: string): Agent {
   return {
@@ -56,16 +56,21 @@ describe("AgentsOverviewBar mobile scroll contract", () => {
   it("renders the production overview chain for many, duplicate, and empty active-agent states", () => {
     const agents = Array.from({ length: 13 }, (_, index) => makeAgent(`agent-${index}`));
     const onToggle = vi.fn();
+    // The trigger is hosted by the Agents header, so it is a sibling of the expanded section rather than its child.
     const { container, rerender } = render(
       <div className="agents-view">
-        <AgentsOverviewBar stats={{ activeCount: 13, assignedTaskCount: 13, completedRuns: 0, failedRuns: 0, successRate: 1 }} activeAgents={[...agents, agents[0]]} isOpen onToggle={onToggle} />
+        <div className="agents-view-controls">
+          <AgentsOverviewToggle activeAgents={[...agents, agents[0]]} isOpen onToggle={onToggle} />
+        </div>
+        <AgentsOverviewBar stats={{ activeCount: 13, assignedTaskCount: 13, completedRuns: 0, failedRuns: 0, successRate: 1 }} activeAgents={[...agents, agents[0]]} isOpen />
       </div>,
     );
 
     const overview = container.querySelector(".agents-view > section.agents-overview-bar");
-    const toggle = overview?.querySelector(":scope > button.agents-overview-bar__toggle");
+    const toggle = container.querySelector(".agents-view-controls > button.agents-overview-bar__toggle");
     const content = overview?.querySelector(":scope > .agents-overview-bar__content");
     expect(overview).toBeTruthy();
+    expect(overview?.querySelector("button.agents-overview-bar__toggle")).toBeNull();
     expect(toggle).toHaveAttribute("aria-expanded", "true");
     expect(content?.firstElementChild).toHaveClass("agent-metrics-bar", "agents-overview-bar__metrics");
 
@@ -79,7 +84,7 @@ describe("AgentsOverviewBar mobile scroll contract", () => {
 
     rerender(
       <div className="agents-view">
-        <AgentsOverviewBar stats={{ activeCount: 0, assignedTaskCount: 0, completedRuns: 0, failedRuns: 0, successRate: 1 }} activeAgents={[]} isOpen onToggle={onToggle} />
+        <AgentsOverviewBar stats={{ activeCount: 0, assignedTaskCount: 0, completedRuns: 0, failedRuns: 0, successRate: 1 }} activeAgents={[]} isOpen />
       </div>,
     );
     const emptyContent = container.querySelector(".agents-overview-bar__content");
@@ -88,9 +93,10 @@ describe("AgentsOverviewBar mobile scroll contract", () => {
 
     rerender(
       <div className="agents-view">
-        <AgentsOverviewBar stats={{ activeCount: 13, assignedTaskCount: 13, completedRuns: 0, failedRuns: 0, successRate: 1 }} activeAgents={agents} isOpen={false} onToggle={onToggle} />
+        <AgentsOverviewBar stats={{ activeCount: 13, assignedTaskCount: 13, completedRuns: 0, failedRuns: 0, successRate: 1 }} activeAgents={agents} isOpen={false} />
       </div>,
     );
     expect(container.querySelector(".agents-overview-bar__content")).toBeNull();
+    expect(container.querySelector("section.agents-overview-bar")).toBeNull();
   });
 });

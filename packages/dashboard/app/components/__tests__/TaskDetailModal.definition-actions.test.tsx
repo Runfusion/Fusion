@@ -49,6 +49,11 @@ function PauseDetailHarness({ mobileHeaderMode }: { mobileHeaderMode?: "back" })
 
 setupTaskDetailModalHooks();
 
+function openPlanDocument(): void {
+  const button = screen.queryByRole("button", { name: "Read plan" });
+  if (button) fireEvent.click(button);
+}
+
 describe("TaskDetailModal", () => {
   describe("Plan tab edit mode", () => {
     it("shows Edit button in Plan tab", () => {
@@ -66,6 +71,8 @@ describe("TaskDetailModal", () => {
 
       expect(screen.getByRole("button", { name: "Plan" })).toBeTruthy();
       expect(screen.queryByRole("button", { name: "Definition" })).toBeNull();
+      expect(screen.getByRole("button", { name: "Read plan" })).toBeTruthy();
+      openPlanDocument();
       expect(screen.getByText("Edit")).toBeTruthy();
     });
 
@@ -86,6 +93,7 @@ describe("TaskDetailModal", () => {
         </FileBrowserProvider>,
       );
 
+      openPlanDocument();
       const actionRow = document.querySelector(".detail-spec-edit-trigger");
       expect(actionRow).toBeTruthy();
       const promptButton = screen.getByRole("button", { name: "Open PROMPT.md" });
@@ -109,6 +117,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
+      openPlanDocument();
       const planSection = document.querySelector(".detail-section--plan-prompt");
       expect(planSection).toBeTruthy();
       // Initially showing markdown view
@@ -117,6 +126,7 @@ describe("TaskDetailModal", () => {
       expect(planSection?.contains(markdown)).toBe(true);
 
       // Click Edit button
+      openPlanDocument();
       fireEvent.click(screen.getByText("Edit"));
 
       // Should show spec edit textarea (query by class for specificity)
@@ -145,6 +155,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
+      openPlanDocument();
       const planSection = document.querySelector(".detail-section--plan-prompt");
       const fallback = document.querySelector(".detail-prompt");
       expect(planSection).toBeTruthy();
@@ -167,7 +178,9 @@ describe("TaskDetailModal", () => {
       );
 
       expect(document.querySelector(".task-detail-content--embedded")).toBeTruthy();
+      openPlanDocument();
       const planSection = document.querySelector(".detail-section--plan-prompt");
+      openPlanDocument();
       fireEvent.click(screen.getByText("Edit"));
 
       const editMode = document.querySelector(".spec-editor-edit-mode");
@@ -192,6 +205,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
+      openPlanDocument();
       fireEvent.click(screen.getByText("Edit"));
       const textarea = document.querySelector(".spec-editor-textarea") as HTMLTextAreaElement;
       fireEvent.change(textarea, { target: { value: "Modified content" } });
@@ -221,6 +235,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
+      openPlanDocument();
       fireEvent.click(screen.getByText("Edit"));
       const textarea = document.querySelector(".spec-editor-textarea") as HTMLTextAreaElement;
       fireEvent.change(textarea, { target: { value: "# Updated" } });
@@ -248,6 +263,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
+      openPlanDocument();
       fireEvent.click(screen.getByText("Edit"));
 
       expect(screen.getByText("Ask AI to Revise")).toBeTruthy();
@@ -273,6 +289,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
+      openPlanDocument();
       fireEvent.click(screen.getByText("Edit"));
 
       const feedbackInput = screen.getByPlaceholderText(/e.g., 'Add more details/);
@@ -446,6 +463,8 @@ describe("TaskDetailModal", () => {
         />,
       );
 
+      expect(screen.getByRole("button", { name: "Read plan" })).toBeTruthy();
+      openPlanDocument();
       expect(screen.getByText("(no prompt)")).toBeTruthy();
       expect(screen.getByText("Edit")).toBeTruthy();
     });
@@ -1788,6 +1807,7 @@ describe("TaskDetailModal", () => {
       delete slimTask.prompt;
 
       render(<TaskDetailContent task={slimTask as TaskDetail} initialTab="definition" onDeleteTask={noopDelete} onMergeTask={noopMerge} onOpenDetail={noopOpenDetail} addToast={noop} />);
+      openPlanDocument();
 
       await waitFor(() => expect(screen.getByText("Authoritative prompt")).toBeTruthy());
       expect(mockFetchDetail).toHaveBeenCalledTimes(1);
@@ -1807,6 +1827,7 @@ describe("TaskDetailModal", () => {
         .mockResolvedValueOnce({ id: "FN-fresh", prompt: "# Re-entered revision" });
 
       render(<TaskDetailContent task={makeTask({ id: "FN-fresh", column: "triage", status: "planning", prompt: "" })} projectId="project-fresh" initialTab="definition" onDeleteTask={noopDelete} onMergeTask={noopMerge} onOpenDetail={noopOpenDetail} addToast={noop} />);
+      openPlanDocument();
 
       await act(async () => { await vi.advanceTimersByTimeAsync(0); });
       expect(screen.getByText("First revision")).toBeTruthy();
@@ -1818,12 +1839,14 @@ describe("TaskDetailModal", () => {
       expect(mockFetchPrompt).toHaveBeenCalledTimes(2);
       expect(mockFetchDetail).not.toHaveBeenCalled();
 
+      fireEvent.click(screen.getByRole("button", { name: "Back to definition" }));
       fireEvent.click(screen.getByText("Activity"));
       await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
       expect(mockFetchPrompt).toHaveBeenCalledTimes(2);
       expect(mockFetchDetail).not.toHaveBeenCalled();
 
       fireEvent.click(screen.getByText("Plan"));
+      openPlanDocument();
       await act(async () => { await vi.advanceTimersByTimeAsync(0); });
       expect(screen.getByText("Re-entered revision")).toBeTruthy();
       expect(mockFetchPrompt).toHaveBeenCalledTimes(3);
@@ -1841,9 +1864,11 @@ describe("TaskDetailModal", () => {
         .mockResolvedValueOnce({ id: "FN-edit", prompt: "# New server revision" });
 
       render(<TaskDetailContent task={makeTask({ id: "FN-edit", column: "todo", prompt: "# Initial", workflowStepResults: [{ workflowStepId: "plan-review", status: "pending", startedAt: "2026-08-03T02:00:00Z" }] })} initialTab="definition" onDeleteTask={noopDelete} onMergeTask={noopMerge} onOpenDetail={noopOpenDetail} addToast={noop} />);
+      openPlanDocument();
       await act(async () => { await vi.advanceTimersByTimeAsync(0); });
       expect(screen.getByText("Server revision")).toBeTruthy();
 
+      openPlanDocument();
       fireEvent.click(screen.getByText("Edit"));
       const textarea = document.querySelector(".spec-editor-textarea") as HTMLTextAreaElement;
       fireEvent.change(textarea, { target: { value: "# Local operator edit" } });
@@ -1865,6 +1890,7 @@ describe("TaskDetailModal", () => {
       const props = { initialTab: "definition" as const, onDeleteTask: noopDelete, onMergeTask: noopMerge, onOpenDetail: noopOpenDetail, addToast: noop };
       const view = render(<TaskDetailContent {...props} task={makeTask({ id: "FN-old", column: "triage", status: "planning", prompt: "# Old task" })} />);
       view.rerender(<TaskDetailContent {...props} task={makeTask({ id: "FN-current", column: "triage", status: "planning", prompt: "" })} />);
+      openPlanDocument();
       await waitFor(() => expect(screen.getByText("Current task")).toBeTruthy());
       await act(async () => { resolveFirst({ id: "FN-old", prompt: "# Stale task" }); });
       expect(screen.queryByText("Stale task")).toBeNull();

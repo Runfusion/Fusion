@@ -6,8 +6,8 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-vi.mock("@fusion/dashboard/app/components/ViewHeader", () => ({
-  ViewHeader: ({ title, actions }: { title: string; actions?: ReactNode }) => (
+vi.mock("@fusion/dashboard/app/plugins/PluginDashboardViewHeader", () => ({
+  PluginDashboardViewHeader: ({ title, actions }: { title: string; actions?: ReactNode }) => (
     <header><h1>{title}</h1>{actions}</header>
   ),
 }));

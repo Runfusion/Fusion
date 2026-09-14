@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from "react";
-import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import { Settings, LayoutGrid, List, Search, Activity, MoreHorizontal, Clock, Folder, History, GitBranch, Monitor, Workflow, Bot, Target, Grid3X3, Mail, MessageSquare, Check, Zap, Sparkles, Brain, Lock, Gauge, Lightbulb, PanelsTopLeft, ChevronDown, ChevronRight, PanelRight, Plus, Star } from "lucide-react";
+import { Settings, LayoutGrid, List, Search, Activity, MoreHorizontal, Clock, Folder, History, GitBranch, Monitor, Workflow, Bot, Target, Grid3X3, Mail, MessageSquare, Check, Zap, Sparkles, Brain, Lock, Gauge, Lightbulb, PanelsTopLeft, ChevronDown, ChevronRight, PanelRight, Star } from "lucide-react";
 import "./Header.css";
 // ProjectSelector styles used by the imported standalone component.
 import "./ProjectSelector.css";
@@ -20,6 +19,7 @@ import { buildPluginTaskViewId, isPluginViewId } from "../plugins/pluginViewRegi
 import { getPluginNavIcon } from "./pluginNavIcon";
 import { TaskSearchInput } from "./TaskSearchInput";
 import type { ShellHostContext } from "../shell-host";
+import { ViewActionButton } from "./ViewActionButton";
 export { resolveReportContextRefs } from "../utils/reportContextRefs";
 
 export { useViewportMode };
@@ -94,8 +94,6 @@ export interface HeaderProps {
   shellHost?: ShellHostContext;
   /** When true, the mobile bottom nav bar handles primary navigation and header nav controls are hidden. */
   mobileNavEnabled?: boolean;
-  /** Enables the Alpha shell variants without changing legacy navigation. */
-  alphaUpdatesEnabled?: boolean;
   /** When true on non-mobile screens, persistent left sidebar owns primary view navigation. */
   leftSidebarNavActive?: boolean;
   /*
@@ -152,7 +150,6 @@ export function Header({
   projectId,
   shellHost = { kind: "browser" },
   mobileNavEnabled,
-  alphaUpdatesEnabled = false,
   leftSidebarNavActive = false,
   rightDockAvailable = false,
   rightDockOpen = false,
@@ -299,7 +296,7 @@ export function Header({
   const shouldShowMobileSearch = isMobileSearchOpen || searchQuery.length > 0;
 
   const canShowNonMobileSearch = (view === "board" || view === "list") && !isMobile && onSearchChange;
-  const showAlphaDesktopSearch = Boolean(alphaUpdatesEnabled && mode === "desktop" && canShowNonMobileSearch);
+  const showAlphaDesktopSearch = Boolean(mode === "desktop" && canShowNonMobileSearch);
   const closeAlphaSearch = useCallback(() => {
     setIsAlphaSearchOpen(false);
     setAlphaSearchQuery("");
@@ -474,7 +471,7 @@ export function Header({
               fill="currentColor"
             />
           </svg>
-          {!(isMobile && alphaUpdatesEnabled) && <h1 className="logo">{t("appName", "Fusion")}</h1>}
+          {!isMobile && <h1 className="logo">{t("appName", "Fusion")}</h1>}
         </div>
 
         {/* Mobile Project Switch - dropdown trigger next to logo when at least one project exists (mobile only) */}
@@ -653,12 +650,16 @@ export function Header({
           </button>
         )}
 
-        {/* FNXC:AlphaUpdates 2026-09-09-19:11: Alpha gives Usage one canonical mobile home in the shared hamburger menu; the legacy shell retains its direct header shortcut. */}
-        {isMobile && hideFullNav && !alphaUpdatesEnabled && onOpenUsage && (
+        {/*
+        FNXC:MobileUsage 2026-09-13-22:47:
+        The mobile project header keeps a one-tap Usage shortcut so AI quota status is reachable without opening the shared navigation menu. Show it only while mobile navigation owns the primary destinations; the legacy compact header retains its existing Usage entry in the overflow menu.
+        */}
+        {isMobile && hideFullNav && onOpenUsage && (
           <button
             className="btn-icon"
             onClick={(event) => onOpenUsage(event.currentTarget.getBoundingClientRect())}
             title={t("header.viewUsage", "View usage")}
+            aria-label={t("header.viewUsage", "View usage")}
             data-testid="mobile-header-usage-btn"
           >
             <Activity size={16} />
@@ -676,20 +677,40 @@ export function Header({
         {/**
          * FNXC:Header 2026-06-21-00:00:
          * Desktop and tablet header search must render after the workflow portal slot so a populated WorkflowSwitcher appears left of the search icon while preserving the mobile search trigger's existing position and behavior.
+         *
+         * FNXC:AlphaTaskSearch 2026-09-12-21:52:
+         * On Alpha desktop Board and List, Search alternates in this exact action slot between the magnifier and the shared inline combobox. Its transient query and task-detail selection remain isolated from the Board/List filter; close, Escape, and selection clear the field and restore focus to the recreated trigger without any modal or backdrop.
          */}
         {showAlphaDesktopSearch && onSearchChange && (
-          <button
-            ref={alphaSearchTriggerRef}
-            type="button"
-            className="btn-icon"
-            onClick={() => setIsAlphaSearchOpen(true)}
-            title={t("header.openSearch", "Open search")}
-            aria-label={t("header.openSearch", "Open search")}
-            aria-expanded={isAlphaSearchOpen}
-            data-testid="alpha-desktop-header-search-btn"
-          >
-            <Search size={16} />
-          </button>
+          isAlphaSearchOpen ? (
+            <TaskSearchInput
+              query={alphaSearchQuery}
+              tasks={taskSearchTasks}
+              onSearchChange={setAlphaSearchQuery}
+              onSelectTask={(task) => {
+                const selected = taskSearchTasks?.find((candidate) => candidate.id.toLocaleLowerCase() === task.id.toLocaleLowerCase());
+                if (selected) onSelectSearchTask?.(selected);
+                closeAlphaSearch();
+              }}
+              onClose={closeAlphaSearch}
+              autoFocus
+              className="header-search--alpha-inline"
+              testId="alpha-desktop-header-search-input"
+            />
+          ) : (
+            <button
+              ref={alphaSearchTriggerRef}
+              type="button"
+              className="btn-icon"
+              onClick={() => setIsAlphaSearchOpen(true)}
+              title={t("header.openSearch", "Open search")}
+              aria-label={t("header.openSearch", "Open search")}
+              aria-expanded={false}
+              data-testid="alpha-desktop-header-search-btn"
+            >
+              <Search size={16} />
+            </button>
+          )
         )}
 
         {canShowNonMobileSearchToggle && !showAlphaDesktopSearch && (
@@ -716,15 +737,22 @@ export function Header({
             >
               <LayoutGrid size={16} />
             </button>
-            <button
-              className={`view-toggle-btn${view === "list" ? " active" : ""}`}
-              onClick={() => onChangeView("list")}
-              title={t("header.listView", "List view")}
-              aria-label={t("header.listView", "List view")}
-              aria-pressed={view === "list"}
-            >
-              <List size={16} />
-            </button>
+            {/*
+            FNXC:ListInRightDock 2026-09-14-04:42:
+            FN-382: on a phone the toggle still switches to the List page; on tablet and desktop List lives in the
+            right dock, so the toggle would either duplicate that tool or navigate away from the current destination.
+            */}
+            {isMobile ? (
+              <button
+                className={`view-toggle-btn${view === "list" ? " active" : ""}`}
+                onClick={() => onChangeView("list")}
+                title={t("header.listView", "List view")}
+                aria-label={t("header.listView", "List view")}
+                aria-pressed={view === "list"}
+              >
+                <List size={16} />
+              </button>
+            ) : null}
             {showAgentsTab && (
               <button
                 className={`view-toggle-btn${view === "agents" ? " active" : ""}`}
@@ -951,18 +979,6 @@ export function Header({
                       <Lock size={14} />
                       <span>{t("header.secretsView", "Secrets")}</span>
                     </button>
-                    {!alphaUpdatesEnabled && <button
-                      className={`view-toggle-overflow-item${view === "patchnode" ? " active" : ""}`}
-                      onClick={() => {
-                        onChangeView("patchnode");
-                        setIsViewOverflowOpen(false);
-                      }}
-                      role="menuitem"
-                      data-testid="view-overflow-patchnode"
-                    >
-                      <History size={14} />
-                      <span>{t("nav.patchnode", "History")}</span>
-                    </button>}
                     {experimentalFeatures?.devServerView && (
                       <button
                         className={`view-toggle-overflow-item${view === "dev-server" || view === "devserver" ? " active" : ""}`}
@@ -1234,44 +1250,20 @@ export function Header({
         FNXC:MobileTaskNavigation 2026-08-20-05:47:
         Issue #2226 moves mobile Board/List navigation to the footer so Header can expose App's single full-task modal entry point from every active project view. The Planning column keeps its separate quick-entry composer.
 
-        FNXC:MobileTaskNavigation 2026-09-12-05:41:
-        The App-owned create-task control stays in the Header only on tablet/mobile Alpha and on legacy mobile when bottom navigation is active. Desktop creation remains available through its dedicated surfaces and shortcuts without leaving a duplicate Header button or shell; retained compact controls stay last in the action cluster.
+        FNXC:StandardizedViewActions 2026-09-13-22:40:
+        The App-owned create-task control keeps its established placement — tablet/mobile only — and merely adopts the shared action primitive so its shape matches every other creation entry. Desktop creation stays with its dedicated surfaces and shortcuts, so standardizing the button must not reintroduce a retired desktop Header duplicate. List is excluded at every viewport because its own header preserves the selected-workflow argument.
         */}
-        {((alphaUpdatesEnabled && mode !== "desktop") || (isMobile && mobileNavEnabled)) && projectId && onNewTask && (
-          <button
-            className="btn-icon"
+        {mode !== "desktop" && projectId && onNewTask && view !== "list" ? (
+          <ViewActionButton
+            kind="create"
             onClick={onNewTask}
+            label={t("newTaskModal.title", "New Task")}
             title={t("newTaskModal.title", "New Task")}
-            aria-label={t("newTaskModal.title", "New Task")}
             data-testid="mobile-header-new-task"
-          >
-            <Plus />
-          </button>
-        )}
+          />
+        ) : null}
       </div>
     </header>
-
-    {/*
-    FNXC:AlphaTaskSearch 2026-09-12-01:35:
-    Alpha desktop replaces the filtering field with one Search icon. Its portaled, centered search selects a project-scoped task into the canonical detail route, while backdrop/Escape/selection close and clear transient input without touching Board or remote query state.
-    */}
-    {showAlphaDesktopSearch && isAlphaSearchOpen && typeof document !== "undefined" ? createPortal(
-      <div className="alpha-task-search-overlay" role="presentation" data-testid="alpha-task-search-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) closeAlphaSearch(); }}>
-        <div className="alpha-task-search-overlay__panel" role="dialog" aria-modal="true" aria-label={t("header.searchTasks", "Search tasks...")}>
-          <TaskSearchInput
-            query={alphaSearchQuery}
-            tasks={taskSearchTasks}
-            onSearchChange={setAlphaSearchQuery}
-            onSelectTask={(task) => {
-              const selected = taskSearchTasks?.find((candidate) => candidate.id.toLocaleLowerCase() === task.id.toLocaleLowerCase());
-              if (selected) onSelectSearchTask?.(selected);
-              closeAlphaSearch();
-            }}
-            autoFocus
-            className="alpha-task-search-overlay__search"
-          />
-        </div>
-      </div>, document.body) : null}
 
     {/* Desktop/Tablet Search - floating below header, in board or list view */}
     {canShowNonMobileSearch && shouldShowNonMobileSearch && !showAlphaDesktopSearch && (

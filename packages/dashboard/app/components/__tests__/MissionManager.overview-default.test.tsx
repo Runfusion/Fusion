@@ -150,7 +150,8 @@ describe("MissionManager overview default", () => {
 
     renderMissionManager();
     expect(await screen.findByText("First Mission")).toBeInTheDocument();
-    expect(screen.queryByTestId("mission-empty-detail")).not.toBeInTheDocument();
+    expect(screen.getByTestId("mission-empty-detail")).toBeInTheDocument();
+    expect(screen.getByTestId("mission-empty-detail").closest(".view-layout")).toHaveAttribute("data-mobile-pane", "list");
     await waitFor(() => expect(mockFetchMission).not.toHaveBeenCalled());
   });
 

@@ -41,6 +41,7 @@ function input(overrides: Parameters<typeof runPlanReviewDependencyGate>[0] exte
     settings: {} as Settings,
     workspaceConfig: null,
     worktreePath,
+    nodeId: "plan-review",
     store,
     getRunContextFor: () => undefined,
     runConfiguredCommand: runner(),
@@ -52,7 +53,12 @@ function input(overrides: Parameters<typeof runPlanReviewDependencyGate>[0] exte
 function graphNodeDeps(row: TaskDetail, worktreePath: string, runConfiguredCommand = runner()) {
   const store = {
     getTask: vi.fn(async () => row),
+    updateTask: vi.fn(async (_taskId: string, patch: Partial<Task>) => {
+      Object.assign(row, patch);
+      return row;
+    }),
     logEntry: vi.fn(async () => undefined),
+    recordRunAuditEvent: vi.fn(async () => undefined),
   };
   return {
     store,
@@ -233,6 +239,53 @@ describe("Plan Review dependency gate", () => {
       feedback: expect.stringMatching(/^Dependencies are not installed\./),
     }));
     expect(result.visitedNodeIds).toContain("plan-replan");
+  });
+
+  it("persists the executing Plan Review node for Retry after a repeated deterministic failure", async () => {
+    const root = worktree({ "package.json": "{}" });
+    const row = task({
+      worktree: root,
+      enabledWorkflowSteps: ["plan-review"],
+      workflowStepResults: [],
+    });
+    const command = runner({
+      stdout: "",
+      stderr: "error: No interpreter found for Python >=3.13 in managed installations or search path",
+      exitCode: 2,
+      signal: null,
+      timedOut: false,
+      bufferExceeded: false,
+    });
+    const harness = graphNodeDeps(row, root, command);
+    const graph = new WorkflowGraphExecutor({
+      handlers: {
+        prompt: (node, context) => runGraphCustomNode(
+          harness as never,
+          node,
+          context.task,
+          context.settings as Settings,
+          undefined,
+          context.context,
+        ),
+      },
+      recordWorkflowStepResult: vi.fn(async () => undefined),
+    });
+    const settings = {
+      experimentalFeatures: { workflowGraphExecutor: true },
+      worktreeInitCommand: "install project dependencies",
+    } as Settings;
+
+    const first = await graph.run(row, settings, planReviewGraph());
+    const second = await graph.run(row, settings, planReviewGraph());
+
+    expect(first.visitedNodeIds).toContain("plan-replan");
+    expect(second.visitedNodeIds).not.toContain("plan-replan");
+    expect(command).toHaveBeenCalledTimes(2);
+    expect(row.externalBlock).toMatchObject({
+      source: "dependency-readiness",
+      /* FNXC:WorktreeDependencies 2026-09-13-09:05: Retry continuations target the owning optional group because template children are not resumable IR nodes. */
+      resume: { nodeId: "plan-review" },
+    });
   });
 
   it("routes a graph-produced dependency REVISE through cap exhaustion to awaiting approval", async () => {

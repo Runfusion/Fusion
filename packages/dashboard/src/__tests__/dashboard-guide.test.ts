@@ -51,15 +51,82 @@ describe("dashboard guide coverage for lazy-loaded views", () => {
     expect(piBody).toContain("Settings → Plugins → Pi Extensions");
   });
 
-  it("documents the responsive Alpha Header and Quick Entry hold contract", () => {
+  it("documents completed-column arrival anchoring separately from history pagination", () => {
+    const guide = readDashboardGuide();
+    const completedColumnsBody = getSectionBody(guide, "Board completed columns");
+
+    expect(completedColumnsBody).toContain("the column stays at the top and shows that task immediately");
+    expect(completedColumnsBody).toContain("Fusion preserves your reading position");
+    expect(completedColumnsBody).toContain("separate from automatic history pagination");
+  });
+
+  it("documents the responsive official Header and Quick Entry hold contract", () => {
     const guide = readDashboardGuide();
 
-    expect(guide).toContain("New Task** is absent from both the Alpha desktop footer and Header");
+    expect(guide).toContain("New Task** is absent from both the desktop footer and Header");
     expect(guide).toContain("tablet and mobile retain the rightmost compact Header action");
     expect(guide).toContain("one non-wrapping row; long workflow names truncate before the Search icon moves");
     expect(guide).toContain("icon-only Save button");
-    expect(guide).toContain("hold continuously for 1,200 ms");
-    expect(guide).toContain("Non-Alpha Quick Entry retains its text Save button and separate Start action");
+    expect(guide).toContain("continuous 500 ms hold");
+    expect(guide).toContain("a single click or tap saves the task exactly once");
+    expect(guide).toContain("Releasing before the threshold performs the ordinary save");
+    expect(guide).toContain("leaving or cancelling the gesture creates nothing");
+    expect(guide).toContain("every visible icon-only action in the primary row uses the same token-sized square");
+    expect(guide).toContain("text option controls retain their content-sized width");
+    expect(guide).toContain("Historical alphaUpdates values never select another layout");
+  });
+
+  it("documents the shared tablet/desktop footer without broadening desktop-only behavior", () => {
+    const guide = readDashboardGuide();
+
+    expect(guide).toContain("official tablet and desktop design uses one full-width navigation footer instead of ExecutorStatusBar");
+    expect(guide).toContain("Terminal** sits immediately left of **Settings");
+    expect(guide).toContain("Tablet retains its sidebar, compact Header, standard right dock, ordinary page routing, and no Alpha desktop windows or guards");
+    expect(guide).toContain("continues to use More on mobile");
+  });
+
+  it("documents direct file windows without removing the full Files browser", () => {
+    const guide = readDashboardGuide();
+
+    expect(guide).toContain("A window opened for that specific file shows only its editor, preview, loading state, or error");
+    expect(guide).toContain("it does not repeat the file list, sidebar resize separator, or narrow-layout **Back to file list** action");
+    expect(guide).toContain("Opening Files without selecting a file still opens the complete browser");
+  });
+
+  it("documents the ascending single-column desktop More menu", () => {
+    const guide = readDashboardGuide();
+
+    expect(guide).toContain("More** opens centered above its trigger as a compact single vertical column");
+    expect(guide).toContain("one destination per row and vertical scrolling when the list grows beyond the viewport");
+    expect(guide).toContain("leaving the combined region still closes it");
+  });
+
+  it("documents official bottom-entering mobile drawers and Task Detail close ownership", () => {
+    const guide = readDashboardGuide();
+
+    expect(guide).toContain("every mobile drawer rises vertically from below with no lateral movement");
+    expect(guide).toContain("when reduced motion is requested, it appears without that transition");
+    expect(guide).toContain("The drawer omits the redundant **Back to board** action");
+    expect(guide).toContain("Desktop Board panels retain **Back to board**");
+  });
+
+  it("documents Alpha Updates retirement separately from Whiteboard Alpha", () => {
+    const guide = readDashboardGuide();
+
+    expect(guide).toContain("The removed `experimentalFeatures.alphaUpdates` setting is tolerated only as inert historical data");
+    expect(guide).toContain("Enable **Settings → Experimental → Whiteboard Alpha** (`experimentalFeatures.whiteboardView`)");
+    expect(guide).not.toContain("With **Alpha Updates**");
+  });
+
+  it("documents canonical Task Detail tabs with mouse drag-to-scroll and native touch", () => {
+    const guide = readDashboardGuide();
+
+    expect(guide).toContain("drag it horizontally with the left mouse button to scroll without using the wheel");
+    expect(guide).toContain("a stationary click still selects its tab or opens the Activity menu");
+    expect(guide).toContain("Tab order always remains canonical");
+    expect(guide).toContain("Touch and pen input keep the browser's native horizontal pan and tap behavior");
+    expect(guide).not.toContain("drag a tab with the mouse to reorder it");
+    expect(guide).not.toContain("Alt+ArrowLeft");
   });
 
   it("documents permanent Planning sessions off phone and compact phone navigation", () => {

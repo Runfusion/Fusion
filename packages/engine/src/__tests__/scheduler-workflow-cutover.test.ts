@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeTransitionRejection, TransitionRejectionError, buildBootstrapPrompt, type Task, type TaskStore, type WorkflowIr } from "@fusion/core";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { Scheduler } from "../scheduler.js";
 import { AgentSemaphore } from "../concurrency/concurrency.js";
 
@@ -22,6 +23,15 @@ scheduler fixtures model a card that already cleared the gate (the state every r
 the capacity sweep sees it). Holding an unreviewed card is the gate working — that path is owned by
 `pre-release-plan-review.test.ts`.
 */
+const PROJECT_ROOT = fileURLToPath(new URL("../../../..", import.meta.url)).replace(/\/$/, "");
+const VALID_PLAN = [
+  "# Task",
+  "Body",
+  "",
+  "## Plan Premises",
+  '- {"kind":"file-exists","path":"package.json"}',
+].join("\n");
+
 const PASSED_PLAN_REVIEW = {
   workflowStepId: "plan-review",
   workflowStepName: "Plan Review",
@@ -40,6 +50,7 @@ function task(overrides: Partial<Task> = {}): Task {
     steps: [],
     currentStep: 0,
     log: [],
+    prompt: VALID_PLAN,
     workflowStepResults: [PASSED_PLAN_REVIEW],
     createdAt: "2026-06-23T00:00:00.000Z",
     updatedAt: "2026-06-23T00:00:00.000Z",
@@ -98,7 +109,7 @@ function storeWith(
       if (appended) await logEntry(id, transition.action);
       return { appended, task: current };
     }),
-    getRootDir: vi.fn(() => "/tmp/project"),
+    getRootDir: vi.fn(() => PROJECT_ROOT),
     getTasksDir: vi.fn(() => "/tmp/project/.fusion/tasks"),
     on: vi.fn(),
     off: vi.fn(),
@@ -109,8 +120,8 @@ function storeWith(
       listGoalIdsForMission: () => [],
     })),
     getTaskWorkflowSelection: vi.fn((id: string) => {
-      const workflowId = workflows.selections?.[id];
-      return workflowId ? { workflowId, stepIds: [] } : undefined;
+      const workflowId = workflows.selections?.[id] ?? "builtin:coding";
+      return { workflowId, stepIds: [] };
     }),
     getWorkflowDefinition: vi.fn(async (id: string) => {
       const ir = workflows.definitions?.[id];
@@ -123,7 +134,7 @@ describe("Scheduler workflow cutover", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(existsSync).mockReturnValue(true);
-    vi.mocked(readFile).mockResolvedValue("# Task\nBody");
+    vi.mocked(readFile).mockResolvedValue(VALID_PLAN);
   });
 
   afterEach(() => {
@@ -370,7 +381,7 @@ describe("Scheduler workflow cutover", () => {
     const moveOptions = vi.mocked(store.moveTaskIf).mock.calls[0]?.[3] as {
       allocateWorktree?: (reservedNames: Set<string>) => string | null;
     };
-    expect(moveOptions.allocateWorktree?.(new Set())).toBe("/tmp/project/custom-worktrees/fn-102");
+    expect(moveOptions.allocateWorktree?.(new Set())).toBe(`${PROJECT_ROOT}/custom-worktrees/fn-102`);
   });
 
   it("continues executor handoff for all released tasks when post-release metadata or logs fail", async () => {

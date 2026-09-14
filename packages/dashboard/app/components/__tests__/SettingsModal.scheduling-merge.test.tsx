@@ -208,37 +208,41 @@ describe("SettingsModal", () => {
     localStorage.setItem("fusion:settings:show-advanced", "true");
   });
 
-  it("persists Alpha Updates on and off without rewriting mobile navigation preferences", async () => {
+  it.each([
+    ["absente", undefined],
+    ["fausse", false],
+    ["vraie", true],
+  ] as const)("masque Alpha Updates avec une valeur historique %s et conserve Whiteboard", async (_label, alphaUpdates) => {
     const mobileNavPrimaryItems = ["settings", "planning"];
-    const settingsWithoutAlpha = {
-      ...defaultSettings,
-      mobileNavPrimaryItems,
-      experimentalFeatures: { leftSidebarNav: true },
+    const experimentalFeatures = {
+      leftSidebarNav: true,
+      ...(alphaUpdates === undefined ? {} : { alphaUpdates }),
     };
-    mockFetchSettings.mockResolvedValue(settingsWithoutAlpha);
-    mockFetchSettingsByScope.mockResolvedValue({ global: defaultSettings, project: settingsWithoutAlpha });
-    mockUpdateGlobalSettings.mockImplementation(async (settings) => settings);
+    const settings = { ...defaultSettings, mobileNavPrimaryItems, experimentalFeatures };
+    mockFetchSettings.mockResolvedValue(settings);
+    mockFetchSettingsByScope.mockResolvedValue({ global: settings, project: settings });
+    mockUpdateGlobalSettings.mockImplementation(async (nextSettings) => nextSettings);
 
     renderModal({ initialSection: "experimental" });
     await waitForSettingsModalReady();
 
-    const alphaToggle = screen.getByRole("checkbox", { name: "Alpha Updates" });
-    expect(alphaToggle).not.toBeChecked();
+    expect(screen.queryByRole("checkbox", { name: "Alpha Updates" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Alpha Updates")).not.toBeInTheDocument();
+    expect(document.getElementById("experimental-alphaUpdates")).toBeNull();
+    const whiteboardToggle = screen.getByRole("checkbox", { name: "Whiteboard Alpha" });
+    expect(whiteboardToggle).not.toBeChecked();
 
+    const projectSaveCount = mockUpdateSettings.mock.calls.length;
     vi.useFakeTimers();
-    fireEvent.click(alphaToggle);
+    fireEvent.click(whiteboardToggle);
     await flushSettingsAutoSave();
     expect(mockUpdateGlobalSettings).toHaveBeenLastCalledWith(expect.objectContaining({
-      experimentalFeatures: expect.objectContaining({ alphaUpdates: true }),
+      experimentalFeatures: expect.objectContaining({
+        ...(alphaUpdates === undefined ? {} : { alphaUpdates }),
+        whiteboardView: true,
+      }),
     }));
-    expect(mockUpdateSettings.mock.calls.every(([patch]) => !("mobileNavPrimaryItems" in patch))).toBe(true);
-
-    fireEvent.click(alphaToggle);
-    await flushSettingsAutoSave();
-    expect(mockUpdateGlobalSettings).toHaveBeenLastCalledWith(expect.objectContaining({
-      experimentalFeatures: expect.objectContaining({ alphaUpdates: false }),
-    }));
-    expect(mockUpdateSettings.mock.calls.every(([patch]) => !("mobileNavPrimaryItems" in patch))).toBe(true);
+    expect(mockUpdateSettings.mock.calls.slice(projectSaveCount).every(([patch]) => !("mobileNavPrimaryItems" in patch))).toBe(true);
     vi.useRealTimers();
   });
 

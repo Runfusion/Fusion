@@ -48,6 +48,10 @@ and a 640px floor would push content under the east edge in a narrow window.
   resize: none;
 }
 
+/*
+FNXC:ModalChrome 2026-09-13-14:21:
+Model Onboarding owns only the header layout and placement of its close action. ModalCloseButton remains the sole owner of close-button geometry, border, radius, paint, and interaction feedback so this modal cannot shrink or restyle the canonical control.
+*/
 .model-onboarding-header {
   display: flex;
   align-items: center;
@@ -56,34 +60,11 @@ and a 640px floor would push content under the east edge in a narrow window.
   gap: var(--space-md);
 }
 
-.model-onboarding-header .modal-close {
-  background: none;
-  border: none;
-  font-size: 20px;
-  color: var(--text-muted);
-  cursor: pointer;
-  padding: 4px 8px;
-  border-radius: 4px;
-  line-height: 1;
-}
-
-.model-onboarding-header .modal-close:hover {
-  color: var(--text);
-  background: var(--surface-hover);
-}
-
-.model-onboarding-title {
-  font-size: 24px;
-  font-weight: 800;
-  margin: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--text);
-  line-height: 1.1;
-}
-
-.model-onboarding-title svg {
+/*
+FNXC:StandardizedViewLayout 2026-09-13-22:40:
+FN-379: the shared header owns onboarding's title typography; only the step icon accent stays local.
+*/
+.model-onboarding-header .view-header__title svg {
   color: var(--accent);
 }
 

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { getMobileKeyboardLayoutViewportHeight } from "../utils/mobileBarKeyboardFlags";
 
 const IOS_FALLBACK_MIN_GAP_PX = 30;
 const IOS_FALLBACK_MIN_FOCUSED_GAP_PX = 16;
@@ -82,11 +83,42 @@ interface KeyboardMetrics {
   vvOffsetTop: number;
 }
 
+interface NavigationViewportMetrics extends KeyboardMetrics {
+  baselineHeight: number | null;
+}
+
+export interface MobileKeyboardNavigationViewport {
+  active: boolean;
+  keyboardOverlap: number;
+  viewportHeight: number | null;
+  viewportOffsetTop: number;
+}
+
+export interface MobileKeyboardState {
+  keyboardOverlap: number;
+  viewportHeight: number | null;
+  viewportOffsetTop: number;
+  keyboardOpen: boolean;
+  navigationViewport: MobileKeyboardNavigationViewport;
+}
+
 const CLOSED_KEYBOARD_METRICS: KeyboardMetrics = {
   overlap: 0,
   open: false,
   vvHeight: null,
   vvOffsetTop: 0,
+};
+
+const CLOSED_NAVIGATION_VIEWPORT_METRICS: NavigationViewportMetrics = {
+  ...CLOSED_KEYBOARD_METRICS,
+  baselineHeight: null,
+};
+
+const CLOSED_NAVIGATION_VIEWPORT: MobileKeyboardNavigationViewport = {
+  active: false,
+  keyboardOverlap: 0,
+  viewportHeight: null,
+  viewportOffsetTop: 0,
 };
 
 function hasImpossibleViewportSample(): boolean {
@@ -163,16 +195,17 @@ function getKeyboardMetrics(
   // Android/Chrome style overlap. Only treat as open while an input is
   // actually focused — without this, the (often slow) visualViewport
   // dismissal animation keeps reporting overlap > 0 for hundreds of ms
-  // after the user has tapped Done, which leaves App-level layout (mobile
-  // nav bar visibility, project-content padding) stuck in keyboard-up
-  // mode and makes downstream components (ChatView) jump on settle.
+  // after the user has tapped Done, which leaves focus-owned layout (the
+  // executor footer and composer padding) stuck in keyboard-up mode and
+  // makes downstream components (ChatView) jump on settle. Navigation keeps
+  // a separate viewport-placement lifetime below without extending this flag.
   //
   // Prefer documentElement.clientHeight over window.innerHeight: Android
   // Chrome can report a stale innerHeight (multi-window / shrink-to-fit
   // edge cases — observed innerHeight=2848 while html.clientHeight=797),
   // which makes the overlap calc explode and false-positives keyboard-open
   // whenever a textarea has focus.
-  const layoutHeight = document.documentElement?.clientHeight || window.innerHeight;
+  const layoutHeight = getMobileKeyboardLayoutViewportHeight();
   const chromeOverlap = Math.max(0, layoutHeight - vv.offsetTop - vv.height);
   if (chromeOverlap > 0 && focused) {
     return { overlap: chromeOverlap, open: true, vvHeight: vv.height, vvOffsetTop: offsetTop };
@@ -208,6 +241,67 @@ function getKeyboardMetrics(
   return CLOSED_KEYBOARD_METRICS;
 }
 
+/*
+FNXC:MobilePillKeyboard 2026-09-13-11:20:
+A keyboard interaction ends as soon as focus leaves the editor, so `keyboardOpen` must still release composers and the executor footer immediately. Fixed mobile navigation has a different placement lifetime: retain and refresh its last proven keyboard viewport until both the visual viewport height and top offset return to the captured closed baseline, preventing the pill and its open popover from falling behind the dismissing iOS keyboard.
+*/
+function getNavigationViewportMetrics(
+  keyboardMetrics: KeyboardMetrics,
+  previousMetrics: NavigationViewportMetrics,
+  { forceClosed = false }: { forceClosed?: boolean } = {},
+): NavigationViewportMetrics {
+  if (forceClosed || typeof window === "undefined" || !window.visualViewport) {
+    return CLOSED_NAVIGATION_VIEWPORT_METRICS;
+  }
+
+  const viewport = window.visualViewport;
+  if (viewport.scale > 1.01) {
+    return CLOSED_NAVIGATION_VIEWPORT_METRICS;
+  }
+
+  if (keyboardMetrics.open) {
+    const inferredBaseline = viewport.offsetTop + viewport.height + keyboardMetrics.overlap;
+    return {
+      ...keyboardMetrics,
+      baselineHeight: Math.max(getBaselineViewportHeight(), inferredBaseline),
+    };
+  }
+
+  if (!previousMetrics.open) {
+    return CLOSED_NAVIGATION_VIEWPORT_METRICS;
+  }
+
+  // A transient impossible sample cannot prove that the closing viewport has
+  // settled. Preserve the prior safe placement until a coherent sample lands.
+  if (hasImpossibleViewportSample()) {
+    return previousMetrics;
+  }
+
+  const baselineHeight = previousMetrics.baselineHeight ?? getBaselineViewportHeight();
+  const heightRestored = viewport.height >= baselineHeight - IOS_VIEWPORT_SHRINK_MIN_PX;
+  const topRestored = viewport.offsetTop <= IMPOSSIBLE_VIEWPORT_EPSILON_PX;
+  if (heightRestored && topRestored) {
+    return CLOSED_NAVIGATION_VIEWPORT_METRICS;
+  }
+
+  return {
+    overlap: Math.max(0, baselineHeight - viewport.offsetTop - viewport.height),
+    open: true,
+    vvHeight: viewport.height,
+    vvOffsetTop: viewport.offsetTop,
+    baselineHeight,
+  };
+}
+
+function toNavigationViewport(metrics: NavigationViewportMetrics): MobileKeyboardNavigationViewport {
+  return {
+    active: metrics.open,
+    keyboardOverlap: metrics.overlap,
+    viewportHeight: metrics.vvHeight,
+    viewportOffsetTop: metrics.vvOffsetTop,
+  };
+}
+
 /** Reset cached viewport baseline. Exported for tests only. */
 export function _resetInitialViewportHeight(): void {
   resetBaselineViewportHeight();
@@ -220,12 +314,14 @@ interface UseMobileKeyboardOptions {
 
 export function useMobileKeyboard(
   { enabled = true, allowNonMobileViewport = false }: UseMobileKeyboardOptions = {},
-): { keyboardOverlap: number; viewportHeight: number | null; viewportOffsetTop: number; keyboardOpen: boolean } {
+): MobileKeyboardState {
   const [keyboardOverlap, setKeyboardOverlap] = useState(0);
   const [viewportHeight, setViewportHeight] = useState<number | null>(null);
   const [viewportOffsetTop, setViewportOffsetTop] = useState(0);
   const [keyboardOpen, setKeyboardOpen] = useState(false);
+  const [navigationViewport, setNavigationViewport] = useState<MobileKeyboardNavigationViewport>(CLOSED_NAVIGATION_VIEWPORT);
   const stableMetricsRef = useRef<KeyboardMetrics>(CLOSED_KEYBOARD_METRICS);
+  const navigationViewportMetricsRef = useRef<NavigationViewportMetrics>(CLOSED_NAVIGATION_VIEWPORT_METRICS);
 
   useEffect(() => {
     if (!enabled || (!allowNonMobileViewport && !isMobileDevice())) {
@@ -233,6 +329,8 @@ export function useMobileKeyboard(
       setViewportHeight(null);
       setViewportOffsetTop(0);
       setKeyboardOpen(false);
+      setNavigationViewport(CLOSED_NAVIGATION_VIEWPORT);
+      navigationViewportMetricsRef.current = CLOSED_NAVIGATION_VIEWPORT_METRICS;
       return;
     }
 
@@ -242,12 +340,37 @@ export function useMobileKeyboard(
       setViewportHeight(null);
       setViewportOffsetTop(0);
       setKeyboardOpen(false);
+      setNavigationViewport(CLOSED_NAVIGATION_VIEWPORT);
       stableMetricsRef.current = CLOSED_KEYBOARD_METRICS;
+      navigationViewportMetricsRef.current = CLOSED_NAVIGATION_VIEWPORT_METRICS;
       return;
     }
 
-    const commitMetrics = (metrics: KeyboardMetrics) => {
+    const commitNavigationViewport = (
+      metrics: KeyboardMetrics,
+      {
+        forceClosed = false,
+        preserveOffsetTop = false,
+      }: { forceClosed?: boolean; preserveOffsetTop?: boolean } = {},
+    ) => {
+      const nextMetrics = getNavigationViewportMetrics(
+        metrics,
+        navigationViewportMetricsRef.current,
+        { forceClosed },
+      );
+      navigationViewportMetricsRef.current = nextMetrics;
+      const nextViewport = toNavigationViewport(nextMetrics);
+      setNavigationViewport((current) => preserveOffsetTop && nextViewport.active
+        ? { ...nextViewport, viewportOffsetTop: current.viewportOffsetTop }
+        : nextViewport);
+    };
+
+    const commitMetrics = (
+      metrics: KeyboardMetrics,
+      { forceNavigationClosed = false }: { forceNavigationClosed?: boolean } = {},
+    ) => {
       stableMetricsRef.current = metrics;
+      commitNavigationViewport(metrics, { forceClosed: forceNavigationClosed });
       setKeyboardOverlap(metrics.overlap);
       setViewportHeight(metrics.vvHeight);
       setViewportOffsetTop(metrics.vvOffsetTop);
@@ -271,6 +394,7 @@ export function useMobileKeyboard(
     const updateScrollOnly = () => {
       const metrics = getKeyboardMetrics(stableMetricsRef.current);
       stableMetricsRef.current = metrics;
+      commitNavigationViewport(metrics, { preserveOffsetTop: true });
       setKeyboardOverlap(metrics.overlap);
       setViewportHeight(metrics.vvHeight);
       setKeyboardOpen(metrics.open);
@@ -372,7 +496,7 @@ export function useMobileKeyboard(
       }
       commitMetrics(getKeyboardMetrics(stableMetricsRef.current, {
         bypassImpossibleSampleHold: collapsedRestoreSample,
-      }));
+      }), { forceNavigationClosed: collapsedRestoreSample });
       scheduleTailUpdates();
     };
 
@@ -405,12 +529,14 @@ export function useMobileKeyboard(
       cancelHeadUpdate();
       cancelPoll();
       stableMetricsRef.current = CLOSED_KEYBOARD_METRICS;
+      navigationViewportMetricsRef.current = CLOSED_NAVIGATION_VIEWPORT_METRICS;
       setKeyboardOverlap(0);
       setViewportHeight(null);
       setViewportOffsetTop(0);
       setKeyboardOpen(false);
+      setNavigationViewport(CLOSED_NAVIGATION_VIEWPORT);
     };
   }, [allowNonMobileViewport, enabled]);
 
-  return { keyboardOverlap, viewportHeight, viewportOffsetTop, keyboardOpen };
+  return { keyboardOverlap, viewportHeight, viewportOffsetTop, keyboardOpen, navigationViewport };
 }

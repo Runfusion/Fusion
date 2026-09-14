@@ -62,20 +62,19 @@ describe("NotesView", () => {
     expect(screen.queryByRole("button", { name: "Back" })).toBeNull();
   });
 
-  it("fills the host with an edge-to-edge extensible split", async () => {
+  it("fills the host with the shared edge-to-edge rail and detail split", async () => {
     renderNotes();
     await screen.findByRole("button", { name: /Commande/ });
     const view = screen.getByRole("region", { name: "Notes" });
-    const layout = view.querySelector<HTMLElement>(".notes-layout");
-    const list = view.querySelector<HTMLElement>(".notes-list");
+    const layout = view.querySelector<HTMLElement>(".view-layout");
+    const rail = view.querySelector<HTMLElement>(".view-sidebar__panel");
     const detail = view.querySelector<HTMLElement>(".notes-detail");
     expect(getComputedStyle(view).display).toBe("flex");
-    expect(getComputedStyle(layout!).display).toBe("flex");
-    expect(getComputedStyle(layout!).padding).toBe("0");
-    expect(getComputedStyle(layout!).gap).toBe("");
-    expect(getComputedStyle(list!).borderRadius).toBe("");
-    expect(getComputedStyle(detail!).flexGrow).toBe("1");
-    expect(layout?.children).toEqual(expect.objectContaining({ length: 2 }));
+    expect(layout).not.toBeNull();
+    expect(rail!.querySelector(".notes-list")).not.toBeNull();
+    expect(detail).not.toBeNull();
+    expect(view.querySelector(".view-layout__content")!.contains(detail!)).toBe(true);
+    expect(view.querySelectorAll(".notes-list, .notes-detail")).toHaveLength(2);
   });
 
   it("keeps hover and keyboard focus separate from semantic selection", async () => {
@@ -97,9 +96,9 @@ describe("NotesView", () => {
     renderNotes(undefined);
     expect(api.fetchNotes).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "New note" })).toBeDisabled();
-    const layout = screen.getByRole("region", { name: "Notes" }).querySelector(".notes-layout");
-    expect(layout?.querySelectorAll(".notes-list, .notes-detail")).toHaveLength(2);
-    expect(layout?.querySelectorAll(".card")).toHaveLength(0);
+    const view = screen.getByRole("region", { name: "Notes" });
+    expect(view.querySelectorAll(".notes-list, .notes-detail")).toHaveLength(2);
+    expect(view.querySelectorAll(".card")).toHaveLength(0);
   });
 
   it("renders loading and list failure states inside the same split", async () => {
@@ -121,7 +120,8 @@ describe("NotesView", () => {
     api.fetchNotes.mockResolvedValue({ notes: [] });
     renderNotes();
     expect(screen.getByRole("heading", { name: "Notes" })).toBeInTheDocument();
-    const create = await screen.findByRole("button", { name: "Create your first note" });
+    expect(screen.queryByRole("button", { name: "Create your first note" })).toBeNull();
+    const create = await screen.findByRole("button", { name: "New note" });
     fireEvent.click(create);
     await waitFor(() => expect(api.createNote).toHaveBeenCalledWith("p", { title: "Nouvelle note", content: "" }));
     expect(await screen.findByLabelText("Note title")).toHaveValue(note.title);
@@ -306,7 +306,7 @@ describe("NotesView", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Discard" }));
     await waitFor(() => expect(screen.queryByLabelText("Note title")).not.toBeInTheDocument());
     expect(screen.getByRole("button", { name: /Commande/ })).toBeInTheDocument();
-    const layout = screen.getByRole("region", { name: "Notes" }).querySelector(".notes-layout");
-    expect(layout?.querySelectorAll(".notes-list, .notes-detail")).toHaveLength(2);
+    const view = screen.getByRole("region", { name: "Notes" });
+    expect(view.querySelectorAll(".notes-list, .notes-detail")).toHaveLength(2);
   });
 });

@@ -35,11 +35,6 @@
   border-bottom: 1px solid var(--border);
 }
 
-.agent-dialog-header-title {
-  font-weight: 600;
-  font-size: calc(var(--space-md) + var(--space-xs) * 0.75);
-}
-
 .agent-dialog-body {
   flex: 1;
   overflow-y: auto;
@@ -459,10 +454,6 @@
   margin-top: calc(var(--space-xs) * 0.5);
 }
 
-
-.agent-dialog-header-sparkle {
-  margin-right: var(--space-sm);
-}
 
 .agent-dialog-error-banner {
   color: var(--color-error);

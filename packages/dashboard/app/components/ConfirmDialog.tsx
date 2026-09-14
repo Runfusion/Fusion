@@ -1,4 +1,4 @@
-import { ModalCloseButton } from "./ModalCloseButton";
+import { ViewHeader } from "./ViewHeader";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
@@ -122,10 +122,14 @@ export function ConfirmDialog({
         aria-modal="true"
         aria-label={options.title}
       >
-        <div className="modal-header">
-          <h3>{options.title}</h3>
-          <ModalCloseButton onClick={onCancel} aria-label={t("confirm.closeDialog", "Close confirmation dialog")} />
-        </div>
+        {/* FNXC:StandardizedViewLayout 2026-09-13-21:49: Shared chrome for the global confirmation; cancel remains its only close semantics. */}
+        <ViewHeader
+          className="modal-header"
+          headingLevel={3}
+          title={options.title}
+          onClose={onCancel}
+          closeButtonProps={{ "aria-label": t("confirm.closeDialog", "Close confirmation dialog") }}
+        />
 
         <div className="confirm-dialog__body">{options.message}</div>
 

@@ -214,7 +214,18 @@ export function PullRequestView(props: PullRequestViewProps) {
     [detail, dispatch],
   );
 
-  const viewHeader = <ViewHeader icon={GitPullRequest} title={t("pr.view.title", "Pull Requests")} />;
+  /* FNXC:StandardizedViewNavigation 2026-09-13-21:43: Internal PR list selection returns through the common tactile header chevron; controlled detail hosts remain unchanged and do not gain a false list destination. */
+  const viewHeader = (
+    <ViewHeader
+      icon={GitPullRequest}
+      title={t("pr.view.title", "Pull Requests")}
+      backAction={canReturnToList ? {
+        label: t("pr.view.backToList", "Back to list"),
+        "data-testid": "pr-back-to-list",
+        onClick: () => setSelectedId(null),
+      } : undefined}
+    />
+  );
 
   if (isListMode) {
     if (listError) {
@@ -313,18 +324,11 @@ export function PullRequestView(props: PullRequestViewProps) {
   FNXC:PullRequests 2026-06-22-01:00:
   Added the shared ViewHeader (GitPullRequest icon, matching the left-sidebar nav) at the top of every populated PR state so the view reads consistently with other main-content views. The PR-specific identity row (repo/number/branch/state) stays below it. ViewHeader supplies the standard --space-lg top/side padding; the view body must not repeat the top padding.
   */
-  const backToListControl = canReturnToList ? (
-    <button type="button" className="pr-back-to-list btn" data-testid="pr-back-to-list" onClick={() => setSelectedId(null)}>
-      {t("pr.view.backToList", "Back to list")}
-    </button>
-  ) : null;
-
   // ── creating ───────────────────────────────────────────────────────────────
   if (state === "creating") {
     return (
       <div className="pr-view" data-testid="pr-view" data-state="creating">
         {viewHeader}
-        {backToListControl}
         <PrIdentityHeader detail={detail} />
         <div className="pr-placeholder" data-testid="pr-creating">
           <Clock size={16} /> {t("pr.view.creating", "Creating PR…")}
@@ -338,7 +342,6 @@ export function PullRequestView(props: PullRequestViewProps) {
     return (
       <div className="pr-view" data-testid="pr-view" data-state="failed">
         {viewHeader}
-        {backToListControl}
         <PrIdentityHeader detail={detail} />
         <div className="pr-error-reason" data-testid="pr-failed">
           <AlertTriangle size={16} className="pr-icon-failure" />
@@ -365,7 +368,6 @@ export function PullRequestView(props: PullRequestViewProps) {
     return (
       <div className="pr-view" data-testid="pr-view" data-state="unverified">
         {viewHeader}
-        {backToListControl}
         <PrIdentityHeader detail={detail} />
         <div className="pr-notice pr-notice--unverified" data-testid="pr-unverified">
           <Clock size={16} /> {t("pr.view.verifyingGithub", "Verifying with GitHub…")}
@@ -391,7 +393,6 @@ export function PullRequestView(props: PullRequestViewProps) {
   return (
     <div className="pr-view" data-testid="pr-view" data-state={state}>
       {viewHeader}
-      {backToListControl}
       <PrIdentityHeader detail={detail} />
 
       {/* responding banner */}

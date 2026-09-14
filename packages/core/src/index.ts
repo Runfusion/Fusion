@@ -145,6 +145,8 @@ export {
 } from "./plugins/plugin-prompt-condition.js";
 export type { PromptConditionEvaluationResult } from "./plugins/plugin-prompt-condition.js";
 export { buildPreservedPlanRespecifyPatch, computePlanApprovalFingerprint, isPlanReviewSatisfied, resolvePlanApprovalRequired, supersedePlanReviewResults } from "./planner/plan-approval.js";
+export { PLAN_PREMISE_KINDS, parsePlanPremises } from "./planner/plan-premises.js";
+export type { PlanPremise, PlanPremiseKind, PlanPremisesParseResult } from "./planner/plan-premises.js";
 export { canonicalizePlan, createCurrentPlanEvidence, diffSpecLocks, isSpecLockActive, isUnavailablePlanLockError, PLAN_LOCK_UNAVAILABLE_DIAGNOSTIC, SPEC_LOCK_PARSER_VERSION, UnavailablePlanLockError } from "./planner/spec-lock.js";
 export { evaluateSpecDrift, hasPriorLockDivergence, isCurrentSpecDriftReport } from "./planner/drift-report.js";
 export type { CanonicalPlan, CanonicalPlanSection, CurrentPlanEvidence, SpecLock, SpecLockDiff, SpecLockSection } from "./planner/spec-lock.js";
@@ -334,6 +336,7 @@ export type {
 export {
   DEFAULT_MAX_REWORK_CYCLES,
   MAX_REWORK_CYCLES_CAP,
+  ABSOLUTE_MAX_AUTOMATIC_REVIEW_REVISIONS,
   resolveMaxReworkCycles,
   resolveOptionalStepRevisionBudget,
   classifyWorkflowAgentNode,
@@ -2536,7 +2539,7 @@ export type {
   ResearchCancellationState,
 } from "./research/research-types.js";
 
-export { isExperimentalFeatureEnabled, GRAPH_NATIVE_POST_MERGE_FLAG, CHAT_FOCUS_FLAG, ALPHA_UPDATES_FLAG, WHITEBOARD_VIEW_FLAG } from "./config/experimental-features.js";
+export { isExperimentalFeatureEnabled, GRAPH_NATIVE_POST_MERGE_FLAG, CHAT_FOCUS_FLAG, WHITEBOARD_VIEW_FLAG } from "./config/experimental-features.js";
 export {
   DEFAULT_MOBILE_NAV_PRIMARY_ITEMS,
   MAX_MOBILE_NAV_PRIMARY_ITEMS,

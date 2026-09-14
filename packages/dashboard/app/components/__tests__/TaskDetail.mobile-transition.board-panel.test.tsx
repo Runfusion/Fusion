@@ -14,10 +14,11 @@
  * which stays the responsibility of `TaskDetail.swipe-back.test.tsx` /
  * `navigation-history.test.tsx` (run unmodified per PROMPT.md).
  */
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import type { Settings, Task } from "@fusion/core";
 import type { ProjectInfo } from "../../api";
+import { readAppFile } from "../../test/cssFixture";
 
 const defaultSettings: Settings = {
   maxConcurrent: 2,
@@ -245,15 +246,17 @@ vi.mock("../../hooks/useNodes", () => ({
 }));
 
 const mockUseViewportMode = vi.fn(() => "desktop");
-vi.mock("../../hooks/useViewportMode", () => ({
-  MOBILE_MEDIA_QUERY: "(max-width: 768px), (max-height: 480px)",
-  isFullScreenSheetViewport: () => false,
-  isShortViewport: () => false,
-  getViewportMode: () => mockUseViewportMode(),
-  isMobileViewport: () => mockUseViewportMode() === "mobile",
-  isTabletTouchViewport: (mode?: string) => mode === "tablet",
-  useViewportMode: (..._args: unknown[]) => mockUseViewportMode(..._args),
-}));
+vi.mock("../../hooks/useViewportMode", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../hooks/useViewportMode")>();
+  return {
+    ...actual,
+    useViewportMode: () => {
+      const mode = mockUseViewportMode() as "mobile" | "tablet" | "desktop";
+      actual.publishViewportMode(mode);
+      return mode;
+    },
+  };
+});
 
 const mockUseMobileKeyboard = vi.fn(() => ({
   keyboardOverlap: 0, viewportHeight: null, viewportOffsetTop: 0, keyboardOpen: false,
@@ -262,7 +265,36 @@ vi.mock("../../hooks/useMobileKeyboard", () => ({
   useMobileKeyboard: (..._args: unknown[]) => mockUseMobileKeyboard(..._args),
 }));
 
+import { getViewportMode } from "../../hooks/useViewportMode";
 import { App } from "../../App";
+
+const LANDSCAPE_PHONE_WIDTH = 844;
+const LANDSCAPE_PHONE_HEIGHT = 390;
+const originalScreenDescriptor = Object.getOwnPropertyDescriptor(window, "screen");
+const originalInnerWidth = window.innerWidth;
+const originalInnerHeight = window.innerHeight;
+
+function installLandscapePhoneViewport(): void {
+  Object.defineProperty(window, "innerWidth", { writable: true, configurable: true, value: LANDSCAPE_PHONE_WIDTH });
+  Object.defineProperty(window, "innerHeight", { writable: true, configurable: true, value: LANDSCAPE_PHONE_HEIGHT });
+  Object.defineProperty(window, "screen", {
+    configurable: true,
+    value: { width: LANDSCAPE_PHONE_WIDTH, height: LANDSCAPE_PHONE_HEIGHT },
+  });
+  vi.stubGlobal("matchMedia", vi.fn((query: string) => ({
+    matches:
+      query === "(max-width: 768px), (max-height: 480px)" ||
+      query === "(max-height: 480px)" ||
+      query === "(min-width: 769px) and (max-width: 1024px)",
+    media: query,
+    onchange: null,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    dispatchEvent: vi.fn(() => true),
+  })));
+}
 
 function makeBoardTask(id: string, title: string): Task {
   return {
@@ -292,6 +324,14 @@ describe("Board main-panel task-detail — mobile transition class gating (MainC
     mockUseTasks.mockReset();
   });
 
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    Object.defineProperty(window, "innerWidth", { writable: true, configurable: true, value: originalInnerWidth });
+    Object.defineProperty(window, "innerHeight", { writable: true, configurable: true, value: originalInnerHeight });
+    if (originalScreenDescriptor) Object.defineProperty(window, "screen", originalScreenDescriptor);
+    delete document.documentElement.dataset.viewportMode;
+  });
+
   it("applies the mobile transition class to the board main-panel surface when the viewport is mobile", async () => {
     mockUseViewportMode.mockReturnValue("mobile");
     const task = makeBoardTask("FN-1", "Board Detail");
@@ -314,6 +354,34 @@ describe("Board main-panel task-detail — mobile transition class gating (MainC
       expect(screen.getByTestId("task-detail-main-panel-content")).toBeInTheDocument();
     });
     expect(document.querySelector(".task-detail-main-panel--mobile-transition")).toBeInTheDocument();
+  });
+
+  it("anime le panneau Board sur un téléphone physique en paysage plus large que 768px", async () => {
+    installLandscapePhoneViewport();
+    expect(getViewportMode()).toBe("mobile");
+    mockUseViewportMode.mockImplementation(() => getViewportMode());
+    const task = makeBoardTask("FN-2", "Landscape Board Detail");
+    mockUseTasks.mockImplementation(() => ({
+      tasks: [task],
+      createTask: mockCreateTask,
+      moveTask: vi.fn(),
+      deleteTask: vi.fn(),
+      mergeTask: vi.fn(),
+      retryTask: vi.fn(),
+      updateTask: vi.fn(),
+      duplicateTask: vi.fn(),
+      refreshTasks: vi.fn(),
+    }));
+
+    await renderAppAndWait("board-view");
+    fireEvent.click(screen.getByTestId("open-task-FN-2"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("task-detail-main-panel-content")).toBeInTheDocument();
+    });
+    expect(document.documentElement).toHaveAttribute("data-viewport-mode", "mobile");
+    expect(document.querySelector(".task-detail-main-panel--mobile-transition")).toBeInTheDocument();
+    expect(readAppFile("styles.css")).toMatch(/html\[data-viewport-mode="mobile"\] \.task-detail-main-panel--mobile-transition\s*\{[^}]*animation: alpha-mobile-drawer-rise-in/);
   });
 
   it("does NOT apply the mobile transition class to the board main-panel surface on desktop", async () => {

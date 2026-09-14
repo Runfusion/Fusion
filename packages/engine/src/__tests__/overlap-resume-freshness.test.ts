@@ -50,8 +50,8 @@ describe("overlap resume freshness gate", () => {
     });
     expect(git(fx.waitingPath, "merge-base", "--is-ancestor", fx.c1, "HEAD") || "included").toBe("included");
     expect(await readFile(join(fx.waitingPath, "shared.ts"), "utf8")).toContain("number");
-    expect(result.analysis?.decision).toBe("revalidate");
-    expect(mock.completeTaskOverlapWait).toHaveBeenCalledWith(expect.objectContaining({ phase: "revalidation-pending" }));
+    expect(result.analysis?.decision).toBe("briefing");
+    expect(mock.completeTaskOverlapWait).toHaveBeenCalledWith(expect.objectContaining({ phase: "ready" }));
   });
 
   it("uses the durable delivery snapshot after the blocker row is deleted and recaptures its files", async () => {
@@ -100,7 +100,7 @@ describe("overlap resume freshness gate", () => {
       task, store: workspaceStore, worktreePath: fx.waitingPath, owner: "owner-b", repository: "repo-b",
       refresh: async () => { git(fx.waitingPath, "merge", "--ff-only", fx.c1); },
     });
-    expect(episode.phase).toBe("revalidation-pending");
+    expect(episode.phase).toBe("ready");
     expect(episode.receipt.deliveryProofs.map((proof: any) => proof.repository)).toEqual(["repo-a", "repo-b"]);
   });
 

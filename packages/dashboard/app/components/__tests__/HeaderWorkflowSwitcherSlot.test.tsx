@@ -146,9 +146,9 @@ describe("HeaderWorkflowSwitcherSlot", () => {
     fireEvent.click(await screen.findByTestId("workflow-switcher"));
     const aggregateOption = screen.getByTestId(`workflow-switcher-option-${ALL_WORKFLOWS_BOARD_VIEW_ID}`);
     expect(aggregateOption).toHaveTextContent("All workflows");
-    expect(within(aggregateOption).getByTitle("Todo: 0")).toBeInTheDocument();
-    expect(within(aggregateOption).getByTitle("In Progress: 0")).toBeInTheDocument();
-    expect(within(aggregateOption).getByTitle("Done: 0")).toBeInTheDocument();
+    expect(within(aggregateOption).getByTitle("Plan: 0")).toBeInTheDocument();
+    expect(within(aggregateOption).getByTitle("Progress: 0")).toBeInTheDocument();
+    expect(within(aggregateOption).getByTitle("Review: 0")).toBeInTheDocument();
     expect(screen.queryByTestId(`workflow-switcher-edit-${ALL_WORKFLOWS_BOARD_VIEW_ID}`)).toBeNull();
     fireEvent.click(screen.getByTestId(`workflow-switcher-option-${ALL_WORKFLOWS_BOARD_VIEW_ID}`));
 

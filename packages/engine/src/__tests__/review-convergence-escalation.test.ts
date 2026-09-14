@@ -44,6 +44,7 @@ function harness(settings: Record<string, unknown>, row = task()) {
       return row;
     }),
     logEntry,
+    appendAgentLog: vi.fn(async () => {}),
     recordRunAuditEvent,
   };
   const run = (stop: ReviewConvergenceStop = repeatStop) => routeReviewConvergenceLadder({
@@ -110,9 +111,10 @@ describe("FN-224 frozen review escalation candidate chain", () => {
       reviewConvergenceEscalationModelId: "current-model",
     }, task({ modelProvider: "current-provider", modelId: "current-model" }));
 
-    await expect(subject.run()).resolves.toBe("released");
+    await expect(subject.run()).resolves.toBe("human-escalated");
 
     expect(subject.atomicPatches[0]).toMatchObject({ reviewConvergenceStage: 2 });
+    expect(subject.row).toMatchObject({ status: "awaiting-approval", awaitingApprovalReason: "code-review-non-convergence" });
     expect(subject.sendTaskBackForFix).not.toHaveBeenCalled();
     expect(subject.logEntry).toHaveBeenCalledWith(subject.row.id, "Review convergence escalation source: none", expect.stringContaining("dedicated-target-not-distinct"), expect.anything());
     expect(escalationAudit(subject)?.metadata).toMatchObject({ stage: 2, mode: "arbitration", hasModelTarget: false, escalationSource: "none" });
@@ -127,18 +129,20 @@ describe("FN-224 frozen review escalation candidate chain", () => {
       executionFallbackModelId: "current-model",
     }, task({ modelProvider: "current-provider", modelId: "current-model" }));
 
-    await expect(subject.run()).resolves.toBe("released");
+    await expect(subject.run()).resolves.toBe("human-escalated");
 
     expect(subject.atomicPatches[0]).toMatchObject({ reviewConvergenceStage: 2 });
+    expect(subject.row).toMatchObject({ status: "awaiting-approval", awaitingApprovalReason: "code-review-non-convergence" });
     expect(subject.sendTaskBackForFix).not.toHaveBeenCalled();
   });
 
   it("(f) skips to arbitration under the shipped empty settings", async () => {
     const subject = harness({});
 
-    await expect(subject.run()).resolves.toBe("released");
+    await expect(subject.run()).resolves.toBe("human-escalated");
 
     expect(subject.atomicPatches[0]).toMatchObject({ reviewConvergenceStage: 2, reviewConvergenceEscalationCount: 1 });
+    expect(subject.row).toMatchObject({ status: "awaiting-approval", awaitingApprovalReason: "code-review-non-convergence" });
     expect(subject.sendTaskBackForFix).not.toHaveBeenCalled();
   });
 
@@ -151,34 +155,37 @@ describe("FN-224 frozen review escalation candidate chain", () => {
       reviewConvergenceEscalationModelId: "effective-model",
     });
 
-    await expect(subject.run()).resolves.toBe("released");
+    await expect(subject.run()).resolves.toBe("human-escalated");
 
     expect(subject.atomicPatches[0]).toMatchObject({ reviewConvergenceStage: 2 });
+    expect(subject.row).toMatchObject({ status: "awaiting-approval", awaitingApprovalReason: "code-review-non-convergence" });
     expect(subject.sendTaskBackForFix).not.toHaveBeenCalled();
   });
 
-  it("(h) keeps budget exhaustion on stage one with empty settings", async () => {
+  it("(h) parks budget exhaustion before another remediation dispatch", async () => {
     const subject = harness({});
 
-    await expect(subject.run({ ...repeatStop, kind: "budget-exhausted" })).resolves.toBe("escalated");
+    await expect(subject.run({ ...repeatStop, kind: "budget-exhausted" })).resolves.toBe("human-escalated");
 
-    expect(subject.atomicPatches[0]).toMatchObject({ reviewConvergenceStage: 1 });
-    expect(subject.sendTaskBackForFix).toHaveBeenCalledOnce();
-    expect(escalationAudit(subject)?.metadata).toMatchObject({ mode: "executor-remediation", hasModelTarget: false, escalationSource: "none" });
+    expect(subject.atomicPatches[0]).toMatchObject({ reviewConvergenceStage: 3 });
+    expect(subject.row).toMatchObject({ status: "awaiting-approval", awaitingApprovalReason: "code-review-non-convergence" });
+    expect(subject.sendTaskBackForFix).not.toHaveBeenCalled();
+    expect(escalationAudit(subject)).toBeUndefined();
   });
 
-  it("(i) keeps budget exhaustion on stage one when the dedicated target is identical", async () => {
+  it("(i) ignores alternate-model configuration after budget exhaustion", async () => {
     const subject = harness({
       reviewConvergenceEscalationEnabled: true,
       reviewConvergenceEscalationProvider: "current-provider",
       reviewConvergenceEscalationModelId: "current-model",
     }, task({ modelProvider: "current-provider", modelId: "current-model" }));
 
-    await expect(subject.run({ ...repeatStop, kind: "budget-exhausted" })).resolves.toBe("escalated");
+    await expect(subject.run({ ...repeatStop, kind: "budget-exhausted" })).resolves.toBe("human-escalated");
 
-    expect(subject.atomicPatches[0]).toMatchObject({ reviewConvergenceStage: 1 });
-    expect(subject.sendTaskBackForFix).toHaveBeenCalledOnce();
-    expect(escalationAudit(subject)?.metadata).toMatchObject({ mode: "executor-remediation", hasModelTarget: false, escalationSource: "none" });
+    expect(subject.atomicPatches[0]).toMatchObject({ reviewConvergenceStage: 3 });
+    expect(subject.row).toMatchObject({ status: "awaiting-approval", awaitingApprovalReason: "code-review-non-convergence" });
+    expect(subject.sendTaskBackForFix).not.toHaveBeenCalled();
+    expect(escalationAudit(subject)).toBeUndefined();
   });
 
   it("declines when the gate clears between the preliminary read and atomic claim", async () => {
@@ -200,7 +207,7 @@ describe("FN-224 frozen review escalation candidate chain", () => {
     expect(row).not.toHaveProperty("reviewConvergenceStage");
   });
 
-  it("records the convergence dossier and releases Code Review without a human park", async () => {
+  it("records the convergence dossier and parks Code Review visibly", async () => {
     const row = task({
       reviewConvergenceStage: 2,
       reviewConvergenceEscalationCount: 2,
@@ -214,12 +221,12 @@ describe("FN-224 frozen review escalation candidate chain", () => {
     });
     const subject = harness({}, row);
 
-    await expect(subject.run({ ...repeatStop, attempt: 4 })).resolves.toBe("released");
+    await expect(subject.run({ ...repeatStop, attempt: 4 })).resolves.toBe("human-escalated");
 
-    const dossierCall = subject.logEntry.mock.calls.find((call) => call[1] === "Review convergence exhausted — released as non-blocking");
+    const dossierCall = subject.logEntry.mock.calls.find((call) => call[1] === "Review convergence exhausted — awaiting operator action");
     expect(dossierCall?.[2]).toContain("Reviewer position\n- Reviewer: rollback — Rollback proof");
     expect(dossierCall?.[2]).toContain("Implementer on rollback: The transaction already guarantees it.");
-    expect(row).not.toHaveProperty("awaitingApprovalReason");
+    expect(row).toMatchObject({ status: "awaiting-approval", awaitingApprovalReason: "code-review-non-convergence" });
   });
 
   it("preserves the operator-authored Plan Review replan-cap hold", async () => {

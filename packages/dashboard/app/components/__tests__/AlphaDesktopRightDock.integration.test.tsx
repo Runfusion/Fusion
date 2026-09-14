@@ -163,36 +163,55 @@ describe("App Alpha desktop right-dock window ownership", () => {
     notesApi.deleteNote.mockResolvedValue(undefined);
   });
 
-  it("relie la vraie liste Chat Alpha à une fenêtre dédiée sans dupliquer", async () => {
+  it("relie la vraie liste Chat Alpha à plusieurs fenêtres surlignées sans dupliquer", async () => {
     const existing = session("chat-existing", "project-a", "Conversation du dock", "2026-09-12T01:00:00.000Z");
-    api.fetchChatSessions.mockResolvedValue({ sessions: [existing] });
+    const second = session("chat-second", "project-a", "Deuxième conversation", "2026-09-12T00:30:00.000Z");
+    const third = session("chat-third", "project-a", "Conversation fermée", "2026-09-12T00:15:00.000Z");
+    api.fetchChatSessions.mockResolvedValue({ sessions: [existing, second, third] });
     localStorage.setItem(RIGHT_DOCK_VIEW_STORAGE_KEY, "chat");
     render(<IntegrationProviders><AppCompositionHarness projectId="project-a" /></IntegrationProviders>);
 
-    const row = await screen.findByTestId(`chat-session-${existing.id}`);
+    const firstRow = await screen.findByTestId(`chat-session-${existing.id}`);
+    const secondRow = screen.getByTestId(`chat-session-${second.id}`);
+    const thirdRow = screen.getByTestId(`chat-session-${third.id}`);
     expect(screen.queryByTestId(`chat-session-window-state-${existing.id}`)).toBeNull();
-    fireEvent.click(row);
-    await waitFor(() => expect(screen.getByTestId(`chat-session-window-state-${existing.id}`)).toHaveTextContent("Open"));
+    fireEvent.click(firstRow);
+    fireEvent.click(secondRow);
+    await waitFor(() => {
+      expect(firstRow).toHaveClass("chat-session-item--window-open");
+      expect(secondRow).toHaveClass("chat-session-item--window-open");
+    });
+    expect(thirdRow).not.toHaveClass("chat-session-item--window-open");
+    expect(screen.getByTestId(`chat-session-window-state-${existing.id}`)).toHaveTextContent("Open");
+    expect(screen.getByTestId(`chat-session-window-state-${second.id}`)).toHaveTextContent("Open");
     expect(screen.getAllByTestId(`floating-window-chat-window-project-a-${existing.id}`)).toHaveLength(1);
+    expect(screen.getAllByTestId(`floating-window-chat-window-project-a-${second.id}`)).toHaveLength(1);
 
-    fireEvent.click(row);
+    fireEvent.click(firstRow);
     expect(screen.getAllByTestId(`floating-window-chat-window-project-a-${existing.id}`)).toHaveLength(1);
 
     fireEvent.click(screen.getByTestId("minimize-chats"));
+    expect(firstRow).not.toHaveClass("chat-session-item--window-open");
+    expect(secondRow).not.toHaveClass("chat-session-item--window-open");
     expect(screen.getByTestId(`chat-session-window-state-${existing.id}`)).toHaveTextContent("Minimized");
+    expect(screen.getByTestId(`chat-session-window-state-${second.id}`)).toHaveTextContent("Minimized");
 
-    const updated = session(existing.id, "project-a", "Conversation alimentée", "2026-09-12T02:00:00.000Z");
-    act(() => sse.handlers["chat:session:updated"]?.({ data: JSON.stringify(updated) } as MessageEvent));
-    expect(await screen.findByText(updated.title)).toBeInTheDocument();
     fireEvent.click(screen.getByTestId(`chat-session-${existing.id}`));
+    expect(screen.getByTestId(`chat-session-${existing.id}`)).toHaveClass("chat-session-item--window-open");
+    expect(secondRow).not.toHaveClass("chat-session-item--window-open");
     expect(screen.getByTestId(`chat-session-window-state-${existing.id}`)).toHaveTextContent("Open");
     expect(screen.getAllByTestId(`floating-window-chat-window-project-a-${existing.id}`)).toHaveLength(1);
+
+    fireEvent.click(screen.getByTestId(`floating-window-chat-window-project-a-${existing.id}`).querySelector<HTMLElement>("[data-testid='chat-modal-close']")!);
+    await waitFor(() => expect(screen.queryByTestId(`chat-session-window-state-${existing.id}`)).toBeNull());
+    expect(screen.getByTestId(`chat-session-${existing.id}`)).not.toHaveClass("chat-session-item--window-open");
 
     const created = session("chat-created", "project-a", "Conversation créée", "2026-09-12T03:00:00.000Z");
     api.createChatSession.mockResolvedValue({ session: created });
     fireEvent.click(screen.getByTestId("chat-new-btn"));
     expect(await screen.findByTestId(`chat-session-${created.id}`)).toBeInTheDocument();
     expect(screen.getByTestId(`chat-session-window-state-${created.id}`)).toHaveTextContent("Open");
+    expect(screen.getByTestId(`chat-session-${created.id}`)).toHaveClass("chat-session-item--window-open");
     expect(screen.getByTestId(`floating-window-chat-window-project-a-${created.id}`)).toBeInTheDocument();
   });
 

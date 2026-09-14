@@ -238,66 +238,6 @@ describe("fast mode workflow/runtime invariants", () => {
     }
   });
 
-  it("repairs an overlap-delta REVISE inside executeWorkflowGraph before the resumed node", async () => {
-    let liveTask = task({ id: "FN-332-REVALIDATE", worktree: process.cwd(), steps: [{ name: "Completed preparation", status: "done" }], currentStep: 1 });
-    const { store, executor } = makeExecutorForTask(liveTask);
-    const selected = { workflowId: "WF-overlap-revalidate", stepIds: [] };
-    store.getTask.mockImplementation(async () => liveTask);
-    store.getTaskWorkflowSelectionAsync = vi.fn(async () => selected);
-    store.getWorkflowDefinition = vi.fn(async () => ({
-      id: selected.workflowId,
-      name: "Overlap resume",
-      ir: {
-        version: "v1",
-        name: "Overlap resume",
-        columns: [{ id: "in-progress", name: "Work", traits: [] }],
-        nodes: [{ id: "start", kind: "start" }, { id: "resume-node", kind: "prompt", config: { prompt: "Continue implementation" } }, { id: "end", kind: "end" }],
-        edges: [{ from: "start", to: "resume-node" }, { from: "resume-node", to: "end" }],
-      },
-    }));
-    const receipt = {
-      decision: "revalidate", freshness: "proven", commonFiles: ["src/shared.ts"], deliveryProofs: [],
-      decisionFingerprint: "delta-generation", briefing: "FN-A changed src/shared.ts", decidedAt: now,
-    };
-    let episode: any = { projectId: "p", taskId: liveTask.id, episodeId: "episode-delta", blockerTaskId: "FN-A", observedAt: now, phase: "revalidation-pending", revision: 3, owner: "graph-owner", attempt: 1, receipt, updatedAt: now };
-    store.listTaskOverlapWaits = vi.fn(async () => episode.phase === "ready" ? [] : [episode]);
-    store.completeTaskOverlapWait = vi.fn(async (input: any) => {
-      if (input.expectedRevision !== episode.revision) return null;
-      episode = { ...episode, ...input, revision: episode.revision + 1 };
-      return episode;
-    });
-    store.claimTaskOverlapWait = vi.fn(async (input: any) => {
-      if (input.expectedRevision !== episode.revision) return null;
-      episode = { ...episode, phase: "analyzing", revision: episode.revision + 1, observation: { executionIdentity: input.executionIdentity } };
-      return episode;
-    });
-    let deltaReviewCount = 0;
-    const executeStep = vi.spyOn(executor as any, "executeWorkflowStep").mockImplementation(async (_task: any, step: any) => {
-      if (step.name === "Overlap Delta Plan Revalidation" && deltaReviewCount++ === 0) {
-        return { success: false, verdict: "REVISE", notes: "Keep sharedApi compatible." };
-      }
-      if (step.name === "Overlap Delta Targeted Plan Repair") {
-        liveTask = { ...liveTask, prompt: `${liveTask.prompt}\n\n## Targeted repair\nKeep sharedApi compatible.` };
-        return { success: true };
-      }
-      if (step.name === "Overlap Delta Plan Revalidation") return { success: true, verdict: "APPROVE" };
-      return { success: true, output: "ordinary node completed" };
-    });
-
-    await (executor as any).executeWorkflowGraph(liveTask);
-
-    expect(executeStep.mock.calls.map((call: any[]) => call[1].name)).toEqual([
-      "Overlap Delta Plan Revalidation",
-      "Overlap Delta Targeted Plan Repair",
-      "Overlap Delta Plan Revalidation",
-      "resume-node",
-    ]);
-    expect(episode).toMatchObject({ phase: "ready", receipt: { revalidationVerdict: "APPROVE" } });
-    expect(liveTask.column).toBe("in-progress");
-    expect(liveTask.steps[0].status).toBe("done");
-    expect(store.updateTask).not.toHaveBeenCalledWith(liveTask.id, expect.objectContaining({ status: "needs-replan" }), expect.anything());
-  });
-
   it("retries failed external overlap delivery and sends a later generation through runImplementation", async () => {
     const externalPath = "/tmp/external-runtime";
     const episode = (id: string, predecessor: string, revision: number) => ({

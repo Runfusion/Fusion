@@ -64,11 +64,11 @@ export interface ResolveOptionalReviewRevisionBudgetInput {
 /**
  * Resolve the automatic remediation budget for graph-native optional review gates.
  *
- * FNXC:WorkflowRevisionBudget 2026-09-03-05:40:
+ * FNXC:WorkflowRevisionBudget 2026-09-13-04:34:
  * A stored non-negative workflow value wins first (including `0`), then an authored node
- * `maxRevisions` preserves custom and Compound Engineering policy. Only an otherwise-unset Code
- * Review receives the bounded built-in default; Plan Review remains unbounded behind its separate
- * replan cap, while Browser Verification and custom optional gates keep their caller fallback.
+ * `maxRevisions` preserves custom and Compound Engineering policy. `"unbounded"` remains a policy
+ * sentinel at this layer; the shared runtime resolver converts it to the finite absolute backstop.
+ * Browser Verification and custom optional gates keep their caller fallback, also clamped there.
  */
 export function resolveOptionalReviewRevisionBudget({
   optionalGroupId,

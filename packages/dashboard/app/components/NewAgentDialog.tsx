@@ -9,7 +9,7 @@ import { CustomModelDropdown } from "./CustomModelDropdown";
 import { LoadingSpinner } from "./LoadingSpinner";
 import { ProviderIcon } from "./ProviderIcon";
 import { AgentGenerationModal } from "./AgentGenerationModal";
-import { ModalCloseButton } from "./ModalCloseButton";
+import { ViewHeader } from "./ViewHeader";
 import { AGENT_PRESETS, type AgentPreset } from "./agent-presets";
 import {
   buildAgentCreatePayload,
@@ -427,11 +427,17 @@ export function NewAgentDialog({
   return createPortal(
     <div className="agent-dialog-overlay" {...overlayDismiss}>
       <div className="agent-dialog" role="dialog" aria-modal="true" aria-label={t("agents.dialogAriaLabel", "Create new agent")}>
-        {/* Header */}
-        <div className="agent-dialog-header">
-          <span className="agent-dialog-header-title">{t("agents.dialogTitle", "New Agent")}</span>
-          <ModalCloseButton onClick={handleClose} aria-label={t("agents.closeAriaLabel", "Close")} />
-        </div>
+        {/*
+        FNXC:StandardizedViewLayout 2026-09-13-22:40:
+        FN-379 remediation: agent creation shares the canonical header instead of its own title row.
+        */}
+        <ViewHeader
+          className="agent-dialog-header"
+          headingLevel={3}
+          title={t("agents.dialogTitle", "New Agent")}
+          onClose={handleClose}
+          closeButtonProps={{ "aria-label": t("agents.closeAriaLabel", "Close") }}
+        />
 
         {/* Step indicator */}
         <div className="agent-dialog-steps">

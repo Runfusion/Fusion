@@ -1,3 +1,4 @@
+import { ViewHeader } from "./ViewHeader";
 import "./DuplicateWarningModal.css";
 import { AlphaButton, AlphaDialog, AlphaSurface } from "./alpha-ui";
 import { useEffect, useRef } from "react";
@@ -33,9 +34,13 @@ export function DuplicateWarningModal({ matches, onOpen, onProceed, onCancel }: 
   */
   return (
     <AlphaDialog overlayClassName="modal-overlay open" className="modal duplicate-warning-modal" labelledBy="duplicate-warning-modal-title" onClose={onCancel}>
-        <div className="modal-header">
-          <h3 id="duplicate-warning-modal-title">{t("duplicateWarning.title", "Possible duplicates")}</h3>
-        </div>
+        {/* FNXC:StandardizedViewLayout 2026-09-13-21:49: Shared chrome; the decision buttons remain the only exits from this confirmation. */}
+        <ViewHeader
+          className="modal-header"
+          headingLevel={3}
+          titleId="duplicate-warning-modal-title"
+          title={t("duplicateWarning.title", "Possible duplicates")}
+        />
         <div className="duplicate-warning-modal-body">
           <p className="duplicate-warning-modal-copy">{t("duplicateWarning.message", "We found similar active tasks. Open an existing task or create this one anyway.")}</p>
           <div className="duplicate-warning-modal-list">

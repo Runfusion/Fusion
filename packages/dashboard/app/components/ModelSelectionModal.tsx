@@ -1,4 +1,4 @@
-import { ModalCloseButton } from "./ModalCloseButton";
+import { ViewHeader } from "./ViewHeader";
 import { useCallback, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
@@ -209,13 +209,15 @@ export function ModelSelectionModal({
   return (
     <div className="modal-overlay open" {...overlayDismiss} role="dialog" aria-modal="true" data-testid="model-selection-modal">
       <div className="modal modal-lg">
-        <div className="modal-header">
-          <div className="detail-title-row">
-            <Brain size={20} style={{ color: "var(--todo)" }} />
-            <h3>{t("modelSelection.title", "Select Models")}</h3>
-          </div>
-          <ModalCloseButton onClick={onClose} aria-label={t("actions.close", "Close")} data-testid="model-selection-close" />
-        </div>
+        {/* FNXC:StandardizedViewLayout 2026-09-13-21:49: Shared dialog chrome owns the icon, title, and canonical close. */}
+        <ViewHeader
+          className="modal-header"
+          headingLevel={3}
+          icon={Brain}
+          title={t("modelSelection.title", "Select Models")}
+          onClose={onClose}
+          closeButtonProps={{ "aria-label": t("actions.close", "Close"), "data-testid": "model-selection-close" }}
+        />
 
         <div className="planning-modal-body">
           {modelsLoading ? (

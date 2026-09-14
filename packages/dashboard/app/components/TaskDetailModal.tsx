@@ -1,11 +1,14 @@
+import { ViewHeader } from "./ViewHeader";
 import { ModalCloseButton } from "./ModalCloseButton";
 import "./TaskDetailModal.css";
 import React, { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import { Pencil, Bot, X, ChevronDown, ChevronRight, GitBranch, ArrowLeft, Loader2, AlertTriangle, Sparkles, Maximize2, Minimize2, Info, Copy, RotateCcw, Trash2, Pause, Play, RefreshCcw, MoreHorizontal } from "lucide-react";
+import { Pencil, Bot, X, ChevronDown, ChevronRight, GitBranch, ArrowLeft, Loader2, AlertTriangle, Sparkles, Maximize2, Minimize2, Info, Copy, RotateCcw, Trash2, Pause, Play, RefreshCcw, MoreHorizontal, FileText, Check } from "lucide-react";
 import { useViewportMode } from "../hooks/useViewportMode";
 import { AlphaMobileDrawer } from "./AlphaMobileDrawer";
+import { ViewBackButton } from "./ViewActionButton";
+import { ViewLayoutContent, ViewLayoutFooter, ViewLayoutHeader } from "./ViewLayout";
 import { mergeTaskSnapshot } from "../hooks/useTasks";
 import { dismissAiMergeReviewFinding } from "../api/tasks/tasks-lifecycle";
 import { FloatingWindow } from "./FloatingWindow";
@@ -83,7 +86,6 @@ import { ProviderIcon } from "./ProviderIcon";
 import { LoadingSpinner } from "./LoadingSpinner";
 import { KeepAliveView } from "./KeepAliveView";
 import { TaskDetailTabStrip, type TaskDetailTabStripItem } from "./TaskDetailTabStrip";
-import { hasSavedTaskDetailTabOrder, loadTaskDetailTabOrder, reconcileTaskDetailTabOrder, saveTaskDetailTabOrder } from "../utils/taskDetailTabOrder";
 import { subscribeSse } from "../sse-bus";
 import type { SessionTerminalMode, SessionTerminalPosture } from "./SessionTerminal";
 import { usePluginUiSlots } from "../hooks/usePluginUiSlots";
@@ -97,7 +99,6 @@ import { getInReviewStallCopy, shouldShowInReviewStallBadge } from "../utils/inR
 import { getUnifiedTaskProgress } from "../utils/taskProgress";
 import { getStalePausedReviewCopy, shouldShowStalePausedReviewBadge } from "../utils/stalePausedReviewCopy";
 import { getTaskAgeStalenessCopy } from "../utils/taskAgeStalenessCopy";
-import { splitTaskPlanSummary } from "../utils/taskPlanSummary";
 import { decideTaskPromptRefresh } from "../utils/taskPromptRefresh";
 import { getPriorityLabel } from "../utils/priorityIndicator";
 import { hasPendingAutomaticRecovery } from "../utils/taskRecovery";
@@ -296,6 +297,25 @@ function getStepStatusColor(status: string): string {
     case "pending":
     default:
       return "var(--border)";
+  }
+}
+
+/*
+FNXC:TaskDetailProgress 2026-09-13-00:20:
+The Definition step list must localize completion counts, origins, and every implementation or workflow status so non-English dashboards never mix English fallback labels into task progress.
+*/
+function getStepStatusLabel(status: string, t: TFunction<"app">): string {
+  switch (status) {
+    case "done":
+    case "passed": return t("taskDetail.progress.status.done", "Completed");
+    case "failed": return t("taskDetail.progress.status.failed", "Failed");
+    case "advisory_failure": return t("taskDetail.progress.status.advisory", "Completed with feedback");
+    case "not_run": return t("taskDetail.progress.status.notRun", "Not run");
+    case "in-progress":
+    case "running": return t("taskDetail.progress.status.running", "In progress");
+    case "skipped": return t("taskDetail.progress.status.skipped", "Skipped");
+    case "pending":
+    default: return t("taskDetail.progress.status.pending", "Pending");
   }
 }
 
@@ -540,14 +560,11 @@ export type TaskDetailContentProps = Omit<TaskDetailModalProps, "onClose"> & {
   Embedded task detail can be hosted by a movable FloatingWindow. In that surface the task header is the only visible header, so onRequestClose must render a close icon beside edit instead of relying on separate window chrome.
   */
   onRequestClose?: () => void;
-  /*
-  FNXC:TaskDetail 2026-06-22-18:40:
-  onBackToBoard powers the board-card full-panel "Back to board" affordance rendered in the gray header (far right). It is only honored when embedded is also true, so ListView split-pane and modal usages never show it.
-  */
+  /** @deprecated Host callback alias retained for test adapters; production chrome uses onRequestClose. */
   onBackToBoard?: () => void;
   /*
   FNXC:FloatingWindow 2026-06-22-20:45:
-  onPopOut, when supplied, renders the header's Maximize2 pop-out button. List/Board wire it to push this task into App's floating task-detail window array, opening the same embedded TaskDetailContent inside a movable, resizable, non-blocking FloatingWindow. It is independent of embedded/onBackToBoard so List split-pane and the board full-panel can both expose it.
+  onPopOut, when supplied, renders the desktop/tablet header's Maximize2 pop-out button. List/Board wire it to the same embedded TaskDetailContent; phone chrome suppresses it because the owning drawer is already the single full-width presentation.
   */
   onPopOut?: (task: Task) => void;
   /*
@@ -913,15 +930,16 @@ export function TaskDetailContent({
   initialTab,
   initialAction,
   taskDetailChatFirst = false,
-  mobileHeaderMode = "close",
+  mobileHeaderMode: _mobileHeaderMode = "close",
   embedded = false,
   active = true,
   onRequestClose,
-  onBackToBoard,
+  onBackToBoard: _onBackToBoard,
   onPopOut,
   workflowFieldDefs: workflowFieldDefsProp,
 }: TaskDetailContentProps) {
   const { t } = useTranslation("app");
+  const isPhonePresentation = useViewportMode() === "mobile";
   const columnLabel = useColumnLabel();
   const fileBrowser = useFileBrowser();
   const [activeTab, setActiveTab] = useState<TabId>(() => resolveDefaultTab(initialTab, task.column, taskDetailChatFirst));
@@ -1148,7 +1166,6 @@ export function TaskDetailContent({
       });
     return () => { cancelled = true; };
   }, [active, activeTab, projectId, workingTask.id, workingTask.overlapBlockedBy]);
-  const planSummary = useMemo(() => splitTaskPlanSummary(workingTask.prompt || ""), [workingTask.prompt]);
   const handleCopyActivityLogs = useCallback(async () => {
     if (detailLoading || activityLog.length === 0) return;
     const copied = await copyTextToClipboard(serializeTaskActivityLogs(activityLog));
@@ -1412,25 +1429,6 @@ export function TaskDetailContent({
   }, [task.id]);
 
   const [highlightStallCode, setHighlightStallCode] = useState<string | null>(null);
-  const [descriptionExpanded, setDescriptionExpanded] = useState(false);
-  const [titleOverflows, setTitleOverflows] = useState(false);
-  const titleRef = useRef<HTMLSpanElement | null>(null);
-  const displayTitleText = task.title || task.description || task.id;
-
-  /*
-  FNXC:TaskDetailTitle 2026-08-05-18:48:
-  Browser layout proved that swapping bare heading text for the semantic title button can alter the
-  exact box whose overflow decides whether that button exists. Measure an always-present text span
-  with the collapsed two-line rules instead; the button is an out-of-flow accessible overlay and
-  cannot feed back into eligibility. Expansion remains an operator-owned state across modal,
-  full-panel, split-pane, right-dock, and floating-window hosts. Reset only for a new task or its
-  title/description/id fallback, never from a resize delivery. Kept-alive hidden pop-outs are not a
-  live layout authority: disconnect and fence their callbacks until their host is visible again.
-  */
-  useLayoutEffect(() => {
-    setDescriptionExpanded(false);
-    setTitleOverflows(false);
-  }, [displayTitleText, task.id]);
   const [attachments, setAttachments] = useState<TaskAttachment[]>(task.attachments || []);
   const [uploading, setUploading] = useState(false);
   const [dependencies, setDependencies] = useState<string[]>(() => [...new Set(task.dependencies || [])]);
@@ -1519,43 +1517,6 @@ export function TaskDetailContent({
     };
   }, [active, activeTab, projectId, promptRefreshLifecycleActive, task.id, requestTaskDetail, adoptAuthoritativeDetail]);
   const [prCreateOpen, setPrCreateOpen] = useState(false);
-
-  useLayoutEffect(() => {
-    // A kept-alive floating detail can be hidden while another view owns its layout. Its stale
-    // ResizeObserver delivery must not change eligibility before the host becomes visible again.
-    if (!active) return;
-
-    const titleElement = titleRef.current;
-    if (!titleElement) {
-      setTitleOverflows(false);
-      return;
-    }
-
-    // Expanded headings have natural height, so only the rendered collapsed layout is a valid
-    // overflow measurement. The user choice remains mounted while this observer is disconnected.
-    if (descriptionExpanded) return;
-
-    let cancelled = false;
-    const measureTitleOverflow = () => {
-      if (cancelled) return;
-      const overflows = titleElement.scrollHeight > titleElement.clientHeight + 1;
-      setTitleOverflows((previous) => previous === overflows ? previous : overflows);
-    };
-
-    measureTitleOverflow();
-
-    const resizeObserver = typeof ResizeObserver !== "undefined"
-      ? new ResizeObserver(measureTitleOverflow)
-      : null;
-    resizeObserver?.observe(titleElement);
-    window.addEventListener("resize", measureTitleOverflow);
-
-    return () => {
-      cancelled = true;
-      resizeObserver?.disconnect();
-      window.removeEventListener("resize", measureTitleOverflow);
-    };
-  }, [active, descriptionExpanded, displayTitleText, task.id]);
 
   /*
   FNXC:WorkflowBadges 2026-06-29-00:00:
@@ -1831,9 +1792,9 @@ export function TaskDetailContent({
   const [gitlabTrackingExpanded, setGitlabTrackingExpanded] = useState(false);
   // FNXC:TaskDetailPlan 2026-07-04-00:00: Original prompt is collapsed by default (see render site below); operator must click the chevron toggle to reveal the markdown-rendered text.
   const [originalPromptExpanded, setOriginalPromptExpanded] = useState(false);
-  const [planDetailsExpanded, setPlanDetailsExpanded] = useState(false);
+  const [planDocumentOpen, setPlanDocumentOpen] = useState(false);
   useEffect(() => {
-    setPlanDetailsExpanded(false);
+    setPlanDocumentOpen(false);
   }, [workingTask.id]);
   const [githubTrackingExpanded, setGithubTrackingExpanded] = useState(false);
   const [githubRepoOverrideDraft, setGithubRepoOverrideDraft] = useState(task.githubTracking?.repoOverride ?? "");
@@ -4277,8 +4238,8 @@ export function TaskDetailContent({
   */
   const shouldShowBranchGroupCard = Boolean(task.branchContext?.groupId && !isActivityExpanded);
   /*
-  FNXC:TaskDetailPlannerChat 2026-07-01-00:00:
-  Maximized Planner Chat reserves vertical room for task identity and the planner conversation, so failed-task chrome is not mounted in that state. Normal detail, Activity expansion, and collapsed Planner Chat still surface task failures immediately.
+  FNXC:TaskDetailPlannerChat 2026-09-13-13:09:
+  Failure recovery chrome belongs to Definition and is never duplicated inside Activity or Planner Chat, whether those conversations are expanded or collapsed.
   */
   /*
   FNXC:TaskFailedBanner 2026-07-15-16:30:
@@ -4293,7 +4254,7 @@ export function TaskDetailContent({
   FNXC:TaskRecoveryVocabulary 2026-08-28-01:20:
   A scheduled automatic recovery must not hide the failed-task alert. Operators still need the pending-recovery explanation and an immediate, stage-aware Retry choice.
   */
-  const shouldShowTaskFailureAlert = Boolean(task.status === "failed" && !isPlannerChatExpanded);
+  const shouldShowTaskFailureAlert = task.status === "failed";
   const taskFailureReason = task.error?.trim() || t("taskDetail.error.genericFailureReason", "The task failed before it could complete.");
   const taskFailureToolDetail = useMemo(() => {
     const lastToolCompletion = agentLogEntries.findLast(
@@ -5011,39 +4972,9 @@ export function TaskDetailContent({
       node: <TaskDetailTabButton selected={activeTab === tabId} onSelect={() => setActiveTab(tabId)}>{entry.slot.label}</TaskDetailTabButton>,
     })),
   ];
-  const canonicalTabIds = canonicalTabItems.map((item) => item.id);
-  const canonicalTabSignature = canonicalTabIds.join("\u0000");
-  const [tabOrderState, setTabOrderState] = useState(() => ({
-    projectId,
-    canonicalSignature: canonicalTabSignature,
-    customized: hasSavedTaskDetailTabOrder(projectId),
-    order: loadTaskDetailTabOrder(projectId, canonicalTabIds),
-  }));
-  const renderedTabOrder = tabOrderState.projectId !== projectId
-    ? loadTaskDetailTabOrder(projectId, canonicalTabIds)
-    : tabOrderState.canonicalSignature !== canonicalTabSignature && !tabOrderState.customized
-      ? loadTaskDetailTabOrder(projectId, canonicalTabIds)
-      : reconcileTaskDetailTabOrder(tabOrderState.order, canonicalTabIds);
+  const canonicalTabSignature = canonicalTabItems.map((item) => item.id).join("\u0000");
   useEffect(() => {
-    setTabOrderState((current) => {
-      const sameProject = current.projectId === projectId;
-      const customized = sameProject ? current.customized : hasSavedTaskDetailTabOrder(projectId);
-      return {
-        projectId,
-        canonicalSignature: canonicalTabSignature,
-        customized,
-        order: sameProject && customized
-          ? reconcileTaskDetailTabOrder(current.order, canonicalTabIds)
-          : loadTaskDetailTabOrder(projectId, canonicalTabIds),
-      };
-    });
-  }, [projectId, canonicalTabSignature]);
-  const handleTabOrderChange = useCallback((order: string[]) => {
-    setTabOrderState({ projectId, canonicalSignature: canonicalTabSignature, customized: true, order });
-    saveTaskDetailTabOrder(projectId, order);
-  }, [canonicalTabSignature, projectId]);
-  useEffect(() => {
-    if (!canonicalTabIds.includes(activeTab)) setActiveTab("definition");
+    if (!canonicalTabItems.some((item) => item.id === activeTab)) setActiveTab("definition");
   }, [activeTab, canonicalTabSignature]);
 
   /*
@@ -5327,9 +5258,22 @@ export function TaskDetailContent({
         onDragOver={handleDragOver}
         onDrop={handleDrop}
       >
-      <div className="modal-header">
-          <div className="detail-title-row">
-            <span className="detail-id" id="task-detail-modal-title">{task.id}</span>
+        {/*
+        FNXC:TaskDetailTitleRemoval 2026-09-13-11:59:
+        Every board, main-panel, list-split, right-dock, drawer, and pop-out host shares this title-free header. Keep the task ID, lifecycle badges, and actions here; the title remains editable only through the Definition form.
+        */}
+        <ViewLayoutHeader className="modal-header">
+          {isPhonePresentation ? (
+            <ViewBackButton
+              className="task-detail-mobile-back"
+              label={t("taskDetail.header.back", "Back")}
+              onClick={requestClose}
+              data-testid="task-detail-mobile-back"
+            />
+          ) : null}
+          <div className="detail-header-copy">
+            <div className="detail-title-row">
+              <span className="detail-id">{task.id}</span>
             {/*
             FNXC:WorkflowResolvedColumns 2026-07-27-15:35 (U10 / R8):
             The badge names the card's column in the card's OWN workflow vocabulary. `columnLabel`
@@ -5345,14 +5289,15 @@ export function TaskDetailContent({
             timestamp-reconciled working snapshot, never the raw prop, so a late Todo board/detail
             payload cannot flash over a newer queued dependency or file-overlap state.
             */}
-            <span className={`detail-column-badge badge-${workingTask.column}`}>
-              {workflowColumnDisplayName ?? columnLabel(workingTask.column)}
-            </span>
-            {hasTaskStatusBadge(workingTask.status) && (
-              <span className="card-status-badge" data-testid="task-detail-status-badge">
-                {taskStatusBadgeLabel}
+              <span className={`detail-column-badge badge-${workingTask.column}`}>
+                {workflowColumnDisplayName ?? columnLabel(workingTask.column)}
               </span>
-            )}
+              {hasTaskStatusBadge(workingTask.status) && (
+                <span className="card-status-badge" data-testid="task-detail-status-badge">
+                  {taskStatusBadgeLabel}
+                </span>
+              )}
+            </div>
           </div>
           <div className="modal-header-actions">
             {!isEditing && directHeaderActions.map((action) => (
@@ -5396,7 +5341,7 @@ export function TaskDetailContent({
             )}
             {!isEditing && canEdit && (
               <AlphaButton
-                className="modal-edit-btn"
+                className="btn btn-icon btn-sm modal-edit-btn task-detail-header-action"
                 onClick={enterEditMode}
                 title={t("taskDetail.header.editTask", "Edit task")}
                 aria-label={t("taskDetail.header.editTask", "Edit task")}
@@ -5408,10 +5353,10 @@ export function TaskDetailContent({
             FNXC:FloatingWindow 2026-06-22-20:45 (updated 2026-06-22-18:32):
             "Pop out" affordance opens this task detail in a movable, resizable, non-blocking FloatingWindow. Header action order is edit, then expand/pop-out, then Back to board pinned far right so board-card detail controls read as edit/resize/navigation.
             */}
-            {onPopOut && (
+            {!isPhonePresentation && onPopOut && (
               <AlphaButton
                 type="button"
-                className="modal-edit-btn"
+                className="btn btn-icon btn-sm modal-edit-btn task-detail-header-action"
                 onClick={() => onPopOut(task)}
                 title={t("taskDetail.header.popOut", "Pop out")}
                 aria-label={t("taskDetail.header.popOut", "Pop out")}
@@ -5421,57 +5366,29 @@ export function TaskDetailContent({
               </AlphaButton>
             )}
             {/*
-            FNXC:TaskDetail 2026-06-22-18:40 (updated 2026-06-22-18:32):
-            Board-card full-panel "Back to board" must be the far-right header action, after edit and expand/pop-out. margin-left:auto pushes it away from the utility controls while keeping it in the same gray header row. Only rendered when embedded AND onBackToBoard are supplied (board-card detail), never in ListView split-pane or modal usages.
+            FNXC:TaskDetailResponsiveChrome 2026-09-13-16:30:
+            Phone Task Detail has exactly one ChevronLeft before task identity in all six hosts and no close, pop-out, or fullscreen affordance. Desktop and tablet retain the canonical close and optional pop-out; every control invokes the callback supplied by its TaskDetailHostBoundary owner.
             */}
-            {embedded && onBackToBoard && (
-              <AlphaButton
-                type="button"
-                className="task-detail-header-back-btn"
-                onClick={onBackToBoard}
-              >
-                <ArrowLeft size={14} aria-hidden="true" />
-                <span>{t("app.taskDetail.backToBoard", "Back to board")}</span>
-              </AlphaButton>
-            )}
-            {embedded && onRequestClose && !onBackToBoard && (
+            {!isPhonePresentation && embedded && onRequestClose && (
               <ModalCloseButton
                 className="task-detail-floating-close"
                 onClick={requestClose}
                 aria-label={t("common.close", "Close")}
                />
             )}
-            {!embedded && mobileHeaderMode === "back" && (
-              <AlphaButton
-                className="modal-close task-detail-mobile-back"
-                onClick={requestClose}
-                aria-label={t("taskDetail.header.backToList", "Back to task list")}
-                type="button"
-              >
-                <ArrowLeft aria-hidden="true" />
-                <span>{t("taskDetail.header.back", "Back")}</span>
-              </AlphaButton>
-            )}
-            {!embedded && mobileHeaderMode !== "back" && (
+            {!isPhonePresentation && !embedded && (
               <ModalCloseButton onClick={requestClose} aria-label={t("common.close", "Close")} />
             )}
           </div>
-        </div>
-        {!isEditing && (
+        </ViewLayoutHeader>
+        {!isEditing && !planDocumentOpen && (
           <TaskDetailTabStrip
             items={canonicalTabItems}
             activeId={activeTab}
             ariaLabel={t("taskDetail.tabs.label", "Task detail tabs")}
-            order={renderedTabOrder}
-            onOrderChange={handleTabOrderChange}
-            reorderAnnouncement={(label, position, count) => t(
-              "taskDetail.tabs.reordered",
-              "{{label}} moved to position {{position}} of {{count}}",
-              { label, position, count },
-            )}
           />
         )}
-        <main className={`detail-body${activeTab === "chat" && activitySegment === "feed" && !isActivityExpanded && !isEditing ? " detail-body--feed" : ""}${activeTab === "chat" && activitySegment === "raw-logs" && !isEditing ? " detail-body--agent-log" : ""}${activeTab === "chat" && (activitySegment === "current" || isActivityExpanded) && !isEditing ? " detail-body--chat" : ""}${activeTab === "planner-chat" && !isEditing ? " detail-body--planner-chat" : ""}`} data-testid="task-detail-tab-content">
+        <ViewLayoutContent as="main" className={`detail-body${planDocumentOpen ? " detail-body--plan-document" : ""}${activeTab === "chat" && activitySegment === "feed" && !isActivityExpanded && !isEditing ? " detail-body--feed" : ""}${activeTab === "chat" && activitySegment === "raw-logs" && !isEditing ? " detail-body--agent-log" : ""}${activeTab === "chat" && (activitySegment === "current" || isActivityExpanded) && !isEditing ? " detail-body--chat" : ""}${activeTab === "planner-chat" && !isEditing ? " detail-body--planner-chat" : ""}`} data-testid="task-detail-tab-content">
           {isEditing ? (
             <div className="modal-edit-form">
               <TaskForm
@@ -5576,48 +5493,6 @@ export function TaskDetailContent({
             </div>
           ) : (
             <>
-              {activeTab === "definition" && (
-                <>
-                {/*
-                FNXC:TaskDetailShell 2026-09-12-02:34:
-                Le titre et sa synthèse appartiennent exclusivement au contenu Définition. Les autres destinations commencent directement par leur propre contenu, sans espace de titre global.
-                */}
-                <div className="detail-heading-row">
-                  {/*
-                  FNXC:TaskDetailTitle 2026-08-04-18:00:
-                  An overflowing task-detail title is its own sole expansion control. Keep the semantic button inside the h2 so pointer, touch, and keyboard activation share one accessible target; the separate Show more/Show less row must not return.
-                  */}
-                  <h2 className={`detail-title${descriptionExpanded ? "" : " detail-title--collapsed"}`}>
-                    <span ref={titleRef} className="detail-title-measurement">
-                      {displayTitleText}
-                    </span>
-                    {titleOverflows || descriptionExpanded ? (
-                      <AlphaButton
-                        type="button"
-                        className="detail-title-control"
-                        aria-expanded={descriptionExpanded}
-                        aria-label={descriptionExpanded
-                          ? t("taskDetail.title.collapse", "Collapse task title")
-                          : t("taskDetail.title.expand", "Expand task title")}
-                        onClick={() => setDescriptionExpanded((expanded) => !expanded)}
-                      />
-                    ) : null}
-                  </h2>
-                  {showSummarizeTitleButton && (
-                    <AlphaButton
-                      type="button"
-                      className="detail-summarize-title-btn"
-                      onClick={() => void handleSummarizeTitle()}
-                      disabled={isSummarizingTitle || isSaving}
-                      data-testid="summarize-title-btn"
-                    >
-                      {isSummarizingTitle ? <Loader2 size={14} className="spinner" /> : <Sparkles size={14} />}
-                      <span>{t("taskDetail.title.summarize", "Summarize")}</span>
-                    </AlphaButton>
-                  )}
-                </div>
-                </>
-              )}
               {activeTab === "definition" && customFieldDefs && customFieldDefs.length > 0 ? (
                 <TaskFieldsSection
                   fieldDefs={customFieldDefs}
@@ -5934,6 +5809,7 @@ export function TaskDetailContent({
                   loadingMore={agentLogLoadingMore}
                   totalCount={agentLogTotal}
                   showMissingDetailHint
+                  allowFullscreen={!isPhonePresentation}
                 />
               ) : activitySegment === "interventions" ? (
                 // FNXC:PlannerOversight 2026-07-04-19:00: FN-7571 relocates the FN-7519
@@ -5958,7 +5834,7 @@ export function TaskDetailContent({
                       <Copy aria-hidden="true" />
                       {t("taskDetail.logs.copy", "Copy logs")}
                     </AlphaButton>
-                    <AlphaButton
+                    {!isPhonePresentation ? <AlphaButton
                       type="button"
                       className="btn btn-icon btn-sm activity-expand-toggle activity-expand-toggle--overlay"
                       onClick={() => setActivityExpanded((value) => !value)}
@@ -5967,7 +5843,7 @@ export function TaskDetailContent({
                       data-testid="task-chat-expand-toggle"
                     >
                       {isActivityExpanded ? <Minimize2 aria-hidden="true" /> : <Maximize2 aria-hidden="true" />}
-                    </AlphaButton>
+                    </AlphaButton> : null}
                   </div>
                   <h4>{t("taskDetail.activity.feedHeading", "Feed")}</h4>
                   {(workingTask as typeof workingTask & { activityLogTruncatedCount?: number }).activityLogTruncatedCount ? (
@@ -6002,6 +5878,7 @@ export function TaskDetailContent({
                               className={`detail-log-entry${isHighlighted ? " detail-log-entry--stall-highlight" : ""}`}
                               data-stall-highlight={isHighlighted ? "true" : undefined}
                             >
+                              <span className="detail-log-marker" aria-hidden="true" />
                               <div className="detail-log-header">
                                 {/*
                                 FNXC:PreciseTaskLogTimestamps 2026-09-01-01:03:
@@ -6019,6 +5896,12 @@ export function TaskDetailContent({
                                   />
                                 </div>
                                 <span className="detail-log-action">{action}</span>
+                                {entry.runContext?.agentId ? (
+                                  <span className="detail-log-agent">
+                                    <Bot size={12} aria-hidden="true" />
+                                    {entry.runContext.agentId}
+                                  </span>
+                                ) : null}
                               </div>
                               {outcome && (
                                 <div className="detail-log-outcome">{outcome}</div>
@@ -6924,164 +6807,81 @@ export function TaskDetailContent({
             </>
           ) : (
           <>
-          <div className="detail-section detail-step-progress">
-            <h4>{t("taskDetail.progress.heading", "Progress")}</h4>
-            {unifiedProgress.total > 0 ? (
-              <div className="step-progress-wrapper">
-                <div className="step-progress-bar">
-                  {unifiedProgress.items.map((item) => (
-                    <div
-                      key={item.id}
-                      className={`step-progress-segment step-progress-segment--${item.status} step-progress-segment--source-${item.source}`}
-                      data-tooltip={`${item.name} (${item.source === "workflow" ? "workflow step · " : ""}${item.status})`}
-                      style={{ backgroundColor: getStepStatusColor(item.status) }}
-                    />
-                  ))}
-                </div>
-                <span className="step-progress-label">
-                  {t("taskDetail.progress.stepCount", { count: unifiedProgress.completed, total: unifiedProgress.total, defaultValue_one: "{{count}}/{{total}} step", defaultValue_other: "{{count}}/{{total}} steps" })}
-                </span>
-              </div>
-            ) : (
-              <div className="step-progress-empty">{t("taskDetail.progress.noSteps", "(no steps defined)")}</div>
-            )}
-          </div>
-          <div className="detail-section detail-section--plan-prompt">
-            {!isEditingSpec && (
-              <div className="detail-spec-edit-trigger">
-                {/**
-                 * FNXC:TaskDetailPlan 2026-06-30-00:00:
-                 * The Plan tab keeps the internal definition route for stable links, while exposing a direct PROMPT.md editor action so operators can comment on the executable task plan file without replacing the inline AI revision flow.
-                 *
-                 * FNXC:TaskDetailPlan 2026-06-30-00:00:
-                 * The Plan prompt surfaces must span the task-detail card body in modal and embedded renderings. Keep the scoped wrapper around markdown, no-prompt fallback, inline edit, and AI revision controls so width fixes do not alter unrelated detail sections.
-                 */}
-                {fileBrowser && (
-                  <AlphaButton
-                    className="btn btn-sm"
-                    onClick={openPromptFile}
-                    title={t("taskDetail.spec.openPromptTitle", "Open this task's PROMPT.md in the file editor")}
-                  >
-                    {t("taskDetail.spec.openPromptBtn", "Open PROMPT.md")}
-                  </AlphaButton>
-                )}
-                <AlphaButton className="btn btn-sm" onClick={enterSpecEditMode}>
-                  {t("taskDetail.spec.editBtn", "Edit")}
+          {planDocumentOpen ? (
+            <div className="detail-plan-document" data-testid="task-detail-plan-document">
+              {/*
+              FNXC:TaskDetailDefinition 2026-09-12-22:52:
+              Lire le plan ouvre le vrai PROMPT.md comme sous-vue interne de TaskDetailContent. Retour restaure Définition sans changer d’onglet ni perdre les actions du plan.
+              */}
+              <div className="detail-plan-document-header">
+                <AlphaButton type="button" className="btn btn-sm detail-plan-back" onClick={() => setPlanDocumentOpen(false)} aria-label={t("taskDetail.spec.backToDefinition", "Back to definition")}>
+                  <ArrowLeft size={16} aria-hidden="true" /><FileText size={14} aria-hidden="true" /><span>{t("taskDetail.spec.promptFileName", "PROMPT.md")}</span>
                 </AlphaButton>
               </div>
-            )}
-            {isEditingSpec ? (
-              <div className="spec-editor-edit-mode">
-                <AlphaTextArea
-                  className="spec-editor-textarea"
-                  value={specEditContent}
-                  onChange={(e) => setSpecEditContent(e.target.value)}
-                  onKeyDown={handleSpecTextareaKeyDown}
-                  disabled={isSavingSpec}
-                  placeholder={t("taskDetail.spec.placeholder", "Enter task specification in Markdown...")}
-                  rows={12}
-                />
-                <div className="spec-editor-actions-row">
-                  <AlphaButton
-                    className="btn btn-sm"
-                    onClick={exitSpecEditMode}
-                    disabled={isSavingSpec}
-                  >
-                    {t("common.cancel", "Cancel")}
-                  </AlphaButton>
-                  <AlphaButton
-                    className="btn btn-primary btn-sm"
-                    onClick={() => void handleSaveSpecFromEdit()}
-                    disabled={specEditContent === (workingTask.prompt || "") || isSavingSpec}
-                  >
-                    {isSavingSpec ? t("taskDetail.spec.saving", "Saving…") : t("common.save", "Save")}
-                  </AlphaButton>
-                </div>
-                <div className="spec-editor-hint">
-                  <kbd>Ctrl</kbd>+<kbd>Enter</kbd> {t("taskDetail.spec.hintSave", "to save")} · <kbd>Escape</kbd> {t("taskDetail.spec.hintCancel", "to cancel")}
-                </div>
-                {/* AI Revision Section */}
-                <div className="spec-editor-revision">
-                  <h4>{t("taskDetail.spec.aiReviseHeading", "Ask AI to Revise")}</h4>
-                  <p className="spec-editor-revision-help">
-                    {t("taskDetail.spec.aiReviseHelp", "Provide feedback for the AI to improve this specification. The task will move to planning for replanning.")}
-                  </p>
-                  <AlphaTextArea
-                    className="spec-editor-feedback"
-                    value={specFeedback}
-                    onChange={(e) => setSpecFeedback(e.target.value)}
-                    placeholder={t("taskDetail.spec.feedbackPlaceholder", "e.g., 'Add more details about error handling', 'Split this into smaller steps', 'Include tests for the API endpoints'...")}
-                    disabled={isRequestingRevision}
-                    rows={4}
-                    maxLength={MAX_TASK_MESSAGE_LENGTH}
-                  />
-                  <div className="spec-editor-revision-actions">
-                    <span className="spec-editor-char-count">
-                      {specFeedback.length}/{MAX_TASK_MESSAGE_LENGTH}
-                    </span>
-                    <AlphaButton
-                      className="btn btn-primary btn-sm"
-                      onClick={() => void handleRequestRevisionFromEdit()}
-                      disabled={!specFeedback.trim() || isRequestingRevision}
-                    >
-                      {isRequestingRevision ? t("taskDetail.spec.requesting", "Requesting…") : t("taskDetail.spec.requestRevisionBtn", "Request AI Revision")}
-                    </AlphaButton>
+              <div className="detail-section detail-section--plan-prompt">
+                {!isEditingSpec && <div className="detail-spec-edit-trigger">
+                  {fileBrowser && <AlphaButton className="btn btn-sm" onClick={openPromptFile} title={t("taskDetail.spec.openPromptTitle", "Open this task's PROMPT.md in the file editor")}>{t("taskDetail.spec.openPromptBtn", "Open PROMPT.md")}</AlphaButton>}
+                  <AlphaButton className="btn btn-sm" onClick={enterSpecEditMode}>{t("taskDetail.spec.editBtn", "Edit")}</AlphaButton>
+                </div>}
+                {isEditingSpec ? <div className="spec-editor-edit-mode">
+                  <AlphaTextArea className="spec-editor-textarea" value={specEditContent} onChange={(e) => setSpecEditContent(e.target.value)} onKeyDown={handleSpecTextareaKeyDown} disabled={isSavingSpec} placeholder={t("taskDetail.spec.placeholder", "Enter task specification in Markdown...")} rows={12} />
+                  <div className="spec-editor-actions-row">
+                    <AlphaButton className="btn btn-sm" onClick={exitSpecEditMode} disabled={isSavingSpec}>{t("common.cancel", "Cancel")}</AlphaButton>
+                    <AlphaButton className="btn btn-primary btn-sm" onClick={() => void handleSaveSpecFromEdit()} disabled={specEditContent === (workingTask.prompt || "") || isSavingSpec}>{isSavingSpec ? t("taskDetail.spec.saving", "Saving…") : t("common.save", "Save")}</AlphaButton>
                   </div>
-                </div>
+                  <div className="spec-editor-hint"><kbd>Ctrl</kbd>+<kbd>Enter</kbd> {t("taskDetail.spec.hintSave", "to save")} · <kbd>Escape</kbd> {t("taskDetail.spec.hintCancel", "to cancel")}</div>
+                  <div className="spec-editor-revision">
+                    <h4>{t("taskDetail.spec.aiReviseHeading", "Ask AI to Revise")}</h4>
+                    <p className="spec-editor-revision-help">{t("taskDetail.spec.aiReviseHelp", "Provide feedback for the AI to improve this specification. The task will move to planning for replanning.")}</p>
+                    <AlphaTextArea className="spec-editor-feedback" value={specFeedback} onChange={(e) => setSpecFeedback(e.target.value)} placeholder={t("taskDetail.spec.feedbackPlaceholder", "e.g., 'Add more details about error handling', 'Split this into smaller steps', 'Include tests for the API endpoints'...")} disabled={isRequestingRevision} rows={4} maxLength={MAX_TASK_MESSAGE_LENGTH} />
+                    <div className="spec-editor-revision-actions"><span className="spec-editor-char-count">{specFeedback.length}/{MAX_TASK_MESSAGE_LENGTH}</span><AlphaButton className="btn btn-primary btn-sm" onClick={() => void handleRequestRevisionFromEdit()} disabled={!specFeedback.trim() || isRequestingRevision}>{isRequestingRevision ? t("taskDetail.spec.requesting", "Requesting…") : t("taskDetail.spec.requestRevisionBtn", "Request AI Revision")}</AlphaButton></div>
+                  </div>
+                </div> : detailLoading ? <div className="spec-loading"><LoadingSpinner label={t("taskDetail.spec.loading", "Loading specification…")} /></div> : workingTask.prompt ? <div className="markdown-body" data-testid="task-detail-plan-full"><ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={sharedRehypePlugins} components={markdownLinkifyComponents}>{workingTask.prompt}</ReactMarkdown></div> : <div className="detail-prompt">{t("taskDetail.spec.noPrompt", "(no prompt)")}</div>}
               </div>
-            ) : detailLoading ? (
-              <div className="spec-loading"><LoadingSpinner label={t("taskDetail.spec.loading", "Loading specification…")} /></div>
-            ) : workingTask.prompt ? (
-              planSummary.hasSummary ? (
-                <>
-                  {/*
-                  FNXC:TaskDetailPlan 2026-08-27-10:22:
-                  Definition shows the product summary and Before → After first so operators can confirm
-                  intent at a glance. A plan without either summary heading stays fully visible, while
-                  remaining technical detail is available through this explicit disclosure.
-                  */}
-                  <div className="markdown-body" data-testid="task-detail-plan-summary">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={sharedRehypePlugins} components={markdownLinkifyComponents}>
-                      {planSummary.summaryMarkdown}
-                    </ReactMarkdown>
-                  </div>
-                  {planSummary.restMarkdown.trim() && (
-                    <>
-                      <AlphaButton
-                        type="button"
-                        className="btn btn-sm touch-target detail-plan-details-toggle"
-                        data-testid="task-detail-plan-details-toggle"
-                        aria-expanded={planDetailsExpanded}
-                        aria-controls={`${workingTask.id}-plan-details`}
-                        onClick={() => setPlanDetailsExpanded((expanded) => !expanded)}
-                      >
-                        <ChevronRight size={16} className={planDetailsExpanded ? "detail-source-chevron--expanded" : undefined} />
-                        {planDetailsExpanded
-                          ? t("taskDetail.spec.hideDetailsBtn", "Hide details")
-                          : t("taskDetail.spec.moreDetailsBtn", "See more details")}
-                      </AlphaButton>
-                      {planDetailsExpanded && (
-                        <div className="markdown-body" id={`${workingTask.id}-plan-details`} data-testid="task-detail-plan-details">
-                          <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={sharedRehypePlugins} components={markdownLinkifyComponents}>
-                            {planSummary.restMarkdown}
-                          </ReactMarkdown>
-                        </div>
-                      )}
-                    </>
+            </div>
+          ) : (
+            <>
+              {/*
+              FNXC:TaskDetailDefinition 2026-09-13-11:59:
+              La description est la présentation principale de Définition et le header partagé ne répète plus le titre. Le titre reste une donnée éditable dans TaskForm; sa synthèse demeure disponible près de la description lorsque ses préconditions sont remplies.
+              */}
+              <section className="detail-section detail-definition-description" aria-labelledby={`${workingTask.id}-definition-description`}>
+                <div className="detail-source-header detail-definition-header">
+                  <h4 id={`${workingTask.id}-definition-description`}>{t("taskDetail.definition.descriptionHeading", "Description")}</h4>
+                  {showSummarizeTitleButton && (
+                    <AlphaButton
+                      type="button"
+                      className="btn btn-icon btn-sm detail-summarize-title-btn"
+                      onClick={() => void handleSummarizeTitle()}
+                      disabled={isSummarizingTitle || isSaving}
+                      data-testid="summarize-title-btn"
+                    >
+                      {isSummarizingTitle ? <Loader2 size={14} className="spinner" /> : <Sparkles size={14} />}
+                      <span>{t("taskDetail.title.summarize", "Summarize")}</span>
+                    </AlphaButton>
                   )}
-                </>
-              ) : (
-                <div className="markdown-body">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={sharedRehypePlugins} components={markdownLinkifyComponents}>
-                    {planSummary.restMarkdown}
-                  </ReactMarkdown>
                 </div>
-              )
-            ) : (
-              <div className="detail-prompt">{t("taskDetail.spec.noPrompt", "(no prompt)")}</div>
-            )}
-          </div>
-          </>
+                {hasOriginalTaskPrompt ? <div className="markdown-body" data-testid="task-detail-definition-description"><ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={sharedRehypePlugins} components={markdownLinkifyComponents}>{originalTaskPrompt}</ReactMarkdown></div> : <div className="detail-empty-inline">{t("taskDetail.definition.noDescription", "(no description)")}</div>}
+                <AlphaButton type="button" className="btn btn-sm detail-read-plan" onClick={() => setPlanDocumentOpen(true)}><FileText size={14} aria-hidden="true" />{t("taskDetail.spec.readPlanBtn", "Read plan")}</AlphaButton>
+              </section>
+              <section className="detail-section detail-step-progress" aria-labelledby={`${workingTask.id}-progress-heading`}>
+                <div className="detail-progress-heading"><h4 id={`${workingTask.id}-progress-heading`}>{t("taskDetail.progress.heading", "Progress")}</h4><span className="step-progress-label">{t("taskDetail.progress.completedCount", "{{count}}/{{total}} completed", { count: unifiedProgress.completed, total: unifiedProgress.total })}</span></div>
+                {unifiedProgress.total > 0 ? <>
+                  <div className="step-progress-track" role="progressbar" aria-valuemin={0} aria-valuemax={unifiedProgress.total} aria-valuenow={unifiedProgress.completed}><span style={{ inlineSize: `${(unifiedProgress.completed / unifiedProgress.total) * 100}%` }} /></div>
+                  <ol className="detail-step-list">{unifiedProgress.items.map((item) => {
+                    const statusLabel = getStepStatusLabel(item.status, t as TFunction<"app">);
+                    const complete = item.status === "done";
+                    return <li key={item.id} className={`detail-step-item detail-step-item--${item.status}`}>
+                      <span className="detail-step-indicator" style={{ color: getStepStatusColor(item.status) }} aria-hidden="true">{complete ? <Check size={12} /> : <span className="status-dot" />}</span>
+                      <span className="detail-step-name">{item.name}</span>
+                      <span className="detail-step-origin">{item.source === "workflow" ? t("taskDetail.progress.workflowOrigin", "Workflow gate") : t("taskDetail.progress.implementationOrigin", "Implementation")}</span>
+                      <span className="detail-step-status">{statusLabel}</span>
+                    </li>;
+                  })}</ol>
+                </> : <div className="step-progress-empty">{t("taskDetail.progress.noSteps", "(no steps defined)")}</div>}
+              </section>
+            </>
+          )}          </>
           )}
           </>
           )}
@@ -7112,7 +6912,7 @@ export function TaskDetailContent({
                   footerTarget={!isEditing && activeTab === "chat" && activitySegment === "current" ? tabFooterTarget : null}
                   footerVisible={!isEditing && activeTab === "chat" && activitySegment === "current"}
                   expanded={isActivityExpanded}
-                  onToggleExpanded={() => setActivityExpanded((value) => !value)}
+                  onToggleExpanded={isPhonePresentation ? undefined : () => setActivityExpanded((value) => !value)}
                   effectiveModels={{
                     triage: toTaskChatModelInfo(resolveEffectivePlanning(workingTask, agentLogEntries, settings)),
                     executor: toTaskChatModelInfo(resolveEffectiveExecutor(workingTask, agentLogEntries, assignedAgent, settings, detailColumnFlags)),
@@ -7136,7 +6936,7 @@ export function TaskDetailContent({
                   projectId={projectId}
                   active={active && activeTab === "planner-chat"}
                   expanded={isPlannerChatExpanded}
-                  onExpandedChange={setPlannerChatExpanded}
+                  onExpandedChange={isPhonePresentation ? undefined : setPlannerChatExpanded}
                   taskChatModel={resolveEffectiveTaskChat(settings)}
                   addToast={addToast}
                   onTaskUpdated={onTaskUpdated}
@@ -7224,10 +7024,10 @@ export function TaskDetailContent({
               )}
             </div>
           )}
-      </main>
+      </ViewLayoutContent>
       {!isEditing && (activeTab === "planner-chat" || (activeTab === "chat" && activitySegment === "current")) && (
-        <div
-          ref={setTabFooterTarget}
+        <ViewLayoutFooter
+          ref={(element) => setTabFooterTarget(element as HTMLDivElement | null)}
           className="modal-actions task-detail-chat-footer"
           data-testid="task-detail-chat-footer"
         />
@@ -7259,7 +7059,7 @@ export function TaskDetailContent({
         runs event-driven on the move-to-in-review and on its sweep — no manual user action needed.
         */}
         {showTaskDetailFooter && (
-          <div className="modal-actions" data-testid="task-detail-contextual-footer">
+          <ViewLayoutFooter className="modal-actions" data-testid="task-detail-contextual-footer">
           {isEditing ? (
             <>
               <span className="modal-edit-hint">
@@ -7314,7 +7114,7 @@ export function TaskDetailContent({
               )}
             </>
           )}
-          </div>
+          </ViewLayoutFooter>
         )}
       {showResetDialog && onResetTask && (
         <TaskResetDialog
@@ -7333,10 +7133,15 @@ export function TaskDetailContent({
             overlayProps={refineOverlayDismissProps}
           >
             <div className="modal detail-refine-modal">
-              <div className="modal-header">
-                <h3 id="task-detail-refine-title" className="detail-refine-title">{t("taskDetail.refine.modalTitle", "Refine")}</h3>
-                <ModalCloseButton onClick={handleCloseRefineModal} aria-label={t("common.close", "Close")} />
-              </div>
+              {/* FNXC:StandardizedViewLayout 2026-09-13-21:49: The nested Refine dialog shares the canonical header instead of a local title row. */}
+              <ViewHeader
+                className="modal-header"
+                headingLevel={3}
+                titleId="task-detail-refine-title"
+                title={t("taskDetail.refine.modalTitle", "Refine")}
+                onClose={handleCloseRefineModal}
+                closeButtonProps={{ "aria-label": t("common.close", "Close") }}
+              />
               <div className="detail-body">
                   <p className="detail-refine-help">
                     {t("taskDetail.refine.help", "Describe what needs to be refined or improved...")}
@@ -7387,8 +7192,14 @@ export function TaskDetailContent({
   );
 }
 
+/*
+FNXC:TaskDetailDefinition 2026-09-13-11:59:
+La modale et le drawer conservent un nom accessible localisé même si leur header visuel ne contient plus le titre de la tâche. Le nom vient d’une chaîne stable et non d’un élément visuel susceptible d’être absent.
+*/
 export function TaskDetailModal({ onClose, alphaMobileDrawer = false, ...props }: TaskDetailModalProps) {
+  const { t } = useTranslation("app");
   const viewportMode = useViewportMode();
+  const accessibleName = t("taskDetail.accessibleName", "Task detail");
   const closeRequestedRef = useRef(false);
   useEffect(() => { closeRequestedRef.current = false; }, [props.task.id]);
   const requestClose = useCallback(() => {
@@ -7410,7 +7221,7 @@ export function TaskDetailModal({ onClose, alphaMobileDrawer = false, ...props }
     return (
       <AlphaMobileDrawer
         open
-        title="Task detail"
+        title={accessibleName}
         onClose={requestClose}
         testId="alpha-mobile-drawer-task-detail"
         contentOwnsHeader
@@ -7426,8 +7237,8 @@ export function TaskDetailModal({ onClose, alphaMobileDrawer = false, ...props }
   return (
     <FloatingWindow
       windowKey="task-detail"
-      title="Task detail"
-      ariaLabelledBy="task-detail-modal-title"
+      title={accessibleName}
+      ariaLabel={accessibleName}
       onClose={requestClose}
       modal
       hideHeader

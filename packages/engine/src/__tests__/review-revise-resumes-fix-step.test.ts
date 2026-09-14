@@ -53,6 +53,15 @@ export function makeCompletedReviewTask(overrides: Partial<Task> = {}): Task {
     ].join("\n"),
     worktree: "/virtual/fn-277",
     modifiedFiles: ["packages/dashboard/app/components/TaskChatTab.css"],
+    workflowStepResults: [{
+      workflowStepId: "code-review",
+      workflowStepName: "Code Review",
+      phase: "pre-merge",
+      status: "failed",
+      verdict: "REVISE",
+      startedAt: "2026-09-01T01:29:40.000Z",
+      completedAt: "2026-09-01T01:29:44.000Z",
+    }],
     log: [
       { timestamp: "2026-09-01T01:29:39.372Z", action: "Step 2 (Testing & Verification) → done" },
       { timestamp: "2026-09-01T01:29:45.302Z", action: COMPLETION_MARKER },

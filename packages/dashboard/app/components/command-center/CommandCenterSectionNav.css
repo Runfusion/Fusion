@@ -3,6 +3,21 @@
   display: inline-block;
 }
 
+.cc-section-nav--rail {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  inline-size: 100%;
+  min-block-size: 0;
+  padding: var(--space-sm);
+  overflow-y: auto;
+}
+
+.cc-section-nav--rail .cc-section-nav-option {
+  inline-size: 100%;
+  min-block-size: var(--view-sidebar-row-min-height);
+}
+
 .cc-section-nav-trigger {
   display: inline-flex;
   align-items: center;

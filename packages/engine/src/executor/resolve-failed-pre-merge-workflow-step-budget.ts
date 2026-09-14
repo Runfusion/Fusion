@@ -49,6 +49,6 @@ export async function resolveFailedPreMergeWorkflowStepBudget(
     key,
     stepName: target.workflowStepName,
     attempts: countOptionalStepRevisionAttempts(task, key, target.workflowStepName),
-    label: budget.unbounded ? "unbounded" : String(budget.max),
+    label: budget.unbounded ? `unbounded (absolute cap ${budget.max})` : String(budget.max),
   };
 }

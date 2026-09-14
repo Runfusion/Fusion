@@ -281,6 +281,33 @@ Alpha keeps all workflow selections in one navigable homemade Alpha listbox. The
   box-shadow: var(--focus-ring);
 }
 
+/*
+FNXC:StandardizedViewActions 2026-09-14-02:47:
+New workflow sits in a non-scrolling popover footer so it stays reachable while a long workflow list scrolls,
+instead of duplicating the affordance as a second button beside the selector trigger.
+*/
+.workflow-switcher-footer {
+  flex: 0 0 auto;
+  margin-top: var(--space-xs);
+  padding-top: var(--space-xs);
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.workflow-switcher-create {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  width: 100%;
+  min-height: calc(var(--space-lg) + var(--space-sm));
+  border-radius: var(--radius-md);
+}
+
+[data-theme="light"] .workflow-switcher-footer {
+  background: var(--surface);
+}
+
 .workflow-switcher-edit {
   flex: 0 0 auto;
   align-self: center;
@@ -301,30 +328,11 @@ Alpha keeps all workflow selections in one navigable homemade Alpha listbox. The
   margin-left: auto;
 }
 
-.workflow-switcher-footer {
-  flex: 0 0 auto;
-  margin-top: var(--space-xs);
-  padding-top: var(--space-xs);
-  border-top: 1px solid var(--border);
-  background: var(--surface);
-}
-
-.workflow-switcher-create {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-sm);
-  width: 100%;
-  min-height: calc(var(--space-lg) + var(--space-sm));
-  border-radius: var(--radius-md);
-}
-
 [data-theme="light"] .workflow-switcher-option-row--selected {
   background: color-mix(in srgb, var(--todo) 10%, transparent);
 }
 
-[data-theme="light"] .workflow-switcher-menu,
-[data-theme="light"] .workflow-switcher-footer {
+[data-theme="light"] .workflow-switcher-menu {
   background: var(--surface);
 }
 

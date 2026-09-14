@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -17,6 +18,8 @@ import { currentFloatingZ, currentTaskDetailFloatingZ, nextFloatingZ, nextTaskDe
 import { isInsidePortalSafeSurface } from "../utils/portalSurfaces";
 import "./FloatingWindow.css";
 import { ModalCloseButton } from "./ModalCloseButton";
+import { ViewDrawerHandle } from "./ViewDrawer";
+import { ViewLayoutContent, ViewLayoutHeader } from "./ViewLayout";
 
 /*
 FNXC:FloatingWindow 2026-06-22-20:45:
@@ -299,7 +302,18 @@ export function FloatingWindow({
   ariaLabelledBy,
 }: FloatingWindowProps) {
   const { t } = useTranslation("app");
-  const resolvedMinSize: FloatingWindowSize = minSize ?? { width: DEFAULT_MIN_WIDTH, height: DEFAULT_MIN_HEIGHT };
+  /*
+  FNXC:FloatingWindow 2026-09-13-22:40:
+  Callers pass `minSize` as an inline object literal, so rebuilding this per render gave every
+  geometry-dependent effect a new identity and made passive geometry persistence write to storage on
+  each render. Memoize on the primitive extents so persistence follows real geometry changes only.
+  */
+  const minWidth = minSize?.width ?? DEFAULT_MIN_WIDTH;
+  const minHeight = minSize?.height ?? DEFAULT_MIN_HEIGHT;
+  const resolvedMinSize: FloatingWindowSize = useMemo(
+    () => ({ width: minWidth, height: minHeight }),
+    [minWidth, minHeight],
+  );
   const viewportMode = useViewportMode();
   /*
   FNXC:ModalTouchGeometry 2026-07-26-12:19:
@@ -827,9 +841,7 @@ export function FloatingWindow({
         expose no floating-window affordance or touch gesture surface.
         */}
         {alphaMobileDrawer && (
-          <div className="floating-window__drawer-handle-target" aria-hidden="true">
-            <span className="floating-window__drawer-handle" />
-          </div>
+          <ViewDrawerHandle className="floating-window__drawer-handle-target" barClassName="floating-window__drawer-handle" />
         )}
         {!geometryPersistenceSuspended && RESIZE_DIRECTIONS.map((direction) => (
           <div
@@ -843,7 +855,7 @@ export function FloatingWindow({
           />
         ))}
         {!hideHeader && (
-          <div
+          <ViewLayoutHeader
             className="floating-window__header"
             data-testid={`floating-window-drag-handle-${windowKey}`}
             {...(hasTabletTouchGeometry ? { "data-resize-hit-target": "true" } : {})}
@@ -857,11 +869,11 @@ export function FloatingWindow({
                 data-testid={`floating-window-close-${windowKey}`}
               />
             )}
-          </div>
+          </ViewLayoutHeader>
         )}
-        <div className="floating-window__body" data-testid={`floating-window-body-${windowKey}`}>
+        <ViewLayoutContent className="floating-window__body" data-testid={`floating-window-body-${windowKey}`}>
           {children}
-        </div>
+        </ViewLayoutContent>
       </div>
     </div>,
     document.body,

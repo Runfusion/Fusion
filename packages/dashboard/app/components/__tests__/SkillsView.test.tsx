@@ -136,7 +136,7 @@ describe("SkillsView", () => {
 
       await waitFor(() => {
         expect(screen.getByTestId("skills-view")).toBeTruthy();
-        expect(screen.getByText("Skills & Snippets")).toBeTruthy();
+        expect(screen.getByText("Skills")).toBeTruthy();
         expect(screen.getByText(/discovered/)).toBeTruthy();
       });
     });
@@ -259,112 +259,6 @@ describe("SkillsView", () => {
       await waitFor(() => {
         expect(screen.getByText("No skills available in the catalog.")).toBeTruthy();
       });
-    });
-  });
-
-  describe("chat snippets", () => {
-    function activateSnippetsTab(): void {
-      fireEvent.click(screen.getByTestId("skills-tab-snippets"));
-    }
-
-    it("creates, edits, and deletes a snippet while preserving prompt text", async () => {
-      render(<SkillsView addToast={mockAddToast} onClose={onClose} />);
-      activateSnippetsTab();
-      await screen.findByTestId("snippets-empty");
-
-      const prompt = "  lance toujours les tests\navec chrome devtool mcp 😀  ";
-      fireEvent.change(screen.getByLabelText("Name"), { target: { value: "  ＴＥＳＴ  " } });
-      fireEvent.change(screen.getByLabelText("Prompt"), { target: { value: prompt } });
-      fireEvent.click(screen.getByRole("button", { name: "Add snippet" }));
-
-      await screen.findByText("/test");
-      expect(mockUpdateGlobalSettings).toHaveBeenLastCalledWith({
-        chatSnippets: [{ name: "test", prompt }],
-      });
-      fireEvent.click(screen.getByRole("button", { name: "Edit /test" }));
-      fireEvent.change(screen.getByLabelText("Name"), { target: { value: "checks" } });
-      fireEvent.change(screen.getByLabelText("Prompt"), { target: { value: `${prompt}\nupdated` } });
-      fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
-
-      const renamedTrigger = await screen.findByText("/checks");
-      expect(renamedTrigger.closest("article")?.querySelector(".skills-view-snippets__preview")?.textContent).toBe(`${prompt}\nupdated`);
-      fireEvent.click(screen.getByRole("button", { name: "Delete /checks" }));
-      await screen.findByTestId("snippets-empty");
-      expect(screen.queryByText("/checks")).toBeNull();
-    });
-
-    it("rejects reserved, duplicate, and over-capacity names before writing", async () => {
-      chatSnippets = [{ name: "existing", prompt: "existing prompt" }];
-      const first = render(<SkillsView addToast={mockAddToast} onClose={onClose} />);
-      activateSnippetsTab();
-      await screen.findByText("/existing");
-
-      fireEvent.change(screen.getByLabelText("Name"), { target: { value: "STEER" } });
-      fireEvent.change(screen.getByLabelText("Prompt"), { target: { value: "prompt" } });
-      fireEvent.click(screen.getByRole("button", { name: "Add snippet" }));
-      expect(await screen.findByText("This name is reserved for a chat command.")).toBeTruthy();
-
-      fireEvent.change(screen.getByLabelText("Name"), { target: { value: "ＥＸＩＳＴＩＮＧ" } });
-      fireEvent.click(screen.getByRole("button", { name: "Add snippet" }));
-      expect(await screen.findByText("A snippet with this name already exists.")).toBeTruthy();
-      expect(mockUpdateGlobalSettings).not.toHaveBeenCalled();
-
-      first.unmount();
-      __test_resetChatSnippetsCache();
-      chatSnippets = Array.from({ length: 50 }, (_, index) => ({ name: `item-${index}`, prompt: `${index}` }));
-      render(<SkillsView addToast={mockAddToast} onClose={onClose} />);
-      activateSnippetsTab();
-      await screen.findByText("/item-49");
-      fireEvent.change(screen.getByLabelText("Name"), { target: { value: "overflow" } });
-      fireEvent.change(screen.getByLabelText("Prompt"), { target: { value: "prompt" } });
-      fireEvent.click(screen.getByRole("button", { name: "Add snippet" }));
-      expect(await screen.findByText("You can save up to 50 snippets.")).toBeTruthy();
-      expect(mockUpdateGlobalSettings).not.toHaveBeenCalled();
-    });
-
-    it("keeps the loaded list and editable form after a failed write rebase", async () => {
-      chatSnippets = [{ name: "existing", prompt: "existing prompt" }];
-      mockUpdateGlobalSettings.mockRejectedValueOnce(new Error("write failed"));
-      render(<SkillsView addToast={mockAddToast} onClose={onClose} />);
-      activateSnippetsTab();
-      await screen.findByText("/existing");
-
-      fireEvent.change(screen.getByLabelText("Name"), { target: { value: "test" } });
-      fireEvent.change(screen.getByLabelText("Prompt"), { target: { value: "keep editable" } });
-      fireEvent.click(screen.getByRole("button", { name: "Add snippet" }));
-
-      expect(await screen.findByText("The snippet could not be saved. Refresh and try again.")).toBeTruthy();
-      expect(screen.getByText("/existing")).toBeTruthy();
-      expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("test");
-      expect((screen.getByLabelText("Prompt") as HTMLTextAreaElement).value).toBe("keep editable");
-    });
-
-    it("disables writes before the first authoritative load and exposes retry after failure", async () => {
-      let rejectLoad!: (error: Error) => void;
-      mockFetchGlobalSettings.mockReturnValueOnce(new Promise((_, reject) => { rejectLoad = reject; }));
-      render(<SkillsView addToast={mockAddToast} onClose={onClose} />);
-      activateSnippetsTab();
-
-      expect(screen.getByTestId("snippets-loading")).toBeTruthy();
-      expect(screen.getByRole("button", { name: "Add snippet" })).toBeDisabled();
-      await act(async () => rejectLoad(new Error("read failed")));
-      expect(await screen.findByText("Snippets could not be refreshed. Your last loaded list is still shown.")).toBeTruthy();
-      expect(screen.getByRole("button", { name: "Add snippet" })).toBeDisabled();
-      expect(mockUpdateGlobalSettings).not.toHaveBeenCalled();
-    });
-
-    it("keeps skill actions and snippet management accessible by switching tabs", async () => {
-      render(<SkillsView addToast={mockAddToast} onClose={onClose} />);
-
-      expect(await screen.findByRole("heading", { name: "Discovered Skills" })).toBeTruthy();
-      expect(screen.getByRole("heading", { name: "Skills Catalog" })).toBeTruthy();
-      expect(screen.getByRole("checkbox", { name: "Disable test-skill" })).toBeTruthy();
-      expect(screen.getByRole("button", { name: "Install Test Skill" })).toBeTruthy();
-
-      activateSnippetsTab();
-      expect(screen.getByRole("heading", { name: "Chat Snippets" })).toBeTruthy();
-      expect(screen.getByRole("textbox", { name: "Name" })).toBeTruthy();
-      expect(screen.getByRole("button", { name: "Add snippet" })).toBeTruthy();
     });
   });
 
@@ -670,11 +564,11 @@ describe("SkillsView", () => {
       render(<SkillsView addToast={mockAddToast} onClose={onClose} />);
 
       await waitFor(() => {
-        expect(screen.getByLabelText("Close Skills & Snippets view")).toBeTruthy();
+        expect(screen.getByLabelText("Close Skills view")).toBeTruthy();
       });
 
       await act(async () => {
-        fireEvent.click(screen.getByLabelText("Close Skills & Snippets view"));
+        fireEvent.click(screen.getByLabelText("Close Skills view"));
       });
 
       expect(onClose).toHaveBeenCalled();
@@ -1253,7 +1147,7 @@ describe("SkillsView", () => {
     it("returns to the list via the narrow-mode back button (master→detail flow)", async () => {
       // FNXC:Skills 2026-06-23-01:45: NARROW single-panel master→detail flow.
       // Selecting a skill shows the detail ON TOP; the BACK affordance
-      // (data-testid="skills-detail-back") clears the selection and returns to
+      // (the shared header chevron labelled "Back to skills") clears the selection and returns to
       // the list. Asserts the back control exists and restores the empty-state.
       render(<SkillsView addToast={mockAddToast} onClose={onClose} />);
 
@@ -1271,8 +1165,8 @@ describe("SkillsView", () => {
         expect(screen.getByTestId("skills-view").getAttribute("data-selected")).toBe("true");
       });
 
-      const backButton = screen.getByTestId("skills-detail-back");
-      expect(backButton).toBeTruthy();
+      const backButton = screen.getByRole("button", { name: "Back to skills" });
+      expect(backButton).toHaveClass("view-back-button");
 
       await act(async () => {
         fireEvent.click(backButton);

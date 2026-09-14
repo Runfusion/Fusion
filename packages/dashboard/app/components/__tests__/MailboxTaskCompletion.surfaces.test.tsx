@@ -118,7 +118,7 @@ describe("task completion mail production surfaces", () => {
     await user.click(await screen.findByTestId("mailbox-item-empty"));
     let detail = await screen.findByTestId("mailbox-message-detail");
     expect(within(detail).getByText("Summary for empty")).toBeInTheDocument();
-    expect(within(detail).getByTestId("mailbox-task-completion")).toBeEmptyDOMElement();
+    expect(within(detail).getByTestId("mailbox-task-completion-no-recommendations")).toHaveTextContent("No follow-up recommendations were suggested.");
     expect(within(detail).queryByTestId("mailbox-view-task")).not.toBeInTheDocument();
 
     const backToList = screen.queryByTestId("mailbox-back-to-list");
@@ -155,10 +155,12 @@ describe("task completion mail production surfaces", () => {
     expect(within(surface).getByText("Summary for completion")).toBeInTheDocument();
     const completionCount = pane === "conversation" ? 2 : 1;
     expect(within(surface).getAllByTestId("mailbox-task-completion")).toHaveLength(completionCount);
+    expect(within(surface).getAllByRole("region", { name: "Suggested recommendations" })).toHaveLength(completionCount);
     expect(within(surface).getAllByRole("img", { name: "Completion image" })).toHaveLength(completionCount * 2);
     expect(within(surface).queryByText("document")).not.toBeInTheDocument();
     expect(await within(surface).findAllByText("Add regression coverage")).toHaveLength(completionCount);
     expect(within(surface).getAllByRole("button", { name: "Create task" })).toHaveLength(completionCount);
+    expect(within(surface).getAllByRole("button", { name: "View task: FN-325" })).toHaveLength(completionCount);
 
     await user.click(within(surface).getAllByRole("button", { name: "View task: FN-325" })[0]);
     expect(onOpenTask).toHaveBeenCalledWith("FN-325");

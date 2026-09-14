@@ -2,14 +2,17 @@ import "./AgentsView.css";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { useState, useEffect, useCallback, useRef, useMemo, useId, useLayoutEffect, lazy, Suspense, type CSSProperties, type ReactNode, type MutableRefObject, type RefObject, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { Plus, Play, Pause, Activity, Trash2, RefreshCw, Bot, List, ChevronRight, Filter, Upload, Network, SlidersHorizontal, ZoomIn, ZoomOut, Minimize2, Move, Info } from "lucide-react";
+import { Play, Pause, Activity, Trash2, RefreshCw, Bot, List, ChevronRight, Filter, Upload, Network, SlidersHorizontal, ZoomIn, ZoomOut, Minimize2, Move, Info } from "lucide-react";
 import type { Agent, AgentCapability, AgentOnboardingSummary, AgentState, OrgTreeNode } from "../api";
 import { fetchAgents, updateAgent, updateAgentState, deleteAgent, startAgentRun, fetchOrgTree, fetchSettings, updateSettings, isAgentHeartbeatEnabled, withAgentHeartbeatEnabled } from "../api";
 
 const AgentDetailView = lazy(() => import("./AgentDetailView").then((m) => ({ default: m.AgentDetailView })));
 import { AgentTokenStatsPanel } from "./AgentTokenStatsPanel";
-import { AgentsOverviewBar } from "./AgentsOverviewBar";
+import { AgentsOverviewBar, AgentsOverviewToggle } from "./AgentsOverviewBar";
 import { ViewHeader } from "./ViewHeader";
+import { ViewActionButton } from "./ViewActionButton";
+import { ViewSidebar } from "./ViewSidebar";
+import { ViewLayout } from "./ViewLayout";
 import { AgentEmptyState } from "./AgentEmptyState";
 import { useAgents } from "../hooks/useAgents";
 import { useConfirm } from "../hooks/useConfirm";
@@ -73,28 +76,6 @@ const ORG_CHART_SCALE_MIN = 0.25;
 const ORG_CHART_SCALE_MAX = 3;
 const ORG_CHART_KEYBOARD_PAN_STEP = 16;
 const ORG_CHART_OVERSCROLL = 32;
-
-/*
-FNXC:AgentsView 2026-06-20-00:00:
-The Agents split view needs a wider tablet default than the old fixed CSS column and the sidebar must be user-resizable on non-mobile viewports.
-Persist the clamped width per project so desktop and tablet users keep their preferred agent-list/detail balance without affecting the stacked mobile layout.
-*/
-const AGENTS_SIDEBAR_DEFAULT_WIDTH = 320;
-const AGENTS_SIDEBAR_MIN_WIDTH = 260;
-const AGENTS_SIDEBAR_MAX_WIDTH = 520;
-const AGENTS_SIDEBAR_WIDTH_STORAGE_KEY = "kb-dashboard-agents-sidebar-width";
-
-function clampAgentsSidebarWidth(width: number): number {
-  return Math.max(AGENTS_SIDEBAR_MIN_WIDTH, Math.min(AGENTS_SIDEBAR_MAX_WIDTH, width));
-}
-
-function readAgentsSidebarWidth(projectId?: string): number {
-  if (typeof window === "undefined") return AGENTS_SIDEBAR_DEFAULT_WIDTH;
-  const stored = getScopedItem(AGENTS_SIDEBAR_WIDTH_STORAGE_KEY, projectId);
-  const parsed = stored ? Number(stored) : NaN;
-  if (!Number.isFinite(parsed)) return AGENTS_SIDEBAR_DEFAULT_WIDTH;
-  return clampAgentsSidebarWidth(parsed);
-}
 
 function getStateBadgeClass(state: AgentState): string {
   switch (state) {
@@ -502,7 +483,6 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
   );
   const viewportMode = useViewportMode();
   const isMobileViewport = viewportMode === "mobile";
-  const [sidebarWidth, setSidebarWidth] = useState<number>(() => readAgentsSidebarWidth(projectId));
   const [filterState, setFilterState] = useState<AgentState | "all">("all");
   const { agents, stats, isLoading, loadAgents, refreshAgents } = useAgents(projectId, {
     filterState,
@@ -554,10 +534,6 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
   const controlsPanelId = useId();
 
   useEffect(() => {
-    setSidebarWidth(readAgentsSidebarWidth(projectId));
-  }, [projectId]);
-
-  useEffect(() => {
     const saved = getScopedItem("fn-agent-view", projectId);
     if (saved === "list" || saved === "board" || saved === "org") {
       setAgentView(saved);
@@ -579,59 +555,6 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
   useEffect(() => {
     setScopedItem(ORG_CHART_LAYOUT_STORAGE_KEY, orgChartLayoutPreference, projectId);
   }, [orgChartLayoutPreference, projectId]);
-
-  const persistSidebarWidth = useCallback((width: number) => {
-    try {
-      setScopedItem(AGENTS_SIDEBAR_WIDTH_STORAGE_KEY, String(width), projectId);
-    } catch {
-      // Ignore storage errors.
-    }
-  }, [projectId]);
-
-  const handleSidebarResizeStart = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if (isMobileViewport) return;
-    event.preventDefault();
-    event.stopPropagation();
-    const handle = event.currentTarget;
-    if (typeof handle.setPointerCapture === "function") {
-      handle.setPointerCapture(event.pointerId);
-    }
-    const startX = event.clientX;
-    const startWidth = sidebarWidth;
-    let latestWidth = startWidth;
-    document.body.style.userSelect = "none";
-
-    const onPointerMove = (moveEvent: PointerEvent) => {
-      const deltaX = moveEvent.clientX - startX;
-      const nextWidth = clampAgentsSidebarWidth(startWidth + deltaX);
-      latestWidth = nextWidth;
-      setSidebarWidth(nextWidth);
-    };
-
-    const onPointerUp = (upEvent: PointerEvent) => {
-      if (typeof handle.releasePointerCapture === "function") {
-        handle.releasePointerCapture(upEvent.pointerId);
-      }
-      document.body.style.userSelect = "";
-      document.removeEventListener("pointermove", onPointerMove);
-      document.removeEventListener("pointerup", onPointerUp);
-      persistSidebarWidth(latestWidth);
-    };
-
-    document.addEventListener("pointermove", onPointerMove);
-    document.addEventListener("pointerup", onPointerUp);
-  }, [isMobileViewport, persistSidebarWidth, sidebarWidth]);
-
-  const handleSidebarResizeKeyDown = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (isMobileViewport) return;
-    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-    event.preventDefault();
-    const step = event.shiftKey ? 50 : 10;
-    const delta = event.key === "ArrowLeft" ? -step : step;
-    const nextWidth = clampAgentsSidebarWidth(sidebarWidth + delta);
-    setSidebarWidth(nextWidth);
-    persistSidebarWidth(nextWidth);
-  }, [isMobileViewport, persistSidebarWidth, sidebarWidth]);
 
   const [editingRoleForAgent, setEditingRoleForAgent] = useState<string | null>(null);
   const roleSelectRef = useRef<HTMLSelectElement>(null);
@@ -1524,7 +1447,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
   }, []);
 
   return (
-    <div className="agents-view">
+    <ViewLayout className="agents-view" contentOwnsScroll header={<>
       {/*
       FNXC:Navigation 2026-06-22-01:10:
       Agents adopts the shared ViewHeader (Command Center-modeled) title row for cross-view consistency. The deeply-integrated controls (view-toggle, controls popup, refresh, import, new-agent) keep working by passing the existing agents-view-controls cluster through the header actions prop. The agents-view-controls / agents-view-primary-actions class names are preserved so existing scoped CSS (incl. mobile rules covered by the CSS string-match test) still applies.
@@ -1535,8 +1458,23 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
       <ViewHeader
         icon={Bot}
         title={t("agents.title", "Agents")}
+        backAction={selectedAgentId && (isMobileViewport || agentView === "org") ? {
+          label: agentView === "org" ? t("agents.backToOrgChart", "Back to org chart") : t("agents.backToAgents", "Back to agents"),
+          onClick: handleCloseDetail,
+          "data-testid": "agents-detail-back",
+        } : undefined}
         actions={
         <div className="agents-view-controls">
+          {/*
+          FNXC:StandardizedViewActions 2026-09-14-02:47:
+          Overview is a view-level disclosure, so its trigger sits with the other header actions. The rail keeps only the
+          agent collection and the expanded overview drops in as a sibling section beneath the header.
+          */}
+          <AgentsOverviewToggle
+            activeAgents={displayActiveAgents}
+            isOpen={isOverviewOpen}
+            onToggle={() => setIsOverviewOpen((open) => !open)}
+          />
           <div className="view-toggle">
             <button
               className={`view-toggle-btn${agentView === "list" ? " active" : ""}`}
@@ -1587,34 +1525,27 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
             >
               <RefreshCw size={16} className={isLoading ? "spin" : undefined} />
             </button>
-            {!isMobileViewport && (
-              <>
-                <button
-                  className="btn btn-sm agent-import-trigger"
-                  onClick={() => {
-                    setIsImporting(true);
-                    setIsControlsPanelOpen(false);
-                  }}
-                  aria-label={t("agents.import", "Import")}
-                  title={t("agents.import", "Import")}
-                >
-                  <Upload size={16} />
-                  {t("agents.import", "Import")}
-                </button>
-                <button
-                  className="btn btn-task-create btn-sm"
-                  onClick={() => {
-                    handleOpenNewAgent();
-                    setIsControlsPanelOpen(false);
-                  }}
-                  aria-label={t("agents.newAgent", "New Agent")}
-                  title={t("agents.newAgent", "New Agent")}
-                >
-                  <Plus size={16} />
-                  {t("agents.newAgent", "New Agent")}
-                </button>
-              </>
-            )}
+            {!isMobileViewport ? <button
+              className="btn btn-sm agent-import-trigger"
+              onClick={() => {
+                setIsImporting(true);
+                setIsControlsPanelOpen(false);
+              }}
+              aria-label={t("agents.import", "Import")}
+              title={t("agents.import", "Import")}
+            >
+              <Upload size={16} />
+              {t("agents.import", "Import")}
+            </button> : null}
+            <ViewActionButton
+              kind="create"
+              label={t("agents.newAgent", "New Agent")}
+              onClick={() => {
+                handleOpenNewAgent();
+                setIsControlsPanelOpen(false);
+              }}
+              data-testid="agents-new-agent"
+            />
             {isControlsPanelOpen && (
               <div
                 ref={controlsPanelRef}
@@ -1668,18 +1599,6 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
                     >
                       <Upload size={16} />
                       {t("agents.import", "Import")}
-                    </button>
-                    <button
-                      className="btn btn-task-create btn-sm"
-                      onClick={() => {
-                        handleOpenNewAgent();
-                        setIsControlsPanelOpen(false);
-                      }}
-                      aria-label={t("agents.newAgent", "New Agent")}
-                      title={t("agents.newAgent", "New Agent")}
-                    >
-                      <Plus size={16} />
-                      {t("agents.newAgent", "New Agent")}
                     </button>
                   </div>
                 )}
@@ -1812,6 +1731,8 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
         </div>
         }
       />
+    </>}
+    >
 
       <NewAgentDialog
         isOpen={isCreating}
@@ -1839,7 +1760,6 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
         activeAgents={displayActiveAgents}
         projectId={projectId}
         isOpen={isOverviewOpen}
-        onToggle={() => setIsOverviewOpen((open) => !open)}
         onSelectAgent={handleOverviewAgentSelect}
         onOpenTaskLogs={onOpenTaskLogs}
       />
@@ -1849,14 +1769,6 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
           <div className="agents-view-content agents-view-content--org-full">
             {selectedAgentId ? (
               <div className="agents-org-detail-view" data-testid="agents-org-detail-view">
-                <button
-                  type="button"
-                  className="btn btn-sm agents-org-detail-back"
-                  onClick={handleCloseDetail}
-                  aria-label={t("agents.backToOrgChart", "Back to org chart")}
-                >
-                  {t("agents.backToOrgChart", "Back to org chart")}
-                </button>
                 <Suspense fallback={null}>
                   <AgentDetailView
                     key={selectedAgentId}
@@ -1962,11 +1874,16 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
           </div>
         </div>
       ) : (
-      <div
-        className="agents-split-layout"
-        style={isMobileViewport ? undefined : { gridTemplateColumns: `${sidebarWidth}px var(--space-sm) minmax(0, 1fr)` }}
-      >
-        <div className={`agents-split-sidebar${isMobileDetailOpen ? " agents-split-sidebar--hidden-mobile" : ""}`}>
+      <div className="agents-split-layout">
+        <ViewSidebar
+          ariaLabel={t("agents.agentList", "Agent list")}
+          resizeLabel={t("agents.resizeSidebar", "Resize agent list")}
+          hostIdentity="agents-main"
+          mobile={isMobileViewport}
+          panelTestId="agents-split-sidebar"
+          separatorTestId="agents-sidebar-resize-handle"
+          className={`agents-split-sidebar${isMobileDetailOpen ? " agents-split-sidebar--hidden-mobile" : ""}`}
+        >
           <div className="agents-view-content">
         {/* Agent Collection */}
         {showInitialAgentsLoading ? (
@@ -2413,23 +2330,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
         )}
           </div>
 
-        </div>
-
-        {!isMobileViewport && (
-          <div
-            className="agents-split-resize-handle"
-            data-testid="agents-sidebar-resize-handle"
-            role="separator"
-            aria-orientation="vertical"
-            aria-valuemin={AGENTS_SIDEBAR_MIN_WIDTH}
-            aria-valuemax={AGENTS_SIDEBAR_MAX_WIDTH}
-            aria-valuenow={sidebarWidth}
-            aria-label={t("agents.resizeSidebar", "Resize agents sidebar")}
-            tabIndex={0}
-            onPointerDown={handleSidebarResizeStart}
-            onKeyDown={handleSidebarResizeKeyDown}
-          />
-        )}
+        </ViewSidebar>
 
         <div className={`agents-split-detail${isMobileViewport && !selectedAgentId ? " agents-split-detail--hidden-mobile" : ""}`}>
           {selectedAgentId ? (
@@ -2437,7 +2338,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
               <AgentDetailView
                 key={selectedAgentId}
                 inline
-                showInlineBackButton={isMobileViewport}
+                showInlineBackButton={false}
                 agentId={selectedAgentId}
                 projectId={projectId}
                 onClose={handleCloseDetail}
@@ -2459,6 +2360,6 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
         </div>
       </div>
       )}
-    </div>
+    </ViewLayout>
   );
 }

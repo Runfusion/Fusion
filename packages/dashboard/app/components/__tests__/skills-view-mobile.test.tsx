@@ -341,10 +341,8 @@ describe("SkillsView component structure", () => {
     expect(screen.queryByRole("button", { name: "Install Mobile Installed" })).toBeNull();
   });
 
-  it("keeps the snippet editor, actions, and execution-skill sections reachable in the narrow layout", async () => {
-    mockFetchGlobalSettings.mockResolvedValue({
-      chatSnippets: [{ name: "test", prompt: "lance toujours les tests avec chrome devtool mcp" }],
-    });
+  /* Snippets left this view for its own destination; its narrow-layout coverage lives in SnippetsView.test.tsx. */
+  it("keeps the execution-skill sections reachable in the narrow layout", async () => {
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 375 });
     window.dispatchEvent(new Event("resize"));
     const { SkillsView } = await import("../SkillsView");
@@ -353,12 +351,8 @@ describe("SkillsView component structure", () => {
 
     expect(await screen.findByRole("heading", { name: "Discovered Skills" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Skills Catalog" })).toBeTruthy();
-
-    fireEvent.click(screen.getByTestId("skills-tab-snippets"));
-    expect(await screen.findByText("/test")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Edit /test" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Delete /test" })).toBeTruthy();
-    expect(screen.getByLabelText("Chat snippet editor")).toBeTruthy();
+    expect(screen.queryByTestId("skills-tab-snippets")).toBeNull();
+    expect(screen.queryByLabelText("Chat snippet editor")).toBeNull();
   });
 
   it("renders .skills-view-content wrapper around sections", async () => {
@@ -376,11 +370,11 @@ describe("SkillsView component structure", () => {
     const contentWrapper = screen.getByTestId("skills-view").querySelector(".skills-view-content");
     expect(contentWrapper).not.toBeNull();
 
-    // Only the two execution-skill sections remain inside the wrapper.
+    // Only the two execution-skill sections remain inside the wrapper, and no snippet chrome survives.
     const sections = contentWrapper!.querySelectorAll(".skills-view-section");
     expect(sections.length).toBe(2);
     expect(contentWrapper!.querySelector(".skills-view-snippets")).toBeNull();
-    expect(screen.getByTestId("skills-panel-snippets").querySelector(".skills-view-snippets")).not.toBeNull();
+    expect(screen.queryByTestId("skills-panel-snippets")).toBeNull();
 
     // Header (now the shared ViewHeader: .view-header) should be outside the content
     // wrapper, directly on skills-view.

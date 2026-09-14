@@ -21,7 +21,6 @@ import {
   BookOpen,
   FileText,
   Palette,
-  Plus,
   X,
   ChevronDown,
   ChevronRight,
@@ -31,6 +30,8 @@ import {
 import { fetchPiSettings, updatePiSettings, installPiPackage, reinstallFusionPiPackage, fetchPiExtensions, updatePiExtensions, type PiSettings, type PiExtensionEntry } from "../api";
 import type { ToastType } from "../hooks/useToast";
 import { LoadingSpinner } from "./LoadingSpinner";
+import { ViewActionButton } from "./ViewActionButton";
+import { ViewHeader } from "./ViewHeader";
 
 interface PiExtensionsManagerProps {
   addToast: (message: string, type?: ToastType) => void;
@@ -239,14 +240,18 @@ export function PiExtensionsManager({ addToast, projectId }: PiExtensionsManager
 
   return (
     <div className="pi-ext-manager">
-      <div className="pi-ext-manager-header">
-        <h4 className="pi-ext-manager-title">{t("piManager.title", "Pi Extensions")}</h4>
-        <div className="pi-ext-manager-actions">
-          <button className="btn-icon" onClick={loadSettings} title={t("piManager.refreshButton", "Refresh")} disabled={loading}>
-            <RefreshCw size={16} className={loading ? "spin" : ""} />
-          </button>
-        </div>
-      </div>
+      {/* FNXC:StandardizedViewLayout 2026-09-13-21:43: Pi package creation and refresh live in the shared header; the source input remains the unchanged controller for the one install action. */}
+      <ViewHeader
+        className="pi-ext-manager-header"
+        icon={Puzzle}
+        title={t("piManager.title", "Pi Extensions")}
+        actions={(
+          <>
+            <ViewActionButton icon={RefreshCw} iconClassName={loading ? "spin" : undefined} label={t("piManager.refreshButton", "Refresh")} onClick={loadSettings} disabled={loading} />
+            <ViewActionButton kind="create" label={installing ? t("piManager.installing", "Installing…") : t("piManager.addButton", "Add")} onClick={handleInstall} disabled={installing || !newSource.trim()} />
+          </>
+        )}
+      />
 
       {loading ? (
         <div className="loading-state"><LoadingSpinner label={t("piManager.loading", "Loading Pi settings…")} /></div>
@@ -274,14 +279,6 @@ export function PiExtensionsManager({ addToast, projectId }: PiExtensionsManager
                 }}
                 disabled={installing}
               />
-              <button
-                className="btn btn-primary"
-                onClick={handleInstall}
-                disabled={installing || !newSource.trim()}
-              >
-                <Plus size={14} />
-                {installing ? t("piManager.installing", "Installing…") : t("piManager.addButton", "Add")}
-              </button>
             </div>
             <div className="pi-ext-add-form-row">
               <button

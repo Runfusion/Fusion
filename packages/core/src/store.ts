@@ -2813,7 +2813,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     return publishTaskOverlapDeliveriesImpl(this, blockerTaskId, deliveries);
   }
 
-  async completeTaskOverlapWait(input: { taskId: string; episodeId: string; expectedRevision: number; owner: string; phase?: "ready" | "delivered" | "freshness-pending" | "revalidation-pending" | "repair-required"; receipt: OverlapWaitReceipt; executionIdentity?: OverlapWaitExecutionIdentity }) {
+  async completeTaskOverlapWait(input: { taskId: string; episodeId: string; expectedRevision: number; owner: string; phase?: "ready" | "delivered" | "freshness-pending"; receipt: OverlapWaitReceipt; executionIdentity?: OverlapWaitExecutionIdentity }) {
     return completeTaskOverlapWaitImpl(this, input);
   }
   async logEntry(id: string, action: string, outcome?: string, runContext?: RunMutationContext): Promise<Task> {

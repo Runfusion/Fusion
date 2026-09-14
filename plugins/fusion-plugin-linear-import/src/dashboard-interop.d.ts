@@ -1,3 +1,17 @@
+declare module "@fusion/dashboard/app/plugins/PluginDashboardViewHeader" {
+  import type { ComponentType, ReactNode } from "react";
+  import type { LucideProps } from "lucide-react";
+
+  export interface PluginDashboardViewHeaderProps {
+    icon?: ComponentType<LucideProps>;
+    title: ReactNode;
+    actions?: ReactNode;
+    titleId?: string;
+  }
+
+  export function PluginDashboardViewHeader(props: PluginDashboardViewHeaderProps): ReactNode;
+}
+
 declare module "@fusion/dashboard/app/plugins/types" {
   import type { ReactNode } from "react";
 

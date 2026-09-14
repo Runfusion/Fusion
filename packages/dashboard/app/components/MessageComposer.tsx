@@ -1,7 +1,7 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useAutosizeTextarea } from "../hooks/useAutosizeTextarea";
-import { X, Send, Loader2, Bot, AlertCircle } from "lucide-react";
+import { Send, Loader2, Bot, AlertCircle } from "lucide-react";
 import type { DragEvent } from "react";
 import type { NativeStructureEmbed, NativeStructureRef, ParticipantType, MessageType } from "@fusion/core";
 import { getErrorMessage } from "@fusion/core";
@@ -247,18 +247,13 @@ export function MessageComposer({
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
-      <div className="message-composer-header">
-        <span>{replyContext ? t("composer.replyTitle", "Reply") : t("composer.newMessageTitle", "New Message")}</span>
-        <button
-          className="btn-icon"
-          onClick={onCancel}
-          aria-label={t("actions.cancel", "Cancel")}
-          data-testid="message-composer-cancel"
-        >
-          <X size={16} />
-        </button>
-      </div>
-
+      {/*
+      FNXC:StandardizedMailboxLayout 2026-09-14-10:24:
+      FN-379 remediation: the composer is hosted content, never a second chrome owner. Its dynamic identity
+      ("New Message"/"Reply") and its abandon action belong to the owning ViewHeader of Mailbox (destination and
+      floating window alike), so the composer no longer renders a local header row or a local close control. The
+      contextual footer Cancel remains a form command of the open form.
+      */}
       <div className="message-composer-body">
         {/* FNXC:StructuralMail 2026-08-09-12:41: Quick mail remains the default and never adds metadata; report validation stays at send time so recipient gating remains independent. FN-8870 requires at least one complete section for structural reports. */}
         <div className="message-composer-mode" role="group" aria-label={t("composer.mode", "Message mode")}>

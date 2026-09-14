@@ -58,7 +58,7 @@ function DetailFixture({ enabled, title = "Alpha task" }: { enabled: boolean; ti
 const hostTask = makeTask({ id: "FN-HOST-STATE", title: "State-owned task detail" });
 const asyncHostTask = async () => hostTask;
 
-function MainContentStateHost() {
+function MainContentStateHost({ mobileAlpha = false }: { mobileAlpha?: boolean }) {
   const [taskView, setTaskView] = useState<TaskView>("board");
   const [navEntries, setNavEntries] = useState<NavEntry[]>([]);
   const [restoreCount, setRestoreCount] = useState(0);
@@ -77,6 +77,9 @@ function MainContentStateHost() {
     tasks: [hostTask],
     filteredBoardTasks: [hostTask],
     currentProject: { id: "host-project" },
+    viewMode: "project",
+    isMobile: mobileAlpha,
+    experimentalFeatures: {},
     modalManager: {},
     globalPaused: false,
     t: (_key: string, fallback?: string) => fallback ?? _key,
@@ -176,10 +179,10 @@ function AppPopoutStateHost() {
 }
 
 describe("homemade Alpha Task Detail", () => {
-  it("keeps the stable Task Detail DOM outside Alpha and owns one surface inside Alpha", () => {
+  it("keeps one official Task Detail surface across historical provider values", () => {
     const view = render(<DetailFixture enabled={false} />);
-    expect(document.querySelector("[data-alpha-surface='true']")).toBeNull();
-    expect(document.querySelector("[data-task-detail-surface='true']")).not.toHaveAttribute("data-alpha-ui");
+    expect(document.querySelectorAll(".task-detail-alpha-boundary[data-alpha-surface='true']")).toHaveLength(1);
+    expect(document.querySelector("[data-task-detail-surface='true']")).toHaveAttribute("data-alpha-ui", "surface");
 
     view.rerender(<DetailFixture enabled />);
     expect(document.querySelectorAll(".task-detail-alpha-boundary[data-alpha-surface='true']")).toHaveLength(1);
@@ -217,10 +220,10 @@ describe("homemade Alpha Task Detail", () => {
   });
 
   it("keeps every production host on the canonical shared Task Detail implementation", () => {
+    // FN-382: List no longer hosts task detail; a row delegates to whichever layer its host owns.
     const hostContracts = [
       ["components/AppModals.tsx", "<AppModalTaskDetailHost"],
       ["components/dashboard/MainContent.tsx", "<MainPanelTaskDetailHost"],
-      ["components/ListView.tsx", "<ListSplitTaskDetailHost"],
       ["components/useRightDockController.tsx", "<RightDockTaskDetailHost"],
       ["App.tsx", "<AppTaskPopoutWindows"],
     ] as const;
@@ -260,7 +263,7 @@ describe("homemade Alpha Task Detail", () => {
     expect(document.querySelectorAll("[data-task-detail-surface='true']")).toHaveLength(1);
   });
 
-  it("runs MainContent Back through App's production snapshot and navigation owner", async () => {
+  it("conserve la sortie canonique du panneau desktop et restaure son état", async () => {
     const user = userEvent.setup();
     render(<AlphaProvider enabled><MainContentStateHost /></AlphaProvider>);
 
@@ -270,7 +273,7 @@ describe("homemade Alpha Task Detail", () => {
     expect(screen.getByTestId("main-tab")).toHaveTextContent("plan");
     expect(screen.getByTestId("main-nav-count")).toHaveTextContent("1");
 
-    await user.click(screen.getByRole("button", { name: "Back to board" }));
+    await user.click(screen.getByRole("button", { name: "Close" }));
     expect(screen.getByTestId("main-route")).toHaveTextContent("board");
     expect(screen.getByTestId("main-snapshot")).toHaveTextContent("empty");
     expect(screen.getByTestId("main-tab")).toHaveTextContent("chat");
@@ -279,51 +282,28 @@ describe("homemade Alpha Task Detail", () => {
     expect(document.querySelector("[data-task-detail-surface='true']")).toBeNull();
   });
 
-  it("clears ListView's real persisted split selection after Close", async () => {
+  it("retire Back to board du drawer mobile et restaure Board par sa fermeture unique", async () => {
     const user = userEvent.setup();
-    const previousWidth = window.innerWidth;
-    const previousMatchMedia = window.matchMedia;
-    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1200 });
-    Object.defineProperty(window, "matchMedia", {
-      configurable: true,
-      value: (query: string) => ({
-        matches: false,
-        media: query,
-        onchange: null,
-        addListener: noop,
-        removeListener: noop,
-        addEventListener: noop,
-        removeEventListener: noop,
-        dispatchEvent: () => false,
-      }),
-    });
-    vi.mocked(fetchBoardWorkflows).mockResolvedValueOnce({
-      flagEnabled: true,
-      defaultWorkflowId: "builtin:coding",
-      workflows: [{
-        id: "builtin:coding",
-        name: "Coding",
-        columns: [
-          { id: "triage", name: "Planning", flags: { intake: true } },
-          { id: "todo", name: "Todo", flags: { hold: true } },
-          { id: "in-progress", name: "In progress", flags: { countsTowardWip: true } },
-          { id: "in-review", name: "In review", flags: { review: true } },
-          { id: "done", name: "Done", flags: { complete: true } },
-        ],
-      }],
-      taskWorkflowIds: { [hostTask.id]: "builtin:coding" },
-    });
-    localStorage.setItem(scopedKey("kb-dashboard-list-selected-task", "host-project"), hostTask.id);
-    render(<AlphaProvider enabled><ListViewStateHost /></AlphaProvider>);
+    render(<AlphaProvider enabled><MainContentStateHost mobileAlpha /></AlphaProvider>);
 
-    const splitDetail = await screen.findByTestId("list-split-detail-content");
-    expect(within(splitDetail).getAllByText(hostTask.id).length).toBeGreaterThan(0);
-    await user.click(screen.getByRole("button", { name: "Close" }));
-    expect(await screen.findByText("Select a task to view details")).toBeInTheDocument();
-    expect(localStorage.getItem(scopedKey("kb-dashboard-list-selected-task", "host-project"))).toBeNull();
-    Object.defineProperty(window, "matchMedia", { configurable: true, value: previousMatchMedia });
-    Object.defineProperty(window, "innerWidth", { configurable: true, value: previousWidth });
+    await user.click(screen.getByRole("button", { name: "Open main detail" }));
+    const drawer = screen.getByRole("dialog", { name: "Task detail" });
+    expect(drawer.querySelector("[data-task-detail-surface='true']")).toBeInTheDocument();
+    expect(within(drawer).queryByRole("button", { name: "Back to board" })).toBeNull();
+    expect(within(drawer).queryByText("Back to board")).toBeNull();
+    expect(drawer.querySelector(".task-detail-header-back-btn")).toBeNull();
+    expect(within(drawer).getAllByRole("button", { name: "Close" })).toHaveLength(1);
+
+    await user.click(within(drawer).getByRole("button", { name: "Close" }));
+    expect(screen.getByTestId("main-route")).toHaveTextContent("board");
+    expect(screen.getByTestId("main-snapshot")).toHaveTextContent("empty");
+    expect(screen.getByTestId("main-tab")).toHaveTextContent("chat");
+    expect(screen.getByTestId("main-nav-count")).toHaveTextContent("0");
+    expect(screen.getByTestId("main-restore-count")).toHaveTextContent("1");
+    expect(screen.queryByRole("dialog", { name: "Task detail" })).toBeNull();
   });
+
+  /* FN-382: List no longer owns a split selection to clear — a row delegates to the host's own detail layer. */
 
   it("removes the detail snapshot owned by useRightDockController after Close", async () => {
     const user = userEvent.setup();
@@ -485,13 +465,16 @@ describe("homemade Alpha Task Detail", () => {
     vi.mocked(rejectPlan).mockReset();
     vi.mocked(approvePlan).mockResolvedValue({} as never);
     vi.mocked(rejectPlan).mockResolvedValue({} as never);
+    const approvalTask = makeTask({ id: "FN-APPROVAL", column: "todo", status: "awaiting-approval", prompt: "# Reviewed plan" });
+    vi.mocked(fetchTaskDetail).mockResolvedValue(approvalTask);
 
     const approvalView = render(
       <AlphaProvider enabled={enabled}>
         <TaskDetailContent
           {...sharedProps}
           embedded
-          task={makeTask({ id: "FN-APPROVAL", column: "todo", status: "awaiting-approval", prompt: "# Reviewed plan" })}
+          initialTab="definition"
+          task={approvalTask}
         />
       </AlphaProvider>,
     );
@@ -510,7 +493,7 @@ describe("homemade Alpha Task Detail", () => {
     const onMergeTask = vi.fn(async () => ({ merged: true }) as never);
     const reviewView = render(
       <AlphaProvider enabled={enabled}>
-        <TaskDetailContent {...sharedProps} embedded task={makeTask({ id: "FN-REVIEW", column: "in-review" })} onMergeTask={onMergeTask} />
+        <TaskDetailContent {...sharedProps} embedded initialTab="review" task={makeTask({ id: "FN-REVIEW", column: "in-review" })} onMergeTask={onMergeTask} />
       </AlphaProvider>,
     );
     const merge = screen.getByRole("button", { name: "Merge & Close" });
@@ -520,7 +503,7 @@ describe("homemade Alpha Task Detail", () => {
 
     reviewView.rerender(
       <AlphaProvider enabled={enabled}>
-        <TaskDetailContent {...sharedProps} embedded task={makeTask({ id: "FN-REVIEW", column: "in-review", status: "merging-pr" })} onMergeTask={onMergeTask} />
+        <TaskDetailContent {...sharedProps} embedded initialTab="review" task={makeTask({ id: "FN-REVIEW", column: "in-review", status: "merging-pr" })} onMergeTask={onMergeTask} />
       </AlphaProvider>,
     );
     expect(screen.getByRole("button", { name: "Merging PR…" })).toBeDisabled();
@@ -531,13 +514,16 @@ describe("homemade Alpha Task Detail", () => {
     const approval = deferred<Record<string, never>>();
     vi.mocked(approvePlan).mockReset().mockReturnValue(approval.promise as never);
     vi.mocked(rejectPlan).mockReset().mockResolvedValue({} as never);
+    const approvalTask = makeTask({ id: "FN-PENDING-APPROVAL", column: "todo", status: "awaiting-approval", prompt: "# Pending plan" });
+    vi.mocked(fetchTaskDetail).mockResolvedValue(approvalTask);
 
     render(
       <AlphaProvider enabled={enabled}>
         <TaskDetailContent
           {...sharedProps}
           embedded
-          task={makeTask({ id: "FN-PENDING-APPROVAL", column: "todo", status: "awaiting-approval", prompt: "# Pending plan" })}
+          initialTab="definition"
+          task={approvalTask}
         />
       </AlphaProvider>,
     );

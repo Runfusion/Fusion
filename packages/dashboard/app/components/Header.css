@@ -51,37 +51,6 @@ non-notched devices, so this is a no-op there. Pair with viewport-fit=cover (ind
   max-width: none;
 }
 
-.alpha-task-search-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: var(--z-modal);
-  display: grid;
-  place-items: center;
-  padding: var(--space-xl);
-  background: color-mix(in srgb, var(--bg) 78%, transparent);
-}
-
-.alpha-task-search-overlay__panel {
-  inline-size: min(calc(var(--space-3xl) * 10), 100%);
-  padding: var(--space-lg);
-  border: var(--btn-border-width) solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--surface);
-  box-shadow: var(--shadow-lg);
-}
-
-.alpha-task-search-overlay__search {
-  inline-size: 100%;
-}
-
-.alpha-task-search-overlay__search .header-search-input {
-  inline-size: 100%;
-}
-
-@media (max-width: 768px) {
-  .alpha-task-search-overlay { display: none; }
-}
-
 .header-left {
   display: flex;
   align-items: center;
@@ -831,7 +800,7 @@ non-notched devices, so this is a no-op there. Pair with viewport-fit=cover (ind
   transition: border-color var(--transition-fast);
 }
 
-/* FNXC:AlphaUpdates 2026-09-09-18:24: Desktop Alpha keeps Board/List search permanently inline after the workflow slot; tablet, mobile, and flag-off layouts retain the floating search contract. */
+/* FNXC:AlphaTaskSearch 2026-09-12-21:52: Alpha desktop expands Search inline only while requested, in the magnifier's action slot after the workflow selector. The shared dropdown anchors below this token-sized field; compact and non-Alpha surfaces retain their existing floating search layout. */
 .header-search--alpha-inline {
   flex: 0 1 calc(var(--space-2xl) * 8);
   min-width: calc(var(--space-2xl) * 5);

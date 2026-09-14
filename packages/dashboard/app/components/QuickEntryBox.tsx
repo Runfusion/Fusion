@@ -1,6 +1,6 @@
 import "./QuickEntryBox.css";
 import { AlphaButton, AlphaInput, AlphaListBox, AlphaListBoxItem, AlphaMenu, AlphaMenuItem, AlphaPopoverSurface, AlphaTextArea } from "./alpha-ui";
-import { useState, useCallback, useRef, useEffect, useMemo } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import { createPortal } from "react-dom";
 import type { ToastType } from "../hooks/useToast";
@@ -30,7 +30,7 @@ import { useQuickAddSubmitOnEnter } from "../hooks/useQuickAddSubmitOnEnter";
 import { useAlphaSurface } from "../context/AlphaContext";
 
 const STORAGE_KEY = "kb-quick-entry-text";
-const ALPHA_START_HOLD_DURATION_MS = 1_200;
+const ALPHA_START_HOLD_DURATION_MS = 500;
 type AlphaSaveGesture = { kind: "pointer"; pointerId: number } | { kind: "keyboard"; key: " " | "Enter" };
 const ALLOWED_TASK_ATTACHMENT_TYPES = new Set([
   "image/png",
@@ -87,10 +87,12 @@ interface QuickEntryBoxProps {
   */
   defaultExpanded?: boolean;
   /*
-  FNXC:QuickEntry 2026-06-22-19:25:
-  List view renders quick-add as a COMPACT single-line input so the box isn't tall. When true, the textarea stays one line: isExpanded initializes false, focus does NOT auto-expand it, and auto-resize-to-scrollHeight is short-circuited (capped to the one-line min-height). Board/columns omit singleLine, preserving the tall 80px + auto-grow behavior. singleLine governs only textarea height, not the disclosure/controls panel (which List already collapses via defaultExpanded={false}).
+  FNXC:QuickEntry 2026-09-14-03:31:
+  The `singleLine` compact variant is REMOVED. It existed only for List, and made the same composer look and behave
+  differently depending on where it was mounted: one-line textarea, no auto-grow, no expand on focus, no expand on
+  Shift+Enter. List and Board now instantiate this component with the same contract, so there is one Quick Entry
+  presentation everywhere.
   */
-  singleLine?: boolean;
   /** Explicit override of the global Enter-submit preference. */
   submitOnEnter?: boolean;
   /**
@@ -162,7 +164,7 @@ function hasMeaningfulNodeChoice(nodes: NodeInfo[]): boolean {
   return nodes.length > 1 || nodes.some((node) => node.type !== "local");
 }
 
-export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], availableModels, workflowId, workflowOptions, defaultWorkflowId, projectId, autoExpand = true, defaultExpanded = true, singleLine = false, submitOnEnter, favoriteProviders: parentFavoriteProviders, favoriteModels: parentFavoriteModels, onToggleFavorite: parentToggleFavorite, onToggleModelFavorite: parentToggleModelFavorite, onOpenTask }: QuickEntryBoxProps) {
+export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], availableModels, workflowId, workflowOptions, defaultWorkflowId, projectId, autoExpand = true, defaultExpanded = true, submitOnEnter, favoriteProviders: parentFavoriteProviders, favoriteModels: parentFavoriteModels, onToggleFavorite: parentToggleFavorite, onToggleModelFavorite: parentToggleModelFavorite, onOpenTask }: QuickEntryBoxProps) {
   const { t } = useTranslation("app");
   const alphaActive = useAlphaSurface();
   const contextSubmitOnEnter = useQuickAddSubmitOnEnter();
@@ -175,8 +177,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   // isExpanded controls textarea height styling (auto-resize)
-  // FNXC:QuickEntry 2026-06-22-19:25: singleLine (List view) starts collapsed so the textarea is one line, not the tall 80px variant.
-  const [isExpanded, setIsExpanded] = useState(!singleLine);
+  const [isExpanded, setIsExpanded] = useState(true);
   // isDisclosureExpanded controls visibility of advanced options (Deps, Models, etc.).
   /*
   FNXC:AlphaQuickEntry 2026-09-11-00:30:
@@ -192,9 +193,10 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
   const alphaSaveButtonRef = useRef<HTMLButtonElement | null>(null);
   const alphaSaveGestureRef = useRef<AlphaSaveGesture | null>(null);
   const alphaSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const alphaSaveBarrierReleaseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const alphaSaveSuppressClickRef = useRef(false);
   const alphaStartWorkflowRef = useRef<ValidatedQuickAddWorkflow | null>(null);
-  const [alphaSaveState, setAlphaSaveState] = useState<"idle" | "holding" | "confirmed">("idle");
+  const [alphaSaveState, setAlphaSaveState] = useState<"idle" | "holding">("idle");
   const justResetRef = useRef(false);
   const draftPersistenceWarningShownRef = useRef(false);
   const previousProjectIdRef = useRef(projectId);
@@ -439,12 +441,13 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
   const startInitialColumn = validatedStartWorkflow ? resolveQuickAddStartInitialColumn(validatedStartWorkflow) : null;
   const startWorkflowTarget = validatedStartWorkflow ? resolveQuickAddStartWorkflowTarget(validatedStartWorkflow) : null;
   /*
-  FNXC:QuickAddStart 2026-09-12-00:36:
-  Alpha exposes Start through a continuous 1,200ms hold on its single icon-only Save action; legacy surfaces retain
-  the explicit Start chip. Eligibility remains `workflowSupportsQuickAddStart`: Coding (Ideas), or a workflow whose
-  first visible lane is a server-derived manual-intake/"waiting" column. A provable target is still required
-  (`startInitialColumn` for the create-time column override, or `onMoveTask` for the follow-up move), so malformed or
-  ineligible workflows never turn Save into an inferred transition.
+  FNXC:QuickAddStart 2026-09-13-17:28:
+  Alpha exposes two outcomes through its single icon-only Save action: a brief click or tap saves the task, while a
+  continuous 500ms hold starts it. Legacy surfaces retain the explicit Start chip. Eligibility remains
+  `workflowSupportsQuickAddStart`: Coding (Ideas), or a workflow whose first visible lane is a server-derived
+  manual-intake/"waiting" column. A provable target is still required (`startInitialColumn` for the create-time
+  column override, or `onMoveTask` for the follow-up move), so malformed or ineligible workflows never turn Save
+  into an inferred transition.
   */
   const canQuickAddStart = Boolean(validatedStartWorkflow && workflowSupportsQuickAddStart(validatedStartWorkflow) && startWorkflowTarget && (startInitialColumn || onMoveTask));
   const canQuickAddStartNow = canQuickAddStart && Boolean(description.trim()) && !isSubmitting;
@@ -645,12 +648,11 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
   }, []);
 
   // Resize when description changes (not in fullscreen mode since CSS handles it)
-  // FNXC:QuickEntry 2026-06-22-19:25: singleLine (List view) must stay one line — skip auto-resize-to-scrollHeight so the textarea never grows tall with content; CSS clamps it to the one-line height.
   useEffect(() => {
-    if (isExpanded && !singleLine) {
+    if (isExpanded) {
       autoResize();
     }
-  }, [description, isExpanded, autoResize, singleLine]);
+  }, [description, isExpanded, autoResize]);
 
   /*
   FNXC:QuickEntryFocus 2026-06-25-00:00:
@@ -1090,12 +1092,12 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
 
   const handleDuplicateCancel = useCallback(() => {
     /*
-    FNXC:QuickAddStart 2026-09-12-01:00:
-    Cancelling duplicate confirmation discards both the saved Start intent and any synthetic-click suppression
-    left by the now-finished hold. A later ordinary Save must remain create-only and respond on its first click.
+    FNXC:QuickAddStart 2026-09-12-21:38:
+    Cancelling duplicate confirmation discards the saved Start intent but retains the completed hold's click barrier.
+    The gesture's trailing pointer/key release and synthetic click must be consumed before a later independent Save,
+    even when the dialog closes while the original physical gesture is still held.
     */
     startIntentRef.current = null;
-    alphaSaveSuppressClickRef.current = false;
     setDuplicateMatches(null);
     submitInFlightRef.current = false;
     setIsSubmitting(false);
@@ -1107,10 +1109,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
         if (e.shiftKey) {
           // Allow Shift+Enter to insert a newline in any quick-entry state
           // Don't prevent default - let the newline be inserted
-          // FNXC:QuickEntry 2026-06-22-19:25: singleLine (List view) stays one line even on Shift+Enter — do not expand the textarea.
-          if (!singleLine) {
-            setIsExpanded(true);
-          }
+          setIsExpanded(true);
           return;
         }
         if (duplicateMatches || submitInFlightRef.current) {
@@ -1201,7 +1200,6 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
       setIsDisclosureExpanded,
       duplicateMatches,
       enterSubmits,
-      singleLine,
     ],
   );
 
@@ -1215,11 +1213,10 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
 
   const handleFocus = useCallback(() => {
     // Auto-expand on focus when autoExpand prop is true (default)
-    // FNXC:QuickEntry 2026-06-22-19:25: never auto-expand the textarea on focus when singleLine (List view) — it must stay one line.
-    if (autoExpand && !singleLine) {
+    if (autoExpand) {
       setIsExpanded(true);
     }
-  }, [autoExpand, singleLine]);
+  }, [autoExpand]);
 
   const toggleDep = useCallback((id: string) => {
     setDependencies((prev) =>
@@ -1670,19 +1667,27 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
   }, [canQuickAddStartNow, handleSubmit, validatedStartWorkflow]);
 
   const cancelAlphaSaveGesture = useCallback((suppressClick = false) => {
+    const hadActiveGesture = alphaSaveGestureRef.current !== null;
     if (alphaSaveTimerRef.current) clearTimeout(alphaSaveTimerRef.current);
     alphaSaveTimerRef.current = null;
     alphaSaveGestureRef.current = null;
     alphaStartWorkflowRef.current = null;
-    alphaSaveSuppressClickRef.current = suppressClick;
+    if (hadActiveGesture) alphaSaveSuppressClickRef.current = suppressClick;
     setAlphaSaveState("idle");
   }, []);
 
+  const releaseAlphaSaveClickBarrierAfterTerminalEvent = useCallback(() => {
+    if (!alphaSaveSuppressClickRef.current || alphaSaveBarrierReleaseTimerRef.current) return;
+    alphaSaveBarrierReleaseTimerRef.current = setTimeout(() => {
+      alphaSaveBarrierReleaseTimerRef.current = null;
+      alphaSaveSuppressClickRef.current = false;
+    }, 0);
+  }, []);
+
   const beginAlphaSaveGesture = useCallback((gesture: AlphaSaveGesture) => {
-    if (!alphaActive || !canQuickAddStartNow || !validatedStartWorkflow || alphaSaveGestureRef.current) return false;
+    if (!alphaActive || !canQuickAddStartNow || !validatedStartWorkflow || alphaSaveGestureRef.current || alphaSaveSuppressClickRef.current) return false;
     alphaSaveGestureRef.current = gesture;
     alphaStartWorkflowRef.current = validatedStartWorkflow;
-    alphaSaveSuppressClickRef.current = false;
     setAlphaSaveState("holding");
     alphaSaveTimerRef.current = setTimeout(() => {
       const workflowSnapshot = alphaStartWorkflowRef.current;
@@ -1690,7 +1695,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
       alphaSaveGestureRef.current = null;
       alphaStartWorkflowRef.current = null;
       alphaSaveSuppressClickRef.current = true;
-      setAlphaSaveState("confirmed");
+      setAlphaSaveState("idle");
       handleStartClick(workflowSnapshot);
     }, ALPHA_START_HOLD_DURATION_MS);
     return true;
@@ -1707,14 +1712,26 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
   }, [cancelAlphaSaveGesture, handleSubmit]);
 
   /*
-  FNXC:AlphaQuickEntry 2026-09-12-01:00:
-  Pointer and keyboard holds share one timer and one captured workflow snapshot. Only a primary pointer using its
-  primary button may begin a hold, so right-click, middle-click, secondary pen buttons, and non-primary contacts
-  cannot start work. Explicit cancellation never saves; an ordinary early release saves exactly once, while
-  confirmed holds suppress the synthetic click and run the existing Start submission path exactly once. Workflow
-  changes, submission, disablement, blur, Escape, capture loss, and unmount all invalidate the pending gesture.
+  FNXC:AlphaQuickEntry 2026-09-13-17:28:
+  Pointer and keyboard holds share one 500ms timer and one captured workflow snapshot. Only a primary pointer using
+  its primary button may begin a hold. Explicit cancellation never saves; an ordinary release before the threshold
+  saves exactly once and consumes its synthetic click. Reaching the threshold consumes Start exactly once, arms
+  suppression for late release/click events, and resets the visual state to Save immediately rather than tying
+  protection to rendered confirmation state. Workflow changes, submission, disablement, blur, Escape, capture loss,
+  and unmount invalidate a pending gesture.
+
+  FNXC:AlphaQuickEntry 2026-09-12-21:38:
+  A completed Start hold owns its synthetic-click barrier until the trailing click is consumed, independently of
+  submission success, failure, or duplicate-dialog cancellation. Success can reset and re-enable the form before the
+  pointer is released, while cancellation preserves the draft; neither outcome may let that same physical gesture
+  save a new or retained draft. After pointerup/keyup, a zero-delay terminal-event fence releases the barrier only
+  after the browser's associated click turn; this also prevents a click suppressed by a temporarily disabled native
+  button from consuming the next independent Save. A new hold cannot replace an unconsumed gesture barrier.
   */
-  useEffect(() => cancelAlphaSaveGesture, [cancelAlphaSaveGesture]);
+  useEffect(() => () => {
+    cancelAlphaSaveGesture();
+    if (alphaSaveBarrierReleaseTimerRef.current) clearTimeout(alphaSaveBarrierReleaseTimerRef.current);
+  }, [cancelAlphaSaveGesture]);
   useEffect(() => {
     if (alphaSaveGestureRef.current && (!alphaActive || isSubmitting || isDisabled || !canQuickAddStartNow || alphaStartWorkflowRef.current !== validatedStartWorkflow)) {
       cancelAlphaSaveGesture(true);
@@ -1828,7 +1845,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
   return (
     <>
       <div
-        className={`quick-entry-box ${isDisclosureExpanded ? "quick-entry-box--expanded" : "quick-entry-box--collapsed"}${singleLine ? " quick-entry--single-line" : ""}${isFileDragOver ? " quick-entry-box--drag-over" : ""}`}
+        className={`quick-entry-box ${isDisclosureExpanded ? "quick-entry-box--expanded" : "quick-entry-box--collapsed"}${isFileDragOver ? " quick-entry-box--drag-over" : ""}`}
         data-testid="quick-entry-box"
         onDragEnter={handleDragEnter}
         onDragOver={handleDragOver}
@@ -1847,7 +1864,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
           <div className="quick-entry-textarea-wrap">
             <AlphaTextArea
               ref={textareaRef}
-              className={`quick-entry-input ${isExpanded && !singleLine ? "quick-entry-input--expanded" : ""}`}
+              className={`quick-entry-input ${isExpanded ? "quick-entry-input--expanded" : ""}`}
               placeholder={isSubmitting ? t("tasks.creating", "Creating...") : t("tasks.addTaskPlaceholder", "Add a task...")}
               value={description}
               onChange={(e) => setDescription(e.target.value)}
@@ -1857,7 +1874,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
               onBlur={handleBlur}
               disabled={isSubmitting || isDisabled}
               data-testid="quick-entry-input"
-              rows={singleLine ? 1 : 2}
+              rows={2}
               aria-controls="quick-entry-controls"
               aria-expanded={isDisclosureExpanded}
             />
@@ -2519,6 +2536,8 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
                 onClick={() => {
                   if (alphaSaveSuppressClickRef.current) {
                     alphaSaveSuppressClickRef.current = false;
+                    if (alphaSaveBarrierReleaseTimerRef.current) clearTimeout(alphaSaveBarrierReleaseTimerRef.current);
+                    alphaSaveBarrierReleaseTimerRef.current = null;
                     return;
                   }
                   if (!alphaSaveGestureRef.current) void handleSubmit();
@@ -2531,6 +2550,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
                 }}
                 onPointerUp={(event) => {
                   completeAlphaSaveGesture({ kind: "pointer", pointerId: event.pointerId });
+                  releaseAlphaSaveClickBarrierAfterTerminalEvent();
                   if (event.currentTarget.hasPointerCapture?.(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
                 }}
                 onPointerCancel={() => cancelAlphaSaveGesture(true)}
@@ -2550,24 +2570,36 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
                   if (event.key === " " || event.key === "Enter") {
                     event.preventDefault();
                     completeAlphaSaveGesture({ kind: "keyboard", key: event.key });
+                    releaseAlphaSaveClickBarrierAfterTerminalEvent();
                   }
                 }}
                 onBlur={() => cancelAlphaSaveGesture(true)}
                 disabled={!description.trim() || isSubmitting}
+                style={alphaActive ? ({ "--quick-entry-alpha-hold-duration": `${ALPHA_START_HOLD_DURATION_MS}ms` } as CSSProperties) : undefined}
                 data-testid="quick-entry-save"
                 data-hold-state={alphaActive ? alphaSaveState : undefined}
                 aria-label={alphaActive
-                  ? (alphaSaveState === "holding" ? t("tasks.releaseToSaveHoldToStart", "Release to save; keep holding to start") : alphaSaveState === "confirmed" ? t("tasks.startingTask", "Starting task") : t("tasks.saveHoldToStart", "Save task; hold to start"))
+                  ? (alphaSaveState === "holding" ? t("tasks.releaseToSaveHoldToStart", "Release to save; keep holding to start") : t("tasks.saveHoldToStart", "Save task; hold to start"))
                   : undefined}
                 title={alphaActive ? t("tasks.saveHoldToStart", "Save task; hold to start") : t("tasks.createTaskTitle", "Create task")}
               >
-                {alphaActive && <span className="quick-entry-alpha-save-progress" aria-hidden="true" />}
-                {alphaActive && alphaSaveState !== "idle" ? <Play size={12} aria-hidden="true" /> : <Save size={12} aria-hidden="true" />}
+                {alphaActive && (
+                  <span className="quick-entry-alpha-save-icons">
+                    <span className="quick-entry-alpha-save-icon quick-entry-alpha-save-icon--save" aria-hidden="true">
+                      <Save size={12} />
+                    </span>
+                    <span className="quick-entry-alpha-save-progress" aria-hidden="true">
+                      <span className="quick-entry-alpha-save-icon quick-entry-alpha-save-icon--start">
+                        <Play size={12} />
+                      </span>
+                    </span>
+                  </span>
+                )}
                 {!alphaActive && <>{t("tasks.save", "Save")}</>}
               </AlphaButton>
               {alphaActive && (
                 <span className="visually-hidden" role="status" aria-live="polite">
-                  {alphaSaveState === "holding" ? t("tasks.holdToStartProgress", "Keep holding to start") : alphaSaveState === "confirmed" ? t("tasks.startingTask", "Starting task") : ""}
+                  {alphaSaveState === "holding" ? t("tasks.holdToStartProgress", "Keep holding to start") : ""}
                 </span>
               )}
             </div>

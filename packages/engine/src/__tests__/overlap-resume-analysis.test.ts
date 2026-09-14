@@ -26,14 +26,14 @@ describe("overlap resume analysis", () => {
     const detail = analyzeOverlapResume({ task: task(plan()), deliveries: [delivery()] });
     const signature = analyzeOverlapResume({ task: task(plan()), deliveries: [delivery({ paths: [{ repository: ".", path: "src/shared.ts", status: "modified", diff: "-export function sharedApi(a: string)\n+export function sharedApi(a: number)" }] })] });
     expect(detail.decision).toBe("briefing");
-    expect(signature).toMatchObject({ decision: "revalidate", reason: "structural-contract-change" });
+    expect(signature).toMatchObject({ decision: "briefing", reason: "structural-contract-change" });
   });
 
   it.each([
     ["deleted", { repository: ".", path: "src/shared.ts", status: "deleted" as const, diff: "-export function sharedApi() {}" }],
     ["renamed", { repository: ".", path: "src/new.ts", previousPath: "src/shared.ts", status: "renamed" as const, diff: "" }],
   ])("revalidates a structurally %s plan target", (_label, change) => {
-    expect(analyzeOverlapResume({ task: task(plan()), deliveries: [delivery({ paths: [change] })] }).decision).toBe("revalidate");
+    expect(analyzeOverlapResume({ task: task(plan()), deliveries: [delivery({ paths: [change] })] }).decision).toBe("briefing");
   });
 
   it("keeps identical relative paths in separate workspace repositories", () => {

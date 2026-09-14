@@ -85,7 +85,8 @@ describe("tablet header controls", () => {
   it("renders view toggle inline on tablet", () => {
     renderTabletHeader({ onChangeView: noop, showAgentsTab: true });
     expect(screen.getByTitle("Board view")).toBeDefined();
-    expect(screen.getByTitle("List view")).toBeDefined();
+    // FN-382: tablet reaches List through the right dock, not the header toggle.
+    expect(screen.queryByTitle("List view")).toBeNull();
     expect(screen.getByTitle("Agents view")).toBeDefined();
     expect(screen.getByTestId("view-toggle-command-center")).toBeDefined();
     expect(screen.queryByTitle("Artifacts view")).toBeNull();

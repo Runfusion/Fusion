@@ -314,8 +314,8 @@ vi.mock("../../components/TaskDetailModal", () => ({
   ),
   TaskDetailContent: ({ task, onBackToBoard, onOpenDetail, onRequestClose }: { task: { id: string; title?: string }; onBackToBoard?: () => void; onOpenDetail?: (task: { id: string; title?: string }) => void; onRequestClose?: () => void }) => (
     <section data-testid="main-panel-task-detail">
-      <button type="button" onClick={onBackToBoard}>Back to board</button>
-      {onRequestClose && <button type="button" aria-label="Close" onClick={onRequestClose}>Close</button>}
+      {onBackToBoard && <button type="button" onClick={onBackToBoard}>Back to board</button>}
+      {onRequestClose && !onBackToBoard && <button type="button" aria-label="Close" onClick={onRequestClose}>Close</button>}
       <h2>{task.title ?? task.id}</h2>
       <button type="button" onClick={() => onOpenDetail?.({ id: "FN-6965", title: "Nested task" })}>Open nested task</button>
     </section>
@@ -486,7 +486,7 @@ vi.mock("../../components/ChatView", async (importOriginal) => {
     ChatView: (props: Parameters<typeof actual.ChatView>[0]) => {
       if (appChatTestControl.renderProductionView) return <actual.ChatView {...props} />;
       return (
-        <div className="chat-view" data-testid={props.floating ? "quick-chat-host" : "main-chat-host"} data-alpha={String(props.experimentalFeatures?.alphaUpdates === true)}>
+        <div className="chat-view" data-testid={props.floating ? "quick-chat-host" : "main-chat-host"}>
           <header className="view-header"><h2>Chat</h2><button type="button">New Chat</button><button type="button" aria-label="Pop out chat">Pop out</button></header>
           <button type="button" data-testid="app-chat-session-fixture">Conversation fixture</button>
           <textarea className="chat-input" data-testid="chat-input" aria-label="Message" />
@@ -692,9 +692,22 @@ vi.mock("../../hooks/useNodes", () => ({
   })),
 }));
 
+interface MockMobileKeyboardState {
+  keyboardOverlap: number;
+  viewportHeight: number | null;
+  viewportOffsetTop: number;
+  keyboardOpen: boolean;
+  navigationViewport?: {
+    active: boolean;
+    keyboardOverlap: number;
+    viewportHeight: number | null;
+    viewportOffsetTop: number;
+  };
+}
+
 // Mock useMobileKeyboard for modal keyboard isolation tests (FN-3290).
 // Default: keyboard closed, matching real test-environment behavior.
-const mockUseMobileKeyboard = vi.fn(() => ({
+const mockUseMobileKeyboard = vi.fn((): MockMobileKeyboardState => ({
   keyboardOverlap: 0,
   viewportHeight: null,
   viewportOffsetTop: 0,
@@ -948,10 +961,10 @@ async function waitForAppShell(): Promise<void> {
   await waitFor(() => {
     expect(fetchSettings).toHaveBeenCalled();
     if (mockUseViewportMode() === "mobile") {
-      expect(screen.getByTestId("mobile-nav-tab-tasks")).toBeTruthy();
-      expect(screen.getByTestId("mobile-nav-tab-list")).toBeTruthy();
+      expect(screen.getByTestId("mobile-nav-tab-command-center")).toBeTruthy();
+      expect(screen.getByTestId("mobile-nav-tab-planning")).toBeTruthy();
     } else {
-      expect(screen.getByTitle("Settings")).toBeTruthy();
+      expect(screen.getByTestId("alpha-desktop-action-bar")).toBeTruthy();
     }
   });
 }
@@ -966,8 +979,6 @@ describe("FN-8698 retained Board and List task popups", () => {
   it.each([
     ["desktop", "board", "list"],
     ["desktop", "list", "board"],
-    ["mobile", "board", "list"],
-    ["mobile", "list", "board"],
   ] as const)("opens %s %s then %s independently through real view affordances", async (viewport, firstView, secondView) => {
     /*
     FNXC:TaskPopupViewGating 2026-08-01-16:47:
@@ -976,7 +987,7 @@ describe("FN-8698 retained Board and List task popups", () => {
     drops that origin or mobile's separate header navigation path, so this App-level regression
     clicks each shipped card/row and view-switch affordance and closes each instance independently.
     */
-    if (viewport === "mobile") mockUseViewportMode.mockReturnValue("mobile");
+    mockUseViewportMode.mockReturnValue(viewport);
     const sharedTask = {
       id: "FN-8698",
       title: "Retained popup regression task",
@@ -1026,7 +1037,7 @@ describe("FN-8698 retained Board and List task popups", () => {
     const showView = async (view: "board" | "list") => {
       const navigationTestId = viewport === "mobile"
         ? `mobile-nav-tab-${view === "board" ? "tasks" : "list"}`
-        : `sidebar-nav-${view}`;
+        : `alpha-desktop-nav-${view}`;
       fireEvent.click(screen.getByTestId(navigationTestId));
       await waitFor(() => expect(document.querySelector(taskSelector(view))).toBeTruthy());
     };
@@ -1082,9 +1093,10 @@ beforeEach(() => {
    * leaked auth/settings Once value made App render an auto-opened modal surface instead of the
    * board. mockReset each once-queue-prone API mock here, then re-apply its default below.
    */
-  for (const onceProneApiMock of [fetchSettings, updateSettings, fetchGlobalSettings, fetchDashboardHealth, fetchAuthStatus, fetchModels, fetchScripts, runScript, fetchBoardWorkflows, fetchPluginDashboardViews]) {
+  for (const onceProneApiMock of [fetchSettings, updateSettings, fetchGlobalSettings, fetchDashboardHealth, fetchAuthStatus, fetchModels, fetchScripts, runScript, fetchBoardWorkflows, fetchPluginDashboardViews, fetchPatchnode]) {
     vi.mocked(onceProneApiMock).mockReset();
   }
+  vi.mocked(fetchPatchnode).mockResolvedValue({ days: [], totalEntries: 0, hasMore: false });
   vi.mocked(fetchPluginDashboardViews).mockResolvedValue([]);
   vi.mocked(fetchSettings).mockResolvedValue({ ...defaultSettings });
   vi.mocked(updateSettings).mockResolvedValue({ ...defaultSettings });
@@ -1229,7 +1241,7 @@ beforeEach(() => {
     keyboardOpen: false,
   });
   mockUseViewportMode.mockReset();
-  mockUseViewportMode.mockReturnValue("desktop");
+  mockUseViewportMode.mockReturnValue("tablet");
   /* Reset alongside the mode: it is a SEPARATE predicate, so a suite that sets it must not leak. */
   mockIsShortViewport.mockReset();
   mockIsShortViewport.mockReturnValue(false);
@@ -1237,21 +1249,121 @@ beforeEach(() => {
   mockAgentStats.idleNonEphemeralCount = 1;
 });
 
-describe("Alpha Updates production wiring", () => {
-  it("passes the resolved Alpha flag through the real App Quick Chat host", async () => {
+describe("official dashboard design production wiring", () => {
+  it("keeps Quick Chat available under the official design", async () => {
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
-      experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: true },
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures },
     });
     render(<App />);
     fireEvent.click(await screen.findByTestId("quick-chat-fab-host"));
-    expect(await screen.findByTestId("quick-chat-host")).toHaveAttribute("data-alpha", "true");
+    expect(await screen.findByTestId("quick-chat-host")).toBeInTheDocument();
   });
+
+  /*
+  FNXC:StandardBoardHeight 2026-09-12-19:19:
+  App's jsdom lane proves production composition and the exact absent/disabled Alpha routing without inventing layout metrics. The browser smoke owns rectangle, overflow, and scroll assertions against the emitted App because only a rendering engine can make those measurements meaningful.
+  */
+  it.each([
+    ["absent", undefined],
+    ["disabled", false],
+    ["enabled", true],
+  ] as const)("keeps every production Board state on the official shell when Alpha is %s", async (_flagState, alphaUpdates) => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    const states = ["skeleton", "sans-workflow", "selection-vide", "selection-debordante", "aggregate-debordant"] as const;
+    const overflowTasks = Array.from({ length: 3 }, (_, index) => ({
+      id: `FN-362-${index}`,
+      title: index < 2 ? "Carte dupliquée" : `Carte ${index}`,
+      description: "Vérification de la hauteur sûre du Board standard.",
+      status: "in-progress",
+      column: "in-progress",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: "2026-09-12T00:00:00.000Z",
+      updatedAt: "2026-09-12T00:00:00.000Z",
+    }));
+
+    for (const state of states) {
+      localStorage.removeItem(scopedKey(BOARD_WORKFLOW_SELECTION_STORAGE_KEY, DEFAULT_PROJECT_ID));
+      const experimentalFeatures = { ...defaultSettings.experimentalFeatures };
+      delete experimentalFeatures.alphaUpdates;
+      if (alphaUpdates !== undefined) experimentalFeatures.alphaUpdates = alphaUpdates;
+      vi.mocked(fetchSettings).mockResolvedValue({ ...defaultSettings, experimentalFeatures });
+      if (state === "skeleton") {
+        vi.mocked(fetchBoardWorkflows).mockImplementation(() => new Promise(() => {}));
+      } else if (state === "sans-workflow") {
+        vi.mocked(fetchBoardWorkflows).mockResolvedValue({ ...DEFAULT_BOARD_WORKFLOWS, defaultWorkflowId: "", workflows: [] });
+      } else {
+        vi.mocked(fetchBoardWorkflows).mockResolvedValue({
+          ...DEFAULT_BOARD_WORKFLOWS,
+          taskWorkflowIds: Object.fromEntries(overflowTasks.map((task) => [task.id, "builtin:coding"])),
+        });
+      }
+      const tasks = state.endsWith("debordante") || state.endsWith("debordant") ? overflowTasks : [];
+      mockUseTasks.mockReturnValue({
+        tasks,
+        isStale: false,
+        createTask: mockCreateTask,
+        moveTask: vi.fn(),
+        pauseTask: vi.fn(),
+        unpauseTask: vi.fn(),
+        deleteTask: vi.fn(),
+        mergeTask: vi.fn(),
+        retryTask: vi.fn(),
+        resetTask: vi.fn(),
+        updateTask: vi.fn(),
+        duplicateTask: vi.fn(),
+        refreshTasks: vi.fn(),
+        ingestCreatedTasks: vi.fn(),
+        lastFetchTimeMs: Date.now(),
+      });
+
+      const view = render(<App />);
+      const keepAlive = await screen.findByTestId("board-keep-alive");
+      const board = await waitFor(() => {
+        const candidate = keepAlive.querySelector<HTMLElement>(".board");
+        expect(candidate).not.toBeNull();
+        return candidate!;
+      });
+      if (state === "aggregate-debordant") {
+        fireEvent.click(screen.getByTestId("workflow-switcher"));
+        fireEvent.click(await screen.findByTestId(`workflow-switcher-option-${ALL_WORKFLOWS_BOARD_VIEW_ID}`));
+      }
+
+      const shell = screen.getByTestId("dashboard-project-shell");
+      const content = shell.querySelector<HTMLElement>(".project-content");
+      expect(shell.parentElement).toHaveClass("dashboard-project-stack");
+      expect(content).toHaveClass("project-content--with-footer");
+      expect(content?.contains(keepAlive)).toBe(true);
+      expect(keepAlive.contains(board)).toBe(true);
+      expect(board.closest("[data-alpha-surface]")).toHaveAttribute("data-alpha-surface", "true");
+      expect(document.querySelector(".executor-status-bar")).not.toBeInTheDocument();
+      expect(screen.getByTestId("alpha-desktop-action-bar")).toBeInTheDocument();
+
+      if (state === "skeleton") expect(screen.getByTestId("board-workflows-skeleton")).toBe(board);
+      if (state === "sans-workflow") expect(screen.getByTestId("board-workflows-empty")).toBe(board);
+      if (state.startsWith("selection") || state.startsWith("aggregate")) {
+        expect(board.closest(".board-workflow-view")).not.toBeNull();
+        expect(board).toHaveClass("board-workflow-columns");
+      }
+      if (state === "selection-vide") expect(board.querySelectorAll(".empty-column").length).toBeGreaterThan(0);
+      if (state === "selection-debordante" || state === "aggregate-debordant") {
+        expect(screen.getAllByText("Carte dupliquée")).toHaveLength(2);
+        expect(board.querySelector("[data-column='in-progress'] .column-body")).not.toBeNull();
+        expect(screen.getByTestId("workflow-switcher").getAttribute("aria-label")).toContain(
+          state === "aggregate-debordant" ? "All workflows" : "Coding",
+        );
+      }
+      view.unmount();
+    }
+  }, 30_000);
 
   it.each([
     ["tablet", "empty"],
     ["desktop", "populated"],
-  ] as const)("keeps one reserved footer in Alpha %s with %s tasks", async (mode, taskState) => {
+  ] as const)("monte le footer et ouvre More dans le vrai host Alpha %s avec des tâches %s", async (mode, taskState) => {
     mockUseViewportMode.mockReturnValue(mode);
     if (taskState === "populated") {
       const emptyResult = mockUseTasks();
@@ -1262,14 +1374,14 @@ describe("Alpha Updates production wiring", () => {
     }
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
-      experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: true },
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures },
     });
     localStorage.setItem("fusion:right-dock-open", "true");
 
     render(<App />);
 
     await waitFor(() => expect(screen.getByTestId("dashboard-project-shell")).toBeInTheDocument());
-    expect(Boolean(document.querySelector(".executor-status-bar"))).toBe(mode === "tablet");
+    expect(document.querySelector(".executor-status-bar")).toBeNull();
     const shell = screen.getByTestId("dashboard-project-shell");
     const content = shell.querySelector(".project-content");
     const sidebar = mode === "tablet" ? await screen.findByTestId("left-sidebar-nav") : null;
@@ -1280,36 +1392,77 @@ describe("Alpha Updates production wiring", () => {
     });
     expect(content).toHaveClass("project-content--with-footer");
     expect(content).not.toHaveClass("project-content--with-alpha-nav", "project-content--with-mobile-nav");
+    expect(screen.getByTestId("alpha-desktop-action-bar")).toBeInTheDocument();
+    const moreTrigger = screen.getByTestId("alpha-desktop-nav-more");
+    expect(moreTrigger).toHaveAttribute("aria-expanded", "false");
+    fireEvent.pointerEnter(moreTrigger);
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+    expect(moreTrigger).toHaveAttribute("aria-expanded", "true");
     if (mode === "desktop") {
       expect(sidebar).toBeNull();
-      expect(screen.getByTestId("alpha-desktop-action-bar")).toBeInTheDocument();
       expect(shell).not.toHaveClass("dashboard-project-shell--with-sidebar");
     } else {
       expect(sidebar).toHaveClass("left-sidebar-nav--with-footer");
       expect(shell).toHaveClass("dashboard-project-shell--with-sidebar");
+      expect(document.querySelector("header.header")).toBeInTheDocument();
     }
     expect(rightDock).toHaveClass("right-dock--with-footer");
     expect(shell).toHaveClass("dashboard-project-shell--with-right-dock");
-    if (mode === "tablet") expect(screen.getByTestId("executor-terminal-launcher-segment")).toBeInTheDocument();
-    else expect(screen.queryByTestId("executor-terminal-launcher-segment")).toBeNull();
+    expect(screen.queryByTestId("executor-terminal-launcher-segment")).toBeNull();
     expect(document.querySelector(".mobile-nav-bar")).toBeNull();
   });
 
-  it.each([
-    ["Alpha tablette", "tablet", true],
-    ["desktop non-Alpha", "desktop", false],
-  ] as const)("conserve Chat liste/détail extensible et exclut Notes sur %s", async (_label, mode, alphaUpdates) => {
+  it.each(["tablet", "desktop"] as const)("ouvre et démonte Terminal depuis le footer large en mode %s", async (mode) => {
     mockUseViewportMode.mockReturnValue(mode);
-    configureProductionAppChat();
+    terminalLifecycle.reset();
     localStorage.setItem("fusion:right-dock-open", "true");
-    vi.mocked(fetchSettings).mockResolvedValue({
-      ...defaultSettings,
-      experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates },
-    });
 
     render(<App />);
+
+    const terminal = await screen.findByTestId("alpha-desktop-nav-terminal");
+    expect(screen.queryByTestId("terminal-modal")).toBeNull();
+    expect(terminalLifecycle.mounts).toBe(0);
+    fireEvent.click(terminal);
+    expect(await screen.findByTestId("terminal-modal")).toHaveAttribute("data-footer-visible", "true");
+    expect(terminalLifecycle.mounts).toBe(1);
+    fireEvent.click(screen.getByTestId("terminal-close-btn"));
+    await waitFor(() => expect(screen.queryByTestId("terminal-modal")).toBeNull());
+    expect(terminalLifecycle.unmounts).toBe(1);
+
+    if (mode === "tablet") {
+      expect(screen.getByTestId("dashboard-project-shell")).toHaveClass("dashboard-project-shell--with-sidebar");
+      expect(await screen.findByTestId("left-sidebar-nav")).toBeInTheDocument();
+      expect(document.querySelector(".right-dock")).toBeInTheDocument();
+      expect(document.querySelector("[data-testid^='floating-window-overlay-']")).toBeNull();
+    }
+  });
+
+  it.each([
+    ["absente", undefined],
+    ["fausse", false],
+    ["vraie", true],
+  ] as const)("conserve le shell tablette et Chat quand la valeur Alpha historique est %s", async (_label, alphaUpdates) => {
+    mockUseViewportMode.mockReturnValue("tablet");
+    configureProductionAppChat();
+    localStorage.setItem("fusion:right-dock-open", "true");
+    const experimentalFeatures = { ...defaultSettings.experimentalFeatures };
+    delete experimentalFeatures.alphaUpdates;
+    if (alphaUpdates !== undefined) experimentalFeatures.alphaUpdates = alphaUpdates;
+    vi.mocked(fetchSettings).mockResolvedValue({ ...defaultSettings, experimentalFeatures });
+
+    render(<App />);
+    const shell = await screen.findByTestId("dashboard-project-shell");
+    expect(shell).toHaveClass("dashboard-project-shell--with-sidebar", "dashboard-project-shell--with-right-dock");
+    expect(shell.querySelector(".project-content")).toHaveClass("project-content--with-footer");
+    expect(await screen.findByTestId("left-sidebar-nav")).toHaveClass("left-sidebar-nav--with-footer");
+    expect(screen.queryByTestId("executor-terminal-launcher-segment")).toBeNull();
+    expect(screen.getByTestId("alpha-desktop-action-bar")).toBeInTheDocument();
+    expect(document.querySelector(".executor-status-bar")).toBeNull();
+    expect(document.querySelector(".mobile-nav-bar")).toBeNull();
+
     fireEvent.click(await screen.findByTestId("right-dock-tab-chat"));
     const dock = screen.getByTestId("right-dock");
+    expect(dock).toHaveClass("right-dock--with-footer");
     expect(within(dock).queryByTestId("right-dock-tab-notes")).toBeNull();
     expect(within(dock).getByTestId("right-dock-expand")).toBeInTheDocument();
 
@@ -1327,7 +1480,7 @@ describe("Alpha Updates production wiring", () => {
     mockUseViewportMode.mockReturnValue("mobile");
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
-      experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: true },
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures },
     });
 
     render(<App />);
@@ -1350,7 +1503,7 @@ describe("Alpha Updates production wiring", () => {
     mockCurrentProjectState.currentProject = null;
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
-      experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: true },
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures },
     });
 
     render(<App />);
@@ -1373,7 +1526,7 @@ describe("Alpha Updates production wiring", () => {
     mockUseViewportMode.mockReturnValue("mobile");
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
-      experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: true },
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures },
     });
     document.documentElement.dataset.viewportMode = "mobile";
     document.documentElement.style.setProperty("--mobile-nav-alpha-system-offset", `${layout.systemOffset}px`);
@@ -1492,7 +1645,7 @@ describe("Alpha Updates production wiring", () => {
     mockUseViewportMode.mockReturnValue("mobile");
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
-      experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: true },
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures },
     });
     if (boardState === "skeleton") {
       vi.mocked(fetchBoardWorkflows).mockImplementation(() => new Promise(() => {}));
@@ -1583,27 +1736,29 @@ describe("Alpha Updates production wiring", () => {
     }
   });
 
-  it.each(["mobile", "tablet", "desktop"] as const)("keeps the standard footer and reservations in %s", async (mode) => {
+  it.each(["mobile", "tablet", "desktop"] as const)("keeps the official footer and reservations with stale false settings in %s", async (mode) => {
     mockUseViewportMode.mockReturnValue(mode);
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
-      experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: false },
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures },
     });
 
     render(<App />);
 
-    await waitFor(() => expect(document.querySelector(".executor-status-bar")).not.toBeNull());
+    await waitForAppShell();
     const shell = screen.getByTestId("dashboard-project-shell");
     const content = shell.querySelector(".project-content");
-    expect(content).toHaveClass("project-content--with-footer");
-
+    expect(document.querySelector(".executor-status-bar")).toBeNull();
+    expect(content).toHaveClass(mode === "mobile" ? "project-content--with-alpha-nav" : "project-content--with-footer");
     if (mode === "mobile") {
-      const nav = document.querySelector(".mobile-nav-bar");
-      expect(nav).toHaveClass("mobile-nav-bar--with-footer");
-      expect(content).toHaveClass("project-content--with-mobile-nav");
-    } else {
+      expect(document.querySelector(".mobile-nav-bar")).toHaveClass("mobile-nav-bar--alpha");
+      expect(screen.queryByTestId("left-sidebar-nav")).toBeNull();
+    } else if (mode === "tablet") {
       expect(await screen.findByTestId("left-sidebar-nav")).toHaveClass("left-sidebar-nav--with-footer");
-      expect(shell).toHaveClass("dashboard-project-shell--with-sidebar", "dashboard-project-shell--with-right-dock");
+      expect(screen.getByTestId("alpha-desktop-action-bar")).toBeInTheDocument();
+    } else {
+      expect(screen.getByTestId("alpha-desktop-action-bar")).toBeInTheDocument();
+      expect(screen.queryByTestId("left-sidebar-nav")).toBeNull();
     }
   });
 
@@ -1611,7 +1766,7 @@ describe("Alpha Updates production wiring", () => {
     mockUseViewportMode.mockReturnValue("desktop");
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
-      experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: true },
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures },
     });
 
     render(<App />);
@@ -1627,7 +1782,7 @@ describe("Alpha Updates production wiring", () => {
     mockUseViewportMode.mockReturnValue("desktop");
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
-      experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: true },
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures },
     });
     vi.mocked(fetchBoardWorkflows).mockResolvedValue({
       ...DEFAULT_BOARD_WORKFLOWS,
@@ -1661,11 +1816,11 @@ describe("Alpha Updates production wiring", () => {
     expect(screen.queryByTestId("mobile-header-new-task")).toBeNull();
   });
 
-  it("retire la réserve de contenu Alpha avec le clavier et les modales", async () => {
+  it("conserve la pill et sa réserve avec le clavier mais les retire pour une modale", async () => {
     mockUseViewportMode.mockReturnValue("mobile");
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
-      experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: true },
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures },
     });
     mockUseMobileKeyboard.mockReturnValue({
       keyboardOverlap: 250,
@@ -1678,7 +1833,8 @@ describe("Alpha Updates production wiring", () => {
     await screen.findByTestId("alpha-mobile-menu-trigger");
     expect(document.querySelector(".executor-status-bar")).toBeNull();
     expect(document.querySelector(".mobile-nav-bar")).toHaveClass("mobile-nav-bar--keyboard-open");
-    expect(screen.getByTestId("dashboard-project-shell").querySelector(".project-content")).not.toHaveClass("project-content--with-alpha-nav");
+    expect(document.querySelector(".mobile-nav-bar")).not.toHaveStyle({ pointerEvents: "none" });
+    expect(screen.getByTestId("dashboard-project-shell").querySelector(".project-content")).toHaveClass("project-content--with-alpha-nav");
     keyboardRender.unmount();
 
     mockUseMobileKeyboard.mockReturnValue({ keyboardOverlap: 0, viewportHeight: null, viewportOffsetTop: 0, keyboardOpen: false });
@@ -1692,14 +1848,83 @@ describe("Alpha Updates production wiring", () => {
     modalRender.unmount();
   });
 
-  it.each([
-    ["portrait", { width: 390, height: 844, systemOffset: 46 }],
-    ["paysage", { width: 844, height: 390, systemOffset: 48 }],
-  ] as const)("superpose le drawer Command Center à la pill en %s, même quand le clavier la masque", async (_name, viewport) => {
+  it("garde le popover détenu par App ouvert quand son focus referme le clavier", async () => {
     mockUseViewportMode.mockReturnValue("mobile");
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
-      experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: true },
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures },
+    });
+
+    const view = render(<><textarea aria-label="Champ avant navigation" /><App /></>);
+    const field = screen.getByRole("textbox", { name: "Champ avant navigation" });
+    const trigger = await screen.findByTestId("alpha-mobile-menu-trigger");
+    field.focus();
+    expect(field).toHaveFocus();
+
+    mockUseMobileKeyboard.mockReturnValue({
+      keyboardOverlap: 250,
+      viewportHeight: 478,
+      viewportOffsetTop: 40,
+      keyboardOpen: true,
+    });
+    view.rerender(<><textarea aria-label="Champ avant navigation" /><App /></>);
+    await waitFor(() => expect(document.querySelector(".mobile-nav-bar")).toHaveClass("mobile-nav-bar--keyboard-open"));
+
+    fireEvent.click(trigger);
+    const popover = await screen.findByRole("menu", { name: "Navigate" });
+    await waitFor(() => expect(screen.getByTestId("mobile-more-item-terminal")).toHaveFocus());
+    expect(field).not.toHaveFocus();
+    expect(popover).toHaveStyle({ "--mobile-nav-viewport-offset-top": "40px" });
+
+    const keyboardLift = popover.style.getPropertyValue("--mobile-nav-keyboard-lift");
+    expect(keyboardLift).not.toBe("0px");
+    mockUseMobileKeyboard.mockReturnValue({
+      keyboardOverlap: 0,
+      viewportHeight: null,
+      viewportOffsetTop: 0,
+      keyboardOpen: false,
+      navigationViewport: {
+        active: true,
+        keyboardOverlap: 250,
+        viewportHeight: 478,
+        viewportOffsetTop: 40,
+      },
+    });
+    view.rerender(<><textarea aria-label="Champ avant navigation" /><App /></>);
+
+    await waitFor(() => expect(document.querySelector(".mobile-nav-bar")).toHaveClass("mobile-nav-bar--keyboard-open"));
+    expect(screen.getByRole("menu", { name: "Navigate" })).toBe(popover);
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    expect(popover).toHaveStyle({
+      "--mobile-nav-keyboard-lift": keyboardLift,
+      "--mobile-nav-viewport-offset-top": "40px",
+    });
+
+    mockUseMobileKeyboard.mockReturnValue({
+      keyboardOverlap: 0,
+      viewportHeight: null,
+      viewportOffsetTop: 0,
+      keyboardOpen: false,
+    });
+    view.rerender(<><textarea aria-label="Champ avant navigation" /><App /></>);
+
+    await waitFor(() => expect(document.querySelector(".mobile-nav-bar")).not.toHaveClass("mobile-nav-bar--keyboard-open"));
+    expect(screen.getByRole("menu", { name: "Navigate" })).toBe(popover);
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    expect(popover).toHaveStyle({
+      "--mobile-nav-keyboard-lift": "0px",
+      "--mobile-nav-viewport-offset-top": "0px",
+    });
+  });
+
+  it.each([
+    ["portrait", { width: 390, height: 844, systemOffset: 46 }],
+    ["paysage", { width: 844, height: 390, systemOffset: 48 }],
+  ] as const)("superpose le drawer Command Center à la pill en %s, même quand le clavier est ouvert", async (_name, viewport) => {
+    mockUseViewportMode.mockReturnValue("mobile");
+    vi.mocked(fetchSettings).mockResolvedValue({
+      ...defaultSettings,
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures },
     });
     const previousViewport = { width: window.innerWidth, height: window.innerHeight };
     Object.defineProperties(window, {
@@ -1742,7 +1967,7 @@ describe("Alpha Updates production wiring", () => {
     configureProductionAppChat();
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
-      experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: true },
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures },
     });
     mockUseMobileKeyboard.mockReturnValue({
       keyboardOverlap: geometry.keyboardOverlap,
@@ -1791,7 +2016,7 @@ describe("Alpha Updates production wiring", () => {
     appChatTestControl.renderProductionPlanningView = true;
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
-      experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: true },
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures },
     });
     const systemOffset = 46;
     const productionStyle = installProductionAlphaDrawerRules(systemOffset);
@@ -1835,31 +2060,16 @@ describe("Alpha Updates production wiring", () => {
     }
   });
 
-  it("refreshes the mobile shell on and off without losing configured primary items", async () => {
+  it.each([undefined, false, true] as const)("keeps the official mobile pill for historical Alpha value %s", async (alphaUpdates) => {
     mockUseViewportMode.mockReturnValue("mobile");
-    const legacySettings = {
-      ...defaultSettings,
-      mobileNavPrimaryItems: ["settings", "planning"],
-      experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: false },
-    };
-    const alphaSettings = {
-      ...legacySettings,
-      experimentalFeatures: { ...legacySettings.experimentalFeatures, alphaUpdates: true },
-    };
-    vi.mocked(fetchSettings).mockResolvedValue(legacySettings);
+    const experimentalFeatures = { ...defaultSettings.experimentalFeatures };
+    delete experimentalFeatures.alphaUpdates;
+    if (alphaUpdates !== undefined) experimentalFeatures.alphaUpdates = alphaUpdates;
+    vi.mocked(fetchSettings).mockResolvedValue({ ...defaultSettings, mobileNavPrimaryItems: ["settings", "planning"], experimentalFeatures });
 
     render(<App />);
-    await waitFor(() => expect(screen.getByTestId("mobile-nav-tab-settings")).toBeInTheDocument());
-    expect(screen.getByTestId("mobile-nav-tab-planning")).toBeInTheDocument();
-    expect(screen.getByTestId("mobile-nav-tab-more")).toBeInTheDocument();
-
-    vi.mocked(fetchSettings).mockResolvedValue(alphaSettings);
-    fireEvent.click(screen.getByTestId("mobile-nav-tab-settings"));
-    fireEvent.click(await screen.findByRole("button", { name: "Close" }));
-
     await waitFor(() => expect(screen.getByTestId("alpha-mobile-menu-trigger")).toBeInTheDocument());
     expect(screen.getByTestId("dashboard-project-shell").querySelector(".project-content")).toHaveClass("project-content--with-alpha-nav");
-    expect(screen.getByTestId("dashboard-project-shell").querySelector(".project-content")).not.toHaveClass("project-content--with-mobile-nav");
     expect(screen.queryByTestId("mobile-nav-tab-more")).toBeNull();
     expect(Array.from(document.querySelectorAll<HTMLElement>(".mobile-nav-bar--alpha > .mobile-nav-tab")).map((tab) => tab.dataset.testid)).toEqual([
       "mobile-nav-tab-command-center",
@@ -1868,27 +2078,10 @@ describe("Alpha Updates production wiring", () => {
       "mobile-nav-tab-mailbox",
     ]);
     expect(screen.queryByTestId("mobile-nav-tab-tasks")).toBeNull();
-    expect(document.querySelector(".mobile-nav-bar--alpha")?.lastElementChild).toBe(screen.getByTestId("alpha-mobile-menu-trigger"));
-    expect(screen.queryByTestId("alpha-mobile-menu-trigger")?.closest("header")).toBeNull();
-
-    vi.mocked(fetchSettings).mockResolvedValue(legacySettings);
-    const alphaTrigger = screen.getByTestId("alpha-mobile-menu-trigger");
-    expect(alphaTrigger).toHaveAttribute("aria-expanded", "false");
-    fireEvent.click(alphaTrigger);
-    expect(alphaTrigger).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByRole("menu", { name: "Navigate" })).toHaveClass("alpha-mobile-navigation-popover");
-    expect(document.querySelector(".mobile-more-sheet-backdrop")).toBeNull();
-    expect(document.querySelector(".mobile-more-sheet-handle")).toBeNull();
-    fireEvent.click(screen.getByTestId("mobile-more-item-settings"));
-    fireEvent.click((await screen.findAllByRole("button", { name: "Close" }))[0]);
-
-    await waitFor(() => expect(screen.getByTestId("mobile-nav-tab-more")).toBeInTheDocument());
-    expect(screen.getByTestId("mobile-nav-tab-settings")).toBeInTheDocument();
-    expect(screen.getByTestId("mobile-nav-tab-planning")).toBeInTheDocument();
-    expect(screen.queryByTestId("alpha-mobile-menu-trigger")).toBeNull();
   });
 
   it("remplace les deux barres et héberge Chat liste-seule et Notes inline", async () => {
+    mockUseViewportMode.mockReturnValue("desktop");
     configureProductionAppChat();
     localStorage.setItem("fusion:right-dock-open", "true");
     const note = { id: "note-alpha", title: "Note Alpha", content: "Initial", revision: 1, createdAt: "2026-09-11", updatedAt: "2026-09-11" };
@@ -1896,7 +2089,7 @@ describe("Alpha Updates production wiring", () => {
     mockNotesApi.fetchNote.mockReset().mockResolvedValue(note);
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
-      experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: true },
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures },
     });
 
     render(<App />);
@@ -1921,25 +2114,105 @@ describe("Alpha Updates production wiring", () => {
   });
 
   it.each([
-    ["selected", undefined],
-    ["aggregate", ALL_WORKFLOWS_BOARD_VIEW_ID],
-  ] as const)("routes complete-column History through the %s Board production chain", async (_mode, selection) => {
+    ["selected", "desktop", 1200, undefined, "loading"],
+    ["aggregate", "desktop", 1200, ALL_WORKFLOWS_BOARD_VIEW_ID, "empty"],
+    ["selected", "mobile", 600, undefined, "error"],
+    ["aggregate", "mobile", 600, ALL_WORKFLOWS_BOARD_VIEW_ID, "populated"],
+  ] as const)("routes complete-column History through the %s Board production chain on %s", async (_mode, viewport, width, selection, historyState) => {
+    mockUseViewportMode.mockReturnValue(viewport);
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
-      experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: true },
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures },
     });
     if (selection) {
       localStorage.setItem(scopedKey(BOARD_WORKFLOW_SELECTION_STORAGE_KEY, DEFAULT_PROJECT_ID), selection);
     }
+    const emptyTasks = mockUseTasks();
+    mockUseTasks.mockReturnValue({
+      ...emptyTasks,
+      tasks: [{
+        id: "FN-371-HISTORY",
+        title: "History render invariant",
+        description: "Keep the populated Board mounted while History opens.",
+        status: "done",
+        column: "done",
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: "2026-09-12T00:00:00.000Z",
+        updatedAt: "2026-09-12T00:00:00.000Z",
+      }],
+    });
+    const populatedFeed = {
+      days: [{
+        day: "2026-09-12",
+        completedCount: 1,
+        revertedCount: 0,
+        entries: [{
+          entryId: "completed:FN-371-HISTORY:1",
+          taskId: "FN-371-HISTORY",
+          kind: "completed" as const,
+          occurrenceKey: "1",
+          day: "2026-09-12",
+          occurredAt: "2026-09-12T00:00:00.000Z",
+          title: "History render invariant",
+          body: "History loaded without replacing the Board.",
+        }],
+      }],
+      totalEntries: 1,
+      hasMore: false,
+    };
+    if (historyState === "loading") {
+      vi.mocked(fetchPatchnode).mockImplementation(() => new Promise(() => undefined));
+    } else if (historyState === "error") {
+      vi.mocked(fetchPatchnode).mockRejectedValue(new Error("History unavailable"));
+    } else if (historyState === "populated") {
+      vi.mocked(fetchPatchnode).mockResolvedValue(populatedFeed);
+    }
+    const originalWidth = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
 
-    render(<App />);
+    try {
+      render(<App />);
 
-    const historyButton = await screen.findByTestId("column-history-done");
-    expect(screen.queryByTestId("sidebar-nav-patchnode")).toBeNull();
-    fireEvent.click(historyButton);
-    expect(await screen.findByRole("dialog", { name: "History" })).toHaveAttribute("aria-modal", "false");
-    expect(localStorage.getItem(taskViewStorageKey())).toBe("board");
-    expect(document.querySelectorAll(".board")).toHaveLength(1);
+      const historyButton = await screen.findByTestId("column-history-done");
+      const boardBefore = document.querySelector(".board");
+      const columnsBefore = Array.from(document.querySelectorAll(".board > .column"));
+      expect(boardBefore).not.toBeNull();
+      expect(screen.queryByTestId("sidebar-nav-patchnode")).toBeNull();
+
+      fireEvent.click(historyButton);
+      const historyDialog = await screen.findByRole("dialog", { name: "History" });
+      expect(historyDialog).toHaveAttribute("aria-modal", viewport === "desktop" ? "false" : "true");
+      expect(document.querySelector(".board")).toBe(boardBefore);
+      expect(Array.from(document.querySelectorAll(".board > .column"))).toEqual(columnsBefore);
+      expect(document.querySelectorAll(".board")).toHaveLength(1);
+      if (viewport === "desktop") {
+        expect(localStorage.getItem(taskViewStorageKey())).toBe("board");
+      } else {
+        expect(screen.getByTestId("alpha-mobile-drawer-main-content")).toContainElement(historyDialog);
+        expect(screen.getByTestId("board-keep-alive")).not.toHaveAttribute("aria-hidden");
+      }
+
+      fireEvent.click(historyButton);
+      expect(screen.getAllByRole("dialog", { name: "History" })).toHaveLength(1);
+      expect(document.querySelector(".board")).toBe(boardBefore);
+
+      if (historyState === "loading") {
+        expect(screen.getByText("Loading History…")).toBeInTheDocument();
+      } else if (historyState === "error") {
+        expect(await screen.findByText("History could not be loaded.")).toBeInTheDocument();
+      } else if (historyState === "empty") {
+        expect(await screen.findByTestId("patchnode-empty")).toBeInTheDocument();
+      } else {
+        expect(await screen.findByText("History loaded without replacing the Board.")).toBeInTheDocument();
+      }
+      expect(document.querySelector(".board")).toBe(boardBefore);
+      expect(Array.from(document.querySelectorAll(".board > .column"))).toEqual(columnsBefore);
+    } finally {
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth });
+    }
   });
 });
 
@@ -3678,7 +3951,7 @@ describe("App view switching", () => {
     localStorage.setItem(taskViewStorageKey(), "plugin:fusion-plugin-dependency-graph:graph");
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
-      experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: true },
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures },
     });
     vi.mocked(fetchPluginDashboardViews).mockResolvedValue([
       {
@@ -3752,7 +4025,7 @@ describe("App view switching", () => {
     Roadmap-item previews open through the restored hosted roadmaps destination, so plugin
     dashboard rows must remain visible rather than being filtered as legacy navigation.
     */
-    mockUseViewportMode.mockReturnValue("desktop");
+    mockUseViewportMode.mockReturnValue("tablet");
     (fetchSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       ...defaultSettings,
       experimentalFeatures: { ...defaultSettings.experimentalFeatures, roadmap: true },
@@ -4547,34 +4820,20 @@ describe("Script run flow", () => {
 describe("Script-to-terminal modal handoff", () => {
   beforeEach(() => {
     mockProjectsState.projects = [mockCurrentProjectState.currentProject!];
+    mockUseViewportMode.mockReturnValue("mobile");
   });
+
+  async function openScriptsModalFromMobileMenu() {
+    fireEvent.click(await screen.findByTestId("alpha-mobile-menu-trigger"));
+    fireEvent.click(screen.getByTestId("mobile-more-terminal-split-toggle"));
+    fireEvent.click(await screen.findByTestId("mobile-more-scripts-manage"));
+    await screen.findByTestId("scripts-modal");
+  }
 
   it("closes ScriptsModal and opens TerminalModal when Run is clicked", async () => {
     render(<App />);
 
-    // Wait for the app to fully render
-    await waitFor(() => {
-      expect(screen.getByTitle("Settings")).toBeTruthy();
-    });
-
-    // Open the Scripts modal via the quick-scripts dropdown "Manage Scripts..." button
-    const scriptsBtn = await screen.findByTestId("scripts-btn");
-    await act(async () => {
-      fireEvent.click(scriptsBtn);
-    });
-
-    // Wait for the dropdown menu to appear and click "Manage Scripts..."
-    await waitFor(() => {
-      expect(screen.getByTestId("quick-scripts-manage")).toBeTruthy();
-    });
-    await act(async () => {
-      fireEvent.click(screen.getByTestId("quick-scripts-manage"));
-    });
-
-    // Wait for the Scripts modal to open and load scripts
-    await waitFor(() => {
-      expect(screen.getByTestId("scripts-modal")).toBeTruthy();
-    });
+    await openScriptsModalFromMobileMenu();
 
     // Click the Run button on the "build" script
     await act(async () => {
@@ -4598,26 +4857,7 @@ describe("Script-to-terminal modal handoff", () => {
   it("allows reopening ScriptsModal after closing TerminalModal", async () => {
     render(<App />);
 
-    await waitFor(() => {
-      expect(screen.getByTitle("Settings")).toBeTruthy();
-    });
-
-    // Open the Scripts modal and run a script
-    const scriptsBtn = await screen.findByTestId("scripts-btn");
-    await act(async () => {
-      fireEvent.click(scriptsBtn);
-    });
-
-    await waitFor(() => {
-      expect(screen.getByTestId("quick-scripts-manage")).toBeTruthy();
-    });
-    await act(async () => {
-      fireEvent.click(screen.getByTestId("quick-scripts-manage"));
-    });
-
-    await waitFor(() => {
-      expect(screen.getByTestId("scripts-modal")).toBeTruthy();
-    });
+    await openScriptsModalFromMobileMenu();
 
     await act(async () => {
       fireEvent.click(screen.getByTestId("run-script-build"));
@@ -4639,47 +4879,14 @@ describe("Script-to-terminal modal handoff", () => {
       expect(screen.queryByTestId("terminal-modal")).toBeNull();
     });
 
-    // Reopen the Scripts modal
-    await act(async () => {
-      fireEvent.click(scriptsBtn);
-    });
-
-    await waitFor(() => {
-      expect(screen.getByTestId("quick-scripts-manage")).toBeTruthy();
-    });
-    await act(async () => {
-      fireEvent.click(screen.getByTestId("quick-scripts-manage"));
-    });
-
-    // Scripts modal should open again cleanly
-    await waitFor(() => {
-      expect(screen.getByTestId("scripts-modal")).toBeTruthy();
-    });
+    // Scripts modal should reopen cleanly from its unchanged mobile owner.
+    await openScriptsModalFromMobileMenu();
   });
 
   it("does not call runScript API — command is sent directly to terminal", async () => {
     render(<App />);
 
-    await waitFor(() => {
-      expect(screen.getByTitle("Settings")).toBeTruthy();
-    });
-
-    // Open the Scripts modal
-    const scriptsBtn = await screen.findByTestId("scripts-btn");
-    await act(async () => {
-      fireEvent.click(scriptsBtn);
-    });
-
-    await waitFor(() => {
-      expect(screen.getByTestId("quick-scripts-manage")).toBeTruthy();
-    });
-    await act(async () => {
-      fireEvent.click(screen.getByTestId("quick-scripts-manage"));
-    });
-
-    await waitFor(() => {
-      expect(screen.getByTestId("scripts-modal")).toBeTruthy();
-    });
+    await openScriptsModalFromMobileMenu();
 
     // Click Run on the "build" script
     await act(async () => {
@@ -4718,23 +4925,15 @@ describe("App footer-safe project layout", () => {
     expect(wrapper?.querySelector(".board")).toBeTruthy();
   });
 
-  it("opens the built-in file browser from the footer project directory link", async () => {
+  it("opens the built-in file browser from its unchanged mobile menu owner", async () => {
     localStorage.setItem("kb-dashboard-view-mode", "project");
     mockProjectsState.projects = [mockCurrentProjectState.currentProject];
+    mockUseViewportMode.mockReturnValue("mobile");
 
     render(<App />);
 
-    await waitFor(() => {
-      expect(screen.getByTestId("executor-project-path-toggle")).toBeTruthy();
-    });
-
-    fireEvent.click(screen.getByTestId("executor-project-path-toggle"));
-
-    await waitFor(() => {
-      expect(screen.getByTestId("executor-project-path-link")).toHaveTextContent("/test");
-    });
-
-    fireEvent.click(screen.getByTestId("executor-project-path-link"));
+    fireEvent.click(await screen.findByTestId("alpha-mobile-menu-trigger"));
+    fireEvent.click(screen.getByTestId("mobile-more-item-files"));
 
     await waitFor(() => {
       expect(screen.getByText("Files — Project")).toBeTruthy();
@@ -4836,6 +5035,7 @@ describe("App footer-safe project layout", () => {
 });
 
 describe("App node mode switching", () => {
+  beforeEach(() => mockUseViewportMode.mockReturnValue("desktop"));
   // FNXC:AlphaDesktopWindows 2026-09-12-05:41: A dock selection now opens an independent dedicated note window, so it no longer transfers clean editor ownership into the later tablet page; the page-only transition remains the guard contract here.
   it.each([
     ["sans ouverture préalable du dock", false],
@@ -4844,7 +5044,7 @@ describe("App node mode switching", () => {
     mockProjectsState.projects = [{ ...DEFAULT_PROJECT }, project2];
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
-      experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: true },
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures },
     });
     const note = { id: "note-transition", title: "Transition", content: "Initial", revision: 1, createdAt: "2026-09-11", updatedAt: "2026-09-11" };
     mockNotesApi.fetchNotes.mockResolvedValue({ notes: [note] });
@@ -4893,7 +5093,7 @@ describe("App node mode switching", () => {
     mockProjectsState.projects = [{ ...DEFAULT_PROJECT }, project2];
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
-      experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: true },
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures },
     });
     const note = { id: "note-transition", title: "Transition", content: "Initial", revision: 1, createdAt: "2026-09-11", updatedAt: "2026-09-11" };
     mockNotesApi.fetchNotes.mockResolvedValue({ notes: [note] });
@@ -4932,7 +5132,7 @@ describe("App node mode switching", () => {
     mockProjectsState.projects = [{ ...DEFAULT_PROJECT }, project2];
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
-      experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: true },
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures },
     });
     const note = { id: "note-transition", title: "Transition", content: "Initial", revision: 1, createdAt: "2026-09-11", updatedAt: "2026-09-11" };
     mockNotesApi.fetchNotes.mockResolvedValue({ notes: [note] });
@@ -4975,7 +5175,7 @@ describe("App node mode switching", () => {
     });
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
-      experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: true },
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures },
     });
     const note = { id: "note-1", title: "Brouillon", content: "Initial", revision: 1, createdAt: "2026-09-11", updatedAt: "2026-09-11" };
     mockNotesApi.fetchNotes.mockResolvedValue({ notes: [note] });
@@ -5037,7 +5237,7 @@ describe("App node mode switching", () => {
     mockNodeContextValue.isRemote = true;
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
-      experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: true },
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures },
     });
     const note = { id: "note-node-fallback", title: "Portée", content: "Initial", revision: 1, createdAt: "2026-09-11", updatedAt: "2026-09-11" };
     mockNotesApi.fetchNotes.mockResolvedValue({ notes: [note] });
@@ -5762,7 +5962,7 @@ describe("FN-3290: modal keyboard isolation for mobile dashboard layout", () => 
     expect(wrapper?.classList.contains("project-content--with-mobile-nav")).toBe(false);
   });
 
-  it("keeps project-content--with-mobile-nav when keyboard is open inside a modal (mobile)", async () => {
+  it("keeps the official mobile navigation reservation removed while a modal keyboard is open", async () => {
     // Use deep link to open a task detail modal — avoids complex mobile overflow navigation
     Object.defineProperty(window, "location", {
       configurable: true,
@@ -5789,11 +5989,9 @@ describe("FN-3290: modal keyboard isolation for mobile dashboard layout", () => 
       expect(screen.getByText("Task FN-123")).toBeTruthy();
     });
 
-    // The dashboard wrapper should STILL have project-content--with-mobile-nav
-    // because the keyboard-open state is gated by anyModalOpen.
     const wrapper = document.querySelector(".project-content");
     expect(wrapper).toBeTruthy();
-    expect(wrapper?.classList.contains("project-content--with-mobile-nav")).toBe(true);
+    expect(wrapper).not.toHaveClass("project-content--with-alpha-nav", "project-content--with-mobile-nav");
   });
 
   it("removes mobile nav class when modal closes while keyboard stays open", async () => {
@@ -5818,9 +6016,8 @@ describe("FN-3290: modal keyboard isolation for mobile dashboard layout", () => 
       expect(screen.getByText("Task FN-456")).toBeTruthy();
     });
 
-    // With modal open, mobile nav class is preserved despite keyboard being open
     let wrapper = document.querySelector(".project-content");
-    expect(wrapper?.classList.contains("project-content--with-mobile-nav")).toBe(true);
+    expect(wrapper).not.toHaveClass("project-content--with-alpha-nav", "project-content--with-mobile-nav");
 
     // Close the modal via close button
     const closeBtn = document.querySelector(".modal-overlay.open .modal-close") as HTMLElement;
@@ -5838,6 +6035,7 @@ describe("FN-3290: modal keyboard isolation for mobile dashboard layout", () => 
 });
 
 describe("App task search suggestions", () => {
+  beforeEach(() => mockUseViewportMode.mockReturnValue("desktop"));
   function makeSearchTask(id: string, title: string, column = "todo") {
     return {
       id,
@@ -5878,7 +6076,7 @@ describe("App task search suggestions", () => {
   it("ouvre une tâche locale terminée depuis la recherche Alpha sans filtrer Board ou List", async () => {
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
-      experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: true },
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures },
     });
     const source = [
       makeSearchTask("FN-351", "Active Alpha task"),
@@ -5907,7 +6105,10 @@ describe("App task search suggestions", () => {
     expect(board.getByText("Completed Alpha task")).toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId("alpha-desktop-header-search-btn"));
+    const inlineSearch = screen.getByTestId("alpha-desktop-header-search-input");
+    expect(inlineSearch.parentElement).toBe(document.querySelector(".header-actions"));
     fireEvent.change(screen.getByRole("combobox", { name: "Search tasks..." }), { target: { value: "353" } });
+    expect(screen.queryByRole("dialog", { name: "Search tasks..." })).toBeNull();
     fireEvent.click(screen.getByRole("option", { name: "FN-353: Completed Alpha task" }));
 
     expect(screen.queryByTestId("alpha-task-search-overlay")).toBeNull();
@@ -5927,7 +6128,7 @@ describe("App task search suggestions", () => {
   it("ouvre une tâche distante autoritative depuis Alpha sans propager la requête transitoire", async () => {
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
-      experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: true },
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures },
     });
     mockLocalSearchTasks([makeSearchTask("LOCAL-353", "Local task")]);
     mockNodeContextValue.isRemote = true;
@@ -5952,69 +6153,37 @@ describe("App task search suggestions", () => {
     expect(board.queryByText("Local task")).toBeNull();
 
     fireEvent.click(screen.getByTestId("alpha-desktop-header-search-btn"));
+    expect(screen.getByTestId("alpha-desktop-header-search-input").parentElement).toBe(document.querySelector(".header-actions"));
     fireEvent.change(screen.getByRole("combobox", { name: "Search tasks..." }), { target: { value: "353" } });
     fireEvent.click(screen.getByRole("option", { name: "REMOTE-353: Remote completed Alpha task" }));
 
+    expect(screen.queryByTestId("alpha-task-search-overlay")).toBeNull();
     expect(screen.getAllByRole("dialog", { name: "Remote completed Alpha task" })).toHaveLength(1);
     expect(board.getByText("Remote completed Alpha task")).toBeInTheDocument();
     expect(remoteQueries.every((query) => query === undefined)).toBe(true);
     remoteSpy.mockRestore();
   });
 
-  it("ferme l’overlay Alpha par backdrop ou Escape et réinitialise sa requête", async () => {
+  it("ferme le champ Alpha inline par la croix ou Escape et réinitialise sa requête", async () => {
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
-      experimentalFeatures: { ...defaultSettings.experimentalFeatures, alphaUpdates: true },
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures },
     });
     mockLocalSearchTasks([makeSearchTask("FN-353", "Alpha task")]);
 
     render(<App />);
     await waitForAppShell();
-    const trigger = screen.getByTestId("alpha-desktop-header-search-btn");
-    fireEvent.click(trigger);
+    fireEvent.click(screen.getByTestId("alpha-desktop-header-search-btn"));
     fireEvent.change(screen.getByRole("combobox", { name: "Search tasks..." }), { target: { value: "353" } });
-    fireEvent.mouseDown(screen.getByTestId("alpha-task-search-overlay"));
-    expect(screen.queryByTestId("alpha-task-search-overlay")).toBeNull();
-    await waitFor(() => expect(trigger).toHaveFocus());
+    fireEvent.click(screen.getByRole("button", { name: "Close search" }));
+    await waitFor(() => expect(screen.getByTestId("alpha-desktop-header-search-btn")).toHaveFocus());
 
-    fireEvent.click(trigger);
+    fireEvent.click(screen.getByTestId("alpha-desktop-header-search-btn"));
     expect(screen.getByRole("combobox", { name: "Search tasks..." })).toHaveValue("");
-    fireEvent.keyDown(document, { key: "Escape" });
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "Search tasks..." }), { key: "Escape" });
+    await waitFor(() => expect(screen.getByTestId("alpha-desktop-header-search-btn")).toHaveFocus());
     expect(screen.queryByTestId("alpha-task-search-overlay")).toBeNull();
-    await waitFor(() => expect(trigger).toHaveFocus());
     expect(screen.queryByRole("dialog", { name: "Alpha task" })).toBeNull();
-  });
-
-  it("applies a selected exact ID to the shared Board and List search", async () => {
-    localStorage.setItem("kb-dashboard-view-mode", "project");
-    localStorage.setItem(taskViewStorageKey(), "board");
-    mockLocalSearchTasks([
-      makeSearchTask("FN-331", "Selected task"),
-      makeSearchTask("ERR-331", "Other prefix"),
-      makeSearchTask("FN-332", "Different task"),
-    ]);
-
-    render(<App />);
-    await waitForAppShell();
-    fireEvent.click(screen.getByTestId("desktop-header-search-btn"));
-    const input = screen.getByRole("combobox", { name: "Search tasks..." });
-    fireEvent.change(input, { target: { value: "331" } });
-    fireEvent.click(screen.getByRole("option", { name: "FN-331: Selected task" }));
-
-    expect(input).toHaveValue("FN-331");
-    await waitFor(() => {
-      const board = screen.getByTestId("board-keep-alive");
-      expect(within(board).getByText("Selected task")).toBeInTheDocument();
-      expect(within(board).queryByText("Other prefix")).toBeNull();
-    });
-
-    fireEvent.click(screen.getByTestId("sidebar-nav-list"));
-    await waitFor(() => {
-      const list = screen.getByTestId("list-keep-alive");
-      expect(list).not.toHaveAttribute("aria-hidden");
-      expect(within(list).getByText("Selected task")).toBeInTheDocument();
-      expect(within(list).queryByText("Other prefix")).toBeNull();
-    });
   });
 
   it("uses remote tasks exclusively and keeps completed search results eligible", async () => {
@@ -6035,7 +6204,7 @@ describe("App task search suggestions", () => {
 
     render(<App />);
     await waitForAppShell();
-    fireEvent.click(screen.getByTestId("desktop-header-search-btn"));
+    fireEvent.click(screen.getByTestId("alpha-desktop-header-search-btn"));
     fireEvent.change(screen.getByRole("combobox", { name: "Search tasks..." }), { target: { value: "331" } });
 
     expect(screen.getByRole("option", { name: "REMOTE-331: Remote completed task" })).toBeInTheDocument();
@@ -6058,16 +6227,12 @@ describe("App task search suggestions", () => {
 
     render(<App />);
     await waitForAppShell();
-    fireEvent.click(screen.getByTestId("desktop-header-search-btn"));
+    fireEvent.click(screen.getByTestId("alpha-desktop-header-search-btn"));
     fireEvent.change(screen.getByRole("combobox", { name: "Search tasks..." }), { target: { value: "331" } });
 
     expect(screen.queryByRole("option", { name: /LOCAL-331/ })).toBeNull();
     expect(within(screen.getByTestId("board-keep-alive")).queryByText("Local task")).toBeNull();
 
-    fireEvent.click(screen.getByTestId("sidebar-nav-list"));
-    const list = screen.getByTestId("list-keep-alive");
-    expect(list).not.toHaveAttribute("aria-hidden");
-    expect(within(list).queryByText("Local task")).toBeNull();
     remoteSpy.mockRestore();
   });
 
@@ -6089,19 +6254,16 @@ describe("App task search suggestions", () => {
 
     const { rerender } = render(<App />);
     await waitForAppShell();
-    fireEvent.click(screen.getByTestId("desktop-header-search-btn"));
+    fireEvent.click(screen.getByTestId("alpha-desktop-header-search-btn"));
     fireEvent.change(screen.getByRole("combobox", { name: "Search tasks..." }), { target: { value: "331" } });
     expect(screen.getByRole("option", { name: "NODE1-331: First node task" })).toBeInTheDocument();
-    fireEvent.click(screen.getByTestId("sidebar-nav-list"));
-    expect(within(screen.getByTestId("list-keep-alive")).getByText("First node task")).toBeInTheDocument();
-
     mockNodeContextValue.currentNodeId = "node-2";
     rerender(<App />);
     expect(screen.queryByRole("option", { name: /NODE1-331/ })).toBeNull();
     expect(screen.queryByRole("option", { name: /LOCAL-331/ })).toBeNull();
-    const listDuringNodeChange = within(screen.getByTestId("list-keep-alive"));
-    expect(listDuringNodeChange.queryByText("First node task")).toBeNull();
-    expect(listDuringNodeChange.queryByText("Local task")).toBeNull();
+    const boardDuringNodeChange = within(screen.getByTestId("board-keep-alive"));
+    expect(boardDuringNodeChange.queryByText("First node task")).toBeNull();
+    expect(boardDuringNodeChange.queryByText("Local task")).toBeNull();
 
     remoteLoading = true;
     rerender(<App />);
@@ -6167,8 +6329,8 @@ describe("FN-5817 mobile auto-merge toggle stability", () => {
     render(<App />);
 
     const toggle = await screen.findByRole("checkbox", { name: "Auto-merge" });
-    expect(screen.getByTestId("mobile-nav-tab-tasks")).toBeInTheDocument();
-    expect(screen.getByTestId("mobile-nav-tab-list")).toBeInTheDocument();
+    expect(screen.getByTestId("mobile-nav-tab-command-center")).toBeInTheDocument();
+    expect(screen.getByTestId("mobile-nav-tab-planning")).toBeInTheDocument();
     expect(document.querySelector("main.board")).not.toBeNull();
     expect(screen.getByText("In review task")).toBeInTheDocument();
     expect(screen.queryByText("Something went wrong")).toBeNull();
@@ -6180,8 +6342,8 @@ describe("FN-5817 mobile auto-merge toggle stability", () => {
         expect.objectContaining({ autoMerge: expect.any(Boolean) }),
         DEFAULT_PROJECT_ID,
       );
-      expect(screen.getByTestId("mobile-nav-tab-tasks")).toBeInTheDocument();
-      expect(screen.getByTestId("mobile-nav-tab-list")).toBeInTheDocument();
+      expect(screen.getByTestId("mobile-nav-tab-command-center")).toBeInTheDocument();
+      expect(screen.getByTestId("mobile-nav-tab-planning")).toBeInTheDocument();
       expect(screen.getByRole("checkbox", { name: "Auto-merge" })).toBeInTheDocument();
       expect(document.querySelector("main.board")).not.toBeNull();
       expect(screen.getByText("In review task")).toBeInTheDocument();
@@ -6251,8 +6413,8 @@ describe("App shell connection status plumbing", () => {
 
     await waitFor(() => {
       expect(mockGetShellConnectionNativeResult).toHaveBeenCalledWith(mockShellHostContextValue.host);
-      expect(screen.getByTestId("mobile-nav-tab-tasks")).toBeInTheDocument();
-      expect(screen.getByTestId("mobile-nav-tab-list")).toBeInTheDocument();
+      expect(screen.getByTestId("mobile-nav-tab-command-center")).toBeInTheDocument();
+      expect(screen.getByTestId("mobile-nav-tab-planning")).toBeInTheDocument();
     });
 
     expect(screen.queryByTestId("shell-connection-status-button")).toBeNull();
@@ -6309,21 +6471,9 @@ describe("terminal mount lifecycle (App mounts the terminal only while open)", (
     ).toEqual([]);
     expect(terminalLifecycle.mounts).toBe(0);
 
-    // Open the terminal through the Scripts -> Run path.
+    // Open the terminal through the wide footer's canonical action.
     await act(async () => {
-      fireEvent.click(await screen.findByTestId("scripts-btn"));
-    });
-    await waitFor(() => {
-      expect(screen.getByTestId("quick-scripts-manage")).toBeTruthy();
-    });
-    await act(async () => {
-      fireEvent.click(screen.getByTestId("quick-scripts-manage"));
-    });
-    await waitFor(() => {
-      expect(screen.getByTestId("scripts-modal")).toBeTruthy();
-    });
-    await act(async () => {
-      fireEvent.click(screen.getByTestId("run-script-build"));
+      fireEvent.click(await screen.findByTestId("alpha-desktop-nav-terminal"));
     });
     await waitFor(() => {
       expect(screen.getByTestId("terminal-modal")).toBeTruthy();

@@ -493,9 +493,11 @@ describe("content-binding approval persistence backstop", () => {
       status: "passed",
     }] });
     const harness = sinkHarness(row);
-    await expect(persistWorkflowStepResultWithOutcome(harness.deps as never, row.id, incoming)).resolves.toEqual({
+    await expect(persistWorkflowStepResultWithOutcome(harness.deps as never, row.id, incoming)).resolves.toMatchObject({
       scopeCurrent: true,
       persisted: true,
+      disposition: "applied",
+      persistedResult: expect.objectContaining({ status: "failed" }),
     });
     const persisted = row.workflowStepResults?.find((entry) => entry.workflowStepId === incoming.workflowStepId);
     expect(persisted).toMatchObject({ status: "failed" });

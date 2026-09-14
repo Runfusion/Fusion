@@ -1,4 +1,4 @@
-import { ModalCloseButton } from "./ModalCloseButton";
+import { ViewHeader } from "./ViewHeader";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import type { CSSProperties, DragEvent } from "react";
@@ -916,11 +916,20 @@ export function UsageIndicator({ isOpen, onClose, projectId, anchorRect, present
             : sizeStyle
         }
       >
-        <div className="modal-header">
-          <div className="usage-header">
-            <Activity size={18} className="usage-header-icon" />
-            <h3>{t("usage.title", "Usage")}</h3>
-          </div>
+        {/*
+        FNXC:StandardizedViewLayout 2026-09-13-21:49:
+        Usage adopts the shared header: one title owner, the view-mode group as header actions, and the canonical
+        close only when this surface owns its dismissal. The embedded right-dock presentation still delegates the
+        exit to its host, so no close control is invented there.
+        */}
+        <ViewHeader
+          className="modal-header"
+          headingLevel={3}
+          icon={Activity}
+          title={t("usage.title", "Usage")}
+          onClose={isEmbedded ? undefined : onClose}
+          closeButtonProps={{ "aria-label": t("actions.closeModal", "Close usage modal"), "data-testid": "usage-modal-close" }}
+          actions={(
           <div className="usage-header-actions">
             <div className="usage-view-toggle" role="group" aria-label={t("usage.viewModeLabel", "Usage view mode")}>
               <button
@@ -940,17 +949,9 @@ export function UsageIndicator({ isOpen, onClose, projectId, anchorRect, present
                 {t("usage.viewModeRemaining", "Remaining")}
               </button>
             </div>
-            {/* FNXC:UsageIndicator 2026-06-22-00:00: embedded presentation drops the
-                modal close button; the right-dock owns dismissal. */}
-            {!isEmbedded && (
-              <ModalCloseButton
-                onClick={onClose}
-                aria-label={t("actions.closeModal", "Close usage modal")}
-                data-testid="usage-modal-close"
-               />
-            )}
           </div>
-        </div>
+          )}
+        />
 
         <div className="usage-content" ref={contentRef}>
           {(!hasFetched && !error) && providers.length === 0 ? (

@@ -3123,7 +3123,8 @@
     "selectProject": "选择项目",
     "settings": "设置",
     "showScripts": "显示脚本",
-    "skillsView": "技能与片段",
+    "skillsView": "技能",
+    "snippetsView": "片段",
     "startAiEngine": "启动 AI 引擎",
     "stashRecoveryView": "暂存恢复",
     "stopAiEngine": "停止 AI 引擎",
@@ -3572,7 +3573,9 @@
     "recommendationsUnavailableTaskReason": "",
     "taskCompletion": "任务完成",
     "completionImages": "任务完成图片",
-    "completionImage": "任务完成图片"
+    "completionImage": "任务完成图片",
+    "suggestedRecommendations": "建议的后续事项",
+    "noSuggestedRecommendations": "未提出后续建议。"
   },
   "memory": {
     "auditChecksTitle": "审计检查",
@@ -4375,8 +4378,8 @@
       "local": "本地 Docker",
       "remote": "远程: {{host}}"
     },
-    "dockerHostLabel": "主机",
     "dockerHostConfig": "主机配置",
+    "dockerHostLabel": "主机",
     "dockerHostPath": "主机路径",
     "dockerHostUrl": "Docker 主机地址",
     "dockerLabel": "Docker",
@@ -4510,6 +4513,7 @@
     "sectionProjects": "项目",
     "sectionSettingsSync": "设置同步",
     "sectionSyncHistory": "同步历史",
+    "selectPrompt": "Select a node to inspect its status, projects, and sync state.",
     "startButton": "启动",
     "statusConnecting": "连接中",
     "statusError": "错误",
@@ -7868,6 +7872,7 @@
     "unavailable": "详细文件更改不可用。"
   },
   "taskDetail": {
+    "accessibleName": "任务详情",
     "actions": {
       "menuBtn": "操作",
       "oversightHeading": "",
@@ -7982,6 +7987,10 @@
         "none": "",
         "matches": ""
       }
+    },
+    "definition": {
+      "descriptionHeading": "描述",
+      "noDescription": "（无描述）"
     },
     "description": {
       "showLess": "显示更少",
@@ -8169,6 +8178,18 @@
     },
     "progress": {
       "heading": "进度",
+      "completedCount": "已完成 {{count}}/{{total}}",
+      "workflowOrigin": "工作流关卡",
+      "implementationOrigin": "实现",
+      "status": {
+        "done": "已完成",
+        "failed": "失败",
+        "advisory": "已完成（有反馈）",
+        "notRun": "未运行",
+        "running": "进行中",
+        "skipped": "已跳过",
+        "pending": "待处理"
+      },
       "noSteps": "（未定义步骤）",
       "stepCount_one": "",
       "stepCount_other": ""
@@ -8272,6 +8293,7 @@
     "spec": {
       "aiReviseHeading": "请 AI 修订",
       "aiReviseHelp": "提供反馈让 AI 改进此规范。任务将进入规划阶段重新规划。",
+      "backToDefinition": "返回定义",
       "editBtn": "编辑",
       "feedbackPlaceholder": "例如，'添加更多错误处理细节'、'拆分为更小步骤'、'添加 API 端点测试'...",
       "hintCancel": "取消",
@@ -8279,6 +8301,8 @@
       "loading": "正在加载规范…",
       "noPrompt": "（无提示词）",
       "placeholder": "以 Markdown 格式输入任务规范...",
+      "promptFileName": "PROMPT.md",
+      "readPlanBtn": "阅读计划",
       "requesting": "正在请求…",
       "requestRevisionBtn": "请求 AI 修订",
       "revisionColumnError": "无法请求修订：任务必须在 triage、todo、in-progress 或 in-review 列中。",
@@ -8308,7 +8332,6 @@
       "model": "模型",
       "pullRequest": "拉取请求",
       "review": "审查",
-      "reordered": "已将 {{label}} 移动到第 {{position}} 个位置，共 {{count}} 个",
       "routing": "路由",
       "stats": "统计",
       "terminal": "会话",
@@ -8940,8 +8963,8 @@
   },
   "todo": {
     "addItemPlaceholder": "添加待办事项",
-    "allDoneHidden": "",
     "addList": "添加列表",
+    "allDoneHidden": "",
     "assignAgent": "将 {{text}} 分配给代理",
     "cancelItemEdit": "取消项目编辑",
     "cancelList": "取消列表",
@@ -8970,8 +8993,8 @@
     "failedToCreateTask": "创建任务失败：{{error}}",
     "failedToLoadAgents": "加载代理失败：{{error}}",
     "failedUpdateItem": "更新项失败",
-    "hideDone": "",
     "failedUpdateItemToast": "更新待办事项失败",
+    "hideDone": "",
     "itemsLabel": "待办事项",
     "lists": "列表",
     "listsLabel": "待办事项列表边栏",
@@ -8994,6 +9017,7 @@
     "startPlanning": "从 {{text}} 开始规划",
     "taskCreatedAndAssigned": "创建了 {{id}} 并分配给 {{agent}}",
     "taskCreatedFromTodo": "从待办事项创建了 {{id}}",
+    "title": "待办事项",
     "todoListsLabel": "待办事项列表",
     "todos": "待办事项"
   },
