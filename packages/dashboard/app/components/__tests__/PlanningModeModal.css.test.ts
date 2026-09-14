@@ -100,7 +100,12 @@ describe("PlanningModeModal CSS responsive action contract", () => {
     const css = loadPlanningCss();
     const twoPaneCss = getMediaBlocks(css, DESKTOP_PLANNING_WORKSPACE_QUERY).join("\n");
 
-    expect(findRule(twoPaneCss, ".planning-modal-body--split")).toMatch(/flex-direction\s*:\s*row\s*;/);
+    /*
+    The shell is a ViewLayout: header on top, then a body that owns the rail/content row. Forcing a row on the shell
+    itself laid the header beside the body and left Planning with neither a full-width header nor a visible rail, so
+    the shell must NOT declare a row here.
+    */
+    expect(findRule(twoPaneCss, ".planning-modal-body--split")).toBeUndefined();
     expect(findRule(twoPaneCss, ".planning-modal-body--show-detail .planning-sidebar,\n  .planning-modal-body--show-list .planning-sidebar")).toMatch(/display\s*:\s*flex\s*;/);
     expect(findRule(twoPaneCss, ".planning-modal-body--show-list .planning-detail")).toMatch(/display\s*:\s*flex\s*;/);
 

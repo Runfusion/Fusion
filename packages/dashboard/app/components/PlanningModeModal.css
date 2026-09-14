@@ -295,10 +295,6 @@ FN-379: the shared header owns the history title row; only its stacked hint keep
 FNXC:StandardizedPlanningLayout 2026-09-13-16:30:
 ViewLayout owns the outer column and its body owns the list/detail row. Planning's business panes fill those shared slots without retaining a second width, divider, or resize authority.
 */
-.planning-modal-body--split {
-  flex-direction: column;
-}
-
 .planning-modal-body--split .view-layout__content {
   position: relative;
 }
@@ -1697,9 +1693,13 @@ FNXC:PlanningSidebar 2026-09-12-05:41:
 Desktop and tablet keep the session sidebar, resize handle, and detail pane visible together even in a short viewport. These width-gated rules override the short-shell phone paint without removing compact internal form adaptations.
 */
 @media (min-width: 769px) {
-  .planning-modal-body--split {
-    flex-direction: row;
-  }
+  /*
+  FNXC:StandardizedViewLayout 2026-09-14-06:12:
+  This class used to sit on the split CONTAINER that held the session rail beside the interview, so forcing a row was
+  right. It now sits on the shared ViewLayout SHELL, which must stay a column: header on top, then the body that owns
+  the rail/content row. Forcing a row here laid the header beside the body, so Planning showed neither a full-width
+  header nor a left rail. The shell keeps its own direction; only the body is a row.
+  */
 
   .planning-modal-body--show-detail .planning-sidebar,
   .planning-modal-body--show-list .planning-sidebar {
