@@ -1,6 +1,8 @@
 {
   "generatedFrom": "node scripts/lifecycle-column-census.mjs --strict --update-baseline",
-  "byFile": {},
+  "byFile": {
+    "packages/engine/src/execution/hold-release.ts": 3
+  },
   "deliberateByFile": {
     "packages/core/src/task-store/async/async-comments-attachments.ts\u0000archived": 6,
     "packages/core/src/task-store/archive-reintegration.ts\u0000archived": 4,
