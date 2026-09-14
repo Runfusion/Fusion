@@ -3220,7 +3220,7 @@ describe("StepSessionExecutor", () => {
       expect(results[0].retries).toBe(0);
     });
 
-    it("succeeds with reduced-prompt retry when compact returns null", async () => {
+    it("succeeds with reduced-prompt retry when compaction reports nothing-to-compact", async () => {
       const task = makeTaskDetail({
         prompt: makeStepPrompt("FN-001", 1),
         steps: [{ name: "Step 0", status: "pending" }],
