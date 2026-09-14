@@ -727,6 +727,16 @@ export function MobileNavBar({
             onTouchStart={officialDesignEnabled ? undefined : handleSheetTouchStart}
             onTouchEnd={officialDesignEnabled ? undefined : finishSheetDrag}
             onTouchCancel={officialDesignEnabled ? undefined : resetSheetDrag}
+            /*
+            FNXC:MobileNav 2026-09-14-07:02:
+            Selecting an entry that only becomes reachable AFTER scrolling did nothing. The sheet carries a transform
+            open animation, and any state change while it is scrolled can restart that animation: the surface shifts
+            under the finger between touchstart and click, so the tap lands on nothing. `--gesture-ready` already
+            neutralises the animation, but it was armed only by a DRAG, which a plain scroll never performs. Arming it
+            on first scroll settles the surface for every entry below the fold; the flag is idempotent so scrolling
+            does not re-render per event.
+            */
+            onScroll={officialDesignEnabled ? undefined : () => { if (!hasSheetDragged) setHasSheetDragged(true); }}
           >
             {!officialDesignEnabled && <div className="mobile-more-sheet-handle" aria-hidden="true" />}
             <div className="mobile-more-sheet-title">{t("nav.moreSheetTitle", "Navigate")}</div>
