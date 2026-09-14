@@ -4,6 +4,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   type PropsWithChildren,
 } from "react";
@@ -308,5 +309,15 @@ export function useNavigationHistory(
     };
   }, []);
 
-  return { pushNav, replaceCurrent, removeNav, promoteNav };
+  /*
+  FNXC:Navigation 2026-09-14-19:51:
+  This result is the NavigationHistoryProvider value, so an object literal rebuilt on every render gave every consumer
+  (MobileNavBar, ChatView, MissionManager, ArtifactsGallery, AppModals, PlanningModeModal) a new context identity on
+  every parent render and re-ran their context-dependent effects. Memoizing keeps the value referentially stable for as
+  long as its four callbacks are.
+  */
+  return useMemo(
+    () => ({ pushNav, replaceCurrent, removeNav, promoteNav }),
+    [pushNav, replaceCurrent, removeNav, promoteNav],
+  );
 }

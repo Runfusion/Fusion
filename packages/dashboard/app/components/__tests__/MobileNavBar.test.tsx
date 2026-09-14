@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { fetchScripts } from "../../api";
 import { createMobileNavGeometryStyle, MobileNavBar } from "../MobileNavBar";
 import { MOBILE_MEDIA_QUERY } from "../../hooks/useViewportMode";
+import { NavigationHistoryProvider, useNavigationHistory } from "../../hooks/useNavigationHistory";
 
 vi.mock("../../api", () => ({
   fetchScripts: vi.fn(),
@@ -253,5 +254,188 @@ describe("MobileNavBar official mobile shell", () => {
     fireEvent.click(screen.getByTestId("mobile-nav-tab-chat"));
     expect(props.onChangeView).toHaveBeenCalledTimes(1);
     expect(props.onChangeView).toHaveBeenCalledWith("chat");
+  });
+});
+
+/*
+FNXC:MobileNav 2026-09-14-19:51:
+Scrolling the mobile navigation popover then tapping an entry must open that entry. The opening focus affordance is
+emitted once per open and with `preventScroll`, because a repeated or scrolling focus() returns the `overflow-y: auto`
+surface to scrollTop 0 and moves the list under the finger between touchstart and click. The spy below reproduces that
+browser behavior: a focus() without `preventScroll` resets the enclosing popover's scroll position.
+*/
+type RecordedFocus = { target: HTMLElement; options?: FocusOptions };
+
+const originalFocus = HTMLElement.prototype.focus;
+
+function installFocusRecorder(recorded: RecordedFocus[]) {
+  return vi.spyOn(HTMLElement.prototype, "focus").mockImplementation(function focusMock(
+    this: HTMLElement,
+    options?: FocusOptions,
+  ) {
+    recorded.push({ target: this, options });
+    if (!options?.preventScroll) {
+      const scrollable = this.closest<HTMLElement>(".alpha-mobile-navigation-popover");
+      if (scrollable) scrollable.scrollTop = 0;
+    }
+    originalFocus.call(this, options);
+  });
+}
+
+function menuFocusCalls(recorded: RecordedFocus[]) {
+  return recorded.filter((entry) => entry.target.closest(".alpha-mobile-navigation-popover") !== null);
+}
+
+function exposeScrollPosition(element: HTMLElement, value: number) {
+  let scrollTop = value;
+  Object.defineProperty(element, "scrollTop", {
+    configurable: true,
+    get: () => scrollTop,
+    set: (next: number) => { scrollTop = next; },
+  });
+}
+
+/*
+FNXC:MobileNav 2026-09-14-19:51:
+This shell reproduces App's mount exactly: `useNavigationHistory` feeds a NavigationHistoryProvider, so every parent
+re-render used to hand the popover a new context identity. Props are supplied by the caller so a re-render does not
+fabricate new handler identities of its own.
+*/
+function NavigationHistoryShell({
+  navProps,
+  mailboxUnreadCount,
+  withProvider = true,
+}: {
+  navProps: Partial<React.ComponentProps<typeof MobileNavBar>>;
+  mailboxUnreadCount?: number;
+  withProvider?: boolean;
+}) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const navigationHistory = useNavigationHistory({ enabled: true });
+  const bar = (
+    <MobileNavBar
+      {...(navProps as React.ComponentProps<typeof MobileNavBar>)}
+      mailboxUnreadCount={mailboxUnreadCount}
+      alphaMenuOpen={menuOpen}
+      onAlphaMenuOpenChange={setMenuOpen}
+    />
+  );
+  if (!withProvider) return bar;
+  const { pushNav, replaceCurrent, removeNav, promoteNav } = navigationHistory;
+  return (
+    <NavigationHistoryProvider value={{ pushNav, replaceCurrent, removeNav, promoteNav }}>
+      {bar}
+    </NavigationHistoryProvider>
+  );
+}
+
+describe("MobileNavBar navigation popover keeps its scroll position", () => {
+  let recordedFocus: RecordedFocus[];
+  let focusSpy: ReturnType<typeof installFocusRecorder>;
+
+  beforeEach(() => {
+    mockViewport("mobile");
+    vi.mocked(fetchScripts).mockReset();
+    vi.mocked(fetchScripts).mockResolvedValue({});
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 844 });
+    Object.defineProperty(document.documentElement, "clientHeight", { configurable: true, value: 844 });
+    recordedFocus = [];
+    focusSpy = installFocusRecorder(recordedFocus);
+  });
+
+  afterEach(() => {
+    focusSpy.mockRestore();
+    document.documentElement.style.removeProperty("--mobile-nav-height");
+    document.documentElement.style.removeProperty("--mobile-nav-pill-height");
+    if (initialClientHeightDescriptor) {
+      Object.defineProperty(document.documentElement, "clientHeight", initialClientHeightDescriptor);
+    } else {
+      delete (document.documentElement as { clientHeight?: number }).clientHeight;
+    }
+  });
+
+  it("focuses the first entry once per open, with preventScroll, across parent re-renders that change the navigation-history identity", () => {
+    const navProps = createDefaultProps();
+    const view = render(<NavigationHistoryShell navProps={navProps} mailboxUnreadCount={0} />);
+    fireEvent.click(screen.getByTestId("alpha-mobile-menu-trigger"));
+
+    const popover = screen.getByRole("menu", { name: "Navigate" });
+    exposeScrollPosition(popover, 180);
+
+    view.rerender(<NavigationHistoryShell navProps={navProps} mailboxUnreadCount={1} />);
+    view.rerender(<NavigationHistoryShell navProps={navProps} mailboxUnreadCount={2} />);
+
+    const calls = menuFocusCalls(recordedFocus);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].options).toEqual({ preventScroll: true });
+    expect(popover.scrollTop).toBe(180);
+  });
+
+  it("opens the destination tapped after scrolling instead of resetting the popover", () => {
+    const navProps = createDefaultProps();
+    const view = render(<NavigationHistoryShell navProps={navProps} mailboxUnreadCount={0} />);
+    fireEvent.click(screen.getByTestId("alpha-mobile-menu-trigger"));
+
+    const popover = screen.getByRole("menu", { name: "Navigate" });
+    exposeScrollPosition(popover, 180);
+    view.rerender(<NavigationHistoryShell navProps={navProps} mailboxUnreadCount={1} />);
+
+    expect(popover.scrollTop).toBe(180);
+    fireEvent.click(screen.getByTestId("mobile-more-item-settings"));
+
+    expect(navProps.onOpenSettings).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("menu", { name: "Navigate" })).toBeNull();
+  });
+
+  it("re-arms the opening focus so every open focuses exactly once", () => {
+    const navProps = createDefaultProps();
+    render(<NavigationHistoryShell navProps={navProps} />);
+    const trigger = screen.getByTestId("alpha-mobile-menu-trigger");
+
+    fireEvent.click(trigger);
+    expect(menuFocusCalls(recordedFocus)).toHaveLength(1);
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("menu", { name: "Navigate" })).toBeNull();
+
+    fireEvent.click(trigger);
+    const calls = menuFocusCalls(recordedFocus);
+    expect(calls).toHaveLength(2);
+    expect(calls.map((entry) => entry.options)).toEqual([{ preventScroll: true }, { preventScroll: true }]);
+  });
+
+  it("focuses once for a reduced destination set", () => {
+    const navProps = { ...createDefaultProps(), showSkillsTab: false, experimentalFeatures: {} };
+    const view = render(<NavigationHistoryShell navProps={navProps} mailboxUnreadCount={0} />);
+    fireEvent.click(screen.getByTestId("alpha-mobile-menu-trigger"));
+    expect(screen.queryByTestId("mobile-more-item-whiteboard")).toBeNull();
+
+    view.rerender(<NavigationHistoryShell navProps={navProps} mailboxUnreadCount={4} />);
+
+    expect(menuFocusCalls(recordedFocus)).toHaveLength(1);
+  });
+
+  it("focuses once and routes the tapped destination without a navigation-history provider", () => {
+    const navProps = createDefaultProps();
+    const view = render(<NavigationHistoryShell navProps={navProps} withProvider={false} mailboxUnreadCount={0} />);
+    fireEvent.click(screen.getByTestId("alpha-mobile-menu-trigger"));
+
+    const popover = screen.getByRole("menu", { name: "Navigate" });
+    exposeScrollPosition(popover, 96);
+    view.rerender(<NavigationHistoryShell navProps={navProps} withProvider={false} mailboxUnreadCount={5} />);
+
+    expect(menuFocusCalls(recordedFocus)).toHaveLength(1);
+    expect(popover.scrollTop).toBe(96);
+    fireEvent.click(screen.getByTestId("mobile-more-item-list"));
+    expect(navProps.onChangeView).toHaveBeenCalledWith("list");
+  });
+
+  it("mounts no popover and emits no focus on desktop", () => {
+    mockViewport("desktop");
+    const navProps = createDefaultProps();
+    render(<NavigationHistoryShell navProps={navProps} />);
+
+    expect(screen.queryByRole("menu", { name: "Navigate" })).toBeNull();
+    expect(screen.queryByTestId("alpha-mobile-menu-trigger")).toBeNull();
+    expect(recordedFocus).toHaveLength(0);
   });
 });

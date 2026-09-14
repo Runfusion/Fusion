@@ -255,6 +255,24 @@ describe("Header", () => {
     expect(onOpenSettings).toHaveBeenCalled();
   });
 
+  /*
+  FNXC:Navigation 2026-09-14-19:51:
+  Exemption marker for FN-397. The Header's mobile overflow menu is not affected by the popover scroll reset because it
+  emits no opening focus at all; freeze that so a future auto-focus cannot silently reintroduce a scroll-resetting
+  focus() on a menu surface.
+  */
+  it("emits no focus call when the mobile overflow menu opens", () => {
+    const focusSpy = vi.spyOn(HTMLElement.prototype, "focus");
+    try {
+      renderHeader({ onOpenSettings: noop }, "mobile");
+      fireEvent.click(screen.getByTitle("More header actions"));
+      expect(screen.getByText("Settings")).toBeDefined();
+      expect(focusSpy).not.toHaveBeenCalled();
+    } finally {
+      focusSpy.mockRestore();
+    }
+  });
+
   it("does not render the desktop files button", () => {
     renderHeader({ onOpenFiles: vi.fn() }, "desktop");
     expect(screen.queryByTestId("files-toggle-btn")).toBeNull();

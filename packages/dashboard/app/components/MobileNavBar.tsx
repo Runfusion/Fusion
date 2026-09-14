@@ -423,10 +423,29 @@ export function MobileNavBar({
     [dismissMore],
   );
 
+  /*
+  FNXC:MobileNav 2026-09-14-19:51:
+  The opening focus is an accessibility affordance emitted EXACTLY ONCE PER OPEN, and never scrolls.
+  It used to live in the dismissal effect, whose deps change identity on any parent re-render (`dismissMore`
+  follows the NavigationHistoryContext value). Replaying `focus()` on a `overflow-y: auto` popover returns it to
+  scrollTop 0, so the list moved under the finger between touchstart and click and an entry reached after scrolling
+  never opened. The open-transition ref re-arms on close, and `preventScroll` keeps the surface still.
+  */
+  const openFocusArmedRef = useRef(false);
+  useEffect(() => {
+    if (!isMenuOpen) {
+      openFocusArmedRef.current = false;
+      return;
+    }
+    if (openFocusArmedRef.current) return;
+    openFocusArmedRef.current = true;
+    menuSurfaceRef.current
+      ?.querySelector<HTMLButtonElement>("button:not(:disabled)")
+      ?.focus({ preventScroll: true });
+  }, [isMenuOpen]);
+
   useEffect(() => {
     if (!isMenuOpen) return;
-
-    menuSurfaceRef.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") dismissMore();

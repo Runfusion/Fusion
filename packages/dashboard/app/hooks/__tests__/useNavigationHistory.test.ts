@@ -455,6 +455,33 @@ describe("useNavigationHistory", () => {
     expect(revert).toHaveBeenCalledTimes(1);
   });
 
+  /*
+  FNXC:Navigation 2026-09-14-19:51:
+  This result is App's NavigationHistoryProvider value. An unstable identity re-ran every consumer's
+  context-dependent effects on each App render, which is what replayed MobileNavBar's opening focus and
+  reset the mobile navigation popover's scroll position mid-tap.
+  */
+  it("returns a referentially stable result across re-renders and keeps every method functional", () => {
+    const { result, rerender } = renderHookWithHistory();
+    const first = result.current;
+
+    rerender({ enabled: true });
+    rerender({ enabled: true });
+
+    expect(result.current).toBe(first);
+    expect(Object.keys(result.current).sort()).toEqual(["promoteNav", "pushNav", "removeNav", "replaceCurrent"]);
+
+    const close = vi.fn();
+    act(() => {
+      result.current.pushNav({ type: "modal", close });
+    });
+
+    expect(pushStateSpy).toHaveBeenCalledWith({ navIndex: 1 }, "");
+
+    dispatchPopState({ navIndex: 0 });
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
   it("useNavigationHistoryContext returns the provided value", () => {
     const value: UseNavigationHistoryResult = {
       pushNav: vi.fn(),

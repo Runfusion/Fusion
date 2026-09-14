@@ -586,7 +586,14 @@ function AppInner() {
   const isMobile = viewportMode === "mobile";
 
   // Navigation history for browser back button (desktop + mobile).
-  const { pushNav, replaceCurrent, removeNav, promoteNav } = useNavigationHistory({ enabled: true });
+  /*
+  FNXC:Navigation 2026-09-14-19:51:
+  Publish the hook's memoized result as the provider value. A fresh object literal here re-ran every consumer's
+  context-dependent effects on each App render — which replayed MobileNavBar's opening focus and reset the mobile
+  navigation popover's scroll position mid-tap.
+  */
+  const navigationHistory = useNavigationHistory({ enabled: true });
+  const { pushNav, replaceCurrent, removeNav, promoteNav } = navigationHistory;
   const viewNavRevertRef = useRef(new Map<TaskView, (() => void)[]>());
 
   // View state must be defined before useTasks since useTasks depends on taskView for SSE gating
@@ -2298,7 +2305,7 @@ function AppInner() {
       <ChatSubmitOnEnterProvider value={chatSubmitOnEnter}>
       <ModalDismissPreferenceProvider enabled={dismissModalsOnOutsideClick}>
         <QuickAddSubmitOnEnterProvider enabled={quickAddSubmitOnEnter}>
-      <NavigationHistoryProvider value={{ pushNav, replaceCurrent, removeNav, promoteNav }}>
+      <NavigationHistoryProvider value={navigationHistory}>
         <FileBrowserProvider openFile={openFileInBrowser}>
           <RetryWarningProvider value={maxTotalRetriesBeforeFail * RETRY_WARNING_RATIO}>
             <CostBadgeProvider value={{ enabled: showCostBadgeOnCards, pricingOverrides: modelPricingOverrides }}>
