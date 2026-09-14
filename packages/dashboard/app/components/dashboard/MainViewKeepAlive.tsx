@@ -190,7 +190,6 @@ function renderListSubtree(props: MainContentProps, active: boolean) {
     remoteData,
     tasks,
     currentProject,
-    moveTask,
     retryTask,
     onOpenChatWithPrefill,
     deleteTask,
@@ -207,7 +206,6 @@ function renderListSubtree(props: MainContentProps, active: boolean) {
     addToast,
     globalPaused,
     openNewTaskWithNav,
-    handleBoardQuickCreate,
     openPlanningWithInitialPlanWithNav,
     availableModels,
     favoriteProviders,
@@ -237,7 +235,6 @@ function renderListSubtree(props: MainContentProps, active: boolean) {
       <ListView
         tasks={isRemote && remoteData.tasks.length > 0 ? remoteData.tasks : tasks}
         projectId={currentProject?.id}
-        onMoveTask={moveTask}
         onRetryTask={retryTask}
         onOpenChatWithPrefill={onOpenChatWithPrefill}
         onDeleteTask={deleteTask}
@@ -254,7 +251,6 @@ function renderListSubtree(props: MainContentProps, active: boolean) {
         addToast={addToast}
         globalPaused={globalPaused}
         onNewTask={openNewTaskWithNav}
-        onQuickCreate={handleBoardQuickCreate}
         onPlanningMode={openPlanningWithInitialPlanWithNav}
         availableModels={availableModels}
         favoriteProviders={favoriteProviders}

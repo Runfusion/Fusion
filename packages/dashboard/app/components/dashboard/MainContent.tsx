@@ -152,7 +152,6 @@ export function MainContentListView(props: AppMainPanelTaskDetailMainContentProp
     isRemote,
     remoteData,
     currentProject,
-    moveTask,
     retryTask,
     onOpenChatWithPrefill,
     deleteTask,
@@ -169,7 +168,6 @@ export function MainContentListView(props: AppMainPanelTaskDetailMainContentProp
     addToast,
     globalPaused,
     openNewTaskWithNav,
-    handleBoardQuickCreate,
     openPlanningWithInitialPlanWithNav,
     availableModels,
     favoriteProviders,
@@ -192,7 +190,6 @@ export function MainContentListView(props: AppMainPanelTaskDetailMainContentProp
       <ListView
         tasks={isRemote && remoteData.tasks.length > 0 ? remoteData.tasks : tasks}
         projectId={currentProject?.id}
-        onMoveTask={moveTask}
         onRetryTask={retryTask}
         onOpenChatWithPrefill={onOpenChatWithPrefill}
         onDeleteTask={deleteTask}
@@ -209,7 +206,6 @@ export function MainContentListView(props: AppMainPanelTaskDetailMainContentProp
         addToast={addToast}
         globalPaused={globalPaused}
         onNewTask={openNewTaskWithNav}
-        onQuickCreate={handleBoardQuickCreate}
         onPlanningMode={openPlanningWithInitialPlanWithNav}
         availableModels={availableModels}
         favoriteProviders={favoriteProviders}

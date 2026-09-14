@@ -4,7 +4,7 @@ import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { ArrowUpDown, ArrowUp, ArrowDown, Link, Columns3, EyeOff, Eye, ChevronRight, Zap, Trash2, Pause, Play, ListChecks, Pencil } from "lucide-react";
-import { DEFAULT_COLUMN, THINKING_LEVELS, getErrorMessage, isColumn, sortTasksForDisplayColumn, type Task, type TaskDetail, type Column, type ColumnId, type TaskCreateInput, type MergeResult, type GithubIssueAction, type PrInfo, type ThinkingLevel } from "@fusion/core";
+import { DEFAULT_COLUMN, THINKING_LEVELS, getErrorMessage, isColumn, sortTasksForDisplayColumn, type Task, type TaskDetail, type Column, type ColumnId, type MergeResult, type GithubIssueAction, type PrInfo, type ThinkingLevel } from "@fusion/core";
 import { resolveEffectiveAutoMerge } from "../../../core/src/merge/task-merge";
 import { useColumnLabel } from "../i18n/labels";
 import { isCompleteColumnRole, isIntakeColumnRole, isPreImplementationColumnRole, isReviewColumnRole, isWipColumnRole } from "../utils/columnRoles";
@@ -14,8 +14,6 @@ import { ExternalBlockNotice, PlanApprovalNotice } from "./TaskCard";
 import { PrCreateModal } from "./PrCreateModal";
 import { TaskResetDialog } from "./TaskResetDialog";
 import type { BoardWorkflowColumn, BoardWorkflowsPayload, ModelInfo, NodeInfo, RevertTaskOptions, RevertTaskResult } from "../api";
-import { QuickEntryBox } from "./QuickEntryBox";
-import { AlphaBoundary } from "../context/AlphaContext";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { NodeHealthDot } from "./NodeHealthDot";
 import { hasPendingAutomaticRecovery } from "../utils/taskRecovery";
@@ -43,7 +41,6 @@ import { ViewSidebar } from "./ViewSidebar";
 import { ViewActionButton } from "./ViewActionButton";
 import { ViewHeader } from "./ViewHeader";
 import { computeWorkflowStatusCounts } from "./workflowStatusCounts";
-import { writeBoardWorkflowsCache } from "../utils/boardWorkflowsCache";
 import { useBoardWorkflows } from "../hooks/useBoardWorkflows";
 import { useUnmappedWorkflowRefetch } from "../hooks/useUnmappedWorkflowRefetch";
 import { TaskContextMenu, buildTaskActionMenuModel, getTaskPrAutomationLabel, type TaskContextMenuColumnMetadata, type TaskMenuItemDescriptor } from "./TaskContextMenu";
@@ -222,7 +219,6 @@ export function canUseListSplitLayout(containerWidth: number): boolean {
 
 interface ListViewProps {
   tasks: Task[];
-  onMoveTask: (id: string, column: ColumnId, optionsOrPosition?: { preserveProgress?: boolean; expectedColumn?: string } | number) => Promise<Task>;
   onRetryTask?: (id: string) => Promise<Task>;
   onOpenChatWithPrefill?: (prefillText: string) => void;
   onReviseTask?: (task: Task) => void;
@@ -250,7 +246,6 @@ interface ListViewProps {
   addToast: (message: string, type?: ToastType) => void;
   globalPaused?: boolean;
   onNewTask?: (workflowId?: string | null) => void;
-  onQuickCreate?: (input: TaskCreateInput) => Promise<Task | void>;
   availableModels?: ModelInfo[];
   favoriteProviders?: string[];
   favoriteModels?: string[];
@@ -361,7 +356,6 @@ function getTaskProgress(
 
 export function ListView({
   tasks,
-  onMoveTask,
   onRetryTask,
   onOpenChatWithPrefill,
   onDeleteTask,
@@ -379,7 +373,6 @@ export function ListView({
   addToast,
   globalPaused,
   onNewTask,
-  onQuickCreate,
   availableModels,
   favoriteProviders = [],
   favoriteModels = [],
@@ -435,7 +428,6 @@ export function ListView({
     isAllWorkflowsSelected,
     setSelectedWorkflowId,
     refreshBoardWorkflows,
-    setBoardWorkflowsState,
   } = useBoardWorkflows({ projectId });
   const [headerWorkflowSlot, setHeaderWorkflowSlot] = useState<HTMLElement | null>(() => {
     if (typeof document === "undefined") return null;
@@ -929,88 +921,10 @@ export function ListView({
     [boardWorkflows, tasks],
   );
 
-  const createTargetWorkflowId = useMemo(() => {
-    if (!workflowMode || !boardWorkflows) return null;
-    if (!isAllWorkflowsSelected) return selectedWorkflow?.id ?? null;
-    return boardWorkflows.workflows.find((workflow) => workflow.id === boardWorkflows.defaultWorkflowId)?.id
-      ?? boardWorkflows.workflows[0]?.id
-      ?? null;
-  }, [boardWorkflows, isAllWorkflowsSelected, selectedWorkflow, workflowMode]);
 
-  const createTargetColumn = useMemo(() => {
-    if (workflowMode && boardWorkflows && createTargetWorkflowId) {
-      const workflow = boardWorkflows.workflows.find((candidate) => candidate.id === createTargetWorkflowId);
-      const target = workflow?.columns.find((column) => column.flags.intake && !column.flags.hiddenFromBoard)
-        ?? workflow?.columns.find((column) => !column.flags.hiddenFromBoard);
-      if (target) return target.id;
-    }
-    const target = listColumns.find((column) => column.flags.intake)
-      ?? listColumns[0];
-    return target?.id;
-  }, [boardWorkflows, createTargetWorkflowId, listColumns, workflowMode]);
 
-  /**
-   * FNXC:WorkflowList 2026-06-21-21:37:
-   * List quick-create shares Board's workflow filtering invariant: when taskWorkflowIds lags task creation, optimistically recording the selected workflow keeps the newly-created row visible in the active workflow lane until the authoritative refetch reconciles it (FN-6903).
-   */
-  const applyOptimisticTaskWorkflow = useCallback((taskId: string, workflowId: string) => {
-    setBoardWorkflowsState((previous) => {
-      if (!previous || previous.projectId !== projectId) return previous;
-      if (previous.payload.taskWorkflowIds[taskId]) return previous;
 
-      const payload: BoardWorkflowsPayload = {
-        ...previous.payload,
-        taskWorkflowIds: {
-          ...previous.payload.taskWorkflowIds,
-          [taskId]: workflowId,
-        },
-      };
-      writeBoardWorkflowsCache(projectId, payload);
-      return { projectId, payload };
-    });
-  }, [projectId]);
 
-  const resolveListQuickCreateTarget = useCallback((targetWorkflowId: string, preferredColumnId?: string | null): ColumnId | undefined => {
-    const workflow = boardWorkflows?.workflows.find((candidate) => candidate.id === targetWorkflowId);
-    if (!workflow) return undefined;
-    const visibleColumns = workflow.columns.filter((column) => !column.flags.hiddenFromBoard);
-    /*
-    FNXC:QuickAddStart 2026-07-22-17:45:
-    Preserve a Quick Add Start column only when the selected workflow's visible metadata
-    still validates it. Ordinary Save omits the preference and retains list intake routing.
-    */
-    const preferredColumn = preferredColumnId ? visibleColumns.find((column) => column.id === preferredColumnId) : undefined;
-    const column = preferredColumn
-      ?? visibleColumns.find((candidate) => candidate.flags.intake)
-      ?? visibleColumns[0];
-    return column?.id as ColumnId | undefined;
-  }, [boardWorkflows]);
-
-  const handleListQuickCreate = useCallback(async (input: TaskCreateInput) => {
-    const create = onQuickCreate ?? (async () => addToast(t("listView.taskCreationUnavailable", "Task creation not available"), "error"));
-    if (workflowMode && createTargetWorkflowId && createTargetColumn) {
-      const workflowId = typeof input.workflowId === "string" && input.workflowId !== ALL_WORKFLOWS_BOARD_VIEW_ID ? input.workflowId : createTargetWorkflowId;
-      const targetColumn = resolveListQuickCreateTarget(workflowId, input.column) ?? createTargetColumn;
-      const created = await create({
-        ...input,
-        column: targetColumn,
-        workflowId,
-      });
-      if (created?.id) {
-        const createdWorkflowId = (created as Task & { workflowId?: string }).workflowId ?? workflowId;
-        applyOptimisticTaskWorkflow(created.id, createdWorkflowId);
-        refreshBoardWorkflows();
-      }
-      return created;
-    }
-    return create(input);
-  }, [addToast, applyOptimisticTaskWorkflow, createTargetColumn, createTargetWorkflowId, onQuickCreate, refreshBoardWorkflows, resolveListQuickCreateTarget, t, workflowMode]);
-
-  /*
-  FNXC:ListWorkflowSelection 2026-06-29-00:00:
-  List quick-add Plan handoffs must inherit the same active workflow as direct quick-create. Passing null only while workflow mode has no selected workflow preserves stale-id fallback behavior without reverting to the project default lane.
-  */
-  const listQuickEntryWorkflowId = workflowMode ? createTargetWorkflowId : undefined;
 
   // Column display labels
   const COLUMN_LABELS_MAP: Record<ListColumn, string> = {
@@ -2538,45 +2452,10 @@ export function ListView({
               </aside>
             )}
             {/*
-            FNXC:AlphaQuickEntry 2026-09-13-15:44:
-            List owns an Alpha boundary at the real Quick Entry mount so both the retained MainViewKeepAlive route
-            and MainContent fallback expose the same icon-only 500ms Save-to-Start gesture and mobile button squares.
+            FNXC:ListNoQuickEntry 2026-09-14-06:40:
+            List has no composer of its own. Creation belongs to the header New Task action and to the Board column
+            composers; a second Quick Entry inside the list competed with them for the same project-scoped draft.
             */}
-            <AlphaBoundary className="list-quick-entry-above-table">
-              <QuickEntryBox
-                onCreate={handleListQuickCreate}
-                onMoveTask={onMoveTask}
-                addToast={addToast}
-                tasks={tasks}
-                availableModels={availableModels}
-                onPlanningMode={onPlanningMode}
-                workflowId={listQuickEntryWorkflowId}
-                workflowOptions={workflowMode ? workflowOptions : undefined}
-                defaultWorkflowId={workflowMode ? createTargetWorkflowId ?? boardWorkflows?.defaultWorkflowId ?? null : undefined}
-                projectId={projectId}
-                /*
-                FNXC:QuickEntry 2026-09-14-03:31:
-                List instantiates the SAME Quick Entry as the Board: same disclosure defaults, same textarea growth,
-                same gestures. The former compact `singleLine`/`defaultExpanded={false}` variant made one composer
-                behave two ways depending on its host and is deleted.
-                */
-                autoExpand={false}
-                favoriteProviders={favoriteProviders}
-                favoriteModels={favoriteModels}
-                onToggleFavorite={onToggleFavorite}
-                onToggleModelFavorite={onToggleModelFavorite}
-                onOpenTask={(taskId) => {
-                  const matchingTask = tasks.find((candidate) => candidate.id === taskId);
-                  if (matchingTask) {
-                    onOpenDetail(matchingTask);
-                    return;
-                  }
-                  if (typeof window !== "undefined") {
-                    window.location.hash = `#/tasks/${taskId}`;
-                  }
-                }}
-              />
-            </AlphaBoundary>
         {filteredCount === 0 ? (
           <div className="list-empty">
             {searchQuery ? t("listView.noTasksMatch", "No tasks match your filter") : t("listView.noTasksYet", "No tasks yet")}
