@@ -232,6 +232,7 @@ export function MainContentListView(props: AppMainPanelTaskDetailMainContentProp
         header would carry two identical controls.
         */
         workflowControlsInHeader={props.listHost !== "dock"}
+        compact={props.listHost === "dock"}
       />
     </PageErrorBoundary>
   );

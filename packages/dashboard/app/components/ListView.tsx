@@ -294,6 +294,13 @@ interface ListViewProps {
   /** Relocates workflow controls into the Header portal slot when sidebar navigation owns the inline chrome. */
   workflowControlsInHeader?: boolean;
   /*
+  FNXC:ListInRightDock 2026-09-14-05:42:
+  A compact host (the right dock) renders the card list, never the wide table, whatever its measured width reports,
+  and shows NO workflow selector: the workflow is whatever the board already selected, read from the same
+  project-scoped selection that useBoardWorkflows persists for every surface.
+  */
+  compact?: boolean;
+  /*
   FNXC:MainViewKeepAlive 2026-08-30-19:05:
   A kept-alive host leaves ListView mounted while hidden. Inactive preserves local filters and
   selection, but must release the shared workflow-header slot until this is the visible view.
@@ -397,6 +404,7 @@ export function ListView({
   onOpenWorkflowEditor,
   onCreateWorkflow,
   workflowControlsInHeader = false,
+  compact = false,
   active = true,
 }: ListViewProps) {
   const { t } = useTranslation("app");
@@ -447,7 +455,7 @@ export function ListView({
     && (listContainerWidth !== null
       ? canUseListSplitLayout(listContainerWidth)
       : viewportMode === "desktop");
-  const useSinglePaneList = !canRenderSplitLayout;
+  const useSinglePaneList = compact || !canRenderSplitLayout;
   const { confirm, confirmWithSelect } = useConfirm();
 
   useEffect(() => {
@@ -2144,6 +2152,7 @@ export function ListView({
   };
 
   const renderWorkflowSelector = () => {
+    if (compact) return null;
     if (!workflowMode || !selectedWorkflow) return null;
     const shouldRenderWorkflowControls = workflowOptions.length > 1 || Boolean(onCreateWorkflow || onOpenWorkflowEditor);
     if (!shouldRenderWorkflowControls || workflowOptions.length === 0) return null;
@@ -2158,6 +2167,8 @@ export function ListView({
           onOpen={refreshBoardWorkflows}
           label={t("listView.workflowLabel", "Workflow")}
           onEditWorkflow={onOpenWorkflowEditor}
+          /* FNXC:ListNoWorkflowCreate 2026-09-14-05:42: creation stays inside the selector popover, like every other switcher host. */
+          onCreateWorkflow={onCreateWorkflow}
         />
       </div>
     );
@@ -2291,13 +2302,12 @@ export function ListView({
           onClick={() => onNewTask(isAllWorkflowsSelected ? undefined : selectedWorkflow?.id)}
         />
       ) : null}
-      {onCreateWorkflow ? (
-        <ViewActionButton
-          kind="create"
-          label={t("workflowSwitcher.newWorkflow", "New workflow")}
-          onClick={onCreateWorkflow}
-        />
-      ) : null}
+      {/*
+      FNXC:ListNoWorkflowCreate 2026-09-14-05:42:
+      Workflow creation belongs to the workflow selector that owns workflow lifecycle, not to the task list's action
+      row. A second entry point here duplicated the affordance on phones, where it sat beside New Task and read as a
+      second way to create a task.
+      */}
     </div>
   );
 

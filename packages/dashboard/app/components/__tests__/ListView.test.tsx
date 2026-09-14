@@ -2276,13 +2276,10 @@ describe("ListView", () => {
     expect(onOpenWorkflowEditor).toHaveBeenCalledWith("wf-custom");
     expect(onCreateWorkflow).not.toHaveBeenCalled();
 
-    // Workflow creation is a single header action; the popover keeps only contextual row editing.
-    expect(screen.queryByTestId("workflow-switcher-create")).toBeNull();
-    const createButtons = screen.getAllByRole("button", { name: "New workflow" });
-    expect(createButtons).toHaveLength(1);
-    expect(screen.getByTestId("list-primary-action-cluster")).toContainElement(createButtons[0]);
-    fireEvent.click(createButtons[0]);
-    expect(onCreateWorkflow).toHaveBeenCalledTimes(1);
+    // Workflow creation belongs to the selector that owns workflow lifecycle, never to the list action row.
+    expect(screen.queryByRole("button", { name: "New workflow" })).toBeNull();
+    expect(within(screen.getByTestId("list-primary-action-cluster")).queryByRole("button", { name: "New workflow" })).toBeNull();
+    expect(onCreateWorkflow).not.toHaveBeenCalled();
   });
 
   it("relocates the list workflow selector and its actions into the header slot", async () => {
@@ -2334,7 +2331,8 @@ describe("ListView", () => {
       expect(document.querySelector(".list-view > .list-workflow-control")).toBeNull();
 
       fireEvent.click(selector);
-      expect(screen.queryByTestId("workflow-switcher-create")).toBeNull();
+      // Creation lives in the selector popover footer; the list action row offers none.
+      expect(screen.getByTestId("workflow-switcher-create")).toBeInTheDocument();
       expect(screen.getAllByRole("button", { name: "New workflow" })).toHaveLength(1);
       fireEvent.click(screen.getByTestId("workflow-switcher-option-wf-custom"));
       await waitFor(() => expect(screen.getByText("Custom task")).toBeInTheDocument());

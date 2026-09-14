@@ -287,11 +287,21 @@ List rows and mobile cards expose the same task lifecycle menu as Board cards fr
 
 /* New class for QuickEntryBox positioned above the table in list view.
    FNXC:ListView 2026-06-23-20:15: Remove the divider above quick-add by eliminating top padding; the controls and quick-add share the same surface without a visible seam. */
+/*
+FNXC:ListQuickEntrySpacing 2026-09-14-05:42:
+The composer sat inside a --space-xl gutter that was sized for a full-width page. In a narrow host (the right dock)
+that gutter ate most of the row while the composer itself already carries its own padding, so the collapsed box read
+as a small field floating in a large empty frame. One modest inset here; the box owns the rest.
+*/
 .list-quick-entry-above-table {
   width: 100%;
-  padding: 0 var(--space-xl) var(--space-md);
+  padding: 0 var(--space-sm) var(--space-sm);
   background: var(--surface);
   border-top: 0;
+}
+
+.list-quick-entry-above-table .quick-entry-box--collapsed {
+  margin-bottom: 0;
 }
 
 .list-quick-entry-above-table .quick-entry-box {
