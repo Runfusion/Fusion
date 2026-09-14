@@ -18,7 +18,6 @@ import {
   List,
   Mail,
   MessageSquare,
-  Plus,
   PanelsTopLeft,
   Search,
   Settings,
@@ -242,8 +241,6 @@ export function LeftSidebarNav({
     setSidebarWidth(nextWidth);
     persistSidebarWidth(nextWidth);
   }, [isCollapsed, sidebarWidth]);
-
-  const newTaskLabel = t("nav.newTask", "New Task");
 
   /*
   FNXC:Navigation 2026-06-22-12:00:
@@ -514,23 +511,7 @@ export function LeftSidebarNav({
       </nav>
 
       <div className="left-sidebar-nav__footer">
-        {/*
-        FNXC:Navigation 2026-06-23-02:30:
-        New Task now lives in the footer, directly ABOVE Collapse (and Settings), per user request — the primary create action sits with the other persistent footer affordances instead of at the top of the rail.
-        */}
-        {onNewTask ? (
-          <button
-            type="button"
-            className="btn left-sidebar-nav__item left-sidebar-nav__new-task"
-            aria-label={newTaskLabel}
-            title={newTaskLabel}
-            data-testid="sidebar-nav-new-task"
-            onClick={() => onNewTask()}
-          >
-            <Plus size={16} />
-            <span className="left-sidebar-nav__label">{newTaskLabel}</span>
-          </button>
-        ) : null}
+        {/* FNXC:StandardizedViewActions 2026-09-13-21:43: New Task is header-owned; the navigation footer contains navigation chrome only and must never expose a duplicate creation mutation. */}
         {/*
         FNXC:Navigation 2026-06-21-00:00:
         The sidebar collapse affordance belongs in the footer immediately above Settings, using the same row-item visual language. Expanded mode shows the Collapse label, while rail mode relies on the shared label-hiding rule so the button remains icon-only like Settings.

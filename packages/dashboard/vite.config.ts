@@ -149,8 +149,10 @@ export default defineConfig({
       "@fusion/core/column-roles": resolve(__dirname, "../core/src/column-roles.ts"),
       "@fusion/core": resolve(__dirname, "../core/src/types.ts"),
       "@fusion/dashboard/app/components/TaskCard": resolve(__dirname, "app/components/TaskCard.tsx"),
-      // FNXC:PluginBuild 2026-06-22-03:50: Bundled plugin source can import the dashboard's shared ViewHeader through the package export; Vite needs the same source alias during dashboard builds so plugin UI normalization does not fail only in CI merge builds.
+      // FNXC:PluginBuild 2026-09-13-16:50: Bundled plugin source can import shared header primitives and the cooperative full-page header through package exports; Vite needs matching source aliases so one-header composition cannot fail only in CI merge builds.
       "@fusion/dashboard/app/components/ViewHeader": resolve(__dirname, "app/components/ViewHeader.tsx"),
+      "@fusion/dashboard/app/plugins/PluginDashboardViewHeader": resolve(__dirname, "app/plugins/PluginDashboardViewHeader.tsx"),
+      "@fusion/dashboard/app/plugins/PluginDashboardViewHost": resolve(__dirname, "app/plugins/PluginDashboardViewHost.tsx"),
       // FNXC:Quality 2026-07-19-12:00: The bundled Quality plugin needs the host's token-appended artifact URL helper because native video loads cannot attach authorization headers.
       "@fusion/dashboard/app/api/tasks/task-content": resolve(__dirname, "app/api/tasks/task-content.ts"),
       "@fusion/dashboard/app/plugins/types": resolve(__dirname, "app/plugins/types.ts"),

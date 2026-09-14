@@ -18,7 +18,9 @@ import { BackendConnectionErrorPage } from "../BackendConnectionErrorPage";
 import { HeaderWorkflowSwitcherSlot } from "../HeaderWorkflowSwitcherSlot";
 import { GraphWorkflowSwitcherSlot, filterTasksByGraphWorkflowSelection } from "../GraphWorkflowSwitcherSlot";
 import { PluginDashboardViewHost } from "../../plugins/PluginDashboardViewHost";
+import { PluginDashboardHostChromeContext } from "../../plugins/PluginDashboardViewHeader";
 import { buildPluginTaskViewId, getPluginViewId, isPluginViewId } from "../../plugins/pluginViewRegistry";
+import { getPluginNavIcon } from "../pluginNavIcon";
 import { isNearDuplicateCanonicalInactive } from "../../../../core/src/duplicates/near-duplicate-canonical";
 import { fetchMission, fetchMissions, fetchInsights, fetchTaskDetail, listEvals } from "../../api";
 import { attachNativeStructureRefToDrag } from "../../utils/nativeStructureDrag";
@@ -83,6 +85,13 @@ FNXC:AlphaMobileDrawer 2026-09-10-23:59:
 Ordinary and plugin destinations share this production bridge so header ownership is derived from the routed task view in one place. Browser smoke mounts this same bridge, preventing fixture copies from silently disagreeing with MainContent.
 */
 export function AlphaMainContentDrawer({ taskView, open, title, onClose, children }: AlphaMainContentDrawerProps) {
+  /*
+  FNXC:StandardizedPluginViews 2026-09-13-22:40:
+  When the drawer paints the fallback title for a plugin destination it owns that header, so the plugin
+  host must contribute only actions and body. Publishing the same derivation both ways keeps one visual
+  header authority per surface instead of stacking two titles.
+  */
+  const drawerOwnsHeader = isPluginViewId(taskView);
   return (
     <AlphaMobileDrawer
       open={open}
@@ -90,10 +99,12 @@ export function AlphaMainContentDrawer({ taskView, open, title, onClose, childre
       onClose={onClose}
       keepMounted
       testId="alpha-mobile-drawer-main-content"
-      contentOwnsHeader={!isPluginViewId(taskView)}
+      contentOwnsHeader={!drawerOwnsHeader}
       contentOwnsScroll={false}
     >
-      {children}
+      <PluginDashboardHostChromeContext.Provider value={{ hostOwnsHeader: drawerOwnsHeader }}>
+        {children}
+      </PluginDashboardHostChromeContext.Provider>
     </AlphaMobileDrawer>
   );
 }
@@ -518,12 +529,14 @@ export function MainContent(props: MainContentProps) {
   dashboard-views response may mount a plugin view, so a persisted legacy view cannot revive a
   disabled plugin and issue requests to an unavailable plugin API.
   */
-  const isEnabledPluginTaskView = resolvedPluginTaskView !== null && pluginDashboardViews.some(
-    (entry) => resolvedPluginTaskView === `plugin:${entry.pluginId}:${entry.view.viewId}`,
-  );
+  const enabledPluginView = resolvedPluginTaskView === null
+    ? undefined
+    : pluginDashboardViews.find(
+      (entry) => resolvedPluginTaskView === `plugin:${entry.pluginId}:${entry.view.viewId}`,
+    );
 
   // Project view
-  if (resolvedPluginTaskView && isEnabledPluginTaskView) {
+  if (resolvedPluginTaskView && enabledPluginView) {
     const pluginTasks = isRemote && remoteData.tasks.length > 0 ? remoteData.tasks : tasks;
     const isDependencyGraphView = resolvedPluginTaskView === "plugin:fusion-plugin-dependency-graph:graph";
     /*
@@ -556,6 +569,15 @@ export function MainContent(props: MainContentProps) {
         ) : null}
         <PluginDashboardViewHost
           taskView={resolvedPluginTaskView as `plugin:${string}:${string}`}
+          /*
+          FNXC:StandardizedPluginViews 2026-09-13-16:30:
+          Every enabled primary plugin destination is framed by the same host-owned ViewHeader and bounded ViewLayout. Resolution still comes exclusively from the existing project-scoped manifest list: this adds neither routes nor a registration for Reports.
+          */
+          layout={{
+            title: enabledPluginView.view.label,
+            icon: getPluginNavIcon(enabledPluginView.view.icon),
+            contentOwnsScroll: isDependencyGraphView,
+          }}
           context={{
             projectId: currentProject?.id,
             tasks: pluginContextTasks,
@@ -1037,8 +1059,8 @@ export function MainContent(props: MainContentProps) {
               globalPaused={globalPaused}
               initialTab={mainPanelDetailInitialTab}
               /*
-              FNXC:TaskDetailDrawerNavigation 2026-09-12-20:37:
-              The desktop Board panel retains Back to board. Alpha mobile declares its drawer presentation explicitly so the shared host exposes only Close there; both actions still call the same navigation owner that restores Board state and history.
+              FNXC:TaskDetailHostOwnership 2026-09-13-16:30:
+              MainContent remains the navigation owner while canonical Task Detail chrome chooses ChevronLeft on phone and Close on desktop/tablet. Alpha's outer drawer contributes only its handle, never a second return control.
               */
               onNavigateToBoard={closeTaskDetailMainPanel}
               presentation={alphaMobileDrawerEnabled ? "drawer" : "panel"}

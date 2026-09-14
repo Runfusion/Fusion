@@ -580,7 +580,14 @@ idle and auto-translate-off views retain their original layout.
   align-items: flex-start;
 }
 
+.github-import-modal__title-copy {
+  display: flex;
+  flex-direction: column;
+  min-inline-size: 0;
+}
+
 .github-import-modal__subtitle {
+  display: block;
   margin-top: var(--space-xs);
   color: var(--text-muted);
   font-size: 13px;

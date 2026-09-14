@@ -223,6 +223,14 @@ html {
   Canonical content-row height (28px = btn-sm box: 4+4 padding + 1+1 border + ~18px line). ViewHeader bounds every action child to this so taller controls (touch-target 44px close buttons, view-toggle 32px segmented switches, base .btn 36px primary buttons) collapse to the canonical row instead of stretching the header past --view-header-min-height. Skills (was 77px / 44px touch-target), Goals (was 69px / 36px primary btn), and Agents (was 65px / 32px view-toggle) all clamp to ~61px without clipping their 16-18px icons, which stay centered.
   */
   --view-header-content-row: 28px;
+  /*
+  FNXC:StandardizedViewLayout 2026-09-13-16:12:
+  Every full dashboard destination shares a 300px preferred collection rail, one 220–560px resize range, and one row rhythm. Component CSS consumes these tokens instead of copying per-view widths or typography.
+  */
+  --view-sidebar-width: calc(var(--space-lg) * 18.75);
+  --view-sidebar-min-width: calc(var(--space-lg) * 13.75);
+  --view-sidebar-max-width: calc(var(--space-lg) * 35);
+  --view-sidebar-row-min-height: calc(var(--space-lg) * 2.25);
   --column-gap: var(--space-md);
   --board-padding: var(--space-lg) var(--space-xl);
   --icon-size-md: 16px;

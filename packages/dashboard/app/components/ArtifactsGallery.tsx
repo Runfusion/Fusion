@@ -1,4 +1,4 @@
-import { ModalCloseButton } from "./ModalCloseButton";
+import { ViewHeader } from "./ViewHeader";
 import "./ArtifactsGallery.css";
 import { useCallback, useContext, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
@@ -502,13 +502,19 @@ function OverlayShell({ label, onClose, children, wide, closeRef, windowKey, per
 
 function ViewerHeader({ title, onClose, t, actions, closeRef }: { title: string; onClose: () => void; t: TFunction<"app">; actions?: React.ReactNode; closeRef: React.RefObject<HTMLButtonElement | null> }) {
   return (
-    <div className="artifacts-gallery-viewer-header">
-      <h3 className="artifacts-gallery-viewer-title">{title}</h3>
-      <div className="artifacts-gallery-viewer-actions">
-        {actions}
-        <ModalCloseButton ref={closeRef}  onClick={onClose} aria-label={t("documents.closeLightbox", "Close artifact preview")} />
-      </div>
-    </div>
+    /*
+    FNXC:StandardizedViewLayout 2026-09-13-22:40:
+    FN-379 remediation: gallery viewers share the canonical header, keeping their own actions and focus ref.
+    */
+    <ViewHeader
+      className="artifacts-gallery-viewer-header"
+      headingLevel={3}
+      title={title}
+      actions={actions}
+      onClose={onClose}
+      closeButtonRef={closeRef}
+      closeButtonProps={{ "aria-label": t("documents.closeLightbox", "Close artifact preview") }}
+    />
   );
 }
 

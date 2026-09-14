@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useState, type ReactNode } from "react";
 import { useHorizontalMousePan } from "../hooks/useHorizontalMousePan";
+import { ViewLayoutTabs } from "./ViewLayout";
 import "./TaskDetailTabStrip.css";
 
 export interface TaskDetailTabStripItem {
@@ -28,7 +29,7 @@ export function TaskDetailTabStrip({ items, activeId, ariaLabel }: TaskDetailTab
   const { isPanning, ...mousePanBindings } = useHorizontalMousePan(scrollElement, { canStartFrom });
 
   return (
-    <div
+    <ViewLayoutTabs
       ref={setScrollElement}
       className={`detail-tabs${isPanning ? " is-mouse-panning" : ""}`}
       role="tablist"
@@ -37,6 +38,6 @@ export function TaskDetailTabStrip({ items, activeId, ariaLabel }: TaskDetailTab
       {...mousePanBindings}
     >
       {items.map((item) => <Fragment key={item.id}>{item.node}</Fragment>)}
-    </div>
+    </ViewLayoutTabs>
   );
 }

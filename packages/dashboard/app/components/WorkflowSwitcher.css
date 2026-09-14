@@ -301,30 +301,11 @@ Alpha keeps all workflow selections in one navigable homemade Alpha listbox. The
   margin-left: auto;
 }
 
-.workflow-switcher-footer {
-  flex: 0 0 auto;
-  margin-top: var(--space-xs);
-  padding-top: var(--space-xs);
-  border-top: 1px solid var(--border);
-  background: var(--surface);
-}
-
-.workflow-switcher-create {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-sm);
-  width: 100%;
-  min-height: calc(var(--space-lg) + var(--space-sm));
-  border-radius: var(--radius-md);
-}
-
 [data-theme="light"] .workflow-switcher-option-row--selected {
   background: color-mix(in srgb, var(--todo) 10%, transparent);
 }
 
-[data-theme="light"] .workflow-switcher-menu,
-[data-theme="light"] .workflow-switcher-footer {
+[data-theme="light"] .workflow-switcher-menu {
   background: var(--surface);
 }
 

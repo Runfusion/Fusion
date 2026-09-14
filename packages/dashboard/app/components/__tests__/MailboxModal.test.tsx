@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { MailboxModal } from "../MailboxModal";
 import * as apiModule from "../../api";
 import * as mobileKeyboardModule from "../../hooks/useMobileKeyboard";
+import * as headerModule from "../Header";
 import type { Agent } from "../../api";
 import type { Message } from "@fusion/core";
 
@@ -38,6 +39,7 @@ vi.mock("../Header", () => ({
 
 // Mock lucide-react icons
 vi.mock("lucide-react", () => ({
+  ChevronLeft: () => <span data-testid="icon-chevron-left">Back</span>,
   X: () => <span data-testid="icon-x">X</span>,
   Mail: () => <span data-testid="icon-mail">Mail</span>,
   Send: () => <svg data-testid="icon-send" />,
@@ -593,7 +595,7 @@ describe("MailboxModal", () => {
     });
 
     const backToListButton = screen.getByTestId("mailbox-back-to-list");
-    expect(backToListButton).toHaveClass("btn", "btn-sm", "btn-secondary");
+    expect(backToListButton).toHaveClass("view-back-button");
 
     fireEvent.click(backToListButton);
     await waitFor(() => {
@@ -985,6 +987,37 @@ describe("MailboxModal", () => {
 
     const headerComposeButton = screen.getByTestId("mailbox-header-compose");
     expect(headerComposeButton).toHaveClass("btn", "btn-sm", "btn-primary");
+  });
+
+  /*
+  FNXC:StandardizedMailboxLayout 2026-09-14-10:24:
+  FN-379 remediation: the floating mailbox hosts the same composer, so on desktop and phone alike it keeps one header
+  carrying the composer identity and a single abandon control; the composer body adds no second header or close.
+  */
+  it.each(["desktop", "mobile"] as const)("gives the %s floating composer one header and one abandon control", async (viewport) => {
+    const viewportMode = vi.mocked(headerModule.useViewportMode);
+    viewportMode.mockImplementation(() => viewport);
+    try {
+      render(<MailboxModal {...defaultProps} />);
+      await waitFor(() => expect(screen.getByTestId("mailbox-header-compose")).toBeDefined());
+
+      fireEvent.click(screen.getByTestId("mailbox-header-compose"));
+      await waitFor(() => expect(screen.getByTestId("message-composer")).toBeDefined());
+
+      const banners = screen.getAllByRole("banner");
+      expect(banners).toHaveLength(1);
+      expect(within(banners[0]).getByText("New Message")).toBeDefined();
+      expect(document.querySelector(".message-composer-header")).toBeNull();
+      expect(screen.queryByTestId("message-composer-cancel")).toBeNull();
+
+      const back = screen.getByTestId("mailbox-back-to-list");
+      expect(within(banners[0]).getByTestId("mailbox-back-to-list")).toBe(back);
+      fireEvent.click(back);
+      await waitFor(() => expect(screen.queryByTestId("message-composer")).toBeNull());
+      expect(mockSendMessage).not.toHaveBeenCalled();
+    } finally {
+      viewportMode.mockImplementation(() => "mobile");
+    }
   });
 
   it("shows compose button in header on agents tab", async () => {

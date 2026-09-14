@@ -9,7 +9,6 @@ import {
   Search,
   Trash2,
   Archive,
-  ArrowLeft,
   Pencil,
   Bot,
   Paperclip,
@@ -25,8 +24,6 @@ import {
   ExternalLink,
   Tag,
   FileText,
-  PanelLeft,
-  PanelLeftClose,
   Bookmark,
 } from "lucide-react";
 import { FN_AGENT_ID, TASK_PLANNER_CHAT_AGENT_ID_PREFIX, useChat, type ChatMessageInfo, type ChatSessionInfo } from "../hooks/useChat";
@@ -71,6 +68,9 @@ import {
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { ViewHeader } from "./ViewHeader";
+import { ViewActionButton } from "./ViewActionButton";
+import { ViewSidebar } from "./ViewSidebar";
+import { ViewLayout } from "./ViewLayout";
 import {
   StandardChatActionButton,
   StandardChatMessageItem,
@@ -190,34 +190,6 @@ export function resolveChatContextMenuPosition(
     x: Math.min(Math.max(CHAT_CONTEXT_MENU_VIEWPORT_MARGIN_PX, proposedLeft), maximumLeft),
     y: Math.min(Math.max(CHAT_CONTEXT_MENU_VIEWPORT_MARGIN_PX, anchorY), maximumTop),
   };
-}
-export const CHAT_DOCKED_SIDEBAR_WIDTH_STORAGE_KEY = "fusion:chat-docked-sidebar-width";
-export const CHAT_DOCKED_SIDEBAR_OPEN_STORAGE_KEY = "fusion:chat-docked-sidebar-open";
-export const CHAT_DOCKED_SIDEBAR_MIN_WIDTH = 220;
-export const CHAT_DOCKED_SIDEBAR_MAX_WIDTH = 480;
-export const CHAT_DOCKED_SIDEBAR_DEFAULT_WIDTH = 300;
-
-export function clampChatDockedSidebarWidth(width: number): number {
-  return Number.isFinite(width) ? Math.max(CHAT_DOCKED_SIDEBAR_MIN_WIDTH, Math.min(CHAT_DOCKED_SIDEBAR_MAX_WIDTH, width)) : CHAT_DOCKED_SIDEBAR_DEFAULT_WIDTH;
-}
-
-function readChatDockedSidebarWidth(persist: boolean): number {
-  if (!persist || typeof window === "undefined") return CHAT_DOCKED_SIDEBAR_DEFAULT_WIDTH;
-  try {
-    const raw = window.localStorage.getItem(CHAT_DOCKED_SIDEBAR_WIDTH_STORAGE_KEY);
-    const value = raw?.trim() ? Number(raw) : NaN;
-    return Number.isFinite(value) && value > 0 ? clampChatDockedSidebarWidth(value) : CHAT_DOCKED_SIDEBAR_DEFAULT_WIDTH;
-  } catch { return CHAT_DOCKED_SIDEBAR_DEFAULT_WIDTH; }
-}
-
-function readChatDockedSidebarOpen(persist: boolean): boolean {
-  if (!persist || typeof window === "undefined") return true;
-  try { return window.localStorage.getItem(CHAT_DOCKED_SIDEBAR_OPEN_STORAGE_KEY) !== "false"; } catch { return true; }
-}
-
-function persistChatDockedSidebarPreference(key: string, value: string, persist: boolean) {
-  if (!persist || typeof window === "undefined") return;
-  try { window.localStorage.setItem(key, value); } catch { /* Ignore unavailable storage. */ }
 }
 let chatViewWasPreviouslyInactive = false;
 let activeChatFindOwner: HTMLElement | null = null;
@@ -811,11 +783,11 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
   FN-9193 restores an optional conversation list only for non-floating tablet-or-wider hosts.
   Mobile, compact dock, and floating hosts retain their one-pane list/detail contract.
   */
-  const [dockedSidebarWidth, setDockedSidebarWidth] = useState(() => readChatDockedSidebarWidth(persistChatPreferences));
-  const [dockedSidebarOpen, setDockedSidebarOpen] = useState(() => readChatDockedSidebarOpen(persistChatPreferences));
-  const resizeTeardownRef = useRef<(() => void) | null>(null);
-  const dockedSidebarEligible = !listOnly && !dedicatedConversation && !floating && !isChatMobile;
-  const dockedSidebarVisible = dockedSidebarEligible && dockedSidebarOpen;
+  /*
+  FNXC:StandardizedChatLayout 2026-09-13-22:31:
+  Chat keeps its conversation collection mounted and visible on every tablet-or-wider in-place host, and that rail can no longer be hidden away. Floating pop-out windows and phones stay list-or-detail hosts, so they keep the shared header chevron as their single return. Dedicated conversation windows retain only their bound thread and never retarget the shared controller.
+  */
+  const dockedSidebarVisible = !listOnly && !dedicatedConversation && !floating && !isChatMobile;
 
   useEffect(() => {
     if (!active || !activeSession?.id) {
@@ -2499,47 +2471,6 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
     [deleteSession, addToast],
   );
 
-  useEffect(() => () => resizeTeardownRef.current?.(), []);
-
-  const persistDockedWidth = useCallback((nextWidth: number) => {
-    persistChatDockedSidebarPreference(CHAT_DOCKED_SIDEBAR_WIDTH_STORAGE_KEY, String(nextWidth), persistChatPreferences);
-  }, [persistChatPreferences]);
-
-  const handleDockedResizeStart = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    const handle = event.currentTarget;
-    handle.setPointerCapture?.(event.pointerId);
-    const startX = event.clientX;
-    const startWidth = dockedSidebarWidth;
-    let latestWidth = startWidth;
-    const priorUserSelect = document.body.style.userSelect;
-    document.body.style.userSelect = "none";
-    const onMove = (move: PointerEvent) => { latestWidth = clampChatDockedSidebarWidth(startWidth + move.clientX - startX); setDockedSidebarWidth(latestWidth); };
-    const teardown = (up?: PointerEvent) => {
-      if (up) handle.releasePointerCapture?.(up.pointerId);
-      document.body.style.userSelect = priorUserSelect;
-      document.removeEventListener("pointermove", onMove);
-      document.removeEventListener("pointerup", onUp);
-      document.removeEventListener("pointercancel", onUp);
-      resizeTeardownRef.current = null;
-      persistDockedWidth(latestWidth);
-    };
-    const onUp = (up: PointerEvent) => teardown(up);
-    resizeTeardownRef.current?.();
-    resizeTeardownRef.current = () => teardown();
-    document.addEventListener("pointermove", onMove);
-    document.addEventListener("pointerup", onUp);
-    document.addEventListener("pointercancel", onUp);
-  }, [dockedSidebarWidth, persistDockedWidth]);
-
-  const handleDockedResizeKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-    event.preventDefault();
-    const nextWidth = clampChatDockedSidebarWidth(dockedSidebarWidth + (event.key === "ArrowRight" ? 16 : -16));
-    setDockedSidebarWidth(nextWidth);
-    persistDockedWidth(nextWidth);
-  }, [dockedSidebarWidth, persistDockedWidth]);
-
   /*
   FNXC:ChatStashBackfill 2026-08-19-16:28:
   (operator request 2026-08-19) "Preserve to Stash" context-menu action: backfills this
@@ -3401,7 +3332,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
     FNXC:ChatNavigation 2026-08-20-23:57:
     FN-096 keeps the canonical New Chat action in this shared header for both list and selected-detail states. Embedded, floating, and dock hosts must reuse this one creation entry point while the thread row retains the sole Back action.
     */
-    <div ref={chatViewRef} className={`chat-view${floating ? " chat-view--floating" : ""}${isChatMobile ? " chat-view--narrow" : ""}${hasDetailSelection ? " chat-view--detail" : ""}${dockedSidebarVisible ? " chat-view--docked-list" : ""}${chatMessageLayout === "full-width" ? " chat-view--full-width" : ""}`}>
+    <ViewLayout contentOwnsScroll className={`chat-view${floating ? " chat-view--floating" : ""}${isChatMobile ? " chat-view--narrow" : ""}${hasDetailSelection ? " chat-view--detail" : ""}${dockedSidebarVisible ? " chat-view--docked-list" : ""}${chatMessageLayout === "full-width" ? " chat-view--full-width" : ""}`} header={<>
       <ViewHeader
         icon={MessageSquare}
         title={dedicatedConversation ? threadHeaderTitle : t("chat.title", "Chat")}
@@ -3412,27 +3343,21 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
           className: "chat-view-header-icon",
           "data-testid": "chat-modal-close",
         } : undefined}
+        backAction={hasDetailSelection && !dedicatedConversation && !dockedSidebarVisible ? {
+          label: t("chat.backToConversations", "Back to conversations"),
+          onClick: handleVisibleDetailBack,
+          "data-testid": "chat-back-btn",
+        } : undefined}
         actions={
           <>
-            {dockedSidebarEligible ? (
-              <AlphaButton type="button" className="btn-icon chat-view-header-icon" data-testid="chat-docked-sidebar-toggle"
-                aria-pressed={dockedSidebarOpen}
-                aria-label={dockedSidebarOpen ? t("chat.hideConversationList", "Hide conversation list") : t("chat.showConversationList", "Show conversation list")}
-                title={dockedSidebarOpen ? t("chat.hideConversationList", "Hide conversation list") : t("chat.showConversationList", "Show conversation list")}
-                onClick={() => { const next = !dockedSidebarOpen; setDockedSidebarOpen(next); persistChatDockedSidebarPreference(CHAT_DOCKED_SIDEBAR_OPEN_STORAGE_KEY, String(next), persistChatPreferences); }}>
-                {dockedSidebarOpen ? <PanelLeftClose /> : <PanelLeft />}
-              </AlphaButton>
-            ) : null}
-
-            {!dedicatedConversation ? <AlphaButton
-              className="btn btn-sm btn-primary chat-view-header-new-chat"
+            {!dedicatedConversation ? <ViewActionButton
+              kind="create"
+              className="chat-view-header-new-chat"
+              label={t("chat.newChat", "New Chat")}
               onClick={handleNewChat}
               data-testid="chat-new-btn"
               title={onOpenSessionInNewWindow ? t("chat.newChatOpenInNewWindowHint", "Ctrl/Cmd + click to open the new conversation in a separate window") : undefined}
-            >
-              <Plus size={14} />
-              {t("chat.newChat", "New Chat")}
-            </AlphaButton> : null}
+            /> : null}
             {!floating && onPopOut ? (
               <AlphaButton
                 type="button"
@@ -3460,12 +3385,19 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
           </>
         }
       />
-      <div className="chat-view__body">
+      </>}
+    >
+      <div ref={chatViewRef} className="chat-view__body">
       {/* Sidebar */}
-      {!dedicatedConversation ? <div
-        className={`chat-sidebar${hasDetailSelection && !dockedSidebarVisible ? " chat-sidebar--hidden" : ""}${dockedSidebarVisible ? " chat-sidebar--docked" : ""}`}
-        style={dockedSidebarVisible ? { width: dockedSidebarWidth, minWidth: dockedSidebarWidth } : undefined}
-      >
+      {!dedicatedConversation ? <ViewSidebar
+        ariaLabel={t("chat.conversations", "Conversations")}
+        resizeLabel={t("chat.resizeSidebar", "Resize chat sidebar")}
+        hostIdentity={floating ? "chat-floating" : "chat-main"}
+        mobile={isChatMobile}
+        panelTestId="chat-sidebar-panel"
+        separatorTestId="chat-sidebar-resize-handle"
+        className={hasDetailSelection && !dockedSidebarVisible ? "chat-sidebar--hidden" : undefined}
+      ><div className={`chat-sidebar${dockedSidebarVisible ? " chat-sidebar--docked" : ""}`}>
         <>
             {/* Search section */}
             {/*
@@ -3640,12 +3572,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
               )}
             </div>
         </>
-        {dockedSidebarVisible ? <div className="chat-sidebar__resize-handle" role="separator" aria-orientation="vertical" tabIndex={0}
-          aria-valuenow={dockedSidebarWidth} aria-valuemin={CHAT_DOCKED_SIDEBAR_MIN_WIDTH} aria-valuemax={CHAT_DOCKED_SIDEBAR_MAX_WIDTH}
-          aria-label={t("chat.resizeSidebar", "Resize chat sidebar")} data-testid="chat-sidebar-resize-handle"
-          onPointerDown={handleDockedResizeStart} onKeyDown={handleDockedResizeKeyDown} /> : null}
-
-      </div> : null}
+      </div></ViewSidebar> : null}
 
 
 
@@ -3875,16 +3802,6 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
         */}
         {hasThreadInView && !dedicatedConversation && (
           <div className="chat-thread-header">
-            {!dockedSidebarVisible ? <AlphaButton
-              type="button"
-              className="btn btn-sm chat-thread-header-back chat-back-btn"
-              onClick={handleVisibleDetailBack}
-              data-testid="chat-back-btn"
-              aria-label={t("chat.backToConversations", "Back to conversations")}
-            >
-              <ArrowLeft size={14} aria-hidden="true" />
-              <span>{t("chat.back", "Back")}</span>
-            </AlphaButton> : null}
             <div className="chat-thread-header-identity" data-testid="chat-thread-header-identity">
               {activeModelProvider ? <ProviderIcon provider={activeModelProvider} size="md" /> : <Bot size={16} />}
               {/*
@@ -3952,7 +3869,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
 
       </div>
 
-    </div>
+    </ViewLayout>
   );
 }
 

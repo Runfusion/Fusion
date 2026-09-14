@@ -1,4 +1,4 @@
-import { ModalCloseButton } from "./ModalCloseButton";
+import { ViewHeader } from "./ViewHeader";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { Task, TaskPriority } from "@fusion/core";
@@ -102,10 +102,14 @@ export function ResearchTaskActionModal({ open, mode, run, finding, projectId, o
   return (
     <div className="modal-overlay open" role="presentation" onClick={onClose}>
       <div className="modal modal-lg research-task-action-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
-        <div className="modal-header">
-          <h3>{mode === "create" ? t("research.createTaskTitle", "Create task from finding") : t("research.enrichTaskTitle", "Enrich existing task")}</h3>
-          <ModalCloseButton aria-label={t("actions.close", "Close")} onClick={onClose} />
-        </div>
+        {/* FNXC:StandardizedViewLayout 2026-09-13-21:49: Shared dialog chrome; `.modal-header` stays for the drag handle selector. */}
+        <ViewHeader
+          className="modal-header"
+          headingLevel={3}
+          title={mode === "create" ? t("research.createTaskTitle", "Create task from finding") : t("research.enrichTaskTitle", "Enrich existing task")}
+          onClose={onClose}
+          closeButtonProps={{ "aria-label": t("actions.close", "Close") }}
+        />
 
         <div className="research-task-action-modal__body">
           <div className="card research-task-action-modal__preview">

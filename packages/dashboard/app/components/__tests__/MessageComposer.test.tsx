@@ -82,9 +82,15 @@ describe("MessageComposer", () => {
     });
   });
 
-  it("renders the composer with header", () => {
+  /*
+  FNXC:StandardizedMailboxLayout 2026-09-14-10:24:
+  FN-379 remediation: the composer is hosted form content. Its identity title moved to the owning Mailbox header, so the
+  composer itself renders only its form body and footer commands.
+  */
+  it("renders the composer form body without its own identity title", () => {
     render(<MessageComposer {...defaultProps} />);
-    expect(screen.getByText("New Message")).toBeDefined();
+    expect(screen.getByTestId("message-composer-content")).toBeDefined();
+    expect(screen.queryByText("New Message")).toBeNull();
   });
 
   it("shows agent dropdown when agents are provided", () => {
@@ -331,10 +337,16 @@ describe("MessageComposer", () => {
     expect(screen.getByTestId("message-composer-error").textContent).toContain("Network error");
   });
 
-  it("calls onCancel when clicking cancel button", () => {
-    render(<MessageComposer {...defaultProps} />);
-    fireEvent.click(screen.getByTestId("message-composer-cancel"));
-    expect(defaultProps.onCancel).toHaveBeenCalledOnce();
+  /*
+  FNXC:StandardizedMailboxLayout 2026-09-14-10:24:
+  FN-379 remediation deleted the composer's local header row and its X exit; the owning Mailbox header now carries the
+  composer identity and abandon action, so that case lives in the Mailbox host suites instead of here.
+  */
+  it("renders no local header row and no local close control", () => {
+    const { container } = render(<MessageComposer {...defaultProps} />);
+    expect(container.querySelector(".message-composer-header")).toBeNull();
+    expect(screen.queryByTestId("message-composer-cancel")).toBeNull();
+    expect(screen.queryByText("New Message")).toBeNull();
   });
 
   it("calls onCancel when clicking cancel footer button", () => {

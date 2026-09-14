@@ -39,6 +39,8 @@ import { CustomModelDropdown } from "./CustomModelDropdown";
 import { useConfirm } from "../hooks/useConfirm";
 import { FloatingWindow } from "./FloatingWindow";
 import { ModalCloseButton } from "./ModalCloseButton";
+import { ViewHeader } from "./ViewHeader";
+import { ViewLayout } from "./ViewLayout";
 import { AgentAvatar } from "./AgentAvatar";
 import { FileEditor } from "./FileEditor";
 import { AgentErrorIndicator } from "./AgentErrorDetailsModal";
@@ -950,22 +952,15 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
   const isResumeAllDisabled = isBulkEligibilityLoading || bulkResumeEligibleCount === 0;
 
   const detailContent = (
-      <div className={detailShellClassName}>
-        {/* Header */}
-        <div className="agent-detail-header">
-          {/* Identity area: icon + name + badges */}
-          <div className="agent-detail-identity">
-            {inline && showInlineBackButton ? (
-              <button
-                type="button"
-                className="btn agent-detail-inline-back"
-                onClick={onClose}
-                aria-label={t("agents.backToAgents", "Back to agents")}
-              >
-                <ChevronLeft size={16} />
-                {t("agents.agentsLabel", "Agents")}
-              </button>
-            ) : null}
+      <ViewLayout className={detailShellClassName} contentOwnsScroll header={<>
+        {/*
+        FNXC:StandardizedAgentDetail 2026-09-13-16:55:
+        Agent detail uses the shared title owner in inline and floating hosts. Embedded list-to-detail navigation is the canonical ChevronLeft before identity, never a second row inside detail content.
+        */}
+        <ViewHeader
+          className="agent-detail-header"
+          backAction={inline && showInlineBackButton ? { label: t("agents.backToAgents", "Back to agents"), onClick: onClose } : undefined}
+          title={<div className="agent-detail-identity">
             <div className="agent-detail-icon">
               <AgentAvatar agent={agent} size={36} />
             </div>
@@ -984,9 +979,8 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
                 </span>
               </div>
             </div>
-          </div>
-
-          <div className="agent-detail-header-actions">
+          </div>}
+          actions={<div className="agent-detail-header-actions">
             {/* Lifecycle controls: compact action buttons */}
             <div className="agent-detail-controls">
               {/* State-dependent action buttons */}
@@ -1133,8 +1127,10 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
                 <ModalCloseButton onClick={onClose} aria-label={t("common.close", "Close")} title={t("common.close", "Close")} />
               )}
             </div>
-          </div>
-        </div>
+          </div>}
+        />
+      </>}
+      >
 
         {/* Tabs */}
         <div className="agent-detail-tabs">
@@ -1309,7 +1305,7 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
             )}
           </div>
         )}
-      </div>
+      </ViewLayout>
   );
 
   if (inline) {

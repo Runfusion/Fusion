@@ -1,4 +1,7 @@
 import { ModalCloseButton } from "./ModalCloseButton";
+import { ViewHeader } from "./ViewHeader";
+import { ViewActionButton } from "./ViewActionButton";
+import { ViewLayout } from "./ViewLayout";
 import "./MailboxModal.css";
 import { FloatingWindow } from "./FloatingWindow";
 import { useState, useEffect, useCallback, useMemo, useRef, type CSSProperties } from "react";
@@ -864,28 +867,40 @@ export function MailboxModal({
   return (
     <FloatingWindow windowKey="mailbox" title={t("mailbox.title", "Mailbox")} ariaLabel={t("mailbox.title", "Mailbox")} onClose={onClose} hideHeader dragHandleSelector=".mailbox-modal .modal-header" className="floating-window--mailbox" defaultSize={{ width: 860, height: 680 }} minSize={{ width: 480, height: 360 }} persistGeometryKey="floating-window:mailbox" suspendGeometryPersistenceOnMobile suspendGeometryPersistenceOnShortViewport closeOnOutsidePointerDown modal testId="mailbox-modal-overlay">
       {/* FNXC:ModalTouchGeometry 2026-07-26-16:22: Mailbox is a long-lived workspace; preserve outside dismissal and keep keyboard positioning inside the hosted panel. */}
-      <div className="modal modal-lg mailbox-modal" style={containerKeyboardStyle} data-testid="mailbox-modal">
-        {/* Header */}
-        <div className="modal-header mailbox-header">
-          <div className="mailbox-title">
+      <ViewLayout className="modal modal-lg mailbox-modal" style={containerKeyboardStyle} data-testid="mailbox-modal" contentOwnsScroll header={<>
+        {/* FNXC:StandardizedMailboxLayout 2026-09-13-16:55: The floating mailbox shares the same header action and detail-return primitives as the full destination; its long-lived controller and compose draft remain mounted in this host. */}
+        <ViewHeader
+          className="modal-header mailbox-header"
+          backAction={showComposer
+            ? { label: t("actions.cancel", "Cancel"), onClick: handleComposeCancel, "data-testid": "mailbox-back-to-list" }
+            : selectedMessage
+              ? { label: t("mailbox.backButton", "Back"), onClick: handleCloseMessage, "data-testid": "mailbox-back-to-list" }
+              : undefined}
+          /*
+          FNXC:StandardizedMailboxLayout 2026-09-14-10:24:
+          FN-379 remediation: the floating mailbox hosts the same composer, so its identity and abandon action are
+          carried by this single header instead of a second header row inside the composer body.
+          */
+          title={<div className="mailbox-title">
             <Mail size={18} />
-            <span>{t("mailbox.title", "Mailbox")}</span>
+            <span>{showComposer
+              ? (composeReplyContext ? t("composer.replyTitle", "Reply") : t("composer.newMessageTitle", "New Message"))
+              : t("mailbox.title", "Mailbox")}</span>
             {unreadCount > 0 && (
               <span className="mailbox-unread-badge" data-testid="mailbox-unread-badge">
                 {unreadCount}
               </span>
             )}
-          </div>
-          <div className="mailbox-header-actions">
-            <button
-              className="btn btn-sm btn-primary"
+          </div>}
+          actions={<div className="mailbox-header-actions">
+            <ViewActionButton
+              kind="create"
+              icon={MessageSquare}
+              label={t("mailbox.composeButton", "Compose")}
               onClick={handleOpenCompose}
               title={t("mailbox.composeTitle", "Compose message")}
               data-testid="mailbox-header-compose"
-            >
-              <MessageSquare size={14} />
-              <span>{t("mailbox.composeButton", "Compose")}</span>
-            </button>
+            />
             {activeTab === "inbox" && unreadCount > 0 && (
               <button
                 className="btn btn-sm btn-secondary"
@@ -917,8 +932,10 @@ export function MailboxModal({
               title={t("mailbox.closeTitle", "Close")}
               data-testid="mailbox-close"
              />
-          </div>
-        </div>
+          </div>}
+        />
+      </>}
+      >
 
         {/* Tabs */}
         <div className="mailbox-tabs" data-testid="mailbox-tabs">
@@ -963,13 +980,6 @@ export function MailboxModal({
           {selectedMessage && !showComposer && (
             <div className="mailbox-message-detail" data-testid="mailbox-message-detail" id={`message-${selectedMessage.id}`}>
               <div className="mailbox-message-detail-header">
-                <button
-                  className="btn btn-sm btn-secondary"
-                  onClick={handleCloseMessage}
-                  data-testid="mailbox-back-to-list"
-                >
-                  {t("mailbox.backButton", "← Back")}
-                </button>
                 <div className="mailbox-message-detail-meta">
                   <span className="mailbox-message-type">{messageTypeLabel(selectedMessage.type, t)}</span>
                 <MailboxKindBadge metadata={selectedMessage.metadata} />
@@ -1397,7 +1407,7 @@ export function MailboxModal({
           )}
         </div>
 
-      </div>
+      </ViewLayout>
     </FloatingWindow>
   );
 }

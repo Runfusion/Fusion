@@ -276,9 +276,8 @@ describe("RoadmapsView", () => {
       expect(screen.getByText("Q2 Roadmap")).toBeInTheDocument();
     });
 
-    // Click create button
-    const createBtn = screen.getByTestId("create-roadmap-btn");
-    fireEvent.click(createBtn);
+    // FN-379: creation is the single canonical header entry, not a local rail button.
+    fireEvent.click(screen.getByTestId("create-roadmap-header-btn"));
 
     // Fill in the form
     const titleInput = screen.getByTestId("create-roadmap-title");
@@ -819,7 +818,9 @@ describe("RoadmapsView", () => {
 
       expect(screen.getByText("Q2 Roadmap")).toBeInTheDocument();
       expect(screen.getByText("Q3 Roadmap")).toBeInTheDocument();
-      expect(screen.getByTestId("mobile-create-roadmap-btn")).toBeInTheDocument();
+      // FN-379: the phone list no longer owns a creation button; the shared header does.
+      expect(screen.getByTestId("create-roadmap-header-btn")).toBeInTheDocument();
+      expect(screen.queryByTestId("mobile-create-roadmap-btn")).toBeNull();
     });
 
     it("shows mobile roadmap items when roadmaps exist on mobile", async () => {
@@ -872,15 +873,14 @@ describe("RoadmapsView", () => {
       });
     });
 
-    it("mobile create button shows create form", async () => {
+    it("mobile header creation shows the create form", async () => {
       render(<RoadmapsView addToast={mockAddToast} />);
 
       await waitFor(() => {
-        expect(screen.getByTestId("mobile-create-roadmap-btn")).toBeInTheDocument();
+        expect(screen.getByTestId("create-roadmap-header-btn")).toBeInTheDocument();
       });
 
-      // Click create button
-      fireEvent.click(screen.getByTestId("mobile-create-roadmap-btn"));
+      fireEvent.click(screen.getByTestId("create-roadmap-header-btn"));
 
       // Should show create form
       await waitFor(() => {
@@ -901,11 +901,10 @@ describe("RoadmapsView", () => {
       render(<RoadmapsView addToast={mockAddToast} />);
 
       await waitFor(() => {
-        expect(screen.getByTestId("mobile-create-roadmap-btn")).toBeInTheDocument();
+        expect(screen.getByTestId("create-roadmap-header-btn")).toBeInTheDocument();
       });
 
-      // Click create button
-      fireEvent.click(screen.getByTestId("mobile-create-roadmap-btn"));
+      fireEvent.click(screen.getByTestId("create-roadmap-header-btn"));
 
       // Fill in the form using userEvent for better React integration
       await waitFor(() => {
@@ -952,8 +951,9 @@ describe("RoadmapsView", () => {
         expect(screen.getByTestId("roadmaps-view__mobile-list")).toBeInTheDocument();
       });
 
-      expect(screen.getByText("No roadmaps yet.")).toBeInTheDocument();
-      expect(screen.getByTestId("roadmaps-view__mobile-list").textContent).toContain("Create Roadmap");
+      // FN-379: the empty phone list points at the shared header entry instead of its own call to action.
+      expect(screen.getByText("No roadmaps yet. Use the header action to create one.")).toBeInTheDocument();
+      expect(screen.getByTestId("create-roadmap-header-btn")).toBeInTheDocument();
     });
 
     it("mobile header shows action buttons when roadmap selected", async () => {

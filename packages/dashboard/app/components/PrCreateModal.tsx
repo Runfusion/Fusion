@@ -1,4 +1,4 @@
-import { ModalCloseButton } from "./ModalCloseButton";
+import { ViewHeader } from "./ViewHeader";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties } from "react";
 import { AlphaButton, AlphaDialogPanel, AlphaInput, AlphaSelect, AlphaSurface, AlphaTextArea } from "./alpha-ui";
 import ReactMarkdown from "react-markdown";
@@ -573,10 +573,14 @@ export function PrCreateModal({
         className="modal modal-lg pr-create-modal"
         labelledBy={headingId}
       >
-        <div className="modal-header pr-create-modal__drag-handle">
-          <h2 id={headingId}>{t("pr.createTitle", "Create Pull Request")}</h2>
-          <ModalCloseButton onClick={onClose} aria-label={t("actions.close", "Close")} />
-        </div>
+        {/* FNXC:StandardizedViewLayout 2026-09-13-21:49: Shared dialog chrome; the drag-handle class is preserved on the shared header element. */}
+        <ViewHeader
+          className="modal-header pr-create-modal__drag-handle"
+          titleId={headingId}
+          title={t("pr.createTitle", "Create Pull Request")}
+          onClose={onClose}
+          closeButtonProps={{ "aria-label": t("actions.close", "Close") }}
+        />
 
         <div className="pr-create-modal__body">
           <>

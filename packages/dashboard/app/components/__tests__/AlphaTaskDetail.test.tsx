@@ -263,7 +263,7 @@ describe("homemade Alpha Task Detail", () => {
     expect(document.querySelectorAll("[data-task-detail-surface='true']")).toHaveLength(1);
   });
 
-  it("conserve Back to board dans le panneau desktop et restaure son état", async () => {
+  it("conserve la sortie canonique du panneau desktop et restaure son état", async () => {
     const user = userEvent.setup();
     render(<AlphaProvider enabled><MainContentStateHost /></AlphaProvider>);
 
@@ -273,7 +273,7 @@ describe("homemade Alpha Task Detail", () => {
     expect(screen.getByTestId("main-tab")).toHaveTextContent("plan");
     expect(screen.getByTestId("main-nav-count")).toHaveTextContent("1");
 
-    await user.click(screen.getByRole("button", { name: "Back to board" }));
+    await user.click(screen.getByRole("button", { name: "Close" }));
     expect(screen.getByTestId("main-route")).toHaveTextContent("board");
     expect(screen.getByTestId("main-snapshot")).toHaveTextContent("empty");
     expect(screen.getByTestId("main-tab")).toHaveTextContent("chat");

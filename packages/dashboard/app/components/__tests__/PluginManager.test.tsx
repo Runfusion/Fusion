@@ -1730,7 +1730,7 @@ describe("PluginManager", () => {
       const settingsButtons = screen.getAllByTitle("Settings");
       await userEvent.click(settingsButtons[0]);
 
-      const pluginTitle = await screen.findByRole("heading", { name: "Test Plugin A", level: 4 });
+      const pluginTitle = await screen.findByRole("heading", { name: /Test Plugin A/, level: 2 });
       const settingsHeading = screen.getByRole("heading", { name: "Settings", level: 5 });
 
       expect(pluginTitle).toBeTruthy();

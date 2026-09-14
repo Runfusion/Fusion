@@ -1,10 +1,11 @@
-import { ModalCloseButton } from "./ModalCloseButton";
+import { ViewHeader } from "./ViewHeader";
+import { ViewLayoutContent } from "./ViewLayout";
 // Base ActivityLogModal styles (.activity-log-*, .activity-icon, etc.) currently live
 // in ScriptsModal.css. Until fully extracted, import that file so this eager modal is styled.
 import "./ScriptsModal.css";
 // Embedded (right-dock) activity-log styles were extracted to their own file next to this component.
 import "./ActivityLogModal.css";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, type Ref } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { X, History, Trash2, Filter, RefreshCw, CheckCircle, XCircle, ArrowRight, Plus, Settings, AlertCircle, Loader2, Folder } from "lucide-react";
@@ -261,12 +262,27 @@ export function ActivityLogModal({
         className={isEmbedded ? "modal modal-lg activity-log-modal activity-log-modal--embedded" : "modal modal-lg activity-log-modal"}
         data-testid="activity-log-modal"
       >
-        {/* Header — uses shared modal-header pattern for consistent close control */}
-        <div className="modal-header activity-log-header">
-          <div className="activity-log-title">
-            <History size={18} />
-            <span>{t("activityLog.title", "Activity Log")}</span>
-          </div>
+        {/*
+        FNXC:StandardizedViewLayout 2026-09-13-22:40:
+        FN-379 makes History a classified destination: its title, filters, and exit are built by the shared
+        ViewHeader inside the canonical header zone instead of a local modal-header row, so the embedded dock,
+        the floating window, and the phone drawer all frame the same single chrome owner.
+        */}
+        <ViewHeader
+          className="modal-header activity-log-header"
+          title={
+            <span className="activity-log-title">
+              <History size={18} />
+              <span>{t("activityLog.title", "Activity Log")}</span>
+            </span>
+          }
+          onClose={isEmbedded ? undefined : onClose}
+          closeButtonProps={{
+            "aria-label": t("actions.close", "Close"),
+            title: t("actions.close", "Close"),
+            "data-testid": "activity-close",
+          }}
+          actions={
           <div className="activity-log-actions">
             {/* Project filter dropdown (when projects provided) */}
             {projects.length > 0 && (
@@ -328,17 +344,8 @@ export function ActivityLogModal({
               </button>
             )}
           </div>
-          {/* Close button — uses shared modal-close for consistent sizing and alignment.
-              FNXC:RightDockEmbedded 2026-06-22-00:00: Dropped in embedded mode; the dock provides its own close. */}
-          {!isEmbedded && (
-            <ModalCloseButton
-              onClick={onClose}
-              aria-label={t("actions.close", "Close")}
-              title={t("actions.close", "Close")}
-              data-testid="activity-close"
-             />
-          )}
-        </div>
+          }
+        />
 
         {/* Task search remains inline in every presentation; the active badges compose beside it. */}
         <div className="activity-log-active-filters">
@@ -380,7 +387,7 @@ export function ActivityLogModal({
           </div>
 
         {/* Content */}
-        <div className="activity-log-content" data-testid="activity-log-content" ref={activityScrollRef}>
+        <ViewLayoutContent className="activity-log-content" data-testid="activity-log-content" ref={activityScrollRef as Ref<HTMLElement>}>
           {error && (
             <div className="activity-log-error" data-testid="activity-error">
               <AlertCircle size={16} />
@@ -471,7 +478,7 @@ export function ActivityLogModal({
               <Loader2 size={20} className="spin" />
             </div>
           )}
-        </div>
+        </ViewLayoutContent>
 
         {/* Confirmation dialog for clear */}
         {showConfirmClear && (

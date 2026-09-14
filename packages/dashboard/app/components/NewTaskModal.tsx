@@ -1,4 +1,4 @@
-import { ModalCloseButton } from "./ModalCloseButton";
+import { ViewHeader } from "./ViewHeader";
 import "./NewTaskModal.css";
 import { useState, useCallback, useEffect, useRef, type ChangeEvent } from "react";
 import { createPortal } from "react-dom";
@@ -1185,13 +1185,15 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
 
   const taskFormContents = (
     <div ref={floatingFormRef}>
-      <div
+      {/* FNXC:StandardizedViewLayout 2026-09-13-21:49: Shared chrome; the drag-handle class and test hook stay on the shared header element. */}
+      <ViewHeader
         className="modal-header new-task-modal__header--draggable"
         data-testid="new-task-drag-handle"
-      >
-      <h3>{t("newTaskModal.title", "New Task")}</h3>
-      <ModalCloseButton onClick={handleClose} disabled={isSubmitting} aria-label={t("actions.close", "Close")} />
-        </div>
+        headingLevel={3}
+        title={t("newTaskModal.title", "New Task")}
+        onClose={handleClose}
+        closeButtonProps={{ disabled: isSubmitting, "aria-label": t("actions.close", "Close") }}
+      />
 
         <div className="modal-body">
       {!setupReadinessLoading && visibleSetupHasWarnings && (

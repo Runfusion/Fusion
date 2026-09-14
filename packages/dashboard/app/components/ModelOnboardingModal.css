@@ -60,18 +60,11 @@ Model Onboarding owns only the header layout and placement of its close action. 
   gap: var(--space-md);
 }
 
-.model-onboarding-title {
-  font-size: 24px;
-  font-weight: 800;
-  margin: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--text);
-  line-height: 1.1;
-}
-
-.model-onboarding-title svg {
+/*
+FNXC:StandardizedViewLayout 2026-09-13-22:40:
+FN-379: the shared header owns onboarding's title typography; only the step icon accent stays local.
+*/
+.model-onboarding-header .view-header__title svg {
   color: var(--accent);
 }
 

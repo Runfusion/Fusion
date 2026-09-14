@@ -24,8 +24,21 @@ export default defineConfig({
         replacement: fileURLToPath(new URL("../../packages/dashboard/app/api/tasks/task-content.ts", import.meta.url)),
       },
       {
-        find: "@fusion/dashboard/app/components/ViewHeader",
-        replacement: fileURLToPath(new URL("../../packages/dashboard/app/components/ViewHeader.tsx", import.meta.url)),
+        find: "@fusion/dashboard/app/plugins/PluginDashboardViewHeader",
+        replacement: fileURLToPath(new URL("../../packages/dashboard/app/plugins/PluginDashboardViewHeader.tsx", import.meta.url)),
+      },
+      /*
+      FNXC:VitestAliases 2026-09-13-22:40:
+      The cooperative plugin header pulls the dashboard API client, which imports this browser-safe core leaf.
+      String aliases match by PREFIX, so the subpath entries must precede the `@fusion/core` package alias.
+      */
+      {
+        find: "@fusion/core/task-delete-attribution",
+        replacement: fileURLToPath(new URL("../../packages/core/src/task-delete-attribution.ts", import.meta.url)),
+      },
+      {
+        find: "@fusion/core/column-roles",
+        replacement: fileURLToPath(new URL("../../packages/core/src/column-roles.ts", import.meta.url)),
       },
       {
         find: "@fusion/core",

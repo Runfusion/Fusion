@@ -70,6 +70,16 @@
   flex-shrink: 0;
 }
 
+/*
+FNXC:StandardizedViewLayout 2026-09-13-22:40:
+FN-379: the wizard's brand/eyebrow/title column lives inside the shared header title, which clips single-line
+titles by default. Release that clamp for this stacked identity only.
+*/
+.setup-wizard-header .view-header__title-content {
+  overflow: visible;
+  white-space: normal;
+}
+
 .setup-wizard-heading {
   display: flex;
   flex-direction: column;
@@ -99,8 +109,6 @@
 }
 
 .setup-wizard-title {
-  font-size: 24px;
-  font-weight: 800;
   color: var(--text);
   margin: 0;
   line-height: 1.1;
@@ -759,9 +767,6 @@ primary action keeps its filled emphasis and wider padding only.
     font-size: 20px;
   }
 
-  .setup-wizard-title {
-    font-size: 21px;
-  }
 
   .setup-wizard-content {
     padding: var(--space-md);

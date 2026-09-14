@@ -1,4 +1,4 @@
-import { ModalCloseButton } from "./ModalCloseButton";
+import { ViewHeader } from "./ViewHeader";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { fetchAgents } from "../api";
@@ -210,10 +210,14 @@ export function CreateRoomModal({ isOpen, onClose, onCreate, projectId, existing
       layer="utility"
     >
       <div ref={modalRef} className="modal create-room-modal">
-        <div className="modal-header">
-          <h3>{t("createRoom.title", "Create room")}</h3>
-          <ModalCloseButton aria-label={t("actions.close", "Close")} onClick={onClose} />
-        </div>
+        {/* FNXC:StandardizedViewLayout 2026-09-13-21:49: Shared dialog chrome; `.modal-header` stays for the drag handle selector. */}
+        <ViewHeader
+          className="modal-header"
+          headingLevel={3}
+          title={t("createRoom.title", "Create room")}
+          onClose={onClose}
+          closeButtonProps={{ "aria-label": t("actions.close", "Close") }}
+        />
 
         <div className="form-group create-room-modal-name-group">
           <label htmlFor="create-room-name">{t("createRoom.nameLabel", "Room name")}</label>

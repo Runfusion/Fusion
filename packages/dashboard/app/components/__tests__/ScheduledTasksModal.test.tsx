@@ -1,8 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { ScheduledTasksModal } from "../ScheduledTasksModal";
+import { readAppFile } from "../../test/cssFixture";
 import { assertModalGeometryRecoveryAndSheetContracts, assertRenderedModalTouchGeometry } from "./floatingWindowMigration.test-helpers";
 import type { Routine } from "@fusion/core";
 
@@ -17,6 +16,7 @@ vi.mock("lucide-react", () => ({
   CheckCircle: () => <span data-testid="icon-check">Success</span>,
   XCircle: () => <span data-testid="icon-x">Failure</span>,
   ChevronDown: () => <span data-testid="icon-down">Down</span>,
+  ChevronLeft: () => <span data-testid="icon-left">Back</span>,
   ChevronUp: () => <span data-testid="icon-up">Up</span>,
   Calendar: () => <span data-testid="icon-calendar">Calendar</span>,
   Webhook: () => <span data-testid="icon-webhook">Webhook</span>,
@@ -145,7 +145,8 @@ describe("ScheduledTasksModal", () => {
     await waitFor(() => {
       expect(screen.getByText("No automations yet")).toBeDefined();
     });
-    expect(screen.getByText("Create your first automation")).toBeDefined();
+    expect(screen.queryByText("Create your first automation")).toBeNull();
+    expect(screen.getByRole("button", { name: "New Automation" })).toBeDefined();
     expect(screen.getByText("0 automations")).toBeDefined();
     expect(mockFetchAutomations).not.toHaveBeenCalled();
   });
@@ -208,7 +209,7 @@ describe("ScheduledTasksModal", () => {
   });
 
   it("keeps mobile Automations full-screen and hides resize handles by CSS contract", () => {
-    const source = readFileSync(resolve(__dirname, "../ScriptsModal.css"), "utf8");
+    const source = readAppFile("components/ScriptsModal.css");
     /*
     FNXC:GitManager 2026-08-15-22:35:
     FN-8702 (1e67e87321) moved ScriptsModal.css's standalone phone-sheet blocks from
@@ -234,11 +235,9 @@ describe("ScheduledTasksModal", () => {
 
     render(<ScheduledTasksModal onClose={onClose} addToast={addToast} />);
 
-    await waitFor(() => {
-      expect(screen.getByText("Database Backup")).toBeDefined();
-    });
-    expect(screen.getByText("npx runfusion.ai backup --create")).toBeDefined();
-    expect(screen.getByText("New Automation")).toBeDefined();
+    expect(await screen.findByRole("option", { name: /database backup/i })).toBeDefined();
+    expect(await screen.findByText("npx runfusion.ai backup --create")).toBeDefined();
+    expect(screen.getByRole("button", { name: "New Automation" })).toBeDefined();
   });
 
   it("renders scope controls in the toolbar below the modal header", async () => {
@@ -249,7 +248,7 @@ describe("ScheduledTasksModal", () => {
       expect(screen.getByText("Scoped Routine")).toBeDefined();
     });
 
-    const header = document.querySelector(".modal-header");
+    const header = document.querySelector(".view-header");
     const toolbar = document.querySelector(".scheduling-toolbar");
     const toolbarLeft = document.querySelector(".scheduling-toolbar-left");
     const toolbarRight = document.querySelector(".scheduling-toolbar-right");
@@ -263,11 +262,12 @@ describe("ScheduledTasksModal", () => {
     expect(scopeSelector).toBeTruthy();
     expect(toolbarLeft?.contains(scopeSelector as Node)).toBe(true);
     expect(header?.contains(scopeSelector as Node)).toBe(false);
-    expect(toolbarRight?.contains(newAutomationButton)).toBe(true);
+    expect(header?.contains(newAutomationButton)).toBe(true);
+    expect(toolbarRight?.contains(newAutomationButton)).toBe(false);
   });
 
   it("styles scope controls like the Artifacts button bar", () => {
-    const source = readFileSync(resolve(__dirname, "../ScriptsModal.css"), "utf8");
+    const source = readAppFile("components/ScriptsModal.css");
     const selectorRule = source.match(/\.scheduling-scope-selector\s*\{[^}]*\}/)?.[0] ?? "";
     const scopeRule = source.match(/\.scope-btn\s*\{[^}]*\}/)?.[0] ?? "";
     const activeRule = source.match(/\.scope-btn\.active\s*\{[^}]*\}/)?.[0] ?? "";
@@ -317,9 +317,9 @@ describe("ScheduledTasksModal", () => {
     render(<ScheduledTasksModal onClose={onClose} addToast={addToast} />);
 
     await waitFor(() => {
-      expect(screen.getByText("Create your first automation")).toBeDefined();
+      expect(screen.getByText("No automations yet")).toBeDefined();
     });
-    fireEvent.click(screen.getByText("Create your first automation"));
+    fireEvent.click(screen.getByRole("button", { name: "New Automation" }));
 
     expect(screen.getByText("New Routine", { selector: "h4" })).toBeDefined();
     expect(screen.getByLabelText("Name")).toBeDefined();
@@ -335,9 +335,9 @@ describe("ScheduledTasksModal", () => {
     render(<ScheduledTasksModal onClose={onClose} addToast={addToast} />);
 
     await waitFor(() => {
-      expect(screen.getByText("Create your first automation")).toBeDefined();
+      expect(screen.getByText("No automations yet")).toBeDefined();
     });
-    fireEvent.click(screen.getByText("Create your first automation"));
+    fireEvent.click(screen.getByRole("button", { name: "New Automation" }));
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "New Automation" } });
     fireEvent.change(screen.getByLabelText("Command"), { target: { value: "echo test" } });
     fireEvent.click(screen.getByText("Create Routine"));
@@ -364,7 +364,7 @@ describe("ScheduledTasksModal", () => {
     await waitFor(() => {
       expect(screen.getByText("My Routine")).toBeDefined();
     });
-    fireEvent.click(screen.getByLabelText("Edit My Routine"));
+    fireEvent.click(await screen.findByLabelText("Edit My Routine"));
     await waitFor(() => {
       expect(screen.getByText("Edit Routine", { selector: "h4" })).toBeDefined();
     });
@@ -412,7 +412,7 @@ describe("ScheduledTasksModal", () => {
     await waitFor(() => {
       expect(screen.getByText("My Routine")).toBeDefined();
     });
-    fireEvent.click(screen.getByLabelText("Run My Routine now"));
+    fireEvent.click(await screen.findByLabelText("Run My Routine now"));
 
     await waitFor(() => {
       expect(mockStreamRoutineRun).toHaveBeenCalledWith("routine-001", expect.any(Object), { scope: "global" });
@@ -455,7 +455,7 @@ describe("ScheduledTasksModal", () => {
     await waitFor(() => {
       expect(screen.getByText("My Routine")).toBeDefined();
     });
-    fireEvent.click(screen.getByLabelText("Run My Routine now"));
+    fireEvent.click(await screen.findByLabelText("Run My Routine now"));
 
     await waitFor(() => {
       expect(addToast).toHaveBeenCalledWith('"My Routine" completed successfully', "success");
@@ -489,7 +489,7 @@ describe("ScheduledTasksModal", () => {
     await waitFor(() => {
       expect(screen.getByText("My Routine")).toBeDefined();
     });
-    fireEvent.click(screen.getByLabelText("Run My Routine now"));
+    fireEvent.click(await screen.findByLabelText("Run My Routine now"));
 
     await waitFor(() => {
       expect(addToast).toHaveBeenCalledWith('"My Routine" failed: backup command exited 1', "error");
@@ -511,7 +511,7 @@ describe("ScheduledTasksModal", () => {
     await waitFor(() => {
       expect(screen.getByText("My Routine")).toBeDefined();
     });
-    fireEvent.click(screen.getByLabelText("Delete My Routine"));
+    fireEvent.click(await screen.findByLabelText("Delete My Routine"));
 
     await waitFor(() => {
       expect(mockConfirm).toHaveBeenCalledWith({
@@ -534,7 +534,7 @@ describe("ScheduledTasksModal", () => {
     await waitFor(() => {
       expect(screen.getByText("My Routine")).toBeDefined();
     });
-    fireEvent.click(screen.getByLabelText("Disable My Routine"));
+    fireEvent.click(await screen.findByLabelText("Disable My Routine"));
 
     await waitFor(() => {
       expect(mockUpdateRoutine).toHaveBeenCalledWith("routine-001", { enabled: false }, { scope: "global" });
@@ -546,9 +546,9 @@ describe("ScheduledTasksModal", () => {
     render(<ScheduledTasksModal onClose={onClose} addToast={addToast} />);
 
     await waitFor(() => {
-      expect(screen.getByText("Create your first automation")).toBeDefined();
+      expect(screen.getByText("No automations yet")).toBeDefined();
     });
-    fireEvent.click(screen.getByText("Create your first automation"));
+    fireEvent.click(screen.getByRole("button", { name: "New Automation" }));
     fireEvent.keyDown(document, { key: "Escape" });
 
     expect(onClose).not.toHaveBeenCalled();
@@ -595,42 +595,30 @@ describe("ScheduledTasksModal", () => {
         expect(screen.getByRole("option", { name: /database backup/i })).toBeDefined();
       });
 
-      const twoPane = container.querySelector(".automations-two-pane");
-      const listPane = container.querySelector(".automations-list-pane");
+      const layout = container.querySelector(".view-layout.automations-embedded-view");
+      const listPane = container.querySelector("[data-testid='automations-list-pane']");
       const detailPane = container.querySelector(".automations-detail-pane");
-      expect(twoPane).not.toBeNull();
+      expect(layout).not.toBeNull();
       expect(listPane).not.toBeNull();
       expect(detailPane).not.toBeNull();
-      expect(twoPane?.children[0]).toBe(listPane);
-      expect(twoPane?.children[1]).toBe(detailPane);
-      expect(screen.getByText("Select an automation")).toBeDefined();
+      expect(layout?.contains(listPane)).toBe(true);
+      expect(layout?.contains(detailPane)).toBe(true);
       expect(screen.getByText("Disabled")).toBeDefined();
-
-      fireEvent.click(screen.getByRole("option", { name: /database backup/i }));
 
       await waitFor(() => {
         expect(detailPane?.querySelector(".routine-card .routine-card-name")?.textContent).toBe("Database Backup");
       });
       expect(screen.getByText("fn backup --create")).toBeDefined();
-      expect(container.querySelector(".automations-single-pane")).toBeNull();
     });
 
-    it("keeps embedded automation grid rows top-packed while preserving wide two-pane rules", () => {
-      const source = readFileSync(resolve(__dirname, "../ScriptsModal.css"), "utf8");
-      const baseRule = source.match(/\.automations-two-pane\s*\{[^}]*\}/)?.[0] ?? "";
-      const containerRule = source.match(/@container \(min-width: 900px\)\s*\{\s*\.automations-two-pane\s*\{[^}]*\}/)?.[0] ?? "";
-      const mediaRule = source.match(/@media \(min-width: 900px\)\s*\{\s*\.automations-two-pane\s*\{[^}]*\}/)?.[0] ?? "";
-      const mobileRule = source.match(/@media \(max-width: 768px\)\s*\{[\s\S]*?\.automations-two-pane\s*\{[^}]*\}/)?.[0] ?? "";
+    it("delegates embedded list/detail geometry to the shared layout instead of retaining a local grid authority", () => {
+      const source = readAppFile("components/ScriptsModal.css");
+      const sharedLayout = readAppFile("components/ViewLayout.css");
 
-      expect(baseRule).toContain("grid-template-columns: 1fr;");
-      expect(baseRule).toContain("align-content: start;");
-      expect(baseRule).toContain("align-items: start;");
-      expect(baseRule).toContain("grid-auto-rows: max-content;");
-      expect(containerRule).toContain("grid-template-columns: minmax(0, 18rem) minmax(0, 1fr);");
-      expect(containerRule).toContain("align-items: start;");
-      expect(mediaRule).toContain("grid-template-columns: minmax(0, 18rem) minmax(0, 1fr);");
-      expect(mediaRule).toContain("align-items: start;");
-      expect(mobileRule).toContain("grid-template-columns: 1fr;");
+      expect(source).not.toContain(".automations-two-pane");
+      expect(source).not.toContain(".automations-single-pane");
+      expect(sharedLayout).toMatch(/\.view-layout__body\s*\{[^}]*display:\s*flex/);
+      expect(sharedLayout).toMatch(/\.view-layout__sidebar-slot\s*\{[^}]*flex:\s*none/);
     });
 
     it("does not dismiss on Escape in embedded mode", async () => {

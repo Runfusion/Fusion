@@ -1,4 +1,4 @@
-import { ModalCloseButton } from "./ModalCloseButton";
+import { ViewHeader } from "./ViewHeader";
 import "./SetupWizardModal.css";
 import { lazy, Suspense, useState, useCallback, useMemo, useRef, useEffect, type KeyboardEvent } from "react";
 import { Loader2, CheckCircle, ChevronRight, Sparkles } from "lucide-react";
@@ -443,10 +443,18 @@ export function SetupWizardModal({
     >
       {/* FNXC:ModalTouchGeometry 2026-07-26-16:22: The first-run wizard remains blocking, while its reflowable steps use shared tablet geometry and suspend it for sheet viewports. */}
       <div className={modalClassName}>
-        {/* Header */}
-        <div className="setup-wizard-header">
-          <div className="setup-wizard-heading">
-            <div className="setup-wizard-brand" aria-label={t("setup.brandName", "Fusion")}>
+        {/*
+        FNXC:StandardizedViewLayout 2026-09-13-22:40:
+        FN-379 remediation: the first-run wizard shares the canonical header. Its brand block and onboarding
+        eyebrow stay rich title content, and the dialog keeps labelling itself from the step title span.
+        */}
+        <ViewHeader
+          className="setup-wizard-header"
+          onClose={state.step !== "complete" && state.step !== "agent" ? handleClose : undefined}
+          closeButtonProps={{ "aria-label": t("setup.closeWizard", "Close wizard") }}
+          title={(
+          <span className="setup-wizard-heading">
+            <span className="setup-wizard-brand" aria-label={t("setup.brandName", "Fusion")}>
               <svg
                 className="setup-wizard-brand-logo"
                 width={28}
@@ -469,7 +477,7 @@ export function SetupWizardModal({
                 />
               </svg>
               <span className="setup-wizard-brand-name">{t("setup.brandName", "Fusion")}</span>
-            </div>
+            </span>
             {/*
               FNXC:SetupWizard 2026-07-10-11:05:
               First-run review: opening project registration from the 5-step onboarding wizard (its
@@ -484,21 +492,16 @@ export function SetupWizardModal({
                 {t("setup.projectStepContext", "Step 3 of 5 — Project · Fusion setup")}
               </span>
             )}
-            <h2 id="wizard-title" className="setup-wizard-title">
+            <span id="wizard-title" className="setup-wizard-title">
               {state.step === "manual" && (includeAgentStep
                 ? t("setup.welcomeToFusion", "Welcome to Fusion")
                 : t("setup.titleSetUpProject", "Set Up Your Project"))}
               {state.step === "agent" && t("setup.firstAgentTitle", "Create your first agent")}
               {state.step === "complete" && t("setup.setupCompleteTitle", "Setup Complete!")}
-            </h2>
-          </div>
-          {state.step !== "complete" && state.step !== "agent" && (
-            <ModalCloseButton
-              onClick={handleClose}
-              aria-label={t("setup.closeWizard", "Close wizard")}
-             />
+            </span>
+          </span>
           )}
-        </div>
+        />
 
         {/* Content */}
         <div className="setup-wizard-content">

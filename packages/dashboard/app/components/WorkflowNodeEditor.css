@@ -130,92 +130,25 @@ Align the embedded workflows header to the shared ViewHeader/Insights metric —
 .wf-editor-body {
   display: flex;
   flex: 1;
+  flex-direction: column;
   min-width: 0;
   min-height: 0;
 }
 
+/*
+FNXC:StandardizedViewLayout 2026-09-13-21:43:
+The workflow collection uses the shared project-scoped rail width and separator. The panel fills that rail while its existing authoring sections retain their own vertical scroll and disclosure state.
+*/
 .wf-editor-sidebar {
   display: flex;
   flex-direction: column;
   gap: var(--space-xs);
-  width: 300px;
+  width: 100%;
   min-width: 0;
   padding: var(--space-sm);
-  border-right: 1px solid var(--border);
+  border-right: 0;
   overflow-x: hidden;
   overflow-y: auto;
-}
-
-/*
-FNXC:WorkflowSidebar 2026-06-22-12:00:
-Workflow authors need to reclaim horizontal graph-editing space without leaving
-the workflow view. Hide only the sidebar shell when collapsed and keep the
-restore control attached to the canvas so the state is always reversible.
-
-FNXC:WorkflowSidebar 2026-06-22-12:35:
-When collapsed, the show-sidebar control belongs inline in the workflow name strip before the workflow name. It must be icon-only and in normal document flow so it cannot overlap the header title or workflow name.
-*/
-.wf-editor-body--sidebar-collapsed .wf-editor-sidebar {
-  display: none;
-}
-
-.wf-editor-sidebar-head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-xs);
-  min-width: 0;
-}
-
-.wf-editor-sidebar-head .wf-editor-new {
-  flex: 1 1 auto;
-  justify-content: center;
-}
-
-.wf-sidebar-shell-toggle,
-.wf-sidebar-shell-restore {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-xs);
-  min-height: 30px;
-  padding: var(--space-xs) var(--space-sm);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  color: var(--text-muted);
-  box-shadow: var(--shadow-sm);
-  font: inherit;
-  font-size: 0.72rem;
-  font-weight: 600;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
-}
-
-.wf-sidebar-shell-toggle {
-  flex: 0 0 auto;
-  width: 30px;
-  padding-inline: 0;
-}
-
-.wf-sidebar-shell-restore {
-  flex: 0 0 auto;
-  width: 30px;
-  padding-inline: 0;
-  white-space: nowrap;
-}
-
-.wf-sidebar-shell-toggle:hover,
-.wf-sidebar-shell-restore:hover {
-  border-color: var(--accent);
-  background: var(--surface-hover);
-  color: var(--accent);
-}
-
-.wf-sidebar-shell-toggle:focus-visible,
-.wf-sidebar-shell-restore:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
 }
 
 /* U12: columns + fields authoring sections moved into the left sidebar, below
@@ -283,22 +216,6 @@ When collapsed, the show-sidebar control belongs inline in the workflow name str
 .wf-sidebar-section .wf-column-panel-header,
 .wf-sidebar-section .wf-fields-panel-header {
   justify-content: flex-end;
-}
-
-.wf-editor-new {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-xs);
-  padding: var(--space-xs) var(--space-sm);
-  background: var(--bg-secondary);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--text);
-  cursor: pointer;
-}
-
-.wf-editor-new:hover {
-  background: var(--bg-tertiary);
 }
 
 /* U5/R10: sidebar import affordance + persistent inline error/warning regions. */

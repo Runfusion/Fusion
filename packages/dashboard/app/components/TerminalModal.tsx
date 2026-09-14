@@ -38,6 +38,8 @@ import { getViewportMode, isMobileViewport } from "../hooks/useViewportMode";
 import { useDrawerDismissGesture } from "../hooks/useDrawerDismissGesture";
 import { FloatingWindow, FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT } from "./FloatingWindow";
 import { ModalCloseButton } from "./ModalCloseButton";
+import { ViewDrawerHandle } from "./ViewDrawer";
+import { ViewLayoutContent, ViewLayoutFooter, ViewLayoutHeader } from "./ViewLayout";
 import { currentFloatingZ, nextFloatingZ } from "./floatingWindowStack";
 import { useConfirm } from "../hooks/useConfirm";
 import { getPathBasename } from "../utils/pathDisplay";
@@ -2724,9 +2726,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
       {...(alphaMobileDrawer ? dismissHandleProps : {})}
     >
         {alphaMobileDrawer && (
-          <div className="terminal-drawer-handle-target" data-testid="terminal-drawer-handle" aria-hidden="true">
-            <span className="terminal-drawer-handle" />
-          </div>
+          <ViewDrawerHandle className="terminal-drawer-handle-target" barClassName="terminal-drawer-handle" data-testid="terminal-drawer-handle" />
         )}
         {!embedded && (isDockedMode || isBelowMode) && (
           <div
@@ -2740,7 +2740,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
         )}
         {/* Header — on mobile (≤768px) use compact selector/actions;
             .terminal-title is hidden; action button labels are hidden (icons only) */}
-        <div className="terminal-header">
+        <ViewLayoutHeader className="terminal-header">
           {/*
           FNXC:TerminalModalControls 2026-07-31-22:19:
           Tablet floating terminals need a reserved, real pointer target because the flexing tab
@@ -2914,7 +2914,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
               aria-label={t("terminal.closeTerminal", "Close terminal")}
             />
           )}
-        </div>
+        </ViewLayoutHeader>
 
         {/* Error message */}
         {error && (
@@ -2924,7 +2924,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
         )}
 
         {/* Terminal container */}
-        <div className="terminal-container" data-testid="terminal-container">
+        <ViewLayoutContent className="terminal-container" data-testid="terminal-container">
           {isLoading && !bootstrapError && !showManualStart && (
             <div className="terminal-loading" data-testid="terminal-loading">
               <div className="terminal-spinner" />
@@ -3028,10 +3028,10 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
             onPointerDown={handleTerminalGestureFocus}
             onTouchStart={handleTerminalGestureFocus}
           />
-        </div>
+        </ViewLayoutContent>
 
         {showShortcuts && (
-          <div className="terminal-shortcut-panel" data-testid="terminal-shortcut-panel">
+          <ViewLayoutFooter className="terminal-shortcut-panel" data-testid="terminal-shortcut-panel">
             <div className="terminal-shortcut-modifier-row">
               <button
                 type="button"
@@ -3137,7 +3137,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
                 {shortcut.label}
               </button>
             ))}
-          </div>
+          </ViewLayoutFooter>
         )}
 
         {showPreferences && (

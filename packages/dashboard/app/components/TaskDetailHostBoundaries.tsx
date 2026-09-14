@@ -39,8 +39,8 @@ export interface MainPanelTaskDetailHostProps extends Omit<TaskDetailContentProp
 }
 
 /*
-FNXC:TaskDetailDrawerNavigation 2026-09-12-20:37:
-The Board main-panel host keeps one navigation owner in both presentations. Desktop panel chrome receives Back to board, while the Alpha mobile drawer receives only the canonical close action wired to that same owner, avoiding a duplicate affordance without changing Board scroll, tab, snapshot, or history restoration.
+FNXC:TaskDetailHostOwnership 2026-09-13-16:30:
+The Board main-panel host passes its navigation owner through the canonical close boundary in every presentation. TaskDetailContent chooses phone back chrome versus desktop/tablet close chrome, so the host never invents a textual return row or a second drawer header.
 */
 export function MainPanelTaskDetailHost({ onNavigateToBoard, mobileTransition = false, presentation = "panel", ...props }: MainPanelTaskDetailHostProps) {
   return (

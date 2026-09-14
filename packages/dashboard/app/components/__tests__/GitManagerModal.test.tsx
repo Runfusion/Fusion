@@ -393,6 +393,28 @@ describe("GitManagerModal", () => {
     expect(baseElement.querySelector(".floating-window--git-manager")).toBeTruthy();
   });
 
+  /*
+  FNXC:StandardizedViewLayout 2026-09-13-22:40:
+  FN-379 classifies Git Manager as a shared-chrome destination: on the desktop window and on the phone sheet it
+  must build exactly one canonical header owning the single exit, with its sections bounded by the content zone.
+  */
+  it.each(["desktop", "mobile"] as const)("keeps Git Manager on one canonical header with a bounded body (%s)", async (mode) => {
+    mockUseViewportMode.mockReturnValue(mode);
+    render(<GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />);
+    await waitFor(() => expect(screen.getByText("Git Manager")).toBeInTheDocument());
+
+    const panel = screen.getByTestId("floating-window-git-manager");
+    const headers = panel.querySelectorAll(".view-header");
+    expect(headers).toHaveLength(1);
+    const closes = panel.querySelectorAll(".modal-close");
+    expect(closes).toHaveLength(1);
+    expect(headers[0].contains(closes[0])).toBe(true);
+
+    const content = panel.querySelector<HTMLElement>('.gm-layout[data-view-layout-zone="content"]');
+    expect(content).toBeTruthy();
+    expect(headers[0].contains(content as HTMLElement)).toBe(false);
+  });
+
   it("keeps the sidebar-launched Git Manager overlay transparent and click-through like Files", () => {
     const css = loadAllAppCss();
     const overlayRule = css.match(/\.modal-overlay\.git-manager-modal-overlay\.git-manager-modal-overlay\s*\{([^}]*)\}/)?.[1] ?? "";

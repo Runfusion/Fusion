@@ -21,11 +21,8 @@ FN-6690 fix: Command Center CSS was authored against a numeric token scale (--sp
 }
 
 /*
-FNXC:CommandCenter 2026-06-17-00:00:
-The Command Center must remain scrollable on mobile inside the overflow-hidden .project-content flex parent. Keep the header, including its section dropdown, pinned while .cc-tabpanel owns vertical scrolling and safe-area bottom clearance.
-
-FNXC:CommandCenter 2026-09-01-06:07:
-The section dropdown replaces the wrapping tab strip, preserving the compact pinned header while the panel remains the sole scroll owner.
+FNXC:StandardizedViewLayout 2026-09-13-21:43:
+Command Center uses the shared pinned header and project-scoped section rail. Its active analytics panel remains the sole content scroller; on phones the rail is shown first and the common back control returns from the selected section without remounting its controller.
 */
 .cc-header {
   display: flex;
@@ -68,6 +65,10 @@ Dashboard follows the global header rule: surface background, canonical height/p
     max-height: var(--view-header-content-row);
     white-space: nowrap;
   }
+}
+
+.cc-sidebar__panel {
+  overflow: hidden;
 }
 
 .cc-title {

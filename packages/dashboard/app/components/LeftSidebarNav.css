@@ -43,40 +43,6 @@ The collapse toggle lives in the footer above Settings instead of floating on th
 }
 
 /*
-FNXC:Navigation 2026-06-21-20:45:
-The persistent desktop/tablet sidebar needs a centered New Task CTA at the top so task creation is reachable from any project screen. It uses the shared row label and rail hiding behavior so expanded mode shows icon plus text while collapsed mode remains an icon-only button with the same global dialog trigger.
-
-FNXC:Navigation 2026-06-22-00:00:
-The New Task CTA must occupy exactly the same box as a sidebar item highlight: same min-height/padding/radius (inherited from .left-sidebar-nav__item) and the same horizontal inset as list rows. The list insets its rows by --space-sm padding, so the CTA matches with --space-sm side margins. The drop shadow is removed because it bled past the box edge and made the CTA read as larger than the item highlights; spacing below the CTA equals the inter-row gap (list padding-top --space-sm).
-*/
-/*
-FNXC:Navigation 2026-06-22-00:10:
-The CTA carries .left-sidebar-nav__item, whose width:100% rule is declared later and otherwise wins over a single-class width:auto. Because the CTA is a direct child of the unpadded aside (not the padded list), width:100% + side margins overflows the aside by 2×--space-sm, overlapping the resize bar and rendering wider than the padded item highlights. Raise specificity (.left-sidebar-nav .left-sidebar-nav__new-task) so width:auto wins: align-self:stretch then fills the aside minus the --space-sm side margins, exactly matching an item highlight box (list content width).
-*/
-/*
-FNXC:Navigation 2026-06-23-02:45:
-New Task lives in the footer with Collapse/Settings and must be the SAME height + width as them. It inherits the base .left-sidebar-nav__item height; dropping the old CTA side/top margins (which inset it as a top-of-rail CTA) lets it fill the footer's padded width exactly like the other footer items, separated only by the footer gap. It keeps the accent CTA fill so it still reads as the primary action.
-*/
-.left-sidebar-nav .left-sidebar-nav__new-task {
-  flex-shrink: 0;
-  justify-content: center;
-  align-self: stretch;
-  box-sizing: border-box;
-  width: auto;
-  margin: 0;
-  border-radius: var(--radius-md);
-  background: var(--accent);
-  color: var(--accent-text);
-  font-weight: 600;
-}
-
-.left-sidebar-nav__new-task:hover,
-.left-sidebar-nav__new-task:focus-visible {
-  background: color-mix(in srgb, var(--accent) 88%, var(--surface));
-  color: var(--accent-text);
-}
-
-/*
 FNXC:Navigation 2026-06-22-00:00:
 With the secondary divider removed the nav reads as one continuous list, so the gap between the primary and secondary sections must match the within-section row rhythm (--space-xs) instead of the larger --space-sm. Otherwise the boundary (e.g. Compound → Goals) shows a doubled gap.
 */
@@ -290,10 +256,6 @@ The footer has no top divider; it remains a functional footer cluster but should
   justify-content: center;
   padding-right: 0;
   padding-left: 0;
-}
-
-.left-sidebar-nav--collapsed .left-sidebar-nav__new-task {
-  justify-content: center;
 }
 
 /*

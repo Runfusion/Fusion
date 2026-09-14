@@ -433,64 +433,38 @@ List rows and mobile cards expose the same task lifecycle menu as Board cards fr
 }
 
 /*
-FNXC:ListView 2026-06-22-00:40:
-Widen the split resize column so the task-list sidebar is easy to grab and drag (the 4px --space-xs target was hard to hit). The handle shows a centered grip line that brightens on hover/focus.
-
-FNXC:ListView 2026-06-22-18:00:
-List view should not show a wide divider gutter. Collapse the grid handle column to zero width and let the transparent resize handle overlap the single 1px sidebar border, preserving a comfortable touch target without making the visible divider wider.
+FNXC:StandardizedViewLayout 2026-09-13-21:43:
+List reuses the canonical sidebar and separator rather than retaining a second width key or pointer controller. The task table remains the rail itself; no second task-list panel is introduced.
 */
 .list-split-layout {
   display: grid;
-  grid-template-columns: auto 0 minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr);
   height: 100%;
   min-height: 0;
 }
 
-/*
-FNXC:SidebarDivider 2026-06-22-18:00:
-The static 1px divider line lives on the sidebar pane's right border while the resize handle column has no visible width. This keeps one normal divider line between the task list and detail pane without a large gutter.
-*/
 .list-split-sidebar {
   min-width: 0;
   min-height: 0;
+  overflow: hidden;
+}
+
+.list-split-sidebar__panel {
   overflow: auto;
-  border-right: 1px solid var(--border);
+  border-right: var(--btn-border-width) solid var(--border);
 }
 
-/*
-FNXC:SidebarDivider 2026-06-22-18:00:
-The List split resize control is a transparent var(--space-sm)-wide drag hit-area that overlaps the single pane border. It tints a narrow centered band only on hover/active/focus, matching the left sidebar handle's "large target, slim visual" behavior without widening the visible divider.
-*/
-.list-split-resize-handle {
-  position: relative;
-  left: calc(var(--space-sm) / -2);
-  width: var(--space-sm);
-  cursor: col-resize;
+.list-single-pane-sidebar {
+  width: 100%;
+  height: auto;
+  overflow: visible;
   background: transparent;
-  touch-action: none;
-  z-index: 2;
-  transition: background var(--transition-fast);
 }
 
-.list-split-resize-handle::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 50%;
-  width: var(--space-xs);
-  transform: translateX(-50%);
-}
-
-.list-split-resize-handle:hover::before,
-.list-split-resize-handle:active::before,
-.list-split-resize-handle:focus-visible::before {
-  background: color-mix(in srgb, var(--todo) 30%, transparent);
-}
-
-.list-split-resize-handle:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring-strong);
+.list-single-pane-sidebar > .view-sidebar__panel {
+  flex: 1;
+  overflow: visible;
+  background: transparent;
 }
 
 /*

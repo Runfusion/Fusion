@@ -104,9 +104,10 @@ function getMissionForm(control: HTMLElement) {
 }
 
 async function findManualMissionCreateLink() {
+  fireEvent.click(await screen.findByRole("button", { name: "Plan New Mission" }));
   return waitFor(() => {
-    const link = document.querySelector<HTMLAnchorElement>(".mission-list__manual-create-link");
-    if (!link) throw new Error("Production mission list must expose manual creation beside planning");
+    const link = document.querySelector<HTMLButtonElement>(".mission-list__manual-create-link");
+    if (!link) throw new Error("The canonical header creation menu must preserve manual mission creation");
     return link;
   });
 }
@@ -185,7 +186,7 @@ describe("MissionManager auto-merge override", () => {
     } });
 
     const { unmount } = render(<MissionManager isInline isOpen onClose={() => {}} addToast={() => {}} projectId="project-1" />);
-    expect(screen.getByTestId("mission-manager-dialog").querySelector(".mission-manager__body--stacked")).not.toBeNull();
+    expect(screen.getByTestId("mission-manager-dialog").querySelector(".view-layout[data-mobile-pane='list']")).not.toBeNull();
     await screen.findByText("Single PR Mission");
     fireEvent.click(await findManualMissionCreateLink());
     const createControl = await screen.findByLabelText("Mission auto-merge override") as HTMLSelectElement;
@@ -205,12 +206,9 @@ describe("MissionManager auto-merge override", () => {
     mockFetchMissions.mockResolvedValue([mission()]);
 
     render(<MissionManager isInline isOpen onClose={() => {}} addToast={() => {}} projectId="project-1" />);
-    const sidebarCreate = await waitFor(() => {
-      const button = document.querySelector<HTMLButtonElement>(".mission-manager__sidebar-cta");
-      if (!button) throw new Error("Mission sidebar planning CTA must be rendered");
-      return button;
-    });
-    fireEvent.click(sidebarCreate);
+    const headerCreate = await screen.findByRole("button", { name: "Plan New Mission" });
+    fireEvent.click(headerCreate);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Plan New Mission" }));
 
     await waitFor(() => expect(screen.queryByLabelText("Mission auto-merge override")).toBeNull());
   });

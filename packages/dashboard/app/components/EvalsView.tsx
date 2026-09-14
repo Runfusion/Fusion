@@ -6,6 +6,8 @@ import { useEvals } from "../hooks/useEvals";
 import type { SectionId } from "./SettingsModal";
 import { LoadingSpinner } from "./LoadingSpinner";
 import { ViewHeader } from "./ViewHeader";
+import { ViewLayout } from "./ViewLayout";
+import { ViewSidebar } from "./ViewSidebar";
 import "./EvalsView.css";
 import { isNativeStructureDragEnabled, serializeNativeStructureRef } from "../utils/nativeStructureDrag";
 
@@ -45,8 +47,7 @@ export function EvalsView({ projectId, onOpenSettings, onOpenTaskDetail }: Evals
       FNXC:Evals 2026-06-23-04:15:
       The disabled state shares the standard ViewHeader (matching InsightsView/ResearchView) and centers its empty-state copy/CTA in the full-width pane. Previously it rendered as a headerless `evals-view card`, which collapsed to a ~70px min-content column and lacked a view header.
       */
-      <section className="evals-view" data-testid="evals-disabled">
-        <ViewHeader icon={Target} title={t("evals.title", "Evals")} />
+      <ViewLayout className="evals-view" data-testid="evals-disabled" header={<ViewHeader icon={Target} title={t("evals.title", "Evals")} />}>
         <div className="evals-view__empty">
           <h2 className="evals-title">{t("evals.disabledTitle", "Scheduled evals are disabled")}</h2>
           <p className="evals-empty-copy">{t("evals.enablePrompt", "Enable Scheduled Evals to review scored tasks, evidence, and follow-up recommendations.")}</p>
@@ -55,19 +56,21 @@ export function EvalsView({ projectId, onOpenSettings, onOpenTaskDetail }: Evals
             {t("evals.openSettings", "Open Scheduled Evals Settings")}
           </button>
         </div>
-      </section>
+      </ViewLayout>
     );
   }
 
+  /* FNXC:EvalsCollectionLayout 2026-09-13-16:29: Evals is read-only collection navigation, so its result list uses the shared rail and intentionally exposes no create affordance; phones return from a selected score through the canonical header action. */
   return (
     /*
     FNXC:Navigation 2026-06-22-01:10:
     Evals adopts the shared ViewHeader (CC-modeled) so this main-content destination reads consistently with the others; the scored-results grid moves into a body wrapper beneath the header. The per-list Refresh control stays in the results toolbar.
     */
-    <section className="evals-view" data-testid="evals-view">
-      <ViewHeader icon={Target} title={t("evals.title", "Evals")} />
-      <div className="evals-view__body">
-      <div className="evals-list card">
+    <ViewLayout
+      className="evals-view"
+      data-testid="evals-view"
+      header={<ViewHeader icon={Target} title={t("evals.title", "Evals")} backAction={selectedEvalId ? { label: t("common.back", "Back"), onClick: () => setSelectedEvalId(null) } : undefined} />}
+      sidebar={<ViewSidebar ariaLabel={t("evals.title", "Evals")}><div className="evals-list card">
         <div className="evals-toolbar">
           <input
             className="input"
@@ -106,8 +109,9 @@ export function EvalsView({ projectId, onOpenSettings, onOpenTaskDetail }: Evals
             </li>
           ))}
         </ul>
-      </div>
-
+      </div></ViewSidebar>}
+      mobilePane={selectedEvalId ? "detail" : "list"}
+    >
       <div className="evals-detail card" data-testid="evals-detail">
         {!selectedEval && <p className="evals-state">{t("evals.selectPrompt", "Select an evaluation to inspect scores, rationale, and evidence.")}</p>}
         {selectedEval && (
@@ -155,7 +159,6 @@ export function EvalsView({ projectId, onOpenSettings, onOpenTaskDetail }: Evals
           </>
         )}
       </div>
-      </div>
-    </section>
+    </ViewLayout>
   );
 }

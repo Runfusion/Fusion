@@ -877,6 +877,27 @@ Placement guidance:
 - `overflow`: desktop header overflow menu
 - `more`: mobile More sheet / secondary nav surfaces
 
+### Shared dashboard-view layout contract
+
+<!-- FNXC:StandardizedViewLayout 2026-09-13-22:31: FN-379 standardizes every dashboard destination on one layout/header/rail/action contract, so plugin views must cooperate with the host chrome instead of forking a second header or a private rail width. -->
+
+Full dashboard destinations share one composition: a single header, an optional tab strip, the content, and an optional contextual footer. Plugin views participate through opt-in, backward-compatible exports:
+
+| Import | Purpose |
+| --- | --- |
+| `@fusion/dashboard/app/components/ViewLayout` | Bounded shell: header, optional tabs, body, optional footer. Pass `contentOwnsScroll` only when the child owns the entire flex/scroll chain (canvas, transcript, terminal, table). |
+| `@fusion/dashboard/app/components/ViewHeader` | The single visible title/action owner, including the tactile `ChevronLeft` return before the title via `backAction`. |
+| `@fusion/dashboard/app/components/ViewSidebar` | The desktop/tablet collection rail with the shared accessible separator. |
+| `@fusion/dashboard/app/components/ViewActionButton` | The shared creation/action button (`kind="create"` renders the common `Plus`); labels collapse visually on phones while the localized accessible name is retained. |
+| `@fusion/dashboard/app/plugins/PluginDashboardViewHeader` | Cooperative header for plugin views: outside a full host it renders `ViewHeader`; inside one it keeps a single title and portals the plugin's live actions into the host header. |
+
+Rules:
+- Never render a second title when the host already provides chrome; use `PluginDashboardViewHeader` so the host owns the visible header.
+- Never publish a private sidebar width key. The rail width is one project-scoped preference owned by `ViewLayoutContext`/`useViewSidebarWidth`; a host may clamp the rendered width but only the provider persists the operator preference.
+- Put primary creation in the header, not in a footer or an empty-state duplicate.
+- On phones, show the list first and return through the header chevron; do not add a separate textual Back row.
+- The `layout` contract on `PluginDashboardViewHost` is optional. Views registered before FN-379, and uncontrolled third-party extensions, keep their previous host fallback rendering.
+
 Project-scoped UI state guidance:
 - Persist plugin view layout/state in browser storage using a plugin-owned base key and the shared project-scoped pattern (`kb:${projectId}:${baseKey}`).
 - For dependency graph layout, the canonical base key is `fusion-plugin-dependency-graph:positions`.

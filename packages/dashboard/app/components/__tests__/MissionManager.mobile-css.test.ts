@@ -176,21 +176,13 @@ describe("desktop two-panel split CSS", () => {
     expect(css).toContain("overflow-y: auto;");
   });
 
-  it("anchors desktop Plan New Mission CTA above the list with the shared tokenized height", () => {
-    const css = loadAllAppCss();
-    const barRule = css.match(/\.mission-manager__sidebar-cta-bar\s*\{[^}]*\}/)?.[0];
-    const ctaRule = css.match(/\.mission-manager__sidebar-cta\s*\{[^}]*\}/)?.[0];
-
-    expect(barRule).toContain("border-bottom: var(--btn-border-width) solid var(--border);");
-    expect(ctaRule).toContain("width: 100%;");
-    expect(ctaRule).toContain("min-height: calc(var(--space-lg) * 2 + var(--space-sm));");
-    expect(ctaRule).toContain("justify-content: center;");
-  });
-
-  it("removes obsolete mission CTA wrappers and empty-state styling", () => {
+  it("removes obsolete mission CTA wrappers, local rail geometry, and empty-state styling", () => {
     const css = loadAllAppCss();
 
     expect(css).not.toContain(".mission-manager__sidebar-footer");
+    expect(css).not.toContain(".mission-manager__sidebar-cta-bar");
+    expect(css).not.toContain(".mission-manager__sidebar-cta ");
+    expect(css).not.toContain(".mission-manager__sidebar-resize-handle");
     expect(css).not.toContain(".mission-list__footer");
     expect(css).not.toContain(".mission-list__footer-actions");
     expect(css).not.toContain(".mission-manager__empty-cta");

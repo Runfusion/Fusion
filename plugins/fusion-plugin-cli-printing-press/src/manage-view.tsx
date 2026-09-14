@@ -1,3 +1,4 @@
+import { PluginDashboardViewHeader } from "@fusion/dashboard/app/plugins/PluginDashboardViewHeader";
 import type { PluginDashboardViewContext } from "@fusion/dashboard/app/plugins/types";
 import { List, Pencil, RefreshCw, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -77,11 +78,10 @@ export function CliPrintingPressManageView({ context: _context }: { context?: Pl
   if (loading) return <section className="card cli-press-manage-state"><p>Loading drafts…</p></section>;
   if (error) return <section className="card cli-press-manage-state"><p className="form-error">{error}</p></section>;
 
+  /* FNXC:StandardizedPluginViews 2026-09-13-16:50: The cooperative header prevents a duplicate manage title in full-page hosts while retaining canonical standalone plugin chrome. */
   return (
     <section className="cli-press-manage">
-      <header className="cli-press-manage-header">
-        <h2><List /> Manage Service CLIs</h2>
-      </header>
+      <PluginDashboardViewHeader icon={List} title="Manage Service CLIs" />
       {statusMessage ? <p className="cli-press-manage-status">{statusMessage}</p> : null}
       {!drafts.length ? <div className="card"><p>No saved drafts yet. Use the Create Service CLI view to add one.</p></div> : (
         <div className="cli-press-manage-layout">

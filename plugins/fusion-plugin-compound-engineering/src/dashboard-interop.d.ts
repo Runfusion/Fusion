@@ -34,13 +34,9 @@ declare module "@fusion/dashboard/app/plugins/types" {
   }
 }
 
-// FNXC:CompoundEngineeringUI 2026-06-22-09:40:
-// Ambient shape for the dashboard's shared main-content header so the CE view
-// renders an icon + title header consistent with native Fusion views WITHOUT a
-// runtime dependency on `@fusion/dashboard` (host package). The host resolves
-// the real `ViewHeader.tsx` at runtime (and the test alias maps `@fusion/dashboard`
-// to the package dir); this minimal structural declaration is enough for tsc.
-declare module "@fusion/dashboard/app/components/ViewHeader" {
+// FNXC:CompoundEngineeringUI 2026-09-13-16:50:
+// Ambient shape for the dashboard's cooperative plugin header keeps standalone chrome and full-page action portals type-safe WITHOUT a runtime package dependency. The host resolves the real source at build/test time.
+declare module "@fusion/dashboard/app/plugins/PluginDashboardViewHeader" {
   import type { ComponentType, ReactNode } from "react";
   import type { LucideProps } from "lucide-react";
 
@@ -51,5 +47,5 @@ declare module "@fusion/dashboard/app/components/ViewHeader" {
     titleId?: string;
   }
 
-  export function ViewHeader(props: ViewHeaderProps): ReactNode;
+  export function PluginDashboardViewHeader(props: ViewHeaderProps): ReactNode;
 }

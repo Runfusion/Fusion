@@ -386,7 +386,15 @@ Chromium CDP touch geometry needs its own opt-in project: browser launch is cost
 and coordinate hit testing cannot run in jsdom or an API shard. Keep this single spec outside both the
 quality backfill and deep API lanes so Chromium availability produces an explicit lane result, not duplicate coverage.
 */
-const browserTouchTests = ["src/__tests__/task-modal-touch-resize-browser.test.ts"];
+/*
+FNXC:StandardizedViewLayout 2026-09-13-20:32:
+FN-379's rendered geometry (shared rail width, header creation placement, tactile back target, phone pane
+exclusivity) joins the existing touch lane so it is collected exactly once and self-gates without a local Chromium.
+*/
+const browserTouchTests = [
+  "src/__tests__/task-modal-touch-resize-browser.test.ts",
+  "src/__tests__/view-layout-browser.test.ts",
+];
 
 const qualityApiTests = [
   // Critical HTTP/server behavior: auth, task/project/settings mutation,
@@ -534,6 +542,15 @@ export const dashboardQualityProjectGlobs = {
 export default defineConfig({
   plugins: [react()],
   resolve: {
+    /*
+    FNXC:StandardizedPluginViews 2026-09-13-22:40:
+    Bundled plugin sources are authored as NodeNext ESM and import siblings with an explicit `.js` suffix.
+    Mapping that suffix back to the TypeScript sources lets the dashboard runner mount the REAL plugin
+    destinations for FN-379's shared-chrome proof instead of a stand-in, and it changes no production build.
+    */
+    extensionAlias: {
+      ".js": [".ts", ".tsx", ".js"],
+    },
     alias: {
       /*
       FNXC:GitHubImportTranslate 2026-07-15-09:30:
@@ -558,6 +575,8 @@ export default defineConfig({
       // FNXC:Quality 2026-07-19-12:00: Keep the Quality plugin's tokenized artifact-media bridge resolvable under host Vitest just as it is in the production dashboard bundle.
       "@fusion/dashboard/app/api/tasks/task-content": resolve(__dirname, "app/api/tasks/task-content.ts"),
       "@fusion/dashboard/app/plugins/types": resolve(__dirname, "app/plugins/types.ts"),
+      // FNXC:StandardizedPluginViews 2026-09-13-22:40: Bundled plugin destinations adopt the cooperative header; keep that bridge resolvable when the host runner mounts the real plugin component.
+      "@fusion/dashboard/app/plugins/PluginDashboardViewHeader": resolve(__dirname, "app/plugins/PluginDashboardViewHeader.tsx"),
       "@fusion/dashboard/app/utils/projectStorage": resolve(__dirname, "app/utils/projectStorage.ts"),
       "@fusion-plugin-examples/droid-runtime/probe": resolve(
         __dirname,

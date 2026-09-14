@@ -1,4 +1,4 @@
-import { ModalCloseButton } from "./ModalCloseButton";
+import { ViewHeader } from "./ViewHeader";
 import "./GroupTaskModal.css";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -107,10 +107,13 @@ export function GroupTaskModal({ isOpen, onClose, groupId, projectId, onOpenMemb
     /* FNXC:ModalTouchGeometry 2026-07-26-13:15: Shared FloatingWindow owns this modal's touch drag, resize, clamping, and persistence while phone and short viewports retain their sheet behavior. */
     <FloatingWindow windowKey="group-task" title={t("groupTask.title", "Branch Group")} ariaLabel={t("groupTask.ariaLabel", "Branch group details")} onClose={onClose} hideHeader dragHandleSelector=".modal-header" className="floating-window--group-task" defaultSize={{ width: 720, height: 560 }} minSize={{ width: 360, height: 280 }} persistGeometryKey="floating-window:group-task" suspendGeometryPersistenceOnMobile suspendGeometryPersistenceOnShortViewport closeOnOutsidePointerDown>
       <div className="modal modal-lg group-task-modal">
-        <div className="modal-header">
-          <h2>{t("groupTask.title", "Branch Group {{id}}", { id: groupId })}</h2>
-          <ModalCloseButton onClick={onClose} aria-label={t("actions.closeModal", "Close modal")} />
-        </div>
+        {/* FNXC:StandardizedViewLayout 2026-09-13-21:49: Shared dialog chrome; `.modal-header` stays for the drag handle selector. */}
+        <ViewHeader
+          className="modal-header"
+          title={t("groupTask.title", "Branch Group {{id}}", { id: groupId })}
+          onClose={onClose}
+          closeButtonProps={{ "aria-label": t("actions.closeModal", "Close modal") }}
+        />
         <div className="modal-body group-task-modal-body">
           {loading && (
             <div className="card group-task-modal-state"><Loader2 className="spin" /> {t("groupTask.loading", "Loading branch group…")}</div>

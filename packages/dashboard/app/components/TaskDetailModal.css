@@ -3538,6 +3538,21 @@ Les pills Alpha occupent l’espace intérieur disponible dans chaque hôte sans
     min-block-size: var(--alpha-touch-height);
   }
 
+  /*
+  FNXC:TaskDetailResponsiveChrome 2026-09-13-22:40:
+  Phone Task Detail adds the shared ChevronLeft before task identity, so the header row must absorb it by
+  letting the action cluster shrink and wrap. Pinning the cluster to its intrinsic width pushed the surface
+  past the viewport and reintroduced horizontal document overflow.
+  */
+  [data-alpha-surface="true"] > .task-detail-content > .modal-header {
+    flex-wrap: wrap;
+  }
+
+  [data-alpha-surface="true"] .modal-header-actions {
+    flex: 0 1 auto;
+    min-inline-size: 0;
+  }
+
   [data-alpha-surface="true"] .detail-body {
     padding: var(--alpha-density-2);
   }

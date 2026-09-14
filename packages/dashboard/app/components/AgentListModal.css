@@ -5,15 +5,11 @@
   max-height: 80vh;
 }
 
-.agent-list-modal .modal-title {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-  font-size: calc(var(--space-md) + var(--space-xs) * 0.75);
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  margin: 0;
-}
+/*
+FNXC:StandardizedViewLayout 2026-09-13-21:49:
+FN-379 removed the local `.modal-title` row: the shared header owns this window's title, icon, and typography, so
+no local title styling survives it.
+*/
 
 .agent-list-modal .agent-modal-content {
   padding: var(--space-xl) calc(var(--space-lg) + var(--space-xs));

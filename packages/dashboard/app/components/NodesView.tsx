@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Box, Plus, Server, Wifi, WifiOff, Globe, RefreshCw, X } from "lucide-react";
+import { Box, Server, Wifi, WifiOff, Globe, RefreshCw } from "lucide-react";
 import "./NodesView.css";
 import { useNodes } from "../hooks/useNodes";
 import { useProjects } from "../hooks/useProjects";
@@ -16,6 +16,10 @@ import { NodeDetailModal } from "./NodeDetailModal";
 import { useManagedDockerNodes } from "../hooks/useManagedDockerNodes";
 import type { ManagedDockerNodeInput } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
+import { ViewActionButton } from "./ViewActionButton";
+import { ViewHeader } from "./ViewHeader";
+import { ViewLayout } from "./ViewLayout";
+import { ViewSidebar } from "./ViewSidebar";
 
 interface NodesViewProps {
   addToast: (message: string, type?: ToastType) => void;
@@ -56,6 +60,13 @@ export function NodesView({ addToast, onClose }: NodesViewProps) {
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [dockerOnboardingOpen, setDockerOnboardingOpen] = useState(false);
   const [selectedNode, setSelectedNode] = useState<NodeInfo | null>(null);
+  /*
+  FNXC:StandardizedViewLayout 2026-09-13-20:32:
+  The registered nodes are the destination collection, so they live in the shared rail while the content pane shows
+  the focused node. Rail focus is deliberately separate from `selectedNode`, which still owns the node detail modal,
+  so navigating the collection never mutates or opens an editing surface on its own.
+  */
+  const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
 
   // Track remote nodes for sync status polling
   useEffect(() => {
@@ -145,42 +156,93 @@ export function NodesView({ addToast, onClose }: NodesViewProps) {
     await update(id, updates);
   }, [update]);
 
-  return (
-    <div className="nodes-view" data-testid="nodes-view">
-      <div className="nodes-view-header">
-        <div className="nodes-view-title">
-          <h2>
-            <Server size={20} />
-            {t("nodes.heading", "Nodes")}
-          </h2>
-          <span className="nodes-view-count">{t("nodes.registeredCount", "{{count}} registered", { count: nodes.length })}</span>
-        </div>
+  const focusedNode = useMemo(
+    () => nodes.find((node) => node.id === focusedNodeId) ?? null,
+    [focusedNodeId, nodes],
+  );
 
-        <div className="nodes-view-actions">
-          {onClose ? (
-            <button
-              className="btn-icon nodes-view-close"
-              onClick={onClose}
-              aria-label={t("nodes.closeAriaLabel", "Close nodes view")}
-            >
-              <X size={16} />
-            </button>
-          ) : null}
-          <button className="btn btn-sm" onClick={() => void handleRefresh()} disabled={loading || dockerLoading}>
-            <RefreshCw size={14} className={loading ? "spin" : ""} />
-            {t("nodes.refresh", "Refresh")}
+  const renderNodeCard = useCallback((node: NodeInfo) => {
+    const nodeSyncStatus = node.type === "remote" && syncStatusMap[node.id]
+      ? computeSyncState(syncStatusMap[node.id])
+      : undefined;
+    return (
+      <NodeCard
+        key={node.id}
+        node={node}
+        projects={projects}
+        onHealthCheck={(id) => { void handleHealthCheck(id); }}
+        onEdit={(selected) => setSelectedNode(selected)}
+        onRemove={(id) => { void handleUnregister(id); }}
+        isLoading={loading}
+        syncStatus={nodeSyncStatus}
+        authSyncState={node.type === "remote" ? getAuthSyncState(node.id) : undefined}
+        authSyncProviders={node.type === "remote" ? getAuthProviders(node.id) : undefined}
+        managedDockerNode={dockerNodeMap.get(node.id)}
+      />
+    );
+  }, [dockerNodeMap, getAuthProviders, getAuthSyncState, handleHealthCheck, handleUnregister, loading, projects, syncStatusMap]);
+
+  /*
+  FNXC:StandardizedViewLayout 2026-09-13-20:32:
+  Nodes composes the canonical Header → Content zones with the registered-node rail as its collection. Registration
+  actions preserve their original callbacks, labels collapse visually (not accessibly) on phones, and the empty
+  collection carries no second creation entry competing with the header's canonical one.
+  */
+  const header = (
+      <ViewHeader
+        className="nodes-view-header"
+        icon={Server}
+        title={(
+          <>
+            <span>{t("nodes.heading", "Nodes")}</span>
+            <span className="nodes-view-count">{t("nodes.registeredCount", "{{count}} registered", { count: nodes.length })}</span>
+          </>
+        )}
+        onClose={onClose}
+        backAction={focusedNode ? { label: t("actions.back", "Back"), onClick: () => setFocusedNodeId(null), "data-testid": "nodes-back" } : undefined}
+        closeButtonProps={{ "aria-label": t("nodes.closeAriaLabel", "Close nodes view") }}
+        actions={(
+          <>
+            <ViewActionButton icon={RefreshCw} label={t("nodes.refresh", "Refresh")} onClick={() => void handleRefresh()} disabled={loading || dockerLoading} />
+            <ViewActionButton kind="create" label={t("nodes.addNode", "Add Node")} onClick={() => setAddModalOpen(true)} />
+            <ViewActionButton icon={Box} label={t("nodes.addDockerNode", "Add Docker Node")} onClick={() => setDockerOnboardingOpen(true)} title={t("nodes.addDockerNodeTitle", "Add a managed Docker node")} />
+          </>
+        )}
+      />
+  );
+
+  const sidebar = (
+    <ViewSidebar ariaLabel={t("nodes.heading", "Nodes")} panelTestId="nodes-rail">
+      <div className="nodes-view-rail" role="listbox" aria-label={t("nodes.heading", "Nodes")}>
+        {nodes.length === 0 ? (
+          <p className="nodes-view-rail-empty">{t("nodes.noRegistered", "No nodes are registered yet.")}</p>
+        ) : nodes.map((node) => (
+          <button
+            key={node.id}
+            type="button"
+            role="option"
+            aria-selected={focusedNodeId === node.id}
+            data-testid="nodes-rail-item"
+            data-status={node.status}
+            className={`nodes-view-rail-row${focusedNodeId === node.id ? " active" : ""}`}
+            onClick={() => setFocusedNodeId(node.id)}
+          >
+            <span className="nodes-view-rail-name">{node.name}</span>
+            <span className={`nodes-view-rail-status nodes-view-rail-status--${node.status}`}>{node.status}</span>
           </button>
-          <button className="btn btn-sm" onClick={() => setAddModalOpen(true)}>
-            <Plus size={14} />
-            {t("nodes.addNode", "Add Node")}
-          </button>
-          <button className="btn btn-sm" onClick={() => setDockerOnboardingOpen(true)} title={t("nodes.addDockerNodeTitle", "Add a managed Docker node")}>
-            <Box size={14} />
-            {t("nodes.addDockerNode", "Add Docker Node")}
-          </button>
-        </div>
+        ))}
       </div>
+    </ViewSidebar>
+  );
 
+  return (
+    <ViewLayout
+      className="nodes-view"
+      data-testid="nodes-view"
+      header={header}
+      sidebar={sidebar}
+      mobilePane={focusedNode ? "detail" : "list"}
+    >
       <div className="nodes-view-stats">
         <div className="nodes-view-stat" data-testid="nodes-stat-total">
           <span>{t("nodes.total", "Total")}</span>
@@ -234,33 +296,14 @@ export function NodesView({ addToast, onClose }: NodesViewProps) {
       ) : nodes.length === 0 ? (
         <div className="nodes-view-empty">
           <p>{t("nodes.noRegistered", "No nodes are registered yet.")}</p>
-          <button className="btn btn-primary" onClick={() => setAddModalOpen(true)}>
-            <Plus size={14} />
-            {t("nodes.addFirstNode", "Add First Node")}
-          </button>
+        </div>
+      ) : focusedNode ? (
+        <div className="nodes-view-grid" data-testid="nodes-detail">
+          {renderNodeCard(focusedNode)}
         </div>
       ) : (
-        <div className="nodes-view-grid">
-          {nodes.map((node) => {
-            const nodeSyncStatus = node.type === "remote" && syncStatusMap[node.id]
-              ? computeSyncState(syncStatusMap[node.id])
-              : undefined;
-            return (
-              <NodeCard
-                key={node.id}
-                node={node}
-                projects={projects}
-                onHealthCheck={(id) => { void handleHealthCheck(id); }}
-                onEdit={(selected) => setSelectedNode(selected)}
-                onRemove={(id) => { void handleUnregister(id); }}
-                isLoading={loading}
-                syncStatus={nodeSyncStatus}
-                authSyncState={node.type === "remote" ? getAuthSyncState(node.id) : undefined}
-                authSyncProviders={node.type === "remote" ? getAuthProviders(node.id) : undefined}
-                managedDockerNode={dockerNodeMap.get(node.id)}
-              />
-            );
-          })}
+        <div className="nodes-view-empty" data-testid="nodes-no-selection">
+          <p>{t("nodes.selectPrompt", "Select a node to inspect its status, projects, and sync state.")}</p>
         </div>
       )}
 
@@ -300,6 +343,6 @@ export function NodesView({ addToast, onClose }: NodesViewProps) {
         onUpdateDockerConfig={patchDockerConfig}
         onFetchDockerConfigDiff={fetchDockerDiff}
       />
-    </div>
+    </ViewLayout>
   );
 }

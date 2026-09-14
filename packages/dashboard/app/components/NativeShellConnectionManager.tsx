@@ -1,4 +1,4 @@
-import { ModalCloseButton } from "./ModalCloseButton";
+import { ViewHeader } from "./ViewHeader";
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { FusionShellApi, ShellConnectionProfile, ShellConnectionState } from "../types/native-shell";
@@ -119,10 +119,13 @@ export function NativeShellConnectionManager({ open, shellApi, shellState, onClo
   return (
     <div className="modal-overlay open">
       <div className="modal native-shell-connection-manager" role="dialog" aria-label={t("shell.connectionManagerLabel", "Connection Manager")}>
-        <div className="modal-header">
-          <h2>{t("shell.connectionManager", "Connection Manager")}</h2>
-          <ModalCloseButton onClick={onClose} aria-label={t("actions.close", "Close")} />
-        </div>
+        {/* FNXC:StandardizedViewLayout 2026-09-13-21:49: Shared dialog chrome for the connection manager. */}
+        <ViewHeader
+          className="modal-header"
+          title={t("shell.connectionManager", "Connection Manager")}
+          onClose={onClose}
+          closeButtonProps={{ "aria-label": t("actions.close", "Close") }}
+        />
 
         <div className="native-shell-connection-manager__profiles">
           {isDesktopShell && (

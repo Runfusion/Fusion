@@ -1,3 +1,4 @@
+import { ViewHeader } from "./ViewHeader";
 import { ModalCloseButton } from "./ModalCloseButton";
 import "./TaskDetailModal.css";
 import React, { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -6,6 +7,8 @@ import { useTranslation } from "react-i18next";
 import { Pencil, Bot, X, ChevronDown, ChevronRight, GitBranch, ArrowLeft, Loader2, AlertTriangle, Sparkles, Maximize2, Minimize2, Info, Copy, RotateCcw, Trash2, Pause, Play, RefreshCcw, MoreHorizontal, FileText, Check } from "lucide-react";
 import { useViewportMode } from "../hooks/useViewportMode";
 import { AlphaMobileDrawer } from "./AlphaMobileDrawer";
+import { ViewBackButton } from "./ViewActionButton";
+import { ViewLayoutContent, ViewLayoutFooter, ViewLayoutHeader } from "./ViewLayout";
 import { mergeTaskSnapshot } from "../hooks/useTasks";
 import { dismissAiMergeReviewFinding } from "../api/tasks/tasks-lifecycle";
 import { FloatingWindow } from "./FloatingWindow";
@@ -557,14 +560,11 @@ export type TaskDetailContentProps = Omit<TaskDetailModalProps, "onClose"> & {
   Embedded task detail can be hosted by a movable FloatingWindow. In that surface the task header is the only visible header, so onRequestClose must render a close icon beside edit instead of relying on separate window chrome.
   */
   onRequestClose?: () => void;
-  /*
-  FNXC:TaskDetailDrawerNavigation 2026-09-12-20:37:
-  onBackToBoard powers the desktop Board-panel action when its host requests it. It is honored only for embedded content; the Alpha mobile drawer deliberately omits it and supplies onRequestClose to the same Board navigation owner instead.
-  */
+  /** @deprecated Host callback alias retained for test adapters; production chrome uses onRequestClose. */
   onBackToBoard?: () => void;
   /*
   FNXC:FloatingWindow 2026-06-22-20:45:
-  onPopOut, when supplied, renders the header's Maximize2 pop-out button. List/Board wire it to push this task into App's floating task-detail window array, opening the same embedded TaskDetailContent inside a movable, resizable, non-blocking FloatingWindow. It is independent of embedded/onBackToBoard so List split-pane and the board full-panel can both expose it.
+  onPopOut, when supplied, renders the desktop/tablet header's Maximize2 pop-out button. List/Board wire it to the same embedded TaskDetailContent; phone chrome suppresses it because the owning drawer is already the single full-width presentation.
   */
   onPopOut?: (task: Task) => void;
   /*
@@ -930,15 +930,16 @@ export function TaskDetailContent({
   initialTab,
   initialAction,
   taskDetailChatFirst = false,
-  mobileHeaderMode = "close",
+  mobileHeaderMode: _mobileHeaderMode = "close",
   embedded = false,
   active = true,
   onRequestClose,
-  onBackToBoard,
+  onBackToBoard: _onBackToBoard,
   onPopOut,
   workflowFieldDefs: workflowFieldDefsProp,
 }: TaskDetailContentProps) {
   const { t } = useTranslation("app");
+  const isPhonePresentation = useViewportMode() === "mobile";
   const columnLabel = useColumnLabel();
   const fileBrowser = useFileBrowser();
   const [activeTab, setActiveTab] = useState<TabId>(() => resolveDefaultTab(initialTab, task.column, taskDetailChatFirst));
@@ -5261,7 +5262,15 @@ export function TaskDetailContent({
         FNXC:TaskDetailTitleRemoval 2026-09-13-11:59:
         Every board, main-panel, list-split, right-dock, drawer, and pop-out host shares this title-free header. Keep the task ID, lifecycle badges, and actions here; the title remains editable only through the Definition form.
         */}
-        <div className="modal-header">
+        <ViewLayoutHeader className="modal-header">
+          {isPhonePresentation ? (
+            <ViewBackButton
+              className="task-detail-mobile-back"
+              label={t("taskDetail.header.back", "Back")}
+              onClick={requestClose}
+              data-testid="task-detail-mobile-back"
+            />
+          ) : null}
           <div className="detail-header-copy">
             <div className="detail-title-row">
               <span className="detail-id">{task.id}</span>
@@ -5344,7 +5353,7 @@ export function TaskDetailContent({
             FNXC:FloatingWindow 2026-06-22-20:45 (updated 2026-06-22-18:32):
             "Pop out" affordance opens this task detail in a movable, resizable, non-blocking FloatingWindow. Header action order is edit, then expand/pop-out, then Back to board pinned far right so board-card detail controls read as edit/resize/navigation.
             */}
-            {onPopOut && (
+            {!isPhonePresentation && onPopOut && (
               <AlphaButton
                 type="button"
                 className="btn btn-icon btn-sm modal-edit-btn task-detail-header-action"
@@ -5357,42 +5366,21 @@ export function TaskDetailContent({
               </AlphaButton>
             )}
             {/*
-            FNXC:TaskDetailDrawerNavigation 2026-09-12-20:37:
-            The desktop Board-panel Back to board action remains the far-right header action after edit and expand/pop-out. Rendering still requires embedded plus onBackToBoard, so the Alpha drawer can omit the redundant action and render its one canonical Close control through onRequestClose instead.
+            FNXC:TaskDetailResponsiveChrome 2026-09-13-16:30:
+            Phone Task Detail has exactly one ChevronLeft before task identity in all six hosts and no close, pop-out, or fullscreen affordance. Desktop and tablet retain the canonical close and optional pop-out; every control invokes the callback supplied by its TaskDetailHostBoundary owner.
             */}
-            {embedded && onBackToBoard && (
-              <AlphaButton
-                type="button"
-                className="btn btn-icon btn-sm task-detail-header-back-btn"
-                onClick={onBackToBoard}
-              >
-                <ArrowLeft size={14} aria-hidden="true" />
-                <span>{t("app.taskDetail.backToBoard", "Back to board")}</span>
-              </AlphaButton>
-            )}
-            {embedded && onRequestClose && !onBackToBoard && (
+            {!isPhonePresentation && embedded && onRequestClose && (
               <ModalCloseButton
                 className="task-detail-floating-close"
                 onClick={requestClose}
                 aria-label={t("common.close", "Close")}
                />
             )}
-            {!embedded && mobileHeaderMode === "back" && (
-              <AlphaButton
-                className="modal-close task-detail-mobile-back"
-                onClick={requestClose}
-                aria-label={t("taskDetail.header.backToList", "Back to task list")}
-                type="button"
-              >
-                <ArrowLeft aria-hidden="true" />
-                <span>{t("taskDetail.header.back", "Back")}</span>
-              </AlphaButton>
-            )}
-            {!embedded && mobileHeaderMode !== "back" && (
+            {!isPhonePresentation && !embedded && (
               <ModalCloseButton onClick={requestClose} aria-label={t("common.close", "Close")} />
             )}
           </div>
-        </div>
+        </ViewLayoutHeader>
         {!isEditing && !planDocumentOpen && (
           <TaskDetailTabStrip
             items={canonicalTabItems}
@@ -5400,7 +5388,7 @@ export function TaskDetailContent({
             ariaLabel={t("taskDetail.tabs.label", "Task detail tabs")}
           />
         )}
-        <main className={`detail-body${planDocumentOpen ? " detail-body--plan-document" : ""}${activeTab === "chat" && activitySegment === "feed" && !isActivityExpanded && !isEditing ? " detail-body--feed" : ""}${activeTab === "chat" && activitySegment === "raw-logs" && !isEditing ? " detail-body--agent-log" : ""}${activeTab === "chat" && (activitySegment === "current" || isActivityExpanded) && !isEditing ? " detail-body--chat" : ""}${activeTab === "planner-chat" && !isEditing ? " detail-body--planner-chat" : ""}`} data-testid="task-detail-tab-content">
+        <ViewLayoutContent as="main" className={`detail-body${planDocumentOpen ? " detail-body--plan-document" : ""}${activeTab === "chat" && activitySegment === "feed" && !isActivityExpanded && !isEditing ? " detail-body--feed" : ""}${activeTab === "chat" && activitySegment === "raw-logs" && !isEditing ? " detail-body--agent-log" : ""}${activeTab === "chat" && (activitySegment === "current" || isActivityExpanded) && !isEditing ? " detail-body--chat" : ""}${activeTab === "planner-chat" && !isEditing ? " detail-body--planner-chat" : ""}`} data-testid="task-detail-tab-content">
           {isEditing ? (
             <div className="modal-edit-form">
               <TaskForm
@@ -5821,6 +5809,7 @@ export function TaskDetailContent({
                   loadingMore={agentLogLoadingMore}
                   totalCount={agentLogTotal}
                   showMissingDetailHint
+                  allowFullscreen={!isPhonePresentation}
                 />
               ) : activitySegment === "interventions" ? (
                 // FNXC:PlannerOversight 2026-07-04-19:00: FN-7571 relocates the FN-7519
@@ -5845,7 +5834,7 @@ export function TaskDetailContent({
                       <Copy aria-hidden="true" />
                       {t("taskDetail.logs.copy", "Copy logs")}
                     </AlphaButton>
-                    <AlphaButton
+                    {!isPhonePresentation ? <AlphaButton
                       type="button"
                       className="btn btn-icon btn-sm activity-expand-toggle activity-expand-toggle--overlay"
                       onClick={() => setActivityExpanded((value) => !value)}
@@ -5854,7 +5843,7 @@ export function TaskDetailContent({
                       data-testid="task-chat-expand-toggle"
                     >
                       {isActivityExpanded ? <Minimize2 aria-hidden="true" /> : <Maximize2 aria-hidden="true" />}
-                    </AlphaButton>
+                    </AlphaButton> : null}
                   </div>
                   <h4>{t("taskDetail.activity.feedHeading", "Feed")}</h4>
                   {(workingTask as typeof workingTask & { activityLogTruncatedCount?: number }).activityLogTruncatedCount ? (
@@ -6923,7 +6912,7 @@ export function TaskDetailContent({
                   footerTarget={!isEditing && activeTab === "chat" && activitySegment === "current" ? tabFooterTarget : null}
                   footerVisible={!isEditing && activeTab === "chat" && activitySegment === "current"}
                   expanded={isActivityExpanded}
-                  onToggleExpanded={() => setActivityExpanded((value) => !value)}
+                  onToggleExpanded={isPhonePresentation ? undefined : () => setActivityExpanded((value) => !value)}
                   effectiveModels={{
                     triage: toTaskChatModelInfo(resolveEffectivePlanning(workingTask, agentLogEntries, settings)),
                     executor: toTaskChatModelInfo(resolveEffectiveExecutor(workingTask, agentLogEntries, assignedAgent, settings, detailColumnFlags)),
@@ -6947,7 +6936,7 @@ export function TaskDetailContent({
                   projectId={projectId}
                   active={active && activeTab === "planner-chat"}
                   expanded={isPlannerChatExpanded}
-                  onExpandedChange={setPlannerChatExpanded}
+                  onExpandedChange={isPhonePresentation ? undefined : setPlannerChatExpanded}
                   taskChatModel={resolveEffectiveTaskChat(settings)}
                   addToast={addToast}
                   onTaskUpdated={onTaskUpdated}
@@ -7035,10 +7024,10 @@ export function TaskDetailContent({
               )}
             </div>
           )}
-      </main>
+      </ViewLayoutContent>
       {!isEditing && (activeTab === "planner-chat" || (activeTab === "chat" && activitySegment === "current")) && (
-        <div
-          ref={setTabFooterTarget}
+        <ViewLayoutFooter
+          ref={(element) => setTabFooterTarget(element as HTMLDivElement | null)}
           className="modal-actions task-detail-chat-footer"
           data-testid="task-detail-chat-footer"
         />
@@ -7070,7 +7059,7 @@ export function TaskDetailContent({
         runs event-driven on the move-to-in-review and on its sweep — no manual user action needed.
         */}
         {showTaskDetailFooter && (
-          <div className="modal-actions" data-testid="task-detail-contextual-footer">
+          <ViewLayoutFooter className="modal-actions" data-testid="task-detail-contextual-footer">
           {isEditing ? (
             <>
               <span className="modal-edit-hint">
@@ -7125,7 +7114,7 @@ export function TaskDetailContent({
               )}
             </>
           )}
-          </div>
+          </ViewLayoutFooter>
         )}
       {showResetDialog && onResetTask && (
         <TaskResetDialog
@@ -7144,10 +7133,15 @@ export function TaskDetailContent({
             overlayProps={refineOverlayDismissProps}
           >
             <div className="modal detail-refine-modal">
-              <div className="modal-header">
-                <h3 id="task-detail-refine-title" className="detail-refine-title">{t("taskDetail.refine.modalTitle", "Refine")}</h3>
-                <ModalCloseButton onClick={handleCloseRefineModal} aria-label={t("common.close", "Close")} />
-              </div>
+              {/* FNXC:StandardizedViewLayout 2026-09-13-21:49: The nested Refine dialog shares the canonical header instead of a local title row. */}
+              <ViewHeader
+                className="modal-header"
+                headingLevel={3}
+                titleId="task-detail-refine-title"
+                title={t("taskDetail.refine.modalTitle", "Refine")}
+                onClose={handleCloseRefineModal}
+                closeButtonProps={{ "aria-label": t("common.close", "Close") }}
+              />
               <div className="detail-body">
                   <p className="detail-refine-help">
                     {t("taskDetail.refine.help", "Describe what needs to be refined or improved...")}

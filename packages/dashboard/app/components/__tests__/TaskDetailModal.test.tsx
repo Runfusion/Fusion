@@ -667,23 +667,22 @@ describe("TaskDetailModal base-branch editor", () => {
 });
 
 describe("TaskDetailModal summarize title action", () => {
-  it("orders board detail header actions as edit, pop-out, then Back to board", () => {
-    const onBackToBoard = vi.fn();
+  it("orders desktop board detail header actions as edit, pop-out, then close", () => {
+    const onRequestClose = vi.fn();
     const onPopOut = vi.fn();
     renderSummarizeTitleModal(
       { column: "todo" as any },
-      { embedded: true, onBackToBoard, onPopOut },
+      { embedded: true, onRequestClose, onPopOut },
     );
 
     const actions = document.querySelector(".modal-header-actions");
     expect(actions).not.toBeNull();
     const editButton = screen.getByRole("button", { name: "Edit task" });
     const popOutButton = screen.getByTestId("task-detail-pop-out");
-    const backButton = screen.getByRole("button", { name: /back to board/i });
+    const closeButton = screen.getByRole("button", { name: "Close" });
 
-    // FNXC:TaskDetailDefinition 2026-09-13-11:59: Board Task Detail keeps edit, pop-out, then Back to board in the header while title summarization lives in Definition.
-    expect(Array.from(actions!.children).slice(-3)).toEqual([editButton, popOutButton, backButton]);
-    for (const action of [editButton, popOutButton, backButton]) {
+    expect(Array.from(actions!.children).slice(-3)).toEqual([editButton, popOutButton, closeButton]);
+    for (const action of [editButton, popOutButton, closeButton]) {
       expect(action).toHaveClass("btn", "btn-icon", "btn-sm");
     }
   });
@@ -1052,7 +1051,6 @@ describe("TaskDetailModal Activity feed loading", () => {
     expect(await screen.findAllByText("same action")).toHaveLength(2);
     const copyButton = screen.getByTestId("task-activity-copy-logs");
     expect(screen.getAllByTestId("task-activity-copy-logs")).toHaveLength(1);
-    expect(screen.getAllByTestId("task-chat-expand-toggle")).toHaveLength(1);
     await user.click(copyButton);
 
     await waitFor(() => {

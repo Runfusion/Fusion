@@ -12,13 +12,15 @@ export interface CommandCenterSectionNavProps {
   sections: CommandCenterSection[];
   activeId: string;
   onSelect: (id: string) => void;
+  /** Full-height section rail used by the shared dashboard view sidebar. */
+  variant?: "dropdown" | "rail";
 }
 
 /*
-FNXC:CommandCenter 2026-09-01-06:07:
-Command Center has eighteen sections, so its navigation is a dropdown rather than a tab strip to avoid consuming multiple header rows. useSubViews remains the sole owner of section order and nodesEnabled gating; this component only presents the supplied list.
+FNXC:StandardizedViewLayout 2026-09-13-21:43:
+Command Center keeps useSubViews as the sole section-order and feature-gating authority. The same component presents those sections as the shared full-height rail in the dashboard view and retains the compact dropdown fallback for constrained legacy hosts.
 */
-export function CommandCenterSectionNav({ sections, activeId, onSelect }: CommandCenterSectionNavProps) {
+export function CommandCenterSectionNav({ sections, activeId, onSelect, variant = "dropdown" }: CommandCenterSectionNavProps) {
   const { t } = useTranslation("app");
   const [open, setOpen] = useState(false);
   const [focusActiveOnOpen, setFocusActiveOnOpen] = useState(false);
@@ -105,6 +107,25 @@ export function CommandCenterSectionNav({ sections, activeId, onSelect }: Comman
       setOpen(true);
     }
   };
+
+  if (variant === "rail") {
+    return (
+      <nav className="cc-section-nav cc-section-nav--rail" aria-label={t("commandCenter.tablistLabel", "Dashboard sections")}>
+        {sections.map((section) => (
+          <button
+            key={section.id}
+            type="button"
+            className={`cc-section-nav-option${section.id === activeId ? " active" : ""}`}
+            aria-current={section.id === activeId ? "page" : undefined}
+            data-testid={`command-center-section-option-${section.id}`}
+            onClick={() => onSelect(section.id)}
+          >
+            {section.label}
+          </button>
+        ))}
+      </nav>
+    );
+  }
 
   return (
     <div className="cc-section-nav">

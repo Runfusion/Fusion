@@ -28,7 +28,7 @@ declare module "@fusion/dashboard/app/api/tasks/task-content" {
   export function artifactMediaUrlWithToken(id: string, projectId?: string): string;
 }
 
-declare module "@fusion/dashboard/app/components/ViewHeader" {
+declare module "@fusion/dashboard/app/plugins/PluginDashboardViewHeader" {
   import type { ComponentType, ReactNode } from "react";
   import type { LucideProps } from "lucide-react";
 
@@ -39,5 +39,5 @@ declare module "@fusion/dashboard/app/components/ViewHeader" {
     titleId?: string;
   }
 
-  export function ViewHeader(props: ViewHeaderProps): ReactNode;
+  export function PluginDashboardViewHeader(props: ViewHeaderProps): ReactNode;
 }

@@ -1327,7 +1327,12 @@ describe("AgentListModal", () => {
       expect(modal).toBeTruthy();
     });
 
-    it("renders modal-title element for header consistency", async () => {
+    /*
+    FNXC:StandardizedViewLayout 2026-09-13-21:49:
+    FN-379 replaced the local `.modal-title` row with the shared header, so header consistency is now asserted on
+    the canonical header element that owns the destination title.
+    */
+    it("renders the shared header title for header consistency", async () => {
       render(
         <AgentListModal
           isOpen={true}
@@ -1337,7 +1342,7 @@ describe("AgentListModal", () => {
       );
 
       await waitFor(() => {
-        const title = document.querySelector(".modal-title");
+        const title = document.querySelector(".view-header .view-header__title");
         expect(title).toBeTruthy();
         expect(title?.textContent).toContain("Agents");
       });

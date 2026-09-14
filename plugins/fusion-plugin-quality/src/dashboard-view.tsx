@@ -1,7 +1,7 @@
 import "./dashboard-view.css";
 import { useCallback, useEffect, useState, type ReactElement } from "react";
 import { Play, RefreshCw, ShieldCheck } from "lucide-react";
-import { ViewHeader } from "@fusion/dashboard/app/components/ViewHeader";
+import { PluginDashboardViewHeader } from "@fusion/dashboard/app/plugins/PluginDashboardViewHeader";
 import {
   artifactMediaUrlWithToken,
   type ArtifactWithTask,
@@ -14,7 +14,7 @@ Quality hub dashboard view — project-wide run history and preset catalog.
 Host registers this via registerBundledPluginViews (static registry).
 
 FNXC:Quality 2026-07-15-23:30:
-Layout matches native main-content views: shared ViewHeader (ShieldCheck + title),
+Layout matches native main-content views: cooperative shared plugin header (ShieldCheck + title),
 flex column root, tokenized body inset, card + table for run history, btn-sm header
 actions. Removes ad-hoc padding/h2/inline table styles that made Quality look unlike
 Insights / Compound Engineering / Goals.
@@ -264,7 +264,7 @@ export function QualityDashboardView({
 
   return (
     <div className="quality-view" data-testid="quality-hub">
-      <ViewHeader icon={ShieldCheck} title="Quality" actions={actions} titleId="quality-view-title" />
+      <PluginDashboardViewHeader icon={ShieldCheck} title="Quality" actions={actions} titleId="quality-view-title" />
       <div className="quality-view-body">
         <p className="quality-view-lede">
           Project-wide test runs. Advisory only — does not change merge eligibility. Prefer Task QA for

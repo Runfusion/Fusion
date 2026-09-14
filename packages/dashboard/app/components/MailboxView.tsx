@@ -51,13 +51,15 @@ import { MailboxKindBadge, MailboxStructuralItem, isStructuralMail } from "./Mai
 import type { ChatReportHandoff } from "./chatReportHandoff";
 import { MessageComposer, type NativeStructureCandidate } from "./MessageComposer";
 import { ViewHeader } from "./ViewHeader";
+import { ViewActionButton } from "./ViewActionButton";
+import { ViewSidebar } from "./ViewSidebar";
+import { ViewLayout } from "./ViewLayout";
 import { WorktrunkInstallApprovalDetails } from "./WorktrunkInstallApprovalDetails";
 import { GatedActionApprovalDetails } from "./GatedActionApprovalDetails";
 import { subscribeSse } from "../sse-bus";
 import { useViewportMode } from "../hooks/useViewportMode";
 import { useMobileKeyboard } from "../hooks/useMobileKeyboard";
 import { NavigationHistoryContext } from "../hooks/useNavigationHistory";
-import { getScopedItem, setScopedItem } from "../utils/projectStorage";
 import { getRelativeTimeBucket } from "../utils/relativeTimeAgo";
 
 // ── Types ─────────────────────────────────────────────────────────────────
@@ -98,39 +100,6 @@ interface MailboxViewProps {
 }
 
 const ALL_AGENTS_MAILBOX_ID = "__all_agents__";
-
-/*
-FNXC:Mailbox 2026-06-22-16:00:
-The mailbox message-list pane defaults narrow and can be dragged narrower than before. Lowered min 280->180 and default 320->220 so the conversation list takes less horizontal room by default while the active-message pane gets more; users can still widen via the resize handle (persisted per project).
-*/
-const MAILBOX_SIDEBAR_MIN_WIDTH = 180;
-const MAILBOX_SIDEBAR_MAX_RATIO = 0.65;
-const MAILBOX_SIDEBAR_KEYBOARD_STEP = 16;
-const MAILBOX_SIDEBAR_DEFAULT_WIDTH = 220;
-
-function getMailboxSidebarMaxWidth(containerWidth: number): number {
-  return Math.max(MAILBOX_SIDEBAR_MIN_WIDTH, containerWidth * MAILBOX_SIDEBAR_MAX_RATIO);
-}
-
-function clampMailboxSidebarWidth(width: number, containerWidth: number): number {
-  const maxWidth = getMailboxSidebarMaxWidth(containerWidth);
-  return Math.min(Math.max(width, MAILBOX_SIDEBAR_MIN_WIDTH), maxWidth);
-}
-
-function readMailboxSidebarWidth(projectId?: string): number {
-  try {
-    const saved = getScopedItem("kb-dashboard-mailbox-sidebar-width", projectId);
-    if (!saved) return MAILBOX_SIDEBAR_DEFAULT_WIDTH;
-    const parsed = Number(saved);
-    if (Number.isFinite(parsed) && parsed > 0) {
-      return parsed;
-    }
-  } catch {
-    // Invalid localStorage data - fall through to default
-  }
-
-  return MAILBOX_SIDEBAR_DEFAULT_WIDTH;
-}
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -319,14 +288,7 @@ export function MailboxView({
   const isMobile = viewportMode === "mobile";
   const navigationHistory = useContext(NavigationHistoryContext);
   const isSplitPane = !isMobile;
-  const [sidebarWidth, setSidebarWidth] = useState<number>(() => readMailboxSidebarWidth(projectId));
-  const splitLayoutRef = useRef<HTMLDivElement>(null);
   const mailboxContentRef = useRef<HTMLDivElement>(null);
-  /*
-  FNXC:Mailbox 2026-06-22-18:05:
-  Teardown ref for the pointer-driven divider drag. The pointer move/up/cancel listeners and the captured pointer must be released exactly once on pointerup, pointercancel, or unmount; storing the cleanup here guarantees we never leak a global listener or a stuck pointer capture if the component unmounts mid-drag.
-  */
-  const splitResizeTeardownRef = useRef<(() => void) | null>(null);
   const pendingScrollTopRef = useRef<number | null>(null);
   const { keyboardOverlap, viewportHeight, viewportOffsetTop, keyboardOpen } = useMobileKeyboard({ enabled: isMobile });
   const containerKeyboardStyle = useMemo<CSSProperties | undefined>(() => {
@@ -340,104 +302,6 @@ export function MailboxView({
       ...(viewportHeight != null ? { "--vv-height": `${viewportHeight}px` } : {}),
     } as CSSProperties;
   }, [keyboardOpen, keyboardOverlap, viewportHeight, viewportOffsetTop]);
-
-  useEffect(() => {
-    setSidebarWidth(readMailboxSidebarWidth(projectId));
-  }, [projectId]);
-
-  useEffect(() => {
-    if (!isSplitPane) return;
-    const containerWidth = splitLayoutRef.current?.clientWidth;
-    if (!containerWidth) return;
-
-    setSidebarWidth((current) => clampMailboxSidebarWidth(current, containerWidth));
-  }, [isSplitPane]);
-
-  useEffect(() => {
-    if (!isSplitPane) return;
-    try {
-      setScopedItem("kb-dashboard-mailbox-sidebar-width", String(sidebarWidth), projectId);
-    } catch {
-      // localStorage persistence is best-effort.
-    }
-  }, [isSplitPane, projectId, sidebarWidth]);
-
-  /*
-  FNXC:Mailbox 2026-06-22-18:05:
-  Divider drag uses pointer events + setPointerCapture so the drag keeps tracking even when the cursor leaves the thin handle. Each move maps the pointer's X to a list-pane width relative to the split-layout left edge, clamped to [MIN, container * MAX_RATIO]. setSidebarWidth feeds the pane's inline `width`, which the flex row now honors, so the resize is live; the existing persistence effect writes the final width to scoped storage. The teardown (release capture + remove listeners) runs once on pointerup/pointercancel and is parked in splitResizeTeardownRef for unmount safety.
-  */
-  const handleSplitResizeStart = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    if (!isSplitPane) return;
-    event.preventDefault();
-    const container = splitLayoutRef.current;
-    if (!container) return;
-
-    splitResizeTeardownRef.current?.();
-
-    const handle = event.currentTarget;
-    const rect = container.getBoundingClientRect();
-    const pointerId = event.pointerId;
-
-    const onPointerMove = (moveEvent: PointerEvent) => {
-      if (moveEvent.pointerId !== pointerId) return;
-      const proposedWidth = moveEvent.clientX - rect.left;
-      setSidebarWidth(clampMailboxSidebarWidth(proposedWidth, rect.width));
-    };
-
-    const teardown = () => {
-      handle.removeEventListener("pointermove", onPointerMove);
-      handle.removeEventListener("pointerup", teardown);
-      handle.removeEventListener("pointercancel", teardown);
-      try {
-        handle.releasePointerCapture(pointerId);
-      } catch {
-        // Pointer capture may already be released; ignore.
-      }
-      splitResizeTeardownRef.current = null;
-    };
-
-    splitResizeTeardownRef.current = teardown;
-
-    try {
-      handle.setPointerCapture(pointerId);
-    } catch {
-      // setPointerCapture can throw in non-DOM test environments; drag still works via listeners.
-    }
-    handle.addEventListener("pointermove", onPointerMove);
-    handle.addEventListener("pointerup", teardown);
-    handle.addEventListener("pointercancel", teardown);
-  }, [isSplitPane]);
-
-  useEffect(() => () => {
-    splitResizeTeardownRef.current?.();
-  }, []);
-
-  const handleSplitResizeKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (!isSplitPane) return;
-    const measuredWidth = splitLayoutRef.current?.clientWidth ?? 0;
-    const fallbackWidth = sidebarWidth / MAILBOX_SIDEBAR_MAX_RATIO + MAILBOX_SIDEBAR_KEYBOARD_STEP;
-    const containerWidth = Math.max(measuredWidth, fallbackWidth);
-
-    const maxWidth = getMailboxSidebarMaxWidth(containerWidth);
-
-    if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
-      event.preventDefault();
-      const delta = event.key === "ArrowLeft" ? -MAILBOX_SIDEBAR_KEYBOARD_STEP : MAILBOX_SIDEBAR_KEYBOARD_STEP;
-      setSidebarWidth((current) => clampMailboxSidebarWidth(current + delta, containerWidth));
-      return;
-    }
-
-    if (event.key === "Home") {
-      event.preventDefault();
-      setSidebarWidth(MAILBOX_SIDEBAR_MIN_WIDTH);
-      return;
-    }
-
-    if (event.key === "End") {
-      event.preventDefault();
-      setSidebarWidth(maxWidth);
-    }
-  }, [isSplitPane, sidebarWidth]);
 
   const captureMailboxScroll = useCallback(() => {
     if (!isMobile) {
@@ -1015,15 +879,6 @@ export function MailboxView({
     return (
       <div className="mailbox-message-detail" data-testid="mailbox-message-detail" id={detailMessageAnchorId(selectedMessage.id)}>
         <div className="mailbox-message-detail-header">
-          {isMobile && (
-            <button
-              className="btn btn-sm btn-secondary"
-              onClick={dismissMessage}
-              data-testid="mailbox-back-to-list"
-            >
-              ← {t("mailbox.back", "Back")}
-            </button>
-          )}
           <div className="mailbox-message-detail-meta">
             <span className="mailbox-message-type">{messageTypeLabel(selectedMessage.type)}</span>
             <MailboxKindBadge metadata={selectedMessage.metadata} />
@@ -1581,18 +1436,36 @@ export function MailboxView({
   physical-screen and visualViewport signals that determine the mobile classification.
   */
   return (
-    <div
+    <ViewLayout
       className={`mailbox-view${isMobile ? " mailbox-view--mobile" : ""}`}
       style={containerKeyboardStyle}
       data-testid="mailbox-view"
-    >
+      contentOwnsScroll
+      header={<>
       {/*
       FNXC:Navigation 2026-06-22-01:10:
       Mailbox adopts the shared ViewHeader (Command Center-modeled) for a consistent main-content title row. The unread count badge stays beside the title (preserving the mailbox-unread-badge test id), and Compose / Mark-all-read / Refresh controls move into the header actions cluster so they keep working. Tabs remain below the header as their own row.
       */}
+      {/*
+      FNXC:StandardizedMailboxLayout 2026-09-14-10:24:
+      FN-379 remediation: the open composer no longer paints its own header. Mailbox's ViewHeader carries the composer's
+      dynamic identity ("New Message"/"Reply") and owns the single abandon control, on desktop as well as phone, so the
+      surface keeps exactly one header and one functional exit.
+      */}
       <ViewHeader
         icon={Mail}
-        title={t("mailbox.title", "Mailbox")}
+        title={showComposer
+          ? (composeReplyContext ? t("composer.replyTitle", "Reply") : t("composer.newMessageTitle", "New Message"))
+          : t("mailbox.title", "Mailbox")}
+        backAction={showComposer ? {
+          label: t("actions.cancel", "Cancel"),
+          onClick: handleComposeCancel,
+          "data-testid": "mailbox-back-to-list",
+        } : isMobile && (selectedMessage || selectedApproval) ? {
+          label: t("mailbox.back", "Back"),
+          onClick: selectedMessage ? dismissMessage : dismissApproval,
+          "data-testid": "mailbox-back-to-list",
+        } : undefined}
         actions={
           <>
             {unreadCount > 0 && (
@@ -1600,15 +1473,14 @@ export function MailboxView({
                 {unreadCount}
               </span>
             )}
-            <button
-              className="btn btn-sm btn-primary"
+            <ViewActionButton
+              kind="create"
+              icon={MessageSquare}
+              label={t("mailbox.compose", "Compose")}
               onClick={handleOpenCompose}
               title={t("mailbox.composeMessageTitle", "Compose message")}
               data-testid="mailbox-header-compose"
-            >
-              <MessageSquare size={14} />
-              <span>{t("mailbox.compose", "Compose")}</span>
-            </button>
+            />
             {activeTab === "inbox" && unreadCount > 0 && (
               <button
                 className="btn btn-sm btn-secondary"
@@ -1639,6 +1511,8 @@ export function MailboxView({
           </>
         }
       />
+      </>}
+    >
 
       {/* Tabs */}
       <div className="mailbox-tabs" data-testid="mailbox-tabs">
@@ -1681,27 +1555,17 @@ export function MailboxView({
 
       <div className="mailbox-content" data-testid="mailbox-content" ref={mailboxContentRef}>
         {isSplitPane ? (
-          <div className="mailbox-split-layout" data-testid="mailbox-split-layout" ref={splitLayoutRef}>
-            <div
+          <div className="mailbox-split-layout" data-testid="mailbox-split-layout">
+            <ViewSidebar
+              ariaLabel={t("mailbox.messageList", "Message list")}
+              resizeLabel={t("mailbox.resizeMessageListPane", "Resize message list pane")}
+              hostIdentity="mailbox-main"
+              panelTestId="mailbox-split-list-pane"
+              separatorTestId="mailbox-split-resize-handle"
               className="mailbox-split-list-pane"
-              data-testid="mailbox-split-list-pane"
-              style={{ width: `${sidebarWidth}px` }}
             >
               {renderListPane()}
-            </div>
-            <div
-              className="mailbox-split-resize-handle"
-              data-testid="mailbox-split-resize-handle"
-              role="separator"
-              aria-orientation="vertical"
-              aria-label={t("mailbox.resizeMessageListPane", "Resize message list pane")}
-              tabIndex={0}
-              aria-valuemin={MAILBOX_SIDEBAR_MIN_WIDTH}
-              aria-valuemax={Math.round(getMailboxSidebarMaxWidth(splitLayoutRef.current?.clientWidth ?? sidebarWidth / MAILBOX_SIDEBAR_MAX_RATIO))}
-              aria-valuenow={Math.round(sidebarWidth)}
-              onPointerDown={handleSplitResizeStart}
-              onKeyDown={handleSplitResizeKeyDown}
-            />
+            </ViewSidebar>
             <div className="mailbox-split-detail-pane" data-testid="mailbox-split-detail-pane">
               {renderDetailPane()}
             </div>
@@ -1730,7 +1594,7 @@ export function MailboxView({
           </>
         )}
       </div>
-    </div>
+    </ViewLayout>
   );
 }
 

@@ -351,18 +351,27 @@ describe("Header", () => {
       expect(actions?.firstElementChild?.querySelector("svg")).not.toBeNull();
     });
 
-    it.each(["desktop"] as const)("does not render the mobile New Task action at the %s tier", (tier) => {
-      renderHeader({ mobileNavEnabled: true, projectId: "project-1", onNewTask: vi.fn() }, tier);
-      expect(screen.queryByTestId("mobile-header-new-task")).toBeNull();
-    });
-
-    it("omits the Alpha New Task action and its shell on desktop", () => {
-      const onNewTask = vi.fn();
-      const { container } = renderHeader({ projectId: "project-1", onNewTask }, "desktop");
+    it("keeps the retired desktop Header New Task action absent while standardizing its shape", () => {
+      // Desktop creation lives on its dedicated surfaces and shortcuts; adopting the shared action
+      // primitive must not reintroduce a Header duplicate that was deliberately removed.
+      renderHeader({ mobileNavEnabled: true, projectId: "project-1", onNewTask: vi.fn() }, "desktop");
       expect(screen.queryByTestId("mobile-header-new-task")).toBeNull();
       expect(screen.queryByRole("button", { name: "New Task" })).toBeNull();
-      expect(container.querySelector(".header-actions")?.querySelector('[title="New Task"]')).toBeNull();
-      expect(onNewTask).not.toHaveBeenCalled();
+    });
+
+    it.each(["tablet", "mobile"] as const)("builds the %s New Task action from the shared create primitive", (tier) => {
+      const onNewTask = vi.fn();
+      renderHeader({ projectId: "project-1", onNewTask }, tier);
+      const action = screen.getByTestId("mobile-header-new-task");
+      expect(action).toHaveClass("view-action-button", "view-action-button--create");
+      fireEvent.click(action);
+      expect(onNewTask).toHaveBeenCalledOnce();
+    });
+
+    it("suppresses the global New Task action when List owns the workflow-aware header action", () => {
+      renderHeader({ projectId: "project-1", view: "list", onNewTask: vi.fn() }, "desktop");
+      expect(screen.queryByTestId("mobile-header-new-task")).toBeNull();
+      expect(screen.queryByRole("button", { name: "New Task" })).toBeNull();
     });
 
     it.each(["tablet", "mobile"] as const)("renders one functional Alpha New Task action last at the %s tier", (tier) => {

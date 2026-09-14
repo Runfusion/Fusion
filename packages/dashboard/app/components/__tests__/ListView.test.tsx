@@ -9,6 +9,7 @@ import type { Task, TaskDetail } from "@fusion/core";
 import { scopedKey } from "../../utils/projectStorage";
 import { ALL_WORKFLOWS_BOARD_VIEW_ID, BOARD_WORKFLOW_SELECTION_STORAGE_KEY } from "../../utils/boardWorkflowSelection";
 import { loadAllAppCss } from "../../test/cssFixture";
+import { ViewLayoutProvider } from "../../context/ViewLayoutContext";
 
 // Mock the API
 vi.mock("../../api", () => ({
@@ -317,7 +318,12 @@ const renderListView = (
     projectId: TEST_PROJECT_ID,
   };
 
-  const result = render(<ListView {...defaultProps} {...props} />);
+  const effectiveProjectId = props.projectId ?? defaultProps.projectId;
+  const result = render(
+    <ViewLayoutProvider projectId={effectiveProjectId}>
+      <ListView {...defaultProps} {...props} />
+    </ViewLayoutProvider>,
+  );
   if (options.openViewOptions ?? true) {
     const viewOptionsToggle = screen.queryByRole("button", { name: /^view$/i });
     if (viewOptionsToggle) {
@@ -1967,7 +1973,7 @@ describe("ListView", () => {
     localStorage.setItem(scopedStorageKey("kb-dashboard-list-columns"), JSON.stringify(["title", "status"]));
     localStorage.setItem(scopedStorageKey("kb-dashboard-selected-tasks"), JSON.stringify(["FN-002"]));
     localStorage.setItem(scopedStorageKey("kb-dashboard-list-collapsed"), JSON.stringify(["todo"]));
-    localStorage.setItem(scopedStorageKey("kb-dashboard-list-sidebar-width"), "420");
+    localStorage.setItem(scopedStorageKey("kb-dashboard-view-sidebar-width"), "420");
 
     const listProps: React.ComponentProps<typeof ListView> = {
       tasks: [createMockTask({ id: "FN-001", column: "backlog", title: "Custom workflow task" })],
@@ -1991,7 +1997,7 @@ describe("ListView", () => {
     expect(window.localStorage.getItem(scopedStorageKey("kb-dashboard-list-columns"))).toBe(JSON.stringify(["title", "status"]));
     expect(window.localStorage.getItem(scopedStorageKey("kb-dashboard-selected-tasks"))).toBe(JSON.stringify(["FN-002"]));
     expect(window.localStorage.getItem(scopedStorageKey("kb-dashboard-list-collapsed"))).toBe(JSON.stringify(["todo"]));
-    expect(window.localStorage.getItem(scopedStorageKey("kb-dashboard-list-sidebar-width"))).toBe("420");
+    expect(window.localStorage.getItem(scopedStorageKey("kb-dashboard-view-sidebar-width"))).toBe("420");
     expect(screen.getByText("Custom workflow task")).toBeInTheDocument();
 
     await act(async () => {
@@ -2096,7 +2102,7 @@ describe("ListView", () => {
     const desktop = renderListView({
       tasks: [
         createMockTask({ id: "FN-001", column: "triage", title: "Coding task" }),
-        createMockTask({ id: "FN-002", column: "complete", title: "Custom done task" }),
+        createMockTask({ id: "FN-002", column: "backlog", title: "Custom task" }),
       ],
     });
 
@@ -2104,8 +2110,8 @@ describe("ListView", () => {
     expect(desktopTrigger).toHaveTextContent("Coding");
     expect(desktopTrigger.querySelector(".workflow-switcher-counts")).toBeNull();
     await openWorkflowSwitcher();
-    expect(desktopTrigger).toHaveTextContent("1");
-    expect(screen.getByTestId("workflow-switcher-option-wf-custom")).toHaveTextContent("1");
+    await waitFor(() => expect(desktopTrigger).toHaveTextContent("1"));
+    await waitFor(() => expect(screen.getByTestId("workflow-switcher-option-wf-custom")).toHaveTextContent("1"));
     fireEvent.keyDown(desktopTrigger, { key: "Escape" });
     desktop.unmount();
     desktopSpy.mockRestore();
@@ -2115,7 +2121,7 @@ describe("ListView", () => {
     renderListView({
       tasks: [
         createMockTask({ id: "FN-001", column: "triage", title: "Coding task" }),
-        createMockTask({ id: "FN-002", column: "complete", title: "Custom done task" }),
+        createMockTask({ id: "FN-002", column: "backlog", title: "Custom task" }),
       ],
     });
 
@@ -2123,7 +2129,7 @@ describe("ListView", () => {
     expect(mobileTrigger).toHaveTextContent("Coding");
     expect(mobileTrigger.querySelector(".workflow-switcher-counts")).toBeNull();
     await openWorkflowSwitcher();
-    expect(mobileTrigger).toHaveTextContent("1");
+    await waitFor(() => expect(mobileTrigger).toHaveTextContent("1"));
     mobileSpy.mockRestore();
   });
 
@@ -2174,16 +2180,16 @@ describe("ListView", () => {
 
     await openWorkflowSwitcher();
     const aggregateOption = screen.getByTestId(`workflow-switcher-option-${ALL_WORKFLOWS_BOARD_VIEW_ID}`);
-    expect(within(aggregateOption).getByTitle("Todo: 2")).toBeInTheDocument();
-    expect(within(aggregateOption).getByTitle("In Progress: 1")).toBeInTheDocument();
-    expect(within(aggregateOption).getByTitle("Done: 2")).toBeInTheDocument();
+    await waitFor(() => expect(within(aggregateOption).getByTitle("Plan: 2")).toBeInTheDocument());
+    expect(within(aggregateOption).getByTitle("Progress: 1")).toBeInTheDocument();
+    expect(within(aggregateOption).getByTitle("Review: 0")).toBeInTheDocument();
     expect(within(aggregateOption).getByTitle("1 merging")).toBeInTheDocument();
-    expect(within(screen.getByTestId("workflow-switcher-option-builtin:coding")).getByTitle("Todo: 1")).toBeInTheDocument();
-    expect(within(screen.getByTestId("workflow-switcher-option-builtin:coding")).getByTitle("In Progress: 1")).toBeInTheDocument();
-    expect(within(screen.getByTestId("workflow-switcher-option-builtin:coding")).getByTitle("Done: 1")).toBeInTheDocument();
-    expect(within(screen.getByTestId("workflow-switcher-option-wf-custom")).getByTitle("Todo: 1")).toBeInTheDocument();
-    expect(within(screen.getByTestId("workflow-switcher-option-wf-custom")).getByTitle("In Progress: 0")).toBeInTheDocument();
-    expect(within(screen.getByTestId("workflow-switcher-option-wf-custom")).getByTitle("Done: 1")).toBeInTheDocument();
+    expect(within(screen.getByTestId("workflow-switcher-option-builtin:coding")).getByTitle("Plan: 1")).toBeInTheDocument();
+    expect(within(screen.getByTestId("workflow-switcher-option-builtin:coding")).getByTitle("Progress: 1")).toBeInTheDocument();
+    expect(within(screen.getByTestId("workflow-switcher-option-builtin:coding")).getByTitle("Review: 0")).toBeInTheDocument();
+    expect(within(screen.getByTestId("workflow-switcher-option-wf-custom")).getByTitle("Plan: 1")).toBeInTheDocument();
+    expect(within(screen.getByTestId("workflow-switcher-option-wf-custom")).getByTitle("Progress: 0")).toBeInTheDocument();
+    expect(within(screen.getByTestId("workflow-switcher-option-wf-custom")).getByTitle("Review: 0")).toBeInTheDocument();
   });
 
   it("shows all workflows in ListView without submitting the aggregate sentinel", async () => {
@@ -2217,7 +2223,7 @@ describe("ListView", () => {
     expect(screen.getByTestId("workflow-switcher")).toHaveTextContent("All workflows");
     expect(screen.queryByTestId(`workflow-switcher-edit-${ALL_WORKFLOWS_BOARD_VIEW_ID}`)).toBeNull();
 
-    fireEvent.click(screen.getByText("+ New Task"));
+    fireEvent.click(screen.getByRole("button", { name: "New Task" }));
     expect(mockOnNewTask).toHaveBeenCalledWith(undefined);
 
     fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Aggregate quick add" } });
@@ -2230,7 +2236,7 @@ describe("ListView", () => {
     expect(mockOnQuickCreate).not.toHaveBeenCalledWith(expect.objectContaining({ workflowId: ALL_WORKFLOWS_BOARD_VIEW_ID }));
   });
 
-  it("shows workflow edit and New actions inside the dropdown", async () => {
+  it("keeps workflow editing contextual in the dropdown and creation in the header", async () => {
     const onCreateWorkflow = vi.fn();
     const onOpenWorkflowEditor = vi.fn();
     vi.mocked(fetchBoardWorkflows).mockResolvedValue({
@@ -2270,12 +2276,16 @@ describe("ListView", () => {
     expect(onOpenWorkflowEditor).toHaveBeenCalledWith("wf-custom");
     expect(onCreateWorkflow).not.toHaveBeenCalled();
 
-    fireEvent.click(selector);
-    fireEvent.click(screen.getByTestId("workflow-switcher-create"));
+    // Workflow creation is a single header action; the popover keeps only contextual row editing.
+    expect(screen.queryByTestId("workflow-switcher-create")).toBeNull();
+    const createButtons = screen.getAllByRole("button", { name: "New workflow" });
+    expect(createButtons).toHaveLength(1);
+    expect(screen.getByTestId("list-primary-action-cluster")).toContainElement(createButtons[0]);
+    fireEvent.click(createButtons[0]);
     expect(onCreateWorkflow).toHaveBeenCalledTimes(1);
   });
 
-  it("relocates the list workflow selector and dropdown actions into the header slot", async () => {
+  it("relocates the list workflow selector and its actions into the header slot", async () => {
     const onCreateWorkflow = vi.fn();
     const onOpenWorkflowEditor = vi.fn();
     const headerSlot = document.createElement("div");
@@ -2324,7 +2334,8 @@ describe("ListView", () => {
       expect(document.querySelector(".list-view > .list-workflow-control")).toBeNull();
 
       fireEvent.click(selector);
-      expect(screen.getByTestId("workflow-switcher-create")).toBeInTheDocument();
+      expect(screen.queryByTestId("workflow-switcher-create")).toBeNull();
+      expect(screen.getAllByRole("button", { name: "New workflow" })).toHaveLength(1);
       fireEvent.click(screen.getByTestId("workflow-switcher-option-wf-custom"));
       await waitFor(() => expect(screen.getByText("Custom task")).toBeInTheDocument());
       expect(screen.queryByText("Coding task")).not.toBeInTheDocument();
@@ -2534,33 +2545,37 @@ describe("ListView", () => {
   it("reloads persisted sidebar width when projectId changes", () => {
     const viewportSpy = mockDesktopViewport();
     const clientWidthSpy = vi.spyOn(window.HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
-    localStorage.setItem(scopedKey("kb-dashboard-list-sidebar-width", "project-a"), "300");
-    localStorage.setItem(scopedKey("kb-dashboard-list-sidebar-width", "project-b"), "460");
+    localStorage.setItem(scopedKey("kb-dashboard-view-sidebar-width", "project-a"), "300");
+    localStorage.setItem(scopedKey("kb-dashboard-view-sidebar-width", "project-b"), "460");
     const tasks = [createMockTask({ id: "FN-001", title: "Task" })];
 
     const { rerender } = render(
-      <ListView
-        tasks={tasks}
-        onMoveTask={vi.fn()}
-        onOpenDetail={vi.fn()}
-        addToast={mockAddToast}
-        projectId="project-a"
-      />
+      <ViewLayoutProvider projectId="project-a">
+        <ListView
+          tasks={tasks}
+          onMoveTask={vi.fn()}
+          onOpenDetail={vi.fn()}
+          addToast={mockAddToast}
+          projectId="project-a"
+        />
+      </ViewLayoutProvider>,
     );
 
-    expect(screen.getByTestId("list-split-sidebar")).toHaveStyle({ width: "300px" });
+    expect(screen.getByTestId("list-split-sidebar").closest(".view-sidebar")).toHaveStyle({ "--view-sidebar-current-width": "300px" });
 
     rerender(
-      <ListView
-        tasks={tasks}
-        onMoveTask={vi.fn()}
-        onOpenDetail={vi.fn()}
-        addToast={mockAddToast}
-        projectId="project-b"
-      />
+      <ViewLayoutProvider projectId="project-b">
+        <ListView
+          tasks={tasks}
+          onMoveTask={vi.fn()}
+          onOpenDetail={vi.fn()}
+          addToast={mockAddToast}
+          projectId="project-b"
+        />
+      </ViewLayoutProvider>,
     );
 
-    expect(screen.getByTestId("list-split-sidebar")).toHaveStyle({ width: "460px" });
+    expect(screen.getByTestId("list-split-sidebar").closest(".view-sidebar")).toHaveStyle({ "--view-sidebar-current-width": "460px" });
     clientWidthSpy.mockRestore();
     viewportSpy.mockRestore();
   });
@@ -2568,25 +2583,25 @@ describe("ListView", () => {
   it("supports keyboard resizing on the desktop split-pane handle", async () => {
     const viewportSpy = mockDesktopViewport();
     const clientWidthSpy = vi.spyOn(window.HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
-    // Persisted below the 64px min clamps up to 64.
-    localStorage.setItem(scopedStorageKey("kb-dashboard-list-sidebar-width"), "40");
+    // The shared preference clamps every destination to its canonical minimum.
+    localStorage.setItem(scopedStorageKey("kb-dashboard-view-sidebar-width"), "40");
     const tasks = [createMockTask({ id: "FN-001", title: "Task" })];
 
     renderListView({ tasks });
-    await waitFor(() => expect(screen.getByTestId("list-split-sidebar")).toHaveStyle({ width: "64px" }));
+    await waitFor(() => expect(screen.getByTestId("list-split-sidebar").closest(".view-sidebar")).toHaveStyle({ "--view-sidebar-current-width": "220px" }));
 
     const handle = screen.getByTestId("list-split-resize-handle");
     const startWidth = Number(handle.getAttribute("aria-valuenow"));
 
     expect(handle).toHaveAttribute("tabindex", "0");
-    expect(handle).toHaveAttribute("aria-valuemin", "64");
-    expect(Number(handle.getAttribute("aria-valuemax"))).toBeGreaterThanOrEqual(64);
+    expect(handle).toHaveAttribute("aria-valuemin", "220");
+    expect(handle).toHaveAttribute("aria-valuemax", "560");
 
     fireEvent.keyDown(handle, { key: "ArrowRight" });
     expect(Number(handle.getAttribute("aria-valuenow"))).toBeGreaterThan(startWidth);
     fireEvent.keyDown(handle, { key: "Home" });
-    expect(handle).toHaveAttribute("aria-valuenow", "64");
-    expect(screen.getByTestId("list-split-sidebar")).toHaveStyle({ width: "64px" });
+    expect(handle).toHaveAttribute("aria-valuenow", "220");
+    expect(screen.getByTestId("list-split-sidebar").closest(".view-sidebar")).toHaveStyle({ "--view-sidebar-current-width": "220px" });
     clientWidthSpy.mockRestore();
     viewportSpy.mockRestore();
   });
@@ -2599,21 +2614,21 @@ describe("ListView", () => {
       .spyOn(window.HTMLElement.prototype, "getBoundingClientRect")
       .mockReturnValue({ left: 0, width: 1000, top: 0, right: 1000, bottom: 300, height: 300, x: 0, y: 0, toJSON() {} } as DOMRect);
     const cwSpy = vi.spyOn(window.HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
-    localStorage.setItem(scopedStorageKey("kb-dashboard-list-sidebar-width"), "300");
+    localStorage.setItem(scopedStorageKey("kb-dashboard-view-sidebar-width"), "300");
     const tasks = [createMockTask({ id: "FN-001", title: "Task" })];
 
     renderListView({ tasks });
-    await waitFor(() => expect(screen.getByTestId("list-split-sidebar")).toHaveStyle({ width: "300px" }));
+    await waitFor(() => expect(screen.getByTestId("list-split-sidebar").closest(".view-sidebar")).toHaveStyle({ "--view-sidebar-current-width": "300px" }));
 
     const handle = screen.getByTestId("list-split-resize-handle");
     // Narrow the pane.
     fireEvent.pointerDown(handle, { clientX: 300, pointerId: 1 });
-    fireEvent.pointerMove(window, { clientX: 250, pointerId: 1 });
-    await waitFor(() => expect(screen.getByTestId("list-split-sidebar")).toHaveStyle({ width: "250px" }));
+    fireEvent.pointerMove(document, { clientX: 250, pointerId: 1 });
+    await waitFor(() => expect(screen.getByTestId("list-split-sidebar").closest(".view-sidebar")).toHaveStyle({ "--view-sidebar-current-width": "250px" }));
     // Widen the pane.
-    fireEvent.pointerMove(window, { clientX: 420, pointerId: 1 });
-    await waitFor(() => expect(screen.getByTestId("list-split-sidebar")).toHaveStyle({ width: "420px" }));
-    fireEvent.pointerUp(window, { pointerId: 1 });
+    fireEvent.pointerMove(document, { clientX: 420, pointerId: 1 });
+    await waitFor(() => expect(screen.getByTestId("list-split-sidebar").closest(".view-sidebar")).toHaveStyle({ "--view-sidebar-current-width": "420px" }));
+    fireEvent.pointerUp(document, { pointerId: 1 });
 
     rectSpy.mockRestore();
     cwSpy.mockRestore();
@@ -2621,17 +2636,15 @@ describe("ListView", () => {
   });
 
   it("does not collapse the split sidebar to the min when the container width is unmeasurable", async () => {
-    // FNXC:ListView 2026-06-22-18:00: A zero/unreliable container measurement must not force the
-    // persisted width down to the min clamp — that was the resize regression (pane snapped to 64px).
+    // The canonical preference is independent from a temporarily unmeasurable List host.
     const viewportSpy = mockDesktopViewport();
     const cwSpy = vi.spyOn(window.HTMLElement.prototype, "clientWidth", "get").mockReturnValue(0);
-    localStorage.setItem(scopedStorageKey("kb-dashboard-list-sidebar-width"), "300");
+    localStorage.setItem(scopedStorageKey("kb-dashboard-view-sidebar-width"), "300");
     const tasks = [createMockTask({ id: "FN-001", title: "Task" })];
 
     renderListView({ tasks });
-    // Width must be preserved (not collapsed to 64) while the container reports 0.
     await new Promise((resolve) => setTimeout(resolve, 60));
-    expect(screen.getByTestId("list-split-sidebar")).toHaveStyle({ width: "300px" });
+    expect(screen.getByTestId("list-split-sidebar").closest(".view-sidebar")).toHaveStyle({ "--view-sidebar-current-width": "300px" });
 
     cwSpy.mockRestore();
     viewportSpy.mockRestore();
@@ -2786,8 +2799,8 @@ describe("ListView", () => {
     expect(screen.queryByTestId("list-split-sidebar")).toBeNull();
     expect(screen.queryByTestId("list-split-resize-handle")).toBeNull();
     expect(screen.queryByTestId("list-split-detail")).toBeNull();
-    expect(container.querySelector(".list-toolbar .list-action-cluster")).toBeInTheDocument();
-    expect(within(container.querySelector(".list-toolbar .list-action-cluster") as HTMLElement).getByText("+ New Task")).toBeInTheDocument();
+    expect(container.querySelector(".view-header__actions .list-action-cluster")).toBeInTheDocument();
+    expect(within(container.querySelector(".view-header__actions .list-action-cluster") as HTMLElement).getByRole("button", { name: "New Task" })).toBeInTheDocument();
     expect(container.querySelector(".list-quick-entry-above-table .quick-entry-box")).toBeInTheDocument();
     expect(container.querySelector(".list-cards")).toBeInTheDocument();
     expect(container.querySelector("table.list-table")).toBeNull();
@@ -3483,29 +3496,28 @@ describe("ListView", () => {
     expect(screen.getAllByRole("row").filter((r) => r.getAttribute("data-id"))).toHaveLength(1);
   });
 
-  it("forwards the selected workflow rather than a click event when + New Task is clicked", () => {
+  it("forwards the selected workflow rather than a click event when New Task is clicked", () => {
     const mockOnNewTask = vi.fn();
 
     renderListView({ onNewTask: mockOnNewTask });
 
-    fireEvent.click(screen.getByText("+ New Task"));
+    fireEvent.click(screen.getByRole("button", { name: "New Task" }));
 
     expect(mockOnNewTask).toHaveBeenCalledWith("builtin:coding");
   });
 
 
-  it("keeps Bulk Edit, View, and + New Task together in the desktop sidebar controls", () => {
+  it("keeps Bulk Edit, View, and New Task together in the canonical header", () => {
     renderListView({}, { openViewOptions: false });
 
-    const actions = document.querySelector(".list-sidebar-controls .list-action-cluster");
+    const actions = document.querySelector(".view-header__actions .list-action-cluster");
     const actionButtons = Array.from(actions?.querySelectorAll("button") ?? []).map((button) => button.textContent);
-    expect(actionButtons).toEqual(["Bulk Edit", "View", "+ New Task"]);
+    expect(actionButtons).toEqual(["Bulk Edit", "View", "New Task"]);
   });
 
   it("keeps the primary list action cluster on one physical row when the pane narrows", () => {
     const css = readAppFile("components/ListView.css");
     const actionClusterRule = css.match(/\.list-action-cluster,\s*\n\.list-sidebar-controls__actions\s*\{[^}]*\}/)?.[0] ?? "";
-    const toolbarRule = css.match(/\.list-sidebar-controls__toolbar\s*\{[^}]*\}/)?.[0] ?? "";
     const singlePaneToolbarRule = css.match(/@media\s*\(max-width:\s*1024px\)[\s\S]*?\.list-toolbar\s*\{[^}]*padding:\s*var\(--space-sm\) var\(--space-md\);[^}]*\}/)?.[0] ?? "";
 
     expect(actionClusterRule).toContain("flex-wrap: nowrap");
@@ -3513,44 +3525,42 @@ describe("ListView", () => {
     expect(actionClusterRule).toContain("inline-size: max-content");
     expect(actionClusterRule).toContain("min-width: max-content");
     expect(actionClusterRule).toContain("overflow-x: auto");
-    expect(toolbarRule).toContain("justify-content: center");
     expect(singlePaneToolbarRule).toContain("justify-content: center");
   });
 
   it("keeps measured tablet split chrome visible while scoping card hiding to single-pane List", () => {
     const css = loadAllAppCss();
     const singlePaneCardRule = css.match(/\.list-view--single-pane \.list-table\s*\{[^}]*display:\s*none;[^}]*\}/)?.[0] ?? "";
-    const desktopSplitRule = css.match(/\.list-split-layout\s*\{[^}]*grid-template-columns:\s*auto 0 minmax\(0, 1fr\);[^}]*\}/)?.[0] ?? "";
+    const desktopSplitRule = css.match(/\.list-split-layout\s*\{[^}]*grid-template-columns:\s*auto minmax\(0, 1fr\);[^}]*\}/)?.[0] ?? "";
 
     expect(css).not.toMatch(/\.list-split-resize-handle,\s*\n\s*\.list-split-detail\s*\{[^}]*display:\s*none/);
     expect(singlePaneCardRule).toContain("display: none");
-    expect(desktopSplitRule).toContain("grid-template-columns: auto 0 minmax(0, 1fr)");
+    expect(desktopSplitRule).toContain("grid-template-columns: auto minmax(0, 1fr)");
   });
 
-  it("omits the full New Task button from mobile toolbar controls", () => {
+  it("keeps every mobile header action icon-only with an accessible name", () => {
     const viewportSpy = mockMobileViewport();
     renderListView({}, { openViewOptions: false });
 
-    const actions = document.querySelector(".list-toolbar .list-action-cluster");
-    const actionButtons = Array.from(actions?.querySelectorAll("button") ?? []).map((button) => button.textContent);
-    expect(actionButtons).toEqual(["Bulk Edit", "View"]);
-    expect(screen.queryByText("+ New Task")).toBeNull();
+    const actions = document.querySelector(".view-header__actions .list-action-cluster");
+    expect(Array.from(actions?.querySelectorAll("button") ?? [])).toHaveLength(3);
+    expect(within(actions as HTMLElement).getByRole("button", { name: "New Task" })).toHaveClass("view-action-button--mobile-icon-only");
 
     viewportSpy.mockRestore();
   });
 
-  it("+ New Task button uses theme-driven btn-task-create class", () => {
+  it("New Task button uses the shared action and theme-driven task-create classes", () => {
     const mockOnNewTask = vi.fn();
     renderListView({ onNewTask: mockOnNewTask });
 
-    const newTaskButton = screen.getByText("+ New Task");
-    expect(newTaskButton.className).toContain("btn-task-create");
+    const newTaskButton = screen.getByRole("button", { name: "New Task" });
+    expect(newTaskButton).toHaveClass("view-action-button", "btn-task-create");
   });
 
-  it("does not render + New Task button when onNewTask is not provided", () => {
+  it("does not render New Task button when onNewTask is not provided", () => {
     renderListView({ onNewTask: undefined });
 
-    expect(screen.queryByText("+ New Task")).toBeNull();
+    expect(screen.queryByRole("button", { name: "New Task" })).toBeNull();
   });
 
   it("renders drop zones for each column", () => {

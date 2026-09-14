@@ -334,6 +334,8 @@ interface AgentLogViewerProps {
   totalCount?: number | null;
   /** Shows one explanatory note for visible historical tool rows without saved detail. */
   showMissingDetailHint?: boolean;
+  /** Keeps fullscreen chrome out of phone-owned detail navigation. */
+  allowFullscreen?: boolean;
 }
 
 /**
@@ -365,6 +367,7 @@ export function AgentLogViewer({
   loadingMore = false,
   totalCount = null,
   showMissingDetailHint = false,
+  allowFullscreen = true,
 }: AgentLogViewerProps) {
   const { t } = useTranslation("app");
   const containerRef = useRef<HTMLDivElement>(null);
@@ -610,7 +613,7 @@ export function AgentLogViewer({
       <div className={`agent-log-viewer${isFullscreen ? " agent-log-viewer--fullscreen" : ""}`} data-testid="agent-log-viewer">
         {/* FNXC:TaskDetailActivity 2026-07-01-00:00: Activity → Raw owns one fullscreen affordance through AgentLogViewer even while logs are loading, because TaskDetailModal intentionally omits its Activity-level expand button on Raw to avoid duplicate controls. */}
         <div className="agent-log-empty-header">
-          <div className="agent-log-model-header-toggle">{fullscreenToggle}</div>
+          {allowFullscreen ? <div className="agent-log-model-header-toggle">{fullscreenToggle}</div> : null}
         </div>
         <div className="agent-log-loading" role="status" aria-live="polite">{t("agentLog.loading", "Loading agent logs…")}</div>
       </div>
@@ -622,7 +625,7 @@ export function AgentLogViewer({
       <div className={`agent-log-viewer${isFullscreen ? " agent-log-viewer--fullscreen" : ""}`} data-testid="agent-log-viewer">
         {/* FNXC:TaskDetailActivity 2026-07-01-00:00: Empty Raw logs still expose the single AgentLogViewer fullscreen button so Raw never needs the duplicate Activity expand toggle. */}
         <div className="agent-log-empty-header">
-          <div className="agent-log-model-header-toggle">{fullscreenToggle}</div>
+          {allowFullscreen ? <div className="agent-log-model-header-toggle">{fullscreenToggle}</div> : null}
         </div>
         <div className="agent-log-empty">{t("agentLog.empty", "No agent output yet.")}</div>
       </div>
@@ -678,7 +681,7 @@ export function AgentLogViewer({
           >
             {showToolOutput ? t("agentLog.toolsOn", "Tools: On") : t("agentLog.toolsOff", "Tools: Off")}
           </button>
-          {fullscreenToggle}
+          {allowFullscreen ? fullscreenToggle : null}
         </div>
 
         {modelHeaderExpanded && (

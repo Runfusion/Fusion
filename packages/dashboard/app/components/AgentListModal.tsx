@@ -1,4 +1,5 @@
-import { ModalCloseButton } from "./ModalCloseButton";
+import { ViewHeader } from "./ViewHeader";
+import { ViewActionButton } from "./ViewActionButton";
 import "./AgentListModal.css";
 // AgentListModal renders agent cards using .agent-board-*, .agent-icon, .agent-state-filter
 // rules that live in AgentsView.css. The modal is eager but AgentsView is lazy, so we
@@ -6,7 +7,7 @@ import "./AgentListModal.css";
 import "./AgentsView.css";
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { Plus, Play, Pause, Square, Trash2, RefreshCw, Bot, LayoutGrid, List, Filter } from "lucide-react";
+import { Play, Pause, Square, Trash2, RefreshCw, Bot, LayoutGrid, List, Filter } from "lucide-react";
 import type { Agent, AgentCapability, AgentState } from "../api";
 import { fetchAgents, createAgent, updateAgent, updateAgentState, deleteAgent, fetchSettings } from "../api";
 import { getScopedItem, setScopedItem } from "../utils/projectStorage";
@@ -291,12 +292,20 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
         <FloatingWindow windowKey="agent-list" modal title={t("agents.modalTitle", "Agents")} ariaLabel={t("agents.modalTitle", "Agents")} onClose={onClose} hideHeader dragHandleSelector=".agent-list-modal .modal-header" className="floating-window--agent-list" defaultSize={{ width: 900, height: 680 }} minSize={{ width: 480, height: 360 }} persistGeometryKey="floating-window:agent-list" suspendGeometryPersistenceOnMobile suspendGeometryPersistenceOnShortViewport closeOnOutsidePointerDown>
       {/* FNXC:ModalTouchGeometry 2026-07-26-16:07: Agents is a long-lived workspace; shared geometry persists on desktop/tablet while explicit outside dismissal preserves its former overlay behavior. */}
       <div className="modal modal--wide agent-list-modal">
-        <div className="modal-header">
-          <h2 className="modal-title">
-            <Bot size={20} />
-            {t("agents.modalTitle", "Agents")}
-          </h2>
-          <div className="modal-actions">
+        {/*
+        FNXC:StandardizedViewLayout 2026-09-13-21:49:
+        FN-379 standardizes the Agents window: the shared header owns the title, the representation toggle, refresh,
+        the single New Agent creation, and the canonical close. The creation no longer duplicates itself inside the
+        content controls bar, and the header action collapses to icon-only on phone chrome with its localized name.
+        */}
+        <ViewHeader
+          className="modal-header"
+          icon={Bot}
+          title={t("agents.modalTitle", "Agents")}
+          onClose={onClose}
+          closeButtonProps={{ "aria-label": t("agents.close", "Close") }}
+          actions={(
+          <>
             <div className="view-toggle">
               <button
                 className={`view-toggle-btn${view === "board" ? " active" : ""}`}
@@ -325,9 +334,15 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
             >
               <RefreshCw size={16} className={isLoading ? "spin" : ""} />
             </button>
-            <ModalCloseButton onClick={onClose} aria-label={t("agents.close", "Close")} />
-          </div>
-        </div>
+            <ViewActionButton
+              kind="create"
+              data-testid="agent-list-modal-create"
+              onClick={() => setIsCreating(!isCreating)}
+              label={isCreating ? t("agents.cancel", "Cancel") : t("agents.newAgent", "New Agent")}
+            />
+          </>
+          )}
+        />
 
         <div className="modal-content agent-modal-content">
           {/* Filter and Create Bar */}
@@ -349,13 +364,6 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
               </select>
             </div>
 
-            <button
-              className="btn btn-task-create btn-sm"
-              onClick={() => setIsCreating(!isCreating)}
-            >
-              <Plus size={16} />
-              {isCreating ? t("agents.cancel", "Cancel") : t("agents.newAgent", "New Agent")}
-            </button>
           </div>
 
           {/* Create Form */}

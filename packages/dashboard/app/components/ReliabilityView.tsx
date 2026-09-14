@@ -1,3 +1,4 @@
+import { ViewHeader } from "./ViewHeader";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AlertCircle, Loader2 } from "lucide-react";
@@ -255,7 +256,8 @@ export function ReliabilityView({ projectId }: { projectId?: string } = {}) {
       {showResetConfirm ? (
         <div className="modal-overlay open" role="presentation">
           <div className="modal" role="dialog" aria-modal="true" aria-labelledby="reliability-reset-title">
-            <div className="modal-header"><h2 id="reliability-reset-title">{t("reliability.resetModal.title", "Reset reliability stats?")}</h2></div>
+            {/* FNXC:StandardizedViewLayout 2026-09-13-21:49: Shared chrome for the inline reset confirmation; Cancel/Reset stay its only exits. */}
+            <ViewHeader className="modal-header" titleId="reliability-reset-title" title={t("reliability.resetModal.title", "Reset reliability stats?")} />
             <p>{t("reliability.resetModal.description", "This sets a new baseline for reliability statistics. Historical events older than the reset time are excluded from counts but are not deleted.")}</p>
             {resetError ? <div className="form-error">{resetError}</div> : null}
             <div className="modal-actions">

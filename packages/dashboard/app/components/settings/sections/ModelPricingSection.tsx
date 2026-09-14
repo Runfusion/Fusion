@@ -1,4 +1,4 @@
-import { ModalCloseButton } from "../../ModalCloseButton";
+import { ViewHeader } from "../../ViewHeader";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { MouseEvent } from "react";
 import { useTranslation } from "react-i18next";
@@ -171,15 +171,22 @@ export function ModelPricingSection({ form, setForm, addToast, projectId }: Mode
     return (
       <div className="modal-overlay open" onClick={handleOverlayClick} role="dialog" aria-modal="true" aria-labelledby="model-pricing-table-title" data-testid="model-pricing-table-modal">
         <div className="modal modal-lg model-pricing-modal">
-          <div className="modal-header">
-            <div>
-              <h3 id="model-pricing-table-title">{t("settings.modelPricing.tableTitle", "Model pricing table")}</h3>
-              <p className="settings-muted model-pricing-modal__subtitle">
-                {t("settings.modelPricing.saveHint", "Manual edits are saved with the rest of Global settings.")}
-              </p>
-            </div>
-            <ModalCloseButton onClick={closeTable} aria-label={t("actions.close", "Close")} data-testid="model-pricing-close" />
-          </div>
+          {/* FNXC:StandardizedViewLayout 2026-09-13-21:49: The pricing table dialog shares the canonical header; its subtitle stays part of the header identity. */}
+          <ViewHeader
+            className="modal-header"
+            headingLevel={3}
+            titleId="model-pricing-table-title"
+            title={(
+              <span>
+                <span>{t("settings.modelPricing.tableTitle", "Model pricing table")}</span>
+                <span className="settings-muted model-pricing-modal__subtitle">
+                  {t("settings.modelPricing.saveHint", "Manual edits are saved with the rest of Global settings.")}
+                </span>
+              </span>
+            )}
+            onClose={closeTable}
+            closeButtonProps={{ "aria-label": t("actions.close", "Close"), "data-testid": "model-pricing-close" }}
+          />
 
           <div className="model-pricing-modal__body">
             <div className="model-pricing-table" role="table" aria-label={t("settings.modelPricing.overrides", "Model pricing overrides")}>

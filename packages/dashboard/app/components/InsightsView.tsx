@@ -28,6 +28,8 @@ import {
 } from "lucide-react";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { ViewHeader } from "./ViewHeader";
+import { ViewLayout } from "./ViewLayout";
+import { ViewSidebar } from "./ViewSidebar";
 import { isNativeStructureDragEnabled, serializeNativeStructureRef } from "../utils/nativeStructureDrag";
 import { fetchModels, updateGlobalSettings, type ModelInfo } from "../api";
 import { useInsights, type InsightSection } from "../hooks/useInsights";
@@ -494,8 +496,13 @@ export function InsightsView({ projectId, addToast, onClose, onCreateTask, model
     );
   };
 
-  return (
-    <div className="insights-view" data-testid="insights-view">
+  /* FNXC:InsightsCollectionLayout 2026-09-13-16:29: Insights remains a read-only generated collection; the shared bounded layout contains its existing category/detail controller without adding a misleading create action. */
+  /*
+  FNXC:StandardizedViewLayout 2026-09-13-22:40:
+  The header is supplied through the shared layout's header zone rather than as a child, so it stays a fixed sibling of the bounded content instead of scrolling away inside it.
+  */
+  const insightsHeader = (
+    <>
       {/*
       FNXC:Insights 2026-06-22-01:00:
       Migrated to the shared ViewHeader for consistency with other main-content views. The insight count and action buttons live in the actions slot; ViewHeader already provides the --space-lg side/top padding and --space-md bottom gap, so the view body must not repeat the top padding.
@@ -589,7 +596,11 @@ export function InsightsView({ projectId, addToast, onClose, onCreateTask, model
           </>
         )}
       />
+    </>
+  );
 
+  return (
+    <ViewLayout className="insights-view" data-testid="insights-view" header={insightsHeader}>
       {showModelConfig && (
         <div className="insights-model-config" data-testid="model-config">
           {/*
@@ -683,16 +694,16 @@ export function InsightsView({ projectId, addToast, onClose, onCreateTask, model
         </div>
       ) : (
         <div className="insights-body">
-          <aside className="insights-sidebar" aria-label={t("insights.categoriesLabel", "Insight categories")}>
+          <ViewSidebar className="insights-sidebar" ariaLabel={t("insights.categoriesLabel", "Insight categories")}>
             <ul className="insights-category-list">
               {filteredSections.map(renderCategoryItem)}
             </ul>
-          </aside>
+          </ViewSidebar>
           <div className="insights-detail">
             {renderActiveInsights()}
           </div>
         </div>
       )}
-    </div>
+    </ViewLayout>
   );
 }

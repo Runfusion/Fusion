@@ -106,11 +106,6 @@ The descriptive subtitle renders inside ViewHeader's actions slot; mute it so it
   margin: 0;
 }
 
-.todo-add-list-btn {
-  min-height: calc(var(--space-2xl) + var(--space-xs));
-  min-width: calc(var(--space-2xl) + var(--space-xs));
-}
-
 .todo-list-items {
   display: flex;
   flex-direction: column;
@@ -451,7 +446,6 @@ Redesign Todos to fit the rest of the dashboard theme: full-height tokenized wor
   letter-spacing: 0.08em;
 }
 
-.todo-add-list-btn,
 .todo-icon-btn,
 .todo-item-reorder-btn {
   border-color: transparent;
@@ -728,7 +722,6 @@ NARROW container (right dock): collapse the side-by-side split into a single-pan
   /* Comfortable touch targets and full-width add controls in the stack. */
   .todo-list-item,
   .todo-list-select-btn,
-  .todo-add-list-btn,
   .todo-icon-btn,
   .todo-item,
   .todo-item-reorder-btn,
@@ -819,7 +812,6 @@ NARROW container (right dock): collapse the side-by-side split into a single-pan
 
   .todo-list-item,
   .todo-list-select-btn,
-  .todo-add-list-btn,
   .todo-icon-btn,
   .todo-item,
   .todo-item-reorder-btn,

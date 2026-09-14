@@ -73,6 +73,7 @@ vi.mock("../../sse-bus", () => ({
 // Mock lucide-react icons
 vi.mock("lucide-react", () => ({
   X: () => <span data-testid="icon-x">X</span>,
+  ChevronLeft: () => <span data-testid="icon-chevron-left">Back</span>,
   Mail: () => <span data-testid="icon-mail">Mail</span>,
   Send: () => <svg data-testid="icon-send" />,
   Inbox: () => <svg data-testid="icon-inbox" />,
@@ -288,7 +289,7 @@ describe("MailboxView", () => {
     expect(screen.getByTestId("message-composer-content")).toHaveValue("Assistant report body");
     expect(screen.getByTestId("message-composer-send")).toBeDisabled();
 
-    await user.click(screen.getByTestId("message-composer-cancel"));
+    await user.click(screen.getByTestId("mailbox-back-to-list"));
     expect(screen.queryByTestId("report-title")).not.toBeInTheDocument();
     rerender(<MailboxView {...defaultProps} composePrefill={prefill} />);
     expect(screen.queryByTestId("report-title")).not.toBeInTheDocument();
@@ -1362,7 +1363,7 @@ describe("MailboxView", () => {
       await screen.findByTestId("mailbox-message-detail");
       fireEvent.click(screen.getByTestId("mailbox-reply"));
       await screen.findByTestId("message-composer");
-      fireEvent.click(screen.getByTestId("message-composer-cancel"));
+      fireEvent.click(screen.getByTestId("mailbox-back-to-list"));
       await waitFor(() => expect(screen.queryByTestId("message-composer")).toBeNull());
 
       act(() => {
@@ -2489,38 +2490,24 @@ describe("MailboxView", () => {
       const afterRight = Number(handle.getAttribute("aria-valuenow"));
       expect(afterRight).toBeGreaterThanOrEqual(afterLeft);
 
-      // FNXC:Mailbox 2026-06-22-18:05: Home clamps to MAILBOX_SIDEBAR_MIN_WIDTH (locked at 180); End clamps to the container max ratio.
       fireEvent.keyDown(handle, { key: "Home" });
-      expect(Number(handle.getAttribute("aria-valuenow"))).toBe(180);
+      expect(Number(handle.getAttribute("aria-valuenow"))).toBe(220);
 
       fireEvent.keyDown(handle, { key: "End" });
-      expect(Number(handle.getAttribute("aria-valuenow"))).toBeGreaterThanOrEqual(180);
+      expect(Number(handle.getAttribute("aria-valuenow"))).toBe(560);
     });
 
-    it("persists and restores scoped mailbox sidebar width", async () => {
+    it("uses the shared standalone sidebar authority outside the app provider", async () => {
       mockUseViewportMode.mockReturnValue("desktop");
       mockFetchInbox.mockResolvedValue(makeInboxResponse([mockMessage], 1));
 
-      const projectId = "proj-persist";
-      const storageKey = `kb:${projectId}:kb-dashboard-mailbox-sidebar-width`;
-      window.localStorage.setItem(storageKey, "360");
-
-      const { unmount } = render(<MailboxView {...defaultProps} projectId={projectId} />);
+      render(<MailboxView {...defaultProps} projectId="proj-persist" />);
 
       const handle = await screen.findByTestId("mailbox-split-resize-handle");
-      expect(Number(handle.getAttribute("aria-valuenow"))).toBe(360);
-
+      expect(Number(handle.getAttribute("aria-valuenow"))).toBe(300);
       fireEvent.keyDown(handle, { key: "ArrowRight" });
-      await waitFor(() => {
-        const savedWidth = Number(window.localStorage.getItem(storageKey));
-        expect(savedWidth).toBeGreaterThan(360);
-      });
-
-      unmount();
-      render(<MailboxView {...defaultProps} projectId={projectId} />);
-      const remountedHandle = await screen.findByTestId("mailbox-split-resize-handle");
-      const persistedWidth = Number(window.localStorage.getItem(storageKey));
-      expect(Number(remountedHandle.getAttribute("aria-valuenow"))).toBe(Math.round(persistedWidth));
+      expect(Number(handle.getAttribute("aria-valuenow"))).toBe(316);
+      expect(window.localStorage.getItem("kb:proj-persist:kb-dashboard-view-sidebar-width")).toBeNull();
     });
   });
 

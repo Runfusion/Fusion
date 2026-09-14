@@ -80,6 +80,78 @@
   color: var(--color-error);
 }
 
+/*
+FNXC:StandardizedViewLayout 2026-09-13-20:32:
+The registered-node rail reuses the shared collection row geometry and tokens so every destination rail reads the
+same: one row per object, name plus status, and selection/hover/focus expressed only through semantic tokens.
+*/
+.nodes-view-rail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-sm);
+}
+
+.nodes-view-rail-empty {
+  padding: var(--space-sm);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.nodes-view-rail-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  min-block-size: var(--touch-target-min-size);
+  padding: var(--space-xs) var(--space-sm);
+  border: var(--btn-border-width) solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  text-align: start;
+  cursor: pointer;
+}
+
+.nodes-view-rail-row:hover {
+  background: var(--surface-hover);
+}
+
+.nodes-view-rail-row:focus-visible {
+  outline: var(--btn-border-width) solid var(--accent);
+  outline-offset: var(--btn-border-width);
+}
+
+.nodes-view-rail-row.active {
+  background: var(--surface-hover);
+  border-color: var(--border);
+}
+
+.nodes-view-rail-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nodes-view-rail-status {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.nodes-view-rail-status--online {
+  color: var(--color-success);
+}
+
+.nodes-view-rail-status--offline,
+.nodes-view-rail-status--error {
+  color: var(--color-error);
+}
+
+.nodes-view-rail-status--connecting {
+  color: var(--color-warning);
+}
+
 .nodes-view-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(calc(var(--space-lg) * 20), 1fr));

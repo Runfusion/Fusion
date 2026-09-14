@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AlertCircle, CheckCircle2, Loader2 } from "lucide-react";
+import { PluginDashboardViewHeader } from "@fusion/dashboard/app/plugins/PluginDashboardViewHeader";
 import type { PluginDashboardViewContext } from "@fusion/dashboard/app/plugins/types";
 import type { LinearIssue } from "./linear-client.js";
 import "./LinearImportView.css";
@@ -165,16 +166,17 @@ export function LinearImportView({ context }: { context?: PluginDashboardViewCon
     });
   };
 
+  /*
+  FNXC:StandardizedPluginViews 2026-09-13-16:50:
+  Linear keeps filter/import state local while its connection badge joins the sole host header. Standalone plugin hosts still receive the same canonical header from the cooperative wrapper.
+  */
   return (
-    <section className="linear-import-view" aria-labelledby="linear-import-heading">
-      <header className="linear-import-view__header">
-        <div>
-          <p className="linear-import-view__eyebrow">Bundled plugin</p>
-          <h1 id="linear-import-heading" className="linear-import-view__title">Linear Import</h1>
-          <p className="linear-import-view__subtitle">Browse Linear issues and import selected issues into Fusion triage.</p>
-        </div>
-        <StatusBadge state={status} message={statusMessage} />
-      </header>
+    <section className="linear-import-view" aria-label="Linear Import">
+      <PluginDashboardViewHeader
+        title="Linear Import"
+        actions={<StatusBadge state={status} message={statusMessage} />}
+      />
+      <p className="linear-import-view__subtitle">Browse Linear issues and import selected issues into Fusion triage.</p>
 
       {status === "missing" ? (
         <div className="card linear-import-view__message linear-import-view__message--info" role="status">

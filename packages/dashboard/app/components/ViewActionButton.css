@@ -1,0 +1,77 @@
+/*
+FNXC:StandardizedViewActions 2026-09-13-16:12:
+Header actions reuse the shared button system and icon metrics. Phone chrome exposes the canonical touch target while hiding only the redundant action label, never labels belonging to tabs, list choices, or forms.
+*/
+.view-action-button {
+  gap: var(--space-xs);
+  white-space: nowrap;
+}
+
+.view-action-button > svg,
+.view-back-button > svg {
+  flex: none;
+  inline-size: var(--icon-size-sm);
+  block-size: var(--icon-size-sm);
+  pointer-events: none;
+}
+
+.view-back-button {
+  flex: none;
+  inline-size: var(--touch-target-min-size);
+  min-inline-size: var(--touch-target-min-size);
+  block-size: var(--touch-target-min-size);
+  min-block-size: var(--touch-target-min-size);
+  padding: 0;
+  border-radius: var(--radius-md);
+}
+
+.view-back-button:focus-visible,
+.view-action-button:focus-visible {
+  box-shadow: var(--focus-ring-strong);
+}
+
+/*
+FNXC:StandardizedViewActions 2026-09-13-22:40:
+Icon-only actions are a PHONE affordance and follow the canonical classifier. A short desktop window (or one
+shrunk by a keyboard) keeps its labelled actions; collapsing them to icons there would remove readable text the
+viewport never actually lacked room for. The pre-hydration fallback covers the unambiguous narrow-width case.
+*/
+@media (max-width: 768px), (max-height: 480px) {
+  html[data-viewport-mode="mobile"] .view-action-button--mobile-icon-only {
+    inline-size: var(--touch-target-min-size);
+    min-inline-size: var(--touch-target-min-size);
+    block-size: var(--touch-target-min-size);
+    min-block-size: var(--touch-target-min-size);
+    justify-content: center;
+    padding: 0;
+  }
+
+  html[data-viewport-mode="mobile"] .view-action-button--mobile-icon-only .view-action-button__label {
+    position: absolute;
+    inline-size: var(--btn-border-width);
+    block-size: var(--btn-border-width);
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 768px) {
+  html:not([data-viewport-mode]) .view-action-button--mobile-icon-only {
+    inline-size: var(--touch-target-min-size);
+    min-inline-size: var(--touch-target-min-size);
+    block-size: var(--touch-target-min-size);
+    min-block-size: var(--touch-target-min-size);
+    justify-content: center;
+    padding: 0;
+  }
+
+  html:not([data-viewport-mode]) .view-action-button--mobile-icon-only .view-action-button__label {
+    position: absolute;
+    inline-size: var(--btn-border-width);
+    block-size: var(--btn-border-width);
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}

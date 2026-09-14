@@ -31,6 +31,26 @@
       "types": "./app/components/ViewHeader.tsx",
       "import": "./app/components/ViewHeader.tsx"
     },
+    "./app/components/ViewLayout": {
+      "types": "./app/components/ViewLayout.tsx",
+      "import": "./app/components/ViewLayout.tsx"
+    },
+    "./app/components/ViewSidebar": {
+      "types": "./app/components/ViewSidebar.tsx",
+      "import": "./app/components/ViewSidebar.tsx"
+    },
+    "./app/components/ViewActionButton": {
+      "types": "./app/components/ViewActionButton.tsx",
+      "import": "./app/components/ViewActionButton.tsx"
+    },
+    "./app/context/ViewLayoutContext": {
+      "types": "./app/context/ViewLayoutContext.tsx",
+      "import": "./app/context/ViewLayoutContext.tsx"
+    },
+    "./app/hooks/useViewSidebarWidth": {
+      "types": "./app/hooks/useViewSidebarWidth.ts",
+      "import": "./app/hooks/useViewSidebarWidth.ts"
+    },
     "./app/utils/copyToClipboard": {
       "types": "./app/utils/copyToClipboard.ts",
       "import": "./app/utils/copyToClipboard.ts"
@@ -38,6 +58,14 @@
     "./app/utils/projectStorage": {
       "types": "./app/utils/projectStorage.ts",
       "import": "./app/utils/projectStorage.ts"
+    },
+    "./app/plugins/PluginDashboardViewHeader": {
+      "types": "./app/plugins/PluginDashboardViewHeader.tsx",
+      "import": "./app/plugins/PluginDashboardViewHeader.tsx"
+    },
+    "./app/plugins/PluginDashboardViewHost": {
+      "types": "./app/plugins/PluginDashboardViewHost.tsx",
+      "import": "./app/plugins/PluginDashboardViewHost.tsx"
     },
     "./app/plugins/pluginViewRegistry": {
       "types": "./app/plugins/pluginViewRegistry.tsx",

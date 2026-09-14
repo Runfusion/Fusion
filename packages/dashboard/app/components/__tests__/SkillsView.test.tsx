@@ -1253,7 +1253,7 @@ describe("SkillsView", () => {
     it("returns to the list via the narrow-mode back button (master→detail flow)", async () => {
       // FNXC:Skills 2026-06-23-01:45: NARROW single-panel master→detail flow.
       // Selecting a skill shows the detail ON TOP; the BACK affordance
-      // (data-testid="skills-detail-back") clears the selection and returns to
+      // (the shared header chevron labelled "Back to skills") clears the selection and returns to
       // the list. Asserts the back control exists and restores the empty-state.
       render(<SkillsView addToast={mockAddToast} onClose={onClose} />);
 
@@ -1271,8 +1271,8 @@ describe("SkillsView", () => {
         expect(screen.getByTestId("skills-view").getAttribute("data-selected")).toBe("true");
       });
 
-      const backButton = screen.getByTestId("skills-detail-back");
-      expect(backButton).toBeTruthy();
+      const backButton = screen.getByRole("button", { name: "Back to skills" });
+      expect(backButton).toHaveClass("view-back-button");
 
       await act(async () => {
         fireEvent.click(backButton);

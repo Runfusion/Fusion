@@ -1309,13 +1309,11 @@ separate approvals Back button outside this header or non-mobile mailbox layouts
   gap: var(--space-lg);
 }
 
-.message-composer-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  font-weight: 600;
-  font-size: 0.95rem;
-}
+/*
+FNXC:StandardizedMailboxLayout 2026-09-14-10:24:
+FN-379 remediation: the composer's local header row was removed, so its rule is deleted rather than left as an
+orphan selector. Its identity and abandon action are painted by the owning ViewHeader.
+*/
 
 .message-composer-body {
   display: flex;

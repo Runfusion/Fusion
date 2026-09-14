@@ -1,4 +1,4 @@
-import { ModalCloseButton } from "./ModalCloseButton";
+import { ViewHeader } from "./ViewHeader";
 import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -78,9 +78,14 @@ setResult(await reportFile({ actionType, targetType, report: result.report, endo
     } finally { setBusy(false); }
   };
   return <div className="report-modal-backdrop" role="presentation"><section className="card report-modal" role="dialog" aria-modal="true" aria-label={`${actionType} report`}>
-    <ModalCloseButton className="btn-icon report-modal__close" aria-label={t("report.close", "Close report")} onClick={onClose} />
+    {/*
+    FNXC:StandardizedViewLayout 2026-09-13-22:40:
+    FN-379 remediation: reporting owns the canonical header instead of a floating close control plus a
+    duplicate first-stage title; later stage headings stay content headings below it.
+    */}
+    <ViewHeader className="report-modal__header" headingLevel={3} title={actionType[0].toUpperCase() + actionType.slice(1)} onClose={onClose} closeButtonProps={{ "aria-label": t("report.close", "Close report") }} />
     {error && <p className="report-modal__error" role="alert">{error}</p>}
-    {!result && <><h2>{actionType[0].toUpperCase() + actionType.slice(1)}</h2><label htmlFor="report-prompt">{prompts[actionType]}</label><textarea id="report-prompt" className="input" value={prompt} onChange={(event) => setPrompt(event.target.value)} maxLength={4000} />
+    {!result && <><label htmlFor="report-prompt">{prompts[actionType]}</label><textarea id="report-prompt" className="input" value={prompt} onChange={(event) => setPrompt(event.target.value)} maxLength={4000} />
       {/* FNXC:ReportPipeline 2026-07-19-10:00: Screenshot storage is opt-in and
       requires retention confirmation before its artifact reference is sent. A
       capture that finishes after opt-out is discarded rather than restoring it. */}
@@ -91,7 +96,7 @@ setResult(await reportFile({ actionType, targetType, report: result.report, endo
       <label htmlFor="report-target">{t("report.targetLabel", "Filing target")}</label><select id="report-target" className="input" value={targetType ?? ""} onChange={(event) => setTargetType((event.target.value || undefined) as ReportTarget | undefined)}><option value="">{t("report.targetInherit", "Use configured action target")}</option><option value="issue">{t("report.targetIssue", "GitHub Issue")}</option><option value="discussion">{t("report.targetDiscussion", "GitHub Discussion")}</option></select>
       <details className="report-modal__activity-trace"><summary>{t("report.activityTrace", "Activity trace to send")}</summary><ul>{getRecentActivity().map((entry, index) => <li key={`${entry}-${index}`}>{entry}</li>)}</ul></details>
       <button className="btn btn-primary" type="button" disabled={!prompt.trim() || busy} onClick={() => void submit()}>{error ? "Retry" : "Continue"}</button></>}
-    {result?.kind === "draft-ready" && result.report && <><h2>{t("report.review", "Review your report")}</h2><label htmlFor="report-review-prompt">{t("report.summary", "Report summary")}</label><textarea id="report-review-prompt" className="input" value={result.report.userPrompt} onChange={(event) => {
+    {result?.kind === "draft-ready" && result.report && <><h4>{t("report.review", "Review your report")}</h4><label htmlFor="report-review-prompt">{t("report.summary", "Report summary")}</label><textarea id="report-review-prompt" className="input" value={result.report.userPrompt} onChange={(event) => {
       const userPrompt = event.target.value;
       // FNXC:ReportPipeline 2026-07-16-18:45:
       // Keep the original derivation marker when the guided prompt changes.
@@ -108,7 +113,7 @@ setResult(await reportFile({ actionType, targetType, report: result.report, endo
       instead of posting a dedupe match immediately.
       */}
       {/* FNXC:ReportPipeline 2026-07-18-20:45: A public-roadmap duplicate is endorsed through the same reviewed data-point UI as an issue, so reporters strengthen the tracked item rather than opening a parallel thread. */}
-      <h2>{result.issue.roadmap ? t("report.roadmapDuplicate.title", "Already on the roadmap — add your data point?") : t("report.duplicateReview", "Review data point for a similar open issue")}</h2>
+      <h4>{result.issue.roadmap ? t("report.roadmapDuplicate.title", "Already on the roadmap — add your data point?") : t("report.duplicateReview", "Review data point for a similar open issue")}</h4>
       <a href={result.issue.url} target="_blank" rel="noreferrer">{result.issue.title}</a>
       <label htmlFor="report-duplicate-prompt">{t("report.summary", "Report summary")}</label>
       <textarea id="report-duplicate-prompt" className="input" value={result.report.userPrompt} onChange={(event) => {
@@ -123,9 +128,9 @@ setResult(await reportFile({ actionType, targetType, report: result.report, endo
 {(result?.kind === "filed" || result?.kind === "endorsed") && <>
       {/* FNXC:ReportPipeline 2026-07-18-12:30: When disabled Discussions fall back to
       Issues, state the actual filed destination rather than implying the report became a Discussion. */}
-      <h2>{result.kind === "filed" && result.destination === "issue" ? "Report filed as an Issue" : "Report sent"}</h2><a href={result.url} target="_blank" rel="noreferrer">{t("report.viewGitHub", "View on GitHub")}</a>{result.report?.body && <><label htmlFor="filed-report">{t("report.final", "Final report")}</label><textarea id="filed-report" className="input" value={result.report.body} readOnly /></>}</>}
+      <h4>{result.kind === "filed" && result.destination === "issue" ? "Report filed as an Issue" : "Report sent"}</h4><a href={result.url} target="_blank" rel="noreferrer">{t("report.viewGitHub", "View on GitHub")}</a>{result.report?.body && <><label htmlFor="filed-report">{t("report.final", "Final report")}</label><textarea id="filed-report" className="input" value={result.report.body} readOnly /></>}</>}
 
-    {result?.kind === "help" && <><h2>{t("report.suggestedHelp", "Suggested help")}</h2><p>{result.answer?.summary ?? result.answer?.content}</p></>}
+    {result?.kind === "help" && <><h4>{t("report.suggestedHelp", "Suggested help")}</h4><p>{result.answer?.summary ?? result.answer?.content}</p></>}
     {result?.kind === "unavailable" && <>
       <p role="alert">{result.message}</p>
       <button className="btn btn-secondary" type="button" onClick={() => { setResult(undefined); setError(undefined); }}>{t("report.returnToPrompt", "Return to prompt")}</button>

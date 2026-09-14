@@ -4626,6 +4626,7 @@ export default interface Resources {
       "sectionProjects": "Projects",
       "sectionSettingsSync": "Settings Sync",
       "sectionSyncHistory": "Sync History",
+      "selectPrompt": "Select a node to inspect its status, projects, and sync state.",
       "startButton": "Start",
       "statusConnecting": "Connecting",
       "statusError": "Error",
@@ -9328,6 +9329,7 @@ export default interface Resources {
       "startPlanning": "Start planning from {{text}}",
       "taskCreatedAndAssigned": "Created {{id}} and assigned to {{agent}}",
       "taskCreatedFromTodo": "Created {{id}} from todo",
+      "title": "Todos",
       "todoListsLabel": "Todo lists",
       "todos": "Todos"
     },

@@ -1,4 +1,4 @@
-import { ModalCloseButton } from "./ModalCloseButton";
+import { ViewHeader } from "./ViewHeader";
 import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { Minimize2, ZoomIn, ZoomOut } from "lucide-react";
@@ -310,11 +310,21 @@ export function ArtifactImageViewer({ artifactId, title, projectId, taskId, onOp
       minSize={{ width: 320, height: 280 }}
     >
       <section className="artifact-image-viewer" aria-label={`Image artifact: ${title}`}>
-        <header className="artifact-image-viewer__header">
-          <h3 className="artifact-image-viewer__title">{title}</h3>
-          {taskId && onOpenTask && <button className="btn btn-sm" type="button" onClick={() => onOpenTask(taskId)}>{t("artifactImageViewer.openTask", "Open task")}</button>}
-          <ModalCloseButton ref={closeRef}  onClick={onClose} aria-label={t("artifactImageViewer.close", "Close artifact preview")} />
-        </header>
+        {/*
+        FNXC:StandardizedViewLayout 2026-09-13-22:40:
+        FN-379 remediation: the media viewer shares the canonical header; its opening focus target stays the
+        canonical close control through the header's ref pass-through.
+        */}
+        <ViewHeader
+          className="artifact-image-viewer__header"
+          headingLevel={3}
+          title={title}
+          titleTestId="artifact-image-viewer-title"
+          actions={taskId && onOpenTask ? <button className="btn btn-sm" type="button" onClick={() => onOpenTask(taskId)}>{t("artifactImageViewer.openTask", "Open task")}</button> : undefined}
+          onClose={onClose}
+          closeButtonRef={closeRef}
+          closeButtonProps={{ "aria-label": t("artifactImageViewer.close", "Close artifact preview") }}
+        />
         <div className="artifact-image-viewer__content" aria-live="polite">
           {loading && <p>{t("artifactImageViewer.loading", "Loading image artifact…")}</p>}
           {error && (

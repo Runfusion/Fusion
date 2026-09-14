@@ -1,0 +1,87 @@
+/*
+FNXC:StandardizedViewSidebar 2026-09-13-16:12:
+All collection rails share one surface, type scale, row geometry, and accessible resize separator. A host may constrain the rendered custom property, but only the provider persists the operator's project preference.
+*/
+.view-sidebar {
+  display: flex;
+  flex: none;
+  min-inline-size: 0;
+  min-block-size: 0;
+  block-size: 100%;
+  background: var(--surface);
+}
+
+.view-sidebar__panel {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  inline-size: var(--view-sidebar-current-width, var(--view-sidebar-width));
+  min-inline-size: 0;
+  min-block-size: 0;
+  overflow: hidden;
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--font-size-sm);
+}
+
+.view-sidebar__panel :is(button, [role="option"], [role="menuitem"], a) {
+  min-block-size: var(--view-sidebar-row-min-height);
+}
+
+.view-sidebar__separator {
+  position: relative;
+  z-index: 1;
+  flex: 0 0 var(--space-sm);
+  inline-size: var(--space-sm);
+  min-block-size: 0;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.view-sidebar__separator::after {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 50%;
+  inline-size: var(--btn-border-width);
+  background: var(--border);
+  transform: translateX(-50%);
+  transition: background var(--transition-fast);
+}
+
+.view-sidebar__separator:is(:hover, :focus-visible)::after {
+  background: var(--todo);
+}
+
+.view-sidebar__separator:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.view-sidebar--mobile {
+  inline-size: 100%;
+}
+
+.view-sidebar--mobile .view-sidebar__panel {
+  inline-size: 100%;
+}
+
+/*
+FNXC:StandardizedViewSidebar 2026-09-13-22:40:
+Full-width rails belong to the phone presentation only, so they follow the canonical classifier rather than the
+raw short-viewport arm: a short desktop window keeps its resizable rail at its stored width. The pre-hydration
+fallback covers the unambiguous narrow-width case until the mode is published.
+*/
+@media (max-width: 768px), (max-height: 480px) {
+  html[data-viewport-mode="mobile"] .view-sidebar,
+  html[data-viewport-mode="mobile"] .view-sidebar__panel {
+    inline-size: 100%;
+  }
+}
+
+@media (max-width: 768px) {
+  html:not([data-viewport-mode]) .view-sidebar,
+  html:not([data-viewport-mode]) .view-sidebar__panel {
+    inline-size: 100%;
+  }
+}

@@ -542,7 +542,6 @@ describe("WorkflowNodeEditor", () => {
   });
 
   afterEach(() => {
-    localStorage.removeItem("fusion:wf-left-sidebar-collapsed");
     localStorage.removeItem("fusion:wf-sidebar-settings-collapsed");
     localStorage.removeItem("fusion:wf-templates-collapsed");
     cleanup();
@@ -633,29 +632,17 @@ describe("WorkflowNodeEditor", () => {
     expect(ir.edges.some((e) => e.from === merge!.id && e.to === "end")).toBe(true);
     expect(ir.edges.some((e) => e.from === "start" && e.to === "end")).toBe(false);
   });
-  it("lets desktop users collapse and restore the workflow sidebar", async () => {
+  it("keeps the desktop workflow rail visible under the shared resize authority", async () => {
     vi.mocked(fetchWorkflows).mockResolvedValue([def()]);
 
     render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
 
     expect(await screen.findByTestId("wf-workflow-name")).toHaveTextContent("QA");
-    const body = screen.getByTestId("wf-new-workflow").closest(".wf-editor-body");
-    expect(body).not.toBeNull();
-    expect(body!).not.toHaveClass("wf-editor-body--sidebar-collapsed");
-    expect(screen.queryByTestId("wf-sidebar-restore")).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByTestId("wf-sidebar-collapse"));
-
-    expect(body!).toHaveClass("wf-editor-body--sidebar-collapsed");
-    const restoreButton = screen.getByTestId("wf-sidebar-restore");
-    expect(restoreButton).toHaveAccessibleName("Show workflow sidebar");
-    expect(restoreButton).toHaveTextContent("");
-    expect(screen.getByTestId("wf-workflow-name").previousElementSibling).toBe(restoreButton);
-
-    fireEvent.click(screen.getByTestId("wf-sidebar-restore"));
-
-    expect(body!).not.toHaveClass("wf-editor-body--sidebar-collapsed");
-    expect(screen.queryByTestId("wf-sidebar-restore")).not.toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: "Workflows" })).toBeInTheDocument();
+    expect(screen.getByRole("separator", { name: "Resize workflow sidebar" })).toBeInTheDocument();
+    expect(screen.getByTestId("wf-new-workflow").closest(".view-header")).toBeInTheDocument();
+    expect(screen.queryByTestId("wf-sidebar-collapse")).toBeNull();
+    expect(screen.queryByTestId("wf-sidebar-restore")).toBeNull();
   });
 
   it("lets users collapse and restore the workflow mini map", async () => {

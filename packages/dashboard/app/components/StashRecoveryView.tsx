@@ -1,4 +1,4 @@
-import { ModalCloseButton } from "./ModalCloseButton";
+import { ViewHeader } from "./ViewHeader";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../api";
@@ -123,10 +123,14 @@ export function StashRecoveryView() {
       {diffState && (
         <div className="modal-overlay open" onClick={() => setDiffState(null)}>
           <div className="modal stash-recovery-diff-modal" role="dialog" aria-modal="true" aria-label={t("stashRecovery.diffDialogLabel", "Diff for {{sha}}", { sha: diffState.sha })} onClick={(event) => event.stopPropagation()}>
-            <div className="modal-header">
-              <h3>{t("stashRecovery.diffHeader", "Diff for {{sha}}", { sha: diffState.sha.slice(0, 7) })}</h3>
-              <ModalCloseButton onClick={() => setDiffState(null)} aria-label={t("stashRecovery.closeDiffDialog", "Close diff dialog")} />
-            </div>
+            {/* FNXC:StandardizedViewLayout 2026-09-13-21:49: Shared chrome for the nested diff dialog; its close still only dismisses the diff. */}
+            <ViewHeader
+              className="modal-header"
+              headingLevel={3}
+              title={t("stashRecovery.diffHeader", "Diff for {{sha}}", { sha: diffState.sha.slice(0, 7) })}
+              onClose={() => setDiffState(null)}
+              closeButtonProps={{ "aria-label": t("stashRecovery.closeDiffDialog", "Close diff dialog") }}
+            />
             {diffState.loading && <p><LoadingSpinner label={t("stashRecovery.loadingDiff", "Loading diff…")} /></p>}
             {diffState.error && <div className="form-error">{diffState.error}</div>}
             {!diffState.loading && !diffState.error && (

@@ -1,4 +1,4 @@
-import { ModalCloseButton } from "./ModalCloseButton";
+import { ViewHeader } from "./ViewHeader";
 import { useState, useEffect, useCallback } from "react";
 import { isCompleteColumnRole } from "../utils/columnRoles";
 import { useTranslation } from "react-i18next";
@@ -142,16 +142,26 @@ export function ChangesDiffModal({ columnFlags,
       closeOnOutsidePointerDown={dismissOnOutsidePointerDown}
     >
       <div className="modal changes-diff-modal">
-        {/* Header */}
-        <div className="modal-header changes-diff-modal-header">
-          <div className="changes-diff-header-title">
-            <FileCode size={18} />
-            <span>{t("changes.title", "Changes")} — {taskId}</span>
-            <span className="changes-stat-summary">
-              <span className="diff-add">+{stats.additions}</span>{" "}
-              <span className="diff-del">-{stats.deletions}</span>
+        {/*
+        FNXC:StandardizedViewLayout 2026-09-13-21:49:
+        Shared chrome owns the rich identity (file icon, task id, diff stats) and the canonical close, while the
+        file navigation, wrap toggle, and refresh stay content-owned actions inside the shared action group.
+        */}
+        <ViewHeader
+          className="modal-header changes-diff-modal-header"
+          icon={FileCode}
+          title={(
+            <span className="changes-diff-header-title">
+              <span>{t("changes.title", "Changes")} — {taskId}</span>
+              <span className="changes-stat-summary">
+                <span className="diff-add">+{stats.additions}</span>{" "}
+                <span className="diff-del">-{stats.deletions}</span>
+              </span>
             </span>
-          </div>
+          )}
+          onClose={onClose}
+          closeButtonProps={{ "aria-label": t("actions.close", "Close") }}
+          actions={(
           <div className="changes-diff-header-actions">
             {files.length > 0 && (
               <div className="changes-nav">
@@ -196,9 +206,9 @@ export function ChangesDiffModal({ columnFlags,
                 {t("actions.refresh", "Refresh")}
               </button>
             )}
-            <ModalCloseButton onClick={onClose} aria-label={t("actions.close", "Close")} />
           </div>
-        </div>
+          )}
+        />
 
         {/* Body */}
         <div className="changes-diff-body">

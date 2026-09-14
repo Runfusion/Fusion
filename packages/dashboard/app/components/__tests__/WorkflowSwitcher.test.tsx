@@ -148,7 +148,7 @@ describe("WorkflowSwitcher", () => {
     expect(shortWidth).toBeGreaterThanOrEqual(240);
     expect(longWidth).toBeGreaterThan(shortWidth);
 
-    const css = loadAllAppCssBaseOnly();
+    const css = readAppFile("components/WorkflowSwitcher.css");
     const triggerRule = cssRuleFor(css, ".workflow-switcher-trigger");
     expect(triggerRule).toMatch(/max-width:\s*calc\(var\(--space-xl\) \* 12\)/);
     const currentNameRule = cssRuleFor(css, ".workflow-switcher-current-name,\n.workflow-switcher-option-name");
@@ -159,7 +159,7 @@ describe("WorkflowSwitcher", () => {
 
   it("matches the ProjectSelector trigger and menu chrome without reverting to the old styling", () => {
     /* Surface Enumeration: CSS parity covers the shared Board/ListView WorkflowSwitcher render seam, the header portal slot, desktop menu chrome, mobile max-width safety, selected/highlighted rows, count-badge preservation, and light-theme selected tint without changing behavior. */
-    const css = loadAllAppCssBaseOnly();
+    const css = readAppFile("components/WorkflowSwitcher.css");
 
     const triggerRule = cssRuleFor(css, ".workflow-switcher-trigger");
     expect(triggerRule).toMatch(/background:\s*transparent/);

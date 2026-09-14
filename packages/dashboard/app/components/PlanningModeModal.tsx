@@ -1,4 +1,7 @@
-import { ModalCloseButton } from "./ModalCloseButton";
+import { ViewActionButton } from "./ViewActionButton";
+import { ViewHeader } from "./ViewHeader";
+import { ViewLayout } from "./ViewLayout";
+import { ViewSidebar } from "./ViewSidebar";
 import "./PlanningModeModal.css";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
@@ -54,7 +57,7 @@ import {
   clearPlanningActiveSession,
 } from "../hooks/modalPersistence";
 import { getRelativeTimeBucket } from "../utils/relativeTimeAgo";
-import { Lightbulb, X, Loader2, CheckCircle, ArrowLeft, ArrowRight, Sparkles, Trash2, RefreshCw, ChevronLeft, MessageSquarePlus, AlertCircle, Clock, HelpCircle, StopCircle, Archive, ArchiveRestore, Pencil, History } from "lucide-react";
+import { Lightbulb, X, Loader2, CheckCircle, ArrowLeft, ArrowRight, Sparkles, Trash2, RefreshCw, MessageSquarePlus, AlertCircle, Clock, HelpCircle, StopCircle, Archive, ArchiveRestore, Pencil, History } from "lucide-react";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { ConversationHistory } from "./ConversationHistory";
 import { PlanningSessionPrompt } from "./PlanningSessionPrompt";
@@ -74,14 +77,9 @@ import { ALL_WORKFLOWS_BOARD_VIEW_ID } from "../utils/boardWorkflowSelection";
 const WARNING_ICON = "⚠️";
 
 /*
-FNXC:Planning 2026-08-16-14:48:
-The embedded Planning sidebar is resizable exactly like Missions (MissionManager's MISSION_SIDEBAR_* constants). Default 300px matches Missions' default (calc(--space-lg 16px * 18.75)); min/max/storage mirror Missions so the two views resize identically and persist independently.
+FNXC:StandardizedViewLayout 2026-09-13-21:43:
+Planning and Missions delegate sidebar width, bounds, persistence, and gesture cleanup to ViewSidebar. They intentionally share one project preference so moving between destinations never changes the rail geometry or leaves an independent resize owner.
 */
-const PLANNING_SIDEBAR_DEFAULT_WIDTH = 300;
-const PLANNING_SIDEBAR_MIN_WIDTH = 220;
-const PLANNING_SIDEBAR_MAX_WIDTH = 560;
-const PLANNING_SIDEBAR_STORAGE_KEY = "fusion:planning-sidebar-width";
-
 const MAX_PLANNING_AUTO_RETRIES = 3;
 
 /*
@@ -711,7 +709,11 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(resumeSessionId ?? null);
   // Mobile: when the modal is narrow, only one pane is visible at a time.
   // `mobileShowDetail` toggles between list (false) and detail (true).
-  const [mobileShowDetail, setMobileShowDetail] = useState<boolean>(Boolean(resumeSessionId));
+  /*
+  FNXC:StandardizedPlanningLayout 2026-09-13-16:30:
+  Phone Planning always enters through the session list for ordinary navigation, including an empty list and an implicitly restored active session. Explicit resume/seed handoffs still transition to detail through their owning effects so notification and task handoffs remain direct.
+  */
+  const [mobileShowDetail, setMobileShowDetail] = useState(false);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [showArchived, setShowArchived] = useState(false);
   const thinkingOutputRef = useRef<HTMLDivElement>(null);
@@ -915,77 +917,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [isRefineMenuOpen]);
-
-  /*
-  FNXC:Planning 2026-08-16-14:48:
-  Resizable Planning sidebar — pointer-drag + arrow-key resize with localStorage persistence, mirroring MissionManager.handleSidebarResizeStart/handleSidebarResizeKeyDown. Width is clamped to PLANNING_SIDEBAR_MIN/MAX and applied as an inline width on the sidebar <aside>. Disabled on mobile where the sidebar stacks full-width.
-  */
-  const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
-    if (typeof window === "undefined") return PLANNING_SIDEBAR_DEFAULT_WIDTH;
-    const stored = window.localStorage.getItem(PLANNING_SIDEBAR_STORAGE_KEY);
-    const parsed = stored ? Number(stored) : NaN;
-    if (!Number.isFinite(parsed)) return PLANNING_SIDEBAR_DEFAULT_WIDTH;
-    return Math.max(PLANNING_SIDEBAR_MIN_WIDTH, Math.min(PLANNING_SIDEBAR_MAX_WIDTH, parsed));
-  });
-
-  const persistSidebarWidth = useCallback((width: number) => {
-    try {
-      window.localStorage.setItem(PLANNING_SIDEBAR_STORAGE_KEY, String(width));
-    } catch {
-      // Ignore storage errors.
-    }
-  }, []);
-
-  const handleSidebarResizeStart = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    if (isMobile) return;
-    event.preventDefault();
-    event.stopPropagation();
-    const handle = event.currentTarget;
-    if (typeof handle.setPointerCapture === "function") {
-      handle.setPointerCapture(event.pointerId);
-    }
-    const startX = event.clientX;
-    const startWidth = sidebarWidth;
-    let latestWidth = startWidth;
-    document.body.style.userSelect = "none";
-
-    const onPointerMove = (moveEvent: PointerEvent) => {
-      const deltaX = moveEvent.clientX - startX;
-      const nextWidth = Math.max(
-        PLANNING_SIDEBAR_MIN_WIDTH,
-        Math.min(PLANNING_SIDEBAR_MAX_WIDTH, startWidth + deltaX),
-      );
-      latestWidth = nextWidth;
-      setSidebarWidth(nextWidth);
-    };
-
-    const onPointerUp = (upEvent: PointerEvent) => {
-      if (typeof handle.releasePointerCapture === "function") {
-        handle.releasePointerCapture(upEvent.pointerId);
-      }
-      document.body.style.userSelect = "";
-      document.removeEventListener("pointermove", onPointerMove);
-      document.removeEventListener("pointerup", onPointerUp);
-      persistSidebarWidth(latestWidth);
-    };
-
-    document.addEventListener("pointermove", onPointerMove);
-    document.addEventListener("pointerup", onPointerUp);
-  }, [isMobile, persistSidebarWidth, sidebarWidth]);
-
-  const handleSidebarResizeKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (isMobile) return;
-    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-    event.preventDefault();
-    const step = event.shiftKey ? 50 : 10;
-    const delta = event.key === "ArrowLeft" ? -step : step;
-    const nextWidth = Math.max(
-      PLANNING_SIDEBAR_MIN_WIDTH,
-      Math.min(PLANNING_SIDEBAR_MAX_WIDTH, sidebarWidth + delta),
-    );
-    setSidebarWidth(nextWidth);
-    persistSidebarWidth(nextWidth);
-  }, [isMobile, persistSidebarWidth, sidebarWidth]);
 
   /*
   FNXC:PlanningComments 2026-07-24-06:05:
@@ -2294,7 +2225,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     const storedSessionId = getPlanningActiveSession(projectId);
     if (!storedSessionId || dismissedResumeRef.current === storedSessionId) return;
     setSelectedSessionId(storedSessionId);
-    setMobileShowDetail(true);
     void loadSession(storedSessionId);
   }, [initialPlanProp, isOpen, projectId, resumeSessionId, selectedSessionId]);
 
@@ -2346,29 +2276,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     if (!isOpen) return;
     void refreshSessionsList();
   }, [isOpen, refreshSessionsList]);
-
-  // Mobile empty-session routing: when the session list finishes loading and
-  // is empty, and there is no resumeSessionId or selected session, auto-
-  // switch to the detail pane so mobile users land on the composer instead
-  // of an empty sidebar. Desktop/tablet split-view is unaffected because
-  // both panes are visible simultaneously.
-  //
-  // We gate on sessionsLoading to avoid firing on the initial render (where
-  // planningSessions is empty but hasn't been fetched yet). When the sessions
-  // list finishes loading, planningSessions reflects the server response and
-  // we can make an informed routing decision.
-  const prevSessionsLoadingRef = useRef(false);
-  useEffect(() => {
-    const justFinishedLoading = prevSessionsLoadingRef.current && !sessionsLoading;
-    prevSessionsLoadingRef.current = sessionsLoading;
-    if (!justFinishedLoading) return;
-    if (viewportMode !== "mobile") return;
-    if (mobileShowDetail) return;
-    if (resumeSessionId) return;
-    if (selectedSessionId) return;
-    if (planningSessions.length > 0) return;
-    setMobileShowDetail(true);
-  }, [viewportMode, mobileShowDetail, resumeSessionId, selectedSessionId, sessionsLoading, planningSessions.length]);
 
   // SSE subscription keeps the list live (mirrors useBackgroundSessions, but
   // unfiltered by status so completed/errored sessions stay visible).
@@ -3582,7 +3489,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       ariaLabel={t("planning.title", "Planning Mode")}
       onClose={handleClose}
       hideHeader
-      dragHandleSelector=".planning-modal > .modal-header"
+      dragHandleSelector=".planning-modal .view-header"
       className="floating-window--planning-mode"
       defaultSize={{ width: Math.min(window.innerWidth * 0.95, 1200), height: window.innerHeight * 0.85 }}
       minSize={{ width: 360, height: 480 }}
@@ -3599,80 +3506,82 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     (
       <div className={isEmbedded ? "modal modal-lg planning-modal planning-modal--embedded" : "modal modal-lg planning-modal"} ref={modalRef}>
         {/*
-        FNXC:PlanningMode 2026-09-12-05:41:
-        Embedded planning is a main-content destination, not a dialog: it drops the modal close button and matches other embedded view headers. Desktop/tablet navigate through the permanent sidebar; only phone keeps Back for its exclusive list/detail flow.
+        FNXC:StandardizedPlanningLayout 2026-09-13-16:30:
+        Planning uses the shared header, one header-owned New session action, shared list/detail navigation, and the project-scoped sidebar width authority. Interview history and rename callbacks remain attached to the same session identity.
         */}
-        <div className={isEmbedded ? "modal-header modal-header--embedded" : "modal-header"}>
-          <div className="detail-title-row">
-            {canReturnToSessionList && (
-              <button
-                className="modal-back planning-session-back"
-                onClick={handleBackToList}
-                aria-label={t("planning.backToSessions", "Back to sessions")}
-                title={t("planning.backToSessions", "Back to sessions")}
-              >
-                <ChevronLeft size={18} />
-              </button>
-            )}
-            {/*
-            FNXC:Planning 2026-06-23-03:00:
-            Header icon mirrors MissionManager's <Target size={20} className="mission-manager__header-icon" />: same size (20) and same var(--todo) tint + flex-shrink:0, applied via the scoped .planning-modal--embedded .modal-header--embedded .detail-title-row > svg rule (it overrides the shared icon-triage brown so the two headers read as siblings).
-            */}
-            <Lightbulb size={20} className="icon-triage" />
-            {selectedSessionId && (view.type === "question" || view.type === "loading" || view.type === "session_loading" || view.type === "error") && activeSessionTitle && isRenamingSession ? (
-              <input
-                className="input planning-session-title-input"
-                aria-label={t("planning.renameSession", "Rename session")}
-                value={sessionTitleDraft}
-                onChange={(event) => setSessionTitleDraft(event.target.value)}
-                onBlur={() => void handleRenameSession()}
-                onKeyDown={(event) => { if (event.key === "Enter") void handleRenameSession(); }}
-                autoFocus
+        <ViewLayout
+          className={`planning-modal-body planning-modal-body--split ${isSessionListMode ? "planning-modal-body--show-list" : "planning-modal-body--show-detail"}`}
+          contentOwnsScroll
+          mobilePane={isSessionListMode ? "list" : "detail"}
+          header={(
+            <ViewHeader
+              icon={Lightbulb}
+              className={isEmbedded ? "modal-header--embedded" : "modal-header"}
+              backAction={canReturnToSessionList ? {
+                label: t("planning.backToSessions", "Back to sessions"),
+                onClick: handleBackToList,
+                className: "planning-session-back",
+              } : undefined}
+              title={selectedSessionId && (view.type === "question" || view.type === "loading" || view.type === "session_loading" || view.type === "error") && activeSessionTitle && isRenamingSession ? (
+                <input
+                  className="input planning-session-title-input"
+                  aria-label={t("planning.renameSession", "Rename session")}
+                  value={sessionTitleDraft}
+                  onChange={(event) => setSessionTitleDraft(event.target.value)}
+                  onBlur={() => void handleRenameSession()}
+                  onKeyDown={(event) => { if (event.key === "Enter") void handleRenameSession(); }}
+                  autoFocus
+                />
+              ) : (
+                <>
+                  <span>{selectedSessionId && (view.type === "question" || view.type === "loading" || view.type === "session_loading" || view.type === "error") && activeSessionTitle ? activeSessionTitle : t("planning.title", "Planning Mode")}</span>
+                  {selectedSessionId && (view.type === "question" || view.type === "loading" || view.type === "session_loading" || view.type === "error") && activeSessionTitle ? <button type="button" className="btn-icon" aria-label={t("planning.renameSession", "Rename session")} onClick={() => { setSessionTitleDraft(activeSessionTitle); setIsRenamingSession(true); }}><Pencil /></button> : null}
+                </>
+              )}
+              actions={(
+                <>
+                  <ViewActionButton kind="create" label={t("planning.newSession", "New session")} onClick={handleNewSession} />
+                  {selectedSessionId && (view.type === "question" || view.type === "loading" || view.type === "session_loading" || view.type === "error" || view.type === "plan_review" || view.type === "create_retry") ? (
+                    <ViewActionButton
+                      ref={historyTriggerRef}
+                      icon={History}
+                      label={t("planning.history", "History")}
+                      className={`planning-history-trigger${isHistoryOpen ? " active" : ""}`}
+                      aria-expanded={isHistoryOpen}
+                      aria-controls="planning-history-panel"
+                      onClick={() => {
+                        const nextOpen = !isHistoryOpen;
+                        setIsHistoryOpen(nextOpen);
+                        if (nextOpen) {
+                          setShowSessionList(false);
+                          if (isCompactInterview) setMobileShowDetail(true);
+                        }
+                      }}
+                    />
+                  ) : null}
+                </>
+              )}
+              onClose={isEmbedded ? undefined : handleClose}
+              closeButtonProps={{ "aria-label": t("common.close", "Close") }}
+            />
+          )}
+          sidebar={shouldRenderSessionSidebar ? (
+            <ViewSidebar ariaLabel={t("planning.planningSessions", "Planning sessions")} hostIdentity="planning" mobile={isMobile} panelTestId="planning-sidebar">
+              <PlanningSessionList
+                sessions={planningSessions}
+                loading={sessionsLoading}
+                selectedSessionId={selectedSessionId}
+                pendingDeleteId={pendingDeleteId}
+                showArchived={showArchived}
+                onToggleShowArchived={() => setShowArchived((v) => !v)}
+                onArchive={(id) => void handleArchiveSession(id)}
+                onSelectSession={handleSelectSession}
+                onRequestDelete={setPendingDeleteId}
+                onConfirmDelete={(id) => void handleDeleteSession(id)}
+                onCancelDelete={() => setPendingDeleteId(null)}
               />
-            ) : (
-              <><h3>{selectedSessionId && (view.type === "question" || view.type === "loading" || view.type === "session_loading" || view.type === "error") && activeSessionTitle ? activeSessionTitle : t("planning.title", "Planning Mode")}</h3>
-              {selectedSessionId && (view.type === "question" || view.type === "loading" || view.type === "session_loading" || view.type === "error") && activeSessionTitle && <button type="button" className="btn-icon" aria-label={t("planning.renameSession", "Rename session")} onClick={() => { setSessionTitleDraft(activeSessionTitle); setIsRenamingSession(true); }}><Pencil /></button>}</>
-            )}
-          </div>
-          {/*
-          FNXC:PlanningSessionBack 2026-07-21-11:15:
-          History remains the only detail action in this group. Session-list navigation lives in the
-          title-row Back control on every viewport, avoiding a duplicate Sessions toggle and keeping
-          compact list/detail state synchronized through one handler.
-          */}
-          {selectedSessionId && (view.type === "question" || view.type === "loading" || view.type === "session_loading" || view.type === "error" || view.type === "plan_review" || view.type === "create_retry") && (
-            <div className="planning-header-controls">
-              <button
-                ref={historyTriggerRef}
-                type="button"
-                className={`btn planning-history-trigger${isHistoryOpen ? " active" : ""}`}
-                aria-expanded={isHistoryOpen}
-                aria-controls="planning-history-panel"
-                onClick={() => {
-                  const nextOpen = !isHistoryOpen;
-                  setIsHistoryOpen(nextOpen);
-                  if (nextOpen) {
-                    setShowSessionList(false);
-                    if (isCompactInterview) setMobileShowDetail(true);
-                  }
-                }}
-              >
-                <History size={16} />
-                {t("planning.history", "History")}
-              </button>
-            </div>
-          )}
-          {!isEmbedded && (
-            <div className="modal-header-actions">
-              <ModalCloseButton onClick={handleClose} aria-label={t("common.close", "Close")} />
-            </div>
-          )}
-        </div>
-
-        <div
-          className={`planning-modal-body planning-modal-body--split ${
-            isSessionListMode ? "planning-modal-body--show-list" : "planning-modal-body--show-detail"
-          }`}
+            </ViewSidebar>
+          ) : undefined}
         >
           {isHistoryOpen && (
             <div className="planning-history-overlay" data-testid="planning-history-overlay">
@@ -3683,20 +3592,25 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                 role="region"
                 aria-label={t("planning.questionAnswerHistory", "Question and answer history")}
               >
-                <div className="planning-history-header">
-                  <div className="planning-history-heading">
-                    <History size={18} />
-                    <div>
-                      <h4>{t("planning.history", "History")}</h4>
-                      <p>{t("planning.historyHint", "Questions, answers, and AI reasoning for each plan update.")}</p>
-                    </div>
-                  </div>
-                  <ModalCloseButton
-                    ref={historyCloseRef}
-                    aria-label={t("planning.closeHistory", "Close history")}
-                    onClick={closeHistory}
-                  />
-                </div>
+                {/*
+                FNXC:StandardizedViewLayout 2026-09-13-22:40:
+                FN-379 remediation: the history overlay shares the canonical header instead of its own row, and
+                keeps its opening focus on the canonical close control.
+                */}
+                <ViewHeader
+                  className="planning-history-header"
+                  headingLevel={3}
+                  icon={History}
+                  title={(
+                    <span className="planning-history-heading">
+                      {t("planning.history", "History")}
+                      <span className="planning-history-hint">{t("planning.historyHint", "Questions, answers, and AI reasoning for each plan update.")}</span>
+                    </span>
+                  )}
+                  onClose={closeHistory}
+                  closeButtonRef={historyCloseRef}
+                  closeButtonProps={{ "aria-label": t("planning.closeHistory", "Close history") }}
+                />
                 <div className="planning-history-scroll">
                   <PlanningSessionPrompt prompt={activePlanPrompt} testId="planning-history-initial-prompt" />
                   {historyPanelEntries.length > 0 ? (
@@ -3713,39 +3627,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
               </section>
             </div>
           )}
-          {shouldRenderSessionSidebar && (
-          <PlanningSessionList
-            sessions={planningSessions}
-            loading={sessionsLoading}
-            selectedSessionId={selectedSessionId}
-            pendingDeleteId={pendingDeleteId}
-            showArchived={showArchived}
-            sidebarWidth={isMobile ? undefined : sidebarWidth}
-            onToggleShowArchived={() => setShowArchived((v) => !v)}
-            onArchive={(id) => void handleArchiveSession(id)}
-            onSelectSession={handleSelectSession}
-            onNewSession={handleNewSession}
-            onRequestDelete={setPendingDeleteId}
-            onConfirmDelete={(id) => void handleDeleteSession(id)}
-            onCancelDelete={() => setPendingDeleteId(null)}
-          />
-          )}
-
-          {!isMobile && (
-            <div
-              className="planning-sidebar-resize-handle"
-              role="separator"
-              aria-orientation="vertical"
-              aria-valuemin={PLANNING_SIDEBAR_MIN_WIDTH}
-              aria-valuemax={PLANNING_SIDEBAR_MAX_WIDTH}
-              aria-valuenow={sidebarWidth}
-              aria-label={t("planning.resizeSidebar", "Resize planning sidebar")}
-              tabIndex={0}
-              onPointerDown={handleSidebarResizeStart}
-              onKeyDown={handleSidebarResizeKeyDown}
-            />
-          )}
-
           <div className="planning-detail">
           {error && <div className="form-error planning-error">{error}</div>}
           {/*
@@ -4257,7 +4138,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
 
           </div>
 
-        </div>
+        </ViewLayout>
       </div>
     )
   );
@@ -4986,12 +4867,9 @@ interface PlanningSessionListProps {
   selectedSessionId: string | null;
   pendingDeleteId: string | null;
   showArchived: boolean;
-  /** Resizable sidebar width (px) on desktop; undefined on mobile where it stacks full-width. */
-  sidebarWidth?: number;
   onToggleShowArchived: () => void;
   onArchive: (id: string) => void;
   onSelectSession: (id: string) => void;
-  onNewSession: () => void;
   onRequestDelete: (id: string) => void;
   onConfirmDelete: (id: string) => void;
   onCancelDelete: () => void;
@@ -5003,26 +4881,26 @@ function PlanningSessionList({
   selectedSessionId,
   pendingDeleteId,
   showArchived,
-  sidebarWidth,
   onToggleShowArchived,
   onArchive,
   onSelectSession,
-  onNewSession,
   onRequestDelete,
   onConfirmDelete,
   onCancelDelete,
 }: PlanningSessionListProps) {
   const { t } = useTranslation("app");
   return (
-    <aside
-      className="planning-sidebar"
-      aria-label={t("planning.planningSessions", "Planning sessions")}
-      style={sidebarWidth === undefined ? undefined : { width: `${sidebarWidth}px` }}
-    >
-      {/*
-      FNXC:Planning 2026-08-16-14:48:
-      Planning intentionally keeps its primary "New session" action pinned to a bottom footer while its session list scrolls. Missions now anchors its slightly taller CTA at the top of its sidebar, so the two surfaces do not require footer-placement parity.
-      */}
+    <div className="planning-sidebar">
+      <div className="planning-sidebar-filter">
+        <button
+          type="button"
+          className="btn btn-sm planning-sidebar-toggle-archived-link"
+          onClick={onToggleShowArchived}
+          aria-pressed={showArchived}
+        >
+          {showArchived ? t("planning.hideArchived", "Hide archived") : t("planning.showArchived", "Show archived")}
+        </button>
+      </div>
       <div className="planning-sidebar-list">
         {/*
         FNXC:PlanningMode 2026-07-15-00:00:
@@ -5141,32 +5019,7 @@ function PlanningSessionList({
           );
         })}
       </div>
-      <div className="planning-sidebar-footer">
-        {/*
-        FNXC:Planning 2026-08-16-14:48:
-        Planning keeps its bottom-anchored New session CTA at its current metrics. It shares the "btn btn-primary" treatment with Missions, whose slightly taller CTA now lives at the top of the mission sidebar; exact placement and height parity are intentionally not required.
-        */}
-        <button
-          className={`btn btn-primary planning-sidebar-new ${selectedSessionId === null ? "active" : ""}`}
-          onClick={onNewSession}
-          type="button"
-        >
-          <MessageSquarePlus size={16} />
-          <span>{t("planning.newSession", "New session")}</span>
-        </button>
-        <a
-          href="#"
-          className="planning-sidebar-toggle-archived-link"
-          onClick={(e) => {
-            e.preventDefault();
-            onToggleShowArchived();
-          }}
-          aria-pressed={showArchived}
-        >
-          {showArchived ? t("planning.hideArchived", "Hide archived") : t("planning.showArchived", "Show archived")}
-        </a>
-      </div>
-    </aside>
+    </div>
   );
 }
 

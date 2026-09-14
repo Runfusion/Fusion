@@ -405,7 +405,7 @@ describe("TaskDetailModal", () => {
       expect(screen.getAllByTestId("task-detail-workflow-badge")).toHaveLength(1);
       expect(screen.queryByTestId("task-detail-workflow-badge-mobile")).toBeNull();
       expect(document.querySelector(".detail-title-row .detail-workflow-badge")).toBeNull();
-      expect(screen.getByRole("button", { name: "Back to task list" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
     });
   });
 
@@ -1310,7 +1310,7 @@ describe("TaskDetailModal", () => {
     expect(screen.queryByRole("button", { name: "Back to task list" })).toBeNull();
   });
 
-  it("renders mobile back control variant when requested", () => {
+  it("uses physical viewport chrome instead of the obsolete header-mode hint", () => {
     render(
       <TaskDetailModal
         initialTab="definition"
@@ -1325,8 +1325,7 @@ describe("TaskDetailModal", () => {
       />,
     );
 
-    expect(screen.getByRole("button", { name: "Back to task list" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
   });
 
   it("omits close control in embedded mode while rendering shared content", () => {
@@ -1424,10 +1423,10 @@ describe("TaskDetailModal", () => {
       expectNoBranchReattachmentAffordance(container);
     });
 
-    it("keeps the removed mobile rebind action shell absent in narrow task detail rendering", () => {
+    it("keeps the removed rebind action shell absent when legacy mobile intent is supplied", () => {
       const { container } = renderTaskDetail(makeTask({ column: "in-review", branch: null, worktree: null }), "back");
 
-      expect(screen.getByRole("button", { name: "Back to task list" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
       expectNoBranchReattachmentAffordance(container);
     });
 

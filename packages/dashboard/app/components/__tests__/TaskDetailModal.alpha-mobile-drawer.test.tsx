@@ -45,9 +45,11 @@ describe("TaskDetailModal Alpha mobile drawer", () => {
     expect(dialog.querySelectorAll(":scope > .alpha-mobile-drawer__header")).toHaveLength(0);
     expect(dialog.querySelectorAll(".task-detail-content > .modal-header")).toHaveLength(1);
     expect(dialog.querySelectorAll(":scope > .alpha-mobile-drawer__close")).toHaveLength(0);
-    expect(screen.queryByRole("button", { name: "Back to board" })).toBeNull();
+    const back = screen.getByRole("button", { name: "Back" });
+    expect(back).toHaveClass("view-back-button");
+    expect(back.querySelector(".lucide-chevron-left")).toBeInTheDocument();
     expect(dialog.querySelector(".task-detail-header-back-btn")).toBeNull();
-    expect(dialog.querySelectorAll(":scope > .alpha-mobile-drawer__handle-target")).toHaveLength(1);
+    expect(dialog.querySelectorAll(":scope > .alpha-mobile-drawer__handle-target.view-drawer__handle-target")).toHaveLength(1);
     expect(document.querySelector(".floating-window--task-detail")).toBeNull();
 
     fireEvent.keyDown(document, { key: "Escape" });

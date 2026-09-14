@@ -23,6 +23,8 @@ import type { PluginSetupStatusResponse, RegistryPluginEntry } from "../api";
 import type { ToastType } from "../hooks/useToast";
 import { useConfirm } from "../hooks/useConfirm";
 import { subscribeSse } from "../sse-bus";
+import { ViewActionButton } from "./ViewActionButton";
+import { ViewHeader } from "./ViewHeader";
 
 /** Normalized plugin lifecycle payload from SSE plugin:lifecycle events */
 interface PluginLifecyclePayload {
@@ -700,20 +702,22 @@ export function PluginManager({ addToast, projectId, onPluginsChanged }: PluginM
   if (selectedPlugin) {
     return (
       <div className="plugin-manager-detail" data-testid="plugin-manager-detail">
-        <div className="plugin-manager-detail-header">
-          <button className="btn-icon" onClick={() => setSelectedPlugin(null)} aria-label={t("plugins.backToList", "Back to plugin list")}>
-            <X size={16} />
-          </button>
-          <div className="plugin-detail-title">
-            <div className="plugin-detail-title-copy">
-              <h4 className="plugin-detail-name">{selectedPlugin.name}</h4>
-              {renderPluginError(selectedPlugin, "plugin-error-text plugin-error-text--detail")}
-            </div>
-            <span className="plugin-state-badge" style={{ color: STATE_COLORS[selectedPlugin.state] || STATE_COLORS.installed }}>
-              {selectedPlugin.state}
+        <ViewHeader
+          className="plugin-manager-detail-header"
+          icon={Package}
+          title={(
+            <span className="plugin-detail-title">
+              <span className="plugin-detail-title-copy">
+                <span className="plugin-detail-name">{selectedPlugin.name}</span>
+                {renderPluginError(selectedPlugin, "plugin-error-text plugin-error-text--detail")}
+              </span>
+              <span className="plugin-state-badge" style={{ color: STATE_COLORS[selectedPlugin.state] || STATE_COLORS.installed }}>
+                {selectedPlugin.state}
+              </span>
             </span>
-          </div>
-        </div>
+          )}
+          backAction={{ label: t("plugins.backToList", "Back to plugin list"), onClick: () => setSelectedPlugin(null) }}
+        />
 
         <div className="plugin-detail-content">
           <div className="plugin-detail-card">
@@ -1231,18 +1235,18 @@ export function PluginManager({ addToast, projectId, onPluginsChanged }: PluginM
   // Plugin list view
   return (
     <div className="plugin-manager" data-testid="plugin-manager">
-      <div className="plugin-manager-header">
-        <span className="plugin-manager-header-title">{t("plugins.installedPlugins", "Installed Plugins")}</span>
-        <div className="plugin-manager-actions">
-          <button className="btn btn-sm" onClick={() => void loadPlugins()} title={t("plugins.refresh", "Refresh")} aria-label={t("plugins.refreshPluginList", "Refresh plugin list")}>
-            <RefreshCw size={14} className={loading ? "spin" : ""} />
-            {t("plugins.refresh", "Refresh")}
-          </button>
-          <button className="btn btn-primary btn-sm" onClick={() => setShowInstall(true)}>
-            <Plus size={14} /> {t("plugins.install", "Install")}
-          </button>
-        </div>
-      </div>
+      {/* FNXC:StandardizedViewLayout 2026-09-13-21:43: Plugin list/detail navigation and installation now use the same header actions and tactile return as every Settings collection without changing install or save controllers. */}
+      <ViewHeader
+        className="plugin-manager-header"
+        icon={Package}
+        title={t("plugins.installedPlugins", "Installed Plugins")}
+        actions={(
+          <>
+            <ViewActionButton icon={RefreshCw} label={t("plugins.refresh", "Refresh")} onClick={() => void loadPlugins()} title={t("plugins.refresh", "Refresh")} aria-label={t("plugins.refreshPluginList", "Refresh plugin list")} />
+            <ViewActionButton kind="create" label={t("plugins.install", "Install")} onClick={() => setShowInstall(true)} />
+          </>
+        )}
+      />
 
       {showInstall && (
         <div className="plugin-install-form">

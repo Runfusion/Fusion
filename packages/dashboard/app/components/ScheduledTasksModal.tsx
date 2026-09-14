@@ -4,7 +4,7 @@ import { ModalCloseButton } from "./ModalCloseButton";
 import "./ScriptsModal.css";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import { Plus, Zap, Globe, Folder } from "lucide-react";
+import { Zap, Globe, Folder } from "lucide-react";
 import type { Routine, RoutineCreateInput } from "@fusion/core";
 import { getErrorMessage } from "@fusion/core";
 import {
@@ -21,6 +21,10 @@ import { RoutineEditor } from "./RoutineEditor";
 import type { ToastType } from "../hooks/useToast";
 import { useEmbeddedPresentation, type ModalPresentation } from "../hooks/useEmbeddedPresentation";
 import { FloatingWindow } from "./FloatingWindow";
+import { ViewActionButton } from "./ViewActionButton";
+import { ViewHeader } from "./ViewHeader";
+import { ViewLayout, type ViewLayoutMobilePane } from "./ViewLayout";
+import { ViewSidebar } from "./ViewSidebar";
 
 /** Polling interval for auto-refreshing the schedule/routine list (30 seconds). */
 const POLL_INTERVAL_MS = 30_000;
@@ -61,6 +65,7 @@ export function ScheduledTasksModal({ onClose, addToast, projectId, presentation
   const liveRunStreamsRef = useRef<Record<string, { close: () => void }>>({});
   // FNXC:AutomationsEmbedded 2026-06-22-00:00: Two-pane embedded layout tracks the routine selected in the left list to render its detail on the right.
   const [selectedRoutineId, setSelectedRoutineId] = useState<string | null>(null);
+  const [mobilePane, setMobilePane] = useState<ViewLayoutMobilePane>("list");
 
   // Build scope options for API calls
   const scopeOptions = useMemo(() => ({
@@ -68,10 +73,23 @@ export function ScheduledTasksModal({ onClose, addToast, projectId, presentation
     projectId: activeScope === "project" ? projectId : undefined,
   }), [activeScope, projectId]);
 
+  /*
+  FNXC:AutomationsScopeFence 2026-09-13-22:40:
+  Global and project automations are two different collections behind one list. A slower Global read must never
+  publish into a Project list (or the reverse): the rows shown would belong to one scope while every subsequent
+  run/toggle/update call carries the other scope's options. Every load captures its scope identity and is
+  discarded — rows AND error toast — when the live scope has moved on.
+  */
+  const scopeIdentity = `${activeScope}:${activeScope === "project" ? projectId ?? "" : ""}`;
+  const liveScopeIdentityRef = useRef(scopeIdentity);
+  liveScopeIdentityRef.current = scopeIdentity;
+
   // Load routines
   const loadRoutines = useCallback(async () => {
+    const requestScopeIdentity = liveScopeIdentityRef.current;
     try {
       const data = await fetchRoutines(scopeOptions);
+      if (liveScopeIdentityRef.current !== requestScopeIdentity) return;
       setRoutines(data);
       setLastRunOutput((previous) => {
         const next = { ...previous };
@@ -90,6 +108,7 @@ export function ScheduledTasksModal({ onClose, addToast, projectId, presentation
         return next;
       });
     } catch (err) {
+      if (liveScopeIdentityRef.current !== requestScopeIdentity) return;
       addToast(getErrorMessage(err) || t("schedule.loadRoutinesError", "Failed to load routines"), "error");
     }
   }, [addToast, scopeOptions]);
@@ -235,7 +254,9 @@ export function ScheduledTasksModal({ onClose, addToast, projectId, presentation
 
   const handleEditRoutine = useCallback((routine: Routine) => {
     setEditingRoutine(routine);
+    setSelectedRoutineId(routine.id);
     setRoutineView("edit");
+    setMobilePane("detail");
   }, []);
 
   const handleUpdateRoutine = useCallback(
@@ -336,6 +357,7 @@ export function ScheduledTasksModal({ onClose, addToast, projectId, presentation
   const handleRoutineCancel = useCallback(() => {
     setRoutineView("list");
     setEditingRoutine(undefined);
+    setMobilePane("list");
   }, []);
 
   useEffect(() => {
@@ -353,13 +375,13 @@ export function ScheduledTasksModal({ onClose, addToast, projectId, presentation
     setRoutineView("list");
     setEditingRoutine(undefined);
     setLastRunOutput({});
+    setMobilePane("list");
   }, []);
 
-  // FNXC:AutomationsEmbedded 2026-06-22-00:00: Keep the embedded detail-pane selection valid; clear it when the selected routine disappears from the (possibly re-scoped/re-polled) list.
+  // FNXC:AutomationsCollectionLayout 2026-09-13-16:41: Keep the detail selection valid across re-scope and polling, and select the first live routine so desktop/tablet never open on a blank document beside a populated rail.
   useEffect(() => {
-    if (selectedRoutineId && !routines.some((r) => r.id === selectedRoutineId)) {
-      setSelectedRoutineId(null);
-    }
+    if (selectedRoutineId && routines.some((routine) => routine.id === selectedRoutineId)) return;
+    setSelectedRoutineId(routines[0]?.id ?? null);
   }, [routines, selectedRoutineId]);
 
   const selectedRoutine = useMemo(
@@ -393,13 +415,6 @@ export function ScheduledTasksModal({ onClose, addToast, projectId, presentation
           <Zap size={48} strokeWidth={1} />
           <h4>{t("schedule.noAutomations", "No automations yet")}</h4>
           <p>{t("schedule.emptyStateDescription", "Create an automation with a schedule, webhook, API, or manual trigger.")}</p>
-          <button
-            className="btn btn-primary btn-sm"
-            onClick={() => setRoutineView("create")}
-          >
-            <Plus size={14} />
-            {t("schedule.createFirst", "Create your first automation")}
-          </button>
         </div>
       );
     }
@@ -423,15 +438,13 @@ export function ScheduledTasksModal({ onClose, addToast, projectId, presentation
     );
   };
 
-  const renderContent = () => {
-    return renderRoutinesContent();
+  const openCreateRoutine = () => {
+    setEditingRoutine(undefined);
+    setRoutineView("create");
+    setMobilePane("detail");
   };
 
-  // Determine if we're in "list" view for showing the "New" button
-  const isShowingList =
-    routineView === "list" && routines.length > 0;
-
-  // Shared scope/count/new-automation toolbar, used by both the modal and embedded presentations.
+  // Shared scope/count toolbar, used by both the modal and embedded presentations.
   const toolbar = (
     <div className="scheduling-toolbar" aria-live="polite">
       <div className="scheduling-toolbar-left" role="group" aria-label={t("schedule.scopeGroup", "Scheduling scope")}>
@@ -462,18 +475,7 @@ export function ScheduledTasksModal({ onClose, addToast, projectId, presentation
           {t("schedule.automationCount", "{{count}} automation{{plural}}", { count: routines.length, plural: routines.length === 1 ? "" : "s" })}
         </span>
       </div>
-      <div className="scheduling-toolbar-right">
-        {isShowingList && (
-          <button
-            className="btn btn-primary btn-sm"
-            onClick={() => setRoutineView("create")}
-            aria-label={t("schedule.createNew", "Create new automation")}
-          >
-            <Plus size={14} />
-            {t("schedule.newAutomation", "New Automation")}
-          </button>
-        )}
-      </div>
+      <div className="scheduling-toolbar-right" />
     </div>
   );
 
@@ -484,76 +486,87 @@ export function ScheduledTasksModal({ onClose, addToast, projectId, presentation
   // collapse to a single column below ~900px (see .automations-embedded CSS). In list view the left pane shows a
   // compact selectable rail; selecting a routine renders its full RoutineCard on the right. In create/edit view the
   // editor spans the full width.
-  if (isEmbedded) {
-    const isListView = routineView === "list";
-    return (
-      <div className="automations-embedded right-dock-embedded-view">
-        <div className="automations-embedded-view">
-          <div className="cc-header automations-embedded-header">
-            <h3 className="cc-title" id="schedules-modal-title">
-              <Zap size={20} className="icon-triage" />
-              {t("schedule.title", "Automations")}
-            </h3>
-          </div>
+  /*
+  FNXC:AutomationsCollectionLayout 2026-09-13-16:29:
+  Automations keeps one mounted collection rail on desktop while selection, create, and edit replace only the detail pane. Phones present the same controller as list then detail and return through ViewHeader's canonical back action, preserving polling and live-run streams.
+  */
+  const automationHeader = (
+    <ViewHeader
+      className={isEmbedded ? undefined : "automation-modal__drag-handle"}
+      icon={Zap}
+      title={t("schedule.title", "Automations")}
+      titleId="schedules-modal-title"
+      backAction={mobilePane === "detail" ? { label: t("actions.back", "Back"), onClick: handleRoutineCancel } : undefined}
+      actions={(
+        <>
+          <ViewActionButton kind="create" label={t("schedule.newAutomation", "New Automation")} onClick={openCreateRoutine} />
+          {!isEmbedded ? <ModalCloseButton onClick={onClose} aria-label={t("common.close", "Close")} /> : null}
+        </>
+      )}
+    />
+  );
 
-          {toolbar}
-
-          {isListView && routines.length > 0 ? (
-            <div className="automations-two-pane">
-              {/* Left pane: compact selectable list of automations */}
-              <div className="automations-list-pane" role="listbox" aria-label={t("schedule.title", "Automations")}>
-                {routines.map((r) => (
-                  <button
-                    key={r.id}
-                    type="button"
-                    role="option"
-                    aria-selected={selectedRoutineId === r.id}
-                    className={`automation-list-row${selectedRoutineId === r.id ? " active" : ""}`}
-                    onClick={() => setSelectedRoutineId(r.id)}
-                  >
-                    <Zap size={14} className="icon-triage" />
-                    <span className="automation-list-row-name">{r.name}</span>
-                    {!r.enabled && (
-                      <span className="automation-list-row-badge">{t("schedule.disabled", "Disabled")}</span>
-                    )}
-                  </button>
-                ))}
-              </div>
-
-              {/* Right pane: detail for the selected automation, or an empty prompt */}
-              <div className="automations-detail-pane">
-                {selectedRoutine ? (
-                  <div className="routine-list">
-                    <RoutineCard
-                      key={selectedRoutine.id}
-                      routine={selectedRoutine}
-                      onEdit={handleEditRoutine}
-                      onDelete={handleDeleteRoutine}
-                      onRun={handleRunRoutine}
-                      onToggle={handleToggleRoutine}
-                      running={runningRoutineId === selectedRoutine.id}
-                      lastRunOutput={lastRunOutput[selectedRoutine.id] ?? null}
-                      liveRunOutput={liveRunOutput[selectedRoutine.id] ?? null}
-                    />
-                  </div>
-                ) : (
-                  <div className="routine-empty-state automations-detail-empty">
-                    <Zap size={48} strokeWidth={1} />
-                    <h4>{t("schedule.selectAutomation", "Select an automation")}</h4>
-                    <p>{t("schedule.selectAutomationHint", "Choose an automation from the list to view its details.")}</p>
-                  </div>
-                )}
-              </div>
-            </div>
-          ) : (
-            // Empty state, create, and edit views span the full width (single column).
-            <div className="automations-single-pane">
-              {renderContent()}
-            </div>
-          )}
-        </div>
+  const automationSidebar = (
+    <ViewSidebar ariaLabel={t("schedule.title", "Automations")} panelTestId="automations-list-pane">
+      <div className="automations-list-pane" role="listbox">
+        {routines.map((routine) => (
+          <button
+            key={routine.id}
+            type="button"
+            role="option"
+            aria-selected={selectedRoutineId === routine.id}
+            className={`automation-list-row${selectedRoutineId === routine.id ? " active" : ""}`}
+            onClick={() => {
+              setSelectedRoutineId(routine.id);
+              setRoutineView("list");
+              setEditingRoutine(undefined);
+              setMobilePane("detail");
+            }}
+          >
+            <Zap size={14} className="icon-triage" />
+            <span className="automation-list-row-name">{routine.name}</span>
+            {!routine.enabled ? <span className="automation-list-row-badge">{t("schedule.disabled", "Disabled")}</span> : null}
+          </button>
+        ))}
       </div>
-    );
+    </ViewSidebar>
+  );
+
+  const automationDetail = routineView !== "list"
+    ? renderRoutinesContent()
+    : selectedRoutine
+      ? (
+        <div className="routine-list">
+          <RoutineCard
+            routine={selectedRoutine}
+            onEdit={handleEditRoutine}
+            onDelete={handleDeleteRoutine}
+            onRun={handleRunRoutine}
+            onToggle={handleToggleRoutine}
+            running={runningRoutineId === selectedRoutine.id}
+            lastRunOutput={lastRunOutput[selectedRoutine.id] ?? null}
+            liveRunOutput={liveRunOutput[selectedRoutine.id] ?? null}
+          />
+        </div>
+      )
+      : routines.length === 0
+        ? renderRoutinesContent()
+        : (
+          <div className="routine-empty-state automations-detail-empty">
+            <Zap size={48} strokeWidth={1} />
+            <h4>{t("schedule.selectAutomation", "Select an automation")}</h4>
+            <p>{t("schedule.selectAutomationHint", "Choose an automation from the list to view its details.")}</p>
+          </div>
+        );
+
+  const automationLayout = (
+    <ViewLayout className="automations-embedded-view" header={automationHeader} tabs={toolbar} sidebar={automationSidebar} mobilePane={mobilePane}>
+      <div className="automations-detail-pane">{automationDetail}</div>
+    </ViewLayout>
+  );
+
+  if (isEmbedded) {
+    return <div className="automations-embedded right-dock-embedded-view">{automationLayout}</div>;
   }
 
   // ── Modal (floating window) presentation ────────────────────────────────
@@ -583,19 +596,7 @@ export function ScheduledTasksModal({ onClose, addToast, projectId, presentation
        * FN-7036 moves the desktop Automations popup into the shared FloatingWindow shell so it matches Plan Mission and Workflow editor drag, resize, stack, clamp, and geometry-persistence behavior. Mobile remains full-screen through the ScriptsModal.css floating-window contract, while the embedded main-content presentation above bypasses all FloatingWindow chrome.
        */}
       <div className="modal modal-lg automation-modal" role="dialog" aria-modal="true" aria-labelledby="schedules-modal-title">
-        <div className="modal-header automation-modal__drag-handle">
-          <div className="detail-title-row">
-            <Zap size={20} className="icon-triage" />
-            <h3 id="schedules-modal-title">{t("schedule.title", "Automations")}</h3>
-          </div>
-          <ModalCloseButton onClick={onClose} aria-label={t("common.close", "Close")} />
-        </div>
-
-        {toolbar}
-
-        <div className="schedule-modal-content" id="scheduled-tasks-content">
-          {renderContent()}
-        </div>
+        {automationLayout}
       </div>
     </FloatingWindow>
   );

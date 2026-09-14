@@ -17,6 +17,18 @@ Discussion filing uses the same scrub-before-egress report pipeline as Issues. F
 
 The Fusion dashboard is the main control plane for tasks, agents, missions, settings, logs, and repository operations.
 
+## Common view composition
+
+Dashboard destinations use one composition contract. On desktop and tablet, a collection keeps its local sidebar visible beside the selected detail, including while creating or editing an item; the sidebar preference starts at 300 pixels, is bounded from 220 to 560 pixels, and is stored separately for each project. On phones, the same mounted view presents the collection first, then the selected detail, so switching presentation does not discard drafts, streams, focus state, or request ownership.
+
+Each surface is ordered as **Header → optional Tabs → Content → optional Footer**. The header owns the current title and view-level actions. A resource's primary creation action appears once in that header with the shared Plus button; phone headers show its icon only while retaining the localized accessible name. Contextual form submission, interview responses, and confirmations may remain in a footer. Tabs, choices, filters, and list labels keep their informative text.
+
+The window tools follow the same rule. **History**, **Scripts**, and **Git Manager** build their title, filters, and single close control in that shared header, and their list or sections scroll in the bounded content area below it. **Scripts** presents its saved scripts as the collection beside the create/edit form, keeps its single **Add Script** entry in the header, and on phones shows the list first and the form behind the shared return. When one of them is framed by the right dock or a mobile drawer, the framing host supplies the exit and the tool shows no second header or duplicate close control.
+
+Dialogs, confirmations, onboarding flows, and secondary windows use the same header. Agents, Usage, Changes, Model selection, node and connection dialogs, settings pickers, task reset, and the expanded workflow output all show one title row that carries their icon, their view-level actions, and the single canonical close control. A surface that deliberately has no exit — an onboarding choice, a duplicate warning, a stash-conflict recovery, or a destructive confirmation — keeps its explicit decision buttons as its only way out rather than gaining a close cross.
+
+A detail return is a single, touch-sized ChevronLeft button before the owning title or identity. Drawers do not add a second title, Back row, close action, or scroll container when their content already owns it. Global navigation and quick-entry controls keep their existing owners and do not become duplicate local destinations.
+
 ## Board completed columns
 
 When a newly completed task arrives while a completed column is already at the top, the column stays at the top and shows that task immediately. If you have scrolled farther down, Fusion preserves your reading position instead of pulling you back to the newest task. This arrival behavior is separate from automatic history pagination: reaching the bottom can continue loading older completed tasks without changing which content you were reading.
@@ -1704,7 +1716,7 @@ Task columns, conversation indexes and transcripts, logs, recommendations, histo
 
 Inspect task definition, logs, review feedback, comments, artifacts, workflow outcomes, model overrides, and task routing from a single modal.
 
-- Editable tasks with descriptions show **Summarize as title** beside the read-mode title; it asks AI to generate a concise title from the description and saves it without opening the edit form.
+- Editable tasks with descriptions show **Summarize as title** beside **Description**; it asks AI to generate a concise title from the description and saves it without opening the edit form.
 - The top-level **Chat** tab appears first for active task details and is the default landing tab for non-`done` tasks. It uses the project Direct Chat default model and thinking level, and exposes one Brain popover with model-only targeting and thinking-level selection without impersonating a Direct Chat agent. Opening the tab is lookup-only: Fusion creates the task-scoped Chat session only after you send a composer message, starter prompt, or question answer. Once a user message exists, the resumable planner chat can appear in the global Chat list; interacted chats are kept when the task reaches its workflow's Complete column and removed when the task is deleted. Each send includes bounded server-built task context so the planner can answer current status, progress, recent activity, dependency, and task definition questions. It shows starter prompts for common planning questions, can render structured planner questions, and converts only explicit operator steering intent through the scoped steering tool. The composer stays pinned while the transcript, loading, error, starter, history, and streaming states scroll internally; on mobile/narrow task detail, the default focused Chat layout hides nonessential title/metadata/tab/action rows until you collapse it from the in-view expand control.
 - The **Activity** view picker offers **Live**, **Feed**, **Raw Logs**, and conditional **Interventions**. Live and Raw Logs show persisted tool arguments and results directly; long payloads stay visible as a clamped preview with an explicit reveal control, and unavailable historical detail is explained inline. Live, Feed, and Raw Logs share an expand/collapse control that lets the active segment fill the task-detail modal, then restores the normal header, tabs, and action footer when collapsed.
 - The **Summary** tab is available for every task and is the default landing tab for completed work. It starts with **Work done by agents**: Plan, Code, and Review report stages appear in chronological order with static headings and counts—there are no collapsed accordions. Every dated, markdown-formatted report is visible immediately; review reports preserve the reviewer's rationale, multi-repository reviews retain each repository's note, and legacy verdicts with no rationale show an explicit no-notes line. The completion summary always appears exactly once at the end of Review, regardless of which summary-projection workflow node produced it, and carries no verdict or status pill because it is a report rather than a decision; a missing report stays explicitly empty rather than being fabricated. There is no Merge stage: Summary owns neither spend nor landed-commit facts, and landed-commit facts appear only in the trailing merge panel for completed work.
@@ -1840,6 +1852,8 @@ Navigation:
 - Mobile: `MobileNavBar` → **More** sheet → **Nodes** (shown only when `experimentalFeatures.nodesView` is enabled)
 
 ![Nodes view](./screenshots/nodes-view.png)
+
+Nodes follows the shared destination layout: registered nodes are listed in the standard left rail, and selecting one shows its card in the detail pane. Node registration lives only in the header (**Add Node** / **Add Docker Node**), including when no node is registered yet, so an empty collection no longer offers a second call to action. On phones the rail is the first screen and the chevron before the title returns to it.
 
 ### Local/Remote Node Switching
 

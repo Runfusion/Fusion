@@ -223,7 +223,7 @@ describe("PlanningModeModal CSS responsive action contract", () => {
     expect(responsiveCss).not.toMatch(/\.planning-actions\s*>\s*\.planning-plan-actions/);
   });
 
-  it("keeps the mobile sessions list scrolling above the bottom-pinned New session footer", () => {
+  it("keeps the mobile sessions list scrolling with no bottom creation footer", () => {
     const css = loadPlanningCss();
     const mobileShellCss = getMediaBlocks(css, MOBILE_PLANNING_SHELL_QUERY).join("\n");
 
@@ -246,8 +246,7 @@ describe("PlanningModeModal CSS responsive action contract", () => {
     expect(sidebarListRule).toMatch(/min-height\s*:\s*0\s*;/);
     expect(sidebarListRule).toMatch(/overflow-y\s*:\s*auto\s*;/);
 
-    const footerRule = findRule(mobileShellCss, ".planning-modal-body--show-list .planning-sidebar-footer");
-    expect(footerRule).toBeTruthy();
-    expect(footerRule).toMatch(/flex-shrink\s*:\s*0\s*;/);
+    expect(css).not.toMatch(/\.planning-sidebar-footer/);
+    expect(css).not.toMatch(/\.planning-sidebar-resize-handle/);
   });
 });

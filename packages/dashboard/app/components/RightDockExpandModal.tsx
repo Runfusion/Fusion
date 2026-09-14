@@ -3,6 +3,7 @@ import { useCallback, useEffect, type RefObject } from "react";
 import { Maximize2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { FloatingWindow } from "./FloatingWindow";
+import { ViewLayoutContent, ViewLayoutHeader } from "./ViewLayout";
 import { findOverflowViewEntry, isOverflowViewEntryExpandable, type OverflowViewEntry, type OverflowViewKey, type OverflowViewRenderProps, type OverflowViewVisibilityOptions } from "./overflowViewRegistry";
 import "./RightDock.css";
 
@@ -82,7 +83,12 @@ export function RightDockExpandModal({
       className="modal right-dock-expand-modal right-dock-expand-modal--floating"
       testId="right-dock-expand-modal"
     >
-      <div
+      {/*
+      FNXC:StandardizedViewLayout 2026-09-13-20:32:
+      The expand window keeps its own draggable title row, but declares it as the canonical header zone so the shared
+      Header → Content composition is explicit here too and no second title can be stacked above the framed view.
+      */}
+      <ViewLayoutHeader
         className="modal-header right-dock-expand-modal__header right-dock-expand-modal__header--draggable"
         data-testid="right-dock-expand-drag-handle"
       >
@@ -92,10 +98,10 @@ export function RightDockExpandModal({
           <span>{entry.label}</span>
         </div>
         <ModalCloseButton onClick={closeAndRestoreFocus} aria-label={t("rightDock.closeExpandedView", "Close expanded right dock view")} data-testid="right-dock-expand-close" />
-      </div>
-      <div className="right-dock-expand-modal__body" data-testid="right-dock-expand-body">
+      </ViewLayoutHeader>
+      <ViewLayoutContent className="right-dock-expand-modal__body" data-testid="right-dock-expand-body">
         {entry.render({ ...renderProps, surface: "expand" })}
-      </div>
+      </ViewLayoutContent>
     </FloatingWindow>
   );
 }

@@ -22,13 +22,6 @@ The shared viewport owns image clipping, touch gestures, and zoom feedback. Tool
   border-bottom: var(--btn-border-width) solid var(--border);
 }
 
-.artifact-image-viewer__title {
-  margin: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .artifact-image-viewer__content {
   display: flex;
   flex: 1;

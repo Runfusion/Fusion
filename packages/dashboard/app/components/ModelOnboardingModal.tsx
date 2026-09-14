@@ -1,4 +1,4 @@
-import { ModalCloseButton } from "./ModalCloseButton";
+import { ViewHeader } from "./ViewHeader";
 import "./ModelOnboardingModal.css";
 import "./SetupWizardModal.css";
 import { lazy, Suspense, useState, useEffect, useCallback, useRef, useMemo, type KeyboardEvent, type ReactNode } from "react";
@@ -2619,9 +2619,21 @@ export function ModelOnboardingModal({
       ariaLabelledBy="onboarding-title"
     >
       <div className="modal model-onboarding-modal">
-        {/* Header */}
-        <div className="model-onboarding-header">
-          <h2 id="onboarding-title" className="model-onboarding-title">
+        {/*
+        FNXC:StandardizedViewLayout 2026-09-13-22:40:
+        FN-379 remediation: onboarding shares the canonical header; the per-step identity stays rich title
+        content and the skip control stays the canonical close affordance.
+        */}
+        <ViewHeader
+          className="model-onboarding-header"
+          titleId="onboarding-title"
+          onClose={step !== "complete" ? handleDismiss : undefined}
+          closeButtonProps={{
+            "aria-label": t("setup.skipOnboardingAriaLabel", "Skip onboarding"),
+            title: t("setup.skipForNow", "Skip for now"),
+          }}
+          title={(
+          <>
             {step === "ai-setup" && (
               <>
                 <Zap size={24} /> {t("setup.titleAiSetup", "Set Up AI")} <span className="onboarding-optional-badge">{t("setup.optionalBadge", "Optional")}</span>
@@ -2652,15 +2664,9 @@ export function ModelOnboardingModal({
                 <CheckCircle size={24} /> {t("setup.titleAllSet", "All Set!")}
               </>
             )}
-          </h2>
-          {step !== "complete" && (
-            <ModalCloseButton
-              onClick={handleDismiss}
-              aria-label={t("setup.skipOnboardingAriaLabel", "Skip onboarding")}
-              title={t("setup.skipForNow", "Skip for now")}
-             />
+          </>
           )}
-        </div>
+        />
 
         {/* Step indicator - progress steps + complete */}
         <div className="model-onboarding-steps">

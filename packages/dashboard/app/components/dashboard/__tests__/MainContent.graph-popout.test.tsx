@@ -8,10 +8,12 @@ import { usePoppedOutTasks } from "../../../hooks/usePoppedOutTasks";
 import type { PluginDashboardViewContext } from "../../../plugins/types";
 
 const hostContexts: PluginDashboardViewContext[] = [];
+const hostLayouts: Array<{ title?: unknown }> = [];
 
 vi.mock("../../../plugins/PluginDashboardViewHost", () => ({
-  PluginDashboardViewHost: ({ taskView, context }: { taskView: string; context?: PluginDashboardViewContext }) => {
+  PluginDashboardViewHost: ({ taskView, context, layout }: { taskView: string; context?: PluginDashboardViewContext; layout?: { title?: unknown } }) => {
     if (context) hostContexts.push(context);
+    if (layout) hostLayouts.push(layout);
     const task = context?.tasks[0];
     return (
       <div data-testid="plugin-host" data-task-view={taskView}>
@@ -319,6 +321,13 @@ describe("MainContent graph task pop-out wiring", () => {
     expect(setters.setTaskPopupsBoardListOnlyImmediate).toHaveBeenCalledWith(true);
     expect(setters.setShowCostBadgeOnCardsImmediate).toHaveBeenCalledWith(false);
     expect(setters.setTaskDetailChatFirstImmediate).toHaveBeenCalledWith(false);
+  });
+
+  it("gives each enabled plugin destination host-owned canonical chrome", () => {
+    hostLayouts.length = 0;
+    render(<MainContent {...mainContentProps()} />);
+    expect(hostLayouts.length).toBeGreaterThan(0);
+    expect(hostLayouts.every((layout) => layout.title === "Graph")).toBe(true);
   });
 
   it("routes dependency-graph bridge and rendered task-card opens to the shared pop-out", () => {

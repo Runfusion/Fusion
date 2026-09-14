@@ -1,4 +1,4 @@
-import { ModalCloseButton } from "./ModalCloseButton";
+import { ViewHeader } from "./ViewHeader";
 import "@xyflow/react/dist/style.css";
 import { isCompleteColumnRole, isReviewColumnRole } from "../utils/columnRoles";
 import "./WorkflowResultsTab.css";
@@ -1353,11 +1353,27 @@ export function WorkflowResultsTab({
             data-testid="workflow-output-modal"
           >
             <div className="workflow-output-modal" role="dialog" aria-modal="true">
-              <div className="workflow-output-modal-header">
-                <div className="workflow-output-modal-title">
-                  <span className="workflow-output-modal-name">{result.workflowStepName}</span>
-                  {phaseBadge(phase, result.workflowStepId, "workflow-output-modal-phase", t)}
-                </div>
+              {/*
+              FNXC:StandardizedViewLayout 2026-09-13-21:49:
+              The expanded workflow output dialog uses the shared header: rich step identity plus the phase badge as
+              its title, the render-mode toggle as a header action, and the canonical close.
+              */}
+              <ViewHeader
+                className="workflow-output-modal-header"
+                headingLevel={3}
+                title={(
+                  <span className="workflow-output-modal-title">
+                    <span className="workflow-output-modal-name">{result.workflowStepName}</span>
+                    {phaseBadge(phase, result.workflowStepId, "workflow-output-modal-phase", t)}
+                  </span>
+                )}
+                onClose={closeExpandedView}
+                closeButtonProps={{
+                  className: "btn btn-icon btn-sm workflow-output-modal-close",
+                  "data-testid": "workflow-output-modal-close",
+                  "aria-label": t("actions.close", "Close"),
+                }}
+                actions={(
                 <div className="workflow-output-modal-controls">
                   <button
                     type="button"
@@ -1368,14 +1384,9 @@ export function WorkflowResultsTab({
                   >
                     {renderMode === "markdown" ? t("app:workflow.markdown", "Markdown") : t("app:workflow.plain", "Plain")}
                   </button>
-                  <ModalCloseButton
-                    className="btn btn-icon btn-sm workflow-output-modal-close"
-                    onClick={closeExpandedView}
-                    data-testid="workflow-output-modal-close"
-                    aria-label={t("actions.close", "Close")}
-                   />
                 </div>
-              </div>
+                )}
+              />
               <div className="workflow-output-modal-body">
                 <div
                   className={`workflow-result-output workflow-result-output--expanded${renderMode === "markdown" ? " workflow-result-output--markdown" : ""}`}

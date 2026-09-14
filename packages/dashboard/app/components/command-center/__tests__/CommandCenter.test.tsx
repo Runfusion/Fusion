@@ -490,7 +490,7 @@ describe("CommandCenter shell", () => {
         onThemeModeChange={vi.fn()}
       />,
     );
-    expect(screen.getByTestId("command-center-section-nav-trigger").textContent).toContain("Overview");
+    expect(screen.getByTestId("command-center-section-option-overview")).toHaveAttribute("aria-current", "page");
     expect(screen.getByTestId("command-center-panel-overview")).toBeTruthy();
     expect(screen.getByTestId("command-center-controls")).toBeTruthy();
     expect(screen.queryByTestId("cc-controls-org-chart")).toBeNull();
@@ -1136,24 +1136,21 @@ describe("CommandCenter shell", () => {
     ).toBe(true);
   });
 
-  it("exposes the ARIA listbox pattern", () => {
+  it("exposes one labelled section-navigation rail", () => {
     render(<CommandCenter />);
-    const trigger = screen.getByTestId("command-center-section-nav-trigger");
+    const navigation = screen.getByRole("navigation", { name: "Dashboard sections" });
     expect(screen.queryByRole("tablist")).toBeNull();
     expect(screen.queryByRole("tab")).toBeNull();
-    expect(trigger.getAttribute("aria-haspopup")).toBe("listbox");
-    expect(trigger.getAttribute("aria-expanded")).toBe("false");
-    fireEvent.click(trigger);
-    expect(screen.getByRole("listbox").querySelectorAll('[role="option"]')).toHaveLength(17);
+    expect(within(navigation).getAllByRole("button")).toHaveLength(17);
     expect(screen.queryByTestId("command-center-section-option-ideation")).toBeNull();
     expect(screen.queryByTestId("command-center-section-option-nodes")).toBeNull();
     expect(screen.getByRole("region", { name: "Overview" })).toBeTruthy();
   });
 
-  it("activates a section from the dropdown", () => {
+  it("activates a section from the shared rail", () => {
     render(<CommandCenter />);
     selectCommandCenterSection("tokens");
-    expect(screen.getByTestId("command-center-section-nav-trigger").textContent).toContain("Tokens");
+    expect(screen.getByTestId("command-center-section-option-tokens")).toHaveAttribute("aria-current", "page");
     expect(screen.getByTestId("command-center-panel-tokens")).toBeTruthy();
   });
 
@@ -1348,39 +1345,27 @@ describe("CommandCenter shell", () => {
     expect(screen.getByTestId("cc-area-team").textContent).not.toContain("NaN");
   });
 
-  it("lists every enabled section in the dropdown", () => {
+  it("lists every enabled section in the shared rail", () => {
     render(<CommandCenter nodesEnabled={true} />);
-    fireEvent.click(screen.getByTestId("command-center-section-nav-trigger"));
     for (const id of ["overview", "tokens", "tools", "activity", "productivity", "workflows", "ecosystem", "github", "signals", "system", "nodes", "reliability", "mission-control", "team"]) {
       expect(screen.getByTestId(`command-center-section-option-${id}`)).toBeTruthy();
     }
   });
 
-  it("supports keyboard navigation and selection in the dropdown", () => {
+  it("keeps rail sections keyboard-focusable while activating exactly one section", () => {
     render(<CommandCenter nodesEnabled={true} />);
-    const trigger = screen.getByTestId("command-center-section-nav-trigger");
-    trigger.focus();
-    fireEvent.keyDown(trigger, { key: "ArrowDown" });
-    const overview = screen.getByTestId("command-center-section-option-overview");
-    expect(document.activeElement).toBe(overview);
-    fireEvent.keyDown(overview, { key: "ArrowDown" });
-    expect(document.activeElement).toBe(screen.getByTestId("command-center-section-option-tokens"));
-    fireEvent.keyDown(document.activeElement!, { key: "End" });
-    expect(document.activeElement).toBe(screen.getByTestId("command-center-section-option-mission-control"));
-    fireEvent.keyDown(document.activeElement!, { key: "Home" });
-    fireEvent.keyDown(document.activeElement!, { key: "ArrowDown" });
-    fireEvent.keyDown(document.activeElement!, { key: "Enter" });
+    const tokens = screen.getByTestId("command-center-section-option-tokens");
+    tokens.focus();
+    fireEvent.click(tokens);
     expect(screen.getByTestId("command-center-panel-tokens")).toBeTruthy();
-    expect(document.activeElement).toBe(trigger);
+    expect(document.activeElement).toBe(tokens);
   });
 
-  it("closes the dropdown with Escape", () => {
+  it("keeps the section rail mounted after selection", () => {
     render(<CommandCenter />);
-    const trigger = screen.getByTestId("command-center-section-nav-trigger");
-    fireEvent.click(trigger);
-    fireEvent.keyDown(screen.getByRole("listbox"), { key: "Escape" });
-    expect(screen.queryByRole("listbox")).toBeNull();
-    expect(document.activeElement).toBe(trigger);
+    selectCommandCenterSection("tokens");
+    expect(screen.getByRole("navigation", { name: "Dashboard sections" })).toBeInTheDocument();
+    expect(screen.getByTestId("command-center-section-option-tokens")).toHaveAttribute("aria-current", "page");
   });
 
   it("keeps the active section panel focusable", () => {

@@ -1,4 +1,6 @@
-import { ModalCloseButton } from "./ModalCloseButton";
+import { ViewActionButton } from "./ViewActionButton";
+import { ViewHeader } from "./ViewHeader";
+import { ViewLayout } from "./ViewLayout";
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import type { PlanningQuestion, Settings, ThinkingLevel } from "@fusion/core";
@@ -829,26 +831,20 @@ export function MissionInterviewModal({
         The Plan Mission with AI workspace must be draggable and resizable on desktop by delegating geometry to FloatingWindow, while mobile keeps the existing full-screen/sheet-like mission interview flow. Keep one embedded mission header so close/send-to-background controls do not duplicate FloatingWindow chrome.
       */}
       <div className="modal modal-lg planning-modal mission-interview-modal">
-        <div className="modal-header mission-interview-modal__drag-handle">
-          <div className="detail-title-row">
-            <Target size={20} className="icon-triage" />
-            <h3>{t("missions.planTitle", "Plan Mission with AI")}</h3>
-          </div>
-          <div className="modal-header-actions">
-            {canSendToBackground && (
-              <button
-                className="modal-send-to-background"
-                onClick={handleSendToBackground}
-                title={t("missions.sendToBackground", "Send to background")}
-                aria-label={t("missions.sendToBackground", "Send to background")}
-              >
-                <Minimize2 size={16} />
-              </button>
-            )}
-            <ModalCloseButton onClick={handleClose} aria-label={t("actions.close", "Close")} />
-          </div>
-        </div>
-
+        {/* FNXC:StandardizedMissionInterviewLayout 2026-09-13-16:30: Mission interviews use the same header/content shell as their owning Missions destination while retaining backgrounding and close semantics. */}
+        <ViewLayout
+          contentOwnsScroll
+          header={(
+            <ViewHeader
+              icon={Target}
+              title={t("missions.planTitle", "Plan Mission with AI")}
+              className="mission-interview-modal__drag-handle"
+              actions={canSendToBackground ? <ViewActionButton icon={Minimize2} label={t("missions.sendToBackground", "Send to background")} onClick={handleSendToBackground} /> : undefined}
+              onClose={handleClose}
+              closeButtonProps={{ "aria-label": t("actions.close", "Close") }}
+            />
+          )}
+        >
         <div className="planning-modal-body">
           {error && <div className="form-error planning-error">{error}</div>}
           {/*
@@ -1064,6 +1060,7 @@ export function MissionInterviewModal({
           )}
 
         </div>
+        </ViewLayout>
       </div>
     </FloatingWindow>
   );

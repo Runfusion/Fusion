@@ -9,6 +9,7 @@ import {
 } from "@fusion/core";
 import { Header, useViewportMode } from "./components/Header";
 import { AlphaProvider } from "./context/AlphaContext";
+import { ViewLayoutProvider } from "./context/ViewLayoutContext";
 import {
   AppTaskPopoutWindows,
   useAppMainPanelTaskDetailState,
@@ -2261,6 +2262,7 @@ function AppInner() {
   const alphaDesktopActiveNavigationId = alphaDesktopWindows.topmost ?? taskView;
   return (
     <AlphaProvider>
+    <ViewLayoutProvider projectId={currentProject?.id}>
     <ConfirmDialogProvider skipConfirmations={skipConfirmationDialogs}>
       <ChatMessageLayoutProvider value={chatMessageLayout}>
       <ChatSubmitOnEnterProvider value={chatSubmitOnEnter}>
@@ -2722,6 +2724,7 @@ function AppInner() {
       </ChatSubmitOnEnterProvider>
       </ChatMessageLayoutProvider>
     </ConfirmDialogProvider>
+    </ViewLayoutProvider>
     </AlphaProvider>
   );
 }

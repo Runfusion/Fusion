@@ -3,7 +3,7 @@ import { useState, useCallback, useMemo, Fragment, useEffect, useLayoutEffect, u
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import { ArrowUpDown, ArrowUp, ArrowDown, Link, Columns3, EyeOff, Eye, ChevronRight, Zap, Trash2, Pause, Play } from "lucide-react";
+import { ArrowUpDown, ArrowUp, ArrowDown, Link, Columns3, EyeOff, Eye, ChevronRight, Zap, Trash2, Pause, Play, ListChecks, Pencil } from "lucide-react";
 import { DEFAULT_COLUMN, THINKING_LEVELS, getErrorMessage, isColumn, sortTasksForDisplayColumn, type Task, type TaskDetail, type Column, type ColumnId, type TaskCreateInput, type MergeResult, type GithubIssueAction, type PrInfo, type ThinkingLevel } from "@fusion/core";
 import { resolveEffectiveAutoMerge } from "../../../core/src/merge/task-merge";
 import { useColumnLabel } from "../i18n/labels";
@@ -39,6 +39,9 @@ import { isReviewBudgetExhaustedApproval } from "../utils/reviewBudgetApproval";
 import { useConfirm } from "../hooks/useConfirm";
 import { extractDependencyDeleteConflict, extractLineageDeleteConflict } from "../utils/taskDelete";
 import { WorkflowSwitcher } from "./WorkflowSwitcher";
+import { ViewSidebar } from "./ViewSidebar";
+import { ViewActionButton } from "./ViewActionButton";
+import { ViewHeader } from "./ViewHeader";
 import { computeWorkflowStatusCounts } from "./workflowStatusCounts";
 import { writeBoardWorkflowsCache } from "../utils/boardWorkflowsCache";
 import { useBoardWorkflows } from "../hooks/useBoardWorkflows";
@@ -208,25 +211,6 @@ function readSelectedTaskId(projectId?: string): string | null {
   return null;
 }
 
-function readSidebarWidth(projectId?: string): number {
-  const fallbackWidth = 400;
-  try {
-    const saved = getScopedItem("kb-dashboard-list-sidebar-width", projectId);
-    if (!saved) return fallbackWidth;
-    const parsed = Number(saved);
-    if (Number.isFinite(parsed) && parsed > 0) {
-      return parsed;
-    }
-  } catch {
-    // Invalid localStorage data - fall through to default
-  }
-
-  return fallbackWidth;
-}
-
-const LIST_SIDEBAR_MIN_WIDTH = 64; // FNXC:ListView 2026-06-22-00:00: The desktop task-list split sidebar minimum is 64 (was 120) so users can shrink the left panel much further; task titles wrap to two lines (.list-split-sidebar .list-cell-title) so they stay legible at narrow widths. Resize, keyboard, and ARIA paths share one clamp value.
-const LIST_SIDEBAR_MAX_RATIO = 0.65;
-const LIST_SIDEBAR_KEYBOARD_STEP = 16;
 const LIST_MINIMUM_USABLE_TASK_LIST_WIDTH = 320;
 const LIST_MINIMUM_USABLE_DETAIL_WIDTH = 480;
 export const LIST_MINIMUM_SPLIT_LAYOUT_WIDTH = LIST_MINIMUM_USABLE_TASK_LIST_WIDTH + LIST_MINIMUM_USABLE_DETAIL_WIDTH;
@@ -234,15 +218,6 @@ export const LIST_MINIMUM_SPLIT_LAYOUT_WIDTH = LIST_MINIMUM_USABLE_TASK_LIST_WID
 /** Returns whether the List surface can keep both its task list and embedded detail usable. */
 export function canUseListSplitLayout(containerWidth: number): boolean {
   return containerWidth >= LIST_MINIMUM_SPLIT_LAYOUT_WIDTH;
-}
-
-function getSidebarMaxWidth(containerWidth: number): number {
-  return Math.max(LIST_SIDEBAR_MIN_WIDTH, containerWidth * LIST_SIDEBAR_MAX_RATIO);
-}
-
-function clampSidebarWidth(width: number, containerWidth: number): number {
-  const maxWidth = getSidebarMaxWidth(containerWidth);
-  return Math.min(Math.max(width, LIST_SIDEBAR_MIN_WIDTH), maxWidth);
 }
 
 interface ListViewProps {
@@ -535,16 +510,12 @@ export function ListView({
     return persistedSelection ? tasks.find((task) => task.id === persistedSelection) ?? null : null;
   });
   const [selectedTaskInitialTab, setSelectedTaskInitialTab] = useState<DetailTaskTab | undefined>();
-  const [sidebarWidth, setSidebarWidth] = useState<number>(() => readSidebarWidth(projectId));
   const splitLayoutRef = useRef<HTMLDivElement>(null);
   const [splitLayoutContainer, setSplitLayoutContainer] = useState<HTMLDivElement | null>(null);
   const setSplitLayoutRef = useCallback((node: HTMLDivElement | null) => {
     splitLayoutRef.current = node;
     setSplitLayoutContainer(node);
   }, []);
-  const splitSidebarRef = useRef<HTMLDivElement>(null);
-  // FNXC:ListView 2026-06-22-18:00: Holds the active pointer-drag teardown so move/up/cancel/unmount all detach the same listeners — prevents the "window mousemove with no cleanup" leak called out by the frontend-races review.
-  const splitResizeTeardownRef = useRef<(() => void) | null>(null);
   const previousStorageProjectIdRef = useRef(projectId);
 
   useEffect(() => {
@@ -561,7 +532,6 @@ export function ListView({
     setSelectedTaskSnapshot(
       persistedSelection ? tasks.find((task) => task.id === persistedSelection) ?? null : null,
     );
-    setSidebarWidth(readSidebarWidth(projectId));
   }, [projectId, tasks]);
 
   // Persist selection to localStorage
@@ -616,63 +586,6 @@ export function ListView({
     observer.observe(splitLayoutContainer);
     return () => observer.disconnect();
   }, [splitLayoutContainer]);
-
-  useEffect(() => {
-    if (useSinglePaneList || typeof ResizeObserver === "undefined") return;
-    const container = splitLayoutRef.current;
-    if (!container) return;
-
-    const applyClamp = () => {
-      /*
-      FNXC:ListView 2026-06-22-18:00:
-      A zero/unmeasurable container width must NOT clamp the persisted sidebar width down to the 64px
-      min — that collapse made the resize handle appear broken (drag snapped the pane to the minimum
-      and refused to widen). Only re-clamp when the container reports a real width.
-      */
-      const containerWidth = container.clientWidth;
-      if (containerWidth <= 0) return;
-      // Keep width valid when viewport/container size changes.
-      const clamped = clampSidebarWidth(sidebarWidth, containerWidth);
-      if (clamped !== sidebarWidth) {
-        setSidebarWidth(clamped);
-      }
-    };
-
-    applyClamp();
-    const observer = new ResizeObserver(applyClamp);
-    observer.observe(container);
-    return () => observer.disconnect();
-  }, [sidebarWidth, useSinglePaneList]);
-
-  useEffect(() => {
-    if (useSinglePaneList || typeof ResizeObserver === "undefined") return;
-    const sidebar = splitSidebarRef.current;
-    const container = splitLayoutRef.current;
-    if (!sidebar || !container) return;
-
-    let saveTimer: ReturnType<typeof setTimeout> | null = null;
-    let lastSavedWidth = sidebar.offsetWidth;
-
-    const observer = new ResizeObserver(() => {
-      const nextWidth = clampSidebarWidth(sidebar.offsetWidth, container.clientWidth);
-      if (nextWidth === lastSavedWidth) return;
-      lastSavedWidth = nextWidth;
-      if (saveTimer) clearTimeout(saveTimer);
-      saveTimer = setTimeout(() => {
-        try {
-          setScopedItem("kb-dashboard-list-sidebar-width", String(nextWidth), projectId);
-        } catch {
-          // localStorage persistence is best-effort.
-        }
-      }, 200);
-    });
-
-    observer.observe(sidebar);
-    return () => {
-      observer.disconnect();
-      if (saveTimer) clearTimeout(saveTimer);
-    };
-  }, [projectId, useSinglePaneList]);
 
   // Bulk edit state and handlers (declared before clearSelection so every clear path resets pending lane edits)
   const [executorModel, setExecutorModel] = useState<string>("__no_change__");
@@ -2221,88 +2134,6 @@ export function ListView({
     }, 200);
   }, [projectId]);
 
-  /*
-  FNXC:ListView 2026-06-22-18:00:
-  Pointer-based split resize. setPointerCapture keeps move/up events flowing to the handle even when
-  the cursor leaves it, and a single teardown ref (cleared on pointerup/pointercancel/unmount) detaches
-  every listener exactly once. Width is measured from a live rect per move (re-reading rect.left/width
-  each frame) and clamped between LIST_SIDEBAR_MIN_WIDTH (64) and 65% of the container so the inline
-  style={{ width }} — which wins over the grid `auto` track — updates live and persists.
-  */
-  const handleSplitResizeStart = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    if (useSinglePaneList) return;
-    const container = splitLayoutRef.current;
-    if (!container) return;
-    event.preventDefault();
-
-    // Detach any prior drag (defensive against a missed pointerup).
-    splitResizeTeardownRef.current?.();
-
-    const handle = event.currentTarget;
-    const pointerId = event.pointerId;
-    try {
-      handle.setPointerCapture(pointerId);
-    } catch {
-      // setPointerCapture is best-effort (e.g. synthetic events in tests).
-    }
-
-    const onPointerMove = (moveEvent: PointerEvent) => {
-      const rect = container.getBoundingClientRect();
-      // Guard against an unmeasurable container so a drag never collapses the pane to the min.
-      const containerWidth = rect.width > 0 ? rect.width : container.clientWidth;
-      if (containerWidth <= 0) return;
-      const proposedWidth = moveEvent.clientX - rect.left;
-      setSidebarWidth(clampSidebarWidth(proposedWidth, containerWidth));
-    };
-
-    const teardown = () => {
-      window.removeEventListener("pointermove", onPointerMove);
-      window.removeEventListener("pointerup", teardown);
-      window.removeEventListener("pointercancel", teardown);
-      try {
-        handle.releasePointerCapture(pointerId);
-      } catch {
-        // Capture may already be released.
-      }
-      splitResizeTeardownRef.current = null;
-    };
-
-    splitResizeTeardownRef.current = teardown;
-    window.addEventListener("pointermove", onPointerMove);
-    window.addEventListener("pointerup", teardown);
-    window.addEventListener("pointercancel", teardown);
-  }, [useSinglePaneList]);
-
-  // FNXC:ListView 2026-06-22-18:00: Tear down any in-flight resize drag on unmount so window pointer listeners never leak.
-  useEffect(() => () => splitResizeTeardownRef.current?.(), []);
-
-  const handleSplitResizeKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (useSinglePaneList) return;
-    const measuredWidth = splitLayoutRef.current?.clientWidth ?? 0;
-    const fallbackWidth = sidebarWidth / LIST_SIDEBAR_MAX_RATIO + LIST_SIDEBAR_KEYBOARD_STEP;
-    const containerWidth = Math.max(measuredWidth, fallbackWidth);
-
-    const maxWidth = getSidebarMaxWidth(containerWidth);
-
-    if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
-      event.preventDefault();
-      const delta = event.key === "ArrowLeft" ? -LIST_SIDEBAR_KEYBOARD_STEP : LIST_SIDEBAR_KEYBOARD_STEP;
-      setSidebarWidth((current) => clampSidebarWidth(current + delta, containerWidth));
-      return;
-    }
-
-    if (event.key === "Home") {
-      event.preventDefault();
-      setSidebarWidth(LIST_SIDEBAR_MIN_WIDTH);
-      return;
-    }
-
-    if (event.key === "End") {
-      event.preventDefault();
-      setSidebarWidth(maxWidth);
-    }
-  }, [sidebarWidth, useSinglePaneList]);
-
   const getSortIcon = (field: SortField) => {
     if (!sortField || sortField !== field) return <ArrowUpDown size={14} className="sort-icon" />;
     return sortDirection === "asc" ? (
@@ -2327,7 +2158,6 @@ export function ListView({
           onOpen={refreshBoardWorkflows}
           label={t("listView.workflowLabel", "Workflow")}
           onEditWorkflow={onOpenWorkflowEditor}
-          onCreateWorkflow={onCreateWorkflow}
         />
       </div>
     );
@@ -2427,12 +2257,8 @@ export function ListView({
 
   const renderListWorkflowSkeleton = (empty = false) => (
     <div className="list-view list-view--workflow-skeleton" aria-busy={!empty} aria-label={empty ? t("listView.noWorkflowLanes", "No workflow lanes available") : t("listView.loadingWorkflowLanes", "Loading workflow lanes")} data-testid={empty ? "list-workflows-empty" : "list-workflows-skeleton"}>
-      <div className="list-view-header">
-        <div>
-          <h2>{t("listView.title", "List View")}</h2>
-          <p className="list-subtitle">{empty ? t("listView.noWorkflowLanes", "No workflow lanes available") : t("listView.loadingWorkflowLanes", "Loading workflow lanes")}</p>
-        </div>
-      </div>
+      <ViewHeader icon={ListChecks} title={t("listView.title", "List View")} />
+      <p className="list-subtitle">{empty ? t("listView.noWorkflowLanes", "No workflow lanes available") : t("listView.loadingWorkflowLanes", "Loading workflow lanes")}</p>
       <div className="list-workflow-skeleton card" aria-hidden="true">
         <div className="list-workflow-skeleton__row list-workflow-skeleton__row--header" />
         <div className="list-workflow-skeleton__row" />
@@ -2443,25 +2269,34 @@ export function ListView({
 
   const renderPrimaryActionCluster = () => (
     <div className="list-action-cluster" data-testid="list-primary-action-cluster">
-      <button className="btn btn-sm" onClick={toggleBulkEdit} aria-pressed={bulkEditEnabled}>
-        {bulkEditEnabled ? t("listView.doneEditing", "Done Editing") : t("listView.bulkEdit", "Bulk Edit")}
-      </button>
-      <button
-        className="btn btn-sm list-view-options-toggle"
+      <ViewActionButton
+        icon={Pencil}
+        label={bulkEditEnabled ? t("listView.doneEditing", "Done Editing") : t("listView.bulkEdit", "Bulk Edit")}
+        onClick={toggleBulkEdit}
+        aria-pressed={bulkEditEnabled}
+      />
+      <ViewActionButton
+        icon={Columns3}
+        className="list-view-options-toggle"
+        label={t("listView.viewOptions", "View")}
         onClick={() => setViewOptionsOpen((prev) => !prev)}
         aria-expanded={viewOptionsOpen}
         aria-controls={useSinglePaneList ? "list-view-options-panel-mobile" : "list-view-options-panel"}
-      >
-        <Columns3 size={14} />
-        {t("listView.viewOptions", "View")}
-      </button>
-      {onNewTask && !isMobile ? (
-        <button
-          className="btn btn-task-create btn-sm list-new-task-action"
+      />
+      {onNewTask ? (
+        <ViewActionButton
+          className="btn-task-create list-new-task-action"
+          kind="create"
+          label={t("listView.newTask", "New Task")}
           onClick={() => onNewTask(isAllWorkflowsSelected ? undefined : selectedWorkflow?.id)}
-        >
-          {t("listView.newTask", "+ New Task")}
-        </button>
+        />
+      ) : null}
+      {onCreateWorkflow ? (
+        <ViewActionButton
+          kind="create"
+          label={t("workflowSwitcher.newWorkflow", "New workflow")}
+          onClick={onCreateWorkflow}
+        />
       ) : null}
     </div>
   );
@@ -2588,6 +2423,8 @@ export function ListView({
     this marker instead — it exists only when the list actually has lanes to draw.
     */
     <div className={`list-view${useSinglePaneList ? " list-view--single-pane" : ""}`} data-testid="list-view-body">
+      {/* FNXC:StandardizedViewActions 2026-09-13-21:43: List keeps workflow-aware task creation, bulk mode, and view options in one canonical header; mobile hides action labels visually while preserving the same callbacks and accessible names. */}
+      <ViewHeader icon={ListChecks} title={t("listView.title", "List View")} actions={renderPrimaryActionCluster()} />
       {contextMenuState && hasContextMenuActions && createPortal(
         <div
           ref={contextMenuRef}
@@ -2627,7 +2464,6 @@ export function ListView({
         <>
           <div className="list-toolbar">
             {renderWorkflowSelector()}
-            {renderPrimaryActionCluster()}
           </div>
           {viewOptionsOpen ? (
             <div className="list-toolbar-mobile-options">{renderViewOptionsPanel("list-view-options-panel-mobile")}</div>
@@ -2649,11 +2485,16 @@ export function ListView({
 
       <div className="list-table-container" ref={listScrollRef} onScroll={virtualList.onScroll}>
         <div className={useSinglePaneList ? "" : "list-split-layout"} data-testid={useSinglePaneList ? undefined : "list-split-layout"} ref={setSplitLayoutRef}>
-          <div
-            className={useSinglePaneList ? "" : "list-split-sidebar"}
-            data-testid={useSinglePaneList ? undefined : "list-split-sidebar"}
-            ref={splitSidebarRef}
-            style={useSinglePaneList ? undefined : { width: `${sidebarWidth}px` }}
+          <ViewSidebar
+            ariaLabel={t("listView.taskListLabel", "Task list")}
+            resizeLabel={t("listView.resizeSidebar", "Resize task list sidebar")}
+            hostIdentity="list-main"
+            mobile={useSinglePaneList}
+            resizable={!useSinglePaneList}
+            className={useSinglePaneList ? "list-single-pane-sidebar" : "list-split-sidebar"}
+            panelClassName={useSinglePaneList ? undefined : "list-split-sidebar__panel"}
+            panelTestId={useSinglePaneList ? undefined : "list-split-sidebar"}
+            separatorTestId="list-split-resize-handle"
           >
             {!useSinglePaneList && (
               <aside className="list-sidebar-controls" aria-label={t("listView.listControlsLabel", "List controls")}>
@@ -2663,9 +2504,6 @@ export function ListView({
                 */}
                 <div className="list-sidebar-controls__header">
                   {renderWorkflowSelector()}
-                  <div className="list-sidebar-controls__toolbar">
-                    {renderPrimaryActionCluster()}
-                  </div>
                   <div className="list-sidebar-summary-chips">
                     {selectedColumn ? (
                       <button className="btn btn-sm" onClick={clearColumnFilter} aria-label={t("listView.clearColumnFilter", "Clear column filter")}>
@@ -3278,27 +3116,8 @@ export function ListView({
               ) : null}
             </div>
           ) : null}
-          </div>
+          </ViewSidebar>
           {!useSinglePaneList && (
-            <>
-              <div
-                className="list-split-resize-handle"
-                data-testid="list-split-resize-handle"
-                onPointerDown={handleSplitResizeStart}
-                onKeyDown={handleSplitResizeKeyDown}
-                role="separator"
-                tabIndex={0}
-                aria-orientation="vertical"
-                aria-label={t("listView.resizeSidebar", "Resize task list sidebar")}
-                aria-valuemin={LIST_SIDEBAR_MIN_WIDTH}
-                aria-valuemax={Math.round(
-                  getSidebarMaxWidth(
-                    splitLayoutRef.current?.clientWidth ??
-                      (sidebarWidth / LIST_SIDEBAR_MAX_RATIO + LIST_SIDEBAR_KEYBOARD_STEP)
-                  )
-                )}
-                aria-valuenow={Math.round(sidebarWidth)}
-              />
               <div className="list-split-detail" data-testid="list-split-detail">
                 {!selectedTaskSnapshot ? (
                   <div className="list-split-detail-empty">
@@ -3344,7 +3163,6 @@ export function ListView({
                     />
                 )}
               </div>
-            </>
           )}
         </div>
       </div>

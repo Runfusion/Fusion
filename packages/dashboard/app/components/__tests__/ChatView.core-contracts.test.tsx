@@ -46,7 +46,9 @@ const popOutProps = {
 
 function expectThreadOpen(options: { narrow?: boolean } = {}) {
   expect(screen.getByTestId("chat-back-btn")).toBeInTheDocument();
-  expect(document.querySelector(".chat-sidebar")).toHaveClass("chat-sidebar--hidden");
+  // The shared rail host carries the hidden modifier; the conversation list stays mounted inside it.
+  expect(document.querySelector(".view-sidebar")).toHaveClass("chat-sidebar--hidden");
+  expect(document.querySelector(".chat-sidebar")).toBeInTheDocument();
   expect(document.querySelector(".chat-view")).toHaveClass("chat-view--detail");
   if (options.narrow) {
     expect(document.querySelector(".chat-view")).toHaveClass("chat-view--narrow");

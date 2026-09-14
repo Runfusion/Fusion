@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import * as LucideIcons from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { PluginDashboardViewContext } from "@fusion/dashboard/app/plugins/types";
-import { ViewHeader } from "@fusion/dashboard/app/components/ViewHeader";
+import { PluginDashboardViewHeader } from "@fusion/dashboard/app/plugins/PluginDashboardViewHeader";
 import { useArtifacts } from "./hooks/useArtifacts.js";
 import { useViewportMode } from "./hooks/useViewportMode.js";
 import { useCeSession, type CeSessionSubscribe } from "./hooks/useCeSession.js";
@@ -20,8 +20,8 @@ export const COMPOUND_ENGINEERING_VIEW_HEADER_ICON = "Boxes";
  * FNXC:CompoundEngineeringUI 2026-06-17-00:52:
  * The dashboard surface keeps CE-specific data-testid values and semantics intact while adding shared Fusion classes to panels and controls so plugin layout inherits the system button/card rhythm.
  *
- * FNXC:CompoundEngineeringUI 2026-06-22-09:40:
- * The view renders the dashboard's shared ViewHeader (Boxes icon + "Compound Engineering" title) at the top of its root container so the CE plugin surface reads with the same main-content header as native Fusion views. ViewHeader supplies the standard --space-lg top/side padding and is flex-shrink:0, so the root drops its own header padding and becomes a flex column whose content area (.ce-view-body) scrolls below the fixed header. The summary + "Start a stage" affordances move into ViewHeader's right-aligned actions slot, preserving their data-testid values (ce-summary, ce-start-action-header).
+ * FNXC:CompoundEngineeringUI 2026-09-13-16:50:
+ * The cooperative plugin header renders normal shared chrome in standalone hosts. In a full dashboard destination the outer host remains the sole title owner while CE's live summary and "Start a stage" controls portal into its actions slot; the body keeps its existing controller, scroll chain, and test identities.
  */
 
 /** Resolve a lucide icon name (from the registry) to a component, with fallback. */
@@ -642,7 +642,7 @@ export function CompoundEngineeringView(props: CompoundEngineeringViewProps) {
   if (ceSession.session) {
     return (
       <div className="ce-view" data-testid="compound-engineering-view" data-mobile={mobile ? "true" : "false"}>
-        <ViewHeader icon={HeaderIcon} title="Compound Engineering" />
+        <PluginDashboardViewHeader icon={HeaderIcon} title="Compound Engineering" />
         <div className="ce-view-body">
           <SessionsPanel
             sessions={ceSessions.sessions}
@@ -674,7 +674,7 @@ export function CompoundEngineeringView(props: CompoundEngineeringViewProps) {
 
   return (
     <div className="ce-view" data-testid="compound-engineering-view" data-mobile={mobile ? "true" : "false"}>
-      <ViewHeader
+      <PluginDashboardViewHeader
         icon={HeaderIcon}
         title="Compound Engineering"
         actions={

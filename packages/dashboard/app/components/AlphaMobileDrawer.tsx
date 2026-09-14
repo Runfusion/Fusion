@@ -1,6 +1,8 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useDrawerDismissGesture } from "../hooks/useDrawerDismissGesture";
+import { ViewDrawerHandle } from "./ViewDrawer";
+import { ViewLayoutContent, ViewLayoutHeader } from "./ViewLayout";
 import "./AlphaMobileDrawer.css";
 
 export interface AlphaMobileDrawerProps {
@@ -140,17 +142,15 @@ export function AlphaMobileDrawer({
         tabIndex={-1}
         {...dismissHandleProps}
       >
-        <div className="alpha-mobile-drawer__handle-target" aria-hidden="true">
-          <span className="alpha-mobile-drawer__handle" />
-        </div>
+        <ViewDrawerHandle className="alpha-mobile-drawer__handle-target" barClassName="alpha-mobile-drawer__handle" />
         {contentOwnsHeader ? (
           <h2 id={`${testId}-title`} className="alpha-mobile-drawer__accessible-title visually-hidden">{title}</h2>
         ) : (
-          <header className="alpha-mobile-drawer__header">
+          <ViewLayoutHeader as="header" className="alpha-mobile-drawer__header">
             <h2 id={`${testId}-title`} className="alpha-mobile-drawer__title">{title}</h2>
-          </header>
+          </ViewLayoutHeader>
         )}
-        <div className="alpha-mobile-drawer__body">{children}</div>
+        <ViewLayoutContent className="alpha-mobile-drawer__body">{children}</ViewLayoutContent>
       </section>
     </div>,
     document.body,

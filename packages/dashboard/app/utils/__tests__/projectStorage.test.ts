@@ -90,10 +90,7 @@ describe("projectStorage", () => {
         "kb-dashboard-list-collapsed",
         "kb-dashboard-selected-tasks",
         "kb-dashboard-list-selected-task",
-        "kb-dashboard-list-sidebar-width",
-        "kb-dashboard-mailbox-sidebar-width",
-        "kb-dashboard-agents-sidebar-width",
-        "kb-dashboard-github-import-list-width",
+        "kb-dashboard-view-sidebar-width",
         "kb-dashboard-github-import-state",
         "kb-quick-entry-text",
         "kb-inline-create-text",
@@ -116,7 +113,24 @@ describe("projectStorage", () => {
         "fusion-plugin-dependency-graph:positions",
       ]),
     );
-    expect(PROJECT_STORAGE_KEYS).toHaveLength(31);
+    expect(PROJECT_STORAGE_KEYS).toHaveLength(28);
+  });
+
+  it("routes every migrated sidebar through the one shared width preference", () => {
+    // The per-view rail widths collapsed into a single shared project-scoped preference.
+    for (const retired of [
+      "kb-dashboard-list-sidebar-width",
+      "kb-dashboard-mailbox-sidebar-width",
+      "kb-dashboard-agents-sidebar-width",
+      "kb-dashboard-github-import-list-width",
+      "fusion:file-browser-sidebar-width",
+      "fusion:settings-nav-width",
+    ]) {
+      expect(PROJECT_STORAGE_KEYS).not.toContain(retired);
+    }
+    expect(PROJECT_STORAGE_KEYS.filter((key) => key.includes("sidebar-width"))).toEqual([
+      "kb-dashboard-view-sidebar-width",
+    ]);
   });
 
   it("getScopedItem returns null when localStorage.getItem is unavailable", () => {

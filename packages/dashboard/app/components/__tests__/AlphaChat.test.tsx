@@ -209,7 +209,8 @@ describe("homemade Alpha Chat", () => {
       if (host === "quick-chat") {
         const floatingChat = document.querySelector(".floating-window--chat .chat-view--floating");
         expect(floatingChat?.children[0]).toHaveClass("view-header");
-        expect(floatingChat?.children[1]).toHaveClass("chat-view__body");
+        expect(floatingChat?.children[1]).toHaveClass("view-layout__body");
+        expect(floatingChat?.children[1]?.querySelector(".chat-view__body")).not.toBeNull();
         expect(floatingChat?.querySelectorAll('[data-testid="chat-modal-close"]')).toHaveLength(1);
         expect(floatingChat?.querySelector('[data-testid="chat-modal-close"]')).toHaveClass("modal-close");
         expect(document.querySelector(".floating-window--chat .floating-window__close")).toBeNull();
@@ -278,7 +279,8 @@ describe("homemade Alpha Chat", () => {
       const floatingChat = document.querySelector<HTMLElement>(".floating-window--chat .chat-view--floating");
       expect(floatingChat).not.toBeNull();
       expect(floatingChat?.children[0]).toHaveClass("view-header");
-      expect(floatingChat?.children[1]).toHaveClass("chat-view__body");
+      expect(floatingChat?.children[1]).toHaveClass("view-layout__body");
+        expect(floatingChat?.children[1]?.querySelector(".chat-view__body")).not.toBeNull();
       expect(floatingChat?.querySelectorAll('[data-testid="chat-modal-close"]')).toHaveLength(1);
       expect(document.querySelector(".floating-window--chat .floating-window__close")).toBeNull();
       if (viewport === "mobile") {

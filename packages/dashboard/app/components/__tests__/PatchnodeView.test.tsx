@@ -71,12 +71,17 @@ describe("PatchnodeView", () => {
     expect(screen.getByTestId("patchnode-day-2026-08-27")).toBeInTheDocument();
     const view = screen.getByTestId("patchnode-view");
     const header = view.querySelector(":scope > .view-header");
-    const scrollBody = view.querySelector(":scope > .patchnode-view__content");
+    const body = view.querySelector(":scope > .view-layout__body");
+    const scrollBody = view.querySelector(".patchnode-view__content");
     expect(header).toBeInTheDocument();
     expect(scrollBody).toBeInTheDocument();
+    // The fixed header stays outside the scrolling body and is still painted first.
     expect(scrollBody?.contains(header)).toBe(false);
     expect(view.children[0]).toBe(header);
-    expect(view.children[1]).toBe(scrollBody);
+    expect(view.children[1]).toBe(body);
+    expect(body?.contains(scrollBody as Node)).toBe(true);
+    // History owns its whole scroll chain, so the shared content zone must not add a second scroller.
+    expect(view).toHaveClass("view-layout--content-owns-scroll");
     expect(screen.getAllByRole("button", { name: "Close History" })).toHaveLength(1);
     expect(container.querySelector(".floating-window__close")).toBeNull();
     const older = screen.getByTestId("patchnode-day-2026-08-27");

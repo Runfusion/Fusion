@@ -1,6 +1,9 @@
-import { ModalCloseButton } from "./ModalCloseButton";
+import { ViewActionButton } from "./ViewActionButton";
+import { ViewHeader } from "./ViewHeader";
+import { ViewLayout } from "./ViewLayout";
+import { ViewSidebar } from "./ViewSidebar";
 import "./MissionManager.css";
-import { useState, useEffect, useCallback, useRef, useMemo, type MouseEvent, type ReactNode } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -18,7 +21,6 @@ import {
   Trash2,
   ChevronRight,
   ChevronDown,
-  ChevronLeft,
   Target,
   Layers,
   Package,
@@ -128,11 +130,6 @@ import type { AutopilotState, MissionInterviewDraftSummary } from "./mission-typ
 import { readCache, SWR_CACHE_KEYS, writeCache } from "../utils/swrCache";
 import { getRelativeTimeBucket } from "../utils/relativeTimeAgo";
 import { isNativeStructureDragEnabled, serializeNativeStructureRef } from "../utils/nativeStructureDrag";
-
-const MISSION_SIDEBAR_DEFAULT_WIDTH = 300;
-const MISSION_SIDEBAR_MIN_WIDTH = 220;
-const MISSION_SIDEBAR_MAX_WIDTH = 560;
-const MISSION_SIDEBAR_STORAGE_KEY = "fusion:mission-sidebar-width";
 
 interface MissionManagerProps {
   isOpen: boolean;
@@ -884,73 +881,8 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
   const [detailLoading, setDetailLoading] = useState(false);
   const isMobile = useViewportMode() === "mobile";
   const { pushNav } = useNavigationHistoryContext();
-  const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
-    if (typeof window === "undefined") return MISSION_SIDEBAR_DEFAULT_WIDTH;
-    const stored = window.localStorage.getItem(MISSION_SIDEBAR_STORAGE_KEY);
-    const parsed = stored ? Number(stored) : NaN;
-    if (!Number.isFinite(parsed)) return MISSION_SIDEBAR_DEFAULT_WIDTH;
-    return Math.max(MISSION_SIDEBAR_MIN_WIDTH, Math.min(MISSION_SIDEBAR_MAX_WIDTH, parsed));
-  });
-
-  const persistSidebarWidth = useCallback((width: number) => {
-    try {
-      window.localStorage.setItem(MISSION_SIDEBAR_STORAGE_KEY, String(width));
-    } catch {
-      // Ignore storage errors.
-    }
-  }, []);
-
-  const handleSidebarResizeStart = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    if (isMobile) return;
-    event.preventDefault();
-    event.stopPropagation();
-    const handle = event.currentTarget;
-    if (typeof handle.setPointerCapture === "function") {
-      handle.setPointerCapture(event.pointerId);
-    }
-    const startX = event.clientX;
-    const startWidth = sidebarWidth;
-    let latestWidth = startWidth;
-    document.body.style.userSelect = "none";
-
-    const onPointerMove = (moveEvent: PointerEvent) => {
-      const deltaX = moveEvent.clientX - startX;
-      const nextWidth = Math.max(
-        MISSION_SIDEBAR_MIN_WIDTH,
-        Math.min(MISSION_SIDEBAR_MAX_WIDTH, startWidth + deltaX),
-      );
-      latestWidth = nextWidth;
-      setSidebarWidth(nextWidth);
-    };
-
-    const onPointerUp = (upEvent: PointerEvent) => {
-      if (typeof handle.releasePointerCapture === "function") {
-        handle.releasePointerCapture(upEvent.pointerId);
-      }
-      document.body.style.userSelect = "";
-      document.removeEventListener("pointermove", onPointerMove);
-      document.removeEventListener("pointerup", onPointerUp);
-      persistSidebarWidth(latestWidth);
-    };
-
-    document.addEventListener("pointermove", onPointerMove);
-    document.addEventListener("pointerup", onPointerUp);
-  }, [isMobile, persistSidebarWidth, sidebarWidth]);
-
-  const handleSidebarResizeKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (isMobile) return;
-    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-    event.preventDefault();
-    const step = event.shiftKey ? 50 : 10;
-    const delta = event.key === "ArrowLeft" ? -step : step;
-    const nextWidth = Math.max(
-      MISSION_SIDEBAR_MIN_WIDTH,
-      Math.min(MISSION_SIDEBAR_MAX_WIDTH, sidebarWidth + delta),
-    );
-    setSidebarWidth(nextWidth);
-    persistSidebarWidth(nextWidth);
-  }, [isMobile, persistSidebarWidth, sidebarWidth]);
-
+  const [showArchived, setShowArchived] = useState(false);
+  const [isCreateMenuOpen, setIsCreateMenuOpen] = useState(false);
   const [isCreatingMission, setIsCreatingMission] = useState(false);
   const [editingMissionId, setEditingMissionId] = useState<string | null>(null);
   const [missionForm, setMissionForm] = useState<MissionFormData>(EMPTY_MISSION_FORM);
@@ -4976,14 +4908,15 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
   before a mission exists. This link opens the existing form without changing
   the frozen planning button set.
   */
-  const openDirectMissionCreate = (event: MouseEvent<HTMLAnchorElement>) => {
-    event.preventDefault();
+  const openDirectMissionCreate = () => {
+    setIsCreateMenuOpen(false);
     setMissionForm(EMPTY_MISSION_FORM);
     setEditingMissionId(null);
     setIsCreatingMission(true);
   };
 
   const openNewMissionInterview = () => {
+    setIsCreateMenuOpen(false);
     if (resumeSessionId) {
       dismissedResumeSessionIdRef.current = resumeSessionId;
     }
@@ -5289,28 +5222,27 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
     );
   });
 
-  const renderMissionListContent = ({ hideListCta = false }: { hideListCta?: boolean } = {}) => {
-    const persistedInterviewMissions = missions.filter((mission) => mission.interviewState === "in_progress");
-    const standardMissions = missions.filter((mission) => mission.interviewState !== "in_progress");
-    const showListCta = !hideListCta;
+  const renderMissionListContent = () => {
+    /*
+    FNXC:StandardizedMissionLayout 2026-09-13-16:30:
+    Archived missions are a list concern rather than a second destination. The filter stays with the collection while the one Plan New Mission action remains in the shared header at every breakpoint.
+    */
+    const visibleMissions = missions.filter((mission) => showArchived || mission.status !== "archived");
+    const persistedInterviewMissions = visibleMissions.filter((mission) => mission.interviewState === "in_progress");
+    const standardMissions = visibleMissions.filter((mission) => mission.interviewState !== "in_progress");
 
     return (
       <div className="mission-list">
-        {/*
-        FNXC:MissionsUI 2026-08-16-14:48:
-        Mobile Missions anchors its single Plan New Mission CTA above every list state so it is immediately reachable. The inline create form suppresses this whole container rather than leaving an empty header shell.
-        */}
-        {!isCreatingMission && showListCta && (
-          <div className="mission-list__header-actions">
-            <button className="btn btn-sm btn-primary mission-list__primary-cta" onClick={openNewMissionInterview}>
-              <Sparkles size={14} />
-              {t("missions.planNewMission", "Plan New Mission")}
-            </button>
-            <a className="mission-list__manual-create-link" href="#mission-create" onClick={openDirectMissionCreate}>
-              {t("missions.createButton", "Create")}
-            </a>
-          </div>
-        )}
+        <div className="mission-list__filters">
+          <button
+            type="button"
+            className="btn btn-sm"
+            aria-pressed={showArchived}
+            onClick={() => setShowArchived((visible) => !visible)}
+          >
+            {showArchived ? t("missions.hideArchived", "Hide archived") : t("missions.showArchived", "Show archived")}
+          </button>
+        </div>
 
         {/* Create mission form */}
               {isCreatingMission && (
@@ -5536,7 +5468,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                 </div>
               )}
 
-              {missions.length === 0 && missionInterviewDrafts.length === 0 && persistedInterviewMissions.length === 0 && !isCreatingMission && (
+              {visibleMissions.length === 0 && missionInterviewDrafts.length === 0 && !isCreatingMission && (
                 <div className="mission-manager__empty mission-manager__empty--large mission-manager__empty--mission">
                   <Target size={32} />
                   <h3 className="mission-manager__empty-title">{t("missions.noMissionsYetTitle", "No missions yet")}</h3>
@@ -5629,139 +5561,85 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
       data-testid="mission-manager-dialog"
     >
       {/*
-      FNXC:Navigation 2026-06-22-01:10:
-      Missions keeps its own header element (not the shared ViewHeader component) because it owns a dynamic mobile title (mission title when one is selected), a back button for stacked list->detail nav, an inline-vs-modal padding variant, and the mission-header-title test id. To stay visually consistent with the Command Center-modeled ViewHeader, the title uses the same icon size (20) and 1.125rem title metric via .mission-manager__title.
+      FNXC:StandardizedMissionLayout 2026-09-13-16:30:
+      Missions and its resumable interview drafts share the canonical header/list/detail shell. The shared sidebar keeps one project-scoped width across Planning and Missions, while all existing mission fetch, repair, interview, and navigation callbacks remain owned here.
       */}
-      <div className={`mission-manager__header${isInline ? " mission-manager__header--inline" : ""}`}>
-        <div className="mission-manager__header-title">
-          {selectedMission && (
-            <button
-              className="mission-manager__back-btn"
-              onClick={handleBackToList}
-              title={t("missions.backToMissions", "Back to missions")}
-              aria-label={t("missions.backToMissionsList", "Back to missions list")}
-              data-testid="mission-back-btn"
-            >
-              <ChevronLeft size={18} />
-            </button>
-          )}
-          <Target size={20} className="mission-manager__header-icon" />
-          <h2 className="mission-manager__title" data-testid="mission-header-title">
-            <span className="mission-manager__title-text mission-manager__title-text--desktop">{t("missions.title", "Missions")}</span>
-            <span className="mission-manager__title-text mission-manager__title-text--mobile">
-              {selectedMission ? selectedMission.title : t("missions.title", "Missions")}
-            </span>
-          </h2>
-        </div>
-        {!isInline && (
-          <ModalCloseButton
-            onClick={onClose}
-            title={t("missions.close", "Close")}
-            aria-label={t("missions.closeMissionManager", "Close Mission Manager")}
-            data-testid="mission-close-btn"
-           />
+      <ViewLayout
+        contentOwnsScroll
+        mobilePane={selectedMission ? "detail" : "list"}
+        header={(
+          <ViewHeader
+            icon={Target}
+            title={selectedMission && isMobile ? selectedMission.title : t("missions.title", "Missions")}
+            titleTestId="mission-header-title"
+            backAction={selectedMission ? {
+              label: t("missions.backToMissionsList", "Back to missions list"),
+              onClick: handleBackToList,
+              "data-testid": "mission-back-btn",
+            } : undefined}
+            actions={!isCreatingMission ? (
+              <div className="mission-manager__create-menu">
+                <ViewActionButton
+                  kind="create"
+                  label={t("missions.planNewMission", "Plan New Mission")}
+                  aria-expanded={isCreateMenuOpen}
+                  aria-controls={isCreateMenuOpen ? "mission-create-menu" : undefined}
+                  onClick={() => setIsCreateMenuOpen((open) => !open)}
+                />
+                {isCreateMenuOpen ? (
+                  <div id="mission-create-menu" className="mission-manager__create-menu-popover" role="menu">
+                    <button type="button" role="menuitem" onClick={openNewMissionInterview}>
+                      <Sparkles aria-hidden="true" />
+                      {t("missions.planNewMission", "Plan New Mission")}
+                    </button>
+                    <button type="button" role="menuitem" className="mission-list__manual-create-link" onClick={openDirectMissionCreate}>
+                      <Plus aria-hidden="true" />
+                      {t("missions.createButton", "Create")}
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            ) : undefined}
+            onClose={isInline ? undefined : onClose}
+            closeButtonProps={{
+              title: t("missions.close", "Close"),
+              "aria-label": t("missions.closeMissionManager", "Close Mission Manager"),
+              "data-testid": "mission-close-btn",
+            }}
+          />
         )}
-      </div>
-
-      {isMobile ? (
-        <div className="mission-manager__body mission-manager__body--stacked">
-          {loading ? (
-            <div className="mission-manager__loading">
-              <Loader2 size={24} className="spinner" />
-              <span>{t("missions.loadingMissions", "Loading missions...")}</span>
+        sidebar={(
+          <ViewSidebar ariaLabel={t("missions.missionList", "Mission list")} hostIdentity="missions" mobile={isMobile} panelTestId="mission-sidebar">
+            <div className="mission-manager__sidebar">
+              {shouldRenderSidebarDeleteConfirm ? renderDeleteConfirmPanel() : null}
+              <div className="mission-manager__sidebar-list">
+                {loading ? (
+                  <div className="mission-manager__loading">
+                    <Loader2 size={24} className="spinner" />
+                    <span>{t("missions.loadingMissions", "Loading missions...")}</span>
+                  </div>
+                ) : renderMissionListContent()}
+              </div>
             </div>
-          ) : detailLoading && !selectedMission ? (
+          </ViewSidebar>
+        )}
+      >
+        <div className="mission-manager__detail-pane">
+          {detailLoading && !selectedMission ? (
             <div className="mission-manager__loading">
               <Loader2 size={24} className="spinner" />
               <span>{t("missions.loadingMissionDetails", "Loading mission details...")}</span>
             </div>
-          ) : selectedMission ? (
-            renderMissionDetailContent()
-          ) : (
-            renderMissionListContent()
-          )}
-          {deleteConfirmId && renderDeleteConfirmPanel()}
-          {linkTaskFeatureId && renderLinkTaskPanel()}
-        </div>
-      ) : (
-        <div className="mission-manager__split">
-          <aside
-            className="mission-manager__sidebar"
-            data-testid="mission-sidebar"
-            aria-label={t("missions.missionList", "Mission list")}
-            style={isMobile ? undefined : { width: `${sidebarWidth}px` }}
-          >
-            {/*
-            FNXC:MissionsUI 2026-08-16-14:48:
-            Desktop Missions anchors its single Plan New Mission CTA before the scrolling list for immediate reachability. Empty and create-form states never duplicate the CTA, and create mode omits the bar unless the delete confirmation still needs it.
-            */}
-            {(shouldRenderSidebarDeleteConfirm || !isCreatingMission) && (
-              <div className="mission-manager__sidebar-cta-bar" data-testid="mission-sidebar-cta-bar">
-                {shouldRenderSidebarDeleteConfirm && renderDeleteConfirmPanel()}
-                {!isCreatingMission && (
-                  <>
-                    <button
-                      className="btn btn-primary mission-manager__sidebar-cta"
-                      onClick={openNewMissionInterview}
-                      title={t("missions.planNewMission", "Plan New Mission")}
-                      aria-label={t("missions.planNewMission", "Plan New Mission")}
-                    >
-                      <Sparkles size={14} />
-                      {t("missions.planNewMission", "Plan New Mission")}
-                    </button>
-                    <a className="mission-list__manual-create-link" href="#mission-create" onClick={openDirectMissionCreate}>
-                      {t("missions.createButton", "Create")}
-                    </a>
-                  </>
-                )}
-              </div>
-            )}
-            <div className="mission-manager__sidebar-list">
-              {loading ? (
-                <div className="mission-manager__loading">
-                  <Loader2 size={24} className="spinner" />
-                  <span>{t("missions.loadingMissions", "Loading missions...")}</span>
-                </div>
-              ) : (
-                renderMissionListContent({ hideListCta: true })
-              )}
+          ) : selectedMission ? renderMissionDetailContent() : (
+            <div className="mission-manager__detail-pane-empty" data-testid="mission-empty-detail">
+              <Target size={32} />
+              <span>{t("missions.selectMissionToView", "Select a mission to view details")}</span>
             </div>
-          </aside>
-
-          {!isMobile && (
-            <div
-              className="mission-manager__sidebar-resize-handle"
-              role="separator"
-              aria-orientation="vertical"
-              aria-valuemin={MISSION_SIDEBAR_MIN_WIDTH}
-              aria-valuemax={MISSION_SIDEBAR_MAX_WIDTH}
-              aria-valuenow={sidebarWidth}
-              aria-label={t("missions.resizeSidebar", "Resize mission sidebar")}
-              tabIndex={0}
-              onPointerDown={handleSidebarResizeStart}
-              onKeyDown={handleSidebarResizeKeyDown}
-            />
           )}
-
-          <div className="mission-manager__detail-pane">
-            {detailLoading && !selectedMission ? (
-              <div className="mission-manager__loading">
-                <Loader2 size={24} className="spinner" />
-                <span>{t("missions.loadingMissionDetails", "Loading mission details...")}</span>
-              </div>
-            ) : selectedMission ? (
-              renderMissionDetailContent()
-            ) : (
-              <div className="mission-manager__detail-pane-empty" data-testid="mission-empty-detail">
-                <Target size={32} />
-                <span>{t("missions.selectMissionToView", "Select a mission to view details")}</span>
-              </div>
-            )}
-            {deleteConfirmId && !shouldRenderSidebarDeleteConfirm && renderDeleteConfirmPanel()}
-            {linkTaskFeatureId && renderLinkTaskPanel()}
-          </div>
+          {deleteConfirmId && !shouldRenderSidebarDeleteConfirm ? renderDeleteConfirmPanel() : null}
+          {linkTaskFeatureId ? renderLinkTaskPanel() : null}
         </div>
-      )}
+      </ViewLayout>
     </div>
   );
 

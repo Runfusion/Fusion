@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { Settings, LayoutGrid, List, Search, Activity, MoreHorizontal, Clock, Folder, History, GitBranch, Monitor, Workflow, Bot, Target, Grid3X3, Mail, MessageSquare, Check, Zap, Sparkles, Brain, Lock, Gauge, Lightbulb, PanelsTopLeft, ChevronDown, ChevronRight, PanelRight, Plus, Star } from "lucide-react";
+import { Settings, LayoutGrid, List, Search, Activity, MoreHorizontal, Clock, Folder, History, GitBranch, Monitor, Workflow, Bot, Target, Grid3X3, Mail, MessageSquare, Check, Zap, Sparkles, Brain, Lock, Gauge, Lightbulb, PanelsTopLeft, ChevronDown, ChevronRight, PanelRight, Star } from "lucide-react";
 import "./Header.css";
 // ProjectSelector styles used by the imported standalone component.
 import "./ProjectSelector.css";
@@ -19,6 +19,7 @@ import { buildPluginTaskViewId, isPluginViewId } from "../plugins/pluginViewRegi
 import { getPluginNavIcon } from "./pluginNavIcon";
 import { TaskSearchInput } from "./TaskSearchInput";
 import type { ShellHostContext } from "../shell-host";
+import { ViewActionButton } from "./ViewActionButton";
 export { resolveReportContextRefs } from "../utils/reportContextRefs";
 
 export { useViewportMode };
@@ -1242,20 +1243,18 @@ export function Header({
         FNXC:MobileTaskNavigation 2026-08-20-05:47:
         Issue #2226 moves mobile Board/List navigation to the footer so Header can expose App's single full-task modal entry point from every active project view. The Planning column keeps its separate quick-entry composer.
 
-        FNXC:MobileTaskNavigation 2026-09-12-05:41:
-        The App-owned create-task control stays in the Header only on tablet/mobile Alpha and on legacy mobile when bottom navigation is active. Desktop creation remains available through its dedicated surfaces and shortcuts without leaving a duplicate Header button or shell; retained compact controls stay last in the action cluster.
+        FNXC:StandardizedViewActions 2026-09-13-22:40:
+        The App-owned create-task control keeps its established placement — tablet/mobile only — and merely adopts the shared action primitive so its shape matches every other creation entry. Desktop creation stays with its dedicated surfaces and shortcuts, so standardizing the button must not reintroduce a retired desktop Header duplicate. List is excluded at every viewport because its own header preserves the selected-workflow argument.
         */}
-        {mode !== "desktop" && projectId && onNewTask && (
-          <button
-            className="btn-icon"
+        {mode !== "desktop" && projectId && onNewTask && view !== "list" ? (
+          <ViewActionButton
+            kind="create"
             onClick={onNewTask}
+            label={t("newTaskModal.title", "New Task")}
             title={t("newTaskModal.title", "New Task")}
-            aria-label={t("newTaskModal.title", "New Task")}
             data-testid="mobile-header-new-task"
-          >
-            <Plus />
-          </button>
-        )}
+          />
+        ) : null}
       </div>
     </header>
 

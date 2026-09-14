@@ -946,7 +946,9 @@ describe.runIf(executablePath)("Task modal tablet touch resize browser regressio
                 const layout = document.querySelector<HTMLElement>(".list-split-layout");
                 const sidebar = document.querySelector<HTMLElement>(".list-split-sidebar");
                 if (!layout || !sidebar) throw new Error("Cannot preserve the mounted List split host");
-                layout.style.gridTemplateColumns = "0 0 minmax(0, 1fr)";
+                // The shared sidebar owns its own separator, so the split is two tracks: collapse the
+                // list column and let the detail column take the remaining width.
+                layout.style.gridTemplateColumns = "0 minmax(0, 1fr)";
                 sidebar.style.inlineSize = "0";
                 sidebar.style.visibility = "hidden";
               } else if (name === "right-dock") {

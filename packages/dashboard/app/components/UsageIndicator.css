@@ -23,16 +23,11 @@
   flex-shrink: 0;
 }
 
-.usage-header {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-}
-
-.usage-header-icon {
-  color: var(--in-progress);
-}
-
+/*
+FNXC:StandardizedViewLayout 2026-09-13-21:49:
+FN-379 removed the local title cluster: the shared header owns Usage's icon and title, so only the header action
+group keeps local styling.
+*/
 /* Header actions with view toggle */
 .usage-header-actions {
   display: flex;

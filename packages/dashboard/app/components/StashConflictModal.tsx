@@ -1,3 +1,4 @@
+import { ViewHeader } from "./ViewHeader";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Copy } from "lucide-react";
@@ -235,9 +236,13 @@ export default function StashConflictModal({
   return (
     <div className="modal-overlay open" role="dialog" aria-modal="true" aria-labelledby="stash-conflict-modal-title">
       <div className="modal stash-conflict-modal" ref={modalRef} tabIndex={-1}>
-        <div className="modal-header">
-          <h3 id="stash-conflict-modal-title">{t("git.stashConflict.title", "Resolve auto-stash conflicts")}</h3>
-        </div>
+        {/* FNXC:StandardizedViewLayout 2026-09-13-21:49: Shared chrome; this recovery dialog deliberately exits through its own explicit actions only. */}
+        <ViewHeader
+          className="modal-header"
+          headingLevel={3}
+          titleId="stash-conflict-modal-title"
+          title={t("git.stashConflict.title", "Resolve auto-stash conflicts")}
+        />
         <p className="stash-conflict-modal__summary">
           {t("git.stashConflict.summary", "Pulled {{branch}}, but restoring local edits from stash produced conflicts.", { branch: integrationBranch })}
         </p>

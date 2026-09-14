@@ -1,10 +1,13 @@
 import "./WhiteboardView.css";
 import { useEffect, useRef } from "react";
-import { ArrowLeft, Copy, Download, FileJson, History, PanelsTopLeft, Plus, Save, Search, Trash2 } from "lucide-react";
+import { Copy, Download, FileJson, History, PanelsTopLeft, Save, Search, Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useConfirm } from "../hooks/useConfirm";
 import { useWhiteboards } from "../hooks/useWhiteboards";
+import { ViewActionButton } from "./ViewActionButton";
 import { ViewHeader } from "./ViewHeader";
+import { ViewLayout } from "./ViewLayout";
+import { ViewSidebar } from "./ViewSidebar";
 import { WhiteboardCanvas } from "./whiteboard/WhiteboardCanvas";
 import { exportWhiteboardJson, exportWhiteboardPng } from "./whiteboard/whiteboard-export";
 export interface WhiteboardViewProps { projectId?: string; addToast?: (message: string, type?: "success" | "error" | "info" | "warning") => void }
@@ -16,20 +19,17 @@ export function WhiteboardView({ projectId, addToast }: WhiteboardViewProps) {
   const back = async () => { if (await canAbandon()) boards.clearSelection(); };
   const remove = async () => { if (boards.selected && await confirm.confirm({ title: t("whiteboard.deleteTitle", "Delete whiteboard?"), message: t("whiteboard.deleteMessage", "This action cannot be undone."), confirmLabel: t("common.delete", "Delete"), danger: true }) && await boards.remove()) addToast?.(t("whiteboard.deleted", "Whiteboard deleted"), "success"); };
   useEffect(() => { const handler = (event: BeforeUnloadEvent) => { if (boards.dirty) { event.preventDefault(); event.returnValue = ""; } }; window.addEventListener("beforeunload", handler); return () => window.removeEventListener("beforeunload", handler); }, [boards.dirty]);
-  return <section className={`whiteboard-view${boards.selected ? " whiteboard-view--editor" : ""}`} aria-label={t("nav.whiteboard", "Whiteboard")}>
-    <ViewHeader icon={PanelsTopLeft} title={t("nav.whiteboard", "Whiteboard")} actions={<><span className="btn-badge">{t("common.alpha", "Alpha")}</span><button className="btn btn-primary" type="button" disabled={!projectId || boards.saving} onClick={() => void boards.create()}><Plus />{t("whiteboard.new", "New whiteboard")}</button></>} />
-    <div className="whiteboard-workspace">
-      <aside className="whiteboard-list" aria-label={t("whiteboard.list", "Whiteboards")}>
+  /* FNXC:WhiteboardCollectionLayout 2026-09-13-16:29: Whiteboard keeps its guarded draft controller mounted while the shared shell presents a resizable desktop collection rail and a canonical mobile list-to-canvas back action. */
+  const sidebar = <ViewSidebar ariaLabel={t("whiteboard.list", "Whiteboards")}><div className="whiteboard-list">
         <label className="whiteboard-search"><Search /><span className="sr-only">{t("whiteboard.search", "Search whiteboards")}</span><input className="input" type="search" value={boards.search} onChange={(e)=>boards.setSearch(e.target.value)} placeholder={t("whiteboard.search", "Search whiteboards")} /></label>
         {!projectId ? <p className="whiteboard-state">{t("whiteboard.noProject", "Select a project to use Whiteboard")}</p> : null}
         {boards.loading && !boards.whiteboards.length ? <p className="whiteboard-state">{t("common.loading", "Loading…")}</p> : null}
         {!boards.loading && projectId && !boards.whiteboards.length ? <p className="whiteboard-state">{boards.search ? t("whiteboard.noResults", "No whiteboards found") : t("whiteboard.empty", "No whiteboards yet")}</p> : null}
         {boards.whiteboards.map((board)=><button key={board.id} type="button" className={`whiteboard-list-item${board.id === (boards.pendingSelectedId ?? boards.selected?.id) ? " whiteboard-list-item--selected" : ""}`} onClick={()=>void choose(board.id)} aria-current={board.id === boards.selected?.id ? "page" : undefined}><strong>{board.title}</strong><span>{board.id.slice(0,8)}</span><time dateTime={board.updatedAt}>{new Date(board.updatedAt).toLocaleString()}</time></button>)}
-      </aside>
-      <main className="whiteboard-editor">
+      </div></ViewSidebar>;
+  const detail = <main className="whiteboard-editor">
         {boards.selected && boards.draftDocument ? <>
           <div className="whiteboard-editor-toolbar">
-            <button className="btn btn-icon whiteboard-back" type="button" aria-label={t("common.back", "Back")} onClick={()=>void back()}><ArrowLeft /></button>
             <input className="input whiteboard-title" aria-label={t("whiteboard.title", "Whiteboard title")} maxLength={200} value={boards.draftTitle} onChange={(e)=>boards.setDraftTitle(e.target.value)} />
             <span>{boards.saving ? t("whiteboard.saving", "Saving…") : boards.dirty ? t("whiteboard.unsaved", "Unsaved") : t("whiteboard.saved", "Saved")}</span>
             <button className="btn" type="button" onClick={()=>void boards.rename()}>{t("whiteboard.rename", "Rename")}</button>
@@ -44,7 +44,13 @@ export function WhiteboardView({ projectId, addToast }: WhiteboardViewProps) {
           {boards.revisions.length ? <div className="whiteboard-revisions">{boards.revisions.map((revision)=><button className="btn" type="button" key={revision.revision} onClick={()=>void boards.restore(revision.revision)}>v{revision.revision} · {new Date(revision.createdAt).toLocaleString()}</button>)}</div> : null}
           <div className="whiteboard-canvas-host" ref={canvasRef}><WhiteboardCanvas document={boards.draftDocument} onChange={boards.setDraftDocument} /></div>
         </> : <div className="whiteboard-state whiteboard-editor-empty"><PanelsTopLeft /><p>{t("whiteboard.select", "Select or create a whiteboard")}</p></div>}
-      </main>
-    </div>
+      </main>;
+  return <section className={`whiteboard-view${boards.selected ? " whiteboard-view--editor" : ""}`} aria-label={t("nav.whiteboard", "Whiteboard")}>
+    <ViewLayout
+      header={<ViewHeader icon={PanelsTopLeft} title={t("nav.whiteboard", "Whiteboard")} backAction={boards.selected ? { label: t("common.back", "Back"), onClick: () => void back() } : undefined} actions={<><span className="btn-badge">{t("common.alpha", "Alpha")}</span><ViewActionButton kind="create" label={t("whiteboard.new", "New whiteboard")} disabled={!projectId || boards.saving} onClick={() => void boards.create()} /></>} />}
+      sidebar={sidebar}
+      mobilePane={boards.selected ? "detail" : "list"}
+      contentOwnsScroll
+    >{detail}</ViewLayout>
   </section>;
 }
