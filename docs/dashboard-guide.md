@@ -1476,13 +1476,15 @@ Workflow behavior:
 - Feature triage and slice **Triage all features** create new tasks on the selected workflow.
 - If no workflow is selected, or workflow columns are unavailable, mission-created tasks continue to use the project default workflow.
 
-<!-- FNXC:MissionInterviewDocs 2026-06-25-15:55: FN-6975 made the Plan Mission with AI workspace movable/resizable on desktop while preserving mobile's fixed full-screen flow, and stream failures now surface one recoverable retry state instead of leaving the modal spinning. -->
+<!-- FNXC:MissionInterviewDocs 2026-09-14-21:32: FN-395 makes Plan Mission with AI part of the Missions main content instead of a floating window: it replaces the mission list while open, so there is no longer anything to drag, resize, or persist geometry for. Stream failures still surface one recoverable retry state instead of leaving the interview spinning. -->
 <!-- FNXC:PlanningInterview 2026-06-26-00:00: GitHub #1794 requires structured planning, mission, milestone, and slice interview questions to let users reject all provided single-select/multi-select options by choosing Other and writing their own answer. -->
 
-Plan Mission with AI modal behavior:
-- On desktop, the modal opens as a floating workspace that can be dragged by its title bar and resized from the window edges/corners.
-- On mobile, the mission interview keeps the fixed full-screen/sheet-style layout so touch users retain the original focused flow.
-- If the mission interview stream reports a terminal failure, the modal closes the failed stream, shows one normalized error, and offers retry without duplicating late error/complete events.
+Plan Mission with AI behavior:
+- **Plan Mission with AI** is a main-content surface, not a modal. Starting or resuming an interview replaces the mission list inside the Missions view and fills the available content area.
+- Desktop, tablet, and mobile share the same embedded flow. There is no overlay, no title-bar drag, no resize handle, and no remembered window size or position.
+- Closing the interview (the header **Close** button or `Escape`) returns to the mission list without cancelling the interview session; an un-started goal draft is preserved.
+- When an interview is resumed, the header also offers **Send to background** so the session keeps running while you return to the mission list.
+- If the mission interview stream reports a terminal failure, the interview closes the failed stream, shows one normalized error, and offers retry without duplicating late error/complete events.
 - Structured single-select and multi-select interview questions include **Other (write your own)** so users can decline all suggested options, submit a free-text answer, or combine that text with selected multi-select options.
 
 ## Roadmaps View

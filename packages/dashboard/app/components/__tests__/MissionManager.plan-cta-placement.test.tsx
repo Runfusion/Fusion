@@ -67,7 +67,9 @@ describe("MissionManager canonical creation and archive controls", () => {
 
     fireEvent.click(within(header).getByRole("button", { name: "Plan New Mission" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Plan New Mission" }));
-    await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
+    /* FNXC:MissionInterviewMainContent 2026-09-14-21:32: The interview is an embedded main-content panel that replaces the manager body, not a dialog. */
+    await waitFor(() => expect(screen.getByTestId("mission-interview-panel")).toBeInTheDocument());
+    expect(screen.queryByTestId("mission-manager-dialog")).toBeNull();
   });
 
   it("keeps the archive filter in the list and reveals archived missions on demand", async () => {

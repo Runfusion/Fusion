@@ -5646,7 +5646,14 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
     </div>
   );
 
-  const interviewModal = (
+  /*
+  FNXC:MissionInterviewMainContent 2026-09-14-21:32:
+  Plan Mission with AI is a main-content destination, not a modal layered over the board. While the interview is open it
+  REPLACES the mission manager body in both hosts (the inline MainContent mount and the overlay surface), so it fills the
+  available region with no floating chrome. Closing unmounts it and hands the region back to the mission list; the goal
+  draft, resume and send-to-background flows are unchanged (the draft is persisted by the interview's own close/unmount path).
+  */
+  const interviewSurface = (
     <MissionInterviewModal
       key={interviewModalKey}
       isOpen={showInterviewModal}
@@ -5679,11 +5686,12 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
     />
   ) : null;
 
+  const managerBody = showInterviewModal ? interviewSurface : manager;
+
   if (isInline) {
     return (
       <>
-        {manager}
-        {interviewModal}
+        {managerBody}
         {milestoneSliceInterviewModal}
       </>
     );
@@ -5700,9 +5708,8 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
         role="dialog"
         aria-modal="true"
       >
-        {manager}
+        {managerBody}
       </DashboardWindowSurfaceRoot>
-      {interviewModal}
       {milestoneSliceInterviewModal}
     </>
   );

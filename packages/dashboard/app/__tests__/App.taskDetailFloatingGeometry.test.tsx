@@ -105,7 +105,7 @@ describe("task-detail FloatingWindow geometry", () => {
       }),
     );
     localStorage.setItem(
-      "floating-window:mission-interview",
+      "floating-window:sample-secondary",
       JSON.stringify({
         size: { width: 540, height: 420 },
         position: { x: 210, y: 120 },
@@ -128,7 +128,7 @@ describe("task-detail FloatingWindow geometry", () => {
           windowKey="mission"
           title="Mission"
           onClose={() => {}}
-          persistGeometryKey="floating-window:mission-interview"
+          persistGeometryKey="floating-window:sample-secondary"
         >
           <div>mission body</div>
         </FloatingWindow>
