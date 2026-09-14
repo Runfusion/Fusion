@@ -29,6 +29,7 @@ import {
 import { FN_AGENT_ID, TASK_PLANNER_CHAT_AGENT_ID_PREFIX, useChat, type ChatMessageInfo, type ChatSessionInfo } from "../hooks/useChat";
 import { useChatUnread } from "../hooks/useChatUnread";
 import { useVirtualizedChatTranscript } from "../hooks/useVirtualizedChatTranscript";
+import { useStickyBottomFollow } from "../hooks/useStickyBottomFollow";
 import { useVirtualizedList } from "../hooks/useVirtualizedList";
 import { useAutoPaginationSentinel } from "../hooks/useAutoPaginationSentinel";
 import { useComposerDictation } from "../hooks/useComposerDictation";
@@ -723,6 +724,31 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
     keys: transcriptKeys,
     scrollRef: messagesContainerRef,
   });
+  /*
+  FNXC:StickyBottomScroll 2026-09-14-20:19:
+  FN-398 : `.chat-messages` a désormais un propriétaire unique du suivi du bas. L'intention utilisateur (molette,
+  pan tactile, touche de navigation, glissement de barre de défilement) désengage le suivi de façon synchrone et
+  INDÉPENDAMMENT de la géométrie ; auparavant un geste de 30 px restait sous le seuil de 50 px, ne désengageait rien,
+  et la boucle d'ancrage suivante réécrivait `scrollTop` en bas. Le seuil ne sert plus qu'au RÉENGAGEMENT. Toute
+  intention clôt aussi la propriété d'alignement terminal du virtualiseur et l'ancrage différé de 250 ms, qui étaient
+  les deux autres écrivains capables de raccrocher le lecteur.
+  */
+  const stickyFollow = useStickyBottomFollow(messagesContainerRef, {
+    rearmThresholdPx: CHAT_BOTTOM_FOLLOW_THRESHOLD_PX,
+    attachKey: `${activeSession?.id ?? ""}:${detailOpen}`,
+    onFollowingChange: (following) => {
+      isUserScrollingRef.current = !following;
+      setIsUserScrolling(!following);
+    },
+    onUserIntent: () => {
+      directThreadAnchorGenerationRef.current += 1;
+      virtualTranscript.cancelPendingScrollToBottom();
+      if (directThreadDeferredAnchorTimeoutRef.current !== null) {
+        window.clearTimeout(directThreadDeferredAnchorTimeoutRef.current);
+        directThreadDeferredAnchorTimeoutRef.current = null;
+      }
+    },
+  });
   const chatThreadRef = useRef<HTMLDivElement | null>(null);
   const clippedMessageFrameRef = useRef<number | null>(null);
   const [topClippedMessageIds, setTopClippedMessageIds] = useState<Set<string>>(() => new Set());
@@ -995,18 +1021,18 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
     });
   }, [updateTopClippedMessages]);
 
-  const captureScrollSnapshot = useCallback((synchronizeOwnershipFromGeometry = false) => {
+  const captureScrollSnapshot = useCallback(() => {
     const messagesContainer = messagesContainerRef.current;
     const threadId = getActiveThreadId();
     if (!messagesContainer || !threadId) return;
 
-    let isDetached = isUserScrollingRef.current;
-    if (synchronizeOwnershipFromGeometry) {
-      const atBottom = messagesContainer.scrollTop + messagesContainer.clientHeight >= messagesContainer.scrollHeight - CHAT_BOTTOM_FOLLOW_THRESHOLD_PX;
-      isDetached = !atBottom;
-      isUserScrollingRef.current = isDetached;
-      setIsUserScrolling(isDetached);
-    }
+    /*
+    FNXC:StickyBottomScroll 2026-09-14-20:19:
+    FN-398 : la propriété du viewport n'est plus redéduite de la géométrie ici. L'écouteur natif du propriétaire
+    unique s'exécute sur l'élément avant la délégation React, donc `isUserScrollingRef` est déjà à jour ;
+    recalculer un « suis-je à moins de 50 px ? » ici réengageait le suivi qu'un petit geste venait de relâcher.
+    */
+    const isDetached = isUserScrollingRef.current;
 
     const scrollTop = messagesContainer.scrollTop;
     const messageElements = messagesContainer.querySelectorAll<HTMLElement>(".chat-message[data-message-id]");
@@ -1032,13 +1058,9 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
     const messagesContainer = messagesContainerRef.current;
     if (!messagesContainer) return;
 
-    captureScrollSnapshot(true);
-    if (isUserScrollingRef.current) {
-      directThreadAnchorGenerationRef.current += 1;
-      virtualTranscript.cancelPendingScrollToBottom();
-    }
+    captureScrollSnapshot();
     scheduleTopClippedMessageUpdate();
-  }, [captureScrollSnapshot, scheduleTopClippedMessageUpdate, virtualTranscript.cancelPendingScrollToBottom]);
+  }, [captureScrollSnapshot, scheduleTopClippedMessageUpdate]);
 
   /*
   FNXC:ChatScrollAnchor 2026-09-07-23:09:
@@ -1051,6 +1073,13 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
     }
 
     const generation = ++directThreadAnchorGenerationRef.current;
+    /*
+    FNXC:StickyBottomScroll 2026-09-14-20:19:
+    FN-398 : chaque frame de la boucle (y compris la première et le chemin `force`) abandonne dès qu'une intention
+    utilisateur est arrivée depuis le début de la boucle. Auparavant seule la géométrie gardait cette boucle, et un
+    geste sous le seuil la laissait réécrire `scrollTop` en bas frame après frame.
+    */
+    const intentGenerationAtStart = stickyFollow.intentGenerationRef.current;
     let frame = 0;
     let stableFrames = 0;
     let lastScrollHeight = -1;
@@ -1058,11 +1087,13 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
 
     const writeBottom = () => {
       if (!container.isConnected || generation !== directThreadAnchorGenerationRef.current) return;
+      if (stickyFollow.intentGenerationRef.current !== intentGenerationAtStart) return;
       if (isUserScrollingRef.current && frame > 0) {
         return;
       }
 
       virtualTranscript.scrollToBottom();
+      stickyFollow.noteProgrammaticWrite(container.scrollTop);
       if (container.scrollHeight === lastScrollHeight) {
         stableFrames += 1;
       } else {
@@ -1072,8 +1103,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
 
       frame += 1;
       if (frame >= maxFrames || stableFrames >= 2) {
-        setIsUserScrolling(false);
-        isUserScrollingRef.current = false;
+        if (stickyFollow.intentGenerationRef.current === intentGenerationAtStart) stickyFollow.setFollowing(true);
         return;
       }
 
@@ -1081,7 +1111,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
     };
 
     writeBottom();
-  }, [virtualTranscript.scrollToBottom]);
+  }, [stickyFollow, virtualTranscript.scrollToBottom]);
 
   const activeThreadMessages = messages;
   const conversationSearchMatches = useMemo(() => {
@@ -1137,6 +1167,8 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
     }
 
     messagesContainer.scrollTop = Math.max(0, restoredScrollTop);
+    // Restauration d'ancre : écriture programmatique fencée par position attendue, pas par minuterie.
+    stickyFollow.noteProgrammaticWrite(messagesContainer.scrollTop);
     scrollRestoreSnapshotRef.current = {
       ...snapshot,
       scrollTop: messagesContainer.scrollTop,
@@ -1144,9 +1176,8 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
       clientHeight: messagesContainer.clientHeight,
       capturedAtMs: typeof performance !== "undefined" ? performance.now() : Date.now(),
     };
-    isUserScrollingRef.current = true;
-    setIsUserScrolling(true);
-  }, [getActiveThreadId, getMessageElement]);
+    stickyFollow.setFollowing(false);
+  }, [getActiveThreadId, getMessageElement, stickyFollow]);
 
   /*
   FNXC:ChatTranscriptVirtualization 2026-09-06-14:15:
@@ -1207,9 +1238,9 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
     if (!messagesContainer) return;
     // Cancel any pending scroll restoration so it doesn't override the explicit jump-to-bottom.
     scrollRestoreSnapshotRef.current = null;
-    isUserScrollingRef.current = false;
+    stickyFollow.setFollowing(true);
     anchorToBottom(messagesContainer);
-  }, [anchorToBottom, logScrollDebug]);
+  }, [anchorToBottom, logScrollDebug, stickyFollow]);
 
   useLayoutEffect(() => {
     if (directThreadDeferredAnchorTimeoutRef.current !== null) {
@@ -1253,8 +1284,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
     const shouldTakeViewportOwnership = previousState === null || isThreadChanged;
     if (shouldTakeViewportOwnership) {
       scrollRestoreSnapshotRef.current = null;
-      isUserScrollingRef.current = false;
-      setIsUserScrolling(false);
+      stickyFollow.setFollowing(true);
     }
     anchorToBottom(messagesContainer, { force: shouldTakeViewportOwnership });
     {
@@ -1928,7 +1958,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
     }
 
     const sentFiles = new Set(files);
-    captureScrollSnapshot(true);
+    captureScrollSnapshot();
     snippetDraftEphemeralRef.current = false;
     setMessageInput("");
     try {

@@ -1,6 +1,7 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  PIN_MAX_REASSERT_MS,
   isColumnCentered,
   resolveFlingTargetIndex,
   resolvePageAnimationMs,
@@ -106,6 +107,13 @@ waiting out native inertia. Settling therefore means "run the page animation to 
 helper advances past both the idle fallback and the longest page animation.
 */
 const SETTLE_ADVANCE_MS = 400;
+
+/*
+FNXC:BoardNavigation 2026-09-14-20:19:
+FN-398 bounded the compositor pin, so cases that assert the fence must reach the snap WITHOUT spending the whole
+fence window first. This advance clears a single-column page animation (190ms) plus a couple of frames, leaving the fence open.
+*/
+const PAGE_ANIMATION_SETTLE_MS = 224;
 
 function settleAfterMomentum(): void {
   act(() => {
@@ -705,13 +713,43 @@ describe("useColumnScrollSnap", () => {
     expect(scroller.scrollLeft).toBe(COLUMN_WIDTH);
   });
 
-  it("pins after settle so residual fling cannot move the board", () => {
+  /*
+  FNXC:BoardNavigation 2026-09-14-20:19:
+  FN-398 turned the pin into a BOUNDED compositor fence. Residual fling arriving inside the fence window is
+  still corrected — that is what this case has always guarded — but the fence now closes on its own instead of
+  vetoing every later scroll "until the next touch", which is what took the scroll away from mouse, keyboard and
+  programmatic board-scroll restores.
+  */
+  it("pins residual fling that arrives inside the bounded compositor fence", () => {
     const scroller = createScroller();
     renderHook(() => useColumnScrollSnap(scroller, { mobileOnly: true, isUserInteraction: () => true }));
 
-    act(() => dispatchShortSwipe(scroller, { scrollDelta: 10, clientDelta: 20 }));
-    settleAfterMomentum();
+    act(() => {
+      dispatchShortSwipe(scroller, { scrollDelta: 10, clientDelta: 20 });
+      vi.advanceTimersByTime(PAGE_ANIMATION_SETTLE_MS);
+      expect(scroller.scrollLeft).toBe(COLUMN_WIDTH);
+
+      // Late WebKit compositor write, one frame after the snap: still inside the fence.
+      scroller.scrollLeft = COLUMN_WIDTH + 40;
+      scroller.dispatchEvent(new Event("scroll"));
+      scroller.dispatchEvent(new Event("scrollend"));
+    });
+
     expect(scroller.scrollLeft).toBe(COLUMN_WIDTH);
+  });
+
+  it("closes the compositor fence so a later scroll is never rewritten", () => {
+    const scroller = createScroller();
+    renderHook(() => useColumnScrollSnap(scroller, { mobileOnly: true, isUserInteraction: () => true }));
+
+    act(() => {
+      dispatchShortSwipe(scroller, { scrollDelta: 10, clientDelta: 20 });
+      vi.advanceTimersByTime(PAGE_ANIMATION_SETTLE_MS);
+    });
+    expect(scroller.scrollLeft).toBe(COLUMN_WIDTH);
+
+    // Past the bounded window there is no compositor write left to correct.
+    act(() => { vi.advanceTimersByTime(PIN_MAX_REASSERT_MS + 32); });
 
     act(() => {
       scroller.scrollLeft = COLUMN_WIDTH + 40;
@@ -719,9 +757,97 @@ describe("useColumnScrollSnap", () => {
       scroller.dispatchEvent(new Event("scrollend"));
       vi.advanceTimersByTime(500);
     });
+
+    expect(scroller.scrollLeft).toBe(COLUMN_WIDTH + 40);
+  });
+
+  /*
+  FNXC:BoardNavigation 2026-09-14-20:19:
+  FN-398 reported symptom, board side: once the columns snapped, a scroll written from a NON-touch source (a mouse
+  pan, or `restoreBoardScroll` from app/utils/boardScrollSnapshot.ts) was immediately rewritten back to the snapped
+  column and the reassert loop kept doing it. A difference beyond compositor drift is a real scroll and is kept.
+  */
+  it("keeps a real non-touch scroll and releases the pin instead of vetoing it", () => {
+    const scroller = createScroller();
+    renderHook(() => useColumnScrollSnap(scroller, { mobileOnly: true, isUserInteraction: () => true }));
+
+    act(() => {
+      dispatchShortSwipe(scroller, { scrollDelta: 10, clientDelta: 20 });
+      vi.advanceTimersByTime(PAGE_ANIMATION_SETTLE_MS);
+    });
+    expect(scroller.scrollLeft).toBe(COLUMN_WIDTH);
+
+    act(() => {
+      scroller.scrollLeft = COLUMN_WIDTH + 2 * COLUMN_WIDTH;
+      scroller.dispatchEvent(new Event("scroll"));
+    });
+    expect(scroller.scrollLeft).toBe(COLUMN_WIDTH + 2 * COLUMN_WIDTH);
+
+    // The pin is gone: no reassertion survives to pull the board back.
+    act(() => { vi.advanceTimersByTime(500); });
+    expect(scroller.scrollLeft).toBe(COLUMN_WIDTH + 2 * COLUMN_WIDTH);
+  });
+
+  it("still corrects a one-pixel compositor drift inside the fence", () => {
+    const scroller = createScroller();
+    renderHook(() => useColumnScrollSnap(scroller, { mobileOnly: true, isUserInteraction: () => true }));
+
+    act(() => {
+      dispatchShortSwipe(scroller, { scrollDelta: 10, clientDelta: 20 });
+      vi.advanceTimersByTime(PAGE_ANIMATION_SETTLE_MS);
+      scroller.scrollLeft = COLUMN_WIDTH + 1;
+      vi.advanceTimersByTime(16);
+    });
+
     expect(scroller.scrollLeft).toBe(COLUMN_WIDTH);
   });
 
+  it("releases the pin on a mouse pointerdown", () => {
+    const scroller = createScroller();
+    renderHook(() => useColumnScrollSnap(scroller, { mobileOnly: true, isUserInteraction: () => true }));
+
+    act(() => {
+      dispatchShortSwipe(scroller, { scrollDelta: 10, clientDelta: 20 });
+      vi.advanceTimersByTime(PAGE_ANIMATION_SETTLE_MS);
+    });
+
+    act(() => {
+      const event = new Event("pointerdown", { bubbles: true });
+      Object.defineProperty(event, "pointerType", { value: "mouse" });
+      Object.defineProperty(event, "isPrimary", { value: true });
+      scroller.dispatchEvent(event);
+      scroller.scrollLeft = COLUMN_WIDTH + 30;
+      scroller.dispatchEvent(new Event("scroll"));
+      vi.advanceTimersByTime(500);
+    });
+
+    expect(scroller.scrollLeft).toBe(COLUMN_WIDTH + 30);
+  });
+
+  it("releases the pin on a keyboard scroll", () => {
+    const scroller = createScroller();
+    renderHook(() => useColumnScrollSnap(scroller, { mobileOnly: true, isUserInteraction: () => true }));
+
+    act(() => {
+      dispatchShortSwipe(scroller, { scrollDelta: 10, clientDelta: 20 });
+      vi.advanceTimersByTime(PAGE_ANIMATION_SETTLE_MS);
+    });
+
+    act(() => {
+      scroller.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+      scroller.scrollLeft = COLUMN_WIDTH + 30;
+      scroller.dispatchEvent(new Event("scroll"));
+      vi.advanceTimersByTime(500);
+    });
+
+    expect(scroller.scrollLeft).toBe(COLUMN_WIDTH + 30);
+  });
+
+  /*
+  FNXC:BoardNavigation 2026-09-14-20:19:
+  FN-398 keeps this iOS invariant but times it against the bounded fence: the callback-less compositor write is
+  corrected while the fence is open, after several earlier reassertion passes.
+  */
   it("keeps the integer pin after a compositor fling tick arrives after earlier reassertions", () => {
     const scroller = createScroller();
     renderHook(() => useColumnScrollSnap(scroller, { mobileOnly: true, isUserInteraction: () => true }));
@@ -732,9 +858,9 @@ describe("useColumnScrollSnap", () => {
       // hook-owned page animation has finished. It must not abort the page.
       scroller.dispatchEvent(new Event("scrollend"));
 
-      // Run the page animation out, then let watchdog passes complete before the
-      // callback-less compositor write.
-      vi.advanceTimersByTime(SETTLE_ADVANCE_MS);
+      // Run the page animation out, then let several watchdog passes complete before the
+      // callback-less compositor write, all inside the bounded fence.
+      vi.advanceTimersByTime(PAGE_ANIMATION_SETTLE_MS);
       expect(scroller.scrollLeft).toBe(COLUMN_WIDTH);
       scroller.scrollLeft = COLUMN_WIDTH + 40;
       vi.advanceTimersByTime(16);

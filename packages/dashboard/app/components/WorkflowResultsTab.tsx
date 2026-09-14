@@ -28,6 +28,7 @@ import { linkifyFilePaths, linkifyReactChildren } from "../utils/filePathLinkify
 import { workflowResultTextsAreEquivalent } from "../utils/workflowResultText";
 import { resolveEffectiveExecutor, resolveEffectivePlanning, resolveEffectiveValidator } from "./effective-model-resolution";
 import { isWorkflowStepNotRun } from "../utils/taskProgress";
+import { useStickyBottomFollow } from "../hooks/useStickyBottomFollow";
 
 // Markdown rendering components for workflow output
 const markdownComponents: Components = {
@@ -267,8 +268,15 @@ function LiveAgentLogOutput({
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
-  const isFollowingRef = useRef(true);
   const startedAtMs = new Date(startedAt).getTime();
+  /*
+  FNXC:StickyBottomScroll 2026-09-14-20:19:
+  FN-398 : le journal de workflow en direct partage le propriétaire unique du suivi du bas. L'intention utilisateur
+  relâche le suivi de façon synchrone, indépendamment du seuil de 50 px ; `followTail` et le `ResizeObserver` du
+  contenu cessent alors d'écrire dès la frame du geste.
+  */
+  const stickyFollow = useStickyBottomFollow(containerRef, { rearmThresholdPx: BOTTOM_FOLLOW_THRESHOLD_PX });
+  const isFollowingRef = stickyFollow.isFollowingRef;
 
   // Filter entries to only show those from this step's time window
   const stepEntries = entries.filter((entry) => {
@@ -276,21 +284,12 @@ function LiveAgentLogOutput({
     return entryMs >= startedAtMs;
   });
 
-  const isNearBottom = useCallback((container: HTMLDivElement) => (
-    container.scrollHeight - (container.scrollTop + container.clientHeight) <= BOTTOM_FOLLOW_THRESHOLD_PX
-  ), []);
-
   const followTail = useCallback(() => {
     const container = containerRef.current;
     if (!container || !isFollowingRef.current) return;
     container.scrollTop = container.scrollHeight;
-  }, []);
-
-  const handleScroll = useCallback(() => {
-    const container = containerRef.current;
-    if (!container) return;
-    isFollowingRef.current = isNearBottom(container);
-  }, [isNearBottom]);
+    stickyFollow.noteProgrammaticWrite(container.scrollTop);
+  }, [isFollowingRef, stickyFollow]);
 
   /*
   FNXC:WorkflowLiveLog 2026-07-18-16:10:
@@ -322,7 +321,6 @@ function LiveAgentLogOutput({
       ref={containerRef}
       className="workflow-live-log"
       data-testid={`workflow-live-log-${stepId}`}
-      onScroll={handleScroll}
     >
       <div ref={contentRef}>
         {stepEntries.map((entry, i) => {

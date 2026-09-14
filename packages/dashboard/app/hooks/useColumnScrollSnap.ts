@@ -7,7 +7,9 @@ Wrong-way snaps came from (1) settle direction using the last micro scroll tick 
 rubber-band/fling end often reverses for a frame — and (2) origin±nearest hybrid targets.
 Direction is locked at finger-up from net gesture delta only (never post-lift ticks). Target
 is always the next column in that scroll direction from the current viewport (classic
-directional page snap). Pin until next touch; the controlled animation kills residual fling.
+directional page snap). The controlled animation kills residual fling, and a BOUNDED pin
+(FN-398: PIN_MAX_REASSERT_MS, PIN_DRIFT_TOLERANCE_PX, released by any user intent) closes the
+last compositor write without ever vetoing a real scroll.
 
 FNXC:BoardNavigation 2026-07-22-15:10:
 A tap during post-lift momentum must cancel the pending directional settle and re-baseline
@@ -37,6 +39,23 @@ const CENTER_TOLERANCE_PX = 1;
 const MIN_PAN_CLIENT_PX = 12;
 /** Keep a WebKit compositor write from outliving the main-thread hard jump. */
 const PIN_REASSERT_INTERVAL_MS = 16;
+/*
+FNXC:BoardNavigation 2026-09-14-20:19:
+FN-398 : l'épingle est une CLÔTURE BORNÉE du dernier write compositeur, pas un veto permanent. Elle ne durait
+auparavant que « jusqu'au prochain toucher » : un pan souris, un défilement clavier ou une restauration
+programmatique (`restoreBoardScroll`) était donc annulé et le tableau se remettait de force sur la colonne
+aimée. Le write compositeur tardif qu'elle corrige arrive en quelques frames, ce qui est borné.
+*/
+export const PIN_MAX_REASSERT_MS = 160;
+/**
+ * Écart maximal, en px, encore attribuable à une dérive compositeur.
+ *
+ * Au-delà, l'écart décrit un défilement réel : l'épingle est libérée et le défilement n'est jamais annulé.
+ * La valeur doit rester au-dessus de la dérive réellement observée sur WebKit — les fixtures iOS existantes
+ * modélisent un tick de fling résiduel de 40 px — tout en restant très en deçà d'un saut de colonne, pour qu'une
+ * restauration programmatique ou un pan souris soit toujours classé comme défilement réel.
+ */
+export const PIN_DRIFT_TOLERANCE_PX = 48;
 
 /*
 FNXC:BoardNavigation 2026-07-24-11:20:
@@ -447,10 +466,12 @@ export function useColumnScrollSnap(
     let priorInlineScrollSnapType = "";
     let idleTimer: ReturnType<typeof setTimeout> | null = null;
     let capturedPointerId: number | null = null;
-    /** Force scrollLeft until the next user touch. */
+    /** Bounded compositor fence: force scrollLeft only for late compositor drift, never a real scroll. */
     let pinnedScrollLeft: number | null = null;
-    /** Continues correcting late WebKit compositor writes until the next user interaction. */
+    /** Corrects late WebKit compositor writes, bounded by PIN_MAX_REASSERT_MS. */
     let pinReassertTimer: ReturnType<typeof setTimeout> | null = null;
+    /** Wall-clock start of the current pin, used to close the bounded fence. */
+    let pinStartedAt = 0;
     /*
     FNXC:BoardNavigation 2026-07-24-11:20:
     Release velocity comes from board scrollLeft samples taken while the finger is down, not from
@@ -503,6 +524,28 @@ export function useColumnScrollSnap(
     const clearPin = () => {
       clearPinReassertion();
       pinnedScrollLeft = null;
+      pinStartedAt = 0;
+    };
+
+    /**
+     * True when `scrollLeft` differs from the pin by more than late compositor drift.
+     *
+     * FNXC:BoardNavigation 2026-09-14-20:19:
+     * FN-398: a difference beyond the tolerance describes a REAL scroll (mouse pan, keyboard, or a
+     * programmatic board-scroll restore). Rewriting it was the board-side "my scroll is taken away".
+     */
+    const isRealScrollAwayFromPin = (): boolean =>
+      pinnedScrollLeft !== null && Math.abs(scroller.scrollLeft - pinnedScrollLeft) > PIN_DRIFT_TOLERANCE_PX;
+
+    /** Applies the bounded fence to a scroll/scrollend tick. Returns true when the tick was absorbed. */
+    const absorbTickWithPin = (): boolean => {
+      if (pinnedScrollLeft === null) return false;
+      if (now() - pinStartedAt > PIN_MAX_REASSERT_MS || isRealScrollAwayFromPin()) {
+        clearPin();
+        return false;
+      }
+      scroller.scrollLeft = pinnedScrollLeft;
+      return true;
     };
 
     /**
@@ -526,13 +569,28 @@ export function useColumnScrollSnap(
     FNXC:BoardNavigation 2026-07-22-19:15:
     On phone-class WebKit, `scrollend` can precede a final compositor fling write that has no
     usable `scroll` callback. Two post-jump tasks can both run before that late write, so retain a
-    lightweight pin watchdog until the next user interaction. It corrects only a changed value,
-    preserving free-scroll while held and CSS proximity rather than making snap mandatory.
+    lightweight pin watchdog. It corrects only a changed value, preserving free-scroll while held
+    and CSS proximity rather than making snap mandatory.
+
+    FNXC:BoardNavigation 2026-09-14-20:19:
+    FN-398 bounds that watchdog. It now stops after PIN_MAX_REASSERT_MS (~10 frames, the lifetime of
+    the compositor write it exists to correct) and releases immediately when scrollLeft differs by
+    more than PIN_DRIFT_TOLERANCE_PX, because such a difference is a real scroll — a mouse pan, a
+    keyboard scroll, or `restoreBoardScroll` — and rewriting it took the scroll away from the user.
     */
     const reassertPinnedScrollLeft = () => {
       pinReassertTimer = setTimeout(() => {
         pinReassertTimer = null;
         if (pinnedScrollLeft === null) return;
+        // FN-398: the fence closes on its own; it never outlives the compositor write it corrects.
+        if (now() - pinStartedAt > PIN_MAX_REASSERT_MS) {
+          clearPin();
+          return;
+        }
+        if (isRealScrollAwayFromPin()) {
+          clearPin();
+          return;
+        }
         if (scroller.scrollLeft !== pinnedScrollLeft) {
           hardJumpScrollLeft(scroller, pinnedScrollLeft);
         }
@@ -546,6 +604,7 @@ export function useColumnScrollSnap(
       suspendNativeSnap();
       hardJumpScrollLeft(scroller, target);
       pinnedScrollLeft = target;
+      pinStartedAt = now();
       scroller.scrollLeft = target;
       clearPinReassertion();
       reassertPinnedScrollLeft();
@@ -873,6 +932,12 @@ export function useColumnScrollSnap(
     const beginInteraction = (event: Event) => {
       if (!isUserInteraction(event)) return;
       /*
+      FNXC:BoardNavigation 2026-09-14-20:19:
+      FN-398: ANY user intent releases the fence, including mouse input. Releasing it only after the
+      mouse early-return below meant a mouse pan was vetoed by a pin the finger had left behind.
+      */
+      clearPin();
+      /*
       FNXC:BoardNavigation 2026-08-30-07:01:
       The mobile column-snap owner must never capture mouse input. A non-touch desktop browser at
       <=768 CSS px resolves to mobile, and ancestor capture retargets the compatibility click away
@@ -881,7 +946,6 @@ export function useColumnScrollSnap(
       if (isMousePointerEvent(event)) return;
 
       if (event.type === "touchstart") touchSequenceActive = true;
-      clearPin();
       /*
       FNXC:BoardNavigation 2026-07-24-11:20:
       A touch landing mid-animation takes the axis back immediately (overflow restored, rAF
@@ -980,10 +1044,7 @@ export function useColumnScrollSnap(
     };
 
     const handleScroll = () => {
-      if (pinnedScrollLeft !== null) {
-        scroller.scrollLeft = pinnedScrollLeft;
-        return;
-      }
+      if (absorbTickWithPin()) return;
       if (!interactionActive) return;
       const current = scroller.scrollLeft;
       if (current === lastScrollLeft) return;
@@ -1061,15 +1122,20 @@ export function useColumnScrollSnap(
     };
 
     const handleScrollEnd = () => {
-      if (pinnedScrollLeft !== null) {
-        scroller.scrollLeft = pinnedScrollLeft;
-        return;
-      }
+      if (absorbTickWithPin()) return;
       if (pointerHeld) return;
       if (!interactionActive) return;
       snapInScrollDirection();
     };
 
+    /*
+    FNXC:BoardNavigation 2026-09-14-20:19:
+    FN-398: keyboard scrolling is user intent too. It never went through `beginInteraction`, so a
+    keyboard scroll landed inside a live pin and was rewritten back to the snapped column.
+    */
+    const releasePinOnKeyboardIntent = () => { clearPin(); };
+
+    scroller.addEventListener("keydown", releasePinOnKeyboardIntent);
     scroller.addEventListener("pointerdown", beginInteraction);
     scroller.addEventListener("touchstart", beginInteraction, { passive: true });
     scroller.addEventListener("wheel", beginInteraction, { passive: true });
@@ -1089,6 +1155,7 @@ export function useColumnScrollSnap(
       cancelPageAnimation();
       releasePointerCapture();
       restoreNativeSnap();
+      scroller.removeEventListener("keydown", releasePinOnKeyboardIntent);
       scroller.removeEventListener("pointerdown", beginInteraction);
       scroller.removeEventListener("touchstart", beginInteraction);
       scroller.removeEventListener("wheel", beginInteraction);

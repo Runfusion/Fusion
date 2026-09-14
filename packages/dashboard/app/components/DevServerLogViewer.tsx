@@ -5,6 +5,7 @@ import "./DevServerLogViewer.css";
 import type { DevServerLogEntry } from "../hooks/useDevServerLogs";
 import { linkifyReactChildren } from "../utils/filePathLinkify";
 import { useAutoPaginationSentinel } from "../hooks/useAutoPaginationSentinel";
+import { useStickyBottomFollow } from "../hooks/useStickyBottomFollow";
 
 interface DevServerLogViewerProps {
   entries: DevServerLogEntry[];
@@ -23,10 +24,6 @@ type LogSeverityFilter = "all" | LogSeverity;
 // eslint-disable-next-line no-control-regex -- ANSI escape stripping is required for readable terminal logs.
 const ANSI_ESCAPE_PATTERN = /\x1b\[[0-9;]*m/g;
 const BOTTOM_FOLLOW_THRESHOLD_PX = 50;
-
-function isNearBottom(container: HTMLElement): boolean {
-  return container.scrollHeight - (container.scrollTop + container.clientHeight) <= BOTTOM_FOLLOW_THRESHOLD_PX;
-}
 
 function stripAnsi(value: string): string {
   return value.replace(ANSI_ESCAPE_PATTERN, "");
@@ -130,10 +127,25 @@ export function DevServerLogViewer({
 
   const matchCount = filteredEntries.length;
 
+  /*
+  FNXC:StickyBottomScroll 2026-09-14-20:19:
+  FN-398 : le journal du serveur de développement partage le propriétaire unique du suivi du bas. Une intention
+  utilisateur relâche le suivi de façon synchrone, indépendamment du seuil de 50 px, pour que l'observateur de
+  mutation cesse de rappeler `scrollToBottom` pendant que le lecteur remonte.
+  */
+  const stickyFollow = useStickyBottomFollow(containerRef, {
+    rearmThresholdPx: BOTTOM_FOLLOW_THRESHOLD_PX,
+    onFollowingChange: (following) => {
+      isUserScrollingRef.current = !following;
+      setIsUserScrolling(!following);
+    },
+  });
+
   const setManualScrollState = useCallback((isManualScrolling: boolean) => {
+    stickyFollow.setFollowing(!isManualScrolling);
     isUserScrollingRef.current = isManualScrolling;
     setIsUserScrolling(isManualScrolling);
-  }, []);
+  }, [stickyFollow]);
 
   const scrollToBottom = useCallback(() => {
     const container = containerRef.current;
@@ -141,9 +153,9 @@ export function DevServerLogViewer({
       return;
     }
 
-    container.scrollTop = container.scrollHeight;
+    stickyFollow.followBottom();
     setManualScrollState(false);
-  }, [setManualScrollState]);
+  }, [setManualScrollState, stickyFollow]);
 
   useEffect(() => {
     const previousRunning = prevRunningRef.current;
@@ -158,14 +170,7 @@ export function DevServerLogViewer({
     prevEntryCountRef.current = entries.length;
   }, [entries.length, isRunning, isUserScrolling, scrollToBottom]);
 
-  const handleScroll = useCallback(() => {
-    const container = containerRef.current;
-    if (!container) {
-      return;
-    }
 
-    setManualScrollState(!isNearBottom(container));
-  }, [setManualScrollState]);
 
   useEffect(() => {
     if (loading || entries.length === 0) {
@@ -279,7 +284,6 @@ export function DevServerLogViewer({
         <div
           ref={containerRef}
           className="devserver-log-viewer__content"
-          onScroll={handleScroll}
           data-testid="devserver-log-content"
         >
           {hasMore ? (

@@ -30,6 +30,7 @@ import {
   type ChatInputAutosizeController,
 } from "../utils/chatInputAutosize";
 import { ChatFocusSelector } from "./ChatFocusSelector";
+import { useStickyBottomFollow } from "../hooks/useStickyBottomFollow";
 import "./TaskPlannerChatTab.css";
 
 interface TaskPlannerChatTabProps {
@@ -84,10 +85,6 @@ interface StarterPromptDefinition {
 }
 
 const BOTTOM_FOLLOW_THRESHOLD = 48;
-
-function isTranscriptNearBottom(container: HTMLElement): boolean {
-  return container.scrollHeight - (container.scrollTop + container.clientHeight) <= BOTTOM_FOLLOW_THRESHOLD;
-}
 
 function normalizePendingMessages(messages: readonly string[]): string[] {
   return messages.map((message) => message.trim()).filter(Boolean);
@@ -406,7 +403,6 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
   const isTranscriptAtBottomRef = useRef(true);
   const previousMessageCountRef = useRef(0);
   const previousActiveRef = useRef(false);
-  const isProgrammaticTranscriptScrollRef = useRef(false);
   const loadRequestRef = useRef(0);
   const streamRequestRef = useRef(0);
   const addToastRef = useRef(addToast);
@@ -922,21 +918,34 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
     };
   }, []);
 
+  /*
+  FNXC:StickyBottomScroll 2026-09-14-20:19:
+  FN-398 : Planner Chat partage le propriétaire unique du suivi du bas. Le désengagement ne dépend plus du seuil de
+  48 px : molette, pan tactile et touches de navigation relâchent le suivi de façon synchrone. Le fencing des
+  écritures programmatiques passe du drapeau `isProgrammaticTranscriptScrollRef` (qui ne couvrait qu'une
+  affectation synchrone) à l'attribution par POSITION ATTENDUE du propriétaire, qui couvre aussi un événement
+  `scroll` livré plus tard.
+  */
+  const stickyFollow = useStickyBottomFollow(transcriptRef, {
+    rearmThresholdPx: BOTTOM_FOLLOW_THRESHOLD,
+    attachKey: active,
+    onFollowingChange: (following) => {
+      isTranscriptAtBottomRef.current = following;
+      setIsTranscriptAtBottom(following);
+    },
+  });
+
   const setTranscriptAtBottom = useCallback((atBottom: boolean) => {
+    stickyFollow.setFollowing(atBottom);
     isTranscriptAtBottomRef.current = atBottom;
     setIsTranscriptAtBottom(atBottom);
-  }, []);
+  }, [stickyFollow]);
 
   const anchorTranscriptToBottom = useCallback((container: HTMLElement) => {
-    // Assignment does not normally emit scroll, but preserve the user-pinned state if a host does.
-    isProgrammaticTranscriptScrollRef.current = true;
-    try {
-      container.scrollTop = container.scrollHeight;
-      setTranscriptAtBottom(true);
-    } finally {
-      isProgrammaticTranscriptScrollRef.current = false;
-    }
-  }, [setTranscriptAtBottom]);
+    container.scrollTop = container.scrollHeight;
+    stickyFollow.noteProgrammaticWrite(container.scrollTop);
+    setTranscriptAtBottom(true);
+  }, [setTranscriptAtBottom, stickyFollow]);
 
   /*
   FNXC:ChatMessagePagination 2026-09-06-13:40:
@@ -976,13 +985,13 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
     }
   }, [hasMoreHistory, projectId]);
 
+  /*
+  FN-398 : la décision de suivi appartient au propriétaire unique, dont l'écouteur natif s'exécute avant cette
+  délégation React. Ce gestionnaire ne fait plus que publier la géométrie au virtualiseur.
+  */
   const handleTranscriptScroll = useCallback(() => {
-    if (isProgrammaticTranscriptScrollRef.current) return;
     virtualTranscript.onScroll();
-    const container = transcriptRef.current;
-    if (!container) return;
-    setTranscriptAtBottom(isTranscriptNearBottom(container));
-  }, [setTranscriptAtBottom, virtualTranscript.onScroll]);
+  }, [virtualTranscript.onScroll]);
 
   useEffect(() => {
     const sentinel = historySentinelRef.current;

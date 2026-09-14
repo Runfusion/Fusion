@@ -1663,7 +1663,14 @@ describe("TaskChatTab", () => {
     expect(metrics.scrollTop).toBe(25);
   });
 
-  it("continues following new entries when the user is near the bottom", () => {
+  /*
+  FNXC:StickyBottomScroll 2026-09-14-20:19:
+  FN-398 a remplacé la décision géométrique par l'intention : un défilement réel vers le haut désengage le suivi
+  MÊME s'il atterrit dans la fenêtre de 48 px. Ce cas affirmait l'inverse (un saut de 280 px vers le haut restait
+  « suivi » parce qu'il finissait à 40 px du bas), ce qui est exactement le raccrochage signalé. Il exprime
+  désormais la nouvelle vérité : remonter détache, redescendre dans la fenêtre réarme.
+  */
+  it("rearms following only when the reader scrolls back down into the bottom window", () => {
     const metrics = mockTranscriptMetrics({ scrollHeight: 1000, clientHeight: 240, initialScrollTop: 0 });
     const firstEntries = [makeEntry({ agent: "executor", text: "first output" })];
     const secondEntries = [...firstEntries, makeEntry({ agent: "executor", text: "second output", timestamp: "2026-06-12T00:00:01.000Z" })];
@@ -1674,12 +1681,30 @@ describe("TaskChatTab", () => {
     const { rerender } = render(<TaskChatTab task={makeTask()} active addToast={vi.fn()} />);
     expect(metrics.scrollTop).toBe(1000);
 
+    // Scrolling UP is user intent: it detaches even though 720 + 240 lands inside the 48px window.
     metrics.scrollTop = 720;
     fireEvent.scroll(screen.getByTestId("task-chat-transcript"));
     metrics.scrollHeight = 1400;
     rerender(<TaskChatTab task={makeTask()} active addToast={vi.fn()} />);
 
-    expect(metrics.scrollTop).toBe(1400);
+    expect(metrics.scrollTop).toBe(720);
+
+    // Scrolling back DOWN into the window rearms, so the next growth follows again.
+    metrics.scrollTop = 1160;
+    fireEvent.scroll(screen.getByTestId("task-chat-transcript"));
+    metrics.scrollHeight = 1600;
+    mockedUseAgentLogs.mockReturnValue({
+      entries: [...secondEntries, makeEntry({ agent: "executor", text: "third output", timestamp: "2026-06-12T00:00:02.000Z" })],
+      loading: false,
+      clear: vi.fn(),
+      loadMore: vi.fn(),
+      hasMore: false,
+      total: 3,
+      loadingMore: false,
+    });
+    rerender(<TaskChatTab task={makeTask()} active addToast={vi.fn()} />);
+
+    expect(metrics.scrollTop).toBe(1600);
   });
 
   it("does not yank a scrolled-up user when a new entry arrives", () => {
@@ -1855,7 +1880,12 @@ describe("TaskChatTab", () => {
     expect(screen.queryByTestId("task-chat-jump-to-bottom")).not.toBeInTheDocument();
   });
 
-  it("renders the jump-to-bottom button only after a populated transcript is scrolled up", () => {
+  /*
+  FNXC:StickyBottomScroll 2026-09-14-20:19:
+  FN-398 : le bouton de retour au bas suit l'état de suivi, et le suivi est désormais relâché dès le premier
+  défilement vers le haut. Ce cas exigeait auparavant de dépasser le seuil de 48 px avant de voir le bouton.
+  */
+  it("renders the jump-to-bottom button as soon as a populated transcript is scrolled up", () => {
     const metrics = mockTranscriptMetrics({ scrollHeight: 1200, clientHeight: 240, initialScrollTop: 0 });
     mockLogs([makeEntry({ agent: "executor", text: "latest output" })]);
 
@@ -1865,7 +1895,7 @@ describe("TaskChatTab", () => {
 
     metrics.scrollTop = 920;
     fireEvent.scroll(screen.getByTestId("task-chat-transcript"));
-    expect(screen.queryByTestId("task-chat-jump-to-bottom")).not.toBeInTheDocument();
+    expect(screen.getByTestId("task-chat-jump-to-bottom")).toBeVisible();
 
     metrics.scrollTop = 600;
     fireEvent.scroll(screen.getByTestId("task-chat-transcript"));

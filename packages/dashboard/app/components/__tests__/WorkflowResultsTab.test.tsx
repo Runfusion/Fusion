@@ -938,6 +938,82 @@ describe("WorkflowResultsTab", () => {
       expect(geometry.scrollTop).toBe(1200);
     });
 
+    /*
+    FNXC:StickyBottomScroll 2026-09-14-20:19:
+    FN-398 : une molette de 30 px — sous l'ancien seuil de 50 px — doit libérer le lecteur. Avant, `isFollowingRef`
+    restait vrai et `followTail` (plus le `ResizeObserver` du contenu) réécrivait `scrollTop` en bas.
+    */
+    /*
+    FNXC:StickyBottomScroll 2026-09-14-21:29:
+    FN-398 : le journal en direct affiche « Waiting for agent output… » avant la première entrée, donc son
+    conteneur de défilement n'existe pas au premier rendu. Le propriétaire doit s'abonner au nœud tardif,
+    sinon aucun geste n'est jamais entendu et le lecteur reste collé à la queue.
+    */
+    it("subscribes to a live-log container that only mounts with the first entry", () => {
+      const view = renderLiveLog([]);
+      // La branche vide rend un nœud DIFFÉRENT, sans `ref` : le conteneur de défilement arrive plus tard.
+      expect(screen.getByTestId("workflow-live-log-WS-004").querySelector(".workflow-live-log-empty")).not.toBeNull();
+
+      mockedUseAgentLogs.mockReturnValue({ entries: initialEntries, loading: false, clear: vi.fn(), loadMore: vi.fn(), hasMore: false, total: initialEntries.length, loadingMore: false });
+      view.rerender(<WorkflowResultsTab taskId="FN-001" results={mockResults} isTaskInProgress />);
+      const container = screen.getByTestId("workflow-live-log-WS-004") as HTMLDivElement;
+      const geometry = mockWorkflowLiveLogGeometry(container, 800);
+
+      const wheel = new Event("wheel", { bubbles: true });
+      Object.defineProperty(wheel, "deltaY", { value: -30 });
+      Object.defineProperty(wheel, "target", { value: container });
+      act(() => { container.dispatchEvent(wheel); });
+      geometry.scrollTop = 770;
+      fireEvent.scroll(container);
+
+      geometry.scrollHeight = 1200;
+      mockedUseAgentLogs.mockReturnValue({ entries: appendedEntries, loading: false, clear: vi.fn(), loadMore: vi.fn(), hasMore: false, total: appendedEntries.length, loadingMore: false });
+      view.rerender(<WorkflowResultsTab taskId="FN-001" results={mockResults} isTaskInProgress />);
+
+      expect(geometry.scrollTop).toBe(770);
+    });
+
+    it("stops following after a wheel-up smaller than the bottom threshold", () => {
+      const view = renderLiveLog(initialEntries);
+      const container = screen.getByTestId("workflow-live-log-WS-004") as HTMLDivElement;
+      const geometry = mockWorkflowLiveLogGeometry(container, 800);
+
+      const wheel = new Event("wheel", { bubbles: true });
+      Object.defineProperty(wheel, "deltaY", { value: -30 });
+      Object.defineProperty(wheel, "target", { value: container });
+      act(() => { container.dispatchEvent(wheel); });
+      geometry.scrollTop = 770;
+      fireEvent.scroll(container);
+
+      geometry.scrollHeight = 1200;
+      mockedUseAgentLogs.mockReturnValue({ entries: appendedEntries, loading: false, clear: vi.fn(), loadMore: vi.fn(), hasMore: false, total: appendedEntries.length, loadingMore: false });
+      view.rerender(<WorkflowResultsTab taskId="FN-001" results={mockResults} isTaskInProgress />);
+
+      expect(geometry.scrollTop).toBe(770);
+    });
+
+    it("rearms following after the reader scrolls manually back to the bottom", () => {
+      const view = renderLiveLog(initialEntries);
+      const container = screen.getByTestId("workflow-live-log-WS-004") as HTMLDivElement;
+      const geometry = mockWorkflowLiveLogGeometry(container, 800);
+
+      const wheel = new Event("wheel", { bubbles: true });
+      Object.defineProperty(wheel, "deltaY", { value: -30 });
+      Object.defineProperty(wheel, "target", { value: container });
+      act(() => { container.dispatchEvent(wheel); });
+      geometry.scrollTop = 770;
+      fireEvent.scroll(container);
+
+      geometry.scrollTop = 800;
+      fireEvent.scroll(container);
+
+      geometry.scrollHeight = 1200;
+      mockedUseAgentLogs.mockReturnValue({ entries: appendedEntries, loading: false, clear: vi.fn(), loadMore: vi.fn(), hasMore: false, total: appendedEntries.length, loadingMore: false });
+      view.rerender(<WorkflowResultsTab taskId="FN-001" results={mockResults} isTaskInProgress />);
+
+      expect(geometry.scrollTop).toBe(1200);
+    });
+
     it("anchors to the bottom when the live log first becomes scrollable", () => {
       const proto = HTMLElement.prototype;
       const originalScrollHeight = Object.getOwnPropertyDescriptor(proto, "scrollHeight");

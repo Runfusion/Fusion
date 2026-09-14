@@ -34,6 +34,7 @@ import { parseRuntimeModelMarker } from "./effective-model-resolution";
 import { useChatMessageLayout } from "../context/ChatMessageLayoutContext";
 import { useChatEnterSubmits } from "../context/ChatSubmitOnEnterContext";
 import { getSlashTriggerMatch } from "./chat-commands";
+import { useStickyBottomFollow } from "../hooks/useStickyBottomFollow";
 import { applySnippetToDraft, filterChatSnippets, matchStandaloneSnippetInvocation } from "./chat-snippets";
 import "./TaskChatTab.css";
 
@@ -90,9 +91,6 @@ const BOTTOM_FOLLOW_THRESHOLD = 48;
 const TOP_LOAD_THRESHOLD = 48;
 const INITIAL_LOADING_INDICATOR_DELAY_MS = 150;
 
-function isTranscriptNearBottom(container: HTMLElement): boolean {
-  return container.scrollHeight - (container.scrollTop + container.clientHeight) <= BOTTOM_FOLLOW_THRESHOLD;
-}
 
 function getRoleLabel(role: AgentLogRole, t: TFunction<"app">): string {
   switch (role) {
@@ -820,15 +818,34 @@ export function TaskChatTab({ task, columnFlags, projectId, active, addToast, on
     anchorFrameRef.current = null;
   }, []);
 
+  /*
+  FNXC:StickyBottomScroll 2026-09-14-20:19:
+  FN-398 : le transcript de tâche partage désormais le propriétaire unique du suivi du bas. L'intention utilisateur
+  désengage de façon synchrone, indépendamment du seuil de 48 px : auparavant un geste sous ce seuil laissait
+  `isTranscriptAtBottomRef` à vrai, et le `followTail` des observateurs (ou la boucle de 6 frames) réécrivait
+  `scrollTop` en bas avant même la livraison de l'événement `scroll`.
+  */
+  const stickyFollow = useStickyBottomFollow(transcriptRef, {
+    rearmThresholdPx: BOTTOM_FOLLOW_THRESHOLD,
+    attachKey: active,
+    onFollowingChange: (following) => {
+      isTranscriptAtBottomRef.current = following;
+      setIsTranscriptAtBottom(following);
+    },
+  });
+
   const setTranscriptFollowing = useCallback((following: boolean) => {
+    stickyFollow.setFollowing(following);
     isTranscriptAtBottomRef.current = following;
     setIsTranscriptAtBottom(following);
-  }, []);
+  }, [stickyFollow]);
 
   const anchorTranscriptToBottom = useCallback((container: HTMLElement) => {
     cancelAnchorTranscriptFrame();
     if (!container.isConnected) return;
 
+    // FN-398 : la boucle abandonne dès qu'une intention utilisateur est arrivée depuis son démarrage.
+    const intentGenerationAtStart = stickyFollow.intentGenerationRef.current;
     let frame = 0;
     let stableFrames = 0;
     let lastScrollHeight = -1;
@@ -837,8 +854,10 @@ export function TaskChatTab({ task, columnFlags, projectId, active, addToast, on
     const writeBottom = () => {
       anchorFrameRef.current = null;
       if (!container.isConnected || !isTranscriptAtBottomRef.current) return;
+      if (stickyFollow.intentGenerationRef.current !== intentGenerationAtStart) return;
 
       container.scrollTop = container.scrollHeight;
+      stickyFollow.noteProgrammaticWrite(container.scrollTop);
       previousScrollHeightRef.current = container.scrollHeight;
       setTranscriptFollowing(true);
       if (container.scrollHeight === lastScrollHeight) {
@@ -857,7 +876,7 @@ export function TaskChatTab({ task, columnFlags, projectId, active, addToast, on
     };
 
     writeBottom();
-  }, [cancelAnchorTranscriptFrame, setTranscriptFollowing]);
+  }, [cancelAnchorTranscriptFrame, setTranscriptFollowing, stickyFollow]);
 
   useEffect(() => {
     if (!active) return;
@@ -871,6 +890,7 @@ export function TaskChatTab({ task, columnFlags, projectId, active, addToast, on
     const followTail = () => {
       if (!isTranscriptAtBottomRef.current) return;
       container.scrollTop = container.scrollHeight;
+      stickyFollow.noteProgrammaticWrite(container.scrollTop);
       previousScrollHeightRef.current = container.scrollHeight;
     };
     const resizeObserver = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(followTail);
@@ -881,7 +901,7 @@ export function TaskChatTab({ task, columnFlags, projectId, active, addToast, on
       resizeObserver?.disconnect();
       mutationObserver?.disconnect();
     };
-  }, [active]);
+  }, [active, stickyFollow]);
 
   useLayoutEffect(() => () => {
     cancelAnchorTranscriptFrame();
@@ -948,15 +968,14 @@ export function TaskChatTab({ task, columnFlags, projectId, active, addToast, on
       const previousHeight = pendingPrependScrollHeightRef.current ?? previousScrollHeight;
       const heightDelta = container.scrollHeight - previousHeight;
       container.scrollTop = previousTop + Math.max(0, heightDelta);
-      pendingPrependScrollHeightRef.current = null;
-      setTranscriptFollowing(isTranscriptNearBottom(container));
+      // Restauration de préfixe : écriture programmatique fencée, et le suivi n'est jamais réarmé par un prepend.
+      stickyFollow.noteProgrammaticWrite(container.scrollTop);
     } else if (transcriptItemCount > previousCount) {
       const shouldFollow = previousCount === 0 || isTranscriptAtBottomRef.current;
       if (shouldFollow) {
         container.scrollTop = container.scrollHeight;
+        stickyFollow.noteProgrammaticWrite(container.scrollTop);
         setTranscriptFollowing(true);
-      } else {
-        setTranscriptFollowing(isTranscriptNearBottom(container));
       }
       if (pendingPrependScrollHeightRef.current !== null) {
         pendingPrependScrollHeightRef.current = container.scrollHeight;
@@ -968,7 +987,7 @@ export function TaskChatTab({ task, columnFlags, projectId, active, addToast, on
     previousScrollHeightRef.current = container.scrollHeight;
     previousFirstEntryKeyRef.current = firstEntryKey;
     previousAgentEntryCountRef.current = entries.length;
-  }, [active, entries.length, firstEntryKey, setTranscriptFollowing, transcriptItemCount]);
+  }, [active, entries.length, firstEntryKey, setTranscriptFollowing, stickyFollow, transcriptItemCount]);
 
   const loadPreviousMessages = useCallback(async () => {
     const container = transcriptRef.current;
@@ -983,23 +1002,27 @@ export function TaskChatTab({ task, columnFlags, projectId, active, addToast, on
     }
   }, [active, hasMore, loadMore, loadingMore]);
 
+  /*
+  FN-398 : la décision de suivi appartient au propriétaire unique (écouteur natif exécuté avant la délégation
+  React). Ce gestionnaire ne fait plus que la comptabilité de hauteur et le déclenchement de la pagination haute.
+  */
   const handleTranscriptScroll = useCallback(() => {
     const container = transcriptRef.current;
     if (!container) return;
     previousScrollHeightRef.current = container.scrollHeight;
-    setTranscriptFollowing(isTranscriptNearBottom(container));
     if (container.scrollTop <= TOP_LOAD_THRESHOLD) {
       void loadPreviousMessages();
     }
-  }, [loadPreviousMessages, setTranscriptFollowing]);
+  }, [loadPreviousMessages]);
 
+  /** Réengagement explicite : le bouton de retour au bas reste une commande utilisateur autoritaire. */
   const scrollTranscriptToBottom = useCallback(() => {
     const container = transcriptRef.current;
     if (!container) return;
-    container.scrollTop = container.scrollHeight;
+    stickyFollow.followBottom();
     previousScrollHeightRef.current = container.scrollHeight;
     setTranscriptFollowing(true);
-  }, [setTranscriptFollowing]);
+  }, [setTranscriptFollowing, stickyFollow]);
 
   const handleSnippetSelect = useCallback((snippet: ChatSnippet) => {
     const applied = applySnippetToDraft(

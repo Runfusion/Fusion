@@ -652,6 +652,12 @@ FN-110 keeps the conversation-local Find row compact across Chat hosts and disti
      transform momentarily exposes the body background as a gray
      box partially covering the messages. */
   overscroll-behavior: contain;
+  /* FNXC:StickyBottomScroll 2026-09-14-20:19:
+     FN-398: native scroll anchoring pulls against the manual bottom pin. When content grows above the
+     reader's cursor the browser silently shifts scrollTop to preserve its own anchor, which fights the
+     single sticky-bottom owner and reads to the user as "the scroll is being taken away from me". The
+     owner is the only authority on this viewport, so native anchoring is disabled here. */
+  overflow-anchor: none;
 }
 
 /*
