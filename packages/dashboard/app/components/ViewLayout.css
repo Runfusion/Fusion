@@ -47,8 +47,17 @@ One bounded flex composition prevents phantom page scrollers and keeps contextua
   overscroll-behavior: contain;
 }
 
+/*
+FNXC:StandardizedViewLayout 2026-09-14-04:12:
+The direction is explicit and vertical. Before this shell existed, every destination root was its own
+`flex-direction: column` (`.mailbox-view`, the Agent Detail shell, …), so a host could hand the content zone a tab
+row followed by a body and get the expected stack. Adopting the shell with a direction-less `display: flex` silently
+turned those children into a ROW: Mailbox and Agent Detail rendered their tab bars squeezed into a narrow left column
+instead of a line above the content. A single child is unaffected either way; two or more must stack.
+*/
 .view-layout--content-owns-scroll .view-layout__content {
   display: flex;
+  flex-direction: column;
   overflow: hidden;
 }
 

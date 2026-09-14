@@ -1,6 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { ViewLayout } from "../ViewLayout";
+import { loadComponentCss } from "../../test/cssFixture";
 
 describe("ViewLayout", () => {
   it("compose Header, Tabs, Content et Footer dans cet ordre", () => {
@@ -41,5 +42,29 @@ describe("ViewLayout", () => {
       <ViewLayout header={<header>Titre</header>} contentOwnsScroll><div>Terminal</div></ViewLayout>,
     );
     expect(container.firstElementChild).toHaveClass("view-layout--content-owns-scroll");
+  });
+
+  /*
+  Un hôte qui possède son défilement empile ses enfants : barre d'onglets puis corps. Sans direction explicite, le
+  conteneur retombe en RANGÉE et la barre d'onglets se retrouve écrasée à gauche du contenu (régression observée sur
+  Mailbox et Agent Detail, dont les racines étaient des colonnes avant l'adoption de ce socle).
+  */
+  it("empile les enfants du contenu quand l'hôte possède son défilement", () => {
+    const css = loadComponentCss("ViewLayout.css");
+    const rule = css.match(/\.view-layout--content-owns-scroll \.view-layout__content\s*\{([^}]*)\}/)?.[1] ?? "";
+
+    expect(rule).toContain("display: flex");
+    expect(rule).toContain("flex-direction: column");
+
+    const { container } = render(
+      <ViewLayout header={<header>Titre</header>} contentOwnsScroll>
+        <nav data-testid="onglets">Onglets</nav>
+        <section data-testid="corps">Corps</section>
+      </ViewLayout>,
+    );
+    const content = container.querySelector(".view-layout__content")!;
+    expect(content.children).toHaveLength(2);
+    expect(content.firstElementChild).toBe(screen.getByTestId("onglets"));
+    expect(content.lastElementChild).toBe(screen.getByTestId("corps"));
   });
 });
