@@ -510,6 +510,13 @@ export type DatabaseMutationType =
   | "task:step-session-abort-contained"
   /** Metadata: { taskId, blockerTaskIds, episodeCount, commonFileCount, decision, freshness } — paths and prose stay in the transactional receipt. */
   | "task:overlap-wait-released"
+  /*
+  FNXC:OverlapWaitSynchronization 2026-09-15-19:20:
+  FN-429. Metadata: { taskId, blockerTaskId, repository, fromSha, toSha, proof, episodeCount } — a delivered
+  predecessor commit rewritten by an integration-branch rebase was proven equivalent to a commit the execution
+  checkout does contain. Ids and fixed outcomes only: paths, diffs, and summaries stay in the receipt.
+  */
+  | "task:overlap-delivery-reconciled"
   /** Metadata: { taskId, artifactKeys, owner, source, action, attempt, maxAttempts, nodeId? } */
   | "task:required-artifact-missing"
   /*

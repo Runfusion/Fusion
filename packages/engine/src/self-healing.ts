@@ -941,6 +941,12 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   private readonly staleContentParkRecoveryAttempts = new Map<string, number>();
   private readonly staleContentParkRecoveryBudgetLogged = new Set<string>();
   private readonly unrunPreMergeGateRerouteAuditKeys = new Set<string>();
+  /*
+  FNXC:SelfHealingReclaim 2026-09-15-19:20:
+  FN-429. Dedup keys for the pending-overlap-evidence withholding diagnostic below, so a wait that survives
+  many sweeps names its cause once instead of every ~5 minutes.
+  */
+  private readonly overlapEvidenceWithheldLogKeys = new Set<string>();
   private readonly githubCheckStateRetentionLastPrunedAt = new Map<string, number>();
   private readonly processBootStartedAt = Date.now();
   private lastDbCorruptionNotifiedAt: number | null = null;
@@ -4259,6 +4265,28 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     }
   }
 
+  /*
+  FNXC:SelfHealingReclaim 2026-09-15-19:20:
+  FN-429. Reads the overlap-wait episodes that are still working (`observed`, `analyzing`,
+  `freshness-pending`) so the `tip-already-merged` reclaim can withhold instead of destroying a checkout it
+  cannot repair. An unreadable read reports pending evidence (fail-closed). A store with no overlap-wait
+  reader at all reports none, mirroring the resume gate's own legacy/adapter contract — every production
+  `TaskStore` implements it, so this only concerns structural doubles, which state their intent explicitly.
+  */
+  private async readPendingOverlapEvidence(task: Task): Promise<Array<{ blockerTaskId: string; phase: string }>> {
+    const reader = (this.store as { listTaskOverlapWaits?: (taskId: string, options?: { pendingOnly?: boolean }) => Promise<Array<{ blockerTaskId: string; phase: string }>> }).listTaskOverlapWaits;
+    if (typeof reader !== "function") return [];
+    try {
+      const pending = await reader.call(this.store, task.id, { pendingOnly: true });
+      if (!Array.isArray(pending)) return [];
+      return pending
+        .filter((episode) => episode?.phase === "observed" || episode?.phase === "analyzing" || episode?.phase === "freshness-pending")
+        .map((episode) => ({ blockerTaskId: episode.blockerTaskId, phase: episode.phase }));
+    } catch {
+      return [{ blockerTaskId: "unknown", phase: "unreadable" }];
+    }
+  }
+
   /**
    * STANDING: do not auto-discard stranded commits. Reclaim preserves commits;
    * unrecoverable conflicts are escalated for human review.
@@ -4517,6 +4545,29 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             continue;
           }
           if (inspection.kind === "tip-already-merged") {
+            /*
+            FNXC:SelfHealingReclaim 2026-09-15-19:20:
+            FN-429. This branch does not repair overlap delivery evidence, so it must not touch a card whose
+            resume is waiting on that evidence. On FN-428 it destroyed and recreated the checkout and cleared
+            `error`/`status` roughly every 5 minutes: the next dispatch hit the same unproven delivery, the card
+            re-failed, and the operator saw a cleanup loop instead of the real cause. Withhold entirely while any
+            episode is `observed`/`analyzing`/`freshness-pending`, write one deduped diagnostic naming the
+            pending delivery, and mutate nothing. An unreadable episode read is treated as pending evidence
+            (fail-closed): withholding costs a sweep, destroying a checkout cannot be undone.
+            */
+            const pendingOverlapEvidence = await this.readPendingOverlapEvidence(task);
+            if (pendingOverlapEvidence.length > 0) {
+              for (const pending of pendingOverlapEvidence) {
+                const logKey = `${task.id}::${pending.blockerTaskId}::${pending.phase}`;
+                if (this.overlapEvidenceWithheldLogKeys.has(logKey)) continue;
+                this.overlapEvidenceWithheldLogKeys.add(logKey);
+                await this.store.logEntry(
+                  task.id,
+                  `[recovery] tip-already-merged withheld — overlap delivery evidence for ${pending.blockerTaskId} is still ${pending.phase}; reclaiming the checkout would not repair it`,
+                ).catch(() => undefined);
+              }
+              continue;
+            }
             const branchName = task.branch;
             const ownership = await this.readCommitTaskOwnership(inspection.tipSha, task.id, task.lineageId).catch(async () => {
               await this.rejectForeignAlreadyMergedCandidate({

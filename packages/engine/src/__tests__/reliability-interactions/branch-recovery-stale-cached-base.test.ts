@@ -29,6 +29,12 @@ function createStore(): TaskStore & EventEmitter {
   (emitter as any).logEntry = vi.fn().mockResolvedValue(undefined);
   (emitter as any).recordRunAuditEvent = vi.fn().mockResolvedValue(undefined);
   (emitter as any).clearStaleExecutionStartBranchReferences = vi.fn().mockReturnValue([]);
+  /*
+  FNXC:SelfHealingReclaim 2026-09-15-19:20:
+  FN-429. Declared intent: these stale-cached-base cards carry NO pending overlap delivery evidence, so the
+  reclaim is expected to proceed rather than withhold.
+  */
+  (emitter as any).listTaskOverlapWaits = vi.fn().mockResolvedValue([]);
   return emitter;
 }
 

@@ -2251,10 +2251,34 @@ export class ProjectEngine {
         // Live surface cleared — allow a fresh skip log if work goes live again later.
         this.plannerLiveRetrySkipLogDedup.delete(`${task.id}::${decision.watchedStage ?? "executor"}`);
         /* FNXC:WorkflowResolvedColumns 2026-07-30-22:20: census-invisible moveTask DESTINATION — a call argument, not a comparison. */
-        await moveTaskToContainedBackwardTarget(store, task.id, "self-healing-stranded-recovery", {
+        const contained = await moveTaskToContainedBackwardTarget(store, task.id, "self-healing-stranded-recovery", {
           preserveProgress: true,
           moveSource: "engine",
         }, task.column);
+        /*
+        FNXC:PlannerOversight 2026-09-15-19:20:
+        FN-429. This callback used to discard the containment result and `return true` unconditionally, so a
+        refusal — `in-place-recovery` (this reason has no backward-move authority), `no-contained-target`, or a
+        capacity deferral — was reported to PlannerRecoveryController as a successful retry. On FN-428 that
+        produced a "retry" claim roughly every 45 seconds while `lifecycle-move` logged the same refusal and
+        nothing moved. A refusal now returns false (the attempt is not consumed as progress) and writes one
+        durable diagnostic per (taskId, stage, reason), reusing the dedup set the existing
+        `clearPlannerLiveRetrySkipLogDedup` helper clears. No backward-move authority is added anywhere.
+        */
+        if (!contained.moved) {
+          const stage = (decision.watchedStage ?? "executor") as string;
+          const outcome = "reason" in contained ? contained.reason : `deferred-${contained.deferred}`;
+          const refusalKey = `${task.id}::${stage}::${outcome}`;
+          if (!this.plannerLiveRetrySkipLogDedup.has(refusalKey)) {
+            this.plannerLiveRetrySkipLogDedup.add(refusalKey);
+            runtimeLog.log(`[planner-oversight] retry_step not dispatched for ${task.id} — lifecycle recovery stayed in place (${outcome})`);
+            await store.logEntry(
+              task.id,
+              `[planner] stage=${stage} signal=retry-not-dispatched: lifecycle recovery contained in place (${outcome})`,
+            ).catch(() => undefined);
+          }
+          return false;
+        }
         // FN-7551: the attempt just dispatched — record it as attemptCount + 1
         // (decision.attemptCount is the count BEFORE this dispatch).
         await this.emitOverseerInterventionSafe(() =>

@@ -153,7 +153,15 @@ pgDescribe("FN-7551 — overseer decision points populate the intervention timel
     expect(await getPlannerInterventionTimeline(store, task.id)).toHaveLength(0);
   });
 
-  it("failed executor with no error source dispatches retry_step and emits a retry entry with attemptCount/attemptLimit", async () => {
+  /*
+  FNXC:PlannerOversight 2026-09-15-19:20:
+  FN-429 updates this case to the current contract. `retry_step` used to be reported as a dispatched retry
+  unconditionally, but its recovery reason has no backward-move authority under lifecycle containment, so the
+  move is refused in place. Claiming a retry anyway is what produced FN-428's ~45s "retry" loop with nothing
+  moving, so the handler now records ONE durable diagnostic and emits no retry intervention. The retry-emission
+  branch itself is covered in `planner-retry-step-contained-recovery.test.ts` with the lifecycle seam moved.
+  */
+  it("failed executor with no error source records a contained-recovery diagnostic instead of a retry entry", async () => {
     const task = await seedTask("in-progress");
     const { controllerWithSnapshot } = wireRealEngineOverseer(store);
     const controller = controllerWithSnapshot(observation({ taskId: task.id, stage: "executor", signal: "failed", sources: [] }));
@@ -162,11 +170,9 @@ pgDescribe("FN-7551 — overseer decision points populate the intervention timel
     expect(decision?.action).toBe("retry_step");
 
     const timeline = await getPlannerInterventionTimeline(store, task.id);
-    const retryEntry = timeline.find((e) => e.action === "retry");
-    expect(retryEntry).toBeTruthy();
-    expect(retryEntry?.stage).toBe("executor");
-    expect(retryEntry?.attemptCount).toBe(1);
-    expect(retryEntry?.attemptLimit).toBe(3);
+    expect(timeline.find((e) => e.action === "retry")).toBeUndefined();
+    const log = (await store.getTask(task.id)).log ?? [];
+    expect(log.filter((entry) => entry.action?.includes("retry-not-dispatched"))).toHaveLength(1);
   });
 
   /*

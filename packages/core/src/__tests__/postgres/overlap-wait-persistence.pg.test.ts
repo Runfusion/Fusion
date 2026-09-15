@@ -272,4 +272,35 @@ pgDescribe("overlap wait persistence", () => {
     })).resolves.toBeNull();
     expect((await h.store().listTaskOverlapWaits(waiting.id))[0]?.phase).toBe("cancelled");
   });
+
+  /*
+  FNXC:OverlapWaitSynchronization 2026-09-15-19:20:
+  FN-429. A delivery rewritten by an integration-branch rebase keeps its patch and Fusion trailers while
+  changing SHA, so the proven rewrite must survive in the durable receipt: that is what lets Retry, an engine
+  restart, or a deleted worktree resume without re-deriving the proof. The revision/owner fence stays the sole
+  admission, so a stale revision or a foreign owner still publishes nothing.
+  */
+  it("round-trips a reconciled rewritten delivery proof under the revision and owner fence", async () => {
+    const blocker = await h.store().createTask({ description: "holder" });
+    const waiting = await h.store().createTask({ description: "waiting" });
+    await h.store().transitionQueuedEpisode(waiting.id, overlap(blocker.id));
+    const observed = (await h.store().listTaskOverlapWaits(waiting.id))[0]!;
+    const claim = await h.store().claimTaskOverlapWait({ taskId: waiting.id, episodeId: observed.episodeId, expectedRevision: observed.revision, owner: "executor-1" });
+    const receipt = {
+      decision: "briefing" as const,
+      freshness: "proven" as const,
+      commonFiles: ["src/shared.ts"],
+      deliveryProofs: [{ repository: ".", target: "main", landedSha: "9ff2f99683c6", reconciledSha: "b98b32fd4b96", reconciliationProof: "patch-id+task-trailer", landedFiles: ["src/shared.ts"], freshness: "proven" as const }],
+      decisionFingerprint: "reconciled-1",
+      decidedAt: new Date().toISOString(),
+    };
+
+    await expect(h.store().completeTaskOverlapWait({ taskId: waiting.id, episodeId: observed.episodeId, expectedRevision: observed.revision, owner: "executor-1", receipt })).resolves.toBeNull();
+    await expect(h.store().completeTaskOverlapWait({ taskId: waiting.id, episodeId: observed.episodeId, expectedRevision: claim!.revision, owner: "executor-2", receipt })).resolves.toBeNull();
+    const completed = await h.store().completeTaskOverlapWait({ taskId: waiting.id, episodeId: observed.episodeId, expectedRevision: claim!.revision, owner: "executor-1", receipt });
+
+    expect(completed?.receipt?.deliveryProofs[0]).toMatchObject({ landedSha: "9ff2f99683c6", reconciledSha: "b98b32fd4b96", reconciliationProof: "patch-id+task-trailer" });
+    const reread = (await h.store().listTaskOverlapWaits(waiting.id))[0];
+    expect(reread?.receipt?.deliveryProofs[0]).toMatchObject({ landedSha: "9ff2f99683c6", reconciledSha: "b98b32fd4b96", reconciliationProof: "patch-id+task-trailer" });
+  });
 });
