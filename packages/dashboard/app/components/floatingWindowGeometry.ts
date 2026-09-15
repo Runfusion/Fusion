@@ -12,9 +12,9 @@ no host re-implements opening, cascading, snapping, or restoring:
   member takes the first free 28px step. The cascade only ever MOVES a window; it never shrinks one
   (overlap is preferable to a smaller window), and it flips to a negative step when forward travel is
   unavailable.
-- SNAP: dragging a window header into a 24px band at the left/right edge halves the work area for it;
-  the top band fills the work area. Top wins in a corner. Snapped rects are always derived from the
-  LIVE work area, so opening/closing a sidebar re-splits the halves immediately.
+- SNAP: dragging a window until its OWN left/right edge touches the matching work-area wall halves that
+  area for it; its top edge touching the top wall fills the area. Top wins in a corner. Snapped rects are
+  always derived from the LIVE work area, so opening/closing a sidebar re-splits the halves immediately.
 - RESTORE: dragging a snapped window down by 24px restores the floating rect captured before the FIRST
   snap, so left → right → maximized → down never restores a snapped rectangle.
 */
@@ -40,10 +40,28 @@ export type FloatingWindowSnapMode = "floating" | "left" | "right" | "maximized"
 /** Standard opening size used when a host declares no `defaultSize`. */
 export const FLOATING_WINDOW_STANDARD_WIDTH = 720;
 export const FLOATING_WINDOW_STANDARD_HEIGHT = 560;
+/*
+FNXC:FloatingWindowGeometry 2026-09-15-04:01:
+FN-401: a detached conversation used to open at 980x680 while a task window opened at 800x680, so every
+chat pop-out looked oversized next to the task windows it sits beside. Task and Chat windows now share
+ONE standard opening size expressed by these constants, and every host (Task Detail modal, task pop-out,
+detached chat) reads them instead of repeating a literal. `minSize` stays per host: Chat keeps a narrower
+minimum so it remains usable inside a half-width snap column.
+*/
+export const FLOATING_WINDOW_TASK_STANDARD_WIDTH = 800;
+export const FLOATING_WINDOW_TASK_STANDARD_HEIGHT = 680;
 /** Shared cascade step for the pristine-window cohort. Identical for every window type (DRY with chats). */
 export const FLOATING_WINDOW_CASCADE_STEP_PX = 28;
-/** CSS-pixel band around the work-area edges that arms a snap preview while dragging a header. */
-export const FLOATING_WINDOW_SNAP_BAND_PX = 24;
+/*
+FNXC:FloatingWindowSnap 2026-09-15-04:01:
+FN-401 replaces the former 24px pointer band (`FLOATING_WINDOW_SNAP_BAND_PX`, deleted with `detectSnapZone`)
+with exact WALL CONTACT of the dragged panel. No tolerance band is needed once the panel decides: the
+position clamp pins an over-dragged window's edge exactly on the wall, so "push it against the wall" is
+always achievable. A band would instead arm a zone for any large window merely sitting near a wall — an
+800x680 window in a 1280x700 work area is almost always within 24px of something. This value is only a
+sub-pixel guard for fractional work areas, never a reach-in band.
+*/
+export const FLOATING_WINDOW_SNAP_CONTACT_PX = 0.5;
 /** Pointer travel below this stays a click: it must not mark the window as user-adjusted or snap it. */
 export const FLOATING_WINDOW_DRAG_THRESHOLD_PX = 6;
 /** Downward travel required to detach a snapped window back to its pre-snap floating rect. */
@@ -176,22 +194,35 @@ export function resolveSnapRect(mode: FloatingWindowSnapMode, bounds: DashboardW
 }
 
 /*
-FNXC:FloatingWindowSnap 2026-09-14-21:10:
-Zone detection follows the POINTER inside the dragged header, not the panel rectangle, so a large
-window cannot arm a zone merely by being wide. The top band wins in both top corners.
+FNXC:FloatingWindowSnap 2026-09-15-04:01:
+FN-401: zone detection follows the DRAGGED PANEL RECTANGLE, not the pointer. The operator's mental model is
+"push the window against a wall": a wide panel whose right edge was already pinned to the right wall by the
+position clamp offered nothing until the CURSOR also entered a 24px band, which could be hundreds of pixels
+further right and therefore unreachable. Callers must pass the CLAMPED candidate rectangle, because an
+unclamped position never lands exactly on a wall.
+
+Rules, in order:
+- non-finite input or a degenerate work area arms nothing;
+- the top edge ON the top wall wins in both top corners (`maximized`);
+- otherwise the left edge on the left wall arms `left`, the right edge on the right wall arms `right`;
+- AMBIGUITY: a panel as wide as the work area touches BOTH walls at once. Guessing a side there would snap a
+  window the operator only meant to move, and such a panel is already equivalent to the filled work area, so
+  nothing is armed; it detaches downward first like any docked window.
 */
-export function detectSnapZone(
-  pointer: FloatingWindowPosition,
+export function detectSnapZoneForRect(
+  rect: FloatingWindowRect,
   bounds: DashboardWindowBounds,
-  band: number = FLOATING_WINDOW_SNAP_BAND_PX,
+  contact: number = FLOATING_WINDOW_SNAP_CONTACT_PX,
 ): FloatingWindowSnapMode | null {
-  if (!finite(pointer.x, pointer.y, bounds.left, bounds.top, bounds.right, bounds.bottom)) return null;
+  if (!finite(rect.position.x, rect.position.y, rect.size.width, rect.size.height)) return null;
+  if (!finite(bounds.left, bounds.top, bounds.right, bounds.bottom, bounds.width, bounds.height)) return null;
   if (bounds.width <= 0 || bounds.height <= 0) return null;
-  if (pointer.y < bounds.top - band || pointer.y > bounds.bottom + band) return null;
-  if (pointer.x < bounds.left - band || pointer.x > bounds.right + band) return null;
-  if (pointer.y <= bounds.top + band) return "maximized";
-  if (pointer.x <= bounds.left + band) return "left";
-  if (pointer.x >= bounds.right - band) return "right";
+  if (rect.position.y <= bounds.top + contact) return "maximized";
+  const touchesLeft = rect.position.x <= bounds.left + contact;
+  const touchesRight = rect.position.x + rect.size.width >= bounds.right - contact;
+  if (touchesLeft && touchesRight) return null;
+  if (touchesLeft) return "left";
+  if (touchesRight) return "right";
   return null;
 }
 

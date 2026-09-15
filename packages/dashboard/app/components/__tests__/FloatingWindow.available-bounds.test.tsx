@@ -42,6 +42,20 @@ function dragTo(target: HTMLElement, clientX: number, clientY: number, pointerId
 }
 
 /*
+FNXC:FloatingWindowBounds 2026-09-15-04:01:
+FN-401 arms a snap zone from the dragged PANEL's own edge, so pushing a window fully against a work-area
+edge is now a dock request, applied on release. The clamping contract (exact edges, no artificial gutter)
+is therefore asserted while the gesture is still HELD — the panel has already moved to the exact edge and
+only the dock is deferred — then cancelled, which validates nothing.
+*/
+function holdDragTo(target: HTMLElement, clientX: number, clientY: number, pointerId: number) {
+  preparePointerTarget(target);
+  fireEvent.pointerDown(target, { pointerId, clientX: 100, clientY: 100, button: 0 });
+  fireEvent.pointerMove(target, { pointerId, clientX, clientY });
+  return () => fireEvent.pointerCancel(target, { pointerId, clientX, clientY });
+}
+
+/*
 FNXC:FloatingWindowBounds 2026-09-14-10:52:
 These regressions reproduce the shell geometry contract with live DOM landmark rectangles. Exact edges, rather than a synthetic viewport gutter, remain authoritative across drag, oversized restore, dock/footer replacement, and viewport resize.
 */
@@ -90,15 +104,48 @@ describe("FloatingWindow available shell bounds", () => {
     const handle = screen.getByTestId("floating-window-drag-handle-edge");
     await waitFor(() => expect(panel.style.top).toBe("100px"));
 
-    dragTo(handle, -5000, -5000, 1);
+    // The held drag applies its position through requestAnimationFrame; run it synchronously here.
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { callback(0); return 1; });
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+
+    const cancelTopLeft = holdDragTo(handle, -5000, -5000, 1);
     expect(panel.style.left).toBe("0px");
     expect(panel.style.top).toBe("64px");
+    cancelTopLeft();
 
-    dragTo(handle, 5000, 5000, 2);
+    const cancelBottomRight = holdDragTo(handle, 5000, 5000, 2);
     expect(panel.style.left).toBe("680px");
     expect(panel.style.top).toBe("564px");
     expect(Number.parseFloat(panel.style.left) + Number.parseFloat(panel.style.width)).toBe(980);
     expect(Number.parseFloat(panel.style.top) + Number.parseFloat(panel.style.height)).toBe(764);
+    cancelBottomRight();
+    expect(panel.dataset.snapMode).toBe("floating");
+  });
+
+  /*
+  FNXC:FloatingWindowBounds 2026-09-15-04:01:
+  FN-401: releasing at that same exact edge is the dock request, and the half is measured against the work
+  area the dock actually reduces — header, footer, and right dock excluded, no gutter.
+  */
+  it("docks to the right half of the exact work area when released against its right edge", async () => {
+    render(
+      <DashboardWindowManagerProvider>
+        <Landmarks />
+        <FloatingWindow windowKey="dock-edge" title="Edge" onClose={() => {}} defaultSize={{ width: 300, height: 200 }} minSize={{ width: 100, height: 100 }} defaultPosition={{ x: 100, y: 100 }}>
+          body
+        </FloatingWindow>
+      </DashboardWindowManagerProvider>,
+    );
+    const panel = screen.getByTestId("floating-window-dock-edge");
+    const handle = screen.getByTestId("floating-window-drag-handle-dock-edge");
+    await waitFor(() => expect(panel.style.top).toBe("100px"));
+
+    dragTo(handle, 5000, 400, 3);
+
+    expect(panel.dataset.snapMode).toBe("right");
+    expect(panel.style.width).toBe("490px");
+    expect(panel.style.left).toBe("490px");
+    expect(Number.parseFloat(panel.style.left) + Number.parseFloat(panel.style.width)).toBe(980);
   });
 
   it("falls back edge-by-edge to the viewport when landmarks are absent", async () => {

@@ -10,7 +10,11 @@ import { ViewBackButton } from "./ViewActionButton";
 import { ViewLayoutContent, ViewLayoutFooter, ViewLayoutHeader } from "./ViewLayout";
 import { mergeTaskSnapshot } from "../hooks/useTasks";
 import { dismissAiMergeReviewFinding } from "../api/tasks/tasks-lifecycle";
-import { FloatingWindow } from "./FloatingWindow";
+import {
+  FLOATING_WINDOW_TASK_STANDARD_HEIGHT,
+  FLOATING_WINDOW_TASK_STANDARD_WIDTH,
+  FloatingWindow,
+} from "./FloatingWindow";
 import { currentFloatingZ } from "./floatingWindowStack";
 import { ExternalBlockNotice } from "./TaskCard";
 import { TaskRefineDialog } from "./TaskRefineDialog";
@@ -7287,7 +7291,8 @@ export function TaskDetailModal({ onClose, mobileDrawer = false, ...props }: Tas
       className="floating-window--task-detail"
       /* FNXC:ModalTouchGeometry 2026-09-14-11:35: Task Detail shares its layer with Chat work windows so interaction order remains coordinated by floatingWindowStack. */
       layer="task-detail"
-      defaultSize={{ width: 800, height: 680 }}
+      /* FNXC:TaskWindowIdentity 2026-09-15-04:01: FN-401 — the standard task-window size is now a shared constant so detached chats open at exactly this geometry. */
+      defaultSize={{ width: FLOATING_WINDOW_TASK_STANDARD_WIDTH, height: FLOATING_WINDOW_TASK_STANDARD_HEIGHT }}
       minSize={{ width: 480, height: 480 }}
       /* FNXC:ModalTouchGeometry 2026-07-26-19:05: Replace legacy size-only persistence with complete geometry and suspend it for phone and short sheet layouts. */
       suspendGeometryPersistenceOnMobile

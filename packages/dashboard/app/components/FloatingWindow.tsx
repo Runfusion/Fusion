@@ -15,7 +15,7 @@ import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { isFullScreenSheetViewport, isShortViewport, isTabletTouchViewport, useViewportMode } from "../hooks/useViewportMode";
 import { useDrawerDismissGesture } from "../hooks/useDrawerDismissGesture";
-import { currentFloatingZ, currentTaskDetailFloatingZ, nextFloatingZ, nextTaskDetailFloatingZ } from "./floatingWindowStack";
+import { currentFloatingZ, currentTaskDetailFloatingZ, nextFloatingZ, nextSnapPreviewZ, nextTaskDetailFloatingZ } from "./floatingWindowStack";
 import { isInsidePortalSafeSurface } from "../utils/portalSurfaces";
 import "./FloatingWindow.css";
 import { ModalCloseButton } from "./ModalCloseButton";
@@ -34,7 +34,7 @@ import {
   FLOATING_WINDOW_DRAG_THRESHOLD_PX,
   clampFloatingWindowPosition,
   clampFloatingWindowSize,
-  detectSnapZone,
+  detectSnapZoneForRect,
   resolveDetachedRect,
   resolveOpeningRect,
   resolveSnapRect,
@@ -46,6 +46,8 @@ import {
 
 export {
   FLOATING_WINDOW_CASCADE_STEP_PX,
+  FLOATING_WINDOW_TASK_STANDARD_HEIGHT,
+  FLOATING_WINDOW_TASK_STANDARD_WIDTH,
   clampFloatingWindowPosition,
   clampFloatingWindowSize,
 } from "./floatingWindowGeometry";
@@ -273,6 +275,12 @@ export function FloatingWindow({
   const [position, setPosition] = useState<FloatingWindowPosition>(() => openingRect.position);
   const [snapMode, setSnapMode] = useState<FloatingWindowSnapMode>("floating");
   const [snapPreview, setSnapPreview] = useState<FloatingWindowSnapMode | null>(null);
+  /*
+  FNXC:FloatingWindowSnap 2026-09-15-04:01:
+  FN-401: the preview owns its OWN z claimed at arming time, because it is portaled to its own layer rather
+  than painted inside this window's overlay. No z is claimed while nothing is armed.
+  */
+  const [snapPreviewZ, setSnapPreviewZ] = useState<number | null>(null);
   /** Floating rect captured before the FIRST snap; left → right → maximized never overwrites it. */
   const floatingRectRef = useRef<FloatingWindowRect>(openingRect);
   const snapModeRef = useRef<FloatingWindowSnapMode>("floating");
@@ -499,8 +507,15 @@ export function FloatingWindow({
       1. Below the 6px threshold the gesture stays a CLICK: no geometry change, no cascade exit.
       2. A snapped window stays pinned until the pointer travels 24px DOWN; that detaches it back to the
          pre-snap floating rect, re-anchored under the pointer, and the drag continues from there.
-      3. Inside a 24px edge band the matching zone is PREVIEWED only; the mode is applied on pointerup.
+      3. Once free, a zone is PREVIEWED whenever the PANEL's own clamped edge touches the matching work-area
+         wall; the mode is applied on pointerup.
       4. `pointercancel` / lost capture validates nothing and returns to the pre-gesture geometry.
+
+      FNXC:FloatingWindowSnap 2026-09-15-04:01:
+      FN-401: a still-docked window arms NOTHING. Its rectangle is pinned by the zone, so it has no edge to
+      offer, and the pointer alone may no longer carry a docked window to another wall. The one documented
+      way out of any dock — including the filled work area, where no wall is reachable at all — is the 24px
+      downward drag below; the SAME gesture may then continue on to another wall and arm it.
       */
       let anchorX = startX;
       let anchorY = startY;
@@ -510,9 +525,9 @@ export function FloatingWindow({
       let moved = false;
       /*
       FNXC:FloatingWindowSnap 2026-09-14-22:36:
-      A maximized window's header sits ON the top band, so the 24px downward detach can finish with the pointer still
-      inside that band and instantly re-arm the very mode it just left — the window would never come loose. After a
-      detach the ABANDONED mode stays disarmed until the pointer leaves its band; carrying the window straight to a
+      A maximized window's top edge sits ON the top wall, so the 24px downward detach can finish with the panel still
+      against that wall and instantly re-arm the very mode it just left — the window would never come loose. After a
+      detach the ABANDONED mode stays disarmed until the panel leaves that wall; carrying the window straight to a
       DIFFERENT zone (left to right, side to top) keeps working in the same gesture.
       */
       let disarmedZone: FloatingWindowSnapMode | null = null;
@@ -524,6 +539,7 @@ export function FloatingWindow({
         if (previewZone === zone) return;
         previewZone = zone;
         setSnapPreview(zone);
+        setSnapPreviewZ(zone === null ? null : nextSnapPreviewZ());
       };
 
       const handlePointerMove = (moveEvent: PointerEvent) => {
@@ -532,19 +548,8 @@ export function FloatingWindow({
         const bounds = boundsRef.current;
         if (!detached) {
           if (moveEvent.clientY - startY < FLOATING_WINDOW_DETACH_PX) {
-            /*
-            A snapped window stays pinned, but the operator may still carry it to ANOTHER zone: once past
-            the click threshold, a different armed zone is previewed and applied on release. Only the
-            documented downward gesture below detaches it back to its floating rect.
-            */
-            if (Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) < FLOATING_WINDOW_DRAG_THRESHOLD_PX) return;
-            const zone = detectSnapZone({ x: moveEvent.clientX, y: moveEvent.clientY }, bounds);
-            if (zone && zone !== snapModeRef.current) {
-              moved = true;
-              setPreview(zone);
-            } else {
-              setPreview(null);
-            }
+            // Pinned: the panel cannot move, so it exposes no edge and nothing can be armed yet.
+            setPreview(null);
             return;
           }
           const restored = resolveDetachedRect(
@@ -571,7 +576,11 @@ export function FloatingWindow({
         moved = true;
         markUserAdjusted();
         latest = { x: basePosition.x + moveEvent.clientX - anchorX, y: basePosition.y + moveEvent.clientY - anchorY };
-        const zone = detectSnapZone({ x: moveEvent.clientX, y: moveEvent.clientY }, bounds);
+        // The candidate rect must be CLAMPED before detection: an unclamped position never touches a wall.
+        const zone = detectSnapZoneForRect(
+          { position: clampFloatingWindowPosition(latest, activeSize, bounds), size: activeSize },
+          bounds,
+        );
         if (disarmedZone !== null && zone === disarmedZone) {
           setPreview(null);
         } else {
@@ -928,8 +937,32 @@ export function FloatingWindow({
   The preview is pure paint: it is `aria-hidden`, never focusable, and `pointer-events: none`, so it can
   neither receive a click nor intercept the gesture that armed it. It is rendered only while a zone is
   armed and is discarded on pointerup, pointercancel, hide, and unmount.
+
+  FNXC:FloatingWindowSnap 2026-09-15-04:01:
+  FN-401: it is also rendered in its OWN body portal, outside this window's overlay. The overlay's inline
+  z-index opens a closed stacking context, so a preview nested inside it could never outrank the board or
+  another window no matter what z it carried. A hidden window shows no preview at all, which also guarantees
+  no orphan node survives in `document.body`.
   */
-  const previewRect = snapPreview ? resolveSnapRect(snapPreview, availableBounds) : null;
+  const previewRect = snapPreview && !effectiveHidden ? resolveSnapRect(snapPreview, availableBounds) : null;
+  const snapPreviewLayer = previewRect
+    ? createPortal(
+      <div
+        className={`floating-window__snap-preview floating-window__snap-preview--${snapPreview}`}
+        data-testid={`floating-window-snap-preview-${windowKey}`}
+        data-snap-zone={snapPreview ?? undefined}
+        aria-hidden
+        style={{
+          left: `${previewRect.position.x}px`,
+          top: `${previewRect.position.y}px`,
+          width: `${previewRect.size.width}px`,
+          height: `${previewRect.size.height}px`,
+          zIndex: snapPreviewZ ?? zIndex,
+        }}
+      />,
+      document.body,
+    )
+    : null;
 
   /*
   FNXC:FloatingWindow 2026-06-22-21:10:
@@ -938,7 +971,10 @@ export function FloatingWindow({
   FNXC:FloatingWindowVisibility 2026-09-14-11:35:
   Hidden windows remain portaled and layout-participating so child identity, geometry, and scroll survive. Visibility, inertness, aria state, and suspended handlers remove retained surfaces from paint, focus, and interaction without display removal.
   */
-  return createPortal(
+  return (
+    <>
+    {snapPreviewLayer}
+    {createPortal(
     <div
       ref={windowSurface.rootRef}
       className={`floating-window-overlay${effectiveModal ? " floating-window-overlay--modal" : ""}${mobileDrawer ? " floating-window-overlay--mobile-drawer" : ""}${effectiveHidden ? " floating-window-overlay--hidden" : ""}${overlayClassName ? ` ${overlayClassName}` : ""}`}
@@ -964,21 +1000,6 @@ export function FloatingWindow({
       // FNXC:FloatingWindow 2026-06-22-23:00: The z-index MUST live on the position:fixed overlay (which creates a stacking context), not the panel. A panel z-index is trapped inside the overlay's context and loses to page elements that are stacking contexts in body's context (e.g. the right dock at position:absolute z-index:20). With z on the overlay, the whole window sits at the shared floating band in body's stacking context and reliably paints above page content + tap-to-front reorders correctly.
       style={{ zIndex }}
     >
-      {previewRect && (
-        <div
-          className={`floating-window__snap-preview floating-window__snap-preview--${snapPreview}`}
-          data-testid={`floating-window-snap-preview-${windowKey}`}
-          data-snap-zone={snapPreview ?? undefined}
-          aria-hidden
-          style={{
-            left: `${previewRect.position.x}px`,
-            top: `${previewRect.position.y}px`,
-            width: `${previewRect.size.width}px`,
-            height: `${previewRect.size.height}px`,
-            zIndex,
-          }}
-        />
-      )}
       <div
         ref={panelRef}
         data-snap-mode={snapMode}
@@ -1047,5 +1068,7 @@ export function FloatingWindow({
       </div>
     </div>,
     document.body,
+    )}
+    </>
   );
 }

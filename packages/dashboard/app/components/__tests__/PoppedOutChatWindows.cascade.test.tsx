@@ -1,7 +1,12 @@
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DashboardWindowManagerProvider } from "../../context/DashboardWindowManagerContext";
-import { FLOATING_WINDOW_CASCADE_STEP_PX } from "../FloatingWindow";
+import {
+  FLOATING_WINDOW_CASCADE_STEP_PX,
+  FLOATING_WINDOW_TASK_STANDARD_HEIGHT,
+  FLOATING_WINDOW_TASK_STANDARD_WIDTH,
+  FloatingWindow,
+} from "../FloatingWindow";
 import { PoppedOutChatWindows } from "../PoppedOutChatWindows";
 
 /*
@@ -10,14 +15,19 @@ FN-394 removed Chat's private cascade slot and its durable geometry key, so this
 SHARED window contract on detached conversations: every chat window opens at the standard Chat size,
 centred in the live work area, ignoring any previously stored geometry; a second still-pristine window
 is only DISPLACED by one shared cascade step (never shrunk); and windows of other projects stay unrendered.
+
+FNXC:ChatWindows 2026-09-15-04:01:
+FN-401 adds the shared-size symptom assertion: a detached conversation must open at EXACTLY the task-window
+standard geometry (it used to open at 980x680 beside an 800x680 task window). The constants are imported
+rather than re-typed so a future size change cannot leave this suite asserting a stale literal.
 */
 
 vi.mock("../ChatView", () => ({
   ChatView: ({ initialDirectSession }: { initialDirectSession: { id: string } }) => <div>{initialDirectSession.id}</div>,
 }));
 
-const CHAT_WIDTH = 980;
-const CHAT_HEIGHT = 680;
+const CHAT_WIDTH = FLOATING_WINDOW_TASK_STANDARD_WIDTH;
+const CHAT_HEIGHT = FLOATING_WINDOW_TASK_STANDARD_HEIGHT;
 
 const entry = (id: string, projectId = "project-a") => ({
   projectId,
@@ -118,5 +128,46 @@ describe("PoppedOutChatWindows cascade", () => {
     const visible = screen.getByTestId("floating-window-chat-window-project-a-visible");
     await waitFor(() => expect(Number.parseFloat(visible.style.width)).toBe(CHAT_WIDTH));
     expect(rectOf(visible).left).toBe((window.innerWidth - CHAT_WIDTH) / 2);
+  });
+
+  /*
+  FNXC:ChatWindows 2026-09-15-04:01:
+  FN-401 symptom assertion (1): render a detached conversation and a task-shaped window in the SAME window
+  manager and compare their opening rectangles. Before FN-401 the chat opened 180px wider than the task
+  window; they must now be identical.
+  */
+  it("opens a detached conversation at exactly the task-window standard size", async () => {
+    render(
+      <DashboardWindowManagerProvider>
+        <PoppedOutChatWindows
+          entries={[entry("sized")]}
+          projectId="project-a"
+          addToast={vi.fn()}
+          onClose={vi.fn()}
+          onOpenSessionInNewWindow={vi.fn()}
+        />
+        <FloatingWindow
+          windowKey="task-standard-probe"
+          title="Task"
+          onClose={vi.fn()}
+          layer="task-detail"
+          defaultSize={{ width: FLOATING_WINDOW_TASK_STANDARD_WIDTH, height: FLOATING_WINDOW_TASK_STANDARD_HEIGHT }}
+          minSize={{ width: 480, height: 480 }}
+        >
+          <div />
+        </FloatingWindow>
+      </DashboardWindowManagerProvider>,
+    );
+
+    const chat = screen.getByTestId("floating-window-chat-window-project-a-sized");
+    const task = screen.getByTestId("floating-window-task-standard-probe");
+    await waitFor(() => expect(Number.parseFloat(chat.style.width)).toBe(CHAT_WIDTH));
+
+    const chatRect = rectOf(chat);
+    const taskRect = rectOf(task);
+    expect(chatRect.width).toBe(taskRect.width);
+    expect(chatRect.height).toBe(taskRect.height);
+    expect(chatRect.width).toBe(FLOATING_WINDOW_TASK_STANDARD_WIDTH);
+    expect(chatRect.height).toBe(FLOATING_WINDOW_TASK_STANDARD_HEIGHT);
   });
 });

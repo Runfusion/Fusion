@@ -7,7 +7,11 @@ import { usePoppedOutTasks, type PoppedOutTaskEntry } from "../hooks/usePoppedOu
 import type { DetailTaskTab } from "../hooks/useModalManager";
 import type { NavEntry } from "../hooks/useNavigationHistory";
 import type { TaskView } from "../hooks/useViewState";
-import { FloatingWindow } from "./FloatingWindow";
+import {
+  FLOATING_WINDOW_TASK_STANDARD_HEIGHT,
+  FLOATING_WINDOW_TASK_STANDARD_WIDTH,
+  FloatingWindow,
+} from "./FloatingWindow";
 import { useDashboardWindowSurfaceActivity } from "../context/DashboardWindowManagerContext";
 import { TaskDetailContent, TaskDetailModal, type TaskDetailContentProps, type TaskDetailModalProps } from "./TaskDetailModal";
 
@@ -127,6 +131,8 @@ export function AppTaskPopoutWindow({ task, onRemoveWindow, raiseToFrontSignal, 
       hideHeader
       dragHandleSelector=".task-detail-content--embedded > .modal-header"
       className="floating-window--task-detail"
+      /* FNXC:TaskWindowIdentity 2026-09-15-04:01: FN-401 — a task pop-out declared no size and fell back to the generic 720x560 standard; it now opens at the same task-window size as the Task Detail modal and a detached chat. */
+      defaultSize={{ width: FLOATING_WINDOW_TASK_STANDARD_WIDTH, height: FLOATING_WINDOW_TASK_STANDARD_HEIGHT }}
       suspendGeometryPersistenceOnMobile
       layer="task-detail"
     >

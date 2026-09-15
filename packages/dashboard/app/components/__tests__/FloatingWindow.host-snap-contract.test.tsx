@@ -9,6 +9,11 @@ FNXC:FloatingWindowSnap 2026-09-14-21:10:
 FN-394 host contract, exercised on PRODUCTION modals rather than a synthetic stand-in: each hosted window
 opens at its own standard size, snaps left/right/top from its REAL header, restores its pre-snap rect on a
 downward drag, and stays independent of any historical geometry record and of a neighbouring window.
+
+FNXC:FloatingWindowSnap 2026-09-15-04:01:
+FN-401 arms zones from the dragged PANEL rectangle, so a docked window (pinned, no edge of its own) arms
+nothing until the 24px downward detach frees it. The shared `drag` helper therefore accepts intermediate
+points, and the top-band gesture below is one continuous drag: down to detach, then up to the top wall.
 */
 
 const HEADER_HEIGHT = 64;
@@ -44,9 +49,16 @@ function prepareCapture(target: HTMLElement) {
   Object.defineProperty(target, "releasePointerCapture", { configurable: true, value: vi.fn() });
 }
 
-function drag(handle: HTMLElement, from: { x: number; y: number }, to: { x: number; y: number }, pointerId: number) {
+function drag(
+  handle: HTMLElement,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  pointerId: number,
+  via: { x: number; y: number }[] = [],
+) {
   prepareCapture(handle);
   fireEvent.pointerDown(handle, { pointerId, clientX: from.x, clientY: from.y, button: 0 });
+  for (const point of via) fireEvent.pointerMove(handle, { pointerId, clientX: point.x, clientY: point.y });
   fireEvent.pointerMove(handle, { pointerId, clientX: to.x, clientY: to.y });
   fireEvent.pointerUp(handle, { pointerId, clientX: to.x, clientY: to.y });
 }
@@ -106,7 +118,7 @@ describe("hosted modal snap contract", () => {
     drag(header, { x: 200, y: 300 }, { x: 1277, y: 400 }, 2);
     expect(rectOf(panel).left).toBe(640);
 
-    drag(header, { x: 900, y: 300 }, { x: 900, y: HEADER_HEIGHT + 2 }, 3);
+    drag(header, { x: 900, y: 300 }, { x: 900, y: HEADER_HEIGHT + 2 }, 3, [{ x: 900, y: 324 }]);
     expect(rectOf(panel)).toEqual({ left: 0, top: HEADER_HEIGHT, width: 1280, height: 700 });
 
     drag(header, { x: 640, y: HEADER_HEIGHT + 8 }, { x: 640, y: HEADER_HEIGHT + 70 }, 4);

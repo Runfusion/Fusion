@@ -9,6 +9,13 @@ FN-394 snap gestures, driven by REAL pointer events on the real window (native h
 header, mouse and touch). These regressions assert the rendered rectangle, not helper return values:
 half-width columns, the filled work area, top priority in a corner, the click threshold, detaching back
 to the pre-snap floating rect, and the fact that an interrupted gesture validates nothing.
+
+FNXC:FloatingWindowSnap 2026-09-15-04:01:
+FN-401 moves arming from the pointer to the dragged PANEL rectangle. Two consequences are encoded here:
+- a gesture that pushes the panel against a wall arms that column even with the pointer far from that wall;
+- a still-docked window arms nothing at all, so carrying it to another wall is now one continuous gesture
+  that first travels 24px DOWN to detach (the only way out of the filled work area) and then on to the wall.
+The `via` points of `drag` exist for exactly that two-phase gesture.
 */
 
 const HEADER_HEIGHT = 64;
@@ -48,6 +55,8 @@ function prepareCapture(target: HTMLElement) {
 
 interface Gesture {
   from?: { x: number; y: number };
+  /** Intermediate pointermove points, e.g. the downward travel that detaches a docked window. */
+  via?: { x: number; y: number }[];
   to: { x: number; y: number };
   pointerId?: number;
   pointerType?: "mouse" | "touch";
@@ -62,22 +71,26 @@ function drag(handle: HTMLElement, gesture: Gesture) {
   const from = gesture.from ?? { x: 600, y: 400 };
   prepareCapture(handle);
   fireEvent.pointerDown(handle, { pointerId, pointerType, clientX: from.x, clientY: from.y, button: 0 });
+  for (const point of gesture.via ?? []) {
+    fireEvent.pointerMove(handle, { pointerId, pointerType, clientX: point.x, clientY: point.y });
+  }
   fireEvent.pointerMove(handle, { pointerId, pointerType, clientX: gesture.to.x, clientY: gesture.to.y });
   if (gesture.hold) return;
   if (gesture.cancel) fireEvent.pointerCancel(handle, { pointerId, pointerType, clientX: gesture.to.x, clientY: gesture.to.y });
   else fireEvent.pointerUp(handle, { pointerId, pointerType, clientX: gesture.to.x, clientY: gesture.to.y });
 }
 
-function renderWindow(options: { sidebar?: boolean; delegated?: boolean } = {}) {
+function renderWindow(options: { sidebar?: boolean; delegated?: boolean; defaultSize?: { width: number; height: number } } = {}) {
+  const defaultSize = options.defaultSize ?? { width: 600, height: 400 };
   const view = render(
     <DashboardWindowManagerProvider>
       <Landmarks sidebar={options.sidebar} />
       {options.delegated ? (
-        <FloatingWindow windowKey="snap" title="Snap" onClose={() => {}} hideHeader dragHandleSelector=".host-header" defaultSize={{ width: 600, height: 400 }} minSize={{ width: 320, height: 200 }}>
+        <FloatingWindow windowKey="snap" title="Snap" onClose={() => {}} hideHeader dragHandleSelector=".host-header" defaultSize={defaultSize} minSize={{ width: 320, height: 200 }}>
           <div className="host-header">Host header</div>
         </FloatingWindow>
       ) : (
-        <FloatingWindow windowKey="snap" title="Snap" onClose={() => {}} defaultSize={{ width: 600, height: 400 }} minSize={{ width: 320, height: 200 }}>body</FloatingWindow>
+        <FloatingWindow windowKey="snap" title="Snap" onClose={() => {}} defaultSize={defaultSize} minSize={{ width: 320, height: 200 }}>body</FloatingWindow>
       )}
     </DashboardWindowManagerProvider>,
   );
@@ -130,9 +143,96 @@ describe("FloatingWindow snap gestures", () => {
     drag(handle, { to: { x: 1276, y: 400 }, pointerId: 2 });
     expect(rectOf(panel)).toEqual({ left: 640, top: HEADER_HEIGHT, width: 640, height: 700 });
 
-    drag(handle, { from: { x: 900, y: 200 }, to: { x: 700, y: HEADER_HEIGHT + 4 }, pointerId: 3 });
+    // One continuous gesture: 24px down detaches the docked window, then the panel travels to the top band.
+    drag(handle, { from: { x: 900, y: 200 }, via: [{ x: 900, y: 224 }], to: { x: 700, y: HEADER_HEIGHT + 4 }, pointerId: 3 });
     expect(rectOf(panel)).toEqual({ left: 0, top: HEADER_HEIGHT, width: 1280, height: 700 });
     expect(panel.dataset.snapMode).toBe("maximized");
+  });
+
+  /*
+  FNXC:FloatingWindowSnap 2026-09-15-04:01:
+  FN-401 symptom assertion (2): the pointer stays at mid-height and well inside the work area, so the OLD
+  pointer-driven detection armed nothing. The position clamp pins the panel's right edge to the right wall,
+  which must now arm and apply the right column.
+  */
+  it("arms the right column from the panel's own edge while the pointer stays away from the band", async () => {
+    const { panel, handle } = renderWindow();
+    await waitFor(() => expect(rectOf(panel).width).toBe(600));
+
+    drag(handle, { from: { x: 600, y: 400 }, to: { x: 1000, y: 400 }, pointerId: 70, hold: true });
+    const preview = screen.getByTestId("floating-window-snap-preview-snap");
+    expect(preview.dataset.snapZone).toBe("right");
+    // The pointer stayed 280px away from the right wall; only the panel's clamped edge is against it.
+    expect(1280 - 1000).toBeGreaterThan(24);
+
+    fireEvent.pointerUp(handle, { pointerId: 70, clientX: 1000, clientY: 400 });
+    expect(panel.dataset.snapMode).toBe("right");
+    expect(rectOf(panel)).toEqual({ left: 640, top: HEADER_HEIGHT, width: 640, height: 700 });
+  });
+
+  /*
+  FNXC:FloatingWindowSnap 2026-09-15-04:01:
+  FN-401: a docked window is pinned, so it offers no edge. Moving the pointer to another wall without the
+  documented downward detach must arm nothing and leave the dock untouched.
+  */
+  it("arms nothing while the window is still docked", async () => {
+    const { panel, handle } = renderWindow();
+    await waitFor(() => expect(rectOf(panel).width).toBe(600));
+
+    drag(handle, { to: { x: 6, y: 400 }, pointerId: 71 });
+    expect(panel.dataset.snapMode).toBe("left");
+
+    drag(handle, { from: { x: 300, y: 300 }, to: { x: 1278, y: 290 }, pointerId: 72, hold: true });
+    expect(screen.queryByTestId("floating-window-snap-preview-snap")).not.toBeInTheDocument();
+    fireEvent.pointerUp(handle, { pointerId: 72, clientX: 1278, clientY: 290 });
+    expect(panel.dataset.snapMode).toBe("left");
+    expect(rectOf(panel).left).toBe(0);
+  });
+
+  /*
+  FNXC:FloatingWindowSnap 2026-09-15-04:01:
+  FN-401 surface enumeration: a sheet presentation (phone / short viewport) exposes no drag and therefore no
+  zone at all. The panel geometry must not move and no preview may ever be armed.
+  */
+  it("arms no zone and moves nothing in sheet presentation", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 600 });
+    // `isFullScreenSheetViewport` reads the CSS breakpoint through matchMedia, not innerWidth.
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: /max-width/.test(query),
+      media: query,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {},
+      onchange: null,
+      dispatchEvent: () => false,
+    }));
+    render(
+      <DashboardWindowManagerProvider>
+        <Landmarks />
+        <FloatingWindow
+          windowKey="sheet"
+          title="Sheet"
+          onClose={() => {}}
+          suspendGeometryPersistenceOnMobile
+          suspendGeometryPersistenceOnShortViewport
+          defaultSize={{ width: 400, height: 300 }}
+          minSize={{ width: 320, height: 200 }}
+        >
+          body
+        </FloatingWindow>
+      </DashboardWindowManagerProvider>,
+    );
+    const panel = screen.getByTestId("floating-window-sheet");
+    await waitFor(() => expect(rectOf(panel).width).toBe(400));
+    const before = rectOf(panel);
+
+    const handle = screen.getByTestId("floating-window-drag-handle-sheet");
+    drag(handle, { from: { x: 300, y: 400 }, via: [{ x: 300, y: 430 }], to: { x: 4, y: 400 }, pointerId: 73, hold: true });
+    expect(screen.queryByTestId("floating-window-snap-preview-sheet")).not.toBeInTheDocument();
+    fireEvent.pointerUp(handle, { pointerId: 73, clientX: 4, clientY: 400 });
+    expect(rectOf(panel)).toEqual(before);
+    expect(panel.dataset.snapMode).toBe("floating");
   });
 
   it("gives the top band priority over a side band in a corner", async () => {
@@ -194,7 +294,8 @@ describe("FloatingWindow snap gestures", () => {
 
     drag(handle, { to: { x: 5, y: 400 }, pointerId: 11 });
     drag(handle, { from: { x: 300, y: 300 }, to: { x: 1278, y: 400 }, pointerId: 12 });
-    drag(handle, { from: { x: 900, y: 300 }, to: { x: 900, y: HEADER_HEIGHT + 1 }, pointerId: 13 });
+    // Detach downward first, then continue to the top band inside the same gesture.
+    drag(handle, { from: { x: 900, y: 300 }, via: [{ x: 900, y: 324 }], to: { x: 900, y: HEADER_HEIGHT + 1 }, pointerId: 13 });
     expect(panel.dataset.snapMode).toBe("maximized");
     expect(screen.queryByTestId("floating-window-resize-se")).not.toBeInTheDocument();
 
@@ -250,7 +351,9 @@ describe("FloatingWindow snap gestures", () => {
 
   it("lets a half-width column go below the declared minimum while the shell stays uncovered", async () => {
     Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 600 });
-    const { panel, handle } = renderWindow();
+    // The panel must be narrower than the work area, otherwise it touches BOTH walls at once and FN-401
+    // deliberately refuses to guess a side.
+    const { panel, handle } = renderWindow({ defaultSize: { width: 400, height: 400 } });
     await waitFor(() => expect(rectOf(panel).width).toBeGreaterThan(0));
     drag(handle, { from: { x: 300, y: 400 }, to: { x: 4, y: 400 }, pointerId: 21 });
     expect(rectOf(panel).width).toBe(300);
@@ -270,7 +373,7 @@ describe("FloatingWindow snap gestures", () => {
     // The same cancellation from a snapped state returns to the snapped rect, not to a half-applied one.
     drag(handle, { to: { x: 4, y: 400 }, pointerId: 31 });
     expect(panel.dataset.snapMode).toBe("left");
-    drag(handle, { from: { x: 200, y: 300 }, to: { x: 1278, y: 400 }, pointerId: 32, cancel: true });
+    drag(handle, { from: { x: 200, y: 300 }, via: [{ x: 200, y: 330 }], to: { x: 1278, y: 400 }, pointerId: 32, cancel: true });
     expect(panel.dataset.snapMode).toBe("left");
     expect(rectOf(panel).left).toBe(0);
   });

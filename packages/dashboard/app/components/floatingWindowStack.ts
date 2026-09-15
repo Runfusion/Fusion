@@ -55,6 +55,18 @@ export function currentFloatingZ(): number {
   return topZ;
 }
 
+/*
+FNXC:FloatingWindowStack 2026-09-15-04:01:
+FN-401: the snap-zone preview claims the TOP of this single stack. It used to be painted inside its own
+window's overlay, whose inline `z-index` opens a closed stacking context, so the board or any other window
+could cover the very affordance that tells the operator where the window is about to land. As a top claim in
+the one shared counter it always paints above the board and above every other window, and `--fusion-max-z`
+keeps following the ceiling so the plugin layer remains above the whole dashboard.
+*/
+export function nextSnapPreviewZ(): number {
+  return nextFloatingZ();
+}
+
 /** Claim the front of the shared window stack from a task/Chat work surface. Alias of `nextFloatingZ` since FN-394. */
 export function nextTaskDetailFloatingZ(): number {
   return nextFloatingZ();

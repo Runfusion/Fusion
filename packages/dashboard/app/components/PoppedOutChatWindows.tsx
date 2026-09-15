@@ -6,7 +6,11 @@ import { Suspense, type ComponentProps } from "react";
 import type { ChatSessionInfo } from "../hooks/useChat";
 import type { PoppedOutChatEntry } from "../hooks/usePoppedOutChats";
 import { ChatView } from "./ChatView";
-import { FloatingWindow } from "./FloatingWindow";
+import {
+  FLOATING_WINDOW_TASK_STANDARD_HEIGHT,
+  FLOATING_WINDOW_TASK_STANDARD_WIDTH,
+  FloatingWindow,
+} from "./FloatingWindow";
 
 export interface PoppedOutChatWindowsProps {
   entries: PoppedOutChatEntry[];
@@ -47,7 +51,8 @@ export function PoppedOutChatWindows({ entries, projectId, addToast, experimenta
       layer="task-detail"
       suspendGeometryPersistenceOnMobile
       suspendGeometryPersistenceOnShortViewport
-      defaultSize={{ width: 980, height: 680 }}
+      /* FNXC:ChatWindows 2026-09-15-04:01: FN-401 — a detached conversation opens at exactly the task-window standard size; the narrower minSize keeps it usable inside a half-width snap column. */
+      defaultSize={{ width: FLOATING_WINDOW_TASK_STANDARD_WIDTH, height: FLOATING_WINDOW_TASK_STANDARD_HEIGHT }}
       minSize={{ width: 300, height: 420 }}
       ariaLabel={entry.session.title || "Chat"}
       raiseToFrontSignal={entry.focusNonce}

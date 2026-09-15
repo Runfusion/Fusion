@@ -3,6 +3,9 @@ import { describe, expect, it, vi } from "vitest";
 import { PoppedOutChatWindows } from "../PoppedOutChatWindows";
 
 vi.mock("../FloatingWindow", () => ({
+  /* FNXC:ChatWindows 2026-09-15-04:01: FN-401 — the host reads the shared standard task-window size from this module, so the mock must expose it. */
+  FLOATING_WINDOW_TASK_STANDARD_WIDTH: 800,
+  FLOATING_WINDOW_TASK_STANDARD_HEIGHT: 680,
   FloatingWindow: ({ children, onClose, windowKey, raiseToFrontSignal, title, ariaLabel }: any) => <section data-testid={`window-${windowKey}`} data-raise-signal={raiseToFrontSignal} data-window-title={title} data-window-aria-label={ariaLabel}><button onClick={onClose}>close</button>{children}</section>,
 }));
 vi.mock("../ChatView", () => ({
