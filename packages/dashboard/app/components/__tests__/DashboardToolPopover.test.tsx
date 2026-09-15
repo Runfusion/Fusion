@@ -75,6 +75,78 @@ describe("DashboardToolPopover", () => {
   });
 
   /*
+   * FN-436: the bottom-bar Chat trigger is NOT the last action in its bar (Terminal, Settings and the window-visibility
+   * toggle follow it), so aligning the panel's right edge with the trigger's left it ~100px short of the screen edge —
+   * the operator reported it opening "too far left". `align="viewport-end"` pins it to the viewport's right edge, and
+   * the default alignment must stay untouched for the header anchors.
+   */
+  it("pins a viewport-end panel to the right edge of a desktop viewport", () => {
+    window.innerWidth = 1280;
+    window.innerHeight = 800;
+    render(<DashboardToolPopover open onClose={vi.fn()} anchorRect={rect({ top: 764, bottom: 800, left: 1100, right: 1180, height: 36 })} id="chat-panel" testId="tool-popover" ariaLabel="Conversations" align="viewport-end"><div /></DashboardToolPopover>);
+
+    const panel = screen.getByTestId("tool-popover");
+    expect(panel.style.left).toBe("852px");
+    expect(Number.parseInt(panel.style.left, 10) + Number.parseInt(panel.style.width, 10)).toBe(1272);
+    expect(panel).toHaveAttribute("data-placement", "above");
+  });
+
+  it("pins a viewport-end panel to the right edge of a landscape-tablet viewport", () => {
+    window.innerWidth = 1024;
+    window.innerHeight = 640;
+    render(<DashboardToolPopover open onClose={vi.fn()} anchorRect={rect({ top: 604, bottom: 640, left: 860, right: 940, height: 36 })} id="chat-panel" testId="tool-popover" ariaLabel="Conversations" align="viewport-end"><div /></DashboardToolPopover>);
+
+    const panel = screen.getByTestId("tool-popover");
+    expect(Number.parseInt(panel.style.left, 10) + Number.parseInt(panel.style.width, 10)).toBe(1024 - 8);
+  });
+
+  it("keeps the anchor-end alignment for a header trigger when no align is requested", () => {
+    window.innerWidth = 1280;
+    window.innerHeight = 800;
+    render(<DashboardToolPopover open onClose={vi.fn()} anchorRect={rect()} id="activity-panel" testId="tool-popover" ariaLabel="Activity Log"><div /></DashboardToolPopover>);
+    expect(screen.getByTestId("tool-popover").style.left).toBe("540px");
+  });
+
+  it("keeps a viewport-end panel inside the viewport when no anchor rect is available", () => {
+    window.innerWidth = 1280;
+    window.innerHeight = 800;
+    render(<DashboardToolPopover open onClose={vi.fn()} anchorRect={null} id="p" testId="tool-popover" ariaLabel="Panel" align="viewport-end"><div /></DashboardToolPopover>);
+
+    const panel = screen.getByTestId("tool-popover");
+    const left = Number.parseInt(panel.style.left, 10);
+    expect(left).toBeGreaterThanOrEqual(8);
+    expect(left + Number.parseInt(panel.style.width, 10)).toBeLessThanOrEqual(1280);
+  });
+
+  it("shrinks a viewport-end panel instead of overflowing a narrow viewport", () => {
+    window.innerWidth = 390;
+    window.innerHeight = 640;
+    render(<DashboardToolPopover open onClose={vi.fn()} anchorRect={rect({ right: 380 })} id="p" testId="tool-popover" ariaLabel="Panel" width={520} align="viewport-end"><div /></DashboardToolPopover>);
+
+    const panel = screen.getByTestId("tool-popover");
+    const left = Number.parseInt(panel.style.left, 10);
+    const panelWidth = Number.parseInt(panel.style.width, 10);
+    expect(panelWidth).toBeLessThanOrEqual(390 - 16);
+    expect(left).toBeGreaterThanOrEqual(8);
+    expect(left + panelWidth).toBeLessThanOrEqual(390);
+  });
+
+  it("re-pins a viewport-end panel to the new right edge after a resize", () => {
+    window.innerWidth = 1280;
+    window.innerHeight = 800;
+    render(<DashboardToolPopover open onClose={vi.fn()} anchorRect={rect({ top: 764, bottom: 800, left: 1100, right: 1180, height: 36 })} id="p" testId="tool-popover" ariaLabel="Panel" align="viewport-end"><div /></DashboardToolPopover>);
+    expect(screen.getByTestId("tool-popover").style.left).toBe("852px");
+
+    act(() => {
+      window.innerWidth = 900;
+      window.dispatchEvent(new Event("resize"));
+    });
+
+    const panel = screen.getByTestId("tool-popover");
+    expect(Number.parseInt(panel.style.left, 10) + Number.parseInt(panel.style.width, 10)).toBe(900 - 8);
+  });
+
+  /*
    * FN-433: Chat's conversation list is virtualized and measures its container, so it needs a definite height; Activity
    * and Notes must stay content-sized, and the available space must always win over the requested height.
    */

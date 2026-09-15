@@ -2878,6 +2878,15 @@ function AppInner() {
           so an indefinite-height parent collapses the list to nothing; Activity and Notes stay content-sized.
           */
           preferredHeight={560}
+          /*
+          FNXC:ToolSurfaces 2026-09-15-22:15:
+          FN-436 : exigence opérateur — la liste des conversations doit être quasiment collée à la bordure droite de
+          l'écran. Son déclencheur `desktop-nav-chat-panel` n'est PAS la dernière action de la barre du bas (Terminal,
+          Réglages et la bascule de visibilité des fenêtres le suivent), donc l'alignement par défaut sur l'ancre
+          ouvrait la popover loin du bord. Seul cet hôte opte pour `viewport-end` ; Activité et Notes restent alignés
+          sous leur bouton d'en-tête.
+          */
+          align="viewport-end"
         >
           <Suspense fallback={null}>
             <ChatView

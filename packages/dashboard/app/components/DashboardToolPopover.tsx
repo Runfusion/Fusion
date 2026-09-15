@@ -9,11 +9,18 @@ const DEFAULT_WIDTH = 420;
 /** Floor the panel never shrinks below; also the threshold under which the space below an anchor is unusable. */
 const MIN_PANEL_BLOCK_SIZE = 200;
 
+/**
+ * Horizontal alignment strategy. `anchor-end` aligns the panel's right edge with the trigger's right edge;
+ * `viewport-end` aligns it with the viewport's right edge (minus `VIEWPORT_MARGIN`).
+ */
+export type ToolPopoverAlign = "anchor-end" | "viewport-end";
+
 export interface ToolPopoverGeometryInput {
   anchorRect: DOMRect | null;
   viewport: { width: number; height: number };
   width: number;
   preferredHeight?: number;
+  align?: ToolPopoverAlign;
 }
 
 export interface ToolPopoverGeometry {
@@ -40,12 +47,23 @@ height collapsed to the floor — present in the DOM, entirely off-screen. The o
 Placement is therefore resolved from MEASURED geometry, never from a CSS `@media` guess: stay `below` by default, and
 flip to `above` only when the space below the anchor is unusable (< MIN_PANEL_BLOCK_SIZE) AND there is more room above.
 The `below` branch keeps the exact prior arithmetic so header anchors are a byte-for-byte non-regression.
+
+FNXC:ToolSurfaces 2026-09-15-22:15:
+FN-436 : l'alignement horizontal devient une option explicite. Aligner le bord droit du panneau sur celui de l'ANCRE
+est correct pour les déclencheurs d'en-tête (Activité, Notes), mais pas pour Chat : son bouton `desktop-nav-chat-panel`
+vit dans `.desktop-action-bar__right` et est SUIVI de Terminal, Réglages et de la bascule de visibilité des fenêtres,
+donc son bord droit est à plusieurs centaines de pixels de la bordure de l'écran et la popover s'ouvrait « trop à
+gauche ». `viewport-end` colle le panneau au bord droit du viewport (à `VIEWPORT_MARGIN` près) ; l'option reste opt-in
+et le défaut `anchor-end` conserve exactement l'arithmétique précédente, pour que les ancres d'en-tête ne régressent pas.
+Les deux branches restent bornées au viewport, donc aucune ne peut faire déborder le panneau.
 */
-export function resolveToolPopoverGeometry({ anchorRect, viewport, width, preferredHeight }: ToolPopoverGeometryInput): ToolPopoverGeometry {
+export function resolveToolPopoverGeometry({ anchorRect, viewport, width, preferredHeight, align = "anchor-end" }: ToolPopoverGeometryInput): ToolPopoverGeometry {
   const resolvedWidth = Math.min(width, Math.max(240, viewport.width - VIEWPORT_MARGIN * 2));
   const anchorBottom = anchorRect?.bottom ?? VIEWPORT_MARGIN;
   const anchorRight = anchorRect?.right ?? viewport.width - VIEWPORT_MARGIN;
-  const left = Math.max(VIEWPORT_MARGIN, Math.min(anchorRight - resolvedWidth, viewport.width - resolvedWidth - VIEWPORT_MARGIN));
+  const left = align === "viewport-end"
+    ? Math.max(VIEWPORT_MARGIN, viewport.width - resolvedWidth - VIEWPORT_MARGIN)
+    : Math.max(VIEWPORT_MARGIN, Math.min(anchorRight - resolvedWidth, viewport.width - resolvedWidth - VIEWPORT_MARGIN));
 
   // A stale rect can report an anchor below the current viewport; clamping keeps the flipped panel inside it.
   const anchorTop = Math.min(anchorRect?.top ?? VIEWPORT_MARGIN, viewport.height);
@@ -103,6 +121,8 @@ export interface DashboardToolPopoverProps {
   width?: number;
   /** Opt-in definite block size, bounded by the available space. Omit it to keep the panel content-sized. */
   preferredHeight?: number;
+  /** Opt-in horizontal alignment; defaults to aligning the panel's right edge with the trigger's. */
+  align?: ToolPopoverAlign;
   children: ReactNode;
 }
 
@@ -121,7 +141,7 @@ Contract:
   nested menu) must not trigger that dismissal — the backdrop is an explicit sibling element, so only a click that
   actually lands on it dismisses.
 */
-export function DashboardToolPopover({ open, onClose, anchorRect, ariaLabel, id, testId, width = DEFAULT_WIDTH, preferredHeight, children }: DashboardToolPopoverProps) {
+export function DashboardToolPopover({ open, onClose, anchorRect, ariaLabel, id, testId, width = DEFAULT_WIDTH, preferredHeight, align, children }: DashboardToolPopoverProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const restoreFocusRef = useRef<HTMLElement | null>(null);
   const [viewport, setViewport] = useState(() => ({
@@ -167,7 +187,7 @@ export function DashboardToolPopover({ open, onClose, anchorRect, ariaLabel, id,
 
   if (!open) return null;
 
-  const geometry = resolveToolPopoverGeometry({ anchorRect, viewport, width, preferredHeight });
+  const geometry = resolveToolPopoverGeometry({ anchorRect, viewport, width, preferredHeight, align });
 
   return createPortal(
     <DashboardWindowSurfaceRoot logicalId={id} group="dialog" className="dashboard-window-surface-root--contents">

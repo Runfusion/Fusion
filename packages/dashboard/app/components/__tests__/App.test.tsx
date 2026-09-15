@@ -6935,6 +6935,74 @@ describe("FN-426 tool surfaces without the right sidebar", () => {
   });
 
   /*
+   * FN-436 symptom: the Chat trigger is followed in the bottom bar by Terminal, Settings and the window-visibility
+   * toggle, so aligning the panel's right edge with the TRIGGER's right edge opened it ~100px short of the screen edge —
+   * the operator reported the popover as "too far left". This case replays the exact FN-433 trigger rect and asserts the
+   * panel's right edge now sits VIEWPORT_MARGIN (8px) from the viewport edge, while its `above` placement is unchanged.
+   */
+  it("pins the bottom-bar conversation list to the right edge of the screen", async () => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    vi.mocked(fetchSettings).mockResolvedValue(toolSettings());
+    const priorWidth = window.innerWidth;
+    const priorHeight = window.innerHeight;
+    Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 1280 });
+    Object.defineProperty(window, "innerHeight", { configurable: true, writable: true, value: 800 });
+
+    render(<App />);
+
+    const trigger = await screen.findByTestId("desktop-nav-chat-panel");
+    const rectSpy = vi.spyOn(trigger, "getBoundingClientRect").mockReturnValue({
+      x: 1100, y: 764, top: 764, bottom: 800, left: 1100, right: 1180, width: 80, height: 36, toJSON: () => ({}),
+    } as DOMRect);
+
+    try {
+      fireEvent.click(trigger);
+      const panel = await screen.findByTestId("chat-tool-popover");
+
+      expect(panel.style.left).toBe("852px");
+      expect(Number.parseInt(panel.style.left, 10) + Number.parseInt(panel.style.width, 10)).toBe(1280 - 8);
+      expect(panel).toHaveAttribute("data-placement", "above");
+    } finally {
+      rectSpy.mockRestore();
+      Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: priorWidth });
+      Object.defineProperty(window, "innerHeight", { configurable: true, writable: true, value: priorHeight });
+    }
+  });
+
+  /*
+   * FN-436 non-regression: only Chat opts into viewport alignment. The header Activity panel must keep its right edge on
+   * its own trigger, not on the screen edge.
+   */
+  it("keeps the header Activity panel aligned on its trigger, not on the screen edge", async () => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    vi.mocked(fetchSettings).mockResolvedValue(toolSettings());
+    const priorWidth = window.innerWidth;
+    const priorHeight = window.innerHeight;
+    Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 1280 });
+    Object.defineProperty(window, "innerHeight", { configurable: true, writable: true, value: 800 });
+
+    render(<App />);
+
+    const trigger = await screen.findByTestId("header-activity-panel-btn");
+    const rectSpy = vi.spyOn(trigger, "getBoundingClientRect").mockReturnValue({
+      x: 640, y: 40, top: 40, bottom: 60, left: 640, right: 700, width: 60, height: 20, toJSON: () => ({}),
+    } as DOMRect);
+
+    try {
+      fireEvent.click(trigger);
+      const panel = await screen.findByTestId("activity-tool-popover");
+
+      // width=520 anchored on the trigger's right edge: 700 - 520 = 180, far from the 1280-520-8=752 viewport edge.
+      expect(panel.style.left).toBe("180px");
+      expect(panel).toHaveAttribute("data-placement", "below");
+    } finally {
+      rectSpy.mockRestore();
+      Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: priorWidth });
+      Object.defineProperty(window, "innerHeight", { configurable: true, writable: true, value: priorHeight });
+    }
+  });
+
+  /*
    * FN-433 non-regression: the header-anchored panels have room below their trigger, so they must keep resolving to the
    * unchanged `below` placement.
    */
