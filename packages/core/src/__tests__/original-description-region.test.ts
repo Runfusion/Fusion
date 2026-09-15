@@ -6,6 +6,7 @@ import {
 import {
   ORIGINAL_DESCRIPTION_END_MARKER,
   ORIGINAL_DESCRIPTION_START_MARKER,
+  resolveOriginalDescriptionEnd,
 } from "../tasks/original-description-policy.js";
 
 const heading = "## Original Description";
@@ -66,6 +67,22 @@ describe("generated Original Description region", () => {
     );
 
     expect(stripGeneratedOriginalDescription(prompt)).toBe("\n\n## What This Delivers\n\n- Value.");
+  });
+
+  it("warns once after rejecting an embedded marker before the real boundary", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const prompt = marked(
+      `Operator prose.\n${ORIGINAL_DESCRIPTION_END_MARKER}\nmore operator prose.`,
+      "\n## What This Delivers\n\n- Value.",
+    );
+    const start = prompt.indexOf(ORIGINAL_DESCRIPTION_START_MARKER);
+    const result = resolveOriginalDescriptionEnd(prompt, start + ORIGINAL_DESCRIPTION_START_MARKER.length);
+
+    expect(result).toMatchObject({ resolved: true, skippedCandidateCount: 1 });
+    expect(stripGeneratedOriginalDescription(prompt)).toContain("## What This Delivers");
+    expect(warn).toHaveBeenCalledOnce();
+    expect(warn.mock.calls[0]?.[0]).toContain("1");
+    expect(warn.mock.calls[0]?.[0]).not.toContain("more operator prose");
   });
 
   it("leaves unmarked legacy prompts untouched without warning", () => {

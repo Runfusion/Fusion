@@ -44,6 +44,81 @@ export const ORIGINAL_DESCRIPTION_HEADING = "## Original Description";
 /** Markers delimit the verbatim body so embedded `##` lines cannot end the section. */
 export const ORIGINAL_DESCRIPTION_START_MARKER = "<!-- fusion-original-description:start -->";
 export const ORIGINAL_DESCRIPTION_END_MARKER = "<!-- fusion-original-description:end -->";
+export const ORIGINAL_DESCRIPTION_ENCODING_MARKER = "<!-- fusion-original-description:encoding=escaped-v1 -->";
+export const ORIGINAL_DESCRIPTION_ESCAPE_PREFIX = "<!-- fusion-original-description:esc:";
+
+/**
+ * FNXC:SpecLock 2026-09-15-02:52:
+ * FN-9272 makes marker quoting decidable at the hygiene write boundary. Encoding is declared
+ * in-band because conditionally escaping then guessing whether to decode loses operator text.
+ * The declaration is itself reserved, so an operator cannot spoof an encoded region.
+ */
+const ESCAPED_MARKERS = {
+  start: `${ORIGINAL_DESCRIPTION_ESCAPE_PREFIX}start -->`,
+  end: `${ORIGINAL_DESCRIPTION_ESCAPE_PREFIX}end -->`,
+  encoding: `${ORIGINAL_DESCRIPTION_ESCAPE_PREFIX}encoding -->`,
+  escape: `${ORIGINAL_DESCRIPTION_ESCAPE_PREFIX}escape -->`,
+} as const;
+
+function normalizeOriginalDescriptionBody(body: string): string {
+  return (body ?? "").trimEnd();
+}
+
+export function shouldEncodeOriginalDescriptionBody(body: string): boolean {
+  return [
+    ORIGINAL_DESCRIPTION_START_MARKER,
+    ORIGINAL_DESCRIPTION_END_MARKER,
+    ORIGINAL_DESCRIPTION_ENCODING_MARKER,
+    ORIGINAL_DESCRIPTION_ESCAPE_PREFIX,
+  ].some((token) => body.includes(token));
+}
+
+/** Total, injective codec: escape the escape prefix before reserved marker tokens. */
+export function encodeOriginalDescriptionBody(body: string): string {
+  return body
+    .replaceAll(ORIGINAL_DESCRIPTION_ESCAPE_PREFIX, ESCAPED_MARKERS.escape)
+    .replaceAll(ORIGINAL_DESCRIPTION_START_MARKER, ESCAPED_MARKERS.start)
+    .replaceAll(ORIGINAL_DESCRIPTION_END_MARKER, ESCAPED_MARKERS.end)
+    .replaceAll(ORIGINAL_DESCRIPTION_ENCODING_MARKER, ESCAPED_MARKERS.encoding);
+}
+
+/** Decode one encoded body in a single left-to-right scan so escape forms never double-decode. */
+export function decodeOriginalDescriptionBody(body: string): string {
+  let output = "";
+  let cursor = 0;
+  while (cursor < body.length) {
+    const next = body.indexOf(ORIGINAL_DESCRIPTION_ESCAPE_PREFIX, cursor);
+    if (next === -1) return output + body.slice(cursor);
+    output += body.slice(cursor, next);
+    const suffix = body.slice(next);
+    const match = Object.entries(ESCAPED_MARKERS).find(([, escaped]) => suffix.startsWith(escaped));
+    if (!match) {
+      output += ORIGINAL_DESCRIPTION_ESCAPE_PREFIX;
+      cursor = next + ORIGINAL_DESCRIPTION_ESCAPE_PREFIX.length;
+      continue;
+    }
+    const [kind, escaped] = match;
+    output += kind === "start" ? ORIGINAL_DESCRIPTION_START_MARKER
+      : kind === "end" ? ORIGINAL_DESCRIPTION_END_MARKER
+        : kind === "encoding" ? ORIGINAL_DESCRIPTION_ENCODING_MARKER
+          : ORIGINAL_DESCRIPTION_ESCAPE_PREFIX;
+    cursor = next + escaped.length;
+  }
+  return output;
+}
+
+function stripMarkedBodyEnvelope(body: string): string {
+  return body.replace(/^\n/, "").replace(/\n$/, "");
+}
+
+function decodeDeclaredOriginalDescriptionBody(body: string): string {
+  const enveloped = stripMarkedBodyEnvelope(body);
+  if (enveloped === ORIGINAL_DESCRIPTION_ENCODING_MARKER) return "";
+  if (enveloped.startsWith(`${ORIGINAL_DESCRIPTION_ENCODING_MARKER}\n`)) {
+    return decodeOriginalDescriptionBody(enveloped.slice(ORIGINAL_DESCRIPTION_ENCODING_MARKER.length + 1));
+  }
+  return enveloped;
+}
 
 /**
  * When markers are absent (planner-written plain section), end Original Description at the
@@ -85,11 +160,14 @@ export const PREFERRED_SECTION_TERMINATORS: readonly RegExp[] = [
  * Ends with exactly one trailing newline so insertion is predictable.
  */
 export function buildOriginalDescriptionSection(originalDescription: string): string {
-  const body = (originalDescription ?? "").trimEnd();
+  const body = normalizeOriginalDescriptionBody(originalDescription);
+  const storedBody = shouldEncodeOriginalDescriptionBody(body)
+    ? `${ORIGINAL_DESCRIPTION_ENCODING_MARKER}\n${encodeOriginalDescriptionBody(body)}`
+    : body;
   return (
     `${ORIGINAL_DESCRIPTION_HEADING}\n\n` +
     `${ORIGINAL_DESCRIPTION_START_MARKER}\n` +
-    `${body}\n` +
+    `${storedBody}\n` +
     `${ORIGINAL_DESCRIPTION_END_MARKER}\n`
   );
 }
@@ -107,12 +185,15 @@ export function applyOriginalDescription(
     return promptMarkdown;
   }
 
-  const wantedBody = (originalDescription ?? "").trimEnd();
+  const wantedBody = normalizeOriginalDescriptionBody(originalDescription);
   const existingBody = extractOriginalDescriptionBody(promptMarkdown, originalDescription);
-  // Idempotent when the section already carries the exact operator text.
+  const needsEncoding = shouldEncodeOriginalDescriptionBody(wantedBody);
+  // Idempotent only when the stored form also satisfies the declared encoding protocol.
   if (existingBody !== null && existingBody.trimEnd() === wantedBody) {
-    // Still rewrite when markers are missing so later updates stay H2-safe.
-    if (hasOriginalDescriptionMarkers(promptMarkdown)) {
+    const hasDeclaration = promptMarkdown.includes(
+      `${ORIGINAL_DESCRIPTION_START_MARKER}\n${ORIGINAL_DESCRIPTION_ENCODING_MARKER}`,
+    );
+    if (hasOriginalDescriptionMarkers(promptMarkdown) && hasDeclaration === needsEncoding) {
       return promptMarkdown;
     }
   }
@@ -133,7 +214,7 @@ export function extractOriginalDescriptionBody(
   if (!range) {
     return null;
   }
-  return range.body.trimEnd();
+  return decodeDeclaredOriginalDescriptionBody(range.body).trimEnd();
 }
 
 function hasOriginalDescriptionHeading(content: string): boolean {
@@ -145,6 +226,54 @@ function hasOriginalDescriptionMarkers(content: string): boolean {
     content.includes(ORIGINAL_DESCRIPTION_START_MARKER) &&
     content.includes(ORIGINAL_DESCRIPTION_END_MARKER)
   );
+}
+
+/**
+ * FNXC:SpecLock 2026-09-15-02:52:
+ * Writer and reader use this one resolver, but only hygiene supplies the known operator body:
+ * that makes the write boundary decidable and repairs truncated legacy artifacts. Readers stay
+ * pure prompt functions because their results feed persisted approval/spec-lock hashes.
+ *
+ * The invariant is region-scoped: hygiene encodes marker literals so P1 leaves no raw end marker
+ * inside a written region and P2 selects its first end marker. Plans may quote markers after the
+ * region, so file-wide uniqueness and fence tracking are both invalid. The known-heading guard
+ * remains for best-effort legacy reads; only the read path turns skipped/unresolved results into
+ * one warning, while matching hygiene is deliberately silent.
+ */
+export function resolveOriginalDescriptionEnd(
+  promptText: string,
+  startAfterMarker: number,
+  expectedBody?: string,
+): { resolved: boolean; end: number; skippedCandidateCount: number; rejectedSuccessorHeading?: string } {
+  let searchFrom = startAfterMarker;
+  let skippedCandidateCount = 0;
+  let rejectedSuccessorHeading: string | undefined;
+  const expected = expectedBody === undefined ? undefined : normalizeOriginalDescriptionBody(expectedBody);
+
+  while (searchFrom < promptText.length) {
+    const end = promptText.indexOf(ORIGINAL_DESCRIPTION_END_MARKER, searchFrom);
+    if (end === -1) break;
+    const rawBody = promptText.slice(startAfterMarker, end);
+    if (expected !== undefined) {
+      if (normalizeOriginalDescriptionBody(decodeDeclaredOriginalDescriptionBody(rawBody)) === expected) {
+        return { resolved: true, end, skippedCandidateCount };
+      }
+    } else {
+      const after = promptText.slice(end + ORIGINAL_DESCRIPTION_END_MARKER.length);
+      const successor = /^\n{1,2}(##[^\r\n]*)(?:\r?\n|$)/.exec(after)?.[1];
+      const isKnownSuccessor = successor !== undefined && PREFERRED_SECTION_TERMINATORS.some((pattern) =>
+        new RegExp(pattern.source, pattern.flags).test(successor),
+      );
+      if (!after.trim() || isKnownSuccessor) {
+        return { resolved: true, end, skippedCandidateCount };
+      }
+      rejectedSuccessorHeading ??= /^##[^\r\n]*$/m.exec(after)?.[0]?.trim().slice(0, 160);
+    }
+    skippedCandidateCount += 1;
+    searchFrom = end + ORIGINAL_DESCRIPTION_END_MARKER.length;
+  }
+  rejectedSuccessorHeading ??= /^##[^\r\n]*$/m.exec(promptText.slice(startAfterMarker))?.[0]?.trim().slice(0, 160);
+  return { resolved: false, end: -1, skippedCandidateCount, rejectedSuccessorHeading };
 }
 
 /**
@@ -166,19 +295,24 @@ function findOriginalDescriptionRange(
 
   // Marker-bounded body (preferred — safe for any embedded markdown).
   const startMarkerIdx = afterHeader.indexOf(ORIGINAL_DESCRIPTION_START_MARKER);
-  const endMarkerIdx = afterHeader.indexOf(ORIGINAL_DESCRIPTION_END_MARKER);
-  if (
-    startMarkerIdx !== -1 &&
-    endMarkerIdx !== -1 &&
-    endMarkerIdx > startMarkerIdx
-  ) {
-    const bodyStart = startMarkerIdx + ORIGINAL_DESCRIPTION_START_MARKER.length;
-    const body = afterHeader.slice(bodyStart, endMarkerIdx).replace(/^\n/, "").replace(/\n$/, "");
-    const sectionEnd =
-      headerEnd + endMarkerIdx + ORIGINAL_DESCRIPTION_END_MARKER.length;
+  if (startMarkerIdx !== -1) {
+    const bodyStart = headerEnd + startMarkerIdx + ORIGINAL_DESCRIPTION_START_MARKER.length;
+    /*
+    FNXC:SpecLock 2026-09-15-03:12:
+    FN-9272 uses the known body to repair an ambiguous legacy region before later description
+    updates. If that body no longer matches, fall back to the first valid boundary only: scanning
+    past it could mistake a marker quote in planner prose for the region end and delete that prose.
+    The writer remains silent because matching and conservative replacement are not read ambiguity.
+    */
+    const expectedResolution = resolveOriginalDescriptionEnd(content, bodyStart, originalDescription);
+    const resolution = expectedResolution.resolved
+      ? expectedResolution
+      : resolveOriginalDescriptionEnd(content, bodyStart);
+    if (!resolution.resolved) return null;
+    const body = content.slice(bodyStart, resolution.end);
+    const sectionEnd = resolution.end + ORIGINAL_DESCRIPTION_END_MARKER.length;
     // Consume a single trailing newline after the end marker when present.
-    const absoluteEnd =
-      content[sectionEnd] === "\n" ? sectionEnd + 1 : sectionEnd;
+    const absoluteEnd = content[sectionEnd] === "\n" ? sectionEnd + 1 : sectionEnd;
     return { sectionStart, sectionEnd: absoluteEnd, body };
   }
 
