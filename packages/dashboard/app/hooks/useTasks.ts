@@ -1738,7 +1738,17 @@ export function useTasks(options?: UseTasksOptions) {
         let changed = false;
         const next = prev.map((task) => {
           const cleared = clearInReviewStallForFreshAgentLog(task, entry);
-          const updated = addRecentPlannerActivityForFreshAgentLog(cleared, entry, resolveColumnFlags?.(cleared));
+          /*
+          FNXC:LifecycleColumnCensus 2026-09-15-15:25:
+          The SSE subscription intentionally remains stable while workflow metadata loads. Read the
+          current resolver from its ref so renamed planning lanes start receiving agent activity
+          without waiting for the subscription to reconnect.
+          */
+          const updated = addRecentPlannerActivityForFreshAgentLog(
+            cleared,
+            entry,
+            resolveColumnFlagsRef.current?.(cleared),
+          );
           if (updated !== task) changed = true;
           return updated;
         });
