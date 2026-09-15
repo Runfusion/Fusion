@@ -88,6 +88,35 @@ describe("PatchnodeView", () => {
     expect(older.querySelectorAll(".patchnode-entry")[0]).toHaveTextContent("Cancelled delivery");
   });
 
+  /*
+  FNXC:HistoryModalSurface 2026-09-15-04:29:
+  FN-403: the floating/drawer host is the ONLY History presentation. One instance, one title, one feed request, and
+  the window body must carry the full height so `.patchnode-view__content` keeps owning the scroll.
+  */
+  it("monte une seule instance flottante qui garde le corps scrollable plein héritage de hauteur", async () => {
+    const css = readAppFile("components/PatchnodeView.css");
+    expect(css).toMatch(/\.patchnode-view__window-body\s*\{[^}]*height:\s*100%;/s);
+    expect(css).toMatch(/\.patchnode-view__window-body\s*\{[^}]*min-height:\s*0;/s);
+    expect(css).toMatch(/\.patchnode-view__window-body\s*\{[^}]*overflow:\s*hidden;/s);
+
+    render(<PatchnodeView floating={{ onClose: vi.fn() }} />);
+    await screen.findByTestId("patchnode-day-2026-08-28");
+
+    expect(document.querySelectorAll('[data-testid="patchnode-view"]')).toHaveLength(1);
+    expect(document.querySelectorAll("#patchnode-title")).toHaveLength(1);
+    expect(fetchPatchnode).toHaveBeenCalledTimes(1);
+    const dialog = screen.getByRole("dialog", { name: "History" });
+    const windowBody = dialog.querySelector(".patchnode-view__window-body");
+    expect(windowBody).not.toBeNull();
+    expect(windowBody?.contains(screen.getByTestId("patchnode-view"))).toBe(true);
+  });
+
+  it("charge l'historique de tous les projets quand aucun projet n'est sélectionné", async () => {
+    render(<PatchnodeView floating={{ onClose: vi.fn() }} />);
+    await screen.findByTestId("patchnode-day-2026-08-28");
+    expect(fetchPatchnode).toHaveBeenCalledWith(expect.objectContaining({ limit: 50 }), undefined);
+  });
+
   it("paginates through the sentinel rooted in the History scroll body", async () => {
     let observerCallback: IntersectionObserverCallback | undefined;
     let observerRoot: Element | Document | null | undefined;

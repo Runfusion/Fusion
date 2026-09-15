@@ -27,6 +27,13 @@ import { GroupTaskModal } from "./GroupTaskModal";
 import { useNavigationHistoryContext } from "../hooks/useNavigationHistory";
 import { MobileDrawer } from "./MobileDrawer";
 
+/*
+FNXC:HistoryModalSurface 2026-09-15-04:29:
+FN-403: History is a modal surface with EXACTLY ONE render owner, mounted here beside the other modals. The
+previous `taskView === "patchnode"` page and the pilot-window host are both gone, so History can no longer mount
+twice, duplicate its feed request, or replace the operator's current main view.
+*/
+const PatchnodeView = lazy(() => import("./PatchnodeView").then((m) => ({ default: m.PatchnodeView })));
 const SetupWizardModal = lazy(() => import("./SetupWizardModal").then((m) => ({ default: m.SetupWizardModal })));
 const SettingsModal = lazy(() => import("./SettingsModal").then((m) => ({ default: m.SettingsModal })));
 const WorkflowNodeEditor = lazy(() => import("./WorkflowNodeEditor").then((m) => ({ default: m.WorkflowNodeEditor })));
@@ -150,6 +157,8 @@ interface AppModalsProps {
   onReopenOnboarding?: () => void;
   /** Optional callback to open mailbox approvals from Settings. */
   onOpenApprovals?: (approvalId?: string) => void;
+  /* FNXC:HistoryModalSurface 2026-09-15-04:29: History delegates entry activation to App's canonical nav-aware Task Detail opener. */
+  onOpenTaskDetailById?: (taskId: string) => void | Promise<void>;
   /** Enables planning-style agent onboarding entry points inside setup. */
   agentOnboardingEnabled?: boolean;
 }
@@ -213,6 +222,7 @@ export function AppModals({
   onSettingsClose,
   onReopenOnboarding,
   onOpenApprovals,
+  onOpenTaskDetailById,
   agentOnboardingEnabled = false,
 }: AppModalsProps) {
   const { t } = useTranslation("app");
@@ -245,6 +255,11 @@ export function AppModals({
     removeNav(handleSettingsClose);
     handleSettingsClose();
   }, [handleSettingsClose, removeNav]);
+
+  const closeHistoryWithNav = useCallback(() => {
+    removeNav(modalManager.closeHistory);
+    modalManager.closeHistory();
+  }, [modalManager.closeHistory, removeNav]);
 
   const closeGitHubImportWithNav = useCallback(() => {
     removeNav(modalManager.closeGitHubImport);
@@ -521,6 +536,18 @@ export function AppModals({
           projectId={projectId}
           anchorRect={modalManager.usageAnchorRect}
         />
+      )}
+
+      {modalManager.historyOpen && (
+        <ModalErrorBoundary>
+          <Suspense fallback={null}>
+            <PatchnodeView
+              projectId={projectId}
+              onOpenTaskDetail={onOpenTaskDetailById}
+              floating={{ onClose: closeHistoryWithNav }}
+            />
+          </Suspense>
+        </ModalErrorBoundary>
       )}
 
       {modalManager.schedulesOpen && (

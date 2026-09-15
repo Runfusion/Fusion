@@ -59,6 +59,11 @@ export const DASHBOARD_VIEWS: readonly DashboardViewMetadata[] = [
   /*
   FNXC:HistoryNaming 2026-09-04-09:35:
   Operators call this destination History, and chat exposes it as `fn_history_read`. The `patchnode` view id, `nav.patchnode` key, `GET /api/patchnode` route, `project.patchnode_entries` table, and persisted mobile-navigation preferences intentionally remain unchanged.
+
+  FNXC:HistoryModalSurface 2026-09-15-04:29:
+  FN-403: History is no longer a main-content destination. The id stays in this registry because persisted view
+  values, deep links, the API route, and the mobile navigation registry still address it, but a request for it now
+  opens the single History modal instead of replacing the current view.
   */
   { id: "patchnode", label: "History", labelKey: "nav.patchnode" },
   { id: "graph", label: "Graph" },

@@ -81,6 +81,13 @@ export interface ModalManager {
   githubImportOpen: boolean;
   usageOpen: boolean;
   usageAnchorRect: DOMRect | null;
+  /*
+  FNXC:HistoryModalSurface 2026-09-15-04:29:
+  FN-403: History has exactly one render owner, and its open state lives here. It used to have two competing
+  owners — a `taskView === "patchnode"` main-content page and a pilot FloatingWindow — which could mount two
+  PatchnodeView instances at once and forced the main view to Board on open.
+  */
+  historyOpen: boolean;
   terminalOpen: boolean;
   terminalInitialCommand: string | undefined;
   terminalInitialCommandGeneration: number;
@@ -150,6 +157,9 @@ export interface ModalManager {
 
   openUsage: (anchorRect?: DOMRect | null) => void;
   closeUsage: () => void;
+
+  openHistory: () => void;
+  closeHistory: () => void;
 
   toggleTerminal: () => void;
   closeTerminal: () => void;
@@ -231,6 +241,7 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
   const [schedulesOpen, setSchedulesOpen] = useState(false);
   const [githubImportOpen, setGitHubImportOpen] = useState(false);
   const [usageOpen, setUsageOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [usageAnchorRect, setUsageAnchorRect] = useState<DOMRect | null>(null);
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [terminalInitialCommand, setTerminalInitialCommand] = useState<string | undefined>(undefined);
@@ -416,6 +427,16 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
     setUsageAnchorRect(null);
   }, []);
 
+  /*
+  FNXC:HistoryModalSurface 2026-09-15-04:29:
+  FN-403: History is deliberately EXCLUDED from `anyModalOpen`. That aggregate means "a blocking overlay owns the
+  screen" and drives shell side effects such as closing the mobile navigation popover; History is a coexisting,
+  non-blocking window (desktop `aria-modal="false"`, mobile drawer) in the same family as a detached chat, so the
+  board underneath stays interactive and the mobile pill must remain usable while it is open.
+  */
+  const openHistory = useCallback(() => setHistoryOpen(true), []);
+  const closeHistory = useCallback(() => setHistoryOpen(false), []);
+
   const toggleTerminal = useCallback(() => {
     setTerminalOpen((prev) => !prev);
   }, []);
@@ -518,6 +539,8 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
     setScriptsOpen(false);
     setTerminalOpen(false);
     setTerminalInitialCommand(undefined);
+    /* FNXC:HistoryModalSurface 2026-09-15-04:29: History renders the active project's feed, so a project swap must close it like every other project-scoped surface. */
+    setHistoryOpen(false);
   }, []);
 
   const clearQuickAddPlanningDrafts = useCallback(() => {
@@ -605,6 +628,9 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
     closeGitHubImport,
     openUsage,
     closeUsage,
+    historyOpen,
+    openHistory,
+    closeHistory,
     toggleTerminal,
     closeTerminal,
     openFiles,

@@ -58,7 +58,6 @@ import { WhiteboardView } from "../WhiteboardView";
 import { EvalsView } from "../EvalsView";
 import { GitHubImportModal } from "../GitHubImportModal";
 import { GoalsView } from "../GoalsView";
-import { PatchnodeView } from "../PatchnodeView";
 import { InsightsView } from "../InsightsView";
 import { MemoryView } from "../MemoryView";
 import { PullRequestView } from "../PullRequestView";
@@ -92,6 +91,8 @@ export interface MainContentProps {
   pluginDashboardViews: PluginDashboardViewEntry[];
   modalManager: ModalManager;
   handleChangeTaskView: (newView: TaskView) => void;
+  /* FNXC:HistoryModalSurface 2026-09-15-04:29: FN-403: History is a modal surface, not a view. Board's complete-column action calls this nav-aware opener instead of navigating. */
+  openHistory: () => void;
   refreshAppSettings: () => Promise<void>;
   addToast: (message: string, type?: ToastType) => void;
   currentProject: ProjectInfo | null;
@@ -283,7 +284,6 @@ export interface MainContentProps {
   WhiteboardView: LazyExoticComponent<typeof WhiteboardView>;
   EvalsView: LazyExoticComponent<typeof EvalsView>;
   GoalsView: LazyExoticComponent<typeof GoalsView>;
-  PatchnodeView: LazyExoticComponent<typeof PatchnodeView>;
   InsightsView: LazyExoticComponent<typeof InsightsView>;
   MemoryView: LazyExoticComponent<typeof MemoryView>;
   PullRequestView: LazyExoticComponent<typeof PullRequestView>;

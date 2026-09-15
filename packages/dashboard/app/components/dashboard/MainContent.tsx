@@ -61,7 +61,7 @@ const MOBILE_DRAWER_TITLES: Partial<Record<string, string>> = {
   workflows: "Workflows",
   schedules: "Automation",
   "github-import": "Import from GitHub",
-  patchnode: "History",
+  /* FNXC:HistoryModalSurface 2026-09-15-04:29: FN-403 removed the `patchnode` entry — History never renders inside the main-content drawer; it owns its own modal/drawer surface. */
   "task-detail": "Task detail",
 };
 
@@ -362,7 +362,6 @@ export function MainContent(props: MainContentProps) {
   WhiteboardView,
   EvalsView,
   GoalsView,
-  PatchnodeView,
   InsightsView,
   MemoryView,
   PullRequestView,
@@ -1001,20 +1000,12 @@ export function MainContent(props: MainContentProps) {
     );
   }
 
-  if (taskView === "patchnode") {
-    return (
-      <PageErrorBoundary>
-        <Suspense fallback={null}>
-          <PatchnodeView
-            projectId={currentProject?.id}
-            onOpenTaskDetail={(taskId) => fetchTaskDetail(taskId, currentProject?.id)
-              .then((task) => openDetailTask(task as TaskDetail))
-              .catch(() => undefined)}
-          />
-        </Suspense>
-      </PageErrorBoundary>
-    );
-  }
+  /*
+  FNXC:HistoryModalSurface 2026-09-15-04:29:
+  FN-403: `patchnode` is no longer a main-content destination. History is a modal surface owned by
+  useModalManager and rendered exactly once by AppModals, so this switch deliberately has no History branch;
+  App coerces any residual `patchnode` view request into opening that modal.
+  */
 
   if (taskView === "goalsView") {
     if (!settingsLoaded || !goalsEnabled) {

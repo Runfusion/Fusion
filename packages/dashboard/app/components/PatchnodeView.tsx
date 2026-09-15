@@ -174,5 +174,10 @@ export function PatchnodeView({ projectId, onOpenTaskDetail, floating }: Patchno
     </ViewLayout>
   );
   if (!floating) return content;
-  return <FloatingWindow title={t("patchnode.title", "History")} ariaLabel={t("patchnode.title", "History")} onClose={() => void floating.onClose()} windowKey="history-view" hideHeader dragHandleSelector=".view-header" minSize={{ width: 360, height: 280 }} raiseToFrontSignal={floating.raiseToFrontSignal}><div onPointerDown={floating.onActivate} onFocusCapture={floating.onActivate}>{content}</div></FloatingWindow>;
+  /*
+  FNXC:HistoryModalSurface 2026-09-15-04:29:
+  FN-403: this is the ONLY History presentation. The activation wrapper must carry the window's full height,
+  because `.patchnode-view` is `height: 100%`; a bare unsized div collapsed the scrollable body inside the window.
+  */
+  return <FloatingWindow title={t("patchnode.title", "History")} ariaLabel={t("patchnode.title", "History")} onClose={() => void floating.onClose()} windowKey="history-view" hideHeader dragHandleSelector=".view-header" minSize={{ width: 360, height: 280 }} raiseToFrontSignal={floating.raiseToFrontSignal}><div className="patchnode-view__window-body" onPointerDown={floating.onActivate} onFocusCapture={floating.onActivate}>{content}</div></FloatingWindow>;
 }

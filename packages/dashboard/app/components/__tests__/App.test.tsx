@@ -2112,9 +2112,16 @@ describe("official dashboard design production wiring", () => {
     expect(document.querySelector(".right-dock .notes-view--compact")).not.toBeNull();
   });
 
+  /*
+  FNXC:HistoryModalSurface 2026-09-15-04:29:
+  FN-403: History has ONE render owner on every breakpoint — the modal surface. It must mount exactly one
+  PatchnodeView, leave the Board nodes untouched, and never rewrite the persisted view value. Tablet is included
+  because it previously had no window owner at all and fell back to the full-page History destination.
+  */
   it.each([
     ["selected", "desktop", 1200, undefined, "loading"],
     ["aggregate", "desktop", 1200, ALL_WORKFLOWS_BOARD_VIEW_ID, "empty"],
+    ["selected", "tablet", 900, undefined, "populated"],
     ["selected", "mobile", 600, undefined, "error"],
     ["aggregate", "mobile", 600, ALL_WORKFLOWS_BOARD_VIEW_ID, "populated"],
   ] as const)("routes complete-column History through the %s Board production chain on %s", async (_mode, viewport, width, selection, historyState) => {
@@ -2181,21 +2188,25 @@ describe("official dashboard design production wiring", () => {
       expect(boardBefore).not.toBeNull();
       expect(screen.queryByTestId("sidebar-nav-patchnode")).toBeNull();
 
+      const persistedViewBefore = localStorage.getItem(taskViewStorageKey());
+
       fireEvent.click(historyButton);
       const historyDialog = await screen.findByRole("dialog", { name: "History" });
-      expect(historyDialog).toHaveAttribute("aria-modal", viewport === "desktop" ? "false" : "true");
+      expect(historyDialog).toHaveAttribute("aria-modal", viewport === "mobile" ? "true" : "false");
+      expect(document.querySelectorAll('[data-testid="patchnode-view"]')).toHaveLength(1);
+      expect(document.querySelectorAll("#patchnode-title")).toHaveLength(1);
       expect(document.querySelector(".board")).toBe(boardBefore);
       expect(Array.from(document.querySelectorAll(".board > .column"))).toEqual(columnsBefore);
       expect(document.querySelectorAll(".board")).toHaveLength(1);
-      if (viewport === "desktop") {
-        expect(localStorage.getItem(taskViewStorageKey())).toBe("board");
-      } else {
-        expect(screen.getByTestId("mobile-drawer-main-content")).toContainElement(historyDialog);
+      expect(screen.queryByTestId("mobile-drawer-main-content")).toBeNull();
+      expect(localStorage.getItem(taskViewStorageKey())).toBe(persistedViewBefore);
+      if (viewport === "mobile") {
         expect(screen.getByTestId("board-keep-alive")).not.toHaveAttribute("aria-hidden");
       }
 
       fireEvent.click(historyButton);
       expect(screen.getAllByRole("dialog", { name: "History" })).toHaveLength(1);
+      expect(document.querySelectorAll('[data-testid="patchnode-view"]')).toHaveLength(1);
       expect(document.querySelector(".board")).toBe(boardBefore);
 
       if (historyState === "loading") {
@@ -2209,9 +2220,57 @@ describe("official dashboard design production wiring", () => {
       }
       expect(document.querySelector(".board")).toBe(boardBefore);
       expect(Array.from(document.querySelectorAll(".board > .column"))).toEqual(columnsBefore);
+
+      fireEvent.click(within(historyDialog).getByRole("button", { name: "Close History" }));
+      await waitFor(() => expect(document.querySelectorAll('[data-testid="patchnode-view"]')).toHaveLength(0));
+      expect(document.querySelector(".board")).toBe(boardBefore);
     } finally {
       Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth });
     }
+  });
+
+  /*
+  FNXC:HistoryModalSurface 2026-09-15-04:29:
+  FN-403 symptom reproduction: a persisted legacy `patchnode` view value used to render the full-page History AND
+  let the pilot window open a second instance. It must now resolve to Board with exactly one History modal, and the
+  legacy value must never be written back.
+  */
+  it.each(["desktop", "tablet", "mobile"] as const)("résout une vue patchnode persistée en une seule instance History sur %s", async (viewport) => {
+    mockUseViewportMode.mockReturnValue(viewport);
+    vi.mocked(fetchSettings).mockResolvedValue({
+      ...defaultSettings,
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures },
+    });
+    vi.mocked(fetchPatchnode).mockResolvedValue({ days: [], totalEntries: 0, hasMore: false });
+    localStorage.setItem(taskViewStorageKey(), "patchnode");
+
+    render(<App />);
+
+    await screen.findByRole("dialog", { name: "History" });
+    expect(document.querySelectorAll('[data-testid="patchnode-view"]')).toHaveLength(1);
+    expect(document.querySelectorAll("#patchnode-title")).toHaveLength(1);
+    expect(localStorage.getItem(taskViewStorageKey())).toBe("board");
+    await waitFor(() => expect(document.querySelector(".board")).not.toBeNull());
+  });
+
+  it("ferme l'Historique avec le retour arrière du navigateur", async () => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    vi.mocked(fetchSettings).mockResolvedValue({
+      ...defaultSettings,
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures },
+    });
+    vi.mocked(fetchPatchnode).mockResolvedValue({ days: [], totalEntries: 0, hasMore: false });
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByTestId("column-history-done"));
+    await screen.findByRole("dialog", { name: "History" });
+
+    act(() => {
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+
+    await waitFor(() => expect(document.querySelectorAll('[data-testid="patchnode-view"]')).toHaveLength(0));
   });
 });
 

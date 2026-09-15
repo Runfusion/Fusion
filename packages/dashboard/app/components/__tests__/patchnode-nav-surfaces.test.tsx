@@ -67,4 +67,27 @@ describe("Patchnode navigation surfaces", () => {
     render(<DesktopActionBar entries={buildDashboardNavigationEntries({ view: "board", onChangeView: vi.fn() })} activeId="board" tasks={[]} />);
     expect(screen.queryByTestId("desktop-nav-patchnode")).toBeNull();
   });
+
+  /*
+  FNXC:HistoryModalSurface 2026-09-15-04:29:
+  FN-403: History is a modal surface, so a `patchnode` view value must leave the mobile navigation on its ordinary
+  destination instead of highlighting a History tab or leaving an empty active shell behind.
+  */
+  it("ne marque aucune destination mobile active pour une valeur de vue patchnode", () => {
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: vi.fn().mockImplementation((query: string) => ({
+        matches: query.includes("max-width: 768px"),
+        media: query,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      })),
+    });
+
+    render(<MobileNavBar {...mobileProps()} view={"patchnode" as never} />);
+
+    expect(screen.queryByTestId("mobile-nav-tab-patchnode")).toBeNull();
+    expect(screen.queryByTestId("mobile-more-item-patchnode")).toBeNull();
+    expect(document.querySelectorAll(".mobile-nav-tab--active")).toHaveLength(0);
+  });
 });

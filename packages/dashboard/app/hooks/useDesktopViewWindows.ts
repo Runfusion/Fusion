@@ -22,7 +22,12 @@ interface UseDesktopViewWindowsOptions {
 
 /*
 FNXC:DesktopViewWindows 2026-09-11-19:35:
-The desktop shell keeps Board as the permanent main surface while History is the sole stable pilot window. Notes list is inline in the right dock, while every dedicated note window registers a project/note guard in the same scope-exit registry so all dirty drafts are confirmed independently before navigation or project changes.
+The desktop shell keeps Board as the permanent main surface. Notes list is inline in the right dock, while every dedicated note window registers a project/note guard in the same scope-exit registry so all dirty drafts are confirmed independently before navigation or project changes.
+
+FNXC:HistoryModalSurface 2026-09-15-04:29:
+FN-403: History is NOT a pilot window any more — it is a modal-manager surface (`historyOpen`) rendered once by
+AppModals. This hook keeps its generic window API purely for the `notes` / `note:*` guards and `requestCloseAll`,
+which the missing-node fallback and project switches still use; no caller opens a History window.
 */
 export function useDesktopViewWindows({ enabled, projectId, navigation, showBoard, showNotesPage, notesDirty = false }: UseDesktopViewWindowsOptions) {
   const { pushNav, removeNav, promoteNav } = navigation;

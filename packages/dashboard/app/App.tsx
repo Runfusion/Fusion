@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo, useRef, lazy, Suspense } from "react";
+import { useState, useCallback, useEffect, useLayoutEffect, useMemo, useRef, lazy } from "react";
 import { useTranslation } from "react-i18next";
 import {
   type Task,
@@ -173,7 +173,6 @@ const SecretsView = lazy(() => import("./components/SecretsView").then((m) => ({
 const CommandCenter = lazy(() => import("./components/command-center/CommandCenter").then((m) => ({ default: m.CommandCenter })));
 const DevServerView = lazy(() => import("./components/DevServerView").then((m) => ({ default: m.DevServerView })));
 const GoalsView = lazy(() => import("./components/GoalsView").then((m) => ({ default: m.GoalsView })));
-const PatchnodeView = lazy(() => import("./components/PatchnodeView").then((m) => ({ default: m.PatchnodeView })));
 const PullRequestView = lazy(() => import("./components/PullRequestView").then((m) => ({ default: m.PullRequestView })));
 /*
 FNXC:Navigation 2026-06-22-00:00:
@@ -218,7 +217,6 @@ function prefetchLazyViews() {
     void import("./components/command-center/CommandCenter");
     void import("./components/DevServerView");
     void import("./components/GoalsView");
-    void import("./components/PatchnodeView");
     void import("./components/PullRequestView");
   });
 }
@@ -691,15 +689,37 @@ function AppInner() {
   route, both nav producers and the drawer. When the dock is unavailable (no project shell, feature off) the ordinary
   route still answers, so the destination can never become unreachable.
   */
+  /*
+  FNXC:HistoryModalSurface 2026-09-15-04:29:
+  FN-403: History has one open/close owner for every entry point — the Board complete-column action, the mobile
+  navigation registry, a deep link and a persisted `patchnode` view all land here. Opening it never changes
+  `taskView`, so the operator's current destination stays on screen, and it pushes exactly one navigation entry so
+  Browser Back closes it.
+  */
+  const openHistoryWithNav = useCallback(() => {
+    if (modalManager.historyOpen) return;
+    modalManager.openHistory();
+    pushNav({ type: "modal", close: modalManager.closeHistory });
+  }, [modalManager, pushNav]);
+  const closeHistoryWithNav = useCallback(() => {
+    removeNav(modalManager.closeHistory);
+    modalManager.closeHistory();
+  }, [modalManager, removeNav]);
+
   const listDockRouteRef = useRef<((newView: TaskView) => boolean) | null>(null);
   const chatWindowRouteRef = useRef<((newView: TaskView) => boolean) | null>(null);
   const primaryChatWindowOpenRef = useRef(false);
   const closePrimaryChatWindowRef = useRef<(() => void) | null>(null);
   const handleTaskViewChange = useCallback((newView: TaskView) => {
+    /* FNXC:HistoryModalSurface 2026-09-15-04:29: FN-403: a `patchnode` view request opens the History modal instead of navigating; History is no longer a destination. */
+    if (newView === "patchnode") {
+      openHistoryWithNav();
+      return;
+    }
     if (chatWindowRouteRef.current?.(newView)) return;
     if (listDockRouteRef.current?.(newView)) return;
     if (!desktopWindowRouterRef.current(newView)) commitTaskViewChange(newView);
-  }, [commitTaskViewChange]);
+  }, [commitTaskViewChange, openHistoryWithNav]);
 
   /*
   FNXC:NativeStructureEmbed 2026-07-19-19:30:
@@ -1262,20 +1282,12 @@ function AppInner() {
   }, [desktopViewWindows.requestCloseAll, clearCurrentNode, currentNodeId, currentNodeMissing, nodeListIdentity]);
   desktopWindowRouterRef.current = (target) => {
     if (!desktopNavigationActive) return false;
-    if (target === "patchnode") {
-      desktopViewWindows.open(target);
-      return true;
-    }
     if (desktopViewWindows.windows.length === 0) return false;
     void desktopViewWindows.requestCloseAll().then((accepted) => {
       if (accepted) commitTaskViewChange(target);
     });
     return true;
   };
-  useEffect(() => {
-    if (!desktopNavigationActive || taskView !== "patchnode") return;
-    desktopViewWindows.open(taskView);
-  }, [desktopNavigationActive, desktopViewWindows.open, taskView]);
   const agentOnboardingEnabled = experimentalFeatures.agentOnboarding === true;
   const agentsEnabled = true;
 
@@ -1293,6 +1305,18 @@ function AppInner() {
     removeNav(handleSettingsClose);
     handleSettingsClose();
   }, [handleSettingsClose, removeNav]);
+
+  /*
+  FNXC:HistoryModalSurface 2026-09-15-04:29:
+  FN-403: a legacy persisted view value or a programmatic navigation can still carry `patchnode`, which is no
+  longer a main-content destination. Coerce it to Board and open the History modal once, in a layout effect so no
+  empty/fallback main-content frame is ever painted, and never write `patchnode` back to view storage.
+  */
+  useLayoutEffect(() => {
+    if (taskView !== "patchnode") return;
+    handleChangeTaskView("board");
+    openHistoryWithNav();
+  }, [taskView, handleChangeTaskView, openHistoryWithNav]);
 
   // Redirect to board if feature-gated views are disabled.
   useEffect(() => {
@@ -1620,6 +1644,8 @@ function AppInner() {
         terminalOpen: modalManager.terminalOpen,
         modalClosers: [
           [primaryChatWindowOpenRef.current, () => closePrimaryChatWindowRef.current?.()],
+          /* FNXC:HistoryModalSurface 2026-09-15-04:29: FN-403: History is a coexisting window, so Escape closes it after detached task/chat/note windows and the terminal but before the blocking modals underneath. */
+          [modalManager.historyOpen, closeHistoryWithNav],
           [modalManager.filesOpen, modalManager.closeFiles],
           [modalManager.workflowEditorOpen, modalManager.closeWorkflowEditor],
           [modalManager.gitManagerOpen, modalManager.closeGitManager],
@@ -1654,7 +1680,7 @@ function AppInner() {
     */
     void desktopViewWindows.requestClose(pilotTopmost);
     return true;
-  }, [desktopViewWindows.requestClose, desktopViewWindows.requestGuardedClose, desktopViewWindows.topmost, closeDetailTaskWithNav, closePoppedOutChat, closePoppedOutTaskWithNav, closeTerminalWithNav, dashboardWindowVisibility?.hiddenSnapshotActive, modalManager, poppedOutChatEntries, poppedOutNoteEntries, poppedOutTaskEntries]);
+  }, [desktopViewWindows.requestClose, desktopViewWindows.requestGuardedClose, desktopViewWindows.topmost, closeDetailTaskWithNav, closeHistoryWithNav, closePoppedOutChat, closePoppedOutTaskWithNav, closeTerminalWithNav, dashboardWindowVisibility?.hiddenSnapshotActive, modalManager, poppedOutChatEntries, poppedOutNoteEntries, poppedOutTaskEntries]);
 
   const openFilesWithNav = useCallback((workspace?: string, initialFile?: string | null) => {
     modalManager.openFiles(workspace, initialFile);
@@ -2066,6 +2092,7 @@ function AppInner() {
     pluginDashboardViews,
     modalManager,
     handleChangeTaskView,
+    openHistory: openHistoryWithNav,
     refreshAppSettings,
     addToast,
     currentProject,
@@ -2222,7 +2249,6 @@ function AppInner() {
     WhiteboardView,
     EvalsView,
     GoalsView,
-    PatchnodeView,
     InsightsView,
     MemoryView,
     PullRequestView,
@@ -2532,19 +2558,11 @@ function AppInner() {
         {rightDock.dock}
       </div>
       {wideFooterActive ? <DesktopActionBar entries={desktopNavigationEntries} activeId={desktopActiveNavigationId} tasks={footerTasks} projectId={currentProject?.id} columnFlagsByTaskId={footerColumnFlagsByTaskId} onToggleTerminal={toggleTerminalWithNav} /> : null}
-      {desktopNavigationActive ? desktopViewWindows.windows.filter((entry) => entry.id === "patchnode").map((entry) => (
-        <Suspense fallback={null} key={entry.id}>
-          <PatchnodeView
-            projectId={currentProject?.id}
-            onOpenTaskDetail={async (taskId) => {
-              const task = await fetchTaskDetail(taskId, currentProject?.id);
-              /* FNXC:DesktopViewWindows 2026-09-11-20:06: History delegates to the canonical nav-aware Task Detail opener so Browser Back and Escape close the detail layer before either pilot window. */
-              openDetailTask(task);
-            }}
-            floating={{ onClose: () => { void desktopViewWindows.requestClose("patchnode"); }, onActivate: () => desktopViewWindows.activate("patchnode"), raiseToFrontSignal: entry.raiseToFrontSignal }}
-          />
-        </Suspense>
-      )) : null}
+      {/*
+      FNXC:HistoryModalSurface 2026-09-15-04:29:
+      FN-403: History no longer has a pilot-window host here. AppModals owns the single PatchnodeView instance,
+      so no breakpoint can mount a second one and the current main view is never replaced on open.
+      */}
       {/*
       FNXC:Terminal 2026-07-26-11:40:
       Mount the terminal ONLY while it is open. It used to be mounted for the whole session (visibility driven purely by `isOpen`), so a closed terminal still ran `useTerminalSessions` + `useTerminal`: a live PTY WebSocket, its heartbeat interval, and — because xterm is torn down on close, leaving no `onData` subscriber — an UNBOUNDED client-side buffer of every byte the shell emitted while the user was elsewhere. Background timers/sockets are a primary tab-discard signal on iOS Safari and Chrome Android, and the growing buffer is the memory pressure that triggers the discard; together they are why returning to the dashboard after a few minutes costs a full white-splash reload.
@@ -2711,6 +2729,11 @@ function AppInner() {
         onSettingsClose={handleSettingsCloseWithNav}
         onReopenOnboarding={reopenOnboardingWithNav}
         onOpenApprovals={(_approvalId) => handleTaskViewChange("mailbox")}
+        /* FNXC:HistoryModalSurface 2026-09-15-04:29: History entries delegate to the canonical nav-aware Task Detail opener so Escape/Back close the detail layer before History. */
+        onOpenTaskDetailById={async (taskId) => {
+          const task = await fetchTaskDetail(taskId, currentProject?.id);
+          openDetailTask(task);
+        }}
         agentOnboardingEnabled={agentOnboardingEnabled}
       />
             {shellApi && (

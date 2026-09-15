@@ -223,6 +223,57 @@ describe("App dashboard keyboard shortcuts", () => {
     expect(closeSettings).not.toHaveBeenCalled();
   });
 
+  /*
+  FNXC:HistoryModalSurface 2026-09-15-04:29:
+  FN-403: History joined the Escape ladder as a coexisting window — detached task/chat/note windows and the
+  terminal close first, History closes before the blocking modals underneath it, and a hidden window snapshot still
+  suppresses everything.
+  */
+  it("ferme l'Historique après les surfaces détachées et avant les modales bloquantes", () => {
+    const closePoppedOutTask = vi.fn();
+    const closePoppedOutChat = vi.fn();
+    const closeTerminal = vi.fn();
+    const closeHistory = vi.fn();
+    const closeSettings = vi.fn();
+    const handlers = { closePoppedOutTask, closePoppedOutChat, closeTerminal };
+
+    expect(closeTopmostDashboardPopupForShortcut({
+      poppedOutTaskEntries: [{ task: { id: "FN-1" } }],
+      poppedOutChatEntries: [],
+      terminalOpen: false,
+      modalClosers: [[false, vi.fn()], [true, closeHistory], [true, closeSettings]],
+    } as never, handlers)).toBe(true);
+    expect(closePoppedOutTask).toHaveBeenCalledWith("FN-1");
+    expect(closeHistory).not.toHaveBeenCalled();
+
+    expect(closeTopmostDashboardPopupForShortcut({
+      poppedOutTaskEntries: [],
+      poppedOutChatEntries: [],
+      terminalOpen: true,
+      modalClosers: [[false, vi.fn()], [true, closeHistory], [true, closeSettings]],
+    } as never, handlers)).toBe(true);
+    expect(closeTerminal).toHaveBeenCalledTimes(1);
+    expect(closeHistory).not.toHaveBeenCalled();
+
+    expect(closeTopmostDashboardPopupForShortcut({
+      poppedOutTaskEntries: [],
+      poppedOutChatEntries: [],
+      terminalOpen: false,
+      modalClosers: [[false, vi.fn()], [true, closeHistory], [true, closeSettings]],
+    } as never, handlers)).toBe(true);
+    expect(closeHistory).toHaveBeenCalledTimes(1);
+    expect(closeSettings).not.toHaveBeenCalled();
+
+    expect(closeTopmostDashboardPopupForShortcut({
+      poppedOutTaskEntries: [],
+      poppedOutChatEntries: [],
+      terminalOpen: false,
+      modalClosers: [[false, vi.fn()], [false, closeHistory], [true, closeSettings]],
+    } as never, handlers)).toBe(true);
+    expect(closeSettings).toHaveBeenCalledTimes(1);
+    expect(closeHistory).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps insertion Escape ordering when an existing detached chat is focused", () => {
     const { result } = renderHook(() => usePoppedOutChats());
     const session = (id: string) => ({ id, agentId: "agent", title: id, status: "active" as const, createdAt: "2026-08-23T00:00:00.000Z", updatedAt: "2026-08-23T00:00:00.000Z" });

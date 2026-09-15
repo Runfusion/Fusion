@@ -38,6 +38,7 @@ function props(overrides: Partial<MainContentProps> = {}): MainContentProps {
     pluginDashboardViews: [],
     modalManager: { openPlanningWithSession: vi.fn() } as unknown as MainContentProps["modalManager"],
     handleChangeTaskView: vi.fn(),
+    openHistory: vi.fn(),
     refreshAppSettings: vi.fn(async () => undefined),
     addToast: vi.fn(),
     currentProject: { id: "project-1", name: "Project 1" } as MainContentProps["currentProject"],

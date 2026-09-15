@@ -69,14 +69,19 @@ const EXPECTED_APP_LEVEL_VIEWS = new Set([
   "DevServerView",
   "GoalsView",
   "PullRequestView",
-  "PatchnodeView",
 ]);
 
 /*
  * FNXC:DashboardLazyViews 2026-06-16-17:40:
  * AppModals lazy-loads top-level heavy modals outside App.tsx, so the docs guard must scan that source site too; otherwise SettingsModal and WorkflowNodeEditor can drift out of the canonical inventory while tests stay green.
  */
+/*
+FNXC:HistoryModalSurface 2026-09-15-04:29:
+FN-403: History moved from an App-level view chunk to the AppModals modal surface, because AppModals is now its
+only render owner.
+*/
 const EXPECTED_APP_MODALS_LAZY_VIEWS = new Set([
+  "PatchnodeView",
   "SetupWizardModal",
   "SettingsModal",
   "WorkflowNodeEditor",

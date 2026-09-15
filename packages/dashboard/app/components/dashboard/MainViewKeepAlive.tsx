@@ -335,8 +335,9 @@ export function MainViewKeepAlive({ activeId, mountedIds, projectKey, mainConten
   */
   const mainContentPropsRef = useRef(mainContentProps);
   mainContentPropsRef.current = mainContentProps;
+  /* FNXC:HistoryModalSurface 2026-09-15-04:29: FN-403: opening History is a modal request, never a view change, so the retained Board subtree is untouched. */
   const handleOpenHistory = useCallback(() => {
-    mainContentPropsRef.current.handleChangeTaskView("patchnode");
+    mainContentPropsRef.current.openHistory();
   }, []);
   /*
   FNXC:TaskRefine 2026-09-14-22:23:

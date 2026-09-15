@@ -116,12 +116,19 @@ function renderHost(activeId: "board" | "list" | "chat" | null) {
   );
 }
 
+/*
+FNXC:HistoryModalSurface 2026-09-15-04:29:
+FN-403: the complete-lane History action is a modal request. It calls the `openHistory` owner and must never route
+through `handleChangeTaskView`, so the retained Board subtree keeps its identity and its memoized column callbacks.
+*/
 function HistoryWindowHost() {
   const [historyOpen, setHistoryOpen] = useState(false);
+  const viewChanges: string[] = trackedViewChanges;
   const [props] = useState(() => ({
     ...mainContentProps(),
+    openHistory: () => setHistoryOpen(true),
     handleChangeTaskView: (view: MainContentProps["taskView"]) => {
-      if (view === "patchnode") setHistoryOpen(true);
+      viewChanges.push(String(view));
     },
   } as MainContentProps));
   return (
@@ -136,6 +143,8 @@ function HistoryWindowHost() {
     </>
   );
 }
+
+const trackedViewChanges: string[] = [];
 
 function createHeaderSlot() {
   const slot = document.createElement("div");
@@ -154,7 +163,8 @@ function productionAppSourceFiles(): string[] {
 }
 
 describe("MainViewKeepAlive", () => {
-  it("keeps the complete-column History callback stable when its Alpha window opens", () => {
+  it("keeps the complete-column History callback stable when the History modal opens", () => {
+    trackedViewChanges.length = 0;
     activeByView.historyCallbacks.length = 0;
     activeByView.historyColumnRenders = 0;
     render(<HistoryWindowHost />);
@@ -168,6 +178,7 @@ describe("MainViewKeepAlive", () => {
     fireEvent.click(screen.getByTestId("column-history-done"));
 
     expect(screen.getByTestId("history-window")).toBeInTheDocument();
+    expect(trackedViewChanges).toEqual([]);
     expect(screen.getByTestId("board-child")).toBe(boardBefore);
     expect(activeByView.historyCallbacks.at(-1)).toBe(callbackBefore);
     expect(activeByView.historyColumnRenders).toBe(rendersBeforeOpen);

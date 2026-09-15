@@ -609,6 +609,46 @@ describe("useModalManager", () => {
     expect(result.current.workflowEditorInitialWorkflowId).toBeUndefined();
   });
 
+  /*
+  FNXC:HistoryModalSurface 2026-09-15-04:29:
+  FN-403: History is a modal-manager surface with a single render owner, and it is deliberately not part of
+  `anyModalOpen` because it never blocks the board underneath.
+  */
+  it("opens and closes History without joining the blocking-modal aggregate", () => {
+    const { result } = renderHook(() =>
+      useModalManager({ projectId: "proj_1", planningSessions: [] }),
+    );
+
+    expect(result.current.historyOpen).toBe(false);
+
+    act(() => {
+      result.current.openHistory();
+    });
+    expect(result.current.historyOpen).toBe(true);
+    expect(result.current.anyModalOpen).toBe(false);
+
+    act(() => {
+      result.current.closeHistory();
+    });
+    expect(result.current.historyOpen).toBe(false);
+  });
+
+  it("closes History when project-scoped modals are closed", () => {
+    const { result } = renderHook(() =>
+      useModalManager({ projectId: "proj_1", planningSessions: [] }),
+    );
+
+    act(() => {
+      result.current.openHistory();
+    });
+    expect(result.current.historyOpen).toBe(true);
+
+    act(() => {
+      result.current.closeProjectScopedModals();
+    });
+    expect(result.current.historyOpen).toBe(false);
+  });
+
   it("keeps workflow editor settings and create modes distinct from target workflow opens", () => {
     const { result } = renderHook(() =>
       useModalManager({ projectId: "proj_1", planningSessions: [] }),

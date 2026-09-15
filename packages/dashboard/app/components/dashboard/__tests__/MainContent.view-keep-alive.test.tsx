@@ -126,6 +126,7 @@ function mainContentProps(overrides: Partial<MainContentProps> = {}): MainConten
       openNewTaskWithDescription: vi.fn(),
     } as unknown as MainContentProps["modalManager"],
     handleChangeTaskView: vi.fn(),
+    openHistory: vi.fn(),
     refreshAppSettings: vi.fn(async () => undefined),
     addToast: vi.fn(),
     currentProject: { id: "project-1", name: "Project 1" } as MainContentProps["currentProject"],
@@ -321,6 +322,20 @@ describe("MainContent main-view keep alive", () => {
     expect(messages!.scrollTop).toBe(91);
     expect(await screen.findByTestId("chat-input")).toBe(input);
     expect(input).toHaveValue("Keep this draft");
+  });
+
+  /*
+  FNXC:HistoryModalSurface 2026-09-15-04:29:
+  FN-403: `patchnode` is no longer a main-content destination, so this switch must never produce a History page.
+  App coerces the value to Board and opens the single History modal instead.
+  */
+  it("ne rend plus aucune page de contenu principal pour patchnode", async () => {
+    render(<MainContent {...mainContentProps({ taskView: "patchnode" as MainContentProps["taskView"] })} />);
+
+    await waitFor(() => expect(screen.queryAllByTestId("list-view-body").length).toBeGreaterThan(0));
+    expect(document.querySelectorAll('[data-testid="patchnode-view"]')).toHaveLength(0);
+    expect(document.querySelectorAll("#patchnode-title")).toHaveLength(0);
+    expect(screen.queryByTestId("mobile-drawer-main-content")).toBeNull();
   });
 
   it("keeps the production ListView mounted across List to Board to List navigation", async () => {
