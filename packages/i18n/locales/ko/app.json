@@ -9611,6 +9611,16 @@
     },
     "sending": "",
     "thinking": "",
+    "thinkingLevelTitle": "{{title}} · 사고 수준: {{level}}",
+    "thinkingLevels": {
+      "off": "끄기",
+      "minimal": "최소",
+      "low": "낮음",
+      "medium": "보통",
+      "high": "높음",
+      "xhigh": "매우 높음",
+      "max": "최대"
+    },
     "toolCall": "",
     "toolCallCount_one": "",
     "toolCallCount_other": "",

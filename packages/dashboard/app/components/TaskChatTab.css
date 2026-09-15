@@ -127,6 +127,34 @@ FN-6425 requires the chat expand control to stay inside the chat view as an icon
   color: var(--text-muted);
 }
 
+/*
+FNXC:TaskDetailChat 2026-09-15-08:46:
+FN-410: the role icon now identifies the model AND the reasoning effort. The badge sits under the
+provider mark in a dedicated column wrapper so the existing icon box, its fallback variant, and the
+header's own flex row keep their current geometry; when no level is known the wrapper holds the icon
+alone and nothing shifts.
+*/
+.task-chat-provider {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(var(--space-xs) / 2);
+  flex: 0 0 auto;
+}
+
+.task-chat-provider-thinking {
+  max-inline-size: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-radius: var(--radius-sm);
+  padding-inline: var(--space-xs);
+  background: var(--surface-hover);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-tight);
+}
+
 .task-chat-provider-icon {
   display: inline-flex;
   align-items: center;

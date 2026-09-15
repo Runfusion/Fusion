@@ -1662,7 +1662,16 @@ experimental flag reader here. Its Settings dependency is type-only and introduc
 export { isExperimentalFeatureEnabled, CHAT_FOCUS_FLAG, WHITEBOARD_VIEW_FLAG } from "./config/experimental-features.js";
 export { createEmptyWhiteboardDocument, validateWhiteboardDocument, validateWhiteboardTitle, WhiteboardValidationError, WhiteboardRevisionConflictError, WhiteboardNotFoundError } from "./whiteboards/whiteboard-types.js";
 export type { WhiteboardDocumentV1, WhiteboardDocument, WhiteboardFrame, WhiteboardText, WhiteboardRelation, WhiteboardRelationBranch, ProjectWhiteboard, ProjectWhiteboardSummary, WhiteboardRevision } from "./whiteboards/whiteboard-types.js";
+/*
+FNXC:ModelResolution 2026-09-15-08:46:
+FN-410: the dashboard client resolves `@fusion/core` to this browser-safe leaf
+(`packages/dashboard/vite.config.ts`), so the shared lane thinking-level precedence has to be
+re-exported here for Task Detail to display the effort a run actually used instead of re-deriving
+it. `./ai/model-resolution.js` is already imported by this module, so this adds no new browser
+module surface.
+*/
 export {
+  resolvePhaseThinkingLevel,
   resolveExecutionSettingsModel,
   resolvePlanningSettingsModel,
   resolveProjectDefaultModel,
@@ -1673,7 +1682,7 @@ export {
   resolveTitleSummarizerSettingsModel,
   resolveValidatorSettingsModel,
 } from "./ai/model-resolution.js";
-export type { ResolvedModelSelection } from "./ai/model-resolution.js";
+export type { ResolvedModelSelection, ModelThinkingPhase } from "./ai/model-resolution.js";
 export { resolveResearchSettings } from "./research/research-settings.js";
 export { resolveResearchFindingId } from "./research/research-types.js";
 export type { ResolvedResearchSettings } from "./research/research-settings.js";

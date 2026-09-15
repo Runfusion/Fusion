@@ -9630,6 +9630,16 @@
     },
     "sending": "",
     "thinking": "",
+    "thinkingLevelTitle": "{{title}} · réflexion : {{level}}",
+    "thinkingLevels": {
+      "off": "Désactivé",
+      "minimal": "Minimal",
+      "low": "Faible",
+      "medium": "Moyen",
+      "high": "Élevé",
+      "xhigh": "Très élevé",
+      "max": "Maximum"
+    },
     "toolCall": "",
     "toolCallCount_one": "",
     "toolCallCount_other": "",

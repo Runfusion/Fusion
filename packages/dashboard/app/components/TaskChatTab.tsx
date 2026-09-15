@@ -30,7 +30,7 @@ import {
 import { formatAgentLogTimingLabels, markdownComponents } from "./AgentLogViewer";
 import { ToolCallDetails } from "./ToolCallDetails";
 import { ThinkingTrace, isInteractiveDisclosureTarget } from "./ThinkingTrace";
-import { parseRuntimeModelMarker } from "./effective-model-resolution";
+import { parseRuntimeModelMarker, parseRuntimeModelMarkerThinkingLevel } from "./effective-model-resolution";
 import { useChatMessageLayout } from "../context/ChatMessageLayoutContext";
 import { useChatEnterSubmits } from "../context/ChatSubmitOnEnterContext";
 import { getSlashTriggerMatch } from "./chat-commands";
@@ -67,9 +67,18 @@ function TaskChatFooterPortal({ target, children }: { target?: HTMLElement | nul
 
 type AgentLogRole = AgentRole | undefined;
 
+/*
+FNXC:TaskDetailChat 2026-09-15-08:46:
+FN-410: the Live role icon identifies the model AND the reasoning effort that was actually applied,
+because the same model at `minimal` and at `max` is not the same run. The level is resolved, never
+guessed: the runtime "using model" marker first, then the shared lane precedence. When no source
+supplies one, the badge is omitted entirely (no empty span, no orphan label) and the accessible name
+stays exactly what it was before this change.
+*/
 type TaskChatModelInfo = {
   provider: string;
   modelId?: string;
+  thinkingLevel?: string;
 };
 
 type UserChatMessage = Pick<SteeringComment, "id" | "text" | "createdAt"> & { optimistic?: boolean };
@@ -111,7 +120,10 @@ function parseModelMarker(entry: AgentLogEntry): TaskChatModelInfo | null {
   if (entry.type !== "status" && entry.type !== "text") return null;
   const role = entry.agent === PLANNER_AGENT_ROLE ? "Planning" : entry.agent === "executor" ? "Executor" : entry.agent === "reviewer" ? "Reviewer" : null;
   if (!role) return null;
-  return parseRuntimeModelMarker(entry.text, role);
+  const parsed = parseRuntimeModelMarker(entry.text, role);
+  if (!parsed) return null;
+  const thinkingLevel = parseRuntimeModelMarkerThinkingLevel(entry.text, role);
+  return thinkingLevel ? { ...parsed, thinkingLevel } : parsed;
 }
 
 function makeModelInfo(provider: string | undefined, modelId: string | undefined): TaskChatModelInfo | null {
@@ -163,15 +175,77 @@ function getModelForRole(
   FNXC:TaskDetailChat 2026-06-23-00:54:
   Default executor models such as OpenAI Codex GPT-5.5 can resolve through settings rather than task overrides or log markers. Task chat receives the same effective model resolution used by the task-detail model header so role icons match Chat and Agent Log instead of falling back to CPU for default-backed agents.
   */
-  return getRuntimeModelForRole(entries, role) ?? getEffectiveModelForRole(effectiveModels, role) ?? getExplicitModelForRole(task, role);
+  const resolved = getRuntimeModelForRole(entries, role) ?? getEffectiveModelForRole(effectiveModels, role) ?? getExplicitModelForRole(task, role);
+  if (!resolved || resolved.thinkingLevel) return resolved;
+
+  /*
+  FNXC:TaskDetailChat 2026-09-15-08:46:
+  FN-410: MODEL precedence is untouched above. A runtime marker that names a model without a thinking
+  annotation (older engine rows, or a lane that logged none) still leaves the effort knowable from the
+  task/lane resolution the host passes in, so backfill only that field — never the provider/model.
+  */
+  const laneThinkingLevel = getEffectiveModelForRole(effectiveModels, role)?.thinkingLevel;
+  return laneThinkingLevel ? { ...resolved, thinkingLevel: laneThinkingLevel } : resolved;
 }
 
-function TaskChatAgentIcon({ label, modelInfo }: { label: string; modelInfo: TaskChatModelInfo | null }) {
+/*
+FNXC:TaskDetailChat 2026-09-15-08:46:
+FN-410: canonical thinking levels get a localized label; a non-canonical value coming from a
+historical marker is shown verbatim rather than dropped or normalized away, so an operator reading an
+old log still sees what that run recorded.
+*/
+const THINKING_LEVEL_LABEL_KEYS: Record<string, string> = {
+  off: "taskChat.thinkingLevels.off",
+  minimal: "taskChat.thinkingLevels.minimal",
+  low: "taskChat.thinkingLevels.low",
+  medium: "taskChat.thinkingLevels.medium",
+  high: "taskChat.thinkingLevels.high",
+  xhigh: "taskChat.thinkingLevels.xhigh",
+  max: "taskChat.thinkingLevels.max",
+};
+
+const THINKING_LEVEL_FALLBACKS: Record<string, string> = {
+  off: "Off",
+  minimal: "Minimal",
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  xhigh: "Very High",
+  max: "Max",
+};
+
+function formatThinkingLevel(level: string | undefined, t: TFunction<"app">): string | null {
+  const normalized = level?.trim();
+  if (!normalized) return null;
+  const key = THINKING_LEVEL_LABEL_KEYS[normalized.toLowerCase()];
+  return key ? t(key, THINKING_LEVEL_FALLBACKS[normalized.toLowerCase()]) : normalized;
+}
+
+function TaskChatAgentIcon({ label, modelInfo, t }: { label: string; modelInfo: TaskChatModelInfo | null; t: TFunction<"app"> }) {
+  const thinkingLabel = formatThinkingLevel(modelInfo?.thinkingLevel, t);
+  /*
+  FNXC:TaskDetailChat 2026-09-15-08:46:
+  FN-410: the reasoning effort joins the accessible name and tooltip only when a real source supplied
+  it. With no level, `describedTitle` stays byte-identical to the pre-FN-410 string and no badge
+  element is rendered at all — no empty span, no orphan aria-label.
+  */
+  const withThinking = (title: string) => (
+    thinkingLabel ? t("taskChat.thinkingLevelTitle", "{{title}} · thinking: {{level}}", { title, level: thinkingLabel }) : title
+  );
+  const thinkingBadge = thinkingLabel ? (
+    <span className="task-chat-provider-thinking" data-testid="task-chat-provider-thinking" aria-hidden="true">
+      {thinkingLabel}
+    </span>
+  ) : null;
+
   if (modelInfo?.provider) {
-    const title = modelInfo.modelId ? `${label}: ${modelInfo.provider}/${modelInfo.modelId}` : `${label}: ${modelInfo.provider}`;
+    const title = withThinking(modelInfo.modelId ? `${label}: ${modelInfo.provider}/${modelInfo.modelId}` : `${label}: ${modelInfo.provider}`);
     return (
-      <span className="task-chat-provider-icon" title={title} aria-label={title}>
-        <ProviderIcon provider={modelInfo.provider} size="md" />
+      <span className="task-chat-provider">
+        <span className="task-chat-provider-icon" title={title} aria-label={title}>
+          <ProviderIcon provider={modelInfo.provider} size="md" />
+        </span>
+        {thinkingBadge}
       </span>
     );
   }
@@ -180,10 +254,13 @@ function TaskChatAgentIcon({ label, modelInfo }: { label: string; modelInfo: Tas
   FNXC:TaskDetailChat 2026-06-23-00:42:
   Task chat role headers should use provider logos whenever the role's model provider is known, and a neutral CPU fallback when it is not. Avoid role clip-art avatars so executor/reviewer/merger rows read as professional model execution blocks rather than cartoon agent identities.
   */
-  const title = `${label}: model provider unknown`;
+  const title = withThinking(`${label}: model provider unknown`);
   return (
-    <span className="task-chat-provider-icon task-chat-provider-icon--fallback" title={title} aria-label={title}>
-      <Cpu size={18} aria-hidden="true" />
+    <span className="task-chat-provider">
+      <span className="task-chat-provider-icon task-chat-provider-icon--fallback" title={title} aria-label={title}>
+        <Cpu size={18} aria-hidden="true" />
+      </span>
+      {thinkingBadge}
     </span>
   );
 }
@@ -1255,7 +1332,7 @@ export function TaskChatTab({ task, columnFlags, projectId, active, addToast, on
             return (
               <section className="task-chat-group" key={`${item.role ?? "agent"}-${itemIndex}`} aria-label={t("taskChat.agentMessages", "{{label}} messages", { label: item.label })}>
                 <header className="task-chat-group-header">
-                  <TaskChatAgentIcon label={item.label} modelInfo={modelInfo} />
+                  <TaskChatAgentIcon label={item.label} modelInfo={modelInfo} t={t} />
                   <div>
                     <div className="task-chat-role-label">{item.label}</div>
                     <div className="task-chat-group-meta">

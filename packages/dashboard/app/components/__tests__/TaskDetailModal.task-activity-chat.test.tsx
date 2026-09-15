@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { act, render, screen, fireEvent } from "@testing-library/react";
+import { act, render, screen, fireEvent, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import React, { type ComponentProps } from "react";
 import type { AgentLogEntry } from "@fusion/core";
@@ -152,6 +152,86 @@ describe("TaskDetailModal Activity and planner Chat tab integration", () => {
     expect(screen.queryByRole("heading", { name: "Feed" })).not.toBeInTheDocument();
     expect(screen.getByTestId("agent-log-viewer")).toBeInTheDocument();
     expect(screen.getAllByText("raw executor line").some((node) => node.closest('[aria-hidden="true"]') == null)).toBe(true);
+  });
+
+  /*
+  FNXC:TaskDetailActivity 2026-09-15-08:46:
+  FN-410: the Activity view options rendered side by side because the column layout sat on the
+  portaled surface while the option buttons live inside the `[role="menu"]` element. jsdom does not
+  compute layout, so the proof is structural here (every option is a direct child of the menu element
+  carrying the vertical-list class) and completed by the CSS contract asserted in
+  TaskDetailModal.css.test.ts for both the base and the mobile breakpoint.
+  */
+  it("FN-410 rend les vues d'Activity comme une liste verticale portée par l'élément [role=menu]", () => {
+    mockRawLogs([]);
+    renderModal();
+
+    const surface = openActivityViewMenu();
+    const menu = screen.getByRole("menu", { name: "Activity views" });
+    expect(surface.contains(menu)).toBe(true);
+    expect(menu).toHaveClass("activity-view-menu-list");
+
+    const options = screen.getAllByRole("menuitem");
+    expect(options.map((option) => option.textContent?.trim())).toEqual(["Live", "Feed", "Raw"]);
+    for (const option of options) {
+      expect(option).toHaveClass("activity-view-menu-item");
+      expect(option.parentElement).toBe(menu);
+    }
+  });
+
+  it("FN-410 garde la liste verticale quand l'oversight ajoute l'option Interventions", () => {
+    mockRawLogs([]);
+    renderModal({
+      task: makeTask({
+        id: "FN-410-oversight",
+        column: "in-progress" as any,
+        plannerOversightLevel: "autonomous",
+        log: [],
+        steeringComments: [],
+      }),
+    });
+
+    openActivityViewMenu();
+    const menu = screen.getByRole("menu", { name: "Activity views" });
+    expect(menu).toHaveClass("activity-view-menu-list");
+
+    const options = screen.getAllByRole("menuitem");
+    expect(options.map((option) => option.textContent?.trim())).toEqual(["Live", "Feed", "Raw", "Interventions"]);
+    for (const option of options) {
+      expect(option.parentElement).toBe(menu);
+    }
+  });
+
+  /*
+  FNXC:TaskDetailChat 2026-09-15-08:46:
+  FN-410 end to end: a task log carrying the engine's thinking-effort annotation must surface that
+  effort on the Live role icon of the matching role, through the real TaskDetailModal wiring.
+  */
+  it("FN-410 expose le niveau de réflexion sur l'icône de modèle de Live", () => {
+    mockRawLogs([
+      {
+        timestamp: "2026-06-30T20:03:00.000Z",
+        taskId: "FN-410-thinking",
+        type: "status",
+        agent: "executor",
+        text: "Executor using model: openai/gpt-4o (thinking effort: high)",
+      },
+      { timestamp: "2026-06-30T20:04:00.000Z", taskId: "FN-410-thinking", type: "text", agent: "executor", text: "executor output" },
+    ] as AgentLogEntry[]);
+
+    renderModal({
+      task: makeTask({
+        id: "FN-410-thinking",
+        column: "in-progress" as any,
+        plannerOversightLevel: "off",
+        log: [],
+        steeringComments: [],
+      }),
+    });
+
+    const executorGroup = screen.getByRole("region", { name: "Executor messages" });
+    expect(within(executorGroup).getByTestId("task-chat-provider-thinking")).toHaveTextContent("High");
+    expect(within(executorGroup).getByLabelText("Executor: openai/gpt-4o · thinking: High")).toBeInTheDocument();
   });
 
   it("conserve le brouillon et le transcript Live à travers Feed, Raw et un autre onglet", async () => {

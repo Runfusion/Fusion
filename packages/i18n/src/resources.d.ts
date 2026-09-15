@@ -8102,6 +8102,16 @@ export default interface Resources {
       "statusUpdate": "Status update",
       "statusUpdateTimestamp": "Status update timestamp",
       "thinking": "Thinking",
+      "thinkingLevelTitle": "{{title}} · thinking: {{level}}",
+      "thinkingLevels": {
+        "high": "High",
+        "low": "Low",
+        "max": "Max",
+        "medium": "Medium",
+        "minimal": "Minimal",
+        "off": "Off",
+        "xhigh": "Very High"
+      },
       "toolCall": "Tool call",
       "toolCallCount_one": "{{count}} tool call",
       "toolCallCount_other": "{{count}} tool calls",

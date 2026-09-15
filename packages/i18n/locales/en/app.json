@@ -9700,6 +9700,16 @@
     },
     "sending": "Sending",
     "thinking": "Thinking",
+    "thinkingLevelTitle": "{{title}} · thinking: {{level}}",
+    "thinkingLevels": {
+      "off": "Off",
+      "minimal": "Minimal",
+      "low": "Low",
+      "medium": "Medium",
+      "high": "High",
+      "xhigh": "Very High",
+      "max": "Max"
+    },
     "toolCall": "Tool call",
     "toolCallCount_one": "{{count}} tool call",
     "toolCallCount_other": "{{count}} tool calls",

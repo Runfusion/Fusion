@@ -2633,6 +2633,23 @@ The body-portaled menu must paint above the owning task-detail modal/popup while
   overscroll-behavior: contain;
 }
 
+/*
+FNXC:TaskDetailActivity 2026-09-15-08:46:
+FN-410: the Activity view options must read as a vertical list. `.activity-view-menu` is only the
+portaled, viewport-positioned FRAME; its single child is the `[role="menu"]` element rendered by
+`UiMenu`, which carries no layout of its own, so the option buttons stayed in that element's inline
+flow and lined up horizontally. The column layout therefore belongs on the menu element itself —
+the same placement `.model-menu-items` and `.chat-thread-title-menu` already use — never on
+`UiMenu`/`UiPrimitives.tsx` or a global `[role="menu"]` selector, which would restyle every
+dashboard menu. This holds at every breakpoint: no media-query override may return it to a row.
+*/
+.activity-view-menu-list {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-xs) / 2);
+  min-inline-size: 100%;
+}
+
 .activity-view-menu-item {
   appearance: none;
   border: 0;

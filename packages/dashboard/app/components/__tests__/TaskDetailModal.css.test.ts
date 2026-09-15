@@ -149,4 +149,25 @@ describe("TaskDetailModal CSS contract", () => {
     expect(css).not.toContain(".log-subview-toggle");
     expect(css).not.toContain(".log-subview-btn");
   });
+
+  it("FN-410 lays the Activity view options out as a vertical list on the menu element itself", async () => {
+    const css = await loadAllAppCssBaseOnly();
+    const fullCss = await loadAllAppCss();
+
+    // The column layout must live on the `[role="menu"]` element rendered by UiMenu, not only on the
+    // portaled frame: the frame's own column rule never reached the option buttons, which is why they
+    // rendered side by side.
+    expect(css).toMatch(/\.activity-view-menu-list\s*\{[^}]*display\s*:\s*flex\s*;/);
+    expect(css).toMatch(/\.activity-view-menu-list\s*\{[^}]*flex-direction\s*:\s*column\s*;/);
+
+    // No rule anywhere — base or any media query, including the mobile breakpoint — may put the list
+    // back into a row/inline flow.
+    expect(fullCss).not.toMatch(/\.activity-view-menu-list\s*\{[^}]*flex-direction\s*:\s*row/);
+    expect(fullCss).not.toMatch(/\.activity-view-menu-list\s*\{[^}]*display\s*:\s*(?:inline-flex|grid|block|inline)\s*;/);
+    expect(fullCss).not.toMatch(/\.activity-view-menu-list\s*\{[^}]*flex-flow\s*:\s*row/);
+
+    // Reused literals that earlier segmented-control designs owned must stay absent.
+    expect(css).not.toContain(".activity-segmented-control");
+    expect(css).not.toContain(".activity-segment");
+  });
 });

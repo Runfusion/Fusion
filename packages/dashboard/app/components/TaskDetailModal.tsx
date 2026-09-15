@@ -119,7 +119,7 @@ import { recordResumeEvent } from "../utils/resumeInstrumentation";
 import { HUMAN_PLAN_APPROVAL_MESSAGE_MAX_LENGTH_CLIENT, isHumanPlanApprovalArmedClient, isReviewBudgetExhaustedApproval, isTaskAwaitingPlanApproval, resolvePlanReviewEpisodeIdClient } from "../utils/reviewBudgetApproval";
 import { HumanPlanApprovalControls } from "./HumanPlanApprovalControls";
 import { getTaskStatusBadgeLabel, hasTaskStatusBadge, isTaskPlanningActive } from "../utils/taskStatusBadgeLabel";
-import { ACTIVE_STATUSES, resolveEffectiveExecutor, resolveEffectivePlanning, resolveEffectiveTaskChat, resolveEffectiveValidator, type ModelSelection } from "./effective-model-resolution";
+import { ACTIVE_STATUSES, resolveEffectiveExecutor, resolveEffectivePlanning, resolveEffectiveTaskChat, resolveEffectiveThinkingLevel, resolveEffectiveValidator, type ModelSelection } from "./effective-model-resolution";
 import { TaskContextMenu, buildTaskActionMenuModel, getTaskPrAutomationLabel } from "./TaskContextMenu";
 import type { TaskContextMenuColumnFlags, TaskContextMenuColumnMetadata, TaskMenuItemDescriptor } from "./TaskContextMenu";
 import { FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT } from "./FloatingWindow";
@@ -275,9 +275,17 @@ function hasUsableTrackingTitle(task: { title?: string | null; description?: str
   return Boolean(firstMeaningfulLine);
 }
 
-function toTaskChatModelInfo(model: ModelSelection): { provider: string; modelId?: string } | null {
+/*
+FNXC:TaskDetailChat 2026-09-15-08:46:
+FN-410: Activity Live's role icon reports the reasoning effort alongside the model, so the effective
+model handed to TaskChatTab carries the resolved thinking level for that lane. The level stays
+optional end to end: when no marker and no configured lane supplies one, nothing is attached and the
+icon renders exactly as before.
+*/
+function toTaskChatModelInfo(model: ModelSelection, thinkingLevel?: string): { provider: string; modelId?: string; thinkingLevel?: string } | null {
   if (!model.provider) return null;
-  return model.modelId ? { provider: model.provider, modelId: model.modelId } : { provider: model.provider };
+  const base = model.modelId ? { provider: model.provider, modelId: model.modelId } : { provider: model.provider };
+  return thinkingLevel ? { ...base, thinkingLevel } : base;
 }
 
 /*
@@ -4970,7 +4978,16 @@ export function TaskDetailContent({
           maxHeight: activityViewMenuPosition.maxHeight,
         }}
       >
+        {/*
+          FNXC:TaskDetailActivity 2026-09-15-08:46:
+          FN-410: `UiPortalSurface` is only the positioned frame; the option buttons live inside the
+          `[role="menu"]` element produced by `UiMenu`, which ships no layout, so a column rule placed on
+          the surface never reached them and the views rendered side by side. Carry the vertical-list class
+          on the menu element itself (as `.model-menu-items` does) rather than patching `UiMenu` or a global
+          `[role="menu"]` selector, which would change every menu in the dashboard.
+        */}
         <UiMenu
+          className="activity-view-menu-list"
           aria-label={t("taskDetail.activity.menuLabel", "Activity views")}
           onKeyDown={handleActivityViewMenuKeyDown}
         >
@@ -7080,10 +7097,22 @@ export function TaskDetailContent({
                   expanded={isActivityExpanded}
                   onToggleExpanded={isPhonePresentation ? undefined : () => setActivityExpanded((value) => !value)}
                   effectiveModels={{
-                    triage: toTaskChatModelInfo(resolveEffectivePlanning(workingTask, agentLogEntries, settings)),
-                    executor: toTaskChatModelInfo(resolveEffectiveExecutor(workingTask, agentLogEntries, assignedAgent, settings, detailColumnFlags)),
-                    reviewer: toTaskChatModelInfo(resolveEffectiveValidator(workingTask, agentLogEntries, assignedAgent, settings, detailColumnFlags)),
-                    merger: toTaskChatModelInfo(resolveEffectiveValidator(workingTask, agentLogEntries, assignedAgent, settings, detailColumnFlags)),
+                    triage: toTaskChatModelInfo(
+                      resolveEffectivePlanning(workingTask, agentLogEntries, settings),
+                      resolveEffectiveThinkingLevel(workingTask, agentLogEntries, "planning", settings),
+                    ),
+                    executor: toTaskChatModelInfo(
+                      resolveEffectiveExecutor(workingTask, agentLogEntries, assignedAgent, settings, detailColumnFlags),
+                      resolveEffectiveThinkingLevel(workingTask, agentLogEntries, "execution", settings),
+                    ),
+                    reviewer: toTaskChatModelInfo(
+                      resolveEffectiveValidator(workingTask, agentLogEntries, assignedAgent, settings, detailColumnFlags),
+                      resolveEffectiveThinkingLevel(workingTask, agentLogEntries, "validation", settings),
+                    ),
+                    merger: toTaskChatModelInfo(
+                      resolveEffectiveValidator(workingTask, agentLogEntries, assignedAgent, settings, detailColumnFlags),
+                      resolveEffectiveThinkingLevel(workingTask, agentLogEntries, "merger", settings),
+                    ),
                   }}
                 />
             </KeepAliveView>

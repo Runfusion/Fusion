@@ -9622,6 +9622,16 @@
     },
     "sending": "Enviando",
     "thinking": "Pensando",
+    "thinkingLevelTitle": "{{title}} · raciocínio: {{level}}",
+    "thinkingLevels": {
+      "off": "Desativado",
+      "minimal": "Mínimo",
+      "low": "Baixo",
+      "medium": "Médio",
+      "high": "Alto",
+      "xhigh": "Muito alto",
+      "max": "Máximo"
+    },
     "toolCall": "Chamada de ferramenta",
     "toolCallCount_one": "{{count}} chamada de ferramenta",
     "toolCallCount_other": "{{count}} chamadas de ferramenta",
