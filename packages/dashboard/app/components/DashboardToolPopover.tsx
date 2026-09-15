@@ -6,6 +6,88 @@ import "./DashboardToolPopover.css";
 const VIEWPORT_MARGIN = 8;
 const ANCHOR_GAP = 8;
 const DEFAULT_WIDTH = 420;
+/** Floor the panel never shrinks below; also the threshold under which the space below an anchor is unusable. */
+const MIN_PANEL_BLOCK_SIZE = 200;
+
+export interface ToolPopoverGeometryInput {
+  anchorRect: DOMRect | null;
+  viewport: { width: number; height: number };
+  width: number;
+  preferredHeight?: number;
+}
+
+export interface ToolPopoverGeometry {
+  placement: "above" | "below";
+  /** Emitted only for `below`; `above` panels are anchored by `bottom` so the two are never written together. */
+  top?: number;
+  /** Emitted only for `above`. */
+  bottom?: number;
+  left: number;
+  width: number;
+  maxHeight: number;
+  /** Emitted only when a caller asked for a definite height; otherwise the panel stays content-sized. */
+  height?: number;
+}
+
+/*
+FNXC:ToolSurfaces 2026-09-15-20:24:
+FN-433: this panel is anchored to a HEADER trigger (Activity, Notes) in two cases and to the BOTTOM-BAR trigger
+(`desktop-nav-chat-panel` in DesktopActionBar, whose bar is `position: fixed; bottom: 0`) in the third. The original
+geometry placed the panel unconditionally below its anchor, which is correct only for a header trigger: for the footer
+trigger `anchorRect.bottom` is ~`window.innerHeight`, so the panel was laid out flush against the bottom edge with its
+height collapsed to the floor — present in the DOM, entirely off-screen. The operator clicked Chat and saw nothing.
+
+Placement is therefore resolved from MEASURED geometry, never from a CSS `@media` guess: stay `below` by default, and
+flip to `above` only when the space below the anchor is unusable (< MIN_PANEL_BLOCK_SIZE) AND there is more room above.
+The `below` branch keeps the exact prior arithmetic so header anchors are a byte-for-byte non-regression.
+*/
+export function resolveToolPopoverGeometry({ anchorRect, viewport, width, preferredHeight }: ToolPopoverGeometryInput): ToolPopoverGeometry {
+  const resolvedWidth = Math.min(width, Math.max(240, viewport.width - VIEWPORT_MARGIN * 2));
+  const anchorBottom = anchorRect?.bottom ?? VIEWPORT_MARGIN;
+  const anchorRight = anchorRect?.right ?? viewport.width - VIEWPORT_MARGIN;
+  const left = Math.max(VIEWPORT_MARGIN, Math.min(anchorRight - resolvedWidth, viewport.width - resolvedWidth - VIEWPORT_MARGIN));
+
+  // A stale rect can report an anchor below the current viewport; clamping keeps the flipped panel inside it.
+  const anchorTop = Math.min(anchorRect?.top ?? VIEWPORT_MARGIN, viewport.height);
+  const spaceBelow = viewport.height - anchorBottom - ANCHOR_GAP - VIEWPORT_MARGIN;
+  const spaceAbove = anchorTop - ANCHOR_GAP - VIEWPORT_MARGIN;
+
+  if (spaceBelow < MIN_PANEL_BLOCK_SIZE && spaceAbove > spaceBelow) {
+    const maxHeight = Math.max(MIN_PANEL_BLOCK_SIZE, spaceAbove);
+    return {
+      placement: "above",
+      bottom: Math.max(VIEWPORT_MARGIN, viewport.height - anchorTop + ANCHOR_GAP),
+      left,
+      width: resolvedWidth,
+      maxHeight,
+      height: resolveDefiniteHeight(preferredHeight, maxHeight),
+    };
+  }
+
+  const top = Math.max(VIEWPORT_MARGIN, anchorBottom + ANCHOR_GAP);
+  const maxHeight = Math.max(MIN_PANEL_BLOCK_SIZE, viewport.height - top - VIEWPORT_MARGIN);
+  return {
+    placement: "below",
+    top,
+    left,
+    width: resolvedWidth,
+    maxHeight,
+    height: resolveDefiniteHeight(preferredHeight, maxHeight),
+  };
+}
+
+/*
+FNXC:ToolSurfaces 2026-09-15-20:24:
+FN-433: `preferredHeight` is opt-in because Activity and Notes are content-sized and must stay so — when it is absent no
+`height` style is emitted at all. Chat needs it: `.chat-view` declares `height: 100%` and its conversation list is
+virtualized through `useVirtualizedList`, which measures `container.clientHeight`. Inside a parent of indefinite height
+the `min-block-size: 0` / `overflow: hidden` flex body collapses, so the list would have no measurable viewport and
+render no visible rows. The available space always wins, so a definite height can never push the panel off-screen.
+*/
+function resolveDefiniteHeight(preferredHeight: number | undefined, maxHeight: number): number | undefined {
+  if (preferredHeight === undefined) return undefined;
+  return Math.min(preferredHeight, maxHeight);
+}
 
 export interface DashboardToolPopoverProps {
   /** Rendered only while true; the body is unmounted on close so it holds no polling or subscriptions. */
@@ -19,6 +101,8 @@ export interface DashboardToolPopoverProps {
   id: string;
   testId?: string;
   width?: number;
+  /** Opt-in definite block size, bounded by the available space. Omit it to keep the panel content-sized. */
+  preferredHeight?: number;
   children: ReactNode;
 }
 
@@ -37,7 +121,7 @@ Contract:
   nested menu) must not trigger that dismissal — the backdrop is an explicit sibling element, so only a click that
   actually lands on it dismisses.
 */
-export function DashboardToolPopover({ open, onClose, anchorRect, ariaLabel, id, testId, width = DEFAULT_WIDTH, children }: DashboardToolPopoverProps) {
+export function DashboardToolPopover({ open, onClose, anchorRect, ariaLabel, id, testId, width = DEFAULT_WIDTH, preferredHeight, children }: DashboardToolPopoverProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const restoreFocusRef = useRef<HTMLElement | null>(null);
   const [viewport, setViewport] = useState(() => ({
@@ -83,12 +167,7 @@ export function DashboardToolPopover({ open, onClose, anchorRect, ariaLabel, id,
 
   if (!open) return null;
 
-  const resolvedWidth = Math.min(width, Math.max(240, viewport.width - VIEWPORT_MARGIN * 2));
-  const anchorBottom = anchorRect?.bottom ?? VIEWPORT_MARGIN;
-  const anchorRight = anchorRect?.right ?? viewport.width - VIEWPORT_MARGIN;
-  const top = Math.max(VIEWPORT_MARGIN, anchorBottom + ANCHOR_GAP);
-  const left = Math.max(VIEWPORT_MARGIN, Math.min(anchorRight - resolvedWidth, viewport.width - resolvedWidth - VIEWPORT_MARGIN));
-  const maxHeight = Math.max(200, viewport.height - top - VIEWPORT_MARGIN);
+  const geometry = resolveToolPopoverGeometry({ anchorRect, viewport, width, preferredHeight });
 
   return createPortal(
     <DashboardWindowSurfaceRoot logicalId={id} group="dialog" className="dashboard-window-surface-root--contents">
@@ -102,8 +181,9 @@ export function DashboardToolPopover({ open, onClose, anchorRect, ariaLabel, id,
         tabIndex={-1}
         className="dashboard-tool-popover"
         data-testid={testId}
+        data-placement={geometry.placement}
         onKeyDown={handleKeyDown}
-        style={{ top, left, width: resolvedWidth, maxHeight }}
+        style={{ top: geometry.top, bottom: geometry.bottom, left: geometry.left, width: geometry.width, maxHeight: geometry.maxHeight, height: geometry.height }}
       >
         <div className="dashboard-tool-popover__body">{children}</div>
       </div>

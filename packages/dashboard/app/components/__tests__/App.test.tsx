@@ -7051,6 +7051,64 @@ describe("FN-426 tool surfaces without the right sidebar", () => {
     expect(screen.queryByTestId("right-dock-body")).toBeNull();
   });
 
+  /*
+   * FN-433 symptom: the bottom bar is `position: fixed; bottom: 0`, so the Chat trigger's rect bottom is the window
+   * bottom. Placing the panel below it laid the whole dialog out past the bottom edge — present in the DOM, invisible
+   * on screen, which is exactly "clicking Chat shows nothing". jsdom's default zero rect hides that, so this case feeds
+   * the real footer geometry and asserts the panel opens ABOVE the trigger, fully inside the viewport.
+   */
+  it("opens the bottom-bar conversation list above its trigger and inside the viewport", async () => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    vi.mocked(fetchSettings).mockResolvedValue(toolSettings());
+    // Earlier mobile-viewport cases redefine innerHeight as a non-writable property, so define rather than assign.
+    const priorHeight = window.innerHeight;
+    Object.defineProperty(window, "innerHeight", { configurable: true, writable: true, value: 800 });
+
+    render(<App />);
+
+    const trigger = await screen.findByTestId("desktop-nav-chat-panel");
+    const rectSpy = vi.spyOn(trigger, "getBoundingClientRect").mockReturnValue({
+      x: 1100, y: 764, top: 764, bottom: 800, left: 1100, right: 1180, width: 80, height: 36, toJSON: () => ({}),
+    } as DOMRect);
+
+    try {
+      fireEvent.click(trigger);
+      const panel = await screen.findByTestId("chat-tool-popover");
+
+      expect(panel).toHaveAttribute("data-placement", "above");
+      expect(panel.style.top).toBe("");
+      expect(panel.style.bottom).not.toBe("");
+
+      const bottom = Number.parseInt(panel.style.bottom, 10);
+      const height = Number.parseInt(panel.style.height || panel.style.maxHeight, 10);
+      const bottomEdge = 800 - bottom;
+      expect(bottomEdge).toBeLessThanOrEqual(764 - 8);
+      expect(bottomEdge - height).toBeGreaterThanOrEqual(8);
+    } finally {
+      rectSpy.mockRestore();
+      Object.defineProperty(window, "innerHeight", { configurable: true, writable: true, value: priorHeight });
+    }
+  });
+
+  /*
+   * FN-433 non-regression: the header-anchored panels have room below their trigger, so they must keep resolving to the
+   * unchanged `below` placement.
+   */
+  it("keeps the header Activity and Notes panels anchored below their triggers", async () => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    vi.mocked(fetchSettings).mockResolvedValue(toolSettings());
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByTestId("header-activity-panel-btn"));
+    expect(await screen.findByTestId("activity-tool-popover")).toHaveAttribute("data-placement", "below");
+    fireEvent.keyDown(screen.getByTestId("activity-tool-popover"), { key: "Escape" });
+    await waitFor(() => expect(screen.queryByTestId("activity-tool-popover")).toBeNull());
+
+    fireEvent.click(screen.getByTestId("header-notes-panel-btn"));
+    expect(await screen.findByTestId("notes-tool-popover")).toHaveAttribute("data-placement", "below");
+  });
+
   it("toggles Board and List from the header without a sidebar", async () => {
     mockUseViewportMode.mockReturnValue("desktop");
     vi.mocked(fetchSettings).mockResolvedValue(toolSettings());

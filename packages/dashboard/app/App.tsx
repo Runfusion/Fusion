@@ -2834,6 +2834,12 @@ function AppInner() {
           id={CHAT_TOOL_PANEL_ID}
           testId="chat-tool-popover"
           ariaLabel="Conversations"
+          /*
+          FNXC:ToolSurfaces 2026-09-15-20:24:
+          FN-433: only Chat asks for a definite height. Its conversation list is virtualized and measures its container,
+          so an indefinite-height parent collapses the list to nothing; Activity and Notes stay content-sized.
+          */
+          preferredHeight={560}
         >
           <Suspense fallback={null}>
             <ChatView

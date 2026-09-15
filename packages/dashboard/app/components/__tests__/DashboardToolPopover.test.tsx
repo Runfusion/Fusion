@@ -36,6 +36,101 @@ describe("DashboardToolPopover", () => {
     expect(panel.style.top).toBe("68px");
     expect(panel.style.left).toBe("540px");
     expect(panel.style.maxHeight).toBe("724px");
+    expect(panel).toHaveAttribute("data-placement", "below");
+  });
+
+  /*
+   * FN-433: the bottom-bar Chat trigger lives in a bar fixed to `bottom: 0`, so its rect bottom is the window bottom.
+   * Placing the panel below it put the whole dialog off-screen — the operator clicked Chat and saw nothing. These cases
+   * assert the flip is driven by measured geometry and that the flipped panel is fully contained in the viewport.
+   */
+  it("flips above a bottom-bar anchor instead of rendering off-screen below it", () => {
+    window.innerWidth = 1280;
+    window.innerHeight = 800;
+    render(<DashboardToolPopover open onClose={vi.fn()} anchorRect={rect({ top: 764, bottom: 800, left: 1100, right: 1180, height: 36 })} id="chat-panel" testId="tool-popover" ariaLabel="Conversations"><div /></DashboardToolPopover>);
+
+    const panel = screen.getByTestId("tool-popover");
+    expect(panel).toHaveAttribute("data-placement", "above");
+    expect(panel.style.top).toBe("");
+    expect(panel.style.bottom).toBe("44px");
+    const maxHeight = Number.parseInt(panel.style.maxHeight, 10);
+    expect(maxHeight).toBeLessThanOrEqual(756);
+    // Bottom edge clears the trigger; top edge stays inside the viewport margin.
+    expect(800 - 44).toBeLessThanOrEqual(764 - 8);
+    expect(800 - 44 - maxHeight).toBeGreaterThanOrEqual(8);
+  });
+
+  it("keeps a bottom-bar anchor above and inside a short landscape-tablet viewport", () => {
+    window.innerWidth = 1024;
+    window.innerHeight = 640;
+    render(<DashboardToolPopover open onClose={vi.fn()} anchorRect={rect({ top: 604, bottom: 640, left: 860, right: 940, height: 36 })} id="chat-panel" testId="tool-popover" ariaLabel="Conversations"><div /></DashboardToolPopover>);
+
+    const panel = screen.getByTestId("tool-popover");
+    expect(panel).toHaveAttribute("data-placement", "above");
+    expect(panel.style.top).toBe("");
+    const bottom = Number.parseInt(panel.style.bottom, 10);
+    const maxHeight = Number.parseInt(panel.style.maxHeight, 10);
+    expect(640 - bottom).toBeLessThanOrEqual(604 - 8);
+    expect(640 - bottom - maxHeight).toBeGreaterThanOrEqual(8);
+  });
+
+  /*
+   * FN-433: Chat's conversation list is virtualized and measures its container, so it needs a definite height; Activity
+   * and Notes must stay content-sized, and the available space must always win over the requested height.
+   */
+  it("emits no height style unless a preferred height is requested", () => {
+    window.innerWidth = 1280;
+    window.innerHeight = 800;
+    render(<DashboardToolPopover open onClose={vi.fn()} anchorRect={rect()} id="p" testId="tool-popover" ariaLabel="Panel"><div /></DashboardToolPopover>);
+    expect(screen.getByTestId("tool-popover").style.height).toBe("");
+  });
+
+  it("applies a requested height when the available space allows it", () => {
+    window.innerWidth = 1280;
+    window.innerHeight = 800;
+    render(<DashboardToolPopover open onClose={vi.fn()} anchorRect={rect({ top: 764, bottom: 800, left: 1100, right: 1180, height: 36 })} id="p" testId="tool-popover" ariaLabel="Panel" preferredHeight={560}><div /></DashboardToolPopover>);
+    expect(screen.getByTestId("tool-popover").style.height).toBe("560px");
+  });
+
+  it("bounds a requested height by the space actually available", () => {
+    window.innerWidth = 1280;
+    window.innerHeight = 420;
+    render(<DashboardToolPopover open onClose={vi.fn()} anchorRect={rect({ top: 384, bottom: 420, left: 1100, right: 1180, height: 36 })} id="p" testId="tool-popover" ariaLabel="Panel" preferredHeight={560}><div /></DashboardToolPopover>);
+
+    const panel = screen.getByTestId("tool-popover");
+    const height = Number.parseInt(panel.style.height, 10);
+    expect(height).toBeLessThan(560);
+    expect(height).toBe(Number.parseInt(panel.style.maxHeight, 10));
+  });
+
+  it("stays below and inside the viewport when no anchor rect is available", () => {
+    window.innerWidth = 1280;
+    window.innerHeight = 800;
+    render(<DashboardToolPopover open onClose={vi.fn()} anchorRect={null} id="p" testId="tool-popover" ariaLabel="Panel"><div /></DashboardToolPopover>);
+
+    const panel = screen.getByTestId("tool-popover");
+    expect(panel).toHaveAttribute("data-placement", "below");
+    expect(panel.style.bottom).toBe("");
+    const top = Number.parseInt(panel.style.top, 10);
+    expect(top).toBeGreaterThanOrEqual(8);
+    expect(top + Number.parseInt(panel.style.maxHeight, 10)).toBeLessThanOrEqual(800);
+  });
+
+  it("re-resolves the placement of a low anchor when the window shrinks", () => {
+    window.innerWidth = 1280;
+    window.innerHeight = 1200;
+    render(<DashboardToolPopover open onClose={vi.fn()} anchorRect={rect({ top: 764, bottom: 800, left: 1100, right: 1180, height: 36 })} id="p" testId="tool-popover" ariaLabel="Panel"><div /></DashboardToolPopover>);
+    expect(screen.getByTestId("tool-popover")).toHaveAttribute("data-placement", "below");
+
+    act(() => {
+      window.innerHeight = 800;
+      window.dispatchEvent(new Event("resize"));
+    });
+
+    const panel = screen.getByTestId("tool-popover");
+    expect(panel).toHaveAttribute("data-placement", "above");
+    expect(panel.style.top).toBe("");
+    expect(panel.style.bottom).toBe("44px");
   });
 
   it("keeps the panel inside a narrow viewport instead of overflowing it", () => {
