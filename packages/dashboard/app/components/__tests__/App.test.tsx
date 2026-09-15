@@ -2391,9 +2391,15 @@ describe("official dashboard design production wiring", () => {
     render(<App />);
     expect(await screen.findByTestId("desktop-action-bar")).toBeInTheDocument();
     expect(document.querySelector(".executor-status-bar")).toBeNull();
+<<<<<<< HEAD
     expect(screen.queryByTestId("desktop-nav-patchnode")).toBeNull();
     expect(screen.queryByTestId("desktop-nav-chat")).toBeNull();
     expect(screen.queryByTestId("desktop-nav-notes")).toBeNull();
+=======
+    expect(screen.queryByTestId("alpha-desktop-nav-patchnode")).toBeNull();
+    expect(screen.getByTestId("alpha-desktop-nav-chat")).toHaveAccessibleName("Chat");
+    expect(screen.queryByTestId("alpha-desktop-nav-notes")).toBeNull();
+>>>>>>> b8fe1ed834 (feat(dashboard): restore Chat as an Alpha footer page destination)
 
     /*
     FNXC:ChatSurfaceUnification 2026-09-14-17:46:
@@ -2413,6 +2419,13 @@ describe("official dashboard design production wiring", () => {
     expect(await within(screen.getByTestId("right-dock")).findByText("Note Alpha")).toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: "Notes" })).toBeNull();
     expect(document.querySelector(".right-dock .notes-view--compact")).not.toBeNull();
+
+    /*
+    FNXC:AlphaDesktopNavigation 2026-09-15-07:00:
+    With a dock conversation window and a Notes window already open, the footer Chat entry must still reach the full Chat page: it closes the Alpha windows and activates the retained chat host instead of leaving the operator on the page behind.
+    */
+    fireEvent.click(screen.getByTestId("alpha-desktop-nav-chat"));
+    expect(await screen.findByTestId("chat-keep-alive")).not.toHaveAttribute("aria-hidden");
   });
 
   /*
