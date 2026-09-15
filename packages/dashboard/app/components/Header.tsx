@@ -58,10 +58,13 @@ export interface HeaderProps {
   onOpenUsage?: (anchorRect?: DOMRect | null) => void;
   onOpenActivityLog?: () => void;
   /*
-  FNXC:ToolSurfaces 2026-09-15-16:04:
-  FN-426: Activity and Notes are header-anchored panels on EVERY breakpoint, so neither depends on the optional right
-  dock nor on the mobile More sheet. The Header owns only the triggers and their anchor rect; App owns the single open
-  panel, which is what keeps Activity, Notes, and the footer Chat list mutually exclusive.
+  FNXC:ToolSurfaces 2026-09-16-23:06:
+  FN-437 supersedes FN-426's "every breakpoint" rule for these two triggers: on PHONE the footer navigation menu is the
+  single owner of Activity (`mobile-more-item-activity`) and Notes (`mobile-more-item-notes`), so the Header renders
+  neither trigger there and the narrow header stops duplicating the footer. The FN-426 guarantee that neither tool
+  depends on the optional right dock is still upheld — by the Header on tablet/desktop and by the footer menu on
+  phone. The Header owns only the triggers and their anchor rect; App owns the single open panel, which is what keeps
+  Activity, Notes, and the footer Chat list mutually exclusive.
   */
   onOpenActivityPanel?: (anchorRect: DOMRect | null) => void;
   activityPanelOpen?: boolean;
@@ -758,13 +761,15 @@ export function Header({
               <LayoutGrid size={16} />
             </button>
             {/*
-            FNXC:ToolSurfaces 2026-09-15-16:04:
-            FN-426 restores List beside Board in the legacy view-toggle group. FN-382 had made List a right-dock tool,
-            which was the last reason the dock was structurally required to browse tasks as a list. Hosts where this
-            whole group is suppressed get the standalone Board/List toggle in `header-actions` instead, so the
-            destination is reachable on every host without ever having two producers on the same one.
+            FNXC:ToolSurfaces 2026-09-16-23:06:
+            FN-426 restored List beside Board in the legacy view-toggle group because FN-382 had made List a right-dock
+            tool, which was the last reason the dock was structurally required to browse tasks as a list. FN-437 keeps
+            that guarantee on tablet/desktop only: on phone the footer navigation menu owns List
+            (`mobile-more-item-list`, rendered unconditionally), so this producer — and the standalone one in
+            `header-actions` below — are both suppressed when `isMobile`, leaving exactly one owner per host and no
+            duplicate between header and footer.
             */}
-            <button
+            {!isMobile && <button
               className={`view-toggle-btn${view === "list" ? " active" : ""}`}
               onClick={() => onChangeView(view === "list" ? "board" : "list")}
               title={t("header.listView", "List view")}
@@ -773,7 +778,7 @@ export function Header({
               data-testid="header-list-view-btn"
             >
               <List size={16} />
-            </button>
+            </button>}
             {showAgentsTab && (
               <button
                 className={`view-toggle-btn${view === "agents" ? " active" : ""}`}
@@ -1086,13 +1091,15 @@ export function Header({
         <PluginSlot slotId="header-action" projectId={projectId} />
 
         {/*
-        FNXC:ToolSurfaces 2026-09-15-16:04:
-        FN-426: when a wide primary navigation surface (footer or left sidebar) suppresses the view-toggle group above,
-        Board/List would otherwise have no header producer at all — and FN-382 had already taken List out of that
-        navigation on the assumption the right dock would always host it. This standalone toggle is the single
-        replacement: exactly one control, present only where the group is suppressed, so no host shows two.
+        FNXC:ToolSurfaces 2026-09-16-23:06:
+        FN-426: when a wide primary navigation surface (left sidebar) suppresses the view-toggle group above, Board/List
+        would otherwise have no header producer at all — and FN-382 had already taken List out of that navigation on the
+        assumption the right dock would always host it. This standalone toggle is the single replacement on
+        tablet/desktop: exactly one control, present only where the group is suppressed, so no host shows two.
+        FN-437 excludes phone entirely (`!isMobile`): there the footer navigation menu is List's single owner, so the
+        invariant "no `header-list-view-btn` while `isMobile`" holds regardless of `mobileNavEnabled`.
         */}
-        {onChangeView && (hideFullNav || hideHeaderViewNav) && (
+        {onChangeView && !isMobile && (hideFullNav || hideHeaderViewNav) && (
           <button
             className={`btn-icon${view === "list" ? " btn-icon--active" : ""}`}
             onClick={() => onChangeView(view === "list" ? "board" : "list")}
@@ -1106,12 +1113,15 @@ export function Header({
         )}
 
         {/*
-        FNXC:ToolSurfaces 2026-09-15-16:04:
-        FN-426: Activity and Notes are header panels on every breakpoint, mounted here rather than behind the mobile
-        More sheet, so neither has the optional right dock as its only host. Usage stays an independent surface with
-        its own trigger below; App guarantees only one of these panels is open at a time.
+        FNXC:ToolSurfaces 2026-09-16-23:06:
+        FN-426 mounted Activity and Notes here on every breakpoint so neither had the optional right dock as its only
+        host. FN-437 narrows that to tablet/desktop: on phone the footer navigation menu already owns both destinations
+        (`mobile-more-item-activity` opens the full-screen activity log, `mobile-more-item-notes` opens the Notes view
+        in the main-content drawer), so a header trigger here was a second producer crowding a narrow header. The
+        dock-independence guarantee is unchanged — the footer menu takes over on phone. Usage stays an independent
+        surface with its own trigger below; App guarantees only one of these panels is open at a time.
         */}
-        {onOpenActivityPanel && (
+        {!isMobile && onOpenActivityPanel && (
           <button
             className={`btn-icon${activityPanelOpen ? " btn-icon--active" : ""}`}
             onClick={(event) => onOpenActivityPanel(event.currentTarget.getBoundingClientRect())}
@@ -1125,7 +1135,7 @@ export function Header({
             <History size={16} />
           </button>
         )}
-        {onOpenNotesPanel && (
+        {!isMobile && onOpenNotesPanel && (
           <button
             className={`btn-icon${notesPanelOpen ? " btn-icon--active" : ""}`}
             onClick={(event) => onOpenNotesPanel(event.currentTarget.getBoundingClientRect())}
@@ -1321,10 +1331,17 @@ export function Header({
         FNXC:MobileTaskNavigation 2026-08-20-05:47:
         Issue #2226 moves mobile Board/List navigation to the footer so Header can expose App's single full-task modal entry point from every active project view. The Planning column keeps its separate quick-entry composer.
 
-        FNXC:StandardizedViewActions 2026-09-13-22:40:
-        The App-owned create-task control keeps its established placement — tablet/mobile only — and merely adopts the shared action primitive so its shape matches every other creation entry. Desktop creation stays with its dedicated surfaces and shortcuts, so standardizing the button must not reintroduce a retired desktop Header duplicate. List is excluded at every viewport because its own header preserves the selected-workflow argument.
+        FNXC:StandardizedViewActions 2026-09-16-23:06:
+        FN-437 reinstates the App-owned create-task control on DESKTOP, for every view including List: creating a task
+        previously depended on the current screen (Board, List, sidebar, keyboard shortcut), so there was no way to
+        create one from an arbitrary view. The Header is the one surface present on every screen, which makes it the
+        correct owner of that view-independent entry. It still adopts the shared `ViewActionButton` primitive so its
+        shape matches every other creation entry, and it keeps its established compact behavior below desktop, where
+        List is excluded because its own header preserves the selected-workflow argument. On desktop that List header
+        button is deliberately KEPT and coexists with this one: they live in two distinct bars (`header-actions` versus
+        the view's own header), and the workflow-aware argument is the reason the List one is not replaceable.
         */}
-        {mode !== "desktop" && projectId && onNewTask && view !== "list" ? (
+        {projectId && onNewTask && (mode === "desktop" || view !== "list") ? (
           <ViewActionButton
             kind="create"
             onClick={onNewTask}

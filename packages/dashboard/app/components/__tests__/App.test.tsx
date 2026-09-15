@@ -2037,7 +2037,13 @@ describe("official dashboard design production wiring", () => {
     }
   });
 
-  it("retire Nouvelle tâche du Header Alpha desktop sans ouvrir de modale", async () => {
+  /*
+  FNXC:StandardizedViewActions 2026-09-16-23:06:
+  FN-437 remplaçant du test « retire Nouvelle tâche du Header Alpha desktop » : la création ne doit plus dépendre de
+  l'écran affiché, donc le Header desktop expose désormais cette action — sans pour autant ouvrir la modale tant que
+  l'opérateur ne clique pas.
+  */
+  it("expose Nouvelle tâche dans le Header desktop sans ouvrir la modale d'emblée", async () => {
     mockUseViewportMode.mockReturnValue("desktop");
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
@@ -2048,9 +2054,13 @@ describe("official dashboard design production wiring", () => {
 
     await screen.findByTestId("dashboard-project-shell");
     const header = document.querySelector("header.header");
-    expect(header?.querySelector('[data-testid="mobile-header-new-task"]')).toBeNull();
-    expect(header?.querySelector('[aria-label="New Task"]')).toBeNull();
+    const action = header?.querySelector('[data-testid="mobile-header-new-task"]');
+    expect(action).not.toBeNull();
+    expect(header?.querySelectorAll('[data-testid="mobile-header-new-task"]')).toHaveLength(1);
     expect(screen.queryByRole("heading", { name: "New Task" })).toBeNull();
+
+    fireEvent.click(action as HTMLElement);
+    expect(await screen.findByRole("heading", { name: "New Task" })).toBeInTheDocument();
   });
 
   it("garde le workflow réel du Board et la loupe Alpha desktop sur une seule rangée", async () => {
@@ -2088,7 +2098,14 @@ describe("official dashboard design production wiring", () => {
     expect(search.parentElement).toBe(actions);
     expect(Array.from(actions?.children ?? []).indexOf(slot)).toBeLessThan(Array.from(actions?.children ?? []).indexOf(search));
     expect(document.querySelector(".board-workflow-view > .board-workflow-toolbar")).toBeNull();
-    expect(screen.queryByTestId("mobile-header-new-task")).toBeNull();
+    /*
+    FN-437 : l'action Nouvelle tâche est désormais une entrée permanente du Header desktop. La contrainte que ce test
+    protège reste la rangée unique, donc on asserte qu'elle vit dans `header-actions` après la recherche, sans faire
+    déborder la rangée sur une seconde ligne.
+    */
+    const newTask = screen.getByTestId("mobile-header-new-task");
+    expect(newTask.parentElement).toBe(actions);
+    expect(Array.from(actions?.children ?? []).indexOf(search)).toBeLessThan(Array.from(actions?.children ?? []).indexOf(newTask));
   });
 
   it("conserve la pill et sa réserve avec le clavier mais les retire pour une modale", async () => {
@@ -7061,7 +7078,7 @@ qu'une liste dont le clic ouvrait une fenêtre flottante dédiée. Chaque cas mo
 recomposé : un test au niveau du résolveur prouverait la règle et manquerait le câblage, qui est la seule chose qui
 peut laisser un outil inatteignable.
 */
-describe("FN-435 hôtes d'outils par point de rupture", () => {
+describe("FN-435/FN-437 hôtes d'outils par point de rupture", () => {
   const toolSettings = (overrides: Record<string, unknown> = {}) => ({
     ...defaultSettings,
     navigationPlacement: "footer" as const,
@@ -7074,13 +7091,21 @@ describe("FN-435 hôtes d'outils par point de rupture", () => {
     mockNotesApi.fetchNote.mockResolvedValue({ id: "note-1", title: "Commande", content: "pnpm test", revision: 1, createdAt: "2026-01-01", updatedAt: "2026-01-01" });
   });
 
-  it("ouvre le journal d'activité dans la modale plein écran sur téléphone", async () => {
+  /*
+  FNXC:ToolSurfaces 2026-09-16-23:06:
+  FN-437 cas (d1) : le Header mobile n'expose plus `header-activity-panel-btn`. La destination est inchangée (même
+  modale plein écran) mais son propriétaire est maintenant l'entrée `mobile-more-item-activity` du menu du pied de
+  page. Ce test remplace la version FN-435 qui cliquait le déclencheur du Header.
+  */
+  it("ouvre le journal d'activité dans la modale plein écran depuis le menu du pied de page sur téléphone", async () => {
     mockUseViewportMode.mockReturnValue("mobile");
     vi.mocked(fetchSettings).mockResolvedValue(toolSettings());
 
     render(<App />);
 
-    fireEvent.click(await screen.findByTestId("header-activity-panel-btn"));
+    expect(screen.queryByTestId("header-activity-panel-btn")).toBeNull();
+    fireEvent.click(await screen.findByTestId("mobile-menu-trigger"));
+    fireEvent.click(await screen.findByTestId("mobile-more-item-activity"));
     expect(await screen.findByTestId("activity-log-modal")).toBeInTheDocument();
     expect(screen.queryByTestId("activity-tool-popover")).toBeNull();
   });
@@ -7096,20 +7121,32 @@ describe("FN-435 hôtes d'outils par point de rupture", () => {
     expect(within(popover).getByTestId("activity-log-modal")).toBeInTheDocument();
   });
 
-  it("ouvre Notes dans un tiroir avec navigation interne liste puis éditeur sur téléphone", async () => {
+  /*
+  FNXC:ToolSurfaces 2026-09-16-23:06:
+  FN-437 cas (d2)+(d3) : remplaçant du test FN-435 « ouvre Notes dans un tiroir… », dont le sujet — le tiroir d'outil
+  `mobile-drawer-notes` — est retiré parce que le Header n'expose plus son déclencheur sur téléphone. Le propriétaire
+  mobile de Notes est désormais l'entrée du menu du pied de page, qui ouvre la vue Notes plein écran dans
+  `MainContentDrawer` avec la même navigation interne liste → éditeur, et cet hôte retiré n'est jamais monté.
+  */
+  it("ouvre Notes en plein écran depuis le menu du pied de page avec navigation liste puis éditeur sur téléphone", async () => {
     mockUseViewportMode.mockReturnValue("mobile");
     vi.mocked(fetchSettings).mockResolvedValue(toolSettings());
 
     render(<App />);
 
-    fireEvent.click(await screen.findByTestId("header-notes-panel-btn"));
-    const drawer = await screen.findByTestId("mobile-drawer-notes");
+    expect(screen.queryByTestId("header-notes-panel-btn")).toBeNull();
+    fireEvent.click(await screen.findByTestId("mobile-menu-trigger"));
+    fireEvent.click(await screen.findByTestId("mobile-more-item-notes"));
+
+    const drawer = await screen.findByTestId("mobile-drawer-main-content");
     expect(screen.queryByTestId("notes-tool-popover")).toBeNull();
+    // (d3) l'hôte d'outil Notes mobile retiré par FN-437 n'est jamais monté.
+    expect(screen.queryByTestId("mobile-drawer-notes")).toBeNull();
 
     const row = await within(drawer).findByRole("button", { name: /^Commande/ });
     fireEvent.click(row);
     expect(await within(drawer).findByLabelText(/Editor for|File editor/)).toBeInTheDocument();
-    expect(screen.getAllByTestId("mobile-drawer-notes")).toHaveLength(1);
+    expect(screen.getAllByTestId("mobile-drawer-main-content")).toHaveLength(1);
   });
 
   it("héberge le rail liste ET l'éditeur dans la popover sur ordinateur sans fenêtre détachée", async () => {
@@ -7143,5 +7180,26 @@ describe("FN-435 hôtes d'outils par point de rupture", () => {
     view.rerender(<App />);
     await waitFor(() => expect(screen.queryByTestId("activity-tool-popover")).toBeNull());
     expect(screen.queryByTestId("activity-log-modal")).toBeNull();
+  });
+
+  /*
+  FNXC:ToolSurfaces 2026-09-16-23:06:
+  FN-437 cas (d4), jumeau Notes du cas ci-dessus. Puisque le Header mobile n'expose plus de déclencheur Notes et que
+  l'hôte mobile est retiré, un panneau Notes ouvert sur ordinateur deviendrait un état orphelin — sans hôte NI moyen
+  de le refermer — après une bascule vers le point de rupture téléphone.
+  */
+  it("ferme le panneau Notes orphelin quand le point de rupture passe en téléphone", async () => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    vi.mocked(fetchSettings).mockResolvedValue(toolSettings());
+
+    const view = render(<App />);
+
+    fireEvent.click(await screen.findByTestId("header-notes-panel-btn"));
+    await screen.findByTestId("notes-tool-popover");
+
+    mockUseViewportMode.mockReturnValue("mobile");
+    view.rerender(<App />);
+    await waitFor(() => expect(screen.queryByTestId("notes-tool-popover")).toBeNull());
+    expect(screen.queryByTestId("mobile-drawer-notes")).toBeNull();
   });
 });

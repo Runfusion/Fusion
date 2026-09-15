@@ -103,6 +103,16 @@ non-notched devices, so this is a no-op there. Pair with viewport-fit=cover (ind
   flex: 0 0 auto;
 }
 
+/*
+FNXC:StandardizedViewActions 2026-09-16-23:06:
+FN-437 makes the New Task action a permanent Header entry at every tier, including desktop, where `.header-actions` is
+shrinkable (`flex: 0 1 auto`) and shares the row with the growing workflow slot. Without an explicit shrink contract the
+create button would be the control that compresses when a workflow name is long, exactly like the icon buttons above.
+*/
+.header-actions > .view-action-button {
+  flex: 0 0 auto;
+}
+
 .header-workflow-slot:empty {
   display: none;
 }

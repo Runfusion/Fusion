@@ -60,19 +60,14 @@ export function PlanningDrawer({ open, title, onClose, children }: AppDrawerBrid
 }
 
 /*
-FNXC:ToolSurfaces 2026-09-15-21:23:
-FN-435 : sur téléphone, Notes est un TIROIR avec navigation interne liste ↔ éditeur, comme le tchat, et non une popover
-écrasée contre le bord de l'écran. Ce pont appartient à App au même titre que Projects et Planning ; il n'est pas
-`keepMounted`, car une vue Notes fermée ne doit retenir ni contrôleur d'édition ni anti-rebond en attente. La vue Notes
-possède son propre en-tête et son propre défilement borné, d'où les deux drapeaux d'appropriation.
+FNXC:ToolSurfaces 2026-09-16-23:06:
+FN-435 avait introduit ici un pont `NotesDrawer` (`mobile-drawer-notes`) pour héberger Notes sur téléphone. FN-437 le
+supprime : le Header n'expose plus de déclencheur Notes sur téléphone, donc ce pont n'avait plus aucune entrée. Le
+propriétaire mobile de Notes est l'entrée `mobile-more-item-notes` du menu du pied de page, qui route vers la vue Notes
+plein écran hébergée par `MainContentDrawer` (`mobile-drawer-main-content`) avec la même navigation interne liste ↔
+éditeur. Ne pas réintroduire un second hôte Notes mobile ici : la mutuelle exclusion des propriétaires est ce qui
+empêche deux contrôleurs d'édition concurrents.
 */
-export function NotesDrawer({ open, title, onClose, children }: AppDrawerBridgeProps) {
-  return (
-    <MobileDrawer open={open} title={title} onClose={onClose} testId="mobile-drawer-notes" contentOwnsHeader contentOwnsScroll>
-      {children}
-    </MobileDrawer>
-  );
-}
 
 const FOCUSABLE_SELECTOR = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 

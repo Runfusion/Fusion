@@ -20,7 +20,7 @@ import {
   useAppMainPanelTaskDetailState,
   useAppPoppedOutTaskState,
 } from "./components/TaskDetailHostBoundaries";
-import { NotesDrawer, PlanningDrawer, ProjectsDrawer } from "./components/MobileDrawer";
+import { PlanningDrawer, ProjectsDrawer } from "./components/MobileDrawer";
 import { PoppedOutChatWindows } from "./components/PoppedOutChatWindows";
 import { PoppedOutNoteWindows } from "./components/PoppedOutNoteWindows";
 import { AppModals, openAppFileInBrowser } from "./components/AppModals";
@@ -1128,17 +1128,21 @@ function AppInner() {
   }, []);
   const [milestoneSliceResumeSessionId, setMilestoneSliceResumeSessionId] = useState<string | undefined>(undefined);
   /*
-  FNXC:ToolSurfaces 2026-09-15-21:23:
+  FNXC:ToolSurfaces 2026-09-16-23:06:
   FN-435 : sur téléphone le journal d'activité passe par la modale plein écran, jamais par la popover. Une rotation
   d'écran peut faire basculer le point de rupture alors que la popover est déjà ouverte ; sans cette fermeture elle
   resterait ancrée à un rect périmé, écrasée contre le bord. L'état n'est délibérément PAS transféré vers la modale :
   une ouverture fantôme que l'opérateur n'a pas demandée serait pire que la fermeture.
-  Notes n'a pas besoin de ce traitement : son état d'ouverture unique (`toolPanel.kind === "notes"`) est partagé par
-  les deux hôtes, donc la bascule change simplement d'hôte sans rien orpheliner.
+  FN-437 étend la fermeture à Notes. L'affirmation FN-435 « Notes n'a pas besoin de ce traitement » reposait sur
+  l'existence d'un hôte Notes mobile partageant le même état ; cet hôte (le tiroir `mobile-drawer-notes`) est retiré
+  parce que le Header n'expose plus son déclencheur sur téléphone. Le propriétaire mobile de Notes est désormais
+  l'entrée `mobile-more-item-notes` du menu du pied de page, qui route vers la vue Notes plein écran hébergée par
+  `MainContentDrawer` — un état `toolPanel.kind === "notes"` hérité de tablette resterait donc sans hôte NI déclencheur
+  pour le refermer.
   */
   useEffect(() => {
     if (!isMobile) return;
-    setToolPanel((current) => (current?.kind === "activity" ? null : current));
+    setToolPanel((current) => (current?.kind === "activity" || current?.kind === "notes" ? null : current));
   }, [isMobile]);
 
   useEffect(() => {
@@ -2596,8 +2600,9 @@ function AppInner() {
         onOpenGitHubImport={openGitHubImportWithNav}
         onOpenUsage={openUsageWithNav}
         onOpenActivityLog={openActivityLogWithNav}
-        onOpenActivityPanel={currentProject ? (anchorRect) => { if (isMobile) openActivityLogWithNav(); else openToolPanel("activity", anchorRect); } : undefined}
-        activityPanelOpen={isMobile ? modalManager.activityLogOpen : toolPanel?.kind === "activity"}
+        /* FNXC:ToolSurfaces 2026-09-16-23:06: FN-437 — le Header ne rend plus ce déclencheur sur téléphone (le menu du pied de page appelle directement `onOpenActivityLog`), donc la branche mobile de ce câblage était devenue morte. */
+        onOpenActivityPanel={currentProject ? (anchorRect) => openToolPanel("activity", anchorRect) : undefined}
+        activityPanelOpen={toolPanel?.kind === "activity"}
         activityPanelId={ACTIVITY_TOOL_PANEL_ID}
         onOpenNotesPanel={currentProject ? (anchorRect) => openToolPanel("notes", anchorRect) : undefined}
         notesPanelOpen={toolPanel?.kind === "notes"}
@@ -2819,50 +2824,40 @@ function AppInner() {
         </DashboardToolPopover>
       ) : null}
       {/*
-      FNXC:ToolSurfaces 2026-09-15-21:23:
+      FNXC:ToolSurfaces 2026-09-16-23:06:
       FN-435 : l'hôte de Notes est résolu par le point de rupture MESURÉ (`useViewportMode`), jamais par une supposition
-      CSS, et il n'existe qu'UN SEUL propriétaire Notes à la fois. Sur téléphone c'est le tiroir, avec navigation
-      interne liste ↔ éditeur ; sur tablette et ordinateur c'est la popover, qui héberge désormais la vue COMPLÈTE
-      (rail liste + éditeur simultanés) et ne délègue plus à une fenêtre de note détachée : cliquer une note depuis
-      cette popover n'ouvre plus de seconde fenêtre. Le raccourci Notes du dock optionnel conserve, lui, son
-      `onOpenNote` — sa liste est volontairement sans détail et serait inerte sans cible.
+      CSS, et il n'existe qu'UN SEUL propriétaire Notes à la fois. Sur tablette et ordinateur c'est cette popover, qui
+      héberge la vue COMPLÈTE (rail liste + éditeur simultanés) et ne délègue plus à une fenêtre de note détachée :
+      cliquer une note depuis cette popover n'ouvre plus de seconde fenêtre. Le raccourci Notes du dock optionnel
+      conserve, lui, son `onOpenNote` — sa liste est volontairement sans détail et serait inerte sans cible.
+      FN-437 retire la branche mobile (le tiroir `mobile-drawer-notes`) : le Header n'expose plus de déclencheur Notes
+      sur téléphone, donc cet hôte n'avait plus aucune entrée. Le propriétaire mobile est désormais l'entrée
+      `mobile-more-item-notes` du menu du pied de page, qui route vers la même `NotesView` plein écran dans
+      `MainContentDrawer`, avec la même navigation interne liste ↔ éditeur — un seul propriétaire mobile au lieu de deux.
       La popover reçoit une hauteur définie pour la même raison que Chat : un parent à hauteur indéfinie ferait
       s'effondrer le rail et l'éditeur du layout deux panneaux.
       */}
-      {currentProject && toolPanel?.kind === "notes" ? (
-        isMobile ? (
-          <NotesDrawer open title={t("nav.notes", "Notes")} onClose={closeToolPanel}>
-            <Suspense fallback={null}>
-              <NotesView
-                projectId={currentProject.id}
-                addToast={addToast}
-                controller={notesController}
-                registerGuard={registerStandardNotesGuard}
-              />
-            </Suspense>
-          </NotesDrawer>
-        ) : (
-          <DashboardToolPopover
-            open
-            onClose={closeToolPanel}
-            anchorRect={toolPanel.anchorRect}
-            id={NOTES_TOOL_PANEL_ID}
-            testId="notes-tool-popover"
-            ariaLabel="Notes"
-            width={760}
-            preferredHeight={560}
-          >
-            <Suspense fallback={null}>
-              <NotesView
-                projectId={currentProject.id}
-                addToast={addToast}
-                controller={notesController}
-                registerGuard={registerStandardNotesGuard}
-                compact
-              />
-            </Suspense>
-          </DashboardToolPopover>
-        )
+      {currentProject && !isMobile && toolPanel?.kind === "notes" ? (
+        <DashboardToolPopover
+          open
+          onClose={closeToolPanel}
+          anchorRect={toolPanel.anchorRect}
+          id={NOTES_TOOL_PANEL_ID}
+          testId="notes-tool-popover"
+          ariaLabel="Notes"
+          width={760}
+          preferredHeight={560}
+        >
+          <Suspense fallback={null}>
+            <NotesView
+              projectId={currentProject.id}
+              addToast={addToast}
+              controller={notesController}
+              registerGuard={registerStandardNotesGuard}
+              compact
+            />
+          </Suspense>
+        </DashboardToolPopover>
       ) : null}
       {currentProject && toolPanel?.kind === "chat" ? (
         <DashboardToolPopover

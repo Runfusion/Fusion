@@ -152,6 +152,54 @@ describe("Mobile Feature Access Regression Guard", () => {
     expect(props.onChangeView).toHaveBeenCalledWith("list");
   });
 
+  /*
+   * FNXC:ToolSurfaces 2026-09-16-23:06:
+   * FN-437 cas (d) : le Header mobile ne rend plus Liste, Notes ni Activité. Ce garde-fou prouve que les trois
+   * destinations restent atteignables depuis le menu du pied de page, qui en est désormais le propriétaire unique.
+   */
+  it("garde Liste, Notes et Activité atteignables depuis le menu de la barre du bas", () => {
+    const props = createDefaultMobileNavProps();
+    render(<MobileNavBar {...props} view="board" navigationMenuOpen />);
+
+    fireEvent.click(screen.getByTestId("mobile-more-item-list"));
+    expect(props.onChangeView).toHaveBeenCalledWith("list");
+
+    fireEvent.click(screen.getByTestId("mobile-more-item-notes"));
+    expect(props.onChangeView).toHaveBeenCalledWith("notes");
+
+    fireEvent.click(screen.getByTestId("mobile-more-item-activity"));
+    expect(props.onOpenActivityLog).toHaveBeenCalled();
+  });
+
+  /*
+   * FN-437 cas croisé : un seul propriétaire par destination sur téléphone. Le même test asserte l'absence des trois
+   * déclencheurs du Header ET la présence des trois entrées du menu, de sorte qu'aucun retrait ne peut rendre une
+   * destination inaccessible et qu'aucune restauration ne peut recréer un doublon sans casser ce garde-fou.
+   */
+  it("attribue Liste, Notes et Activité au seul menu du pied de page sur téléphone", () => {
+    const navProps = createDefaultMobileNavProps();
+    render(
+      <>
+        <Header
+          mobileNavEnabled
+          projectId="proj_1"
+          onChangeView={vi.fn()}
+          onOpenActivityPanel={vi.fn()}
+          onOpenNotesPanel={vi.fn()}
+        />
+        <MobileNavBar {...navProps} view="board" navigationMenuOpen />
+      </>,
+    );
+
+    expect(screen.queryByTestId("header-list-view-btn")).toBeNull();
+    expect(screen.queryByTestId("header-activity-panel-btn")).toBeNull();
+    expect(screen.queryByTestId("header-notes-panel-btn")).toBeNull();
+
+    expect(screen.getByTestId("mobile-more-item-list")).toBeInTheDocument();
+    expect(screen.getByTestId("mobile-more-item-notes")).toBeInTheDocument();
+    expect(screen.getByTestId("mobile-more-item-activity")).toBeInTheDocument();
+  });
+
   it("keeps Board as the permanent background without duplicate navigation", () => {
     const props = createDefaultMobileNavProps();
     render(<MobileNavBar {...props} view="list" navigationMenuOpen />);
@@ -429,6 +477,11 @@ describe("Mobile Feature Access Regression Guard", () => {
     }
   });
 
+  /*
+   * FN-437 : Liste n'est plus un déclencheur du Header sur téléphone (le menu du pied de page en est le propriétaire
+   * unique, cf. le garde-fou « garde Liste, Notes et Activité atteignables… »). Le repli du Header reste vérifié pour
+   * Board et Agents, qui n'ont pas changé de propriétaire.
+   */
   it("left sidebar suppression does not affect the mobile header fallback", () => {
     mockViewport("mobile");
     render(
@@ -442,7 +495,7 @@ describe("Mobile Feature Access Regression Guard", () => {
     );
 
     expect(screen.getByTitle("Board view")).toBeDefined();
-    expect(screen.getByTitle("List view")).toBeDefined();
+    expect(screen.queryByTestId("header-list-view-btn")).toBeNull();
   });
 
   it("header view toggle fallback renders on mobile when mobile nav is disabled", () => {
@@ -456,8 +509,8 @@ describe("Mobile Feature Access Regression Guard", () => {
     );
 
     expect(screen.getByTitle("Board view")).toBeDefined();
-    expect(screen.getByTitle("List view")).toBeDefined();
     expect(screen.getByTitle("Agents view")).toBeDefined();
+    expect(screen.queryByTestId("header-list-view-btn")).toBeNull();
   });
 
   it("all three task views remain reachable across mobile navigation surfaces", () => {
@@ -488,9 +541,9 @@ describe("Mobile Feature Access Regression Guard", () => {
       />,
     );
 
-    fireEvent.click(screen.getByTitle("List view"));
+    // FN-437 : sur téléphone, seul le menu du pied de page route vers Liste ; le Header garde Board et Agents.
+    expect(screen.queryByTitle("List view")).toBeNull();
     fireEvent.click(screen.getByTitle("Agents view"));
-    expect(headerOnChangeView).toHaveBeenCalledWith("list");
     expect(headerOnChangeView).toHaveBeenCalledWith("agents");
   });
 });

@@ -3,7 +3,7 @@ import { cleanup, render, screen, waitFor, within } from "@testing-library/react
 import { RightDock } from "../RightDock";
 import { RightDockExpandModal } from "../RightDockExpandModal";
 import { MainContentDrawer } from "../dashboard/MainContent";
-import { NotesDrawer, PlanningDrawer, ProjectsDrawer } from "../MobileDrawer";
+import { PlanningDrawer, ProjectsDrawer } from "../MobileDrawer";
 import { MobileUsageDrawer } from "../AppModals";
 import { ViewLayoutProvider } from "../../context/ViewLayoutContext";
 
@@ -100,21 +100,12 @@ describe("FN-379 shared chrome on the auxiliary runtime hosts", () => {
         </PlanningDrawer>
       ),
     },
-    {
-      /*
-      FNXC:ToolSurfaces 2026-09-15-21:23:
-      FN-435 : sur téléphone, le panneau d'outils Notes est hébergé par ce pont plutôt que par la popover d'en-tête.
-      Il doit donc satisfaire exactement le même contrat de chrome que Projects et Planning.
-      */
-      name: "notes",
-      testId: "mobile-drawer-notes",
-      title: "Notes",
-      element: (
-        <NotesDrawer open title="Notes" onClose={vi.fn()}>
-          <div data-testid="bridge-body">Notes body</div>
-        </NotesDrawer>
-      ),
-    },
+    /*
+    FNXC:ToolSurfaces 2026-09-16-23:06:
+    FN-437 retire le cas de pont `notes` : son sujet, le pont `NotesDrawer` (`mobile-drawer-notes`) introduit par
+    FN-435, est supprimé parce que le Header n'expose plus de déclencheur Notes sur téléphone. Le contrat de chrome de
+    la vue Notes mobile est désormais couvert par le cas « main content » ci-dessous, qui est son hôte réel.
+    */
     {
       name: "main content",
       testId: "mobile-drawer-main-content",
