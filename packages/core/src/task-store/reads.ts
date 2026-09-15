@@ -1135,7 +1135,18 @@ export async function getTaskVerificationRequestAsyncImpl(store: TaskStore, task
   */
   const layer = store.asyncLayer!;
   const projectFilter = layer.projectId ? eq(schema.project.taskVerificationRequests.projectId, layer.projectId) : undefined;
-  const rows = await layer.db.select().from(schema.project.taskVerificationRequests).where(and(eq(schema.project.taskVerificationRequests.taskId, taskId), ...(projectFilter ? [projectFilter] : []))).limit(1);
+  /*
+  FNXC:VerificationWriteAhead 2026-08-31-00:00 (EXAM-010):
+  Ordering is explicitly latest-first (requestedAt DESC). The composite PK
+  (project_id, task_id) guarantees at most one row per project/task, so this is a
+  defensive determinism statement, not a behavior change. The read intentionally
+  returns records in ANY status — including stale/failed reclaimed rows — because
+  status consumers (chat fn_task_verification_status, task-workflow and
+  command-center routes, TaskVerificationStatus.tsx) must never be told "no record
+  exists" for a task that issued verification calls. null is reserved for the true
+  never-issued case.
+  */
+  const rows = await layer.db.select().from(schema.project.taskVerificationRequests).where(and(eq(schema.project.taskVerificationRequests.taskId, taskId), ...(projectFilter ? [projectFilter] : []))).orderBy(desc(schema.project.taskVerificationRequests.requestedAt)).limit(1);
   const row = rows[0];
   return row ? { taskId: row.taskId, requestId: row.requestId, status: row.status as TaskVerificationStatus, profile: row.profile as TaskVerificationRequest["profile"], command: row.command, scope: row.scope as TaskVerificationRequest["scope"], requestedBy: row.requestedBy, requestedAt: row.requestedAt, ...(row.startedAt ? { startedAt: row.startedAt } : {}), ...(row.completedAt ? { completedAt: row.completedAt } : {}), ...(row.result ? { result: row.result as TaskVerificationResultSummary } : {}), ...(row.rejectionReason ? { rejectionReason: row.rejectionReason } : {}) } : null;
 }

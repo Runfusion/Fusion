@@ -631,6 +631,16 @@ FNXC:TaskVerificationRequest 2026-07-30-00:00:
 Chat records an allowlisted profile only. It deliberately has no shell runner: the
 executor claims this record on its existing task worktree under the shared slot.
 */
+/*
+FNXC:VerificationWriteAhead 2026-08-31-00:00 (EXAM-010):
+Exported for direct unit testing of the status semantics (the status tool must return
+the latest persisted record — including stale/failed reclaimed rows — and reserve
+"No verification request exists" for the true never-issued case).
+*/
+export function __testCreateTaskVerificationTools(taskStore: TaskStore, actionGateContext?: AgentActionGateContext): ChatCustomTool[] {
+  return createTaskVerificationTools(taskStore, actionGateContext);
+}
+
 function createTaskVerificationTools(taskStore: TaskStore, actionGateContext?: AgentActionGateContext): ChatCustomTool[] {
   const profiles = new Set(["verify:fast", "test-command"]);
   const request = {
@@ -663,6 +673,14 @@ function createTaskVerificationTools(taskStore: TaskStore, actionGateContext?: A
     execute: async (_id: string, raw: { task_id?: unknown }) => {
       const taskId = typeof raw.task_id === "string" ? raw.task_id.trim() : "";
       if (!taskId) return { content: [{ type: "text" as const, text: "ERROR: task_id is required." }], isError: true, details: {} };
+      /*
+      FNXC:VerificationWriteAhead 2026-08-31-00:00 (EXAM-010):
+      Executor fn_run_verification calls now write-ahead persist, so this read returns
+      the latest record for ANY task that issued a verification call — including stale
+      records reclaimed to terminal `failed` with a rejectionReason naming the lost
+      executor or the watchdog ceiling. "No verification request exists" is reserved
+      for the true never-issued case; it is never a symptom of a dropped record.
+      */
       const record = await taskStore.getTaskVerificationRequestAsync(taskId);
       return { content: [{ type: "text" as const, text: record ? JSON.stringify(record) : `No verification request exists for ${taskId}.` }], details: record ?? {} };
     },

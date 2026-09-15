@@ -765,6 +765,17 @@ export const DEFAULT_PROJECT_SETTINGS = {
   // project opts into a single default budget.
   buildTimeoutMs: 300_000,
   verificationCommandTimeoutMs: undefined,
+  /*
+  FNXC:VerificationWriteAhead 2026-08-31-00:00 (EXAM-010):
+  End-to-end watchdog ceiling for a single fn_run_verification / verification-pickup
+  call, covering slot-queue wait PLUS subprocess run. Before this setting the queue
+  wait was unbounded and a never-settling child wedged the executor run indefinitely
+  (observed 51+ min on EXAM-002, 2026-08-31) while the 60s synthetic-heartbeat loop
+  suppressed the stuck detector. Default 600s sits well above observed full-suite
+  durations (156–186s) and below the 1800s per-command hard cap. Values <= 0 disable
+  the watchdog (escape hatch); the tool additionally clamps to the hard cap.
+  */
+  verificationWatchdogTimeoutMs: 600_000,
   // FNXC:Verification 2026-06-25-00:00: default-on file-scoped verification —
   // run only the branch diff's own test files so merge verification stays
   // proportional to the change; the thin merge gate carries cross-cutting
