@@ -1734,7 +1734,7 @@ export async function applySchemaBaseline(
       /*
       FNXC:ReviewLaneDispatch 2026-09-15 (STAS-205 upstream port): this block's
       bookkeeping marker is written by the migration SQL itself (see
-      0079_stas_205_review_lane_ledger.sql), atomically with the DDL, instead of
+      0081_stas_205_review_lane_ledger.sql), atomically with the DDL, instead of
       the inline parameterized-INSERT template every sibling block uses —
       ThreatCrush's changed-line scan flags SQL-shaped template literals
       regardless of drizzle's bound-parameter safety. Behavior is identical:

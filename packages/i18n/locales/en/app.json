@@ -1260,6 +1260,9 @@
     "toggleWrap": "Toggle word wrap"
   },
   "chat": {
+    "contextTruncationNotice_one": "To fit the context window, {{count}} older message ({{tokens}} tokens) was dropped from this conversation's history.",
+    "contextTruncationNotice_other": "To fit the context window, {{count}} older messages ({{tokens}} tokens) were dropped from this conversation's history.",
+    "contextTruncationUnproven": "The reduced context size could not be verified.",
     "archive": "Archive",
     "attachFiles": "Attach files",
     "cancel": "Cancel",

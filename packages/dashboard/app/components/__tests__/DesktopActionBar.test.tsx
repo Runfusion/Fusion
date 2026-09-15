@@ -88,7 +88,11 @@ describe("DesktopActionBar", () => {
     expect(screen.queryByTestId("desktop-nav-terminal")).toBeNull();
     expect(document.querySelector(".desktop-action-bar__right")).toContainElement(screen.getByTestId("desktop-nav-settings"));
     expect(screen.queryByTestId("desktop-nav-patchnode")).toBeNull();
-    expect(screen.queryByTestId("desktop-nav-chat")).toBeNull();
+    /*
+    FNXC:DesktopNavigation 2026-09-15-07:00: Chat returned to the footer as a direct page destination on operator
+    request; this assertion encoded FN-417's removal and is updated with the restored entry.
+    */
+    expect(screen.getByTestId("desktop-nav-chat")).toHaveAccessibleName("Chat");
     expect(screen.queryByTestId("desktop-nav-notes")).toBeNull();
   });
 
