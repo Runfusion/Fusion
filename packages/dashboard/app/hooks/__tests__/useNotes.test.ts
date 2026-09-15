@@ -187,4 +187,134 @@ describe("useNotes", () => {
     expect(result.current.dirty).toBe(false);
     expect(result.current.saving).toBe(false);
   });
+
+  /*
+  FNXC:ProjectNotes 2026-09-15-21:23:
+  FN-435 : le renommage et la suppression sont déclenchés depuis la liste, donc potentiellement sur une note qui n'est
+  pas la sélection courante. L'invariant testé ici est qu'une telle mutation ne touche jamais le brouillon ouvert.
+  */
+  describe("mutations déclenchées depuis la liste", () => {
+    beforeEach(() => {
+      api.fetchNotes.mockResolvedValue({ notes: [note, noteB] });
+      api.fetchNote.mockImplementation((_projectId: string, id: string) => Promise.resolve(id === noteB.id ? noteB : note));
+    });
+
+    it("renomme une note non sélectionnée sans toucher le brouillon courant", async () => {
+      api.updateNote.mockResolvedValue({ ...noteB, title: "Renommée", revision: 2 });
+      const { result } = renderHook(() => useNotes("A"));
+      await waitFor(() => expect(result.current.notes).toHaveLength(2));
+      await act(async () => result.current.select(note.id));
+      act(() => result.current.setDraftContent("brouillon A"));
+
+      await act(async () => { await result.current.renameNote(noteB.id, "Renommée"); });
+
+      expect(api.updateNote).toHaveBeenCalledWith("A", noteB.id, { title: "Renommée", expectedRevision: 1 });
+      expect(result.current.notes.find((summary) => summary.id === noteB.id)?.title).toBe("Renommée");
+      expect(result.current.selected?.id).toBe(note.id);
+      expect(result.current.draftTitle).toBe(note.title);
+      expect(result.current.draftContent).toBe("brouillon A");
+    });
+
+    it("aligne la révision quand la note renommée est la sélection courante", async () => {
+      api.updateNote.mockResolvedValueOnce({ ...note, title: "Renommée", revision: 2 });
+      const { result } = renderHook(() => useNotes("A"));
+      await waitFor(() => expect(result.current.notes).toHaveLength(2));
+      await act(async () => result.current.select(note.id));
+
+      await act(async () => { await result.current.renameNote(note.id, "Renommée"); });
+      expect(result.current.selected?.revision).toBe(2);
+      expect(result.current.draftTitle).toBe("Renommée");
+
+      act(() => result.current.setDraftContent("suite"));
+      api.updateNote.mockResolvedValueOnce({ ...note, title: "Renommée", content: "suite", revision: 3 });
+      await act(async () => { await result.current.save(); });
+      expect(api.updateNote).toHaveBeenLastCalledWith("A", note.id, { title: "Renommée", content: "suite", expectedRevision: 2 });
+      expect(result.current.conflict).toBe(false);
+    });
+
+    it("supprime une note non sélectionnée sans vider la sélection", async () => {
+      api.deleteNote.mockResolvedValue(undefined);
+      const { result } = renderHook(() => useNotes("A"));
+      await waitFor(() => expect(result.current.notes).toHaveLength(2));
+      await act(async () => result.current.select(note.id));
+      act(() => result.current.setDraftContent("brouillon A"));
+
+      await act(async () => { expect(await result.current.removeNote(noteB.id)).toBe(true); });
+      expect(api.deleteNote).toHaveBeenCalledWith("A", noteB.id, 1);
+      expect(result.current.notes.map((summary) => summary.id)).toEqual([note.id]);
+      expect(result.current.selected?.id).toBe(note.id);
+      expect(result.current.draftContent).toBe("brouillon A");
+    });
+
+    it("vide sélection et brouillon quand la note supprimée est la sélection", async () => {
+      api.deleteNote.mockResolvedValue(undefined);
+      const { result } = renderHook(() => useNotes("A"));
+      await waitFor(() => expect(result.current.notes).toHaveLength(2));
+      await act(async () => result.current.select(note.id));
+
+      await act(async () => { expect(await result.current.removeNote(note.id)).toBe(true); });
+      expect(result.current.selected).toBeNull();
+      expect(result.current.draftTitle).toBe("");
+      expect(result.current.draftContent).toBe("");
+      expect(result.current.notes.map((summary) => summary.id)).toEqual([noteB.id]);
+    });
+
+    it("positionne conflict et préserve le brouillon sur un 409 de renommage", async () => {
+      api.updateNote.mockRejectedValue(new ApiRequestError("conflict", 409, { code: "NOTE_REVISION_CONFLICT" }));
+      const { result } = renderHook(() => useNotes("A"));
+      await waitFor(() => expect(result.current.notes).toHaveLength(2));
+      await act(async () => result.current.select(note.id));
+      act(() => result.current.setDraftContent("brouillon A"));
+
+      await act(async () => { await result.current.renameNote(note.id, "Renommée"); });
+      expect(result.current.conflict).toBe(true);
+      expect(result.current.draftContent).toBe("brouillon A");
+      expect(result.current.selected?.revision).toBe(1);
+    });
+  });
+
+  /*
+  FNXC:ProjectNotes 2026-09-15-21:23:
+  FN-435 : `saveIfDirty` remplace le bouton Enregistrer supprimé et porte seul la garde anti-boucle de
+  l'enregistrement automatique.
+  */
+  describe("saveIfDirty", () => {
+    it("n'émet aucune requête quand le brouillon est propre", async () => {
+      const { result } = renderHook(() => useNotes("A"));
+      await waitFor(() => expect(result.current.notes).toHaveLength(1));
+      await act(async () => result.current.select(note.id));
+      await act(async () => { expect(await result.current.saveIfDirty()).toBeNull(); });
+      expect(api.updateNote).not.toHaveBeenCalled();
+    });
+
+    it("n'émet aucune requête tant qu'un enregistrement est en vol", async () => {
+      const update = deferred<typeof note>();
+      api.updateNote.mockReturnValue(update.promise);
+      const { result } = renderHook(() => useNotes("A"));
+      await waitFor(() => expect(result.current.notes).toHaveLength(1));
+      await act(async () => result.current.select(note.id));
+      act(() => result.current.setDraftContent("en vol"));
+      let saving!: Promise<unknown>;
+      act(() => { saving = result.current.save(); });
+      await waitFor(() => expect(result.current.saving).toBe(true));
+
+      await act(async () => { expect(await result.current.saveIfDirty()).toBeNull(); });
+      expect(api.updateNote).toHaveBeenCalledTimes(1);
+      await act(async () => { update.resolve({ ...note, content: "en vol", revision: 2 }); await saving; });
+    });
+
+    it("ne retente rien après un échec d'enregistrement tant que l'opérateur n'a pas tranché", async () => {
+      api.updateNote.mockRejectedValue(new ApiRequestError("conflict", 409, { code: "NOTE_REVISION_CONFLICT" }));
+      const { result } = renderHook(() => useNotes("A"));
+      await waitFor(() => expect(result.current.notes).toHaveLength(1));
+      await act(async () => result.current.select(note.id));
+      act(() => result.current.setDraftContent("logs locaux"));
+      await act(async () => { await result.current.saveIfDirty(); });
+      expect(api.updateNote).toHaveBeenCalledTimes(1);
+
+      act(() => result.current.setDraftContent("logs locaux encore"));
+      await act(async () => { expect(await result.current.saveIfDirty()).toBeNull(); });
+      expect(api.updateNote).toHaveBeenCalledTimes(1);
+    });
+  });
 });

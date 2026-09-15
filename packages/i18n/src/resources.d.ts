@@ -4675,6 +4675,9 @@ export default interface Resources {
       "yes": "Yes"
     },
     "notes": {
+      "actionsAria": "Note actions for {{title}}",
+      "autoSaved": "Changes are saved automatically",
+      "backToList": "Back to notes",
       "conflict": "This note changed elsewhere. Your draft is preserved.",
       "createFirst": "Create your first note",
       "deleteMessage": "This action cannot be undone.",
@@ -4689,13 +4692,14 @@ export default interface Resources {
       "noResults": "No notes found",
       "overwrite": "Overwrite with my draft",
       "reload": "Reload server version",
+      "rename": "Rename",
+      "renameAria": "Rename {{title}}",
       "saved": "Note saved",
       "savedState": "Saved",
       "saving": "Saving…",
       "search": "Search notes",
       "select": "Select a note or create a new one",
-      "title": "Note title",
-      "unsaved": "Unsaved changes"
+      "title": "Note title"
     },
     "onboarding": {
       "authToken": "Auth token (optional)",

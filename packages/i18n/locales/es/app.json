@@ -9917,7 +9917,6 @@
     "createFirst": "Create your first note",
     "select": "Select a note or create a new one",
     "title": "Note title",
-    "unsaved": "Unsaved changes",
     "savedState": "Saved",
     "saving": "Saving…",
     "saved": "Note saved",
@@ -9929,7 +9928,12 @@
     "deleteMessage": "This action cannot be undone.",
     "conflict": "This note changed elsewhere. Your draft is preserved.",
     "reload": "Reload server version",
-    "overwrite": "Overwrite with my draft"
+    "overwrite": "Overwrite with my draft",
+    "autoSaved": "",
+    "backToList": "",
+    "rename": "",
+    "renameAria": "",
+    "actionsAria": ""
   },
   "whiteboard": {
     "tools": "Whiteboard tools",

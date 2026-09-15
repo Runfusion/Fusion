@@ -974,4 +974,40 @@ describe("FileEditor", () => {
       }
     });
   });
+
+  /*
+  FNXC:NotesEditing 2026-09-15-21:23:
+  FN-435 : l'hôte Notes monte l'éditeur sans aucune chrome. Le masquage est opt-in par propriété et ne doit ni
+  modifier les autres hôtes, ni écrire la préférence Modifier/Aperçu partagée avec le navigateur de fichiers.
+  */
+  describe("hideToolbar", () => {
+    const toolbarButtonNames = [/^edit$/i, /^preview mode$/i, /^undo$/i, /^redo$/i, /toggle word wrap/i, /toggle editor options/i];
+
+    it("renders no toolbar control while keeping the editable surface", () => {
+      render(<FileEditor content="# Hello" onChange={vi.fn()} filePath="note.md" hideToolbar />);
+      expect(document.querySelector(".file-editor-toolbar")).toBeNull();
+      for (const name of toolbarButtonNames) {
+        expect(screen.queryByRole("button", { name })).toBeNull();
+      }
+      expect(document.querySelector(".file-editor-codemirror")).not.toBeNull();
+      expect(document.querySelector(".file-editor-preview")).toBeNull();
+    });
+
+    it("forces edit mode over a persisted preview preference without rewriting it", () => {
+      window.localStorage.setItem(markdownPreviewStorageKey, "true");
+      render(<FileEditor content="# Hello" onChange={vi.fn()} filePath="note.md" hideToolbar />);
+      expect(document.querySelector(".file-editor-preview")).toBeNull();
+      expect(document.querySelector(".file-editor-codemirror")).not.toBeNull();
+      expect(window.localStorage.getItem(markdownPreviewStorageKey)).toBe("true");
+    });
+
+    it("leaves the toolbar and persisted preview behaviour untouched for other hosts", () => {
+      window.localStorage.setItem(markdownPreviewStorageKey, "true");
+      render(<FileEditor content="# Hello" onChange={vi.fn()} filePath="readme.md" forceToolbarActionsVisible />);
+      expect(document.querySelector(".file-editor-toolbar")).not.toBeNull();
+      expect(screen.getByRole("button", { name: /^edit mode$/i })).toBeInTheDocument();
+      expect(document.querySelector(".file-editor-preview")).not.toBeNull();
+      expect(window.localStorage.getItem(markdownPreviewStorageKey)).toBe("true");
+    });
+  });
 });

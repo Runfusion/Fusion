@@ -226,24 +226,85 @@ export function useNotes(projectId?: string) {
     });
   }, [enqueue, projectId, state]);
 
-  const remove = useCallback(() => {
-    if (!projectId || !state.selected) return Promise.resolve(false);
-    const selected = state.selected;
+  /*
+  FNXC:ProjectNotes 2026-09-15-21:23:
+  FN-435 : le renommage et la suppression sont désormais déclenchés depuis la LISTE, sur n'importe quelle ligne, alors
+  que la liste et le détail partagent UN SEUL contrôleur dans la popover et le drawer. Invariant : une mutation
+  déclenchée depuis la liste ne doit jamais altérer le brouillon d'une AUTRE note. Ces opérations résolvent donc leur
+  révision par identifiant (résumé de liste, ou note sélectionnée quand c'est la même) et ne touchent `selected`,
+  `draftTitle`, `draftContent` et `revision` que lorsque l'identifiant muté EST la sélection courante. Aligner
+  `selected.revision` après un renommage de la note ouverte est obligatoire : sans cela l'enregistrement automatique
+  suivant repartirait d'une révision périmée et échouerait en 409 immédiatement après chaque renommage.
+  */
+  const renameNote = useCallback((id: string, title: string) => {
+    if (!projectId) return Promise.resolve(null as ProjectNoteSummary | null);
+    const summary = state.notes.find((candidate) => candidate.id === id);
+    const expectedRevision = state.selected?.id === id ? state.selected.revision : summary?.revision;
+    if (expectedRevision === undefined) return Promise.resolve(null as ProjectNoteSummary | null);
+    const selectedGeneration = selectionGeneration.current;
+    const requestId = ++mutationRequest.current;
+    return enqueue(async () => {
+      if (activeProject.current !== projectId) return null;
+      setState((s) => ({ ...s, saving: true, failedSelectionId: null, error: null, errorOperation: null }));
+      try {
+        const note = await updateNote(projectId, id, { title, expectedRevision });
+        if (activeProject.current !== projectId) return null;
+        setState((s) => {
+          const ownsRequest = mutationRequest.current === requestId;
+          const ownsSelection = selectionGeneration.current === selectedGeneration && s.selected?.id === id;
+          return {
+            ...s,
+            ...(ownsRequest ? { saving: false } : {}),
+            notes: s.notes.map((candidate) => (candidate.id === id ? { ...candidate, ...note } : candidate)),
+            ...(ownsSelection ? {
+              selected: note,
+              draftTitle: note.title,
+              conflict: false,
+              error: null,
+              errorOperation: null,
+              dirty: s.draftContent !== note.content,
+            } : {}),
+          };
+        });
+        return note;
+      } catch (error) {
+        if (activeProject.current !== projectId) return null;
+        setState((s) => {
+          const ownsRequest = mutationRequest.current === requestId;
+          if (!ownsRequest && s.selected?.id !== id) return s;
+          return {
+            ...s,
+            ...(ownsRequest ? { saving: false } : {}),
+            error: error instanceof Error ? error.message : "Unable to rename note",
+            errorOperation: "other" as const,
+            conflict: error instanceof ApiRequestError && error.status === 409,
+          };
+        });
+        return null;
+      }
+    });
+  }, [enqueue, projectId, state.notes, state.selected]);
+
+  const removeNote = useCallback((id: string) => {
+    if (!projectId) return Promise.resolve(false);
+    const summary = state.notes.find((candidate) => candidate.id === id);
+    const expectedRevision = state.selected?.id === id ? state.selected.revision : summary?.revision;
+    if (expectedRevision === undefined) return Promise.resolve(false);
     const selectedGeneration = selectionGeneration.current;
     const requestId = ++mutationRequest.current;
     return enqueue(async () => {
       if (activeProject.current !== projectId) return false;
       setState((s) => ({ ...s, saving: true, failedSelectionId: null, error: null, errorOperation: null }));
       try {
-        await deleteNote(projectId, selected.id, selected.revision);
+        await deleteNote(projectId, id, expectedRevision);
         if (activeProject.current !== projectId) return false;
         setState((s) => {
           const ownsRequest = mutationRequest.current === requestId;
-          const ownsSelection = selectionGeneration.current === selectedGeneration && s.selected?.id === selected.id;
+          const ownsSelection = selectionGeneration.current === selectedGeneration && s.selected?.id === id;
           return {
             ...s,
             ...(ownsRequest ? { saving: false } : {}),
-            notes: s.notes.filter((summary) => summary.id !== selected.id),
+            notes: s.notes.filter((candidate) => candidate.id !== id),
             ...(ownsSelection ? { selected: null, draftTitle: "", draftContent: "", dirty: false, conflict: false } : {}),
           };
         });
@@ -252,18 +313,34 @@ export function useNotes(projectId?: string) {
         if (activeProject.current !== projectId) return false;
         setState((s) => {
           const ownsRequest = mutationRequest.current === requestId;
-          const ownsSelection = selectionGeneration.current === selectedGeneration && s.selected?.id === selected.id;
-          if (!ownsRequest && !ownsSelection) return s;
+          if (!ownsRequest && s.selected?.id !== id) return s;
           return {
             ...s,
             ...(ownsRequest ? { saving: false } : {}),
-            ...(ownsSelection ? { error: error instanceof Error ? error.message : "Unable to delete note", errorOperation: "other" as const, conflict: error instanceof ApiRequestError && error.status === 409 } : {}),
+            error: error instanceof Error ? error.message : "Unable to delete note",
+            errorOperation: "other" as const,
+            conflict: error instanceof ApiRequestError && error.status === 409,
           };
         });
         return false;
       }
     });
-  }, [enqueue, projectId, state.selected]);
+  }, [enqueue, projectId, state.notes, state.selected]);
 
-  return { ...state, loadList, select, clearSelection, setSearch, setDraftTitle, setDraftContent, create, save, reload, overwrite, remove };
+  /** Legacy selection-scoped delete, preserved for existing callers and reimplemented over `removeNote`. */
+  const remove = useCallback(() => (state.selected ? removeNote(state.selected.id) : Promise.resolve(false)), [removeNote, state.selected]);
+
+  /*
+  FNXC:ProjectNotes 2026-09-15-21:23:
+  FN-435 : point d'entrée UNIQUE de l'enregistrement automatique, qui remplace le bouton Enregistrer supprimé. Il porte
+  seul la garde de non-répétition : une écriture déjà en vol, un conflit de révision non tranché ou un échec
+  d'enregistrement précédent bloquent toute nouvelle tentative, sinon un anti-rebond qui se redéclenche transformerait
+  un 409 en boucle d'écriture infinie et écraserait la décision Recharger/Écraser de l'opérateur.
+  */
+  const saveIfDirty = useCallback(() => {
+    if (!state.dirty || state.saving || state.conflict || state.errorOperation === "save") return Promise.resolve(null as ProjectNote | null);
+    return save();
+  }, [save, state.conflict, state.dirty, state.errorOperation, state.saving]);
+
+  return { ...state, loadList, select, clearSelection, setSearch, setDraftTitle, setDraftContent, create, save, saveIfDirty, reload, overwrite, remove, removeNote, renameNote };
 }

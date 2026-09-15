@@ -3,7 +3,7 @@ import { cleanup, render, screen, waitFor, within } from "@testing-library/react
 import { RightDock } from "../RightDock";
 import { RightDockExpandModal } from "../RightDockExpandModal";
 import { MainContentDrawer } from "../dashboard/MainContent";
-import { PlanningDrawer, ProjectsDrawer } from "../MobileDrawer";
+import { NotesDrawer, PlanningDrawer, ProjectsDrawer } from "../MobileDrawer";
 import { MobileUsageDrawer } from "../AppModals";
 import { ViewLayoutProvider } from "../../context/ViewLayoutContext";
 
@@ -98,6 +98,21 @@ describe("FN-379 shared chrome on the auxiliary runtime hosts", () => {
         <PlanningDrawer open title="Planning" onClose={vi.fn()}>
           <div data-testid="bridge-body">Planning body</div>
         </PlanningDrawer>
+      ),
+    },
+    {
+      /*
+      FNXC:ToolSurfaces 2026-09-15-21:23:
+      FN-435 : sur téléphone, le panneau d'outils Notes est hébergé par ce pont plutôt que par la popover d'en-tête.
+      Il doit donc satisfaire exactement le même contrat de chrome que Projects et Planning.
+      */
+      name: "notes",
+      testId: "mobile-drawer-notes",
+      title: "Notes",
+      element: (
+        <NotesDrawer open title="Notes" onClose={vi.fn()}>
+          <div data-testid="bridge-body">Notes body</div>
+        </NotesDrawer>
       ),
     },
     {

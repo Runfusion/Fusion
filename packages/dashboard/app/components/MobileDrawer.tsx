@@ -59,6 +59,21 @@ export function PlanningDrawer({ open, title, onClose, children }: AppDrawerBrid
   );
 }
 
+/*
+FNXC:ToolSurfaces 2026-09-15-21:23:
+FN-435 : sur téléphone, Notes est un TIROIR avec navigation interne liste ↔ éditeur, comme le tchat, et non une popover
+écrasée contre le bord de l'écran. Ce pont appartient à App au même titre que Projects et Planning ; il n'est pas
+`keepMounted`, car une vue Notes fermée ne doit retenir ni contrôleur d'édition ni anti-rebond en attente. La vue Notes
+possède son propre en-tête et son propre défilement borné, d'où les deux drapeaux d'appropriation.
+*/
+export function NotesDrawer({ open, title, onClose, children }: AppDrawerBridgeProps) {
+  return (
+    <MobileDrawer open={open} title={title} onClose={onClose} testId="mobile-drawer-notes" contentOwnsHeader contentOwnsScroll>
+      {children}
+    </MobileDrawer>
+  );
+}
+
 const FOCUSABLE_SELECTOR = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 /*

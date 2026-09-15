@@ -11,6 +11,8 @@ function notesController() {
     setSearch: vi.fn(), loadList: vi.fn(), select: vi.fn(), create: vi.fn(), remove: vi.fn(),
     save: vi.fn(), reload: vi.fn(), overwrite: vi.fn(), clearSelection: vi.fn(),
     setDraftTitle: vi.fn(), setDraftContent: vi.fn(),
+    // FN-435: the shared controller now also owns list-scoped rename/delete and the autosave entry point.
+    saveIfDirty: vi.fn(), renameNote: vi.fn(), removeNote: vi.fn(),
   } as never;
 }
 
@@ -19,7 +21,8 @@ describe("shared collection layout migrations", () => {
     const controller = notesController();
     render(<NotesView projectId="p-1" controller={controller} />);
     expect(screen.getByRole("complementary", { name: "Notes list" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /Architecture/ }));
+    // FN-435: the row's actions trigger is also labelled with the note title, so anchor on the selection target.
+    fireEvent.click(screen.getByRole("button", { name: /^Architecture/ }));
     expect((controller as unknown as { select: ReturnType<typeof vi.fn> }).select).toHaveBeenCalledWith("note-1");
   });
 

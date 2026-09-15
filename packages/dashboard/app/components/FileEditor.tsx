@@ -25,6 +25,15 @@ interface FileEditorProps {
   canToggleAutoSave?: boolean;
   toolbarExpanded?: boolean;
   forceToolbarActionsVisible?: boolean;
+  /*
+  FNXC:NotesEditing 2026-09-15-21:23:
+  FN-435 : hôte opt-in sans chrome d'édition (l'éditeur de note, dont la demande explicite est « retirer tous les
+  boutons »). Masquer la barre IMPOSE le mode édition pour cette instance : sans bascule Modifier/Aperçu visible, une
+  préférence « Aperçu » persistée enfermerait l'opérateur dans une note en lecture seule sans aucun moyen d'en sortir.
+  Le forçage est dérivé, jamais écrit : cet hôte ne doit pas toucher la préférence localStorage partagée avec le
+  navigateur de fichiers, sinon ouvrir une note reconfigurerait silencieusement le navigateur de fichiers.
+  */
+  hideToolbar?: boolean;
   toolbarActionsId?: string;
   onSendSelectionToTask?: (description: string) => void;
 }
@@ -78,6 +87,7 @@ export function FileEditor({
   canToggleAutoSave = true,
   toolbarExpanded,
   forceToolbarActionsVisible = false,
+  hideToolbar = false,
   toolbarActionsId: externalToolbarActionsId,
   onSendSelectionToTask,
 }: FileEditorProps) {
@@ -120,7 +130,7 @@ export function FileEditor({
   const toolbarActionsId = externalToolbarActionsId ?? generatedToolbarActionsId;
   const [darkThemeActive, setDarkThemeActive] = useState(() => isDarkTheme());
 
-  const effectiveShowPreview = isMarkdown && (readOnly ? true : showPreview);
+  const effectiveShowPreview = !hideToolbar && isMarkdown && (readOnly ? true : showPreview);
   const shouldRenderLineNumbers = showLineNumbers && !readOnly && !effectiveShowPreview;
   const shouldShowLineNumbersToggle = Boolean(onToggleLineNumbers) && canToggleLineNumbers && !readOnly && !effectiveShowPreview;
   const shouldShowAutoSaveToggle = Boolean(onToggleAutoSave) && canToggleAutoSave && !readOnly && !effectiveShowPreview;
@@ -172,8 +182,10 @@ export function FileEditor({
   ) : null;
 
   useEffect(() => {
+    // FNXC:NotesEditing 2026-09-15-21:23: un hôte sans barre n'a aucune bascule à mémoriser; il ne réécrit donc jamais la préférence partagée.
+    if (hideToolbar) return;
     writeBooleanPref(FILE_EDITOR_MARKDOWN_PREVIEW_STORAGE_KEY, showPreview);
-  }, [showPreview]);
+  }, [hideToolbar, showPreview]);
 
   useEffect(() => {
     if (!editorHostRef.current || effectiveShowPreview) {
@@ -327,7 +339,7 @@ export function FileEditor({
 
   return (
     <div className="file-editor-container">
-      {hasToolbarActions && (expanded || !isControlled) ? (
+      {!hideToolbar && hasToolbarActions && (expanded || !isControlled) ? (
         <div className={`file-editor-toolbar ${expanded ? "file-editor-toolbar--expanded" : ""}`}>
           {showToolbarDisclosure && (
             <button className="btn btn-sm btn-icon file-editor-toolbar-button" onClick={handleToolbarActionsToggle} aria-label={t("fileEditor.toggleOptions", "Toggle editor options")} title={t("fileEditor.toggleOptions", "Toggle editor options")} aria-expanded={expanded} aria-controls={toolbarActionsId}>

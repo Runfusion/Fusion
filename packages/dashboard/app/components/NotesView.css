@@ -54,7 +54,6 @@ The selected note uses an accent tint and persistent inset marker independently 
 }
 
 .notes-search svg,
-.notes-detail-toolbar svg,
 .notes-view .view-header svg {
   inline-size: var(--icon-size-md);
   block-size: var(--icon-size-md);
@@ -68,30 +67,98 @@ The selected note uses an accent tint and persistent inset marker independently 
   overscroll-behavior: contain;
 }
 
+/*
+FNXC:NotesEditing 2026-09-15-21:23:
+FN-435 : la ligne de liste possède désormais le renommage et la suppression, donc elle ne peut plus être un seul
+`<button>` — un bouton ne peut pas contenir d'autres boutons. La ligne devient un conteneur positionné qui héberge la
+cible de sélection, le champ de renommage en place et le menu d'actions, en réutilisant `btn-icon` plutôt qu'en
+forkant un bouton propre à Notes.
+*/
 .notes-list-item {
+  position: relative;
   inline-size: 100%;
+  display: flex;
+  align-items: stretch;
+  border-block-end: var(--btn-border-width) solid var(--color-border);
+  background: transparent;
+  color: var(--color-text);
+  transition: background var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.notes-list-item-select {
+  flex: 1;
+  min-inline-size: 0;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: var(--space-xs);
   padding: var(--space-md);
   border: 0;
-  border-block-end: var(--btn-border-width) solid var(--color-border);
   background: transparent;
-  color: var(--color-text);
+  color: inherit;
   text-align: start;
   cursor: pointer;
-  transition: background var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.notes-list-item-rename {
+  flex: 1;
+  min-inline-size: 0;
+  margin: var(--space-sm);
+  font-weight: var(--font-weight-semibold);
+}
+
+.notes-list-item-menu-btn {
+  align-self: center;
+  margin-inline-end: var(--space-sm);
+  flex-shrink: 0;
+  color: var(--color-text-muted);
+}
+
+.notes-list-item-menu {
+  position: absolute;
+  inset-block-start: 100%;
+  inset-inline-end: var(--space-sm);
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  min-inline-size: calc(var(--space-3xl) * 2);
+  padding: var(--space-2xs);
+  border: var(--btn-border-width) solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-lg);
+}
+
+.notes-list-item-menu-action {
+  padding: var(--space-xs) var(--space-sm);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  text-align: start;
+  cursor: pointer;
+}
+
+.notes-list-item-menu-action:hover {
+  background: var(--color-surface-hover);
+}
+
+.notes-list-item-menu-action--danger {
+  color: var(--color-error);
 }
 
 .notes-list-item:hover {
   background: var(--color-surface-hover);
 }
 
-.notes-list-item:focus-visible {
+.notes-list-item:focus-within {
   position: relative;
-  outline: none;
   box-shadow: var(--focus-ring-strong);
+}
+
+.notes-list-item-select:focus-visible {
+  outline: none;
 }
 
 .notes-list-item--selected {
@@ -130,21 +197,6 @@ The selected note uses an accent tint and persistent inset marker independently 
   flex: 1;
   min-inline-size: 0;
   flex-direction: column;
-}
-
-.notes-detail-toolbar {
-  display: flex;
-  flex-shrink: 0;
-  align-items: center;
-  gap: var(--space-sm);
-  padding: var(--space-md);
-  border-block-end: var(--btn-border-width) solid var(--color-border);
-}
-
-.notes-title {
-  flex: 1;
-  min-inline-size: calc(var(--space-3xl) * 2);
-  font-weight: var(--font-weight-semibold);
 }
 
 .notes-save-state {
@@ -220,9 +272,7 @@ Compact/list-only Notes garde toujours la liste dans le dock; chaque détail app
   .notes-view--detail .notes-list { display: none; }
   .notes-view:not(.notes-view--detail) .notes-detail { display: none; }
   .notes-back { display: inline-flex; }
-  .notes-detail-toolbar, .notes-conflict, .notes-error { flex-wrap: wrap; }
-  .notes-title { flex-basis: calc(100% - var(--space-3xl)); }
-  .notes-save-state { margin-inline-start: auto; }
+  .notes-conflict, .notes-error { flex-wrap: wrap; }
 }
 
 .notes-view--dedicated .notes-layout,
@@ -237,16 +287,8 @@ Compact/list-only Notes garde toujours la liste dans le dock; chaque détail app
   display: none;
 }
 
-.notes-view--dedicated :is(.notes-detail-toolbar, .notes-conflict, .notes-error) {
+.notes-view--dedicated :is(.notes-conflict, .notes-error) {
   flex-wrap: wrap;
-}
-
-.notes-view--dedicated .notes-title {
-  flex-basis: calc(100% - var(--space-3xl));
-}
-
-.notes-view--dedicated .notes-save-state {
-  margin-inline-start: auto;
 }
 
 .notes-view--floating { block-size: 100%; background: var(--surface); }

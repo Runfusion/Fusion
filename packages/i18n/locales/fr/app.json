@@ -9917,7 +9917,6 @@
     "createFirst": "Créer votre première note",
     "select": "Sélectionnez une note ou créez-en une",
     "title": "Titre de la note",
-    "unsaved": "Modifications non enregistrées",
     "savedState": "Enregistré",
     "saving": "Enregistrement…",
     "saved": "Note enregistrée",
@@ -9929,7 +9928,12 @@
     "deleteMessage": "Cette action est irréversible.",
     "conflict": "Cette note a été modifiée ailleurs. Votre brouillon est conservé.",
     "reload": "Recharger la version serveur",
-    "overwrite": "Remplacer par mon brouillon"
+    "overwrite": "Remplacer par mon brouillon",
+    "autoSaved": "Les modifications sont enregistrées automatiquement",
+    "backToList": "Retour aux notes",
+    "rename": "Renommer",
+    "renameAria": "Renommer {{title}}",
+    "actionsAria": "Actions de la note {{title}}"
   },
   "whiteboard": {
     "tools": "Whiteboard tools",
