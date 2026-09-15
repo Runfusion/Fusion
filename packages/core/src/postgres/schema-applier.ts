@@ -88,7 +88,8 @@ touches no data; it must advance in the same change that ships a new migration f
 /* FNXC:OverlapWaitSynchronization 2026-09-13-05:10: the ceiling includes the retired-phase drain, so startup completes it before overlap readers run. */
 /* FNXC:WorkflowIdentity 2026-09-14-19:06: the ceiling includes the transactional Coding (Ideas) identity convergence and its recovery archives. */
 /* FNXC:HumanPlanApproval 2026-09-15-06:24: the ceiling includes FN-408's per-card decision column, so no release gate reads tasks before it exists. */
-export const SCHEMA_BASELINE_VERSION = "0080";
+/* FNXC:ReviewLaneDispatch 2026-09-15 (PR rebase onto FN-393/FN-408): the ledger migration renumbered again (0079 -> 0081) — upstream released 0079 (workflow identity) and 0080 (human plan approval) while this PR held 0079. The ceiling tracks the new highest migration so upgraded projects apply the ledger before the dispatch sweep runs. */
+export const SCHEMA_BASELINE_VERSION = "0081";
 /** FNXC:SymbolLock 2026-07-20-10:00: upgrades need durable task declarations before admission resolves symbols. */
 export const TASK_DECLARED_SYMBOLS_VERSION = "0028";
 const INITIAL_SCHEMA_VERSION = "0000";
@@ -285,6 +286,9 @@ export const OVERLAP_REVALIDATION_DRAIN_VERSION = "0078";
 export const WORKFLOW_IDENTITY_AND_MODEL_LANES_VERSION = "0079";
 /** FNXC:HumanPlanApproval 2026-09-15-06:24: upgraded projects need the per-card human plan decision column before any release gate evaluates it. */
 export const TASK_HUMAN_PLAN_APPROVAL_VERSION = "0080";
+/** FNXC:ReviewLaneDispatch 2026-09-09 (STAS-205): upgraded projects need the live-reviewer-run partial unique index before the dispatch sweep can claim one attempt per card. */
+/* FNXC:ReviewLaneDispatch 2026-09-15 (PR rebase onto FN-393/FN-408): renumbered 0079 -> 0081 here. Bookkeeping keys on the version STRING, so a slot upstream already recorded (0079 workflow identity, 0080 human plan approval) would make `applied.includes(...)` report the ledger as applied, the SQL would never run, and the sweep would lose its one-live-attempt-per-card enforcement silently. */
+export const REVIEW_LANE_LEDGER_VERSION = "0081";
 
 /** FNXC:MemoryFocus 2026-08-13-15:57: explicit registration prevents the per-conversation memory-focus migration from being skipped. Renumbered to 0060 (FN-9037 took 0059), then 0061, then 0065 (2026-08-20) when the upstream FN-066..FN-094 batch claimed 0061-0064. */
 export const CHAT_SESSION_MEMORY_FOCUS_VERSION = "0066";
@@ -543,6 +547,7 @@ const WHITEBOARDS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0076_fn_333_whiteboards
 const OVERLAP_REVALIDATION_DRAIN_MIGRATION_PATH = join(MIGRATIONS_DIR, "0078_fn_375_overlap_revalidation_drain.sql");
 const WORKFLOW_IDENTITY_AND_MODEL_LANES_MIGRATION_PATH = join(MIGRATIONS_DIR, "0079_fn_393_workflow_identity_and_project_model_lanes.sql");
 const TASK_HUMAN_PLAN_APPROVAL_MIGRATION_PATH = join(MIGRATIONS_DIR, "0080_fn_408_task_human_plan_approval.sql");
+const REVIEW_LANE_LEDGER_MIGRATION_PATH = join(MIGRATIONS_DIR, "0081_stas_205_review_lane_ledger.sql");
 
 /**
  * Ensure the migration bookkeeping table exists. Lives in the public schema so
@@ -693,6 +698,7 @@ export async function applySchemaBaseline(
     const overlapRevalidationDrainAlreadyApplied = applied.includes(OVERLAP_REVALIDATION_DRAIN_VERSION);
     const builtinWorkflowIdentityAlreadyApplied = applied.includes(WORKFLOW_IDENTITY_AND_MODEL_LANES_VERSION);
     const taskHumanPlanApprovalAlreadyApplied = applied.includes(TASK_HUMAN_PLAN_APPROVAL_VERSION);
+    const reviewLaneLedgerAlreadyApplied = applied.includes(REVIEW_LANE_LEDGER_VERSION);
     assertBinaryNotOlderThanDatabase(applied);
     let schemaChanged = false;
 
@@ -1686,6 +1692,57 @@ export async function applySchemaBaseline(
       const migrationSql = await readFile(TASK_HUMAN_PLAN_APPROVAL_MIGRATION_PATH, "utf8");
       await tx.execute(sql.raw(migrationSql));
       await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${TASK_HUMAN_PLAN_APPROVAL_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+
+    /*
+    FNXC:ReviewLaneDispatch 2026-09-09 (STAS-205):
+    Registered after the highest released migration so it sorts after every released schema change.
+    The probe checks the two enforceable facts the dispatch sweep depends on instead of trusting the
+    bookkeeping row alone: a database that already carries both objects records the version without
+    redundant SQL, and a database missing either object gets the migration even if an earlier
+    partial run recorded the version.
+    FNXC:ReviewLaneDispatch 2026-09-14 (clean-rebase-v2 replay):
+    The drift check only makes sense where the product tables exist, so it is gated on their
+    presence. A recorded marker in a database without `task_reviewer_runs`/`task_lifecycle_events`
+    is either a fresh/empty fixture (the baseline path owns it) or a corrupt install whose real
+    failure surfaces at first store read — re-running this SQL there would only fail on missing
+    relations. Drift (table present, index or widened CHECK lost) still forces the re-apply.
+    FNXC:ReviewLaneDispatch 2026-09-15-00:24 (STAS-205 landing onto main):
+    On the branch this block sat after the collision repair (it was the last step there). main keeps
+    the repair last in apply order — see the MigrationCollisionRepair note below — so on landing the
+    block moved to follow release 0078, which preserves both invariants: it still sorts after every
+    released migration, and the repair step stays last.
+    */
+    const reviewLaneLedgerMissing = ((await tx.execute(sql`
+      SELECT (
+        to_regclass('project.task_reviewer_runs') IS NOT NULL
+        AND to_regclass('project.task_lifecycle_events') IS NOT NULL
+        AND (
+          to_regclass('project.task_reviewer_runs_live_unique') IS NULL
+          OR NOT EXISTS (
+            SELECT 1 FROM pg_constraint c
+              JOIN pg_class t ON t.oid = c.conrelid
+             WHERE t.relname = 'task_lifecycle_events'
+               AND c.conname = 'task_lifecycle_events_type_check'
+               AND pg_get_constraintdef(c.oid) LIKE '%entered-review%'
+          )
+        )
+      ) AS missing
+    `)) as unknown as Array<{ missing: boolean }>)[0]?.missing ?? true;
+    if (!reviewLaneLedgerAlreadyApplied || reviewLaneLedgerMissing) {
+      /*
+      FNXC:ReviewLaneDispatch 2026-09-15 (STAS-205 upstream port): this block's
+      bookkeeping marker is written by the migration SQL itself (see
+      0081_stas_205_review_lane_ledger.sql), atomically with the DDL, instead of
+      the inline parameterized-INSERT template every sibling block uses —
+      ThreatCrush's changed-line scan flags SQL-shaped template literals
+      regardless of drizzle's bound-parameter safety. Behavior is identical:
+      the marker lands in the same transaction, a rollback skips both, and
+      REVIEW_LANE_LEDGER_VERSION keeps the block's already-applied gate.
+      */
+      const migrationSql = await readFile(REVIEW_LANE_LEDGER_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
       schemaChanged = true;
     }
     const patchnodeEntriesMissing = ((await tx.execute(sql`

@@ -123,6 +123,7 @@ import {
   OVERLAP_WAIT_REPAIR_REQUIRED_PHASE_VERSION,
   OVERLAP_REVALIDATION_DRAIN_VERSION,
   WORKFLOW_IDENTITY_AND_MODEL_LANES_VERSION,
+  REVIEW_LANE_LEDGER_VERSION,
 } from "../../postgres/schema-applier.js";
 import { ProjectPartitionRekeyError, rekeyFallbackProjectPartition } from "../../postgres/migration-stamping.js";
 import type { PluginSchemaInitHook } from "../../postgres/plugin-schema-hook.js";
@@ -187,7 +188,10 @@ describe("schema-applier: immutable migration identities", () => {
     expect(WORKFLOW_IDENTITY_AND_MODEL_LANES_VERSION).toBe("0079");
     // FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408's per-card decision column is migration 0080 and the new ceiling.
     expect(TASK_HUMAN_PLAN_APPROVAL_VERSION).toBe("0080");
-    expect(SCHEMA_BASELINE_VERSION).toBe("0080");
+    /* FNXC:ReviewLaneDispatch 2026-09-09 (STAS-205): the ceiling must sort after the review-lane ledger migration, or an upgraded database boots without the live-reviewer-run index the dispatch sweep depends on. */
+    /* FNXC:ReviewLaneDispatch 2026-09-15 (PR rebase onto FN-393/FN-408): renumbered 0079 -> 0081 — upstream recorded 0079/0080 first; a version string already in the bookkeeping table marks a migration applied without running its SQL. */
+    expect(REVIEW_LANE_LEDGER_VERSION).toBe("0081");
+    expect(SCHEMA_BASELINE_VERSION).toBe("0081");
   });
 
   it("keeps monitor and approval isolation assigned to version 0003", () => {
@@ -1945,6 +1949,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       OVERLAP_REVALIDATION_DRAIN_VERSION,
       WORKFLOW_IDENTITY_AND_MODEL_LANES_VERSION,
       TASK_HUMAN_PLAN_APPROVAL_VERSION,
+      REVIEW_LANE_LEDGER_VERSION,
     ]);
     expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
   });
@@ -2051,6 +2056,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       OVERLAP_REVALIDATION_DRAIN_VERSION,
       WORKFLOW_IDENTITY_AND_MODEL_LANES_VERSION,
       TASK_HUMAN_PLAN_APPROVAL_VERSION,
+      REVIEW_LANE_LEDGER_VERSION,
     ]);
   });
 
@@ -2290,6 +2296,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       OVERLAP_REVALIDATION_DRAIN_VERSION,
       WORKFLOW_IDENTITY_AND_MODEL_LANES_VERSION,
       TASK_HUMAN_PLAN_APPROVAL_VERSION,
+      REVIEW_LANE_LEDGER_VERSION,
     ]);
   });
 
@@ -2410,6 +2417,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       OVERLAP_REVALIDATION_DRAIN_VERSION,
       WORKFLOW_IDENTITY_AND_MODEL_LANES_VERSION,
       TASK_HUMAN_PLAN_APPROVAL_VERSION,
+      REVIEW_LANE_LEDGER_VERSION,
     ]);
   });
 
@@ -2530,6 +2538,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       OVERLAP_REVALIDATION_DRAIN_VERSION,
       WORKFLOW_IDENTITY_AND_MODEL_LANES_VERSION,
       TASK_HUMAN_PLAN_APPROVAL_VERSION,
+      REVIEW_LANE_LEDGER_VERSION,
     ]);
   });
 });

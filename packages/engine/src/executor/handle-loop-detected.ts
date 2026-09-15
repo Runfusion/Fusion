@@ -8,8 +8,10 @@
  */
 import type { TaskStore } from "@fusion/core";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
-import { compactSessionContext } from "../pi.js";
+import { compactSessionContext, type CompactionOutcome } from "../pi.js";
 import { executorLog } from "../logger.js";
+import { emitBoundedRunAudit } from "../util/emit-bounded-run-audit.js";
+import { generateSyntheticRunId } from "../util/run-audit.js";
 
 /** Upper bound for in-process loop recovery before falling through to kill/requeue. */
 export const LOOP_COMPACTION_TIMEOUT_MS = 60_000;
@@ -64,25 +66,73 @@ export async function handleLoopDetected(
       });
     }
   };
-  let compactResult: Awaited<ReturnType<typeof compactSessionContext>> | null;
+  let compactOutcome: CompactionOutcome;
   try {
-    compactResult = await Promise.race([
+    compactOutcome = await Promise.race([
       compactSessionContext(activeEntry.session),
-      new Promise<null>((resolve) => {
+      new Promise<CompactionOutcome>((resolve) => {
         compactionTimer = setTimeout(() => {
           compactionTimedOut = true;
           abortActiveSession();
-          resolve(null);
+          /*
+          FNXC:ChatContextGuardEscalation 2026-09-04-10:57:
+          RUFU-182: the timeout arm resolves a synthetic `error` outcome (nothing proven appended) so
+          this caller branches on `reason` like every other consumer. Loop recovery never retries in
+          place regardless — the kill/requeue fallback below is unchanged.
+          */
+          resolve({
+            reason: "error",
+            branchMutated: false,
+            engineMessage: `Context compaction timed out after ${LOOP_COMPACTION_TIMEOUT_MS / 1000}s`,
+          });
         }, LOOP_COMPACTION_TIMEOUT_MS);
       }),
     ]);
   } finally {
     if (compactionTimer) clearTimeout(compactionTimer);
   }
-  if (!compactResult) {
+  /*
+  FNXC:CompactionNoProgress 2026-09-04-16:35:
+  RUFU-187 — a `no-progress` outcome means pi DID mutate the branch (a CompactionEntry is now in the
+  tree) while the before/after comparison proves nothing was freed, so this lane's compact-and-resume
+  recovery is refused. The honest wording is a requirement, not decoration: the previous shape let a
+  non-reducing pass read as progress, which burned a detection cycle and re-attempted a recovery that
+  cannot help (pi's second `compact()` can only answer "Already compacted" — the RUFU-124 lineage).
+  Storing `attempts` WITHOUT `pending` is what makes the next detection fast-fail at the ceiling check
+  above instead of touching pi again. Telemetry stays ids/counts/outcomes-only per the run-audit
+  contract; the operator-facing sentence lives on the card, never in the audit row.
+  */
+  if (compactOutcome.reason === "no-progress") {
+    const sentence =
+      `Context compaction reduced nothing (attempt ${attempt}, ` +
+      `before=${compactOutcome.tokensBefore} after=${compactOutcome.estimatedTokensAfter} tokens) — ` +
+      `compact-and-resume recovery not accepted`;
+    executorLog.log(`${taskId} ${sentence} — falling back to kill/requeue`);
+    await deps.store.logEntry(taskId, `${sentence} — falling back to kill/requeue`);
+    deps.loopRecoveryState.set(taskId, { attempts: attempt, pending: false });
+    await emitBoundedRunAudit(deps.store, {
+      taskId,
+      agentId: "executor",
+      runId: generateSyntheticRunId("compaction-no-progress", taskId),
+      domain: "database",
+      mutationType: "task:compaction-no-progress",
+      target: taskId,
+      metadata: {
+        source: "loop-recovery",
+        tokensBefore: compactOutcome.tokensBefore,
+        tokensAfter: compactOutcome.estimatedTokensAfter,
+        basis: compactOutcome.basis,
+      },
+    });
+    return false;
+  }
+
+  if (compactOutcome.reason !== "compacted") {
     const reason = compactionTimedOut
       ? `Context compaction timed out after ${LOOP_COMPACTION_TIMEOUT_MS / 1000}s`
-      : "Context compaction failed or unavailable";
+      : `Context compaction ${compactOutcome.reason === "error" ? "failed" : `refused (${compactOutcome.reason})`}${
+          compactOutcome.engineMessage ? `: ${compactOutcome.engineMessage}` : ""
+        }`;
     executorLog.log(`${taskId} ${reason.toLowerCase()} — falling back to kill/requeue`);
     await deps.store.logEntry(taskId, `${reason} — falling back to kill/requeue`);
     return false;
@@ -94,7 +144,7 @@ export async function handleLoopDetected(
     return false;
   }
 
-  executorLog.log(`${taskId} compaction succeeded (freed ${compactResult.tokensBefore} tokens) — setting recovery-pending`);
+  executorLog.log(`${taskId} compaction succeeded (freed ${compactOutcome.tokensBefore} tokens) — setting recovery-pending`);
   await deps.store.logEntry(taskId, `Context compacted successfully — will resume with fresh context`);
 
   // FN-5168: once loop recovery has fired in this execute() lifecycle,

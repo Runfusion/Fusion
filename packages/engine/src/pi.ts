@@ -30,6 +30,7 @@ import {
   DefaultResourceLoader,
   DefaultPackageManager,
   discoverAndLoadExtensions,
+  estimateTokens,
   ModelRegistry,
   ModelRuntime,
   SessionManager,
@@ -516,13 +517,20 @@ export async function promptWithFallback(session: AgentSession, prompt: string, 
 
     piLog.warn("promptWithFallback: context limit error — attempting auto-compaction");
     await flushMemoryBeforeSessionCompaction(session);
-    const compactResult = await compactSessionContext(session);
-    if (!compactResult) {
-      piLog.error("promptWithFallback: compaction unavailable — propagating original error");
+    const compactOutcome = await compactSessionContext(session);
+    if (compactOutcome.reason !== "compacted") {
+      /*
+      FNXC:CompactionNoProgress 2026-09-04-16:35:
+      A `no-progress` outcome takes the SAME lane as any other compaction failure: retrying the
+      prompt into a context that provably did not shrink would just fail the same way with a worse
+      error, so the original context-limit error is propagated. `describeCompactionUnavailable`
+      keeps the log honest about WHAT happened instead of implying a retryable refusal.
+      */
+      piLog.error(`promptWithFallback: ${describeCompactionUnavailable(compactOutcome)} — propagating original error`);
       throw err;
     }
 
-    piLog.log(`promptWithFallback: compaction succeeded (${compactResult.tokensBefore} tokens) — retrying prompt`);
+    piLog.log(`promptWithFallback: compaction succeeded (${compactOutcome.tokensBefore} tokens) — retrying prompt`);
     try {
       await promptSessionAndCheck(session, prompt, options);
       piLog.log("promptWithFallback: prompt completed after auto-compaction");
@@ -968,42 +976,309 @@ async function flushMemoryBeforeSessionCompaction(session: AgentSession): Promis
   }
 }
 
+/*
+FNXC:ChatContextGuardEscalation 2026-09-04-10:57:
+RUFU-182 (LCM ladder tiers 1-2): `compactSessionContext` collapsed every refusal into `null`,
+erasing pi's real reason. The saneca chat-b6a74d40 "Already compacted" refusal surfaced as a false
+static-floor diagnosis ("the static context itself exceeds the window budget"), instructing the
+operator to shrink tools and memory that were not the problem. The return value is now a
+discriminated `CompactionOutcome` preserving pi's reason, pi's message, and — decisively — whether
+pi's branch moved, because the guard's escalation tier may only retry where the engine still honours
+a second call.
+
+Verified against installed @earendil-works/pi-coding-agent@0.84.4 (`dist/core/agent-session.js`,
+`dist/core/compaction/compaction.js`; `pi-compaction-contract.test.ts` is the drift tripwire):
+- `compact(customInstructions?)` throws "Already compacted" when the last branch entry is a
+  compaction entry, and `prepareCompaction` IGNORES the instructions argument on that refusal —
+  no directive can unlock a second pass, so `already-compacted` is terminal at tier 1.
+- It throws "Nothing to compact (session too small)" when the branch is below the compaction floor.
+- On success it APPENDS the compaction entry and rebuilds the message list before resolving, so a
+  throw means nothing landed (a retry is mechanically possible) while any resolution means the
+  branch moved (a second call can only be refused). `branchMutated` encodes exactly that, and
+  `isRetryAfterCompactionFailureLegal` is true only for the `error` arm.
+- pi's `CompactionResult` DOES carry `estimatedTokensAfter`; the guard must not use it for
+  send/no-send because it counts messages only (no system prompt, no tool definitions) while the
+  guard's budget is a whole-request estimate. It does gate strict-reduction acceptance (`reduced`).
+
+Tier escalation lives in `chat-context-guard.ts`, never here: this helper performs exactly one
+engine call per invocation and classifies its result. Callers must branch on `reason`, not on the
+absence of a result.
+
+FNXC:CompactionNoProgress 2026-09-04-16:35:
+RUFU-187 adds `no-progress` as a SIBLING kind of the landed taxonomy (never a boolean bolt-on, so
+every consumer's exhaustive `reason` switch is compiler-flagged). Operator-visible invariant: a
+compaction whose tokens-after is >= its tokens-before must not masquerade as progress, because the
+executor's compact-and-resume recovery otherwise logs "freed N tokens", burns its one-shot attempt
+ceiling, and re-enters the same doomed recovery (the RUFU-124 lineage — pi's second `compact()` can
+only answer "Already compacted", so the retry cannot help).
+Pi internals that make the classification sound (@earendil-works/pi-coding-agent 0.84.4,
+`dist/core/agent-session.js`): `session.compact()` sets `estimatedTokensAfter` from
+`estimateMessagesTokens` of the POST-compaction message list, while `tokensBefore` is a
+preparation-time figure, so the two are a mixed basis. That bias runs ONE way only — it pushes
+marginal (<~15%) reductions toward `no-progress`, i.e. toward honesty; it can never hide a real
+cut. When `estimatedTokensAfter` is absent the helper compares pi's own per-message
+`estimateTokens` (chars/4) over the session's messages before vs after the call — deliberately the
+same estimator on both sides, and never `getContextUsage()` provider usage (the RUFU-118
+blind-estimator lesson: restored provider usage describes the turn that RECORDED it).
+By the time `no-progress` is reported pi has ALREADY appended the CompactionEntry and rebuilt the
+message list — the branch mutation is pi's and is not undone here. Refusing a lane's recovery is
+about what OUR logs and audit rows may claim, not about rolling back the session.
+*/
+
+/** pi's compaction verdict, preserved from 0.84.4's refusal literals. */
+export type PiCompactionReason =
+  | "compacted"
+  | "already-compacted"
+  | "nothing-to-compact"
+  | "unsupported"
+  | "error";
+
+/**
+ * Reason-preserving result of one `session.compact()` attempt.
+ *
+ * Every arm carries `branchMutated` (true exactly when pi appended a compaction entry before
+ * resolving) so no caller can infer escalation legality from the absence of a summary.
+ */
+export type CompactionOutcome =
+  | {
+      reason: "compacted";
+      branchMutated: true;
+      /** pi's LLM summary; may be empty — the guard's acceptance rule owns that judgement. */
+      summary: string;
+      tokensBefore: number;
+      /** pi's message-only post-compaction estimate; null when pi reported no usable number. */
+      estimatedTokensAfter: number | null;
+      /** Strict reduction measured from pi's own before/after fields. */
+      reduced: boolean;
+    }
+  | {
+      reason: "already-compacted";
+      branchMutated: false;
+      /** pi's refusal text for the absolute guard refusal. */
+      engineMessage: string | null;
+    }
+  | {
+      reason: "nothing-to-compact";
+      branchMutated: false;
+      /** pi's refusal text for the absolute guard refusal. */
+      engineMessage: string | null;
+    }
+  | {
+      /**
+       * RUFU-187: pi appended a CompactionEntry (so `branchMutated` is true and a second
+       * `compact()` is NOT legally retryable), but the deterministic before/after comparison
+       * proves the context did not shrink. Both token counts share the basis named by `basis`:
+       * `pi-reported` keeps pi's own pair, `pure-estimate` keeps the helper's per-message
+       * `estimateTokens` pair (pi's `tokensBefore` is preparation-time provider-derived and is
+       * not comparable with a chars/4 message estimate).
+       */
+      reason: "no-progress";
+      branchMutated: true;
+      tokensBefore: number;
+      estimatedTokensAfter: number;
+      basis: "pi-reported" | "pure-estimate";
+    }
+  | {
+      reason: "error";
+      branchMutated: false;
+      /** pi's error text; synthetic text for an impossible falsy resolve. */
+      engineMessage: string | null;
+    }
+  | { reason: "unsupported"; branchMutated: false; engineMessage: null };
+
+/**
+ * Classify a thrown (or impossible falsy-resolve) compaction failure into the refusal arm it
+ * evidences. Keys on pi 0.84.4's refusal literals case-insensitively; `error` is the honest
+ * fallback for anything else. `pi-compaction-contract.test.ts` alarms when the dependency's
+ * literals drift from what this classifier recognizes.
+ */
+export function classifyCompactionFailure(err: unknown): CompactionOutcome {
+  const engineMessage =
+    err instanceof Error ? err.message : err === undefined || err === null ? null : String(err);
+  const lower = (engineMessage ?? "").toLowerCase();
+  if (lower.includes("already compacted")) {
+    return { reason: "already-compacted", branchMutated: false, engineMessage };
+  }
+  if (lower.includes("nothing to compact")) {
+    return { reason: "nothing-to-compact", branchMutated: false, engineMessage };
+  }
+  return { reason: "error", branchMutated: false, engineMessage };
+}
+
+/**
+ * True only for the `error` arm — the sole outcome where pi threw without appending, so a second
+ * `compact()` is mechanically honoured. Exported so no caller can invent an illegal retry: a
+ * `compacted` pass (even one the acceptance rule declined), `no-progress`, `already-compacted`,
+ * `nothing-to-compact`, and `unsupported` are all terminal at tier 1.
+ *
+ * FNXC:ChatContextGuardEscalation 2026-09-04-10:57:
+ * Typed as a type predicate so the guard's escalation block narrows to the error arm at
+ * compile time while keeping this predicate the SINGLE legality authority. This requires
+ * `CompactionOutcome` to keep ONE LITERAL PER UNION MEMBER — a member whose `reason` is
+ * itself a literal union (e.g. merging error back into the refusal arms) is invisible to
+ * discriminant narrowing and to `Extract<..., {reason:"error"}>`, which would resolve to
+ * `never`.
+ */
+export function isRetryAfterCompactionFailureLegal(
+  outcome: CompactionOutcome,
+): outcome is Extract<CompactionOutcome, { reason: "error" }> {
+  return outcome.reason === "error";
+}
+
+/**
+ * RUFU-187 fallback measurement for {@link compactSessionContext}: the sum of pi's own
+ * per-message `estimateTokens` (chars/4) over the session's loaded messages, or `null` when the
+ * session exposes no message array to measure. Used ONLY to compare the same quantity before and
+ * after `session.compact()` when pi reported no `estimatedTokensAfter` — a difference in absolute
+ * scale between the two sides is meaningless, a difference between the two sides is not.
+ */
+function estimateLoadedMessageTokens(session: AgentSession): number | null {
+  const state = (session as unknown as { agent?: { state?: { messages?: unknown } }; state?: { messages?: unknown } });
+  const messages = state.agent?.state?.messages ?? state.state?.messages;
+  if (!Array.isArray(messages)) {
+    return null;
+  }
+  let total = 0;
+  for (const message of messages) {
+    try {
+      total += estimateTokens(message as Parameters<typeof estimateTokens>[0]);
+    } catch {
+      // A malformed message shape counts as 0: the comparison stays best-effort and must never
+      // break a compaction that already succeeded.
+    }
+  }
+  return total;
+}
+
+/**
+ * RUFU-187: the ONE lane-facing sentence for any non-`compacted` compaction outcome, shared by
+ * both `promptWithFallback` sites so a retry-onto-provably-unchanged-context can never be logged
+ * as success. `no-progress` names the before/after counts and its measurement basis rather than
+ * the generic "unavailable" wording, because the honest statement differs: the engine DID run a
+ * compaction, it just freed nothing.
+ *
+ * FNXC:CompactionNoProgress 2026-09-04-16:35
+ */
+function describeCompactionUnavailable(outcome: CompactionOutcome): string {
+  switch (outcome.reason) {
+    case "compacted":
+      // Defensive: the two callers only reach this helper for refusal/non-reduction arms, and a
+      // `compacted` outcome is not a failure to describe. Kept total so the switch narrows every
+      // other arm and `engineMessage` is only ever touched where it actually exists.
+      return "compaction produced a summary";
+    case "no-progress":
+      return `compaction reduced nothing (before=${outcome.tokensBefore} after=${outcome.estimatedTokensAfter} tokens, basis=${outcome.basis})`;
+    default:
+      // already-compacted | nothing-to-compact | unsupported | error all carry `engineMessage`.
+      return `compaction unavailable (${outcome.reason}${outcome.engineMessage ? ` (${outcome.engineMessage})` : ""})`;
+  }
+}
+
 /**
  * Compact an agent session's context to free up the context window.
  *
  * Uses the SDK's native `session.compact()` method when available (the
  * preferred path — it produces structured, LLM-generated summaries).
+ * Never throws: pi's refusals, a missing capability, and transient failures are
+ * returned as the matching {@link CompactionOutcome} arm with `branchMutated`
+ * telling the caller whether a retry is mechanically possible.
  *
  * @param session — The agent session to compact
  * @param customInstructions — Optional instructions for the compaction summary.
- *   When not provided, uses COMPACTION_FALLBACK_INSTRUCTIONS.
- * @returns The compaction result with summary and token metrics, or null if
- *   compaction was not available or failed.
+ *   When not provided, uses COMPACTION_FALLBACK_INSTRUCTIONS (the ladder's tier-1
+ *   "normal" call shape, unchanged since RUFU-118).
  */
 export async function compactSessionContext(
   session: AgentSession,
   customInstructions?: string,
-): Promise<{ summary: string; tokensBefore: number } | null> {
+): Promise<CompactionOutcome> {
   const instructions = customInstructions ?? COMPACTION_FALLBACK_INSTRUCTIONS;
 
-  // Check if session.compact is available (runtime capability detection)
+  // Runtime capability detection: a session without the native method can never compact.
   if (typeof (session as any).compact !== "function") {
-    return null;
+    return { reason: "unsupported", branchMutated: false, engineMessage: null };
   }
 
   try {
+    /*
+    FNXC:CompactionNoProgress 2026-09-04-16:35:
+    Snapshot the pure estimate BEFORE the call so the `estimatedTokensAfter`-absent fallback
+    compares like with like. Cheap (chars/4 over already-loaded messages) and always taken: the
+    cost of one wasted estimate is trivial next to misclassifying a real reduction.
+    */
+    const messageTokensBefore = estimateLoadedMessageTokens(session);
     const result = await (session as any).compact(instructions);
     if (result && typeof result === "object") {
+      const summary = typeof result.summary === "string" ? result.summary : "";
+      const tokensBefore =
+        typeof result.tokensBefore === "number" && Number.isFinite(result.tokensBefore)
+          ? result.tokensBefore
+          : 0;
+      const estimatedTokensAfter =
+        typeof result.estimatedTokensAfter === "number" && Number.isFinite(result.estimatedTokensAfter)
+          ? result.estimatedTokensAfter
+          : null;
+      /*
+      FNXC:CompactionNoProgress 2026-09-04-16:35:
+      Mechanical success is not progress. Gate on a non-empty summary first so an empty-summary
+      pass keeps RUFU-182's `compacted` + `reduced` reporting (the chat guard's `empty-summary`
+      reason owns that judgement and its landed tests must not move). Then, only when pi gave a
+      usable after-count, a >= comparison is `no-progress` on the `pi-reported` basis; when pi gave
+      nothing usable, compare the helper's own before/after message estimates (`pure-estimate`).
+      An unavailable measurement on EITHER side leaves the `compacted` arm alone — unknown is not
+      evidence of a non-reduction.
+      */
+      if (summary.trim().length > 0 && estimatedTokensAfter !== null && estimatedTokensAfter >= tokensBefore) {
+        return {
+          reason: "no-progress",
+          branchMutated: true,
+          tokensBefore,
+          estimatedTokensAfter,
+          basis: "pi-reported",
+        };
+      }
+      /*
+      FNXC:CompactionNoProgress 2026-09-04-16:35:
+      Fallback basis, gated on a POSITIVE pre-estimate. An empty (0) or absent message list is NOT
+      evidence of a non-reduction — the message array is only one contributor to pi's full-context
+      `tokensBefore` (prompt/tools/recorded usage live outside it), so `after >= 0` would fire on any
+      non-empty summary and fabricate progress loss where the real context may well have shrunk.
+      That is the RUFU-118 blind-estimator lesson inverted: unknown, or measured on the wrong basis,
+      must never be laundered into a refusal. Only a substantive (>0) message baseline makes the
+      like-for-like before/after comparison meaningful.
+      */
+      if (
+        summary.trim().length > 0 &&
+        estimatedTokensAfter === null &&
+        messageTokensBefore !== null &&
+        messageTokensBefore > 0
+      ) {
+        const messageTokensAfter = estimateLoadedMessageTokens(session);
+        if (messageTokensAfter !== null && messageTokensAfter >= messageTokensBefore) {
+          return {
+            reason: "no-progress",
+            branchMutated: true,
+            tokensBefore: messageTokensBefore,
+            estimatedTokensAfter: messageTokensAfter,
+            basis: "pure-estimate",
+          };
+        }
+      }
       return {
-        summary: result.summary ?? "",
-        tokensBefore: result.tokensBefore ?? 0,
+        reason: "compacted",
+        branchMutated: true,
+        summary,
+        tokensBefore,
+        estimatedTokensAfter,
+        reduced: estimatedTokensAfter !== null && estimatedTokensAfter < tokensBefore,
       };
     }
-    return null;
+    // pi appends the compaction entry before compact() resolves, so a falsy resolve contradicts
+    // the 0.84.4 contract. Treat it as an error arm (nothing proven appended) rather than
+    // laundering it into a refusal reason.
+    return classifyCompactionFailure(new Error("session.compact() produced no compaction result"));
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    piLog.warn(`Context compaction failed (will fall through to kill/requeue): ${msg}`);
-    return null;
+    return classifyCompactionFailure(err);
   }
 }
 
@@ -3463,20 +3738,21 @@ export async function createPiAgentSessionRaw(options: AgentOptions): Promise<Ag
 
         piLog.warn("promptWithFallback: context limit error — attempting auto-compaction");
         await flushMemoryBeforeSessionCompaction(activeSession);
-        const compactResult = await compactSessionContext(activeSession);
-        if (compactResult) {
-          piLog.log(`promptWithFallback: compaction succeeded (${compactResult.tokensBefore} tokens) — retrying prompt`);
-          try {
-            await promptSessionAndCheck(activeSession, prompt, effectivePromptOptions);
-            return;
-          } catch (retryErr: any) {
-            const retryErrorMessage = retryErr?.message || "";
-            piLog.error(`promptWithFallback: retry after auto-compaction failed: ${retryErrorMessage}`);
-            // Throw original error to preserve original context
-            throw err;
-          }
-        } else {
-          piLog.error("promptWithFallback: compaction unavailable — propagating original error");
+        const compactOutcome = await compactSessionContext(activeSession);
+        if (compactOutcome.reason !== "compacted") {
+          // RUFU-187: `no-progress` propagates the original error like every other failure — see
+          // the standalone promptWithFallback site for the shared lane sentence.
+          piLog.error(`promptWithFallback: ${describeCompactionUnavailable(compactOutcome)} — propagating original error`);
+          throw err;
+        }
+        piLog.log(`promptWithFallback: compaction succeeded (${compactOutcome.tokensBefore} tokens) — retrying prompt`);
+        try {
+          await promptSessionAndCheck(activeSession, prompt, effectivePromptOptions);
+          return;
+        } catch (retryErr: any) {
+          const retryErrorMessage = retryErr?.message || "";
+          piLog.error(`promptWithFallback: retry after auto-compaction failed: ${retryErrorMessage}`);
+          // Throw original error to preserve original context
           throw err;
         }
       }

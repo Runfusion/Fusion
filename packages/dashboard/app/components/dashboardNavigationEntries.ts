@@ -1,6 +1,6 @@
 import type { ComponentType } from "react";
 import type { LucideProps } from "lucide-react";
-import { Bot, Brain, Clock, Gauge, Lightbulb, LayoutGrid, Mail, PanelsTopLeft, Search, Settings, Sparkles, Target, Type, Workflow, Zap } from "lucide-react";
+import { Bot, Brain, Clock, Gauge, Lightbulb, LayoutGrid, Mail, MessageSquare, PanelsTopLeft, Search, Settings, Sparkles, Target, Type, Workflow, Zap } from "lucide-react";
 import type { PluginDashboardViewEntry } from "../api";
 import type { TaskView } from "../hooks/useViewState";
 import { buildPluginTaskViewId } from "../plugins/pluginViewRegistry";
@@ -41,6 +41,8 @@ export interface DashboardNavigationRegistryOptions {
 /*
 FNXC:DesktopNavigation 2026-09-11-21:48:
 The desktop footer owns primary navigation only. History remains on complete-column headers, while Chat and Notes belong to the explicit desktop right-dock host; removing those three footer entries prevents duplicate navigation owners without changing standard hosts.
+
+Operator decision: Chat returns to the footer as a direct page destination, because the dock launcher only reaches per-session windows and left no one-click route to the full Chat page. The `chat` route is live — MainViewKeepAlive retains and activates the Chat subtree — so the footer entry navigates rather than toggling a host. Notes and List remain dock-only, and the dock's list-only Chat launcher is unchanged.
 */
 export function buildDashboardNavigationEntries(options: DashboardNavigationRegistryOptions): DashboardNavigationEntry[] {
   const page = (id: string, label: string, view: TaskView, icon: ComponentType<LucideProps>, placement: DashboardNavigationPlacement = "overflow"): DashboardNavigationEntry => ({ id, label, view, icon, kind: "main-page", placement, testId: `desktop-nav-${id}`, onSelect: () => options.onChangeView(view) });
@@ -50,6 +52,8 @@ export function buildDashboardNavigationEntries(options: DashboardNavigationRegi
     page("planning", "Planning", "planning", Lightbulb, "direct"),
     page("missions", "Missions", "missions", Target, "direct"),
     ...(options.showAgents ? [page("agents", "Agents", "agents", Bot, "direct")] : []),
+    /* FNXC:AlphaDesktopNavigation 2026-09-15-07:00: The Chat dot mirrors the sidebar/mobile unread-response indicator and never marks the route the operator is already on. */
+    { ...page("chat", "Chat", "chat", MessageSquare, "direct"), dot: options.view !== "chat" && options.chatHasUnreadResponse ? "pending" as const : undefined },
     { ...page("mailbox", "Mailbox", "mailbox", Mail, "direct"), badge: options.mailboxUnreadCount, dot: options.view !== "mailbox" && (options.mailboxPendingApprovalCount ?? 0) > 0 ? "pending" as const : undefined },
   ];
   const plugins = [...(options.pluginDashboardViews ?? [])].sort((a, b) => (a.view.order ?? Number.MAX_SAFE_INTEGER) - (b.view.order ?? Number.MAX_SAFE_INTEGER)).map((entry) => {

@@ -43,6 +43,31 @@ function expectAscendingSingleColumnGeometry(menu: HTMLElement) {
 }
 
 describe("DesktopActionBar", () => {
+
+  /*
+  FNXC:DesktopNavigation 2026-09-15-07:00: Chat is a direct footer page again on operator request, so the bar renders
+  it in the centered scroller and routes it to the chat page. Ported onto DesktopActionBar when upstream renamed the
+  Alpha footer family and the old AlphaDesktopActionBar tests were deleted with the component.
+  */
+  it("renders Chat as a direct footer page destination", () => {
+    const onChangeView = vi.fn();
+    render(<DesktopActionBar entries={entries(onChangeView)} activeId="board" tasks={[]} />);
+    const chat = screen.getByTestId("desktop-nav-chat");
+    expect(chat).toHaveAccessibleName("Chat");
+    expect(document.querySelector(".desktop-action-bar__scroller")).toContainElement(chat);
+    fireEvent.click(chat);
+    expect(onChangeView).toHaveBeenCalledWith("chat");
+  });
+
+  it("marks Chat as unread outside the Chat route", () => {
+    const unread = render(<DesktopActionBar entries={entries(vi.fn(), { chatHasUnreadResponse: true })} activeId="board" tasks={[]} />);
+    expect(unread.getByTestId("desktop-nav-chat").querySelector(".status-dot--pending")).not.toBeNull();
+    unread.unmount();
+
+    const onChatRoute = render(<DesktopActionBar entries={entries(vi.fn(), { view: "chat", chatHasUnreadResponse: true })} activeId="chat" tasks={[]} />);
+    expect(onChatRoute.getByTestId("desktop-nav-chat").querySelector(".status-dot--pending")).toBeNull();
+  });
+
   beforeEach(() => {
     vi.mocked(useExecutorStats).mockReturnValue({ stats: { runningTaskCount: 0, maxConcurrent: 4 } as never, loading: false, error: null, refresh: vi.fn() });
   });
@@ -63,7 +88,11 @@ describe("DesktopActionBar", () => {
     expect(screen.queryByTestId("desktop-nav-terminal")).toBeNull();
     expect(document.querySelector(".desktop-action-bar__right")).toContainElement(screen.getByTestId("desktop-nav-settings"));
     expect(screen.queryByTestId("desktop-nav-patchnode")).toBeNull();
-    expect(screen.queryByTestId("desktop-nav-chat")).toBeNull();
+    /*
+    FNXC:DesktopNavigation 2026-09-15-07:00: Chat returned to the footer as a direct page destination on operator
+    request; this assertion encoded FN-417's removal and is updated with the restored entry.
+    */
+    expect(screen.getByTestId("desktop-nav-chat")).toHaveAccessibleName("Chat");
     expect(screen.queryByTestId("desktop-nav-notes")).toBeNull();
   });
 

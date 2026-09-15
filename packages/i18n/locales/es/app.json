@@ -1432,7 +1432,10 @@
     "conversationIdCopied": "",
     "copyConversationId": "",
     "questionOptionalLabel": "",
-    "questionSelectHintWithOptional": ""
+    "questionSelectHintWithOptional": "",
+    "contextTruncationUnproven": "",
+    "contextTruncationNotice_one": "",
+    "contextTruncationNotice_other": ""
   },
   "chatRooms": {
     "error": {
@@ -6373,6 +6376,8 @@
       "stashUrlLabel": "",
       "stashUrlPlaceholder": "",
       "uploadTaskAgentLogTranscriptToStash": "",
+      "chatContextBudget": "",
+      "chatContextBudgetHelp": "",
       "03": "",
       "agentsGetMemorySearchMemoryGetAndMemory": "",
       "agentsSearchWithQmdFirstFallBackTo": "",
@@ -6421,7 +6426,22 @@
       "qmdInstallFailed": "",
       "qmdInstallUnavailable": "",
       "saveBeforeCompacting": "",
-      "saveBeforeSwitching": ""
+      "saveBeforeSwitching": "",
+      "backendFile": "",
+      "backendHelp": "",
+      "backendLabel": "",
+      "backendQmd": "",
+      "backendReadonly": "",
+      "backendStash": "",
+      "capOnTranscriptEventsUploadedPerTask": "",
+      "executorSessionCapture": "",
+      "preOverflowCompaction": "",
+      "preOverflowCompactionHelp": "",
+      "maxTranscriptEventsPerTask": "",
+      "stashUrlHelp": "",
+      "stashUrlLabel": "",
+      "stashUrlPlaceholder": "",
+      "uploadTaskAgentLogTranscriptToStash": ""
     },
     "merge": {
       "abort": "",
