@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { ScheduledTasksModal } from "../ScheduledTasksModal";
+import { FLOATING_WINDOW_STANDARD_HEIGHT_RATIO } from "../FloatingWindow";
 import { readAppFile } from "../../test/cssFixture";
 import { assertModalGeometryRecoveryAndSheetContracts, assertRenderedModalTouchGeometry } from "./floatingWindowMigration.test-helpers";
 import type { Routine } from "@fusion/core";
@@ -91,6 +92,15 @@ vi.mock("../CustomModelDropdown", () => ({
   ),
 }));
 
+/*
+FNXC:AutomationsWindow 2026-09-15-13:41:
+FN-418 caps the standard OPENING height at a proportion of the live work area, so the expected height is
+derived from that contract instead of the 640px this host declares. The window-shell invariant is unchanged.
+*/
+function standardOpeningHeight(requested: number): number {
+  return Math.min(requested, Math.round(window.innerHeight * FLOATING_WINDOW_STANDARD_HEIGHT_RATIO));
+}
+
 function setViewport(width: number, height: number) {
   Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
   Object.defineProperty(window, "innerHeight", { configurable: true, value: height });
@@ -158,7 +168,7 @@ describe("ScheduledTasksModal", () => {
     expect(panel).toHaveClass("floating-window--automation");
     expect(panel).toHaveClass("floating-window--headerless");
     expect(panel.style.width).toBe("720px");
-    expect(panel.style.height).toBe("640px");
+    expect(panel.style.height).toBe(`${standardOpeningHeight(640)}px`);
     expect(screen.queryByTestId("floating-window-drag-handle-automation")).toBeNull();
     expect(screen.getAllByRole("button", { name: "Close" })).toHaveLength(1);
 

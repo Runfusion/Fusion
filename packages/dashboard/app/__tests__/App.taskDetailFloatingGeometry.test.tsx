@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, beforeEach } from "vitest";
 import { DashboardWindowManagerProvider } from "../context/DashboardWindowManagerContext";
-import { FloatingWindow } from "../components/FloatingWindow";
+import { FLOATING_WINDOW_STANDARD_HEIGHT_RATIO, FloatingWindow } from "../components/FloatingWindow";
 
 /*
 FNXC:TaskWindowIdentity 2026-09-14-21:10:
@@ -9,9 +9,20 @@ FN-394 deleted the shared `floating-window:task-detail` geometry key together wi
 rectangle. Two task windows no longer inherit one another's size or place, a reopened task restarts at
 the standard task size, and task windows now share ONE stack with every other window type instead of
 sitting in a permanently lower band.
+
+FNXC:TaskWindowIdentity 2026-09-15-13:41:
+FN-418 caps the standard OPENING height at a proportion of the live work area, so the expected height is
+derived from that contract instead of the host's declared 620px literal. The identity invariant is unchanged:
+two task windows still open at the same standard rectangle and the legacy record is still ignored.
 */
 
 const LEGACY_TASK_DETAIL_GEOMETRY_KEY = "floating-window:task-detail";
+const TASK_DEFAULT_HEIGHT = 620;
+
+/** Opening height under the FN-418 proportional cap. No landmarks here, so the work area is the viewport. */
+function openingHeight(): number {
+  return Math.min(TASK_DEFAULT_HEIGHT, Math.round(window.innerHeight * FLOATING_WINDOW_STANDARD_HEIGHT_RATIO));
+}
 
 function taskWindow(taskId: string) {
   return (
@@ -22,7 +33,7 @@ function taskWindow(taskId: string) {
       hideHeader
       dragHandleSelector=".task-detail-content--embedded > .modal-header"
       className="floating-window--task-detail"
-      defaultSize={{ width: 820, height: 620 }}
+      defaultSize={{ width: 820, height: TASK_DEFAULT_HEIGHT }}
       layer="task-detail"
     >
       <div className="task-detail-content--embedded">
@@ -53,14 +64,14 @@ describe("task-detail FloatingWindow geometry", () => {
     const first = renderTaskDetailPopup("FN-7459-A");
     const firstPanel = screen.getByTestId("floating-window-task-detail-FN-7459-A");
     expect(firstPanel.style.width).toBe("820px");
-    expect(firstPanel.style.height).toBe("620px");
+    expect(firstPanel.style.height).toBe(`${openingHeight()}px`);
 
     first.unmount();
     renderTaskDetailPopup("FN-7459-B");
 
     const secondPanel = screen.getByTestId("floating-window-task-detail-FN-7459-B");
     expect(secondPanel.style.width).toBe("820px");
-    expect(secondPanel.style.height).toBe("620px");
+    expect(secondPanel.style.height).toBe(`${openingHeight()}px`);
     expect(secondPanel).toHaveClass("floating-window--task-detail");
     // The legacy record is neither used nor rewritten; FN-394 performs no purge.
     expect(localStorage.getItem(LEGACY_TASK_DETAIL_GEOMETRY_KEY)).toBe(legacy);

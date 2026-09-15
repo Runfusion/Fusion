@@ -1,7 +1,11 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DashboardWindowManagerProvider, useDashboardWindowLandmark } from "../../context/DashboardWindowManagerContext";
-import { FloatingWindow } from "../FloatingWindow";
+import {
+  FLOATING_WINDOW_STANDARD_HEIGHT_RATIO,
+  FLOATING_WINDOW_TASK_STANDARD_HEIGHT,
+  FloatingWindow,
+} from "../FloatingWindow";
 import { TerminalModal, _resetInitialViewportHeight } from "../TerminalModal";
 
 /*
@@ -19,6 +23,17 @@ rendered rectangle plus the shared stacking order:
 
 const HEADER_HEIGHT = 64;
 const FOOTER_HEIGHT = 36;
+
+/*
+FNXC:TerminalWindow 2026-09-15-13:41:
+FN-418 caps the standard OPENING height at a proportion of the live work area, so the parity assertion derives
+the expected height from that contract. The parity invariant is unchanged: a detached terminal still opens at
+the same standard rectangle as a task window.
+*/
+function standardOpeningHeight(): number {
+  const workArea = window.innerHeight - HEADER_HEIGHT - FOOTER_HEIGHT;
+  return Math.min(FLOATING_WINDOW_TASK_STANDARD_HEIGHT, Math.round(workArea * FLOATING_WINDOW_STANDARD_HEIGHT_RATIO));
+}
 
 vi.mock("../../hooks/useTerminal", () => ({ useTerminal: vi.fn() }));
 vi.mock("../../hooks/useTerminalSessions", () => ({ useTerminalSessions: vi.fn() }));
@@ -196,7 +211,7 @@ describe("detached terminal window parity", () => {
 
     const panel = await screen.findByTestId("floating-window-terminal-parity-size");
     await waitFor(() => expect(rectOf(panel).width).toBe(800));
-    expect(rectOf(panel).height).toBe(680);
+    expect(rectOf(panel).height).toBe(standardOpeningHeight());
   });
 
   it("snaps the detached terminal to the right half from its own header", async () => {

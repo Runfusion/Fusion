@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DashboardWindowManagerProvider } from "../../context/DashboardWindowManagerContext";
 import {
   FLOATING_WINDOW_CASCADE_STEP_PX,
+  FLOATING_WINDOW_STANDARD_HEIGHT_RATIO,
   FLOATING_WINDOW_TASK_STANDARD_HEIGHT,
   FLOATING_WINDOW_TASK_STANDARD_WIDTH,
   FloatingWindow,
@@ -20,6 +21,11 @@ FNXC:ChatWindows 2026-09-15-04:01:
 FN-401 adds the shared-size symptom assertion: a detached conversation must open at EXACTLY the task-window
 standard geometry (it used to open at 980x680 beside an 800x680 task window). The constants are imported
 rather than re-typed so a future size change cannot leave this suite asserting a stale literal.
+
+FNXC:ChatWindows 2026-09-15-13:41:
+FN-418 caps the standard OPENING height at a proportion of the live work area, so the expected height is
+derived from that contract (`openingHeight()`) instead of the raw task-standard constant. The FN-401
+invariant is unchanged and still asserted: chat and task windows open at the SAME rectangle.
 */
 
 vi.mock("../ChatView", () => ({
@@ -27,7 +33,11 @@ vi.mock("../ChatView", () => ({
 }));
 
 const CHAT_WIDTH = FLOATING_WINDOW_TASK_STANDARD_WIDTH;
-const CHAT_HEIGHT = FLOATING_WINDOW_TASK_STANDARD_HEIGHT;
+
+/** Opening height under the FN-418 proportional cap. No landmarks here, so the work area is the viewport. */
+function openingHeight(requested = FLOATING_WINDOW_TASK_STANDARD_HEIGHT): number {
+  return Math.min(requested, Math.round(window.innerHeight * FLOATING_WINDOW_STANDARD_HEIGHT_RATIO));
+}
 
 const entry = (id: string, projectId = "project-a") => ({
   projectId,
@@ -86,18 +96,19 @@ describe("PoppedOutChatWindows cascade", () => {
     const second = screen.getByTestId("floating-window-chat-window-project-a-second");
     await waitFor(() => expect(Number.parseFloat(second.style.width)).toBe(CHAT_WIDTH));
 
+    const chatHeight = openingHeight();
     expect(rectOf(first)).toEqual({
       left: (window.innerWidth - CHAT_WIDTH) / 2,
-      top: (window.innerHeight - CHAT_HEIGHT) / 2,
+      top: (window.innerHeight - chatHeight) / 2,
       width: CHAT_WIDTH,
-      height: CHAT_HEIGHT,
+      height: chatHeight,
     });
     // The cascade only moves the second window: it keeps the full standard Chat size.
     expect(rectOf(second)).toEqual({
       left: (window.innerWidth - CHAT_WIDTH) / 2 + FLOATING_WINDOW_CASCADE_STEP_PX,
-      top: (window.innerHeight - CHAT_HEIGHT) / 2 + FLOATING_WINDOW_CASCADE_STEP_PX,
+      top: (window.innerHeight - chatHeight) / 2 + FLOATING_WINDOW_CASCADE_STEP_PX,
       width: CHAT_WIDTH,
-      height: CHAT_HEIGHT,
+      height: chatHeight,
     });
   });
 
@@ -113,9 +124,9 @@ describe("PoppedOutChatWindows cascade", () => {
     await waitFor(() => expect(Number.parseFloat(first.style.width)).toBe(CHAT_WIDTH));
     expect(rectOf(first)).toEqual({
       left: (window.innerWidth - CHAT_WIDTH) / 2,
-      top: (window.innerHeight - CHAT_HEIGHT) / 2,
+      top: (window.innerHeight - openingHeight()) / 2,
       width: CHAT_WIDTH,
-      height: CHAT_HEIGHT,
+      height: openingHeight(),
     });
     expect(setItem.mock.calls.some(([key]) => String(key).includes("chat-floating-window"))).toBe(false);
     setItem.mockRestore();
@@ -168,6 +179,6 @@ describe("PoppedOutChatWindows cascade", () => {
     expect(chatRect.width).toBe(taskRect.width);
     expect(chatRect.height).toBe(taskRect.height);
     expect(chatRect.width).toBe(FLOATING_WINDOW_TASK_STANDARD_WIDTH);
-    expect(chatRect.height).toBe(FLOATING_WINDOW_TASK_STANDARD_HEIGHT);
+    expect(chatRect.height).toBe(openingHeight());
   });
 });

@@ -1,7 +1,11 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useDashboardWindowLandmark, DashboardWindowManagerProvider } from "../../context/DashboardWindowManagerContext";
-import { FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT, FloatingWindow } from "../FloatingWindow";
+import {
+  FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT,
+  FLOATING_WINDOW_STANDARD_HEIGHT_RATIO,
+  FloatingWindow,
+} from "../FloatingWindow";
 
 const rects = {
   header: { left: 0, top: 0, right: 1280, bottom: 64, width: 1280, height: 64 },
@@ -11,6 +15,15 @@ const rects = {
 };
 
 let resizeObservers: Array<() => void> = [];
+
+/** FloatingWindow's default minimum height: it still wins over the FN-418 proportional opening cap. */
+const DEFAULT_MIN_HEIGHT = 280;
+
+/** Standard opening height of a 500px-tall host in a work area of `areaHeight` (FN-418 cap, then clamps). */
+function standardHeight(areaHeight: number): number {
+  const capped = Math.min(500, Math.round(areaHeight * FLOATING_WINDOW_STANDARD_HEIGHT_RATIO));
+  return Math.min(Math.max(capped, DEFAULT_MIN_HEIGHT), areaHeight);
+}
 
 function domRect(value: Omit<DOMRect, "x" | "y" | "toJSON">): DOMRect {
   return { ...value, x: value.left, y: value.top, toJSON: () => ({}) };
@@ -159,34 +172,47 @@ describe("FloatingWindow available shell bounds", () => {
     expect(panel.style.top).toBe("0px");
   });
 
+  /*
+  FNXC:FloatingWindowBounds 2026-09-15-13:41:
+  FN-418 caps the standard OPENING height at a proportion of the live work area, so this fixture derives the
+  opened height from that contract and asks for a `y` that is STILL clamped by the shorter alpha footer.
+  The intent is unchanged: the mounted window must be re-clamped against the new work area on both axes.
+  */
   it("reclamps mounted geometry after dock, footer, and viewport changes and emits geometry", async () => {
     const geometryEvents = vi.fn();
     window.addEventListener(FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT, geometryEvents);
+    // Opening height against the initial work area (header + standard footer) and, after the rerender, against
+    // the taller alpha-footer work area — a still-pristine window re-resolves its standard size.
+    const openedHeight = standardHeight(800 - 64 - 36);
+    const alphaFooterHeight = standardHeight(800 - 64 - 48);
     const { rerender } = render(
       <DashboardWindowManagerProvider>
         <Landmarks dock={false} />
-        <FloatingWindow windowKey="dynamic" title="Dynamic" onClose={() => {}} defaultSize={{ width: 600, height: 500 }} defaultPosition={{ x: 680, y: 264 }}>body</FloatingWindow>
+        <FloatingWindow windowKey="dynamic" title="Dynamic" onClose={() => {}} defaultSize={{ width: 600, height: 500 }} defaultPosition={{ x: 680, y: 400 }}>body</FloatingWindow>
       </DashboardWindowManagerProvider>,
     );
     const panel = screen.getByTestId("floating-window-dynamic");
     await waitFor(() => expect(panel.style.left).toBe("680px"));
+    expect(Number.parseFloat(panel.style.height)).toBe(openedHeight);
 
     rerender(
       <DashboardWindowManagerProvider>
         <Landmarks dock alphaFooter />
-        <FloatingWindow windowKey="dynamic" title="Dynamic" onClose={() => {}} defaultSize={{ width: 600, height: 500 }} defaultPosition={{ x: 680, y: 264 }}>body</FloatingWindow>
+        <FloatingWindow windowKey="dynamic" title="Dynamic" onClose={() => {}} defaultSize={{ width: 600, height: 500 }} defaultPosition={{ x: 680, y: 400 }}>body</FloatingWindow>
       </DashboardWindowManagerProvider>,
     );
     resizeObservers.forEach((notify) => notify());
     await waitFor(() => expect(panel.style.left).toBe("380px"));
-    expect(panel.style.top).toBe("252px");
+    // Bottom of the alpha-footer work area minus the window height: the vertical clamp is still exercised.
+    expect(panel.style.top).toBe(`${rects.alphaFooter.top - alphaFooterHeight}px`);
 
     Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 900 });
     Object.defineProperty(window, "innerHeight", { configurable: true, writable: true, value: 500 });
     fireEvent(window, new Event("resize"));
     await waitFor(() => {
+      // Width still fills the shrunken work area; height follows the standard opening contract for it.
       expect(Number.parseFloat(panel.style.width)).toBe(900 - 300);
-      expect(Number.parseFloat(panel.style.height)).toBe(500 - 64 - 48);
+      expect(Number.parseFloat(panel.style.height)).toBe(standardHeight(500 - 64 - 48));
     });
     expect(geometryEvents).toHaveBeenCalled();
     window.removeEventListener(FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT, geometryEvents);

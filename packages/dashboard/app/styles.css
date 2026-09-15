@@ -187,6 +187,16 @@ html {
   --radius-sm: 4px;
   --radius-md: 8px;
   --radius-lg: 12px;
+  /*
+  FNXC:ModalChrome 2026-09-15-13:41:
+  FN-418: a dialog laid directly on `.modal-overlay` used to open up to 80vh, which reads as a full-height
+  panel on an ordinary laptop. Its default ceiling now matches the FN-418 window opening ratio (~62% of the
+  viewport) so both dialog families look like windows rather than full screens. This ceiling applies ONLY to
+  those non-hosted dialogs (SettingsModal's nested sub-dialogs, NewTaskModal's mobile drawer): a modal hosted
+  by FloatingWindow is neutralised by `height: 100%; max-height: none` in FloatingWindow.css, so the JS
+  geometry keeps sole authority over a window's size. `dvh` follows mobile browser chrome as it retracts.
+  */
+  --modal-default-max-height: 62dvh;
   --radius-xl: 16px;
   --radius-pill: 10px;
 
@@ -1394,7 +1404,7 @@ re-couple the two axes the product now presents as independent.
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   width: 480px;
-  max-height: 80vh;
+  max-height: var(--modal-default-max-height, 62dvh);
   box-shadow: var(--shadow-lg);
   display: flex;
   flex-direction: column;

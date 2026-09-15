@@ -6,6 +6,7 @@ import { loadAllAppCss, loadStylesCss } from "../../test/cssFixture";
 import {
   FLOATING_WINDOW_CASCADE_STEP_PX,
   FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT,
+  FLOATING_WINDOW_STANDARD_HEIGHT_RATIO,
   FloatingWindow,
 } from "../FloatingWindow";
 import { readAppFile } from "../../test/cssFixture";
@@ -978,7 +979,14 @@ describe("FloatingWindow", () => {
         <div>terminal body</div>
       </FloatingWindow>,
     );
-    expect(screen.getByTestId("floating-window-terminal-project-one")).toHaveStyle({ width: "640px", height: "480px" });
+    /*
+    FNXC:FloatingWindow 2026-09-15-13:41:
+    FN-418 caps the standard opening height at a proportion of the live work area, so the expected height is
+    derived from that contract rather than from the declared 480px. The identity invariant is unchanged: the
+    replaced identity must open at the SAME standard rectangle, never the other project's stored one.
+    */
+    const standardHeight = Math.min(480, Math.round(window.innerHeight * FLOATING_WINDOW_STANDARD_HEIGHT_RATIO));
+    expect(screen.getByTestId("floating-window-terminal-project-one")).toHaveStyle({ width: "640px", height: `${standardHeight}px` });
 
     rerender(
       <FloatingWindow windowKey="terminal-project-two" title="Terminal" onClose={() => {}} persistGeometryKey={secondKey} defaultSize={{ width: 640, height: 480 }}>
@@ -987,7 +995,7 @@ describe("FloatingWindow", () => {
     );
 
     // A replaced identity is a NEW opening: the same standard size, never the other project's rectangle.
-    expect(screen.getByTestId("floating-window-terminal-project-two")).toHaveStyle({ width: "640px", height: "480px" });
+    expect(screen.getByTestId("floating-window-terminal-project-two")).toHaveStyle({ width: "640px", height: `${standardHeight}px` });
     expect(JSON.parse(localStorage.getItem(firstKey) ?? "{}")).toEqual(firstGeometry);
   });
 

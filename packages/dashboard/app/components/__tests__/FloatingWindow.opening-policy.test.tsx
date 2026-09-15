@@ -1,7 +1,11 @@
 import { cleanup, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DashboardWindowManagerProvider, useDashboardWindowLandmark } from "../../context/DashboardWindowManagerContext";
-import { FLOATING_WINDOW_CASCADE_STEP_PX, FloatingWindow } from "../FloatingWindow";
+import {
+  FLOATING_WINDOW_CASCADE_STEP_PX,
+  FLOATING_WINDOW_STANDARD_HEIGHT_RATIO,
+  FloatingWindow,
+} from "../FloatingWindow";
 
 /*
 FNXC:FloatingWindowGeometry 2026-09-14-21:10:
@@ -9,10 +13,29 @@ FN-394 opening policy, asserted on the RENDERED rectangle of real windows rather
 values: every window opens at its OWN standard size, centred in the live work area, uninfluenced by
 storage, by another window's placement, or by an occupied snap zone. The one exception is the shared
 cohort of still-pristine floating windows, which step by 28px and NEVER shrink to make room.
+
+FNXC:FloatingWindowGeometry 2026-09-15-13:41:
+FN-418 adds the proportional OPENING cap to that same policy: a window must never open filling the whole band
+between header and footer, even when its host asks for more pixels than that band holds. Expected heights are
+derived from `openingHeight()` so a future ratio change cannot leave this suite asserting a stale literal.
 */
 
 const HEADER_HEIGHT = 64;
 const FOOTER_HEIGHT = 36;
+
+/** Live work-area height in this harness: the band between the measured header and footer landmarks. */
+function workAreaHeight(): number {
+  return window.innerHeight - HEADER_HEIGHT - FOOTER_HEIGHT;
+}
+
+/** FloatingWindow's default minimum height: it still wins over the FN-418 cap on a short work area. */
+const DEFAULT_MIN_HEIGHT = 280;
+
+/** Opening height a host asking for `requested` actually gets under the FN-418 proportional cap. */
+function openingHeight(requested: number, minHeight = DEFAULT_MIN_HEIGHT): number {
+  const capped = Math.min(requested, Math.round(workAreaHeight() * FLOATING_WINDOW_STANDARD_HEIGHT_RATIO));
+  return Math.min(Math.max(capped, minHeight), workAreaHeight());
+}
 
 function domRect(value: { left: number; top: number; right: number; bottom: number; width: number; height: number }): DOMRect {
   return { ...value, x: value.left, y: value.top, toJSON: () => ({}) } as DOMRect;
@@ -107,11 +130,12 @@ describe("FloatingWindow opening policy", () => {
 
     expectCentered(alpha, { width: 600, height: 400 });
     // Beta keeps its own standard size — the cascade only displaces it.
+    const betaHeight = openingHeight(520);
     const betaRect = rectOf(beta);
     expect(betaRect.width).toBe(820);
-    expect(betaRect.height).toBe(520);
+    expect(betaRect.height).toBe(betaHeight);
     expect(betaRect.left).toBe((window.innerWidth - 820) / 2 + FLOATING_WINDOW_CASCADE_STEP_PX);
-    expect(betaRect.top).toBe(HEADER_HEIGHT + (window.innerHeight - HEADER_HEIGHT - FOOTER_HEIGHT - 520) / 2 + FLOATING_WINDOW_CASCADE_STEP_PX);
+    expect(betaRect.top).toBe(HEADER_HEIGHT + (workAreaHeight() - betaHeight) / 2 + FLOATING_WINDOW_CASCADE_STEP_PX);
   });
 
   it("ignores prefilled, invalid, and failing storage and never writes geometry", async () => {
@@ -194,10 +218,57 @@ describe("FloatingWindow opening policy", () => {
         <FloatingWindow windowKey="beta" title="Beta" onClose={() => {}} defaultSize={{ width: 640, height: 320 }}>b</FloatingWindow>
       </DashboardWindowManagerProvider>,
     );
+    const alpha = screen.getByTestId("floating-window-alpha");
     const beta = screen.getByTestId("floating-window-beta");
     await waitFor(() => expect(Number.parseFloat(beta.style.width)).toBe(640));
-    // Overlap is preferred over any size reduction.
-    expect(rectOf(beta).height).toBe(320);
+    // Overlap is preferred over any size reduction: beta opens at exactly the same standard height as alpha.
+    // On this very short work area the default minimum height dominates the proportional cap.
+    expect(openingHeight(320)).toBe(DEFAULT_MIN_HEIGHT);
+    expect(rectOf(beta).height).toBe(openingHeight(320));
+    expect(rectOf(beta).height).toBe(rectOf(alpha).height);
+  });
+
+  /*
+  FNXC:FloatingWindowGeometry 2026-09-15-13:41:
+  FN-418 symptom assertion: on a realistic laptop work area (1024x768 viewport, 64px header, 36px footer =>
+  668px), a host asking for 720px used to open at 668px — 100% of the band between header and footer, which is
+  exactly what the operator reported. The opening height must now land inside the requested 60/65% range while
+  the window stays centred, and a host already below the cap must be left alone.
+  */
+  it("opens a tall window at about two thirds of the work area instead of filling it", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 1024 });
+    Object.defineProperty(window, "innerHeight", { configurable: true, writable: true, value: 768 });
+    render(
+      <DashboardWindowManagerProvider>
+        <Landmarks />
+        <FloatingWindow windowKey="tall" title="Tall" onClose={() => {}} defaultSize={{ width: 720, height: 720 }}>settings</FloatingWindow>
+      </DashboardWindowManagerProvider>,
+    );
+    const panel = screen.getByTestId("floating-window-tall");
+    await waitFor(() => expect(Number.parseFloat(panel.style.width)).toBe(720));
+
+    expect(workAreaHeight()).toBe(668);
+    const rect = rectOf(panel);
+    expect(rect.height).toBe(414);
+    expect(rect.height).toBeLessThan(workAreaHeight());
+    const ratio = rect.height / workAreaHeight();
+    expect(ratio).toBeGreaterThanOrEqual(0.6);
+    expect(ratio).toBeLessThanOrEqual(0.65);
+    expectCentered(panel, { width: 720, height: 414 });
+  });
+
+  it("leaves a window that already fits below the cap at its own size", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 1024 });
+    Object.defineProperty(window, "innerHeight", { configurable: true, writable: true, value: 768 });
+    render(
+      <DashboardWindowManagerProvider>
+        <Landmarks />
+        <FloatingWindow windowKey="short" title="Short" onClose={() => {}} defaultSize={{ width: 520, height: 400 }}>dialog</FloatingWindow>
+      </DashboardWindowManagerProvider>,
+    );
+    const panel = screen.getByTestId("floating-window-short");
+    await waitFor(() => expect(Number.parseFloat(panel.style.width)).toBe(520));
+    expectCentered(panel, { width: 520, height: 400 });
   });
 
   it("does not mark a window as user-adjusted when the shell resizes it", async () => {

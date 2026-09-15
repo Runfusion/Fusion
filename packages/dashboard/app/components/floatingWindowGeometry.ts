@@ -50,6 +50,20 @@ minimum so it remains usable inside a half-width snap column.
 */
 export const FLOATING_WINDOW_TASK_STANDARD_WIDTH = 800;
 export const FLOATING_WINDOW_TASK_STANDARD_HEIGHT = 680;
+/*
+FNXC:FloatingWindowGeometry 2026-09-15-13:41:
+FN-418: an opening height expressed in FIXED PIXELS was only ever clamped DOWN to the work area, so any
+work area shorter than the requested height produced a window filling 100% of the band between header and
+footer — the exact "why do modals open that large?" report. A laptop work area is commonly 600-700px while
+hosts request 720 (Settings) or 680 (task/chat), so the clamp hit constantly.
+
+The standard OPENING height is therefore additionally capped to a proportion of the LIVE work area (62%,
+inside the 60/65% the operator asked for). The cap applies at opening only: `minSize` still wins over it
+(`clampFloatingWindowSize` keeps its max-then-min order), the live work area still has the last word, and
+snapping, manual resizing, restore-after-snap, and mobile full-screen sheets are untouched. Width is never
+capped — the request was about height alone.
+*/
+export const FLOATING_WINDOW_STANDARD_HEIGHT_RATIO = 0.62;
 /** Shared cascade step for the pristine-window cohort. Identical for every window type (DRY with chats). */
 export const FLOATING_WINDOW_CASCADE_STEP_PX = 28;
 /*
@@ -108,7 +122,10 @@ export function clampFloatingWindowRect(
   return { size, position: clampFloatingWindowPosition(rect.position, size, bounds) };
 }
 
-/** The window's own standard size, clamped to the live work area. Never derived from another window. */
+/**
+ * The window's own standard size: capped to {@link FLOATING_WINDOW_STANDARD_HEIGHT_RATIO} of the live work
+ * area (height only, FN-418) and then clamped to that area. Never derived from another window.
+ */
 export function resolveStandardSize(
   defaultSize: FloatingWindowSize | undefined,
   minSize: FloatingWindowSize,
@@ -117,7 +134,10 @@ export function resolveStandardSize(
   const requested = defaultSize && finite(defaultSize.width, defaultSize.height)
     ? defaultSize
     : { width: FLOATING_WINDOW_STANDARD_WIDTH, height: FLOATING_WINDOW_STANDARD_HEIGHT };
-  return clampFloatingWindowSize(requested, minSize, bounds);
+  const proportional = Number.isFinite(bounds.height) && bounds.height > 0
+    ? Math.min(requested.height, Math.round(bounds.height * FLOATING_WINDOW_STANDARD_HEIGHT_RATIO))
+    : requested.height;
+  return clampFloatingWindowSize({ width: requested.width, height: proportional }, minSize, bounds);
 }
 
 /** Centre of the live work area for a given size. */
