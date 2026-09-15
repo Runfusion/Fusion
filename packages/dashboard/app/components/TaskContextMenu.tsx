@@ -120,10 +120,14 @@ export interface BuildTaskActionMenuModelOptions {
   onDelete?: () => void;
   onDuplicate?: () => void;
   /*
-  FNXC:TaskContextMenu 2026-07-13-00:00:
-  Pre-execution task cards can open the same Planning Mode handoff as inline create, but only hosts that wire a planning route should expose the action so dock/plugin/detail surfaces never render a dead Plan item.
+  FNXC:TaskContextMenu 2026-09-15-10:40:
+  FN-417 removes the `merge` review action from every TASK CONTEXT MENU because the engine drives
+  delivery automatically; the single remaining manual merge command is Task Detail's review footer
+  button. The descriptor is therefore OPT-IN: hosts that render the model as a popup menu leave this
+  flag unset and get `reviewAction === undefined` for merge-shaped verdicts, while `start-pr-review`,
+  `check-pr-status`, and the disabled `pr-automation` note are unaffected in every host.
   */
-  onPlan?: () => void;
+  includeMergeCompletionAction?: boolean;
   onOpenRefine?: () => void;
   onRetry?: () => void;
   onReset?: () => void;
@@ -162,8 +166,9 @@ review column" for every card during first paint.
 
 NOTE, flagged not fixed: the id is currently an UNCONDITIONAL disjunct, so explicit
 `{ mergeBlocker: false, humanReview: false }` on a column named `in-review` is still classified as
-review. #2664 fixed exactly that shape in `isPreExecutionHoldColumn` (traits first, id as fallback).
-Same fix belongs here, but it is a BEHAVIOR CHANGE and out of scope for a conversion batch.
+review. #2664 fixed exactly that shape elsewhere by INVERTING the read — traits first, id only as the
+degraded answer when no flags arrive. The same inversion belongs here, but it is a BEHAVIOR CHANGE
+and out of scope for a conversion batch.
 */
 function isReviewColumn(column: string, flags?: TaskContextMenuColumnFlags): boolean {
   return column === "in-review" || flags?.mergeBlocker === true || flags?.humanReview === true;
@@ -188,51 +193,21 @@ function isMutableLiveColumn(column: string, flags?: TaskContextMenuColumnFlags)
   return column !== "done";
 }
 
-export function isPreExecutionHoldColumn(column: string, flags?: TaskContextMenuColumnFlags): boolean {
-  if (flags?.complete === true) return false;
-  /*
-  FNXC:WorkflowResolvedColumns 2026-07-30-18:35 (Phase B — AUDITED, deliberately NOT consolidated):
-  `isPreImplementationColumnRole` in `utils/columnRoles.ts` answers a near-identical question and I
-  routed this through it — then reverted, because its DEGRADED-MODE answer is wider than this one's.
-
-  Its legacy set is {todo, triage}; this predicate's was {triage} alone. They differ for a reason:
-  that helper drives the preserve-progress prompt, where a flagless `todo` should prompt (losing
-  steps is unrecoverable), while THIS drives the Plan affordance, where a flagless `todo` must not
-  offer to re-plan a card that may already be planned. Consolidating added `plan` to flagless `todo`
-  cards — caught by "exposes Plan only for pre-execution hold columns".
-
-  Same shape, different degraded answer: the trait path is identical and the fallbacks are not
-  interchangeable. Kept separate with the difference recorded, rather than made to look shared.
-  */
-  /*
-  FNXC:WorkflowLifecycleColumns 2026-07-30-08:00 (U12 — the LAST `triage` column guard):
-  FLAGS-FIRST, id only as the degraded answer. It used to OR the legacy id with the traits
-  UNCONDITIONALLY, which is not a fallback: a resolved column that happens to be named `triage` but
-  whose traits say it is mid-flight answered true, offering Plan on a card that is already executing.
-
-  The degraded set stays {triage} ALONE — deliberately not the {todo, triage} used by
-  `isPreImplementationColumnRole`, for the reason recorded above: that helper drives the
-  preserve-progress prompt where a flagless `todo` should prompt, while this drives the Plan
-  affordance where a flagless `todo` must not offer to re-plan a possibly-planned card.
-
-  Behaviour delta is exactly the inversion. Flags absent: unchanged (`column === "triage"`). Flags
-  present and intake/hold: unchanged (true). Flags present, name `triage`, traits mid-flight: was
-  true, now false — which is the defect.
-
-  DELIBERATE-LITERAL: the surviving `triage` is the DEGRADED answer, not an unconverted guard, and it
-  is the last `triage` comparison in production source. Converting it is not available — there is no
-  trait to read when `flags` is undefined, which happens during first paint and for a card in a column
-  its workflow no longer declares. Deleting it would silently withdraw Plan from exactly the stranded
-  cards that need re-planning most.
-
-  So the census reaching zero for `triage` means "no unconverted guards remain", not "the string is
-  gone". Recorded here rather than achieved by deleting a fallback to move a number.
-  */
-  return flags ? (flags.intake === true || flags.hold === true) : column === "triage";
-}
+/*
+FNXC:TaskContextMenu 2026-09-15-10:40:
+FN-417 deleted `isPreExecutionHoldColumn` together with its only production consumer, the `plan`
+menu descriptor: the engine plans cards automatically, so a manual Plan affordance in a task context
+menu no longer corresponds to anything an operator drives. That predicate carried the LAST `triage`
+comparison recorded for this file, so its removal drops the TaskContextMenu.tsx/triage entry from the
+lifecycle-column census baseline — `scripts/lib/lifecycle-column-census-baseline.json` must be
+re-sealed, otherwise `pnpm check:lifecycle-columns` fails `stale` on the DROP (a fall diverges from
+the baseline exactly like a rise). The surviving DELIBERATE-LITERAL fallbacks above
+(`isReviewColumn`, `isDoneOrReview`, `isMutableLiveColumn`) are untouched: they are first-paint
+degraded answers, not unconverted guards.
+*/
 export function getTaskReviewAction(
   task: Task | TaskDetail,
-  options: Pick<BuildTaskActionMenuModelOptions, "t" | "currentColumnFlags" | "mergeStrategy" | "autoMergeEnabled" | "prAutomationLabel" | "isCheckingPrStatus" | "onMerge" | "onStartPrReview" | "onCheckPrStatus">,
+  options: Pick<BuildTaskActionMenuModelOptions, "t" | "currentColumnFlags" | "mergeStrategy" | "autoMergeEnabled" | "prAutomationLabel" | "isCheckingPrStatus" | "includeMergeCompletionAction" | "onMerge" | "onStartPrReview" | "onCheckPrStatus">,
 ): TaskReviewActionDescriptor | undefined {
   const currentColumnFlags = options.currentColumnFlags;
   if (!isReviewColumn(task.column, currentColumnFlags)) {
@@ -259,11 +234,23 @@ export function getTaskReviewAction(
       };
     }
     if (prStatus === "merged") {
-      return { id: "merge", label: options.t("taskDetail.pr.finishAndClose", "Finish & Close"), onSelect: options.onMerge };
+      return options.includeMergeCompletionAction
+        ? { id: "merge", label: options.t("taskDetail.pr.finishAndClose", "Finish & Close"), onSelect: options.onMerge }
+        : undefined;
     }
   }
 
-  return { id: "merge", label: options.t("taskDetail.pr.mergeAndClose", "Merge & Close"), onSelect: options.onMerge };
+  /*
+  FNXC:TaskContextMenu 2026-09-15-10:40:
+  FN-417: the merge-completion verdicts ("Merge & Close" and the manual-PR "Finish & Close") are the
+  only opt-in members of this descriptor union. The engine merges automatically, so a context menu
+  must not offer the command; Task Detail opts in so its review footer button is unchanged for the
+  rare projects that still merge by hand. Returning `undefined` rather than a disabled descriptor is
+  deliberate — a disabled shell is the dead affordance this task removes.
+  */
+  return options.includeMergeCompletionAction
+    ? { id: "merge", label: options.t("taskDetail.pr.mergeAndClose", "Merge & Close"), onSelect: options.onMerge }
+    : undefined;
 }
 
 export function buildTaskActionMenuModel(options: BuildTaskActionMenuModelOptions): TaskActionMenuModel {
@@ -285,12 +272,11 @@ export function buildTaskActionMenuModel(options: BuildTaskActionMenuModelOption
   }
 
   /*
-  FNXC:TaskContextMenu 2026-07-13-00:00:
-  Plan belongs only to pre-execution hold/intake cards and reuses the inline-create Planning Mode handoff. Omit it entirely unless the host injects `onPlan`, because Planning Mode creates a new task and unwired menu hosts must not show a disabled shell.
+  FNXC:TaskContextMenu 2026-09-15-10:40:
+  FN-417 removed the `plan` descriptor that used to sit here for intake/hold cards. Planning is driven
+  by the engine, so no task context menu offers it on any host or breakpoint; the remaining Planning
+  Mode entry points (inline create, quick entry, task form, GitHub import) are untouched.
   */
-  if (options.onPlan && isPreExecutionHoldColumn(task.column, currentColumnFlags)) {
-    actions.push({ id: "plan", label: t("taskDetail.plan.openPlanningBtn", "Plan"), onSelect: options.onPlan });
-  }
 
   if (isDoneOrReview(task.column, currentColumnFlags) && options.onOpenRefine) {
     actions.push({ id: "refine", label: t("taskDetail.refine.btn", "Refine"), onSelect: options.onOpenRefine });

@@ -251,10 +251,12 @@ interface ListViewProps {
   favoriteModels?: string[];
   onToggleFavorite?: (provider: string) => void;
   onToggleModelFavorite?: (modelId: string) => void;
-  /**
-   * Called when the user clicks the "Plan" button in the quick entry box.
-   */
-  onPlanningMode?: (initialPlan: string, workflowId?: string | null) => void;
+  /*
+  FNXC:ListContextMenu 2026-09-15-10:40:
+  FN-417 removed the list row menu's Plan entry — the engine plans automatically — so `ListView` no
+  longer accepts `onPlanningMode`. The List surface renders no quick-entry box, so nothing else here
+  consumed it; Board's `Column`/`QuickEntryBox` path keeps its own callback untouched.
+  */
   /**
    * Called when tasks are updated (e.g., after bulk model update).
    * Allows parent to refresh task list or handle optimistically.
@@ -374,7 +376,6 @@ export function ListView({
   favoriteModels = [],
   onToggleFavorite,
   onToggleModelFavorite,
-  onPlanningMode,
   onTasksUpdated,
   projectId,
   projectName: _projectName,
@@ -827,15 +828,6 @@ export function ListView({
     return taskContextMenuColumnsByTaskId.get(task.id)?.find((column) => column.id === task.column)?.label
       ?? getListColumnLabel(task.column);
   }, [getListColumnLabel]);
-
-  const getTaskPlanningWorkflowId = useCallback((task: Task): string | null => {
-    const taskWorkflowId = (task as Task & { workflowId?: string | null }).workflowId;
-    if (taskWorkflowId) return taskWorkflowId;
-    if (workflowMode && boardWorkflows) {
-      return boardWorkflows.taskWorkflowIds[task.id] ?? boardWorkflows.defaultWorkflowId ?? null;
-    }
-    return null;
-  }, [boardWorkflows, workflowMode]);
 
   /*
   FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
@@ -1738,10 +1730,6 @@ export function ListView({
       mergeStrategy,
       prAutomationLabel: getTaskPrAutomationLabel(t, task.status),
       onDelete: () => void handleListTaskDelete(task),
-      onPlan: onPlanningMode ? () => {
-        const seed = (task.description ?? "").trim() || task.title || task.id;
-        onPlanningMode(seed, getTaskPlanningWorkflowId(task));
-      } : undefined,
       onDuplicate: onDuplicateTask ? async () => {
         await runDuplicateTaskAction({
           taskId: task.id,
@@ -1837,7 +1825,7 @@ export function ListView({
       actions.push({ id: model.reviewAction.id, label: model.reviewAction.label, disabled: model.reviewAction.disabled, onSelect: model.reviewAction.onSelect });
     }
     return actions.filter((action) => "items" in action || action.tone === "note" || action.disabled === true || Boolean(action.onSelect));
-  }, [addToast, autoMerge, boardWorkflows, getTaskColumnFlags, confirm, confirmWithSelect, getTaskPlanningWorkflowId, handleListContextCheckPrStatus, handleListContextEnableGithubTracking, handleListTaskDelete, handleListTaskRestoreRevert, handleListTaskRevert, isMobile, lastFetchTimeMs, mergeStrategy, onDuplicateTask, onMergeTask, onOpenDetail, onPlanningMode, onPauseTask, onResetTask, onRetryTask, onUnpauseTask, onRevertTask, onRestoreRevertTask, onTasksUpdated, projectId, t, useSinglePaneList]);
+  }, [addToast, autoMerge, boardWorkflows, getTaskColumnFlags, confirm, confirmWithSelect, handleListContextCheckPrStatus, handleListContextEnableGithubTracking, handleListTaskDelete, handleListTaskRestoreRevert, handleListTaskRevert, isMobile, lastFetchTimeMs, mergeStrategy, onDuplicateTask, onMergeTask, onOpenDetail, onPauseTask, onResetTask, onRetryTask, onUnpauseTask, onRevertTask, onRestoreRevertTask, onTasksUpdated, projectId, t, useSinglePaneList]);
 
   const contextMenuActions = useMemo(
     () => (contextMenuState ? buildListContextMenuActions(contextMenuState.task) : []),

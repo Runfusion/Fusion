@@ -206,7 +206,6 @@ function renderListSubtree(
     addToast,
     globalPaused,
     openNewTaskWithNav,
-    openPlanningWithInitialPlanWithNav,
     availableModels,
     favoriteProviders,
     favoriteModels,
@@ -247,7 +246,6 @@ function renderListSubtree(
         addToast={addToast}
         globalPaused={globalPaused}
         onNewTask={openNewTaskWithNav}
-        onPlanningMode={openPlanningWithInitialPlanWithNav}
         availableModels={availableModels}
         favoriteProviders={favoriteProviders}
         favoriteModels={favoriteModels}

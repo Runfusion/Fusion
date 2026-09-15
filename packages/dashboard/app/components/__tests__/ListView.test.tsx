@@ -1289,11 +1289,17 @@ describe("ListView", () => {
     fireEvent.contextMenu(document.querySelector('.list-row[data-id="FN-002"]') as HTMLElement, { clientX: 40, clientY: 50 });
     expect(screen.getByRole("menuitem", { name: "Unpause" })).toBeInTheDocument();
 
+    /*
+    FNXC:ListContextMenu 2026-09-15-10:40:
+    FN-417: an in-review row no longer offers merge completion — the engine merges automatically and
+    the only manual command is Task Detail's review footer button. Refine still proves the menu is
+    genuinely built for a review row rather than empty.
+    */
     fireEvent.contextMenu(document.querySelector('.list-row[data-id="FN-003"]') as HTMLElement, { clientX: 40, clientY: 50 });
-    expect(screen.getByRole("menuitem", { name: "Merge & Close" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Merge & Close" })).not.toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Refine" })).toBeInTheDocument();
     fireEvent.contextMenu(document.querySelector('.list-row[data-id="FN-006"]') as HTMLElement, { clientX: 40, clientY: 50 });
-    expect(screen.getByRole("menuitem", { name: "Merge & Close" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Merge & Close" })).not.toBeInTheDocument();
 
     fireEvent.contextMenu(document.querySelector('.list-row[data-id="FN-004"]') as HTMLElement, { clientX: 40, clientY: 50 });
     expect(screen.getByRole("menuitem", { name: "Refine" })).toBeInTheDocument();
@@ -1318,7 +1324,7 @@ describe("ListView", () => {
     const reviewRow = document.querySelector('.list-row[data-id="FN-003"]') as HTMLElement;
     reviewRow.focus();
     fireEvent.keyDown(reviewRow, { key: "ContextMenu" });
-    expect(screen.getByRole("menuitem", { name: "Merge & Close" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Merge & Close" })).not.toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Refine" })).toBeInTheDocument();
 
     expect(onPauseTask).not.toHaveBeenCalled();
@@ -1450,33 +1456,14 @@ describe("ListView", () => {
     }));
   });
 
-  it("opens Planning Mode from eligible list row menus and omits it for executing rows", async () => {
-    const viewportSpy = mockDesktopViewport();
-    const onPlanningMode = vi.fn();
-    const onOpenDetail = vi.fn();
-    const tasks = [
-      createMockTask({ id: "FN-030", title: "Planning row", description: "Seed from list", column: "triage" }),
-      createMockTask({ id: "FN-031", title: "Executing row", description: "Do not plan", column: "in-progress", status: "executing" }),
-    ];
-
-    renderListView({ tasks, onOpenDetail, onPlanningMode });
-
-    fireEvent.contextMenu(document.querySelector('.list-row[data-id="FN-030"]') as HTMLElement, { clientX: 40, clientY: 50 });
-    fireEvent.click(screen.getByRole("menuitem", { name: "Plan" }));
-    /*
-    FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9):
-    Was `null`. That was the LEGACY value: `getTaskPlanningWorkflowId` only returns
-    null when `workflowMode` is false, which production never was. With lanes
-    resolved it returns the task's workflow (here the default), so Planning Mode is
-    seeded with the right workflow — the behaviour operators have always had.
-    */
-    expect(onPlanningMode).toHaveBeenCalledWith("Seed from list", "builtin:coding");
-    expect(onOpenDetail).not.toHaveBeenCalled();
-
-    fireEvent.contextMenu(document.querySelector('.list-row[data-id="FN-031"]') as HTMLElement, { clientX: 40, clientY: 50 });
-    expect(screen.queryByRole("menuitem", { name: "Plan" })).not.toBeInTheDocument();
-    viewportSpy.mockRestore();
-  });
+  /*
+  FNXC:ListContextMenu 2026-09-15-10:40:
+  FN-417 deleted "opens Planning Mode from eligible list row menus and omits it for executing rows".
+  Its subject — the row menu's Plan entry, `ListView`'s `onPlanningMode` prop, and the
+  `getTaskPlanningWorkflowId` helper it exercised — was removed because the engine plans
+  automatically. Absence on list rows at both breakpoints is proven by
+  `task-menu-merge-plan-removed.test.tsx`.
+  */
 
   it("offers Revert on a renamed complete lane", async () => {
     const RENAMED_LANE_PAYLOAD = {

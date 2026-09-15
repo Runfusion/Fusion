@@ -787,7 +787,6 @@ function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeG
                   projectId={projectId}
                   onOpenDetail={onOpenDetail}
                   onRefinementCreated={onRefinementCreated}
-                  onPlanningMode={onPlanningMode}
                   workflowId={workflowMode ? workflowId : undefined}
                   onMoveTask={onMoveTask}
                   addToast={addToast}
@@ -830,7 +829,6 @@ function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeG
                   task={task}
                   projectId={projectId}
                   onOpenDetail={onOpenDetail}
-                  onPlanningMode={onPlanningMode}
                   planningWorkflowId={workflowMode ? workflowId : taskWorkflowBadges?.get(task.id)?.workflowId ?? null}
                   onRefinementCreated={onRefinementCreated}
                   onOpenGroupModal={onOpenGroupModal}

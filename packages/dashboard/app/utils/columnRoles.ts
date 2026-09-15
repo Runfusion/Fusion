@@ -92,8 +92,13 @@ export function isPreImplementationColumnRole(flags: ColumnRoleFlags | undefined
  * wait-for-capacity lane — listing an intake card as "upcoming work" in the worktree view would
  * report a card that has no plan yet as ready to run.
  *
- * Same shape, different degraded answer — the asymmetry U11 verified for
- * `isPreExecutionHoldColumn` and this file already documents elsewhere.
+ * Same shape, different degraded answer — the asymmetry U11 verified across the pre-execution
+ * predicates (traits first, legacy id only as the no-metadata fallback), which this file already
+ * documents elsewhere.
+ *
+ * FNXC:WorkflowResolvedColumns 2026-09-15-10:40:
+ * The Task-Context-Menu twin this note used to name by symbol was deleted with its Plan affordance
+ * (FN-417). The asymmetry it illustrated is unchanged and still applies to the helpers in this file.
  */
 export function isHoldColumnRole(flags: ColumnRoleFlags | undefined, columnId: string): boolean {
   /*

@@ -235,9 +235,15 @@ describe("FN-198 dashboard task relocation removal", () => {
 
   it("keeps Task Detail Actions and review controls without a move dropdown in modal and embedded hosts", () => {
     const detailTask = makeTask({ id: "FN-198-review", column: "in-review" as Column });
+    /*
+    FNXC:TaskDetailFooter 2026-09-15-10:40:
+    The review footer renders only on the Review tab (`showTaskDetailFooter` requires it), so this
+    host must open there to observe the merge command it asserts. Pairing the assertion with the
+    Definition tab made the case fail on a contract that was never in question.
+    */
     const modal = render(
       <TaskDetailModal
-        initialTab="definition"
+        initialTab="review"
         task={detailTask}
         onClose={noop}
         onDeleteTask={noopDelete}
@@ -329,7 +335,13 @@ describe("FN-198 dashboard task relocation removal", () => {
     expect(onMoveTask).not.toHaveBeenCalled();
   });
 
-  it("keeps the card review action while removing every in-review destination item", () => {
+  /*
+  FNXC:TaskContextMenu 2026-09-15-10:40:
+  Was "keeps the card review action while removing every in-review destination item". FN-417 removed
+  merge completion from card context menus, so the review action this case guarded no longer exists
+  there; the move-destination invariant it also guarded is unchanged and still asserted.
+  */
+  it("offers neither a merge completion item nor any in-review destination item", () => {
     const onMoveTask = moveSpy();
     render(
       <TaskCard
@@ -342,7 +354,9 @@ describe("FN-198 dashboard task relocation removal", () => {
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: "Task actions" }));
-    expect(screen.getByRole("menuitem", { name: "Merge & Close" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Merge & Close" })).toBeNull();
+    // Positive anchor: the menu is genuinely open and populated, not simply absent.
+    expect(screen.getByRole("menuitem", { name: "Delete" })).toBeInTheDocument();
     expectNoMoveItems();
     expect(onMoveTask).not.toHaveBeenCalled();
   });

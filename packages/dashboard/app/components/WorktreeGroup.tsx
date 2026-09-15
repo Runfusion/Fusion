@@ -19,7 +19,6 @@ interface WorktreeGroupProps {
   allTasks?: Task[];
   projectId?: string;
   onOpenDetail: (task: Task | TaskDetail) => void;
-  onPlanningMode?: (initialPlan: string, workflowId?: string | null) => void;
   workflowId?: string | null;
   /** App-owned ingestion seam for a refinement created from a card's own Refine dialog. */
   onRefinementCreated?: (task: Task) => void;
@@ -77,7 +76,6 @@ function WorktreeGroupComponent({
   allTasks,
   projectId,
   onOpenDetail,
-  onPlanningMode,
   workflowId,
   onRefinementCreated,
   onMoveTask,
@@ -147,7 +145,6 @@ function WorktreeGroupComponent({
           task={task}
           projectId={projectId}
           onOpenDetail={onOpenDetail}
-          onPlanningMode={onPlanningMode}
           planningWorkflowId={getTaskPlanningWorkflowId(task)}
           onRefinementCreated={onRefinementCreated}
           onMoveTask={onMoveTask}
@@ -185,7 +182,6 @@ function WorktreeGroupComponent({
           projectId={projectId}
           queued
           onOpenDetail={onOpenDetail}
-          onPlanningMode={onPlanningMode}
           planningWorkflowId={getTaskPlanningWorkflowId(task)}
           onRefinementCreated={onRefinementCreated}
           onMoveTask={onMoveTask}

@@ -4412,6 +4412,14 @@ export function TaskDetailContent({
     autoMergeEnabled: effectiveAutoMerge,
     prAutomationLabel,
     isCheckingPrStatus,
+    /*
+    FNXC:TaskDetailPresentation 2026-09-15-10:40:
+    FN-417 made the merge-completion review action opt-in and removed it from every task CONTEXT MENU
+    because the engine merges automatically. Task Detail is the one surface that opts back in: its
+    review footer keeps the explicit "Merge & Close" / "Finish & Close" button as the single manual
+    merge command, for projects that still drive delivery by hand.
+    */
+    includeMergeCompletionAction: true,
     onDelete: handleDelete,
     onDuplicate: handleDuplicate,
     onOpenRefine: handleOpenRefineModal,

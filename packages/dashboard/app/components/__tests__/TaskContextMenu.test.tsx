@@ -81,35 +81,35 @@ describe("TaskContextMenu shared task action model", () => {
     expect(actionIds(makeTask({ column: "done" }), { onRetry, onReset })).toEqual(["delete"]);
   });
 
-  it("exposes Plan only for pre-execution hold columns with a host callback", () => {
-    const onPlan = vi.fn();
-    const eligibleCases: Array<[string, Partial<Parameters<typeof buildTaskActionMenuModel>[0]>]> = [
-      ["triage", {}],
-      ["custom intake", { currentColumnFlags: { intake: true } }],
-      ["custom hold", { currentColumnFlags: { hold: true } }],
+  /*
+  FNXC:TaskContextMenu 2026-09-15-10:40:
+  FN-417: the engine plans automatically, so NO column shape produces a `plan` descriptor any more.
+  Replaces "exposes Plan only for pre-execution hold columns with a host callback", whose subject
+  (the `plan` descriptor and its `isPreExecutionHoldColumn` gate) was deleted with the affordance.
+  The previously eligible shapes are enumerated here so a re-added descriptor fails loudly, and each
+  case is anchored positively so the assertion cannot pass by producing an empty menu.
+  */
+  it("never produces a Plan action, for any column shape", () => {
+    const shapes: Array<[string, string, Record<string, boolean> | undefined]> = [
+      ["legacy intake id", "triage", undefined],
+      ["no resolved flags yet (first paint)", "backlog", undefined],
+      ["renamed intake lane", "ideas", { intake: true }],
+      ["renamed hold lane", "backlog", { hold: true }],
+      ["merged planning lane", "todo", { intake: true, hold: true }],
+      ["mid-flight column NAMED triage", "triage", { intake: false, hold: false, countsTowardWip: true }],
     ];
 
-    for (const [label, overrides] of eligibleCases) {
-      const column = label === "triage" ? "triage" : label;
-      const model = buildTaskActionMenuModel({
-        task: makeTask({ column: column as any }),
+    for (const [label, column, flags] of shapes) {
+      const ids = buildTaskActionMenuModel({
+        task: makeTask({ column: column as never }),
         t,
-
-        onPlan,
-        ...overrides,
-      });
-      expect(model.actions.map((action) => action.id), label).toContain("plan");
-      expect(model.actions.find((action) => action.id === "plan")?.label).toBe("Plan");
+        currentColumnFlags: flags as never,
+        onDelete: vi.fn(),
+      } as never).actions.map((action: { id: string }) => action.id);
+      expect(ids, label).not.toContain("plan");
+      // Positive anchor: the menu is genuinely built for this shape, not empty.
+      expect(ids, label).toContain("delete");
     }
-
-    for (const column of ["todo", "in-progress", "in-review", "done"] as const) {
-      expect(actionIds(makeTask({ column }), { onPlan })).not.toContain("plan");
-    }
-    expect(actionIds(makeTask({ column: "complete" as any }), { onPlan, currentColumnFlags: { hold: true, complete: true } })).not.toContain("plan");
-    expect(actionIds(makeTask({ column: "triage" }))).not.toContain("plan");
-
-    buildTaskActionMenuModel({ task: makeTask({ column: "triage" }), t, onPlan }).actions.find((action) => action.id === "plan")?.onSelect?.();
-    expect(onPlan).toHaveBeenCalledTimes(1);
   });
 
   it("exposes GitHub tracking enablement only for untracked tasks with a host callback", () => {
@@ -182,12 +182,45 @@ describe("TaskContextMenu shared task action model", () => {
     }
   });
 
-  it("mirrors in-review merge and manual PR status actions", () => {
-    expect(buildTaskActionMenuModel({ task: makeTask({ column: "in-review" }), t }).reviewAction).toMatchObject({
-      id: "merge",
-      label: "Merge & Close",
-    });
+  /*
+  FNXC:TaskContextMenu 2026-09-15-10:40:
+  FN-417: merge completion is OPT-IN. Without `includeMergeCompletionAction` — the shape every task
+  context menu host uses — an in-review card yields no review action at all; Task Detail opts in and
+  gets the unchanged footer descriptor. The PR-flow verdicts are unaffected either way.
+  */
+  it("withholds merge completion unless the host opts in", () => {
+    // Auto-merge lane: "Merge & Close" is withheld.
+    expect(buildTaskActionMenuModel({
+      task: makeTask({ column: "in-review" }),
+      t,
+      onMerge: vi.fn(),
+    }).reviewAction).toBeUndefined();
 
+    // Manual-PR lane with an already-merged PR: "Finish & Close" is withheld.
+    expect(buildTaskActionMenuModel({
+      task: makeTask({ column: "in-review", prInfo: { status: "merged" } as any }),
+      t,
+      mergeStrategy: "pull-request",
+      autoMergeEnabled: false,
+      onMerge: vi.fn(),
+    }).reviewAction).toBeUndefined();
+
+    expect(buildTaskActionMenuModel({
+      task: makeTask({ column: "in-review" }),
+      t,
+      includeMergeCompletionAction: true,
+    }).reviewAction).toMatchObject({ id: "merge", label: "Merge & Close" });
+
+    expect(buildTaskActionMenuModel({
+      task: makeTask({ column: "in-review", prInfo: { status: "merged" } as any }),
+      t,
+      includeMergeCompletionAction: true,
+      mergeStrategy: "pull-request",
+      autoMergeEnabled: false,
+    }).reviewAction).toMatchObject({ id: "merge", label: "Finish & Close" });
+  });
+
+  it("mirrors in-review manual PR status actions without opting into merge completion", () => {
     const onMerge = vi.fn();
     const onStartPrReview = vi.fn();
     const startPrReviewAction = buildTaskActionMenuModel({
@@ -388,53 +421,3 @@ describe("shouldShowActionsMenu by workflow shape (not by column id)", () => {
   });
 });
 
-/*
-FNXC:WorkflowLifecycleColumns 2026-07-30-08:00 (U12 — the last `triage` column guard):
-THE INVERSION. `isPreExecutionHoldColumn` ORed the legacy id with the traits unconditionally, so a
-resolved column merely NAMED `triage` answered true even when its own traits said work was underway
-— offering Plan, which re-plans, on a card that is already executing.
-
-The existing cases here all pass a column with no flags or with hold/intake set, so every one of them
-agrees under both the old and new form. That is why this defect survived the file's earlier
-conversion: nothing exercised a resolved column whose name and traits disagree.
-
-REVERT CHECK: restore the `column === "triage" ||` prefix and the first case fails — Plan reappears
-on a mid-flight card.
-*/
-describe("pre-execution hold resolves traits, not the column's name", () => {
-  it("does NOT treat a mid-flight column NAMED `triage` as a planning target", () => {
-    const model = buildTaskActionMenuModel({
-      task: makeTask({ column: "triage" }),
-      t,
-
-      currentColumnFlags: { intake: false, hold: false, countsTowardWip: true } as any,
-      onPlan: vi.fn(),
-    } as never);
-    expect(model.actions.map((a: { id: string }) => a.id)).not.toContain("plan");
-  });
-
-  it("still offers Plan on a RENAMED hold column", () => {
-    // The narrowing guard: traits decide, so a board that never uses the legacy name still works.
-    const model = buildTaskActionMenuModel({
-      task: makeTask({ column: "backlog" as never }),
-      t,
-
-      currentColumnFlags: { intake: true, hold: true } as any,
-      onPlan: vi.fn(),
-    } as never);
-    expect(model.actions.map((a: { id: string }) => a.id)).toContain("plan");
-  });
-
-  it("keeps the flagless degraded answer for `triage` and withholds it for flagless `todo`", () => {
-    /*
-    The asymmetry the file documents: with no flags, `triage` is the only pre-execution hold. A
-    flagless `todo` must NOT offer Plan, because re-planning an already-planned card is not
-    recoverable by the operator.
-    */
-    const forColumn = (column: string) =>
-      buildTaskActionMenuModel({ task: makeTask({ column: column as never }), t, onPlan: vi.fn() } as never)
-        .actions.map((a: { id: string }) => a.id);
-    expect(forColumn("triage")).toContain("plan");
-    expect(forColumn("todo")).not.toContain("plan");
-  });
-});
