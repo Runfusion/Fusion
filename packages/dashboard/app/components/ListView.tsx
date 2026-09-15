@@ -9,7 +9,7 @@ import { resolveEffectiveAutoMerge } from "../../../core/src/merge/task-merge";
 import { useColumnLabel } from "../i18n/labels";
 import { isCompleteColumnRole, isIntakeColumnRole, isPreImplementationColumnRole, isReviewColumnRole, isWipColumnRole } from "../utils/columnRoles";
 import { batchUpdateTaskModels, fetchNodes, refreshPrStatus, updateTask } from "../api";
-import { ExternalBlockNotice, PlanApprovalNotice } from "./TaskCard";
+import { ExternalBlockNotice, HumanPlanApprovalBadge, PlanApprovalNotice } from "./TaskCard";
 import { PrCreateModal } from "./PrCreateModal";
 import { TaskRefineDialog } from "./TaskRefineDialog";
 import { TaskResetDialog } from "./TaskResetDialog";
@@ -2508,6 +2508,8 @@ export function ListView({
                                     <span className="visually-hidden">{t("listView.fastMode", "Fast mode")}</span>
                                   </span>
                                 )}
+                                {/* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 badge on the mobile card render, beside Fast; both may show at once. */}
+                                <HumanPlanApprovalBadge task={task} variant="list" />
                                 <span className="list-card-spacer" />
                                 {isPaused && task.pausedByAgentId ? (
                                   <span className="list-status-badge paused">{t("listView.pausedByAgent", "paused by agent")}</span>
@@ -2776,6 +2778,8 @@ export function ListView({
                                             <span className="visually-hidden">{t("listView.fastMode", "Fast mode")}</span>
                                           </span>
                                         )}
+                                        {/* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 badge on the desktop table render, beside Fast. */}
+                                        <HumanPlanApprovalBadge task={task} variant="list" />
                                         <span className="list-title-text">{getTaskTitleDisplay(task).text}</span>
                                       </div>
                                     </div>

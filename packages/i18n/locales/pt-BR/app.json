@@ -8911,6 +8911,21 @@
       "copy": "",
       "replanCapCopy": "",
       "title": ""
+    },
+    "humanPlanApproval": {
+      "toggle": "Exigir minha aprovação do plano antes da execução",
+      "messageLabel": "Mensagem (opcional)",
+      "messagePlaceholder": "Vai recusar? Diga o que está errado no plano. Vai aprovar? Acrescente um ponto de atenção.",
+      "approve": "Aprovar",
+      "reject": "Recusar",
+      "review": "Revisar plano",
+      "hint": "Recusar devolve sua mensagem para um novo plano. Aprovar inicia o trabalho e passa sua nota para a implementação.",
+      "noticeCopy": "Abra a tarefa para aprovar ou recusar este plano, com uma mensagem opcional.",
+      "badgeArmed": "Sua aprovação do plano é necessária antes da execução",
+      "badgeAwaiting": "Aguardando sua aprovação do plano",
+      "badgeApproved": "Plano aprovado por você",
+      "approved": "Plano aprovado — {{id}} segue para a execução",
+      "rejected": "Plano recusado — {{id}} volta para um novo plano"
     }
   },
   "terminal": {

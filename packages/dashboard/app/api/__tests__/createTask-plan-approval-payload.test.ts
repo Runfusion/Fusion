@@ -36,7 +36,12 @@ describe("createTask plan approval payload", () => {
   it("keeps supported create-time overrides in the explicit API whitelist", () => {
     const source = readFileSync(resolve(__dirname, "../tasks/tasks.ts"), "utf8");
     const start = source.indexOf("export async function createTask(");
-    const end = source.indexOf("/** Update explicit workspace repository intent", start);
+    /*
+    The former end marker ("/** Update explicit workspace repository intent") no longer exists in
+    tasks.ts, which silently made this whitelist guard slice to -1 and fail. Anchor on the next
+    exported declaration after createTask instead, which is structural rather than prose.
+    */
+    const end = source.indexOf("export interface TaskOverlapBlockerReport", start);
     const createTaskSource = source.slice(start, end);
 
     expect(start).toBeGreaterThanOrEqual(0);
@@ -46,6 +51,8 @@ describe("createTask plan approval payload", () => {
       "plannerOversightLevel",
       "sessionAdvisorEnabled",
       "enabledWorkflowSteps",
+      // FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408's per-card arming flag joins the explicit whitelist.
+      "humanPlanApproval",
     ]) {
       expect(createTaskSource).toContain(override);
     }

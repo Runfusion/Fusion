@@ -21,6 +21,9 @@ import {
   ACTIVE_WORKFLOW_WORK_ITEM_STATES,
   computePlanApprovalFingerprint,
   isPlanReviewSatisfied,
+  /* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 publishes its per-card decision hold with the satisfied review result. */
+  HUMAN_PLAN_APPROVAL_REASON,
+  isHumanPlanApprovalEnabled,
   isUnavailablePlanLockError,
   PLAN_LOCK_UNAVAILABLE_DIAGNOSTIC,
   PLAN_REVIEW_GROUP_ID,
@@ -272,7 +275,11 @@ type WorkflowStepResultPatch = Pick<
   | "approvedPlanFingerprint"
   | "reviewConvergenceStage"
   | "reviewConvergenceEscalationCount"
->;
+> & {
+  /* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 publishes its decision hold in the SAME write as the satisfied Plan Review result. */
+  status?: Task["status"];
+  awaitingApprovalReason?: Task["awaitingApprovalReason"] | null;
+};
 
 type FencedWorkflowStepResultOutcome =
   | { applied: true; task: Task }
@@ -323,11 +330,29 @@ function buildWorkflowStepResultPatch(
     revisionKey: resultToPersist.workflowStepId,
     workflowStepId: resultToPersist.workflowStepId,
   }) ?? sameGate;
+  /*
+  FNXC:HumanPlanApproval 2026-09-15-06:24:
+  FN-408 — for a card carrying the per-card human requirement, the moment Plan Review becomes
+  satisfied is exactly the moment the operator decision becomes possible. Publishing the
+  `awaiting-approval` hold in the SAME durable write as the review result removes the window in
+  which the review is satisfied but nothing yet says a human must decide. The hold is stamped with
+  its own reason so notifications and controls never mislabel it as the revision-cap park.
+
+  This is presentation/routing state only — the authoritative gate is the durable decision itself
+  (isHumanPlanApprovalPending), which every release surface consults independently of status.
+  */
+  const publishesHumanApprovalHold = isPlanReviewResult
+    && isPlanReviewSatisfied(resultToPersist)
+    && isHumanPlanApprovalEnabled(current)
+    && current.status !== "awaiting-approval";
   return {
     resultToPersist,
     results,
     patch: {
       workflowStepResults: results,
+      ...(publishesHumanApprovalHold
+        ? { status: "awaiting-approval" as const, awaitingApprovalReason: HUMAN_PLAN_APPROVAL_REASON }
+        : {}),
       ...reviewConvergenceResetPatch(
         current.workflowStepResults?.find((entry) => entry.workflowStepId === resultToPersist.workflowStepId),
         resultToPersist,

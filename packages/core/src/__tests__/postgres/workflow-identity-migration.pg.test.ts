@@ -12,7 +12,8 @@ const migration = readFileSync(migrationPath, "utf8");
 describe("workflow identity migration registration", () => {
   it("registers every startup hook before identity reads", () => {
     const applier = readFileSync(new URL("../../postgres/schema-applier.ts", import.meta.url), "utf8");
-    expect(SCHEMA_BASELINE_VERSION).toBe("0079");
+    // FN-408 advanced the ceiling to 0080; this migration keeps its own released version.
+    expect(Number(SCHEMA_BASELINE_VERSION)).toBeGreaterThanOrEqual(Number(WORKFLOW_IDENTITY_AND_MODEL_LANES_VERSION));
     expect(WORKFLOW_IDENTITY_AND_MODEL_LANES_VERSION).toBe("0079");
     expect(applier).toContain("0079_fn_393_workflow_identity_and_project_model_lanes.sql");
     expect(applier).toContain("applied.includes(WORKFLOW_IDENTITY_AND_MODEL_LANES_VERSION)");

@@ -8919,6 +8919,21 @@
       "copy": "",
       "replanCapCopy": "",
       "title": ""
+    },
+    "humanPlanApproval": {
+      "toggle": "Exiger ma validation du plan avant exécution",
+      "messageLabel": "Message (facultatif)",
+      "messagePlaceholder": "En cas de refus, dites ce qui ne va pas dans le plan. En cas de validation, ajoutez un point de vigilance.",
+      "approve": "Valider",
+      "reject": "Refuser",
+      "review": "Examiner le plan",
+      "hint": "Refuser renvoie votre message pour un nouveau plan. Valider lance le travail et transmet votre note à l'implémentation.",
+      "noticeCopy": "Ouvrez la tâche pour valider ou refuser ce plan, avec un message facultatif.",
+      "badgeArmed": "Votre validation du plan est requise avant exécution",
+      "badgeAwaiting": "En attente de votre validation du plan",
+      "badgeApproved": "Plan validé par vous",
+      "approved": "Plan validé — {{id}} continue vers l'exécution",
+      "rejected": "Plan refusé — {{id}} repart pour un nouveau plan"
     }
   },
   "terminal": {

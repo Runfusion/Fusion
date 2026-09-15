@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { memo, useCallback, useState, useRef, useEffect, useLayoutEffect, useMemo, type CSSProperties, type ReactElement } from "react";
 import { createPortal } from "react-dom";
-import { Link, Clock, Layers, Pencil, ChevronDown, Folder, Target, Bot, Trash2, RotateCw, Zap, GitBranch, GitPullRequest, AlertTriangle, Eye, MoreHorizontal, Sparkles, X } from "lucide-react";
+import { Link, Clock, Layers, Pencil, ChevronDown, Folder, Target, Bot, Trash2, RotateCw, Zap, UserCheck, GitBranch, GitPullRequest, AlertTriangle, Eye, MoreHorizontal, Sparkles, X } from "lucide-react";
 import { isTaskExternallyBlocked } from "@fusion/core";
 import type { Task, TaskDetail, Column, ColumnId, PrInfo, IssueInfo, TaskPriority, GithubIssueAction, MergeResult, PlannerOversightLevel } from "@fusion/core";
 import {
@@ -64,6 +64,9 @@ import { getTaskStatusBadgeLabel, getTaskWipLifecycleBadgeLabel, type TaskStatus
 import {
   isReviewBudgetExhaustedApproval,
   isTaskAwaitingPlanApproval,
+  /* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 per-card decision badge and notice routing. */
+  isHumanPlanApprovalArmedClient,
+  resolveHumanPlanApprovalBadgeState,
 } from "../utils/reviewBudgetApproval";
 import { canStartPrFeedbackAddressing, getTaskPrimaryPrInfo } from "../utils/prFeedback";
 import type { ToastType } from "../hooks/useToast";
@@ -750,6 +753,35 @@ export function ExternalBlockNotice({ task, variant, onOpenChatWithPrefill, onRe
   );
 }
 
+/*
+FNXC:HumanPlanApproval 2026-09-15-06:24:
+FN-408 — one badge shared by the board card and BOTH ListView renders (mobile cards and the desktop
+table), so the three surfaces cannot drift in label or state. Module scope, never nested in a host
+render. Returns null for every card without the option, so no empty badge shell is produced.
+*/
+export function HumanPlanApprovalBadge({ task, variant }: { task: Task; variant: "card" | "list" }) {
+  const { t } = useTranslation("app");
+  const state = resolveHumanPlanApprovalBadgeState(task);
+  if (!state) return null;
+  const label = state === "approved"
+    ? t("tasks.humanPlanApproval.badgeApproved", "Plan approved by you")
+    : state === "awaiting"
+      ? t("tasks.humanPlanApproval.badgeAwaiting", "Awaiting your plan approval")
+      : t("tasks.humanPlanApproval.badgeArmed", "Your plan approval required before execution");
+  return (
+    <span
+      className={`${variant === "list" ? "list-execution-mode-badge" : "card-execution-mode-badge"} ${variant}-human-plan-approval-badge`}
+      data-testid={`${variant}-human-plan-approval-badge`}
+      data-state={state}
+      title={label}
+      aria-label={label}
+    >
+      <UserCheck aria-hidden="true" />
+      <span className="visually-hidden">{label}</span>
+    </span>
+  );
+}
+
 interface PlanApprovalNoticeProps {
   task: Task;
   variant: "card" | "list" | "detail";
@@ -757,6 +789,14 @@ interface PlanApprovalNoticeProps {
   addToast: (message: string, type?: ToastType) => void;
   onTaskUpdated?: (task: Task) => void;
   isPlanningLane?: boolean;
+  /*
+  FNXC:HumanPlanApproval 2026-09-15-06:24:
+  FN-408 — a per-card human decision must carry a message and an explicit plan/episode identity, and
+  a slim board row has neither. For those cards the notice opens the task record instead of sending a
+  blind approval that would bypass the message field and the stale-plan fence. Every other approval
+  reason keeps its direct Approve action.
+  */
+  onOpenTaskRecord?: (task: Task) => void;
 }
 
 /*
@@ -770,6 +810,7 @@ export function PlanApprovalNotice({
   addToast,
   onTaskUpdated,
   isPlanningLane = true,
+  onOpenTaskRecord,
 }: PlanApprovalNoticeProps) {
   const { t } = useTranslation("app");
   const [isApproving, setIsApproving] = useState(false);
@@ -777,6 +818,7 @@ export function PlanApprovalNotice({
   if (isTaskExternallyBlocked(task) || !awaitingApproval) return null;
 
   const replanCap = isReviewBudgetExhaustedApproval(task);
+  const requiresMessagedDecision = isHumanPlanApprovalArmedClient(task);
   /*
   FNXC:PlanApproval 2026-09-05-22:04:
   Board and List rows are slim and never carry prompt, so a client prompt gate makes the enabled primary action silently fail after a reload. The approve-plan endpoint owns status, column, and PROMPT.md validation; its refusal is shown through this notice's error toast.
@@ -808,14 +850,31 @@ export function PlanApprovalNotice({
             : t("tasks.planApproval.title", "Need Your Review")}
         </strong>
         <span className="plan-approval-notice__copy">
-          {replanCap
-            ? t("tasks.planApproval.replanCapCopy", "Review the current plan, then approve it or request specific changes.")
-            : t("tasks.planApproval.copy", "Review the plan before implementation starts.")}
+          {requiresMessagedDecision
+            ? t("tasks.humanPlanApproval.noticeCopy", "Open the task to approve or reject this plan, with an optional message.")
+            : replanCap
+              ? t("tasks.planApproval.replanCapCopy", "Review the current plan, then approve it or request specific changes.")
+              : t("tasks.planApproval.copy", "Review the plan before implementation starts.")}
         </span>
         <span className="plan-approval-notice__actions">
-          <UiButton type="button" className="btn btn-primary btn-sm" onClick={(event) => void approve(event)} disabled={isApproving}>
-            {isApproving ? t("tasks.planApproval.approving", "Approving...") : t("tasks.planApproval.approve", "Approve")}
-          </UiButton>
+          {requiresMessagedDecision ? (
+            <UiButton
+              type="button"
+              className="btn btn-primary btn-sm"
+              data-testid={`plan-approval-open-decision-${variant}-${task.id}`}
+              onClick={(event) => {
+                event.stopPropagation();
+                onOpenTaskRecord?.(task);
+              }}
+              disabled={!onOpenTaskRecord}
+            >
+              {t("tasks.humanPlanApproval.review", "Review plan")}
+            </UiButton>
+          ) : (
+            <UiButton type="button" className="btn btn-primary btn-sm" onClick={(event) => void approve(event)} disabled={isApproving}>
+              {isApproving ? t("tasks.planApproval.approving", "Approving...") : t("tasks.planApproval.approve", "Approve")}
+            </UiButton>
+          )}
         </span>
       </div>
   );
@@ -2399,6 +2458,7 @@ function TaskCardComponent({
     effectiveOversightLevel !== "off" &&
     !isInheritedDefaultOversightLevel;
 
+
   /*
    * FNXC:PlannerOversight 2026-07-18-01:30:
    * FN-8255 requires the transient Eye badge and its header-wrapper gate to
@@ -3629,6 +3689,8 @@ function TaskCardComponent({
           projectId={projectId}
           addToast={addToast}
           isPlanningLane={isPlanningLane}
+          /* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 routes a messaged decision to the task record instead of approving from the slim card. */
+          onOpenTaskRecord={onOpenDetail}
         />
       )}
       <div className="card-header">
@@ -3948,6 +4010,14 @@ function TaskCardComponent({
                 <span className="visually-hidden">{t("tasks.fastMode", "Fast mode")}</span>
               </span>
             )}
+            {/*
+            FNXC:HumanPlanApproval 2026-09-15-06:24:
+            FN-408 — the card must show, from creation onward, that this work will not reach
+            in-progress without a human decision. Fast is mutually exclusive with it (2026-09-15-07:30),
+            so the two badges never coexist on a new card, and its label distinguishes "not decidable yet" from "waiting on you" from "you
+            approved", so a card still being planned never claims it is already waiting.
+            */}
+            <HumanPlanApprovalBadge task={task} variant="card" />
             {showOversightBadge && (
               <span
                 className={`card-oversight-badge card-oversight-badge--${OVERSIGHT_BADGE_MODIFIER[effectiveOversightLevel as Exclude<PlannerOversightLevel, "off">]}`}

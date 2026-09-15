@@ -1,0 +1,76 @@
+/*
+FNXC:HumanPlanApproval 2026-09-15-06:24:
+FN-408 decision surface. Design tokens only — no raw px, hex, or rgba — and it reuses the shared
+`.input` and `.btn` primitives rather than forking button or field variants.
+*/
+.human-plan-approval-controls {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 100%;
+}
+
+.human-plan-approval-controls__label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
+}
+
+.human-plan-approval-controls__input {
+  width: 100%;
+  resize: vertical;
+  min-block-size: calc(var(--space-8) + var(--space-4));
+  font-family: inherit;
+}
+
+.human-plan-approval-controls__error {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-error);
+}
+
+.human-plan-approval-controls__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  justify-content: flex-end;
+}
+
+.human-plan-approval-controls__hint {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+/*
+The footer placement is the sticky action bar, where vertical space is scarce: keep the field to a
+single visible line and drop the explanatory hint, which the banner above already states.
+*/
+.human-plan-approval-controls--footer .human-plan-approval-controls__input {
+  min-block-size: var(--space-8);
+}
+
+.human-plan-approval-controls--footer .human-plan-approval-controls__hint {
+  display: none;
+}
+
+/*
+Phones: the two decisions must stay reachable with a thumb and must not be squeezed onto one
+cramped line, so they stretch to full width and stack in a comfortable tap order.
+*/
+@media (max-width: 768px) {
+  .human-plan-approval-controls__actions {
+    justify-content: stretch;
+  }
+
+  .human-plan-approval-controls__actions > * {
+    flex: 1 1 auto;
+  }
+
+  .human-plan-approval-controls--footer .human-plan-approval-controls__hint {
+    display: none;
+  }
+}

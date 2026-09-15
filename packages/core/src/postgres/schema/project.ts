@@ -244,6 +244,8 @@ export const tasks = projectSchema.table("tasks", {
   repositoryScope: jsonb("repository_scope"),
   // FNXC:ExternalBlock 2026-08-28-03:48: obstacle origin and exact resume coordinates survive process restarts.
   externalBlock: jsonb("external_block"),
+  /* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 per-card human plan decision state. */
+  humanPlanApproval: jsonb("human_plan_approval"),
   planningFailure: jsonb("planning_failure"),
   noCommitsExpected: integer("no_commits_expected").default(0),
   enabledWorkflowSteps: jsonb("enabled_workflow_steps").default([]),

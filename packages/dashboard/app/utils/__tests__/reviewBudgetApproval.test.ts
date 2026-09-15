@@ -3,8 +3,21 @@ import type { Task } from "@fusion/core";
 import type { WorkflowStepResult } from "../../../../core/src/types/workflow/workflow-steps";
 import { isTaskBlockedOnApproval } from "../../../../core/src/merge/task-merge";
 import { isPlanReviewSatisfied } from "../../../../core/src/planner/plan-approval";
+import {
+  HUMAN_PLAN_APPROVAL_MESSAGE_MAX_LENGTH,
+  hasCurrentHumanPlanApproval,
+  isHumanPlanApprovalEnabled,
+  resolvePlanReviewEpisodeId,
+} from "../../../../core/src/planner/human-plan-approval";
 import { isWorkflowOptionalGroupEnabled } from "../../../../core/src/workflows/workflow-optional-steps";
-import { isPlanReviewGateUnsatisfied, isTaskBlockedOnApprovalHold } from "../reviewBudgetApproval";
+import {
+  HUMAN_PLAN_APPROVAL_MESSAGE_MAX_LENGTH_CLIENT,
+  hasCurrentHumanPlanApprovalClient,
+  isPlanReviewGateUnsatisfied,
+  isTaskBlockedOnApprovalHold,
+  resolveHumanPlanApprovalBadgeState,
+  resolvePlanReviewEpisodeIdClient,
+} from "../reviewBudgetApproval";
 
 /*
 FNXC:TaskCardPromote 2026-08-11-09:09:
@@ -73,5 +86,82 @@ describe("FN-8950 approval-hold contract", () => {
   ])("matches core for %s", (_name, task) => {
     const approvalTask = task as Pick<Task, "paused" | "pausedReason" | "status">;
     expect(isTaskBlockedOnApprovalHold(approvalTask)).toBe(isTaskBlockedOnApproval(approvalTask));
+  });
+});
+
+/*
+FNXC:HumanPlanApproval 2026-09-15-06:24:
+FN-408 duplicates core's per-card decision rules for the same browser-bundle reason as FN-8950 above
+(core's plan-approval module imports `node:crypto` at module top, and importing it from a component
+breaks the dashboard build). This is the anti-drift pin: the mirror must agree with core on every
+state, and the message limit the UI enforces must be the same number the server enforces.
+*/
+describe("FN-408 per-card human plan approval contract", () => {
+  const EPISODE = "2026-09-15T06:20:00.000Z";
+  const FINGERPRINT = "f".repeat(64);
+
+  const passed = (completedAt: string | undefined, over: Partial<WorkflowStepResult> = {}): WorkflowStepResult => ({
+    workflowStepId: "plan-review",
+    workflowStepName: "Plan Review",
+    status: "passed",
+    completedAt,
+    ...over,
+  });
+
+  const decision = (over: Record<string, unknown> = {}) => ({
+    requestId: "r1",
+    decision: "approved" as const,
+    decidedBy: "dashboard-operator",
+    decidedAt: EPISODE,
+    planFingerprint: FINGERPRINT,
+    planningEpisodeId: EPISODE,
+    ...over,
+  });
+
+  const CASES: ReadonlyArray<readonly [string, Partial<Task>]> = [
+    ["no option", { workflowStepResults: [passed(EPISODE)], approvedPlanFingerprint: FINGERPRINT }],
+    ["armed, review pending", { humanPlanApproval: { enabled: true }, workflowStepResults: [] }],
+    ["armed, review satisfied, undecided", {
+      humanPlanApproval: { enabled: true },
+      workflowStepResults: [passed(EPISODE)],
+      approvedPlanFingerprint: FINGERPRINT,
+    }],
+    ["armed and approved", {
+      humanPlanApproval: { enabled: true, decision: decision() },
+      workflowStepResults: [passed(EPISODE)],
+      approvedPlanFingerprint: FINGERPRINT,
+    }],
+    ["approved for a superseded episode", {
+      humanPlanApproval: { enabled: true, decision: decision() },
+      workflowStepResults: [
+        passed(EPISODE, { supersededAt: EPISODE, supersededReason: "respecify" }),
+        passed("2026-09-15T09:00:00.000Z"),
+      ],
+      approvedPlanFingerprint: FINGERPRINT,
+    }],
+    ["approved for a different plan", {
+      humanPlanApproval: { enabled: true, decision: decision() },
+      workflowStepResults: [passed(EPISODE)],
+      approvedPlanFingerprint: "9".repeat(64),
+    }],
+    ["rejection record", {
+      humanPlanApproval: { enabled: true, decision: decision({ decision: "rejected" }) },
+      workflowStepResults: [passed(EPISODE)],
+      approvedPlanFingerprint: FINGERPRINT,
+    }],
+  ] as const;
+
+  it.each(CASES)("matches core for %s", (_name, overrides) => {
+    const task = overrides as Task;
+    expect(hasCurrentHumanPlanApprovalClient(task)).toBe(hasCurrentHumanPlanApproval(task));
+    expect(resolvePlanReviewEpisodeIdClient(task)).toBe(resolvePlanReviewEpisodeId(task.workflowStepResults));
+    // The badge is derived state, so it must never contradict the shared release predicate.
+    const badge = resolveHumanPlanApprovalBadgeState(task);
+    expect(badge === "approved").toBe(hasCurrentHumanPlanApproval(task));
+    expect(badge !== null).toBe(isHumanPlanApprovalEnabled(task));
+  });
+
+  it("enforces the same message limit the server enforces", () => {
+    expect(HUMAN_PLAN_APPROVAL_MESSAGE_MAX_LENGTH_CLIENT).toBe(HUMAN_PLAN_APPROVAL_MESSAGE_MAX_LENGTH);
   });
 });

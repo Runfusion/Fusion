@@ -31,6 +31,8 @@ vi.mock("lucide-react", () => ({
   Flag: () => <svg />,
   TriangleAlert: () => null,
   Zap: () => <svg />,
+  /* FN-408: the New Task dialog renders the per-card human plan approval toggle beside Fast. */
+  UserCheck: () => <svg />,
   ShieldCheck: () => null,
   Brain: () => null,
   Server: () => null,
@@ -618,6 +620,39 @@ describe("NewTaskModal", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
     await waitFor(() => expect(onCreateTask).toHaveBeenCalledTimes(2));
     expect(onCreateTask.mock.calls[1]?.[0]).not.toHaveProperty("requirePlanApproval");
+  });
+
+  /*
+  FNXC:HumanPlanApproval 2026-09-15-07:30:
+  FN-408 remediation — Fast and the per-card human plan approval are mutually exclusive: Fast skips
+  planning and Plan Review, so an armed fast card could never reach a decision. The dialog clears one
+  when the other is armed, and the create payload can never carry both.
+  */
+  it("keeps Fast and human plan approval mutually exclusive in the create payload", async () => {
+    const { props } = renderNewTaskModal();
+
+    const fastToggle = screen.getByTestId("task-form-inline-fast");
+    const humanToggle = screen.getByTestId("task-form-inline-human-plan-approval");
+
+    fireEvent.click(fastToggle);
+    expect(fastToggle).toHaveAttribute("aria-pressed", "true");
+
+    fireEvent.click(humanToggle);
+    expect(humanToggle).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByTestId("task-form-inline-fast")).toHaveAttribute("aria-pressed", "false");
+
+    fireEvent.change(screen.getByPlaceholderText("What needs to be done?"), { target: { value: "Needs my approval" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
+
+    await waitFor(() => expect(props.onCreateTask).toHaveBeenCalledTimes(1));
+    const payload = vi.mocked(props.onCreateTask).mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(payload).toMatchObject({ humanPlanApproval: true });
+    expect(payload).not.toHaveProperty("executionMode");
+
+    // Re-arming Fast clears the human requirement in the other direction.
+    fireEvent.click(screen.getByTestId("task-form-inline-human-plan-approval"));
+    fireEvent.click(screen.getByTestId("task-form-inline-fast"));
+    expect(screen.getByTestId("task-form-inline-human-plan-approval")).toHaveAttribute("aria-pressed", "false");
   });
 
   it("includes executionMode fast in the create payload when Fast is selected", async () => {

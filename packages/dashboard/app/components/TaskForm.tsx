@@ -11,7 +11,7 @@ import { getTaskTitleDisplayText } from "../utils/taskTitleDisplay";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { NodeHealthDot } from "./NodeHealthDot";
 import { LoadingSpinner } from "./LoadingSpinner";
-import { Sparkles, ChevronUp, ChevronDown, Maximize2, Minimize2, Paperclip, Zap, Brain, Server } from "lucide-react";
+import { Sparkles, ChevronUp, ChevronDown, Maximize2, Minimize2, Paperclip, Zap, UserCheck, Brain, Server } from "lucide-react";
 import { REPO_OVERRIDE_RE, resolveEffectiveGithubRepoDefault } from "./githubTracking";
 import { getPriorityColorVar, getPriorityIcon, getPriorityLabel } from "../utils/priorityIndicator";
 import { ProviderIcon } from "./ProviderIcon";
@@ -181,6 +181,15 @@ export interface TaskFormProps {
   onAutoMergeChange?: (value: boolean | undefined) => void;
   executionMode?: TaskExecutionModeSelection;
   onExecutionModeChange?: (value: TaskExecutionModeSelection) => void;
+  /*
+  FNXC:HumanPlanApproval 2026-09-15-06:24:
+  FN-408 — per-card human plan validation. Mutually exclusive with Fast (2026-09-15-07:30): Fast
+  skips planning and plan review, so an armed fast card could never be validated. This component
+  stays a controlled reporter; the owning host clears the other toggle. Optional so read-only and
+  edit-mode hosts omit the control entirely rather than render a dead toggle.
+  */
+  humanPlanApproval?: boolean;
+  onHumanPlanApprovalChange?: (value: boolean) => void;
   githubTrackingEnabled?: boolean;
   onGithubTrackingEnabledChange?: (value: boolean, meta?: TaskFormValueChangeMeta) => void;
   githubRepoOverride?: string;
@@ -299,6 +308,8 @@ export function TaskForm({
   autoMerge,
   onAutoMergeChange,
   executionMode,
+  humanPlanApproval,
+  onHumanPlanApprovalChange,
   onExecutionModeChange,
   githubTrackingEnabled,
   onGithubTrackingEnabledChange,
@@ -936,6 +947,11 @@ export function TaskForm({
   const inlinePriorityLabel = getPriorityLabel(inlinePriority);
   const inlinePriorityButtonLabel = t("taskForm.priorityInlineAria", "Priority: {{priority}}", { priority: inlinePriorityLabel });
   const inlineFastButtonLabel = t("taskForm.toggleFastMode", "Toggle fast execution mode");
+  /* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 toggle label states the consequence, matching QuickEntryBox. */
+  const inlineHumanPlanApprovalLabel = t(
+    "tasks.humanPlanApproval.toggle",
+    "Require my approval of the plan before execution",
+  );
 
   const revealAdvancedControl = useCallback((selector: string) => {
     if (!forceMoreOptionsOpen) setShowMoreOptions(true);
@@ -1186,6 +1202,22 @@ export function TaskForm({
               title={inlineFastButtonLabel}
             >
               <Zap size={12} className="task-form-action-icon" aria-hidden="true" />
+            </UiButton>
+          )}
+
+          {/* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 — immediately beside Fast, same inline icon primitive and size; the host keeps the two mutually exclusive. */}
+          {onHumanPlanApprovalChange && humanPlanApproval !== undefined && (
+            <UiButton
+              type="button"
+              className={`btn btn-sm task-form-inline-icon-btn ${humanPlanApproval ? "btn-primary" : ""}`}
+              onClick={() => onHumanPlanApprovalChange(!humanPlanApproval)}
+              aria-pressed={humanPlanApproval}
+              aria-label={inlineHumanPlanApprovalLabel}
+              disabled={disabled}
+              data-testid="task-form-inline-human-plan-approval"
+              title={inlineHumanPlanApprovalLabel}
+            >
+              <UserCheck size={12} className="task-form-action-icon" aria-hidden="true" />
             </UiButton>
           )}
 

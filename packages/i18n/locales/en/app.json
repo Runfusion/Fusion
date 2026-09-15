@@ -8989,7 +8989,22 @@
     "costBadgeAriaLabel": "Estimated cost {{amount}}",
     "dismissDuplicateFlag": "Mark the duplicate flag for {{id}} as read",
     "nearDuplicateHeldTitle": "Flagged as a duplicate of {{id}}. This task stays paused until you clear this flag or delete it.",
-    "duplicateDismissFailed": "Failed to clear the duplicate flag for {{taskId}}: {{error}}"
+    "duplicateDismissFailed": "Failed to clear the duplicate flag for {{taskId}}: {{error}}",
+    "humanPlanApproval": {
+      "toggle": "Require my approval of the plan before execution",
+      "messageLabel": "Message (optional)",
+      "messagePlaceholder": "Rejecting? Say what is wrong with the plan. Approving? Add anything to watch out for.",
+      "approve": "Approve",
+      "reject": "Reject",
+      "review": "Review plan",
+      "hint": "Reject sends your message back for a new plan. Approve starts the work and passes your note to the implementer.",
+      "noticeCopy": "Open the task to approve or reject this plan, with an optional message.",
+      "badgeArmed": "Your plan approval required before execution",
+      "badgeAwaiting": "Awaiting your plan approval",
+      "badgeApproved": "Plan approved by you",
+      "approved": "Plan approved — {{id}} continues to execution",
+      "rejected": "Plan rejected — {{id}} goes back for a new plan"
+    }
   },
   "terminal": {
     "arrowKeysLabel": "Terminal arrow keys",

@@ -8900,6 +8900,21 @@
       "copy": "",
       "replanCapCopy": "",
       "title": ""
+    },
+    "humanPlanApproval": {
+      "toggle": "執行前需要我核准計畫",
+      "messageLabel": "留言（選填）",
+      "messagePlaceholder": "若要拒絕，請說明計畫哪裡有問題；若要核准，請補充需要注意的地方。",
+      "approve": "核准",
+      "reject": "拒絕",
+      "review": "檢視計畫",
+      "hint": "拒絕會把你的留言帶回去重新擬定計畫。核准會開始工作並把你的備註傳給實作方。",
+      "noticeCopy": "開啟任務以核准或拒絕此計畫，可附上留言。",
+      "badgeArmed": "執行前需要你核准計畫",
+      "badgeAwaiting": "等待你核准計畫",
+      "badgeApproved": "計畫已由你核准",
+      "approved": "計畫已核准 — {{id}} 繼續執行",
+      "rejected": "計畫已拒絕 — {{id}} 返回重新擬定計畫"
     }
   },
   "terminal": {

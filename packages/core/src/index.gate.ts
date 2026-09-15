@@ -115,6 +115,30 @@ export {
 } from "./plugins/plugin-prompt-condition.js";
 export type { PromptConditionEvaluationResult } from "./plugins/plugin-prompt-condition.js";
 export { buildPreservedPlanRespecifyPatch, computePlanApprovalFingerprint, isPlanReviewSatisfied, resolvePlanApprovalRequired, supersedePlanReviewResults } from "./planner/plan-approval.js";
+/* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408's per-card decision predicates are shared by the engine's release, execution-entry, and prompt seams. */
+export {
+  HUMAN_PLAN_APPROVAL_MESSAGE_MAX_LENGTH,
+  HUMAN_PLAN_APPROVAL_REASON,
+  HumanPlanApprovalMessageError,
+  HumanPlanApprovalWorkflowError,
+  HUMAN_PLAN_APPROVAL_NOTE_HEADING,
+  formatApprovedHumanPlanNoteSection,
+  resolveHumanPlanApprovalWorkflowSteps,
+  /* FNXC:HumanPlanApproval 2026-09-15-07:30: FN-408 remediation — arming the requirement neutralizes Fast so the card can actually be planned, reviewed and decided. */
+  resolveHumanPlanApprovalExecutionMode,
+  buildHumanPlanApprovalCreationState,
+  clearHumanPlanApprovalDecision,
+  hasCurrentHumanPlanApproval,
+  isHumanPlanApprovalDecidable,
+  isHumanPlanApprovalEnabled,
+  isHumanPlanApprovalPending,
+  /* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 execution-entry fence, deliberately separate from the planning-dispatch approval hold. */
+  isTaskBlockedOnHumanPlanApproval,
+  resolveApprovedHumanPlanNote,
+  resolveCurrentHumanPlanApprovalDecision,
+  resolvePlanReviewEpisodeId,
+  sanitizeHumanPlanApprovalMessage,
+} from "./planner/human-plan-approval.js";
 export { PLAN_PREMISE_KINDS, parsePlanPremises } from "./planner/plan-premises.js";
 export type { PlanPremise, PlanPremiseKind, PlanPremisesParseResult } from "./planner/plan-premises.js";
 export { canonicalizePlan, createCurrentPlanEvidence, diffSpecLocks, isSpecLockActive, isUnavailablePlanLockError, PLAN_LOCK_UNAVAILABLE_DIAGNOSTIC, SPEC_LOCK_PARSER_VERSION, UnavailablePlanLockError } from "./planner/spec-lock.js";

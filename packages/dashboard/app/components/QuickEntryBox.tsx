@@ -9,7 +9,7 @@ import type { Task, Settings, TaskPriority, ResolvedWorkflowOptionalStep, Thinki
 import type { ModelInfo, Agent, CreateTaskInput, DuplicateMatch, BoardWorkflowDefinition, NodeInfo } from "../api";
 import { checkDuplicateTasks, fetchModels, fetchSettings, updateGlobalSettings, fetchAgents, uploadAttachment, fetchWorkflowOptionalSteps } from "../api";
 import { DuplicateWarningModal } from "./DuplicateWarningModal";
-import { Link, Paperclip, Brain, Lightbulb, Sparkles, Save, ChevronDown, ChevronUp, ChevronRight, Bot, Server, Zap, Eye, EyeOff, Play } from "lucide-react";
+import { Link, Paperclip, Brain, Lightbulb, Sparkles, Save, ChevronDown, ChevronUp, ChevronRight, Bot, Server, Zap, UserCheck, Eye, EyeOff, Play } from "lucide-react";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { LoadingSpinner } from "./LoadingSpinner";
 import { getScopedItem, MAX_PERSISTED_DRAFT_BYTES, removeScopedItem, setScopedItem } from "../utils/projectStorage";
@@ -289,6 +289,14 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
   const [optionalSteps, setOptionalSteps] = useState<ResolvedWorkflowOptionalStep[]>([]);
   const [enabledOptionalStepIds, setEnabledOptionalStepIds] = useState<string[]>([]);
   const [isFastMode, setIsFastMode] = useState(false);
+  /*
+  FNXC:HumanPlanApproval 2026-09-15-06:24:
+  FN-408 — per-card human plan validation. Its own state, but MUTUALLY EXCLUSIVE with Fast
+  (2026-09-15-07:30): Fast is planless, so an armed Fast card could never reach a plan, a Plan
+  Review or a decidable episode. Arming this clears Fast and vice versa; arming it never clears the
+  optional-step selection.
+  */
+  const [requiresHumanPlanApproval, setRequiresHumanPlanApproval] = useState(false);
   const isFastModeRef = useRef(isFastMode);
   const preFastOptionalStepIdsRef = useRef<string[] | null>(null);
   const defaultOnOptionalStepIds = useMemo(
@@ -519,11 +527,19 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
   FN-260 makes Fast reversible: leaving it restores the pre-Fast selection plus any steps explicitly enabled while Fast was active. Invalidate that baseline whenever non-user metadata seeding or reset replaces the enabled set, so stale workflow selections fall back to the current defaultOn seed.
   */
 
-  const toggleFastMode = useCallback(() => {
-    const next = !isFastMode;
+  /*
+  FNXC:HumanPlanApproval 2026-09-15-07:30:
+  FN-408 remediation — Fast and the per-card human plan approval are mutually exclusive in the UI
+  because they are mutually exclusive on the server: an armed card is always planned, so the create
+  payload can never carry both. Turning one on visibly turns the other off instead of silently
+  dropping the operator's Fast choice at creation.
+  */
+  const setFastMode = useCallback((next: boolean) => {
+    if (next === isFastModeRef.current) return;
     if (next) {
       preFastOptionalStepIdsRef.current = enabledOptionalStepIds;
       setEnabledOptionalStepIds([]);
+      setRequiresHumanPlanApproval(false);
     } else {
       setEnabledOptionalStepIds(
         restoreOptionalStepsOnFastExit(
@@ -534,8 +550,19 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
       );
       preFastOptionalStepIdsRef.current = null;
     }
+    isFastModeRef.current = next;
     setIsFastMode(next);
-  }, [defaultOnOptionalStepIds, enabledOptionalStepIds, isFastMode]);
+  }, [defaultOnOptionalStepIds, enabledOptionalStepIds]);
+
+  const toggleFastMode = useCallback(() => {
+    setFastMode(!isFastMode);
+  }, [isFastMode, setFastMode]);
+
+  const toggleHumanPlanApproval = useCallback(() => {
+    const next = !requiresHumanPlanApproval;
+    if (next) setFastMode(false);
+    setRequiresHumanPlanApproval(next);
+  }, [requiresHumanPlanApproval, setFastMode]);
 
   const executorSelectionValue = getModelSelectionValue(executorProvider, executorModelId);
   const validatorSelectionValue = getModelSelectionValue(validatorProvider, validatorModelId);
@@ -786,6 +813,8 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
     setEnabledOptionalStepIds(defaultOnOptionalStepIds);
     preFastOptionalStepIdsRef.current = null;
     setIsFastMode(false);
+    /* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 resets with the other creation choices after a successful create. */
+    setRequiresHumanPlanApproval(false);
     setGithubTrackingOverride(null);
     setSessionAdvisorOverride(null);
     setPriority(DEFAULT_TASK_PRIORITY);
@@ -929,6 +958,8 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
         */
         enabledWorkflowSteps: isFastMode || optionalSteps.length > 0 ? enabledOptionalStepIds : undefined,
         ...(isFastMode ? { executionMode: "fast" } : {}),
+        /* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 sends only the arming flag; the server owns Plan Review enforcement and every decision. */
+        ...(requiresHumanPlanApproval ? { humanPlanApproval: true } : {}),
         githubTracking: githubTrackingOverride !== null ? { enabled: githubTrackingOverride } : undefined,
         // FNXC:PlannerOversight 2026-07-14-18:11: only send when user toggled away from project default.
         sessionAdvisorEnabled: sessionAdvisorOverride !== null ? sessionAdvisorOverride : undefined,
@@ -1820,6 +1851,11 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
   const priorityLabel = getPriorityLabel(priority);
   const priorityButtonLabel = t("tasks.quickEntryPriorityLabel", "Priority: {{priority}}", { priority: priorityLabel });
   const fastToggleLabel = t("tasks.toggleFastMode", "Toggle fast execution mode");
+  /* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 toggle label; the tooltip states the actual consequence, not just the mode name. */
+  const humanPlanApprovalToggleLabel = t(
+    "tasks.humanPlanApproval.toggle",
+    "Require my approval of the plan before execution",
+  );
   const disclosureLabel = isDisclosureExpanded
     ? t("tasks.hideAdvancedOptions", "Hide advanced options")
     : t("tasks.showAdvancedOptions", "Show advanced options");
@@ -2507,6 +2543,20 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
                 aria-label={fastToggleLabel}
               >
                 <Zap size={14} aria-hidden="true" />
+              </UiButton>
+
+              {/* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 — sits immediately beside Fast, same icon-button primitive and size, toggled independently. */}
+              <UiButton
+                type="button"
+                className={`btn btn-icon btn-sm ${requiresHumanPlanApproval ? "btn-primary" : ""}`}
+                onClick={toggleHumanPlanApproval}
+                onMouseDown={(e) => e.preventDefault()}
+                aria-pressed={requiresHumanPlanApproval}
+                data-testid="quick-entry-human-plan-approval-toggle"
+                title={humanPlanApprovalToggleLabel}
+                aria-label={humanPlanApprovalToggleLabel}
+              >
+                <UserCheck size={14} aria-hidden="true" />
               </UiButton>
 
               <UiButton

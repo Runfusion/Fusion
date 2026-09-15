@@ -303,12 +303,36 @@ export function revertTask(id: string, projectId?: string, body?: RevertTaskOpti
   });
 }
 
-export function approvePlan(id: string, projectId?: string): Promise<Task> {
-  return api<Task>(withProjectId(`/tasks/${id}/approve-plan`, projectId), { method: "POST" });
+/*
+FNXC:HumanPlanApproval 2026-09-15-06:24:
+FN-408 — both decisions may carry an operator message: an approval note becomes implementation
+context, a rejection message becomes planner feedback. `expectedPlanFingerprint`/`expectedEpisodeId`
+make a decision opened in a stale tab fail loudly instead of validating a plan the operator never
+read, and `requestId` makes a double submit idempotent. All fields are optional so the historical
+two-argument call sites (ordinary plan-approval holds) keep working byte-identically.
+*/
+export interface PlanDecisionOptions {
+  message?: string;
+  requestId?: string;
+  expectedPlanFingerprint?: string;
+  expectedEpisodeId?: string;
 }
 
-export function rejectPlan(id: string, projectId?: string): Promise<Task> {
-  return api<Task>(withProjectId(`/tasks/${id}/reject-plan`, projectId), { method: "POST" });
+function planDecisionInit(options?: PlanDecisionOptions): RequestInit {
+  if (!options || Object.keys(options).length === 0) return { method: "POST" };
+  return {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(options),
+  };
+}
+
+export function approvePlan(id: string, projectId?: string, options?: PlanDecisionOptions): Promise<Task> {
+  return api<Task>(withProjectId(`/tasks/${id}/approve-plan`, projectId), planDecisionInit(options));
+}
+
+export function rejectPlan(id: string, projectId?: string, options?: PlanDecisionOptions): Promise<Task> {
+  return api<Task>(withProjectId(`/tasks/${id}/reject-plan`, projectId), planDecisionInit(options));
 }
 
 

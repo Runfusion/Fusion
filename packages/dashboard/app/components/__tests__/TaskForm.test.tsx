@@ -19,6 +19,8 @@ vi.mock("lucide-react", () => ({
   Flag: () => null,
   TriangleAlert: () => null,
   Zap: () => null,
+  // FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408's per-card human plan approval toggle icon.
+  UserCheck: () => null,
   Brain: () => null,
   Server: () => null,
   Cpu: () => null,
@@ -1906,6 +1908,63 @@ describe("TaskForm focus behavior (FN-1459)", () => {
 
       expect(screen.getByText("Repository must be in owner/repo format.")).toBeInTheDocument();
     });
+  });
+});
+
+/*
+FNXC:HumanPlanApproval 2026-09-15-06:24:
+FN-408 — the New Task dialog must offer the same per-card human plan requirement as Quick Entry, as
+an independent toggle placed beside Fast. Hosts that do not pass the callback must render no control
+at all rather than a dead shell.
+*/
+describe("human plan approval toggle", () => {
+  it("renders nothing when the host does not supply the callback", () => {
+    renderTaskForm({ executionMode: "standard", onExecutionModeChange: vi.fn() });
+
+    expect(screen.queryByTestId("task-form-inline-human-plan-approval")).toBeNull();
+  });
+
+  it("reports its pressed state and toggles independently of Fast", () => {
+    const onHumanPlanApprovalChange = vi.fn();
+    const onExecutionModeChange = vi.fn();
+    renderTaskForm({
+      executionMode: "standard",
+      onExecutionModeChange,
+      humanPlanApproval: false,
+      onHumanPlanApprovalChange,
+    });
+
+    const toggle = screen.getByTestId("task-form-inline-human-plan-approval");
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+
+    fireEvent.click(toggle);
+    expect(onHumanPlanApprovalChange).toHaveBeenCalledWith(true);
+    // Arming the human requirement must not change the execution mode.
+    expect(onExecutionModeChange).not.toHaveBeenCalled();
+  });
+
+  /*
+  FNXC:HumanPlanApproval 2026-09-15-07:30:
+  FN-408 remediation — TaskForm stays a controlled reporter: it renders the state its host gives it
+  and reports the requested change. Fast / human-approval exclusivity is enforced by the host that
+  owns both values (NewTaskModal), which is where it is asserted.
+  */
+  it("reports turning the requirement back off without touching the execution mode", () => {
+    const onHumanPlanApprovalChange = vi.fn();
+    const onExecutionModeChange = vi.fn();
+    renderTaskForm({
+      executionMode: "standard",
+      onExecutionModeChange,
+      humanPlanApproval: true,
+      onHumanPlanApprovalChange,
+    });
+
+    const toggle = screen.getByTestId("task-form-inline-human-plan-approval");
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+
+    fireEvent.click(toggle);
+    expect(onHumanPlanApprovalChange).toHaveBeenCalledWith(false);
+    expect(onExecutionModeChange).not.toHaveBeenCalled();
   });
 });
 

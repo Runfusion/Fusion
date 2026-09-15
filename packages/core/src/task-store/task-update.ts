@@ -35,6 +35,7 @@ import {normalizeTaskReviewState} from "../task-store/review-state.js";
 import {hasOwnDeclaredSymbols, normalizeDeclaredSymbols, extractDeclaredSymbolsFromPrompt, resolveTaskSymbolsForTask} from "../tasks/task-symbol-resolution.js";
 import {assertValidProviderInstanceId} from "../provider-instance.js";
 import {supersedePlanReviewResults} from "../planner/plan-approval.js";
+import {resolveHumanPlanApprovalExecutionMode} from "../planner/human-plan-approval.js";
 import {PLAN_REVIEW_GROUP_ID} from "../workflows/builtin-plan-review-group.js";
 import {BranchWriteProvenanceError, validateTaskBranchName} from "../branch/branch-assignment.js";
 import {withTaskBranchContextInSourceMetadata} from "./branch-context.js";
@@ -317,6 +318,12 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
         task.externalBlock = undefined;
       } else if (updates.externalBlock !== undefined) {
         task.externalBlock = updates.externalBlock;
+      }
+      /* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 uses the explicit null sentinel to clear the per-card state; undefined omits the field. */
+      if (updates.humanPlanApproval === null) {
+        task.humanPlanApproval = undefined;
+      } else if (updates.humanPlanApproval !== undefined) {
+        task.humanPlanApproval = updates.humanPlanApproval;
       }
       if (updates.planningFailure === null) {
         task.planningFailure = undefined;
@@ -1044,7 +1051,17 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       if (updates.executionMode === null) {
         task.executionMode = undefined;
       } else if (updates.executionMode !== undefined) {
-        task.executionMode = updates.executionMode as import("../types.js").ExecutionMode;
+        /*
+        FNXC:HumanPlanApproval 2026-09-15-07:30:
+        FN-408 remediation — a later Fast toggle must not strand an armed card either. Fast skips
+        plan review and planning entirely, so an armed Fast card could never reach a decidable
+        review episode; the per-card requirement wins and Fast is neutralized. `task.humanPlanApproval`
+        already carries this update's own arming because that field is applied earlier in this pass.
+        */
+        task.executionMode = resolveHumanPlanApprovalExecutionMode(
+          task.humanPlanApproval?.enabled === true,
+          updates.executionMode,
+        ) as import("../types.js").ExecutionMode | undefined;
       }
       /*
       FNXC:PlannerOversight 2026-07-14-18:11:

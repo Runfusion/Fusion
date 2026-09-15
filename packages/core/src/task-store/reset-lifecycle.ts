@@ -9,6 +9,7 @@ import type { TaskStore } from "../store.js";
 import { createLogger } from "../process/logger.js";
 import { resolveTaskSymbolsForTask } from "../tasks/task-symbol-resolution.js";
 import { cancelTaskOverlapWaitsInTransaction } from "./overlap-wait-ops.js";
+import { clearHumanPlanApprovalDecision } from "../planner/human-plan-approval.js";
 
 const resetLog = createLogger("task-store-reset-lifecycle");
 const ACTIVE_TASK_CONTINUATION_STATES = ["runnable", "running", "held", "retrying"] as const;
@@ -80,6 +81,12 @@ export function buildResetTask(
     pausedReason: undefined,
     externalBlock: undefined,
     planningFailure: undefined,
+    /*
+    FNXC:HumanPlanApproval 2026-09-15-06:24:
+    FN-408 — Reset keeps the per-card requirement (it is the operator's standing intent for this card)
+    but discards any decision, so the regenerated plan always asks again.
+    */
+    humanPlanApproval: clearHumanPlanApprovalDecision(task.humanPlanApproval) ?? undefined,
     pausedByAgentId: undefined,
     checkedOutBy: undefined,
     checkedOutAt: undefined,

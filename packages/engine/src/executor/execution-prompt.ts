@@ -9,7 +9,8 @@ import type {
   TaskDetail,
   WorkflowFieldDefinition,
 } from "@fusion/core";
-import { buildExecutionMemoryInstructions, buildMemoryPreSteeringNudge, isFastExecutionMode, resolveTaskOutputLanguage, type WorkspaceConfig } from "@fusion/core";
+/* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 delivers the approved operator note as implementation context. */
+import { buildExecutionMemoryInstructions, buildMemoryPreSteeringNudge, formatApprovedHumanPlanNoteSection, isFastExecutionMode, resolveTaskOutputLanguage, type WorkspaceConfig } from "@fusion/core";
 import { buildFastLanePrompt } from "../execution/step-session-executor.js";
 import { executorLog } from "../logger.js";
 import type { PluginRunner } from "../plugins/plugin-runner.js";
@@ -225,7 +226,7 @@ git log --oneline
 
   /* FNXC:TaskOutputLanguage 2026-08-19-14:56: Executor settings are captured by the run before this prompt is built, so summary and recommendation prose do not drift mid-session. */
   const outputLanguageInstruction = resolveTaskOutputLanguage(settings, task.description).instruction;
-  const executionPrompt = `## Task Output Language
+  let executionPrompt = `## Task Output Language
 ${outputLanguageInstruction}
 Apply this to fn_task_done summary and populated recommendation title/description only; keep recommendation schema, ids, categories, tools, code, and task syntax canonical.
 
@@ -278,6 +279,16 @@ If the repo has a typecheck command, run it before \`fn_task_done()\` and fix an
 Use \`fn_task_create\` for truly separate follow-up work, including unrelated/pre-existing broad-suite failures.
 If lint is configured and failing, fix that too before completion.
 Do not repeatedly rerun a broad failing or hanging workspace command without a new hypothesis and a narrower confirming command.`;
+
+  /*
+  FNXC:HumanPlanApproval 2026-09-15-06:24:
+  FN-408 — an operator who approved this plan may attach a note ("just be careful about X while
+  implementing"). It is delivered as implementation CONTEXT here rather than written into PROMPT.md,
+  so the approved plan keeps its exact text and fingerprint. The shared formatter emits nothing when
+  there is no current approved note, and never emits a note from a superseded plan or episode.
+  */
+  const humanPlanApprovalNote = formatApprovedHumanPlanNoteSection(task);
+  if (humanPlanApprovalNote) executionPrompt += `\n\n${humanPlanApprovalNote}`;
 
   if (workspaceConfig && workspaceConfig.repos.length > 0) {
     return executionPrompt + `\n\n## Workspace mode\n` +

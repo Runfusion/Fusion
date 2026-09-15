@@ -8900,6 +8900,21 @@
       "copy": "",
       "replanCapCopy": "",
       "title": ""
+    },
+    "humanPlanApproval": {
+      "toggle": "执行前需要我批准计划",
+      "messageLabel": "留言（可选）",
+      "messagePlaceholder": "如果拒绝，请说明计划有什么问题；如果批准，请补充需要注意的地方。",
+      "approve": "批准",
+      "reject": "拒绝",
+      "review": "查看计划",
+      "hint": "拒绝会把你的留言带回去重新制定计划。批准会开始工作并把你的备注传给实现方。",
+      "noticeCopy": "打开任务以批准或拒绝此计划，可附上留言。",
+      "badgeArmed": "执行前需要你批准计划",
+      "badgeAwaiting": "等待你批准计划",
+      "badgeApproved": "计划已由你批准",
+      "approved": "计划已批准 — {{id}} 继续执行",
+      "rejected": "计划已拒绝 — {{id}} 返回重新制定计划"
     }
   },
   "terminal": {

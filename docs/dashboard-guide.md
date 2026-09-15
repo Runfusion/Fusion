@@ -118,6 +118,27 @@ Reset retains the task ID, title, confirmed description, dependencies, workflow 
 
 When project or workflow policy requires manual plan approval, the task stops after planning in the workflow's intake or hold planning lane. **Need Your Review** appears on the Board card, in compact and table List layouts, and as a Task Detail banner. **Approve** on Board and List cards works directly from the board row and does not require opening the task first. Use **Approve** to continue; Task Detail also keeps **Reject Plan** available to discard the plan and regenerate it.
 
+### Requiring your approval for one specific task
+
+Next to the lightning-bolt Fast button, both Quick Entry and the New Task dialog have a person-with-a-check button. Turning it on means: **this card will not start work until you personally approve its plan.** It applies even when the project is set to auto-approve every plan, it applies to the card you are creating, and it changes no project setting.
+
+Fast and this button are alternatives, not companions: turning one on turns the other off. Fast deliberately skips planning and plan review, so there would be no plan for you to validate — choosing your approval keeps the card on the ordinary planned route.
+
+A marked card shows a person-with-a-check badge on the Board card and in both List layouts, so you can see at a glance which work is waiting on you. The badge label tells you where the card is: your approval is *required* while the plan is still being written and reviewed, *awaited* once the plan has passed its review and your decision is the only thing left, and *approved* once you have decided.
+
+The order is fixed: the plan is written, Plan Review checks it, and only then are you asked. You are never asked to validate a plan the reviewer has not examined yet.
+
+Open the task to decide. Under the plan you get one message box and two buttons:
+
+- **Reject** sends the card back for a new plan, and your message goes to the planner. Use it when something is genuinely wrong with the plan. The rejected plan is kept as the starting point for the revision rather than thrown away, and the card stays where it is — it does not move backwards to intake.
+- **Approve** starts the work, and your message is passed to the implementer as a note ("just watch out for X"). It is a note only: it does not modify the plan you just approved.
+
+The message is optional for both decisions. You can type it in the banner or in the footer bar — they share one draft, so it does not matter which you use. If a decision fails, your message is kept so you never have to retype it.
+
+A decision always applies to the exact plan you were shown. If the plan was re-reviewed while your tab was open, the decision is refused and you are asked to reload, rather than silently approving something you did not read. After a rejection, the new plan needs a fresh decision — even if it comes back looking identical. On Board and List rows, a marked card's notice opens the task instead of approving directly, because the decision needs your message and the plan you actually saw.
+
+If the workflow you pick has no plan review at all, the combination is refused at creation instead of creating a card that could never be approved.
+
 ## Task Recovery
 
 Every live card, including an intake or planning card, offers **Retry**, **Reset**, and **Delete**. **Retry** stays in the current column: in planning it rebuilds the plan from the original request; during work it discards in-flight work and starts again on the approved plan; during review it discards review verdicts and reviews the produced work again. Workspace retries use the same in-place behavior while preserving every per-repository worktree and landing record, including repositories already delivered. **Reset** opens the task's original description in an editable dialog, then starts the task over from the confirmed text while discarding plan, work, and reviews. **Delete** removes the task.

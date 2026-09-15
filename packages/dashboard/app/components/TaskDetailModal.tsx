@@ -115,7 +115,9 @@ import { getTaskLogEntryAction, getTaskLogEntryOutcome } from "../utils/taskLogE
 import { copyTextToClipboard } from "../utils/copyToClipboard";
 import { getRelativeTimeBucket } from "../utils/relativeTimeAgo";
 import { recordResumeEvent } from "../utils/resumeInstrumentation";
-import { isReviewBudgetExhaustedApproval, isTaskAwaitingPlanApproval } from "../utils/reviewBudgetApproval";
+/* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 per-card decision routing and plan/episode identity. */
+import { HUMAN_PLAN_APPROVAL_MESSAGE_MAX_LENGTH_CLIENT, isHumanPlanApprovalArmedClient, isReviewBudgetExhaustedApproval, isTaskAwaitingPlanApproval, resolvePlanReviewEpisodeIdClient } from "../utils/reviewBudgetApproval";
+import { HumanPlanApprovalControls } from "./HumanPlanApprovalControls";
 import { getTaskStatusBadgeLabel, hasTaskStatusBadge, isTaskPlanningActive } from "../utils/taskStatusBadgeLabel";
 import { ACTIVE_STATUSES, resolveEffectiveExecutor, resolveEffectivePlanning, resolveEffectiveTaskChat, resolveEffectiveValidator, type ModelSelection } from "./effective-model-resolution";
 import { TaskContextMenu, buildTaskActionMenuModel, getTaskPrAutomationLabel } from "./TaskContextMenu";
@@ -3694,6 +3696,65 @@ export function TaskDetailContent({
   }, [isPlanApprovalPending, task.id, projectId, requestClose, addToast, confirm, t]);
 
   /*
+  FNXC:HumanPlanApproval 2026-09-15-06:24:
+  FN-408 — the per-card decision. ONE shared draft and ONE shared handler pair serve both the banner
+  and the sticky footer, so the operator can type in either placement and submit from the other; two
+  independent drafts would silently discard whichever was not used.
+
+  Every decision carries the plan fingerprint and review episode the operator actually saw, so a
+  decision made in a stale tab is refused by the server instead of validating a plan they never read.
+  A failure preserves the draft and shows the message inline — nothing typed is ever thrown away.
+  The decision request id is per attempt, which makes a double click idempotent server-side.
+  */
+  const requiresHumanPlanDecision = isHumanPlanApprovalArmedClient(task);
+  const humanPlanDecisionIdentity = useMemo(() => ({
+    expectedPlanFingerprint: task.approvedPlanFingerprint,
+    expectedEpisodeId: resolvePlanReviewEpisodeIdClient(task),
+  }), [task]);
+  const humanPlanDecisionEpisodeKey = `${task.id}:${humanPlanDecisionIdentity.expectedPlanFingerprint ?? ""}:${humanPlanDecisionIdentity.expectedEpisodeId ?? ""}`;
+  const [humanPlanDecisionMessage, setHumanPlanDecisionMessage] = useState("");
+  const [humanPlanDecisionError, setHumanPlanDecisionError] = useState<string | null>(null);
+  const humanPlanDecisionEpisodeRef = useRef(humanPlanDecisionEpisodeKey);
+  useEffect(() => {
+    // Reset on a genuinely NEW task or review episode only — never on an ordinary refresh,
+    // which would wipe a message the operator is still composing.
+    if (humanPlanDecisionEpisodeRef.current === humanPlanDecisionEpisodeKey) return;
+    humanPlanDecisionEpisodeRef.current = humanPlanDecisionEpisodeKey;
+    setHumanPlanDecisionMessage("");
+    setHumanPlanDecisionError(null);
+  }, [humanPlanDecisionEpisodeKey]);
+
+  const submitHumanPlanDecision = useCallback(async (decision: "approve" | "reject") => {
+    if (isPlanApprovalPending) return;
+    setIsPlanApprovalPending(true);
+    setHumanPlanDecisionError(null);
+    const options = {
+      message: humanPlanDecisionMessage,
+      requestId: `${task.id}-${decision}-${Date.now()}`,
+      ...humanPlanDecisionIdentity,
+    };
+    try {
+      if (decision === "approve") {
+        await approvePlan(task.id, projectId, options);
+        addToast(t("tasks.humanPlanApproval.approved", "Plan approved — {{id}} continues to execution", { id: task.id }), "success");
+      } else {
+        await rejectPlan(task.id, projectId, options);
+        addToast(t("tasks.humanPlanApproval.rejected", "Plan rejected — {{id}} goes back for a new plan", { id: task.id }), "info");
+      }
+      setHumanPlanDecisionMessage("");
+      requestClose();
+    } catch (err) {
+      // Keep the draft: the operator must never have to retype their message after a failure.
+      setHumanPlanDecisionError(getErrorMessage(err));
+    } finally {
+      setIsPlanApprovalPending(false);
+    }
+  }, [isPlanApprovalPending, humanPlanDecisionMessage, humanPlanDecisionIdentity, task.id, projectId, requestClose, addToast, t]);
+
+  const handleHumanPlanApprove = useCallback(() => { void submitHumanPlanDecision("approve"); }, [submitHumanPlanDecision]);
+  const handleHumanPlanReject = useCallback(() => { void submitHumanPlanDecision("reject"); }, [submitHumanPlanDecision]);
+
+  /*
   FNXC:TaskRefine 2026-09-14-22:23:
   FN-400: this surface only owns the Refine entry of its own header Actions menu. Card and list-row menus host the
   shared standalone dialog themselves, so Refine no longer opens a task record; the one-shot `initialAction` deep link
@@ -5611,6 +5672,20 @@ export function TaskDetailContent({
                   so an operator can act without scrolling through a long task body.
                   */}
                   {workingTask.prompt && (
+                    requiresHumanPlanDecision ? (
+                      /* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 replaces the bare buttons with the messaged decision surface. */
+                      <HumanPlanApprovalControls
+                        taskId={task.id}
+                        variant="banner"
+                        message={humanPlanDecisionMessage}
+                        onMessageChange={setHumanPlanDecisionMessage}
+                        onApprove={handleHumanPlanApprove}
+                        onReject={handleHumanPlanReject}
+                        pending={isPlanApprovalPending}
+                        error={humanPlanDecisionError}
+                        maxLength={HUMAN_PLAN_APPROVAL_MESSAGE_MAX_LENGTH_CLIENT}
+                      />
+                    ) : (
                     <div className="detail-plan-approval-banner__actions" data-testid="detail-plan-approval-banner-actions">
                       <UiButton className="btn btn-primary btn-sm" data-testid="detail-plan-approval-banner-approve" disabled={isPlanApprovalPending} onClick={handleApprovePlan}>
                         {t("taskDetail.plan.approveBtn", "Approve Plan")}
@@ -5619,6 +5694,7 @@ export function TaskDetailContent({
                         {t("taskDetail.plan.rejectBtn", "Reject Plan")}
                       </UiButton>
                     </div>
+                    )
                   )}
                 </div>
               )}
@@ -7173,6 +7249,24 @@ export function TaskDetailContent({
               {/* Approve/Reject Plan buttons for manual plan-approval holds (also covers
                   legacy rows with awaitingApprovalReason === "release-authorization"). */}
               {isAwaitingApproval && workingTask.prompt && (
+                requiresHumanPlanDecision ? (
+                  /*
+                  FNXC:HumanPlanApproval 2026-09-15-06:24:
+                  FN-408 — the footer shares the banner's draft and handlers, so text typed in one
+                  placement submits from the other.
+                  */
+                  <HumanPlanApprovalControls
+                    taskId={task.id}
+                    variant="footer"
+                    message={humanPlanDecisionMessage}
+                    onMessageChange={setHumanPlanDecisionMessage}
+                    onApprove={handleHumanPlanApprove}
+                    onReject={handleHumanPlanReject}
+                    pending={isPlanApprovalPending}
+                    error={humanPlanDecisionError}
+                    maxLength={HUMAN_PLAN_APPROVAL_MESSAGE_MAX_LENGTH_CLIENT}
+                  />
+                ) : (
                 <>
                   <UiButton className="btn btn-primary btn-sm" data-testid="detail-plan-approval-footer-approve" disabled={isPlanApprovalPending} onClick={handleApprovePlan}>
                     {t("taskDetail.plan.approveBtn", "Approve Plan")}
@@ -7181,6 +7275,7 @@ export function TaskDetailContent({
                     {t("taskDetail.plan.rejectBtn", "Reject Plan")}
                   </UiButton>
                 </>
+                )
               )}
 
               <div className="modal-actions-spacer" />

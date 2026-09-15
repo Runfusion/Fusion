@@ -240,6 +240,8 @@ vi.mock("lucide-react", () => {
     Flag: MockIcon("lucide-flag"),
     TriangleAlert: MockIcon("lucide-triangle-alert"),
     Zap: MockIcon("lucide-zap"),
+    // FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408's per-card human plan approval toggle icon.
+    UserCheck: MockIcon("lucide-user-check"),
     ShieldCheck: MockIcon("lucide-shield-check"),
     Eye: MockIcon("lucide-eye"),
     EyeOff: MockIcon("lucide-eye-off"),
@@ -469,6 +471,8 @@ const QUICK_ENTRY_ACTION_BUTTONS = [
   ["Session advisor", "quick-entry-session-advisor-toggle"],
   ["Priority", "quick-entry-priority-button"],
   ["Fast", "quick-entry-fast-toggle"],
+  // FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 adds the per-card human plan approval toggle beside Fast.
+  ["Human plan approval", "quick-entry-human-plan-approval-toggle"],
   ["Save", "quick-entry-save"],
 ] as const;
 
@@ -478,6 +482,7 @@ const QUICK_ENTRY_PRIMARY_ICON_BUTTON_IDS = [
   "quick-entry-session-advisor-toggle",
   "quick-entry-priority-button",
   "quick-entry-fast-toggle",
+  "quick-entry-human-plan-approval-toggle",
 ] as const;
 
 const ALPHA_QUICK_ENTRY_PRIMARY_ICON_BUTTON_IDS = [
@@ -1086,17 +1091,19 @@ describe("QuickEntryBox", () => {
       expandQuickEntry();
 
       const actionButtonTestIds = getActionButtonTestIdsInDomOrder();
-      expect(actionButtonTestIds.slice(-6)).toEqual([
+      expect(actionButtonTestIds.slice(-7)).toEqual([
         "quick-entry-attach",
         "quick-entry-github-toggle",
         "quick-entry-session-advisor-toggle",
         "quick-entry-priority-button",
         "quick-entry-fast-toggle",
+        // FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 sits immediately after Fast and before Save.
+        "quick-entry-human-plan-approval-toggle",
         "quick-entry-save",
       ]);
 
       const primaryGroup = screen.getByTestId("quick-entry-primary-group");
-      for (const testId of ["quick-entry-attach", "quick-entry-github-toggle", "quick-entry-session-advisor-toggle", "quick-entry-priority-button", "quick-entry-fast-toggle", "quick-entry-save"]) {
+      for (const testId of ["quick-entry-attach", "quick-entry-github-toggle", "quick-entry-session-advisor-toggle", "quick-entry-priority-button", "quick-entry-fast-toggle", "quick-entry-human-plan-approval-toggle", "quick-entry-save"]) {
         expect(primaryGroup.contains(screen.getByTestId(testId))).toBe(true);
       }
       const optionsGroup = screen.getByTestId("quick-entry-options-group");
@@ -1474,6 +1481,10 @@ describe("QuickEntryBox", () => {
           await waitFor(() => {
             expect(helpers.props.onCreate).toHaveBeenCalled();
           });
+          break;
+        // FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408's toggle arms on tap, exactly like Fast.
+        case "quick-entry-human-plan-approval-toggle":
+          expect(screen.getByTestId(testId)).toHaveAttribute("aria-pressed", "true");
           break;
         default:
           throw new Error(`Unhandled QuickEntry action test id: ${testId}`);
@@ -2447,6 +2458,13 @@ describe("QuickEntryBox", () => {
         "quick-entry-session-advisor-toggle",
         "quick-entry-priority-button",
         "quick-entry-fast-toggle",
+        /*
+        FNXC:HumanPlanApproval 2026-09-15-06:24:
+        FN-408's per-card human plan approval toggle is a DIFFERENT control from the retired FN-234
+        `quick-entry-plan-approval-toggle`, which this test still asserts stays absent along with its
+        `requirePlanApproval` payload field.
+        */
+        "quick-entry-human-plan-approval-toggle",
         "quick-entry-save",
       ];
       expect(screen.queryByTestId("quick-entry-plan-approval-toggle")).toBeNull();
@@ -2483,6 +2501,81 @@ describe("QuickEntryBox", () => {
 
       fireEvent.click(fastToggle);
       expect(fastToggle.getAttribute("aria-pressed")).toBe("false");
+    });
+
+    /*
+    FNXC:HumanPlanApproval 2026-09-15-06:24:
+    FN-408 — the per-card human plan requirement is created here, so this is where the operator's
+    intent must survive: present in the payload and cleared after a successful create so the next
+    task does not silently inherit it.
+
+    FNXC:HumanPlanApproval 2026-09-15-07:30:
+    FN-408 remediation — Fast and the human requirement are MUTUALLY EXCLUSIVE. Fast skips planning
+    and Plan Review, so an armed fast card could never reach a decision and would be immobilized;
+    creation neutralizes the combination server-side, and each toggle visibly clears the other here
+    instead of letting the operator believe both choices survived.
+    */
+    it("makes human plan approval and Fast mutually exclusive", () => {
+      renderQuickEntryBox({});
+      expandQuickEntry();
+
+      const humanToggle = screen.getByTestId("quick-entry-human-plan-approval-toggle");
+      const fastToggle = screen.getByTestId("quick-entry-fast-toggle");
+
+      expect(humanToggle).toHaveAttribute("aria-pressed", "false");
+      fireEvent.click(humanToggle);
+      expect(humanToggle).toHaveAttribute("aria-pressed", "true");
+      expect(fastToggle).toHaveAttribute("aria-pressed", "false");
+
+      // Turning Fast on clears the human requirement.
+      fireEvent.click(fastToggle);
+      expect(fastToggle).toHaveAttribute("aria-pressed", "true");
+      expect(humanToggle).toHaveAttribute("aria-pressed", "false");
+
+      // ...and arming the human requirement again clears Fast.
+      fireEvent.click(humanToggle);
+      expect(humanToggle).toHaveAttribute("aria-pressed", "true");
+      expect(fastToggle).toHaveAttribute("aria-pressed", "false");
+    });
+
+    it("never builds a create payload carrying both Fast and human plan approval", async () => {
+      const onCreate = vi.fn().mockResolvedValue(CREATED_TASK);
+      renderQuickEntryBox({ onCreate });
+      expandQuickEntry();
+
+      fireEvent.click(screen.getByTestId("quick-entry-fast-toggle"));
+      fireEvent.click(screen.getByTestId("quick-entry-human-plan-approval-toggle"));
+      fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Needs my approval" } });
+      fireEvent.click(screen.getByTestId("quick-entry-save"));
+
+      await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+      const payload = onCreate.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(payload).toMatchObject({ humanPlanApproval: true });
+      expect(payload).not.toHaveProperty("executionMode");
+    });
+
+    it("sends humanPlanApproval only when armed, and resets it after a successful create", async () => {
+      const onCreate = vi.fn().mockResolvedValue(CREATED_TASK);
+      renderQuickEntryBox({ onCreate });
+      expandQuickEntry();
+
+      // Not armed: the field is absent entirely, so an ordinary card keeps today's behavior.
+      fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Ordinary task" } });
+      fireEvent.click(screen.getByTestId("quick-entry-save"));
+      await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+      expect(onCreate.mock.calls[0]?.[0]).not.toHaveProperty("humanPlanApproval");
+
+      // Armed: only the boolean flag is sent — never a decision.
+      fireEvent.click(screen.getByTestId("quick-entry-human-plan-approval-toggle"));
+      fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Needs my approval" } });
+      fireEvent.click(screen.getByTestId("quick-entry-save"));
+      await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(2));
+      expect(onCreate.mock.calls[1]?.[0]).toMatchObject({ humanPlanApproval: true });
+
+      // Reset with the other creation choices, so the next card does not inherit it silently.
+      await waitFor(() => {
+        expect(screen.getByTestId("quick-entry-human-plan-approval-toggle")).toHaveAttribute("aria-pressed", "false");
+      });
     });
 
     it("keeps GitHub toggle usable while project settings are still loading", async () => {

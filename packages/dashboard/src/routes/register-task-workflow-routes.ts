@@ -17,7 +17,7 @@ entry path drifts below direct chat's finite transport envelope.
  * than turning one board load into thousands of file reads. Truncation is logged, never silent.
  */
 const AWAITING_PLANNING_ENRICH_LIMIT = 200;
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { existsSync } from "node:fs";
 import { readFile, rm, rmdir, stat, realpath } from "node:fs/promises";
@@ -88,6 +88,11 @@ import {
   writePromptFileAtomic,
   PLAN_REVIEW_GROUP_ID,
   buildPreservedPlanRespecifyPatch,
+  /* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 per-card decision admission and message sanitation. */
+  isHumanPlanApprovalEnabled,
+  resolvePlanReviewEpisodeId,
+  sanitizeHumanPlanApprovalMessage,
+  type HumanPlanApprovalDecision,
   TransitionRejectionError,
   TaskDocumentPreconditionFailedError,
   validateTaskDocumentPreconditions,
@@ -1727,6 +1732,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         mergerThinkingLevel,
         reviewLevel,
         executionMode,
+        /* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 — creation accepts only a boolean arming flag, never a decision. */
+        humanPlanApproval,
         autoMerge,
         autoMergeProvenance,
         priority,
@@ -1785,6 +1792,16 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       const validExecutionModes = ["standard", "fast"];
       if (executionMode !== undefined && executionMode !== null && !validExecutionModes.includes(executionMode)) {
         throw badRequest(`executionMode must be one of: ${validExecutionModes.join(", ")}`);
+      }
+
+      /*
+      FNXC:HumanPlanApproval 2026-09-15-06:24:
+      FN-408 — refuse any non-boolean shape here, so an object carrying a fabricated `decision`
+      cannot even reach the store. The store's creation builder drops one defensively too; this
+      rejection makes the attempt visible instead of silently ignored.
+      */
+      if (humanPlanApproval !== undefined && typeof humanPlanApproval !== "boolean") {
+        throw badRequest("humanPlanApproval must be a boolean");
       }
 
       if (autoMerge !== undefined && typeof autoMerge !== "boolean") {
@@ -2179,6 +2196,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         summarize,
         reviewLevel: reviewLevel ?? undefined,
         executionMode: executionMode || undefined,
+        humanPlanApproval: humanPlanApproval === true ? true : undefined,
         ...(typeof autoMerge === "boolean" ? { autoMerge } : {}),
         priority: priority ?? undefined,
         source: {
@@ -5029,9 +5047,107 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
   });
 
   // Approve plan for a task in awaiting-approval status
+  /*
+  FNXC:HumanPlanApproval 2026-09-15-06:24:
+  FN-408 — shared decision admission for approve-plan and reject-plan on a card carrying the
+  per-card human requirement. It runs INSIDE the planning lifecycle lock against the freshly-read
+  task, so it always judges the live plan rather than the one the browser tab was showing.
+
+  Four refusals, all of which must be impossible to skip:
+    • deciding before Plan Review is satisfied (the mandated order is plan -> review -> decision);
+    • deciding against a plan or review episode that is no longer current (a stale tab);
+    • replaying the SAME requestId, which is idempotent and must not mutate again;
+    • sending the OPPOSITE decision for an already-decided request, which is a conflict.
+  Cards without the option keep the historical signatures and behavior untouched.
+  */
+  type HumanPlanDecisionInput = {
+    message?: string;
+    requestId: string;
+    expectedPlanFingerprint?: string;
+    expectedEpisodeId?: string;
+  };
+
+  const parseHumanPlanDecisionInput = (body: unknown): HumanPlanDecisionInput => {
+    const raw = (body ?? {}) as Record<string, unknown>;
+    let message: string | undefined;
+    try {
+      message = sanitizeHumanPlanApprovalMessage(raw.message);
+    } catch (error) {
+      throw badRequest(error instanceof Error ? error.message : "invalid message");
+    }
+    for (const key of ["requestId", "expectedPlanFingerprint", "expectedEpisodeId"] as const) {
+      if (raw[key] !== undefined && typeof raw[key] !== "string") {
+        throw badRequest(`${key} must be a string`);
+      }
+    }
+    const requestId = typeof raw.requestId === "string" && raw.requestId.trim().length > 0
+      ? raw.requestId.trim()
+      : randomUUID();
+    return {
+      message,
+      requestId,
+      expectedPlanFingerprint: typeof raw.expectedPlanFingerprint === "string" ? raw.expectedPlanFingerprint : undefined,
+      expectedEpisodeId: typeof raw.expectedEpisodeId === "string" ? raw.expectedEpisodeId : undefined,
+    };
+  };
+
+  /** Returns the decision to persist, or `"already-applied"` for an idempotent replay. */
+  const admitHumanPlanDecision = (
+    task: Task,
+    decision: "approved" | "rejected",
+    input: HumanPlanDecisionInput,
+    /*
+    The fingerprint the route is about to PERSIST, read from the on-disk PROMPT.md. The recorded
+    proof must pin that exact value, not the pre-read one: the release gate compares the decision's
+    `planFingerprint` against the stored `approvedPlanFingerprint`, so recording a different value
+    would produce a decision that can never satisfy its own gate. A mismatch between the two means
+    the plan text drifted since the review, so the operator would be validating something other than
+    what they read — that is a conflict, not an approval.
+    */
+    persistedPlanFingerprint?: string,
+  ): HumanPlanApprovalDecision | "already-applied" => {
+    const episodeId = resolvePlanReviewEpisodeId(task.workflowStepResults);
+    const fingerprint = persistedPlanFingerprint ?? task.approvedPlanFingerprint;
+    if (!episodeId || !fingerprint) {
+      throw conflict("Plan Review must be satisfied before this plan can be approved or rejected");
+    }
+    if (
+      persistedPlanFingerprint !== undefined
+      && task.approvedPlanFingerprint !== undefined
+      && persistedPlanFingerprint !== task.approvedPlanFingerprint
+    ) {
+      throw conflict("The plan on disk no longer matches the reviewed plan — reload and decide again");
+    }
+    if (input.expectedPlanFingerprint && input.expectedPlanFingerprint !== fingerprint) {
+      throw conflict("The plan changed since this decision was opened — reload and decide again");
+    }
+    if (input.expectedEpisodeId && input.expectedEpisodeId !== episodeId) {
+      throw conflict("The plan was reviewed again since this decision was opened — reload and decide again");
+    }
+    const existing = task.humanPlanApproval?.decision;
+    if (existing && existing.requestId === input.requestId) {
+      if (existing.decision !== decision) {
+        throw conflict("This decision request was already resolved with the opposite outcome");
+      }
+      if (existing.planFingerprint === fingerprint && existing.planningEpisodeId === episodeId) {
+        return "already-applied";
+      }
+    }
+    return {
+      requestId: input.requestId,
+      decision,
+      ...(input.message ? { message: input.message } : {}),
+      decidedBy: "dashboard-operator",
+      decidedAt: new Date().toISOString(),
+      planFingerprint: fingerprint,
+      planningEpisodeId: episodeId,
+    };
+  };
+
   router.post("/tasks/:id/approve-plan", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
+      const decisionInput = parseHumanPlanDecisionInput(req.body);
       const updated = await scopedStore.withPlanningLifecycleLock(req.params.id, async () => {
         /*
          * FNXC:PlanningDependencyReseed 2026-08-04-06:35 FN-8768:
@@ -5149,9 +5265,26 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           await scopedStore.lockCurrentPlanWhilePlanningLocked(task.id, approvedPlanFingerprint, approvedPrompt);
         }
 
+        /*
+        FNXC:HumanPlanApproval 2026-09-15-06:24:
+        FN-408 — for an armed card the operator decision itself is the release proof, so it must be
+        durable in the SAME patch that clears the hold. `approvedPlanFingerprint` is written by triage
+        and Plan Review automatically and can never stand in for it. Approving preserves the plan and
+        its review untouched: the note travels as implementation context, not as a plan edit.
+        */
+        let humanDecisionPatch: { humanPlanApproval: Task["humanPlanApproval"] } | Record<string, never> = {};
+        if (isHumanPlanApprovalEnabled(task)) {
+          const admitted = admitHumanPlanDecision(task, "approved", decisionInput, approvedPlanFingerprint);
+          if (admitted !== "already-applied") {
+            humanDecisionPatch = { humanPlanApproval: { enabled: true, decision: admitted } };
+          }
+        }
+
         const approvalPatch = {
           status: null,
+          awaitingApprovalReason: null,
           approvedPlanFingerprint: approvedPlanFingerprint ?? null,
+          ...humanDecisionPatch,
           ...(approvedWorkflowStepResults ? { workflowStepResults: approvedWorkflowStepResults } : {}),
         } satisfies Parameters<TaskStore["updateTask"]>[1];
 
@@ -5227,6 +5360,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
   router.post("/tasks/:id/reject-plan", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
+      const rejectionInput = parseHumanPlanDecisionInput(req.body);
       const updated = await scopedStore.withPlanningLifecycleLock(req.params.id, async () => {
         /*
          * FNXC:PlanningDependencyReseed 2026-08-04-06:35 FN-8768:
@@ -5250,6 +5384,38 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         // FNXC:ReleaseAuthorizationGate 2026-07-09-00:00:
         // Release-authorization gate removed — see the approve-plan handler above. A task
         // carrying the legacy release-authorization hold can now be rejected normally.
+
+        /*
+        FNXC:HumanPlanApproval 2026-09-15-06:24:
+        FN-408 — rejecting an armed card is an explicit REVISION, not a plan deletion. The rejected
+        plan is preserved as the revision source (`buildPreservedPlanRespecifyPatch` retires its
+        current Plan Review evidence under the `respecify` reason, so the preserved text can never
+        count as already reviewed), and the operator message is delivered to the PLANNER — never to
+        implementation. The card stays in its planning/hold role and keeps the per-card requirement,
+        so even a regenerated, byte-identical plan must be decided again: retiring the review result
+        starts a new episode, which is what invalidates the old decision.
+        */
+        if (isHumanPlanApprovalEnabled(task)) {
+          const admitted = admitHumanPlanDecision(task, "rejected", rejectionInput);
+          const feedback = rejectionInput.message;
+          await scopedStore.logEntry(
+            task.id,
+            "Plan rejected by user",
+            feedback ?? "Specification will be regenerated",
+          );
+          if (feedback) {
+            // Triage collects revision feedback from the task log when it re-plans.
+            await scopedStore.logEntry(task.id, "AI spec revision requested", feedback);
+          }
+          const supersededAt = new Date().toISOString();
+          await scopedStore.updateTask(task.id, {
+            ...buildPreservedPlanRespecifyPatch(task, supersededAt),
+            ...(admitted === "already-applied"
+              ? {}
+              : { humanPlanApproval: { enabled: true, decision: admitted } }),
+          });
+          return await scopedStore.getTask(task.id);
+        }
 
         // Log the rejection
         await scopedStore.logEntry(task.id, "Plan rejected by user", "Specification will be regenerated");

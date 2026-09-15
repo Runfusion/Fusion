@@ -8900,6 +8900,21 @@
       "copy": "",
       "replanCapCopy": "",
       "title": ""
+    },
+    "humanPlanApproval": {
+      "toggle": "실행 전에 내 계획 승인 요구",
+      "messageLabel": "메시지(선택)",
+      "messagePlaceholder": "거부한다면 계획의 문제점을 적어 주세요. 승인한다면 주의할 점을 덧붙이세요.",
+      "approve": "승인",
+      "reject": "거부",
+      "review": "계획 검토",
+      "hint": "거부하면 메시지가 새 계획 작성으로 전달됩니다. 승인하면 작업이 시작되고 메모가 구현에 전달됩니다.",
+      "noticeCopy": "선택적 메시지와 함께 이 계획을 승인하거나 거부하려면 작업을 여세요.",
+      "badgeArmed": "실행 전에 내 계획 승인이 필요합니다",
+      "badgeAwaiting": "내 계획 승인 대기 중",
+      "badgeApproved": "내가 승인한 계획",
+      "approved": "계획 승인됨 — {{id}}이(가) 실행으로 진행합니다",
+      "rejected": "계획 거부됨 — {{id}}이(가) 새 계획으로 돌아갑니다"
     }
   },
   "terminal": {
