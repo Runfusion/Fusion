@@ -12,6 +12,25 @@ export type TaskDeletedLifecyclePayload = {
   deletedBy: string | null;
 };
 
+/*
+FNXC:ReviewLaneDispatch 2026-09-09 (STAS-205):
+Every other column transition was invisible to the outbox because the CHECK allowed one
+event type, so "when did this card enter review?" had no committed answer. Entering review
+is the fact the dispatch invariant is keyed on, so it is the one addition here; the payload
+stays a discriminated union so a new event type cannot borrow another type's payload.
+*/
+export type TaskEnteredReviewLifecyclePayload = {
+  taskId: string;
+  previousColumn: string;
+  toColumn: string;
+  enteredAt: string;
+  actor: string;
+};
+
+export type TaskLifecycleEventInput =
+  | { projectId: string; eventType: "task:deleted"; taskId: string; occurredAt: string; payload: TaskDeletedLifecyclePayload }
+  | { projectId: string; eventType: "task:entered-review"; taskId: string; occurredAt: string; payload: TaskEnteredReviewLifecyclePayload };
+
 export function makeTaskLifecycleEventId(projectId: string, eventType: string, taskId: string, occurredAt: string): string {
   return `evt_${createHash("sha256").update(`${projectId}\0${eventType}\0${taskId}\0${occurredAt}`).digest("hex").slice(0, 32)}`;
 }
@@ -24,7 +43,7 @@ export function makeTaskLifecycleEventId(projectId: string, eventType: string, t
  */
 export async function appendTaskLifecycleEventInTransaction(
   tx: DbTransaction,
-  input: { projectId: string; eventType: "task:deleted"; taskId: string; occurredAt: string; payload: TaskDeletedLifecyclePayload },
+  input: TaskLifecycleEventInput,
 ): Promise<{ seq: string; eventId: string }> {
   const sequenceRows = await tx.execute(sql`
     INSERT INTO project.task_lifecycle_event_seq (project_id, last_seq)
