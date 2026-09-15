@@ -367,6 +367,8 @@ export async function wakeApprovedPlanningContinuations(deps: {
 /** The FIFO due-poll batch size. Named because the starvation the deferral above
  *  prevents is a property of this bound, so the two belong in one place. */
 export const DUE_PLANNING_CONTINUATION_BATCH_LIMIT = 20;
+/** A drain is only force-opened after this long without an owning-pass progress mark. */
+export const CONTINUATION_DRAIN_STALL_MS = 300_000;
 
 /** Everything the specification-complete reaction touches, injected so the
  *  reaction is exercisable without constructing a runtime. */
@@ -926,6 +928,10 @@ export class InProcessRuntime
   private workflowContinuationTimer?: ReturnType<typeof setInterval>;
   private workflowContinuationDrainActive = false;
   private workflowContinuationDrainSince = 0;
+  private workflowContinuationDrainProgressAt = 0;
+  private workflowContinuationDrainPhase = "idle";
+  private workflowContinuationDrainPending = false;
+  private workflowContinuationDrainGeneration = 0;
   /*
   FNXC:PlanReviewApproval 2026-08-04-00:26:
   Track the event edge and the durable approval marker. The marker covers engine restarts and
@@ -2775,38 +2781,72 @@ export class InProcessRuntime
    * runtime-lifecycle wrapper — re-entry guard, active-status check, and the
    * adapters that bind the pass to this runtime's store and executor.
    */
+  /** Mark progress only when this pass still owns the continuation-drain state. */
+  private markWorkflowContinuationDrainProgress(generation: number, phase: string): void {
+    if (this.workflowContinuationDrainGeneration !== generation) return;
+    this.workflowContinuationDrainProgressAt = Date.now();
+    this.workflowContinuationDrainPhase = phase;
+  }
+
   private async drainWorkflowContinuations(): Promise<void> {
     if (this.status !== "active") return;
     if (this.workflowContinuationDrainActive) {
-      /* FNXC:PumpWatchdog 2026-08-01-02:00: one hung pass leaves the guard closed forever and every later tick/wake drops SILENTLY (the triage-poll death, 00769fad7c/e51ebff381). Past the threshold, warn with the stuck duration and force the guard open; the hung pass's own finally re-clearing it later is harmless. */
-      const stuckMs = this.workflowContinuationDrainSince > 0 ? Date.now() - this.workflowContinuationDrainSince : 0;
-      if (stuckMs < 300_000) return;
-      runtimeLog.warn(`continuation-drain watchdog: previous drain still marked in-flight after ${Math.round(stuckMs / 1000)}s — forcing the guard open`);
+      this.workflowContinuationDrainPending = true;
+      /*
+      FNXC:PumpWatchdog 2026-09-15-15:14:
+      A claimed re-entry guard must release on every exit path: issue #3617's pause short-circuit
+      escaped before its finally, leaving the pump to advance only through watchdog force-opens.
+      Under event-loop starvation a pass may exceed the threshold while advancing, so measure stalled
+      progress and name its last phase. Force-open supersedes but cannot cancel the old pass; every
+      progress write is generation-owned so late marks cannot disarm a successor's watchdog.
+      */
+      const now = Date.now();
+      const progressAt = this.workflowContinuationDrainProgressAt || this.workflowContinuationDrainSince;
+      const stalledMs = progressAt > 0 ? now - progressAt : 0;
+      if (stalledMs < CONTINUATION_DRAIN_STALL_MS) return;
+      const inFlightMs = this.workflowContinuationDrainSince > 0 ? now - this.workflowContinuationDrainSince : 0;
+      runtimeLog.warn(`continuation-drain watchdog: previous drain still marked in-flight after ${Math.round(inFlightMs / 1000)}s — forcing the guard open (stalled ${Math.round(stalledMs / 1000)}s; last phase: ${this.workflowContinuationDrainPhase})`);
     }
     this.workflowContinuationDrainActive = true;
     this.workflowContinuationDrainSince = Date.now();
-    /*
-    FNXC:EnginePause 2026-08-01-00:20:
-    A pause-suspended run persists a runnable continuation (same mechanism as capacity). Without
-    this gate the drain would re-dispatch it on the next tick and the graph would bounce
-    suspend→dispatch→suspend forever while paused — and worse, dispatch genuinely new work under
-    Stop AI Engine. Settings are re-read here (not event-driven) for the same reason as the
-    boundary probe: the pause must bind even if `settings:updated` never reaches this instance.
-    */
+    const drainGeneration = ++this.workflowContinuationDrainGeneration;
+    this.markWorkflowContinuationDrainProgress(drainGeneration, "claimed");
     try {
-      const settings = await this.taskStore.getSettings();
-      if (settings.globalPause === true || settings.enginePaused === true) return;
-    } catch {
-      /* unreadable settings: proceed as before rather than wedging the pump */
-    }
-    try {
+      /*
+      FNXC:EnginePause 2026-08-01-00:20:
+      A pause-suspended run persists a runnable continuation (same mechanism as capacity). Without
+      this gate the drain would re-dispatch it on the next tick and the graph would bounce
+      suspend→dispatch→suspend forever while paused — and worse, dispatch genuinely new work under
+      Stop AI Engine. Settings are re-read here (not event-driven) for the same reason as the
+      boundary probe: the pause must bind even if `settings:updated` never reaches this instance.
+      */
+      try {
+        const settings = await this.taskStore.getSettings();
+        this.markWorkflowContinuationDrainProgress(drainGeneration, "settings");
+        if (settings.globalPause === true || settings.enginePaused === true) return;
+      } catch {
+        /* unreadable settings: proceed as before rather than wedging the pump */
+      }
+      const dispatch = createPlanningContinuationDispatcher({
+        store: this.taskStore,
+        projectId: this.taskStore.getRootDir(),
+        execute: (task) => this.executor.execute(task),
+        onError: (_task, item, error) => {
+          runtimeLog.error(`Workflow continuation ${item.id} failed:`, error);
+        },
+      });
       await drainDuePlanningContinuations({
-        listDue: () => this.taskStore.listDueWorkflowWorkItems({
-          kinds: ["task"],
-          states: ["runnable", "retrying"],
-          limit: DUE_PLANNING_CONTINUATION_BATCH_LIMIT,
-        }),
-        getTask: (taskId) => Promise.resolve(this.taskStore.getTask(taskId)),
+        listDue: async () => {
+          const items = await this.taskStore.listDueWorkflowWorkItems({
+            kinds: ["task"], states: ["runnable", "retrying"], limit: DUE_PLANNING_CONTINUATION_BATCH_LIMIT,
+          });
+          this.markWorkflowContinuationDrainProgress(drainGeneration, "list-due");
+          return items;
+        },
+        getTask: (taskId) => {
+          this.markWorkflowContinuationDrainProgress(drainGeneration, "get-task");
+          return Promise.resolve(this.taskStore.getTask(taskId));
+        },
         /* FNXC:WorkflowLifecycleColumns 2026-08-02-15:20 (fleet): the PRODUCTION resolver for the drain's
            terminal check — the pure pass keeps the legacy pair when this is omitted, which is what every
            existing test relies on. One IR read per due item, and the batch is capped by
@@ -2820,21 +2860,32 @@ export class InProcessRuntime
             "archived",
           ]);
         },
-        cancelOrphan: (item, reason) => this.cancelOrphanedWorkflowWorkItem(item, reason),
-        defer: (deferral) => this.deferParkedWorkflowWorkItem(deferral),
-        dispatch: createPlanningContinuationDispatcher({
-          store: this.taskStore,
-          projectId: this.taskStore.getRootDir(),
-          execute: (task) => this.executor.execute(task),
-          onError: (_task, item, error) => {
-            runtimeLog.error(`Workflow continuation ${item.id} failed:`, error);
-          },
-        }),
+        cancelOrphan: (item, reason) => {
+          this.markWorkflowContinuationDrainProgress(drainGeneration, "cancel-orphan");
+          return this.cancelOrphanedWorkflowWorkItem(item, reason);
+        },
+        defer: (deferral) => {
+          this.markWorkflowContinuationDrainProgress(drainGeneration, "defer");
+          return this.deferParkedWorkflowWorkItem(deferral);
+        },
+        dispatch: (task, item) => {
+          this.markWorkflowContinuationDrainProgress(drainGeneration, "dispatch");
+          return dispatch(task, item);
+        },
         nowMs: () => Date.now(),
         warn: (message) => runtimeLog.warn(message),
       });
     } finally {
-      this.workflowContinuationDrainActive = false;
+      if (this.workflowContinuationDrainGeneration === drainGeneration) {
+        this.workflowContinuationDrainActive = false;
+        this.workflowContinuationDrainSince = 0;
+        this.workflowContinuationDrainProgressAt = 0;
+        this.workflowContinuationDrainPhase = "idle";
+        if (this.workflowContinuationDrainPending) {
+          this.workflowContinuationDrainPending = false;
+          this.kickWorkflowContinuationProcessor();
+        }
+      }
     }
   }
 

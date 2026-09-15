@@ -47,6 +47,7 @@ import {
   workflowEntryArtifacts,
 } from "../execution/required-workflow-artifacts.js";
 import { getActiveNotificationService } from "../util/notifier.js";
+import { holdWorkflowAdmission, workflowAdmissionHoldReason } from "./workflow-admission-hold.js";
 
 export function buildWorkflowGateActivityMetadata(
   result: CoreWorkflowStepResult,

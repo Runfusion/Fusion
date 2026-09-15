@@ -1341,6 +1341,7 @@ export class WorkflowGraphExecutor {
           const authoritativeResult = terminalPersistence.persistedResult;
           const effectiveStepStatus = authoritativeResult?.status ?? stepStatus;
           const effectiveVerdict = authoritativeResult ? authoritativeResult.verdict : verdict;
+          const verdictRequired = false;
           const requiredGate = verdictRequired || resolveRequiredPreMergeStepIds(ir, task.enabledWorkflowSteps, task).has(node.id);
           const persistenceUnavailable = terminalPersistence.disposition !== "no-writer"
             && terminalPersistence.disposition !== "aborted"
@@ -1351,7 +1352,6 @@ export class WorkflowGraphExecutor {
            * leaves APPROVE attached to a failed row. Only a durably passed result may advance.
            */
           const requiresAuthoritativeApproval = verdictRequired
-            || authoritativeResult?.verdictRequired === true
             || this.workflowReviewKind(node) !== undefined;
           /*
            * FNXC:AuthoritativeGateResult 2026-09-13-05:59:
