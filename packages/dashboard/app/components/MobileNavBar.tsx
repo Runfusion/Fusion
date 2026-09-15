@@ -43,6 +43,7 @@ import type { TaskView } from "../hooks/useViewState";
 import { getMobileKeyboardLayoutViewportHeight } from "../utils/mobileBarKeyboardFlags";
 import { buildPluginTaskViewId, isPluginViewId } from "../plugins/pluginViewRegistry";
 import { getPluginDashboardViewNavIcon } from "./pluginNavIcon";
+import { ViewDrawerHandle } from "./ViewDrawer";
 import { MOBILE_NAV_SELECTABLE_ITEMS, type MobileNavSelectableItem } from "../../../core/src/board/mobile-nav-primary-items";
 
 export interface PublishedMobileNavHeightInput {
@@ -787,7 +788,13 @@ export function MobileNavBar({
             */
             onScroll={officialDesignEnabled ? undefined : () => { if (!hasSheetDragged) setHasSheetDragged(true); }}
           >
-            {!officialDesignEnabled && <div className="mobile-more-sheet-handle" aria-hidden="true" />}
+            {/*
+            FNXC:StandardizedDrawers 2026-09-15-04:56:
+            FN-406: the More sheet drew its own grab bar, which is exactly the drift that gave the file browser two
+            handles. It now uses the shared ViewDrawerHandle primitive; `mobile-more-sheet-handle` stays on the TARGET
+            because `handleSheetTouchStart` resolves drag eligibility via `closest(".mobile-more-sheet-handle")`.
+            */}
+            {!officialDesignEnabled && <ViewDrawerHandle className="mobile-more-sheet-handle" barClassName="mobile-more-sheet-handle__bar" />}
             <div className="mobile-more-sheet-title">{t("nav.moreSheetTitle", "Navigate")}</div>
 
             {shellConnectionControl ? (

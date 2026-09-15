@@ -3,6 +3,7 @@ import type { ComponentType, HTMLAttributes, ReactNode, Ref } from "react";
 import type { LucideProps } from "lucide-react";
 import { ModalCloseButton, type ModalCloseButtonProps } from "./ModalCloseButton";
 import { ViewBackButton, type ViewBackButtonProps } from "./ViewActionButton";
+import { useDrawerPresentation } from "./ViewDrawer";
 
 /*
 FNXC:StandardizedViewHeader 2026-09-13-16:12:
@@ -59,6 +60,17 @@ export function ViewHeader({
 }: ViewHeaderProps) {
   const closeLabel = closeButtonProps?.["aria-label"]
     ?? (typeof title === "string" ? `Close ${title}` : "Close");
+  /*
+  FNXC:StandardizedDrawers 2026-09-15-04:56:
+  FN-406: a phone drawer is dismissed by dragging its shared handle, tapping the scrim, or Escape, so the canonical
+  close is redundant chrome there. Suppressing it centrally — rather than per host — is what makes every hosted view
+  conform at once; the context defaults to false, so desktop, tablet, phones without `data-mobile-drawers`, and
+  excluded windows (setup wizard, onboarding, confirmations) are untouched. `backAction` is a distinct affordance and
+  always survives. When the close was the only action, the actions row is dropped entirely so no empty spacer shell
+  reserves width next to the title.
+  */
+  const drawerPresentation = useDrawerPresentation();
+  const showClose = Boolean(onClose) && !drawerPresentation;
   return (
     <header {...headerProps} className={["view-header", className].filter(Boolean).join(" ")}>
       {backAction ? <ViewBackButton {...backAction} /> : null}
@@ -73,10 +85,10 @@ export function ViewHeader({
           <span className="view-header__title-content" data-testid={titleTestId}>{title}</span>
         </h2>
       )}
-      {actions != null || onClose ? (
+      {actions != null || showClose ? (
         <div className="view-header__actions">
           {actions}
-          {onClose ? <ModalCloseButton {...closeButtonProps} ref={closeButtonRef} aria-label={closeLabel} onClick={onClose} /> : null}
+          {showClose && onClose ? <ModalCloseButton {...closeButtonProps} ref={closeButtonRef} aria-label={closeLabel} onClick={onClose} /> : null}
         </div>
       ) : null}
     </header>

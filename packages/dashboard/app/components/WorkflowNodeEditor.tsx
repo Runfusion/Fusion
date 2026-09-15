@@ -1,4 +1,5 @@
 import { ModalCloseButton } from "./ModalCloseButton";
+import { HideInDrawer } from "./ViewDrawer";
 import { ViewActionButton } from "./ViewActionButton";
 import { ViewHeader } from "./ViewHeader";
 import { ViewLayout } from "./ViewLayout";
@@ -2860,8 +2861,15 @@ function InnerEditor({
                     label={t("workflows.newWorkflow", "New workflow")}
                     onClick={() => setCreateOpen(true)}
                   />
+                  {/*
+                  FNXC:StandardizedDrawers 2026-09-15-04:56:
+                  FN-406: the editor keeps its own close next to the create action, so the shared ViewHeader rule
+                  cannot reach it. HideInDrawer applies the single drawer-chrome definition at the render position.
+                  */}
                   {!isEmbedded ? (
-                    <ModalCloseButton className="wf-editor-close" onClick={requestClose} aria-label={t("workflows.closeEditor", "Close workflow editor")} />
+                    <HideInDrawer>
+                      <ModalCloseButton className="wf-editor-close" onClick={requestClose} aria-label={t("workflows.closeEditor", "Close workflow editor")} />
+                    </HideInDrawer>
                   ) : null}
                 </>
               )}

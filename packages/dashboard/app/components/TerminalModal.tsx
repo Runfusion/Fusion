@@ -39,7 +39,7 @@ import { useDrawerDismissGesture } from "../hooks/useDrawerDismissGesture";
 import { FloatingWindow, FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT } from "./FloatingWindow";
 import { DashboardWindowSurfaceRoot } from "../context/DashboardWindowManagerContext";
 import { ModalCloseButton } from "./ModalCloseButton";
-import { ViewDrawerHandle } from "./ViewDrawer";
+import { ViewDrawerHandle, resolveDrawerPresentation } from "./ViewDrawer";
 import { ViewLayoutContent, ViewLayoutFooter, ViewLayoutHeader } from "./ViewLayout";
 import { currentFloatingZ, nextFloatingZ } from "./floatingWindowStack";
 import { useConfirm } from "../hooks/useConfirm";
@@ -549,10 +549,13 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
   
   const terminalRef = useRef<HTMLDivElement>(null);
   const modalRef = useRef<HTMLDivElement>(null);
-  const mobileDrawer = isMobileTerminal
-    && !embedded
-    && typeof document !== "undefined"
-    && document.documentElement.dataset.mobileDrawers === "true";
+  /*
+  FNXC:StandardizedDrawers 2026-09-15-04:56:
+  FN-406: this was the second byte-identical copy of the phone-drawer predicate. It now resolves through the shared
+  `resolveDrawerPresentation` seam; the embedded guard stays local because an embedded terminal is parent-owned chrome.
+  */
+  const mobileDrawer = !embedded
+    && resolveDrawerPresentation({ viewportMode: isMobileTerminal ? "mobile" : "desktop" });
   const dismissHandleProps = useDrawerDismissGesture({
     enabled: mobileDrawer,
     panelRef: modalRef,

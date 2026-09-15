@@ -19,9 +19,13 @@ ViewHeader, which builds their exit through the canonical primitive on their beh
 direct importers, so the census shrinks to the remaining surfaces that still construct a close outside a shared
 header; re-adding a local close row to a migrated owner fails this ratchet.
 */
+/*
+FNXC:ModalChromeTests 2026-09-15-04:56:
+FN-406: the file browser stopped constructing its own close and now hands it to the shared ViewHeader through
+`onClose`, which is what lets the single drawer-chrome rule remove it on phone drawers. It therefore leaves this census.
+*/
 const canonicalConsumers = [
   "AgentDetailView.tsx",
-  "FileBrowserModal.tsx",
   "FloatingWindow.tsx",
   "MailboxModal.tsx",
   "RightDockExpandModal.tsx",

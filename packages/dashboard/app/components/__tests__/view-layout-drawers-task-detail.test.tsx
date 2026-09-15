@@ -56,7 +56,11 @@ describe("shared drawer and Task Detail view layout", () => {
       .filter((file) => !file.startsWith("__tests__/") && file !== "ViewDrawer.tsx")
       .filter((file) => readAppFile(`components/${file}`).includes("<ViewDrawerHandle"))
       .sort();
-    expect(consumers).toEqual(["FloatingWindow.tsx", "MobileDrawer.tsx", "TerminalModal.tsx"]);
+    /*
+    FNXC:StandardizedDrawers 2026-09-15-04:56:
+    FN-406: the mobile More sheet joins the census because its hand-drawn grab bar was replaced by the shared handle.
+    */
+    expect(consumers).toEqual(["FloatingWindow.tsx", "MobileDrawer.tsx", "MobileNavBar.tsx", "TerminalModal.tsx"]);
   });
 
   beforeEach(async () => {

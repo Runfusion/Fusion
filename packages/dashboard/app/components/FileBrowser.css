@@ -708,24 +708,17 @@ Narrow Files windows use the same single-pane list/editor behavior as mobile eve
     align-items: flex-start;
     gap: var(--space-sm);
     min-height: 56px;
-    padding-block: calc(var(--space-md) + var(--space-xs)) var(--space-md);
+    /* FNXC:StandardizedDrawers 2026-09-15-04:56: FN-406 removed the header's own grab bar, so the top block no longer reserves room for it. */
+    padding-block: var(--space-md);
   }
 
   /*
-  FNXC:FileBrowser 2026-06-23-23:25:
-  On phones the full-screen Files modal still uses the header as its drag handle, but the title row can wrap and the action controls consume much of the top bar. Preserve a large touch-safe grab area with touch-action:none and add a subtle handle marker so dragging is discoverable without adding a second toolbar.
+  FNXC:StandardizedDrawers 2026-09-15-04:56:
+  FN-406: this header used to paint its OWN grab bar (a `::before` pseudo-element added 2026-06-23, before the shared
+  ViewDrawerHandle existed). The drawer shell already renders that handle, so the phone sheet showed two stacked bars.
+  The bar is deleted and the handle is owned solely by ViewDrawerHandle; the header keeps its touch-safe grab area
+  (`touch-action: none` plus min-height) because it remains the `dragHandleSelector` for the movable desktop window.
   */
-  .file-browser-modal-header::before {
-    content: "";
-    position: absolute;
-    top: var(--space-xs);
-    left: 50%;
-    width: calc(var(--space-xl) + var(--space-sm));
-    height: calc(var(--space-xs) * 0.75);
-    transform: translateX(-50%);
-    border-radius: var(--radius-pill);
-    background: color-mix(in srgb, var(--text-muted) 44%, transparent);
-  }
 
   .file-browser-modal-header .view-header__title-content {
     overflow: hidden;

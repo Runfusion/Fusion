@@ -1,4 +1,3 @@
-import { ModalCloseButton } from "./ModalCloseButton";
 import "./FileBrowser.css";
 import { useState, useCallback, useEffect, useMemo, useId, useLayoutEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
@@ -320,6 +319,14 @@ export function FileBrowserModal({
             label: t("fileBrowser.back", "Back to file list"),
             onClick: handleBackToList,
           } : undefined}
+          /*
+          FNXC:StandardizedDrawers 2026-09-15-04:56:
+          FN-406: the close is handed to ViewHeader through `onClose` instead of being built locally, so the single
+          drawer-chrome rule removes it in phone drawer presentation. On desktop, tablet, and a phone without the
+          `data-mobile-drawers` opt-in the canonical control renders exactly as before.
+          */
+          onClose={onClose}
+          closeButtonProps={{ "aria-label": t("actions.close", "Close") }}
           actions={(
             <div className="file-browser-header-actions">
               <WorkspaceSelector
@@ -328,7 +335,6 @@ export function FileBrowserModal({
                 workspaces={workspaces}
                 onSelect={handleWorkspaceSelect}
               />
-              <ModalCloseButton onClick={onClose} aria-label={t("actions.close", "Close")} />
             </div>
           )}
         />

@@ -41,6 +41,7 @@ import { CustomModelDropdown } from "./CustomModelDropdown";
 import { useConfirm } from "../hooks/useConfirm";
 import { FloatingWindow } from "./FloatingWindow";
 import { ModalCloseButton } from "./ModalCloseButton";
+import { HideInDrawer } from "./ViewDrawer";
 import { ViewHeader } from "./ViewHeader";
 import { ViewLayout } from "./ViewLayout";
 import { AgentAvatar } from "./AgentAvatar";
@@ -1124,8 +1125,15 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
               <button className="btn-icon" onClick={() => void loadAgent()} title={t("common.refresh", "Refresh")} aria-label={t("common.refresh", "Refresh")}>
                 <RefreshCw size={16} />
               </button>
+              {/*
+              FNXC:StandardizedDrawers 2026-09-15-04:56:
+              FN-406: one shared rule decides drawer chrome. HideInDrawer removes this close only in phone drawer
+              presentation; inline hosting keeps its existing owner-provided dismissal.
+              */}
               {!inline && (
-                <ModalCloseButton onClick={onClose} aria-label={t("common.close", "Close")} title={t("common.close", "Close")} />
+                <HideInDrawer>
+                  <ModalCloseButton onClick={onClose} aria-label={t("common.close", "Close")} title={t("common.close", "Close")} />
+                </HideInDrawer>
               )}
             </div>
           </div>}

@@ -849,12 +849,72 @@ describe("FileBrowserModal", () => {
 
     const mobileBlock = extractMobileMediaBlocks(cssContent);
     const mobileHeaderRules = mobileBlock.match(/\.file-browser-modal-header\s*\{([^}]*)\}/)?.[1] ?? "";
-    const mobileHandleRules = mobileBlock.match(/\.file-browser-modal-header::before\s*\{([^}]*)\}/)?.[1] ?? "";
 
     expect(mobileHeaderRules).toContain("min-height: 56px");
-    expect(mobileHeaderRules).toContain("padding-block: calc(var(--space-md) + var(--space-xs)) var(--space-md)");
-    expect(mobileHandleRules).toContain("position: absolute");
-    expect(mobileHandleRules).toContain("background: color-mix(in srgb, var(--text-muted) 44%, transparent)");
+    expect(mobileHeaderRules).toContain("padding-block: var(--space-md)");
+    /*
+    FNXC:StandardizedDrawers 2026-09-15-04:56:
+    FN-406: the header must no longer paint a grab bar of its own. The drawer shell already renders the shared
+    ViewDrawerHandle above it, so a local `::before` bar produced two stacked handles on phones. The touch-safe drag
+    area asserted above stays; only the duplicate bar is gone, anywhere in the app's CSS.
+    */
+    expect(cssContent).not.toContain(".file-browser-modal-header::before");
+  });
+
+  /*
+  FNXC:StandardizedDrawers 2026-09-15-04:56:
+  FN-406 symptom verification: on a phone drawer the file browser showed TWO grab bars (the shell's ViewDrawerHandle
+  plus this header's own `::before` bar) and a close button, unlike every other drawer. A conforming drawer exposes
+  exactly one shared handle and no close; dismissal is drag, scrim, or Escape. The close must still render on a phone
+  WITHOUT the `data-mobile-drawers` opt-in, because such a window is not a drawer at all.
+  */
+  describe("mobile drawer conformance", () => {
+    function renderPhoneFileBrowser({ drawers }: { drawers: boolean }) {
+      Object.defineProperty(window, "innerWidth", { writable: true, configurable: true, value: 390 });
+      document.documentElement.dataset.viewportMode = "mobile";
+      if (drawers) document.documentElement.dataset.mobileDrawers = "true";
+      else delete document.documentElement.dataset.mobileDrawers;
+      return render(
+        <FileBrowserModal
+          initialWorkspace="project"
+          isOpen={true}
+          onClose={mockOnClose}
+          onWorkspaceChange={mockOnWorkspaceChange}
+        />,
+      );
+    }
+
+    afterEach(() => {
+      delete document.documentElement.dataset.mobileDrawers;
+      delete document.documentElement.dataset.viewportMode;
+    });
+
+    it("exposes exactly one drawer handle and no close in drawer presentation", () => {
+      renderPhoneFileBrowser({ drawers: true });
+
+      const panel = document.querySelector(".floating-window")!;
+      expect(panel.querySelectorAll(".view-drawer__handle-target")).toHaveLength(1);
+      expect(screen.queryByRole("button", { name: /close/i })).not.toBeInTheDocument();
+    });
+
+    it("keeps the close on a phone without the drawer opt-in", () => {
+      renderPhoneFileBrowser({ drawers: false });
+
+      expect(document.querySelectorAll(".view-drawer__handle-target")).toHaveLength(0);
+      expect(screen.getByRole("button", { name: /close/i })).toBeInTheDocument();
+    });
+
+    it("keeps the back affordance while the close is suppressed in drawer presentation", async () => {
+      renderPhoneFileBrowser({ drawers: true });
+
+      fireEvent(window, new Event("resize"));
+      fireEvent.click(screen.getByText("file1.ts"));
+
+      await waitFor(() => {
+        expect(screen.getByLabelText("Back to file list")).toBeInTheDocument();
+      });
+      expect(screen.queryByRole("button", { name: /close/i })).not.toBeInTheDocument();
+    });
   });
 
   it("closes on Escape and saves on Cmd+S", () => {

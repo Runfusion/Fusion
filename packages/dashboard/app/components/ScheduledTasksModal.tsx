@@ -1,4 +1,5 @@
 import { ModalCloseButton } from "./ModalCloseButton";
+import { HideInDrawer } from "./ViewDrawer";
 // ScheduledTasksModal renders schedule/routine cards using .scheduling-*, .routine-*,
 // .schedule-form classes that live in ScriptsModal.css. Both modals share that file.
 import "./ScriptsModal.css";
@@ -50,6 +51,7 @@ interface ScheduledTasksModalProps {
 }
 
 export function ScheduledTasksModal({ onClose, addToast, projectId, presentation = "modal" }: ScheduledTasksModalProps) {
+
   const { t } = useTranslation("app");
   const { isEmbedded, escapeEnabled } = useEmbeddedPresentation(presentation);
   // Scope state: defaults to "project" when projectId exists, else "global"
@@ -500,7 +502,12 @@ export function ScheduledTasksModal({ onClose, addToast, projectId, presentation
       actions={(
         <>
           <ViewActionButton kind="create" label={t("schedule.newAutomation", "New Automation")} onClick={openCreateRoutine} />
-          {!isEmbedded ? <ModalCloseButton onClick={onClose} aria-label={t("common.close", "Close")} /> : null}
+          {/*
+          FNXC:StandardizedDrawers 2026-09-15-04:56:
+          FN-406: this header builds its own close alongside a create action, so the shared ViewHeader suppression
+          cannot see it. HideInDrawer applies the same one-definition rule at the position where the control renders.
+          */}
+          {!isEmbedded ? <HideInDrawer><ModalCloseButton onClick={onClose} aria-label={t("common.close", "Close")} /></HideInDrawer> : null}
         </>
       )}
     />

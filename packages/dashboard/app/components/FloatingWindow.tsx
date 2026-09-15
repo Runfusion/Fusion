@@ -19,7 +19,7 @@ import { currentFloatingZ, currentTaskDetailFloatingZ, nextFloatingZ, nextSnapPr
 import { isInsidePortalSafeSurface } from "../utils/portalSurfaces";
 import "./FloatingWindow.css";
 import { ModalCloseButton } from "./ModalCloseButton";
-import { ViewDrawerHandle } from "./ViewDrawer";
+import { DrawerPresentationProvider, ViewDrawerHandle, resolveDrawerPresentation } from "./ViewDrawer";
 import { ViewLayoutContent, ViewLayoutHeader } from "./ViewLayout";
 import {
   DashboardWindowSurfaceActivityProvider,
@@ -235,10 +235,12 @@ export function FloatingWindow({
   */
   const isTabletViewportMode = viewportMode === "tablet";
   const drawerExcluded = Boolean(className && /(?:setup-wizard|onboarding|confirm)/.test(className));
-  const mobileDrawer = viewportMode === "mobile"
-    && typeof document !== "undefined"
-    && document.documentElement.dataset.mobileDrawers === "true"
-    && !drawerExcluded;
+  /*
+  FNXC:StandardizedDrawers 2026-09-15-04:56:
+  FN-406: the phone-drawer predicate is resolved by the shared `resolveDrawerPresentation` seam and republished on
+  context, so hosted content (which owns its own ViewHeader) suppresses the same chrome this shell does.
+  */
+  const mobileDrawer = resolveDrawerPresentation({ viewportMode, excluded: drawerExcluded });
   const effectiveModal = modal || mobileDrawer;
   /*
   FNXC:ModalGeometryPersistence 2026-07-16-00:40:
@@ -1062,7 +1064,7 @@ export function FloatingWindow({
         )}
         <ViewLayoutContent className="floating-window__body" data-testid={`floating-window-body-${windowKey}`}>
           <DashboardWindowSurfaceActivityProvider active={windowSurface.surfaceActive}>
-            {children}
+            <DrawerPresentationProvider value={mobileDrawer}>{children}</DrawerPresentationProvider>
           </DashboardWindowSurfaceActivityProvider>
         </ViewLayoutContent>
       </div>

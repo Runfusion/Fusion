@@ -1,4 +1,5 @@
 import { ModalCloseButton } from "./ModalCloseButton";
+import { HideInDrawer } from "./ViewDrawer";
 import { ViewHeader } from "./ViewHeader";
 import { ViewActionButton } from "./ViewActionButton";
 import { ViewLayout } from "./ViewLayout";
@@ -998,12 +999,19 @@ export function MailboxModal({
             >
               {isLoading ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />}
             </button>
-            <ModalCloseButton
-              onClick={onClose}
-              aria-label={t("mailbox.closeAriaLabel", "Close")}
-              title={t("mailbox.closeTitle", "Close")}
-              data-testid="mailbox-close"
-             />
+            {/*
+            FNXC:StandardizedDrawers 2026-09-15-04:56:
+            FN-406: a phone drawer dismisses through its shared handle, scrim, or Escape, so the canonical close is
+            removed from the accessibility tree there. HideInDrawer is false on every other surface.
+            */}
+            <HideInDrawer>
+              <ModalCloseButton
+                onClick={onClose}
+                aria-label={t("mailbox.closeAriaLabel", "Close")}
+                title={t("mailbox.closeTitle", "Close")}
+                data-testid="mailbox-close"
+              />
+            </HideInDrawer>
           </div>}
         />
       </>}

@@ -340,22 +340,24 @@ The popover's upper bound is the shifted visual viewport top plus the device saf
   to { transform: translateY(0); }
 }
 
+/*
+FNXC:StandardizedDrawers 2026-09-15-04:56:
+FN-406: the visible bar is now painted by the shared ViewDrawerHandle primitive, so this rule keeps only the sheet's
+local touch target geometry. Re-adding a `::after` bar here would reintroduce the duplicate-handle drift.
+*/
 .mobile-more-sheet-handle {
-  display: flex;
-  align-items: center;
-  justify-content: center;
   box-sizing: border-box;
-  width: calc(var(--space-xl) + var(--space-md));
+  inline-size: calc(var(--space-xl) + var(--space-md));
   min-height: calc(var(--space-xl) + var(--space-md));
+  flex: 0 0 auto;
   margin: 0 auto var(--space-sm);
 }
 
-.mobile-more-sheet-handle::after {
-  width: 100%;
-  height: calc(var(--space-xs) / 2);
+.mobile-more-sheet-handle .mobile-more-sheet-handle__bar {
+  inline-size: 100%;
+  block-size: calc(var(--space-xs) / 2);
   border-radius: var(--radius-sm);
   background: var(--border);
-  content: "";
 }
 
 .mobile-more-sheet-title {

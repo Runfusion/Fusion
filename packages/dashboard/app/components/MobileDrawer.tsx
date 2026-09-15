@@ -1,7 +1,7 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useDrawerDismissGesture } from "../hooks/useDrawerDismissGesture";
-import { ViewDrawerHandle } from "./ViewDrawer";
+import { DrawerPresentationProvider, ViewDrawerHandle } from "./ViewDrawer";
 import { ViewLayoutContent, ViewLayoutHeader } from "./ViewLayout";
 import "./MobileDrawer.css";
 import {
@@ -176,9 +176,14 @@ export function MobileDrawer({
             <h2 id={`${testId}-title`} className="mobile-drawer__title">{title}</h2>
           </ViewLayoutHeader>
         )}
+        {/*
+        FNXC:StandardizedDrawers 2026-09-15-04:56:
+        FN-406: MobileDrawer is a drawer BY CONSTRUCTION, so it publishes the presentation unconditionally rather than
+        re-deriving the viewport predicate. Hosted content therefore suppresses its own canonical close here too.
+        */}
         <ViewLayoutContent className="mobile-drawer__body">
           <DashboardWindowSurfaceActivityProvider active={windowSurface.surfaceActive}>
-            {children}
+            <DrawerPresentationProvider value>{children}</DrawerPresentationProvider>
           </DashboardWindowSurfaceActivityProvider>
         </ViewLayoutContent>
       </section>

@@ -2329,6 +2329,27 @@ The dashboard's CSS is split into a global stylesheet (`packages/dashboard/app/s
 
 **Rule:** New CSS for a component goes in `app/components/ComponentName.css`, NOT `styles.css`. Only design tokens, primitives (`.btn`, `.card`, `.modal`, `.form-input`), and cross-component `@media` overrides belong in the global file.
 
+### Mobile drawer conformance
+
+A surface presented as a phone drawer exposes **exactly one drag handle and no close cross**. The handle is always the
+shared `ViewDrawerHandle` primitive (`packages/dashboard/app/components/ViewDrawer.tsx`); never paint a grab bar with a
+local `::before`/`::after` rule, because the drawer shell already renders one and a second bar simply stacks on top of
+it. Dismissal is the downward drag, the backdrop, or Escape; the detail return (`backAction`) is navigation, not
+dismissal chrome, and always survives.
+
+The presentation itself has a single definition. `resolveDrawerPresentation({ viewportMode, excluded })` is the only
+place that spells out the rule (phone viewport, the `data-mobile-drawers` opt-in published on `<html>`, no host-local
+exclusion). `FloatingWindow` and `MobileDrawer` publish the resolved value on context, so hosted content reads it with
+`useDrawerPresentation()` — or wraps chrome it wants suppressed in `HideInDrawer`, which is the correct read for a host
+that renders its own `FloatingWindow` and therefore sits above the provider. `ViewHeader` applies the rule centrally:
+a close passed through its `onClose` prop disappears in drawer presentation, and its actions row is dropped entirely
+when that close was its only child. The context defaults to `false`, so desktop, tablet, phones without
+`data-mobile-drawers`, and excluded windows (setup wizard, onboarding, confirmations) are unaffected.
+
+Both halves are ratcheted by `packages/dashboard/app/components/__tests__/drawer-conformance-inventory.test.tsx`: a new
+bespoke handle in a phone media block or an unguarded close control fails the suite. Desktop and tablet **resize** grips
+are explicitly exempt — they are pointer-resize affordances, not drawer handles.
+
 ### Banners
 
 Use the shared `Banner` component for dashboard notices. Its `tone` selects semantic info, warning, error, success, or neutral tinting; `layout` selects inline cards or sticky chrome; and `density` selects compact or regular spacing. Banners use a tinted surface and `var(--btn-border-width)` hairline border, never a left accent bar. Declaration values use design tokens: raw px is allowed only in `@media` conditions, zero values, and `var()` fallbacks.
