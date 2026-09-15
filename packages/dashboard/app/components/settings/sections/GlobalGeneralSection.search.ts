@@ -37,7 +37,7 @@ export const globalGeneralSearchEntries: SettingsSearchEntry[] = [
     labelKey: "settings.globalGeneral.quickAddSubmitOnEnter",
     labelFallback: " Press Enter to save a task in Quick Add ",
     helpKey: "settings.globalGeneral.quickAddSubmitOnEnterHint",
-    helpFallback: " Default: enabled. When disabled, Enter inserts a newline and Cmd/Ctrl+Enter saves. ",
+    helpFallback: " Default: enabled. When disabled, Enter inserts a newline. Cmd/Ctrl+Enter always creates and starts the task when the selected workflow allows it, and saves otherwise. ",
     keywords: ["enter", "keyboard", "quick add", "newline", "submit"],
   },
   {

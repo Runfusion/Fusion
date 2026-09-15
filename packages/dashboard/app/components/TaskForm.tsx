@@ -846,6 +846,30 @@ export function TaskForm({
     resizeDescription();
   }, [descriptionReadOnly, onDescriptionChange, resizeDescription]);
 
+  /*
+  FNXC:NewTaskWorkflowStart 2026-09-15-09:12:
+  FN-411 — Cmd/Ctrl+Enter in the create-mode description is the "create AND start" accelerator, mirroring Quick Add.
+  It lives in TaskForm because that is the ONLY point shared by both NewTaskModal presentations (the desktop
+  FloatingWindow and the mobile portal overlay), so one handler covers both breakpoints. No eligibility rule is
+  duplicated here: NewTaskModal already passes `onStartSubmit` only for a Start-capable workflow and gates it with
+  `startSubmitDisabled`, and `handleStartSubmit` re-checks the validated workflow itself. When Start is absent or
+  disabled the shortcut falls back to `onCreateSubmit`, so it never fails silently. Plain Enter and Shift+Enter are
+  deliberately NOT intercepted: the full dialog's description stays multi-line.
+  */
+  const handleDescriptionKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (mode !== "create" || descriptionReadOnly) return;
+    if (e.key !== "Enter" || e.shiftKey || !(e.metaKey || e.ctrlKey)) return;
+    if (onStartSubmit && !startSubmitDisabled && !disabled) {
+      e.preventDefault();
+      onStartSubmit();
+      return;
+    }
+    if (onCreateSubmit && !createSubmitDisabled && !disabled) {
+      e.preventDefault();
+      onCreateSubmit();
+    }
+  }, [mode, descriptionReadOnly, disabled, onStartSubmit, startSubmitDisabled, onCreateSubmit, createSubmitDisabled]);
+
   const handleToggleDescriptionExpand = useCallback(() => {
     setIsDescriptionExpanded((prev) => !prev);
   }, []);
@@ -1035,6 +1059,7 @@ export function TaskForm({
             id="task-form-description"
             value={description}
             onChange={handleDescriptionInput}
+            onKeyDown={handleDescriptionKeyDown}
             placeholder={t("taskForm.descriptionPlaceholder", "What needs to be done?")}
             rows={mode === "edit" ? 8 : 5}
             readOnly={descriptionReadOnly}

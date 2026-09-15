@@ -6454,7 +6454,7 @@ export default interface Resources {
         "ownerRepo": "owner/repo",
         "projectsInheritThisValueWhenTheyDoNot": "Projects inherit this value when they do not set a project default tracking repo. No default — unset.",
         "quickAddSubmitOnEnter": " Press Enter to save a task in Quick Add ",
-        "quickAddSubmitOnEnterHint": " Default: enabled. When disabled, Enter inserts a newline and Cmd/Ctrl+Enter saves. ",
+        "quickAddSubmitOnEnterHint": " Default: enabled. When disabled, Enter inserts a newline. Cmd/Ctrl+Enter always creates and starts the task when the selected workflow allows it, and saves otherwise. ",
         "releaseChannel": "Release channel",
         "releaseChannelHelp": "Stable follows official releases. Beta follows pre-releases cut from main and also picks up each stable release once it overtakes the beta. Switching back to Stable never downgrades. Default: stable.",
         "reportRoadmapDedupeEnabled": "Global public-roadmap deduplication",

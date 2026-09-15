@@ -6090,4 +6090,215 @@ describe("QuickEntryBox", () => {
     });
   });
 
+  /*
+  FNXC:QuickEntry 2026-09-15-09:12:
+  FN-411 symptom: Cmd/Ctrl+Enter behaved exactly like plain Enter (create only), so starting a card still
+  required the 500ms Save hold or the Start chip. These cases drive the real textarea key handler across both
+  Start mechanisms (atomic create-column override and create-then-move promotion), both modifier keys, both
+  breakpoints, empty/duplicate/in-flight data states, and the ineligible-workflow fallback.
+  */
+  describe("Cmd/Ctrl+Enter creates and starts", () => {
+    const ideasWorkflow = {
+      id: "builtin:coding-ideas",
+      name: "Coding (Ideas)",
+      columns: [
+        { id: "ideas", name: "Ideas", flags: { hold: true } },
+        { id: "todo", name: "Todo", flags: {} },
+        { id: "done", name: "Done", flags: { complete: true } },
+      ],
+    };
+
+    const holdFirstWorkflow = {
+      id: "custom:accelerator-waiting",
+      name: "Accelerator waiting first",
+      columns: [
+        { id: "waiting", name: "Waiting", flags: { intake: true, hold: true, manualIntake: true } },
+        { id: "working", name: "Working", flags: {} },
+        { id: "done", name: "Done", flags: { complete: true } },
+      ],
+    };
+
+    const ineligibleWorkflow = {
+      id: "builtin:coding",
+      name: "Coding",
+      columns: [
+        { id: "planning", name: "Planning", flags: { intake: true, hold: true } },
+        { id: "todo", name: "Todo", flags: {} },
+      ],
+    };
+
+    const typeDescription = (value: string) => {
+      fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value } });
+    };
+
+    const pressAccelerator = (modifier: "ctrlKey" | "metaKey") => {
+      fireEvent.keyDown(screen.getByTestId("quick-entry-input"), { key: "Enter", [modifier]: true });
+    };
+
+    it.each([
+      ["desktop ctrlKey", mockDesktopViewport, "ctrlKey" as const],
+      ["desktop metaKey", mockDesktopViewport, "metaKey" as const],
+      ["mobile ctrlKey", mockMobileViewport, "ctrlKey" as const],
+      ["mobile metaKey", mockMobileViewport, "metaKey" as const],
+    ])("creates the Ideas card directly in its Start column on %s", async (_label, mockViewport, modifier) => {
+      mockViewport();
+      const onCreate = vi.fn().mockResolvedValue({ ...CREATED_TASK, id: "FN-accel", column: "ideas", workflowId: ideasWorkflow.id });
+      const onMoveTask = vi.fn().mockResolvedValue({});
+      renderQuickEntryBox({ onCreate, onMoveTask, workflowId: ideasWorkflow.id, workflowOptions: [ideasWorkflow] });
+      typeDescription("Start via accelerator");
+
+      pressAccelerator(modifier);
+
+      await waitFor(() => expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({
+        description: "Start via accelerator",
+        workflowId: ideasWorkflow.id,
+        column: "todo",
+      })));
+      expect(onMoveTask).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["ctrlKey" as const],
+      ["metaKey" as const],
+    ])("promotes a hold-first workflow with a follow-up move (%s)", async (modifier) => {
+      const onCreate = vi.fn().mockResolvedValue({ ...CREATED_TASK, id: "FN-accel-move", column: "waiting", workflowId: holdFirstWorkflow.id });
+      const onMoveTask = vi.fn().mockResolvedValue({});
+      renderQuickEntryBox({ onCreate, onMoveTask, workflowId: holdFirstWorkflow.id, workflowOptions: [holdFirstWorkflow] });
+      typeDescription("Promote via accelerator");
+
+      pressAccelerator(modifier);
+
+      await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+      expect(onCreate.mock.calls[0]![0]).not.toHaveProperty("column");
+      await waitFor(() => expect(onMoveTask).toHaveBeenCalledWith("FN-accel-move", "working"));
+    });
+
+    it.each([
+      ["ineligible", ineligibleWorkflow],
+      ["malformed", { ...ideasWorkflow, columns: [] }],
+    ])("falls back to create-only for %s workflow metadata", async (_label, workflow) => {
+      const onCreate = vi.fn().mockResolvedValue({ ...CREATED_TASK, id: "FN-accel-save-only", workflowId: workflow.id });
+      const onMoveTask = vi.fn();
+      renderQuickEntryBox({ onCreate, onMoveTask, workflowId: workflow.id, workflowOptions: [workflow] });
+      typeDescription("Create only");
+
+      pressAccelerator("ctrlKey");
+
+      await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+      expect(onCreate.mock.calls[0]![0]).not.toHaveProperty("column");
+      expect(onMoveTask).not.toHaveBeenCalled();
+    });
+
+    it("falls back to create-only when the composer host provides no workflow metadata", async () => {
+      const onCreate = vi.fn().mockResolvedValue(undefined);
+      const onMoveTask = vi.fn();
+      renderQuickEntryBox({ onCreate, onMoveTask });
+      typeDescription("No workflow metadata");
+
+      pressAccelerator("metaKey");
+
+      await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+      expect(onCreate.mock.calls[0]![0]).not.toHaveProperty("column");
+      expect(onMoveTask).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["empty", ""],
+      ["whitespace only", "   "],
+    ])("never creates or starts for a %s description", async (_label, value) => {
+      const onCreate = vi.fn().mockResolvedValue(undefined);
+      const onMoveTask = vi.fn();
+      renderQuickEntryBox({ onCreate, onMoveTask, workflowId: ideasWorkflow.id, workflowOptions: [ideasWorkflow] });
+      if (value) typeDescription(value);
+
+      pressAccelerator("ctrlKey");
+      await flushPendingTimers();
+
+      expect(onCreate).not.toHaveBeenCalled();
+      expect(onMoveTask).not.toHaveBeenCalled();
+    });
+
+    it("keeps the Start intent through duplicate confirmation", async () => {
+      const onCreate = vi.fn().mockResolvedValue({ ...CREATED_TASK, id: "FN-accel-duplicate", column: "todo", workflowId: ideasWorkflow.id });
+      vi.mocked(checkDuplicateTasks).mockResolvedValueOnce([
+        { id: "FN-existing", title: "Existing", description: "Existing", column: "ideas", score: 0.9 },
+      ]);
+      renderQuickEntryBox({ onCreate, workflowId: ideasWorkflow.id, workflowOptions: [ideasWorkflow] });
+      typeDescription("Duplicate accelerator Start");
+
+      pressAccelerator("ctrlKey");
+
+      expect(await screen.findByText("Possible duplicates")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Create anyway" }));
+
+      await waitFor(() => expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({
+        acknowledgedDuplicates: ["FN-existing"],
+        column: "todo",
+        workflowId: ideasWorkflow.id,
+      })));
+    });
+
+    it("creates exactly once when the accelerator is pressed repeatedly", async () => {
+      const onCreate = vi.fn().mockResolvedValue({ ...CREATED_TASK, id: "FN-accel-once", column: "ideas", workflowId: ideasWorkflow.id });
+      renderQuickEntryBox({ onCreate, workflowId: ideasWorkflow.id, workflowOptions: [ideasWorkflow] });
+      typeDescription("Only once");
+
+      pressAccelerator("ctrlKey");
+      pressAccelerator("ctrlKey");
+      pressAccelerator("metaKey");
+
+      await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+      await flushPendingTimers();
+      expect(onCreate).toHaveBeenCalledTimes(1);
+    });
+
+    it("starts even when plain Enter submission is disabled", async () => {
+      const onCreate = vi.fn().mockResolvedValue({ ...CREATED_TASK, id: "FN-accel-no-enter", column: "ideas", workflowId: ideasWorkflow.id });
+      renderQuickEntryBox({ onCreate, submitOnEnter: false, workflowId: ideasWorkflow.id, workflowOptions: [ideasWorkflow] });
+      const textarea = screen.getByTestId("quick-entry-input");
+      typeDescription("Accelerator without Enter submit");
+
+      fireEvent.keyDown(textarea, { key: "Enter" });
+      await flushPendingTimers();
+      expect(onCreate).not.toHaveBeenCalled();
+
+      pressAccelerator("ctrlKey");
+
+      await waitFor(() => expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({ column: "todo" })));
+    });
+
+    it("leaves Shift+Cmd/Ctrl+Enter as a newline", async () => {
+      const onCreate = vi.fn().mockResolvedValue(undefined);
+      renderQuickEntryBox({ onCreate, workflowId: ideasWorkflow.id, workflowOptions: [ideasWorkflow] });
+      typeDescription("Newline please");
+
+      fireEvent.keyDown(screen.getByTestId("quick-entry-input"), { key: "Enter", shiftKey: true, ctrlKey: true });
+      await flushPendingTimers();
+
+      expect(onCreate).not.toHaveBeenCalled();
+      expect(screen.getByTestId("quick-entry-input")).toHaveValue("Newline please");
+    });
+
+    it("keeps the existing Save keyboard hold gesture and never double-submits", async () => {
+      const onCreate = vi.fn().mockResolvedValue({ ...CREATED_TASK, id: "FN-accel-save-button", column: "ideas", workflowId: ideasWorkflow.id });
+      renderQuickEntryBox({ onCreate, workflowId: ideasWorkflow.id, workflowOptions: [ideasWorkflow] });
+      typeDescription("Save button accelerator");
+      const save = screen.getByTestId("quick-entry-save");
+
+      // The Save button owns its own Space/Enter hold gesture; the textarea accelerator does not reach it.
+      fireEvent.keyDown(save, { key: "Enter", ctrlKey: true });
+      expect(save).toHaveAttribute("data-hold-state", "holding");
+      expect(onCreate).not.toHaveBeenCalled();
+
+      // Releasing before the 500ms threshold is still exactly one ordinary Save, with no Start column.
+      await act(async () => vi.advanceTimersByTime(100));
+      fireEvent.keyUp(save, { key: "Enter", ctrlKey: true });
+
+      await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+      expect(onCreate.mock.calls[0]![0]).not.toHaveProperty("column");
+      await flushPendingTimers();
+      expect(onCreate).toHaveBeenCalledTimes(1);
+    });
+  });
+
 });

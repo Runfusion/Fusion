@@ -52,7 +52,7 @@ export function GlobalGeneralSection({ form, setForm }: GlobalGeneralSectionProp
         descriptor={{
           key: "quickAddSubmitOnEnter",
           label: t("settings.globalGeneral.quickAddSubmitOnEnter", " Press Enter to save a task in Quick Add "),
-          help: t("settings.globalGeneral.quickAddSubmitOnEnterHint", " Default: enabled. When disabled, Enter inserts a newline and Cmd/Ctrl+Enter saves. "),
+          help: t("settings.globalGeneral.quickAddSubmitOnEnterHint", " Default: enabled. When disabled, Enter inserts a newline. Cmd/Ctrl+Enter always creates and starts the task when the selected workflow allows it, and saves otherwise. "),
           scope: "global",
         }}
         value={form.quickAddSubmitOnEnter !== false}

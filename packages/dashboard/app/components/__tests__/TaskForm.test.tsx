@@ -1163,6 +1163,60 @@ describe("TaskForm description-adjacent actions layout (FN-781)", () => {
     expect(screen.getByTestId("task-form-plan-button")).not.toHaveClass("task-form-inline-icon-btn");
   });
 
+  /*
+  FNXC:NewTaskWorkflowStart 2026-09-15-09:12:
+  FN-411 negative controls for the create-mode Cmd/Ctrl+Enter accelerator: it must never submit from an edit-mode
+  description (the task detail host has no create/start callbacks to run), must respect the disabled flags, and
+  must leave both inline actions rendered and labelled exactly as before.
+  */
+  it("does not submit from an edit-mode description on Cmd/Ctrl+Enter", () => {
+    const onCreateSubmit = vi.fn();
+    const onStartSubmit = vi.fn();
+    renderTaskForm({ mode: "edit", description: "Some task", onCreateSubmit, onStartSubmit });
+    const description = document.getElementById("task-form-description")!;
+
+    fireEvent.keyDown(description, { key: "Enter", ctrlKey: true });
+    fireEvent.keyDown(description, { key: "Enter", metaKey: true });
+
+    expect(onCreateSubmit).not.toHaveBeenCalled();
+    expect(onStartSubmit).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["ctrlKey" as const],
+    ["metaKey" as const],
+  ])("prefers Start over Create on %s+Enter and keeps both actions labelled", (modifier) => {
+    const onCreateSubmit = vi.fn();
+    const onStartSubmit = vi.fn();
+    renderTaskForm({ description: "Start me", onCreateSubmit, onStartSubmit });
+
+    fireEvent.keyDown(document.getElementById("task-form-description")!, { key: "Enter", [modifier]: true });
+
+    expect(onStartSubmit).toHaveBeenCalledTimes(1);
+    expect(onCreateSubmit).not.toHaveBeenCalled();
+    expect(screen.getByTestId("task-form-inline-start")).toHaveAccessibleName("Start");
+    expect(screen.getByTestId("task-form-inline-create")).toHaveTextContent("Create");
+    expect(screen.getByTestId("task-form-description-actions").querySelector("button:empty")).toBeNull();
+  });
+
+  it("falls back to Create when Start is disabled, and does nothing when both are disabled", () => {
+    const onCreateSubmit = vi.fn();
+    const onStartSubmit = vi.fn();
+    const { unmount } = renderTaskForm({ description: "Create me", onCreateSubmit, onStartSubmit, startSubmitDisabled: true });
+
+    fireEvent.keyDown(document.getElementById("task-form-description")!, { key: "Enter", ctrlKey: true });
+    expect(onStartSubmit).not.toHaveBeenCalled();
+    expect(onCreateSubmit).toHaveBeenCalledTimes(1);
+
+    unmount();
+    onCreateSubmit.mockClear();
+    renderTaskForm({ description: "Nothing", onCreateSubmit, onStartSubmit, startSubmitDisabled: true, createSubmitDisabled: true });
+
+    fireEvent.keyDown(document.getElementById("task-form-description")!, { key: "Enter", ctrlKey: true });
+    expect(onCreateSubmit).not.toHaveBeenCalled();
+    expect(onStartSubmit).not.toHaveBeenCalled();
+  });
+
   it("does not render description-actions or Start in edit mode", () => {
     renderTaskForm({
       mode: "edit",

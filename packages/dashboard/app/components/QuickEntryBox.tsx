@@ -1128,6 +1128,22 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
     setIsSubmitting(false);
   }, []);
 
+  /*
+  FNXC:QuickAddStart 2026-07-24-11:20:
+  Start stashes the workflow snapshot validated at click time in `startIntentRef` and then runs the SAME submit
+  path as Save. The snapshot (not live state) is what `submitCreateTask` reads, so a workflow list refreshed
+  mid-duplicate-confirmation cannot retarget an in-flight Start.
+
+  FNXC:QuickAddStart 2026-09-15-09:12:
+  Declared above `handleKeyDown` because the Cmd/Ctrl+Enter accelerator routes through this exact function
+  rather than duplicating the eligibility/snapshot rules.
+  */
+  const handleStartClick = useCallback((workflowSnapshot: ValidatedQuickAddWorkflow | null = validatedStartWorkflow) => {
+    if (!canQuickAddStartNow || !workflowSnapshot) return;
+    startIntentRef.current = workflowSnapshot;
+    void handleSubmit();
+  }, [canQuickAddStartNow, handleSubmit, validatedStartWorkflow]);
+
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
       if (e.key === "Enter") {
@@ -1144,10 +1160,23 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
         /*
         FNXC:QuickEntry 2026-08-16-03:15:
         The global Quick Add option defaults on to preserve historical Enter submission. When disabled, plain Enter remains a browser newline while Cmd/Ctrl+Enter stays the explicit save accelerator.
+
+        FNXC:QuickEntry 2026-09-15-09:12:
+        FN-411 promotes Cmd/Ctrl+Enter to the "create AND start" accelerator: when the selected workflow is
+        Start-eligible (`canQuickAddStartNow`, i.e. a validated workflow with a provable destination and a
+        non-empty description), the shortcut runs `handleStartClick` — the SAME path as the Save hold gesture
+        and the legacy Start chip — so the frozen `startIntentRef` snapshot, duplicate preflight and
+        `submitInFlightRef` lock all still apply. It falls back to create-only `handleSubmit()` whenever Start
+        is not provable, so the shortcut never fails silently. Plain Enter is unchanged and stays governed by
+        `quickAddSubmitOnEnter`; Shift+Enter (even with Cmd/Ctrl) stays a newline.
         */
         if (e.metaKey || e.ctrlKey) {
           e.preventDefault();
-          handleSubmit();
+          if (canQuickAddStartNow) {
+            handleStartClick();
+          } else {
+            handleSubmit();
+          }
           return;
         }
         if (!enterSubmits) {
@@ -1225,6 +1254,8 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
       setIsDisclosureExpanded,
       duplicateMatches,
       enterSubmits,
+      canQuickAddStartNow,
+      handleStartClick,
     ],
   );
 
@@ -1679,18 +1710,6 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
   FNXC:QuickEntry 2026-06-30-00:00:
   Quick-add intentionally exposes no Plan button, disabled Plan state, tooltip, test id, or click target. Keep non-quick-add planning entry points such as the New Task dialog and model-menu planning lane intact.
   */
-  /*
-  FNXC:QuickAddStart 2026-07-24-11:20:
-  Start stashes the workflow snapshot validated at click time in `startIntentRef` and then runs the SAME submit
-  path as Save. The snapshot (not live state) is what `submitCreateTask` reads, so a workflow list refreshed
-  mid-duplicate-confirmation cannot retarget an in-flight Start.
-  */
-  const handleStartClick = useCallback((workflowSnapshot: ValidatedQuickAddWorkflow | null = validatedStartWorkflow) => {
-    if (!canQuickAddStartNow || !workflowSnapshot) return;
-    startIntentRef.current = workflowSnapshot;
-    void handleSubmit();
-  }, [canQuickAddStartNow, handleSubmit, validatedStartWorkflow]);
-
   const cancelQuickAddSaveGesture = useCallback((suppressClick = false) => {
     const hadActiveGesture = quickAddSaveGestureRef.current !== null;
     if (quickAddSaveTimerRef.current) clearTimeout(quickAddSaveTimerRef.current);
