@@ -9,6 +9,7 @@
 import {type TaskStore, type MoveTaskOptions, type MoveTaskInternalOptions, storeLog} from "../store.js";
 import { buildPatchnodeEntryInput } from "../board/patchnode.js";
 import { appendPatchnodeEntryInTransaction } from "./async/async-patchnode.js";
+import { appendTaskLifecycleEventInTransaction } from "./lifecycle-outbox.js";
 import * as schema from "../postgres/schema/index.js";
 import {TaskDeletedError, HandoffInvariantViolationError, TransitionRejectionError} from "./errors.js";
 
@@ -1259,6 +1260,29 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
           layer.projectId ?? "",
           buildPatchnodeEntryInput(task, "completed", task.columnMovedAt ?? movedAt),
         );
+      }
+      /*
+      FNXC:ReviewLaneDispatch 2026-09-09 (STAS-205):
+      Record lane entry as a lifecycle fact in the same transaction that moves the row, so
+      no entry path can produce a card in review with no committed evidence of how it got
+      there. Engine, scheduler, workflow graph, completion handoff, dashboard drag, and the
+      CLI bundle all funnel through this function, which is why the guarantee lives here
+      rather than at any call site; `moveSource` makes the path attributable from data.
+      */
+      if (toColumn === (moveLifecycle?.review ?? "in-review") && fromColumn !== toColumn) {
+        await appendTaskLifecycleEventInTransaction(tx, {
+          projectId: layer.projectId ?? "",
+          eventType: "task:entered-review",
+          taskId: id,
+          occurredAt: movedAt,
+          payload: {
+            taskId: id,
+            previousColumn: fromColumn,
+            toColumn,
+            enteredAt: movedAt,
+            actor: moveSource,
+          },
+        });
       }
 
       // Dequeue from merge queue on column exit (if leaving in-review).

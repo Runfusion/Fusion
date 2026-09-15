@@ -561,6 +561,9 @@ export const legacyTaskReviewerRuns = projectSchema.table("task_reviewer_runs", 
   primaryKey({ columns: [t.projectId, t.id] }),
   index("idxLegacyTaskReviewerRunsTask").on(t.projectId, t.taskId),
   index("idxLegacyTaskReviewerRunsStatus").on(t.projectId, t.status),
+  uniqueIndex("task_reviewer_runs_live_unique")
+    .on(t.projectId, t.taskId, t.reviewerAgentId)
+    .where(sql`${t.invalidatedAt} IS NULL`),
 ]);
 
 // ── Distributed task ID allocator ────────────────────────────────────
@@ -687,7 +690,7 @@ export const taskLifecycleEvents = projectSchema.table("task_lifecycle_events", 
 }, (t) => [
   primaryKey({ columns: [t.projectId, t.seq] }),
   unique("task_lifecycle_events_project_event_unique").on(t.projectId, t.eventId),
-  check("task_lifecycle_events_type_check", sql`${t.eventType} IN ('task:deleted')`),
+  check("task_lifecycle_events_type_check", sql`${t.eventType} IN ('task:deleted', 'task:entered-review')`),
   index("idxTaskLifecycleEventsTask").on(t.projectId, t.taskId),
 ]);
 
