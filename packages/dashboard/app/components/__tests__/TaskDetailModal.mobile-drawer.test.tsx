@@ -45,9 +45,13 @@ describe("TaskDetailModal Alpha mobile drawer", () => {
     expect(dialog.querySelectorAll(":scope > .mobile-drawer__header")).toHaveLength(0);
     expect(dialog.querySelectorAll(".task-detail-content > .modal-header")).toHaveLength(1);
     expect(dialog.querySelectorAll(":scope > .mobile-drawer__close")).toHaveLength(0);
-    const back = screen.getByRole("button", { name: "Back" });
-    expect(back).toHaveClass("view-back-button");
-    expect(back.querySelector(".lucide-chevron-left")).toBeInTheDocument();
+    /*
+    FNXC:StandardizedDrawers 2026-09-15-16:33:
+    FN-427: this drawer used to render a ChevronLeft wired to dismissal. Task Detail has no list→detail navigation, and
+    the handle, backdrop and Escape below already dismiss the drawer, so that control was duplicated chrome and is gone.
+    */
+    expect(screen.queryByRole("button", { name: "Back" })).toBeNull();
+    expect(dialog.querySelector(".view-back-button")).toBeNull();
     expect(dialog.querySelector(".task-detail-header-back-btn")).toBeNull();
     expect(dialog.querySelectorAll(":scope > .mobile-drawer__handle-target.view-drawer__handle-target")).toHaveLength(1);
     expect(document.querySelector(".floating-window--task-detail")).toBeNull();

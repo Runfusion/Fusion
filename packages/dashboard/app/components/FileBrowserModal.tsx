@@ -315,6 +315,15 @@ export function FileBrowserModal({
               {selectedFile ? <span className="file-browser-header-path">{selectedFile}</span> : null}
             </>
           )}
+          /*
+          FNXC:FileBrowser 2026-09-15-16:33:
+          FN-427: this back IS a real internal navigation (open file -> file list), so it is kept in every narrow
+          presentation, drawer included, unlike a back whose only effect would be to dismiss the surface. It renders
+          exactly when the list exists (`!isDirectFileView`), the layout is single-pane (`isMobile`), and a file is
+          currently open (`mobileView === "editor"`). The direct file view deliberately has no back and no tree: it was
+          opened for one file and has no list to return to (see FNXC:FileBrowserDocs 2026-09-13-08:37); its way out is
+          the canonical close, or the drawer handle/backdrop/Escape in drawer presentation.
+          */
           backAction={!isDirectFileView && isMobile && selectedFile && mobileView === "editor" ? {
             label: t("fileBrowser.back", "Back to file list"),
             onClick: handleBackToList,

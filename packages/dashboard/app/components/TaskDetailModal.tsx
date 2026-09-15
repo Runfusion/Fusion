@@ -8,6 +8,7 @@ import { useViewportMode } from "../hooks/useViewportMode";
 import { MobileDrawer } from "./MobileDrawer";
 import { ViewBackButton } from "./ViewActionButton";
 import { ViewLayoutContent, ViewLayoutFooter, ViewLayoutHeader } from "./ViewLayout";
+import { useDrawerPresentation } from "./ViewDrawer";
 import { mergeTaskSnapshot } from "../hooks/useTasks";
 import { dismissAiMergeReviewFinding } from "../api/tasks/tasks-lifecycle";
 import {
@@ -976,6 +977,14 @@ export function TaskDetailContent({
 }: TaskDetailContentProps) {
   const { t } = useTranslation("app");
   const isPhonePresentation = useViewportMode() === "mobile";
+  /*
+  FNXC:StandardizedDrawers 2026-09-15-16:33:
+  FN-427: read the FN-406 drawer seam from the hosted content so the header can tell "presented as a phone drawer"
+  apart from "phone, but not a drawer". A back control is legitimate only when it performs a real internal
+  navigation; in drawer presentation the surface is already dismissed by the ViewDrawerHandle, the scrim and Escape,
+  so a back wired to requestClose is duplicated chrome disguised as navigation.
+  */
+  const drawerPresentation = useDrawerPresentation();
   const columnLabel = useColumnLabel();
   const [activeTab, setActiveTab] = useState<TabId>(() => resolveDefaultTab(initialTab, task.column, taskDetailChatFirst));
   const [activitySegment, setActivitySegment] = useState<ActivitySegment>(() => resolveDefaultActivitySegment(initialTab));
@@ -5346,7 +5355,14 @@ export function TaskDetailContent({
         Every board, main-panel, list-split, right-dock, drawer, and pop-out host shares this title-free header. Keep the task ID, lifecycle badges, and actions here; the title remains editable only through the Definition form.
         */}
         <ViewLayoutHeader className="modal-header">
-          {isPhonePresentation ? (
+          {/*
+          FNXC:StandardizedDrawers 2026-09-15-16:33:
+          FN-427: Task Detail owns no list→detail navigation, so this ChevronLeft only ever dismissed the surface. It is
+          retained on a phone WITHOUT the `data-mobile-drawers` opt-in, where the canonical close is already suppressed
+          by `isPhonePresentation` and removing it too would leave the surface with no visible way out. The close guards
+          below stay deliberately broader (every phone), because only the back control is re-keyed on drawer presentation.
+          */}
+          {isPhonePresentation && !drawerPresentation ? (
             <ViewBackButton
               className="task-detail-mobile-back"
               label={t("taskDetail.header.back", "Back")}
@@ -5455,8 +5471,12 @@ export function TaskDetailContent({
               </UiButton>
             )}
             {/*
-            FNXC:TaskDetailResponsiveChrome 2026-09-13-16:30:
-            Phone Task Detail has exactly one ChevronLeft before task identity in all six hosts and no close, pop-out, or fullscreen affordance. Desktop and tablet retain the canonical close and optional pop-out; every control invokes the callback supplied by its TaskDetailHostBoundary owner.
+            FNXC:TaskDetailResponsiveChrome 2026-09-15-16:33:
+            Phone Task Detail renders no close, pop-out, or fullscreen affordance in any of its six hosts. Superseding the
+            2026-09-13 "exactly one ChevronLeft in all six phone hosts" rule, FN-427 keeps that ChevronLeft only on a phone
+            that is NOT in drawer presentation (see the StandardizedDrawers block above the back button): in a drawer the
+            handle, scrim and Escape already dismiss the surface. Desktop and tablet retain the canonical close and optional
+            pop-out; every control invokes the callback supplied by its TaskDetailHostBoundary owner.
             */}
             {!isPhonePresentation && embedded && onRequestClose && (
               <ModalCloseButton

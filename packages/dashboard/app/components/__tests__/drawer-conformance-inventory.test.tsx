@@ -6,6 +6,7 @@ import { FloatingWindow } from "../FloatingWindow";
 import { MobileDrawer } from "../MobileDrawer";
 import { ModalCloseButton } from "../ModalCloseButton";
 import { HideInDrawer, useDrawerPresentation } from "../ViewDrawer";
+import { ViewBackButton } from "../ViewActionButton";
 import { ViewHeader } from "../ViewHeader";
 
 /*
@@ -171,6 +172,39 @@ describe("drawer chrome conformance across hosts", () => {
     expect(container.ownerDocument.querySelector(".view-header__actions")).toBeNull();
   });
 
+  /*
+  FNXC:StandardizedDrawers 2026-09-15-16:33:
+  FN-427: a back control whose only effect is to dismiss the surface is drawer chrome wearing a navigation costume —
+  the handle, scrim and Escape already dismiss it. Suppression goes through the same seam as the close (HideInDrawer /
+  useDrawerPresentation); a back that performs a real internal navigation must survive untouched.
+  */
+  it("removes a dismiss-only back control in drawer presentation while keeping internal navigation", () => {
+    setViewport("mobile");
+    render(
+      <FloatingWindow windowKey="chrome-dismiss-back" title="Host" onClose={() => {}} hideHeader>
+        <HideInDrawer>
+          <ViewBackButton label="Back" onClick={() => {}} />
+        </HideInDrawer>
+        <HostedHeader />
+      </FloatingWindow>,
+    );
+    expect(screen.queryByRole("button", { name: "Back" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Back to list" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /close/i })).not.toBeInTheDocument();
+  });
+
+  it("keeps a dismiss-only back control on a phone without the drawer opt-in", () => {
+    setViewport("mobile", { drawers: false });
+    render(
+      <FloatingWindow windowKey="chrome-dismiss-back-no-optin" title="Host" onClose={() => {}} hideHeader>
+        <HideInDrawer>
+          <ViewBackButton label="Back" onClick={() => {}} />
+        </HideInDrawer>
+      </FloatingWindow>,
+    );
+    expect(screen.getByRole("button", { name: "Back" })).toBeInTheDocument();
+  });
+
   it("keeps a non-close action row rendered in drawer presentation", () => {
     setViewport("mobile");
     render(
@@ -207,10 +241,45 @@ const RESIZE_GRIP_EXEMPTIONS = [
  * TaskDetailModal guards its two closes with `isPhonePresentation` (viewport === "mobile"), a DELIBERATELY BROADER
  * contract than drawer presentation: it hides the close on every phone host, drawer or not. Re-keying it onto
  * `useDrawerPresentation()` would regress that contract on a phone without `data-mobile-drawers`.
+ * FN-427 re-keys only the BACK control onto `useDrawerPresentation()` (a back wired to dismissal is duplicated drawer
+ * chrome), so the file now reads the seam; the close guards above stay on the broader phone predicate and this
+ * exemption remains the record of that deliberate asymmetry.
  */
 const CLOSE_GUARD_EXEMPTIONS: readonly string[] = ["TaskDetailModal.tsx"];
 
 const DRAWER_PRESENTATION_GUARDS = ["HideInDrawer", "useDrawerPresentation", "resolveDrawerPresentation"] as const;
+
+/**
+ * FN-427 back-affordance census. Every production component that renders a detail return is listed here with the
+ * internal navigation it performs, so a NEW call site cannot appear without a deliberate classification. A return is
+ * legitimate only when it navigates within the surface (list -> detail, detail -> list); a return whose only effect is
+ * to dismiss the surface must go through the drawer-presentation seam instead, as TaskDetailModal now does.
+ */
+const BACK_AFFORDANCE_INVENTORY: readonly string[] = [
+  "AgentDetailView.tsx", // agent detail sections -> agent overview
+  "AgentsView.tsx", // agent detail -> agent list
+  "ChatView.tsx", // conversation -> conversation list
+  "EvalsView.tsx", // eval run -> eval list
+  "FileBrowserModal.tsx", // file editor -> file list
+  "GoalsView.tsx", // goal detail -> goal list
+  "MailboxModal.tsx", // message -> mailbox list
+  "MailboxView.tsx", // message -> mailbox list
+  "MissionManager.tsx", // mission detail -> mission list
+  "NodesView.tsx", // focused node -> node graph
+  "NotesView.tsx", // note editor -> note list
+  "PlanningModeModal.tsx", // history/session detail -> planning composer
+  "PluginManager.tsx", // plugin detail -> plugin list
+  "PullRequestView.tsx", // pull request detail -> pull request list
+  "ScheduledTasksModal.tsx", // schedule form -> schedule list
+  "ScriptsModal.tsx", // script form -> script list
+  "SkillsView.tsx", // skill detail -> skill list
+  "TaskDetailModal.tsx", // FN-427: no internal navigation; the phone back is re-keyed on drawer presentation
+  "ViewHeader.tsx", // shared header primitive that renders every hosted backAction
+  "WhiteboardView.tsx", // board detail -> board list
+  "WorkflowNodeEditor.tsx", // node inspector -> workflow canvas
+  "command-center/CommandCenter.tsx", // panel detail -> command center home
+  "command-center/IdeationPanel.tsx", // candidate detail -> candidate list
+];
 
 function phoneMediaBlocks(css: string): string {
   const blocks: string[] = [];
@@ -274,6 +343,24 @@ describe("drawer conformance ratchets", () => {
       });
 
     expect(unguarded).toEqual([]);
+  });
+
+  it("keeps every production back affordance in the classified census", () => {
+    const callSites = listComponentFiles()
+      .filter((file) => !file.startsWith("__tests__/") && !file.includes("/__tests__/"))
+      .filter((file) => {
+        const source = productionSource(file);
+        return source.includes("backAction=") || source.includes("<ViewBackButton");
+      })
+      .sort();
+
+    expect(callSites).toEqual([...BACK_AFFORDANCE_INVENTORY].sort());
+  });
+
+  it("keys the Task Detail back affordance on the shared drawer presentation seam", () => {
+    const source = productionSource("TaskDetailModal.tsx");
+    expect(source).toContain("useDrawerPresentation");
+    expect(source).toMatch(/isPhonePresentation\s*&&\s*!drawerPresentation/);
   });
 
   it("resolves the More sheet drag target from the shared handle's inner bar", () => {

@@ -1182,3 +1182,45 @@ Narrow Files windows use the same single-pane list/editor behavior as mobile eve
   font-size: calc(var(--space-sm) + var(--space-xs) * 0.5);
   font-family: var(--font-mono);
 }
+
+/*
+FNXC:FileBrowser 2026-09-15-16:33:
+FN-427 drawer geometry. The phone block above sizes the Files surface on the VIEWPORT (100dvh), which stays correct for
+a phone WITHOUT the `data-mobile-drawers` opt-in because the window is then a full-screen sheet. In drawer presentation
+the real panel is shorter — FloatingWindow.css pins the drawer to `var(--mobile-drawer-block-size)` — so a 100dvh
+surface overflowed its host, pushed the end of `.file-browser-list` under the visible area, and turned the drawer body
+(`overflow: auto`) into a second competing scroller. These rules carry BOTH `--file-browser` and `--mobile-drawer` so
+they beat the generic drawer rules on specificity rather than on stylesheet concatenation order: the surface is bounded
+to its panel (100%), the drawer body stops scrolling, and every box between panel and list keeps `min-height: 0` so
+`.file-browser-list` remains the single bounded scroll owner and its last entry is reachable.
+*/
+html[data-mobile-drawers="true"][data-viewport-mode="mobile"] .floating-window--file-browser.floating-window--mobile-drawer .floating-window__body {
+  min-height: 0;
+  min-block-size: 0;
+  overflow: hidden;
+}
+
+html[data-mobile-drawers="true"][data-viewport-mode="mobile"] .floating-window--file-browser.floating-window--mobile-drawer .modal.file-browser-modal {
+  width: 100%;
+  max-width: 100%;
+  height: 100%;
+  min-height: 0;
+  max-height: 100%;
+}
+
+html[data-mobile-drawers="true"][data-viewport-mode="mobile"] .floating-window--file-browser.floating-window--mobile-drawer .file-browser-body,
+html[data-mobile-drawers="true"][data-viewport-mode="mobile"] .floating-window--file-browser.floating-window--mobile-drawer .file-browser-sidebar,
+html[data-mobile-drawers="true"][data-viewport-mode="mobile"] .floating-window--file-browser.floating-window--mobile-drawer .view-sidebar__panel,
+html[data-mobile-drawers="true"][data-viewport-mode="mobile"] .floating-window--file-browser.floating-window--mobile-drawer .file-browser-sidebar__panel,
+html[data-mobile-drawers="true"][data-viewport-mode="mobile"] .floating-window--file-browser.floating-window--mobile-drawer .file-browser-content,
+html[data-mobile-drawers="true"][data-viewport-mode="mobile"] .floating-window--file-browser.floating-window--mobile-drawer .file-browser {
+  min-height: 0;
+  min-block-size: 0;
+}
+
+html[data-mobile-drawers="true"][data-viewport-mode="mobile"] .floating-window--file-browser.floating-window--mobile-drawer .file-browser-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
