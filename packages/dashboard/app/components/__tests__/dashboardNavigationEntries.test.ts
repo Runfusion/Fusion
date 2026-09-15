@@ -15,11 +15,32 @@ describe("dashboardNavigationEntries", () => {
     expect(entries.filter((entry) => entry.kind === "external-owner")).toEqual([]);
     expect(entries.some((entry) => entry.id === "secrets" || entry.id === "pull-requests")).toBe(false);
     expect(entries.map((entry) => entry.id)).not.toEqual(expect.arrayContaining(["patchnode", "chat", "notes"]));
-    // FN-382: List is a right-dock tool on every host that consumes this registry, so it is no longer a page entry.
+    /*
+     * FN-439 inverts FN-382's "List is a right-dock tool" assertion: List is a registry destination again, in the
+     * overflow tier, so the primary rail keeps exactly these six direct entries while the footer **More** menu owns
+     * List on tablet/desktop.
+     */
     expect(entries.filter((entry) => entry.placement === "direct").map((entry) => entry.id)).toEqual(["command-center", "board", "planning", "missions", "agents", "mailbox"]);
-    expect(entries.some((entry) => entry.id === "list")).toBe(false);
+    expect(entries.some((entry) => entry.id === "list")).toBe(true);
     expect(entries.find((entry) => entry.id === "settings")?.placement).toBe("external");
     expect(entries.filter((entry) => entry.placement !== "external").every((entry) => typeof entry.onSelect === "function")).toBe(true);
+  });
+
+  /*
+   * FN-439 cas (f) : List quitte le Header sur tablette/ordinateur, donc le registre doit en porter la destination de
+   * remplacement — placement `overflow` (menu **More** du pied de page), route `list`, testId `desktop-nav-list`.
+   */
+  it("expose List comme destination overflow routée vers la vue list", () => {
+    const onChangeView = vi.fn();
+    const entries = buildDashboardNavigationEntries({ ...base, onChangeView });
+    const list = entries.find((entry) => entry.id === "list");
+    expect(list).toBeDefined();
+    expect(list?.placement).toBe("overflow");
+    expect(list?.kind).toBe("main-page");
+    expect(list?.view).toBe("list");
+    expect(list?.testId).toBe("desktop-nav-list");
+    list?.onSelect?.();
+    expect(onChangeView).toHaveBeenCalledWith("list");
   });
 
   /* FN-426: Files and Git are ordinary destinations that navigate through the shared view owner, like any other page. */

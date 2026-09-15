@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DesktopActionBar } from "../DesktopActionBar";
 import { useExecutorStats } from "../../hooks/useExecutorStats";
@@ -121,6 +121,33 @@ describe("DesktopActionBar", () => {
     expect(screen.queryByTestId("desktop-nav-more")).toBeNull();
     expect(screen.queryByRole("menu")).toBeNull();
     expect(document.querySelector(".desktop-action-bar__more")).toBeNull();
+  });
+
+  /*
+   * FN-439 cas (g) : le Header ne produit plus de bouton List sur tablette/ordinateur, donc le menu **More** du pied de
+   * page en devient le propriétaire. La destination reste hors du rail direct, ferme le menu au clic et route vers
+   * `list`.
+   */
+  it("expose List dans le menu More et non dans le rail direct", async () => {
+    const onChangeView = vi.fn().mockResolvedValue(true);
+    render(<DesktopActionBar entries={entries(onChangeView)} activeId="board" tasks={[]} />);
+    expect(screen.queryByTestId("desktop-nav-list")).toBeNull();
+
+    const menu = openOverflowMenu();
+    const listEntry = within(menu).getByTestId("desktop-nav-list");
+    expect(listEntry).toHaveAccessibleName("List");
+
+    fireEvent.click(listEntry);
+    expect(onChangeView).toHaveBeenCalledWith("list");
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  });
+
+  it("marque List comme destination active quand la vue courante est list", () => {
+    render(<DesktopActionBar entries={entries()} activeId="list" tasks={[]} />);
+    const menu = openOverflowMenu();
+    const listEntry = within(menu).getByTestId("desktop-nav-list");
+    expect(listEntry).toHaveAttribute("aria-current", "page");
+    expect(listEntry).toHaveClass("desktop-action-bar__action--active");
   });
 
   it("rend une destination sur une seule rangée ascendante", () => {

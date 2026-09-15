@@ -52,10 +52,11 @@ const SIDEBAR_REGISTRY_VIEW_IDS = [
   "command-center",
   "board",
   /*
-   * FN-382 made List a dock tool and FN-403 made History a modal, so neither is a sidebar destination any more. They
-   * were left in this hand-maintained list and made the enrolment count assertion permanently red; removing them
-   * restores the guard instead of loosening it.
+   * FN-403 made History a modal, so it is not a sidebar destination any more. List left this rail under FN-382 for the
+   * same reason and is back under FN-439, which returns it to primary navigation so the Header stops producing a
+   * tablet/desktop List button; it must therefore be enrolled here again.
    */
+  "list",
   "planning",
   "missions",
   "agents",

@@ -1,6 +1,6 @@
 import type { ComponentType } from "react";
 import type { LucideProps } from "lucide-react";
-import { Bot, Brain, Clock, Folder, FolderGit2, Gauge, Lightbulb, LayoutGrid, Mail, Monitor, PanelsTopLeft, Search, Settings, Sparkles, Target, Type, Workflow, Zap } from "lucide-react";
+import { Bot, Brain, Clock, Folder, FolderGit2, Gauge, Lightbulb, LayoutGrid, List, Mail, Monitor, PanelsTopLeft, Search, Settings, Sparkles, Target, Type, Workflow, Zap } from "lucide-react";
 import type { PluginDashboardViewEntry } from "../api";
 import type { TaskView } from "../hooks/useViewState";
 import { buildPluginTaskViewId } from "../plugins/pluginViewRegistry";
@@ -59,6 +59,15 @@ export function buildDashboardNavigationEntries(options: DashboardNavigationRegi
     return page(`plugin-${entry.pluginId}-${entry.view.viewId}`, entry.view.label, view, getPluginDashboardViewNavIcon(entry));
   });
   const overflow = [
+    /*
+    FNXC:ToolSurfaces 2026-09-15-23:37:
+    FN-439: List is an ordinary destination of the wide navigation again. FN-382 had evicted it on the assumption the
+    right dock would always host it, and FN-426 then had to keep a standalone Header button alive as the only
+    reachable producer. Putting it in the footer **More** menu (and back in the sidebar) is what allows the Header to
+    stop producing it on tablet/desktop, leaving exactly one owner per host. It sits in `overflow`, not `direct`, so
+    the primary rail keeps its existing six destinations unchanged.
+    */
+    page("list", "List", "list", List),
     ...plugins,
     /*
     FNXC:ToolSurfaces 2026-09-15-16:04:

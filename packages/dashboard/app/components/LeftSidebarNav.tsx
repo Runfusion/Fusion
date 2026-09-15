@@ -17,6 +17,7 @@ import {
   Gauge,
   Lightbulb,
   LayoutGrid,
+  List,
   Mail,
   MessageSquare,
   Monitor,
@@ -362,10 +363,22 @@ export function LeftSidebarNav({
       onSelect: () => onChangeView("board"),
     },
     /*
-    FNXC:ListInRightDock 2026-09-14-04:42:
-    FN-382: List is a right-dock tool on every non-mobile host, so this rail no longer offers it as a page. The phone
-    navigation keeps both of its List producers.
+    FNXC:ListInRightDock 2026-09-15-23:37:
+    FN-382 had made List a right-dock tool, which is why this rail stopped offering it as a page. FN-426 then made the
+    dock optional, so the destination survived only through a standalone Header button. FN-439 returns List to the
+    primary navigation itself and removes that Header producer on tablet/desktop; the replacement guarantee is exactly
+    one producer per host: this entry under the sidebar placement, `desktop-nav-list` in the footer **More** menu under
+    the footer placement, and `mobile-more-item-list` on a phone.
     */
+    {
+      id: "list",
+      label: t("nav.list", getDashboardViewLabel("list")),
+      view: "list",
+      isActive: view === "list",
+      icon: List,
+      testId: "sidebar-nav-list",
+      onSelect: () => onChangeView("list"),
+    },
     ...(graphPluginEntry ? [mapPluginEntry(graphPluginEntry)] : []),
     /*
     FNXC:Navigation 2026-06-23-01:30:

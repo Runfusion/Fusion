@@ -127,6 +127,22 @@ describe("LeftSidebarNav", () => {
     expect(onChangeView).toHaveBeenCalledWith("whiteboard");
   });
 
+  /*
+   * FN-439 cas (h) : sous la disposition barre latérale, la sidebar est le propriétaire unique de la destination List
+   * maintenant que le Header ne la produit plus sur tablette/ordinateur.
+   */
+  it("rend List comme destination de la barre latérale et route vers la vue list", () => {
+    const active = renderSidebar({ view: "list" });
+    expect(screen.getByTestId("sidebar-nav-list")).toHaveAttribute("aria-current", "page");
+    active.unmount();
+
+    const { onChangeView } = renderSidebar();
+    const entry = screen.getByTestId("sidebar-nav-list");
+    expect(entry).not.toHaveAttribute("aria-current");
+    fireEvent.click(entry);
+    expect(onChangeView).toHaveBeenCalledWith("list");
+  });
+
   it("keeps general History out after the official design promotion", () => {
     renderSidebar();
     expect(screen.queryByTestId("sidebar-nav-patchnode")).toBeNull();
@@ -216,6 +232,7 @@ describe("LeftSidebarNav", () => {
     const orderedTestIds = [
       "sidebar-nav-command-center",
       "sidebar-nav-board",
+      "sidebar-nav-list",
       "sidebar-nav-planning",
       "sidebar-nav-missions",
       "sidebar-nav-agents",
@@ -236,7 +253,9 @@ describe("LeftSidebarNav", () => {
     expect(orderedIndices).toEqual([...orderedIndices].sort((a, b) => a - b));
     expect(orderedIndices.every((index) => index >= 0)).toBe(true);
     expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-command-center"))).toBeLessThan(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-agents")));
-    expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-planning"))).toBe(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-board")) + 1);
+    /* FN-439: List sits immediately after Board again, so Planning follows List instead of Board. */
+    expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-list"))).toBe(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-board")) + 1);
+    expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-planning"))).toBe(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-list")) + 1);
     expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-missions"))).toBe(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-planning")) + 1);
     expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-agents"))).toBe(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-missions")) + 1);
     expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-skills"))).toBe(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-mailbox")) + 1);
@@ -319,8 +338,8 @@ describe("LeftSidebarNav", () => {
 
     expect(screen.getByTestId("left-sidebar-nav")).toHaveStyle({ width: "224px", minWidth: "224px" });
     expect(screen.getByTestId("sidebar-nav-board")).toHaveAccessibleName("Board");
-    // FN-382: List is a right-dock tool on this host, so the rail offers no List page.
-    expect(screen.queryByTestId("sidebar-nav-list")).toBeNull();
+    // FN-439: List is a rail destination again (the Header stopped producing it on tablet/desktop), with the shortened label.
+    expect(screen.getByTestId("sidebar-nav-list")).toHaveAccessibleName("List");
     expect(screen.getByTestId("sidebar-nav-agents")).toHaveAccessibleName("Agents");
     expect(screen.getByTestId("sidebar-nav-missions")).toHaveAccessibleName("Missions");
     expect(screen.queryByRole("button", { name: /view$/i })).toBeNull();

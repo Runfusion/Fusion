@@ -114,7 +114,13 @@ function Shell({
 }
 
 function searchButton(): HTMLElement {
+  /*
+   * On desktop the Header renders the inline search trigger (`desktop-inline-header-search-btn`); the older ids are
+   * still produced on the other hosts. The helper resolves whichever trigger the current host renders so the
+   * "slot precedes search" ordering assertion keeps testing ordering rather than an obsolete id.
+   */
   return screen.queryByTestId("alpha-desktop-header-search-btn")
+    ?? screen.queryByTestId("desktop-inline-header-search-btn")
     ?? screen.getByTestId("desktop-header-search-btn");
 }
 

@@ -132,6 +132,30 @@ describe("GraphWorkflowSwitcherSlot", () => {
   });
 
   /*
+  FN-439 cas (c) : le Header ne produit plus `#header-workflow-slot` hors Board/List, donc Graph n'affiche plus de
+  contrôle. La preuve que le filtrage du graphe survit à cette disparition est que la sélection reste publiée :
+  l'effet `onWorkflowSelectionChange` s'exécute avant le retour anticipé lié à l'absence de slot.
+  */
+  it("publie la sélection résolue sans rien rendre quand le slot du Header est absent", async () => {
+    const onWorkflowSelectionChange = vi.fn();
+
+    const { container } = render(
+      <GraphWorkflowSwitcherSlot projectId="project-graph-no-slot" onWorkflowSelectionChange={onWorkflowSelectionChange} />,
+    );
+
+    await waitFor(() => {
+      expect(onWorkflowSelectionChange).toHaveBeenLastCalledWith({
+        boardWorkflows: workflowPayload(),
+        selectedWorkflow: DEFAULT_WORKFLOW,
+        isAllWorkflowsSelected: false,
+      });
+    });
+    expect(container).toBeEmptyDOMElement();
+    expect(document.querySelector(".board-workflow-toolbar")).toBeNull();
+    expect(screen.queryByTestId("workflow-switcher")).toBeNull();
+  });
+
+  /*
   FNXC:WorkflowControls 2026-09-15-01:44:
   FN-405: Graph now shares `useHeaderWorkflowSlot` with Board, List, and the Planning/Missions slot.
   A header slot mounted after Graph must still receive the switcher rather than leaving it unrendered.

@@ -199,8 +199,18 @@ export function Header({
 
   FNXC:WorkflowControls 2026-06-22-18:00:
   Mobile also renders the workflow portal in the top header next to the logo/project switch. The board/list workflow selector stays single-sourced through this slot, while CSS hides the "Workflow" label and compacts the trigger so it fits the mobile header.
+
+  FNXC:WorkflowControls 2026-09-15-23:32:
+  FN-439 makes Board and List the only pages that own a visible workflow selector: the portal node is produced only
+  for those two views, so Graph, Planning, and Missions no longer show a dropdown on a page that lists no tasks.
+  This does NOT break them — `GraphWorkflowSwitcherSlot`/`HeaderWorkflowSwitcherSlot` publish
+  `onWorkflowSelectionChange` from an effect that runs BEFORE their slot-absent early return, so graph filtering and
+  the Planning/Missions creation workflow keep using the persisted selection. FN-405's "one slot, one owner"
+  guarantee is preserved because the node stays single-sourced; the view condition only narrows where it exists.
   */
   const hideHeaderViewNav = leftSidebarNavActive && !isMobile;
+  /* FN-439: single explicit derivation shared by both producers of `#header-workflow-slot`. */
+  const workflowSlotVisible = view === "board" || view === "list";
   /*
   FNXC:Navigation 2026-06-21-23:40:
   The right dock is persistent and owns its own collapse control, so Header must not render a duplicate right-dock toggle or repurpose the More views overflow trigger on tablet/desktop.
@@ -560,7 +570,7 @@ export function Header({
           </div>
         )}
 
-        {hideFullNav && (
+        {hideFullNav && workflowSlotVisible && (
           <div
             id="header-workflow-slot"
             className="header-workflow-slot header-workflow-slot--mobile"
@@ -689,7 +699,7 @@ export function Header({
           </button>
         )}
 
-        {hideHeaderViewNav && (
+        {hideHeaderViewNav && workflowSlotVisible && (
           <div
             id="header-workflow-slot"
             className="header-workflow-slot"
@@ -1091,26 +1101,15 @@ export function Header({
         <PluginSlot slotId="header-action" projectId={projectId} />
 
         {/*
-        FNXC:ToolSurfaces 2026-09-16-23:06:
-        FN-426: when a wide primary navigation surface (left sidebar) suppresses the view-toggle group above, Board/List
-        would otherwise have no header producer at all — and FN-382 had already taken List out of that navigation on the
-        assumption the right dock would always host it. This standalone toggle is the single replacement on
-        tablet/desktop: exactly one control, present only where the group is suppressed, so no host shows two.
-        FN-437 excludes phone entirely (`!isMobile`): there the footer navigation menu is List's single owner, so the
-        invariant "no `header-list-view-btn` while `isMobile`" holds regardless of `mobileNavEnabled`.
+        FNXC:ToolSurfaces 2026-09-15-23:32:
+        FN-426 added a standalone Board/List toggle here because FN-382 had removed List from the wide navigation, so a
+        suppressed view-toggle group left the destination unreachable. FN-439 restores List to the wide navigation
+        itself — the footer **More** menu (`desktop-nav-list`) under the footer placement and `sidebar-nav-list` under
+        the sidebar placement — so this header producer is deleted rather than narrowed: keeping it would give
+        tablet/desktop two owners for the same destination. FN-437 had already removed the phone producer, where the
+        bottom-bar menu (`mobile-more-item-list`) is the single owner. Net contract: exactly one List producer per host,
+        and no host relies on the optional right dock.
         */}
-        {onChangeView && !isMobile && (hideFullNav || hideHeaderViewNav) && (
-          <button
-            className={`btn-icon${view === "list" ? " btn-icon--active" : ""}`}
-            onClick={() => onChangeView(view === "list" ? "board" : "list")}
-            title={view === "list" ? t("header.boardView", "Board view") : t("header.listView", "List view")}
-            aria-label={view === "list" ? t("header.boardView", "Board view") : t("header.listView", "List view")}
-            aria-pressed={view === "list"}
-            data-testid="header-list-view-btn"
-          >
-            <List size={16} />
-          </button>
-        )}
 
         {/*
         FNXC:ToolSurfaces 2026-09-16-23:06:

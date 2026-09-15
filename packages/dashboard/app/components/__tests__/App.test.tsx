@@ -4194,11 +4194,11 @@ describe("App view switching", () => {
 
     // Wait for the header to render with view toggle
     await waitFor(() => {
-      expect(screen.getByTestId("header-list-view-btn")).toBeTruthy();
+      expect(screen.getByTestId("sidebar-nav-list")).toBeTruthy();
     });
 
     // Click to switch to list view
-    fireEvent.click(screen.getByTestId("header-list-view-btn"));
+    fireEvent.click(screen.getByTestId("sidebar-nav-list"));
 
     // List view should be rendered (it has a different structure)
     await waitFor(() => {
@@ -4217,11 +4217,11 @@ describe("App view switching", () => {
 
     // Wait for the header to render
     await waitFor(() => {
-      expect(screen.getByTestId("header-list-view-btn")).toBeTruthy();
+      expect(screen.getByTestId("sidebar-nav-list")).toBeTruthy();
     });
 
     // Switch to list view
-    fireEvent.click(screen.getByTestId("header-list-view-btn"));
+    fireEvent.click(screen.getByTestId("sidebar-nav-list"));
     await waitFor(() => {
       expect(screen.queryByTestId("list-view-body")).toBeTruthy();
     });
@@ -4243,10 +4243,10 @@ describe("App view switching", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("header-list-view-btn")).toBeTruthy();
+      expect(screen.getByTestId("sidebar-nav-list")).toBeTruthy();
     });
 
-    fireEvent.click(screen.getByTestId("header-list-view-btn"));
+    fireEvent.click(screen.getByTestId("sidebar-nav-list"));
 
     await waitFor(() => {
       expect(screen.queryByTestId("list-view-body")).toBeTruthy();
@@ -4274,11 +4274,11 @@ describe("App view switching", () => {
 
     // Wait for the header to render
     await waitFor(() => {
-      expect(screen.getByTestId("header-list-view-btn")).toBeTruthy();
+      expect(screen.getByTestId("sidebar-nav-list")).toBeTruthy();
     });
 
     // Switch to list view
-    fireEvent.click(screen.getByTestId("header-list-view-btn"));
+    fireEvent.click(screen.getByTestId("sidebar-nav-list"));
 
     // Should have saved to localStorage
     await waitFor(() => {
@@ -4302,7 +4302,8 @@ describe("App view switching", () => {
     });
 
     // List view should be active
-    expect(screen.getByTestId("header-list-view-btn")).toHaveAttribute("aria-pressed", "true");
+    /* FN-439: List became a sidebar destination, so its active state is the nav entry aria-current. */
+    expect(screen.getByTestId("sidebar-nav-list")).toHaveAttribute("aria-current", "page");
 
     // Cleanup
     localStorage.removeItem(taskViewStorageKey());
@@ -4531,7 +4532,7 @@ describe("App view switching", () => {
     // Wait for the header to render with view toggle
     await waitFor(() => {
       expect(screen.getByTestId("sidebar-nav-board")).toBeTruthy();
-      expect(screen.getByTestId("header-list-view-btn")).toBeTruthy();
+      expect(screen.getByTestId("sidebar-nav-list")).toBeTruthy();
       expect(screen.getByTestId("sidebar-nav-agents")).toBeTruthy();
     });
   });
@@ -6396,7 +6397,7 @@ describe("App task search suggestions", () => {
     expect(observedQueries.every((query) => query === undefined)).toBe(true);
 
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
-    fireEvent.click(screen.getByTestId("header-list-view-btn"));
+    fireEvent.click(screen.getByTestId("sidebar-nav-list"));
     await waitFor(() => expect(screen.getByTestId("list-keep-alive")).not.toHaveAttribute("aria-hidden"));
     const list = within(screen.getByTestId("list-keep-alive"));
     expect(list.getByText("Active Alpha task")).toBeInTheDocument();
@@ -7043,13 +7044,20 @@ describe("FN-426 tool surfaces without the right sidebar", () => {
     expect(await screen.findByTestId("notes-tool-popover")).toHaveAttribute("data-placement", "below");
   });
 
-  it("toggles Board and List from the header without a sidebar", async () => {
+  /*
+   * FN-439: the Header no longer produces a List button on tablet/desktop. Under the footer placement the **More**
+   * menu is List's single owner, so reaching the List view must go through it — that is the replacement for FN-426's
+   * header toggle this test used to assert.
+   */
+  it("reaches List from the footer More menu without a sidebar", async () => {
     mockUseViewportMode.mockReturnValue("desktop");
     vi.mocked(fetchSettings).mockResolvedValue(toolSettings());
 
     render(<App />);
 
-    fireEvent.click(await screen.findByTestId("header-list-view-btn"));
+    expect(screen.queryByTestId("header-list-view-btn")).toBeNull();
+    fireEvent.pointerEnter(await screen.findByTestId("desktop-nav-more"));
+    fireEvent.click(await screen.findByTestId("desktop-nav-list"));
     expect(await screen.findByTestId("list-keep-alive")).toBeInTheDocument();
     expect(screen.queryByTestId("right-dock-body")).toBeNull();
   });

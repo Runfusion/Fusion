@@ -403,9 +403,34 @@ describe("Header", () => {
       expect(screen.queryByTestId("header-list-view-btn")).toBeNull();
     });
 
-    it.each(["tablet", "desktop"] as const)("garde exactement un bouton List sur %s", (mode) => {
-      renderHeader({ onChangeView: noop, leftSidebarNavActive: true }, mode);
-      expect(screen.getAllByTestId("header-list-view-btn")).toHaveLength(1);
+    /*
+     * FN-439 cas (d) : sur tablette et ordinateur, la navigation large possède désormais List (menu **More** du pied
+     * de page, ou barre latérale). Le Header n'en est plus le producteur : le bouton autonome de `header-actions` a
+     * disparu. Remplace le contrat FN-426 « garde exactement un bouton List sur %s ».
+     */
+    it.each(["tablet", "desktop"] as const)("ne rend aucun bouton List sur %s quand une surface large possède la navigation", (mode) => {
+      const rendered = renderHeader({ onChangeView: noop, leftSidebarNavActive: true, view: "board" }, mode);
+      expect(screen.queryByTestId("header-list-view-btn")).toBeNull();
+
+      rendered.unmount();
+      renderHeader({ onChangeView: noop, leftSidebarNavActive: true, view: "list" }, mode);
+      expect(screen.queryByTestId("header-list-view-btn")).toBeNull();
+    });
+
+    /*
+     * FN-439 cas (e) : après le retrait, `.header-actions` ne doit garder ni coquille de bouton vide ni nœud de slot
+     * workflow orphelin sur une vue qui n'est ni Board ni List.
+     */
+    it.each(["tablet", "desktop"] as const)("ne laisse ni bouton vide ni slot workflow résiduel sur %s", (mode) => {
+      const { container } = renderHeader({ onChangeView: noop, leftSidebarNavActive: true, view: "missions" }, mode);
+      const actions = container.querySelector(".header-actions")!;
+      for (const button of actions.querySelectorAll("button")) {
+        const hasIcon = button.querySelector("svg") !== null;
+        const hasLabel = (button.textContent ?? "").trim().length > 0;
+        expect(hasIcon || hasLabel).toBe(true);
+      }
+      expect(document.querySelector(".header-workflow-slot")).toBeNull();
+      expect(screen.queryByTestId("header-workflow-slot")).toBeNull();
     });
 
     /* FN-426: the List button is a toggle — it returns to the Board when the List route is already on screen. */
@@ -427,15 +452,48 @@ describe("Header", () => {
      * would leave the destination unreachable for operators who turn the optional right sidebar off.
      */
     it.each(["desktop", "tablet"] as const)(
-      "renders the workflow portal slot and only the standalone Board/List toggle on %s sidebar nav",
+      "renders the workflow portal slot and no List producer at all on %s sidebar nav",
       (mode) => {
         renderHeader({ onChangeView: noop, leftSidebarNavActive: true, view: "board" }, mode);
         expect(screen.getByTestId("header-workflow-slot")).toBeInTheDocument();
         expect(screen.queryByTitle("Board view")).toBeNull();
         expect(screen.queryByTestId("view-toggle-command-center")).toBeNull();
-        expect(screen.getAllByTestId("header-list-view-btn")).toHaveLength(1);
+        expect(screen.queryByTestId("header-list-view-btn")).toBeNull();
       },
     );
+
+    /*
+     * FN-439 cas (a) : le slot workflow n'appartient qu'à Board et List. Sur toute autre destination le nœud disparaît
+     * complètement (aucun conteneur, aucune classe résiduelle), ce qui suffit à masquer le sélecteur puisque les quatre
+     * consommateurs du portail retournent `null` sans slot.
+     */
+    it.each(["tablet", "desktop"] as const)("ne rend le slot workflow que sur board et list en %s", (mode) => {
+      for (const view of ["board", "list"] as const) {
+        const rendered = renderHeader({ onChangeView: noop, leftSidebarNavActive: true, view }, mode);
+        expect(screen.getByTestId("header-workflow-slot")).toBeInTheDocument();
+        rendered.unmount();
+      }
+
+      for (const view of ["missions", "planning", "command-center"] as const) {
+        const rendered = renderHeader({ onChangeView: noop, leftSidebarNavActive: true, view }, mode);
+        expect(screen.queryByTestId("header-workflow-slot")).toBeNull();
+        expect(document.querySelector(".header-workflow-slot")).toBeNull();
+        rendered.unmount();
+      }
+    });
+
+    /* FN-439 cas (b) : même contrat pour le producteur mobile de `header-left`. */
+    it("ne rend le slot workflow mobile que sur board et list", () => {
+      for (const view of ["board", "list"] as const) {
+        const rendered = renderHeader({ onChangeView: noop, mobileNavEnabled: true, view }, "mobile");
+        expect(screen.getByTestId("header-workflow-slot")).toHaveClass("header-workflow-slot--mobile");
+        rendered.unmount();
+      }
+
+      renderHeader({ onChangeView: noop, mobileNavEnabled: true, view: "missions" }, "mobile");
+      expect(screen.queryByTestId("header-workflow-slot")).toBeNull();
+      expect(document.querySelector(".header-workflow-slot")).toBeNull();
+    });
 
     it("renders the workflow portal slot in the mobile top header when mobile nav owns view switching", () => {
       renderHeader({ onChangeView: noop, leftSidebarNavActive: true, mobileNavEnabled: true }, "mobile");
