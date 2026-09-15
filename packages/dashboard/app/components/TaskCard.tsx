@@ -3587,8 +3587,20 @@ function TaskCardComponent({
                 ? t("tasks.statusQueued", "Queued")
                 : wipLifecycleBadgeLabel
                   ?? getTaskStatusLabel(visualStatus ?? "", t, showOptionalGateBadge ? undefined : getRunningWorkflowStepLabel(task), { idle: !isAgentActive, overlapBlockedBy: task.overlapBlockedBy ?? null, sessionContentionWaitReason: task.sessionContentionWaitReason ?? null });
+  /*
+  FNXC:HumanPlanApproval 2026-09-15-23:08:
+  FN-443 — human plan approval is a card metadata badge in its own right, so the wrapper guard must
+  know about it. Without it the ONLY visible proof that a task will wait for the operator's decision
+  disappeared on exactly the cards with nothing else to show: a freshly created card carries no
+  priority (default), no Fast (mutually exclusive with the requirement) and no oversight, so the
+  wrapper never mounted and the badge inside it never rendered. Derived from the same shared
+  predicate the badge itself uses, so guard and badge cannot disagree; still nullable, so
+  `.card-meta-badges` is never rendered empty.
+  */
+  const humanPlanApprovalBadgeState = resolveHumanPlanApprovalBadgeState(task);
   const hasCardMetaBadges = showPriorityBadge
     || task.executionMode === "fast"
+    || humanPlanApprovalBadgeState !== null
     // FNXC:PlannerOversight 2026-07-04-00:00: the oversight badge is opt-in
     // metadata (absent for the common "off" default) — include it in the wrapper
     // guard so `.card-meta-badges` only renders when it has a real child.

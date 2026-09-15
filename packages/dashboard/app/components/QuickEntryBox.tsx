@@ -1037,10 +1037,29 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
     planningProvider,
     planningModelId,
     planningCredentialInstanceId,
+    hasMergerOverride,
+    mergerProvider,
+    mergerModelId,
     mergerCredentialInstanceId,
     thinkingLevel,
+    validatorThinkingLevel,
+    planningThinkingLevel,
+    mergerThinkingLevel,
     enabledOptionalStepIds,
+    optionalSteps,
     isFastMode,
+    /*
+    FNXC:HumanPlanApproval 2026-09-15-23:08:
+    FN-443 — the human plan approval arming flag is part of the create intent this callback reads, so
+    it MUST be declared here. Omitting it froze the payload on the value captured at the last
+    unrelated dependency change: an operator who typed the request first and armed the toggle second
+    created a card WITHOUT the requirement, silently, because only a further keystroke (`description`)
+    rebuilt the callback. The same stale-capture defect applied to the merger override, its model id,
+    and the three per-lane thinking levels, which are declared alongside it for the same reason.
+    Read the value from state — never mirror it into a ref, which would reintroduce a second
+    authority for an operator choice that must stay exactly what the toolbar shows.
+    */
+    requiresHumanPlanApproval,
     settings,
     githubTrackingOverride,
     sessionAdvisorOverride,

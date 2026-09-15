@@ -655,6 +655,59 @@ describe("NewTaskModal", () => {
     expect(screen.getByTestId("task-form-inline-human-plan-approval")).toHaveAttribute("aria-pressed", "false");
   });
 
+  /*
+  FNXC:HumanPlanApproval 2026-09-15-23:08:
+  FN-443 — the New task window already rebuilds its create payload from live state, but Quick Add's
+  identical control lost the operator's choice whenever it was armed after the request text. These
+  cases pin the SECOND creation surface against that same regression: every gesture order must reach
+  the same payload, and only the last visible choice may ever count.
+  */
+  describe("FN-443 human plan approval survives every toggle order", () => {
+    const typeRequest = (value: string) => {
+      fireEvent.change(screen.getByPlaceholderText("What needs to be done?"), { target: { value } });
+    };
+    const submit = () => fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
+    const armApproval = () => fireEvent.click(screen.getByTestId("task-form-inline-human-plan-approval"));
+
+    it("sends humanPlanApproval when armed AFTER the request text is typed", async () => {
+      const { props } = renderNewTaskModal();
+
+      typeRequest("Armed last");
+      armApproval();
+      submit();
+
+      await waitFor(() => expect(props.onCreateTask).toHaveBeenCalledTimes(1));
+      expect(vi.mocked(props.onCreateTask).mock.calls[0]?.[0]).toMatchObject({
+        description: "Armed last",
+        humanPlanApproval: true,
+      });
+    });
+
+    it("omits humanPlanApproval when armed then disarmed after typing", async () => {
+      const { props } = renderNewTaskModal();
+
+      typeRequest("Changed my mind");
+      armApproval();
+      armApproval();
+      expect(screen.getByTestId("task-form-inline-human-plan-approval")).toHaveAttribute("aria-pressed", "false");
+      submit();
+
+      await waitFor(() => expect(props.onCreateTask).toHaveBeenCalledTimes(1));
+      expect(vi.mocked(props.onCreateTask).mock.calls[0]?.[0]).not.toHaveProperty("humanPlanApproval");
+    });
+
+    it("keeps the historical arm-then-type order working", async () => {
+      const { props } = renderNewTaskModal();
+
+      armApproval();
+      typeRequest("Armed first");
+      submit();
+
+      await waitFor(() => expect(props.onCreateTask).toHaveBeenCalledTimes(1));
+      expect(vi.mocked(props.onCreateTask).mock.calls[0]?.[0]).toMatchObject({ humanPlanApproval: true });
+    });
+  });
+
   it("includes executionMode fast in the create payload when Fast is selected", async () => {
     const { props } = renderNewTaskModal();
 

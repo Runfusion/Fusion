@@ -2578,6 +2578,164 @@ describe("QuickEntryBox", () => {
       });
     });
 
+    /*
+    FNXC:HumanPlanApproval 2026-09-15-23:08:
+    FN-443 symptom reproduction — every case above arms the toggle BEFORE typing, which is the only
+    order that ever worked: the payload builder captured a stale arming value that a later keystroke
+    happened to refresh. These cases drive the operator's real gesture order (type, then arm) across
+    EVERY trigger that reaches the same builder — Save, the Cmd/Ctrl+Enter accelerator, the Save hold
+    Start gesture, and duplicate confirmation — plus the arm-then-disarm order, so only the last
+    visible choice can ever reach the server. The merger case proves the stale-capture class is gone
+    rather than one field being special-cased.
+    */
+    describe("FN-443 toggle order is irrelevant to the created card", () => {
+      const typeRequest = (value = "Needs my approval") => {
+        fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value } });
+      };
+      const armApproval = () => {
+        fireEvent.click(screen.getByTestId("quick-entry-human-plan-approval-toggle"));
+      };
+
+      it("sends humanPlanApproval when the toggle is armed AFTER the request text is typed", async () => {
+        const onCreate = vi.fn().mockResolvedValue(CREATED_TASK);
+        renderQuickEntryBox({ onCreate });
+        expandQuickEntry();
+
+        typeRequest();
+        armApproval();
+        clickSave();
+
+        await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+        expect(onCreate.mock.calls[0]?.[0]).toMatchObject({
+          description: "Needs my approval",
+          humanPlanApproval: true,
+        });
+      });
+
+      it("omits humanPlanApproval when the toggle is armed and then disarmed after typing", async () => {
+        const onCreate = vi.fn().mockResolvedValue(CREATED_TASK);
+        renderQuickEntryBox({ onCreate });
+        expandQuickEntry();
+
+        typeRequest("Changed my mind");
+        armApproval();
+        armApproval();
+        clickSave();
+
+        await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+        expect(screen.getByTestId("quick-entry-human-plan-approval-toggle")).toHaveAttribute("aria-pressed", "false");
+        expect(onCreate.mock.calls[0]?.[0]).not.toHaveProperty("humanPlanApproval");
+      });
+
+      it("keeps the historical arm-then-type order working", async () => {
+        const onCreate = vi.fn().mockResolvedValue(CREATED_TASK);
+        renderQuickEntryBox({ onCreate });
+        expandQuickEntry();
+
+        armApproval();
+        typeRequest();
+        clickSave();
+
+        await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+        expect(onCreate.mock.calls[0]?.[0]).toMatchObject({ humanPlanApproval: true });
+      });
+
+      it.each([
+        ["ctrlKey" as const],
+        ["metaKey" as const],
+      ])("sends humanPlanApproval through the Cmd/Ctrl+Enter accelerator armed after typing (%s)", async (modifier) => {
+        const onCreate = vi.fn().mockResolvedValue(CREATED_TASK);
+        renderQuickEntryBox({ onCreate });
+        expandQuickEntry();
+
+        typeRequest();
+        armApproval();
+        fireEvent.keyDown(screen.getByTestId("quick-entry-input"), { key: "Enter", [modifier]: true });
+
+        await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+        expect(onCreate.mock.calls[0]?.[0]).toMatchObject({ humanPlanApproval: true });
+      });
+
+      it("sends humanPlanApproval through plain Enter armed after typing", async () => {
+        const onCreate = vi.fn().mockResolvedValue(CREATED_TASK);
+        renderQuickEntryBox({ onCreate });
+        expandQuickEntry();
+
+        typeRequest();
+        armApproval();
+        fireEvent.keyDown(screen.getByTestId("quick-entry-input"), { key: "Enter" });
+
+        await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+        expect(onCreate.mock.calls[0]?.[0]).toMatchObject({ humanPlanApproval: true });
+      });
+
+      it("sends humanPlanApproval through the Save hold Start gesture armed after typing", async () => {
+        const ideasWorkflow = {
+          id: "builtin:coding-ideas",
+          name: "Coding (Ideas)",
+          columns: [
+            { id: "ideas", name: "Ideas", flags: { hold: true } },
+            { id: "todo", name: "Todo", flags: {} },
+            { id: "done", name: "Done", flags: { complete: true } },
+          ],
+        };
+        const onCreate = vi.fn().mockResolvedValue({ ...CREATED_TASK, id: "FN-armed-start", column: "ideas", workflowId: ideasWorkflow.id });
+        renderQuickEntryBox({ onCreate, onMoveTask: vi.fn().mockResolvedValue({}), workflowId: ideasWorkflow.id, workflowOptions: [ideasWorkflow] });
+        expandQuickEntry();
+
+        typeRequest();
+        armApproval();
+        const save = screen.getByTestId("quick-entry-save");
+        fireEvent.pointerDown(save, { pointerId: 21, pointerType: "mouse", button: 0, isPrimary: true });
+        await act(async () => vi.advanceTimersByTime(500));
+
+        await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+        expect(onCreate.mock.calls[0]?.[0]).toMatchObject({ humanPlanApproval: true, column: "todo" });
+      });
+
+      it("carries humanPlanApproval armed after typing through duplicate confirmation", async () => {
+        vi.mocked(checkDuplicateTasks).mockResolvedValueOnce([
+          { id: "FN-456", title: "Duplicate", description: "duplicate", column: "todo", score: 0.9 },
+        ]);
+        const onCreate = vi.fn().mockResolvedValue(CREATED_TASK);
+        renderQuickEntryBox({ onCreate });
+        expandQuickEntry();
+
+        typeRequest();
+        armApproval();
+        clickSave();
+        fireEvent.click(await screen.findByRole("button", { name: "Create anyway" }));
+
+        await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+        expect(onCreate.mock.calls[0]?.[0]).toMatchObject({
+          humanPlanApproval: true,
+          acknowledgedDuplicates: ["FN-456"],
+        });
+      });
+
+      it("sends a merger model override chosen after typing, proving the stale-capture class is fixed", async () => {
+        const onCreate = vi.fn().mockResolvedValue(CREATED_TASK);
+        renderQuickEntryBox({ onCreate });
+        expandQuickEntry();
+
+        typeRequest("Merger picked last");
+        openModelMenu();
+        fireEvent.click(screen.getByTestId("model-menu-merger"));
+        fireEvent.click(screen.getByTestId("dropdown-select-merger model"));
+        fireEvent.change(screen.getByTestId("custom-model-dropdown-thinking"), { target: { value: "high" } });
+        fireEvent.keyDown(screen.getByTestId("quick-entry-input"), { key: "Escape" });
+        fireEvent.keyDown(screen.getByTestId("quick-entry-input"), { key: "Escape" });
+        clickSave();
+
+        await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+        expect(onCreate.mock.calls[0]?.[0]).toMatchObject({
+          mergerModelProvider: "anthropic",
+          mergerModelId: "claude-sonnet-4-5",
+          mergerThinkingLevel: "high",
+        });
+      });
+    });
+
     it("keeps GitHub toggle usable while project settings are still loading", async () => {
       vi.mocked(fetchSettings).mockReturnValueOnce(new Promise(() => undefined));
       renderQuickEntryBox({});
