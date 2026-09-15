@@ -299,6 +299,16 @@ export function getBoardTaskOpenRoute(options: {
   return "main-panel";
 }
 
+export type CoexistingTaskOpenRoute = "task-window" | "main-panel";
+
+/*
+FNXC:HistoryModalSurface 2026-09-15-19:12:
+FN-428: opening a task from a coexisting surface (History) must never mount the blocking modal presentation. Desktop and tablet route to a coexisting task window; mobile routes to the main panel because task pop-outs are deliberately purged there (one detail owner on mobile).
+*/
+export function getCoexistingTaskOpenRoute(options: { mobileDrawerActive: boolean }): CoexistingTaskOpenRoute {
+  return options.mobileDrawerActive ? "main-panel" : "task-window";
+}
+
 export interface DashboardShortcutPopupState {
   poppedOutTaskEntries: Array<Pick<PoppedOutTaskEntry, "task">>;
   poppedOutChatEntries: Array<Pick<PoppedOutChatEntry, "projectId" | "session">>;
@@ -2233,6 +2243,21 @@ function AppInner() {
     openTaskDetailInMainPanel(task, initialTab);
   }, [mobileDrawerActive, isMobile, openMobileTasksInPopup, openTaskDetailInMainPanel, openTasksInRightSidebar, popOutTaskDetailForCurrentView, rightDock, rightDockActive]);
 
+  /*
+  FNXC:HistoryModalSurface 2026-09-15-19:12:
+  FN-428: single owner of the coexisting task-open decision. History (a coexisting FloatingWindow) and the shared
+  `popOutTaskDetail` prop both route through it, so neither can drift back to the blocking `TaskDetailModal`
+  presentation whose `.floating-window-overlay--modal` veil covered and neutralized the History window. Escape ordering
+  (task window before History) stays owned by `closeTopmostDashboardPopupForShortcut`.
+  */
+  const openTaskDetailInWindow = useCallback((task: Task | TaskDetail, initialTab?: DetailTaskTab) => {
+    if (getCoexistingTaskOpenRoute({ mobileDrawerActive }) === "main-panel") {
+      openTaskDetailInMainPanel(task, initialTab);
+      return;
+    }
+    popOutTaskDetailForCurrentView(task, initialTab);
+  }, [mobileDrawerActive, openTaskDetailInMainPanel, popOutTaskDetailForCurrentView]);
+
   useEffect(() => {
     if (!openTasksInRightSidebar) {
       rightDock.closeDockTask();
@@ -2340,7 +2365,7 @@ function AppInner() {
     agentsEnabled,
     agentOnboardingEnabled,
     handleOpenTaskLogs,
-    popOutTaskDetail: mobileDrawerActive ? openTaskDetailInMainPanel : popOutTaskDetailForCurrentView,
+    popOutTaskDetail: openTaskDetailInWindow,
     selectedPrId,
     gitManagerInitialSection,
     insightsEnabled,
@@ -2999,10 +3024,17 @@ function AppInner() {
         onOpenWorkflowEditor={openWorkflowEditorWithNav}
         onOpenWorkflowSettings={openWorkflowSettingsWithNav}
         onOpenApprovals={(_approvalId) => handleTaskViewChange("mailbox")}
-        /* FNXC:HistoryModalSurface 2026-09-15-04:29: History entries delegate to the canonical nav-aware Task Detail opener so Escape/Back close the detail layer before History. */
+        /*
+        FNXC:HistoryModalSurface 2026-09-15-19:12:
+        FN-428: History is itself a coexisting FloatingWindow, so activating one of its entries opens a coexisting task
+        window (transparent, click-through overlay) and never the blocking presentation, which mounted
+        `.floating-window-overlay--modal` and made History look closed while it was only veiled and inert. History stays
+        mounted, interactive and unrefetched; Escape still closes the task window before History through
+        `closeTopmostDashboardPopupForShortcut`. Detail lookup stays fail-soft for entries whose task is gone.
+        */
         onOpenTaskDetailById={async (taskId) => {
           const task = await fetchTaskDetail(taskId, currentProject?.id);
-          openDetailTask(task);
+          openTaskDetailInWindow(task);
         }}
         agentOnboardingEnabled={agentOnboardingEnabled}
       />
