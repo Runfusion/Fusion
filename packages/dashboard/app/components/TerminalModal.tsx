@@ -27,8 +27,6 @@ import {
   ChevronDown,
   FolderGit2,
   FolderRoot,
-  Pin,
-  PinOff,
   History,
 } from "lucide-react";
 import { useTerminal } from "../hooks/useTerminal";
@@ -90,18 +88,26 @@ The WebGL-context disposal in disposeXtermInstance is the part of the memory wor
 */
 const TERMINAL_SCROLLBACK_LINES = 5000;
 
-export type TerminalDisplayMode = "docked" | "floating" | "below";
+/*
+FNXC:TerminalLayout 2026-09-15-07:57:
+FN-409 reduces the non-mobile terminal to exactly two presentations: pinned (`below`, in flow above the
+fixed bottom bar, the DEFAULT) and detached (`floating`). The legacy `docked` overlay presentation and its
+pin/unpin toggle are removed; a stored `"docked"` value is normalized to `"below"` on read.
+*/
+export type TerminalDisplayMode = "floating" | "below";
 
 export const TERMINAL_DISPLAY_MODE_STORAGE_PREFIX = "fusion:terminal-display-mode-";
 
-const TERMINAL_DOCKED_DEFAULT_HEIGHT = 360;
-const TERMINAL_DOCKED_MIN_HEIGHT = 240;
-const TERMINAL_DOCKED_VIEWPORT_MARGIN = 96;
 const TERMINAL_BELOW_DEFAULT_HEIGHT = 260;
 const TERMINAL_BELOW_MIN_HEIGHT = 180;
 const TERMINAL_BELOW_APP_MIN_HEIGHT = 320;
-const TERMINAL_FLOAT_DEFAULT_WIDTH = 960;
-const TERMINAL_FLOAT_DEFAULT_HEIGHT = 560;
+/*
+FNXC:TerminalLayout 2026-09-15-07:57:
+FN-409: the detached terminal opens at the same standard window size as a task pop-out and a detached chat.
+The value is duplicated here rather than imported so this change never collides with the shared geometry module.
+*/
+const TERMINAL_FLOAT_DEFAULT_WIDTH = 800;
+const TERMINAL_FLOAT_DEFAULT_HEIGHT = 680;
 const TERMINAL_FLOAT_MIN_WIDTH = 480;
 const TERMINAL_FLOAT_MIN_HEIGHT = 320;
 
@@ -117,13 +123,15 @@ function terminalDisplayModeStorageKey(projectId?: string): string {
 }
 
 /*
-FNXC:TerminalLayout 2026-07-04-19:08:
-Terminal display mode is a project-scoped, reversible layout preference. Missing or invalid storage must continue to use the original overlay docked terminal, while the new below mode persists only when the operator pins the terminal to push content.
+FNXC:TerminalLayout 2026-09-15-07:57:
+FN-409: terminal display mode stays a project-scoped, reversible layout preference, but the pinned presentation
+is now the default. Missing storage, the retired `"docked"` legacy value, and any invalid value all resolve to
+`"below"` WITHOUT writing back at load time, so an operator who never touched the control gets the pinned terminal.
 */
 export function readTerminalDisplayMode(projectId?: string): TerminalDisplayMode {
-  if (typeof window === "undefined") return "docked";
+  if (typeof window === "undefined") return "below";
   const value = window.localStorage.getItem(terminalDisplayModeStorageKey(projectId));
-  return value === "floating" || value === "below" ? value : "docked";
+  return value === "floating" ? "floating" : "below";
 }
 
 function writeTerminalDisplayMode(mode: TerminalDisplayMode, projectId?: string): TerminalDisplayMode {
@@ -133,10 +141,15 @@ function writeTerminalDisplayMode(mode: TerminalDisplayMode, projectId?: string)
   return mode;
 }
 
+/*
+FNXC:TerminalLayout 2026-09-15-07:57:
+FN-409: the panel-height record keeps its existing `fusion:terminal-docked-height-<projectId>` key so operators do
+not lose a stored height, even though the only remaining panel presentation is the pinned one.
+*/
 function readTerminalDockedHeight(projectId?: string): number {
-  if (typeof window === "undefined") return TERMINAL_DOCKED_DEFAULT_HEIGHT;
+  if (typeof window === "undefined") return TERMINAL_BELOW_DEFAULT_HEIGHT;
   const parsed = Number.parseInt(window.localStorage.getItem(`fusion:terminal-docked-height-${projectId ?? "default"}`) ?? "", 10);
-  return Number.isFinite(parsed) ? parsed : TERMINAL_DOCKED_DEFAULT_HEIGHT;
+  return Number.isFinite(parsed) ? parsed : TERMINAL_BELOW_DEFAULT_HEIGHT;
 }
 
 function clampTerminalPanelHeight(height: number, minHeight: number, viewportReserve: number): number {
@@ -145,16 +158,12 @@ function clampTerminalPanelHeight(height: number, minHeight: number, viewportRes
   return Math.min(Math.max(height, minHeight), maxHeight);
 }
 
-function clampTerminalDockedHeight(height: number): number {
-  return clampTerminalPanelHeight(height, TERMINAL_DOCKED_MIN_HEIGHT, TERMINAL_DOCKED_VIEWPORT_MARGIN);
-}
-
 function clampTerminalBelowHeight(height: number): number {
   return clampTerminalPanelHeight(height, TERMINAL_BELOW_MIN_HEIGHT, TERMINAL_BELOW_APP_MIN_HEIGHT);
 }
 
-function writeTerminalDockedHeight(height: number, projectId?: string, mode: "docked" | "below" = "docked"): number {
-  const clamped = mode === "below" ? clampTerminalBelowHeight(height) : clampTerminalDockedHeight(height);
+function writeTerminalDockedHeight(height: number, projectId?: string): number {
+  const clamped = clampTerminalBelowHeight(height);
   if (typeof window !== "undefined") {
     window.localStorage.setItem(`fusion:terminal-docked-height-${projectId ?? "default"}`, String(Math.round(clamped)));
   }
@@ -471,6 +480,16 @@ interface TerminalModalProps {
   /** Whether the fixed ExecutorStatusBar footer is currently rendered; reserves space for it in below-mode. */
   footerVisible?: boolean;
   /*
+  FNXC:TerminalLayout 2026-09-15-07:57:
+  FN-409: the terminal is the single source of truth for its own effective presentation, so the shell never reads
+  `localStorage` to guess it. This reports whether the terminal is CURRENTLY rendered as the pinned in-flow panel
+  (false for mobile, embedded, and detached), and is called with `false` on unmount so a closed terminal never
+  leaves the shell believing it is still pinned.
+  */
+  onPinnedLayoutChange?: (pinned: boolean) => void;
+  /** Monotonic signal: bump to raise the detached terminal window to the front without resetting its session. */
+  focusNonce?: number;
+  /*
   FNXC:TaskPopupViewGating 2026-07-23-10:25:
   Keep-alive suspension gate (FN remount-churn fix follow-up). Kept-alive hosts (the task-detail
   worktree Terminal tab inside a hidden popup or behind another tab) keep isOpen=true so the xterm
@@ -499,7 +518,7 @@ interface TerminalModalProps {
  * 
  * The terminal spawns a real shell (bash/zsh/powershell based on platform).
  */
-export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandGeneration = 0, projectId, embedded = false, defaultCwd, scopeId, footerVisible = false, active = true }: TerminalModalProps) {
+export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandGeneration = 0, projectId, embedded = false, defaultCwd, scopeId, footerVisible = false, active = true, onPinnedLayoutChange, focusNonce }: TerminalModalProps) {
   const { t } = useTranslation("app");
   // FNXC:TaskPopupViewGating 2026-07-23-10:25: auxiliary-effect gate — see the `active` prop doc above. Never used for xterm init/cleanup or render.
   const auxEffectsActive = isOpen && active;
@@ -543,7 +562,6 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
   FNXC:Terminal 2026-07-10-00:00:
   FN-7813 embedded mode is parent-layout owned: render in-flow, skip portal/overlay/display-mode chrome, and keep the shared xterm/session/resize observers so Task Detail gets the same terminal behavior without taking over the viewport.
   */
-  const isDockedMode = !embedded && !isMobileTerminal && displayMode === "docked";
   const isFloatingMode = !embedded && !isMobileTerminal && displayMode === "floating";
   const isBelowMode = !embedded && !isMobileTerminal && displayMode === "below";
   
@@ -653,6 +671,16 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
     setDockedHeight(readTerminalDockedHeight(projectId));
   }, [projectId]);
 
+  /*
+  FNXC:TerminalLayout 2026-09-15-07:57:
+  FN-409 publishes the effective pinned presentation to the shell so the bottom-bar height is reserved exactly once.
+  The unmount cleanup reports `false` because App unmounts this component on close.
+  */
+  useEffect(() => {
+    onPinnedLayoutChange?.(isBelowMode);
+    return () => onPinnedLayoutChange?.(false);
+  }, [isBelowMode, onPinnedLayoutChange]);
+
   useEffect(() => {
     if (!auxEffectsActive) return;
     /*
@@ -685,7 +713,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
   }, [projectId]);
 
   const handleDockedResizePointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!isDockedMode && !isBelowMode) return;
+    if (!isBelowMode) return;
     event.preventDefault();
     const captureTarget = event.currentTarget;
     const pointerId = event.pointerId;
@@ -700,8 +728,8 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
 
     const handlePointerMove = (moveEvent: PointerEvent) => {
       if (moveEvent.pointerId !== pointerId) return;
-      const nextHeight = isBelowMode ? startHeight + (moveEvent.clientY - startY) : startHeight + (startY - moveEvent.clientY);
-      latestHeight = isBelowMode ? clampTerminalBelowHeight(nextHeight) : clampTerminalDockedHeight(nextHeight);
+      const nextHeight = startHeight + (moveEvent.clientY - startY);
+      latestHeight = clampTerminalBelowHeight(nextHeight);
       if (frame) return;
       frame = requestAnimationFrame(() => {
         frame = 0;
@@ -716,7 +744,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
     };
     function handlePointerUp() {
       if (frame) cancelAnimationFrame(frame);
-      setDockedHeight(writeTerminalDockedHeight(latestHeight, projectId, isBelowMode ? "below" : "docked"));
+      setDockedHeight(writeTerminalDockedHeight(latestHeight, projectId));
       document.body.style.userSelect = previousUserSelect;
       detachListeners();
       dragTeardownRef.current = null;
@@ -733,7 +761,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
     captureTarget.addEventListener("pointermove", handlePointerMove);
     captureTarget.addEventListener("pointerup", handlePointerUp);
     captureTarget.addEventListener("pointercancel", handlePointerUp);
-  }, [dockedHeight, isBelowMode, isDockedMode, projectId]);
+  }, [dockedHeight, isBelowMode, projectId]);
 
   /**
    * Fit xterm and publish cols/rows for a specific terminal session.
@@ -2296,15 +2324,18 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
     setFontSize((current) => clampTerminalFontSize(current - 1));
   }, [setFontSize]);
 
+  /*
+  FNXC:TerminalModalControls 2026-09-15-07:57:
+  FN-409: the only remaining presentation control toggles pinned <-> detached. Re-attaching restores the pinned
+  panel and re-normalizes the stored height, which is what the retired pin toggle used to do.
+  */
   const handleToggleDisplayMode = useCallback(() => {
-    setDisplayMode(displayMode === "floating" ? "docked" : "floating");
-  }, [displayMode, setDisplayMode]);
-
-  const handleToggleBelowMode = useCallback(() => {
-    setDisplayMode(displayMode === "below" ? "docked" : "below");
-    if (displayMode !== "below") {
+    if (displayMode === "floating") {
+      setDisplayMode("below");
       setDockedHeight((current) => clampTerminalBelowHeight(current || TERMINAL_BELOW_DEFAULT_HEIGHT));
+      return;
     }
+    setDisplayMode("floating");
   }, [displayMode, setDisplayMode]);
 
   const handlePreferenceFontSizeChange = useCallback(
@@ -2423,15 +2454,15 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
   "+" button.
   */
   const showManualStart = isReady && autoCreateDisabled && !activeTab && !bootstrapError;
-  // FNXC:Terminal 2026-06-23-04:30: Always carry the base `terminal-modal-overlay` class so the no-dim/no-blur rule applies in EVERY mode (docked, floating, AND the mobile/default sheet that is neither) — the terminal must never dim the page behind it.
-  const overlayClassName = `modal-overlay open terminal-modal-overlay${isDockedMode ? " terminal-modal-overlay--docked" : ""}${isFloatingMode ? " terminal-modal-overlay--floating" : ""}`;
+  // FNXC:Terminal 2026-06-23-04:30: Always carry the base `terminal-modal-overlay` class so the no-dim/no-blur rule applies in EVERY mode (floating, pinned, AND the mobile sheet that is neither) — the terminal must never dim the page behind it.
+  const overlayClassName = `modal-overlay open terminal-modal-overlay${isFloatingMode ? " terminal-modal-overlay--floating" : ""}`;
   /*
-  FNXC:TerminalModalControls 2026-07-24-01:10:
+  FNXC:TerminalModalControls 2026-09-15-07:57:
   CSS still has a width-based phone media query for true-phone fallback. Mark a known tablet
-  explicitly so its floating/docked geometry wins at the 768px boundary rather than inheriting
+  explicitly so its floating/pinned geometry wins at the 768px boundary rather than inheriting
   the phone full-screen shell. Embedded terminals remain parent-owned and never receive this chrome.
   */
-  const modalClassName = `modal terminal-modal${isMobileTerminal && !embedded ? " terminal-modal--mobile" : ""}${isTabletTerminal && !isMobileTerminal && !embedded ? " terminal-modal--tablet" : ""}${isDockedMode ? " terminal-modal--docked" : ""}${isFloatingMode ? " terminal-modal--floating" : ""}${isBelowMode ? " terminal-modal--below" : ""}${embedded ? " terminal-modal--embedded" : ""}`;
+  const modalClassName = `modal terminal-modal${isMobileTerminal && !embedded ? " terminal-modal--mobile" : ""}${isTabletTerminal && !isMobileTerminal && !embedded ? " terminal-modal--tablet" : ""}${isFloatingMode ? " terminal-modal--floating" : ""}${isBelowMode ? " terminal-modal--below" : ""}${embedded ? " terminal-modal--embedded" : ""}`;
   /*
   FNXC:TerminalWorkspaces 2026-07-13-00:00:
   The workspace picker menu is portaled to `document.body`, so floating terminal mode keeps it in the utility floating band above the terminal panel. FloatingWindow owns the panel stack claim; this fixed menu band preserves the menu's root-portal visibility.
@@ -2453,13 +2484,16 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
           "--vv-width": viewportWidth ? `${viewportWidth}px` : undefined,
         }
       : {}),
-    ...(isDockedMode ? { "--terminal-docked-height": `${dockedHeight}px` } : {}),
     ...(isBelowMode ? { "--terminal-below-height": `${clampTerminalBelowHeight(dockedHeight || TERMINAL_BELOW_DEFAULT_HEIGHT)}px` } : {}),
   } as CSSProperties;
 
   /*
   FNXC:TerminalFooter 2026-07-11-20:20:
-  FN-7829 keeps the single terminal action-control cluster (reconnect/restart, font-size, Clear, Shortcuts toggle, Preferences toggle, connection status, exit code, and help text) in the bottom `.terminal-status-bar` footer at every breakpoint. Pin/pop-out use their own single header fragment beside close; the header still never renders `.terminal-actions`, preventing handler drift across all presentation modes.
+  FN-7829 keeps the single terminal action-control cluster (reconnect/restart, font-size, Clear, Shortcuts toggle, Preferences toggle, connection status, exit code, and help text) in the bottom `.terminal-status-bar` footer at every breakpoint.
+
+  FNXC:TerminalFooter 2026-09-15-07:57:
+  FN-409 removed the pin toggle, so the header presentation fragment now carries exactly one control (detach/re-attach)
+  beside close; the header still never renders `.terminal-actions`, preventing handler drift across all presentations.
   */
   const reopenSessionControl = detachedSessions.length > 0 ? (
     <>
@@ -2582,22 +2616,14 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
   );
 
   /*
-  FNXC:TerminalModalControls 2026-08-13-08:13:
-  The operator requires pin and pop-out toggles in the top toolbar immediately left of close.
+  FNXC:TerminalModalControls 2026-09-15-07:57:
+  FN-409: the terminal now has exactly ONE presentation control in the top toolbar, immediately left of close —
+  detach / re-attach. The pin toggle is gone because the pinned presentation is the default and the only
+  non-floating non-mobile one, so a pin affordance had no second state left to select.
   Keep this shared fragment at one header render site; mobile and embedded terminals render neither.
   */
   const terminalDisplayModeControls = (
     <>
-      <button
-        className="terminal-clear-btn terminal-clear-btn--shortcut terminal-clear-btn--icon"
-        onClick={handleToggleBelowMode}
-        data-testid="terminal-pin-toggle"
-        title={isBelowMode ? t("terminal.unpinTerminal", "Unpin terminal (overlay content)") : t("terminal.pinTerminal", "Pin terminal (push content)")}
-        aria-label={isBelowMode ? t("terminal.unpinTerminal", "Unpin terminal (overlay content)") : t("terminal.pinTerminal", "Pin terminal (push content)")}
-        aria-pressed={isBelowMode}
-      >
-        {isBelowMode ? <PinOff size={14} /> : <Pin size={14} />}
-      </button>
       <button
         className="terminal-clear-btn terminal-clear-btn--shortcut terminal-clear-btn--icon"
         onClick={handleToggleDisplayMode}
@@ -2732,13 +2758,13 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
         {mobileDrawer && (
           <ViewDrawerHandle className="terminal-drawer-handle-target" barClassName="terminal-drawer-handle" data-testid="terminal-drawer-handle" />
         )}
-        {!embedded && (isDockedMode || isBelowMode) && (
+        {!embedded && isBelowMode && (
           <div
-            className={isBelowMode ? "terminal-below-resize-handle" : "terminal-docked-resize-handle"}
+            className="terminal-below-resize-handle"
             data-testid="terminal-docked-resize-handle"
             role="separator"
             aria-orientation="horizontal"
-            aria-label={isBelowMode ? t("terminal.resizeBelowPanel", "Resize pinned terminal panel") : t("terminal.resizeDockedPanel", "Resize terminal panel")}
+            aria-label={t("terminal.resizeBelowPanel", "Resize pinned terminal panel")}
             onPointerDown={handleDockedResizePointerDown}
           />
         )}
@@ -2898,10 +2924,10 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
           )}
 
           {/*
-          FNXC:TerminalModalControls 2026-08-03-00:21:
+          FNXC:TerminalModalControls 2026-09-15-07:57:
           Every non-embedded terminal has exactly one modal-close control, rendered after the
           tab region (including its new-terminal affordance), optional workspace picker, status
-          title, and non-mobile pin/pop-out controls. Keeping one shared final render site makes
+          title, and the non-mobile detach/re-attach control. Keeping one shared final render site makes
           the close-after-plus, far-right contract structural for desktop, tablet,
           ResizeObserver overflow, and mobile.
           Mobile keeps the corner class so its explicit flex order remains last; embedded terminals
@@ -3346,10 +3372,14 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
   );
 
   /*
-  FNXC:ModalTouchGeometry 2026-07-27-18:20:
-  Only the terminal pop-out uses the shared floating host. Docked, below, mobile, and embedded
-  presentations retain their existing layout and lifecycle because they are not floating windows.
-  The legacy size/position pair intentionally resets to one project-scoped geometry record.
+  FNXC:ModalTouchGeometry 2026-09-15-07:57:
+  Only the detached terminal uses the shared floating host. Pinned, mobile, and embedded presentations retain
+  their existing layout and lifecycle because they are not floating windows.
+
+  FNXC:TerminalLayout 2026-09-15-07:57:
+  FN-409 gives the detached terminal the SAME window contract as a task pop-out and a detached chat: the
+  `task-detail` stacking band, the shared `window` surface group, a raise-to-front signal, and the standard
+  task-window opening size. Edge snapping and click-to-front then behave identically across those windows.
   */
   const terminalPanel = isFloatingMode ? (
     <FloatingWindow
@@ -3358,6 +3388,9 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
       windowKey={`terminal-${projectId ?? "default"}`}
       defaultSize={{ width: TERMINAL_FLOAT_DEFAULT_WIDTH, height: TERMINAL_FLOAT_DEFAULT_HEIGHT }}
       minSize={{ width: TERMINAL_FLOAT_MIN_WIDTH, height: TERMINAL_FLOAT_MIN_HEIGHT }}
+      layer="task-detail"
+      surfaceGroup="window"
+      raiseToFrontSignal={focusNonce}
       hideHeader
       dragHandleSelector=".terminal-header"
       suspendGeometryPersistenceOnMobile
@@ -3399,10 +3432,10 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
 
   if (isFloatingMode) return terminalPanel;
 
-  // Docked and mobile terminal presentations retain their established overlay host.
+  // FNXC:TerminalLayout 2026-09-15-07:57: FN-409 leaves this portal host to the mobile sheet alone; the retired docked overlay was its only other user.
   return createPortal(
     <DashboardWindowSurfaceRoot
-      logicalId={`terminal-${projectId ?? "default"}-${isDockedMode ? "docked" : "mobile"}`}
+      logicalId={`terminal-${projectId ?? "default"}-mobile`}
       group="drawer"
       className={overlayClassName}
       onMouseDown={handleOverlayMouseDown}

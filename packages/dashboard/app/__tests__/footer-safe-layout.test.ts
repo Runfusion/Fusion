@@ -98,12 +98,14 @@ describe("footer-safe project workspace layout", () => {
   // ── Child views use height: 100% ───────────────────────────────────
 
   describe("Board boundary and scroll ownership", () => {
-    const alphaCss = readAppFile("ui.css");
-
-    it("keeps both Alpha boundary states layout-transparent", () => {
-      expect(alphaCss).toMatch(/\[data-alpha-surface\]\s*\{[^}]*display:\s*contents/);
-      expect(alphaCss).not.toMatch(/\[data-alpha-surface="true"\]\s*\{[^}]*display:\s*contents/);
-    });
+    /*
+    FNXC:DashboardFooterLayout 2026-09-15-09:52:
+    REMOVED: "keeps both Alpha boundary states layout-transparent". FN-399 replaced the Alpha
+    boundary with the themeable Interface style axis, deleting the `[data-alpha-surface]` marker and
+    renaming `ui.css` to `native-ui.css`; the stale `ui.css` read made this whole file crash at import
+    time, so the dead assertion only became visible once the path was repaired. The absence of the
+    marker is now owned by NativeUiPrimitives.test.tsx and App.test.tsx.
+    */
 
     it("keeps horizontal overflow on Board and vertical overflow in column bodies", () => {
       const boardBlock = css.match(/\.board\s*\{[^}]*\}/)?.[0] ?? "";
@@ -161,9 +163,17 @@ describe("footer-safe project workspace layout", () => {
   describe("--executor-footer-height consumers that size themselves", () => {
     // Comments carry braces and at-rule prose, so strip them before parsing rules.
     const baseCss = loadAllAppCssBaseOnly().replace(/\/\*[\s\S]*?\*\//g, "");
-    const ruleBlocks = [...baseCss.matchAll(/(^|\})\s*([^{}@]+?)\s*\{([^{}]*)\}/g)].map((match) => ({
-      selector: match[2].trim(),
-      body: match[3],
+    /*
+    FNXC:DashboardFooterLayout 2026-09-15-09:52:
+    The rule scanner must NOT anchor on the previous rule's closing brace: consuming that brace makes
+    matchAll skip every other rule, so whether a given selector is seen depends on how many rules
+    precede it in the concatenated stylesheet. Removing unrelated rules (FN-409 deleted the docked
+    terminal styles) flipped that parity and hid `.desktop-action-bar`. Selectors cannot contain
+    braces, so scanning `selector { body }` directly is both simpler and parity-free.
+    */
+    const ruleBlocks = [...baseCss.matchAll(/([^{}@]+?)\s*\{([^{}]*)\}/g)].map((match) => ({
+      selector: match[1].trim(),
+      body: match[2],
     }));
 
     it("floors the token at 0px on :root, which is what makes redeclaration mandatory", () => {

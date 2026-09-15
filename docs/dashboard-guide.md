@@ -1122,7 +1122,7 @@ Mailbox view shows inbox/outbox communication threads, unread state, approvals, 
 
 Fusion embeds a terminal using xterm.js. Its native PTY binary is delivered by a script-free per-platform package, so normal installs need neither a compiler nor install-script execution. Supported terminal platforms are macOS arm64/x64, Linux x64/arm64, and Windows x64/arm64; 32-bit Linux (`ia32` and armv7) is not supported. If the terminal reports that its module could not be loaded, the message names the missing platform package; this usually means optional dependencies were omitted or `node_modules` was copied between operating systems.
 
-Desktop and tablet use the footer status bar as the terminal launcher; mobile keeps the full-screen terminal path. Known touch tablets, including at the 768px responsive boundary, retain docked/floating presentation rather than falling back to the phone sheet. Their saved floating size and position and touch drag/edge-or-corner resize controls stay available when a software keyboard shortens the visual viewport. In tablet floating mode, use the reserved grip at the left side of the terminal header to move the window; it stays available even when the tab strip overflows. True narrow phones, including folded panes and short phone landscapes, intentionally remain full-screen.
+Desktop and tablet use the footer status bar as the terminal launcher; mobile keeps the full-screen terminal path. Known touch tablets, including at the 768px responsive boundary, retain the pinned/detached presentation rather than falling back to the phone sheet. Their touch drag and edge-or-corner resize controls stay available when a software keyboard shortens the visual viewport. In tablet floating mode, use the reserved grip at the left side of the terminal header to move the window; it stays available even when the tab strip overflows. True narrow phones, including folded panes and short phone landscapes, intentionally remain full-screen.
 
 Quick scripts can be created and renamed from **Manage Scripts** with any non-empty name, including spaces, Unicode, and punctuation. Each script may include an optional description; desktop, tablet, and mobile quick menus show that description when present and otherwise show the command. Selecting the item always executes the saved command, never the descriptive text, and existing automation references follow a rename automatically.
 
@@ -1146,30 +1146,28 @@ Terminal sessions run on the Fusion server, not in your browser, and several bro
 
 On Windows, the embedded terminal starts a supported shell inside Fusion, such as Command Prompt (`cmd.exe`) or Windows PowerShell. Windows Terminal (`wt.exe`) is an external terminal host and is not required or launched for the embedded panel, so Fusion should not show native Windows Terminal help/version popups while starting a terminal. If embedded terminal startup fails, Fusion shows an inline error with **Retry** instead of a blocking native dialog; install or repair Windows Terminal separately with `winget install Microsoft.WindowsTerminal` only if you want to use Windows Terminal outside Fusion.
 
-<!-- FNXC:TerminalFooter 2026-07-11-20:45: FN-7829 keeps terminal action controls (font size, Clear, Shortcuts, Preferences, and status) in the bottom terminal footer at every width, while pin and pop-out sit immediately left of close in the non-mobile top toolbar; desktop/tablet tabs fall back to the mobile-style selector when the tab strip cannot fit its container. -->
+<!-- FNXC:TerminalFooter 2026-09-15-07:57: FN-409 leaves the non-mobile terminal with exactly two presentations — pinned (default, in flow above the fixed bottom bar) and detached (a shared floating window). The pin/unpin toggle and the old overlay "docked" presentation are gone, so the top toolbar carries one presentation control (detach / re-attach) immediately left of close; action controls stay in the bottom terminal footer at every width. -->
 Use the terminal on desktop/tablet:
 
 1. Select the **Terminal** button in the footer executor status bar.
-   Expected outcome: the terminal opens as a bottom-docked overlay panel with the active shell session and a draggable top resize handle. Font size / clear / shortcuts / preferences controls and connection status render in the bottom action-control footer, while pin and pop-out toggles render in the top toolbar immediately left of the close button at every desktop/tablet width.
-2. Select **Pin terminal (push content)** from the top toolbar immediately left of Close.
-   Expected outcome: the terminal moves into a persisted below-application panel that reserves space instead of covering the board, chat, or right sidebar. The pinned panel also reserves space above the fixed status footer (the executor status bar), so its bottom action-control footer (font size, Clear, Shortcuts, Preferences, connection status, and exit code) stays fully visible instead of being covered by it. Select **Unpin terminal (overlay content)** in the top toolbar to return to the overlay docked panel.
-3. Drag the top edge of the docked or pinned panel.
-   Expected outcome: the panel height changes within its viewport-safe bounds and persists per project, with pinned mode clamped shorter so the application remains usable.
-4. Select **Pop out** from the top toolbar immediately left of Close.
-   Expected outcome: the terminal switches to a floating window that can be dragged and freely resized; size, position, and display mode are saved per project. On touch tablets, drag the reserved header grip rather than the horizontally scrollable tab strip.
-5. Select **Dock** from the same top-toolbar control in the floating terminal.
-   Expected outcome: the terminal returns to the bottom docked overlay panel using the saved docked height.
-6. Select the scripts chevron beside the footer **Terminal** button.
+   Expected outcome: the terminal opens **pinned** — an in-flow panel across the bottom of the application, directly above the fixed bottom bar, that pushes the board, chat, and right sidebar up instead of covering them. There is no pin control to click first, and no empty band between the application content and the terminal: only the pinned terminal reserves the bottom bar's height. Font size / Clear / Shortcuts / Preferences and connection status render in the bottom action-control footer, while the single detach control renders in the top toolbar immediately left of the close button at every desktop/tablet width.
+2. Drag the top edge of the pinned panel.
+   Expected outcome: the panel height changes within its viewport-safe bounds, stays clamped short enough to keep the application usable, and persists per project.
+3. Select **Pop out** from the top toolbar immediately left of Close.
+   Expected outcome: the terminal becomes a floating window that behaves exactly like a task or conversation window: it opens at the standard window size centred in the work area, comes to the front when you click it, moves by dragging its header, and snaps to the work-area edges (left half, right half, full). Its size and position are not remembered between openings. On touch tablets, drag the reserved header grip rather than the horizontally scrollable tab strip.
+4. Select **Dock** from the same top-toolbar control in the detached terminal.
+   Expected outcome: the terminal returns to the pinned panel using the saved panel height.
+5. Select the scripts chevron beside the footer **Terminal** button.
    Expected outcome: the quick scripts menu opens without toggling the terminal; choosing a script runs it in the terminal, and the menu footer opens script management.
 
 Use the terminal on mobile:
 
 1. Open the bottom navigation **More** sheet and select **Terminal**.
-   Expected outcome: the terminal opens as a full-screen, keyboard-aware modal rather than the desktop/tablet docked or floating surface.
+   Expected outcome: the terminal opens as a full-screen, keyboard-aware modal rather than the desktop/tablet pinned or detached surface.
 2. Use the **Terminal tab** selector to switch between terminal tabs, or use the adjacent **+** action to open another Project Root terminal.
-   Expected outcome: every terminal tab appears in the dropdown, switching preserves the active session, and the desktop horizontal tab strip is not shown on mobile. The same selector also appears on desktop/tablet when a narrow docked or floating terminal does not have enough room to show the whole tab strip.
+   Expected outcome: every terminal tab appears in the dropdown, switching preserves the active session, and the desktop horizontal tab strip is not shown on mobile. The same selector also appears on desktop/tablet when a narrow pinned or detached terminal does not have enough room to show the whole tab strip.
 3. When multiple tabs are open, use **Close current tab** beside the selector, then close the modal when finished.
-   Expected outcome: mobile can close the active terminal tab without exposing a cramped horizontal tab strip, and terminal sessions reconnect/recover normally without desktop dock state affecting the mobile layout.
+   Expected outcome: mobile can close the active terminal tab without exposing a cramped horizontal tab strip, and terminal sessions reconnect/recover normally without the desktop presentation affecting the mobile layout.
 
 Open a terminal in a specific workspace:
 

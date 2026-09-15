@@ -41,7 +41,7 @@ describe("complex modal presentation contract", () => {
     expect(component("AgentDetailView")).toContain("backdropMouseHandlers");
   });
 
-  it("retains documented embedded, docked, and dock-origin presentation gates", () => {
+  it("retains documented embedded, pinned, and dock-origin presentation gates", () => {
     const agentDetail = component("AgentDetailView");
     const githubImport = component("GitHubImportModal");
     const terminal = component("TerminalModal");
@@ -52,7 +52,8 @@ describe("complex modal presentation contract", () => {
     expect(githubImport).toContain("if (isEmbedded)");
     expect(githubImport).toContain("resizePersistEnabled");
     expect(terminal).toContain("const terminalPanel = isFloatingMode ? (");
-    expect(terminal).toContain("isDockedMode");
+    // FN-409 removed the docked terminal presentation; the pinned (`below`) gate is the survivor.
+    expect(terminal).toContain("isBelowMode");
     expect(rightDock).toContain("surface: \"expand\"");
   });
 

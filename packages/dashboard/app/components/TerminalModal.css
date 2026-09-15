@@ -61,16 +61,6 @@ FN-7621 recurrence #3 root cause: styles.css's mobile `@media (max-width: 768px)
   touch-action: pan-x pan-y;
 }
 
-.modal-overlay.terminal-modal-overlay--docked.terminal-modal-overlay--docked {
-  align-items: stretch;
-  justify-content: flex-end;
-  padding: 0;
-  background: transparent;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-  pointer-events: none;
-}
-
 .modal.terminal-modal {
   /* Initial dimensions are applied only when no persisted size has been
      restored — see :not([style*=...]) selectors below. */
@@ -108,51 +98,11 @@ retain their own sizing rules below.
   resize: none;
 }
 
-.modal.terminal-modal.terminal-modal--docked {
-  --floating-window-shadow: var(--shadow-lg);
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: calc(var(--icb-bottom-offset, 0px) + var(--executor-footer-height, calc(var(--space-xl) + var(--space-md))));
-  width: 100vw;
-  min-width: 0;
-  height: var(--terminal-docked-height);
-  min-height: calc(var(--space-xl) * 10);
-  max-width: none;
-  max-height: calc(100dvh - (var(--space-xl) * 4));
-  resize: none;
-  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
-  pointer-events: auto;
-  box-shadow: var(--floating-window-shadow, var(--shadow-lg));
-}
-
 /*
-FNXC:Terminal 2026-06-22-01:30:
-Larger grab target for the docked terminal top resize handle: it straddles the panel's top edge (extends above it) and is taller, so it is easy to grab on desktop and touch. touch-action:none keeps the drag from being hijacked by scroll/gestures so the resize stays smooth.
+FNXC:TerminalLayout 2026-09-15-07:57:
+FN-409 removed the overlay `docked` presentation, its overlay modifier, and its dedicated top resize grip. The only
+remaining non-mobile presentations are the in-flow pinned panel below and the shared floating window above.
 */
-.terminal-docked-resize-handle {
-  position: absolute;
-  top: calc(var(--space-sm) * -1);
-  left: 0;
-  right: 0;
-  height: calc(var(--space-md) + var(--space-sm));
-  cursor: ns-resize;
-  touch-action: none;
-  z-index: 2;
-}
-
-.terminal-docked-resize-handle::before {
-  content: "";
-  position: absolute;
-  left: 50%;
-  top: calc(var(--space-xs) / 2);
-  width: calc(var(--space-xl) * 2);
-  height: calc(var(--space-xs) / 2);
-  transform: translateX(-50%);
-  border-radius: var(--radius-pill);
-  background: var(--border);
-}
-
 
 /*
 FNXC:TerminalLayout 2026-07-04-19:22:
@@ -172,7 +122,7 @@ FN-7897 fixed the pinned terminal rendering underneath the fixed ExecutorStatusB
 
 /*
 FNXC:TerminalLayout 2026-07-12-18:50:
-FN-7897: reserve space for the fixed ExecutorStatusBar footer when it is rendered (footerVisible prop), so the pinned/below terminal's own bottom .terminal-status-bar action row stays fully visible above the footer instead of being painted over. --executor-footer-height is redeclared here (not inherited — see comment above) to match the .project-content--with-footer precedent; --icb-bottom-offset mirrors the same Android Chrome ICB compensation already applied to .terminal-modal--docked's bottom calc.
+FN-7897: reserve space for the fixed ExecutorStatusBar footer when it is rendered (footerVisible prop), so the pinned/below terminal's own bottom .terminal-status-bar action row stays fully visible above the footer instead of being painted over. --executor-footer-height is redeclared here (not inherited — see comment above) to match the .project-content--with-footer precedent; --icb-bottom-offset carries the same Android Chrome ICB compensation the retired docked presentation used in its bottom calc (FN-409).
 */
 .terminal-below-host--with-footer {
   --executor-footer-height: 36px;
@@ -1917,24 +1867,13 @@ The Android keyboard-open recurrence can start with a touch-primary visualViewpo
   }
 
   /*
-  FNXC:TerminalModalControls 2026-07-24-01:10:
+  FNXC:TerminalModalControls 2026-09-15-07:57:
   A known touch tablet can share this CSS-width breakpoint with a phone. The React
-  classifier marks it explicitly, so restore the stored floating/docked geometry
-  after the phone fallback rules (which use !important to defeat stale phone sizes).
-  This keeps the shared header move grip and all eight resize targets reachable at
-  exactly 768px without exposing any geometry controls on true-phone sheets.
+  classifier marks it explicitly so the tablet keeps the full non-mobile terminal chrome
+  (shared header move grip, resize targets, tab strip, pinned host) at exactly 768px
+  instead of inheriting the phone full-screen sheet. FN-409 removed the docked geometry
+  restore that used to live here with the docked presentation itself.
   */
-  .modal.terminal-modal.terminal-modal--tablet.terminal-modal--docked {
-    min-width: 0 !important;
-    min-height: calc(var(--space-xl) * 10) !important;
-    width: 100vw !important;
-    height: var(--terminal-docked-height) !important;
-    max-width: none !important;
-    max-height: calc(100dvh - (var(--space-xl) * 4)) !important;
-    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
-    border: 1px solid var(--border);
-  }
-
   .modal.terminal-modal.terminal-modal--tablet .terminal-header {
     flex-wrap: nowrap;
     row-gap: 0;

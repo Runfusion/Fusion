@@ -393,30 +393,47 @@ App.tsx ~1927 exists to remove — passed the whole suite.
 invoked at all, and whether it was unmounted. Existing DOM-level tests are unaffected; the markup is
 unchanged.
 */
+/*
+FNXC:TerminalLayout 2026-09-15-07:57:
+FN-409: the stand-in also models the terminal's pinned-layout SIGNAL, because the shell's footer reservation now
+depends on it. `pinnedDefault` mirrors the real component's default (pinned on non-mobile, never pinned on a phone),
+and the stand-in's pop-out button reports the detached state exactly as the real control does. The real component's
+side of this contract is proven against the real TerminalModal in TerminalModal.test.tsx.
+*/
 const terminalLifecycle = {
   renders: [] as boolean[],
   mounts: 0,
   unmounts: 0,
+  pinnedDefault: true,
   reset(): void {
     this.renders = [];
     this.mounts = 0;
     this.unmounts = 0;
+    this.pinnedDefault = true;
   },
 };
 
 vi.mock("../../components/TerminalModal", async () => {
-  const { useEffect } = await import("react");
+  const { useEffect, useState } = await import("react");
   return {
-    TerminalModal: ({ isOpen, onClose, footerVisible }: { isOpen: boolean; onClose: () => void; footerVisible?: boolean }) => {
+    TerminalModal: ({ isOpen, onClose, footerVisible, onPinnedLayoutChange }: { isOpen: boolean; onClose: () => void; footerVisible?: boolean; onPinnedLayoutChange?: (pinned: boolean) => void }) => {
       terminalLifecycle.renders.push(isOpen);
+      const [pinned, setPinned] = useState(terminalLifecycle.pinnedDefault);
       useEffect(() => {
         terminalLifecycle.mounts += 1;
         return () => {
           terminalLifecycle.unmounts += 1;
         };
       }, []);
+      useEffect(() => {
+        onPinnedLayoutChange?.(pinned);
+        return () => onPinnedLayoutChange?.(false);
+      }, [onPinnedLayoutChange, pinned]);
       return isOpen ? (
-        <div className="modal-overlay open" data-testid="terminal-modal" data-footer-visible={String(footerVisible === true)}>
+        <div className="modal-overlay open" data-testid="terminal-modal" data-footer-visible={String(footerVisible === true)} data-pinned={String(pinned)}>
+          <button type="button" data-testid="terminal-popout-toggle" onClick={() => setPinned((current) => !current)}>
+            Pop out
+          </button>
           <button type="button" data-testid="terminal-close-btn" onClick={onClose}>
             Close
           </button>
@@ -1423,6 +1440,62 @@ describe("official dashboard design production wiring", () => {
       expect(document.querySelector(".right-dock")).toBeInTheDocument();
       expect(document.querySelector("[data-testid^='floating-window-overlay-']")).toBeNull();
     }
+  });
+
+  /*
+  FNXC:TerminalLayout 2026-09-15-07:57:
+  FN-409 symptom acceptance (2): the bottom bar's height must be reserved EXACTLY ONCE. While the pinned terminal is
+  shown it is the only element the fixed bar covers, so the shell consumers stop reserving; closing the terminal or
+  detaching it restores their reservation.
+  */
+  it.each(["tablet", "desktop"] as const)("ne r\u00e9serve la hauteur de la barre du bas qu'une seule fois quand le terminal est \u00e9pingl\u00e9 (%s)", async (mode) => {
+    mockUseViewportMode.mockReturnValue(mode);
+    terminalLifecycle.reset();
+    localStorage.setItem("fusion:right-dock-open", "true");
+
+    render(<App />);
+
+    const shell = await screen.findByTestId("dashboard-project-shell");
+    const content = shell.querySelector(".project-content")!;
+    const dock = await screen.findByTestId("right-dock");
+    const sidebar = mode === "tablet" ? await screen.findByTestId("left-sidebar-nav") : null;
+
+    // Terminal closed: the shell owns the reservation.
+    expect(content).toHaveClass("project-content--with-footer");
+    expect(dock).toHaveClass("right-dock--with-footer");
+    if (sidebar) expect(sidebar).toHaveClass("left-sidebar-nav--with-footer");
+
+    fireEvent.click(await screen.findByTestId("desktop-nav-terminal"));
+    const terminal = await screen.findByTestId("terminal-modal");
+    expect(terminal).toHaveAttribute("data-pinned", "true");
+
+    // Pinned terminal: only the terminal host reserves, so no empty band is left above it.
+    await waitFor(() => {
+      expect(content).not.toHaveClass("project-content--with-footer");
+      expect(dock).not.toHaveClass("right-dock--with-footer");
+      if (sidebar) expect(sidebar).not.toHaveClass("left-sidebar-nav--with-footer");
+      // The terminal itself keeps receiving the raw footer visibility: it is the single legitimate consumer.
+      expect(terminal).toHaveAttribute("data-footer-visible", "true");
+    });
+
+    // Detaching the terminal takes it out of the flow, so the shell reservation returns.
+    fireEvent.click(screen.getByTestId("terminal-popout-toggle"));
+    await waitFor(() => {
+      expect(content).toHaveClass("project-content--with-footer");
+      expect(dock).toHaveClass("right-dock--with-footer");
+      if (sidebar) expect(sidebar).toHaveClass("left-sidebar-nav--with-footer");
+    });
+
+    // Re-pinning drops it again, and closing the terminal restores it for good.
+    fireEvent.click(screen.getByTestId("terminal-popout-toggle"));
+    await waitFor(() => expect(content).not.toHaveClass("project-content--with-footer"));
+    fireEvent.click(screen.getByTestId("terminal-close-btn"));
+    await waitFor(() => {
+      expect(screen.queryByTestId("terminal-modal")).toBeNull();
+      expect(content).toHaveClass("project-content--with-footer");
+      expect(dock).toHaveClass("right-dock--with-footer");
+      if (sidebar) expect(sidebar).toHaveClass("left-sidebar-nav--with-footer");
+    });
   });
 
   it.each([

@@ -1226,6 +1226,22 @@ function AppInner() {
   const wideFooterActive = viewportMode !== "mobile" && projectShellPresent;
   const executorFooterVisible = projectShellPresent && !wideFooterActive && viewportMode !== "mobile";
   const shellFooterVisible = executorFooterVisible || wideFooterActive;
+  /*
+  FNXC:TerminalLayout 2026-09-15-07:57:
+  FN-409 removes the phantom 36px band above the pinned terminal. The bottom bar is FIXED and paints over the
+  bottom of `.dashboard-project-stack`. When the pinned terminal is in flow at the bottom of that stack, it is the
+  only element the bar covers, so a reservation by the shell ABOVE it protects nothing and renders as an empty band
+  between the application content and the terminal. While the terminal reports itself pinned, the shell consumers
+  (`.project-content--with-footer`, `.left-sidebar-nav--with-footer`, `.right-dock--with-footer`) stop reserving and
+  `.terminal-below-host--with-footer` remains the single legitimate consumer of `--executor-footer-height` in the stack.
+  `TerminalModal` still receives the raw `shellFooterVisible`, and `MobileNavBar` keeps `executorFooterVisible`.
+  The terminal is the source of truth for its EFFECTIVE presentation, so the shell never reads `localStorage` here.
+  */
+  const [terminalPinnedBelow, setTerminalPinnedBelow] = useState(false);
+  const handleTerminalPinnedLayoutChange = useCallback((pinned: boolean) => {
+    setTerminalPinnedBelow(pinned);
+  }, []);
+  const shellFooterReservationVisible = shellFooterVisible && !terminalPinnedBelow;
   const mobileNavVisible = projectShellPresent;
   /*
   FNXC:MobileDrawer 2026-09-10-17:16:
@@ -1965,7 +1981,7 @@ function AppInner() {
   const { rightDock, windows: desktopRightDockWindows } = useAppDesktopRightDockComposition({
     projectId: currentProject?.id,
     owner: appRightDockWindows,
-    controllerInput: { active: rightDockActive, addToast, columnFlagsByTaskId: footerColumnFlagsByTaskId, settingsLoaded, researchReadinessVersion, goalAnchorId, tasks: boardSourceTasks, workflowSteps, subscribePluginEvents, openDetailTask: mobileDrawerActive ? openTaskDetailInMainPanel : openDetailTask, notesController, registerNotesGuard: registerDesktopDockNotesGuard, openFileInBrowser, onUpdateTask: updateTask, onDeleteTask: deleteTask, onRevertTask: revertTask, onMergeTask: mergeTask, onRetryTask: retryTask, onOpenChatWithPrefill: openChatWithPrefill, onPauseTask: pauseTask, onUnpauseTask: unpauseTask, onBypassReview: bypassReview, onResetTask: resetTask, onDuplicateTask: duplicateTask, onTaskUpdated: (task: Task) => ingestCreatedTasks([task]), openSettings: (section?: string) => openSettingsWithNav(section as SectionId), onOpenUsage: openUsageWithNav, onOpenActivityLog: openActivityLogWithNav, onOpenGitHubImport: openGitHubImportWithNav, onOpenGitManager: openGitManagerWithNav, onOpenSchedules: openSchedulesWithNav, onSendSelectionToTask: modalManager.openNewTaskWithDescription, onCreateTaskFromInsight: handleInsightTaskCreate, onNavigateToMission: handleOpenMission, onTaskCreated: (task: Task) => ingestCreatedTasks([task]), prAuthAvailable, autoMerge, taskDetailChatFirst, renderListView: isMobile ? undefined : renderDockListView, onSendAsReport: handleSendChatMessageAsReport, visibilityOptions: { hostMode: desktopNavigationActive ? "desktop" : "standard", experimentalFeatures: { insights: insightsEnabled, memoryView: memoryEnabled, devServerView: devServerEnabled, researchView: researchEnabled, evalsView: evalsEnabled, goalsView: goalsEnabled }, showSkillsTab: skillsEnabled, pluginDashboardViews, listViewAvailable: !isMobile }, footerVisible: shellFooterVisible },
+    controllerInput: { active: rightDockActive, addToast, columnFlagsByTaskId: footerColumnFlagsByTaskId, settingsLoaded, researchReadinessVersion, goalAnchorId, tasks: boardSourceTasks, workflowSteps, subscribePluginEvents, openDetailTask: mobileDrawerActive ? openTaskDetailInMainPanel : openDetailTask, notesController, registerNotesGuard: registerDesktopDockNotesGuard, openFileInBrowser, onUpdateTask: updateTask, onDeleteTask: deleteTask, onRevertTask: revertTask, onMergeTask: mergeTask, onRetryTask: retryTask, onOpenChatWithPrefill: openChatWithPrefill, onPauseTask: pauseTask, onUnpauseTask: unpauseTask, onBypassReview: bypassReview, onResetTask: resetTask, onDuplicateTask: duplicateTask, onTaskUpdated: (task: Task) => ingestCreatedTasks([task]), openSettings: (section?: string) => openSettingsWithNav(section as SectionId), onOpenUsage: openUsageWithNav, onOpenActivityLog: openActivityLogWithNav, onOpenGitHubImport: openGitHubImportWithNav, onOpenGitManager: openGitManagerWithNav, onOpenSchedules: openSchedulesWithNav, onSendSelectionToTask: modalManager.openNewTaskWithDescription, onCreateTaskFromInsight: handleInsightTaskCreate, onNavigateToMission: handleOpenMission, onTaskCreated: (task: Task) => ingestCreatedTasks([task]), prAuthAvailable, autoMerge, taskDetailChatFirst, renderListView: isMobile ? undefined : renderDockListView, onSendAsReport: handleSendChatMessageAsReport, visibilityOptions: { hostMode: desktopNavigationActive ? "desktop" : "standard", experimentalFeatures: { insights: insightsEnabled, memoryView: memoryEnabled, devServerView: devServerEnabled, researchView: researchEnabled, evalsView: evalsEnabled, goalsView: goalsEnabled }, showSkillsTab: skillsEnabled, pluginDashboardViews, listViewAvailable: !isMobile }, footerVisible: shellFooterReservationVisible },
     chatWindowProps: { addToast, experimentalFeatures, onSendAsReport: handleSendChatMessageAsReport },
     noteWindowProps: {
       addToast,
@@ -2486,11 +2502,11 @@ function AppInner() {
             currentProject={currentProject}
             onSelectProject={handleSelectProject}
             onViewAllProjects={handleViewAllProjects}
-            footerVisible={shellFooterVisible}
+            footerVisible={shellFooterReservationVisible}
           />
         )}
         <div
-          className={`project-content${shellFooterVisible && (!isMobile || !mobileKeyboardOpen) ? " project-content--with-footer" : ""}${isMobile && mobileNavVisible && !(modalManager.anyModalOpen || taskView === "chat") ? " project-content--with-mobile-nav" : ""}`}
+          className={`project-content${shellFooterReservationVisible && (!isMobile || !mobileKeyboardOpen) ? " project-content--with-footer" : ""}${isMobile && mobileNavVisible && !(modalManager.anyModalOpen || taskView === "chat") ? " project-content--with-mobile-nav" : ""}`}
         >
           <AppMainPanelTaskDetailComposition
             state={mainPanelTaskDetail}
@@ -2586,6 +2602,8 @@ function AppInner() {
           initialCommandGeneration={modalManager.terminalInitialCommandGeneration}
           projectId={currentProject.id}
           footerVisible={shellFooterVisible}
+          onPinnedLayoutChange={handleTerminalPinnedLayoutChange}
+          focusNonce={modalManager.terminalInitialCommandGeneration}
         />
       )}
       </div>
