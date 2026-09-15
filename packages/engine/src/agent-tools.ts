@@ -1887,7 +1887,17 @@ export function createHistoryReadTool(store: TaskStore): ToolDefinition {
           const reverted = entry.kind === "completed" && entry.revertedAt
             ? ` (reverted ${entry.revertedAt.slice(0, 10)})`
             : "";
-          return `${cancelled}${entry.taskId} — ${entry.title}: ${entry.body}${reverted}`;
+          /*
+          FNXC:HistoryChat 2026-09-15-23:26:
+          FN-444: chat reads the same durable ledger as the History window, so it inherits the same
+          degenerate rows — an entry captured before the ledger learned the canonical task label, or one
+          whose task has since been deleted, stores its own task id as label and body. Each segment is
+          therefore emitted only when it adds information, so the identifier is never repeated on a line.
+          The `CANCELLED — ` and ` (reverted YYYY-MM-DD)` markers are unchanged.
+          */
+          const label = entry.title.trim() && entry.title.trim() !== entry.taskId ? entry.title : "";
+          const body = entry.body.trim() && entry.body.trim() !== entry.taskId && entry.body !== label ? entry.body : "";
+          return `${cancelled}${entry.taskId}${label ? ` — ${label}` : ""}${body ? `: ${body}` : ""}${reverted}`;
         }),
       ]);
       return {

@@ -149,7 +149,19 @@ export function PatchnodeView({ projectId, onOpenTaskDetail, floating }: Patchno
               <span>{t("patchnode.entryCount", { count: day.entries.length, defaultValue: "{{count}} entries" })}</span>
             </header>
             <div className="patchnode-day__entries">
-              {day.entries.map((entry) => (
+              {day.entries.map((entry) => {
+                /*
+                FNXC:PatchnodeView 2026-09-15-23:26:
+                FN-444: an entry captured before the ledger learned the canonical task label — or one whose
+                task has since been deleted, so the repair pass can never reach it — stores its own task id
+                as both label and body. History must never repeat the identifier, so each line is rendered
+                only when it adds information: the label when it is neither empty nor the id already shown
+                in the metadata chip, and the body when it is neither empty nor a repeat of the label or id.
+                An omitted line mounts NO element, so no empty shell contributes to the card's flex gap.
+                */
+                const label = entry.title.trim() && entry.title.trim() !== entry.taskId ? entry.title : "";
+                const body = entry.body.trim() && entry.body.trim() !== entry.taskId && entry.body !== label ? entry.body : "";
+                return (
                 <button
                   className={`card patchnode-entry patchnode-entry--${entry.kind}${entry.revertedAt ? " patchnode-entry--reverted" : ""}`}
                   key={entry.entryId}
@@ -162,10 +174,11 @@ export function PatchnodeView({ projectId, onOpenTaskDetail, floating }: Patchno
                     {entry.kind === "reverted" ? <span className="patchnode-entry__badge patchnode-entry__badge--cancelled"><RotateCcw aria-hidden="true" />{t("patchnode.cancelled", "Cancelled")}</span> : null}
                     {entry.kind === "completed" && entry.revertedAt ? <span className="patchnode-entry__badge">{t("patchnode.reverted", "Reverted")}</span> : null}
                   </span>
-                  <strong>{entry.title}</strong>
-                  <span className="patchnode-entry__body">{entry.body}</span>
+                  {label ? <strong>{label}</strong> : null}
+                  {body ? <span className="patchnode-entry__body">{body}</span> : null}
                 </button>
-              ))}
+                );
+              })}
             </div>
           </section>
         )) : null}

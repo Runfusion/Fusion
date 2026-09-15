@@ -169,10 +169,95 @@ describe("PatchnodeView", () => {
     expect(screen.getByTestId("patchnode-search")).toHaveValue("missing");
   });
 
-  it("renders a non-empty title fallback body", async () => {
+  /*
+  FNXC:PatchnodeView 2026-09-15-23:26:
+  FN-444 replaced the previous "non-empty title fallback body" expectation: a body that merely repeats the
+  rendered label is the duplication this task removes, so the card must show that text exactly once.
+  */
+  it("renders a body that repeats the label only once", async () => {
     fetchPatchnode.mockResolvedValue({ ...feed, days: [{ ...feed.days[0]!, entries: [{ ...feed.days[0]!.entries[0]!, body: "Search" }] }] });
     render(<PatchnodeView />);
-    expect(await screen.findByText("Search", { selector: ".patchnode-entry__body" })).toBeInTheDocument();
+    const entry = await screen.findByTestId("patchnode-entry-completed:FN-2:2");
+    expect(entry.querySelectorAll(".patchnode-entry__body")).toHaveLength(0);
+    expect(entry.textContent?.match(/Search/g)).toHaveLength(1);
+  });
+
+  describe("label rendering never repeats the task identifier", () => {
+    const singleEntry = (overrides: Record<string, unknown>) => ({
+      ...feed,
+      days: [{ ...feed.days[0]!, entries: [{ ...feed.days[0]!.entries[0]!, ...overrides }] }],
+    });
+    const card = () => screen.findByTestId("patchnode-entry-completed:FN-2:2");
+
+    it("renders the identifier once and the label once for a healthy entry", async () => {
+      render(<PatchnodeView />);
+      const entry = await card();
+      expect(entry.textContent?.match(/FN-2/g)).toHaveLength(1);
+      expect(entry.querySelector("strong")).toHaveTextContent("Search");
+      expect(entry.querySelector(".patchnode-entry__body")).toHaveTextContent("Added search");
+    });
+
+    /*
+    FNXC:PatchnodeView 2026-09-15-23:26:
+    FN-444 symptom reproduction: a legacy entry whose task was deleted can never be repaired by the ledger
+    pass, so the render surface itself must not print the identifier twice.
+    */
+    it("renders an unrepairable legacy entry's identifier exactly once and mounts no empty shell", async () => {
+      fetchPatchnode.mockResolvedValue(singleEntry({ title: "FN-2", body: "FN-2" }));
+      render(<PatchnodeView />);
+      const entry = await card();
+      expect(entry.textContent?.match(/FN-2/g)).toHaveLength(1);
+      expect(entry.querySelectorAll("strong")).toHaveLength(0);
+      expect(entry.querySelectorAll(".patchnode-entry__body")).toHaveLength(0);
+      expect([...entry.children].every((child) => child.textContent?.trim())).toBe(true);
+    });
+
+    it("omits the body element entirely when there is no summary", async () => {
+      fetchPatchnode.mockResolvedValue(singleEntry({ body: "" }));
+      render(<PatchnodeView />);
+      const entry = await card();
+      expect(entry.querySelector("strong")).toHaveTextContent("Search");
+      expect(entry.querySelectorAll(".patchnode-entry__body")).toHaveLength(0);
+    });
+
+    it("keeps the cancelled badge while applying the same label rule to a reverted entry", async () => {
+      fetchPatchnode.mockResolvedValue(singleEntry({ kind: "reverted", title: "FN-2", body: "FN-2" }));
+      render(<PatchnodeView />);
+      const entry = await card();
+      expect(entry).toHaveTextContent("Cancelled");
+      expect(entry.textContent?.replace("Cancelled", "").match(/FN-2/g)).toHaveLength(1);
+    });
+
+    it("applies the same rule in the floating host and at the mobile breakpoint", async () => {
+      const css = readAppFile("components/PatchnodeView.css");
+      // The mobile override must not hide or re-add any label element.
+      expect(css).toMatch(/@media\s*\(max-width:\s*768px\)/);
+      expect(css).not.toMatch(/\.patchnode-entry__body\s*\{[^}]*display:\s*none/s);
+
+      const innerWidth = window.innerWidth;
+      const matchMedia = window.matchMedia;
+      try {
+        Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 640 });
+        vi.stubGlobal("matchMedia", (query: string) => ({
+          matches: /max-width:\s*768px/.test(query),
+          media: query,
+          onchange: null,
+          addListener: vi.fn(),
+          removeListener: vi.fn(),
+          addEventListener: vi.fn(),
+          removeEventListener: vi.fn(),
+          dispatchEvent: vi.fn(),
+        }));
+        fetchPatchnode.mockResolvedValue(singleEntry({ title: "FN-2", body: "FN-2" }));
+        render(<PatchnodeView floating={{ onClose: vi.fn() }} />);
+        const entry = await card();
+        expect(entry.textContent?.match(/FN-2/g)).toHaveLength(1);
+        expect(entry.querySelectorAll("strong")).toHaveLength(0);
+      } finally {
+        Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: innerWidth });
+        vi.stubGlobal("matchMedia", matchMedia);
+      }
+    });
   });
 
   it("renders cancelled and reverted treatments", async () => {

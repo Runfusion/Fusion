@@ -1,5 +1,5 @@
 import { and, desc, eq, gt, gte, ilike, inArray, isNotNull, isNull, lt, lte, or, sql } from "drizzle-orm";
-import { buildPatchnodeEntryId, buildPatchnodeEntryInput } from "../../board/patchnode.js";
+import { buildPatchnodeEntryId, buildPatchnodeEntryInput, buildPatchnodeSnapshotLabel } from "../../board/patchnode.js";
 import { storeLog } from "../../store.js";
 import * as schema from "../../postgres/schema/index.js";
 import type { AsyncDataLayer, DbTransaction } from "../../postgres/data-layer.js";
@@ -12,6 +12,9 @@ This accessor follows the project-scoped append-only activity shape but delibera
 
 FNXC:PatchnodeLedger 2026-08-28-12:16:
 Backfill is bounded and insert-only. A delivery superseded before Patchnode shipped left no durable lane, occurrence, or point-in-time summary evidence, so reconciliation must not invent one from a later task state.
+
+FNXC:PatchnodeLedger 2026-09-15-23:26:
+FN-444 adds the one exception: a bounded label-repair pass that rewrites the degenerate `title = task_id` marker of an EXISTING row to the live task's canonical label. It creates no entry and never rewrites a real summary, so the insert-only rule above still holds for delivery evidence itself.
 */
 
 const RECONCILE_PAGE_SIZE = 500;
@@ -211,12 +214,14 @@ export type PatchnodeReconcileResult = {
   completedInserted: number;
   revertedInserted: number;
   archivedBackfilled: number;
+  labelsRepaired: number;
   truncated: boolean;
 };
 
 type ReconcileTaskRow = {
   id: string;
   title: string | null;
+  description: string | null;
   summary: string | null;
   column: string;
   columnMovedAt: string | null;
@@ -224,10 +229,16 @@ type ReconcileTaskRow = {
   deletedAt: string | null;
 };
 
+/*
+FNXC:PatchnodeLedger 2026-09-15-23:26:
+FN-444: the snapshot carries the real description because `buildPatchnodeSnapshotLabel` derives a
+titleless task's label from it. The hardcoded empty description made every backfilled delivery
+(live completion, revert, archived) persist the task id as its own label.
+*/
 const asTaskSnapshot = (row: ReconcileTaskRow): Task => ({
   id: row.id,
   title: row.title ?? undefined,
-  description: "",
+  description: row.description ?? "",
   summary: row.summary ?? undefined,
   column: row.column as Column,
   currentStep: 0,
@@ -253,16 +264,36 @@ function revertedMarker(metadata: unknown): { revertedAt: string; revertedCommit
   };
 }
 
+/*
+FNXC:PatchnodeLedger 2026-09-15-23:26:
+FN-444: a degenerate entry is one whose stored label is EXACTLY its own task id, the marker the old
+builder wrote whenever a task had no stored title. That equality is the whole admission rule: a
+legitimate label can never be repaired away, and a task whose canonical label really is its id
+(neither title nor description) yields no repair at all. `body` is only reset when it too was the
+copied id; a genuine point-in-time summary is never rewritten, because the ledger records what was
+delivered, not what the task says today.
+*/
+export function planPatchnodeLabelRepair(
+  entry: Pick<PatchnodeEntry, "taskId" | "title" | "body">,
+  task: { id: string; title?: string | null; description?: string | null },
+): { title: string; body: string } | null {
+  if (entry.title !== entry.taskId) return null;
+  const title = buildPatchnodeSnapshotLabel({ ...task, id: entry.taskId });
+  if (title === entry.taskId) return null;
+  return { title, body: entry.body === entry.taskId ? "" : entry.body };
+}
+
 export async function reconcilePatchnodeFromLiveTasks(
   layer: AsyncDataLayer,
   completeColumns: ReadonlySet<string>,
 ): Promise<PatchnodeReconcileResult> {
   const projectId = requireProjectId(layer);
-  const result: PatchnodeReconcileResult = { completedInserted: 0, revertedInserted: 0, archivedBackfilled: 0, truncated: false };
+  const result: PatchnodeReconcileResult = { completedInserted: 0, revertedInserted: 0, archivedBackfilled: 0, labelsRepaired: 0, truncated: false };
   const tasks = schema.project.tasks;
   const selectShape = {
     id: tasks.id,
     title: tasks.title,
+    description: tasks.description,
     summary: tasks.summary,
     column: tasks.column,
     columnMovedAt: tasks.columnMovedAt,
@@ -353,6 +384,50 @@ export async function reconcilePatchnodeFromLiveTasks(
     }
     if (rows.length < RECONCILE_PAGE_SIZE) break;
     archivedCursor = rows.at(-1)!.id;
+    if (page === RECONCILE_MAX_PAGES - 1) result.truncated = true;
+  }
+
+  /*
+  FNXC:PatchnodeLedger 2026-09-15-23:26:
+  FN-444: this fourth pass is the only non-insert write reconciliation performs, and it does not
+  break the insert-only guarantee the other passes exist to protect. It invents no delivery, no
+  occurrence, no lane and no point-in-time summary: it replaces a MISSING-label marker
+  (`title = task_id`, written by the pre-FN-444 builder for every titleless task) with the canonical
+  label of the task that is still live. Entries whose task is gone or soft-deleted are left exactly
+  as they are — the read surfaces render those degenerate rows without repeating the identifier.
+  The pass is bounded by the same page size and page cap as the others and is idempotent, because a
+  repaired row no longer matches `title = task_id`.
+  */
+  let repairCursor = "";
+  for (let page = 0; page < RECONCILE_MAX_PAGES; page += 1) {
+    const entries = schema.project.patchnodeEntries;
+    const rows = await layer.db.select({
+      entryId: entries.entryId,
+      taskId: entries.taskId,
+      title: entries.title,
+      body: entries.body,
+      taskTitle: tasks.title,
+      taskDescription: tasks.description,
+    }).from(entries).innerJoin(tasks, and(
+      eq(tasks.projectId, entries.projectId),
+      eq(tasks.id, entries.taskId),
+      isNull(tasks.deletedAt),
+    )).where(and(
+      eq(entries.projectId, projectId),
+      eq(entries.title, entries.taskId),
+      repairCursor ? gt(entries.entryId, repairCursor) : undefined,
+    )).orderBy(entries.entryId).limit(RECONCILE_PAGE_SIZE);
+    for (const row of rows) {
+      const repair = planPatchnodeLabelRepair(row, { id: row.taskId, title: row.taskTitle, description: row.taskDescription });
+      if (!repair) continue;
+      const updated = await layer.db.update(entries).set(repair).where(and(
+        eq(entries.projectId, projectId),
+        eq(entries.entryId, row.entryId),
+      )).returning({ entryId: entries.entryId });
+      if (updated.length) result.labelsRepaired += 1;
+    }
+    if (rows.length < RECONCILE_PAGE_SIZE) break;
+    repairCursor = rows.at(-1)!.entryId;
     if (page === RECONCILE_MAX_PAGES - 1) result.truncated = true;
   }
 
