@@ -13,12 +13,13 @@ import { type ModelInfo, type BoardWorkflowsPayload, type BoardWorkflowColumn, t
 import { useBlockerFanout, type BlockerFanoutColumnFlags } from "../hooks/useBlockerFanout";
 import { useColumnScrollSnap } from "../hooks/useColumnScrollSnap";
 import { useBoardMousePan } from "../hooks/useBoardMousePan";
-import { MOBILE_MEDIA_QUERY, useViewportMode } from "../hooks/useViewportMode";
+import { MOBILE_MEDIA_QUERY } from "../hooks/useViewportMode";
 import { recordResumeEvent } from "../utils/resumeInstrumentation";
 import { WorkflowSwitcher } from "./WorkflowSwitcher";
 import { computeWorkflowStatusCounts } from "./workflowStatusCounts";
 import { writeBoardWorkflowsCache } from "../utils/boardWorkflowsCache";
 import { useBoardWorkflows } from "../hooks/useBoardWorkflows";
+import { useHeaderWorkflowSlot } from "../hooks/useHeaderWorkflowSlot";
 import { useUnmappedWorkflowRefetch } from "../hooks/useUnmappedWorkflowRefetch";
 import {
   ALL_WORKFLOWS_BOARD_VIEW_ID,
@@ -235,7 +236,6 @@ function BoardContent({ tasks, projectId, maxConcurrent, maxWorktrees, showWorkt
     boardRef.current = element;
     setBoardElement((current) => current === element ? current : element);
   }, []);
-  const viewportMode = useViewportMode();
   useColumnScrollSnap(boardElement, { mobileOnly: true });
   useEffect(() => {
     if (!active) return;
@@ -261,22 +261,21 @@ function BoardContent({ tasks, projectId, maxConcurrent, maxWorktrees, showWorkt
   */
   const { isPanning: isBoardMousePanning, ...boardMousePanBindings } = useBoardMousePan(boardElement, true);
   const boardClassName = `board board-workflow-columns${isBoardMousePanning ? " is-mouse-panning" : ""}`;
-  const [headerWorkflowSlot, setHeaderWorkflowSlot] = useState<HTMLElement | null>(() => {
-    if (typeof document === "undefined") return null;
-    return document.getElementById("header-workflow-slot");
-  });
+  /*
+  FNXC:WorkflowControls 2026-09-15-01:44:
+  FN-405: slot resolution is shared with List, Graph, and the Planning/Missions slot. Board used to
+  resolve `#header-workflow-slot` exactly once per `[active, workflowControlsInHeader, viewportMode]`
+  change, so a header shell mounted after the Board — or a breakpoint swap that replaces the slot node —
+  left this null forever and the toolbar stayed inline UNDER the header. The shared hook keeps
+  re-resolving while the view is active, so the inline fallback now applies only to a genuinely absent
+  slot; an inactive Board still passes `enabled: false` and never claims the shared slot.
+  */
+  const headerWorkflowSlot = useHeaderWorkflowSlot({ enabled: active && workflowControlsInHeader });
   /*
   FNXC:TaskSearchPagination 2026-09-07-18:20:
   Search results are a server-paginated task collection, not a finite client-side filter. Every searched lane therefore receives the shared current-page cursor and automatic loading callback, including completion lanes; the separate completion-history pager applies only outside search.
   */
   const isSearchActive = searchQuery.trim() !== "";
-  useEffect(() => {
-    if (!active || !workflowControlsInHeader || typeof document === "undefined") {
-      setHeaderWorkflowSlot(null);
-      return;
-    }
-    setHeaderWorkflowSlot(document.getElementById("header-workflow-slot"));
-  }, [active, workflowControlsInHeader, viewportMode]);
 
   useEffect(() => {
     if (!active) return;
@@ -928,6 +927,12 @@ function BoardContent({ tasks, projectId, maxConcurrent, maxWorktrees, showWorkt
     React commits portals before the active-gate effect clears a retained Board's cached header slot.
     Gate selection here too, so an inactive Board renders its toolbar inline inside the hidden wrapper
     instead of claiming the shared slot for a commit.
+
+    FNXC:WorkflowControls 2026-09-15-01:44:
+    FN-405: `headerWorkflowSlot` now comes from the shared resolver, which keeps re-resolving a
+    late-mounted or replaced slot. A null value therefore means the header renders no slot at all, and
+    the inline fallback below is reserved for exactly that case rather than for a slot that simply had
+    not mounted at first render.
     */
     const shouldRelocateWorkflowToolbar = active && workflowControlsInHeader && Boolean(headerWorkflowSlot);
     const relocatedWorkflowToolbar = shouldRelocateWorkflowToolbar && workflowToolbar

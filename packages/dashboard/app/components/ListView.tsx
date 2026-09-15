@@ -40,6 +40,7 @@ import { ViewActionButton } from "./ViewActionButton";
 import { ViewHeader } from "./ViewHeader";
 import { computeWorkflowStatusCounts } from "./workflowStatusCounts";
 import { useBoardWorkflows } from "../hooks/useBoardWorkflows";
+import { useHeaderWorkflowSlot } from "../hooks/useHeaderWorkflowSlot";
 import { useUnmappedWorkflowRefetch } from "../hooks/useUnmappedWorkflowRefetch";
 import { TaskContextMenu, buildTaskActionMenuModel, getTaskPrAutomationLabel, type TaskContextMenuColumnMetadata, type TaskMenuItemDescriptor } from "./TaskContextMenu";
 import type { DetailTaskOpenOptions } from "../hooks/useModalManager";
@@ -429,10 +430,15 @@ export function ListView({
     setSelectedWorkflowId,
     refreshBoardWorkflows,
   } = useBoardWorkflows({ projectId });
-  const [headerWorkflowSlot, setHeaderWorkflowSlot] = useState<HTMLElement | null>(() => {
-    if (typeof document === "undefined") return null;
-    return document.getElementById("header-workflow-slot");
-  });
+  /*
+  FNXC:WorkflowControls 2026-09-15-01:44:
+  FN-405: List shares the single `#header-workflow-slot` with Board, Graph, and the Planning/Missions
+  slot. The previous one-shot `getElementById` never retried, so a header shell mounted after the List
+  — or a breakpoint swap that replaces the slot node — pinned the control to its inline fallback under
+  the header. The shared resolver keeps re-resolving while the view is active; an inactive List passes
+  `enabled: false` so it never claims the shared slot.
+  */
+  const headerWorkflowSlot = useHeaderWorkflowSlot({ enabled: active && workflowControlsInHeader });
   const viewportMode = useViewportMode();
   const isMobile = viewportMode === "mobile";
   const [listContainerWidth, setListContainerWidth] = useState<number | null>(null);
@@ -449,14 +455,6 @@ export function ListView({
       : viewportMode === "desktop");
   const useSinglePaneList = compact || !canRenderSplitLayout;
   const { confirm, confirmWithSelect } = useConfirm();
-
-  useEffect(() => {
-    if (!active || !workflowControlsInHeader || typeof document === "undefined") {
-      setHeaderWorkflowSlot(null);
-      return;
-    }
-    setHeaderWorkflowSlot(document.getElementById("header-workflow-slot"));
-  }, [active, workflowControlsInHeader, viewportMode]);
 
   // Column visibility state - initialize from localStorage or reduced default columns
   const [visibleColumns, setVisibleColumns] = useState<Set<ListColumn>>(() => readVisibleColumns(projectId));
@@ -1996,6 +1994,11 @@ export function ListView({
     A cached header slot survives the render where a retained List becomes inactive, before its
     active-gate effect clears state. Restrict the portal at render time so that commit leaves the
     shared slot empty and keeps the hidden toolbar inline.
+
+    FNXC:WorkflowControls 2026-09-15-01:44:
+    FN-405: `headerWorkflowSlot` comes from the shared resolver, which survives a late-mounted or
+    replaced slot. A null value therefore proves the header renders no slot, so the inline fallback
+    below applies only to a genuinely absent slot.
     */
     return active && workflowControlsInHeader && headerWorkflowSlot
       ? createPortal(workflowControl, headerWorkflowSlot)

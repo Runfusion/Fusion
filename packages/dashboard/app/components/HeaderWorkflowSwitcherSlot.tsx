@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 import { createPortal } from "react-dom";
 import type { BoardWorkflowDefinition, BoardWorkflowsPayload } from "../api";
 import { useBoardWorkflows } from "../hooks/useBoardWorkflows";
 import { ALL_WORKFLOWS_BOARD_VIEW_ID } from "../utils/boardWorkflowSelection";
-import { useViewportMode } from "../hooks/useViewportMode";
+import { useHeaderWorkflowSlot } from "../hooks/useHeaderWorkflowSlot";
 import { WorkflowSwitcher } from "./WorkflowSwitcher";
 import type { WorkflowStatusCounts } from "./workflowStatusCounts";
 
@@ -43,32 +43,16 @@ export function HeaderWorkflowSwitcherSlot({
     setSelectedWorkflowId,
     refreshBoardWorkflows,
   } = useBoardWorkflows({ projectId });
-  const viewportMode = useViewportMode();
+  /*
+  FNXC:MissionWorkflows 2026-06-25-00:00:
+  Missions shares Planning's header workflow dropdown because mission triage creates tasks. The header slot can be absent on mobile or during layout swaps, so poll only briefly and re-resolve on viewport changes to avoid an empty toolbar shell or an unbounded timer.
 
-  const [headerWorkflowSlot, setHeaderWorkflowSlot] = useState<HTMLElement | null>(() => {
-    if (typeof document === "undefined") return null;
-    return document.getElementById("header-workflow-slot");
-  });
-
-  useEffect(() => {
-    if (typeof document === "undefined") return;
-    const resolve = () => {
-      const slot = document.getElementById("header-workflow-slot");
-      setHeaderWorkflowSlot((previous) => (previous === slot ? previous : slot));
-      return slot;
-    };
-    if (resolve()) return;
-    /*
-    FNXC:MissionWorkflows 2026-06-25-00:00:
-    Missions shares Planning's header workflow dropdown because mission triage creates tasks. The header slot can be absent on mobile or during layout swaps, so poll only briefly and re-resolve on viewport changes to avoid an empty toolbar shell or an unbounded timer.
-    */
-    let attempts = 0;
-    const interval = window.setInterval(() => {
-      attempts += 1;
-      if (resolve() || attempts >= 20) window.clearInterval(interval);
-    }, 250);
-    return () => window.clearInterval(interval);
-  }, [viewportMode]);
+  FNXC:WorkflowControls 2026-09-15-01:44:
+  FN-405: that bounded retry now lives in the shared `useHeaderWorkflowSlot` resolver used by Board,
+  List, Graph, and this slot, so a late-mounted or replaced header slot is handled identically on every
+  surface instead of four divergent copies.
+  */
+  const headerWorkflowSlot = useHeaderWorkflowSlot({ enabled: true });
 
   const selection = useMemo<HeaderWorkflowSelection | null>(() => {
     if (!workflowMode || !boardWorkflows || !selectedWorkflow) return null;

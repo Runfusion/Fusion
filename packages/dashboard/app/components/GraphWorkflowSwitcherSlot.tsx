@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 import { createPortal } from "react-dom";
 import type { BoardWorkflowDefinition, BoardWorkflowsPayload } from "../api";
 import { useBoardWorkflows } from "../hooks/useBoardWorkflows";
 import { ALL_WORKFLOWS_BOARD_VIEW_ID } from "../utils/boardWorkflowSelection";
-import { useViewportMode } from "../hooks/useViewportMode";
+import { useHeaderWorkflowSlot } from "../hooks/useHeaderWorkflowSlot";
 import { WorkflowSwitcher } from "./WorkflowSwitcher";
 import type { WorkflowStatusCounts } from "./workflowStatusCounts";
 
@@ -61,32 +61,16 @@ export function GraphWorkflowSwitcherSlot({
     setSelectedWorkflowId,
     refreshBoardWorkflows,
   } = useBoardWorkflows({ projectId });
-  const viewportMode = useViewportMode();
+  /*
+  FNXC:GraphWorkflowSwitcher 2026-06-23-21:45:
+  Graph shares the Board/List header workflow affordance, but mobile and inactive left-sidebar layouts can omit `#header-workflow-slot`. Poll only briefly and re-resolve on viewport changes so Graph never spins forever or leaves an empty dropdown shell when the header slot is absent.
 
-  const [headerWorkflowSlot, setHeaderWorkflowSlot] = useState<HTMLElement | null>(() => {
-    if (typeof document === "undefined") return null;
-    return document.getElementById("header-workflow-slot");
-  });
-
-  useEffect(() => {
-    if (typeof document === "undefined") return;
-    const resolve = () => {
-      const slot = document.getElementById("header-workflow-slot");
-      setHeaderWorkflowSlot((previous) => (previous === slot ? previous : slot));
-      return slot;
-    };
-    if (resolve()) return;
-    /*
-    FNXC:GraphWorkflowSwitcher 2026-06-23-21:45:
-    Graph shares the Board/List header workflow affordance, but mobile and inactive left-sidebar layouts can omit `#header-workflow-slot`. Poll only briefly and re-resolve on viewport changes so Graph never spins forever or leaves an empty dropdown shell when the header slot is absent.
-    */
-    let attempts = 0;
-    const interval = window.setInterval(() => {
-      attempts += 1;
-      if (resolve() || attempts >= 20) window.clearInterval(interval);
-    }, 250);
-    return () => window.clearInterval(interval);
-  }, [viewportMode]);
+  FNXC:WorkflowControls 2026-09-15-01:44:
+  FN-405: that bounded retry now lives in the shared `useHeaderWorkflowSlot` resolver used by Board,
+  List, Graph, and the Planning/Missions slot, so all four surfaces survive a late-mounted or replaced
+  slot identically instead of drifting apart.
+  */
+  const headerWorkflowSlot = useHeaderWorkflowSlot({ enabled: true });
 
   const selection = useMemo<GraphWorkflowSelection | null>(() => {
     if (!workflowMode || !boardWorkflows || !selectedWorkflow) return null;

@@ -1588,6 +1588,70 @@ describe("Board", () => {
       }
     });
 
+    /*
+    FNXC:WorkflowControls 2026-09-15-01:44:
+    FN-405 symptom regression: the header slot can mount AFTER Board (project shell mounted after the
+    view, breakpoint swap replacing the slot node). Board used to resolve `#header-workflow-slot` once
+    and never retry, so the selector stayed in the inline `.board-workflow-toolbar` rendered UNDER the
+    header forever. The shared resolver must relocate it once the slot appears, exactly once.
+    */
+    it("relocates the workflow selector when the header slot mounts after the first render", async () => {
+      enableFlag({ "FN-1": "builtin:coding", "FN-2": "wf-custom" }, [DEFAULT_WORKFLOW, CUSTOM_WORKFLOW]);
+      const headerSlot = document.createElement("div");
+      headerSlot.id = "header-workflow-slot";
+      headerSlot.className = "header-workflow-slot";
+      try {
+        renderBoard({
+          tasks: [mkTask({ id: "FN-1" }), mkTask({ id: "FN-2", column: "intake" })],
+          workflowControlsInHeader: true,
+        });
+
+        await screen.findByTestId("workflow-switcher");
+        // No slot yet: the documented inline fallback is the only safe placement.
+        await waitFor(() => expect(document.querySelector(".board-workflow-view > .board-workflow-toolbar")).not.toBeNull());
+
+        document.body.appendChild(headerSlot);
+
+        await waitFor(() => expect(headerSlot.querySelector(".board-workflow-toolbar")).not.toBeNull());
+        expect(headerSlot.contains(screen.getByTestId("workflow-switcher"))).toBe(true);
+        expect(document.querySelector(".board-workflow-view > .board-workflow-toolbar")).toBeNull();
+        expect(document.querySelectorAll(".board-workflow-toolbar")).toHaveLength(1);
+      } finally {
+        headerSlot.remove();
+      }
+    });
+
+    it("migrates the workflow selector when the header slot node is replaced", async () => {
+      enableFlag({ "FN-1": "builtin:coding", "FN-2": "wf-custom" }, [DEFAULT_WORKFLOW, CUSTOM_WORKFLOW]);
+      const mobileSlot = document.createElement("div");
+      mobileSlot.id = "header-workflow-slot";
+      mobileSlot.className = "header-workflow-slot header-workflow-slot--mobile";
+      document.body.appendChild(mobileSlot);
+      const desktopSlot = document.createElement("div");
+      desktopSlot.id = "header-workflow-slot";
+      desktopSlot.className = "header-workflow-slot";
+      try {
+        renderBoard({
+          tasks: [mkTask({ id: "FN-1" }), mkTask({ id: "FN-2", column: "intake" })],
+          workflowControlsInHeader: true,
+        });
+
+        await waitFor(() => expect(mobileSlot.querySelector(".board-workflow-toolbar")).not.toBeNull());
+
+        // Breakpoint swap: same id, different node.
+        mobileSlot.remove();
+        document.body.appendChild(desktopSlot);
+
+        await waitFor(() => expect(desktopSlot.querySelector(".board-workflow-toolbar")).not.toBeNull());
+        expect(mobileSlot.querySelector(".board-workflow-toolbar")).toBeNull();
+        expect(document.querySelector(".board-workflow-view > .board-workflow-toolbar")).toBeNull();
+        expect(document.querySelectorAll(".board-workflow-toolbar")).toHaveLength(1);
+      } finally {
+        mobileSlot.remove();
+        desktopSlot.remove();
+      }
+    });
+
     it("keeps the board workflow toolbar inline when header relocation is inactive", async () => {
       const headerSlot = document.createElement("div");
       headerSlot.id = "header-workflow-slot";

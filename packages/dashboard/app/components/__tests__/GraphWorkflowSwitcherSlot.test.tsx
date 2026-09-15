@@ -131,6 +131,24 @@ describe("GraphWorkflowSwitcherSlot", () => {
     });
   });
 
+  /*
+  FNXC:WorkflowControls 2026-09-15-01:44:
+  FN-405: Graph now shares `useHeaderWorkflowSlot` with Board, List, and the Planning/Missions slot.
+  A header slot mounted after Graph must still receive the switcher rather than leaving it unrendered.
+  */
+  it("portals into a header workflow slot mounted after the first render", async () => {
+    render(<GraphWorkflowSwitcherSlot projectId="project-graph-late" />);
+
+    await waitFor(() => expect(fetchBoardWorkflowsMock).toHaveBeenCalled());
+    expect(screen.queryByTestId("workflow-switcher")).toBeNull();
+
+    const headerSlot = appendHeaderWorkflowSlot();
+
+    const selector = await screen.findByTestId("workflow-switcher");
+    expect(headerSlot.contains(selector)).toBe(true);
+    expect(document.querySelectorAll(".board-workflow-toolbar")).toHaveLength(1);
+  });
+
   it("refreshes the board-workflows payload when the dropdown opens", async () => {
     appendHeaderWorkflowSlot();
     render(<GraphWorkflowSwitcherSlot projectId="project-refresh" />);

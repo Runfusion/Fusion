@@ -93,6 +93,30 @@ describe("HeaderWorkflowSwitcherSlot", () => {
     });
   });
 
+  /*
+  FNXC:WorkflowControls 2026-09-15-01:44:
+  FN-405: the Planning/Missions slot now shares `useHeaderWorkflowSlot` with Board, List, and Graph.
+  A header slot mounted after this component must still receive the switcher.
+  */
+  it("portals into a header workflow slot mounted after the first render", async () => {
+    render(<HeaderWorkflowSwitcherSlot projectId="project-header-late" />);
+
+    await waitFor(() => expect(fetchBoardWorkflowsMock).toHaveBeenCalled());
+    expect(screen.queryByTestId("workflow-switcher")).toBeNull();
+
+    const headerSlot = document.createElement("div");
+    headerSlot.id = "header-workflow-slot";
+    headerSlot.className = "header-workflow-slot";
+    document.body.appendChild(headerSlot);
+    try {
+      const selector = await screen.findByTestId("workflow-switcher");
+      expect(headerSlot.contains(selector)).toBe(true);
+      expect(document.querySelectorAll(".board-workflow-toolbar")).toHaveLength(1);
+    } finally {
+      headerSlot.remove();
+    }
+  });
+
   it("keeps the Planning wrapper rendering the shared header switcher", async () => {
     renderWithHeader(<PlanningWorkflowSwitcherSlot projectId="project-planning" />);
 

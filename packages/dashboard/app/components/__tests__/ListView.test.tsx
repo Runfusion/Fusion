@@ -2313,6 +2313,85 @@ describe("ListView", () => {
     }
   });
 
+  /*
+  FNXC:WorkflowControls 2026-09-15-01:44:
+  FN-405 symptom regression: List resolved `#header-workflow-slot` once and never retried, so a header
+  slot mounted after the view (or replaced on a breakpoint swap) pinned the control to its inline
+  fallback under the header. The shared resolver must relocate it once the slot exists, exactly once.
+  */
+  it("relocates the list workflow selector when the header slot mounts after the first render", async () => {
+    const headerSlot = document.createElement("div");
+    headerSlot.id = "header-workflow-slot";
+    headerSlot.className = "header-workflow-slot";
+    vi.mocked(fetchBoardWorkflows).mockResolvedValue({
+      flagEnabled: true,
+      defaultWorkflowId: "builtin:coding",
+      workflows: [
+        { id: "builtin:coding", name: "Coding", columns: [{ id: "triage", name: "Triage", flags: { intake: true } }] },
+        { id: "wf-custom", name: "Custom", columns: [{ id: "backlog", name: "Backlog", flags: { intake: true } }] },
+      ],
+      taskWorkflowIds: { "FN-001": "builtin:coding" },
+    });
+    try {
+      renderListView({
+        tasks: [createMockTask({ id: "FN-001", column: "triage", title: "Coding task" })],
+        onCreateWorkflow: vi.fn(),
+        workflowControlsInHeader: true,
+      });
+
+      await screen.findByTestId("workflow-switcher");
+      await waitFor(() => expect(document.querySelector(".list-view .list-workflow-control")).not.toBeNull());
+
+      document.body.appendChild(headerSlot);
+
+      await waitFor(() => expect(headerSlot.querySelector(".list-workflow-control")).not.toBeNull());
+      expect(headerSlot.contains(screen.getByTestId("workflow-switcher"))).toBe(true);
+      expect(document.querySelector(".list-view .list-workflow-control")).toBeNull();
+      expect(document.querySelectorAll(".list-workflow-control")).toHaveLength(1);
+    } finally {
+      headerSlot.remove();
+    }
+  });
+
+  it("migrates the list workflow selector when the header slot node is replaced", async () => {
+    const mobileSlot = document.createElement("div");
+    mobileSlot.id = "header-workflow-slot";
+    mobileSlot.className = "header-workflow-slot header-workflow-slot--mobile";
+    document.body.appendChild(mobileSlot);
+    const desktopSlot = document.createElement("div");
+    desktopSlot.id = "header-workflow-slot";
+    desktopSlot.className = "header-workflow-slot";
+    vi.mocked(fetchBoardWorkflows).mockResolvedValue({
+      flagEnabled: true,
+      defaultWorkflowId: "builtin:coding",
+      workflows: [
+        { id: "builtin:coding", name: "Coding", columns: [{ id: "triage", name: "Triage", flags: { intake: true } }] },
+        { id: "wf-custom", name: "Custom", columns: [{ id: "backlog", name: "Backlog", flags: { intake: true } }] },
+      ],
+      taskWorkflowIds: { "FN-001": "builtin:coding" },
+    });
+    try {
+      renderListView({
+        tasks: [createMockTask({ id: "FN-001", column: "triage", title: "Coding task" })],
+        onCreateWorkflow: vi.fn(),
+        workflowControlsInHeader: true,
+      });
+
+      await waitFor(() => expect(mobileSlot.querySelector(".list-workflow-control")).not.toBeNull());
+
+      mobileSlot.remove();
+      document.body.appendChild(desktopSlot);
+
+      await waitFor(() => expect(desktopSlot.querySelector(".list-workflow-control")).not.toBeNull());
+      expect(mobileSlot.querySelector(".list-workflow-control")).toBeNull();
+      expect(document.querySelector(".list-view .list-workflow-control")).toBeNull();
+      expect(document.querySelectorAll(".list-workflow-control")).toHaveLength(1);
+    } finally {
+      mobileSlot.remove();
+      desktopSlot.remove();
+    }
+  });
+
   it("keeps list workflow controls inline when header relocation is inactive", async () => {
     const headerSlot = document.createElement("div");
     headerSlot.id = "header-workflow-slot";

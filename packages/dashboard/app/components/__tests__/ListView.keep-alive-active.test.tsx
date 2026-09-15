@@ -125,4 +125,24 @@ describe("ListView active keep-alive gate", () => {
       restoreViewport();
     }
   });
+
+  /*
+  FNXC:WorkflowControls 2026-09-15-01:44:
+  FN-405: an inactive List must release the shared slot, but a List that becomes active again must
+  RECLAIM it. The shared resolver re-resolves on re-enable, so the round trip must end with the control
+  back in the header and no residual inline copy.
+  */
+  it("reclaims the header workflow slot when it becomes active again", async () => {
+    const slot = createHeaderSlot();
+    const { container, rerender } = render(<ListView {...listProps({ active: true, workflowControlsInHeader: true })} />);
+    await waitFor(() => expect(slot.querySelector(".list-workflow-control")).not.toBeNull());
+
+    rerender(<ListView {...listProps({ active: false, workflowControlsInHeader: true })} />);
+    await waitFor(() => expect(slot).toBeEmptyDOMElement());
+
+    rerender(<ListView {...listProps({ active: true, workflowControlsInHeader: true })} />);
+    await waitFor(() => expect(slot.querySelector(".list-workflow-control")).not.toBeNull());
+    expect(container.querySelector(".list-workflow-control")).toBeNull();
+    expect(document.querySelectorAll(".list-workflow-control")).toHaveLength(1);
+  });
 });
