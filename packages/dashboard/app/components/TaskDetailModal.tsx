@@ -54,7 +54,7 @@ import { getTaskTitleDisplayText } from "../utils/taskTitleDisplay";
 import { extractTaskProductSummary } from "../utils/taskPlanSummary";
 import { resolveEffectiveAutoMerge } from "../../../core/src/merge/task-merge";
 import { uploadAttachment, deleteAttachment, updateTask, repairOverlapBlocker, fetchOverlapBlockerReport, fetchTaskDetail, fetchTaskPrompt, fetchSpecLock, fetchTaskVerificationRequest, fetchSettings, fetchTaskEffectiveSettings, fetchGlobalSettings, requestSpecRevision, rebuildTaskSpec, approvePlan, rejectPlan, fetchWorkflowResults, assignTask, fetchAgents, fetchAgent, refreshPrStatus, fetchBoardWorkflows, updateTaskCustomFields, fetchWorkflowSettingValues, nudgeOverseer, stopOverseer, explainOverseer, fetchModels, fetchNodes, api } from "../api";
-import type { RevertTaskOptions, RevertTaskResult, ModelInfo, NodeInfo, SpecLockResponse, TaskOverlapBlockerReport } from "../api";
+import type { RestoreTaskRevertOptions, RestoreTaskRevertResult, RevertTaskOptions, RevertTaskResult, ModelInfo, NodeInfo, SpecLockResponse, TaskOverlapBlockerReport } from "../api";
 import type { BoardWorkflowsPayload, WorkflowFieldDefinition, CustomFieldRejection } from "../api";
 import { WorkflowIcon } from "./WorkflowIcon";
 import { ApiRequestError } from "../api";
@@ -523,8 +523,6 @@ export interface TaskDetailModalProps {
   columnFlagsByTaskId?: ReadonlyMap<string, BlockerFanoutColumnFlags>;
   onClose: () => void;
   onOpenDetail: (task: Task | TaskDetail, initialTab?: DetailTaskTab) => void; // For clicking linked task details
-  /** Opens a New Task draft from a reverted task description. */
-  onReviseTask?: (task: Task) => void;
   onDeleteTask: (id: string, options?: {
     removeDependencyReferences?: boolean;
     removeLineageReferences?: boolean;
@@ -532,6 +530,8 @@ export interface TaskDetailModalProps {
     allowResurrection?: boolean;
   }) => Promise<Task>;
   onRevertTask?: (id: string, body?: RevertTaskOptions) => Promise<RevertTaskResult>;
+  /* FNXC:TaskRevert 2026-09-15-10:00 (FN-416): restore-the-revert replaces the reverted task's Revise action. */
+  onRestoreRevertTask?: (id: string, body?: RestoreTaskRevertOptions) => Promise<RestoreTaskRevertResult>;
   onMergeTask: (id: string) => Promise<MergeResult>;
   onRetryTask?: (id: string) => Promise<Task>;
   onOpenChatWithPrefill?: (prefillText: string) => void;
@@ -931,8 +931,8 @@ export function TaskDetailContent({
   columnFlagsByTaskId,
   onOpenDetail,
   onDeleteTask,
-  onReviseTask,
   onRevertTask,
+  onRestoreRevertTask,
   onMergeTask,
   onRetryTask,
   onOpenChatWithPrefill,
@@ -3635,6 +3635,38 @@ export function TaskDetailContent({
     }
   }, [onRevertTask, confirm, task.id, addToast, t]);
 
+  /*
+  FNXC:TaskRevert 2026-09-15-10:00 (FN-416):
+  Detail-surface restore-the-revert, same contract and toast vocabulary as the card/list handlers.
+  */
+  const handleRestoreRevertTask = useCallback(async () => {
+    if (!onRestoreRevertTask) return;
+    try {
+      const result = await onRestoreRevertTask(task.id, { mode: "auto" });
+
+      if (result.mode === "ai") {
+        addToast(result.alreadyOpen
+          ? t("tasks.restoreRevertAlreadyOpen", "A restore task is already open: {{id}}", { id: result.createdTaskId })
+          : t("tasks.restoreRevertAiCreated", "Created restore task {{id}}", { id: result.createdTaskId }), "success");
+        return;
+      }
+
+      if (result.needsHuman) {
+        addToast(t("tasks.restoreRevertNeedsHuman", "Cannot restore {{taskId}}: {{reason}}", { taskId: task.id, reason: result.reason || t("tasks.revertNeedsHumanDefault", "human review required") }), "error");
+        return;
+      }
+
+      if (result.clean) {
+        addToast(t("tasks.restoreRevertSuccess", "Restored {{taskId}}", { taskId: task.id }), "success");
+        return;
+      }
+
+      addToast(t("tasks.restoreRevertFailed", "Failed to restore {{taskId}}", { taskId: task.id }), "error");
+    } catch (err) {
+      addToast(getErrorMessage(err), "error");
+    }
+  }, [addToast, onRestoreRevertTask, task.id, t]);
+
   const isTaskPaused = task.paused || task.userPaused;
   /*
   FNXC:PlanReviewReplan 2026-07-15-11:09:
@@ -4619,14 +4651,18 @@ export function TaskDetailContent({
       ...detailQuickActionItems,
       ...taskActionMenuModel.actions.filter((action) => !TASK_DETAIL_DIRECT_ACTION_IDS.has(action.id)),
     ];
-    if (isTaskReverted(task.sourceMetadata) && onReviseTask) {
+    /*
+    FNXC:TaskRevert 2026-09-15-10:00 (FN-416):
+    A reverted task is offered "Restore revert" instead of Revert (there is nothing left to revert)
+    and instead of the removed Revise action.
+    */
+    if (isTaskReverted(task.sourceMetadata) && onRestoreRevertTask) {
       actions.push({
-        id: "revise",
-        label: t("taskDetail.revise", "Revise"),
-        onSelect: () => { onReviseTask(task); requestClose(); },
+        id: "restore-revert",
+        label: t("tasks.restoreRevert", "Restore revert"),
+        onSelect: () => void handleRestoreRevertTask(),
       });
-    }
-    if (isDoneColumn && onRevertTask && isRevertable) {
+    } else if (isDoneColumn && onRevertTask && isRevertable) {
       actions.push({
         id: "revert",
         label: t("tasks.revert", "Revert"),
@@ -4634,7 +4670,7 @@ export function TaskDetailContent({
       });
     }
     return actions;
-  }, [detailQuickActionItems, taskActionMenuModel.actions, task, onReviseTask, requestClose, isDoneColumn, onRevertTask, isRevertable, handleRevertTask, t]);
+  }, [detailQuickActionItems, taskActionMenuModel.actions, task, isDoneColumn, onRevertTask, onRestoreRevertTask, isRevertable, handleRestoreRevertTask, handleRevertTask, t]);
 
   const closeActivityViewMenuAndFocusTrigger = useCallback(() => {
     activityViewMenuViewportGuardUntilRef.current = 0;

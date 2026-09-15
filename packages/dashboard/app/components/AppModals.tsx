@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, lazy, Suspense } from "react";
 import { useTranslation } from "react-i18next";
-import type { ProjectInfo, RevertTaskOptions, RevertTaskResult } from "../api";
+import type { ProjectInfo, RestoreTaskRevertOptions, RestoreTaskRevertResult, RevertTaskOptions, RevertTaskResult } from "../api";
 import type { ColorTheme, Column, MergeResult, Task, TaskCreateInput, ThemeMode, UiStyle, GithubIssueAction } from "@fusion/core";
 import type { UseProjectActionsResult } from "../hooks/useProjectActions";
 import { mergeTaskSnapshot } from "../hooks/useTasks";
@@ -117,6 +117,8 @@ interface AppModalsProps {
     }) => Promise<Task>;
     mergeTask: (taskId: string) => Promise<MergeResult>;
     revertTask?: (taskId: string, body?: RevertTaskOptions) => Promise<RevertTaskResult>;
+    /* FNXC:TaskRevert 2026-09-15-10:00 (FN-416): restore-the-revert action for a reverted task. */
+    restoreTaskRevert?: (taskId: string, body?: RestoreTaskRevertOptions) => Promise<RestoreTaskRevertResult>;
     retryTask: (taskId: string) => Promise<Task>;
     pauseTask: (taskId: string) => Promise<Task>;
     unpauseTask: (taskId: string) => Promise<Task>;
@@ -406,11 +408,11 @@ export function AppModals({
             onClosed={() => { detailNavCloseRef.current = null; }}
             onOpenDetail={openDetailTaskWithNav}
             mobileHeaderMode={modalManager.detailTaskOrigin === "list-mobile" ? "back" : "close"}
-            /* FNXC:TaskRevert 2026-08-01-20:27: Modal detail must offer the same revision draft recovery as every reverted-task host. */
-            onReviseTask={(task) => modalManager.openNewTaskWithDescription(task.description)}
             onDeleteTask={taskOperations.deleteTask}
             onMergeTask={taskOperations.mergeTask}
             onRevertTask={taskOperations.revertTask}
+            /* FNXC:TaskRevert 2026-09-15-10:00 (FN-416): a reverted task is resolved by restoring its revert, not by a Revise draft. */
+            onRestoreRevertTask={taskOperations.restoreTaskRevert}
             onRetryTask={taskOperations.retryTask}
             onOpenChatWithPrefill={onOpenChatWithPrefill}
             onPauseTask={taskOperations.pauseTask}

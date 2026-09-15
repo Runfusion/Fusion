@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { isCompleteColumnRole } from "../utils/columnRoles";
 import { isTaskReverted } from "../utils/taskRevert";
 import type { GithubIssueAction, Task, TaskDetail } from "@fusion/core";
+import type { RestoreTaskRevertOptions, RestoreTaskRevertResult } from "../api";
 import type { ToastType } from "../hooks/useToast";
 import { TaskCard } from "./TaskCard";
 import "./DockTaskList.css";
@@ -13,7 +14,8 @@ export interface DockTaskListProps {
   tasks: Array<Task | TaskDetail>;
   projectId?: string;
   onOpenTask?: (task: Task | TaskDetail) => void;
-  onReviseTask?: (task: Task) => void;
+  /* FNXC:TaskRevert 2026-09-15-10:00 (FN-416): reverted dock rows expose restore-the-revert, not Delete/Revise buttons. */
+  onRestoreRevertTask?: (id: string, body?: RestoreTaskRevertOptions) => Promise<RestoreTaskRevertResult>;
   onUpdateTask?: (id: string, updates: { title?: string; description?: string; dependencies?: string[]; dismissNearDuplicate?: boolean; githubTracking?: { enabled?: boolean } }) => Promise<Task>;
   onDeleteTask?: (id: string, options?: { removeDependencyReferences?: boolean; removeLineageReferences?: boolean; githubIssueAction?: GithubIssueAction; allowResurrection?: boolean }) => Promise<Task>;
   onOpenChatWithPrefill?: (prefillText: string) => void;
@@ -46,7 +48,7 @@ export function DockTaskList({ columnFlagsByTaskId,
   projectId,
   onOpenTask,
   onDeleteTask,
-  onReviseTask,
+  onRestoreRevertTask,
   onUpdateTask,
   onOpenChatWithPrefill,
   addToast = () => {},
@@ -145,7 +147,7 @@ export function DockTaskList({ columnFlagsByTaskId,
             Every task Delete affordance must reach the shared confirm→delete flow. The right-dock Tasks list is a TaskCard host, so it must pass onDeleteTask instead of rendering cards that silently lack/delete-disable the destructive path.
             */
             onDeleteTask={onDeleteTask}
-            onReviseTask={onReviseTask}
+            onRestoreRevertTask={onRestoreRevertTask}
             onUpdateTask={onUpdateTask}
             onOpenChatWithPrefill={onOpenChatWithPrefill}
             addToast={addToast}

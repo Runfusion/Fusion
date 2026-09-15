@@ -319,7 +319,7 @@ After you have visited **Board**, **List**, or **Chat**, switching to another da
 
 ### Board panning and mobile Kanban column snapping
 
-Reverted work remains in its own workflow column and is marked with a **Reverted** label; it is not collected into a separate board, list, or right-dock group. Its resolution actions remain available on the Board and right-dock card, in the List row context menu, and in Task Detail: use **Delete** to remove the task or **Revise** to create a follow-up revision.
+Reverted work remains in its own workflow column and is marked with a **Reverted** label; it is not collected into a separate board, list, or right-dock group. The card itself carries the label and nothing else — no Delete/Revise buttons. Its one resolution action, **Restore revert**, lives in the task context menu (Board and right-dock card right-click or long-press, List row context menu, Task Detail actions).
 
 <!-- FNXC:BoardNavigationDocs 2026-08-21-18:21: FN-115 preserves native task-card activation until horizontal Board pan intent is proven, so stationary clicks continue to reach the configured popup, right-dock, or main-panel detail destination. -->
 <!-- FNXC:BoardNavigationDocs 2026-08-27-10:09: FN-194 intentionally makes Board text non-selectable because native selection-autoscroll was a second, involuntary horizontal scroll path before the mouse-pan threshold. Editable Board controls retain native selection. -->
@@ -423,7 +423,7 @@ The Alpha icon-only pill provides Dashboard, Planning, Chat, and Mailbox as a fl
 <!-- FNXC:TaskDetailAlphaDocs 2026-09-11-17:35: Task Detail uses the same canonical four-zone shell and action ownership in modal, embedded, pop-out, and Alpha drawer hosts; Alpha changes presentation, never layout semantics or lifecycle eligibility. -->
 ### Task Detail presentation
 
-The complete Task Detail surface—not only its chat content—uses Fusion’s official neutral presentation. Every host follows the same fixed order: **Header → Tabs → Content → optional Footer**. The compact header shows the task number and status, followed by icon-only **Duplicate**, **Retry**, **Delete**, **Pause/Unpause**, and **Reset** actions when each is eligible. Its icon-only **Actions** overflow retains attachments, GitHub tracking, oversight, priority, Fast mode, refinement, bypass, Revise, and Revert operations. Every icon has a localized accessible name and tooltip.
+The complete Task Detail surface—not only its chat content—uses Fusion’s official neutral presentation. Every host follows the same fixed order: **Header → Tabs → Content → optional Footer**. The compact header shows the task number and status, followed by icon-only **Duplicate**, **Retry**, **Delete**, **Pause/Unpause**, and **Reset** actions when each is eligible. Its icon-only **Actions** overflow retains attachments, GitHub tracking, oversight, priority, Fast mode, refinement, bypass, and Revert operations — or **Restore revert** in place of Revert once the task has been reverted. Every icon has a localized accessible name and tooltip.
 
 The horizontally scrollable tab strip remains immediately below the header. The central content alone consumes the remaining height and owns ordinary scrolling. Activity Live and task Chat fill that height in empty, loading, populated, and streaming states: the transcript shrinks and scrolls while the composer remains the final in-flow element at the lower edge without covering messages. A footer is rendered only for persistent contextual controls such as edit Save/Cancel, plan Approve/Reject, or review/PR completion; standard tasks render no empty footer.
 
@@ -2868,7 +2868,15 @@ per-modal geometry coverage.
 
 ### Reverted task resolution
 
-When a completed task is successfully reverted, it remains in its ordinary workflow column or list group with a **Reverted** label. It is not moved to a separate group. Open the task for provenance, choose **Delete** from the Board or right-dock card, List row context menu, or task detail to use the existing guarded deletion flow, or choose **Revise** from those same resolution surfaces to open New Task with the original description prefilled.
+When a completed task is successfully reverted, it remains in its ordinary workflow column or list group with a **Reverted** label. It is not moved to a separate group, and the card shows only that label — the former Delete/Revise button pair on the card is gone.
+
+To undo the revert, open the task context menu (right-click a Board or right-dock card, long-press it on mobile, use the List row context menu, or open the Task Detail actions) and choose **Restore revert**. An already-reverted task is not offered **Revert** again.
+
+What happens then:
+
+- Fusion reverts the revert commit(s) on the integration branch and shows a success toast. The **Reverted** label disappears on every surface (board, list, dock) once the restore is recorded; the revert history itself is preserved, so the task's Patchnode cancellation record stays readable.
+- If the restore conflicts with later work, nothing is force-written. Fusion creates a dedicated AI task that re-applies the reverted behavior while preserving later changes to the same files; that task is delivered by the ordinary AI merge pipeline (the Merger agent), which owns AI-assisted conflict resolution. A second attempt while that task is still open re-uses it instead of creating a duplicate.
+- If auto-merge is off for the task or project, Fusion refuses with an explanatory toast rather than writing to a branch the project opted out of.
 
 ### Todo Lists plugin enablement
 

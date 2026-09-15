@@ -1696,16 +1696,18 @@ describe("ListView", () => {
       status: "done",
       sourceMetadata: { revertedAt: "2026-08-01T00:00:00.000Z" },
     });
-    const onReviseTask = vi.fn();
+    /* FN-416 case (b): the reverted row's Revise entry is replaced by Restore revert. */
+    const onRestoreRevertTask = vi.fn().mockResolvedValue({ mode: "git", clean: true, restoreCommitSha: "restore-sha" });
 
-    renderListView({ tasks: [reverted], onReviseTask });
+    renderListView({ tasks: [reverted], onRestoreRevertTask });
 
     expect(screen.queryByTestId("list-reverted-tasks")).toBeNull();
     expect(document.querySelector('.list-row[data-id="FN-REVERTED"]')).toHaveTextContent("Reverted");
     fireEvent.contextMenu(document.querySelector('.list-row[data-id="FN-REVERTED"]') as HTMLElement, { clientX: 40, clientY: 50 });
     expect(screen.getByRole("menuitem", { name: "Delete" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("menuitem", { name: "Revise" }));
-    expect(onReviseTask).toHaveBeenCalledWith(reverted);
+    expect(screen.queryByRole("menuitem", { name: "Revise" })).toBeNull();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Restore revert" }));
+    expect(onRestoreRevertTask).toHaveBeenCalledWith("FN-REVERTED", { mode: "auto" });
     viewportSpy.mockRestore();
   });
 
@@ -1727,7 +1729,7 @@ describe("ListView", () => {
     viewportSpy.mockRestore();
   });
 
-  it("keeps reverted completed rows labelled and revisable from mobile long-press", () => {
+  it("keeps reverted completed rows labelled and restorable from mobile long-press", () => {
     vi.useFakeTimers();
     const viewportSpy = mockMobileViewport();
     const reverted = createMockTask({
@@ -1737,9 +1739,10 @@ describe("ListView", () => {
       status: "done",
       sourceMetadata: { revertedAt: "2026-08-01T00:00:00.000Z" },
     });
-    const onReviseTask = vi.fn();
+    /* FN-416 case (h): mobile long-press exposes the same single restore affordance as desktop right-click. */
+    const onRestoreRevertTask = vi.fn().mockResolvedValue({ mode: "git", clean: true, restoreCommitSha: "restore-sha" });
 
-    renderListView({ tasks: [reverted], onReviseTask });
+    renderListView({ tasks: [reverted], onRestoreRevertTask });
 
     const card = document.querySelector('.list-card[data-id="FN-REVERTED-MOBILE"]') as HTMLElement;
     expect(card).toHaveTextContent("Reverted");
@@ -1747,8 +1750,9 @@ describe("ListView", () => {
     act(() => {
       vi.advanceTimersByTime(550);
     });
-    fireEvent.pointerUp(screen.getByRole("menuitem", { name: "Revise" }), { pointerType: "touch", pointerId: 2 });
-    expect(onReviseTask).toHaveBeenCalledWith(reverted);
+    expect(screen.queryByRole("menuitem", { name: "Revise" })).toBeNull();
+    fireEvent.pointerUp(screen.getByRole("menuitem", { name: "Restore revert" }), { pointerType: "touch", pointerId: 2 });
+    expect(onRestoreRevertTask).toHaveBeenCalledWith("FN-REVERTED-MOBILE", { mode: "auto" });
     viewportSpy.mockRestore();
     vi.useRealTimers();
   });

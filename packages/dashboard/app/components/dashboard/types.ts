@@ -32,6 +32,8 @@ import type {
   ProjectInfoWithSource,
   RevertTaskOptions,
   RevertTaskResult,
+  RestoreTaskRevertOptions,
+  RestoreTaskRevertResult,
   PluginDashboardViewEntry,
 } from "../../api";
 import type { FusionShellApi } from "../../types/native-shell";
@@ -219,6 +221,8 @@ export interface MainContentProps {
   ) => Promise<Task>;
   retryTask: (id: string) => Promise<Task>;
   revertTask: (id: string, body?: RevertTaskOptions) => Promise<RevertTaskResult>;
+  /* FNXC:TaskRevert 2026-09-15-10:00 (FN-416): restore-the-revert operation forwarded to board/list surfaces. */
+  restoreTaskRevert: (id: string, body?: RestoreTaskRevertOptions) => Promise<RestoreTaskRevertResult>;
   deleteTask: (
     id: string,
     options?: {

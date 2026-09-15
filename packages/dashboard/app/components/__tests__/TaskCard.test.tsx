@@ -7394,17 +7394,21 @@ describe("TaskCard reverted chip", () => {
     expect(screen.getByLabelText("This task's changes were reverted")).toBeInTheDocument();
   });
 
-  it("renders Delete and Revise resolution actions when handlers are supplied", () => {
-    const onReviseTask = vi.fn();
+  /*
+  FN-416 removed the card's Delete/Revise resolution strip: a reverted card carries only its badge,
+  and restoring the revert is a context-menu action. Full coverage of the replacement affordance
+  lives in TaskCard.revert-restore.test.tsx; this case keeps the old contract from creeping back.
+  */
+  it("renders no Delete or Revise resolution actions on a reverted card", () => {
     const task = makeTask({ column: "done", sourceMetadata: { revertedAt: "2026-07-16T00:00:00.000Z" } });
     render(
-      <TaskCard task={task} onOpenDetail={noop} onDeleteTask={vi.fn()} onReviseTask={onReviseTask} addToast={noop} />,
+      <TaskCard task={task} onOpenDetail={noop} onDeleteTask={vi.fn()} addToast={noop} />,
     );
 
-    const actions = document.querySelector(".card-reverted-actions") as HTMLElement;
-    expect(within(actions).getByRole("button", { name: "Delete" })).toBeInTheDocument();
-    fireEvent.click(within(actions).getByRole("button", { name: "Revise" }));
-    expect(onReviseTask).toHaveBeenCalledWith(task);
+    expect(document.querySelector(".card-reverted-actions")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Revise" })).toBeNull();
+    expect(screen.getByLabelText("This task's changes were reverted")).toBeInTheDocument();
   });
 
   it("does not render for missing, blank, or non-completed revert markers", () => {

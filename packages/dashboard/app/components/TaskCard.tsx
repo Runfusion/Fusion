@@ -21,7 +21,7 @@ import { resolveEffectiveAutoMerge } from "../../../core/src/merge/task-merge";
 // resolver — like resolveEffectiveAutoMerge above — must be imported from its source module
 // directly rather than the package barrel.
 import { resolveEffectivePlannerOversightLevel } from "../../../core/src/workflows/workflow-settings-resolver";
-import { addressPrFeedback, approvePlan, fetchTaskDetail, uploadAttachment, fetchMission, fetchAgent, refreshPrStatus, fetchWorkflowSettingValues, fetchBoardWorkflows, type WorkflowFieldDefinition, type RevertTaskOptions, type RevertTaskResult } from "../api";
+import { addressPrFeedback, approvePlan, fetchTaskDetail, uploadAttachment, fetchMission, fetchAgent, refreshPrStatus, fetchWorkflowSettingValues, fetchBoardWorkflows, type WorkflowFieldDefinition, type RevertTaskOptions, type RevertTaskResult, type RestoreTaskRevertOptions, type RestoreTaskRevertResult } from "../api";
 import { GitHubBadge } from "./GitHubBadge";
 import { GitLabBadge } from "./GitLabBadge";
 import { RuntimeFallbackBadge } from "./RuntimeFallbackBadge";
@@ -906,8 +906,13 @@ interface TaskCardProps {
     updates: { title?: string; description?: string; dependencies?: string[]; dismissNearDuplicate?: boolean; githubTracking?: { enabled?: boolean } }
   ) => Promise<Task>;
   onRevertTask?: (id: string, body?: RevertTaskOptions) => Promise<RevertTaskResult>;
-  /** Resolution action for a successfully reverted task. */
-  onReviseTask?: (task: Task) => void;
+  /*
+  FNXC:TaskRevert 2026-09-15-10:00 (FN-416):
+  A reverted card now shows ONLY its badge — the Delete/Revise resolution buttons (and the
+  `onReviseTask` prop that fed them) are gone. Restoring the revert is a context-menu action
+  instead, so the affordance lives in one place on every surface (board card, list row, detail).
+  */
+  onRestoreRevertTask?: (id: string, body?: RestoreTaskRevertOptions) => Promise<RestoreTaskRevertResult>;
   onDeleteTask?: (id: string, options?: {
     removeDependencyReferences?: boolean;
     removeLineageReferences?: boolean;
@@ -1132,6 +1137,7 @@ function areTaskCardPropsEqual(previous: TaskCardProps, next: TaskCardProps): bo
     previous.addToast === next.addToast &&
     previous.onUpdateTask === next.onUpdateTask &&
     previous.onRevertTask === next.onRevertTask &&
+    previous.onRestoreRevertTask === next.onRestoreRevertTask &&
     previous.onDeleteTask === next.onDeleteTask &&
     previous.onPauseTask === next.onPauseTask &&
     previous.onRetryTask === next.onRetryTask &&
@@ -1277,8 +1283,8 @@ function TaskCardComponent({
   globalPaused,
   onUpdateTask,
   onRevertTask,
+  onRestoreRevertTask,
   onDeleteTask,
-  onReviseTask,
   onPauseTask,
   onRetryTask,
   onOpenChatWithPrefill,
@@ -2694,6 +2700,40 @@ function TaskCardComponent({
     handleRevertClick({ stopPropagation() {} } as React.MouseEvent<HTMLButtonElement>);
   }, [handleRevertClick]);
 
+  /*
+  FNXC:TaskRevert 2026-09-15-10:00 (FN-416):
+  Restore-the-revert handler. Calls the route in "auto" mode (git first, AI-restore task on
+  conflict/unsupported) and reuses the revert toast vocabulary: success, AI task created/already
+  open, needsHuman refusal (autoMerge off — never silently AI-forked), failure. The source task's
+  column is never mutated; the Reverted badge clears because the route stamped `restoredAt`.
+  */
+  const handleTaskActionRestoreRevert = useCallback(() => {
+    if (!onRestoreRevertTask) return;
+
+    void onRestoreRevertTask(task.id, { mode: "auto" }).then((result) => {
+      if (result.mode === "ai") {
+        addToast(result.alreadyOpen
+          ? t("tasks.restoreRevertAlreadyOpen", "A restore task is already open: {{id}}", { id: result.createdTaskId })
+          : t("tasks.restoreRevertAiCreated", "Created restore task {{id}}", { id: result.createdTaskId }), "success");
+        return;
+      }
+
+      if (result.needsHuman) {
+        addToast(t("tasks.restoreRevertNeedsHuman", "Cannot restore {{taskId}}: {{reason}}", { taskId: task.id, reason: result.reason || t("tasks.revertNeedsHumanDefault", "human review required") }), "error");
+        return;
+      }
+
+      if (result.clean) {
+        addToast(t("tasks.restoreRevertSuccess", "Restored {{taskId}}", { taskId: task.id }), "success");
+        return;
+      }
+
+      addToast(t("tasks.restoreRevertFailed", "Failed to restore {{taskId}}", { taskId: task.id }), "error");
+    }).catch((err) => {
+      addToast(getErrorMessage(err), "error");
+    });
+  }, [addToast, onRestoreRevertTask, t, task.id]);
+
   const handleDeleteClick = useCallback(async (e: React.MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
     if (!onDeleteTask) return;
@@ -3027,7 +3067,7 @@ function TaskCardComponent({
   ]);
   const contextMenuActions = useMemo<TaskMenuItemDescriptor[]>(() => {
     /* FNXC:TaskRefine 2026-09-14-22:23: FN-400 — Refine is always available on a complete card because the card hosts the dialog itself. */
-    if (!isCompleteColumn && !onDeleteTask && !onRevertTask && !onDuplicateTask && !onRetryTask && !onResetTask && !onPauseTask && !onUnpauseTask && !onMergeTask && !onPlanningMode && !onUpdateTask) {
+    if (!isCompleteColumn && !onDeleteTask && !onRevertTask && !onRestoreRevertTask && !onDuplicateTask && !onRetryTask && !onResetTask && !onPauseTask && !onUnpauseTask && !onMergeTask && !onPlanningMode && !onUpdateTask) {
       return [];
     }
     const actions: TaskMenuItemDescriptor[] = [...taskActionMenuModel.actions];
@@ -3037,7 +3077,19 @@ function TaskCardComponent({
     commit to revert, so the menu communicates WHY the affordance is inert
     instead of silently hiding it.
     */
-    if (isCompleteColumn && onRevertTask) {
+    /*
+    FNXC:TaskRevert 2026-09-15-10:00 (FN-416):
+    An already-reverted card is never offered Revert again (there is nothing left to revert); it is
+    offered "Restore revert" instead. Desktop right-click and mobile long-press share this one
+    model, so both breakpoints get the same single affordance.
+    */
+    if (isCompleteColumn && showRevertedChip && onRestoreRevertTask) {
+      actions.push({
+        id: "restore-revert",
+        label: t("tasks.restoreRevert", "Restore revert"),
+        onSelect: handleTaskActionRestoreRevert,
+      });
+    } else if (isCompleteColumn && onRevertTask) {
       actions.push({
         id: "revert",
         label: t("tasks.revert", "Revert"),
@@ -3049,7 +3101,7 @@ function TaskCardComponent({
       actions.push({ id: taskActionMenuModel.reviewAction.id, label: taskActionMenuModel.reviewAction.label, disabled: taskActionMenuModel.reviewAction.disabled, onSelect: taskActionMenuModel.reviewAction.onSelect });
     }
     return actions.filter((action) => "items" in action || action.tone === "note" || action.disabled === true || Boolean(action.onSelect));
-  }, [handleTaskActionRevert, isCompleteColumn, isRevertable, onDeleteTask, onDuplicateTask, onMergeTask, onPlanningMode, onPauseTask, onResetTask, onRetryTask, onRevertTask, onUnpauseTask, onUpdateTask, taskActionMenuModel.actions, taskActionMenuModel.reviewAction]);
+  }, [handleTaskActionRestoreRevert, handleTaskActionRevert, isCompleteColumn, isRevertable, onDeleteTask, onDuplicateTask, onMergeTask, onPlanningMode, onPauseTask, onResetTask, onRestoreRevertTask, onRetryTask, onRevertTask, onUnpauseTask, onUpdateTask, showRevertedChip, taskActionMenuModel.actions, taskActionMenuModel.reviewAction]);
   const hasContextMenuActions = contextMenuActions.length > 0;
 
   const closeContextMenu = useCallback(() => {
@@ -3359,12 +3411,6 @@ function TaskCardComponent({
           aria-label={t("tasks.revertedBadgeTitle", "This task's changes were reverted")}
         >
           <span>{t("tasks.revertedBadge", "Reverted")}</span>
-        </span>
-      )}
-      {showRevertedChip && (
-        <span className="card-reverted-actions" aria-label={t("tasks.revertedResolutionActions", "Reverted task resolution actions")}>
-          {onDeleteTask && <UiButton type="button" className="btn" onClick={(event) => { event.stopPropagation(); void handleTaskActionDelete(); }}>{t("tasks.delete", "Delete")}</UiButton>}
-          {onReviseTask && <UiButton type="button" className="btn" onClick={(event) => { event.stopPropagation(); onReviseTask(task); }}>{t("tasks.revise", "Revise")}</UiButton>}
         </span>
       )}
       {showNearDuplicateChip && (

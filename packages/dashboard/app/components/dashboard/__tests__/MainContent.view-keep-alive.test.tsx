@@ -158,6 +158,7 @@ function mainContentProps(overrides: Partial<MainContentProps> = {}): MainConten
     updateTask: vi.fn(async () => taskFixture()),
     retryTask: vi.fn(async () => taskFixture()),
     revertTask: vi.fn(async () => ({ task: taskFixture() })),
+    restoreTaskRevert: vi.fn(async () => ({ mode: "git", clean: true })),
     deleteTask: vi.fn(async () => taskFixture()),
     searchQuery: "",
     availableModels: [],

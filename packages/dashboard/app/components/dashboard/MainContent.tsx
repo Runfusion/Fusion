@@ -197,10 +197,10 @@ export function MainContentListView(props: AppMainPanelTaskDetailMainContentProp
     retryTask,
     onOpenChatWithPrefill,
     deleteTask,
-    modalManager,
     pauseTask,
     unpauseTask,
     revertTask,
+    restoreTaskRevert,
     mergeTask,
     resetTask,
     duplicateTask,
@@ -231,10 +231,10 @@ export function MainContentListView(props: AppMainPanelTaskDetailMainContentProp
         onRetryTask={retryTask}
         onOpenChatWithPrefill={onOpenChatWithPrefill}
         onDeleteTask={deleteTask}
-        onReviseTask={(task) => modalManager.openNewTaskWithDescription(task.description)}
         onPauseTask={pauseTask}
         onUnpauseTask={unpauseTask}
         onRevertTask={revertTask}
+        onRestoreRevertTask={restoreTaskRevert}
         onMergeTask={mergeTask}
         onResetTask={resetTask}
         onDuplicateTask={duplicateTask}
@@ -288,6 +288,8 @@ export function MainContent(props: MainContentProps) {
   taskView,
   pluginDashboardViews,
   modalManager,
+  /* FNXC:TaskRevert 2026-09-15-10:00 (FN-416): restore-the-revert reaches the main-panel detail host. */
+  restoreTaskRevert,
   handleChangeTaskView,
   refreshAppSettings,
   addToast,
@@ -1212,7 +1214,7 @@ export function MainContent(props: MainContentProps) {
               onPopOut={(task) => { popOutTaskDetail(task); closeTaskDetailMainPanel(); }}
               onOpenDetail={(value, initialTab) => openTaskDetailInMainPanel(value, initialTab ?? "chat")}
               onDeleteTask={deleteTask}
-              onReviseTask={(task) => modalManager.openNewTaskWithDescription(task.description)}
+              onRestoreRevertTask={restoreTaskRevert}
               onMergeTask={mergeTask}
               onRetryTask={retryTask}
               onOpenChatWithPrefill={onOpenChatWithPrefill}

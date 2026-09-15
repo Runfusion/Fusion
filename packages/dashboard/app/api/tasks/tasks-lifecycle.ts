@@ -304,6 +304,48 @@ export function revertTask(id: string, projectId?: string, body?: RevertTaskOpti
 }
 
 /*
+FNXC:TaskRevert 2026-09-15-10:00 (FN-416):
+Client contract for `POST /tasks/:id/revert/restore` — the context-menu "Restore revert" action
+that replaced the reverted card's Delete/Revise buttons. Like `revertTask` this is a discriminated
+union, NOT a `Task`: the route never moves the source task, it only stamps the additive
+`restoredAt` marker that makes the Reverted badge disappear.
+*/
+export interface RestoreTaskRevertGitResult {
+  mode: "git";
+  clean?: boolean;
+  restoreCommitSha?: string;
+  restoreCommitShas?: string[];
+  conflicts?: unknown;
+  alreadyRestored?: boolean;
+  unsupported?: boolean;
+  needsHuman?: boolean;
+  reason?: string;
+}
+
+export interface RestoreTaskRevertAiResult {
+  mode: "ai";
+  createdTaskId: string;
+  alreadyOpen?: boolean;
+}
+
+export type RestoreTaskRevertResult = RestoreTaskRevertGitResult | RestoreTaskRevertAiResult;
+
+export interface RestoreTaskRevertOptions {
+  mode?: "git" | "ai" | "auto";
+}
+
+export function restoreTaskRevert(
+  id: string,
+  projectId?: string,
+  body?: RestoreTaskRevertOptions,
+): Promise<RestoreTaskRevertResult> {
+  return api<RestoreTaskRevertResult>(withProjectId(`/tasks/${id}/revert/restore`, projectId), {
+    method: "POST",
+    body: JSON.stringify(body ?? {}),
+  });
+}
+
+/*
 FNXC:HumanPlanApproval 2026-09-15-06:24:
 FN-408 — both decisions may carry an operator message: an approval note becomes implementation
 context, a rejection message becomes planner feedback. `expectedPlanFingerprint`/`expectedEpisodeId`

@@ -126,6 +126,9 @@ import {
   applyWorkspaceRevertBoundaries,
   TaskRevertError,
   createAiUndoTask,
+  // FN-416: restore-the-revert service + its AI fallback task.
+  performTaskRevertRestore,
+  createAiRestoreTask,
   prepareRevertPrBranch,
   prepareWorkspaceRevertPrBranches,
   isInReviewMissingWorktreeSessionStartFailure,
@@ -146,6 +149,7 @@ import {
   resumeApprovedPlanReviewHandoff,
   type ApprovedPlanReviewHandoffResult,
   type AiUndoTaskResult,
+  type AiRestoreTaskResult,
   type PrepareRevertPrBranchResult,
   type PrepareWorkspaceRevertPrBranchesResult,
   type WorkspaceRepoRevertPrBranch,
@@ -3399,6 +3403,177 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
 
       if (shouldFallBackToAi) {
         res.json(await createAiUndoResult());
+        return;
+      }
+
+      res.json(result);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      if (err instanceof TaskRevertError) {
+        const status = err.code === "dirty-working-tree" || err.code === "branch-mismatch" ? 409 : 500;
+        throw new ApiError(status, err.message, { code: err.code });
+      }
+      rethrowTaskApiError(err, req.params.id);
+    }
+  });
+
+  /*
+  FNXC:TaskRevert 2026-09-15-10:00 (FN-416 — restore the revert):
+  POST /tasks/:id/revert/restore — the ONLY resolution path a reverted card now offers (the
+  card's Delete/Revise buttons are gone; the context menu offers "Restore revert" instead).
+  Guard rails mirror `POST /tasks/:id/revert` exactly:
+    - only tasks in a resolved Complete lane are restorable (409 otherwise);
+    - only a CURRENTLY reverted task is restorable — no `revertedAt`, or a `restoredAt` already
+      at/after it, is a 409 rather than a silent no-op;
+    - `mode`: `"git"` (raw git result, never creates a task), `"ai"` (straight to the AI-restore
+      task), `"auto"` (default — git first, AI-restore task on conflict/unsupported);
+    - the source task's column/status is NEVER mutated, and `revertedAt` is NEVER deleted, so the
+      Patchnode cancellation history stays readable. The restore is recorded ADDITIVELY as
+      `sourceMetadata.restoredAt` (+ `restoredCommitSha` when a commit was created), which is what
+      makes `isTaskReverted` (dashboard) drop the badge — no schema migration.
+  The AI fallback task is delivered by the ordinary AI merge pipeline (`runAiMerge`, the Merger
+  agent), which already owns AI-assisted conflict resolution.
+  */
+  router.post("/tasks/:id/revert/restore", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const task = await scopedStore.getTask(req.params.id);
+      if (!task) {
+        throw notFound(`Task ${req.params.id} not found`);
+      }
+      const terminalColumns = await resolveTerminalColumnsForTask(scopedStore, task.id);
+      if (!terminalColumns.has(task.column)) {
+        throw conflict(`Task ${task.id} is in column "${task.column}"; only completed tasks can be restored`);
+      }
+
+      /*
+      FNXC:TaskRevert 2026-09-15-10:00:
+      Server-side twin of the dashboard's `isTaskReverted` predicate, including its fail-safe
+      comparison: any doubtful marker keeps the task reverted (so a restore stays offered) while a
+      restore at-or-after the revert means there is nothing left to restore.
+      */
+      const restoreMetadata = task.sourceMetadata as { revertedAt?: unknown; revertedCommitSha?: unknown; restoredAt?: unknown } | undefined;
+      const revertedAtMarker = typeof restoreMetadata?.revertedAt === "string" ? restoreMetadata.revertedAt.trim() : "";
+      if (!revertedAtMarker) {
+        throw conflict(`Task ${task.id} is not reverted; nothing to restore`);
+      }
+      const restoredAtMarker = typeof restoreMetadata?.restoredAt === "string" ? restoreMetadata.restoredAt.trim() : "";
+      if (restoredAtMarker) {
+        const revertedMs = new Date(revertedAtMarker).getTime();
+        const restoredMs = new Date(restoredAtMarker).getTime();
+        if (Number.isFinite(revertedMs) && Number.isFinite(restoredMs) && restoredMs >= revertedMs) {
+          throw conflict(`Task ${task.id} revert was already restored at ${restoredAtMarker}`);
+        }
+      }
+
+      const requestedMode = (req.body as { mode?: unknown } | undefined)?.mode;
+      if (requestedMode !== undefined && requestedMode !== "git" && requestedMode !== "ai" && requestedMode !== "auto") {
+        throw badRequest(`Invalid restore mode "${String(requestedMode)}"; expected "git", "ai", or "auto"`);
+      }
+      const mode: "git" | "ai" | "auto" = (requestedMode as "git" | "ai" | "auto" | undefined) ?? "auto";
+
+      const settings = await scopedStore.getSettingsFast();
+      const configuredAiUndoWorkflowId = settings.aiUndoTaskWorkflowId?.trim();
+      let aiRestoreWorkflowId: string | undefined;
+      if (configuredAiUndoWorkflowId) {
+        const exists =
+          isBuiltinWorkflowId(configuredAiUndoWorkflowId) || Boolean(await scopedStore.getWorkflowDefinition(configuredAiUndoWorkflowId));
+        if (exists) {
+          aiRestoreWorkflowId = configuredAiUndoWorkflowId;
+        } else {
+          severityAuditLog.warn(
+            `[task-revert-restore] aiUndoTaskWorkflowId "${configuredAiUndoWorkflowId}" does not resolve to a known workflow; AI-restore task will inherit the project default workflow instead`,
+          );
+        }
+      }
+
+      const createAiRestoreResult = async (): Promise<AiRestoreTaskResult> =>
+        createAiRestoreTask({
+          createTask: (input) => scopedStore.createTask(input),
+          // Keyed on `restoreOf`, never `revertOf` — an open undo task must not suppress a restore.
+          findOpenRestoreTaskForSource: (id) => scopedStore.findOpenRevertTaskForSource(id, "restoreOf"),
+          sourceTask: task,
+          workflowId: aiRestoreWorkflowId,
+        });
+
+      /*
+      FNXC:TaskRevert 2026-09-15-10:00:
+      Durable write FIRST, response second: the operator must never be told the revert was restored
+      by a response the store did not record.
+      */
+      const stampRestored = async (restoreCommitSha?: string): Promise<void> => {
+        await scopedStore.updateTask(task.id, {
+          sourceMetadataPatch: {
+            restoredAt: new Date().toISOString(),
+            ...(restoreCommitSha ? { restoredCommitSha: restoreCommitSha } : {}),
+          },
+        });
+      };
+
+      if (mode === "ai") {
+        res.json(await createAiRestoreResult());
+        return;
+      }
+
+      const rootDir = scopedStore.getRootDir();
+
+      /*
+      FNXC:TaskRevert 2026-09-15-10:00:
+      Workspace tasks land across MULTIPLE sub-repo integration branches, so a single-repo restore
+      has no coherent target (the same limitation the revert path documents). Refuse explicitly;
+      `auto` hands the work to the AI-restore task instead of dead-ending.
+      */
+      if (isWorkspaceTask(task)) {
+        if (mode === "auto") {
+          res.json(await createAiRestoreResult());
+          return;
+        }
+        res.json({ mode: "git", unsupported: true, reason: "workspace-task-restore-unsupported" });
+        return;
+      }
+
+      const baseBranch = task.mergeDetails?.mergeTargetBranch || await resolveIntegrationBranch(rootDir, settings);
+
+      // Same branch-mismatch contract as the revert route: `rootDir` is the shared user checkout and
+      // may legitimately sit on any branch; committing a restore onto the wrong branch is worse than
+      // refusing.
+      const currentBranch = (await runGitCommand(["rev-parse", "--abbrev-ref", "HEAD"], rootDir, 5_000)).trim();
+      if (currentBranch !== baseBranch) {
+        throw new ApiError(409, `Checkout is on "${currentBranch}", not the task's base branch "${baseBranch}"; switch to "${baseBranch}" before restoring`, {
+          code: "branch-mismatch",
+          currentBranch,
+          baseBranch,
+        });
+      }
+
+      const result = await performTaskRevertRestore({
+        task,
+        revertableColumns: terminalColumns,
+        worktreePath: rootDir,
+        baseBranch,
+        effectiveAutoMerge: settings.autoMerge,
+      });
+
+      if (result.mode === "git" && "clean" in result && result.clean === true) {
+        const restoreCommitSha = "restoreCommitSha" in result && typeof result.restoreCommitSha === "string" ? result.restoreCommitSha : undefined;
+        await stampRestored(restoreCommitSha);
+      }
+
+      if (mode === "git") {
+        res.json(result);
+        return;
+      }
+
+      // mode === "auto": AI fallback ONLY on conflict or an unsupported git result.
+      // Clean/alreadyRestored/needsHuman results are returned as-is — needsHuman (autoMerge-off)
+      // NEVER force-writes and NEVER silently AI-forks.
+      const shouldFallBackToAi =
+        ("clean" in result && result.clean === false) ||
+        ("unsupported" in result && result.unsupported === true);
+      if (shouldFallBackToAi) {
+        res.json(await createAiRestoreResult());
         return;
       }
 

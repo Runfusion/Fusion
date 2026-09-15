@@ -13,7 +13,7 @@ import { ExternalBlockNotice, HumanPlanApprovalBadge, PlanApprovalNotice } from 
 import { PrCreateModal } from "./PrCreateModal";
 import { TaskRefineDialog } from "./TaskRefineDialog";
 import { TaskResetDialog } from "./TaskResetDialog";
-import type { BoardWorkflowColumn, BoardWorkflowsPayload, ModelInfo, NodeInfo, RevertTaskOptions, RevertTaskResult } from "../api";
+import type { BoardWorkflowColumn, BoardWorkflowsPayload, ModelInfo, NodeInfo, RestoreTaskRevertOptions, RestoreTaskRevertResult, RevertTaskOptions, RevertTaskResult } from "../api";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { NodeHealthDot } from "./NodeHealthDot";
 import { hasPendingAutomaticRecovery } from "../utils/taskRecovery";
@@ -220,7 +220,6 @@ interface ListViewProps {
   tasks: Task[];
   onRetryTask?: (id: string) => Promise<Task>;
   onOpenChatWithPrefill?: (prefillText: string) => void;
-  onReviseTask?: (task: Task) => void;
   onDeleteTask: (id: string, options?: {
     removeDependencyReferences?: boolean;
     removeLineageReferences?: boolean;
@@ -229,6 +228,8 @@ interface ListViewProps {
   onPauseTask?: (id: string) => Promise<Task>;
   onUnpauseTask?: (id: string) => Promise<Task>;
   onRevertTask?: (id: string, body?: RevertTaskOptions) => Promise<RevertTaskResult>;
+  /* FNXC:TaskRevert 2026-09-15-10:00 (FN-416): restore-the-revert replaces the reverted row's Revise entry. */
+  onRestoreRevertTask?: (id: string, body?: RestoreTaskRevertOptions) => Promise<RestoreTaskRevertResult>;
   onMergeTask: (id: string) => Promise<MergeResult>;
   onResetTask?: (id: string, options?: { description?: string }) => Promise<Task>;
   onDuplicateTask?: (id: string, options?: { workflowId?: string }) => Promise<Task>;
@@ -354,10 +355,10 @@ export function ListView({
   onRetryTask,
   onOpenChatWithPrefill,
   onDeleteTask,
-  onReviseTask,
   onPauseTask,
   onUnpauseTask,
   onRevertTask,
+  onRestoreRevertTask,
   onMergeTask,
   onResetTask,
   onDuplicateTask,
@@ -1659,6 +1660,39 @@ export function ListView({
     }
   }, [addToast, confirm, onRevertTask, t]);
 
+  /*
+  FNXC:TaskRevert 2026-09-15-10:00 (FN-416):
+  List-view restore-the-revert, same contract and toast vocabulary as the card handler: auto mode,
+  AI-restore task on conflict, `needsHuman` surfaced rather than force-written or silently AI-forked.
+  */
+  const handleListTaskRestoreRevert = useCallback(async (task: Task) => {
+    if (!onRestoreRevertTask) return;
+    try {
+      const result = await onRestoreRevertTask(task.id, { mode: "auto" });
+
+      if (result.mode === "ai") {
+        addToast(result.alreadyOpen
+          ? t("tasks.restoreRevertAlreadyOpen", "A restore task is already open: {{id}}", { id: result.createdTaskId })
+          : t("tasks.restoreRevertAiCreated", "Created restore task {{id}}", { id: result.createdTaskId }), "success");
+        return;
+      }
+
+      if (result.needsHuman) {
+        addToast(t("tasks.restoreRevertNeedsHuman", "Cannot restore {{taskId}}: {{reason}}", { taskId: task.id, reason: result.reason || t("tasks.revertNeedsHumanDefault", "human review required") }), "error");
+        return;
+      }
+
+      if (result.clean) {
+        addToast(t("tasks.restoreRevertSuccess", "Restored {{taskId}}", { taskId: task.id }), "success");
+        return;
+      }
+
+      addToast(t("tasks.restoreRevertFailed", "Failed to restore {{taskId}}", { taskId: task.id }), "error");
+    } catch (err) {
+      addToast(getErrorMessage(err), "error");
+    }
+  }, [addToast, onRestoreRevertTask, t]);
+
   const handleListContextCheckPrStatus = useCallback(async (task: Task) => {
     try {
       await refreshPrStatus(task.id, projectId);
@@ -1778,7 +1812,19 @@ export function ListView({
     List-view Revert menu entry for completed rows. Disabled (rather than omitted) when the task lacks a landed
     commit to revert.
     */
-    if (isCompleteColumnRole(taskColumnFlags, task.column) && onRevertTask) {
+    /*
+    FNXC:TaskRevert 2026-09-15-10:00 (FN-416):
+    Replaces the reverted row's Revise entry. An already-reverted row is never offered Revert again
+    (nothing left to revert); it is offered "Restore revert" instead. Desktop right-click and mobile
+    long-press share this one model, so both breakpoints get the same single affordance.
+    */
+    if (isCompleteColumnRole(taskColumnFlags, task.column) && isTaskReverted(task.sourceMetadata) && onRestoreRevertTask) {
+      actions.push({
+        id: "restore-revert",
+        label: t("tasks.restoreRevert", "Restore revert"),
+        onSelect: () => void handleListTaskRestoreRevert(task),
+      });
+    } else if (isCompleteColumnRole(taskColumnFlags, task.column) && onRevertTask) {
       const isRevertable = Boolean(task.mergeDetails?.commitSha);
       actions.push({
         id: "revert",
@@ -1787,19 +1833,11 @@ export function ListView({
         onSelect: isRevertable ? () => void handleListTaskRevert(task) : undefined,
       });
     }
-    /*
-    FNXC:TaskRevert 2026-08-27-02:18:
-    The removed list reverted section exposed Delete and Revise actions. Delete remains in the
-    shared menu model; Revise belongs here so desktop right-click and mobile long-press retain it.
-    */
-    if (onReviseTask && isTaskReverted(task.sourceMetadata) && isCompleteColumnRole(taskColumnFlags, task.column)) {
-      actions.push({ id: "revise", label: t("tasks.revise", "Revise"), onSelect: () => onReviseTask(task) });
-    }
     if (model.reviewAction) {
       actions.push({ id: model.reviewAction.id, label: model.reviewAction.label, disabled: model.reviewAction.disabled, onSelect: model.reviewAction.onSelect });
     }
     return actions.filter((action) => "items" in action || action.tone === "note" || action.disabled === true || Boolean(action.onSelect));
-  }, [addToast, autoMerge, boardWorkflows, getTaskColumnFlags, confirm, confirmWithSelect, getTaskPlanningWorkflowId, handleListContextCheckPrStatus, handleListContextEnableGithubTracking, handleListTaskDelete, handleListTaskRevert, isMobile, lastFetchTimeMs, mergeStrategy, onDuplicateTask, onMergeTask, onOpenDetail, onPlanningMode, onPauseTask, onResetTask, onRetryTask, onUnpauseTask, onRevertTask, onReviseTask, onTasksUpdated, projectId, t, useSinglePaneList]);
+  }, [addToast, autoMerge, boardWorkflows, getTaskColumnFlags, confirm, confirmWithSelect, getTaskPlanningWorkflowId, handleListContextCheckPrStatus, handleListContextEnableGithubTracking, handleListTaskDelete, handleListTaskRestoreRevert, handleListTaskRevert, isMobile, lastFetchTimeMs, mergeStrategy, onDuplicateTask, onMergeTask, onOpenDetail, onPlanningMode, onPauseTask, onResetTask, onRetryTask, onUnpauseTask, onRevertTask, onRestoreRevertTask, onTasksUpdated, projectId, t, useSinglePaneList]);
 
   const contextMenuActions = useMemo(
     () => (contextMenuState ? buildListContextMenuActions(contextMenuState.task) : []),

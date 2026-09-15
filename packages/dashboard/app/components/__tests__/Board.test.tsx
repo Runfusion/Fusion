@@ -76,7 +76,7 @@ vi.mock("../Column", () => ({
     onOpenDetail,
     onMoveTask,
     onDeleteTask,
-    onReviseTask,
+    onRestoreRevertTask,
   }: {
     column: string;
     tasks: Task[];
@@ -104,7 +104,7 @@ vi.mock("../Column", () => ({
     onOpenDetail?: (task: Task) => void;
     onMoveTask?: (id: string, column: string) => Promise<Task>;
     onDeleteTask?: unknown;
-    onReviseTask?: (task: Task) => void;
+    onRestoreRevertTask?: (id: string, body?: { mode?: string }) => Promise<unknown>;
   }) => {
     columnRenderCounts[column] = (columnRenderCounts[column] ?? 0) + 1;
     return (
@@ -125,7 +125,7 @@ vi.mock("../Column", () => ({
             <span data-testid={`board-task-card-title-${task.id}`}>{task.title ?? task.description ?? task.id}</span>
             <button type="button" data-testid={`board-task-card-control-${task.id}`} onClick={(event) => event.stopPropagation()}>card control</button>
             {onDeleteTask ? <button type="button">Delete</button> : null}
-            {onReviseTask ? <button type="button" onClick={() => onReviseTask(task)}>Revise</button> : null}
+            {onRestoreRevertTask ? <button type="button" onClick={() => void onRestoreRevertTask(task.id, { mode: "auto" })}>Restore revert</button> : null}
             <span data-has-move-task={String(Boolean(onMoveTask))} />
           </article>
         ))}
@@ -137,17 +137,17 @@ vi.mock("../Column", () => ({
 }));
 
 /*
-FNXC:TaskRevert 2026-08-01-20:06:
-The aggregate resolution section renders TaskCard directly rather than through the
-Column mock. Keep this focused Board suite isolated from TaskCard's badge-fetching
-hooks while exposing the card traits and Delete/Revise callbacks it must receive.
+FNXC:TaskRevert 2026-09-15-10:00:
+FN-416: the reverted card no longer renders Delete/Revise buttons; its resolution action is the
+context-menu restore. This mock exposes the card traits and the restore callback the Board must forward,
+while keeping this focused suite isolated from TaskCard's badge-fetching hooks.
 */
 vi.mock("../TaskCard", () => ({
-  TaskCard: ({ task, taskColumnFlags, onDeleteTask, onReviseTask }: { task: Task; taskColumnFlags?: { complete?: boolean }; onDeleteTask?: unknown; onReviseTask?: (task: Task) => void }) => (
+  TaskCard: ({ task, taskColumnFlags, onDeleteTask, onRestoreRevertTask }: { task: Task; taskColumnFlags?: { complete?: boolean }; onDeleteTask?: unknown; onRestoreRevertTask?: (id: string, body?: { mode?: string }) => Promise<unknown> }) => (
     <article data-testid={`board-resolution-card-${task.id}`} data-complete={String(taskColumnFlags?.complete === true)}>
       <span>{task.title}</span>
       {onDeleteTask ? <button type="button">Delete</button> : null}
-      {onReviseTask ? <button type="button" onClick={() => onReviseTask(task)}>Revise</button> : null}
+      {onRestoreRevertTask ? <button type="button" onClick={() => void onRestoreRevertTask(task.id, { mode: "auto" })}>Restore revert</button> : null}
     </article>
   ),
 }));
@@ -1416,7 +1416,9 @@ describe("Board", () => {
       enableFlag({ [reverted.id]: shippedWorkflow.id }, [DEFAULT_WORKFLOW, shippedWorkflow]);
       window.localStorage.setItem(scopedKey(BOARD_WORKFLOW_SELECTION_STORAGE_KEY, projectId), ALL_WORKFLOWS_BOARD_VIEW_ID);
 
-      renderBoard({ projectId, tasks: [reverted, reverted], onDeleteTask: vi.fn().mockResolvedValue(reverted), onReviseTask: vi.fn() });
+      /* FN-416: the Board forwards the restore-the-revert action instead of a Revise draft callback. */
+      const onRestoreRevertTask = vi.fn().mockResolvedValue({ mode: "git", clean: true, restoreCommitSha: "restore-sha" });
+      renderBoard({ projectId, tasks: [reverted, reverted], onDeleteTask: vi.fn().mockResolvedValue(reverted), onRestoreRevertTask });
 
       await waitFor(() => expect(screen.getByTestId("column-shipped")).toBeDefined());
       const shippedColumn = screen.getByTestId("column-shipped");
@@ -1424,7 +1426,8 @@ describe("Board", () => {
       expect(shippedColumn).toHaveAttribute("data-tasks", expect.stringContaining(reverted.id));
       expect(screen.queryByTestId("board-reverted-tasks")).toBeNull();
       expect(within(shippedColumn).getByRole("button", { name: "Delete" })).toBeInTheDocument();
-      expect(within(shippedColumn).getByRole("button", { name: "Revise" })).toBeInTheDocument();
+      expect(within(shippedColumn).queryByRole("button", { name: "Revise" })).toBeNull();
+      expect(within(shippedColumn).getByRole("button", { name: "Restore revert" })).toBeInTheDocument();
     });
 
     it("deduplicates reverted work in its selected-workflow column", async () => {

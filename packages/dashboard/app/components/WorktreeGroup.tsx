@@ -6,7 +6,7 @@ import { isNearDuplicateCanonicalInactive } from "../../../core/src/duplicates/n
 import { ClipboardList, GitBranch } from "lucide-react";
 import { TaskCard } from "./TaskCard";
 import type { ToastType } from "../hooks/useToast";
-import type { RevertTaskOptions, RevertTaskResult } from "../api";
+import type { RestoreTaskRevertOptions, RestoreTaskRevertResult, RevertTaskOptions, RevertTaskResult } from "../api";
 import type { BlockerFanoutEntry } from "../hooks/useBlockerFanout";
 import type { TaskContextMenuColumnMetadata } from "./TaskContextMenu";
 
@@ -38,6 +38,8 @@ interface WorktreeGroupProps {
   onDuplicateTask?: (id: string, options?: { workflowId?: string }) => Promise<Task>;
   onMergeTask?: (id: string) => Promise<MergeResult>;
   onRevertTask?: (id: string, body?: RevertTaskOptions) => Promise<RevertTaskResult>;
+  /* FNXC:TaskRevert 2026-09-15-10:00 (FN-416): restore-the-revert reaches the in-column card. */
+  onRestoreRevertTask?: (id: string, body?: RestoreTaskRevertOptions) => Promise<RestoreTaskRevertResult>;
   onDeleteTask?: (id: string, options?: {
     removeDependencyReferences?: boolean;
     removeLineageReferences?: boolean;
@@ -90,6 +92,7 @@ function WorktreeGroupComponent({
     onDuplicateTask,
   onMergeTask,
   onRevertTask,
+  onRestoreRevertTask,
   onDeleteTask,
   onOpenDetailWithTab,
   onOpenMission,
@@ -161,6 +164,7 @@ function WorktreeGroupComponent({
           onDuplicateTask={onDuplicateTask}
           onMergeTask={onMergeTask}
           onRevertTask={onRevertTask}
+          onRestoreRevertTask={onRestoreRevertTask}
           onDeleteTask={onDeleteTask}
           onOpenDetailWithTab={onOpenDetailWithTab}
           onOpenMission={onOpenMission}
@@ -198,6 +202,7 @@ function WorktreeGroupComponent({
           onDuplicateTask={onDuplicateTask}
           onMergeTask={onMergeTask}
           onRevertTask={onRevertTask}
+          onRestoreRevertTask={onRestoreRevertTask}
           onDeleteTask={onDeleteTask}
           onOpenDetailWithTab={onOpenDetailWithTab}
           onOpenMission={onOpenMission}

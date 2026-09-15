@@ -174,6 +174,14 @@ Done task cards (board card inline row + context menu, the detail view, and the 
 
 The source task's column/lifecycle is never mutated as a side effect of a revert; the Revert affordance is absent when the task has no landed commit or when the hosting surface does not support it.
 
+#### Restore-the-revert affordance (FN-416)
+
+A reverted card shows only its **Reverted** label — it no longer renders Delete/Revise resolution buttons. The same surfaces (board/right-dock card context menu, list row context menu, task detail actions) instead expose **Restore revert**, which calls `POST /tasks/:id/revert/restore` in `"auto"` mode and replaces the **Revert** entry on an already-reverted task:
+
+- A clean restore reverts the revert commit(s) and stamps an additive `sourceMetadata.restoredAt` marker, which clears the **Reverted** label everywhere. `revertedAt` is never deleted, so Patchnode revert history stays readable.
+- A conflicting or unsupported result creates a dedicated AI restore task (marker `sourceMetadata.restoreOf`, idempotent while one is open) delivered by the AI merge pipeline / Merger agent.
+- A `needsHuman` result (auto-merge off) is surfaced as a toast and never force-written or silently AI-forked.
+
 ### 2) Plan Mode (AI interview)
 
 On desktop/tablet, open **Planning** from the left sidebar to start or resume a planning session. You can also hand a draft from the board quick-entry row or New Task dialog to Planning with the **Plan** action.

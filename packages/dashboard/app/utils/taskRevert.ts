@@ -30,8 +30,30 @@ import { isTerminalColumnRole, type ColumnRoleTraitFlags } from "@fusion/core/co
  * Keep this defensive predicate shared so every card/detail consumer applies the
  * same provenance contract to untyped historical source metadata.
  */
+/**
+ * FNXC:TaskRevert 2026-09-15-10:00:
+ * FN-416 makes the revert marker REVOCABLE. `POST /tasks/:id/revert/restore` stamps an
+ * ADDITIVE `sourceMetadata.restoredAt` (and never deletes `revertedAt`), so the Patchnode
+ * history of the cancellation episode stays readable and no schema migration is needed.
+ * A task is therefore reverted only while no restore marker at-or-after the revert exists.
+ *
+ * Fail-safe comparison, deliberately: any doubtful restore datum (absent, non-string, blank,
+ * unparsable, or EARLIER than `revertedAt`) leaves the task reverted, and an unparsable
+ * `revertedAt` also keeps it reverted. Erasing a "Reverted" badge on bad data would claim
+ * shipped work is live again; keeping it is the honest degraded answer.
+ */
 export function isTaskReverted(sourceMetadata: Task["sourceMetadata"] | undefined): boolean {
-  return typeof sourceMetadata?.revertedAt === "string" && sourceMetadata.revertedAt.trim().length > 0;
+  const revertedAt = typeof sourceMetadata?.revertedAt === "string" ? sourceMetadata.revertedAt.trim() : "";
+  if (revertedAt.length === 0) return false;
+
+  const restoredAt = typeof sourceMetadata?.restoredAt === "string" ? sourceMetadata.restoredAt.trim() : "";
+  if (restoredAt.length === 0) return true;
+
+  const revertedMs = new Date(revertedAt).getTime();
+  const restoredMs = new Date(restoredAt).getTime();
+  if (!Number.isFinite(revertedMs) || !Number.isFinite(restoredMs)) return true;
+
+  return restoredMs < revertedMs;
 }
 
 /**

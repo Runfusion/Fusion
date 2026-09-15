@@ -81,8 +81,6 @@ export interface OverflowViewRenderProps {
   onOpenSessionInNewWindow?: (session: ChatSessionInfo) => void;
   openChatWindows?: ReadonlySet<string>;
   onSendAsReport?: (handoff: ChatReportHandoff) => void;
-  /** Opens New Task with a reverted source task's original description. */
-  onReviseTask?: (task: Task | TaskDetail) => void;
   onUpdateTask?: (id: string, updates: { title?: string; description?: string; dependencies?: string[]; dismissNearDuplicate?: boolean; githubTracking?: { enabled?: boolean } }) => Promise<Task>;
   onDeleteTask?: (id: string, options?: { removeDependencyReferences?: boolean; removeLineageReferences?: boolean; githubIssueAction?: GithubIssueAction; allowResurrection?: boolean }) => Promise<Task>;
   onOpenChatWithPrefill?: (prefillText: string) => void;

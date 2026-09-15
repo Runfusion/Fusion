@@ -3,7 +3,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, type KeyboardEvent } fro
 import { useTranslation } from "react-i18next";
 import { sortTasksForDisplayColumn, type Task, type TaskDetail, type Column as ColumnType, type ColumnId, type TaskCreateInput, type GithubIssueAction } from "@fusion/core";
 import { Column } from "./Column";
-import type { ModelInfo, BoardWorkflowDefinition, RevertTaskOptions, RevertTaskResult } from "../api";
+import type { ModelInfo, BoardWorkflowDefinition, RestoreTaskRevertOptions, RestoreTaskRevertResult, RevertTaskOptions, RevertTaskResult } from "../api";
 import type { ToastType } from "../hooks/useToast";
 import type { BlockerFanoutEntry } from "../hooks/useBlockerFanout";
 
@@ -45,6 +45,8 @@ export interface LaneProps {
   onUpdateTask?: (id: string, updates: { title?: string; description?: string; dependencies?: string[] }) => Promise<Task>;
   onRetryTask?: (id: string) => Promise<Task>;
   onRevertTask?: (id: string, body?: RevertTaskOptions) => Promise<RevertTaskResult>;
+  /* FNXC:TaskRevert 2026-09-15-10:00 (FN-416): restore-the-revert reaches the in-column card. */
+  onRestoreRevertTask?: (id: string, body?: RestoreTaskRevertOptions) => Promise<RestoreTaskRevertResult>;
   onDeleteTask?: (id: string, options?: {
     removeDependencyReferences?: boolean;
     removeLineageReferences?: boolean;
@@ -187,6 +189,7 @@ function LaneComponent(props: LaneProps) {
               onUpdateTask={props.onUpdateTask}
               onRetryTask={props.onRetryTask}
               onRevertTask={props.onRevertTask}
+              onRestoreRevertTask={props.onRestoreRevertTask}
               onDeleteTask={props.onDeleteTask}
               availableModels={props.availableModels}
               onOpenDetailWithTab={props.onOpenDetailWithTab}

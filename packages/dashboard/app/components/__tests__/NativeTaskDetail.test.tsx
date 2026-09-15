@@ -408,7 +408,8 @@ describe("native Task Detail", () => {
     const user = userEvent.setup();
     const onDeleteTask = vi.fn(async () => makeTask());
     const onRevertTask = vi.fn(async () => ({ mode: "git", clean: true, revertCommitSha: "deadbeef" }) as never);
-    const onReviseTask = vi.fn();
+    /* FN-416 case (c): a reverted task offers Restore revert in place of Revert and the removed Revise action. */
+    const onRestoreRevertTask = vi.fn(async () => ({ mode: "git", clean: true, restoreCommitSha: "restore-sha" }) as never);
     const view = render(
       <>
         <TaskDetailContent
@@ -417,7 +418,7 @@ describe("native Task Detail", () => {
           task={makeTask({ column: "done", branch: "fusion/fn-099", completedAt: "2026-01-02T00:00:00Z", mergeDetails: { commitSha: "abc123" } as never })}
           onDeleteTask={onDeleteTask}
           onRevertTask={onRevertTask}
-          onReviseTask={onReviseTask}
+          onRestoreRevertTask={onRestoreRevertTask}
         />
       </>,
     );
@@ -435,14 +436,17 @@ describe("native Task Detail", () => {
           task={makeTask({ column: "done", sourceMetadata: { revertedAt: "2026-01-02T00:00:00Z" } as never })}
           onDeleteTask={onDeleteTask}
           onRevertTask={onRevertTask}
-          onReviseTask={onReviseTask}
+          onRestoreRevertTask={onRestoreRevertTask}
         />
       </>,
     );
     expect(screen.queryByRole("button", { name: "Revert this task's changes" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "Actions" }));
-    await user.click(within(await screen.findByRole("menu", { name: "Task actions" })).getByRole("menuitem", { name: "Revise" }));
-    expect(onReviseTask).toHaveBeenCalledTimes(1);
+    const revertedMenu = await screen.findByRole("menu", { name: "Task actions" });
+    expect(within(revertedMenu).queryByRole("menuitem", { name: "Revise" })).toBeNull();
+    expect(within(revertedMenu).queryByRole("menuitem", { name: "Revert" })).toBeNull();
+    await user.click(within(revertedMenu).getByRole("menuitem", { name: "Restore revert" }));
+    expect(onRestoreRevertTask).toHaveBeenCalledWith("FN-099", { mode: "auto" });
   });
 
   it.each([false, true])("preserves WIP pause and retry actions with Alpha=%s", async (enabled) => {

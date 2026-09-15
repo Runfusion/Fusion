@@ -43,7 +43,6 @@ function renderBoardSubtree(
   active: boolean,
   onOpenHistory: () => void,
   onRefinementCreated: NonNullable<ComponentProps<typeof Board>["onRefinementCreated"]>,
-  onReviseTask: NonNullable<ComponentProps<typeof Board>["onReviseTask"]>,
 ) {
   const {
     capacityRiskBannerEnabled,
@@ -78,6 +77,7 @@ function renderBoardSubtree(
     duplicateTask,
     mergeTask,
     revertTask,
+    restoreTaskRevert,
     deleteTask,
     loadMoreCurrentTasks,
     currentTasksTotal,
@@ -144,7 +144,7 @@ function renderBoardSubtree(
         onDuplicateTask={duplicateTask}
         onMergeTask={mergeTask}
         onRevertTask={revertTask}
-        onReviseTask={onReviseTask}
+        onRestoreRevertTask={restoreTaskRevert}
         onDeleteTask={deleteTask}
         onLoadMoreCurrentTasks={isRemote ? undefined : loadMoreCurrentTasks}
         currentTasksTotal={isRemote ? undefined : currentTasksTotal}
@@ -194,10 +194,10 @@ function renderListSubtree(
     retryTask,
     onOpenChatWithPrefill,
     deleteTask,
-    modalManager,
     pauseTask,
     unpauseTask,
     revertTask,
+    restoreTaskRevert,
     mergeTask,
     resetTask,
     duplicateTask,
@@ -234,10 +234,10 @@ function renderListSubtree(
         onRetryTask={retryTask}
         onOpenChatWithPrefill={onOpenChatWithPrefill}
         onDeleteTask={deleteTask}
-        onReviseTask={(task) => modalManager.openNewTaskWithDescription(task.description)}
         onPauseTask={pauseTask}
         onUnpauseTask={unpauseTask}
         onRevertTask={revertTask}
+        onRestoreRevertTask={restoreTaskRevert}
         onMergeTask={mergeTask}
         onResetTask={resetTask}
         onDuplicateTask={duplicateTask}
@@ -307,11 +307,10 @@ function renderMainViewSubtree(
   active: boolean,
   onOpenHistory: () => void,
   onRefinementCreated: NonNullable<ComponentProps<typeof Board>["onRefinementCreated"]>,
-  onReviseTask: NonNullable<ComponentProps<typeof Board>["onReviseTask"]>,
 ) {
   switch (id) {
     case "board":
-      return renderBoardSubtree(props, active, onOpenHistory, onRefinementCreated, onReviseTask);
+      return renderBoardSubtree(props, active, onOpenHistory, onRefinementCreated);
     case "list":
       return renderListSubtree(props, active, onRefinementCreated);
     case "chat":
@@ -339,9 +338,6 @@ export function MainViewKeepAlive({ activeId, mountedIds, projectKey, mainConten
   const handleRefinementCreated = useCallback<NonNullable<ComponentProps<typeof Board>["onRefinementCreated"]>>((task) => {
     mainContentPropsRef.current.ingestCreatedTasks([task]);
   }, []);
-  const handleReviseTask = useCallback<NonNullable<ComponentProps<typeof Board>["onReviseTask"]>>((task) => {
-    mainContentPropsRef.current.modalManager.openNewTaskWithDescription(task.description);
-  }, []);
 
   return (
     <>
@@ -350,7 +346,7 @@ export function MainViewKeepAlive({ activeId, mountedIds, projectKey, mainConten
         const isActive = activeId === id || (mobileDrawer !== undefined && mobileDrawer.backgroundActive !== false && id === "board");
         const subtree = (
           <KeepAliveView key={`${projectKey}:${id}`} hidden={!isActive} testId={`${id}-keep-alive`}>
-            {renderMainViewSubtree(id, mainContentProps, isActive, handleOpenHistory, handleRefinementCreated, handleReviseTask)}
+            {renderMainViewSubtree(id, mainContentProps, isActive, handleOpenHistory, handleRefinementCreated)}
           </KeepAliveView>
         );
         if (!isDrawerView) return subtree;

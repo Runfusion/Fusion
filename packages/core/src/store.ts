@@ -1765,7 +1765,18 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     return getBranchProgressByTaskImpl(this, taskIds);
   }
   // FNXC:PostgresCutover 2026-07-04-00:00: facade delegates to async PG query in backend mode.
-  async findOpenRevertTaskForSource(sourceTaskId: string): Promise<Task | null> {
+  /*
+  FNXC:TaskRevert 2026-09-15-10:00:
+  FN-416 adds the opposite intent (restore a reverted task), whose AI fallback task carries
+  `sourceMetadata.restoreOf`. The lane question and the project scoping are identical, so the
+  marker key is a parameter rather than a second copy of this query. It defaults to `revertOf`,
+  so every historical call site is byte-identical. The two keys must stay DISTINCT: an open undo
+  task must never suppress a restore task, and vice versa.
+  */
+  async findOpenRevertTaskForSource(
+    sourceTaskId: string,
+    metadataKey: "revertOf" | "restoreOf" = "revertOf",
+  ): Promise<Task | null> {
     const trimmedId = sourceTaskId.trim();
     if (trimmedId.length === 0) return null;
     /*
@@ -1795,7 +1806,9 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     const conditions = [
       isNull(schema.project.tasks.deletedAt),
       ...revertFinishedExclusions,
-      sql`${schema.project.tasks.sourceMetadata}->>'revertOf' = ${trimmedId}`,
+      metadataKey === "restoreOf"
+        ? sql`${schema.project.tasks.sourceMetadata}->>'restoreOf' = ${trimmedId}`
+        : sql`${schema.project.tasks.sourceMetadata}->>'revertOf' = ${trimmedId}`,
     ];
     if (layer.projectId) {
       conditions.push(eq(schema.project.tasks.projectId, layer.projectId));

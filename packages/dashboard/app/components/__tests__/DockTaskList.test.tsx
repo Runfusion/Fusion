@@ -11,7 +11,7 @@ The mock records each TaskCard mount so tests can assert row identity stability:
 const { taskCardMountLog } = vi.hoisted(() => ({ taskCardMountLog: [] as string[] }));
 
 vi.mock("../TaskCard", () => ({
-  TaskCard: ({ task, taskColumnFlags, onOpenDetail, onDeleteTask, onReviseTask }: { task: Task | TaskDetail; taskColumnFlags?: { complete?: boolean }; onOpenDetail: (task: Task | TaskDetail) => void; onDeleteTask?: (id: string) => Promise<Task>; onReviseTask?: (task: Task) => void }) => {
+  TaskCard: ({ task, taskColumnFlags, onOpenDetail, onDeleteTask, onRestoreRevertTask }: { task: Task | TaskDetail; taskColumnFlags?: { complete?: boolean }; onOpenDetail: (task: Task | TaskDetail) => void; onDeleteTask?: (id: string) => Promise<Task>; onRestoreRevertTask?: (id: string, body?: { mode?: string }) => Promise<unknown> }) => {
     useEffect(() => {
       taskCardMountLog.push(task.id);
     }, []);
@@ -24,7 +24,7 @@ vi.mock("../TaskCard", () => ({
         onClick={() => onOpenDetail(task)}
       >
         {task.title ?? task.id}
-        {onReviseTask ? <span data-testid={`mock-task-card-revise-${task.id}`} onClick={(event) => { event.stopPropagation(); onReviseTask(task as Task); }}>Revise</span> : null}
+        {onRestoreRevertTask ? <span data-testid={`mock-task-card-restore-revert-${task.id}`} onClick={(event) => { event.stopPropagation(); void onRestoreRevertTask(task.id, { mode: "auto" }); }}>Restore revert</span> : null}
       </button>
     );
   },
@@ -172,13 +172,14 @@ describe("DockTaskList", () => {
   FNXC:RightDockTasks 2026-06-28-18:42:
   Empty right-dock task states must distinguish a truly empty list from a list whose only rows are completed, so the compact panel never renders blank and the Show Done affordance remains reachable when completed rows exist.
   */
-  it("renders reverted complete work as an ordinary dock row with revise", () => {
+  /* FN-416 case (d): the dock row forwards restore-the-revert; the removed Revise handler is gone. */
+  it("renders reverted complete work as an ordinary dock row with restore-the-revert", () => {
     const reverted = {
       ...makeTask("FN-REVERTED", "Cancelled task", "shipped"),
       description: "first line\nsecond line",
       sourceMetadata: { revertedAt: "2026-08-01T00:00:00.000Z" },
     } as Task;
-    const onReviseTask = vi.fn();
+    const onRestoreRevertTask = vi.fn().mockResolvedValue({ mode: "git", clean: true, restoreCommitSha: "restore-sha" });
 
     render(
       <DockTaskList
@@ -186,7 +187,7 @@ describe("DockTaskList", () => {
         columnFlagsByTaskId={new Map([[reverted.id, { complete: true }]])}
         onOpenTask={vi.fn()}
         onDeleteTask={vi.fn()}
-        onReviseTask={onReviseTask}
+        onRestoreRevertTask={onRestoreRevertTask}
         addToast={vi.fn()}
       />,
     );
@@ -196,8 +197,8 @@ describe("DockTaskList", () => {
     fireEvent.click(screen.getByRole("button", { name: "Show Done" }));
     expect(screen.getAllByTestId("dock-task-list-row-FN-REVERTED")).toHaveLength(1);
     expect(screen.getByTestId("mock-task-card-FN-REVERTED")).toHaveAttribute("data-complete", "true");
-    fireEvent.click(screen.getByTestId("mock-task-card-revise-FN-REVERTED"));
-    expect(onReviseTask).toHaveBeenCalledWith(reverted);
+    fireEvent.click(screen.getByTestId("mock-task-card-restore-revert-FN-REVERTED"));
+    expect(onRestoreRevertTask).toHaveBeenCalledWith(reverted.id, { mode: "auto" });
   });
 
   it("renders distinct empty states for no tasks and only completed tasks", () => {

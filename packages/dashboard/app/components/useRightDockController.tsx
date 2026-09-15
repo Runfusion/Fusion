@@ -7,7 +7,7 @@ import type { ChatSessionInfo } from "../hooks/useChat";
 import type { ChatReportHandoff } from "./chatReportHandoff";
 import type { DetailTaskTab } from "../hooks/useModalManager";
 import { fetchTaskDetail } from "../api";
-import type { RevertTaskOptions, RevertTaskResult } from "../api";
+import type { RestoreTaskRevertOptions, RestoreTaskRevertResult, RevertTaskOptions, RevertTaskResult } from "../api";
 import { TaskCard } from "./TaskCard";
 import { RightDockTaskDetailHost } from "./TaskDetailHostBoundaries";
 import { mergeTaskSnapshot } from "../hooks/useTasks";
@@ -45,6 +45,8 @@ export interface RightDockControllerInput {
   onUpdateTask?: (id: string, updates: { title?: string; description?: string; dependencies?: string[]; dismissNearDuplicate?: boolean; githubTracking?: { enabled?: boolean } }) => Promise<Task>;
   onDeleteTask: (id: string, options?: { removeDependencyReferences?: boolean; removeLineageReferences?: boolean; githubIssueAction?: GithubIssueAction; allowResurrection?: boolean }) => Promise<Task>;
   onRevertTask?: (id: string, body?: RevertTaskOptions) => Promise<RevertTaskResult>;
+  /* FNXC:TaskRevert 2026-09-15-10:00 (FN-416): restore-the-revert reaches the dock task detail. */
+  onRestoreRevertTask?: (id: string, body?: RestoreTaskRevertOptions) => Promise<RestoreTaskRevertResult>;
   onMergeTask: (id: string) => Promise<MergeResult>;
   onRetryTask?: (id: string) => Promise<Task>;
   onOpenChatWithPrefill?: (prefillText: string) => void;
@@ -259,13 +261,6 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
         .then((task) => input.openDetailTask(task as TaskDetail))
         .catch((error) => input.addToast(error instanceof Error ? error.message : "Failed to open task detail", "error"));
     },
-    /*
-    FNXC:TaskRevert 2026-08-01-20:06:
-    Dock resolution uses the same New Task prefill owner as every other surface.
-    Keeping this callback in registry props lets compact and expanded dock hosts revise
-    the exact source description without introducing a second draft state.
-    */
-    onReviseTask: (task: Task | TaskDetail) => input.onSendSelectionToTask(task.description),
     onDeleteTask: input.onDeleteTask,
     onOpenChatWithPrefill: input.onOpenChatWithPrefill,
     onOpenDetail: input.openDetailTask,
@@ -296,10 +291,10 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
       tasks={input.tasks as Task[]}
       onCloseDock={closeDockTask}
       onOpenDetail={(value, initialTab) => input.openDetailTask(value, initialTab ?? "chat")}
-      /* FNXC:TaskRevert 2026-08-01-20:27: Right-dock task detail uses the shared New Task draft recovery for reverted tasks. */
-      onReviseTask={(task) => input.onSendSelectionToTask(task.description)}
       onDeleteTask={input.onDeleteTask}
       onRevertTask={input.onRevertTask}
+      /* FNXC:TaskRevert 2026-09-15-10:00 (FN-416): dock task detail offers restore-the-revert, not a Revise draft. */
+      onRestoreRevertTask={input.onRestoreRevertTask}
       onMergeTask={input.onMergeTask}
       onRetryTask={input.onRetryTask}
       onOpenChatWithPrefill={input.onOpenChatWithPrefill}
