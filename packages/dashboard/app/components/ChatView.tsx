@@ -161,6 +161,13 @@ export interface ChatViewProps {
   initialComposerDraft?: string;
   initialComposerDraftNonce?: number;
   onSendAsReport?: (handoff: ChatReportHandoff) => void;
+  /*
+  FNXC:ChatWindows 2026-09-14-23:48:
+  FN-396: a host that renders this conversation's identity outside the view (a detached window's header and accessible
+  name) cannot keep the snapshot it opened with. This reports the live active session whenever a rendered identity
+  field changes. It is a pure notification: it never selects a session and never writes into useChat.
+  */
+  onActiveSessionChange?: (session: ChatSessionInfo) => void;
 }
 
 const CHAT_CONTEXT_MENU_FALLBACK_WIDTH_PX = 200;
@@ -359,7 +366,7 @@ function ChatDialogBackdrop({ children, onClose }: { children: React.ReactElemen
 
 type CopyFeedbackState = "success" | "error" | null;
 
-function ChatViewContent({ projectId, addToast, floating = false, compactLayout = false, listOnly = false, openChatWindows, dedicatedConversation = false, findActive: hostFindActive = true, active: hostActive = true, onPopOut, onMaximize, onClose, onOpenSessionInNewWindow, initialDirectSession, initialDirectSessionNonce, persistChatPreferences = true, chatCommandContext, initialComposerDraft, initialComposerDraftNonce, onSendAsReport }: ChatViewProps) {
+function ChatViewContent({ projectId, addToast, floating = false, compactLayout = false, listOnly = false, openChatWindows, dedicatedConversation = false, findActive: hostFindActive = true, active: hostActive = true, onPopOut, onMaximize, onClose, onOpenSessionInNewWindow, initialDirectSession, initialDirectSessionNonce, persistChatPreferences = true, chatCommandContext, initialComposerDraft, initialComposerDraftNonce, onSendAsReport, onActiveSessionChange }: ChatViewProps) {
   const { t } = useTranslation("app");
   const managedSurfaceActive = useDashboardWindowSurfaceActivity();
   const active = hostActive && managedSurfaceActive;
@@ -2804,8 +2811,38 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
   FNXC:ChatNavigation 2026-08-20-05:25:
   FN-068 makes the saved conversation title the direct-thread identity for every host. Model metadata remains secondary, and titleless legacy sessions use a stable label rather than promoting a model name into the title slot.
   */
+  /*
+  FNXC:ChatWindows 2026-09-14-23:48:
+  FN-396: report the live conversation identity to the host exactly when a field it renders moves. Comparing the
+  rendered fields rather than object identity keeps an unrelated refresh (a new preview, a streaming flag) from
+  looping the host's state writer.
+  */
+  const lastReportedSessionRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!onActiveSessionChange || !activeSession) return;
+    const signature = JSON.stringify([
+      activeSession.id,
+      activeSession.title ?? null,
+      activeSession.updatedAt,
+      activeSession.status,
+      activeSession.agentId,
+      activeSession.modelProvider ?? null,
+      activeSession.modelId ?? null,
+      activeSession.pinnedAt ?? null,
+    ]);
+    if (lastReportedSessionRef.current === signature) return;
+    lastReportedSessionRef.current = signature;
+    onActiveSessionChange(activeSession);
+  }, [activeSession, onActiveSessionChange]);
+
+  /*
+  FNXC:ChatWindows 2026-09-14-23:48:
+  FN-396: the requested session is only a first-paint fallback for a dedicated host that has not resolved its
+  conversation yet. Once the live session exists it is authoritative, including when its title is cleared — otherwise
+  a cleared title silently resurrects the name the window was opened with.
+  */
   const threadHeaderTitle = activeSession?.title?.trim()
-    || (dedicatedConversation ? initialDirectSession?.title?.trim() : "")
+    || (dedicatedConversation && !activeSession ? initialDirectSession?.title?.trim() : "")
     || t("chat.untitledConversation", "Untitled conversation");
 
   const showThreadHeaderModelTag = Boolean(activeModelTag);
@@ -3180,8 +3217,8 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
             onToggleFavorite={handleToggleFavoriteProvider}
             favoriteModels={favoriteModels}
             onToggleModelFavorite={handleToggleFavoriteModel}
-            agents={Array.from(agentsMap.values())}
             agentId={activeSession?.agentId}
+            agentName={activeSession?.agentId ? agentsMap.get(activeSession.agentId)?.name : undefined}
             modelProvider={activeSession?.modelProvider}
             modelId={activeSession?.modelId}
             targetKey={activeSession?.id ?? null}

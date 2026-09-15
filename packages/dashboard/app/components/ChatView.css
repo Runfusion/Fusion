@@ -1768,7 +1768,6 @@ Model/agent retargeting and favorite stars stay inside the same Brain popup. The
   z-index: calc(var(--fusion-max-z) + 2);
 }
 
-.chat-view--narrow .chat-thinking-agent-list,
 .chat-view--narrow .chat-thinking-popover-list {
   max-height: calc(var(--space-xl) * 7);
 }
@@ -1795,94 +1794,14 @@ Thinking-section text uses the defined muted text token across all themes. The m
   text-transform: uppercase;
 }
 
-.chat-thinking-mode-toggle {
-  display: flex;
-  gap: var(--space-xs);
-  margin-bottom: var(--space-sm);
-  padding: var(--space-xs);
-  background: var(--surface-secondary);
-  border-radius: var(--radius-md);
-}
-
-.chat-thinking-mode-btn {
-  flex: 1;
-  border: none;
-  background: transparent;
-  color: var(--text-muted);
-  padding: var(--space-xs) var(--space-sm);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  font-size: 0.8125rem;
-  transition: background var(--transition-fast), color var(--transition-fast);
-}
-
-.chat-thinking-mode-btn--active,
-.chat-thinking-mode-btn:hover {
-  background: var(--surface);
-  color: var(--text-primary);
-}
-
-.chat-thinking-mode-btn:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring-strong);
-}
-
 .chat-thinking-model-picker .custom-model-dropdown {
   width: 100%;
 }
 
-.chat-thinking-agent-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-xs);
-  max-height: calc(var(--space-xl) * 8);
-  overflow-y: auto;
-}
-
-.chat-thinking-agent-item {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-  width: 100%;
-  border: 1px solid var(--border);
-  background: transparent;
-  color: inherit;
-  text-align: left;
-  padding: var(--space-sm);
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  transition: background var(--transition-fast), border-color var(--transition-fast);
-}
-
-.chat-thinking-agent-item:hover,
-.chat-thinking-agent-item--selected {
-  background: var(--card-hover);
-  border-color: var(--accent);
-}
-
-.chat-thinking-agent-item:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring-strong);
-}
-
-.chat-thinking-agent-name {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.chat-thinking-agent-role,
 .chat-thinking-current-target,
 .chat-thinking-empty {
   color: var(--text-muted);
   font-size: 0.75rem;
-}
-
-.chat-thinking-agent-role {
-  flex: none;
-  text-transform: capitalize;
 }
 
 .chat-thinking-current-target,
@@ -2212,7 +2131,6 @@ Thinking-section text uses the defined muted text token across all themes. The m
   FNXC:Chat-ModelSwitch 2026-09-06-21:10:
   Mobile keeps only the inner model and thinking lists scrollable. The fixed body portal owns its viewport geometry, so no breakpoint may reintroduce a composer-relative containing block.
   */
-  .chat-thinking-agent-list,
   .chat-thinking-popover-list {
     max-height: calc(var(--space-xl) * 7);
   }

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatThinkingLevelControl } from "../ChatThinkingLevelControl";
 import { ModelSelectionModal } from "../ModelSelectionModal";
@@ -68,7 +68,8 @@ describe("model-menu filter host dismissal", () => {
       { id: "gpt-4o", provider: "openai", name: "GPT-4o" },
     ]} />);
     fireEvent.click(screen.getByTestId("chat-thinking-btn"));
-    fireEvent.click(screen.getByLabelText("Model"));
+    // FN-396: the section is labelled by its visible "Model" title, so target the picker's own trigger.
+    fireEvent.click(within(screen.getByTestId("chat-thinking-model-picker")).getByRole("button", { name: "Model" }));
     const filter = await screen.findByPlaceholderText("Filter models…");
     if (mobile) fireEvent.touchStart(filter);
     fireEvent.pointerDown(filter); fireEvent.mouseDown(filter);

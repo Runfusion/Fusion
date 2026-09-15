@@ -3,7 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { THINKING_LEVELS } from "@fusion/core";
-import { Bot, Brain } from "lucide-react";
+import { Brain } from "lucide-react";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import type { ModelInfo } from "../api";
 import { FN_AGENT_ID } from "../hooks/useChat";
@@ -26,17 +26,14 @@ FNXC:Chat-ThinkingLevel 2026-07-12-20:08:
 The Default entry must describe the resolved project/global default supplied by ChatView, while omitted props preserve the legacy isolated fallback label `Default (off)`.
 
 FNXC:Chat-ModelSwitch 2026-09-06-21:10:
-Task Chat reuses this one brain-icon popover with model-only targeting, so selecting its model can never impersonate a durable agent. Direct Chat retains the agent lane; hosts that opt out of it render only the model picker and the shared thinking-level list. Chat hosts also pass the shared favorite-provider and favorite-model actions through this control so the existing dropdown renders the same persistent star affordance on desktop and mobile.
+Task Chat reuses this one brain-icon popover with model-only targeting, so selecting its model can never impersonate a durable agent. Every chat host now shares that model-only lane: the popover retargets a MODEL and nothing else. Chat hosts also pass the shared favorite-provider and favorite-model actions through this control so the existing dropdown renders the same persistent star affordance on desktop and mobile.
+
+FNXC:Chat-ModelSwitch 2026-09-14-23:48:
+FN-396 removes the Model/Agent toggle and the selectable agent list from this panel. Agents are solicited by writing `@Agent_Name` in the message, and each agent answers with the model and thinking level configured on its own record, so a second, contradictory place to re-assign a conversation to an agent was duplicate mechanism rather than a feature. A conversation historically bound to an agent still works: its target is surfaced read-only so the operator can see who owns it, and the server-side agent-bound session support is untouched.
 
 FNXC:Chat-ThinkingLevel 2026-07-16-00:34:
 FN-8030 lets room composers reuse this control with showTargetSection={false}. A room's thinking effort is the default reasoning effort for every responder, and rooms have no per-composer model or agent target to switch.
 */
-
-export interface ChatThinkingLevelControlAgent {
-  id: string;
-  name: string;
-  role?: string;
-}
 
 export interface ChatThinkingLevelControlProps {
   /** Session's current thinkingLevel; null/undefined/empty means "inherit default". */
@@ -45,10 +42,8 @@ export interface ChatThinkingLevelControlProps {
   onChange: (level: string) => void | Promise<void>;
   /** Resolved project/global default used only for the Default/clear label. */
   defaultThinkingLevel?: string;
-  /** Show direct-chat model/agent targeting controls; rooms render only the thinking-level list. */
+  /** Show the model targeting control; rooms render only the thinking-level list. */
   showTargetSection?: boolean;
-  /** Keep the direct-chat agent lane visible; model-only hosts never render agent controls. */
-  showAgentTarget?: boolean;
   /** Optional accessible label forwarded to the embedded model picker. */
   modelPickerLabel?: string;
   /** Optional inherited/default entry label forwarded to the embedded model picker. */
@@ -62,15 +57,15 @@ export interface ChatThinkingLevelControlProps {
   onToggleFavorite?: (provider: string) => void;
   favoriteModels?: string[];
   onToggleModelFavorite?: (modelId: string) => void;
-  agents?: ChatThinkingLevelControlAgent[];
+  /** Conversation already bound to a durable agent; surfaced read-only, never selectable here. */
   agentId?: string | null;
+  /** Display name for a bound agent; the id is used when the host cannot resolve one. */
+  agentName?: string;
   modelProvider?: string | null;
   modelId?: string | null;
-  onChangeModel?: (selection: { agentId?: string; modelProvider?: string | null; modelId?: string | null }) => void | Promise<void>;
+  onChangeModel?: (selection: { modelProvider?: string | null; modelId?: string | null }) => void | Promise<void>;
   disabled?: boolean;
 }
-
-type TargetMode = "model" | "agent";
 
 type TargetExpectation = { agent: string; model: string };
 type TargetSnapshot = TargetExpectation & { key: string | null; level: string };
@@ -80,7 +75,6 @@ export function ChatThinkingLevelControl({
   onChange,
   defaultThinkingLevel = "off",
   showTargetSection = true,
-  showAgentTarget = true,
   modelPickerLabel,
   modelDefaultOptionLabel,
   targetKey,
@@ -90,8 +84,8 @@ export function ChatThinkingLevelControl({
   onToggleFavorite,
   favoriteModels = [],
   onToggleModelFavorite,
-  agents = [],
   agentId,
+  agentName,
   modelProvider,
   modelId,
   onChangeModel,
@@ -99,7 +93,6 @@ export function ChatThinkingLevelControl({
 }: ChatThinkingLevelControlProps) {
   const { t } = useTranslation("app");
   const [open, setOpen] = useState(false);
-  const [targetMode, setTargetMode] = useState<TargetMode>(() => (showAgentTarget && agentId && agentId !== FN_AGENT_ID ? "agent" : "model"));
   const rootRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const popoverRef = useRef<HTMLDivElement | null>(null);
@@ -124,6 +117,7 @@ export function ChatThinkingLevelControl({
   const hasStaleThinkingLevel = Boolean(normalizedLevel) && !thinkingLevelOptions.includes(normalizedLevel);
   const isActive = normalizedLevel !== "" || (showTargetSection && (Boolean(currentModelValue) || Boolean(selectedAgentId)));
   const listboxId = "chat-thinking-level-listbox";
+  const targetSectionTitleId = "chat-thinking-target-section-title";
 
   useEffect(() => {
     if (!open) return;
@@ -224,13 +218,7 @@ export function ChatThinkingLevelControl({
     }
 
     lastTargetSnapshotRef.current = next;
-    setTargetMode(showAgentTarget && selectedAgentId ? "agent" : "model");
-  }, [currentModelValue, normalizedLevel, normalizedTargetKey, selectedAgentId, showAgentTarget]);
-
-  const selectedAgent = useMemo(
-    () => agents.find((agent) => agent.id === selectedAgentId),
-    [agents, selectedAgentId],
-  );
+  }, [currentModelValue, normalizedLevel, normalizedTargetKey, selectedAgentId]);
 
   const optionLabel = (value: string): string => {
     if (value === "") {
@@ -259,24 +247,6 @@ export function ChatThinkingLevelControl({
       : { modelProvider: value.slice(0, slashIdx), modelId: value.slice(slashIdx + 1) });
   };
 
-  const chooseAgent = (nextAgentId: string) => {
-    if (!nextAgentId) return;
-    armTargetExpectation({ agent: nextAgentId, model: "" });
-    void onChangeModel?.({ agentId: nextAgentId });
-  };
-
-  /*
-  FNXC:Chat-ModelSwitch 2026-07-24-00:00:
-  Windows Electron can show the Agent toggle's pressed feedback after primary pointerdown while
-  its host prevents the following click. Commit the visual mode switch on primary pointerdown so
-  the available-agent list deterministically replaces the model picker; preserve click handling
-  only for keyboard/synthetic activation (`detail === 0`) so one pointer gesture does not reset
-  the local mode twice. `aria-pressed` makes the selected target observable to assistive tech.
-  */
-  const activateTargetMode = (mode: TargetMode) => {
-    setTargetMode(mode);
-  };
-
   const handleTriggerKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
     if (event.key === "Escape") {
       pendingTargetRef.current = null;
@@ -294,19 +264,6 @@ export function ChatThinkingLevelControl({
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
       chooseLevel(value);
-    }
-  };
-
-  const handleAgentKeyDown = (event: KeyboardEvent<HTMLButtonElement>, nextAgentId: string) => {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      pendingTargetRef.current = null;
-      setOpen(false);
-      return;
-    }
-    if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault();
-      chooseAgent(nextAgentId);
     }
   };
 
@@ -351,96 +308,38 @@ export function ChatThinkingLevelControl({
             maxHeight: popoverPosition.maxHeight,
           }}
         >
+          {/*
+          FNXC:Chat-ModelSwitch 2026-09-14-23:48:
+          FN-396: the target section is labelled BY its visible title rather than repeating "Model" in an aria-label,
+          because the embedded model picker already owns that accessible name and two identical labels are ambiguous.
+          */}
           {showTargetSection ? (
-          <section className="chat-thinking-target-section" aria-label={showAgentTarget ? t("chat.modelAgentSection", "Model / Agent") : t("chat.newChatModeModel", "Model")}>
-            <div className="chat-thinking-section-title">{showAgentTarget ? t("chat.modelAgentSection", "Model / Agent") : t("chat.newChatModeModel", "Model")}</div>
-            {showAgentTarget ? (
-              <div className="chat-thinking-mode-toggle" data-testid="chat-thinking-mode-toggle">
-                <AlphaButton
-                  type="button"
-                  className={`chat-thinking-mode-btn${targetMode === "model" ? " chat-thinking-mode-btn--active" : ""}`}
-                  data-testid="chat-thinking-mode-model"
-                  aria-pressed={targetMode === "model"}
-                  onPointerDown={(event) => {
-                    if (event.button === 0) activateTargetMode("model");
-                  }}
-                  onClick={(event) => {
-                    if (event.detail === 0) activateTargetMode("model");
-                  }}
-                >
-                  {t("chat.newChatModeModel", "Model")}
-                </AlphaButton>
-                <AlphaButton
-                  type="button"
-                  className={`chat-thinking-mode-btn${targetMode === "agent" ? " chat-thinking-mode-btn--active" : ""}`}
-                  data-testid="chat-thinking-mode-agent"
-                  aria-pressed={targetMode === "agent"}
-                  onPointerDown={(event) => {
-                    if (event.button === 0) activateTargetMode("agent");
-                  }}
-                  onClick={(event) => {
-                    if (event.detail === 0) activateTargetMode("agent");
-                  }}
-                >
-                  {t("chat.newChatModeAgent", "Agent")}
-                </AlphaButton>
-              </div>
-            ) : null}
-
-            {targetMode === "model" || !showAgentTarget ? (
-              <div className="chat-thinking-model-picker" data-testid="chat-thinking-model-picker">
-                <CustomModelDropdown
-                  models={models}
-                  value={currentModelValue}
-                  onChange={chooseModel}
-                  label={modelPickerLabel ?? t("chat.newChatModeModel", "Model")}
-                  placeholder={t("chat.selectModel", "Select a model")}
-                  defaultOptionLabel={modelDefaultOptionLabel}
-                  disabled={!onChangeModel || models.length === 0}
-                  favoriteProviders={favoriteProviders}
-                  onToggleFavorite={onToggleFavorite}
-                  favoriteModels={favoriteModels}
-                  onToggleModelFavorite={onToggleModelFavorite}
-                  menuWidth="readable"
-                />
-                {models.length === 0 ? (
-                  <div className="chat-thinking-empty" data-testid="chat-thinking-model-empty">
-                    {t("chat.noModelsAvailable", "No models available")}
-                  </div>
-                ) : null}
-              </div>
-            ) : (
-              <div className="chat-thinking-agent-list" data-testid="chat-thinking-agent-list">
-                {agents.length === 0 ? (
-                  <div className="chat-thinking-empty" data-testid="chat-thinking-agent-empty">
-                    {t("chat.noAgentsAvailable", "No agents available")}
-                  </div>
-                ) : (
-                  agents.map((agent) => {
-                    const selected = selectedAgentId === agent.id;
-                    return (
-                      <AlphaButton
-                        key={agent.id}
-                        type="button"
-                        className={`chat-thinking-agent-item${selected ? " chat-thinking-agent-item--selected" : ""}`}
-                        data-testid={`chat-thinking-agent-${agent.id}`}
-                        aria-pressed={selected}
-                        disabled={!onChangeModel}
-                        onClick={() => chooseAgent(agent.id)}
-                        onKeyDown={(event) => handleAgentKeyDown(event, agent.id)}
-                      >
-                        <Bot size={16} />
-                        <span className="chat-thinking-agent-name">{agent.name || agent.id}</span>
-                        {agent.role ? <span className="chat-thinking-agent-role">{agent.role}</span> : null}
-                      </AlphaButton>
-                    );
-                  })
-                )}
-              </div>
-            )}
-            {showAgentTarget && selectedAgent ? (
+          <section className="chat-thinking-target-section" aria-labelledby={targetSectionTitleId}>
+            <div className="chat-thinking-section-title" id={targetSectionTitleId}>{t("chat.newChatModeModel", "Model")}</div>
+            <div className="chat-thinking-model-picker" data-testid="chat-thinking-model-picker">
+              <CustomModelDropdown
+                models={models}
+                value={currentModelValue}
+                onChange={chooseModel}
+                label={modelPickerLabel ?? t("chat.newChatModeModel", "Model")}
+                placeholder={t("chat.selectModel", "Select a model")}
+                defaultOptionLabel={modelDefaultOptionLabel}
+                disabled={!onChangeModel || models.length === 0}
+                favoriteProviders={favoriteProviders}
+                onToggleFavorite={onToggleFavorite}
+                favoriteModels={favoriteModels}
+                onToggleModelFavorite={onToggleModelFavorite}
+                menuWidth="readable"
+              />
+              {models.length === 0 ? (
+                <div className="chat-thinking-empty" data-testid="chat-thinking-model-empty">
+                  {t("chat.noModelsAvailable", "No models available")}
+                </div>
+              ) : null}
+            </div>
+            {selectedAgentId ? (
               <div className="chat-thinking-current-target" data-testid="chat-thinking-current-agent">
-                {t("chat.currentAgentTarget", "Current agent: {{name}}", { name: selectedAgent.name || selectedAgent.id })}
+                {t("chat.currentAgentTarget", "Current agent: {{name}}", { name: agentName || selectedAgentId })}
               </div>
             ) : currentModelValue ? (
               <div className="chat-thinking-current-target" data-testid="chat-thinking-current-model">

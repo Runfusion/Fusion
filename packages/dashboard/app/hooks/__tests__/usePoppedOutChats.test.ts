@@ -61,6 +61,54 @@ describe("usePoppedOutChats", () => {
     expect(result.current.entries[1].composerPrefill).toBeUndefined();
   });
 
+  /*
+  FNXC:ChatWindows 2026-09-14-23:48:
+  FN-396: the session captured when a window opened is not the durable identity of a conversation. A rename must
+  reach the open window in place, without touching focusNonce or the composer prefill (which would re-raise the
+  window and reseed a draft the operator is typing).
+  */
+  it("syncs a renamed session in place without disturbing focus or prefill state", () => {
+    const { result } = renderHook(() => usePoppedOutChats());
+    act(() => result.current.popOut("project-a", session("a", "Ancien"), { composerPrefill: "brouillon" }));
+    act(() => result.current.popOut("project-a", session("b", "Autre")));
+
+    act(() => result.current.syncSession("project-a", session("a", "Nouveau")));
+
+    expect(result.current.entries[0]).toMatchObject({
+      session: { id: "a", title: "Nouveau" },
+      focusNonce: 1,
+      composerPrefill: { text: "brouillon", nonce: 1 },
+    });
+    expect(result.current.entries[1]).toMatchObject({ session: { title: "Autre" }, focusNonce: 1 });
+  });
+
+  it("ignores a sync for an unknown entry and never rewrites an unchanged identity", () => {
+    const { result } = renderHook(() => usePoppedOutChats());
+    act(() => result.current.popOut("project-a", session("a", "Ancien")));
+    const before = result.current.entries;
+
+    act(() => result.current.syncSession("project-a", session("missing", "Nouveau")));
+    act(() => result.current.syncSession("project-b", session("a", "Nouveau")));
+    expect(result.current.entries).toBe(before);
+
+    // A new object carrying the same rendered identity must not produce a React write.
+    act(() => result.current.syncSession("project-a", { ...session("a", "Ancien"), lastMessagePreview: "ping" }));
+    expect(result.current.entries).toBe(before);
+  });
+
+  it("syncs only the entry of the matching project when one session id is open twice", () => {
+    const { result } = renderHook(() => usePoppedOutChats());
+    act(() => result.current.popOut("project-a", session("same", "A")));
+    act(() => result.current.popOut("project-b", session("same", "B")));
+
+    act(() => result.current.syncSession("project-a", session("same", "A renommée")));
+
+    expect(result.current.entries.map((entry) => [entry.projectId, entry.session.title])).toEqual([
+      ["project-a", "A renommée"],
+      ["project-b", "B"],
+    ]);
+  });
+
   /* FNXC:ChatWindows 2026-09-14-21:10: FN-394 moved window separation to the shared window-manager cohort, so entries no longer carry a chat-only cascade slot; only identity and closing remain this hook.s concern. */
   it("closes precisely and closes all", () => {
     const { result } = renderHook(() => usePoppedOutChats());

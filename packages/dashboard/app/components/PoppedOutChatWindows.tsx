@@ -21,9 +21,16 @@ export interface PoppedOutChatWindowsProps {
   primary dock host; the emitting window and every other conversation stay mounted with their streams intact.
   */
   onSendAsReport?: ComponentProps<typeof ChatView>["onSendAsReport"];
+  /*
+  FNXC:ChatWindows 2026-09-14-23:48:
+  FN-396: the hosted conversation owns its own identity. A rename (dialog or `chat:session:updated` event) reaches
+  the window header and its accessible name through this callback, so the window never has to be closed and reopened
+  to show the current title.
+  */
+  onSessionSynced?: (projectId: string, session: ChatSessionInfo) => void;
 }
 
-export function PoppedOutChatWindows({ entries, projectId, addToast, experimentalFeatures, onClose, onOpenSessionInNewWindow, onSendAsReport }: PoppedOutChatWindowsProps) {
+export function PoppedOutChatWindows({ entries, projectId, addToast, experimentalFeatures, onClose, onOpenSessionInNewWindow, onSendAsReport, onSessionSynced }: PoppedOutChatWindowsProps) {
   /*
   FNXC:ChatWindows 2026-09-14-22:36:
   FN-394 removed Chat's own cascade bookkeeping and its durable geometry. Every detached conversation opens at the standard Chat size, centred, and the shared window manager decides whether an untouched neighbour earns one cascade offset — the same rule as every other dashboard window.
@@ -59,6 +66,7 @@ export function PoppedOutChatWindows({ entries, projectId, addToast, experimenta
           initialComposerDraft={entry.composerPrefill?.text}
           initialComposerDraftNonce={entry.composerPrefill?.nonce}
           onOpenSessionInNewWindow={onOpenSessionInNewWindow}
+          onActiveSessionChange={(session) => onSessionSynced?.(entry.projectId, session)}
           onSendAsReport={onSendAsReport}
           onClose={() => onClose(entry.projectId, entry.session.id)}
         />

@@ -160,8 +160,11 @@ function DockToWindowHarness({ pendingPrefill }: { pendingPrefill?: string }) {
         addToast={vi.fn()}
         onClose={chats.close}
         onOpenSessionInNewWindow={openSessionInNewWindow}
+        onSessionSynced={chats.syncSession}
       />
       <output data-testid="open-window-count">{chats.entries.length}</output>
+      <output data-testid="open-window-titles">{chats.entries.map((entry) => entry.session.title ?? "").join("|")}</output>
+      <output data-testid="open-window-nonces">{chats.entries.map((entry) => entry.focusNonce).join("|")}</output>
     </DashboardWindowManagerProvider>
   );
 }
@@ -283,6 +286,37 @@ describe("unified Chat host routing", () => {
     await clickDockSession(secondSessionFixture);
     await waitFor(() => expect(screen.getByTestId("open-window-count")).toHaveTextContent("2"));
     expect(detachedWindow(secondSessionFixture)).toBeInTheDocument();
+  });
+
+  /*
+  FNXC:ChatWindows 2026-09-14-23:48:
+  FN-396 end-to-end: the real dock → window-owner → detached-window wiring must carry a rename into the open window.
+  Before this, `entry.session` was written only by popOut, so the operator had to close and reopen the conversation.
+  */
+  it("carries a rename into the already-open detached window without re-raising it", async () => {
+    const { rerender } = render(<DockToWindowHarness />);
+
+    await clickDockSession();
+    await waitFor(() => expect(screen.getByTestId("open-window-count")).toHaveTextContent("1"));
+    const window = detachedWindow(activeSessionFixture);
+    await waitFor(() => expect(screen.getByTestId("open-window-titles")).toHaveTextContent(activeSessionFixture.title!));
+    expect(screen.getByTestId("open-window-nonces")).toHaveTextContent("1");
+
+    const renamed: ChatSessionInfo = { ...activeSessionFixture, title: "Titre renommé" };
+    setupMockChat({
+      activeSession: renamed,
+      sessions: [renamed, secondSessionFixture],
+      filteredSessions: [renamed, secondSessionFixture],
+      messages: [{ id: "message-1", role: "assistant", content: "Réponse", createdAt: "2026-09-14T10:00:00.000Z" }] as never,
+    });
+    rerender(<DockToWindowHarness />);
+
+    await waitFor(() => expect(screen.getByTestId("open-window-titles")).toHaveTextContent("Titre renommé"));
+    expect(detachedWindow(activeSessionFixture)).toBe(window);
+    expect(screen.getByTestId(`floating-window-overlay-chat-window-project-a-${activeSessionFixture.id}`))
+      .toHaveAttribute("aria-label", "Titre renommé");
+    expect(screen.getByTestId("open-window-nonces")).toHaveTextContent("1");
+    expect(within(window).getByText("Titre renommé")).toBeInTheDocument();
   });
 
   it("hands an external composer prefill to the conversation that request opened, never to the dock list", async () => {

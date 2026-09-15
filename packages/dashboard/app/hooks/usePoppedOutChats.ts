@@ -26,8 +26,29 @@ export interface PoppedOutChatOpenOptions {
 export interface UsePoppedOutChatsResult {
   entries: PoppedOutChatEntry[];
   popOut: (projectId: string, session: ChatSessionInfo, options?: PoppedOutChatOpenOptions) => void;
+  /*
+  FNXC:ChatWindows 2026-09-14-23:48:
+  FN-396: the session captured at open time is only the REQUEST that opened a window, never the durable identity of
+  the conversation. Renaming a conversation used to leave the old title on an open window until the operator closed
+  and reopened it, because popOut was the single writer of `entry.session`. syncSession replaces that snapshot in
+  place from the live conversation, deliberately leaving focusNonce and composerPrefill untouched: advancing either
+  would re-raise the window and reseed a draft the operator is typing.
+  */
+  syncSession: (projectId: string, session: ChatSessionInfo) => void;
   close: (projectId: string, sessionId: string) => void;
   closeAll: () => void;
+}
+
+/** Fields a detached window renders or keys on; an echo of these is not a state change. */
+function sameRenderedIdentity(a: ChatSessionInfo, b: ChatSessionInfo): boolean {
+  return a.id === b.id
+    && (a.title ?? null) === (b.title ?? null)
+    && a.updatedAt === b.updatedAt
+    && a.status === b.status
+    && a.agentId === b.agentId
+    && (a.modelProvider ?? null) === (b.modelProvider ?? null)
+    && (a.modelId ?? null) === (b.modelId ?? null)
+    && (a.pinnedAt ?? null) === (b.pinnedAt ?? null);
 }
 
 export function usePoppedOutChats(): UsePoppedOutChatsResult {
@@ -64,11 +85,21 @@ export function usePoppedOutChats(): UsePoppedOutChatsResult {
     });
   }, []);
 
+  const syncSession = useCallback((projectId: string, session: ChatSessionInfo) => {
+    setEntries((current) => {
+      const index = current.findIndex((entry) => entry.projectId === projectId && entry.session.id === session.id);
+      if (index === -1 || sameRenderedIdentity(current[index].session, session)) return current;
+      const refreshed = [...current];
+      refreshed[index] = { ...refreshed[index], session };
+      return refreshed;
+    });
+  }, []);
+
   const close = useCallback((projectId: string, sessionId: string) => {
     setEntries((current) => current.filter((entry) => entry.projectId !== projectId || entry.session.id !== sessionId));
   }, []);
 
   const closeAll = useCallback(() => setEntries([]), []);
 
-  return { entries, popOut, close, closeAll };
+  return { entries, popOut, syncSession, close, closeAll };
 }

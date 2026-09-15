@@ -1845,7 +1845,6 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
           level={displayedModel.thinkingLevel}
           defaultThinkingLevel={taskChatModel.thinkingLevel ?? "off"}
           showTargetSection
-          showAgentTarget={false}
           targetKey={plannerChatScopeKey}
           models={models}
           favoriteProviders={favoriteProviders}

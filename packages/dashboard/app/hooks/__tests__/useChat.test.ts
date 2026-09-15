@@ -4682,6 +4682,34 @@ describe("useChat", () => {
       });
     });
 
+    /*
+    FNXC:ChatWindows 2026-09-14-23:48:
+    FN-396: a conversation open in two hosts converges through this event. The host that did not perform the rename
+    must see the new title on BOTH the active session and its list row, because detached windows derive their header
+    and accessible name from the live active session.
+    */
+    it("renames the active session and its list row on chat:session:updated", async () => {
+      const original = makeSession({ id: "session-001", agentId: "agent-001", title: "Ancien" });
+      mockFetchChatSessions.mockResolvedValueOnce({ sessions: [original] });
+      mockFetchChatSession.mockResolvedValue({ session: original } as never);
+
+      const { result } = renderHook(() => useChat("proj-123"));
+      await waitFor(() => expect(result.current.sessions).toHaveLength(1));
+      await act(async () => { await result.current.selectSession("session-001"); });
+      await waitFor(() => expect(result.current.activeSession?.id).toBe("session-001"));
+
+      act(() => {
+        subscribeHandler["chat:session:updated"]?.({
+          data: JSON.stringify(makeSession({ id: "session-001", agentId: "agent-001", title: "Nouveau" })),
+        } as MessageEvent);
+      });
+
+      await waitFor(() => {
+        expect(result.current.activeSession?.title).toBe("Nouveau");
+        expect(result.current.sessions[0]?.title).toBe("Nouveau");
+      });
+    });
+
     it("FN-8504 waits for the authoritative cursor when an SSE update races session re-entry", async () => {
       const staleSession = {
         ...makeSession({ id: "session-reentry-race", agentId: "agent-001" }),

@@ -357,6 +357,7 @@ export interface AppAlphaDesktopRightDockCompositionInput {
     | "projectId"
     | "onClose"
     | "onOpenSessionInNewWindow"
+    | "onSessionSynced"
   >;
   noteWindowProps: Omit<import("./components/PoppedOutNoteWindows").PoppedOutNoteWindowsProps,
     | "entries"
@@ -397,6 +398,12 @@ export function useAppAlphaDesktopRightDockComposition({
         projectId={projectId}
         onClose={owner.chats.close}
         onOpenSessionInNewWindow={owner.openSessionInNewWindow}
+        /*
+        FNXC:ChatWindows 2026-09-14-23:48:
+        FN-396: a detached window keeps its own conversation identity current, so a rename repaints its header and
+        accessible name without the operator closing and reopening the window.
+        */
+        onSessionSynced={owner.chats.syncSession}
       />
     </>
   ) : null;
