@@ -4,6 +4,7 @@ const severityAuditLog = createLogger("dashboard-gitlab-lifecycle");
 import type { GlobalSettings, ProjectSettings, Task, TaskGitLabTrackedItem, TaskStore } from "@fusion/core";
 import { GitLabClient } from "./gitlab.js";
 import { resolveGitlabAuth } from "./gitlab-auth.js";
+import { safeLogTaskEntry } from "./task-log-safety.js";
 
 export type GitLabLifecycleTarget = {
   kind: "project_issue" | "group_issue" | "merge_request";
@@ -64,15 +65,14 @@ export function formatGitLabTargetLabel(kind: GitLabLifecycleTarget["kind"], pro
   return `${String(project)}${marker}${iid}`;
 }
 
+/*
+FNXC:GithubTrackingReconcile 2026-09-15-15:19:
+GitLab delete-path logging may target a row that is already read-only. Preserve unrelated errors,
+while delegating the expected refusal so it cannot abort the lifecycle handler.
+*/
 export async function safeLogGitLabEntry(store: TaskStore, taskId: string, message: string, details: string): Promise<void> {
-  try {
-    await store.logEntry(taskId, message, details);
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    if (errorMessage.includes(`Task ${taskId} not found`)) {
-      severityAuditLog.warn(`[gitlab-lifecycle] Unable to write log entry for deleted task ${taskId}: ${message}`);
-      return;
-    }
-    throw error;
-  }
+  await safeLogTaskEntry(store, taskId, message, details, {
+    logger: severityAuditLog,
+    context: "gitlab-lifecycle",
+  });
 }

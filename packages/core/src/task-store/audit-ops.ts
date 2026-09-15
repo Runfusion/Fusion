@@ -22,6 +22,7 @@ import {readTaskRow, updateTaskColumns} from "../task-store/async/async-persiste
 import { getLiveTaskColumn } from "./async/async-comments-attachments.js";
 import { acquireTaskAdvisoryXactLock } from "./task-advisory-lock.js";
 import { resolveArchivedLanes } from "../project-lane-vocabulary.js";
+import { buildTaskLogReadOnlyMessage, buildTaskNotFoundMessage } from "./task-log-write-refusal.js";
 import * as schema from "../postgres/schema/index.js";
 
 export async function runPluginColumnTransitionHooksImpl(store: TaskStore, taskId: string, workflowIr: WorkflowIr, fromColumn: string, toColumn: string,): Promise<void> {
@@ -318,8 +319,8 @@ export async function logEntryImpl(store: TaskStore, id: string, action: string,
           hot path. The same distinction governs the eight downstream comparisons in
           `async-comments-attachments.ts`, which are sentinels for the same reason.
           */
-          if (state === "archived") throw new Error(`Task ${id} is archived — logging is read-only`);
-          if (state === null) throw new Error(`Task ${id} not found`);
+          if (state === "archived") throw new Error(buildTaskLogReadOnlyMessage(id));
+          if (state === null) throw new Error(buildTaskNotFoundMessage(id));
         }
 
         const dir = store.taskDir(id);
@@ -365,7 +366,7 @@ export async function logEntryImpl(store: TaskStore, id: string, action: string,
             const layer = store.asyncLayer!;
       const pgRow = await readTaskRow(layer, id, { includeDeleted: true });
       if (!pgRow) {
-        throw new Error(`Task ${id} not found`);
+        throw new Error(buildTaskNotFoundMessage(id));
       }
       /*
       FNXC:WorkflowLifecycleColumns 2026-07-30-21:20 (audited — REAL, deferred with the cost stated):
@@ -426,7 +427,7 @@ export async function logEntryImpl(store: TaskStore, id: string, action: string,
         /* DELIBERATE-LITERAL — the degraded fallback arm; the live arm above uses the resolved set. */
         : pgRow.column === "archived";
       if (rowIsArchivedLane || pgRow.deletedAt != null) {
-        throw new Error(`Task ${id} is archived — logging is read-only`);
+        throw new Error(buildTaskLogReadOnlyMessage(id));
       }
       // PG jsonb columns arrive already-parsed; convert to the TaskLogEntry[] shape.
       const existingLog = Array.isArray(pgRow.log) ? (pgRow.log as TaskLogEntry[]) : [];
