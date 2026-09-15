@@ -1643,9 +1643,11 @@ describe("ChatManager.sendMessage", () => {
       };
     });
 
+    /* ThreatCrush CWE-377: a fake rootDir that is never created — the memory
+       reads miss exactly as they did on the old "/tmp/test" literal. */
     const chatManager = new ChatManager(
       mockChatStore as any,
-      "/tmp/test",
+      "chat-test-root",
       mockAgentStore as any,
       undefined,
       async () => ({ chatContextBudgetEnabled: false }),

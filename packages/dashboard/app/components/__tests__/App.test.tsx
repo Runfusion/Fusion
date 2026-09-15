@@ -2391,15 +2391,9 @@ describe("official dashboard design production wiring", () => {
     render(<App />);
     expect(await screen.findByTestId("desktop-action-bar")).toBeInTheDocument();
     expect(document.querySelector(".executor-status-bar")).toBeNull();
-<<<<<<< HEAD
     expect(screen.queryByTestId("desktop-nav-patchnode")).toBeNull();
-    expect(screen.queryByTestId("desktop-nav-chat")).toBeNull();
+    expect(screen.getByTestId("desktop-nav-chat")).toHaveAccessibleName("Chat");
     expect(screen.queryByTestId("desktop-nav-notes")).toBeNull();
-=======
-    expect(screen.queryByTestId("alpha-desktop-nav-patchnode")).toBeNull();
-    expect(screen.getByTestId("alpha-desktop-nav-chat")).toHaveAccessibleName("Chat");
-    expect(screen.queryByTestId("alpha-desktop-nav-notes")).toBeNull();
->>>>>>> b8fe1ed834 (feat(dashboard): restore Chat as an Alpha footer page destination)
 
     /*
     FNXC:ChatSurfaceUnification 2026-09-14-17:46:

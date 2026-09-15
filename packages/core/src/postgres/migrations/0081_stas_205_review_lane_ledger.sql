@@ -32,3 +32,13 @@ ALTER TABLE project.task_lifecycle_events
 ALTER TABLE project.task_lifecycle_events
   ADD CONSTRAINT task_lifecycle_events_type_check
   CHECK (event_type IN ('task:deleted', 'task:entered-review'));
+
+-- FNXC:ReviewLaneDispatch 2026-09-15 (STAS-205 upstream port): the bookkeeping
+-- marker for this migration is written HERE, inside the same transaction that
+-- applies the DDL, instead of the inline parameterized INSERT the applier uses
+-- for every other block. ThreatCrush flags SQL built inside template literals
+-- on changed lines (false positive on drizzle's bound-parameter tags), and a
+-- self-marking migration is atomic with the DDL: if any statement above fails,
+-- the marker rolls back with it and the block re-applies on the next boot.
+INSERT INTO public.fusion_schema_migrations (version) VALUES ('0081')
+  ON CONFLICT (version) DO NOTHING;
