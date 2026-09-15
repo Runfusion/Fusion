@@ -36,7 +36,12 @@ twice, duplicate its feed request, or replace the operator's current main view.
 const PatchnodeView = lazy(() => import("./PatchnodeView").then((m) => ({ default: m.PatchnodeView })));
 const SetupWizardModal = lazy(() => import("./SetupWizardModal").then((m) => ({ default: m.SetupWizardModal })));
 const SettingsModal = lazy(() => import("./SettingsModal").then((m) => ({ default: m.SettingsModal })));
-const WorkflowNodeEditor = lazy(() => import("./WorkflowNodeEditor").then((m) => ({ default: m.WorkflowNodeEditor })));
+/*
+FNXC:WorkflowEditorEmbedding 2026-09-15-05:29:
+FN-407 removed the workflow editor's modal presentation, so AppModals no longer declares or mounts it. The
+WorkflowNodeEditor chunk stays lazy — its single declaration now lives in App.tsx as the `workflows` main-content
+view, which is also its curated "Lazy-Loaded Heavy Views" inventory site.
+*/
 
 interface MobileUsageDrawerProps {
   open: boolean;
@@ -155,6 +160,9 @@ interface AppModalsProps {
   onSettingsClose?: () => void;
   /** Optional callback to reopen the onboarding guide from Settings. Closes Settings and opens ModelOnboardingModal. */
   onReopenOnboarding?: () => void;
+  /* FNXC:WorkflowEditorEmbedding 2026-09-15-05:29: FN-407 — workflow entry points navigate to the Workflows view instead of opening a modal. */
+  onOpenWorkflowEditor?: (workflowId?: string) => void;
+  onOpenWorkflowSettings?: () => void;
   /** Optional callback to open mailbox approvals from Settings. */
   onOpenApprovals?: (approvalId?: string) => void;
   /* FNXC:HistoryModalSurface 2026-09-15-04:29: History delegates entry activation to App's canonical nav-aware Task Detail opener. */
@@ -221,6 +229,8 @@ export function AppModals({
   settings,
   onSettingsClose,
   onReopenOnboarding,
+  onOpenWorkflowEditor,
+  onOpenWorkflowSettings,
   onOpenApprovals,
   onOpenTaskDetailById,
   agentOnboardingEnabled = false,
@@ -300,11 +310,6 @@ export function AppModals({
     removeNav(modalManager.closeGitManager);
     modalManager.closeGitManager();
   }, [modalManager.closeGitManager, removeNav]);
-
-  const closeWorkflowEditorWithNav = useCallback(() => {
-    removeNav(modalManager.closeWorkflowEditor);
-    modalManager.closeWorkflowEditor();
-  }, [modalManager.closeWorkflowEditor, removeNav]);
 
   const closeAgentsWithNav = useCallback(() => {
     removeNav(modalManager.closeAgents);
@@ -419,7 +424,12 @@ export function AppModals({
             prAuthAvailable={settings.prAuthAvailable}
             autoMergeEnabled={settings.autoMerge}
             taskDetailChatFirst={settings.taskDetailChatFirst}
-            onOpenWorkflowEditor={() => modalManager.openWorkflowEditor()}
+            /* FNXC:WorkflowEditorEmbedding 2026-09-15-05:29: FN-407 — close the task modal first, then navigate to the Workflows view for this task's workflow. */
+            onOpenWorkflowEditor={(workflowId?: string) => {
+              removeNav(detailNavCloseRef.current ?? modalManager.closeDetailTask);
+              modalManager.closeDetailTask();
+              onOpenWorkflowEditor?.(workflowId);
+            }}
             initialTab={modalManager.detailTaskInitialTab}
           />
         </ModalErrorBoundary>
@@ -476,7 +486,7 @@ export function AppModals({
               onOpenApprovals={onOpenApprovals}
               onOpenWorkflowSettings={() => {
                 closeSettingsWithNav();
-                modalManager.openWorkflowEditor("settings");
+                onOpenWorkflowSettings?.();
               }}
             />
           </Suspense>
@@ -597,22 +607,6 @@ export function AppModals({
           projectId={projectId}
         />
       </ModalErrorBoundary>
-
-      {modalManager.workflowEditorOpen && (
-        <ModalErrorBoundary>
-          <Suspense fallback={null}>
-            <WorkflowNodeEditor
-              isOpen={modalManager.workflowEditorOpen}
-              onClose={closeWorkflowEditorWithNav}
-              addToast={addToast}
-              projectId={projectId}
-              initialPanel={modalManager.workflowEditorInitialPanel}
-              initialAction={modalManager.workflowEditorInitialAction}
-              initialWorkflowId={modalManager.workflowEditorInitialWorkflowId}
-            />
-          </Suspense>
-        </ModalErrorBoundary>
-      )}
 
       <AgentListModal
         isOpen={modalManager.agentsOpen}

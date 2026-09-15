@@ -9405,9 +9405,9 @@
     "aiSubmit": "使用 AI 設計",
     "aiToggle": "改用描述方式",
     "backToWorkflowList": "",
+    "backToBoard": "",
     "clickToEditDescription": "按一下以編輯說明",
     "clickToRename": "按一下以重新命名",
-    "closeEditor": "",
     "created": "已建立工作流程「{{name}}」",
     "createDescription": "說明（選填）",
     "createFailed": "建立工作流程失敗",
@@ -9543,9 +9543,7 @@
     "merging": "",
     "mergingTitle": "",
     "review": "審查",
-    "triggerAria": "Select workflow. Current workflow: {{name}}",
-    "editWorkflow": "Edit workflow",
-    "newWorkflow": "New workflow"
+    "triggerAria": "Select workflow. Current workflow: {{name}}"
   },
   "workspace": {
     "projectRoot": "項目根目錄",

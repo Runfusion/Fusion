@@ -7,8 +7,6 @@ Planning keeps this compatibility wrapper while the neutral HeaderWorkflowSwitch
 
 interface PlanningWorkflowSwitcherSlotProps {
   projectId?: string;
-  onOpenWorkflowEditor?: (workflowId?: string) => void;
-  onCreateWorkflow?: () => void;
   onWorkflowSelectionChange?: (selection: HeaderWorkflowSelection | null) => void;
 }
 

@@ -169,8 +169,6 @@ function mainContentProps(overrides: Partial<MainContentProps> = {}): MainConten
     staleHighFanoutBlockerAgeThresholdMs: 0,
     lastFetchTimeMs: undefined,
     prAuthAvailable: false,
-    openWorkflowEditorWithNav: vi.fn(),
-    openCreateWorkflowWithNav: vi.fn(),
     sidebarActive: true,
     isMobile: false,
     isRemote: false,

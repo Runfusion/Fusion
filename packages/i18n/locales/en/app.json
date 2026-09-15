@@ -9494,9 +9494,9 @@
     "aiSubmit": "Design with AI",
     "aiToggle": "Describe it instead",
     "backToWorkflowList": "Back to workflows",
+    "backToBoard": "Back to board",
     "clickToEditDescription": "Click to edit description",
     "clickToRename": "Click to rename",
-    "closeEditor": "Close workflow editor",
     "created": "Created workflow \"{{name}}\"",
     "createDescription": "Description (optional)",
     "createFailed": "Failed to create workflow",
@@ -9632,9 +9632,7 @@
     "merging": "Merging",
     "mergingTitle": "{{count}} merging task{{plural}}",
     "review": "Review",
-    "triggerAria": "Select workflow. Current workflow: {{name}}",
-    "editWorkflow": "Edit workflow",
-    "newWorkflow": "New workflow"
+    "triggerAria": "Select workflow. Current workflow: {{name}}"
   },
   "workspace": {
     "projectRoot": "Project Root",

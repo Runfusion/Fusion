@@ -26,7 +26,6 @@ export interface PlanningKeepAliveProps {
   handlePlanningTaskCreated: (task: Task) => void;
   handlePlanningTasksCreated: (tasks: Task[]) => void;
   openBoardTaskDetail: (task: Task | TaskDetail, initialTab?: DetailTaskTab) => void;
-  openWorkflowEditorWithNav: (workflowId?: string) => void;
 }
 
 export function PlanningKeepAlive({
@@ -39,7 +38,6 @@ export function PlanningKeepAlive({
   handlePlanningTaskCreated,
   handlePlanningTasksCreated,
   openBoardTaskDetail,
-  openWorkflowEditorWithNav,
 }: PlanningKeepAliveProps) {
   const [planningHeaderWorkflowId, setPlanningHeaderWorkflowId] = useState<string | null>(null);
 
@@ -54,7 +52,6 @@ export function PlanningKeepAlive({
         {active ? (
           <PlanningWorkflowSwitcherSlot
             projectId={projectId}
-            onOpenWorkflowEditor={openWorkflowEditorWithNav}
             onWorkflowSelectionChange={(selection) => setPlanningHeaderWorkflowId(selection && !selection.isAllWorkflowsSelected ? selection.selectedWorkflow.id : null)}
           />
         ) : null}

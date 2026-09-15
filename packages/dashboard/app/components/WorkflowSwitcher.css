@@ -236,22 +236,21 @@ The workflow listbox is portaled but visually remains the ProjectSelector siblin
 }
 
 /*
-FNXC:NativeUiCollections 2026-09-10-20:30:
-All workflow selections live in one navigable native listbox. The aligned edit rail is a sibling collection of auxiliary actions, so options never contain buttons and Tab can leave the listbox for row editing.
+FNXC:NativeUiCollections 2026-09-15-05:29:
+All workflow selections live in one navigable native listbox.
+FN-407 removed the sibling edit rail, so the popover body is a single full-width column instead of a two-column grid that would otherwise leave an empty track.
 */
 .workflow-switcher-options {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
 }
 
-.workflow-switcher-option-collection,
-.workflow-switcher-edit-rail {
+.workflow-switcher-option-collection {
   display: flex;
   flex-direction: column;
   min-width: 0;
 }
 
-.workflow-switcher-edit-rail > *,
 .workflow-switcher-option-collection > * {
   min-height: var(--control-height-sm);
 }
@@ -274,50 +273,9 @@ All workflow selections live in one navigable native listbox. The aligned edit r
   transition: background var(--transition-fast);
 }
 
-.workflow-switcher-option:focus-visible,
-.workflow-switcher-edit:focus-visible,
-.workflow-switcher-create:focus-visible {
+.workflow-switcher-option:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
-}
-
-/*
-FNXC:StandardizedViewActions 2026-09-14-02:47:
-New workflow sits in a non-scrolling popover footer so it stays reachable while a long workflow list scrolls,
-instead of duplicating the affordance as a second button beside the selector trigger.
-*/
-.workflow-switcher-footer {
-  flex: 0 0 auto;
-  margin-top: var(--space-xs);
-  padding-top: var(--space-xs);
-  border-top: 1px solid var(--border);
-  background: var(--surface);
-}
-
-.workflow-switcher-create {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-sm);
-  width: 100%;
-  min-height: calc(var(--space-lg) + var(--space-sm));
-  border-radius: var(--radius-md);
-}
-
-[data-theme="light"] .workflow-switcher-footer {
-  background: var(--surface);
-}
-
-.workflow-switcher-edit {
-  flex: 0 0 auto;
-  align-self: center;
-  color: var(--text-muted);
-  transition: background var(--transition-fast), color var(--transition-fast);
-}
-
-.workflow-switcher-edit:hover {
-  background: var(--card-hover);
-  color: var(--text);
 }
 
 .workflow-switcher-option-name {

@@ -131,7 +131,6 @@ const listProps = {
   onMergeTask: vi.fn(async () => ({} as never)),
   onOpenDetail: vi.fn(),
   addToast: vi.fn(),
-  onCreateWorkflow: vi.fn(),
 };
 
 type Surface = "Board" | "ListView";

@@ -106,8 +106,6 @@ function renderBoardSubtree(
     handleOpenMission,
     lastFetchTimeMs,
     prAuthAvailable,
-    openWorkflowEditorWithNav,
-    openCreateWorkflowWithNav,
   } = props;
   /* FNXC:OfficialDashboardDesign 2026-09-13-00:38: Board and List always own the Header workflow slot in the official desktop shell. */
   const workflowControlsInHeader = true;
@@ -175,8 +173,6 @@ function renderBoardSubtree(
         onOpenMission={handleOpenMission}
         lastFetchTimeMs={lastFetchTimeMs}
         prAuthAvailable={prAuthAvailable}
-        onOpenWorkflowEditor={openWorkflowEditorWithNav}
-        onCreateWorkflow={openCreateWorkflowWithNav}
         workflowControlsInHeader={workflowControlsInHeader}
         onOpenHistory={onOpenHistory}
         active={active}
@@ -227,8 +223,6 @@ function renderListSubtree(
     autoMerge,
     openMobileTasksInPopup,
     mergeStrategy,
-    openWorkflowEditorWithNav,
-    openCreateWorkflowWithNav,
   } = props;
   const workflowControlsInHeader = true;
 
@@ -270,8 +264,6 @@ function renderListSubtree(
         autoMerge={autoMerge}
         openMobileTasksInPopup={openMobileTasksInPopup}
         mergeStrategy={mergeStrategy}
-        onOpenWorkflowEditor={openWorkflowEditorWithNav}
-        onCreateWorkflow={openCreateWorkflowWithNav}
         workflowControlsInHeader={workflowControlsInHeader}
         active={active}
       />

@@ -9405,9 +9405,9 @@
     "aiSubmit": "用 AI 设计",
     "aiToggle": "改为描述",
     "backToWorkflowList": "",
+    "backToBoard": "",
     "clickToEditDescription": "点击编辑描述",
     "clickToRename": "点击重命名",
-    "closeEditor": "",
     "created": "已创建工作流“{{name}}”",
     "createDescription": "描述（可选）",
     "createFailed": "创建工作流失败",
@@ -9543,9 +9543,7 @@
     "merging": "",
     "mergingTitle": "",
     "review": "审核",
-    "triggerAria": "Select workflow. Current workflow: {{name}}",
-    "editWorkflow": "Edit workflow",
-    "newWorkflow": "New workflow"
+    "triggerAria": "Select workflow. Current workflow: {{name}}"
   },
   "workspace": {
     "projectRoot": "项目根目录",

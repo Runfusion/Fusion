@@ -96,13 +96,16 @@ export interface ModalManager {
   fileBrowserInitialFile: string | null;
   activityLogOpen: boolean;
   gitManagerOpen: boolean;
-  workflowEditorOpen: boolean;
-  /** When the workflow editor opens, which internal panel to pre-select (U9 redirect stubs). */
-  workflowEditorInitialPanel?: "settings";
-  /** When the workflow editor opens, which modal action to start. */
-  workflowEditorInitialAction?: "create";
-  /** When the workflow editor opens for editing, which workflow id to pre-select. */
-  workflowEditorInitialWorkflowId?: string;
+  /*
+  FNXC:WorkflowEditorEmbedding 2026-09-15-05:29:
+  FN-407 removed the workflow editor's modal presentation. There is no `workflowEditorOpen` modal state any
+  more — the editor is the Workflows VIEW. What survives is view parameters an entry point can hand to that
+  view, which is why they are not part of `anyModalOpen`: no overlay is open, a route simply carries context.
+  */
+  /** Which internal panel the Workflows view should pre-select (U9 redirect stubs). */
+  workflowViewPanel?: "settings";
+  /** Which workflow id the Workflows view should pre-select. */
+  workflowViewWorkflowId?: string;
   agentsOpen: boolean;
   scriptsOpen: boolean;
   setupWizardOpen: boolean;
@@ -174,8 +177,8 @@ export interface ModalManager {
   openGitManager: () => void;
   closeGitManager: () => void;
 
-  openWorkflowEditor: (initialPanelOrAction?: "settings" | "create", initialWorkflowId?: string) => void;
-  closeWorkflowEditor: () => void;
+  setWorkflowViewParams: (params: { panel?: "settings"; workflowId?: string }) => void;
+  clearWorkflowViewParams: () => void;
 
   openAgents: () => void;
   closeAgents: () => void;
@@ -251,10 +254,8 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
   const [fileBrowserInitialFile, setFileBrowserInitialFile] = useState<string | null>(null);
   const [activityLogOpen, setActivityLogOpen] = useState(false);
   const [gitManagerOpen, setGitManagerOpen] = useState(false);
-  const [workflowEditorOpen, setWorkflowEditorOpen] = useState(false);
-  const [workflowEditorInitialPanel, setWorkflowEditorInitialPanel] = useState<"settings" | undefined>(undefined);
-  const [workflowEditorInitialAction, setWorkflowEditorInitialAction] = useState<"create" | undefined>(undefined);
-  const [workflowEditorInitialWorkflowId, setWorkflowEditorInitialWorkflowId] = useState<string | undefined>(undefined);
+  const [workflowViewPanel, setWorkflowViewPanel] = useState<"settings" | undefined>(undefined);
+  const [workflowViewWorkflowId, setWorkflowViewWorkflowId] = useState<string | undefined>(undefined);
   const [agentsOpen, setAgentsOpen] = useState(false);
   const [scriptsOpen, setScriptsOpen] = useState(false);
   const [setupWizardOpen, setSetupWizardOpen] = useState(false);
@@ -273,7 +274,6 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
       filesOpen ||
       activityLogOpen ||
       gitManagerOpen ||
-      workflowEditorOpen ||
       scriptsOpen ||
       agentsOpen ||
       usageOpen ||
@@ -472,19 +472,13 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
   const openGitManager = useCallback(() => setGitManagerOpen(true), []);
   const closeGitManager = useCallback(() => setGitManagerOpen(false), []);
 
-  const openWorkflowEditor = useCallback((initialPanelOrAction?: "settings" | "create", initialWorkflowId?: string) => {
-    const isSettingsOpen = initialPanelOrAction === "settings";
-    const isCreateOpen = initialPanelOrAction === "create";
-    setWorkflowEditorInitialPanel(isSettingsOpen ? "settings" : undefined);
-    setWorkflowEditorInitialAction(isCreateOpen ? "create" : undefined);
-    setWorkflowEditorInitialWorkflowId(!isSettingsOpen && !isCreateOpen ? initialWorkflowId : undefined);
-    setWorkflowEditorOpen(true);
+  const setWorkflowViewParams = useCallback((params: { panel?: "settings"; workflowId?: string }) => {
+    setWorkflowViewPanel(params.panel);
+    setWorkflowViewWorkflowId(params.panel === "settings" ? undefined : params.workflowId);
   }, []);
-  const closeWorkflowEditor = useCallback(() => {
-    setWorkflowEditorOpen(false);
-    setWorkflowEditorInitialPanel(undefined);
-    setWorkflowEditorInitialAction(undefined);
-    setWorkflowEditorInitialWorkflowId(undefined);
+  const clearWorkflowViewParams = useCallback(() => {
+    setWorkflowViewPanel(undefined);
+    setWorkflowViewWorkflowId(undefined);
   }, []);
 
   const openAgents = useCallback(() => setAgentsOpen(true), []);
@@ -532,10 +526,8 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
     setFileBrowserInitialFile(null);
     setActivityLogOpen(false);
     setGitManagerOpen(false);
-    setWorkflowEditorOpen(false);
-    setWorkflowEditorInitialPanel(undefined);
-    setWorkflowEditorInitialAction(undefined);
-    setWorkflowEditorInitialWorkflowId(undefined);
+    setWorkflowViewPanel(undefined);
+    setWorkflowViewWorkflowId(undefined);
     setScriptsOpen(false);
     setTerminalOpen(false);
     setTerminalInitialCommand(undefined);
@@ -595,10 +587,8 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
     fileBrowserInitialFile,
     activityLogOpen,
     gitManagerOpen,
-    workflowEditorOpen,
-    workflowEditorInitialPanel,
-    workflowEditorInitialAction,
-    workflowEditorInitialWorkflowId,
+    workflowViewPanel,
+    workflowViewWorkflowId,
     agentsOpen,
     scriptsOpen,
     setupWizardOpen,
@@ -640,8 +630,8 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
     closeActivityLog,
     openGitManager,
     closeGitManager,
-    openWorkflowEditor,
-    closeWorkflowEditor,
+    setWorkflowViewParams,
+    clearWorkflowViewParams,
     openAgents,
     closeAgents,
     openScripts,

@@ -39,6 +39,48 @@ A monotonic request id makes repeated clicks for the same agent observable to Ag
 let agentAnchorRequestSeq = 0;
 export function nextAgentAnchorRequestId(): number { return ++agentAnchorRequestSeq; }
 
+/*
+FNXC:WorkflowEditorEmbedding 2026-09-15-05:29:
+FN-407 made the Workflows view the single workflow-editor surface. Entry points that name a workflow (a task's
+Edit workflow) or a panel (Settings' Open workflow settings) hand those over as VIEW PARAMETERS rather than modal
+state. Clearing them on unmount is what makes a later plain "Workflows" nav entry open clean instead of
+resurrecting the previously preselected workflow. Declared at module scope so navigating away and back does not
+remount the editor as a brand-new element type.
+*/
+function WorkflowsMainView({
+  View,
+  addToast,
+  projectId,
+  initialPanel,
+  initialWorkflowId,
+  onClose,
+  onClearParams,
+}: {
+  View: MainContentProps["_WorkflowEditorView"];
+  addToast: MainContentProps["addToast"];
+  projectId?: string;
+  initialPanel?: "settings";
+  initialWorkflowId?: string;
+  onClose: () => void;
+  onClearParams: () => void;
+}) {
+  useEffect(() => onClearParams, [onClearParams]);
+  return (
+    <PageErrorBoundary>
+      <Suspense fallback={null}>
+        <View
+          isOpen={true}
+          onClose={onClose}
+          addToast={addToast}
+          projectId={projectId}
+          initialPanel={initialPanel}
+          initialWorkflowId={initialWorkflowId}
+        />
+      </Suspense>
+    </PageErrorBoundary>
+  );
+}
+
 const MOBILE_DRAWER_TITLES: Partial<Record<string, string>> = {
   "command-center": "Dashboard",
   planning: "Planning",
@@ -179,8 +221,6 @@ export function MainContentListView(props: AppMainPanelTaskDetailMainContentProp
     autoMerge,
     openMobileTasksInPopup,
     mergeStrategy,
-    openWorkflowEditorWithNav,
-    openCreateWorkflowWithNav,
   } = props;
 
   return (
@@ -216,8 +256,6 @@ export function MainContentListView(props: AppMainPanelTaskDetailMainContentProp
         autoMerge={autoMerge}
         openMobileTasksInPopup={openMobileTasksInPopup}
         mergeStrategy={mergeStrategy}
-        onOpenWorkflowEditor={openWorkflowEditorWithNav}
-        onCreateWorkflow={openCreateWorkflowWithNav}
         /*
         FNXC:ListInRightDock 2026-09-14-05:12:
         Only the ROUTE host portals its workflow selector into the shared header slot. The dock host renders its own
@@ -333,7 +371,6 @@ export function MainContent(props: MainContentProps) {
   openPlanningWithInitialPlanWithNav,
   ingestCreatedTasks,
   nodesEnabled,
-  openWorkflowEditorWithNav,
   handleGitHubImport,
   devServerEnabled,
   mainPanelDetailTask,
@@ -343,7 +380,6 @@ export function MainContent(props: MainContentProps) {
   updateTask,
   retryTask,
   deleteTask,
-  openCreateWorkflowWithNav,
   sidebarActive: _sidebarActive,
   notesController,
   registerNotesGuard,
@@ -592,9 +628,11 @@ export function MainContent(props: MainContentProps) {
             onMobileNavPrimaryItemsChange={setMobileNavPrimaryItemsImmediate}
             onReopenOnboarding={reopenOnboardingWithNav}
             onOpenApprovals={() => handleChangeTaskView("mailbox")}
+            /* FNXC:WorkflowEditorEmbedding 2026-09-15-05:29: FN-407 — the embedded Settings referral navigates to the Workflows view, exactly like the modal one. */
             onOpenWorkflowSettings={() => {
               closeSettingsView();
-              modalManager.openWorkflowEditor("settings");
+              modalManager.setWorkflowViewParams({ panel: "settings" });
+              handleChangeTaskView("workflows");
             }}
           />
         </Suspense>
@@ -659,8 +697,6 @@ export function MainContent(props: MainContentProps) {
         {isDependencyGraphView ? (
           <GraphWorkflowSwitcherSlot
             projectId={currentProject?.id}
-            onOpenWorkflowEditor={openWorkflowEditorWithNav}
-            onCreateWorkflow={openCreateWorkflowWithNav}
             onWorkflowSelectionChange={setGraphWorkflowSelection}
           />
         ) : null}
@@ -813,7 +849,6 @@ export function MainContent(props: MainContentProps) {
         */}
         <HeaderWorkflowSwitcherSlot
           projectId={currentProject?.id}
-          onOpenWorkflowEditor={openWorkflowEditorWithNav}
           onWorkflowSelectionChange={(selection) => setMissionWorkflowId(selection && !selection.isAllWorkflowsSelected ? selection.selectedWorkflow.id : null)}
         />
         {/*
@@ -1065,22 +1100,21 @@ export function MainContent(props: MainContentProps) {
   }
 
   /*
-  FNXC:Navigation 2026-06-22-00:00:
-  Workflows, Import Tasks (GitHub import), and Automations are left-sidebar destinations that render embedded in the main content area instead of as modal overlays. Closing returns to the board. The same components still mount as modals in AppModals for the mobile overflow path.
+  FNXC:Navigation 2026-09-15-05:29:
+  Workflows, Import Tasks (GitHub import), and Automations are left-sidebar destinations that render embedded in the main content area instead of as modal overlays. Closing returns to the board.
+  FN-407: Workflows is now the ONLY presentation of the workflow editor — AppModals no longer mounts a modal copy — so every entry point converges here. Import Tasks and Automations still have a modal twin for the mobile overflow path.
   */
   if (taskView === "workflows") {
     return (
-      <PageErrorBoundary>
-        <Suspense fallback={null}>
-          <_WorkflowEditorView
-            isOpen={true}
-            onClose={() => handleChangeTaskView("board")}
-            addToast={addToast}
-            projectId={currentProject?.id}
-            presentation="embedded"
-          />
-        </Suspense>
-      </PageErrorBoundary>
+      <WorkflowsMainView
+        View={_WorkflowEditorView}
+        addToast={addToast}
+        projectId={currentProject?.id}
+        initialPanel={modalManager.workflowViewPanel}
+        initialWorkflowId={modalManager.workflowViewWorkflowId}
+        onClose={() => handleChangeTaskView("board")}
+        onClearParams={modalManager.clearWorkflowViewParams}
+      />
     );
   }
 

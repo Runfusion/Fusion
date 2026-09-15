@@ -1035,7 +1035,7 @@ export function createAlphaDrawerProductionFixtureSource() {
     function ProductionProvider({ id }) {
       if (id === "short") return React.createElement(MobileDrawer, { ...drawerProps("Short"), testId: "native-drawer-short" }, React.createElement("button", { type: "button", "data-smoke": "native-drawer-short-final" }, "Short final control"));
       if (id === "projects") return React.createElement(AlphaProjectsDrawer, drawerProps("Projects"), React.createElement(ProjectOverview, { projects: [project], onSelectProject: noop, onAddProject: noop, onPauseProject: noop, onResumeProject: noop, onRemoveProject: noop }));
-      if (id === "planning") return React.createElement(AlphaPlanningDrawer, drawerProps("Planning"), React.createElement(PlanningKeepAlive, { active: true, projectId: project.id, tasks: [], bgPlanningSessions: [], modalManager, handleChangeTaskView: noop, handlePlanningTaskCreated: noop, handlePlanningTasksCreated: noop, openBoardTaskDetail: noop, openWorkflowEditorWithNav: noop }));
+      if (id === "planning") return React.createElement(AlphaPlanningDrawer, drawerProps("Planning"), React.createElement(PlanningKeepAlive, { active: true, projectId: project.id, tasks: [], bgPlanningSessions: [], modalManager, handleChangeTaskView: noop, handlePlanningTaskCreated: noop, handlePlanningTasksCreated: noop, openBoardTaskDetail: noop }));
       if (id === "usage") return React.createElement(AlphaUsageDrawer, { ...drawerProps("Usage"), projectId: project.id });
       if (id === "task-detail" || id === "long") return React.createElement(TaskDetailModal, { task, projectId: project.id, alphaMobileDrawer: true, onClose: noop, onOpenDetail: noop, onDeleteTask: asyncTask, onMergeTask: async () => ({ success: true }), addToast: noop });
       if (id === "plugin") return React.createElement(AlphaMainContentDrawer, { ...drawerProps("Todo"), taskView: "plugin:fusion-plugin-todos:todos" }, React.createElement(Suspense, { fallback: null }, React.createElement(PluginDashboardViewHost, { taskView: "plugin:fusion-plugin-todos:todos", context: { projectId: project.id, tasks: [], workflowSteps: [], openTaskDetail: noop } })));
@@ -1154,8 +1154,6 @@ export function createAlphaDrawerProductionFixtureSource() {
         handleToggleModelFavorite: async () => {},
         staleHighFanoutBlockerAgeThresholdMs: 0,
         prAuthAvailable: false,
-        openWorkflowEditorWithNav: noop,
-        openCreateWorkflowWithNav: noop,
         sidebarActive: true,
         isMobile: false,
         isRemote: false,

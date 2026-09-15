@@ -2196,7 +2196,8 @@ describe("ListView", () => {
     expect(screen.getByText("Custom task")).toBeInTheDocument();
     expect(screen.getByText("Stale workflow task")).toBeInTheDocument();
     expect(screen.getByTestId("workflow-switcher")).toHaveTextContent("All workflows");
-    expect(screen.queryByTestId(`workflow-switcher-edit-${ALL_WORKFLOWS_BOARD_VIEW_ID}`)).toBeNull();
+    // FN-407: no row carries an edit affordance any more, aggregate or real.
+    expect(screen.queryAllByTestId(/^workflow-switcher-edit-/)).toHaveLength(0);
 
     fireEvent.click(screen.getByRole("button", { name: "New Task" }));
     expect(mockOnNewTask).toHaveBeenCalledWith(undefined);
@@ -2204,9 +2205,12 @@ describe("ListView", () => {
     // Creation from the list runs through the header New Task action; the list owns no composer of its own.
   });
 
-  it("keeps workflow editing contextual in the dropdown and creation in the header", async () => {
-    const onCreateWorkflow = vi.fn();
-    const onOpenWorkflowEditor = vi.fn();
+  /*
+  FN-407: this case proved the dropdown owned workflow editing and creation. Both affordances were removed
+  from the quick switcher, so it now proves the inverse invariant: the List host renders a selection-only
+  switcher and no workflow-lifecycle control anywhere in its action row.
+  */
+  it("keeps the list workflow dropdown selection-only with no lifecycle affordance", async () => {
     vi.mocked(fetchBoardWorkflows).mockResolvedValue({
       flagEnabled: true,
       defaultWorkflowId: "builtin:coding",
@@ -2233,26 +2237,20 @@ describe("ListView", () => {
 
     renderListView({
       tasks: [createMockTask({ id: "FN-001", column: "triage", title: "Workflow task" })],
-      onCreateWorkflow,
-      onOpenWorkflowEditor,
     });
 
     const selector = await screen.findByTestId("workflow-switcher");
     expect(document.querySelector(".list-workflow-create-btn")).toBeNull();
     fireEvent.click(selector);
-    fireEvent.click(screen.getByTestId("workflow-switcher-edit-wf-custom"));
-    expect(onOpenWorkflowEditor).toHaveBeenCalledWith("wf-custom");
-    expect(onCreateWorkflow).not.toHaveBeenCalled();
+    expect(screen.queryAllByTestId(/^workflow-switcher-edit-/)).toHaveLength(0);
+    expect(screen.queryByTestId("workflow-switcher-create")).toBeNull();
 
-    // Workflow creation belongs to the selector that owns workflow lifecycle, never to the list action row.
+    // Workflow lifecycle lives in the Workflows view, never in the list dropdown or its action row.
     expect(screen.queryByRole("button", { name: "New workflow" })).toBeNull();
     expect(within(screen.getByTestId("list-primary-action-cluster")).queryByRole("button", { name: "New workflow" })).toBeNull();
-    expect(onCreateWorkflow).not.toHaveBeenCalled();
   });
 
   it("relocates the list workflow selector and its actions into the header slot", async () => {
-    const onCreateWorkflow = vi.fn();
-    const onOpenWorkflowEditor = vi.fn();
     const headerSlot = document.createElement("div");
     headerSlot.id = "header-workflow-slot";
     headerSlot.className = "header-workflow-slot";
@@ -2286,8 +2284,6 @@ describe("ListView", () => {
           createMockTask({ id: "FN-001", column: "triage", title: "Coding task" }),
           createMockTask({ id: "FN-002", column: "backlog", title: "Custom task" }),
         ],
-        onCreateWorkflow,
-        onOpenWorkflowEditor,
         workflowControlsInHeader: true,
       });
 
@@ -2299,15 +2295,13 @@ describe("ListView", () => {
       expect(document.querySelector(".list-view > .list-workflow-control")).toBeNull();
 
       fireEvent.click(selector);
-      // Creation lives in the selector popover footer; the list action row offers none.
-      expect(screen.getByTestId("workflow-switcher-create")).toBeInTheDocument();
-      expect(screen.getAllByRole("button", { name: "New workflow" })).toHaveLength(1);
+      // FN-407: the relocated popover is selection-only — no creation footer, no per-row edit rail.
+      expect(screen.queryByTestId("workflow-switcher-create")).toBeNull();
+      expect(screen.queryAllByTestId(/^workflow-switcher-edit-/)).toHaveLength(0);
+      expect(screen.queryByRole("button", { name: "New workflow" })).toBeNull();
       fireEvent.click(screen.getByTestId("workflow-switcher-option-wf-custom"));
       await waitFor(() => expect(screen.getByText("Custom task")).toBeInTheDocument());
       expect(screen.queryByText("Coding task")).not.toBeInTheDocument();
-      fireEvent.click(selector);
-      fireEvent.click(screen.getByTestId("workflow-switcher-edit-wf-custom"));
-      expect(onOpenWorkflowEditor).toHaveBeenCalledWith("wf-custom");
     } finally {
       headerSlot.remove();
     }
@@ -2335,7 +2329,6 @@ describe("ListView", () => {
     try {
       renderListView({
         tasks: [createMockTask({ id: "FN-001", column: "triage", title: "Coding task" })],
-        onCreateWorkflow: vi.fn(),
         workflowControlsInHeader: true,
       });
 
@@ -2373,7 +2366,6 @@ describe("ListView", () => {
     try {
       renderListView({
         tasks: [createMockTask({ id: "FN-001", column: "triage", title: "Coding task" })],
-        onCreateWorkflow: vi.fn(),
         workflowControlsInHeader: true,
       });
 
@@ -2408,7 +2400,6 @@ describe("ListView", () => {
     try {
       renderListView({
         tasks: [createMockTask({ id: "FN-001", column: "triage", title: "Coding task" })],
-        onCreateWorkflow: vi.fn(),
       });
 
       await screen.findByTestId("workflow-switcher");

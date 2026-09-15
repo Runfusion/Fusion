@@ -68,6 +68,18 @@ const LazySettingsCloseStub = lazy(async () => ({
   default: ({ onClose }: { onClose: () => void }) => <button type="button" onClick={onClose}>Close settings view</button>,
 }));
 let embeddedSettingsProps: Record<string, unknown> | undefined;
+let embeddedWorkflowProps: Record<string, unknown> | undefined;
+const LazyWorkflowBridgeStub = lazy(async () => ({
+  default: (props: Record<string, unknown>) => {
+    embeddedWorkflowProps = props;
+    return <div data-testid="embedded-workflow-editor" className="workflow-editor-embedded" />;
+  },
+}));
+const LazySettingsWorkflowReferralStub = lazy(async () => ({
+  default: ({ onOpenWorkflowSettings }: { onOpenWorkflowSettings: () => void }) => (
+    <button type="button" onClick={onOpenWorkflowSettings}>Open workflow settings</button>
+  ),
+}));
 const LazySettingsBridgeStub = lazy(async () => ({
   default: (props: Record<string, unknown>) => {
     embeddedSettingsProps = props;
@@ -87,7 +99,8 @@ function mainContentProps(overrides: Partial<MainContentProps> = {}): MainConten
     modalManager: {
       closeSettings: vi.fn(),
       settingsInitialSection: undefined,
-      openWorkflowEditor: vi.fn(),
+      setWorkflowViewParams: vi.fn(),
+      clearWorkflowViewParams: vi.fn(),
     } as unknown as MainContentProps["modalManager"],
     handleChangeTaskView: vi.fn(),
     openHistory: vi.fn(),
@@ -184,7 +197,6 @@ function mainContentProps(overrides: Partial<MainContentProps> = {}): MainConten
     openPlanningWithInitialPlanWithNav: vi.fn(),
     ingestCreatedTasks: vi.fn(),
     nodesEnabled: true,
-    openWorkflowEditorWithNav: vi.fn(),
     handlePlanningTaskCreated: vi.fn(),
     handlePlanningTasksCreated: vi.fn(),
     handleGitHubImport: vi.fn(),
@@ -213,7 +225,6 @@ function mainContentProps(overrides: Partial<MainContentProps> = {}): MainConten
     handleToggleModelFavorite: vi.fn(),
     staleHighFanoutBlockerAgeThresholdMs: 0,
     lastFetchTimeMs: undefined,
-    openCreateWorkflowWithNav: vi.fn(),
     sidebarActive: false,
     isMobile: false,
     mainPanelDetailInitialTab: "chat",
@@ -247,6 +258,73 @@ function mainContentProps(overrides: Partial<MainContentProps> = {}): MainConten
   };
 }
 
+/*
+FN-407: the workflow editor has exactly one presentation — the `workflows` main-content view. These cases prove
+the two halves of that at the owning router: the Settings referral NAVIGATES there instead of opening an overlay,
+and the view itself renders the embedded editor with its view parameters and no floating-window chrome.
+*/
+describe("MainContent workflow editor view routing", () => {
+  it("routes the Settings workflow referral to the Workflows view without any overlay", async () => {
+    const closeSettings = vi.fn();
+    const handleChangeTaskView = vi.fn();
+    const setWorkflowViewParams = vi.fn();
+
+    render(
+      <MainContent
+        {...mainContentProps({
+          taskView: "settings",
+          modalManager: {
+            closeSettings,
+            settingsInitialSection: undefined,
+            setWorkflowViewParams,
+            clearWorkflowViewParams: vi.fn(),
+          } as unknown as MainContentProps["modalManager"],
+          handleChangeTaskView,
+          _SettingsView: LazySettingsWorkflowReferralStub as MainContentProps["_SettingsView"],
+        })}
+      />,
+    );
+
+    (await screen.findByText("Open workflow settings")).click();
+
+    expect(setWorkflowViewParams).toHaveBeenCalledWith({ panel: "settings" });
+    expect(handleChangeTaskView).toHaveBeenCalledWith("workflows");
+    expect(document.body.querySelector(".floating-window--workflow-editor")).toBeNull();
+    expect(document.body.querySelector('[data-testid="floating-window-overlay-workflow-node-editor"]')).toBeNull();
+  });
+
+  it("renders the Workflows view with its view parameters and clears them on unmount", async () => {
+    embeddedWorkflowProps = undefined;
+    const clearWorkflowViewParams = vi.fn();
+
+    const view = render(
+      <MainContent
+        {...mainContentProps({
+          taskView: "workflows",
+          modalManager: {
+            workflowViewPanel: undefined,
+            workflowViewWorkflowId: "WF-002",
+            setWorkflowViewParams: vi.fn(),
+            clearWorkflowViewParams,
+          } as unknown as MainContentProps["modalManager"],
+          _WorkflowEditorView: LazyWorkflowBridgeStub as MainContentProps["_WorkflowEditorView"],
+        })}
+      />,
+    );
+
+    await screen.findByTestId("embedded-workflow-editor");
+    expect(embeddedWorkflowProps?.initialWorkflowId).toBe("WF-002");
+    expect(embeddedWorkflowProps?.initialPanel).toBeUndefined();
+    // FN-407: no presentation prop survives — the editor renders embedded unconditionally.
+    expect(embeddedWorkflowProps).not.toHaveProperty("presentation");
+    expect(document.body.querySelector(".floating-window--workflow-editor")).toBeNull();
+    expect(document.body.querySelector(".modal-overlay")).toBeNull();
+
+    view.unmount();
+    expect(clearWorkflowViewParams).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("MainContent graph task pop-out wiring", () => {
   it("refreshes app settings when the embedded Settings view closes", async () => {
     const closeSettings = vi.fn();
@@ -257,7 +335,7 @@ describe("MainContent graph task pop-out wiring", () => {
       <MainContent
         {...mainContentProps({
           taskView: "settings",
-          modalManager: { closeSettings, settingsInitialSection: undefined, openWorkflowEditor: vi.fn() } as unknown as MainContentProps["modalManager"],
+          modalManager: { closeSettings, settingsInitialSection: undefined, setWorkflowViewParams: vi.fn(), clearWorkflowViewParams: vi.fn() } as unknown as MainContentProps["modalManager"],
           handleChangeTaskView,
           refreshAppSettings,
           _SettingsView: LazySettingsCloseStub as MainContentProps["_SettingsView"],

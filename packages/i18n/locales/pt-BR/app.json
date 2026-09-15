@@ -9416,9 +9416,9 @@
     "aiSubmit": "Projetar com IA",
     "aiToggle": "Descrever em vez disso",
     "backToWorkflowList": "Voltar para os fluxos de trabalho",
+    "backToBoard": "Voltar para o quadro",
     "clickToEditDescription": "Clique para editar a descrição",
     "clickToRename": "Clique para renomear",
-    "closeEditor": "Fechar editor de fluxo de trabalho",
     "created": "Fluxo de trabalho \"{{name}}\" criado",
     "createDescription": "Descrição (opcional)",
     "createFailed": "Falha ao criar o fluxo de trabalho",
@@ -9554,9 +9554,7 @@
     "merging": "Em merge",
     "mergingTitle": "{{count}} tarefa{{plural}} em merge",
     "review": "Revisão",
-    "triggerAria": "Selecionar fluxo de trabalho. Fluxo de trabalho atual: {{name}}",
-    "editWorkflow": "Editar fluxo de trabalho",
-    "newWorkflow": "Novo fluxo de trabalho"
+    "triggerAria": "Selecionar fluxo de trabalho. Fluxo de trabalho atual: {{name}}"
   },
   "workspace": {
     "projectRoot": "Raiz do projeto",

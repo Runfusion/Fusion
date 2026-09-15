@@ -101,7 +101,7 @@ describe("useModalManager", () => {
       result.current.openFiles("project", "/README.md");
       result.current.openActivityLog();
       result.current.openGitManager();
-      result.current.openWorkflowEditor();
+      result.current.setWorkflowViewParams({ workflowId: "WF-selected" });
       result.current.openScripts();
       result.current.toggleTerminal();
       result.current.openSettings("general");
@@ -123,7 +123,9 @@ describe("useModalManager", () => {
     expect(result.current.fileBrowserInitialFile).toBeNull();
     expect(result.current.activityLogOpen).toBe(false);
     expect(result.current.gitManagerOpen).toBe(false);
-    expect(result.current.workflowEditorOpen).toBe(false);
+    // FN-407: the workflow editor is a view, so a project swap clears its view parameters instead of closing a modal.
+    expect(result.current.workflowViewWorkflowId).toBeUndefined();
+    expect(result.current.workflowViewPanel).toBeUndefined();
     expect(result.current.scriptsOpen).toBe(false);
     expect(result.current.terminalOpen).toBe(false);
     // Cross-project surfaces survive the swap.
@@ -587,26 +589,30 @@ describe("useModalManager", () => {
     expect(result.current.detailTask).toBeNull();
   });
 
-  it("tracks a target workflow id for normal workflow editor opens and resets it on close", () => {
+  /*
+  FN-407: the workflow editor has no modal state left — `workflowEditorOpen`/`openWorkflowEditor`/
+  `closeWorkflowEditor` are gone. What remains are view parameters an entry point hands to the Workflows view,
+  and the invariant that they never join the blocking-modal aggregate.
+  */
+  it("tracks a target workflow id as a view parameter and clears it on demand", () => {
     const { result } = renderHook(() =>
       useModalManager({ projectId: "proj_1", planningSessions: [] }),
     );
 
     act(() => {
-      result.current.openWorkflowEditor(undefined, "WF-selected");
+      result.current.setWorkflowViewParams({ workflowId: "WF-selected" });
     });
 
-    expect(result.current.workflowEditorOpen).toBe(true);
-    expect(result.current.workflowEditorInitialPanel).toBeUndefined();
-    expect(result.current.workflowEditorInitialAction).toBeUndefined();
-    expect(result.current.workflowEditorInitialWorkflowId).toBe("WF-selected");
+    expect(result.current.workflowViewPanel).toBeUndefined();
+    expect(result.current.workflowViewWorkflowId).toBe("WF-selected");
+    expect(result.current.anyModalOpen).toBe(false);
 
     act(() => {
-      result.current.closeWorkflowEditor();
+      result.current.clearWorkflowViewParams();
     });
 
-    expect(result.current.workflowEditorOpen).toBe(false);
-    expect(result.current.workflowEditorInitialWorkflowId).toBeUndefined();
+    expect(result.current.workflowViewWorkflowId).toBeUndefined();
+    expect(result.current.workflowViewPanel).toBeUndefined();
   });
 
   /*
@@ -649,23 +655,25 @@ describe("useModalManager", () => {
     expect(result.current.historyOpen).toBe(false);
   });
 
-  it("keeps workflow editor settings and create modes distinct from target workflow opens", () => {
+  /*
+  FN-407: the "create" action is gone entirely — workflow creation is the Workflows view's own header button.
+  The settings panel parameter survives and must still exclude a target workflow id.
+  */
+  it("keeps the settings panel view parameter distinct from a target workflow parameter", () => {
     const { result } = renderHook(() =>
       useModalManager({ projectId: "proj_1", planningSessions: [] }),
     );
 
     act(() => {
-      result.current.openWorkflowEditor("settings", "WF-ignored");
+      result.current.setWorkflowViewParams({ panel: "settings", workflowId: "WF-ignored" });
     });
-    expect(result.current.workflowEditorInitialPanel).toBe("settings");
-    expect(result.current.workflowEditorInitialAction).toBeUndefined();
-    expect(result.current.workflowEditorInitialWorkflowId).toBeUndefined();
+    expect(result.current.workflowViewPanel).toBe("settings");
+    expect(result.current.workflowViewWorkflowId).toBeUndefined();
 
     act(() => {
-      result.current.openWorkflowEditor("create", "WF-ignored");
+      result.current.setWorkflowViewParams({ workflowId: "WF-selected" });
     });
-    expect(result.current.workflowEditorInitialPanel).toBeUndefined();
-    expect(result.current.workflowEditorInitialAction).toBe("create");
-    expect(result.current.workflowEditorInitialWorkflowId).toBeUndefined();
+    expect(result.current.workflowViewPanel).toBeUndefined();
+    expect(result.current.workflowViewWorkflowId).toBe("WF-selected");
   });
 });

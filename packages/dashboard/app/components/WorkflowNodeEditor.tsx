@@ -1,5 +1,4 @@
-import { ModalCloseButton } from "./ModalCloseButton";
-import { HideInDrawer } from "./ViewDrawer";
+
 import { ViewActionButton } from "./ViewActionButton";
 import { ViewHeader } from "./ViewHeader";
 import { ViewLayout } from "./ViewLayout";
@@ -58,7 +57,7 @@ import { subscribeSse } from "../sse-bus";
 FNXC:i18n-Localize 2026-06-20-00:00:
 FN-6770 localizes this workflow surface through t() and authored en catalog keys so hardcoded user-facing copy does not need a lint.ignore deferral.
 */
-import { useEmbeddedPresentation, type ModalPresentation } from "../hooks/useEmbeddedPresentation";
+
 import { isMobileViewport, useViewportMode } from "../hooks/useViewportMode";
 import { WorkflowIcon } from "./WorkflowIcon";
 import { workflowNodeTypes, type WorkflowFlowNodeData, type WorkflowEditorNodeKind } from "./nodes/WorkflowNodeTypes";
@@ -258,17 +257,6 @@ interface WorkflowNodeEditorProps {
   initialAction?: "create";
   /** Workflow id to preselect when the editor opens from workflow-aware surfaces. */
   initialWorkflowId?: string;
-  /*
-  FNXC:WorkflowEditorEmbedding 2026-06-22-00:00:
-  The workflow editor can render either as a fixed modal overlay ("modal", the
-  default and historical behavior) or inline as a main-content-area view
-  ("embedded") that fills the right-dock panel like a Command Center view.
-  In embedded mode the editor drops the .modal-overlay shell, the X close
-  button, native resize, and all modal-only dismiss paths (Escape, overlay
-  click) so it reads as a persistent view rather than a dismissible dialog.
-  The modal path stays byte-identical when presentation is "modal"/undefined.
-  */
-  presentation?: ModalPresentation;
 }
 
 let nodeSeq = 0;
@@ -830,10 +818,8 @@ function InnerEditor({
   initialAction,
   initialWorkflowId,
   modalRef,
-  isEmbedded = false,
-}: Omit<WorkflowNodeEditorProps, "isOpen" | "presentation"> & {
+}: Omit<WorkflowNodeEditorProps, "isOpen"> & {
   modalRef: React.RefObject<HTMLDivElement | null>;
-  isEmbedded?: boolean;
 }) {
   const [workflows, setWorkflows] = useState<WorkflowDefinition[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -2809,30 +2795,17 @@ function InnerEditor({
       : null;
 
   /*
-  FNXC:WorkflowEditorFloating 2026-06-24-00:00:
-  Dropdown-launched workflow editing must use the shared movable/resizable FloatingWindow so workflow modals participate in drag, resize, viewport clamping, geometry persistence, and shared z-index stacking. The embedded Workflows destination remains fixed in its host panel and bypasses all floating chrome.
+  FNXC:WorkflowEditorFloating 2026-09-15-05:29:
+  FN-407 deleted the editor's floating/modal presentation. There is no FloatingWindow host, no overlay, no X close
+  affordance, and no Escape-to-dismiss: the workflow editor is the persistent Workflows VIEW, reached identically
+  from the sidebar, the header, mobile More, a task's Edit workflow, and the Settings referral. Two competing
+  presentations for one surface is exactly what this removed. `onClose` survives as the view's return-to-board.
   */
   const modalElement = (
       <div
-        className={`modal wf-editor-modal${isEmbedded ? " wf-editor-modal--embedded" : ""}`}
+        className="modal wf-editor-modal wf-editor-modal--embedded"
         ref={modalRef}
         onClick={(e) => e.stopPropagation()}
-        onKeyDown={(e) => {
-          // Dedicated Escape handler (useOverlayDismiss does not cover Escape).
-          // Ignore Escape originating from inputs/textareas/selects so inline
-          // editors (name/description) keep their own Escape-to-cancel behavior.
-          if (e.key !== "Escape") return;
-          // Embedded views are persistent; Escape must not dismiss them.
-          if (isEmbedded) return;
-          // The create dialog (rendered as a child) owns its own Escape; if it's
-          // open, let it handle the event (it stops propagation already).
-          if (createOpen) return;
-          const target = e.target as HTMLElement;
-          const tag = target.tagName;
-          if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
-          e.stopPropagation();
-          requestClose();
-        }}
       >
         <ViewLayout
           className={`wf-editor-body${workflowListStageOpen ? " wf-editor-body--list-stage" : " wf-editor-body--editor-stage"}${
@@ -2847,10 +2820,20 @@ function InnerEditor({
               className="wf-editor-header"
               icon={Workflow}
               title={t("workflows.title", "Workflows")}
-              backAction={isMobileMode && !workflowListStageOpen ? {
+              /*
+              FNXC:WorkflowEditorEmbedding 2026-09-15-05:29:
+              FN-407 removed the editor's close affordance with its modal presentation. On mobile the header back
+              control is the only in-view exit, so it now completes its own chain: editor stage steps back to the
+              workflow list, and the list stage returns to the board through `onClose`. Desktop and tablet already
+              exit through the sidebar/header navigation and keep no back control.
+              */
+              backAction={isMobileMode ? (workflowListStageOpen ? {
+                label: t("workflows.backToBoard", "Back to board"),
+                onClick: requestClose,
+              } : {
                 label: t("workflows.backToWorkflowList", "Back to workflows"),
                 onClick: () => setWorkflowListStageOpen(true),
-              } : undefined}
+              }) : undefined}
               actions={(
                 <>
                   <ViewActionButton
@@ -2862,15 +2845,11 @@ function InnerEditor({
                     onClick={() => setCreateOpen(true)}
                   />
                   {/*
-                  FNXC:StandardizedDrawers 2026-09-15-04:56:
-                  FN-406: the editor keeps its own close next to the create action, so the shared ViewHeader rule
-                  cannot reach it. HideInDrawer applies the single drawer-chrome definition at the render position.
+                  FNXC:StandardizedDrawers 2026-09-15-05:29:
+                  FN-407: the editor no longer renders a close affordance at all — it is a persistent view, not a
+                  dismissible dialog — so the FN-406 HideInDrawer wrapper around its ModalCloseButton is gone with it.
+                  Creation stays here as the view's primary header action.
                   */}
-                  {!isEmbedded ? (
-                    <HideInDrawer>
-                      <ModalCloseButton className="wf-editor-close" onClick={requestClose} aria-label={t("workflows.closeEditor", "Close workflow editor")} />
-                    </HideInDrawer>
-                  ) : null}
                 </>
               )}
             />
@@ -5663,28 +5642,14 @@ function InnerEditor({
   );
   return (
     <>
-      {isEmbedded ? (
-        // FNXC:WorkflowEditorEmbedding 2026-06-22-00:00: inline main-content
-        // wrapper (no fixed overlay, no overlayProps overlay-click dismiss).
-        <div className="workflow-editor-embedded right-dock-embedded-view">
-          {modalElement}
-        </div>
-      ) : (
-        <FloatingWindow
-          title={t("workflows.title", "Workflows")}
-          onClose={requestClose}
-          windowKey="workflow-node-editor"
-          className="floating-window--workflow-editor"
-          hideHeader
-          dragHandleSelector=".wf-editor-header"
-          defaultSize={{ width: 1200, height: 820 }}
-          minSize={{ width: 640, height: 480 }}
-          /* FNXC:ModalGeometryPersistence 2026-07-15-19:30: The workflow editor becomes a ≤768px full-screen sheet, so retain desktop geometry without replaying or writing it on the sheet. */
-          suspendGeometryPersistenceOnMobile
-        >
-          {modalElement}
-        </FloatingWindow>
-      )}
+      {/*
+      FNXC:WorkflowEditorEmbedding 2026-09-15-05:29:
+      FN-407: the inline main-content wrapper is now the ONLY wrapper. No fixed overlay, no floating window, no
+      overlay-click dismiss — so a workflow entry point can never produce a second, competing presentation.
+      */}
+      <div className="workflow-editor-embedded right-dock-embedded-view">
+        {modalElement}
+      </div>
       {promptFullscreenOverlay}
     </>
   );
@@ -5698,10 +5663,8 @@ export function WorkflowNodeEditor({
   initialPanel,
   initialAction,
   initialWorkflowId,
-  presentation = "modal",
 }: WorkflowNodeEditorProps) {
   const modalRef = useRef<HTMLDivElement>(null);
-  const { isEmbedded } = useEmbeddedPresentation(presentation);
   if (!isOpen) return null;
   return (
     <ReactFlowProvider>
@@ -5713,7 +5676,6 @@ export function WorkflowNodeEditor({
         initialAction={initialAction}
         initialWorkflowId={initialWorkflowId}
         modalRef={modalRef}
-        isEmbedded={isEmbedded}
       />
     </ReactFlowProvider>
   );

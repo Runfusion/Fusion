@@ -9405,9 +9405,9 @@
     "aiSubmit": "AI로 디자인",
     "aiToggle": "대신 설명하기",
     "backToWorkflowList": "",
+    "backToBoard": "",
     "clickToEditDescription": "클릭하여 설명 편집",
     "clickToRename": "클릭하여 이름 변경",
-    "closeEditor": "",
     "created": "워크플로 \"{{name}}\"을(를) 만들었습니다",
     "createDescription": "설명 (선택 사항)",
     "createFailed": "워크플로 만들기에 실패했습니다",
@@ -9543,9 +9543,7 @@
     "merging": "",
     "mergingTitle": "",
     "review": "검토",
-    "triggerAria": "Select workflow. Current workflow: {{name}}",
-    "editWorkflow": "Edit workflow",
-    "newWorkflow": "New workflow"
+    "triggerAria": "Select workflow. Current workflow: {{name}}"
   },
   "workspace": {
     "projectRoot": "프로젝트 루트",

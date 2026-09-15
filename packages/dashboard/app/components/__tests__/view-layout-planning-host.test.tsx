@@ -53,7 +53,6 @@ function renderHost(active: boolean, handleChangeTaskView = vi.fn()) {
         handlePlanningTaskCreated={vi.fn()}
         handlePlanningTasksCreated={vi.fn()}
         openBoardTaskDetail={vi.fn()}
-        openWorkflowEditorWithNav={vi.fn()}
       />
     </ViewLayoutProvider>,
   );
@@ -98,7 +97,6 @@ describe("FN-379 standardized chrome through the Planning keep-alive host", () =
           handlePlanningTaskCreated={vi.fn()}
           handlePlanningTasksCreated={vi.fn()}
           openBoardTaskDetail={vi.fn()}
-          openWorkflowEditorWithNav={vi.fn()}
         />
       </ViewLayoutProvider>,
     );

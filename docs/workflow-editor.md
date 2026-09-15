@@ -19,15 +19,17 @@ Use this guide when you want to inspect the shipped lifecycle, copy a built-in w
 
 ## Opening the editor
 
-The shipped dashboard opens the same workflow editor from four places:
+The workflow editor has exactly one home: the **Workflows** view in the main content area. It never opens as a floating window or a modal over another screen, and there is no separate "editor dialog" to dismiss — you leave it by navigating elsewhere. Every entry point below lands on that same view:
 
-- **Desktop header:** click the **Workflow** button in the top header.
+- **Desktop sidebar/header:** choose **Workflows**.
 - **Compact/mobile header overflow:** when the header collapses, open the overflow menu and choose **Workflows**.
 - **Mobile bottom navigation:** open **More** and choose **Workflows**.
-- **Task detail modal:** open a task, select the **Workflow** tab, and use **Edit workflow** to open the editor with that task's workflow context.
-- **Settings moved-setting stubs:** settings sections whose policy belongs to a workflow show an **Open workflow settings** redirect. It closes Settings and opens the workflow editor with the **Settings** panel selected. Project/global model settings remain in the main Settings modal.
+- **Task detail:** open a task, select the **Workflow** tab, and use **Edit workflow**. The task modal closes and the Workflows view opens.
+- **Settings moved-setting stubs:** settings sections whose policy belongs to a workflow show an **Open workflow settings** redirect. It closes Settings and opens the Workflows view with the **Settings** panel selected. Project/global model settings remain in the main Settings modal.
 
-These entry points do not create different workflow formats. Desktop and mobile render different layouts for the same workflow definition.
+To create a workflow, use **New workflow** in the Workflows view header. The Board/List/Graph workflow dropdown only switches which workflow you are looking at; it carries no edit or create action.
+
+These entry points do not create different workflow formats. Desktop and mobile render different layouts for the same workflow definition; on mobile the header back control walks back from a workflow to the workflow list, then to the board.
 
 ## Canvas anatomy
 

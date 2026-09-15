@@ -175,14 +175,16 @@ const DevServerView = lazy(() => import("./components/DevServerView").then((m) =
 const GoalsView = lazy(() => import("./components/GoalsView").then((m) => ({ default: m.GoalsView })));
 const PullRequestView = lazy(() => import("./components/PullRequestView").then((m) => ({ default: m.PullRequestView })));
 /*
-FNXC:Navigation 2026-06-22-00:00:
-Workflows, Import Tasks (GitHub import), and Automations render as embedded main-content views (presentation="embedded") via these lazy chunks; the same components still mount as modals in AppModals for the mobile overflow path.
+FNXC:Navigation 2026-09-15-05:29:
+Import Tasks (GitHub import) and Automations render as embedded main-content views via these lazy chunks; the same components still mount as modals in AppModals for the mobile overflow path. Workflows no longer has a modal twin — FN-407 made the embedded view its only presentation.
 */
 /*
-FNXC:DashboardLazyViews 2026-06-22-00:00:
-WorkflowEditorView, ImportTasksView, and AutomationsView are embedded main-content presentations that REUSE already-documented chunks (WorkflowNodeEditor, plus the GitHub import and scheduled-tasks modals mounted in AppModals). They are excluded from the curated "Lazy-Loaded Heavy Views" App-level inventory via the leading-underscore convention so the docs guard counts each heavy chunk once; renaming the underlying component would double-count it.
+FNXC:DashboardLazyViews 2026-09-15-05:29:
+The leading-underscore convention marks an embedded main-content presentation that REUSES a chunk already curated elsewhere, so `extractAppLazyViews` (which filters `_`-prefixed names) counts each heavy chunk once. It still applies to _ImportTasksView, _AutomationsView, and _SettingsView, whose chunks are also mounted as modals in AppModals.
+
+FN-407 RE-HOMED WorkflowNodeEditor here. AppModals no longer declares or mounts it, so this is now its ONLY lazy declaration and therefore its curation site — hence no underscore. The MainContentProps key deliberately keeps the historical `_WorkflowEditorView` name and is passed explicitly below, so the re-homing does not ripple a rename through dashboard/types.ts, MainContent.tsx, and their tests.
 */
-const _WorkflowEditorView = lazy(() => import("./components/WorkflowNodeEditor").then((m) => ({ default: m.WorkflowNodeEditor })));
+const WorkflowNodeEditor = lazy(() => import("./components/WorkflowNodeEditor").then((m) => ({ default: m.WorkflowNodeEditor })));
 const _ImportTasksView = lazy(() => import("./components/GitHubImportModal").then((m) => ({ default: m.GitHubImportModal })));
 const _AutomationsView = lazy(() => import("./components/ScheduledTasksModal").then((m) => ({ default: m.ScheduledTasksModal })));
 /*
@@ -1647,7 +1649,7 @@ function AppInner() {
           /* FNXC:HistoryModalSurface 2026-09-15-04:29: FN-403: History is a coexisting window, so Escape closes it after detached task/chat/note windows and the terminal but before the blocking modals underneath. */
           [modalManager.historyOpen, closeHistoryWithNav],
           [modalManager.filesOpen, modalManager.closeFiles],
-          [modalManager.workflowEditorOpen, modalManager.closeWorkflowEditor],
+          /* FNXC:WorkflowEditorEmbedding 2026-09-15-05:29: FN-407 removed the workflow editor's modal presentation, so it has no Escape closer — it is a persistent view like Settings, not an overlay. */
           [modalManager.gitManagerOpen, modalManager.closeGitManager],
           [modalManager.activityLogOpen, modalManager.closeActivityLog],
           [modalManager.scriptsOpen, modalManager.closeScripts],
@@ -1738,15 +1740,22 @@ function AppInner() {
     pushNav({ type: "modal", close: modalManager.closeScripts });
   }, [modalManager, pushNav]);
 
+  /*
+  FNXC:WorkflowEditorEmbedding 2026-09-15-05:29:
+  FN-407: every workflow entry point now behaves exactly like choosing Workflows in the nav — it navigates to the
+  `workflows` main-content view carrying optional view parameters. This mirrors openSettingsWithNav: no modal nav
+  entry is pushed here because handleTaskViewChange owns the back-navigation entry for a view destination.
+  Creation is not an entry point at all; it is the `wf-new-workflow` header action inside that view.
+  */
   const openWorkflowEditorWithNav = useCallback((workflowId?: string) => {
-    modalManager.openWorkflowEditor(undefined, workflowId);
-    pushNav({ type: "modal", close: modalManager.closeWorkflowEditor });
-  }, [modalManager, pushNav]);
+    modalManager.setWorkflowViewParams({ workflowId });
+    handleTaskViewChange("workflows");
+  }, [modalManager, handleTaskViewChange]);
 
-  const openCreateWorkflowWithNav = useCallback(() => {
-    modalManager.openWorkflowEditor("create");
-    pushNav({ type: "modal", close: modalManager.closeWorkflowEditor });
-  }, [modalManager, pushNav]);
+  const openWorkflowSettingsWithNav = useCallback(() => {
+    modalManager.setWorkflowViewParams({ panel: "settings" });
+    handleTaskViewChange("workflows");
+  }, [modalManager, handleTaskViewChange]);
 
   const openUsageWithNav = useCallback((anchorRect?: DOMRect | null) => {
     modalManager.openUsage(anchorRect);
@@ -2180,7 +2189,6 @@ function AppInner() {
     openPlanningWithInitialPlanWithNav,
     ingestCreatedTasks,
     nodesEnabled,
-    openWorkflowEditorWithNav,
     handleGitHubImport,
     devServerEnabled,
     filteredBoardTasks: boardSourceTasks,
@@ -2225,7 +2233,6 @@ function AppInner() {
     handleToggleModelFavorite,
     staleHighFanoutBlockerAgeThresholdMs,
     lastFetchTimeMs,
-    openCreateWorkflowWithNav,
     sidebarActive,
     notesController,
     registerNotesGuard: registerStandardNotesGuard,
@@ -2259,7 +2266,7 @@ function AppInner() {
     _AutomationsView,
     _ImportTasksView,
     _SettingsView,
-    _WorkflowEditorView,
+    _WorkflowEditorView: WorkflowNodeEditor,
   };
   mainContentPropsRef.current = mainContentProps;
 
@@ -2535,7 +2542,6 @@ function AppInner() {
                   handlePlanningTaskCreated={handlePlanningTaskCreated}
                   handlePlanningTasksCreated={handlePlanningTasksCreated}
                   openBoardTaskDetail={openBoardTaskDetail}
-                  openWorkflowEditorWithNav={openWorkflowEditorWithNav}
                 />
               </PlanningDrawer>
             ) : (
@@ -2550,7 +2556,6 @@ function AppInner() {
                 handlePlanningTaskCreated={handlePlanningTaskCreated}
                 handlePlanningTasksCreated={handlePlanningTasksCreated}
                 openBoardTaskDetail={openBoardTaskDetail}
-                openWorkflowEditorWithNav={openWorkflowEditorWithNav}
               />
             )
           )}
@@ -2728,6 +2733,8 @@ function AppInner() {
         settings={{ prAuthAvailable, autoMerge, openTasksInRightSidebar, openMobileTasksInPopup, showCostBadgeOnCards, taskDetailChatFirst, chatMessageLayout, themeMode, colorTheme, uiStyle, dashboardFontScalePct, shadcnCustomColors, resolvedThemeMode, setThemeMode, setColorTheme, setUiStyle, setDashboardFontScalePct, setShadcnCustomColors, setChatMessageLayoutImmediate, setOpenTasksInRightSidebarImmediate, setOpenMobileTasksInPopupImmediate, setShowCostBadgeOnCardsImmediate, setTaskDetailChatFirstImmediate, setMobileNavPrimaryItemsImmediate }}
         onSettingsClose={handleSettingsCloseWithNav}
         onReopenOnboarding={reopenOnboardingWithNav}
+        onOpenWorkflowEditor={openWorkflowEditorWithNav}
+        onOpenWorkflowSettings={openWorkflowSettingsWithNav}
         onOpenApprovals={(_approvalId) => handleTaskViewChange("mailbox")}
         /* FNXC:HistoryModalSurface 2026-09-15-04:29: History entries delegate to the canonical nav-aware Task Detail opener so Escape/Back close the detail layer before History. */
         onOpenTaskDetailById={async (taskId) => {

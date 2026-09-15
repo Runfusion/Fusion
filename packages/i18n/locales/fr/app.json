@@ -9424,9 +9424,9 @@
     "aiSubmit": "Concevoir avec l'IA",
     "aiToggle": "Le décrire à la place",
     "backToWorkflowList": "",
+    "backToBoard": "",
     "clickToEditDescription": "Cliquez pour modifier la description",
     "clickToRename": "Cliquez pour renommer",
-    "closeEditor": "",
     "created": "Workflow « {{name}} » créé",
     "createDescription": "Description (facultatif)",
     "createFailed": "Impossible de créer le workflow",
@@ -9562,9 +9562,7 @@
     "merging": "",
     "mergingTitle": "",
     "review": "Revue",
-    "triggerAria": "Select workflow. Current workflow: {{name}}",
-    "editWorkflow": "Edit workflow",
-    "newWorkflow": "New workflow"
+    "triggerAria": "Select workflow. Current workflow: {{name}}"
   },
   "workspace": {
     "projectRoot": "Racine du projet",

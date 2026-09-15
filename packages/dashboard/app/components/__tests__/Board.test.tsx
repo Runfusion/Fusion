@@ -1468,16 +1468,16 @@ describe("Board", () => {
       expect(screen.getByTestId("column-review").getAttribute("data-has-auto-merge-toggle")).toBe("yes");
     });
 
-    it("keeps workflow create and edit actions visible when only one workflow exists", async () => {
-      const onCreateWorkflow = vi.fn();
-      const onOpenWorkflowEditor = vi.fn();
+    /*
+    FN-407: the Board cases that drove `onCreateWorkflow`/`onOpenWorkflowEditor` through the switcher popover
+    are DELETED — the quick switcher is now selection-only and Board no longer accepts those props. The
+    single-workflow case is replaced below by the invariant that the Board host renders no edit/create
+    affordance and still keeps its toolbar free of empty button shells.
+    */
+    it("renders a selection-only workflow toolbar when only one workflow exists", async () => {
       enableFlag({ "FN-1": "builtin:coding" }, [DEFAULT_WORKFLOW]);
 
-      renderBoard({
-        tasks: [mkTask({ id: "FN-1", column: "triage" })],
-        onCreateWorkflow,
-        onOpenWorkflowEditor,
-      });
+      renderBoard({ tasks: [mkTask({ id: "FN-1", column: "triage" })] });
 
       await waitFor(() => expect(screen.getByTestId("column-triage")).toBeDefined());
       const selector = screen.getByTestId("workflow-switcher");
@@ -1485,59 +1485,25 @@ describe("Board", () => {
       expect(document.querySelector(".board-workflow-create-btn")).toBeNull();
 
       fireEvent.click(selector);
-      fireEvent.click(screen.getByTestId("workflow-switcher-create"));
-      fireEvent.click(selector);
-      fireEvent.click(screen.getByTestId("workflow-switcher-edit-builtin:coding"));
-      expect(onCreateWorkflow).toHaveBeenCalledTimes(1);
-      expect(onOpenWorkflowEditor).toHaveBeenCalledTimes(1);
-      expect(onOpenWorkflowEditor).toHaveBeenCalledWith("builtin:coding");
-    });
-
-    it("preserves workflow toolbar partial action visibility", async () => {
-      const onCreateWorkflow = vi.fn();
-      enableFlag({}, [DEFAULT_WORKFLOW]);
-      const { unmount } = renderBoard({ onCreateWorkflow });
-
-      await waitFor(() => expect(document.querySelector(".board-workflow-toolbar")).not.toBeNull());
-      expect(document.querySelector(".board-workflow-create-btn")).toBeNull();
-      fireEvent.click(screen.getByTestId("workflow-switcher"));
-      fireEvent.click(screen.getByTestId("workflow-switcher-create"));
-      expect(screen.queryByTestId("workflow-switcher-edit-builtin:coding")).toBeNull();
-      expect(onCreateWorkflow).toHaveBeenCalledTimes(1);
-      unmount();
-
-      const onOpenWorkflowEditor = vi.fn();
-      enableFlag({}, [DEFAULT_WORKFLOW]);
-      renderBoard({ onOpenWorkflowEditor });
-
-      await waitFor(() => expect(document.querySelector(".board-workflow-toolbar")).not.toBeNull());
-      expect(document.querySelector(".board-workflow-edit-btn")).toBeNull();
-      fireEvent.click(screen.getByTestId("workflow-switcher"));
+      expect(screen.queryAllByTestId(/^workflow-switcher-edit-/)).toHaveLength(0);
       expect(screen.queryByTestId("workflow-switcher-create")).toBeNull();
-      fireEvent.click(screen.getByTestId("workflow-switcher-edit-builtin:coding"));
-      expect(onOpenWorkflowEditor).toHaveBeenCalledTimes(1);
     });
 
     it("renders workflow toolbar actions without a collapse affordance", async () => {
-      const onCreateWorkflow = vi.fn();
-      const onOpenWorkflowEditor = vi.fn();
       enableFlag(
         { "FN-1": "builtin:coding", "FN-2": "wf-custom" },
         [DEFAULT_WORKFLOW, CUSTOM_WORKFLOW],
       );
       renderBoard({
         tasks: [mkTask({ id: "FN-1" }), mkTask({ id: "FN-2", column: "intake" })],
-        onCreateWorkflow,
-        onOpenWorkflowEditor,
       });
 
       const selector = await screen.findByTestId("workflow-switcher");
       expect(document.querySelector(".board-workflow-edit-btn")).toBeNull();
       expect(document.querySelector(".board-workflow-create-btn")).toBeNull();
       fireEvent.click(selector);
-      expect(screen.getByTestId("workflow-switcher-create")).toBeDefined();
-      expect(screen.getByTestId("workflow-switcher-edit-builtin:coding")).toBeDefined();
-      expect(screen.getByTestId("workflow-switcher-edit-wf-custom")).toBeDefined();
+      expect(screen.queryByTestId("workflow-switcher-create")).toBeNull();
+      expect(screen.queryAllByTestId(/^workflow-switcher-edit-/)).toHaveLength(0);
       const toolbar = document.querySelector(".board-workflow-toolbar");
       expect(toolbar).not.toBeNull();
       expect(toolbar?.hasAttribute("data-collapsed")).toBe(false);
@@ -1547,8 +1513,6 @@ describe("Board", () => {
     });
 
     it("relocates the real populated workflow selector into the header without a fallback toolbar", async () => {
-      const onCreateWorkflow = vi.fn();
-      const onOpenWorkflowEditor = vi.fn();
       const longWorkflow = { ...CUSTOM_WORKFLOW, name: "Workflow with a deliberately long delivery name" };
       const headerSlot = document.createElement("div");
       headerSlot.id = "header-workflow-slot";
@@ -1561,8 +1525,6 @@ describe("Board", () => {
       try {
         renderBoard({
           tasks: [mkTask({ id: "FN-1" }), mkTask({ id: "FN-2", column: "intake" })],
-          onCreateWorkflow,
-          onOpenWorkflowEditor,
           workflowControlsInHeader: true,
         });
 
@@ -1574,15 +1536,13 @@ describe("Board", () => {
         expect(document.querySelector(".board-workflow-view > .board-workflow-toolbar")).toBeNull();
 
         fireEvent.click(selector);
-        expect(screen.getByTestId("workflow-switcher-create")).toBeInTheDocument();
+        expect(screen.queryByTestId("workflow-switcher-create")).toBeNull();
+        expect(screen.queryAllByTestId(/^workflow-switcher-edit-/)).toHaveLength(0);
         fireEvent.click(screen.getByTestId("workflow-switcher-option-wf-custom"));
         await waitFor(() => expect(screen.getByTestId("column-intake")).toBeDefined());
         expect(selector).toHaveTextContent(longWorkflow.name);
         expect(screen.queryByTestId("column-todo")).toBeNull();
         expect(document.querySelectorAll(".board-workflow-toolbar")).toHaveLength(1);
-        fireEvent.click(selector);
-        fireEvent.click(screen.getByTestId("workflow-switcher-edit-wf-custom"));
-        expect(onOpenWorkflowEditor).toHaveBeenCalledWith("wf-custom");
       } finally {
         headerSlot.remove();
       }
@@ -1660,8 +1620,6 @@ describe("Board", () => {
       try {
         renderBoard({
           tasks: [mkTask({ id: "FN-1" }), mkTask({ id: "FN-2", column: "intake" })],
-          onCreateWorkflow: vi.fn(),
-          onOpenWorkflowEditor: vi.fn(),
         });
 
         await screen.findByTestId("workflow-switcher");
@@ -1689,7 +1647,9 @@ describe("Board", () => {
         expect(headerSlot.querySelector(".board-workflow-create-btn")).toBeNull();
         fireEvent.click(screen.getByTestId("workflow-switcher"));
         expect(screen.getByTestId("workflow-switcher-option-__all_workflows__")).toBeInTheDocument();
-        expect(screen.queryByTestId("workflow-switcher-edit-__all_workflows__")).toBeNull();
+        // FN-407: no row carries an edit affordance any more, aggregate or real.
+        expect(screen.queryAllByTestId(/^workflow-switcher-edit-/)).toHaveLength(0);
+        expect(screen.queryByTestId("workflow-switcher-create")).toBeNull();
       } finally {
         headerSlot.remove();
       }
@@ -1748,8 +1708,6 @@ describe("Board", () => {
     });
 
     it("renders one selected workflow at a time and switches workflows from the dropdown", async () => {
-      const onCreateWorkflow = vi.fn();
-      const onOpenWorkflowEditor = vi.fn();
       enableFlag(
         { "FN-1": "builtin:coding", "FN-2": "wf-custom", "FN-3": "wf-custom" },
         [DEFAULT_WORKFLOW, CUSTOM_WORKFLOW],
@@ -1760,8 +1718,6 @@ describe("Board", () => {
           mkTask({ id: "FN-2", column: "intake" }),
           mkTask({ id: "FN-3", column: "intake" }),
         ],
-        onCreateWorkflow,
-        onOpenWorkflowEditor,
       });
       const selector = await screen.findByTestId("workflow-switcher");
       expect(selector).toHaveTextContent("Coding");
@@ -1773,11 +1729,9 @@ describe("Board", () => {
       expect(document.querySelector(".board-workflow-edit-btn")).toBeNull();
       expect(document.querySelector(".board-workflow-create-btn")).toBeNull();
       fireEvent.click(selector);
-      fireEvent.click(screen.getByTestId("workflow-switcher-create"));
-      fireEvent.click(selector);
-      fireEvent.click(screen.getByTestId("workflow-switcher-edit-builtin:coding"));
-      expect(onCreateWorkflow).toHaveBeenCalledTimes(1);
-      expect(onOpenWorkflowEditor).toHaveBeenCalledTimes(1);
+      expect(screen.queryByTestId("workflow-switcher-create")).toBeNull();
+      expect(screen.queryAllByTestId(/^workflow-switcher-edit-/)).toHaveLength(0);
+      fireEvent.keyDown(selector, { key: "Escape" });
       expect(JSON.parse(screen.getByTestId("column-todo").getAttribute("data-tasks") || "[]").map((task: Task) => task.id)).toEqual(["FN-1"]);
       expect(screen.getByTestId("column-todo")).toHaveAttribute("data-workflow-badges", "{}");
       expect(screen.queryByTestId("column-intake")).toBeNull();
@@ -1786,10 +1740,6 @@ describe("Board", () => {
       await waitFor(() => expect(screen.getByTestId("column-intake")).toBeDefined());
       expect(JSON.parse(screen.getByTestId("column-intake").getAttribute("data-tasks") || "[]").map((task: Task) => task.id).sort()).toEqual(["FN-2", "FN-3"]);
       expect(screen.queryByTestId("column-todo")).toBeNull();
-
-      fireEvent.click(screen.getByTestId("workflow-switcher"));
-      fireEvent.click(screen.getByTestId("workflow-switcher-edit-wf-custom"));
-      expect(onOpenWorkflowEditor).toHaveBeenCalledWith("wf-custom");
     });
 
     it("passes workflow options and the selected workflow default to per-workflow quick-add", async () => {

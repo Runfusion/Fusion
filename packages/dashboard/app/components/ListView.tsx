@@ -281,8 +281,6 @@ interface ListViewProps {
   autoMerge?: boolean;
   /** Project merge strategy so list context menus match Task Detail before a PR exists. */
   mergeStrategy?: string;
-  onOpenWorkflowEditor?: (workflowId?: string) => void;
-  onCreateWorkflow?: () => void;
   /** Relocates workflow controls into the Header portal slot when sidebar navigation owns the inline chrome. */
   workflowControlsInHeader?: boolean;
   /*
@@ -389,8 +387,6 @@ export function ListView({
   lastFetchTimeMs,
   autoMerge,
   mergeStrategy = "direct",
-  onOpenWorkflowEditor,
-  onCreateWorkflow,
   workflowControlsInHeader = false,
   compact = false,
   active = true,
@@ -1965,8 +1961,13 @@ export function ListView({
   const renderWorkflowSelector = () => {
     if (compact) return null;
     if (!workflowMode || !selectedWorkflow) return null;
-    const shouldRenderWorkflowControls = workflowOptions.length > 1 || Boolean(onCreateWorkflow || onOpenWorkflowEditor);
-    if (!shouldRenderWorkflowControls || workflowOptions.length === 0) return null;
+    /*
+    FNXC:WorkflowControls 2026-09-15-05:29:
+    FN-407 removed the switcher's edit/create affordances, so a single-workflow list has nothing to choose between.
+    Render the control only when there is a real selection to make; otherwise the wrapper would be an empty shell.
+    */
+    const shouldRenderWorkflowControls = workflowOptions.length > 1;
+    if (!shouldRenderWorkflowControls) return null;
     const workflowControl = (
       <div className="list-workflow-control">
         <WorkflowSwitcher
@@ -1977,9 +1978,6 @@ export function ListView({
           aggregateOption={{ id: ALL_WORKFLOWS_BOARD_VIEW_ID, name: "All workflows" }}
           onOpen={refreshBoardWorkflows}
           label={t("listView.workflowLabel", "Workflow")}
-          onEditWorkflow={onOpenWorkflowEditor}
-          /* FNXC:ListNoWorkflowCreate 2026-09-14-05:42: creation stays inside the selector popover, like every other switcher host. */
-          onCreateWorkflow={onCreateWorkflow}
         />
       </div>
     );
@@ -1987,8 +1985,8 @@ export function ListView({
     FNXC:WorkflowControls 2026-06-20-00:00:
     ListView keeps its own workflow selection state and only portals its workflow controls into Header when the sidebar header slot exists.
 
-    FNXC:WorkflowControls 2026-06-20-15:43:
-    ListView now has edit parity through WorkflowSwitcher row actions and no longer renders a standalone create icon, preventing empty button shells across desktop and mobile header placements.
+    FNXC:WorkflowControls 2026-09-15-05:29:
+    FN-407: ListView renders the selector alone and never a standalone edit/create icon, preventing empty button shells across desktop and mobile header placements.
 
     FNXC:MainViewKeepAlive 2026-08-31-14:54:
     A cached header slot survives the render where a retained List becomes inactive, before its

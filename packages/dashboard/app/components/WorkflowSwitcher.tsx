@@ -1,7 +1,7 @@
 import "./WorkflowSwitcher.css";
 import { UiButton, UiListBox, UiListBoxItem, UiPopoverSurface } from "./ui";
 
-import { ChevronDown, Pencil, Plus } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
@@ -24,8 +24,6 @@ export interface WorkflowSwitcherProps {
   /** Fired each time the dropdown transitions from closed to open so consumers can refresh count data. */
   onOpen?: () => void;
   label?: string;
-  onEditWorkflow?: (workflowId: string) => void;
-  onCreateWorkflow?: () => void;
 }
 
 interface DropdownPosition {
@@ -43,9 +41,12 @@ const DEFAULT_MENU_MIN_WIDTH = 240;
  * FNXC:WorkflowSwitcher 2026-06-21-18:34:
  * The open listbox must expose full workflow names for comparison while the collapsed trigger remains intentionally narrow and ellipsized.
  * Size the menu from measured name content plus option decorations, then clamp to the viewport so the trigger width can prevent shrinking but cannot force long names to stay truncated.
- * OPTION_DECORATIONS_WIDTH budgets the option row padding/gaps, three count badges plus separators, an optional btn-icon edit affordance, and scrollbar allowance from the existing token-sized CSS.
+ * OPTION_DECORATIONS_WIDTH budgets the option row padding/gaps, three count badges plus separators, and scrollbar allowance from the existing token-sized CSS.
+ *
+ * FNXC:WorkflowSwitcher 2026-09-15-05:29:
+ * FN-407 removed the per-row edit affordance, so the decoration budget no longer reserves a btn-icon column.
  */
-export const OPTION_DECORATIONS_WIDTH = 200;
+export const OPTION_DECORATIONS_WIDTH = 164;
 
 export interface ComputeMenuWidthInput {
   longestNameWidth: number;
@@ -84,29 +85,23 @@ function getWorkflowIconValue(workflow: WorkflowSwitcherAggregateOption | BoardW
  * Counts are contextual detail, so the collapsed trigger must stay visually and accessibly scoped to the active workflow name plus chevron.
  * Render Plan, Progress, and Review counts only while the dropdown is expanded; option rows keep their count text because the listbox is the comparison surface.
  *
- * FNXC:StandardizedViewActions 2026-09-13-21:43:
- * Workflow row editing remains contextual inside the listbox, and New workflow lives with it in a non-scrolling popover footer.
- *
- * FNXC:StandardizedViewActions 2026-09-14-02:47:
- * FN-379 extracted New workflow into a sibling header action because "every creation entry uses the shared button".
- * That was the rule applied without judgment: the selector already owns workflow lifecycle, so a second control beside
- * it duplicates the affordance and pushes a mutation into a row meant for selection. Creation returns INSIDE the
- * popover footer, where it stays reachable while a long workflow list scrolls. The shared creation contract applies to
- * a view's primary resource action in its header — not to an action already scoped by its own picker.
+ * FNXC:StandardizedViewActions 2026-09-15-05:29:
+ * FN-407 makes the quick switcher a pure selector: it carries NO mutation at all. The per-row "Edit workflow" rail and
+ * the persistent "New workflow" popover footer are removed, because a picker that also edits and creates presents two
+ * competing surfaces for the same resource. Workflow lifecycle now lives in exactly one place — the Workflows view —
+ * where creation is the header action `wf-new-workflow` and editing is selecting a workflow in that view.
  *
  * FNXC:WorkflowSwitcher 2026-06-21-00:00:
  * Opening the dropdown must refresh workflow count data because task-to-workflow assignments do not emit board-workflows invalidation events.
  * Fire onOpen only on closed-to-open transitions so consumers can refetch without close-time calls or render loops.
  */
-export function WorkflowSwitcher({ workflows, value, onChange, counts, aggregateOption, onOpen, label: labelProp, onEditWorkflow, onCreateWorkflow }: WorkflowSwitcherProps) {
+export function WorkflowSwitcher({ workflows, value, onChange, counts, aggregateOption, onOpen, label: labelProp }: WorkflowSwitcherProps) {
   const { t } = useTranslation("app");
   const label = labelProp ?? t("workflowSwitcher.label", "Workflow");
   const planLabel = t("workflowSwitcher.plan", "Plan");
   const progressLabel = t("workflowSwitcher.progress", "Progress");
   const reviewLabel = t("workflowSwitcher.review", "Review");
   const mergingLabel = t("workflowSwitcher.merging", "Merging");
-  const editWorkflowLabel = t("workflowSwitcher.editWorkflow", "Edit workflow");
-  const newWorkflowLabel = t("workflowSwitcher.newWorkflow", "New workflow");
   const listboxId = useId();
 
   const [isOpen, setIsOpen] = useState(false);
@@ -123,9 +118,10 @@ export function WorkflowSwitcher({ workflows, value, onChange, counts, aggregate
 
   const switcherOptions = useMemo(() => {
     /*
-    FNXC:WorkflowSwitcher 2026-06-29-16:00:
-    The Board can expose a dashboard-only "All workflows" filter before real workflows, but that sentinel is not a backend workflow id and must never receive workflow edit affordances.
-    Keep the aggregate option in this presentation layer so real workflow sorting, counts, create/edit actions, and durable selection semantics remain owned by the existing Board/useBoardWorkflows path.
+    FNXC:WorkflowSwitcher 2026-09-15-05:29:
+    The Board can expose a dashboard-only "All workflows" filter before real workflows, but that sentinel is not a backend workflow id.
+    Keep the aggregate option in this presentation layer so real workflow sorting, counts, and durable selection semantics remain owned by the existing Board/useBoardWorkflows path.
+    FN-407: the switcher no longer renders edit/create affordances, so the sentinel needs no special mutation guard — only selection semantics.
     */
     return aggregateOption ? [aggregateOption, ...workflows] : workflows;
   }, [aggregateOption, workflows]);
@@ -244,18 +240,6 @@ export function WorkflowSwitcher({ workflows, value, onChange, counts, aggregate
     triggerRef.current?.focus();
   }, [onChange]);
 
-  const handleEditWorkflow = useCallback((workflowId: string) => {
-    if (!onEditWorkflow) return;
-    setIsOpen(false);
-    onEditWorkflow(workflowId);
-  }, [onEditWorkflow]);
-
-  const handleCreateWorkflow = useCallback(() => {
-    if (!onCreateWorkflow) return;
-    setIsOpen(false);
-    onCreateWorkflow();
-  }, [onCreateWorkflow]);
-
   const handleKeyDown = useCallback((event: KeyboardEvent) => {
     switch (event.key) {
       case "ArrowDown":
@@ -348,12 +332,10 @@ export function WorkflowSwitcher({ workflows, value, onChange, counts, aggregate
             style={{ width: dropdownPosition.width, maxHeight: dropdownPosition.maxHeight }}
           >
             {/*
-            FNXC:NativeUiCollections 2026-09-15-00:20:
-            Every workflow is one option of a single native listbox so arrow navigation crosses rows. Edit
-            actions stay in a sibling rail, outside every option, and remain reachable by Tab without
-            creating nested interactive options. This was the in-boundary variant; it is now the only one,
-            because it is the richer of the two — it keeps per-workflow edit labels and never nests a
-            button inside an option. Header, Board, Graph and List all get it.
+            FNXC:NativeUiCollections 2026-09-15-05:29:
+            Every workflow is one option of a single native listbox so arrow navigation crosses rows.
+            FN-407 removed the sibling edit rail, so the popover now contains exactly one collection and
+            no interactive node other than the selectable options. Header, Board, Graph and List all get it.
             */}
             <UiListBox aria-label={label} className="workflow-switcher-option-collection">
               {switcherOptions.map((workflow, index) => {
@@ -383,38 +365,8 @@ export function WorkflowSwitcher({ workflows, value, onChange, counts, aggregate
                 );
               })}
             </UiListBox>
-            {onEditWorkflow ? (
-              <div className="workflow-switcher-edit-rail" aria-label={editWorkflowLabel}>
-                {switcherOptions.map((workflow) => aggregateOption?.id === workflow.id ? <span key={workflow.id} /> : (
-                  <UiButton
-                    key={workflow.id}
-                    type="button"
-                    className="btn btn-icon btn-sm workflow-switcher-edit"
-                    data-testid={`workflow-switcher-edit-${workflow.id}`}
-                    aria-label={`${editWorkflowLabel}: ${workflow.name}`}
-                    title={editWorkflowLabel}
-                    onClick={() => handleEditWorkflow(workflow.id)}
-                  >
-                    <Pencil aria-hidden="true" />
-                  </UiButton>
-                ))}
-              </div>
-            ) : null}
           </div>
         )}
-        {onCreateWorkflow ? (
-          <div className="workflow-switcher-footer">
-            <UiButton
-              type="button"
-              className="btn workflow-switcher-create"
-              data-testid="workflow-switcher-create"
-              onClick={handleCreateWorkflow}
-            >
-              <Plus aria-hidden="true" />
-              <span>{newWorkflowLabel}</span>
-            </UiButton>
-          </div>
-        ) : null}
       </UiPopoverSurface>,
       portalRoot,
     )

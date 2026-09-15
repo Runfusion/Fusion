@@ -158,12 +158,10 @@ describe("HeaderWorkflowSwitcherSlot", () => {
 
   it("exposes all workflows as an aggregate non-editable header selection", async () => {
     const onWorkflowSelectionChange = vi.fn<(selection: HeaderWorkflowSelection | null) => void>();
-    const onOpenWorkflowEditor = vi.fn();
     renderWithHeader(
       <HeaderWorkflowSwitcherSlot
         projectId="project-header-all"
         onWorkflowSelectionChange={onWorkflowSelectionChange}
-        onOpenWorkflowEditor={onOpenWorkflowEditor}
       />,
     );
 
@@ -173,7 +171,9 @@ describe("HeaderWorkflowSwitcherSlot", () => {
     expect(within(aggregateOption).getByTitle("Plan: 0")).toBeInTheDocument();
     expect(within(aggregateOption).getByTitle("Progress: 0")).toBeInTheDocument();
     expect(within(aggregateOption).getByTitle("Review: 0")).toBeInTheDocument();
-    expect(screen.queryByTestId(`workflow-switcher-edit-${ALL_WORKFLOWS_BOARD_VIEW_ID}`)).toBeNull();
+    // FN-407: the header slot renders a selection-only switcher — no row has an edit affordance.
+    expect(screen.queryAllByTestId(/^workflow-switcher-edit-/)).toHaveLength(0);
+    expect(screen.queryByTestId("workflow-switcher-create")).toBeNull();
     fireEvent.click(screen.getByTestId(`workflow-switcher-option-${ALL_WORKFLOWS_BOARD_VIEW_ID}`));
 
     await waitFor(() => {
@@ -182,18 +182,22 @@ describe("HeaderWorkflowSwitcherSlot", () => {
         selectedWorkflow: expect.objectContaining({ id: DEFAULT_WORKFLOW.id }),
       }));
     });
-    expect(onOpenWorkflowEditor).not.toHaveBeenCalledWith(ALL_WORKFLOWS_BOARD_VIEW_ID);
     expect(localStorage.getItem("kb:project-header-all:kb-dashboard-board-workflow-selection")).toBe(ALL_WORKFLOWS_BOARD_VIEW_ID);
   });
 
-  it("forwards dropdown edit workflow ids from the shared header slot", async () => {
-    const onOpenWorkflowEditor = vi.fn();
-    renderWithHeader(<HeaderWorkflowSwitcherSlot projectId="project-header-edit" onOpenWorkflowEditor={onOpenWorkflowEditor} />);
+  /*
+  FN-407: the case that proved the header slot forwarded dropdown edit workflow ids is DELETED — the slot no
+  longer accepts an edit callback and the popover renders no edit affordance. Its replacement proves the
+  absence directly on this host.
+  */
+  it("renders no edit or create affordance from the shared header slot", async () => {
+    renderWithHeader(<HeaderWorkflowSwitcherSlot projectId="project-header-edit" />);
 
     fireEvent.click(await screen.findByTestId("workflow-switcher"));
-    fireEvent.click(screen.getByTestId("workflow-switcher-edit-wf-missions"));
 
-    expect(onOpenWorkflowEditor).toHaveBeenCalledWith("wf-missions");
+    expect(screen.queryAllByTestId(/^workflow-switcher-edit-/)).toHaveLength(0);
+    expect(screen.queryByTestId("workflow-switcher-create")).toBeNull();
+    expect(screen.getAllByRole("option").length).toBeGreaterThan(1);
   });
 
   it("renders no toolbar shell when workflow mode is off, empty, or only one workflow exists", async () => {

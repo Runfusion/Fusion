@@ -16,11 +16,10 @@ export interface HeaderWorkflowSelection {
 interface HeaderWorkflowSwitcherSlotProps {
   projectId?: string;
   /*
-  FNXC:WorkflowEditorFloating 2026-06-24-00:00:
-  Header-slot workflow edit actions serve Planning and Missions, so this callback must forward the row workflow id exactly like Board/List. Dropping the argument opens the floating editor on the default workflow instead of the selected row.
+  FNXC:WorkflowEditorFloating 2026-09-15-05:29:
+  FN-407: the header slot renders a selection-only switcher. Workflow editing is no longer reachable from this
+  dropdown at all — it lives in the Workflows view — so the slot carries no edit or create callback.
   */
-  onOpenWorkflowEditor?: (workflowId?: string) => void;
-  onCreateWorkflow?: () => void;
   onWorkflowSelectionChange?: (selection: HeaderWorkflowSelection | null) => void;
 }
 
@@ -30,8 +29,6 @@ const EMPTY_COUNTS: Map<string, WorkflowStatusCounts> = new Map();
 
 export function HeaderWorkflowSwitcherSlot({
   projectId,
-  onOpenWorkflowEditor,
-  onCreateWorkflow,
   onWorkflowSelectionChange,
 }: HeaderWorkflowSwitcherSlotProps) {
   const {
@@ -81,8 +78,6 @@ export function HeaderWorkflowSwitcherSlot({
           counts={EMPTY_COUNTS}
           aggregateOption={{ id: ALL_WORKFLOWS_BOARD_VIEW_ID, name: "All workflows" }}
           onOpen={refreshBoardWorkflows}
-          onEditWorkflow={onOpenWorkflowEditor}
-          onCreateWorkflow={onCreateWorkflow}
         />
       </div>
     </div>,

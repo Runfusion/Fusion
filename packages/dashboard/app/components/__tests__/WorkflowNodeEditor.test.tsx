@@ -1,5 +1,4 @@
 import { readFileSync } from "node:fs";
-import { useState } from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act, render, screen, waitFor, cleanup, within } from "@testing-library/react";
 import { parseWorkflowIr, type WorkflowDefinition, type Settings } from "@fusion/core";
@@ -19,7 +18,7 @@ const STEP_TEMPLATE_FIXTURES: WorkflowStepTemplate[] = [
   { id: "browser-verification", name: "Browser Verification", description: "browser", prompt: "You verify in a browser.", category: "Quality", toolMode: "coding" },
   { id: "frontend-ux-design", name: "Frontend UX Design", description: "ux", prompt: "You review UX.", category: "Quality", toolMode: "readonly" },
 ];
-import type { Agent, BoardWorkflowDefinition } from "../../api";
+import type { Agent } from "../../api";
 import {
   irToFlow,
   flowToIr,
@@ -100,7 +99,6 @@ import type { TraitCatalogEntry } from "../../api";
 import type { WorkflowStepTemplate } from "@fusion/core";
 import { beforeEach as viBeforeEach } from "vitest";
 import { WorkflowNodeEditor } from "../WorkflowNodeEditor";
-import { WorkflowSwitcher } from "../WorkflowSwitcher";
 import { ConfirmDialogProvider } from "../../hooks/useConfirm";
 import { MOBILE_MEDIA_QUERY } from "../../hooks/useViewportMode";
 
@@ -114,6 +112,11 @@ function getPromptFullscreenTextarea() {
   return within(overlay!).getByLabelText("Prompt") as HTMLTextAreaElement;
 }
 
+/*
+FN-407: the workflow editor is no longer hosted by a FloatingWindow, so there is no editor overlay to look up.
+This helper now exists to prove its ABSENCE, and the prompt-editor stacking assertions below compare the expanded
+prompt window against the shared stack floor instead of against an editor window that cannot exist.
+*/
 function getWorkflowEditorFloatingOverlay() {
   return document.body.querySelector('[data-testid="floating-window-overlay-workflow-node-editor"]') as HTMLElement | null;
 }
@@ -124,15 +127,15 @@ function zIndexOf(element: HTMLElement) {
 }
 
 function expectPromptOverlayAboveWorkflowWindow() {
-  const workflowWindow = getWorkflowEditorFloatingOverlay();
   const promptOverlay = getPromptFullscreenOverlay();
-  expect(workflowWindow).toBeInTheDocument();
   expect(promptOverlay).toBeInTheDocument();
+  // FN-407: the editor itself has no floating window, so nothing of its own can sit above the prompt editor.
+  expect(getWorkflowEditorFloatingOverlay()).toBeNull();
   // FN-394: the expanded prompt editor is hosted by its own FloatingWindow, so the stack order lives on that window's overlay.
   const promptWindow = document.body.querySelector('[data-testid="floating-window-overlay-workflow-prompt-fullscreen"]') as HTMLElement | null;
   expect(promptWindow).toBeInTheDocument();
   expect(promptWindow!).toContainElement(promptOverlay!);
-  expect(zIndexOf(promptWindow!)).toBeGreaterThan(zIndexOf(workflowWindow!));
+  expect(zIndexOf(promptWindow!)).toBeGreaterThan(10000);
 }
 
 function defineElementMetric(element: Element, property: "clientWidth" | "scrollWidth", value: number) {
@@ -862,7 +865,12 @@ describe("WorkflowNodeEditor", () => {
     expect(css.indexOf(".wf-mobile-actions .wf-editor-action")).toBeLessThan(mobileMediaIndex);
   });
 
-  it("routes modal sizing through FloatingWindow without stale overlay or native resize shells", () => {
+  /*
+  FN-407: the editor has no floating-window host any more, so its stylesheet must carry NO rule scoped to that
+  window class. The surviving contract is the flush embedded shell plus the mobile guard that keeps the embedded
+  editor out of the dialog viewport-takeover.
+  */
+  it("sizes the embedded editor shell with no floating-window or overlay rules left behind", () => {
     const css = readAppFile("components/WorkflowNodeEditor.css");
     const modalBlock = css.match(/\.wf-editor-modal \{[\s\S]*?\n\}/)?.[0] ?? "";
     const mobileBlock = css.slice(css.indexOf("@media (max-width: 768px)"));
@@ -871,10 +879,8 @@ describe("WorkflowNodeEditor", () => {
     expect(modalBlock).toContain("height: 100%;");
     expect(modalBlock).toContain("resize: none;");
     expect(modalBlock).not.toContain("resize: both");
-    expect(css).toContain(".floating-window--workflow-editor .floating-window__body");
-    expect(mobileBlock).toContain(".floating-window--workflow-editor");
-    expect(mobileBlock).toContain(".floating-window--workflow-editor .floating-window__resize-handle");
-    expect(mobileBlock).toContain("display: none;");
+    expect(css).not.toContain(".floating-window--workflow-editor");
+    expect(mobileBlock).toContain(".wf-editor-modal:not(.wf-editor-modal--embedded)");
     expect(mobileBlock).not.toContain(".modal-overlay:has(.wf-editor-modal");
   });
 
@@ -914,47 +920,12 @@ describe("WorkflowNodeEditor", () => {
     expect(screen.getByRole("button", { name: "Custom" })).not.toHaveClass("active");
   });
 
-  it("opens the selected workflow from a real dropdown edit button into the floating modal", async () => {
-    vi.mocked(fetchWorkflows).mockResolvedValue([def(), v2Def()]);
-    const switcherWorkflows: BoardWorkflowDefinition[] = [
-      { id: "WF-001", name: "QA", columns: [] },
-      { id: "WF-002", name: "Custom", columns: [] },
-    ];
-
-    function DropdownEditHarness() {
-      const [editorWorkflowId, setEditorWorkflowId] = useState<string | undefined>();
-      const [editorOpen, setEditorOpen] = useState(false);
-      return (
-        <>
-          <WorkflowSwitcher
-            workflows={switcherWorkflows}
-            value="WF-001"
-            onChange={() => {}}
-            counts={new Map()}
-            onEditWorkflow={(workflowId) => {
-              setEditorWorkflowId(workflowId);
-              setEditorOpen(true);
-            }}
-          />
-          <WorkflowNodeEditor
-            isOpen={editorOpen}
-            onClose={() => setEditorOpen(false)}
-            addToast={() => {}}
-            initialWorkflowId={editorWorkflowId}
-          />
-        </>
-      );
-    }
-
-    render(<DropdownEditHarness />);
-    fireEvent.click(screen.getByTestId("workflow-switcher"));
-    fireEvent.click(await screen.findByTestId("workflow-switcher-edit-WF-002"));
-
-    expect(await screen.findByTestId("wf-workflow-name")).toHaveTextContent("Custom");
-    expect(screen.getByTestId("floating-window-workflow-node-editor")).toBeInTheDocument();
-    expect(screen.getByTestId("floating-window-resize-se")).toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: "Custom" })[0]).toHaveClass("active");
-  });
+  /*
+  FN-407: the case that drove the editor from a quick-switcher "Edit workflow" button into a floating modal is
+  DELETED. Both halves of its subject were removed — the switcher has no edit affordance, and the editor has no
+  floating/modal presentation. The surviving contract (initialWorkflowId preselects that workflow) is covered by
+  the desktop fallback and mobile preselect cases around it.
+  */
 
   it("skips the mobile workflow list stage when the initial workflow id is valid", async () => {
     mockWorkflowEditorViewport("mobile");
@@ -1404,15 +1375,14 @@ describe("WorkflowNodeEditor", () => {
     expect(screen.getByRole("button", { name: "Expand prompt editor" })).toBeInTheDocument();
   });
 
-  it("stacks the fullscreen prompt editor above the workflow floating window on desktop", async () => {
+  it("stacks the fullscreen prompt editor above the shared window floor on desktop", async () => {
     vi.mocked(fetchWorkflows).mockResolvedValue([v2Def()]);
 
     render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
 
     await screen.findByText("Save");
-    const workflowWindow = getWorkflowEditorFloatingOverlay();
-    expect(workflowWindow).toBeInTheDocument();
-    expect(zIndexOf(workflowWindow!)).toBeGreaterThan(10000);
+    // FN-407: the editor is a plain view, so it contributes no window of its own to the shared stack.
+    expect(getWorkflowEditorFloatingOverlay()).toBeNull();
 
     fireEvent.click(await screen.findByTestId("wf-node-prompt"));
     fireEvent.click(await screen.findByRole("button", { name: "Expand prompt editor" }));
@@ -1690,10 +1660,12 @@ describe("WorkflowNodeEditor", () => {
   });
 });
 
-// FNXC:EmbeddedPresentation 2026-06-22-12:00:
-// presentation="embedded" was a zero-coverage branch. These assert the embedded contract via useEmbeddedPresentation:
-// no fixed floating/overlay chrome, Escape does NOT dismiss (escapeEnabled is false), and the embedded root class renders.
-describe("WorkflowNodeEditor — embedded presentation", () => {
+/*
+FN-407: the editor's modal presentation is DELETED, so "embedded" is no longer a branch — it is the only
+presentation. These cases now assert the unconditional contract on the DEFAULT mounting: no floating window,
+no modal overlay, no close affordance, and Escape never dismisses.
+*/
+describe("WorkflowNodeEditor — single embedded presentation", () => {
   beforeEach(() => {
     vi.mocked(fetchWorkflows).mockResolvedValue([]);
     vi.mocked(fetchTraits).mockResolvedValue(TRAIT_CATALOG);
@@ -1706,25 +1678,33 @@ describe("WorkflowNodeEditor — embedded presentation", () => {
     vi.clearAllMocks();
   });
 
-  it("renders the embedded root class and no modal overlay", async () => {
+  it("renders the embedded root class and no floating window, overlay, or close affordance", async () => {
     const { container } = render(
-      <WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} presentation="embedded" />,
+      <WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />,
     );
 
     expect(await screen.findByText("Workflows")).toBeInTheDocument();
     expect(container.querySelector(".workflow-editor-embedded")).not.toBeNull();
     expect(container.querySelector(".wf-editor-modal--embedded")).not.toBeNull();
-    // No fixed full-screen overlay host or floating-window chrome in embedded mode.
+    // FN-407 symptom assertion: the default mounting produces no floating-window or modal chrome whatsoever.
     expect(container.querySelector(".modal-overlay")).toBeNull();
+    expect(document.body.querySelector(".modal-overlay")).toBeNull();
     expect(container.querySelector(".wf-editor-overlay")).toBeNull();
     expect(document.body.querySelector(".floating-window--workflow-editor")).toBeNull();
+    expect(getWorkflowEditorFloatingOverlay()).toBeNull();
+    expect(document.body.querySelector('[data-testid="floating-window-workflow-node-editor"]')).toBeNull();
     expect(document.body.querySelector(".floating-window__resize-handle")).toBeNull();
+    // No residual close shell: no editor close button and no orphaned close label.
+    expect(document.body.querySelectorAll(".wf-editor-close")).toHaveLength(0);
+    expect(screen.queryByLabelText("Close workflow editor")).toBeNull();
+    // The create action survives as the view's primary header action.
+    expect(screen.getByTestId("wf-new-workflow")).toBeInTheDocument();
   });
 
   it("opens the prompt fullscreen editor from embedded workflows without floating chrome", async () => {
     vi.mocked(fetchWorkflows).mockResolvedValue([v2Def()]);
 
-    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} presentation="embedded" />);
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
 
     await screen.findByText("Save");
     expect(getWorkflowEditorFloatingOverlay()).toBeNull();
@@ -1740,40 +1720,23 @@ describe("WorkflowNodeEditor — embedded presentation", () => {
     expect(zIndexOf(promptWindow!)).toBeGreaterThan(10000);
   });
 
-  it("does not dismiss on Escape in embedded mode", async () => {
+  it("never dismisses on Escape", async () => {
     const onClose = vi.fn();
     const { container } = render(
-      <WorkflowNodeEditor isOpen onClose={onClose} addToast={() => {}} presentation="embedded" />,
+      <WorkflowNodeEditor isOpen onClose={onClose} addToast={() => {}} />,
     );
 
     expect(await screen.findByText("Workflows")).toBeInTheDocument();
-    // Escape is handled on the modal element (onKeyDown), so fire it there — not on document.
     const embeddedModal = container.querySelector(".wf-editor-modal--embedded")!;
     fireEvent.keyDown(embeddedModal, { key: "Escape" });
+    fireEvent.keyDown(document, { key: "Escape" });
     expect(onClose).not.toHaveBeenCalled();
   });
 
-  it("uses FloatingWindow chrome and Escape-to-close in modal mode", async () => {
-    const onClose = vi.fn();
-    render(<WorkflowNodeEditor isOpen onClose={onClose} addToast={() => {}} />);
-
-    expect(await screen.findByText("Workflows")).toBeInTheDocument();
-    const floating = document.body.querySelector(".floating-window--workflow-editor") as HTMLElement | null;
-    expect(floating).not.toBeNull();
-    expect(screen.getByTestId("floating-window-workflow-node-editor")).toBe(floating);
-    expect(screen.getByTestId("floating-window-overlay-workflow-node-editor")).toHaveAttribute("aria-modal", "false");
-    expect(document.body.querySelector(".wf-editor-overlay")).toBeNull();
-    expect(document.body.querySelector(".modal-overlay .wf-editor-modal")).toBeNull();
-    expect(document.body.querySelector(".wf-editor-modal--embedded")).toBeNull();
-    expect(document.body.querySelectorAll(".wf-editor-close")).toHaveLength(1);
-    expect(screen.getByTestId("floating-window-resize-se")).toBeInTheDocument();
-    expect(screen.queryByTestId("floating-window-drag-handle-workflow-node-editor")).not.toBeInTheDocument();
-    expect(floating!.querySelector(".wf-editor-header")).not.toBeNull();
-    // Modal-mode Escape is handled on the modal element (onKeyDown), not document.
-    const modal = floating!.querySelector(".wf-editor-modal")!;
-    fireEvent.keyDown(modal, { key: "Escape" });
-    expect(onClose).toHaveBeenCalled();
-  });
+  /*
+  FN-407: the case that proved FloatingWindow chrome and Escape-to-close in modal mode is DELETED. Its entire
+  subject — the modal presentation — was removed; the invariant that no such chrome exists is asserted above.
+  */
 });
 
 describe("WorkflowNodeEditor — U1 card-style nodes", () => {
@@ -3071,6 +3034,8 @@ function renderWithConfirm(ui: import("react").ReactElement) {
 
 describe("WorkflowNodeEditor — U4 create dialog / delete / inline rename / dirty guard", () => {
   beforeEach(() => {
+    /* FN-407: cases below opt into the mobile back chain, so pin the default viewport instead of inheriting the previous case's. */
+    mockWorkflowEditorViewport("desktop");
     vi.mocked(fetchTraits).mockResolvedValue(TRAIT_CATALOG);
     vi.mocked(fetchStepParsers).mockResolvedValue(["step-headings", "json-steps"]);
     vi.mocked(fetchModels).mockResolvedValue({ models: [] });
@@ -3104,18 +3069,12 @@ describe("WorkflowNodeEditor — U4 create dialog / delete / inline rename / dir
     expect(await screen.findByTestId("wf-create-dialog")).toBeInTheDocument();
   });
 
-  it("does not let parent Escape close the floating editor while create dialog is open", async () => {
-    const onClose = vi.fn();
-    vi.mocked(fetchWorkflows).mockResolvedValue([]);
-    render(<WorkflowNodeEditor isOpen onClose={onClose} addToast={() => {}} initialAction="create" />);
-
-    expect(await screen.findByTestId("wf-create-dialog")).toBeInTheDocument();
-    const modal = document.body.querySelector(".floating-window--workflow-editor .wf-editor-modal")!;
-    fireEvent.keyDown(modal, { key: "Escape" });
-
-    expect(onClose).not.toHaveBeenCalled();
-    expect(screen.getByTestId("wf-create-dialog")).toBeInTheDocument();
-  });
+  /*
+  FN-407: the case that proved a parent Escape could not dismiss the editor out from under an open create dialog is
+  DELETED. Its subject was the editor's own Escape-to-close, which went with the modal presentation — there is no
+  parent dismissal left to guard against. Escape reaching the create dialog now simply closes that dialog, which is
+  ordinary dialog behavior; the editor's immunity to Escape is asserted by "never dismisses on Escape" above.
+  */
 
   it("creates and activates a workflow on a valid submit", async () => {
     const addToast = vi.fn();
@@ -3383,13 +3342,24 @@ describe("WorkflowNodeEditor — U4 create dialog / delete / inline rename / dir
 
   // ── Dirty guard ────────────────────────────────────────────────────────────
 
+  /*
+  FN-407 repointed the dirty-guard-on-exit cases. The editor's close button went with its modal presentation, so
+  the guarded exit is now the mobile header back chain: editor stage -> workflow list -> board (`onClose`). Desktop
+  and tablet leave through sidebar/header navigation, which never entered this guard.
+  */
+  async function exitViaMobileBackToBoard() {
+    fireEvent.click(await screen.findByLabelText("Back to workflows"));
+    fireEvent.click(await screen.findByLabelText("Back to board"));
+  }
+
   it("closes immediately with no confirm when there are no edits", async () => {
+    mockWorkflowEditorViewport("mobile");
     const onClose = vi.fn();
     vi.mocked(fetchWorkflows).mockResolvedValue([v2Def()]);
-    renderWithConfirm(<WorkflowNodeEditor isOpen onClose={onClose} addToast={() => {}} />);
+    renderWithConfirm(<WorkflowNodeEditor isOpen onClose={onClose} addToast={() => {}} initialWorkflowId="WF-002" />);
     // Wait for the workflow to load (clean snapshot established).
     await screen.findByTestId("wf-workflow-name");
-    fireEvent.click(screen.getByLabelText("Close workflow editor"));
+    await exitViaMobileBackToBoard();
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
     // No discard confirm dialog appeared.
     expect(screen.queryByRole("dialog", { name: /Discard unsaved changes/i })).not.toBeInTheDocument();
@@ -3399,36 +3369,39 @@ describe("WorkflowNodeEditor — U4 create dialog / delete / inline rename / dir
     // Regression for mapping-default asymmetry: the loaded snapshot is computed
     // through flowToIr(irToFlow(...)) so default-materialization matches the live
     // side and a freshly-loaded workflow is never dirty.
-    const onClose = vi.fn();
     vi.mocked(fetchWorkflows).mockResolvedValue([stepwiseDef()]);
-    renderWithConfirm(<WorkflowNodeEditor isOpen onClose={onClose} addToast={() => {}} />);
+    renderWithConfirm(<WorkflowNodeEditor isOpen onClose={vi.fn()} addToast={() => {}} />);
     await screen.findByTestId("wf-node-foreach");
-    fireEvent.click(screen.getByLabelText("Close workflow editor"));
-    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
-    expect(screen.queryByRole("dialog", { name: /Discard unsaved changes/i })).not.toBeInTheDocument();
+    /*
+    FN-407: with the close button gone, freshly-loaded cleanliness is asserted through the export action, which the
+    editor disables exactly while unsaved edits exist. A dirty snapshot would disable it here.
+    */
+    expect(screen.getByTestId("wf-export")).toBeEnabled();
   });
 
   it("prompts to discard on close when dirty; confirming closes, cancelling keeps it open", async () => {
+    mockWorkflowEditorViewport("mobile");
     const onClose = vi.fn();
     vi.mocked(fetchWorkflows).mockResolvedValue([v2Def()]);
-    renderWithConfirm(<WorkflowNodeEditor isOpen onClose={onClose} addToast={() => {}} />);
+    renderWithConfirm(<WorkflowNodeEditor isOpen onClose={onClose} addToast={() => {}} initialWorkflowId="WF-002" />);
     await screen.findByText("Save");
-    await waitFor(() => expect(screen.getAllByLabelText(/Column name/i).length).toBeGreaterThan(0));
+    /* FN-407: this case runs on the mobile back chain, where the desktop column inspector is not rendered. */
+    await screen.findByTestId("wf-workflow-name");
     // Make an edit: inline rename.
     fireEvent.click(screen.getByTestId("wf-workflow-name"));
     const input = await screen.findByTestId("wf-workflow-name-input");
     fireEvent.change(input, { target: { value: "Edited" } });
     fireEvent.keyDown(input, { key: "Enter" });
 
-    // Close → discard confirm appears. Cancel keeps the editor open.
-    fireEvent.click(screen.getByLabelText("Close workflow editor"));
+    // Exit → discard confirm appears. Cancel keeps the editor open.
+    await exitViaMobileBackToBoard();
     const dialog = await screen.findByRole("dialog", { name: /Discard unsaved changes/i });
     fireEvent.click(within(dialog).getByRole("button", { name: /Cancel/i }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: /Discard unsaved changes/i })).not.toBeInTheDocument());
     expect(onClose).not.toHaveBeenCalled();
 
-    // Close again → confirm → onClose fires.
-    fireEvent.click(screen.getByLabelText("Close workflow editor"));
+    // Exit again → confirm → onClose fires.
+    fireEvent.click(await screen.findByLabelText("Back to board"));
     const dialog2 = await screen.findByRole("dialog", { name: /Discard unsaved changes/i });
     fireEvent.click(within(dialog2).getByRole("button", { name: /Discard/i }));
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
@@ -4192,9 +4165,11 @@ describe("WorkflowNodeEditor — U10 design-with-AI", () => {
 
     // Canvas replaced: the designed script node appears.
     await waitFor(() => expect(screen.getByTestId("wf-node-script")).toBeInTheDocument());
-    // Dirty: closing now prompts the discard guard.
-    fireEvent.click(screen.getByLabelText("Close workflow editor"));
-    expect(await screen.findByRole("dialog", { name: /Discard unsaved changes/i })).toBeInTheDocument();
+    /*
+    FN-407: the editor has no close button to drive the discard guard from. Dirtiness is asserted through the
+    export action, which the editor disables exactly while unsaved edits exist.
+    */
+    expect(screen.getByTestId("wf-export")).toBeDisabled();
   });
 
   it("toolbar flow: cancelling the replace confirm keeps the canvas unchanged", async () => {

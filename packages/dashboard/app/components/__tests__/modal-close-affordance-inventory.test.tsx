@@ -24,6 +24,10 @@ FNXC:ModalChromeTests 2026-09-15-04:56:
 FN-406: the file browser stopped constructing its own close and now hands it to the shared ViewHeader through
 `onClose`, which is what lets the single drawer-chrome rule remove it on phone drawers. It therefore leaves this census.
 */
+/*
+FN-407: the workflow editor lost its modal presentation, and with it the only close affordance it constructed.
+It is a persistent view now, so it no longer imports ModalCloseButton and leaves this census.
+*/
 const canonicalConsumers = [
   "AgentDetailView.tsx",
   "FloatingWindow.tsx",
@@ -33,7 +37,6 @@ const canonicalConsumers = [
   "TaskDetailModal.tsx",
   "TerminalModal.tsx",
   "ViewHeader.tsx",
-  "WorkflowNodeEditor.tsx",
 ] as const;
 
 function productionComponentSource(file: string) {

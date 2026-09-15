@@ -101,7 +101,7 @@ content header rather than rendering native and delegated controls together.
 | `TaskDetailModal.tsx` | B | `TaskDetailModal.tsx` `<FloatingWindow layer="task-detail">` | already migrated | FN-8619 | Dense tabs and pop-out stacking retained; `task-detail-modal-size` is orphaned for `floating-window:task-detail` (one-time reset). | — |
 | `TerminalModal.tsx` | A | Floating mode uses FloatingWindow (`terminal-<project>`), headerless delegated drag host. | already migrated | FN-8620 | Floating legacy pair superseded by `fusion:terminal-float-geometry-<project>` (one-time reset). | Docked mode is explicitly gated and retains its top-edge resize / `fusion:terminal-docked-height-<project>` because it owns dock layout. |
 | `WorkflowAddStepModal.tsx` | A | `WorkflowAddStepModal.tsx:144` `<FloatingWindow` | already migrated | FN-8606 core/workflow (done) | Headerless delegated handle. | — |
-| `WorkflowNodeEditor.tsx` | A | `WorkflowNodeEditor.tsx:5646` `<FloatingWindow`; `:19` `createPortal` | already migrated | n/a | Full-screen workflow editor, delegated header. | — |
+| `WorkflowNodeEditor.tsx` | n/a | Not a modal. FN-407 removed its floating/modal presentation; it renders only as the embedded `workflows` main-content view (`.workflow-editor-embedded`) with no overlay, no floating window, and no close affordance. | out of scope | FN-407 | The workflow editor is a persistent view reached identically from the sidebar, header, mobile More, a task's **Edit workflow**, and the Settings referral. | Two competing presentations for one surface was the defect FN-407 removed; it retains its own `FloatingWindow` hosts only for the nested create dialog and expanded prompt editor, which are genuine dialogs. |
 
 ## Completeness check
 

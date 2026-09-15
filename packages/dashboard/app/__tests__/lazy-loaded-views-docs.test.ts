@@ -69,6 +69,12 @@ const EXPECTED_APP_LEVEL_VIEWS = new Set([
   "DevServerView",
   "GoalsView",
   "PullRequestView",
+  /*
+  FN-407: WorkflowNodeEditor moved from the AppModals modal-chunk site to App.tsx. AppModals no longer declares
+  or mounts it, so App.tsx became its only lazy declaration and therefore its curation site. The chunk is still
+  lazy and still one curated entry — it was re-homed, not removed.
+  */
+  "WorkflowNodeEditor",
 ]);
 
 /*
@@ -84,7 +90,6 @@ const EXPECTED_APP_MODALS_LAZY_VIEWS = new Set([
   "PatchnodeView",
   "SetupWizardModal",
   "SettingsModal",
-  "WorkflowNodeEditor",
 ]);
 
 const EXPECTED_PLUGINS_SECTION_LAZY_VIEWS = new Set([
@@ -99,7 +104,8 @@ const EXPECTED_AGENTS_VIEW_LAZY_VIEWS = new Set([
 const EXPECTED_EXCLUDED_LAZY = [
   {
     file: "../App.tsx",
-    symbols: ["_WorkflowEditorView", "_ImportTasksView", "_AutomationsView", "_SettingsView"],
+    /* FN-407: `_WorkflowEditorView` is gone from this exclusion list — the Workflows view IS the curated entry now, so its declaration is no longer underscore-prefixed. */
+    symbols: ["_ImportTasksView", "_AutomationsView", "_SettingsView"],
     reason: "embedded App presentations reuse already-documented modal/import chunks",
   },
   {

@@ -191,7 +191,6 @@ export interface MainContentProps {
   openPlanningWithInitialPlanWithNav: (initialPlan: string, workflowId?: string | null, sourceIssue?: { provider: "github"; repository: string; issueNumber: number; url: string; title?: string }) => void;
   ingestCreatedTasks: (tasks: Task[]) => void;
   nodesEnabled: boolean;
-  openWorkflowEditorWithNav: (workflowId?: string) => void;
   handleGitHubImport: (task: Task) => void;
   devServerEnabled: boolean;
   mainPanelDetailTask: Task | TaskDetail | null;
@@ -258,7 +257,6 @@ export interface MainContentProps {
   // FNXC:StuckTagRemoval 2026-08-17-22:30: stuck-task tagging removed from the dashboard; taskStuckTimeoutMs is engine-side only now.
   staleHighFanoutBlockerAgeThresholdMs: number;
   lastFetchTimeMs: number | undefined;
-  openCreateWorkflowWithNav: () => void;
   sidebarActive: boolean;
   notesController?: UseNotesController;
   registerNotesGuard?: (guard: () => boolean | Promise<boolean>, onAccepted?: () => void) => () => void;

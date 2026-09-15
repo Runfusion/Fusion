@@ -16,11 +16,10 @@ export interface GraphWorkflowSelection {
 interface GraphWorkflowSwitcherSlotProps {
   projectId?: string;
   /*
-  FNXC:WorkflowEditorFloating 2026-06-24-00:00:
-  Graph shares the Board/List workflow dropdown contract, so row edit must forward the workflow id into the floating editor. Keeping the parameter prevents Graph edits from falling back to the default workflow.
+  FNXC:WorkflowEditorFloating 2026-09-15-05:29:
+  FN-407: Graph shares the Board/List workflow dropdown contract, which is now selection-only. Workflow editing
+  is reachable exclusively from the Workflows view, so this slot carries no edit or create callback.
   */
-  onOpenWorkflowEditor?: (workflowId?: string) => void;
-  onCreateWorkflow?: () => void;
   onWorkflowSelectionChange?: (selection: GraphWorkflowSelection | null) => void;
 }
 
@@ -48,8 +47,6 @@ export function filterTasksByGraphWorkflowSelection<T extends { id: string }>(
 
 export function GraphWorkflowSwitcherSlot({
   projectId,
-  onOpenWorkflowEditor,
-  onCreateWorkflow,
   onWorkflowSelectionChange,
 }: GraphWorkflowSwitcherSlotProps) {
   const {
@@ -99,8 +96,6 @@ export function GraphWorkflowSwitcherSlot({
           counts={EMPTY_COUNTS}
           aggregateOption={{ id: ALL_WORKFLOWS_BOARD_VIEW_ID, name: "All workflows" }}
           onOpen={refreshBoardWorkflows}
-          onEditWorkflow={onOpenWorkflowEditor}
-          onCreateWorkflow={onCreateWorkflow}
         />
       </div>
     </div>,

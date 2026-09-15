@@ -259,7 +259,7 @@ describe("FloatingWindow", () => {
       "floating-window--automation",
       "floating-window--pr-create",
       "floating-window--file-browser",
-      "floating-window--workflow-editor",
+      /* FN-407: the workflow editor left the floating-window family entirely, so it declares no caller-scoped handle rules to check. */
       "artifacts-gallery-window",
     ]) {
       const rules = cssRulesForClass(desktopAppCss, callerClass);
@@ -523,7 +523,7 @@ describe("FloatingWindow", () => {
       ".floating-window__header",
       ".floating-window--headerless .task-detail-content--embedded > .modal-header",
       ".chat-view--floating .view-header",
-      ".floating-window--workflow-editor .wf-editor-header",
+      /* FN-407: the workflow editor is a main-content view, not a movable window, so it owns no drag handle. */
       ".floating-window--automation .automation-modal__drag-handle",
       /* FNXC:MissionInterviewMainContent 2026-09-14-21:32: Plan Mission with AI left the floating-window family for the Missions main content, so it owns no drag handle. */
       ".floating-window--pr-create .pr-create-modal__drag-handle",
