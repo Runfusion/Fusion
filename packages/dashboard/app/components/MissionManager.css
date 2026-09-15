@@ -309,6 +309,21 @@ primary CTA while every production presentation can open the merge-aware form.
   padding: var(--space-lg);
 }
 
+/*
+FNXC:MissionInterviewMainContent 2026-09-15-03:29:
+FN-402 renders Plan Mission with AI inside the detail pane. The interview owns its own padding and scrolling, so the
+pane drops its reading padding and hands scroll ownership to the embedded panel instead of nesting two scrollers.
+*/
+.mission-manager__detail-pane--interview {
+  padding: 0;
+  overflow: hidden;
+}
+
+.mission-manager__detail-pane--interview > .mission-interview-panel {
+  flex: 1;
+  min-height: 0;
+}
+
 /* Empty-state placeholder shown when no mission is selected in the desktop detail pane. */
 .mission-manager__detail-pane-empty {
   display: flex;

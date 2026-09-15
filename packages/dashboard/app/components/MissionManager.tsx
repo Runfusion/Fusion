@@ -5554,6 +5554,34 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
     </div>
   );
 
+  /*
+  FNXC:MissionInterviewMainContent 2026-09-15-03:29:
+  FN-402: Plan Mission with AI is a main-content destination, and it now occupies the mission DETAIL PANE instead of
+  replacing the whole mission manager body. Replacing the body unmounted the mission list under the operator, who lost
+  all list context the moment an interview opened; the interview now simply takes the region that otherwise shows
+  "Select a mission to view details", exactly like Planning renders session detail beside its persistent session rail.
+  The sidebar and header stay mounted in both hosts (the inline MainContent mount and the overlay surface). Closing
+  hands the detail pane back to its empty state; goal draft, resume and send-to-background flows are unchanged
+  (the draft is persisted by the interview's own close/unmount path).
+  */
+  const interviewSurface = (
+    <MissionInterviewModal
+      key={interviewModalKey}
+      isOpen={showInterviewModal}
+      onClose={handleInterviewModalClose}
+      onSendToBackground={handleInterviewModalClose}
+      showSendToBackgroundButton={interviewLaunchMode === "resume"}
+      /* FNXC:MissionInterviewMainContent 2026-09-15-03:29: nested under the Missions h2, so the interview declares h3 and never adds a sibling h2 to the document outline. */
+      headingLevel={3}
+      onMissionCreated={() => {
+        loadMissions();
+        addToast(t("missions.createdFromInterview", "Mission created from AI interview"), "success");
+      }}
+      projectId={projectId}
+      resumeSessionId={interviewLaunchMode === "resume" ? effectiveResumeSessionId : undefined}
+    />
+  );
+
   const manager = (
     <div
       ref={modalRef}
@@ -5567,15 +5595,23 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
       */}
       <ViewLayout
         contentOwnsScroll
-        mobilePane={selectedMission ? "detail" : "list"}
+        mobilePane={showInterviewModal || selectedMission ? "detail" : "list"}
         header={(
           <ViewHeader
             icon={Target}
             title={selectedMission && isMobile ? selectedMission.title : t("missions.title", "Missions")}
             titleTestId="mission-header-title"
-            backAction={selectedMission ? {
+            /*
+            FNXC:MissionsBackAffordance 2026-09-15-03:29:
+            FN-402: Missions follows the Planning grammar (`canReturnToSessionList = isMobile && …`). On desktop and
+            tablet the list and the detail pane are mounted side by side, so there is nowhere to go back TO and the
+            control is not rendered at all — no empty button shell, no dangling aria-label. Only the phone viewport,
+            which shows a single pane at a time, keeps it: it closes the interview when one is open, otherwise it
+            deselects the mission.
+            */
+            backAction={isMobile && (showInterviewModal || selectedMission) ? {
               label: t("missions.backToMissionsList", "Back to missions list"),
-              onClick: handleBackToList,
+              onClick: showInterviewModal ? handleInterviewModalClose : handleBackToList,
               "data-testid": "mission-back-btn",
             } : undefined}
             actions={!isCreatingMission ? (
@@ -5625,8 +5661,8 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
           </ViewSidebar>
         )}
       >
-        <div className="mission-manager__detail-pane">
-          {detailLoading && !selectedMission ? (
+        <div className={`mission-manager__detail-pane${showInterviewModal ? " mission-manager__detail-pane--interview" : ""}`}>
+          {showInterviewModal ? interviewSurface : detailLoading && !selectedMission ? (
             <div className="mission-manager__loading">
               <Loader2 size={24} className="spinner" />
               <span>{t("missions.loadingMissionDetails", "Loading mission details...")}</span>
@@ -5642,29 +5678,6 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
         </div>
       </ViewLayout>
     </div>
-  );
-
-  /*
-  FNXC:MissionInterviewMainContent 2026-09-14-21:32:
-  Plan Mission with AI is a main-content destination, not a modal layered over the board. While the interview is open it
-  REPLACES the mission manager body in both hosts (the inline MainContent mount and the overlay surface), so it fills the
-  available region with no floating chrome. Closing unmounts it and hands the region back to the mission list; the goal
-  draft, resume and send-to-background flows are unchanged (the draft is persisted by the interview's own close/unmount path).
-  */
-  const interviewSurface = (
-    <MissionInterviewModal
-      key={interviewModalKey}
-      isOpen={showInterviewModal}
-      onClose={handleInterviewModalClose}
-      onSendToBackground={handleInterviewModalClose}
-      showSendToBackgroundButton={interviewLaunchMode === "resume"}
-      onMissionCreated={() => {
-        loadMissions();
-        addToast(t("missions.createdFromInterview", "Mission created from AI interview"), "success");
-      }}
-      projectId={projectId}
-      resumeSessionId={interviewLaunchMode === "resume" ? effectiveResumeSessionId : undefined}
-    />
   );
 
   const milestoneSliceInterviewModal = interviewTarget ? (
@@ -5684,7 +5697,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
     />
   ) : null;
 
-  const managerBody = showInterviewModal ? interviewSurface : manager;
+  const managerBody = manager;
 
   if (isInline) {
     return (

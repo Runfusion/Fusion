@@ -4,9 +4,11 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { MissionManager } from "../MissionManager";
 
 /*
-FNXC:MissionInterviewMainContent 2026-09-14-21:32:
-Plan Mission with AI is a main-content destination: while the interview is open it REPLACES the mission manager body
-in both hosts (the inline MainContent mount and the overlay surface). Closing hands the region back to the mission list.
+FNXC:MissionInterviewMainContent 2026-09-15-03:29:
+FN-402: Plan Mission with AI is a main-content destination rendered INSIDE the Missions detail pane. In both hosts
+(the inline MainContent mount and the overlay surface) the manager shell, header and mission list stay mounted while
+the interview occupies the region that otherwise shows "Select a mission to view details". Closing hands that pane
+back to its empty state.
 */
 
 const mockFetchMissions = vi.fn();
@@ -102,38 +104,43 @@ beforeEach(() => {
 });
 
 describe("MissionManager hosts the mission interview in main content", () => {
-  it("replaces the manager body with the interview in the inline host", async () => {
+  it("renders the interview in the detail pane while the inline host keeps its list", async () => {
     renderManager();
     await screen.findByText("Inline Host Mission");
     expect(screen.getByTestId("mission-manager-dialog")).toBeInTheDocument();
 
     await openInterviewFromHeader();
 
-    expect(screen.queryByTestId("mission-manager-dialog")).toBeNull();
-    expect(screen.queryByText("Inline Host Mission")).toBeNull();
+    expect(screen.getByTestId("mission-manager-dialog")).toBeInTheDocument();
+    expect(screen.getByTestId("mission-sidebar")).toBeInTheDocument();
+    expect(screen.getByText("Inline Host Mission")).toBeInTheDocument();
+    expect(within(screen.getByTestId("view-layout-content")).getByTestId("mission-interview-probe")).toBeInTheDocument();
+    expect(screen.queryByTestId("mission-empty-detail")).toBeNull();
   });
 
-  it("returns to the mission list when the interview closes", async () => {
+  it("returns the detail pane to its empty state when the interview closes", async () => {
     renderManager();
     await screen.findByText("Inline Host Mission");
 
     await openInterviewFromHeader();
     fireEvent.click(screen.getByRole("button", { name: "Close interview probe" }));
 
-    await waitFor(() => expect(screen.getByTestId("mission-manager-dialog")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId("mission-empty-detail")).toBeInTheDocument());
+    expect(screen.getByTestId("mission-manager-dialog")).toBeInTheDocument();
     expect(screen.queryByTestId("mission-interview-probe")).toBeNull();
     expect(screen.getByText("Inline Host Mission")).toBeInTheDocument();
   });
 
-  it("replaces the manager body in the overlay host too", async () => {
+  it("renders the interview in the detail pane in the overlay host too", async () => {
     renderManager({ isInline: false });
     await screen.findByText("Inline Host Mission");
     expect(screen.getByTestId("mission-manager-dialog")).toBeInTheDocument();
 
     await openInterviewFromHeader();
 
-    expect(screen.queryByTestId("mission-manager-dialog")).toBeNull();
-    expect(screen.getByTestId("mission-interview-probe")).toBeInTheDocument();
+    expect(screen.getByTestId("mission-manager-dialog")).toBeInTheDocument();
+    expect(screen.getByTestId("mission-sidebar")).toBeInTheDocument();
+    expect(within(screen.getByTestId("view-layout-content")).getByTestId("mission-interview-probe")).toBeInTheDocument();
   });
 
   it("opens the embedded surface directly when resuming a session", async () => {
@@ -141,6 +148,8 @@ describe("MissionManager hosts the mission interview in main content", () => {
 
     const probe = await screen.findByTestId("mission-interview-probe");
     expect(probe).toHaveAttribute("data-resume-session-id", "mission-session-9");
-    expect(screen.queryByTestId("mission-manager-dialog")).toBeNull();
+    expect(screen.getByTestId("mission-manager-dialog")).toBeInTheDocument();
+    expect(screen.getByTestId("mission-sidebar")).toBeInTheDocument();
+    expect(within(screen.getByTestId("view-layout-content")).getByTestId("mission-interview-probe")).toBe(probe);
   });
 });

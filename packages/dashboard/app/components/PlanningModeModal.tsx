@@ -503,7 +503,12 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   const [editingQuestionId, setEditingQuestionId] = useState<string | null>(null);
   const editingQuestionIdRef = useRef<string | null>(null);
   const [_isHistoryEditPending, setIsHistoryEditPending] = useState(false);
-  const [isRenamingSession, setIsRenamingSession] = useState(false);
+  /*
+  FNXC:PlanningSessionRename 2026-09-15-03:29:
+  FN-402 moved rename onto the session ROW, so the edit target is an explicit session id rather than "whatever session
+  the header currently shows". Any listed session can be renamed without being opened first.
+  */
+  const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
   const [sessionTitleDraft, setSessionTitleDraft] = useState("");
   const [loadedSessionTitle, setLoadedSessionTitle] = useState<string | null>(null);
   const [isRefiningSummary, setIsRefiningSummary] = useState(false);
@@ -3277,25 +3282,29 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     && Boolean(selectedSessionId)
     && Boolean(activeSessionTitle)
     && (view.type === "question" || view.type === "loading" || view.type === "session_loading" || view.type === "error");
-  const handleRenameSession = useCallback(async () => {
-    const sessionId = selectedSessionId;
+  /*
+  FNXC:PlanningSessionRename 2026-09-15-03:29:
+  FN-402: rename targets the row's OWN session. The empty/unchanged guard compares against that session's current
+  title (not the header's active title), the optimistic patch and rollback both key on it, and the loaded header
+  title is only synchronised when the renamed session is the one currently open.
+  */
+  const handleRenameSession = useCallback(async (sessionId: string) => {
     const nextTitle = sessionTitleDraft.trim();
-    if (!sessionId || !nextTitle || nextTitle === activeSessionTitle) {
-      setIsRenamingSession(false);
-      return;
-    }
-    const previousTitle = activeSessionTitle;
+    const currentTitle = planningSessions.find((session) => session.id === sessionId)?.title
+      ?? (sessionId === selectedSessionId ? loadedSessionTitle : null);
+    setRenamingSessionId(null);
+    if (!sessionId || !nextTitle || nextTitle === currentTitle) return;
+    const previousTitle = currentTitle;
     setPlanningSessions((sessions) => sessions.map((session) => session.id === sessionId ? { ...session, title: nextTitle } : session));
-    setLoadedSessionTitle(nextTitle);
-    setIsRenamingSession(false);
+    if (sessionId === selectedSessionId) setLoadedSessionTitle(nextTitle);
     try {
       await updatePlanningSessionTitle(sessionId, nextTitle, projectId);
     } catch (err) {
       setPlanningSessions((sessions) => sessions.map((session) => session.id === sessionId ? { ...session, title: previousTitle ?? session.title } : session));
-      setLoadedSessionTitle(previousTitle ?? null);
+      if (sessionId === selectedSessionId) setLoadedSessionTitle(previousTitle ?? null);
       setError(getErrorMessage(err) || t("planning.renameSession", "Rename session"));
     }
-  }, [activeSessionTitle, projectId, selectedSessionId, sessionTitleDraft, t]);
+  }, [loadedSessionTitle, planningSessions, projectId, selectedSessionId, sessionTitleDraft, t]);
 
   /*
   FNXC:PlanningMode 2026-06-21-00:00:
@@ -3552,22 +3561,8 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                 onClick: handleBackToList,
                 className: "planning-session-back",
               } : undefined}
-              title={showsSessionIdentity && isRenamingSession ? (
-                <input
-                  className="input planning-session-title-input"
-                  aria-label={t("planning.renameSession", "Rename session")}
-                  value={sessionTitleDraft}
-                  onChange={(event) => setSessionTitleDraft(event.target.value)}
-                  onBlur={() => void handleRenameSession()}
-                  onKeyDown={(event) => { if (event.key === "Enter") void handleRenameSession(); }}
-                  autoFocus
-                />
-              ) : (
-                <>
-                  <span>{showsSessionIdentity ? activeSessionTitle : t("planning.title", "Planning Mode")}</span>
-                  {showsSessionIdentity ? <button type="button" className="btn-icon" aria-label={t("planning.renameSession", "Rename session")} onClick={() => { setSessionTitleDraft(activeSessionTitle ?? ""); setIsRenamingSession(true); }}><Pencil /></button> : null}
-                </>
-              )}
+              /* FNXC:PlanningSessionRename 2026-09-15-03:29: FN-402 moved rename onto the session row, so the header owns identity only — no edit affordance and no leftover button shell. */
+              title={<span>{showsSessionIdentity ? activeSessionTitle : t("planning.title", "Planning Mode")}</span>}
               actions={(
                 <ViewActionButton kind="create" label={t("planning.newSession", "New session")} onClick={handleNewSession} />
               )}
@@ -3589,6 +3584,12 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                 onRequestDelete={setPendingDeleteId}
                 onConfirmDelete={(id) => void handleDeleteSession(id)}
                 onCancelDelete={() => setPendingDeleteId(null)}
+                renamingSessionId={renamingSessionId}
+                renameDraft={sessionTitleDraft}
+                onRequestRename={(id, currentTitle) => { setSessionTitleDraft(currentTitle); setRenamingSessionId(id); }}
+                onRenameDraftChange={setSessionTitleDraft}
+                onCommitRename={(id) => void handleRenameSession(id)}
+                onCancelRename={() => setRenamingSessionId(null)}
               />
             </ViewSidebar>
           ) : undefined}
@@ -4893,6 +4894,12 @@ interface PlanningSessionListProps {
   onRequestDelete: (id: string) => void;
   onConfirmDelete: (id: string) => void;
   onCancelDelete: () => void;
+  renamingSessionId: string | null;
+  renameDraft: string;
+  onRequestRename: (id: string, currentTitle: string) => void;
+  onRenameDraftChange: (value: string) => void;
+  onCommitRename: (id: string) => void;
+  onCancelRename: () => void;
 }
 
 function PlanningSessionList({
@@ -4907,6 +4914,12 @@ function PlanningSessionList({
   onRequestDelete,
   onConfirmDelete,
   onCancelDelete,
+  renamingSessionId,
+  renameDraft,
+  onRequestRename,
+  onRenameDraftChange,
+  onCommitRename,
+  onCancelRename,
 }: PlanningSessionListProps) {
   const { t } = useTranslation("app");
   return (
@@ -4953,11 +4966,35 @@ function PlanningSessionList({
           const isPendingDelete = pendingDeleteId === session.id;
           const isArchived = session.archived === true;
           const isTerminal = session.status === "complete" || session.status === "error";
+          const isRenaming = renamingSessionId === session.id;
+          const displayTitle = session.status === "draft" && (!session.title || session.title === "New planning session")
+            ? (session.preview ?? t("planning.newPlanningSession", "New planning session"))
+            : session.title || t("planning.untitledSession", "Untitled session");
+          /*
+          FNXC:PlanningSessionRename 2026-09-15-03:29:
+          FN-402: renaming belongs to the session ROW, right beside its delete control, so any listed session — draft,
+          archived or simply not open — can be renamed without first opening it. The header no longer exposes any title
+          edit affordance. The inline editor stays plain JSX (never a nested component) so each keystroke keeps focus.
+          */
           return (
             <div
               key={session.id}
               className={`planning-sidebar-item ${isSelected ? "selected" : ""} ${isPendingDelete ? "pending-delete" : ""} ${isArchived ? "archived" : ""}`}
             >
+              {isRenaming ? (
+                <input
+                  className="input planning-sidebar-item-title-input"
+                  aria-label={t("planning.renameSession", "Rename session")}
+                  value={renameDraft}
+                  autoFocus
+                  onChange={(event) => onRenameDraftChange(event.target.value)}
+                  onBlur={() => onCommitRename(session.id)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") { event.preventDefault(); onCommitRename(session.id); }
+                    else if (event.key === "Escape") { event.preventDefault(); onCancelRename(); }
+                  }}
+                />
+              ) : (
               <button
                 type="button"
                 className="planning-sidebar-item-button"
@@ -4976,9 +5013,7 @@ function PlanningSessionList({
                       otherwise the blur/close summarize would do model work
                       that the user never sees in the sidebar.
                     */}
-                    {session.status === "draft" && (!session.title || session.title === "New planning session")
-                      ? (session.preview ?? t("planning.newPlanningSession", "New planning session"))
-                      : session.title || t("planning.untitledSession", "Untitled session")}
+                    {displayTitle}
                   </span>
                   <span className="planning-sidebar-item-meta">
                     <PlanningSessionStatusLabel status={session.status} />
@@ -4987,6 +5022,7 @@ function PlanningSessionList({
                   </span>
                 </span>
               </button>
+              )}
 
               {isPendingDelete ? (
                 <div className="planning-sidebar-confirm">
@@ -5021,6 +5057,18 @@ function PlanningSessionList({
                       {isArchived ? <ArchiveRestore size={14} /> : <Archive size={14} />}
                     </button>
                   )}
+                  <button
+                    type="button"
+                    className="planning-sidebar-item-rename"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onRequestRename(session.id, displayTitle);
+                    }}
+                    aria-label={t("planning.renameSession", "Rename session")}
+                    title={t("planning.renameSession", "Rename session")}
+                  >
+                    <Pencil size={14} />
+                  </button>
                   <button
                     type="button"
                     className="planning-sidebar-item-delete"

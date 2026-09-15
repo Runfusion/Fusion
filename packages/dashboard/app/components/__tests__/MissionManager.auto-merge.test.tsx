@@ -359,7 +359,9 @@ describe("MissionManager auto-merge override", () => {
     expect(screen.queryByRole("heading", { name: "Single PR Mission" })).toBeNull();
   });
 
+  // FN-402: the Missions Back control exists only on the phone viewport, so this deselect path renders mobile.
   it("does not allow a delayed detail request to reopen a mission after returning to the list", async () => {
+    setMobileViewport();
     const detail = mission(false);
     let resolveRefresh!: (value: typeof detail) => void;
     const delayedRefresh = new Promise<typeof detail>((resolve) => { resolveRefresh = resolve; });
@@ -368,7 +370,8 @@ describe("MissionManager auto-merge override", () => {
 
     render(<MissionManager isInline isOpen onClose={() => {}} addToast={() => {}} projectId="project-1" />);
     fireEvent.click(await screen.findByText("Single PR Mission"));
-    await screen.findByRole("heading", { name: "Single PR Mission" });
+    // On the phone viewport the header title mirrors the open mission, so the detail heading is one of several matches.
+    await screen.findAllByRole("heading", { name: "Single PR Mission" });
     fireEvent.click(screen.getByRole("button", { name: "Open mission Single PR Mission" }));
     fireEvent.click(screen.getByTestId("mission-back-btn"));
 

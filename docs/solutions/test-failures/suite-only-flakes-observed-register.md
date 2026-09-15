@@ -712,3 +712,32 @@ reached agent creation at all — reads as module-mock ownership racing across f
 `@fusion/core` agent-factory mock, not a wait that needs lengthening. No timeout was widened, no retry
 added, and no assertion relaxed. A SECOND sighting is an ordinary on-sight quarantine with no further
 discretion, per the standing rule in AGENTS.md.
+
+---
+
+## Entry: `MissionManager.reconcile` pre-commit switch window (first sighting)
+
+- **File:** `packages/dashboard/app/components/__tests__/MissionManager.reconcile.test.tsx`
+- **Exact tests:** `MissionManager reconcile control > silently discards preview resolution and rejection in the pre-commit switch window` and `MissionManager reconcile control > refuses a same-batch retained-panel apply click so no write reaches the abandoned mission`
+- **Owner:** unowned — first sighting, recorded rather than quarantined because the file's remaining 20 tests are substantial coverage and quarantine is file-level.
+- **Observed tree/SHA:** `0dc3ef5eb` (FN-402). Both cases sit at file lines 179 and 190, i.e. BEFORE the single FN-402 edit in this file at line 263, so the change cannot have run ahead of them.
+- **Observed frequency:** once, and only when the file ran in the same vitest command as 31 other `MissionManager.*` / `MissionInterviewModal.*` / `PlanningModeModal.*` files. Passes deterministically alone and on an immediate rerun of the identical multi-file command.
+
+Verbatim observed failure:
+
+```
+FAIL dashboard-app-quality-backfill app/components/__tests__/MissionManager.reconcile.test.tsx > MissionManager reconcile control > silently discards preview resolution and rejection in the pre-commit switch window
+AssertionError: expected "vi.fn()" to be called 2 times, but got 1 times
+ ❯ app/components/__tests__/MissionManager.reconcile.test.tsx:179:112
+```
+
+| run | result |
+|---|---|
+| 32 files in one command (all `MissionManager.*`, `MissionInterviewModal.*`, `PlanningModeModal.*`) | **failed** — 2 failed / 317 passed |
+| `MissionManager.reconcile.test.tsx` alone, same tree | **passed** (22/22) |
+| the same 32-file command rerun, same tree | **passed** (319/319) |
+
+Both assertions depend on real-timer `waitFor` windows around deferred preview/apply promises, so a
+loaded worker reads as scheduling pressure rather than a product race. No timeout was widened, no retry
+added, and no assertion relaxed. A SECOND sighting is an ordinary on-sight quarantine with no further
+discretion, per the standing rule in AGENTS.md.

@@ -806,7 +806,7 @@ When a Planning session needs your input or needs attention, open the docked Pla
 When an active Planning AI generation appears stuck, Planning Mode automatically retries the same session up to three times and shows **Retrying… (attempt N of 3)** before falling back to the permanent **Retry**/**Dismiss** error panel. Any successful question or summary progress resets the automatic retry budget. Leaving Planning—including while a plan update or refined question is generating—and returning restores the last active interview for that project. Reopening or reloading a saved Planning session restores its saved question, plan review, thinking, or error without starting another generation; choose **Retry** explicitly from a restored error panel if you want to run it again.
 
 <!-- FNXC:PlanningMode 2026-07-19-15:55: FN-8400 replaces the duplicate prompt-recovery controls with a focused three-pane interview; restarting remains a deliberate New session action. -->
-Use **New session** to restart planning with a different idea.
+Use **New session** to restart planning with a different idea. To rename a session, use the pencil on its own row in the session rail, next to the delete control; any listed session can be renamed without opening it first.
 
 <!-- FNXC:PlanningHistory 2026-08-28-03:34: FN-210 requires every Planning Mode Q&A history surface to preserve the initiating request as visible, read-only session context. -->
 The **History** panel, the error panel, and plan review's **Show user Q&A** section show the original request that started the session in a read-only box above the questions and answers. Reading, scrolling, selecting, or copying this text does not edit it or change the session. When an older or incomplete session has no saved starting text, Planning Mode omits the box entirely.
@@ -1489,13 +1489,14 @@ Workflow behavior:
 - Feature triage and slice **Triage all features** create new tasks on the selected workflow.
 - If no workflow is selected, or workflow columns are unavailable, mission-created tasks continue to use the project default workflow.
 
-<!-- FNXC:MissionInterviewDocs 2026-09-14-21:32: FN-395 makes Plan Mission with AI part of the Missions main content instead of a floating window: it replaces the mission list while open, so there is no longer anything to drag, resize, or persist geometry for. Stream failures still surface one recoverable retry state instead of leaving the interview spinning. -->
+<!-- FNXC:MissionInterviewDocs 2026-09-15-03:29: FN-395 made Plan Mission with AI part of the Missions main content instead of a floating window, and FN-402 places it in the mission DETAIL PANE rather than in place of the mission list, so the list stays visible and the Missions Back control is phone-only. Stream failures still surface one recoverable retry state instead of leaving the interview spinning. -->
 <!-- FNXC:PlanningInterview 2026-06-26-00:00: GitHub #1794 requires structured planning, mission, milestone, and slice interview questions to let users reject all provided single-select/multi-select options by choosing Other and writing their own answer. -->
 
 Plan Mission with AI behavior:
-- **Plan Mission with AI** is a main-content surface, not a modal. Starting or resuming an interview replaces the mission list inside the Missions view and fills the available content area.
+- **Plan Mission with AI** is a main-content surface, not a modal. Starting or resuming an interview fills the mission **detail pane** — the right-hand region that otherwise reads *Select a mission to view details* — while the mission list stays visible beside it, exactly like Planning shows session detail beside its session rail.
 - Desktop, tablet, and mobile share the same embedded flow. There is no overlay, no title-bar drag, no resize handle, and no remembered window size or position.
-- Closing the interview (the header **Close** button or `Escape`) returns to the mission list without cancelling the interview session; an un-started goal draft is preserved.
+- The Missions **Back** control exists only on the phone viewport, where a single pane is visible at a time. Desktop and tablet keep list and detail side by side, so no Back control is shown at all.
+- Closing the interview (the header **Close** button or `Escape`) returns the detail pane to *Select a mission to view details* without cancelling the interview session; an un-started goal draft is preserved.
 - When an interview is resumed, the header also offers **Send to background** so the session keeps running while you return to the mission list.
 - If the mission interview stream reports a terminal failure, the interview closes the failed stream, shows one normalized error, and offers retry without duplicating late error/complete events.
 - Structured single-select and multi-select interview questions include **Other (write your own)** so users can decline all suggested options, submit a free-text answer, or combine that text with selected multi-select options.

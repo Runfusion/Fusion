@@ -89,6 +89,12 @@ interface MissionInterviewModalProps {
   resumeSessionId?: string;
   onSendToBackground?: () => void;
   showSendToBackgroundButton?: boolean;
+  /*
+  FNXC:MissionInterviewMainContent 2026-09-15-03:29:
+  FN-402 renders the interview inside the Missions detail pane, below the owning "Missions" h2. The host declares the
+  rank so the interview never contributes a sibling h2 to the document outline; standalone hosts keep the h2 default.
+  */
+  headingLevel?: 2 | 3;
 }
 
 interface QuestionResponse {
@@ -118,6 +124,7 @@ export function MissionInterviewModal({
   resumeSessionId,
   onSendToBackground,
   showSendToBackgroundButton = false,
+  headingLevel = 2,
 }: MissionInterviewModalProps) {
   const { t } = useTranslation("app");
   const [missionGoal, setMissionGoal] = useState("");
@@ -817,11 +824,13 @@ export function MissionInterviewModal({
 
   return (
     /*
-      FNXC:MissionInterviewModal 2026-09-14-21:32:
+      FNXC:MissionInterviewModal 2026-09-15-03:29:
       Plan Mission with AI is part of the Missions main content, not a modal and not a floating window.
       The interview renders as an embedded panel that fills its host region (desktop, tablet and mobile alike):
       no overlay, no backdrop, no role="dialog"/aria-modal, no drag/resize affordance and no persisted geometry.
-      Closing simply returns the operator to the mission list; the goal draft, resume and send-to-background flows are unchanged.
+      FN-402: that host region is the Missions DETAIL PANE, so the mission list stays mounted beside the interview
+      instead of being unmounted under the operator. Closing hands the detail pane back to its empty state;
+      the goal draft, resume and send-to-background flows are unchanged.
     */
     <section
       className="mission-interview-panel"
@@ -836,6 +845,7 @@ export function MissionInterviewModal({
             <ViewHeader
               icon={Target}
               title={t("missions.planTitle", "Plan Mission with AI")}
+              headingLevel={headingLevel}
               actions={canSendToBackground ? <ViewActionButton icon={Minimize2} label={t("missions.sendToBackground", "Send to background")} onClick={handleSendToBackground} /> : undefined}
               onClose={handleClose}
               closeButtonProps={{ "aria-label": t("actions.close", "Close") }}

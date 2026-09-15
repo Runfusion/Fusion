@@ -515,8 +515,14 @@ Planning intentionally retains this bottom-pinned New session button at its curr
   align-items: stretch;
 }
 
+/*
+FNXC:PlanningSessionRename 2026-09-15-03:29:
+FN-402 puts rename on the session row beside delete, so the pencil shares the delete/archive control geometry,
+reveal-on-hover behaviour and focus ring rather than forking a one-off button style.
+*/
 .planning-sidebar-item-delete,
-.planning-sidebar-item-archive {
+.planning-sidebar-item-archive,
+.planning-sidebar-item-rename {
   flex-shrink: 0;
   width: calc(var(--space-lg) + var(--space-xl));
   min-width: calc(var(--space-lg) + var(--space-xl));
@@ -536,7 +542,9 @@ Planning intentionally retains this bottom-pinned New session button at its curr
 .planning-sidebar-item:hover .planning-sidebar-item-delete,
 .planning-sidebar-item:focus-within .planning-sidebar-item-delete,
 .planning-sidebar-item:hover .planning-sidebar-item-archive,
-.planning-sidebar-item:focus-within .planning-sidebar-item-archive {
+.planning-sidebar-item:focus-within .planning-sidebar-item-archive,
+.planning-sidebar-item:hover .planning-sidebar-item-rename,
+.planning-sidebar-item:focus-within .planning-sidebar-item-rename {
   display: flex;
 }
 
@@ -545,15 +553,27 @@ Planning intentionally retains this bottom-pinned New session button at its curr
   background: color-mix(in srgb, var(--color-error) 15%, transparent);
 }
 
-.planning-sidebar-item-archive:hover {
+.planning-sidebar-item-archive:hover,
+.planning-sidebar-item-rename:hover {
   color: var(--todo);
   background: color-mix(in srgb, var(--todo) 15%, transparent);
 }
 
 .planning-sidebar-item-delete:focus-visible,
-.planning-sidebar-item-archive:focus-visible {
+.planning-sidebar-item-archive:focus-visible,
+.planning-sidebar-item-rename:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring-strong);
+}
+
+/* Inline row rename editor: shares the row's typography and the shared `.input` primitive. */
+.planning-sidebar-item-title-input {
+  flex: 1;
+  min-width: 0;
+  margin: var(--space-xs) var(--space-sm);
+  padding: var(--space-xs) var(--space-sm);
+  font-size: var(--font-sm);
+  border-radius: var(--radius-sm);
 }
 
 .planning-sidebar-item.archived .planning-sidebar-item-button {
@@ -691,7 +711,8 @@ Planning intentionally retains this bottom-pinned New session button at its curr
   }
   /* Always keep action buttons visible on mobile (no hover) */
   .planning-sidebar-item-delete,
-  .planning-sidebar-item-archive {
+  .planning-sidebar-item-archive,
+  .planning-sidebar-item-rename {
     display: flex;
   }
 }
@@ -2296,10 +2317,6 @@ mobile and desktop offer the same View task / Return to sessions choices.
     flex: 0 0 auto;
   }
 
-  .planning-modal--embedded .modal-header--embedded .planning-session-title-input {
-    flex: 1 1 auto;
-    min-width: 0;
-  }
 
   .planning-header-controls {
     display: grid;
