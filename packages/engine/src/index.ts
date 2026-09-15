@@ -1005,9 +1005,6 @@ export { RoutineScheduler, type RoutineSchedulerOptions } from "./scheduling/rou
 export { StuckTaskDetector, type StuckTaskDetectorOptions, type DisposableSession } from "./healing/stuck-task-detector.js";
 export { HeartbeatMonitor, HeartbeatTriggerScheduler, type WakeContext } from "./agent-heartbeat.js";
 export { TokenCapDetector, type TokenCapCheckResult } from "./errors/token-cap-detector.js";
-<<<<<<< HEAD
-export { SelfHealingManager, type SelfHealingOptions, type RebindResult, type LandedReviewReconcileResult } from "./self-healing.js";
-=======
 /*
 FNXC:ChatContextGuard 2026-08-18-18:06:
 RUFU-118 phase 1: export the deterministic pre-overflow compaction gate for the
@@ -1029,8 +1026,7 @@ export {
   type CompactionGateResult,
   type CompactionGateSession,
 } from "./chat-context-guard.js";
-export { SelfHealingManager, type SelfHealingOptions, type RebindResult } from "./self-healing.js";
->>>>>>> 431aa113e1 (RUFU-118: add chat pre-overflow compaction guard and cut v0.77.0-beta.2)
+export { SelfHealingManager, type SelfHealingOptions, type RebindResult, type LandedReviewReconcileResult } from "./self-healing.js";
 /*
 FNXC:MergeReliability 2026-07-15-21:45 (FN-8004 follow-up):
 Exported for the dashboard's manual Retry gate, which must share ONE definition of "orphaned
