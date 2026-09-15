@@ -87,6 +87,29 @@ export function extractTaskProductSummary(prompt: string): TaskProductSummary | 
   return null;
 }
 
+/**
+ * Extract the body of the plan's `## Before → After Transformation` section.
+ *
+ * FNXC:TaskDetailDefinition 2026-09-15-16:02:
+ * FN-424 promotes the before/after summary to a DIRECT view in Définition, rendered right below
+ * `What this delivers` instead of staying buried in the full plan document. It reuses the same
+ * fence-aware scanner as `extractTaskProductSummary`, so a heading inside a code fence and a
+ * duplicated heading cannot produce a false extraction, and the ASCII `->` variant is accepted.
+ * An empty section body is `null` so the caller renders NOTHING rather than an empty shell.
+ * Anti-duplication is the CALLER's rule: when `extractTaskProductSummary` already served this same
+ * body as its legacy `before-after` fallback, the caller must not render the section twice.
+ */
+export function extractTaskBeforeAfterTransformation(prompt: string): string | null {
+  const content = prompt.replace(/^#\s+[^\n]*\n+/, "");
+  if (!content.trim()) return null;
+
+  const heading = findSummaryHeadings(content).find((match) => match.kind === "before-after");
+  if (!heading) return null;
+
+  const body = content.slice(heading.end, findSectionEnd(content, heading.end)).trim();
+  return body || null;
+}
+
 type HeadingMatch = { start: number; end: number; kind: "what" | "before-after" };
 
 function findSummaryHeadings(content: string): HeadingMatch[] {

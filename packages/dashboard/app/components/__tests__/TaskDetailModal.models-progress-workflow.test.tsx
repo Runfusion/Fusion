@@ -714,11 +714,15 @@ describe("TaskDetailModal", () => {
     refresh of the same task (an SSE tick must not slam an open list) and resets only when a
     different task is opened.
     */
-    it("renders Progress before Description and the product outcome", () => {
+    it("renders Progress before Description, the product outcome and the before/after section", () => {
       render(
         <TaskDetailModal
           initialTab="definition"
-          task={makeTask({ description: "Definition description", steps: [{ name: "Step 1", status: "done" }] })}
+          task={makeTask({
+            description: "Definition description",
+            prompt: "# Task: FN-1 - Ordered\n\n## What This Delivers\n\nOutcome body.\n\n## Before → After Transformation\n\nTransformation body.\n",
+            steps: [{ name: "Step 1", status: "done" }],
+          })}
           onClose={noop}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
@@ -728,12 +732,14 @@ describe("TaskDetailModal", () => {
       );
 
       const sections = Array.from(document.querySelectorAll(".detail-section"))
-        .filter((section) => section.matches(".detail-step-progress, .detail-definition-description, .detail-definition-outcome"))
-        .map((section) => (section.classList.contains("detail-step-progress")
-          ? "progress"
-          : section.classList.contains("detail-definition-description") ? "description" : "outcome"));
+        .filter((section) => section.matches(".detail-step-progress, .detail-definition-description, .detail-definition-outcome, .detail-definition-transformation"))
+        .map((section) => {
+          if (section.classList.contains("detail-step-progress")) return "progress";
+          if (section.classList.contains("detail-definition-description")) return "description";
+          return section.classList.contains("detail-definition-outcome") ? "outcome" : "transformation";
+        });
 
-      expect(sections).toEqual(["progress", "description", "outcome"]);
+      expect(sections).toEqual(["progress", "description", "outcome", "transformation"]);
     });
 
     it("keeps the counter and bar visible while the step list starts collapsed", () => {
@@ -756,6 +762,20 @@ describe("TaskDetailModal", () => {
       const toggle = screen.getByTestId("detail-step-list-toggle");
       expect(toggle).toHaveAttribute("aria-expanded", "false");
       expect(toggle.getAttribute("aria-controls")).toBe(document.querySelector(".detail-step-progress")?.querySelector("ol")?.id ?? toggle.getAttribute("aria-controls"));
+
+      /*
+      FNXC:TaskDetailDefinition 2026-09-15-16:02:
+      FN-424: the disclosure is now an icon-only chevron sitting on the progress bar's row, so its
+      accessible name comes from `aria-label` and it must stay a real button beside the bar.
+      */
+      expect(toggle.tagName).toBe("BUTTON");
+      expect(toggle).toHaveAttribute("type", "button");
+      expect(toggle).toHaveAccessibleName("Show steps");
+      expect(toggle).toHaveTextContent("");
+      const row = toggle.closest(".detail-progress-row");
+      expect(row).toBeInTheDocument();
+      expect(row!.querySelector(".step-progress-track")).toBeInTheDocument();
+      expect(row!.querySelector(".detail-source-chevron--expanded")).toBeNull();
     });
 
     it("expands and collapses the step list through its accessible control", () => {
@@ -779,10 +799,14 @@ describe("TaskDetailModal", () => {
       expect(toggle).toHaveAttribute("aria-expanded", "true");
       expect(toggle.getAttribute("aria-controls")).toBe(list!.id);
       expect(document.querySelectorAll(".detail-step-item")).toHaveLength(2);
+      expect(toggle).toHaveAccessibleName("Hide steps");
+      expect(toggle.querySelector(".detail-source-chevron--expanded")).toBeInTheDocument();
 
       fireEvent.click(toggle);
       expect(document.querySelector(".detail-step-list")).toBeNull();
       expect(toggle).toHaveAttribute("aria-expanded", "false");
+      expect(toggle).toHaveAccessibleName("Show steps");
+      expect(toggle.querySelector(".detail-source-chevron--expanded")).toBeNull();
     });
 
     it("keeps the list open across a refresh of the SAME task and collapses on a task change", () => {

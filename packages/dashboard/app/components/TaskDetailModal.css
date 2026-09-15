@@ -292,15 +292,80 @@ one baseline, and reuses the description body's muted markdown treatment.
 /*
 FNXC:TaskDetailDefinition 2026-09-14-20:00:
 The step-list disclosure. Never hides the counter or bar above it — it toggles the list alone.
+
+FNXC:TaskDetailDefinition 2026-09-15-16:02:
+FN-424 makes it a discreet chevron sitting on the progress bar's own row, to the RIGHT of the bar,
+instead of a chunky text button underneath it. The visual treatment comes entirely from the shared
+`.detail-source-toggle` stack, so this rule only owns the row layout — the bar takes the free space
+and the chevron keeps its intrinsic hit area.
 */
-.detail-step-list-toggle {
-  display: inline-flex;
+.detail-progress-row {
+  display: flex;
   align-items: center;
-  gap: var(--space-xs);
-  margin-top: var(--space-sm);
+  gap: var(--space-sm);
+}
+
+.detail-progress-row .step-progress-track {
+  flex: 1;
+  min-inline-size: 0;
+}
+
+/*
+FNXC:TaskDetailDefinition 2026-09-15-16:02:
+FN-424 gives the four definition blocks (progress, description, outcome, before/after) a real card
+treatment so they read as separate cards instead of touching slabs. Token-only: no raw pixel, hex or
+rgb() value here or in the mobile override below.
+*/
+.detail-step-progress,
+.detail-definition-description,
+.detail-definition-outcome,
+.detail-definition-transformation {
+  padding: var(--space-md);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.detail-definition-transformation {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-md);
+  margin-top: var(--space-lg);
+}
+
+.detail-definition-transformation h4 {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+}
+
+.detail-definition-transformation .markdown-body {
+  inline-size: 100%;
+  color: var(--text-muted);
+}
+
+.detail-definition-transformation .markdown-body > :first-child {
+  margin-block-start: 0;
+}
+
+.detail-definition-transformation .markdown-body > :last-child {
+  margin-block-end: 0;
 }
 
 @media (max-width: 768px) {
+  /*
+  FNXC:TaskDetailDefinition 2026-09-15-16:02:
+  A phone gets the tighter card padding so four padded cards still fit the viewport.
+  */
+  .detail-step-progress,
+  .detail-definition-description,
+  .detail-definition-outcome,
+  .detail-definition-transformation {
+    padding: var(--space-sm);
+  }
+
   /*
   FNXC:TaskDetailDefinition 2026-09-14-20:00:
   A phone has far less vertical room, so the bounded description gets a shorter cap. It still
@@ -339,10 +404,16 @@ The step-list disclosure. Never hides the counter or bar above it — it toggles
   min-inline-size: 0;
 }
 
+/*
+FNXC:TaskDetailPresentation 2026-09-15-16:02:
+FN-424 left this header with the Back control alone, so it packs to the start instead of spreading a
+single button across the row with `space-between`.
+*/
 .detail-plan-document-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
+  gap: var(--space-sm);
 }
 
 .detail-plan-back span {
@@ -1218,23 +1289,11 @@ Expanded Planner Chat reserves the narrow task-detail surface for the conversati
 }
 
 
-.detail-spec-edit-trigger {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-sm);
-  margin-bottom: var(--space-md);
-}
-
-@media (max-width: 768px) {
-  .detail-spec-edit-trigger {
-    align-items: stretch;
-  }
-
-  .detail-spec-edit-trigger .btn {
-    flex: 1 1 auto;
-  }
-}
+/*
+FNXC:TaskDetailPresentation 2026-09-15-16:02:
+FN-424 removed the plan sub-view's `Open PROMPT.md` / `Edit` trigger row, so its base rule and its
+mobile override are deleted rather than left as orphan selectors.
+*/
 
 .detail-attachments-grid {
   display: flex;
@@ -2095,13 +2154,14 @@ The original operator prompt is now rendered as Markdown (shared PROMPT.md rende
   color: var(--text-muted);
 }
 
+/*
+FNXC:TaskDetailPresentation 2026-09-15-16:02:
+FN-424 made the plan sub-view read-only, so the inline editor's surfaces are gone from this scope;
+only the rendered plan, the `(no prompt)` fallback and the loading spinner remain.
+*/
 .detail-section--plan-prompt .markdown-body,
 .detail-section--plan-prompt .detail-prompt,
-.detail-section--plan-prompt .spec-loading,
-.detail-section--plan-prompt .spec-editor-edit-mode,
-.detail-section--plan-prompt .spec-editor-revision,
-.detail-section--plan-prompt .spec-editor-textarea,
-.detail-section--plan-prompt .spec-editor-feedback {
+.detail-section--plan-prompt .spec-loading {
   box-sizing: border-box;
   width: 100%;
   min-width: 0;
@@ -2331,25 +2391,6 @@ stretches it on touch layouts, preserving a clear tap target without creating a 
     width: 100%;
   }
 
-  .detail-section--plan-prompt .detail-spec-edit-trigger,
-  .detail-section--plan-prompt .spec-editor-actions-row,
-  .detail-section--plan-prompt .spec-editor-revision-actions {
-    align-items: stretch;
-  }
-
-  .detail-section--plan-prompt .spec-editor-actions-row,
-  .detail-section--plan-prompt .spec-editor-revision-actions {
-    flex-wrap: wrap;
-  }
-
-  .detail-section--plan-prompt .spec-editor-actions-row .btn,
-  .detail-section--plan-prompt .spec-editor-revision-actions .btn {
-    flex: 1 1 auto;
-  }
-
-  .detail-section--plan-prompt .spec-editor-char-count {
-    flex: 1 1 auto;
-  }
 }
 
 .detail-section h4 {
@@ -3877,20 +3918,28 @@ html[data-ui-style="clean"] .detail-step-status {
   font-weight: var(--ui-font-weight-medium);
 }
 
-/* The step-list disclosure reads as part of the discreet heading rather than a button. */
+/*
+The step-list disclosure reads as part of the discreet heading rather than a button.
+
+FNXC:TaskDetailDefinition 2026-09-15-16:02:
+FN-424 turned it into an icon-only chevron on the progress bar's row, so the former text-button
+typography rules are gone; Clean only keeps it quiet and compact beside the bar.
+*/
+html[data-ui-style="clean"] .detail-progress-row {
+  gap: var(--ui-density-md);
+}
+
 html[data-ui-style="clean"] .detail-step-list-toggle {
-  padding: 0;
+  padding: var(--ui-density-3xs);
   background: transparent;
   border-color: transparent;
   color: var(--text-muted);
-  font-size: var(--ui-font-size-2xs);
-  letter-spacing: var(--ui-letter-spacing-wide);
-  text-transform: uppercase;
+  border-radius: var(--ui-radius-md);
 }
 
 html[data-ui-style="clean"] .detail-step-list-toggle:hover {
   color: var(--text);
-  background: transparent;
+  background: color-mix(in srgb, var(--text) var(--ui-hover-mix), transparent);
 }
 
 /* ── Description, product summary and plan ─────────────────────────────────────── */
@@ -3901,7 +3950,6 @@ html[data-ui-style="clean"] .detail-definition-description {
 
 /* `Read plan` and the plan sub-view controls are quiet bordered buttons. */
 html[data-ui-style="clean"] .detail-plan-back,
-html[data-ui-style="clean"] .detail-plan-copy,
 html[data-ui-style="clean"] .detail-read-plan {
   gap: var(--ui-density-2xs);
   padding: var(--ui-density-2xs) var(--ui-density-md);
@@ -3913,7 +3961,6 @@ html[data-ui-style="clean"] .detail-read-plan {
 }
 
 html[data-ui-style="clean"] .detail-plan-back:hover,
-html[data-ui-style="clean"] .detail-plan-copy:hover,
 html[data-ui-style="clean"] .detail-read-plan:hover {
   background: color-mix(in srgb, var(--text) var(--ui-hover-mix), transparent);
 }

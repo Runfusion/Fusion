@@ -7987,7 +7987,8 @@
       "descriptionHeading": "描述",
       "noDescription": "（无描述）",
       "noOutcome": "尚无计划摘要 — 打开“阅读计划”查看完整规范。",
-      "outcomeHeading": "该任务交付的内容"
+      "outcomeHeading": "该任务交付的内容",
+      "transformationHeading": "变更前 → 变更后"
     },
     "description": {
       "showLess": "显示更少",
@@ -8290,26 +8291,11 @@
       "gitlabBadge": ""
     },
     "spec": {
-      "aiReviseHeading": "请 AI 修订",
-      "aiReviseHelp": "提供反馈让 AI 改进此规范。任务将进入规划阶段重新规划。",
       "backToDefinition": "返回定义",
-      "editBtn": "编辑",
-      "feedbackPlaceholder": "例如，'添加更多错误处理细节'、'拆分为更小步骤'、'添加 API 端点测试'...",
-      "hintCancel": "取消",
-      "hintSave": "保存",
       "loading": "正在加载规范…",
       "noPrompt": "（无提示词）",
-      "placeholder": "以 Markdown 格式输入任务规范...",
       "promptFileName": "PROMPT.md",
-      "readPlanBtn": "阅读计划",
-      "requesting": "正在请求…",
-      "requestRevisionBtn": "请求 AI 修订",
-      "revisionColumnError": "无法请求修订：任务必须在 triage、todo、in-progress 或 in-review 列中。",
-      "revisionRequested": "已请求 AI 修订。任务已移至规划阶段。",
-      "saving": "正在保存…",
-      "updated": "规范已更新",
-      "copy": "复制",
-      "copied": "已复制"
+      "readPlanBtn": "阅读计划"
     },
     "stall": {
       "noLogEntry": "尚无日志条目",

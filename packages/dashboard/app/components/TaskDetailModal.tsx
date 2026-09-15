@@ -30,7 +30,6 @@ import { sharedRehypePlugins, createMermaidCodeComponent } from "./markdownPipel
 import type { Task, TaskDetail, TaskAttachment, ColumnId, MergeResult, Settings, GlobalSettings, Agent, TaskPriority, TaskSourceIssue, WorkflowStepResult, GithubIssueAction, TaskGitLabTrackedItem, PlannerOversightLevel, PlannerOverseerRuntimeSnapshot, TaskVerificationRequest, ThinkingLevel } from "@fusion/core";
 import {
   DEFAULT_TASK_PRIORITY,
-  MAX_TASK_MESSAGE_LENGTH,
   REPO_OVERRIDE_RE,
   TASK_PRIORITIES,
   PLANNER_OVERSIGHT_LEVELS,
@@ -51,9 +50,9 @@ import {
   isWipColumnRole,
 } from "../utils/columnRoles";
 import { getTaskTitleDisplayText } from "../utils/taskTitleDisplay";
-import { extractTaskProductSummary } from "../utils/taskPlanSummary";
+import { extractTaskBeforeAfterTransformation, extractTaskProductSummary } from "../utils/taskPlanSummary";
 import { resolveEffectiveAutoMerge } from "../../../core/src/merge/task-merge";
-import { uploadAttachment, deleteAttachment, updateTask, repairOverlapBlocker, fetchOverlapBlockerReport, fetchTaskDetail, fetchTaskPrompt, fetchSpecLock, fetchTaskVerificationRequest, fetchSettings, fetchTaskEffectiveSettings, fetchGlobalSettings, requestSpecRevision, rebuildTaskSpec, approvePlan, rejectPlan, fetchWorkflowResults, assignTask, fetchAgents, fetchAgent, refreshPrStatus, fetchBoardWorkflows, updateTaskCustomFields, fetchWorkflowSettingValues, nudgeOverseer, stopOverseer, explainOverseer, fetchModels, fetchNodes, api } from "../api";
+import { uploadAttachment, deleteAttachment, updateTask, repairOverlapBlocker, fetchOverlapBlockerReport, fetchTaskDetail, fetchTaskPrompt, fetchSpecLock, fetchTaskVerificationRequest, fetchSettings, fetchTaskEffectiveSettings, fetchGlobalSettings, rebuildTaskSpec, approvePlan, rejectPlan, fetchWorkflowResults, assignTask, fetchAgents, fetchAgent, refreshPrStatus, fetchBoardWorkflows, updateTaskCustomFields, fetchWorkflowSettingValues, nudgeOverseer, stopOverseer, explainOverseer, fetchModels, fetchNodes, api } from "../api";
 import type { RestoreTaskRevertOptions, RestoreTaskRevertResult, RevertTaskOptions, RevertTaskResult, ModelInfo, NodeInfo, SpecLockResponse, TaskOverlapBlockerReport } from "../api";
 import type { BoardWorkflowsPayload, WorkflowFieldDefinition, CustomFieldRejection } from "../api";
 import { WorkflowIcon } from "./WorkflowIcon";
@@ -72,7 +71,7 @@ import { PrCreateModal } from "./PrCreateModal";
 import { PlannerInterventionTimeline } from "./PlannerInterventionTimeline";
 import { TaskComments } from "./TaskComments";
 import { TaskChatTab } from "./TaskChatTab";
-import { UiButton, UiInput, UiMenu, UiMenuItem, UiPortalSurface, UiSelect, UiSurface, UiTextArea } from "./ui";
+import { UiButton, UiInput, UiMenu, UiMenuItem, UiPortalSurface, UiSelect, UiSurface } from "./ui";
 import { TaskPlannerChatTab } from "./TaskPlannerChatTab";
 import { TaskReviewTab } from "./TaskReviewTab";
 import { TaskChangesTab } from "./TaskChangesTab";
@@ -123,19 +122,25 @@ import { ACTIVE_STATUSES, resolveEffectiveExecutor, resolveEffectivePlanning, re
 import { TaskContextMenu, buildTaskActionMenuModel, getTaskPrAutomationLabel } from "./TaskContextMenu";
 import type { TaskContextMenuColumnFlags, TaskContextMenuColumnMetadata, TaskMenuItemDescriptor } from "./TaskContextMenu";
 import { FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT } from "./FloatingWindow";
-import { useFileBrowser } from "../context/FileBrowserContext";
 
 /*
 FNXC:TaskMessageLength 2026-08-29-08:02:
-Task-detail refinement and spec-revision composers retain their counters and browser maxLength
-attributes, but source their ceiling from the same server constant so operator text is never refused
-locally below the task-message route contract.
+Task-detail refinement composers retain their counters and browser maxLength attributes, but source
+their ceiling from the same server constant so operator text is never refused locally below the
+task-message route contract.
+
+FNXC:TaskDetailPresentation 2026-09-15-16:02:
+FN-424 removed the inline spec-revision composer and the plan sub-view's `Open PROMPT.md` action, so
+this file no longer needs the message-length constant nor the file-browser context.
 */
 const STALE_PAUSED_REVIEW_LOG_REGEX = /^Stale paused review surfaced \[([^\]]+)\]/;
 const EMPTY_MARKDOWN_CHILD_SEPARATOR = "";
 const STRING_OBJECT_TAG = "[object String]";
-/* FNXC:TaskDetailPresentation 2026-09-15-00:20: the plan-copy confirmation is transient and self-clearing. */
-const PLAN_COPY_FEEDBACK_MS = 1500;
+/*
+FNXC:TaskDetailPresentation 2026-09-15-16:02:
+FN-424 removed the plan-sub-view Copy action, so its transient confirmation delay, state, timer and
+token fence are deleted rather than kept as unreachable machinery.
+*/
 const ACTIVITY_VIEW_MENU_VIEWPORT_PADDING = 16;
 const ACTIVITY_VIEW_MENU_TRIGGER_GAP = 4;
 const ACTIVITY_VIEW_MENU_MIN_WIDTH = 160;
@@ -972,7 +977,6 @@ export function TaskDetailContent({
   const { t } = useTranslation("app");
   const isPhonePresentation = useViewportMode() === "mobile";
   const columnLabel = useColumnLabel();
-  const fileBrowser = useFileBrowser();
   const [activeTab, setActiveTab] = useState<TabId>(() => resolveDefaultTab(initialTab, task.column, taskDetailChatFirst));
   const [activitySegment, setActivitySegment] = useState<ActivitySegment>(() => resolveDefaultActivitySegment(initialTab));
   const [activityExpanded, setActivityExpanded] = useState(false);
@@ -1246,9 +1250,20 @@ export function TaskDetailContent({
     () => (workingTask.prompt ? extractTaskProductSummary(workingTask.prompt) : null),
     [workingTask.prompt],
   );
-  const openPromptFile = useCallback(() => {
-    fileBrowser?.openFile(`.fusion/tasks/${workingTask.id}/PROMPT.md`, { workspace: "project" });
-  }, [fileBrowser, workingTask.id]);
+  /*
+  FNXC:TaskDetailDefinition 2026-09-15-16:02:
+  FN-424 surfaces the plan's `## Before → After Transformation` as a DIRECT view in Définition,
+  right below `What this delivers`, so the reading order is progress → description → outcome →
+  before/after without opening the full plan. Anti-duplication: when `productSummary` already fell
+  back to the before/after body (a legacy plan with no `What This Delivers`), that body is ALREADY
+  on screen, so the dedicated section renders nothing rather than repeating it. It derives from the
+  current `workingTask.prompt`, so it can never show the previous task's plan.
+  */
+  const beforeAfterTransformation = useMemo(
+    () => (workingTask.prompt ? extractTaskBeforeAfterTransformation(workingTask.prompt) : null),
+    [workingTask.prompt],
+  );
+  const showBeforeAfterTransformation = Boolean(beforeAfterTransformation) && productSummary?.source !== "before-after";
   const hasPendingRecovery = hasPendingAutomaticRecovery(task);
   const nearDuplicateOf = isStringValue(workingTask.sourceMetadata?.nearDuplicateOf)
     ? workingTask.sourceMetadata.nearDuplicateOf
@@ -1481,11 +1496,11 @@ export function TaskDetailContent({
   const [agents, setAgents] = useState<Agent[]>([]);
   const [showAgentPicker, setShowAgentPicker] = useState(false);
   const [agentsLoading, setAgentsLoading] = useState(false);
-  const [isSavingSpec, setIsSavingSpec] = useState(false);
-  const [isRequestingRevision, setIsRequestingRevision] = useState(false);
-  const [isEditingSpec, setIsEditingSpec] = useState(false);
-  const [specEditContent, setSpecEditContent] = useState(workingTask.prompt || "");
-  const [specFeedback, setSpecFeedback] = useState("");
+  /*
+  FNXC:TaskDetailPresentation 2026-09-15-16:02:
+  FN-424 removed the inline specification editor with the Edit action that opened it, so its saving,
+  revision-request, draft and feedback state is deleted rather than left as unreachable machinery.
+  */
   const [showRefineModal, setShowRefineModal] = useState(false);
   const [showResetDialog, setShowResetDialog] = useState(false);
 
@@ -1839,15 +1854,6 @@ export function TaskDetailContent({
   // FNXC:TaskDetailPlan 2026-07-04-00:00: Original prompt is collapsed by default (see render site below); operator must click the chevron toggle to reveal the markdown-rendered text.
   const [originalPromptExpanded, setOriginalPromptExpanded] = useState(false);
   const [planDocumentOpen, setPlanDocumentOpen] = useState(false);
-  /*
-  FNXC:TaskDetailPresentation 2026-09-15-00:20:
-  The plan-copy confirmation is transient state bound to the OPEN document: its timer is cancelled on
-  unmount, on closing the sub-view and on a task switch, and a copy that resolves after any of those is
-  ignored, so a successor task can never inherit a stale "Copied".
-  */
-  const [planCopied, setPlanCopied] = useState(false);
-  const planCopyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const planCopyTokenRef = useRef(0);
   /*
   FNXC:TaskDetailDefinition 2026-09-14-19:50:
   The step list starts COLLAPSED and stays wherever the operator left it for as long as the same
@@ -2388,15 +2394,11 @@ export function TaskDetailContent({
   }, [showActionsMenu, showActivityViewMenu]);
 
   /*
-  FNXC:TaskDetailPlan 2026-08-03-02:32:
-  A visible Definition poll may update the authoritative prompt while an operator is editing it.
-  Reset edit state only for a different task; reacting to prompt revisions would discard the active
-  local draft and replace its textarea.
+  FNXC:TaskDetailPresentation 2026-09-15-16:02:
+  FN-424 removed the inline spec editor, so this task-identity effect no longer resets any edit
+  draft — it now owns only the step-list disclosure.
   */
   useEffect(() => {
-    setIsEditingSpec(false);
-    setSpecEditContent(workingTask.prompt || "");
-    setSpecFeedback("");
     // FNXC:TaskDetailDefinition 2026-09-14-19:50: FN-391 — a DIFFERENT task opens with its steps collapsed; a refresh of the same task keeps the operator's choice.
     setStepListExpanded(false);
   }, [task.id]);
@@ -3876,44 +3878,6 @@ export function TaskDetailContent({
     }
   }, [addToast, closeMenus, isCheckingPrStatus, onTaskUpdated, projectId, task]);
 
-  /*
-  FNXC:TaskDetailPresentation 2026-09-15-00:20:
-  Copying the plan reads the live Markdown source through the shared clipboard utility (which already has
-  the non-secure-context fallback). A rejected copy shows NO confirmation; a resolution that arrives after
-  the sub-view closed, the task changed, or the component unmounted is discarded by the token fence.
-  */
-  const handleCopyPlanDocument = useCallback(async () => {
-    const prompt = workingTask.prompt;
-    if (!prompt) return;
-    const token = planCopyTokenRef.current + 1;
-    planCopyTokenRef.current = token;
-    const copied = await copyTextToClipboard(prompt);
-    if (!copied || planCopyTokenRef.current !== token) return;
-    setPlanCopied(true);
-    if (planCopyTimerRef.current) clearTimeout(planCopyTimerRef.current);
-    planCopyTimerRef.current = setTimeout(() => {
-      planCopyTimerRef.current = null;
-      setPlanCopied(false);
-    }, PLAN_COPY_FEEDBACK_MS);
-  }, [workingTask.prompt]);
-
-  /* Retire the confirmation and its timer whenever the document is replaced, closed, or unmounted. */
-  useEffect(() => {
-    planCopyTokenRef.current += 1;
-    setPlanCopied(false);
-    if (planCopyTimerRef.current) {
-      clearTimeout(planCopyTimerRef.current);
-      planCopyTimerRef.current = null;
-    }
-    return () => {
-      planCopyTokenRef.current += 1;
-      if (planCopyTimerRef.current) {
-        clearTimeout(planCopyTimerRef.current);
-        planCopyTimerRef.current = null;
-      }
-    };
-  }, [planDocumentOpen, workingTask.id]);
-
   const handleCloseRefineModal = useCallback(() => {
     setShowRefineModal(false);
   }, []);
@@ -4145,87 +4109,11 @@ export function TaskDetailContent({
     }
   }, [addToast, onOpenDetail, projectId, t]);
 
-  // Spec save handlers (must be declared before functions that use them)
-  const handleSaveSpec = useCallback(async (newContent: string) => {
-    setIsSavingSpec(true);
-    try {
-      await updateTask(workingTask.id, { prompt: newContent }, projectId);
-      addToast(t("taskDetail.spec.updated", "Spec updated"), "success");
-      // FNXC:TaskDetailPlan 2026-08-03-02:06: update immutably so the preview reflects an explicit save.
-      setFullDetail((previous) => previous ? { ...previous, prompt: newContent } : previous);
-    } catch (err) {
-      addToast(getErrorMessage(err), "error");
-      throw err;
-    } finally {
-      setIsSavingSpec(false);
-    }
-  }, [workingTask, addToast]);
-
-  const handleRequestSpecRevision = useCallback(async (feedback: string) => {
-    setIsRequestingRevision(true);
-    try {
-      await requestSpecRevision(task.id, feedback, projectId);
-      addToast(t("taskDetail.spec.revisionRequested", "AI revision requested. Task moved to planning."), "success");
-      // Task has been moved to planning, close modal
-      requestClose();
-    } catch (err) {
-      const msg = getErrorMessage(err);
-      if (msg.includes("done") || msg.includes("complete")) {
-        addToast(t("taskDetail.spec.revisionColumnError", "Cannot request revision: Task must be in 'triage', 'todo', 'in-progress', or 'in-review' column."), "error");
-      } else {
-        addToast(msg, "error");
-      }
-    } finally {
-      setIsRequestingRevision(false);
-    }
-  }, [task.id, addToast, requestClose]);
-
-  // Spec editing handlers (depend on handleSaveSpec and handleRequestSpecRevision)
-  const enterSpecEditMode = useCallback(() => {
-    setIsEditingSpec(true);
-    setSpecEditContent(workingTask.prompt || "");
-    setSpecFeedback("");
-  }, [workingTask.prompt]);
-
-  const exitSpecEditMode = useCallback(() => {
-    setIsEditingSpec(false);
-    setSpecEditContent(workingTask.prompt || "");
-    setSpecFeedback("");
-  }, [workingTask.prompt]);
-
-  const handleSaveSpecFromEdit = useCallback(async () => {
-    if (specEditContent === (workingTask.prompt || "")) {
-      exitSpecEditMode();
-      return;
-    }
-
-    // Exit edit mode immediately so the UI transitions back to preview as soon
-    // as save is initiated. If save fails, restore edit mode for retry.
-    setIsEditingSpec(false);
-    try {
-      await handleSaveSpec(specEditContent);
-    } catch (err) {
-      setIsEditingSpec(true);
-      throw err;
-    }
-  }, [specEditContent, workingTask.prompt, handleSaveSpec, exitSpecEditMode]);
-
-  const handleRequestRevisionFromEdit = useCallback(async () => {
-    if (!specFeedback.trim()) return;
-    await handleRequestSpecRevision(specFeedback.trim());
-  }, [specFeedback, handleRequestSpecRevision]);
-
-  // Keyboard shortcuts for spec edit mode
-  const handleSpecTextareaKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === "Escape") {
-      e.preventDefault();
-      exitSpecEditMode();
-    } else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
-      e.preventDefault();
-      void handleSaveSpecFromEdit();
-    }
-  }, [exitSpecEditMode, handleSaveSpecFromEdit]);
-
+  /*
+  FNXC:TaskDetailPresentation 2026-09-15-16:02:
+  FN-424 deleted the spec save, AI-revision, enter/exit edit and textarea-shortcut handlers with the
+  inline editor they served — no surface reaches them any more.
+  */
   const availableTasks = tasks
     .filter((t) => t.id !== task.id && !dependencies.includes(t.id))
     .sort((a, b) => {
@@ -7029,50 +6917,20 @@ export function TaskDetailContent({
               FNXC:TaskDetailDefinition 2026-09-12-22:52:
               Lire le plan ouvre le vrai PROMPT.md comme sous-vue interne de TaskDetailContent. Retour restaure Définition sans changer d’onglet ni perdre les actions du plan.
               */}
+              {/*
+              FNXC:TaskDetailPresentation 2026-09-15-16:02:
+              FN-424: the operator asked for Copy, Open PROMPT.md and Edit to be REMOVED from the plan
+              sub-view. The inline specification editor (including `Ask AI to Revise`) went with them,
+              because Edit was its only entry point and an unreachable editor is dead weight. The
+              sub-view is now a pure read: Back, then the complete PROMPT.md.
+              */}
               <div className="detail-plan-document-header">
                 <UiButton type="button" className="btn btn-sm detail-plan-back" onClick={() => setPlanDocumentOpen(false)} aria-label={t("taskDetail.spec.backToDefinition", "Back to definition")}>
                   <ArrowLeft size={16} aria-hidden="true" /><FileText size={14} aria-hidden="true" /><span>{t("taskDetail.spec.promptFileName", "PROMPT.md")}</span>
                 </UiButton>
-                {/*
-                FNXC:TaskDetailPresentation 2026-09-15-00:20:
-                Copy puts the CURRENT Markdown source of this task's real PROMPT.md on the clipboard — never the
-                rendered DOM and never the product summary. It is absent while the document is loading or has no
-                content, so there is no control that cannot do anything, and a failed copy shows no confirmation.
-                */}
-                {!detailLoading && workingTask.prompt ? (
-                  <UiButton
-                    type="button"
-                    className="btn btn-sm detail-plan-copy"
-                    data-testid="task-detail-plan-copy"
-                    onClick={() => void handleCopyPlanDocument()}
-                  >
-                    {planCopied ? <Check size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
-                    <span>{planCopied ? t("taskDetail.spec.copied", "Copied") : t("taskDetail.spec.copy", "Copy")}</span>
-                  </UiButton>
-                ) : null}
-                <span className="sr-only" role="status" aria-live="polite">
-                  {planCopied ? t("taskDetail.spec.copied", "Copied") : ""}
-                </span>
               </div>
               <div className="detail-section detail-section--plan-prompt">
-                {!isEditingSpec && <div className="detail-spec-edit-trigger">
-                  {fileBrowser && <UiButton className="btn btn-sm" onClick={openPromptFile} title={t("taskDetail.spec.openPromptTitle", "Open this task's PROMPT.md in the file editor")}>{t("taskDetail.spec.openPromptBtn", "Open PROMPT.md")}</UiButton>}
-                  <UiButton className="btn btn-sm" onClick={enterSpecEditMode}>{t("taskDetail.spec.editBtn", "Edit")}</UiButton>
-                </div>}
-                {isEditingSpec ? <div className="spec-editor-edit-mode">
-                  <UiTextArea className="spec-editor-textarea" value={specEditContent} onChange={(e) => setSpecEditContent(e.target.value)} onKeyDown={handleSpecTextareaKeyDown} disabled={isSavingSpec} placeholder={t("taskDetail.spec.placeholder", "Enter task specification in Markdown...")} rows={12} />
-                  <div className="spec-editor-actions-row">
-                    <UiButton className="btn btn-sm" onClick={exitSpecEditMode} disabled={isSavingSpec}>{t("common.cancel", "Cancel")}</UiButton>
-                    <UiButton className="btn btn-primary btn-sm" onClick={() => void handleSaveSpecFromEdit()} disabled={specEditContent === (workingTask.prompt || "") || isSavingSpec}>{isSavingSpec ? t("taskDetail.spec.saving", "Saving…") : t("common.save", "Save")}</UiButton>
-                  </div>
-                  <div className="spec-editor-hint"><kbd>Ctrl</kbd>+<kbd>Enter</kbd> {t("taskDetail.spec.hintSave", "to save")} · <kbd>Escape</kbd> {t("taskDetail.spec.hintCancel", "to cancel")}</div>
-                  <div className="spec-editor-revision">
-                    <h4>{t("taskDetail.spec.aiReviseHeading", "Ask AI to Revise")}</h4>
-                    <p className="spec-editor-revision-help">{t("taskDetail.spec.aiReviseHelp", "Provide feedback for the AI to improve this specification. The task will move to planning for replanning.")}</p>
-                    <UiTextArea className="spec-editor-feedback" value={specFeedback} onChange={(e) => setSpecFeedback(e.target.value)} placeholder={t("taskDetail.spec.feedbackPlaceholder", "e.g., 'Add more details about error handling', 'Split this into smaller steps', 'Include tests for the API endpoints'...")} disabled={isRequestingRevision} rows={4} maxLength={MAX_TASK_MESSAGE_LENGTH} />
-                    <div className="spec-editor-revision-actions"><span className="spec-editor-char-count">{specFeedback.length}/{MAX_TASK_MESSAGE_LENGTH}</span><UiButton className="btn btn-primary btn-sm" onClick={() => void handleRequestRevisionFromEdit()} disabled={!specFeedback.trim() || isRequestingRevision}>{isRequestingRevision ? t("taskDetail.spec.requesting", "Requesting…") : t("taskDetail.spec.requestRevisionBtn", "Request AI Revision")}</UiButton></div>
-                  </div>
-                </div> : detailLoading ? <div className="spec-loading"><LoadingSpinner label={t("taskDetail.spec.loading", "Loading specification…")} /></div> : workingTask.prompt ? <div className="markdown-body" data-testid="task-detail-plan-full"><ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={sharedRehypePlugins} components={markdownLinkifyComponents}>{workingTask.prompt}</ReactMarkdown></div> : <div className="detail-prompt">{t("taskDetail.spec.noPrompt", "(no prompt)")}</div>}
+                {detailLoading ? <div className="spec-loading"><LoadingSpinner label={t("taskDetail.spec.loading", "Loading specification…")} /></div> : workingTask.prompt ? <div className="markdown-body" data-testid="task-detail-plan-full"><ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={sharedRehypePlugins} components={markdownLinkifyComponents}>{workingTask.prompt}</ReactMarkdown></div> : <div className="detail-prompt">{t("taskDetail.spec.noPrompt", "(no prompt)")}</div>}
               </div>
             </div>
           ) : (
@@ -7091,27 +6949,41 @@ export function TaskDetailContent({
               <section className="detail-section detail-step-progress" aria-labelledby={`${workingTask.id}-progress-heading`}>
                 <div className="detail-progress-heading"><h4 id={`${workingTask.id}-progress-heading`}>{t("taskDetail.progress.heading", "Progress")}</h4><span className="step-progress-label">{t("taskDetail.progress.completedCount", "{{count}}/{{total}} completed", { count: unifiedProgress.completed, total: unifiedProgress.total })}</span></div>
                 {unifiedProgress.total > 0 ? <>
-                  <div className="step-progress-track" role="progressbar" aria-valuemin={0} aria-valuemax={unifiedProgress.total} aria-valuenow={unifiedProgress.completed}><span style={{ inlineSize: `${(unifiedProgress.completed / unifiedProgress.total) * 100}%` }} /></div>
                   {/*
                   FNXC:TaskDetailDefinition 2026-09-14-19:50:
                   The disclosure NEVER hides the counter or the bar — only the per-step list. It is a
                   real <button> with aria-expanded/aria-controls so keyboard and screen-reader users
                   get the same affordance, and expanding recomputes nothing: `unifiedProgress` is
                   already resolved above.
+
+                  FNXC:TaskDetailDefinition 2026-09-15-16:02:
+                  FN-424 replaces the chunky `Show steps` text button with the DISCREET chevron
+                  already used by every other collapsible section here (`detail-source-toggle` +
+                  `detail-source-chevron--expanded`), sitting on the same row to the RIGHT of the
+                  progress bar so the accordion affordance reads as part of the bar. No new button
+                  primitive: only the visual weight changes, the accessible contract (button,
+                  aria-expanded, aria-controls, localized name) is unchanged, and the label moves to
+                  `aria-label`/`title` because the control is now icon-only.
                   */}
-                  <UiButton
-                    type="button"
-                    className="btn btn-sm detail-step-list-toggle"
-                    onClick={() => setStepListExpanded((expanded) => !expanded)}
-                    aria-expanded={stepListExpanded}
-                    aria-controls={`${workingTask.id}-detail-step-list`}
-                    data-testid="detail-step-list-toggle"
-                  >
-                    {stepListExpanded ? <ChevronDown size={14} aria-hidden="true" /> : <ChevronRight size={14} aria-hidden="true" />}
-                    {stepListExpanded
-                      ? t("taskDetail.progress.hideSteps", "Hide steps")
-                      : t("taskDetail.progress.showSteps", "Show steps")}
-                  </UiButton>
+                  <div className="detail-progress-row">
+                    <div className="step-progress-track" role="progressbar" aria-valuemin={0} aria-valuemax={unifiedProgress.total} aria-valuenow={unifiedProgress.completed}><span style={{ inlineSize: `${(unifiedProgress.completed / unifiedProgress.total) * 100}%` }} /></div>
+                    <UiButton
+                      type="button"
+                      className="detail-source-toggle detail-step-list-toggle"
+                      onClick={() => setStepListExpanded((expanded) => !expanded)}
+                      aria-expanded={stepListExpanded}
+                      aria-controls={`${workingTask.id}-detail-step-list`}
+                      aria-label={stepListExpanded
+                        ? t("taskDetail.progress.hideSteps", "Hide steps")
+                        : t("taskDetail.progress.showSteps", "Show steps")}
+                      title={stepListExpanded
+                        ? t("taskDetail.progress.hideSteps", "Hide steps")
+                        : t("taskDetail.progress.showSteps", "Show steps")}
+                      data-testid="detail-step-list-toggle"
+                    >
+                      <ChevronRight size={16} aria-hidden="true" className={stepListExpanded ? "detail-source-chevron--expanded" : undefined} />
+                    </UiButton>
+                  </div>
                   {stepListExpanded && (
                     <ol className="detail-step-list" id={`${workingTask.id}-detail-step-list`}>{unifiedProgress.items.map((item) => {
                       const statusLabel = getStepStatusLabel(item.status, t as TFunction<"app">);
@@ -7152,6 +7024,20 @@ export function TaskDetailContent({
                     ? <div className="markdown-body detail-definition-outcome-body" data-testid="task-detail-definition-outcome"><ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={sharedRehypePlugins} components={markdownLinkifyComponents}>{productSummary.markdown}</ReactMarkdown></div>
                     : <div className="detail-empty-inline" data-testid="task-detail-definition-outcome-empty">{t("taskDetail.definition.noOutcome", "No plan summary yet — open Read plan for the full specification.")}</div>}
               </section>
+              {/*
+              FNXC:TaskDetailDefinition 2026-09-15-16:02:
+              Reading order is progress → description → outcome → before/after. This section is a
+              DIRECT view of the plan's before/after summary, never a placeholder: absent section,
+              empty body, or a body already served by `What this delivers` all render nothing.
+              */}
+              {showBeforeAfterTransformation && beforeAfterTransformation ? (
+                <section className="detail-section detail-definition-transformation" aria-labelledby={`${workingTask.id}-definition-transformation`}>
+                  <div className="detail-source-header detail-definition-header">
+                    <h4 id={`${workingTask.id}-definition-transformation`}>{t("taskDetail.definition.transformationHeading", "Before → After")}</h4>
+                  </div>
+                  <div className="markdown-body detail-definition-transformation-body" data-testid="task-detail-definition-transformation"><ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={sharedRehypePlugins} components={markdownLinkifyComponents}>{beforeAfterTransformation}</ReactMarkdown></div>
+                </section>
+              ) : null}
             </>
           )}          </>
           )}

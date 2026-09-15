@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extractTaskProductSummary, splitTaskPlanSummary } from "../taskPlanSummary";
+import { extractTaskBeforeAfterTransformation, extractTaskProductSummary, splitTaskPlanSummary } from "../taskPlanSummary";
 
 const bothSections = `# Task: FN-195 - Summary first
 
@@ -168,5 +168,49 @@ describe("extractTaskProductSummary", () => {
 
     expect(summary?.markdown.startsWith("## ")).toBe(false);
     expect(summary?.markdown).not.toContain("## What This Delivers");
+  });
+});
+
+describe("extractTaskBeforeAfterTransformation", () => {
+  it("returns the before/after body when the plan carries both summary sections", () => {
+    const transformation = extractTaskBeforeAfterTransformation(bothSections);
+
+    expect(transformation).toContain("**Before:** intent is buried");
+    expect(transformation).toContain("**After:** intent is visible");
+    expect(transformation).not.toContain("## Before");
+    expect(transformation).not.toContain("Operators can confirm");
+  });
+
+  it("accepts the ASCII arrow variant of the heading", () => {
+    expect(extractTaskBeforeAfterTransformation("# Task: FN-1 - Legacy\n\n## Before -> After Transformation\n\nASCII arrow body.\n")).toBe("ASCII arrow body.");
+  });
+
+  it("skips a fenced heading and keeps only the first real occurrence", () => {
+    const transformation = extractTaskBeforeAfterTransformation(
+      "# Task: FN-1 - Fenced\n\n```md\n## Before → After Transformation\n\nFenced example.\n```\n\n## Before → After Transformation\n\nReal transformation.\n\n## Before → After Transformation\n\nDuplicate.\n",
+    );
+
+    expect(transformation).toBe("Real transformation.");
+    expect(transformation).not.toContain("Fenced example.");
+    expect(transformation).not.toContain("Duplicate.");
+  });
+
+  it.each([
+    { label: "a plan without the section", prompt: "# Task: FN-1 - Outcome only\n\n## What This Delivers\n\nOutcome.\n" },
+    { label: "an empty before/after section", prompt: "# Task: FN-1 - Empty\n\n## Before → After Transformation\n\n## Mission\n\nTechnical brief.\n" },
+    { label: "an empty prompt", prompt: "" },
+    { label: "a heading-only prompt", prompt: "# Task: FN-1 - Heading only\n" },
+  ])("returns null for $label", ({ prompt }) => {
+    expect(extractTaskBeforeAfterTransformation(prompt)).toBeNull();
+  });
+
+  it("does not change extractTaskProductSummary results for the same plans", () => {
+    expect(extractTaskProductSummary(bothSections)?.source).toBe("what-this-delivers");
+    expect(extractTaskProductSummary(bothSections)?.markdown).toContain("Operators can confirm the expected outcome quickly.");
+
+    const legacyOnly = "# Task: FN-1 - Legacy\n\n## Before → After Transformation\n\n- **Before:** manual\n- **After:** automatic\n";
+    expect(extractTaskProductSummary(legacyOnly)?.source).toBe("before-after");
+    expect(extractTaskProductSummary(legacyOnly)?.markdown).toContain("**After:** automatic");
+    expect(extractTaskBeforeAfterTransformation(legacyOnly)).toBe(extractTaskProductSummary(legacyOnly)?.markdown);
   });
 });

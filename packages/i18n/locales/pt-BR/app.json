@@ -7998,7 +7998,8 @@
       "descriptionHeading": "Descrição",
       "noDescription": "(sem descrição)",
       "noOutcome": "Ainda não há resumo do plano — abra Ler plano para ver a especificação completa.",
-      "outcomeHeading": "O que esta tarefa entrega"
+      "outcomeHeading": "O que esta tarefa entrega",
+      "transformationHeading": "Antes → Depois"
     },
     "description": {
       "showLess": "Mostrar menos",
@@ -8330,26 +8331,11 @@
       "url": "URL"
     },
     "spec": {
-      "aiReviseHeading": "Pedir à IA para revisar",
-      "aiReviseHelp": "Forneça feedback para a IA melhorar esta especificação. A tarefa passará para planejamento para ser replanejada.",
       "backToDefinition": "Voltar à definição",
-      "editBtn": "Editar",
-      "feedbackPlaceholder": "ex.: 'Adicione mais detalhes sobre o tratamento de erros', 'Divida isso em etapas menores', 'Inclua testes para os endpoints da API'...",
-      "hintCancel": "para cancelar",
-      "hintSave": "para salvar",
       "loading": "Carregando especificação…",
       "noPrompt": "(sem prompt)",
-      "placeholder": "Insira a especificação da tarefa em Markdown...",
       "promptFileName": "PROMPT.md",
-      "readPlanBtn": "Ler o plano",
-      "requesting": "Solicitando…",
-      "requestRevisionBtn": "Solicitar revisão da IA",
-      "revisionColumnError": "Não é possível solicitar revisão: a tarefa deve estar na coluna 'triage', 'todo', 'in-progress' ou 'in-review'.",
-      "revisionRequested": "Revisão da IA solicitada. Tarefa movida para planejamento.",
-      "saving": "Salvando…",
-      "updated": "Especificação atualizada",
-      "copy": "Copiar",
-      "copied": "Copiado"
+      "readPlanBtn": "Ler o plano"
     },
     "stall": {
       "noLogEntry": "Ainda não há entrada de log",

@@ -106,19 +106,30 @@ describe("Task Detail exposes the same product in both interface styles", () => 
 
   it("keeps the progress counter, bar and step data identical under both styles", async () => {
     const user = userEvent.setup();
-    const captured: Array<{ counter: string | null; steps: string[]; bar: string | null }> = [];
+    const captured: Array<{ counter: string | null; steps: string[]; bar: string | null; toggleName: string | null; toggleInRow: boolean }> = [];
 
     for (const style of STYLES) {
       const view = renderDetail(style);
       openDefinition();
-      await user.click(screen.getByTestId("detail-step-list-toggle"));
+      const toggle = screen.getByTestId("detail-step-list-toggle");
+      await user.click(toggle);
       captured.push({
         counter: document.querySelector(".step-progress-label")?.textContent ?? null,
         bar: document.querySelector(".step-progress-track")?.getAttribute("aria-valuenow") ?? null,
         steps: Array.from(document.querySelectorAll(".detail-step-item")).map((item) => item.textContent ?? ""),
+        /*
+        FNXC:TaskDetailDefinition 2026-09-15-16:02:
+        FN-424: the icon-only chevron must carry the SAME localized accessible name and sit on the
+        progress bar's row in both styles — clean is presentation only.
+        */
+        toggleName: toggle.getAttribute("aria-label"),
+        toggleInRow: Boolean(toggle.closest(".detail-progress-row")?.querySelector(".step-progress-track")),
       });
       view.unmount();
     }
+
+    expect(captured[0].toggleName).toBe("Hide steps");
+    expect(captured[0].toggleInRow).toBe(true);
 
     expect(captured[0]).toEqual(captured[1]);
   });
@@ -280,11 +291,22 @@ describe("the clean grammar is a scoped, token-only presentation layer", () => {
   });
 });
 
-describe("the plan sub-view copies the real specification", () => {
-  it("offers Copy only once the real plan document is available", () => {
-    renderDetail("clean", { prompt: "" });
+/*
+FNXC:TaskDetailPresentation 2026-09-15-16:02:
+FN-424 removed Copy from the plan sub-view, so the case that asserted when Copy appears is replaced
+by its successor invariant: the sub-view is a read in BOTH styles, with no copy or edit action.
+*/
+describe("the plan sub-view is a read in both styles", () => {
+  it.each(["classic", "clean"] as const)("exposes no copy or edit action in the %s style", (style) => {
+    renderDetail(style, { prompt: "# Task: FN-STYLE\n\n## Mission\n\nThe complete plan stays readable.\n" });
     openDefinition();
     fireEvent.click(screen.getByRole("button", { name: /Read plan/i }));
+
     expect(screen.queryByTestId("task-detail-plan-copy")).toBeNull();
+    expect(document.querySelector(".detail-spec-edit-trigger")).toBeNull();
+    for (const name of ["Copy", "Open PROMPT.md", "Edit"]) {
+      expect(screen.queryByRole("button", { name })).toBeNull();
+    }
+    expect(screen.getByTestId("task-detail-plan-full")).toBeInTheDocument();
   });
 });

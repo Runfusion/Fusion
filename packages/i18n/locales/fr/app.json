@@ -8006,7 +8006,8 @@
       "descriptionHeading": "Description",
       "noDescription": "(aucune description)",
       "noOutcome": "Pas encore de résumé du plan — ouvrez Lire le plan pour la spécification complète.",
-      "outcomeHeading": "Ce que la tâche produit"
+      "outcomeHeading": "Ce que la tâche produit",
+      "transformationHeading": "Avant → Après"
     },
     "description": {
       "showLess": "Afficher moins",
@@ -8309,26 +8310,11 @@
       "gitlabBadge": ""
     },
     "spec": {
-      "aiReviseHeading": "Demander une révision à l'IA",
-      "aiReviseHelp": "Fournissez des commentaires pour que l'IA améliore cette spécification. La tâche passera en planification.",
       "backToDefinition": "Retour à la définition",
-      "editBtn": "Modifier",
-      "feedbackPlaceholder": "p. ex., « Ajoutez plus de détails sur la gestion des erreurs », « Découpez en étapes plus petites »...",
-      "hintCancel": "pour annuler",
-      "hintSave": "pour enregistrer",
       "loading": "Chargement de la spécification…",
       "noPrompt": "(aucune invite)",
-      "placeholder": "Saisissez la spécification de la tâche en Markdown...",
       "promptFileName": "PROMPT.md",
-      "readPlanBtn": "Lire le plan",
-      "requesting": "Demande en cours…",
-      "requestRevisionBtn": "Demander une révision IA",
-      "revisionColumnError": "Impossible de demander une révision : la tâche doit être dans la colonne « triage », « todo », « in-progress » ou « in-review ».",
-      "revisionRequested": "Révision IA demandée. La tâche a été déplacée en planification.",
-      "saving": "Enregistrement…",
-      "updated": "Spécification mise à jour",
-      "copy": "Copier",
-      "copied": "Copié"
+      "readPlanBtn": "Lire le plan"
     },
     "stall": {
       "noLogEntry": "Aucune entrée de journal pour l'instant",

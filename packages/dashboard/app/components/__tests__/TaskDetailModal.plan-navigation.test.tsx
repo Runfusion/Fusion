@@ -1,16 +1,16 @@
 /*
-FNXC:TaskDetailPresentation 2026-09-15-00:20:
-The plan sub-view shows the task's REAL `PROMPT.md` and adds a Copy control. What matters is that Copy puts
-the current Markdown SOURCE on the clipboard (never the rendered DOM and never the product summary), that
-its confirmation is transient and self-clearing, that a failure shows no confirmation, and that leaving the
-document or switching task can never leave a stale "Copied" behind for a successor.
+FNXC:TaskDetailPresentation 2026-09-15-16:02:
+FN-424 removed Copy, Open PROMPT.md and Edit from the plan sub-view, and the inline specification
+editor that Edit was the only entry point for. The copy-confirmation cases that encoded those
+affordances are deleted with their subject rather than weakened.
 
-The sub-view itself must stay a sub-view: Back returns to the same tab it was opened from, the plan's own
-editing affordances remain, and reading or copying mutates nothing.
+What remains, and what these tests guard: the sub-view stays a sub-view (Back returns to the tab it
+was opened from), it renders the task's REAL `PROMPT.md` complete, and it exposes NO write or copy
+action on either host, in either style, with or without a mounted file browser.
 */
 
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
 import {
   makeTask,
   noop,
@@ -20,6 +20,7 @@ import {
   setupTaskDetailModalHooks,
 } from "./TaskDetailModal.test-helpers";
 import { TaskDetailContent } from "../TaskDetailModal";
+import { FileBrowserProvider } from "../../context/FileBrowserContext";
 
 setupTaskDetailModalHooks();
 
@@ -27,7 +28,7 @@ const PLAN = [
   "# Task: FN-PLAN",
   "",
   "## Mission",
-  "Copy the **source**, not the rendered document.",
+  "Read the **source**, not a summary.",
   "",
   "1. First step",
   "2. Second step",
@@ -42,14 +43,16 @@ const sharedProps = {
   addToast: noop,
 };
 
-function renderPlan(overrides = {}) {
-  return render(
+function renderPlan(options?: { embedded?: boolean; withFileBrowser?: boolean }) {
+  const content = (
     <TaskDetailContent
       {...sharedProps}
-      embedded
-      task={makeTask({ id: "FN-PLAN", prompt: PLAN, ...overrides })}
-    />,
+      embedded={options?.embedded ?? true}
+      onRequestClose={noop}
+      task={makeTask({ id: "FN-PLAN", prompt: PLAN })}
+    />
   );
+  return render(options?.withFileBrowser ? <FileBrowserProvider>{content}</FileBrowserProvider> : content);
 }
 
 function openDefinition() {
@@ -64,25 +67,13 @@ function openPlanDocument() {
   fireEvent.click(screen.getByRole("button", { name: /Read plan/i }));
 }
 
-let writeText: ReturnType<typeof vi.fn>;
-
-beforeEach(() => {
-  writeText = vi.fn().mockResolvedValue(undefined);
-  Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
-  Object.defineProperty(window, "isSecureContext", { configurable: true, value: true });
-});
-
-afterEach(() => {
-  vi.useRealTimers();
-});
-
-describe("plan sub-view navigation and copy", () => {
+describe("plan sub-view navigation", () => {
   it("opens the real PROMPT.md as a sub-view and returns to the tab it came from", () => {
     renderPlan();
     openPlanDocument();
 
     expect(screen.getByTestId("task-detail-plan-document")).toBeInTheDocument();
-    expect(screen.getByTestId("task-detail-plan-full")).toHaveTextContent("Copy the source, not the rendered document.");
+    expect(screen.getByTestId("task-detail-plan-full")).toHaveTextContent("Read the source, not a summary.");
 
     fireEvent.click(screen.getByRole("button", { name: "Back to definition" }));
 
@@ -91,90 +82,54 @@ describe("plan sub-view navigation and copy", () => {
     expect(screen.getByRole("button", { name: /Read plan/i })).toBeInTheDocument();
   });
 
-  it("copies the current Markdown source rather than the rendered document", async () => {
+  it("keeps Back as the only control in the sub-view header", () => {
     renderPlan();
     openPlanDocument();
 
-    fireEvent.click(screen.getByTestId("task-detail-plan-copy"));
-
-    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
-    expect(writeText).toHaveBeenCalledWith(PLAN);
-    // Proof it is the SOURCE: Markdown syntax survives, which rendered text would have consumed.
-    expect(writeText.mock.calls[0]![0]).toContain("## Mission");
-    expect(writeText.mock.calls[0]![0]).toContain("`inline code`");
+    const header = document.querySelector(".detail-plan-document-header");
+    expect(header).toBeInTheDocument();
+    expect(header!.querySelectorAll("button")).toHaveLength(1);
+    expect(header!.querySelector("button")).toHaveAccessibleName("Back to definition");
   });
 
-  it("confirms the copy and clears that confirmation on its own", async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    renderPlan();
+  /*
+  The invariant, not the reported repro: no host, and no mounted file browser, may expose a copy or
+  write affordance in the plan sub-view.
+  */
+  it.each([
+    { label: "the embedded host", embedded: true, withFileBrowser: false },
+    { label: "the modal-shaped host", embedded: false, withFileBrowser: false },
+    { label: "a mounted file browser", embedded: true, withFileBrowser: true },
+  ])("exposes no Copy, Open PROMPT.md or Edit action in $label", ({ embedded, withFileBrowser }) => {
+    renderPlan({ embedded, withFileBrowser });
     openPlanDocument();
 
-    fireEvent.click(screen.getByTestId("task-detail-plan-copy"));
-    await waitFor(() => expect(screen.getByTestId("task-detail-plan-copy")).toHaveTextContent("Copied"));
+    for (const name of ["Copy", "Open PROMPT.md", "Edit"]) {
+      expect(screen.queryByRole("button", { name })).toBeNull();
+    }
+    expect(screen.queryByTestId("task-detail-plan-copy")).toBeNull();
+    expect(document.querySelector(".detail-plan-copy")).toBeNull();
+    expect(document.querySelector(".detail-spec-edit-trigger")).toBeNull();
+    expect(document.querySelector(".spec-editor-edit-mode")).toBeNull();
+    expect(document.querySelector(".spec-editor-textarea")).toBeNull();
 
-    await act(async () => {
-      vi.advanceTimersByTime(1500);
-    });
-
-    expect(screen.getByTestId("task-detail-plan-copy")).toHaveTextContent("Copy");
+    // The read stays complete.
+    expect(screen.getByTestId("task-detail-plan-full")).toHaveTextContent("Read the source, not a summary.");
+    expect(screen.getByTestId("task-detail-plan-full")).toHaveTextContent("Second step");
   });
 
-  it("shows no confirmation when the clipboard refuses", async () => {
-    writeText.mockRejectedValue(new Error("denied"));
-    // The shared utility falls back to execCommand; make that fail too so the copy genuinely fails.
-    Object.defineProperty(document, "execCommand", { configurable: true, value: vi.fn(() => false) });
-
-    renderPlan();
+  it("still shows the (no prompt) fallback when the task has no plan", () => {
+    render(
+      <TaskDetailContent
+        {...sharedProps}
+        embedded
+        onRequestClose={noop}
+        task={makeTask({ id: "FN-EMPTY", prompt: "" })}
+      />,
+    );
     openPlanDocument();
 
-    fireEvent.click(screen.getByTestId("task-detail-plan-copy"));
-
-    await waitFor(() => expect(writeText).toHaveBeenCalled());
-    expect(screen.getByTestId("task-detail-plan-copy")).toHaveTextContent("Copy");
-    expect(screen.getByTestId("task-detail-plan-copy")).not.toHaveTextContent("Copied");
-  });
-
-  it("never carries a confirmation back into the document after leaving it", async () => {
-    renderPlan();
-    openPlanDocument();
-
-    fireEvent.click(screen.getByTestId("task-detail-plan-copy"));
-    await waitFor(() => expect(screen.getByTestId("task-detail-plan-copy")).toHaveTextContent("Copied"));
-
-    fireEvent.click(screen.getByRole("button", { name: "Back to definition" }));
-    fireEvent.click(screen.getByRole("button", { name: /Read plan/i }));
-
-    expect(screen.getByTestId("task-detail-plan-copy")).toHaveTextContent("Copy");
-  });
-
-  it("discards a copy that resolves after the document closed", async () => {
-    let release!: () => void;
-    writeText.mockImplementation(() => new Promise<void>((resolve) => { release = () => resolve(); }));
-
-    renderPlan();
-    openPlanDocument();
-    fireEvent.click(screen.getByTestId("task-detail-plan-copy"));
-
-    fireEvent.click(screen.getByRole("button", { name: "Back to definition" }));
-    await act(async () => {
-      release();
-      await Promise.resolve();
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: /Read plan/i }));
-    expect(screen.getByTestId("task-detail-plan-copy")).toHaveTextContent("Copy");
-  });
-
-  it("keeps the plan's own editing affordances and mutates nothing by reading or copying", async () => {
-    renderPlan();
-    openPlanDocument();
-
-    expect(screen.getByRole("button", { name: "Edit" })).toBeInTheDocument();
-
-    fireEvent.click(screen.getByTestId("task-detail-plan-copy"));
-    await waitFor(() => expect(writeText).toHaveBeenCalled());
-
-    // The document is unchanged and still the real prompt.
-    expect(screen.getByTestId("task-detail-plan-full")).toHaveTextContent("Copy the source, not the rendered document.");
+    expect(screen.getByText("(no prompt)")).toBeInTheDocument();
+    expect(screen.queryByTestId("task-detail-plan-copy")).toBeNull();
   });
 });

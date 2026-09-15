@@ -7988,7 +7988,8 @@
       "descriptionHeading": "Descripción",
       "noDescription": "(sin descripción)",
       "noOutcome": "Aún no hay resumen del plan: abre Leer plan para ver la especificación completa.",
-      "outcomeHeading": "Lo que entrega esta tarea"
+      "outcomeHeading": "Lo que entrega esta tarea",
+      "transformationHeading": "Antes → Después"
     },
     "description": {
       "showLess": "Mostrar menos",
@@ -8291,26 +8292,11 @@
       "gitlabBadge": ""
     },
     "spec": {
-      "aiReviseHeading": "Pedir revisión a la IA",
-      "aiReviseHelp": "Proporciona comentarios para que la IA mejore esta especificación. La tarea pasará a planificación.",
       "backToDefinition": "Volver a la definición",
-      "editBtn": "Editar",
-      "feedbackPlaceholder": "p. ej., 'Añade más detalles sobre el manejo de errores', 'Divídelo en pasos más pequeños', 'Incluye pruebas para los endpoints de la API'...",
-      "hintCancel": "para cancelar",
-      "hintSave": "para guardar",
       "loading": "Cargando especificación…",
       "noPrompt": "(sin indicación)",
-      "placeholder": "Ingresa la especificación de la tarea en Markdown...",
       "promptFileName": "PROMPT.md",
-      "readPlanBtn": "Leer el plan",
-      "requesting": "Solicitando…",
-      "requestRevisionBtn": "Solicitar revisión de IA",
-      "revisionColumnError": "No se puede solicitar revisión: la tarea debe estar en la columna 'triage', 'todo', 'in-progress' o 'in-review'.",
-      "revisionRequested": "Revisión de IA solicitada. La tarea se movió a planificación.",
-      "saving": "Guardando…",
-      "updated": "Especificación actualizada",
-      "copy": "Copiar",
-      "copied": "Copiado"
+      "readPlanBtn": "Leer el plan"
     },
     "stall": {
       "noLogEntry": "Aún no hay entrada en el registro",

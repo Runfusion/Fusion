@@ -8226,7 +8226,8 @@ export default interface Resources {
         "descriptionHeading": "Description",
         "noDescription": "(no description)",
         "noOutcome": "No plan summary yet — open Read plan for the full specification.",
-        "outcomeHeading": "What this delivers"
+        "outcomeHeading": "What this delivers",
+        "transformationHeading": "Before → After"
       },
       "delete": {
         "actionClosed": "closed",
@@ -8625,26 +8626,11 @@ export default interface Resources {
         "url": "URL"
       },
       "spec": {
-        "aiReviseHeading": "Ask AI to Revise",
-        "aiReviseHelp": "Provide feedback for the AI to improve this specification. The task will move to planning for replanning.",
         "backToDefinition": "Back to definition",
-        "copied": "Copied",
-        "copy": "Copy",
-        "editBtn": "Edit",
-        "feedbackPlaceholder": "e.g., 'Add more details about error handling', 'Split this into smaller steps', 'Include tests for the API endpoints'...",
-        "hintCancel": "to cancel",
-        "hintSave": "to save",
         "loading": "Loading specification…",
         "noPrompt": "(no prompt)",
-        "placeholder": "Enter task specification in Markdown...",
         "promptFileName": "PROMPT.md",
-        "readPlanBtn": "Read plan",
-        "requestRevisionBtn": "Request AI Revision",
-        "requesting": "Requesting…",
-        "revisionColumnError": "Cannot request revision: Task must be in 'triage', 'todo', 'in-progress', or 'in-review' column.",
-        "revisionRequested": "AI revision requested. Task moved to planning.",
-        "saving": "Saving…",
-        "updated": "Spec updated"
+        "readPlanBtn": "Read plan"
       },
       "specLock": {
         "accepted": "Accepted {{acceptedAt}} · plan hash {{planHash}} · approval {{approval}}",

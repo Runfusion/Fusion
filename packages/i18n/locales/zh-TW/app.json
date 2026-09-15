@@ -7987,7 +7987,8 @@
       "descriptionHeading": "描述",
       "noDescription": "（無描述）",
       "noOutcome": "尚無計畫摘要 — 開啟「閱讀計畫」查看完整規格。",
-      "outcomeHeading": "此任務交付的內容"
+      "outcomeHeading": "此任務交付的內容",
+      "transformationHeading": "變更前 → 變更後"
     },
     "description": {
       "showLess": "顯示更少",
@@ -8290,26 +8291,11 @@
       "gitlabBadge": ""
     },
     "spec": {
-      "aiReviseHeading": "請 AI 修訂",
-      "aiReviseHelp": "提供反饋讓 AI 改善此規範。任務將進入規劃階段重新規劃。",
       "backToDefinition": "返回定義",
-      "editBtn": "編輯",
-      "feedbackPlaceholder": "例如：「添加更多錯誤處理細節」、「拆分為更小步驟」、「添加 API 端點測試」...",
-      "hintCancel": "取消",
-      "hintSave": "儲存",
       "loading": "正在載入規範…",
       "noPrompt": "（無提示詞）",
-      "placeholder": "以 Markdown 格式輸入任務規範...",
       "promptFileName": "PROMPT.md",
-      "readPlanBtn": "閱讀計畫",
-      "requesting": "正在請求…",
-      "requestRevisionBtn": "請求 AI 修訂",
-      "revisionColumnError": "無法請求修訂：任務必須在「triage」、「todo」、「in-progress」或「in-review」欄中。",
-      "revisionRequested": "已請求 AI 修訂。任務已移至規劃階段。",
-      "saving": "正在儲存…",
-      "updated": "規範已更新",
-      "copy": "複製",
-      "copied": "已複製"
+      "readPlanBtn": "閱讀計畫"
     },
     "stall": {
       "noLogEntry": "尚無日誌條目",

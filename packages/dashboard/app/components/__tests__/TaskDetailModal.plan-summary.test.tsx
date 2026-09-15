@@ -110,11 +110,21 @@ describe("TaskDetailContent internal plan navigation", () => {
     expect(screen.getByTestId("task-detail-definition-description")).toHaveTextContent("Second description");
   });
 
-  it("keeps the complete prompt in the edit textarea", () => {
+  /*
+  FNXC:TaskDetailPresentation 2026-09-15-16:02:
+  FN-424 removed the inline edit textarea with the Edit action that opened it. What survives is the
+  guarantee the textarea used to carry: the sub-view shows the COMPLETE prompt.
+  */
+  it("renders the complete prompt read-only with no edit textarea", () => {
     renderDefinition();
     openPlan();
-    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
-    expect(document.querySelector(".spec-editor-textarea")).toHaveValue(fullPrompt);
+
+    expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
+    expect(document.querySelector(".spec-editor-textarea")).toBeNull();
+    const plan = screen.getByTestId("task-detail-plan-full");
+    expect(plan).toHaveTextContent("Operators can confirm the expected outcome quickly.");
+    expect(plan).toHaveTextContent("Technical delivery details.");
+    expect(plan).toHaveTextContent("Ship it");
   });
 
   /*
@@ -220,5 +230,127 @@ describe("TaskDetailContent internal plan navigation", () => {
     expect(selectorIndex).toBeGreaterThan(-1);
     expect(rule).toContain("var(--space-md)");
     expect(rule).not.toMatch(/#[0-9a-f]|rgb\(|\d+px/i);
+  });
+});
+
+/*
+FNXC:TaskDetailDefinition 2026-09-15-16:02:
+FN-424 renders the plan's `Before → After Transformation` as a DIRECT section below
+`What this delivers`. It never duplicates a body already shown as the legacy outcome fallback, and
+it renders nothing (not a placeholder) when the plan has no such section.
+*/
+const bothSectionsPrompt = `# Task: FN-195 - Summary first
+
+## What This Delivers
+
+Operators can confirm the expected outcome quickly.
+
+## Before → After Transformation
+
+- **Before:** the operator had to open the full plan.
+- **After:** the transformation is visible at a glance.
+
+## Mission
+
+Technical delivery details.
+`;
+
+describe("TaskDetailContent definition before/after section", () => {
+  it.each([{ embedded: false }, { embedded: true }])("shows the before/after body under the outcome (embedded: $embedded)", ({ embedded }) => {
+    renderDefinition({ prompt: bothSectionsPrompt, embedded });
+
+    const transformation = screen.getByTestId("task-detail-definition-transformation");
+    expect(transformation).toHaveTextContent("the transformation is visible at a glance.");
+    expect(screen.getByTestId("task-detail-definition-outcome")).not.toHaveTextContent("the transformation is visible at a glance.");
+    expect(transformation).not.toHaveTextContent("Technical delivery details.");
+    expect(screen.getByRole("heading", { name: "Before → After" })).toBeInTheDocument();
+  });
+
+  it("keeps the reading order progress, description, outcome, before/after", () => {
+    const { container } = renderDefinition({ prompt: bothSectionsPrompt });
+
+    const order = Array.from(container.querySelectorAll(".detail-step-progress, .detail-definition-description, .detail-definition-outcome, .detail-definition-transformation")).map((node) => {
+      if (node.classList.contains("detail-step-progress")) return "progress";
+      if (node.classList.contains("detail-definition-description")) return "description";
+      if (node.classList.contains("detail-definition-outcome")) return "outcome";
+      return "transformation";
+    });
+
+    expect(order).toEqual(["progress", "description", "outcome", "transformation"]);
+  });
+
+  it("never duplicates a before/after body already served as the legacy outcome", () => {
+    renderDefinition({ prompt: "# Task: FN-195 - Legacy\n\n## Before → After Transformation\n\nBefore it was manual; after it is automatic.\n\n## Mission\n\nTechnical delivery details.\n" });
+
+    expect(screen.getByTestId("task-detail-definition-outcome")).toHaveTextContent("Before it was manual; after it is automatic.");
+    expect(screen.queryByTestId("task-detail-definition-transformation")).toBeNull();
+  });
+
+  it.each([
+    { label: "a plan without the section", prompt: fullPrompt },
+    { label: "an empty before/after section", prompt: "# Task: FN-195 - Empty\n\n## What This Delivers\n\nOutcome.\n\n## Before → After Transformation\n\n## Mission\n\nTechnical delivery details.\n" },
+    { label: "an empty plan", prompt: "" },
+  ])("renders no section and no placeholder for $label", ({ prompt }) => {
+    const { container } = renderDefinition({ prompt });
+
+    expect(screen.queryByTestId("task-detail-definition-transformation")).toBeNull();
+    expect(container.querySelector(".detail-definition-transformation")).toBeNull();
+  });
+
+  it("ignores a fenced or duplicated before/after heading", () => {
+    renderDefinition({
+      prompt: "# Task: FN-195 - Fenced\n\n## What This Delivers\n\nOutcome.\n\n```md\n## Before → After Transformation\n\nFenced example text.\n```\n\n## Before → After Transformation\n\nThe real transformation.\n\n## Before → After Transformation\n\nA duplicated heading.\n",
+    });
+
+    const transformation = screen.getByTestId("task-detail-definition-transformation");
+    expect(transformation).toHaveTextContent("The real transformation.");
+    expect(transformation).not.toHaveTextContent("Fenced example text.");
+    expect(transformation).not.toHaveTextContent("A duplicated heading.");
+  });
+
+  /*
+  FNXC:TaskDetailDefinition 2026-09-15-16:02:
+  FN-424 gives the four definition blocks a padded card treatment. The rule must stay token-only:
+  no raw pixel, hex or rgb() value, on desktop and on the mobile override.
+  */
+  it("gives the four definition blocks a token-only card treatment", () => {
+    const css = readTaskDetailModalCss();
+    const selector = ".detail-step-progress,\n.detail-definition-description,\n.detail-definition-outcome,\n.detail-definition-transformation {";
+    const selectorIndex = css.indexOf(selector);
+    expect(selectorIndex).toBeGreaterThan(-1);
+
+    const rule = css.slice(selectorIndex, css.indexOf("}", selectorIndex) + 1);
+    expect(rule).toContain("padding: var(--space-");
+    expect(rule).toContain("border-radius: var(--radius-");
+    expect(rule).toContain("solid var(--border)");
+    expect(rule).toContain("background: var(--surface)");
+    expect(rule).not.toMatch(/#[0-9a-f]{3,}|rgb\(|\d+px/i);
+
+    const rowIndex = css.indexOf(".detail-progress-row {");
+    expect(rowIndex).toBeGreaterThan(-1);
+    const rowRule = css.slice(rowIndex, css.indexOf("}", rowIndex) + 1);
+    expect(rowRule).toContain("display: flex");
+    expect(rowRule).toContain("align-items: center");
+    expect(rowRule).not.toMatch(/#[0-9a-f]{3,}|rgb\(|\d+px/i);
+  });
+
+  it("never leaks the previous task's before/after after a task change", () => {
+    const view = renderDefinition({ id: "FN-FIRST", prompt: bothSectionsPrompt, embedded: true });
+    expect(screen.getByTestId("task-detail-definition-transformation")).toHaveTextContent("the transformation is visible at a glance.");
+
+    view.rerender(
+      <TaskDetailContent
+        task={makeTask({ id: "FN-SECOND", prompt: "# Task: FN-SECOND - Second\n\n## What This Delivers\n\nA different outcome entirely.\n", description: "Second description" })}
+        initialTab="definition"
+        embedded
+        onRequestClose={noop}
+        onDeleteTask={noopDelete}
+        onMergeTask={noopMerge}
+        onOpenDetail={noopOpenDetail}
+        addToast={noop}
+      />,
+    );
+
+    expect(screen.queryByTestId("task-detail-definition-transformation")).toBeNull();
   });
 });
