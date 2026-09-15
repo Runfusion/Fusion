@@ -2,6 +2,7 @@ import { ViewHeader } from "./ViewHeader";
 import { DashboardWindowSurfaceRoot } from "../context/DashboardWindowManagerContext";
 import { FloatingWindow } from "./FloatingWindow";
 import { useState, useEffect, useCallback, useRef } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import type { CSSProperties, DragEvent } from "react";
 import { RefreshCw, Activity, TrendingUp, CheckCircle, AlertTriangle, Eye, GripVertical, ChevronUp, ChevronDown } from "lucide-react";
@@ -1052,7 +1053,15 @@ export function UsageIndicator({ isOpen, onClose, projectId, anchorRect, present
   }
 
   if (showDesktopPopover) {
-    return (
+    /*
+    FNXC:PopoverLayering 2026-09-15-09:31:
+    FN-413 portals the anchored popover (backdrop + panel) to document.body like CustomModelDropdown does.
+    floatingWindowStack.ts's contract requires any surface compared in the `--fusion-max-z` band to live in the
+    ROOT stacking context: an inline panel cannot beat siblings outside its own context whatever its z-index.
+    The popover is already `position: fixed` with computed coordinates, so the portal is geometrically neutral,
+    and Escape / outside-click dismissal are document-level listeners and an explicit backdrop handler.
+    */
+    return createPortal(
       <DashboardWindowSurfaceRoot logicalId="usage" group="dialog" className="dashboard-window-surface-root--contents">
         <div
           className="usage-popover-backdrop"
@@ -1060,7 +1069,8 @@ export function UsageIndicator({ isOpen, onClose, projectId, anchorRect, present
           data-testid="usage-modal-overlay"
         />
         {usageContent}
-      </DashboardWindowSurfaceRoot>
+      </DashboardWindowSurfaceRoot>,
+      document.body
     );
   }
 

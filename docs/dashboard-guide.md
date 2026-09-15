@@ -2571,6 +2571,8 @@ For the simplest integration, append overlay content to `#plugin-overlay-root`. 
 
 A static mount-point z-index would eventually be overtaken by the unbounded, session-monotonic utility counter. The live custom property is therefore the layering primitive; the mount point is an inert convenience consumer. When empty, it does not alter layout, scrolling, or pointer behavior.
 
+**Dominant transient surfaces.** A small set of short-lived shell surfaces must stay in front of every dashboard-managed window while they are open — including a window opened *after* them — because they are opened from chrome that remains reachable at all times: the header-anchored **Usage** popover, and the footer **More** menu on desktop, tablet, and phone. They therefore derive their layer from the same live ceiling rather than a static value: the transparent backdrop uses `calc(var(--fusion-max-z) + 2)` and the panel uses `calc(var(--fusion-max-z) + 3)`. The Usage popover is portaled to `document.body` so it is compared in the root stacking context, and the desktop/tablet footer carries its elevation on the bar itself (the bar owns a `--z-sticky` stacking context its absolutely positioned menu could never escape); the footer returns to its resting layer as soon as the menu closes.
+
 Tokens in the table are stable. Renaming or removing one requires a deprecation note and a changeset; `theme-token-contract-docs.test.ts` guards that every documented token still has a CSS definition.
 
 ### Theme system

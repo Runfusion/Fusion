@@ -232,4 +232,88 @@ describe("DesktopActionBar", () => {
     await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
     expect(onChangeView).toHaveBeenCalledTimes(2);
   });
+
+  /*
+  FNXC:PopoverLayering 2026-09-15-09:31:
+  FN-413: while the More menu is open the footer must outrank every dashboard-managed window (shared stack at 10100+).
+  The elevation is carried by the BAR because its `var(--z-sticky)` stacking context traps the absolutely positioned menu.
+  */
+  // (d)
+  it("élève la barre au-dessus du plafond de fenêtres pendant l’ouverture du menu More", () => {
+    render(<DesktopActionBar entries={entries()} activeId="board" tasks={[]} />);
+    const footer = screen.getByTestId("desktop-action-bar");
+    expect(footer).not.toHaveClass("desktop-action-bar--menu-open");
+
+    openOverflowMenu();
+    expect(footer).toHaveClass("desktop-action-bar--menu-open");
+
+    const openRule = alphaDesktopActionBarCss.match(/\.desktop-action-bar--menu-open\s*\{([^}]*)\}/s)?.[1] ?? "";
+    expect(openRule).toMatch(/z-index:\s*calc\(var\(--fusion-max-z\)\s*\+\s*3\)/);
+    const restRule = alphaDesktopActionBarCss.match(/\.desktop-action-bar\s*\{([^}]*)\}/s)?.[1] ?? "";
+    expect(restRule).toMatch(/z-index:\s*var\(--z-sticky\)/);
+  });
+
+  // (e)
+  it("retire le modificateur d’élévation sur chaque fermeture existante", async () => {
+    const onChangeView = vi.fn().mockResolvedValue(true);
+    const view = render(<DesktopActionBar entries={entries(onChangeView)} activeId="board" tasks={[]} />);
+    const footer = screen.getByTestId("desktop-action-bar");
+    const trigger = screen.getByTestId("desktop-nav-more");
+
+    // Escape
+    fireEvent.focus(trigger);
+    expect(footer).toHaveClass("desktop-action-bar--menu-open");
+    fireEvent.keyDown(trigger, { key: "Escape" });
+    expect(footer).not.toHaveClass("desktop-action-bar--menu-open");
+
+    // sortie de focus
+    fireEvent.focus(trigger);
+    expect(footer).toHaveClass("desktop-action-bar--menu-open");
+    fireEvent.focusOut(trigger, { relatedTarget: null });
+    expect(footer).not.toHaveClass("desktop-action-bar--menu-open");
+
+    // sélection d’une entrée acceptée
+    fireEvent.pointerEnter(trigger);
+    expect(footer).toHaveClass("desktop-action-bar--menu-open");
+    fireEvent.click(screen.getByTestId("desktop-nav-automations"));
+    await waitFor(() => expect(footer).not.toHaveClass("desktop-action-bar--menu-open"));
+
+    view.unmount();
+
+    // expiration du délai de grâce après pointerLeave
+    vi.useFakeTimers();
+    render(<DesktopActionBar entries={entries()} activeId="board" tasks={[]} />);
+    const footer2 = screen.getByTestId("desktop-action-bar");
+    fireEvent.pointerEnter(screen.getByTestId("desktop-nav-more"));
+    expect(footer2).toHaveClass("desktop-action-bar--menu-open");
+    fireEvent.pointerLeave(screen.getByRole("menu").parentElement!);
+    act(() => vi.advanceTimersByTime(200));
+    expect(footer2).not.toHaveClass("desktop-action-bar--menu-open");
+  });
+
+  // (i)
+  it("ne rend ni conteneur overflow ni modificateur d’élévation sans destination overflow", () => {
+    const withoutOverflow = entries().filter((entry) => entry.placement !== "overflow");
+    render(<DesktopActionBar entries={withoutOverflow} activeId="board" tasks={[]} />);
+    expect(document.querySelector(".desktop-action-bar__more")).toBeNull();
+    expect(screen.getByTestId("desktop-action-bar")).not.toHaveClass("desktop-action-bar--menu-open");
+    expect(document.querySelector(".desktop-action-bar--menu-open")).toBeNull();
+  });
+
+  // (l) structural invariant: no footer ancestor may create a stacking context, or the elevation is trapped.
+  it("garde les ancêtres de mise en page du footer sans contexte d’empilement", () => {
+    const projectSelectorCss = readAppFile("components/ProjectSelector.css");
+    for (const selector of [".dashboard-project-stack", ".dashboard-project-shell"]) {
+      const rule = projectSelectorCss.match(
+        new RegExp(`\\${selector}\\s*\\{([\\s\\S]*?)\\n\\}`)
+      )?.[1];
+      expect(rule, `${selector} rule must exist`).toBeTruthy();
+      const declarations = (rule ?? "").replace(/\/\*[\s\S]*?\*\//g, "");
+      for (const property of ["z-index", "transform", "filter", "contain", "isolation"]) {
+        expect(declarations, `${selector} must not declare ${property}`).not.toMatch(
+          new RegExp(`(^|[;{\\s])${property}\\s*:`)
+        );
+      }
+    }
+  });
 });

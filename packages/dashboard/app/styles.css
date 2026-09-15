@@ -283,6 +283,20 @@ html {
   */
   --fusion-max-z: 11001;
 
+  /*
+  FNXC:PopoverLayering 2026-09-15-09:31:
+  FN-413 fixes dominant TRANSIENT shell surfaces (the header-anchored Usage popover, the footer "More"
+  menu on desktop/tablet/phone) that were painted on the legacy 30-101 band and therefore disappeared
+  behind any dashboard-managed window, whose shared stack starts at 10100 (floatingWindowStack.ts).
+  While such a surface is OPEN it must stay in front of every dashboard-managed window, including one
+  opened AFTER it, so it derives its layer from the LIVE ceiling instead of a static value:
+    backdrop / click-catcher : calc(var(--fusion-max-z) + 2)
+    panel                    : calc(var(--fusion-max-z) + 3)
+  The ceiling is only ever CONSUMED here; FUSION_MAX_Z_FLOOR and the stack counter are never redefined
+  from CSS. Ties with other ceiling-derived consumers resolve by DOM order, which is acceptable because
+  these surfaces are mutually exclusive in practice and close on outside click/Escape/selection.
+  */
+
   --shadow-glow: var(--ui-shadow-glow-geometry) color-mix(in srgb, var(--todo) 30%, transparent);
   --glow-success: var(--ui-shadow-glow-geometry) color-mix(in srgb, var(--cta-border) 30%, transparent);
   --glow-warning: var(--ui-shadow-glow-geometry) color-mix(in srgb, #e3b541 30%, transparent);

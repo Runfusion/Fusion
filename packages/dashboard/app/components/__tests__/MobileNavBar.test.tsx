@@ -6,6 +6,9 @@ import { fetchScripts } from "../../api";
 import { createMobileNavGeometryStyle, MobileNavBar } from "../MobileNavBar";
 import { MOBILE_MEDIA_QUERY } from "../../hooks/useViewportMode";
 import { NavigationHistoryProvider, useNavigationHistory } from "../../hooks/useNavigationHistory";
+import { readAppFile } from "../../test/cssFixture";
+
+const mobileNavBarLayeringCss = readAppFile("components/MobileNavBar.css");
 
 vi.mock("../../api", () => ({
   fetchScripts: vi.fn(),
@@ -144,6 +147,42 @@ describe("MobileNavBar official mobile shell", () => {
     } else {
       delete (document.documentElement as { clientHeight?: number }).clientHeight;
     }
+  });
+
+  /*
+  FNXC:PopoverLayering 2026-09-15-09:31:
+  FN-413: the phone More menu must outrank every dashboard-managed window while open. The proof has two halves:
+  the surface is a SIBLING of `.mobile-nav-bar` (so nothing traps it in the bar's stacking context) and its declared
+  layer derives from the live `--fusion-max-z` ceiling rather than the legacy 90/91 pair.
+  */
+  // (f)
+  it("keeps the official pill popover outside the nav bar and above the live window ceiling", () => {
+    const { container } = render(<OfficialMobileShell />);
+    fireEvent.click(screen.getByTestId("mobile-menu-trigger"));
+
+    const popover = screen.getByRole("menu", { name: "Navigate" });
+    expect(popover).toHaveClass("mobile-navigation-popover");
+    const navBar = container.querySelector<HTMLElement>(".mobile-nav-bar")!;
+    expect(navBar.contains(popover)).toBe(false);
+
+    const rule = mobileNavBarLayeringCss.match(/\.mobile-navigation-popover\s*\{([^}]*)\}/s)?.[1] ?? "";
+    expect(rule).toMatch(/z-index:\s*calc\(var\(--fusion-max-z\)\s*\+\s*3\)/);
+  });
+
+  // (g) legacy sheet variant: unreachable at runtime today (officialDesignEnabled is a constant true),
+  // so its contract is pinned on the stylesheet plus the sibling structure of the markup branch.
+  it("keeps the legacy sheet variant and its backdrop on the ceiling-derived scale", () => {
+    const sheetRule = mobileNavBarLayeringCss.match(/\.mobile-more-sheet\s*\{([^}]*)\}/s)?.[1] ?? "";
+    const backdropRule = mobileNavBarLayeringCss.match(/\.mobile-more-sheet-backdrop\s*\{([^}]*)\}/s)?.[1] ?? "";
+    expect(sheetRule).toMatch(/z-index:\s*calc\(var\(--fusion-max-z\)\s*\+\s*3\)/);
+    expect(backdropRule).toMatch(/z-index:\s*calc\(var\(--fusion-max-z\)\s*\+\s*2\)/);
+
+    // The sheet, its backdrop and the pill popover are rendered as siblings of <nav>, never inside it.
+    const source = readAppFile("components/MobileNavBar.tsx");
+    const afterNav = source.slice(source.indexOf("</nav>"));
+    expect(afterNav).toContain("mobile-more-sheet-backdrop");
+    expect(afterNav).toContain("mobile-navigation-popover");
+    expect(afterNav).toContain("mobile-more-sheet");
   });
 
   it("renders the fixed pill destinations and no legacy tabs", () => {

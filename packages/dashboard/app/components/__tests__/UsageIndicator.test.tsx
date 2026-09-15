@@ -5,6 +5,7 @@ import "../UsageIndicator.css";
 import * as useUsageDataModule from "../../hooks/useUsageData";
 import type { ProviderUsage } from "../../api";
 import { scopedKey } from "../../utils/projectStorage";
+import { readAppFile, loadAllAppCssBaseOnly } from "../../test/cssFixture";
 
 // Mock the useUsageData hook
 vi.mock("../../hooks/useUsageData", () => ({
@@ -2962,5 +2963,148 @@ describe("UsageIndicator", () => {
     // Email should NOT be rendered
     expect(screen.queryByText("user@example.com")).not.toBeInTheDocument();
     expect(document.querySelector(".usage-provider-email")).not.toBeInTheDocument();
+  });
+});
+
+/*
+FNXC:PopoverLayering 2026-09-15-09:31:
+FN-413 requires the header-anchored Usage popover to outrank every dashboard-managed window while it is open.
+That only holds if the popover is portaled into the ROOT stacking context (floatingWindowStack.ts contract), so
+these cases pin the portal, the surface class across every data state, the host census, and the negative control.
+*/
+describe("UsageIndicator — dominant transient popover layering (FN-413)", () => {
+  const onClose = vi.fn();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.removeItem(USAGE_VIEW_MODE_KEY);
+    localStorage.removeItem(USAGE_HIDDEN_WINDOWS_KEY);
+    localStorage.removeItem(USAGE_PROVIDER_ORDER_KEY);
+    localStorage.removeItem(USAGE_MODAL_SIZE_KEY);
+    setViewportSize({ width: 1440, height: 900 });
+  });
+
+  const dataStates: Array<[string, Partial<MockUsageDataState>]> = [
+    ["loading", { providers: [], loading: true, hasFetched: false, error: null }],
+    ["error", { providers: [], loading: false, error: "boom" }],
+    ["empty provider list", { providers: [], loading: false, error: null }],
+    [
+      "populated providers",
+      {
+        providers: [
+          {
+            name: "Anthropic",
+            icon: "A",
+            status: "ok",
+            plan: "Pro",
+            windows: [{ label: "Session", percentUsed: 10, percentLeft: 90, resetText: "resets in 4h" }],
+          },
+        ] as ProviderUsage[],
+        loading: false,
+        error: null,
+      },
+    ],
+  ];
+
+  // (a)
+  it.each(dataStates)(
+    "renders the anchored popover portaled into document.body with the popover class (%s)",
+    (_label, overrides) => {
+      mockUseUsageData.mockReturnValue(createUsageDataState({ refresh: vi.fn(), ...overrides }));
+
+      const { container } = render(
+        <UsageIndicator
+          isOpen={true}
+          onClose={onClose}
+          projectId={TEST_PROJECT_ID}
+          anchorRect={createAnchorRect()}
+        />
+      );
+
+      const modal = screen.getByTestId("usage-modal");
+      expect(modal).toHaveClass("usage-modal--popover");
+      expect(screen.getByTestId("usage-modal-overlay")).toBeInTheDocument();
+
+      const surfaceRoot = modal.parentElement as HTMLElement;
+      expect(surfaceRoot).not.toBeNull();
+      expect(container.contains(surfaceRoot)).toBe(false);
+      expect(document.body.contains(surfaceRoot)).toBe(true);
+    }
+  );
+
+  // (b) source census: every host that opens Usage with an anchor rect is known and wired.
+  it("census: exactly the known onOpenUsage callers pass a measured anchor rect", () => {
+    const headerSource = readAppFile("components/Header.tsx");
+    const anchoredHostIds = new Set<string>();
+
+    for (const match of headerSource.matchAll(/<button[\s\S]*?<\/button>/g)) {
+      const block = match[0];
+      if (!block.includes("onOpenUsage(")) continue;
+      if (!block.includes("getBoundingClientRect()")) continue;
+      const testId = block.match(/data-testid="([^"]+)"/)?.[1];
+      if (testId) anchoredHostIds.add(testId);
+    }
+
+    expect([...anchoredHostIds].sort()).toEqual([
+      "header-usage-btn",
+      "mobile-header-usage-btn",
+      "overflow-usage-btn",
+    ]);
+  });
+
+  // (c) negative control
+  it("renders no popover class and no portal when there is no anchor rect", () => {
+    mockUseUsageData.mockReturnValue(createUsageDataState({ refresh: vi.fn() }));
+
+    const { container } = render(
+      <UsageIndicator isOpen={true} onClose={onClose} projectId={TEST_PROJECT_ID} anchorRect={null} />
+    );
+
+    // NOTE: the shared-window branch reuses the `usage-modal-overlay` testId for its own overlay,
+    // so the popover-specific proof is the backdrop class, not that testId.
+    expect(screen.getByTestId("usage-modal")).not.toHaveClass("usage-modal--popover");
+    expect(document.querySelectorAll(".usage-popover-backdrop")).toHaveLength(0);
+    expect(container.querySelector(".usage-modal--popover")).toBeNull();
+  });
+
+  // (c bis) negative control: phone viewport with an anchor rect is not the popover branch
+  it("renders no popover class on a phone viewport even with an anchor rect", () => {
+    mockUseUsageData.mockReturnValue(createUsageDataState({ refresh: vi.fn() }));
+    setViewportSize({ width: 390, height: 780 });
+
+    render(
+      <UsageIndicator
+        isOpen={true}
+        onClose={onClose}
+        projectId={TEST_PROJECT_ID}
+        anchorRect={createAnchorRect()}
+      />
+    );
+
+    expect(screen.getByTestId("usage-modal")).not.toHaveClass("usage-modal--popover");
+    expect(document.querySelectorAll(".usage-popover-backdrop")).toHaveLength(0);
+  });
+
+  // (k) the surface root must stay display:contents so it introduces no intermediate stacking context.
+  it("keeps the popover surface root as a display:contents wrapper", () => {
+    mockUseUsageData.mockReturnValue(createUsageDataState({ refresh: vi.fn() }));
+
+    render(
+      <UsageIndicator
+        isOpen={true}
+        onClose={onClose}
+        projectId={TEST_PROJECT_ID}
+        anchorRect={createAnchorRect()}
+      />
+    );
+
+    const surfaceRoot = screen.getByTestId("usage-modal").parentElement as HTMLElement;
+    expect(surfaceRoot.className).toContain("dashboard-window-surface-root--contents");
+
+    const rule = loadAllAppCssBaseOnly().match(
+      /\.dashboard-window-surface-root--contents\s*\{([^}]*)\}/
+    );
+    expect(rule).not.toBeNull();
+    expect(rule![1]).toContain("display: contents");
   });
 });

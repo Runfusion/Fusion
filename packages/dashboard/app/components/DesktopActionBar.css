@@ -20,6 +20,17 @@ The bar renders as a sibling of .dashboard-project-shell inside .dashboard-proje
   border-block-start: var(--btn-border-width) solid var(--border-color);
   background: var(--bg-secondary);
 }
+/*
+FNXC:PopoverLayering 2026-09-15-09:31:
+FN-413 elevates the BAR while its More menu is open, never the menu alone: `.desktop-action-bar` declares
+`z-index: var(--z-sticky)` (30) and thus creates a stacking context, so raising the absolutely positioned
+`.desktop-action-bar__menu` inside it would be inert against the 10100+ dashboard window stack. The menu is also
+deliberately NOT portaled: the trigger+panel `pointerenter`/`pointerleave` perimeter and the `::before` hover corridor
+both depend on DOM parenthood. At rest the bar keeps `var(--z-sticky)`.
+*/
+.desktop-action-bar--menu-open {
+  z-index: calc(var(--fusion-max-z) + 3);
+}
 .desktop-action-bar__capacity, .desktop-action-bar__right { display: flex; flex: 0 0 auto; align-items: stretch; }
 .desktop-action-bar__center { display: flex; flex: 1 1 auto; min-inline-size: 0; justify-content: center; gap: var(--space-xs); }
 .desktop-action-bar__scroller { display: flex; justify-content: center; gap: var(--space-xs); overflow-x: auto; }

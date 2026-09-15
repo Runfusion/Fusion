@@ -82,7 +82,14 @@ export function DesktopActionBar({ entries, activeId, tasks, projectId, columnFl
   FNXC:DesktopNavigation 2026-09-13-02:40:
   The wide footer shared by tablet and desktop keeps capacity at the far left, navigation in the middle, and its optional Terminal action immediately left of the single retained Settings action. Scripts remain on their existing owners, and omitting both right-side actions must leave no empty action-group shell.
   */
-  return <nav ref={dashboardWindowFooterRef} className="desktop-action-bar" aria-label={t("nav.primaryNavAriaLabel", "Primary navigation")} data-testid="desktop-action-bar">
+  /*
+  FNXC:PopoverLayering 2026-09-15-09:31:
+  FN-413: while the More menu is OPEN the footer must outrank every dashboard-managed window, so the bar carries an
+  open modifier. The elevation belongs to the BAR, not the menu: `.desktop-action-bar` declares `z-index: var(--z-sticky)`
+  and therefore owns a stacking context its absolutely positioned child can never escape. At rest the bar stays on the
+  sticky token so a closed footer never dominates windows. Driven strictly by `overflowOpen`; no other behavior changes.
+  */
+  return <nav ref={dashboardWindowFooterRef} className={`desktop-action-bar${overflowOpen ? " desktop-action-bar--menu-open" : ""}`} aria-label={t("nav.primaryNavAriaLabel", "Primary navigation")} data-testid="desktop-action-bar">
     <div className="desktop-action-bar__capacity"><EngineControlMenu projectId={projectId} triggerContent={<span data-testid="desktop-capacity-count">{capacityText}</span>} triggerLabel={capacityLabel} /></div>
     <div className="desktop-action-bar__center"><div className="desktop-action-bar__scroller">{direct.map((entry) => renderButton(entry))}</div>
     {overflow.length ? <div

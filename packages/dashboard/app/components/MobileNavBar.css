@@ -271,11 +271,18 @@ The official navigation menu uses the pill's measured top edge as its exclusive 
 FNXC:MobilePillPopover 2026-09-13-10:32:
 The popover's upper bound is the shifted visual viewport top plus the device safe inset and token gap. Subtract the App-provided viewport offset from the actual height cap so an iOS keyboard transition cannot leave the first menu controls above the visible canvas.
 */
+/*
+FNXC:PopoverLayering 2026-09-15-09:31:
+FN-413: the phone "More" menu (both the official pill popover and the legacy sheet, plus its backdrop) must outrank
+every dashboard-managed window while OPEN — the shared window stack starts at 10100, so the legacy 90/91 pair was
+covered by any open window. These surfaces are siblings of `.mobile-nav-bar`, never its descendants, so deriving
+from the live `--fusion-max-z` ceiling is effective. `.mobile-nav-bar` itself stays at rest on its own layer.
+*/
 .mobile-navigation-popover {
   position: fixed;
   bottom: var(--mobile-nav-popover-bottom);
   right: calc(var(--icb-right-offset, 0px) + var(--space-md));
-  z-index: 91;
+  z-index: calc(var(--fusion-max-z) + 3);
   width: min(calc(var(--space-2xl) * 8), calc(100vw - (var(--space-md) * 2) - var(--icb-right-offset, 0px)));
   max-height: calc(100dvh - var(--mobile-nav-popover-bottom) - var(--mobile-nav-viewport-offset-top) - env(safe-area-inset-top, 0px) - var(--space-md));
   overflow-y: auto;
@@ -296,7 +303,7 @@ The popover's upper bound is the shifted visual viewport top plus the device saf
 .mobile-more-sheet-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 90;
+  z-index: calc(var(--fusion-max-z) + 2);
   background: color-mix(in srgb, var(--bg) 50%, transparent);
   animation: mobile-more-backdrop-in 0.2s ease;
 }
@@ -306,7 +313,7 @@ The popover's upper bound is the shifted visual viewport top plus the device saf
   bottom: 0;
   left: 0;
   right: 0;
-  z-index: 91;
+  z-index: calc(var(--fusion-max-z) + 3);
   background: var(--surface);
   border-top-left-radius: var(--radius-lg, 12px);
   border-top-right-radius: var(--radius-lg, 12px);

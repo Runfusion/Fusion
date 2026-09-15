@@ -12,10 +12,16 @@ FNXC:FloatingWindowDialogHosts 2026-09-14-22:36:
 FN-394 re-hosted the confirmation, provider sign-in, agent-creation, and workflow-creation dialogs in the shared
 FloatingWindow, which owns the single portal for them. They are therefore no longer their own portal roots.
 */
+/*
+FNXC:PopoverLayering 2026-09-15-09:31:
+FN-413 portals the header-anchored Usage popover to document.body so its `--fusion-max-z`-derived layer is compared
+in the root stacking context; that makes UsageIndicator its own portal root in addition to its FloatingWindow branch.
+*/
 const modalPortalRoots = [
   "NewTaskModal.tsx",
   "TaskDetailModal.tsx",
   "TerminalModal.tsx",
+  "UsageIndicator.tsx",
 ] as const;
 
 const declarativelyManagedDirectModalRoots = [
