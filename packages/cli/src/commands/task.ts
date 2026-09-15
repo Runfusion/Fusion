@@ -1,5 +1,5 @@
 import { TaskStore, COLUMNS, COLUMN_LABELS, MAX_TASK_MESSAGE_LENGTH, resolveProjectColumnsForRoles, TERMINAL_ROLES, resolveReviewColumns, resolveTaskLifecycleColumns, resolveWorkflowIrForTask, resolveWorkflowIrForTaskWithProvenance, workflowHasColumn, CentralCore, buildAutoPauseClearPatch, buildManualRetryResetPatch, extractIntentSignature, findNearDuplicates, getTaskDuplicateLineage, isValidRepoSlug, isWorkspaceTask, reconcileDeterministicDuplicate, resolveTaskGithubTracking, runDeterministicDuplicateGuard, type Settings, type Column, type ColumnId, type StepStatus, type AgentLogType, type AgentLogEntry, type IntentSignature, type NearDuplicateCandidate, type NearDuplicateMatch, type TaskDependencyMutation } from "@fusion/core";
-import { admitTaskToWip, isFirstPlanningToWipAdmission, isInReviewMissingWorktreeSessionStartFailure, planTaskWorktreePath, runAiMerge, landWorkspaceTask, withWorkspaceMergeDispatchLease, clearOwnedMergeStamp, reconcileUnownedStaleMergeStamp } from "@fusion/engine";
+import { admitTaskToWip, isFirstPlanningToWipAdmission, isInReviewMissingWorktreeSessionStartFailure, planTaskWorktreePath, runAiMerge, landWorkspaceTask, withWorkspaceMergeDispatchLease, clearOwnedMergeStamp, reconcileUnownedStaleMergeStamp, SelfHealingManager } from "@fusion/engine";
 import { createInterface } from "node:readline/promises";
 import type { PlanningQuestion, PlanningSummary } from "@fusion/core";
 import { createSession, createTaskFromPlanSession, ensureDurablePlanningSessionStore, getSession as getPlanningSession, submitResponse, validateSession, RateLimitError, SessionNotFoundError, InvalidSessionStateError } from "@fusion/dashboard/planning";
@@ -1244,6 +1244,39 @@ async function runTaskShowWithStore(id: string, store: TaskStore) {
       console.log(`    ${ts}  ${l.action}${l.outcome ? ` → ${l.outcome}` : ""}`);
     }
     console.log();
+  }
+}
+
+/** Reconcile an in-review card after its already-landed branch was deliberately cleaned up. */
+export async function runTaskReconcile(id: string, projectName?: string) {
+  const context = await resolveBoardContext(projectName, id, "resolve project");
+  try {
+    /*
+    FNXC:WorkflowRecovery 2026-09-15-15:27 (FN-9304):
+    This CLI is a separate process, so its registries are structurally empty and cannot prove
+    idleness. Leave every liveness and CAS decision to SelfHealingManager's durable fence.
+    */
+    const manager = new SelfHealingManager(context.store, { rootDir: context.projectPath });
+    const result = await manager.reconcileLandedReviewTask(id, { source: "manual", requireAutoMergeEligible: false });
+    if (result.outcome === "reconciled") {
+      console.log(`Reconciled ${id}: landed ${result.sha} via ${result.strategy} on ${result.baseBranch}; card moved to complete.`);
+      return;
+    }
+    if (result.outcome === "already-complete") {
+      console.log(`${id} is already complete; no reconciliation was needed.`);
+      return;
+    }
+    if (result.outcome === "not-landed") {
+      console.error(`Cannot reconcile ${id}: no commit with Fusion-Task-Id: ${id} (or its lineage trailer) was found on ${result.baseBranch}. Reconcile never fabricates an approval.`);
+    } else if (result.outcome === "raced") {
+      console.error(`Cannot reconcile ${id}: the card changed while reconciling (${result.reason}); retry.`);
+    } else {
+      const live = ["live-session", "executing", "checkout-leased"].includes(result.reason);
+      console.error(`Cannot reconcile ${id}: ${result.reason}${live ? "; something is still working on this task" : ""}.`);
+    }
+    await closeBoardContextAndExit(context, 1);
+  } finally {
+    await closeProjectStore(context).catch(() => undefined);
   }
 }
 

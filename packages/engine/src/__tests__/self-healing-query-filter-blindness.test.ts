@@ -1234,7 +1234,7 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     const resolveTarget = vi.fn(async () => ({ branch: "main", source: "settings" }));
     Object.assign(manager, {
       resolveSelfHealingMergeTarget: resolveTarget,
-      isBranchTipMisboundToTask: vi.fn(async () => ({ rejection: null, branchTip: "abc1234" })),
+      isBranchTipMisboundToTask: vi.fn(async () => ({ rejection: null, branchMissing: false, branchTip: "abc1234", misbound: false, landed: null })),
     });
     return { manager, resolveTarget };
   }

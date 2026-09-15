@@ -127,6 +127,7 @@ vi.mock("@fusion/core", async (importActual) => {
 // Mock @fusion/engine
 vi.mock("@fusion/engine", () => ({
   aiMergeTask: vi.fn(),
+  SelfHealingManager: vi.fn(),
   runAiMerge: vi.fn(),
   landWorkspaceTask: vi.fn(),
   admitTaskToWip: vi.fn(),

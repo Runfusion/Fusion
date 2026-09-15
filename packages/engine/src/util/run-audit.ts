@@ -587,6 +587,10 @@ export type DatabaseMutationType =
   /* FNXC:MissionAutoReconcile 2026-08-11-02:39: Periodic reconcile records only IDs, source enums, and bounded counters. */
   | "mission:reconcile-pass"
   | "task:auto-recover-branch-misbound"
+  /** Metadata: { taskId, source, branch, baseBranch, mergeSha, mergeStrategy, ownershipProof } — identifiers and fixed outcomes only. */
+  | "task:reconcile-absent-branch-landed"
+  /** Metadata: { taskId, source, branch, baseBranch, reason } — identifiers and fixed outcomes only. */
+  | "task:reconcile-absent-branch-unproven"
   | "task:auto-recover-misrouted-foreign-commit"
   | "task:auto-recover-foreign-only-contamination"
   | "task:auto-recover-foreign-only-contamination-skipped"

@@ -53,7 +53,7 @@ import type { MeshLeaseManager } from "./project/mesh-lease-manager.js";
 import { createLogger, schedulerLog } from "./logger.js";
 import { registerLifecycleMoveLog } from "./execution/lifecycle-move-log.js";
 import { moveTaskToContainedBackwardTarget, type ContainedLifecycleMoveResult } from "./execution/lifecycle-move.js";
-import { emitBoundedRunAudit } from "./util/emit-bounded-run-audit.js";
+import { emitBoundedRunAudit, emitBoundedRunAuditWithOutcome } from "./util/emit-bounded-run-audit.js";
 import {
   TRIAGE_MARKER_CLEARED_REPLAN_LOG_ACTION,
   buildInactiveDuplicateClearFeedback,
@@ -651,7 +651,7 @@ shares ONE definition with this sweep. Previously the manual gate hardcoded its 
 and refused to retry ANY merge-active status, so an orphaned `landing` stamp was un-retryable by
 hand while this sweep cleared it automatically minutes later.
 */
-import { ACTIVE_MERGE_STATUSES, DEFAULT_STALE_MERGING_STATUS_MIN_AGE_MS, isStaleMergeActiveStatus, shouldClearOrphanedMergeStamp } from "./merge/merge-active-status.js";
+import { ACTIVE_MERGE_STATUSES, DEFAULT_STALE_MERGING_STATUS_MIN_AGE_MS, isMergeActiveStatus, isStaleMergeActiveStatus, shouldClearOrphanedMergeStamp } from "./merge/merge-active-status.js";
 export { ACTIVE_MERGE_STATUSES, DEFAULT_STALE_MERGING_STATUS_MIN_AGE_MS, isMergeActiveStatus, isStaleMergeActiveStatus } from "./merge/merge-active-status.js";
 const STRANDED_COMPLETED_TODO_ACTIVE_STATUSES = new Set([
   "in-progress",
@@ -853,6 +853,13 @@ function isPrincipalHeldPlanningStatusOwned(status: Task["status"] | undefined):
   return status === null || status === undefined;
 }
 
+export type LandedReviewReconcileResult =
+  | { outcome: "reconciled"; sha: string; strategy: string; baseBranch: string }
+  | { outcome: "already-complete" }
+  | { outcome: "not-landed"; baseBranch: string }
+  | { outcome: "raced"; reason: string }
+  | { outcome: "ineligible"; reason: "workspace" | "not-in-review" | "paused" | "user-paused" | "executing" | "live-session" | "checkout-leased" | "auto-merge-off" | "no-branch-recorded" | "branch-present" | "engine-paused" };
+
 export class SelfHealingManager extends SelfHealingGitEvidence {
   // ── Auto-unpause state ──────────────────────────────────────────────
   private unpauseTimer: ReturnType<typeof setTimeout> | null = null;
@@ -881,6 +888,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   // ── Per-task deadlock recovery cooldown ─────────────────────────────
   private deadlockRecoveryCooldown: Map<string, number> = new Map();
   private mergeStarvationDrops: Map<string, number> = new Map();
+  private readonly absentBranchUnprovenAuditKeys = new Set<string>();
   /*
   FNXC:Workspace 2026-08-15-04:42:
   The partial-land reconciler separately bounds rejected merge enqueues and unavailable branch
@@ -13763,6 +13771,79 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   }
 
 
+  /**
+   * Reconciles an absent post-merge branch only after ownership proof and liveness fences agree.
+   *
+   * FNXC:WorkflowRecovery 2026-09-15-15:27 (FN-9304):
+   * The engine registry is authoritative only for this process, while a CLI has an intentionally
+   * empty registry. Pair that local fence with durable pause, status, and checkout-lease evidence;
+   * neither tier alone can safely finalize a card owned by another process.
+   */
+  async reconcileLandedReviewTask(
+    taskId: string,
+    options: { source: "self-healing" | "manual"; requireAutoMergeEligible?: boolean },
+  ): Promise<LandedReviewReconcileResult> {
+    const task = await this.store.getTask(taskId).catch(() => null);
+    if (!task) return { outcome: "ineligible", reason: "not-in-review" };
+    const settings = await this.store.getSettings();
+    if (settings.globalPause || settings.enginePaused) return { outcome: "ineligible", reason: "engine-paused" };
+    if (isWorkspaceTask(task)) return { outcome: "ineligible", reason: "workspace" };
+    const reviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
+    if (!reviewColumns.has(task.column)) {
+      return task.mergeDetails?.mergeConfirmed ? { outcome: "already-complete" } : { outcome: "ineligible", reason: "not-in-review" };
+    }
+    if (task.mergeDetails?.mergeConfirmed) return { outcome: "already-complete" };
+    if (task.paused) return { outcome: "ineligible", reason: "paused" };
+    if (task.userPaused) return { outcome: "ineligible", reason: "user-paused" };
+    const livePaths = activeSessionRegistry.pathsForTask(task.id).filter((path) => activeSessionRegistry.isPathActive(path));
+    if (livePaths.length > 0) return { outcome: "ineligible", reason: "live-session" };
+    if (executingTaskLock.has(task.id) || this.options.isTaskActive?.(task.id) === true) return { outcome: "ineligible", reason: "executing" };
+    // FNXC:WorkflowRecovery 2026-09-15-16:05 (FN-9304): Every canonical merge-active
+    // status, including clean-room review and landing, proves a merger may still own this card.
+    if (task.status === "executing" || task.status === "in-progress" || isMergeActiveStatus(task.status)) return { outcome: "ineligible", reason: "executing" };
+    const graceMs = (settings.taskStuckTimeoutMs ?? STALE_ACTIVE_BRANCH_EXECUTION_GRACE_MS) * PHANTOM_EXECUTOR_BINDING_AGE_MULTIPLIER;
+    const leaseAge = task.checkoutLeaseRenewedAt ? Date.now() - Date.parse(task.checkoutLeaseRenewedAt) : Number.POSITIVE_INFINITY;
+    if (task.checkoutRunId && Number.isFinite(leaseAge) && leaseAge >= 0 && leaseAge < graceMs) return { outcome: "ineligible", reason: "checkout-leased" };
+    if (options.requireAutoMergeEligible && !allowsAutoMergeProcessing(task, settings)) return { outcome: "ineligible", reason: "auto-merge-off" };
+    const branch = task.branch;
+    if (!branch) return { outcome: "ineligible", reason: "no-branch-recorded" };
+    const mergeTarget = await this.resolveSelfHealingMergeTarget(task, settings, "reconcile-absent-branch");
+    const check = await this.isBranchTipMisboundToTask({ branch, taskId: task.id, lineageId: task.lineageId, baseBranch: mergeTarget.branch });
+    if (!check.branchMissing) return { outcome: "ineligible", reason: "branch-present" };
+    if (!check.landed) return { outcome: "not-landed", baseBranch: mergeTarget.branch };
+    const fingerprint = JSON.stringify({ column: task.column, status: task.status ?? null, paused: !!task.paused, userPaused: !!task.userPaused, branch, mergeConfirmed: !!task.mergeDetails?.mergeConfirmed, checkoutRunId: task.checkoutRunId ?? null, checkoutLeaseRenewedAt: task.checkoutLeaseRenewedAt ?? null });
+    const mergeDetails: MergeDetails = { commitSha: check.landed.sha, mergedAt: new Date().toISOString(), mergeConfirmed: true, prNumber: getPrimaryPrInfo(task)?.number, mergeTargetBranch: mergeTarget.branch, mergeTargetSource: mergeTarget.source };
+    let committed = false;
+    const commitIfCurrent = (current: Task) => {
+      const currentFingerprint = JSON.stringify({ column: current.column, status: current.status ?? null, paused: !!current.paused, userPaused: !!current.userPaused, branch: current.branch ?? null, mergeConfirmed: !!current.mergeDetails?.mergeConfirmed, checkoutRunId: current.checkoutRunId ?? null, checkoutLeaseRenewedAt: current.checkoutLeaseRenewedAt ?? null });
+      if (currentFingerprint !== fingerprint) return null;
+      committed = true;
+      return { mergeDetails, branch: null, branchWriteOrigin: "engine" as const, status: null, error: null, paused: false };
+    };
+    if (typeof this.store.updateTaskAtomic === "function") {
+      await this.store.updateTaskAtomic(task.id, commitIfCurrent);
+    } else {
+      // Lightweight in-memory stores used by legacy recovery tests predate the atomic seam.
+      const current = await this.store.getTask(task.id);
+      const patch = current && commitIfCurrent(current);
+      if (patch) await this.store.updateTask(task.id, patch);
+    }
+    if (!committed) return { outcome: "raced", reason: "task-state-changed" };
+    await this.recordSelfHealingBranchGroupMemberLanding(task, mergeTarget, "reconcile-absent-branch");
+    const completeLane = (await resolveTaskLifecycleColumns(this.store, task.id))?.complete ?? "done";
+    const movedTask = await this.moveToCompleteLaneAfterLandedCleanup(task, completeLane, "reconcile-absent-branch", mergeDetails);
+    this.emitTaskMerged(movedTask, { mergeConfirmed: true });
+    await this.store.logEntry(task.id, `Auto-reconciled: absent branch with landed content on ${mergeTarget.branch} at ${check.landed.sha.slice(0, 8)} via ${check.landed.strategy}`);
+    await this.reconcileCompletedTask(task.id, { worktreeHint: task.worktree ?? undefined });
+    /*
+    FNXC:RunAudit 2026-09-15-15:27 (FN-9304):
+    Reconciliation telemetry uses the FN-9175 bounded seam after the CAS mutation. An absent,
+    throwing, rejecting, hanging, or late audit sink must never alter or wedge card finalization.
+    */
+    await emitBoundedRunAudit(this.store, { taskId: task.id, agentId: "self-healing", runId: generateSyntheticRunId("reconcile-absent-branch", task.id), domain: "database", mutationType: "task:reconcile-absent-branch-landed", target: task.id, metadata: { taskId: task.id, source: options.source, branch, baseBranch: mergeTarget.branch, mergeSha: check.landed.sha, mergeStrategy: check.landed.strategy, ownershipProof: "trailer" } }, { log });
+    return { outcome: "reconciled", sha: check.landed.sha, strategy: check.landed.strategy, baseBranch: mergeTarget.branch };
+  }
+
   async recoverBranchMisboundInReviewTasks(): Promise<number> {
     try {
       const settings = await this.store.getSettings();
@@ -13829,6 +13910,29 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             lineageId: task.lineageId,
             baseBranch,
           });
+          if (check.branchMissing) {
+            /*
+            FNXC:WorkflowRecovery 2026-09-15-15:27 (FN-9304):
+            Post-merge cleanup removes branches normally. Classify it, then finalize only with
+            ownership-anchored base proof and a passing liveness fence; unproven cards stay quiet
+            rather than re-emitting the historical rev-parse warning every maintenance cycle.
+            */
+            const result = await this.reconcileLandedReviewTask(task.id, { source: "self-healing", requireAutoMergeEligible: true });
+            if (result.outcome === "reconciled") recovered++;
+            else if (result.outcome !== "already-complete") {
+              const reason = result.outcome === "not-landed" ? "not-landed" : result.reason;
+              const key = `${task.id}:${reason}`;
+              if (!this.absentBranchUnprovenAuditKeys.has(key)) {
+                const audit = await emitBoundedRunAuditWithOutcome(this.store, {
+                  taskId: task.id, agentId: "self-healing", runId: generateSyntheticRunId("reconcile-absent-branch", task.id), domain: "database", mutationType: "task:reconcile-absent-branch-unproven", target: task.id,
+                  metadata: { taskId: task.id, source: "self-healing", branch, baseBranch, reason },
+                }, { log });
+                if (audit.outcome === "recorded") this.absentBranchUnprovenAuditKeys.add(key);
+              }
+              log.debug(`recoverBranchMisboundInReviewTasks: absent branch for ${task.id} was not reconciled (${reason})`);
+            }
+            continue;
+          }
           if (check.rejection) {
             await this.rejectForeignAlreadyMergedCandidate({
               task,
