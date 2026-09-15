@@ -4,8 +4,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { useEffect, useRef, useState } from "react";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { loadAllAppCss } from "../../test/cssFixture";
+import { loadAllAppCss, loadAllAppCssBaseOnly } from "../../test/cssFixture";
 import { CustomModelDropdown } from "../CustomModelDropdown";
+import { FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT } from "../FloatingWindow";
 
 vi.mock("../ProviderIcon", () => ({
   ProviderIcon: ({ provider }: { provider: string }) => <span data-testid={`provider-icon-${provider}`} />, 
@@ -116,6 +117,101 @@ describe("CustomModelDropdown", () => {
     const wrapperRuleMatch = css.match(/\.model-combobox-search-wrapper\s*\{[^}]*\}/);
     expect(wrapperRuleMatch).toBeTruthy();
     expect(wrapperRuleMatch![0]).toContain("background: var(--surface);");
+  });
+
+  /*
+  FNXC:ModelDropdown 2026-09-15-03:49:
+  Options are native <button>s; without a local reset they keep the browser's ButtonFace background
+  (white-on-white model names in dark mode) and their intrinsic content width (rows stop short of the
+  list edge). These cases reproduce both reported symptoms against the base rule and the rendered DOM.
+  */
+  it("resets the native button background and stretches each option to the full row width", () => {
+    const css = loadAllAppCssBaseOnly();
+    const optionRule = css.match(/\.model-combobox-option\s*\{[^}]*\}/)?.[0] ?? "";
+
+    expect(optionRule).toContain("background: transparent;");
+    expect(optionRule).toContain("border: 0;");
+    expect(optionRule).toContain("appearance: none;");
+    expect(optionRule).toContain("color: var(--text);");
+    expect(optionRule).toContain("width: 100%;");
+    expect(optionRule).toContain("flex: 1 1 auto;");
+    expect(optionRule).toContain("text-align: left;");
+
+    // The pinned-favourite row must still win over the transparent base background.
+    expect(css.indexOf(".model-combobox-option--favorite")).toBeGreaterThan(css.indexOf(".model-combobox-option {"));
+
+    // The rendered provider-header classes must exist in CSS (the legacy -text class was never rendered).
+    expect(css).toContain(".model-combobox-optgroup-label");
+    expect(css).toContain(".model-combobox-optgroup-actions");
+    expect(css).not.toContain(".model-combobox-optgroup-text");
+  });
+
+  it.each([
+    ["populated multi-provider list", { filter: "", collapse: false }],
+    ["collapsed provider group", { filter: "", collapse: true }],
+    ["filtered list", { filter: "claude", collapse: false }],
+  ])("renders every option as a full-width button child of its option row (%s)", async (_label, scenario) => {
+    const user = userEvent.setup();
+    render(
+      <CustomModelDropdown
+        label="Model"
+        value="anthropic/claude-sonnet"
+        onChange={vi.fn()}
+        models={COLLAPSIBLE_MODELS}
+        onToggleModelFavorite={vi.fn()}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Model" }));
+    const portal = await screen.findByTestId("model-combobox-portal");
+    if (scenario.collapse) {
+      await user.click(within(portal).getByTestId("model-combobox-provider-toggle-anthropic"));
+    }
+    if (scenario.filter) {
+      await user.type(screen.getByPlaceholderText("Filter models…"), scenario.filter);
+    }
+
+    const options = portal.querySelectorAll(".model-combobox-option");
+    expect(options.length).toBeGreaterThan(0);
+    for (const option of Array.from(options)) {
+      expect(option.tagName).toBe("BUTTON");
+      expect(option.parentElement?.classList.contains("model-combobox-option-row")).toBe(true);
+    }
+  });
+
+  it("keeps the empty-filter state readable without any option row", async () => {
+    const user = userEvent.setup();
+    render(<CustomModelDropdown label="Model" value="" onChange={vi.fn()} models={COLLAPSIBLE_MODELS} />);
+    await user.click(screen.getByRole("button", { name: "Model" }));
+    await user.type(screen.getByPlaceholderText("Filter models…"), "zzzz-no-match");
+
+    const portal = await screen.findByTestId("model-combobox-portal");
+    expect(portal.querySelector(".model-combobox-no-results")).not.toBeNull();
+    // Only the always-present "default" special option survives an empty filter; it is still a
+    // full-width button row, never a content-width native button.
+    const remaining = Array.from(portal.querySelectorAll(".model-combobox-option"));
+    expect(remaining.length).toBe(1);
+    expect(remaining[0]!.tagName).toBe("BUTTON");
+    expect(remaining[0]!.parentElement?.classList.contains("model-combobox-option-row")).toBe(true);
+  });
+
+  it("renders the pinned favourite option as a full-width button row", async () => {
+    const user = userEvent.setup();
+    render(
+      <CustomModelDropdown
+        label="Model"
+        value=""
+        onChange={vi.fn()}
+        models={COLLAPSIBLE_MODELS}
+        favoriteModels={["anthropic/claude-sonnet"]}
+        onToggleModelFavorite={vi.fn()}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Model" }));
+    const portal = await screen.findByTestId("model-combobox-portal");
+    const favorite = portal.querySelector(".model-combobox-option--favorite");
+    expect(favorite).not.toBeNull();
+    expect(favorite!.tagName).toBe("BUTTON");
+    expect(favorite!.parentElement?.classList.contains("model-combobox-option-row")).toBe(true);
   });
 
   it("renders provider headers inside the list with sticky positioning", async () => {
@@ -1416,6 +1512,118 @@ describe("CustomModelDropdown", () => {
           value: originalInnerHeight,
         });
       }
+    });
+
+    /*
+    FNXC:ModelDropdown 2026-09-15-03:49:
+    Downward placement must stay anchored to the trigger even when the remaining space below is smaller
+    than the 160px scroll floor. The previous clamp lifted the menu to keep that floor on screen, which
+    detached it from its trigger; maxHeight is a scroll ceiling, never a placement input.
+    */
+    it("stays anchored under the trigger when space below is smaller than the scroll floor", async () => {
+      const user = userEvent.setup();
+
+      // Viewport 400: space above (130) <= space below (170), so it must open DOWNWARD,
+      // and space below is under the 160px floor + padding, which is where the clamp used to bite.
+      const restore = setupBoundingRectMock({
+        top: 130,
+        left: 50,
+        bottom: 230,
+        width: 300,
+        height: 100,
+        right: 350,
+        x: 50,
+        y: 130,
+      } as DOMRect);
+
+      const originalInnerHeight = window.innerHeight;
+      Object.defineProperty(window, "innerHeight", { writable: true, configurable: true, value: 400 });
+
+      try {
+        render(<CustomModelDropdown label="Executor Model" value="" onChange={vi.fn()} models={MOCK_MODELS} />);
+        await user.click(screen.getByRole("button", { name: "Executor Model" }));
+
+        const portal = await screen.findByTestId("model-combobox-portal");
+        // Strict anchoring: rect.bottom + gap = 230 + 4. The old height-floor clamp produced 224.
+        expect(parseFloat(portal.style.top)).toBe(234);
+        // Downward placement never anchors the bottom edge.
+        expect(portal.style.bottom).toBe("");
+      } finally {
+        restore();
+        Object.defineProperty(window, "innerHeight", {
+          writable: true,
+          configurable: true,
+          value: originalInnerHeight,
+        });
+      }
+    });
+
+    /*
+    FNXC:ModelDropdown 2026-09-15-03:49:
+    A body-portaled menu is a logical child of the floating window owning its trigger. Dragging or
+    resizing that window fires neither resize nor scroll, so the menu used to stay at its old screen
+    position, visually detached from its modal.
+    */
+    describe("floating window re-anchoring", () => {
+      const moveTriggerTo = (top: number, bottom: number) => {
+        Element.prototype.getBoundingClientRect = vi.fn(() => ({
+          top,
+          left: 90,
+          bottom,
+          width: 300,
+          height: bottom - top,
+          right: 390,
+          x: 90,
+          y: top,
+          toJSON: () => ({}),
+        }) as DOMRect);
+      };
+
+      const openAtInitialRect = async () => {
+        const user = userEvent.setup();
+        moveTriggerTo(100, 140);
+        render(<CustomModelDropdown label="Executor Model" value="" onChange={vi.fn()} models={MOCK_MODELS} />);
+        await user.click(screen.getByRole("button", { name: "Executor Model" }));
+        const portal = await screen.findByTestId("model-combobox-portal");
+        expect(parseFloat(portal.style.top)).toBe(144);
+        expect(parseFloat(portal.style.left)).toBe(90);
+        return portal;
+      };
+
+      it("follows the trigger when the host floating window reports a geometry change", async () => {
+        const originalRect = Element.prototype.getBoundingClientRect;
+        try {
+          const portal = await openAtInitialRect();
+
+          moveTriggerTo(300, 340);
+          fireEvent(window, new CustomEvent(FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT));
+
+          await waitFor(() => expect(parseFloat(portal.style.top)).toBe(344));
+          expect(screen.getByTestId("model-combobox-portal")).toBeInTheDocument();
+        } finally {
+          Element.prototype.getBoundingClientRect = originalRect;
+        }
+      });
+
+      it("follows the trigger while the host window is dragged, without closing the menu", async () => {
+        const originalRect = Element.prototype.getBoundingClientRect;
+        try {
+          const portal = await openAtInitialRect();
+
+          moveTriggerTo(220, 260);
+          fireEvent.pointerMove(document);
+          await waitFor(() => expect(parseFloat(portal.style.top)).toBe(264));
+
+          moveTriggerTo(260, 300);
+          fireEvent.pointerUp(document);
+          await waitFor(() => expect(parseFloat(portal.style.top)).toBe(304));
+
+          expect(screen.getByTestId("model-combobox-portal")).toBeInTheDocument();
+          expect(screen.getByPlaceholderText("Filter models…")).toBeInTheDocument();
+        } finally {
+          Element.prototype.getBoundingClientRect = originalRect;
+        }
+      });
     });
   });
 

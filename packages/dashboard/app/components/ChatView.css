@@ -1795,7 +1795,7 @@ Thinking-section text uses the defined muted text token across all themes. The m
   text-transform: uppercase;
 }
 
-.chat-thinking-model-picker .custom-model-dropdown {
+.chat-thinking-model-picker .model-combobox {
   width: 100%;
 }
 

@@ -7,6 +7,7 @@ import { createPortal } from "react-dom";
 import type { ModelInfo, ProviderCredentialInstanceSummary } from "../api";
 import { filterModels } from "../utils/modelFilter";
 import { ProviderIcon } from "./ProviderIcon";
+import { FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT } from "./FloatingWindow";
 
 export interface CustomModelDropdownProps {
   models: ModelInfo[];
@@ -425,10 +426,16 @@ export function CustomModelDropdown({
     The model menu's maxHeight includes a 160px scroll floor, so upward top placement based on that
     cap separates short model lists from their trigger. Anchor the bottom instead; the visual-viewport
     offset preserves the existing effective-viewport coordinate conversion for keyboard and zoom cases.
+
+    FNXC:ModelDropdown 2026-09-15-03:49:
+    The same rule now governs DOWNWARD placement. Clamping top to keep the 160px height floor on screen
+    lifted the menu above its trigger whenever space below was tight, which is exactly the detachment
+    fixedMenuPosition.ts forbids ("never clamp placement to preserve a preferred/min height floor").
+    Anchor strictly under the trigger; maxHeight remains a scroll ceiling, not a placement input.
     */
     const top = openUpward
       ? null
-      : Math.min(triggerBottom + gap + offsetTop, viewportHeight + offsetTop - verticalPadding - maxHeight);
+      : triggerBottom + gap + offsetTop;
     const bottom = openUpward
       ? viewportHeight + offsetTop - rect.top + gap
       : null;
@@ -494,8 +501,29 @@ export function CustomModelDropdown({
 
     const handleReposition = () => updateDropdownPosition();
 
+    /*
+    FNXC:ModelDropdown 2026-09-15-03:49:
+    A surface portaled onto document.body is still a logical child of the floating window that owns its
+    trigger. resize/scroll alone never fire while a chat window is dragged or resized, so the menu stayed
+    at its old screen position — visually detached from its modal. Re-anchor on the floating-window
+    geometry event and on capture-phase pointermove/pointerup (the live drag), coalesced through one rAF,
+    exactly like TaskDetailModal's activity-view menu. These listeners only reposition: they never close
+    the menu and never interfere with the portal surface's stopPropagation guard.
+    */
+    let positionFrame = 0;
+    const schedulePositionUpdate = () => {
+      if (positionFrame) return;
+      positionFrame = requestAnimationFrame(() => {
+        positionFrame = 0;
+        updateDropdownPosition();
+      });
+    };
+
     window.addEventListener("resize", handleReposition);
     window.addEventListener("scroll", handleReposition, true);
+    window.addEventListener(FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT, schedulePositionUpdate);
+    document.addEventListener("pointermove", schedulePositionUpdate, true);
+    document.addEventListener("pointerup", schedulePositionUpdate, true);
 
     // Listen for visual viewport changes (virtual keyboard open/close, zoom)
     const vv = window.visualViewport;
@@ -505,8 +533,12 @@ export function CustomModelDropdown({
     }
 
     return () => {
+      if (positionFrame) cancelAnimationFrame(positionFrame);
       window.removeEventListener("resize", handleReposition);
       window.removeEventListener("scroll", handleReposition, true);
+      window.removeEventListener(FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT, schedulePositionUpdate);
+      document.removeEventListener("pointermove", schedulePositionUpdate, true);
+      document.removeEventListener("pointerup", schedulePositionUpdate, true);
       if (vv) {
         vv.removeEventListener("resize", handleReposition);
         vv.removeEventListener("scroll", handleReposition);

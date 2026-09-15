@@ -323,11 +323,29 @@ The complete model list precedes a labelled auxiliary-action rail. Each full-wid
   min-width: 0;
 }
 
+/*
+FNXC:ModelDropdown 2026-09-15-03:49:
+Since FNXC:NativeUiCollections each option is a NATIVE <button> (legacyAs="button") inside a flex
+.model-combobox-option-row, and native-ui.css deliberately resets only font/color/cursor for [data-ui].
+Without a local reset the button keeps its intrinsic content width (rows stop short of the list edge)
+and the browser's ButtonFace background (white model names on a white button in dark mode). Mirror the
+same reset the sibling option lists already carry (.workflow-switcher-option, .agent-mention-item,
+.chat-thinking-popover-option, .model-menu-item).
+*/
 .model-combobox-option {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
   padding: var(--space-sm) var(--space-md);
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
   cursor: pointer;
   transition: background var(--transition-instant);
   overflow: hidden;
@@ -416,11 +434,27 @@ Provider headers must remain visible while their long model groups scroll in the
   overflow: hidden;
 }
 
-.model-combobox-optgroup-text {
+/*
+FNXC:ModelDropdown 2026-09-15-03:49:
+The provider header renders .model-combobox-optgroup-label / -actions; the legacy -text class was never
+rendered, so the label had neither flex growth nor truncation.
+*/
+.model-combobox-optgroup-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
   flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.model-combobox-optgroup-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex-shrink: 0;
 }
 
 /* Provider favorite star (in optgroup header) */

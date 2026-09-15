@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { ChatThinkingLevelControl } from "../ChatThinkingLevelControl";
-import { FloatingWindow } from "../FloatingWindow";
+import { FloatingWindow, FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT } from "../FloatingWindow";
 import { loadAllAppCss } from "../../test/cssFixture";
 
 const models = [
@@ -239,6 +239,48 @@ describe("ChatThinkingLevelControl mobile popover overlay contract", () => {
       expect(screen.queryByTestId("chat-thinking-popover")).not.toBeInTheDocument();
       unmount();
       composer.remove();
+    } finally {
+      Element.prototype.getBoundingClientRect = originalRect;
+    }
+  });
+
+  /*
+  FNXC:ModelDropdown 2026-09-15-03:49:
+  The Brain popover is the portaled host of the chat model picker. Dragging or resizing a floating chat
+  window fires neither resize nor scroll, so without the floating-window geometry event and the pointer
+  drag listeners the popover (and the nested model list) stayed detached at its old screen position.
+  */
+  it("re-anchors the brain popover on host floating-window geometry changes and pointer drags", async () => {
+    const originalRect = Element.prototype.getBoundingClientRect;
+    const setRect = (top: number, bottom: number) => {
+      Element.prototype.getBoundingClientRect = vi.fn(() => ({
+        top, bottom, left: 20, right: 60, width: 40, height: bottom - top, x: 20, y: top, toJSON: () => ({}),
+      } as DOMRect));
+    };
+    try {
+      setRect(300, 340);
+      render(<ChatThinkingLevelControl level={null} onChange={vi.fn()} onChangeModel={vi.fn()} models={models} />);
+      fireEvent.click(screen.getByTestId("chat-thinking-btn"));
+      const popover = await screen.findByTestId("chat-thinking-popover");
+      const initialTop = popover.style.top;
+
+      setRect(120, 160);
+      fireEvent(window, new CustomEvent(FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT));
+      await waitFor(() => expect(popover.style.top).not.toBe(initialTop));
+      const afterGeometryTop = popover.style.top;
+
+      setRect(360, 400);
+      fireEvent.pointerMove(document);
+      await waitFor(() => expect(popover.style.top).not.toBe(afterGeometryTop));
+      const afterDragTop = popover.style.top;
+
+      setRect(200, 240);
+      fireEvent.pointerUp(document);
+      await waitFor(() => expect(popover.style.top).not.toBe(afterDragTop));
+
+      // Repositioning must never dismiss the popover or unmount the nested model picker.
+      expect(screen.getByTestId("chat-thinking-popover")).toBeInTheDocument();
+      expect(screen.getByTestId("chat-thinking-model-picker")).toBeInTheDocument();
     } finally {
       Element.prototype.getBoundingClientRect = originalRect;
     }

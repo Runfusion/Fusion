@@ -9,6 +9,7 @@ import type { ModelInfo } from "../api";
 import { FN_AGENT_ID } from "../hooks/useChat";
 import { computeFixedMenuPosition, getLayoutViewportSize, type FixedMenuPosition } from "../utils/fixedMenuPosition";
 import { isInsidePortaledModelMenu } from "../utils/portalSurfaces";
+import { FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT } from "./FloatingWindow";
 
 /*
 FNXC:Chat-ThinkingLevel 2026-08-18-23:38:
@@ -172,14 +173,37 @@ export function ChatThinkingLevelControl({
   FNXC:Chat-ModelSwitch 2026-09-06-21:10:
   The Brain panel is a fixed body portal, just like its nested model list. Measuring from the trigger in layout-viewport coordinates keeps both layers overlaid above the composer/footer on narrow and mobile chats; resize and capture-phase scroll re-anchor it without letting either portal enlarge a scroll container.
   */
+  /*
+  FNXC:ModelDropdown 2026-09-15-03:49:
+  The Brain panel is the portaled HOST of the model list inside chats: if the parent detaches from its
+  floating window, the nested picker detaches with it. resize/scroll never fire while a floating chat
+  window is dragged or resized, so re-anchor on the floating-window geometry event and on capture-phase
+  pointermove/pointerup, coalesced through one rAF. These listeners only reposition; they never close
+  the popover.
+  */
   useLayoutEffect(() => {
     if (!open) return;
     updatePopoverPosition();
+    let positionFrame = 0;
+    const schedulePositionUpdate = () => {
+      if (positionFrame) return;
+      positionFrame = requestAnimationFrame(() => {
+        positionFrame = 0;
+        updatePopoverPosition();
+      });
+    };
     window.addEventListener("resize", updatePopoverPosition);
     window.addEventListener("scroll", updatePopoverPosition, true);
+    window.addEventListener(FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT, schedulePositionUpdate);
+    document.addEventListener("pointermove", schedulePositionUpdate, true);
+    document.addEventListener("pointerup", schedulePositionUpdate, true);
     return () => {
+      if (positionFrame) cancelAnimationFrame(positionFrame);
       window.removeEventListener("resize", updatePopoverPosition);
       window.removeEventListener("scroll", updatePopoverPosition, true);
+      window.removeEventListener(FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT, schedulePositionUpdate);
+      document.removeEventListener("pointermove", schedulePositionUpdate, true);
+      document.removeEventListener("pointerup", schedulePositionUpdate, true);
     };
   }, [open, updatePopoverPosition]);
 
