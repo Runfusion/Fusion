@@ -3,7 +3,7 @@ import {
   ORIGINAL_DESCRIPTION_END_MARKER,
   ORIGINAL_DESCRIPTION_HEADING,
   ORIGINAL_DESCRIPTION_START_MARKER,
-  PREFERRED_SECTION_TERMINATORS,
+  resolveOriginalDescriptionEnd,
 } from "./original-description-policy.js";
 
 /**
@@ -24,50 +24,34 @@ import {
  */
 export function findGeneratedOriginalDescriptionEnd(promptText: string, start: number): number {
   if (start === -1) return -1;
-
-  let searchFrom = start + ORIGINAL_DESCRIPTION_START_MARKER.length;
-  while (searchFrom < promptText.length) {
-    const end = promptText.indexOf(ORIGINAL_DESCRIPTION_END_MARKER, searchFrom);
-    if (end === -1) return -1;
-
-    const after = promptText.slice(end + ORIGINAL_DESCRIPTION_END_MARKER.length);
-    const successor = /^\n{1,2}(##[^\n]*)(?:\n|$)/.exec(after)?.[1];
-    const isKnownSuccessor = successor !== undefined && PREFERRED_SECTION_TERMINATORS.some((pattern) =>
-      // Fresh regexes prevent any future global/sticky terminator from leaking lastIndex state.
-      new RegExp(pattern.source, pattern.flags).test(successor),
-    );
-    if (!after.trim() || isKnownSuccessor) {
-      return end;
-    }
-    searchFrom = end + ORIGINAL_DESCRIPTION_END_MARKER.length;
-  }
-  return -1;
-}
-
-/** Return bounded structural context for an unresolved marker without exposing operator prose. */
-function findRejectedSuccessorHeading(promptText: string, start: number): string {
-  const firstEnd = promptText.indexOf(
-    ORIGINAL_DESCRIPTION_END_MARKER,
+  const result = resolveOriginalDescriptionEnd(
+    promptText,
     start + ORIGINAL_DESCRIPTION_START_MARKER.length,
   );
-  const afterMarker = promptText.slice(
-    firstEnd === -1 ? start + ORIGINAL_DESCRIPTION_START_MARKER.length : firstEnd + ORIGINAL_DESCRIPTION_END_MARKER.length,
-  );
-  const heading = /^##[^\r\n]*$/m.exec(afterMarker)?.[0]?.trim();
-  return heading ? heading.slice(0, 160) : "(no following H2 heading)";
+  return result.resolved ? result.end : -1;
 }
 
 /** Remove only the exact deterministic Original Description section injected during specification hygiene. */
 export function stripGeneratedOriginalDescription(promptText: string): string {
   const start = promptText.indexOf(ORIGINAL_DESCRIPTION_START_MARKER);
-  const end = findGeneratedOriginalDescriptionEnd(promptText, start);
   if (start === -1) return promptText;
-  if (end === -1) {
+  const result = resolveOriginalDescriptionEnd(
+    promptText,
+    start + ORIGINAL_DESCRIPTION_START_MARKER.length,
+  );
+  // The read path alone reports ambiguity: unresolved takes precedence over skipped candidates.
+  if (!result.resolved) {
     createLogger("original-description-region").warn(
-      `Generated Original Description start marker has no acceptable end marker; successor heading: ${findRejectedSuccessorHeading(promptText, start)}`,
+      `Generated Original Description start marker has no acceptable end marker; successor heading: ${result.rejectedSuccessorHeading ?? "(no following H2 heading)"}; skipped candidates: ${result.skippedCandidateCount}`,
     );
     return promptText;
   }
+  if (result.skippedCandidateCount > 0) {
+    createLogger("original-description-region").warn(
+      `Generated Original Description skipped candidates before a resolved end marker: ${result.skippedCandidateCount}`,
+    );
+  }
+  const end = result.end;
 
   const heading = promptText.lastIndexOf(ORIGINAL_DESCRIPTION_HEADING, start);
   if (heading === -1) return promptText;
