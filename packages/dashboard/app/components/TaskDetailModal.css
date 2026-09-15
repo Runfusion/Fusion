@@ -236,11 +236,21 @@ FN-391 bounds the read-only description so a long one cannot push Progress or th
 out of view. `max-block-size` plus internal scrolling keeps the section's height predictable in
 every host (modal, main panel, list split, right dock, drawer, pop-out); the focus ring comes from
 the shared token so the focusable region stays visible to keyboard users.
+
+FNXC:TaskDetailDefinition 2026-09-15-19:26:
+FN-430: ce bloc borné ne doit PAS confiner le scroll vertical. Arrivé en bas de son contenu, la
+molette ou le geste tactile doit chaîner vers le scroller parent `.detail-body`, sinon l'opérateur
+est piégé dans un encadré qui n'a plus rien à défiler alors que la fiche a encore du contenu
+dessous; d'où `overscroll-behavior: auto` déclaré explicitement à la place du `contain` d'origine.
+La borne de hauteur est par ailleurs divisée par deux (18rem -> 9rem, mobile 12rem -> 6rem) pour que
+`What this delivers` et `Before -> After` restent visibles sans long défilement. Le confinement
+reste volontaire pour les surfaces flottantes (`.activity-view-menu`, `position: fixed`) et pour
+l'axe inline des bandeaux d'onglets (`overscroll-behavior-inline: contain`).
 */
 .detail-definition-description-body {
-  max-block-size: var(--task-detail-description-max-block-size, 18rem);
+  max-block-size: var(--task-detail-description-max-block-size, 9rem);
   overflow-y: auto;
-  overscroll-behavior: contain;
+  overscroll-behavior: auto;
 }
 
 .detail-definition-description-body:focus-visible {
@@ -372,7 +382,7 @@ rgb() value here or in the mobile override below.
   scrolls internally rather than growing, which is what keeps the outcome section reachable.
   */
   .detail-definition-description-body {
-    max-block-size: var(--task-detail-description-max-block-size-mobile, 12rem);
+    max-block-size: var(--task-detail-description-max-block-size-mobile, 6rem);
   }
 
   .detail-definition-outcome .detail-definition-header {

@@ -16,6 +16,24 @@ function readTaskDetailModalCss(): string {
   return loadComponentCss("TaskDetailModal.css");
 }
 
+function stripCssComments(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, "");
+}
+
+/** Returns the balanced `{ ... }` block that starts at or after `fromIndex`. */
+function extractBlock(source: string, fromIndex: number): string {
+  const start = source.indexOf("{", fromIndex);
+  let depth = 0;
+  for (let i = start; i < source.length; i += 1) {
+    if (source[i] === "{") depth += 1;
+    else if (source[i] === "}") {
+      depth -= 1;
+      if (depth === 0) return source.slice(start, i + 1);
+    }
+  }
+  return source.slice(start);
+}
+
 setupTaskDetailModalHooks();
 
 const fullPrompt = `# Task: FN-195 - Summary first
@@ -220,6 +238,77 @@ describe("TaskDetailContent internal plan navigation", () => {
     expect(rule).toContain("overflow-y: auto");
     expect(rule).toContain("max-block-size");
     expect(rule).not.toMatch(/#[0-9a-f]{3,}|rgb\(/i);
+  });
+
+  /*
+  FNXC:TaskDetailDefinition 2026-09-15-19:26:
+  FN-430: le bloc de description borné doit chaîner son scroll vers `.detail-body` une fois son
+  contenu épuisé (pas de `overscroll-behavior: contain` sur l'axe bloc) et sa borne de hauteur est
+  divisée par deux. jsdom n'implémente pas le chaînage natif: la condition d'échec est donc prouvée
+  disparue sur la source CSS effectivement chargée, plus un inventaire qui empêche la réintroduction
+  silencieuse du confinement sur un bloc de contenu en flux.
+  */
+  describe("FN-430 description scroll chaining", () => {
+    it("chains block-axis scrolling to the parent and halves the desktop height bound", () => {
+      renderDefinition({ description: `${"Long description paragraph. ".repeat(60)}` });
+
+      const css = readTaskDetailModalCss();
+      const selectorIndex = css.indexOf(".detail-definition-description-body {");
+      expect(selectorIndex).toBeGreaterThan(-1);
+      const rule = css.slice(selectorIndex, css.indexOf("}", selectorIndex) + 1);
+
+      expect(rule).toContain("overflow-y: auto");
+      expect(rule).toContain("overscroll-behavior: auto");
+      expect(rule).not.toContain("overscroll-behavior: contain");
+      expect(rule).toContain("max-block-size: var(--task-detail-description-max-block-size, 9rem)");
+    });
+
+    it("halves the mobile height bound without re-introducing containment", () => {
+      const css = readTaskDetailModalCss();
+      const mediaIndex = css.indexOf("@media (max-width: 768px) {");
+      expect(mediaIndex).toBeGreaterThan(-1);
+      const mediaBlock = extractBlock(css, mediaIndex);
+
+      const selectorIndex = mediaBlock.indexOf(".detail-definition-description-body {");
+      expect(selectorIndex).toBeGreaterThan(-1);
+      const rule = mediaBlock.slice(selectorIndex, mediaBlock.indexOf("}", selectorIndex) + 1);
+
+      expect(rule).toContain("max-block-size: var(--task-detail-description-max-block-size-mobile, 6rem)");
+      expect(rule).not.toContain("overscroll-behavior");
+    });
+
+    it("keeps the populated description focusable and grouped", () => {
+      renderDefinition({ description: `${"Long description paragraph. ".repeat(60)}` });
+
+      const body = screen.getByTestId("task-detail-definition-description");
+      expect(body).toHaveClass("detail-definition-description-body");
+      expect(body).toHaveAttribute("tabindex", "0");
+      expect(body).toHaveAttribute("role", "group");
+    });
+
+    it("renders no bounded scroller when the description is empty", () => {
+      const { container } = renderDefinition({ description: "   " });
+
+      expect(screen.queryByTestId("task-detail-definition-description")).toBeNull();
+      expect(container.querySelector(".detail-empty-inline")).not.toBeNull();
+    });
+
+    it("confines block-axis overscroll only on the floating activity menu", () => {
+      const source = stripCssComments(readTaskDetailModalCss());
+      const confined: string[] = [];
+      const declaration = /overscroll-behavior:\s*contain/g;
+
+      for (let match = declaration.exec(source); match; match = declaration.exec(source)) {
+        const openBrace = source.lastIndexOf("{", match.index);
+        const previousBoundary = Math.max(
+          source.lastIndexOf("}", openBrace),
+          source.lastIndexOf("{", openBrace - 1),
+        );
+        confined.push(source.slice(previousBoundary + 1, openBrace).trim());
+      }
+
+      expect(confined).toEqual([".activity-view-menu"]);
+    });
   });
 
   it("uses token-only responsive styles for definition and plan navigation", () => {
