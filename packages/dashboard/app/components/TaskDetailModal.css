@@ -1346,12 +1346,24 @@ the stack direction is stated explicitly rather than inherited from a block-layo
   position: relative;
 }
 
+/*
+FNXC:TaskDetailActionsMenu 2026-09-15-09:30:
+FN-415: the Task Detail header passes its own `className` to TaskContextMenu, which REPLACES the shared
+`.task-context-menu` class, so this family never inherited the `--task-context-menu-*` width convention and every
+option wrapped onto 2-3 lines inside a 76px column. The menu now sizes to its content between a readable minimum and
+a viewport-bounded maximum, and each option occupies exactly one line, truncated with an ellipsis rather than wrapped.
+*/
 .detail-actions-menu {
+  --detail-actions-menu-min-width: calc(var(--space-xl) * 6 + var(--space-lg));
+  --detail-actions-menu-max-width: min(calc(var(--space-xl) * 14), calc(100vw - var(--space-xl)));
+
   position: absolute;
   bottom: calc(100% + var(--space-xs));
   left: 0;
   z-index: 50;
-  min-width: calc(var(--space-2xl) + var(--space-2xl) + var(--space-md));
+  width: max-content;
+  min-width: var(--detail-actions-menu-min-width);
+  max-width: var(--detail-actions-menu-max-width);
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -1372,6 +1384,9 @@ the stack direction is stated explicitly rather than inherited from a block-layo
   border: none;
   cursor: pointer;
   text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   transition: background var(--transition-fast);
 }
 
@@ -1384,6 +1399,9 @@ the stack direction is stated explicitly rather than inherited from a block-layo
 .detail-actions-menu-note {
   color: var(--text-muted);
   font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /*

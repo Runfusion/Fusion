@@ -9,6 +9,7 @@ import {
   noopDelete,
   noopMerge,
   noopOpenDetail,
+  getCssRuleBlock,
   openTaskDetailActionsMenu,
   readDashboardStylesSource,
   setupTaskDetailModalHooks,
@@ -255,6 +256,21 @@ describe("Task Detail footer quick actions", () => {
   });
 });
 
+/*
+FNXC:TaskDetailActionsMenu 2026-09-15-09:30:
+FN-415: mobile rules for this family live in a co-located `@media (max-width: 768px)` block inside the aggregated
+stylesheet source, so the mobile rule is located by scanning every 768px block for the `.detail-actions-menu` rule
+that carries the viewport-bound `max-width` rather than by a lazy match that can bind to the base rule.
+*/
+function readMobileActionsMenuRule(css: string): string {
+  for (const block of css.split(/@media[^{]*\(max-width:\s*768px\)[^{]*\{/).slice(1)) {
+    for (const match of block.matchAll(/\.detail-actions-menu\s*\{([^}]*)\}/g)) {
+      if (match[1].includes("max-width: calc(100vw")) return match[1];
+    }
+  }
+  return "";
+}
+
 describe("Task Detail metadata and footer CSS", () => {
   it("removes only retired selectors and preserves the Details metadata family", () => {
     const css = readDashboardStylesSource();
@@ -292,5 +308,76 @@ describe("Task Detail metadata and footer CSS", () => {
     expect(actions).toContain("max-height:");
     expect(actions).toContain("overflow-x: hidden");
     expect(actions).toContain("overflow-y: auto");
+  });
+
+  /*
+  FNXC:TaskDetailActionsMenu 2026-09-15-09:30:
+  FN-415: the header overflow menu must be wide enough that every option occupies exactly one line. These cases pin
+  the width convention, the nowrap/ellipsis contract on every item family, the mobile viewport bound, and the DOM
+  proof that no rendered entry escapes the nowrap rule.
+  */
+  it("sizes the header actions menu on its content instead of the retired 76px minimum", () => {
+    const css = readDashboardStylesSource();
+    const actions = css.match(/^\.detail-actions-menu\s*\{([^}]*)\}/m)?.[1] ?? "";
+
+    expect(actions).not.toContain("calc(var(--space-2xl) + var(--space-2xl) + var(--space-md))");
+    expect(actions).toContain("width: max-content");
+    expect(actions).toContain("min-width: var(--detail-actions-menu-min-width)");
+    expect(actions).toContain("max-width: var(--detail-actions-menu-max-width)");
+    expect(actions).toContain("left: 0");
+    expect(actions).toContain("max-height:");
+    expect(actions).toContain("overflow-x: hidden");
+    expect(actions).toContain("overflow-y: auto");
+  });
+
+  it.each([".detail-actions-menu-item", ".detail-actions-menu-note"])(
+    "keeps %s on a single line with ellipsis truncation",
+    (selector) => {
+      const rule = getCssRuleBlock(readDashboardStylesSource(), selector);
+
+      expect(rule).toContain("white-space: nowrap");
+      expect(rule).toContain("text-overflow: ellipsis");
+    },
+  );
+
+  it("keeps the mobile viewport bound without re-enabling wrapping", () => {
+    const css = readDashboardStylesSource();
+    const mobileRule = readMobileActionsMenuRule(css);
+
+    expect(mobileRule).toContain("max-width: calc(100vw - calc(var(--space-lg) + var(--space-md)))");
+    expect(mobileRule).toContain("max-height");
+    expect(mobileRule).toContain("overflow-y: auto");
+    expect(mobileRule).not.toContain("white-space: normal");
+    expect(mobileRule).not.toContain("min-width");
+  });
+});
+
+describe("Task Detail header actions menu single-line coverage", () => {
+  it("renders every populated entry with a class covered by the nowrap rule", async () => {
+    renderHost(makeTask({
+      githubTracking: { enabled: true },
+      plannerOversightLevel: "steer",
+      sessionAdvisorEnabled: true,
+      priority: "high",
+      executionMode: "fast",
+    }));
+    const menu = await openTaskDetailActionsMenu();
+
+    expect(within(menu).getByRole("menuitem", { name: "Execution mode: fast" })).toBeInTheDocument();
+    expect(within(menu).getByTestId("detail-actions-priority-heading")).toBeInTheDocument();
+
+    const entries = Array.from(menu.querySelectorAll<HTMLElement>("button, span[role='note']"));
+    expect(entries.length).toBeGreaterThan(0);
+    for (const entry of entries) {
+      expect(entry.classList.contains("detail-actions-menu-item")
+        || entry.classList.contains("detail-actions-menu-note")).toBe(true);
+    }
+  });
+
+  it("renders no menu at all when no secondary header action is available", async () => {
+    renderHost(makeTask({ column: "done", status: "done" }));
+    await screen.findByRole("button", { name: "Actions" });
+
+    expect(document.querySelector(".detail-actions-menu")).toBeNull();
   });
 });
