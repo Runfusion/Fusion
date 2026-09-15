@@ -21,6 +21,7 @@ function renderAppearanceSection(
   const onOpenMobileTasksInPopupChange = vi.fn();
   const onShowCostBadgeOnCardsChange = vi.fn();
   const onTaskDetailChatFirstChange = vi.fn();
+  const onRightSidebarEnabledChange = vi.fn();
   let form: SettingsFormState = {
     maxConcurrent: 2,
     maxWorktrees: 4,
@@ -49,6 +50,8 @@ function renderAppearanceSection(
       onChatMessageLayoutChange={onChatMessageLayoutChange}
       navigationPlacement={form.navigationPlacement}
       onNavigationPlacementChange={onNavigationPlacementChange}
+      rightSidebarEnabled={form.rightSidebarEnabled}
+      onRightSidebarEnabledChange={onRightSidebarEnabledChange}
       openTasksInRightSidebar={form.openTasksInRightSidebar}
       onOpenTasksInRightSidebarChange={onOpenTasksInRightSidebarChange}
       openMobileTasksInPopup={form.openMobileTasksInPopup}
@@ -66,6 +69,7 @@ function renderAppearanceSection(
     setForm,
     getForm: () => form,
     onNavigationPlacementChange,
+    onRightSidebarEnabledChange,
     onOpenTasksInRightSidebarChange,
     onOpenMobileTasksInPopupChange,
     onShowCostBadgeOnCardsChange,
@@ -98,6 +102,30 @@ describe("AppearanceSection", () => {
   it("displays an invalid persisted navigation placement as the bottom-bar default", () => {
     renderAppearanceSection({ navigationPlacement: "left" as never });
     expect((screen.getByLabelText("Navigation menu placement") as HTMLSelectElement).value).toBe("footer");
+  });
+
+  /*
+   * FN-426: the right tool dock is optional and default-off, so this toggle is the only in-product way to bring it
+   * back. It must render unchecked for absent/invalid persisted values and write both the form and the live callback.
+   */
+  it("renders the right tool sidebar opt-in unchecked by default and enables it", () => {
+    const { setForm, getForm, onRightSidebarEnabledChange } = renderAppearanceSection();
+    const toggle = screen.getByLabelText("Show the right tool sidebar") as HTMLInputElement;
+    expect(toggle.checked).toBe(false);
+    fireEvent.click(toggle);
+    expect(onRightSidebarEnabledChange).toHaveBeenCalledWith(true);
+    expect(getForm().rightSidebarEnabled).toBe(true);
+    expect(setForm).toHaveBeenCalledTimes(1);
+  });
+
+  it("checks the right tool sidebar opt-in for a persisted true", () => {
+    renderAppearanceSection({ rightSidebarEnabled: true });
+    expect((screen.getByLabelText("Show the right tool sidebar") as HTMLInputElement).checked).toBe(true);
+  });
+
+  it("treats a malformed persisted right sidebar value as disabled", () => {
+    renderAppearanceSection({ rightSidebarEnabled: "yes" as never });
+    expect((screen.getByLabelText("Show the right tool sidebar") as HTMLInputElement).checked).toBe(false);
   });
 
   it("renders the two-option conversation layout selector and updates full width", () => {

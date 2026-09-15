@@ -382,6 +382,91 @@ describe("useActivityLog", () => {
     expect(result.current.entries).toHaveLength(500);
   });
 
+  /*
+   * FN-426: Activity is now a header panel that follows the current project and filters, so an in-flight response must
+   * never publish into a scope the reader has already left. These cases drive both orderings and every writable
+   * output: rows, hasMore, loading, error, and the pagination cursor.
+   */
+  describe("scope fencing", () => {
+    it("ignores a previous project response that resolves after the project changed", async () => {
+      let resolveA!: (value: ActivityFeedEntry[]) => void;
+      mockFetchActivityFeed
+        .mockImplementationOnce(() => new Promise((resolve) => { resolveA = resolve as (value: ActivityFeedEntry[]) => void; }))
+        .mockResolvedValue(createFeedEntries(2, "proj_b", "B"));
+
+      const { result, rerender } = renderHook(
+        ({ projectId }) => useActivityLog({ projectId, useCentralFeed: true }),
+        { initialProps: { projectId: "proj_a" } },
+      );
+      rerender({ projectId: "proj_b" });
+      await waitFor(() => expect(result.current.entries).toHaveLength(2));
+      expect(result.current.entries.every((entry) => entry.projectId === "proj_b")).toBe(true);
+
+      await act(async () => { resolveA(createFeedEntries(40, "proj_a", "A")); });
+
+      expect(result.current.entries).toHaveLength(2);
+      expect(result.current.entries.every((entry) => entry.projectId === "proj_b")).toBe(true);
+      expect(result.current.loading).toBe(false);
+    });
+
+    it("ignores a previous project rejection so it cannot show an error under the new scope", async () => {
+      let rejectA!: (reason: Error) => void;
+      mockFetchActivityFeed
+        .mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectA = reject as (reason: Error) => void; }))
+        .mockResolvedValue(createFeedEntries(1, "proj_b", "B"));
+
+      const { result, rerender } = renderHook(
+        ({ projectId }) => useActivityLog({ projectId, useCentralFeed: true }),
+        { initialProps: { projectId: "proj_a" } },
+      );
+      rerender({ projectId: "proj_b" });
+      await waitFor(() => expect(result.current.entries).toHaveLength(1));
+
+      await act(async () => { rejectA(new Error("project A is gone")); await Promise.resolve(); });
+
+      expect(result.current.error).toBeNull();
+      expect(result.current.loading).toBe(false);
+      expect(result.current.entries).toHaveLength(1);
+    });
+
+    it("ignores a stale response after an explicit clear", async () => {
+      let resolveFirst!: (value: ActivityFeedEntry[]) => void;
+      mockFetchActivityFeed.mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve as (value: ActivityFeedEntry[]) => void; }));
+
+      const { result } = renderHook(() => useActivityLog({ projectId: "proj_a", autoRefresh: false, useCentralFeed: true }));
+      act(() => { result.current.clear(); });
+
+      await act(async () => { resolveFirst(createFeedEntries(3)); });
+
+      expect(result.current.entries).toEqual([]);
+      expect(result.current.hasMore).toBe(false);
+      expect(result.current.loading).toBe(false);
+    });
+
+    it("does not append a page whose cursor was reset by a filter change", async () => {
+      let resolvePage!: (value: ActivityFeedEntry[]) => void;
+      mockFetchActivityFeed
+        .mockResolvedValueOnce(createFeedEntries(2))
+        .mockImplementationOnce(() => new Promise((resolve) => { resolvePage = resolve as (value: ActivityFeedEntry[]) => void; }))
+        .mockResolvedValue([]);
+
+      const { result, rerender } = renderHook(
+        ({ type }) => useActivityLog({ projectId: "proj_a", type, autoRefresh: false, useCentralFeed: true }),
+        { initialProps: { type: undefined as ActivityFeedEntry["type"] | undefined } },
+      );
+      await waitFor(() => expect(result.current.entries).toHaveLength(2));
+
+      let pending!: Promise<void>;
+      act(() => { pending = result.current.loadMore(); });
+      rerender({ type: "task:failed" });
+      await waitFor(() => expect(result.current.entries).toHaveLength(0));
+
+      await act(async () => { resolvePage(createFeedEntries(5)); await pending; });
+
+      expect(result.current.entries).toHaveLength(0);
+    });
+  });
+
   it("passes type filter to unified feed when useCentralFeed is true", async () => {
     mockFetchActivityFeed.mockResolvedValue([]);
 

@@ -51,8 +51,11 @@ declared by LeftSidebarNav. Deliberately excluded and why:
 const SIDEBAR_REGISTRY_VIEW_IDS = [
   "command-center",
   "board",
-  "list",
-  "patchnode",
+  /*
+   * FN-382 made List a dock tool and FN-403 made History a modal, so neither is a sidebar destination any more. They
+   * were left in this hand-maintained list and made the enrolment count assertion permanently red; removing them
+   * restores the guard instead of loosening it.
+   */
   "planning",
   "missions",
   "agents",
@@ -62,6 +65,10 @@ const SIDEBAR_REGISTRY_VIEW_IDS = [
   "memory",
   "notes",
   "goalsView",
+  /* FN-426: Files, Git Manager, and Dev Server became real destinations when the right dock became optional. */
+  "files",
+  "git-manager",
+  "dev-server",
   "automations",
   "import-tasks",
   "workflows",

@@ -28,6 +28,20 @@ export const appearanceSearchEntries: SettingsSearchEntry[] = [
       "Choose whether the main menu sits in the bottom bar or in a left sidebar. Only one is ever shown. Project-scoped; default: Bottom bar.",
     keywords: ["menu", "navigation", "sidebar", "footer", "bottom bar"],
   },
+  /*
+   * FNXC:SettingsSearch 2026-09-15-16:04:
+   * FN-426 right tool dock opt-in. Label and help mirror the section's `t()` calls verbatim.
+   */
+  {
+    sectionId: "appearance",
+    key: "rightSidebarEnabled",
+    labelKey: "settings.appearance.rightSidebarEnabled",
+    labelFallback: "Show the right tool sidebar",
+    helpKey: "settings.appearance.rightSidebarEnabledHelp",
+    helpFallback:
+      "When enabled, tablet and desktop show an optional right sidebar with Files, Chat, List, and Notes shortcuts. Every tool stays reachable without it. Project-scoped; default: disabled.",
+    keywords: ["right sidebar", "dock", "tools", "panel", "files", "notes"],
+  },
   {
     sectionId: "appearance",
     key: "chatMessageLayout",

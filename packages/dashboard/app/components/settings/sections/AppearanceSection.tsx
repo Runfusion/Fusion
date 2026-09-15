@@ -25,6 +25,9 @@ export interface AppearanceSectionProps extends SectionBaseProps {
     /* FNXC:Navigation 2026-09-15-14:41: FN-419 — project choice of the single primary navigation surface. */
     navigationPlacement?: NavigationPlacement;
     onNavigationPlacementChange?: (placement: NavigationPlacement) => void;
+    /* FNXC:RightSidebarOptional 2026-09-15-16:04: FN-426 — project opt-in for the otherwise-absent right tool dock. */
+    rightSidebarEnabled?: boolean;
+    onRightSidebarEnabledChange?: (enabled: boolean) => void;
     openTasksInRightSidebar?: boolean;
     onOpenTasksInRightSidebarChange?: (enabled: boolean) => void;
     openMobileTasksInPopup?: boolean;
@@ -44,7 +47,7 @@ Rows render through the shared settings primitives rather than hand-rolled `form
 FNXC:SettingsScope 2026-07-15-17:35:
 Scope badges are per-row because this section genuinely mixes authority levels: theme, color, and font scale are global (DEFAULT_GLOBAL_SETTINGS), while every task-presentation toggle below is project-scoped (DEFAULT_PROJECT_SETTINGS). The nav labels the whole section "global", which is true only of the theme controls, so the badges are what tell an operator which of these travels between projects.
 */
-export function AppearanceSection({ form, setForm, themeMode, colorTheme, uiStyle, onUiStyleChange, dashboardFontScalePct, shadcnCustomColors = {}, resolvedThemeMode, onThemeModeChange, onColorThemeChange, onDashboardFontScaleChange, onShadcnCustomColorsChange, chatMessageLayout = "bubbles", onChatMessageLayoutChange, navigationPlacement = "footer", onNavigationPlacementChange, openTasksInRightSidebar, onOpenTasksInRightSidebarChange, openMobileTasksInPopup, onOpenMobileTasksInPopupChange, showCostBadgeOnCards, onShowCostBadgeOnCardsChange, taskDetailChatFirst, onTaskDetailChatFirstChange, sessionBannersHidden, setSessionBannersHidden, }: AppearanceSectionProps) {
+export function AppearanceSection({ form, setForm, themeMode, colorTheme, uiStyle, onUiStyleChange, dashboardFontScalePct, shadcnCustomColors = {}, resolvedThemeMode, onThemeModeChange, onColorThemeChange, onDashboardFontScaleChange, onShadcnCustomColorsChange, chatMessageLayout = "bubbles", onChatMessageLayoutChange, navigationPlacement = "footer", onNavigationPlacementChange, rightSidebarEnabled, onRightSidebarEnabledChange, openTasksInRightSidebar, onOpenTasksInRightSidebarChange, openMobileTasksInPopup, onOpenMobileTasksInPopupChange, showCostBadgeOnCards, onShowCostBadgeOnCardsChange, taskDetailChatFirst, onTaskDetailChatFirstChange, sessionBannersHidden, setSessionBannersHidden, }: AppearanceSectionProps) {
     const { t } = useTranslation("app");
     return (<>
       <h4 className="settings-section-heading">{t("settings.appearance.title", "Appearance")}</h4>
@@ -110,6 +113,26 @@ export function AppearanceSection({ form, setForm, themeMode, colorTheme, uiStyl
           const nextLayout = normalizeChatMessageLayout(value);
           setForm((f) => ({ ...f, chatMessageLayout: nextLayout }));
           onChatMessageLayoutChange?.(nextLayout);
+        }}
+      />
+      {/*
+      FNXC:RightSidebarOptional 2026-09-15-16:04:
+      FN-426: availability of the right tool dock, not its open/closed state. Off by default because every tool it
+      hosts is reachable from the header, footer, or a dedicated page; switching it on restores a Files/Chat/List/Notes
+      shortcut panel without removing any of those accesses.
+      */}
+      <SettingsToggleRow
+        descriptor={{
+          key: "rightSidebarEnabled",
+          label: t("settings.appearance.rightSidebarEnabled", "Show the right tool sidebar"),
+          help: t("settings.appearance.rightSidebarEnabledHelp", "When enabled, tablet and desktop show an optional right sidebar with Files, Chat, List, and Notes shortcuts. Every tool stays reachable without it. Project-scoped; default: disabled."),
+          scope: "project",
+        }}
+        value={(form.rightSidebarEnabled ?? rightSidebarEnabled) === true}
+        onChange={(v) => {
+          const next = v === true;
+          setForm((f) => ({ ...f, rightSidebarEnabled: next }));
+          onRightSidebarEnabledChange?.(next);
         }}
       />
       <SettingsToggleRow

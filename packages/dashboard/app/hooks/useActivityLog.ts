@@ -66,16 +66,39 @@ export function useActivityLog(options: UseActivityLogOptions = {}): UseActivity
   const [hasMore, setHasMore] = useState(false);
   const lastTimestampRef = useRef<string | undefined>(undefined);
 
+  /*
+  FNXC:ActivityScopeFencing 2026-09-15-16:04:
+  FN-426: both `refresh` and `loadMore` published their results unconditionally. A project switch, a type/task filter
+  change, a `clear()`, or simply unmounting the popover could not stop an in-flight response from writing rows,
+  `hasMore`, `error`, `loading`, and the pagination cursor for a scope the reader had already left — which is exactly
+  how an old project's activity appeared under a new project's header.
+
+  The fence is a REQUEST GENERATION, bumped on every scope change and on `clear()`/unmount. A response, an error, and
+  even the `finally` block each check their captured generation before touching state, so nothing an obsolete request
+  does is observable. Retention (500), pagination, and the visibility-aware poll are unchanged.
+  */
+  const generationRef = useRef(0);
+  const scopeKey = `${useCentralFeed ? "central" : "project"}|${projectId ?? ""}|${type ?? ""}|${taskId ?? ""}|${limit}`;
+  const scopeKeyRef = useRef(scopeKey);
+  if (scopeKeyRef.current !== scopeKey) {
+    scopeKeyRef.current = scopeKey;
+    generationRef.current += 1;
+    lastTimestampRef.current = undefined;
+  }
+  useEffect(() => () => { generationRef.current += 1; }, []);
+
   /**
    * Fetch entries using the appropriate data source.
    *
-   * Per-project log (/api/activity) — the default — reads directly from the
-   * project's own SQLite database and always contains task lifecycle events.
+   * Per-project log (/api/activity) — the default — reads the project's own
+   * store and always contains task lifecycle events. (Corrected 2026-09-15: the
+   * runtime store is PostgreSQL; the route is unchanged either way.)
    *
    * Unified feed (/api/activity-feed) reads from the central database and
    * supports cross-project aggregation.
    */
   const refresh = useCallback(async () => {
+    const generation = generationRef.current;
     try {
       setLoading(true);
       setError(null);
@@ -96,22 +119,28 @@ export function useActivityLog(options: UseActivityLogOptions = {}): UseActivity
         }));
       }
 
+      if (generation !== generationRef.current) return;
       setEntries(data);
       setHasMore(data.length === limit);
 
-      if (data.length > 0) {
-        lastTimestampRef.current = data[data.length - 1].timestamp;
-      }
+      /*
+      FNXC:ActivityScopeFencing 2026-09-15-16:04:
+      The cursor is part of the published result. A refresh that lost its generation must not advance it, or the next
+      `loadMore` in the NEW scope would page from a timestamp that belongs to the old one.
+      */
+      lastTimestampRef.current = data.length > 0 ? data[data.length - 1].timestamp : undefined;
     } catch (err) {
+      if (generation !== generationRef.current) return;
       setError(err instanceof Error ? err.message : "Failed to load activity log");
     } finally {
-      setLoading(false);
+      if (generation === generationRef.current) setLoading(false);
     }
   }, [limit, projectId, taskId, type, useCentralFeed]);
 
   const loadMore = useCallback(async () => {
     if (!lastTimestampRef.current) return;
 
+    const generation = generationRef.current;
     try {
       setLoading(true);
 
@@ -159,6 +188,13 @@ export function useActivityLog(options: UseActivityLogOptions = {}): UseActivity
       direction: `refresh` (manual, and the 5s visibility-aware poll) refetches the newest page from
       offset 0 and resets the buffer, so anything dropped off the head comes straight back.
       */
+      /*
+      FNXC:ActivityScopeFencing 2026-09-15-16:04:
+      A page that raced a scope change, a clear, or a reset cursor must not be appended: the rows below it are no
+      longer the ones it continues. Checking the generation AND the still-present cursor covers both orderings
+      (loadMore before refresh, and refresh before loadMore).
+      */
+      if (generation !== generationRef.current || !lastTimestampRef.current) return;
       setEntries((prev) => {
         const merged = [...prev, ...data];
         return merged.length > MAX_RETAINED_ENTRIES ? merged.slice(-MAX_RETAINED_ENTRIES) : merged;
@@ -169,15 +205,24 @@ export function useActivityLog(options: UseActivityLogOptions = {}): UseActivity
         lastTimestampRef.current = data[data.length - 1].timestamp;
       }
     } catch (err) {
+      if (generation !== generationRef.current) return;
       setError(err instanceof Error ? err.message : "Failed to load more entries");
     } finally {
-      setLoading(false);
+      if (generation === generationRef.current) setLoading(false);
     }
   }, [limit, projectId, taskId, type, useCentralFeed]);
 
+  /*
+  FNXC:ActivityScopeFencing 2026-09-15-16:04:
+  Clearing is a scope boundary too: a response already in flight belongs to the cleared view, so it is invalidated
+  rather than allowed to repopulate the list the caller just emptied.
+  */
   const clear = useCallback(() => {
+    generationRef.current += 1;
     setEntries([]);
     setHasMore(false);
+    setError(null);
+    setLoading(false);
     lastTimestampRef.current = undefined;
   }, []);
 

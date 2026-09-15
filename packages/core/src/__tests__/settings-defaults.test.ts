@@ -296,6 +296,23 @@ describe("settings defaults invariants", () => {
     });
   });
 
+  /*
+  FNXC:RightSidebarOptional 2026-09-15-16:04:
+  FN-426 makes the right tool dock an opt-in. The default must stay explicitly false (not merely absent) so an
+  upgraded project lands on the redistributed accesses instead of the historical always-on dock.
+  */
+  describe("rightSidebarEnabled default", () => {
+    it("defaults to false and keeps the setting project-scoped", () => {
+      expect(DEFAULT_PROJECT_SETTINGS.rightSidebarEnabled).toBe(false);
+      expect("rightSidebarEnabled" in DEFAULT_PROJECT_SETTINGS).toBe(true);
+      expect(PROJECT_SETTINGS_KEYS).toContain("rightSidebarEnabled");
+      expect(isProjectSettingsKey("rightSidebarEnabled")).toBe(true);
+      expect("rightSidebarEnabled" in DEFAULT_GLOBAL_SETTINGS).toBe(false);
+      expect(GLOBAL_SETTINGS_KEYS).not.toContain("rightSidebarEnabled");
+      expect(isGlobalOnlySettingsKey("rightSidebarEnabled")).toBe(false);
+    });
+  });
+
   describe("taskDetailChatFirst default", () => {
     it("keeps taskDetailChatFirst explicitly false in project defaults", () => {
       expect(DEFAULT_PROJECT_SETTINGS.taskDetailChatFirst).toBe(false);

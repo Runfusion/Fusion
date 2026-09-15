@@ -298,7 +298,13 @@ describe("MainViewKeepAlive", () => {
     const chatHosts = sourceFiles
       .filter((file) => readAppFile(file).includes("<ChatView"))
       .sort();
+    /*
+     * FN-426: App.tsx joins this census as the footer Conversations popover host. It is mounted only while that
+     * popover is open and renders ChatView in `listOnly` mode, so it never adds a second retained transcript — the
+     * conversation itself still opens through the existing popped-out chat windows.
+     */
     expect(chatHosts).toEqual([
+      "App.tsx",
       "components/ChatView.tsx",
       "components/PoppedOutChatWindows.tsx",
       "components/dashboard/MainViewKeepAlive.tsx",

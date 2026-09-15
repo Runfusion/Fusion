@@ -681,17 +681,12 @@ export function MobileNavBar({
         aria-label={t("nav.primaryNavAriaLabel", "Primary navigation")}
       >
         {effectivePrimaryItems.map((item) => renderSelectableItem(item, "primary"))}
-        {!officialDesignEnabled && <button
-          type="button"
-          className={`mobile-nav-tab${view === "list" ? " mobile-nav-tab--active" : ""}`}
-          data-testid="mobile-nav-tab-list"
-          role="tab"
-          aria-selected={view === "list"}
-          onClick={() => onChangeView("list")}
-        >
-          <span className="mobile-nav-tab-icon-wrapper"><List /></span>
-          <span className="mobile-nav-tab-label">{t("nav.list", "List")}</span>
-        </button>}
+        {/*
+        FNXC:ToolSurfaces 2026-09-15-16:04:
+        FN-426 removes this legacy-layout List tab. The header Board/List toggle now exists on every breakpoint,
+        including phones, so keeping a second bottom-bar producer would give one destination two primary owners. The
+        `tasks` customizable item (Board) and the More sheet are unchanged.
+        */}
 
         {!officialDesignEnabled && topLevelPrimaryPluginViews.map((entry) => {
           const pluginTaskView = buildPluginTaskViewId(entry.pluginId, entry.view.viewId);

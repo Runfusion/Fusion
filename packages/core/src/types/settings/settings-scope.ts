@@ -1522,6 +1522,15 @@ export interface ProjectSettings {
    */
   navigationPlacement?: "footer" | "sidebar";
   /**
+   * FNXC:RightSidebarOptional 2026-09-15-16:04:
+   * FN-426: the right tool dock is no longer a structural part of the shell. Every tool it used to own (Git Manager,
+   * Activity, Secrets, Pull Requests, Files, Chat, List, Notes) now has a first-class access outside it, so the dock
+   * is an explicit opt-in convenience that defaults OFF. This flag controls AVAILABILITY only; the dock's
+   * open/pinned/width/selected-tool preferences stay local (`fusion:right-dock-*`) and can never re-enable it.
+   * Only the exact boolean `true` opts in; absent, null, `"true"`, and numbers all fail closed.
+   */
+  rightSidebarEnabled?: boolean;
+  /**
    * FNXC:TaskDetailActivityFirst 2026-06-30-23:59:
    * Default-off keeps task details Activity-first so omitted non-done opens land on the legacy `chat` Activity → Live surface. Operators can set true to restore Chat-first ordering/default while explicit Activity/Chat/Logs deep links remain stable.
    */

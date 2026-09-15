@@ -134,9 +134,22 @@ const EXPECTED_EXCLUDED_LAZY = [
     /*
      * FNXC:DashboardLazyViews 2026-06-27-00:00:
      * The right-dock chat tab re-imports ChatView through the overflow registry, but ChatView remains counted once as the App-level Chat chunk in the curated AGENTS inventory.
+     *
+     * FN-426 emptied this registry of Dev Server, Secrets, and Pull Requests: each owns a destination elsewhere now,
+     * so the optional panel no longer re-imports their chunks at all.
      */
-    symbols: ["DevServerView", "SecretsView", "PullRequestView", "ChatView"],
+    symbols: ["ChatView"],
     reason: "right-dock overflow re-imports of App-level chunks already counted once",
+    countedBy: "../App.tsx",
+  },
+  {
+    file: "../components/GitManagerModal.tsx",
+    /*
+     * FN-426: Pull Requests became a Git Manager section, so Git lazily re-imports the same PullRequestView chunk the
+     * App already counts once. Only the section that needs it pays for it.
+     */
+    symbols: ["PullRequestView"],
+    reason: "Git Manager's Pull Requests section re-imports an App-level chunk already counted once",
     countedBy: "../App.tsx",
   },
 ] as const;

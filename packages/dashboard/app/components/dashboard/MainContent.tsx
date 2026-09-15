@@ -31,6 +31,9 @@ import type { SectionId } from "../SettingsModal";
 import type { MainContentProps } from "./types";
 import { MainViewKeepAlive, isKeepAliveMainViewId, type KeepAliveMainViewId } from "./MainViewKeepAlive";
 import { MobileDrawer } from "../MobileDrawer";
+/* FNXC:ToolSurfaces 2026-09-15-16:04: FN-426 — Files and Git Manager destinations; both reuse bodies already in the main bundle. */
+import { FilesView } from "../FilesView";
+import { GitManagerView } from "../GitManagerView";
 
 /*
 FNXC:CommandCenterAgentActivity 2026-08-10-01:54:
@@ -304,6 +307,8 @@ export function MainContent(props: MainContentProps) {
   setShadcnCustomColors,
   resolvedThemeMode,
   setChatMessageLayoutImmediate,
+  rightSidebarEnabled,
+  setRightSidebarEnabledImmediate,
   setOpenTasksInRightSidebarImmediate,
   setOpenMobileTasksInPopupImmediate,
   setShowCostBadgeOnCardsImmediate,
@@ -357,6 +362,7 @@ export function MainContent(props: MainContentProps) {
   handleOpenTaskLogs,
   popOutTaskDetail,
   selectedPrId,
+  gitManagerInitialSection,
   insightsEnabled,
   handleInsightTaskCreate,
   researchEnabled,
@@ -623,6 +629,8 @@ export function MainContent(props: MainContentProps) {
             onShadcnCustomColorsChange={setShadcnCustomColors}
             chatMessageLayout={chatMessageLayout}
             onChatMessageLayoutChange={setChatMessageLayoutImmediate}
+            rightSidebarEnabled={rightSidebarEnabled}
+            onRightSidebarEnabledChange={setRightSidebarEnabledImmediate}
             openTasksInRightSidebar={openTasksInRightSidebar}
             onOpenTasksInRightSidebarChange={setOpenTasksInRightSidebarImmediate}
             openMobileTasksInPopup={openMobileTasksInPopup}
@@ -936,6 +944,40 @@ export function MainContent(props: MainContentProps) {
     );
   }
 
+  /*
+  FNXC:ToolSurfaces 2026-09-15-16:04:
+  FN-426: Files and Git Manager are real destinations now, which is what makes the right dock optional. Both are
+  imported eagerly because their bodies (DockFilesView, GitManagerModal) were already in the main bundle through the
+  dock and AppModals, so promoting them to pages adds no new chunk.
+  */
+  if (taskView === "files") {
+    return (
+      <PageErrorBoundary>
+        <FilesView projectId={currentProject?.id} openFile={openFileInBrowser} />
+      </PageErrorBoundary>
+    );
+  }
+
+  if (taskView === "git-manager") {
+    return (
+      <PageErrorBoundary>
+        <GitManagerView
+          projectId={currentProject?.id}
+          tasks={tasks as Task[]}
+          addToast={addToast}
+          /* An old `pull-requests` request is routed here by App with this section preselected. */
+          initialSection={gitManagerInitialSection}
+          selectedPullRequestId={selectedPrId}
+        />
+      </PageErrorBoundary>
+    );
+  }
+
+  /*
+  FNXC:ToolSurfaces 2026-09-15-16:04:
+  FN-426 removed Pull Requests from every navigation surface in favour of the Git Manager section. This branch is kept
+  only as a defensive host for a request that somehow bypasses App's routing; it is not an offered destination.
+  */
   if (taskView === "pull-requests") {
     return (
       <PageErrorBoundary>

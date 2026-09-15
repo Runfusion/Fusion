@@ -658,6 +658,9 @@ interface SettingsModalProps {
   /** FN-419: mirrors the pending project navigation placement into the shell immediately. */
   navigationPlacement?: NavigationPlacement;
   onNavigationPlacementChange?: (placement: NavigationPlacement) => void;
+  /** FN-426: mirrors the pending right-dock availability into the shell immediately. */
+  rightSidebarEnabled?: boolean;
+  onRightSidebarEnabledChange?: (enabled: boolean) => void;
   /** Current App-shell values and optimistic callbacks for mounted Appearance consumers. */
   openTasksInRightSidebar?: boolean;
   onOpenTasksInRightSidebarChange?: (enabled: boolean) => void;
@@ -937,6 +940,8 @@ export function SettingsModal({
   onChatMessageLayoutChange,
   navigationPlacement = "footer",
   onNavigationPlacementChange,
+  rightSidebarEnabled,
+  onRightSidebarEnabledChange,
   openTasksInRightSidebar,
   onOpenTasksInRightSidebarChange,
   openMobileTasksInPopup,
@@ -1006,6 +1011,8 @@ export function SettingsModal({
     taskDetailChatFirst: false,
     chatMessageLayout: "bubbles",
     navigationPlacement: "footer",
+    /* FNXC:RightSidebarOptional 2026-09-15-16:04: FN-426 — pre-hydration form value matches the default-off schema. */
+    rightSidebarEnabled: false,
     executorAllowSiblingBranchRename: false,
     worktreeCopyFiles: [],
     worktreesDir: "",
@@ -1588,6 +1595,12 @@ export function SettingsModal({
           has exactly its two valid choices and falls back to the bottom bar.
           */
           navigationPlacement: normalizeNavigationPlacement(s.navigationPlacement),
+          /*
+          FNXC:RightSidebarOptional 2026-09-15-16:04:
+          FN-426: only the exact boolean true enters the form, so a legacy or malformed persisted value renders the
+          toggle off and saves the same default-off value the shell already applied.
+          */
+          rightSidebarEnabled: s.rightSidebarEnabled === true,
           /*
           FNXC:GithubImportTracking 2026-07-01-00:00:
           Missing githubLinkImportedIssuesToTracking must render as unchecked and save as project-scoped false only after operator interaction; this keeps upgraded projects on legacy import behavior by default.
@@ -4221,6 +4234,8 @@ export function SettingsModal({
             onChatMessageLayoutChange={onChatMessageLayoutChange}
             navigationPlacement={navigationPlacement}
             onNavigationPlacementChange={onNavigationPlacementChange}
+            rightSidebarEnabled={rightSidebarEnabled}
+            onRightSidebarEnabledChange={onRightSidebarEnabledChange}
             openTasksInRightSidebar={openTasksInRightSidebar}
             onOpenTasksInRightSidebarChange={onOpenTasksInRightSidebarChange}
             openMobileTasksInPopup={openMobileTasksInPopup}

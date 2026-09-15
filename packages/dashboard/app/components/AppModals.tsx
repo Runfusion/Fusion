@@ -142,6 +142,8 @@ interface AppModalsProps {
     chatMessageLayout: ChatMessageLayout;
     /* FN-419: project choice of the single primary navigation surface. */
     navigationPlacement: NavigationPlacement;
+    /* FN-426: project opt-in for the optional right tool dock. */
+    rightSidebarEnabled: boolean;
     themeMode: ThemeMode;
     colorTheme: ColorTheme;
     /* FNXC:UiStyleAxis 2026-09-15-00:20: second, independent appearance axis owned by the single useTheme instance in App. */
@@ -156,6 +158,7 @@ interface AppModalsProps {
     setShadcnCustomColors: (colors: Record<string, string>) => void;
     setChatMessageLayoutImmediate: (layout: ChatMessageLayout) => void;
     setNavigationPlacementImmediate: (placement: NavigationPlacement) => void;
+    setRightSidebarEnabledImmediate: (enabled: boolean) => void;
     setOpenTasksInRightSidebarImmediate: (enabled: boolean) => void;
     setOpenMobileTasksInPopupImmediate: (enabled: boolean) => void;
     setShowCostBadgeOnCardsImmediate: (enabled: boolean) => void;
@@ -481,6 +484,8 @@ export function AppModals({
               onChatMessageLayoutChange={settings.setChatMessageLayoutImmediate}
               navigationPlacement={settings.navigationPlacement}
               onNavigationPlacementChange={settings.setNavigationPlacementImmediate}
+              rightSidebarEnabled={settings.rightSidebarEnabled}
+              onRightSidebarEnabledChange={settings.setRightSidebarEnabledImmediate}
               openTasksInRightSidebar={settings.openTasksInRightSidebar}
               onOpenTasksInRightSidebarChange={settings.setOpenTasksInRightSidebarImmediate}
               openMobileTasksInPopup={settings.openMobileTasksInPopup}

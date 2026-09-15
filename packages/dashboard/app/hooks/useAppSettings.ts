@@ -50,6 +50,12 @@ export interface UseAppSettingsResult {
    * FN-419: project choice of the single primary navigation surface (bottom footer vs left sidebar).
    */
   navigationPlacement: NavigationPlacement;
+  /**
+   * FNXC:RightSidebarOptional 2026-09-15-16:04:
+   * FN-426: project opt-in for the right tool dock. Availability only — the dock's local open/pin/width/tool
+   * preferences never substitute for it. Absent, invalid, and pre-hydration states are all `false`.
+   */
+  rightSidebarEnabled: boolean;
   mobileNavPrimaryItems: string[];
   dashboardKeyboardShortcuts: Required<DashboardKeyboardShortcutMap>;
   dismissModalsOnOutsideClick: boolean;
@@ -70,6 +76,7 @@ export interface UseAppSettingsResult {
   toggleEnginePause: () => Promise<void>;
   setChatMessageLayoutImmediate: (layout: ChatMessageLayout) => void;
   setNavigationPlacementImmediate: (placement: NavigationPlacement) => void;
+  setRightSidebarEnabledImmediate: (enabled: boolean) => void;
   setOpenTasksInRightSidebarImmediate: (enabled: boolean) => void;
   setOpenMobileTasksInPopupImmediate: (enabled: boolean) => void;
   setShowCostBadgeOnCardsImmediate: (enabled: boolean) => void;
@@ -113,6 +120,8 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
   const [taskDetailChatFirst, setTaskDetailChatFirst] = useState(false);
   const [chatMessageLayout, setChatMessageLayout] = useState<ChatMessageLayout>("bubbles");
   const [navigationPlacement, setNavigationPlacement] = useState<NavigationPlacement>("footer");
+  /* FNXC:RightSidebarOptional 2026-09-15-16:04: FN-426 — default-off availability of the right tool dock. */
+  const [rightSidebarEnabled, setRightSidebarEnabled] = useState(false);
   const [mobileNavPrimaryItems, setMobileNavPrimaryItems] = useState<string[]>(() => resolveMobileNavPrimaryItems().primaryItems);
   const [dashboardKeyboardShortcuts, setDashboardKeyboardShortcuts] = useState<Required<DashboardKeyboardShortcutMap>>(DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS);
   const [dismissModalsOnOutsideClick, setDismissModalsOnOutsideClick] = useState(false);
@@ -203,6 +212,12 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
       setTaskDetailChatFirst(settings.taskDetailChatFirst === true);
       setChatMessageLayout(normalizeChatMessageLayout(settings.chatMessageLayout));
       setNavigationPlacement(normalizeNavigationPlacement(settings.navigationPlacement));
+      /*
+      FNXC:RightSidebarOptional 2026-09-15-16:04:
+      FN-426: strictly `=== true`. A stale string, number, or absent field must never mount a shell surface the
+      operator did not ask for, because every tool is reachable without it.
+      */
+      setRightSidebarEnabled(settings.rightSidebarEnabled === true);
       setExperimentalFeatures(settings.experimentalFeatures ?? {});
       const features = settings.experimentalFeatures ?? {};
       /*
@@ -224,6 +239,12 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     setInsightsEnabled(true);
     setMemoryEnabled(true);
     setDevServerEnabled(false);
+    /*
+    FNXC:RightSidebarOptional 2026-09-15-16:04:
+    FN-426: a project switch must not carry the previous project's dock availability across the gap before the new
+    project's settings land, so it falls back to the safe default rather than the outgoing value.
+    */
+    setRightSidebarEnabled(false);
     setOpenTasksInRightSidebar(false);
     setOpenMobileTasksInPopup(false);
     setShowCostBadgeOnCards(false);
@@ -323,6 +344,15 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     setNavigationPlacement(normalizeNavigationPlacement(placement));
   }, []);
 
+  const setRightSidebarEnabledImmediate = useCallback((enabled: boolean) => {
+    /*
+    FNXC:RightSidebarOptional 2026-09-15-16:04:
+    FN-426 mirrors the Appearance opt-in into the shell during its input event so the dock appears/disappears live.
+    Like the sibling Immediate setters it never persists; SettingsModal stays the sole debounced writer.
+    */
+    setRightSidebarEnabled(enabled === true);
+  }, []);
+
   const setOpenTasksInRightSidebarImmediate = useCallback((enabled: boolean) => {
     setOpenTasksInRightSidebar(enabled === true);
   }, []);
@@ -372,6 +402,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     taskDetailChatFirst,
     chatMessageLayout,
     navigationPlacement,
+    rightSidebarEnabled,
     mobileNavPrimaryItems,
     dashboardKeyboardShortcuts,
     dismissModalsOnOutsideClick,
@@ -392,6 +423,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     toggleEnginePause,
     setChatMessageLayoutImmediate,
     setNavigationPlacementImmediate,
+    setRightSidebarEnabledImmediate,
     setOpenTasksInRightSidebarImmediate,
     setOpenMobileTasksInPopupImmediate,
     setShowCostBadgeOnCardsImmediate,

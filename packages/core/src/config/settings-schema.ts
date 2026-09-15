@@ -668,6 +668,14 @@ export const DEFAULT_PROJECT_SETTINGS = {
   */
   navigationPlacement: "footer",
   /*
+  FNXC:RightSidebarOptional 2026-09-15-16:04:
+  FN-426 makes the right tool dock optional and default-OFF: every tool it hosted has a dedicated access elsewhere
+  (Git and Files pages, Activity and Notes header popovers, Chat footer list, Board/List header toggle, Secrets in
+  project settings, Pull Requests inside Git). Operators can still switch it back on, where it keeps only
+  Files/Chat/List/Notes.
+  */
+  rightSidebarEnabled: false,
+  /*
   FNXC:TaskDetailActivityFirst 2026-06-30-23:59:
   Project task-detail defaults are Activity-first unless this opt-in is true. Keeping the default false preserves explicit deep-link ids while making omitted non-done task opens land on Activity → Live.
   */

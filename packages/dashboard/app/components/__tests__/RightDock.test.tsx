@@ -87,15 +87,17 @@ function TestRightDock(props: Omit<RightDockProps, "pinned" | "onTogglePin" | "s
 FNXC:ChatSurfaceUnification 2026-09-14-11:35:
 The dock rail is registry-sourced. Chat is a launcher button rather than an inline tab; Todos remains plugin-provided and appears only when the project enables its view.
 */
+/*
+ * FN-426: the right sidebar is an explicit project opt-in now, so it may not be the OWNER of anything. Its roster is
+ * exactly four shortcuts whose canonical hosts live elsewhere; Git Manager, Activity Log, Secrets, Pull Requests, Dev
+ * Server, and plugin views became destinations of their own and are asserted absent below.
+ */
 const toolTabIds = [
   "right-dock-tab-files",
   // FNXC:ChatSurfaceUnification 2026-09-14-17:46: FN-392 restores Chat as an inline dock tool tab, in registry order.
   "right-dock-tab-chat",
-  "right-dock-tab-activity-log",
-  "right-dock-tab-git-manager",
-  "right-dock-tab-devserver",
-  "right-dock-tab-secrets",
-  "right-dock-tab-pull-requests",
+  "right-dock-tab-list",
+  "right-dock-tab-notes",
 ];
 
 const removedViewTabIds = [
@@ -174,13 +176,13 @@ describe("RightDock", () => {
     FNXC:Navigation 2026-06-22-16:00:
     Every right-dock tab is now an inline view, so selecting one (git-manager) persists it and the dock restores that selection on remount instead of snapping back to Files.
     */
-    fireEvent.click(screen.getByTestId("right-dock-tab-git-manager"));
-    expect(screen.getByTestId("right-dock-tab-git-manager")).toHaveAttribute("aria-selected", "true");
-    expect(window.localStorage.getItem(RIGHT_DOCK_VIEW_STORAGE_KEY)).toBe("git-manager");
+    fireEvent.click(screen.getByTestId("right-dock-tab-notes"));
+    expect(screen.getByTestId("right-dock-tab-notes")).toHaveAttribute("aria-selected", "true");
+    expect(window.localStorage.getItem(RIGHT_DOCK_VIEW_STORAGE_KEY)).toBe("notes");
     unmount();
 
     render(<TestRightDock open={true} renderProps={renderProps} />);
-    expect(screen.getByTestId("right-dock-tab-git-manager")).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByTestId("right-dock-tab-notes")).toHaveAttribute("aria-selected", "true");
   });
 
   it("conserve Files comme liste unique aux largeurs étroite et large", () => {
@@ -240,9 +242,9 @@ describe("RightDock", () => {
 
   it("keeps temporary task detail visible while the underlying tool selection changes", () => {
     render(<TestRightDock open={true} renderProps={{ ...renderProps, tasks: [] }} dockTask={{ id: "FN-7169", title: "Sidebar task" } as never} dockTaskContent={<div data-testid="dock-task-detail">Sidebar task</div>} onCloseDockTask={vi.fn()} />);
-    fireEvent.click(screen.getByTestId("right-dock-tab-git-manager"));
+    fireEvent.click(screen.getByTestId("right-dock-tab-notes"));
     expect(screen.getByTestId("dock-task-detail")).toHaveTextContent("Sidebar task");
-    expect(screen.getByTestId("right-dock-tab-git-manager")).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByTestId("right-dock-tab-notes")).toHaveAttribute("aria-selected", "true");
   });
 
   it("controller dock task opens, replaces, persists across tabs, and clears on close or inactive teardown", () => {
@@ -294,7 +296,7 @@ describe("RightDock", () => {
     expect(openDetailTask).not.toHaveBeenCalled();
     expect(screen.getByTestId("dock-task-detail")).toHaveTextContent("First task");
 
-    fireEvent.click(screen.getByTestId("right-dock-tab-git-manager"));
+    fireEvent.click(screen.getByTestId("right-dock-tab-notes"));
     expect(screen.getByTestId("dock-task-detail")).toHaveTextContent("First task");
 
     fireEvent.click(screen.getByTestId("open-second"));
@@ -306,7 +308,7 @@ describe("RightDock", () => {
 
     fireEvent.click(screen.getByTestId("close-dock-task"));
     expect(screen.queryByTestId("dock-task-detail")).toBeNull();
-    expect(screen.getByRole("tabpanel", { name: "Git Manager" })).toBeInTheDocument();
+    expect(screen.getByRole("tabpanel", { name: "Notes" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId("open-first"));
     expect(screen.getByTestId("dock-task-detail")).toHaveTextContent("First task");
@@ -315,7 +317,7 @@ describe("RightDock", () => {
     expect(screen.queryByTestId("dock-task-detail")).toBeNull();
     expect(screen.queryByText("Same ID in second project")).toBeNull();
     expect(taskDetailRenderSpy).not.toHaveBeenCalled();
-    expect(screen.getByRole("tabpanel", { name: "Git Manager" })).toBeInTheDocument();
+    expect(screen.getByRole("tabpanel", { name: "Notes" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId("open-first"));
     expect(screen.getByTestId("dock-task-detail")).toHaveTextContent("First task");
@@ -323,7 +325,7 @@ describe("RightDock", () => {
     expect(screen.queryByTestId("right-dock")).toBeNull();
     rerender(<Harness active={true} projectId="project-2" />);
     expect(screen.queryByTestId("dock-task-detail")).toBeNull();
-    expect(screen.getByRole("tabpanel", { name: "Git Manager" })).toBeInTheDocument();
+    expect(screen.getByRole("tabpanel", { name: "Notes" })).toBeInTheDocument();
   });
 
   it("renders the pin affordance for both states and delegates the toggle", () => {
@@ -469,55 +471,46 @@ describe("RightDock", () => {
             goalsView: true,
           },
           showSkillsTab: true,
+          listViewAvailable: true,
           pluginDashboardViews: [{ pluginId: "fusion-plugin-todos", view: { viewId: "todos", label: "Todos", placement: "overflow", order: 70 } }],
         }}
       />,
     );
 
     /*
-    FNXC:Navigation 2026-06-22-16:00:
-    With Dev Server enabled and Todo supplied by the enabled plugin list, the nine-entry roster renders in registry order.
+    FN-426: even with every experimental flag on and a plugin view supplied, the opted-in panel offers only its four
+    shortcuts. A relocated tool appearing here would give it two owners while its real destination already exists.
     */
-    expect(screen.getAllByRole("tab").map((tab) => tab.getAttribute("data-testid"))).toEqual([
-      ...toolTabIds,
-      "right-dock-tab-plugin-fusion-plugin-todos-todos",
-    ]);
+    expect(screen.getAllByRole("tab").map((tab) => tab.getAttribute("data-testid"))).toEqual(toolTabIds);
     expect(screen.queryByTestId("right-dock-tab-tasks")).toBeNull();
     expect(screen.getByTestId("right-dock-tab-files")).toHaveAttribute("aria-label", "Files");
     expect(screen.getByTestId("right-dock-tab-chat")).toHaveAttribute("aria-label", "Chat");
     expect(screen.getByTestId("right-dock-tab-chat")).toHaveAttribute("role", "tab");
-    expect(screen.getByTestId("right-dock-tab-activity-log")).toHaveAttribute("aria-label", "Activity Log");
-    expect(screen.getByTestId("right-dock-tab-git-manager")).toHaveAttribute("aria-label", "Git Manager");
-    expect(screen.getByTestId("right-dock-tab-devserver")).toHaveAttribute("aria-label", "Dev Server");
-    expect(screen.getByTestId("right-dock-tab-secrets")).toHaveAttribute("aria-label", "Secrets");
-    expect(screen.getByTestId("right-dock-tab-plugin-fusion-plugin-todos-todos")).toHaveAttribute("aria-label", "Todos");
-    expect(screen.getByTestId("right-dock-tab-pull-requests")).toHaveAttribute("aria-label", "Pull Requests");
+    expect(screen.getByTestId("right-dock-tab-list")).toHaveAttribute("aria-label", "List");
+    expect(screen.getByTestId("right-dock-tab-notes")).toHaveAttribute("aria-label", "Notes");
+    for (const relocated of ["right-dock-tab-activity-log", "right-dock-tab-git-manager", "right-dock-tab-devserver", "right-dock-tab-secrets", "right-dock-tab-pull-requests", "right-dock-tab-plugin-fusion-plugin-todos-todos"]) {
+      expect(screen.queryByTestId(relocated)).toBeNull();
+    }
     for (const removedId of removedViewTabIds) {
       expect(screen.queryByTestId(removedId)).toBeNull();
     }
   });
 
-  it("gates devserver behind its visibility flag and omits disabled Todo plugins", () => {
-    /*
-    FNXC:Navigation 2026-06-22-16:00:
-    Dev Server is feature-gated, while Todo is absent unless the project-enabled plugin list supplies it. With neither, the dock renders seven static inline tools.
-    */
+  it("omits List where the host supplies no List surface, and never offers Dev Server or plugins", () => {
     render(<TestRightDock open={true} renderProps={renderProps} />);
     expect(screen.getAllByRole("tab").map((tab) => tab.getAttribute("data-testid"))).toEqual([
       "right-dock-tab-files",
       "right-dock-tab-chat",
-      "right-dock-tab-activity-log",
-      "right-dock-tab-git-manager",
-      "right-dock-tab-secrets",
-      "right-dock-tab-pull-requests",
+      "right-dock-tab-notes",
     ]);
     expect(screen.queryByTestId("right-dock-tab-devserver")).toBeNull();
     expect(screen.queryByTestId("right-dock-tab-todos")).toBeNull();
   });
 
-  it("shows non-expandable Notes only in the explicit Alpha desktop host", () => {
+  /* FN-426: the panel is chosen explicitly, so its Notes shortcut is offered on tablet as well as desktop. */
+  it("shows non-expandable Notes on both wide hosts", () => {
     const { rerender } = render(<TestRightDock open renderProps={{ ...renderProps, hostMode: "standard" }} visibilityOptions={{ hostMode: "standard" }} />);
-    expect(screen.queryByTestId("right-dock-tab-notes")).toBeNull();
+    expect(screen.getByTestId("right-dock-tab-notes")).toBeInTheDocument();
 
     rerender(<TestRightDock open renderProps={{ ...renderProps, hostMode: "desktop" }} visibilityOptions={{ hostMode: "desktop" }} />);
     fireEvent.click(screen.getByTestId("right-dock-tab-notes"));
@@ -558,12 +551,17 @@ describe("RightDock", () => {
     FNXC:Navigation 2026-06-22-16:00:
     The right dock no longer hosts launcher-action tabs that fire Header handlers; every tab is an inline view. Clicking a non-Files tab selects it (aria-selected flips, Files deselects) and replaces the body, and the Files tab restores the inline Files view.
     */
-    render(<TestRightDock open={true} renderProps={{ ...renderProps, tasks: [] }} />);
+    /*
+     * FN-426: the remaining non-Files shortcuts are lazy, and a suspending switch keeps the previous body mounted but
+     * hidden, which is indistinguishable from a body that never switched. The List shortcut renders an owner-supplied
+     * node synchronously, so it is the honest way to assert the body actually changes.
+     */
+    render(<TestRightDock open={true} renderProps={{ ...renderProps, tasks: [], renderListView: () => <div data-testid="dock-list-surface" /> }} visibilityOptions={{ listViewAvailable: true }} />);
 
     expect(screen.getByTestId("right-dock-tab-files")).toHaveAttribute("aria-selected", "true");
     expect(screen.getByTestId("right-dock-files-view")).toBeInTheDocument();
 
-    for (const tabId of ["right-dock-tab-activity-log", "right-dock-tab-git-manager", "right-dock-tab-secrets"]) {
+    for (const tabId of ["right-dock-tab-list"]) {
       fireEvent.click(screen.getByTestId(tabId));
       expect(screen.getByTestId(tabId)).toHaveAttribute("aria-selected", "true");
       expect(screen.getByTestId("right-dock-tab-files")).toHaveAttribute("aria-selected", "false");
@@ -715,16 +713,18 @@ describe("RightDock", () => {
     expect(parsed.position.y).toBeGreaterThanOrEqual(16);
   });
 
-  it("fires expand for the currently selected inline entry", () => {
-    /*
-    FNXC:Navigation 2026-06-22-16:00:
-    Every tab is inline, so the expand button fires onExpand with whichever inline entry is selected (here git-manager after switching away from the default Files).
-    */
+  /*
+   * FN-426: Chat, List, and Notes are deliberately non-expandable (an expand window would be a second owner beside
+   * the panel), so Files is the one shortcut that still offers the affordance.
+   */
+  it("fires expand for the currently selected inline entry and offers no expansion for the others", () => {
     const onExpand = vi.fn();
     render(<TestRightDock open={true} renderProps={renderProps} onExpand={onExpand} />);
-    fireEvent.click(screen.getByTestId("right-dock-tab-git-manager"));
     fireEvent.click(screen.getByTestId("right-dock-expand"));
-    expect(onExpand).toHaveBeenCalledWith("git-manager");
+    expect(onExpand).toHaveBeenCalledWith("files");
+
+    fireEvent.click(screen.getByTestId("right-dock-tab-notes"));
+    expect(screen.queryByTestId("right-dock-expand")).toBeNull();
   });
 
   /*

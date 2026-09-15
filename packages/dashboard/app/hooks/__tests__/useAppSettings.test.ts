@@ -130,6 +130,58 @@ describe("useAppSettings", () => {
   });
 
   /*
+  FN-426: the right tool dock is availability-gated by this project setting alone. Anything other than the exact
+  boolean `true` must resolve to disabled, because every tool it hosts is reachable without it and a stale value must
+  never resurrect a shell surface the operator did not ask for.
+  */
+  it.each([
+    [true, true],
+    [false, false],
+    [undefined, false],
+    ["true", false],
+    [1, false],
+  ] as const)("normalizes a persisted rightSidebarEnabled %s to %s", async (stored, expected) => {
+    mockFetchSettings.mockResolvedValueOnce({ rightSidebarEnabled: stored } as never);
+    const { result } = renderHook(() => useAppSettings("proj_123"));
+
+    await waitFor(() => expect(result.current.settingsLoaded).toBe(true));
+    expect(result.current.rightSidebarEnabled).toBe(expected);
+  });
+
+  it("keeps project right-sidebar availability isolated and ignores a previous project's late response", async () => {
+    let resolveProjectA!: (value: never) => void;
+    mockFetchSettings
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveProjectA = resolve as (value: never) => void; }))
+      .mockResolvedValueOnce({ rightSidebarEnabled: false } as never);
+
+    const { result, rerender } = renderHook(({ projectId }) => useAppSettings(projectId), { initialProps: { projectId: "project-a" } });
+    rerender({ projectId: "project-b" });
+
+    await waitFor(() => expect(result.current.settingsLoaded).toBe(true));
+    expect(result.current.rightSidebarEnabled).toBe(false);
+
+    await act(async () => {
+      resolveProjectA({ rightSidebarEnabled: true } as never);
+    });
+
+    expect(result.current.rightSidebarEnabled).toBe(false);
+  });
+
+  it("mirrors the Appearance right-sidebar opt-in into the shell without persisting", async () => {
+    mockFetchSettings.mockResolvedValueOnce({ rightSidebarEnabled: false } as never);
+    const { result } = renderHook(() => useAppSettings("proj_123"));
+
+    await waitFor(() => expect(result.current.settingsLoaded).toBe(true));
+    const updatesBefore = mockUpdateSettings.mock.calls.length;
+
+    act(() => { result.current.setRightSidebarEnabledImmediate(true); });
+    expect(result.current.rightSidebarEnabled).toBe(true);
+    act(() => { result.current.setRightSidebarEnabledImmediate(false); });
+    expect(result.current.rightSidebarEnabled).toBe(false);
+    expect(mockUpdateSettings.mock.calls.length).toBe(updatesBefore);
+  });
+
+  /*
   FNXC:TaskWindowIdentity 2026-09-14-17:46:
   FN-392: a historical `taskPopupsBoardListOnly` value — absent, true, or false — hydrates without being exposed or
   applied. The hook publishes no such state and no setter, so no surface can read or rewrite it.

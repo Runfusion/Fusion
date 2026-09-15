@@ -243,6 +243,15 @@ describe("SettingsModal", () => {
         chatMessageLayout: "bubbles",
         gitlabAuthTokenType: "personal",
         mergeAdvanceAutoSync: "stash-and-ff",
+        /*
+        FNXC:RightSidebarOptional 2026-09-15-17:29:
+        FN-426: this fixture states the persisted value of every project preference the Appearance form normalizes on
+        load, so the scoped save patch stays exactly the field the operator changed. `navigationPlacement` (FN-419) and
+        `rightSidebarEnabled` (FN-426) are normalized the same way, so an absent value would otherwise read as a real
+        edit and widen this assertion's patch.
+        */
+        navigationPlacement: "footer",
+        rightSidebarEnabled: false,
         pushRemote: undefined,
         showCostBadgeOnCards: false,
         taskDetailChatFirst: false,

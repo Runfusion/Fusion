@@ -43,6 +43,14 @@ const defaultSettings: Settings = {
    * `fetchSettings` payload.
    */
   navigationPlacement: "sidebar" as const,
+  /*
+   * FNXC:DashboardTests 2026-09-15-16:04:
+   * FN-426 makes the right tool sidebar an opt-in whose shipped default is OFF. The great majority of this file's
+   * existing cases were written against the historical always-on panel, so the shared fixture opts into it once here
+   * instead of rewriting each case. The FN-426 block at the end of this file overrides it explicitly, in both
+   * directions, because the default-off behavior is exactly what it proves.
+   */
+  rightSidebarEnabled: true,
 };
 
 const mockAgentStats = {
@@ -1714,7 +1722,12 @@ describe("official dashboard design production wiring", () => {
 
     const dock = screen.getByTestId("right-dock");
     expect(dock).toHaveClass("right-dock--with-footer");
-    expect(within(dock).queryByTestId("right-dock-tab-notes")).toBeNull();
+    /*
+     * FN-426: the opted-in panel offers the same four shortcuts on tablet and desktop. The old desktop-only Notes gate
+     * existed to stop a stale selection creating a hidden Notes owner in a panel nobody chose; the panel is chosen
+     * explicitly now, and the canonical Notes list is the header popover either way.
+     */
+    expect(within(dock).getByTestId("right-dock-tab-notes")).toBeInTheDocument();
     fireEvent.click(await within(dock).findByTestId("right-dock-tab-chat"));
 
     /*
@@ -4157,11 +4170,11 @@ describe("App view switching", () => {
 
     // Wait for the header to render with view toggle
     await waitFor(() => {
-      expect(screen.getByTestId("sidebar-nav-list")).toBeTruthy();
+      expect(screen.getByTestId("header-list-view-btn")).toBeTruthy();
     });
 
     // Click to switch to list view
-    fireEvent.click(screen.getByTestId("sidebar-nav-list"));
+    fireEvent.click(screen.getByTestId("header-list-view-btn"));
 
     // List view should be rendered (it has a different structure)
     await waitFor(() => {
@@ -4180,11 +4193,11 @@ describe("App view switching", () => {
 
     // Wait for the header to render
     await waitFor(() => {
-      expect(screen.getByTestId("sidebar-nav-list")).toBeTruthy();
+      expect(screen.getByTestId("header-list-view-btn")).toBeTruthy();
     });
 
     // Switch to list view
-    fireEvent.click(screen.getByTestId("sidebar-nav-list"));
+    fireEvent.click(screen.getByTestId("header-list-view-btn"));
     await waitFor(() => {
       expect(screen.queryByTestId("list-view-body")).toBeTruthy();
     });
@@ -4206,10 +4219,10 @@ describe("App view switching", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("sidebar-nav-list")).toBeTruthy();
+      expect(screen.getByTestId("header-list-view-btn")).toBeTruthy();
     });
 
-    fireEvent.click(screen.getByTestId("sidebar-nav-list"));
+    fireEvent.click(screen.getByTestId("header-list-view-btn"));
 
     await waitFor(() => {
       expect(screen.queryByTestId("list-view-body")).toBeTruthy();
@@ -4237,11 +4250,11 @@ describe("App view switching", () => {
 
     // Wait for the header to render
     await waitFor(() => {
-      expect(screen.getByTestId("sidebar-nav-list")).toBeTruthy();
+      expect(screen.getByTestId("header-list-view-btn")).toBeTruthy();
     });
 
     // Switch to list view
-    fireEvent.click(screen.getByTestId("sidebar-nav-list"));
+    fireEvent.click(screen.getByTestId("header-list-view-btn"));
 
     // Should have saved to localStorage
     await waitFor(() => {
@@ -4265,7 +4278,7 @@ describe("App view switching", () => {
     });
 
     // List view should be active
-    expect(screen.getByTestId("sidebar-nav-list").className).toContain("active");
+    expect(screen.getByTestId("header-list-view-btn")).toHaveAttribute("aria-pressed", "true");
 
     // Cleanup
     localStorage.removeItem(taskViewStorageKey());
@@ -4494,7 +4507,7 @@ describe("App view switching", () => {
     // Wait for the header to render with view toggle
     await waitFor(() => {
       expect(screen.getByTestId("sidebar-nav-board")).toBeTruthy();
-      expect(screen.getByTestId("sidebar-nav-list")).toBeTruthy();
+      expect(screen.getByTestId("header-list-view-btn")).toBeTruthy();
       expect(screen.getByTestId("sidebar-nav-agents")).toBeTruthy();
     });
   });
@@ -6517,7 +6530,7 @@ describe("App task search suggestions", () => {
     expect(observedQueries.every((query) => query === undefined)).toBe(true);
 
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
-    fireEvent.click(screen.getByTestId("desktop-nav-list"));
+    fireEvent.click(screen.getByTestId("header-list-view-btn"));
     await waitFor(() => expect(screen.getByTestId("list-keep-alive")).not.toHaveAttribute("aria-hidden"));
     const list = within(screen.getByTestId("list-keep-alive"));
     expect(list.getByText("Active Alpha task")).toBeInTheDocument();
@@ -6904,5 +6917,162 @@ describe("terminal mount lifecycle (App mounts the terminal only while open)", (
       terminalLifecycle.renders.length,
       "App re-rendered TerminalModal after close; it must not be mounted at all while closed.",
     ).toBe(rendersWhileOpen);
+  });
+});
+
+/*
+FN-426 — AUTHORITATIVE PROOF THAT NOTHING REQUIRES THE RIGHT SIDEBAR.
+
+Original state: Git Manager, Activity Log, Secrets, Pull Requests, Files, Chat, and List were reachable only through
+the right sidebar, which mounted unconditionally on every tablet/desktop project screen. The sidebar is now an explicit
+project opt-in that defaults OFF, so each of those tools must have a canonical host of its own.
+
+Every case renders the real `<App />` rather than a recomposed harness: a resolver-level test would prove the mapping
+and miss the wiring, and the wiring is the only thing that can strand a tool.
+*/
+describe("FN-426 tool surfaces without the right sidebar", () => {
+  const toolSettings = (overrides: Record<string, unknown> = {}) => ({
+    ...defaultSettings,
+    navigationPlacement: "footer" as const,
+    /* The shipped default: this block exists to prove every tool works without the panel. */
+    rightSidebarEnabled: false,
+    ...overrides,
+  });
+
+  it.each(["tablet", "desktop"] as const)("mounts no right sidebar shell at all by default on %s", async (mode) => {
+    mockUseViewportMode.mockReturnValue(mode);
+    vi.mocked(fetchSettings).mockResolvedValue(toolSettings());
+
+    render(<App />);
+
+    await screen.findByTestId("desktop-action-bar");
+    expect(screen.queryByTestId("right-dock")).toBeNull();
+    expect(screen.queryByTestId("right-dock-body")).toBeNull();
+    expect(screen.queryByTestId("header-right-dock-toggle")).toBeNull();
+    expect(screen.getByTestId("dashboard-project-shell")).not.toHaveClass("dashboard-project-shell--with-right-dock");
+  });
+
+  /*
+   * A pre-FN-426 browser carries a stored open preference. That is a LOCAL record of how the panel was last used; it
+   * must never re-enable a panel the project has turned off.
+   */
+  it("keeps the sidebar absent despite a stored open preference", async () => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    localStorage.setItem("fusion:right-dock-open", "true");
+    localStorage.setItem("fusion:right-dock-pinned", "true");
+    vi.mocked(fetchSettings).mockResolvedValue(toolSettings());
+
+    render(<App />);
+
+    await screen.findByTestId("desktop-action-bar");
+    expect(screen.queryByTestId("right-dock")).toBeNull();
+    expect(screen.queryByTestId("header-right-dock-toggle")).toBeNull();
+  });
+
+  it("mounts the sidebar with exactly the four opt-in tools when the project enables it", async () => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    localStorage.setItem("fusion:right-dock-open", "true");
+    vi.mocked(fetchSettings).mockResolvedValue(toolSettings({ rightSidebarEnabled: true }));
+
+    render(<App />);
+
+    expect(await screen.findByTestId("header-right-dock-toggle")).toBeInTheDocument();
+    expect(await screen.findByTestId("right-dock-body")).toBeInTheDocument();
+    for (const tool of ["files", "chat", "list", "notes"]) {
+      expect(await screen.findByTestId(`right-dock-tab-${tool}`)).toBeInTheDocument();
+    }
+    for (const relocated of ["git-manager", "activity-log", "secrets", "pull-requests", "devserver"]) {
+      expect(screen.queryByTestId(`right-dock-tab-${relocated}`)).toBeNull();
+    }
+  });
+
+  it("opens Git Manager as a real page from the bottom bar, with no sidebar", async () => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    vi.mocked(fetchSettings).mockResolvedValue(toolSettings());
+
+    render(<App />);
+
+    fireEvent.pointerEnter(await screen.findByTestId("desktop-nav-more"));
+    fireEvent.click(await screen.findByTestId("desktop-nav-git-manager"));
+
+    expect(await screen.findByTestId("git-manager-view")).toBeInTheDocument();
+    expect(screen.queryByTestId("right-dock")).toBeNull();
+  });
+
+  it("opens Files as a real page from the bottom bar", async () => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    vi.mocked(fetchSettings).mockResolvedValue(toolSettings());
+
+    render(<App />);
+
+    fireEvent.pointerEnter(await screen.findByTestId("desktop-nav-more"));
+    fireEvent.click(await screen.findByTestId("desktop-nav-files"));
+
+    expect(await screen.findByTestId("files-view")).toBeInTheDocument();
+  });
+
+  it("opens Activity and Notes as header panels, one at a time", async () => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    vi.mocked(fetchSettings).mockResolvedValue(toolSettings());
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByTestId("header-activity-panel-btn"));
+    expect(await screen.findByTestId("activity-tool-popover")).toBeInTheDocument();
+    expect(screen.queryByTestId("notes-tool-popover")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("header-notes-panel-btn"));
+    expect(await screen.findByTestId("notes-tool-popover")).toBeInTheDocument();
+    expect(screen.queryByTestId("activity-tool-popover")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("header-notes-panel-btn"));
+    await waitFor(() => expect(screen.queryByTestId("notes-tool-popover")).toBeNull());
+  });
+
+  it("keeps the Activity task-ID search visible inside the header panel", async () => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    vi.mocked(fetchSettings).mockResolvedValue(toolSettings());
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByTestId("header-activity-panel-btn"));
+    const popover = await screen.findByTestId("activity-tool-popover");
+    expect(within(popover).getByTestId("activity-task-search")).toBeInTheDocument();
+  });
+
+  it("opens the conversation list from the bottom bar instead of the sidebar", async () => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    vi.mocked(fetchSettings).mockResolvedValue(toolSettings());
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByTestId("desktop-nav-chat-panel"));
+    expect(await screen.findByTestId("chat-tool-popover")).toBeInTheDocument();
+    expect(screen.queryByTestId("right-dock-body")).toBeNull();
+  });
+
+  it("toggles Board and List from the header without a sidebar", async () => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    vi.mocked(fetchSettings).mockResolvedValue(toolSettings());
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByTestId("header-list-view-btn"));
+    expect(await screen.findByTestId("list-keep-alive")).toBeInTheDocument();
+    expect(screen.queryByTestId("right-dock-body")).toBeNull();
+  });
+
+  /*
+   * Pull Requests and Secrets keep their ids so bookmarks and persisted views still resolve, but they are no longer
+   * destinations: the first is a Git section and the second a Settings section.
+   */
+  it("routes a legacy pull-requests request into the Git page", async () => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    vi.mocked(fetchSettings).mockResolvedValue(toolSettings());
+    localStorage.setItem(scopedKey("kb-dashboard-task-view", "proj_123"), "pull-requests");
+
+    render(<App />);
+
+    expect(await screen.findByTestId("git-manager-view")).toBeInTheDocument();
   });
 });

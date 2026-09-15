@@ -1,13 +1,8 @@
 import { Suspense, lazy, type ComponentType, type ReactNode } from "react";
 import {
   Folder,
-  GitBranch,
-  GitPullRequest,
-  History,
   List as ListIcon,
-  Lock,
   MessageSquare,
-  Monitor,
   StickyNote,
   type LucideProps,
 } from "lucide-react";
@@ -16,40 +11,32 @@ import type { PluginDashboardViewEntry } from "../api";
 import type { ToastType } from "../hooks/useToast";
 import type { ChatSessionInfo } from "../hooks/useChat";
 import type { ChatReportHandoff } from "./chatReportHandoff";
-import { buildPluginTaskViewId } from "../plugins/pluginViewRegistry";
-import { PluginDashboardViewHost } from "../plugins/PluginDashboardViewHost";
 import type { DetailTaskTab, PluginDashboardViewContext } from "../plugins/types";
 import { DockFilesView } from "./DockFilesView";
 import { PageErrorBoundary } from "./ErrorBoundary";
-import { getPluginNavIcon } from "./pluginNavIcon";
-import { ActivityLogModal } from "./ActivityLogModal";
-import { GitManagerModal } from "./GitManagerModal";
-import { attachNativeStructureRefToDrag } from "../utils/nativeStructureDrag";
 
 /*
-FNXC:Navigation 2026-06-22-00:40:
-Dev Server and Secrets are right-dock tools (moved off the left sidebar). They render inline in the dock; Dev Server is gated by the devServerView experimental flag. Lazy-loaded to keep them out of the main bundle.
+FNXC:ToolSurfaces 2026-09-15-16:04:
+FN-426 empties this registry of every tool that now owns a canonical host elsewhere. Git Manager and Files are main
+content pages, Activity and Notes open as header popovers, Secrets is a Settings section, Pull Requests is a Git
+section, Dev Server and plugin destinations belong to the primary navigation. What remains is a deliberately small set
+of SHORTCUTS: the optional dock duplicates no owner, it only offers a second route to four surfaces that each still
+have their own.
 */
-const DevServerView = lazy(() => import("./DevServerView").then((m) => ({ default: m.DevServerView })));
-const SecretsView = lazy(() => import("./SecretsView").then((m) => ({ default: m.SecretsView })));
-const PullRequestView = lazy(() => import("./PullRequestView").then((m) => ({ default: m.PullRequestView })));
 const ChatView = lazy(() => import("./ChatView").then((m) => ({ default: m.ChatView })));
 const NotesView = lazy(() => import("./NotesView").then((m) => ({ default: m.NotesView })));
 
 export type OverflowViewHostMode = "standard" | "desktop";
 
-export type OverflowViewKey =
-  | "usage"
-  | "activity-log"
-  | "git-manager"
-  | "files"
-  | "chat"
-  | "list"
-  | "notes"
-  | "devserver"
-  | "secrets"
-  | "pull-requests"
-  | `plugin:${string}:${string}`;
+/*
+FNXC:ToolSurfaces 2026-09-15-16:04:
+FN-426 narrows the dock's tool set to exactly the four shortcuts the optional panel may offer. A persisted selection
+naming a retired tool (`git-manager`, `activity-log`, `secrets`, `pull-requests`, `devserver`, `plugin:*`) is simply
+not a visible key any more, so `readStoredRightDockView` already resolves it through its existing Files fallback.
+*/
+export const OPTIONAL_RIGHT_DOCK_TOOL_KEYS = ["files", "chat", "list", "notes"] as const;
+
+export type OverflowViewKey = (typeof OPTIONAL_RIGHT_DOCK_TOOL_KEYS)[number];
 
 export interface OverflowViewFeatureState {
   insights?: boolean;
@@ -216,118 +203,26 @@ export const STATIC_OVERFLOW_VIEW_ENTRIES: readonly OverflowViewEntry[] = [
     label: "Notes",
     icon: StickyNote,
     testId: "right-dock-tab-notes",
-    isVisible: (options) => options.hostMode === "desktop",
+    /*
+    FNXC:ToolSurfaces 2026-09-15-16:04:
+    FN-426: the opted-in dock offers the same four shortcuts on tablet and desktop. The previous desktop-only gate
+    existed to stop a stale selection creating a hidden Notes owner in a dock the operator never chose; the dock is
+    now chosen explicitly, and the header popover remains the canonical Notes list either way.
+    */
     isExpandable: () => false,
     render: (props) => wrapOverflowView(
       <NotesView projectId={props.projectId} addToast={props.addToast} controller={props.notesController} onOpenNote={props.onOpenNote} compact listOnly />,
     ),
   },
-  {
-    key: "activity-log",
-    label: "Activity Log",
-    icon: History,
-    testId: "right-dock-tab-activity-log",
-    render: (props) => wrapOverflowView(
-      <ActivityLogModal
-        isOpen={true}
-        onClose={() => {}}
-        tasks={(props.tasks ?? []) as Task[]}
-        onOpenTaskDetail={props.onOpenTaskDetail}
-        projectId={props.projectId}
-        presentation="embedded"
-      />,
-    ),
-  },
-  {
-    key: "git-manager",
-    label: "Git Manager",
-    icon: GitBranch,
-    testId: "right-dock-tab-git-manager",
-    render: (props) => wrapOverflowView(
-      <GitManagerModal
-        isOpen={true}
-        onClose={() => {}}
-        tasks={(props.tasks ?? []) as Task[]}
-        addToast={props.addToast}
-        projectId={props.projectId}
-        presentation="embedded"
-      />,
-    ),
-  },
-  {
-    key: "devserver",
-    label: "Dev Server",
-    icon: Monitor,
-    testId: "right-dock-tab-devserver",
-    isVisible: (options) => options.experimentalFeatures?.devServerView === true,
-    render: (props) => wrapOverflowView(<DevServerView tasks={props.tasks} addToast={props.addToast} projectId={props.projectId} columnFlagsByTaskId={props.columnFlagsByTaskId} />),
-  },
-  {
-    key: "secrets",
-    label: "Secrets",
-    icon: Lock,
-    testId: "right-dock-tab-secrets",
-    render: (props) => wrapOverflowView(<SecretsView addToast={props.addToast} projectId={props.projectId} />),
-  },
-  {
-    key: "pull-requests",
-    label: "Pull Requests",
-    icon: GitPullRequest,
-    testId: "right-dock-tab-pull-requests",
-    render: (props) => wrapOverflowView(<PullRequestView projectId={props.projectId} />),
-  },
 ];
 
-function buildPluginOverflowViewEntries(pluginDashboardViews: PluginDashboardViewEntry[] = []): OverflowViewEntry[] {
-  return pluginDashboardViews
-    .filter((entry) => entry.view.placement !== "primary")
-    /*
-    FNXC:Navigation 2026-06-22-00:00:
-    The dependency graph must not appear in the right sidebar; it remains a left-sidebar destination only.
-    */
-    .filter((entry) => entry.pluginId !== "fusion-plugin-dependency-graph")
-    .sort((a, b) => (a.view.order ?? Number.MAX_SAFE_INTEGER) - (b.view.order ?? Number.MAX_SAFE_INTEGER))
-    .map((entry) => {
-      const pluginTaskView = buildPluginTaskViewId(entry.pluginId, entry.view.viewId);
-      const PluginIcon = getPluginNavIcon(entry.view.icon);
-      return {
-        key: pluginTaskView,
-        label: entry.view.label,
-        icon: PluginIcon,
-        testId: `right-dock-tab-plugin-${entry.pluginId}-${entry.view.viewId}`,
-        render: (props: OverflowViewRenderProps) => wrapOverflowView(
-          <PluginDashboardViewHost
-            taskView={pluginTaskView}
-            context={props.pluginContext
-              ? {
-                ...props.pluginContext,
-                // FNXC:NativeStructurePluginDrag 2026-08-09-05:48: Right-dock callers pass a
-                // prebuilt context, so inject the host drag seam here too rather than letting that
-                // path bypass the fallback context below.
-                beginNativeStructureDrag: props.pluginContext.beginNativeStructureDrag ?? attachNativeStructureRefToDrag,
-              }
-              : {
-                projectId: props.projectId,
-                tasks: (props.tasks ?? []) as Task[],
-                workflowSteps: props.workflowSteps ?? [],
-                subscribePluginEvents: props.subscribePluginEvents,
-                openTaskDetail: props.onOpenDetail ?? (() => undefined),
-                openFile: props.openFile ?? (() => undefined),
-                beginNativeStructureDrag: attachNativeStructureRefToDrag,
-                renderTaskCard: props.renderTaskCard,
-                addToast: props.addToast,
-                openPlanningMode: props.onPlanningMode,
-                onTaskCreated: props.onTaskCreated,
-              }}
-          />,
-        ),
-      } satisfies OverflowViewEntry;
-    });
-}
-
+/*
+FNXC:ToolSurfaces 2026-09-15-16:04:
+FN-426: plugin dashboard views are no longer dock tools. They keep their primary-navigation destinations, so hosting
+them here as well would give a plugin two owners in a panel that is now purely optional.
+*/
 export function getVisibleOverflowViewEntries(options: OverflowViewVisibilityOptions = {}): OverflowViewEntry[] {
-  const staticEntries = STATIC_OVERFLOW_VIEW_ENTRIES.filter((entry) => entry.isVisible?.(options) ?? true);
-  return [...staticEntries, ...buildPluginOverflowViewEntries(options.pluginDashboardViews)];
+  return STATIC_OVERFLOW_VIEW_ENTRIES.filter((entry) => entry.isVisible?.(options) ?? true);
 }
 
 export function findOverflowViewEntry(key: OverflowViewKey, options: OverflowViewVisibilityOptions = {}): OverflowViewEntry | undefined {

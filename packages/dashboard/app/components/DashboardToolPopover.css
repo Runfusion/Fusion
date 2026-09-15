@@ -1,0 +1,52 @@
+/*
+FNXC:ToolSurfaces 2026-09-15-16:04:
+FN-426: shared chrome for the header-anchored Activity and Notes panels. Layering derives from the live
+`--fusion-max-z` ceiling published by floatingWindowStack.ts, exactly like the Usage popover, so a panel opened before
+a dashboard window is still readable above it. No sizing constant is copied from UsageIndicator.css: the panel's own
+geometry is computed against the viewport by its component.
+*/
+.dashboard-tool-popover__backdrop {
+  position: fixed;
+  inset: 0;
+  background: transparent;
+  z-index: calc(var(--fusion-max-z) + 2);
+}
+
+.dashboard-tool-popover {
+  position: fixed;
+  z-index: calc(var(--fusion-max-z) + 3);
+  display: flex;
+  flex-direction: column;
+  min-block-size: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+
+/*
+FNXC:ToolSurfaces 2026-09-15-16:04:
+`min-block-size: 0` is what makes the bounded height real: without it the flex child grows to its content and the
+panel scrolls the page instead of itself.
+*/
+.dashboard-tool-popover__body {
+  flex: 1 1 auto;
+  min-block-size: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/*
+FNXC:ToolSurfaces 2026-09-15-16:04:
+On phones the panel spans the usable width so its search field and rows stay tappable with a virtual keyboard open.
+*/
+@media (max-width: 768px) {
+  .dashboard-tool-popover {
+    inset-inline: var(--space-sm);
+    inline-size: auto !important;
+    left: var(--space-sm) !important;
+  }
+}

@@ -1,0 +1,11 @@
+/*
+FNXC:ToolSurfaces 2026-09-15-16:04:
+FN-426: page framing only. The browser keeps every rule from DockFilesView.css; this file just lets the list own the
+full bounded content height instead of the dock column height it was authored against.
+*/
+.files-view .dock-files-view {
+  block-size: 100%;
+  min-block-size: 0;
+  display: flex;
+  flex-direction: column;
+}

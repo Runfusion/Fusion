@@ -12,11 +12,14 @@ import {
   ChevronLeft,
   ChevronRight,
   Clock,
+  Folder,
+  FolderGit2,
   Gauge,
   Lightbulb,
   LayoutGrid,
   Mail,
   MessageSquare,
+  Monitor,
   PanelsTopLeft,
   Search,
   Settings,
@@ -447,6 +450,34 @@ export function LeftSidebarNav({
     FNXC:Navigation 2026-06-22-00:00 (reordered 2026-06-23-01:45):
     Workflows, Import Tasks, and Automations are left-sidebar destinations that load in the main content area (not modals). Import Tasks is the GitHub import view (labeled "Import Tasks", not "Import from GitHub"). Automations + Import Tasks sit directly ABOVE Compound Eng per user request.
     */
+    /*
+    FNXC:ToolSurfaces 2026-09-15-16:04:
+    FN-426: Files and Git Manager are sidebar destinations too. They were the last two tools reachable only through the
+    right dock, so this rail — which is a full replacement for the footer under `navigationPlacement: "sidebar"` — must
+    offer them, otherwise turning the dock off would strand them on that placement. Pull Requests stays a Git section
+    and Secrets stays a Settings section, so neither gains a rail entry.
+    */
+    {
+      id: "files",
+      label: t("nav.files", getDashboardViewLabel("files")),
+      view: "files" as TaskView,
+      isActive: view === "files",
+      icon: Folder,
+      testId: "sidebar-nav-files",
+      onSelect: () => onChangeView("files"),
+    },
+    {
+      id: "git-manager",
+      label: t("nav.gitManager", getDashboardViewLabel("git-manager")),
+      view: "git-manager" as TaskView,
+      isActive: view === "git-manager",
+      icon: FolderGit2,
+      testId: "sidebar-nav-git-manager",
+      onSelect: () => onChangeView("git-manager"),
+    },
+    ...(experimentalFeatures?.devServerView
+      ? [{ id: "dev-server", label: t("nav.devServer", getDashboardViewLabel("dev-server")), view: "dev-server" as TaskView, isActive: view === "dev-server" || view === "devserver", icon: Monitor, testId: "sidebar-nav-dev-server", onSelect: () => onChangeView("dev-server") }]
+      : []),
     {
       id: "automations",
       label: t("nav.automations", getDashboardViewLabel("automations")),
@@ -499,6 +530,7 @@ export function LeftSidebarNav({
     showAgents: showAgentsTab,
     showSkills: showSkillsTab,
     flags: { memory: experimentalFeatures?.memoryView, whiteboard: experimentalFeatures?.whiteboardView, goals: experimentalFeatures?.goalsView, insights: experimentalFeatures?.insights, research: experimentalFeatures?.researchView, ideation: experimentalFeatures?.ideationView, evals: experimentalFeatures?.evalsView },
+    showDevServer: experimentalFeatures?.devServerView === true,
   });
   const sharedKinds = new Map(sharedRegistry.map((entry) => [entry.view ?? entry.id, entry.kind]));
 

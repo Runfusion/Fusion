@@ -1,6 +1,6 @@
 import type { ComponentType } from "react";
 import type { LucideProps } from "lucide-react";
-import { Bot, Brain, Clock, Gauge, Lightbulb, LayoutGrid, Mail, PanelsTopLeft, Search, Settings, Sparkles, Target, Type, Workflow, Zap } from "lucide-react";
+import { Bot, Brain, Clock, Folder, FolderGit2, Gauge, Lightbulb, LayoutGrid, Mail, Monitor, PanelsTopLeft, Search, Settings, Sparkles, Target, Type, Workflow, Zap } from "lucide-react";
 import type { PluginDashboardViewEntry } from "../api";
 import type { TaskView } from "../hooks/useViewState";
 import { buildPluginTaskViewId } from "../plugins/pluginViewRegistry";
@@ -36,6 +36,8 @@ export interface DashboardNavigationRegistryOptions {
   mailboxPendingApprovalCount?: number;
   chatHasUnreadResponse?: boolean;
   planningNeedsInput?: boolean;
+  /* FN-426: Dev Server is a primary-navigation destination now that the right dock no longer hosts it. */
+  showDevServer?: boolean;
 }
 
 /*
@@ -58,6 +60,16 @@ export function buildDashboardNavigationEntries(options: DashboardNavigationRegi
   });
   const overflow = [
     ...plugins,
+    /*
+    FNXC:ToolSurfaces 2026-09-15-16:04:
+    FN-426: Files, Git, and Dev Server become ordinary primary-navigation destinations. They were the last tools that
+    existed only inside the right dock, so promoting them here is what allows the dock to be turned off without any
+    feature becoming unreachable. Pull Requests is deliberately absent: it is a section of Git, not a destination.
+    Secrets is deliberately absent: it lives in Settings → project Secrets.
+    */
+    page("files", "Files", "files", Folder),
+    page("git-manager", "Git Manager", "git-manager", FolderGit2),
+    ...(options.showDevServer ? [page("dev-server", "Dev Server", "dev-server", Monitor)] : []),
     ...(options.showSkills ? [page("skills", "Skills", "skills", Zap)] : []),
     ...(options.showSkills ? [page("snippets", "Snippets", "snippets", Type)] : []),
     ...(options.flags?.memory ? [page("memory", "Memory", "memory", Brain)] : []),
@@ -72,10 +84,11 @@ export function buildDashboardNavigationEntries(options: DashboardNavigationRegi
     ...(options.flags?.evals ? [page("evals", "Evals", "evals", Target)] : []),
     { id: "settings", label: "Settings", icon: Settings, kind: "existing-action" as const, placement: "external" as const, view: "settings" as TaskView, testId: "desktop-nav-settings", onSelect: options.onOpenSettings },
   ];
-  const external: DashboardNavigationEntry[] = [
-    { id: "dev-server", label: "Dev Server", icon: PanelsTopLeft, kind: "external-owner", placement: "external", view: "devserver", testId: "right-dock-dev-server" },
-    { id: "secrets", label: "Secrets", icon: Settings, kind: "external-owner", placement: "external", view: "secrets", testId: "right-dock-secrets" },
-    { id: "pull-requests", label: "Pull Requests", icon: Workflow, kind: "external-owner", placement: "external", view: "pull-requests", testId: "right-dock-pull-requests" },
-  ];
-  return [...direct, ...overflow, ...external];
+  /*
+  FNXC:ToolSurfaces 2026-09-15-16:04:
+  FN-426 removes the `external-owner` tier entirely. It existed to declare destinations whose real owner was the right
+  dock; with the dock optional, a destination owned by it would be unreachable whenever an operator leaves it off.
+  Dev Server moved into the overflow above, Secrets into Settings, Pull Requests into the Git page.
+  */
+  return [...direct, ...overflow];
 }

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { Settings, LayoutGrid, List, Search, Activity, MoreHorizontal, Clock, Folder, History, GitBranch, Monitor, Workflow, Bot, Target, Grid3X3, Mail, MessageSquare, Check, Zap, Sparkles, Brain, Lock, Gauge, Lightbulb, PanelsTopLeft, ChevronDown, ChevronRight, PanelRight, Star } from "lucide-react";
+import { Settings, LayoutGrid, List, Search, Activity, MoreHorizontal, Clock, Folder, History, GitBranch, Monitor, Workflow, Bot, Target, Grid3X3, Mail, MessageSquare, Check, Zap, Sparkles, Brain, Gauge, Lightbulb, PanelsTopLeft, ChevronDown, ChevronRight, PanelRight, Star, StickyNote } from "lucide-react";
 import "./Header.css";
 // ProjectSelector styles used by the imported standalone component.
 import "./ProjectSelector.css";
@@ -57,6 +57,18 @@ export interface HeaderProps {
   onOpenGitHubImport?: () => void;
   onOpenUsage?: (anchorRect?: DOMRect | null) => void;
   onOpenActivityLog?: () => void;
+  /*
+  FNXC:ToolSurfaces 2026-09-15-16:04:
+  FN-426: Activity and Notes are header-anchored panels on EVERY breakpoint, so neither depends on the optional right
+  dock nor on the mobile More sheet. The Header owns only the triggers and their anchor rect; App owns the single open
+  panel, which is what keeps Activity, Notes, and the footer Chat list mutually exclusive.
+  */
+  onOpenActivityPanel?: (anchorRect: DOMRect | null) => void;
+  activityPanelOpen?: boolean;
+  activityPanelId?: string;
+  onOpenNotesPanel?: (anchorRect: DOMRect | null) => void;
+  notesPanelOpen?: boolean;
+  notesPanelId?: string;
   /** Opens the mailbox view */
   onOpenMailbox?: () => void;
   /** Unread message count for badge display */
@@ -126,6 +138,12 @@ export function Header({
   onOpenGitHubImport,
   onOpenUsage,
   onOpenActivityLog,
+  onOpenActivityPanel,
+  activityPanelOpen = false,
+  activityPanelId,
+  onOpenNotesPanel,
+  notesPanelOpen = false,
+  notesPanelId,
   onOpenMailbox,
   mailboxUnreadCount = 0,
   mailboxPendingApprovalCount = 0,
@@ -740,21 +758,22 @@ export function Header({
               <LayoutGrid size={16} />
             </button>
             {/*
-            FNXC:ListInRightDock 2026-09-14-04:42:
-            FN-382: on a phone the toggle still switches to the List page; on tablet and desktop List lives in the
-            right dock, so the toggle would either duplicate that tool or navigate away from the current destination.
+            FNXC:ToolSurfaces 2026-09-15-16:04:
+            FN-426 restores List beside Board in the legacy view-toggle group. FN-382 had made List a right-dock tool,
+            which was the last reason the dock was structurally required to browse tasks as a list. Hosts where this
+            whole group is suppressed get the standalone Board/List toggle in `header-actions` instead, so the
+            destination is reachable on every host without ever having two producers on the same one.
             */}
-            {isMobile ? (
-              <button
-                className={`view-toggle-btn${view === "list" ? " active" : ""}`}
-                onClick={() => onChangeView("list")}
-                title={t("header.listView", "List view")}
-                aria-label={t("header.listView", "List view")}
-                aria-pressed={view === "list"}
-              >
-                <List size={16} />
-              </button>
-            ) : null}
+            <button
+              className={`view-toggle-btn${view === "list" ? " active" : ""}`}
+              onClick={() => onChangeView(view === "list" ? "board" : "list")}
+              title={t("header.listView", "List view")}
+              aria-label={t("header.listView", "List view")}
+              aria-pressed={view === "list"}
+              data-testid="header-list-view-btn"
+            >
+              <List size={16} />
+            </button>
             {showAgentsTab && (
               <button
                 className={`view-toggle-btn${view === "agents" ? " active" : ""}`}
@@ -969,18 +988,13 @@ export function Header({
                         <span>{t("header.memoryView", "Memory")}</span>
                       </button>
                     )}
-                    <button
-                      className={`view-toggle-overflow-item${view === "secrets" ? " active" : ""}`}
-                      onClick={() => {
-                        onChangeView("secrets");
-                        setIsViewOverflowOpen(false);
-                      }}
-                      role="menuitem"
-                      data-testid="view-overflow-secrets"
-                    >
-                      <Lock size={14} />
-                      <span>{t("header.secretsView", "Secrets")}</span>
-                    </button>
+                    {/*
+                    FNXC:ToolSurfaces 2026-09-15-16:04:
+                    FN-426 removes the standalone Secrets entry: secrets live in Settings → project Secrets, beside the
+                    other project configuration they belong to. The `secrets` id remains RECOGNIZED — an old link or a
+                    persisted view still opens that Settings section — it is simply no longer OFFERED as a destination
+                    of its own here.
+                    */}
                     {experimentalFeatures?.devServerView && (
                       <button
                         className={`view-toggle-overflow-item${view === "dev-server" || view === "devserver" ? " active" : ""}`}
@@ -1070,6 +1084,61 @@ export function Header({
 
         {/* Plugin UI slot for header actions */}
         <PluginSlot slotId="header-action" projectId={projectId} />
+
+        {/*
+        FNXC:ToolSurfaces 2026-09-15-16:04:
+        FN-426: when a wide primary navigation surface (footer or left sidebar) suppresses the view-toggle group above,
+        Board/List would otherwise have no header producer at all — and FN-382 had already taken List out of that
+        navigation on the assumption the right dock would always host it. This standalone toggle is the single
+        replacement: exactly one control, present only where the group is suppressed, so no host shows two.
+        */}
+        {onChangeView && (hideFullNav || hideHeaderViewNav) && (
+          <button
+            className={`btn-icon${view === "list" ? " btn-icon--active" : ""}`}
+            onClick={() => onChangeView(view === "list" ? "board" : "list")}
+            title={view === "list" ? t("header.boardView", "Board view") : t("header.listView", "List view")}
+            aria-label={view === "list" ? t("header.boardView", "Board view") : t("header.listView", "List view")}
+            aria-pressed={view === "list"}
+            data-testid="header-list-view-btn"
+          >
+            <List size={16} />
+          </button>
+        )}
+
+        {/*
+        FNXC:ToolSurfaces 2026-09-15-16:04:
+        FN-426: Activity and Notes are header panels on every breakpoint, mounted here rather than behind the mobile
+        More sheet, so neither has the optional right dock as its only host. Usage stays an independent surface with
+        its own trigger below; App guarantees only one of these panels is open at a time.
+        */}
+        {onOpenActivityPanel && (
+          <button
+            className={`btn-icon${activityPanelOpen ? " btn-icon--active" : ""}`}
+            onClick={(event) => onOpenActivityPanel(event.currentTarget.getBoundingClientRect())}
+            title={t("nav.activityLog", "Activity Log")}
+            aria-label={t("nav.activityLog", "Activity Log")}
+            aria-haspopup="dialog"
+            aria-expanded={activityPanelOpen}
+            aria-controls={activityPanelOpen ? activityPanelId : undefined}
+            data-testid="header-activity-panel-btn"
+          >
+            <History size={16} />
+          </button>
+        )}
+        {onOpenNotesPanel && (
+          <button
+            className={`btn-icon${notesPanelOpen ? " btn-icon--active" : ""}`}
+            onClick={(event) => onOpenNotesPanel(event.currentTarget.getBoundingClientRect())}
+            title={t("nav.notes", "Notes")}
+            aria-label={t("nav.notes", "Notes")}
+            aria-haspopup="dialog"
+            aria-expanded={notesPanelOpen}
+            aria-controls={notesPanelOpen ? notesPanelId : undefined}
+            data-testid="header-notes-panel-btn"
+          >
+            <StickyNote size={16} />
+          </button>
+        )}
 
         {/*
         FNXC:Navigation 2026-06-22-00:50:

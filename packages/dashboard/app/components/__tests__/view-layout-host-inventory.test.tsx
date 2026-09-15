@@ -59,6 +59,12 @@ const INVENTORY: InventoryRow[] = [
   { destination: "Import Tasks", producer: "components/GitHubImportModal.tsx", scenario: "components/__tests__/GitHubImportModal.test.tsx", requires: ["ViewHeader"] },
   { destination: "Settings", producer: "components/SettingsModal.tsx", scenario: "components/__tests__/SettingsModal.general.test.tsx", requires: ["ViewHeader", "ViewSidebar"] },
   { destination: "Files", producer: "components/FileBrowserModal.tsx", scenario: "components/__tests__/FileBrowserModal.test.tsx", requires: ["ViewHeader", "ViewSidebar"] },
+  /*
+  FN-426: Files and Git Manager became full main-content destinations so no tool depends on the right dock. Each owns
+  one canonical header over the existing browser/Git bodies — they add a host, not a second set of operations.
+  */
+  { destination: "Files page", producer: "components/FilesView.tsx", scenario: "components/__tests__/FilesView.test.tsx", requires: ["ViewLayout", "ViewHeader"] },
+  { destination: "Git manager page", producer: "components/GitManagerView.tsx", scenario: "components/__tests__/GitManagerView.test.tsx", requires: ["ViewLayout", "ViewHeader"] },
   { destination: "Pull requests", producer: "components/PullRequestView.tsx", scenario: "components/__tests__/view-layout-tools.test.tsx", requires: ["ViewHeader"] },
   { destination: "Secrets", producer: "components/SecretsView.tsx", scenario: "components/__tests__/view-layout-tools.test.tsx", requires: ["ViewHeader", "ViewActionButton"] },
   { destination: "Dev server", producer: "components/DevServerView.tsx", scenario: "components/__tests__/DevServerView.test.tsx", requires: ["ViewHeader", "ViewActionButton"] },

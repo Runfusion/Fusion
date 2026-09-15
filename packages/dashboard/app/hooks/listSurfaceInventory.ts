@@ -21,15 +21,21 @@ Board completion history and current/search results share cursor owners but not 
 */
 export const LIST_SURFACE_INVENTORY: readonly ListSurfaceInventoryEntry[] = [
   { id: "board-columns", hosts: ["Board", "Column", "ListView"], pagination: "server-cursor", virtualized: true, direction: "end", tests: ["DoneColumn.history-pagination.integration", "Column.scroll-geometry", "useTasks.done-pagination", "useAutoPaginationSentinel", "Board.done-pagination", "Column", "list-view-windowing"] },
-  { id: "chat-sessions", hosts: ["ChatView", "FloatingWindow", "RightDock", "mobile"], pagination: "server-cursor", virtualized: true, direction: "end", tests: ["ChatView.sessions-rooms", "ChatView.virtualization"] },
+  { id: "chat-sessions", hosts: ["ChatView", "FloatingWindow", "RightDock", "DashboardToolPopover", "mobile"], pagination: "server-cursor", virtualized: true, direction: "end", tests: ["ChatView.sessions-rooms", "ChatView.virtualization"] },
   { id: "direct-transcript", hosts: ["ChatView", "FloatingWindow", "RightDock", "mobile"], pagination: "server-cursor", virtualized: true, direction: "start", tests: ["ChatView.virtualization"] },
   { id: "planner-transcript", hosts: ["TaskPlannerChatTab", "expanded"], pagination: "server-cursor", virtualized: true, direction: "start", tests: ["TaskPlannerChatTab.virtualization"] },
   { id: "agent-logs", hosts: ["AgentLogViewer", "TaskDetailModal", "AgentDetailView"], pagination: "server-offset-bounded", virtualized: true, direction: "start", tests: ["AgentLogViewer.layout", "AgentDetailView.logs-tasks-runs"] },
-  { id: "activity-logs", hosts: ["ActivityLogModal", "RightDock"], pagination: "server-cursor", virtualized: true, direction: "start", tests: ["ActivityLogModal"] },
+  /*
+  FNXC:ListSurfaceInventory 2026-09-15-17:33:
+  FN-426 moves these collections out of the now-optional right dock: Activity and the conversation list are reachable
+  from the header/footer popovers, and Git history has a full page host. The pagination owners are unchanged — only the
+  hosts that can render them.
+  */
+  { id: "activity-logs", hosts: ["ActivityLogModal", "RightDock", "DashboardToolPopover"], pagination: "server-cursor", virtualized: true, direction: "start", tests: ["ActivityLogModal"] },
   { id: "dev-server-logs", hosts: ["DevServerLogViewer"], pagination: "server-cursor", virtualized: true, direction: "start", tests: ["DevServerLogViewer"] },
   { id: "settings-sync-logs", hosts: ["SettingsSyncLog"], pagination: "local-bounded", virtualized: true, direction: "start", tests: ["SettingsSyncLog"], bound: 1_000 },
   { id: "patchnode", hosts: ["PatchnodeView"], pagination: "server-cursor", virtualized: true, direction: "end", tests: ["PatchnodeView"] },
-  { id: "git-history", hosts: ["GitManagerModal"], pagination: "server-offset-bounded", virtualized: true, direction: "end", tests: ["GitManagerModal"] },
+  { id: "git-history", hosts: ["GitManagerModal", "GitManagerView"], pagination: "server-offset-bounded", virtualized: true, direction: "end", tests: ["GitManagerModal", "GitManagerView"] },
   { id: "missions", hosts: ["MissionManager"], pagination: "server-offset-bounded", virtualized: true, direction: "end", tests: ["MissionManager"] },
   { id: "agent-activity", hosts: ["AgentActivityPanel"], pagination: "server-cursor", virtualized: true, direction: "end", tests: ["AgentActivityPanel"] },
   { id: "static-selectors", hosts: ["select", "menus", "command-palette"], pagination: "exempt", virtualized: false, direction: "none", tests: ["listSurfaceInventory"], bound: 500, exemption: "Catalogues statiques ou plafonnés par leur fournisseur." },

@@ -364,8 +364,11 @@ describe("Mobile Feature Access Regression Guard", () => {
       );
 
       expect(screen.getByTitle("Board view")).toBeDefined();
-      // FN-382: List is a right-dock tool on these hosts, so the header toggle no longer offers it.
-      expect(screen.queryByTitle("List view")).toBeNull();
+      /*
+       * FN-426 supersedes FN-382's dock-only List: the right sidebar is optional now, so the header toggle offers
+       * List again — exactly once — on every host that renders this group.
+       */
+      expect(screen.getAllByTitle("List view")).toHaveLength(1);
       expect(screen.getByTestId("view-toggle-overflow-trigger")).toBeDefined();
       unmount();
     }

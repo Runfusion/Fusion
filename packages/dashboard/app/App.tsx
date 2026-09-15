@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useLayoutEffect, useMemo, useRef, lazy } from "react";
+import { useState, useCallback, useEffect, useLayoutEffect, useMemo, useRef, lazy, Suspense } from "react";
 import { useTranslation } from "react-i18next";
 import {
   type Task,
@@ -72,6 +72,19 @@ import { computeMobileBarKeyboardFlags } from "./utils/mobileBarKeyboardFlags";
 import { recordActivity } from "./utils/activity-trace";
 import { closeViewShortcut, retainViewNavRevert } from "./utils/dashboardShortcutToggles";
 import { normalizeNavigationPlacement, resolveChatHost, resolveNavigationSurfaces } from "./utils/navigationPlacement";
+/* FNXC:ToolSurfaces 2026-09-15-16:04: FN-426 — one decider for retired standalone tool destinations. */
+import { isRedirectedToolSurface, resolveToolSurfaceRoute } from "./utils/toolSurfaceRouting";
+import { DashboardToolPopover } from "./components/DashboardToolPopover";
+import { ActivityLogModal } from "./components/ActivityLogModal";
+/*
+FNXC:ToolSurfaces 2026-09-15-16:04:
+FN-426: stable ids shared by each trigger's `aria-controls` and its panel, so assistive technology can follow the
+relationship without the Header and App inventing two different strings.
+*/
+const ACTIVITY_TOOL_PANEL_ID = "dashboard-activity-panel";
+const NOTES_TOOL_PANEL_ID = "dashboard-notes-panel";
+const CHAT_TOOL_PANEL_ID = "dashboard-chat-panel";
+import type { SectionId as GitManagerSectionId } from "./components/GitManagerModal";
 import { useSetupReadiness } from "./hooks/useSetupReadiness";
 import { useGithubSetupWarningDelay } from "./hooks/useGithubSetupWarningDelay";
 import { useUpdateCheck } from "./hooks/useUpdateCheck";
@@ -711,6 +724,13 @@ function AppInner() {
 
   const listDockRouteRef = useRef<((newView: TaskView) => boolean) | null>(null);
   const chatWindowRouteRef = useRef<((newView: TaskView) => boolean) | null>(null);
+  /*
+  FNXC:ToolSurfaces 2026-09-15-16:04:
+  FN-426: legacy tool destinations (`pull-requests`, `secrets`) still arrive from bookmarks, persisted views, restored
+  history, and customized mobile items. They are answered by their NEW owner here — one decider, assigned below where
+  the Settings opener exists — so no caller has to know the mapping and no destination gains a second owner.
+  */
+  const toolSurfaceRouteRef = useRef<((newView: TaskView) => boolean) | null>(null);
   const primaryChatWindowOpenRef = useRef(false);
   const closePrimaryChatWindowRef = useRef<(() => void) | null>(null);
   const handleTaskViewChange = useCallback((newView: TaskView) => {
@@ -719,6 +739,7 @@ function AppInner() {
       openHistoryWithNav();
       return;
     }
+    if (toolSurfaceRouteRef.current?.(newView)) return;
     if (chatWindowRouteRef.current?.(newView)) return;
     if (listDockRouteRef.current?.(newView)) return;
     if (!desktopWindowRouterRef.current(newView)) commitTaskViewChange(newView);
@@ -1077,6 +1098,24 @@ function AppInner() {
     const v = new URL(window.location.href).searchParams.get("pr");
     return v ?? undefined;
   });
+  /*
+  FNXC:ToolSurfaces 2026-09-15-16:04:
+  FN-426: which Git Manager section the page opens on. Set to `pull-requests` by the Pull Requests entry points and
+  legacy links; cleared when the operator leaves Git so a later plain Git click lands on Status again.
+  */
+  const [gitManagerInitialSection, setGitManagerInitialSection] = useState<GitManagerSectionId | undefined>(undefined);
+  /*
+  FNXC:ToolSurfaces 2026-09-15-16:04:
+  FN-426: exactly ONE navigation panel among Activity, Notes, and the footer Chat list is open at a time. Modelling it
+  as a single discriminated value (rather than three booleans) makes that mutual exclusion structural: opening one
+  replaces the other, and no combination can show two lists of the same tool at once. Usage stays independent — it is
+  a different surface with its own trigger and its own state.
+  */
+  const [toolPanel, setToolPanel] = useState<{ kind: "activity" | "notes" | "chat"; anchorRect: DOMRect | null } | null>(null);
+  const closeToolPanel = useCallback(() => setToolPanel(null), []);
+  const openToolPanel = useCallback((kind: "activity" | "notes" | "chat", anchorRect: DOMRect | null) => {
+    setToolPanel((current) => (current?.kind === kind ? null : { kind, anchorRect }));
+  }, []);
   const [milestoneSliceResumeSessionId, setMilestoneSliceResumeSessionId] = useState<string | undefined>(undefined);
 
   useEffect(() => {
@@ -1089,11 +1128,21 @@ function AppInner() {
       setAgentAnchor(undefined);
     }
   }, [agentAnchor, taskView]);
+  /*
+  FNXC:ToolSurfaces 2026-09-15-16:04:
+  FN-426: the linked pull request now belongs to the Git Manager page, so its selection is released when the operator
+  leaves Git — not when they leave the retired standalone Pull Requests route.
+  */
   useEffect(() => {
-    if (taskView !== "pull-requests" && selectedPrId !== undefined) {
+    if (taskView !== "git-manager" && selectedPrId !== undefined) {
       setSelectedPrId(undefined);
     }
   }, [selectedPrId, taskView]);
+  useEffect(() => {
+    if (taskView !== "git-manager" && gitManagerInitialSection !== undefined) {
+      setGitManagerInitialSection(undefined);
+    }
+  }, [gitManagerInitialSection, taskView]);
   const { open: authTokenRecoveryOpen } = useAuthTokenRecovery();
   const {
     health: dashboardHealth,
@@ -1124,6 +1173,7 @@ function AppInner() {
     taskDetailChatFirst,
     chatMessageLayout,
     navigationPlacement,
+    rightSidebarEnabled,
     dashboardKeyboardShortcuts,
     dismissModalsOnOutsideClick,
     quickAddSubmitOnEnter,
@@ -1139,6 +1189,7 @@ function AppInner() {
     goalsEnabled,
     setChatMessageLayoutImmediate,
     setNavigationPlacementImmediate,
+    setRightSidebarEnabledImmediate,
     setOpenTasksInRightSidebarImmediate,
     setOpenMobileTasksInPopupImmediate,
     setShowCostBadgeOnCardsImmediate,
@@ -1224,8 +1275,19 @@ function AppInner() {
   an explicit "sidebar" placement would leave an operator with zero navigation surfaces and no in-product way out.
   */
   const leftSidebarNavEnabled = experimentalFeatures.leftSidebarNav !== false;
-  /* FNXC:Navigation 2026-06-22-18:00: The right dock panel is no longer experimental or user-toggleable; tablet/desktop project screens always support it regardless of any stale persisted `rightDock` setting. */
-  const rightDockEnabled = true;
+  /*
+  FNXC:RightSidebarOptional 2026-09-15-16:04:
+  FN-426 makes the right dock OPTIONAL and default-off. Every tool it used to own now has a canonical host (Git and
+  Files pages, Activity/Notes header popovers, the footer Chat list, the header Board/List toggle, Secrets in project
+  settings, Pull Requests inside Git), so nothing depends on it.
+
+  Availability is the loaded project setting ONLY. It deliberately ignores the dock's LOCAL preferences
+  (`fusion:right-dock-open`, `-pinned`, `-width`, `-view`): those record how the operator last used the panel and must
+  never be able to resurrect a panel the project has turned off — which is exactly what a pre-FN-426 stored
+  `right-dock-open=true` would otherwise do on first paint. Availability also requires hydrated settings, so the
+  unhydrated frame renders no shell it may have to retract.
+  */
+  const rightDockEnabled = settingsLoaded && rightSidebarEnabled === true;
   const projectShellPresent = viewMode === "project" && !!currentProject;
   /*
   FNXC:DesktopNavigation 2026-09-15-14:41:
@@ -1597,6 +1659,39 @@ function AppInner() {
   const openCommandCenterWithNav = useCallback(() => {
     handleTaskViewChange("command-center");
   }, [handleTaskViewChange]);
+
+  /*
+  FNXC:ToolSurfaces 2026-09-15-16:04:
+  FN-426: the single redirect for retired standalone tool destinations. `pull-requests` becomes the Git Manager page
+  with its PR section preselected (the linked `?pr=` id survives untouched), and `secrets` opens Settings at the
+  project Secrets section. Both go through the ordinary navigation owners, so exactly one history entry is written
+  and Back behaves like any other destination change.
+  */
+  /*
+  FNXC:ToolSurfaces 2026-09-15-16:04:
+  FN-426: a retired destination does not only arrive through a click. A persisted per-project view, a restored history
+  entry, and a `?view=` deep link all write `taskView` directly, bypassing `handleTaskViewChange`. Re-applying the
+  route whenever the resolved view IS a retired one covers those paths with the same single decider, and terminates
+  because every route target is itself a real destination.
+  */
+  useEffect(() => {
+    if (!isRedirectedToolSurface(taskView)) return;
+    toolSurfaceRouteRef.current?.(taskView);
+  }, [taskView]);
+
+  toolSurfaceRouteRef.current = (requestedView: TaskView) => {
+    const route = resolveToolSurfaceRoute(requestedView);
+    if (route.kind === "git-pull-requests") {
+      setGitManagerInitialSection("pull-requests");
+      commitTaskViewChange("git-manager");
+      return true;
+    }
+    if (route.kind === "settings-section") {
+      openSettingsWithNav(route.section);
+      return true;
+    }
+    return false;
+  };
 
   const openNewTaskWithNav = useCallback((workflowId?: string | null) => {
     modalManager.openNewTask(workflowId);
@@ -2000,7 +2095,7 @@ function AppInner() {
   const { rightDock, windows: desktopRightDockWindows } = useAppDesktopRightDockComposition({
     projectId: currentProject?.id,
     owner: appRightDockWindows,
-    controllerInput: { active: rightDockActive, addToast, columnFlagsByTaskId: footerColumnFlagsByTaskId, settingsLoaded, researchReadinessVersion, goalAnchorId, tasks: boardSourceTasks, workflowSteps, subscribePluginEvents, openDetailTask: mobileDrawerActive ? openTaskDetailInMainPanel : openDetailTask, notesController, registerNotesGuard: registerDesktopDockNotesGuard, openFileInBrowser, onUpdateTask: updateTask, onDeleteTask: deleteTask, onRevertTask: revertTask, onRestoreRevertTask: restoreTaskRevert, onMergeTask: mergeTask, onRetryTask: retryTask, onOpenChatWithPrefill: openChatWithPrefill, onPauseTask: pauseTask, onUnpauseTask: unpauseTask, onBypassReview: bypassReview, onResetTask: resetTask, onDuplicateTask: duplicateTask, onTaskUpdated: (task: Task) => ingestCreatedTasks([task]), openSettings: (section?: string) => openSettingsWithNav(section as SectionId), onOpenUsage: openUsageWithNav, onOpenActivityLog: openActivityLogWithNav, onOpenGitHubImport: openGitHubImportWithNav, onOpenGitManager: openGitManagerWithNav, onOpenSchedules: openSchedulesWithNav, onSendSelectionToTask: modalManager.openNewTaskWithDescription, onCreateTaskFromInsight: handleInsightTaskCreate, onNavigateToMission: handleOpenMission, onTaskCreated: (task: Task) => ingestCreatedTasks([task]), prAuthAvailable, autoMerge, taskDetailChatFirst, renderListView: isMobile ? undefined : renderDockListView, onSendAsReport: handleSendChatMessageAsReport, visibilityOptions: { hostMode: desktopNavigationActive ? "desktop" : "standard", experimentalFeatures: { insights: insightsEnabled, memoryView: memoryEnabled, devServerView: devServerEnabled, researchView: researchEnabled, evalsView: evalsEnabled, goalsView: goalsEnabled }, showSkillsTab: skillsEnabled, pluginDashboardViews, listViewAvailable: !isMobile }, footerVisible: shellFooterReservationVisible },
+    controllerInput: { active: rightDockActive, addToast, columnFlagsByTaskId: footerColumnFlagsByTaskId, settingsLoaded, researchReadinessVersion, goalAnchorId, tasks: boardSourceTasks, workflowSteps, subscribePluginEvents, openDetailTask: mobileDrawerActive ? openTaskDetailInMainPanel : openDetailTask, notesController, registerNotesGuard: registerDesktopDockNotesGuard, openFileInBrowser, onUpdateTask: updateTask, onDeleteTask: deleteTask, onRevertTask: revertTask, onRestoreRevertTask: restoreTaskRevert, onMergeTask: mergeTask, onRetryTask: retryTask, onOpenChatWithPrefill: openChatWithPrefill, onPauseTask: pauseTask, onUnpauseTask: unpauseTask, onBypassReview: bypassReview, onResetTask: resetTask, onDuplicateTask: duplicateTask, onTaskUpdated: (task: Task) => ingestCreatedTasks([task]), openSettings: (section?: string) => openSettingsWithNav(section as SectionId), onOpenUsage: openUsageWithNav, onOpenActivityLog: openActivityLogWithNav, onOpenGitHubImport: openGitHubImportWithNav, onOpenGitManager: openGitManagerWithNav, onOpenSchedules: openSchedulesWithNav, onSendSelectionToTask: modalManager.openNewTaskWithDescription, onCreateTaskFromInsight: handleInsightTaskCreate, onNavigateToMission: handleOpenMission, onTaskCreated: (task: Task) => ingestCreatedTasks([task]), prAuthAvailable, autoMerge, taskDetailChatFirst, renderListView: isMobile || taskView === "list" ? undefined : renderDockListView, onSendAsReport: handleSendChatMessageAsReport, visibilityOptions: { hostMode: desktopNavigationActive ? "desktop" : "standard", experimentalFeatures: { insights: insightsEnabled, memoryView: memoryEnabled, devServerView: devServerEnabled, researchView: researchEnabled, evalsView: evalsEnabled, goalsView: goalsEnabled }, showSkillsTab: skillsEnabled, pluginDashboardViews, listViewAvailable: !isMobile }, footerVisible: shellFooterReservationVisible },
     chatWindowProps: { addToast, experimentalFeatures, onSendAsReport: handleSendChatMessageAsReport },
     noteWindowProps: {
       addToast,
@@ -2092,12 +2187,18 @@ function AppInner() {
     }
   }, [mobileDrawerActive, chatDockHostOpen, chatPageHostKind, handleChangeTaskView, rightDock, selectChatInDock, taskView]);
 
-  listDockRouteRef.current = (newView: TaskView) => {
-    if (newView !== "list" || isMobile || !rightDockActive) return false;
-    rightDock.selectView("list");
-    if (!rightDock.open) rightDock.toggle();
-    return true;
-  };
+  /*
+  FNXC:ToolSurfaces 2026-09-15-16:04:
+  FN-426 REMOVES the List → dock interception FN-382 introduced. It was the last routing rule that could only be
+  satisfied by the right dock: with the dock optional, intercepting List would make the list unreachable for every
+  operator who leaves it off. List is an ordinary destination again on every breakpoint, reached from the header
+  Board/List toggle.
+
+  The dock's explicit List tab survives for operators who opt back in, and `renderListView` below withholds it while
+  the List ROUTE is on screen — suspending the peer content rather than deleting the route — so exactly one List owner
+  is ever active.
+  */
+  listDockRouteRef.current = () => false;
 
   /*
   FNXC:OpenTasksInRightSidebar 2026-06-28-00:00:
@@ -2181,6 +2282,8 @@ function AppInner() {
     setShadcnCustomColors,
     resolvedThemeMode,
     setChatMessageLayoutImmediate,
+    rightSidebarEnabled,
+    setRightSidebarEnabledImmediate,
     setOpenTasksInRightSidebarImmediate,
     setOpenMobileTasksInPopupImmediate,
     setShowCostBadgeOnCardsImmediate,
@@ -2239,6 +2342,7 @@ function AppInner() {
     handleOpenTaskLogs,
     popOutTaskDetail: mobileDrawerActive ? openTaskDetailInMainPanel : popOutTaskDetailForCurrentView,
     selectedPrId,
+    gitManagerInitialSection,
     insightsEnabled,
     handleInsightTaskCreate,
     researchEnabled,
@@ -2411,6 +2515,8 @@ function AppInner() {
     showAgents: agentsEnabled,
     showSkills: skillsEnabled,
     flags: { memory: memoryEnabled, whiteboard: whiteboardEnabled, goals: goalsEnabled, insights: insightsEnabled, research: researchEnabled, ideation: ideationEnabled, evals: evalsEnabled },
+    /* FN-426: Dev Server moved out of the right dock into primary navigation, keeping its existing experimental gate. */
+    showDevServer: devServerEnabled,
     mailboxUnreadCount,
     mailboxPendingApprovalCount,
     chatHasUnreadResponse,
@@ -2452,6 +2558,12 @@ function AppInner() {
         onOpenGitHubImport={openGitHubImportWithNav}
         onOpenUsage={openUsageWithNav}
         onOpenActivityLog={openActivityLogWithNav}
+        onOpenActivityPanel={currentProject ? (anchorRect) => openToolPanel("activity", anchorRect) : undefined}
+        activityPanelOpen={toolPanel?.kind === "activity"}
+        activityPanelId={ACTIVITY_TOOL_PANEL_ID}
+        onOpenNotesPanel={currentProject ? (anchorRect) => openToolPanel("notes", anchorRect) : undefined}
+        notesPanelOpen={toolPanel?.kind === "notes"}
+        notesPanelId={NOTES_TOOL_PANEL_ID}
         onOpenMailbox={() => handleTaskViewChange("mailbox")}
         mailboxUnreadCount={mailboxUnreadCount}
         mailboxPendingApprovalCount={mailboxPendingApprovalCount}
@@ -2635,7 +2747,83 @@ function AppInner() {
         </div>
         {rightDock.dock}
       </div>
-      {wideFooterActive ? <DesktopActionBar entries={desktopNavigationEntries} activeId={desktopActiveNavigationId} tasks={footerTasks} projectId={currentProject?.id} columnFlagsByTaskId={footerColumnFlagsByTaskId} onToggleTerminal={toggleTerminalWithNav} /> : null}
+      {wideFooterActive ? <DesktopActionBar entries={desktopNavigationEntries} activeId={desktopActiveNavigationId} tasks={footerTasks} projectId={currentProject?.id} columnFlagsByTaskId={footerColumnFlagsByTaskId} onToggleTerminal={toggleTerminalWithNav} onOpenChatPanel={currentProject ? (anchorRect) => openToolPanel("chat", anchorRect) : undefined} chatPanelOpen={toolPanel?.kind === "chat"} chatPanelId={CHAT_TOOL_PANEL_ID} chatHasUnreadResponse={chatHasUnreadResponse} /> : null}
+      {/*
+      FNXC:ToolSurfaces 2026-09-15-16:04:
+      FN-426: the three navigation panels that replace right-dock-only hosting. Each mounts its body only while open,
+      so a closed panel holds no polling or subscription; each delegates to the SAME owner its dock/page equivalent
+      used (`notesController` + `openNoteInWindow` for Notes, `openSessionInNewWindow` for Chat), so opening a note or
+      a conversation never creates a second editor, transcript, or session owner.
+      */}
+      {currentProject && toolPanel?.kind === "activity" ? (
+        <DashboardToolPopover
+          open
+          onClose={closeToolPanel}
+          anchorRect={toolPanel.anchorRect}
+          id={ACTIVITY_TOOL_PANEL_ID}
+          testId="activity-tool-popover"
+          ariaLabel="Activity Log"
+          width={520}
+        >
+          <ActivityLogModal
+            isOpen
+            onClose={closeToolPanel}
+            tasks={boardSourceTasks as Task[]}
+            projects={effectiveProjects}
+            projectId={currentProject.id}
+            onOpenTaskDetail={(taskId: string) => {
+              closeToolPanel();
+              const task = boardSourceTasks.find((candidate) => candidate.id === taskId);
+              if (task) openDetailTask(task);
+            }}
+            presentation="embedded"
+          />
+        </DashboardToolPopover>
+      ) : null}
+      {currentProject && toolPanel?.kind === "notes" ? (
+        <DashboardToolPopover
+          open
+          onClose={closeToolPanel}
+          anchorRect={toolPanel.anchorRect}
+          id={NOTES_TOOL_PANEL_ID}
+          testId="notes-tool-popover"
+          ariaLabel="Notes"
+        >
+          <Suspense fallback={null}>
+            <NotesView
+              projectId={currentProject.id}
+              addToast={addToast}
+              controller={notesController}
+              onOpenNote={(note) => { closeToolPanel(); appRightDockWindows.openNoteInWindow(note); }}
+              compact
+              listOnly
+            />
+          </Suspense>
+        </DashboardToolPopover>
+      ) : null}
+      {currentProject && toolPanel?.kind === "chat" ? (
+        <DashboardToolPopover
+          open
+          onClose={closeToolPanel}
+          anchorRect={toolPanel.anchorRect}
+          id={CHAT_TOOL_PANEL_ID}
+          testId="chat-tool-popover"
+          ariaLabel="Conversations"
+        >
+          <Suspense fallback={null}>
+            <ChatView
+              projectId={currentProject.id}
+              addToast={addToast}
+              experimentalFeatures={{ insights: insightsEnabled, memoryView: memoryEnabled, devServerView: devServerEnabled, researchView: researchEnabled, evalsView: evalsEnabled, goalsView: goalsEnabled }}
+              onOpenSessionInNewWindow={(session) => { closeToolPanel(); openSessionInNewWindow(session); }}
+              openChatWindows={appRightDockWindows.openChatWindows}
+              onSendAsReport={handleSendChatMessageAsReport}
+              compactLayout
+              listOnly
+            />
+          </Suspense>
+        </DashboardToolPopover>
+      ) : null}
       {/*
       FNXC:HistoryModalSurface 2026-09-15-04:29:
       FN-403: History no longer has a pilot-window host here. AppModals owns the single PatchnodeView instance,
@@ -2805,7 +2993,7 @@ function AppInner() {
         onOpenChatWithPrefill={openChatWithPrefill}
         taskOperations={{ moveTask, deleteTask, mergeTask, revertTask, restoreTaskRevert, retryTask, pauseTask, unpauseTask, bypassReview, resetTask, duplicateTask }}
         deepLink={{ handleDetailClose }}
-        settings={{ prAuthAvailable, autoMerge, openTasksInRightSidebar, openMobileTasksInPopup, showCostBadgeOnCards, taskDetailChatFirst, chatMessageLayout, navigationPlacement: normalizeNavigationPlacement(navigationPlacement), themeMode, colorTheme, uiStyle, dashboardFontScalePct, shadcnCustomColors, resolvedThemeMode, setThemeMode, setColorTheme, setUiStyle, setDashboardFontScalePct, setShadcnCustomColors, setChatMessageLayoutImmediate, setNavigationPlacementImmediate, setOpenTasksInRightSidebarImmediate, setOpenMobileTasksInPopupImmediate, setShowCostBadgeOnCardsImmediate, setTaskDetailChatFirstImmediate, setMobileNavPrimaryItemsImmediate }}
+        settings={{ prAuthAvailable, autoMerge, openTasksInRightSidebar, openMobileTasksInPopup, showCostBadgeOnCards, taskDetailChatFirst, chatMessageLayout, navigationPlacement: normalizeNavigationPlacement(navigationPlacement), rightSidebarEnabled, themeMode, colorTheme, uiStyle, dashboardFontScalePct, shadcnCustomColors, resolvedThemeMode, setThemeMode, setColorTheme, setUiStyle, setDashboardFontScalePct, setShadcnCustomColors, setChatMessageLayoutImmediate, setNavigationPlacementImmediate, setRightSidebarEnabledImmediate, setOpenTasksInRightSidebarImmediate, setOpenMobileTasksInPopupImmediate, setShowCostBadgeOnCardsImmediate, setTaskDetailChatFirstImmediate, setMobileNavPrimaryItemsImmediate }}
         onSettingsClose={handleSettingsCloseWithNav}
         onReopenOnboarding={reopenOnboardingWithNav}
         onOpenWorkflowEditor={openWorkflowEditorWithNav}

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
+import { cleanup, render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { Header, resolveReportContextRefs } from "../Header";
 
 // Mock fetchScripts for overflow submenu
@@ -297,6 +297,39 @@ describe("Header", () => {
   });
 
   describe("view toggle", () => {
+    /*
+     * FN-426: Activity and Notes moved out of the right dock into header panels that exist on EVERY breakpoint, so the
+     * Header owns their triggers, their anchor rect, and their accessible expanded/controls relationship.
+     */
+    it.each(["mobile", "tablet", "desktop"] as const)("renders the Activity and Notes panel triggers on %s", (mode) => {
+      const onOpenActivityPanel = vi.fn();
+      const onOpenNotesPanel = vi.fn();
+      renderHeader({ onChangeView: noop, onOpenActivityPanel, onOpenNotesPanel, activityPanelId: "a", notesPanelId: "n" }, mode);
+
+      const activity = screen.getByTestId("header-activity-panel-btn");
+      const notes = screen.getByTestId("header-notes-panel-btn");
+      expect(activity).toHaveAttribute("aria-expanded", "false");
+      expect(activity).not.toHaveAttribute("aria-controls");
+      activity.click();
+      notes.click();
+      expect(onOpenActivityPanel).toHaveBeenCalledTimes(1);
+      expect(onOpenActivityPanel.mock.calls[0][0]).toBeTruthy();
+      expect(onOpenNotesPanel).toHaveBeenCalledTimes(1);
+    });
+
+    it("advertises the open panel through aria-expanded and aria-controls", () => {
+      renderHeader({ onChangeView: noop, onOpenActivityPanel: vi.fn(), activityPanelOpen: true, activityPanelId: "dashboard-activity-panel" });
+      const activity = screen.getByTestId("header-activity-panel-btn");
+      expect(activity).toHaveAttribute("aria-expanded", "true");
+      expect(activity).toHaveAttribute("aria-controls", "dashboard-activity-panel");
+    });
+
+    it("renders no panel trigger shell when its opener is absent", () => {
+      renderHeader({ onChangeView: noop });
+      expect(screen.queryByTestId("header-activity-panel-btn")).toBeNull();
+      expect(screen.queryByTestId("header-notes-panel-btn")).toBeNull();
+    });
+
     it("does not render view toggle when onChangeView is not provided", () => {
       renderHeader();
       expect(screen.queryByTitle("Board view")).toBeNull();
@@ -304,13 +337,13 @@ describe("Header", () => {
     });
 
     /*
-    FN-382: List is a right-dock tool on tablet and desktop, so the toggle offers Board only there. The phone keeps
-    both buttons because it keeps the dedicated List page.
+    FN-426 supersedes FN-382's dock-only List: the right dock is optional, so the header offers Board AND List on
+    every breakpoint. Otherwise an operator who leaves the dock off would have no way to browse tasks as a list.
     */
-    it("renders view toggle when onChangeView is provided", () => {
+    it("renders both Board and List toggles when onChangeView is provided", () => {
       renderHeader({ onChangeView: noop });
       expect(screen.getByTitle("Board view")).toBeDefined();
-      expect(screen.queryByTitle("List view")).toBeNull();
+      expect(screen.getByTitle("List view")).toBeDefined();
     });
 
     it("keeps the List toggle on the phone host", () => {
@@ -319,19 +352,34 @@ describe("Header", () => {
       expect(screen.getByTitle("List view")).toBeDefined();
     });
 
-    it("renders the workflow portal slot instead of the view toggle on desktop sidebar nav", () => {
-      renderHeader({ onChangeView: noop, leftSidebarNavActive: true }, "desktop");
-      expect(screen.getByTestId("header-workflow-slot")).toBeInTheDocument();
-      expect(screen.queryByTitle("Board view")).toBeNull();
-      expect(screen.queryByTitle("List view")).toBeNull();
+    /* FN-426: the List button is a toggle — it returns to the Board when the List route is already on screen. */
+    it("toggles between Board and List through onChangeView", async () => {
+      const onChangeView = vi.fn();
+      renderHeader({ onChangeView, view: "board" });
+      screen.getByTestId("header-list-view-btn").click();
+      expect(onChangeView).toHaveBeenLastCalledWith("list");
+
+      cleanup();
+      renderHeader({ onChangeView, view: "list" });
+      screen.getByTestId("header-list-view-btn").click();
+      expect(onChangeView).toHaveBeenLastCalledWith("board");
     });
 
-    it("renders the workflow portal slot instead of the view toggle on tablet sidebar nav", () => {
-      renderHeader({ onChangeView: noop, leftSidebarNavActive: true }, "tablet");
-      expect(screen.getByTestId("header-workflow-slot")).toBeInTheDocument();
-      expect(screen.queryByTitle("Board view")).toBeNull();
-      expect(screen.queryByTitle("List view")).toBeNull();
-    });
+    /*
+     * FN-426: the view-toggle GROUP stays suppressed while a wide navigation surface owns routing, but Board/List
+     * keeps exactly one standalone header producer there — otherwise FN-382's removal of List from that navigation
+     * would leave the destination unreachable for operators who turn the optional right sidebar off.
+     */
+    it.each(["desktop", "tablet"] as const)(
+      "renders the workflow portal slot and only the standalone Board/List toggle on %s sidebar nav",
+      (mode) => {
+        renderHeader({ onChangeView: noop, leftSidebarNavActive: true, view: "board" }, mode);
+        expect(screen.getByTestId("header-workflow-slot")).toBeInTheDocument();
+        expect(screen.queryByTitle("Board view")).toBeNull();
+        expect(screen.queryByTestId("view-toggle-command-center")).toBeNull();
+        expect(screen.getAllByTestId("header-list-view-btn")).toHaveLength(1);
+      },
+    );
 
     it("renders the workflow portal slot in the mobile top header when mobile nav owns view switching", () => {
       renderHeader({ onChangeView: noop, leftSidebarNavActive: true, mobileNavEnabled: true }, "mobile");
@@ -547,12 +595,16 @@ describe("Header", () => {
       expect(screen.getByRole("menu", { name: "More views" })).toBeInTheDocument();
     });
 
-    it("shows secrets in overflow and routes to secrets view", () => {
-      const onChangeView = vi.fn();
-      renderHeader({ onChangeView, view: "board" });
+    /*
+     * FN-426 moved Secrets into Settings → project Secrets, so the header no longer offers it as a destination of its
+     * own. The `secrets` id is still recognized by App's routing (old links and persisted views open that Settings
+     * section), but the standalone menu entry and its shell must be gone.
+     */
+    it("no longer offers a standalone Secrets destination in the overflow menu", () => {
+      renderHeader({ onChangeView: noop, view: "board" });
       fireEvent.click(screen.getByTestId("view-toggle-overflow-trigger"));
-      fireEvent.click(screen.getByTestId("view-overflow-secrets"));
-      expect(onChangeView).toHaveBeenCalledWith("secrets");
+      expect(screen.queryByTestId("view-overflow-secrets")).toBeNull();
+      expect(within(screen.getByRole("menu", { name: "More views" })).queryByText("Secrets")).toBeNull();
     });
 
     it("renders dependency graph in overflow and uses canonical graph task view", () => {

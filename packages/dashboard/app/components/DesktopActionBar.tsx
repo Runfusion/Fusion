@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FocusEvent, type KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
-import { ChevronUp, Terminal } from "lucide-react";
+import { ChevronUp, MessageSquare, Terminal } from "lucide-react";
 import type { Task } from "@fusion/core";
 import type { ExecutorColumnFlags } from "../hooks/useExecutorStats";
 import { useExecutorStats } from "../hooks/useExecutorStats";
@@ -17,11 +17,21 @@ export interface DesktopActionBarProps {
   projectId?: string;
   columnFlagsByTaskId?: ReadonlyMap<string, ExecutorColumnFlags>;
   onToggleTerminal?: () => void;
+  /*
+  FNXC:ToolSurfaces 2026-09-15-16:04:
+  FN-426: the bottom bar owns the Chat entry point. It opens the conversation LIST as an anchored panel; picking or
+  creating a conversation hands off to the existing project-scoped window owner, so the footer never becomes a second
+  transcript host. The bar supplies only the trigger and its anchor rect.
+  */
+  onOpenChatPanel?: (anchorRect: DOMRect | null) => void;
+  chatPanelOpen?: boolean;
+  chatPanelId?: string;
+  chatHasUnreadResponse?: boolean;
 }
 
 const MORE_MENU_CLOSE_GRACE_MS = 150;
 
-export function DesktopActionBar({ entries, activeId, tasks, projectId, columnFlagsByTaskId, onToggleTerminal }: DesktopActionBarProps) {
+export function DesktopActionBar({ entries, activeId, tasks, projectId, columnFlagsByTaskId, onToggleTerminal, onOpenChatPanel, chatPanelOpen = false, chatPanelId, chatHasUnreadResponse = false }: DesktopActionBarProps) {
   /* FNXC:NativeNavigation 2026-09-12-00:36: Navigation labels, including its overflow trigger and landmark, must use the shared locale catalog rather than English-only literals. */
   const { t } = useTranslation("app");
   const dashboardWindowFooterRef = useDashboardWindowLandmark("footer");
@@ -104,7 +114,20 @@ export function DesktopActionBar({ entries, activeId, tasks, projectId, columnFl
       <button type="button" className="desktop-action-bar__action" aria-label={t("header.moreViews", "More views")} aria-haspopup="menu" aria-expanded={overflowOpen} data-testid="desktop-nav-more" onClick={openOverflow}><ChevronUp aria-hidden="true" /><span>{t("nav.more", "More")}</span></button>
       {overflowOpen ? <div className="desktop-action-bar__menu" role="menu">{overflow.map((entry) => renderButton(entry, true))}</div> : null}
     </div> : null}</div>
-    {onToggleTerminal || settings ? <div className="desktop-action-bar__right">
+    {onOpenChatPanel || onToggleTerminal || settings ? <div className="desktop-action-bar__right">
+      {onOpenChatPanel ? <button
+        type="button"
+        className={`desktop-action-bar__action${chatPanelOpen ? " desktop-action-bar__action--active" : ""}`}
+        aria-label={t("nav.chat", "Chat")}
+        aria-haspopup="dialog"
+        aria-expanded={chatPanelOpen}
+        aria-controls={chatPanelOpen ? chatPanelId : undefined}
+        data-testid="desktop-nav-chat-panel"
+        onClick={(event) => onOpenChatPanel(event.currentTarget.getBoundingClientRect())}
+      >
+        <span className="desktop-action-bar__icon"><MessageSquare aria-hidden="true" />{chatHasUnreadResponse && !chatPanelOpen ? <span className="status-dot status-dot--pending" /> : null}</span>
+        <span>{t("nav.chat", "Chat")}</span>
+      </button> : null}
       {onToggleTerminal ? <button type="button" className="desktop-action-bar__action" aria-label={t("nav.terminal", "Terminal")} data-testid="desktop-nav-terminal" onClick={onToggleTerminal}>
         <span className="desktop-action-bar__icon"><Terminal aria-hidden="true" /></span>
         <span>{t("nav.terminal", "Terminal")}</span>

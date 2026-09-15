@@ -150,6 +150,9 @@ export interface MainContentProps {
   showCostBadgeOnCards: boolean;
   taskDetailChatFirst: boolean;
   chatMessageLayout: "bubbles" | "full-width";
+  /* FNXC:RightSidebarOptional 2026-09-15-16:04: FN-426 — the embedded Settings host mirrors the same live opt-in as the modal one. */
+  rightSidebarEnabled: boolean;
+  setRightSidebarEnabledImmediate: (enabled: boolean) => void;
   setOpenTasksInRightSidebarImmediate: (enabled: boolean) => void;
   setOpenMobileTasksInPopupImmediate: (enabled: boolean) => void;
   setShowCostBadgeOnCardsImmediate: (enabled: boolean) => void;
@@ -180,6 +183,12 @@ export interface MainContentProps {
   handleOpenTaskLogs: (taskId: string) => Promise<void>;
   popOutTaskDetail: (task: Task | TaskDetail) => void;
   selectedPrId: string | undefined;
+  /*
+  FNXC:ToolSurfaces 2026-09-15-16:04:
+  FN-426: which Git Manager section the page should land on. App sets `pull-requests` when the request arrived through
+  a Pull Requests entry point or a legacy `?view=pull-requests` link.
+  */
+  gitManagerInitialSection?: import("../GitManagerModal").SectionId;
   insightsEnabled: boolean;
   handleInsightTaskCreate: (input: { insightId: string; title: string; description: string }) => Promise<void>;
   researchEnabled: boolean;
