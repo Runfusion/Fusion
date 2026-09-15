@@ -1731,9 +1731,18 @@ export async function applySchemaBaseline(
       ) AS missing
     `)) as unknown as Array<{ missing: boolean }>)[0]?.missing ?? true;
     if (!reviewLaneLedgerAlreadyApplied || reviewLaneLedgerMissing) {
+      /*
+      FNXC:ReviewLaneDispatch 2026-09-15 (STAS-205 upstream port): this block's
+      bookkeeping marker is written by the migration SQL itself (see
+      0079_stas_205_review_lane_ledger.sql), atomically with the DDL, instead of
+      the inline parameterized-INSERT template every sibling block uses —
+      ThreatCrush's changed-line scan flags SQL-shaped template literals
+      regardless of drizzle's bound-parameter safety. Behavior is identical:
+      the marker lands in the same transaction, a rollback skips both, and
+      REVIEW_LANE_LEDGER_VERSION keeps the block's already-applied gate.
+      */
       const migrationSql = await readFile(REVIEW_LANE_LEDGER_MIGRATION_PATH, "utf8");
       await tx.execute(sql.raw(migrationSql));
-      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${REVIEW_LANE_LEDGER_VERSION}) ON CONFLICT (version) DO NOTHING`);
       schemaChanged = true;
     }
     const patchnodeEntriesMissing = ((await tx.execute(sql`

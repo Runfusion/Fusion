@@ -193,7 +193,7 @@ function makeManager(
 ) {
   // taskStore is the 7th constructor parameter (after messageStore) — the RUFU-182
   // audit sink seam the gate receives as audit.sink.
-  return new ChatManager(mockChatStore as never, "/tmp/test", agentStore as never, undefined, getSettings, undefined, taskStore as never);
+  return new ChatManager(mockChatStore as never, "chat-test-root", agentStore as never, undefined, getSettings, undefined, taskStore as never);
 }
 
 function setupSession(overrides: Record<string, unknown> = {}) {

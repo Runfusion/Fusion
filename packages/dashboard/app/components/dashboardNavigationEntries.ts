@@ -39,16 +39,10 @@ export interface DashboardNavigationRegistryOptions {
 }
 
 /*
-<<<<<<< HEAD
 FNXC:DesktopNavigation 2026-09-11-21:48:
 The desktop footer owns primary navigation only. History remains on complete-column headers, while Chat and Notes belong to the explicit desktop right-dock host; removing those three footer entries prevents duplicate navigation owners without changing standard hosts.
-=======
-FNXC:AlphaDesktopNavigation 2026-09-11-21:48:
-The desktop Alpha footer owns primary navigation only. History remains on complete-column headers, while Chat and Notes belong to the explicit Alpha desktop right-dock host; removing those three footer entries prevents duplicate navigation owners without changing standard hosts.
 
-FNXC:AlphaDesktopNavigation 2026-09-15-07:00:
 Operator decision: Chat returns to the footer as a direct page destination, because the dock launcher only reaches per-session windows and left no one-click route to the full Chat page. The `chat` route is live — MainViewKeepAlive retains and activates the Chat subtree — so the footer entry navigates rather than toggling a host. Notes and List remain dock-only, and the dock's list-only Chat launcher is unchanged.
->>>>>>> b8fe1ed834 (feat(dashboard): restore Chat as an Alpha footer page destination)
 */
 export function buildDashboardNavigationEntries(options: DashboardNavigationRegistryOptions): DashboardNavigationEntry[] {
   const page = (id: string, label: string, view: TaskView, icon: ComponentType<LucideProps>, placement: DashboardNavigationPlacement = "overflow"): DashboardNavigationEntry => ({ id, label, view, icon, kind: "main-page", placement, testId: `desktop-nav-${id}`, onSelect: () => options.onChangeView(view) });

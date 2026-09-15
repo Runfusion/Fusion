@@ -316,7 +316,7 @@ index makes a concurrent second dispatch a no-op.
 # classification + timing (20 tests; run by both engine projects, hence 40)
 pnpm --filter @runfusion/fusion exec vitest run src/__tests__/review-lane-dispatch-sweep.test.ts --silent=passed-only --reporter=dot
 # dispatch proof against a real PostgreSQL store, including entry-path attribution
-FUSION_PG_TEST_URL_BASE="postgresql://postgres:password@<host>:<port>" \
+FUSION_PG_TEST_URL_BASE="postgresql://postgres:<db-password>@<host>:<port>" \
   pnpm --filter @runfusion/fusion exec vitest run src/__tests__/review-lane-cli-entry-dispatch.pg.test.ts --silent=passed-only --reporter=dot
 pnpm --filter @fusion/core exec vitest run src/__tests__/postgres/review-lane-entry-lifecycle.pg.test.ts --silent=passed-only --reporter=dot
 ```
