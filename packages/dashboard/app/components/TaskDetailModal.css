@@ -1352,6 +1352,14 @@ FN-415: the Task Detail header passes its own `className` to TaskContextMenu, wh
 `.task-context-menu` class, so this family never inherited the `--task-context-menu-*` width convention and every
 option wrapped onto 2-3 lines inside a 76px column. The menu now sizes to its content between a readable minimum and
 a viewport-bounded maximum, and each option occupies exactly one line, truncated with an ellipsis rather than wrapped.
+
+FNXC:TaskDetailActionsMenu 2026-09-15-13:50:
+FN-420: the menu must never exceed the height of the Task Detail shell that contains it. It is capped at 80% of that
+shell's measured height and scrolls beyond it. No CSS unit can reference an arbitrary ancestor's height — a percentage
+max-height resolves against the `.detail-actions-dropdown` anchor (button-sized), and `container-type: size` is rejected
+because size containment can collapse a content-sized shell and creates a containing block for positioned descendants.
+The cap is therefore measured in JavaScript and published as the inline `--detail-actions-menu-max-height` custom
+property on the anchor; the viewport bound below stays as the declarative fallback whenever no height is measurable.
 */
 .detail-actions-menu {
   --detail-actions-menu-min-width: calc(var(--space-xl) * 6 + var(--space-lg));
@@ -1368,7 +1376,7 @@ a viewport-bounded maximum, and each option occupies exactly one line, truncated
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-md);
-  max-height: calc(100dvh - calc(var(--space-2xl) * 4));
+  max-height: var(--detail-actions-menu-max-height, calc(100dvh - calc(var(--space-2xl) * 4)));
   overflow-x: hidden;
   overflow-y: auto;
 }
@@ -2982,7 +2990,7 @@ Feed's copy and expansion actions share one tokenized overlay group so the bound
   .detail-actions-menu {
     bottom: calc(100% + var(--space-xs));
     max-width: calc(100vw - calc(var(--space-lg) + var(--space-md)));
-    max-height: calc(100dvh - 120px);
+    max-height: var(--detail-actions-menu-max-height, calc(100dvh - calc(var(--space-2xl) * 3 + var(--space-xl))));
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
   }

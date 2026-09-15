@@ -924,6 +924,13 @@ function canTaskEditGithubTracking(
   return !isCompleteColumnRole(columnFlags, column);
 }
 
+/*
+FNXC:TaskDetailActionsMenu 2026-09-15-13:50:
+FN-420: the header overflow menu is capped at this fraction of the measured Task Detail shell height so it can never
+exceed the modal, floating window, dock panel, or embedded host that contains it; beyond the cap it scrolls.
+*/
+export const TASK_DETAIL_ACTIONS_MENU_MAX_HEIGHT_RATIO = 0.8;
+
 export function TaskDetailContent({
   task,
   projectId,
@@ -1815,6 +1822,7 @@ export function TaskDetailContent({
 
   // Split-menu dropdown state for footer actions
   const [showActionsMenu, setShowActionsMenu] = useState(false);
+  const [actionsMenuMaxHeight, setActionsMenuMaxHeight] = useState<number | null>(null);
   const [showActivityViewMenu, setShowActivityViewMenu] = useState(false);
   const [activityViewMenuPosition, setActivityViewMenuPosition] = useState<ActivityViewMenuPosition | null>(null);
   const [sourceIssueExpanded, setSourceIssueExpanded] = useState(false);
@@ -2303,6 +2311,36 @@ export function TaskDetailContent({
   useEffect(() => {
     setShowAgentPicker(false);
   }, [task.id]);
+
+  /*
+  FNXC:TaskDetailActionsMenu 2026-09-15-13:50:
+  FN-420: no CSS unit can bound this menu by the height of the Task Detail shell that contains it, so the cap is
+  measured here while the menu is open and published as the inline `--detail-actions-menu-max-height` custom property
+  on the anchor. `clientHeight` is read (not `getBoundingClientRect()`) so the measurement ignores transforms. When no
+  height is measurable the variable is withheld and the stylesheet's viewport fallback stays effective, so no shell is
+  ever given a zero cap. A ResizeObserver re-measures while a floating window is resized; it is a progressive
+  enhancement only, since the dashboard test setup installs a no-op ResizeObserver.
+  */
+  useLayoutEffect(() => {
+    if (!showActionsMenu) {
+      setActionsMenuMaxHeight(null);
+      return;
+    }
+    const host = actionsMenuRef.current?.closest<HTMLElement>(".task-detail-content");
+    if (!host) {
+      setActionsMenuMaxHeight(null);
+      return;
+    }
+    const measure = () => {
+      const height = host.clientHeight;
+      setActionsMenuMaxHeight(height > 0 ? Math.round(height * TASK_DETAIL_ACTIONS_MENU_MAX_HEIGHT_RATIO) : null);
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => measure());
+    observer.observe(host);
+    return () => observer.disconnect();
+  }, [showActionsMenu]);
 
   // Close task-detail dropdown menus on outside click.
   useEffect(() => {
@@ -5472,7 +5510,13 @@ export function TaskDetailContent({
               </UiButton>
             ))}
             {!isEditing && secondaryHeaderActions.length > 0 && (
-              <div className="detail-actions-dropdown detail-actions-dropdown--header" ref={actionsMenuRef}>
+              <div
+                className="detail-actions-dropdown detail-actions-dropdown--header"
+                ref={actionsMenuRef}
+                style={actionsMenuMaxHeight !== null
+                  ? ({ "--detail-actions-menu-max-height": `${actionsMenuMaxHeight}px` } as React.CSSProperties)
+                  : undefined}
+              >
                 <UiButton
                   type="button"
                   className="btn btn-icon btn-sm task-detail-header-action"
