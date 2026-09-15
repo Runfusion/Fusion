@@ -25,6 +25,13 @@ const defaultSettings: Settings = {
   testCommand: "",
   buildCommand: "",
   experimentalFeatures: { insights: true, roadmap: true, skillsView: true, agentsView: true, evalsView: true, todoView: true, leftSidebarNav: false, rightDock: false },
+  /*
+   * FN-419: a wide project shell always suppresses the Header view shortcuts, because exactly one primary navigation
+   * surface owns routing. These navigation-HISTORY cases previously drove the Header shortcuts while the wide footer
+   * was also mounted — the duplicate-navigation state this task removes — so they now route through the left column,
+   * whose destinations expose the same `title` attributes. The history invariants under test are unchanged.
+   */
+  navigationPlacement: "sidebar" as const,
 };
 
 const mockSubscribeSse = vi.fn((..._args: any[]) => vi.fn());
@@ -554,8 +561,7 @@ describe("Navigation history integration", () => {
     await renderAppAndWait();
 
     const pushCallsBefore = (window.history.pushState as any).mock.calls.length;
-    fireEvent.click(screen.getByTestId("view-toggle-overflow-trigger"));
-    fireEvent.click(screen.getByTestId("view-overflow-evals"));
+    fireEvent.click(await screen.findByTestId("sidebar-nav-evals"));
 
     await waitFor(() => {
       expect(screen.getByTestId("evals-view")).toBeTruthy();
@@ -572,8 +578,7 @@ describe("Navigation history integration", () => {
     await renderAppAndWait();
 
     const pushCallsBefore = (window.history.pushState as any).mock.calls.length;
-    fireEvent.click(screen.getByTestId("view-toggle-overflow-trigger"));
-    fireEvent.click(await screen.findByTestId("view-overflow-plugin-fusion-plugin-todos-todos"));
+    fireEvent.click(await screen.findByTestId("sidebar-nav-plugin-fusion-plugin-todos-todos"));
 
     await waitFor(() => {
       expect(screen.getByTestId("todo-view-root")).toBeTruthy();

@@ -5886,7 +5886,11 @@
       "chatMessageLayout": "",
       "chatMessageLayoutBubbles": "",
       "chatMessageLayoutFullWidth": "",
-      "chatMessageLayoutHelp": ""
+      "chatMessageLayoutHelp": "",
+      "navigationPlacement": "",
+      "navigationPlacementFooter": "",
+      "navigationPlacementSidebar": "",
+      "navigationPlacementHelp": ""
     },
     "auth": {
       "apiKeyCleared": "Clave API borrada",

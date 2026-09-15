@@ -661,6 +661,13 @@ export const DEFAULT_PROJECT_SETTINGS = {
   */
   chatMessageLayout: "bubbles",
   /*
+  FNXC:Navigation 2026-09-15-14:41:
+  FN-419 seeds the historical bottom-footer placement so upgraded projects keep their current menu position. Only an
+  explicit "sidebar" choice moves the primary menu (plus the engine control and Terminal action) into the left column,
+  and the two surfaces can never be shown at the same time.
+  */
+  navigationPlacement: "footer",
+  /*
   FNXC:TaskDetailActivityFirst 2026-06-30-23:59:
   Project task-detail defaults are Activity-first unless this opt-in is true. Keeping the default false preserves explicit deep-link ids while making omitted non-done task opens land on Activity → Live.
   */

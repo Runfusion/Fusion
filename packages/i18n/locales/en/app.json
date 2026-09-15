@@ -5930,7 +5930,11 @@
       "chatMessageLayout": "Conversation layout",
       "chatMessageLayoutBubbles": "Bubbles",
       "chatMessageLayoutFullWidth": "Full width",
-      "chatMessageLayoutHelp": "Choose Bubbles or Full width for Chat windows, task Activity, and Planner Chat. Project-scoped; default: Bubbles."
+      "chatMessageLayoutHelp": "Choose Bubbles or Full width for Chat windows, task Activity, and Planner Chat. Project-scoped; default: Bubbles.",
+      "navigationPlacement": "Navigation menu placement",
+      "navigationPlacementFooter": "Bottom bar",
+      "navigationPlacementSidebar": "Left sidebar",
+      "navigationPlacementHelp": "Choose whether the main menu sits in the bottom bar or in a left sidebar. Only one is ever shown. Project-scoped; default: Bottom bar."
     },
     "auth": {
       "apiKeyCleared": "API key cleared",

@@ -21,6 +21,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { MobileNavBar } from "../components/MobileNavBar";
 import { Header, useViewportMode } from "../components/Header";
 import { LeftSidebarNav } from "../components/LeftSidebarNav";
+import { resolveNavigationSurfaces, type NavigationPlacement } from "../utils/navigationPlacement";
 
 function mockViewport(mode: "mobile" | "tablet" | "desktop") {
   Object.defineProperty(window, "matchMedia", {
@@ -63,13 +64,20 @@ const createDefaultMobileNavProps = () => ({
   projectId: "proj_1",
 });
 
-function LeftSidebarAppGateHarness({ leftSidebarNavFlag }: { leftSidebarNavFlag?: boolean }) {
+/*
+ * FNXC:Navigation 2026-09-15-14:41:
+ * FN-419: these harnesses used to DUPLICATE App's sidebar gate (and therefore asserted the removed
+ * `experimentalFeatures.leftSidebarNav` placement semantics). They now consume the same shared resolver App does,
+ * so the placement setting — not the legacy flag — decides which single surface mounts.
+ */
+function LeftSidebarAppGateHarness({ navigationPlacement }: { navigationPlacement: NavigationPlacement }) {
   const mode = useViewportMode();
-  const isMobile = mode === "mobile";
-  const viewMode = "project";
   const currentProject = createProjects()[0];
-  const leftSidebarNavEnabled = leftSidebarNavFlag !== false;
-  const sidebarActive = leftSidebarNavEnabled && !isMobile && viewMode === "project" && !!currentProject;
+  const { sidebarActive } = resolveNavigationSurfaces({
+    viewportMode: mode,
+    projectShellPresent: !!currentProject,
+    navigationPlacement,
+  });
 
   return sidebarActive ? (
     <LeftSidebarNav
@@ -84,12 +92,15 @@ function LeftSidebarAppGateHarness({ leftSidebarNavFlag }: { leftSidebarNavFlag?
   ) : null;
 }
 
-function PrimaryNavigationSurfaceHarness({ leftSidebarNavFlag }: { leftSidebarNavFlag?: boolean }) {
+function PrimaryNavigationSurfaceHarness({ navigationPlacement }: { navigationPlacement: NavigationPlacement }) {
   const mode = useViewportMode();
   const isMobile = mode === "mobile";
   const currentProject = createProjects()[0];
-  const leftSidebarNavEnabled = leftSidebarNavFlag !== false;
-  const sidebarActive = leftSidebarNavEnabled && !isMobile && !!currentProject;
+  const { headerPrimaryNavSuppressed } = resolveNavigationSurfaces({
+    viewportMode: mode,
+    projectShellPresent: !!currentProject,
+    navigationPlacement,
+  });
 
   return (
     <>
@@ -98,9 +109,9 @@ function PrimaryNavigationSurfaceHarness({ leftSidebarNavFlag }: { leftSidebarNa
         onChangeView={vi.fn()}
         mobileNavEnabled={isMobile}
         showAgentsTab={true}
-        leftSidebarNavActive={sidebarActive}
+        leftSidebarNavActive={headerPrimaryNavSuppressed}
       />
-      <LeftSidebarAppGateHarness leftSidebarNavFlag={leftSidebarNavFlag} />
+      <LeftSidebarAppGateHarness navigationPlacement={navigationPlacement} />
       <MobileNavBar {...createDefaultMobileNavProps()} />
     </>
   );
@@ -380,41 +391,37 @@ describe("Mobile Feature Access Regression Guard", () => {
     }
   });
 
-  it("left sidebar app gate renders by default on desktop and tablet, honors explicit opt-out, and never renders on mobile", () => {
+  it("left sidebar app gate follows the project navigation placement and never renders on mobile", () => {
     /*
      * Surface Enumeration checklist asserted here:
-     * - leftSidebarNav unset/undefined -> sidebar renders on desktop and tablet.
-     * - leftSidebarNav true -> sidebar renders on desktop and tablet.
-     * - leftSidebarNav false -> sidebar does not render and legacy Header nav returns.
-     * - mobile never renders the sidebar for any flag state; MobileNavBar owns navigation.
-     * - active sidebar state suppresses Header view-toggle and overflow shells.
+     * - navigationPlacement "sidebar" -> sidebar renders on desktop and tablet.
+     * - navigationPlacement "footer" -> sidebar does not render; the footer owns navigation, so Header view
+     *   shortcuts stay suppressed on both wide tiers (they are NOT a fallback for a footer-owned shell).
+     * - mobile never renders the sidebar for any placement; MobileNavBar owns navigation and Header keeps its
+     *   mobile fallback behavior.
      */
-    const flagStates = [
-      { label: "unset", leftSidebarNavFlag: undefined, sidebarExpected: true },
-      { label: "true", leftSidebarNavFlag: true, sidebarExpected: true },
-      { label: "false", leftSidebarNavFlag: false, sidebarExpected: false },
-    ] as const;
+    const placements = [
+      { label: "sidebar", navigationPlacement: "sidebar" as const, sidebarExpected: true },
+      { label: "footer", navigationPlacement: "footer" as const, sidebarExpected: false },
+    ];
 
-    for (const { label, leftSidebarNavFlag, sidebarExpected } of flagStates) {
+    for (const { label, navigationPlacement, sidebarExpected } of placements) {
       for (const tier of ["desktop", "tablet"] as const) {
         mockViewport(tier);
-        const { unmount } = render(<PrimaryNavigationSurfaceHarness leftSidebarNavFlag={leftSidebarNavFlag} />);
-        expect(screen.queryByTestId("left-sidebar-nav"), `${label} flag on ${tier}`).toBe(
+        const { unmount } = render(<PrimaryNavigationSurfaceHarness navigationPlacement={navigationPlacement} />);
+        expect(screen.queryByTestId("left-sidebar-nav"), `${label} placement on ${tier}`).toBe(
           sidebarExpected ? screen.getByTestId("left-sidebar-nav") : null,
         );
-        expect(screen.queryByTitle("Board view"), `${label} flag header board shortcut on ${tier}`).toBe(
-          sidebarExpected ? null : screen.getByTitle("Board view"),
-        );
-        expect(screen.queryByTestId("view-toggle-overflow-trigger"), `${label} flag overflow on ${tier}`).toBe(
-          sidebarExpected ? null : screen.getByTestId("view-toggle-overflow-trigger"),
-        );
+        // Either wide surface owns routing, so the Header never re-adds a third navigation.
+        expect(screen.queryByTitle("Board view"), `${label} placement header board shortcut on ${tier}`).toBeNull();
+        expect(screen.queryByTestId("view-toggle-overflow-trigger"), `${label} placement overflow on ${tier}`).toBeNull();
         unmount();
       }
 
       mockViewport("mobile");
-      const { container, unmount } = render(<PrimaryNavigationSurfaceHarness leftSidebarNavFlag={leftSidebarNavFlag} />);
-      expect(screen.queryByTestId("left-sidebar-nav"), `${label} flag on mobile`).toBeNull();
-      expect(container.querySelector(".mobile-nav-bar"), `${label} flag mobile nav`).not.toBeNull();
+      const { container, unmount } = render(<PrimaryNavigationSurfaceHarness navigationPlacement={navigationPlacement} />);
+      expect(screen.queryByTestId("left-sidebar-nav"), `${label} placement on mobile`).toBeNull();
+      expect(container.querySelector(".mobile-nav-bar"), `${label} placement mobile nav`).not.toBeNull();
       unmount();
     }
   });

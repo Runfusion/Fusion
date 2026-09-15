@@ -23,11 +23,16 @@ import {
   Sparkles,
   StickyNote,
   Target,
+  Terminal,
   Workflow,
   Zap,
   type LucideProps,
 } from "lucide-react";
+import type { Task } from "@fusion/core";
 import type { ProjectInfo, PluginDashboardViewEntry } from "../api";
+import type { ExecutorColumnFlags } from "../hooks/useExecutorStats";
+import { useExecutorStats } from "../hooks/useExecutorStats";
+import { EngineControlMenu } from "./EngineControlMenu";
 import type { TaskView } from "../hooks/useViewState";
 import { buildPluginTaskViewId } from "../plugins/pluginViewRegistry";
 import { getPluginDashboardViewNavIcon } from "./pluginNavIcon";
@@ -131,6 +136,18 @@ export interface LeftSidebarNavProps {
   onSelectProject?: (project: ProjectInfo) => void;
   onViewAllProjects?: () => void;
   footerVisible?: boolean;
+  /*
+  FNXC:Navigation 2026-09-15-14:41:
+  FN-419: in `sidebar` placement the shell has NO bottom bar, so the engine control menu and the Terminal action
+  would otherwise lose their only wide entry point. The sidebar hosts them here instead. Because the two primary
+  surfaces are mutually exclusive, `EngineControlMenu` can never be mounted twice at once.
+  `DashboardWindowVisibilityToggle` is deliberately NOT relocated: the operator asked for that control to disappear
+  in sidebar placement, and it remains footer-only (still rendered by `DesktopActionBar` and `ExecutorStatusBar`).
+  */
+  tasks?: Task[];
+  projectId?: string;
+  columnFlagsByTaskId?: ReadonlyMap<string, ExecutorColumnFlags>;
+  onToggleTerminal?: () => void;
 }
 
 function formatCount(count: number): string {
@@ -175,6 +192,10 @@ export function LeftSidebarNav({
   showAgentsTab = false,
   showSkillsTab = false,
   footerVisible = false,
+  tasks,
+  projectId,
+  columnFlagsByTaskId,
+  onToggleTerminal,
 }: LeftSidebarNavProps) {
   const { t } = useTranslation("app");
   /*
@@ -202,6 +223,21 @@ export function LeftSidebarNav({
       return next;
     });
   }, []);
+
+  /*
+  FNXC:Navigation 2026-09-15-14:41:
+  FN-419: the engine control trigger mirrors the footer's contract exactly — same `executor.engineControls` label and
+  the same `running / maxConcurrent` trigger content — so moving the menu between placements does not change what an
+  operator reads. The hook runs unconditionally (Rules of Hooks); the host renders only when a project is present.
+  */
+  const emptyTasks = useMemo<Task[]>(() => [], []);
+  const { stats: executorStats, loading: executorStatsLoading, error: executorStatsError } = useExecutorStats(tasks ?? emptyTasks, projectId, columnFlagsByTaskId);
+  const capacityText = executorStatsLoading
+    ? t("commandCenter.controls.status.loading", "Loading…")
+    : executorStatsError
+      ? t("commandCenter.controls.concurrency.error", "Unable to load concurrency settings")
+      : `${executorStats.runningTaskCount} / ${executorStats.maxConcurrent}`;
+  const capacityLabel = `${t("executor.engineControls", "Engine controls")}: ${capacityText}`;
 
   const handleResizeStart = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (isCollapsed) return;
@@ -516,6 +552,35 @@ export function LeftSidebarNav({
 
       <div className="left-sidebar-nav__footer">
         {/* FNXC:StandardizedViewActions 2026-09-13-21:43: New Task is header-owned; the navigation footer contains navigation chrome only and must never expose a duplicate creation mutation. */}
+        {/*
+        FNXC:Navigation 2026-09-15-14:41:
+        FN-419 relocates the shell controls that have no other wide host in `sidebar` placement: the engine control
+        menu and the Terminal action, both ABOVE Collapse. Omitting `onToggleTerminal` must leave no empty button
+        shell. `DashboardWindowVisibilityToggle` is intentionally absent here — the operator asked for it to disappear
+        with the bottom bar, and it stays owned by `DesktopActionBar`/`ExecutorStatusBar`.
+        */}
+        {projectId ? (
+          <div className="left-sidebar-nav__capacity">
+            <EngineControlMenu
+              projectId={projectId}
+              triggerContent={<span data-testid="sidebar-capacity-count">{capacityText}</span>}
+              triggerLabel={capacityLabel}
+            />
+          </div>
+        ) : null}
+        {onToggleTerminal ? (
+          <button
+            type="button"
+            className="btn left-sidebar-nav__item left-sidebar-nav__terminal"
+            aria-label={t("nav.terminal", "Terminal")}
+            title={t("nav.terminal", "Terminal")}
+            data-testid="sidebar-nav-terminal"
+            onClick={onToggleTerminal}
+          >
+            <Terminal size={16} />
+            <span className="left-sidebar-nav__label">{t("nav.terminal", "Terminal")}</span>
+          </button>
+        ) : null}
         {/*
         FNXC:Navigation 2026-06-21-00:00:
         The sidebar collapse affordance belongs in the footer immediately above Settings, using the same row-item visual language. Expanded mode shows the Collapse label, while rail mode relies on the shared label-hiding rule so the button remains icon-only like Settings.

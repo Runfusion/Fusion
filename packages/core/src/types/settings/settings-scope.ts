@@ -1514,6 +1514,14 @@ export interface ProjectSettings {
    */
   chatMessageLayout?: "bubbles" | "full-width";
   /**
+   * FNXC:Navigation 2026-09-15-14:41:
+   * FN-419: the single source of truth for WHERE the primary navigation menu lives — the bottom footer bar or the
+   * left sidebar column. The two surfaces are mutually exclusive by construction (see
+   * `packages/dashboard/app/utils/navigationPlacement.ts`); before this setting the tablet tier mounted both.
+   * Missing or invalid persisted values resolve to the historical bottom footer placement.
+   */
+  navigationPlacement?: "footer" | "sidebar";
+  /**
    * FNXC:TaskDetailActivityFirst 2026-06-30-23:59:
    * Default-off keeps task details Activity-first so omitted non-done opens land on the legacy `chat` Activity → Live surface. Operators can set true to restore Chat-first ordering/default while explicit Activity/Chat/Logs deep links remain stable.
    */

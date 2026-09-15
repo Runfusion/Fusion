@@ -6675,7 +6675,11 @@
       "chatMessageLayout": "",
       "chatMessageLayoutBubbles": "",
       "chatMessageLayoutFullWidth": "",
-      "chatMessageLayoutHelp": ""
+      "chatMessageLayoutHelp": "",
+      "navigationPlacement": "",
+      "navigationPlacementFooter": "",
+      "navigationPlacementSidebar": "",
+      "navigationPlacementHelp": ""
     },
     "search": {
       "allSections": "Mostrando todas as seções de configurações",

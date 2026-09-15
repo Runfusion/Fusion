@@ -14,6 +14,20 @@ export const appearanceSearchEntries: SettingsSearchEntry[] = [
    * the project-scoped conversation layout metadata identical to AppearanceSection
    * so label, help, and field-key queries all reach the existing control.
    */
+  /*
+   * FNXC:SettingsSearch 2026-09-15-14:41:
+   * FN-419 navigation placement control. Label and help mirror the section's `t()` calls verbatim.
+   */
+  {
+    sectionId: "appearance",
+    key: "navigationPlacement",
+    labelKey: "settings.appearance.navigationPlacement",
+    labelFallback: "Navigation menu placement",
+    helpKey: "settings.appearance.navigationPlacementHelp",
+    helpFallback:
+      "Choose whether the main menu sits in the bottom bar or in a left sidebar. Only one is ever shown. Project-scoped; default: Bottom bar.",
+    keywords: ["menu", "navigation", "sidebar", "footer", "bottom bar"],
+  },
   {
     sectionId: "appearance",
     key: "chatMessageLayout",

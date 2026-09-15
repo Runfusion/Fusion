@@ -6,6 +6,7 @@ import { SettingsToggleRow } from "../SettingsToggleRow";
 import { SettingsSelectRow } from "../SettingsSelectRow";
 import type { SectionBaseProps } from "./context";
 import { normalizeChatMessageLayout, type ChatMessageLayout } from "../../../hooks/useAppSettings";
+import { normalizeNavigationPlacement, type NavigationPlacement } from "../../../utils/navigationPlacement";
 export interface AppearanceSectionProps extends SectionBaseProps {
     themeMode: ThemeMode;
     colorTheme: ColorTheme;
@@ -21,6 +22,9 @@ export interface AppearanceSectionProps extends SectionBaseProps {
     onShadcnCustomColorsChange?: (colors: Record<string, string>) => void;
     chatMessageLayout?: ChatMessageLayout;
     onChatMessageLayoutChange?: (layout: ChatMessageLayout) => void;
+    /* FNXC:Navigation 2026-09-15-14:41: FN-419 — project choice of the single primary navigation surface. */
+    navigationPlacement?: NavigationPlacement;
+    onNavigationPlacementChange?: (placement: NavigationPlacement) => void;
     openTasksInRightSidebar?: boolean;
     onOpenTasksInRightSidebarChange?: (enabled: boolean) => void;
     openMobileTasksInPopup?: boolean;
@@ -40,7 +44,7 @@ Rows render through the shared settings primitives rather than hand-rolled `form
 FNXC:SettingsScope 2026-07-15-17:35:
 Scope badges are per-row because this section genuinely mixes authority levels: theme, color, and font scale are global (DEFAULT_GLOBAL_SETTINGS), while every task-presentation toggle below is project-scoped (DEFAULT_PROJECT_SETTINGS). The nav labels the whole section "global", which is true only of the theme controls, so the badges are what tell an operator which of these travels between projects.
 */
-export function AppearanceSection({ form, setForm, themeMode, colorTheme, uiStyle, onUiStyleChange, dashboardFontScalePct, shadcnCustomColors = {}, resolvedThemeMode, onThemeModeChange, onColorThemeChange, onDashboardFontScaleChange, onShadcnCustomColorsChange, chatMessageLayout = "bubbles", onChatMessageLayoutChange, openTasksInRightSidebar, onOpenTasksInRightSidebarChange, openMobileTasksInPopup, onOpenMobileTasksInPopupChange, showCostBadgeOnCards, onShowCostBadgeOnCardsChange, taskDetailChatFirst, onTaskDetailChatFirstChange, sessionBannersHidden, setSessionBannersHidden, }: AppearanceSectionProps) {
+export function AppearanceSection({ form, setForm, themeMode, colorTheme, uiStyle, onUiStyleChange, dashboardFontScalePct, shadcnCustomColors = {}, resolvedThemeMode, onThemeModeChange, onColorThemeChange, onDashboardFontScaleChange, onShadcnCustomColorsChange, chatMessageLayout = "bubbles", onChatMessageLayoutChange, navigationPlacement = "footer", onNavigationPlacementChange, openTasksInRightSidebar, onOpenTasksInRightSidebarChange, openMobileTasksInPopup, onOpenMobileTasksInPopupChange, showCostBadgeOnCards, onShowCostBadgeOnCardsChange, taskDetailChatFirst, onTaskDetailChatFirstChange, sessionBannersHidden, setSessionBannersHidden, }: AppearanceSectionProps) {
     const { t } = useTranslation("app");
     return (<>
       <h4 className="settings-section-heading">{t("settings.appearance.title", "Appearance")}</h4>
@@ -67,6 +71,29 @@ export function AppearanceSection({ form, setForm, themeMode, colorTheme, uiStyl
             onShadcnCustomColorsChange?.(colors);
         }}/>
       <LanguageSelector />
+      {/*
+      FNXC:Navigation 2026-09-15-14:41:
+      FN-419: one project choice decides WHERE the primary menu lives. The two surfaces are mutually exclusive by
+      construction, so this control can never produce the historical double-navigation state.
+      */}
+      <SettingsSelectRow
+        descriptor={{
+          key: "navigationPlacement",
+          label: t("settings.appearance.navigationPlacement", "Navigation menu placement"),
+          help: t("settings.appearance.navigationPlacementHelp", "Choose whether the main menu sits in the bottom bar or in a left sidebar. Only one is ever shown. Project-scoped; default: Bottom bar."),
+          scope: "project",
+          options: [
+            { value: "footer", label: t("settings.appearance.navigationPlacementFooter", "Bottom bar") },
+            { value: "sidebar", label: t("settings.appearance.navigationPlacementSidebar", "Left sidebar") },
+          ],
+        }}
+        value={normalizeNavigationPlacement(form.navigationPlacement ?? navigationPlacement)}
+        onChange={(value) => {
+          const nextPlacement = normalizeNavigationPlacement(value);
+          setForm((f) => ({ ...f, navigationPlacement: nextPlacement }));
+          onNavigationPlacementChange?.(nextPlacement);
+        }}
+      />
       <SettingsSelectRow
         descriptor={{
           key: "chatMessageLayout",

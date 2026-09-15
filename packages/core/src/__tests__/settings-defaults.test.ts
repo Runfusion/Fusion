@@ -284,6 +284,18 @@ describe("settings defaults invariants", () => {
     });
   });
 
+  describe("navigationPlacement default", () => {
+    it("defaults to footer and keeps the setting project-scoped", () => {
+      expect(DEFAULT_PROJECT_SETTINGS.navigationPlacement).toBe("footer");
+      expect("navigationPlacement" in DEFAULT_PROJECT_SETTINGS).toBe(true);
+      expect(PROJECT_SETTINGS_KEYS).toContain("navigationPlacement");
+      expect(isProjectSettingsKey("navigationPlacement")).toBe(true);
+      expect("navigationPlacement" in DEFAULT_GLOBAL_SETTINGS).toBe(false);
+      expect(GLOBAL_SETTINGS_KEYS).not.toContain("navigationPlacement");
+      expect(isGlobalOnlySettingsKey("navigationPlacement")).toBe(false);
+    });
+  });
+
   describe("taskDetailChatFirst default", () => {
     it("keeps taskDetailChatFirst explicitly false in project defaults", () => {
       expect(DEFAULT_PROJECT_SETTINGS.taskDetailChatFirst).toBe(false);

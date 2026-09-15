@@ -344,15 +344,32 @@ During a user pan, the board temporarily suspends native CSS `scroll-snap-type: 
 This behavior used to be mobile-only, and now applies across all viewports.
 Task Detail modal opens from onboarding, activity log, and task-to-task navigation now all register navigation history entries, so Android back swipe/button dismisses them consistently.
 
-## Left Sidebar Navigation (experimental)
+## Navigation menu placement
 
-**Left Sidebar Navigation** is enabled by default for desktop/tablet project screens, moving project navigation out of the Header and into a persistent left sidebar. To opt out, open **Settings → Experimental Features** and turn **Left Sidebar Navigation** off (`leftSidebarNav: false`).
+<!-- FNXC:DashboardDocs 2026-09-15-14:41: FN-419 makes the primary navigation surface an explicit project choice. Exactly one surface is mounted per screen; the old tablet state that showed the bottom bar and the left sidebar at the same time is gone. -->
+
+There is always **exactly one primary navigation menu on screen**. Where it lives is a project setting: open **Settings → Appearance → Navigation menu placement** and choose **Bottom bar** (default) or **Left sidebar**. No screen size ever shows both, and mobile always keeps its bottom navigation bar regardless of the choice.
+
+What changes with the placement:
+
+| | **Bottom bar** (default) | **Left sidebar** |
+| --- | --- | --- |
+| Primary menu | Fixed bar across the bottom of the project shell | Persistent column on the left |
+| Engine control (running / max concurrent) | In the bottom bar | In the sidebar footer, above **Collapse** |
+| **Terminal** action | In the bottom bar | In the sidebar footer |
+| Dashboard window visibility toggle | In the bottom bar | **Not shown** |
+| Bottom-bar height reservation | Content, sidebar, and right dock reserve it | No bottom bar exists, so nothing reserves its height |
+| **Chat** from the primary menu | Opens in the right dock | Opens as a **full main page**, like Notes |
+
+The legacy **Settings → Experimental Features → Left Sidebar Navigation** flag no longer decides the placement; the Appearance setting above does. An old `leftSidebarNav: false` value can never leave a project with no navigation at all.
+
+### Left sidebar contents
 
 <!-- FNXC:DashboardDocs 2026-06-22-00:00: The dashboard navigation docs must mirror the post-reshuffle source of truth: the left sidebar owns primary content views plus Workflows, Import Tasks, and Automations, while the right dock owns only inline tool panels. -->
 <!-- FNXC:DashboardNavigationDocs 2026-06-22-09:30: FN-6897 synced the user-facing navigation guide after the sidebar/dock reshuffle. Desktop/tablet navigation is split between left-sidebar main-content destinations, a persistent far-right tools dock, and the footer-launched Terminal; stale Header overflow, duplicate dock/sidebar, and standalone Stash Recovery affordances must not be documented as current behavior. -->
 <!-- FNXC:InboxCategories 2026-09-09-20:37: Mailbox is the sole navigation destination for ordinary mail, historical artifact/recommendation notices, and task-completion recaps; task documents and non-image artifacts remain available from Task Detail. -->
 
-When enabled on desktop or tablet project screens, the sidebar starts with a centered **New Task** button that opens the existing New Task dialog from any project screen. Expanded mode shows the plus icon and **New Task** label; collapsed rail mode keeps the centered icon-only button accessible through its label/title. Below that action, the sidebar contains primary destinations (**Board**, **List**, **Agents** when enabled, **Command Center**, **Planning**, **Missions**, **Chat**, **Mailbox**, and plugin primary views) followed by secondary destinations (**Workflows**, **Import Tasks**, **Automations**, optional **Evals**, **Goals**, **Research**, **Insights**, **Skills & Snippets**, **Memory**, **Dev Server**, and plugin overflow views when their flags/plugins are enabled). The footer contains the sidebar collapse toggle directly above **Settings**.
+When the sidebar placement is selected on desktop or tablet project screens, the sidebar starts with a centered **New Task** button that opens the existing New Task dialog from any project screen. Expanded mode shows the plus icon and **New Task** label; collapsed rail mode keeps the centered icon-only button accessible through its label/title. Below that action, the sidebar contains primary destinations (**Board**, **List**, **Agents** when enabled, **Command Center**, **Planning**, **Missions**, **Chat**, **Mailbox**, and plugin primary views) followed by secondary destinations (**Workflows**, **Import Tasks**, **Automations**, optional **Evals**, **Goals**, **Research**, **Insights**, **Skills & Snippets**, **Memory**, **Dev Server**, and plugin overflow views when their flags/plugins are enabled). The footer contains the engine control and the **Terminal** action, then the sidebar collapse toggle directly above **Settings**. Selecting **Chat** here opens the conversation as a full main page rather than in the right dock.
 
 Use the desktop/tablet sidebar this way:
 

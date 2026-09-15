@@ -184,6 +184,28 @@ describe("MainViewKeepAlive", () => {
     expect(activeByView.historyColumnRenders).toBe(rendersBeforeOpen);
   });
 
+  /*
+   * FN-419: in `sidebar` navigation placement Chat is an ordinary main page, exactly like Notes — no drawer wrapper,
+   * and still exactly ONE mounted primary Chat instance (FN-392 invariant).
+   */
+  it("mounts Chat as a page with no drawer wrapper and a single instance for the sidebar page host", () => {
+    activeByView.chat.length = 0;
+    const { container } = render(
+      <MainViewKeepAlive
+        activeId="chat"
+        mountedIds={["board", "chat"]}
+        projectKey="project-1"
+        mainContentProps={mainContentProps()}
+      />,
+    );
+
+    expect(screen.getAllByTestId("chat-child")).toHaveLength(1);
+    expect(screen.getByTestId("chat-child")).toHaveAttribute("data-active", "true");
+    expect(screen.getByTestId("chat-keep-alive")).not.toHaveAttribute("aria-hidden");
+    expect(container.querySelector(".mobile-drawer")).toBeNull();
+    expect(container.querySelector("[data-testid='main-view-mobile-drawer']")).toBeNull();
+  });
+
   it("exposes History whenever the official complete lane has a route handler", () => {
     renderHost("board");
     expect(screen.getByTestId("column-history-done")).toBeInTheDocument();
@@ -296,10 +318,24 @@ describe("MainViewKeepAlive", () => {
       "components/ListView.tsx",
     ]);
 
+    /*
+     * FN-419: the keep-alive Chat gate is no longer mobile-drawer-only — the `sidebar` navigation placement is a
+     * second page host. The structural guard follows the new gate: Chat enters the tree exactly when this shell is
+     * the resolved page host, and a non-page shell still evicts a retained Chat entry.
+     */
     const mainContent = readAppFile("components/dashboard/MainContent.tsx");
-    expect(mainContent).toContain('taskView === "chat" && !mobileDrawerEnabled ? null : taskView');
+    expect(mainContent).toContain('const chatPageHostEnabled = mobileDrawerEnabled || chatPageHost === "sidebar-page"');
+    expect(mainContent).toContain('taskView === "chat" && !chatPageHostEnabled ? null : taskView');
+    expect(mainContent).toContain('!chatPageHostEnabled && storedKeepAliveIds.includes("chat")');
     expect(mainContent).toContain('storedKeepAliveIds.filter((id) => id !== "chat")');
+    // The drawer wrapper stays strictly mobile: sidebar placement must mount Chat as a page.
+    expect(mainContent).toContain("mobileDrawer={mobileDrawerEnabled ?");
+    /*
+     * Pre-existing stale assertion repaired here (unrelated to FN-419): the dock Chat entry expresses its restricted
+     * capability through `isExpandable`, not `isInline` — the `isInline: () => false` literal this line pinned was
+     * removed from the registry by a later change, so the guard was asserting a construct that no longer exists.
+     */
     const registry = readAppFile("components/overflowViewRegistry.tsx");
-    expect(registry).toContain("isInline: () => false");
+    expect(registry).toContain("isExpandable: () => false");
   });
 });

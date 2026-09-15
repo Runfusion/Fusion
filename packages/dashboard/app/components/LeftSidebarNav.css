@@ -206,8 +206,47 @@ The footer has no top divider; it remains a functional footer cluster but should
   padding: var(--space-sm);
 }
 
-.left-sidebar-nav__settings {
+.left-sidebar-nav__settings,
+.left-sidebar-nav__terminal {
   justify-content: flex-start;
+}
+
+/*
+FNXC:Navigation 2026-09-15-14:41:
+FN-419: in `sidebar` placement the shell has no bottom bar, so the engine control menu lives in this footer cluster.
+The trigger fills the footer row like the other items, and the shared popover is re-anchored to open toward the
+viewport (the sidebar sits against the inline-start edge) with the same viewport-sized floor/ceiling the footer host
+uses, so a narrow rail can never collapse the panel to the trigger width.
+*/
+.left-sidebar-nav__capacity {
+  display: flex;
+  align-items: stretch;
+  inline-size: 100%;
+  min-inline-size: 0;
+}
+
+.left-sidebar-nav__capacity .engine-control-menu {
+  inline-size: 100%;
+  min-inline-size: 0;
+}
+
+.left-sidebar-nav__capacity .engine-control-menu__trigger--text {
+  inline-size: 100%;
+  min-inline-size: 0;
+  justify-content: flex-start;
+  border-radius: var(--radius-md);
+}
+
+.left-sidebar-nav__capacity .engine-control-menu > .engine-control-menu__popover.card {
+  inset-inline-start: 0;
+  inset-inline-end: auto;
+  min-inline-size: min(24rem, calc(100vw - (var(--space-lg) * 2)));
+  max-inline-size: calc(100vw - (var(--space-lg) * 2));
+}
+
+.left-sidebar-nav--collapsed .left-sidebar-nav__capacity .engine-control-menu__trigger--text {
+  justify-content: center;
+  padding-inline: 0;
 }
 
 .left-sidebar-nav__resize-handle {

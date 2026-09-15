@@ -71,6 +71,7 @@ import { useMobileKeyboardViewportLock, useMobileViewportRestoreReset } from "./
 import { computeMobileBarKeyboardFlags } from "./utils/mobileBarKeyboardFlags";
 import { recordActivity } from "./utils/activity-trace";
 import { closeViewShortcut, retainViewNavRevert } from "./utils/dashboardShortcutToggles";
+import { normalizeNavigationPlacement, resolveChatHost, resolveNavigationSurfaces } from "./utils/navigationPlacement";
 import { useSetupReadiness } from "./hooks/useSetupReadiness";
 import { useGithubSetupWarningDelay } from "./hooks/useGithubSetupWarningDelay";
 import { useUpdateCheck } from "./hooks/useUpdateCheck";
@@ -1122,6 +1123,7 @@ function AppInner() {
     modelPricingOverrides,
     taskDetailChatFirst,
     chatMessageLayout,
+    navigationPlacement,
     dashboardKeyboardShortcuts,
     dismissModalsOnOutsideClick,
     quickAddSubmitOnEnter,
@@ -1136,6 +1138,7 @@ function AppInner() {
     devServerEnabled,
     goalsEnabled,
     setChatMessageLayoutImmediate,
+    setNavigationPlacementImmediate,
     setOpenTasksInRightSidebarImmediate,
     setOpenMobileTasksInPopupImmediate,
     setShowCostBadgeOnCardsImmediate,
@@ -1213,18 +1216,34 @@ function AppInner() {
 
   FNXC:Navigation 2026-06-21-00:00:
   Left sidebar navigation is now the default primary navigation on non-mobile project screens. Keep `leftSidebarNav: false` as the explicit opt-out and keep mobile on the bottom navigation bar.
+
+  FNXC:Navigation 2026-09-15-14:41:
+  FN-419 supersedes the flag as a PLACEMENT gate: the project setting `navigationPlacement` is now the single decider,
+  resolved by `resolveNavigationSurfaces`. `leftSidebarNavEnabled` survives only as part of the `experimentalFeatures`
+  payload handed to Header (no API removal); it must never re-enter the surface computation, because combining it with
+  an explicit "sidebar" placement would leave an operator with zero navigation surfaces and no in-product way out.
   */
   const leftSidebarNavEnabled = experimentalFeatures.leftSidebarNav !== false;
   /* FNXC:Navigation 2026-06-22-18:00: The right dock panel is no longer experimental or user-toggleable; tablet/desktop project screens always support it regardless of any stale persisted `rightDock` setting. */
   const rightDockEnabled = true;
   const projectShellPresent = viewMode === "project" && !!currentProject;
-  const desktopNavigationActive = viewportMode === "desktop" && projectShellPresent;
   /*
-  FNXC:DesktopNavigation 2026-09-13-02:40:
-  Tablet and desktop share the wide footer, while desktopNavigationActive remains desktop-only and continues to own sidebar removal, pilot routing, windows, and guards. Mobile keeps its pill, and tablet keeps its compact Header, sidebar, standard right dock, and page routing; only the footer owner broadens here.
+  FNXC:DesktopNavigation 2026-09-15-14:41:
+  FN-419 replaces the old rule ("tablet and desktop share the wide footer while the sidebar is only removed on
+  desktop") which made the tablet tier mount BOTH primary navigation surfaces at once. One shared pure resolver now
+  owns every surface flag, so footer and sidebar are mutually exclusive on every breakpoint by construction. The
+  desktop pilot (windows, router, Notes guards) stays bound to the FOOTER placement; `sidebar` placement falls back to
+  ordinary page routing on desktop. In `sidebar` placement the shell has no bottom bar at all, so neither the pilot
+  footer nor the legacy `ExecutorStatusBar` is mounted and no `--executor-footer-height` reservation is emitted.
   */
-  const wideFooterActive = viewportMode !== "mobile" && projectShellPresent;
-  const executorFooterVisible = projectShellPresent && !wideFooterActive && viewportMode !== "mobile";
+  const navigationSurfaces = resolveNavigationSurfaces({
+    viewportMode,
+    projectShellPresent,
+    navigationPlacement: normalizeNavigationPlacement(navigationPlacement),
+  });
+  const desktopNavigationActive = navigationSurfaces.desktopPilotActive;
+  const wideFooterActive = navigationSurfaces.footerNavActive;
+  const executorFooterVisible = navigationSurfaces.executorFooterVisible;
   const shellFooterVisible = executorFooterVisible || wideFooterActive;
   /*
   FNXC:TerminalLayout 2026-09-15-07:57:
@@ -1259,7 +1278,7 @@ function AppInner() {
     setUiMenuOpen(false);
   }, [currentProject?.id, isMobile, modalManager.anyModalOpen, viewMode]);
   const rightDockActive = rightDockEnabled && !isMobile && projectShellPresent;
-  const sidebarActive = leftSidebarNavEnabled && !isMobile && projectShellPresent && !desktopNavigationActive;
+  const sidebarActive = navigationSurfaces.sidebarActive;
   const desktopViewWindows = useDesktopViewWindows({
     enabled: desktopNavigationActive,
     projectId: currentProject?.id,
@@ -2013,24 +2032,48 @@ function AppInner() {
   inline list (or any visible detached conversation); on mobile it remains the Chat route. The hook is resolved here
   because the dock host state only exists after the dock composition above.
   */
+  /*
+  FNXC:ChatSurfaceUnification 2026-09-15-14:41:
+  FN-419 adds a THIRD primary Chat host: in `sidebar` placement, selecting Chat from the left column shows the
+  conversation in the main page exactly like Notes, instead of hijacking the right dock. `resolveChatHost` returns
+  exactly one host, so the FN-392 "one primary Chat host" invariant still holds; a page host (mobile OR sidebar)
+  clears the unread badge through the Chat route, while the dock host keeps its inline-list/detached signal.
+  */
+  const chatPageHostKind = resolveChatHost({
+    mobileDrawerActive,
+    rightDockActive,
+    navigationPlacement: normalizeNavigationPlacement(navigationPlacement),
+  });
+  const chatHostIsPage = chatPageHostKind === "mobile-page" || chatPageHostKind === "sidebar-page";
   const { chatHasUnreadResponse } = useChatUnreadBadge(currentProject?.id, {
-    primaryHostActive: isMobile ? taskView === "chat" : (chatDockHostOpen || chatSurfaceVisible),
+    primaryHostActive: chatHostIsPage ? taskView === "chat" : (chatDockHostOpen || chatSurfaceVisible),
   });
   chatWindowRouteRef.current = (newView: TaskView) => {
     if (newView !== "chat") return false;
-    if (mobileDrawerActive) {
+    if (chatPageHostKind === "mobile-page") {
       if (taskView !== "chat") commitTaskViewChange("chat");
       return true;
     }
-    if (!rightDockActive) return false;
+    /* Sidebar placement (and a shell with no dock) lets Chat be an ordinary main-page destination. */
+    if (chatPageHostKind !== "dock") return false;
     selectChatInDock();
     if (taskView === "chat") handleChangeTaskView("board");
     return true;
   };
 
   /*
-  FNXC:ChatSurfaceUnification 2026-09-14-17:46:
-  Responsive handoff preserves the user's primary Chat intent while enforcing one host: a wide Chat route becomes the dock list, and a wide dock Chat selection becomes the mobile route. Project-scope cleanup remains controller-owned.
+  FNXC:ChatSurfaceUnification 2026-09-15-14:41:
+  Responsive handoff preserves the user's primary Chat intent while enforcing one host. A wide Chat route becomes the
+  dock list ONLY while the dock is the resolved host; a wide dock Chat selection becomes the mobile route. FN-419 adds
+  the inverse transition: when the main page is the resolved Chat host, a dock whose selected tool is Chat is RE-POINTED
+  to the default dock tool instead of being closed.
+
+  FNXC:ChatSurfaceUnification 2026-09-15-15:40:
+  Closing the dock here made it unopenable: the dock's selected view is persisted (`fusion:right-dock-view`), so an
+  operator who last used the dock's Chat tab in `footer` placement kept `selectedView === "chat"` forever. Every
+  Header dock toggle (and every `openTaskInDock` board click) re-opened the dock and this effect immediately closed it
+  again, so the control looked dead and the tab strip — which only renders while the dock is open — was unreachable.
+  Re-pointing the selection keeps exactly one primary Chat host AND keeps the dock openable and navigable.
   */
   useEffect(() => {
     if (mobileDrawerActive && chatDockHostOpen) {
@@ -2038,11 +2081,16 @@ function AppInner() {
       if (taskView !== "chat") handleChangeTaskView("chat");
       return;
     }
-    if (!mobileDrawerActive && rightDockActive && taskView === "chat") {
+    if (chatPageHostKind === "sidebar-page" && rightDock.selectedView === "chat") {
+      /* "files" is the dock's own storage fallback (readStoredRightDockView), so it is always an inline-legal tool. */
+      rightDock.selectView("files");
+      return;
+    }
+    if (chatPageHostKind === "dock" && taskView === "chat") {
       selectChatInDock();
       handleChangeTaskView("board");
     }
-  }, [mobileDrawerActive, chatDockHostOpen, handleChangeTaskView, rightDock, rightDockActive, selectChatInDock, taskView]);
+  }, [mobileDrawerActive, chatDockHostOpen, chatPageHostKind, handleChangeTaskView, rightDock, selectChatInDock, taskView]);
 
   listDockRouteRef.current = (newView: TaskView) => {
     if (newView !== "list" || isMobile || !rightDockActive) return false;
@@ -2251,6 +2299,8 @@ function AppInner() {
     staleHighFanoutBlockerAgeThresholdMs,
     lastFetchTimeMs,
     sidebarActive,
+    /* FNXC:ChatSurfaceUnification 2026-09-15-14:41: FN-419 hands the resolved primary Chat host to the keep-alive tree so `sidebar` placement mounts Chat as a main page. */
+    chatPageHost: chatPageHostKind,
     notesController,
     registerNotesGuard: registerStandardNotesGuard,
     isMobile,
@@ -2430,7 +2480,8 @@ function AppInner() {
         onViewAllProjects={handleViewAllProjects}
         projectId={currentProject?.id}
         mobileNavEnabled={isMobile}
-        leftSidebarNavActive={sidebarActive || desktopNavigationActive}
+        /* FNXC:Navigation 2026-09-15-14:41: Any wide primary surface (footer OR sidebar) owns routing, so Header must not re-render its view shortcuts and create a third navigation. */
+        leftSidebarNavActive={navigationSurfaces.headerPrimaryNavSuppressed}
         rightDockAvailable={rightDockActive}
         rightDockOpen={rightDock.open}
         onToggleRightDock={rightDock.toggle}
@@ -2504,6 +2555,11 @@ function AppInner() {
             onSelectProject={handleSelectProject}
             onViewAllProjects={handleViewAllProjects}
             footerVisible={shellFooterReservationVisible}
+            /* FNXC:Navigation 2026-09-15-14:41: FN-419 gives the sidebar the engine control and Terminal action because `sidebar` placement removes the bottom bar entirely; the window-visibility toggle stays footer-only. */
+            tasks={footerTasks}
+            projectId={currentProject?.id}
+            columnFlagsByTaskId={footerColumnFlagsByTaskId}
+            onToggleTerminal={toggleTerminalWithNav}
           />
         )}
         <div
@@ -2749,7 +2805,7 @@ function AppInner() {
         onOpenChatWithPrefill={openChatWithPrefill}
         taskOperations={{ moveTask, deleteTask, mergeTask, revertTask, restoreTaskRevert, retryTask, pauseTask, unpauseTask, bypassReview, resetTask, duplicateTask }}
         deepLink={{ handleDetailClose }}
-        settings={{ prAuthAvailable, autoMerge, openTasksInRightSidebar, openMobileTasksInPopup, showCostBadgeOnCards, taskDetailChatFirst, chatMessageLayout, themeMode, colorTheme, uiStyle, dashboardFontScalePct, shadcnCustomColors, resolvedThemeMode, setThemeMode, setColorTheme, setUiStyle, setDashboardFontScalePct, setShadcnCustomColors, setChatMessageLayoutImmediate, setOpenTasksInRightSidebarImmediate, setOpenMobileTasksInPopupImmediate, setShowCostBadgeOnCardsImmediate, setTaskDetailChatFirstImmediate, setMobileNavPrimaryItemsImmediate }}
+        settings={{ prAuthAvailable, autoMerge, openTasksInRightSidebar, openMobileTasksInPopup, showCostBadgeOnCards, taskDetailChatFirst, chatMessageLayout, navigationPlacement: normalizeNavigationPlacement(navigationPlacement), themeMode, colorTheme, uiStyle, dashboardFontScalePct, shadcnCustomColors, resolvedThemeMode, setThemeMode, setColorTheme, setUiStyle, setDashboardFontScalePct, setShadcnCustomColors, setChatMessageLayoutImmediate, setNavigationPlacementImmediate, setOpenTasksInRightSidebarImmediate, setOpenMobileTasksInPopupImmediate, setShowCostBadgeOnCardsImmediate, setTaskDetailChatFirstImmediate, setMobileNavPrimaryItemsImmediate }}
         onSettingsClose={handleSettingsCloseWithNav}
         onReopenOnboarding={reopenOnboardingWithNav}
         onOpenWorkflowEditor={openWorkflowEditorWithNav}

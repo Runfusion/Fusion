@@ -381,6 +381,7 @@ export function MainContent(props: MainContentProps) {
   retryTask,
   deleteTask,
   sidebarActive: _sidebarActive,
+  chatPageHost,
   notesController,
   registerNotesGuard,
   isMobile,
@@ -500,11 +501,16 @@ export function MainContent(props: MainContentProps) {
   const projectKey = currentProject?.id ?? "all-projects";
   const mobileDrawerEnabled = isMobile && viewMode === "project" && currentProject !== null;
   /*
-  FNXC:ChatSurfaceUnification 2026-09-14-11:35:
-  `taskView="chat"` owns only the mobile drawer. Wide shells exclude Chat from the main keep-alive tree so a restored route or breakpoint transition cannot mount a second primary Chat behind the registry-backed window.
+  FNXC:ChatSurfaceUnification 2026-09-15-14:41:
+  `taskView="chat"` belongs to the main keep-alive tree only while THIS shell is the resolved primary Chat host:
+  the mobile drawer, or (FN-419) the `sidebar` navigation placement where Chat is an ordinary main page like Notes.
+  A dock-hosted shell still excludes Chat so a restored route or breakpoint transition cannot mount a second primary
+  Chat behind the registry-backed window. The drawer WRAPPER stays strictly `mobileDrawerEnabled`: sidebar placement
+  mounts Chat as a page, never inside a drawer.
   */
+  const chatPageHostEnabled = mobileDrawerEnabled || chatPageHost === "sidebar-page";
   const selectedKeepAliveId: KeepAliveMainViewId | null = isKeepAliveMainViewId(taskView)
-    ? taskView === "chat" && !mobileDrawerEnabled ? null : taskView
+    ? taskView === "chat" && !chatPageHostEnabled ? null : taskView
     : taskView === "task-detail" && mainPanelDetailTask === null
       ? "board"
       : null;
@@ -513,7 +519,7 @@ export function MainContent(props: MainContentProps) {
     () => ({ projectKey, ids: [] }),
   );
   const storedKeepAliveIds = keepAliveViews.projectKey === projectKey ? keepAliveViews.ids : [];
-  const previousIds = !mobileDrawerEnabled && storedKeepAliveIds.includes("chat")
+  const previousIds = !chatPageHostEnabled && storedKeepAliveIds.includes("chat")
     ? storedKeepAliveIds.filter((id) => id !== "chat")
     : storedKeepAliveIds;
   const requiredKeepAliveIds = [

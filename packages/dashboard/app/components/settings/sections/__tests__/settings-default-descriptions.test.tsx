@@ -102,6 +102,7 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   autoUpdateEnabled: "globalGeneral.autoUpdateEnabledHelp",
   autoRestartAfterUpdate: "globalGeneral.autoRestartAfterUpdateHelp",
   // AppearanceSection
+  navigationPlacement: "appearance.navigationPlacementHelp",
   chatMessageLayout: "appearance.chatMessageLayoutHelp",
   openTasksInRightSidebar: "appearance.openTasksInRightSidebarHelp",
   openMobileTasksInPopup: "appearance.openMobileTasksInPopupHelp",

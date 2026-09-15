@@ -5,6 +5,7 @@ import { resolveMobileNavPrimaryItems } from "../../../core/src/board/mobile-nav
 import type { ModelPricingOverrides } from "../../../core/src/ai/model-pricing";
 import { DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS, resolveDashboardKeyboardShortcuts, type DashboardKeyboardShortcutMap } from "../utils/keyboardShortcuts";
 import { normalizeChatSubmitOnEnterMode, type ChatSubmitOnEnterMode } from "../context/ChatSubmitOnEnterContext";
+import { normalizeNavigationPlacement, type NavigationPlacement } from "../utils/navigationPlacement";
 
 export type ChatMessageLayout = "bubbles" | "full-width";
 export type PlanApprovalMode = NonNullable<ProjectSettings["planApprovalMode"]>;
@@ -44,6 +45,11 @@ export interface UseAppSettingsResult {
   modelPricingOverrides?: ModelPricingOverrides;
   taskDetailChatFirst: boolean;
   chatMessageLayout: ChatMessageLayout;
+  /**
+   * FNXC:Navigation 2026-09-15-14:41:
+   * FN-419: project choice of the single primary navigation surface (bottom footer vs left sidebar).
+   */
+  navigationPlacement: NavigationPlacement;
   mobileNavPrimaryItems: string[];
   dashboardKeyboardShortcuts: Required<DashboardKeyboardShortcutMap>;
   dismissModalsOnOutsideClick: boolean;
@@ -63,6 +69,7 @@ export interface UseAppSettingsResult {
   toggleGlobalPause: () => Promise<void>;
   toggleEnginePause: () => Promise<void>;
   setChatMessageLayoutImmediate: (layout: ChatMessageLayout) => void;
+  setNavigationPlacementImmediate: (placement: NavigationPlacement) => void;
   setOpenTasksInRightSidebarImmediate: (enabled: boolean) => void;
   setOpenMobileTasksInPopupImmediate: (enabled: boolean) => void;
   setShowCostBadgeOnCardsImmediate: (enabled: boolean) => void;
@@ -105,6 +112,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
   const [modelPricingOverrides, setModelPricingOverrides] = useState<ModelPricingOverrides | undefined>(undefined);
   const [taskDetailChatFirst, setTaskDetailChatFirst] = useState(false);
   const [chatMessageLayout, setChatMessageLayout] = useState<ChatMessageLayout>("bubbles");
+  const [navigationPlacement, setNavigationPlacement] = useState<NavigationPlacement>("footer");
   const [mobileNavPrimaryItems, setMobileNavPrimaryItems] = useState<string[]>(() => resolveMobileNavPrimaryItems().primaryItems);
   const [dashboardKeyboardShortcuts, setDashboardKeyboardShortcuts] = useState<Required<DashboardKeyboardShortcutMap>>(DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS);
   const [dismissModalsOnOutsideClick, setDismissModalsOnOutsideClick] = useState(false);
@@ -194,6 +202,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
       */
       setTaskDetailChatFirst(settings.taskDetailChatFirst === true);
       setChatMessageLayout(normalizeChatMessageLayout(settings.chatMessageLayout));
+      setNavigationPlacement(normalizeNavigationPlacement(settings.navigationPlacement));
       setExperimentalFeatures(settings.experimentalFeatures ?? {});
       const features = settings.experimentalFeatures ?? {};
       /*
@@ -221,6 +230,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     setModelPricingOverrides(undefined);
     setTaskDetailChatFirst(false);
     setChatMessageLayout("bubbles");
+    setNavigationPlacement("footer");
     setDashboardKeyboardShortcuts(DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS);
     setDismissModalsOnOutsideClick(false);
     setPlanApprovalMode("workflow");
@@ -304,6 +314,15 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     setChatMessageLayout(normalizeChatMessageLayout(layout));
   }, []);
 
+  const setNavigationPlacementImmediate = useCallback((placement: NavigationPlacement) => {
+    /*
+    FNXC:Navigation 2026-09-15-14:41:
+    FN-419 mirrors the Appearance placement control into the shell during its input event so the menu moves live.
+    Like the other Immediate setters this never persists: SettingsModal stays the sole debounced writer.
+    */
+    setNavigationPlacement(normalizeNavigationPlacement(placement));
+  }, []);
+
   const setOpenTasksInRightSidebarImmediate = useCallback((enabled: boolean) => {
     setOpenTasksInRightSidebar(enabled === true);
   }, []);
@@ -352,6 +371,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     modelPricingOverrides,
     taskDetailChatFirst,
     chatMessageLayout,
+    navigationPlacement,
     mobileNavPrimaryItems,
     dashboardKeyboardShortcuts,
     dismissModalsOnOutsideClick,
@@ -371,6 +391,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     toggleGlobalPause,
     toggleEnginePause,
     setChatMessageLayoutImmediate,
+    setNavigationPlacementImmediate,
     setOpenTasksInRightSidebarImmediate,
     setOpenMobileTasksInPopupImmediate,
     setShowCostBadgeOnCardsImmediate,

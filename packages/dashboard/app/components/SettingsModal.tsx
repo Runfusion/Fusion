@@ -28,6 +28,7 @@ import {
 } from "../utils/keyboardShortcuts";
 import type { DashboardKeyboardShortcutMap } from "../utils/keyboardShortcuts";
 import { normalizeChatMessageLayout, type ChatMessageLayout } from "../hooks/useAppSettings";
+import { normalizeNavigationPlacement, type NavigationPlacement } from "../utils/navigationPlacement";
 import { SettingsHelpTip } from "./settings/SettingsHelpTip";
 import { AppearanceSection } from "./settings/sections/AppearanceSection";
 import { ExperimentalSection } from "./settings/sections/ExperimentalSection";
@@ -654,6 +655,9 @@ interface SettingsModalProps {
   /** Mirrors the pending project conversation layout into mounted chat surfaces immediately. */
   chatMessageLayout?: ChatMessageLayout;
   onChatMessageLayoutChange?: (layout: ChatMessageLayout) => void;
+  /** FN-419: mirrors the pending project navigation placement into the shell immediately. */
+  navigationPlacement?: NavigationPlacement;
+  onNavigationPlacementChange?: (placement: NavigationPlacement) => void;
   /** Current App-shell values and optimistic callbacks for mounted Appearance consumers. */
   openTasksInRightSidebar?: boolean;
   onOpenTasksInRightSidebarChange?: (enabled: boolean) => void;
@@ -931,6 +935,8 @@ export function SettingsModal({
   onShadcnCustomColorsChange,
   chatMessageLayout = "bubbles",
   onChatMessageLayoutChange,
+  navigationPlacement = "footer",
+  onNavigationPlacementChange,
   openTasksInRightSidebar,
   onOpenTasksInRightSidebarChange,
   openMobileTasksInPopup,
@@ -999,6 +1005,7 @@ export function SettingsModal({
     showCostBadgeOnCards: false,
     taskDetailChatFirst: false,
     chatMessageLayout: "bubbles",
+    navigationPlacement: "footer",
     executorAllowSiblingBranchRename: false,
     worktreeCopyFiles: [],
     worktreesDir: "",
@@ -1575,6 +1582,12 @@ export function SettingsModal({
           Normalize legacy or malformed project values before they enter the form so the selector always has exactly its two valid choices and defaults to Bubbles.
           */
           chatMessageLayout: normalizeChatMessageLayout(s.chatMessageLayout),
+          /*
+          FNXC:Navigation 2026-09-15-14:41:
+          FN-419: normalize a legacy or malformed persisted placement before it enters the form so the selector always
+          has exactly its two valid choices and falls back to the bottom bar.
+          */
+          navigationPlacement: normalizeNavigationPlacement(s.navigationPlacement),
           /*
           FNXC:GithubImportTracking 2026-07-01-00:00:
           Missing githubLinkImportedIssuesToTracking must render as unchecked and save as project-scoped false only after operator interaction; this keeps upgraded projects on legacy import behavior by default.
@@ -4206,6 +4219,8 @@ export function SettingsModal({
             onShadcnCustomColorsChange={onShadcnCustomColorsChange}
             chatMessageLayout={chatMessageLayout}
             onChatMessageLayoutChange={onChatMessageLayoutChange}
+            navigationPlacement={navigationPlacement}
+            onNavigationPlacementChange={onNavigationPlacementChange}
             openTasksInRightSidebar={openTasksInRightSidebar}
             onOpenTasksInRightSidebarChange={onOpenTasksInRightSidebarChange}
             openMobileTasksInPopup={openMobileTasksInPopup}

@@ -8,6 +8,7 @@
  */
 import type { Dispatch, LazyExoticComponent, SetStateAction } from "react";
 import type { TFunction } from "i18next";
+import type { ChatHost } from "../../utils/navigationPlacement";
 import type {
   CapacityRiskSignal,
   ColorTheme,
@@ -262,6 +263,12 @@ export interface MainContentProps {
   staleHighFanoutBlockerAgeThresholdMs: number;
   lastFetchTimeMs: number | undefined;
   sidebarActive: boolean;
+  /*
+  FNXC:ChatSurfaceUnification 2026-09-15-14:41:
+  FN-419: the App-resolved primary Chat host. `"sidebar-page"` makes Chat an ordinary main-page destination (like
+  Notes) without any mobile drawer wrapper; omitted/`"dock"` preserves the wide dock hand-off.
+  */
+  chatPageHost?: ChatHost;
   notesController?: UseNotesController;
   registerNotesGuard?: (guard: () => boolean | Promise<boolean>, onAccepted?: () => void) => () => void;
   isMobile: boolean;

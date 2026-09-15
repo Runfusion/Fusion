@@ -12,7 +12,11 @@ vi.mock("../../LanguageSelector", () => ({
   LanguageSelector: () => <div data-testid="language-selector" />,
 }));
 
-function renderAppearanceSection(formOverrides: Partial<Settings> = {}, onChatMessageLayoutChange = vi.fn()) {
+function renderAppearanceSection(
+  formOverrides: Partial<Settings> = {},
+  onChatMessageLayoutChange = vi.fn(),
+  onNavigationPlacementChange = vi.fn(),
+) {
   const onOpenTasksInRightSidebarChange = vi.fn();
   const onOpenMobileTasksInPopupChange = vi.fn();
   const onShowCostBadgeOnCardsChange = vi.fn();
@@ -43,6 +47,8 @@ function renderAppearanceSection(formOverrides: Partial<Settings> = {}, onChatMe
       dashboardFontScalePct={100}
       chatMessageLayout={form.chatMessageLayout}
       onChatMessageLayoutChange={onChatMessageLayoutChange}
+      navigationPlacement={form.navigationPlacement}
+      onNavigationPlacementChange={onNavigationPlacementChange}
       openTasksInRightSidebar={form.openTasksInRightSidebar}
       onOpenTasksInRightSidebarChange={onOpenTasksInRightSidebarChange}
       openMobileTasksInPopup={form.openMobileTasksInPopup}
@@ -59,6 +65,7 @@ function renderAppearanceSection(formOverrides: Partial<Settings> = {}, onChatMe
   return {
     setForm,
     getForm: () => form,
+    onNavigationPlacementChange,
     onOpenTasksInRightSidebarChange,
     onOpenMobileTasksInPopupChange,
     onShowCostBadgeOnCardsChange,
@@ -67,12 +74,39 @@ function renderAppearanceSection(formOverrides: Partial<Settings> = {}, onChatMe
 }
 
 describe("AppearanceSection", () => {
+  /*
+   * FN-419: the navigation placement control is the only in-product way to move the primary menu, so it must render
+   * the current value, write both the form and the live callback, and fail closed on a malformed persisted value.
+   */
+  it("renders the two-option navigation placement selector and updates to the sidebar", () => {
+    const onNavigationPlacementChange = vi.fn();
+    const { setForm, getForm } = renderAppearanceSection({}, vi.fn(), onNavigationPlacementChange);
+    const selector = screen.getByLabelText("Navigation menu placement") as HTMLSelectElement;
+    expect(selector.value).toBe("footer");
+    expect(Array.from(selector.options).map((option) => option.value)).toEqual(["footer", "sidebar"]);
+    fireEvent.change(selector, { target: { value: "sidebar" } });
+    expect(onNavigationPlacementChange).toHaveBeenCalledWith("sidebar");
+    expect(setForm).toHaveBeenCalledTimes(1);
+    expect(getForm().navigationPlacement).toBe("sidebar");
+  });
+
+  it("selects a persisted sidebar navigation placement", () => {
+    renderAppearanceSection({ navigationPlacement: "sidebar" });
+    expect((screen.getByLabelText("Navigation menu placement") as HTMLSelectElement).value).toBe("sidebar");
+  });
+
+  it("displays an invalid persisted navigation placement as the bottom-bar default", () => {
+    renderAppearanceSection({ navigationPlacement: "left" as never });
+    expect((screen.getByLabelText("Navigation menu placement") as HTMLSelectElement).value).toBe("footer");
+  });
+
   it("renders the two-option conversation layout selector and updates full width", () => {
     const onChatMessageLayoutChange = vi.fn();
     const { setForm, getForm } = renderAppearanceSection({}, onChatMessageLayoutChange);
     const selector = screen.getByLabelText("Conversation layout") as HTMLSelectElement;
     expect(selector.value).toBe("bubbles");
-    expect(screen.getAllByRole("option")).toHaveLength(2);
+    // Scoped to this selector: FN-419 added a second select row to the section.
+    expect(Array.from(selector.options).map((option) => option.value)).toEqual(["bubbles", "full-width"]);
     fireEvent.change(selector, { target: { value: "full-width" } });
     expect(onChatMessageLayoutChange).toHaveBeenCalledWith("full-width");
     expect(setForm).toHaveBeenCalledTimes(1);

@@ -8,6 +8,7 @@ import type { ModalManager } from "../hooks/useModalManager";
 import type { NavEntry } from "../hooks/useNavigationHistory";
 import type { UseTaskHandlersResult } from "../hooks/useTaskHandlers";
 import type { ChatMessageLayout } from "../hooks/useAppSettings";
+import type { NavigationPlacement } from "../utils/navigationPlacement";
 import type { Toast, ToastType } from "../hooks/useToast";
 import { ModalErrorBoundary } from "./ErrorBoundary";
 import { AppModalTaskDetailHost } from "./TaskDetailHostBoundaries";
@@ -139,6 +140,8 @@ interface AppModalsProps {
     showCostBadgeOnCards: boolean;
     taskDetailChatFirst: boolean;
     chatMessageLayout: ChatMessageLayout;
+    /* FN-419: project choice of the single primary navigation surface. */
+    navigationPlacement: NavigationPlacement;
     themeMode: ThemeMode;
     colorTheme: ColorTheme;
     /* FNXC:UiStyleAxis 2026-09-15-00:20: second, independent appearance axis owned by the single useTheme instance in App. */
@@ -152,6 +155,7 @@ interface AppModalsProps {
     setDashboardFontScalePct: (scalePct: number) => void;
     setShadcnCustomColors: (colors: Record<string, string>) => void;
     setChatMessageLayoutImmediate: (layout: ChatMessageLayout) => void;
+    setNavigationPlacementImmediate: (placement: NavigationPlacement) => void;
     setOpenTasksInRightSidebarImmediate: (enabled: boolean) => void;
     setOpenMobileTasksInPopupImmediate: (enabled: boolean) => void;
     setShowCostBadgeOnCardsImmediate: (enabled: boolean) => void;
@@ -475,6 +479,8 @@ export function AppModals({
               onShadcnCustomColorsChange={settings.setShadcnCustomColors}
               chatMessageLayout={settings.chatMessageLayout}
               onChatMessageLayoutChange={settings.setChatMessageLayoutImmediate}
+              navigationPlacement={settings.navigationPlacement}
+              onNavigationPlacementChange={settings.setNavigationPlacementImmediate}
               openTasksInRightSidebar={settings.openTasksInRightSidebar}
               onOpenTasksInRightSidebarChange={settings.setOpenTasksInRightSidebarImmediate}
               openMobileTasksInPopup={settings.openMobileTasksInPopup}

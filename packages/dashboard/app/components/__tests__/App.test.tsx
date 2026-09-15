@@ -34,6 +34,15 @@ const defaultSettings: Settings = {
    * App.test.tsx now mirrors the shipped left-sidebar navigation default because graduated destinations (Insights, Memory, Todo, Goals, Agents) must stay visible even when stale experimental flags are false. Individual legacy header-toggle tests opt out explicitly instead of making the whole fixture hide sidebar controls.
    */
   experimentalFeatures: { insights: true, skillsView: true, agentsView: true, memoryView: true, evalsView: true, leftSidebarNav: true },
+  /*
+   * FNXC:DashboardTests 2026-09-15-14:41:
+   * FN-419 makes the primary navigation surface an explicit project choice whose SHIPPED default is the bottom
+   * footer. The great majority of this file's cases exercise routing THROUGH THE LEFT COLUMN (`sidebar-nav-*`), so
+   * the shared fixture opts into the sidebar placement once, here, instead of rewriting each case. Cases that are
+   * about the footer placement (or about the shipped default) override `navigationPlacement` explicitly in their own
+   * `fetchSettings` payload.
+   */
+  navigationPlacement: "sidebar" as const,
 };
 
 const mockAgentStats = {
@@ -970,15 +979,23 @@ function configureProductionAppChat(): void {
   } satisfies UseChatRoomsResult);
 }
 
+/*
+ * FNXC:DashboardTests 2026-09-15-14:41:
+ * FN-419: a wide project shell mounts EXACTLY ONE primary navigation surface, chosen by `navigationPlacement`. The
+ * shared readiness helper therefore waits for whichever surface the shell owns instead of pinning the footer, and
+ * asserts the exclusivity invariant while it is at it.
+ */
 async function waitForAppShell(): Promise<void> {
   await waitFor(() => {
     expect(fetchSettings).toHaveBeenCalled();
     if (mockUseViewportMode() === "mobile") {
       expect(screen.getByTestId("mobile-nav-tab-command-center")).toBeTruthy();
       expect(screen.getByTestId("mobile-nav-tab-planning")).toBeTruthy();
-    } else {
-      expect(screen.getByTestId("desktop-action-bar")).toBeTruthy();
+      return;
     }
+    const footer = screen.queryByTestId("desktop-action-bar");
+    const sidebar = screen.queryByTestId("left-sidebar-nav");
+    expect(Boolean(footer) !== Boolean(sidebar)).toBe(true);
   });
 }
 
@@ -1011,8 +1028,10 @@ describe("FN-392 task windows travel across Board and other views", () => {
       createdAt: "2026-08-01T00:00:00.000Z",
       updatedAt: "2026-08-01T00:00:00.000Z",
     };
+    /* FN-419: the wide footer navigation entries used below belong to the footer placement. */
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
+      navigationPlacement: "footer",
       openMobileTasksInPopup: true,
     });
     mockUseTasks.mockImplementation(() => ({
@@ -1236,6 +1255,166 @@ beforeEach(() => {
   mockAgentStats.idleNonEphemeralCount = 1;
 });
 
+/*
+ * FN-419 — AUTHORITATIVE SYMPTOM PROOF.
+ *
+ * Original symptom: at one screen size (the `tablet` tier) the primary menu appeared TWICE — in the left sidebar AND
+ * in the bottom footer. Exact reproduction: render the real `<App />` in the project shell at `tablet` with project
+ * settings that do not carry `navigationPlacement`, and count the mounted primary navigation surfaces.
+ *
+ * Every case below renders the real `<App />` (the shipped shell composition), never a recomposed harness.
+ */
+describe("placement du menu de navigation", () => {
+  const settingsWith = (overrides: Record<string, unknown>) => {
+    const base: Record<string, unknown> = { ...defaultSettings };
+    delete base.navigationPlacement;
+    return { ...base, ...overrides };
+  };
+
+  const mountedPrimarySurfaces = () => ({
+    footer: screen.queryByTestId("desktop-action-bar"),
+    sidebar: screen.queryByTestId("left-sidebar-nav"),
+  });
+
+  const expectExactlyOneSurface = (expected: "footer" | "sidebar") => {
+    const { footer, sidebar } = mountedPrimarySurfaces();
+    expect([footer, sidebar].filter(Boolean)).toHaveLength(1);
+    if (expected === "footer") {
+      expect(footer).not.toBeNull();
+      expect(sidebar).toBeNull();
+    } else {
+      expect(sidebar).not.toBeNull();
+      expect(footer).toBeNull();
+      expect(document.querySelector(".executor-status-bar")).toBeNull();
+    }
+    // Neither placement may let the Header re-add a third navigation.
+    expect(screen.queryByTitle("Board view")).toBeNull();
+    expect(screen.queryByTestId("view-toggle-overflow-trigger")).toBeNull();
+  };
+
+  it.each(["tablet", "desktop"] as const)(
+    "ne monte que le footer sans la clé navigationPlacement en %s (reproduction exacte du bug)",
+    async (mode) => {
+      mockUseViewportMode.mockReturnValue(mode);
+      vi.mocked(fetchSettings).mockResolvedValue(settingsWith({}));
+
+      render(<App />);
+
+      expect(await screen.findByTestId("desktop-action-bar")).toBeInTheDocument();
+      expectExactlyOneSurface("footer");
+    },
+  );
+
+  it.each(["tablet", "desktop"] as const)(
+    "traite une valeur persistée invalide comme le défaut footer en %s",
+    async (mode) => {
+      mockUseViewportMode.mockReturnValue(mode);
+      vi.mocked(fetchSettings).mockResolvedValue(settingsWith({ navigationPlacement: "left" }));
+
+      render(<App />);
+
+      expect(await screen.findByTestId("desktop-action-bar")).toBeInTheDocument();
+      expectExactlyOneSurface("footer");
+    },
+  );
+
+  it.each(["tablet", "desktop"] as const)(
+    "ne monte que la sidebar, sans aucune barre basse ni réservation, en %s",
+    async (mode) => {
+      mockUseViewportMode.mockReturnValue(mode);
+      localStorage.setItem("fusion:right-dock-open", "true");
+      vi.mocked(fetchSettings).mockResolvedValue(settingsWith({ navigationPlacement: "sidebar" }));
+
+      render(<App />);
+
+      const sidebar = await screen.findByTestId("left-sidebar-nav");
+      expectExactlyOneSurface("sidebar");
+
+      // No bottom bar at all => no `--executor-footer-height` reservation anywhere in the shell.
+      const shell = screen.getByTestId("dashboard-project-shell");
+      expect(shell).toHaveClass("dashboard-project-shell--with-sidebar");
+      expect(shell.querySelector(".project-content")).not.toHaveClass("project-content--with-footer");
+      expect(sidebar).not.toHaveClass("left-sidebar-nav--with-footer");
+      const dock = await screen.findByTestId("right-dock");
+      expect(dock).not.toHaveClass("right-dock--with-footer");
+    },
+  );
+
+  it("monte quand même la sidebar avec un drapeau hérité leftSidebarNav à false", async () => {
+    mockUseViewportMode.mockReturnValue("tablet");
+    vi.mocked(fetchSettings).mockResolvedValue(
+      settingsWith({
+        navigationPlacement: "sidebar",
+        experimentalFeatures: { ...defaultSettings.experimentalFeatures, leftSidebarNav: false },
+      }),
+    );
+
+    render(<App />);
+
+    // A stale opt-out flag must never combine with an explicit sidebar placement into zero navigation surfaces.
+    expect(await screen.findByTestId("left-sidebar-nav")).toBeInTheDocument();
+    expectExactlyOneSurface("sidebar");
+  });
+
+  it("donne à la sidebar le contrôle moteur et Terminal, sans le bouton de visibilité des fenêtres", async () => {
+    mockUseViewportMode.mockReturnValue("tablet");
+    terminalLifecycle.reset();
+    vi.mocked(fetchSettings).mockResolvedValue(settingsWith({ navigationPlacement: "sidebar" }));
+
+    render(<App />);
+
+    await screen.findByTestId("left-sidebar-nav");
+    expect(await screen.findByTestId("sidebar-capacity-count")).toBeInTheDocument();
+    expect(screen.queryByTestId("dashboard-window-visibility-toggle")).toBeNull();
+
+    fireEvent.click(await screen.findByTestId("sidebar-nav-terminal"));
+    const terminal = await screen.findByTestId("terminal-modal");
+    expect(terminal).toHaveAttribute("data-footer-visible", "false");
+  });
+
+  it("ouvre le Chat en page principale depuis le menu de gauche, sans ouvrir le dock", async () => {
+    mockUseViewportMode.mockReturnValue("tablet");
+    vi.mocked(fetchSettings).mockResolvedValue(settingsWith({ navigationPlacement: "sidebar" }));
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByTestId("sidebar-nav-chat"));
+
+    const chatHost = await screen.findByTestId("chat-keep-alive");
+    expect(chatHost).toBeInTheDocument();
+    // Exactly one primary Chat host, mounted inside the main content — like Notes, not in a drawer or the dock.
+    const chatSurfaces = await screen.findAllByTestId("canonical-chat-host");
+    expect(chatSurfaces).toHaveLength(1);
+    expect(chatHost.contains(chatSurfaces[0])).toBe(true);
+    expect(screen.queryByTestId("detached-chat-host")).toBeNull();
+    // The right dock must not have been hijacked into the Chat tool.
+    expect(screen.queryByTestId("right-dock-body")).toBeNull();
+  });
+
+  /*
+  FN-419: the dock's selected tool is persisted, so an operator arriving in `sidebar` placement very often still has
+  "chat" stored from a previous `footer` session. The main page owning Chat must re-point that stored selection, never
+  close the dock: closing it on every render made the Header toggle look dead and hid the tab strip.
+  */
+  it("garde le dock ouvrable en placement sidebar malgré une vue « chat » persistée", async () => {
+    mockUseViewportMode.mockReturnValue("tablet");
+    localStorage.setItem("fusion:right-dock-view", "chat");
+    vi.mocked(fetchSettings).mockResolvedValue(settingsWith({ navigationPlacement: "sidebar" }));
+
+    render(<App />);
+
+    await screen.findByTestId("left-sidebar-nav");
+    fireEvent.click(await screen.findByTestId("header-right-dock-toggle"));
+
+    // The dock stays open and its body is reachable, so the tab strip can be used to pick another tool.
+    const dockBody = await screen.findByTestId("right-dock-body");
+    expect(dockBody).toBeInTheDocument();
+    expect(await screen.findByTestId("right-dock-tab-chat")).toBeInTheDocument();
+    // Chat stays a main-page destination: the dock must not host it in this placement.
+    expect(within(dockBody).queryByTestId("canonical-chat-host")).toBeNull();
+  });
+});
+
 describe("official dashboard design production wiring", () => {
   /*
   FNXC:ChatSurfaceUnification 2026-09-14-17:46:
@@ -1245,8 +1424,10 @@ describe("official dashboard design production wiring", () => {
   it("opens Chat as the inline dock list without an expanded or parallel page host", async () => {
     mockUseViewportMode.mockReturnValue("desktop");
     localStorage.setItem("fusion:right-dock-open", "true");
+    /* FN-419: the dock is the primary Chat host only in the footer placement; sidebar placement uses the main page. */
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
+      navigationPlacement: "footer",
       experimentalFeatures: { ...defaultSettings.experimentalFeatures },
     });
     render(<App />);
@@ -1269,6 +1450,7 @@ describe("official dashboard design production wiring", () => {
     ["enabled", true],
   ] as const)("keeps every production Board state on the official shell when Alpha is %s", async (_flagState, alphaUpdates) => {
     mockUseViewportMode.mockReturnValue("desktop");
+    /* FN-419: the bottom bar and its `--with-footer` reservations exist only in the footer placement (set per state below). */
     const states = ["skeleton", "sans-workflow", "selection-vide", "selection-debordante", "aggregate-debordant"] as const;
     const overflowTasks = Array.from({ length: 3 }, (_, index) => ({
       id: `FN-362-${index}`,
@@ -1289,7 +1471,7 @@ describe("official dashboard design production wiring", () => {
       const experimentalFeatures = { ...defaultSettings.experimentalFeatures };
       delete experimentalFeatures.alphaUpdates;
       if (alphaUpdates !== undefined) experimentalFeatures.alphaUpdates = alphaUpdates;
-      vi.mocked(fetchSettings).mockResolvedValue({ ...defaultSettings, experimentalFeatures });
+      vi.mocked(fetchSettings).mockResolvedValue({ ...defaultSettings, navigationPlacement: "footer", experimentalFeatures });
       if (state === "skeleton") {
         vi.mocked(fetchBoardWorkflows).mockImplementation(() => new Promise(() => {}));
       } else if (state === "sans-workflow") {
@@ -1377,8 +1559,14 @@ describe("official dashboard design production wiring", () => {
         tasks: [{ id: "FN-340", title: "Footer regression", description: "x", status: "in-progress", column: "in-progress", dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "", updatedAt: "" }],
       });
     }
+    /*
+     * FN-419: this case is about the FOOTER placement, so it opts in explicitly. Under that placement the left
+     * sidebar must be ABSENT on both wide tiers — the previous expectation (tablet showing the sidebar WITH the
+     * footer) encoded the very double-navigation bug this task removes.
+     */
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
+      navigationPlacement: "footer",
       experimentalFeatures: { ...defaultSettings.experimentalFeatures },
     });
     localStorage.setItem("fusion:right-dock-open", "true");
@@ -1389,7 +1577,6 @@ describe("official dashboard design production wiring", () => {
     expect(document.querySelector(".executor-status-bar")).toBeNull();
     const shell = screen.getByTestId("dashboard-project-shell");
     const content = shell.querySelector(".project-content");
-    const sidebar = mode === "tablet" ? await screen.findByTestId("left-sidebar-nav") : null;
     const rightDock = await waitFor(() => {
       const dock = document.querySelector(".right-dock");
       expect(dock).not.toBeNull();
@@ -1403,14 +1590,9 @@ describe("official dashboard design production wiring", () => {
     fireEvent.pointerEnter(moreTrigger);
     expect(screen.getByRole("menu")).toBeInTheDocument();
     expect(moreTrigger).toHaveAttribute("aria-expanded", "true");
-    if (mode === "desktop") {
-      expect(sidebar).toBeNull();
-      expect(shell).not.toHaveClass("dashboard-project-shell--with-sidebar");
-    } else {
-      expect(sidebar).toHaveClass("left-sidebar-nav--with-footer");
-      expect(shell).toHaveClass("dashboard-project-shell--with-sidebar");
-      expect(document.querySelector("header.header")).toBeInTheDocument();
-    }
+    expect(screen.queryByTestId("left-sidebar-nav")).toBeNull();
+    expect(shell).not.toHaveClass("dashboard-project-shell--with-sidebar");
+    if (mode === "tablet") expect(document.querySelector("header.header")).toBeInTheDocument();
     expect(rightDock).toHaveClass("right-dock--with-footer");
     expect(shell).toHaveClass("dashboard-project-shell--with-right-dock");
     expect(screen.queryByTestId("executor-terminal-launcher-segment")).toBeNull();
@@ -1420,6 +1602,8 @@ describe("official dashboard design production wiring", () => {
   it.each(["tablet", "desktop"] as const)("ouvre et démonte Terminal depuis le footer large en mode %s", async (mode) => {
     mockUseViewportMode.mockReturnValue(mode);
     terminalLifecycle.reset();
+    /* FN-419: the wide footer Terminal action only exists in the footer placement. */
+    vi.mocked(fetchSettings).mockResolvedValue({ ...defaultSettings, navigationPlacement: "footer" });
     localStorage.setItem("fusion:right-dock-open", "true");
 
     render(<App />);
@@ -1435,8 +1619,9 @@ describe("official dashboard design production wiring", () => {
     expect(terminalLifecycle.unmounts).toBe(1);
 
     if (mode === "tablet") {
-      expect(screen.getByTestId("dashboard-project-shell")).toHaveClass("dashboard-project-shell--with-sidebar");
-      expect(await screen.findByTestId("left-sidebar-nav")).toBeInTheDocument();
+      // FN-419: the footer placement owns navigation on both wide tiers, so no sidebar accompanies it.
+      expect(screen.getByTestId("dashboard-project-shell")).not.toHaveClass("dashboard-project-shell--with-sidebar");
+      expect(screen.queryByTestId("left-sidebar-nav")).toBeNull();
       expect(document.querySelector(".right-dock")).toBeInTheDocument();
       expect(document.querySelector("[data-testid^='floating-window-overlay-']")).toBeNull();
     }
@@ -1451,6 +1636,11 @@ describe("official dashboard design production wiring", () => {
   it.each(["tablet", "desktop"] as const)("ne r\u00e9serve la hauteur de la barre du bas qu'une seule fois quand le terminal est \u00e9pingl\u00e9 (%s)", async (mode) => {
     mockUseViewportMode.mockReturnValue(mode);
     terminalLifecycle.reset();
+    /*
+     * FN-419: a bottom bar only exists in the footer placement, so the reservation contract is asserted there. The
+     * sidebar is absent under that placement, so it can no longer carry a `--with-footer` modifier at all.
+     */
+    vi.mocked(fetchSettings).mockResolvedValue({ ...defaultSettings, navigationPlacement: "footer" });
     localStorage.setItem("fusion:right-dock-open", "true");
 
     render(<App />);
@@ -1458,12 +1648,11 @@ describe("official dashboard design production wiring", () => {
     const shell = await screen.findByTestId("dashboard-project-shell");
     const content = shell.querySelector(".project-content")!;
     const dock = await screen.findByTestId("right-dock");
-    const sidebar = mode === "tablet" ? await screen.findByTestId("left-sidebar-nav") : null;
+    expect(screen.queryByTestId("left-sidebar-nav")).toBeNull();
 
     // Terminal closed: the shell owns the reservation.
     expect(content).toHaveClass("project-content--with-footer");
     expect(dock).toHaveClass("right-dock--with-footer");
-    if (sidebar) expect(sidebar).toHaveClass("left-sidebar-nav--with-footer");
 
     fireEvent.click(await screen.findByTestId("desktop-nav-terminal"));
     const terminal = await screen.findByTestId("terminal-modal");
@@ -1473,7 +1662,6 @@ describe("official dashboard design production wiring", () => {
     await waitFor(() => {
       expect(content).not.toHaveClass("project-content--with-footer");
       expect(dock).not.toHaveClass("right-dock--with-footer");
-      if (sidebar) expect(sidebar).not.toHaveClass("left-sidebar-nav--with-footer");
       // The terminal itself keeps receiving the raw footer visibility: it is the single legitimate consumer.
       expect(terminal).toHaveAttribute("data-footer-visible", "true");
     });
@@ -1483,7 +1671,6 @@ describe("official dashboard design production wiring", () => {
     await waitFor(() => {
       expect(content).toHaveClass("project-content--with-footer");
       expect(dock).toHaveClass("right-dock--with-footer");
-      if (sidebar) expect(sidebar).toHaveClass("left-sidebar-nav--with-footer");
     });
 
     // Re-pinning drops it again, and closing the terminal restores it for good.
@@ -1494,7 +1681,6 @@ describe("official dashboard design production wiring", () => {
       expect(screen.queryByTestId("terminal-modal")).toBeNull();
       expect(content).toHaveClass("project-content--with-footer");
       expect(dock).toHaveClass("right-dock--with-footer");
-      if (sidebar) expect(sidebar).toHaveClass("left-sidebar-nav--with-footer");
     });
   });
 
@@ -1509,13 +1695,18 @@ describe("official dashboard design production wiring", () => {
     const experimentalFeatures = { ...defaultSettings.experimentalFeatures };
     delete experimentalFeatures.alphaUpdates;
     if (alphaUpdates !== undefined) experimentalFeatures.alphaUpdates = alphaUpdates;
-    vi.mocked(fetchSettings).mockResolvedValue({ ...defaultSettings, experimentalFeatures });
+    /*
+     * FN-419: the dock Chat hand-off asserted below belongs to the FOOTER placement (sidebar placement routes Chat to
+     * the main page instead), and the tablet shell now mounts exactly one primary surface — the footer.
+     */
+    vi.mocked(fetchSettings).mockResolvedValue({ ...defaultSettings, navigationPlacement: "footer", experimentalFeatures });
 
     render(<App />);
     const shell = await screen.findByTestId("dashboard-project-shell");
-    expect(shell).toHaveClass("dashboard-project-shell--with-sidebar", "dashboard-project-shell--with-right-dock");
+    expect(shell).toHaveClass("dashboard-project-shell--with-right-dock");
+    expect(shell).not.toHaveClass("dashboard-project-shell--with-sidebar");
     expect(shell.querySelector(".project-content")).toHaveClass("project-content--with-footer");
-    expect(await screen.findByTestId("left-sidebar-nav")).toHaveClass("left-sidebar-nav--with-footer");
+    expect(screen.queryByTestId("left-sidebar-nav")).toBeNull();
     expect(screen.queryByTestId("executor-terminal-launcher-segment")).toBeNull();
     expect(screen.getByTestId("desktop-action-bar")).toBeInTheDocument();
     expect(document.querySelector(".executor-status-bar")).toBeNull();
@@ -1802,8 +1993,10 @@ describe("official dashboard design production wiring", () => {
 
   it.each(["mobile", "tablet", "desktop"] as const)("keeps the official footer and reservations with stale false settings in %s", async (mode) => {
     mockUseViewportMode.mockReturnValue(mode);
+    /* FN-419: the footer and its height reservations belong to the footer placement; both wide tiers behave alike now. */
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
+      navigationPlacement: "footer",
       experimentalFeatures: { ...defaultSettings.experimentalFeatures },
     });
 
@@ -1814,15 +2007,13 @@ describe("official dashboard design production wiring", () => {
     const content = shell.querySelector(".project-content");
     expect(document.querySelector(".executor-status-bar")).toBeNull();
     expect(content).toHaveClass(mode === "mobile" ? "project-content--with-mobile-nav" : "project-content--with-footer");
+    // The left sidebar never mounts under the footer placement, on any tier.
+    expect(screen.queryByTestId("left-sidebar-nav")).toBeNull();
     if (mode === "mobile") {
       expect(document.querySelector(".mobile-nav-bar")).toHaveClass("mobile-nav-bar--native");
-      expect(screen.queryByTestId("left-sidebar-nav")).toBeNull();
-    } else if (mode === "tablet") {
-      expect(await screen.findByTestId("left-sidebar-nav")).toHaveClass("left-sidebar-nav--with-footer");
-      expect(screen.getByTestId("desktop-action-bar")).toBeInTheDocument();
+      expect(screen.queryByTestId("desktop-action-bar")).toBeNull();
     } else {
       expect(screen.getByTestId("desktop-action-bar")).toBeInTheDocument();
-      expect(screen.queryByTestId("left-sidebar-nav")).toBeNull();
     }
   });
 
@@ -2153,8 +2344,10 @@ describe("official dashboard design production wiring", () => {
     const note = { id: "note-alpha", title: "Note Alpha", content: "Initial", revision: 1, createdAt: "2026-09-11", updatedAt: "2026-09-11" };
     mockNotesApi.fetchNotes.mockReset().mockResolvedValue({ notes: [note] });
     mockNotesApi.fetchNote.mockReset().mockResolvedValue(note);
+    /* FN-419: the desktop pilot dock tools require the footer placement. */
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
+      navigationPlacement: "footer",
       experimentalFeatures: { ...defaultSettings.experimentalFeatures },
     });
 
@@ -2456,7 +2649,12 @@ describe("FN-4250 FileBrowserProvider coverage", () => {
 
     render(<App />);
 
-    expect(screen.getByTitle("Settings")).toBeInTheDocument();
+    /*
+     * FN-419: assert the shell itself rather than a control that only one placement labels with a `title`. Before
+     * settings hydrate, the shell paints the shipped default placement; the point of this case is that it paints at
+     * all, immediately, with no probe loader.
+     */
+    expect(screen.getByTestId("dashboard-project-shell")).toBeInTheDocument();
     expect(screen.queryByTestId("fb-probe-loader")).not.toBeInTheDocument();
   });
 
@@ -3036,8 +3234,12 @@ describe("App chat unread response indicator", () => {
     });
 
     fireEvent.click(screen.getByTestId("sidebar-nav-chat"));
-    // FN-392: the wide Chat destination is the dock's inline list, so the dock body is the surface that becomes visible.
-    expect(await screen.findByTestId("right-dock-body")).toBeInTheDocument();
+    /*
+     * FN-419 (operator requirement 3): from the LEFT COLUMN, Chat opens in the main page like Notes — it no longer
+     * hijacks the right dock — so the page host is the surface that becomes visible and clears the badge.
+     */
+    expect(await screen.findByTestId("chat-keep-alive")).toBeInTheDocument();
+    expect(screen.queryByTestId("right-dock-body")).toBeNull();
 
     await waitFor(() => {
       expect(chatUnreadDot()).toBeNull();
@@ -4499,6 +4701,8 @@ describe("App view switching", () => {
   restored, and no expand modal is ever created for Chat.
   */
   it("project switch consumes a restored wide Chat selection and restores ordinary page views", async () => {
+    /* FN-419: the dock consumes a restored wide `chat` selection only in the footer placement. */
+    vi.mocked(fetchSettings).mockResolvedValue({ ...defaultSettings, navigationPlacement: "footer" });
     const projectA = { id: "proj_a", name: "Project A", path: "/a", status: "active" as const, isolationMode: "in-process" as const, createdAt: "", updatedAt: "" };
     const projectB = { id: "proj_b", name: "Project B", path: "/b", status: "active" as const, isolationMode: "in-process" as const, createdAt: "", updatedAt: "" };
 
@@ -4511,19 +4715,24 @@ describe("App view switching", () => {
     expect(await screen.findByTestId("right-dock-body")).toBeInTheDocument();
     expect(screen.queryByTestId("right-dock-expand-modal")).toBeNull();
     expect(screen.getByTestId("fb-probe-chat")).toBeTruthy();
-    expect(screen.getByTestId("sidebar-nav-chat").className).not.toContain("active");
+    /*
+     * FN-419: this case runs in the FOOTER placement, so the left column is absent by design. The invariant it
+     * guards — the restored wide `chat` selection is consumed into the dock and never becomes a parallel PAGE host —
+     * is asserted on the page tree itself instead of on a nav item that belongs to the other placement.
+     */
+    expect(screen.queryByTestId("chat-keep-alive")).toBeNull();
     await waitFor(() => expect(localStorage.getItem("kb:proj_a:kb-dashboard-task-view")).toBe("board"));
 
     mockCurrentProjectState.currentProject = projectB;
     view.rerender(<App />);
     await waitFor(() => expect(document.querySelector(".insights-view")).toBeTruthy());
-    expect(screen.getByTestId("sidebar-nav-insights").className).toContain("active");
     expect(screen.queryByTestId("right-dock-expand-modal")).toBeNull();
     expect(localStorage.getItem("kb:proj_b:kb-dashboard-task-view")).toBe("insights");
 
     mockCurrentProjectState.currentProject = projectA;
     view.rerender(<App />);
-    await waitFor(() => expect(screen.getByTestId("sidebar-nav-board").className).toContain("active"));
+    // FN-419: footer placement — the active destination is read from the footer's Board entry.
+    await waitFor(() => expect(screen.getByTestId("desktop-nav-board")).toHaveAttribute("aria-current", "page"));
     expect(screen.queryByTestId("right-dock-expand-modal")).toBeNull();
     expect(localStorage.getItem("kb:proj_a:kb-dashboard-task-view")).toBe("board");
     expect(localStorage.getItem("kb:proj_b:kb-dashboard-task-view")).toBe("insights");
@@ -5057,6 +5266,11 @@ describe("Script-to-terminal modal handoff", () => {
 });
 
 describe("App footer-safe project layout", () => {
+  /* FN-419: footer-safe containment is a property of the FOOTER placement; the sidebar placement has no bottom bar. */
+  beforeEach(() => {
+    vi.mocked(fetchSettings).mockResolvedValue({ ...defaultSettings, navigationPlacement: "footer" });
+  });
+
   afterEach(() => {
     localStorage.removeItem("kb-dashboard-view-mode");
     localStorage.removeItem(taskViewStorageKey());
@@ -5188,15 +5402,28 @@ describe("App footer-safe project layout", () => {
 });
 
 describe("App node mode switching", () => {
-  beforeEach(() => mockUseViewportMode.mockReturnValue("desktop"));
+  /*
+   * FN-419: every case in this block exercises the DESKTOP PILOT (dock Notes tool, pilot windows, node guards), which
+   * is bound to the footer placement. Opt the whole block in once rather than per case.
+   */
+  beforeEach(() => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    vi.mocked(fetchSettings).mockResolvedValue({ ...defaultSettings, navigationPlacement: "footer" });
+  });
   // FNXC:DesktopViewWindows 2026-09-12-05:41: A dock selection now opens an independent dedicated note window, so it no longer transfers clean editor ownership into the later tablet page; the page-only transition remains the guard contract here.
   it.each([
     ["sans ouverture préalable du dock", false],
   ] as const)("protège un brouillon devenu sale sur la page tablette %s", async (_label, openCleanDockNote) => {
     const project2 = { ...DEFAULT_PROJECT, id: "proj_456", name: "Second Project", path: "/second" };
     mockProjectsState.projects = [{ ...DEFAULT_PROJECT }, project2];
+    /*
+     * FN-419: unlike its siblings in this block, this case reaches the Notes PAGE from primary navigation. The footer
+     * registry has no Notes destination (Notes is a desktop-pilot dock tool there), so the sidebar placement is the
+     * one that exposes it — and this remaining parameterization never opens the dock.
+     */
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
+      navigationPlacement: "sidebar",
       experimentalFeatures: { ...defaultSettings.experimentalFeatures },
     });
     const note = { id: "note-transition", title: "Transition", content: "Initial", revision: 1, createdAt: "2026-09-11", updatedAt: "2026-09-11" };
@@ -5213,7 +5440,10 @@ describe("App node mode switching", () => {
 
     mockUseViewportMode.mockReturnValue("tablet");
     view.rerender(<App />);
-    fireEvent.click(await screen.findByTestId("sidebar-nav-notes"));
+    // FN-419: sidebar placement — the Notes destination is the left column entry, and no bottom bar accompanies it.
+    const notesEntry = await screen.findByTestId("sidebar-nav-notes");
+    expect(screen.queryByTestId("desktop-action-bar")).toBeNull();
+    fireEvent.click(notesEntry);
     const notesPage = await waitFor(() => {
       const candidate = document.querySelector<HTMLElement>(".notes-view:not(.notes-view--compact)");
       expect(candidate).not.toBeNull();
@@ -5246,6 +5476,7 @@ describe("App node mode switching", () => {
     mockProjectsState.projects = [{ ...DEFAULT_PROJECT }, project2];
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
+      navigationPlacement: "footer",
       experimentalFeatures: { ...defaultSettings.experimentalFeatures },
     });
     const note = { id: "note-transition", title: "Transition", content: "Initial", revision: 1, createdAt: "2026-09-11", updatedAt: "2026-09-11" };
@@ -5285,6 +5516,7 @@ describe("App node mode switching", () => {
     mockProjectsState.projects = [{ ...DEFAULT_PROJECT }, project2];
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
+      navigationPlacement: "footer",
       experimentalFeatures: { ...defaultSettings.experimentalFeatures },
     });
     const note = { id: "note-transition", title: "Transition", content: "Initial", revision: 1, createdAt: "2026-09-11", updatedAt: "2026-09-11" };
@@ -5328,6 +5560,7 @@ describe("App node mode switching", () => {
     });
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
+      navigationPlacement: "footer",
       experimentalFeatures: { ...defaultSettings.experimentalFeatures },
     });
     const note = { id: "note-1", title: "Brouillon", content: "Initial", revision: 1, createdAt: "2026-09-11", updatedAt: "2026-09-11" };
@@ -5390,6 +5623,7 @@ describe("App node mode switching", () => {
     mockNodeContextValue.isRemote = true;
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
+      navigationPlacement: "footer",
       experimentalFeatures: { ...defaultSettings.experimentalFeatures },
     });
     const note = { id: "note-node-fallback", title: "Portée", content: "Initial", revision: 1, createdAt: "2026-09-11", updatedAt: "2026-09-11" };
@@ -5838,10 +6072,11 @@ describe("App onboarding reopen", () => {
         defaultModelId: "claude-sonnet-4-5",
       });
 
-    // Mock Settings and auth
+    /* FN-419: this case opens Settings from the primary navigation Settings item, which the sidebar placement labels with a title. */
     (fetchSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       maxConcurrent: 2,
       maxWorktrees: 4,
+      navigationPlacement: "sidebar",
     });
     (fetchAuthStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
       providers: [
@@ -5898,10 +6133,11 @@ describe("App onboarding reopen", () => {
       defaultModelId: "claude-sonnet-4-5",
     });
 
-    // Mock Settings and auth
+    /* FN-419: this case opens Settings from the primary navigation Settings item, which the sidebar placement labels with a title. */
     (fetchSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       maxConcurrent: 2,
       maxWorktrees: 4,
+      navigationPlacement: "sidebar",
     });
     (fetchAuthStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
       providers: [
@@ -6622,10 +6858,12 @@ always-mounted silently green.
 describe("terminal mount lifecycle (App mounts the terminal only while open)", () => {
   it("never mounts TerminalModal while the terminal is closed, and unmounts it on close", async () => {
     terminalLifecycle.reset();
+    /* FN-419: this case opens the terminal through the wide FOOTER action, so it opts into that placement. */
+    vi.mocked(fetchSettings).mockResolvedValue({ ...defaultSettings, navigationPlacement: "footer" });
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByTitle("Settings")).toBeTruthy();
+      expect(screen.getByTestId("desktop-action-bar")).toBeTruthy();
     });
 
     expect(
