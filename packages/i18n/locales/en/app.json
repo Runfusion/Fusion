@@ -1165,7 +1165,8 @@
     "disableHeartbeatsCountHint": "Disable {{count}} enabled project heartbeats",
     "bulkFailures": "failed {{count}}",
     "detailLabel": "Agent detail",
-    "lastCompletedStep": "Last completed Step {{index}}: {{name}}"
+    "lastCompletedStep": "Last completed Step {{index}}: {{name}}",
+    "mailSubject": "Subject"
   },
   "app": {
     "backendError": {
@@ -2052,7 +2053,10 @@
     "reportTitle": "Report title",
     "sectionBody": "Section body",
     "sectionHeading": "Section heading",
-    "selectStructure": "Select structure…"
+    "selectStructure": "Select structure…",
+    "subject": "Subject",
+    "subjectPlaceholder": "Short subject (optional)",
+    "subjectTooLong": "Subject must be at most 200 characters"
   },
   "confirm": {
     "cancel": "Cancel",
@@ -3575,7 +3579,16 @@
     "completionImages": "Completion images",
     "completionImage": "Completion image",
     "suggestedRecommendations": "Suggested recommendations",
-    "noSuggestedRecommendations": "No follow-up recommendations were suggested."
+    "noSuggestedRecommendations": "No follow-up recommendations were suggested.",
+    "subject": {
+      "none": "(no subject)",
+      "taskCompleted": "{{taskId}} completed",
+      "taskProposal": "Task proposal: {{title}}",
+      "taskRecommendations": "Task recommendations",
+      "taskWedge": "{{taskId}} needs attention",
+      "duplicateDecision": "{{taskId}} duplicate decision",
+      "planningClarification": "Planning clarification"
+    }
   },
   "memory": {
     "auditChecksTitle": "Audit Checks",

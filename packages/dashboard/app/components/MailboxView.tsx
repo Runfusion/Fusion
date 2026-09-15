@@ -40,6 +40,7 @@ import {
   type ApprovalRequestSummary,
   type ApprovalRequestDetail,
 } from "../api";
+import { resolveMailboxMessageSubject } from "./mailboxSubject";
 import { MailboxMessageContent } from "./MailboxMessageContent";
 import { MailboxArtifactAttachment } from "./MailboxArtifactAttachment";
 import { MailboxRelatedWorkLink, hasRelatedTaskLink } from "./MailboxRelatedWorkLink";
@@ -871,6 +872,23 @@ export function MailboxView({
 
   // ── Render ────────────────────────────────────────────────────────────
 
+  /*
+  FNXC:MailboxSubject 2026-09-15-04:40:
+  Operator requirement: a mailbox row shows an AUTHOR and a SUBJECT, never the raw head of the body.
+  Every list below renders this single shared block so no surface can leak Markdown ("## Task
+  completed: FN-325") into the list, and the body preview element is omitted entirely when there is
+  nothing left to preview instead of leaving an empty shell.
+  */
+  const renderSubjectAndPreview = (msg: Message) => {
+    const { subject, bodyPreview } = resolveMailboxMessageSubject(msg, t);
+    return (
+      <>
+        <div className="mailbox-item-subject" data-testid={`mailbox-item-subject-${msg.id}`}>{subject}</div>
+        {bodyPreview ? <div className="mailbox-item-preview">{bodyPreview}</div> : null}
+      </>
+    );
+  };
+
   const renderMessageDetail = () => {
     if (!selectedMessage || showComposer) return null;
 
@@ -921,6 +939,10 @@ export function MailboxView({
             )}
           </div>
         </div>
+        {/* FNXC:MailboxSubject 2026-09-15-04:40: The detail view states the subject above the participants so an opened mail always shows author AND subject. */}
+        <h3 className="mailbox-message-subject" data-testid="mailbox-message-detail-subject">
+          {resolveMailboxMessageSubject(selectedMessage, t).subject}
+        </h3>
         <div className="mailbox-message-participants">
           <div className="mailbox-participant">
             <span className="mailbox-participant-label">{t("mailbox.from", "From")}:</span>
@@ -1044,7 +1066,16 @@ export function MailboxView({
           {archivedInbox?.messages.length === 0 && <div className="mailbox-empty" data-testid="mailbox-archived-empty">{t("mailbox.noArchivedMessages", "No archived messages")}</div>}
           {archivedInbox?.messages.map((message) => (
             <button type="button" className="mailbox-item" key={message.id} onClick={() => void handleOpenMessage(message)} data-testid={`mailbox-item-${message.id}`}>
-              <span className="mailbox-item-preview">{message.content}</span>
+              <div className="mailbox-item-avatar">
+                {message.fromType === "agent" ? <Bot size={16} /> : <User size={16} />}
+              </div>
+              <div className="mailbox-item-content">
+                <div className="mailbox-item-header">
+                  <span className="mailbox-item-from">{getParticipantLabel(message.fromId, message.fromType)}</span>
+                  <span className="mailbox-item-time">{formatTimestamp(message.createdAt, t)}</span>
+                </div>
+                {renderSubjectAndPreview(message)}
+              </div>
             </button>
           ))}
         </div>
@@ -1083,7 +1114,7 @@ export function MailboxView({
                   <MailboxKindBadge metadata={msg.metadata} />
                   <span className="mailbox-item-time">{formatTimestamp(msg.createdAt, t)}</span>
                 </div>
-                <div className="mailbox-item-preview">{msg.content.slice(0, 80)}{msg.content.length > 80 ? "…" : ""}</div>
+                {renderSubjectAndPreview(msg)}
               </div>
               {!msg.read && <div className="mailbox-item-unread-dot" data-testid={`mailbox-unread-dot-${msg.id}`} />}
             </div>
@@ -1118,7 +1149,7 @@ export function MailboxView({
                   </span>
                   <span className="mailbox-item-time">{formatTimestamp(msg.createdAt, t)}</span>
                 </div>
-                <div className="mailbox-item-preview">{msg.content.slice(0, 80)}{msg.content.length > 80 ? "…" : ""}</div>
+                {renderSubjectAndPreview(msg)}
               </div>
             </div>
           ))}
@@ -1199,7 +1230,7 @@ export function MailboxView({
                         <span>{t("mailbox.from", "From")}: {getParticipantLabel(msg.fromId, msg.fromType)}</span>
                         <span>{t("mailbox.to", "To")}: {getParticipantLabel(msg.toId, msg.toType)}</span>
                       </div>
-                      <div className="mailbox-item-preview">{msg.content.slice(0, 80)}{msg.content.length > 80 ? "…" : ""}</div>
+                      {renderSubjectAndPreview(msg)}
                     </div>
                   </div>
                 ))}
@@ -1234,7 +1265,7 @@ export function MailboxView({
                         </span>
                         <span className="mailbox-item-time">{formatTimestamp(msg.createdAt, t)}</span>
                       </div>
-                      <div className="mailbox-item-preview">{msg.content.slice(0, 80)}{msg.content.length > 80 ? "…" : ""}</div>
+                      {renderSubjectAndPreview(msg)}
                     </div>
                   </div>
                 ))}
@@ -1256,7 +1287,7 @@ export function MailboxView({
                         </span>
                         <span className="mailbox-item-time">{formatTimestamp(msg.createdAt, t)}</span>
                       </div>
-                      <div className="mailbox-item-preview">{msg.content.slice(0, 80)}{msg.content.length > 80 ? "…" : ""}</div>
+                      {renderSubjectAndPreview(msg)}
                     </div>
                   </div>
                 ))}

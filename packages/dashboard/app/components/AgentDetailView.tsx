@@ -26,6 +26,7 @@ import {
 import { AgentLogViewer } from "./AgentLogViewer";
 import { LoadingSpinner } from "./LoadingSpinner";
 import { AgentReflectionsTab } from "./AgentReflectionsTab";
+import { resolveMailboxMessageSubject } from "./mailboxSubject";
 import { getAgentHealthStatus } from "../utils/agentHealth";
 import { getTaskTitleDisplayText } from "../utils/taskTitleDisplay";
 import type { AgentHealthStatus } from "../utils/agentHealth";
@@ -1895,7 +1896,16 @@ function MailTab({
     onRefresh();
   };
 
-  const renderMessage = (message: Message) => (
+  /*
+  FNXC:MailboxSubject 2026-09-15-04:40:
+  Operator requirement: every mail row shows an AUTHOR and a SUBJECT, never the raw head of the body
+  (a completion notice used to render literally as "## Task completed: FN-325"). The subject comes
+  from the shared resolveMailboxMessageSubject used by MailboxView/MailboxModal, and the preview
+  element is omitted entirely when the body holds nothing beyond the subject line.
+  */
+  const renderMessage = (message: Message) => {
+    const { subject, bodyPreview } = resolveMailboxMessageSubject(message, t);
+    return (
     <button
       key={message.id}
       type="button"
@@ -1915,11 +1925,13 @@ function MailTab({
           )}
           <span className="mailbox-item-time">{formatMailboxTimestamp(message.createdAt, t)}</span>
         </div>
-        <div className="mailbox-item-preview">{message.content.slice(0, 80)}{message.content.length > 80 ? "…" : ""}</div>
+        <div className="mailbox-item-subject" data-testid={`mailbox-item-subject-${message.id}`}>{subject}</div>
+        {bodyPreview ? <div className="mailbox-item-preview">{bodyPreview}</div> : null}
       </div>
       {activeSubtab === "inbox" && !message.read ? <div className="mailbox-item-unread-dot" aria-label={t("agents.unreadMessage", "Unread message")} /> : null}
     </button>
-  );
+    );
+  };
 
   return (
     <div className="agent-mail-tab">
@@ -1976,6 +1988,11 @@ function MailTab({
               {activeSubtab === "inbox" ? t("agents.backToInbox", "Back to Inbox") : t("agents.backToOutbox", "Back to Outbox")}
             </button>
             <div className="agent-mail-tab-detail-meta">
+              {/* FNXC:MailboxSubject 2026-09-15-04:40: An opened agent mail states its subject before the participants, matching the mailbox detail views. */}
+              <div className="agent-mail-tab-detail-row">
+                <span className="agent-mail-tab-detail-label">{t("agents.mailSubject", "Subject")}</span>
+                <span data-testid="agent-mail-tab-detail-subject">{resolveMailboxMessageSubject(selectedMessage, t).subject}</span>
+              </div>
               <div className="agent-mail-tab-detail-row">
                 <span className="agent-mail-tab-detail-label">{t("agents.mailFrom", "From")}</span>
                 <span>{mailboxParticipantLabel(selectedMessage.fromId, selectedMessage.fromType, agentNamesById, t)}</span>

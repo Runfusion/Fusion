@@ -30,6 +30,8 @@ vi.mock("lucide-react", () => ({
   Target: () => null, CircleAlert: () => null,
   // FNXC:MessageArchive 2026-08-15-05:45: FN-9014 added mailbox archiving; MailboxModal now imports Archive.
   Archive: () => null,
+  // FNXC:MailboxSubject 2026-09-15-04:40: the mobile/modal detail back button renders ChevronLeft.
+  ChevronLeft: () => null,
 }));
 
 import * as api from "../../api";
@@ -160,8 +162,8 @@ describe("structural mail production surfaces", () => {
       expect(screen.getByTestId("mailbox-conversation")).toBeInTheDocument();
       expect(screen.getAllByText("Release report").length).toBeGreaterThan(0);
       expect(screen.getAllByTestId("mailbox-report-section-body")[0].querySelector("table")).toBeInTheDocument();
-      expect(screen.getByText("Empty report")).toBeInTheDocument();
-      expect(screen.getByText("Embedded report")).toBeInTheDocument();
+      expect(screen.getAllByText("Empty report").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("Embedded report").length).toBeGreaterThan(0);
       expect(screen.getByTestId("mailbox-native-structure-embeds")).toBeInTheDocument();
       await waitFor(() => expect(screen.getByTestId("mailbox-inline-approval-approve")).toBeInTheDocument());
       await waitFor(() => expect(screen.getAllByTestId("mailbox-inline-approval-status")).toHaveLength(3));
@@ -195,7 +197,7 @@ describe("structural mail production surfaces", () => {
       if (selected.structural === "report") {
         expect(screen.getByTestId("mailbox-structural-report")).toBeInTheDocument();
         expect(within(screen.getByTestId("mailbox-message-detail")).getByTestId("mailbox-kind-badge")).toHaveTextContent("Report");
-        if (selected.id === "zero-report") expect(screen.getByText("Empty report")).toBeInTheDocument();
+        if (selected.id === "zero-report") expect(screen.getAllByText("Empty report").length).toBeGreaterThan(0);
         if (selected.id === "embedded-report") expect(screen.getByTestId("mailbox-native-structure-embeds")).toBeInTheDocument();
       } else if (selected.structural === "pending") {
         expect(await screen.findByTestId("mailbox-inline-approval-approve")).toBeInTheDocument();

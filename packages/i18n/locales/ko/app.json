@@ -1155,7 +1155,8 @@
     "disableHeartbeatsCountHint": "",
     "bulkFailures": "",
     "detailLabel": "",
-    "lastCompletedStep": ""
+    "lastCompletedStep": "",
+    "mailSubject": "제목"
   },
   "app": {
     "backendError": {
@@ -2042,7 +2043,10 @@
     "reportTitle": "",
     "sectionBody": "",
     "sectionHeading": "",
-    "selectStructure": ""
+    "selectStructure": "",
+    "subject": "제목",
+    "subjectPlaceholder": "짧은 제목 (선택)",
+    "subjectTooLong": "제목은 200자 이하여야 합니다"
   },
   "confirm": {
     "cancel": "취소",
@@ -3566,7 +3570,16 @@
     "completionImages": "작업 완료 이미지",
     "completionImage": "작업 완료 이미지",
     "suggestedRecommendations": "제안된 권장 사항",
-    "noSuggestedRecommendations": "제안된 후속 권장 사항이 없습니다."
+    "noSuggestedRecommendations": "제안된 후속 권장 사항이 없습니다.",
+    "subject": {
+      "none": "(제목 없음)",
+      "taskCompleted": "{{taskId}} 완료",
+      "taskProposal": "작업 제안: {{title}}",
+      "taskRecommendations": "작업 추천",
+      "taskWedge": "{{taskId}} 조치 필요",
+      "duplicateDecision": "{{taskId}} 중복 결정",
+      "planningClarification": "계획 설명 요청"
+    }
   },
   "memory": {
     "auditChecksTitle": "감사 검사",

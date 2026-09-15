@@ -18,7 +18,7 @@ vi.mock("../../hooks/useMobileKeyboard", () => ({ useMobileKeyboard: vi.fn(() =>
 vi.mock("../../sse-bus", () => ({ subscribeSse: vi.fn(() => () => {}) }));
 vi.mock("../Header", () => ({ useViewportMode: vi.fn(() => "desktop") }));
 vi.mock("../ComposeChatPanel", () => ({ ComposeChatPanel: () => null }));
-vi.mock("lucide-react", () => ({ Mail: () => null, Send: () => null, Inbox: () => null, Bot: () => null, Trash2: () => null, Archive: () => null, CheckCheck: () => null, Loader2: () => null, RefreshCw: () => null, MessageSquare: () => null, User: () => null, X: () => null, Check: () => null, ChevronRight: () => null, ChevronDown: () => null, AlertCircle: () => null, Map: () => null, Flag: () => null, Lightbulb: () => null, BarChart3: () => null, Target: () => null, CircleAlert: () => null }));
+vi.mock("lucide-react", () => ({ Mail: () => null, Send: () => null, Inbox: () => null, Bot: () => null, Trash2: () => null, Archive: () => null, CheckCheck: () => null, Loader2: () => null, RefreshCw: () => null, MessageSquare: () => null, User: () => null, X: () => null, Check: () => null, ChevronRight: () => null, ChevronDown: () => null, AlertCircle: () => null, Map: () => null, Flag: () => null, Lightbulb: () => null, BarChart3: () => null, Target: () => null, CircleAlert: () => null, ChevronLeft: () => null }));
 
 import * as api from "../../api";
 

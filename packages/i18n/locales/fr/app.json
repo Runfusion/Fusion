@@ -1155,7 +1155,8 @@
     "disableHeartbeatsCountHint": "Désactiver {{count}} battements activés",
     "bulkFailures": "{{count}} échecs",
     "detailLabel": "",
-    "lastCompletedStep": ""
+    "lastCompletedStep": "",
+    "mailSubject": "Objet"
   },
   "app": {
     "backendError": {
@@ -2042,7 +2043,10 @@
     "reportTitle": "",
     "sectionBody": "",
     "sectionHeading": "",
-    "selectStructure": ""
+    "selectStructure": "",
+    "subject": "Objet",
+    "subjectPlaceholder": "Objet court (facultatif)",
+    "subjectTooLong": "L'objet ne doit pas dépasser 200 caractères"
   },
   "confirm": {
     "cancel": "Annuler",
@@ -3567,7 +3571,16 @@
     "completionImages": "Images de fin de tâche",
     "completionImage": "Image de fin de tâche",
     "suggestedRecommendations": "Recommandations suggérées",
-    "noSuggestedRecommendations": "Aucune recommandation de suivi n’a été suggérée."
+    "noSuggestedRecommendations": "Aucune recommandation de suivi n’a été suggérée.",
+    "subject": {
+      "none": "(sans objet)",
+      "taskCompleted": "{{taskId}} terminé",
+      "taskProposal": "Proposition de tâche : {{title}}",
+      "taskRecommendations": "Recommandations de tâches",
+      "taskWedge": "{{taskId}} requiert une action",
+      "duplicateDecision": "{{taskId}} : décision de doublon",
+      "planningClarification": "Clarification de planification"
+    }
   },
   "memory": {
     "auditChecksTitle": "Vérifications d'audit",

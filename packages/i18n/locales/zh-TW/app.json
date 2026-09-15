@@ -1155,7 +1155,8 @@
     "disableHeartbeatsCountHint": "",
     "bulkFailures": "",
     "detailLabel": "",
-    "lastCompletedStep": ""
+    "lastCompletedStep": "",
+    "mailSubject": "主旨"
   },
   "app": {
     "backendError": {
@@ -2042,7 +2043,10 @@
     "reportTitle": "",
     "sectionBody": "",
     "sectionHeading": "",
-    "selectStructure": ""
+    "selectStructure": "",
+    "subject": "主旨",
+    "subjectPlaceholder": "簡短主旨（選填）",
+    "subjectTooLong": "主旨不得超過 200 個字元"
   },
   "confirm": {
     "cancel": "取消",
@@ -3566,7 +3570,16 @@
     "completionImages": "任務完成圖片",
     "completionImage": "任務完成圖片",
     "suggestedRecommendations": "建議的後續事項",
-    "noSuggestedRecommendations": "未提出後續建議。"
+    "noSuggestedRecommendations": "未提出後續建議。",
+    "subject": {
+      "none": "（無主旨）",
+      "taskCompleted": "{{taskId}} 已完成",
+      "taskProposal": "任務提案：{{title}}",
+      "taskRecommendations": "任務建議",
+      "taskWedge": "{{taskId}} 需要處理",
+      "duplicateDecision": "{{taskId}} 重複判定",
+      "planningClarification": "規劃釐清"
+    }
   },
   "memory": {
     "auditChecksTitle": "稽核檢查",

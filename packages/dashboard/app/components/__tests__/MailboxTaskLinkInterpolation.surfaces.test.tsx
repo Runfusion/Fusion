@@ -28,7 +28,7 @@ vi.mock("lucide-react", () => ({
   CheckCheck: () => null, Loader2: () => null, RefreshCw: () => null, MessageSquare: () => null,
   User: () => null, X: () => null, Check: () => null, ChevronRight: () => null, ChevronDown: () => null,
   AlertCircle: () => null, Map: () => null, Flag: () => null, Lightbulb: () => null, BarChart3: () => null,
-  Target: () => null, CircleAlert: () => null, Archive: () => null,
+  Target: () => null, CircleAlert: () => null, Archive: () => null, ChevronLeft: () => null,
 }));
 
 import * as api from "../../api";

@@ -1155,7 +1155,8 @@
     "disableHeartbeatsCountHint": "Desactivar {{count}} latidos activados",
     "bulkFailures": "fallaron {{count}}",
     "detailLabel": "",
-    "lastCompletedStep": ""
+    "lastCompletedStep": "",
+    "mailSubject": "Asunto"
   },
   "app": {
     "backendError": {
@@ -2042,7 +2043,10 @@
     "reportTitle": "",
     "sectionBody": "",
     "sectionHeading": "",
-    "selectStructure": ""
+    "selectStructure": "",
+    "subject": "Asunto",
+    "subjectPlaceholder": "Asunto breve (opcional)",
+    "subjectTooLong": "El asunto debe tener como máximo 200 caracteres"
   },
   "confirm": {
     "cancel": "Cancelar",
@@ -3567,7 +3571,16 @@
     "completionImages": "Imágenes de finalización",
     "completionImage": "Imagen de finalización",
     "suggestedRecommendations": "Recomendaciones sugeridas",
-    "noSuggestedRecommendations": "No se sugirió ninguna recomendación de seguimiento."
+    "noSuggestedRecommendations": "No se sugirió ninguna recomendación de seguimiento.",
+    "subject": {
+      "none": "(sin asunto)",
+      "taskCompleted": "{{taskId}} completada",
+      "taskProposal": "Propuesta de tarea: {{title}}",
+      "taskRecommendations": "Recomendaciones de tareas",
+      "taskWedge": "{{taskId}} requiere atención",
+      "duplicateDecision": "{{taskId}}: decisión de duplicado",
+      "planningClarification": "Aclaración de planificación"
+    }
   },
   "memory": {
     "auditChecksTitle": "Comprobaciones de auditoría",

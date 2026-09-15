@@ -1546,6 +1546,21 @@ export function validateMessageMetadata(metadata: MessageMetadata | undefined): 
   }
 
   /*
+  FNXC:MailboxSubject 2026-09-15-04:40:
+  A declared subject must be a real subject: blank strings would render an empty mailbox subject
+  line, so they are rejected rather than silently stored. Absence stays valid for backward
+  compatibility — the dashboard derives a display subject for legacy rows and system notices.
+  */
+  if (metadata.subject !== undefined) {
+    if (typeof metadata.subject !== "string" || metadata.subject.trim().length === 0) {
+      throw new Error("metadata.subject must be a non-empty string");
+    }
+    if (metadata.subject.trim().length > 200) {
+      throw new Error("metadata.subject must be at most 200 characters");
+    }
+  }
+
+  /*
   FNXC:NativeStructureEmbed 2026-07-19-12:30:
   Mail accepts only the shared six-kind NativeStructureRef union. The roadmap item uses the
   plugin-owned read adapter at render time, so attachment metadata remains a ref rather than a

@@ -196,6 +196,28 @@ badged Inbox tab was the first overflowing tab to collapse its icon to a dot.
   flex-shrink: 0;
 }
 
+/*
+FNXC:MailboxSubject 2026-09-15-04:40:
+Every mailbox row carries an author AND a subject. The subject is the prominent single line of the
+row (list) or the heading of an opened mail (detail); the body preview stays the muted secondary
+line below it. Shared by MailboxView, MailboxModal and the AgentDetailView Mail tab.
+*/
+.mailbox-item-subject {
+  font-size: 0.85rem;
+  font-weight: var(--font-weight-medium);
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mailbox-message-subject {
+  margin: 0 0 var(--space-sm);
+  font-size: 1rem;
+  font-weight: var(--font-weight-semibold);
+  color: var(--text);
+}
+
 .mailbox-item-preview {
   font-size: 0.8rem;
   color: var(--text-muted);

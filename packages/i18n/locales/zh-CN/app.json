@@ -1155,7 +1155,8 @@
     "disableHeartbeatsCountHint": "",
     "bulkFailures": "",
     "detailLabel": "",
-    "lastCompletedStep": ""
+    "lastCompletedStep": "",
+    "mailSubject": "主题"
   },
   "app": {
     "backendError": {
@@ -2042,7 +2043,10 @@
     "reportTitle": "",
     "sectionBody": "",
     "sectionHeading": "",
-    "selectStructure": ""
+    "selectStructure": "",
+    "subject": "主题",
+    "subjectPlaceholder": "简短主题（可选）",
+    "subjectTooLong": "主题不能超过 200 个字符"
   },
   "confirm": {
     "cancel": "取消",
@@ -3566,7 +3570,16 @@
     "completionImages": "任务完成图片",
     "completionImage": "任务完成图片",
     "suggestedRecommendations": "建议的后续事项",
-    "noSuggestedRecommendations": "未提出后续建议。"
+    "noSuggestedRecommendations": "未提出后续建议。",
+    "subject": {
+      "none": "（无主题）",
+      "taskCompleted": "{{taskId}} 已完成",
+      "taskProposal": "任务提议：{{title}}",
+      "taskRecommendations": "任务建议",
+      "taskWedge": "{{taskId}} 需要处理",
+      "duplicateDecision": "{{taskId}} 重复判定",
+      "planningClarification": "规划澄清"
+    }
   },
   "memory": {
     "auditChecksTitle": "审计检查",

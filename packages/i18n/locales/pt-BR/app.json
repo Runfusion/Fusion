@@ -1165,7 +1165,8 @@
     "disableHeartbeatsCountHint": "Desativar {{count}} heartbeats ativados do projeto",
     "bulkFailures": "falharam {{count}}",
     "detailLabel": "",
-    "lastCompletedStep": ""
+    "lastCompletedStep": "",
+    "mailSubject": "Assunto"
   },
   "app": {
     "backendError": {
@@ -2052,7 +2053,10 @@
     "reportTitle": "",
     "sectionBody": "",
     "sectionHeading": "",
-    "selectStructure": ""
+    "selectStructure": "",
+    "subject": "Assunto",
+    "subjectPlaceholder": "Assunto curto (opcional)",
+    "subjectTooLong": "O assunto deve ter no máximo 200 caracteres"
   },
   "confirm": {
     "cancel": "Cancelar",
@@ -3577,7 +3581,16 @@
     "completionImages": "Imagens da conclusão",
     "completionImage": "Imagem da conclusão",
     "suggestedRecommendations": "Recomendações sugeridas",
-    "noSuggestedRecommendations": "Nenhuma recomendação de acompanhamento foi sugerida."
+    "noSuggestedRecommendations": "Nenhuma recomendação de acompanhamento foi sugerida.",
+    "subject": {
+      "none": "(sem assunto)",
+      "taskCompleted": "{{taskId}} concluída",
+      "taskProposal": "Proposta de tarefa: {{title}}",
+      "taskRecommendations": "Recomendações de tarefas",
+      "taskWedge": "{{taskId}} requer atenção",
+      "duplicateDecision": "{{taskId}}: decisão de duplicata",
+      "planningClarification": "Esclarecimento de planejamento"
+    }
   },
   "memory": {
     "auditChecksTitle": "Verificações de auditoria",

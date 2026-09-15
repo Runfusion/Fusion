@@ -32,7 +32,7 @@ vi.mock("lucide-react", () => ({
   Mail: () => null, Send: () => null, Inbox: () => null, Bot: () => null, Trash2: () => null, Archive: () => null,
   CheckCheck: () => null, Loader2: () => null, RefreshCw: () => null, MessageSquare: () => null, User: () => null,
   X: () => null, Check: () => null, ChevronRight: () => null, ChevronDown: () => null, AlertCircle: () => null,
-  Map: () => null, Flag: () => null, Lightbulb: () => null, BarChart3: () => null, Target: () => null, CircleAlert: () => null,
+  ChevronLeft: () => null, Map: () => null, Flag: () => null, Lightbulb: () => null, BarChart3: () => null, Target: () => null, CircleAlert: () => null,
 }));
 
 import * as api from "../../api";
@@ -102,7 +102,13 @@ describe("task completion mail production surfaces", () => {
     render(<Host projectId="project-1" addToast={vi.fn()} onOpenNativeStructure={vi.fn()} nativeStructureCandidates={[]} />);
     await user.click(await screen.findByTestId("mailbox-item-ordinary"));
     const detail = await screen.findByTestId("mailbox-message-detail");
-    expect(within(detail).getByText("Ordinary mailbox message")).toBeInTheDocument();
+    /*
+    FNXC:MailboxSubject 2026-09-15-04:40:
+    The detail now states a subject above the body, so this body text legitimately appears twice:
+    once as the derived subject line and once in the message body.
+    */
+    expect(within(detail).getByTestId("mailbox-message-detail-subject")).toHaveTextContent("Ordinary mailbox message");
+    expect(within(detail).getByTestId("mailbox-message-body")).toHaveTextContent("Ordinary mailbox message");
     expect(within(detail).queryByTestId("mailbox-task-completion")).not.toBeInTheDocument();
     expect(within(detail).queryByTestId("mailbox-view-task")).not.toBeInTheDocument();
   });
@@ -117,7 +123,9 @@ describe("task completion mail production surfaces", () => {
 
     await user.click(await screen.findByTestId("mailbox-item-empty"));
     let detail = await screen.findByTestId("mailbox-message-detail");
-    expect(within(detail).getByText("Summary for empty")).toBeInTheDocument();
+    // FNXC:MailboxSubject 2026-09-15-04:40: the summary is now also echoed by the derived subject line.
+    expect(within(detail).getAllByText("Summary for empty").length).toBeGreaterThan(0);
+    expect(within(detail).getByTestId("mailbox-message-detail-subject")).toHaveTextContent("Summary for empty");
     expect(within(detail).getByTestId("mailbox-task-completion-no-recommendations")).toHaveTextContent("No follow-up recommendations were suggested.");
     expect(within(detail).queryByTestId("mailbox-view-task")).not.toBeInTheDocument();
 
@@ -125,7 +133,7 @@ describe("task completion mail production surfaces", () => {
     if (backToList) await user.click(backToList);
     await user.click(screen.getByTestId("mailbox-item-unavailable"));
     detail = await screen.findByTestId("mailbox-message-detail");
-    expect(within(detail).getByText("Summary for unavailable")).toBeInTheDocument();
+    expect(within(detail).getAllByText("Summary for unavailable").length).toBeGreaterThan(0);
     expect(await within(detail).findByTestId("mailbox-task-recommendations-unavailable")).toBeInTheDocument();
     const failedImage = within(detail).getByRole("img", { name: "Completion image" });
     fireEvent.error(failedImage);
