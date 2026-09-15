@@ -66,6 +66,7 @@ import {
   isLegacyWorkspaceWorktreeLayout,
   resolveWorkspaceTaskWorktreeDir,
   resolveSandboxBackend as resolveConfiguredSandboxBackend,
+  buildOperatorLanguageDirective,
 } from "@fusion/core";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
@@ -2362,6 +2363,7 @@ export async function runImplementation(
           goalContext: executorGoalContext,
           agentInstructions: executorInstructions,
           pluginContributions: executorPluginContributions,
+          operatorLanguageDirective: buildOperatorLanguageDirective(settings),
         });
 
         const executorSystemPromptFinal = collapsePromptLayers(executorLayers);

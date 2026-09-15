@@ -2319,6 +2319,8 @@ export class ChatManager {
           agentStore: this.agentStore,
           basePrompt: CHAT_SYSTEM_PROMPT,
           includeProjectMemory: true,
+          // FNXC:OperatorLanguage 2026-09-16-13:05: room responders honor the operator language setting (PR review).
+          settings: await this.getChatModelSettings(),
         });
       } catch (error) {
         diagnostics.warn(`Failed to build chat prompt for room responder ${input.responder.id}: ${error instanceof Error ? error.message : String(error)}`);
@@ -2572,7 +2574,7 @@ export class ChatManager {
     await ensureEngineReady();
     let systemPrompt = CHAT_SYSTEM_PROMPT;
     if (buildAgentChatPromptFn) {
-      try { systemPrompt = await buildAgentChatPromptFn({ agent: input.responder, rootDir: this.rootDir, agentStore: this.agentStore, basePrompt: CHAT_SYSTEM_PROMPT, includeProjectMemory: true }); }
+      try { systemPrompt = await buildAgentChatPromptFn({ agent: input.responder, rootDir: this.rootDir, agentStore: this.agentStore, basePrompt: CHAT_SYSTEM_PROMPT, includeProjectMemory: true, settings: await this.getChatModelSettings() }); }
       catch (error) { diagnostics.warn(`Failed to build mentioned chat prompt for ${input.responder.id}: ${error instanceof Error ? error.message : String(error)}`); }
     }
     const mentionContext = await this.buildMentionContext(input.mentions);
@@ -2904,6 +2906,8 @@ export class ChatManager {
             agentStore: this.agentStore,
             basePrompt: CHAT_SYSTEM_PROMPT,
             includeProjectMemory: true,
+            // FNXC:OperatorLanguage 2026-09-16-13:05: direct agent chat honors the operator language setting (PR review).
+            settings: await this.getChatModelSettings(),
           });
           systemPrompt = `${systemPrompt}\n\n${CHAT_AGENT_MESSAGE_ROUTING_GUIDANCE}`;
         } catch (promptBuildError) {

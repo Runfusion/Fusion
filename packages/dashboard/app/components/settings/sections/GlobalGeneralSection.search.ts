@@ -51,6 +51,17 @@ export const globalGeneralSearchEntries: SettingsSearchEntry[] = [
     keywords: ["persist", "transcript", "disk usage", "tool arguments", "tool results"],
   },
   {
+    /* FNXC:OperatorLanguage 2026-09-15-07:18: mirrors the section's new operatorLanguage row verbatim. */
+    sectionId: "global-general",
+    key: "operatorLanguage",
+    labelKey: "settings.globalGeneral.operatorLanguage",
+    labelFallback: " Operator language for agent text ",
+    helpKey: "settings.globalGeneral.operatorLanguageHint",
+    helpFallback:
+      " Language agents use for operator-facing text: mailbox messages, reports, task logs, completion summaries, and chat replies. Code, commands, identifiers, and quoted log output always stay in their original language. Default: Automatic — reply in the language of each message, which leaves autonomous lanes on English. ",
+    keywords: ["language", "slovak", "jazyk", "reply language", "output language", "maily", "mailbox language", "translation"],
+  },
+  {
     sectionId: "global-general",
     key: "agentToolOutputMaxChars",
     labelKey: "settings.globalGeneral.agentToolOutputLimit",

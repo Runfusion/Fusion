@@ -41,6 +41,7 @@ import {
   resolveWorkflowIrForTask,
   columnsWithFlag,
   resolveTaskLifecycleColumns,
+  buildOperatorLanguageDirective,
 } from "@fusion/core";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "@earendil-works/pi-ai";
@@ -2808,12 +2809,25 @@ export class HeartbeatMonitor {
         const plannerHeartbeatPatrolEnabled = isNoTaskRun
           ? await resolveNoTaskHeartbeatPatrolEnabled(taskStore, heartbeatModelSettings)
           : true;
-        const baseHeartbeatSystemPrompt = adjustHeartbeatMemoryPrimer(
-          isNoTaskRun
-            ? renderHeartbeatNoTaskSystemPrompt({ plannerHeartbeatPatrolEnabled })
-            : HEARTBEAT_SYSTEM_PROMPT,
-          resolvedMemoryMode.mode,
-        );
+        /*
+        FNXC:OperatorLanguage 2026-09-15-07:18:
+        Heartbeat lanes generate operator-facing prose (mailbox messages via fn_send_message,
+        reports, task logs) with no operator message in the turn to mirror — that is why English
+        maily arrived even while the operator chats in Slovak. The global operatorLanguage
+        directive rides the same store settings this lane already loads (heartbeatModelSettings,
+        which also carries globalPause), so an operator change takes effect on the next heartbeat
+        tick without a restart. Unset/"auto" appends nothing — the prompt stays byte-identical.
+        */
+        const heartbeatLanguageDirective = buildOperatorLanguageDirective(heartbeatModelSettings);
+        const baseHeartbeatSystemPrompt = [
+          adjustHeartbeatMemoryPrimer(
+            isNoTaskRun
+              ? renderHeartbeatNoTaskSystemPrompt({ plannerHeartbeatPatrolEnabled })
+              : HEARTBEAT_SYSTEM_PROMPT,
+            resolvedMemoryMode.mode,
+          ),
+          heartbeatLanguageDirective,
+        ].filter(Boolean).join("\n\n");
         let resolvedInstructionsText = "";
         let resolvedInstructionsForIdentity: SnapshotFieldState = { status: "unset" };
         let workspaceMemoryForIdentity: SnapshotFieldState = { status: "unset" };

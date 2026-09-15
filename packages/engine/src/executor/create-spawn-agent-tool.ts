@@ -22,7 +22,7 @@ import type {
   Settings,
   TaskStore,
 } from "@fusion/core";
-import { resolveEffectiveConcurrency, resolveExecutorFallbackModel, resolveProjectColumnsForRoles } from "@fusion/core";
+import { buildOperatorLanguageDirective, resolveEffectiveConcurrency, resolveExecutorFallbackModel, resolveProjectColumnsForRoles } from "@fusion/core";
 import type { ToolDefinition, AgentSession } from "@earendil-works/pi-coding-agent";
 import {
   createResolvedAgentSession,
@@ -276,7 +276,16 @@ export function createSpawnAgentTool(
 
   Parent task: ${taskId}
   Child agent: ${agent.id} (${name})`;
-          const childSystemPrompt = buildSystemPromptWithInstructions(childBasePrompt, childInstructions);
+          /*
+          FNXC:OperatorLanguage 2026-09-16-13:05:
+          Spawned child agents report back into the parent task log the operator reads, so the
+          child prompt carries the operator language directive like the parent lane.
+          */
+          const childOperatorLanguageDirective = buildOperatorLanguageDirective(settings);
+          const childSystemPrompt = buildSystemPromptWithInstructions(
+            childBasePrompt,
+            childOperatorLanguageDirective ? `${childInstructions}\n\n${childOperatorLanguageDirective}` : childInstructions,
+          );
 
           // Build skill selection context for child agent session
           const childTask = await deps.store.getTask(taskId);
