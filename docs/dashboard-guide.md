@@ -2352,6 +2352,21 @@ The dashboard's CSS is split into a global stylesheet (`packages/dashboard/app/s
 
 **Rule:** New CSS for a component goes in `app/components/ComponentName.css`, NOT `styles.css`. Only design tokens, primitives (`.btn`, `.card`, `.modal`, `.form-input`), and cross-component `@media` overrides belong in the global file.
 
+### Tab strips are never selectable
+
+A tab row is a drag-to-scroll surface, so its labels must never be selectable: the browser starts a native
+selection (blue highlight plus selection-autoscroll) before the shared horizontal-pan hook crosses its 4px
+intent threshold, which is exactly the involuntary second scroll system the Board already removed. One
+global primitive in `packages/dashboard/app/styles.css` suppresses selection on `[role="tablist"]` and its
+descendants, and on the named inventory of tab rows that carry no role; a more specific carve-out keeps
+`input`, `textarea`, `select`, and `[contenteditable="true"]` inside a strip natively selectable. The
+suppression is unconditional — it does not depend on a panning state, a breakpoint, or which host renders
+the strip.
+
+**A new tab strip must either carry `role="tablist"` or be added to that selector list.** Do not copy the
+rule into a component stylesheet. `packages/dashboard/app/__tests__/tab-strip-text-selection.test.ts`
+censuses every tab-strip class rendered by a component and fails on an uncovered one.
+
 ### Mobile drawer conformance
 
 A surface presented as a phone drawer exposes **exactly one drag handle and no close cross**. The handle is always the

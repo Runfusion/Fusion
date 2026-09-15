@@ -7,6 +7,19 @@ function getCssRuleBlock(css: string, selector: string): string {
   return ruleMatch?.[1] ?? "";
 }
 
+/*
+FNXC:TaskDetailStructure 2026-09-15-14:23:
+The strip is declared by several top-level rules that layer onto one another, so asserting a single
+captured block pins whichever one happens to come first in source order rather than the cascade result.
+Union the declarations instead: a positive assertion then means "some layer declares it" and a negative
+assertion means "no layer declares it", which is what the contract is actually about.
+*/
+function getCssRuleBlocks(css: string, selector: string): string {
+  const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(`(?:^|[}\n])\\s*(?:[^{}]*,\\s*)?${escapedSelector}(?:\\s*,[^{}]*)?\\s*\\{([^}]*)\\}`, "g");
+  return [...css.matchAll(pattern)].map((match) => match[1] ?? "").join("\n");
+}
+
 function expectNoOuterPaddingOverride(css: string, selector: string): void {
   const ruleBlock = getCssRuleBlock(css, selector);
   expect(ruleBlock, `${selector} rule`).not.toBe("");
@@ -22,9 +35,9 @@ describe("TaskDetailModal CSS contract", () => {
 
   it("garde la barre d'onglets plane et matérialise uniquement la sélection", async () => {
     const css = await loadAllAppCssBaseOnly();
-    const strip = getCssRuleBlock(css, '.detail-tabs');
-    const tab = getCssRuleBlock(css, '.detail-tab');
-    const active = getCssRuleBlock(css, '.detail-tab-active');
+    const strip = getCssRuleBlocks(css, '.detail-tabs');
+    const tab = getCssRuleBlocks(css, '.detail-tab');
+    const active = getCssRuleBlocks(css, '.detail-tab-active');
 
     /*
     FNXC:TaskDetailStructure 2026-09-14-21:15:
@@ -56,7 +69,16 @@ describe("TaskDetailModal CSS contract", () => {
     expect(css).toMatch(/\.detail-tabs\s*\{[^}]*touch-action\s*:\s*pan-x\s+pan-y\s*;/);
     expect(css).toMatch(/\.detail-tab\s*\{[^}]*flex-shrink\s*:\s*0\s*;/);
     expect(css).toMatch(/\.detail-tabs\.is-mouse-panning[\s\S]*?cursor\s*:\s*grabbing\s*!important\s*;/);
-    expect(css).toMatch(/\.detail-tabs\.is-mouse-panning[\s\S]*?user-select\s*:\s*none\s*;/);
+    /*
+    FNXC:TabStripTextSelection 2026-09-15-14:23:
+    FN-423 replaced the previous assertion here (selection suppressed only while `is-mouse-panning`)
+    with the new truth: suppression is unconditional and owned by the global tab-strip primitive, so
+    a drag can never start a selection before the shared hook's 4px pan threshold is crossed. The pan
+    state now owns the cursor alone.
+    */
+    const panningBlock = getCssRuleBlock(css, ".detail-tabs.is-mouse-panning");
+    expect(panningBlock).not.toMatch(/user-select\s*:/);
+    expect(css).toMatch(/\[role="tablist"\][^{}]*\{[^}]*user-select\s*:\s*none\s*;/);
   });
 
   /* FNXC:TaskDetailPadding 2026-09-12-03:19: The active tab now renders directly in the single `.detail-body` scroller, which owns the canonical inset without a generic child wrapper. */

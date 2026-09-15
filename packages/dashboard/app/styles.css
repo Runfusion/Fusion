@@ -1398,6 +1398,32 @@ type scale and weight belong to the interface style. Reinstating a per-theme sha
 re-couple the two axes the product now presents as independent.
 */
 
+/*
+FNXC:TabStripTextSelection 2026-09-15-14:23:
+FN-423: a click-drag on a tab row must only scroll the row, never start a native text selection.
+The suppression is UNCONDITIONAL rather than tied to the panning state because `useHorizontalMousePan`
+can only `preventDefault()` after its 4px intent threshold, so the browser has already begun a
+selection (blue highlight plus selection-autoscroll) before any `is-mouse-panning` class exists.
+This primitive lives in the global stylesheet because it is transversal to a dozen tab-strip
+components; duplicating it into each component CSS is exactly the drift the reuse rule forbids.
+The selector list is `[role="tablist"]` plus the audited inventory of tab rows that carry no role.
+Grammar, specificity and source order copy `FNXC:BoardTextSelection` in `Board.css` literally: broad
+suppression first, then a MORE SPECIFIC editable carve-out so inputs inside a strip keep native
+selection independently of CSS import order.
+*/
+:is([role="tablist"], .mailbox-tabs, .mailbox-agent-subtabs, .terminal-tabs, .terminal-mobile-tabs, .settings-sidebar, .agent-detail-tabs, .wf-mobile-tabs, .prompt-manager-tabs, .project-filter-tabs),
+:is([role="tablist"], .mailbox-tabs, .mailbox-agent-subtabs, .terminal-tabs, .terminal-mobile-tabs, .settings-sidebar, .agent-detail-tabs, .wf-mobile-tabs, .prompt-manager-tabs, .project-filter-tabs) * {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+:is([role="tablist"], .mailbox-tabs, .mailbox-agent-subtabs, .terminal-tabs, .terminal-mobile-tabs, .settings-sidebar, .agent-detail-tabs, .wf-mobile-tabs, .prompt-manager-tabs, .project-filter-tabs) :is(input, textarea, select, [contenteditable="true"]) {
+  user-select: text;
+  -webkit-user-select: text;
+  -webkit-touch-callout: default;
+}
+
 .modal {
   position: relative;
   background: var(--surface);

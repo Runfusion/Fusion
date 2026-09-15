@@ -17,6 +17,31 @@ import {
   MainPanelTaskDetailHost,
   RightDockTaskDetailHost,
 } from "../TaskDetailHostBoundaries";
+import { loadStylesCss } from "../../test/cssFixture";
+
+/*
+FNXC:TabStripTextSelection 2026-09-15-14:23:
+FN-423 symptom acceptance. The reported defect is that a click-drag on the tab row starts a native text
+selection: the browser begins selecting BEFORE `useHorizontalMousePan` crosses its 4px threshold, so a
+suppression gated on `is-mouse-panning` arrives too late. The selector under test is read from the real
+stylesheet rather than restated here, so the assertion tracks the shipped rule.
+*/
+function suppressionSelector(): string {
+  const css = loadStylesCss().replace(/\/\*[\s\S]*?\*\//g, "");
+  const rule = [...css.matchAll(/([^{}]+)\{([^}]*)\}/g)].find(
+    ([, selector, declarations]) =>
+      selector.includes('[role="tablist"]') && declarations.includes("user-select: none;"),
+  );
+  if (!rule) throw new Error("no tab-strip selection-suppression rule found in styles.css");
+  return rule[1]!.trim().replace(/\s+/g, " ");
+}
+
+function expectStripUnselectable(scroller: HTMLElement, selector: string): void {
+  expect(scroller.matches(selector)).toBe(true);
+  const label = scroller.querySelector<HTMLElement>(".detail-tab")!;
+  expect(label).not.toBeNull();
+  expect(label.matches(selector)).toBe(true);
+}
 
 setupTaskDetailModalHooks();
 
@@ -174,6 +199,38 @@ describe("Task Detail tab mouse pan", () => {
     expect(labels.indexOf("Pull Request")).toBeLessThan(labels.indexOf("Comments"));
     expect(labels.slice(-2)).toEqual(["Terminal", "Quality"]);
     expect(labels.filter((label) => label === "Plan")).toHaveLength(1);
+  });
+
+  it("empêche toute sélection de texte avant, pendant et après le pan", () => {
+    const selector = suppressionSelector();
+    render(embeddedContent());
+    const scroller = configureScroller();
+
+    // Avant tout pointerdown : c'est ici que la sélection native démarrait.
+    expectStripUnselectable(scroller, selector);
+
+    const chat = screen.getByRole("button", { name: "Chat" });
+    fireEvent.pointerDown(chat, { pointerId: 1, pointerType: "mouse", button: 0, clientX: 100, clientY: 50 });
+    fireEvent.pointerMove(chat, { pointerId: 1, pointerType: "mouse", clientX: 140, clientY: 50 });
+    expect(scroller).toHaveClass("is-mouse-panning");
+    expectStripUnselectable(scroller, selector);
+
+    fireEvent.pointerUp(scroller, { pointerId: 1, pointerType: "mouse", button: 0, clientX: 140, clientY: 50 });
+    expect(scroller).not.toHaveClass("is-mouse-panning");
+    expectStripUnselectable(scroller, selector);
+  });
+
+  it("protège aussi une rangée sans débordement, où aucun pan n'est possible", () => {
+    const selector = suppressionSelector();
+    render(embeddedContent());
+    const scroller = configureScroller(document, false);
+
+    expectStripUnselectable(scroller, selector);
+
+    pan(screen.getByRole("button", { name: "Chat" }), scroller, 100, 40);
+
+    expect(scroller).not.toHaveClass("is-mouse-panning");
+    expectStripUnselectable(scroller, selector);
   });
 
   it.each([

@@ -1,11 +1,13 @@
 /*
 FNXC:TaskDetailTabs 2026-09-12-17:32:
-The tab row keeps native horizontal touch panning and shows closed-hand feedback only after shared mouse-pan intent wins. The panning state temporarily owns cursor and text selection without changing the flat tab treatment or stationary control behavior.
+The tab row keeps native horizontal touch panning and shows closed-hand feedback only after shared mouse-pan intent wins. The panning state owns the cursor only, without changing the flat tab treatment or stationary control behavior.
+
+FNXC:TaskDetailTabs 2026-09-15-14:23:
+FN-423 moved text-selection suppression out of this state. Selection is now suppressed unconditionally by the `FNXC:TabStripTextSelection` primitive in `styles.css`, which covers every tab strip: gating it on `is-mouse-panning` was too late, since the browser starts selecting before the shared hook's 4px pan threshold is crossed.
 */
 .detail-tabs.is-mouse-panning,
 .detail-tabs.is-mouse-panning * {
   cursor: grabbing !important;
-  user-select: none;
 }
 
 @media (max-width: 768px) {
