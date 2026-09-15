@@ -206,6 +206,23 @@ jobs:
       - name: Assert every dashboard test file is gated or skip-listed
         run: node scripts/check-test-inventory.mjs --dashboard-curated
 
+  # FNXC:LifecycleColumnCensus 2026-09-15-15:11:
+  # The ratchet previously ran only for pull requests, so a drift merged to main
+  # stayed invisible until an unrelated pull request inherited its failing lint job.
+  lifecycle-ratchet-drift:
+    name: Lifecycle-column ratchet drift
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+
+      - name: Setup Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+
+      - name: Run lifecycle-column ratchet
+        run: pnpm check:lifecycle-columns
+
   line-count-audit:
     name: Line-count audit
     runs-on: ubuntu-latest

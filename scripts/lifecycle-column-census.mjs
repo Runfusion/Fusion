@@ -17,12 +17,12 @@ Report-only by default:
 `--strict` fails on a RISE (a reintroduced guard) and equally on a DROP that was not recorded: a
 stale allowance is a hole through which the same guards can return while the check stays green.
 
-WIRED INTO THE MERGE GATE (`pnpm test:gate`) as of 2026-07-31. The original note here said the
-opposite — "NOT wired into the merge gate" — on the reasoning that a thousand-site backlog cannot be
-blocking on the day it is first measured. That reasoning was sound and its conclusion expired: the
-baseline is per-file, so gating costs nothing for files nobody touches, and while it was unwired the
-baseline drifted to 854 against a tree of 787. Sixty-seven guards of regression would have merged
-green (PR #2661).
+The ratchet runs in the `Lint` job of `.github/workflows/pr-checks.yml` for pull requests and in the
+post-merge `lifecycle-ratchet-drift` job of `.github/workflows/full-suite.yml` for pushes to `main`.
+It is intentionally not part of `pnpm test:gate`: that static gate runs only the leading
+`node scripts/check-*.mjs` entries from `test:gate:static`, while this command remains an explicit
+Lint-job policy check. The per-file baseline makes that check free for files nobody changes, and the
+post-merge job prevents main-line drift from being discovered only by an unrelated pull request.
 
 Consequence for conversion PRs, stated because it is a real cost: lowering a count now REQUIRES
 re-recording the baseline in the same PR (`--strict --update-baseline`). That is deliberate — it puts

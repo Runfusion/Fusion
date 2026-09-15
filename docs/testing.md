@@ -224,6 +224,15 @@ A dropped baseline must be **deliberately re-recorded and committed** with
 count is pinned and any divergence is a real event. `--strict --update-baseline` re-records unconditionally
 and prints `ACCEPTED RISES`, which is the only way to record a rise deliberately.
 
+<!-- FNXC:LifecycleColumnCensus 2026-09-15-15:11: The PR-only ratchet let main-line drift
+accumulate unseen until an unrelated pull request inherited the failure. Keep post-merge observation
+separate from the merge gate while making the same strict command visible at the introducing commit. -->
+The strict ratchet runs in the `Lint` job of `PR Checks` on `pull_request` and in the
+`lifecycle-ratchet-drift` job of `.github/workflows/full-suite.yml` on pushes to `main`.
+`pnpm lint` does **not** run this census. Resolve every rise by converting it to a live
+workflow-resolved check or adding a declaration-leading `DELIBERATE-LITERAL` marker with its reason,
+then re-record the baseline with `--strict --update-baseline` in the same change.
+
 The regression suite is `packages/engine/src/__tests__/lifecycle-column-census.test.ts`. It pins
 each form the census must catch (all six ids, non-`column` locals, single quotes, negation,
 multiple hits per line) and each it must not (role comparisons, comment prose, trailing line

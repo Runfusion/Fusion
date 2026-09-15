@@ -4496,6 +4496,35 @@ describe("useTasks", () => {
       expect(result.current.tasks[0]?.recentAgentActivityAt).toBe("2026-07-28T12:00:01.000Z");
     });
 
+    it("uses workflow metadata that arrives after the stable SSE subscription starts", async () => {
+      const initialTask = createMockTask({
+        column: "drafting",
+        status: null,
+        updatedAt: "2026-07-28T12:00:00.000Z",
+      });
+      mockFetchTasks.mockResolvedValueOnce([initialTask]);
+      const { result, rerender } = renderHook(
+        ({ resolveColumnFlags }: { resolveColumnFlags?: (task: Task) => { intake?: boolean; hold?: boolean } }) => (
+          useTasks({ resolveColumnFlags })
+        ),
+        { initialProps: { resolveColumnFlags: undefined } },
+      );
+
+      await waitFor(() => expect(result.current.tasks).toHaveLength(1));
+      rerender({ resolveColumnFlags: () => ({ intake: true, hold: true }) });
+
+      act(() => {
+        MockEventSource.instances[0]._emit("agent:log", {
+          taskId: initialTask.id,
+          timestamp: "2026-07-28T12:00:01.000Z",
+          type: "tool",
+          agent: "triage",
+        });
+      });
+
+      expect(result.current.tasks[0]?.recentAgentActivityAt).toBe("2026-07-28T12:00:01.000Z");
+    });
+
     /* The paired negative: resolved traits must still NARROW. A renamed WIP lane is not planning. */
     it("does not stamp planner activity for a card in a RENAMED wip lane", async () => {
       const initialTask = createMockTask({
