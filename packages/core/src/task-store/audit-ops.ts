@@ -22,6 +22,7 @@ import {readTaskRow, updateTaskColumns} from "../task-store/async/async-persiste
 import { getLiveTaskColumn } from "./async/async-comments-attachments.js";
 import { acquireTaskAdvisoryXactLock } from "./task-advisory-lock.js";
 import { ARCHIVED_SENTINEL_LANES } from "../project-lane-vocabulary.js";
+import { buildTaskLogReadOnlyMessage, buildTaskNotFoundMessage } from "./task-log-write-refusal.js";
 import * as schema from "../postgres/schema/index.js";
 import { observeOverlapWaitTransitionInTransaction } from "./overlap-wait-ops.js";
 
@@ -310,10 +311,10 @@ export async function logEntryImpl(store: TaskStore, id: string, action: string,
           /*
           FNXC:TaskArchiveRemoval 2026-09-04-18:25 DELIBERATE-LITERAL:
           `getLiveTaskColumn` returns `archived` only as the stable deleted/historical sentinel. It is
-          not a workflow role, and logs remain read-only for that sentinel.
+          not a workflow role, and logs remain read-only for that sentinel; the shared helper owns its literal.
           */
-          if (state === "archived") throw new Error(`Task ${id} is deleted or historical — logging is read-only`);
-          if (state === null) throw new Error(`Task ${id} not found`);
+          if (state === "archived") throw new Error(buildTaskLogReadOnlyMessage(id));
+          if (state === null) throw new Error(buildTaskNotFoundMessage(id));
         }
 
         const dir = store.taskDir(id);
@@ -359,12 +360,12 @@ export async function logEntryImpl(store: TaskStore, id: string, action: string,
             const layer = store.asyncLayer!;
       const pgRow = await readTaskRow(layer, id, { includeDeleted: true });
       if (!pgRow) {
-        throw new Error(`Task ${id} not found`);
+        throw new Error(buildTaskNotFoundMessage(id));
       }
       /*
       FNXC:TaskArchiveRemoval 2026-09-04-18:25 DELIBERATE-LITERAL:
       Log mutation rejects the fixed historical sentinel and soft-deleted rows. Archive is not a
-      workflow role; keeping the property comparison in the fallback preserves SQL/TypeScript parity
+      workflow role; the shared helper owns the refusal literal while this comparison preserves SQL/TypeScript parity
       for migration-era data.
       */
       const historicalSentinels = ARCHIVED_SENTINEL_LANES;
@@ -373,7 +374,7 @@ export async function logEntryImpl(store: TaskStore, id: string, action: string,
         /* DELIBERATE-LITERAL — migration fallback for callers without sentinel metadata. */
         : pgRow.column === "archived";
       if (rowIsHistoricalSentinel || pgRow.deletedAt != null) {
-        throw new Error(`Task ${id} is deleted or historical — logging is read-only`);
+        throw new Error(buildTaskLogReadOnlyMessage(id));
       }
       // PG jsonb columns arrive already-parsed; convert to the TaskLogEntry[] shape.
       const existingLog = Array.isArray(pgRow.log) ? (pgRow.log as TaskLogEntry[]) : [];

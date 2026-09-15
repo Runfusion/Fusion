@@ -5,9 +5,11 @@ import type { GlobalSettings, LifecycleColumns, ProjectSettings, Task, TaskSourc
 import { resolveTaskLifecycleColumns } from "@fusion/core";
 import { resolveGithubTrackingAuth } from "./github-auth.js";
 import { GitHubClient } from "./github.js";
+import { safeLogTaskEntry } from "./task-log-safety.js";
 
 const RECONCILE_SCAN_LIMIT = 200;
 const RECONCILE_CONCURRENCY_LIMIT = 4;
+const DELETED_DIAGNOSTIC_SIGNATURE_CAP = 50;
 
 /*
 FNXC:WorkflowResolvedColumns 2026-07-31-05:10:
@@ -65,6 +67,25 @@ function compareUpdatedAtDesc(a: Task, b: Task): number {
 }
 
 export class GitHubTrackingReconciler {
+  private readonly deletedDiagnosticSignaturesByStore = new WeakMap<TaskStore, {
+    lastAuthSignature?: string;
+    taskSignatures: Set<string>;
+  }>();
+
+  private warnDeletedDiagnostic(store: TaskStore, signature: string, message: string): void {
+    const known = this.deletedDiagnosticSignaturesByStore.get(store) ?? { taskSignatures: new Set<string>() };
+    if (signature.startsWith("auth:")) {
+      if (known.lastAuthSignature === signature) return;
+      known.lastAuthSignature = signature;
+    } else {
+      if (known.taskSignatures.has(signature)) return;
+      known.taskSignatures.add(signature);
+      // Keep backlog failures diagnostic without retaining unbounded deleted-task history.
+      while (known.taskSignatures.size > DELETED_DIAGNOSTIC_SIGNATURE_CAP) known.taskSignatures.delete(known.taskSignatures.values().next().value!);
+    }
+    this.deletedDiagnosticSignaturesByStore.set(store, known);
+    severityAuditLog.warn(message);
+  }
   /*
   FNXC:GithubTrackingReconcile 2026-07-16-15:40:
   The three reconcile passes are INDEPENDENT and each MUST run even when another throws.
@@ -124,7 +145,10 @@ export class GitHubTrackingReconciler {
     const resolution = resolveGithubTrackingAuth({ projectSettings, globalSettings });
     if (!resolution.ok) {
       for (const task of tasks) {
-        await store.logEntry(task.id, "Skipped GitHub tracking issue reconciliation", resolution.message);
+        await safeLogTaskEntry(store, task.id, "Skipped GitHub tracking issue reconciliation", resolution.message, {
+          logger: severityAuditLog,
+          context: "github-tracking-reconcile",
+        });
       }
       return { scanned: tasks.length, closed: 0, skipped: tasks.length, errors: 0 };
     }
@@ -155,10 +179,12 @@ export class GitHubTrackingReconciler {
         closed += 1;
       } catch (error) {
         errors += 1;
-        await store.logEntry(
+        await safeLogTaskEntry(
+          store,
           task.id,
           "Failed to reconcile GitHub tracking issue",
           error instanceof Error ? error.message : String(error),
+          { logger: severityAuditLog, context: "github-tracking-reconcile" },
         );
       }
     });
@@ -187,7 +213,10 @@ export class GitHubTrackingReconciler {
     const resolution = resolveGithubTrackingAuth({ projectSettings, globalSettings });
     if (!resolution.ok) {
       for (const task of tasks) {
-        await store.logEntry(task.id, "Skipped GitHub source issue reconciliation", resolution.message);
+        await safeLogTaskEntry(store, task.id, "Skipped GitHub source issue reconciliation", resolution.message, {
+          logger: severityAuditLog,
+          context: "github-tracking-reconcile",
+        });
       }
       return { scanned: tasks.length, closed: 0, skipped: tasks.length, errors: 0 };
     }
@@ -232,10 +261,12 @@ export class GitHubTrackingReconciler {
         closed += 1;
       } catch (error) {
         errors += 1;
-        await store.logEntry(
+        await safeLogTaskEntry(
+          store,
           task.id,
           "Failed to reconcile GitHub source issue",
           error instanceof Error ? error.message : String(error),
+          { logger: severityAuditLog, context: "github-tracking-reconcile" },
         );
       }
     });
@@ -270,7 +301,10 @@ export class GitHubTrackingReconciler {
     const resolution = resolveGithubTrackingAuth({ projectSettings, globalSettings });
     if (!resolution.ok) {
       for (const task of tasks) {
-        await store.logEntry(task.id, "Skipped GitHub source issue closed-at backfill", resolution.message);
+        await safeLogTaskEntry(store, task.id, "Skipped GitHub source issue closed-at backfill", resolution.message, {
+          logger: severityAuditLog,
+          context: "github-tracking-reconcile",
+        });
       }
       return { scanned: tasks.length, filled: 0, skipped: tasks.length, errors: 0, hasMore };
     }
@@ -305,10 +339,12 @@ export class GitHubTrackingReconciler {
         filled += 1;
       } catch (error) {
         errors += 1;
-        await store.logEntry(
+        await safeLogTaskEntry(
+          store,
           task.id,
           "Failed to backfill GitHub source issue closed-at",
           error instanceof Error ? error.message : String(error),
+          { logger: severityAuditLog, context: "github-tracking-reconcile" },
         );
       }
     });
@@ -325,18 +361,23 @@ export class GitHubTrackingReconciler {
     const tasks = Array.isArray(listedTasks?.tasks) ? listedTasks.tasks : [];
     const hasMore = listedTasks?.hasMore === true;
     /*
-    FNXC:WorkflowResolvedColumns 2026-07-31-05:20:
-    This bounded reconciliation page contains only soft-deleted rows selected by
-    `listTasksForGithubTrackingReconcile`; completed tasks close their issue on the live lifecycle path.
-    The historical archive subsystem is a migration source and is not a second task-lifecycle authority.
+    FNXC:GithubTrackingReconcile 2026-09-15-15:19:
+    Every row this pass holds was selected with `deletedAt IS NOT NULL`, so task-log writes are refused
+    by construction. Diagnostics belong in the service log and are first-occurrence-only: repeating them
+    each cycle recreates the reported symptom. Issue #3616's outbox cadence is owned by poll outcomes;
+    this pass owes idle projects quiescence: zero task-store writes and no repeated per-cycle work.
+    Retain at most 50 distinct signatures per store so a large deleted backlog cannot grow memory forever.
     */
     const projectSettings = ((await store.getSettings()) ?? {}) as Pick<ProjectSettings, "githubAuthMode" | "githubAuthToken">;
     const globalSettings = (await store.getGlobalSettingsStore?.()?.getSettings?.() ?? {}) as Pick<GlobalSettings, never>;
     const resolution = resolveGithubTrackingAuth({ projectSettings, globalSettings });
     if (!resolution.ok) {
-      for (const task of tasks) {
-        await store.logEntry(task.id, "Skipped GitHub tracking issue reconciliation (deleted pass)", resolution.message);
-      }
+      const signature = `auth:${resolution.message}:${tasks.length}`;
+      this.warnDeletedDiagnostic(
+        store,
+        signature,
+        `[github-tracking-reconcile] skipped ${tasks.length} deleted/archived GitHub tracking task(s): ${resolution.message}`,
+      );
       return { scanned: tasks.length, closed: 0, skipped: tasks.length, errors: 0, hasMore };
     }
 
@@ -366,10 +407,12 @@ export class GitHubTrackingReconciler {
         closed += 1;
       } catch (error) {
         errors += 1;
-        await store.logEntry(
-          task.id,
-          "Failed to reconcile GitHub tracking issue (deleted pass)",
-          error instanceof Error ? error.message : String(error),
+        const message = error instanceof Error ? error.message : String(error);
+        const coordinates = `${issue.owner}/${issue.repo}#${issue.number}`;
+        this.warnDeletedDiagnostic(
+          store,
+          `task:${task.id}:${coordinates}:${message}`,
+          `[github-tracking-reconcile] failed deleted/archived GitHub tracking reconciliation for ${task.id} (${coordinates}): ${message}`,
         );
       }
     });
@@ -391,10 +434,12 @@ async function persistSourceIssueClosedAt(
   try {
     await store.updateTask(taskId, { sourceIssue: { ...sourceIssue, closedAt } });
   } catch (error) {
-    await store.logEntry(
+    await safeLogTaskEntry(
+      store,
       taskId,
       "Failed to persist GitHub source issue closed timestamp",
       error instanceof Error ? error.message : String(error),
+      { logger: severityAuditLog, context: "github-tracking-reconcile" },
     );
   }
 }

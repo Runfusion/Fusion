@@ -306,6 +306,34 @@ describe("GitHubTrackingReconciler", () => {
       expect(result.hasMore).toBe(true);
       expect(result.skipped).toBe(1);
     });
+
+    it("keeps deleted and archived rows log-free while reporting auth degradation once", async () => {
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      mockResolveGithubTrackingAuth.mockReturnValue({ ok: false, message: "no auth" });
+      const store = createStore({ reconcileCandidates: [
+        { id: "FN-deleted", deletedAt: "2026-01-01T00:00:00.000Z", githubTracking: { enabled: true, issue: { owner: "o", repo: "r", number: 1 } } },
+        { id: "FN-archived", column: "archived", githubTracking: { enabled: true, issue: { owner: "o", repo: "r", number: 2 } } },
+      ] });
+      (store.logEntry as any).mockRejectedValue(new Error("Task FN-deleted is archived — logging is read-only"));
+
+      await expect(new GitHubTrackingReconciler().runSweep(store, { offset: 0 })).resolves.toEqual({ nextOffset: 0 });
+      expect(store.logEntry).not.toHaveBeenCalled();
+      expect(warnSpy.mock.calls.flat().join(" ")).not.toContain("pass failed");
+      warnSpy.mockRestore();
+    });
+
+    it("keeps a deleted-pass GitHub failure out of task logs and out of pass-failed isolation", async () => {
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      mockResolveGithubTrackingAuth.mockReturnValue({ ok: true, auth: { mode: "token", token: "ghp_test" } });
+      mockGetIssue.mockRejectedValue(new Error("github unavailable"));
+      const store = createStore({ reconcileCandidates: [{ id: "FN-1", deletedAt: "2026-01-01T00:00:00.000Z", githubTracking: { enabled: true, issue: { owner: "o", repo: "r", number: 1 } } }] });
+      (store.logEntry as any).mockRejectedValue(new Error("Task FN-1 is deleted or historical — logging is read-only"));
+
+      await expect(new GitHubTrackingReconciler().runSweep(store, { offset: 0 })).resolves.toEqual({ nextOffset: 0 });
+      expect(store.logEntry).not.toHaveBeenCalled();
+      expect(warnSpy.mock.calls.flat().join(" ")).not.toContain("pass failed");
+      warnSpy.mockRestore();
+    });
   });
 
   /*

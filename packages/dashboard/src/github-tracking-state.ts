@@ -5,6 +5,7 @@ import type { GithubIssueAction, GlobalSettings, ProjectSettings, Task, TaskStor
 import { columnsWithFlag, declaresAnyLifecycleTrait, resolveWorkflowIrForTask } from "@fusion/core";
 import { GitHubClient } from "./github.js";
 import { resolveGithubTrackingAuth } from "./github-auth.js";
+import { safeLogTaskEntry } from "./task-log-safety.js";
 
 /*
 FNXC:WorkflowResolvedColumns 2026-07-31-13:40 (fleet — inline fallback arms):
@@ -327,17 +328,16 @@ export class GitHubTrackingStateService {
     (store as unknown as { emit: (eventName: string, payload: GitHubIssueActionEvent) => void }).emit("github-issue:action", event);
   }
 
+  /*
+  FNXC:GithubTrackingReconcile 2026-09-15-15:19:
+  Delete handlers can race a soft-deleted or historical row becoming read-only. Delegate the known
+  refusal to the shared seam so it cannot starve the entire delete-path handler.
+  */
   private async safeLogDeletedTaskEntry(store: TaskStore, taskId: string, message: string, details: string): Promise<void> {
-    try {
-      await store.logEntry(taskId, message, details);
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      if (errorMessage.includes(`Task ${taskId} not found`)) {
-        severityAuditLog.warn(`[github-tracking-state] Unable to write log entry for deleted task ${taskId}: ${message}`);
-        return;
-      }
-      throw error;
-    }
+    await safeLogTaskEntry(store, taskId, message, details, {
+      logger: severityAuditLog,
+      context: "github-tracking-state",
+    });
   }
 
   private async handleSourceIssueDelete(store: TaskStore, task: Task, meta?: TaskDeletedMeta): Promise<void> {
