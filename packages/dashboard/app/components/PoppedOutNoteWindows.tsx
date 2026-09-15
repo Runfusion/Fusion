@@ -10,6 +10,12 @@ export interface PoppedOutNoteWindowsProps {
   registerGuard?: (projectId: string, noteId: string, guard: () => boolean | Promise<boolean>, onAccepted?: () => void) => () => void;
 }
 
+/*
+FNXC:ProjectNotes 2026-09-15-03:29:
+FN-404 : `dedicatedNoteId` reste l’identité de montage et de `windowKey` ; `dedicatedNote` transporte en plus
+l’instantané VIVANT tenu à jour par `usePoppedOutNotes.syncNote`. Un renommage externe atteint ainsi la fenêtre en
+place, sans la remonter au premier plan et sans écraser un brouillon sale.
+*/
 export function PoppedOutNoteWindows({ entries, projectId, addToast, onClose, onChanged, registerGuard }: PoppedOutNoteWindowsProps) {
   return entries.filter((entry) => entry.projectId === projectId).map((entry) => (
     <NotesView
@@ -17,6 +23,7 @@ export function PoppedOutNoteWindows({ entries, projectId, addToast, onClose, on
       projectId={entry.projectId}
       addToast={addToast}
       dedicatedNoteId={entry.note.id}
+      dedicatedNote={entry.note}
       onChanged={onChanged}
       floating={{
         onClose: () => onClose(entry.projectId, entry.note.id),

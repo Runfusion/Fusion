@@ -19,6 +19,12 @@ export interface NotesViewProps {
   compact?: boolean;
   listOnly?: boolean;
   dedicatedNoteId?: string;
+  /*
+  FNXC:ProjectNotes 2026-09-15-03:29:
+  FN-404 : instantané VIVANT de la note imposée, tenu à jour par le propriétaire des fenêtres détachées. Seule la
+  fenêtre dédiée le reçoit ; la page standard et la liste `listOnly` du dock ne le passent jamais et restent inchangées.
+  */
+  dedicatedNote?: ProjectNoteSummary;
   onOpenNote?: (note: ProjectNoteSummary) => void;
   onChanged?: () => void;
   registerGuard?: (guard: () => boolean | Promise<boolean>, onAccepted?: () => void) => () => void;
@@ -29,13 +35,14 @@ export interface NotesViewProps {
 FNXC:ProjectNotes 2026-09-12-04:06:
 NotesView conserve un seul formulaire partagé avec trois frontières explicites : la page standard garde liste + détail, le dock de droite monte uniquement la liste, et une fenêtre dédiée monte uniquement l’éditeur de la note imposée. Chaque fenêtre dédiée possède son propre useNotes afin que brouillon, conflit, sauvegarde et confirmation de fermeture restent indépendants.
 */
-export function NotesView({ projectId, addToast, controller, compact = false, listOnly = false, dedicatedNoteId, onOpenNote, onChanged, registerGuard, floating }: NotesViewProps) {
+export function NotesView({ projectId, addToast, controller, compact = false, listOnly = false, dedicatedNoteId, dedicatedNote, onOpenNote, onChanged, registerGuard, floating }: NotesViewProps) {
   const { t } = useTranslation("app");
   const confirm = useConfirm();
   const ownedNotes = useNotes(controller ? undefined : projectId);
   const notes = controller ?? ownedNotes;
   const dedicated = Boolean(dedicatedNoteId);
   const dedicatedSelectionRef = useRef<string | null>(null);
+  const adoptedRevisionRef = useRef<number | null>(null);
 
   useEffect(() => {
     const identity = dedicatedNoteId ? `${projectId ?? ""}:${dedicatedNoteId}` : null;
@@ -43,6 +50,25 @@ export function NotesView({ projectId, addToast, controller, compact = false, li
     dedicatedSelectionRef.current = identity;
     void notes.select(dedicatedNoteId!);
   }, [dedicatedNoteId, notes.select, projectId]);
+
+  /*
+  FNXC:ProjectNotes 2026-09-15-03:29:
+  FN-404 : un renommage effectué ailleurs atteint la fenêtre en place. Cet effet est délibérément distinct du garde de
+  première sélection ci-dessus : il n’adopte la révision externe que si elle est STRICTEMENT plus récente que la
+  révision chargée et que la fenêtre n’a pas de brouillon sale, car un brouillon en cours ne doit jamais être écrasé
+  par une version venue d’ailleurs. L’adoption passe par `notes.select` afin que `selected.revision` reste aligné avec
+  la CAS d’enregistrement, et la dernière révision tentée est mémorisée pour qu’une lecture qui ne la publie pas (note
+  supprimée, erreur réseau) ne déclenche pas de boucle de re-sélection.
+  */
+  useEffect(() => {
+    if (!dedicated || !dedicatedNote || dedicatedNote.id !== dedicatedNoteId) return;
+    const selected = notes.selected;
+    if (!selected || selected.id !== dedicatedNote.id) return;
+    if (notes.dirty || dedicatedNote.revision <= selected.revision) return;
+    if (adoptedRevisionRef.current === dedicatedNote.revision) return;
+    adoptedRevisionRef.current = dedicatedNote.revision;
+    void notes.select(dedicatedNote.id);
+  }, [dedicated, dedicatedNote, dedicatedNoteId, notes.dirty, notes.select, notes.selected]);
 
   const abandon = useCallback(async () => !notes.dirty || confirm.confirm({ title: t("notes.discardTitle", "Discard changes?"), message: t("notes.discardMessage", "Your unsaved draft will be lost."), confirmLabel: t("notes.discard", "Discard"), danger: true }), [confirm, notes.dirty, t]);
   const commitFloatingClose = useCallback(() => { if (notes.dirty) notes.clearSelection(); }, [notes]);

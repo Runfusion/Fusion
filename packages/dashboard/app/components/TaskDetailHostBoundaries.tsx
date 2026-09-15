@@ -226,6 +226,14 @@ FNXC:TaskWindowIdentity 2026-09-14-17:46:
 FN-392: one entry renders one window keyed by task id, with no view-derived visibility. Activity comes from the global
 window manager through `AppTaskPopoutContent`, so a hidden window still suspends polling and pasting while a mere view
 change never interrupts its content, terminal, or local state.
+
+FNXC:TaskWindowIdentity 2026-09-15-03:29:
+FN-404: the FN-396 snapshot drift (an open window stranded on an old name) does NOT apply to task windows, so they get
+no `syncTask` writer. Two properties make them immune and both are locked by
+`__tests__/TaskDetailHostBoundaries.live-rename.test.tsx`: the entry snapshot is re-merged with the live row on every
+render below (`mergeTaskSnapshot`), and the window carries no nominal title — `title`/`ariaLabel` are the static
+localized `taskDetail.accessibleName`. `popOut` therefore remains the single writer of `entry.task`, and `focusNonce`
+advances only on an actual open request.
 */
 export function AppTaskPopoutWindows({ entries, liveTasks, onCloseTask, windowProps }: AppTaskPopoutWindowsProps) {
   return entries.map(({ task: snapshot, initialTab, focusNonce }) => {

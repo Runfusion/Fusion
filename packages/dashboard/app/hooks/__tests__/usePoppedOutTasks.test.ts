@@ -68,6 +68,29 @@ describe("usePoppedOutTasks", () => {
   });
 
   /*
+  FNXC:TaskWindowIdentity 2026-09-15-03:29:
+  FN-404: this owner deliberately has NO `syncTask`. A detached task window derives its content from the live task list
+  at render time (`AppTaskPopoutWindows` + `mergeTaskSnapshot`) and shows no nominal title, so the FN-396 snapshot drift
+  cannot reach it. `popOut` therefore stays the single writer of `entry.task`, and `focusNonce` advances only when an
+  open request is actually made — never as a side effect of live data arriving.
+  */
+  it("keeps popOut as the single writer of the entry snapshot and focus nonce", () => {
+    const { result } = renderHook(() => usePoppedOutTasks());
+    act(() => result.current.popOut(task("1")));
+    const opened = result.current.entries;
+
+    expect(Object.keys(result.current).sort()).toEqual(["close", "closeAll", "entries", "popOut", "tasks"]);
+    expect(result.current).not.toHaveProperty("syncTask");
+
+    act(() => result.current.close("absent"));
+    expect(result.current.entries).toEqual(opened);
+    expect(result.current.entries[0].focusNonce).toBe(1);
+
+    act(() => result.current.popOut({ ...task("1"), title: "renamed elsewhere" } as never));
+    expect(result.current.entries[0]).toMatchObject({ focusNonce: 2, task: { title: "renamed elsewhere" } });
+  });
+
+  /*
   FNXC:ProjectSwitchModalReset 2026-07-23-00:00:
   A project swap dismisses every popped-out task window — they are task-detail surfaces for the previous project.
   */

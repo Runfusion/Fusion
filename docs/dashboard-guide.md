@@ -2895,6 +2895,8 @@ La destination **Notes** est disponible dans la barre latérale sur ordinateur e
 
 Sous l’en-tête, Notes occupe tout le panneau disponible. Sur ordinateur et tablette, une séparation unique place la liste compacte à gauche et donne tout l’espace restant à l’éditeur; la note cliquée reçoit immédiatement un fond et un marqueur d’accent, sans attendre la fin de son chargement. Sur un écran étroit ou peu haut, la liste et le détail deviennent un parcours plein panneau, avec une commande **Back** accessible pour revenir à la liste.
 
+Une fenêtre de note détachée suit le nom courant de sa note : renommer la note ailleurs met immédiatement à jour le titre de la fenêtre, sans la remonter au premier plan ni voler le focus. Tant qu’un brouillon non enregistré est en cours dans cette fenêtre, il n’est jamais remplacé par la version venue d’ailleurs.
+
 Une note accepte du texte libre et du Markdown, notamment des commandes et des journaux. Les changements restent marqués comme non enregistrés jusqu’à l’action **Save** (ou Ctrl/Cmd+S); une suppression ou l’abandon d’un brouillon demande confirmation. En cas d’erreur réseau ou de conflit de révision, le brouillon local est conservé et l’utilisateur choisit explicitement de recharger la version serveur ou de la remplacer.
 
 ## Whiteboard Alpha

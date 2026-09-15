@@ -279,15 +279,51 @@ describe("NotesView", () => {
     await waitFor(() => expect(api.updateNote).toHaveBeenLastCalledWith("p", note.id, { title: "Local", content: "logs locaux", expectedRevision: 2 }));
   });
 
+  /*
+  FNXC:ProjectNotes 2026-09-15-03:29:
+  FN-404 : l’adoption d’une révision externe appartient exclusivement à la fenêtre dédiée. La page Notes standard et la
+  liste `listOnly` du dock ne reçoivent jamais `dedicatedNote` et ne doivent déclencher aucune sélection supplémentaire,
+  même quand la liste partagée republie une note renommée.
+  */
+  it("ne déclenche aucune sélection supplémentaire sur la page standard ni dans le dock listOnly", async () => {
+    const renamed = { ...note, title: "Renommée", revision: 2, updatedAt: "2026-01-02" };
+    const standard = render(<ConfirmDialogProvider><NotesView projectId="p" /></ConfirmDialogProvider>);
+    fireEvent.click(await screen.findByRole("button", { name: /Commande/ }));
+    await screen.findByLabelText("Note title");
+    expect(api.fetchNote).toHaveBeenCalledTimes(1);
+
+    api.fetchNotes.mockResolvedValue({ notes: [renamed] });
+    standard.rerender(<ConfirmDialogProvider><NotesView projectId="p" /></ConfirmDialogProvider>);
+    await waitFor(() => expect(screen.getByLabelText("Note title")).toHaveValue("Commande"));
+    expect(api.fetchNote).toHaveBeenCalledTimes(1);
+    standard.unmount();
+
+    const onOpenNote = vi.fn();
+    const dock = render(<ConfirmDialogProvider><NotesView projectId="p" compact listOnly onOpenNote={onOpenNote} /></ConfirmDialogProvider>);
+    await screen.findByRole("button", { name: /Renommée/ });
+    dock.rerender(<ConfirmDialogProvider><NotesView projectId="p" compact listOnly onOpenNote={onOpenNote} /></ConfirmDialogProvider>);
+    expect(api.fetchNote).toHaveBeenCalledTimes(1);
+    expect(onOpenNote).not.toHaveBeenCalled();
+  });
+
   it("defines the canonical narrow and short-screen single-panel contract", () => {
     renderNotes();
     const mediaRules = Array.from(document.styleSheets).flatMap((sheet) => {
       try { return Array.from(sheet.cssRules).filter((rule): rule is CSSMediaRule => rule instanceof CSSMediaRule); }
       catch { return []; }
     });
-    const mobileRule = mediaRules.find((rule) => rule.conditionText.includes("max-width: 768px") && rule.conditionText.includes("max-height: 480px"));
-    expect(mobileRule).toBeDefined();
-    const responsiveCss = Array.from(mobileRule!.cssRules).map((rule) => rule.cssText).join(" ");
+    /*
+    FNXC:NotesCollectionLayout 2026-09-15-03:29:
+    Plusieurs feuilles partagent désormais la même condition de media query étroite/peu haute, donc sélectionner la
+    première règle trouvée pouvait inspecter celle d’un autre composant. Le contrat mobile de Notes est asserté sur
+    l’ensemble des règles portant cette condition, restreint aux sélecteurs de Notes.
+    */
+    const notesResponsiveRules = mediaRules
+      .filter((rule) => rule.conditionText.includes("max-width: 768px") && rule.conditionText.includes("max-height: 480px"))
+      .flatMap((rule) => Array.from(rule.cssRules).map((inner) => inner.cssText))
+      .filter((cssText) => cssText.includes(".notes-"));
+    expect(notesResponsiveRules.length).toBeGreaterThan(0);
+    const responsiveCss = notesResponsiveRules.join(" ");
     expect(responsiveCss).toContain(".notes-view--detail .notes-list");
     expect(responsiveCss).toContain(".notes-view:not(.notes-view--detail) .notes-detail");
     expect(responsiveCss.match(/display: none/g)).toHaveLength(2);

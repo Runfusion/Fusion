@@ -6,6 +6,7 @@ import {
   useAppDesktopRightDockWindows,
 } from "../../App";
 import { useChat } from "../../hooks/useChat";
+import { useNotes } from "../../hooks/useNotes";
 import { NavigationHistoryProvider, useNavigationHistory } from "../../hooks/useNavigationHistory";
 import { ConfirmDialogProvider } from "../../hooks/useConfirm";
 import { RIGHT_DOCK_OPEN_STORAGE_KEY, RIGHT_DOCK_VIEW_STORAGE_KEY } from "../RightDock";
@@ -139,6 +140,25 @@ function AppCompositionHarness({
     {composition.rightDock.modal}
     {composition.windows}
   </ConfirmDialogProvider>;
+}
+
+/*
+FNXC:ProjectNotes 2026-09-15-03:29:
+FN-404 : la composition de production est le seul câblage entre la source vivante des Notes (`notesController`, partagé
+par la page Notes et la liste du dock) et l’instantané détenu par les fenêtres détachées. L’exercer ici garantit qu’une
+omission de ce chemin fasse échouer le test, au lieu d’être masquée par un harness qui réassemble les pièces.
+*/
+function useNotesSyncProduction(projectId: string) {
+  const owner = useAppDesktopRightDockWindows(projectId);
+  const notesController = useNotes(projectId);
+  useAppDesktopRightDockComposition({
+    projectId,
+    owner,
+    controllerInput: { ...controllerInput("desktop"), notesController },
+    chatWindowProps: { addToast: vi.fn() },
+    noteWindowProps: { addToast: vi.fn() },
+  });
+  return { owner, notesController };
 }
 
 /*
@@ -299,6 +319,30 @@ describe("App Alpha desktop right-dock window ownership", () => {
     act(() => result.current.windows.openSessionInNewWindow(result.current.chat.sessions[0]));
     expect(result.current.windows.openChatWindows.has(created.id)).toBe(true);
     expect(result.current.windows.chats.entries[0].focusNonce).toBe(3);
+  });
+
+  it("republie la liste Notes vivante dans les fenêtres détachées sans toucher focusNonce ni l’ordre", async () => {
+    const first = { id: "note-1", title: "Première", revision: 1, createdAt: "2026-09-12T00:00:00.000Z", updatedAt: "2026-09-12T01:00:00.000Z" };
+    const second = { id: "note-2", title: "Deuxième", revision: 1, createdAt: "2026-09-12T00:00:00.000Z", updatedAt: "2026-09-12T01:00:00.000Z" };
+    notesApi.fetchNotes.mockResolvedValue({ notes: [first, second] });
+    const { result } = renderHook(() => useNotesSyncProduction("project-a"));
+    await waitFor(() => expect(result.current.notesController.notes).toHaveLength(2));
+
+    act(() => {
+      result.current.owner.openNoteInWindow(first);
+      result.current.owner.openNoteInWindow(second);
+    });
+    expect(result.current.owner.notes.entries.map((entry) => entry.note.id)).toEqual(["note-1", "note-2"]);
+    const nonces = result.current.owner.notes.entries.map((entry) => entry.focusNonce);
+
+    const renamed = { ...first, title: "Renommée", revision: 2, updatedAt: "2026-09-12T02:00:00.000Z" };
+    notesApi.fetchNotes.mockResolvedValue({ notes: [renamed, second] });
+    await act(async () => { await result.current.notesController.loadList(""); });
+
+    await waitFor(() => expect(result.current.owner.notes.entries[0].note).toMatchObject({ title: "Renommée", revision: 2 }));
+    expect(result.current.owner.notes.entries.map((entry) => entry.note.id)).toEqual(["note-1", "note-2"]);
+    expect(result.current.owner.notes.entries.map((entry) => entry.focusNonce)).toEqual(nonces);
+    expect(result.current.owner.notes.entries[1].note.title).toBe("Deuxième");
   });
 
   it("isole les fenêtres entre projets et refuse les ouvertures sans projet", () => {

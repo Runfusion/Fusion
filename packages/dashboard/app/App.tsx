@@ -383,6 +383,20 @@ export function useAppDesktopRightDockComposition({
     openChatWindows: owner.openChatWindows,
     onOpenNote: owner.openNoteInWindow,
   });
+  /*
+  FNXC:ProjectNotes 2026-09-15-03:29:
+  FN-404 : les Notes n’ont aucun abonnement SSE ; leur source vivante est le `notesController` déjà partagé par la page
+  Notes et la liste du dock. Chaque publication de cette liste resynchronise en place l’instantané des fenêtres
+  détachées du projet courant, de sorte qu’un renommage externe atteigne leur titre sans toucher `focusNonce` ni
+  l’ordre d’activation. Après un enregistrement effectué par la fenêtre elle-même, la révision publiée égale celle déjà
+  chargée, donc aucune re-sélection n’est déclenchée et aucune boucle n’est possible.
+  */
+  const liveNotes = controllerInput.notesController?.notes;
+  const syncNote = owner.notes.syncNote;
+  useEffect(() => {
+    if (!projectId || !liveNotes) return;
+    for (const summary of liveNotes) syncNote(projectId, summary);
+  }, [liveNotes, projectId, syncNote]);
   const windows = projectId ? (
     <>
       <PoppedOutNoteWindows
