@@ -3,7 +3,6 @@ import { useState } from "react";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { TaskForm } from "../TaskForm";
-import { AlphaProvider, AlphaBoundary } from "../../context/AlphaContext";
 import type { Task, Column } from "@fusion/core";
 
 // Mock lucide-react
@@ -623,8 +622,8 @@ describe("TaskForm", () => {
     vi.mocked(fetchGitBranches).mockResolvedValue([{ name: "main" }] as never);
 
     render(
-      <AlphaProvider enabled={enabled}>
-        <AlphaBoundary preserveDisabledDom>
+      <>
+        <>
           <TaskForm
             {...renderTaskFormDefaults}
             forceMoreOptionsOpen
@@ -645,14 +644,14 @@ describe("TaskForm", () => {
             autoMerge={undefined}
             onAutoMergeChange={onAutoMergeChange}
           />
-        </AlphaBoundary>
-      </AlphaProvider>,
+        </>
+      </>,
     );
 
     /*
-    FNXC:HomemadeAlphaPrimitives 2026-09-14-21:10:
+    FNXC:NativeUiPrimitives 2026-09-14-21:10:
     `AlphaBoundary` publishes the active surface marker unconditionally since the official-design
-    change (`AlphaContext.tsx`), so a control INSIDE a boundary carries `data-alpha-ui` regardless of
+    change (`AlphaContext.tsx`), so a control INSIDE a boundary carries `data-ui` regardless of
     the surrounding provider flag. The assertion below was still encoding the pre-change contract and
     failed for `Alpha=false`. What this case genuinely guards is unchanged and still asserted: every
     adaptive control stays a real `<select>` with its accessible label, and remains actionable.
@@ -660,7 +659,7 @@ describe("TaskForm", () => {
     const choose = async (label: string, option: string) => {
       const control = await screen.findByLabelText<HTMLSelectElement>(label);
       expect(control.tagName).toBe("SELECT");
-      expect(control).toHaveAttribute("data-alpha-ui", "select");
+      expect(control).toHaveAttribute("data-ui", "select");
       expect(control).toBeEnabled();
       await user.selectOptions(control, option);
     };

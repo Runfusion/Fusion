@@ -30,7 +30,7 @@ interface DrawerDrag {
 const DISTANCE_RATIO = 0.25;
 const VELOCITY_THRESHOLD = 0.6;
 const INTENT_THRESHOLD = 6;
-const HANDLE_SELECTOR = ".alpha-mobile-drawer__handle-target, .floating-window__drawer-handle-target, .terminal-drawer-handle-target";
+const HANDLE_SELECTOR = ".mobile-drawer__handle-target, .floating-window__drawer-handle-target, .terminal-drawer-handle-target";
 const INTERACTIVE_SELECTOR = "button, input, select, textarea, a[href], [contenteditable='true'], [role='button'], [role='slider'], [role='textbox']";
 const EXCLUDED_GESTURE_SELECTOR = ".xterm, .xterm-screen, .xterm-viewport";
 
@@ -60,13 +60,13 @@ function isEligibleStart(target: Element, panel: HTMLElement): boolean {
 }
 
 /*
-FNXC:AlphaMobileDrawerGesture 2026-09-11-15:01:
-An Alpha drawer handle is always eligible, while a body drag may claim dismissal only when every vertical scroll owner between the target and panel was already at its top edge on pointerdown. Interactive controls, selected text, xterm surfaces, and a body gesture that started while scrolled remain native for their entire pointer lifetime.
+FNXC:MobileDrawerGesture 2026-09-11-15:01:
+A drawer handle is always eligible, while a body drag may claim dismissal only when every vertical scroll owner between the target and panel was already at its top edge on pointerdown. Interactive controls, selected text, xterm surfaces, and a body gesture that started while scrolled remain native for their entire pointer lifetime.
 
-FNXC:AlphaMobileDrawerGesture 2026-09-11-15:01:
+FNXC:MobileDrawerGesture 2026-09-11-15:01:
 The gesture claims its sole pointer only after a downward, vertically dominant intent threshold. Every terminal path releases capture, cancels paint, and clears inline motion before the one possible dismissal callback; external close, disable, cancel, lost capture, and unmount clean up without dismissing.
 
-FNXC:AlphaMobileDrawerGesture 2026-09-11-15:35:
+FNXC:MobileDrawerGesture 2026-09-11-15:35:
 Touch body drags require a native non-passive touchmove listener because the mobile shell deliberately permits pan-y and the browser may cancel a deferred Pointer Event claim. Keep touchstart passive and preserve native scrolling for ineligible, upward, horizontal, or initially scrolled gestures; prevent the downward top-edge move only once dismissal intent is established, then remove the document listeners before dismissal.
 */
 export function useDrawerDismissGesture({

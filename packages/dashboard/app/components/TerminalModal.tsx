@@ -549,12 +549,12 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
   
   const terminalRef = useRef<HTMLDivElement>(null);
   const modalRef = useRef<HTMLDivElement>(null);
-  const alphaMobileDrawer = isMobileTerminal
+  const mobileDrawer = isMobileTerminal
     && !embedded
     && typeof document !== "undefined"
-    && document.documentElement.dataset.alphaMobileDrawers === "true";
+    && document.documentElement.dataset.mobileDrawers === "true";
   const dismissHandleProps = useDrawerDismissGesture({
-    enabled: alphaMobileDrawer,
+    enabled: mobileDrawer,
     panelRef: modalRef,
     onDismiss: onClose,
   });
@@ -2724,9 +2724,9 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
       style={modalStyle}
       role={isBelowMode ? "region" : undefined}
       aria-label={isBelowMode ? t("terminal.belowRegion", "Pinned terminal") : undefined}
-      {...(alphaMobileDrawer ? dismissHandleProps : {})}
+      {...(mobileDrawer ? dismissHandleProps : {})}
     >
-        {alphaMobileDrawer && (
+        {mobileDrawer && (
           <ViewDrawerHandle className="terminal-drawer-handle-target" barClassName="terminal-drawer-handle" data-testid="terminal-drawer-handle" />
         )}
         {!embedded && (isDockedMode || isBelowMode) && (
@@ -2906,7 +2906,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
           */}
           {!embedded && !isMobileTerminal && terminalDisplayModeControls}
 
-          {!embedded && !alphaMobileDrawer && (
+          {!embedded && !mobileDrawer && (
             <ModalCloseButton
               className={`terminal-close${isMobileTerminal ? " terminal-close--corner" : ""}`}
               onClick={onClose}

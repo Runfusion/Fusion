@@ -6,7 +6,6 @@ import { resolve } from "node:path";
 import type { AgentLogEntry, Task } from "@fusion/core";
 import { TaskChatTab } from "../TaskChatTab";
 import { ChatMessageLayoutProvider } from "../../context/ChatMessageLayoutContext";
-import { AlphaProvider, AlphaBoundary } from "../../context/AlphaContext";
 import { isCliSessionLive, type CliSessionSummaryRecord } from "../TaskDetailModal";
 import { useAgentLogs } from "../../hooks/useAgentLogs";
 import { addSteeringComment, fetchGlobalSettings, refineTask, updateGlobalSettings } from "../../api";
@@ -393,19 +392,19 @@ describe("TaskChatTab", () => {
 
   it("renders its production composer with homemade Alpha only inside the Alpha surface", () => {
     const view = render(
-      <AlphaProvider enabled>
-        <AlphaBoundary><TaskChatTab task={makeTask()} active addToast={vi.fn()} /></AlphaBoundary>
-      </AlphaProvider>,
+      <>
+        <><TaskChatTab task={makeTask()} active addToast={vi.fn()} /></>
+      </>,
     );
-    expect(screen.getByLabelText("Message active agent session")).toHaveAttribute("data-alpha-ui", "textarea");
-    expect(view.container.querySelector('[data-alpha-ui="button"]')).not.toBeNull();
+    expect(screen.getByLabelText("Message active agent session")).toHaveAttribute("data-ui", "textarea");
+    expect(view.container.querySelector('[data-ui="button"]')).not.toBeNull();
 
     view.rerender(
-      <AlphaProvider enabled={false}>
-        <AlphaBoundary><TaskChatTab task={makeTask()} active addToast={vi.fn()} /></AlphaBoundary>
-      </AlphaProvider>,
+      <>
+        <><TaskChatTab task={makeTask()} active addToast={vi.fn()} /></>
+      </>,
     );
-    expect(screen.getByLabelText("Message active agent session")).not.toHaveAttribute("data-alpha-ui");
+    expect(screen.getByLabelText("Message active agent session")).not.toHaveAttribute("data-ui");
   });
 
   it("subscribes to live agent logs only when active", () => {

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import { Power } from "lucide-react";
-import { DEFAULT_PROJECT_SETTINGS, type ColorTheme, type ThemeMode } from "@fusion/core";
+import { DEFAULT_PROJECT_SETTINGS, DEFAULT_UI_STYLE, type ColorTheme, type ThemeMode, type UiStyle } from "@fusion/core";
+import { UiStyleSelector } from "../UiStyleSelector";
 import { resolveEffectiveConcurrency } from "../../../../core/src/workflows/workflow-capacity.js";
 import { fetchSettings, updateSettings } from "../../api/legacy";
 import { useAppSettings } from "../../hooks/useAppSettings";
@@ -15,6 +16,9 @@ import "./CommandCenterControls.css";
 export interface CommandCenterControlsProps {
   projectId?: string;
   colorTheme: ColorTheme;
+  /* FNXC:UiStyleAxis 2026-09-15-00:20: second, independent appearance axis owned by the single useTheme instance in App. */
+  uiStyle?: UiStyle;
+  onUiStyleChange?: (style: UiStyle) => void;
   themeMode: ThemeMode;
   shadcnCustomColors?: Record<string, string>;
   resolvedThemeMode?: "dark" | "light";
@@ -98,7 +102,7 @@ function StatusPill({ paused, label }: { paused: boolean; label: string }) {
   );
 }
 
-export function CommandCenterControls({ projectId, colorTheme, themeMode, shadcnCustomColors = {}, resolvedThemeMode = themeMode === "light" ? "light" : "dark", onColorThemeChange, onThemeModeChange, onShadcnCustomColorsChange = () => {}, onChangeView }: CommandCenterControlsProps) {
+export function CommandCenterControls({ projectId, colorTheme, uiStyle, onUiStyleChange, themeMode, shadcnCustomColors = {}, resolvedThemeMode = themeMode === "light" ? "light" : "dark", onColorThemeChange, onThemeModeChange, onShadcnCustomColorsChange = () => {}, onChangeView }: CommandCenterControlsProps) {
   const { t } = useTranslation("app");
   const { confirm } = useConfirm();
   const {
@@ -329,6 +333,19 @@ export function CommandCenterControls({ projectId, colorTheme, themeMode, shadcn
             onThemeModeChange={onThemeModeChange}
             onShadcnCustomColorsChange={onShadcnCustomColorsChange}
           />
+          {/*
+          FNXC:UiStyleAxis 2026-09-15-00:20:
+          The two appearance axes sit side by side in the same card so the operator sees they are separate
+          choices: the dropdown above picks COLOUR, this control picks the non-chromatic grammar. It is the
+          same shared selector Settings → Appearance renders, wired to the same single useTheme owner, so the
+          two entry points can never offer different options or drift out of sync.
+          */}
+          {onUiStyleChange ? (
+            <div className="cc-controls-ui-style">
+              <h4>{t("uiStyle.label", "Interface style")}</h4>
+              <UiStyleSelector uiStyle={uiStyle ?? DEFAULT_UI_STYLE} onChange={onUiStyleChange} />
+            </div>
+          ) : null}
         </section>
 
 

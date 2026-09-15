@@ -106,10 +106,10 @@ describe("browser layout smoke fixture", () => {
     const productionSource = createAlphaDrawerProductionFixtureSource();
 
     for (const hook of [
-      "alpha-drawer-fixtures",
-      "alpha-drawer-production-root",
-      "alpha-drawer-floating",
-      "alpha-drawer-terminal",
+      "native-drawer-fixtures",
+      "native-drawer-production-root",
+      "native-drawer-floating",
+      "native-drawer-terminal",
       "alpha-board-fixture",
       "alpha-board-production-root",
       "alpha-pill-production-root",
@@ -117,10 +117,10 @@ describe("browser layout smoke fixture", () => {
       expect(html).toContain(`data-smoke="${hook}"`);
     }
     for (const productionComponent of [
-      "AlphaProjectsDrawer",
-      "AlphaPlanningDrawer",
-      "AlphaUsageDrawer",
-      "AlphaMainContentDrawer",
+      "ProjectsDrawer",
+      "PlanningDrawer",
+      "MobileUsageDrawer",
+      "MainContentDrawer",
       "MainViewKeepAlive",
       "MobileNavBar",
       "TaskDetailModal",
@@ -142,12 +142,12 @@ describe("browser layout smoke fixture", () => {
     expect(productionSource).not.toContain("closeLabel:");
     expect(productionSource).not.toContain('className: "chat-view"');
     expect(productionSource).not.toContain('className: "planning-view open"');
-    expect(html).toContain("alpha-drawer-production-fixture.js");
-    expect(html).toContain("floating-window--alpha-mobile-drawer");
+    expect(html).toContain("native-drawer-production-fixture.js");
+    expect(html).toContain("floating-window--mobile-drawer");
     expect(html).toContain("terminal-modal-overlay");
-    expect(html).toContain("project-content--with-alpha-nav");
+    expect(html).toContain("project-content--with-mobile-nav");
     expect(html).not.toContain('data-smoke="alpha-board-column"');
-    expect(html).not.toContain('<nav class="mobile-nav-bar mobile-nav-bar--alpha"');
+    expect(html).not.toContain('<nav class="mobile-nav-bar mobile-nav-bar--native"');
   });
 
   it("refuse toute pill masquée ou tout popover qui la recouvre", () => {

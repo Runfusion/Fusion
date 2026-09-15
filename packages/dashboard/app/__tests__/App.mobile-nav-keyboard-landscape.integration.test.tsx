@@ -69,7 +69,7 @@ function restoreDescriptor(target: object, property: string, descriptor?: Proper
 }
 
 const GEOMETRY_TOKEN_VALUES = {
-  "--mobile-nav-alpha-system-offset": 16,
+  "--mobile-nav-system-offset": 16,
   "--mobile-nav-pill-height": 44,
   "--space-md": 12,
   "--space-sm": 8,
@@ -125,7 +125,7 @@ function resolveRenderedOverlayGeometry({
   expect(navViewportTop).toBe(viewportOffsetTop);
   expect(popoverViewportTop).toBe(navViewportTop);
 
-  const systemOffset = GEOMETRY_TOKEN_VALUES["--mobile-nav-alpha-system-offset"];
+  const systemOffset = GEOMETRY_TOKEN_VALUES["--mobile-nav-system-offset"];
   const floatingGap = GEOMETRY_TOKEN_VALUES["--space-sm"];
   const pillHeight = GEOMETRY_TOKEN_VALUES["--mobile-nav-pill-height"];
   const popoverGap = GEOMETRY_TOKEN_VALUES["--space-xs"];
@@ -204,8 +204,8 @@ function MobileNavKeyboardHarness({ isMobile }: { isMobile: boolean }) {
       footerVisible={!state.footerHidden}
       keyboardOpen={state.navKeyboardOpen}
       keyboardMetrics={state}
-      alphaMenuOpen={menuOpen}
-      onAlphaMenuOpenChange={setMenuOpen}
+      navigationMenuOpen={menuOpen}
+      onUiMenuOpenChange={setMenuOpen}
     />
   </>;
 }
@@ -269,7 +269,7 @@ describe("App mobile keyboard and production pill seam", () => {
     const nav = container.querySelector<HTMLElement>(".mobile-nav-bar");
     expect(nav).not.toBeNull();
     expect(nav).not.toHaveClass("mobile-nav-bar--keyboard-open");
-    const trigger = screen.getByTestId("alpha-mobile-menu-trigger");
+    const trigger = screen.getByTestId("mobile-menu-trigger");
     expect(trigger).toBeEnabled();
 
     const shrinkViewport = () => {

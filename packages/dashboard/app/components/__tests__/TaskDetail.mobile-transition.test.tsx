@@ -75,16 +75,16 @@ function installLandscapePhoneViewport(): void {
 describe("Task-detail mobile predictive-back transition — CSS invariants", () => {
   it("fait monter le panneau Board depuis le bas et neutralise le mouvement réduit", () => {
     const css = readAppFile("styles.css");
-    expect(css).toMatch(/html\[data-viewport-mode="mobile"\] \.task-detail-main-panel--mobile-transition\s*\{[^}]*animation: alpha-mobile-drawer-rise-in/);
-    expect(css).toMatch(/@keyframes alpha-mobile-drawer-rise-in\s*\{[\s\S]*?from\s*\{[^}]*translate: 0 var\(--space-xl\)/);
-    expect(css).not.toMatch(/@keyframes alpha-mobile-drawer-rise-in\s*\{[\s\S]*?translateX/);
+    expect(css).toMatch(/html\[data-viewport-mode="mobile"\] \.task-detail-main-panel--mobile-transition\s*\{[^}]*animation: mobile-drawer-rise-in/);
+    expect(css).toMatch(/@keyframes mobile-drawer-rise-in\s*\{[\s\S]*?from\s*\{[^}]*translate: 0 var\(--space-xl\)/);
+    expect(css).not.toMatch(/@keyframes mobile-drawer-rise-in\s*\{[\s\S]*?translateX/);
     const reducedMotionBlock = css.slice(css.indexOf("@media (prefers-reduced-motion: reduce) {\n  html[data-viewport-mode=\"mobile\"] .task-detail-main-panel--mobile-transition"));
     expect(reducedMotionBlock.slice(0, 250)).toContain("animation: none;");
   });
 
   it("fait monter les surfaces modales depuis le bas et neutralise le mouvement réduit", () => {
     const css = readAppFile("components/TaskDetailModal.css");
-    expect(css).toMatch(/html\[data-viewport-mode="mobile"\] \.task-detail-modal--mobile-transition\s*\{[^}]*animation: alpha-mobile-drawer-rise-in/);
+    expect(css).toMatch(/html\[data-viewport-mode="mobile"\] \.task-detail-modal--mobile-transition\s*\{[^}]*animation: mobile-drawer-rise-in/);
     expect(css).not.toContain("task-detail-modal-mobile-slide-fade-in");
     const reducedMotionBlock = css.slice(css.indexOf("@media (prefers-reduced-motion: reduce) {\n  html[data-viewport-mode=\"mobile\"] .task-detail-modal--mobile-transition"));
     expect(reducedMotionBlock.slice(0, 250)).toContain("animation: none;");

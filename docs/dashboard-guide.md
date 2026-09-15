@@ -2363,6 +2363,77 @@ PR tab note: `PrPanel` cards use tokenized `.pr-card` grid spacing (`padding` + 
 
 The `index.html` shell is templated server-side: the server injects a per-user `<link rel="modulepreload">` for the last-used `taskView` chunk, sourced from Vite's `dist/client/.vite/manifest.json` and `kb:<projectId>:kb-dashboard-task-view` in localStorage.
 
+### Appearance is two independent axes: colour theme and interface style
+
+Since FN-399 the dashboard's appearance is governed by **two independent preferences**, both global and both
+chosen in **Settings → Appearance** and in the **Command Center** theme card:
+
+| Axis | Attribute | Preference | Owns |
+| --- | --- | --- | --- |
+| Colour theme | `html[data-color-theme]` | `colorTheme` (+ `themeMode`, `shadcnCustomColors`) | Which colours are used: palette, semantic hues, custom overrides, and a preset's font *family* identity |
+| Interface style | `html[data-ui-style]` | `uiStyle` | Non-chromatic grammar: density, radii, border widths, type scale/weight/leading, control and touch heights, icon sizes, hover intensity, motion, shadow and focus-ring **geometry** |
+
+The two never move together. Choosing **Épuré** does not change a single colour; choosing a new palette does
+not change a single dimension. The font-size preference keeps multiplying the whole style grammar because
+every style value is expressed in `rem`/`em`.
+
+Values are `classic` (**Actuel**, the default and the fallback for any unknown persisted value) and `clean`
+(**Épuré**). Both are published before React by the pre-hydration bootstrap in `app/index.html`,
+`getThemeInitScript()`, and the Electron renderer shell, so a saved `clean` paints on the first frame.
+See [`docs/settings-reference.md`](settings-reference.md#uistyle) for scope, persistence and reset behaviour.
+
+#### The interface-style catalogue
+
+`app/ui-style-tokens.css` is the single catalogue for the second axis. Every token is declared once per
+style: `classic` on `:root` (so an absent attribute behaves exactly like the default) and `clean` under
+the `html[data-ui-style="clean"]` selector, which overrides only the names whose value actually differs.
+
+| Catalogue family | Tokens | Role | Classic | Clean |
+| --- | --- | --- | --- | --- |
+| Density | `--ui-density-3xs` … `--ui-density-2xl` | Rhythm rungs a component pads and gaps with | `0.125`–`2rem` | tighter (`0.125`–`1.75rem`) |
+| Radii | `--ui-radius-xs/sm/md/lg/xl/pill` | Corner softness | `0.25`–`1rem` | softer small rungs, tighter `lg` |
+| Borders | `--ui-border-width`, `--ui-border-width-strong` | Outline weight | `0.0625rem` / `0.125rem` | hairline for both |
+| Typography | `--ui-font-family`, `--ui-font-family-mono`, `--ui-font-size-2xs…lg`, `--ui-font-weight-*`, `--ui-line-height-*`, `--ui-letter-spacing-*` | Scale, weight, leading, tracking. The **family is read from the colour preset**, so a theme keeps its typographic identity | base `0.875rem` | smaller headings, roomier leading, wider tracking for discreet headings |
+| Controls | `--ui-control-height-sm/…/lg`, `--ui-touch-height`, `--ui-icon-size-sm/…/lg` | Control box and glyph sizing | `2rem` control, `1rem` glyph | `1.875rem` control, `0.9375rem` glyph (the 15–16px equivalent of the reference grammar) |
+| State | `--ui-hover-mix`, `--ui-hover-mix-strong`, `--ui-active-mix`, `--ui-disabled-opacity`, `--ui-muted-opacity` | Hover/active intensity as `color-mix` percentages — never a colour | `8/14/18%` | quieter `6/10/14%` |
+| Motion | `--ui-duration-instant/fast/normal/slow`, `--ui-easing` | Transition timing | `0.1`–`0.3s` | `0.08`–`0.25s` |
+| Elevation geometry | `--ui-shadow-*-geometry`, `--ui-focus-ring-geometry`, `--ui-shadow-opacity*` | Offset/blur/spread only; the colour half stays with the theme | standard | shallower |
+
+Invariants, all asserted by `app/__tests__/ui-style-contract.test.ts`:
+
+* **No colour in the catalogue.** A style never decides which colour is used.
+* **No new `px`.** Values are `rem`/`em`/unitless/seconds, so the font-scale preference keeps scaling them.
+* **The touch floor is style-independent.** `--ui-touch-height` stays `2.75rem` (44px at the default root
+  size) in both styles: a denser grammar may never shrink a real tap target.
+* **Classic metrics are untouched.** The bindings that map shared tokens (`--radius-*`, `--btn-padding`,
+  `--transition-*`, `--icon-size-*`…) onto the catalogue are scoped to the clean style only, so upgrading
+  changes no classic pixel.
+
+#### Colour presets no longer impose shape (intentional difference)
+
+Before FN-399, several colour presets also shipped geometry: their own `--space-*` and `--radius-*` ramps,
+`--btn-padding`, `--btn-border-width`, `--card-padding`, motion durations, and descendant rules setting
+`font-size`, `font-weight`, `letter-spacing`, `text-transform`, `border-radius` or `border-width`. Cozy
+Cartoon additionally enlarged button typography and icon size from `styles.css`.
+
+All of that is **removed**: a preset now declares colour (and its font family identity) only, and shadow /
+focus-ring declarations keep the preset's colour while taking their geometry from the catalogue. This is a
+deliberate, user-visible difference — presets such as Factory, Brutalist, Terminal and Cozy Cartoon no
+longer change dimensions, weights or letter-spacing. In exchange, the two axes compose: any palette can be
+worn by either grammar. `app/__tests__/ui-style-contract.test.ts` fails if a preset reintroduces shape.
+
+A second intentional difference: Board, Chat, Task Detail and their body-portaled overlays used to be
+pinned to a fixed neutral palette by the old `alpha-ui.css` boundary scope, so a theme change could not
+recolour them. That scope is gone, so **themes now really apply** to those surfaces in both styles.
+
+#### Extending the grammar to another view
+
+A view adopts the axis without inventing a local table: consume `--ui-*` directly (or a shared token that
+is already bound under the clean style), and use the native primitives in `app/components/ui` for
+controls, collections, portals and dialogs. Do not add a per-component style branch in JavaScript and do
+not declare a second per-style value table in component CSS — if a rung is missing, add it to the
+catalogue once so every view inherits it.
+
 ### Design tokens
 
 `styles.css` is the source of truth for tokens (`--space-*`, `--radius-*`, `--shadow-*`, `--duration-*`, `--transition-*`, `--font-*`, `--header-height`, `--mobile-nav-height`, `--standalone-bottom-gap`, `--overlay-padding-top`) and color variables (`--bg`, `--surface`, `--card`, `--text`, `--text-muted`, status colors `--triage`/`--todo`/`--in-progress`/`--in-review`/`--done`, semantic `--color-success`/`--color-error`/`--color-warning`/`--color-info`, status backgrounds `--status-*-bg`).

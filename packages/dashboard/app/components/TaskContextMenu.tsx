@@ -1,6 +1,5 @@
 import "./TaskContextMenu.css";
-import { AlphaMenu, AlphaMenuItem, AlphaMenuSubmenu } from "./alpha-ui";
-import { useAlphaSurface } from "../context/AlphaContext";
+import { UiMenu, UiMenuItem } from "./ui";
 import type { KeyboardEvent, PointerEvent as ReactPointerEvent, MouseEvent as ReactMouseEvent, ReactNode } from "react";
 import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { TFunction } from "i18next";
@@ -327,7 +326,7 @@ export function buildTaskActionMenuModel(options: BuildTaskActionMenuModelOption
     actions.push({
       id: "bypass-review",
       label: t("taskDetail.bypassReview.btn", "Bypass failed review"),
-      // FNXC:TaskDetailAlpha 2026-09-11-04:19: Bypass is an audited operator action, not explanatory note copy; keep it keyboard- and pointer-selectable in both menu implementations.
+      // FNXC:TaskDetailPresentation 2026-09-11-04:19: Bypass is an audited operator action, not explanatory note copy; keep it keyboard- and pointer-selectable in both menu implementations.
       onSelect: options.onBypassReview,
     });
   }
@@ -421,7 +420,6 @@ export function TaskContextMenu({
   const touchSelectedActionRef = useRef<{ id: string; at: number } | null>(null);
   const submenuRef = useRef<HTMLDivElement | null>(null);
   const [openSubmenuId, setOpenSubmenuId] = useState<string | null>(null);
-  const alphaSurface = useAlphaSurface();
   const [submenuOpensLeft, setSubmenuOpensLeft] = useState(false);
 
   const selectAction = useCallback((action: TaskMenuActionDescriptor) => {
@@ -517,49 +515,22 @@ export function TaskContextMenu({
     items[nextIndex]?.focus();
   };
 
-  if (alphaSurface) {
-    return (
-      <div ref={menuRef} className={className} data-alpha-menu-layout="task-actions">
-        {/*
-        FNXC:AlphaCollections 2026-09-10-20:30:
-        Alpha task actions share one homemade Alpha menu, and nested groups use Fusion's SubmenuTrigger. React Aria therefore owns arrow traversal, focus entry, and submenu transitions instead of the historical button-query keyboard loop.
 
-        FNXC:TaskDetailFooterActions 2026-09-13-12:59:
-        Alpha menus preserve descriptor order even when non-actionable note rows label an action group. Rendering notes in place keeps Task Detail's Attach → GitHub → Oversight → Priority → Fast contract without making headings focusable or selectable.
-        */}
-        <AlphaMenu aria-label="Task actions">
-          {actions.map((item) => {
-            if ("items" in item) {
-              return (
-                <AlphaMenuSubmenu key={item.id} id={item.id} label={item.label} className={`${itemClassName} task-context-menu__submenu-toggle`} menuClassName="task-context-menu__submenu">
-                  {item.items.map((action) => {
-                    const classes = [itemClassName, "task-context-menu__submenu-item"];
-                    if (action.tone === "danger") classes.push(dangerItemClassName);
-                    return <AlphaMenuItem key={action.id} id={action.id} className={classes.join(" ")} disabled={action.disabled} data-testid={action.testId} aria-pressed={action.pressed} onPointerUp={(event) => handleActionPointerUp(event, action)} onClick={(event) => handleActionClick(event, action)}>{action.label}</AlphaMenuItem>;
-                  })}
-                </AlphaMenuSubmenu>
-              );
-            }
-            if (item.tone === "note") {
-              return <span key={item.id} className={`${itemClassName} ${noteItemClassName}`} role="note" data-testid={item.testId}>{item.label}</span>;
-            }
-            const classes = [itemClassName];
-            if (item.tone === "danger") classes.push(dangerItemClassName);
-            return <AlphaMenuItem key={item.id} id={item.id} className={classes.join(" ")} disabled={item.disabled} data-testid={item.testId} aria-pressed={item.pressed} onPointerUp={(event) => handleActionPointerUp(event, item)} onClick={(event) => handleActionClick(event, item)}>{item.label}</AlphaMenuItem>;
-          })}
-        </AlphaMenu>
-      </div>
-    );
-  }
-
+  /*
+  FNXC:NativeUiCollections 2026-09-15-00:20:
+  REMOVED: the duplicate in-boundary task-actions menu. With the native presentation there is ONE menu
+  implementation, and it is the richer of the two former variants — it keeps `renderAction`, the `role`
+  override, left-opening submenu placement and non-focusable note rows, while the shared `UiMenu` now
+  provides focus entry and restoration for every caller (card, detail and list) unconditionally.
+  */
   return (
-    <AlphaMenu ref={menuRef} className={className} aria-label="Task actions" role={role} onKeyDown={handleKeyDown}>
+    <UiMenu ref={menuRef} className={className} aria-label="Task actions" role={role} onKeyDown={handleKeyDown}>
       {actions.map((item) => {
         if ("items" in item) {
           const isOpen = openSubmenuId === item.id;
           return (
             <div className="task-context-menu__submenu-parent" key={item.id}>
-              <AlphaMenuItem
+              <UiMenuItem
                 id={`${item.id}-submenu`}
                 type="button"
                 className={`${itemClassName} task-context-menu__submenu-toggle`}
@@ -575,9 +546,9 @@ export function TaskContextMenu({
                 }}
               >
                 {item.label}
-              </AlphaMenuItem>
+              </UiMenuItem>
               {isOpen && (
-                <AlphaMenu
+                <UiMenu
                   ref={submenuRef}
                   className={`task-context-menu__submenu${submenuOpensLeft ? " task-context-menu__submenu--opens-left" : ""}`}
                   aria-label={item.label}
@@ -587,7 +558,7 @@ export function TaskContextMenu({
                     const classes = [itemClassName, "task-context-menu__submenu-item"];
                     if (action.tone === "danger") classes.push(dangerItemClassName);
                     return (
-                      <AlphaMenuItem
+                      <UiMenuItem
                         key={action.id}
                         id={action.id}
                         type="button"
@@ -600,10 +571,10 @@ export function TaskContextMenu({
                         onClick={(event) => handleActionClick(event, action)}
                       >
                         {action.label}
-                      </AlphaMenuItem>
+                      </UiMenuItem>
                     );
                   })}
-                </AlphaMenu>
+                </UiMenu>
               )}
             </div>
           );
@@ -615,10 +586,10 @@ export function TaskContextMenu({
         const defaultNode = action.tone === "note" ? (
           <span key={action.id} className={classes.join(" ")} role="note" data-testid={action.testId}>{action.label}</span>
         ) : (
-          <AlphaMenuItem key={action.id} id={action.id} type="button" className={classes.join(" ")} role={role === "menu" ? "menuitem" : undefined} disabled={action.disabled} data-testid={action.testId} aria-pressed={action.pressed} onPointerUp={(event) => handleActionPointerUp(event, action)} onClick={(event) => handleActionClick(event, action)}>{action.label}</AlphaMenuItem>
+          <UiMenuItem key={action.id} id={action.id} type="button" className={classes.join(" ")} role={role === "menu" ? "menuitem" : undefined} disabled={action.disabled} data-testid={action.testId} aria-pressed={action.pressed} onPointerUp={(event) => handleActionPointerUp(event, action)} onClick={(event) => handleActionClick(event, action)}>{action.label}</UiMenuItem>
         );
         return <Fragment key={action.id}>{renderAction ? renderAction(action, defaultNode) : defaultNode}</Fragment>;
       })}
-    </AlphaMenu>
+    </UiMenu>
   );
 }

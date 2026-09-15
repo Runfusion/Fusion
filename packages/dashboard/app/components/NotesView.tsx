@@ -27,7 +27,7 @@ export interface NotesViewProps {
 
 /*
 FNXC:ProjectNotes 2026-09-12-04:06:
-NotesView conserve un seul formulaire partagé avec trois frontières explicites : la page standard garde liste + détail, le dock Alpha monte uniquement la liste, et une fenêtre dédiée monte uniquement l’éditeur de la note imposée. Chaque fenêtre dédiée possède son propre useNotes afin que brouillon, conflit, sauvegarde et confirmation de fermeture restent indépendants.
+NotesView conserve un seul formulaire partagé avec trois frontières explicites : la page standard garde liste + détail, le dock de droite monte uniquement la liste, et une fenêtre dédiée monte uniquement l’éditeur de la note imposée. Chaque fenêtre dédiée possède son propre useNotes afin que brouillon, conflit, sauvegarde et confirmation de fermeture restent indépendants.
 */
 export function NotesView({ projectId, addToast, controller, compact = false, listOnly = false, dedicatedNoteId, onOpenNote, onChanged, registerGuard, floating }: NotesViewProps) {
   const { t } = useTranslation("app");

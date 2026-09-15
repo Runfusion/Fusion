@@ -177,6 +177,9 @@ import {
   ANTHROPIC_AUTH_PREFERENCES,
   THEME_MODES,
   COLOR_THEMES,
+  UI_STYLES,
+  DEFAULT_UI_STYLE,
+  isUiStyle,
   SUPPORTED_LOCALES,
   DEFAULT_LOCALE,
   isLocale,
@@ -189,6 +192,7 @@ import type {
   AnthropicAuthPreference,
   ThemeMode,
   ColorTheme,
+  UiStyle,
   Locale,
 } from "./types/ui/execution-and-ui.js";
 export {
@@ -203,6 +207,9 @@ export {
   ANTHROPIC_AUTH_PREFERENCES,
   THEME_MODES,
   COLOR_THEMES,
+  UI_STYLES,
+  DEFAULT_UI_STYLE,
+  isUiStyle,
   SUPPORTED_LOCALES,
   DEFAULT_LOCALE,
   isLocale,
@@ -215,6 +222,7 @@ export type {
   AnthropicAuthPreference,
   ThemeMode,
   ColorTheme,
+  UiStyle,
   Locale,
 };
 

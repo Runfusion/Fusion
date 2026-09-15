@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { AlphaListBox, AlphaListBoxItem } from "./alpha-ui";
+import { UiListBox, UiListBoxItem } from "./ui";
 import { useTranslation } from "react-i18next";
 import { AgentAvatar } from "./AgentAvatar";
 import "./AgentMentionPopup.css";
@@ -56,7 +56,7 @@ export function AgentMentionPopup({
   }
 
   return (
-    <AlphaListBox
+    <UiListBox
       className={`agent-mention-popup agent-mention-popup--${position}`}
       data-testid="agent-mention-popup"
       aria-label={t("agentMention.suggestionsLabel", "Agent mention suggestions")}
@@ -71,7 +71,7 @@ export function AgentMentionPopup({
             </div>
           )}
           {memberAgents.map((agent, index) => (
-            <AlphaListBoxItem
+            <UiListBoxItem
               key={agent.id}
               id={agent.id}
               textValue={agent.name}
@@ -86,7 +86,7 @@ export function AgentMentionPopup({
               {roomMode && <span className="status-dot agent-mention-member-dot" aria-label={t("agentMention.roomMemberBadge", "Room member")} />}
               <span className="agent-mention-name">{agent.name}</span>
               <span className="agent-mention-role">{agent.role}</span>
-            </AlphaListBoxItem>
+            </UiListBoxItem>
           ))}
           {roomMode && !showOtherSection && otherAgents.length > 0 && (
             <div className="agent-mention-hint" data-testid="agent-mention-other-hint">{t("agentMention.typeToSearch", "Type to search other agents")}</div>
@@ -97,7 +97,7 @@ export function AgentMentionPopup({
               {otherAgents.map((agent, index) => {
                 const globalIndex = memberAgents.length + index;
                 return (
-                  <AlphaListBoxItem
+                  <UiListBoxItem
                     key={agent.id}
                     id={agent.id}
                     textValue={agent.name}
@@ -111,13 +111,13 @@ export function AgentMentionPopup({
                     <AgentAvatar agent={agent} size={20} />
                     <span className="agent-mention-name">{agent.name}</span>
                     <span className="agent-mention-role">{agent.role}</span>
-                  </AlphaListBoxItem>
+                  </UiListBoxItem>
                 );
               })}
             </>
           )}
         </>
       )}
-    </AlphaListBox>
+    </UiListBox>
   );
 }

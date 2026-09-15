@@ -11,6 +11,7 @@ import type {
   Locale,
   ReviewArtifactsMode,
   ThemeMode,
+  UiStyle,
   AnthropicAuthPreference,
 } from "../ui/execution-and-ui.js";
 import type {
@@ -327,6 +328,13 @@ export interface GlobalSettings {
   themeMode?: ThemeMode;
   /** Color theme preference for accent colors and styling. Default: "shadcn-ember"; "default" and "ocean" remain valid explicit legacy selections. */
   colorTheme?: ColorTheme;
+  /**
+   * FNXC:UiStyleAxis 2026-09-15-00:20:
+   * Interface style (non-chromatic grammar) preference, independent of `colorTheme`. Global because it
+   * is an operator appearance choice like themeMode/colorTheme, never a per-project override. Missing,
+   * unknown or wrongly typed values resolve to "classic" on read and are replaced on the next write.
+   */
+  uiStyle?: UiStyle;
   /** Token→hex override map for the customizable shadcn theme. Applied only when `colorTheme === "shadcn-custom"`; dashboard sanitizes keys and values before writing CSS custom properties. */
   shadcnCustomColors?: Record<string, string>;
   /** Dashboard font size scale percentage. Bounded to 85-125. Default: 100. */

@@ -8364,7 +8364,9 @@
       "revisionColumnError": "Cannot request revision: Task must be in 'triage', 'todo', 'in-progress', or 'in-review' column.",
       "revisionRequested": "AI revision requested. Task moved to planning.",
       "saving": "Saving…",
-      "updated": "Spec updated"
+      "updated": "Spec updated",
+      "copy": "Copy",
+      "copied": "Copied"
     },
     "stall": {
       "noLogEntry": "No log entry yet",
@@ -9929,5 +9931,12 @@
   "windows": {
     "hide": "Hide all windows",
     "restore": "Restore windows"
+  },
+  "uiStyle": {
+    "label": "Interface style",
+    "classic": "Current",
+    "classicDescription": "The familiar Fusion grammar, unchanged.",
+    "clean": "Clean",
+    "cleanDescription": "Tighter density, softer corners, quieter chrome."
   }
 }

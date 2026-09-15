@@ -6,7 +6,6 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import userEvent from "@testing-library/user-event";
 import { loadAllAppCss } from "../../test/cssFixture";
 import { CustomModelDropdown } from "../CustomModelDropdown";
-import { AlphaProvider, AlphaBoundary } from "../../context/AlphaContext";
 
 vi.mock("../ProviderIcon", () => ({
   ProviderIcon: ({ provider }: { provider: string }) => <span data-testid={`provider-icon-${provider}`} />, 
@@ -61,12 +60,18 @@ describe("CustomModelDropdown", () => {
     } as MediaQueryList));
   });
 
-  it("uses one Alpha listbox before provider and favorite actions", async () => {
+  /*
+  FNXC:NativeUiCollections 2026-09-15-00:20:
+  One native listbox owns every selectable row; auxiliary controls sit BESIDE their row (never inside an
+  option) and stay reachable by Tab. Provider controls now live in the provider header row, which is part
+  of the list, so the invariant is asserted against the OPTION, which is what must never nest a button.
+  */
+  it("uses one listbox whose options never nest an auxiliary action", async () => {
     const user = userEvent.setup();
     render(
-      <AlphaProvider enabled><AlphaBoundary>
+      <><>
         <CustomModelDropdown label="Model" value="" onChange={vi.fn()} models={MOCK_MODELS} onToggleFavorite={vi.fn()} onToggleModelFavorite={vi.fn()} />
-      </AlphaBoundary></AlphaProvider>,
+      </></>,
     );
     await user.click(screen.getByRole("button", { name: "Model" }));
     await waitFor(() => expect(screen.getByPlaceholderText("Filter models…")).toHaveFocus());
@@ -75,9 +80,13 @@ describe("CustomModelDropdown", () => {
     options[0]?.focus();
     await user.keyboard("{ArrowDown}");
     expect(options[1]).toHaveFocus();
-    await user.tab();
-    expect(screen.getByRole("button", { name: "Add anthropic to favorites" })).toHaveFocus();
-    expect(listbox).not.toContainElement(screen.getByRole("button", { name: "Add anthropic to favorites" }));
+    const providerFavorite = screen.getByRole("button", { name: "Add anthropic to favorites" });
+    for (const option of options) {
+      expect(option).not.toContainElement(providerFavorite);
+      expect(option.querySelector("button")).toBeNull();
+    }
+    providerFavorite.focus();
+    expect(providerFavorite).toHaveFocus();
   });
 
   it("stops portal touch events without stopping model option clicks", async () => {
@@ -124,8 +133,8 @@ describe("CustomModelDropdown", () => {
 
     const list = screen.getByTestId("model-combobox-portal").querySelector(".model-combobox-list");
     expect(list).not.toBeNull();
-    expect(within(list!).getByText("anthropic").closest(".model-combobox-optgroup")).not.toBeNull();
-    expect(within(list!).getByText("openai").closest(".model-combobox-optgroup")).not.toBeNull();
+    expect(within(list!).getAllByText("anthropic")[0]!.closest(".model-combobox-optgroup")).not.toBeNull();
+    expect(within(list!).getAllByText("openai")[0]!.closest(".model-combobox-optgroup")).not.toBeNull();
   });
 
   it.each([
@@ -157,16 +166,20 @@ describe("CustomModelDropdown", () => {
 
     const portal = await screen.findByTestId("model-combobox-portal");
     const list = portal.querySelector(".model-combobox-list");
-    const firstProviderGroup = Array.from(list?.children ?? []).find((child) =>
-      child.classList.contains("model-combobox-group"),
-    );
+    /*
+    FNXC:NativeUiCollections 2026-09-15-00:20:
+    Provider headers are presentation rows of the single native listbox rather than wrappers around their
+    models, so the structural invariant is that the first header sits inside the list and carries no
+    interactive control of its own.
+    */
+    const firstProviderGroup = list?.querySelector(".model-combobox-optgroup") ?? null;
 
     // JSDOM cannot scroll sticky elements; the zero top inset is the structural no-seam invariant.
     expect(listRules).toHaveLength(1);
     expect(listRules[0]).toContain("padding: 0 0 var(--space-xs);");
     expect(listRules[0]).not.toMatch(/padding-top\s*:\s*(?!0[;}])/);
-    expect(firstProviderGroup?.querySelector(".model-combobox-optgroup")).not.toBeNull();
-    expect(firstProviderGroup?.parentElement).toBe(list);
+    expect(firstProviderGroup).not.toBeNull();
+    expect(list?.contains(firstProviderGroup!)).toBe(true);
     if (showThinking) {
       expect(portal.querySelector(".model-combobox-thinking")).not.toBeNull();
     } else {
@@ -306,7 +319,18 @@ describe("CustomModelDropdown", () => {
     await user.click(screen.getByRole("button", { name: "Collapse anthropic" }));
 
     expect(screen.queryByText("Claude Sonnet")).toBeNull();
-    await user.keyboard("{ArrowDown}{Enter}");
+
+    /*
+    FNXC:NativeUiKeyboard 2026-09-15-00:20:
+    Keyboard navigation belongs to the native listbox and moves real focus between OPTIONS, so a collapsed
+    provider's models are unreachable and Enter activates the focused option. The invariant is unchanged;
+    only the delegated highlight-index handler it used to run is gone.
+    */
+    const options = screen.getAllByRole("option");
+    options[0]!.focus();
+    await user.keyboard("{ArrowDown}");
+    expect(document.activeElement).toHaveTextContent("GPT-4o");
+    await user.keyboard("{Enter}");
     expect(onChange).toHaveBeenCalledWith("openai/gpt-4o");
   });
 
@@ -318,7 +342,15 @@ describe("CustomModelDropdown", () => {
     await user.click(screen.getByRole("button", { name: "Model" }));
     await user.click(screen.getByRole("button", { name: "Collapse anthropic" }));
 
-    await user.keyboard("{ArrowDown}{ArrowUp}{Enter}");
+    /*
+    FNXC:NativeUiKeyboard 2026-09-15-00:20:
+    Upward navigation also skips a collapsed provider's models because they are not rendered options at all.
+    */
+    const options = screen.getAllByRole("option");
+    options[1]!.focus();
+    await user.keyboard("{ArrowUp}");
+    expect(document.activeElement).toBe(options[0]);
+    await user.keyboard("{Enter}");
     expect(onChange).toHaveBeenCalledWith("");
   });
 
@@ -972,7 +1004,8 @@ describe("CustomModelDropdown", () => {
       const portal = await screen.findByTestId("model-combobox-portal");
       await user.type(within(portal).getByPlaceholderText("Filter models…"), "enterprise production");
 
-      expect(within(portal).getByText("Claude Sonnet 4.5 Enterprise Production with a Very Long Readable Name")).toBeTruthy();
+      // FNXC:NativeUiCollections 2026-09-15-00:20: the name appears in its option and again in the sibling favourite-action row.
+      expect(within(portal).getAllByText("Claude Sonnet 4.5 Enterprise Production with a Very Long Readable Name").length).toBeGreaterThan(0);
       expect(within(portal).queryByText("No models found")).toBeNull();
       expect(within(portal).getByLabelText("Remove Claude Sonnet 4.5 Enterprise Production with a Very Long Readable Name from favorites")).toBeTruthy();
 

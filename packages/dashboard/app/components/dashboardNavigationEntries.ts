@@ -39,11 +39,11 @@ export interface DashboardNavigationRegistryOptions {
 }
 
 /*
-FNXC:AlphaDesktopNavigation 2026-09-11-21:48:
-The desktop Alpha footer owns primary navigation only. History remains on complete-column headers, while Chat and Notes belong to the explicit Alpha desktop right-dock host; removing those three footer entries prevents duplicate navigation owners without changing standard hosts.
+FNXC:DesktopNavigation 2026-09-11-21:48:
+The desktop footer owns primary navigation only. History remains on complete-column headers, while Chat and Notes belong to the explicit desktop right-dock host; removing those three footer entries prevents duplicate navigation owners without changing standard hosts.
 */
 export function buildDashboardNavigationEntries(options: DashboardNavigationRegistryOptions): DashboardNavigationEntry[] {
-  const page = (id: string, label: string, view: TaskView, icon: ComponentType<LucideProps>, placement: DashboardNavigationPlacement = "overflow"): DashboardNavigationEntry => ({ id, label, view, icon, kind: "main-page", placement, testId: `alpha-desktop-nav-${id}`, onSelect: () => options.onChangeView(view) });
+  const page = (id: string, label: string, view: TaskView, icon: ComponentType<LucideProps>, placement: DashboardNavigationPlacement = "overflow"): DashboardNavigationEntry => ({ id, label, view, icon, kind: "main-page", placement, testId: `desktop-nav-${id}`, onSelect: () => options.onChangeView(view) });
   const direct = [
     page("command-center", "Dashboard", "command-center", Gauge, "direct"),
     page("board", "Board", "board", LayoutGrid, "direct"),
@@ -70,7 +70,7 @@ export function buildDashboardNavigationEntries(options: DashboardNavigationRegi
     ...(options.flags?.research ? [page("research", "Research", "research", Search)] : []),
     ...(options.flags?.ideation ? [page("ideation", "Ideation", "ideation", Lightbulb)] : []),
     ...(options.flags?.evals ? [page("evals", "Evals", "evals", Target)] : []),
-    { id: "settings", label: "Settings", icon: Settings, kind: "existing-action" as const, placement: "external" as const, view: "settings" as TaskView, testId: "alpha-desktop-nav-settings", onSelect: options.onOpenSettings },
+    { id: "settings", label: "Settings", icon: Settings, kind: "existing-action" as const, placement: "external" as const, view: "settings" as TaskView, testId: "desktop-nav-settings", onSelect: options.onOpenSettings },
   ];
   const external: DashboardNavigationEntry[] = [
     { id: "dev-server", label: "Dev Server", icon: PanelsTopLeft, kind: "external-owner", placement: "external", view: "devserver", testId: "right-dock-dev-server" },

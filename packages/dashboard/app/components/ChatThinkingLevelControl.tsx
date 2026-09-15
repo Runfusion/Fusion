@@ -1,4 +1,4 @@
-import { AlphaButton, AlphaListBox, AlphaListBoxItem, AlphaPopoverSurface } from "./alpha-ui";
+import { UiButton, UiListBox, UiListBoxItem, UiPopoverSurface } from "./ui";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
@@ -269,7 +269,7 @@ export function ChatThinkingLevelControl({
 
   return (
     <div className="chat-thinking-level-root" ref={rootRef}>
-      <AlphaButton
+      <UiButton
         ref={triggerRef}
         type="button"
         className={`btn-icon chat-thinking-btn${isActive ? " chat-thinking-btn--active" : ""}`}
@@ -287,10 +287,10 @@ export function ChatThinkingLevelControl({
         onKeyDown={handleTriggerKeyDown}
       >
         <Brain size={16} />
-      </AlphaButton>
+      </UiButton>
 
       {open && popoverPosition && typeof document !== "undefined" ? createPortal(
-        <AlphaPopoverSurface
+        <UiPopoverSurface
           ref={popoverRef}
           triggerRef={triggerRef}
           onClose={() => setOpen(false)}
@@ -355,13 +355,13 @@ export function ChatThinkingLevelControl({
 
           <section className="chat-thinking-level-section" aria-label={t("chat.thinkingLevelButton", "Thinking level")}>
             <div className="chat-thinking-section-title">{t("chat.thinkingLevelSection", "Thinking level")}</div>
-            <AlphaListBox
+            <UiListBox
               id={listboxId}
               className="chat-thinking-popover-list"
               aria-label={t("chat.thinkingLevelButton", "Thinking level")}
             >
               {hasStaleThinkingLevel ? (
-                <AlphaListBoxItem
+                <UiListBoxItem
                   legacyAs="button"
                   id={`stale-${normalizedLevel}`}
                   textValue={normalizedLevel}
@@ -371,12 +371,12 @@ export function ChatThinkingLevelControl({
                   data-testid={`chat-thinking-option-${normalizedLevel}`}
                 >
                   {t("models.options.unavailable", "Unavailable: {{level}}", { level: normalizedLevel })}
-                </AlphaListBoxItem>
+                </UiListBoxItem>
               ) : null}
               {thinkingLevelOptions.map((value) => {
                 const selected = normalizedLevel === value;
                 return (
-                  <AlphaListBoxItem
+                  <UiListBoxItem
                     key={value || "default"}
                     id={value || "default"}
                     textValue={optionLabel(value)}
@@ -388,12 +388,12 @@ export function ChatThinkingLevelControl({
                     onKeyDown={(event) => handleOptionKeyDown(event, value)}
                   >
                     {optionLabel(value)}
-                  </AlphaListBoxItem>
+                  </UiListBoxItem>
                 );
               })}
-            </AlphaListBox>
+            </UiListBox>
           </section>
-        </AlphaPopoverSurface>,
+        </UiPopoverSurface>,
         document.body,
       ) : null}
     </div>

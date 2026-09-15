@@ -30,7 +30,7 @@ import type { PluginDashboardViewEntry } from "../../api";
 import type { SectionId } from "../SettingsModal";
 import type { MainContentProps } from "./types";
 import { MainViewKeepAlive, isKeepAliveMainViewId, type KeepAliveMainViewId } from "./MainViewKeepAlive";
-import { AlphaMobileDrawer } from "../AlphaMobileDrawer";
+import { MobileDrawer } from "../MobileDrawer";
 
 /*
 FNXC:CommandCenterAgentActivity 2026-08-10-01:54:
@@ -39,7 +39,7 @@ A monotonic request id makes repeated clicks for the same agent observable to Ag
 let agentAnchorRequestSeq = 0;
 export function nextAgentAnchorRequestId(): number { return ++agentAnchorRequestSeq; }
 
-const ALPHA_DRAWER_TITLES: Partial<Record<string, string>> = {
+const MOBILE_DRAWER_TITLES: Partial<Record<string, string>> = {
   "command-center": "Dashboard",
   planning: "Planning",
   chat: "Chat",
@@ -65,14 +65,14 @@ const ALPHA_DRAWER_TITLES: Partial<Record<string, string>> = {
   "task-detail": "Task detail",
 };
 
-export function resolveAlphaMobileDrawerTitle(taskView: TaskView, pluginDashboardViews: PluginDashboardViewEntry[]): string {
+export function resolveMobileDrawerTitle(taskView: TaskView, pluginDashboardViews: PluginDashboardViewEntry[]): string {
   if (isPluginViewId(taskView)) {
     return pluginDashboardViews.find((entry) => buildPluginTaskViewId(entry.pluginId, entry.view.viewId) === taskView)?.view.label ?? "Plugin";
   }
-  return ALPHA_DRAWER_TITLES[taskView] ?? "Workspace";
+  return MOBILE_DRAWER_TITLES[taskView] ?? "Workspace";
 }
 
-interface AlphaMainContentDrawerProps {
+interface MainContentDrawerProps {
   taskView: TaskView;
   open: boolean;
   title: string;
@@ -81,10 +81,10 @@ interface AlphaMainContentDrawerProps {
 }
 
 /*
-FNXC:AlphaMobileDrawer 2026-09-10-23:59:
+FNXC:MobileDrawer 2026-09-10-23:59:
 Ordinary and plugin destinations share this production bridge so header ownership is derived from the routed task view in one place. Browser smoke mounts this same bridge, preventing fixture copies from silently disagreeing with MainContent.
 */
-export function AlphaMainContentDrawer({ taskView, open, title, onClose, children }: AlphaMainContentDrawerProps) {
+export function MainContentDrawer({ taskView, open, title, onClose, children }: MainContentDrawerProps) {
   /*
   FNXC:StandardizedPluginViews 2026-09-13-22:40:
   When the drawer paints the fallback title for a plugin destination it owns that header, so the plugin
@@ -93,19 +93,19 @@ export function AlphaMainContentDrawer({ taskView, open, title, onClose, childre
   */
   const drawerOwnsHeader = isPluginViewId(taskView);
   return (
-    <AlphaMobileDrawer
+    <MobileDrawer
       open={open}
       title={title}
       onClose={onClose}
       keepMounted
-      testId="alpha-mobile-drawer-main-content"
+      testId="mobile-drawer-main-content"
       contentOwnsHeader={!drawerOwnsHeader}
       contentOwnsScroll={false}
     >
       <PluginDashboardHostChromeContext.Provider value={{ hostOwnsHeader: drawerOwnsHeader }}>
         {children}
       </PluginDashboardHostChromeContext.Provider>
-    </AlphaMobileDrawer>
+    </MobileDrawer>
   );
 }
 
@@ -124,7 +124,7 @@ export interface AppMainPanelTaskDetailCompositionProps {
 }
 
 /*
-FNXC:TaskDetailAlpha 2026-09-11-14:13:
+FNXC:TaskDetailPresentation 2026-09-11-14:13:
 The production MainContent composition owns the final projection of App's task-detail state. Tests mount this component directly so omitting or replacing the authoritative open, close, tab, snapshot, or setter binding breaks the same path App ships.
 */
 export function AppMainPanelTaskDetailComposition({ state, mainContentProps }: AppMainPanelTaskDetailCompositionProps) {
@@ -257,6 +257,8 @@ export function MainContent(props: MainContentProps) {
   themeMode,
   setThemeMode,
   colorTheme,
+  uiStyle,
+  setUiStyle,
   setColorTheme,
   dashboardFontScalePct,
   setDashboardFontScalePct,
@@ -461,13 +463,13 @@ export function MainContent(props: MainContentProps) {
   }, [handleChangeTaskView, setGoalAnchorId, setMissionTargetId]);
 
   const projectKey = currentProject?.id ?? "all-projects";
-  const alphaMobileDrawerEnabled = isMobile && viewMode === "project" && currentProject !== null;
+  const mobileDrawerEnabled = isMobile && viewMode === "project" && currentProject !== null;
   /*
   FNXC:ChatSurfaceUnification 2026-09-14-11:35:
   `taskView="chat"` owns only the mobile drawer. Wide shells exclude Chat from the main keep-alive tree so a restored route or breakpoint transition cannot mount a second primary Chat behind the registry-backed window.
   */
   const selectedKeepAliveId: KeepAliveMainViewId | null = isKeepAliveMainViewId(taskView)
-    ? taskView === "chat" && !alphaMobileDrawerEnabled ? null : taskView
+    ? taskView === "chat" && !mobileDrawerEnabled ? null : taskView
     : taskView === "task-detail" && mainPanelDetailTask === null
       ? "board"
       : null;
@@ -476,11 +478,11 @@ export function MainContent(props: MainContentProps) {
     () => ({ projectKey, ids: [] }),
   );
   const storedKeepAliveIds = keepAliveViews.projectKey === projectKey ? keepAliveViews.ids : [];
-  const previousIds = !alphaMobileDrawerEnabled && storedKeepAliveIds.includes("chat")
+  const previousIds = !mobileDrawerEnabled && storedKeepAliveIds.includes("chat")
     ? storedKeepAliveIds.filter((id) => id !== "chat")
     : storedKeepAliveIds;
   const requiredKeepAliveIds = [
-    ...(alphaMobileDrawerEnabled ? ["board" as const] : []),
+    ...(mobileDrawerEnabled ? ["board" as const] : []),
     ...(selectedKeepAliveId ? [selectedKeepAliveId] : []),
   ];
   const mountedKeepAliveIds = !earlyHidden
@@ -505,7 +507,7 @@ export function MainContent(props: MainContentProps) {
   or connection error must instead release Board's shared header without reparenting retained Chat.
   */
   const activeKeepAliveId = earlyHidden ? null : selectedKeepAliveId;
-  const closeAlphaMobileDrawer = () => {
+  const closeMobileDrawer = () => {
     if (taskView === "task-detail") {
       closeTaskDetailMainPanel();
       return;
@@ -516,18 +518,18 @@ export function MainContent(props: MainContentProps) {
     }
     handleChangeTaskView("board");
   };
-  const alphaDrawerTitle = resolveAlphaMobileDrawerTitle(taskView, pluginDashboardViews);
+  const mobileDrawerTitle = resolveMobileDrawerTitle(taskView, pluginDashboardViews);
   const mainViewKeepAlive = (
     <MainViewKeepAlive
       activeId={activeKeepAliveId}
       mountedIds={mountedKeepAliveIds}
       projectKey={projectKey}
       mainContentProps={props}
-      alphaMobileDrawer={alphaMobileDrawerEnabled ? {
+      mobileDrawer={mobileDrawerEnabled ? {
         activeId: modalManager.detailTask ? null : taskView === "list" || taskView === "chat" ? taskView : null,
         backgroundActive: !earlyHidden,
-        title: alphaDrawerTitle,
-        onClose: closeAlphaMobileDrawer,
+        title: mobileDrawerTitle,
+        onClose: closeMobileDrawer,
       } : undefined}
     />
   );
@@ -569,6 +571,8 @@ export function MainContent(props: MainContentProps) {
             projectId={currentProject?.id}
             themeMode={themeMode}
             colorTheme={colorTheme}
+            uiStyle={uiStyle}
+            onUiStyleChange={setUiStyle}
             onThemeModeChange={setThemeMode}
             onColorThemeChange={setColorTheme}
             dashboardFontScalePct={dashboardFontScalePct}
@@ -874,7 +878,7 @@ export function MainContent(props: MainContentProps) {
     return (
       <PageErrorBoundary>
         <Suspense fallback={null}>
-          {/* FNXC:AlphaDesktopRightDock 2026-09-11-22:51: The standard Notes page must replace any retained compact-dock guard after a desktop-to-tablet transition. Its live dirty-state closure remains authoritative when the draft becomes dirty only after the transition. */}
+          {/* FNXC:DesktopRightDock 2026-09-11-22:51: The standard Notes page must replace any retained compact-dock guard after a desktop-to-tablet transition. Its live dirty-state closure remains authoritative when the draft becomes dirty only after the transition. */}
           <NotesView projectId={currentProject?.id} addToast={addToast} controller={notesController} registerGuard={registerNotesGuard} />
         </Suspense>
       </PageErrorBoundary>
@@ -1031,6 +1035,8 @@ export function MainContent(props: MainContentProps) {
           <CommandCenter
             projectId={currentProject?.id}
             colorTheme={colorTheme}
+            uiStyle={uiStyle}
+            onUiStyleChange={setUiStyle}
             themeMode={themeMode}
             shadcnCustomColors={shadcnCustomColors}
             resolvedThemeMode={resolvedThemeMode}
@@ -1160,7 +1166,7 @@ export function MainContent(props: MainContentProps) {
       <PageErrorBoundary>
         {/*
         FNXC:MobileDrawerMotion 2026-09-12-20:37:
-        Standard mobile Task Detail owns its bottom-edge transition here. Under Alpha, the shared
+        Standard mobile Task Detail owns its bottom-edge transition here. With the mobile shell, the shared
         drawer shell is the sole animated surface, preventing nested content from moving twice;
         dismissal and navigation callbacks remain synchronous and unchanged.
         */}
@@ -1172,11 +1178,11 @@ export function MainContent(props: MainContentProps) {
               initialTab={mainPanelDetailInitialTab}
               /*
               FNXC:TaskDetailHostOwnership 2026-09-13-16:30:
-              MainContent remains the navigation owner while canonical Task Detail chrome chooses ChevronLeft on phone and Close on desktop/tablet. Alpha's outer drawer contributes only its handle, never a second return control.
+              MainContent remains the navigation owner while canonical Task Detail chrome chooses ChevronLeft on phone and Close on desktop/tablet. The outer drawer contributes only its handle, never a second return control.
               */
               onNavigateToBoard={closeTaskDetailMainPanel}
-              presentation={alphaMobileDrawerEnabled ? "drawer" : "panel"}
-              mobileTransition={isMobile && !alphaMobileDrawerEnabled}
+              presentation={mobileDrawerEnabled ? "drawer" : "panel"}
+              mobileTransition={isMobile && !mobileDrawerEnabled}
               /* FNXC:FloatingWindow 2026-06-22-21:10: Popping out from the board's full-panel detail also returns the main panel to the board, so the board (not the emptied detail) sits behind the floating window. */
               onPopOut={(task) => { popOutTaskDetail(task); closeTaskDetailMainPanel(); }}
               onOpenDetail={(value, initialTab) => openTaskDetailInMainPanel(value, initialTab ?? "chat")}
@@ -1228,7 +1234,7 @@ export function MainContent(props: MainContentProps) {
   };
 
   const switchView = renderSwitchView();
-  const switchUsesAlphaDrawer = alphaMobileDrawerEnabled
+  const switchUsesMobileDrawer = mobileDrawerEnabled
     && taskView !== "board"
     && taskView !== "list"
     && taskView !== "chat"
@@ -1238,15 +1244,15 @@ export function MainContent(props: MainContentProps) {
   return (
     <>
       {mainViewKeepAlive}
-      {switchUsesAlphaDrawer ? (
-        <AlphaMainContentDrawer
+      {switchUsesMobileDrawer ? (
+        <MainContentDrawer
           taskView={taskView}
           open={!modalManager.detailTask}
-          title={alphaDrawerTitle}
-          onClose={closeAlphaMobileDrawer}
+          title={mobileDrawerTitle}
+          onClose={closeMobileDrawer}
         >
           {switchView}
-        </AlphaMainContentDrawer>
+        </MainContentDrawer>
       ) : switchView}
     </>
   );

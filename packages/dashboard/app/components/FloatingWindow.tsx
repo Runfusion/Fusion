@@ -232,12 +232,12 @@ export function FloatingWindow({
   2026-08-17, so no gutter zeroing hangs off this class any more.
   */
   const isTabletViewportMode = viewportMode === "tablet";
-  const alphaDrawerExcluded = Boolean(className && /(?:setup-wizard|onboarding|confirm)/.test(className));
-  const alphaMobileDrawer = viewportMode === "mobile"
+  const drawerExcluded = Boolean(className && /(?:setup-wizard|onboarding|confirm)/.test(className));
+  const mobileDrawer = viewportMode === "mobile"
     && typeof document !== "undefined"
-    && document.documentElement.dataset.alphaMobileDrawers === "true"
-    && !alphaDrawerExcluded;
-  const effectiveModal = modal || alphaMobileDrawer;
+    && document.documentElement.dataset.mobileDrawers === "true"
+    && !drawerExcluded;
+  const effectiveModal = modal || mobileDrawer;
   /*
   FNXC:ModalGeometryPersistence 2026-07-16-00:40:
   Opt-in sheet callers present as a full-screen sheet at `max-width: 768px`. Most wide, short landscape
@@ -249,7 +249,7 @@ export function FloatingWindow({
   snap zones, because a half-width column is unusable at that size. Returning to a desktop viewport
   restores the floating rect this instance already holds in memory.
   */
-  const sheetPresentation = alphaMobileDrawer || (suspendGeometryPersistenceOnMobile && (
+  const sheetPresentation = mobileDrawer || (suspendGeometryPersistenceOnMobile && (
     isFullScreenSheetViewport() || (suspendGeometryPersistenceOnShortViewport && isShortViewport())
   ));
 
@@ -394,7 +394,7 @@ export function FloatingWindow({
   const panelRef = useRef<HTMLDivElement | null>(null);
   const windowSurface = useDashboardWindowSurface({
     logicalId: windowKey,
-    group: surfaceGroup ?? (alphaMobileDrawer ? "drawer" : effectiveModal ? "dialog" : "window"),
+    group: surfaceGroup ?? (mobileDrawer ? "drawer" : effectiveModal ? "dialog" : "window"),
     locallyVisible: !hidden,
     stackOrder: zIndex,
   });
@@ -402,7 +402,7 @@ export function FloatingWindow({
   globallyHiddenRef.current = windowSurface.globallyHidden;
   const effectiveHidden = hidden || windowSurface.globallyHidden;
   const dismissHandleProps = useDrawerDismissGesture({
-    enabled: alphaMobileDrawer && !effectiveHidden,
+    enabled: mobileDrawer && !effectiveHidden,
     open: !effectiveHidden,
     panelRef,
     onDismiss: onClose,
@@ -890,8 +890,8 @@ export function FloatingWindow({
     const onKeyDown = (event: KeyboardEvent) => {
       if (eventBelongsToAnotherWindow(event) || !ownsKeyboardBoundary()) return;
       /*
-      FNXC:AlphaMobileDrawer 2026-09-11-02:01:
-      An Alpha mobile FloatingWindow has no close button, so its modal keyboard boundary must retain Escape as a secondary recovery path alongside handle drag and backdrop dismissal.
+      FNXC:MobileDrawer 2026-09-11-02:01:
+      A mobile drawer FloatingWindow has no close button, so its modal keyboard boundary must retain Escape as a secondary recovery path alongside handle drag and backdrop dismissal.
       */
       if (event.key === "Escape") {
         event.preventDefault();
@@ -941,7 +941,7 @@ export function FloatingWindow({
   return createPortal(
     <div
       ref={windowSurface.rootRef}
-      className={`floating-window-overlay${effectiveModal ? " floating-window-overlay--modal" : ""}${alphaMobileDrawer ? " floating-window-overlay--alpha-mobile-drawer" : ""}${effectiveHidden ? " floating-window-overlay--hidden" : ""}${overlayClassName ? ` ${overlayClassName}` : ""}`}
+      className={`floating-window-overlay${effectiveModal ? " floating-window-overlay--modal" : ""}${mobileDrawer ? " floating-window-overlay--mobile-drawer" : ""}${effectiveHidden ? " floating-window-overlay--hidden" : ""}${overlayClassName ? ` ${overlayClassName}` : ""}`}
       role="dialog"
       aria-modal={effectiveModal ? "true" : "false"}
       aria-hidden={effectiveHidden || undefined}
@@ -954,7 +954,7 @@ export function FloatingWindow({
       onMouseDown={(event) => {
         if (effectiveHidden) return;
         backdropMouseHandlers?.onMouseDown?.(event);
-        if (alphaMobileDrawer && event.target === event.currentTarget) onClose();
+        if (mobileDrawer && event.target === event.currentTarget) onClose();
       }}
       onMouseUp={effectiveHidden ? undefined : backdropMouseHandlers?.onMouseUp}
       onClick={effectiveHidden ? undefined : backdropMouseHandlers?.onClick}
@@ -982,18 +982,18 @@ export function FloatingWindow({
       <div
         ref={panelRef}
         data-snap-mode={snapMode}
-        className={`floating-window${hideHeader ? " floating-window--headerless" : ""}${hasTabletTouchGeometry ? " floating-window--touch-geometry" : ""}${isTabletViewportMode ? " floating-window--tablet-viewport" : ""}${alphaMobileDrawer ? " floating-window--alpha-mobile-drawer" : ""}${snapMode === "floating" ? "" : ` floating-window--snapped floating-window--snap-${snapMode}`}${className ? ` ${className}` : ""}`}
+        className={`floating-window${hideHeader ? " floating-window--headerless" : ""}${hasTabletTouchGeometry ? " floating-window--touch-geometry" : ""}${isTabletViewportMode ? " floating-window--tablet-viewport" : ""}${mobileDrawer ? " floating-window--mobile-drawer" : ""}${snapMode === "floating" ? "" : ` floating-window--snapped floating-window--snap-${snapMode}`}${className ? ` ${className}` : ""}`}
         style={panelStyle}
         data-testid={`floating-window-${windowKey}`}
         onPointerDownCapture={windowSurface.surfaceActive ? bringToFront : undefined}
         onPointerDown={(event) => {
-          if (alphaMobileDrawer) dismissHandleProps.onPointerDown(event);
+          if (mobileDrawer) dismissHandleProps.onPointerDown(event);
           else handlePanelPointerDown(event);
         }}
-        onPointerMove={alphaMobileDrawer ? dismissHandleProps.onPointerMove : undefined}
-        onPointerUp={alphaMobileDrawer ? dismissHandleProps.onPointerUp : undefined}
-        onPointerCancel={alphaMobileDrawer ? dismissHandleProps.onPointerCancel : undefined}
-        onLostPointerCapture={alphaMobileDrawer ? dismissHandleProps.onLostPointerCapture : undefined}
+        onPointerMove={mobileDrawer ? dismissHandleProps.onPointerMove : undefined}
+        onPointerUp={mobileDrawer ? dismissHandleProps.onPointerUp : undefined}
+        onPointerCancel={mobileDrawer ? dismissHandleProps.onPointerCancel : undefined}
+        onLostPointerCapture={mobileDrawer ? dismissHandleProps.onLostPointerCapture : undefined}
         onFocusCapture={windowSurface.surfaceActive ? bringToFrontOnFocus : undefined}
         tabIndex={effectiveModal ? -1 : undefined}
       >
@@ -1003,7 +1003,7 @@ export function FloatingWindow({
         handles with CSS there: removing them from the accessibility tree ensures those sheets
         expose no floating-window affordance or touch gesture surface.
         */}
-        {alphaMobileDrawer && (
+        {mobileDrawer && (
           <ViewDrawerHandle className="floating-window__drawer-handle-target" barClassName="floating-window__drawer-handle" />
         )}
         {/*
@@ -1030,7 +1030,7 @@ export function FloatingWindow({
             onPointerDown={handleDragPointerDown}
           >
             <div className="floating-window__title">{title}</div>
-            {!alphaMobileDrawer && (
+            {!mobileDrawer && (
               <ModalCloseButton
                 onClick={onClose}
                 aria-label={t("floatingWindow.close", "Close floating window")}

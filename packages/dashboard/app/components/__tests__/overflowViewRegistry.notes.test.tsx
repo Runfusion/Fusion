@@ -19,12 +19,12 @@ describe("overflowViewRegistry Notes entry", () => {
     expect(getVisibleOverflowViewEntries().map((entry) => entry.key)).not.toContain("notes");
     expect(getVisibleOverflowViewEntries({ hostMode: "standard" }).map((entry) => entry.key)).not.toContain("notes");
 
-    const options = { hostMode: "alpha-desktop" as const };
+    const options = { hostMode: "desktop" as const };
     const entry = findOverflowViewEntry("notes", options);
     expect(entry?.testId).toBe("right-dock-tab-notes");
     expect(isOverflowViewEntryExpandable(entry, options)).toBe(false);
     const controller = {} as never;
-    render(<>{entry?.render?.({ projectId: "project-notes", hostMode: "alpha-desktop", addToast: vi.fn(), notesController: controller, onOpenNote: vi.fn() })}</>);
+    render(<>{entry?.render?.({ projectId: "project-notes", hostMode: "desktop", addToast: vi.fn(), notesController: controller, onOpenNote: vi.fn() })}</>);
     expect(await screen.findByTestId("mock-notes-view")).toHaveAttribute("data-compact", "true");
     expect(screen.getByTestId("mock-notes-view")).toHaveAttribute("data-list-only", "true");
     expect(screen.getByTestId("mock-notes-view")).toHaveAttribute("data-controller", "true");
@@ -35,6 +35,6 @@ describe("overflowViewRegistry Notes entry", () => {
     localStorage.setItem(RIGHT_DOCK_VIEW_STORAGE_KEY, "notes");
     expect(readStoredRightDockView({})).toBe("files");
     expect(readStoredRightDockView({ hostMode: "standard" })).toBe("files");
-    expect(readStoredRightDockView({ hostMode: "alpha-desktop" })).toBe("notes");
+    expect(readStoredRightDockView({ hostMode: "desktop" })).toBe("notes");
   });
 });

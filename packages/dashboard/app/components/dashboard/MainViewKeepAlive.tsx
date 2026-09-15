@@ -4,7 +4,7 @@ import { CapacityRiskBanner } from "../CapacityRiskBanner";
 import { PageErrorBoundary } from "../ErrorBoundary";
 import { KeepAliveView } from "../KeepAliveView";
 import { ListView } from "../ListView";
-import { AlphaMobileDrawer } from "../AlphaMobileDrawer";
+import { MobileDrawer } from "../MobileDrawer";
 import type { MainContentProps } from "./types";
 
 /*
@@ -30,7 +30,7 @@ export interface MainViewKeepAliveProps {
   mountedIds: readonly KeepAliveMainViewId[];
   projectKey: string;
   mainContentProps: MainContentProps;
-  alphaMobileDrawer?: {
+  mobileDrawer?: {
     activeId: Exclude<KeepAliveMainViewId, "board"> | null;
     backgroundActive?: boolean;
     title: string;
@@ -327,10 +327,10 @@ function renderMainViewSubtree(
   }
 }
 
-export function MainViewKeepAlive({ activeId, mountedIds, projectKey, mainContentProps, alphaMobileDrawer }: MainViewKeepAliveProps) {
+export function MainViewKeepAlive({ activeId, mountedIds, projectKey, mainContentProps, mobileDrawer }: MainViewKeepAliveProps) {
   /*
   FNXC:HistoryRenderStability 2026-09-12-23:15:
-  Alpha window or drawer routing rerenders this retained host while Board data stays unchanged. Keep
+  Window or drawer routing rerenders this retained host while Board data stays unchanged. Keep
   every locally adapted column action stable while forwarding to the latest owners, so opening History cannot invalidate memoized workflow columns through History, Refine, or Revise callback identity churn.
   */
   const mainContentPropsRef = useRef(mainContentProps);
@@ -353,8 +353,8 @@ export function MainViewKeepAlive({ activeId, mountedIds, projectKey, mainConten
   return (
     <>
       {mountedIds.map((id) => {
-        const isDrawerView = alphaMobileDrawer !== undefined && id !== "board";
-        const isActive = activeId === id || (alphaMobileDrawer !== undefined && alphaMobileDrawer.backgroundActive !== false && id === "board");
+        const isDrawerView = mobileDrawer !== undefined && id !== "board";
+        const isActive = activeId === id || (mobileDrawer !== undefined && mobileDrawer.backgroundActive !== false && id === "board");
         const subtree = (
           <KeepAliveView key={`${projectKey}:${id}`} hidden={!isActive} testId={`${id}-keep-alive`}>
             {renderMainViewSubtree(id, mainContentProps, isActive, handleOpenHistory, handleRefinementCreated, handleReviseTask)}
@@ -362,19 +362,19 @@ export function MainViewKeepAlive({ activeId, mountedIds, projectKey, mainConten
         );
         if (!isDrawerView) return subtree;
         return (
-          <AlphaMobileDrawer
+          <MobileDrawer
             key={`${projectKey}:${id}`}
-            open={alphaMobileDrawer.activeId === id}
-            title={alphaMobileDrawer.title}
-            onClose={alphaMobileDrawer.onClose}
+            open={mobileDrawer.activeId === id}
+            title={mobileDrawer.title}
+            onClose={mobileDrawer.onClose}
             keepMounted
-            testId={`alpha-mobile-drawer-${id}`}
+            testId={`mobile-drawer-${id}`}
             surfaceGroup={id === "chat" ? "chat" : undefined}
             contentOwnsHeader
             contentOwnsScroll
           >
             {subtree}
-          </AlphaMobileDrawer>
+          </MobileDrawer>
         );
       })}
     </>

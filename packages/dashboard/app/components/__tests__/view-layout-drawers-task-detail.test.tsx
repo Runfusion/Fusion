@@ -10,7 +10,7 @@ import {
   resetTaskDetailFetchMock,
   setupTaskDetailModalHooks,
 } from "./TaskDetailModal.test-helpers";
-import { AlphaMobileDrawer } from "../AlphaMobileDrawer";
+import { MobileDrawer } from "../MobileDrawer";
 import { FloatingWindow } from "../FloatingWindow";
 import { TaskDetailModal } from "../TaskDetailModal";
 import {
@@ -37,8 +37,8 @@ function setViewport(mode: "mobile" | "desktop") {
     })),
   });
   document.documentElement.dataset.viewportMode = mode;
-  if (mode === "mobile") document.documentElement.dataset.alphaMobileDrawers = "true";
-  else delete document.documentElement.dataset.alphaMobileDrawers;
+  if (mode === "mobile") document.documentElement.dataset.mobileDrawers = "true";
+  else delete document.documentElement.dataset.mobileDrawers;
 }
 
 const sharedProps = {
@@ -56,7 +56,7 @@ describe("shared drawer and Task Detail view layout", () => {
       .filter((file) => !file.startsWith("__tests__/") && file !== "ViewDrawer.tsx")
       .filter((file) => readAppFile(`components/${file}`).includes("<ViewDrawerHandle"))
       .sort();
-    expect(consumers).toEqual(["AlphaMobileDrawer.tsx", "FloatingWindow.tsx", "TerminalModal.tsx"]);
+    expect(consumers).toEqual(["FloatingWindow.tsx", "MobileDrawer.tsx", "TerminalModal.tsx"]);
   });
 
   beforeEach(async () => {
@@ -69,14 +69,14 @@ describe("shared drawer and Task Detail view layout", () => {
     Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth });
     Object.defineProperty(window, "matchMedia", { configurable: true, value: originalMatchMedia });
     delete document.documentElement.dataset.viewportMode;
-    delete document.documentElement.dataset.alphaMobileDrawers;
+    delete document.documentElement.dataset.mobileDrawers;
   });
 
   it("uses one shared handle and ordered zones in Alpha and FloatingWindow drawers", () => {
     const alpha = render(
-      <AlphaMobileDrawer open title="Alpha" onClose={noop}>
+      <MobileDrawer open title="Alpha" onClose={noop}>
         <div>Alpha content</div>
-      </AlphaMobileDrawer>,
+      </MobileDrawer>,
     );
     const alphaDialog = screen.getByRole("dialog", { name: "Alpha" });
     expect(alphaDialog.querySelectorAll(":scope > .view-drawer__handle-target")).toHaveLength(1);
@@ -103,7 +103,7 @@ describe("shared drawer and Task Detail view layout", () => {
       <MainPanelTaskDetailHost key="panel" {...sharedProps} onNavigateToBoard={onClose} onPopOut={onPopOut} />,
       <ListSplitTaskDetailHost key="list" {...sharedProps} onClearSelection={onClose} onPopOut={onPopOut} />,
       <RightDockTaskDetailHost key="dock" {...sharedProps} onCloseDock={onClose} onPopOut={onPopOut} />,
-      <TaskDetailModal key="drawer" {...sharedProps} onClose={onClose} onPopOut={onPopOut} alphaMobileDrawer />,
+      <TaskDetailModal key="drawer" {...sharedProps} onClose={onClose} onPopOut={onPopOut} mobileDrawer />,
       <AppTaskPopoutWindow key="popout" {...sharedProps} hidden={false} onRemoveWindow={onClose} onPopOut={onPopOut} />,
     ];
 

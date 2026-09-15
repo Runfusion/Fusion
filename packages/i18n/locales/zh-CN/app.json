@@ -8290,7 +8290,9 @@
       "revisionColumnError": "无法请求修订：任务必须在 triage、todo、in-progress 或 in-review 列中。",
       "revisionRequested": "已请求 AI 修订。任务已移至规划阶段。",
       "saving": "正在保存…",
-      "updated": "规范已更新"
+      "updated": "规范已更新",
+      "copy": "复制",
+      "copied": "已复制"
     },
     "stall": {
       "noLogEntry": "尚无日志条目",
@@ -9930,5 +9932,12 @@
   "windows": {
     "hide": "隐藏所有窗口",
     "restore": "恢复窗口"
+  },
+  "uiStyle": {
+    "label": "界面风格",
+    "classic": "当前",
+    "classicDescription": "保持熟悉的 Fusion 界面语法。",
+    "clean": "简洁",
+    "cleanDescription": "更紧凑的间距、更柔和的圆角、更安静的外框。"
   }
 }

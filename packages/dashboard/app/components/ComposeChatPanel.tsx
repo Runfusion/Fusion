@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { AlphaButton, AlphaTextArea } from "./alpha-ui";
+import { UiButton, UiTextArea } from "./ui";
 import { useTranslation } from "react-i18next";
 import { useComposerDictation } from "../hooks/useComposerDictation";
 import { MicButton } from "./MicButton";
@@ -128,12 +128,12 @@ export function ComposeChatPanel({ projectId, embeds, draftBody, onUseDraft, onC
   return (
     <section id="compose-chat-panel" className="compose-chat-panel" aria-label={t("composeChat.ariaLabel", "Compose chat narrative helper")} data-testid="compose-chat-panel">
       <label className="message-composer-label" htmlFor="compose-chat-request">{t("composeChat.draftNarrative", "Draft narrative")}</label>
-      <AlphaTextArea ref={handleRequestRef} id="compose-chat-request" className="input compose-chat-panel__input" value={request} onChange={(event) => setRequest(event.target.value)} />
+      <UiTextArea ref={handleRequestRef} id="compose-chat-request" className="input compose-chat-panel__input" value={request} onChange={(event) => setRequest(event.target.value)} />
       <div className="compose-chat-panel__output" aria-live="polite">{latestDraft || t("composeChat.emptyDraft", "Ask the assistant to draft the narrative around your attached structures.")}</div>
       <div className="compose-chat-panel__actions"><MicButton {...dictation.micProps} />
-        <AlphaButton className="btn btn-sm btn-primary" type="button" onClick={() => void send()} disabled={chat.isStreaming || isCreating || hasPendingPrompt || !request.trim()}>{t("composeChat.draft", "Draft")}</AlphaButton>
-        <AlphaButton className="btn btn-sm btn-secondary" type="button" onClick={() => latestDraft && onUseDraft(latestDraft)} disabled={!latestDraft}>{t("composeChat.useDraft", "Use draft")}</AlphaButton>
-        <AlphaButton className="btn btn-sm btn-secondary" type="button" onClick={close}>{t("actions.close", "Close")}</AlphaButton>
+        <UiButton className="btn btn-sm btn-primary" type="button" onClick={() => void send()} disabled={chat.isStreaming || isCreating || hasPendingPrompt || !request.trim()}>{t("composeChat.draft", "Draft")}</UiButton>
+        <UiButton className="btn btn-sm btn-secondary" type="button" onClick={() => latestDraft && onUseDraft(latestDraft)} disabled={!latestDraft}>{t("composeChat.useDraft", "Use draft")}</UiButton>
+        <UiButton className="btn btn-sm btn-secondary" type="button" onClick={close}>{t("actions.close", "Close")}</UiButton>
       </div>
     </section>
   );

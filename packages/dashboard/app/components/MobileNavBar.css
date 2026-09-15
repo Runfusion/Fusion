@@ -8,10 +8,10 @@
   --mobile-nav-height: 44px;
   --mobile-nav-pill-height: var(--mobile-nav-height);
   --mobile-nav-floating-gap: 0px;
-  --mobile-nav-alpha-system-offset: calc(var(--icb-bottom-offset, 0px) + max(env(safe-area-inset-bottom, 0px), var(--space-md)) + var(--standalone-bottom-gap));
+  --mobile-nav-system-offset: calc(var(--icb-bottom-offset, 0px) + max(env(safe-area-inset-bottom, 0px), var(--space-md)) + var(--standalone-bottom-gap));
   --mobile-nav-keyboard-lift: 0px;
   --mobile-nav-viewport-offset-top: 0px;
-  --mobile-nav-pill-bottom: calc(var(--mobile-nav-alpha-system-offset) + var(--mobile-nav-floating-gap) + var(--mobile-nav-keyboard-lift));
+  --mobile-nav-pill-bottom: calc(var(--mobile-nav-system-offset) + var(--mobile-nav-floating-gap) + var(--mobile-nav-keyboard-lift));
   --mobile-nav-popover-bottom: calc(var(--mobile-nav-pill-bottom) + var(--mobile-nav-pill-height) + var(--space-xs));
 }
 
@@ -66,25 +66,20 @@ Show the bottom tab bar only when JS mode is mobile. Width-only `@media (max-wid
 
   /* The legacy full-width bar remains hidden while typing. The official pill
      overrides this rule with visual-viewport placement below. */
-  .mobile-nav-bar:not(.mobile-nav-bar--alpha).mobile-nav-bar--keyboard-open,
-  .mobile-nav-bar:not(.mobile-nav-bar--alpha).mobile-nav-bar--with-footer.mobile-nav-bar--keyboard-open {
+  .mobile-nav-bar:not(.mobile-nav-bar--native).mobile-nav-bar--keyboard-open,
+  .mobile-nav-bar:not(.mobile-nav-bar--native).mobile-nav-bar--with-footer.mobile-nav-bar--keyboard-open {
     bottom: 0;
     transform: translateY(100%);
     pointer-events: none;
   }
 
-  /* Content padding: mobile nav only (no footer). Mirrors the visible fixed stack,
-     including ICB compensation when fixed bars are pulled into the visual viewport. */
-  .project-content--with-mobile-nav:not(.project-content--with-footer) {
-    padding-bottom: calc(var(--mobile-nav-height) + max(env(safe-area-inset-bottom, 0px), 12px) + var(--standalone-bottom-gap) + var(--icb-bottom-offset, 0px));
-  }
-
-  /* Content padding: both mobile nav AND footer */
-  .project-content--with-footer.project-content--with-mobile-nav {
-    padding-bottom: calc(
-      var(--executor-footer-height) + var(--mobile-nav-height) + max(env(safe-area-inset-bottom, 0px), 12px) + var(--standalone-bottom-gap) + var(--icb-bottom-offset, 0px)
-    );
-  }
+  /*
+  FNXC:NativeShell 2026-09-15-00:20:
+  REMOVED: the pre-native content-padding rules for this class. App has only ever published the native
+  mobile-nav class, whose single reservation lives further down this file and composes the shared
+  `--mobile-nav-system-offset`. Keeping both sets after the rename would let the two-class footer variant
+  win on specificity and silently change the reserved space.
+  */
 }
 
 html[data-viewport-mode="mobile"] .mobile-nav-bar {
@@ -95,21 +90,11 @@ html[data-viewport-mode="mobile"] .mobile-nav-bar--with-footer {
   bottom: var(--icb-bottom-offset, 0px);
 }
 
-html[data-viewport-mode="mobile"] .mobile-nav-bar:not(.mobile-nav-bar--alpha).mobile-nav-bar--keyboard-open,
-html[data-viewport-mode="mobile"] .mobile-nav-bar:not(.mobile-nav-bar--alpha).mobile-nav-bar--with-footer.mobile-nav-bar--keyboard-open {
+html[data-viewport-mode="mobile"] .mobile-nav-bar:not(.mobile-nav-bar--native).mobile-nav-bar--keyboard-open,
+html[data-viewport-mode="mobile"] .mobile-nav-bar:not(.mobile-nav-bar--native).mobile-nav-bar--with-footer.mobile-nav-bar--keyboard-open {
   bottom: 0;
   transform: translateY(100%);
   pointer-events: none;
-}
-
-html[data-viewport-mode="mobile"] .project-content--with-mobile-nav:not(.project-content--with-footer) {
-  padding-bottom: calc(var(--mobile-nav-height) + max(env(safe-area-inset-bottom, 0px), 12px) + var(--standalone-bottom-gap) + var(--icb-bottom-offset, 0px));
-}
-
-html[data-viewport-mode="mobile"] .project-content--with-footer.project-content--with-mobile-nav {
-  padding-bottom: calc(
-    var(--executor-footer-height) + var(--mobile-nav-height) + max(env(safe-area-inset-bottom, 0px), 12px) + var(--standalone-bottom-gap) + var(--icb-bottom-offset, 0px)
-  );
 }
 
 html:is([data-viewport-mode="tablet"], [data-viewport-mode="desktop"]) .mobile-nav-bar {
@@ -118,12 +103,9 @@ html:is([data-viewport-mode="tablet"], [data-viewport-mode="desktop"]) .mobile-n
 
 /*
 FNXC:ViewportChrome 2026-08-03-00:13:
-If a stale project-content--with-mobile-nav class remains while mode is tablet/desktop, do not reserve phantom tab-bar stack space — only the desktop footer token applies.
+If a stale mobile-nav class remains while mode is tablet/desktop, do not reserve phantom tab-bar stack
+space — only the desktop footer token applies. The native reservation below owns the mobile case.
 */
-html:is([data-viewport-mode="tablet"], [data-viewport-mode="desktop"]) .project-content--with-mobile-nav:not(.project-content--with-footer) {
-  padding-bottom: 0;
-}
-
 html:is([data-viewport-mode="tablet"], [data-viewport-mode="desktop"]) .project-content--with-footer.project-content--with-mobile-nav {
   padding-bottom: var(--executor-footer-height);
 }
@@ -161,13 +143,13 @@ Wrap every tab icon in the same token-sized icon slot and keep unread/pending do
 }
 
 /*
-FNXC:AlphaUpdates 2026-09-10-03:16:
-The Alpha pill stays visually overlaid but must never obscure the final content or system gesture area. Its four destinations remain the only tablist children and the trailing hamburger is an equally sized semantic sibling; the scroller reserves the measured pill border box plus its shared system placement exactly once.
+FNXC:NativeShell 2026-09-10-03:16:
+The navigation pill stays visually overlaid but must never obscure the final content or system gesture area. Its four destinations remain the only tablist children and the trailing hamburger is an equally sized semantic sibling; the scroller reserves the measured pill border box plus its shared system placement exactly once.
 
 FNXC:MobilePillKeyboard 2026-09-13-09:10:
 The official mobile pill remains visible and interactive while an input owns the software keyboard. Its single runtime lift is the visual-viewport occlusion that still exists in the layout viewport; Android resizes-content therefore contributes zero while iOS contributes only the covered band.
 */
-.mobile-nav-bar--alpha {
+.mobile-nav-bar--native {
   --mobile-nav-floating-gap: var(--space-sm);
   left: var(--space-md);
   right: calc(var(--icb-right-offset, 0px) + var(--space-md));
@@ -181,21 +163,21 @@ The official mobile pill remains visible and interactive while an input owns the
 }
 
 @media (max-width: 768px) {
-  .project-content--with-alpha-nav {
-    padding-bottom: calc(var(--mobile-nav-height) + var(--mobile-nav-alpha-system-offset));
+  .project-content--with-mobile-nav {
+    padding-bottom: calc(var(--mobile-nav-height) + var(--mobile-nav-system-offset));
   }
 }
 
-html[data-viewport-mode="mobile"] .project-content--with-alpha-nav {
-  padding-bottom: calc(var(--mobile-nav-height) + var(--mobile-nav-alpha-system-offset));
+html[data-viewport-mode="mobile"] .project-content--with-mobile-nav {
+  padding-bottom: calc(var(--mobile-nav-height) + var(--mobile-nav-system-offset));
 }
 
-html:is([data-viewport-mode="tablet"], [data-viewport-mode="desktop"]) .project-content--with-alpha-nav:not(.project-content--with-footer) {
+html:is([data-viewport-mode="tablet"], [data-viewport-mode="desktop"]) .project-content--with-mobile-nav:not(.project-content--with-footer) {
   padding-bottom: 0;
 }
 
-.mobile-nav-bar--alpha .mobile-nav-tab,
-.mobile-nav-bar--alpha .alpha-mobile-menu-trigger {
+.mobile-nav-bar--native .mobile-nav-tab,
+.mobile-nav-bar--native .mobile-menu-trigger {
   flex: 1 1 0;
   min-width: 0;
   min-height: var(--touch-target-min-size);
@@ -206,19 +188,19 @@ html:is([data-viewport-mode="tablet"], [data-viewport-mode="desktop"]) .project-
   color: var(--text-muted);
 }
 
-.mobile-nav-bar--alpha .alpha-mobile-menu-trigger {
+.mobile-nav-bar--native .mobile-menu-trigger {
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
 }
 
-.mobile-nav-bar--alpha .alpha-mobile-menu-trigger[aria-expanded="true"] {
+.mobile-nav-bar--native .mobile-menu-trigger[aria-expanded="true"] {
   color: var(--text);
   background: var(--surface-hover);
 }
 
-.mobile-nav-bar--alpha .alpha-mobile-menu-trigger svg {
+.mobile-nav-bar--native .mobile-menu-trigger svg {
   width: var(--mobile-nav-icon-size);
   height: var(--mobile-nav-icon-size);
 }
@@ -280,7 +262,7 @@ html:is([data-viewport-mode="tablet"], [data-viewport-mode="desktop"]) .project-
   border-radius: var(--radius-md);
 }
 
-/* === Alpha header popover / standard Mobile More Sheet === */
+/* === Mobile navigation popover / More Sheet === */
 
 /*
 FNXC:MobilePillPopover 2026-09-13-09:10:
@@ -289,7 +271,7 @@ The official navigation menu uses the pill's measured top edge as its exclusive 
 FNXC:MobilePillPopover 2026-09-13-10:32:
 The popover's upper bound is the shifted visual viewport top plus the device safe inset and token gap. Subtract the App-provided viewport offset from the actual height cap so an iOS keyboard transition cannot leave the first menu controls above the visible canvas.
 */
-.alpha-mobile-navigation-popover {
+.mobile-navigation-popover {
   position: fixed;
   bottom: var(--mobile-nav-popover-bottom);
   right: calc(var(--icb-right-offset, 0px) + var(--space-md));
@@ -305,8 +287,8 @@ The popover's upper bound is the shifted visual viewport top plus the device saf
   overscroll-behavior: contain;
 }
 
-.alpha-mobile-navigation-popover .mobile-more-item:focus-visible,
-.alpha-mobile-navigation-popover .mobile-more-split-toggle:focus-visible {
+.mobile-navigation-popover .mobile-more-item:focus-visible,
+.mobile-navigation-popover .mobile-more-split-toggle:focus-visible {
   outline: none;
   box-shadow: inset var(--focus-ring);
 }

@@ -1,8 +1,7 @@
 // ChatView.css is imported eagerly from App.tsx to avoid a flash of
 // unstyled content when the lazy chunk loads. Do not re-import here.
-import { AlphaButton, AlphaDialogBackdrop, AlphaInput, AlphaListBox, AlphaListBoxItem, AlphaMenu, AlphaMenuItem, AlphaMenuSection, AlphaSelect, AlphaTextArea } from "./alpha-ui";
+import { UiButton, UiDialogBackdrop, UiInput, UiListBox, UiListBoxItem, UiMenu, UiMenuItem, UiMenuSection, UiSelect, UiTextArea } from "./ui";
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { AlphaBoundary } from "../context/AlphaContext";
 import {
   MessageSquare,
   Plus,
@@ -361,7 +360,7 @@ export function resolveSessionProvider(
  */
 function ChatDialogBackdrop({ children, onClose }: { children: React.ReactElement<React.HTMLAttributes<HTMLElement>>; onClose: () => void }) {
   const overlayDismiss = useOverlayDismiss(onClose, { enabled: true });
-  return <AlphaDialogBackdrop overlayClassName="chat-new-dialog-backdrop chat-view-dialog-backdrop" onClose={onClose}>{React.cloneElement(children, overlayDismiss)}</AlphaDialogBackdrop>;
+  return <UiDialogBackdrop overlayClassName="chat-new-dialog-backdrop chat-view-dialog-backdrop" onClose={onClose}>{React.cloneElement(children, overlayDismiss)}</UiDialogBackdrop>;
 }
 
 type CopyFeedbackState = "success" | "error" | null;
@@ -1687,8 +1686,8 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
   */
   const handleNewChat = useCallback((event?: React.MouseEvent<HTMLButtonElement>) => {
     /*
-    FNXC:AlphaDesktopRightDock 2026-09-11-21:48:
-    The Alpha desktop dock is a list owner, never a transcript owner. New Chat therefore preserves the host selection and opens the returned identity immediately; standard hosts keep plain-click in-place creation and modifier-click pop-out.
+    FNXC:DesktopRightDock 2026-09-11-21:48:
+    The desktop dock is a list owner, never a transcript owner. New Chat therefore preserves the host selection and opens the returned identity immediately; standard hosts keep plain-click in-place creation and modifier-click pop-out.
     */
     const openInNewWindow = Boolean(onOpenSessionInNewWindow && (listOnly || event?.ctrlKey || event?.metaKey));
     if (chatDefaultTarget?.kind === "agent") {
@@ -2594,7 +2593,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
       <div className="chat-empty-state">
         <MessageSquare size={48} strokeWidth={1.5} />
         <h2>{t("chat.startNewConversation", "Start a new conversation")}</h2>
-        <AlphaButton
+        <UiButton
           className="btn btn-primary"
           onClick={handleNewChat}
           data-testid="chat-new-btn-empty"
@@ -2602,7 +2601,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
         >
           <Plus size={16} />
           {t("chat.newChat", "New Chat")}
-        </AlphaButton>
+        </UiButton>
       </div>
     );
   };
@@ -2781,11 +2780,11 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
       : t("chat.conversationSearchMatchCount", "{{current}} of {{count}} matches", { current: conversationSearchIndex + 1, count });
     return <div className="chat-conversation-search" data-testid="chat-conversation-search">
       <Search size={14} aria-hidden="true" />
-      <AlphaInput ref={conversationSearchInputRef} className="input chat-conversation-search-input" value={conversationSearchQuery} onChange={(event) => { setConversationSearchQuery(event.target.value); setConversationSearchIndex(0); }} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); closeConversationSearch(); } else if (event.key === "Enter") { event.preventDefault(); navigateConversationSearch(event.shiftKey ? -1 : 1); } }} placeholder={t("chat.conversationSearchPlaceholder", "Find in conversation") } aria-label={t("chat.conversationSearchLabel", "Find in conversation")} data-testid="chat-conversation-search-input" />
+      <UiInput ref={conversationSearchInputRef} className="input chat-conversation-search-input" value={conversationSearchQuery} onChange={(event) => { setConversationSearchQuery(event.target.value); setConversationSearchIndex(0); }} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); closeConversationSearch(); } else if (event.key === "Enter") { event.preventDefault(); navigateConversationSearch(event.shiftKey ? -1 : 1); } }} placeholder={t("chat.conversationSearchPlaceholder", "Find in conversation") } aria-label={t("chat.conversationSearchLabel", "Find in conversation")} data-testid="chat-conversation-search-input" />
       <span className="chat-conversation-search-status" role="status" aria-live="polite">{status}</span>
-      <AlphaButton type="button" className="btn-icon" aria-label={t("chat.conversationSearchPrevious", "Previous match")} disabled={count === 0} onClick={() => navigateConversationSearch(-1)}><ChevronUp size={14} /></AlphaButton>
-      <AlphaButton type="button" className="btn-icon" aria-label={t("chat.conversationSearchNext", "Next match")} disabled={count === 0} onClick={() => navigateConversationSearch(1)}><ChevronDown size={14} /></AlphaButton>
-      <AlphaButton type="button" className="btn-icon" aria-label={t("chat.conversationSearchClose", "Close search")} onClick={closeConversationSearch}><X size={14} /></AlphaButton>
+      <UiButton type="button" className="btn-icon" aria-label={t("chat.conversationSearchPrevious", "Previous match")} disabled={count === 0} onClick={() => navigateConversationSearch(-1)}><ChevronUp size={14} /></UiButton>
+      <UiButton type="button" className="btn-icon" aria-label={t("chat.conversationSearchNext", "Next match")} disabled={count === 0} onClick={() => navigateConversationSearch(1)}><ChevronDown size={14} /></UiButton>
+      <UiButton type="button" className="btn-icon" aria-label={t("chat.conversationSearchClose", "Close search")} onClick={closeConversationSearch}><X size={14} /></UiButton>
     </div>;
   };
 
@@ -2963,10 +2962,10 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
     const report = allowReport && role === "assistant" && onSendAsReport ? buildChatReportHandoff(content, t("chat.reportFallbackTitle", "Chat report")) : null;
     if (!canCopy && !report?.handoff) return undefined;
     return <>
-      {canCopy && <AlphaButton type="button" className={`btn-icon chat-message-copy-action${copyFeedbackByMessageId[messageId] === "success" ? " chat-message-copy-action--success" : ""}${copyFeedbackByMessageId[messageId] === "error" ? " chat-message-copy-action--error" : ""}`} data-testid={testId ?? `chat-copy-response-${messageId}`} aria-label={copyFeedbackByMessageId[messageId] === "success" ? t("chat.responseCopied", "Response copied") : copyFeedbackByMessageId[messageId] === "error" ? t("chat.copyFailed", "Copy failed") : t("chat.copyResponse", "Copy response")} onClick={() => { void handleCopyResponse(messageId, content); }}>
+      {canCopy && <UiButton type="button" className={`btn-icon chat-message-copy-action${copyFeedbackByMessageId[messageId] === "success" ? " chat-message-copy-action--success" : ""}${copyFeedbackByMessageId[messageId] === "error" ? " chat-message-copy-action--error" : ""}`} data-testid={testId ?? `chat-copy-response-${messageId}`} aria-label={copyFeedbackByMessageId[messageId] === "success" ? t("chat.responseCopied", "Response copied") : copyFeedbackByMessageId[messageId] === "error" ? t("chat.copyFailed", "Copy failed") : t("chat.copyResponse", "Copy response")} onClick={() => { void handleCopyResponse(messageId, content); }}>
         {copyFeedbackByMessageId[messageId] === "success" ? <Check size={14} /> : <Copy size={14} />}
-      </AlphaButton>}
-      {report?.handoff && <AlphaButton type="button" className="btn-icon" data-testid={`chat-send-as-report-${messageId}`} aria-label={t("chat.sendAsReport", "Send as report")} onClick={() => { if (report.truncated) addToast(t("chat.reportTrimmed", "Message trimmed to 2000 characters for mail"), "warning"); onSendAsReport?.(report.handoff!); }}><FileText size={14} /></AlphaButton>}
+      </UiButton>}
+      {report?.handoff && <UiButton type="button" className="btn-icon" data-testid={`chat-send-as-report-${messageId}`} aria-label={t("chat.sendAsReport", "Send as report")} onClick={() => { if (report.truncated) addToast(t("chat.reportTrimmed", "Message trimmed to 2000 characters for mail"), "warning"); onSendAsReport?.(report.handoff!); }}><FileText size={14} /></UiButton>}
     </>;
   }, [addToast, copyFeedbackByMessageId, handleCopyResponse, onSendAsReport, showProviderResponseCopy, t]);
 
@@ -3061,7 +3060,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
 
   const renderSessionComposerPane = () => (
     <div className="chat-input-area">
-      <AlphaInput
+      <UiInput
         ref={fileInputRef}
         type="file"
         data-testid="chat-file-input"
@@ -3074,7 +3073,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
         }}
       />
       {showSkillMenu && (
-        <AlphaListBox className="chat-skill-menu" data-testid="chat-skill-menu" aria-label={t("chat.slashSuggestions", "Slash suggestions")}>
+        <UiListBox className="chat-skill-menu" data-testid="chat-skill-menu" aria-label={t("chat.slashSuggestions", "Slash suggestions")}>
           {skillsLoading && skillMenuEntries.length === 0 ? (
             <div className="chat-skill-menu-empty">{t("chat.loadingSlashSuggestions", "Loading suggestions…")}</div>
           ) : skillMenuEntries.length === 0 ? (
@@ -3084,7 +3083,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
           ) : (
             skillMenuEntries.map((entry, index) =>
               entry.kind === "command" ? (
-                <AlphaListBoxItem
+                <UiListBoxItem
                   key={`command-${entry.command.trigger}`}
                   id={`command-${entry.command.trigger}`}
                   textValue={entry.command.trigger}
@@ -3103,9 +3102,9 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
                       ? t("chat.commandNoRunningAgentHint", "No running agent to steer")
                       : entry.command.description}
                   </span>
-                </AlphaListBoxItem>
+                </UiListBoxItem>
               ) : entry.kind === "snippet" ? (
-                <AlphaListBoxItem
+                <UiListBoxItem
                   key={`snippet-${entry.snippet.name}`}
                   id={`snippet-${entry.snippet.name}`}
                   textValue={entry.snippet.name}
@@ -3120,9 +3119,9 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
                   <span className="chat-skill-menu-item-description">
                     {t("chat.snippetSuggestion", "Insert saved prompt")}
                   </span>
-                </AlphaListBoxItem>
+                </UiListBoxItem>
               ) : (
-                <AlphaListBoxItem
+                <UiListBoxItem
                   key={entry.skill.id}
                   id={entry.skill.id}
                   textValue={entry.skill.name}
@@ -3137,11 +3136,11 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
                   <span className="chat-skill-menu-item-description" title={entry.skill.relativePath}>
                     {entry.skill.relativePath}
                   </span>
-                </AlphaListBoxItem>
+                </UiListBoxItem>
               ),
             )
           )}
-        </AlphaListBox>
+        </UiListBox>
       )}
       {pendingAttachments.length > 0 && (
         <div className="chat-attachment-previews" data-testid="chat-attachment-previews">
@@ -3156,7 +3155,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
               ) : (
                 <span className="chat-attachment-preview-name">{attachment.file.name}</span>
               )}
-              <AlphaButton
+              <UiButton
                 type="button"
                 className="chat-attachment-remove"
                 onClick={() => removeAttachment(index)}
@@ -3164,7 +3163,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
                 aria-label={`Remove ${attachment.file.name}`}
               >
                 ×
-              </AlphaButton>
+              </UiButton>
             </div>
           ))}
         </div>
@@ -3179,7 +3178,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
         testIdPrefix="chat-pending"
       />
       <div className="chat-input-row">
-        <AlphaButton
+        <UiButton
           type="button"
           className="btn-icon chat-attach-btn"
           data-testid="chat-attach-btn"
@@ -3188,7 +3187,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
           disabled={pendingQueueAction}
         >
           <Paperclip size={16} />
-        </AlphaButton>
+        </UiButton>
         {/*
         FNXC:ChatMemoryFocus 2026-08-24-04:21:
         Per-conversation memory focus is opt-in. Hide its direct-session chip until Settings
@@ -3248,7 +3247,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
             handleAttachmentFiles(event.dataTransfer.files);
           }}
         >
-          <AlphaTextArea
+          <UiTextArea
             ref={handleComposerRef}
             className="chat-input-textarea"
             placeholder={t("chat.typeMessage", "Type a message...")}
@@ -3427,7 +3426,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
               title={onOpenSessionInNewWindow ? t("chat.newChatOpenInNewWindowHint", "Ctrl/Cmd + click to open the new conversation in a separate window") : undefined}
             /> : null}
             {!floating && onPopOut ? (
-              <AlphaButton
+              <UiButton
                 type="button"
                 className="btn-icon chat-view-header-icon"
                 onClick={onPopOut}
@@ -3436,10 +3435,10 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
                 data-testid="chat-pop-out"
               >
                 <Maximize2 size={16} />
-              </AlphaButton>
+              </UiButton>
             ) : null}
             {floating && onMaximize ? (
-              <AlphaButton
+              <UiButton
                 type="button"
                 className="btn-icon chat-view-header-icon"
                 onClick={onMaximize}
@@ -3448,7 +3447,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
                 data-testid="chat-modal-maximize"
               >
                 <Maximize2 size={16} />
-              </AlphaButton>
+              </UiButton>
             ) : null}
           </>
         }
@@ -3478,7 +3477,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
             <div className="chat-sidebar-search-container">
               <div className="chat-sidebar-search-wrapper">
                 <Search size={14} className="chat-sidebar-search-icon" />
-                <AlphaInput
+                <UiInput
                   ref={listSearchInputRef}
                   type="text"
                   className="chat-sidebar-search"
@@ -3495,7 +3494,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
               <div className="chat-sidebar-filter-row">
                 <label className="chat-tag-filter" htmlFor="chat-tag-filter">
                   <Tag size={14} aria-hidden="true" />
-                  <AlphaSelect
+                  <UiSelect
                     id="chat-tag-filter"
                     value={selectedTagId ?? ""}
                     onChange={(event) => setSelectedTagId(event.target.value || null)}
@@ -3504,10 +3503,10 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
                   >
                     <option value="">{t("chat.allTags", "All tags")}</option>
                     {tags.map((tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}
-                  </AlphaSelect>
-                  {selectedTagId ? <AlphaButton type="button" className="btn-icon" aria-label={t("chat.clearTagFilter", "Clear tag filter")} onClick={() => setSelectedTagId(null)}><X size={14} /></AlphaButton> : null}
+                  </UiSelect>
+                  {selectedTagId ? <UiButton type="button" className="btn-icon" aria-label={t("chat.clearTagFilter", "Clear tag filter")} onClick={() => setSelectedTagId(null)}><X size={14} /></UiButton> : null}
                 </label>
-                <AlphaButton
+                <UiButton
                   type="button"
                   className={`btn btn-sm chat-archived-toggle${showArchivedSessions ? " chat-archived-toggle--active" : ""}`}
                   data-testid="chat-archived-toggle"
@@ -3517,7 +3516,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
                   onClick={() => { const next = !showArchivedSessions; setShowArchivedSessions(next); if (next) void refreshArchivedSessions(); }}
                 >
                   {t("chat.archived", "Archived")}
-                </AlphaButton>
+                </UiButton>
               </div>
             </div>
             {/* Session list section */}
@@ -3573,7 +3572,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
                       FNXC:ChatSidebar 2026-07-16-00:00:
                       FN-8173 consolidates Pin, Rename, and Delete into this single three-dot trigger so long conversation titles retain usable row width. It opens the existing context-menu state so click and right-click share the same labeled action list and handlers.
                       */}
-                      <AlphaButton
+                      <UiButton
                         type="button"
                         className="btn-icon chat-session-menu-btn"
                         data-testid="chat-session-menu-btn"
@@ -3591,7 +3590,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
                         }}
                       >
                         <MoreHorizontal size={14} />
-                      </AlphaButton>
+                      </UiButton>
                       <div className="chat-session-title">
                         {sessionTitle}
                         {session.pinnedAt ? <Pin className="chat-session-pinned-indicator" size={14} data-testid={`chat-session-pinned-indicator-${session.id}`} aria-label={t("chat.pinned", "Pinned")} /> : null}
@@ -3615,7 +3614,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
                           {t("chat.matchedInMessage", "Matched: \"{{preview}}\"", { preview: session.matchedMessagePreview })}
                         </div>
                       ) : null}
-                      {showArchivedSessions ? <AlphaButton type="button" className="btn btn-sm btn-secondary" data-testid={`chat-archived-restore-${session.id}`} onClick={(event) => { event.stopPropagation(); void handleRestoreArchived(session.id); }}>{t("chat.restore", "Restore")}</AlphaButton> : null}
+                      {showArchivedSessions ? <UiButton type="button" className="btn btn-sm btn-secondary" data-testid={`chat-archived-restore-${session.id}`} onClick={(event) => { event.stopPropagation(); void handleRestoreArchived(session.id); }}>{t("chat.restore", "Restore")}</UiButton> : null}
                       <div className="chat-session-meta">
                         <span className="chat-session-meta-model">
                           {sessionResolvedModel?.provider ? <ProviderIcon provider={sessionResolvedModel.provider} size="sm" /> : null}
@@ -3650,16 +3649,16 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
           ref={contextMenuRef}
           style={{ top: contextMenu.y, left: contextMenu.x }}
           onClick={(e) => e.stopPropagation()}
-          data-alpha-menu-layout="conversation-actions"
+          data-menu-layout="conversation-actions"
         >
           {/*
-          FNXC:AlphaCollections 2026-09-10-20:43:
-          A conversation owns one sectioned homemade Alpha menu so arrow keys cross primary actions, every tag assignment, and maintenance actions. Tag editing remains a visibly labelled sibling rail after the collection because its buttons are auxiliary controls rather than competing menu items.
+          FNXC:NativeUiCollections 2026-09-10-20:43:
+          A conversation owns one sectioned native menu so arrow keys cross primary actions, every tag assignment, and maintenance actions. Tag editing remains a visibly labelled sibling rail after the collection because its buttons are auxiliary controls rather than competing menu items.
           */}
-          <AlphaMenu aria-label={t("chat.conversationActions", "Conversation actions")} className="chat-session-context-menu-section">
-          <AlphaMenuSection aria-label={t("chat.conversationPrimaryActions", "Primary conversation actions")}>
+          <UiMenu aria-label={t("chat.conversationActions", "Conversation actions")} className="chat-session-context-menu-section">
+          <UiMenuSection aria-label={t("chat.conversationPrimaryActions", "Primary conversation actions")}>
           {onOpenSessionInNewWindow && !showArchivedSessions && contextMenuSession ? (
-            <AlphaMenuItem
+            <UiMenuItem
               id="open-window"
               type="button"
               data-testid="chat-context-open-window"
@@ -3670,9 +3669,9 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
             >
               <ExternalLink size={14} />
               {t("chat.openInNewWindow", "Open in new window")}
-            </AlphaMenuItem>
+            </UiMenuItem>
           ) : null}
-          <AlphaMenuItem
+          <UiMenuItem
             id="copy-id"
             type="button"
             data-testid="chat-context-copy-id"
@@ -3680,8 +3679,8 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
           >
             <Copy size={14} />
             {t("chat.copyConversationId", "Copy conversation ID")}
-          </AlphaMenuItem>
-          <AlphaMenuItem
+          </UiMenuItem>
+          <UiMenuItem
             id="pin"
             onClick={() => handlePin(
               contextMenu.sessionId,
@@ -3693,35 +3692,35 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
           >
             {contextMenuSession?.pinnedAt ? <PinOff size={14} /> : <Pin size={14} />}
             {contextMenuSession?.pinnedAt ? t("chat.unpin", "Unpin") : t("chat.pin", "Pin")}
-          </AlphaMenuItem>
-          <AlphaMenuItem
+          </UiMenuItem>
+          <UiMenuItem
             id="rename"
             onClick={() => openRenameDialog(contextMenu.sessionId)}
             data-testid="chat-context-rename"
           >
             <Pencil size={14} />
             {t("chat.rename", "Rename")}
-          </AlphaMenuItem>
-          </AlphaMenuSection>
+          </UiMenuItem>
+          </UiMenuSection>
           {tags.length > 0 ? (
-            <AlphaMenuSection aria-label={t("chat.conversationTags", "Conversation tags")}>
+            <UiMenuSection aria-label={t("chat.conversationTags", "Conversation tags")}>
               {tags.map((tag) => {
                 const assigned = (contextMenuSession?.tags ?? []).some((candidate) => candidate.id === tag.id);
-                return <AlphaMenuItem key={tag.id} id={`tag-${tag.id}`} role="menuitemcheckbox" aria-checked={assigned} data-testid={`chat-context-tag-${tag.id}`} onClick={() => void setSessionTags(contextMenu.sessionId, assigned ? (contextMenuSession?.tags ?? []).filter((candidate) => candidate.id !== tag.id).map((candidate) => candidate.id) : [...(contextMenuSession?.tags ?? []).map((candidate) => candidate.id), tag.id]).catch(() => addToast(t("chat.failedToUpdateTags", "Failed to update tags"), "error"))}>{assigned ? "✓ " : ""}{tag.name}</AlphaMenuItem>;
+                return <UiMenuItem key={tag.id} id={`tag-${tag.id}`} role="menuitemcheckbox" aria-checked={assigned} data-testid={`chat-context-tag-${tag.id}`} onClick={() => void setSessionTags(contextMenu.sessionId, assigned ? (contextMenuSession?.tags ?? []).filter((candidate) => candidate.id !== tag.id).map((candidate) => candidate.id) : [...(contextMenuSession?.tags ?? []).map((candidate) => candidate.id), tag.id]).catch(() => addToast(t("chat.failedToUpdateTags", "Failed to update tags"), "error"))}>{assigned ? "✓ " : ""}{tag.name}</UiMenuItem>;
               })}
-            </AlphaMenuSection>
+            </UiMenuSection>
           ) : null}
-          <AlphaMenuSection aria-label={t("chat.conversationMaintenanceActions", "Conversation maintenance actions")}>
-          <AlphaMenuItem
+          <UiMenuSection aria-label={t("chat.conversationMaintenanceActions", "Conversation maintenance actions")}>
+          <UiMenuItem
             id="archive"
             onClick={() => handleArchive(contextMenu.sessionId)}
             data-testid="chat-context-archive"
           >
             <Archive size={14} />
             {t("chat.archive", "Archive")}
-          </AlphaMenuItem>
+          </UiMenuItem>
           {chatSettings?.memoryBackendType === "stash" && chatSettings.memoryEnabled !== false ? (
-            <AlphaMenuItem
+            <UiMenuItem
               id="stash-backfill"
               onClick={() => void handleBackfillStash(contextMenu.sessionId)}
               data-testid="chat-context-stash-backfill"
@@ -3732,9 +3731,9 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
               {stashBackfillBusyId === contextMenu.sessionId
                 ? t("chat.preserveToStashWorking", "Uploading to Stash…")
                 : t("chat.preserveToStash", "Preserve to Stash")}
-            </AlphaMenuItem>
+            </UiMenuItem>
           ) : null}
-          <AlphaMenuItem
+          <UiMenuItem
             id="delete"
             onClick={() => {
               setContextMenu(null);
@@ -3744,16 +3743,16 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
           >
             <Trash2 size={14} />
             {t("chat.delete", "Delete")}
-          </AlphaMenuItem>
-          </AlphaMenuSection>
-          </AlphaMenu>
+          </UiMenuItem>
+          </UiMenuSection>
+          </UiMenu>
           <div className="chat-session-tag-menu">
             <div className="chat-tag-action-rail" aria-label={t("chat.tagActions", "Tag actions")}>
-              {tags.map((tag) => <div className="chat-tag-menu-item" key={tag.id}><span className="chat-tag-action-label">{tag.name}</span><AlphaButton type="button" className="btn-icon" aria-label={t("chat.renameTag", "Rename tag {{name}}", { name: tag.name })} data-testid={`chat-context-rename-tag-${tag.id}`} onClick={() => { setRenameTagName(tag.name); setRenameTagDialog(tag); }}><Pencil size={14} /></AlphaButton><AlphaButton type="button" className="btn-icon" aria-label={t("chat.deleteTag", "Delete tag {{name}}", { name: tag.name })} data-testid={`chat-context-delete-tag-${tag.id}`} onClick={() => setConfirmDeleteTag(tag)}><Trash2 size={14} /></AlphaButton></div>)}
+              {tags.map((tag) => <div className="chat-tag-menu-item" key={tag.id}><span className="chat-tag-action-label">{tag.name}</span><UiButton type="button" className="btn-icon" aria-label={t("chat.renameTag", "Rename tag {{name}}", { name: tag.name })} data-testid={`chat-context-rename-tag-${tag.id}`} onClick={() => { setRenameTagName(tag.name); setRenameTagDialog(tag); }}><Pencil size={14} /></UiButton><UiButton type="button" className="btn-icon" aria-label={t("chat.deleteTag", "Delete tag {{name}}", { name: tag.name })} data-testid={`chat-context-delete-tag-${tag.id}`} onClick={() => setConfirmDeleteTag(tag)}><Trash2 size={14} /></UiButton></div>)}
             </div>
             <div className="chat-tag-create-row">
-              <AlphaInput className="input" value={newTagName} placeholder={t("chat.newTag", "New tag")} aria-label={t("chat.newTag", "New tag")} onChange={(event) => setNewTagName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void handleCreateTagForSession(); } }} />
-              <AlphaButton type="button" className="btn btn-sm" onClick={() => void handleCreateTagForSession()}>{t("chat.addTag", "Add")}</AlphaButton>
+              <UiInput className="input" value={newTagName} placeholder={t("chat.newTag", "New tag")} aria-label={t("chat.newTag", "New tag")} onChange={(event) => setNewTagName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void handleCreateTagForSession(); } }} />
+              <UiButton type="button" className="btn btn-sm" onClick={() => void handleCreateTagForSession()}>{t("chat.addTag", "Add")}</UiButton>
             </div>
           </div>
         </div>
@@ -3773,7 +3772,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
             <label className="chat-rename-label" htmlFor="chat-rename-input">
               {t("chat.conversationName", "Conversation name")}
             </label>
-            <AlphaInput
+            <UiInput
               id="chat-rename-input"
               className="input chat-rename-input"
               type="text"
@@ -3790,16 +3789,16 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
               autoFocus
             />
             <div className="chat-new-dialog-actions">
-              <AlphaButton className="btn btn-sm" onClick={() => setRenameDialog(null)}>
+              <UiButton className="btn btn-sm" onClick={() => setRenameDialog(null)}>
                 {t("chat.cancel", "Cancel")}
-              </AlphaButton>
-              <AlphaButton
+              </UiButton>
+              <UiButton
                 className="btn btn-sm btn-primary"
                 onClick={() => void handleRename()}
                 data-testid="chat-rename-save"
               >
                 {t("chat.save", "Save")}
-              </AlphaButton>
+              </UiButton>
             </div>
           </div>
         </ChatDialogBackdrop>
@@ -3810,10 +3809,10 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
           <div className="chat-new-dialog chat-view-dialog" aria-labelledby="chat-rename-tag-dialog-title" onClick={(event) => event.stopPropagation()}>
             <h3 id="chat-rename-tag-dialog-title">{t("chat.renameTagTitle", "Rename tag")}</h3>
             <label className="chat-rename-label" htmlFor="chat-rename-tag-input">{t("chat.tagName", "Tag name")}</label>
-            <AlphaInput id="chat-rename-tag-input" className="input chat-rename-input" value={renameTagName} data-testid="chat-rename-tag-input" onChange={(event) => setRenameTagName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void renameTag(renameTagDialog.id, renameTagName).then(() => setRenameTagDialog(null)).catch(() => addToast(t("chat.failedToRenameTag", "Failed to rename tag"), "error")); } }} autoFocus />
+            <UiInput id="chat-rename-tag-input" className="input chat-rename-input" value={renameTagName} data-testid="chat-rename-tag-input" onChange={(event) => setRenameTagName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void renameTag(renameTagDialog.id, renameTagName).then(() => setRenameTagDialog(null)).catch(() => addToast(t("chat.failedToRenameTag", "Failed to rename tag"), "error")); } }} autoFocus />
             <div className="chat-new-dialog-actions">
-              <AlphaButton className="btn btn-sm" onClick={() => setRenameTagDialog(null)}>{t("chat.cancel", "Cancel")}</AlphaButton>
-              <AlphaButton className="btn btn-sm btn-primary" data-testid="chat-rename-tag-save" onClick={() => void renameTag(renameTagDialog.id, renameTagName).then(() => setRenameTagDialog(null)).catch(() => addToast(t("chat.failedToRenameTag", "Failed to rename tag"), "error"))}>{t("chat.save", "Save")}</AlphaButton>
+              <UiButton className="btn btn-sm" onClick={() => setRenameTagDialog(null)}>{t("chat.cancel", "Cancel")}</UiButton>
+              <UiButton className="btn btn-sm btn-primary" data-testid="chat-rename-tag-save" onClick={() => void renameTag(renameTagDialog.id, renameTagName).then(() => setRenameTagDialog(null)).catch(() => addToast(t("chat.failedToRenameTag", "Failed to rename tag"), "error"))}>{t("chat.save", "Save")}</UiButton>
             </div>
           </div>
         </ChatDialogBackdrop>
@@ -3825,8 +3824,8 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
             <h3 id="chat-delete-tag-dialog-title">{t("chat.deleteTagTitle", "Delete tag?")}</h3>
             <p className="chat-view-delete-dialog-copy">{t("chat.deleteTagBody", "This removes the tag from all conversations, but does not delete conversations.")}</p>
             <div className="chat-new-dialog-actions">
-              <AlphaButton className="btn btn-sm" onClick={() => setConfirmDeleteTag(null)}>{t("chat.cancel", "Cancel")}</AlphaButton>
-              <AlphaButton className="btn btn-sm btn-danger" data-testid="chat-delete-tag-confirm" onClick={() => void deleteTag(confirmDeleteTag.id).then(() => setConfirmDeleteTag(null)).catch(() => addToast(t("chat.failedToDeleteTag", "Failed to delete tag"), "error"))}>{t("chat.delete", "Delete")}</AlphaButton>
+              <UiButton className="btn btn-sm" onClick={() => setConfirmDeleteTag(null)}>{t("chat.cancel", "Cancel")}</UiButton>
+              <UiButton className="btn btn-sm btn-danger" data-testid="chat-delete-tag-confirm" onClick={() => void deleteTag(confirmDeleteTag.id).then(() => setConfirmDeleteTag(null)).catch(() => addToast(t("chat.failedToDeleteTag", "Failed to delete tag"), "error"))}>{t("chat.delete", "Delete")}</UiButton>
             </div>
           </div>
         </ChatDialogBackdrop>
@@ -3841,15 +3840,15 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
               {t("chat.deleteConversationBody", "This action cannot be undone. All messages in this conversation will be permanently deleted.")}
             </p>
             <div className="chat-new-dialog-actions">
-              <AlphaButton className="btn btn-sm" onClick={() => setConfirmDelete(null)}>
+              <UiButton className="btn btn-sm" onClick={() => setConfirmDelete(null)}>
                 {t("chat.cancel", "Cancel")}
-              </AlphaButton>
-              <AlphaButton
+              </UiButton>
+              <UiButton
                 className="btn btn-sm btn-danger"
                 onClick={() => void handleDelete(confirmDelete)}
               >
                 {t("chat.delete", "Delete")}
-              </AlphaButton>
+              </UiButton>
             </div>
           </div>
         </ChatDialogBackdrop>
@@ -3918,7 +3917,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
             {renderConversationSearch()}
             {renderSessionMessagesPane()}
             {isUserScrolling && (
-              <AlphaButton
+              <UiButton
                 type="button"
                 className="btn btn-sm chat-jump-to-latest"
                 data-testid="chat-jump-to-latest"
@@ -3926,7 +3925,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
               >
                 <ChevronDown size={14} />
                 {t("chat.latest", "Latest")}
-              </AlphaButton>
+              </UiButton>
             )}
             {activeSession && renderSessionComposerPane()}
           </>
@@ -3940,10 +3939,11 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
   );
 }
 
+/*
+FNXC:NativeUiPresentation 2026-09-15-00:20:
+REMOVED: the Alpha boundary wrapper. Chat keeps its canonical flex sizing and scroll owner, and the
+selected colour theme now actually recolours its transcript, composer and body-portaled menus.
+*/
 export function ChatView(props: ChatViewProps) {
-  return (
-    <AlphaBoundary>
-      <ChatViewContent {...props} />
-    </AlphaBoundary>
-  );
+  return <ChatViewContent {...props} />;
 }

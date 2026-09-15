@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import { listComponentFiles, readAppFile } from "../test/cssFixture";
 
 const managedPortalPrimitives = [
-  "AlphaMobileDrawer.tsx",
+  "MobileDrawer.tsx",
   "FloatingWindow.tsx",
-  "alpha-ui/AlphaPrimitives.tsx",
+  "ui/UiPrimitives.tsx",
 ] as const;
 
 /*
@@ -65,7 +65,7 @@ const nonModalPortalExclusions = [
 
 /*
 FNXC:DialogStacking 2026-09-14-17:46:
-FN-392: every consumer of the shared Alpha dialog primitive inherits one portal, one manager registration, and one live
+FN-392: every consumer of the shared native dialog primitive inherits one portal, one manager registration, and one live
 layer claim. Enumerating them makes a new child dialog a conscious addition instead of a surface that silently reverts
 to a static CSS z-index under its own parent window.
 */
@@ -83,8 +83,8 @@ const sharedDialogPrimitiveConsumers = [
 
 function sharedDialogPrimitiveHosts(): string[] {
   return listComponentFiles()
-    .filter((file) => !file.includes("__tests__/") && !file.startsWith("alpha-ui/"))
-    .filter((file) => /\b(?:AlphaDialog|AlphaDialogBackdrop)\b/.test(readAppFile(`components/${file}`)))
+    .filter((file) => !file.includes("__tests__/") && !file.startsWith("ui/"))
+    .filter((file) => /\b(?:UiDialog|UiDialogBackdrop)\b/.test(readAppFile(`components/${file}`)))
     .sort();
 }
 
@@ -119,7 +119,7 @@ describe("modal visibility surface inventory", () => {
     for (const file of managedPortalPrimitives) {
       const source = readAppFile(`components/${file}`);
       expect(source, file).toContain("createPortal(");
-      expect(source, file).toMatch(/(?:role=["']dialog["']|aria-modal|floating-window|mobile-drawer|AlphaDialog)/);
+      expect(source, file).toMatch(/(?:role=["']dialog["']|aria-modal|floating-window|mobile-drawer|UiDialog)/);
     }
 
     for (const file of modalPortalRoots) {
@@ -143,7 +143,7 @@ describe("modal visibility surface inventory", () => {
   it("routes every shared dialog consumer through one portaled, layered primitive", () => {
     expect(sharedDialogPrimitiveHosts()).toEqual([...sharedDialogPrimitiveConsumers].sort());
 
-    const primitive = readAppFile("components/alpha-ui/AlphaPrimitives.tsx");
+    const primitive = readAppFile("components/ui/UiPrimitives.tsx");
     expect(primitive).toContain("nextFloatingZ");
     expect(primitive).toContain("stackOrder");
     expect(primitive).toContain("useDashboardWindowFocusRestoring");
@@ -162,7 +162,7 @@ describe("modal visibility surface inventory", () => {
     expect(contextSource).toMatch(/createContext/);
     expect(contextSource).toMatch(/(?:Provider|useDashboardWindowManager)/);
 
-    for (const file of ["FloatingWindow.tsx", "AlphaMobileDrawer.tsx"]) {
+    for (const file of ["FloatingWindow.tsx", "MobileDrawer.tsx"]) {
       expect(readAppFile(`components/${file}`), file).toMatch(/DashboardWindowManager/);
     }
   });

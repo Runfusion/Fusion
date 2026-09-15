@@ -1,7 +1,6 @@
 import { sortTasksForDisplayColumn, type TaskColumnSortMode, type Task, type TaskDetail, type Column as ColumnType, type ColumnId, type TaskCreateInput, type GithubIssueAction, type MergeResult } from "@fusion/core";
 import { Column } from "./Column";
-import { AlphaSurface } from "./alpha-ui";
-import { AlphaBoundary } from "../context/AlphaContext";
+import { UiSurface } from "./ui";
 import "./Lane.css";
 import "./Board.css";
 import type { ToastType } from "../hooks/useToast";
@@ -179,11 +178,11 @@ function BoardWorkflowSkeleton({ empty = false, t }: { empty?: boolean; t: TFunc
   return (
     <main className="board board-workflows-skeleton" id="board" aria-busy={!empty} aria-label={empty ? t("board.noWorkflowLanes", "No workflow lanes available") : t("board.loadingWorkflowLanes", "Loading workflow lanes")} data-testid={empty ? "board-workflows-empty" : "board-workflows-skeleton"}>
       {[0, 1, 2].map((index) => (
-        <AlphaSurface className="board-workflows-skeleton__column card" key={index} aria-hidden="true">
+        <UiSurface className="board-workflows-skeleton__column card" key={index} aria-hidden="true">
           <div className="board-workflows-skeleton__header" />
           <div className="board-workflows-skeleton__card" />
           <div className="board-workflows-skeleton__card board-workflows-skeleton__card--short" />
-        </AlphaSurface>
+        </UiSurface>
       ))}
     </main>
   );
@@ -1138,10 +1137,12 @@ function BoardContent({ tasks, projectId, maxConcurrent, maxWorktrees, showWorkt
   return <BoardWorkflowSkeleton empty={false} t={t} />;
 }
 
+/*
+FNXC:NativeUiPresentation 2026-09-15-00:20:
+REMOVED: the Alpha boundary wrapper. Board no longer opts into a presentation perimeter, so the selected
+colour theme reaches its columns and cards like every other view, and no extra `display: contents` box
+sits between Board and its canonical scroll owner.
+*/
 export function Board(props: BoardProps) {
-  return (
-    <AlphaBoundary>
-      <BoardContent {...props} />
-    </AlphaBoundary>
-  );
+  return <BoardContent {...props} />;
 }

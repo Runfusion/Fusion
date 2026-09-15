@@ -84,7 +84,7 @@ export interface HeaderProps {
   searchQuery?: string;
   onSearchChange?: (query: string) => void;
   taskSearchTasks?: readonly Pick<Task, "id" | "title">[];
-  /** Alpha desktop search navigates to Task Detail without changing board filters. */
+  /** Desktop inline search navigates to Task Detail without changing board filters. */
   onSelectSearchTask?: (task: Pick<Task, "id" | "title">) => void;
   /** Multi-project props */
   projects?: ProjectInfo[];
@@ -185,9 +185,9 @@ export function Header({
   The right dock is persistent and owns its own collapse control, so Header must not render a duplicate right-dock toggle or repurpose the More views overflow trigger on tablet/desktop.
   */
   const [isMobileSearchOpen, setIsMobileSearchOpen] = useState(false);
-  const [isAlphaSearchOpen, setIsAlphaSearchOpen] = useState(false);
-  const [alphaSearchQuery, setAlphaSearchQuery] = useState("");
-  const alphaSearchTriggerRef = useRef<HTMLButtonElement>(null);
+  const [isInlineSearchOpen, setIsInlineSearchOpen] = useState(false);
+  const [inlineSearchQuery, setInlineSearchQuery] = useState("");
+  const inlineSearchTriggerRef = useRef<HTMLButtonElement>(null);
   const [isNonMobileSearchOpen, setIsNonMobileSearchOpen] = useState(false);
   // Track when user has explicitly closed the search (used for toggle visibility)
   const [isNonMobileSearchExplicitlyClosed, setIsNonMobileSearchExplicitlyClosed] = useState(false);
@@ -297,21 +297,21 @@ export function Header({
   const shouldShowMobileSearch = isMobileSearchOpen || searchQuery.length > 0;
 
   const canShowNonMobileSearch = (view === "board" || view === "list") && !isMobile && onSearchChange;
-  const showAlphaDesktopSearch = Boolean(mode === "desktop" && canShowNonMobileSearch);
-  const closeAlphaSearch = useCallback(() => {
-    setIsAlphaSearchOpen(false);
-    setAlphaSearchQuery("");
-    window.setTimeout(() => alphaSearchTriggerRef.current?.focus(), 0);
+  const showDesktopInlineSearch = Boolean(mode === "desktop" && canShowNonMobileSearch);
+  const closeInlineSearch = useCallback(() => {
+    setIsInlineSearchOpen(false);
+    setInlineSearchQuery("");
+    window.setTimeout(() => inlineSearchTriggerRef.current?.focus(), 0);
   }, []);
 
   useEffect(() => {
-    if (!isAlphaSearchOpen) return;
+    if (!isInlineSearchOpen) return;
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") closeAlphaSearch();
+      if (event.key === "Escape") closeInlineSearch();
     };
     document.addEventListener("keydown", closeOnEscape, true);
     return () => document.removeEventListener("keydown", closeOnEscape, true);
-  }, [closeAlphaSearch, isAlphaSearchOpen]);
+  }, [closeInlineSearch, isInlineSearchOpen]);
   // Non-mobile search: toggled open OR has active query, but not if explicitly closed.
   const shouldShowNonMobileSearch = (isNonMobileSearchOpen || searchQuery.length > 0) && !isNonMobileSearchExplicitlyClosed;
   /*
@@ -680,42 +680,42 @@ export function Header({
          * FNXC:Header 2026-06-21-00:00:
          * Desktop and tablet header search must render after the workflow portal slot so a populated WorkflowSwitcher appears left of the search icon while preserving the mobile search trigger's existing position and behavior.
          *
-         * FNXC:AlphaTaskSearch 2026-09-12-21:52:
-         * On Alpha desktop Board and List, Search alternates in this exact action slot between the magnifier and the shared inline combobox. Its transient query and task-detail selection remain isolated from the Board/List filter; close, Escape, and selection clear the field and restore focus to the recreated trigger without any modal or backdrop.
+         * FNXC:HeaderTaskSearch 2026-09-12-21:52:
+         * On desktop Board and List, Search alternates in this exact action slot between the magnifier and the shared inline combobox. Its transient query and task-detail selection remain isolated from the Board/List filter; close, Escape, and selection clear the field and restore focus to the recreated trigger without any modal or backdrop.
          */}
-        {showAlphaDesktopSearch && onSearchChange && (
-          isAlphaSearchOpen ? (
+        {showDesktopInlineSearch && onSearchChange && (
+          isInlineSearchOpen ? (
             <TaskSearchInput
-              query={alphaSearchQuery}
+              query={inlineSearchQuery}
               tasks={taskSearchTasks}
-              onSearchChange={setAlphaSearchQuery}
+              onSearchChange={setInlineSearchQuery}
               onSelectTask={(task) => {
                 const selected = taskSearchTasks?.find((candidate) => candidate.id.toLocaleLowerCase() === task.id.toLocaleLowerCase());
                 if (selected) onSelectSearchTask?.(selected);
-                closeAlphaSearch();
+                closeInlineSearch();
               }}
-              onClose={closeAlphaSearch}
+              onClose={closeInlineSearch}
               autoFocus
-              className="header-search--alpha-inline"
-              testId="alpha-desktop-header-search-input"
+              className="header-search--inline"
+              testId="desktop-header-search-input"
             />
           ) : (
             <button
-              ref={alphaSearchTriggerRef}
+              ref={inlineSearchTriggerRef}
               type="button"
               className="btn-icon"
-              onClick={() => setIsAlphaSearchOpen(true)}
+              onClick={() => setIsInlineSearchOpen(true)}
               title={t("header.openSearch", "Open search")}
               aria-label={t("header.openSearch", "Open search")}
               aria-expanded={false}
-              data-testid="alpha-desktop-header-search-btn"
+              data-testid="desktop-inline-header-search-btn"
             >
               <Search size={16} />
             </button>
           )
         )}
 
-        {canShowNonMobileSearchToggle && !showAlphaDesktopSearch && (
+        {canShowNonMobileSearchToggle && !showDesktopInlineSearch && (
           <button
             className="btn-icon"
             onClick={handleNonMobileSearchToggle}
@@ -1268,7 +1268,7 @@ export function Header({
     </header>
 
     {/* Desktop/Tablet Search - floating below header, in board or list view */}
-    {canShowNonMobileSearch && shouldShowNonMobileSearch && !showAlphaDesktopSearch && (
+    {canShowNonMobileSearch && shouldShowNonMobileSearch && !showDesktopInlineSearch && (
       <div className="header-floating-search">
         <TaskSearchInput
           query={searchQuery}

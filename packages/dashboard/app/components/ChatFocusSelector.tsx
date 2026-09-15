@@ -1,4 +1,4 @@
-import { AlphaButton, AlphaInput, AlphaPopoverSurface } from "./alpha-ui";
+import { UiButton, UiInput, UiPopoverSurface } from "./ui";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { Target } from "lucide-react";
@@ -67,7 +67,7 @@ export function ChatFocusSelector({
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target;
       if (!(target instanceof Node)) return;
-      const insideHeroPopover = target instanceof Element && target.closest('[data-alpha-ui="popover"]');
+      const insideHeroPopover = target instanceof Element && target.closest('[data-ui="popover"]');
       if (!rootRef.current?.contains(target) && !insideHeroPopover) setOpen(false);
     };
     document.addEventListener("pointerdown", handlePointerDown);
@@ -137,7 +137,7 @@ export function ChatFocusSelector({
 
   return (
     <div className="chat-focus-root" ref={rootRef} data-testid="chat-focus-root">
-      <AlphaButton
+      <UiButton
         ref={triggerRef}
         type="button"
         className={`chat-focus-chip${hasTopic ? " chat-focus-chip--active" : " chat-focus-chip--icon-only"}`}
@@ -154,15 +154,15 @@ export function ChatFocusSelector({
       >
         <Target size={14} aria-hidden="true" />
         {hasTopic ? <span className="chat-focus-chip-topic">{focusedTopic}</span> : null}
-      </AlphaButton>
+      </UiButton>
 
       {open && sessionId ? (
-        <AlphaPopoverSurface className="chat-focus-popover" data-testid="chat-focus-popover" triggerRef={triggerRef} onClose={() => setOpen(false)}>
+        <UiPopoverSurface className="chat-focus-popover" data-testid="chat-focus-popover" triggerRef={triggerRef} onClose={() => setOpen(false)}>
           <div className="chat-focus-title">{t("chat.focusTitleDialog", "Memory focus topic")}</div>
           <p className="chat-focus-help">
             {t("chat.focusHelp", "Scopes this conversation's memory recall to a topic. Leave empty or use 'all' for whole-project scope.")}
           </p>
-          <AlphaInput
+          <UiInput
             ref={inputRef}
             className="input chat-focus-input"
             data-testid="chat-focus-input"
@@ -174,7 +174,7 @@ export function ChatFocusSelector({
             disabled={saving}
           />
           <div className="chat-focus-actions">
-            <AlphaButton
+            <UiButton
               type="button"
               className="btn btn-primary chat-focus-save"
               data-testid="chat-focus-save"
@@ -182,9 +182,9 @@ export function ChatFocusSelector({
               disabled={saving}
             >
               {saving ? t("chat.focusSaving", "Saving…") : t("chat.focusSave", "Set focus")}
-            </AlphaButton>
+            </UiButton>
             {hasTopic ? (
-              <AlphaButton
+              <UiButton
                 type="button"
                 className="btn btn-ghost chat-focus-clear"
                 data-testid="chat-focus-clear"
@@ -192,10 +192,10 @@ export function ChatFocusSelector({
                 disabled={saving}
               >
                 {t("chat.focusClear", "Clear to whole-project")}
-              </AlphaButton>
+              </UiButton>
             ) : null}
           </div>
-        </AlphaPopoverSurface>
+        </UiPopoverSurface>
       ) : null}
     </div>
   );

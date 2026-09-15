@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import type { ConversationMentionItem, FileSearchItem, TaskSearchItem } from "../hooks/useFileMention";
 import { getDisplayDirname } from "../utils/pathDisplay";
 import "./FileMentionPopup.css";
-import { AlphaListBox, AlphaListBoxItem } from "./alpha-ui";
+import { UiListBox, UiListBoxItem } from "./ui";
 
 import type { ReactNode } from "react";
 
@@ -84,11 +84,11 @@ export function FileMentionPopup({
           {hasTasks && (
             <div className="file-mention-popup-group">
               <div className="file-mention-popup-group-header">{t("fileMention.taskHeader", "Tasks")}</div>
-              <AlphaListBox legacyAs="ul" className="file-mention-popup-list" aria-label={t("fileMention.taskMatches", "Task matches")}>
+              <UiListBox legacyAs="ul" className="file-mention-popup-list" aria-label={t("fileMention.taskMatches", "Task matches")}>
                 {tasks.map((task, index) => {
                   const rowIndex = getTaskRowIndex(index);
                   return (
-                    <AlphaListBoxItem
+                    <UiListBoxItem
                       legacyAs="li"
                       key={task.id}
                       id={task.id}
@@ -112,21 +112,21 @@ export function FileMentionPopup({
                         </div>
                         <span className="file-mention-popup-item-path">{task.title}</span>
                       </div>
-                    </AlphaListBoxItem>
+                    </UiListBoxItem>
                   );
                 })}
-              </AlphaListBox>
+              </UiListBox>
             </div>
           )}
 
           {hasConversations && (
             <div className="file-mention-popup-group">
               <div className="file-mention-popup-group-header">{t("fileMention.conversationHeader", "Conversations")}</div>
-              <AlphaListBox legacyAs="ul" className="file-mention-popup-list" aria-label={t("fileMention.conversationMatches", "Conversation matches")}>
+              <UiListBox legacyAs="ul" className="file-mention-popup-list" aria-label={t("fileMention.conversationMatches", "Conversation matches")}>
                 {conversations.map((conversation, index) => {
                   const rowIndex = getConversationRowIndex(tasks.length, index);
                   return (
-                    <AlphaListBoxItem
+                    <UiListBoxItem
                       legacyAs="li"
                       key={conversation.id}
                       id={conversation.id}
@@ -145,23 +145,23 @@ export function FileMentionPopup({
                           {conversation.title || t("fileMention.untitledConversation", "Untitled conversation")}
                         </span>
                       </div>
-                    </AlphaListBoxItem>
+                    </UiListBoxItem>
                   );
                 })}
-              </AlphaListBox>
+              </UiListBox>
             </div>
           )}
 
           {hasFiles && (
             <div className="file-mention-popup-group">
               <div className="file-mention-popup-group-header">{t("fileMention.fileHeader", "Files")}</div>
-              <AlphaListBox legacyAs="ul" className="file-mention-popup-list" aria-label={t("fileMention.fileMatches", "File matches")}>
+              <UiListBox legacyAs="ul" className="file-mention-popup-list" aria-label={t("fileMention.fileMatches", "File matches")}>
                 {files.map((file, index) => {
                   const rowIndex = getFileRowIndex(tasks.length, conversations.length, index);
                   const dirPath = getDisplayDirname(file.path);
 
                   return (
-                    <AlphaListBoxItem
+                    <UiListBoxItem
                       legacyAs="li"
                       key={file.path}
                       id={file.path}
@@ -180,10 +180,10 @@ export function FileMentionPopup({
                           <span className="file-mention-popup-item-path">{dirPath}</span>
                         )}
                       </div>
-                    </AlphaListBoxItem>
+                    </UiListBoxItem>
                   );
                 })}
-              </AlphaListBox>
+              </UiListBox>
             </div>
           )}
         </div>

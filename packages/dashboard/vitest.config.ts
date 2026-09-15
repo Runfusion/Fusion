@@ -389,6 +389,8 @@ exclusivity) joins the existing touch lane so it is collected exactly once and s
 const browserTouchTests = [
   "src/__tests__/task-modal-touch-resize-browser.test.ts",
   "src/__tests__/view-layout-browser.test.ts",
+  /* FNXC:UiStyleAxis 2026-09-15-00:20: FN-399's appearance axes need a real engine to compose theme colour against style geometry. */
+  "src/__tests__/ui-style-browser.test.ts",
 ];
 
 const qualityApiTests = [

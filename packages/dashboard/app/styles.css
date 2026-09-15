@@ -248,9 +248,15 @@ html {
 
   /* Shadow tokens */
   /* FNXC:DashboardTheming 2026-06-15-00:00: Global token translucency uses color-mix(in srgb, var(--token) N%, transparent); raw RGB alpha color calls are banned outside var() fallbacks for FN-6489. */
-  --shadow-sm: 0 1px 2px color-mix(in srgb, #000000 10%, transparent);
-  --shadow-md: 0 4px 6px color-mix(in srgb, #000000 10%, transparent);
-  --shadow-lg: 0 4px 24px color-mix(in srgb, #000000 40%, transparent);
+  /*
+  FNXC:UiStyleAxis 2026-09-15-00:20:
+  Shadow GEOMETRY (offset/blur/spread) belongs to the interface-style catalogue in ui-style-tokens.css;
+  only the colour half stays here and in the colour presets, so a style can soften every elevation
+  without touching a single hue.
+  */
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in srgb, #000000 10%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, #000000 10%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, #000000 40%, transparent);
 
   /*
   FNXC:DashboardStyling 2026-07-19-14:00:
@@ -277,12 +283,12 @@ html {
   */
   --fusion-max-z: 11001;
 
-  --shadow-glow: 0 0 8px color-mix(in srgb, var(--todo) 30%, transparent);
-  --glow-success: 0 0 8px color-mix(in srgb, var(--cta-border) 30%, transparent);
-  --glow-warning: 0 0 8px color-mix(in srgb, #e3b541 30%, transparent);
-  --glow-danger: 0 0 8px color-mix(in srgb, var(--color-error) 30%, transparent);
-  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--todo) 15%, transparent);
-  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--todo) 30%, transparent);
+  --shadow-glow: var(--ui-shadow-glow-geometry) color-mix(in srgb, var(--todo) 30%, transparent);
+  --glow-success: var(--ui-shadow-glow-geometry) color-mix(in srgb, var(--cta-border) 30%, transparent);
+  --glow-warning: var(--ui-shadow-glow-geometry) color-mix(in srgb, #e3b541 30%, transparent);
+  --glow-danger: var(--ui-shadow-glow-geometry) color-mix(in srgb, var(--color-error) 30%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--todo) 15%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--todo) 30%, transparent);
 
   /* Animation tokens.
      --duration-* are bare durations, safe anywhere (animation shorthands,
@@ -671,10 +677,10 @@ svg.spinning {
   --status-color-modified: #0969da;
   --status-color-deleted: #cf222e;
   --status-color-unknown: #6e7781;
-  --shadow-sm: 0 1px 2px color-mix(in srgb, var(--text) 8%, transparent);
-  --shadow-md: 0 4px 6px color-mix(in srgb, var(--text) 12%, transparent);
-  --shadow-lg: 0 4px 24px color-mix(in srgb, var(--text) 15%, transparent);
-  --shadow-glow: 0 0 8px color-mix(in srgb, var(--todo) 18%, transparent);
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in srgb, var(--text) 8%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, var(--text) 12%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, var(--text) 15%, transparent);
+  --shadow-glow: var(--ui-shadow-glow-geometry) color-mix(in srgb, var(--todo) 18%, transparent);
   --glow-success: 0 0 8px color-mix(in srgb, var(--color-success) 30%, transparent);
   --glow-warning: 0 0 8px color-mix(in srgb, var(--color-warning) 30%, transparent);
   --glow-danger: 0 0 8px color-mix(in srgb, var(--color-error) 30%, transparent);
@@ -1361,13 +1367,12 @@ Operator feedback requires one readable pixel face for ordinary prose, links, da
 }
 
 /*
-FNXC:DashboardTheming 2026-08-28-07:45:
-The shared .btn rule hardcodes its font size, so Cozy Cartoon needs this single token-backed typography override to make ordinary buttons visibly larger. The compact exclusions preserve every .btn-sm/.btn--sm control, including the height-pinned Quick Add action row, while omitting height and min-height lets the desktop ViewHeader clamp keep trimming enlarged button padding without stretching headers.
+FNXC:UiStyleAxis 2026-09-15-00:20:
+REMOVED: the Cozy Cartoon button typography override (`--cozy-cartoon-btn-font-size` /
+`--cozy-cartoon-btn-font-weight`). Since FN-399 a colour preset decides colour, never shape, so button
+type scale and weight belong to the interface style. Reinstating a per-theme shape rule here would
+re-couple the two axes the product now presents as independent.
 */
-[data-color-theme="cozy-cartoon"] .btn:not(.btn-sm):not(.btn--sm) {
-  font-size: var(--cozy-cartoon-btn-font-size);
-  font-weight: var(--cozy-cartoon-btn-font-weight);
-}
 
 .modal {
   position: relative;
@@ -4125,7 +4130,7 @@ FNXC:Navigation 2026-06-22-00:00:
 Board card clicks open task detail as a full main-content view that replaces the board ("Full main panel" design). This layout fills the main content area with a scrollable embedded TaskDetailContent body. Theme tokens only; mobile shell renders it unchanged because the panel just fills its host.
 
 FNXC:TaskDetailDrawerNavigation 2026-09-12-20:37:
-The panel and its body remain width-bounded so embedded detail cannot exceed the full-width host; the body scrolls vertically only. Desktop Board presentation keeps Back to board inside the TaskDetailContent header, while Alpha mobile uses its canonical Close action instead.
+The panel and its body remain width-bounded so embedded detail cannot exceed the full-width host; the body scrolls vertically only. Desktop Board presentation keeps Back to board inside the TaskDetailContent header, while the mobile drawer uses its canonical Close action instead.
 */
 .task-detail-main-panel {
   display: flex;
@@ -4149,12 +4154,12 @@ The panel and its body remain width-bounded so embedded detail cannot exceed the
 
 /*
 FNXC:MobileDrawerMotion 2026-09-12-20:37:
-All mobile drawer presentations share one bottom-edge entry contract. Animate the individual translate property so FloatingWindow geometry and drag-dismiss transforms remain independent; nested Task Detail content opts out when the Alpha shell already owns this motion. The mobile gate and reduced-motion override preserve desktop, tablet, and motion-sensitive presentations.
+All mobile drawer presentations share one bottom-edge entry contract. Animate the individual translate property so FloatingWindow geometry and drag-dismiss transforms remain independent; nested Task Detail content opts out when the drawer shell already owns this motion. The mobile gate and reduced-motion override preserve desktop, tablet, and motion-sensitive presentations.
 
 FNXC:MobileDrawerMotion 2026-09-12-21:02:
 Task Detail motion follows the canonical viewport-mode attribute rather than the width breakpoint. A phone-class physical screen remains mobile in a short landscape viewport wider than 768 CSS pixels and must retain the same bottom-edge entry.
 */
-@keyframes alpha-mobile-drawer-rise-in {
+@keyframes mobile-drawer-rise-in {
   from {
     opacity: 0;
     translate: 0 var(--space-xl);
@@ -4167,7 +4172,7 @@ Task Detail motion follows the canonical viewport-mode attribute rather than the
 }
 
 html[data-viewport-mode="mobile"] .task-detail-main-panel--mobile-transition {
-  animation: alpha-mobile-drawer-rise-in var(--duration-normal) ease-out;
+  animation: mobile-drawer-rise-in var(--duration-normal) ease-out;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -4177,25 +4182,25 @@ html[data-viewport-mode="mobile"] .task-detail-main-panel--mobile-transition {
 }
 
 /*
-FNXC:AlphaMobileDrawer 2026-09-10-04:41:
-Every Alpha mobile destination and utility must fit the shared narrow drawer without making the viewport its horizontal scroller. Existing responsive components keep their own semantic layout; this cross-component boundary only supplies shrinkability, wrapped headers/actions, local table overflow, and one-column form containment.
+FNXC:MobileDrawer 2026-09-10-04:41:
+Every mobile destination and utility must fit the shared narrow drawer without making the viewport its horizontal scroller. Existing responsive components keep their own semantic layout; this cross-component boundary only supplies shrinkability, wrapped headers/actions, local table overflow, and one-column form containment.
 */
-html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] {
-  --alpha-mobile-drawer-block-size: calc(100dvh - env(safe-area-inset-top, 0px) - var(--space-2xl));
+html[data-mobile-drawers="true"][data-viewport-mode="mobile"] {
+  --mobile-drawer-block-size: calc(100dvh - env(safe-area-inset-top, 0px) - var(--space-2xl));
 }
 
-html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] :is(.alpha-mobile-drawer__body, .floating-window--alpha-mobile-drawer .floating-window__body) {
+html[data-mobile-drawers="true"][data-viewport-mode="mobile"] :is(.mobile-drawer__body, .floating-window--mobile-drawer .floating-window__body) {
   min-width: 0;
   max-width: 100%;
   overflow-x: hidden;
 }
 
-html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] :is(.alpha-mobile-drawer__body, .floating-window--alpha-mobile-drawer) :is(.view-header, .modal-header, .modal-actions) {
+html[data-mobile-drawers="true"][data-viewport-mode="mobile"] :is(.mobile-drawer__body, .floating-window--mobile-drawer) :is(.view-header, .modal-header, .modal-actions) {
   flex-wrap: wrap;
   max-width: 100%;
 }
 
-html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] :is(.alpha-mobile-drawer__body, .floating-window--alpha-mobile-drawer) :is(table, form, fieldset, .settings-layout, .github-import-content) {
+html[data-mobile-drawers="true"][data-viewport-mode="mobile"] :is(.mobile-drawer__body, .floating-window--mobile-drawer) :is(table, form, fieldset, .settings-layout, .github-import-content) {
   min-width: 0;
   max-width: 100%;
 }

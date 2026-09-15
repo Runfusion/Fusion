@@ -519,7 +519,7 @@ describe("RightDock", () => {
     const { rerender } = render(<TestRightDock open renderProps={{ ...renderProps, hostMode: "standard" }} visibilityOptions={{ hostMode: "standard" }} />);
     expect(screen.queryByTestId("right-dock-tab-notes")).toBeNull();
 
-    rerender(<TestRightDock open renderProps={{ ...renderProps, hostMode: "alpha-desktop" }} visibilityOptions={{ hostMode: "alpha-desktop" }} />);
+    rerender(<TestRightDock open renderProps={{ ...renderProps, hostMode: "desktop" }} visibilityOptions={{ hostMode: "desktop" }} />);
     fireEvent.click(screen.getByTestId("right-dock-tab-notes"));
     expect(screen.getByTestId("right-dock-tab-notes")).toHaveAttribute("aria-selected", "true");
     expect(screen.queryByTestId("right-dock-expand")).toBeNull();
@@ -535,7 +535,7 @@ describe("RightDock", () => {
   it("selects Chat inline in Alpha and standard hosts with no expansion affordance", () => {
     window.localStorage.setItem(RIGHT_DOCK_VIEW_STORAGE_KEY, "chat");
     const onExpand = vi.fn();
-    const { rerender } = render(<TestRightDock open renderProps={{ ...renderProps, hostMode: "alpha-desktop" }} visibilityOptions={{ hostMode: "alpha-desktop" }} onExpand={onExpand} />);
+    const { rerender } = render(<TestRightDock open renderProps={{ ...renderProps, hostMode: "desktop" }} visibilityOptions={{ hostMode: "desktop" }} onExpand={onExpand} />);
     fireEvent.click(screen.getByTestId("right-dock-tab-chat"));
     expect(screen.getByTestId("right-dock-tab-chat")).toHaveAttribute("aria-selected", "true");
     expect(screen.queryByTestId("right-dock-expand")).toBeNull();
@@ -548,7 +548,7 @@ describe("RightDock", () => {
     expect(screen.queryByTestId("right-dock-expand")).toBeNull();
     expect(onExpand).not.toHaveBeenCalled();
 
-    const modal = render(<RightDockExpandModal viewKey="chat" renderProps={{ ...renderProps, hostMode: "alpha-desktop" }} visibilityOptions={{ hostMode: "alpha-desktop" }} onClose={vi.fn()} />);
+    const modal = render(<RightDockExpandModal viewKey="chat" renderProps={{ ...renderProps, hostMode: "desktop" }} visibilityOptions={{ hostMode: "desktop" }} onClose={vi.fn()} />);
     expect(screen.queryByTestId("right-dock-expand-modal")).toBeNull();
     modal.unmount();
   });

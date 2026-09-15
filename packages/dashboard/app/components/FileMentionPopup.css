@@ -224,7 +224,7 @@
 /* New chat dialog */
 /*
 FNXC:DialogStacking 2026-09-14-17:46:
-FN-392: layer comes from the shared Alpha dialog primitive so this body-portaled backdrop dominates the floating Chat
+FN-392: layer comes from the shared native dialog primitive so this body-portaled backdrop dominates the floating Chat
 or Task Detail window that opened it; a static z-index here would lose to the work-window band.
 */
 .chat-new-dialog-backdrop {

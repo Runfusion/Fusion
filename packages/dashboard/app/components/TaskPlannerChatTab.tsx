@@ -1,5 +1,5 @@
 import type { ChatInFlightGenerationState, ChatMessage, ChatSnippet, ResolvedModelSelection, Settings, Task, TaskDetail } from "@fusion/core";
-import { AlphaButton, AlphaListBox, AlphaListBoxItem, AlphaTextArea } from "./alpha-ui";
+import { UiButton, UiListBox, UiListBoxItem, UiTextArea } from "./ui";
 import { isWipColumnRole } from "../utils/columnRoles";
 import { getErrorMessage, isExperimentalFeatureEnabled, CHAT_FOCUS_FLAG } from "@fusion/core";
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -1628,7 +1628,7 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
   return (
     <section className={`task-planner-chat${chatMessageLayout === "full-width" ? " task-planner-chat--full-width" : ""}`} aria-label={t("taskDetail.plannerChat.label", "Task-aware chat")} data-testid="task-planner-chat-panel">
       {onExpandedChange && (
-        <AlphaButton
+        <UiButton
           type="button"
           className="btn btn-icon btn-sm task-planner-chat-expand-toggle task-planner-chat-expand-toggle--overlay"
           onClick={() => onExpandedChange(!expanded)}
@@ -1638,7 +1638,7 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
           data-testid="task-planner-chat-expand-toggle"
         >
           {expanded ? <Minimize2 aria-hidden="true" /> : <Maximize2 aria-hidden="true" />}
-        </AlphaButton>
+        </UiButton>
       )}
       <div className="task-planner-chat-transcript" ref={transcriptRef} onScroll={handleTranscriptScroll} data-testid="task-planner-chat-transcript">
         {hasMoreHistory && <div ref={historySentinelRef} className="task-planner-chat-history-sentinel" aria-hidden="true">{loadingOlder ? t("chat.loadingOlderMessages", "Loading older messages…") : null}</div>}
@@ -1667,7 +1667,7 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
             {starterPrompts.length > 0 && (
               <div className="task-planner-chat-starters" aria-label={t("taskDetail.plannerChat.startersLabel", "Task chat starter prompts")}>
                 {starterPrompts.map((prompt) => (
-                  <AlphaButton
+                  <UiButton
                     key={prompt.id}
                     type="button"
                     className="btn task-planner-chat-starter"
@@ -1677,7 +1677,7 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
                   >
                     <span className="task-planner-chat-starter-label">{prompt.label}</span>
                     {prompt.description && <span className="task-planner-chat-starter-description">{prompt.description}</span>}
-                  </AlphaButton>
+                  </UiButton>
                 ))}
               </div>
             )}
@@ -1762,7 +1762,7 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
       />
 
       {showCommandMenu && (
-        <AlphaListBox
+        <UiListBox
           className="chat-skill-menu task-planner-chat-command-menu"
           data-testid="task-planner-chat-command-menu"
           aria-label={t("chat.slashSuggestions", "Slash suggestions")}
@@ -1773,7 +1773,7 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
             slashMenuEntries.map((entry, index) => {
               if (entry.kind === "snippet") {
                 return (
-                  <AlphaListBoxItem
+                  <UiListBoxItem
                     key={`snippet-${entry.snippet.name}`}
                     id={`snippet-${entry.snippet.name}`}
                     textValue={entry.snippet.name}
@@ -1786,7 +1786,7 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
                   >
                     <span className="chat-skill-menu-item-name">/{entry.snippet.name}</span>
                     <span className="chat-skill-menu-item-description">{t("chat.snippetSuggestion", "Insert saved prompt")}</span>
-                  </AlphaListBoxItem>
+                  </UiListBoxItem>
                 );
               }
 
@@ -1799,7 +1799,7 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
               */
               const commandDisabled = entry.command.requiresAgent && !agentRunning;
               return (
-                <AlphaListBoxItem
+                <UiListBoxItem
                   key={entry.command.trigger}
                   id={entry.command.trigger}
                   textValue={entry.command.trigger}
@@ -1818,11 +1818,11 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
                       ? t("chat.commandNoRunningAgentHint", "No running agent to steer")
                       : entry.command.description}
                   </span>
-                </AlphaListBoxItem>
+                </UiListBoxItem>
               );
             })
           )}
-        </AlphaListBox>
+        </UiListBox>
       )}
       {/*
       FNXC:ChatMemoryFocus 2026-08-24-04:21:
@@ -1866,7 +1866,7 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
         FNXC:TaskPlannerChatQueue 2026-09-06-00:48:
         Cancellation owns planner dispatch, not the local text or dictation controls. sendMessageContent queues typed text behind cancellationInProgressRef; this composer has no attachment path, so adding one requires an explicit non-text queue contract.
         */}
-        <AlphaTextArea
+        <UiTextArea
           ref={handleComposerRef}
           className="input task-planner-chat-input"
           aria-label={t("taskDetail.plannerChat.inputLabel", "Message task chat")}

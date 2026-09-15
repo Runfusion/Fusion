@@ -29,10 +29,10 @@ padding, not an inherited reservation.
 }
 
 /*
-FNXC:AlphaMobileDrawer 2026-09-10-04:41:
-Inside the shared Alpha drawer, Task Detail fills only the drawer body and surrenders outer chrome and scrolling to that shell. Existing standard-mobile, tablet, desktop, dock, and floating-window rules remain unchanged because this marker exists only on the Alpha path.
+FNXC:MobileDrawer 2026-09-10-04:41:
+Inside the shared mobile drawer, Task Detail fills only the drawer body and surrenders outer chrome and scrolling to that shell. Existing standard-mobile, tablet, desktop, dock, and floating-window rules remain unchanged because this marker exists only on the drawer path.
 */
-.modal.task-detail-modal--alpha-drawer {
+.modal.task-detail-modal--native-drawer {
   max-width: 100%;
   max-height: 100%;
   border: 0;
@@ -1482,13 +1482,13 @@ that boundary drag and resize, so its inner panel must fill the floating host ra
 
 /*
 FNXC:MobileDrawerMotion 2026-09-12-20:37:
-Standard mobile Task Detail shares the bottom-edge rise used by Alpha drawers, while the Alpha Task Detail composition leaves motion to its outer shell. The viewport class gate and reduced-motion override preserve desktop, tablet, and motion-sensitive presentations without changing dismissal routing.
+Standard mobile Task Detail shares the bottom-edge rise used by mobile drawers, while the drawer Task Detail composition leaves motion to its outer shell. The viewport class gate and reduced-motion override preserve desktop, tablet, and motion-sensitive presentations without changing dismissal routing.
 
 FNXC:MobileDrawerMotion 2026-09-12-21:02:
 The canonical viewport-mode attribute keeps standard Task Detail animated on phone-class landscape screens whose CSS width exceeds the portrait breakpoint. Reduced motion remains authoritative for every mobile orientation.
 */
 html[data-viewport-mode="mobile"] .task-detail-modal--mobile-transition {
-  animation: alpha-mobile-drawer-rise-in var(--duration-normal) ease-out;
+  animation: mobile-drawer-rise-in var(--duration-normal) ease-out;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1559,7 +1559,7 @@ Embedded in the full-width board-card panel the detail content must be width-bou
 
 /*
 FNXC:TaskDetailDrawerNavigation 2026-09-12-20:37:
-The desktop Board-panel Back to board affordance sits at the far right of the gray header and wraps when space is tight. Alpha mobile omits the element entirely, so these token-only styles cannot leave an empty shell.
+The desktop Board-panel Back to board affordance sits at the far right of the gray header and wraps when space is tight. The mobile drawer omits the element entirely, so these token-only styles cannot leave an empty shell.
 */
 .task-detail-header-back-btn {
   margin-inline-start: auto;
@@ -3389,171 +3389,171 @@ Operators need the scheduler's matching file pairs directly beside an overlap bl
 }
 
 /*
-FNXC:TaskDetailAlpha 2026-09-11-02:41:
-Alpha Task Detail is one shared, mobile-first surface in modal, drawer, main-panel, split, right-dock, and pop-out hosts. Neutral homemade Alpha paint and progressive layout are scoped to the boundary; the stable non-Alpha DOM and every lifecycle/action guard remain unchanged.
+FNXC:TaskDetailPresentation 2026-09-11-02:41:
+Task Detail is one shared, mobile-first surface in modal, drawer, main-panel, split, right-dock, and pop-out hosts. Paint now follows the selected colour theme and the interface style owns the progressive layout; every lifecycle and action guard is unchanged.
 */
-.task-detail-alpha-boundary {
+.task-detail-surface-root {
   display: contents;
 }
 
-[data-alpha-surface="true"] > .task-detail-content[data-task-detail-surface="true"] {
-  background: var(--alpha-neutral-background);
-  color: var(--alpha-neutral-foreground);
+.task-detail-content[data-task-detail-surface="true"] {
+  background: var(--bg);
+  color: var(--text);
   border: 0;
   border-radius: inherit;
   box-shadow: none;
   overflow: hidden;
 }
 
-[data-alpha-surface="true"] > .task-detail-content > .modal-header {
-  min-block-size: var(--alpha-touch-height);
-  padding: var(--alpha-density-2) var(--alpha-density-3);
-  background: var(--alpha-neutral-surface);
-  border-block-end: var(--border-width) solid var(--alpha-neutral-border);
-  gap: var(--alpha-density-2);
+.task-detail-content > .modal-header {
+  min-block-size: var(--ui-touch-height);
+  padding: var(--ui-density-sm) var(--ui-density-md);
+  background: var(--surface);
+  border-block-end: var(--border-width) solid var(--border);
+  gap: var(--ui-density-sm);
 }
 
-[data-alpha-surface="true"] .detail-title-row {
+.detail-title-row {
   min-inline-size: 0;
   flex: 1 1 auto;
   flex-wrap: wrap;
-  gap: var(--alpha-density-2);
+  gap: var(--ui-density-sm);
 }
 
-[data-alpha-surface="true"] .detail-id {
-  color: var(--alpha-neutral-foreground);
+.detail-id {
+  color: var(--text);
 }
 
-[data-alpha-surface="true"] :is(.detail-column-badge, .card-status-badge, .detail-workflow-badge, .badge) {
+:is(.detail-column-badge, .card-status-badge, .detail-workflow-badge, .badge) {
   border: var(--border-width) solid color-mix(in srgb, currentColor 22%, transparent);
   box-shadow: none;
 }
 
-[data-alpha-surface="true"] .modal-header-actions {
+.modal-header-actions {
   margin-inline-start: auto;
   flex: 0 0 auto;
-  gap: var(--alpha-density-1);
+  gap: var(--ui-density-2xs);
 }
 
 /*
 FNXC:TaskDetailHeaderActions 2026-09-13-14:21:
-Task Detail's always-active Alpha boundary must preserve one rendered geometry for direct, overflow, edit, pop-out, and close controls. Keep their shared btn-sm dimensions above the mobile breakpoint, then enlarge every header action together to the Alpha touch target; semantic Back controls retain content width while sharing the same height.
+Task Detail must preserve one rendered geometry for direct, overflow, edit, pop-out, and close controls. Keep their shared btn-sm dimensions above the mobile breakpoint, then enlarge every header action together to the shared touch target; semantic Back controls retain content width while sharing the same height.
 */
-[data-alpha-surface="true"] :is(.task-detail-header-action, .modal-close, .task-detail-header-back-btn) {
+:is(.task-detail-header-action, .modal-close, .task-detail-header-back-btn) {
   border-radius: var(--radius-md);
-  color: var(--alpha-neutral-muted);
+  color: var(--text-muted);
 }
 
-[data-alpha-surface="true"] .task-detail-header-back-btn {
+.task-detail-header-back-btn {
   inline-size: auto;
   line-height: normal;
 }
 
-[data-alpha-surface="true"] :is(.task-detail-header-action, .modal-close, .task-detail-header-back-btn):is(:hover, :focus-visible) {
-  background: var(--alpha-neutral-surface-secondary);
-  color: var(--alpha-neutral-foreground);
+:is(.task-detail-header-action, .modal-close, .task-detail-header-back-btn):is(:hover, :focus-visible) {
+  background: var(--surface-secondary);
+  color: var(--text);
 }
 
-[data-alpha-surface="true"] .detail-body {
+.detail-body {
   inline-size: 100%;
   max-inline-size: 100%;
-  padding: var(--alpha-density-3);
+  padding: var(--ui-density-md);
 }
 
 /*
 FNXC:TaskDetailStructure 2026-09-12-23:45:
-Les pills Alpha occupent l’espace intérieur disponible dans chaque hôte sans ajouter leurs marges à une largeur déjà égale à 100 %. Le scroller garde ainsi ses onglets hors du débordement de la fiche, y compris en split et dock étroits.
+Les pills d’onglets occupent l’espace intérieur disponible dans chaque hôte sans ajouter leurs marges à une largeur déjà égale à 100 %. Le scroller garde ainsi ses onglets hors du débordement de la fiche, y compris en split et dock étroits.
 */
-[data-alpha-surface="true"] .detail-tabs {
+.detail-tabs {
   position: sticky;
   inset-block-start: 0;
   z-index: var(--z-sticky);
-  gap: var(--alpha-density-1);
-  inline-size: calc(100% - (var(--alpha-density-3) * 2));
-  max-inline-size: calc(100% - (var(--alpha-density-3) * 2));
-  margin: var(--alpha-density-2) var(--alpha-density-3) var(--alpha-density-3);
-  padding: var(--alpha-density-1);
-  background: var(--alpha-neutral-surface-secondary);
+  gap: var(--ui-density-2xs);
+  inline-size: calc(100% - (var(--ui-density-md) * 2));
+  max-inline-size: calc(100% - (var(--ui-density-md) * 2));
+  margin: var(--ui-density-sm) var(--ui-density-md) var(--ui-density-md);
+  padding: var(--ui-density-2xs);
+  background: var(--surface-secondary);
   border: 0;
   border-radius: var(--radius-pill);
   scrollbar-width: none;
 }
 
-[data-alpha-surface="true"] .detail-tabs::-webkit-scrollbar {
+.detail-tabs::-webkit-scrollbar {
   display: none;
 }
 
-[data-alpha-surface="true"] .detail-tab {
-  min-block-size: var(--alpha-control-height);
-  padding: var(--alpha-density-2) var(--alpha-density-3);
+.detail-tab {
+  min-block-size: var(--ui-control-height);
+  padding: var(--ui-density-sm) var(--ui-density-md);
   border: 0;
   border-radius: var(--radius-pill);
   background: transparent !important;
-  color: var(--alpha-neutral-muted) !important;
+  color: var(--text-muted) !important;
   white-space: nowrap;
 }
 
-[data-alpha-surface="true"] .detail-tab:is(:hover, :focus-visible) {
+.detail-tab:is(:hover, :focus-visible) {
   background: transparent !important;
-  color: var(--alpha-neutral-foreground) !important;
+  color: var(--text) !important;
 }
 
-[data-alpha-surface="true"] .detail-tab-active {
-  background: var(--alpha-neutral-surface) !important;
-  color: var(--alpha-neutral-foreground) !important;
+.detail-tab-active {
+  background: var(--surface) !important;
+  color: var(--text) !important;
   box-shadow: var(--shadow-sm);
   font-weight: 600;
 }
 
-[data-alpha-surface="true"] :is(.detail-section, .task-summary-section, .modal-edit-form .form-group) {
+:is(.detail-section, .task-summary-section, .modal-edit-form .form-group) {
   min-inline-size: 0;
-  background: var(--alpha-neutral-surface);
-  border-color: var(--alpha-neutral-border);
+  background: var(--surface);
+  border-color: var(--border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sm);
 }
 
-[data-alpha-surface="true"] :is(.detail-section h3, .detail-section h4) {
-  color: var(--alpha-neutral-foreground);
+:is(.detail-section h3, .detail-section h4) {
+  color: var(--text);
 }
 
-[data-alpha-surface="true"] :is(.modal-edit-input, .modal-edit-textarea, .task-form input, .task-form textarea, .task-form select) {
+:is(.modal-edit-input, .modal-edit-textarea, .task-form input, .task-form textarea, .task-form select) {
   min-inline-size: 0;
   max-inline-size: 100%;
-  background: var(--alpha-neutral-surface);
-  border-color: var(--alpha-neutral-border);
-  color: var(--alpha-neutral-foreground);
+  background: var(--surface);
+  border-color: var(--border);
+  color: var(--text);
   border-radius: var(--radius-md);
 }
 
-[data-alpha-surface="true"] > .task-detail-content > .modal-actions {
-  gap: var(--alpha-density-2);
-  padding: var(--alpha-density-2) var(--alpha-density-3);
-  background: var(--alpha-neutral-surface);
-  border-block-start: var(--border-width) solid var(--alpha-neutral-border);
+.task-detail-content > .modal-actions {
+  gap: var(--ui-density-sm);
+  padding: var(--ui-density-sm) var(--ui-density-md);
+  background: var(--surface);
+  border-block-start: var(--border-width) solid var(--border);
 }
 
-[data-alpha-surface="true"] .detail-actions-menu,
-[data-alpha-portal="true"].activity-view-menu {
-  background: var(--alpha-neutral-surface);
-  border-color: var(--alpha-neutral-border);
+.detail-actions-menu,
+[data-ui-portal="true"].activity-view-menu {
+  background: var(--surface);
+  border-color: var(--border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-lg);
 }
 
 @media (max-width: 48rem) {
-  [data-alpha-surface="true"] > .task-detail-content > .modal-header {
+  .task-detail-content > .modal-header {
     align-items: flex-start;
-    padding-inline: var(--alpha-density-3);
+    padding-inline: var(--ui-density-md);
   }
 
-  [data-alpha-surface="true"] .detail-title-row {
-    padding-block: var(--alpha-density-1);
+  .detail-title-row {
+    padding-block: var(--ui-density-2xs);
   }
 
-  [data-alpha-surface="true"] :is(.task-detail-header-action, .modal-close, .task-detail-header-back-btn) {
-    min-inline-size: var(--alpha-touch-height);
-    min-block-size: var(--alpha-touch-height);
+  :is(.task-detail-header-action, .modal-close, .task-detail-header-back-btn) {
+    min-inline-size: var(--ui-touch-height);
+    min-block-size: var(--ui-touch-height);
   }
 
   /*
@@ -3562,20 +3562,20 @@ Les pills Alpha occupent l’espace intérieur disponible dans chaque hôte sans
   letting the action cluster shrink and wrap. Pinning the cluster to its intrinsic width pushed the surface
   past the viewport and reintroduced horizontal document overflow.
   */
-  [data-alpha-surface="true"] > .task-detail-content > .modal-header {
+  .task-detail-content > .modal-header {
     flex-wrap: wrap;
   }
 
-  [data-alpha-surface="true"] .modal-header-actions {
+  .modal-header-actions {
     flex: 0 1 auto;
     min-inline-size: 0;
   }
 
-  [data-alpha-surface="true"] .detail-body {
-    padding: var(--alpha-density-2);
+  .detail-body {
+    padding: var(--ui-density-sm);
   }
 
-  [data-alpha-surface="true"] .detail-tabs {
+  .detail-tabs {
     inline-size: 100%;
     max-inline-size: 100%;
     margin-inline: 0;
@@ -3583,21 +3583,21 @@ Les pills Alpha occupent l’espace intérieur disponible dans chaque hôte sans
     border-radius: 0;
   }
 
-  [data-alpha-surface="true"] .detail-tab {
-    min-block-size: var(--alpha-touch-height);
-    padding-inline: var(--alpha-density-3);
+  .detail-tab {
+    min-block-size: var(--ui-touch-height);
+    padding-inline: var(--ui-density-md);
   }
 
-  [data-alpha-surface="true"] :is(.detail-source-grid, .detail-source-edit-grid, .detail-metadata-grid) {
+  :is(.detail-source-grid, .detail-source-edit-grid, .detail-metadata-grid) {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  [data-alpha-surface="true"] > .task-detail-content > .modal-actions {
+  .task-detail-content > .modal-actions {
     position: sticky;
     inset-block-end: 0;
     min-inline-size: 0;
     overflow-x: auto;
-    padding-block-end: max(var(--alpha-density-2), env(safe-area-inset-bottom));
+    padding-block-end: max(var(--ui-density-sm), env(safe-area-inset-bottom));
   }
 }
 
@@ -3670,7 +3670,8 @@ La progression de Définition est une liste lisible plutôt qu’une rangée de 
   justify-content: center;
   inline-size: var(--space-lg);
   block-size: var(--space-lg);
-  border: var(--border-width) solid currentColor;
+  /* FNXC:DashboardStyling 2026-09-15-00:20: --border-width is not a defined token; --btn-border-width is the only border-width token, so the shorthand actually applies. */
+  border: var(--btn-border-width) solid currentColor;
   border-radius: var(--radius-sm);
 }
 
@@ -3712,5 +3713,201 @@ La progression de Définition est une liste lisible plutôt qu’une rangée de 
 
   .detail-step-origin {
     display: none;
+  }
+}
+
+/*
+FNXC:TaskDetailPresentation 2026-09-15-00:20:
+FN-399's "clean" (Épuré) grammar for Task Detail — the pilot surface for the interface-style axis.
+
+This layer is PRESENTATION ONLY. It adds no element, removes no command, and changes no data: the header,
+tab strip, progress, description, product summary and plan sub-view all render exactly the same markup and
+the same real actions in both styles. Every value comes from the ui-style catalogue or an existing token,
+and every colour comes from the selected theme, so this block contains no literal colour and no raw pixel.
+
+The classic grammar is untouched: nothing here applies unless the operator selected the clean style.
+*/
+
+/* ── Header ─────────────────────────────────────────────────────────────── */
+
+html[data-ui-style="clean"] .task-detail-content > .modal-header {
+  padding: var(--ui-density-sm) var(--ui-density-md);
+  gap: var(--ui-density-sm);
+}
+
+html[data-ui-style="clean"] .detail-id {
+  font-family: var(--ui-font-family-mono);
+  font-size: var(--ui-font-size-base);
+  font-weight: var(--ui-font-weight-semibold);
+}
+
+/* Discreet uppercase status chip, like the reference grammar. */
+html[data-ui-style="clean"] .detail-column-badge {
+  padding: 0 var(--ui-density-2xs);
+  font-size: var(--ui-font-size-2xs);
+  font-weight: var(--ui-font-weight-semibold);
+  letter-spacing: var(--ui-letter-spacing-wide);
+  text-transform: uppercase;
+  border-radius: var(--ui-radius-sm);
+}
+
+html[data-ui-style="clean"] .modal-header-actions {
+  gap: var(--ui-density-3xs);
+}
+
+html[data-ui-style="clean"] .modal-header-actions .btn-icon {
+  border-color: transparent;
+  background: transparent;
+  border-radius: var(--ui-radius-sm);
+}
+
+html[data-ui-style="clean"] .modal-header-actions .btn-icon:hover {
+  background: color-mix(in srgb, var(--text) var(--ui-hover-mix), transparent);
+}
+
+html[data-ui-style="clean"] .modal-header-actions .btn-icon svg {
+  inline-size: var(--ui-icon-size);
+  block-size: var(--ui-icon-size);
+}
+
+/*
+A thin decorative separator before Close, only where a Close control exists. `aria-hidden` is unnecessary
+because it is generated content on the button itself, so it stays out of the accessibility tree.
+*/
+html[data-ui-style="clean"] .modal-header-actions .modal-close::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: calc(var(--ui-density-2xs) * -1);
+  inset-block: var(--ui-density-2xs);
+  inline-size: var(--ui-border-width);
+  background: var(--border);
+}
+
+html[data-ui-style="clean"] .modal-header-actions .modal-close {
+  position: relative;
+  margin-inline-start: var(--ui-density-2xs);
+}
+
+/* ── Progress ───────────────────────────────────────────────────────────── */
+
+html[data-ui-style="clean"] .detail-step-progress h4,
+html[data-ui-style="clean"] .detail-definition-description h4 {
+  font-size: var(--ui-font-size-2xs);
+  font-weight: var(--ui-font-weight-semibold);
+  letter-spacing: var(--ui-letter-spacing-wide);
+  text-transform: uppercase;
+}
+
+/* The bar stays thin but always visible — it is never hidden by the disclosure. */
+html[data-ui-style="clean"] .step-progress-track {
+  block-size: var(--ui-density-3xs);
+}
+
+/* Round status pills instead of square indicators. */
+html[data-ui-style="clean"] .detail-step-indicator {
+  inline-size: var(--ui-density-lg);
+  block-size: var(--ui-density-lg);
+  border-radius: var(--ui-radius-pill);
+}
+
+html[data-ui-style="clean"] .detail-step-item {
+  gap: var(--ui-density-md);
+  padding: var(--ui-density-sm) var(--ui-density-2xs);
+  border-radius: var(--ui-radius-md);
+}
+
+html[data-ui-style="clean"] .detail-step-item:is(:hover, :focus-within) {
+  background: color-mix(in srgb, var(--text) var(--ui-hover-mix), transparent);
+}
+
+/* Category chip and a right-aligned status label of stable width. */
+html[data-ui-style="clean"] .detail-step-origin {
+  padding: 0 var(--ui-density-2xs);
+  border-radius: var(--ui-radius-sm);
+  font-size: var(--ui-font-size-2xs);
+  font-weight: var(--ui-font-weight-medium);
+}
+
+html[data-ui-style="clean"] .detail-step-status {
+  text-align: end;
+  font-size: var(--ui-font-size-2xs);
+  font-weight: var(--ui-font-weight-medium);
+}
+
+/* The step-list disclosure reads as part of the discreet heading rather than a button. */
+html[data-ui-style="clean"] .detail-step-list-toggle {
+  padding: 0;
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-muted);
+  font-size: var(--ui-font-size-2xs);
+  letter-spacing: var(--ui-letter-spacing-wide);
+  text-transform: uppercase;
+}
+
+html[data-ui-style="clean"] .detail-step-list-toggle:hover {
+  color: var(--text);
+  background: transparent;
+}
+
+/* ── Description, product summary and plan ─────────────────────────────────────── */
+
+html[data-ui-style="clean"] .detail-definition-description {
+  line-height: var(--ui-line-height-relaxed);
+}
+
+/* `Read plan` and the plan sub-view controls are quiet bordered buttons. */
+html[data-ui-style="clean"] .detail-plan-back,
+html[data-ui-style="clean"] .detail-plan-copy,
+html[data-ui-style="clean"] .detail-read-plan {
+  gap: var(--ui-density-2xs);
+  padding: var(--ui-density-2xs) var(--ui-density-md);
+  background: transparent;
+  border: var(--ui-border-width) solid var(--border);
+  border-radius: var(--ui-radius-md);
+  color: var(--text);
+  font-weight: var(--ui-font-weight-medium);
+}
+
+html[data-ui-style="clean"] .detail-plan-back:hover,
+html[data-ui-style="clean"] .detail-plan-copy:hover,
+html[data-ui-style="clean"] .detail-read-plan:hover {
+  background: color-mix(in srgb, var(--text) var(--ui-hover-mix), transparent);
+}
+
+html[data-ui-style="clean"] .detail-plan-document-header {
+  padding: var(--ui-density-sm) var(--ui-density-md);
+  border-block-end: var(--ui-border-width) solid var(--border);
+}
+
+html[data-ui-style="clean"] .detail-plan-back span {
+  font-family: var(--ui-font-family-mono);
+}
+
+/*
+Mobile: the category chip and the status label must stay READABLE rather than disappear, so the row wraps
+onto a second line instead of dropping information the operator needs.
+*/
+@media (max-width: 768px) {
+  html[data-ui-style="clean"] .detail-step-item {
+    grid-template-columns: auto minmax(0, 1fr);
+    row-gap: var(--ui-density-2xs);
+  }
+
+  html[data-ui-style="clean"] .detail-step-origin,
+  html[data-ui-style="clean"] .detail-step-status {
+    display: inline-flex;
+    grid-column: 2;
+  }
+
+  html[data-ui-style="clean"] .detail-step-status {
+    justify-self: start;
+    text-align: start;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-ui-style="clean"] .step-progress-track > span {
+    transition: none;
   }
 }

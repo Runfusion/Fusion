@@ -1,6 +1,6 @@
 import { ViewHeader } from "./ViewHeader";
 import "./TaskRefineDialog.css";
-import { AlphaButton, AlphaDialogBackdrop, AlphaTextArea } from "./alpha-ui";
+import { UiButton, UiDialogBackdrop, UiTextArea } from "./ui";
 
 import { MAX_TASK_MESSAGE_LENGTH, getErrorMessage } from "@fusion/core";
 import type { Task } from "@fusion/core";
@@ -28,7 +28,7 @@ it. This standalone dialog is owned directly by the card, the list row, and Task
 has to open a record to collect feedback.
 
 The overlay layer paints nothing (see TaskRefineDialog.css) and centers the panel exactly in the viewport at every
-breakpoint. `AlphaDialogBackdrop` is the primitive here rather than `AlphaDialog` because it is the only one accepting
+breakpoint. `UiDialogBackdrop` is the primitive here rather than `UiDialog` because it is the only one accepting
 `overlayProps`, which carries the shared default-off backdrop-dismiss contract; `onClose` is handed to the primitive so
 Escape closes THIS dialog rather than whatever mounted it.
 
@@ -50,7 +50,7 @@ export function TaskRefineDialog({
   const dismissProps = useOverlayDismiss(onClose);
   /*
   FNXC:TaskRefine 2026-09-14-22:23:
-  `AlphaDialogBackdrop` needs `onClose` so Escape closes THIS dialog instead of the surface that opened it, but the
+  `UiDialogBackdrop` needs `onClose` so Escape closes THIS dialog instead of the surface that opened it, but the
   same callback is also fired by its own unconditional backdrop-mousedown branch. That branch would bypass the shared
   default-off dismiss preference, so a press that starts on the overlay marks itself here — `overlayProps.onMouseDown`
   runs first inside the primitive's handler — and the primitive's close is ignored for that event only. Real backdrop
@@ -102,7 +102,7 @@ export function TaskRefineDialog({
   };
 
   return (
-    <AlphaDialogBackdrop
+    <UiDialogBackdrop
       overlayClassName="modal-overlay open task-refine-overlay"
       labelledBy={titleId}
       onClose={isSubmitting ? undefined : handlePrimitiveClose}
@@ -122,7 +122,7 @@ export function TaskRefineDialog({
           <p className="task-refine-dialog__help">
             {t("taskDetail.refine.help", "Describe what needs to be refined or improved...")}
           </p>
-          <AlphaTextArea
+          <UiTextArea
             className="input task-refine-dialog__textarea"
             data-testid="task-refine-feedback"
             value={feedback}
@@ -137,7 +137,7 @@ export function TaskRefineDialog({
             <div className="task-refine-dialog__char-count">
               {t("taskDetail.refine.charCount", "{{count}}/{{max}} characters", { count: feedback.length, max: MAX_TASK_MESSAGE_LENGTH })}
             </div>
-            <AlphaButton
+            <UiButton
               type="button"
               className="btn btn-primary btn-sm"
               data-testid="task-refine-submit"
@@ -147,11 +147,11 @@ export function TaskRefineDialog({
               {isSubmitting
                 ? t("taskDetail.refine.creating", "Creating...")
                 : t("taskDetail.refine.createBtn", "Create Refinement Task")}
-            </AlphaButton>
+            </UiButton>
           </div>
         </div>
         <div className="modal-actions task-refine-dialog__actions">
-          <AlphaButton
+          <UiButton
             type="button"
             className="btn btn-sm"
             data-testid="task-refine-cancel"
@@ -159,9 +159,9 @@ export function TaskRefineDialog({
             disabled={isSubmitting}
           >
             {t("common.cancel", "Cancel")}
-          </AlphaButton>
+          </UiButton>
         </div>
       </div>
-    </AlphaDialogBackdrop>
+    </UiDialogBackdrop>
   );
 }

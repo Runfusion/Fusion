@@ -7,7 +7,6 @@ import { loadAllAppCssBaseOnly } from "../../test/cssFixture";
 import { computeMenuWidth, OPTION_DECORATIONS_WIDTH, WorkflowSwitcher } from "../WorkflowSwitcher";
 import { computeWorkflowStatusCounts, type WorkflowStatusCounts } from "../workflowStatusCounts";
 import { readAppFile } from "../../test/cssFixture";
-import { AlphaProvider, AlphaBoundary } from "../../context/AlphaContext";
 
 const workflows: BoardWorkflowDefinition[] = [
   {
@@ -32,9 +31,15 @@ function cssRuleFor(css: string, selector: string) {
   return css.match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`))?.[1] ?? "";
 }
 
+/*
+FNXC:NativeUiCollections 2026-09-15-00:20:
+The single native switcher sizes its options CONTAINER, which holds the listbox and its sibling edit
+rail, so measuring the listbox element alone no longer reads the computed menu width.
+*/
 function menuWidth() {
   const menu = screen.getByRole("listbox", { name: "Workflow" });
-  return Number.parseFloat(menu.style.width);
+  const sized = menu.closest<HTMLElement>(".workflow-switcher-options") ?? menu;
+  return Number.parseFloat(sized.style.width);
 }
 
 beforeEach(() => {
@@ -565,7 +570,7 @@ describe("WorkflowSwitcher", () => {
   it("keeps Alpha workflow selection and row editing as separate actions", async () => {
     const onChange = vi.fn();
     const onEdit = vi.fn();
-    render(<AlphaProvider enabled><AlphaBoundary><WorkflowSwitcher workflows={workflows} value="builtin:coding" onChange={onChange} counts={countMap()} onEditWorkflow={onEdit} /></AlphaBoundary></AlphaProvider>);
+    render(<><><WorkflowSwitcher workflows={workflows} value="builtin:coding" onChange={onChange} counts={countMap()} onEditWorkflow={onEdit} /></></>);
     fireEvent.click(screen.getByTestId("workflow-switcher"));
     const firstOption = screen.getByTestId("workflow-switcher-option-builtin:coding");
     const option = screen.getByTestId("workflow-switcher-option-design");

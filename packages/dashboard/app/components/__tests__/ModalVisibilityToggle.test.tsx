@@ -11,9 +11,8 @@ import { useDashboardKeyboardShortcuts } from "../../hooks/useDashboardKeyboardS
 import { DashboardWindowVisibilityToggle } from "../DashboardWindowVisibilityToggle";
 import { FloatingWindow } from "../FloatingWindow";
 import { ConfirmDialog } from "../ConfirmDialog";
-import { AlphaMobileDrawer } from "../AlphaMobileDrawer";
-import { AlphaDialog } from "../alpha-ui/AlphaPrimitives";
-import { AlphaBoundary } from "../../context/AlphaContext";
+import { MobileDrawer } from "../MobileDrawer";
+import { UiDialog } from "../ui/UiPrimitives";
 
 function ManagedFixture({ id, locallyVisible = true, stackOrder = 0, children }: { id: string; locallyVisible?: boolean; stackOrder?: number; children?: ReactNode }) {
   const surface = useDashboardWindowSurface({ logicalId: id, locallyVisible, stackOrder });
@@ -205,7 +204,7 @@ describe("Dashboard window visibility toggle", () => {
   it("disarms production Escape and outside-dismiss handlers while their retained surfaces are hidden", async () => {
     const closeWindow = vi.fn();
     const closeConfirm = vi.fn();
-    const closeAlphaDialog = vi.fn();
+    const closeUiDialog = vi.fn();
     const closeDrawer = vi.fn();
     render(
       <ToggleHarness>
@@ -216,10 +215,10 @@ describe("Dashboard window visibility toggle", () => {
           onConfirm={vi.fn()}
           onCancel={closeConfirm}
         />
-        <AlphaBoundary>
-          <AlphaDialog labelledBy="alpha-title" onClose={closeAlphaDialog}><h2 id="alpha-title">Alpha dialog</h2></AlphaDialog>
-        </AlphaBoundary>
-        <AlphaMobileDrawer open title="Drawer" onClose={closeDrawer}>Drawer body</AlphaMobileDrawer>
+        <>
+          <UiDialog labelledBy="alpha-title" onClose={closeUiDialog}><h2 id="alpha-title">Alpha dialog</h2></UiDialog>
+        </>
+        <MobileDrawer open title="Drawer" onClose={closeDrawer}>Drawer body</MobileDrawer>
       </ToggleHarness>,
     );
     const toggle = await screen.findByTestId("dashboard-window-visibility-toggle");
@@ -233,7 +232,7 @@ describe("Dashboard window visibility toggle", () => {
     fireEvent.pointerDown(document.body);
     expect(closeWindow).not.toHaveBeenCalled();
     expect(closeConfirm).not.toHaveBeenCalled();
-    expect(closeAlphaDialog).not.toHaveBeenCalled();
+    expect(closeUiDialog).not.toHaveBeenCalled();
     expect(closeDrawer).not.toHaveBeenCalled();
     expect(screen.getByText("Still mounted")).toBeInTheDocument();
     expect(screen.getByText("Alpha dialog")).toBeInTheDocument();
@@ -260,9 +259,9 @@ describe("Dashboard window visibility toggle", () => {
       <ToggleHarness>
         <FloatingWindow windowKey="first" title="First" modal onClose={closeFirst}>
           <button type="button">first body</button>
-          <AlphaBoundary>
-            <AlphaDialog labelledBy="child-dialog-title" onClose={closeDialog}><h2 id="child-dialog-title">Child dialog</h2></AlphaDialog>
-          </AlphaBoundary>
+          <>
+            <UiDialog labelledBy="child-dialog-title" onClose={closeDialog}><h2 id="child-dialog-title">Child dialog</h2></UiDialog>
+          </>
         </FloatingWindow>
         <FloatingWindow windowKey="second" title="Second" modal onClose={closeSecond}>
           <button type="button">second body</button>

@@ -24,28 +24,28 @@
 }
 
 /*
-FNXC:AlphaDensity 2026-09-11-00:30:
-Alpha task cards keep metadata and status behavior intact while reducing persistent visual weight. Compact padding, neutral elevation, and a quiet hover are boundary-only so every stable card host preserves its historical dimensions.
+FNXC:NativeDensity 2026-09-11-00:30:
+Task cards keep metadata and status behavior intact while reducing persistent visual weight. Compact padding, neutral elevation, and a quiet hover are shared by every card host.
 */
-[data-alpha-surface="true"] .card {
-  padding: var(--alpha-density-3);
+.card {
+  padding: var(--ui-density-md);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-sm);
 }
 
-[data-alpha-surface="true"] .card:hover {
-  border-color: var(--alpha-neutral-muted);
+.card:hover {
+  border-color: var(--text-muted);
   box-shadow: var(--shadow-md);
 }
 
-[data-alpha-surface="true"] .card-header {
-  gap: var(--alpha-density-1);
-  margin-bottom: var(--alpha-density-1);
+.card-header {
+  gap: var(--ui-density-2xs);
+  margin-bottom: var(--ui-density-2xs);
 }
 
 @media (max-width: 768px) {
-  [data-alpha-surface="true"] .card {
-    padding: var(--alpha-density-2);
+  .card {
+    padding: var(--ui-density-sm);
   }
 }
 

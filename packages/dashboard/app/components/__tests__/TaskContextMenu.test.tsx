@@ -4,7 +4,6 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { Task } from "@fusion/core";
 import { TaskContextMenu, buildTaskActionMenuModel } from "../TaskContextMenu";
-import { AlphaProvider, AlphaBoundary } from "../../context/AlphaContext";
 
 const t = ((key: string, fallback: string, vars?: Record<string, string>) => {
   if (!vars) return fallback;
@@ -337,7 +336,7 @@ describe("TaskContextMenu shared task action model", () => {
   it("uses one navigable Alpha menu with a native homemade Alpha submenu", async () => {
     const user = userEvent.setup();
     const onSelect = vi.fn();
-    render(<AlphaProvider enabled><AlphaBoundary><TaskContextMenu actions={[{ id: "pause", label: "Pause" }, { id: "delete", label: "Delete" }, { id: "more", label: "More", items: [{ id: "nested", label: "Nested", onSelect }] }]} /></AlphaBoundary></AlphaProvider>);
+    render(<><><TaskContextMenu actions={[{ id: "pause", label: "Pause" }, { id: "delete", label: "Delete" }, { id: "more", label: "More", items: [{ id: "nested", label: "Nested", onSelect }] }]} /></></>);
     const pause = screen.getByRole("menuitem", { name: "Pause" });
     const del = screen.getByRole("menuitem", { name: "Delete" });
     pause.focus();
@@ -347,7 +346,7 @@ describe("TaskContextMenu shared task action model", () => {
     more.focus();
     await user.keyboard("{ArrowRight}");
     const nested = await screen.findByRole("menuitem", { name: "Nested" });
-    expect(nested.closest('[data-alpha-ui="menu"]')?.querySelector('[data-alpha-ui="menu"]')).toBeNull();
+    expect(nested.closest('[data-ui="menu"]')?.querySelector('[data-ui="menu"]')).toBeNull();
     await user.click(nested);
     expect(onSelect).toHaveBeenCalledTimes(1);
   });

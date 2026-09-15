@@ -4,7 +4,6 @@ import { loadStylesCss } from "../../test/cssFixture";
 import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Column } from "../Column";
-import { AlphaBoundary, AlphaProvider } from "../../context/AlphaContext";
 import type { Task, Column as ColumnType } from "@fusion/core";
 
 const { rebuildTaskSpecMock } = vi.hoisted(() => ({ rebuildTaskSpecMock: vi.fn() }));
@@ -815,8 +814,8 @@ describe("Column Alpha menu keyboard access", () => {
     const onTogglePlanAutoApprove = vi.fn();
 
     render(
-      <AlphaProvider enabled>
-        <AlphaBoundary>
+      <>
+        <>
           <Column
             {...defaultProps}
             column="triage"
@@ -824,8 +823,8 @@ describe("Column Alpha menu keyboard access", () => {
             planAutoApproveEnabled={false}
             onTogglePlanAutoApprove={onTogglePlanAutoApprove}
           />
-        </AlphaBoundary>
-      </AlphaProvider>,
+        </>
+      </>,
     );
 
     const trigger = screen.getByRole("button", { name: "Planning column actions" });

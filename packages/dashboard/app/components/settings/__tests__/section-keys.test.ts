@@ -230,8 +230,9 @@ describe("settings section-keys registry", () => {
   it("a representative global section (appearance) maps to its expected owned keys", () => {
     const entry = getSectionKeyEntry("appearance")!;
     expect(entry.scope).toBe("global");
+    /* FNXC:UiStyleAxis 2026-09-15-00:20: the interface style joins Appearance's owned global keys, so "Reset this menu" restores it too. */
     expect(new Set(entry.keys)).toEqual(
-      new Set(["themeMode", "colorTheme", "dashboardFontScalePct", "shadcnCustomColors"]),
+      new Set(["themeMode", "colorTheme", "uiStyle", "dashboardFontScalePct", "shadcnCustomColors"]),
     );
   });
 

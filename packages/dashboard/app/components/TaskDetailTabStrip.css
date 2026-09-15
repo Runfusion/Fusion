@@ -13,3 +13,51 @@ The tab row keeps native horizontal touch panning and shows closed-hand feedback
     touch-action: pan-x pan-y;
   }
 }
+
+
+/*
+FNXC:TaskDetailPresentation 2026-09-15-00:20:
+FN-399's "clean" grammar for the Task Detail tab strip lives BESIDE the base rules it refines, so the base
+strip and tab rules always precede it. The clean strip drops the pill-group surface for a sober row with a
+fine rounded underline on the active tab only; order, destinations, horizontal pan and keyboard behaviour
+are untouched because this layer sets no layout ownership and no display.
+*/
+html[data-ui-style="clean"] .detail-tabs {
+  gap: var(--ui-density-lg);
+  padding-inline: var(--ui-density-md);
+  border-block-end: var(--ui-border-width) solid var(--border);
+}
+
+html[data-ui-style="clean"] .detail-tab {
+  position: relative;
+  padding: var(--ui-density-sm) 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  color: var(--text-muted);
+  font-size: var(--ui-font-size-base);
+  font-weight: var(--ui-font-weight-medium);
+  transition: color var(--ui-duration-fast) var(--ui-easing);
+}
+
+html[data-ui-style="clean"] .detail-tab:hover {
+  color: var(--text);
+  background: transparent;
+}
+
+html[data-ui-style="clean"] .detail-tab-active {
+  color: var(--text);
+  background: transparent;
+}
+
+/* Fine rounded underline on the active tab only. */
+html[data-ui-style="clean"] .detail-tab-active::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  inset-block-end: calc(var(--ui-border-width) * -1);
+  block-size: var(--ui-border-width-strong);
+  border-radius: var(--ui-radius-pill);
+  background: var(--accent);
+}
+

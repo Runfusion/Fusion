@@ -115,7 +115,7 @@ const INVENTORY: InventoryRow[] = [
   { destination: "Git manager", producer: "components/GitManagerModal.tsx", scenario: "components/__tests__/GitManagerModal.test.tsx", requires: ["ViewHeader", "ViewLayoutContent"] },
   { destination: "Task detail", producer: "components/TaskDetailModal.tsx", scenario: "components/__tests__/view-layout-drawers-task-detail.test.tsx", requires: ["ViewLayoutHeader", "ViewBackButton"] },
   { destination: "Terminal", producer: "components/TerminalModal.tsx", scenario: "components/__tests__/TerminalModal.closed-mount-cost.test.tsx", requires: ["ViewLayoutHeader", "ViewLayoutContent"] },
-  { destination: "Mobile drawer shell", producer: "components/AlphaMobileDrawer.tsx", scenario: "components/__tests__/view-layout-runtime-hosts.test.tsx", requires: ["ViewLayoutHeader", "ViewLayoutContent"] },
+  { destination: "Mobile drawer shell", producer: "components/MobileDrawer.tsx", scenario: "components/__tests__/view-layout-runtime-hosts.test.tsx", requires: ["ViewLayoutHeader", "ViewLayoutContent"] },
   { destination: "Right dock expand window", producer: "components/RightDockExpandModal.tsx", scenario: "components/__tests__/view-layout-runtime-hosts.test.tsx", requires: ["ViewLayoutHeader", "ViewLayoutContent"] },
   { destination: "Floating window shell", producer: "components/FloatingWindow.tsx", scenario: "components/__tests__/view-layout-drawers-task-detail.test.tsx", requires: ["ViewLayoutHeader", "ViewLayoutContent"] },
   { destination: "Plugin view host", producer: "plugins/PluginDashboardViewHost.tsx", scenario: "components/__tests__/view-layout-plugins.test.tsx", requires: ["ViewLayout", "ViewHeader"] },

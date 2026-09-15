@@ -178,7 +178,7 @@ describe("TaskRefineDialog", () => {
       renderDialog();
       const element = overlay();
       expect(element.parentElement).toBe(document.body);
-      expect(element.getAttribute("data-alpha-portal")).toBe("true");
+      expect(element.getAttribute("data-ui-portal")).toBe("true");
       expect(element.className).toContain("task-refine-overlay");
     } finally {
       Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: priorWidth });

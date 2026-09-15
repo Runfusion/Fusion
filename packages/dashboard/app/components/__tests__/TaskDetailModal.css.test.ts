@@ -22,9 +22,9 @@ describe("TaskDetailModal CSS contract", () => {
 
   it("garde la barre d'onglets plane et matérialise uniquement la sélection", async () => {
     const css = await loadAllAppCssBaseOnly();
-    const strip = getCssRuleBlock(css, '[data-alpha-surface="true"] .detail-tabs');
-    const tab = getCssRuleBlock(css, '[data-alpha-surface="true"] .detail-tab');
-    const active = getCssRuleBlock(css, '[data-alpha-surface="true"] .detail-tab-active');
+    const strip = getCssRuleBlock(css, '.detail-tabs');
+    const tab = getCssRuleBlock(css, '.detail-tab');
+    const active = getCssRuleBlock(css, '.detail-tab-active');
 
     /*
     FNXC:TaskDetailStructure 2026-09-14-21:15:
@@ -35,7 +35,7 @@ describe("TaskDetailModal CSS contract", () => {
     materialized.
     */
     expect(strip).toContain("border: 0;");
-    expect(strip).toContain("background: var(--alpha-neutral-surface-secondary);");
+    expect(strip).toContain("background: var(--surface-secondary);");
     expect(strip).not.toMatch(/background:\s*(#|rgb)/i);
     expect(tab).toContain("background: transparent !important;");
     /*
@@ -44,9 +44,9 @@ describe("TaskDetailModal CSS contract", () => {
     The invariant this case guards is unchanged: exactly the active tab is materialized, it uses
     design tokens, and it never inverts to the neutral FOREGROUND colour as a background.
     */
-    expect(active).toContain("background: var(--alpha-neutral-surface) !important;");
+    expect(active).toContain("background: var(--surface) !important;");
     expect(active).toContain("box-shadow: var(--shadow-sm);");
-    expect(active).not.toContain("background: var(--alpha-neutral-foreground)");
+    expect(active).not.toContain("background: var(--text)");
   });
 
   it("FN-5879/FN-6864 keeps the base detail tab strip horizontally scrollable and touch-pannable without shrinking tabs", async () => {

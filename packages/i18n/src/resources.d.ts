@@ -8601,6 +8601,8 @@ export default interface Resources {
         "aiReviseHeading": "Ask AI to Revise",
         "aiReviseHelp": "Provide feedback for the AI to improve this specification. The task will move to planning for replanning.",
         "backToDefinition": "Back to definition",
+        "copied": "Copied",
+        "copy": "Copy",
         "editBtn": "Edit",
         "feedbackPlaceholder": "e.g., 'Add more details about error handling', 'Split this into smaller steps', 'Include tests for the API endpoints'...",
         "hintCancel": "to cancel",
@@ -9319,6 +9321,13 @@ export default interface Resources {
     "trackingRepoSelect": {
       "customOption": "Custom…",
       "loadingHint": "Loading detected GitHub remotes…"
+    },
+    "uiStyle": {
+      "classic": "Current",
+      "classicDescription": "The familiar Fusion grammar, unchanged.",
+      "clean": "Clean",
+      "cleanDescription": "Tighter density, softer corners, quieter chrome.",
+      "label": "Interface style"
     },
     "updateBanner": {
       "dismissLabel": "Dismiss update notice",

@@ -156,7 +156,7 @@ describe("TaskResetDialog", () => {
 
   /*
   FNXC:DialogStacking 2026-09-14-17:46:
-  FN-392: Reset is the second consumer of the shared Alpha dialog primitive audited with Refine. Opened from its real
+  FN-392: Reset is the second consumer of the shared native dialog primitive audited with Refine. Opened from its real
   Actions-menu wiring inside a floating Task Detail window it must be body-portaled and strictly above that window,
   on desktop and on the narrow presentation, otherwise the operator gets an invisible destructive confirmation.
   */
@@ -185,7 +185,7 @@ describe("TaskResetDialog", () => {
       const dialog = screen.getByTestId("task-reset-dialog");
       const overlay = dialog.closest("[data-dashboard-window-surface]") as HTMLElement;
       expect(overlay.parentElement).toBe(document.body);
-      expect(overlay.getAttribute("data-alpha-portal")).toBe("true");
+      expect(overlay.getAttribute("data-ui-portal")).toBe("true");
 
       const parentWindow = screen.getByTestId("floating-window-overlay-task-detail");
       const dialogLayer = Number.parseInt(overlay.style.zIndex, 10);

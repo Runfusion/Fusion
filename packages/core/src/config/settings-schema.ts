@@ -158,6 +158,12 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   New users and unset installs should start on Shadcn Ember. Existing users who explicitly stored colorTheme "default", "ocean", or another valid theme must remain on that selection, so the ids stay valid and only the absence/default seed changes to "shadcn-ember".
   */
   colorTheme: "shadcn-ember",
+  /*
+  FNXC:UiStyleAxis 2026-09-15-00:20:
+  FN-399 adds the independent interface-style axis. "classic" is the seeded default so upgrading an
+  existing install changes no shape; the "clean" grammar is opt-in and never implied by a colour choice.
+  */
+  uiStyle: "classic",
   shadcnCustomColors: undefined,
   dashboardFontScalePct: 100,
   /*

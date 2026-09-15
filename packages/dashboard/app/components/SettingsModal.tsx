@@ -8,7 +8,7 @@ import {
   normalizeMergeIntegrationWorktreeMode,
   normalizeMergeAdvanceAutoSyncMode,
 } from "@fusion/core";
-import type { Settings, GlobalSettings, ThemeMode, ColorTheme, ModelPreset } from "@fusion/core";
+import type { Settings, GlobalSettings, ThemeMode, ColorTheme, UiStyle, ModelPreset } from "@fusion/core";
 import { DEFAULT_GLOBAL_SETTINGS } from "@fusion/core";
 import { fetchSettings, fetchSettingsByScope, updateSettings, updateGlobalSettings, fetchAuthStatus, loginProvider, logoutProvider, cancelProviderLogin, saveApiKey, clearApiKey, fetchModels, testNotification, fetchBackups, createBackup, exportSettings, importSettings, fetchMemoryFile, fetchMemoryFiles, saveMemoryFile, compactMemory, installQmd, testMemoryRetrieval, triggerMemoryDreams, fetchGitRemotes, fetchGitRemotesDetailed, fetchGitBranches, fetchProjects, fetchDashboardHealth, checkForUpdates, installUpdate, fetchSystemInfo, requestSystemRestart, fetchRemoteSettings, fetchRemoteStatus, installCloudflared, fetchRemoteQr, fetchRemoteUrl, submitProviderManualCode, fetchPlugins, formatProviderInstanceKey } from "../api";
 import type { AuthProvider, ManualOAuthCodeInfo, ModelInfo, BackupListResponse, SettingsExportData, MemoryFileInfo, MemoryRetrievalTestResult, GitRemote, GitRemoteDetailed, ProjectInfo, RemoteStatus, UpdateCheckResponse, UpdateInstallResponse, OAuthDeviceCodeInfo } from "../api";
@@ -637,6 +637,10 @@ interface SettingsModalProps {
   onThemeModeChange?: (mode: ThemeMode) => void;
   /** Called when color theme changes */
   onColorThemeChange?: (theme: ColorTheme) => void;
+  /** FNXC:UiStyleAxis 2026-09-15-00:20: current interface style, the second independent appearance axis. */
+  uiStyle?: UiStyle;
+  /** Called when the interface style changes. */
+  onUiStyleChange?: (style: UiStyle) => void;
   /** Current dashboard font scale percentage */
   dashboardFontScalePct?: number;
   /** Current shadcn-custom color overrides */
@@ -918,6 +922,8 @@ export function SettingsModal({
   colorTheme = "shadcn-ember",
   onThemeModeChange,
   onColorThemeChange,
+  uiStyle,
+  onUiStyleChange,
   dashboardFontScalePct = 100,
   shadcnCustomColors = {},
   resolvedThemeMode,
@@ -4194,6 +4200,8 @@ export function SettingsModal({
             resolvedThemeMode={resolvedThemeMode}
             onThemeModeChange={onThemeModeChange}
             onColorThemeChange={onColorThemeChange}
+            uiStyle={uiStyle}
+            onUiStyleChange={onUiStyleChange}
             onDashboardFontScaleChange={onDashboardFontScaleChange}
             onShadcnCustomColorsChange={onShadcnCustomColorsChange}
             chatMessageLayout={chatMessageLayout}

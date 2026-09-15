@@ -6,7 +6,6 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import { TaskPlannerChatTab } from "../TaskPlannerChatTab";
 import { ChatMessageLayoutProvider } from "../../context/ChatMessageLayoutContext";
-import { AlphaProvider, AlphaBoundary } from "../../context/AlphaContext";
 import { clampChatInputHeight, getChatInputAutomaticMaxHeight, getChatInputBoxMetrics } from "../../utils/chatInputAutosize";
 import { __test_resetChatSnippetsCache } from "../../hooks/useChatSnippetsCache";
 
@@ -241,23 +240,23 @@ describe("TaskPlannerChatTab", () => {
 
   it("renders the real planner composer through the shared Alpha boundary", async () => {
     const view = render(
-      <AlphaProvider enabled>
-        <AlphaBoundary>
+      <>
+        <>
           <TaskPlannerChatTab task={makeTask("FN-7310")} active taskChatModel={{ provider: "anthropic", modelId: "claude-plan" }} addToast={vi.fn()} />
-        </AlphaBoundary>
-      </AlphaProvider>,
+        </>
+      </>,
     );
-    expect(await screen.findByLabelText("Message task chat")).toHaveAttribute("data-alpha-ui", "textarea");
-    expect(view.container.querySelector('[data-alpha-ui="button"]')).not.toBeNull();
+    expect(await screen.findByLabelText("Message task chat")).toHaveAttribute("data-ui", "textarea");
+    expect(view.container.querySelector('[data-ui="button"]')).not.toBeNull();
 
     view.rerender(
-      <AlphaProvider enabled={false}>
-        <AlphaBoundary>
+      <>
+        <>
           <TaskPlannerChatTab task={makeTask("FN-7310")} active taskChatModel={{ provider: "anthropic", modelId: "claude-plan" }} addToast={vi.fn()} />
-        </AlphaBoundary>
-      </AlphaProvider>,
+        </>
+      </>,
     );
-    expect(screen.getByLabelText("Message task chat")).not.toHaveAttribute("data-alpha-ui");
+    expect(screen.getByLabelText("Message task chat")).not.toHaveAttribute("data-ui");
   });
 
   afterEach(() => {

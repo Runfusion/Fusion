@@ -151,13 +151,16 @@ describe("Cozy Cartoon color theme", () => {
     expect(lightBlock).toContain("--accent: #e07a6a;");
   });
 
-  it("keeps the Cozy button rule top-level and inherits the existing mobile touch floors", () => {
-    const idx = cssNoComments.indexOf('[data-color-theme="cozy-cartoon"]');
-    expect(idx).not.toBe(-1);
-    const before = cssNoComments.slice(0, idx);
-    expect((before.match(/\{/g)?.length ?? 0) - (before.match(/\}/g)?.length ?? 0)).toBe(0);
+  /*
+  FNXC:UiStyleAxis 2026-09-15-00:20:
+  The Cozy Cartoon button rule is gone with FN-399's axis split, so this case now guards what it always
+  really protected: the shared mobile touch floors stay intact after the preset stopped reshaping buttons.
+  */
+  it("inherits the existing mobile touch floors after the preset stopped reshaping buttons", () => {
+    expect(cssNoComments).not.toContain('[data-color-theme="cozy-cartoon"]');
 
-    const mobileSelectorIdx = cssNoComments.indexOf(".btn:not(.btn-icon):not(.btn-badge):not(.btn-sm):not(.btn--sm)", idx);
+    const mobileSelectorIdx = cssNoComments.indexOf(".btn:not(.btn-icon):not(.btn-badge):not(.btn-sm):not(.btn--sm)");
+    expect(mobileSelectorIdx).not.toBe(-1);
     const mobileMediaIdx = cssNoComments.lastIndexOf("@media (max-width: 768px)", mobileSelectorIdx);
     expect(mobileMediaIdx).not.toBe(-1);
     const mobileBlock = extractAtRuleBlock(cssNoComments, mobileMediaIdx);
@@ -167,35 +170,31 @@ describe("Cozy Cartoon color theme", () => {
     expect(iconRule).toContain("min-height: 36px");
   });
 
-  it("enlarges token geometry without overriding ViewHeader height contracts", () => {
-    const rootBlock = extractSelectorBlock(styles, ":root");
+  /*
+  FNXC:UiStyleAxis 2026-09-15-00:20:
+  FN-399 replaces Cozy Cartoon's per-theme geometry with the shared interface-style catalogue: the preset
+  no longer enlarges radii, paddings, border widths or icon sizes, and its button typography override is
+  deleted from styles.css. Asserting the old enlargement would require re-adding behaviour this task
+  deliberately removed, so the invariant is inverted: the preset carries colour only, and the shared
+  button rules it used to reshape are untouched.
+  */
+  it("declares colour only and imposes no geometry or typography of its own", () => {
     const themeBlock = extractSelectorBlock(themeData, '[data-color-theme="cozy-cartoon"]');
-    const scopedButton = extractSelectorBlock(styles, '[data-color-theme="cozy-cartoon"] .btn:not(.btn-sm):not(.btn--sm)');
-    const declaredProperties = [...scopedButton.matchAll(/^\s*([a-z-]+)\s*:/gm)].map((match) => match[1]);
 
-    expect(declaredProperties).toEqual(["font-size", "font-weight"]);
-    expect(scopedButton).not.toMatch(/min-height/);
-    expect(scopedButton).not.toMatch(/(?:^|\n)\s*height\s*:/);
-    for (const token of ["--btn-padding", "--btn-border-width", "--radius-md", "--radius-lg", "--icon-size-md"] as const) {
-      expect(cssTokenValue(themeBlock, token)).not.toBe(cssTokenValue(rootBlock, token));
+    for (const token of ["--btn-padding", "--btn-border-width", "--radius-md", "--radius-lg", "--icon-size-md", "--icon-size-sm"] as const) {
+      expect(themeBlock).not.toContain(`${token}:`);
     }
     expect(themeData).not.toContain("--quick-entry-action-row-height-desktop");
     expect(themeData).not.toContain("--quick-entry-action-row-height-mobile");
-    expect(themeBlock).not.toContain("--icon-size-sm");
+    expect(themeData).not.toContain("--cozy-cartoon-btn-font-size");
+    expect(themeData).not.toContain("--cozy-cartoon-btn-font-weight");
   });
 
-  it("excludes compact controls by selector shape without changing shared button rules", () => {
+  it("no longer reshapes any shared control through a colour-theme selector", () => {
     const cozySelectors = [...cssNoComments.matchAll(/([^{}]*\[data-color-theme="cozy-cartoon"\][^{}]*)\{/g)]
       .map((match) => match[1].trim());
-    expect(cozySelectors).toEqual(['[data-color-theme="cozy-cartoon"] .btn:not(.btn-sm):not(.btn--sm)']);
+    expect(cozySelectors).toEqual([]);
 
-    const selector = cozySelectors[0];
-    expect(selector).toContain(":not(.btn-sm)");
-    expect(selector).toContain(":not(.btn--sm)");
-    const targetedCompound = selector.replace(/:not\([^)]*\)/g, "");
-    for (const compactTarget of [".btn-sm", ".btn--sm", ".quick-entry", ".view-header"]) {
-      expect(targetedCompound).not.toContain(compactTarget);
-    }
     expect(extractSelectorBlock(styles, ".btn-sm")).toContain("padding: 4px 10px");
     expect(extractSelectorBlock(styles, ".btn")).toContain("padding: var(--btn-padding)");
   });

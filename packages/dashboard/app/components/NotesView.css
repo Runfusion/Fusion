@@ -199,7 +199,7 @@ The selected note uses an accent tint and persistent inset marker independently 
 }
 
 /*
-FNXC:AlphaDesktopRightDock 2026-09-12-04:06:
+FNXC:DesktopRightDock 2026-09-12-04:06:
 Compact/list-only Notes garde toujours la liste dans le dock; chaque détail appartient à sa fenêtre dédiée et ne peut donc pas remplacer cette liste à une largeur quelconque.
 */
 .notes-view--compact .notes-layout,

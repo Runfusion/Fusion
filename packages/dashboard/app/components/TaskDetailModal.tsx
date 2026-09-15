@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { Pencil, Bot, X, ChevronDown, ChevronRight, GitBranch, ArrowLeft, Loader2, AlertTriangle, Maximize2, Minimize2, Info, Copy, RotateCcw, Trash2, Pause, Play, RefreshCcw, MoreHorizontal, FileText, Check } from "lucide-react";
 import { useViewportMode } from "../hooks/useViewportMode";
-import { AlphaMobileDrawer } from "./AlphaMobileDrawer";
+import { MobileDrawer } from "./MobileDrawer";
 import { ViewBackButton } from "./ViewActionButton";
 import { ViewLayoutContent, ViewLayoutFooter, ViewLayoutHeader } from "./ViewLayout";
 import { mergeTaskSnapshot } from "../hooks/useTasks";
@@ -68,8 +68,7 @@ import { PrCreateModal } from "./PrCreateModal";
 import { PlannerInterventionTimeline } from "./PlannerInterventionTimeline";
 import { TaskComments } from "./TaskComments";
 import { TaskChatTab } from "./TaskChatTab";
-import { AlphaBoundary } from "../context/AlphaContext";
-import { AlphaButton, AlphaInput, AlphaMenu, AlphaMenuItem, AlphaPortalSurface, AlphaSelect, AlphaSurface, AlphaTextArea } from "./alpha-ui";
+import { UiButton, UiInput, UiMenu, UiMenuItem, UiPortalSurface, UiSelect, UiSurface, UiTextArea } from "./ui";
 import { TaskPlannerChatTab } from "./TaskPlannerChatTab";
 import { TaskReviewTab } from "./TaskReviewTab";
 import { TaskChangesTab } from "./TaskChangesTab";
@@ -129,6 +128,8 @@ locally below the task-message route contract.
 const STALE_PAUSED_REVIEW_LOG_REGEX = /^Stale paused review surfaced \[([^\]]+)\]/;
 const EMPTY_MARKDOWN_CHILD_SEPARATOR = "";
 const STRING_OBJECT_TAG = "[object String]";
+/* FNXC:TaskDetailPresentation 2026-09-15-00:20: the plan-copy confirmation is transient and self-clearing. */
+const PLAN_COPY_FEEDBACK_MS = 1500;
 const ACTIVITY_VIEW_MENU_VIEWPORT_PADDING = 16;
 const ACTIVITY_VIEW_MENU_TRIGGER_GAP = 4;
 const ACTIVITY_VIEW_MENU_MIN_WIDTH = 160;
@@ -183,19 +184,19 @@ function renderTaskDetailActionIcon(actionId: string): React.ReactNode {
 }
 
 /*
-FNXC:TaskDetailAlpha 2026-09-11-02:41:
-Every dynamic Task Detail destination uses one module-scoped adaptive tab control. This preserves the historical button contract outside Alpha while publishing selected state and homemade Alpha keyboard semantics consistently across narrow and wide hosts.
+FNXC:TaskDetailPresentation 2026-09-11-02:41:
+Every dynamic Task Detail destination uses one module-scoped adaptive tab control. This preserves the historical button contract across hosts while publishing selected state and native keyboard semantics consistently across narrow and wide hosts.
 */
 function TaskDetailTabButton({ selected, onSelect, children }: TaskDetailTabButtonProps) {
   return (
-    <AlphaButton
+    <UiButton
       type="button"
       aria-pressed={selected}
       className={`detail-tab${selected ? " detail-tab-active" : ""}`}
       onClick={onSelect}
     >
       {children}
-    </AlphaButton>
+    </UiButton>
   );
 }
 
@@ -500,8 +501,8 @@ export function deriveCliTabVisibility(
 
 export interface TaskDetailModalProps {
   task: Task | TaskDetail;
-  /** Present the existing detail content in the shared Alpha mobile drawer. */
-  alphaMobileDrawer?: boolean;
+  /** Present the existing detail content in the shared mobile drawer. */
+  mobileDrawer?: boolean;
   projectId?: string;
   tasks?: Task[];
   /* Per-task lifecycle traits for the blocker fan-out; see the useMemo that consumes it. */
@@ -1817,6 +1818,15 @@ export function TaskDetailContent({
   const [originalPromptExpanded, setOriginalPromptExpanded] = useState(false);
   const [planDocumentOpen, setPlanDocumentOpen] = useState(false);
   /*
+  FNXC:TaskDetailPresentation 2026-09-15-00:20:
+  The plan-copy confirmation is transient state bound to the OPEN document: its timer is cancelled on
+  unmount, on closing the sub-view and on a task switch, and a copy that resolves after any of those is
+  ignored, so a successor task can never inherit a stale "Copied".
+  */
+  const [planCopied, setPlanCopied] = useState(false);
+  const planCopyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const planCopyTokenRef = useRef(0);
+  /*
   FNXC:TaskDetailDefinition 2026-09-14-19:50:
   The step list starts COLLAPSED and stays wherever the operator left it for as long as the same
   task is open: an SSE tick that refreshes this task must not slam a list the operator just opened.
@@ -1833,8 +1843,8 @@ export function TaskDetailContent({
   const [isSavingGithubTracking, setIsSavingGithubTracking] = useState(false);
   const [isCheckingPrStatus, setIsCheckingPrStatus] = useState(false);
   /*
-  FNXC:TaskDetailAlpha 2026-09-11-04:19:
-  The duplicated plan-decision controls in the banner and sticky footer represent one operation. A shared pending fence disables every copy while either request is in flight, preventing duplicate or contradictory decisions in both Alpha and stable presentations.
+  FNXC:TaskDetailPresentation 2026-09-11-04:19:
+  The duplicated plan-decision controls in the banner and sticky footer represent one operation. A shared pending fence disables every copy while either request is in flight, preventing duplicate or contradictory decisions in every presentation.
   */
   const [isPlanApprovalPending, setIsPlanApprovalPending] = useState(false);
   const activityListRef = useRef<HTMLDivElement>(null);
@@ -3723,6 +3733,44 @@ export function TaskDetailContent({
     }
   }, [addToast, closeMenus, isCheckingPrStatus, onTaskUpdated, projectId, task]);
 
+  /*
+  FNXC:TaskDetailPresentation 2026-09-15-00:20:
+  Copying the plan reads the live Markdown source through the shared clipboard utility (which already has
+  the non-secure-context fallback). A rejected copy shows NO confirmation; a resolution that arrives after
+  the sub-view closed, the task changed, or the component unmounted is discarded by the token fence.
+  */
+  const handleCopyPlanDocument = useCallback(async () => {
+    const prompt = workingTask.prompt;
+    if (!prompt) return;
+    const token = planCopyTokenRef.current + 1;
+    planCopyTokenRef.current = token;
+    const copied = await copyTextToClipboard(prompt);
+    if (!copied || planCopyTokenRef.current !== token) return;
+    setPlanCopied(true);
+    if (planCopyTimerRef.current) clearTimeout(planCopyTimerRef.current);
+    planCopyTimerRef.current = setTimeout(() => {
+      planCopyTimerRef.current = null;
+      setPlanCopied(false);
+    }, PLAN_COPY_FEEDBACK_MS);
+  }, [workingTask.prompt]);
+
+  /* Retire the confirmation and its timer whenever the document is replaced, closed, or unmounted. */
+  useEffect(() => {
+    planCopyTokenRef.current += 1;
+    setPlanCopied(false);
+    if (planCopyTimerRef.current) {
+      clearTimeout(planCopyTimerRef.current);
+      planCopyTimerRef.current = null;
+    }
+    return () => {
+      planCopyTokenRef.current += 1;
+      if (planCopyTimerRef.current) {
+        clearTimeout(planCopyTimerRef.current);
+        planCopyTimerRef.current = null;
+      }
+    };
+  }, [planDocumentOpen, workingTask.id]);
+
   const handleCloseRefineModal = useCallback(() => {
     setShowRefineModal(false);
   }, []);
@@ -4846,7 +4894,7 @@ export function TaskDetailContent({
       FN-394 merged the task and utility window bands into one stack, so a static menu z-index can now sit BELOW its
       own window. This body-portaled menu therefore claims a live layer just above the current front window instead.
       */
-      <AlphaPortalSurface
+      <UiPortalSurface
         ref={activityViewMenuRef}
         className="activity-view-menu"
         style={{
@@ -4857,12 +4905,12 @@ export function TaskDetailContent({
           maxHeight: activityViewMenuPosition.maxHeight,
         }}
       >
-        <AlphaMenu
+        <UiMenu
           aria-label={t("taskDetail.activity.menuLabel", "Activity views")}
           onKeyDown={handleActivityViewMenuKeyDown}
         >
           {activityViewOptions.map((option) => (
-            <AlphaMenuItem
+            <UiMenuItem
               key={option.value}
               id={`activity-${option.value}`}
               className="activity-view-menu-item"
@@ -4870,10 +4918,10 @@ export function TaskDetailContent({
               onClick={() => selectActivityView(option.value)}
             >
               {option.label}
-            </AlphaMenuItem>
+            </UiMenuItem>
           ))}
-        </AlphaMenu>
-      </AlphaPortalSurface>,
+        </UiMenu>
+      </UiPortalSurface>,
       document.body,
     );
   };
@@ -4887,7 +4935,7 @@ export function TaskDetailContent({
         FNXC:TaskDetailActivity 2026-07-01-00:00:
         Mobile task-detail tabs intentionally overflow-scroll horizontally, so the Activity view menu must be root-portaled and viewport-positioned instead of rendered inside `.detail-tabs` where overflow clipping can blank adjacent tabs and content.
       */}
-      <AlphaButton
+      <UiButton
         ref={activityViewButtonRef}
         type="button"
         className={`detail-tab detail-tab--activity${activeTab === "chat" ? " detail-tab-active" : ""}`}
@@ -4915,7 +4963,7 @@ export function TaskDetailContent({
       >
         <span>{t("taskDetail.tabs.activity", "Activity")}</span>
         <ChevronDown className="detail-tab-chevron" aria-hidden="true" />
-      </AlphaButton>
+      </UiButton>
       {renderActivityViewMenu()}
     </div>
   );
@@ -4969,13 +5017,13 @@ export function TaskDetailContent({
                         <>
                           {t("taskDetail.provenance.createdBy", "Created by")}{" "}
                           {provenanceDisplay.sourceAgentId ? (
-                            <AlphaButton
+                            <UiButton
                               type="button"
                               className="detail-provenance-link"
                               onClick={() => setSelectedSourceAgentId(provenanceDisplay.sourceAgentId!)}
                             >
                               {provenanceDisplay.label}
-                            </AlphaButton>
+                            </UiButton>
                           ) : (
                             provenanceDisplay.label
                           )}
@@ -4999,13 +5047,13 @@ export function TaskDetailContent({
                       {provenanceDisplay.parentTaskId && (
                         <>
                           {" "}{t("taskDetail.provenance.parentTaskOf", "of")}{" "}
-                          <AlphaButton
+                          <UiButton
                             type="button"
                             className="detail-provenance-link"
                             onClick={() => handleDepClick(provenanceDisplay.parentTaskId!)}
                           >
                             {provenanceDisplay.parentTaskId}
-                          </AlphaButton>
+                          </UiButton>
                         </>
                       )}
                       {provenanceDisplay.contextInfo ? (
@@ -5039,13 +5087,13 @@ export function TaskDetailContent({
                     <GitBranch aria-hidden="true" />
                     <span>
                       {t("taskDetail.provenance.createdToUndo", "Created to undo")}{" "}
-                      <AlphaButton
+                      <UiButton
                         type="button"
                         className="detail-provenance-link"
                         onClick={() => handleDepClick(revertOfId)}
                       >
                         {revertOfId}
-                      </AlphaButton>
+                      </UiButton>
                     </span>
                   </div>
                 )}
@@ -5054,13 +5102,13 @@ export function TaskDetailContent({
                     <GitBranch aria-hidden="true" />
                     <span>
                       {t("taskDetail.provenance.undoTask", "Undo task")}:{" "}
-                      <AlphaButton
+                      <UiButton
                         type="button"
                         className="detail-provenance-link"
                         onClick={() => handleDepClick(openUndoTask.id)}
                       >
                         {openUndoTask.id}
-                      </AlphaButton>
+                      </UiButton>
                     </span>
                   </div>
                 )}
@@ -5134,13 +5182,13 @@ export function TaskDetailContent({
                 <div className="detail-attachment-meta">
                   {attachment.originalName} ({formatBytes(attachment.size)})
                 </div>
-                <AlphaButton
+                <UiButton
                   className="detail-attachment-delete"
                   onClick={() => handleDeleteAttachment(attachment.filename)}
                   title={t("taskDetail.attachments.deleteTitle", "Delete attachment")}
                 >
                   ×
-                </AlphaButton>
+                </UiButton>
               </div>
             );
           })}
@@ -5148,13 +5196,13 @@ export function TaskDetailContent({
       ) : (
         <div className="detail-empty-inline">{t("taskDetail.attachments.none", "(no attachments)")}</div>
       )}
-      <AlphaButton
+      <UiButton
         className="btn btn-sm"
         onClick={() => fileInputRef.current?.click()}
         disabled={uploading}
       >
         {uploading ? t("taskDetail.attachments.uploading", "Uploading…") : t("taskDetail.attachments.attachBtn", "Attach Screenshot")}
-      </AlphaButton>
+      </UiButton>
     </div>
   );
 
@@ -5228,9 +5276,14 @@ export function TaskDetailContent({
     </>
   );
 
+  /*
+  FNXC:NativeUiPresentation 2026-09-15-00:20:
+  REMOVED: the Alpha boundary wrapper and its `display: contents` box. Task Detail's own UiSurface root is
+  the single owner of the detail tree, so the selected colour theme reaches the header, tabs, progress,
+  description and plan, and no extra element sits between the host and this scroll owner.
+  */
   return (
-    <AlphaBoundary preserveDisabledDom className="task-detail-alpha-boundary">
-      <AlphaSurface
+      <UiSurface
         className={`task-detail-content${embedded ? " task-detail-content--embedded" : ""}${isActivityExpanded ? " task-detail-content--chat-expanded" : ""}${isPlannerChatExpanded ? " task-detail-content--planner-chat-expanded" : ""}`}
         data-task-detail-surface="true"
         onDragOver={handleDragOver}
@@ -5279,7 +5332,7 @@ export function TaskDetailContent({
           </div>
           <div className="modal-header-actions">
             {!isEditing && directHeaderActions.map((action) => (
-              <AlphaButton
+              <UiButton
                 key={action.id}
                 type="button"
                 className={`btn btn-icon btn-sm task-detail-header-action${action.tone === "danger" ? " task-detail-header-action--danger" : ""}`}
@@ -5290,11 +5343,11 @@ export function TaskDetailContent({
                 onClick={() => action.onSelect?.()}
               >
                 {renderTaskDetailActionIcon(action.id)}
-              </AlphaButton>
+              </UiButton>
             ))}
             {!isEditing && secondaryHeaderActions.length > 0 && (
               <div className="detail-actions-dropdown detail-actions-dropdown--header" ref={actionsMenuRef}>
-                <AlphaButton
+                <UiButton
                   type="button"
                   className="btn btn-icon btn-sm task-detail-header-action"
                   onClick={() => setShowActionsMenu((previous) => !previous)}
@@ -5304,7 +5357,7 @@ export function TaskDetailContent({
                   aria-expanded={showActionsMenu}
                 >
                   <MoreHorizontal aria-hidden="true" />
-                </AlphaButton>
+                </UiButton>
                 {showActionsMenu && (
                   <TaskContextMenu
                     actions={secondaryHeaderActions}
@@ -5318,21 +5371,21 @@ export function TaskDetailContent({
               </div>
             )}
             {!isEditing && canEdit && (
-              <AlphaButton
+              <UiButton
                 className="btn btn-icon btn-sm modal-edit-btn task-detail-header-action"
                 onClick={enterEditMode}
                 title={t("taskDetail.header.editTask", "Edit task")}
                 aria-label={t("taskDetail.header.editTask", "Edit task")}
               >
                 <Pencil size={14} />
-              </AlphaButton>
+              </UiButton>
             )}
             {/*
             FNXC:FloatingWindow 2026-06-22-20:45 (updated 2026-06-22-18:32):
             "Pop out" affordance opens this task detail in a movable, resizable, non-blocking FloatingWindow. Header action order is edit, then expand/pop-out, then Back to board pinned far right so board-card detail controls read as edit/resize/navigation.
             */}
             {!isPhonePresentation && onPopOut && (
-              <AlphaButton
+              <UiButton
                 type="button"
                 className="btn btn-icon btn-sm modal-edit-btn task-detail-header-action"
                 onClick={() => onPopOut(task)}
@@ -5341,7 +5394,7 @@ export function TaskDetailContent({
                 data-testid="task-detail-pop-out"
               >
                 <Maximize2 size={14} />
-              </AlphaButton>
+              </UiButton>
             )}
             {/*
             FNXC:TaskDetailResponsiveChrome 2026-09-13-16:30:
@@ -5426,7 +5479,7 @@ export function TaskDetailContent({
                   <div className="form-group detail-source-edit-group">
                     <label>{t("taskDetail.edit.sourceIssueLabel", "Source Issue")}</label>
                     <div className="detail-source-edit-grid">
-                      <AlphaInput
+                      <UiInput
                         type="text"
                         className="modal-edit-input"
                         placeholder={t("taskDetail.edit.sourceProviderPlaceholder", "Provider (e.g. github)")}
@@ -5435,7 +5488,7 @@ export function TaskDetailContent({
                         disabled={isSaving}
                         data-testid="task-source-provider-input"
                       />
-                      <AlphaInput
+                      <UiInput
                         type="text"
                         className="modal-edit-input"
                         placeholder={t("taskDetail.edit.sourceRepositoryPlaceholder", "Repository (e.g. owner/repo)")}
@@ -5444,7 +5497,7 @@ export function TaskDetailContent({
                         disabled={isSaving}
                         data-testid="task-source-repository-input"
                       />
-                      <AlphaInput
+                      <UiInput
                         type="text"
                         className="modal-edit-input"
                         placeholder={t("taskDetail.edit.sourceExternalIdPlaceholder", "Issue identifier")}
@@ -5453,7 +5506,7 @@ export function TaskDetailContent({
                         disabled={isSaving}
                         data-testid="task-source-external-id-input"
                       />
-                      <AlphaInput
+                      <UiInput
                         type="url"
                         className="modal-edit-input"
                         placeholder={t("taskDetail.edit.sourceUrlPlaceholder", "Issue URL")}
@@ -5486,7 +5539,7 @@ export function TaskDetailContent({
                   </div>
                   <p className="detail-near-duplicate-banner__copy">
                     {t("taskDetail.nearDuplicate.copy", "This task appears to be a near-duplicate of")}{" "}
-                    <AlphaButton
+                    <UiButton
                       type="button"
                       className="detail-provenance-link"
                       onClick={() => {
@@ -5496,16 +5549,16 @@ export function TaskDetailContent({
                       }}
                     >
                       {nearDuplicateOf}
-                    </AlphaButton>
+                    </UiButton>
                     {". "}{t("taskDetail.nearDuplicate.actions", "Keep it to clear this flag, or delete it if the work is already covered.")}
                   </p>
                   <div className="detail-near-duplicate-banner__actions">
-                    <AlphaButton type="button" className="btn btn-danger btn-sm" onClick={() => void handleDeleteNearDuplicate()}>
+                    <UiButton type="button" className="btn btn-danger btn-sm" onClick={() => void handleDeleteNearDuplicate()}>
                       {t("taskDetail.nearDuplicate.deleteBtn", "Delete")}
-                    </AlphaButton>
-                    <AlphaButton type="button" className="btn btn-secondary btn-sm" onClick={() => void handleDismissNearDuplicate()}>
+                    </UiButton>
+                    <UiButton type="button" className="btn btn-secondary btn-sm" onClick={() => void handleDismissNearDuplicate()}>
                       {t("taskDetail.nearDuplicate.keepBtn", "Keep")}
-                    </AlphaButton>
+                    </UiButton>
                   </div>
                 </div>
               )}
@@ -5555,12 +5608,12 @@ export function TaskDetailContent({
                   */}
                   {workingTask.prompt && (
                     <div className="detail-plan-approval-banner__actions" data-testid="detail-plan-approval-banner-actions">
-                      <AlphaButton className="btn btn-primary btn-sm" data-testid="detail-plan-approval-banner-approve" disabled={isPlanApprovalPending} onClick={handleApprovePlan}>
+                      <UiButton className="btn btn-primary btn-sm" data-testid="detail-plan-approval-banner-approve" disabled={isPlanApprovalPending} onClick={handleApprovePlan}>
                         {t("taskDetail.plan.approveBtn", "Approve Plan")}
-                      </AlphaButton>
-                      <AlphaButton className="btn btn-danger btn-sm" data-testid="detail-plan-approval-banner-reject" disabled={isPlanApprovalPending} onClick={handleRejectPlan}>
+                      </UiButton>
+                      <UiButton className="btn btn-danger btn-sm" data-testid="detail-plan-approval-banner-reject" disabled={isPlanApprovalPending} onClick={handleRejectPlan}>
                         {t("taskDetail.plan.rejectBtn", "Reject Plan")}
-                      </AlphaButton>
+                      </UiButton>
                     </div>
                   )}
                 </div>
@@ -5571,7 +5624,7 @@ export function TaskDetailContent({
                 The paperclip renders on every non-editing tab while task details default
                 to Activity or Summary; a Definition-only input made that control a no-op.
                 */}
-                <AlphaInput
+                <UiInput
                   className="detail-hidden-file-input"
                   ref={fileInputRef}
                   type="file"
@@ -5585,7 +5638,7 @@ export function TaskDetailContent({
                     <section className={`ai-merge-review-reconciliation ${reconciliation.terminal ? "ai-merge-review-reconciliation-terminal" : ""}`} aria-label={t("taskDetail.aiMergeReview.title", "AI merge review reconciliation")}>
                       <h3>{reconciliation.consecutiveCleanApprovals > 0 ? t("taskDetail.aiMergeReview.approvedWithPending", "Approved — {{count}} prior finding(s) unconfirmed", { count: pending.length }) : t("taskDetail.aiMergeReview.title", "AI merge review reconciliation")}</h3>
                       {reconciliation.candidateSha && <p>{t("taskDetail.aiMergeReview.candidate", "Candidate:")} <code>{reconciliation.candidateSha}</code></p>}
-                      {pending.length > 0 && <ul>{pending.map((finding) => <li key={finding.id}>{finding.text}{(reconciliation.terminal || finding.disposition === "still-present") && <AlphaButton type="button" className="btn btn-secondary" onClick={() => handleDismissAiMergeFinding(finding.id)}>{t("taskDetail.aiMergeReview.dismissFinding", "Dismiss this finding")}</AlphaButton>}</li>)}</ul>}
+                      {pending.length > 0 && <ul>{pending.map((finding) => <li key={finding.id}>{finding.text}{(reconciliation.terminal || finding.disposition === "still-present") && <UiButton type="button" className="btn btn-secondary" onClick={() => handleDismissAiMergeFinding(finding.id)}>{t("taskDetail.aiMergeReview.dismissFinding", "Dismiss this finding")}</UiButton>}</li>)}</ul>}
                       {reconciliation.terminal && <p>{t("taskDetail.aiMergeReview.terminalGuidance", "Rebase or re-push the branch, dismiss a finding with justification, or land manually.")}</p>}
                     </section>
                   );
@@ -5621,12 +5674,12 @@ export function TaskDetailContent({
                 {hasPendingRecovery ? <div className="detail-error-hint">{t("taskDetail.retry.pendingAutomaticRecovery", "Automatic recovery is pending. You can Retry now to restart this stage.")}</div> : null}
                 {onRetryTask && isMutableLiveColumn ? (
                   <div className="detail-error-actions">
-                    <AlphaButton type="button" className="btn btn-sm" onClick={handleRetry}>
+                    <UiButton type="button" className="btn btn-sm" onClick={handleRetry}>
                       {t("taskDetail.error.retry", "Retry")}
-                    </AlphaButton>
-                    <AlphaButton type="button" className="btn btn-sm" onClick={() => setShowFailureRetryPicker(true)}>
+                    </UiButton>
+                    <UiButton type="button" className="btn btn-sm" onClick={() => setShowFailureRetryPicker(true)}>
                       {t("taskDetail.error.retryWithModel", "Retry with a different model/node")}
-                    </AlphaButton>
+                    </UiButton>
                   </div>
                 ) : null}
                 {showFailureRetryPicker && onRetryTask && isMutableLiveColumn ? (
@@ -5634,7 +5687,7 @@ export function TaskDetailContent({
                     <label htmlFor={`failure-retry-model-${task.id}`}>
                       {t("taskDetail.error.retryModelLabel", "Executor model")}
                     </label>
-                    <AlphaSelect
+                    <UiSelect
                       id={`failure-retry-model-${task.id}`}
                       className="select"
                       value={failureRetryModel}
@@ -5647,11 +5700,11 @@ export function TaskDetailContent({
                           {model.provider}/{model.name || model.id}
                         </option>
                       ))}
-                    </AlphaSelect>
+                    </UiSelect>
                     <label htmlFor={`failure-retry-node-${task.id}`}>
                       {t("taskDetail.error.retryNodeLabel", "Execution node")}
                     </label>
-                    <AlphaSelect
+                    <UiSelect
                       id={`failure-retry-node-${task.id}`}
                       className="select"
                       value={failureRetryNodeId}
@@ -5662,19 +5715,19 @@ export function TaskDetailContent({
                       {failureRetryNodes.map((node) => (
                         <option key={node.id} value={node.id}>{node.name} ({node.type})</option>
                       ))}
-                    </AlphaSelect>
+                    </UiSelect>
                     <div className="detail-error-actions">
-                      <AlphaButton type="button" className="btn btn-sm" onClick={() => setShowFailureRetryPicker(false)} disabled={isFailureRetrySaving}>
+                      <UiButton type="button" className="btn btn-sm" onClick={() => setShowFailureRetryPicker(false)} disabled={isFailureRetrySaving}>
                         {t("common.cancel", "Cancel")}
-                      </AlphaButton>
-                      <AlphaButton
+                      </UiButton>
+                      <UiButton
                         type="button"
                         className="btn btn-sm"
                         onClick={() => void handleRetryWithOverride()}
                         disabled={isFailureRetrySaving || (failureRetryModel === (task.modelProvider && task.modelId ? `${task.modelProvider}/${task.modelId}` : "") && failureRetryNodeId === (task.nodeId ?? ""))}
                       >
                         {t("taskDetail.error.confirmRetry", "Apply and retry")}
-                      </AlphaButton>
+                      </UiButton>
                     </div>
                   </div>
                 ) : null}
@@ -5799,7 +5852,7 @@ export function TaskDetailContent({
               ) : (
                 <div className="detail-activity" role="tabpanel">
                   <div className="detail-activity-actions">
-                    <AlphaButton
+                    <UiButton
                       type="button"
                       className="btn btn-sm detail-activity-copy"
                       onClick={() => void handleCopyActivityLogs()}
@@ -5810,8 +5863,8 @@ export function TaskDetailContent({
                     >
                       <Copy aria-hidden="true" />
                       {t("taskDetail.logs.copy", "Copy logs")}
-                    </AlphaButton>
-                    {!isPhonePresentation ? <AlphaButton
+                    </UiButton>
+                    {!isPhonePresentation ? <UiButton
                       type="button"
                       className="btn btn-icon btn-sm activity-expand-toggle activity-expand-toggle--overlay"
                       onClick={() => setActivityExpanded((value) => !value)}
@@ -5820,7 +5873,7 @@ export function TaskDetailContent({
                       data-testid="task-chat-expand-toggle"
                     >
                       {isActivityExpanded ? <Minimize2 aria-hidden="true" /> : <Maximize2 aria-hidden="true" />}
-                    </AlphaButton> : null}
+                    </UiButton> : null}
                   </div>
                   <h4>{t("taskDetail.activity.feedHeading", "Feed")}</h4>
                   {(workingTask as typeof workingTask & { activityLogTruncatedCount?: number }).activityLogTruncatedCount ? (
@@ -5943,7 +5996,7 @@ export function TaskDetailContent({
                         <div className="detail-in-review-stall-meta">
                           <span>{t("taskDetail.stall.observed", "Observed")} {formatTimestamp(workingTask.inReviewStall.observedAt)}</span>
                           {logMatch ? (
-                            <AlphaButton
+                            <UiButton
                               type="button"
                               className="btn btn-sm detail-in-review-stall-jump"
                               onClick={() => {
@@ -5953,7 +6006,7 @@ export function TaskDetailContent({
                               }}
                             >
                               {t("taskDetail.stall.viewActivityLog", "View activity log")}
-                            </AlphaButton>
+                            </UiButton>
                           ) : (
                             <span
                               className="detail-in-review-stall-no-log"
@@ -5991,7 +6044,7 @@ export function TaskDetailContent({
                           <span>{t("taskDetail.stall.threshold", "Threshold")} {formatDurationCompact(workingTask.stalePausedReview.thresholdMs)}</span>
                           <span>{t("taskDetail.stall.observed", "Observed")} {formatTimestamp(workingTask.stalePausedReview.observedAt)}</span>
                           {logMatch ? (
-                            <AlphaButton
+                            <UiButton
                               type="button"
                               className="btn btn-sm detail-in-review-stall-jump"
                               onClick={() => {
@@ -6001,7 +6054,7 @@ export function TaskDetailContent({
                               }}
                             >
                               {t("taskDetail.stall.viewActivityLog", "View activity log")}
-                            </AlphaButton>
+                            </UiButton>
                           ) : (
                             <span className="detail-in-review-stall-no-log">{t("taskDetail.stall.noLogEntry", "No log entry yet")}</span>
                           )}
@@ -6135,13 +6188,13 @@ export function TaskDetailContent({
                         <span className="detail-dep-id">{dep}</span>
                         <span className="detail-dep-label">{truncate(depLabel, 40)}</span>
                       </span>
-                      <AlphaButton
+                      <UiButton
                         className="dep-remove-btn"
                         onClick={(e) => handleRemoveDep(e, dep)}
                         title={t("taskDetail.deps.removeTitle", "Remove dependency {{id}}", { id: dep })}
                       >
                         ×
-                      </AlphaButton>
+                      </UiButton>
                     </li>
                   );
                 })}
@@ -6155,14 +6208,14 @@ export function TaskDetailContent({
                   {t("taskDetail.deps.overlapBlocker", "File scope overlap blocker:")} {workingTask.overlapBlockedBy}
                   {!overlapBlockerActive && ` ${t("taskDetail.deps.stale", "(stale)")}`}
                 </span>
-                <AlphaButton
+                <UiButton
                   type="button"
                   className="btn btn-sm"
                   onClick={() => void handleClearOverlapBlocker()}
                   title={t("taskDetail.deps.clearBlockerTitle", "Clear overlap blocker {{id}}", { id: workingTask.overlapBlockedBy })}
                 >
                   {t("taskDetail.deps.clearBtn", "Clear")}
-                </AlphaButton>
+                </UiButton>
               </div>
             )}
             {workingTask.overlapBlockedBy && (
@@ -6188,7 +6241,7 @@ export function TaskDetailContent({
               </div>
             )}
             <div className="dep-trigger-wrap">
-              <AlphaButton
+              <UiButton
                 type="button"
                 className="btn btn-sm dep-trigger"
                 onClick={() => {
@@ -6197,7 +6250,7 @@ export function TaskDetailContent({
                 }}
               >
                 {t("taskDetail.deps.addBtn", "Add Dependency")}
-              </AlphaButton>
+              </UiButton>
               {showDepDropdown && (() => {
                 const term = depSearch.toLowerCase();
                 const filtered = term
@@ -6209,7 +6262,7 @@ export function TaskDetailContent({
                   : availableTasks;
                 return (
                   <div className="dep-dropdown">
-                    <AlphaInput
+                    <UiInput
                       className="dep-dropdown-search"
                       placeholder={t("taskDetail.deps.searchPlaceholder", "Search tasks…")}
                       autoFocus
@@ -6296,7 +6349,7 @@ export function TaskDetailContent({
             <div className="detail-source-header">
               <h4>{t("taskDetail.originalPrompt.heading", "Original prompt")}</h4>
               {hasOriginalTaskPrompt && (
-                <AlphaButton
+                <UiButton
                   type="button"
                   className="detail-source-toggle"
                   aria-expanded={originalPromptExpanded}
@@ -6304,7 +6357,7 @@ export function TaskDetailContent({
                   onClick={() => setOriginalPromptExpanded((expanded) => !expanded)}
                 >
                   <ChevronRight size={16} className={originalPromptExpanded ? "detail-source-chevron--expanded" : undefined} />
-                </AlphaButton>
+                </UiButton>
               )}
             </div>
             {hasOriginalTaskPrompt ? (
@@ -6340,7 +6393,7 @@ export function TaskDetailContent({
                   <span className="detail-source-label">{t("taskDetail.retries.label", "Retries")}</span>
                   <span className="detail-source-number">{retrySummary?.total ?? 0}</span>
                 </div>
-                <AlphaButton
+                <UiButton
                   type="button"
                   className="detail-source-toggle"
                   aria-expanded={retriesExpanded}
@@ -6348,7 +6401,7 @@ export function TaskDetailContent({
                   onClick={() => setRetriesExpanded((expanded) => !expanded)}
                 >
                   <ChevronRight size={16} className={retriesExpanded ? "detail-source-chevron--expanded" : undefined} />
-                </AlphaButton>
+                </UiButton>
               </div>
               {retriesExpanded && (
                 <dl className="detail-source-grid detail-retries-grid">
@@ -6395,7 +6448,7 @@ export function TaskDetailContent({
                     <span className="detail-source-number">{`(#${task.sourceIssue.issueNumber})`}</span>
                   )}
                 </div>
-                <AlphaButton
+                <UiButton
                   type="button"
                   className="detail-source-toggle"
                   aria-expanded={sourceIssueExpanded}
@@ -6406,7 +6459,7 @@ export function TaskDetailContent({
                     size={16}
                     className={sourceIssueExpanded ? "detail-source-chevron--expanded" : undefined}
                   />
-                </AlphaButton>
+                </UiButton>
               </div>
               {sourceIssueExpanded && (
                 <dl className="detail-source-grid">
@@ -6463,16 +6516,16 @@ export function TaskDetailContent({
                   <span className="detail-agent-chip">
                     <Bot size={14} />
                     {assignedAgentLabel}
-                    <AlphaButton
+                    <UiButton
                       className="detail-agent-clear"
                       onClick={() => void handleClearAgent()}
                       title={t("taskDetail.agent.unassignTitle", "Unassign agent")}
                     >
                       <X size={12} />
-                    </AlphaButton>
+                    </UiButton>
                   </span>
                 ) : (
-                  <AlphaButton
+                  <UiButton
                     className="btn btn-sm"
                     onClick={() => {
                       if (showAgentPicker) {
@@ -6483,13 +6536,13 @@ export function TaskDetailContent({
                     }}
                   >
                     {t("taskDetail.agent.assignBtn", "Assign Agent")}
-                  </AlphaButton>
+                  </UiButton>
                 )}
                 {showAgentPicker && (
                   <div className="agent-picker-dropdown">
                     {agentsLoading && <div className="agent-picker-loading"><LoadingSpinner label={t("taskDetail.agent.loadingAgents", "Loading agents...")} /></div>}
                     {!agentsLoading && agents.map((a) => (
-                      <AlphaButton
+                      <UiButton
                         key={a.id}
                         className={`agent-picker-item${task.assignedAgentId === a.id ? " selected" : ""}`}
                         onClick={() => void handleAssignAgent(a.id)}
@@ -6497,7 +6550,7 @@ export function TaskDetailContent({
                         <Bot size={14} />
                         <span className="agent-picker-name">{a.name}</span>
                         <span className="agent-picker-role">{a.role}</span>
-                      </AlphaButton>
+                      </UiButton>
                     ))}
                     {!agentsLoading && agents.length === 0 && (
                       <div className="agent-picker-empty">{t("taskDetail.agent.noAgents", "No agents available")}</div>
@@ -6524,7 +6577,7 @@ export function TaskDetailContent({
                     <span className="detail-source-empty">{t("taskDetail.gitlabTracking.unlinked", "No linked GitLab item")}</span>
                   )}
                 </div>
-                <AlphaButton
+                <UiButton
                   type="button"
                   className="detail-source-toggle"
                   aria-expanded={gitlabTrackingExpanded}
@@ -6532,7 +6585,7 @@ export function TaskDetailContent({
                   onClick={() => setGitlabTrackingExpanded((expanded) => !expanded)}
                 >
                   <ChevronRight size={16} className={gitlabTrackingExpanded ? "detail-source-chevron--expanded" : undefined} />
-                </AlphaButton>
+                </UiButton>
               </div>
               {gitlabTrackingExpanded && (
                 <div className="detail-gitlab-tracking-content">
@@ -6578,7 +6631,7 @@ export function TaskDetailContent({
                     <div className="detail-gitlab-tracking-controls">
                       <a className="btn btn-sm touch-target" href={gitlabTrackedItem.url} target="_blank" rel="noopener noreferrer" aria-label={t("taskDetail.gitlabTracking.openAriaLabel", "Open linked GitLab item")}>{t("taskDetail.gitlabTracking.openBtn", "Open in GitLab")}</a>
                       {canEdit && (
-                        <AlphaButton className="btn btn-sm btn-danger touch-target" onClick={() => void handleUnlinkGitLabItem()} disabled={isSavingGithubTracking}>{t("taskDetail.gitlabTracking.unlinkBtn", "Unlink GitLab item")}</AlphaButton>
+                        <UiButton className="btn btn-sm btn-danger touch-target" onClick={() => void handleUnlinkGitLabItem()} disabled={isSavingGithubTracking}>{t("taskDetail.gitlabTracking.unlinkBtn", "Unlink GitLab item")}</UiButton>
                       )}
                     </div>
                   )}
@@ -6606,7 +6659,7 @@ export function TaskDetailContent({
                   )}
                 </div>
                 {showInlineGithubTrackingEnableButton && (
-                  <AlphaButton
+                  <UiButton
                     type="button"
                     className="btn btn-sm btn-primary detail-github-tracking-enable"
                     aria-label={t("taskDetail.githubTracking.enableAriaLabel", "Enable GitHub tracking")}
@@ -6614,7 +6667,7 @@ export function TaskDetailContent({
                     onClick={() => void handleToggleGithubTracking()}
                   >
                     {t("taskDetail.githubTracking.enableBtn", "Enable")}
-                  </AlphaButton>
+                  </UiButton>
                 )}
                 {showGithubTrackingSpinner && (
                   <span
@@ -6629,7 +6682,7 @@ export function TaskDetailContent({
                     </span>
                   </span>
                 )}
-                <AlphaButton
+                <UiButton
                   type="button"
                   className="detail-source-toggle"
                   aria-expanded={githubTrackingExpanded}
@@ -6640,7 +6693,7 @@ export function TaskDetailContent({
                     size={16}
                     className={githubTrackingExpanded ? "detail-source-chevron--expanded" : undefined}
                   />
-                </AlphaButton>
+                </UiButton>
               </div>
               {githubTrackingExpanded && (
                 <div className="detail-github-tracking-content">
@@ -6671,14 +6724,14 @@ export function TaskDetailContent({
                   <div className="detail-github-tracking-controls">
                     {!githubTrackedIssue && githubTrackingEnabled && (
                       <>
-                        <AlphaButton
+                        <UiButton
                           className="btn btn-sm touch-target"
                           onClick={() => void handleRetryGithubTrackingIssueCreate()}
                           disabled={isSavingGithubTracking || !canCreateTrackingIssue}
                           title={!canCreateTrackingIssue ? t("taskDetail.githubTracking.createIssueDisabledTitle", "Add a title or description so a tracking issue can be created.") : undefined}
                         >
                           {t("taskDetail.githubTracking.createIssueBtn", "Create tracking issue")}
-                        </AlphaButton>
+                        </UiButton>
                         {!canCreateTrackingIssue && (
                           <small className="detail-github-tracking-helper">{t("taskDetail.githubTracking.createIssueHelper", "Tracking issue will be created once this task has a title or description to summarize.")}</small>
                         )}
@@ -6687,7 +6740,7 @@ export function TaskDetailContent({
                     {canEditGithubTracking && (
                       <>
                         <label className="checkbox-label" htmlFor="detail-github-tracking-toggle">
-                          <AlphaInput
+                          <UiInput
                             id="detail-github-tracking-toggle"
                             type="checkbox"
                             checked={githubTrackingEnabled}
@@ -6697,7 +6750,7 @@ export function TaskDetailContent({
                           {t("taskDetail.githubTracking.enableCheckboxLabel", "Enable GitHub tracking")}
                         </label>
                         <div className="detail-github-tracking-repo-row">
-                          <AlphaInput
+                          <UiInput
                             className="input"
                             value={githubRepoOverrideDraft}
                             onChange={(event) => {
@@ -6706,15 +6759,15 @@ export function TaskDetailContent({
                             }}
                             placeholder={effectiveGithubRepoDefault || "owner/repo"}
                           />
-                          <AlphaButton className="btn btn-sm" onClick={() => void handleSaveGithubRepoOverride()} disabled={isSavingGithubTracking}>
+                          <UiButton className="btn btn-sm" onClick={() => void handleSaveGithubRepoOverride()} disabled={isSavingGithubTracking}>
                             {t("common.save", "Save")}
-                          </AlphaButton>
+                          </UiButton>
                         </div>
                         {githubRepoOverrideError && <small className="detail-github-tracking-error">{githubRepoOverrideError}</small>}
                         {githubTrackedIssue && (
-                          <AlphaButton className="btn btn-sm touch-target" onClick={() => void handleUnlinkGithubIssue()} disabled={isSavingGithubTracking}>
+                          <UiButton className="btn btn-sm touch-target" onClick={() => void handleUnlinkGithubIssue()} disabled={isSavingGithubTracking}>
                             {t("taskDetail.githubTracking.unlinkBtn", "Unlink GitHub issue")}
-                          </AlphaButton>
+                          </UiButton>
                         )}
                       </>
                     )}
@@ -6726,7 +6779,7 @@ export function TaskDetailContent({
           <div className="detail-section detail-no-commits-expected-section">
             <div className="form-group">
               <label className="checkbox-label" htmlFor="detail-no-commits-expected-toggle">
-                <AlphaInput
+                <UiInput
                   id="detail-no-commits-expected-toggle"
                   type="checkbox"
                   checked={inlineNoCommitsExpected}
@@ -6743,7 +6796,7 @@ export function TaskDetailContent({
           <div className="detail-section detail-routing-section">
             <div className="detail-source-header">
               <span className="detail-source-label">{t("taskDetail.tabs.routing", "Routing")}</span>
-              <AlphaButton
+              <UiButton
                 type="button"
                 className="detail-source-toggle"
                 aria-expanded={routingExpanded}
@@ -6753,7 +6806,7 @@ export function TaskDetailContent({
                 onClick={() => setRoutingExpanded((expanded) => !expanded)}
               >
                 <ChevronRight size={16} className={routingExpanded ? "detail-source-chevron--expanded" : undefined} />
-              </AlphaButton>
+              </UiButton>
             </div>
             {routingExpanded && (
               <RoutingTab
@@ -6768,7 +6821,7 @@ export function TaskDetailContent({
           <div className="detail-section detail-debug-section">
             <div className="detail-source-header">
               <span className="detail-source-label">{t("taskDetail.tabs.debug", "Debug")}</span>
-              <AlphaButton
+              <UiButton
                 type="button"
                 className="detail-source-toggle"
                 aria-expanded={debugExpanded}
@@ -6778,7 +6831,7 @@ export function TaskDetailContent({
                 onClick={() => setDebugExpanded((expanded) => !expanded)}
               >
                 <ChevronRight size={16} className={debugExpanded ? "detail-source-chevron--expanded" : undefined} />
-              </AlphaButton>
+              </UiButton>
             </div>
             {debugExpanded && renderDebugDetails()}
           </div>
@@ -6792,27 +6845,47 @@ export function TaskDetailContent({
               Lire le plan ouvre le vrai PROMPT.md comme sous-vue interne de TaskDetailContent. Retour restaure Définition sans changer d’onglet ni perdre les actions du plan.
               */}
               <div className="detail-plan-document-header">
-                <AlphaButton type="button" className="btn btn-sm detail-plan-back" onClick={() => setPlanDocumentOpen(false)} aria-label={t("taskDetail.spec.backToDefinition", "Back to definition")}>
+                <UiButton type="button" className="btn btn-sm detail-plan-back" onClick={() => setPlanDocumentOpen(false)} aria-label={t("taskDetail.spec.backToDefinition", "Back to definition")}>
                   <ArrowLeft size={16} aria-hidden="true" /><FileText size={14} aria-hidden="true" /><span>{t("taskDetail.spec.promptFileName", "PROMPT.md")}</span>
-                </AlphaButton>
+                </UiButton>
+                {/*
+                FNXC:TaskDetailPresentation 2026-09-15-00:20:
+                Copy puts the CURRENT Markdown source of this task's real PROMPT.md on the clipboard — never the
+                rendered DOM and never the product summary. It is absent while the document is loading or has no
+                content, so there is no control that cannot do anything, and a failed copy shows no confirmation.
+                */}
+                {!detailLoading && workingTask.prompt ? (
+                  <UiButton
+                    type="button"
+                    className="btn btn-sm detail-plan-copy"
+                    data-testid="task-detail-plan-copy"
+                    onClick={() => void handleCopyPlanDocument()}
+                  >
+                    {planCopied ? <Check size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
+                    <span>{planCopied ? t("taskDetail.spec.copied", "Copied") : t("taskDetail.spec.copy", "Copy")}</span>
+                  </UiButton>
+                ) : null}
+                <span className="sr-only" role="status" aria-live="polite">
+                  {planCopied ? t("taskDetail.spec.copied", "Copied") : ""}
+                </span>
               </div>
               <div className="detail-section detail-section--plan-prompt">
                 {!isEditingSpec && <div className="detail-spec-edit-trigger">
-                  {fileBrowser && <AlphaButton className="btn btn-sm" onClick={openPromptFile} title={t("taskDetail.spec.openPromptTitle", "Open this task's PROMPT.md in the file editor")}>{t("taskDetail.spec.openPromptBtn", "Open PROMPT.md")}</AlphaButton>}
-                  <AlphaButton className="btn btn-sm" onClick={enterSpecEditMode}>{t("taskDetail.spec.editBtn", "Edit")}</AlphaButton>
+                  {fileBrowser && <UiButton className="btn btn-sm" onClick={openPromptFile} title={t("taskDetail.spec.openPromptTitle", "Open this task's PROMPT.md in the file editor")}>{t("taskDetail.spec.openPromptBtn", "Open PROMPT.md")}</UiButton>}
+                  <UiButton className="btn btn-sm" onClick={enterSpecEditMode}>{t("taskDetail.spec.editBtn", "Edit")}</UiButton>
                 </div>}
                 {isEditingSpec ? <div className="spec-editor-edit-mode">
-                  <AlphaTextArea className="spec-editor-textarea" value={specEditContent} onChange={(e) => setSpecEditContent(e.target.value)} onKeyDown={handleSpecTextareaKeyDown} disabled={isSavingSpec} placeholder={t("taskDetail.spec.placeholder", "Enter task specification in Markdown...")} rows={12} />
+                  <UiTextArea className="spec-editor-textarea" value={specEditContent} onChange={(e) => setSpecEditContent(e.target.value)} onKeyDown={handleSpecTextareaKeyDown} disabled={isSavingSpec} placeholder={t("taskDetail.spec.placeholder", "Enter task specification in Markdown...")} rows={12} />
                   <div className="spec-editor-actions-row">
-                    <AlphaButton className="btn btn-sm" onClick={exitSpecEditMode} disabled={isSavingSpec}>{t("common.cancel", "Cancel")}</AlphaButton>
-                    <AlphaButton className="btn btn-primary btn-sm" onClick={() => void handleSaveSpecFromEdit()} disabled={specEditContent === (workingTask.prompt || "") || isSavingSpec}>{isSavingSpec ? t("taskDetail.spec.saving", "Saving…") : t("common.save", "Save")}</AlphaButton>
+                    <UiButton className="btn btn-sm" onClick={exitSpecEditMode} disabled={isSavingSpec}>{t("common.cancel", "Cancel")}</UiButton>
+                    <UiButton className="btn btn-primary btn-sm" onClick={() => void handleSaveSpecFromEdit()} disabled={specEditContent === (workingTask.prompt || "") || isSavingSpec}>{isSavingSpec ? t("taskDetail.spec.saving", "Saving…") : t("common.save", "Save")}</UiButton>
                   </div>
                   <div className="spec-editor-hint"><kbd>Ctrl</kbd>+<kbd>Enter</kbd> {t("taskDetail.spec.hintSave", "to save")} · <kbd>Escape</kbd> {t("taskDetail.spec.hintCancel", "to cancel")}</div>
                   <div className="spec-editor-revision">
                     <h4>{t("taskDetail.spec.aiReviseHeading", "Ask AI to Revise")}</h4>
                     <p className="spec-editor-revision-help">{t("taskDetail.spec.aiReviseHelp", "Provide feedback for the AI to improve this specification. The task will move to planning for replanning.")}</p>
-                    <AlphaTextArea className="spec-editor-feedback" value={specFeedback} onChange={(e) => setSpecFeedback(e.target.value)} placeholder={t("taskDetail.spec.feedbackPlaceholder", "e.g., 'Add more details about error handling', 'Split this into smaller steps', 'Include tests for the API endpoints'...")} disabled={isRequestingRevision} rows={4} maxLength={MAX_TASK_MESSAGE_LENGTH} />
-                    <div className="spec-editor-revision-actions"><span className="spec-editor-char-count">{specFeedback.length}/{MAX_TASK_MESSAGE_LENGTH}</span><AlphaButton className="btn btn-primary btn-sm" onClick={() => void handleRequestRevisionFromEdit()} disabled={!specFeedback.trim() || isRequestingRevision}>{isRequestingRevision ? t("taskDetail.spec.requesting", "Requesting…") : t("taskDetail.spec.requestRevisionBtn", "Request AI Revision")}</AlphaButton></div>
+                    <UiTextArea className="spec-editor-feedback" value={specFeedback} onChange={(e) => setSpecFeedback(e.target.value)} placeholder={t("taskDetail.spec.feedbackPlaceholder", "e.g., 'Add more details about error handling', 'Split this into smaller steps', 'Include tests for the API endpoints'...")} disabled={isRequestingRevision} rows={4} maxLength={MAX_TASK_MESSAGE_LENGTH} />
+                    <div className="spec-editor-revision-actions"><span className="spec-editor-char-count">{specFeedback.length}/{MAX_TASK_MESSAGE_LENGTH}</span><UiButton className="btn btn-primary btn-sm" onClick={() => void handleRequestRevisionFromEdit()} disabled={!specFeedback.trim() || isRequestingRevision}>{isRequestingRevision ? t("taskDetail.spec.requesting", "Requesting…") : t("taskDetail.spec.requestRevisionBtn", "Request AI Revision")}</UiButton></div>
                   </div>
                 </div> : detailLoading ? <div className="spec-loading"><LoadingSpinner label={t("taskDetail.spec.loading", "Loading specification…")} /></div> : workingTask.prompt ? <div className="markdown-body" data-testid="task-detail-plan-full"><ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={sharedRehypePlugins} components={markdownLinkifyComponents}>{workingTask.prompt}</ReactMarkdown></div> : <div className="detail-prompt">{t("taskDetail.spec.noPrompt", "(no prompt)")}</div>}
               </div>
@@ -6841,7 +6914,7 @@ export function TaskDetailContent({
                   get the same affordance, and expanding recomputes nothing: `unifiedProgress` is
                   already resolved above.
                   */}
-                  <AlphaButton
+                  <UiButton
                     type="button"
                     className="btn btn-sm detail-step-list-toggle"
                     onClick={() => setStepListExpanded((expanded) => !expanded)}
@@ -6853,7 +6926,7 @@ export function TaskDetailContent({
                     {stepListExpanded
                       ? t("taskDetail.progress.hideSteps", "Hide steps")
                       : t("taskDetail.progress.showSteps", "Show steps")}
-                  </AlphaButton>
+                  </UiButton>
                   {stepListExpanded && (
                     <ol className="detail-step-list" id={`${workingTask.id}-detail-step-list`}>{unifiedProgress.items.map((item) => {
                       const statusLabel = getStepStatusLabel(item.status, t as TFunction<"app">);
@@ -6886,7 +6959,7 @@ export function TaskDetailContent({
               <section className="detail-section detail-definition-outcome" aria-labelledby={`${workingTask.id}-definition-outcome`}>
                 <div className="detail-source-header detail-definition-header">
                   <h4 id={`${workingTask.id}-definition-outcome`}>{t("taskDetail.definition.outcomeHeading", "What this delivers")}</h4>
-                  <AlphaButton type="button" className="btn btn-sm detail-read-plan" onClick={() => setPlanDocumentOpen(true)}><FileText size={14} aria-hidden="true" />{t("taskDetail.spec.readPlanBtn", "Read plan")}</AlphaButton>
+                  <UiButton type="button" className="btn btn-sm detail-read-plan" onClick={() => setPlanDocumentOpen(true)}><FileText size={14} aria-hidden="true" />{t("taskDetail.spec.readPlanBtn", "Read plan")}</UiButton>
                 </div>
                 {detailLoading && !productSummary
                   ? <div className="detail-empty-inline">{t("taskDetail.spec.loading", "Loading specification…")}</div>
@@ -6913,7 +6986,6 @@ export function TaskDetailContent({
           */}
           {keepAliveForCurrentTask.activityLive ? (
             <KeepAliveView hidden={isEditing || activeTab !== "chat" || activitySegment !== "current"} className="task-detail-activity-keep-alive" testId="activity-live-keep-alive">
-              <AlphaBoundary>
                 <TaskChatTab
                   columnFlags={detailColumnFlags}
                   task={workingTask}
@@ -6934,12 +7006,10 @@ export function TaskDetailContent({
                     merger: toTaskChatModelInfo(resolveEffectiveValidator(workingTask, agentLogEntries, assignedAgent, settings, detailColumnFlags)),
                   }}
                 />
-              </AlphaBoundary>
             </KeepAliveView>
           ) : null}
           {keepAliveForCurrentTask.plannerChat ? (
             <KeepAliveView hidden={activeTab !== "planner-chat"} className="task-detail-planner-keep-alive" testId="planner-chat-keep-alive">
-                <AlphaBoundary>
                 <TaskPlannerChatTab
                   task={workingTask}
                   /* FNXC:WorkflowResolvedColumns 2026-07-30-23:40: the kept-alive sibling renders the
@@ -6956,7 +7026,6 @@ export function TaskDetailContent({
                   onTaskUpdated={onTaskUpdated}
                   footerTarget={activeTab === "planner-chat" ? tabFooterTarget : null}
                 />
-                </AlphaBoundary>
             </KeepAliveView>
           ) : null}
           {keepAliveForCurrentTask.terminal ? (
@@ -7080,20 +7149,20 @@ export function TaskDetailContent({
                 {editAutoSaveStatus === "saving" ? t("taskDetail.edit.autosaving", "Autosaving…") : editAutoSaveStatus === "saved" ? t("taskDetail.edit.saved", "Saved") : editAutoSaveStatus === "error" ? t("taskDetail.edit.saveFailed", "Save failed") : t("taskDetail.edit.autosaveHint", "Changes autosave as you edit")}
               </span>
               <div className="modal-actions-spacer" />
-              <AlphaButton
+              <UiButton
                 className="btn btn-sm"
                 onClick={exitEditMode}
                 disabled={isSaving}
               >
                 {t("common.cancel", "Cancel")}
-              </AlphaButton>
-              <AlphaButton
+              </UiButton>
+              <UiButton
                 className="btn btn-primary btn-sm"
                 onClick={() => void handleSave()}
                 disabled={isSaving}
               >
                 {isSaving ? t("taskDetail.edit.saving", "Saving…") : t("common.save", "Save")}
-              </AlphaButton>
+              </UiButton>
             </>
           ) : (
             <>
@@ -7101,12 +7170,12 @@ export function TaskDetailContent({
                   legacy rows with awaitingApprovalReason === "release-authorization"). */}
               {isAwaitingApproval && workingTask.prompt && (
                 <>
-                  <AlphaButton className="btn btn-primary btn-sm" data-testid="detail-plan-approval-footer-approve" disabled={isPlanApprovalPending} onClick={handleApprovePlan}>
+                  <UiButton className="btn btn-primary btn-sm" data-testid="detail-plan-approval-footer-approve" disabled={isPlanApprovalPending} onClick={handleApprovePlan}>
                     {t("taskDetail.plan.approveBtn", "Approve Plan")}
-                  </AlphaButton>
-                  <AlphaButton className="btn btn-danger btn-sm" data-testid="detail-plan-approval-footer-reject" disabled={isPlanApprovalPending} onClick={handleRejectPlan}>
+                  </UiButton>
+                  <UiButton className="btn btn-danger btn-sm" data-testid="detail-plan-approval-footer-reject" disabled={isPlanApprovalPending} onClick={handleRejectPlan}>
                     {t("taskDetail.plan.rejectBtn", "Reject Plan")}
-                  </AlphaButton>
+                  </UiButton>
                 </>
               )}
 
@@ -7118,13 +7187,13 @@ export function TaskDetailContent({
               its only primary footer button, while lifecycle placement stays workflow-owned.
               */}
               {reviewAction && (
-                <AlphaButton
+                <UiButton
                   className="btn btn-primary btn-sm"
                   onClick={reviewAction.onSelect}
                   disabled={reviewAction.disabled}
                 >
                   <span className="detail-footer-button-label">{reviewAction.label}</span>
-                </AlphaButton>
+                </UiButton>
               )}
             </>
           )}
@@ -7160,8 +7229,7 @@ export function TaskDetailContent({
             />
           </Suspense>
         )}
-      </AlphaSurface>
-    </AlphaBoundary>
+      </UiSurface>
   );
 }
 
@@ -7169,7 +7237,7 @@ export function TaskDetailContent({
 FNXC:TaskDetailDefinition 2026-09-13-11:59:
 La modale et le drawer conservent un nom accessible localisé même si leur header visuel ne contient plus le titre de la tâche. Le nom vient d’une chaîne stable et non d’un élément visuel susceptible d’être absent.
 */
-export function TaskDetailModal({ onClose, alphaMobileDrawer = false, ...props }: TaskDetailModalProps) {
+export function TaskDetailModal({ onClose, mobileDrawer = false, ...props }: TaskDetailModalProps) {
   const { t } = useTranslation("app");
   const viewportMode = useViewportMode();
   const accessibleName = t("taskDetail.accessibleName", "Task detail");
@@ -7190,20 +7258,20 @@ export function TaskDetailModal({ onClose, alphaMobileDrawer = false, ...props }
   */
   const isMobileTransition = viewportMode === "mobile";
 
-  if (alphaMobileDrawer && isMobileTransition) {
+  if (mobileDrawer && isMobileTransition) {
     return (
-      <AlphaMobileDrawer
+      <MobileDrawer
         open
         title={accessibleName}
         onClose={requestClose}
-        testId="alpha-mobile-drawer-task-detail"
+        testId="mobile-drawer-task-detail"
         contentOwnsHeader
         contentOwnsScroll
       >
-        <div className="modal modal-lg task-detail-modal task-detail-modal--alpha-drawer">
+        <div className="modal modal-lg task-detail-modal task-detail-modal--native-drawer">
           <TaskDetailContent {...props} onRequestClose={requestClose} />
         </div>
-      </AlphaMobileDrawer>
+      </MobileDrawer>
     );
   }
 

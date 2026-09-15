@@ -622,7 +622,7 @@ describe.runIf(executablePath)("Task modal tablet touch resize browser regressio
     ["list-split", "title-host-list", "task-detail-title-list", false, 820, "tablet"],
     ["right-dock", "title-host-dock", "task-detail-title-dock", false, 1024, "desktop"],
     ["right-dock", "title-host-dock", "task-detail-title-dock", false, 820, "tablet"],
-    ["alpha-mobile-drawer", "alpha-mobile-drawer-task-detail", "task-detail-title-alpha-drawer", true, 390, "mobile"],
+    ["mobile-drawer", "mobile-drawer-task-detail", "task-detail-title-native-drawer", true, 390, "mobile"],
     ["floating-window", "floating-window-overlay-task-detail-", "task-detail-title-app-floating", true, 1200, "desktop"],
     ["floating-window", "floating-window-overlay-task-detail-", "task-detail-title-app-floating", true, 768, "tablet"],
   ] as const;
@@ -744,7 +744,7 @@ describe.runIf(executablePath)("Task modal tablet touch resize browser regressio
         await mkdir(fn391Artifacts, { recursive: true });
         await page.screenshot({ path: path.join(fn391Artifacts, "task-definition-desktop.png") });
       }
-      if (titleMode === "fit" && name === "alpha-mobile-drawer") {
+      if (titleMode === "fit" && name === "mobile-drawer") {
         await mkdir(fn391Artifacts, { recursive: true });
         await page.screenshot({ path: path.join(fn391Artifacts, "task-definition-mobile.png") });
       }
@@ -904,7 +904,7 @@ describe.runIf(executablePath)("Task modal tablet touch resize browser regressio
   }
 
   /*
-  FNXC:TaskDetailAlpha 2026-09-11-03:20:
+  FNXC:TaskDetailPresentation 2026-09-11-03:20:
   The Alpha rollout is credible only when the production modal, mobile drawer, main panel, List split, right dock, and App pop-out each expose one canonical Task Detail surface with usable navigation and no horizontal overflow at their representative breakpoints.
   */
   it.each([
@@ -931,7 +931,7 @@ describe.runIf(executablePath)("Task modal tablet touch resize browser regressio
         .filter((child) => child.matches(".modal-header, .detail-tabs, .detail-body, .modal-actions"))
         .map((child) => child.classList.contains("modal-header") ? "header" : child.classList.contains("detail-tabs") ? "tabs" : child.classList.contains("detail-body") ? "content" : "footer");
       return {
-        boundaries: document.querySelectorAll(".task-detail-alpha-boundary[data-alpha-surface='true']").length,
+        boundaries: document.querySelectorAll(".task-detail-surface-root").length,
         headers: detail.querySelectorAll(":scope > .modal-header").length,
         tabSets: detail.querySelectorAll(":scope > .detail-tabs").length,
         footers: detail.querySelectorAll(":scope > .modal-actions").length,

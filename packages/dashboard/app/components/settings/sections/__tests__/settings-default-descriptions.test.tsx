@@ -635,6 +635,7 @@ const NOT_SURFACED_ALLOWLIST: Record<string, string> = {
   // Global settings not rendered by a plain description field.
   themeMode: "configured via ThemeSelector, not a plain description field",
   colorTheme: "configured via ThemeSelector, not a plain description field",
+  uiStyle: "configured via the interface-style selector inside ThemeSelector, not a plain description field",
   shadcnCustomColors: "configured via ThemeSelector, not a plain description field",
   dashboardFontScalePct: "configured via ThemeSelector, not a plain description field",
   dashboardKeyboardShortcuts: "described inline per shortcut, not a single field",

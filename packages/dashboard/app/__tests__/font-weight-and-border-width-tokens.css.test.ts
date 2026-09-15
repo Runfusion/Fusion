@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { loadAllAppCss, loadStylesCss, loadThemeDataCss } from "../test/cssFixture";
+import { loadAllAppCss, loadStylesCss, loadThemeDataCss, readAppFile } from "../test/cssFixture";
 
 const appDir = resolve(__dirname, "..");
 
@@ -96,13 +96,22 @@ describe("dashboard font-weight and border-width token hygiene", () => {
     expect(definitions.get("btn-border-width")).toBe("1px");
   });
 
-  it("keeps border widths theme-aware while font weights remain theme-agnostic", () => {
+  /*
+  FNXC:UiStyleAxis 2026-09-15-00:20:
+  FN-399 made border widths and font weights INTERFACE-STYLE properties, not colour-preset properties.
+  A colour preset therefore declares neither, and the Cozy Cartoon button typography override is gone.
+  Both live in app/ui-style-tokens.css, which the style-contract suite verifies is colour-free.
+  */
+  it("keeps border widths and font weights out of every colour preset", () => {
     const themeDataCss = loadThemeDataCss();
-    const overrides = [...themeDataCss.matchAll(/--btn-border-width:\s*([^;]+);/g)].map((match) => match[1].trim());
 
-    expect(overrides.some((value) => value !== "1px")).toBe(true);
+    expect(themeDataCss).not.toMatch(/--btn-border-width\s*:/);
     expect(themeDataCss).not.toMatch(/--font-weight-(?:medium|semibold)\s*:/);
-    expect(themeDataCss).toContain("--cozy-cartoon-btn-font-weight: 600;");
+    expect(themeDataCss).not.toContain("--cozy-cartoon-btn-font-weight");
+
+    const catalogue = readAppFile("ui-style-tokens.css");
+    expect(catalogue).toContain("--ui-border-width");
+    expect(catalogue).toContain("--ui-font-weight-semibold");
   });
 
   it("keeps repaired mailbox declarations in the injected dashboard CSS cascade", () => {

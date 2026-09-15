@@ -2093,45 +2093,45 @@ rect (inline left/bottom) and stacked with nextFloatingZ so it clears pinned/pop
 }
 
 /*
-FNXC:AlphaMobileDrawer 2026-09-10-16:56:
-The mobile terminal keeps its PTY and keyboard-overlap lifecycle while its bounded Alpha drawer reaches the viewport bottom above the trigger pill and absorbs system clearance inside the panel. Standard mobile remains governed by the earlier fullscreen rules because this selector requires the App-published Alpha project-shell marker.
+FNXC:MobileDrawer 2026-09-10-16:56:
+The mobile terminal keeps its PTY and keyboard-overlap lifecycle while its bounded mobile drawer reaches the viewport bottom above the trigger pill and absorbs system clearance inside the panel. Standard mobile remains governed by the earlier fullscreen rules because this selector requires the App-published mobile project-shell marker.
 
-FNXC:AlphaMobileDrawer 2026-09-11-01:40:
-The Alpha terminal consumes the same canonical drawer block-size and shared handle gesture as the other drawer owners. Its close button is absent only under that contract; PTY content, Escape/backdrop recovery, and keyboard-aware input remain reachable.
+FNXC:MobileDrawer 2026-09-11-01:40:
+The drawer terminal consumes the same canonical drawer block-size and shared handle gesture as the other drawer owners. Its close button is absent only under that contract; PTY content, Escape/backdrop recovery, and keyboard-aware input remain reachable.
 
 FNXC:MobileDrawerMotion 2026-09-12-20:37:
-The Alpha terminal applies the shared bottom-edge entry to its outer modal only. Reduced motion suppresses that animation while PTY state, keyboard geometry, backdrop, Escape, and drag dismissal remain unchanged.
+The drawer terminal applies the shared bottom-edge entry to its outer modal only. Reduced motion suppresses that animation while PTY state, keyboard geometry, backdrop, Escape, and drag dismissal remain unchanged.
 */
-html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] .terminal-modal-overlay:not(.terminal-modal-overlay--docked) {
+html[data-mobile-drawers="true"][data-viewport-mode="mobile"] .terminal-modal-overlay:not(.terminal-modal-overlay--docked) {
   align-items: flex-end;
   padding-block-start: calc(env(safe-area-inset-top, 0px) + var(--space-2xl));
   background: color-mix(in srgb, var(--bg) 38%, transparent);
 }
 
-html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] .terminal-modal-overlay:not(.terminal-modal-overlay--docked) > .terminal-modal {
+html[data-mobile-drawers="true"][data-viewport-mode="mobile"] .terminal-modal-overlay:not(.terminal-modal-overlay--docked) > .terminal-modal {
   position: relative;
   inset: auto;
   width: 100%;
-  height: var(--alpha-mobile-drawer-block-size);
+  height: var(--mobile-drawer-block-size);
   min-width: 0;
   min-height: 0;
   max-width: 100%;
-  max-height: var(--alpha-mobile-drawer-block-size);
-  padding-block-end: var(--mobile-nav-alpha-system-offset);
+  max-height: var(--mobile-drawer-block-size);
+  padding-block-end: var(--mobile-nav-system-offset);
   border: var(--btn-border-width) solid var(--border);
   border-block-end: 0;
   border-radius: var(--radius-xl) var(--radius-xl) 0 0;
   box-shadow: var(--shadow-lg);
-  animation: alpha-mobile-drawer-rise-in var(--duration-normal) ease-out;
+  animation: mobile-drawer-rise-in var(--duration-normal) ease-out;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] .terminal-modal-overlay:not(.terminal-modal-overlay--docked) > .terminal-modal {
+  html[data-mobile-drawers="true"][data-viewport-mode="mobile"] .terminal-modal-overlay:not(.terminal-modal-overlay--docked) > .terminal-modal {
     animation: none;
   }
 }
 
-html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] .terminal-drawer-handle-target {
+html[data-mobile-drawers="true"][data-viewport-mode="mobile"] .terminal-drawer-handle-target {
   display: flex;
   flex: 0 0 var(--touch-target-min-size);
   align-items: center;
@@ -2142,11 +2142,11 @@ html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] .terminal-dr
   user-select: none;
 }
 
-html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] .terminal-drawer-handle-target:active {
+html[data-mobile-drawers="true"][data-viewport-mode="mobile"] .terminal-drawer-handle-target:active {
   cursor: grabbing;
 }
 
-html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] .terminal-drawer-handle {
+html[data-mobile-drawers="true"][data-viewport-mode="mobile"] .terminal-drawer-handle {
   width: calc(var(--space-xl) + var(--space-md));
   height: var(--space-xs);
   border-radius: var(--radius-pill);

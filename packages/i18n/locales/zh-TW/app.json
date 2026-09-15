@@ -8290,7 +8290,9 @@
       "revisionColumnError": "無法請求修訂：任務必須在「triage」、「todo」、「in-progress」或「in-review」欄中。",
       "revisionRequested": "已請求 AI 修訂。任務已移至規劃階段。",
       "saving": "正在儲存…",
-      "updated": "規範已更新"
+      "updated": "規範已更新",
+      "copy": "複製",
+      "copied": "已複製"
     },
     "stall": {
       "noLogEntry": "尚無日誌條目",
@@ -9930,5 +9932,12 @@
   "windows": {
     "hide": "隱藏所有視窗",
     "restore": "還原視窗"
+  },
+  "uiStyle": {
+    "label": "介面風格",
+    "classic": "目前",
+    "classicDescription": "維持熟悉的 Fusion 介面語法。",
+    "clean": "簡潔",
+    "cleanDescription": "更緊湊的間距、更柔和的圓角、更安靜的外框。"
   }
 }

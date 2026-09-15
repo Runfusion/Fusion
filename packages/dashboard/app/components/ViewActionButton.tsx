@@ -1,6 +1,6 @@
 import { forwardRef, type ButtonHTMLAttributes, type ComponentType, type ReactNode } from "react";
 import { ChevronLeft, Plus, type LucideProps } from "lucide-react";
-import { AlphaButton } from "./alpha-ui";
+import { UiButton } from "./ui";
 import "./ViewActionButton.css";
 
 export type ViewActionButtonKind = "action" | "create";
@@ -51,10 +51,10 @@ export const ViewActionButton = forwardRef<HTMLButtonElement, ViewActionButtonPr
   ].filter(Boolean).join(" ");
 
   return (
-    <AlphaButton {...props} ref={ref} type={type} className={classes} aria-label={props["aria-label"] ?? ariaLabel}>
+    <UiButton {...props} ref={ref} type={type} className={classes} aria-label={props["aria-label"] ?? ariaLabel}>
       {Icon ? <Icon aria-hidden="true" className={iconClassName} /> : null}
       <span className="view-action-button__label">{label}</span>
-    </AlphaButton>
+    </UiButton>
   );
 });
 
@@ -72,7 +72,7 @@ export const ViewBackButton = forwardRef<HTMLButtonElement, ViewBackButtonProps>
   ref,
 ) {
   return (
-    <AlphaButton
+    <UiButton
       {...props}
       ref={ref}
       type={type}
@@ -81,6 +81,6 @@ export const ViewBackButton = forwardRef<HTMLButtonElement, ViewBackButtonProps>
       title={props.title ?? label}
     >
       <ChevronLeft aria-hidden="true" />
-    </AlphaButton>
+    </UiButton>
   );
 });

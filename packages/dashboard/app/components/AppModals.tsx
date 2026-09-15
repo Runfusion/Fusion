@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, lazy, Suspense } from "react";
 import { useTranslation } from "react-i18next";
 import type { ProjectInfo, RevertTaskOptions, RevertTaskResult } from "../api";
-import type { ColorTheme, Column, MergeResult, Task, TaskCreateInput, ThemeMode, GithubIssueAction } from "@fusion/core";
+import type { ColorTheme, Column, MergeResult, Task, TaskCreateInput, ThemeMode, UiStyle, GithubIssueAction } from "@fusion/core";
 import type { UseProjectActionsResult } from "../hooks/useProjectActions";
 import { mergeTaskSnapshot } from "../hooks/useTasks";
 import type { ModalManager } from "../hooks/useModalManager";
@@ -25,13 +25,13 @@ import { ModelOnboardingModal } from "./ModelOnboardingModal";
 import { ToastContainer } from "./ToastContainer";
 import { GroupTaskModal } from "./GroupTaskModal";
 import { useNavigationHistoryContext } from "../hooks/useNavigationHistory";
-import { AlphaMobileDrawer } from "./AlphaMobileDrawer";
+import { MobileDrawer } from "./MobileDrawer";
 
 const SetupWizardModal = lazy(() => import("./SetupWizardModal").then((m) => ({ default: m.SetupWizardModal })));
 const SettingsModal = lazy(() => import("./SettingsModal").then((m) => ({ default: m.SettingsModal })));
 const WorkflowNodeEditor = lazy(() => import("./WorkflowNodeEditor").then((m) => ({ default: m.WorkflowNodeEditor })));
 
-interface AlphaUsageDrawerProps {
+interface MobileUsageDrawerProps {
   open: boolean;
   title: string;
   onClose: () => void;
@@ -39,16 +39,16 @@ interface AlphaUsageDrawerProps {
 }
 
 /*
-FNXC:AlphaMobileDrawer 2026-09-10-23:59:
-Usage browser checks must mount AppModals' production bridge rather than duplicate its shell flags. This exported bridge remains the single Alpha usage composition while the ordinary popover path stays owned by AppModals.
+FNXC:MobileDrawer 2026-09-10-23:59:
+Usage browser checks must mount AppModals' production bridge rather than duplicate its shell flags. This exported bridge remains the single mobile usage composition while the ordinary popover path stays owned by AppModals.
 */
-export function AlphaUsageDrawer({ open, title, onClose, projectId }: AlphaUsageDrawerProps) {
+export function MobileUsageDrawer({ open, title, onClose, projectId }: MobileUsageDrawerProps) {
   return (
-    <AlphaMobileDrawer
+    <MobileDrawer
       open={open}
       title={title}
       onClose={onClose}
-      testId="alpha-mobile-drawer-usage"
+      testId="mobile-drawer-usage"
       contentOwnsHeader
       contentOwnsScroll
     >
@@ -58,7 +58,7 @@ export function AlphaUsageDrawer({ open, title, onClose, projectId }: AlphaUsage
         projectId={projectId}
         presentation="embedded"
       />
-    </AlphaMobileDrawer>
+    </MobileDrawer>
   );
 }
 
@@ -77,8 +77,8 @@ function prefetchSettingsModal() {
 
 interface AppModalsProps {
   projectId?: string;
-  /** Applies the shared drawer presentation only inside the Alpha mobile project shell. */
-  alphaMobileDrawer?: boolean;
+  /** Applies the shared drawer presentation only inside the mobile project shell. */
+  mobileDrawer?: boolean;
   tasks: Task[];
   /* Per-task lifecycle traits, forwarded to Task Detail's blocker fan-out. */
   columnFlagsByTaskId?: ReadonlyMap<string, BlockerFanoutColumnFlags>;
@@ -127,6 +127,9 @@ interface AppModalsProps {
     chatMessageLayout: ChatMessageLayout;
     themeMode: ThemeMode;
     colorTheme: ColorTheme;
+    /* FNXC:UiStyleAxis 2026-09-15-00:20: second, independent appearance axis owned by the single useTheme instance in App. */
+    uiStyle: UiStyle;
+    setUiStyle: (style: UiStyle) => void;
     dashboardFontScalePct: number;
     shadcnCustomColors: Record<string, string>;
     resolvedThemeMode: "dark" | "light";
@@ -189,7 +192,7 @@ export function AppFilesModal({ modalManager, projectId, onClose }: AppFilesModa
 
 export function AppModals({
   projectId,
-  alphaMobileDrawer = false,
+  mobileDrawer = false,
   tasks,
   columnFlagsByTaskId,
   globalPaused = false,
@@ -372,7 +375,7 @@ export function AppModals({
         <ModalErrorBoundary>
           <AppModalTaskDetailHost
             task={detailTask}
-            alphaMobileDrawer={alphaMobileDrawer}
+            mobileDrawer={mobileDrawer}
             projectId={projectId}
             tasks={tasks}
             columnFlagsByTaskId={columnFlagsByTaskId}
@@ -434,6 +437,8 @@ export function AppModals({
               projectId={projectId}
               themeMode={settings.themeMode}
               colorTheme={settings.colorTheme}
+              uiStyle={settings.uiStyle}
+              onUiStyleChange={settings.setUiStyle}
               onThemeModeChange={settings.setThemeMode}
               onColorThemeChange={settings.setColorTheme}
               dashboardFontScalePct={settings.dashboardFontScalePct}
@@ -499,11 +504,11 @@ export function AppModals({
       />
 
       {/*
-      FNXC:AlphaMobileDrawer 2026-09-10-16:56:
-      Usage opened from Alpha mobile reuses its embedded content inside the shared bottom-edge drawer above the trigger pill. The modal manager remains the single open/close owner, while standard mobile and desktop preserve the existing overlay or anchored popover.
+      FNXC:MobileDrawer 2026-09-10-16:56:
+      Usage opened from the mobile shell reuses its embedded content inside the shared bottom-edge drawer above the trigger pill. The modal manager remains the single open/close owner, while standard mobile and desktop preserve the existing overlay or anchored popover.
       */}
-      {alphaMobileDrawer ? (
-        <AlphaUsageDrawer
+      {mobileDrawer ? (
+        <MobileUsageDrawer
           open={modalManager.usageOpen}
           title={t("nav.usage", "Usage")}
           onClose={closeUsageWithNav}

@@ -4953,12 +4953,12 @@ describe("TerminalModal — mobile layout contract", () => {
   it("ferme le terminal Alpha depuis le corps au bord haut et préserve son scroll", async () => {
     const previousInnerWidth = window.innerWidth;
     Object.defineProperty(window, "innerWidth", { value: 390, configurable: true });
-    document.documentElement.dataset.alphaMobileDrawers = "true";
+    document.documentElement.dataset.mobileDrawers = "true";
 
     try {
       render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
       await waitFor(() => expect(screen.getByTestId("terminal-drawer-handle")).toBeInTheDocument());
-      expect(terminalModalCss).toMatch(/\.terminal-modal-overlay:not\(\.terminal-modal-overlay--docked\) > \.terminal-modal\s*\{[^}]*animation: alpha-mobile-drawer-rise-in/);
+      expect(terminalModalCss).toMatch(/\.terminal-modal-overlay:not\(\.terminal-modal-overlay--docked\) > \.terminal-modal\s*\{[^}]*animation: mobile-drawer-rise-in/);
       expect(terminalModalCss).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.terminal-modal-overlay:not\(\.terminal-modal-overlay--docked\) > \.terminal-modal\s*\{[^}]*animation: none/);
       expect(screen.queryByTestId("terminal-close-btn")).toBeNull();
       const modal = screen.getByTestId("terminal-modal");
@@ -4976,7 +4976,7 @@ describe("TerminalModal — mobile layout contract", () => {
       expect(mockOnClose).not.toHaveBeenCalled();
       expect(modal.style.transform).toBe("");
     } finally {
-      delete document.documentElement.dataset.alphaMobileDrawers;
+      delete document.documentElement.dataset.mobileDrawers;
       Object.defineProperty(window, "innerWidth", { value: previousInnerWidth, configurable: true });
     }
   });

@@ -135,7 +135,7 @@ describe("Mobile Feature Access Regression Guard", () => {
 
   it("keeps List accessible from the official mobile navigation menu", () => {
     const props = createDefaultMobileNavProps();
-    render(<MobileNavBar {...props} view="board" alphaMenuOpen />);
+    render(<MobileNavBar {...props} view="board" navigationMenuOpen />);
 
     fireEvent.click(screen.getByTestId("mobile-more-item-list"));
     expect(props.onChangeView).toHaveBeenCalledWith("list");
@@ -143,12 +143,12 @@ describe("Mobile Feature Access Regression Guard", () => {
 
   it("keeps Board as the permanent background without duplicate navigation", () => {
     const props = createDefaultMobileNavProps();
-    render(<MobileNavBar {...props} view="list" alphaMenuOpen />);
+    render(<MobileNavBar {...props} view="list" navigationMenuOpen />);
 
     expect(screen.queryByTestId("mobile-nav-tab-tasks")).toBeNull();
     expect(screen.queryByTestId("mobile-more-item-tasks")).toBeNull();
-    expect(document.querySelectorAll(".mobile-nav-bar--alpha > .mobile-nav-tab")).toHaveLength(4);
-    expect(document.querySelector(".mobile-nav-bar--alpha")?.lastElementChild).toBe(screen.getByTestId("alpha-mobile-menu-trigger"));
+    expect(document.querySelectorAll(".mobile-nav-bar--native > .mobile-nav-tab")).toHaveLength(4);
+    expect(document.querySelector(".mobile-nav-bar--native")?.lastElementChild).toBe(screen.getByTestId("mobile-menu-trigger"));
   });
 
   it("mobile Header exposes New Task without the retired view toggle", () => {
@@ -162,7 +162,7 @@ describe("Mobile Feature Access Regression Guard", () => {
 
   it("agents view is accessible via the mobile navigation menu", () => {
     const props = createDefaultMobileNavProps();
-    render(<MobileNavBar {...props} alphaMenuOpen />);
+    render(<MobileNavBar {...props} navigationMenuOpen />);
 
     fireEvent.click(screen.getByTestId("mobile-more-item-agents"));
     expect(props.onChangeView).toHaveBeenCalledWith("agents");
@@ -195,7 +195,7 @@ describe("Mobile Feature Access Regression Guard", () => {
   });
 
   it("official menu provides access to secondary mobile features", () => {
-    render(<MobileNavBar {...createDefaultMobileNavProps()} alphaMenuOpen />);
+    render(<MobileNavBar {...createDefaultMobileNavProps()} navigationMenuOpen />);
 
     expect(screen.getByTestId("mobile-nav-tab-mailbox")).toBeDefined();
     expect(screen.queryByTestId("mobile-more-item-mailbox")).toBeNull();
@@ -214,7 +214,7 @@ describe("Mobile Feature Access Regression Guard", () => {
   });
 
   it("keeps enabled official destinations reachable without persisted footer customization", () => {
-    render(<MobileNavBar {...createDefaultMobileNavProps()} alphaMenuOpen showSkillsTab={false} experimentalFeatures={{ insights: false, memoryView: false }} />);
+    render(<MobileNavBar {...createDefaultMobileNavProps()} navigationMenuOpen showSkillsTab={false} experimentalFeatures={{ insights: false, memoryView: false }} />);
     expect(screen.getByTestId("mobile-more-item-missions")).toBeInTheDocument();
     expect(screen.queryByTestId("mobile-more-item-skills")).toBeNull();
   });
@@ -457,7 +457,7 @@ describe("Mobile Feature Access Regression Guard", () => {
         {...createDefaultMobileNavProps()}
         view="missions"
         onChangeView={mobileNavOnChangeView}
-        alphaMenuOpen
+        navigationMenuOpen
       />,
     );
 

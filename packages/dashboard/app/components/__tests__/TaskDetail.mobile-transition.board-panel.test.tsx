@@ -380,7 +380,7 @@ describe("Board main-panel task-detail — mobile transition class gating (MainC
     });
     expect(document.documentElement).toHaveAttribute("data-viewport-mode", "mobile");
     expect(document.querySelector(".task-detail-main-panel--mobile-transition")).toBeInTheDocument();
-    expect(readAppFile("styles.css")).toMatch(/html\[data-viewport-mode="mobile"\] \.task-detail-main-panel--mobile-transition\s*\{[^}]*animation: alpha-mobile-drawer-rise-in/);
+    expect(readAppFile("styles.css")).toMatch(/html\[data-viewport-mode="mobile"\] \.task-detail-main-panel--mobile-transition\s*\{[^}]*animation: mobile-drawer-rise-in/);
   });
 
   it("does NOT apply the mobile transition class to the board main-panel surface on desktop", async () => {

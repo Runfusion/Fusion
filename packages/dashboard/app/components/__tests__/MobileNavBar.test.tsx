@@ -50,7 +50,7 @@ const createDefaultProps = () => ({
 
 function OfficialMobileShell(props: Partial<React.ComponentProps<typeof MobileNavBar>> = {}) {
   const [menuOpen, setMenuOpen] = useState(false);
-  return <MobileNavBar {...createDefaultProps()} {...props} alphaMenuOpen={menuOpen} onAlphaMenuOpenChange={setMenuOpen} />;
+  return <MobileNavBar {...createDefaultProps()} {...props} navigationMenuOpen={menuOpen} onUiMenuOpenChange={setMenuOpen} />;
 }
 
 const COMPONENT_GEOMETRY = {
@@ -154,7 +154,7 @@ describe("MobileNavBar official mobile shell", () => {
       "mobile-nav-tab-chat",
       "mobile-nav-tab-mailbox",
     ]);
-    expect(container.querySelector(".mobile-nav-bar")).toHaveClass("mobile-nav-bar--alpha");
+    expect(container.querySelector(".mobile-nav-bar")).toHaveClass("mobile-nav-bar--native");
     expect(screen.queryByTestId("mobile-nav-tab-tasks")).toBeNull();
     expect(screen.queryByTestId("mobile-nav-tab-more")).toBeNull();
   });
@@ -163,9 +163,9 @@ describe("MobileNavBar official mobile shell", () => {
     const user = userEvent.setup();
     const props = createDefaultProps();
     render(<OfficialMobileShell {...props} />);
-    const trigger = screen.getByTestId("alpha-mobile-menu-trigger");
+    const trigger = screen.getByTestId("mobile-menu-trigger");
     await user.click(trigger);
-    expect(screen.getByRole("menu", { name: "Navigate" })).toHaveClass("alpha-mobile-navigation-popover");
+    expect(screen.getByRole("menu", { name: "Navigate" })).toHaveClass("mobile-navigation-popover");
     fireEvent.click(screen.getByTestId("mobile-more-item-list"));
     expect(props.onChangeView).toHaveBeenCalledWith("list");
 
@@ -186,8 +186,8 @@ describe("MobileNavBar official mobile shell", () => {
     }
 
     const { container } = render(<OfficialMobileShell keyboardOpen keyboardMetrics={{ keyboardOverlap: 300, viewportHeight: COMPONENT_GEOMETRY.visualViewportHeight, viewportOffsetTop: COMPONENT_GEOMETRY.viewportOffsetTop }} />);
-    const trigger = screen.getByTestId("alpha-mobile-menu-trigger");
-    expect(trigger).toHaveAttribute("aria-controls", "alpha-mobile-navigation-popover");
+    const trigger = screen.getByTestId("mobile-menu-trigger");
+    expect(trigger).toHaveAttribute("aria-controls", "mobile-navigation-popover");
     fireEvent.click(trigger);
     const popover = screen.getByRole("menu", { name: "Navigate" });
     fireEvent.click(screen.getByTestId("mobile-more-terminal-split-toggle"));
@@ -213,19 +213,19 @@ describe("MobileNavBar official mobile shell", () => {
     expect(geometry.terminalScrollTop).toBeGreaterThan(0);
     expect(geometry.terminalItemBottom).toBeLessThanOrEqual(geometry.popover.bottom);
     expect(geometry.lastItem).toBe(screen.getByTestId("mobile-more-item-settings"));
-    expect(popover).toHaveAttribute("id", "alpha-mobile-navigation-popover");
+    expect(popover).toHaveAttribute("id", "mobile-navigation-popover");
     expect(container.querySelector(".mobile-more-sheet-backdrop")).toBeNull();
     expect(trigger).toHaveAttribute("aria-expanded", "true");
   });
 
   it("keeps Whiteboard absent until its independent flag is enabled", () => {
     const disabled = render(<OfficialMobileShell experimentalFeatures={{}} />);
-    fireEvent.click(screen.getByTestId("alpha-mobile-menu-trigger"));
+    fireEvent.click(screen.getByTestId("mobile-menu-trigger"));
     expect(screen.queryByTestId("mobile-more-item-whiteboard")).toBeNull();
     disabled.unmount();
 
     render(<OfficialMobileShell experimentalFeatures={{ whiteboardView: true }} />);
-    fireEvent.click(screen.getByTestId("alpha-mobile-menu-trigger"));
+    fireEvent.click(screen.getByTestId("mobile-menu-trigger"));
     expect(screen.getByTestId("mobile-more-item-whiteboard")).toHaveTextContent("Alpha");
   });
 
@@ -275,7 +275,7 @@ function installFocusRecorder(recorded: RecordedFocus[]) {
   ) {
     recorded.push({ target: this, options });
     if (!options?.preventScroll) {
-      const scrollable = this.closest<HTMLElement>(".alpha-mobile-navigation-popover");
+      const scrollable = this.closest<HTMLElement>(".mobile-navigation-popover");
       if (scrollable) scrollable.scrollTop = 0;
     }
     originalFocus.call(this, options);
@@ -283,7 +283,7 @@ function installFocusRecorder(recorded: RecordedFocus[]) {
 }
 
 function menuFocusCalls(recorded: RecordedFocus[]) {
-  return recorded.filter((entry) => entry.target.closest(".alpha-mobile-navigation-popover") !== null);
+  return recorded.filter((entry) => entry.target.closest(".mobile-navigation-popover") !== null);
 }
 
 function exposeScrollPosition(element: HTMLElement, value: number) {
@@ -316,8 +316,8 @@ function NavigationHistoryShell({
     <MobileNavBar
       {...(navProps as React.ComponentProps<typeof MobileNavBar>)}
       mailboxUnreadCount={mailboxUnreadCount}
-      alphaMenuOpen={menuOpen}
-      onAlphaMenuOpenChange={setMenuOpen}
+      navigationMenuOpen={menuOpen}
+      onUiMenuOpenChange={setMenuOpen}
     />
   );
   if (!withProvider) return bar;
@@ -357,7 +357,7 @@ describe("MobileNavBar navigation popover keeps its scroll position", () => {
   it("focuses the first entry once per open, with preventScroll, across parent re-renders that change the navigation-history identity", () => {
     const navProps = createDefaultProps();
     const view = render(<NavigationHistoryShell navProps={navProps} mailboxUnreadCount={0} />);
-    fireEvent.click(screen.getByTestId("alpha-mobile-menu-trigger"));
+    fireEvent.click(screen.getByTestId("mobile-menu-trigger"));
 
     const popover = screen.getByRole("menu", { name: "Navigate" });
     exposeScrollPosition(popover, 180);
@@ -374,7 +374,7 @@ describe("MobileNavBar navigation popover keeps its scroll position", () => {
   it("opens the destination tapped after scrolling instead of resetting the popover", () => {
     const navProps = createDefaultProps();
     const view = render(<NavigationHistoryShell navProps={navProps} mailboxUnreadCount={0} />);
-    fireEvent.click(screen.getByTestId("alpha-mobile-menu-trigger"));
+    fireEvent.click(screen.getByTestId("mobile-menu-trigger"));
 
     const popover = screen.getByRole("menu", { name: "Navigate" });
     exposeScrollPosition(popover, 180);
@@ -390,7 +390,7 @@ describe("MobileNavBar navigation popover keeps its scroll position", () => {
   it("re-arms the opening focus so every open focuses exactly once", () => {
     const navProps = createDefaultProps();
     render(<NavigationHistoryShell navProps={navProps} />);
-    const trigger = screen.getByTestId("alpha-mobile-menu-trigger");
+    const trigger = screen.getByTestId("mobile-menu-trigger");
 
     fireEvent.click(trigger);
     expect(menuFocusCalls(recordedFocus)).toHaveLength(1);
@@ -406,7 +406,7 @@ describe("MobileNavBar navigation popover keeps its scroll position", () => {
   it("focuses once for a reduced destination set", () => {
     const navProps = { ...createDefaultProps(), showSkillsTab: false, experimentalFeatures: {} };
     const view = render(<NavigationHistoryShell navProps={navProps} mailboxUnreadCount={0} />);
-    fireEvent.click(screen.getByTestId("alpha-mobile-menu-trigger"));
+    fireEvent.click(screen.getByTestId("mobile-menu-trigger"));
     expect(screen.queryByTestId("mobile-more-item-whiteboard")).toBeNull();
 
     view.rerender(<NavigationHistoryShell navProps={navProps} mailboxUnreadCount={4} />);
@@ -417,7 +417,7 @@ describe("MobileNavBar navigation popover keeps its scroll position", () => {
   it("focuses once and routes the tapped destination without a navigation-history provider", () => {
     const navProps = createDefaultProps();
     const view = render(<NavigationHistoryShell navProps={navProps} withProvider={false} mailboxUnreadCount={0} />);
-    fireEvent.click(screen.getByTestId("alpha-mobile-menu-trigger"));
+    fireEvent.click(screen.getByTestId("mobile-menu-trigger"));
 
     const popover = screen.getByRole("menu", { name: "Navigate" });
     exposeScrollPosition(popover, 96);
@@ -435,7 +435,7 @@ describe("MobileNavBar navigation popover keeps its scroll position", () => {
     render(<NavigationHistoryShell navProps={navProps} />);
 
     expect(screen.queryByRole("menu", { name: "Navigate" })).toBeNull();
-    expect(screen.queryByTestId("alpha-mobile-menu-trigger")).toBeNull();
+    expect(screen.queryByTestId("mobile-menu-trigger")).toBeNull();
     expect(recordedFocus).toHaveLength(0);
   });
 });

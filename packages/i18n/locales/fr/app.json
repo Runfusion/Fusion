@@ -8309,7 +8309,9 @@
       "revisionColumnError": "Impossible de demander une révision : la tâche doit être dans la colonne « triage », « todo », « in-progress » ou « in-review ».",
       "revisionRequested": "Révision IA demandée. La tâche a été déplacée en planification.",
       "saving": "Enregistrement…",
-      "updated": "Spécification mise à jour"
+      "updated": "Spécification mise à jour",
+      "copy": "Copier",
+      "copied": "Copié"
     },
     "stall": {
       "noLogEntry": "Aucune entrée de journal pour l'instant",
@@ -9931,5 +9933,12 @@
   "windows": {
     "hide": "Masquer toutes les fenêtres",
     "restore": "Restaurer les fenêtres"
+  },
+  "uiStyle": {
+    "label": "Style d’interface",
+    "classic": "Actuel",
+    "classicDescription": "La grammaire Fusion habituelle, inchangée.",
+    "clean": "Épuré",
+    "cleanDescription": "Densité resserrée, angles adoucis, chrome discret."
   }
 }

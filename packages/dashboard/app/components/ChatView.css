@@ -29,60 +29,60 @@ Canonical and detached Chat surfaces use the History shell contract: one fixed s
 }
 
 /*
-FNXC:AlphaDensity 2026-09-11-00:30:
-All Alpha Chat hosts share one restrained density hierarchy: quiet list chrome, compact headers/actions, readable transcript measure, and a composer that stays visually primary. These boundary-only rules preserve list/detail navigation, virtualization, streaming, dock/floating geometry, and the stable non-Alpha tree.
+FNXC:NativeDensity 2026-09-11-00:30:
+All Chat hosts share one restrained density hierarchy: quiet list chrome, compact headers/actions, readable transcript measure, and a composer that stays visually primary. These rules preserve list/detail navigation, virtualization, streaming, dock/floating geometry, and the shared component tree.
 */
-[data-alpha-surface="true"] .chat-sidebar-search-container {
-  padding: var(--alpha-density-2);
-  gap: var(--alpha-density-1);
+.chat-sidebar-search-container {
+  padding: var(--ui-density-sm);
+  gap: var(--ui-density-2xs);
 }
 
-[data-alpha-surface="true"] .chat-session-list {
-  padding: var(--alpha-density-1) var(--alpha-density-2);
+.chat-session-list {
+  padding: var(--ui-density-2xs) var(--ui-density-sm);
 }
 
-[data-alpha-surface="true"] .chat-session-item {
-  gap: var(--alpha-density-1);
-  padding: var(--alpha-density-2) var(--alpha-density-3);
+.chat-session-item {
+  gap: var(--ui-density-2xs);
+  padding: var(--ui-density-sm) var(--ui-density-md);
   border-radius: var(--radius-md);
 }
 
-[data-alpha-surface="true"] .chat-thread-header {
-  gap: var(--alpha-density-2);
-  padding: var(--alpha-density-2) var(--alpha-density-3);
-  background: var(--alpha-neutral-background);
+.chat-thread-header {
+  gap: var(--ui-density-sm);
+  padding: var(--ui-density-sm) var(--ui-density-md);
+  background: var(--bg);
 }
 
-[data-alpha-surface="true"] .chat-messages {
-  padding: var(--alpha-density-4);
+.chat-messages {
+  padding: var(--ui-density-lg);
 }
 
-[data-alpha-surface="true"] .chat-transcript-row {
-  padding-block-end: var(--alpha-density-3);
+.chat-transcript-row {
+  padding-block-end: var(--ui-density-md);
 }
 
-[data-alpha-surface="true"] .chat-message {
-  padding: var(--alpha-density-2) var(--alpha-density-3);
+.chat-message {
+  padding: var(--ui-density-sm) var(--ui-density-md);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sm);
 }
 
-[data-alpha-surface="true"] :is(.view-header__actions, .chat-thread-header) .btn {
-  min-block-size: var(--alpha-control-height);
-  padding-block: var(--alpha-density-1);
+:is(.view-header__actions, .chat-thread-header) .btn {
+  min-block-size: var(--ui-control-height);
+  padding-block: var(--ui-density-2xs);
 }
 
 @media (max-width: 768px) {
-  [data-alpha-surface="true"] .chat-messages {
-    padding: var(--alpha-density-2);
+  .chat-messages {
+    padding: var(--ui-density-sm);
   }
 
-  [data-alpha-surface="true"] .chat-thread-header {
-    padding-inline: var(--alpha-density-2);
+  .chat-thread-header {
+    padding-inline: var(--ui-density-sm);
   }
 
-  [data-alpha-surface="true"] :is(.view-header__actions, .chat-thread-header) .btn {
-    min-block-size: var(--alpha-touch-height);
+  :is(.view-header__actions, .chat-thread-header) .btn {
+    min-block-size: var(--ui-touch-height);
   }
 }
 
@@ -256,7 +256,8 @@ html[data-viewport-mode="tablet"] .chat-view--docked-list .chat-sidebar--docked 
   display: inline-flex;
   inline-size: max-content;
   margin-block: var(--space-xs);
-  padding: var(--space-2xs) var(--space-xs);
+  /* FNXC:DashboardStyling 2026-09-15-00:20: --space-2xs is not a defined rung; the tightest real rung is --space-3xs, so the padding actually applies instead of invalidating the declaration. */
+  padding: var(--space-3xs) var(--space-xs);
   border: var(--btn-border-width) solid var(--border-color);
   border-radius: var(--radius-sm);
   color: var(--text-secondary);
@@ -362,8 +363,8 @@ FN-8191 gives the conversation action menu a token-composed border-box width. Ch
 }
 
 /*
-FNXC:AlphaCollections 2026-09-10-20:43:
-Conversation actions use one sectioned homemade Alpha collection for continuous arrow navigation. The tag-action rail follows as sibling chrome, with visible tag names aligned to its rename/delete buttons.
+FNXC:NativeUiCollections 2026-09-10-20:43:
+Conversation actions use one sectioned native collection for continuous arrow navigation. The tag-action rail follows as sibling chrome, with visible tag names aligned to its rename/delete buttons.
 */
 .chat-session-context-menu-section {
   display: contents;
@@ -1527,8 +1528,8 @@ User messages in direct (model-loop) chat carry a compact edit affordance inline
 }
 
 /*
-FNXC:AlphaMobileDrawer 2026-09-10-22:24:
-Chat's transcript is the shrinking scroll owner inside the canonical Alpha drawer height. The composer remains a non-shrinking flex child so short landscape and keyboard-resized layouts cannot push the real input below the panel's internal system clearance.
+FNXC:MobileDrawer 2026-09-10-22:24:
+Chat's transcript is the shrinking scroll owner inside the canonical drawer height. The composer remains a non-shrinking flex child so short landscape and keyboard-resized layouts cannot push the real input below the panel's internal system clearance.
 */
 .chat-input-area {
   position: relative;

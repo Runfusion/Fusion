@@ -48,15 +48,15 @@ const createDefaultProps = () => ({
   projectId: "proj_1",
 });
 
-function AlphaMenuHarness(props: ReturnType<typeof createDefaultProps>) {
+function UiMenuHarness(props: ReturnType<typeof createDefaultProps>) {
   const [open, setOpen] = useState(false);
   useEffect(() => setOpen(true), []);
-  return <MobileNavBar {...props} alphaMenuOpen={open} onAlphaMenuOpenChange={setOpen} />;
+  return <MobileNavBar {...props} navigationMenuOpen={open} onUiMenuOpenChange={setOpen} />;
 }
 
 function ControlledMenuHarness(props: ReturnType<typeof createDefaultProps>) {
   const [open, setOpen] = useState(false);
-  return <MobileNavBar {...props} alphaMenuOpen={open} onAlphaMenuOpenChange={setOpen} />;
+  return <MobileNavBar {...props} navigationMenuOpen={open} onUiMenuOpenChange={setOpen} />;
 }
 
 function dispatchPopState(navIndex: number) {
@@ -66,7 +66,7 @@ function dispatchPopState(navIndex: number) {
 }
 
 async function openMore() {
-  fireEvent.click(screen.getByTestId("alpha-mobile-menu-trigger"));
+  fireEvent.click(screen.getByTestId("mobile-menu-trigger"));
   await waitFor(() => expect(screen.getByTestId("mobile-more-item-activity")).toBeInTheDocument());
 }
 
@@ -99,16 +99,16 @@ describe("MobileNavBar More sheet navigation history", () => {
     const props = createDefaultProps();
     const { container } = render(
       <HistoryHarness onReady={(history) => { navigationHistory = history; }}>
-        <AlphaMenuHarness {...props} />
+        <UiMenuHarness {...props} />
       </HistoryHarness>,
     );
-    await waitFor(() => expect(screen.getByRole("menu", { name: "Navigate" })).toHaveClass("alpha-mobile-navigation-popover"));
+    await waitFor(() => expect(screen.getByRole("menu", { name: "Navigate" })).toHaveClass("mobile-navigation-popover"));
     expect(container.querySelector(".mobile-more-sheet")).toBeNull();
     expect(container.querySelector(".mobile-more-sheet-backdrop")).toBeNull();
 
     dispatchPopState(0);
 
-    await waitFor(() => expect(container.querySelector(".alpha-mobile-navigation-popover")).toBeNull());
+    await waitFor(() => expect(container.querySelector(".mobile-navigation-popover")).toBeNull());
     expect(props.onChangeView).not.toHaveBeenCalled();
   });
 
@@ -130,10 +130,10 @@ describe("MobileNavBar More sheet navigation history", () => {
 
     expect(window.dispatchEvent(nativeBack)).toBe(false);
     expect(window.history.back).toHaveBeenCalledOnce();
-    expect(container.querySelector(".alpha-mobile-navigation-popover")).not.toBeNull();
+    expect(container.querySelector(".mobile-navigation-popover")).not.toBeNull();
 
     dispatchPopState(0);
-    await waitFor(() => expect(container.querySelector(".alpha-mobile-navigation-popover")).toBeNull());
+    await waitFor(() => expect(container.querySelector(".mobile-navigation-popover")).toBeNull());
   });
 
   async function expectProgrammaticCloseConsumesMoreEntry(close: () => void | Promise<void>) {
@@ -179,7 +179,7 @@ describe("MobileNavBar More sheet navigation history", () => {
   });
 
   it("consumes the More entry when its tab toggles closed", async () => {
-    await expectProgrammaticCloseConsumesMoreEntry(() => fireEvent.click(screen.getByTestId("alpha-mobile-menu-trigger")));
+    await expectProgrammaticCloseConsumesMoreEntry(() => fireEvent.click(screen.getByTestId("mobile-menu-trigger")));
   });
 
   it("consumes the More entry when a script runs", async () => {
@@ -212,7 +212,7 @@ describe("MobileNavBar More sheet navigation history", () => {
   it("keeps provider-less official popover renders functional", async () => {
     const { container } = render(<ControlledMenuHarness {...createDefaultProps()} />);
     await openMore();
-    fireEvent.click(screen.getByTestId("alpha-mobile-menu-trigger"));
-    await waitFor(() => expect(container.querySelector(".alpha-mobile-navigation-popover")).toBeNull());
+    fireEvent.click(screen.getByTestId("mobile-menu-trigger"));
+    await waitFor(() => expect(container.querySelector(".mobile-navigation-popover")).toBeNull());
   });
 });

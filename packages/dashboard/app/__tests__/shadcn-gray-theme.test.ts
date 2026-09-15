@@ -20,7 +20,8 @@ describe("Shadcn Gray color theme", () => {
 
     expect(darkBlock).toContain("--surface-hover:");
     expect(lightBlock).toContain("--surface-hover:");
-    expect(darkBlock).toContain("--btn-border-width: 1px;");
+    /* FNXC:UiStyleAxis 2026-09-15-00:20: FN-399 moved border widths to the interface-style catalogue, so a colour preset no longer declares them; the preset keeps colour identity only. */
+    expect(darkBlock).not.toContain("--btn-border-width");
     expect(lightBlock).toContain("--cta-glow: none;");
     expect(darkBlock).toContain("--accent: #a1a1aa;");
     expect(lightBlock).toContain("--accent: #52525b;");

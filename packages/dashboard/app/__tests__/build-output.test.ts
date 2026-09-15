@@ -58,7 +58,7 @@ describe("mobile build output chunking", () => {
       .filter((file) => file.endsWith(".css"))
       .map((file) => readFileSync(resolve(dashboardClientAssetsDir, file), "utf8"))
       .join("\n");
-    const scopeStart = css.indexOf('@scope (:where([data-alpha-surface="true"],[data-alpha-portal="true"])){');
+    const scopeStart = css.indexOf('@scope (:where(:root,[data-ui-portal="true"])){');
     expect(scopeStart).toBeGreaterThanOrEqual(0);
     expect(css).not.toContain("@apply");
     expect(css).not.toContain("@import");
@@ -74,7 +74,7 @@ describe("mobile build output chunking", () => {
       }
     }
     expect(scopeEnd).toBeGreaterThan(scopeStart);
-    const alphaMarkerOffsets = [...css.matchAll(/\[data-alpha-ui\]/g)].map((match) => match.index);
+    const alphaMarkerOffsets = [...css.matchAll(/\[data-ui\]/g)].map((match) => match.index);
     expect(alphaMarkerOffsets.length).toBeGreaterThan(0);
     expect(css).toContain("data-alpha-surface");
     expect(css.toLowerCase()).not.toContain(["hero", "ui"].join(""));

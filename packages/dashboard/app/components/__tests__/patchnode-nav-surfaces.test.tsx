@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { LeftSidebarNav } from "../LeftSidebarNav";
 import { MobileNavBar } from "../MobileNavBar";
 import { Header } from "../Header";
-import { AlphaDesktopActionBar } from "../AlphaDesktopActionBar";
+import { DesktopActionBar } from "../DesktopActionBar";
 import { buildDashboardNavigationEntries } from "../dashboardNavigationEntries";
 
 vi.mock("../../api", async (importOriginal) => {
@@ -64,7 +64,7 @@ describe("Patchnode navigation surfaces", () => {
     expect(screen.queryByTestId("view-overflow-patchnode")).toBeNull();
     header.unmount();
 
-    render(<AlphaDesktopActionBar entries={buildDashboardNavigationEntries({ view: "board", onChangeView: vi.fn() })} activeId="board" tasks={[]} />);
-    expect(screen.queryByTestId("alpha-desktop-nav-patchnode")).toBeNull();
+    render(<DesktopActionBar entries={buildDashboardNavigationEntries({ view: "board", onChangeView: vi.fn() })} activeId="board" tasks={[]} />);
+    expect(screen.queryByTestId("desktop-nav-patchnode")).toBeNull();
   });
 });

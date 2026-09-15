@@ -98,7 +98,7 @@ describe("footer-safe project workspace layout", () => {
   // ── Child views use height: 100% ───────────────────────────────────
 
   describe("Board boundary and scroll ownership", () => {
-    const alphaCss = readAppFile("alpha-ui.css");
+    const alphaCss = readAppFile("ui.css");
 
     it("keeps both Alpha boundary states layout-transparent", () => {
       expect(alphaCss).toMatch(/\[data-alpha-surface\]\s*\{[^}]*display:\s*contents/);
@@ -182,7 +182,7 @@ describe("footer-safe project workspace layout", () => {
     });
 
     it("gives the Alpha desktop navigation footer a non-zero height outside the shell scope", () => {
-      const bar = ruleBlocks.find((rule) => rule.selector === ".alpha-desktop-action-bar");
+      const bar = ruleBlocks.find((rule) => rule.selector === ".desktop-action-bar");
       expect(bar).toBeTruthy();
       expect(bar!.body).toContain("--executor-footer-height: 36px");
       expect(bar!.body).toContain("block-size: var(--executor-footer-height)");

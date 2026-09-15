@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import type { ThemeMode, ColorTheme } from "@fusion/core";
+import type { ThemeMode, ColorTheme, UiStyle } from "@fusion/core";
 import { ThemeSelector } from "../../ThemeSelector";
 import { LanguageSelector } from "../../LanguageSelector";
 import { SettingsToggleRow } from "../SettingsToggleRow";
@@ -9,6 +9,9 @@ import { normalizeChatMessageLayout, type ChatMessageLayout } from "../../../hoo
 export interface AppearanceSectionProps extends SectionBaseProps {
     themeMode: ThemeMode;
     colorTheme: ColorTheme;
+    /* FNXC:UiStyleAxis 2026-09-15-00:20: the interface style is global like themeMode/colorTheme and independent of them. */
+    uiStyle?: UiStyle;
+    onUiStyleChange?: (style: UiStyle) => void;
     dashboardFontScalePct: number;
     shadcnCustomColors?: Record<string, string>;
     resolvedThemeMode?: "dark" | "light";
@@ -37,11 +40,20 @@ Rows render through the shared settings primitives rather than hand-rolled `form
 FNXC:SettingsScope 2026-07-15-17:35:
 Scope badges are per-row because this section genuinely mixes authority levels: theme, color, and font scale are global (DEFAULT_GLOBAL_SETTINGS), while every task-presentation toggle below is project-scoped (DEFAULT_PROJECT_SETTINGS). The nav labels the whole section "global", which is true only of the theme controls, so the badges are what tell an operator which of these travels between projects.
 */
-export function AppearanceSection({ form, setForm, themeMode, colorTheme, dashboardFontScalePct, shadcnCustomColors = {}, resolvedThemeMode, onThemeModeChange, onColorThemeChange, onDashboardFontScaleChange, onShadcnCustomColorsChange, chatMessageLayout = "bubbles", onChatMessageLayoutChange, openTasksInRightSidebar, onOpenTasksInRightSidebarChange, openMobileTasksInPopup, onOpenMobileTasksInPopupChange, showCostBadgeOnCards, onShowCostBadgeOnCardsChange, taskDetailChatFirst, onTaskDetailChatFirstChange, sessionBannersHidden, setSessionBannersHidden, }: AppearanceSectionProps) {
+export function AppearanceSection({ form, setForm, themeMode, colorTheme, uiStyle, onUiStyleChange, dashboardFontScalePct, shadcnCustomColors = {}, resolvedThemeMode, onThemeModeChange, onColorThemeChange, onDashboardFontScaleChange, onShadcnCustomColorsChange, chatMessageLayout = "bubbles", onChatMessageLayoutChange, openTasksInRightSidebar, onOpenTasksInRightSidebarChange, openMobileTasksInPopup, onOpenMobileTasksInPopupChange, showCostBadgeOnCards, onShowCostBadgeOnCardsChange, taskDetailChatFirst, onTaskDetailChatFirstChange, sessionBannersHidden, setSessionBannersHidden, }: AppearanceSectionProps) {
     const { t } = useTranslation("app");
     return (<>
       <h4 className="settings-section-heading">{t("settings.appearance.title", "Appearance")}</h4>
-      <ThemeSelector themeMode={themeMode} colorTheme={colorTheme} dashboardFontScalePct={dashboardFontScalePct} onThemeModeChange={(mode) => {
+      <ThemeSelector themeMode={themeMode} colorTheme={colorTheme} uiStyle={uiStyle} onUiStyleChange={onUiStyleChange ? (style) => {
+            /*
+            FNXC:UiStyleAxis 2026-09-15-00:20:
+            Mirror the chosen style into the settings form so an open Settings form saved later cannot write
+            back a stale value over a choice made meanwhile from the Command Center, then hand the choice to
+            the single useTheme owner that actually persists it.
+            */
+            setForm((f) => ({ ...f, uiStyle: style }));
+            onUiStyleChange(style);
+        } : undefined} dashboardFontScalePct={dashboardFontScalePct} onThemeModeChange={(mode) => {
             setForm((f) => ({ ...f, themeMode: mode }));
             onThemeModeChange?.(mode);
         }} onColorThemeChange={(theme) => {

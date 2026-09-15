@@ -49,7 +49,7 @@ describe("ChatView pop-out host inventory", () => {
       expect(testIdPosition).toBeGreaterThanOrEqual(0);
       /* Chat's shared header uses the reusable action primitives, so accept any of the button elements it renders. */
       const buttonStart = Math.max(
-        ...["<button", "<AlphaButton", "<ViewActionButton"].map((element) => chatView.lastIndexOf(element, testIdPosition)),
+        ...["<button", "<UiButton", "<ViewActionButton"].map((element) => chatView.lastIndexOf(element, testIdPosition)),
       );
       expect(buttonStart).toBeGreaterThanOrEqual(0);
       expect(chatView.slice(buttonStart, testIdPosition)).toContain("onClick={handleNewChat}");

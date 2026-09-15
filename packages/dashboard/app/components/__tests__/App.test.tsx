@@ -786,8 +786,8 @@ function extractProductionDeclaration(rule: string, property: string): string {
 
 function installProductionAlphaReserveRule(): HTMLStyleElement {
   const css = readAppFile("components/MobileNavBar.css");
-  const selector = 'html[data-viewport-mode="mobile"] .project-content--with-alpha-nav';
-  const boardSelector = '[data-alpha-surface="true"] .board';
+  const selector = 'html[data-viewport-mode="mobile"] .project-content--with-mobile-nav';
+  const boardSelector = '.board';
   const boardCss = readAppFile("components/Board.css");
   const style = document.createElement("style");
   style.textContent = `${selector} { ${extractProductionRule(css, selector)} } ${boardSelector} { ${extractProductionRule(boardCss, boardSelector)} }`;
@@ -796,12 +796,12 @@ function installProductionAlphaReserveRule(): HTMLStyleElement {
 }
 
 function installProductionAlphaDrawerRules(systemOffset: number): HTMLStyleElement {
-  const drawerCss = readAppFile("components/AlphaMobileDrawer.css");
+  const drawerCss = readAppFile("components/MobileDrawer.css");
   const navCss = readAppFile("components/MobileNavBar.css");
   const tokenCss = readAppFile("styles.css");
-  const drawerRule = extractProductionRule(drawerCss, ".alpha-mobile-drawer");
-  const panelRule = extractProductionRule(drawerCss, ".alpha-mobile-drawer__panel");
-  const bodyRule = extractProductionRule(drawerCss, ".alpha-mobile-drawer__body");
+  const drawerRule = extractProductionRule(drawerCss, ".mobile-drawer");
+  const panelRule = extractProductionRule(drawerCss, ".mobile-drawer__panel");
+  const bodyRule = extractProductionRule(drawerCss, ".mobile-drawer__body");
   const navRule = extractProductionRule(navCss, ".mobile-nav-bar");
   const inset = extractProductionDeclaration(drawerRule, "inset");
   const insetParts = inset.match(/^([^\s]+)\s+(var\(--icb-right-offset,\s*[^)]+\))\s+([^\s]+)\s+([^\s]+)$/);
@@ -813,18 +813,18 @@ function installProductionAlphaDrawerRules(systemOffset: number): HTMLStyleEleme
   if (!drawerZ) throw new Error(`Production z-index token is missing: ${drawerZToken}`);
 
   const bodyPadding = extractProductionDeclaration(bodyRule, "padding-block-end");
-  if (bodyPadding !== "var(--mobile-nav-alpha-system-offset)") {
+  if (bodyPadding !== "var(--mobile-nav-system-offset)") {
     throw new Error(`Production drawer must keep system clearance inside its body: ${bodyPadding}`);
   }
 
   /*
-  FNXC:AlphaMobileDrawer 2026-09-10-17:16:
+  FNXC:MobileDrawer 2026-09-10-17:16:
   The App regression must click the shipped pill and hamburger paths, then observe the real production declarations as a resolved cascade. Materialize only environment/custom-property values that jsdom cannot resolve so a bottom offset, layer regression, or external safe-area reserve fails at the real shell boundary.
   */
   const style = document.createElement("style");
   style.textContent = `
     .mobile-nav-bar { position: ${extractProductionDeclaration(navRule, "position")}; z-index: ${extractProductionDeclaration(navRule, "z-index")}; }
-    .alpha-mobile-drawer {
+    .mobile-drawer {
       position: ${extractProductionDeclaration(drawerRule, "position")};
       top: ${insetParts[1]};
       right: 0;
@@ -835,8 +835,8 @@ function installProductionAlphaDrawerRules(systemOffset: number): HTMLStyleEleme
       align-items: ${extractProductionDeclaration(drawerRule, "align-items")};
       pointer-events: auto;
     }
-    .alpha-mobile-drawer__panel { height: ${extractProductionDeclaration(panelRule, "height")}; }
-    .alpha-mobile-drawer__body { padding-block-end: ${systemOffset}px; }
+    .mobile-drawer__panel { height: ${extractProductionDeclaration(panelRule, "height")}; }
+    .mobile-drawer__body { padding-block-end: ${systemOffset}px; }
   `;
   document.head.append(style);
   return style;
@@ -844,8 +844,8 @@ function installProductionAlphaDrawerRules(systemOffset: number): HTMLStyleEleme
 
 function expectProductionAlphaDrawerOverlay(drawer: HTMLElement, systemOffset: number): void {
   const nav = document.querySelector<HTMLElement>(".mobile-nav-bar");
-  const panel = drawer.querySelector<HTMLElement>(".alpha-mobile-drawer__panel");
-  const body = drawer.querySelector<HTMLElement>(".alpha-mobile-drawer__body");
+  const panel = drawer.querySelector<HTMLElement>(".mobile-drawer__panel");
+  const body = drawer.querySelector<HTMLElement>(".mobile-drawer__body");
   expect(nav).not.toBeNull();
   expect(panel).not.toBeNull();
   expect(body).not.toBeNull();
@@ -863,14 +863,14 @@ function expectProductionAlphaDrawerOverlay(drawer: HTMLElement, systemOffset: n
 }
 
 function expectSingleDrawerHeader(dialog: HTMLElement, headerSelector: string): void {
-  expect(dialog.querySelector(".alpha-mobile-drawer__header")).toBeNull();
+  expect(dialog.querySelector(".mobile-drawer__header")).toBeNull();
   expect(dialog.querySelectorAll(headerSelector)).toHaveLength(1);
-  expect(dialog.querySelectorAll(".alpha-mobile-drawer__close")).toHaveLength(0);
-  expect(dialog.querySelectorAll(".alpha-mobile-drawer__handle-target")).toHaveLength(1);
+  expect(dialog.querySelectorAll(".mobile-drawer__close")).toHaveLength(0);
+  expect(dialog.querySelectorAll(".mobile-drawer__handle-target")).toHaveLength(1);
 }
 
 function dismissAlphaDrawerByHandle(drawer: Element): void {
-  const handle = drawer.querySelector(".alpha-mobile-drawer__handle-target");
+  const handle = drawer.querySelector(".mobile-drawer__handle-target");
   if (!handle) throw new Error("Alpha drawer handle is missing");
   fireEvent.pointerDown(handle, { pointerId: 1, clientY: 0, button: 0, isPrimary: true });
   fireEvent.pointerMove(handle, { pointerId: 1, clientY: 1000 });
@@ -960,7 +960,7 @@ async function waitForAppShell(): Promise<void> {
       expect(screen.getByTestId("mobile-nav-tab-command-center")).toBeTruthy();
       expect(screen.getByTestId("mobile-nav-tab-planning")).toBeTruthy();
     } else {
-      expect(screen.getByTestId("alpha-desktop-action-bar")).toBeTruthy();
+      expect(screen.getByTestId("desktop-action-bar")).toBeTruthy();
     }
   });
 }
@@ -1028,7 +1028,7 @@ describe("FN-392 task windows travel across Board and other views", () => {
     const taskWindow = screen.getByTestId(popupTestId);
 
     for (const view of ["planning", "agents", "board"] as const) {
-      fireEvent.click(screen.getByTestId(`alpha-desktop-nav-${view}`));
+      fireEvent.click(screen.getByTestId(`desktop-nav-${view}`));
       expect(screen.getByTestId(popupTestId)).toBe(taskWindow);
       expect(screen.getByTestId(overlayTestId)).not.toHaveAttribute("aria-hidden");
     }
@@ -1320,9 +1320,15 @@ describe("official dashboard design production wiring", () => {
       expect(content).toHaveClass("project-content--with-footer");
       expect(content?.contains(keepAlive)).toBe(true);
       expect(keepAlive.contains(board)).toBe(true);
-      expect(board.closest("[data-alpha-surface]")).toHaveAttribute("data-alpha-surface", "true");
+      /*
+      FNXC:NativeUiPresentation 2026-09-15-00:20:
+      The perimeter element is gone, so Board is a direct occupant of its keep-alive host with no extra box
+      between them. That containment — not a marker on a wrapper — is what this case always protected.
+      */
+      expect(board.closest("[data-alpha-surface]")).toBeNull();
+      expect(board.parentElement && keepAlive.contains(board.parentElement)).toBe(true);
       expect(document.querySelector(".executor-status-bar")).not.toBeInTheDocument();
-      expect(screen.getByTestId("alpha-desktop-action-bar")).toBeInTheDocument();
+      expect(screen.getByTestId("desktop-action-bar")).toBeInTheDocument();
 
       if (state === "skeleton") expect(screen.getByTestId("board-workflows-skeleton")).toBe(board);
       if (state === "sans-workflow") expect(screen.getByTestId("board-workflows-empty")).toBe(board);
@@ -1373,9 +1379,9 @@ describe("official dashboard design production wiring", () => {
       return dock;
     });
     expect(content).toHaveClass("project-content--with-footer");
-    expect(content).not.toHaveClass("project-content--with-alpha-nav", "project-content--with-mobile-nav");
-    expect(screen.getByTestId("alpha-desktop-action-bar")).toBeInTheDocument();
-    const moreTrigger = screen.getByTestId("alpha-desktop-nav-more");
+    expect(content).not.toHaveClass("project-content--with-mobile-nav", "project-content--with-mobile-nav");
+    expect(screen.getByTestId("desktop-action-bar")).toBeInTheDocument();
+    const moreTrigger = screen.getByTestId("desktop-nav-more");
     expect(moreTrigger).toHaveAttribute("aria-expanded", "false");
     fireEvent.pointerEnter(moreTrigger);
     expect(screen.getByRole("menu")).toBeInTheDocument();
@@ -1401,7 +1407,7 @@ describe("official dashboard design production wiring", () => {
 
     render(<App />);
 
-    const terminal = await screen.findByTestId("alpha-desktop-nav-terminal");
+    const terminal = await screen.findByTestId("desktop-nav-terminal");
     expect(screen.queryByTestId("terminal-modal")).toBeNull();
     expect(terminalLifecycle.mounts).toBe(0);
     fireEvent.click(terminal);
@@ -1438,7 +1444,7 @@ describe("official dashboard design production wiring", () => {
     expect(shell.querySelector(".project-content")).toHaveClass("project-content--with-footer");
     expect(await screen.findByTestId("left-sidebar-nav")).toHaveClass("left-sidebar-nav--with-footer");
     expect(screen.queryByTestId("executor-terminal-launcher-segment")).toBeNull();
-    expect(screen.getByTestId("alpha-desktop-action-bar")).toBeInTheDocument();
+    expect(screen.getByTestId("desktop-action-bar")).toBeInTheDocument();
     expect(document.querySelector(".executor-status-bar")).toBeNull();
     expect(document.querySelector(".mobile-nav-bar")).toBeNull();
 
@@ -1470,7 +1476,7 @@ describe("official dashboard design production wiring", () => {
 
     render(<App />);
 
-    await waitFor(() => expect(document.querySelector(".mobile-nav-bar")).toHaveClass("mobile-nav-bar--alpha"));
+    await waitFor(() => expect(document.querySelector(".mobile-nav-bar")).toHaveClass("mobile-nav-bar--native"));
     const shell = screen.getByTestId("dashboard-project-shell");
     const content = shell.querySelector(".project-content");
     const nav = document.querySelector(".mobile-nav-bar");
@@ -1478,7 +1484,7 @@ describe("official dashboard design production wiring", () => {
     expect(screen.queryByTestId("executor-terminal-launcher-segment")).toBeNull();
     expect(content).not.toHaveClass("project-content--with-footer", "project-content--with-mobile-nav");
     expect(nav).not.toHaveClass("mobile-nav-bar--with-footer");
-    expect(content).toHaveClass("project-content--with-alpha-nav");
+    expect(content).toHaveClass("project-content--with-mobile-nav");
     expect(screen.queryByTestId("left-sidebar-nav")).toBeNull();
     expect(document.querySelector(".right-dock")).toBeNull();
   });
@@ -1503,9 +1509,9 @@ describe("official dashboard design production wiring", () => {
     ["portrait with iOS inset", { viewportHeight: 640, contentHeight: 720, systemOffset: 46 }],
     ["landscape with Android ICB", { viewportHeight: 360, contentHeight: 720, systemOffset: 48 }],
     ["standalone display", { viewportHeight: 640, contentHeight: 720, systemOffset: 60 }],
-  ] as const)("scrolls a real App final control above the measured Alpha pill in %s", async (_scenario, layout) => {
+  ] as const)("scrolls a real App final control above the measured navigation pill in %s", async (_scenario, layout) => {
     /*
-    FNXC:AlphaUpdates 2026-09-10-04:03:
+    FNXC:NativeShell 2026-09-10-04:03:
     The regression must exercise App's real project scroller and MobileNavBar publication path. This test imports the production reserve declaration and simulates only jsdom's absent box layout, so removing the class, CSS rule, or measured custom property breaks final-control clearance instead of satisfying a duplicated arithmetic fixture.
     */
     mockUseViewportMode.mockReturnValue("mobile");
@@ -1514,9 +1520,9 @@ describe("official dashboard design production wiring", () => {
       experimentalFeatures: { ...defaultSettings.experimentalFeatures },
     });
     document.documentElement.dataset.viewportMode = "mobile";
-    document.documentElement.style.setProperty("--mobile-nav-alpha-system-offset", `${layout.systemOffset}px`);
+    document.documentElement.style.setProperty("--mobile-nav-system-offset", `${layout.systemOffset}px`);
     document.documentElement.style.setProperty("--space-xs", "4px");
-    document.documentElement.style.setProperty("--alpha-density-3", "12px");
+    document.documentElement.style.setProperty("--ui-density-md", "12px");
     const productionStyle = installProductionAlphaReserveRule();
     const nativeGetComputedStyle = window.getComputedStyle.bind(window);
     const offsetHeight = vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function () {
@@ -1540,7 +1546,7 @@ describe("official dashboard design production wiring", () => {
       render(<App />);
 
       const pill = await waitFor(() => {
-        const candidate = document.querySelector<HTMLElement>(".mobile-nav-bar--alpha");
+        const candidate = document.querySelector<HTMLElement>(".mobile-nav-bar--native");
         expect(candidate).not.toBeNull();
         expect(document.documentElement.style.getPropertyValue("--mobile-nav-height")).toBe("62px");
         return candidate!;
@@ -1552,14 +1558,14 @@ describe("official dashboard design production wiring", () => {
       expect(scroller).not.toBeNull();
       expect(board).not.toBeNull();
       expect(columns.length).toBeGreaterThan(0);
-      expect(scroller).toHaveClass("project-content--with-alpha-nav");
+      expect(scroller).toHaveClass("project-content--with-mobile-nav");
       expect(scroller!.style.paddingBottom).toBe("");
 
       const productionPadding = nativeGetComputedStyle(scroller!).paddingBottom;
       expect(productionPadding).toContain("var(--mobile-nav-height)");
-      expect(productionPadding).toContain("var(--mobile-nav-alpha-system-offset)");
+      expect(productionPadding).toContain("var(--mobile-nav-system-offset)");
       const reserve = resolvePixelCalcFromRoot(productionPadding);
-      expect(productionStyle.textContent).toContain("--board-padding: var(--alpha-density-3)");
+      expect(productionStyle.textContent).toContain("--board-padding: var(--ui-density-md)");
       let scrollTop = 0;
       Object.defineProperties(scroller!, {
         clientHeight: { configurable: true, value: layout.viewportHeight },
@@ -1612,10 +1618,10 @@ describe("official dashboard design production wiring", () => {
       offsetHeight.mockRestore();
       rect.mockRestore();
       computedStyle.mockRestore();
-      document.documentElement.style.removeProperty("--mobile-nav-alpha-system-offset");
+      document.documentElement.style.removeProperty("--mobile-nav-system-offset");
       document.documentElement.style.removeProperty("--mobile-nav-height");
       document.documentElement.style.removeProperty("--space-xs");
-      document.documentElement.style.removeProperty("--alpha-density-3");
+      document.documentElement.style.removeProperty("--ui-density-md");
       delete document.documentElement.dataset.viewportMode;
     }
   });
@@ -1648,9 +1654,9 @@ describe("official dashboard design production wiring", () => {
     const systemOffset = 46;
     const allowedGap = 12;
     document.documentElement.dataset.viewportMode = "mobile";
-    document.documentElement.style.setProperty("--mobile-nav-alpha-system-offset", `${systemOffset}px`);
+    document.documentElement.style.setProperty("--mobile-nav-system-offset", `${systemOffset}px`);
     document.documentElement.style.setProperty("--space-xs", "4px");
-    document.documentElement.style.setProperty("--alpha-density-3", `${allowedGap}px`);
+    document.documentElement.style.setProperty("--ui-density-md", `${allowedGap}px`);
     const productionStyle = installProductionAlphaReserveRule();
     const nativeGetComputedStyle = window.getComputedStyle.bind(window);
     const offsetHeight = vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function () {
@@ -1673,7 +1679,7 @@ describe("official dashboard design production wiring", () => {
     try {
       render(<App />);
       const pill = await waitFor(() => {
-        const candidate = document.querySelector<HTMLElement>(".mobile-nav-bar--alpha");
+        const candidate = document.querySelector<HTMLElement>(".mobile-nav-bar--native");
         expect(candidate).not.toBeNull();
         expect(document.documentElement.style.getPropertyValue("--mobile-nav-height")).toBe("62px");
         return candidate!;
@@ -1691,9 +1697,9 @@ describe("official dashboard design production wiring", () => {
 
       const scroller = screen.getByTestId("dashboard-project-shell").querySelector<HTMLElement>(".project-content");
       expect(scroller).not.toBeNull();
-      expect(scroller).toHaveClass("project-content--with-alpha-nav");
+      expect(scroller).toHaveClass("project-content--with-mobile-nav");
       const reserve = resolvePixelCalcFromRoot(nativeGetComputedStyle(scroller!).paddingBottom);
-      const boardSelector = '[data-alpha-surface="true"] .board';
+      const boardSelector = '.board';
       const boardPadding = resolvePixelCalcFromRoot(extractProductionDeclaration(extractProductionRule(readAppFile("components/Board.css"), boardSelector), "--board-padding"));
       const pillTop = viewportHeight - systemOffset - 8 - 54;
       const columnBottom = viewportHeight - reserve - boardPadding;
@@ -1712,10 +1718,10 @@ describe("official dashboard design production wiring", () => {
       offsetHeight.mockRestore();
       rect.mockRestore();
       computedStyle.mockRestore();
-      document.documentElement.style.removeProperty("--mobile-nav-alpha-system-offset");
+      document.documentElement.style.removeProperty("--mobile-nav-system-offset");
       document.documentElement.style.removeProperty("--mobile-nav-height");
       document.documentElement.style.removeProperty("--space-xs");
-      document.documentElement.style.removeProperty("--alpha-density-3");
+      document.documentElement.style.removeProperty("--ui-density-md");
       delete document.documentElement.dataset.viewportMode;
       sessionStorage.clear();
     }
@@ -1734,15 +1740,15 @@ describe("official dashboard design production wiring", () => {
     const shell = screen.getByTestId("dashboard-project-shell");
     const content = shell.querySelector(".project-content");
     expect(document.querySelector(".executor-status-bar")).toBeNull();
-    expect(content).toHaveClass(mode === "mobile" ? "project-content--with-alpha-nav" : "project-content--with-footer");
+    expect(content).toHaveClass(mode === "mobile" ? "project-content--with-mobile-nav" : "project-content--with-footer");
     if (mode === "mobile") {
-      expect(document.querySelector(".mobile-nav-bar")).toHaveClass("mobile-nav-bar--alpha");
+      expect(document.querySelector(".mobile-nav-bar")).toHaveClass("mobile-nav-bar--native");
       expect(screen.queryByTestId("left-sidebar-nav")).toBeNull();
     } else if (mode === "tablet") {
       expect(await screen.findByTestId("left-sidebar-nav")).toHaveClass("left-sidebar-nav--with-footer");
-      expect(screen.getByTestId("alpha-desktop-action-bar")).toBeInTheDocument();
+      expect(screen.getByTestId("desktop-action-bar")).toBeInTheDocument();
     } else {
-      expect(screen.getByTestId("alpha-desktop-action-bar")).toBeInTheDocument();
+      expect(screen.getByTestId("desktop-action-bar")).toBeInTheDocument();
       expect(screen.queryByTestId("left-sidebar-nav")).toBeNull();
     }
   });
@@ -1789,7 +1795,7 @@ describe("official dashboard design production wiring", () => {
     render(<App />);
 
     const switcher = await screen.findByTestId("workflow-switcher");
-    const search = screen.getByTestId("alpha-desktop-header-search-btn");
+    const search = screen.getByTestId("desktop-inline-header-search-btn");
     const actions = document.querySelector(".header-actions");
     const slot = screen.getByTestId("header-workflow-slot");
     await waitFor(() => expect(slot.contains(switcher)).toBe(true));
@@ -1815,20 +1821,20 @@ describe("official dashboard design production wiring", () => {
     });
 
     const keyboardRender = render(<App />);
-    await screen.findByTestId("alpha-mobile-menu-trigger");
+    await screen.findByTestId("mobile-menu-trigger");
     expect(document.querySelector(".executor-status-bar")).toBeNull();
     expect(document.querySelector(".mobile-nav-bar")).toHaveClass("mobile-nav-bar--keyboard-open");
     expect(document.querySelector(".mobile-nav-bar")).not.toHaveStyle({ pointerEvents: "none" });
-    expect(screen.getByTestId("dashboard-project-shell").querySelector(".project-content")).toHaveClass("project-content--with-alpha-nav");
+    expect(screen.getByTestId("dashboard-project-shell").querySelector(".project-content")).toHaveClass("project-content--with-mobile-nav");
     keyboardRender.unmount();
 
     mockUseMobileKeyboard.mockReturnValue({ keyboardOverlap: 0, viewportHeight: null, viewportOffsetTop: 0, keyboardOpen: false });
     const modalRender = render(<App />);
-    await screen.findByTestId("alpha-mobile-menu-trigger");
+    await screen.findByTestId("mobile-menu-trigger");
     fireEvent.click(screen.getByTestId("mobile-header-new-task"));
     await screen.findByRole("heading", { name: "New Task" });
     expect(document.querySelector(".mobile-nav-bar")).toBeNull();
-    expect(screen.getByTestId("dashboard-project-shell").querySelector(".project-content")).not.toHaveClass("project-content--with-alpha-nav");
+    expect(screen.getByTestId("dashboard-project-shell").querySelector(".project-content")).not.toHaveClass("project-content--with-mobile-nav");
     expect(document.querySelector(".executor-status-bar")).toBeNull();
     modalRender.unmount();
   });
@@ -1842,7 +1848,7 @@ describe("official dashboard design production wiring", () => {
 
     const view = render(<><textarea aria-label="Champ avant navigation" /><App /></>);
     const field = screen.getByRole("textbox", { name: "Champ avant navigation" });
-    const trigger = await screen.findByTestId("alpha-mobile-menu-trigger");
+    const trigger = await screen.findByTestId("mobile-menu-trigger");
     field.focus();
     expect(field).toHaveFocus();
 
@@ -1921,8 +1927,8 @@ describe("official dashboard design production wiring", () => {
     try {
       const view = render(<App />);
       fireEvent.click(await screen.findByTestId("mobile-nav-tab-command-center"));
-      const drawer = await screen.findByTestId("alpha-mobile-drawer-main-content");
-      expect(drawer.className).toBe("alpha-mobile-drawer alpha-mobile-drawer--open");
+      const drawer = await screen.findByTestId("mobile-drawer-main-content");
+      expect(drawer.className).toBe("mobile-drawer mobile-drawer--open");
       expectProductionAlphaDrawerOverlay(drawer, viewport.systemOffset);
 
       mockUseMobileKeyboard.mockReturnValue({ keyboardOverlap: 240, viewportHeight: 400, viewportOffsetTop: 0, keyboardOpen: true });
@@ -1930,7 +1936,7 @@ describe("official dashboard design production wiring", () => {
       await waitFor(() => expect(document.querySelector(".mobile-nav-bar")).toHaveClass("mobile-nav-bar--keyboard-open"));
       expectProductionAlphaDrawerOverlay(drawer, viewport.systemOffset);
       dismissAlphaDrawerByHandle(drawer);
-      await waitFor(() => expect(screen.queryByTestId("alpha-mobile-drawer-main-content")).toBeNull());
+      await waitFor(() => expect(screen.queryByTestId("mobile-drawer-main-content")).toBeNull());
     } finally {
       productionStyle.remove();
       Object.defineProperties(window, {
@@ -1945,7 +1951,7 @@ describe("official dashboard design production wiring", () => {
     ["paysage court avec clavier", { width: 844, height: 390, keyboardOverlap: 156 }],
   ] as const)("route la pill vers le vrai Chat et garde son composeur rendu en %s", async (_name, geometry) => {
     /*
-    FNXC:AlphaMobileDrawer 2026-09-10-23:02:
+    FNXC:MobileDrawer 2026-09-10-23:02:
     The symptom regression must cross App's shipped pill into the production ChatView, select a real hook-backed conversation, and measure the resulting composer against the drawer. A component stand-in can prove routing but cannot protect ChatView's own header, selection, or flex chain.
     */
     mockUseViewportMode.mockReturnValue("mobile");
@@ -1979,23 +1985,23 @@ describe("official dashboard design production wiring", () => {
     expect(within(dialog).queryByTestId("chat-pop-out")).toBeNull();
     expect(within(dialog).queryByLabelText("Pop out chat")).toBeNull();
     expect(within(dialog).queryByRole("button", { name: "Close" })).toBeNull();
-    expect(dialog.querySelectorAll(".alpha-mobile-drawer__handle-target")).toHaveLength(1);
+    expect(dialog.querySelectorAll(".mobile-drawer__handle-target")).toHaveLength(1);
     expect(input).toHaveClass("chat-input-textarea");
-    expect(input.closest(".alpha-mobile-drawer__panel")).toBe(dialog);
+    expect(input.closest(".mobile-drawer__panel")).toBe(dialog);
     expect(input).toHaveFocus();
 
-    const chatDrawer = screen.getByTestId("alpha-mobile-drawer-chat");
+    const chatDrawer = screen.getByTestId("mobile-drawer-chat");
     dismissAlphaDrawerByHandle(chatDrawer);
-    await waitFor(() => expect(chatDrawer).toHaveClass("alpha-mobile-drawer--hidden"));
+    await waitFor(() => expect(chatDrawer).toHaveClass("mobile-drawer--hidden"));
 
-    fireEvent.click(screen.getByTestId("alpha-mobile-menu-trigger"));
+    fireEvent.click(screen.getByTestId("mobile-menu-trigger"));
     fireEvent.click(screen.getByTestId("mobile-more-item-list"));
-    const listDrawer = await screen.findByTestId("alpha-mobile-drawer-list");
+    const listDrawer = await screen.findByTestId("mobile-drawer-list");
     const listDialog = within(listDrawer).getByRole("dialog", { name: "List" });
-    expect(listDialog.querySelectorAll(".alpha-mobile-drawer__close")).toHaveLength(0);
-    expect(listDialog.querySelectorAll(".alpha-mobile-drawer__handle-target")).toHaveLength(1);
+    expect(listDialog.querySelectorAll(".mobile-drawer__close")).toHaveLength(0);
+    expect(listDialog.querySelectorAll(".mobile-drawer__handle-target")).toHaveLength(1);
     dismissAlphaDrawerByHandle(listDrawer);
-    await waitFor(() => expect(listDrawer).toHaveClass("alpha-mobile-drawer--hidden"));
+    await waitFor(() => expect(listDrawer).toHaveClass("mobile-drawer--hidden"));
   });
 
   it("garde Planning, Usage et Projects sur le même shell avec un seul propriétaire d’en-tête", async () => {
@@ -2014,29 +2020,29 @@ describe("official dashboard design production wiring", () => {
       const canonicalHeights: string[] = [];
 
       fireEvent.click(await screen.findByTestId("mobile-nav-tab-planning"));
-      const planningDrawer = await screen.findByTestId("alpha-mobile-drawer-planning");
+      const planningDrawer = await screen.findByTestId("mobile-drawer-planning");
       expectProductionAlphaDrawerOverlay(planningDrawer, systemOffset);
       expectSingleDrawerHeader(within(planningDrawer).getByRole("dialog", { name: "Planning" }), ".modal-header--embedded");
-      canonicalHeights.push(window.getComputedStyle(planningDrawer.querySelector(".alpha-mobile-drawer__panel")!).height);
+      canonicalHeights.push(window.getComputedStyle(planningDrawer.querySelector(".mobile-drawer__panel")!).height);
       dismissAlphaDrawerByHandle(planningDrawer);
 
-      fireEvent.click(await screen.findByTestId("alpha-mobile-menu-trigger"));
+      fireEvent.click(await screen.findByTestId("mobile-menu-trigger"));
       fireEvent.click(screen.getByTestId("mobile-more-item-usage"));
-      const usageDrawer = await screen.findByTestId("alpha-mobile-drawer-usage");
-      expect(usageDrawer.className).toBe("alpha-mobile-drawer alpha-mobile-drawer--open");
+      const usageDrawer = await screen.findByTestId("mobile-drawer-usage");
+      expect(usageDrawer.className).toBe("mobile-drawer mobile-drawer--open");
       expectProductionAlphaDrawerOverlay(usageDrawer, systemOffset);
       expectSingleDrawerHeader(within(usageDrawer).getByRole("dialog", { name: "Usage" }), ".modal-header");
-      canonicalHeights.push(window.getComputedStyle(usageDrawer.querySelector(".alpha-mobile-drawer__panel")!).height);
+      canonicalHeights.push(window.getComputedStyle(usageDrawer.querySelector(".mobile-drawer__panel")!).height);
       dismissAlphaDrawerByHandle(usageDrawer);
 
-      fireEvent.click(screen.getByTestId("alpha-mobile-menu-trigger"));
+      fireEvent.click(screen.getByTestId("mobile-menu-trigger"));
       fireEvent.click(screen.getByTestId("mobile-more-item-projects"));
-      const projectsDrawer = await screen.findByTestId("alpha-mobile-drawer-projects");
+      const projectsDrawer = await screen.findByTestId("mobile-drawer-projects");
       expectProductionAlphaDrawerOverlay(projectsDrawer, systemOffset);
       expectSingleDrawerHeader(within(projectsDrawer).getByRole("dialog", { name: "Projects" }), ".view-header");
-      canonicalHeights.push(window.getComputedStyle(projectsDrawer.querySelector(".alpha-mobile-drawer__panel")!).height);
+      canonicalHeights.push(window.getComputedStyle(projectsDrawer.querySelector(".mobile-drawer__panel")!).height);
       dismissAlphaDrawerByHandle(projectsDrawer);
-      await waitFor(() => expect(screen.queryByTestId("alpha-mobile-drawer-projects")).toBeNull());
+      await waitFor(() => expect(screen.queryByTestId("mobile-drawer-projects")).toBeNull());
 
       expect(new Set(canonicalHeights)).toEqual(new Set([canonicalHeights[0]]));
       expect(canonicalHeights[0]).not.toBe("");
@@ -2055,10 +2061,10 @@ describe("official dashboard design production wiring", () => {
     vi.mocked(fetchSettings).mockResolvedValue({ ...defaultSettings, mobileNavPrimaryItems: ["settings", "planning"], experimentalFeatures });
 
     render(<App />);
-    await waitFor(() => expect(screen.getByTestId("alpha-mobile-menu-trigger")).toBeInTheDocument());
-    expect(screen.getByTestId("dashboard-project-shell").querySelector(".project-content")).toHaveClass("project-content--with-alpha-nav");
+    await waitFor(() => expect(screen.getByTestId("mobile-menu-trigger")).toBeInTheDocument());
+    expect(screen.getByTestId("dashboard-project-shell").querySelector(".project-content")).toHaveClass("project-content--with-mobile-nav");
     expect(screen.queryByTestId("mobile-nav-tab-more")).toBeNull();
-    expect(Array.from(document.querySelectorAll<HTMLElement>(".mobile-nav-bar--alpha > .mobile-nav-tab")).map((tab) => tab.dataset.testid)).toEqual([
+    expect(Array.from(document.querySelectorAll<HTMLElement>(".mobile-nav-bar--native > .mobile-nav-tab")).map((tab) => tab.dataset.testid)).toEqual([
       "mobile-nav-tab-command-center",
       "mobile-nav-tab-planning",
       "mobile-nav-tab-chat",
@@ -2080,11 +2086,11 @@ describe("official dashboard design production wiring", () => {
     });
 
     render(<App />);
-    expect(await screen.findByTestId("alpha-desktop-action-bar")).toBeInTheDocument();
+    expect(await screen.findByTestId("desktop-action-bar")).toBeInTheDocument();
     expect(document.querySelector(".executor-status-bar")).toBeNull();
-    expect(screen.queryByTestId("alpha-desktop-nav-patchnode")).toBeNull();
-    expect(screen.queryByTestId("alpha-desktop-nav-chat")).toBeNull();
-    expect(screen.queryByTestId("alpha-desktop-nav-notes")).toBeNull();
+    expect(screen.queryByTestId("desktop-nav-patchnode")).toBeNull();
+    expect(screen.queryByTestId("desktop-nav-chat")).toBeNull();
+    expect(screen.queryByTestId("desktop-nav-notes")).toBeNull();
 
     /*
     FNXC:ChatSurfaceUnification 2026-09-14-17:46:
@@ -2184,7 +2190,7 @@ describe("official dashboard design production wiring", () => {
       if (viewport === "desktop") {
         expect(localStorage.getItem(taskViewStorageKey())).toBe("board");
       } else {
-        expect(screen.getByTestId("alpha-mobile-drawer-main-content")).toContainElement(historyDialog);
+        expect(screen.getByTestId("mobile-drawer-main-content")).toContainElement(historyDialog);
         expect(screen.getByTestId("board-keep-alive")).not.toHaveAttribute("aria-hidden");
       }
 
@@ -3970,10 +3976,10 @@ describe("App view switching", () => {
 
     const dialog = await screen.findByRole("dialog", { name: "Graph" });
     expect(dialog).toContainElement(await screen.findByTestId("dependency-graph"));
-    expect(dialog.querySelectorAll(".alpha-mobile-drawer__header")).toHaveLength(1);
-    expect(dialog.querySelectorAll(".alpha-mobile-drawer__title")).toHaveLength(1);
-    expect(dialog.querySelectorAll(".alpha-mobile-drawer__close")).toHaveLength(0);
-    expect(dialog.querySelectorAll(".alpha-mobile-drawer__handle-target")).toHaveLength(1);
+    expect(dialog.querySelectorAll(".mobile-drawer__header")).toHaveLength(1);
+    expect(dialog.querySelectorAll(".mobile-drawer__title")).toHaveLength(1);
+    expect(dialog.querySelectorAll(".mobile-drawer__close")).toHaveLength(0);
+    expect(dialog.querySelectorAll(".mobile-drawer__handle-target")).toHaveLength(1);
     expect(Array.from(dialog.querySelectorAll("h1,h2,h3")).filter((heading) => heading.textContent === "Graph" && !heading.classList.contains("visually-hidden"))).toHaveLength(1);
   });
 
@@ -4839,7 +4845,7 @@ describe("Script-to-terminal modal handoff", () => {
   });
 
   async function openScriptsModalFromMobileMenu() {
-    fireEvent.click(await screen.findByTestId("alpha-mobile-menu-trigger"));
+    fireEvent.click(await screen.findByTestId("mobile-menu-trigger"));
     fireEvent.click(screen.getByTestId("mobile-more-terminal-split-toggle"));
     fireEvent.click(await screen.findByTestId("mobile-more-scripts-manage"));
     await screen.findByTestId("scripts-modal");
@@ -4947,7 +4953,7 @@ describe("App footer-safe project layout", () => {
 
     render(<App />);
 
-    fireEvent.click(await screen.findByTestId("alpha-mobile-menu-trigger"));
+    fireEvent.click(await screen.findByTestId("mobile-menu-trigger"));
     fireEvent.click(screen.getByTestId("mobile-more-item-files"));
 
     await waitFor(() => {
@@ -5051,7 +5057,7 @@ describe("App footer-safe project layout", () => {
 
 describe("App node mode switching", () => {
   beforeEach(() => mockUseViewportMode.mockReturnValue("desktop"));
-  // FNXC:AlphaDesktopWindows 2026-09-12-05:41: A dock selection now opens an independent dedicated note window, so it no longer transfers clean editor ownership into the later tablet page; the page-only transition remains the guard contract here.
+  // FNXC:DesktopViewWindows 2026-09-12-05:41: A dock selection now opens an independent dedicated note window, so it no longer transfers clean editor ownership into the later tablet page; the page-only transition remains the guard contract here.
   it.each([
     ["sans ouverture préalable du dock", false],
   ] as const)("protège un brouillon devenu sale sur la page tablette %s", async (_label, openCleanDockNote) => {
@@ -5973,8 +5979,14 @@ describe("FN-3290: modal keyboard isolation for mobile dashboard layout", () => 
     });
 
     const wrapper = document.querySelector(".project-content");
-    // Without a modal, the keyboard-open state should remove the mobile nav padding
-    expect(wrapper?.classList.contains("project-content--with-mobile-nav")).toBe(false);
+    /*
+    FNXC:NativeShell 2026-09-15-00:20:
+    Before FN-399 this asserted the absence of a class App never published (it published the perimeter's
+    own name), so it passed vacuously. The shell's real contract is that the navigation pill — and its
+    content reservation — stay mounted while the keyboard is open with no modal, so the operator can still
+    reach every destination; only a blocking modal or the Chat destination removes it.
+    */
+    expect(wrapper?.classList.contains("project-content--with-mobile-nav")).toBe(true);
   });
 
   it("keeps the official mobile navigation reservation removed while a modal keyboard is open", async () => {
@@ -6006,10 +6018,15 @@ describe("FN-3290: modal keyboard isolation for mobile dashboard layout", () => 
 
     const wrapper = document.querySelector(".project-content");
     expect(wrapper).toBeTruthy();
-    expect(wrapper).not.toHaveClass("project-content--with-alpha-nav", "project-content--with-mobile-nav");
+    expect(wrapper).not.toHaveClass("project-content--with-mobile-nav", "project-content--with-mobile-nav");
   });
 
-  it("removes mobile nav class when modal closes while keyboard stays open", async () => {
+  /*
+  FNXC:NativeShell 2026-09-15-00:20:
+  Restored to the shell's real contract now that App publishes this class: a blocking modal removes the
+  navigation reservation, and closing that modal restores it even while the keyboard is still open.
+  */
+  it("restores the mobile nav reservation when a modal closes while the keyboard stays open", async () => {
     Object.defineProperty(window, "location", {
       configurable: true,
       value: new URL("http://localhost:3000/?task=FN-456"),
@@ -6032,7 +6049,7 @@ describe("FN-3290: modal keyboard isolation for mobile dashboard layout", () => 
     });
 
     let wrapper = document.querySelector(".project-content");
-    expect(wrapper).not.toHaveClass("project-content--with-alpha-nav", "project-content--with-mobile-nav");
+    expect(wrapper).not.toHaveClass("project-content--with-mobile-nav", "project-content--with-mobile-nav");
 
     // Close the modal via close button
     const closeBtn = document.querySelector(".modal-overlay.open .modal-close") as HTMLElement;
@@ -6040,11 +6057,10 @@ describe("FN-3290: modal keyboard isolation for mobile dashboard layout", () => 
     fireEvent.click(closeBtn);
     rerender(<App />);
 
-    // Keyboard is still open, but modal is now closed — mobileKeyboardOpen becomes true,
-    // so the mobile nav class should be removed
+    // Keyboard is still open, but the modal is closed, so navigation — and its reservation — come back.
     await waitFor(() => {
       wrapper = document.querySelector(".project-content");
-      expect(wrapper?.classList.contains("project-content--with-mobile-nav")).toBe(false);
+      expect(wrapper?.classList.contains("project-content--with-mobile-nav")).toBe(true);
     });
   });
 });
@@ -6119,8 +6135,8 @@ describe("App task search suggestions", () => {
     expect(board.getByText("Active Alpha task")).toBeInTheDocument();
     expect(board.getByText("Completed Alpha task")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByTestId("alpha-desktop-header-search-btn"));
-    const inlineSearch = screen.getByTestId("alpha-desktop-header-search-input");
+    fireEvent.click(screen.getByTestId("desktop-inline-header-search-btn"));
+    const inlineSearch = screen.getByTestId("desktop-header-search-input");
     expect(inlineSearch.parentElement).toBe(document.querySelector(".header-actions"));
     fireEvent.change(screen.getByRole("combobox", { name: "Search tasks..." }), { target: { value: "353" } });
     expect(screen.queryByRole("dialog", { name: "Search tasks..." })).toBeNull();
@@ -6133,7 +6149,7 @@ describe("App task search suggestions", () => {
     expect(observedQueries.every((query) => query === undefined)).toBe(true);
 
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
-    fireEvent.click(screen.getByTestId("alpha-desktop-nav-list"));
+    fireEvent.click(screen.getByTestId("desktop-nav-list"));
     await waitFor(() => expect(screen.getByTestId("list-keep-alive")).not.toHaveAttribute("aria-hidden"));
     const list = within(screen.getByTestId("list-keep-alive"));
     expect(list.getByText("Active Alpha task")).toBeInTheDocument();
@@ -6167,8 +6183,8 @@ describe("App task search suggestions", () => {
     expect(board.getByText("Remote completed Alpha task")).toBeInTheDocument();
     expect(board.queryByText("Local task")).toBeNull();
 
-    fireEvent.click(screen.getByTestId("alpha-desktop-header-search-btn"));
-    expect(screen.getByTestId("alpha-desktop-header-search-input").parentElement).toBe(document.querySelector(".header-actions"));
+    fireEvent.click(screen.getByTestId("desktop-inline-header-search-btn"));
+    expect(screen.getByTestId("desktop-header-search-input").parentElement).toBe(document.querySelector(".header-actions"));
     fireEvent.change(screen.getByRole("combobox", { name: "Search tasks..." }), { target: { value: "353" } });
     fireEvent.click(screen.getByRole("option", { name: "REMOTE-353: Remote completed Alpha task" }));
 
@@ -6188,15 +6204,15 @@ describe("App task search suggestions", () => {
 
     render(<App />);
     await waitForAppShell();
-    fireEvent.click(screen.getByTestId("alpha-desktop-header-search-btn"));
+    fireEvent.click(screen.getByTestId("desktop-inline-header-search-btn"));
     fireEvent.change(screen.getByRole("combobox", { name: "Search tasks..." }), { target: { value: "353" } });
     fireEvent.click(screen.getByRole("button", { name: "Close search" }));
-    await waitFor(() => expect(screen.getByTestId("alpha-desktop-header-search-btn")).toHaveFocus());
+    await waitFor(() => expect(screen.getByTestId("desktop-inline-header-search-btn")).toHaveFocus());
 
-    fireEvent.click(screen.getByTestId("alpha-desktop-header-search-btn"));
+    fireEvent.click(screen.getByTestId("desktop-inline-header-search-btn"));
     expect(screen.getByRole("combobox", { name: "Search tasks..." })).toHaveValue("");
     fireEvent.keyDown(screen.getByRole("combobox", { name: "Search tasks..." }), { key: "Escape" });
-    await waitFor(() => expect(screen.getByTestId("alpha-desktop-header-search-btn")).toHaveFocus());
+    await waitFor(() => expect(screen.getByTestId("desktop-inline-header-search-btn")).toHaveFocus());
     expect(screen.queryByTestId("alpha-task-search-overlay")).toBeNull();
     expect(screen.queryByRole("dialog", { name: "Alpha task" })).toBeNull();
   });
@@ -6219,7 +6235,7 @@ describe("App task search suggestions", () => {
 
     render(<App />);
     await waitForAppShell();
-    fireEvent.click(screen.getByTestId("alpha-desktop-header-search-btn"));
+    fireEvent.click(screen.getByTestId("desktop-inline-header-search-btn"));
     fireEvent.change(screen.getByRole("combobox", { name: "Search tasks..." }), { target: { value: "331" } });
 
     expect(screen.getByRole("option", { name: "REMOTE-331: Remote completed task" })).toBeInTheDocument();
@@ -6242,7 +6258,7 @@ describe("App task search suggestions", () => {
 
     render(<App />);
     await waitForAppShell();
-    fireEvent.click(screen.getByTestId("alpha-desktop-header-search-btn"));
+    fireEvent.click(screen.getByTestId("desktop-inline-header-search-btn"));
     fireEvent.change(screen.getByRole("combobox", { name: "Search tasks..." }), { target: { value: "331" } });
 
     expect(screen.queryByRole("option", { name: /LOCAL-331/ })).toBeNull();
@@ -6269,7 +6285,7 @@ describe("App task search suggestions", () => {
 
     const { rerender } = render(<App />);
     await waitForAppShell();
-    fireEvent.click(screen.getByTestId("alpha-desktop-header-search-btn"));
+    fireEvent.click(screen.getByTestId("desktop-inline-header-search-btn"));
     fireEvent.change(screen.getByRole("combobox", { name: "Search tasks..." }), { target: { value: "331" } });
     expect(screen.getByRole("option", { name: "NODE1-331: First node task" })).toBeInTheDocument();
     mockNodeContextValue.currentNodeId = "node-2";
@@ -6488,7 +6504,7 @@ describe("terminal mount lifecycle (App mounts the terminal only while open)", (
 
     // Open the terminal through the wide footer's canonical action.
     await act(async () => {
-      fireEvent.click(await screen.findByTestId("alpha-desktop-nav-terminal"));
+      fireEvent.click(await screen.findByTestId("desktop-nav-terminal"));
     });
     await waitFor(() => {
       expect(screen.getByTestId("terminal-modal")).toBeTruthy();

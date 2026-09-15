@@ -72,7 +72,7 @@ describe("DuplicateWarningModal", () => {
     const overlay = document.querySelector('[data-dashboard-window-surface="duplicate-warning-modal-title"]') as HTMLElement;
     expect(overlay).toBeInstanceOf(HTMLElement);
     expect(overlay.parentElement).toBe(document.body);
-    expect(overlay.getAttribute("data-alpha-portal")).toBe("true");
+    expect(overlay.getAttribute("data-ui-portal")).toBe("true");
     expect(Number.parseInt(overlay.style.zIndex, 10)).toBeGreaterThan(0);
   });
 

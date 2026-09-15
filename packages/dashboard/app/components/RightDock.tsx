@@ -372,7 +372,7 @@ export function RightDock({
             <div className="right-dock__title" role="heading" aria-level={3}>{t("rightDock.taskDetailTitle", "Task detail")}</div>
           </div> : null}
           {/*
-          FNXC:AlphaDesktopRightDock 2026-09-12-04:06:
+          FNXC:DesktopRightDock 2026-09-12-04:06:
           Les vues du dock possèdent leur propre titre; le shell supprime donc son header générique pour éviter les doublons. Le tabpanel conserve le label de l’onglet sélectionné, tandis que Task Detail garde son unique header temporaire et son action de retour.
           */}
           <div className="right-dock__body" role="tabpanel" aria-label={showingDockTask ? t("rightDock.taskDetailTitle", "Task detail") : selectedEntry.label} data-testid="right-dock-body">

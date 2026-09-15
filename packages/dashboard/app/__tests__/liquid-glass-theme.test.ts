@@ -96,8 +96,14 @@ describe("Liquid Glass color theme", () => {
     }
     expect(dark).not.toBe(light);
     expect(dark).toContain("--font-primary: -apple-system");
-    expect(dark).toContain("--radius-xl:");
-    expect(dark).toContain("--transition-normal:");
+    /*
+    FNXC:UiStyleAxis 2026-09-15-00:20:
+    FN-399 moved non-chromatic grammar to the interface-style catalogue, so a colour preset no longer
+    declares radii or motion durations. The preset must now own colour (and its family identity) ONLY;
+    asserting the old shape declarations would require re-adding behaviour this task deliberately removed.
+    */
+    expect(dark).not.toContain("--radius-xl:");
+    expect(dark).not.toContain("--transition-normal:");
   });
 
   it("uses regular glass only on functional surfaces and standard material on content", () => {

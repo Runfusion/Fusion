@@ -128,11 +128,11 @@ describe("FloatingWindow", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
-    delete document.documentElement.dataset.alphaMobileDrawers;
+    delete document.documentElement.dataset.mobileDrawers;
   });
 
   it("adopte le drawer modal borné pour un utilitaire Alpha mobile", async () => {
-    document.documentElement.dataset.alphaMobileDrawers = "true";
+    document.documentElement.dataset.mobileDrawers = "true";
     vi.stubGlobal("matchMedia", vi.fn((query: string) => ({
       matches: query.includes("max-width"),
       media: query,
@@ -141,18 +141,18 @@ describe("FloatingWindow", () => {
       removeEventListener: vi.fn(),
     })));
     const close = vi.fn();
-    render(<FloatingWindow windowKey="alpha-drawer" title="Files" onClose={close}><div>Files body</div></FloatingWindow>);
+    render(<FloatingWindow windowKey="native-drawer" title="Files" onClose={close}><div>Files body</div></FloatingWindow>);
 
-    const overlay = screen.getByTestId("floating-window-overlay-alpha-drawer");
-    expect(overlay).toHaveClass("floating-window-overlay--alpha-mobile-drawer", "floating-window-overlay--modal");
+    const overlay = screen.getByTestId("floating-window-overlay-native-drawer");
+    expect(overlay).toHaveClass("floating-window-overlay--mobile-drawer", "floating-window-overlay--modal");
     expect(overlay).toHaveAttribute("aria-modal", "true");
-    const panel = screen.getByTestId("floating-window-alpha-drawer");
-    expect(panel).toHaveClass("floating-window--alpha-mobile-drawer");
-    expect(floatingWindowCss).toMatch(/\.floating-window--alpha-mobile-drawer\s*\{[^}]*animation: alpha-mobile-drawer-rise-in/);
-    expect(floatingWindowCss).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.floating-window--alpha-mobile-drawer\s*\{[^}]*animation: none/);
-    expect(cssRuleContaining(floatingWindowCss, ".floating-window--alpha-mobile-drawer", "animation:")).not.toContain("translateX");
+    const panel = screen.getByTestId("floating-window-native-drawer");
+    expect(panel).toHaveClass("floating-window--mobile-drawer");
+    expect(floatingWindowCss).toMatch(/\.floating-window--mobile-drawer\s*\{[^}]*animation: mobile-drawer-rise-in/);
+    expect(floatingWindowCss).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.floating-window--mobile-drawer\s*\{[^}]*animation: none/);
+    expect(cssRuleContaining(floatingWindowCss, ".floating-window--mobile-drawer", "animation:")).not.toContain("translateX");
     expect(screen.queryAllByRole("separator", { name: "Resize floating window" })).toHaveLength(0);
-    expect(screen.queryByTestId("floating-window-close-alpha-drawer")).toBeNull();
+    expect(screen.queryByTestId("floating-window-close-native-drawer")).toBeNull();
     const body = screen.getByText("Files body");
     fireEvent.pointerDown(body, { pointerId: 1, clientY: 0, button: 0, isPrimary: true });
     fireEvent.pointerMove(body, { pointerId: 1, clientY: 200 });
@@ -173,7 +173,7 @@ describe("FloatingWindow", () => {
   });
 
   it("ferme exactement une fois le vrai FloatingWindow Alpha avec Escape", () => {
-    document.documentElement.dataset.alphaMobileDrawers = "true";
+    document.documentElement.dataset.mobileDrawers = "true";
     vi.stubGlobal("matchMedia", vi.fn((query: string) => ({
       matches: query.includes("max-width"),
       media: query,

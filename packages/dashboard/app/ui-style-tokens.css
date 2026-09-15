@@ -1,0 +1,213 @@
+/*
+FNXC:UiStyleAxis 2026-09-15-00:20:
+FN-399 splits dashboard appearance into two independent axes:
+
+  * `html[data-color-theme]` owns COLOUR ONLY (palette, semantic hues, custom shadcn overrides).
+  * `html[data-ui-style]` owns NON-CHROMATIC GRAMMAR ONLY (density, radii, border widths, typography
+    scale/weights/leading, control and touch heights, icon sizes, hover intensity, motion, and the
+    GEOMETRY half of shadows and focus rings).
+
+This file is the single catalogue for that second axis. Every token below is declared exactly once per
+style; `classic` lives on `:root` so an absent `data-ui-style` attribute behaves exactly like the
+default, and `clean` overrides the same names under `html[data-ui-style="clean"]`.
+
+Rules this file must keep satisfying (asserted by app/__tests__/ui-style-contract.test.ts):
+  * no literal colour of any kind (hex, rgb/rgba, hsl, oklch, named colours) — a style never decides
+    WHICH colour is used, only how dense/round/loud the shape around it is;
+  * no new `px` dimension — values are `rem`, `em`, unitless numbers, `s`, or references to existing
+    tokens, so the font-scale preference keeps multiplying the whole grammar;
+  * no cycles — catalogue entries may reference other catalogue entries or shared design tokens, but
+    a shared token bound to the catalogue is never read back into a catalogue declaration.
+
+Components consume `--ui-*` directly instead of keeping a second per-style table of their own.
+*/
+
+:root {
+  /* ── Density ──────────────────────────────────────────────────────────────
+     Rhythm rungs the style owns. Classic mirrors the historical 4/8/12/16/24/32
+     spacing in rem so both styles share one unit system. */
+  --ui-density-3xs: 0.125rem;
+  --ui-density-2xs: 0.25rem;
+  --ui-density-xs: 0.375rem;
+  --ui-density-sm: 0.5rem;
+  --ui-density-md: 0.75rem;
+  --ui-density-lg: 1rem;
+  --ui-density-xl: 1.5rem;
+  --ui-density-2xl: 2rem;
+
+  /* ── Radii ─────────────────────────────────────────────────────────────── */
+  --ui-radius-xs: 0.25rem;
+  --ui-radius-sm: 0.25rem;
+  --ui-radius-md: 0.5rem;
+  --ui-radius-lg: 0.75rem;
+  --ui-radius-xl: 1rem;
+  --ui-radius-pill: 62.5rem;
+
+  /* ── Border widths ─────────────────────────────────────────────────────── */
+  --ui-border-width: 0.0625rem;
+  --ui-border-width-strong: 0.125rem;
+
+  /* ── Typography ────────────────────────────────────────────────────────────
+     Families come from the shared design tokens; the style owns scale, weight,
+     leading and tracking only. */
+  --ui-font-family: var(--font-primary);
+  --ui-font-family-mono: var(--font-mono);
+  --ui-font-size-2xs: 0.6875rem;
+  --ui-font-size-xs: 0.75rem;
+  --ui-font-size-sm: 0.8125rem;
+  --ui-font-size-base: 0.875rem;
+  --ui-font-size-md: 1rem;
+  --ui-font-size-lg: 1.125rem;
+  --ui-font-weight-regular: 400;
+  --ui-font-weight-medium: 500;
+  --ui-font-weight-semibold: 600;
+  --ui-font-weight-bold: 700;
+  --ui-line-height-tight: 1.25;
+  --ui-line-height-normal: 1.45;
+  --ui-line-height-relaxed: 1.6;
+  --ui-letter-spacing-normal: 0em;
+  --ui-letter-spacing-wide: 0.04em;
+
+  /* ── Control and touch sizing ──────────────────────────────────────────── */
+  --ui-control-height-sm: 1.75rem;
+  --ui-control-height: 2rem;
+  --ui-control-height-lg: 2.25rem;
+  /*
+  FNXC:UiStyleAxis 2026-09-15-00:20:
+  The touch floor is a style-independent accessibility contract: both styles keep the existing
+  2.75rem (44px at the default root size) minimum hit area, so a denser grammar never shrinks a
+  real tap target.
+  */
+  --ui-touch-height: 2.75rem;
+  --ui-icon-size-sm: 0.875rem;
+  --ui-icon-size: 1rem;
+  --ui-icon-size-lg: 1.25rem;
+
+  /* ── Hover / state intensity (unitless percentages for color-mix) ──────── */
+  --ui-hover-mix: 8%;
+  --ui-hover-mix-strong: 14%;
+  --ui-active-mix: 18%;
+  --ui-disabled-opacity: 0.5;
+  --ui-muted-opacity: 0.72;
+
+  /* ── Motion ────────────────────────────────────────────────────────────── */
+  --ui-duration-instant: 0.1s;
+  --ui-duration-fast: 0.15s;
+  --ui-duration-normal: 0.2s;
+  --ui-duration-slow: 0.3s;
+  --ui-easing: ease;
+
+  /* ── Shadow and focus GEOMETRY (never colour) ───────────────────────────
+     Consumed as `var(--ui-shadow-sm-geometry) <theme colour>` so a preset can keep owning the hue
+     while the style owns offset, blur and spread. */
+  --ui-shadow-sm-geometry: 0 0.0625rem 0.125rem;
+  --ui-shadow-md-geometry: 0 0.25rem 0.375rem;
+  --ui-shadow-lg-geometry: 0 0.25rem 1.5rem;
+  --ui-shadow-glow-geometry: 0 0 0.5rem;
+  --ui-focus-ring-geometry: 0 0 0 0.125rem;
+  --ui-shadow-opacity: 10%;
+  --ui-shadow-opacity-strong: 40%;
+}
+
+/*
+FNXC:UiStyleAxis 2026-09-15-00:20:
+The "clean" (Épuré) grammar: tighter rhythm, softer radii, hairline borders, a quieter hover, faster
+motion, and shallower shadows. It declares only the tokens whose value actually differs from classic,
+so the catalogue stays readable and a future style can be added the same way.
+*/
+html[data-ui-style="clean"] {
+  --ui-density-3xs: 0.125rem;
+  --ui-density-2xs: 0.25rem;
+  --ui-density-xs: 0.3125rem;
+  --ui-density-sm: 0.4375rem;
+  --ui-density-md: 0.625rem;
+  --ui-density-lg: 0.875rem;
+  --ui-density-xl: 1.25rem;
+  --ui-density-2xl: 1.75rem;
+
+  --ui-radius-xs: 0.25rem;
+  --ui-radius-sm: 0.375rem;
+  --ui-radius-md: 0.5rem;
+  --ui-radius-lg: 0.625rem;
+  --ui-radius-xl: 1rem;
+
+  --ui-border-width: 0.0625rem;
+  --ui-border-width-strong: 0.0625rem;
+
+  --ui-font-size-2xs: 0.6875rem;
+  --ui-font-size-xs: 0.75rem;
+  --ui-font-size-sm: 0.8125rem;
+  --ui-font-size-base: 0.875rem;
+  --ui-font-size-md: 0.9375rem;
+  --ui-font-size-lg: 1.0625rem;
+  --ui-line-height-normal: 1.5;
+  --ui-line-height-relaxed: 1.65;
+  --ui-letter-spacing-wide: 0.06em;
+
+  --ui-control-height-sm: 1.625rem;
+  --ui-control-height: 1.875rem;
+  --ui-control-height-lg: 2.125rem;
+  /* Glyphs read at the 15–16px equivalent of the reference grammar. */
+  --ui-icon-size-sm: 0.8125rem;
+  --ui-icon-size: 0.9375rem;
+  --ui-icon-size-lg: 1.125rem;
+
+  --ui-hover-mix: 6%;
+  --ui-hover-mix-strong: 10%;
+  --ui-active-mix: 14%;
+
+  --ui-duration-instant: 0.08s;
+  --ui-duration-fast: 0.12s;
+  --ui-duration-normal: 0.15s;
+  --ui-duration-slow: 0.25s;
+
+  --ui-shadow-sm-geometry: 0 0.0625rem 0.125rem;
+  --ui-shadow-md-geometry: 0 0.125rem 0.5rem;
+  --ui-shadow-lg-geometry: 0 0.5rem 1.5rem;
+  --ui-shadow-opacity: 7%;
+  --ui-shadow-opacity-strong: 26%;
+}
+
+/*
+FNXC:UiStyleAxis 2026-09-15-00:20:
+Bindings. Shared design tokens that are PURELY shape are bound to the catalogue so the whole product
+follows the axis rather than each component keeping a private table. Classic keeps the historical
+pixel metrics declared in styles.css — its geometry is deliberately unchanged by this task — so these
+bindings are scoped to the non-default style. Colour tokens are never bound here.
+*/
+html[data-ui-style="clean"] {
+  --radius-sm: var(--ui-radius-sm);
+  --radius-md: var(--ui-radius-md);
+  --radius-lg: var(--ui-radius-lg);
+  --radius-xl: var(--ui-radius-xl);
+  --radius: var(--ui-radius-md);
+  --btn-border-width: var(--ui-border-width);
+  --btn-padding: var(--ui-density-sm) var(--ui-density-lg);
+  --card-padding: var(--ui-density-sm) var(--ui-density-md);
+  --modal-padding: var(--ui-density-lg) var(--ui-density-xl);
+  --header-padding: var(--ui-density-md) var(--ui-density-xl);
+  --duration-instant: var(--ui-duration-instant);
+  --duration-fast: var(--ui-duration-fast);
+  --duration-normal: var(--ui-duration-normal);
+  --duration-slow: var(--ui-duration-slow);
+  --transition-instant: var(--ui-duration-instant) var(--ui-easing);
+  --transition-fast: var(--ui-duration-fast) var(--ui-easing);
+  --transition-normal: var(--ui-duration-normal) var(--ui-easing);
+  --transition-slow: var(--ui-duration-slow) var(--ui-easing);
+  --icon-size-sm: var(--ui-icon-size-sm);
+  --icon-size-md: var(--ui-icon-size);
+}
+
+/*
+FNXC:UiStyleAxis 2026-09-15-00:20:
+Reduced motion is honoured by the axis itself: the style's own durations collapse so no component has
+to re-implement the preference, while the rest of the grammar (density, radii, borders) is unaffected.
+*/
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --ui-duration-instant: 0s;
+    --ui-duration-fast: 0s;
+    --ui-duration-normal: 0s;
+    --ui-duration-slow: 0s;
+  }
+}

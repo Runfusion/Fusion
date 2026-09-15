@@ -8290,7 +8290,9 @@
       "revisionColumnError": "수정 요청 불가: 작업이 'triage', 'todo', 'in-progress' 또는 'in-review' 컬럼에 있어야 합니다.",
       "revisionRequested": "AI 수정 요청됨. 작업이 계획 단계로 이동되었습니다.",
       "saving": "저장 중…",
-      "updated": "명세 업데이트됨"
+      "updated": "명세 업데이트됨",
+      "copy": "복사",
+      "copied": "복사됨"
     },
     "stall": {
       "noLogEntry": "아직 로그 항목 없음",
@@ -9930,5 +9932,12 @@
   "windows": {
     "hide": "모든 창 숨기기",
     "restore": "창 복원"
+  },
+  "uiStyle": {
+    "label": "인터페이스 스타일",
+    "classic": "현재",
+    "classicDescription": "익숙한 Fusion 문법 그대로입니다.",
+    "clean": "간결",
+    "cleanDescription": "더 조밀한 여백, 부드러운 모서리, 차분한 크롬."
   }
 }

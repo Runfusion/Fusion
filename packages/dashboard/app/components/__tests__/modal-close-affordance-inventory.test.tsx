@@ -131,7 +131,7 @@ describe("modal close affordance inventory", () => {
   });
 
   it("reserves manual Close and Cancel labels for explicit internal controls", () => {
-    expect(constructionCounts(/<(?:button|AlphaButton)\b[^>]*?aria-label\s*=\s*(?:"[^"]*(?:close|cancel)[^"]*"|\{[^}]*?(?:close|cancel)[^}]*?\})[^>]*>/gis)).toEqual(internalCloseLabelExemptions);
+    expect(constructionCounts(/<(?:button|UiButton)\b[^>]*?aria-label\s*=\s*(?:"[^"]*(?:close|cancel)[^"]*"|\{[^}]*?(?:close|cancel)[^}]*?\})[^>]*>/gis)).toEqual(internalCloseLabelExemptions);
   });
 
   it("leaves no manual legacy close-class construction anywhere", () => {
@@ -139,7 +139,7 @@ describe("modal close affordance inventory", () => {
       .filter((file) => !file.startsWith("__tests__/") && file !== "ModalCloseButton.tsx")
       .flatMap((file) => {
         const source = productionComponentSource(file);
-        const matches = source.match(/<(?:button|AlphaButton)\b[^>]*className=(?:"[^"]*(?:modal-close|floating-window__close|chat-modal-close|report-modal__close)[^"]*"|\{[^}]*(?:modal-close|floating-window__close|chat-modal-close|report-modal__close)[^}]*\})[^>]*>/gs) ?? [];
+        const matches = source.match(/<(?:button|UiButton)\b[^>]*className=(?:"[^"]*(?:modal-close|floating-window__close|chat-modal-close|report-modal__close)[^"]*"|\{[^}]*(?:modal-close|floating-window__close|chat-modal-close|report-modal__close)[^}]*\})[^>]*>/gs) ?? [];
         return matches.map((construct) => ({ file, construct: construct.replace(/\s+/g, " ") }));
       });
     expect(manual).toEqual([]);

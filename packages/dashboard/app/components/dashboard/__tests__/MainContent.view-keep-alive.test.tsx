@@ -105,7 +105,7 @@ function taskFixture(id = "task-1"): Task {
 }
 
 function dismissDrawerByHandle(dialog: HTMLElement): void {
-  const handle = dialog.querySelector(".alpha-mobile-drawer__handle-target");
+  const handle = dialog.querySelector(".mobile-drawer__handle-target");
   if (!handle) throw new Error("Alpha drawer handle is missing");
   fireEvent.pointerDown(handle, { pointerId: 1, clientY: 0, button: 0, isPrimary: true });
   fireEvent.pointerMove(handle, { pointerId: 1, clientY: 200 });
@@ -363,8 +363,8 @@ describe("MainContent main-view keep alive", () => {
 
     await waitFor(() => expect(document.querySelectorAll("#board")).toHaveLength(1));
     expect(screen.getByTestId("board-keep-alive")).not.toHaveAttribute("aria-hidden");
-    expect(boardRoot().closest('[data-alpha-surface="true"]')).not.toBeNull();
-    expect(boardRoot().querySelector('[data-alpha-ui="button"]')).not.toBeNull();
+    expect(boardRoot().closest(':root')).not.toBeNull();
+    expect(boardRoot().querySelector('[data-ui="button"]')).not.toBeNull();
     const dialog = screen.getByRole("dialog", { name: "Task detail" });
     expect(within(dialog).queryByTestId("task-detail-back")).toBeNull();
     expect(within(dialog).getAllByTestId("task-detail-close")).toHaveLength(1);
@@ -385,9 +385,9 @@ describe("MainContent main-view keep alive", () => {
     })} />);
 
     const dialog = await screen.findByRole("dialog", { name: "Ideation" });
-    expect(dialog).toHaveClass("alpha-mobile-drawer__panel--content-header");
-    expect(dialog).not.toHaveClass("alpha-mobile-drawer__panel--content-scroll");
-    expect(dialog.querySelector(".alpha-mobile-drawer__body")).not.toBeNull();
+    expect(dialog).toHaveClass("mobile-drawer__panel--content-header");
+    expect(dialog).not.toHaveClass("mobile-drawer__panel--content-scroll");
+    expect(dialog.querySelector(".mobile-drawer__body")).not.toBeNull();
     dismissDrawerByHandle(dialog);
     expect(handleChangeTaskView).toHaveBeenCalledTimes(1);
     expect(handleChangeTaskView).toHaveBeenCalledWith("board");
@@ -412,10 +412,10 @@ describe("MainContent main-view keep alive", () => {
     })} />);
 
     const dialog = await screen.findByRole("dialog", { name: "Plugin Tool" });
-    expect(dialog.querySelectorAll(":scope > .alpha-mobile-drawer__header")).toHaveLength(1);
+    expect(dialog.querySelectorAll(":scope > .mobile-drawer__header")).toHaveLength(1);
     expect(dialog.querySelectorAll("h1,h2,h3")).toHaveLength(1);
-    expect(dialog.querySelectorAll(":scope > .alpha-mobile-drawer__close")).toHaveLength(0);
-    expect(dialog.querySelectorAll(":scope > .alpha-mobile-drawer__handle-target")).toHaveLength(1);
+    expect(dialog.querySelectorAll(":scope > .mobile-drawer__close")).toHaveLength(0);
+    expect(dialog.querySelectorAll(":scope > .mobile-drawer__handle-target")).toHaveLength(1);
     expect(await screen.findByTestId("headerless-plugin")).toContainElement(screen.getByRole("button", { name: "Plugin final control" }));
     dismissDrawerByHandle(dialog);
     expect(handleChangeTaskView).toHaveBeenCalledTimes(1);
@@ -434,15 +434,15 @@ describe("MainContent main-view keep alive", () => {
     expect(screen.getByTestId("board-keep-alive")).not.toHaveAttribute("aria-hidden");
     const dialog = screen.getByRole("dialog", { name: "Chat" });
     expect(dialog).toContainElement(chatRoot());
-    expect(dialog).toHaveClass("alpha-mobile-drawer__panel--content-scroll");
-    expect(dialog.querySelector(".alpha-mobile-drawer__header")).toBeNull();
+    expect(dialog).toHaveClass("mobile-drawer__panel--content-scroll");
+    expect(dialog.querySelector(".mobile-drawer__header")).toBeNull();
     expect(Array.from(dialog.querySelectorAll("h1, h2, h3")).filter((heading) => heading.textContent === "Chat" && !heading.classList.contains("visually-hidden"))).toHaveLength(1);
     expect(screen.getByTestId("chat-keep-alive")).not.toHaveAttribute("aria-hidden");
-    expect(chatRoot().closest('[data-alpha-surface="true"]')).not.toBeNull();
+    expect(chatRoot().closest(':root')).not.toBeNull();
     const input = await openProductionChatComposer();
     input.focus();
     expect(input).toHaveFocus();
-    expect(input.closest(".alpha-mobile-drawer__panel")).toBe(dialog);
+    expect(input.closest(".mobile-drawer__panel")).toBe(dialog);
     expect(screen.getByTestId("chat-new-btn")).toBeVisible();
     expect(screen.queryByTestId("chat-pop-out")).toBeNull();
     expect(input).toBeVisible();

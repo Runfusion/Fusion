@@ -1,6 +1,6 @@
 import { ViewHeader } from "./ViewHeader";
 import "./TaskResetDialog.css";
-import { AlphaButton, AlphaDialog, AlphaTextArea } from "./alpha-ui";
+import { UiButton, UiDialog, UiTextArea } from "./ui";
 
 import { getErrorMessage } from "@fusion/core";
 import { useRef, useState } from "react";
@@ -65,7 +65,7 @@ export function TaskResetDialog({
   };
 
   return (
-    <AlphaDialog
+    <UiDialog
       overlayClassName="modal-overlay open task-reset-overlay"
       className="modal modal-md task-reset-dialog"
       labelledBy={titleId}
@@ -91,7 +91,7 @@ export function TaskResetDialog({
           <label className="task-reset-dialog__label" htmlFor={`task-reset-description-${taskId}`}>
             {t("taskDetail.reset.descriptionLabel", "Original description")}
           </label>
-          <AlphaTextArea
+          <UiTextArea
             id={`task-reset-description-${taskId}`}
             className="input task-reset-dialog__textarea"
             data-testid="task-reset-description"
@@ -112,7 +112,7 @@ export function TaskResetDialog({
           </p>
         </div>
         <div className="modal-actions task-reset-dialog__actions">
-          <AlphaButton
+          <UiButton
             type="button"
             className="btn btn-sm"
             data-testid="task-reset-cancel"
@@ -120,8 +120,8 @@ export function TaskResetDialog({
             disabled={isSubmitting}
           >
             {t("common.cancel", "Cancel")}
-          </AlphaButton>
-          <AlphaButton
+          </UiButton>
+          <UiButton
             type="button"
             className="btn btn-danger btn-sm"
             data-testid="task-reset-submit"
@@ -131,9 +131,9 @@ export function TaskResetDialog({
             {isSubmitting
               ? t("taskDetail.reset.submitting", "Resetting…")
               : t("taskDetail.reset.btn", "Reset")}
-          </AlphaButton>
+          </UiButton>
         </div>
       </div>
-    </AlphaDialog>
+    </UiDialog>
   );
 }

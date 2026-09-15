@@ -61,9 +61,9 @@ describe("overflowViewRegistry chat entry", () => {
     expect(chatEntry?.render).toBeTypeOf("function");
     expect(chatEntry?.onActivate).toBeUndefined();
     expect(isOverflowViewEntryInline(chatEntry, {})).toBe(true);
-    expect(isOverflowViewEntryInline(chatEntry, { hostMode: "alpha-desktop" })).toBe(true);
+    expect(isOverflowViewEntryInline(chatEntry, { hostMode: "desktop" })).toBe(true);
     expect(isOverflowViewEntryExpandable(chatEntry, {})).toBe(false);
-    expect(isOverflowViewEntryExpandable(chatEntry, { hostMode: "alpha-desktop" })).toBe(false);
+    expect(isOverflowViewEntryExpandable(chatEntry, { hostMode: "desktop" })).toBe(false);
     expect(isOverflowViewKeyVisible("chat")).toBe(true);
   });
 
@@ -89,6 +89,6 @@ describe("overflowViewRegistry chat entry", () => {
     expect(readStoredRightDockView({})).toBe("files");
     window.localStorage.setItem(RIGHT_DOCK_VIEW_STORAGE_KEY, "chat");
     expect(readStoredRightDockView({})).toBe("chat");
-    expect(readStoredRightDockView({ hostMode: "alpha-desktop" })).toBe("chat");
+    expect(readStoredRightDockView({ hostMode: "desktop" })).toBe("chat");
   });
 });

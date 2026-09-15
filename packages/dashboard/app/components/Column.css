@@ -2,7 +2,7 @@
 FNXC:DoneColumnGeometry 2026-09-09-00:33:
 The Done scroller owns one normal-flow virtual-content block. Spacer heights and row spacing are therefore physical scroll extent, never shrinkable flex children or unmeasured parent gaps.
 
-FNXC:AlphaDesktopNavigation 2026-09-11-19:35:
+FNXC:DesktopNavigation 2026-09-11-19:35:
 The floating desktop action bar does not reduce Board height. Add clearance only to each column's scroll tail so its final controls can scroll above the bar without recreating a dead shell region.
 */
 .column-body {
@@ -46,38 +46,38 @@ The floating desktop action bar does not reduce Board height. Add clearance only
 }
 
 /*
-FNXC:AlphaDensity 2026-09-11-00:30:
-Alpha columns use compact header/body rhythm and one subtle elevation without changing virtual rows, pagination extent, or scroll ownership. The stable Board remains untouched outside the explicit boundary.
+FNXC:NativeDensity 2026-09-11-00:30:
+Columns use a compact header/body rhythm and one subtle elevation without changing virtual rows, pagination extent, or scroll ownership. Virtual rows, pagination extent and scroll ownership are unchanged.
 */
-[data-alpha-surface="true"] .column {
+.column {
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-sm);
 }
 
-[data-alpha-surface="true"] .column-header {
-  gap: var(--alpha-density-1);
-  padding: var(--alpha-density-3) var(--alpha-density-3) 0;
+.column-header {
+  gap: var(--ui-density-2xs);
+  padding: var(--ui-density-md) var(--ui-density-md) 0;
 }
 
-[data-alpha-surface="true"] .column-desc {
-  padding: var(--alpha-density-1) var(--alpha-density-3) var(--alpha-density-2);
+.column-desc {
+  padding: var(--ui-density-2xs) var(--ui-density-md) var(--ui-density-sm);
 }
 
-[data-alpha-surface="true"] .column-body {
-  padding: var(--alpha-density-1) var(--alpha-density-2) var(--alpha-density-2);
+.column-body {
+  padding: var(--ui-density-2xs) var(--ui-density-sm) var(--ui-density-sm);
 }
 
-[data-alpha-surface="true"] .column-pagination-footer {
-  padding-block: var(--alpha-density-1);
+.column-pagination-footer {
+  padding-block: var(--ui-density-2xs);
 }
 
 @media (max-width: 768px) {
-  [data-alpha-surface="true"] .column-header {
-    padding-inline: var(--alpha-density-2);
+  .column-header {
+    padding-inline: var(--ui-density-sm);
   }
 }
 
-/* FNXC:AlphaUpdates 2026-09-09-18:24: The complete-lane History action shares compact header controls and must shrink without colliding with count, sort, or menu actions. */
+/* FNXC:NativeShell 2026-09-09-18:24: The complete-lane History action shares compact header controls and must shrink without colliding with count, sort, or menu actions. */
 .column-history-button {
   flex: 0 0 auto;
   margin-inline-start: auto;

@@ -112,7 +112,7 @@ describe("TaskDetailModal refine modal dismissal invariant", () => {
 
       const overlay = refineOverlay();
       expect(overlay.parentElement).toBe(document.body);
-      expect(overlay.getAttribute("data-alpha-portal")).toBe("true");
+      expect(overlay.getAttribute("data-ui-portal")).toBe("true");
       expect(layerOf(overlay)).toBeGreaterThan(layerOf(parentWindowOverlay()));
 
       const textarea = screen.getByPlaceholderText("Enter your feedback here...");

@@ -155,6 +155,8 @@ export const GLOBAL_SECTION_KEYS: Record<string, ReadonlySet<string>> = {
   appearance: new Set([
     "themeMode",
     "colorTheme",
+    /* FNXC:UiStyleAxis 2026-09-15-00:20: the interface style is a global Appearance key, so "Reset this menu" restores it with the other appearance defaults. */
+    "uiStyle",
     "dashboardFontScalePct",
     "shadcnCustomColors",
   ]),

@@ -5,16 +5,16 @@ const css = loadAllAppCss();
 
 describe("mobile bottom bars keyboard-open css contract", () => {
   it("keeps the official pill above the visual viewport occlusion", () => {
-    const alphaRule = css.match(/\.mobile-nav-bar--alpha\s*\{([^}]*)\}/m);
+    const alphaRule = css.match(/\.mobile-nav-bar--native\s*\{([^}]*)\}/m);
     expect(alphaRule).toBeTruthy();
     expect(alphaRule![1]).toContain("bottom: var(--mobile-nav-pill-bottom)");
-    expect(css).toContain("--mobile-nav-pill-bottom: calc(var(--mobile-nav-alpha-system-offset) + var(--mobile-nav-floating-gap) + var(--mobile-nav-keyboard-lift))");
+    expect(css).toContain("--mobile-nav-pill-bottom: calc(var(--mobile-nav-system-offset) + var(--mobile-nav-floating-gap) + var(--mobile-nav-keyboard-lift))");
     expect(alphaRule![1]).not.toContain("translateY(100%)");
     expect(alphaRule![1]).not.toContain("pointer-events: none");
   });
 
   it("includes the shifted visual viewport top in the popover height cap", () => {
-    const popoverRule = css.match(/\.alpha-mobile-navigation-popover\s*\{([^}]*)\}/m);
+    const popoverRule = css.match(/\.mobile-navigation-popover\s*\{([^}]*)\}/m);
     expect(popoverRule).toBeTruthy();
     expect(css).toContain("--mobile-nav-viewport-offset-top: 0px");
     expect(popoverRule![1]).toContain("var(--mobile-nav-viewport-offset-top)");
@@ -22,13 +22,13 @@ describe("mobile bottom bars keyboard-open css contract", () => {
   });
 
   it("limits the legacy keyboard hide rules to the non-pill bar", () => {
-    expect(css).toContain(".mobile-nav-bar:not(.mobile-nav-bar--alpha).mobile-nav-bar--keyboard-open");
-    expect(css).toContain('html[data-viewport-mode="mobile"] .mobile-nav-bar:not(.mobile-nav-bar--alpha).mobile-nav-bar--keyboard-open');
+    expect(css).toContain(".mobile-nav-bar:not(.mobile-nav-bar--native).mobile-nav-bar--keyboard-open");
+    expect(css).toContain('html[data-viewport-mode="mobile"] .mobile-nav-bar:not(.mobile-nav-bar--native).mobile-nav-bar--keyboard-open');
   });
 
   it("mobile nav keyboard-open rule appears after with-footer rule", () => {
     const withFooterPos = css.indexOf(".mobile-nav-bar--with-footer");
-    const keyboardPos = css.indexOf(".mobile-nav-bar:not(.mobile-nav-bar--alpha).mobile-nav-bar--keyboard-open");
+    const keyboardPos = css.indexOf(".mobile-nav-bar:not(.mobile-nav-bar--native).mobile-nav-bar--keyboard-open");
     expect(withFooterPos).toBeGreaterThanOrEqual(0);
     expect(keyboardPos).toBeGreaterThan(withFooterPos);
   });

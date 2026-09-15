@@ -2,9 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import { RightDock } from "../RightDock";
 import { RightDockExpandModal } from "../RightDockExpandModal";
-import { AlphaMainContentDrawer } from "../dashboard/MainContent";
-import { AlphaPlanningDrawer, AlphaProjectsDrawer } from "../AlphaMobileDrawer";
-import { AlphaUsageDrawer } from "../AppModals";
+import { MainContentDrawer } from "../dashboard/MainContent";
+import { PlanningDrawer, ProjectsDrawer } from "../MobileDrawer";
+import { MobileUsageDrawer } from "../AppModals";
 import { ViewLayoutProvider } from "../../context/ViewLayoutContext";
 
 /*
@@ -82,32 +82,32 @@ describe("FN-379 shared chrome on the auxiliary runtime hosts", () => {
   const bridges = [
     {
       name: "projects",
-      testId: "alpha-mobile-drawer-projects",
+      testId: "mobile-drawer-projects",
       title: "Projects",
       element: (
-        <AlphaProjectsDrawer open title="Projects" onClose={vi.fn()}>
+        <ProjectsDrawer open title="Projects" onClose={vi.fn()}>
           <div data-testid="bridge-body">Projects body</div>
-        </AlphaProjectsDrawer>
+        </ProjectsDrawer>
       ),
     },
     {
       name: "planning",
-      testId: "alpha-mobile-drawer-planning",
+      testId: "mobile-drawer-planning",
       title: "Planning",
       element: (
-        <AlphaPlanningDrawer open title="Planning" onClose={vi.fn()}>
+        <PlanningDrawer open title="Planning" onClose={vi.fn()}>
           <div data-testid="bridge-body">Planning body</div>
-        </AlphaPlanningDrawer>
+        </PlanningDrawer>
       ),
     },
     {
       name: "main content",
-      testId: "alpha-mobile-drawer-main-content",
+      testId: "mobile-drawer-main-content",
       title: "Notes",
       element: (
-        <AlphaMainContentDrawer taskView="notes" open title="Notes" onClose={vi.fn()}>
+        <MainContentDrawer taskView="notes" open title="Notes" onClose={vi.fn()}>
           <div data-testid="bridge-body">Notes body</div>
-        </AlphaMainContentDrawer>
+        </MainContentDrawer>
       ),
     },
   ];
@@ -122,7 +122,7 @@ describe("FN-379 shared chrome on the auxiliary runtime hosts", () => {
     const drawer = await screen.findByTestId(testId);
     const panel = within(drawer).getByRole("dialog", { name: title });
     expect(zoneOrder(panel)).toEqual(["content"]);
-    expect(panel.querySelectorAll(".alpha-mobile-drawer__header")).toHaveLength(0);
+    expect(panel.querySelectorAll(".mobile-drawer__header")).toHaveLength(0);
     expect(panel.querySelectorAll(".modal-close")).toHaveLength(0);
     expect(within(panel).getByTestId("bridge-body")).toBeInTheDocument();
     expect(panel.querySelectorAll(":scope > .view-drawer__handle-target")).toHaveLength(1);
@@ -131,11 +131,11 @@ describe("FN-379 shared chrome on the auxiliary runtime hosts", () => {
   it("lets the usage bridge content own its header without a second drawer title", async () => {
     render(
       <ViewLayoutProvider projectId="project-1">
-        <AlphaUsageDrawer open title="Usage" onClose={vi.fn()} projectId="project-1" />
+        <MobileUsageDrawer open title="Usage" onClose={vi.fn()} projectId="project-1" />
       </ViewLayoutProvider>,
     );
 
-    const drawer = await screen.findByTestId("alpha-mobile-drawer-usage");
+    const drawer = await screen.findByTestId("mobile-drawer-usage");
     const panel = within(drawer).getByRole("dialog", { name: "Usage" });
     expect(zoneOrder(panel)).toEqual(["content"]);
     await waitFor(() => expect(panel.querySelectorAll(".view-header").length).toBeLessThanOrEqual(1));

@@ -1,5 +1,5 @@
 import "./QuickEntryBox.css";
-import { AlphaButton, AlphaInput, AlphaListBox, AlphaListBoxItem, AlphaMenu, AlphaMenuItem, AlphaPopoverSurface, AlphaTextArea } from "./alpha-ui";
+import { UiButton, UiInput, UiListBox, UiListBoxItem, UiMenu, UiMenuItem, UiPopoverSurface, UiTextArea } from "./ui";
 import { useState, useCallback, useRef, useEffect, useMemo, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import { createPortal } from "react-dom";
@@ -28,11 +28,10 @@ import { computeFixedMenuPosition, getLayoutViewportSize } from "../utils/fixedM
 import { isInsidePortaledModelMenu } from "../utils/portalSurfaces";
 import { restoreOptionalStepsOnFastExit } from "../utils/fastModeOptionalSteps";
 import { useQuickAddSubmitOnEnter } from "../hooks/useQuickAddSubmitOnEnter";
-import { useAlphaSurface } from "../context/AlphaContext";
 
 const STORAGE_KEY = "kb-quick-entry-text";
-const ALPHA_START_HOLD_DURATION_MS = 500;
-type AlphaSaveGesture = { kind: "pointer"; pointerId: number } | { kind: "keyboard"; key: " " | "Enter" };
+const QUICK_ADD_START_HOLD_DURATION_MS = 500;
+type QuickAddSaveGesture = { kind: "pointer"; pointerId: number } | { kind: "keyboard"; key: " " | "Enter" };
 const ALLOWED_TASK_ATTACHMENT_TYPES = new Set([
   "image/png",
   "image/jpeg",
@@ -167,7 +166,6 @@ function hasMeaningfulNodeChoice(nodes: NodeInfo[]): boolean {
 
 export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], availableModels, workflowId, workflowOptions, defaultWorkflowId, projectId, autoExpand = true, defaultExpanded = true, submitOnEnter, favoriteProviders: parentFavoriteProviders, favoriteModels: parentFavoriteModels, onToggleFavorite: parentToggleFavorite, onToggleModelFavorite: parentToggleModelFavorite, onOpenTask }: QuickEntryBoxProps) {
   const { t } = useTranslation("app");
-  const alphaActive = useAlphaSurface();
   const contextSubmitOnEnter = useQuickAddSubmitOnEnter();
   const enterSubmits = submitOnEnter ?? contextSubmitOnEnter;
   const [description, setDescription] = useState(() => {
@@ -181,23 +179,26 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
   const [isExpanded, setIsExpanded] = useState(true);
   // isDisclosureExpanded controls visibility of advanced options (Deps, Models, etc.).
   /*
-  FNXC:AlphaQuickEntry 2026-09-11-00:30:
-  Alpha Quick Entry starts with only its compact immediate-action row visible and progressively discloses advanced routing options. List and every non-Alpha host retain the historical defaultExpanded contract; state and callbacks stay in this single composer instance so disclosure never discards the draft.
+  FNXC:NativeQuickEntry 2026-09-15-00:20:
+  Quick Entry starts with only its compact immediate-action row visible and progressively discloses
+  advanced routing options. That compact presentation was already the one Column — the sole production
+  mount — renders, and Column now asks for it explicitly with `defaultExpanded={false}` instead of relying
+  on a perimeter flag, so production geometry is unchanged. State and callbacks stay in this single
+  composer instance so disclosure never discards the draft.
   */
-  const [isDisclosureExpanded, setIsDisclosureExpanded] = useState(alphaActive ? false : defaultExpanded);
-  const previousAlphaActiveRef = useRef(alphaActive);
+  const [isDisclosureExpanded, setIsDisclosureExpanded] = useState(defaultExpanded);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const dictation = useComposerDictation({ textareaRef, value: description, onChange: setDescription, projectId });
   const fileInputRef = useRef<HTMLInputElement>(null);
   const touchButtonRef = useRef<HTMLButtonElement | null>(null);
   const startIntentRef = useRef<ValidatedQuickAddWorkflow | null>(null);
-  const alphaSaveButtonRef = useRef<HTMLButtonElement | null>(null);
-  const alphaSaveGestureRef = useRef<AlphaSaveGesture | null>(null);
-  const alphaSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const alphaSaveBarrierReleaseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const alphaSaveSuppressClickRef = useRef(false);
-  const alphaStartWorkflowRef = useRef<ValidatedQuickAddWorkflow | null>(null);
-  const [alphaSaveState, setAlphaSaveState] = useState<"idle" | "holding">("idle");
+  const quickAddSaveButtonRef = useRef<HTMLButtonElement | null>(null);
+  const quickAddSaveGestureRef = useRef<QuickAddSaveGesture | null>(null);
+  const quickAddSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const quickAddSaveBarrierReleaseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const quickAddSaveSuppressClickRef = useRef(false);
+  const quickAddStartWorkflowRef = useRef<ValidatedQuickAddWorkflow | null>(null);
+  const [quickAddSaveState, setQuickAddSaveState] = useState<"idle" | "holding">("idle");
   const justResetRef = useRef(false);
   const draftPersistenceWarningShownRef = useRef(false);
   const previousProjectIdRef = useRef(projectId);
@@ -326,21 +327,13 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
   const isDisabled = !onCreate;
 
   /*
-  FNXC:AlphaQuickEntryMode 2026-09-11-00:51:
-  Alpha can be toggled while Board remains mounted. Adopt progressive disclosure on entry and restore the non-Alpha `defaultExpanded` contract on exit without remounting the composer or clearing its draft.
+  FNXC:NativeQuickEntry 2026-09-15-00:20:
+  Collapsing advanced controls must close every parent-owned portal state before the triggers disappear.
+  The options subtree is also unmounted below so child-owned workflow-step portals cannot remain visible
+  without an anchor.
   */
   useEffect(() => {
-    if (previousAlphaActiveRef.current === alphaActive) return;
-    previousAlphaActiveRef.current = alphaActive;
-    setIsDisclosureExpanded(alphaActive ? false : defaultExpanded);
-  }, [alphaActive, defaultExpanded]);
-
-  /*
-  FNXC:AlphaQuickEntryPortals 2026-09-11-00:51:
-  Collapsing advanced Alpha controls must close every parent-owned portal state before the triggers disappear. The options subtree is also unmounted below so child-owned workflow-step portals cannot remain visible without an anchor.
-  */
-  useEffect(() => {
-    if (!alphaActive || isDisclosureExpanded) return;
+    if (isDisclosureExpanded) return;
     agentPickerOpenTokenRef.current += 1;
     setShowDeps(false);
     setDepDropdownPosition(null);
@@ -355,7 +348,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
     setIsModelMenuOpen(false);
     setModelMenuPosition(null);
     setActiveModelSubmenu(null);
-  }, [alphaActive, isDisclosureExpanded]);
+  }, [isDisclosureExpanded]);
 
   // Fetch models if not provided by parent
   useEffect(() => {
@@ -443,7 +436,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
   const startWorkflowTarget = validatedStartWorkflow ? resolveQuickAddStartWorkflowTarget(validatedStartWorkflow) : null;
   /*
   FNXC:QuickAddStart 2026-09-13-17:28:
-  Alpha exposes two outcomes through its single icon-only Save action: a brief click or tap saves the task, while a
+  Quick Add exposes two outcomes through its single icon-only Save action: a brief click or tap saves the task, while a
   continuous 500ms hold starts it. Legacy surfaces retain the explicit Start chip. Eligibility remains
   `workflowSupportsQuickAddStart`: Coding (Ideas), or a workflow whose first visible lane is a server-derived
   manual-intake/"waiting" column. A provable target is still required (`startInitialColumn` for the create-time
@@ -1667,53 +1660,53 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
     void handleSubmit();
   }, [canQuickAddStartNow, handleSubmit, validatedStartWorkflow]);
 
-  const cancelAlphaSaveGesture = useCallback((suppressClick = false) => {
-    const hadActiveGesture = alphaSaveGestureRef.current !== null;
-    if (alphaSaveTimerRef.current) clearTimeout(alphaSaveTimerRef.current);
-    alphaSaveTimerRef.current = null;
-    alphaSaveGestureRef.current = null;
-    alphaStartWorkflowRef.current = null;
-    if (hadActiveGesture) alphaSaveSuppressClickRef.current = suppressClick;
-    setAlphaSaveState("idle");
+  const cancelQuickAddSaveGesture = useCallback((suppressClick = false) => {
+    const hadActiveGesture = quickAddSaveGestureRef.current !== null;
+    if (quickAddSaveTimerRef.current) clearTimeout(quickAddSaveTimerRef.current);
+    quickAddSaveTimerRef.current = null;
+    quickAddSaveGestureRef.current = null;
+    quickAddStartWorkflowRef.current = null;
+    if (hadActiveGesture) quickAddSaveSuppressClickRef.current = suppressClick;
+    setQuickAddSaveState("idle");
   }, []);
 
-  const releaseAlphaSaveClickBarrierAfterTerminalEvent = useCallback(() => {
-    if (!alphaSaveSuppressClickRef.current || alphaSaveBarrierReleaseTimerRef.current) return;
-    alphaSaveBarrierReleaseTimerRef.current = setTimeout(() => {
-      alphaSaveBarrierReleaseTimerRef.current = null;
-      alphaSaveSuppressClickRef.current = false;
+  const releaseQuickAddSaveClickBarrierAfterTerminalEvent = useCallback(() => {
+    if (!quickAddSaveSuppressClickRef.current || quickAddSaveBarrierReleaseTimerRef.current) return;
+    quickAddSaveBarrierReleaseTimerRef.current = setTimeout(() => {
+      quickAddSaveBarrierReleaseTimerRef.current = null;
+      quickAddSaveSuppressClickRef.current = false;
     }, 0);
   }, []);
 
-  const beginAlphaSaveGesture = useCallback((gesture: AlphaSaveGesture) => {
-    if (!alphaActive || !canQuickAddStartNow || !validatedStartWorkflow || alphaSaveGestureRef.current || alphaSaveSuppressClickRef.current) return false;
-    alphaSaveGestureRef.current = gesture;
-    alphaStartWorkflowRef.current = validatedStartWorkflow;
-    setAlphaSaveState("holding");
-    alphaSaveTimerRef.current = setTimeout(() => {
-      const workflowSnapshot = alphaStartWorkflowRef.current;
-      alphaSaveTimerRef.current = null;
-      alphaSaveGestureRef.current = null;
-      alphaStartWorkflowRef.current = null;
-      alphaSaveSuppressClickRef.current = true;
-      setAlphaSaveState("idle");
+  const beginQuickAddSaveGesture = useCallback((gesture: QuickAddSaveGesture) => {
+    if (!canQuickAddStartNow || !validatedStartWorkflow || quickAddSaveGestureRef.current || quickAddSaveSuppressClickRef.current) return false;
+    quickAddSaveGestureRef.current = gesture;
+    quickAddStartWorkflowRef.current = validatedStartWorkflow;
+    setQuickAddSaveState("holding");
+    quickAddSaveTimerRef.current = setTimeout(() => {
+      const workflowSnapshot = quickAddStartWorkflowRef.current;
+      quickAddSaveTimerRef.current = null;
+      quickAddSaveGestureRef.current = null;
+      quickAddStartWorkflowRef.current = null;
+      quickAddSaveSuppressClickRef.current = true;
+      setQuickAddSaveState("idle");
       handleStartClick(workflowSnapshot);
-    }, ALPHA_START_HOLD_DURATION_MS);
+    }, QUICK_ADD_START_HOLD_DURATION_MS);
     return true;
-  }, [alphaActive, canQuickAddStartNow, handleStartClick, validatedStartWorkflow]);
+  }, [canQuickAddStartNow, handleStartClick, validatedStartWorkflow]);
 
-  const completeAlphaSaveGesture = useCallback((gesture: AlphaSaveGesture) => {
-    const active = alphaSaveGestureRef.current;
+  const completeQuickAddSaveGesture = useCallback((gesture: QuickAddSaveGesture) => {
+    const active = quickAddSaveGestureRef.current;
     const matches = active?.kind === gesture.kind && (active.kind === "pointer"
-      ? active.pointerId === (gesture as Extract<AlphaSaveGesture, { kind: "pointer" }>).pointerId
-      : active.key === (gesture as Extract<AlphaSaveGesture, { kind: "keyboard" }>).key);
+      ? active.pointerId === (gesture as Extract<QuickAddSaveGesture, { kind: "pointer" }>).pointerId
+      : active.key === (gesture as Extract<QuickAddSaveGesture, { kind: "keyboard" }>).key);
     if (!matches) return;
-    cancelAlphaSaveGesture(true);
+    cancelQuickAddSaveGesture(true);
     void handleSubmit();
-  }, [cancelAlphaSaveGesture, handleSubmit]);
+  }, [cancelQuickAddSaveGesture, handleSubmit]);
 
   /*
-  FNXC:AlphaQuickEntry 2026-09-13-17:28:
+  FNXC:NativeQuickEntry 2026-09-13-17:28:
   Pointer and keyboard holds share one 500ms timer and one captured workflow snapshot. Only a primary pointer using
   its primary button may begin a hold. Explicit cancellation never saves; an ordinary release before the threshold
   saves exactly once and consumes its synthetic click. Reaching the threshold consumes Start exactly once, arms
@@ -1721,7 +1714,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
   protection to rendered confirmation state. Workflow changes, submission, disablement, blur, Escape, capture loss,
   and unmount invalidate a pending gesture.
 
-  FNXC:AlphaQuickEntry 2026-09-12-21:38:
+  FNXC:NativeQuickEntry 2026-09-12-21:38:
   A completed Start hold owns its synthetic-click barrier until the trailing click is consumed, independently of
   submission success, failure, or duplicate-dialog cancellation. Success can reset and re-enable the form before the
   pointer is released, while cancellation preserves the draft; neither outcome may let that same physical gesture
@@ -1730,14 +1723,14 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
   button from consuming the next independent Save. A new hold cannot replace an unconsumed gesture barrier.
   */
   useEffect(() => () => {
-    cancelAlphaSaveGesture();
-    if (alphaSaveBarrierReleaseTimerRef.current) clearTimeout(alphaSaveBarrierReleaseTimerRef.current);
-  }, [cancelAlphaSaveGesture]);
+    cancelQuickAddSaveGesture();
+    if (quickAddSaveBarrierReleaseTimerRef.current) clearTimeout(quickAddSaveBarrierReleaseTimerRef.current);
+  }, [cancelQuickAddSaveGesture]);
   useEffect(() => {
-    if (alphaSaveGestureRef.current && (!alphaActive || isSubmitting || isDisabled || !canQuickAddStartNow || alphaStartWorkflowRef.current !== validatedStartWorkflow)) {
-      cancelAlphaSaveGesture(true);
+    if (quickAddSaveGestureRef.current && (isSubmitting || isDisabled || !canQuickAddStartNow || quickAddStartWorkflowRef.current !== validatedStartWorkflow)) {
+      cancelQuickAddSaveGesture(true);
     }
-  }, [alphaActive, canQuickAddStartNow, cancelAlphaSaveGesture, isDisabled, isSubmitting, validatedStartWorkflow]);
+  }, [canQuickAddStartNow, cancelQuickAddSaveGesture, isDisabled, isSubmitting, validatedStartWorkflow]);
 
   const truncate = (s: string, len: number) =>
     s.length > len ? s.slice(0, len) + "…" : s;
@@ -1831,9 +1824,9 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
     ? t("tasks.hideAdvancedOptions", "Hide advanced options")
     : t("tasks.showAdvancedOptions", "Show advanced options");
 
-  // Alpha keeps immediate actions available while disclosure controls advanced routing options only.
+  // Quick Add keeps immediate actions available while disclosure controls advanced routing options only.
   const showExpandedControls = isDisclosureExpanded;
-  const showActionRow = alphaActive || showExpandedControls;
+  const showActionRow = true;
 
   const toggleExpanded = useCallback(() => {
     setIsDisclosureExpanded((prev) => {
@@ -1863,7 +1856,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
       <div className="description-with-refine">
         <div className="quick-entry-main-row">
           <div className="quick-entry-textarea-wrap">
-            <AlphaTextArea
+            <UiTextArea
               ref={textareaRef}
               className={`quick-entry-input ${isExpanded ? "quick-entry-input--expanded" : ""}`}
               placeholder={isSubmitting ? t("tasks.creating", "Creating...") : t("tasks.addTaskPlaceholder", "Add a task...")}
@@ -1881,18 +1874,18 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
             />
           </div>
           <MicButton {...dictation.micProps} disabled={isSubmitting || isDisabled} />
-          <AlphaButton
+          <UiButton
             type="button"
             className="btn btn-sm quick-entry-toggle"
             onClick={toggleExpanded}
             aria-expanded={isDisclosureExpanded}
             aria-controls="quick-entry-controls"
             data-testid="quick-entry-toggle"
-            title={alphaActive ? disclosureLabel : (isDisclosureExpanded ? t("tasks.collapse", "Collapse") : t("tasks.expand", "Expand"))}
-            aria-label={alphaActive ? disclosureLabel : (isDisclosureExpanded ? t("tasks.collapse", "Collapse") : t("tasks.expand", "Expand"))}
+            title={disclosureLabel}
+            aria-label={disclosureLabel}
           >
             {isDisclosureExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-          </AlphaButton>
+          </UiButton>
         </div>
       </div>
       <div
@@ -1901,7 +1894,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
         hidden={!showActionRow}
         aria-hidden={!showActionRow}
       >
-        {/* Alpha keeps immediate actions visible and progressively discloses advanced options. */}
+        {/* Quick Add keeps immediate actions visible and progressively discloses advanced options. */}
         {showActionRow && !isSubmitting && (
           <div
             className="quick-entry-actions"
@@ -1937,14 +1930,14 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
             up/high, down/low, flag/normal, alert/urgent glyph helper, and Fast uses Zap while retaining
             title/aria-label/test-id semantics.
             */}
-            {(!alphaActive || showExpandedControls) && (
+            {showExpandedControls && (
             <div
               className="quick-entry-options-group"
               data-testid="quick-entry-options-group"
             >
             {showWorkflowSelector && (
               <div className="quick-entry-workflow-wrap" ref={workflowPickerRef}>
-                <AlphaButton
+                <UiButton
                   ref={workflowTriggerRef}
                   type="button"
                   className="btn btn-sm dep-trigger quick-entry-workflow-trigger"
@@ -1990,9 +1983,9 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
                   />
                   <span className="quick-entry-workflow-label">{quickEntryWorkflowLabel}</span>
                   <ChevronDown size={12} aria-hidden="true" />
-                </AlphaButton>
+                </UiButton>
                 {showWorkflowPicker && portalRoot && workflowPickerPosition && createPortal(
-                  <AlphaPopoverSurface
+                  <UiPopoverSurface
                     ref={workflowPickerPortalRef}
                     triggerRef={workflowPickerRef}
                     onClose={() => setShowWorkflowPicker(false)}
@@ -2009,14 +2002,14 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
                     }}
                   >
                     <div className="dep-dropdown-search-header">{t("tasks.quickEntryWorkflowHeader", "Create in workflow")}</div>
-                    <AlphaListBox aria-label={t("tasks.quickEntryWorkflowHeader", "Create in workflow")}>
+                    <UiListBox aria-label={t("tasks.quickEntryWorkflowHeader", "Create in workflow")}>
                     {realWorkflowOptions.map((option) => {
                       const duplicateName = (quickEntryWorkflowNameCounts.get(option.name) ?? 0) > 1;
                       const optionLabel = duplicateName
                         ? t("tasks.quickEntryWorkflowDuplicateLabel", "{{name}} ({{id}})", { name: option.name, id: option.id })
                         : option.name;
                       return (
-                        <AlphaListBoxItem
+                        <UiListBoxItem
                           key={option.id}
                           id={option.id}
                           textValue={optionLabel}
@@ -2037,11 +2030,11 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
                             <span className="dep-dropdown-title quick-entry-workflow-option-name">{option.name}</span>
                             {duplicateName ? <span className="dep-dropdown-subtitle quick-entry-workflow-option-id">{option.id}</span> : null}
                           </span>
-                        </AlphaListBoxItem>
+                        </UiListBoxItem>
                       );
                     })}
-                    </AlphaListBox>
-                  </AlphaPopoverSurface>,
+                    </UiListBox>
+                  </UiPopoverSurface>,
                   portalRoot,
                 )}
               </div>
@@ -2060,7 +2053,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
               Quick Add intentionally omits AI Refine so the compact create row has no refine button, menu, loading state, or /ai/refine-text path. New Task and TaskForm keep their dedicated refine affordance for richer task drafting.
             */}
             <div className="dep-trigger-wrap">
-              <AlphaButton
+              <UiButton
                 ref={depTriggerRef}
                 type="button"
                 onMouseDown={(e) => e.preventDefault()}
@@ -2090,7 +2083,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
               >
                 <Link size={12} style={{ verticalAlign: "middle" }} />
                 {dependencies.length > 0 ? t("tasks.depsCount", "{{count}} deps", { count: dependencies.length }) : t("tasks.deps", "Deps")}
-              </AlphaButton>
+              </UiButton>
             </div>
             {/* Dependency dropdown rendered via portal for proper viewport positioning */}
             {showDeps && portalRoot && depDropdownPosition && (() => {
@@ -2124,7 +2117,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
                     overflowY: depDropdownPosition.maxHeight ? "auto" : undefined,
                   }}
                 >
-                  <AlphaInput
+                  <UiInput
                     className="dep-dropdown-search"
                     placeholder={t("tasks.searchTasksPlaceholder", "Search tasks…")}
                     autoFocus={typeof document === "undefined" || document.activeElement !== textareaRef.current}
@@ -2152,7 +2145,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
               );
             })()}
 
-            <AlphaButton
+            <UiButton
               ref={modelTriggerRef}
               type="button"
               onMouseDown={(e) => e.preventDefault()}
@@ -2173,11 +2166,11 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
             >
               <Brain size={12} style={{ verticalAlign: "middle" }} />
               {modelMenuLabel}
-            </AlphaButton>
+            </UiButton>
 
             {shouldShowNodePicker && (
               <div className="node-trigger-wrap" ref={nodePickerRef}>
-                <AlphaButton
+                <UiButton
                   type="button"
                   onMouseDown={(e) => e.preventDefault()}
                   className="btn btn-sm dep-trigger"
@@ -2209,7 +2202,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
                       <NodeHealthDot status={selectedNode.status} showLabel />
                     </span>
                   )}
-                </AlphaButton>
+                </UiButton>
               </div>
             )}
 
@@ -2268,7 +2261,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
             )}
 
             <div className="agent-trigger-wrap" ref={agentPickerRef}>
-              <AlphaButton
+              <UiButton
                 type="button"
                 onMouseDown={(e) => e.preventDefault()}
                 className="btn btn-sm dep-trigger"
@@ -2288,7 +2281,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
               >
                 <Bot size={12} style={{ verticalAlign: "middle" }} />
                 {selectedAgentLabel ? ` ${selectedAgentLabel}` : ` ${t("tasks.agent", "Agent")}`}
-              </AlphaButton>
+              </UiButton>
             </div>
             {showAgentPicker && portalRoot && agentPickerPosition && createPortal(
               <div
@@ -2345,27 +2338,13 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
 
             {/*
             FNXC:QuickAddStart 2026-07-31-23:51:
-            Start renders as the last chip in the options group so it wraps onto the same line as Models/Agent and
-            reads as an alternate create action beside Save (which stays right-aligned in the primary group). It is
-            present ONLY for manual-intake/"waiting"-first workflows — `hold` alone is not eligibility because the
-            merged auto-triaging Planning lane also holds cards. With an empty description it stays visible but
-            DISABLED (matching Save) so the affordance does not appear and vanish as the operator types; the whole
-            action row still unmounts while a create is in flight.
+            FNXC:NativeQuickEntry 2026-09-15-00:20:
+            REMOVED: the separate visible Start chip. It only ever rendered in the variant Column — the sole
+            production mount — never used, because inside the former boundary Start has always been a hold on the
+            single icon-only Save action. Its eligibility rule (manual-intake/"waiting"-first workflows only,
+            `hold` alone is not eligibility) and its create/move behaviour are unchanged and now live entirely on
+            that gesture, so no affordance and no empty shell is left behind.
             */}
-            {!alphaActive && canQuickAddStart && (
-              <AlphaButton
-                type="button"
-                className="btn btn-sm quick-entry-start-button"
-                onClick={() => handleStartClick()}
-                onMouseDown={(e) => e.preventDefault()}
-                disabled={!canQuickAddStartNow}
-                data-testid="quick-entry-save-start"
-                title={t("tasks.startTaskTitle", "Create and start the task")}
-              >
-                <Play size={12} style={{ verticalAlign: "middle", marginRight: 4 }} />
-                {t("tasks.start", "Start")}
-              </AlphaButton>
-            )}
             </div>
             )}
 
@@ -2385,7 +2364,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
             ProviderIcon's shared size map to size this one GitHub use case.
             */}
             <div className="quick-entry-primary-group" data-testid="quick-entry-primary-group">
-              <AlphaButton
+              <UiButton
                 type="button"
                 onMouseDown={(e) => e.preventDefault()}
                 className="btn btn-icon btn-sm quick-entry-attach-button"
@@ -2398,9 +2377,9 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
                 {pendingAttachments.length > 0 && (
                   <span className="quick-entry-attach-count" aria-hidden="true">{pendingAttachments.length}</span>
                 )}
-              </AlphaButton>
+              </UiButton>
 
-              <AlphaButton
+              <UiButton
                 type="button"
                 className={`btn btn-icon btn-sm ${effectiveGithubTracking ? "btn-primary" : ""}`}
                 onClick={() => {
@@ -2413,7 +2392,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
                 aria-label={githubToggleLabel}
               >
                 <ProviderIcon provider="github" size="sm" />
-              </AlphaButton>
+              </UiButton>
 
               {/*
               FNXC:PlannerOversight 2026-07-14-18:11:
@@ -2425,7 +2404,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
               clear override to null (inherit) — same as TaskDetailModal — instead of
               permanently hardcoding true/false after a double-click.
               */}
-              <AlphaButton
+              <UiButton
                 type="button"
                 className={`btn btn-icon btn-sm ${effectiveSessionAdvisor ? "btn-primary" : ""}`}
                 onClick={() => {
@@ -2442,10 +2421,10 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
                 aria-label={sessionAdvisorToggleLabel}
               >
                 {effectiveSessionAdvisor ? <Eye size={14} aria-hidden="true" /> : <EyeOff size={14} aria-hidden="true" />}
-              </AlphaButton>
+              </UiButton>
 
               <div className="priority-trigger-wrap" ref={priorityPickerRef}>
-                <AlphaButton
+                <UiButton
                   type="button"
                   onMouseDown={(e) => e.preventDefault()}
                   className="btn btn-icon btn-sm dep-trigger"
@@ -2474,7 +2453,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
                 >
                   {/* FNXC:PriorityColorCoding 2026-07-11-00:00: The quick-add icon-only priority trigger must preview urgency color from priorityIndicator without changing its label, test id, or picker behavior. */}
                   <PriorityIcon size={14} aria-hidden="true" style={{ color: getPriorityColorVar(priority) }} />
-                </AlphaButton>
+                </UiButton>
               </div>
 
               {showPriorityPicker && portalRoot && priorityPickerPosition && createPortal(
@@ -2517,7 +2496,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
                 portalRoot,
               )}
 
-              <AlphaButton
+              <UiButton
                 type="button"
                 className={`btn btn-icon btn-sm ${isFastMode ? "btn-primary" : ""}`}
                 onClick={toggleFastMode}
@@ -2528,79 +2507,79 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
                 aria-label={fastToggleLabel}
               >
                 <Zap size={14} aria-hidden="true" />
-              </AlphaButton>
+              </UiButton>
 
-              <AlphaButton
-                ref={alphaSaveButtonRef}
+              <UiButton
+                ref={quickAddSaveButtonRef}
                 type="button"
-                className={`btn btn-task-create btn-sm${alphaActive ? " btn-icon quick-entry-alpha-save" : ""}`}
+                className="btn btn-task-create btn-sm btn-icon quick-entry-save"
                 onClick={() => {
-                  if (alphaSaveSuppressClickRef.current) {
-                    alphaSaveSuppressClickRef.current = false;
-                    if (alphaSaveBarrierReleaseTimerRef.current) clearTimeout(alphaSaveBarrierReleaseTimerRef.current);
-                    alphaSaveBarrierReleaseTimerRef.current = null;
+                  if (quickAddSaveSuppressClickRef.current) {
+                    quickAddSaveSuppressClickRef.current = false;
+                    if (quickAddSaveBarrierReleaseTimerRef.current) clearTimeout(quickAddSaveBarrierReleaseTimerRef.current);
+                    quickAddSaveBarrierReleaseTimerRef.current = null;
                     return;
                   }
-                  if (!alphaSaveGestureRef.current) void handleSubmit();
+                  if (!quickAddSaveGestureRef.current) void handleSubmit();
                 }}
                 onMouseDown={(e) => e.preventDefault()}
                 onPointerDown={(event) => {
                   if (event.button !== 0 || event.isPrimary === false) return;
-                  if (!beginAlphaSaveGesture({ kind: "pointer", pointerId: event.pointerId })) return;
+                  if (!beginQuickAddSaveGesture({ kind: "pointer", pointerId: event.pointerId })) return;
                   event.currentTarget.setPointerCapture?.(event.pointerId);
                 }}
                 onPointerUp={(event) => {
-                  completeAlphaSaveGesture({ kind: "pointer", pointerId: event.pointerId });
-                  releaseAlphaSaveClickBarrierAfterTerminalEvent();
+                  completeQuickAddSaveGesture({ kind: "pointer", pointerId: event.pointerId });
+                  releaseQuickAddSaveClickBarrierAfterTerminalEvent();
                   if (event.currentTarget.hasPointerCapture?.(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
                 }}
-                onPointerCancel={() => cancelAlphaSaveGesture(true)}
-                onPointerLeave={() => cancelAlphaSaveGesture(true)}
-                onLostPointerCapture={() => cancelAlphaSaveGesture(true)}
+                onPointerCancel={() => cancelQuickAddSaveGesture(true)}
+                onPointerLeave={() => cancelQuickAddSaveGesture(true)}
+                onLostPointerCapture={() => cancelQuickAddSaveGesture(true)}
                 onKeyDown={(event) => {
                   if (event.key === "Escape") {
-                    cancelAlphaSaveGesture(true);
+                    cancelQuickAddSaveGesture(true);
                     return;
                   }
                   if ((event.key === " " || event.key === "Enter") && !event.repeat) {
                     event.preventDefault();
-                    beginAlphaSaveGesture({ kind: "keyboard", key: event.key });
+                    beginQuickAddSaveGesture({ kind: "keyboard", key: event.key });
                   }
                 }}
                 onKeyUp={(event) => {
                   if (event.key === " " || event.key === "Enter") {
                     event.preventDefault();
-                    completeAlphaSaveGesture({ kind: "keyboard", key: event.key });
-                    releaseAlphaSaveClickBarrierAfterTerminalEvent();
+                    completeQuickAddSaveGesture({ kind: "keyboard", key: event.key });
+                    releaseQuickAddSaveClickBarrierAfterTerminalEvent();
                   }
                 }}
-                onBlur={() => cancelAlphaSaveGesture(true)}
+                onBlur={() => cancelQuickAddSaveGesture(true)}
                 disabled={!description.trim() || isSubmitting}
-                style={alphaActive ? ({ "--quick-entry-alpha-hold-duration": `${ALPHA_START_HOLD_DURATION_MS}ms` } as CSSProperties) : undefined}
+                style={{ "--quick-entry-hold-duration": `${QUICK_ADD_START_HOLD_DURATION_MS}ms` } as CSSProperties}
                 data-testid="quick-entry-save"
-                data-hold-state={alphaActive ? alphaSaveState : undefined}
-                aria-label={alphaActive
-                  ? (alphaSaveState === "holding" ? t("tasks.releaseToSaveHoldToStart", "Release to save; keep holding to start") : t("tasks.saveHoldToStart", "Save task; hold to start"))
-                  : undefined}
-                title={alphaActive ? t("tasks.saveHoldToStart", "Save task; hold to start") : t("tasks.createTaskTitle", "Create task")}
+                data-hold-state={quickAddSaveState}
+                aria-label={quickAddSaveState === "holding"
+                  ? t("tasks.releaseToSaveHoldToStart", "Release to save; keep holding to start")
+                  : t("tasks.saveHoldToStart", "Save task; hold to start")}
+                title={t("tasks.saveHoldToStart", "Save task; hold to start")}
               >
-                {alphaActive && (
-                  <span className="quick-entry-alpha-save-icons">
-                    <span className="quick-entry-alpha-save-icon quick-entry-alpha-save-icon--save" aria-hidden="true">
+                {/* FNXC:NativeQuickEntry 2026-09-15-00:20: the Save/Start icon pair is always rendered; the hold gesture only drives its mask. */}
+                {(
+                  <span className="quick-entry-save-icons">
+                    <span className="quick-entry-save-icon quick-entry-save-icon--save" aria-hidden="true">
                       <Save size={12} />
                     </span>
-                    <span className="quick-entry-alpha-save-progress" aria-hidden="true">
-                      <span className="quick-entry-alpha-save-icon quick-entry-alpha-save-icon--start">
+                    <span className="quick-entry-save-progress" aria-hidden="true">
+                      <span className="quick-entry-save-icon quick-entry-save-icon--start">
                         <Play size={12} />
                       </span>
                     </span>
                   </span>
                 )}
-                {!alphaActive && <>{t("tasks.save", "Save")}</>}
-              </AlphaButton>
-              {alphaActive && (
+              </UiButton>
+              {(
                 <span className="visually-hidden" role="status" aria-live="polite">
-                  {alphaSaveState === "holding" ? t("tasks.holdToStartProgress", "Keep holding to start") : ""}
+                  {quickAddSaveState === "holding" ? t("tasks.holdToStartProgress", "Keep holding to start") : ""}
                 </span>
               )}
             </div>
@@ -2614,8 +2593,8 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
           removeLabel={t("tasks.removeAttachment", "Remove image")}
           testIdPrefix="quick-entry-preview"
         />
-        {(!alphaActive || showExpandedControls) && isModelMenuOpen && portalRoot && modelMenuPosition && createPortal(
-            <AlphaPopoverSurface
+        {showExpandedControls && isModelMenuOpen && portalRoot && modelMenuPosition && createPortal(
+            <UiPopoverSurface
               ref={modelMenuPortalRef}
               onClose={() => setIsModelMenuOpen(false)}
               className="model-nested-menu model-nested-menu--portal"
@@ -2649,8 +2628,8 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
                  * Top-level model rows use bare role names and matching icon alignment because
                  * .model-menu-item-label has no gap. Submenu headers retain the "<Role> Model" form.
                  */
-                <AlphaMenu className="model-menu-items" aria-label={t("tasks.modelOverrides", "Model overrides")}>
-                  <AlphaMenuItem
+                <UiMenu className="model-menu-items" aria-label={t("tasks.modelOverrides", "Model overrides")}>
+                  <UiMenuItem
                     id="plan"
                     type="button"
                     className={`model-menu-item ${hasPlanningOverride ? "model-menu-item--active" : ""}`}
@@ -2667,8 +2646,8 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
                         : t("tasks.usingDefault", "Using default")}
                     </span>
                     <ChevronRight size={12} style={{ marginLeft: "auto", color: "var(--text-dim)" }} />
-                  </AlphaMenuItem>
-                  <AlphaMenuItem
+                  </UiMenuItem>
+                  <UiMenuItem
                     id="executor"
                     type="button"
                     className={`model-menu-item ${hasExecutorOverride ? "model-menu-item--active" : ""}`}
@@ -2685,8 +2664,8 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
                         : t("tasks.usingDefault", "Using default")}
                     </span>
                     <ChevronRight size={12} style={{ marginLeft: "auto", color: "var(--text-dim)" }} />
-                  </AlphaMenuItem>
-                  <AlphaMenuItem
+                  </UiMenuItem>
+                  <UiMenuItem
                     id="validator"
                     type="button"
                     className={`model-menu-item ${hasValidatorOverride ? "model-menu-item--active" : ""}`}
@@ -2703,8 +2682,8 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
                         : t("tasks.usingDefault", "Using default")}
                     </span>
                     <ChevronRight size={12} style={{ marginLeft: "auto", color: "var(--text-dim)" }} />
-                  </AlphaMenuItem>
-                  <AlphaMenuItem
+                  </UiMenuItem>
+                  <UiMenuItem
                     id="merger"
                     type="button"
                     className={`model-menu-item ${hasMergerOverride ? "model-menu-item--active" : ""}`}
@@ -2721,12 +2700,12 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
                         : t("tasks.usingDefault", "Using default")}
                     </span>
                     <ChevronRight size={12} style={{ marginLeft: "auto", color: "var(--text-dim)" }} />
-                  </AlphaMenuItem>
-                </AlphaMenu>
+                  </UiMenuItem>
+                </UiMenu>
               ) : (
                 // Submenu with CustomModelDropdown for the selected target
                 <div className="model-submenu">
-                  <AlphaButton
+                  <UiButton
                     type="button"
                     className="model-submenu-back"
                     onClick={() => setActiveModelSubmenu(null)}
@@ -2734,7 +2713,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
                   >
                     <ChevronDown size={12} style={{ transform: "rotate(90deg)", marginRight: 4 }} />
                     {t("common.back", "Back")}
-                  </AlphaButton>
+                  </UiButton>
                   <div className="model-submenu-header">
                     {activeModelSubmenu === "plan" && t("tasks.planModel", "Plan Model")}
                     {activeModelSubmenu === "executor" && t("tasks.executorModel", "Executor Model")}
@@ -2780,18 +2759,18 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
                   {modelsError && (
                     <div className="model-submenu-error">
                       <span>{modelsError}</span>
-                      <AlphaButton type="button" className="btn btn-sm" onClick={loadModels}>
+                      <UiButton type="button" className="btn btn-sm" onClick={loadModels}>
                         {t("common.retry", "Retry")}
-                      </AlphaButton>
+                      </UiButton>
                     </div>
                   )}
                 </div>
               )}
-            </AlphaPopoverSurface>,
+            </UiPopoverSurface>,
             portalRoot,
           )}
         </div>
-        <AlphaInput
+        <UiInput
           ref={fileInputRef}
           type="file"
           accept={TASK_ATTACHMENT_ACCEPT}

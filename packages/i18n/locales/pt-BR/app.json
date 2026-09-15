@@ -8330,7 +8330,9 @@
       "revisionColumnError": "Não é possível solicitar revisão: a tarefa deve estar na coluna 'triage', 'todo', 'in-progress' ou 'in-review'.",
       "revisionRequested": "Revisão da IA solicitada. Tarefa movida para planejamento.",
       "saving": "Salvando…",
-      "updated": "Especificação atualizada"
+      "updated": "Especificação atualizada",
+      "copy": "Copiar",
+      "copied": "Copiado"
     },
     "stall": {
       "noLogEntry": "Ainda não há entrada de log",
@@ -9931,5 +9933,12 @@
   "windows": {
     "hide": "Ocultar todas as janelas",
     "restore": "Restaurar janelas"
+  },
+  "uiStyle": {
+    "label": "Estilo da interface",
+    "classic": "Atual",
+    "classicDescription": "A gramática habitual do Fusion, sem alterações.",
+    "clean": "Limpo",
+    "cleanDescription": "Densidade mais compacta, cantos suaves, cromo discreto."
   }
 }

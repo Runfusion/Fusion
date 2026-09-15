@@ -11,6 +11,7 @@ import type { TFunction } from "i18next";
 import type {
   CapacityRiskSignal,
   ColorTheme,
+  UiStyle,
   ColumnId,
   GithubIssueAction,
   MergeResult,
@@ -97,6 +98,9 @@ export interface MainContentProps {
   themeMode: ThemeMode;
   setThemeMode: (mode: ThemeMode) => void;
   colorTheme: ColorTheme;
+  /* FNXC:UiStyleAxis 2026-09-15-00:20: second, independent appearance axis owned by the single useTheme instance in App. */
+  uiStyle: UiStyle;
+  setUiStyle: (style: UiStyle) => void;
   setColorTheme: (theme: ColorTheme) => void;
   dashboardFontScalePct: number;
   setDashboardFontScalePct: (scalePct: number) => void;
@@ -258,7 +262,7 @@ export interface MainContentProps {
   notesController?: UseNotesController;
   registerNotesGuard?: (guard: () => boolean | Promise<boolean>, onAccepted?: () => void) => () => void;
   isMobile: boolean;
-  /** Whether the measured Alpha pill is currently rendered and needs drawer clearance. */
+  /** Whether the measured navigation pill is currently rendered and needs drawer clearance. */
   mainPanelDetailInitialTab: DetailTaskTab | undefined;
   closeTaskDetailMainPanel: () => void;
   setMainPanelDetailTask: Dispatch<SetStateAction<Task | TaskDetail | null>>;

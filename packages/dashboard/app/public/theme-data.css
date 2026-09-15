@@ -782,7 +782,7 @@ All shadcn-family themes should use one UI font family across app chrome, forms,
   --glow-success: none;
   --glow-warning: none;
   --glow-danger: none;
-  --focus-ring: 0 0 0 1px var(--border);
+  --focus-ring: var(--ui-focus-ring-geometry) var(--border);
   --accent: #7da88e;
   --accent-text: #fff;
 }
@@ -822,7 +822,7 @@ All shadcn-family themes should use one UI font family across app chrome, forms,
   --glow-success: none;
   --glow-warning: none;
   --glow-danger: none;
-  --focus-ring: 0 0 0 1px var(--border);
+  --focus-ring: var(--ui-focus-ring-geometry) var(--border);
   --accent: #4a6b56;
   --accent-text: #fff;
 }
@@ -1052,42 +1052,20 @@ All shadcn-family themes should use one UI font family across app chrome, forms,
   --font-primary: "SF Mono", "JetBrains Mono", "Fira Code", Monaco, Consolas, monospace;
   --font-mono: "SF Mono", "JetBrains Mono", "Fira Code", Monaco, Consolas, monospace;
 
-  --space-xs: 2px;
-  --space-sm: 4px;
-  --space-md: 8px;
-  --space-lg: 12px;
-  --space-xl: 16px;
-  --space-2xl: 24px;
 
-  --radius-sm: 2px;
-  --radius-md: 4px;
-  --radius-lg: 6px;
-  --radius-xl: 8px;
-  --radius: var(--radius-md);
 
-  --btn-padding: 6px 12px;
-  --btn-border-width: 2px;
-  --card-padding: 8px 10px;
-  --modal-padding: var(--space-md) var(--space-lg);
-  --header-padding: var(--space-sm) var(--space-lg);
-  --column-gap: var(--space-sm);
-  --board-padding: var(--space-md) var(--space-lg);
 
-  --shadow-sm: 0 1px 1px color-mix(in srgb, #000000 50%, transparent);
-  --shadow-md: 0 2px 4px color-mix(in srgb, #000000 50%, transparent);
-  --shadow-lg: 0 4px 12px color-mix(in srgb, #000000 60%, transparent);
-  --shadow-glow: 0 0 6px color-mix(in srgb, var(--todo) 40%, transparent);
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in srgb, #000000 50%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, #000000 50%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, #000000 60%, transparent);
+  --shadow-glow: var(--ui-shadow-glow-geometry) color-mix(in srgb, var(--todo) 40%, transparent);
   --glow-success: 0 0 8px color-mix(in srgb, var(--color-success) 35%, transparent);
   --glow-warning: 0 0 8px color-mix(in srgb, var(--todo) 40%, transparent);
   --glow-danger: 0 0 8px color-mix(in srgb, var(--color-error) 35%, transparent);
-  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--todo) 18%, transparent);
-  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--todo) 30%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--todo) 18%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--todo) 30%, transparent);
   --shadow: var(--shadow-lg);
 
-  --transition-instant: 0.05s ease;
-  --transition-fast: 0.1s ease;
-  --transition-normal: 0.15s ease;
-  --transition-slow: 0.2s ease;
 
   --cta-bg: #d97706;
   --cta-border: #f59e0b;
@@ -1124,15 +1102,15 @@ All shadcn-family themes should use one UI font family across app chrome, forms,
   --color-error: #dc2626;
   --color-muted: #6b7280;
 
-  --shadow-sm: 0 1px 1px color-mix(in srgb, var(--text) 10%, transparent);
-  --shadow-md: 0 2px 4px color-mix(in srgb, var(--text) 10%, transparent);
-  --shadow-lg: 0 4px 12px color-mix(in srgb, var(--text) 15%, transparent);
-  --shadow-glow: 0 0 6px color-mix(in srgb, var(--todo) 30%, transparent);
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in srgb, var(--text) 10%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, var(--text) 10%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, var(--text) 15%, transparent);
+  --shadow-glow: var(--ui-shadow-glow-geometry) color-mix(in srgb, var(--todo) 30%, transparent);
   --glow-success: 0 0 8px color-mix(in srgb, var(--color-success) 25%, transparent);
   --glow-warning: 0 0 8px color-mix(in srgb, var(--todo) 30%, transparent);
   --glow-danger: 0 0 8px color-mix(in srgb, var(--color-error) 22%, transparent);
-  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--todo) 14%, transparent);
-  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--todo) 24%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--todo) 14%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--todo) 24%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #b45309;
@@ -1190,12 +1168,6 @@ All shadcn-family themes should use one UI font family across app chrome, forms,
   }
 }
 
-[data-color-theme="factory"] .btn {
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  font-weight: 600;
-}
-
 [data-color-theme="factory"] .btn-primary,
 [data-color-theme="factory"] .btn-task-create {
   background: transparent;
@@ -1211,21 +1183,9 @@ All shadcn-family themes should use one UI font family across app chrome, forms,
   box-shadow: var(--shadow-glow);
 }
 
-[data-color-theme="factory"] .card,
-[data-color-theme="factory"] .column {
-  border-width: 2px;
-}
-
-[data-color-theme="factory"] .column-header h2 {
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  font-size: 0.75rem;
-}
-
 [data-color-theme="factory"] .column-count,
 [data-color-theme="factory"] .card-id {
   font-family: var(--font-mono);
-  font-weight: 700;
 }
 
 /*
@@ -1259,42 +1219,20 @@ Factory Mono is a monochrome Factory variant for FN-6724: keep the industrial mo
   --font-primary: "SF Mono", "JetBrains Mono", "Fira Code", Monaco, Consolas, monospace;
   --font-mono: "SF Mono", "JetBrains Mono", "Fira Code", Monaco, Consolas, monospace;
 
-  --space-xs: 2px;
-  --space-sm: 4px;
-  --space-md: 8px;
-  --space-lg: 12px;
-  --space-xl: 16px;
-  --space-2xl: 24px;
 
-  --radius-sm: 2px;
-  --radius-md: 4px;
-  --radius-lg: 6px;
-  --radius-xl: 8px;
-  --radius: var(--radius-md);
 
-  --btn-padding: 6px 12px;
-  --btn-border-width: 2px;
-  --card-padding: 8px 10px;
-  --modal-padding: var(--space-md) var(--space-lg);
-  --header-padding: var(--space-sm) var(--space-lg);
-  --column-gap: var(--space-sm);
-  --board-padding: var(--space-md) var(--space-lg);
 
   --shadow-sm: none;
-  --shadow-md: 0 1px 0 color-mix(in srgb, #000000 60%, transparent);
-  --shadow-lg: 0 1px 0 color-mix(in srgb, #000000 70%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, #000000 60%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, #000000 70%, transparent);
   --shadow-glow: none;
   --glow-success: none;
   --glow-warning: none;
   --glow-danger: none;
-  --focus-ring: 0 0 0 var(--btn-border-width) color-mix(in srgb, var(--accent) 30%, transparent);
-  --focus-ring-strong: 0 0 0 var(--btn-border-width) color-mix(in srgb, var(--accent) 45%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 30%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 45%, transparent);
   --shadow: var(--shadow-lg);
 
-  --transition-instant: 0.05s ease;
-  --transition-fast: 0.1s ease;
-  --transition-normal: 0.15s ease;
-  --transition-slow: 0.2s ease;
 
   --cta-bg: transparent;
   --cta-border: #ef4444;
@@ -1333,14 +1271,14 @@ Factory Mono is a monochrome Factory variant for FN-6724: keep the industrial mo
   --color-muted: #737373;
 
   --shadow-sm: none;
-  --shadow-md: 0 1px 0 color-mix(in srgb, var(--text) 12%, transparent);
-  --shadow-lg: 0 1px 0 color-mix(in srgb, var(--text) 18%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, var(--text) 12%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, var(--text) 18%, transparent);
   --shadow-glow: none;
   --glow-success: none;
   --glow-warning: none;
   --glow-danger: none;
-  --focus-ring: 0 0 0 var(--btn-border-width) color-mix(in srgb, var(--accent) 25%, transparent);
-  --focus-ring-strong: 0 0 0 var(--btn-border-width) color-mix(in srgb, var(--accent) 38%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 25%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 38%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: transparent;
@@ -1367,12 +1305,6 @@ Factory Mono is a monochrome Factory variant for FN-6724: keep the industrial mo
   animation: none;
 }
 
-[data-color-theme="factory-mono"] .btn {
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  font-weight: 600;
-}
-
 [data-color-theme="factory-mono"] .btn-primary,
 [data-color-theme="factory-mono"] .btn-task-create {
   background: transparent;
@@ -1388,21 +1320,9 @@ Factory Mono is a monochrome Factory variant for FN-6724: keep the industrial mo
   box-shadow: none;
 }
 
-[data-color-theme="factory-mono"] .card,
-[data-color-theme="factory-mono"] .column {
-  border-width: var(--btn-border-width);
-}
-
-[data-color-theme="factory-mono"] .column-header h2 {
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  font-size: 0.75rem;
-}
-
 [data-color-theme="factory-mono"] .column-count,
 [data-color-theme="factory-mono"] .card-id {
   font-family: var(--font-mono);
-  font-weight: 700;
 }
 
 /*
@@ -1439,42 +1359,20 @@ FN-6758 makes the default shadcn highlight/accent orange for focus rings, active
   --font-primary: "Geist", "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
 
-  --space-xs: 4px;
-  --space-sm: 6px;
-  --space-md: 10px;
-  --space-lg: 16px;
-  --space-xl: 20px;
-  --space-2xl: 28px;
 
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
-  --radius-xl: 12px;
-  --radius: var(--radius-md);
 
-  --btn-padding: 6px 12px;
-  --btn-border-width: 1px;
-  --card-padding: 10px 12px;
-  --modal-padding: var(--space-md) var(--space-lg);
-  --header-padding: var(--space-sm) var(--space-lg);
-  --column-gap: var(--space-md);
-  --board-padding: var(--space-md) var(--space-lg);
 
-  --shadow-sm: 0 1px 2px color-mix(in srgb, #000000 18%, transparent);
-  --shadow-md: 0 1px 3px color-mix(in srgb, #000000 22%, transparent);
-  --shadow-lg: 0 4px 12px color-mix(in srgb, #000000 24%, transparent);
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in srgb, #000000 18%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, #000000 22%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, #000000 24%, transparent);
   --shadow-glow: none;
   --glow-success: none;
   --glow-warning: none;
   --glow-danger: none;
-  --focus-ring: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 35%, transparent);
-  --focus-ring-strong: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 45%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 35%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 45%, transparent);
   --shadow: var(--shadow-lg);
 
-  --transition-instant: 0.05s ease;
-  --transition-fast: 0.1s ease;
-  --transition-normal: 0.15s ease;
-  --transition-slow: 0.2s ease;
 
   --cta-bg: #fafafa;
   --cta-border: #fafafa;
@@ -1512,15 +1410,15 @@ FN-6758 makes the default shadcn highlight/accent orange for focus rings, active
   --color-error: #dc2626;
   --color-muted: #71717a;
 
-  --shadow-sm: 0 1px 2px color-mix(in srgb, var(--text) 8%, transparent);
-  --shadow-md: 0 1px 3px color-mix(in srgb, var(--text) 10%, transparent);
-  --shadow-lg: 0 4px 12px color-mix(in srgb, var(--text) 12%, transparent);
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in srgb, var(--text) 8%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, var(--text) 10%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, var(--text) 12%, transparent);
   --shadow-glow: none;
   --glow-success: none;
   --glow-warning: none;
   --glow-danger: none;
-  --focus-ring: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 18%, transparent);
-  --focus-ring-strong: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 28%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 18%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 28%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #18181b;
@@ -1569,42 +1467,20 @@ Shadcn Ember must keep shadcn structure but match every Ember-owned color token 
   --font-primary: "Geist", "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
 
-  --space-xs: 4px;
-  --space-sm: 6px;
-  --space-md: 10px;
-  --space-lg: 16px;
-  --space-xl: 20px;
-  --space-2xl: 28px;
 
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
-  --radius-xl: 12px;
-  --radius: var(--radius-md);
 
-  --btn-padding: 6px 12px;
-  --btn-border-width: 1px;
-  --card-padding: 10px 12px;
-  --modal-padding: var(--space-md) var(--space-lg);
-  --header-padding: var(--space-sm) var(--space-lg);
-  --column-gap: var(--space-md);
-  --board-padding: var(--space-md) var(--space-lg);
 
-  --shadow-sm: 0 1px 2px color-mix(in srgb, #000000 18%, transparent);
-  --shadow-md: 0 1px 3px color-mix(in srgb, #000000 22%, transparent);
-  --shadow-lg: 0 4px 12px color-mix(in srgb, #000000 24%, transparent);
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in srgb, #000000 18%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, #000000 22%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, #000000 24%, transparent);
   --shadow-glow: none;
   --glow-success: none;
   --glow-warning: none;
   --glow-danger: none;
-  --focus-ring: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 35%, transparent);
-  --focus-ring-strong: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 45%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 35%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 45%, transparent);
   --shadow: var(--shadow-lg);
 
-  --transition-instant: 0.05s ease;
-  --transition-fast: 0.1s ease;
-  --transition-normal: 0.15s ease;
-  --transition-slow: 0.2s ease;
 
   --cta-bg: #d4622a;
   --cta-border: #e8773a;
@@ -1642,15 +1518,15 @@ Shadcn Ember must keep shadcn structure but match every Ember-owned color token 
   --color-error: #dc2626;
   --color-muted: #71717a;
 
-  --shadow-sm: 0 1px 2px color-mix(in srgb, var(--text) 8%, transparent);
-  --shadow-md: 0 1px 3px color-mix(in srgb, var(--text) 10%, transparent);
-  --shadow-lg: 0 4px 12px color-mix(in srgb, var(--text) 12%, transparent);
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in srgb, var(--text) 8%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, var(--text) 10%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, var(--text) 12%, transparent);
   --shadow-glow: none;
   --glow-success: none;
   --glow-warning: none;
   --glow-danger: none;
-  --focus-ring: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 18%, transparent);
-  --focus-ring-strong: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 28%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 18%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 28%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #c05820;
@@ -1697,42 +1573,20 @@ FN-6816 keeps shadcn-custom visually identical to the base shadcn theme until sa
   --font-primary: "Geist", "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
 
-  --space-xs: 4px;
-  --space-sm: 6px;
-  --space-md: 10px;
-  --space-lg: 16px;
-  --space-xl: 20px;
-  --space-2xl: 28px;
 
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
-  --radius-xl: 12px;
-  --radius: var(--radius-md);
 
-  --btn-padding: 6px 12px;
-  --btn-border-width: 1px;
-  --card-padding: 10px 12px;
-  --modal-padding: var(--space-md) var(--space-lg);
-  --header-padding: var(--space-sm) var(--space-lg);
-  --column-gap: var(--space-md);
-  --board-padding: var(--space-md) var(--space-lg);
 
-  --shadow-sm: 0 1px 2px color-mix(in srgb, #000000 18%, transparent);
-  --shadow-md: 0 1px 3px color-mix(in srgb, #000000 22%, transparent);
-  --shadow-lg: 0 4px 12px color-mix(in srgb, #000000 24%, transparent);
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in srgb, #000000 18%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, #000000 22%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, #000000 24%, transparent);
   --shadow-glow: none;
   --glow-success: none;
   --glow-warning: none;
   --glow-danger: none;
-  --focus-ring: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 35%, transparent);
-  --focus-ring-strong: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 45%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 35%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 45%, transparent);
   --shadow: var(--shadow-lg);
 
-  --transition-instant: 0.05s ease;
-  --transition-fast: 0.1s ease;
-  --transition-normal: 0.15s ease;
-  --transition-slow: 0.2s ease;
 
   --cta-bg: #fafafa;
   --cta-border: #fafafa;
@@ -1770,15 +1624,15 @@ FN-6816 keeps shadcn-custom visually identical to the base shadcn theme until sa
   --color-error: #dc2626;
   --color-muted: #71717a;
 
-  --shadow-sm: 0 1px 2px color-mix(in srgb, var(--text) 8%, transparent);
-  --shadow-md: 0 1px 3px color-mix(in srgb, var(--text) 10%, transparent);
-  --shadow-lg: 0 4px 12px color-mix(in srgb, var(--text) 12%, transparent);
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in srgb, var(--text) 8%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, var(--text) 10%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, var(--text) 12%, transparent);
   --shadow-glow: none;
   --glow-success: none;
   --glow-warning: none;
   --glow-danger: none;
-  --focus-ring: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 18%, transparent);
-  --focus-ring-strong: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 28%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 18%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 28%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #18181b;
@@ -1809,14 +1663,6 @@ FN-6816 keeps shadcn-custom visually identical to the base shadcn theme until sa
   animation: none;
 }
 
-[data-color-theme="shadcn"] .btn,
-[data-color-theme="shadcn-ember"] .btn,
-[data-color-theme="shadcn-custom"] .btn {
-  text-transform: none;
-  letter-spacing: normal;
-  font-weight: 500;
-}
-
 [data-color-theme="shadcn"] .btn-primary,
 [data-color-theme="shadcn"] .btn-task-create,
 [data-color-theme="shadcn-ember"] .btn-primary,
@@ -1839,15 +1685,6 @@ FN-6816 keeps shadcn-custom visually identical to the base shadcn theme until sa
   border-color: var(--cta-border-hover);
   color: var(--cta-text);
   box-shadow: none;
-}
-
-[data-color-theme="shadcn"] .card,
-[data-color-theme="shadcn"] .column,
-[data-color-theme="shadcn-ember"] .card,
-[data-color-theme="shadcn-ember"] .column,
-[data-color-theme="shadcn-custom"] .card,
-[data-color-theme="shadcn-custom"] .column {
-  border-width: var(--btn-border-width);
 }
 
 /*
@@ -1881,36 +1718,18 @@ FN-6756 adds shadcn color-family themes as exact zinc-neutral shadcn variants wi
   --font-primary: "Geist", "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
 
-  --space-xs: 4px;
-  --space-sm: 6px;
-  --space-md: 10px;
-  --space-lg: 16px;
-  --space-xl: 20px;
-  --space-2xl: 28px;
 
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
-  --radius-xl: 12px;
-  --radius: var(--radius-md);
 
-  --btn-padding: 6px 12px;
-  --btn-border-width: 1px;
-  --card-padding: 10px 12px;
-  --modal-padding: var(--space-md) var(--space-lg);
-  --header-padding: var(--space-sm) var(--space-lg);
-  --column-gap: var(--space-md);
-  --board-padding: var(--space-md) var(--space-lg);
 
-  --shadow-sm: 0 1px 2px color-mix(in srgb, #000000 18%, transparent);
-  --shadow-md: 0 1px 3px color-mix(in srgb, #000000 22%, transparent);
-  --shadow-lg: 0 4px 12px color-mix(in srgb, #000000 24%, transparent);
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in srgb, #000000 18%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, #000000 22%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, #000000 24%, transparent);
   --shadow-glow: none;
   --glow-success: none;
   --glow-warning: none;
   --glow-danger: none;
-  --focus-ring: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 35%, transparent);
-  --focus-ring-strong: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 45%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 35%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 45%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #3b82f6;
@@ -1949,15 +1768,15 @@ FN-6756 adds shadcn color-family themes as exact zinc-neutral shadcn variants wi
   --color-error: #dc2626;
   --color-muted: #71717a;
 
-  --shadow-sm: 0 1px 2px color-mix(in srgb, var(--text) 8%, transparent);
-  --shadow-md: 0 1px 3px color-mix(in srgb, var(--text) 10%, transparent);
-  --shadow-lg: 0 4px 12px color-mix(in srgb, var(--text) 12%, transparent);
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in srgb, var(--text) 8%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, var(--text) 10%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, var(--text) 12%, transparent);
   --shadow-glow: none;
   --glow-success: none;
   --glow-warning: none;
   --glow-danger: none;
-  --focus-ring: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 18%, transparent);
-  --focus-ring-strong: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 28%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 18%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 28%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #2563eb;
@@ -1999,36 +1818,18 @@ FN-6756 adds shadcn color-family themes as exact zinc-neutral shadcn variants wi
   --font-primary: "Geist", "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
 
-  --space-xs: 4px;
-  --space-sm: 6px;
-  --space-md: 10px;
-  --space-lg: 16px;
-  --space-xl: 20px;
-  --space-2xl: 28px;
 
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
-  --radius-xl: 12px;
-  --radius: var(--radius-md);
 
-  --btn-padding: 6px 12px;
-  --btn-border-width: 1px;
-  --card-padding: 10px 12px;
-  --modal-padding: var(--space-md) var(--space-lg);
-  --header-padding: var(--space-sm) var(--space-lg);
-  --column-gap: var(--space-md);
-  --board-padding: var(--space-md) var(--space-lg);
 
-  --shadow-sm: 0 1px 2px color-mix(in srgb, #000000 18%, transparent);
-  --shadow-md: 0 1px 3px color-mix(in srgb, #000000 22%, transparent);
-  --shadow-lg: 0 4px 12px color-mix(in srgb, #000000 24%, transparent);
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in srgb, #000000 18%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, #000000 22%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, #000000 24%, transparent);
   --shadow-glow: none;
   --glow-success: none;
   --glow-warning: none;
   --glow-danger: none;
-  --focus-ring: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 35%, transparent);
-  --focus-ring-strong: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 45%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 35%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 45%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #22c55e;
@@ -2067,15 +1868,15 @@ FN-6756 adds shadcn color-family themes as exact zinc-neutral shadcn variants wi
   --color-error: #dc2626;
   --color-muted: #71717a;
 
-  --shadow-sm: 0 1px 2px color-mix(in srgb, var(--text) 8%, transparent);
-  --shadow-md: 0 1px 3px color-mix(in srgb, var(--text) 10%, transparent);
-  --shadow-lg: 0 4px 12px color-mix(in srgb, var(--text) 12%, transparent);
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in srgb, var(--text) 8%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, var(--text) 10%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, var(--text) 12%, transparent);
   --shadow-glow: none;
   --glow-success: none;
   --glow-warning: none;
   --glow-danger: none;
-  --focus-ring: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 18%, transparent);
-  --focus-ring-strong: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 28%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 18%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 28%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #16a34a;
@@ -2117,36 +1918,18 @@ FN-6756 adds shadcn color-family themes as exact zinc-neutral shadcn variants wi
   --font-primary: "Geist", "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
 
-  --space-xs: 4px;
-  --space-sm: 6px;
-  --space-md: 10px;
-  --space-lg: 16px;
-  --space-xl: 20px;
-  --space-2xl: 28px;
 
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
-  --radius-xl: 12px;
-  --radius: var(--radius-md);
 
-  --btn-padding: 6px 12px;
-  --btn-border-width: 1px;
-  --card-padding: 10px 12px;
-  --modal-padding: var(--space-md) var(--space-lg);
-  --header-padding: var(--space-sm) var(--space-lg);
-  --column-gap: var(--space-md);
-  --board-padding: var(--space-md) var(--space-lg);
 
-  --shadow-sm: 0 1px 2px color-mix(in srgb, #000000 18%, transparent);
-  --shadow-md: 0 1px 3px color-mix(in srgb, #000000 22%, transparent);
-  --shadow-lg: 0 4px 12px color-mix(in srgb, #000000 24%, transparent);
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in srgb, #000000 18%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, #000000 22%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, #000000 24%, transparent);
   --shadow-glow: none;
   --glow-success: none;
   --glow-warning: none;
   --glow-danger: none;
-  --focus-ring: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 35%, transparent);
-  --focus-ring-strong: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 45%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 35%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 45%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #ef4444;
@@ -2185,15 +1968,15 @@ FN-6756 adds shadcn color-family themes as exact zinc-neutral shadcn variants wi
   --color-error: #dc2626;
   --color-muted: #71717a;
 
-  --shadow-sm: 0 1px 2px color-mix(in srgb, var(--text) 8%, transparent);
-  --shadow-md: 0 1px 3px color-mix(in srgb, var(--text) 10%, transparent);
-  --shadow-lg: 0 4px 12px color-mix(in srgb, var(--text) 12%, transparent);
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in srgb, var(--text) 8%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, var(--text) 10%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, var(--text) 12%, transparent);
   --shadow-glow: none;
   --glow-success: none;
   --glow-warning: none;
   --glow-danger: none;
-  --focus-ring: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 18%, transparent);
-  --focus-ring-strong: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 28%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 18%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 28%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #dc2626;
@@ -2235,36 +2018,18 @@ FN-6756 adds shadcn color-family themes as exact zinc-neutral shadcn variants wi
   --font-primary: "Geist", "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
 
-  --space-xs: 4px;
-  --space-sm: 6px;
-  --space-md: 10px;
-  --space-lg: 16px;
-  --space-xl: 20px;
-  --space-2xl: 28px;
 
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
-  --radius-xl: 12px;
-  --radius: var(--radius-md);
 
-  --btn-padding: 6px 12px;
-  --btn-border-width: 1px;
-  --card-padding: 10px 12px;
-  --modal-padding: var(--space-md) var(--space-lg);
-  --header-padding: var(--space-sm) var(--space-lg);
-  --column-gap: var(--space-md);
-  --board-padding: var(--space-md) var(--space-lg);
 
-  --shadow-sm: 0 1px 2px color-mix(in srgb, #000000 18%, transparent);
-  --shadow-md: 0 1px 3px color-mix(in srgb, #000000 22%, transparent);
-  --shadow-lg: 0 4px 12px color-mix(in srgb, #000000 24%, transparent);
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in srgb, #000000 18%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, #000000 22%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, #000000 24%, transparent);
   --shadow-glow: none;
   --glow-success: none;
   --glow-warning: none;
   --glow-danger: none;
-  --focus-ring: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 35%, transparent);
-  --focus-ring-strong: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 45%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 35%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 45%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #8b5cf6;
@@ -2303,15 +2068,15 @@ FN-6756 adds shadcn color-family themes as exact zinc-neutral shadcn variants wi
   --color-error: #dc2626;
   --color-muted: #71717a;
 
-  --shadow-sm: 0 1px 2px color-mix(in srgb, var(--text) 8%, transparent);
-  --shadow-md: 0 1px 3px color-mix(in srgb, var(--text) 10%, transparent);
-  --shadow-lg: 0 4px 12px color-mix(in srgb, var(--text) 12%, transparent);
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in srgb, var(--text) 8%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, var(--text) 10%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, var(--text) 12%, transparent);
   --shadow-glow: none;
   --glow-success: none;
   --glow-warning: none;
   --glow-danger: none;
-  --focus-ring: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 18%, transparent);
-  --focus-ring-strong: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 28%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 18%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 28%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #7c3aed;
@@ -2353,36 +2118,18 @@ FN-6756 adds shadcn color-family themes as exact zinc-neutral shadcn variants wi
   --font-primary: "Geist", "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
 
-  --space-xs: 4px;
-  --space-sm: 6px;
-  --space-md: 10px;
-  --space-lg: 16px;
-  --space-xl: 20px;
-  --space-2xl: 28px;
 
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
-  --radius-xl: 12px;
-  --radius: var(--radius-md);
 
-  --btn-padding: 6px 12px;
-  --btn-border-width: 1px;
-  --card-padding: 10px 12px;
-  --modal-padding: var(--space-md) var(--space-lg);
-  --header-padding: var(--space-sm) var(--space-lg);
-  --column-gap: var(--space-md);
-  --board-padding: var(--space-md) var(--space-lg);
 
-  --shadow-sm: 0 1px 2px color-mix(in srgb, #000000 18%, transparent);
-  --shadow-md: 0 1px 3px color-mix(in srgb, #000000 22%, transparent);
-  --shadow-lg: 0 4px 12px color-mix(in srgb, #000000 24%, transparent);
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in srgb, #000000 18%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, #000000 22%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, #000000 24%, transparent);
   --shadow-glow: none;
   --glow-success: none;
   --glow-warning: none;
   --glow-danger: none;
-  --focus-ring: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 35%, transparent);
-  --focus-ring-strong: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 45%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 35%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 45%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #ec4899;
@@ -2421,15 +2168,15 @@ FN-6756 adds shadcn color-family themes as exact zinc-neutral shadcn variants wi
   --color-error: #dc2626;
   --color-muted: #71717a;
 
-  --shadow-sm: 0 1px 2px color-mix(in srgb, var(--text) 8%, transparent);
-  --shadow-md: 0 1px 3px color-mix(in srgb, var(--text) 10%, transparent);
-  --shadow-lg: 0 4px 12px color-mix(in srgb, var(--text) 12%, transparent);
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in srgb, var(--text) 8%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, var(--text) 10%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, var(--text) 12%, transparent);
   --shadow-glow: none;
   --glow-success: none;
   --glow-warning: none;
   --glow-danger: none;
-  --focus-ring: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 18%, transparent);
-  --focus-ring-strong: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 28%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 18%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 28%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #db2777;
@@ -2471,36 +2218,18 @@ FN-6756 adds shadcn color-family themes as exact zinc-neutral shadcn variants wi
   --font-primary: "Geist", "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
 
-  --space-xs: 4px;
-  --space-sm: 6px;
-  --space-md: 10px;
-  --space-lg: 16px;
-  --space-xl: 20px;
-  --space-2xl: 28px;
 
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
-  --radius-xl: 12px;
-  --radius: var(--radius-md);
 
-  --btn-padding: 6px 12px;
-  --btn-border-width: 1px;
-  --card-padding: 10px 12px;
-  --modal-padding: var(--space-md) var(--space-lg);
-  --header-padding: var(--space-sm) var(--space-lg);
-  --column-gap: var(--space-md);
-  --board-padding: var(--space-md) var(--space-lg);
 
-  --shadow-sm: 0 1px 2px color-mix(in srgb, #000000 18%, transparent);
-  --shadow-md: 0 1px 3px color-mix(in srgb, #000000 22%, transparent);
-  --shadow-lg: 0 4px 12px color-mix(in srgb, #000000 24%, transparent);
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in srgb, #000000 18%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, #000000 22%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, #000000 24%, transparent);
   --shadow-glow: none;
   --glow-success: none;
   --glow-warning: none;
   --glow-danger: none;
-  --focus-ring: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 35%, transparent);
-  --focus-ring-strong: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 45%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 35%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 45%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #f97316;
@@ -2539,15 +2268,15 @@ FN-6756 adds shadcn color-family themes as exact zinc-neutral shadcn variants wi
   --color-error: #dc2626;
   --color-muted: #71717a;
 
-  --shadow-sm: 0 1px 2px color-mix(in srgb, var(--text) 8%, transparent);
-  --shadow-md: 0 1px 3px color-mix(in srgb, var(--text) 10%, transparent);
-  --shadow-lg: 0 4px 12px color-mix(in srgb, var(--text) 12%, transparent);
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in srgb, var(--text) 8%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, var(--text) 10%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, var(--text) 12%, transparent);
   --shadow-glow: none;
   --glow-success: none;
   --glow-warning: none;
   --glow-danger: none;
-  --focus-ring: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 18%, transparent);
-  --focus-ring-strong: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 28%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 18%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 28%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #ea580c;
@@ -2589,36 +2318,18 @@ FN-6756 adds shadcn color-family themes as exact zinc-neutral shadcn variants wi
   --font-primary: "Geist", "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
 
-  --space-xs: 4px;
-  --space-sm: 6px;
-  --space-md: 10px;
-  --space-lg: 16px;
-  --space-xl: 20px;
-  --space-2xl: 28px;
 
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
-  --radius-xl: 12px;
-  --radius: var(--radius-md);
 
-  --btn-padding: 6px 12px;
-  --btn-border-width: 1px;
-  --card-padding: 10px 12px;
-  --modal-padding: var(--space-md) var(--space-lg);
-  --header-padding: var(--space-sm) var(--space-lg);
-  --column-gap: var(--space-md);
-  --board-padding: var(--space-md) var(--space-lg);
 
-  --shadow-sm: 0 1px 2px color-mix(in srgb, #000000 18%, transparent);
-  --shadow-md: 0 1px 3px color-mix(in srgb, #000000 22%, transparent);
-  --shadow-lg: 0 4px 12px color-mix(in srgb, #000000 24%, transparent);
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in srgb, #000000 18%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, #000000 22%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, #000000 24%, transparent);
   --shadow-glow: none;
   --glow-success: none;
   --glow-warning: none;
   --glow-danger: none;
-  --focus-ring: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 35%, transparent);
-  --focus-ring-strong: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 45%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 35%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 45%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #eab308;
@@ -2657,15 +2368,15 @@ FN-6756 adds shadcn color-family themes as exact zinc-neutral shadcn variants wi
   --color-error: #dc2626;
   --color-muted: #71717a;
 
-  --shadow-sm: 0 1px 2px color-mix(in srgb, var(--text) 8%, transparent);
-  --shadow-md: 0 1px 3px color-mix(in srgb, var(--text) 10%, transparent);
-  --shadow-lg: 0 4px 12px color-mix(in srgb, var(--text) 12%, transparent);
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in srgb, var(--text) 8%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, var(--text) 10%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, var(--text) 12%, transparent);
   --shadow-glow: none;
   --glow-success: none;
   --glow-warning: none;
   --glow-danger: none;
-  --focus-ring: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 18%, transparent);
-  --focus-ring-strong: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 28%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 18%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 28%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #ca8a04;
@@ -2715,36 +2426,18 @@ FN-8146 restores Shadcn Mono as a persistent option that shares Mono Red tokens.
   --font-primary: "Geist", "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
 
-  --space-xs: 4px;
-  --space-sm: 6px;
-  --space-md: 10px;
-  --space-lg: 16px;
-  --space-xl: 20px;
-  --space-2xl: 28px;
 
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
-  --radius-xl: 12px;
-  --radius: var(--radius-md);
 
-  --btn-padding: 6px 12px;
-  --btn-border-width: 1px;
-  --card-padding: 10px 12px;
-  --modal-padding: var(--space-md) var(--space-lg);
-  --header-padding: var(--space-sm) var(--space-lg);
-  --column-gap: var(--space-md);
-  --board-padding: var(--space-md) var(--space-lg);
 
-  --shadow-sm: 0 1px 2px color-mix(in srgb, #000000 18%, transparent);
-  --shadow-md: 0 1px 3px color-mix(in srgb, #000000 22%, transparent);
-  --shadow-lg: 0 4px 12px color-mix(in srgb, #000000 24%, transparent);
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in srgb, #000000 18%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, #000000 22%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, #000000 24%, transparent);
   --shadow-glow: none;
   --glow-success: none;
   --glow-warning: none;
   --glow-danger: none;
-  --focus-ring: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 35%, transparent);
-  --focus-ring-strong: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 45%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 35%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 45%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #ef4444;
@@ -2785,15 +2478,15 @@ FN-8146 restores Shadcn Mono as a persistent option that shares Mono Red tokens.
   --color-error: #dc2626;
   --color-muted: #71717a;
 
-  --shadow-sm: 0 1px 2px color-mix(in srgb, var(--text) 8%, transparent);
-  --shadow-md: 0 1px 3px color-mix(in srgb, var(--text) 10%, transparent);
-  --shadow-lg: 0 4px 12px color-mix(in srgb, var(--text) 12%, transparent);
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in srgb, var(--text) 8%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, var(--text) 10%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, var(--text) 12%, transparent);
   --shadow-glow: none;
   --glow-success: none;
   --glow-warning: none;
   --glow-danger: none;
-  --focus-ring: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 18%, transparent);
-  --focus-ring-strong: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 28%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 18%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 28%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #dc2626;
@@ -2836,36 +2529,18 @@ FN-8146 restores Shadcn Mono as a persistent option that shares Mono Red tokens.
   --font-primary: "Geist", "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
 
-  --space-xs: 4px;
-  --space-sm: 6px;
-  --space-md: 10px;
-  --space-lg: 16px;
-  --space-xl: 20px;
-  --space-2xl: 28px;
 
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
-  --radius-xl: 12px;
-  --radius: var(--radius-md);
 
-  --btn-padding: 6px 12px;
-  --btn-border-width: 1px;
-  --card-padding: 10px 12px;
-  --modal-padding: var(--space-md) var(--space-lg);
-  --header-padding: var(--space-sm) var(--space-lg);
-  --column-gap: var(--space-md);
-  --board-padding: var(--space-md) var(--space-lg);
 
-  --shadow-sm: 0 1px 2px color-mix(in srgb, #000000 18%, transparent);
-  --shadow-md: 0 1px 3px color-mix(in srgb, #000000 22%, transparent);
-  --shadow-lg: 0 4px 12px color-mix(in srgb, #000000 24%, transparent);
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in srgb, #000000 18%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, #000000 22%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, #000000 24%, transparent);
   --shadow-glow: none;
   --glow-success: none;
   --glow-warning: none;
   --glow-danger: none;
-  --focus-ring: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 35%, transparent);
-  --focus-ring-strong: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 45%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 35%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 45%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #3b82f6;
@@ -2905,15 +2580,15 @@ FN-8146 restores Shadcn Mono as a persistent option that shares Mono Red tokens.
   --color-error: #dc2626;
   --color-muted: #71717a;
 
-  --shadow-sm: 0 1px 2px color-mix(in srgb, var(--text) 8%, transparent);
-  --shadow-md: 0 1px 3px color-mix(in srgb, var(--text) 10%, transparent);
-  --shadow-lg: 0 4px 12px color-mix(in srgb, var(--text) 12%, transparent);
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in srgb, var(--text) 8%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, var(--text) 10%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, var(--text) 12%, transparent);
   --shadow-glow: none;
   --glow-success: none;
   --glow-warning: none;
   --glow-danger: none;
-  --focus-ring: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 18%, transparent);
-  --focus-ring-strong: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 28%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 18%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 28%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #2563eb;
@@ -2956,36 +2631,18 @@ FN-8146 restores Shadcn Mono as a persistent option that shares Mono Red tokens.
   --font-primary: "Geist", "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
 
-  --space-xs: 4px;
-  --space-sm: 6px;
-  --space-md: 10px;
-  --space-lg: 16px;
-  --space-xl: 20px;
-  --space-2xl: 28px;
 
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
-  --radius-xl: 12px;
-  --radius: var(--radius-md);
 
-  --btn-padding: 6px 12px;
-  --btn-border-width: 1px;
-  --card-padding: 10px 12px;
-  --modal-padding: var(--space-md) var(--space-lg);
-  --header-padding: var(--space-sm) var(--space-lg);
-  --column-gap: var(--space-md);
-  --board-padding: var(--space-md) var(--space-lg);
 
-  --shadow-sm: 0 1px 2px color-mix(in srgb, #000000 18%, transparent);
-  --shadow-md: 0 1px 3px color-mix(in srgb, #000000 22%, transparent);
-  --shadow-lg: 0 4px 12px color-mix(in srgb, #000000 24%, transparent);
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in srgb, #000000 18%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, #000000 22%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, #000000 24%, transparent);
   --shadow-glow: none;
   --glow-success: none;
   --glow-warning: none;
   --glow-danger: none;
-  --focus-ring: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 35%, transparent);
-  --focus-ring-strong: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 45%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 35%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 45%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #22c55e;
@@ -3025,15 +2682,15 @@ FN-8146 restores Shadcn Mono as a persistent option that shares Mono Red tokens.
   --color-error: #dc2626;
   --color-muted: #71717a;
 
-  --shadow-sm: 0 1px 2px color-mix(in srgb, var(--text) 8%, transparent);
-  --shadow-md: 0 1px 3px color-mix(in srgb, var(--text) 10%, transparent);
-  --shadow-lg: 0 4px 12px color-mix(in srgb, var(--text) 12%, transparent);
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in srgb, var(--text) 8%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, var(--text) 10%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, var(--text) 12%, transparent);
   --shadow-glow: none;
   --glow-success: none;
   --glow-warning: none;
   --glow-danger: none;
-  --focus-ring: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 18%, transparent);
-  --focus-ring-strong: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 28%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 18%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 28%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #16a34a;
@@ -3076,36 +2733,18 @@ FN-8146 restores Shadcn Mono as a persistent option that shares Mono Red tokens.
   --font-primary: "Geist", "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
 
-  --space-xs: 4px;
-  --space-sm: 6px;
-  --space-md: 10px;
-  --space-lg: 16px;
-  --space-xl: 20px;
-  --space-2xl: 28px;
 
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
-  --radius-xl: 12px;
-  --radius: var(--radius-md);
 
-  --btn-padding: 6px 12px;
-  --btn-border-width: 1px;
-  --card-padding: 10px 12px;
-  --modal-padding: var(--space-md) var(--space-lg);
-  --header-padding: var(--space-sm) var(--space-lg);
-  --column-gap: var(--space-md);
-  --board-padding: var(--space-md) var(--space-lg);
 
-  --shadow-sm: 0 1px 2px color-mix(in srgb, #000000 18%, transparent);
-  --shadow-md: 0 1px 3px color-mix(in srgb, #000000 22%, transparent);
-  --shadow-lg: 0 4px 12px color-mix(in srgb, #000000 24%, transparent);
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in srgb, #000000 18%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, #000000 22%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, #000000 24%, transparent);
   --shadow-glow: none;
   --glow-success: none;
   --glow-warning: none;
   --glow-danger: none;
-  --focus-ring: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 35%, transparent);
-  --focus-ring-strong: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 45%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 35%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 45%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #8b5cf6;
@@ -3145,15 +2784,15 @@ FN-8146 restores Shadcn Mono as a persistent option that shares Mono Red tokens.
   --color-error: #dc2626;
   --color-muted: #71717a;
 
-  --shadow-sm: 0 1px 2px color-mix(in srgb, var(--text) 8%, transparent);
-  --shadow-md: 0 1px 3px color-mix(in srgb, var(--text) 10%, transparent);
-  --shadow-lg: 0 4px 12px color-mix(in srgb, var(--text) 12%, transparent);
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in srgb, var(--text) 8%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, var(--text) 10%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, var(--text) 12%, transparent);
   --shadow-glow: none;
   --glow-success: none;
   --glow-warning: none;
   --glow-danger: none;
-  --focus-ring: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 18%, transparent);
-  --focus-ring-strong: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 28%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 18%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 28%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #7c3aed;
@@ -3196,36 +2835,18 @@ FN-8146 restores Shadcn Mono as a persistent option that shares Mono Red tokens.
   --font-primary: "Geist", "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
 
-  --space-xs: 4px;
-  --space-sm: 6px;
-  --space-md: 10px;
-  --space-lg: 16px;
-  --space-xl: 20px;
-  --space-2xl: 28px;
 
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
-  --radius-xl: 12px;
-  --radius: var(--radius-md);
 
-  --btn-padding: 6px 12px;
-  --btn-border-width: 1px;
-  --card-padding: 10px 12px;
-  --modal-padding: var(--space-md) var(--space-lg);
-  --header-padding: var(--space-sm) var(--space-lg);
-  --column-gap: var(--space-md);
-  --board-padding: var(--space-md) var(--space-lg);
 
-  --shadow-sm: 0 1px 2px color-mix(in srgb, #000000 18%, transparent);
-  --shadow-md: 0 1px 3px color-mix(in srgb, #000000 22%, transparent);
-  --shadow-lg: 0 4px 12px color-mix(in srgb, #000000 24%, transparent);
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in srgb, #000000 18%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, #000000 22%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, #000000 24%, transparent);
   --shadow-glow: none;
   --glow-success: none;
   --glow-warning: none;
   --glow-danger: none;
-  --focus-ring: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 35%, transparent);
-  --focus-ring-strong: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 45%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 35%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 45%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #ec4899;
@@ -3265,15 +2886,15 @@ FN-8146 restores Shadcn Mono as a persistent option that shares Mono Red tokens.
   --color-error: #dc2626;
   --color-muted: #71717a;
 
-  --shadow-sm: 0 1px 2px color-mix(in srgb, var(--text) 8%, transparent);
-  --shadow-md: 0 1px 3px color-mix(in srgb, var(--text) 10%, transparent);
-  --shadow-lg: 0 4px 12px color-mix(in srgb, var(--text) 12%, transparent);
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in srgb, var(--text) 8%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, var(--text) 10%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, var(--text) 12%, transparent);
   --shadow-glow: none;
   --glow-success: none;
   --glow-warning: none;
   --glow-danger: none;
-  --focus-ring: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 18%, transparent);
-  --focus-ring-strong: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 28%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 18%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 28%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #db2777;
@@ -3316,36 +2937,18 @@ FN-8146 restores Shadcn Mono as a persistent option that shares Mono Red tokens.
   --font-primary: "Geist", "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
 
-  --space-xs: 4px;
-  --space-sm: 6px;
-  --space-md: 10px;
-  --space-lg: 16px;
-  --space-xl: 20px;
-  --space-2xl: 28px;
 
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
-  --radius-xl: 12px;
-  --radius: var(--radius-md);
 
-  --btn-padding: 6px 12px;
-  --btn-border-width: 1px;
-  --card-padding: 10px 12px;
-  --modal-padding: var(--space-md) var(--space-lg);
-  --header-padding: var(--space-sm) var(--space-lg);
-  --column-gap: var(--space-md);
-  --board-padding: var(--space-md) var(--space-lg);
 
-  --shadow-sm: 0 1px 2px color-mix(in srgb, #000000 18%, transparent);
-  --shadow-md: 0 1px 3px color-mix(in srgb, #000000 22%, transparent);
-  --shadow-lg: 0 4px 12px color-mix(in srgb, #000000 24%, transparent);
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in srgb, #000000 18%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, #000000 22%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, #000000 24%, transparent);
   --shadow-glow: none;
   --glow-success: none;
   --glow-warning: none;
   --glow-danger: none;
-  --focus-ring: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 35%, transparent);
-  --focus-ring-strong: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 45%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 35%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 45%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #f97316;
@@ -3385,15 +2988,15 @@ FN-8146 restores Shadcn Mono as a persistent option that shares Mono Red tokens.
   --color-error: #dc2626;
   --color-muted: #71717a;
 
-  --shadow-sm: 0 1px 2px color-mix(in srgb, var(--text) 8%, transparent);
-  --shadow-md: 0 1px 3px color-mix(in srgb, var(--text) 10%, transparent);
-  --shadow-lg: 0 4px 12px color-mix(in srgb, var(--text) 12%, transparent);
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in srgb, var(--text) 8%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, var(--text) 10%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, var(--text) 12%, transparent);
   --shadow-glow: none;
   --glow-success: none;
   --glow-warning: none;
   --glow-danger: none;
-  --focus-ring: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 18%, transparent);
-  --focus-ring-strong: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 28%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 18%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 28%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #ea580c;
@@ -3436,36 +3039,18 @@ FN-8146 restores Shadcn Mono as a persistent option that shares Mono Red tokens.
   --font-primary: "Geist", "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
 
-  --space-xs: 4px;
-  --space-sm: 6px;
-  --space-md: 10px;
-  --space-lg: 16px;
-  --space-xl: 20px;
-  --space-2xl: 28px;
 
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
-  --radius-xl: 12px;
-  --radius: var(--radius-md);
 
-  --btn-padding: 6px 12px;
-  --btn-border-width: 1px;
-  --card-padding: 10px 12px;
-  --modal-padding: var(--space-md) var(--space-lg);
-  --header-padding: var(--space-sm) var(--space-lg);
-  --column-gap: var(--space-md);
-  --board-padding: var(--space-md) var(--space-lg);
 
-  --shadow-sm: 0 1px 2px color-mix(in srgb, #000000 18%, transparent);
-  --shadow-md: 0 1px 3px color-mix(in srgb, #000000 22%, transparent);
-  --shadow-lg: 0 4px 12px color-mix(in srgb, #000000 24%, transparent);
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in srgb, #000000 18%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, #000000 22%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, #000000 24%, transparent);
   --shadow-glow: none;
   --glow-success: none;
   --glow-warning: none;
   --glow-danger: none;
-  --focus-ring: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 35%, transparent);
-  --focus-ring-strong: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 45%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 35%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 45%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #eab308;
@@ -3505,15 +3090,15 @@ FN-8146 restores Shadcn Mono as a persistent option that shares Mono Red tokens.
   --color-error: #dc2626;
   --color-muted: #71717a;
 
-  --shadow-sm: 0 1px 2px color-mix(in srgb, var(--text) 8%, transparent);
-  --shadow-md: 0 1px 3px color-mix(in srgb, var(--text) 10%, transparent);
-  --shadow-lg: 0 4px 12px color-mix(in srgb, var(--text) 12%, transparent);
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in srgb, var(--text) 8%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, var(--text) 10%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, var(--text) 12%, transparent);
   --shadow-glow: none;
   --glow-success: none;
   --glow-warning: none;
   --glow-danger: none;
-  --focus-ring: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 18%, transparent);
-  --focus-ring-strong: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 28%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 18%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 28%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #ca8a04;
@@ -3556,36 +3141,18 @@ FN-8146 restores Shadcn Mono as a persistent option that shares Mono Red tokens.
   --font-primary: "Geist", "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
 
-  --space-xs: 4px;
-  --space-sm: 6px;
-  --space-md: 10px;
-  --space-lg: 16px;
-  --space-xl: 20px;
-  --space-2xl: 28px;
 
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
-  --radius-xl: 12px;
-  --radius: var(--radius-md);
 
-  --btn-padding: 6px 12px;
-  --btn-border-width: 1px;
-  --card-padding: 10px 12px;
-  --modal-padding: var(--space-md) var(--space-lg);
-  --header-padding: var(--space-sm) var(--space-lg);
-  --column-gap: var(--space-md);
-  --board-padding: var(--space-md) var(--space-lg);
 
-  --shadow-sm: 0 1px 2px color-mix(in srgb, #000000 18%, transparent);
-  --shadow-md: 0 1px 3px color-mix(in srgb, #000000 22%, transparent);
-  --shadow-lg: 0 4px 12px color-mix(in srgb, #000000 24%, transparent);
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in srgb, #000000 18%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, #000000 22%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, #000000 24%, transparent);
   --shadow-glow: none;
   --glow-success: none;
   --glow-warning: none;
   --glow-danger: none;
-  --focus-ring: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 35%, transparent);
-  --focus-ring-strong: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 45%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 35%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 45%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #fafafa;
@@ -3624,15 +3191,15 @@ FN-8146 restores Shadcn Mono as a persistent option that shares Mono Red tokens.
   --color-error: #18181b;
   --color-muted: #71717a;
 
-  --shadow-sm: 0 1px 2px color-mix(in srgb, var(--text) 8%, transparent);
-  --shadow-md: 0 1px 3px color-mix(in srgb, var(--text) 10%, transparent);
-  --shadow-lg: 0 4px 12px color-mix(in srgb, var(--text) 12%, transparent);
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in srgb, var(--text) 8%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, var(--text) 10%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, var(--text) 12%, transparent);
   --shadow-glow: none;
   --glow-success: none;
   --glow-warning: none;
   --glow-danger: none;
-  --focus-ring: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 18%, transparent);
-  --focus-ring-strong: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 28%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 18%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 28%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #09090b;
@@ -3678,36 +3245,18 @@ Shadcn Gray is the fully-neutral zinc variant: it keeps the shadcn surfaces and 
   --font-primary: "Geist", "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
 
-  --space-xs: 4px;
-  --space-sm: 6px;
-  --space-md: 10px;
-  --space-lg: 16px;
-  --space-xl: 20px;
-  --space-2xl: 28px;
 
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
-  --radius-xl: 12px;
-  --radius: var(--radius-md);
 
-  --btn-padding: 6px 12px;
-  --btn-border-width: 1px;
-  --card-padding: 10px 12px;
-  --modal-padding: var(--space-md) var(--space-lg);
-  --header-padding: var(--space-sm) var(--space-lg);
-  --column-gap: var(--space-md);
-  --board-padding: var(--space-md) var(--space-lg);
 
-  --shadow-sm: 0 1px 2px color-mix(in srgb, #000000 18%, transparent);
-  --shadow-md: 0 1px 3px color-mix(in srgb, #000000 22%, transparent);
-  --shadow-lg: 0 4px 12px color-mix(in srgb, #000000 24%, transparent);
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in srgb, #000000 18%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, #000000 22%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, #000000 24%, transparent);
   --shadow-glow: none;
   --glow-success: none;
   --glow-warning: none;
   --glow-danger: none;
-  --focus-ring: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 35%, transparent);
-  --focus-ring-strong: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 45%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 35%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 45%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #71717a;
@@ -3746,15 +3295,15 @@ Shadcn Gray is the fully-neutral zinc variant: it keeps the shadcn surfaces and 
   --color-error: #3f3f46;
   --color-muted: #71717a;
 
-  --shadow-sm: 0 1px 2px color-mix(in srgb, var(--text) 8%, transparent);
-  --shadow-md: 0 1px 3px color-mix(in srgb, var(--text) 10%, transparent);
-  --shadow-lg: 0 4px 12px color-mix(in srgb, var(--text) 12%, transparent);
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in srgb, var(--text) 8%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, var(--text) 10%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, var(--text) 12%, transparent);
   --shadow-glow: none;
   --glow-success: none;
   --glow-warning: none;
   --glow-danger: none;
-  --focus-ring: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 18%, transparent);
-  --focus-ring-strong: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 28%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 18%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 28%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #52525b;
@@ -3800,36 +3349,18 @@ FN-6815 adds Shadcn Gray Blue as the slate-neutral shadcn variant: the whole sur
   --font-primary: "Geist", "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
 
-  --space-xs: 4px;
-  --space-sm: 6px;
-  --space-md: 10px;
-  --space-lg: 16px;
-  --space-xl: 20px;
-  --space-2xl: 28px;
 
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
-  --radius-xl: 12px;
-  --radius: var(--radius-md);
 
-  --btn-padding: 6px 12px;
-  --btn-border-width: 1px;
-  --card-padding: 10px 12px;
-  --modal-padding: var(--space-md) var(--space-lg);
-  --header-padding: var(--space-sm) var(--space-lg);
-  --column-gap: var(--space-md);
-  --board-padding: var(--space-md) var(--space-lg);
 
-  --shadow-sm: 0 1px 2px color-mix(in srgb, #000000 18%, transparent);
-  --shadow-md: 0 1px 3px color-mix(in srgb, #000000 22%, transparent);
-  --shadow-lg: 0 4px 12px color-mix(in srgb, #000000 24%, transparent);
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in srgb, #000000 18%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, #000000 22%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, #000000 24%, transparent);
   --shadow-glow: none;
   --glow-success: none;
   --glow-warning: none;
   --glow-danger: none;
-  --focus-ring: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 35%, transparent);
-  --focus-ring-strong: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 45%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 35%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 45%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #64748b;
@@ -3868,15 +3399,15 @@ FN-6815 adds Shadcn Gray Blue as the slate-neutral shadcn variant: the whole sur
   --color-error: #dc2626;
   --color-muted: #64748b;
 
-  --shadow-sm: 0 1px 2px color-mix(in srgb, var(--text) 8%, transparent);
-  --shadow-md: 0 1px 3px color-mix(in srgb, var(--text) 10%, transparent);
-  --shadow-lg: 0 4px 12px color-mix(in srgb, var(--text) 12%, transparent);
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in srgb, var(--text) 8%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, var(--text) 10%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, var(--text) 12%, transparent);
   --shadow-glow: none;
   --glow-success: none;
   --glow-warning: none;
   --glow-danger: none;
-  --focus-ring: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 18%, transparent);
-  --focus-ring-strong: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 28%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 18%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 28%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #475569;
@@ -3935,29 +3466,6 @@ FN-6815 adds Shadcn Gray Blue as the slate-neutral shadcn variant: the whole sur
   border-color: var(--accent);
   box-shadow: none;
   animation: none;
-}
-
-[data-color-theme="shadcn-blue"] .btn,
-[data-color-theme="shadcn-green"] .btn,
-[data-color-theme="shadcn-red"] .btn,
-[data-color-theme="shadcn-purple"] .btn,
-[data-color-theme="shadcn-pink"] .btn,
-[data-color-theme="shadcn-orange"] .btn,
-[data-color-theme="shadcn-yellow"] .btn,
-[data-color-theme="shadcn-mono"] .btn,
-[data-color-theme="shadcn-mono-red"] .btn,
-[data-color-theme="shadcn-mono-blue"] .btn,
-[data-color-theme="shadcn-mono-green"] .btn,
-[data-color-theme="shadcn-mono-purple"] .btn,
-[data-color-theme="shadcn-mono-pink"] .btn,
-[data-color-theme="shadcn-mono-orange"] .btn,
-[data-color-theme="shadcn-mono-yellow"] .btn,
-[data-color-theme="shadcn-black"] .btn,
-[data-color-theme="shadcn-gray"] .btn,
-[data-color-theme="shadcn-gray-blue"] .btn {
-  text-transform: none;
-  letter-spacing: normal;
-  font-weight: 500;
 }
 
 [data-color-theme="shadcn-blue"] .btn-primary,
@@ -4044,45 +3552,6 @@ FN-6815 adds Shadcn Gray Blue as the slate-neutral shadcn variant: the whole sur
   box-shadow: none;
 }
 
-[data-color-theme="shadcn-blue"] .card,
-[data-color-theme="shadcn-blue"] .column,
-[data-color-theme="shadcn-green"] .card,
-[data-color-theme="shadcn-green"] .column,
-[data-color-theme="shadcn-red"] .card,
-[data-color-theme="shadcn-red"] .column,
-[data-color-theme="shadcn-purple"] .card,
-[data-color-theme="shadcn-purple"] .column,
-[data-color-theme="shadcn-pink"] .card,
-[data-color-theme="shadcn-pink"] .column,
-[data-color-theme="shadcn-orange"] .card,
-[data-color-theme="shadcn-orange"] .column,
-[data-color-theme="shadcn-yellow"] .card,
-[data-color-theme="shadcn-yellow"] .column,
-[data-color-theme="shadcn-mono"] .card,
-[data-color-theme="shadcn-mono"] .column,
-[data-color-theme="shadcn-mono-red"] .card,
-[data-color-theme="shadcn-mono-red"] .column,
-[data-color-theme="shadcn-mono-blue"] .card,
-[data-color-theme="shadcn-mono-blue"] .column,
-[data-color-theme="shadcn-mono-green"] .card,
-[data-color-theme="shadcn-mono-green"] .column,
-[data-color-theme="shadcn-mono-purple"] .card,
-[data-color-theme="shadcn-mono-purple"] .column,
-[data-color-theme="shadcn-mono-pink"] .card,
-[data-color-theme="shadcn-mono-pink"] .column,
-[data-color-theme="shadcn-mono-orange"] .card,
-[data-color-theme="shadcn-mono-orange"] .column,
-[data-color-theme="shadcn-mono-yellow"] .card,
-[data-color-theme="shadcn-mono-yellow"] .column,
-[data-color-theme="shadcn-black"] .card,
-[data-color-theme="shadcn-black"] .column,
-[data-color-theme="shadcn-gray"] .card,
-[data-color-theme="shadcn-gray"] .column,
-[data-color-theme="shadcn-gray-blue"] .card,
-[data-color-theme="shadcn-gray-blue"] .column {
-  border-width: var(--btn-border-width);
-}
-
 /* AYU - Popular code editor theme with dark and light variants */
 [data-color-theme="ayu"] {
   --bg: #0f1419;
@@ -4103,7 +3572,7 @@ FN-6815 adds Shadcn Gray Blue as the slate-neutral shadcn variant: the whole sur
   --done: #6c7986;
   --color-success: #7ee787;
   --color-error: #f07178;
-  --shadow-lg: 0 4px 24px color-mix(in srgb, #000000 50%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, #000000 50%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #5cb85c;
@@ -4137,7 +3606,7 @@ FN-6815 adds Shadcn Gray Blue as the slate-neutral shadcn variant: the whole sur
   --done: #8a9199;
   --color-success: #86b300;
   --color-error: #f07178;
-  --shadow-lg: 0 4px 24px color-mix(in srgb, var(--text) 15%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, var(--text) 15%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #6d9a00;
@@ -4172,7 +3641,7 @@ FN-6815 adds Shadcn Gray Blue as the slate-neutral shadcn variant: the whole sur
   --done: #828997;
   --color-success: #98c379;
   --color-error: #e06c75;
-  --shadow-lg: 0 4px 24px color-mix(in srgb, #000000 50%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, #000000 50%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #7ec77a;
@@ -4207,7 +3676,7 @@ FN-6815 adds Shadcn Gray Blue as the slate-neutral shadcn variant: the whole sur
   --done: #9da5b4;
   --color-success: #50a14f;
   --color-error: #e45649;
-  --shadow-lg: 0 4px 24px color-mix(in srgb, var(--text) 10%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, var(--text) 10%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #3d8c3b;
@@ -4242,7 +3711,7 @@ FN-6815 adds Shadcn Gray Blue as the slate-neutral shadcn variant: the whole sur
   --done: #7b88a1;
   --color-success: #a3be8c;
   --color-error: #bf616a;
-  --shadow-lg: 0 4px 24px color-mix(in srgb, #000000 40%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, #000000 40%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #8fa879;
@@ -4276,7 +3745,7 @@ FN-6815 adds Shadcn Gray Blue as the slate-neutral shadcn variant: the whole sur
   --done: #4c566a;
   --color-success: #7ca373;
   --color-error: #b54a52;
-  --shadow-lg: 0 4px 24px color-mix(in srgb, var(--text) 10%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, var(--text) 10%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #6a8f63;
@@ -4311,7 +3780,7 @@ FN-6815 adds Shadcn Gray Blue as the slate-neutral shadcn variant: the whole sur
   --done: #6272a4;
   --color-success: #50fa7b;
   --color-error: #ff5555;
-  --shadow-lg: 0 4px 24px color-mix(in srgb, #000000 50%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, #000000 50%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #40d870;
@@ -4345,7 +3814,7 @@ FN-6815 adds Shadcn Gray Blue as the slate-neutral shadcn variant: the whole sur
   --done: #5a5a72;
   --color-success: #2e8b57;
   --color-error: #cc3333;
-  --shadow-lg: 0 4px 24px color-mix(in srgb, var(--text) 10%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, var(--text) 10%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #267a4d;
@@ -4380,7 +3849,7 @@ FN-6815 adds Shadcn Gray Blue as the slate-neutral shadcn variant: the whole sur
   --done: #928374;
   --color-success: #b8bb26;
   --color-error: #fb4934;
-  --shadow-lg: 0 4px 24px color-mix(in srgb, #000000 50%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, #000000 50%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #a0a325;
@@ -4414,7 +3883,7 @@ FN-6815 adds Shadcn Gray Blue as the slate-neutral shadcn variant: the whole sur
   --done: #504945;
   --color-success: #427b58;
   --color-error: #9d0006;
-  --shadow-lg: 0 4px 24px color-mix(in srgb, var(--text) 10%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, var(--text) 10%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #3a6a4e;
@@ -4449,7 +3918,7 @@ FN-6815 adds Shadcn Gray Blue as the slate-neutral shadcn variant: the whole sur
   --done: #565f89;
   --color-success: #9ece6a;
   --color-error: #f7768e;
-  --shadow-lg: 0 4px 24px color-mix(in srgb, #000000 50%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, #000000 50%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #8ab855;
@@ -4483,7 +3952,7 @@ FN-6815 adds Shadcn Gray Blue as the slate-neutral shadcn variant: the whole sur
   --done: #414868;
   --color-success: #48703e;
   --color-error: #c53b53;
-  --shadow-lg: 0 4px 24px color-mix(in srgb, var(--text) 10%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, var(--text) 10%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #3d6035;
@@ -4518,7 +3987,7 @@ FN-6815 adds Shadcn Gray Blue as the slate-neutral shadcn variant: the whole sur
   --done: #6c7086;
   --color-success: #a6e3a1;
   --color-error: #f38ba8;
-  --shadow-lg: 0 4px 24px color-mix(in srgb, #000000 50%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, #000000 50%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #8ad985;
@@ -4552,7 +4021,7 @@ FN-6815 adds Shadcn Gray Blue as the slate-neutral shadcn variant: the whole sur
   --done: #7c7f93;
   --color-success: #40a02b;
   --color-error: #d20f39;
-  --shadow-lg: 0 4px 24px color-mix(in srgb, var(--text) 10%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, var(--text) 10%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #36891f;
@@ -4587,7 +4056,7 @@ FN-6815 adds Shadcn Gray Blue as the slate-neutral shadcn variant: the whole sur
   --done: #484f58;
   --color-success: #3fb950;
   --color-error: #f85149;
-  --shadow-lg: 0 4px 24px color-mix(in srgb, #000000 50%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, #000000 50%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #2ea043;
@@ -4621,7 +4090,7 @@ FN-6815 adds Shadcn Gray Blue as the slate-neutral shadcn variant: the whole sur
   --done: #656d76;
   --color-success: #1a7f37;
   --color-error: #cf222e;
-  --shadow-lg: 0 4px 24px color-mix(in srgb, var(--text) 10%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, var(--text) 10%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #1a7f37;
@@ -4656,7 +4125,7 @@ FN-6815 adds Shadcn Gray Blue as the slate-neutral shadcn variant: the whole sur
   --done: #859289;
   --color-success: #a7c080;
   --color-error: #e67e80;
-  --shadow-lg: 0 4px 24px color-mix(in srgb, #000000 50%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, #000000 50%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #8aad75;
@@ -4690,7 +4159,7 @@ FN-6815 adds Shadcn Gray Blue as the slate-neutral shadcn variant: the whole sur
   --done: #8da489;
   --color-success: #6d9b3a;
   --color-error: #c44040;
-  --shadow-lg: 0 4px 24px color-mix(in srgb, var(--text) 10%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, var(--text) 10%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #5a8a2e;
@@ -4725,7 +4194,7 @@ FN-6815 adds Shadcn Gray Blue as the slate-neutral shadcn variant: the whole sur
   --done: #6e6a86;
   --color-success: #9ccfd8;
   --color-error: #eb6f92;
-  --shadow-lg: 0 4px 24px color-mix(in srgb, #000000 50%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, #000000 50%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #7dbbc4;
@@ -4759,7 +4228,7 @@ FN-6815 adds Shadcn Gray Blue as the slate-neutral shadcn variant: the whole sur
   --done: #9893a5;
   --color-success: #56949f;
   --color-error: #b4637a;
-  --shadow-lg: 0 4px 24px color-mix(in srgb, var(--text) 10%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, var(--text) 10%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #428089;
@@ -4794,7 +4263,7 @@ FN-6815 adds Shadcn Gray Blue as the slate-neutral shadcn variant: the whole sur
   --done: #727169;
   --color-success: #98bb6c;
   --color-error: #c34043;
-  --shadow-lg: 0 4px 24px color-mix(in srgb, #000000 50%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, #000000 50%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #7da55a;
@@ -4828,7 +4297,7 @@ FN-6815 adds Shadcn Gray Blue as the slate-neutral shadcn variant: the whole sur
   --done: #81818c;
   --color-success: #5a8249;
   --color-error: #b03438;
-  --shadow-lg: 0 4px 24px color-mix(in srgb, var(--text) 10%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, var(--text) 10%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #49703f;
@@ -4863,7 +4332,7 @@ FN-6815 adds Shadcn Gray Blue as the slate-neutral shadcn variant: the whole sur
   --done: #5c7a99;
   --color-success: #4ec9b0;
   --color-error: #ef5350;
-  --shadow-lg: 0 4px 24px color-mix(in srgb, #000000 60%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, #000000 60%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #3da890;
@@ -4897,7 +4366,7 @@ FN-6815 adds Shadcn Gray Blue as the slate-neutral shadcn variant: the whole sur
   --done: #8a95a5;
   --color-success: #2b8a73;
   --color-error: #c0392b;
-  --shadow-lg: 0 4px 24px color-mix(in srgb, var(--text) 10%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, var(--text) 10%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #257a68;
@@ -4932,7 +4401,7 @@ FN-6815 adds Shadcn Gray Blue as the slate-neutral shadcn variant: the whole sur
   --done: #676e95;
   --color-success: #c3e88d;
   --color-error: #ff5370;
-  --shadow-lg: 0 4px 24px color-mix(in srgb, #000000 50%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, #000000 50%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #a3c570;
@@ -4966,7 +4435,7 @@ FN-6815 adds Shadcn Gray Blue as the slate-neutral shadcn variant: the whole sur
   --done: #8a8fa0;
   --color-success: #5a9e2f;
   --color-error: #c0392b;
-  --shadow-lg: 0 4px 24px color-mix(in srgb, var(--text) 10%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, var(--text) 10%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #4a8c28;
@@ -5001,7 +4470,7 @@ FN-6815 adds Shadcn Gray Blue as the slate-neutral shadcn variant: the whole sur
   --done: #727072;
   --color-success: #a9dc76;
   --color-error: #ff6188;
-  --shadow-lg: 0 4px 24px color-mix(in srgb, #000000 50%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, #000000 50%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #88c060;
@@ -5035,7 +4504,7 @@ FN-6815 adds Shadcn Gray Blue as the slate-neutral shadcn variant: the whole sur
   --done: #9a9490;
   --color-success: #5a9030;
   --color-error: #c4405e;
-  --shadow-lg: 0 4px 24px color-mix(in srgb, var(--text) 10%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, var(--text) 10%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #4a7a28;
@@ -5070,7 +4539,7 @@ FN-6815 adds Shadcn Gray Blue as the slate-neutral shadcn variant: the whole sur
   --done: #5a7a40;
   --color-success: #a0ff60;
   --color-error: #ff4040;
-  --shadow-lg: 0 4px 24px color-mix(in srgb, #000000 70%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, #000000 70%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #78d840;
@@ -5104,7 +4573,7 @@ FN-6815 adds Shadcn Gray Blue as the slate-neutral shadcn variant: the whole sur
   --done: #7a8a70;
   --color-success: #4a8a20;
   --color-error: #b03030;
-  --shadow-lg: 0 4px 24px color-mix(in srgb, var(--text) 10%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, var(--text) 10%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #3a7a18;
@@ -5143,40 +4612,17 @@ FN-6815 adds Shadcn Gray Blue as the slate-neutral shadcn variant: the whole sur
   --font-primary: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
   --font-mono: "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
 
-  --space-xs: 3px;
-  --space-sm: 6px;
-  --space-md: 9px;
-  --space-lg: 12px;
-  --space-xl: 18px;
-  --space-2xl: 24px;
 
-  --radius-sm: 0px;
-  --radius-md: 0px;
-  --radius-lg: 0px;
-  --radius-xl: 0px;
-  --radius-pill: 0px;
-  --radius: 0px;
 
-  --btn-padding: 8px 12px;
-  --btn-border-width: 3px;
-  --card-padding: 9px 11px;
-  --modal-padding: var(--space-lg) var(--space-xl);
-  --header-padding: var(--space-md) var(--space-xl);
-  --column-gap: var(--space-sm);
-  --board-padding: var(--space-lg) var(--space-xl);
 
   --shadow-sm: none;
   --shadow-md: none;
   --shadow-lg: none;
   --shadow-glow: none;
-  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--accent) 28%, transparent);
-  --focus-ring-strong: 0 0 0 3px color-mix(in srgb, var(--accent) 44%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 28%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 44%, transparent);
   --shadow: none;
 
-  --transition-instant: 0.04s linear;
-  --transition-fast: 0.08s linear;
-  --transition-normal: 0.12s linear;
-  --transition-slow: 0.16s linear;
 
   --cta-bg: #ff6a00;
   --cta-border: #ffd100;
@@ -5210,8 +4656,8 @@ FN-6815 adds Shadcn Gray Blue as the slate-neutral shadcn variant: the whole sur
   --color-success: #4f8f00;
   --color-error: #b32000;
 
-  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--todo) 22%, transparent);
-  --focus-ring-strong: 0 0 0 3px color-mix(in srgb, var(--todo) 35%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--todo) 22%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--todo) 35%, transparent);
 
   --cta-bg: #c2410c;
   --cta-border: #d9480f;
@@ -5222,13 +4668,6 @@ FN-6815 adds Shadcn Gray Blue as the slate-neutral shadcn variant: the whole sur
   --color-info: #b8860b;
   --accent: #c2410c;
   --accent-text: #ffffff;
-}
-
-[data-color-theme="brutalist"] .btn {
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  font-weight: 800;
-  border-width: 3px;
 }
 
 [data-color-theme="brutalist"] .btn-primary,
@@ -5246,9 +4685,7 @@ FN-6815 adds Shadcn Gray Blue as the slate-neutral shadcn variant: the whole sur
 
 [data-color-theme="brutalist"] .card,
 [data-color-theme="brutalist"] .column {
-  border-width: 3px;
   border-style: solid;
-  border-radius: 0;
   box-shadow: none;
 }
 
@@ -5256,12 +4693,6 @@ FN-6815 adds Shadcn Gray Blue as the slate-neutral shadcn variant: the whole sur
 [data-color-theme="brutalist"] .theme-section-title,
 [data-color-theme="brutalist"] .modal-header h3 {
   font-family: Impact, "Arial Black", "Franklin Gothic Heavy", sans-serif;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-
-[data-color-theme="brutalist"] .theme-option-swatch {
-  border-radius: 0;
 }
 
 /* NEON CITY - Cyberpunk neon-on-black */
@@ -5288,39 +4719,20 @@ FN-6815 adds Shadcn Gray Blue as the slate-neutral shadcn variant: the whole sur
   --font-primary: "Rajdhani", "Orbitron", "Share Tech Mono", "Segoe UI", sans-serif;
   --font-mono: "Share Tech Mono", "Fira Code", "JetBrains Mono", monospace;
 
-  --space-xs: 3px;
-  --space-sm: 7px;
-  --space-md: 10px;
-  --space-lg: 14px;
-  --space-xl: 20px;
-  --space-2xl: 28px;
 
-  --radius-sm: 10px;
-  --radius-md: 16px;
-  --radius-lg: 24px;
-  --radius-xl: 28px;
-  --radius-pill: 999px;
-  --radius: var(--radius-md);
 
-  --btn-padding: 8px 16px;
-  --btn-border-width: 2px;
-  --card-padding: 10px 12px;
 
-  --shadow-sm: 0 2px 6px color-mix(in srgb, #000000 35%, transparent);
-  --shadow-md: 0 0 10px color-mix(in srgb, var(--accent) 25%, transparent);
-  --shadow-lg: 0 0 26px color-mix(in srgb, var(--color-info) 20%, transparent);
-  --shadow-glow: 0 0 10px color-mix(in srgb, var(--todo) 45%, transparent);
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in srgb, #000000 35%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, var(--accent) 25%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, var(--color-info) 20%, transparent);
+  --shadow-glow: var(--ui-shadow-glow-geometry) color-mix(in srgb, var(--todo) 45%, transparent);
   --glow-success: 0 0 10px color-mix(in srgb, var(--color-success) 45%, transparent);
   --glow-warning: 0 0 10px color-mix(in srgb, var(--triage) 45%, transparent);
   --glow-danger: 0 0 10px color-mix(in srgb, var(--color-error) 42%, transparent);
-  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--color-info) 20%, transparent);
-  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--accent) 34%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--color-info) 20%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 34%, transparent);
   --shadow: var(--shadow-lg);
 
-  --transition-instant: 0.08s ease;
-  --transition-fast: 0.13s ease;
-  --transition-normal: 0.2s ease;
-  --transition-slow: 0.28s ease;
 
   --cta-bg: #ff2d95;
   --cta-border: #00f0ff;
@@ -5354,14 +4766,14 @@ FN-6815 adds Shadcn Gray Blue as the slate-neutral shadcn variant: the whole sur
   --color-success: #3a8a2e;
   --color-error: #b11f5b;
 
-  --shadow-md: 0 0 10px color-mix(in srgb, var(--todo) 14%, transparent);
-  --shadow-lg: 0 0 22px color-mix(in srgb, var(--color-info) 12%, transparent);
-  --shadow-glow: 0 0 10px color-mix(in srgb, var(--todo) 24%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, var(--todo) 14%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, var(--color-info) 12%, transparent);
+  --shadow-glow: var(--ui-shadow-glow-geometry) color-mix(in srgb, var(--todo) 24%, transparent);
   --glow-success: 0 0 10px color-mix(in srgb, var(--color-success) 24%, transparent);
   --glow-warning: 0 0 10px color-mix(in srgb, var(--triage) 24%, transparent);
   --glow-danger: 0 0 10px color-mix(in srgb, var(--color-error) 20%, transparent);
-  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--color-info) 17%, transparent);
-  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--todo) 24%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--color-info) 17%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--todo) 24%, transparent);
 
   --cta-bg: #b1145f;
   --cta-border: #008e9b;
@@ -5373,12 +4785,6 @@ FN-6815 adds Shadcn Gray Blue as the slate-neutral shadcn variant: the whole sur
   --color-info: #008e9b;
   --accent: #d63384;
   --accent-text: #ffffff;
-}
-
-[data-color-theme="neon-city"] .btn {
-  border-width: 2px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
 }
 
 [data-color-theme="neon-city"] .btn-primary,
@@ -5406,8 +4812,6 @@ FN-6815 adds Shadcn Gray Blue as the slate-neutral shadcn variant: the whole sur
 }
 
 [data-color-theme="neon-city"] .column-header h2 {
-  text-transform: uppercase;
-  letter-spacing: 0.14em;
   font-family: var(--font-mono);
 }
 
@@ -5472,32 +4876,15 @@ FN-6815 adds Shadcn Gray Blue as the slate-neutral shadcn variant: the whole sur
   --font-primary: Georgia, "Times New Roman", Times, serif;
   --font-mono: "Courier New", Courier, monospace;
 
-  --space-xs: 5px;
-  --space-sm: 10px;
-  --space-md: 14px;
-  --space-lg: 19px;
-  --space-xl: 29px;
-  --space-2xl: 38px;
 
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 10px;
-  --radius-xl: 14px;
-  --radius-pill: 999px;
-  --radius: var(--radius-md);
 
-  --btn-padding: 9px 18px;
-  --btn-border-width: 1px;
-  --card-padding: 12px 14px;
-  --modal-padding: var(--space-lg) calc(var(--space-xl) + 2px);
-  --header-padding: var(--space-md) var(--space-xl);
 
-  --shadow-sm: 0 1px 2px color-mix(in srgb, #0a0805 45%, transparent);
-  --shadow-md: 0 4px 12px color-mix(in srgb, #0a0805 35%, transparent);
-  --shadow-lg: 0 12px 28px color-mix(in srgb, #0a0805 40%, transparent);
-  --shadow-glow: 0 0 8px color-mix(in srgb, var(--todo) 25%, transparent);
-  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--color-info) 22%, transparent);
-  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--color-info) 34%, transparent);
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in srgb, #0a0805 45%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, #0a0805 35%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, #0a0805 40%, transparent);
+  --shadow-glow: var(--ui-shadow-glow-geometry) color-mix(in srgb, var(--todo) 25%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--color-info) 22%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--color-info) 34%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #be6e3c;
@@ -5532,12 +4919,12 @@ FN-6815 adds Shadcn Gray Blue as the slate-neutral shadcn variant: the whole sur
   --color-success: #5f7d3f;
   --color-error: #b24f2f;
 
-  --shadow-sm: 0 1px 2px color-mix(in srgb, #4a3723 12%, transparent);
-  --shadow-md: 0 5px 14px color-mix(in srgb, #4a3723 14%, transparent);
-  --shadow-lg: 0 14px 30px color-mix(in srgb, #4a3723 16%, transparent);
-  --shadow-glow: 0 0 8px color-mix(in srgb, var(--todo) 20%, transparent);
-  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--todo) 15%, transparent);
-  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--todo) 24%, transparent);
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in srgb, #4a3723 12%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, #4a3723 14%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, #4a3723 16%, transparent);
+  --shadow-glow: var(--ui-shadow-glow-geometry) color-mix(in srgb, var(--todo) 20%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--todo) 15%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--todo) 24%, transparent);
 
   --cta-bg: #99502d;
   --cta-border: #a8562f;
@@ -5583,8 +4970,6 @@ FN-6815 adds Shadcn Gray Blue as the slate-neutral shadcn variant: the whole sur
 
 [data-color-theme="parchment"] .column-header h2 {
   font-style: italic;
-  font-weight: 600;
-  letter-spacing: 0.02em;
 }
 
 /* TERMINAL - Retro CRT monospace */
@@ -5611,36 +4996,17 @@ FN-6815 adds Shadcn Gray Blue as the slate-neutral shadcn variant: the whole sur
   --font-primary: "IBM Plex Mono", "Source Code Pro", "Courier New", monospace;
   --font-mono: "IBM Plex Mono", "Source Code Pro", "Courier New", monospace;
 
-  --space-xs: 2px;
-  --space-sm: 6px;
-  --space-md: 10px;
-  --space-lg: 14px;
-  --space-xl: 20px;
-  --space-2xl: 28px;
 
-  --radius-sm: 0px;
-  --radius-md: 2px;
-  --radius-lg: 2px;
-  --radius-xl: 2px;
-  --radius-pill: 2px;
-  --radius: var(--radius-md);
 
-  --btn-padding: 7px 12px;
-  --btn-border-width: 2px;
-  --card-padding: 9px 10px;
 
-  --shadow-sm: 0 0 4px color-mix(in srgb, var(--accent) 15%, transparent);
-  --shadow-md: 0 0 10px color-mix(in srgb, var(--accent) 18%, transparent);
-  --shadow-lg: 0 0 22px color-mix(in srgb, var(--accent) 22%, transparent);
-  --shadow-glow: 0 0 10px color-mix(in srgb, var(--todo) 35%, transparent);
-  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 26%, transparent);
-  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--accent) 42%, transparent);
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in srgb, var(--accent) 15%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, var(--accent) 18%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, var(--accent) 22%, transparent);
+  --shadow-glow: var(--ui-shadow-glow-geometry) color-mix(in srgb, var(--todo) 35%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 26%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 42%, transparent);
   --shadow: var(--shadow-lg);
 
-  --transition-instant: 0.02s steps(2, end);
-  --transition-fast: 0.06s steps(3, end);
-  --transition-normal: 0.1s steps(4, end);
-  --transition-slow: 0.16s steps(5, end);
 
   --cta-bg: #33ff00;
   --cta-border: #8fff38;
@@ -5674,12 +5040,12 @@ FN-6815 adds Shadcn Gray Blue as the slate-neutral shadcn variant: the whole sur
   --color-success: #5e9c2d;
   --color-error: #8f5f00;
 
-  --shadow-sm: 0 0 4px color-mix(in srgb, var(--accent) 10%, transparent);
-  --shadow-md: 0 0 8px color-mix(in srgb, var(--accent) 12%, transparent);
-  --shadow-lg: 0 0 14px color-mix(in srgb, var(--accent) 15%, transparent);
-  --shadow-glow: 0 0 8px color-mix(in srgb, var(--todo) 20%, transparent);
-  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 16%, transparent);
-  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--accent) 24%, transparent);
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in srgb, var(--accent) 10%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, var(--accent) 12%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, var(--accent) 15%, transparent);
+  --shadow-glow: var(--ui-shadow-glow-geometry) color-mix(in srgb, var(--todo) 20%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 16%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 24%, transparent);
 
   --cta-bg: #2d6b14;
   --cta-border: #4c8f25;
@@ -5701,10 +5067,7 @@ FN-6815 adds Shadcn Gray Blue as the slate-neutral shadcn variant: the whole sur
 }
 
 [data-color-theme="terminal"] .btn {
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
   border-style: solid;
-  border-width: 2px;
 }
 
 [data-color-theme="terminal"] .btn-primary,
@@ -5718,15 +5081,12 @@ FN-6815 adds Shadcn Gray Blue as the slate-neutral shadcn variant: the whole sur
 [data-color-theme="terminal"] .card,
 [data-color-theme="terminal"] .column {
   border-style: dashed;
-  border-width: 2px;
   box-shadow:
     inset 0 0 0 1px color-mix(in srgb, var(--todo) 28%, transparent),
     var(--shadow-sm);
 }
 
 [data-color-theme="terminal"] .column-header h2 {
-  text-transform: uppercase;
-  letter-spacing: 0.15em;
   text-shadow: 0 0 6px color-mix(in srgb, var(--todo) 35%, transparent);
 }
 
@@ -5785,37 +5145,17 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --font-primary: "Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: "SF Mono", "JetBrains Mono", "Menlo", monospace;
 
-  --space-xs: 5px;
-  --space-sm: 10px;
-  --space-md: 14px;
-  --space-lg: 20px;
-  --space-xl: 28px;
-  --space-2xl: 38px;
 
-  --radius-sm: 8px;
-  --radius-md: 12px;
-  --radius-lg: 20px;
-  --radius-xl: 26px;
-  --radius-pill: 999px;
-  --radius: var(--radius-md);
 
-  --btn-padding: 9px 16px;
-  --btn-border-width: 1px;
-  --card-padding: 12px 14px;
-  --modal-padding: var(--space-lg) var(--space-xl);
 
-  --shadow-sm: 0 8px 16px color-mix(in srgb, #050212 24%, transparent);
-  --shadow-md: 0 14px 30px color-mix(in srgb, #060318 30%, transparent);
-  --shadow-lg: 0 22px 42px color-mix(in srgb, #08041e 35%, transparent);
-  --shadow-glow: 0 0 12px color-mix(in srgb, var(--todo) 26%, transparent);
-  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 20%, transparent);
-  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent);
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in srgb, #050212 24%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, #060318 30%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, #08041e 35%, transparent);
+  --shadow-glow: var(--ui-shadow-glow-geometry) color-mix(in srgb, var(--todo) 26%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 20%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 30%, transparent);
   --shadow: var(--shadow-lg);
 
-  --transition-instant: 0.08s ease;
-  --transition-fast: 0.14s ease;
-  --transition-normal: 0.22s ease;
-  --transition-slow: 0.34s ease;
 
   --cta-bg: color-mix(in srgb, var(--accent) 32%, transparent);
   --cta-border: color-mix(in srgb, #ffffff 38%, transparent);
@@ -5849,12 +5189,12 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --color-success: #3e8f6b;
   --color-error: #c74b7a;
 
-  --shadow-sm: 0 8px 16px color-mix(in srgb, #3f2c66 8%, transparent);
-  --shadow-md: 0 14px 30px color-mix(in srgb, #3f2c66 10%, transparent);
-  --shadow-lg: 0 22px 42px color-mix(in srgb, #3f2c66 14%, transparent);
-  --shadow-glow: 0 0 10px color-mix(in srgb, var(--todo) 20%, transparent);
-  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 15%, transparent);
-  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--accent) 24%, transparent);
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in srgb, #3f2c66 8%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, #3f2c66 10%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, #3f2c66 14%, transparent);
+  --shadow-glow: var(--ui-shadow-glow-geometry) color-mix(in srgb, var(--todo) 20%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 15%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 24%, transparent);
 
   --cta-bg: color-mix(in srgb, var(--accent) 24%, transparent);
   --cta-border: color-mix(in srgb, var(--accent) 38%, transparent);
@@ -5945,37 +5285,17 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --font-primary: "Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: "SF Mono", "JetBrains Mono", "Menlo", monospace;
 
-  --space-xs: 5px;
-  --space-sm: 10px;
-  --space-md: 14px;
-  --space-lg: 20px;
-  --space-xl: 28px;
-  --space-2xl: 38px;
 
-  --radius-sm: 8px;
-  --radius-md: 12px;
-  --radius-lg: 20px;
-  --radius-xl: 26px;
-  --radius-pill: 999px;
-  --radius: var(--radius-md);
 
-  --btn-padding: 9px 16px;
-  --btn-border-width: 1px;
-  --card-padding: 12px 14px;
-  --modal-padding: var(--space-lg) var(--space-xl);
 
-  --shadow-sm: 0 8px 16px color-mix(in srgb, #020305 24%, transparent);
-  --shadow-md: 0 14px 30px color-mix(in srgb, #030407 30%, transparent);
-  --shadow-lg: 0 22px 42px color-mix(in srgb, #04060a 35%, transparent);
-  --shadow-glow: 0 0 12px color-mix(in srgb, var(--todo) 22%, transparent);
-  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 20%, transparent);
-  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent);
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in srgb, #020305 24%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, #030407 30%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, #04060a 35%, transparent);
+  --shadow-glow: var(--ui-shadow-glow-geometry) color-mix(in srgb, var(--todo) 22%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 20%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 30%, transparent);
   --shadow: var(--shadow-lg);
 
-  --transition-instant: 0.08s ease;
-  --transition-fast: 0.14s ease;
-  --transition-normal: 0.22s ease;
-  --transition-slow: 0.34s ease;
 
   --cta-bg: color-mix(in srgb, var(--accent) 32%, transparent);
   --cta-border: color-mix(in srgb, #f5f7fa 38%, transparent);
@@ -6009,12 +5329,12 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --color-success: #667383;
   --color-error: #b24f4f;
 
-  --shadow-sm: 0 8px 16px color-mix(in srgb, #1f2933 8%, transparent);
-  --shadow-md: 0 14px 30px color-mix(in srgb, #1f2933 10%, transparent);
-  --shadow-lg: 0 22px 42px color-mix(in srgb, #1f2933 14%, transparent);
-  --shadow-glow: 0 0 10px color-mix(in srgb, var(--todo) 20%, transparent);
-  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 15%, transparent);
-  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--accent) 24%, transparent);
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in srgb, #1f2933 8%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, #1f2933 10%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, #1f2933 14%, transparent);
+  --shadow-glow: var(--ui-shadow-glow-geometry) color-mix(in srgb, var(--todo) 20%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 15%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 24%, transparent);
 
   --cta-bg: color-mix(in srgb, var(--accent) 24%, transparent);
   --cta-border: color-mix(in srgb, var(--accent) 38%, transparent);
@@ -6105,25 +5425,15 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
 
   --font-primary: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
   --font-mono: "SF Mono", "JetBrains Mono", Menlo, monospace;
-  --radius-sm: 0.625rem;
-  --radius-md: 0.875rem;
-  --radius-lg: 1.25rem;
-  --radius-xl: 1.75rem;
-  --radius-pill: 999rem;
-  --radius: var(--radius-md);
 
-  --shadow-sm: 0 0.25rem 0.75rem color-mix(in oklch, oklch(0.08 0.02 255) 28%, transparent);
-  --shadow-md: 0 0.75rem 2rem color-mix(in oklch, oklch(0.08 0.02 255) 34%, transparent);
-  --shadow-lg: 0 1.25rem 3rem color-mix(in oklch, oklch(0.06 0.02 255) 42%, transparent);
-  --shadow-glow: 0 0 1rem color-mix(in oklch, var(--accent) 28%, transparent);
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in oklch, oklch(0.08 0.02 255) 28%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in oklch, oklch(0.08 0.02 255) 34%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in oklch, oklch(0.06 0.02 255) 42%, transparent);
+  --shadow-glow: var(--ui-shadow-glow-geometry) color-mix(in oklch, var(--accent) 28%, transparent);
   --shadow: var(--shadow-lg);
-  --focus-ring: 0 0 0 0.125rem color-mix(in oklch, var(--accent) 34%, transparent);
-  --focus-ring-strong: 0 0 0 0.1875rem color-mix(in oklch, var(--accent) 48%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in oklch, var(--accent) 34%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in oklch, var(--accent) 48%, transparent);
 
-  --transition-instant: 80ms cubic-bezier(0.2, 0.8, 0.2, 1);
-  --transition-fast: 140ms cubic-bezier(0.2, 0.8, 0.2, 1);
-  --transition-normal: 240ms cubic-bezier(0.2, 0.8, 0.2, 1);
-  --transition-slow: 360ms cubic-bezier(0.2, 0.8, 0.2, 1);
 
   --accent: oklch(0.72 0.16 245);
   --accent-text: oklch(0.99 0.005 250);
@@ -6159,9 +5469,9 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --color-error: oklch(0.53 0.2 25);
   --color-info: var(--in-progress);
 
-  --shadow-sm: 0 0.25rem 0.75rem color-mix(in oklch, oklch(0.3 0.05 250) 12%, transparent);
-  --shadow-md: 0 0.75rem 2rem color-mix(in oklch, oklch(0.3 0.05 250) 16%, transparent);
-  --shadow-lg: 0 1.25rem 3rem color-mix(in oklch, oklch(0.3 0.05 250) 20%, transparent);
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in oklch, oklch(0.3 0.05 250) 12%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in oklch, oklch(0.3 0.05 250) 16%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in oklch, oklch(0.3 0.05 250) 20%, transparent);
   --accent: oklch(0.55 0.19 250);
   --accent-text: oklch(0.99 0.005 245);
   --cta-bg: color-mix(in oklch, var(--accent) 82%, transparent);
@@ -6355,7 +5665,7 @@ Reduced-transparency and forced-colors preferences neutralize every functional s
   --done: #7a7d91;
   --color-success: #29d398;
   --color-error: #e8646a;
-  --shadow-lg: 0 4px 24px color-mix(in srgb, #000000 50%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, #000000 50%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #e8646a;
@@ -6389,7 +5699,7 @@ Reduced-transparency and forced-colors preferences neutralize every functional s
   --done: #8a7d78;
   --color-success: #29a87c;
   --color-error: #d84050;
-  --shadow-lg: 0 4px 24px color-mix(in srgb, var(--text) 10%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, var(--text) 10%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #e8646a;
@@ -6424,7 +5734,7 @@ Reduced-transparency and forced-colors preferences neutralize every functional s
   --done: #5a5850;
   --color-success: #7cb586;
   --color-error: #cb4b16;
-  --shadow-lg: 0 4px 24px color-mix(in srgb, #000000 50%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, #000000 50%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #4c9a91;
@@ -6458,7 +5768,7 @@ Reduced-transparency and forced-colors preferences neutralize every functional s
   --done: #8a8880;
   --color-success: #5a9a68;
   --color-error: #b04820;
-  --shadow-lg: 0 4px 24px color-mix(in srgb, var(--text) 10%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, var(--text) 10%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #3a8578;
@@ -6493,7 +5803,7 @@ Reduced-transparency and forced-colors preferences neutralize every functional s
   --done: #6a60a0;
   --color-success: #00e5ff;
   --color-error: #ff2d95;
-  --shadow-lg: 0 4px 24px color-mix(in srgb, var(--accent) 40%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, var(--accent) 40%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #b537f2;
@@ -6527,7 +5837,7 @@ Reduced-transparency and forced-colors preferences neutralize every functional s
   --done: #8080a0;
   --color-success: #00a8b8;
   --color-error: #d02080;
-  --shadow-lg: 0 4px 24px color-mix(in srgb, var(--accent) 15%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, var(--accent) 15%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #9030c8;
@@ -6562,7 +5872,7 @@ Reduced-transparency and forced-colors preferences neutralize every functional s
   --done: #707080;
   --color-success: #5af78e;
   --color-error: #ff5c57;
-  --shadow-lg: 0 4px 24px color-mix(in srgb, #000000 50%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, #000000 50%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #50fa7b;
@@ -6596,7 +5906,7 @@ Reduced-transparency and forced-colors preferences neutralize every functional s
   --done: #808088;
   --color-success: #30a050;
   --color-error: #d04040;
-  --shadow-lg: 0 4px 24px color-mix(in srgb, var(--text) 10%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, var(--text) 10%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #28a048;
@@ -6631,7 +5941,7 @@ Reduced-transparency and forced-colors preferences neutralize every functional s
   --done: #707488;
   --color-success: #c3e88d;
   --color-error: #f07178;
-  --shadow-lg: 0 4px 24px color-mix(in srgb, #000000 40%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, #000000 40%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #9a7ee8;
@@ -6665,7 +5975,7 @@ Reduced-transparency and forced-colors preferences neutralize every functional s
   --done: #8080a0;
   --color-success: #60a050;
   --color-error: #c04050;
-  --shadow-lg: 0 4px 24px color-mix(in srgb, var(--text) 10%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, var(--text) 10%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #8058c8;
@@ -6700,7 +6010,7 @@ Reduced-transparency and forced-colors preferences neutralize every functional s
   --done: #706050;
   --color-success: #8f6552;
   --color-error: #d47a6a;
-  --shadow-lg: 0 4px 24px color-mix(in srgb, #000000 50%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, #000000 50%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #c17d56;
@@ -6734,7 +6044,7 @@ Reduced-transparency and forced-colors preferences neutralize every functional s
   --done: #8a7a68;
   --color-success: #706050;
   --color-error: #b06050;
-  --shadow-lg: 0 4px 24px color-mix(in srgb, var(--text) 10%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, var(--text) 10%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #906040;
@@ -6769,7 +6079,7 @@ Reduced-transparency and forced-colors preferences neutralize every functional s
   --done: #706050;
   --color-success: #d4874d;
   --color-error: #c44030;
-  --shadow-lg: 0 4px 24px color-mix(in srgb, #000000 50%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, #000000 50%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #c1440e;
@@ -6803,7 +6113,7 @@ Reduced-transparency and forced-colors preferences neutralize every functional s
   --done: #8a7a68;
   --color-success: #b07040;
   --color-error: #a03020;
-  --shadow-lg: 0 4px 24px color-mix(in srgb, var(--text) 10%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, var(--text) 10%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #a03010;
@@ -6838,7 +6148,7 @@ Reduced-transparency and forced-colors preferences neutralize every functional s
   --done: #5d5f78;
   --color-success: #5de4c7;
   --color-error: #d0679d;
-  --shadow-lg: 0 4px 24px color-mix(in srgb, #000000 40%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, #000000 40%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #5de4c7;
@@ -6872,7 +6182,7 @@ Reduced-transparency and forced-colors preferences neutralize every functional s
   --done: #8080a0;
   --color-success: #30a090;
   --color-error: #c04080;
-  --shadow-lg: 0 4px 24px color-mix(in srgb, var(--text) 10%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, var(--text) 10%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #30a090;
@@ -7776,9 +7086,9 @@ Operator feedback supersedes the original oversized pixel choice because its app
   --accent: #d5ad67;
   --accent-text: #21170f;
   --logo-accent: var(--accent);
-  --shadow-glow: 0 0 var(--space-lg) color-mix(in srgb, var(--accent) 28%, transparent);
-  --focus-ring: 0 0 0 var(--btn-border-width) color-mix(in srgb, var(--accent) 24%, transparent);
-  --focus-ring-strong: 0 0 0 var(--btn-border-width) color-mix(in srgb, var(--accent) 36%, transparent);
+  --shadow-glow: var(--ui-shadow-glow-geometry) color-mix(in srgb, var(--accent) 28%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 24%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 36%, transparent);
   --font-primary: "Pixelify Sans", system-ui, sans-serif;
   --medieval-paper-fiber: color-mix(in srgb, var(--text) 6%, transparent);
   --medieval-paper-mottle: color-mix(in srgb, var(--border) 18%, transparent);
@@ -7815,9 +7125,9 @@ Operator feedback supersedes the original oversized pixel choice because its app
   --accent: #765125;
   --accent-text: #fff8e5;
   --logo-accent: var(--accent);
-  --shadow-glow: 0 0 var(--space-lg) color-mix(in srgb, var(--accent) 20%, transparent);
-  --focus-ring: 0 0 0 var(--btn-border-width) color-mix(in srgb, var(--accent) 18%, transparent);
-  --focus-ring-strong: 0 0 0 var(--btn-border-width) color-mix(in srgb, var(--accent) 28%, transparent);
+  --shadow-glow: var(--ui-shadow-glow-geometry) color-mix(in srgb, var(--accent) 20%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 18%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 28%, transparent);
   --font-primary: "Pixelify Sans", system-ui, sans-serif;
   --medieval-paper-fiber: color-mix(in srgb, var(--text) 5%, transparent);
   --medieval-paper-mottle: color-mix(in srgb, var(--border) 16%, transparent);
@@ -7868,9 +7178,9 @@ Midnight gives operators deep-navy surfaces with restrained violet/indigo accent
   --accent: #a78bfa;
   --accent-text: #171035;
   --logo-accent: var(--accent);
-  --shadow-glow: 0 0 12px color-mix(in srgb, var(--accent) 28%, transparent);
-  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 24%, transparent);
-  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--accent) 36%, transparent);
+  --shadow-glow: var(--ui-shadow-glow-geometry) color-mix(in srgb, var(--accent) 28%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 24%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 36%, transparent);
 }
 
 [data-color-theme="midnight"][data-theme="light"] {
@@ -7904,9 +7214,9 @@ Midnight gives operators deep-navy surfaces with restrained violet/indigo accent
   --accent: #5134a3;
   --accent-text: #ffffff;
   --logo-accent: var(--accent);
-  --shadow-glow: 0 0 10px color-mix(in srgb, var(--accent) 20%, transparent);
-  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
-  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent);
+  --shadow-glow: var(--ui-shadow-glow-geometry) color-mix(in srgb, var(--accent) 20%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 18%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 28%, transparent);
 }
 
 /*
@@ -7944,9 +7254,9 @@ Velvet gives operators deep plum and burgundy surfaces with rose-gold actions in
   --accent: #c99a89;
   --accent-text: #1d1418;
   --logo-accent: var(--accent);
-  --shadow-glow: 0 0 12px color-mix(in srgb, var(--accent) 28%, transparent);
-  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 24%, transparent);
-  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--accent) 36%, transparent);
+  --shadow-glow: var(--ui-shadow-glow-geometry) color-mix(in srgb, var(--accent) 28%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 24%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 36%, transparent);
 }
 
 [data-color-theme="velvet"][data-theme="light"] {
@@ -7980,9 +7290,9 @@ Velvet gives operators deep plum and burgundy surfaces with rose-gold actions in
   --accent: #8a4a55;
   --accent-text: #ffffff;
   --logo-accent: var(--accent);
-  --shadow-glow: 0 0 10px color-mix(in srgb, var(--accent) 20%, transparent);
-  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
-  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent);
+  --shadow-glow: var(--ui-shadow-glow-geometry) color-mix(in srgb, var(--accent) 20%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 18%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 28%, transparent);
 }
 
 /*
@@ -8020,9 +7330,9 @@ Iceberg is a persisted navy-slate palette with a pale blue-gray light counterpar
   --accent: #84a0c6;
   --accent-text: #161821;
   --logo-accent: var(--accent);
-  --shadow-glow: 0 0 12px color-mix(in srgb, var(--accent) 28%, transparent);
-  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 24%, transparent);
-  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--accent) 36%, transparent);
+  --shadow-glow: var(--ui-shadow-glow-geometry) color-mix(in srgb, var(--accent) 28%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 24%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 36%, transparent);
 }
 
 [data-color-theme="iceberg"][data-theme="light"] {
@@ -8056,9 +7366,9 @@ Iceberg is a persisted navy-slate palette with a pale blue-gray light counterpar
   --accent: #2d539e;
   --accent-text: #ffffff;
   --logo-accent: var(--accent);
-  --shadow-glow: 0 0 10px color-mix(in srgb, var(--accent) 20%, transparent);
-  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
-  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent);
+  --shadow-glow: var(--ui-shadow-glow-geometry) color-mix(in srgb, var(--accent) 20%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 18%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 28%, transparent);
 }
 
 /*
@@ -8096,9 +7406,9 @@ Flexoki is a persisted warm inky palette with a cream paper light counterpart. K
   --accent: #4385be;
   --accent-text: #100f0f;
   --logo-accent: var(--accent);
-  --shadow-glow: 0 0 12px color-mix(in srgb, var(--accent) 28%, transparent);
-  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 24%, transparent);
-  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--accent) 36%, transparent);
+  --shadow-glow: var(--ui-shadow-glow-geometry) color-mix(in srgb, var(--accent) 28%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 24%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 36%, transparent);
 }
 
 [data-color-theme="flexoki"][data-theme="light"] {
@@ -8132,9 +7442,9 @@ Flexoki is a persisted warm inky palette with a cream paper light counterpart. K
   --accent: #205ea6;
   --accent-text: #fffcf0;
   --logo-accent: var(--accent);
-  --shadow-glow: 0 0 10px color-mix(in srgb, var(--accent) 20%, transparent);
-  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
-  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent);
+  --shadow-glow: var(--ui-shadow-glow-geometry) color-mix(in srgb, var(--accent) 20%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 18%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 28%, transparent);
 }
 
 /*
@@ -8172,20 +7482,9 @@ Cozy Cartoon pairs a flagship light pastel palette with a warm cozy-night dark c
   --accent: #f4a7a3;
   --accent-text: #2b1a1c;
   --logo-accent: var(--accent);
-  --shadow-glow: 0 0 14px color-mix(in srgb, var(--accent) 30%, transparent);
-  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--accent) 28%, transparent);
-  --focus-ring-strong: 0 0 0 3px color-mix(in srgb, var(--accent) 42%, transparent);
-
-  --radius-sm: 10px;
-  --radius-md: 14px;
-  --radius-lg: 20px;
-  --radius-xl: 26px;
-  --radius-pill: 999px;
-  --btn-padding: 12px 22px;
-  --btn-border-width: 2px;
-  --icon-size-md: 18px;
-  --cozy-cartoon-btn-font-size: 15px;
-  --cozy-cartoon-btn-font-weight: 600;
+  --shadow-glow: var(--ui-shadow-glow-geometry) color-mix(in srgb, var(--accent) 30%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 28%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 42%, transparent);
 }
 
 [data-color-theme="cozy-cartoon"][data-theme="light"] {
@@ -8219,9 +7518,9 @@ Cozy Cartoon pairs a flagship light pastel palette with a warm cozy-night dark c
   --accent: #e07a6a;
   --accent-text: #3a1f1c;
   --logo-accent: var(--accent);
-  --shadow-glow: 0 0 12px color-mix(in srgb, var(--accent) 22%, transparent);
-  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
-  --focus-ring-strong: 0 0 0 3px color-mix(in srgb, var(--accent) 34%, transparent);
+  --shadow-glow: var(--ui-shadow-glow-geometry) color-mix(in srgb, var(--accent) 22%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 22%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 34%, transparent);
 }
 
 [data-color-theme="aurora"] {
@@ -8255,9 +7554,9 @@ Cozy Cartoon pairs a flagship light pastel palette with a warm cozy-night dark c
   --accent: #65e6c7;
   --accent-text: #07171c;
   --logo-accent: var(--accent);
-  --shadow-glow: 0 0 12px color-mix(in srgb, var(--accent) 28%, transparent);
-  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 24%, transparent);
-  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--accent) 36%, transparent);
+  --shadow-glow: var(--ui-shadow-glow-geometry) color-mix(in srgb, var(--accent) 28%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 24%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 36%, transparent);
 }
 
 [data-color-theme="aurora"][data-theme="light"] {
@@ -8291,9 +7590,9 @@ Cozy Cartoon pairs a flagship light pastel palette with a warm cozy-night dark c
   --accent: #197d72;
   --accent-text: #ffffff;
   --logo-accent: var(--accent);
-  --shadow-glow: 0 0 10px color-mix(in srgb, var(--accent) 20%, transparent);
-  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
-  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent);
+  --shadow-glow: var(--ui-shadow-glow-geometry) color-mix(in srgb, var(--accent) 20%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 18%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 28%, transparent);
 }
 
 /*
@@ -8331,9 +7630,9 @@ Calm provides low-stimulation slate-and-sage dark surfaces and misty light surfa
   --accent: #8fc9b5;
   --accent-text: #10241f;
   --logo-accent: var(--accent);
-  --shadow-glow: 0 0 12px color-mix(in srgb, var(--accent) 24%, transparent);
-  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 22%, transparent);
-  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--accent) 34%, transparent);
+  --shadow-glow: var(--ui-shadow-glow-geometry) color-mix(in srgb, var(--accent) 24%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 22%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 34%, transparent);
 }
 
 [data-color-theme="calm"][data-theme="light"] {
@@ -8367,9 +7666,9 @@ Calm provides low-stimulation slate-and-sage dark surfaces and misty light surfa
   --accent: #2f7260;
   --accent-text: #ffffff;
   --logo-accent: var(--accent);
-  --shadow-glow: 0 0 10px color-mix(in srgb, var(--accent) 18%, transparent);
-  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
-  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent);
+  --shadow-glow: var(--ui-shadow-glow-geometry) color-mix(in srgb, var(--accent) 18%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 18%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 28%, transparent);
 }
 
 /*
@@ -8407,9 +7706,9 @@ Dawn pairs deep indigo and plum dark surfaces with muted peach, amber, and viole
   --accent: #efb66a;
   --accent-text: #29150f;
   --logo-accent: var(--accent);
-  --shadow-glow: 0 0 12px color-mix(in srgb, var(--accent) 28%, transparent);
-  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 24%, transparent);
-  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--accent) 36%, transparent);
+  --shadow-glow: var(--ui-shadow-glow-geometry) color-mix(in srgb, var(--accent) 28%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 24%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 36%, transparent);
 }
 
 /*
@@ -8447,9 +7746,9 @@ Sage uses soft green-gray surfaces with a muted olive accent, preserving readabl
   --accent: #9ab58a;
   --accent-text: #16201a;
   --logo-accent: var(--accent);
-  --shadow-glow: 0 0 12px color-mix(in srgb, var(--accent) 28%, transparent);
-  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 24%, transparent);
-  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--accent) 36%, transparent);
+  --shadow-glow: var(--ui-shadow-glow-geometry) color-mix(in srgb, var(--accent) 28%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 24%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 36%, transparent);
 }
 
 [data-color-theme="sage"][data-theme="light"] {
@@ -8483,9 +7782,9 @@ Sage uses soft green-gray surfaces with a muted olive accent, preserving readabl
   --accent: #55764d;
   --accent-text: #ffffff;
   --logo-accent: var(--accent);
-  --shadow-glow: 0 0 10px color-mix(in srgb, var(--accent) 20%, transparent);
-  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
-  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent);
+  --shadow-glow: var(--ui-shadow-glow-geometry) color-mix(in srgb, var(--accent) 20%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 18%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 28%, transparent);
 }
 
 /*
@@ -8523,9 +7822,9 @@ Factory Dark is the low-ambient-light industrial sibling of Factory: graphite an
   --accent: #e89532;
   --accent-text: #1a1007;
   --logo-accent: var(--accent);
-  --shadow-glow: 0 0 12px color-mix(in srgb, var(--accent) 28%, transparent);
-  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 24%, transparent);
-  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--accent) 36%, transparent);
+  --shadow-glow: var(--ui-shadow-glow-geometry) color-mix(in srgb, var(--accent) 28%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 24%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 36%, transparent);
 }
 
 [data-color-theme="factory-dark"][data-theme="light"] {
@@ -8559,9 +7858,9 @@ Factory Dark is the low-ambient-light industrial sibling of Factory: graphite an
   --accent: #a95612;
   --accent-text: #ffffff;
   --logo-accent: var(--accent);
-  --shadow-glow: 0 0 10px color-mix(in srgb, var(--accent) 20%, transparent);
-  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
-  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent);
+  --shadow-glow: var(--ui-shadow-glow-geometry) color-mix(in srgb, var(--accent) 20%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 18%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 28%, transparent);
 }
 
 /*
@@ -8599,9 +7898,9 @@ Factory Light is the daylight industrial sibling of Factory and Factory Dark: wa
   --accent: #f0a24a;
   --accent-text: #1d1308;
   --logo-accent: var(--accent);
-  --shadow-glow: 0 0 12px color-mix(in srgb, var(--accent) 28%, transparent);
-  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 24%, transparent);
-  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--accent) 36%, transparent);
+  --shadow-glow: var(--ui-shadow-glow-geometry) color-mix(in srgb, var(--accent) 28%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 24%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 36%, transparent);
 }
 
 [data-color-theme="factory-light"][data-theme="light"] {
@@ -8635,9 +7934,9 @@ Factory Light is the daylight industrial sibling of Factory and Factory Dark: wa
   --accent: #b45309;
   --accent-text: #ffffff;
   --logo-accent: var(--accent);
-  --shadow-glow: 0 0 10px color-mix(in srgb, var(--accent) 20%, transparent);
-  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
-  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent);
+  --shadow-glow: var(--ui-shadow-glow-geometry) color-mix(in srgb, var(--accent) 20%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 18%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 28%, transparent);
 }
 
 [data-color-theme="dawn"][data-theme="light"] {
@@ -8671,7 +7970,7 @@ Factory Light is the daylight industrial sibling of Factory and Factory Dark: wa
   --accent: #9b5618;
   --accent-text: #ffffff;
   --logo-accent: var(--accent);
-  --shadow-glow: 0 0 10px color-mix(in srgb, var(--accent) 20%, transparent);
-  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
-  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent);
+  --shadow-glow: var(--ui-shadow-glow-geometry) color-mix(in srgb, var(--accent) 20%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 18%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--accent) 28%, transparent);
 }

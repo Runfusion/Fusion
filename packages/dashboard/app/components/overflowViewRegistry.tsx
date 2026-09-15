@@ -36,7 +36,7 @@ const PullRequestView = lazy(() => import("./PullRequestView").then((m) => ({ de
 const ChatView = lazy(() => import("./ChatView").then((m) => ({ default: m.ChatView })));
 const NotesView = lazy(() => import("./NotesView").then((m) => ({ default: m.NotesView })));
 
-export type OverflowViewHostMode = "standard" | "alpha-desktop";
+export type OverflowViewHostMode = "standard" | "desktop";
 
 export type OverflowViewKey =
   | "usage"
@@ -168,7 +168,7 @@ export const STATIC_OVERFLOW_VIEW_ENTRIES: readonly OverflowViewEntry[] = [
   },
   /*
   FNXC:ChatSurfaceUnification 2026-09-14-17:46:
-  FN-392: Chat is the dock's compact conversation LIST on every wide host (standard and Alpha desktop), restoring the
+  FN-392: Chat is the dock's compact conversation LIST on every wide host, restoring the
   behavior FN-390 replaced with an expanded window. It is deliberately inline and NOT expandable, exactly like Notes:
   an expand modal would create a second Chat owner beside the dock list. Clicking or creating a conversation delegates
   to the project-scoped window owner (`onOpenSessionInNewWindow`), so transcripts live in their dedicated windows and
@@ -210,15 +210,15 @@ export const STATIC_OVERFLOW_VIEW_ENTRIES: readonly OverflowViewEntry[] = [
     render: (props) => (props.renderListView ? wrapOverflowView(props.renderListView()) : null),
   },
   /*
-  FNXC:AlphaDesktopRightDock 2026-09-11-21:48:
-  Notes is an inline, non-expandable tool only in the explicit Alpha desktop dock. Standard docks exclude it entirely, preventing stale stored selections from creating a hidden or modal Notes owner.
+  FNXC:DesktopRightDock 2026-09-11-21:48:
+  Notes is an inline, non-expandable tool only in the explicit wide desktop dock. Standard docks exclude it entirely, preventing stale stored selections from creating a hidden or modal Notes owner.
   */
   {
     key: "notes",
     label: "Notes",
     icon: StickyNote,
     testId: "right-dock-tab-notes",
-    isVisible: (options) => options.hostMode === "alpha-desktop",
+    isVisible: (options) => options.hostMode === "desktop",
     isExpandable: () => false,
     render: (props) => wrapOverflowView(
       <NotesView projectId={props.projectId} addToast={props.addToast} controller={props.notesController} onOpenNote={props.onOpenNote} compact listOnly />,

@@ -211,15 +211,15 @@ describe("MainViewKeepAlive", () => {
         mountedIds={["board", activeId]}
         projectKey="project-1"
         mainContentProps={mainContentProps()}
-        alphaMobileDrawer={{ activeId, title: activeId === "chat" ? "Chat" : "List", onClose: close }}
+        mobileDrawer={{ activeId, title: activeId === "chat" ? "Chat" : "List", onClose: close }}
       />,
     );
 
     expect(screen.getByTestId("board-keep-alive")).not.toHaveAttribute("aria-hidden");
     const dialog = screen.getByRole("dialog", { name: activeId === "chat" ? "Chat" : "List" });
     expect(dialog).toContainElement(screen.getByTestId(`${activeId}-child`));
-    expect(dialog.querySelector(".alpha-mobile-drawer__close")).toBeNull();
-    const handle = dialog.querySelector(".alpha-mobile-drawer__handle-target")!;
+    expect(dialog.querySelector(".mobile-drawer__close")).toBeNull();
+    const handle = dialog.querySelector(".mobile-drawer__handle-target")!;
     fireEvent.pointerDown(handle, { pointerId: 1, clientY: 0, button: 0, isPrimary: true });
     fireEvent.pointerMove(handle, { pointerId: 1, clientY: 200 });
     fireEvent.pointerUp(handle, { pointerId: 1, clientY: 200 });
@@ -286,7 +286,7 @@ describe("MainViewKeepAlive", () => {
     ]);
 
     const mainContent = readAppFile("components/dashboard/MainContent.tsx");
-    expect(mainContent).toContain('taskView === "chat" && !alphaMobileDrawerEnabled ? null : taskView');
+    expect(mainContent).toContain('taskView === "chat" && !mobileDrawerEnabled ? null : taskView');
     expect(mainContent).toContain('storedKeepAliveIds.filter((id) => id !== "chat")');
     const registry = readAppFile("components/overflowViewRegistry.tsx");
     expect(registry).toContain("isInline: () => false");

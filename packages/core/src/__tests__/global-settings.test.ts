@@ -207,6 +207,45 @@ describe("GlobalSettingsStore", () => {
       await expect(store.getSettings()).resolves.toMatchObject({ colorTheme: "shadcn-ember" });
     });
 
+    /*
+    FNXC:UiStyleAxis 2026-09-15-00:20:
+    FN-399's interface style is a global preference normalized like colorTheme: absent, wrongly typed,
+    `null`-reset and unknown values all resolve to "classic", while unrelated and unknown historical keys
+    survive untouched and colour preferences are never rewritten by a style read.
+    */
+    it("defaults an absent interface style to classic while preserving unrelated and unknown keys", async () => {
+      await mkdir(dir, { recursive: true });
+      await writeFile(
+        join(dir, "settings.json"),
+        JSON.stringify({ colorTheme: "ocean", themeMode: "light", legacyUnknownKey: "keep-me" }),
+      );
+
+      const settings = await new GlobalSettingsStore(dir).getSettings();
+
+      expect(settings.uiStyle).toBe("classic");
+      expect(settings.colorTheme).toBe("ocean");
+      expect(settings.themeMode).toBe("light");
+      expect((settings as Record<string, unknown>).legacyUnknownKey).toBe("keep-me");
+    });
+
+    it.each([
+      ["unknown value", "epure"],
+      ["wrong type", 7],
+      ["null reset", null],
+    ])("resolves an interface style with %s to classic", async (_label, persisted) => {
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, "settings.json"), JSON.stringify({ uiStyle: persisted }));
+
+      await expect(new GlobalSettingsStore(dir).getSettings()).resolves.toMatchObject({ uiStyle: "classic" });
+    });
+
+    it("preserves a persisted clean interface style", async () => {
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, "settings.json"), JSON.stringify({ uiStyle: "clean" }));
+
+      await expect(new GlobalSettingsStore(dir).getSettings()).resolves.toMatchObject({ uiStyle: "clean" });
+    });
+
     it("returns defaults on invalid JSON", async () => {
       await mkdir(dir, { recursive: true });
       await writeFile(join(dir, "settings.json"), "not-json{{{");
@@ -256,6 +295,58 @@ describe("GlobalSettingsStore", () => {
 
       const persisted = JSON.parse(await readFile(join(dir, "settings.json"), "utf-8"));
       expect(persisted.colorTheme).toBe("shadcn-ember");
+    });
+
+    it("round-trips the clean interface style and reloads it in a fresh store instance", async () => {
+      await store.init();
+      await store.updateSettings({ colorTheme: "ocean", themeMode: "light" });
+
+      const updated = await store.updateSettings({ uiStyle: "clean" });
+
+      // Selecting a style must not move any colour preference.
+      expect(updated.uiStyle).toBe("clean");
+      expect(updated.colorTheme).toBe("ocean");
+      expect(updated.themeMode).toBe("light");
+
+      await expect(new GlobalSettingsStore(dir).getSettings()).resolves.toMatchObject({
+        uiStyle: "clean",
+        colorTheme: "ocean",
+        themeMode: "light",
+      });
+    });
+
+    it("replaces an invalid interface style with classic before persistence", async () => {
+      await store.init();
+
+      await expect(store.updateSettings({ uiStyle: "brutalist" as never })).resolves.toMatchObject({
+        uiStyle: "classic",
+      });
+
+      const persisted = JSON.parse(await readFile(join(dir, "settings.json"), "utf-8"));
+      expect(persisted.uiStyle).toBe("classic");
+    });
+
+    it("restores an older configuration without an interface style back to classic", async () => {
+      await store.init();
+      await store.updateSettings({ uiStyle: "clean" });
+
+      // Simulate restoring a pre-FN-399 configuration file wholesale.
+      await writeFile(join(dir, "settings.json"), JSON.stringify({ colorTheme: "forest" }));
+
+      await expect(new GlobalSettingsStore(dir).getSettings()).resolves.toMatchObject({
+        uiStyle: "classic",
+        colorTheme: "forest",
+      });
+    });
+
+    it("leaves the interface style untouched when only a colour theme changes", async () => {
+      await store.init();
+      await store.updateSettings({ uiStyle: "clean" });
+
+      const updated = await store.updateSettings({ colorTheme: "berry" });
+
+      expect(updated.uiStyle).toBe("clean");
+      expect(updated.colorTheme).toBe("berry");
     });
 
     it("round-trips the Aurora color theme through persisted settings", async () => {

@@ -123,18 +123,18 @@ describe("Header", () => {
 
     const actions = container.querySelector(".header-actions");
     const slot = screen.getByTestId("header-workflow-slot");
-    const trigger = screen.getByTestId("alpha-desktop-header-search-btn");
+    const trigger = screen.getByTestId("desktop-inline-header-search-btn");
     const triggerIndex = Array.from(actions?.children ?? []).indexOf(trigger);
     expect(slot.parentElement).toBe(actions);
     expect(triggerIndex).toBeGreaterThan(Array.from(actions?.children ?? []).indexOf(slot));
 
     fireEvent.click(trigger);
-    const inlineSearch = screen.getByTestId("alpha-desktop-header-search-input");
+    const inlineSearch = screen.getByTestId("desktop-header-search-input");
     expect(inlineSearch.parentElement).toBe(actions);
     expect(Array.from(actions?.children ?? []).indexOf(inlineSearch)).toBe(triggerIndex);
-    expect(inlineSearch).toHaveClass("header-search--alpha-inline");
+    expect(inlineSearch).toHaveClass("header-search--inline");
     expect(screen.getByRole("combobox", { name: "Search tasks..." })).toHaveFocus();
-    expect(screen.queryByTestId("alpha-desktop-header-search-btn")).toBeNull();
+    expect(screen.queryByTestId("desktop-inline-header-search-btn")).toBeNull();
     expect(screen.queryByTestId("alpha-task-search-overlay")).toBeNull();
     expect(screen.queryByRole("dialog", { name: "Search tasks..." })).toBeNull();
   });
@@ -144,7 +144,7 @@ describe("Header", () => {
     const onSelectSearchTask = vi.fn();
     renderHeader({ view, searchQuery: "alpha", onSearchChange, onSelectSearchTask, taskSearchTasks: [{ id: "FN-353", title: "Alpha shell" }] }, "desktop");
     expect(screen.queryByTestId("desktop-header-search-btn")).toBeNull();
-    fireEvent.click(screen.getByTestId("alpha-desktop-header-search-btn"));
+    fireEvent.click(screen.getByTestId("desktop-inline-header-search-btn"));
     const input = screen.getByRole("combobox", { name: "Search tasks..." });
     fireEvent.change(input, { target: { value: "353" } });
     expect(screen.getByRole("listbox")).toBeInTheDocument();
@@ -153,7 +153,7 @@ describe("Header", () => {
     expect(onSearchChange).not.toHaveBeenCalled();
     expect(screen.queryByRole("combobox", { name: "Search tasks..." })).toBeNull();
     expect(screen.queryByTestId("alpha-task-search-overlay")).toBeNull();
-    await waitFor(() => expect(screen.getByTestId("alpha-desktop-header-search-btn")).toHaveFocus());
+    await waitFor(() => expect(screen.getByTestId("desktop-inline-header-search-btn")).toHaveFocus());
   });
 
   it.each([
@@ -162,7 +162,7 @@ describe("Header", () => {
     { name: "sans correspondance", tasks: [{ id: "FN-900", title: "Autre tâche" }] },
   ])("garde le combobox Alpha utilisable avec une source $name", ({ tasks }) => {
     renderHeader({ view: "board", onSearchChange: vi.fn(), taskSearchTasks: tasks }, "desktop");
-    fireEvent.click(screen.getByTestId("alpha-desktop-header-search-btn"));
+    fireEvent.click(screen.getByTestId("desktop-inline-header-search-btn"));
     const input = screen.getByRole("combobox", { name: "Search tasks..." });
     fireEvent.change(input, { target: { value: "353" } });
     expect(input).toHaveAttribute("aria-expanded", "false");
@@ -173,21 +173,21 @@ describe("Header", () => {
   it("ferme et réinitialise le champ Alpha desktop par la croix et Escape", async () => {
     renderHeader({ view: "board", onSearchChange: vi.fn(), taskSearchTasks: [{ id: "FN-353", title: "Alpha shell" }] }, "desktop");
 
-    fireEvent.click(screen.getByTestId("alpha-desktop-header-search-btn"));
+    fireEvent.click(screen.getByTestId("desktop-inline-header-search-btn"));
     fireEvent.change(screen.getByRole("combobox", { name: "Search tasks..." }), { target: { value: "353" } });
     fireEvent.click(screen.getByRole("button", { name: "Close search" }));
-    await waitFor(() => expect(screen.getByTestId("alpha-desktop-header-search-btn")).toHaveFocus());
+    await waitFor(() => expect(screen.getByTestId("desktop-inline-header-search-btn")).toHaveFocus());
 
-    fireEvent.click(screen.getByTestId("alpha-desktop-header-search-btn"));
+    fireEvent.click(screen.getByTestId("desktop-inline-header-search-btn"));
     expect(screen.getByRole("combobox", { name: "Search tasks..." })).toHaveValue("");
     fireEvent.keyDown(screen.getByRole("combobox", { name: "Search tasks..." }), { key: "Escape" });
-    await waitFor(() => expect(screen.getByTestId("alpha-desktop-header-search-btn")).toHaveFocus());
+    await waitFor(() => expect(screen.getByTestId("desktop-inline-header-search-btn")).toHaveFocus());
     expect(screen.queryByTestId("alpha-task-search-overlay")).toBeNull();
   });
 
   it.each(["desktop", "tablet", "mobile"] as const)("ne rend jamais le hamburger Alpha dans le Header sur %s", (tier) => {
     renderHeader({ mobileNavEnabled: true }, tier);
-    expect(screen.queryByTestId("alpha-mobile-menu-trigger")).toBeNull();
+    expect(screen.queryByTestId("mobile-menu-trigger")).toBeNull();
   });
 
   it.each(["desktop", "tablet", "mobile"] as const)("does not render the relocated Report affordance in the %s header", (tier) => {
@@ -872,7 +872,7 @@ describe("Header", () => {
       expect(usageButton).toHaveAccessibleName("View usage");
       fireEvent.click(usageButton);
       expect(onOpenUsage).toHaveBeenCalledWith(mockRect);
-      expect(screen.queryByTestId("alpha-mobile-menu-trigger")).toBeNull();
+      expect(screen.queryByTestId("mobile-menu-trigger")).toBeNull();
     });
 
     it("does not call onOpenUsage from the removed desktop toolbar button", () => {
@@ -1076,9 +1076,9 @@ describe("Header", () => {
     it("renders the desktop search toggle after the empty workflow portal slot", () => {
       renderHeader({ onSearchChange: vi.fn(), onChangeView: noop, view: "board", leftSidebarNavActive: true }, "desktop");
       const workflowSlot = screen.getByTestId("header-workflow-slot");
-      const searchToggle = screen.getByTestId("alpha-desktop-header-search-btn");
+      const searchToggle = screen.getByTestId("desktop-inline-header-search-btn");
 
-      expect(screen.getAllByTestId("alpha-desktop-header-search-btn")).toHaveLength(1);
+      expect(screen.getAllByTestId("desktop-inline-header-search-btn")).toHaveLength(1);
       expect(workflowSlot.compareDocumentPosition(searchToggle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     });
 
@@ -1090,9 +1090,9 @@ describe("Header", () => {
       workflowSwitcher.dataset.testid = "mock-workflow-switcher";
       workflowSwitcher.textContent = "Coding workflow";
       workflowSlot.appendChild(workflowSwitcher);
-      const searchToggle = screen.getByTestId("alpha-desktop-header-search-btn");
+      const searchToggle = screen.getByTestId("desktop-inline-header-search-btn");
 
-      expect(screen.getAllByTestId("alpha-desktop-header-search-btn")).toHaveLength(1);
+      expect(screen.getAllByTestId("desktop-inline-header-search-btn")).toHaveLength(1);
       expect(workflowSlot.compareDocumentPosition(searchToggle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
       expect(workflowSwitcher.compareDocumentPosition(searchToggle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     });
@@ -1257,8 +1257,8 @@ describe("Header", () => {
 
     it("rend le champ Alpha desktop inline sans panneau flottant", () => {
       const { container } = renderHeader({ onSearchChange: vi.fn(), view: "board" }, "desktop");
-      fireEvent.click(screen.getByTestId("alpha-desktop-header-search-btn"));
-      expect(container.querySelector(".header-actions .header-search--alpha-inline")).toBeInTheDocument();
+      fireEvent.click(screen.getByTestId("desktop-inline-header-search-btn"));
+      expect(container.querySelector(".header-actions .header-search--inline")).toBeInTheDocument();
       expect(container.querySelector(".header-floating-search")).toBeNull();
       expect(document.querySelector('[aria-modal="true"]')).toBeNull();
     });
@@ -1271,13 +1271,13 @@ describe("Header", () => {
       const { container } = renderHeader({ onSearchChange, view: "board" }, tier);
 
       expect(screen.getByTestId(triggerTestId)).toBeInTheDocument();
-      expect(screen.queryByTestId("alpha-desktop-header-search-btn")).toBeNull();
+      expect(screen.queryByTestId("desktop-inline-header-search-btn")).toBeNull();
       fireEvent.click(screen.getByTestId(triggerTestId));
 
       const floatingSearch = container.querySelector(".header-floating-search");
       expect(floatingSearch).toBeInTheDocument();
       expect(floatingSearch?.querySelector('[role="combobox"]')).toBeInTheDocument();
-      expect(container.querySelector(".header-actions .header-search--alpha-inline")).toBeNull();
+      expect(container.querySelector(".header-actions .header-search--inline")).toBeNull();
       expect(screen.queryByTestId("alpha-task-search-overlay")).toBeNull();
       expect(document.querySelector('[aria-modal="true"]')).toBeNull();
 

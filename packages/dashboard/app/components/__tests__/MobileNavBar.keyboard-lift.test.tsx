@@ -9,7 +9,7 @@ const initialClientHeightDescriptor = Object.getOwnPropertyDescriptor(document.d
 function renderNav(
   keyboardOpen: boolean,
   keyboardMetrics = { keyboardOverlap: 0, viewportHeight: null as number | null, viewportOffsetTop: 0 },
-  alphaMenuOpen = false,
+  navigationMenuOpen = false,
 ) {
   return render(
     <MobileNavBar
@@ -18,7 +18,7 @@ function renderNav(
       footerVisible
       keyboardOpen={keyboardOpen}
       keyboardMetrics={keyboardMetrics}
-      alphaMenuOpen={alphaMenuOpen}
+      navigationMenuOpen={navigationMenuOpen}
     />,
   );
 }
@@ -70,7 +70,7 @@ describe("MobileNavBar keyboard lift CSS", () => {
   it("publishes the shifted iOS viewport geometry on both fixed siblings", () => {
     const { container } = renderNav(true, { keyboardOverlap: 300, viewportHeight: 504, viewportOffsetTop: 40 }, true);
     const nav = container.querySelector<HTMLElement>(".mobile-nav-bar");
-    const popover = container.querySelector<HTMLElement>(".alpha-mobile-navigation-popover");
+    const popover = container.querySelector<HTMLElement>(".mobile-navigation-popover");
     expect(nav).not.toBeNull();
     expect(popover).not.toBeNull();
 

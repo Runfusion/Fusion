@@ -53,8 +53,8 @@ export interface PublishedMobileNavHeightInput {
 }
 
 /**
- * FNXC:AlphaUpdates 2026-09-10-03:16:
- * Publish the rendered Alpha pill border box plus its floating gap exactly once. The shared project scroller consumes this measurement with the separate system offset so final controls remain scrollable above the visual overlay without duplicating safe-area terms.
+ * FNXC:NativeShell 2026-09-10-03:16:
+ * Publish the rendered navigation pill border box plus its floating gap exactly once. The shared project scroller consumes this measurement with the separate system offset so final controls remain scrollable above the visual overlay without duplicating safe-area terms.
  */
 export function computePublishedMobileNavHeight({
   navOffsetHeight,
@@ -118,7 +118,7 @@ export function createMobileNavGeometryStyle(keyboardLift: number, viewportOffse
     "--mobile-nav-floating-gap": "var(--space-sm)",
     "--mobile-nav-keyboard-lift": `${keyboardLift}px`,
     "--mobile-nav-viewport-offset-top": `${visibleViewportTop}px`,
-    "--mobile-nav-pill-bottom": "calc(var(--mobile-nav-alpha-system-offset) + var(--mobile-nav-floating-gap) + var(--mobile-nav-keyboard-lift))",
+    "--mobile-nav-pill-bottom": "calc(var(--mobile-nav-system-offset) + var(--mobile-nav-floating-gap) + var(--mobile-nav-keyboard-lift))",
     "--mobile-nav-popover-bottom": "calc(var(--mobile-nav-pill-bottom) + var(--mobile-nav-pill-height) + var(--space-xs))",
   };
 }
@@ -187,10 +187,10 @@ export interface MobileNavBarProps {
   };
   pluginDashboardViews?: PluginDashboardViewEntry[];
   shellConnectionControl?: ReactNode;
-  /** App-owned open state for the Alpha navigation popover. */
-  alphaMenuOpen?: boolean;
-  /** Updates the App-owned Alpha popover state. */
-  onAlphaMenuOpenChange?: (open: boolean) => void;
+  /** App-owned open state for the mobile navigation popover. */
+  navigationMenuOpen?: boolean;
+  /** Updates the App-owned mobile popover state. */
+  onUiMenuOpenChange?: (open: boolean) => void;
 }
 
 function GitHubLogo({ size = 20 }: { size?: number }) {
@@ -244,8 +244,8 @@ export function MobileNavBar({
   experimentalFeatures,
   pluginDashboardViews = [],
   shellConnectionControl,
-  alphaMenuOpen = false,
-  onAlphaMenuOpenChange,
+  navigationMenuOpen = false,
+  onUiMenuOpenChange,
 }: MobileNavBarProps) {
   const { t } = useTranslation("app");
   const mode = useViewportMode();
@@ -271,17 +271,17 @@ export function MobileNavBar({
   const frozenGeometryRef = useRef<MobileNavGeometryStyle | null>(null);
   const menuTriggerRef = useRef<HTMLButtonElement | null>(null);
   const officialDesignEnabled = true;
-  const isMenuOpen = alphaMenuOpen;
+  const isMenuOpen = navigationMenuOpen;
 
   /*
-  FNXC:AlphaUpdates 2026-09-11-15:01:
-  Alpha keeps its popover state controlled by App while the sole trigger is the trailing sibling of the pill's four-destination tablist. Standard mobile keeps its local More drawer; shell identity changes close either transient surface without creating another state owner.
+  FNXC:NativeShell 2026-09-11-15:01:
+  The navigation pill keeps its popover state controlled by App while the sole trigger is the trailing sibling of the pill's four-destination tablist. Standard mobile keeps its local More drawer; shell identity changes close either transient surface without creating another state owner.
   */
   useEffect(() => {
     setIsMoreOpen(false);
     setIsScriptsSubmenuOpen(false);
-    onAlphaMenuOpenChange?.(false);
-  }, [mode, onAlphaMenuOpenChange, projectId]);
+    onUiMenuOpenChange?.(false);
+  }, [mode, onUiMenuOpenChange, projectId]);
 
   const scriptEntries = useMemo(
     () => [...scripts].sort((a, b) => a.name.localeCompare(b.name)),
@@ -321,9 +321,9 @@ export function MobileNavBar({
   const closeMore = useCallback(() => {
     resetSheetDrag();
     setHasSheetDragged(false);
-    onAlphaMenuOpenChange?.(false);
+    onUiMenuOpenChange?.(false);
     menuTriggerRef.current?.focus();
-  }, [onAlphaMenuOpenChange, resetSheetDrag]);
+  }, [onUiMenuOpenChange, resetSheetDrag]);
 
   /*
   FNXC:MobileNav 2026-07-16-14:30:
@@ -451,7 +451,7 @@ export function MobileNavBar({
       if (event.key === "Escape") dismissMore();
     };
     /*
-    FNXC:AlphaUpdates 2026-09-11-15:01:
+    FNXC:NativeShell 2026-09-11-15:01:
     The trailing pill hamburger owns its toggle click and remains inside the popover boundary. Escape, Back, and outside dismissal keep the canonical menu lifecycle while non-navigation closes restore focus to this sole trigger.
     */
     const onPointerDown = (event: PointerEvent) => {
@@ -459,7 +459,7 @@ export function MobileNavBar({
       if (
         !officialDesignEnabled
         || menuSurfaceRef.current?.contains(event.target as Node)
-        || target?.closest(".alpha-mobile-menu-trigger")
+        || target?.closest(".mobile-menu-trigger")
       ) return;
       /*
       FNXC:MobileNav 2026-09-14-08:05:
@@ -491,7 +491,7 @@ export function MobileNavBar({
     FNXC:Navigation 2026-07-25-22:57:
     A hidden overview bar must remove its published height as well as its DOM shell; otherwise project content retains dead bottom space.
 
-    FNXC:AlphaUpdates 2026-09-10-03:51:
+    FNXC:NativeShell 2026-09-10-03:51:
     Measurement follows every condition that mounts the mobile nav. A desktop/tablet-to-mobile transition or modal close must publish the newly rendered pill height instead of leaving the root fallback active.
     */
     if (hidden) {
@@ -573,8 +573,8 @@ export function MobileNavBar({
   than by the core resolver, keeping persisted choices valid if an operator later enables a feature.
   */
   /*
-  FNXC:AlphaUpdates 2026-09-09-22:40:
-  Every destination reached from an overflow surface closes that surface through handleMoreAction before navigation. This includes Agents and Missions, which are always overflow entries in Alpha but can remain primary tabs in standard mobile mode.
+  FNXC:NativeShell 2026-09-09-22:40:
+  Every destination reached from an overflow surface closes that surface through handleMoreAction before navigation. This includes Agents and Missions, which are always overflow entries on the mobile pill but can remain primary tabs in standard mobile mode.
   */
   const destinationRegistry: Record<MobileNavSelectableItem, {
     icon: ReactNode;
@@ -624,13 +624,13 @@ export function MobileNavBar({
     "dev-server": { icon: <Monitor />, labelKey: "nav.devServer", fallback: "Dev Server", moreTestId: "mobile-more-item-dev-server", isActive: view === "dev-server" || view === "devserver", isAvailable: Boolean(experimentalFeatures?.devServerView), navigate: (surface) => surface === "primary" ? onChangeView("dev-server") : handleMoreAction(() => onChangeView("dev-server")) },
   };
   /*
-  FNXC:AlphaMobileDrawer 2026-09-10-04:41:
-  Board is the permanent Alpha mobile background, not a navigation destination. Keep the persisted standard-mobile `tasks` preference intact while excluding Tasks from both Alpha's four direct destinations and its overflow registry.
+  FNXC:MobileDrawer 2026-09-10-04:41:
+  Board is the permanent mobile background, not a navigation destination. Keep the persisted standard-mobile `tasks` preference intact while excluding Tasks from both the pill's four direct destinations and its overflow registry.
   */
-  const alphaPrimaryItems: MobileNavSelectableItem[] = ["command-center", "planning", "chat", "mailbox"];
-  const effectivePrimaryItems = alphaPrimaryItems.filter((item) => destinationRegistry[item].isAvailable);
+  const primaryDestinationItems: MobileNavSelectableItem[] = ["command-center", "planning", "chat", "mailbox"];
+  const effectivePrimaryItems = primaryDestinationItems.filter((item) => destinationRegistry[item].isAvailable);
   const effectiveOmittedItems = MOBILE_NAV_SELECTABLE_ITEMS
-    .filter((item) => !alphaPrimaryItems.includes(item) && item !== "patchnode" && item !== "tasks")
+    .filter((item) => !primaryDestinationItems.includes(item) && item !== "patchnode" && item !== "tasks")
     .filter((item) => destinationRegistry[item].isAvailable);
   const isMoreActive = effectiveOmittedItems.some((item) => destinationRegistry[item].isActive)
     || view === "graph"
@@ -673,7 +673,7 @@ export function MobileNavBar({
     <>
       <nav
         ref={navRef}
-        className={`mobile-nav-bar mobile-nav-bar--alpha${footerVisible ? " mobile-nav-bar--with-footer" : ""}${keyboardOpen ? " mobile-nav-bar--keyboard-open" : ""}`}
+        className={`mobile-nav-bar mobile-nav-bar--native${footerVisible ? " mobile-nav-bar--with-footer" : ""}${keyboardOpen ? " mobile-nav-bar--keyboard-open" : ""}`}
         style={mobileNavGeometryStyle}
         role="navigation"
         aria-label={t("nav.primaryNavAriaLabel", "Primary navigation")}
@@ -715,18 +715,18 @@ export function MobileNavBar({
         {officialDesignEnabled && (
           <button
             ref={menuTriggerRef}
-            className="alpha-mobile-menu-trigger"
+            className="mobile-menu-trigger"
             type="button"
             onClick={() => {
-              if (alphaMenuOpen) dismissMore();
-              else onAlphaMenuOpenChange?.(true);
+              if (navigationMenuOpen) dismissMore();
+              else onUiMenuOpenChange?.(true);
             }}
             title={t("nav.openMenu", "Open navigation menu")}
             aria-label={t("nav.openMenu", "Open navigation menu")}
             aria-haspopup="menu"
-            aria-expanded={alphaMenuOpen}
-            aria-controls="alpha-mobile-navigation-popover"
-            data-testid="alpha-mobile-menu-trigger"
+            aria-expanded={navigationMenuOpen}
+            aria-controls="mobile-navigation-popover"
+            data-testid="mobile-menu-trigger"
           >
             <Menu />
           </button>
@@ -767,8 +767,8 @@ export function MobileNavBar({
               menuSurfaceRef.current = element;
               sheetRef.current = officialDesignEnabled ? null : element;
             }}
-            id={officialDesignEnabled ? "alpha-mobile-navigation-popover" : undefined}
-            className={officialDesignEnabled ? "alpha-mobile-navigation-popover" : `mobile-more-sheet${isSheetDragging ? " mobile-more-sheet--dragging" : ""}${hasSheetDragged ? " mobile-more-sheet--gesture-ready" : ""}`}
+            id={officialDesignEnabled ? "mobile-navigation-popover" : undefined}
+            className={officialDesignEnabled ? "mobile-navigation-popover" : `mobile-more-sheet${isSheetDragging ? " mobile-more-sheet--dragging" : ""}${hasSheetDragged ? " mobile-more-sheet--gesture-ready" : ""}`}
             role="menu"
             aria-label={t("nav.moreSheetTitle", "Navigate")}
             style={officialDesignEnabled ? mobileNavGeometryStyle : { transform: `translateY(${dragOffset}px)` }}

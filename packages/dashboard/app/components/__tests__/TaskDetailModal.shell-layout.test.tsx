@@ -55,7 +55,7 @@ const titleFreeHostCases = [
   {
     name: "Alpha mobile drawer",
     dialog: true,
-    renderHost: (task: ReturnType<typeof makeTask>) => <TaskDetailModal {...sharedProps} task={task} onClose={noop} alphaMobileDrawer />,
+    renderHost: (task: ReturnType<typeof makeTask>) => <TaskDetailModal {...sharedProps} task={task} onClose={noop} mobileDrawer />,
   },
   {
     name: "task pop-out",

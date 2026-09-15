@@ -2,7 +2,6 @@ import { readFileSync } from "node:fs";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, act, createEvent } from "@testing-library/react";
 import { QuickEntryBox } from "../QuickEntryBox";
-import { AlphaProvider, AlphaBoundary } from "../../context/AlphaContext";
 import { expectStableTyping } from "./typingStability.test-helpers";
 import { TASK_PRIORITIES, type Task, type TaskPriority } from "@fusion/core";
 import { checkDuplicateTasks, fetchSettings, fetchAgents, uploadAttachment, fetchWorkflowOptionalSteps } from "../../api";
@@ -347,37 +346,35 @@ function renderQuickEntryBox(props = {}, { startExpanded = false } = {}) {
   return { ...result, props: { ...defaultProps, ...props } };
 }
 
-function renderAlphaQuickEntryBox(props = {}) {
+/*
+FNXC:NativeQuickEntry 2026-09-15-00:20:
+Renders the composer the way Board columns — the sole production host — mount it: compact, with only the
+immediate-action row visible until advanced options are disclosed. The perimeter that used to impose this
+is gone, so the host states it explicitly through `defaultExpanded`.
+*/
+function renderCompactQuickEntryBox(props = {}) {
   const defaultProps = {
     onCreate: vi.fn().mockResolvedValue(undefined),
     addToast: vi.fn(),
     tasks: mockTasks,
     availableModels: MOCK_MODELS,
     projectId: TEST_PROJECT_ID,
+    defaultExpanded: false,
   };
-  const result = render(
-    <AlphaProvider enabled>
-      <AlphaBoundary>
-        <QuickEntryBox {...defaultProps} {...props} />
-      </AlphaBoundary>
-    </AlphaProvider>,
-  );
+  const result = render(<QuickEntryBox {...defaultProps} {...props} />);
   return { ...result, props: { ...defaultProps, ...props } };
 }
 
-function AlphaModeToggleQuickEntryFixture({ enabled }: { enabled: boolean }) {
+function CompactQuickEntryFixture({ defaultExpanded }: { defaultExpanded: boolean }) {
   return (
-    <AlphaProvider enabled={enabled}>
-      <AlphaBoundary>
-        <QuickEntryBox
-          onCreate={vi.fn().mockResolvedValue(undefined)}
-          addToast={vi.fn()}
-          tasks={mockTasks}
-          availableModels={MOCK_MODELS}
-          projectId={TEST_PROJECT_ID}
-        />
-      </AlphaBoundary>
-    </AlphaProvider>
+    <QuickEntryBox
+      onCreate={vi.fn().mockResolvedValue(undefined)}
+      addToast={vi.fn()}
+      tasks={mockTasks}
+      availableModels={MOCK_MODELS}
+      projectId={TEST_PROJECT_ID}
+      defaultExpanded={defaultExpanded}
+    />
   );
 }
 
@@ -527,7 +524,7 @@ function expectQuickEntryPrimaryIconCluster() {
   }
 }
 
-function expectAlphaQuickEntryPrimaryIconCluster() {
+function expectFullQuickEntryPrimaryIconCluster() {
   const group = screen.getByTestId("quick-entry-primary-group");
   const renderedIds = Array.from(group.querySelectorAll<HTMLButtonElement>("button[data-testid]"))
     .map((button) => button.dataset.testid);
@@ -638,7 +635,7 @@ describe("QuickEntryBox", () => {
   });
 
   it("keeps Alpha immediate actions visible while advanced options progressively disclose without remounting", async () => {
-    renderAlphaQuickEntryBox();
+    renderCompactQuickEntryBox();
     const textarea = screen.getByTestId("quick-entry-input") as HTMLTextAreaElement;
     const save = screen.getByTestId("quick-entry-save");
     const toggle = screen.getByTestId("quick-entry-toggle");
@@ -657,7 +654,7 @@ describe("QuickEntryBox", () => {
   });
 
   it("closes advanced portals when Alpha disclosure collapses", () => {
-    renderAlphaQuickEntryBox({
+    renderCompactQuickEntryBox({
       workflowId: "workflow-one",
       defaultWorkflowId: "workflow-one",
       workflowOptions: [
@@ -687,8 +684,14 @@ describe("QuickEntryBox", () => {
     expect(screen.queryByTestId("quick-entry-priority-option-normal")).toBeNull();
   });
 
-  it("keeps official Alpha disclosure and draft state stable across stale enabled prop changes", async () => {
-    const view = render(<AlphaModeToggleQuickEntryFixture enabled={false} />);
+  /*
+  FNXC:NativeQuickEntry 2026-09-15-00:20:
+  A host changing its `defaultExpanded` request after mount must not discard the operator's disclosure
+  choice, remount the composer, or clear the draft. This replaces the stale-perimeter-prop case with the
+  host contract that actually exists.
+  */
+  it("keeps disclosure and draft state stable across host defaultExpanded changes", async () => {
+    const view = render(<CompactQuickEntryFixture defaultExpanded={false} />);
     const textarea = screen.getByTestId("quick-entry-input") as HTMLTextAreaElement;
     const composer = screen.getByTestId("quick-entry-box");
     await expectStableTyping(textarea, "brouillon conservé", () => screen.getByTestId("quick-entry-input"));
@@ -697,12 +700,12 @@ describe("QuickEntryBox", () => {
     fireEvent.click(screen.getByTestId("quick-entry-toggle"));
     expect(screen.getByTestId("quick-entry-options-group")).toBeVisible();
 
-    view.rerender(<AlphaModeToggleQuickEntryFixture enabled />);
+    view.rerender(<CompactQuickEntryFixture defaultExpanded />);
     expect(screen.getByTestId("quick-entry-options-group")).toBeVisible();
     expect(screen.getByTestId("quick-entry-box")).toBe(composer);
     expect(screen.getByTestId("quick-entry-input")).toHaveValue("brouillon conservé");
 
-    view.rerender(<AlphaModeToggleQuickEntryFixture enabled={false} />);
+    view.rerender(<CompactQuickEntryFixture defaultExpanded={false} />);
     expect(screen.getByTestId("quick-entry-options-group")).toBeVisible();
     expect(screen.getByTestId("quick-entry-box")).toBe(composer);
     expect(screen.getByTestId("quick-entry-input")).toHaveValue("brouillon conservé");
@@ -1012,6 +1015,8 @@ describe("QuickEntryBox", () => {
   });
 
   describe("button focus preservation (FN-6122)", () => {
+    // FNXC:NativeQuickEntry 2026-09-15-00:20: controls opening a body-portaled collection hand focus to it.
+    const PORTALED_COLLECTION_TRIGGERS: readonly string[] = ["quick-entry-deps", "quick-entry-models"];
     const newlyCoveredActionButtons = [
       ["Deps", "quick-entry-deps"],
       ["Attach", "quick-entry-attach"],
@@ -1066,7 +1071,7 @@ describe("QuickEntryBox", () => {
       const textarea = focusTextareaWithValue("Focus-preserving quick-entry action");
 
       await clickActionButtonWithoutStealingFocus(screen.getByTestId(testId), textarea, {
-        allowsPortalAutoFocus: testId === "quick-entry-deps",
+        allowsPortalAutoFocus: PORTALED_COLLECTION_TRIGGERS.includes(testId),
       });
     });
 
@@ -1125,7 +1130,7 @@ describe("QuickEntryBox", () => {
         const button = screen.getByTestId(testId);
         expect(actionsContainer.contains(button)).toBe(true);
         await clickActionButtonWithoutStealingFocus(button, textarea, {
-          allowsPortalAutoFocus: testId === "quick-entry-deps",
+          allowsPortalAutoFocus: PORTALED_COLLECTION_TRIGGERS.includes(testId),
         });
         if (testId === "quick-entry-save") {
           await waitFor(() => {
@@ -1196,7 +1201,7 @@ describe("QuickEntryBox", () => {
       await renderMobileQuickEntryWithEnabledActions();
       const actions = screen.getByTestId("quick-entry-actions");
 
-      expectQuickEntryPrimaryIconCluster();
+      expectFullQuickEntryPrimaryIconCluster();
       for (const testId of QUICK_ENTRY_PRIMARY_ICON_BUTTON_IDS) {
         const button = screen.getByTestId(testId);
         expect(button).toHaveClass("btn");
@@ -1343,7 +1348,9 @@ describe("QuickEntryBox", () => {
         vi.runOnlyPendingTimers();
         vi.runOnlyPendingTimers();
       });
-      expect(document.activeElement).toBe(textarea);
+      // FNXC:NativeQuickEntry 2026-09-15-00:20: a portaled collection may claim focus, but the button never does.
+      if (testId === "quick-entry-models") expect(document.activeElement).not.toBe(button);
+      else expect(document.activeElement).toBe(textarea);
 
       const outsideElement = document.createElement("div");
       document.body.appendChild(outsideElement);
@@ -1382,7 +1389,9 @@ describe("QuickEntryBox", () => {
       for (const button of buttonsWithSaveLast) {
         const textarea = focusTextareaWithValue(`Full mobile surface focus for ${button.dataset.testid ?? button.textContent}`);
         await touchActionButton(button);
-        expect(document.activeElement).toBe(textarea);
+        // FNXC:NativeQuickEntry 2026-09-15-00:20: a portaled collection may claim focus, but the button never does.
+        if (button.dataset.testid === "quick-entry-models") expect(document.activeElement).not.toBe(button);
+        else expect(document.activeElement).toBe(textarea);
       }
     });
   });
@@ -1576,7 +1585,7 @@ describe("QuickEntryBox", () => {
     expect(screen.getByTestId("quick-entry-box").classList.contains("quick-entry-box--expanded")).toBe(false);
     expect(toggleButton.getAttribute("aria-expanded")).toBe("false");
     expect(textarea.getAttribute("aria-expanded")).toBe("false");
-    expect(controls?.hasAttribute("hidden")).toBe(true);
+    expect(screen.queryByTestId("quick-entry-options-group")).toBeNull(); // FNXC:NativeQuickEntry 2026-09-15-00:20: the immediate-action row stays visible; only advanced options disclose.
   });
 
   it.each([
@@ -2355,17 +2364,17 @@ describe("QuickEntryBox", () => {
       renderQuickEntryBox({});
       expandQuickEntry();
 
-      expectQuickEntryPrimaryIconCluster();
+      expectFullQuickEntryPrimaryIconCluster();
       fireEvent.click(screen.getByTestId("quick-entry-session-advisor-toggle"));
       fireEvent.click(screen.getByTestId("quick-entry-github-toggle"));
       fireEvent.click(screen.getByTestId("quick-entry-fast-toggle"));
-      expectQuickEntryPrimaryIconCluster();
+      expectFullQuickEntryPrimaryIconCluster();
 
       for (const taskPriority of TASK_PRIORITIES) {
         openPriorityMenu();
         fireEvent.click(screen.getByTestId(`quick-entry-priority-option-${taskPriority}`));
         expectQuickEntryPriorityButton(taskPriority);
-        expectQuickEntryPrimaryIconCluster();
+        expectFullQuickEntryPrimaryIconCluster();
       }
     });
 
@@ -3789,13 +3798,13 @@ describe("QuickEntryBox", () => {
       const box = screen.getByTestId("quick-entry-box");
       const controls = document.getElementById("quick-entry-controls");
 
-      expect(controls?.hasAttribute("hidden")).toBe(true);
+      expect(screen.queryByTestId("quick-entry-options-group")).toBeNull(); // FNXC:NativeQuickEntry 2026-09-15-00:20: the immediate-action row stays visible; only advanced options disclose.
       fireEvent.dragEnter(box, { dataTransfer: { types: ["Files"], files: [] } });
       expect(screen.getByTestId("quick-entry-drop-target")).toBeInTheDocument();
 
       fireEvent.dragEnd(box);
       expect(screen.queryByTestId("quick-entry-drop-target")).toBeNull();
-      expect(controls?.hasAttribute("hidden")).toBe(true);
+      expect(screen.queryByTestId("quick-entry-options-group")).toBeNull(); // FNXC:NativeQuickEntry 2026-09-15-00:20: the immediate-action row stays visible; only advanced options disclose.
     });
 
     it("keeps tokenized drag/drop and icon-only attachment CSS contracts", () => {
@@ -3863,7 +3872,7 @@ describe("QuickEntryBox", () => {
       // Toggle collapse — both states should collapse together
       toggleQuickEntry();
       expect(textarea.classList.contains("quick-entry-input--expanded")).toBe(false);
-      expect(controls?.hasAttribute("hidden")).toBe(true);
+      expect(screen.queryByTestId("quick-entry-options-group")).toBeNull(); // FNXC:NativeQuickEntry 2026-09-15-00:20: the immediate-action row stays visible; only advanced options disclose.
     });
 
     it("after task creation with autoExpand, no refocus still preserves visible controls", async () => {
@@ -3898,7 +3907,7 @@ describe("QuickEntryBox", () => {
       expect(toggle.getAttribute("aria-expanded")).toBe("true");
       toggleQuickEntry();
       expect(toggle.getAttribute("aria-expanded")).toBe("false");
-      expect(controls?.hasAttribute("hidden")).toBe(true);
+      expect(screen.queryByTestId("quick-entry-options-group")).toBeNull(); // FNXC:NativeQuickEntry 2026-09-15-00:20: the immediate-action row stays visible; only advanced options disclose.
 
       fireEvent.change(textarea, { target: { value: "Collapsed task" } });
       fireEvent.keyDown(textarea, { key: "Enter" });
@@ -3908,7 +3917,7 @@ describe("QuickEntryBox", () => {
       });
 
       expect(toggle.getAttribute("aria-expanded")).toBe("false");
-      expect(controls?.hasAttribute("hidden")).toBe(true);
+      expect(screen.queryByTestId("quick-entry-options-group")).toBeNull(); // FNXC:NativeQuickEntry 2026-09-15-00:20: the immediate-action row stays visible; only advanced options disclose.
     });
 
   });
@@ -4169,7 +4178,8 @@ describe("QuickEntryBox", () => {
 
       const saveButton = screen.getByTestId("quick-entry-save");
       expect(saveButton.className).toContain("btn-task-create");
-      expect(saveButton.getAttribute("title")).toBe("Create task");
+      // FNXC:NativeQuickEntry 2026-09-15-00:20: Save is the single icon-only action whose hold starts the task.
+      expect(saveButton.getAttribute("title")).toBe("Save task; hold to start");
     });
 
     it("save action prevents textarea blur on mousedown", () => {
@@ -4196,10 +4206,16 @@ describe("QuickEntryBox", () => {
 
   describe("Consolidated actions layout (FN-781, FN-1088)", () => {
 
-    it("does not render actions when not expanded", () => {
+    /*
+    FNXC:NativeQuickEntry 2026-09-15-00:20:
+    The immediate-action row stays visible when the composer collapses; only the advanced options group
+    discloses. Asserting the whole row disappears would restore the variant no production host mounted.
+    */
+    it("keeps immediate actions and hides only advanced options when collapsed", () => {
       renderQuickEntryBox({});
       toggleQuickEntry();
-      expect(screen.queryByTestId("quick-entry-actions")).toBeNull();
+      expect(screen.getByTestId("quick-entry-actions")).toBeInTheDocument();
+      expect(screen.queryByTestId("quick-entry-options-group")).toBeNull();
     });
 
     it("renders advanced controls inline in the expanded actions row", () => {
@@ -5385,7 +5401,18 @@ describe("QuickEntryBox", () => {
     };
 
     const enterDescription = () => fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Start this task" } });
-    const clickStart = () => fireEvent.click(screen.getByTestId("quick-entry-save-start"));
+    /*
+    FNXC:NativeQuickEntry 2026-09-15-00:20:
+    The separate visible Start button is gone. It only ever rendered in the variant Column never mounted:
+    in production the composer has always exposed Start as a hold on the single icon-only Save action.
+    These cases keep every business assertion they always made — create column, hold-first move, duplicate
+    confirmation, invalid create results — and now drive the surviving affordance instead of the removed one.
+    */
+    const clickStart = async () => {
+      const save = screen.getByTestId("quick-entry-save");
+      fireEvent.pointerDown(save, { pointerId: 11, pointerType: "mouse", button: 0, isPrimary: true });
+      await act(async () => vi.advanceTimersByTime(500));
+    };
 
     it.each([
       ["desktop", mockDesktopViewport],
@@ -5397,7 +5424,7 @@ describe("QuickEntryBox", () => {
       renderQuickEntryBox({ onCreate, onMoveTask, workflowId: ideasWorkflow.id, workflowOptions: [ideasWorkflow] });
       enterDescription();
 
-      clickStart();
+      await clickStart();
 
       await waitFor(() => expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({ description: "Start this task", workflowId: ideasWorkflow.id, column: "todo" })));
       expect(onMoveTask).not.toHaveBeenCalled();
@@ -5409,7 +5436,7 @@ describe("QuickEntryBox", () => {
       renderQuickEntryBox({ onCreate, onMoveTask, workflowId: holdFirstWorkflow.id, workflowOptions: [holdFirstWorkflow] });
       enterDescription();
 
-      clickStart();
+      await clickStart();
 
       await waitFor(() => expect(onCreate).toHaveBeenCalled());
       expect(onCreate.mock.calls[0]![0]).not.toHaveProperty("column");
@@ -5440,20 +5467,26 @@ describe("QuickEntryBox", () => {
       renderQuickEntryBox({ onCreate, onMoveTask, workflowId: duplicatedIdeasWorkflow.id, workflowOptions: [duplicatedIdeasWorkflow] });
       enterDescription();
 
-      clickStart();
+      await clickStart();
 
       await waitFor(() => expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({ workflowId: duplicatedIdeasWorkflow.id, column: "todo" })));
       expect(onMoveTask).not.toHaveBeenCalled();
     });
 
-    it("disables Start until a description is entered and never hides it mid-typing", () => {
+    /*
+    FNXC:NativeQuickEntry 2026-09-15-00:20:
+    The affordance no longer appears and vanishes as the operator types because it is the SAME Save control:
+    it is disabled with an empty description and enabled once there is one, never added or removed mid-typing.
+    */
+    it("disables the create/start action until a description is entered and never hides it mid-typing", () => {
       renderQuickEntryBox({ onMoveTask: vi.fn(), workflowId: ideasWorkflow.id, workflowOptions: [ideasWorkflow] });
 
-      expect(screen.getByTestId("quick-entry-save-start")).toBeDisabled();
+      expect(screen.getByTestId("quick-entry-save")).toBeDisabled();
       enterDescription();
-      expect(screen.getByTestId("quick-entry-save-start")).not.toBeDisabled();
+      expect(screen.getByTestId("quick-entry-save")).not.toBeDisabled();
       fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "" } });
-      expect(screen.getByTestId("quick-entry-save-start")).toBeDisabled();
+      expect(screen.getByTestId("quick-entry-save")).toBeDisabled();
+      expect(screen.queryByTestId("quick-entry-save-start")).toBeNull();
     });
 
     it("no longer exposes Start through Save long-press or right-click", async () => {
@@ -5481,7 +5514,7 @@ describe("QuickEntryBox", () => {
       vi.mocked(checkDuplicateTasks).mockResolvedValueOnce([{ id: "FN-existing", title: "Existing", description: "Existing", column: "ideas", score: 0.9 }]);
       const { rerender } = renderQuickEntryBox({ onCreate, onMoveTask, workflowId: ideasWorkflow.id, workflowOptions: [ideasWorkflow] });
       enterDescription();
-      clickStart();
+      await clickStart();
       expect(await screen.findByText("Possible duplicates")).toBeInTheDocument();
 
       rerender(<QuickEntryBox onCreate={onCreate} onMoveTask={onMoveTask} addToast={vi.fn()} projectId={TEST_PROJECT_ID} tasks={mockTasks} availableModels={MOCK_MODELS} workflowId={ideasWorkflow.id} workflowOptions={[{ ...ideasWorkflow, name: "Refreshed", columns: [{ id: "ideas", name: "Ideas", flags: { hold: true } }, { id: "refreshed-target", name: "Refreshed target", flags: {} }] }]} />);
@@ -5533,7 +5566,7 @@ describe("QuickEntryBox", () => {
         const onMoveTask = vi.fn().mockResolvedValue({});
         const { unmount } = renderQuickEntryBox({ onCreate, onMoveTask, workflowId: ideasWorkflow.id, workflowOptions: [ideasWorkflow] });
         enterDescription();
-        clickStart();
+        await clickStart();
         await waitFor(() => expect(onCreate).toHaveBeenCalled());
         expect(onMoveTask).not.toHaveBeenCalled();
         unmount();
@@ -5542,7 +5575,7 @@ describe("QuickEntryBox", () => {
     });
   });
 
-  describe("Alpha Save hold-to-Start", () => {
+  describe("Save hold-to-Start", () => {
     const ideasWorkflow = {
       id: "builtin:coding-ideas",
       name: "Coding (Ideas)",
@@ -5570,7 +5603,7 @@ describe("QuickEntryBox", () => {
 
     const setup = (props = {}) => {
       const onCreate = vi.fn().mockResolvedValue({ ...CREATED_TASK, id: "FN-alpha", column: "todo", workflowId: ideasWorkflow.id });
-      const rendered = renderAlphaQuickEntryBox({ onCreate, workflowId: ideasWorkflow.id, workflowOptions: [ideasWorkflow], ...props });
+      const rendered = renderCompactQuickEntryBox({ onCreate, workflowId: ideasWorkflow.id, workflowOptions: [ideasWorkflow], ...props });
       fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Alpha task" } });
       return { ...rendered, onCreate, save: screen.getByTestId("quick-entry-save") };
     };
@@ -5584,7 +5617,7 @@ describe("QuickEntryBox", () => {
       mockViewport();
       setup({ defaultExpanded: !collapsedDisclosure });
 
-      expectAlphaQuickEntryPrimaryIconCluster();
+      expectFullQuickEntryPrimaryIconCluster();
       // No host-specific compact variant survives: every host renders the same composer shell.
       expect(screen.getByTestId("quick-entry-box")).not.toHaveClass("quick-entry--single-line");
       if (_label.includes("mobile")) expect(window.innerWidth).toBe(375);
@@ -5592,7 +5625,7 @@ describe("QuickEntryBox", () => {
       fireEvent.click(screen.getByTestId("quick-entry-session-advisor-toggle"));
       fireEvent.click(screen.getByTestId("quick-entry-github-toggle"));
       fireEvent.click(screen.getByTestId("quick-entry-fast-toggle"));
-      expectAlphaQuickEntryPrimaryIconCluster();
+      expectFullQuickEntryPrimaryIconCluster();
     });
 
     it.each([
@@ -5617,11 +5650,11 @@ describe("QuickEntryBox", () => {
       const { onCreate, save } = setup();
       expect(save).toHaveAccessibleName("Save task; hold to start");
       expect(save).not.toHaveTextContent("Save");
-      expect(save).toHaveStyle({ "--quick-entry-alpha-hold-duration": "500ms" });
+      expect(save).toHaveStyle({ "--quick-entry-hold-duration": "500ms" });
       expect(save.querySelectorAll("button")).toHaveLength(0);
       expect(save.querySelectorAll("svg")).toHaveLength(2);
-      expect(save.querySelector(".quick-entry-alpha-save-icon--save")).toHaveAttribute("aria-hidden", "true");
-      expect(save.querySelector(".quick-entry-alpha-save-progress")).toHaveAttribute("aria-hidden", "true");
+      expect(save.querySelector(".quick-entry-save-icon--save")).toHaveAttribute("aria-hidden", "true");
+      expect(save.querySelector(".quick-entry-save-progress")).toHaveAttribute("aria-hidden", "true");
       expect(screen.queryByTestId("quick-entry-save-start")).toBeNull();
 
       fireEvent.pointerDown(save, { pointerId: 7, pointerType, button: 0, isPrimary: true });
@@ -5679,7 +5712,7 @@ describe("QuickEntryBox", () => {
     it("keeps the visual gesture reset when Start creation rejects", async () => {
       const addToast = vi.fn();
       const onCreate = vi.fn().mockRejectedValue(new Error("start failed"));
-      renderAlphaQuickEntryBox({ addToast, onCreate, workflowId: ideasWorkflow.id, workflowOptions: [ideasWorkflow] });
+      renderCompactQuickEntryBox({ addToast, onCreate, workflowId: ideasWorkflow.id, workflowOptions: [ideasWorkflow] });
       fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Rejected Alpha task" } });
       const save = screen.getByTestId("quick-entry-save");
 
@@ -5779,10 +5812,10 @@ describe("QuickEntryBox", () => {
     it("cancels a hold when the selected workflow changes to another eligible workflow", async () => {
       const onCreate = vi.fn().mockResolvedValue(undefined);
       const replacement = { ...ideasWorkflow, id: "custom:other-ideas", name: "Other Ideas", columns: [{ id: "other-ideas", name: "Other Ideas", flags: { intake: true, hold: true, manualIntake: true } }, ...ideasWorkflow.columns.slice(1)] };
-      const { rerender } = renderAlphaQuickEntryBox({ onCreate, workflowId: ideasWorkflow.id, workflowOptions: [ideasWorkflow, replacement] });
+      const { rerender } = renderCompactQuickEntryBox({ onCreate, workflowId: ideasWorkflow.id, workflowOptions: [ideasWorkflow, replacement] });
       fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Alpha task" } });
       fireEvent.pointerDown(screen.getByTestId("quick-entry-save"), { pointerId: 3, pointerType: "pen", button: 0, isPrimary: true });
-      rerender(<AlphaProvider enabled><AlphaBoundary><QuickEntryBox onCreate={onCreate} addToast={vi.fn()} workflowId={replacement.id} workflowOptions={[ideasWorkflow, replacement]} /></AlphaBoundary></AlphaProvider>);
+      rerender(<><><QuickEntryBox onCreate={onCreate} addToast={vi.fn()} workflowId={replacement.id} workflowOptions={[ideasWorkflow, replacement]} /></></>);
       await act(async () => vi.advanceTimersByTime(500));
       expect(onCreate).not.toHaveBeenCalled();
       expect(screen.getByTestId("quick-entry-save")).toHaveAttribute("data-hold-state", "idle");
@@ -5799,7 +5832,7 @@ describe("QuickEntryBox", () => {
     it("uses the Alpha hold with create-then-move workflows", async () => {
       const onCreate = vi.fn().mockResolvedValue({ ...CREATED_TASK, id: "FN-alpha-move", column: "waiting", workflowId: holdFirstWorkflow.id });
       const onMoveTask = vi.fn().mockResolvedValue({});
-      renderAlphaQuickEntryBox({ onCreate, onMoveTask, workflowId: holdFirstWorkflow.id, workflowOptions: [holdFirstWorkflow] });
+      renderCompactQuickEntryBox({ onCreate, onMoveTask, workflowId: holdFirstWorkflow.id, workflowOptions: [holdFirstWorkflow] });
       fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Move after create" } });
 
       await completePointerHold(screen.getByTestId("quick-entry-save"));
@@ -5814,7 +5847,7 @@ describe("QuickEntryBox", () => {
       vi.mocked(checkDuplicateTasks).mockResolvedValueOnce([
         { id: "FN-existing", title: "Existing", description: "Existing", column: "ideas", score: 0.9 },
       ]);
-      renderAlphaQuickEntryBox({ onCreate, workflowId: ideasWorkflow.id, workflowOptions: [ideasWorkflow] });
+      renderCompactQuickEntryBox({ onCreate, workflowId: ideasWorkflow.id, workflowOptions: [ideasWorkflow] });
       fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Confirm duplicate Start" } });
 
       await completePointerHold(screen.getByTestId("quick-entry-save"));
@@ -5833,7 +5866,7 @@ describe("QuickEntryBox", () => {
       vi.mocked(checkDuplicateTasks).mockResolvedValueOnce([
         { id: "FN-existing", title: "Existing", description: "Existing", column: "ideas", score: 0.9 },
       ]);
-      renderAlphaQuickEntryBox({ onCreate, workflowId: ideasWorkflow.id, workflowOptions: [ideasWorkflow] });
+      renderCompactQuickEntryBox({ onCreate, workflowId: ideasWorkflow.id, workflowOptions: [ideasWorkflow] });
       fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Cancel duplicate Start" } });
       const save = screen.getByTestId("quick-entry-save");
 
@@ -5864,7 +5897,7 @@ describe("QuickEntryBox", () => {
     ])("does not move after an Alpha hold when create returns %s", async (_label, created) => {
       const onCreate = vi.fn().mockResolvedValue(created);
       const onMoveTask = vi.fn().mockResolvedValue({});
-      renderAlphaQuickEntryBox({ onCreate, onMoveTask, workflowId: holdFirstWorkflow.id, workflowOptions: [holdFirstWorkflow] });
+      renderCompactQuickEntryBox({ onCreate, onMoveTask, workflowId: holdFirstWorkflow.id, workflowOptions: [holdFirstWorkflow] });
       fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Invalid create result" } });
 
       await completePointerHold(screen.getByTestId("quick-entry-save"));
@@ -5879,10 +5912,10 @@ describe("QuickEntryBox", () => {
     ])("keeps a long press as ordinary Save for %s Alpha workflow metadata", async (_label, workflow) => {
       const onCreate = vi.fn().mockResolvedValue({ ...CREATED_TASK, id: "FN-alpha-save-only", workflowId: workflow.id });
       const onMoveTask = vi.fn();
-      renderAlphaQuickEntryBox({ onCreate, onMoveTask, workflowId: workflow.id, workflowOptions: [workflow] });
+      renderCompactQuickEntryBox({ onCreate, onMoveTask, workflowId: workflow.id, workflowOptions: [workflow] });
       fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Save only" } });
       const save = screen.getByTestId("quick-entry-save");
-      expectAlphaQuickEntryPrimaryIconCluster();
+      expectFullQuickEntryPrimaryIconCluster();
       expect(screen.queryByTestId("quick-entry-save-start")).toBeNull();
 
       fireEvent.pointerDown(save, { pointerId: 14, pointerType: "mouse", button: 0, isPrimary: true });
@@ -5903,7 +5936,7 @@ describe("QuickEntryBox", () => {
     ])("runs hold-to-Start from the collapsed List host on %s", async (_label, mockViewport) => {
       mockViewport();
       const onCreate = vi.fn().mockResolvedValue({ ...CREATED_TASK, id: "FN-alpha-list", column: "todo", workflowId: ideasWorkflow.id });
-      renderAlphaQuickEntryBox({ onCreate, workflowId: ideasWorkflow.id, workflowOptions: [ideasWorkflow], defaultExpanded: false });
+      renderCompactQuickEntryBox({ onCreate, workflowId: ideasWorkflow.id, workflowOptions: [ideasWorkflow], defaultExpanded: false });
       fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "List Alpha task" } });
 
       // The List host differs only by its collapsed disclosure; the composer shell is the shared one.
@@ -5914,12 +5947,19 @@ describe("QuickEntryBox", () => {
       await waitFor(() => expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({ column: "todo", workflowId: ideasWorkflow.id })));
     });
 
-    it("keeps legacy Save text and its separate Start action", () => {
+    /*
+    FNXC:NativeQuickEntry 2026-09-15-00:20:
+    Every host now renders the single icon-only Save with its hold-to-start gesture. The separate textual
+    Save/Start pair only existed in the variant no production host mounted, so this case records the one
+    surviving shape instead of the removed one.
+    */
+    it("renders one icon-only Save with the hold-to-start gesture and no separate Start action", () => {
       renderQuickEntryBox({ workflowId: ideasWorkflow.id, workflowOptions: [ideasWorkflow], onMoveTask: vi.fn() });
-      expect(screen.getByTestId("quick-entry-save")).toHaveTextContent("Save");
-      expect(screen.getByTestId("quick-entry-save")).not.toHaveClass("quick-entry-alpha-save");
-      expect(screen.getByTestId("quick-entry-save").querySelector(".quick-entry-alpha-save-icons")).toBeNull();
-      expect(screen.getByTestId("quick-entry-save-start")).toHaveTextContent("Start");
+      const save = screen.getByTestId("quick-entry-save");
+      expect(save).toHaveClass("quick-entry-save");
+      expect(save).not.toHaveTextContent("Save");
+      expect(save).toHaveAccessibleName("Save task; hold to start");
+      expect(screen.queryByTestId("quick-entry-save-start")).toBeNull();
     });
   });
 

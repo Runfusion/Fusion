@@ -1,5 +1,5 @@
 import "./TaskCard.css";
-import { AlphaButton, AlphaSurface, AlphaTextArea } from "./alpha-ui";
+import { UiButton, UiSurface, UiTextArea } from "./ui";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { memo, useCallback, useState, useRef, useEffect, useLayoutEffect, useMemo, type CSSProperties, type ReactElement } from "react";
@@ -734,15 +734,15 @@ export function ExternalBlockNotice({ task, variant, onOpenChatWithPrefill, onRe
       {(onOpenChatWithPrefill || onRetryTask) && (
         <span className="external-block-notice__actions">
           {onOpenChatWithPrefill && (
-            <AlphaButton type="button" className="btn btn-icon" onClick={explain} aria-label={t("tasks.externalBlock.explain", "Explain this error")} title={t("tasks.externalBlock.explain", "Explain this error")}>
+            <UiButton type="button" className="btn btn-icon" onClick={explain} aria-label={t("tasks.externalBlock.explain", "Explain this error")} title={t("tasks.externalBlock.explain", "Explain this error")}>
               <Bot aria-hidden="true" />
-            </AlphaButton>
+            </UiButton>
           )}
           {onRetryTask && (
-            <AlphaButton type="button" className="btn" onClick={(event) => void retry(event)} disabled={isResuming}>
+            <UiButton type="button" className="btn" onClick={(event) => void retry(event)} disabled={isResuming}>
               <RotateCw aria-hidden="true" />
               {isResuming ? t("tasks.externalBlock.resuming", "Resuming…") : t("tasks.externalBlock.retry", "Retry")}
-            </AlphaButton>
+            </UiButton>
           )}
         </span>
       )}
@@ -813,9 +813,9 @@ export function PlanApprovalNotice({
             : t("tasks.planApproval.copy", "Review the plan before implementation starts.")}
         </span>
         <span className="plan-approval-notice__actions">
-          <AlphaButton type="button" className="btn btn-primary btn-sm" onClick={(event) => void approve(event)} disabled={isApproving}>
+          <UiButton type="button" className="btn btn-primary btn-sm" onClick={(event) => void approve(event)} disabled={isApproving}>
             {isApproving ? t("tasks.planApproval.approving", "Approving...") : t("tasks.planApproval.approve", "Approve")}
-          </AlphaButton>
+          </UiButton>
         </span>
       </div>
   );
@@ -3223,7 +3223,7 @@ function TaskCardComponent({
     }
 
     return (
-      <AlphaButton
+      <UiButton
         type="button"
         className="card-session-files"
         onClick={handleOpenFiles}
@@ -3231,7 +3231,7 @@ function TaskCardComponent({
       >
         <Folder size={12} />
         <span>{t("tasks.filesChanged", "{{count}} file changed", { count: displayCount, defaultValue_one: "{{count}} file changed", defaultValue_other: "{{count}} files changed" })}</span>
-      </AlphaButton>
+      </UiButton>
     );
   })();
 
@@ -3303,8 +3303,8 @@ function TaskCardComponent({
       )}
       {showRevertedChip && (
         <span className="card-reverted-actions" aria-label={t("tasks.revertedResolutionActions", "Reverted task resolution actions")}>
-          {onDeleteTask && <AlphaButton type="button" className="btn" onClick={(event) => { event.stopPropagation(); void handleTaskActionDelete(); }}>{t("tasks.delete", "Delete")}</AlphaButton>}
-          {onReviseTask && <AlphaButton type="button" className="btn" onClick={(event) => { event.stopPropagation(); onReviseTask(task); }}>{t("tasks.revise", "Revise")}</AlphaButton>}
+          {onDeleteTask && <UiButton type="button" className="btn" onClick={(event) => { event.stopPropagation(); void handleTaskActionDelete(); }}>{t("tasks.delete", "Delete")}</UiButton>}
+          {onReviseTask && <UiButton type="button" className="btn" onClick={(event) => { event.stopPropagation(); onReviseTask(task); }}>{t("tasks.revise", "Revise")}</UiButton>}
         </span>
       )}
       {showNearDuplicateChip && (
@@ -3326,7 +3326,7 @@ function TaskCardComponent({
             <span>{t("tasks.duplicateOf", "Duplicate of {{id}}", { id: String(task.sourceMetadata?.nearDuplicateOf) })}</span>
           </span>
           {onUpdateTask && (
-            <AlphaButton
+            <UiButton
               type="button"
               className="card-duplicate-dismiss"
               onClick={(e) => void handleDismissNearDuplicate(e)}
@@ -3334,7 +3334,7 @@ function TaskCardComponent({
               aria-label={t("tasks.dismissDuplicateFlag", "Mark the duplicate flag for {{id}} as read", { id: String(task.sourceMetadata?.nearDuplicateOf) })}
             >
               <X size={11} aria-hidden="true" />
-            </AlphaButton>
+            </UiButton>
           )}
         </span>
       )}
@@ -3527,7 +3527,7 @@ function TaskCardComponent({
 
   if (isEditing) {
     return (
-      <AlphaSurface
+      <UiSurface
         ref={cardRef}
         className={cardClass}
         data-id={task.id}
@@ -3535,7 +3535,7 @@ function TaskCardComponent({
         onDoubleClick={handleDoubleClick}
       >
         <div className="card-editing-content">
-          <AlphaTextArea
+          <UiTextArea
             ref={descTextareaRef}
             className="card-edit-desc-textarea"
             placeholder={t("tasks.descriptionPlaceholder", "Task description")}
@@ -3553,7 +3553,7 @@ function TaskCardComponent({
             </div>
           )}
         </div>
-      </AlphaSurface>
+      </UiSurface>
     );
   }
 
@@ -3563,7 +3563,7 @@ function TaskCardComponent({
   Stop every touch, pointer, compatibility-click, and keyboard path at the portal wrapper so selecting any menu action cannot invoke card detail opening while TaskContextMenu keeps its own dispatch and navigation behavior.
   */
   return (
-    <AlphaSurface
+    <UiSurface
       ref={cardRef}
       className={cardClass}
       data-id={task.id}
@@ -3892,7 +3892,7 @@ function TaskCardComponent({
         <RuntimeFallbackBadge taskId={task.id} isInViewport={isInViewport} projectId={projectId} />
         {prNode && (
           prNode.state === "failed" ? (
-            <AlphaButton
+            <UiButton
               type="button"
               className="card-status-badge card-pr-node-badge card-pr-node-badge--failed"
               data-testid="pr-node-badge-failed"
@@ -3904,9 +3904,9 @@ function TaskCardComponent({
             >
               <AlertTriangle size={10} aria-hidden="true" />
               <span>{t("tasks.prNodeFailed", "PR failed")}</span>
-            </AlphaButton>
+            </UiButton>
           ) : (
-            <AlphaButton
+            <UiButton
               type="button"
               className={`card-status-badge card-pr-node-badge card-pr-node-badge--${prNode.state}`}
               data-testid={`pr-node-badge-${prNode.state}`}
@@ -3922,7 +3922,7 @@ function TaskCardComponent({
                   ? t("tasks.prNodeWithNumber", "PR #{{number}} · {{state}}", { number: prNode.prNumber, state: prNode.state })
                   : t("tasks.prNodeState", "PR · {{state}}", { state: prNode.state })}
               </span>
-            </AlphaButton>
+            </UiButton>
           )
         )}
         {hasCardMetaBadges && (
@@ -3981,7 +3981,7 @@ function TaskCardComponent({
         {hasHeaderActions && (
         <div className="card-header-actions">
           {isAwaitingInput && onOpenDetailWithTab && (
-            <AlphaButton
+            <UiButton
               className="card-answer-questions-btn"
               onClick={(e) => {
                 e.stopPropagation();
@@ -3991,27 +3991,27 @@ function TaskCardComponent({
               aria-label={t("tasks.answerQuestions", "Answer questions")}
             >
               {t("tasks.answerQuestions", "Answer questions")}
-            </AlphaButton>
+            </UiButton>
           )}
           {canEdit && (
-            <AlphaButton
+            <UiButton
               className="card-edit-btn"
               onClick={handleEditClick}
               title={t("tasks.editTask", "Edit task")}
               aria-label={t("tasks.editTask", "Edit task")}
             >
               <Pencil size={12} />
-            </AlphaButton>
+            </UiButton>
           )}
           {isIntakeColumn && onDeleteTask && (
-            <AlphaButton
+            <UiButton
               className="card-delete-btn"
               onClick={handleDeleteClick}
               title={t("tasks.deleteTask", "Delete task")}
               aria-label={t("tasks.deleteTask", "Delete task")}
             >
               <Trash2 size={12} />
-            </AlphaButton>
+            </UiButton>
           )}
           {/*
           FNXC:TaskCardMenu 2026-07-10-12:00:
@@ -4022,7 +4022,7 @@ function TaskCardComponent({
           groups, dock task lists).
           */}
           {hasContextMenuActions && (
-            <AlphaButton
+            <UiButton
               ref={menuButtonRef}
               type="button"
               className="card-menu-btn"
@@ -4034,7 +4034,7 @@ function TaskCardComponent({
               data-testid={`card-menu-btn-${task.id}`}
             >
               <MoreHorizontal size={14} />
-            </AlphaButton>
+            </UiButton>
           )}
         </div>
         )}
@@ -4049,7 +4049,7 @@ function TaskCardComponent({
           <span className="card-error-icon">⚠</span>
           <span className="card-error-text">{task.error.length > 60 ? task.error.slice(0, 60) + "…" : task.error}</span>
           {onRetryTask && (
-            <AlphaButton
+            <UiButton
               type="button"
               className="btn btn-sm card-error-retry-btn"
               onClick={handleRetryTask}
@@ -4057,7 +4057,7 @@ function TaskCardComponent({
             >
               <RotateCw size={12} />
               {isRetrying ? t("tasks.retrying", "Retrying…") : t("tasks.retry", "Retry")}
-            </AlphaButton>
+            </UiButton>
           )}
         </div>
       )}
@@ -4173,7 +4173,7 @@ function TaskCardComponent({
                 </span>
               )}
             </div>
-            <AlphaButton
+            <UiButton
               type="button"
               className="card-steps-toggle"
               onClick={handleToggleSteps}
@@ -4185,7 +4185,7 @@ function TaskCardComponent({
                 size={14}
                 className={`card-steps-toggle-icon${showSteps ? " expanded" : ""}`}
               />
-            </AlphaButton>
+            </UiButton>
             {showSteps && (
               <div className="card-steps-list">
                 {unifiedProgress.items.map((step, index) => {
@@ -4320,7 +4320,7 @@ function TaskCardComponent({
         <>
         <div className="card-action-row">
           {showCreatePrQuickAction && (
-            <AlphaButton
+            <UiButton
               type="button"
               className="card-create-pr-action"
               title={t("tasks.createPrTitle", "Create a PR for this task")}
@@ -4332,10 +4332,10 @@ function TaskCardComponent({
             >
               <GitPullRequest size={12} />
               {t("tasks.createPr", "Create PR")}
-            </AlphaButton>
+            </UiButton>
           )}
           {showAddressPrFeedbackAction && (
-            <AlphaButton
+            <UiButton
               type="button"
               className="card-create-pr-action card-address-pr-feedback-action"
               data-testid={`card-address-pr-feedback-${task.id}`}
@@ -4350,10 +4350,10 @@ function TaskCardComponent({
               */}
               <Bot size={12} />
               {isAddressingPrFeedback ? t("tasks.addressingPrFeedback", "Addressing…") : t("tasks.addressPrFeedback", "Address PR feedback")}
-            </AlphaButton>
+            </UiButton>
           )}
           {showStartAction && (
-            <AlphaButton
+            <UiButton
               type="button"
               className="card-promote-action card-send-back-btn"
               data-testid={`card-start-${task.id}`}
@@ -4364,7 +4364,7 @@ function TaskCardComponent({
             >
               <Zap size={12} />
               {isStarting ? t("tasks.starting", "Starting…") : t("tasks.start", "Start")}
-            </AlphaButton>
+            </UiButton>
           )}
         </div>
         </>
@@ -4439,7 +4439,7 @@ function TaskCardComponent({
           addToast={addToast}
         />
       )}
-    </AlphaSurface>
+    </UiSurface>
   );
 }
 

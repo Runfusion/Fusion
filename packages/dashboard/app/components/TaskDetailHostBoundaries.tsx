@@ -19,7 +19,7 @@ export interface AppModalTaskDetailHostProps extends Omit<TaskDetailModalProps, 
 }
 
 /*
-FNXC:TaskDetailAlpha 2026-09-11-13:24:
+FNXC:TaskDetailPresentation 2026-09-11-13:24:
 Every Task Detail host renders one canonical content surface while retaining ownership of its distinct exit effect. These production boundaries are shared by the real routers and behavioral tests so navigation, selection, dock, and pop-out cleanup cannot be replaced by a test-only callback map.
 */
 export function AppModalTaskDetailHost({ onRemoveNavigation, onCloseDetail, onCleanupDeepLink, onClosed, ...props }: AppModalTaskDetailHostProps) {
@@ -148,7 +148,7 @@ export interface AppMainPanelTaskDetailStateOptions extends AppTaskDetailNavigat
 }
 
 /*
-FNXC:TaskDetailAlpha 2026-09-11-13:46:
+FNXC:TaskDetailPresentation 2026-09-11-13:46:
 App's main-panel boundary owns the detail snapshot and its navigation entry together. Back must consume that entry, restore Board scrolling, clear the snapshot and reset the landing tab; tests exercise this same hook rather than reconstructing only the final callback.
 */
 export type AppMainPanelTaskDetailState = ReturnType<typeof useAppMainPanelTaskDetailState>;
@@ -219,7 +219,7 @@ export interface AppTaskPopoutWindowsProps {
 }
 
 /*
-FNXC:TaskDetailAlpha 2026-09-11-14:05:
+FNXC:TaskDetailPresentation 2026-09-11-14:05:
 App's pop-out renderer must derive FloatingWindow dismissal from the same state owner that supplied each entry. Keeping entry identity, live snapshot merging, and close binding in this rendered composition prevents host tests from recreating a parallel callback.
 
 FNXC:TaskWindowIdentity 2026-09-14-17:46:
@@ -249,7 +249,7 @@ export interface AppPoppedOutTaskStateOptions extends AppTaskDetailNavigation {
 }
 
 /*
-FNXC:TaskDetailAlpha 2026-09-11-13:46:
+FNXC:TaskDetailPresentation 2026-09-11-13:46:
 App's pop-out boundary owns each window entry and its mobile navigation callback as one state machine. Closing from either FloatingWindow chrome or Task Detail removes the entry and consumes its navigation record.
 
 FNXC:TaskWindowIdentity 2026-09-14-17:46:

@@ -800,8 +800,8 @@ non-notched devices, so this is a no-op there. Pair with viewport-fit=cover (ind
   transition: border-color var(--transition-fast);
 }
 
-/* FNXC:AlphaTaskSearch 2026-09-12-21:52: Alpha desktop expands Search inline only while requested, in the magnifier's action slot after the workflow selector. The shared dropdown anchors below this token-sized field; compact and non-Alpha surfaces retain their existing floating search layout. */
-.header-search--alpha-inline {
+/* FNXC:HeaderTaskSearch 2026-09-12-21:52: Desktop expands Search inline only while requested, in the magnifier's action slot after the workflow selector. The shared dropdown anchors below this token-sized field; compact surfaces retain their existing floating search layout. */
+.header-search--inline {
   flex: 0 1 calc(var(--space-2xl) * 8);
   min-width: calc(var(--space-2xl) * 5);
   max-width: calc(var(--space-2xl) * 10);
