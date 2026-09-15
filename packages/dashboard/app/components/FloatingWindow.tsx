@@ -30,7 +30,6 @@ import {
   type DashboardWindowSurfaceGroup,
 } from "../context/DashboardWindowManagerContext";
 import {
-  FLOATING_WINDOW_DETACH_PX,
   FLOATING_WINDOW_DRAG_THRESHOLD_PX,
   clampFloatingWindowPosition,
   clampFloatingWindowSize,
@@ -38,6 +37,7 @@ import {
   resolveDetachedRect,
   resolveOpeningRect,
   resolveSnapRect,
+  shouldDetachSnappedWindow,
   type FloatingWindowPosition,
   type FloatingWindowRect,
   type FloatingWindowSize,
@@ -508,17 +508,22 @@ export function FloatingWindow({
       FNXC:FloatingWindowSnap 2026-09-14-21:10:
       One gesture owns four behaviors, in this order:
       1. Below the 6px threshold the gesture stays a CLICK: no geometry change, no cascade exit.
-      2. A snapped window stays pinned until the pointer travels 24px DOWN; that detaches it back to the
-         pre-snap floating rect, re-anchored under the pointer, and the drag continues from there.
+      2. A snapped window stays pinned until that same threshold is crossed in ANY direction; that detaches it
+         back to the pre-snap floating rect, re-anchored under the pointer, and the drag continues from there.
       3. Once free, a zone is PREVIEWED whenever the PANEL's own clamped edge touches the matching work-area
          wall; the mode is applied on pointerup.
       4. `pointercancel` / lost capture validates nothing and returns to the pre-gesture geometry.
 
       FNXC:FloatingWindowSnap 2026-09-15-04:01:
       FN-401: a still-docked window arms NOTHING. Its rectangle is pinned by the zone, so it has no edge to
-      offer, and the pointer alone may no longer carry a docked window to another wall. The one documented
-      way out of any dock — including the filled work area, where no wall is reachable at all — is the 24px
-      downward drag below; the SAME gesture may then continue on to another wall and arm it.
+      offer, and the pointer alone may no longer carry a docked window to another wall. The way out of any
+      dock — including the filled work area, where no wall is reachable at all — is the undock below; the SAME
+      gesture may then continue on to another wall and arm it.
+
+      FNXC:FloatingWindowSnap 2026-09-15-14:07:
+      FN-422: that way out is now OMNIDIRECTIONAL and fires at the ordinary drag threshold. Requiring 24px of
+      DOWNWARD travel meant a `maximized` or column window ignored every upward, lateral, and diagonal drag and
+      simply looked stuck. A header CLICK still releases nothing.
       */
       let anchorX = startX;
       let anchorY = startY;
@@ -528,10 +533,14 @@ export function FloatingWindow({
       let moved = false;
       /*
       FNXC:FloatingWindowSnap 2026-09-14-22:36:
-      A maximized window's top edge sits ON the top wall, so the 24px downward detach can finish with the panel still
-      against that wall and instantly re-arm the very mode it just left — the window would never come loose. After a
-      detach the ABANDONED mode stays disarmed until the panel leaves that wall; carrying the window straight to a
-      DIFFERENT zone (left to right, side to top) keeps working in the same gesture.
+      A maximized window's top edge sits ON the top wall, so a detach can finish with the panel still against that
+      wall and instantly re-arm the very mode it just left — the window would never come loose. After a detach the
+      ABANDONED mode stays disarmed until the panel leaves that wall; carrying the window straight to a DIFFERENT
+      zone (left to right, side to top) keeps working in the same gesture.
+
+      FNXC:FloatingWindowSnap 2026-09-15-14:07:
+      FN-422 makes this MORE necessary, not less: an upward or lateral undock from `maximized` or a column lands the
+      restored rect right back against the wall it just left, so `disarmedZone` is what keeps the release visible.
       */
       let disarmedZone: FloatingWindowSnapMode | null = null;
       let previewZone: FloatingWindowSnapMode | null = null;
@@ -550,7 +559,7 @@ export function FloatingWindow({
         moveEvent.preventDefault();
         const bounds = boundsRef.current;
         if (!detached) {
-          if (moveEvent.clientY - startY < FLOATING_WINDOW_DETACH_PX) {
+          if (!shouldDetachSnappedWindow({ x: startX, y: startY }, { x: moveEvent.clientX, y: moveEvent.clientY })) {
             // Pinned: the panel cannot move, so it exposes no edge and nothing can be armed yet.
             setPreview(null);
             return;

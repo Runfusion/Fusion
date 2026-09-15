@@ -16,9 +16,13 @@ the `FloatingWindow.snap.test.tsx` work-area harness (landmarks + mocked landmar
 rendered rectangle plus the shared stacking order:
 
 - dragging the panel against the right wall arms `data-snap-zone="right"` and applies `data-snap-mode="right"`;
-- dragging to the top band fills the work area, and the documented 24px downward detach restores the floating rect;
+- dragging to the top band fills the work area, and detaching restores the floating rect;
 - a pointerdown on the terminal panel raises it above a window mounted AFTER it, and vice versa;
 - the phone sheet presentation exposes neither snapping nor resize handles.
+
+FNXC:TerminalLayout 2026-09-15-14:07:
+FN-422 makes undocking omnidirectional, and the detached terminal inherits it through the shared drag handler:
+the filled work area is now released by any drag past the click threshold, not only by a downward one.
 */
 
 const HEADER_HEIGHT = 64;
@@ -241,8 +245,31 @@ describe("detached terminal window parity", () => {
     expect(panel.dataset.snapMode).toBe("maximized");
     expect(rectOf(panel)).toEqual({ left: 0, top: HEADER_HEIGHT, width: 1280, height: 700 });
 
-    // The documented way out of a filled work area is a 24px downward drag.
+    // Any drag past the click threshold releases the filled work area; downward is only one of them.
     drag(handle, { from: { x: 600, y: 200 }, to: { x: 600, y: 240 }, pointerId: 12 });
+    expect(panel.dataset.snapMode).toBe("floating");
+    expect(rectOf(panel).width).toBe(floating.width);
+    expect(rectOf(panel).height).toBe(floating.height);
+  });
+
+  /*
+  FNXC:TerminalLayout 2026-09-15-14:07:
+  FN-422 symptom acceptance on a REAL host: a maximized detached terminal must come loose on a NON-downward
+  gesture too. Before FN-422 this upward drag left the terminal filling the work area, which is exactly the
+  "the window is stuck" report.
+  */
+  it("releases the filled work area on a non-downward drag", async () => {
+    renderDetachedTerminal("parity-undock-up");
+
+    const panel = await screen.findByTestId("floating-window-terminal-parity-undock-up");
+    await waitFor(() => expect(rectOf(panel).width).toBe(800));
+    const handle = panel.querySelector(".terminal-header") as HTMLElement;
+    const floating = rectOf(panel);
+
+    drag(handle, { from: { x: 600, y: 400 }, to: { x: 600, y: HEADER_HEIGHT + 4 }, pointerId: 13 });
+    expect(panel.dataset.snapMode).toBe("maximized");
+
+    drag(handle, { from: { x: 640, y: 400 }, to: { x: 640, y: 360 }, pointerId: 14 });
     expect(panel.dataset.snapMode).toBe("floating");
     expect(rectOf(panel).width).toBe(floating.width);
     expect(rectOf(panel).height).toBe(floating.height);

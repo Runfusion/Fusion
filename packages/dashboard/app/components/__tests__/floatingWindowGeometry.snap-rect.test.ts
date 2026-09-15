@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { DashboardWindowBounds } from "../../context/DashboardWindowManagerContext";
 import {
+  FLOATING_WINDOW_DRAG_THRESHOLD_PX,
   FLOATING_WINDOW_SNAP_CONTACT_PX,
   detectSnapZoneForRect,
+  shouldDetachSnappedWindow,
   type FloatingWindowRect,
 } from "../floatingWindowGeometry";
 
@@ -84,5 +86,47 @@ describe("detectSnapZoneForRect", () => {
   it("honours a caller-supplied contact tolerance", () => {
     expect(detectSnapZoneForRect(rect(40, 300), bounds)).toBeNull();
     expect(detectSnapZoneForRect(rect(40, 300), bounds, 48)).toBe("left");
+  });
+});
+
+/*
+FNXC:FloatingWindowSnap 2026-09-15-14:07:
+FN-422 unit contract for the omnidirectional undock predicate. A docked window used to come loose only by
+dragging DOWN 24px, so a column or full-screen window looked stuck in every other direction. Release now
+happens as soon as the gesture stops being a click, whatever its direction; below the threshold the gesture
+is still a click and the dock survives.
+*/
+describe("shouldDetachSnappedWindow", () => {
+  const start = { x: 300, y: 300 };
+
+  it("detaches exactly at the drag threshold and not just below it", () => {
+    expect(shouldDetachSnappedWindow(start, { x: 300, y: 300 + FLOATING_WINDOW_DRAG_THRESHOLD_PX })).toBe(true);
+    expect(shouldDetachSnappedWindow(start, { x: 300, y: 300 + FLOATING_WINDOW_DRAG_THRESHOLD_PX - 0.1 })).toBe(false);
+  });
+
+  it("keeps a motionless pointer a click", () => {
+    expect(shouldDetachSnappedWindow(start, { x: 300, y: 300 })).toBe(false);
+  });
+
+  it.each([
+    ["up", { x: 300, y: 280 }],
+    ["down", { x: 300, y: 320 }],
+    ["left", { x: 280, y: 300 }],
+    ["right", { x: 320, y: 300 }],
+    ["diagonal", { x: 320, y: 280 }],
+  ])("detaches on a %s gesture beyond the threshold", (_direction, pointer) => {
+    expect(shouldDetachSnappedWindow(start, pointer)).toBe(true);
+  });
+
+  it("honours a caller-supplied threshold", () => {
+    expect(shouldDetachSnappedWindow(start, { x: 310, y: 300 }, 48)).toBe(false);
+    expect(shouldDetachSnappedWindow(start, { x: 360, y: 300 }, 48)).toBe(true);
+  });
+
+  it("never detaches on non-finite input", () => {
+    expect(shouldDetachSnappedWindow(start, { x: Number.NaN, y: 300 })).toBe(false);
+    expect(shouldDetachSnappedWindow(start, { x: 300, y: Number.POSITIVE_INFINITY })).toBe(false);
+    expect(shouldDetachSnappedWindow({ x: Number.NaN, y: 300 }, { x: 900, y: 900 })).toBe(false);
+    expect(shouldDetachSnappedWindow(start, { x: 900, y: 900 }, Number.NaN)).toBe(false);
   });
 });

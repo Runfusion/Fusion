@@ -78,7 +78,11 @@ sub-pixel guard for fractional work areas, never a reach-in band.
 export const FLOATING_WINDOW_SNAP_CONTACT_PX = 0.5;
 /** Pointer travel below this stays a click: it must not mark the window as user-adjusted or snap it. */
 export const FLOATING_WINDOW_DRAG_THRESHOLD_PX = 6;
-/** Downward travel required to detach a snapped window back to its pre-snap floating rect. */
+/**
+ * Vertical offset used to RE-ANCHOR a detached window under the pointer (see `resolveDetachedRect`).
+ * It is no longer a gesture threshold: since FN-422 the detach itself is omnidirectional and triggers at
+ * `FLOATING_WINDOW_DRAG_THRESHOLD_PX`.
+ */
 export const FLOATING_WINDOW_DETACH_PX = 24;
 
 function finite(...values: number[]): boolean {
@@ -227,7 +231,7 @@ Rules, in order:
 - otherwise the left edge on the left wall arms `left`, the right edge on the right wall arms `right`;
 - AMBIGUITY: a panel as wide as the work area touches BOTH walls at once. Guessing a side there would snap a
   window the operator only meant to move, and such a panel is already equivalent to the filled work area, so
-  nothing is armed; it detaches downward first like any docked window.
+  nothing is armed; it detaches first like any docked window.
 */
 export function detectSnapZoneForRect(
   rect: FloatingWindowRect,
@@ -250,6 +254,10 @@ export function detectSnapZoneForRect(
 FNXC:FloatingWindowSnap 2026-09-14-21:10:
 Detaching restores the floating rect captured before the first snap and re-centres it horizontally
 under the pointer so the window follows the finger/cursor, then clamps to the live work area.
+
+FNXC:FloatingWindowSnap 2026-09-15-14:07:
+FN-422: the gesture that triggers this restore no longer has an imposed direction. `FLOATING_WINDOW_DETACH_PX`
+survives here ONLY as the vertical offset placing the restored rect just under the pointer.
 */
 export function resolveDetachedRect(
   restore: FloatingWindowRect,
@@ -262,4 +270,21 @@ export function resolveDetachedRect(
     size,
     position: clampFloatingWindowPosition({ x: pointer.x - size.width / 2, y: pointer.y - FLOATING_WINDOW_DETACH_PX }, size, bounds),
   };
+}
+
+/*
+FNXC:FloatingWindowSnap 2026-09-15-14:07:
+FN-422: a docked window (`left`, `right`, `maximized`) used to come loose ONLY by dragging DOWN 24px. Pulling it
+up, left, right, or diagonally did nothing at all, so a column or full-screen window simply looked stuck. A
+docked window is now released as soon as the gesture stops being a click, in ANY direction, reusing the
+existing drag threshold. Below the threshold the gesture stays a click and the dock is preserved; non-finite
+input never detaches.
+*/
+export function shouldDetachSnappedWindow(
+  start: FloatingWindowPosition,
+  pointer: FloatingWindowPosition,
+  threshold: number = FLOATING_WINDOW_DRAG_THRESHOLD_PX,
+): boolean {
+  if (!finite(start.x, start.y, pointer.x, pointer.y, threshold)) return false;
+  return Math.hypot(pointer.x - start.x, pointer.y - start.y) >= threshold;
 }
