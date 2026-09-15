@@ -210,6 +210,17 @@ describe("detached terminal window parity", () => {
     _resetInitialViewportHeight();
   });
 
+  /*
+  FN-438: presentation switching is pointer-only. The detached desktop window must expose no toggle button
+  either — the phone-sheet counter-proof below is not the only presentation that owes this absence.
+  */
+  it("exposes no presentation toggle button in the detached desktop window", async () => {
+    renderDetachedTerminal("parity-no-toggle");
+    await screen.findByTestId("floating-window-terminal-parity-no-toggle");
+
+    expect(screen.queryByTestId("terminal-popout-toggle")).toBeNull();
+  });
+
   it("opens at the standard task-window size inside the work area", async () => {
     renderDetachedTerminal("parity-size");
 
@@ -309,6 +320,7 @@ describe("detached terminal window parity", () => {
       expect(screen.queryByTestId("floating-window-terminal-parity-sheet")).toBeNull();
       expect(screen.queryByTestId("floating-window-snap-preview-terminal-parity-sheet")).toBeNull();
       expect(screen.queryByTestId("floating-window-resize-se")).toBeNull();
+      // FN-438: the presentation toggle button no longer exists in ANY presentation.
       expect(screen.queryByTestId("terminal-popout-toggle")).toBeNull();
     } finally {
       delete (window as unknown as { ontouchstart?: unknown }).ontouchstart;

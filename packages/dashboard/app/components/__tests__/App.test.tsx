@@ -450,8 +450,13 @@ vi.mock("../../components/TerminalModal", async () => {
       }, [onPinnedLayoutChange, pinned]);
       return isOpen ? (
         <div className="modal-overlay open" data-testid="terminal-modal" data-footer-visible={String(footerVisible === true)} data-pinned={String(pinned)}>
-          <button type="button" data-testid="terminal-popout-toggle" onClick={() => setPinned((current) => !current)}>
-            Pop out
+          {/*
+          FN-438: a test-only probe that flips this stub's pinned state so the App-level footer reservation can be
+          exercised. It was named after the real header button, which FN-438 deleted; the rename keeps the two
+          unambiguous — the product terminal exposes no presentation toggle at all.
+          */}
+          <button type="button" data-testid="terminal-pinned-layout-probe" onClick={() => setPinned((current) => !current)}>
+            Toggle pinned layout
           </button>
           <button type="button" data-testid="terminal-close-btn" onClick={onClose}>
             Close
@@ -1677,14 +1682,14 @@ describe("official dashboard design production wiring", () => {
     });
 
     // Detaching the terminal takes it out of the flow, so the shell reservation returns.
-    fireEvent.click(screen.getByTestId("terminal-popout-toggle"));
+    fireEvent.click(screen.getByTestId("terminal-pinned-layout-probe"));
     await waitFor(() => {
       expect(content).toHaveClass("project-content--with-footer");
       expect(dock).toHaveClass("right-dock--with-footer");
     });
 
     // Re-pinning drops it again, and closing the terminal restores it for good.
-    fireEvent.click(screen.getByTestId("terminal-popout-toggle"));
+    fireEvent.click(screen.getByTestId("terminal-pinned-layout-probe"));
     await waitFor(() => expect(content).not.toHaveClass("project-content--with-footer"));
     fireEvent.click(screen.getByTestId("terminal-close-btn"));
     await waitFor(() => {

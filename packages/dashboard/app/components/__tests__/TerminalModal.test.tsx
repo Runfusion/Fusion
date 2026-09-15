@@ -49,22 +49,51 @@ function defineMetric(element: Element, property: "clientWidth" | "scrollWidth",
 }
 
 /*
-FN-409: the header now carries exactly ONE presentation control (detach / re-attach), immediately before close.
-The pin toggle it used to check was removed with the docked presentation.
+FN-409 gave the header exactly ONE presentation control (detach / re-attach). FN-438 REMOVED it: switching
+presentation is a pointer gesture, so the header must carry NO presentation control at all, and the removal must
+leave no empty shell or orphaned wrapper — close stays the final header child.
 */
-function expectTerminalDisplayModeControlsBeforeClose(): void {
+function expectNoTerminalDisplayModeControls(): void {
   const header = document.querySelector<HTMLElement>(".terminal-header");
   expect(header).not.toBeNull();
 
   expect(screen.queryByTestId("terminal-pin-toggle")).toBeNull();
-  const popoutToggle = screen.getByTestId("terminal-popout-toggle");
-  const closeButton = screen.getByTestId("terminal-close-btn");
-
-  expect(popoutToggle.parentElement).toBe(header);
-  expect(popoutToggle.compareDocumentPosition(closeButton) & Node.DOCUMENT_POSITION_FOLLOWING)
-    .toBe(Node.DOCUMENT_POSITION_FOLLOWING);
-  expect(popoutToggle.nextElementSibling).toBe(closeButton);
+  expect(screen.queryByTestId("terminal-popout-toggle")).toBeNull();
   expect(header!.querySelector(".terminal-actions")).toBeNull();
+  expect(header!.querySelector("[data-testid='terminal-popout-toggle']")).toBeNull();
+
+  const closeButton = screen.getByTestId("terminal-close-btn");
+  expect(closeButton.parentElement).toBe(header);
+  expect(closeButton.nextElementSibling).toBeNull();
+}
+
+function prepareTerminalPointerCapture(target: HTMLElement) {
+  Object.defineProperty(target, "setPointerCapture", { configurable: true, value: vi.fn() });
+  Object.defineProperty(target, "releasePointerCapture", { configurable: true, value: vi.fn() });
+}
+
+/*
+FN-438: the pinned header IS the detach handle. Tests that used to click the removed pop-out button now replay
+the real gesture.
+*/
+function detachTerminalByHeaderDrag(pointerId = 201): void {
+  const header = document.querySelector<HTMLElement>(".terminal-header")!;
+  prepareTerminalPointerCapture(header);
+  fireEvent.pointerDown(header, { pointerId, pointerType: "mouse", button: 0, clientX: 500, clientY: 400 });
+  fireEvent.pointerMove(header, { pointerId, pointerType: "mouse", clientX: 500, clientY: 340 });
+  fireEvent.pointerUp(header, { pointerId, pointerType: "mouse", clientX: 500, clientY: 340 });
+}
+
+/*
+FN-438: re-pinning is a drag that brings the detached window's bottom edge onto the bottom bar. The travel is
+larger than the viewport so the position clamp lands the bottom edge exactly on the contact line.
+*/
+function repinTerminalByFooterContact(pointerId = 202): void {
+  const header = document.querySelector<HTMLElement>(".terminal-header")!;
+  prepareTerminalPointerCapture(header);
+  fireEvent.pointerDown(header, { pointerId, pointerType: "mouse", button: 0, clientX: 500, clientY: 300 });
+  fireEvent.pointerMove(header, { pointerId, pointerType: "mouse", clientX: 500, clientY: 300 + window.innerHeight });
+  fireEvent.pointerUp(header, { pointerId, pointerType: "mouse", clientX: 500, clientY: 300 + window.innerHeight });
 }
 
 function expectTerminalCloseAfterNewTerminal(newTerminalTestId: string): void {
@@ -1020,34 +1049,50 @@ describe("TerminalModal", () => {
     const pinnedHeight = (): string =>
       screen.getByTestId("terminal-modal").style.getPropertyValue("--terminal-below-height");
 
-    // Upward: the "enlarge" gesture the old top-edge formula shrank the panel with.
+    /*
+    FN-438 lowered the detach threshold to FloatingWindow's shared 6px click threshold, so these sub-threshold
+    gestures are the ones that must remain plain clicks: they change no height AND leave the panel pinned.
+    */
     const upHandle = grabPinnedHandle();
     fireEvent.pointerDown(upHandle, { pointerId: 1, clientY: 500 });
-    fireEvent.pointerMove(upHandle, { pointerId: 1, clientY: 490 });
+    fireEvent.pointerMove(upHandle, { pointerId: 1, clientY: 496 });
     expect(pinnedHeight()).toBe(initialHeight);
     fireEvent.pointerUp(upHandle, { pointerId: 1 });
     expect(pinnedHeight()).toBe(initialHeight);
+    expect(screen.getByTestId("terminal-modal")).toHaveClass("terminal-modal--below");
 
-    // Downward: the gesture the old formula grew the panel with.
     const downHandle = grabPinnedHandle();
     fireEvent.pointerDown(downHandle, { pointerId: 2, clientY: 500 });
-    fireEvent.pointerMove(downHandle, { pointerId: 2, clientY: 510 });
+    fireEvent.pointerMove(downHandle, { pointerId: 2, clientY: 504 });
     expect(pinnedHeight()).toBe(initialHeight);
     fireEvent.pointerUp(downHandle, { pointerId: 2 });
     expect(pinnedHeight()).toBe(initialHeight);
+    expect(screen.getByTestId("terminal-modal")).toHaveClass("terminal-modal--below");
+
+    // A gesture past the threshold detaches instead of resizing: still no height is ever recorded.
+    const detachHandle = grabPinnedHandle();
+    fireEvent.pointerDown(detachHandle, { pointerId: 3, clientY: 500 });
+    fireEvent.pointerMove(detachHandle, { pointerId: 3, clientY: 540 });
+    fireEvent.pointerUp(detachHandle, { pointerId: 3 });
+    await waitFor(() => expect(screen.getByTestId("terminal-modal")).toHaveClass("terminal-modal--floating"));
 
     expect(window.localStorage.getItem(`fusion:terminal-docked-height-${projectId}`)).toBeNull();
   });
 
-  it("toggles between the pinned panel and the detached window with the pop-out control", async () => {
+  /*
+  FN-438: the pop-out button is gone; this round trip is now driven by the two real gestures — drag the pinned
+  header out, drag the window back down onto the bottom bar.
+  */
+  it("toggles between the pinned panel and the detached window with drag gestures alone", async () => {
     render(<TerminalModal isOpen={true} onClose={mockOnClose} projectId="popout-toggle-test" />);
 
     const modal = await screen.findByTestId("terminal-modal");
     expect(modal).toHaveClass("terminal-modal--below");
     expect(screen.queryByTestId("terminal-drag-grip")).toBeNull();
     expect(screen.getByTestId("terminal-pinned-drag-handle")).toBeInTheDocument();
+    expect(screen.queryByTestId("terminal-popout-toggle")).toBeNull();
 
-    fireEvent.click(screen.getByTestId("terminal-popout-toggle"));
+    detachTerminalByHeaderDrag();
 
     await waitFor(() => {
       expect(screen.getByTestId("terminal-modal")).toHaveClass("terminal-modal--floating");
@@ -1055,15 +1100,9 @@ describe("TerminalModal", () => {
       expect(screen.queryByTestId("terminal-drag-grip")).toBeNull();
       expect(screen.getByTestId("floating-window-resize-se")).toBeInTheDocument();
     });
+    expect(screen.queryByTestId("terminal-popout-toggle")).toBeNull();
 
-    const floatingWindow = screen.getByTestId("floating-window-terminal-popout-toggle-test") as HTMLElement & {
-      setPointerCapture: (pointerId: number) => void;
-    };
-    floatingWindow.setPointerCapture = vi.fn();
-    fireEvent.pointerDown(screen.getByTestId("terminal-popout-toggle"), { pointerId: 73, clientX: 100, clientY: 100 });
-    expect(floatingWindow.setPointerCapture).not.toHaveBeenCalled();
-
-    fireEvent.click(screen.getByTestId("terminal-popout-toggle"));
+    repinTerminalByFooterContact();
 
     // Re-attaching returns to the pinned presentation, not to a removed overlay presentation.
     await waitFor(() => {
@@ -1119,10 +1158,10 @@ describe("TerminalModal", () => {
     await screen.findByTestId("terminal-below-host");
     await waitFor(() => expect(onPinnedLayoutChange).toHaveBeenLastCalledWith(true));
 
-    fireEvent.click(screen.getByTestId("terminal-popout-toggle"));
+    detachTerminalByHeaderDrag(211);
     await waitFor(() => expect(onPinnedLayoutChange).toHaveBeenLastCalledWith(false));
 
-    fireEvent.click(screen.getByTestId("terminal-popout-toggle"));
+    repinTerminalByFooterContact(212);
     await waitFor(() => expect(onPinnedLayoutChange).toHaveBeenLastCalledWith(true));
 
     unmount();
@@ -1199,7 +1238,8 @@ describe("TerminalModal", () => {
       expect(screen.queryByTestId("terminal-pin-toggle")).toBeNull();
       expect(screen.queryByLabelText("Pin terminal (push content)")).toBeNull();
       expect(screen.queryByLabelText("Unpin terminal (overlay content)")).toBeNull();
-      expect(screen.getByTestId("terminal-popout-toggle")).toBeInTheDocument();
+      // FN-438: and no presentation toggle either — the header exposes no display-mode control at all.
+      expect(screen.queryByTestId("terminal-popout-toggle")).toBeNull();
     },
   );
 
@@ -1285,8 +1325,8 @@ describe("TerminalModal", () => {
       expect(screen.getByTestId("terminal-below-host")).not.toHaveClass("terminal-below-host--with-footer");
     });
 
-    // FN-409: the pin toggle is gone, so detach/re-attach is what leaves and returns to the pinned host.
-    fireEvent.click(screen.getByTestId("terminal-popout-toggle"));
+    // FN-438: detach/re-attach is a pointer gesture, and it is what leaves and returns to the pinned host.
+    detachTerminalByHeaderDrag(221);
     await waitFor(() => {
       expect(screen.queryByTestId("terminal-below-host")).toBeNull();
     });
@@ -1294,7 +1334,7 @@ describe("TerminalModal", () => {
     rerender(
       <TerminalModal isOpen={true} onClose={mockOnClose} projectId={projectId} footerVisible={true} />,
     );
-    fireEvent.click(screen.getByTestId("terminal-popout-toggle"));
+    repinTerminalByFooterContact(222);
     await waitFor(() => {
       const host = screen.getByTestId("terminal-below-host");
       expect(host).toHaveClass("terminal-below-host--with-footer");
@@ -1360,6 +1400,23 @@ describe("TerminalModal", () => {
     // (that would leave a dead gap when the footer is not visible) — only the --with-footer
     // modifier below reserves it.
     expect(hostRule).not.toContain("padding-bottom");
+  });
+
+  it("keeps the pinned detach grip bar-sized so it cannot swallow header controls (FN-438)", () => {
+    // FN-438 review fix: this grip is absolutely positioned with z-index over a statically positioned
+    // `.terminal-header`, so any height beyond the painted bar intercepts presses aimed at the tabs,
+    // the workspace picker, and the close button. The hit area must equal the bar: `::before` starts at
+    // half a --space-xs and is half a --space-xs thick, so --space-xs contains it exactly.
+    const handleRule = terminalModalCss.match(/\.terminal-below-drag-handle\s*\{([^}]*)\}/)?.[1] ?? "";
+    const barRule = terminalModalCss.match(/\.terminal-below-drag-handle::before\s*\{([^}]*)\}/)?.[1] ?? "";
+
+    expect(handleRule).toContain("height: var(--space-xs);");
+    expect(handleRule).not.toContain("height: calc(var(--space-md) + var(--space-sm));");
+    expect(handleRule).toContain("touch-action: none;");
+    expect(handleRule).not.toMatch(/top:\s*calc\(var\(--space-sm\) \* -1\)/);
+    expect(handleRule).toContain("top: 0;");
+    expect(barRule).toContain("top: calc(var(--space-xs) / 2);");
+    expect(barRule).toContain("height: calc(var(--space-xs) / 2);");
   });
 
   it("reserves executor footer height on the pinned terminal host only when footerVisible (FN-7897)", () => {
@@ -4830,7 +4887,7 @@ describe("TerminalModal — mobile layout contract", () => {
     });
   });
 
-  it("puts desktop display-mode controls immediately before close while footer retains actions", async () => {
+  it("keeps desktop footer actions in the footer while the header exposes no display-mode control", async () => {
     const previousInnerWidth = window.innerWidth;
     Object.defineProperty(window, "innerWidth", { value: 1280, configurable: true });
 
@@ -4845,7 +4902,6 @@ describe("TerminalModal — mobile layout contract", () => {
         const shortcutToggle = screen.getByTestId("terminal-shortcut-toggle");
         const preferencesToggle = screen.getByTestId("terminal-preferences-toggle");
         const fontSizeValue = screen.getByTestId("terminal-font-size-value");
-        const popoutToggle = screen.getByTestId("terminal-popout-toggle");
         const connectionStatus = footer.querySelector(".terminal-connection-status");
 
         expect(connectionStatus?.textContent).toBe("Disconnected");
@@ -4854,12 +4910,11 @@ describe("TerminalModal — mobile layout contract", () => {
           expect(footer.contains(control)).toBe(true);
           expect(header?.contains(control)).toBe(false);
         }
-        // FN-409: the header carries exactly one presentation control.
-        expect(footer.contains(popoutToggle)).toBe(false);
-        expect(header?.contains(popoutToggle)).toBe(true);
+        // FN-438: no presentation control survives anywhere — neither in the header nor pushed into the footer.
+        expect(footer.querySelector("[data-testid='terminal-popout-toggle']")).toBeNull();
         expect(screen.queryByTestId("terminal-actions")).toBeNull();
         expect(screen.queryByTestId("terminal-workspace-picker")).toBeNull();
-        expectTerminalDisplayModeControlsBeforeClose();
+        expectNoTerminalDisplayModeControls();
         expect(header?.contains(screen.getByTestId("terminal-close-btn"))).toBe(true);
         expect(header?.contains(screen.getByTestId("terminal-tabs"))).toBe(true);
       });
@@ -4871,7 +4926,7 @@ describe("TerminalModal — mobile layout contract", () => {
   it.each([
     ["desktop", 1280],
     ["tablet", 900],
-  ])("keeps populated %s workspace picker before header display-mode controls", async (_label, width) => {
+  ])("keeps the populated %s workspace picker before the header close control", async (_label, width) => {
     const previousInnerWidth = window.innerWidth;
     Object.defineProperty(window, "innerWidth", { value: width, configurable: true });
     fireEvent(window, new Event("resize"));
@@ -4891,8 +4946,9 @@ describe("TerminalModal — mobile layout contract", () => {
         const header = document.querySelector<HTMLElement>(".terminal-header");
         const workspacePicker = screen.getByTestId("terminal-workspace-picker");
         expect(header?.contains(workspacePicker)).toBe(true);
-        expectTerminalDisplayModeControlsBeforeClose();
-        expect(workspacePicker.compareDocumentPosition(screen.getByTestId("terminal-popout-toggle")) & Node.DOCUMENT_POSITION_FOLLOWING)
+        expectNoTerminalDisplayModeControls();
+        // FN-438: the picker is followed by close, which is now the last header child.
+        expect(workspacePicker.compareDocumentPosition(screen.getByTestId("terminal-close-btn")) & Node.DOCUMENT_POSITION_FOLLOWING)
           .toBe(Node.DOCUMENT_POSITION_FOLLOWING);
       });
     } finally {
@@ -5003,9 +5059,9 @@ describe("TerminalModal — mobile layout contract", () => {
     }
   });
 
-  it("puts tablet display-mode controls immediately before close while footer retains actions", async () => {
-    // Tablets retain the desktop detach/re-attach presentation control and tab strip,
-    // while their remaining action controls stay in the shared footer fragment.
+  it("keeps tablet footer actions in the footer while the header exposes no display-mode control", async () => {
+    // FN-438: tablets retain the desktop tab strip and gesture-driven presentation switching, but no
+    // presentation control; their remaining action controls stay in the shared footer fragment.
     const previousInnerWidth = window.innerWidth;
     Object.defineProperty(window, "innerWidth", { value: 900, configurable: true });
     fireEvent(window, new Event("resize"));
@@ -5021,7 +5077,6 @@ describe("TerminalModal — mobile layout contract", () => {
         const shortcutToggle = screen.getByTestId("terminal-shortcut-toggle");
         const preferencesToggle = screen.getByTestId("terminal-preferences-toggle");
         const fontSizeValue = screen.getByTestId("terminal-font-size-value");
-        const popoutToggle = screen.getByTestId("terminal-popout-toggle");
 
         // Footer controls remain in the single shared footer fragment.
         expect(footer.contains(clearBtn)).toBe(true);
@@ -5034,9 +5089,8 @@ describe("TerminalModal — mobile layout contract", () => {
         for (const control of [clearBtn, shortcutToggle, preferencesToggle, fontSizeValue]) {
           expect(header?.contains(control)).toBe(false);
         }
-        expect(footer.contains(popoutToggle)).toBe(false);
-        expect(header?.contains(popoutToggle)).toBe(true);
-        expectTerminalDisplayModeControlsBeforeClose();
+        expect(footer.querySelector("[data-testid='terminal-popout-toggle']")).toBeNull();
+        expectNoTerminalDisplayModeControls();
 
         // No empty .terminal-actions shell renders in the tablet header.
         expect(header?.querySelector(".terminal-actions")).toBeNull();

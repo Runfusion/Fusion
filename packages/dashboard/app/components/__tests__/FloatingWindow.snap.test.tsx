@@ -529,6 +529,90 @@ describe("FloatingWindow snap gestures", () => {
     expect(panel.dataset.snapMode).toBe("floating");
   });
 
+  /*
+  FN-438: `onDragGestureEnd` is the validated end-of-gesture contract the terminal re-pin decision depends on.
+  It must fire exactly once per COMPLETED drag, carry the retained snap mode and the final clamped rectangle,
+  and never fire for an interrupted gesture.
+  */
+  describe("onDragGestureEnd", () => {
+    function renderWithGestureEnd() {
+      const onDragGestureEnd = vi.fn();
+      render(
+        <DashboardWindowManagerProvider>
+          <Landmarks />
+          <FloatingWindow
+            windowKey="gesture-end"
+            title="Gesture"
+            onClose={() => {}}
+            defaultSize={{ width: 600, height: 400 }}
+            minSize={{ width: 320, height: 200 }}
+            onDragGestureEnd={onDragGestureEnd}
+          >
+            body
+          </FloatingWindow>
+        </DashboardWindowManagerProvider>,
+      );
+      return {
+        onDragGestureEnd,
+        panel: screen.getByTestId("floating-window-gesture-end"),
+        handle: screen.getByTestId("floating-window-drag-handle-gesture-end"),
+      };
+    }
+
+    it("fires once per completed drag with the final clamped rectangle", async () => {
+      const { onDragGestureEnd, panel, handle } = renderWithGestureEnd();
+      await waitFor(() => expect(rectOf(panel).width).toBe(600));
+
+      drag(handle, { from: { x: 600, y: 400 }, to: { x: 700, y: 500 }, pointerId: 70 });
+
+      expect(onDragGestureEnd).toHaveBeenCalledTimes(1);
+      const info = onDragGestureEnd.mock.calls[0][0];
+      expect(info.windowKey).toBe("gesture-end");
+      expect(info.moved).toBe(true);
+      expect(info.snapMode).toBe("floating");
+      const painted = rectOf(panel);
+      expect(info.rect.position).toEqual({ x: painted.left, y: painted.top });
+      expect(info.rect.size).toEqual({ width: painted.width, height: painted.height });
+      expect(info.bounds.bottom).toBe(window.innerHeight - FOOTER_HEIGHT);
+    });
+
+    it("reports moved:false and no geometry change for a sub-threshold click", async () => {
+      const { onDragGestureEnd, panel, handle } = renderWithGestureEnd();
+      await waitFor(() => expect(rectOf(panel).width).toBe(600));
+      const before = rectOf(panel);
+
+      drag(handle, { from: { x: 600, y: 400 }, to: { x: 602, y: 402 }, pointerId: 71 });
+
+      expect(onDragGestureEnd).toHaveBeenCalledTimes(1);
+      expect(onDragGestureEnd.mock.calls[0][0].moved).toBe(false);
+      expect(rectOf(panel)).toEqual(before);
+    });
+
+    it("reports the retained snap mode and its full work-area rectangle", async () => {
+      const { onDragGestureEnd, panel, handle } = renderWithGestureEnd();
+      await waitFor(() => expect(rectOf(panel).width).toBe(600));
+
+      drag(handle, { from: { x: 900, y: 300 }, to: { x: 900, y: HEADER_HEIGHT + 1 }, pointerId: 72 });
+
+      expect(panel.dataset.snapMode).toBe("maximized");
+      const info = onDragGestureEnd.mock.calls.at(-1)![0];
+      expect(info.snapMode).toBe("maximized");
+      expect(info.rect.position).toEqual({ x: 0, y: HEADER_HEIGHT });
+      expect(info.rect.size.height).toBe(window.innerHeight - HEADER_HEIGHT - FOOTER_HEIGHT);
+      // A snapped rectangle rests on the bottom bound by construction, which is why an owner must gate on snapMode.
+      expect(info.rect.position.y + info.rect.size.height).toBe(info.bounds.bottom);
+    });
+
+    it("never fires for an interrupted gesture", async () => {
+      const { onDragGestureEnd, panel, handle } = renderWithGestureEnd();
+      await waitFor(() => expect(rectOf(panel).width).toBe(600));
+
+      drag(handle, { from: { x: 600, y: 400 }, to: { x: 4, y: 400 }, pointerId: 73, cancel: true });
+
+      expect(onDragGestureEnd).not.toHaveBeenCalled();
+    });
+  });
+
   it("drops an armed preview when the window closes mid-gesture", async () => {
     const { panel, handle, rerender } = renderWindow();
     await waitFor(() => expect(rectOf(panel).width).toBe(600));

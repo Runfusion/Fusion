@@ -299,7 +299,7 @@ Every non-trivial dashboard modal is hosted by `FloatingWindow`. It uses the phy
 
 These are supported presentation exceptions, not silently unmigrated dialogs:
 
-- `TerminalModal` stays docked in docked mode, including its dock-height control; only floating mode is a `FloatingWindow`, opened at its standard size like every other window.
+- `TerminalModal` has exactly two non-mobile presentations: **pinned** (the default — a fixed-height panel in flow above the bottom bar, which is not a `FloatingWindow`) and **detached** (a `FloatingWindow`, opened at its standard size like every other window). Switching between them is purely a pointer gesture, exactly like moving, resizing, and docking every other dashboard window: drag the pinned terminal's header to pull it out into a window, and drag that window back down until its bottom edge meets the bottom bar to re-pin it. There is no presentation toggle button and no dock-height control — both were removed. Snapping the window to the top or to a screen half never re-pins it.
 - `AgentDetailView` stays embedded for inline presentation, while its modal presentation uses `FloatingWindow`; the inline branch owns no floating geometry.
 - `GitHubImportModal` stays embedded when `useEmbeddedPresentation` resolves embedded presentation. Its `resizePersistEnabled` modal-only gate keeps container-filling imports free of floating chrome; modal presentation uses `FloatingWindow`.
 - `RightDockExpandModal` preserves dock-origin content behavior (`surface: "expand"`) while its expanded shell is a `FloatingWindow`.

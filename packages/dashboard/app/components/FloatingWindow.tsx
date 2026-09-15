@@ -27,6 +27,7 @@ import {
   useDashboardWindowCascade,
   useDashboardWindowFocusRestoring,
   useDashboardWindowSurface,
+  type DashboardWindowBounds,
   type DashboardWindowSurfaceGroup,
 } from "../context/DashboardWindowManagerContext";
 import {
@@ -146,6 +147,33 @@ export interface FloatingWindowProps {
   id to the shared dialog so screen readers retain that live name instead of a stale seed title.
   */
   ariaLabelledBy?: string;
+  /*
+  FNXC:FloatingWindowSnap 2026-09-15-22:32:
+  FN-438: the validated end-of-gesture fact, for owners whose own presentation depends on where a drag actually
+  finished (today: the terminal, which re-pins when its bottom edge lands on the bottom bar).
+
+  An external observer CANNOT derive this by measuring the DOM. `handlePointerMove` applies positions through
+  `requestAnimationFrame`, and `handlePointerUp` begins by CANCELLING the pending frame before committing the
+  final placement, so any rectangle read before that commit — including one read from a capture-phase document
+  listener, which runs first — is stale on a fast gesture. That staleness is exactly the reported "re-pinning
+  only works sometimes" defect. This callback is therefore the single source of truth for gesture end: it fires
+  once, at the very end of `handlePointerUp`, and carries the retained snap mode plus the final CLAMPED rect.
+
+  It is deliberately NOT emitted on `pointercancel`, on unmount teardown, or by resize gestures: none of those
+  validate a placement. Owners that do not pass it observe no behavior change whatsoever.
+  */
+  onDragGestureEnd?: (info: FloatingWindowDragGestureEnd) => void;
+}
+
+export interface FloatingWindowDragGestureEnd {
+  windowKey: string;
+  /** True only when the gesture travelled past the shared click threshold, so a click reports `false`. */
+  moved: boolean;
+  /** The snap mode retained by this gesture (`"floating"` when no zone was armed). */
+  snapMode: FloatingWindowSnapMode;
+  /** Final clamped rectangle, in the same coordinate space as `bounds`. */
+  rect: FloatingWindowRect;
+  bounds: DashboardWindowBounds;
 }
 
 const DEFAULT_MIN_WIDTH = 360;
@@ -197,6 +225,7 @@ export function FloatingWindow({
   surfaceGroup,
   ariaLabel,
   ariaLabelledBy,
+  onDragGestureEnd,
 }: FloatingWindowProps) {
   const { t } = useTranslation("app");
   const availableBounds = useDashboardWindowBounds();
@@ -290,6 +319,13 @@ export function FloatingWindow({
   snapModeRef.current = snapMode;
   const boundsRef = useRef(availableBounds);
   boundsRef.current = availableBounds;
+  /*
+  FNXC:FloatingWindowSnap 2026-09-15-22:32:
+  FN-438: held in a ref so an owner may pass an inline callback without re-creating `handleDragPointerDown` and
+  invalidating an in-flight gesture's captured listeners.
+  */
+  const onDragGestureEndRef = useRef(onDragGestureEnd);
+  onDragGestureEndRef.current = onDragGestureEnd;
   const geometryRef = useRef<FloatingWindowRect>({ position, size });
   geometryRef.current = { position, size };
 
@@ -624,6 +660,24 @@ export function FloatingWindow({
         document.body.style.userSelect = previousUserSelect;
         detachListeners();
         dragTeardownRef.current = null;
+        /*
+        FNXC:FloatingWindowSnap 2026-09-15-22:32:
+        FN-438: publish the VALIDATED end of gesture, last, after the retained zone or final position has been
+        applied above. Everything an owner needs is computed here rather than measured from the DOM, because the
+        pending animation frame was just cancelled and the committed geometry is not painted yet.
+        */
+        if (onDragGestureEndRef.current) {
+          const bounds = boundsRef.current;
+          const committedRect = (committedZone ? resolveSnapRect(committedZone, bounds) : null)
+            ?? { position: clampFloatingWindowPosition(latest, activeSize, bounds), size: activeSize };
+          onDragGestureEndRef.current({
+            windowKey,
+            moved,
+            snapMode: committedZone ?? "floating",
+            rect: committedRect,
+            bounds,
+          });
+        }
       }
       function handlePointerCancel(cancelEvent: PointerEvent) {
         if (cancelEvent.pointerId !== pointerId) return;
@@ -656,7 +710,7 @@ export function FloatingWindow({
       captureTarget.addEventListener("pointerup", handlePointerUp);
       captureTarget.addEventListener("pointercancel", handlePointerCancel);
     },
-    [applyRect, applySnapMode, bringToFront, markUserAdjusted, resolvedMinSize, sheetPresentation, windowSurface.surfaceActive]
+    [applyRect, applySnapMode, bringToFront, markUserAdjusted, resolvedMinSize, sheetPresentation, windowKey, windowSurface.surfaceActive]
   );
 
   const handlePanelPointerDown = useCallback(

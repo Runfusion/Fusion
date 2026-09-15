@@ -153,14 +153,27 @@ FN-7897: reserve space for the fixed ExecutorStatusBar footer when it is rendere
 FNXC:TerminalLayout 2026-09-15-21:04:
 FN-434: the pinned panel's top grip detaches the terminal into a floating window instead of resizing it, so it
 carries a grab cursor rather than `ns-resize`. Its bar keeps the same shape operators already recognize.
+
+FNXC:TerminalLayout 2026-09-15-22:32:
+FN-438 pulls the hit area fully INSIDE the panel. The previous negative top offset pushed most of this strip
+above the panel's own top edge, into the application content behind it, so a press aimed at the grip usually
+landed on whatever sat above the terminal. `.terminal-header` now carries the same detach gesture, so this grip
+is the secondary affordance and must not steal pointer events from its neighbours.
+
+FNXC:TerminalLayout 2026-09-16-14:22:
+FN-438 review fix: the hit area is clamped to the painted bar itself (`var(--space-xs)`, exactly the
+`::before` offset plus its thickness). A taller absolutely positioned band sits above the statically
+positioned `.terminal-header` and swallowed the pointer over the top ~45% of every header control (tabs, tab
+close, workspace picker, close), turning a tab click into nothing and a 6px twitch into an unwanted detach.
+Since the header now arms the same gesture, nothing is lost by keeping this target bar-sized.
 */
 .terminal-below-drag-handle {
   position: absolute;
-  top: calc(var(--space-sm) * -1);
+  top: 0;
   left: 0;
   right: 0;
   z-index: 2;
-  height: calc(var(--space-md) + var(--space-sm));
+  height: var(--space-xs);
   cursor: grab;
   touch-action: none;
 }
@@ -267,24 +280,10 @@ stopPropagation in renderTerminalTabStrip.
 }
 
 /*
-FNXC:TerminalModalControls 2026-07-31-22:19:
-Tablets start docked, so the header pop-out control needs the same touch-sized reach without
-changing its established 14px icon or toolbar layout. Its pseudo-element only enlarges the button
-hit area; it is not a second terminal control.
+FNXC:TerminalModalControls 2026-09-15-22:32:
+FN-438 removed the header pop-out/dock button, so its tablet touch-target enlargement and its icon-only chrome
+reset are gone with it. Presentation is switched by dragging the header or the window, never by a control.
 */
-.modal.terminal-modal.terminal-modal--tablet .terminal-clear-btn.terminal-clear-btn--icon[data-testid="terminal-popout-toggle"] {
-  position: relative;
-}
-
-.modal.terminal-modal.terminal-modal--tablet .terminal-clear-btn.terminal-clear-btn--icon[data-testid="terminal-popout-toggle"]::before {
-  content: "";
-  position: absolute;
-  inline-size: var(--modal-resize-touch-target);
-  block-size: var(--modal-resize-touch-target);
-  inset-inline-start: 50%;
-  inset-block-start: 50%;
-  transform: translate(-50%, -50%);
-}
 
 .terminal-tab {
   display: flex;
@@ -681,22 +680,6 @@ The worktree listbox must escape the mobile terminal header's clipped overflow. 
 .terminal-close:hover {
   color: var(--text);
   background: var(--card-hover);
-}
-
-/*
-FNXC:Terminal 2026-06-23-22:12:
-The terminal header pop-out/dock affordance is an icon-only utility control. It should not carry button background or border chrome; keep hover/focus feedback only through color/focus ring so it reads like the surrounding header utility icons.
-*/
-.terminal-clear-btn.terminal-clear-btn--icon[data-testid="terminal-popout-toggle"] {
-  background: transparent;
-  border: none;
-  box-shadow: none;
-}
-
-.terminal-clear-btn.terminal-clear-btn--icon[data-testid="terminal-popout-toggle"]:hover {
-  background: transparent;
-  border: none;
-  color: var(--text);
 }
 
 .terminal-content {

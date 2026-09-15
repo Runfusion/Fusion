@@ -22,8 +22,6 @@ import {
   Plus,
   Keyboard,
   Settings,
-  Maximize2,
-  Minimize2,
   ChevronDown,
   FolderGit2,
   FolderRoot,
@@ -35,7 +33,9 @@ import { useWorkspaces } from "../hooks/useWorkspaces";
 import { getViewportMode, isMobileViewport } from "../hooks/useViewportMode";
 import { useDrawerDismissGesture } from "../hooks/useDrawerDismissGesture";
 import { FloatingWindow, FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT } from "./FloatingWindow";
-import { DashboardWindowSurfaceRoot, useDashboardWindowBounds } from "../context/DashboardWindowManagerContext";
+import type { FloatingWindowDragGestureEnd } from "./FloatingWindow";
+import { FLOATING_WINDOW_DRAG_THRESHOLD_PX } from "./floatingWindowGeometry";
+import { DashboardWindowSurfaceRoot } from "../context/DashboardWindowManagerContext";
 import { ModalCloseButton } from "./ModalCloseButton";
 import { ViewDrawerHandle, resolveDrawerPresentation } from "./ViewDrawer";
 import { ViewLayoutContent, ViewLayoutFooter, ViewLayoutHeader } from "./ViewLayout";
@@ -125,18 +125,36 @@ function resolveTerminalBelowHeight(): number {
 FNXC:TerminalLayout 2026-09-15-21:04:
 FN-434: a drag on the pinned grip must travel past this threshold before it detaches, so a plain click on the
 grip leaves the terminal pinned.
+
+FNXC:TerminalLayout 2026-09-15-22:32:
+FN-438: the pinned HEADER is now the primary detach handle (the 12px grip alone was almost unhittable, and the
+operator reported that dragging the title bar upward did nothing). Pinned detach and floating drag are therefore
+the SAME gesture on the SAME element — `.terminal-header`, which the floating presentation already names through
+`dragHandleSelector` — so the threshold is the shared `FLOATING_WINDOW_DRAG_THRESHOLD_PX` rather than a second,
+larger terminal-local value that made the two presentations feel inconsistent.
 */
-const TERMINAL_DETACH_DRAG_THRESHOLD_PX = 16;
+const TERMINAL_DETACH_DRAG_THRESHOLD_PX = FLOATING_WINDOW_DRAG_THRESHOLD_PX;
 
 /*
 FNXC:TerminalLayout 2026-09-15-21:04:
-FN-434 re-pin contact geometry. `EXECUTOR_FOOTER_HEIGHT_PX` mirrors `--executor-footer-height` in
-TerminalModal.css; `TERMINAL_REPIN_MOVE_MIN_PX` matches FloatingWindow's 6px click threshold so a click is never
-a move; `TERMINAL_REPIN_CONTACT_PX` is the contact tolerance between the window's bottom edge and the footer line.
+FN-434 re-pin contact geometry: `TERMINAL_REPIN_CONTACT_PX` is the contact tolerance between the window's bottom
+edge and the footer line.
+
+FNXC:TerminalLayout 2026-09-15-22:32:
+FN-438 retires `EXECUTOR_FOOTER_HEIGHT_PX` and `TERMINAL_REPIN_MOVE_MIN_PX` with the DOM-measuring re-pin
+listener that owned them: the contact line and the "did it actually move" fact now both arrive from
+`FloatingWindow`'s validated `onDragGestureEnd` payload.
 */
-const EXECUTOR_FOOTER_HEIGHT_PX = 36;
-const TERMINAL_REPIN_MOVE_MIN_PX = 6;
 const TERMINAL_REPIN_CONTACT_PX = 24;
+
+/*
+FNXC:TerminalLayout 2026-09-15-22:32:
+FN-438: a press on a real control inside the pinned header must activate that control, never start a detach.
+This is deliberately the SAME selector `FloatingWindow.handleDragPointerDown` uses, so the pinned and floating
+presentations suppress exactly the same targets.
+*/
+const TERMINAL_HEADER_INTERACTIVE_SELECTOR =
+  "button, a, input, select, textarea, [contenteditable=\"true\"], [role=\"button\"], [role=\"link\"]";
 /*
 FNXC:TerminalLayout 2026-09-15-07:57:
 FN-409: the detached terminal opens at the same standard window size as a task pop-out and a detached chat.
@@ -582,8 +600,11 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
   const [stickyModifier, setStickyModifier] = useState<null | "ctrl" | "alt">(null);
   const [pendingInitialCommandGeneration, setPendingInitialCommandGeneration] = useState(0);
   const [displayMode, setDisplayModeState] = useState<TerminalDisplayMode>(() => readTerminalDisplayMode(projectId));
-  // FNXC:TerminalLayout 2026-09-15-21:04: FN-434 re-pin contact line — `availableBounds.bottom` IS the footer top.
-  const windowBounds = useDashboardWindowBounds();
+  /*
+  FNXC:TerminalLayout 2026-09-15-22:32:
+  FN-438: the re-pin contact line arrives inside `onDragGestureEnd`'s validated payload, so the terminal no
+  longer subscribes to window bounds for that decision.
+  */
   const [isMobileTerminal, setIsMobileTerminal] = useState(() => isTerminalMobileViewport());
   const [isTabletTerminal, setIsTabletTerminal] = useState(() => getViewportMode() === "tablet");
   const [tabsOverflow, setTabsOverflow] = useState(false);
@@ -749,9 +770,26 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
   same capture/teardown pattern the retired resize handler used (pointer capture on the grip, pointerId filtering,
   restored `user-select`, `dragTeardownRef` for unmount/close mid-drag). Detaching requires travelling past
   TERMINAL_DETACH_DRAG_THRESHOLD_PX in EITHER vertical direction, so a plain click on the grip changes nothing.
+
+  FNXC:TerminalLayout 2026-09-15-22:32:
+  FN-438 arms this SAME handler from `.terminal-header` itself, by parity with the detached presentation's
+  `dragHandleSelector=".terminal-header"`: the operator reported that dragging the pinned title bar upward did
+  nothing, because only the 12px grip carried the gesture. The header is full of real controls, so a press is
+  retained only when its target is neither an interactive element (same suppression selector as
+  `FloatingWindow.handleDragPointerDown`) nor a tab surface; `preventDefault()` is called only after the press is
+  retained, so a suppressed press keeps native activation and focus.
   */
-  const handlePinnedDetachPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!isBelowMode) return;
+  const handlePinnedDetachPointerDown = useCallback((event: ReactPointerEvent<HTMLElement>) => {
+    if (!isBelowMode || embedded || isMobileTerminal) return;
+    const target = event.target as HTMLElement | null;
+    /*
+    FNXC:TerminalLayout 2026-09-15-22:32:
+    FN-438: the grip itself carries `role="button"` for assistive labelling, so the interactive-suppression probe
+    must never reject the element the gesture is armed on — only a real control NESTED inside it.
+    */
+    const interactive = target?.closest(TERMINAL_HEADER_INTERACTIVE_SELECTOR);
+    if (interactive && interactive !== event.currentTarget) return;
+    if (target?.closest(".terminal-tab, .terminal-mobile-tabs")) return;
     event.preventDefault();
     const captureTarget = event.currentTarget;
     const pointerId = event.pointerId;
@@ -793,7 +831,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
     captureTarget.addEventListener("pointermove", handlePointerMove);
     captureTarget.addEventListener("pointerup", handlePointerUp);
     captureTarget.addEventListener("pointercancel", handlePointerUp);
-  }, [isBelowMode, setDisplayMode]);
+  }, [embedded, isBelowMode, isMobileTerminal, setDisplayMode]);
 
   /**
    * Fit xterm and publish cols/rows for a specific terminal session.
@@ -890,66 +928,32 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
   FNXC:TerminalLayout 2026-09-15-21:04:
   FN-434 re-pins the detached terminal when the operator DRAGS it back down onto the bottom bar.
 
-  (a) The contact line is `availableBounds.bottom`, which `resolveDashboardWindowBounds` already defines as
-  `footerRect.top`; no separate DOM measurement of the footer is needed. Without a window-manager provider the
-  bounds fall back to the viewport, so the footer height is subtracted explicitly there.
+  (a) The contact line is the window bounds' own `bottom`, which `resolveDashboardWindowBounds` already defines
+  as `footerRect.top`; no separate DOM measurement of the footer is needed.
 
-  (b) The trigger is a COMPLETED POINTER GESTURE on the panel, deliberately NOT
-  `FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT` and not a global `pointerup`: that event is published from a layout
-  effect on mount and on every programmatic re-clamp, a SNAPPED window is sized to the work area so its bottom
-  edge sits on the contact line permanently, and a plain click moves nothing. Any of those three would re-pin
-  instantly and make detaching impossible, so all three are excluded — the window must be genuinely floating at
-  both ends of the gesture and must actually have moved.
+  FNXC:TerminalLayout 2026-09-15-22:32:
+  FN-438 fixes the "it only re-pins sometimes" defect and names its root cause. The retired implementation
+  listened for `pointerdown`/`pointerup` on `document` in the CAPTURE phase and measured
+  `panel.getBoundingClientRect()` itself. Capture-phase listeners run BEFORE FloatingWindow's own handler, which
+  begins by cancelling the pending `requestAnimationFrame` and only then commits the final position — so on a
+  quick gesture the measured bottom edge was the second-to-last frame's, and a panel the operator had genuinely
+  dragged onto the bottom bar was judged to be above it. The decision now consumes `onDragGestureEnd`, the
+  validated end-of-gesture payload FloatingWindow publishes after committing, so it never measures the DOM.
+
+  (b) The three FN-434 exclusions are preserved, each now a FIELD of that payload rather than a DOM probe:
+  mount and programmatic re-clamp publish geometry with no gesture, so they never reach this callback at all (it
+  is emitted only from a completed drag, never from `FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT`); a SNAPPED window
+  fills the work area, so its bottom edge rests on the contact line permanently, hence `snapMode === "floating"`;
+  and a click moves nothing, hence `moved === true`.
   */
-  const repinGestureRef = useRef<{ pointerId: number; startBottom: number } | null>(null);
-  useEffect(() => {
-    if (!isFloatingMode || !auxEffectsActive || isMobileTerminal || embedded) {
-      repinGestureRef.current = null;
-      return;
-    }
-    const panel = modalRef.current?.closest(".floating-window") as HTMLElement | null;
-    if (!panel) return;
-
-    const repinLineY = () => {
-      const viewportLine = window.innerHeight - (footerVisible ? EXECUTOR_FOOTER_HEIGHT_PX : 0);
-      return Math.min(windowBounds.bottom, viewportLine);
-    };
-
-    const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target as Node | null;
-      if (!target || !panel.contains(target)) return;
-      if (panel.dataset.snapMode !== "floating") {
-        repinGestureRef.current = null;
-        return;
-      }
-      repinGestureRef.current = { pointerId: event.pointerId, startBottom: panel.getBoundingClientRect().bottom };
-    };
-
-    const handlePointerUp = (event: PointerEvent) => {
-      const gesture = repinGestureRef.current;
-      if (!gesture || gesture.pointerId !== event.pointerId) return;
-      repinGestureRef.current = null;
-      if (panel.dataset.snapMode !== "floating") return;
-      const endBottom = panel.getBoundingClientRect().bottom;
-      if (Math.abs(endBottom - gesture.startBottom) < TERMINAL_REPIN_MOVE_MIN_PX) return;
-      if (endBottom < repinLineY() - TERMINAL_REPIN_CONTACT_PX) return;
-      setDisplayMode("below");
-    };
-
-    const handlePointerCancel = (event: PointerEvent) => {
-      if (repinGestureRef.current?.pointerId === event.pointerId) repinGestureRef.current = null;
-    };
-
-    document.addEventListener("pointerdown", handlePointerDown, true);
-    document.addEventListener("pointerup", handlePointerUp, true);
-    document.addEventListener("pointercancel", handlePointerCancel, true);
-    return () => {
-      repinGestureRef.current = null;
-      document.removeEventListener("pointerdown", handlePointerDown, true);
-      document.removeEventListener("pointerup", handlePointerUp, true);
-      document.removeEventListener("pointercancel", handlePointerCancel, true);
-    };
-  }, [auxEffectsActive, embedded, footerVisible, isFloatingMode, isMobileTerminal, setDisplayMode, windowBounds.bottom]);
+  const handleFloatingDragGestureEnd = useCallback((info: FloatingWindowDragGestureEnd) => {
+    if (embedded || isMobileTerminal || !auxEffectsActive) return;
+    if (!info.moved || info.snapMode !== "floating") return;
+    const bottomEdge = info.rect.position.y + info.rect.size.height;
+    if (!Number.isFinite(bottomEdge) || !Number.isFinite(info.bounds.bottom)) return;
+    if (bottomEdge < info.bounds.bottom - TERMINAL_REPIN_CONTACT_PX) return;
+    setDisplayMode("below");
+  }, [auxEffectsActive, embedded, isMobileTerminal, setDisplayMode]);
 
   // Bump open generation whenever the modal opens so the initialCommand
   // effect re-evaluates after a close/reopen cycle (deps may be identical).
@@ -2492,18 +2496,6 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
     setFontSize((current) => clampTerminalFontSize(current - 1));
   }, [setFontSize]);
 
-  /*
-  FNXC:TerminalModalControls 2026-09-15-07:57:
-  FN-409: the only remaining presentation control toggles pinned <-> detached.
-
-  FNXC:TerminalModalControls 2026-09-15-21:04:
-  FN-434: re-attaching no longer restores any stored height — the pinned panel is a fixed height, so the toggle is a
-  pure presentation switch in both directions.
-  */
-  const handleToggleDisplayMode = useCallback(() => {
-    setDisplayMode(displayMode === "floating" ? "below" : "floating");
-  }, [displayMode, setDisplayMode]);
-
   const handlePreferenceFontSizeChange = useCallback(
     (value: string) => {
       const parsed = Number.parseInt(value, 10);
@@ -2782,26 +2774,14 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
   );
 
   /*
-  FNXC:TerminalModalControls 2026-09-15-07:57:
-  FN-409: the terminal now has exactly ONE presentation control in the top toolbar, immediately left of close —
-  detach / re-attach. The pin toggle is gone because the pinned presentation is the default and the only
-  non-floating non-mobile one, so a pin affordance had no second state left to select.
-  Keep this shared fragment at one header render site; mobile and embedded terminals render neither.
+  FNXC:TerminalModalControls 2026-09-15-22:32:
+  FN-438 REMOVES the last presentation control from the terminal toolbar. Switching between pinned and detached
+  is now purely a pointer gesture — drag the pinned header out, drag the window's bottom edge back onto the
+  bottom bar — exactly like moving, resizing, and docking every other dashboard window, which expose no button
+  either. The operator asked for the button's removal explicitly; do not reintroduce a button, menu entry, or any
+  other visible toggle affordance here. No empty container or orphaned spacing is left behind: the header renders
+  tabs → workspace picker → status title → close.
   */
-  const terminalDisplayModeControls = (
-    <>
-      <button
-        className="terminal-clear-btn terminal-clear-btn--shortcut terminal-clear-btn--icon"
-        onClick={handleToggleDisplayMode}
-        data-testid="terminal-popout-toggle"
-        title={displayMode === "floating" ? t("terminal.dockTerminal", "Dock terminal") : t("terminal.popOutTerminal", "Pop out terminal")}
-        aria-label={displayMode === "floating" ? t("terminal.dockTerminal", "Dock terminal") : t("terminal.popOutTerminal", "Pop out terminal")}
-        aria-pressed={displayMode === "floating"}
-      >
-        {displayMode === "floating" ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-      </button>
-    </>
-  );
 
   /*
   FNXC:TerminalModalControls 2026-08-01-03:48:
@@ -2941,7 +2921,16 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
         )}
         {/* Header — on mobile (≤768px) use compact selector/actions;
             .terminal-title is hidden; action button labels are hidden (icons only) */}
-        <ViewLayoutHeader className="terminal-header">
+        {/*
+        FNXC:TerminalLayout 2026-09-15-22:32:
+        FN-438: in the pinned presentation the header IS the detach handle, mirroring the detached presentation's
+        `dragHandleSelector=".terminal-header"`. Mobile and embedded terminals arm nothing, because neither owns
+        its own presentation.
+        */}
+        <ViewLayoutHeader
+          className="terminal-header"
+          onPointerDown={!embedded && !isMobileTerminal && isBelowMode ? handlePinnedDetachPointerDown : undefined}
+        >
           {/*
           FNXC:TerminalModalControls 2026-07-31-22:19:
           Tablet floating terminals need a reserved, real pointer target because the flexing tab
@@ -3098,14 +3087,12 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
           FNXC:TerminalModalControls 2026-09-15-07:57:
           Every non-embedded terminal has exactly one modal-close control, rendered after the
           tab region (including its new-terminal affordance), optional workspace picker, status
-          title, and the non-mobile detach/re-attach control. Keeping one shared final render site makes
-          the close-after-plus, far-right contract structural for desktop, tablet,
+          title, and — since FN-438 removed the detach/re-attach button — nothing else. Keeping one shared final
+          render site makes the close-after-plus, far-right contract structural for desktop, tablet,
           ResizeObserver overflow, and mobile.
           Mobile keeps the corner class so its explicit flex order remains last; embedded terminals
           intentionally render no modal-close control because their parent owns dismissal.
           */}
-          {!embedded && !isMobileTerminal && terminalDisplayModeControls}
-
           {!embedded && !mobileDrawer && (
             <ModalCloseButton
               className={`terminal-close${isMobileTerminal ? " terminal-close--corner" : ""}`}
@@ -3564,6 +3551,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
       raiseToFrontSignal={focusNonce}
       hideHeader
       dragHandleSelector=".terminal-header"
+      onDragGestureEnd={handleFloatingDragGestureEnd}
       suspendGeometryPersistenceOnMobile
       suspendGeometryPersistenceOnShortViewport
       ariaLabel={t("terminal.title", "Terminal")}

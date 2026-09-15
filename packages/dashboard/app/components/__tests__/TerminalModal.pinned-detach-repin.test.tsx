@@ -172,6 +172,33 @@ function dragPinnedHandle(deltaY: number, pointerId = 1) {
   fireEvent.pointerUp(handle, { pointerId, clientY: 400 + deltaY });
 }
 
+/*
+FN-438: the pinned HEADER itself is the primary detach handle, so the gesture is replayed on `.terminal-header`
+(optionally starting on a specific descendant, to prove interactive targets are suppressed).
+*/
+function dragPinnedHeader(deltaY: number, options?: { pointerId?: number; target?: HTMLElement }) {
+  const pointerId = options?.pointerId ?? 21;
+  const header = screen.getByTestId("terminal-modal").querySelector(".terminal-header") as HTMLElement;
+  const target = options?.target ?? header;
+  prepareCapture(header);
+  fireEvent.pointerDown(target, { pointerId, pointerType: "mouse", button: 0, clientX: 500, clientY: 400 });
+  fireEvent.pointerMove(header, { pointerId, pointerType: "mouse", clientX: 500, clientY: 400 + deltaY });
+  fireEvent.pointerUp(header, { pointerId, pointerType: "mouse", clientX: 500, clientY: 400 + deltaY });
+}
+
+/*
+FN-438: the re-pin affordance is the gesture itself (the header button is gone), so every test that used to
+click `terminal-popout-toggle` to re-attach now drags the window's bottom edge onto the bottom bar. The travel is
+deliberately larger than the viewport so the clamp lands the bottom edge exactly on the contact line.
+*/
+function repinByFooterContact(panel: HTMLElement, pointerId = 81) {
+  const header = panel.querySelector(".terminal-header") as HTMLElement;
+  prepareCapture(header);
+  fireEvent.pointerDown(header, { pointerId, pointerType: "mouse", button: 0, clientX: 600, clientY: 300 });
+  fireEvent.pointerMove(header, { pointerId, pointerType: "mouse", clientX: 600, clientY: 300 + window.innerHeight });
+  fireEvent.pointerUp(header, { pointerId, pointerType: "mouse", clientX: 600, clientY: 300 + window.innerHeight });
+}
+
 /** Full pointer gesture on the floating panel: press, move the panel's rectangle, release. */
 function moveFloatingPanel(panel: HTMLElement, from: DOMRect, to: DOMRect, pointerId = 5) {
   const header = panel.querySelector(".terminal-header") as HTMLElement;
@@ -254,10 +281,51 @@ describe("pinned terminal detach / footer-contact re-pin", () => {
     renderTerminal("detach-threshold");
     await screen.findByTestId("terminal-below-host");
 
-    dragPinnedHandle(8);
+    dragPinnedHandle(4);
 
     expect(screen.getByTestId("terminal-modal")).toHaveClass("terminal-modal--below");
     expect(storedMode("detach-threshold")).toBe("below");
+  });
+
+  /*
+  FN-438 symptom 1: dragging the pinned TITLE BAR upward did nothing at all, because only the grip armed the
+  gesture. The header must now detach exactly like the grip.
+  */
+  it("detaches when the pinned header itself is dragged upward", async () => {
+    renderTerminal("detach-header");
+    await screen.findByTestId("terminal-below-host");
+
+    dragPinnedHeader(-40);
+
+    await waitFor(() => expect(screen.getByTestId("terminal-modal")).toHaveClass("terminal-modal--floating"));
+    expect(storedMode("detach-header")).toBe("floating");
+  });
+
+  /* (a) The shared 6px click threshold applies to the header too: a 4px press stays a click. */
+  it("keeps the terminal pinned for a header drag under the shared click threshold", async () => {
+    renderTerminal("detach-header-threshold");
+    await screen.findByTestId("terminal-below-host");
+
+    dragPinnedHeader(-4);
+
+    expect(screen.getByTestId("terminal-modal")).toHaveClass("terminal-modal--below");
+    expect(storedMode("detach-header-threshold")).toBe("below");
+  });
+
+  /* (c) Header controls and tab surfaces keep their own behavior: a press there never detaches. */
+  it("never detaches when the header gesture starts on a control or a tab", async () => {
+    renderTerminal("detach-header-controls");
+    await screen.findByTestId("terminal-below-host");
+
+    dragPinnedHeader(-40, { pointerId: 31, target: screen.getByTestId("terminal-close-btn") });
+    expect(storedMode("detach-header-controls")).toBe("below");
+
+    const tabSurface = screen.getByTestId("terminal-modal").querySelector(".terminal-tab") as HTMLElement;
+    expect(tabSurface).not.toBeNull();
+    dragPinnedHeader(-40, { pointerId: 32, target: tabSurface });
+    expect(storedMode("detach-header-controls")).toBe("below");
+
+    expect(screen.getByTestId("terminal-modal")).toHaveClass("terminal-modal--below");
   });
 
   /* (b)+(c) Detach on drag, then re-pin, with the live xterm element following the current container each time. */
@@ -284,7 +352,7 @@ describe("pinned terminal detach / footer-contact re-pin", () => {
     const refreshBaseline = liveXterm()!.refresh.mock.calls.length;
     const fitBaseline = mockFit.mock.calls.length;
 
-    fireEvent.click(screen.getByTestId("terminal-popout-toggle"));
+    repinByFooterContact(screen.getByTestId("floating-window-terminal-detach-drag"));
 
     await waitFor(() => expect(screen.getByTestId("terminal-below-host")).toBeInTheDocument());
     await waitFor(() => {
@@ -296,18 +364,24 @@ describe("pinned terminal detach / footer-contact re-pin", () => {
     expect(mockFit.mock.calls.length).toBeGreaterThan(fitBaseline);
   });
 
-  /* (d) A real move that stops above the footer line must NOT re-pin. */
+  /*
+  (d) A real move that stops above the footer line must NOT re-pin. FN-438 asserts the committed rectangle
+  genuinely ends clear of the contact line, so this counter-proof cannot pass by accident.
+  */
   it("keeps the window detached when the gesture ends above the footer line", async () => {
     renderTerminal("repin-above", { mode: "floating" });
     const panel = await screen.findByTestId("floating-window-terminal-repin-above");
+    const header = panel.querySelector(".terminal-header") as HTMLElement;
+    prepareCapture(header);
 
-    moveFloatingPanel(
-      panel,
-      domRect({ left: 200, top: 100, right: 1000, bottom: 500 }),
-      domRect({ left: 200, top: 200, right: 1000, bottom: 600 }),
-    );
+    // Travel upward, away from the bottom bar, but not far enough to arm the top band.
+    fireEvent.pointerDown(header, { pointerId: 61, pointerType: "mouse", button: 0, clientX: 600, clientY: 400 });
+    fireEvent.pointerMove(header, { pointerId: 61, pointerType: "mouse", clientX: 600, clientY: 360 });
+    fireEvent.pointerUp(header, { pointerId: 61, pointerType: "mouse", clientX: 600, clientY: 360 });
 
     expect(panel.dataset.snapMode).toBe("floating");
+    const committedBottom = Number.parseFloat(panel.style.top) + Number.parseFloat(panel.style.height);
+    expect(committedBottom).toBeLessThan(window.innerHeight - FOOTER_HEIGHT - 24);
     expect(storedMode("repin-above")).toBe("floating");
     expect(screen.queryByTestId("terminal-below-host")).toBeNull();
   });
@@ -329,6 +403,43 @@ describe("pinned terminal detach / footer-contact re-pin", () => {
     expect(screen.getByTestId("terminal-modal")).toHaveClass("terminal-modal--below");
   });
 
+  /*
+  FN-438 symptom 2 reproduction. The panel's DOM rectangle is left STALE for the whole gesture (it keeps the
+  pre-drag value), and the pending animation frame is never flushed, exactly like a quick real drag where
+  `handlePointerUp` cancels the frame before the last move was painted. The retired capture-phase listener
+  measured that stale rectangle and refused to re-pin; the validated `onDragGestureEnd` payload re-pins anyway.
+  */
+  it("re-pins on a fast gesture whose pending frame was never painted", async () => {
+    const pendingFrames: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      pendingFrames.push(callback);
+      return pendingFrames.length;
+    });
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+
+    renderTerminal("repin-stale-frame", { mode: "floating" });
+    const panel = await screen.findByTestId("floating-window-terminal-repin-stale-frame");
+
+    // The DOM rectangle stays where the window STARTED, for the entire gesture.
+    const stale = domRect({ left: 200, top: 100, right: 1000, bottom: 500 });
+    panelRect = stale;
+    const header = panel.querySelector(".terminal-header") as HTMLElement;
+    prepareCapture(header);
+
+    // Travel far enough downward that the committed rect lands on the footer line.
+    const paintedTop = Number.parseFloat(panel.style.top);
+    const paintedHeight = Number.parseFloat(panel.style.height);
+    const footerLine = window.innerHeight - FOOTER_HEIGHT;
+    const travel = footerLine - (paintedTop + paintedHeight);
+
+    fireEvent.pointerDown(header, { pointerId: 41, pointerType: "mouse", button: 0, clientX: 600, clientY: 300 });
+    fireEvent.pointerMove(header, { pointerId: 41, pointerType: "mouse", clientX: 600, clientY: 300 + travel });
+    fireEvent.pointerUp(header, { pointerId: 41, pointerType: "mouse", clientX: 600, clientY: 300 + travel });
+
+    await waitFor(() => expect(storedMode("repin-stale-frame")).toBe("below"));
+    expect(screen.getByTestId("terminal-below-host")).toBeInTheDocument();
+  });
+
   /* (k) Mounting the floating window publishes geometry with no gesture at all: it must stay detached. */
   it("stays detached when the floating window mounts already touching the footer line", async () => {
     const footerLine = window.innerHeight - FOOTER_HEIGHT;
@@ -343,20 +454,29 @@ describe("pinned terminal detach / footer-contact re-pin", () => {
     expect(screen.queryByTestId("terminal-below-host")).toBeNull();
   });
 
-  /* (l) A snapped window sits on the footer line by construction; a full gesture must still not re-pin. */
-  it.each(["bottom", "maximized"])("stays detached for a %s-snapped window resting on the footer line", async (snapMode) => {
-    const projectId = `repin-snap-${snapMode}`;
+  /*
+  (l) A snapped window fills the work area, so its bottom edge rests on the footer line by construction. FN-438
+  drives a REAL docking gesture for each anchored mode (the retired implementation read `data-snap-mode` from the
+  DOM, which a test could set by hand and which proved nothing about the committed mode).
+  */
+  it.each([
+    { mode: "maximized", to: { x: 700, y: HEADER_HEIGHT + 1 } },
+    { mode: "left", to: { x: 4, y: 400 } },
+    { mode: "right", to: { x: window.innerWidth - 4, y: 400 } },
+  ])("stays detached for a $mode-snapped window resting on the footer line", async ({ mode, to }) => {
+    const projectId = `repin-snap-${mode}`;
     renderTerminal(projectId, { mode: "floating" });
     const panel = await screen.findByTestId(`floating-window-terminal-${projectId}`);
-    panel.dataset.snapMode = snapMode;
+    const header = panel.querySelector(".terminal-header") as HTMLElement;
+    prepareCapture(header);
 
-    const footerLine = window.innerHeight - FOOTER_HEIGHT;
-    moveFloatingPanel(
-      panel,
-      domRect({ left: 0, top: HEADER_HEIGHT, right: 1440, bottom: footerLine - 100 }),
-      domRect({ left: 0, top: HEADER_HEIGHT, right: 1440, bottom: footerLine }),
-    );
+    fireEvent.pointerDown(header, { pointerId: 51, pointerType: "mouse", button: 0, clientX: 700, clientY: 400 });
+    fireEvent.pointerMove(header, { pointerId: 51, pointerType: "mouse", clientX: to.x, clientY: to.y });
+    fireEvent.pointerUp(header, { pointerId: 51, pointerType: "mouse", clientX: to.x, clientY: to.y });
 
+    expect(panel.dataset.snapMode).toBe(mode);
+    // The anchored rectangle genuinely touches the contact line, so only the snapMode gate keeps it detached.
+    expect(Number.parseFloat(panel.style.top) + Number.parseFloat(panel.style.height)).toBe(window.innerHeight - FOOTER_HEIGHT);
     expect(storedMode(projectId)).toBe("floating");
     expect(screen.queryByTestId("terminal-below-host")).toBeNull();
   });
@@ -460,9 +580,19 @@ describe("pinned terminal detach / footer-contact re-pin", () => {
 
     expect(screen.queryByTestId("terminal-pinned-drag-handle")).toBeNull();
     expect(screen.queryByTestId("floating-window-terminal-repin-phone")).toBeNull();
+    // FN-438: no toggle button either — the phone sheet has a single presentation.
+    expect(screen.queryByTestId("terminal-popout-toggle")).toBeNull();
 
     fireEvent.pointerDown(document.body, { pointerId: 3, pointerType: "touch", clientY: 800 });
     fireEvent.pointerUp(document.body, { pointerId: 3, pointerType: "touch", clientY: 890 });
+    expect(storedMode("repin-phone")).toBe("floating");
+
+    // FN-438: and dragging the sheet header arms no detach gesture on a phone.
+    const header = screen.getByTestId("terminal-modal").querySelector(".terminal-header") as HTMLElement;
+    prepareCapture(header);
+    fireEvent.pointerDown(header, { pointerId: 4, pointerType: "touch", clientX: 200, clientY: 400 });
+    fireEvent.pointerMove(header, { pointerId: 4, pointerType: "touch", clientX: 200, clientY: 300 });
+    fireEvent.pointerUp(header, { pointerId: 4, pointerType: "touch", clientX: 200, clientY: 300 });
     expect(storedMode("repin-phone")).toBe("floating");
   });
 
@@ -474,6 +604,13 @@ describe("pinned terminal detach / footer-contact re-pin", () => {
     expect(screen.queryByTestId("terminal-pinned-drag-handle")).toBeNull();
     expect(screen.queryByTestId("terminal-below-host")).toBeNull();
     expect(screen.queryByTestId("floating-window-terminal-repin-embedded")).toBeNull();
+    // FN-438: no toggle button, and dragging the embedded header never changes the parent-owned presentation.
+    expect(screen.queryByTestId("terminal-popout-toggle")).toBeNull();
+    const embeddedHeader = screen.getByTestId("terminal-modal").querySelector(".terminal-header") as HTMLElement;
+    prepareCapture(embeddedHeader);
+    fireEvent.pointerDown(embeddedHeader, { pointerId: 7, pointerType: "mouse", button: 0, clientX: 300, clientY: 400 });
+    fireEvent.pointerMove(embeddedHeader, { pointerId: 7, pointerType: "mouse", clientX: 300, clientY: 340 });
+    fireEvent.pointerUp(embeddedHeader, { pointerId: 7, pointerType: "mouse", clientX: 300, clientY: 340 });
     expect(storedMode("repin-embedded")).toBe("below");
   });
 
@@ -484,11 +621,13 @@ describe("pinned terminal detach / footer-contact re-pin", () => {
       _resetInitialViewportHeight();
     });
 
-    it("detaches on a grip drag and re-pins only on a footer-contact move gesture", async () => {
+    it("detaches on a header drag and re-pins only on a footer-contact move gesture", async () => {
       renderTerminal("tablet-gestures");
       await screen.findByTestId("terminal-below-host");
 
-      dragPinnedHandle(40);
+      // FN-438 case (n): the tablet detaches from the header itself, like desktop, and exposes no toggle button.
+      expect(screen.queryByTestId("terminal-popout-toggle")).toBeNull();
+      dragPinnedHeader(-40, { pointerId: 91 });
       await waitFor(() => expect(storedMode("tablet-gestures")).toBe("floating"));
       const panel = await screen.findByTestId("floating-window-terminal-tablet-gestures");
 
