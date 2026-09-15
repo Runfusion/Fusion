@@ -72,6 +72,51 @@ describe("dominant transient surfaces derive their layer from the live window ce
   });
 });
 
+/*
+FNXC:DashboardWindowVisibility 2026-09-15-19:42:
+FN-432 symptom: with the More menu open the bottom-right window-visibility control disappeared, because the opaque
+footer raised to `+ 3` painted over the portaled button declared at `+ 2`. That global escape hatch must outrank EVERY
+dominant transient surface, so its reserved `+ 4` step is asserted against the whole inventory.
+*/
+describe("the global window-visibility control outranks every transient surface (FN-432)", () => {
+  // (g)
+  it("declares a ceiling-derived layer strictly above every transient surface", () => {
+    const css = loadAllAppCss();
+    const controlOffset = readCeilingOffset(css, "#dashboard-window-toggle-root");
+    expect(controlOffset, "#dashboard-window-toggle-root must declare z-index: calc(var(--fusion-max-z) + N)").not.toBeNull();
+
+    for (const { selector, minimumOffset } of TRANSIENT_SURFACES) {
+      expect(readCeilingOffset(css, selector)).toBe(minimumOffset);
+      expect(controlOffset!, `must outrank ${selector}`).toBeGreaterThan(minimumOffset);
+    }
+
+    // Falsification control: the historic `+ 2` layer loses to every `+ 3` panel, which is the reported symptom.
+    const legacyControlOffset = 2;
+    const dominantPanels = TRANSIENT_SURFACES.filter(({ minimumOffset }) => minimumOffset === 3);
+    expect(dominantPanels.length).toBeGreaterThan(0);
+    for (const { minimumOffset } of dominantPanels) {
+      expect(legacyControlOffset).toBeLessThan(minimumOffset);
+    }
+  });
+
+  // (g) base rule, never a media override
+  it("carries its elevation as a base rule", () => {
+    expect(readCeilingOffset(loadAllAppCssBaseOnly(), "#dashboard-window-toggle-root")).not.toBeNull();
+  });
+
+  // (i)
+  it("keeps the control and its placeholder hidden on phones", () => {
+    const css = loadAllAppCss();
+    const mobileRule = findRuleBody(
+      css,
+      "#dashboard-window-toggle-root,\n  .dashboard-window-visibility-toggle__placeholder"
+    );
+    expect(mobileRule, "the mobile hiding rule must still exist").not.toBeNull();
+    expect(mobileRule!).toMatch(/display:\s*none/);
+    expect(css).toMatch(/@media \(max-width: 768px\) \{\s*#dashboard-window-toggle-root,/);
+  });
+});
+
 describe("symptom proof: a transient surface outranks a window opened after it (FN-413)", () => {
   beforeEach(() => {
     document.documentElement.style.removeProperty("--fusion-max-z");

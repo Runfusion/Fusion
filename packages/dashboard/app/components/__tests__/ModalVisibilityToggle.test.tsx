@@ -9,6 +9,9 @@ import {
 } from "../../context/DashboardWindowManagerContext";
 import { useDashboardKeyboardShortcuts } from "../../hooks/useDashboardKeyboardShortcuts";
 import { DashboardWindowVisibilityToggle } from "../DashboardWindowVisibilityToggle";
+import { DesktopActionBar } from "../DesktopActionBar";
+import { buildDashboardNavigationEntries } from "../dashboardNavigationEntries";
+import { useExecutorStats } from "../../hooks/useExecutorStats";
 import { FloatingWindow } from "../FloatingWindow";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { MobileDrawer } from "../MobileDrawer";
@@ -30,6 +33,26 @@ function ManagedFixture({ id, locallyVisible = true, stackOrder = 0, children }:
     >
       {children}
     </div>
+  );
+}
+
+vi.mock("../../hooks/useExecutorStats", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../hooks/useExecutorStats")>();
+  return { ...actual, useExecutorStats: vi.fn(() => ({ stats: { runningTaskCount: 0, maxConcurrent: 4 }, loading: false, error: null, refresh: vi.fn() })) };
+});
+
+/** Production footer host: DesktopActionBar mounts the toggle itself, so this harness adds no second control. */
+function FooterHarness({ children }: { children?: ReactNode }) {
+  return (
+    <DashboardWindowManagerProvider>
+      <DashboardWindowManagerScope scopeKey="project-a" />
+      <main>{children}</main>
+      <DesktopActionBar
+        entries={buildDashboardNavigationEntries({ view: "board", onChangeView: vi.fn(), onNewTask: vi.fn(), onOpenSettings: vi.fn(), showAgents: true })}
+        activeId="board"
+        tasks={[]}
+      />
+    </DashboardWindowManagerProvider>
   );
 }
 
@@ -316,5 +339,32 @@ describe("Dashboard window visibility toggle", () => {
     expect(overlay).not.toHaveAttribute("data-dashboard-window-globally-hidden");
     fireEvent.click(screen.getByTestId("floating-window-close-standalone"));
     expect(close).toHaveBeenCalledOnce();
+  });
+
+  /*
+  FNXC:DashboardWindowVisibility 2026-09-15-19:42:
+  FN-432 symptom: opening the footer More menu raised the whole opaque bar above the portaled control, which vanished.
+  The control is a global escape hatch, so it must stay mounted, enabled, and clickable while that menu is open.
+  */
+  // (h)
+  it("stays mounted, enabled and clickable while the footer More menu is open", async () => {
+    vi.mocked(useExecutorStats).mockReturnValue({ stats: { runningTaskCount: 0, maxConcurrent: 4 } as never, loading: false, error: null, refresh: vi.fn() });
+    render(<FooterHarness><ManagedFixture id="visible-window">body</ManagedFixture></FooterHarness>);
+
+    const toggle = await screen.findByTestId("dashboard-window-visibility-toggle");
+    await waitFor(() => expect(toggle).not.toBeDisabled());
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+
+    fireEvent.pointerEnter(screen.getByTestId("desktop-nav-more"));
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+    expect(screen.getByTestId("desktop-action-bar")).toHaveClass("desktop-action-bar--menu-open");
+
+    expect(screen.getByTestId("dashboard-window-visibility-toggle")).toBe(toggle);
+    expect(toggle.parentElement).toHaveAttribute("id", "dashboard-window-toggle-root");
+    expect(toggle).not.toBeDisabled();
+
+    fireEvent.click(toggle);
+    await waitFor(() => expect(toggle).toHaveAttribute("aria-pressed", "true"));
+    expect(screen.getByTestId("managed-visible-window")).toHaveAttribute("data-dashboard-window-globally-hidden", "true");
   });
 });

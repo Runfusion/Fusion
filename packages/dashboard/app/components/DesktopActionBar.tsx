@@ -42,6 +42,12 @@ export function DesktopActionBar({ entries, activeId, tasks, projectId, columnFl
   /*
   FNXC:DesktopNavigation 2026-09-13-04:10:
   Le menu More du footer partagé par tablette et ordinateur forme un seul périmètre trigger + panneau. Une sortie du pointeur démarre une courte grâce annulable afin que les traversées lentes du corridor ne ferment pas le panneau; focus, Escape et sélection acceptée conservent leurs fermetures explicites.
+
+  FNXC:DesktopNavigation 2026-09-15-19:42:
+  FN-432: l'OUVERTURE au pointeur appartient exclusivement au bouton More. Le périmètre (trigger + corridor + panneau) ne
+  porte plus que l'ANNULATION de la fermeture différée, sinon survoler le corridor invisible situé au-dessus du bouton
+  ouvrait le menu sans jamais survoler More. Le corridor reste indispensable à la traversée bouton → liste, mais il est
+  inerte (`pointer-events: none`) tant que le menu est fermé; il n'est réactivé que sous `desktop-action-bar__more--open`.
   */
   const cancelScheduledClose = useCallback(() => {
     if (closeTimerRef.current === null) return;
@@ -104,14 +110,14 @@ export function DesktopActionBar({ entries, activeId, tasks, projectId, columnFl
     <div className="desktop-action-bar__center"><div className="desktop-action-bar__scroller">{direct.map((entry) => renderButton(entry))}</div>
     {overflow.length ? <div
       ref={overflowRef}
-      className="desktop-action-bar__more"
-      onPointerEnter={openOverflow}
+      className={`desktop-action-bar__more${overflowOpen ? " desktop-action-bar__more--open" : ""}`}
+      onPointerEnter={cancelScheduledClose}
       onPointerLeave={scheduleOverflowClose}
       onFocusCapture={openOverflow}
       onBlurCapture={closeAfterFocusLeaves}
       onKeyDown={handleOverflowKeyDown}
     >
-      <button type="button" className="desktop-action-bar__action" aria-label={t("header.moreViews", "More views")} aria-haspopup="menu" aria-expanded={overflowOpen} data-testid="desktop-nav-more" onClick={openOverflow}><ChevronUp aria-hidden="true" /><span>{t("nav.more", "More")}</span></button>
+      <button type="button" className="desktop-action-bar__action" aria-label={t("header.moreViews", "More views")} aria-haspopup="menu" aria-expanded={overflowOpen} data-testid="desktop-nav-more" onPointerEnter={openOverflow} onClick={openOverflow}><ChevronUp aria-hidden="true" /><span>{t("nav.more", "More")}</span></button>
       {overflowOpen ? <div className="desktop-action-bar__menu" role="menu">{overflow.map((entry) => renderButton(entry, true))}</div> : null}
     </div> : null}</div>
     {onOpenChatPanel || onToggleTerminal || settings ? <div className="desktop-action-bar__right">

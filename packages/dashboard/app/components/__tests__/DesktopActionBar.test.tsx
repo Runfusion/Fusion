@@ -300,6 +300,83 @@ describe("DesktopActionBar", () => {
     expect(document.querySelector(".desktop-action-bar--menu-open")).toBeNull();
   });
 
+  /*
+  FNXC:DesktopNavigation 2026-09-15-19:42:
+  FN-432: ouvrir n’appartient qu’au survol du bouton More. Le corridor invisible au-dessus du bouton ne doit pas capter le
+  pointeur au repos, mais doit continuer d’empêcher la fermeture pendant la traversée bouton → liste.
+  */
+  // (a)
+  it("n’ouvre pas au survol du périmètre seul et ouvre au survol de More", () => {
+    render(<DesktopActionBar entries={entries()} activeId="board" tasks={[]} />);
+    const trigger = screen.getByTestId("desktop-nav-more");
+    const perimeter = document.querySelector<HTMLElement>(".desktop-action-bar__more")!;
+
+    fireEvent.pointerEnter(perimeter);
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(perimeter).not.toHaveClass("desktop-action-bar__more--open");
+
+    fireEvent.pointerEnter(trigger);
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    expect(perimeter).toHaveClass("desktop-action-bar__more--open");
+  });
+
+  // (b)
+  it("conserve le menu ouvert pendant la traversée du corridor vers la liste", () => {
+    vi.useFakeTimers();
+    render(<DesktopActionBar entries={entries()} activeId="board" tasks={[]} />);
+    const trigger = screen.getByTestId("desktop-nav-more");
+    fireEvent.pointerEnter(trigger);
+    const menu = screen.getByRole("menu");
+    const perimeter = menu.parentElement!;
+
+    fireEvent.pointerLeave(perimeter);
+    act(() => vi.advanceTimersByTime(100));
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+    fireEvent.pointerEnter(perimeter);
+    fireEvent.pointerEnter(menu);
+    act(() => vi.advanceTimersByTime(200));
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+  });
+
+  // (c)
+  it("déclare un corridor inerte au repos et interactif seulement menu ouvert", () => {
+    expect(overflowCorridorRule).toMatch(/pointer-events:\s*none/);
+    expect(overflowCorridorRule).toMatch(/inset-inline:\s*0/);
+    expect(overflowCorridorRule).toMatch(/bottom:\s*100%/);
+    expect(overflowCorridorRule).toMatch(/block-size:\s*var\(--space-sm\)/);
+    const openCorridorRule =
+      alphaDesktopActionBarCss.match(/\.desktop-action-bar__more--open::before\s*\{([^}]*)\}/s)?.[1] ?? "";
+    expect(openCorridorRule).toMatch(/pointer-events:\s*auto/);
+  });
+
+  // (d)
+  it("ne rouvre pas depuis le périmètre seul après expiration de la grâce", () => {
+    vi.useFakeTimers();
+    render(<DesktopActionBar entries={entries()} activeId="board" tasks={[]} />);
+    const trigger = screen.getByTestId("desktop-nav-more");
+    fireEvent.pointerEnter(trigger);
+    const perimeter = screen.getByRole("menu").parentElement!;
+    fireEvent.pointerLeave(perimeter);
+    act(() => vi.advanceTimersByTime(200));
+    expect(screen.queryByRole("menu")).toBeNull();
+
+    fireEvent.pointerEnter(perimeter);
+    act(() => vi.advanceTimersByTime(200));
+    expect(screen.queryByRole("menu")).toBeNull();
+
+    fireEvent.pointerEnter(screen.getByTestId("desktop-nav-more"));
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+  });
+
+  // (f) exemption mobile: la feuille More du téléphone reste au tap, sans périmètre de survol.
+  it("n’introduit aucun survol d’ouverture dans la navigation mobile", () => {
+    const mobileNavBarSource = readAppFile("components/MobileNavBar.tsx");
+    expect(mobileNavBarSource).not.toMatch(/onPointerEnter/);
+    expect(mobileNavBarSource).not.toMatch(/onMouseEnter/);
+  });
+
   // (l) structural invariant: no footer ancestor may create a stacking context, or the elevation is trapped.
   it("garde les ancêtres de mise en page du footer sans contexte d’empilement", () => {
     const projectSelectorCss = readAppFile("components/ProjectSelector.css");

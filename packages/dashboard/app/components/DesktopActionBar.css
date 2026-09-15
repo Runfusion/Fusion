@@ -55,6 +55,12 @@ The capacity trigger sits against the footer's inline-start edge, so its shared 
 /*
 FNXC:DesktopNavigation 2026-09-13-04:10:
 Le menu More du footer partagé par tablette et ordinateur centre son panneau au-dessus du trigger. Le corridor transparent occupe exactement l’espacement tokenisé entre les deux surfaces afin que le pointeur reste dans le même périmètre pendant une traversée lente, sans modifier les autres navigations.
+
+FNXC:DesktopNavigation 2026-09-15-19:42:
+FN-432: le corridor ne doit JAMAIS ouvrir le menu. L'ouverture appartient au seul survol du bouton More; le corridor
+n'existe que pour empêcher la fermeture pendant la traversée bouton → liste. Il reste donc inerte au repos
+(`pointer-events: none`), sinon sa bande invisible au-dessus du bouton capte le pointeur et ouvre le menu sans survol de
+More, et il ne redevient interactif que pendant que le menu est ouvert. La géométrie tokenisée reste inchangée.
 */
 .desktop-action-bar__more::before {
   content: "";
@@ -62,6 +68,10 @@ Le menu More du footer partagé par tablette et ordinateur centre son panneau au
   inset-inline: 0;
   bottom: 100%;
   block-size: var(--space-sm);
+  pointer-events: none;
+}
+.desktop-action-bar__more--open::before {
+  pointer-events: auto;
 }
 .desktop-action-bar__menu {
   position: absolute;

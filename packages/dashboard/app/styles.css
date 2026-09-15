@@ -302,6 +302,11 @@ html {
   opened AFTER it, so it derives its layer from the LIVE ceiling instead of a static value:
     backdrop / click-catcher : calc(var(--fusion-max-z) + 2)
     panel                    : calc(var(--fusion-max-z) + 3)
+    global window-visibility control : calc(var(--fusion-max-z) + 4)
+  FNXC:PopoverLayering 2026-09-15-19:42:
+  FN-432 reserves the `+ 4` step for the GLOBAL window-visibility control (#dashboard-window-toggle-root). It is the
+  escape hatch that hides every dashboard-managed window, so it must never be painted under a transient panel: at `+ 2`
+  the opaque footer raised by an open More menu (`+ 3`) covered it entirely. No other surface may claim `+ 4`.
   The ceiling is only ever CONSUMED here; FUSION_MAX_Z_FLOOR and the stack counter are never redefined
   from CSS. Ties with other ceiling-derived consumers resolve by DOM order, which is acceptable because
   these surfaces are mutually exclusive in practice and close on outside click/Escape/selection.
