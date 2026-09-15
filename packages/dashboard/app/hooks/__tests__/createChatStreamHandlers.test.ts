@@ -125,4 +125,77 @@ describe("createChatStreamHandlers", () => {
 
     vi.useRealTimers();
   });
+
+  /*
+  FNXC:AssistantTextCapture 2026-09-15-22:45:
+  FN-431: a reconnect resumes from the persisted checkpoint and then replays only the events after
+  its cursor. The opening words live in the checkpoint, so replaying them again would recreate the
+  reported "I'll researchI'll research" duplication on the client side.
+  */
+  it("FN-431 resumes from a checkpoint without repeating its opening words", () => {
+    vi.useFakeTimers();
+
+    const prefix = "I'll research";
+    const suffix = " the codebase before writing the spec.";
+    let text = prefix;
+    const onDone = vi.fn();
+    const cancelStreamingFlushesRef = { current: null } as { current: (() => void) | null };
+
+    const { handlers } = createChatStreamHandlers({
+      sessionId: "s-1",
+      tempUserMessageId: "",
+      initialText: prefix,
+      setStreamingText: (value) => {
+        text = typeof value === "function" ? value(text) : value;
+      },
+      setStreamingThinking: vi.fn(),
+      setStreamingToolCalls: vi.fn(),
+      cancelStreamingFlushesRef,
+      onDone,
+      onError: vi.fn(),
+    });
+
+    // Only the events strictly after the checkpoint cursor are replayed.
+    handlers.onText(suffix);
+    vi.advanceTimersToNextTimer();
+
+    expect(text).toBe(prefix + suffix);
+    expect(text).not.toBe(prefix + prefix + suffix);
+
+    handlers.onDone({ messageId: "m-1" });
+    expect(onDone).toHaveBeenCalledWith(expect.objectContaining({
+      accumulated: expect.objectContaining({ text: prefix + suffix }),
+    }));
+
+    vi.useRealTimers();
+  });
+
+  it("FN-431 keeps two legitimately identical fragments", () => {
+    vi.useFakeTimers();
+
+    const prefix = "I'll research";
+    let text = "";
+    const cancelStreamingFlushesRef = { current: null } as { current: (() => void) | null };
+
+    const { handlers } = createChatStreamHandlers({
+      sessionId: "s-1",
+      tempUserMessageId: "",
+      setStreamingText: (value) => {
+        text = typeof value === "function" ? value(text) : value;
+      },
+      setStreamingThinking: vi.fn(),
+      setStreamingToolCalls: vi.fn(),
+      cancelStreamingFlushesRef,
+      onDone: vi.fn(),
+      onError: vi.fn(),
+    });
+
+    handlers.onText(prefix);
+    handlers.onText(prefix);
+    vi.advanceTimersToNextTimer();
+
+    expect(text).toBe(prefix + prefix);
+
+    vi.useRealTimers();
+  });
 });

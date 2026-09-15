@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { createAssistantStreamCapture } from "../execution/assistant-text-capture.js";
+import {
+  createAssistantStreamProducer,
+  queueReproStream,
+  REPRO_PREFIX,
+  REPRO_RESPONSE,
+  REPRO_SUFFIX,
+} from "./fixtures/assistant-stream-events.js";
 
 function capture() {
   const text: string[] = []; const thinking: string[] = []; const boundaries: number[] = [];
@@ -46,6 +53,155 @@ describe("createAssistantStreamCapture", () => {
     result.seam.handleAgentEvent(update({ type: "text_delta", partial: second, contentIndex: 0, delta: "REPRO MARKER B" }));
     expect(result.text.slice(-2)).toEqual(["REPRO MARKER B", "REPRO MARKER B"]);
   });
+  describe("FN-431 shared mutable snapshots", () => {
+    it("emits the response once when the start snapshot already carries the first delta", () => {
+      const result = capture();
+      const producer = createAssistantStreamProducer();
+      const index = queueReproStream(producer);
+      producer.drain(result.seam.handleAgentEvent);
+      expect(result.text.join("")).toBe(REPRO_PREFIX);
+      producer.delta("text", index, REPRO_SUFFIX);
+      producer.endBlock("text", index);
+      producer.messageEnd();
+      producer.drain(result.seam.handleAgentEvent);
+      expect(result.text.join("")).toBe(REPRO_RESPONSE);
+      expect(result.text.join("")).not.toBe(REPRO_PREFIX + REPRO_RESPONSE);
+    });
+
+    it("emits the same text when every event is consumed immediately", () => {
+      const result = capture();
+      const producer = createAssistantStreamProducer();
+      producer.messageStart();
+      producer.drain(result.seam.handleAgentEvent);
+      const index = producer.startBlock("text");
+      producer.drain(result.seam.handleAgentEvent);
+      producer.delta("text", index, REPRO_PREFIX);
+      producer.drain(result.seam.handleAgentEvent);
+      expect(result.text.join("")).toBe(REPRO_PREFIX);
+      producer.delta("text", index, REPRO_SUFFIX);
+      producer.endBlock("text", index);
+      producer.messageEnd();
+      producer.drain(result.seam.handleAgentEvent);
+      expect(result.text.join("")).toBe(REPRO_RESPONSE);
+    });
+
+    it("emits each burst delta once when the snapshot is several deltas ahead", () => {
+      const result = capture();
+      const producer = createAssistantStreamProducer();
+      producer.messageStart();
+      const index = producer.startBlock("text");
+      producer.delta("text", index, "alpha ");
+      producer.delta("text", index, "beta ");
+      producer.delta("text", index, "gamma");
+      producer.drain(result.seam.handleAgentEvent);
+      expect(result.text.join("")).toBe("alpha beta gamma");
+      producer.delta("text", index, " delta");
+      producer.endBlock("text", index);
+      producer.messageEnd();
+      producer.drain(result.seam.handleAgentEvent);
+      expect(result.text.join("")).toBe("alpha beta gamma delta");
+    });
+
+    it("produces identical text for copied snapshots without inventing paragraph boundaries", () => {
+      const result = capture();
+      const producer = createAssistantStreamProducer({ snapshot: "copied" });
+      const index = queueReproStream(producer);
+      producer.delta("text", index, REPRO_SUFFIX);
+      producer.endBlock("text", index);
+      producer.messageEnd();
+      producer.drain(result.seam.handleAgentEvent);
+      expect(result.text.join("")).toBe(REPRO_RESPONSE);
+      expect(result.boundaries).toEqual([]);
+    });
+
+    it("keeps thinking, tools, and a following block separate", () => {
+      const result = capture();
+      const producer = createAssistantStreamProducer();
+      producer.messageStart();
+      const thinkingIndex = producer.startBlock("thinking");
+      producer.delta("thinking", thinkingIndex, "Considering.");
+      const first = producer.startBlock("text");
+      producer.delta("text", first, REPRO_PREFIX);
+      producer.drain(result.seam.handleAgentEvent);
+      producer.delta("text", first, REPRO_SUFFIX);
+      producer.endBlock("text", first);
+      const second = producer.startBlock("text");
+      producer.delta("text", second, "Second block.");
+      producer.endBlock("text", second);
+      producer.messageEnd();
+      producer.drain(result.seam.handleAgentEvent);
+      expect(result.thinking.join("")).toBe("Considering.");
+      expect(result.text.join("")).toBe(`${REPRO_RESPONSE}Second block.`);
+      expect(result.boundaries).toEqual([1]);
+    });
+
+    it("keeps intentional repetition and distinct identical messages", () => {
+      const result = capture();
+      const producer = createAssistantStreamProducer();
+      producer.messageStart();
+      const index = producer.startBlock("text");
+      producer.delta("text", index, REPRO_PREFIX);
+      producer.delta("text", index, REPRO_PREFIX);
+      producer.endBlock("text", index);
+      producer.messageEnd();
+      producer.drain(result.seam.handleAgentEvent);
+      expect(result.text.join("")).toBe(REPRO_PREFIX + REPRO_PREFIX);
+
+      const next = createAssistantStreamProducer();
+      const nextIndex = queueReproStream(next);
+      next.endBlock("text", nextIndex);
+      next.messageEnd();
+      next.drain(result.seam.handleAgentEvent);
+      expect(result.text.join("")).toBe(REPRO_PREFIX + REPRO_PREFIX + REPRO_PREFIX);
+    });
+
+    it("preserves markdown, links, spacing, and surrogate pairs split across deltas", () => {
+      const result = capture();
+      const producer = createAssistantStreamProducer();
+      producer.messageStart();
+      const index = producer.startBlock("text");
+      const chunks = ["See [docs](https://example.com/a_b?x=1&y=2)", "\n\n- item\n- item\n", "emoji \u{1F680}".slice(0, 7), "\u{1F680}".slice(1), " done"];
+      for (const chunk of chunks) producer.delta("text", index, chunk);
+      producer.endBlock("text", index);
+      producer.messageEnd();
+      producer.drain(result.seam.handleAgentEvent);
+      expect(result.text.join("")).toBe(chunks.join(""));
+    });
+
+    it("does not reuse cursors from a previous capture instance", () => {
+      const first = capture();
+      const firstProducer = createAssistantStreamProducer();
+      const firstIndex = queueReproStream(firstProducer);
+      firstProducer.endBlock("text", firstIndex);
+      firstProducer.messageEnd();
+      firstProducer.drain(first.seam.handleAgentEvent);
+      expect(first.text.join("")).toBe(REPRO_PREFIX);
+
+      const second = capture();
+      const secondProducer = createAssistantStreamProducer();
+      const secondIndex = queueReproStream(secondProducer);
+      secondProducer.endBlock("text", secondIndex);
+      secondProducer.messageEnd();
+      secondProducer.drain(second.seam.handleAgentEvent);
+      expect(second.text.join("")).toBe(REPRO_PREFIX);
+    });
+
+    it("restores a block that never receives a delta and ignores replayed terminals", () => {
+      const result = capture();
+      const producer = createAssistantStreamProducer();
+      producer.messageStart();
+      const index = producer.startBlock("text");
+      producer.message.content[index]!.text = REPRO_RESPONSE;
+      producer.endBlock("text", index);
+      producer.drain(result.seam.handleAgentEvent);
+      expect(result.text.join("")).toBe(REPRO_RESPONSE);
+      producer.endBlock("text", index);
+      producer.messageEnd();
+      producer.drain(result.seam.handleAgentEvent);
+      expect(result.text.join("")).toBe(REPRO_RESPONSE);
+    });
+  });
+
   it("does not flush tool-result text from production-shaped terminal events", () => {
     const result = capture();
     result.seam.handleAgentEvent({
