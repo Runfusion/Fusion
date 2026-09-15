@@ -6275,7 +6275,10 @@
       "chatSubmitOnEnterHint": "",
       "chatSubmitOnEnterAuto": "",
       "chatSubmitOnEnterAlways": "",
-      "chatSubmitOnEnterNever": ""
+      "chatSubmitOnEnterNever": "",
+      "operatorLanguage": "",
+      "operatorLanguageHint": "",
+      "operatorLanguageAuto": ""
     },
     "globalModels": {
       "modelOverrides": "",

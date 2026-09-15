@@ -260,4 +260,22 @@ describe("triage planning prompt single source", () => {
 
     await expect(captureBasePrompt(task, store)).resolves.toBe(renderedDefaultTriagePrompt);
   });
+
+  /*
+  FNXC:OperatorLanguage 2026-09-16-13:05:
+  PR-review wiring: planning lanes author operator-visible prose (plan specs, planning replies),
+  so the resolved settings' operatorLanguage must ride the triage prompt layers via the shared
+  buildPromptLayers seam.
+  */
+  it("rides the operator language directive on the triage planning prompt when operatorLanguage is set", async () => {
+    const task = createTask({ id: "FN-OL-TRIAGE", executionMode: "standard" });
+    const store = createStore(task, {}, { operatorLanguage: "sk" });
+    await expect(capturePromptLayers(task, store)).resolves.toContain("Operator Language");
+  });
+
+  it("keeps the triage planning prompt directive-free when operatorLanguage is unset (auto default)", async () => {
+    const task = createTask({ id: "FN-OL-TRIAGE-AUTO", executionMode: "standard" });
+    const store = createStore(task, {}, { operatorLanguage: "auto" });
+    await expect(capturePromptLayers(task, store)).resolves.not.toContain("Operator Language");
+  });
 });
