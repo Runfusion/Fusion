@@ -136,25 +136,40 @@ FN-7897: reserve space for the fixed ExecutorStatusBar footer when it is rendere
   height: var(--terminal-below-height);
   min-height: calc(var(--space-xl) * 7.5);
   max-width: none;
-  max-height: min(35dvh, calc(100dvh - (var(--space-2xl) * 10)));
+  /*
+  FNXC:TerminalLayout 2026-09-15-21:04:
+  FN-434: the pinned panel is a FIXED height published by the component as --terminal-below-height. The previous
+  35dvh ceiling would silently shave that fixed height on an ordinary viewport, so the ceiling is only the
+  application-minimum guard rail; `resize: none` stays because no pinned resize gesture exists any more.
+  */
+  max-height: calc(100dvh - (var(--space-2xl) * 5));
   resize: none;
   border: 0;
   border-radius: 0;
   box-shadow: none;
 }
 
-.terminal-below-resize-handle {
+/*
+FNXC:TerminalLayout 2026-09-15-21:04:
+FN-434: the pinned panel's top grip detaches the terminal into a floating window instead of resizing it, so it
+carries a grab cursor rather than `ns-resize`. Its bar keeps the same shape operators already recognize.
+*/
+.terminal-below-drag-handle {
   position: absolute;
   top: calc(var(--space-sm) * -1);
   left: 0;
   right: 0;
   z-index: 2;
   height: calc(var(--space-md) + var(--space-sm));
-  cursor: ns-resize;
+  cursor: grab;
   touch-action: none;
 }
 
-.terminal-below-resize-handle::before {
+.terminal-below-drag-handle:active {
+  cursor: grabbing;
+}
+
+.terminal-below-drag-handle::before {
   content: "";
   position: absolute;
   left: 50%;

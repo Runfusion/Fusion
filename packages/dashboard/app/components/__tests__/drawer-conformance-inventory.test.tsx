@@ -227,12 +227,16 @@ in a named exemption with its reason.
 */
 
 /**
- * Desktop and tablet RESIZE grips are not drawer handles: they belong to pointer resizing, are unreachable on phones,
- * and are listed here so a future move into a phone media block is a deliberate decision rather than a silent pass.
+ * Desktop and tablet pointer grips are not drawer handles: they belong to pointer resizing or window detaching, are
+ * unreachable on phones, and are listed here so a future move into a phone media block is a deliberate decision
+ * rather than a silent pass.
+ *
+ * FN-434 removed the pinned terminal's two resize grips (the panel is a fixed height now) and replaced them with a
+ * single DETACH grip on the pinned panel's top edge: dragging it pulls the terminal out into a floating window. It is
+ * rendered only in the non-mobile pinned presentation, so it is never phone drawer chrome.
  */
 const RESIZE_GRIP_EXEMPTIONS = [
-  ".terminal-docked-resize-handle::before",
-  ".terminal-below-resize-handle::before",
+  ".terminal-below-drag-handle::before",
   ".mailbox-split-resize-handle::before",
   ".terminal-header__drag-grip::before",
 ] as const;

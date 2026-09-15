@@ -35,7 +35,7 @@ import { useWorkspaces } from "../hooks/useWorkspaces";
 import { getViewportMode, isMobileViewport } from "../hooks/useViewportMode";
 import { useDrawerDismissGesture } from "../hooks/useDrawerDismissGesture";
 import { FloatingWindow, FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT } from "./FloatingWindow";
-import { DashboardWindowSurfaceRoot } from "../context/DashboardWindowManagerContext";
+import { DashboardWindowSurfaceRoot, useDashboardWindowBounds } from "../context/DashboardWindowManagerContext";
 import { ModalCloseButton } from "./ModalCloseButton";
 import { ViewDrawerHandle, resolveDrawerPresentation } from "./ViewDrawer";
 import { ViewLayoutContent, ViewLayoutFooter, ViewLayoutHeader } from "./ViewLayout";
@@ -98,9 +98,45 @@ export type TerminalDisplayMode = "floating" | "below";
 
 export const TERMINAL_DISPLAY_MODE_STORAGE_PREFIX = "fusion:terminal-display-mode-";
 
-const TERMINAL_BELOW_DEFAULT_HEIGHT = 260;
-const TERMINAL_BELOW_MIN_HEIGHT = 180;
+/*
+FNXC:TerminalLayout 2026-09-15-21:04:
+FN-434 makes the pinned panel a FIXED height. Its top grip is now a DETACH gesture (see
+`handlePinnedDetachPointerDown`), so there is no resize gesture left to invert: the retired
+`startHeight + (moveEvent.clientY - startY)` formula grew the panel when the operator dragged a TOP-edge
+grip DOWNWARD, which is the reported "resizing feels reversed" symptom. The fixed value is slightly taller
+than the old 260px default because the panel can no longer be enlarged by hand.
+*/
+const TERMINAL_BELOW_FIXED_HEIGHT = 360;
 const TERMINAL_BELOW_APP_MIN_HEIGHT = 320;
+
+/*
+FNXC:TerminalLayout 2026-09-15-21:04:
+FN-434: the only remaining height computation is a VIEWPORT guard rail (never a user gesture) so a short
+viewport still leaves the application usable above the pinned panel.
+*/
+function resolveTerminalBelowHeight(): number {
+  if (typeof window === "undefined") return TERMINAL_BELOW_FIXED_HEIGHT;
+  const maxHeight = Math.max(0, window.innerHeight - TERMINAL_BELOW_APP_MIN_HEIGHT);
+  if (!Number.isFinite(maxHeight) || maxHeight <= 0) return TERMINAL_BELOW_FIXED_HEIGHT;
+  return Math.min(TERMINAL_BELOW_FIXED_HEIGHT, maxHeight);
+}
+
+/*
+FNXC:TerminalLayout 2026-09-15-21:04:
+FN-434: a drag on the pinned grip must travel past this threshold before it detaches, so a plain click on the
+grip leaves the terminal pinned.
+*/
+const TERMINAL_DETACH_DRAG_THRESHOLD_PX = 16;
+
+/*
+FNXC:TerminalLayout 2026-09-15-21:04:
+FN-434 re-pin contact geometry. `EXECUTOR_FOOTER_HEIGHT_PX` mirrors `--executor-footer-height` in
+TerminalModal.css; `TERMINAL_REPIN_MOVE_MIN_PX` matches FloatingWindow's 6px click threshold so a click is never
+a move; `TERMINAL_REPIN_CONTACT_PX` is the contact tolerance between the window's bottom edge and the footer line.
+*/
+const EXECUTOR_FOOTER_HEIGHT_PX = 36;
+const TERMINAL_REPIN_MOVE_MIN_PX = 6;
+const TERMINAL_REPIN_CONTACT_PX = 24;
 /*
 FNXC:TerminalLayout 2026-09-15-07:57:
 FN-409: the detached terminal opens at the same standard window size as a task pop-out and a detached chat.
@@ -142,33 +178,10 @@ function writeTerminalDisplayMode(mode: TerminalDisplayMode, projectId?: string)
 }
 
 /*
-FNXC:TerminalLayout 2026-09-15-07:57:
-FN-409: the panel-height record keeps its existing `fusion:terminal-docked-height-<projectId>` key so operators do
-not lose a stored height, even though the only remaining panel presentation is the pinned one.
+FNXC:TerminalLayout 2026-09-15-21:04:
+FN-434 removed the pinned-panel resize gesture, so the `fusion:terminal-docked-height-<projectId>` preference has
+no writer and no reader left. A legacy stored value is simply ignored — never migrated, never deleted.
 */
-function readTerminalDockedHeight(projectId?: string): number {
-  if (typeof window === "undefined") return TERMINAL_BELOW_DEFAULT_HEIGHT;
-  const parsed = Number.parseInt(window.localStorage.getItem(`fusion:terminal-docked-height-${projectId ?? "default"}`) ?? "", 10);
-  return Number.isFinite(parsed) ? parsed : TERMINAL_BELOW_DEFAULT_HEIGHT;
-}
-
-function clampTerminalPanelHeight(height: number, minHeight: number, viewportReserve: number): number {
-  if (typeof window === "undefined") return Math.max(minHeight, height);
-  const maxHeight = Math.max(minHeight, window.innerHeight - viewportReserve);
-  return Math.min(Math.max(height, minHeight), maxHeight);
-}
-
-function clampTerminalBelowHeight(height: number): number {
-  return clampTerminalPanelHeight(height, TERMINAL_BELOW_MIN_HEIGHT, TERMINAL_BELOW_APP_MIN_HEIGHT);
-}
-
-function writeTerminalDockedHeight(height: number, projectId?: string): number {
-  const clamped = clampTerminalBelowHeight(height);
-  if (typeof window !== "undefined") {
-    window.localStorage.setItem(`fusion:terminal-docked-height-${projectId ?? "default"}`, String(Math.round(clamped)));
-  }
-  return clamped;
-}
 
 const TERMINAL_KEY_LABELS = {
   ctrl: "Ctrl",
@@ -527,6 +540,21 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
   const [isStartingTerminal, setIsStartingTerminal] = useState(false);
   const [exitCode, setExitCode] = useState<number | null>(null);
   const [xtermReady, setXtermReady] = useState(false);
+  /*
+  FNXC:Terminal 2026-09-15-21:04:
+  FN-434 last-resort recreate signal: bumped when a live xterm instance cannot be re-attached to the container of the
+  new presentation, so the init effect (guarded by `xtermRef.current`) is allowed to build a fresh instance there.
+  */
+  const [xtermReinitNonce, setXtermReinitNonce] = useState(0);
+  /*
+  FNXC:Terminal 2026-09-15-21:04:
+  FN-434: `xtermPresentationRef` is the presentation the live instance belongs to. Only a genuine presentation
+  CHANGE may move or rebuild it (a container remount from a session switch is the init effect's business);
+  `xtermReattachFallbackRef` bounds the rebuild to one attempt per presentation so a terminal that never exposes an
+  element cannot loop.
+  */
+  const xtermPresentationRef = useRef<string | null>(null);
+  const xtermReattachFallbackRef = useRef<string | null>(null);
   const [xtermInitError, setXtermInitError] = useState<string | null>(null);
   const [openGeneration, setOpenGeneration] = useState(0);
   const [keyboardOverlap, setKeyboardOverlap] = useState(0);
@@ -554,7 +582,8 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
   const [stickyModifier, setStickyModifier] = useState<null | "ctrl" | "alt">(null);
   const [pendingInitialCommandGeneration, setPendingInitialCommandGeneration] = useState(0);
   const [displayMode, setDisplayModeState] = useState<TerminalDisplayMode>(() => readTerminalDisplayMode(projectId));
-  const [dockedHeight, setDockedHeight] = useState(() => readTerminalDockedHeight(projectId));
+  // FNXC:TerminalLayout 2026-09-15-21:04: FN-434 re-pin contact line — `availableBounds.bottom` IS the footer top.
+  const windowBounds = useDashboardWindowBounds();
   const [isMobileTerminal, setIsMobileTerminal] = useState(() => isTerminalMobileViewport());
   const [isTabletTerminal, setIsTabletTerminal] = useState(() => getViewportMode() === "tablet");
   const [tabsOverflow, setTabsOverflow] = useState(false);
@@ -660,6 +689,8 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
     }
     fitAddonRef.current = null;
     xtermInitializedRef.current = false;
+    // FNXC:Terminal 2026-09-15-21:04: FN-434 — a disposed instance has no presentation, so the next one records fresh.
+    xtermPresentationRef.current = null;
     if (windowResizeListenerRef.current) {
       window.removeEventListener("resize", windowResizeListenerRef.current);
       windowResizeListenerRef.current = null;
@@ -668,7 +699,6 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
 
   useEffect(() => {
     setDisplayModeState(readTerminalDisplayMode(projectId));
-    setDockedHeight(readTerminalDockedHeight(projectId));
   }, [projectId]);
 
   /*
@@ -712,56 +742,58 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
     window.dispatchEvent(new CustomEvent("fusion:terminal-display-mode-change", { detail: { projectId, mode } }));
   }, [projectId]);
 
-  const handleDockedResizePointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+  /*
+  FNXC:TerminalLayout 2026-09-15-21:04:
+  FN-434 turns the pinned panel's top grip into a DETACH gesture: the panel has a fixed height, so the only
+  meaningful pointer intent left on that edge is "pull the terminal out into a window". The gesture follows the
+  same capture/teardown pattern the retired resize handler used (pointer capture on the grip, pointerId filtering,
+  restored `user-select`, `dragTeardownRef` for unmount/close mid-drag). Detaching requires travelling past
+  TERMINAL_DETACH_DRAG_THRESHOLD_PX in EITHER vertical direction, so a plain click on the grip changes nothing.
+  */
+  const handlePinnedDetachPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     if (!isBelowMode) return;
     event.preventDefault();
     const captureTarget = event.currentTarget;
     const pointerId = event.pointerId;
     captureTarget.setPointerCapture?.(pointerId);
     const startY = event.clientY;
-    const startHeight = dockedHeight;
     const previousUserSelect = document.body.style.userSelect;
     document.body.style.userSelect = "none";
+    let detached = false;
 
-    let latestHeight = startHeight;
-    let frame = 0;
-
-    const handlePointerMove = (moveEvent: PointerEvent) => {
-      if (moveEvent.pointerId !== pointerId) return;
-      const nextHeight = startHeight + (moveEvent.clientY - startY);
-      latestHeight = clampTerminalBelowHeight(nextHeight);
-      if (frame) return;
-      frame = requestAnimationFrame(() => {
-        frame = 0;
-        setDockedHeight(latestHeight);
-      });
-    };
     const detachListeners = () => {
       captureTarget.releasePointerCapture?.(pointerId);
       captureTarget.removeEventListener("pointermove", handlePointerMove);
       captureTarget.removeEventListener("pointerup", handlePointerUp);
       captureTarget.removeEventListener("pointercancel", handlePointerUp);
     };
-    function handlePointerUp() {
-      if (frame) cancelAnimationFrame(frame);
-      setDockedHeight(writeTerminalDockedHeight(latestHeight, projectId));
+
+    function endGesture() {
       document.body.style.userSelect = previousUserSelect;
       detachListeners();
       dragTeardownRef.current = null;
     }
 
-    // FNXC:Terminal 2026-06-22-19:50: Unmount/close-mid-drag teardown cancels the pending rAF, releases pointer capture, and detaches the captured-element listeners without persisting a partial drag.
-    dragTeardownRef.current = () => {
-      if (frame) cancelAnimationFrame(frame);
-      document.body.style.userSelect = previousUserSelect;
-      detachListeners();
-      dragTeardownRef.current = null;
-    };
+    function handlePointerMove(moveEvent: PointerEvent) {
+      if (moveEvent.pointerId !== pointerId || detached) return;
+      if (Math.abs(moveEvent.clientY - startY) < TERMINAL_DETACH_DRAG_THRESHOLD_PX) return;
+      detached = true;
+      endGesture();
+      setDisplayMode("floating");
+    }
+
+    function handlePointerUp(upEvent: PointerEvent) {
+      if (upEvent.pointerId !== pointerId) return;
+      endGesture();
+    }
+
+    // FNXC:Terminal 2026-06-22-19:50: Unmount/close-mid-drag teardown releases pointer capture and detaches the captured-element listeners without applying a partial gesture.
+    dragTeardownRef.current = endGesture;
 
     captureTarget.addEventListener("pointermove", handlePointerMove);
     captureTarget.addEventListener("pointerup", handlePointerUp);
     captureTarget.addEventListener("pointercancel", handlePointerUp);
-  }, [dockedHeight, isBelowMode, projectId]);
+  }, [isBelowMode, setDisplayMode]);
 
   /**
    * Fit xterm and publish cols/rows for a specific terminal session.
@@ -854,6 +886,71 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
     return () => window.removeEventListener(FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT, refitFloatingTerminal);
   }, [fitAndResizeForSession, isFloatingMode, projectId]);
 
+  /*
+  FNXC:TerminalLayout 2026-09-15-21:04:
+  FN-434 re-pins the detached terminal when the operator DRAGS it back down onto the bottom bar.
+
+  (a) The contact line is `availableBounds.bottom`, which `resolveDashboardWindowBounds` already defines as
+  `footerRect.top`; no separate DOM measurement of the footer is needed. Without a window-manager provider the
+  bounds fall back to the viewport, so the footer height is subtracted explicitly there.
+
+  (b) The trigger is a COMPLETED POINTER GESTURE on the panel, deliberately NOT
+  `FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT` and not a global `pointerup`: that event is published from a layout
+  effect on mount and on every programmatic re-clamp, a SNAPPED window is sized to the work area so its bottom
+  edge sits on the contact line permanently, and a plain click moves nothing. Any of those three would re-pin
+  instantly and make detaching impossible, so all three are excluded — the window must be genuinely floating at
+  both ends of the gesture and must actually have moved.
+  */
+  const repinGestureRef = useRef<{ pointerId: number; startBottom: number } | null>(null);
+  useEffect(() => {
+    if (!isFloatingMode || !auxEffectsActive || isMobileTerminal || embedded) {
+      repinGestureRef.current = null;
+      return;
+    }
+    const panel = modalRef.current?.closest(".floating-window") as HTMLElement | null;
+    if (!panel) return;
+
+    const repinLineY = () => {
+      const viewportLine = window.innerHeight - (footerVisible ? EXECUTOR_FOOTER_HEIGHT_PX : 0);
+      return Math.min(windowBounds.bottom, viewportLine);
+    };
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (!target || !panel.contains(target)) return;
+      if (panel.dataset.snapMode !== "floating") {
+        repinGestureRef.current = null;
+        return;
+      }
+      repinGestureRef.current = { pointerId: event.pointerId, startBottom: panel.getBoundingClientRect().bottom };
+    };
+
+    const handlePointerUp = (event: PointerEvent) => {
+      const gesture = repinGestureRef.current;
+      if (!gesture || gesture.pointerId !== event.pointerId) return;
+      repinGestureRef.current = null;
+      if (panel.dataset.snapMode !== "floating") return;
+      const endBottom = panel.getBoundingClientRect().bottom;
+      if (Math.abs(endBottom - gesture.startBottom) < TERMINAL_REPIN_MOVE_MIN_PX) return;
+      if (endBottom < repinLineY() - TERMINAL_REPIN_CONTACT_PX) return;
+      setDisplayMode("below");
+    };
+
+    const handlePointerCancel = (event: PointerEvent) => {
+      if (repinGestureRef.current?.pointerId === event.pointerId) repinGestureRef.current = null;
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    document.addEventListener("pointerup", handlePointerUp, true);
+    document.addEventListener("pointercancel", handlePointerCancel, true);
+    return () => {
+      repinGestureRef.current = null;
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+      document.removeEventListener("pointerup", handlePointerUp, true);
+      document.removeEventListener("pointercancel", handlePointerCancel, true);
+    };
+  }, [auxEffectsActive, embedded, footerVisible, isFloatingMode, isMobileTerminal, setDisplayMode, windowBounds.bottom]);
+
   // Bump open generation whenever the modal opens so the initialCommand
   // effect re-evaluates after a close/reopen cycle (deps may be identical).
   useEffect(() => {
@@ -943,6 +1040,10 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
   /*
   FNXC:Terminal 2026-06-21-22:07:
   Docked resize interactions change the terminal viewport without a window resize event, so refit xterm after display mode or docked height changes. FloatingWindow geometry is handled by its dedicated event listener.
+
+  FNXC:TerminalLayout 2026-09-15-21:04:
+  FN-434 removed the pinned-height state, so a presentation change (`displayMode`) is the only remaining local
+  trigger for this refit.
   */
   useEffect(() => {
     if (!auxEffectsActive) return;
@@ -952,7 +1053,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
   /* FNXC:TerminalKeepAlive 2026-07-30-23:55: `floatingSize` was in this array on the PR branch and no
      longer exists — main removed it. Dropped rather than reconstructed: the effect body reads only
      `auxEffectsActive` and `fitAndResizeForSession`, and the rest are layout re-run triggers. */
-  }, [displayMode, dockedHeight, fitAndResizeForSession, auxEffectsActive]);
+  }, [displayMode, fitAndResizeForSession, auxEffectsActive]);
 
   // Refit xterm whenever the user drags the modal's CSS resize grip.
   // The window/visualViewport listeners only fire on viewport changes; native
@@ -1509,6 +1610,72 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
     [],
   );
 
+  /*
+  FNXC:Terminal 2026-09-15-21:04:
+  FN-434 root cause of the "panel appears but the console is gone" report: switching presentation re-mounts the
+  terminal subtree under a DIFFERENT host (`FloatingWindow`, `.terminal-below-host`, or the mobile portal), so
+  `terminalRef` points at a brand-new node — while the xterm init effect is guarded by
+  `if (!mounted || !terminalRef.current || xtermRef.current) return;` and therefore never re-runs. The live xterm
+  element stayed attached to the discarded DOM node. Re-attach it to the current container on every presentation
+  change (layout effect, before paint), then refit and repaint; if there is no element to move, or moving it throws,
+  dispose and let the init effect rebuild the instance in the new container.
+  */
+  useLayoutEffect(() => {
+    const container = terminalRef.current;
+    const terminal = xtermRef.current;
+    if (!container || !terminal) return;
+    /*
+    Scope: a PRESENTATION change only. The container node also remounts on a session/tab switch, which the init
+    effect already owns — reacting to that here would dispose a healthy instance mid-restore.
+    */
+    const presentationKey = `${displayMode}|${embedded}|${isMobileTerminal}`;
+    if (xtermPresentationRef.current === null) {
+      // First pass over a live instance: record the presentation it belongs to, then only react to CHANGES.
+      xtermPresentationRef.current = presentationKey;
+      return;
+    }
+    if (xtermPresentationRef.current === presentationKey) return;
+
+    const element = (terminal as unknown as { element?: HTMLElement | null }).element ?? null;
+    if (element && element.parentElement === container) {
+      xtermPresentationRef.current = presentationKey;
+      return;
+    }
+
+    if (element) {
+      try {
+        container.appendChild(element);
+        xtermPresentationRef.current = presentationKey;
+        fitAndResizeForSession(activeTab?.sessionId);
+        terminal.refresh(0, Math.max(0, terminal.rows - 1));
+        return;
+      } catch {
+        // Fall through to the recreate path below.
+      }
+    }
+
+    /*
+    FNXC:Terminal 2026-09-15-21:04:
+    FN-434 recreate fallback, attempted AT MOST ONCE per presentation: a rebuilt instance that still exposes no
+    attachable element must not dispose-and-rebuild forever (that loop is an unbounded render storm, not a repair).
+    */
+    if (xtermReattachFallbackRef.current === presentationKey) return;
+    xtermReattachFallbackRef.current = presentationKey;
+
+    disposeXtermInstance();
+    xtermInitializedRef.current = false;
+    setXtermReady(false);
+    setXtermReinitNonce((nonce) => nonce + 1);
+  }, [
+    activeTab?.sessionId,
+    disposeXtermInstance,
+    displayMode,
+    embedded,
+    fitAndResizeForSession,
+    isMobileTerminal,
+    xtermReady,
+  ]);
+
   // Initialize xterm.js when a session is attachable.
   // Keying this effect by active session id (not full activeTab object) avoids
   // tearing down xterm lifecycle wiring during unrelated tab metadata updates
@@ -1839,7 +2006,8 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
       Deliberately NOT disposing here. This effect re-runs on every terminal-tab / session change, and the instance must survive a tab switch (the body above disposes+recreates only when the session actually changed). Release is owned by the close effect, the session-invalid swap, manual reinit, and the unmount teardown below — never by this cleanup.
       */
     };
-  }, [disposeXtermInstance, fitAndResizeForSession, isOpen, activeTab?.sessionId, projectId, remeasureAfterTerminalFontLoad]);
+  // FNXC:Terminal 2026-09-15-21:04: FN-434 adds `xtermReinitNonce` so a failed re-attach can rebuild the instance.
+  }, [disposeXtermInstance, fitAndResizeForSession, isOpen, activeTab?.sessionId, projectId, remeasureAfterTerminalFontLoad, xtermReinitNonce]);
 
   // (Input forwarding + window resize listener are wired inside initTerminal
   // so they share the xterm instance's lifetime — see comment there.)
@@ -2326,16 +2494,14 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
 
   /*
   FNXC:TerminalModalControls 2026-09-15-07:57:
-  FN-409: the only remaining presentation control toggles pinned <-> detached. Re-attaching restores the pinned
-  panel and re-normalizes the stored height, which is what the retired pin toggle used to do.
+  FN-409: the only remaining presentation control toggles pinned <-> detached.
+
+  FNXC:TerminalModalControls 2026-09-15-21:04:
+  FN-434: re-attaching no longer restores any stored height — the pinned panel is a fixed height, so the toggle is a
+  pure presentation switch in both directions.
   */
   const handleToggleDisplayMode = useCallback(() => {
-    if (displayMode === "floating") {
-      setDisplayMode("below");
-      setDockedHeight((current) => clampTerminalBelowHeight(current || TERMINAL_BELOW_DEFAULT_HEIGHT));
-      return;
-    }
-    setDisplayMode("floating");
+    setDisplayMode(displayMode === "floating" ? "below" : "floating");
   }, [displayMode, setDisplayMode]);
 
   const handlePreferenceFontSizeChange = useCallback(
@@ -2484,7 +2650,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
           "--vv-width": viewportWidth ? `${viewportWidth}px` : undefined,
         }
       : {}),
-    ...(isBelowMode ? { "--terminal-below-height": `${clampTerminalBelowHeight(dockedHeight || TERMINAL_BELOW_DEFAULT_HEIGHT)}px` } : {}),
+    ...(isBelowMode ? { "--terminal-below-height": `${resolveTerminalBelowHeight()}px` } : {}),
   } as CSSProperties;
 
   /*
@@ -2758,14 +2924,19 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
         {mobileDrawer && (
           <ViewDrawerHandle className="terminal-drawer-handle-target" barClassName="terminal-drawer-handle" data-testid="terminal-drawer-handle" />
         )}
+        {/*
+        FNXC:TerminalLayout 2026-09-15-21:04:
+        FN-434: this grip is a DETACH affordance, not a separator between two resizable regions, so it is a plain
+        labelled target rather than `role="separator"`/`aria-orientation`.
+        */}
         {!embedded && isBelowMode && (
           <div
-            className="terminal-below-resize-handle"
-            data-testid="terminal-docked-resize-handle"
-            role="separator"
-            aria-orientation="horizontal"
-            aria-label={t("terminal.resizeBelowPanel", "Resize pinned terminal panel")}
-            onPointerDown={handleDockedResizePointerDown}
+            className="terminal-below-drag-handle"
+            data-testid="terminal-pinned-drag-handle"
+            role="button"
+            tabIndex={-1}
+            aria-label={t("terminal.detachHandle", "Detach terminal into a window")}
+            onPointerDown={handlePinnedDetachPointerDown}
           />
         )}
         {/* Header — on mobile (≤768px) use compact selector/actions;

@@ -987,7 +987,12 @@ describe("TerminalModal", () => {
     expect(mobileRule).toContain("-webkit-overflow-scrolling: touch;");
   });
 
-  it("renders the desktop terminal pinned below the application and refits after handle resize", async () => {
+  /*
+  FN-434 symptom acceptance (1): the pinned panel is a FIXED height. The retired gesture computed
+  `startHeight + (clientY - startY)` from a TOP-edge grip, so dragging UP (the enlarge gesture) shrank the panel.
+  Both directions must now leave the panel height untouched and must write no height preference at all.
+  */
+  it("renders the desktop terminal pinned below the application at a fixed height that no drag can change", async () => {
     const projectId = "pinned-resize-test";
     window.localStorage.removeItem(`fusion:terminal-docked-height-${projectId}`);
 
@@ -1000,21 +1005,38 @@ describe("TerminalModal", () => {
     expect(modal).not.toHaveClass("terminal-modal--floating");
     expect(screen.getByTestId("terminal-below-host")).toBeInTheDocument();
 
-    const fitCallBaseline = mockFitAddonFit.mock.calls.length;
-    // FNXC:Terminal 2026-06-22-19:50: The resize handlers now capture the pointer and listen on the CAPTURED handle element (not document), so move/up are fired on the handle with the matching pointerId; stub setPointerCapture/releasePointerCapture (jsdom no-ops).
-    const handle = screen.getByTestId("terminal-docked-resize-handle") as HTMLElement & { setPointerCapture: (pointerId: number) => void; releasePointerCapture: (pointerId: number) => void };
-    handle.setPointerCapture = vi.fn();
-    handle.releasePointerCapture = vi.fn();
+    const initialHeight = modal.style.getPropertyValue("--terminal-below-height");
+    expect(initialHeight).not.toBe("");
 
-    // The pinned panel grows downward from its top edge: dragging the handle down by 60px adds 60px.
-    fireEvent.pointerDown(handle, { pointerId: 1, clientY: 500 });
-    fireEvent.pointerMove(handle, { pointerId: 1, clientY: 560 });
-    fireEvent.pointerUp(handle, { pointerId: 1 });
+    const grabPinnedHandle = (): HTMLElement => {
+      const handle = screen.getByTestId("terminal-pinned-drag-handle") as HTMLElement & {
+        setPointerCapture: (pointerId: number) => void;
+        releasePointerCapture: (pointerId: number) => void;
+      };
+      handle.setPointerCapture = vi.fn();
+      handle.releasePointerCapture = vi.fn();
+      return handle;
+    };
+    const pinnedHeight = (): string =>
+      screen.getByTestId("terminal-modal").style.getPropertyValue("--terminal-below-height");
 
-    await waitFor(() => {
-      expect(window.localStorage.getItem(`fusion:terminal-docked-height-${projectId}`)).toBe("320");
-      expect(mockFitAddonFit.mock.calls.length).toBeGreaterThan(fitCallBaseline);
-    });
+    // Upward: the "enlarge" gesture the old top-edge formula shrank the panel with.
+    const upHandle = grabPinnedHandle();
+    fireEvent.pointerDown(upHandle, { pointerId: 1, clientY: 500 });
+    fireEvent.pointerMove(upHandle, { pointerId: 1, clientY: 490 });
+    expect(pinnedHeight()).toBe(initialHeight);
+    fireEvent.pointerUp(upHandle, { pointerId: 1 });
+    expect(pinnedHeight()).toBe(initialHeight);
+
+    // Downward: the gesture the old formula grew the panel with.
+    const downHandle = grabPinnedHandle();
+    fireEvent.pointerDown(downHandle, { pointerId: 2, clientY: 500 });
+    fireEvent.pointerMove(downHandle, { pointerId: 2, clientY: 510 });
+    expect(pinnedHeight()).toBe(initialHeight);
+    fireEvent.pointerUp(downHandle, { pointerId: 2 });
+    expect(pinnedHeight()).toBe(initialHeight);
+
+    expect(window.localStorage.getItem(`fusion:terminal-docked-height-${projectId}`)).toBeNull();
   });
 
   it("toggles between the pinned panel and the detached window with the pop-out control", async () => {
@@ -1023,7 +1045,7 @@ describe("TerminalModal", () => {
     const modal = await screen.findByTestId("terminal-modal");
     expect(modal).toHaveClass("terminal-modal--below");
     expect(screen.queryByTestId("terminal-drag-grip")).toBeNull();
-    expect(screen.getByTestId("terminal-docked-resize-handle")).toBeInTheDocument();
+    expect(screen.getByTestId("terminal-pinned-drag-handle")).toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId("terminal-popout-toggle"));
 
@@ -1047,7 +1069,7 @@ describe("TerminalModal", () => {
     await waitFor(() => {
       expect(screen.getByTestId("terminal-modal")).toHaveClass("terminal-modal--below");
       expect(screen.getByTestId("terminal-below-host")).toBeInTheDocument();
-      expect(screen.getByTestId("terminal-docked-resize-handle")).toBeInTheDocument();
+      expect(screen.getByTestId("terminal-pinned-drag-handle")).toBeInTheDocument();
       expect(window.localStorage.getItem("fusion:terminal-display-mode-popout-toggle-test")).toBe("below");
     });
   });
@@ -1703,7 +1725,7 @@ describe("TerminalModal", () => {
       const modal = await screen.findByTestId("terminal-modal");
       expect(modal).not.toHaveClass("terminal-modal--below");
       expect(modal).not.toHaveClass("terminal-modal--floating");
-      expect(screen.queryByTestId("terminal-docked-resize-handle")).toBeNull();
+      expect(screen.queryByTestId("terminal-pinned-drag-handle")).toBeNull();
       expect(screen.queryByTestId("terminal-popout-toggle")).toBeNull();
       expect(screen.queryByTestId("terminal-pin-toggle")).toBeNull();
       expect(screen.queryByTestId("terminal-drag-grip")).toBeNull();
