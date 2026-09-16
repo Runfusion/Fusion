@@ -431,6 +431,7 @@ export function FileBrowser({
   const touchStartRef = useRef<TouchPoint | null>(null);
   const touchOpenHandledRef = useRef(false);
   const newMenuRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
   const searchRequestIdRef = useRef(0);
 
   const clearLongPressTimers = useCallback(() => {
@@ -582,10 +583,17 @@ export function FileBrowser({
     cancelLongPress();
   }, [cancelLongPress]);
 
-  // Close context menu on scroll within the file browser
+  /*
+  FNXC:FileBrowser 2026-09-16-22:33:
+  Fermeture du menu contextuel au défilement DE CETTE instance. La souscription passait par
+  `document.querySelector(".file-browser-list")`, c'est-à-dire la PREMIÈRE liste du document : avec deux navigateurs
+  montés (dock + fenêtre, ou deux docks), le menu du second ne se fermait jamais sur son propre défilement et se
+  fermait à tort sur celui du premier. La référence locale lie l'écouteur à la liste de l'instance propriétaire ; la
+  liste peut être remplacée par un cycle chargement/erreur, donc la souscription est réévaluée à chaque ouverture.
+  */
   useEffect(() => {
     if (!contextMenu.visible) return;
-    const browserList = document.querySelector(".file-browser-list");
+    const browserList = listRef.current;
     const handleClose = () => {
       touchOpenHandledRef.current = false;
       cancelLongPress();
@@ -909,7 +917,7 @@ export function FileBrowser({
         </div>
       </div>
 
-      <div className="file-browser-list">
+      <div className="file-browser-list" ref={listRef}>
         {isSearching ? (
           <div className="file-browser-search-results" aria-live="polite">
             {searchLoading ? (

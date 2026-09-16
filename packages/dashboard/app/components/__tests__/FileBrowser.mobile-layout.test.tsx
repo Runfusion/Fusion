@@ -156,6 +156,22 @@ function expectSingleBoundedScrollOwner(leafSelector: string, stopSelector: stri
     .map((node) => `${describeNode(node)} -> ${getComputedStyle(node).minHeight || "<unset>"}`);
   expect(unbounded).toEqual([]);
 
+  /*
+  FN-479 : `min-height: 0` ne borne RIEN sur un élément flex qui ne rétrécit pas. `.view-sidebar__panel` héritait
+  `flex: none` de `ViewSidebar.css` et prenait donc la hauteur de son CONTENU (3719px mesurés dans Chromium pour un
+  parent de 731px), ce qui laissait `.file-browser-list` avec `clientHeight === scrollHeight`. La boucle ci-dessus
+  restait verte pendant ce temps : elle ne lisait que `min-height`. Chaque boîte intermédiaire de la chaîne doit donc
+  aussi être réellement réductible.
+  */
+  const nonShrinking = chain
+    .slice(1)
+    .filter((node) => {
+      const style = getComputedStyle(node);
+      return style.flexShrink === "0" || style.flex === "none" || /^0 0 /.test(style.flex ?? "");
+    })
+    .map((node) => `${describeNode(node)} -> ${getComputedStyle(node).flex || getComputedStyle(node).flexShrink}`);
+  expect(nonShrinking).toEqual([]);
+
   for (const node of chain) {
     const touchAction = getComputedStyle(node).touchAction;
     if (!touchAction) continue;
@@ -232,9 +248,18 @@ describe("FileBrowser phone layout (FN-462)", () => {
      * directory, file to copy) render the shared browser inside the SAME `.settings-overlap-path-picker-body`, which
      * as a `.modal-body` scrolled against the list while the browser itself was bounded by nothing.
      */
-    it("(e) bounds the Settings workspace picker and keeps its actions inside the panel", async () => {
+    /*
+     * FN-479 extends host E from one picker to all THREE. They share `.settings-overlap-path-picker-body`, but each is
+     * reached by its own production trigger and its own section, so a single sampled picker could not prove the other
+     * two still resolve a bounded chain.
+     */
+    it.each([
+      ["worktrees" as const, "Browse file to copy into new worktrees"],
+      ["worktrees" as const, "Browse worktrees directory"],
+      ["scheduling" as const, "Browse path for ignored overlap entry 1"],
+    ])("(e) bounds the Settings workspace picker « %s / %s » and keeps its actions inside the panel", async (section, triggerLabel) => {
       setPhone({ drawers: false });
-      render(<SettingsModal onClose={vi.fn()} addToast={vi.fn()} initialSection="worktrees" />);
+      render(<SettingsModal onClose={vi.fn()} addToast={vi.fn()} initialSection={section} />);
 
       await waitFor(() => expect(screen.queryByText("Loading…")).not.toBeInTheDocument(), { timeout: 3000 });
 
@@ -244,8 +269,8 @@ describe("FileBrowser phone layout (FN-462)", () => {
        */
       const browse = await waitFor(
         () => {
-          const node = document.querySelector<HTMLButtonElement>('button[aria-label="Browse file to copy into new worktrees"]');
-          if (!node) throw new Error("worktree copy-file picker trigger not rendered");
+          const node = document.querySelector<HTMLButtonElement>(`button[aria-label="${triggerLabel}"]`);
+          if (!node) throw new Error(`picker trigger not rendered: ${triggerLabel}`);
           return node;
         },
         { timeout: 3000 },

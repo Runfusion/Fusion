@@ -391,6 +391,12 @@ const browserTouchTests = [
   "src/__tests__/view-layout-browser.test.ts",
   /* FNXC:UiStyleAxis 2026-09-15-00:20: FN-399's appearance axes need a real engine to compose theme colour against style geometry. */
   "src/__tests__/ui-style-browser.test.ts",
+  /*
+  FNXC:FileBrowserScroll 2026-09-16-22:33:
+  FN-479 : la propriété de défilement du navigateur de fichiers (hauteur calculée, conteneur défilant effectif,
+  pan tactile natif) ne peut être prouvée que par un moteur réel ; jsdom en calcule aucune des trois.
+  */
+  "src/__tests__/file-browser-scroll-browser.test.ts",
 ];
 
 const qualityApiTests = [

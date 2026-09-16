@@ -146,6 +146,21 @@ describe("FileBrowserModal phone drawer layout", () => {
       expect(ruleBody(css, `${DRAWER_PREFIX} .file-browser {`)).toContain("min-height: 0");
     });
 
+    /*
+    FN-479 : ce groupe de sélecteurs était vert alors que la liste ne défilait toujours pas. `min-height: 0` n'a aucun
+    effet sur un élément flex qui ne rétrécit pas, et `ViewSidebar.css` donne au panneau du rail `flex: none` : il
+    prenait donc la hauteur de son contenu. La déclaration manquante est la réductibilité elle-même, portée par une
+    règle de base (aucun point de rupture : le défaut existait aussi sur tablette et ordinateur) et écrite en forme
+    parent > enfant pour battre `.view-sidebar__panel` par spécificité plutôt que par ordre d'injection.
+    */
+    it("rend le panneau du rail réductible, ce que min-height: 0 ne pouvait pas faire", () => {
+      const css = loadAllAppCss();
+      const body = ruleBody(css, ".file-browser-sidebar > .file-browser-sidebar__panel");
+
+      expect(body).toContain("flex: 1 1 auto");
+      expect(body).not.toContain("flex: none");
+    });
+
     it("makes the file list the single bounded scroll owner in drawer presentation", () => {
       const css = loadAllAppCss();
       const body = ruleBody(css, `${DRAWER_PREFIX} .file-browser-list`);

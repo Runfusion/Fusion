@@ -91,9 +91,37 @@
   background: var(--surface);
 }
 
+/*
+FNXC:FileBrowser 2026-09-16-22:33:
+FN-479 — CAUSE MESURÉE du signalement répété « je n'arrive pas à scroller la liste des dossiers/fichiers ».
+
+L'hôte fautif est le navigateur général `FileBrowserModal` → `FloatingWindow` → `ViewSidebar` → `FileBrowser`.
+Mesure Chromium AVANT ce correctif, avec 80 entrées : `.file-browser-sidebar` est correctement borné (731px à
+390×844, 607px à 1280×900) mais SON ENFANT `.view-sidebar__panel` mesure 3719px / 2717px, si bien que
+`.file-browser-list` reçoit `clientHeight === scrollHeight` : la liste n'est PAS un conteneur défilant, `scrollTop`
+ne peut pas bouger, et les dernières entrées restent définitivement hors écran.
+
+La cause est une propriété de BOÎTE, pas de point de rupture : `ViewSidebar.css` donne au panneau `flex: none`
+(= `0 0 auto`). Dans un conteneur colonne, un élément qui ne rétrécit pas prend la hauteur de son CONTENU, et
+`min-height: 0` — la seule déclaration que FN-427/FN-445/FN-462 avaient posée sur cette boîte — n'a alors aucun
+effet. jsdom ne calcule aucune hauteur, donc ces trois correctifs restaient verts pendant que le symptôme revenait.
+
+Le correctif est donc déclaré ICI, sur la boîte fautive et sans media query : le panneau devient réellement
+réductible dans CE seul hôte. `inline-size` (la largeur du rail, y compris la largeur persistée par l'opérateur)
+reste possédée par `ViewSidebar.css`, et aucun autre consommateur de `.view-sidebar__panel` n'est touché.
+
+La règle de réduction est écrite en forme parent > enfant (spécificité 0,2,0) À DESSEIN : `ViewSidebar.css` déclare
+`.view-sidebar__panel { flex: none }` à 0,1,0, et les deux feuilles sont des fichiers de composant dont l'ordre
+d'injection dépend de l'ordre des imports. Une règle de même spécificité ne gagnerait que par chance de cascade.
+*/
 .file-browser-sidebar__panel {
   overflow: hidden;
   border-right: var(--btn-border-width) solid var(--border);
+}
+
+.file-browser-sidebar > .file-browser-sidebar__panel {
+  flex: 1 1 auto;
+  max-block-size: 100%;
 }
 
 .file-browser-content {
