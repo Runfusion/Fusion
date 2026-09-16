@@ -5,11 +5,12 @@
  * The Vitest JSON report proves the project glob executed; scenario JSON-lines prove that the
  * declarative S01..S19 contract, rather than incidental harness self-tests, actually ran.
  */
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { runWithWatchdog } from "./lib/run-vitest-watchdog.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = resolve(__dirname, "..");
@@ -79,8 +80,9 @@ export function validateScenarioRecords(records) {
   const ids = new Set(records.map((record) => record.scenarioId));
   const missing = [...expected].filter((id) => !ids.has(id));
   const unexpected = [...ids].filter((id) => !expected.has(id));
-  if (missing.length || unexpected.length) {
-    throw new Error(`pipeline smoke scenario census mismatch: missing [${missing.join(", ") || "none"}], unexpected [${unexpected.join(", ") || "none"}]`);
+  const duplicateIds = [...ids].filter((id) => records.filter((record) => record.scenarioId === id).length > 1);
+  if (records.length !== PIPELINE_SMOKE_SCENARIO_COUNT || missing.length || unexpected.length || duplicateIds.length) {
+    throw new Error(`pipeline smoke scenario census mismatch: expected ${PIPELINE_SMOKE_SCENARIO_COUNT} records, received ${records.length}; missing [${missing.join(", ") || "none"}], unexpected [${unexpected.join(", ") || "none"}], duplicates [${duplicateIds.join(", ") || "none"}]`);
   }
   const failed = records.filter((record) => record.verdict !== "pass" || record.expectedTerminal !== record.observedTerminal || record.wedge);
   if (failed.length) {
@@ -168,8 +170,10 @@ function printTable(summary, records, write = console.log) {
   write(`✓ pipeline smoke: ${summary.scenarioIds.length}/${summary.expectedScenarioCount} scenarios passed in ${summary.durationMs}ms (budget ${summary.durationBudgetMs}ms)`);
 }
 
-export function runPipelineSmoke({
-  spawn = spawnSync,
+export async function runPipelineSmoke({
+  spawn: prerequisiteSpawn = spawnSync,
+  watchdog = runWithWatchdog,
+  watchdogSpawn = spawn,
   now = () => Date.now(),
   prerequisite = checkPrerequisites,
   options = {},
@@ -185,7 +189,13 @@ export function runPipelineSmoke({
     diagnosticBudget: false,
     ...options,
   };
-  const preflight = prerequisite({ spawn });
+  /*
+  FNXC:PipelineSmoke 2026-09-16-22:42:
+  CI uploads the final report even after a failed smoke invocation. Remove a prior report before
+  preflight so stale passing evidence cannot be published when prerequisites or the watchdog fail.
+  */
+  rmSync(resolvedOptions.reportPath, { force: true });
+  const preflight = prerequisite({ spawn: prerequisiteSpawn });
   if (!preflight.ok) {
     if (resolvedOptions.allowSkip) {
       const skipped = { schemaVersion: 1, project: PIPELINE_SMOKE_PROJECT, skipped: true, reason: preflight.message };
@@ -206,18 +216,26 @@ export function runPipelineSmoke({
       const rawReportPath = join(reportDir, `vitest-${iteration}.json`);
       const scenarioReportPath = join(reportDir, `scenarios-${iteration}.jsonl`);
       const startedAt = now();
-      const result = spawn(
-        "pnpm",
-        ["exec", "vitest", "run", `--project=${PIPELINE_SMOKE_PROJECT}`, "--silent=passed-only", "--reporter=dot", "--reporter=json", `--outputFile=${rawReportPath}`],
-        {
-          cwd: ENGINE_DIR,
-          stdio: "inherit",
-          env: { ...process.env, FUSION_PIPELINE_SMOKE_REPORT: scenarioReportPath },
-          timeout: resolvedOptions.budgetMs + 30_000,
-        },
-      );
+      /*
+      FNXC:PipelineSmoke 2026-09-16-22:32:
+      The pnpm-to-Vitest boundary must own its entire detached process group. spawnSync timeout
+      leaves descendants alive after ETIMEDOUT, so the unchanged smoke budget is enforced by the
+      shared watchdog's SIGTERM-to-SIGKILL lifecycle rather than widening this duration ceiling.
+      */
+      const result = await watchdog({
+        command: "pnpm",
+        args: ["exec", "vitest", "run", `--project=${PIPELINE_SMOKE_PROJECT}`, "--silent=passed-only", "--reporter=dot", "--reporter=json", `--outputFile=${rawReportPath}`],
+        cwd: ENGINE_DIR,
+        env: { ...process.env, FUSION_PIPELINE_SMOKE_REPORT: scenarioReportPath },
+        budgetMs: resolvedOptions.budgetMs,
+        label: "pipeline smoke",
+        spawn: watchdogSpawn,
+        log: warn,
+      });
       const durationMs = now() - startedAt;
-      if (result.error) throw new Error(`failed to run pipeline smoke: ${result.error.message}`);
+      if (result.timedOut) throw new Error("pipeline smoke timed out; watchdog terminated the Vitest process group");
+      if (result.signal) throw new Error(`pipeline smoke terminated by signal ${result.signal}`);
+      if (result.code !== 0) throw new Error(`pipeline smoke Vitest exited with code ${result.code ?? "unknown"}`);
       if (!existsSync(rawReportPath)) throw new Error("pipeline smoke produced no JSON results file; cannot verify test execution");
       if (!existsSync(scenarioReportPath)) throw new Error("pipeline smoke produced no scenario records; cannot verify declared coverage");
       const { testCount } = parsePipelineSmokeReport(readFileSync(rawReportPath, "utf8"));
@@ -225,7 +243,7 @@ export function runPipelineSmoke({
       const summary = buildPipelineSmokeSummary({
         testCount,
         durationMs,
-        exitCode: result.status ?? 1,
+        exitCode: result.code,
         records,
         budgetMs: resolvedOptions.budgetMs,
         repeat: resolvedOptions.repeat,
@@ -252,7 +270,10 @@ export function runPipelineSmoke({
 function main() {
   try {
     const options = parseArgs(process.argv.slice(2));
-    runPipelineSmoke({ options });
+    void runPipelineSmoke({ options }).catch((error) => {
+      console.error(`✗ ${error instanceof Error ? error.message : String(error)}`);
+      process.exitCode = 1;
+    });
   } catch (error) {
     console.error(`✗ ${error instanceof Error ? error.message : String(error)}`);
     process.exitCode = 1;
