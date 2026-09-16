@@ -34,12 +34,29 @@ The left sidebar is a sibling of project-content, so it does not inherit project
 }
 
 /*
-FNXC:Navigation 2026-06-21-00:00:
-The collapse toggle lives in the footer above Settings instead of floating on the resize border. It reuses the tokenized row-item styling so expanded mode can show the Collapse label and rail mode can hide that label consistently with other sidebar items.
+FNXC:Navigation 2026-06-21-00:00 (rewritten 2026-09-16-20:52):
+The collapse toggle no longer lives in the footer above Settings, and it never floats on the resize border. FN-473 hosts
+it in a dedicated sidebar header region rendered as the aside's first child, mirroring the right dock toggle's position
+in Header. The header is a tokenized flex row that trails the icon in expanded mode and centers it in rail mode.
+
+FNXC:Navigation 2026-09-16-20:52:
+The button uses the canonical borderless icon-only `btn-icon` variant (FN-471), so its geometry stays owned by the
+`--icon-button-size` / `--icon-button-size-mobile` tokens in styles.css. Never declare a width/height box here.
 */
+.left-sidebar-nav__header {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: flex-end;
+  padding: var(--space-sm);
+}
+
+.left-sidebar-nav--collapsed .left-sidebar-nav__header {
+  justify-content: center;
+}
+
 .left-sidebar-nav__collapse-toggle {
   flex-shrink: 0;
-  justify-content: flex-start;
 }
 
 /*
@@ -192,8 +209,8 @@ The narrower resizable sidebar must preserve row rhythm by truncating labels ins
 }
 
 /*
-FNXC:Navigation 2026-06-22-00:00:
-The footer stacks the Collapse toggle above Settings. Use a flex column with a small gap so the two controls are visually separated instead of butting directly against each other.
+FNXC:Navigation 2026-06-22-00:00 (updated 2026-09-16-20:52):
+The footer stacks its remaining controls (engine capacity, optional Terminal, Settings) since FN-473 moved the collapse toggle into the sidebar header. Use a flex column with a small gap so the controls are visually separated instead of butting directly against each other.
 
 FNXC:Navigation 2026-06-22-18:00:
 The footer has no top divider; it remains a functional footer cluster but should not draw a line at its top edge.
