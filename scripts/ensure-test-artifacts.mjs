@@ -519,7 +519,12 @@ export function seedArtifactCache(rootDir = process.cwd(), existsFn = existsSync
   return present.map((pkg) => pkg.name);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+export function isMainModule(moduleUrl, argvPath, windows = undefined) {
+  if (!argvPath) return false;
+  return moduleUrl === pathToFileURL(argvPath, { windows }).href;
+}
+
+if (isMainModule(import.meta.url, process.argv[1])) {
   const argv = process.argv.slice(2);
   if (argv.includes("--print-source-hash")) {
     const hash = computeCombinedSourceHash();
