@@ -2877,7 +2877,14 @@ function AppInner() {
               projectId={currentProject.id}
               addToast={addToast}
               experimentalFeatures={{ insights: insightsEnabled, memoryView: memoryEnabled, devServerView: devServerEnabled, researchView: researchEnabled, evalsView: evalsEnabled, goalsView: goalsEnabled }}
-              onOpenSessionInNewWindow={(session) => { closeToolPanel(); openSessionInNewWindow(session); }}
+              /*
+              FNXC:ToolSurfaces 2026-09-16-04:37:
+              FN-447: ouvrir une conversation avec Ctrl/Cmd enfoncé, ou via l'action « Open in new window » du menu
+              contextuel, ouvre la fenêtre SANS refermer la liste, pour que plusieurs conversations puissent être
+              ouvertes d'affilée. Le clic simple continue de refermer la popover. Escape et le clic sur le backdrop
+              restent les fermetures explicites de DashboardToolPopover.
+              */
+              onOpenSessionInNewWindow={(session, options) => { if (!options?.keepListOpen) closeToolPanel(); openSessionInNewWindow(session); }}
               openChatWindows={appRightDockWindows.openChatWindows}
               onSendAsReport={handleSendChatMessageAsReport}
               compactLayout

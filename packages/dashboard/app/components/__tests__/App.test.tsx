@@ -7002,6 +7002,68 @@ describe("FN-426 tool surfaces without the right sidebar", () => {
   });
 
   /*
+   * FN-447 symptom: from the bottom-bar Conversations popover, Ctrl/Cmd-clicking a conversation — or using the
+   * right-click "Open in new window" action — opened the window AND dismissed the list, so opening several
+   * conversations in a row meant reopening the list every time. The host called closeToolPanel() unconditionally.
+   * These cases replay both gestures against the real ChatView and assert the popover survives while the detached
+   * window appears; the plain-click case asserts the unchanged dismiss-on-select behavior.
+   */
+  const chatWindowTestId = `floating-window-chat-window-${DEFAULT_PROJECT_ID}-${appChatSession.id}`;
+
+  it("garde la liste de conversations ouverte lors d’un Ctrl+clic sur une conversation", async () => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    configureProductionAppChat();
+    vi.mocked(fetchSettings).mockResolvedValue(toolSettings());
+
+    render(<App />);
+    await waitForAppShell();
+
+    fireEvent.click(await screen.findByTestId("desktop-nav-chat-panel"));
+    const panel = await screen.findByTestId("chat-tool-popover");
+    fireEvent.click(await within(panel).findByTestId(`chat-session-${appChatSession.id}`), { ctrlKey: true });
+
+    expect(await screen.findByTestId(chatWindowTestId)).toBeInTheDocument();
+    expect(screen.getByTestId("chat-tool-popover")).toBeInTheDocument();
+
+    /* Escape stays the explicit dismissal of the popover. */
+    fireEvent.keyDown(screen.getByTestId("chat-tool-popover"), { key: "Escape" });
+    await waitFor(() => expect(screen.queryByTestId("chat-tool-popover")).toBeNull());
+  });
+
+  it("garde la liste de conversations ouverte via l’action « Open in new window »", async () => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    configureProductionAppChat();
+    vi.mocked(fetchSettings).mockResolvedValue(toolSettings());
+
+    render(<App />);
+    await waitForAppShell();
+
+    fireEvent.click(await screen.findByTestId("desktop-nav-chat-panel"));
+    const panel = await screen.findByTestId("chat-tool-popover");
+    fireEvent.contextMenu(await within(panel).findByTestId(`chat-session-${appChatSession.id}`), { clientX: 12, clientY: 12 });
+    fireEvent.click(await screen.findByTestId("chat-context-open-window"));
+
+    expect(await screen.findByTestId(chatWindowTestId)).toBeInTheDocument();
+    expect(screen.getByTestId("chat-tool-popover")).toBeInTheDocument();
+  });
+
+  it("referme toujours la liste de conversations sur un clic simple", async () => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    configureProductionAppChat();
+    vi.mocked(fetchSettings).mockResolvedValue(toolSettings());
+
+    render(<App />);
+    await waitForAppShell();
+
+    fireEvent.click(await screen.findByTestId("desktop-nav-chat-panel"));
+    const panel = await screen.findByTestId("chat-tool-popover");
+    fireEvent.click(await within(panel).findByTestId(`chat-session-${appChatSession.id}`));
+
+    expect(await screen.findByTestId(chatWindowTestId)).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByTestId("chat-tool-popover")).toBeNull());
+  });
+
+  /*
    * FN-433 symptom: the bottom bar is `position: fixed; bottom: 0`, so the Chat trigger's rect bottom is the window
    * bottom. Placing the panel below it laid the whole dialog out past the bottom edge — present in the DOM, invisible
    * on screen, which is exactly "clicking Chat shows nothing". jsdom's default zero rect hides that, so this case feeds

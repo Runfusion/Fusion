@@ -149,8 +149,17 @@ export interface ChatViewProps {
   onPopOut?: () => void;
   onMaximize?: () => void;
   onClose?: () => void;
+  /*
+  FNXC:ChatWindows 2026-09-16-04:37:
+  FN-447: the optional second argument carries the operator's INTENT, not a host preference.
+  `keepListOpen: true` means the operator explicitly asked for a separate window (Ctrl/Cmd-click on a
+  list row, or the "Open in new window" context-menu action), so a host that normally dismisses itself
+  on selection (the footer Conversations popover) must stay open and let several conversations be opened
+  in a row. A plain click reports `keepListOpen: false` and keeps the existing dismiss-on-select behavior.
+  Hosts that never dismiss themselves simply ignore the option.
+  */
   /** Opens or focuses this exact Direct session in a separate in-app window. */
-  onOpenSessionInNewWindow?: (session: ChatSessionInfo) => void;
+  onOpenSessionInNewWindow?: (session: ChatSessionInfo, options?: { keepListOpen?: boolean }) => void;
   /** Secondary windows start in Direct and keep selection/scope storage private. */
   initialDirectSession?: ChatSessionInfo;
   /** Monotonic pop-out focus signal; a repeated open restores this window's detail view. */
@@ -2547,11 +2556,17 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
 
   // Handle session click
   const handleSessionClick = useCallback(
-    (id: string) => {
+    (id: string, modifiers?: { ctrlKey?: boolean; metaKey?: boolean }) => {
       const selectedSession = filteredSessions.find((session) => session.id === id);
       markRead("direct", id, selectedSession?.lastMessageAt ?? selectedSession?.updatedAt);
       if (listOnly) {
-        if (selectedSession) onOpenSessionInNewWindow?.(selectedSession);
+        /*
+        FNXC:ChatWindows 2026-09-16-04:37:
+        FN-447: a list-only host always opens a window, but only a modifier-click is an EXPLICIT
+        "open beside" gesture. The flag is always sent as a real boolean so the host condition stays
+        deterministic instead of depending on an absent option.
+        */
+        if (selectedSession) onOpenSessionInNewWindow?.(selectedSession, { keepListOpen: Boolean(modifiers?.ctrlKey || modifiers?.metaKey) });
         return;
       }
       selectSession(id);
@@ -3561,7 +3576,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
                     <div
                       key={session.id}
                       className={`chat-session-item${isActive ? " chat-session-item--active" : ""}${isWindowOpen ? " chat-session-item--window-open" : ""}`}
-                      onClick={() => handleSessionClick(session.id)}
+                      onClick={(event) => handleSessionClick(session.id, event)}
                       onContextMenu={(e) => {
                         e.preventDefault();
                         openSessionMenu(session.id, e.clientX, e.clientY);
@@ -3663,7 +3678,8 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
               type="button"
               data-testid="chat-context-open-window"
               onClick={() => {
-                onOpenSessionInNewWindow(contextMenuSession);
+                // FNXC:ChatWindows 2026-09-16-04:37: FN-447 — this menu action is an explicit new-window request, so the host list stays open.
+                onOpenSessionInNewWindow(contextMenuSession, { keepListOpen: true });
                 setContextMenu(null);
               }}
             >
