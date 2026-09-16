@@ -276,14 +276,17 @@ describe("DesktopActionBar", () => {
     expect(within(openOverflowMenu()).queryByTestId("desktop-nav-settings")).toBeNull();
   });
 
-  /* FN-469 cas (s)+(t) : le bouton icône suit immédiatement le compteur, n'a aucun texte visible et ouvre les réglages. */
-  it("rend un bouton Settings en icône seule juste après le compteur de concurrence", () => {
+  /* FN-489 (ex-FN-469 cas (s)+(t)) : le bouton icône est tout à gauche dans le coin, le compteur le suit immédiatement,
+     le bouton n'a aucun texte visible et ouvre toujours les réglages. */
+  it("rend le bouton Settings en icône seule tout à gauche, suivi du compteur de concurrence", () => {
     const onOpenSettings = vi.fn();
     render(<DesktopActionBar entries={entriesWithSettingsOwner(onOpenSettings)} activeId="board" tasks={[]} />);
 
+    const leading = document.querySelector(".desktop-action-bar__leading")!;
     const capacity = document.querySelector(".desktop-action-bar__capacity")!;
     const icon = screen.getByTestId("desktop-nav-settings-icon");
-    expect(capacity.nextElementSibling).toBe(icon);
+    expect(leading.firstElementChild).toBe(icon);
+    expect(icon.nextElementSibling).toBe(capacity);
     expect(icon).toHaveClass("desktop-action-bar__action");
     expect(icon.textContent).toBe("");
     expect(icon).toHaveAccessibleName("Settings");
@@ -292,6 +295,64 @@ describe("DesktopActionBar", () => {
 
     fireEvent.click(icon);
     expect(onOpenSettings).toHaveBeenCalledTimes(1);
+  });
+
+  /* FN-489 : sans entrée `settings`, la piste de début contient exactement un enfant (le compteur), sans coquille vide. */
+  it("ne laisse aucune coquille dans la piste de début quand l'entrée Settings est absente", () => {
+    render(<DesktopActionBar entries={entries().filter((entry) => entry.id !== "settings")} activeId="board" tasks={[]} projectId="proj_1" />);
+
+    const leading = document.querySelector(".desktop-action-bar__leading")!;
+    expect(screen.queryByTestId("desktop-nav-settings-icon")).toBeNull();
+    expect(leading.children).toHaveLength(1);
+    expect(leading.firstElementChild).toBe(document.querySelector(".desktop-action-bar__capacity"));
+  });
+
+  /* FN-489 : sans `projectId`, l'ordre et la composition de la piste restent identiques (aucun changement de comportement). */
+  it("conserve l'ordre Settings puis compteur même sans projectId", () => {
+    render(<DesktopActionBar entries={entriesWithSettingsOwner(vi.fn())} activeId="board" tasks={[]} />);
+
+    const leading = document.querySelector(".desktop-action-bar__leading")!;
+    expect(leading.children).toHaveLength(2);
+    expect(leading.firstElementChild).toBe(screen.getByTestId("desktop-nav-settings-icon"));
+    expect(leading.lastElementChild).toBe(document.querySelector(".desktop-action-bar__capacity"));
+  });
+
+  /*
+  FN-489 : le déclencheur du compteur réutilise LITTÉRALEMENT `.desktop-action-bar__action`, donc son repos, son survol
+  et son focus sont ceux des autres boutons de la barre; il ne porte plus la peinture générique `.btn` et garde son
+  marqueur `engine-control-menu__trigger--text` (ciblé par LeftSidebarNav.css pour l'autre hôte).
+  */
+  it.each([
+    ["peuplé", { runningTaskCount: 1, maxConcurrent: 3 }, false, null],
+    ["chargement", { runningTaskCount: 0, maxConcurrent: 0 }, true, null],
+    ["erreur", { runningTaskCount: 0, maxConcurrent: 0 }, false, "boom"],
+  ] as const)("peint le compteur comme les autres actions du footer (état %s)", (_label, stats, loading, error) => {
+    vi.mocked(useExecutorStats).mockReturnValue({ stats: stats as never, loading, error, refresh: vi.fn() });
+    render(<DesktopActionBar entries={entriesWithSettingsOwner(vi.fn())} activeId="board" tasks={[]} projectId="proj_1" />);
+
+    const trigger = screen.getByTestId("engine-control-menu-trigger");
+    expect(trigger).toHaveClass("desktop-action-bar__action");
+    expect(trigger).toHaveClass("engine-control-menu__trigger--text");
+    expect(trigger).not.toHaveClass("btn");
+    fireEvent.click(trigger);
+    expect(screen.getByTestId("engine-control-menu")).not.toBeNull();
+  });
+
+  /* FN-489 : contrat CSS — aucune peinture concurrente locale, aucune règle :hover locale, ancrage du popover intact. */
+  it("ne déclare aucune peinture locale concurrente pour le déclencheur du compteur", () => {
+    const capacityTriggerRule = ruleOf(alphaDesktopActionBarCss, ".desktop-action-bar__capacity .engine-control-menu__trigger--text");
+    expect(declarationOf(capacityTriggerRule, "block-size")).toBe("100%");
+    for (const property of ["background", "border", "color", "min-inline-size"]) {
+      expect(declarationOf(capacityTriggerRule, property)).toBe("");
+    }
+    expect(alphaDesktopActionBarCss).not.toMatch(/\.desktop-action-bar__capacity[^{]*:hover/);
+
+    const popoverRule = ruleOf(alphaDesktopActionBarCss, ".desktop-action-bar__capacity .engine-control-menu > .engine-control-menu__popover.card");
+    expect(declarationOf(popoverRule, "inset-inline-start")).toBe("0");
+    expect(declarationOf(popoverRule, "inset-inline-end")).toBe("auto");
+    expect(declarationOf(popoverRule, "min-inline-size")).toBe("min(24rem, calc(100vw - (var(--space-lg) * 2)))");
+    expect(declarationOf(popoverRule, "max-inline-size")).toBe("calc(100vw - (var(--space-lg) * 2))");
+    expect(alphaDesktopActionBarCss).not.toMatch(/@media/);
   });
 
   /* FN-469 cas (u) : Settings est la DERNIÈRE entrée de More, et la sélectionner referme le menu. */

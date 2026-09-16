@@ -104,6 +104,55 @@ describe("EngineControlMenu", () => {
     vi.useRealTimers();
   });
 
+  /*
+  FNXC:DesktopCapacity 2026-09-16-23:05:
+  FN-489: `triggerClassName` est une extension STRICTEMENT additive. Sans elle, la chaîne de classes des deux variantes
+  reste identique à l'existant (les hôtes LeftSidebarNav et ExecutorStatusBar ne doivent rien voir changer); avec elle,
+  seule la classe de BASE est remplacée, les marqueurs `engine-control-menu__trigger--text` et
+  `engine-control-menu__trigger` survivent (LeftSidebarNav.css cible le premier) et l'ouverture du popover est inchangée.
+  */
+  describe("trigger class composition", () => {
+    function renderMenu(props: { triggerContent?: boolean; triggerClassName?: string } = {}) {
+      render(
+        <ConfirmDialogProvider>
+          <EngineControlMenu
+            projectId="proj_123"
+            triggerContent={props.triggerContent ? <span data-testid="trigger-text">1 / 2</span> : undefined}
+            triggerClassName={props.triggerClassName}
+          />
+        </ConfirmDialogProvider>,
+      );
+      return screen.getByTestId("engine-control-menu-trigger");
+    }
+
+    it("keeps the default text-variant classes when no triggerClassName is provided", () => {
+      const trigger = renderMenu({ triggerContent: true });
+      expect(trigger.className).toBe("btn engine-control-menu__trigger--text engine-control-menu__trigger");
+    });
+
+    it("keeps the default icon-variant classes when no triggerClassName is provided", () => {
+      const trigger = renderMenu();
+      expect(trigger.className).toBe("btn-icon engine-control-menu__trigger");
+    });
+
+    it("replaces only the base class when triggerClassName is provided", () => {
+      const trigger = renderMenu({ triggerContent: true, triggerClassName: "desktop-action-bar__action" });
+      expect(trigger).toHaveClass("desktop-action-bar__action");
+      expect(trigger).toHaveClass("engine-control-menu__trigger--text");
+      expect(trigger).toHaveClass("engine-control-menu__trigger");
+      expect(trigger).not.toHaveClass("btn");
+      expect(trigger).not.toHaveClass("btn-icon");
+    });
+
+    it.each([undefined, "desktop-action-bar__action"])("still opens the control panel with triggerClassName=%s", async (triggerClassName) => {
+      const trigger = renderMenu({ triggerContent: true, triggerClassName });
+      expect(trigger).toHaveAttribute("aria-expanded", "false");
+      fireEvent.click(trigger);
+      await screen.findByTestId("engine-control-menu");
+      expect(screen.getByTestId("engine-control-menu-trigger")).toHaveAttribute("aria-expanded", "true");
+    });
+  });
+
 
   // FNXC:GlobalConcurrencyControls 2026-07-15-00:00: FN-7973 requires touch-action:none on both concurrency slider surfaces because the mobile pan-y ancestor lock otherwise steals horizontal native thumb drags.
   it("matches the Command Center slider geometry and mobile touch contract for footer current-use markers", () => {

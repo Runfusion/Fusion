@@ -103,12 +103,14 @@ export function DesktopActionBar({ entries, activeId, tasks, projectId, columnFl
     </button>;
   };
   /*
-  FNXC:DesktopNavigation 2026-09-16-18:31:
-  The wide footer shared by tablet and desktop keeps capacity at the far left, now followed by an icon-only Settings
-  action in the same start track; navigation stays in the middle, and the right group holds only the optional Chat and
-  Terminal actions. Settings is reachable from the start-track icon and as the LAST entry of the More list; it is no
-  longer the retained right-side action. Scripts remain on their existing owners, and omitting both right-side actions
-  must leave no empty action-group shell (the group's presence no longer depends on Settings).
+  FNXC:DesktopNavigation 2026-09-16-23:05:
+  FN-489 inverse l'ordre posé par FN-469 dans la piste de début du footer partagé tablette/ordinateur : l'opérateur veut
+  le bouton réglages en icône seule « tout à gauche dans le coin », donc il est rendu EN PREMIER et le compteur de
+  concurrence le suit. Le coin est obtenu par l'ORDRE seul — `.desktop-action-bar__leading` conserve `grid-column: 1`
+  et `justify-self: start`, et le `padding-inline` symétrique de la barre (FN-467, territoire de FN-484 à droite) n'est
+  pas touché. Navigation au centre, groupe de droite limité aux actions optionnelles Chat et Terminal. Settings reste
+  atteignable par l'icône de la piste de début et comme DERNIÈRE entrée du menu More ; les deux rendus de la piste
+  restent conditionnels, donc aucun des deux ne laisse de coquille vide quand son propriétaire est absent.
   */
   /*
   FNXC:PopoverLayering 2026-09-15-09:31:
@@ -119,13 +121,13 @@ export function DesktopActionBar({ entries, activeId, tasks, projectId, columnFl
   */
   return <nav ref={dashboardWindowFooterRef} className={`desktop-action-bar${overflowOpen ? " desktop-action-bar--menu-open" : ""}`} aria-label={t("nav.primaryNavAriaLabel", "Primary navigation")} data-testid="desktop-action-bar">
     <div className="desktop-action-bar__leading">
-      <div className="desktop-action-bar__capacity"><EngineControlMenu projectId={projectId} triggerContent={<span data-testid="desktop-capacity-count">{capacityText}</span>} triggerLabel={capacityLabel} /></div>
       {/*
-      FNXC:DesktopNavigation 2026-09-16-18:31:
-      FN-469: the icon-only Settings action sits immediately after the capacity counter, in the start track. It reuses
-      `.desktop-action-bar__action` and `.desktop-action-bar__icon` rather than forking a button variant, carries the
-      entry's own label as its accessible name (no new i18n key), and is rendered ONLY when the entry exists, so no
-      empty shell is left behind.
+      FNXC:DesktopNavigation 2026-09-16-23:05:
+      FN-489: l'action Settings en icône seule est le PREMIER enfant de la piste de début, donc collée au bord
+      inline-start de la barre ; le compteur de concurrence la suit immédiatement. Elle réutilise
+      `.desktop-action-bar__action` et `.desktop-action-bar__icon` plutôt que de forker une variante de bouton, porte le
+      libellé de l'entrée comme nom accessible (aucune nouvelle clé i18n) et n'est rendue QUE si l'entrée existe, donc
+      aucune coquille vide n'est laissée derrière.
       */}
       {settings ? <button
         type="button"
@@ -136,6 +138,14 @@ export function DesktopActionBar({ entries, activeId, tasks, projectId, columnFl
       >
         <span className="desktop-action-bar__icon"><settings.icon aria-hidden="true" /></span>
       </button> : null}
+      {/*
+      FNXC:DesktopCapacity 2026-09-16-23:05:
+      FN-489: le compteur ne doit plus se peindre comme une dalle `.btn` qui se remplit au survol, mais comme les autres
+      boutons et le déclencheur More de cette barre. On RÉUTILISE donc `.desktop-action-bar__action` via
+      `triggerClassName` au lieu de recopier ses déclarations dans une règle locale : toute évolution future de la
+      peinture de la barre suit mécaniquement. Le comportement (popover, ancrage viewport-safe, libellés) est inchangé.
+      */}
+      <div className="desktop-action-bar__capacity"><EngineControlMenu projectId={projectId} triggerClassName="desktop-action-bar__action" triggerContent={<span data-testid="desktop-capacity-count">{capacityText}</span>} triggerLabel={capacityLabel} /></div>
     </div>
     {/*
     FNXC:DesktopNavigation 2026-09-16-04:15:

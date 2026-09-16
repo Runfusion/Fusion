@@ -67,6 +67,21 @@ describe("dashboard concurrency surface data", () => {
     worktreeGroupProps.length = 0;
   });
 
+  /*
+  FN-489 contrôle négatif : hors du footer partagé, la variante icône seule d'`EngineControlMenu` (ExecutorStatusBar)
+  conserve strictement sa peinture `btn-icon` ; l'option `triggerClassName` est additive et n'est passée que par
+  `DesktopActionBar`.
+  */
+  it("keeps the icon-only engine control trigger painted by btn-icon outside the shared footer", () => {
+    api.fetchSettings.mockResolvedValue({ maxConcurrent: 6, maxWorktrees: 9, worktreeLimitEnabled: true });
+    const { getByTestId } = render(<EngineControlMenu />);
+
+    const trigger = getByTestId("engine-control-menu-trigger");
+    expect(trigger).toHaveClass("btn-icon");
+    expect(trigger).not.toHaveClass("desktop-action-bar__action");
+    expect(trigger).not.toHaveClass("engine-control-menu__trigger--text");
+  });
+
   it("renders configured values through both editable control surfaces", async () => {
     api.fetchSettings.mockResolvedValue({ maxConcurrent: 6, maxWorktrees: 9, worktreeLimitEnabled: true });
     api.fetchConfig.mockResolvedValue({ maxConcurrent: 6, maxWorktrees: 9, worktreeLimitEnabled: true });

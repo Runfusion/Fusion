@@ -64,6 +64,19 @@ describe("LeftSidebarNav shell controls", () => {
     expect(screen.getByLabelText("Engine controls: 2 / 5")).toBeInTheDocument();
   });
 
+  /*
+  FN-489 contrôle négatif : seul le footer partagé tablette/ordinateur réutilise `.desktop-action-bar__action` pour
+  peindre son compteur. La barre latérale conserve la peinture `.btn` (et ses surcharges locales ciblées sur
+  `engine-control-menu__trigger--text`), donc son déclencheur ne doit JAMAIS porter la classe du footer.
+  */
+  it("conserve la peinture `btn` du déclencheur de capacité de la barre latérale", () => {
+    renderSidebar({ onToggleTerminal: vi.fn() });
+    const trigger = screen.getByTestId("engine-control-menu-trigger");
+    expect(trigger).toHaveClass("btn");
+    expect(trigger).toHaveClass("engine-control-menu__trigger--text");
+    expect(trigger).not.toHaveClass("desktop-action-bar__action");
+  });
+
   it("omits the engine control host entirely when no project is present", () => {
     const { container } = renderSidebar({ projectId: undefined });
     expect(screen.queryByTestId("sidebar-capacity-count")).toBeNull();

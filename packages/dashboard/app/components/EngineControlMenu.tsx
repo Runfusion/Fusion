@@ -21,6 +21,17 @@ export interface EngineControlMenuProps {
   /** Optional truthful text trigger used by the desktop footer. */
   triggerContent?: ReactNode;
   triggerLabel?: string;
+  /*
+  FNXC:DesktopCapacity 2026-09-16-23:05:
+  FN-489: le compteur de concurrence du footer partagé tablette/ordinateur doit se peindre EXACTEMENT comme les autres
+  boutons et le déclencheur More de cette barre, et non comme une dalle `.btn` qui se remplit au survol. La règle projet
+  « Reuse Components, Design Tokens, and Systems » interdit de recopier les déclarations de `.desktop-action-bar__action`
+  dans une règle locale : l'hôte RÉUTILISE littéralement sa classe d'action en la passant ici. L'option est strictement
+  additive — elle remplace la SEULE classe de base (`btn` en variante texte, `btn-icon` en variante icône) et laisse
+  `engine-control-menu__trigger`, `engine-control-menu__trigger--text` et l'ajout d'état ouvert inchangés, afin que les
+  deux autres hôtes (LeftSidebarNav, ExecutorStatusBar) conservent une composition de classes identique à l'octet près.
+  */
+  triggerClassName?: string;
 }
 
 type AsyncState<T> =
@@ -103,7 +114,7 @@ FN-6862 requires the footer popover chrome to stay opaque across themes. Its CSS
 FNXC:EngineControls 2026-06-21-00:00:
 FN-6863 raises the footer concurrency sliders' base drag ceiling to 50 for max tasks, triage, and worktrees. Keep getConcurrencySliderMax value-aware so already-persisted settings above 50 expand the slider instead of hiding or clamping the truthful readout.
 */
-export const EngineControlMenu = forwardRef<EngineControlMenuHandle, EngineControlMenuProps>(function EngineControlMenu({ projectId, triggerContent, triggerLabel }, ref) {
+export const EngineControlMenu = forwardRef<EngineControlMenuHandle, EngineControlMenuProps>(function EngineControlMenu({ projectId, triggerContent, triggerLabel, triggerClassName }, ref) {
   const { t } = useTranslation("app");
   const { confirm } = useConfirm();
   const menuRef = useRef<HTMLDivElement>(null);
@@ -345,7 +356,7 @@ export const EngineControlMenu = forwardRef<EngineControlMenuHandle, EngineContr
     <div className="engine-control-menu" ref={menuRef}>
       <button
         type="button"
-        className={`${triggerContent ? "btn engine-control-menu__trigger--text" : "btn-icon"} engine-control-menu__trigger${open ? " btn-icon--active" : ""}`}
+        className={`${triggerClassName ?? (triggerContent ? "btn" : "btn-icon")}${triggerContent ? " engine-control-menu__trigger--text" : ""} engine-control-menu__trigger${open ? " btn-icon--active" : ""}`}
         onClick={toggleMenu}
         title={triggerLabel ?? t("executor.engineControls", "Engine controls")}
         aria-label={triggerLabel ?? t("executor.engineControls", "Engine controls")}
