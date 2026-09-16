@@ -52,9 +52,13 @@
 
 /*
 FNXC:ViewportChrome 2026-08-03-00:13:
-Show the bottom tab bar only when JS mode is mobile. Width-only `@media (max-width: 768px)` left a gap on tablet-class narrow viewports (mode=tablet mounts no MobileNavBar, CSS still reserved its height under the elevated footer). Also reveal the bar for landscape phones that stay mode=mobile above 768 CSS px. Keep the width media query as a no-JS/first-paint fallback for true phones.
+Show the bottom tab bar only when JS mode is mobile. Width-only `@media (max-width: 768px)` left a gap on tablet-class narrow viewports (mode=tablet mounts no MobileNavBar, CSS still reserved its height under the elevated footer). Also reveal the bar for landscape phones that stay mode=mobile above 768 CSS px. Keep the width media query as a no-JS/first-paint fallback.
+
+FNXC:ViewportChrome 2026-09-16-19:44:
+FN-468 : le shell mobile couvre 0–1023.98 px, tablette comprise, donc ce repli sans JS / premier rendu suit la
+nouvelle frontière. Les autres règles `(max-width: 768px)` du produit restent du style téléphone et ne bougent pas.
 */
-@media (max-width: 768px) {
+@media (max-width: 1023.98px) {
   .mobile-nav-bar {
     display: flex;
   }
@@ -81,7 +85,13 @@ Show the bottom tab bar only when JS mode is mobile. Width-only `@media (max-wid
   */
 }
 
-html[data-viewport-mode="mobile"] .mobile-nav-bar {
+/*
+FNXC:ViewportChrome 2026-09-16-19:44:
+FN-468 : la pill est la navigation primaire de tout le shell mobile (téléphone ET tablette). Ce bras est le SECOND
+des deux verrous qui l'excluaient de la tablette ; l'autre est le prédicat de montage de `MobileNavBar`. Les deux
+doivent tomber ensemble : le CSS seul laisserait un composant jamais monté, le prédicat seul une pill masquée.
+*/
+html:is([data-viewport-mode="mobile"], [data-viewport-mode="tablet"]) .mobile-nav-bar {
   display: flex;
 }
 
@@ -96,16 +106,17 @@ html[data-viewport-mode="mobile"] .mobile-nav-bar:not(.mobile-nav-bar--native).m
   pointer-events: none;
 }
 
-html:is([data-viewport-mode="tablet"], [data-viewport-mode="desktop"]) .mobile-nav-bar {
+html[data-viewport-mode="desktop"] .mobile-nav-bar {
   display: none;
 }
 
 /*
-FNXC:ViewportChrome 2026-08-03-00:13:
-If a stale mobile-nav class remains while mode is tablet/desktop, do not reserve phantom tab-bar stack
-space — only the desktop footer token applies. The native reservation below owns the mobile case.
+FNXC:ViewportChrome 2026-09-16-19:44:
+FN-468 : seule la bande ordinateur peut encore porter une classe de barre mobile périmée ; n'y réserver aucune
+hauteur d'onglets fantôme — seul le jeton de pied de page ordinateur s'applique. La réservation native ci-dessous
+possède désormais le cas téléphone ET tablette.
 */
-html:is([data-viewport-mode="tablet"], [data-viewport-mode="desktop"]) .project-content--with-footer.project-content--with-mobile-nav {
+html[data-viewport-mode="desktop"] .project-content--with-footer.project-content--with-mobile-nav {
   padding-bottom: var(--executor-footer-height);
 }
 
@@ -154,6 +165,14 @@ FN-463: the official mobile pill stays anchored to the bottom of the screen rega
 */
 .mobile-nav-bar--native {
   --mobile-nav-floating-gap: var(--space-sm);
+  /*
+  FNXC:MobileNavDynamicQuickAccess 2026-09-16-19:44:
+  FN-468 : largeur de créneau confortable d'une destination directe, déclarée à partir des jetons et lue par le
+  composant pour décider combien de raccourcis la largeur mesurée peut accueillir. Chaque créneau reste au moins
+  aussi large que deux cibles tactiles minimales, si bien que la rangée élargie ne peut jamais tasser un bouton
+  sous `--touch-target-min-size`.
+  */
+  --mobile-nav-direct-slot-min-width: calc(var(--touch-target-min-size) * 2);
   left: var(--space-md);
   right: calc(var(--icb-right-offset, 0px) + var(--space-md));
   bottom: var(--mobile-nav-pill-bottom);
@@ -165,17 +184,18 @@ FN-463: the official mobile pill stays anchored to the bottom of the screen rega
   box-shadow: var(--shadow-lg);
 }
 
-@media (max-width: 768px) {
+/* FN-468 : repli sans JS / premier rendu aligné sur la frontière 1024 px du shell mobile. */
+@media (max-width: 1023.98px) {
   .project-content--with-mobile-nav {
     padding-bottom: calc(var(--mobile-nav-height) + var(--mobile-nav-system-offset));
   }
 }
 
-html[data-viewport-mode="mobile"] .project-content--with-mobile-nav {
+html:is([data-viewport-mode="mobile"], [data-viewport-mode="tablet"]) .project-content--with-mobile-nav {
   padding-bottom: calc(var(--mobile-nav-height) + var(--mobile-nav-system-offset));
 }
 
-html:is([data-viewport-mode="tablet"], [data-viewport-mode="desktop"]) .project-content--with-mobile-nav:not(.project-content--with-footer) {
+html[data-viewport-mode="desktop"] .project-content--with-mobile-nav:not(.project-content--with-footer) {
   padding-bottom: 0;
 }
 

@@ -407,7 +407,7 @@ describe("FloatingWindow", () => {
   */
   it("marks tablet-mode windows with floating-window--tablet-viewport even without touch", () => {
     vi.stubGlobal("matchMedia", vi.fn((query: string) => ({
-      matches: query === "(min-width: 769px) and (max-width: 1024px)",
+      matches: query === "(min-width: 769px) and (max-width: 1023.98px)",
       media: query,
       onchange: null,
       addListener: vi.fn(),

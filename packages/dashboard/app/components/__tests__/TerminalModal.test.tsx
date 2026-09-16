@@ -1669,7 +1669,7 @@ describe("TerminalModal", () => {
     Object.defineProperty(window, "screen", { configurable: true, value: { width: 1024, height: 768 } });
     Object.defineProperty(navigator, "maxTouchPoints", { configurable: true, value: 1 });
     vi.spyOn(window, "matchMedia").mockImplementation((query: string) => ({
-      matches: query === "(min-width: 769px) and (max-width: 1024px)",
+      matches: query === "(min-width: 769px) and (max-width: 1023.98px)",
       media: query,
       onchange: null,
       addListener: vi.fn(),

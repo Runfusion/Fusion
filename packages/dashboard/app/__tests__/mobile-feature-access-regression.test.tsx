@@ -20,6 +20,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { MobileNavBar } from "../components/MobileNavBar";
 import { Header, useViewportMode } from "../components/Header";
+import { isMobileShellMode } from "../hooks/useViewportMode";
 import { LeftSidebarNav } from "../components/LeftSidebarNav";
 import { resolveNavigationSurfaces, type NavigationPlacement } from "../utils/navigationPlacement";
 
@@ -28,7 +29,7 @@ function mockViewport(mode: "mobile" | "tablet" | "desktop") {
     writable: true,
     value: vi.fn().mockImplementation((query: string) => {
       const isMobileQuery = query === "(max-width: 768px)" || query === "(max-width: 768px), (max-height: 480px)";
-      const isTabletQuery = query === "(min-width: 769px) and (max-width: 1024px)";
+      const isTabletQuery = query === "(min-width: 769px) and (max-width: 1023.98px)";
       return {
         matches: mode === "mobile" ? isMobileQuery : mode === "tablet" ? isTabletQuery : false,
         media: query,
@@ -94,7 +95,8 @@ function LeftSidebarAppGateHarness({ navigationPlacement }: { navigationPlacemen
 
 function PrimaryNavigationSurfaceHarness({ navigationPlacement }: { navigationPlacement: NavigationPlacement }) {
   const mode = useViewportMode();
-  const isMobile = mode === "mobile";
+  /* FN-468 : la pill possède la navigation primaire sur tout le shell mobile (téléphone ET tablette). */
+  const mobileShellActive = isMobileShellMode(mode);
   const currentProject = createProjects()[0];
   const { headerPrimaryNavSuppressed } = resolveNavigationSurfaces({
     viewportMode: mode,
@@ -107,7 +109,7 @@ function PrimaryNavigationSurfaceHarness({ navigationPlacement }: { navigationPl
       <Header
         view="board"
         onChangeView={vi.fn()}
-        mobileNavEnabled={isMobile}
+        mobileNavEnabled={mobileShellActive}
         showAgentsTab={true}
         leftSidebarNavActive={headerPrimaryNavSuppressed}
       />
@@ -460,14 +462,14 @@ describe("Mobile Feature Access Regression Guard", () => {
     }
   });
 
-  it("left sidebar app gate follows the project navigation placement and never renders on mobile", () => {
+  it("left sidebar app gate follows the project navigation placement and never renders in the mobile shell", () => {
     /*
-     * Surface Enumeration checklist asserted here:
-     * - navigationPlacement "sidebar" -> sidebar renders on desktop and tablet.
-     * - navigationPlacement "footer" -> sidebar does not render; the footer owns navigation, so Header view
-     *   shortcuts stay suppressed on both wide tiers (they are NOT a fallback for a footer-owned shell).
-     * - mobile never renders the sidebar for any placement; MobileNavBar owns navigation and Header keeps its
-     *   mobile fallback behavior.
+     * Surface Enumeration checklist asserted here (FN-468 : la bande tablette appartient au shell mobile) :
+     * - navigationPlacement "sidebar" -> la colonne ne rend QUE sur ordinateur.
+     * - navigationPlacement "footer" -> aucune colonne ; le pied de page large possède la navigation sur ordinateur,
+     *   donc les raccourcis de vues du Header restent supprimés.
+     * - téléphone ET tablette ne rendent jamais la colonne, quelle que soit la placement : `MobileNavBar` possède la
+     *   navigation et le Header n'ajoute aucune troisième surface.
      */
     const placements = [
       { label: "sidebar", navigationPlacement: "sidebar" as const, sidebarExpected: true },
@@ -475,23 +477,26 @@ describe("Mobile Feature Access Regression Guard", () => {
     ];
 
     for (const { label, navigationPlacement, sidebarExpected } of placements) {
-      for (const tier of ["desktop", "tablet"] as const) {
-        mockViewport(tier);
+      mockViewport("desktop");
+      {
         const { unmount } = render(<PrimaryNavigationSurfaceHarness navigationPlacement={navigationPlacement} />);
-        expect(screen.queryByTestId("left-sidebar-nav"), `${label} placement on ${tier}`).toBe(
+        expect(screen.queryByTestId("left-sidebar-nav"), `${label} placement on desktop`).toBe(
           sidebarExpected ? screen.getByTestId("left-sidebar-nav") : null,
         );
         // Either wide surface owns routing, so the Header never re-adds a third navigation.
-        expect(screen.queryByTitle("Board view"), `${label} placement header board shortcut on ${tier}`).toBeNull();
-        expect(screen.queryByTestId("view-toggle-overflow-trigger"), `${label} placement overflow on ${tier}`).toBeNull();
+        expect(screen.queryByTitle("Board view"), `${label} placement header board shortcut on desktop`).toBeNull();
+        expect(screen.queryByTestId("view-toggle-overflow-trigger"), `${label} placement overflow on desktop`).toBeNull();
         unmount();
       }
 
-      mockViewport("mobile");
-      const { container, unmount } = render(<PrimaryNavigationSurfaceHarness navigationPlacement={navigationPlacement} />);
-      expect(screen.queryByTestId("left-sidebar-nav"), `${label} placement on mobile`).toBeNull();
-      expect(container.querySelector(".mobile-nav-bar"), `${label} placement mobile nav`).not.toBeNull();
-      unmount();
+      for (const tier of ["mobile", "tablet"] as const) {
+        mockViewport(tier);
+        const { container, unmount } = render(<PrimaryNavigationSurfaceHarness navigationPlacement={navigationPlacement} />);
+        expect(screen.queryByTestId("left-sidebar-nav"), `${label} placement on ${tier}`).toBeNull();
+        expect(container.querySelector(".mobile-nav-bar"), `${label} placement mobile nav on ${tier}`).not.toBeNull();
+        expect(screen.queryByTitle("Board view"), `${label} placement header board shortcut on ${tier}`).toBeNull();
+        unmount();
+      }
     }
   });
 

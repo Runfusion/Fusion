@@ -25,16 +25,21 @@ export function retainViewNavRevert<TView>(
 
 /*
 FNXC:DashboardShortcuts 2026-09-16-02:27:
-FN-441 : la liste des chats a DEUX hôtes déjà existants (tiroir plein écran sur téléphone, popover du pied de
-page sur tablette/ordinateur) et aucun nouvel hôte n'est créé. Le choix reste un seam PUR pour deux raisons :
+FN-441 : la liste des chats a DEUX hôtes déjà existants (tiroir plein écran, popover du pied de page) et aucun
+nouvel hôte n'est créé.
+
+FNXC:DashboardShortcuts 2026-09-16-19:44:
+FN-468 : le choix suit désormais la propriété du SHELL de navigation (`isMobileShellMode`), pas le seul téléphone.
+Sous 1024 px — tablette comprise — le pied de page large n'existe plus, donc sa popover n'a plus d'hôte : le
+tiroir plein écran est la seule cible valide. À partir de 1024 px la popover reste la cible. Le choix reste un seam PUR pour deux raisons :
 il doit être prouvable sans monter tout le shell dashboard, et il doit suivre le point de rupture MESURÉ
 (`useViewportMode`) plutôt qu'une supposition CSS. Sans projet courant, aucun hôte n'existe : l'action est inerte.
 */
 export type ChatListShortcutTarget = "none" | "drawer" | "popover";
 
-export function resolveChatListShortcutTarget(options: { hasProject: boolean; isMobile: boolean }): ChatListShortcutTarget {
+export function resolveChatListShortcutTarget(options: { hasProject: boolean; mobileShellActive: boolean }): ChatListShortcutTarget {
   if (!options.hasProject) return "none";
-  return options.isMobile ? "drawer" : "popover";
+  return options.mobileShellActive ? "drawer" : "popover";
 }
 
 /*

@@ -178,7 +178,7 @@ function mockWorkflowEditorViewport(mode: "desktop" | "mobile" | "tablet" = "des
     value: vi.fn().mockImplementation((query: string) => ({
       matches:
         (mode === "mobile" && (query === MOBILE_MEDIA_QUERY || query === "(max-width: 768px)")) ||
-        (mode === "tablet" && query === "(min-width: 769px) and (max-width: 1024px)"),
+        (mode === "tablet" && query === "(min-width: 769px) and (max-width: 1023.98px)"),
       media: query,
       onchange: null,
       addEventListener: vi.fn(),

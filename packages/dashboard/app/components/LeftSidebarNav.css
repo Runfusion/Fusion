@@ -298,19 +298,22 @@ uses, so a narrow rail can never collapse the panel to the trigger width.
 }
 
 /*
-FNXC:ViewportChrome 2026-08-03-00:13:
-Width-only hide was wrong for tablet-class devices in the 601–768 CSS px band: JS mounts the left sidebar (mode=tablet) while this media query hid it and MobileNavBar returned null — operators lost every primary nav surface. Prefer the published viewport mode; keep the width rule as a no-JS/first-paint fallback for true phones.
+FNXC:ViewportChrome 2026-09-16-19:44:
+FN-468 : la colonne de navigation est une surface LARGE et n'existe plus qu'à partir de 1024 px. Sous cette
+frontière, la pill flottante est l'unique navigation primaire, donc masquer la colonne ne laisse aucun trou — à
+condition que le prédicat de montage de `MobileNavBar` ait été élargi dans le même changement. Le repli en largeur
+suit la même frontière pour le premier rendu / l'absence de JS.
 */
-@media (max-width: 768px) {
+@media (max-width: 1023.98px) {
   .left-sidebar-nav {
     display: none;
   }
 }
 
-html[data-viewport-mode="mobile"] .left-sidebar-nav {
+html:is([data-viewport-mode="mobile"], [data-viewport-mode="tablet"]) .left-sidebar-nav {
   display: none;
 }
 
-html:is([data-viewport-mode="tablet"], [data-viewport-mode="desktop"]) .left-sidebar-nav {
+html[data-viewport-mode="desktop"] .left-sidebar-nav {
   display: flex;
 }

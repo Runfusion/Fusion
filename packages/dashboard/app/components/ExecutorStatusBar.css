@@ -420,11 +420,16 @@ Elevating the fixed footer above `--mobile-nav-height` is only correct when the 
 
 }
 
-html[data-viewport-mode="mobile"] .project-content--with-footer {
+html:is([data-viewport-mode="mobile"], [data-viewport-mode="tablet"]) .project-content--with-footer {
   --executor-footer-height: calc(var(--space-lg) * 2 + var(--space-xs));
 }
 
-html[data-viewport-mode="mobile"] .executor-status-bar {
+/*
+FNXC:ViewportChrome 2026-09-16-19:44:
+FN-468 : la barre d'état compacte, empilée au-dessus de la pill, appartient désormais à tout le shell mobile
+(téléphone ET tablette) ; le gabarit large de 36 px ne commence qu'à 1024 px.
+*/
+html:is([data-viewport-mode="mobile"], [data-viewport-mode="tablet"]) .executor-status-bar {
   padding: var(--space-xs) var(--space-md);
   gap: 4px;
   font-size: 11px;
@@ -433,16 +438,16 @@ html[data-viewport-mode="mobile"] .executor-status-bar {
   bottom: calc(var(--icb-bottom-offset, 0px) + var(--mobile-nav-height) + max(env(safe-area-inset-bottom, 0px), 12px) + var(--standalone-bottom-gap));
 }
 
-html[data-viewport-mode="mobile"] .executor-status-bar.executor-status-bar--keyboard-open {
+html:is([data-viewport-mode="mobile"], [data-viewport-mode="tablet"]) .executor-status-bar.executor-status-bar--keyboard-open {
   bottom: 0;
 }
 
-html:is([data-viewport-mode="tablet"], [data-viewport-mode="desktop"]) .project-content--with-footer,
-html:is([data-viewport-mode="tablet"], [data-viewport-mode="desktop"]) .dashboard-project-shell {
+html[data-viewport-mode="desktop"] .project-content--with-footer,
+html[data-viewport-mode="desktop"] .dashboard-project-shell {
   --executor-footer-height: 36px;
 }
 
-html:is([data-viewport-mode="tablet"], [data-viewport-mode="desktop"]) .executor-status-bar {
+html[data-viewport-mode="desktop"] .executor-status-bar {
   bottom: var(--icb-bottom-offset, 0px);
   height: 36px;
   padding: var(--space-xs) var(--space-lg);
@@ -451,11 +456,11 @@ html:is([data-viewport-mode="tablet"], [data-viewport-mode="desktop"]) .executor
   overflow: visible;
 }
 
-html:is([data-viewport-mode="tablet"], [data-viewport-mode="desktop"]) .executor-status-bar__segment--time {
+html[data-viewport-mode="desktop"] .executor-status-bar__segment--time {
   display: flex;
 }
 
-html:is([data-viewport-mode="tablet"], [data-viewport-mode="desktop"]) .executor-status-bar.executor-status-bar--keyboard-open {
+html[data-viewport-mode="desktop"] .executor-status-bar.executor-status-bar--keyboard-open {
   bottom: var(--icb-bottom-offset, 0px);
 }
 

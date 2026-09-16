@@ -52,25 +52,21 @@ describe("resolveNavigationSurfaces", () => {
     }
   });
 
-  it("leaves mobile entirely to the bottom navigation bar for both placements", () => {
+  /* FN-468 : le shell mobile couvre téléphone ET tablette ; aucune surface large ne peut y mounter. */
+  it("leaves the whole mobile shell (phone and tablet) to the bottom navigation bar for both placements", () => {
+    for (const viewportMode of ["mobile", "tablet"] as const) {
     for (const navigationPlacement of PLACEMENTS) {
-      const surfaces = resolveNavigationSurfaces({ viewportMode: "mobile", projectShellPresent: true, navigationPlacement });
+      const surfaces = resolveNavigationSurfaces({ viewportMode, projectShellPresent: true, navigationPlacement });
       expect(surfaces.sidebarActive).toBe(false);
       expect(surfaces.footerNavActive).toBe(false);
       expect(surfaces.desktopPilotActive).toBe(false);
       expect(surfaces.executorFooterVisible).toBe(false);
       expect(surfaces.headerPrimaryNavSuppressed).toBe(false);
     }
+    }
   });
 
-  it("gives the footer placement the wide bottom bar and keeps the desktop pilot desktop-only", () => {
-    expect(resolveNavigationSurfaces({ viewportMode: "tablet", projectShellPresent: true, navigationPlacement: "footer" })).toEqual({
-      sidebarActive: false,
-      footerNavActive: true,
-      desktopPilotActive: false,
-      executorFooterVisible: false,
-      headerPrimaryNavSuppressed: true,
-    });
+  it("gives the footer placement the wide bottom bar on desktop only", () => {
     expect(resolveNavigationSurfaces({ viewportMode: "desktop", projectShellPresent: true, navigationPlacement: "footer" })).toEqual({
       sidebarActive: false,
       footerNavActive: true,
@@ -80,19 +76,16 @@ describe("resolveNavigationSurfaces", () => {
     });
   });
 
-  it("gives the sidebar placement the left column and removes every bottom bar", () => {
-    for (const viewportMode of ["tablet", "desktop"] as const) {
-      expect(
-        resolveNavigationSurfaces({ viewportMode, projectShellPresent: true, navigationPlacement: "sidebar" }),
-        viewportMode,
-      ).toEqual({
-        sidebarActive: true,
-        footerNavActive: false,
-        desktopPilotActive: false,
-        executorFooterVisible: false,
-        headerPrimaryNavSuppressed: true,
-      });
-    }
+  it("gives the sidebar placement the left column on desktop and removes every bottom bar", () => {
+    expect(
+      resolveNavigationSurfaces({ viewportMode: "desktop", projectShellPresent: true, navigationPlacement: "sidebar" }),
+    ).toEqual({
+      sidebarActive: true,
+      footerNavActive: false,
+      desktopPilotActive: false,
+      executorFooterVisible: false,
+      headerPrimaryNavSuppressed: true,
+    });
   });
 
   it("treats an invalid persisted placement exactly like the footer default", () => {
@@ -113,27 +106,41 @@ describe("resolveChatHost", () => {
   it("keeps mobile on its page presentation regardless of placement and dock availability", () => {
     for (const navigationPlacement of PLACEMENTS) {
       for (const rightDockActive of [true, false]) {
-        expect(resolveChatHost({ mobileDrawerActive: true, rightDockActive, navigationPlacement })).toBe("mobile-page");
+        expect(resolveChatHost({ mobileDrawerActive: true, mobileShellActive: true, rightDockActive, navigationPlacement })).toBe("mobile-page");
+      }
+    }
+  });
+
+  /*
+  FN-468: the tablet band has neither a dock nor a sidebar, so without a page host the pill's Chat destination
+  rendered an empty main panel. The mobile shell (phone OR tablet) now always resolves to the page host.
+  */
+  it("gives the whole mobile shell a page host even without a phone drawer", () => {
+    for (const navigationPlacement of PLACEMENTS) {
+      for (const rightDockActive of [true, false]) {
+        expect(resolveChatHost({ mobileDrawerActive: false, mobileShellActive: true, rightDockActive, navigationPlacement })).toBe("mobile-page");
       }
     }
   });
 
   it("routes the sidebar placement to the main page even when a dock exists", () => {
-    expect(resolveChatHost({ mobileDrawerActive: false, rightDockActive: true, navigationPlacement: "sidebar" })).toBe("sidebar-page");
-    expect(resolveChatHost({ mobileDrawerActive: false, rightDockActive: false, navigationPlacement: "sidebar" })).toBe("sidebar-page");
+    expect(resolveChatHost({ mobileDrawerActive: false, mobileShellActive: false, rightDockActive: true, navigationPlacement: "sidebar" })).toBe("sidebar-page");
+    expect(resolveChatHost({ mobileDrawerActive: false, mobileShellActive: false, rightDockActive: false, navigationPlacement: "sidebar" })).toBe("sidebar-page");
   });
 
   it("keeps the dock hand-off for the footer placement and falls through when no dock exists", () => {
-    expect(resolveChatHost({ mobileDrawerActive: false, rightDockActive: true, navigationPlacement: "footer" })).toBe("dock");
-    expect(resolveChatHost({ mobileDrawerActive: false, rightDockActive: false, navigationPlacement: "footer" })).toBe("none");
+    expect(resolveChatHost({ mobileDrawerActive: false, mobileShellActive: false, rightDockActive: true, navigationPlacement: "footer" })).toBe("dock");
+    expect(resolveChatHost({ mobileDrawerActive: false, mobileShellActive: false, rightDockActive: false, navigationPlacement: "footer" })).toBe("none");
   });
 
   it("returns exactly one host for every input combination", () => {
     for (const mobileDrawerActive of [true, false]) {
-      for (const rightDockActive of [true, false]) {
-        for (const navigationPlacement of PLACEMENTS) {
-          const host = resolveChatHost({ mobileDrawerActive, rightDockActive, navigationPlacement });
-          expect(["mobile-page", "sidebar-page", "dock", "none"]).toContain(host);
+      for (const mobileShellActive of [true, false]) {
+        for (const rightDockActive of [true, false]) {
+          for (const navigationPlacement of PLACEMENTS) {
+            const host = resolveChatHost({ mobileDrawerActive, mobileShellActive, rightDockActive, navigationPlacement });
+            expect(["mobile-page", "sidebar-page", "dock", "none"]).toContain(host);
+          }
         }
       }
     }

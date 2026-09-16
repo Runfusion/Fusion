@@ -4,7 +4,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { fetchScripts } from "../../api";
 import { createMobileNavGeometryStyle, MobileNavBar } from "../MobileNavBar";
-import { MOBILE_MEDIA_QUERY } from "../../hooks/useViewportMode";
+import { MOBILE_MEDIA_QUERY, TABLET_MEDIA_QUERY } from "../../hooks/useViewportMode";
 import { NavigationHistoryProvider, useNavigationHistory } from "../../hooks/useNavigationHistory";
 import { readAppFile } from "../../test/cssFixture";
 
@@ -59,11 +59,14 @@ vi.mock("../../api", () => ({
 
 const initialClientHeightDescriptor = Object.getOwnPropertyDescriptor(document.documentElement, "clientHeight");
 
-function mockViewport(mode: "mobile" | "desktop") {
+/* FN-468 : la pill appartient au shell mobile (téléphone ET tablette), d'où le niveau `tablet` ici. */
+function mockViewport(mode: "mobile" | "tablet" | "desktop") {
   Object.defineProperty(window, "matchMedia", {
     configurable: true,
     value: vi.fn().mockImplementation((query: string) => ({
-      matches: mode === "mobile" && (query === MOBILE_MEDIA_QUERY || query.includes("max-width: 768px")),
+      matches: mode === "tablet"
+        ? query === TABLET_MEDIA_QUERY
+        : mode === "mobile" && (query === MOBILE_MEDIA_QUERY || query.includes("max-width: 768px")),
       media: query,
       addEventListener: vi.fn(),
       removeEventListener: vi.fn(),
@@ -453,7 +456,7 @@ describe("MobileNavBar official mobile shell", () => {
     expect(screen.getByLabelText("Unread chat response")).toHaveClass("status-dot");
   });
 
-  it("hides for modal, keyboard-independent hidden state, and non-mobile viewports", () => {
+  it("hides for modal, keyboard-independent hidden state, and desktop viewports", () => {
     const view = render(<OfficialMobileShell modalOpen />);
     expect(screen.queryByRole("navigation", { name: "Primary navigation" })).toBeNull();
     view.rerender(<OfficialMobileShell hidden />);
@@ -462,6 +465,50 @@ describe("MobileNavBar official mobile shell", () => {
     mockViewport("desktop");
     render(<OfficialMobileShell />);
     expect(screen.queryByRole("navigation", { name: "Primary navigation" })).toBeNull();
+  });
+
+  /*
+  Cas (u) — FN-468 : le montage de la pill est décidé par le prédicat de shell, pas par le seul mode `mobile`. La
+  tablette n'était pas seulement masquée en CSS : le composant refusait de se monter. `modalOpen` et `hidden` ne
+  sont PAS neutralisés par cet élargissement.
+  */
+  it("mounts on tablet as well as phone, never on desktop, and still obeys modalOpen and hidden", () => {
+    for (const mode of ["mobile", "tablet"] as const) {
+      mockViewport(mode);
+      const mounted = render(<OfficialMobileShell />);
+      expect(screen.queryByRole("navigation", { name: "Primary navigation" }), mode).not.toBeNull();
+      expect(document.querySelectorAll(".mobile-nav-tab").length, `${mode} tabs`).toBeGreaterThan(0);
+      expect(
+        document.documentElement.style.getPropertyValue("--mobile-nav-height"),
+        `${mode} published height`,
+      ).not.toBe("");
+      mounted.unmount();
+    }
+
+    mockViewport("tablet");
+    const modal = render(<OfficialMobileShell modalOpen />);
+    expect(screen.queryByRole("navigation", { name: "Primary navigation" })).toBeNull();
+    modal.unmount();
+
+    const hiddenView = render(<OfficialMobileShell hidden />);
+    expect(screen.queryByRole("navigation", { name: "Primary navigation" })).toBeNull();
+    hiddenView.unmount();
+
+    mockViewport("desktop");
+    render(<OfficialMobileShell />);
+    expect(screen.queryByRole("navigation", { name: "Primary navigation" })).toBeNull();
+    expect(document.documentElement.style.getPropertyValue("--mobile-nav-height")).toBe("");
+  });
+
+  /*
+  Cas (v) — FN-468 : l'état clavier de la barre mobile reste piloté par le téléphone (`isMobile`), donc sur tablette
+  `keyboardOpen` vaut faux et ne peut pas supprimer la pill nouvellement montée.
+  */
+  it("keeps the tablet pill mounted because the phone keyboard state never applies there", () => {
+    mockViewport("tablet");
+    render(<OfficialMobileShell keyboardOpen={false} />);
+    const nav = screen.getByRole("navigation", { name: "Primary navigation" });
+    expect(nav.className).not.toContain("mobile-nav-bar--keyboard-open");
   });
 
   /* FN-467 : Chat n'est plus promouvable en onglet direct, la preuve de routage unique porte donc sur une destination sélectionnable. */

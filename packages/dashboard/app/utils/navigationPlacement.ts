@@ -47,15 +47,22 @@ export interface NavigationSurfaces {
 }
 
 /**
+ * FNXC:Navigation 2026-09-16-19:44:
+ * FN-468 : le shell mobile couvre désormais 0–1023.98 px, téléphone ET tablette. Les deux surfaces larges ne
+ * peuvent donc mounter qu'en `desktop` (1024 px et plus), quelle que soit la placement persistée ; toute la
+ * bande tablette appartient à `MobileNavBar`. Attention : ce décideur est le PREMIER des deux verrous. Retirer
+ * les surfaces larges de la tablette sans élargir aussi le prédicat de montage de `MobileNavBar` laisserait la
+ * tablette sans AUCUNE navigation primaire.
+ *
  * FNXC:Navigation 2026-09-15-14:41:
- * Mobile always belongs to `MobileNavBar`, so neither wide surface can mount there regardless of the placement.
+ * Le shell mobile appartient toujours à `MobileNavBar`, donc aucune surface large ne peut y mounter.
  * In `sidebar` placement the shell has NO bottom bar at all (`footerNavActive` and `executorFooterVisible` are both
  * false), which is what removes the `--with-footer` height reservations from the content, sidebar, and right dock.
  */
 export function resolveNavigationSurfaces(input: NavigationSurfacesInput): NavigationSurfaces {
   const { viewportMode, projectShellPresent } = input;
   const placement = normalizeNavigationPlacement(input.navigationPlacement);
-  const wideShell = projectShellPresent && viewportMode !== "mobile";
+  const wideShell = projectShellPresent && viewportMode === "desktop";
   const footerNavActive = wideShell && placement === "footer";
   const sidebarActive = wideShell && placement === "sidebar";
   return {
@@ -71,6 +78,13 @@ export type ChatHost = "mobile-page" | "sidebar-page" | "dock" | "none";
 
 export interface ChatHostInput {
   mobileDrawerActive: boolean;
+  /**
+   * FNXC:ChatSurfaceUnification 2026-09-16-20:16:
+   * FN-468: true when the mobile navigation shell (phone OR tablet) owns routing AND a project shell is mounted.
+   * The tablet band no longer has a right dock or a left column, so without this input `resolveChatHost` answered
+   * `"none"` between 769px and 1023px and the pill's Chat destination rendered an empty main panel.
+   */
+  mobileShellActive: boolean;
   rightDockActive: boolean;
   navigationPlacement: NavigationPlacement;
 }
@@ -81,9 +95,14 @@ export interface ChatHostInput {
  * Notes, instead of hijacking the right dock. Mobile keeps its existing page presentation, footer placement keeps the
  * dock hand-off, and a shell with neither a drawer nor a dock resolves to `"none"` so the caller falls through to its
  * ordinary route. Exactly one host is ever returned, preserving the FN-392 single-primary-Chat-host invariant.
+ *
+ * FNXC:Navigation 2026-09-16-20:16:
+ * FN-468 extends the page host to the WHOLE mobile shell. `"mobile-page"` names the HOST, not the drawer wrapper:
+ * the phone drawer wrapper stays strictly `mobileDrawerActive`/`mobileDrawerEnabled` downstream, while the tablet
+ * gets the same in-page Chat route with ordinary page presentation.
  */
 export function resolveChatHost(input: ChatHostInput): ChatHost {
-  if (input.mobileDrawerActive) return "mobile-page";
+  if (input.mobileDrawerActive || input.mobileShellActive) return "mobile-page";
   if (normalizeNavigationPlacement(input.navigationPlacement) === "sidebar") return "sidebar-page";
   if (input.rightDockActive) return "dock";
   return "none";

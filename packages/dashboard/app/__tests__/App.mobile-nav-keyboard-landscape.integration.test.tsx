@@ -50,7 +50,7 @@ function installResponsiveMedia() {
             ? window.innerWidth <= 600
             : query === "(max-height: 480px)"
               ? window.innerHeight <= 480
-              : query === "(min-width: 769px) and (max-width: 1024px)"
+              : query === "(min-width: 769px) and (max-width: 1023.98px)"
                 ? window.innerWidth >= 769 && window.innerWidth <= 1024
                 : false;
       return {

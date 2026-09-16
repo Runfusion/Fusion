@@ -8,6 +8,7 @@ import {
   isExperimentalFeatureEnabled,
 } from "@fusion/core";
 import { Header, useViewportMode } from "./components/Header";
+import { isMobileShellMode } from "./hooks/useViewportMode";
 import { ViewLayoutProvider } from "./context/ViewLayoutContext";
 import {
   DashboardWindowManagerProvider,
@@ -620,6 +621,15 @@ function AppInner() {
   // references them, avoiding a TDZ violation.
   const viewportMode = useViewportMode();
   const isMobile = viewportMode === "mobile";
+  /*
+  FNXC:Navigation 2026-09-16-19:44:
+  FN-468 : `mobileShellActive` décide la PROPRIÉTÉ DU SHELL DE NAVIGATION — vrai sous 1024 px, téléphone ET
+  tablette — tandis que `isMobile` reste réservé au téléphone pour le clavier virtuel, les drawers plein écran,
+  les tâches détachées et les restaurations de viewport. Les deux ne doivent jamais être confondus : élargir
+  `isMobile` à la tablette transformerait la tablette en téléphone pour la géométrie tactile, ce que FN-468
+  interdit explicitement.
+  */
+  const mobileShellActive = isMobileShellMode(viewportMode);
 
   // Navigation history for browser back button (desktop + mobile).
   /*
@@ -1357,7 +1367,8 @@ function AppInner() {
   useEffect(() => {
     setUiMenuOpen(false);
   }, [currentProject?.id, isMobile, modalManager.anyModalOpen, viewMode]);
-  const rightDockActive = rightDockEnabled && !isMobile && projectShellPresent;
+  /* FN-468 : le dock droit est une surface large ; il disparaît sur toute la bande du shell mobile, tablette comprise. */
+  const rightDockActive = rightDockEnabled && !mobileShellActive && projectShellPresent;
   const sidebarActive = navigationSurfaces.sidebarActive;
   const desktopViewWindows = useDesktopViewWindows({
     enabled: desktopNavigationActive,
@@ -1849,15 +1860,19 @@ function AppInner() {
 
   /*
   FNXC:DashboardShortcuts 2026-09-16-02:27:
-  FN-441 : le clavier doit choisir le MÊME hôte et la MÊME ancre que le pointeur. Sur téléphone la liste des chats
-  est la destination `chat` (tiroir plein écran de MainViewKeepAlive) ; sur tablette/ordinateur c'est la popover
-  `chat` du pied de page ancrée sur `desktop-nav-chat-panel`. La bascule réutilise intégralement les propriétaires
+  FN-441 : le clavier doit choisir le MÊME hôte et la MÊME ancre que le pointeur.
+
+  FNXC:DashboardShortcuts 2026-09-16-19:44:
+  FN-468 déplace la frontière : sur tout le shell mobile (téléphone ET tablette, sous 1024 px) la liste des chats
+  est la destination `chat` (tiroir plein écran de MainViewKeepAlive), parce que la popover du pied de page n'a
+  plus d'hôte sous 1024 px — le pied de page large n'y existe plus. À partir de 1024 px c'est la popover `chat`
+  du pied de page ancrée sur `desktop-nav-chat-panel`. La bascule réutilise intégralement les propriétaires
   existants (handleTaskViewChange / closeViewShortcutWithNav côté vue, openToolPanel / closeToolPanel côté popover)
   pour ne jamais créer une seconde entrée d'historique de navigation ni un second propriétaire de session de
   conversation. Sans projet courant aucun hôte n'existe : l'action est inerte.
   */
   const toggleChatListShortcut = useCallback(() => {
-    const target = resolveChatListShortcutTarget({ hasProject: Boolean(currentProject), isMobile });
+    const target = resolveChatListShortcutTarget({ hasProject: Boolean(currentProject), mobileShellActive });
     if (target === "none") return;
     if (target === "drawer") {
       if (taskView === "chat") closeViewShortcutWithNav("chat");
@@ -1869,7 +1884,7 @@ function AppInner() {
       return;
     }
     openToolPanel("chat", readShortcutAnchorRect("desktop-nav-chat-panel"));
-  }, [closeToolPanel, closeViewShortcutWithNav, currentProject, handleTaskViewChange, isMobile, openToolPanel, taskView, toolPanel?.kind]);
+  }, [closeToolPanel, closeViewShortcutWithNav, currentProject, handleTaskViewChange, mobileShellActive, openToolPanel, taskView, toolPanel?.kind]);
 
   useDashboardKeyboardShortcuts({
     shortcuts: dashboardKeyboardShortcuts,
@@ -2171,8 +2186,15 @@ function AppInner() {
   exactly one host, so the FN-392 "one primary Chat host" invariant still holds; a page host (mobile OR sidebar)
   clears the unread badge through the Chat route, while the dock host keeps its inline-list/detached signal.
   */
+  /*
+  FNXC:ChatSurfaceUnification 2026-09-16-20:16:
+  FN-468: the tablet band lost both wide Chat hosts (right dock and left column), so Chat needs an explicit page host
+  across the entire mobile shell. `mobileShellActive && projectShellPresent` keeps the host bound to a mounted project
+  shell; the phone-only drawer WRAPPER remains `mobileDrawerActive`, so the tablet renders Chat as an ordinary page.
+  */
   const chatPageHostKind = resolveChatHost({
     mobileDrawerActive,
+    mobileShellActive: mobileShellActive && projectShellPresent,
     rightDockActive,
     navigationPlacement: normalizeNavigationPlacement(navigationPlacement),
   });
@@ -2623,7 +2645,7 @@ function AppInner() {
         onSelectProject={handleSelectProject}
         onViewAllProjects={handleViewAllProjects}
         projectId={currentProject?.id}
-        mobileNavEnabled={isMobile}
+        mobileNavEnabled={mobileShellActive}
         /* FNXC:Navigation 2026-09-15-14:41: Any wide primary surface (footer OR sidebar) owns routing, so Header must not re-render its view shortcuts and create a third navigation. */
         leftSidebarNavActive={navigationSurfaces.headerPrimaryNavSuppressed}
         rightDockAvailable={rightDockActive}
@@ -2707,7 +2729,7 @@ function AppInner() {
           />
         )}
         <div
-          className={`project-content${shellFooterReservationVisible && (!isMobile || !mobileKeyboardOpen) ? " project-content--with-footer" : ""}${isMobile && mobileNavVisible && !(modalManager.anyModalOpen || taskView === "chat") ? " project-content--with-mobile-nav" : ""}`}
+          className={`project-content${shellFooterReservationVisible && (!isMobile || !mobileKeyboardOpen) ? " project-content--with-footer" : ""}${mobileShellActive && mobileNavVisible && !(modalManager.anyModalOpen || taskView === "chat") ? " project-content--with-mobile-nav" : ""}`}
         >
           <AppMainPanelTaskDetailComposition
             state={mainPanelTaskDetail}

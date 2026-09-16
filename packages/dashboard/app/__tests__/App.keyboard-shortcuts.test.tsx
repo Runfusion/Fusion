@@ -6,6 +6,7 @@ import { useNavigationHistory } from "../hooks/useNavigationHistory";
 import { usePoppedOutChats } from "../hooks/usePoppedOutChats";
 import { usePoppedOutNotes } from "../hooks/usePoppedOutNotes";
 import { closeViewShortcut, readShortcutAnchorRect, resolveChatListShortcutTarget, retainViewNavRevert } from "../utils/dashboardShortcutToggles";
+import { isMobileShellMode } from "../hooks/useViewportMode";
 
 function baseHandlers() {
   return {
@@ -476,11 +477,22 @@ describe("App dashboard keyboard shortcuts", () => {
     expect(event.defaultPrevented).toBe(false);
   });
 
-  it("resolves the FN-441 chat-list shortcut host from project presence and the measured breakpoint", () => {
-    expect(resolveChatListShortcutTarget({ hasProject: false, isMobile: true })).toBe("none");
-    expect(resolveChatListShortcutTarget({ hasProject: false, isMobile: false })).toBe("none");
-    expect(resolveChatListShortcutTarget({ hasProject: true, isMobile: true })).toBe("drawer");
-    expect(resolveChatListShortcutTarget({ hasProject: true, isMobile: false })).toBe("popover");
+  /*
+   * FN-468 : l'hôte suit désormais la propriété du shell de navigation. Sous 1024 px (téléphone ET tablette) la
+   * popover du pied de page n'a plus d'hôte, donc le tiroir plein écran est la seule cible.
+   */
+  it("resolves the FN-441 chat-list shortcut host from project presence and the mobile shell predicate", () => {
+    expect(resolveChatListShortcutTarget({ hasProject: false, mobileShellActive: true })).toBe("none");
+    expect(resolveChatListShortcutTarget({ hasProject: false, mobileShellActive: false })).toBe("none");
+    for (const mode of ["mobile", "tablet"] as const) {
+      expect(
+        resolveChatListShortcutTarget({ hasProject: true, mobileShellActive: isMobileShellMode(mode) }),
+        mode,
+      ).toBe("drawer");
+    }
+    expect(
+      resolveChatListShortcutTarget({ hasProject: true, mobileShellActive: isMobileShellMode("desktop") }),
+    ).toBe("popover");
   });
 
   it("reads the chat popover anchor from the same footer trigger the pointer uses", () => {

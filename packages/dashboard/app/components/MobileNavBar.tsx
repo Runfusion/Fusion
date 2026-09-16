@@ -38,6 +38,7 @@ import { fetchScripts } from "../api";
 import { normalizeScriptCatalog } from "../api/system/workflows";
 import type { PluginDashboardViewEntry, ScriptEntry } from "../api";
 import { useViewportMode } from "./Header";
+import { isMobileShellMode } from "../hooks/useViewportMode";
 import { NavigationHistoryContext } from "../hooks/useNavigationHistory";
 import type { TaskView } from "../hooks/useViewState";
 import { buildPluginTaskViewId, isPluginViewId } from "../plugins/pluginViewRegistry";
@@ -77,6 +78,77 @@ export function computePublishedMobileNavHeight({
   const resolvedPaddingBottom = Number.isFinite(paddingBottom) ? paddingBottom : 0;
   const contentHeight = resolvedNavOffsetHeight - resolvedPaddingBottom;
   return Math.max(44, Math.ceil(contentHeight));
+}
+
+/*
+FNXC:MobileNavDynamicQuickAccess 2026-09-16-19:44:
+FN-468 : « faut pas surcharger le menu flottant mais faire apparaître au fur et à mesure qu'il y a de l'espace ».
+La rangue directe part de la sélection d'accès rapide résolue (FN-467, inchangée au plus étroit) puis, quand la
+largeur mesurée le permet, promeut des destinations supplémentaires dans CET ordre stable. Les quatre premières
+sont celles citées par l'opérateur (Board, Fichiers, Gestionnaire git, Réglages) ; les suivantes complètent de
+manière déterministe pour qu'une largeur donnée produise toujours la même rangée. `patchnode` est exclu : History
+est une surface modale, pas une destination de navigation.
+*/
+export const MOBILE_NAV_DYNAMIC_PROMOTION_ORDER: MobileNavSelectableItem[] = [
+  "tasks",
+  "files",
+  "git",
+  "settings",
+  "command-center",
+  "planning",
+  "missions",
+  "mailbox",
+  "chat",
+  "agents",
+  "notes",
+  "activity",
+  "workflows",
+  "automation",
+  "projects",
+  "usage",
+];
+
+/*
+FNXC:MobileNavDynamicQuickAccess 2026-09-16-19:44:
+FN-468 : garantie « ne pas surcharger le menu flottant ». Même sur un très large écran du shell mobile, la pill ne
+donne jamais plus de destinations directes que ce plafond ; tout le reste reste atteignable depuis le menu.
+*/
+export const MAX_MOBILE_NAV_DIRECT_DESTINATIONS = 8;
+
+/*
+FNXC:MobileNavDynamicQuickAccess 2026-09-16-19:44:
+Largeur de créneau de repli, utilisée quand la propriété personnalisée CSS n'est pas résolue en pixels (jsdom, avant
+hydratation, `calc()` non calculé). Elle vaut deux cibles tactiles minimales, exactement comme la déclaration CSS.
+*/
+export const MOBILE_NAV_DIRECT_SLOT_FALLBACK_WIDTH = 88;
+
+export interface MobileNavDirectDestinationCountInput {
+  availableWidth: number;
+  slotWidth: number;
+  baseCount: number;
+  maxCount: number;
+}
+
+/**
+ * Nombre de destinations directes que la pill peut afficher à une largeur mesurée donnée.
+ *
+ * FNXC:MobileNavDynamicQuickAccess 2026-09-16-19:44:
+ * FN-468 : fonction PURE, testable sans layout (même précédent que `computePublishedMobileNavHeight`). Une largeur
+ * nulle, négative ou non finie — jsdom, SSR, avant première mesure — renvoie `baseCount`, donc la rangée n'est
+ * JAMAIS plus courte que la sélection d'accès rapide de l'opérateur. Sinon la capacité est le nombre entier de
+ * créneaux disponibles MOINS un créneau réservé au déclencheur de menu, bornée entre `baseCount` et `maxCount`.
+ */
+export function computeMobileNavDirectDestinationCount({
+  availableWidth,
+  slotWidth,
+  baseCount,
+  maxCount,
+}: MobileNavDirectDestinationCountInput): number {
+  const ceiling = Math.max(baseCount, maxCount);
+  if (!Number.isFinite(availableWidth) || availableWidth <= 0) return baseCount;
+  if (!Number.isFinite(slotWidth) || slotWidth <= 0) return baseCount;
+  const capacity = Math.floor(availableWidth / slotWidth) - 1;
+  return Math.min(ceiling, Math.max(baseCount, capacity));
 }
 
 export interface MobileNavKeyboardMetrics {
@@ -256,6 +328,16 @@ export function MobileNavBar({
   const [dragOffset, setDragOffset] = useState(0);
   const [isSheetDragging, setIsSheetDragging] = useState(false);
   const [hasSheetDragged, setHasSheetDragged] = useState(false);
+  /*
+  FNXC:MobileNavDynamicQuickAccess 2026-09-16-19:44:
+  FN-468 : géométrie mesurée de la pill. Une largeur utile nulle — premier rendu, SSR, jsdom sans géométrie — fait
+  retomber la fonction pure sur la rangée de base, donc la rangée n'est jamais plus courte que la sélection
+  d'accès rapide de l'opérateur.
+  */
+  const [pillSlotMetrics, setPillSlotMetrics] = useState<{ availableWidth: number; slotWidth: number }>({
+    availableWidth: 0,
+    slotWidth: MOBILE_NAV_DIRECT_SLOT_FALLBACK_WIDTH,
+  });
   const navRef = useRef<HTMLElement | null>(null);
   const sheetRef = useRef<HTMLDivElement | null>(null);
   const sheetDragRef = useRef<{
@@ -507,6 +589,25 @@ export function MobileNavBar({
     const publishMeasuredHeight = () => {
       const computed = window.getComputedStyle(navEl);
       const paddingBottom = Number.parseFloat(computed.paddingBottom);
+      /*
+      FNXC:MobileNavDynamicQuickAccess 2026-09-16-19:44:
+      FN-468 : la largeur utile est mesurée ICI, en réutilisant le `ResizeObserver` déjà installé sur le `nav` —
+      aucun second observateur de géométrie n'est ajouté. La largeur de créneau vient de la propriété personnalisée
+      issue des jetons, avec repli sûr quand elle n'est pas résolue en pixels. L'état n'est écrit que lorsque la
+      capacité CHANGE, faute de quoi l'observateur se réveillerait à chaque publication de hauteur.
+      */
+      const declaredSlotWidth = Number.parseFloat(computed.getPropertyValue("--mobile-nav-direct-slot-min-width"));
+      const slotWidth = Number.isFinite(declaredSlotWidth) && declaredSlotWidth > 0
+        ? declaredSlotWidth
+        : MOBILE_NAV_DIRECT_SLOT_FALLBACK_WIDTH;
+      const horizontalPadding = (Number.parseFloat(computed.paddingLeft) || 0) + (Number.parseFloat(computed.paddingRight) || 0);
+      const measuredWidth = navEl.getBoundingClientRect().width;
+      const availableWidth = Number.isFinite(measuredWidth) ? Math.max(0, measuredWidth - horizontalPadding) : 0;
+      setPillSlotMetrics((current) => (
+        current.availableWidth === availableWidth && current.slotWidth === slotWidth
+          ? current
+          : { availableWidth, slotWidth }
+      ));
       const floatingGap = Number.parseFloat(computed.getPropertyValue("--mobile-nav-floating-gap"));
       const tabHeights = Array.from(navEl.querySelectorAll<HTMLElement>(".mobile-nav-tab"), (tab) => tab.getBoundingClientRect().height);
       const publishedHeight = computePublishedMobileNavHeight({
@@ -537,7 +638,16 @@ export function MobileNavBar({
     };
   }, [hidden, modalOpen, mode]);
 
-  if (mode !== "mobile" || modalOpen || hidden) {
+  /*
+  FNXC:NativeShell 2026-09-16-19:44:
+  FN-468 : le montage de la pill est désormais décidé par le prédicat de shell partagé `isMobileShellMode`, donc
+  la pill se monte en `mobile` ET en `tablet` (0–1023.98 px). C'est le SECOND des deux verrous qui l'excluaient de
+  la tablette : le CSS la masquait, mais ce prédicat l'empêchéait déjà de se monter du tout. Retirer la colonne de
+  gauche, le pied de page large et le dock droit de la bande tablette sans lever CE verrou laisserait la tablette
+  sans aucune navigation primaire. Seule l'appartenance au MODE est élargie : `modalOpen` et `hidden` conservent
+  leur sémantique exacte et continuent à démonter la pill.
+  */
+  if (!isMobileShellMode(mode) || modalOpen || hidden) {
     return null;
   }
 
@@ -636,9 +746,26 @@ export function MobileNavBar({
   const primaryDestinationItems: MobileNavSelectableItem[] = resolveMobileNavPrimaryItems({
     mobileNavPrimaryItems: quickAccessItems ? [...quickAccessItems] : undefined,
   }).primaryItems;
-  const effectivePrimaryItems = primaryDestinationItems.filter((item) => destinationRegistry[item].isAvailable);
+  const baseDirectItems = primaryDestinationItems.filter((item) => destinationRegistry[item].isAvailable);
+  /*
+  FNXC:MobileNavDynamicQuickAccess 2026-09-16-19:44:
+  FN-468 : la rangée directe est la rangée de base (ordre persisté, inchangée au plus étroit) SUIVIE des candidats
+  de l'ordre de promotion qui ne s'y trouvent pas déjà et qui sont disponibles — un drapeau expérimental désactivé
+  est ignoré sans laisser de bouton vide ni d'`aria-label` orphelin. La troncature au nombre calculé ne peut jamais
+  descendre sous la rangée de base, et toute destination promue quitte le menu déroulant, donc aucune n'est rendue
+  deux fois.
+  */
+  const directDestinationCount = computeMobileNavDirectDestinationCount({
+    availableWidth: pillSlotMetrics.availableWidth,
+    slotWidth: pillSlotMetrics.slotWidth,
+    baseCount: baseDirectItems.length,
+    maxCount: MAX_MOBILE_NAV_DIRECT_DESTINATIONS,
+  });
+  const promotedItems = MOBILE_NAV_DYNAMIC_PROMOTION_ORDER
+    .filter((item) => !baseDirectItems.includes(item) && destinationRegistry[item].isAvailable);
+  const effectivePrimaryItems = [...baseDirectItems, ...promotedItems].slice(0, directDestinationCount);
   const effectiveOmittedItems = MOBILE_NAV_SELECTABLE_ITEMS
-    .filter((item) => !primaryDestinationItems.includes(item) && item !== "patchnode")
+    .filter((item) => !effectivePrimaryItems.includes(item) && item !== "patchnode")
     .filter((item) => destinationRegistry[item].isAvailable);
   const isMoreActive = effectiveOmittedItems.some((item) => destinationRegistry[item].isActive)
     || view === "graph"

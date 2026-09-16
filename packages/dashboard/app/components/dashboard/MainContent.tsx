@@ -527,8 +527,16 @@ export function MainContent(props: MainContentProps) {
   A dock-hosted shell still excludes Chat so a restored route or breakpoint transition cannot mount a second primary
   Chat behind the registry-backed window. The drawer WRAPPER stays strictly `mobileDrawerEnabled`: sidebar placement
   mounts Chat as a page, never inside a drawer.
+
+  FNXC:ChatSurfaceUnification 2026-09-16-20:16:
+  FN-468 makes the resolved host authoritative for the whole mobile shell: `"mobile-page"` is now returned for the
+  tablet band too, where neither the dock nor the sidebar exists. Keying on the host (instead of the phone-only
+  `mobileDrawerEnabled`) is what stops the pill's Chat destination from rendering an empty main panel at 769-1023px.
+  The drawer WRAPPER below still reads `mobileDrawerEnabled`, so the tablet gets a page and never a drawer.
   */
-  const chatPageHostEnabled = mobileDrawerEnabled || chatPageHost === "sidebar-page";
+  const chatPageHostEnabled = mobileDrawerEnabled
+    || chatPageHost === "sidebar-page"
+    || chatPageHost === "mobile-page";
   const selectedKeepAliveId: KeepAliveMainViewId | null = isKeepAliveMainViewId(taskView)
     ? taskView === "chat" && !chatPageHostEnabled ? null : taskView
     : taskView === "task-detail" && mainPanelDetailTask === null

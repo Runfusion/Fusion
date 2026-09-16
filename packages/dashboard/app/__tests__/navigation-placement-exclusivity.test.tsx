@@ -14,7 +14,7 @@ import { Header } from "../components/Header";
 import { LeftSidebarNav } from "../components/LeftSidebarNav";
 import { DesktopActionBar } from "../components/DesktopActionBar";
 import { resolveNavigationSurfaces, type NavigationPlacement } from "../utils/navigationPlacement";
-import type { ViewportMode } from "../hooks/useViewportMode";
+import { isMobileShellMode, TABLET_MEDIA_QUERY, type ViewportMode } from "../hooks/useViewportMode";
 
 vi.mock("../api", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -31,7 +31,7 @@ function mockViewport(mode: ViewportMode) {
     writable: true,
     value: vi.fn().mockImplementation((query: string) => {
       const isMobileQuery = query === "(max-width: 768px)" || query === "(max-width: 768px), (max-height: 480px)";
-      const isTabletQuery = query === "(min-width: 769px) and (max-width: 1024px)";
+      const isTabletQuery = query === TABLET_MEDIA_QUERY;
       return {
         matches: mode === "mobile" ? isMobileQuery : mode === "tablet" ? isTabletQuery : false,
         media: query,
@@ -93,7 +93,8 @@ function NavigationShellHarness({
   navigationPlacement: NavigationPlacement;
   leftSidebarNavFlag?: boolean;
 }) {
-  const isMobile = viewportMode === "mobile";
+  /* FN-468 : la pill est propriétaire de la navigation primaire sur tout le shell mobile (téléphone ET tablette). */
+  const mobileShellActive = isMobileShellMode(viewportMode);
   const surfaces = resolveNavigationSurfaces({ viewportMode, projectShellPresent: true, navigationPlacement });
 
   return (
@@ -101,7 +102,7 @@ function NavigationShellHarness({
       <Header
         view="board"
         onChangeView={vi.fn()}
-        mobileNavEnabled={isMobile}
+        mobileNavEnabled={mobileShellActive}
         showAgentsTab={true}
         leftSidebarNavActive={surfaces.headerPrimaryNavSuppressed}
         experimentalFeatures={{ leftSidebarNav: leftSidebarNavFlag !== false }}
@@ -121,7 +122,7 @@ function NavigationShellHarness({
       {surfaces.footerNavActive ? (
         <DesktopActionBar entries={[]} tasks={[]} projectId="proj_1" onToggleTerminal={vi.fn()} />
       ) : null}
-      {isMobile ? <MobileNavBar {...mobileNavProps} /> : null}
+      {mobileShellActive ? <MobileNavBar {...mobileNavProps} /> : null}
     </>
   );
 }
@@ -156,10 +157,10 @@ describe("navigation placement exclusivity", () => {
 
           expect(mounted.length, `${label} mounted surface count`).toBe(1);
 
-          if (viewportMode === "mobile") {
-            expect(mobileBar, `${label} mobile owner`).not.toBeNull();
-            expect(sidebar, `${label} no sidebar on mobile`).toBeNull();
-            expect(footer, `${label} no wide footer on mobile`).toBeNull();
+          if (isMobileShellMode(viewportMode)) {
+            expect(mobileBar, `${label} mobile shell owner`).not.toBeNull();
+            expect(sidebar, `${label} no sidebar in the mobile shell`).toBeNull();
+            expect(footer, `${label} no wide footer in the mobile shell`).toBeNull();
           } else if (navigationPlacement === "sidebar") {
             expect(sidebar, `${label} sidebar owner`).not.toBeNull();
             expect(footer, `${label} no footer in sidebar placement`).toBeNull();
@@ -176,7 +177,7 @@ describe("navigation placement exclusivity", () => {
     }
   });
 
-  it("suppresses the Header view shortcuts in both wide placements and restores them on mobile only", () => {
+  it("suppresses the Header view shortcuts in both wide placements and on the tablet pill shell", () => {
     for (const navigationPlacement of PLACEMENTS) {
       for (const viewportMode of ["tablet", "desktop"] as const) {
         mockViewport(viewportMode);

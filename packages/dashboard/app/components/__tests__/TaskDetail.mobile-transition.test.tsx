@@ -61,7 +61,7 @@ function installLandscapePhoneViewport(): void {
     matches:
       query === "(max-width: 768px), (max-height: 480px)" ||
       query === "(max-height: 480px)" ||
-      query === "(min-width: 769px) and (max-width: 1024px)",
+      query === "(min-width: 769px) and (max-width: 1023.98px)",
     media: query,
     onchange: null,
     addEventListener: vi.fn(),
