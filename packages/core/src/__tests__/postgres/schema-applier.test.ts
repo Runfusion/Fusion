@@ -121,6 +121,7 @@ import {
   PULL_REQUEST_READINESS_VERSION,
   RECOVERY_DISPOSITION_VERSION,
   FILE_SCOPE_LEASE_RELEASE_VERSION,
+  REVIEW_LANE_LEDGER_VERSION,
 } from "../../postgres/schema-applier.js";
 import { ProjectPartitionRekeyError, rekeyFallbackProjectPartition } from "../../postgres/migration-stamping.js";
 import type { PluginSchemaInitHook } from "../../postgres/plugin-schema-hook.js";
@@ -183,8 +184,16 @@ describe("schema-applier: immutable migration identities", () => {
     expect(Number(PULL_REQUEST_READINESS_VERSION)).toBeGreaterThan(Number(STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION));
     expect(Number(RECOVERY_DISPOSITION_VERSION)).toBeGreaterThan(Number(PULL_REQUEST_READINESS_VERSION));
     expect(Number(FILE_SCOPE_LEASE_RELEASE_VERSION)).toBeGreaterThan(Number(RECOVERY_DISPOSITION_VERSION));
-    expect(Number(SCHEMA_BASELINE_VERSION)).toBeGreaterThanOrEqual(Number(FILE_SCOPE_LEASE_RELEASE_VERSION));
-    expect(SCHEMA_BASELINE_VERSION).toBe("0089");
+    /*
+    FNXC:ReviewLaneDispatch 2026-10-12-20:30 (PR #3619 slot): a migration number is its identity in
+    fusion_schema_migrations, so the ledger sits one slot above the highest upstream file (0089, FN-9529)
+    and takes the ceiling-equality line that belongs to whoever holds the top slot. The branch first
+    claimed 0089 and collided with upstream's own release into that slot; one number, one migration.
+    */
+    expect(REVIEW_LANE_LEDGER_VERSION).toBe("0090");
+    expect(Number(REVIEW_LANE_LEDGER_VERSION)).toBeGreaterThan(Number(FILE_SCOPE_LEASE_RELEASE_VERSION));
+    expect(Number(SCHEMA_BASELINE_VERSION)).toBeGreaterThanOrEqual(Number(REVIEW_LANE_LEDGER_VERSION));
+    expect(SCHEMA_BASELINE_VERSION).toBe("0090");
   });
 
   it("keeps monitor and approval isolation assigned to version 0003", () => {
@@ -670,9 +679,15 @@ pgDescribe("schema-applier: VAL-SCHEMA-008 three-database topology", () => {
 
   it("ensures schemas before hooks when all migration markers are already recorded", async () => {
     ctx = await setupFreshDb();
-    // The applier also re-runs a migration whose table is absent even when its marker exists, so
-    // a marker-only database cannot model "fully migrated"; apply for real, then re-run with hooks.
-    await applySchemaBaseline(ctx.db, { pluginHooks: [] });
+    await ctx.db.execute(sql.raw(`
+      CREATE TABLE public.fusion_schema_migrations (
+        version text PRIMARY KEY,
+        applied_at timestamptz NOT NULL DEFAULT now()
+      );
+      INSERT INTO public.fusion_schema_migrations (version)
+      SELECT lpad(n::text, 4, '0')
+      FROM generate_series(0, ${Number(SCHEMA_BASELINE_VERSION)}) AS migration(n);
+    `));
 
     const observedSchemas: string[] = [];
     const assertSchemasHook: PluginSchemaInitHook = {
@@ -735,7 +750,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     refusal marker (100 → 105); later baseline additions bring the count to 106; and 0048 adds
     GitHub check state (106 → 107); 0049 adds the agent-activity outbox and counter (→ 109);
     0050 adds immutable lock, evidence, and report history (109 → 112); 0052 adds recall records (→ 113);
-    0060 adds workspace coordination leases and land intents (→ 115); 0071 adds patchnode_entries and 0084 adds task_overlap_waits (→ 117). Migration 0086 adds stale review callback waiver receipts (→ 118). Migration 0087 adds columns to pull_requests without changing the table count.
+    0060 adds workspace coordination leases and land intents (→ 115); 0071 adds patchnode_entries and 0084 adds task_overlap_waits (→ 117). Migration 0086 adds stale review callback waiver receipts (→ 118). Migration 0087 adds columns to pull_requests without changing the table count. Migration 0088 adds columns to the existing task_lifecycle_events table, so it introduces no new table.
     Plugin tables are added separately by the schema-init hook and are excluded here.
     */
     expect(bySchema.project).toBe(118);
@@ -2057,12 +2072,14 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_REQUIRE_PLAN_APPROVAL_VERSION,
       PATCHNODE_ENTRIES_VERSION,
       TASK_PLANNING_FAILURE_VERSION,
+      CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION,
       OVERLAP_WAIT_SYNC_VERSION,
       DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION,
       STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION,
       PULL_REQUEST_READINESS_VERSION,
       RECOVERY_DISPOSITION_VERSION,
       FILE_SCOPE_LEASE_RELEASE_VERSION,
+      REVIEW_LANE_LEDGER_VERSION,
     ]);
     const readinessMarkerCount = (await ctx.db.execute(sql`
       SELECT count(*)::int AS count
@@ -2231,6 +2248,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       PULL_REQUEST_READINESS_VERSION,
       RECOVERY_DISPOSITION_VERSION,
       FILE_SCOPE_LEASE_RELEASE_VERSION,
+      REVIEW_LANE_LEDGER_VERSION,
     ]);
   });
 
@@ -2469,6 +2487,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       PULL_REQUEST_READINESS_VERSION,
       RECOVERY_DISPOSITION_VERSION,
       FILE_SCOPE_LEASE_RELEASE_VERSION,
+      REVIEW_LANE_LEDGER_VERSION,
     ]);
   });
 
@@ -2588,6 +2607,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       PULL_REQUEST_READINESS_VERSION,
       RECOVERY_DISPOSITION_VERSION,
       FILE_SCOPE_LEASE_RELEASE_VERSION,
+      REVIEW_LANE_LEDGER_VERSION,
     ]);
   });
 
@@ -2707,6 +2727,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       PULL_REQUEST_READINESS_VERSION,
       RECOVERY_DISPOSITION_VERSION,
       FILE_SCOPE_LEASE_RELEASE_VERSION,
+      REVIEW_LANE_LEDGER_VERSION,
     ]);
   });
 });

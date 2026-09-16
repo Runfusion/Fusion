@@ -310,6 +310,7 @@ export default defineConfig({
             "src/__tests__/triage-preflight.test.ts",
             "src/__tests__/mission-scheduler.test.ts",
             "src/__tests__/heartbeat-monitor.test.ts",
+            "src/__tests__/review-lane-dispatch-sweep.test.ts",
             "src/__tests__/workflow-node-handlers.test.ts",
             "src/__tests__/workflow-policy-ownership-map.test.ts",
           ],
