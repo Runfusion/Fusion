@@ -10,6 +10,7 @@ import { createLogger } from "../process/logger.js";
 import { resolveTaskSymbolsForTask } from "../tasks/task-symbol-resolution.js";
 import { cancelTaskOverlapWaitsInTransaction } from "./overlap-wait-ops.js";
 import { clearHumanPlanApprovalDecision } from "../planner/human-plan-approval.js";
+import { computePauseAccountingPatch } from "../tasks/task-pause-accounting.js";
 
 const resetLog = createLogger("task-store-reset-lifecycle");
 const ACTIVE_TASK_CONTINUATION_STATES = ["runnable", "running", "held", "retrying"] as const;
@@ -52,8 +53,18 @@ export function buildResetTask(
   options?: ResetTaskPublicationOptions,
 ): Task {
   const now = new Date().toISOString();
+  /*
+  FNXC:TaskPauseAccounting 2026-09-16-06:16:
+  FN-457 — Reset writes `paused: false`, so an open pause segment must be BANKED here rather than
+  abandoned; abandoning it leaves an orphaned anchor that readers must then defend against forever.
+  `cumulativePausedMs` itself is never cleared: it joins firstExecutionAt/cumulativeActiveMs/
+  cumulativePlanningMs/columnDwellMs in the timing analytics Reset deliberately preserves.
+  */
+  const pausePatch = computePauseAccountingPatch(task, false, now, false);
   return {
     ...task,
+    cumulativePausedMs: pausePatch.cumulativePausedMs ?? task.cumulativePausedMs,
+    pausedStartedAt: undefined,
     description: resolveResetDescription(task.description, options?.description) ?? task.description,
     column: intakeColumn,
     status: undefined,

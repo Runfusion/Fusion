@@ -120,6 +120,9 @@ export interface TaskRow {
   cumulativeActiveMs: number | null;
   cumulativePlanningMs: number | null;
   planningStartedAt: string | null;
+  /** FNXC:TaskPauseAccounting 2026-09-16-06:16: FN-457 durable paused-time accounting (display-only). */
+  cumulativePausedMs: number | null;
+  pausedStartedAt: string | null;
   columnDwellMs: string | null;
   workflowTransitionNotification: string | null;
   plannerOversightLevel: string | null;
@@ -375,6 +378,8 @@ export const TASK_COLUMN_DESCRIPTORS: TaskColumnDescriptor[] = [
   defineTaskColumn("cumulativeActiveMs", (task) => task.cumulativeActiveMs ?? null),
   defineTaskColumn("cumulativePlanningMs", (task) => task.cumulativePlanningMs ?? null),
   defineTaskColumn("planningStartedAt", (task) => task.planningStartedAt ?? null),
+  defineTaskColumn("cumulativePausedMs", (task) => task.cumulativePausedMs ?? null),
+  defineTaskColumn("pausedStartedAt", (task) => task.pausedStartedAt ?? null),
   /*
   FNXC:TaskLifecyclePersistence 2026-07-14-13:17:
   Persist the late task lifecycle fields through the shared descriptor seam so both SQLite and PostgreSQL retain per-column timing, workflow transition dedupe, oversight overrides, and manual-plan approval state after migration.

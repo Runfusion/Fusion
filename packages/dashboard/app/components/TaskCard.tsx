@@ -59,7 +59,7 @@ import {
 } from "../utils/taskProgress";
 import { ACTIVE_STATUSES, isTaskAgentActive } from "../utils/taskActivity";
 import { getPrBadgeModifierClass } from "../utils/prBadgeClass";
-import { getTotalAgentActiveMs, getEndToEndDurationMs, getTimedDurationMs, getWorkflowRuntimeMs, parseTimestampToMs } from "../utils/taskTiming";
+import { getTaskRuntimeBreakdown, parseTimestampToMs } from "../utils/taskTiming";
 import { getTaskStatusBadgeLabel, getTaskWipLifecycleBadgeLabel, type TaskStatusBadgeContext, hasTaskStatusBadge, isTaskPlanningActive } from "../utils/taskStatusBadgeLabel";
 import {
   isReviewBudgetExhaustedApproval,
@@ -462,41 +462,6 @@ function getDoneCompletionMs(task: Task): number | null {
   return completionMs;
 }
 
-function getInProgressElapsedMs(task: Task, nowMs: number): number | null {
-  const startedMs = parseTimestampToMs(task.columnMovedAt ?? task.updatedAt);
-  if (startedMs == null) return null;
-
-  return Math.max(0, nowMs - startedMs);
-}
-
-// Wall-clock end-to-end runtime: from when the task first entered in-progress
-// to when it first entered done (or `now` if not yet done). Preferred over the
-// instrumented `[timing]` sum on cards in in-progress / in-review / done so the
-// timer reflects how long the task actually took, not just the time spent
-// inside instrumented code paths. Returns null on legacy tasks that completed
-// before `executionStartedAt` was tracked, so callers can fall back.
-function getTaskEndToEndDurationMs(
-  task: Task,
-  nowMs: number,
-  /*
-  FNXC:WorkflowLifecycleColumns 2026-07-31-10:10:
-  THREADED SO THE CONVERSION IS NOT INERT. `getTotalAgentActiveMs` gained an optional `columnFlags`
-  so the LIVE execution segment is counted from the card's own wip lane. This is one of its two
-  production callers, and it passed nothing — so the resolved path existed and never ran, and the
-  card chip under-reported the in-flight run on a renamed board by exactly its elapsed time.
-
-  An optional parameter no production caller supplies is a conversion that reads as done and behaves
-  as the literal: the census drops and nothing changes. Threading it here is what makes it real.
-  */
-  columnFlags?: TaskContextMenuColumnFlags,
-): number | null {
-  // FNXC:TaskTiming 2026-07-20-12:00: planning-only tasks have no execution
-  // accumulator, but their active AI duration still belongs on the card chip.
-  // Use the legacy execution window only when neither active-time source exists.
-  const totalActiveMs = getTotalAgentActiveMs(task, nowMs, columnFlags);
-  return totalActiveMs ?? getEndToEndDurationMs(task.executionStartedAt, task.executionCompletedAt, nowMs);
-}
-
 /*
 FNXC:WorkflowResolvedColumns 2026-07-30-01:20 (fleet phase — FLAGGED AND LEFT COUNTED):
 Module-scope, takes only a `Task`, and has no flags to consult. Converting it means either threading
@@ -540,36 +505,24 @@ function getMergeElapsedMs(task: Task, nowMs: number): number | null {
   return Math.max(0, nowMs - mergeStartedMs);
 }
 
-function getActiveMergeTotalMs(task: Task, nowMs: number, columnFlags?: TaskContextMenuColumnFlags): number | null {
-  const endToEndMs = getTaskEndToEndDurationMs(task, nowMs, columnFlags);
-  if (endToEndMs != null) {
-    return endToEndMs;
-  }
+/*
+FNXC:TaskCardRuntimeChip 2026-09-16-06:16:
+FN-457 replaced this file's four lane-specific duration helpers — `getInProgressElapsedMs`,
+`getTaskEndToEndDurationMs`, `getActiveMergeTotalMs`, and `getInstrumentedDurationMs` — with the one
+shared `getTaskRuntimeBreakdown` in `../utils/taskTiming`. Their invariants moved WITH them rather
+than being deleted:
 
-  const mergeElapsedMs = getMergeElapsedMs(task, nowMs);
-  const instrumentedMs = getInstrumentedDurationMs(task, nowMs);
-  if (instrumentedMs != null) {
-    return instrumentedMs + (mergeElapsedMs ?? 0);
-  }
+- The wip-lane `columnMovedAt` fallback (wall clock, so waiting and pauses counted) is now the
+  breakdown's LAST-RESORT branch, reached only when a legacy row carries no instrumentation at all.
+- "Prefer the server `timedExecutionMs` aggregate and do NOT add workflow runtime on top, because it
+  may already include it" survives verbatim as the breakdown's anti-double-count rule.
+- The `columnFlags` threading that the note below calls load-bearing is now UNCONDITIONAL: the chip
+  passes `taskColumnFlags` on every lane, closing the renamed-board hole where the wip branch called
+  the end-to-end helper without them.
 
-  return mergeElapsedMs;
-}
-
-
-function getInstrumentedDurationMs(task: Task, nowMs: number): number | null {
-  // Prefer server aggregate when present: it is the canonical persisted runtime
-  // and may already include workflow execution. Avoid adding workflow runtime
-  // again in that case.
-  if (typeof task.timedExecutionMs === "number") {
-    return task.timedExecutionMs;
-  }
-
-  const timed = getTimedDurationMs(task.log);
-  const workflow = getWorkflowRuntimeMs(task.workflowStepResults, nowMs);
-  if (timed == null && workflow == null) return null;
-  return (timed ?? 0) + (workflow ?? 0);
-}
-
+`getMergeElapsedMs` stays: it supplies both the live merge contribution to the verification bucket
+and the "Merge phase" half of the merge label.
+*/
 function formatElapsedDuration(elapsedMs: number): string {
   if (!Number.isFinite(elapsedMs) || elapsedMs < 0) return "";
 
@@ -2124,32 +2077,54 @@ function TaskCardComponent({
   Cards that are ineligible must NOT subscribe: eligibility is exactly the set of early-returns the
   old effect used, so cadence, formatting, and which cards animate are unchanged.
   */
+  /*
+  FNXC:TaskCardRuntimeChip 2026-09-16-06:16:
+  FN-457 — subscribe if and only if a LIVE segment actually exists, now that the chip has a single
+  source of truth. A live segment is: an open planning segment, a wip execution segment that is not
+  currently paused (a paused card's chip is frozen by construction, so ticking it repaints an
+  unchanging number), an open verification gate that the breakdown actually counts, or an active
+  merge. Everything else is a settled total and never needs the shared ticker.
+  */
   const wantsLiveTimeIndicator = useMemo(() => {
     if (!isWipColumn && !isReviewColumn) {
       return false;
     }
 
-    const merging = task.status != null && ACTIVE_MERGE_STATUSES.has(task.status);
-    const nowMs = Date.now();
-
-    if (isWipColumn) {
-      const endToEndMs = getTaskEndToEndDurationMs(task, nowMs, taskColumnFlags);
-      const elapsedMs = getInProgressElapsedMs(task, nowMs);
-      const instrumentedMs = getInstrumentedDurationMs(task, nowMs);
-      if (endToEndMs == null && elapsedMs == null && instrumentedMs == null) {
-        return false;
-      }
+    if (task.status != null && ACTIVE_MERGE_STATUSES.has(task.status)) {
+      return true;
     }
 
-    if (!merging && isReviewColumn) {
-      const endToEndMs = getTaskEndToEndDurationMs(task, nowMs);
-      const instrumentedMs = getInstrumentedDurationMs(task, nowMs);
-      if (endToEndMs == null && instrumentedMs == null) {
-        return false;
-      }
+    if (parseTimestampToMs(task.planningStartedAt) != null) {
+      return true;
     }
 
-    return true;
+    const isPaused = task.paused === true || task.userPaused === true;
+    if (isWipColumn && !isPaused && parseTimestampToMs(task.executionStartedAt) != null) {
+      return true;
+    }
+
+    /* A LEGACY live execution window: no cumulative accounting, an execution start, and no
+       completion yet, so the breakdown measures it to `now` and it advances every tick. */
+    if (task.cumulativeActiveMs == null
+      && parseTimestampToMs(task.executionStartedAt) != null
+      && parseTimestampToMs(task.executionCompletedAt) == null) {
+      return true;
+    }
+
+    // An open verification gate ticks unless a live wip segment already covers its wall clock.
+    const liveWipSegmentCovers = isWipColumn && parseTimestampToMs(task.executionStartedAt) != null;
+    if (!liveWipSegmentCovers && (task.workflowStepResults ?? []).some((step) => step.startedAt && !step.completedAt)) {
+      return true;
+    }
+
+    /* Legacy wall-clock fallback cards still advance every tick: their only timing source is the
+       time since column entry. */
+    if (isWipColumn && getTaskRuntimeBreakdown(task, Date.now(), taskColumnFlags) != null
+      && task.cumulativeActiveMs == null && task.cumulativePlanningMs == null && typeof task.timedExecutionMs !== "number") {
+      return true;
+    }
+
+    return false;
   /*
   FNXC:WorkflowResolvedColumns 2026-07-30-23:40:
   THE LANE ROLES BELONG IN THIS LIST, or the card never subscribes on a renamed board.
@@ -2167,96 +2142,102 @@ function TaskCardComponent({
   This repo has no `react-hooks/exhaustive-deps` rule, so the list is maintained by hand and a
   disable directive for that rule fails CI.
   */
-  }, [task.column, task.status, task.columnMovedAt, task.updatedAt, task.workflowStepResults, task.timedExecutionMs, task.firstExecutionAt, task.cumulativeActiveMs, task.executionStartedAt, task.executionCompletedAt, isWipColumn, isReviewColumn, taskColumnFlags]);
+  /* FNXC:TaskCardRuntimeChip 2026-09-16-06:16: FN-457 adds the pause fields this memo now reads.
+     Hand-maintained list (no `react-hooks/exhaustive-deps` in this repo), so an omission is silent. */
+  }, [task.column, task.status, task.columnMovedAt, task.updatedAt, task.workflowStepResults, task.timedExecutionMs, task.firstExecutionAt, task.cumulativeActiveMs, task.cumulativePlanningMs, task.planningStartedAt, task.executionStartedAt, task.executionCompletedAt, task.cumulativePausedMs, task.pausedStartedAt, task.paused, task.userPaused, isWipColumn, isReviewColumn, taskColumnFlags]);
 
   const timeIndicatorNowMs = useLiveTimeTicker(wantsLiveTimeIndicator);
 
+  /*
+  FNXC:TaskCardRuntimeChip 2026-09-16-06:16:
+  FN-457 — ONE computation for every lane, plus a three-line hover detail.
+
+  Before this, the chip answered a different question per lane: wall clock since column entry in wip
+  (so a card parked overnight showed "14h" for twenty real minutes of work), planning + execution in
+  review/complete with verification-gate time counted nowhere, and a third shape during merge. The
+  number was not comparable between two cards, which is the only thing it is for.
+
+  Now the label is `getTaskRuntimeBreakdown().totalMs` in every lane, and the tooltip appends
+  Planning / Execution / Verification lines that sum EXACTLY to it. `taskColumnFlags` is passed
+  unconditionally: the old wip branch omitted them, so on a renamed board the live execution segment
+  was dropped from the chip.
+
+  FORMATTING AND HEADERS ARE DELIBERATELY UNCHANGED: `formatElapsedDuration` (floor, `<1m`) in the
+  wip lane, `formatElapsedDurationDone` (ceiling) elsewhere and during a merge, and the existing
+  `tasks.inProgressTime` / `tasks.executionTime` / `tasks.executionTimeCompleted` /
+  `tasks.executionTimeMergePhase` / `tasks.executionTimeMerging` headers with their tested suffixes.
+  */
   const timeIndicator = useMemo(() => {
     if (!showsTimeIndicator) {
       return null;
     }
 
-    // While a merge is actively running, continue showing live end-to-end
-    // execution time. For legacy tasks without executionStartedAt, fall back
-    // to instrumented runtime plus live merge-phase elapsed since `updatedAt`.
-    if (task.status != null && ACTIVE_MERGE_STATUSES.has(task.status)) {
-      const totalMs = getActiveMergeTotalMs(task, timeIndicatorNowMs);
-      if (totalMs != null) {
-        const elapsedLabel = formatElapsedDurationDone(totalMs);
-        if (elapsedLabel) {
-          const mergeElapsedMs = getMergeElapsedMs(task, timeIndicatorNowMs);
-          const mergeLabel = mergeElapsedMs == null ? null : formatElapsedDuration(mergeElapsedMs);
-          const title = mergeLabel
-            ? t("tasks.executionTimeMergePhase", "Execution time {{elapsed}}. Merge phase {{merge}}", { elapsed: elapsedLabel, merge: mergeLabel })
-            : t("tasks.executionTimeMerging", "Execution time {{elapsed}}. Merging", { elapsed: elapsedLabel });
-          return {
-            label: elapsedLabel,
-            title,
-            ariaLabel: title,
-          };
-        }
+    const merging = task.status != null && ACTIVE_MERGE_STATUSES.has(task.status);
+    const mergeElapsedMs = merging ? getMergeElapsedMs(task, timeIndicatorNowMs) : null;
+    const breakdown = getTaskRuntimeBreakdown(task, timeIndicatorNowMs, taskColumnFlags, mergeElapsedMs ?? undefined);
+    if (breakdown == null) {
+      return null;
+    }
+
+    /* A zero bucket must still render a number: `formatElapsedDurationDone(0)` is the empty string
+       by design (it hides a whole chip), which would silently drop a tooltip line. */
+    const formatBucket = (valueMs: number): string => formatElapsedDurationDone(valueMs) || "0m";
+    const detailLines = [
+      t("tasks.runtimeBreakdownPlanning", "Planning {{elapsed}}", { elapsed: formatBucket(breakdown.planningMs) }),
+      t("tasks.runtimeBreakdownExecution", "Execution {{elapsed}}", { elapsed: formatBucket(breakdown.executionMs) }),
+      t("tasks.runtimeBreakdownVerification", "Verification {{elapsed}}", { elapsed: formatBucket(breakdown.verificationMs) }),
+    ];
+    /* The native `title` tooltip is multi-line; `aria-label` must carry the SAME content flattened,
+       so assistive technology is not handed less than the pointer surface. */
+    const withDetail = (header: string) => ({
+      title: [header, ...detailLines].join("\n"),
+      ariaLabel: [header, ...detailLines].join(". "),
+    });
+
+    if (merging) {
+      const elapsedLabel = formatElapsedDurationDone(breakdown.totalMs);
+      if (elapsedLabel) {
+        const mergeLabel = mergeElapsedMs == null ? null : formatElapsedDuration(mergeElapsedMs);
+        const header = mergeLabel
+          ? t("tasks.executionTimeMergePhase", "Execution time {{elapsed}}. Merge phase {{merge}}", { elapsed: elapsedLabel, merge: mergeLabel })
+          : t("tasks.executionTimeMerging", "Execution time {{elapsed}}. Merging", { elapsed: elapsedLabel });
+        return { label: elapsedLabel, ...withDetail(header) };
       }
     }
 
     if (isWipColumn) {
-      // Prefer the persistent execution start (set on first transition to
-      // in-progress, never reset on retry-loop bounces). Fall back to the
-      // columnMovedAt heuristic for legacy tasks predating the new field.
-      const elapsedMs =
-        getTaskEndToEndDurationMs(task, timeIndicatorNowMs)
-        ?? getInProgressElapsedMs(task, timeIndicatorNowMs)
-        ?? getInstrumentedDurationMs(task, timeIndicatorNowMs);
-      if (elapsedMs == null) {
-        return null;
-      }
-
-      const elapsedLabel = formatElapsedDuration(elapsedMs);
+      const elapsedLabel = formatElapsedDuration(breakdown.totalMs);
       if (!elapsedLabel) {
         return null;
       }
 
-      return {
-        label: elapsedLabel,
-        title: t("tasks.inProgressTime", "In progress {{elapsed}}", { elapsed: elapsedLabel }),
-        ariaLabel: t("tasks.inProgressTime", "In progress {{elapsed}}", { elapsed: elapsedLabel }),
-      };
+      const header = t("tasks.inProgressTime", "In progress {{elapsed}}", { elapsed: elapsedLabel });
+      return { label: elapsedLabel, ...withDetail(header) };
     }
 
-    // in-review and done: show wall-clock end-to-end runtime. Falls back to
-    // the instrumented `[timing]` aggregate for tasks completed before
-    // `executionStartedAt`/`executionCompletedAt` were tracked.
-    const endToEndMs = getTaskEndToEndDurationMs(task, timeIndicatorNowMs);
-    const totalMs = endToEndMs ?? getInstrumentedDurationMs(task, timeIndicatorNowMs);
-    if (totalMs == null) {
-      return null;
-    }
-
-    const elapsedLabel = formatElapsedDurationDone(totalMs);
+    const elapsedLabel = formatElapsedDurationDone(breakdown.totalMs);
     if (!elapsedLabel) {
       return null;
     }
 
     const completionMs = getInReviewCompletionMs(task, taskColumnFlags);
     if (completionMs == null) {
-      return {
-        label: elapsedLabel,
-        title: t("tasks.executionTime", "Execution time {{elapsed}}", { elapsed: elapsedLabel }),
-        ariaLabel: t("tasks.executionTime", "Execution time {{elapsed}}", { elapsed: elapsedLabel }),
-      };
+      const header = t("tasks.executionTime", "Execution time {{elapsed}}", { elapsed: elapsedLabel });
+      return { label: elapsedLabel, ...withDetail(header) };
     }
 
     const completedAt = new Date(completionMs).toLocaleString();
     return {
       label: elapsedLabel,
-      title: t("tasks.executionTimeCompleted", "Execution time {{elapsed}}. Completed {{completedAt}}", { elapsed: elapsedLabel, completedAt }),
-      ariaLabel: t("tasks.executionTimeCompleted", "Execution time {{elapsed}}. Completed {{completedAt}}", { elapsed: elapsedLabel, completedAt }),
+      ...withDetail(t("tasks.executionTimeCompleted", "Execution time {{elapsed}}. Completed {{completedAt}}", { elapsed: elapsedLabel, completedAt })),
     };
   /* FNXC:WorkflowResolvedColumns 2026-07-31-23:59: `taskColumnFlags` joins the deps because this memo
      now READS it. Flags arrive asynchronously (the board resolves workflows after first paint), so a
      card that renders before they load and re-renders after would otherwise keep the pre-flag answer
      — the memo's inputs would be unchanged. This repo has no `react-hooks/exhaustive-deps` rule, so
-     nothing would have flagged the omission. */
-  }, [task.column, task.status, task.columnMovedAt, task.timedExecutionMs, task.updatedAt, task.workflowStepResults, task.log, task.firstExecutionAt, task.cumulativeActiveMs, task.cumulativePlanningMs, task.planningStartedAt, task.executionStartedAt, task.executionCompletedAt, timeIndicatorNowMs, taskColumnFlags]);
+     nothing would have flagged the omission.
+     FNXC:TaskCardRuntimeChip 2026-09-16-06:16: FN-457 adds the pause fields the breakdown reads. */
+  }, [task.column, task.status, task.columnMovedAt, task.timedExecutionMs, task.updatedAt, task.workflowStepResults, task.log, task.firstExecutionAt, task.cumulativeActiveMs, task.cumulativePlanningMs, task.planningStartedAt, task.executionStartedAt, task.executionCompletedAt, task.cumulativePausedMs, task.pausedStartedAt, task.paused, task.userPaused, timeIndicatorNowMs, taskColumnFlags, isWipColumn, t]);
 
   const lifecycleDates = useMemo(() => {
     const created = formatCompactLifecycleDate(task.createdAt, locale, new Date(lifecycleNowMs));

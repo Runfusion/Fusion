@@ -1515,6 +1515,31 @@ export interface Task {
   /** Open planning AI segment; finalized exactly once into cumulativePlanningMs. */
   planningStartedAt?: string;
   /*
+  FNXC:TaskPauseAccounting 2026-09-16-06:16:
+  FN-457 — the task card's clock chip must show time actually WORKED, not wall clock. Before this,
+  a card parked overnight kept accruing, so "14h" could stand for twenty real minutes.
+
+  `cumulativePausedMs` banks milliseconds already spent paused WHILE the card sat in a wip lane;
+  `pausedStartedAt` is the single open pause segment, finalized exactly once into the accumulator.
+  Readers subtract the banked total (plus the open segment) from execution time.
+
+  THREE INVARIANTS, because getting any of them wrong makes the chip WORSE than the wall clock it
+  replaced:
+  1. These fields exist ONLY to subtract pause from displayed totals. They must NEVER be used as a
+     freshness anchor for resume, self-healing, or scheduling — `executionStartedAt`,
+     `firstExecutionAt`, and `cumulativeActiveMs` keep that role and are never touched at pause time.
+  2. A pause taken OUTSIDE a wip lane opens no segment: there is no live execution segment to
+     subtract it from, so banking it would over-deduct.
+  3. A `pausedStartedAt` present on a card that is no longer paused is ORPHANED — written by a seam
+     that cleared `paused` without closing the segment, or carried on a historical row. Readers MUST
+     ignore it. Deducting an open segment from a card that resumed long ago subtracts forever and
+     drives the chip to zero.
+  Writers go through `tasks/task-pause-accounting.ts`; no seam may hand-roll the arithmetic.
+  */
+  cumulativePausedMs?: number;
+  /** Open pause segment (see cumulativePausedMs); orphaned when `paused`/`userPaused` are false. */
+  pausedStartedAt?: string;
+  /*
   FNXC:TaskTiming 2026-06-26-10:14:
   Per-stage dwell-time instrumentation. `cumulativeActiveMs` only measures `in-progress`,
   so "how long did a task sit in todo / in-review" was unrecoverable without reconstructing

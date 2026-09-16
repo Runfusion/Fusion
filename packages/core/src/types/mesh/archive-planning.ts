@@ -93,6 +93,10 @@ export interface ArchivedTaskEntry {
   cumulativePlanningMs?: number;
   /** Open planning AI segment carried through archive/restore. */
   planningStartedAt?: string;
+  /** FNXC:TaskPauseAccounting 2026-09-16-06:16: FN-457 banked paused time carried through archive/restore. */
+  cumulativePausedMs?: number;
+  /** Open pause segment carried through archive/restore; orphaned when the card is not paused. */
+  pausedStartedAt?: string;
   /** FNXC:TaskTiming 2026-06-26-10:14: per-column cumulative dwell (ms) carried through
    *  archive/restore so per-stage wall-clock survives archival. See Task.columnDwellMs. */
   columnDwellMs?: Record<string, number>;

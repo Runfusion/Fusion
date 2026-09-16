@@ -31,6 +31,7 @@ import {
   applySchemaBaseline,
   getAppliedMigrations,
   SCHEMA_BASELINE_VERSION,
+  TASK_PAUSE_ACCOUNTING_VERSION,
   TASK_HUMAN_PLAN_APPROVAL_VERSION,
   WORKFLOW_IR_PIN_AND_LEGACY_ADOPTION_VERSION,
   assertBinaryNotOlderThanDatabase,
@@ -187,7 +188,9 @@ describe("schema-applier: immutable migration identities", () => {
     expect(WORKFLOW_IDENTITY_AND_MODEL_LANES_VERSION).toBe("0079");
     // FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408's per-card decision column is migration 0080 and the new ceiling.
     expect(TASK_HUMAN_PLAN_APPROVAL_VERSION).toBe("0080");
-    expect(SCHEMA_BASELINE_VERSION).toBe("0080");
+    // FNXC:TaskPauseAccounting 2026-09-16-06:16: FN-457's durable paused-time columns are migration 0081 and the new ceiling.
+    expect(TASK_PAUSE_ACCOUNTING_VERSION).toBe("0081");
+    expect(SCHEMA_BASELINE_VERSION).toBe("0081");
   });
 
   it("keeps monitor and approval isolation assigned to version 0003", () => {
@@ -1945,6 +1948,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       OVERLAP_REVALIDATION_DRAIN_VERSION,
       WORKFLOW_IDENTITY_AND_MODEL_LANES_VERSION,
       TASK_HUMAN_PLAN_APPROVAL_VERSION,
+      TASK_PAUSE_ACCOUNTING_VERSION,
     ]);
     expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
   });
@@ -2051,6 +2055,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       OVERLAP_REVALIDATION_DRAIN_VERSION,
       WORKFLOW_IDENTITY_AND_MODEL_LANES_VERSION,
       TASK_HUMAN_PLAN_APPROVAL_VERSION,
+      TASK_PAUSE_ACCOUNTING_VERSION,
     ]);
   });
 
@@ -2290,6 +2295,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       OVERLAP_REVALIDATION_DRAIN_VERSION,
       WORKFLOW_IDENTITY_AND_MODEL_LANES_VERSION,
       TASK_HUMAN_PLAN_APPROVAL_VERSION,
+      TASK_PAUSE_ACCOUNTING_VERSION,
     ]);
   });
 
@@ -2410,6 +2416,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       OVERLAP_REVALIDATION_DRAIN_VERSION,
       WORKFLOW_IDENTITY_AND_MODEL_LANES_VERSION,
       TASK_HUMAN_PLAN_APPROVAL_VERSION,
+      TASK_PAUSE_ACCOUNTING_VERSION,
     ]);
   });
 
@@ -2530,6 +2537,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       OVERLAP_REVALIDATION_DRAIN_VERSION,
       WORKFLOW_IDENTITY_AND_MODEL_LANES_VERSION,
       TASK_HUMAN_PLAN_APPROVAL_VERSION,
+      TASK_PAUSE_ACCOUNTING_VERSION,
     ]);
   });
 });

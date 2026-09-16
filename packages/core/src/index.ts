@@ -3123,6 +3123,9 @@ export type { LanguageFamily, DetectedContentLanguage } from "./i18n/detect-cont
 export { promoteResearchFinding } from "./research/research-feature-promotion.js";
 export type { ResearchFeaturePromotionInput } from "./research/research-feature-promotion.js";
 export { getTotalAgentActiveMs, startPlanningSegment, finalizePlanningSegment } from "./tasks/task-timing.js";
+/** FNXC:TaskPauseAccounting 2026-09-16-06:16: FN-457 — the single shared pause-segment writer used by every seam that writes `task.paused`. */
+export { applyPauseAccounting, computePauseAccountingPatch } from "./tasks/task-pause-accounting.js";
+export type { PauseAccountingTask } from "./tasks/task-pause-accounting.js";
 export { createLogger, type Logger } from "./process/logger.js";
 export { ACTIVE_WORKFLOW_WORK_ITEM_STATES } from "./types.js";
 export * from "./task-document-concurrency.js";

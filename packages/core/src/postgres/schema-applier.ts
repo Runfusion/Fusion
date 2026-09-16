@@ -88,7 +88,8 @@ touches no data; it must advance in the same change that ships a new migration f
 /* FNXC:OverlapWaitSynchronization 2026-09-13-05:10: the ceiling includes the retired-phase drain, so startup completes it before overlap readers run. */
 /* FNXC:WorkflowIdentity 2026-09-14-19:06: the ceiling includes the transactional Coding (Ideas) identity convergence and its recovery archives. */
 /* FNXC:HumanPlanApproval 2026-09-15-06:24: the ceiling includes FN-408's per-card decision column, so no release gate reads tasks before it exists. */
-export const SCHEMA_BASELINE_VERSION = "0080";
+/* FNXC:TaskPauseAccounting 2026-09-16-06:16: the ceiling includes FN-457's paused-time columns, so timing readers never query a tasks table that lacks them. */
+export const SCHEMA_BASELINE_VERSION = "0081";
 /** FNXC:SymbolLock 2026-07-20-10:00: upgrades need durable task declarations before admission resolves symbols. */
 export const TASK_DECLARED_SYMBOLS_VERSION = "0028";
 const INITIAL_SCHEMA_VERSION = "0000";
@@ -285,6 +286,8 @@ export const OVERLAP_REVALIDATION_DRAIN_VERSION = "0078";
 export const WORKFLOW_IDENTITY_AND_MODEL_LANES_VERSION = "0079";
 /** FNXC:HumanPlanApproval 2026-09-15-06:24: upgraded projects need the per-card human plan decision column before any release gate evaluates it. */
 export const TASK_HUMAN_PLAN_APPROVAL_VERSION = "0080";
+/** FNXC:TaskPauseAccounting 2026-09-16-06:16: upgraded projects need the durable paused-time columns before the card chip subtracts pause from worked time. */
+export const TASK_PAUSE_ACCOUNTING_VERSION = "0081";
 
 /** FNXC:MemoryFocus 2026-08-13-15:57: explicit registration prevents the per-conversation memory-focus migration from being skipped. Renumbered to 0060 (FN-9037 took 0059), then 0061, then 0065 (2026-08-20) when the upstream FN-066..FN-094 batch claimed 0061-0064. */
 export const CHAT_SESSION_MEMORY_FOCUS_VERSION = "0066";
@@ -543,6 +546,7 @@ const WHITEBOARDS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0076_fn_333_whiteboards
 const OVERLAP_REVALIDATION_DRAIN_MIGRATION_PATH = join(MIGRATIONS_DIR, "0078_fn_375_overlap_revalidation_drain.sql");
 const WORKFLOW_IDENTITY_AND_MODEL_LANES_MIGRATION_PATH = join(MIGRATIONS_DIR, "0079_fn_393_workflow_identity_and_project_model_lanes.sql");
 const TASK_HUMAN_PLAN_APPROVAL_MIGRATION_PATH = join(MIGRATIONS_DIR, "0080_fn_408_task_human_plan_approval.sql");
+const TASK_PAUSE_ACCOUNTING_MIGRATION_PATH = join(MIGRATIONS_DIR, "0081_fn_457_task_pause_accounting.sql");
 
 /**
  * Ensure the migration bookkeeping table exists. Lives in the public schema so
@@ -693,6 +697,7 @@ export async function applySchemaBaseline(
     const overlapRevalidationDrainAlreadyApplied = applied.includes(OVERLAP_REVALIDATION_DRAIN_VERSION);
     const builtinWorkflowIdentityAlreadyApplied = applied.includes(WORKFLOW_IDENTITY_AND_MODEL_LANES_VERSION);
     const taskHumanPlanApprovalAlreadyApplied = applied.includes(TASK_HUMAN_PLAN_APPROVAL_VERSION);
+    const taskPauseAccountingAlreadyApplied = applied.includes(TASK_PAUSE_ACCOUNTING_VERSION);
     assertBinaryNotOlderThanDatabase(applied);
     let schemaChanged = false;
 
@@ -1695,6 +1700,28 @@ export async function applySchemaBaseline(
       const migrationSql = await readFile(TASK_HUMAN_PLAN_APPROVAL_MIGRATION_PATH, "utf8");
       await tx.execute(sql.raw(migrationSql));
       await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${TASK_HUMAN_PLAN_APPROVAL_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    /*
+    FNXC:TaskPauseAccounting 2026-09-16-06:16:
+    Probe the column as well as the bookkeeping row, exactly like FN-408 above, so a restored
+    database that rewound the tasks table re-applies the additive columns instead of trusting a
+    stale applied-version marker.
+    */
+    const taskPauseAccountingColumnState = (await tx.execute(sql`
+      SELECT
+        to_regclass('project.tasks') IS NOT NULL AS tasks_exists,
+        EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'project' AND table_name = 'tasks' AND column_name = 'cumulative_paused_ms'
+        ) AS cumulative_paused_ms_exists
+    `)) as unknown as Array<{ tasks_exists: boolean; cumulative_paused_ms_exists: boolean }>;
+    const taskPauseAccountingColumnMissing = taskPauseAccountingColumnState[0]?.tasks_exists
+      && !taskPauseAccountingColumnState[0]?.cumulative_paused_ms_exists;
+    if (!taskPauseAccountingAlreadyApplied || taskPauseAccountingColumnMissing) {
+      const migrationSql = await readFile(TASK_PAUSE_ACCOUNTING_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${TASK_PAUSE_ACCOUNTING_VERSION}) ON CONFLICT (version) DO NOTHING`);
       schemaChanged = true;
     }
     const patchnodeEntriesMissing = ((await tx.execute(sql`

@@ -170,6 +170,8 @@ export function rowToTask(row: TaskRow): Task {
     cumulativeActiveMs: row.cumulativeActiveMs ?? undefined,
     cumulativePlanningMs: row.cumulativePlanningMs ?? undefined,
     planningStartedAt: row.planningStartedAt || undefined,
+    cumulativePausedMs: row.cumulativePausedMs ?? undefined,
+    pausedStartedAt: row.pausedStartedAt || undefined,
     columnDwellMs: fromJson<Record<string, number>>(row.columnDwellMs) ?? undefined,
     workflowTransitionNotification: fromJson<import("../types.js").WorkflowTransitionNotificationMarker>(row.workflowTransitionNotification) ?? undefined,
     plannerOversightLevel: (row.plannerOversightLevel || undefined) as Task["plannerOversightLevel"],

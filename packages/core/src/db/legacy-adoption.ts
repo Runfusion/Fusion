@@ -285,6 +285,14 @@ export function planLegacyAdoption(
   const patch: NonNullable<LegacyAdoptionPlan["patch"]> = { legacyAdoptedAt: now };
   if (backfill.kind === "backfill") patch.enabledWorkflowSteps = backfill.enabledWorkflowSteps;
 
+  /*
+  FNXC:TaskPauseAccounting 2026-09-16-06:16:
+  FN-457 — this module is PURE and storage-agnostic (see the header note), so it must not compute
+  pause accounting itself: it cannot resolve the task's workflow IR and therefore cannot tell a WIP
+  lane from a renamed one. The park below is applied through `updateTask`, which owns the single
+  accounting seam and resolves the lane there. An adoption park on a card outside the WIP lane
+  correctly opens NO segment, which is the common case for an unmappable legacy status.
+  */
   // UNMAPPABLE: surface to a human rather than guessing. The status is deliberately LEFT IN
   // PLACE so the operator can see what the row actually carried.
   if (statusAction?.kind === "park-paused") {

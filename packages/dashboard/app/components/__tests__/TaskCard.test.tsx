@@ -6526,14 +6526,16 @@ describe("TaskCard", () => {
     const timer = container.querySelector(".card-time-indicator");
     expectTimerInFooterRight(container);
     expect(timer?.textContent).toContain("30m");
-    expect(timer?.getAttribute("title")).toBe("Execution time 30m");
+    /* FN-457: the tooltip is now the header followed by the Planning / Execution / Verification
+       detail lines, so the header is the FIRST line rather than the whole string. */
+    expect(timer?.getAttribute("title")?.split("\n")[0]).toBe("Execution time 30m");
 
     act(() => {
       vi.advanceTimersByTime(5 * 60_000);
     });
 
     expect(container.querySelector(".card-time-indicator")?.textContent).toContain("35m");
-    expect(container.querySelector(".card-time-indicator")?.getAttribute("title")).toBe("Execution time 35m");
+    expect(container.querySelector(".card-time-indicator")?.getAttribute("title")?.split("\n")[0]).toBe("Execution time 35m");
   });
 
   it("shows cumulative runtime across a user reopen", () => {
@@ -6558,7 +6560,7 @@ describe("TaskCard", () => {
     const timer = container.querySelector(".card-time-indicator");
     expectTimerInFooterRight(container);
     expect(timer?.textContent).toContain("6m");
-    expect(timer?.getAttribute("title")).toBe("Execution time 6m");
+    expect(timer?.getAttribute("title")?.split("\n")[0]).toBe("Execution time 6m");
   });
 
   it("renders planning-only active duration when execution timing is absent", () => {
@@ -6778,7 +6780,7 @@ describe("TaskCard", () => {
       const timer = container.querySelector(".card-time-indicator");
       expectTimerInFooterRight(container);
       expect(timer?.textContent).toContain("45m");
-      expect(timer?.getAttribute("title")).toBe("Execution time 45m. Merge phase <1m");
+      expect(timer?.getAttribute("title")?.split("\n")[0]).toBe("Execution time 45m. Merge phase <1m");
     } finally {
       vi.useRealTimers();
     }

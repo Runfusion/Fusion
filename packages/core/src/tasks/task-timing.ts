@@ -9,7 +9,7 @@ import { isWipColumnRole, type ColumnRoleTraitFlags } from "../column-roles.js";
  */
 export function getTotalAgentActiveMs(
   task: Pick<Task, "column" | "cumulativeActiveMs" | "executionStartedAt" | "cumulativePlanningMs" | "planningStartedAt">
-    & Partial<Pick<Task, "firstExecutionAt" | "createdAt">>,
+    & Partial<Pick<Task, "firstExecutionAt" | "createdAt" | "cumulativePausedMs" | "pausedStartedAt" | "paused" | "userPaused">>,
   nowMs: number,
   /*
   FNXC:WorkflowLifecycleColumns 2026-07-31-03:20 (batch-core feed):
@@ -26,7 +26,22 @@ export function getTotalAgentActiveMs(
 ): number | null {
   const executionBase = Math.max(0, task.cumulativeActiveMs ?? 0);
   const executionStartMs = isWipColumnRole(columnFlags, task.column) ? Date.parse(task.executionStartedAt ?? "") : NaN;
-  const execution = executionBase + (Number.isFinite(executionStartMs) ? Math.max(0, nowMs - executionStartMs) : 0);
+  /*
+  FNXC:TaskPauseAccounting 2026-09-16-06:16:
+  FN-457 — subtract durable paused time from the execution bucket. THIS MUST STAY BYTE-EQUIVALENT TO
+  `getPausedDeductionMs` in `packages/dashboard/app/utils/taskTiming.ts`; the two copies of this
+  calculation have drifted once already (see the WorkflowLifecycleColumns note on `columnFlags`
+  below) and only a visible production defect caught it. `task-timing-pause.test.ts` pins the parity.
+
+  The open segment is deducted ONLY while the card is actually paused: a `pausedStartedAt` on an
+  unpaused card is orphaned (a seam that cleared the park without closing the segment, or a
+  historical row) and deducting it would grow without bound and drive the total to zero.
+  */
+  const pausedBanked = Math.max(0, task.cumulativePausedMs ?? 0);
+  const pauseOpenMs = (task.paused === true || task.userPaused === true) ? Date.parse(task.pausedStartedAt ?? "") : NaN;
+  const pausedMs = pausedBanked + (Number.isFinite(pauseOpenMs) ? Math.max(0, nowMs - pauseOpenMs) : 0);
+  const executionGross = executionBase + (Number.isFinite(executionStartMs) ? Math.max(0, nowMs - executionStartMs) : 0);
+  const execution = Math.max(0, executionGross - pausedMs);
   const planningBase = Math.max(0, task.cumulativePlanningMs ?? 0);
   const planningStartMs = Date.parse(task.planningStartedAt ?? "");
   const planning = planningBase + (Number.isFinite(planningStartMs) ? Math.max(0, nowMs - planningStartMs) : 0);

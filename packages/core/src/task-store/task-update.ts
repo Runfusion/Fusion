@@ -15,6 +15,7 @@ import {
   type TaskMoveLanes,
 } from "../workflows/workflow-lifecycle-traits.js";
 import {resolveWorkflowIrForTask} from "../workflows/workflow-ir-resolver.js";
+import {applyPauseAccounting, LEGACY_WIP_COLUMN_FALLBACK} from "../tasks/task-pause-accounting.js";
 import {InvalidFileScopeError, SelfSpawnedDependencyError, detectSelfSpawnedDependency} from "./errors.js";
 import {mkdir, readFile, stat, unlink} from "node:fs/promises";
 import {join} from "node:path";
@@ -548,6 +549,14 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
             task.status = undefined;
           }
         }
+        /*
+        FNXC:TaskPauseAccounting 2026-09-16-06:16:
+        FN-457 — auto-unpause on agent unassignment clears `paused` above; without this call the
+        segment opened by the explicit pause would stay open forever and readers would subtract an
+        ever-growing interval. The wip flag only gates OPENING a segment and this branch can only
+        ever CLOSE one, so `false` is the accurate argument rather than a resolved lane.
+        */
+        applyPauseAccounting(task, false, new Date().toISOString(), false);
         task.log.push({
           timestamp: new Date().toISOString(),
           action: `Task unpaused (agent ${previousAssignedAgentId} unassigned)`,
@@ -715,7 +724,24 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       } else if (updates.checkoutLeaseEpoch !== undefined) {
         task.checkoutLeaseEpoch = updates.checkoutLeaseEpoch;
       }
-      if (updates.paused !== undefined) task.paused = updates.paused || undefined;
+      if (updates.paused !== undefined) {
+        /*
+        FNXC:TaskPauseAccounting 2026-09-16-06:16:
+        FN-457 — `updateTask({ paused })` is the generic pause seam that every patch-producing helper
+        funnels through (`tasks/task-external-block.ts`, `tasks/manual-retry-reset.ts`,
+        `merge/task-merge.ts`), so accounting is applied once here rather than at each producer.
+        The transition is only accounted when the boolean actually CHANGES, so a repeated write of
+        the same value cannot open a second segment or re-bank a closed one.
+        */
+        const nextPaused = updates.paused === true;
+        if (nextPaused !== (task.paused === true)) {
+          const pausedLanes = await resolveTaskLifecycleColumns(store, id).catch(() => undefined);
+          /* The unresolvable-workflow default is named once in task-pause-accounting.ts. */
+          const inWipLane = task.column === (pausedLanes?.wip ?? LEGACY_WIP_COLUMN_FALLBACK);
+          applyPauseAccounting(task, nextPaused, new Date().toISOString(), inWipLane);
+        }
+        task.paused = updates.paused || undefined;
+      }
       if (updates.baseBranch === null) {
         task.baseBranch = undefined;
       } else if (updates.baseBranch !== undefined) {

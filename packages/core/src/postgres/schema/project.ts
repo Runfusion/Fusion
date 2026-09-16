@@ -199,6 +199,11 @@ export const tasks = projectSchema.table("tasks", {
   cumulativeActiveMs: bigint("cumulative_active_ms", { mode: "number" }),
   cumulativePlanningMs: bigint("cumulative_planning_ms", { mode: "number" }),
   planningStartedAt: text("planning_started_at"),
+  /* FNXC:TaskPauseAccounting 2026-09-16-06:16: FN-457 migration 0081 — durable paused-time accounting.
+     Display-only: `board/productivity-analytics.ts` deliberately keeps aggregating
+     `cumulative_active_ms + cumulative_planning_ms` unchanged, since no existing column changes meaning. */
+  cumulativePausedMs: bigint("cumulative_paused_ms", { mode: "number" }),
+  pausedStartedAt: text("paused_started_at"),
   /*
   FNXC:PostgresMigrationColumnCoverage 2026-07-14-13:17:
   Keep the task schema aligned with late SQLite lifecycle migrations. JSON lifecycle markers stay jsonb for native backend reads; retired board/question fields remain text so their legacy payloads round-trip byte-for-byte.
