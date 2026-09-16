@@ -148,7 +148,8 @@ describe("Task Detail canonical shell", () => {
       expect(header?.querySelector("h1, h2, h3, h4, h5, h6")).toBeNull();
       if (state.title) expect(header).not.toHaveTextContent(state.title);
       fireEvent.click(within(surface!).getByRole("button", { name: "Plan" }));
-      fireEvent.click(within(surface!).getByRole("button", { name: "Edit task" }));
+      fireEvent.click(within(surface!).getByRole("button", { name: "Actions" }));
+      fireEvent.click(within(document.body).getByTestId("task-detail-header-action-edit"));
       /*
       FNXC:TaskDescriptionEditing 2026-09-14-19:25:
       FN-391 removed the title field from the edit form, so the host is title-free in edit mode too —
@@ -271,7 +272,8 @@ describe("Task Detail canonical shell", () => {
 
   it("keeps the edit footer fixed as the final shell zone", () => {
     const view = render(<TaskDetailModal {...sharedProps} task={makeTask({ column: "todo" })} onClose={noop} />);
-    fireEvent.click(screen.getByRole("button", { name: "Edit task" }));
+    fireEvent.click(screen.getByRole("button", { name: "Actions" }));
+    fireEvent.click(screen.getByTestId("task-detail-header-action-edit"));
     expectCanonicalShell(view.baseElement, true, false);
     expect(screen.getByTestId("task-detail-contextual-footer")).toContainElement(screen.getByRole("button", { name: "Save" }));
   });

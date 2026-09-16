@@ -3,7 +3,7 @@ import "./TaskDetailModal.css";
 import React, { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import { Pencil, Bot, X, ChevronDown, ChevronRight, GitBranch, ArrowLeft, Loader2, AlertTriangle, Maximize2, Minimize2, Info, Copy, RotateCcw, Trash2, Pause, Play, RefreshCcw, MoreHorizontal, FileText, Check } from "lucide-react";
+import { Bot, X, ChevronDown, ChevronRight, GitBranch, ArrowLeft, Loader2, AlertTriangle, Maximize2, Minimize2, Info, Copy, MoreHorizontal, FileText, Check } from "lucide-react";
 import { useViewportMode } from "../hooks/useViewportMode";
 import { MobileDrawer } from "./MobileDrawer";
 import { ViewBackButton } from "./ViewActionButton";
@@ -177,24 +177,18 @@ type TaskDetailTabButtonProps = {
   children: React.ReactNode;
 };
 
+/*
+FNXC:TaskDetailHeaderActions 2026-09-16-18:07 (FN-470):
+The "…" overflow is the ONLY Task Detail header action surface. Superseding the 2026-09-11-17:35 rule that
+rendered Duplicate, Retry, Delete, Pause/Unpause and Reset as direct icon buttons, the header now exposes at
+most the Actions trigger plus the canonical close; the phone Back arrow (which lives outside
+`.modal-header-actions`) is the only other exception because it is that host's sole exit. Lifecycle actions,
+Edit task and Pop out are appended — never prefixed — to the overflow list so the documented quick-action head
+order and the Attach file autofocus stay intact. The canonical action model remains the sole source of
+lifecycle eligibility and callbacks, and each relocated entry keeps its historical test id and tone.
+*/
 const TASK_DETAIL_DIRECT_ACTION_IDS = new Set(["duplicate", "retry", "delete", "pause", "unpause", "reset"]);
 const TASK_DETAIL_DIRECT_ACTION_ORDER = ["duplicate", "retry", "delete", "pause", "unpause", "reset"] as const;
-
-/*
-FNXC:TaskDetailHeaderActions 2026-09-11-17:35:
-Task Detail exposes Duplicate, Retry, Delete, Pause/Unpause, and Reset as icon-only header actions while retaining the canonical action model as the sole source of lifecycle eligibility and callbacks. Secondary actions remain in one keyboard-accessible header overflow, so removing the footer trigger never removes an operator capability.
-*/
-function renderTaskDetailActionIcon(actionId: string): React.ReactNode {
-  switch (actionId) {
-    case "duplicate": return <Copy aria-hidden="true" />;
-    case "retry": return <RotateCcw aria-hidden="true" />;
-    case "delete": return <Trash2 aria-hidden="true" />;
-    case "pause": return <Pause aria-hidden="true" />;
-    case "unpause": return <Play aria-hidden="true" />;
-    case "reset": return <RefreshCcw aria-hidden="true" />;
-    default: return null;
-  }
-}
 
 /*
 FNXC:TaskDetailPresentation 2026-09-11-02:41:
@@ -4594,9 +4588,6 @@ export function TaskDetailContent({
   const showTaskDetailFooter = isEditing
     || (activeTab === "definition" && Boolean(isAwaitingApproval && workingTask.prompt))
     || (activeTab === "review" && Boolean(reviewAction));
-  const directHeaderActions = TASK_DETAIL_DIRECT_ACTION_ORDER
-    .map((id) => taskActionMenuModel.actions.find((action) => action.id === id))
-    .filter((action): action is NonNullable<typeof action> => Boolean(action));
   const secondaryHeaderActions = useMemo<TaskMenuItemDescriptor[]>(() => {
     const actions: TaskMenuItemDescriptor[] = [
       ...detailQuickActionItems,
@@ -4622,6 +4613,44 @@ export function TaskDetailContent({
     }
     return actions;
   }, [detailQuickActionItems, taskActionMenuModel.actions, task, isDoneColumn, onRevertTask, onRestoreRevertTask, isRevertable, handleRestoreRevertTask, handleRevertTask, t]);
+
+  /*
+  FNXC:TaskDetailHeaderActions 2026-09-16-18:07 (FN-470):
+  One flat list feeds the single header overflow. Order is load-bearing: the relocated lifecycle actions, then
+  Edit task, then Pop out are APPENDED after the existing secondary actions so `detail-inline-attach` remains the
+  first entry and keeps the menu's opening autofocus.
+  */
+  const headerOverflowActions = useMemo<TaskMenuItemDescriptor[]>(() => {
+    const actions: TaskMenuItemDescriptor[] = [...secondaryHeaderActions];
+    for (const id of TASK_DETAIL_DIRECT_ACTION_ORDER) {
+      const action = taskActionMenuModel.actions.find((candidate) => candidate.id === id);
+      if (!action) continue;
+      actions.push({ ...action, testId: `task-detail-header-action-${action.id}` });
+    }
+    if (canEdit) {
+      actions.push({
+        id: "edit",
+        label: t("taskDetail.header.editTask", "Edit task"),
+        testId: "task-detail-header-action-edit",
+        onSelect: enterEditMode,
+      });
+    }
+    /*
+    FNXC:FloatingWindow 2026-09-16-18:07 (FN-470, supersedes 2026-06-22-20:45):
+    "Pop out" still opens this task detail in a movable, resizable, non-blocking FloatingWindow, but it is now the
+    LAST overflow entry instead of a direct header icon. Phone presentation still omits it because the owning
+    drawer is already the single full-width presentation.
+    */
+    if (!isPhonePresentation && onPopOut) {
+      actions.push({
+        id: "pop-out",
+        label: t("taskDetail.header.popOut", "Pop out"),
+        testId: "task-detail-pop-out",
+        onSelect: () => onPopOut(task),
+      });
+    }
+    return actions;
+  }, [secondaryHeaderActions, taskActionMenuModel.actions, canEdit, enterEditMode, isPhonePresentation, onPopOut, task, t]);
 
   const closeActivityViewMenuAndFocusTrigger = useCallback(() => {
     activityViewMenuViewportGuardUntilRef.current = 0;
@@ -5414,21 +5443,7 @@ export function TaskDetailContent({
             </div>
           </div>
           <div className="modal-header-actions">
-            {!isEditing && directHeaderActions.map((action) => (
-              <UiButton
-                key={action.id}
-                type="button"
-                className={`btn btn-icon btn-sm task-detail-header-action${action.tone === "danger" ? " task-detail-header-action--danger" : ""}`}
-                aria-label={action.label}
-                title={action.label}
-                disabled={action.disabled}
-                data-testid={`task-detail-header-action-${action.id}`}
-                onClick={() => action.onSelect?.()}
-              >
-                {renderTaskDetailActionIcon(action.id)}
-              </UiButton>
-            ))}
-            {!isEditing && secondaryHeaderActions.length > 0 && (
+            {!isEditing && headerOverflowActions.length > 0 && (
               <div
                 className="detail-actions-dropdown detail-actions-dropdown--header"
                 ref={actionsMenuRef}
@@ -5449,7 +5464,7 @@ export function TaskDetailContent({
                 </UiButton>
                 {showActionsMenu && (
                   <TaskContextMenu
-                    actions={secondaryHeaderActions}
+                    actions={headerOverflowActions}
                     className="detail-actions-menu detail-actions-menu--header"
                     itemClassName="detail-actions-menu-item"
                     dangerItemClassName="detail-actions-menu-item-danger"
@@ -5458,32 +5473,6 @@ export function TaskDetailContent({
                   />
                 )}
               </div>
-            )}
-            {!isEditing && canEdit && (
-              <UiButton
-                className="btn btn-icon btn-sm modal-edit-btn task-detail-header-action"
-                onClick={enterEditMode}
-                title={t("taskDetail.header.editTask", "Edit task")}
-                aria-label={t("taskDetail.header.editTask", "Edit task")}
-              >
-                <Pencil size={14} />
-              </UiButton>
-            )}
-            {/*
-            FNXC:FloatingWindow 2026-06-22-20:45 (updated 2026-06-22-18:32):
-            "Pop out" affordance opens this task detail in a movable, resizable, non-blocking FloatingWindow. Header action order is edit, then expand/pop-out, then Back to board pinned far right so board-card detail controls read as edit/resize/navigation.
-            */}
-            {!isPhonePresentation && onPopOut && (
-              <UiButton
-                type="button"
-                className="btn btn-icon btn-sm modal-edit-btn task-detail-header-action"
-                onClick={() => onPopOut(task)}
-                title={t("taskDetail.header.popOut", "Pop out")}
-                aria-label={t("taskDetail.header.popOut", "Pop out")}
-                data-testid="task-detail-pop-out"
-              >
-                <Maximize2 size={14} />
-              </UiButton>
             )}
             {/*
             FNXC:TaskDetailResponsiveChrome 2026-09-15-16:33:

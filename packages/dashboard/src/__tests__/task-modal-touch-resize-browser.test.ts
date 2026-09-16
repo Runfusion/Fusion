@@ -153,6 +153,14 @@ async function openProductionTitleHost(page: Page, name: string, hostTestId: str
       const taskCard = document.querySelector<HTMLElement>("[data-id]");
       if (!taskCard) throw new Error(`App fixture did not render its live board task before opening the production pop-out path: ${document.body.textContent?.slice(0, 500) ?? "empty body"}`);
       taskCard.click();
+      /*
+      FNXC:TaskDetailHeaderActions 2026-09-16-18:07 (FN-470):
+      Pop out is no longer a direct header button: the production path opens the single "…" Actions overflow first.
+      */
+      for (let frame = 0; frame < 6 && !document.querySelector(".detail-actions-dropdown--header button"); frame++) await nextFrames();
+      const actionsTrigger = document.querySelector<HTMLButtonElement>(".detail-actions-dropdown--header button");
+      if (!actionsTrigger) throw new Error("App board detail did not expose its production Actions overflow trigger");
+      actionsTrigger.click();
       for (let frame = 0; frame < 6 && !document.querySelector("[data-testid='task-detail-pop-out']"); frame++) await nextFrames();
       const popOut = document.querySelector<HTMLButtonElement>("[data-testid='task-detail-pop-out']");
       if (!popOut) throw new Error("App board detail did not expose its production Pop out control");
@@ -755,11 +763,17 @@ describe.runIf(executablePath)("Task modal tablet touch resize browser regressio
       expect(state.headerHasTitle).toBe(false);
       expect(state.taskId).toBe(expectedTaskId);
       expect(state.headerHeight).toBeGreaterThan(0);
-      expect(state.iconActionMetrics.length, JSON.stringify(state.iconActionMetrics)).toBeGreaterThanOrEqual(3);
+      /*
+      FNXC:TaskDetailHeaderActions 2026-09-16-18:07 (FN-470):
+      The header keeps at most two icon controls: the Actions overflow and the close control. A phone host renders
+      no close at all, so the floor is one rather than the desktop pair; the old floor of three described the
+      removed direct lifecycle icons.
+      */
+      expect(state.iconActionMetrics.length, JSON.stringify(state.iconActionMetrics)).toBeGreaterThanOrEqual(1);
+      expect(state.iconActionMetrics.length, JSON.stringify(state.iconActionMetrics)).toBeLessThanOrEqual(2);
       expect(state.iconActionMetrics.every((action) => action.hasCompactClasses), JSON.stringify(state.iconActionMetrics)).toBe(true);
-      expect(state.iconActionMetrics.some((action) => action.testId.startsWith("task-detail-header-action-")), JSON.stringify(state.iconActionMetrics)).toBe(true);
+      expect(state.iconActionMetrics.every((action) => ["Actions", "Close"].includes(action.name)), JSON.stringify(state.iconActionMetrics)).toBe(true);
       expect(state.iconActionMetrics.some((action) => action.name === "Actions"), JSON.stringify(state.iconActionMetrics)).toBe(true);
-      expect(state.iconActionMetrics.some((action) => action.name === "Edit task"), JSON.stringify(state.iconActionMetrics)).toBe(true);
       const iconActionWidths = state.iconActionMetrics.map((action) => action.width);
       const iconActionHeights = state.iconActionMetrics.map((action) => action.height);
       expect(Math.max(...iconActionWidths) - Math.min(...iconActionWidths), JSON.stringify(state.iconActionMetrics)).toBeLessThanOrEqual(1);

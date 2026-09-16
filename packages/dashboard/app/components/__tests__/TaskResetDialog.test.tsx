@@ -180,6 +180,8 @@ describe("TaskResetDialog", () => {
         />,
       );
 
+      // Reset now lives in the single header overflow, so the menu is opened first.
+      fireEvent.click(screen.getByRole("button", { name: "Actions" }));
       fireEvent.click(screen.getByTestId("task-detail-header-action-reset"));
 
       const dialog = screen.getByTestId("task-reset-dialog");

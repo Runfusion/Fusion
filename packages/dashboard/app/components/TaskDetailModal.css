@@ -2448,8 +2448,8 @@ stretches it on touch layouts, preserving a clear tap target without creating a 
 /* === Modal Edit Mode Styles === */
 
 /*
-FNXC:TaskDetailHeaderActions 2026-09-13-11:59:
-The canonical Task Detail header keeps lifecycle actions, secondary overflow, host utilities, and close/back controls in one non-draggable, wrapping group. Every icon/action control inherits btn/btn-icon/btn-sm geometry and an accessible name; only the semantic mobile Back action stays outside that stack, while danger actions retain a distinct border treatment.
+FNXC:TaskDetailHeaderActions 2026-09-16-18:07 (FN-470, supersedes 2026-09-13-11:59):
+The canonical Task Detail header group now holds at most two controls: the "…" Actions overflow trigger and the close control. Lifecycle actions, Edit task and Pop out moved into that overflow, so no direct header button carries a danger tone any more and the danger border treatment was removed with its last producer. Every remaining icon control still inherits btn/btn-icon/btn-sm geometry and an accessible name; only the semantic mobile Back action stays outside that stack.
 */
 .modal-header-actions {
   display: flex;
@@ -2463,11 +2463,6 @@ The canonical Task Detail header keeps lifecycle actions, secondary overflow, ho
 .task-detail-header-action {
   flex: 0 0 auto;
   touch-action: manipulation;
-}
-
-.task-detail-header-action--danger {
-  border-style: double;
-  color: var(--color-error);
 }
 
 .detail-actions-dropdown--header {

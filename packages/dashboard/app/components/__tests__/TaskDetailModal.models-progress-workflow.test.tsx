@@ -1286,7 +1286,8 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(screen.getByRole("button", { name: "Edit task" }));
+      fireEvent.click(screen.getByRole("button", { name: "Actions" }));
+      fireEvent.click(screen.getByTestId("task-detail-header-action-edit"));
       const trigger = await screen.findByTestId("task-form-edit-optional-steps");
       expect(trigger).toHaveTextContent("Steps: 1 selected");
       fireEvent.click(trigger);
@@ -1330,7 +1331,8 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(screen.getByRole("button", { name: "Edit task" }));
+      fireEvent.click(screen.getByRole("button", { name: "Actions" }));
+      fireEvent.click(screen.getByTestId("task-detail-header-action-edit"));
       await screen.findByTestId("task-form-edit-optional-steps");
       const descriptionInput = screen.getByRole("textbox", { name: /Description/i });
       fireEvent.change(descriptionInput, { target: { value: "Edited description" } });
