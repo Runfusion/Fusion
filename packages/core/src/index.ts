@@ -2568,7 +2568,11 @@ export {
   MAX_MOBILE_NAV_PRIMARY_ITEMS,
   MOBILE_NAV_SELECTABLE_ITEMS,
   MOBILE_NAV_SELECTABLE_ITEM_LABEL_KEYS,
+  MOBILE_NAV_PRIMARY_SELECTABLE_ITEMS,
+  MOBILE_NAV_PRIMARY_ITEM_NAVIGATION_ENTRY_IDS,
   resolveMobileNavPrimaryItems,
+  resolveNavigationQuickAccessEntryIds,
+  type MobileNavPrimarySelectableItem,
   type MobileNavSelectableItem,
   type ResolvedMobileNavPrimaryItems,
 } from "./board/mobile-nav-primary-items.js";

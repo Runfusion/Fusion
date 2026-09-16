@@ -296,24 +296,56 @@ describe("SettingsModal", () => {
       });
     });
 
-    it("reorders, adds, and removes mobile quick actions before save", async () => {
+    /*
+     * FN-446 : le contrôle pilote désormais les accès rapides de la barre de navigation partagée. Le défaut est à cinq
+     * destinations sans Agents, et le libellé du groupe n'est plus « mobile ».
+     */
+    it("reorders, adds, and removes navigation quick access before save", async () => {
       const onMobileNavPrimaryItemsChange = vi.fn();
       renderModal({ initialSection: "general", onMobileNavPrimaryItemsChange });
       await waitForSettingsModalReady();
 
+      const group = screen.getByRole("group", { name: "Navigation quick access" });
+      expect(Array.from(group.querySelectorAll(".settings-field-label-row")).map((row) => row.textContent)).toEqual([
+        expect.stringContaining("command-center"),
+        expect.stringContaining("tasks"),
+        expect.stringContaining("planning"),
+        expect.stringContaining("missions"),
+        expect.stringContaining("mailbox"),
+      ]);
+
       fireEvent.click(screen.getAllByRole("button", { name: /later$/i })[0]);
-      expect(onMobileNavPrimaryItemsChange).toHaveBeenLastCalledWith(["tasks", "command-center", "agents", "missions", "chat", "mailbox"]);
-      const rows = Array.from(screen.getByRole("group", { name: "Mobile footer quick actions" }).querySelectorAll(".settings-field-label-row"));
+      expect(onMobileNavPrimaryItemsChange).toHaveBeenLastCalledWith(["tasks", "command-center", "planning", "missions", "mailbox"]);
+      const rows = Array.from(screen.getByRole("group", { name: "Navigation quick access" }).querySelectorAll(".settings-field-label-row"));
       expect(rows[0].textContent).toContain("tasks");
 
-      fireEvent.click(screen.getByLabelText("Remove chat"));
-      expect(onMobileNavPrimaryItemsChange).toHaveBeenLastCalledWith(["tasks", "command-center", "agents", "missions", "mailbox"]);
+      fireEvent.click(screen.getByLabelText("Remove planning"));
+      expect(onMobileNavPrimaryItemsChange).toHaveBeenLastCalledWith(["tasks", "command-center", "missions", "mailbox"]);
 
       await settingsModalUser.selectOptions(screen.getByLabelText("Add quick action"), "git");
-      expect(onMobileNavPrimaryItemsChange).toHaveBeenLastCalledWith(["tasks", "command-center", "agents", "missions", "mailbox", "git"]);
+      expect(onMobileNavPrimaryItemsChange).toHaveBeenLastCalledWith(["tasks", "command-center", "missions", "mailbox", "git"]);
 
       fireEvent.click(screen.getByLabelText("Remove tasks"));
-      expect(onMobileNavPrimaryItemsChange).toHaveBeenLastCalledWith(["command-center", "agents", "missions", "mailbox", "git"]);
+      expect(onMobileNavPrimaryItemsChange).toHaveBeenLastCalledWith(["command-center", "missions", "mailbox", "git"]);
+    });
+
+    /* FN-446 : le plafond est de cinq accès rapides plus « More », donc le sélecteur d'ajout se désactive à cinq. */
+    it("disables the quick-access picker once five destinations are selected", async () => {
+      const onMobileNavPrimaryItemsChange = vi.fn();
+      renderModal({ initialSection: "general", onMobileNavPrimaryItemsChange });
+      await waitForSettingsModalReady();
+
+      const picker = screen.getByLabelText("Add quick action") as HTMLSelectElement;
+      expect(picker.disabled).toBe(true);
+      expect(Array.from(picker.options).map((option) => option.value)).not.toContain("chat");
+
+      fireEvent.click(screen.getByLabelText("Remove missions"));
+      expect(onMobileNavPrimaryItemsChange).toHaveBeenLastCalledWith(["command-center", "tasks", "planning", "mailbox"]);
+      expect((screen.getByLabelText("Add quick action") as HTMLSelectElement).disabled).toBe(false);
+
+      await settingsModalUser.selectOptions(screen.getByLabelText("Add quick action"), "agents");
+      expect(onMobileNavPrimaryItemsChange).toHaveBeenLastCalledWith(["command-center", "tasks", "planning", "mailbox", "agents"]);
+      expect((screen.getByLabelText("Add quick action") as HTMLSelectElement).disabled).toBe(true);
     });
 
     it("defaults task chats common-feed opt-in to unchecked", async () => {

@@ -107,7 +107,13 @@ export function DesktopActionBar({ entries, activeId, tasks, projectId, columnFl
   */
   return <nav ref={dashboardWindowFooterRef} className={`desktop-action-bar${overflowOpen ? " desktop-action-bar--menu-open" : ""}`} aria-label={t("nav.primaryNavAriaLabel", "Primary navigation")} data-testid="desktop-action-bar">
     <div className="desktop-action-bar__capacity"><EngineControlMenu projectId={projectId} triggerContent={<span data-testid="desktop-capacity-count">{capacityText}</span>} triggerLabel={capacityLabel} /></div>
-    <div className="desktop-action-bar__center"><div className="desktop-action-bar__scroller">{direct.map((entry) => renderButton(entry))}</div>
+    {/*
+    FNXC:DesktopNavigation 2026-09-16-04:15:
+    FN-446: the direct row is the operator-configured quick-access selection, so it can legitimately resolve to nothing
+    (every chosen destination gated off). Guard the scroller like the More perimeter already guards itself, so removing
+    destinations never leaves an empty row shell behind.
+    */}
+    <div className="desktop-action-bar__center">{direct.length ? <div className="desktop-action-bar__scroller">{direct.map((entry) => renderButton(entry))}</div> : null}
     {overflow.length ? <div
       ref={overflowRef}
       className={`desktop-action-bar__more${overflowOpen ? " desktop-action-bar__more--open" : ""}`}

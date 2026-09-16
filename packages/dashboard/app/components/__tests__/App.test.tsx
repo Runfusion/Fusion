@@ -1087,7 +1087,13 @@ describe("FN-392 task windows travel across Board and other views", () => {
     await waitFor(() => expect(screen.getByTestId(popupTestId)).toBeTruthy());
     const taskWindow = screen.getByTestId(popupTestId);
 
+    /*
+     * FN-446: Agents is no longer a direct quick-access destination of the footer, so reaching it now means opening the
+     * **More** menu first — which is the real operator path. The invariant under test is unchanged: the task window
+     * survives navigation to any other view.
+     */
     for (const view of ["planning", "agents", "board"] as const) {
+      if (!screen.queryByTestId(`desktop-nav-${view}`)) fireEvent.pointerEnter(screen.getByTestId("desktop-nav-more"));
       fireEvent.click(screen.getByTestId(`desktop-nav-${view}`));
       expect(screen.getByTestId(popupTestId)).toBe(taskWindow);
       expect(screen.getByTestId(overlayTestId)).not.toHaveAttribute("aria-hidden");

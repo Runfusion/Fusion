@@ -2850,9 +2850,11 @@ If the endpoint is unavailable on the running dashboard build, the response will
 
 Planning Mode asks another focused question after every answer until you select **Validate plan**. For a vague, subjective, preference-style, or symptom-only opener, it first inspects the relevant repository surface and offers materially distinct, concrete directions plus **Other** instead of an abstract clarification question. Each selected direction, multi-selection, or verbatim Other response rebuilds the evolving plan around that accumulated decision; the next question then narrows the selected direction one consequential level further with concrete options. The provisional plan does not falsely commit to an unselected alternative, and only the operator can validate the finished plan. Each `awaiting_input` question can send the configured `planning-awaiting-input` ntfy event.
 
-### Mobile footer quick actions
+### Navigation quick access
 
-In **Settings → General**, choose up to six Mobile footer quick actions from the add dropdown. The selected list is ordered: use its earlier/later controls or remove actions to adjust the footer, and see each change immediately while Settings remains open. Eligible sidebar and More-sheet destinations can be promoted; unselected available destinations stay reachable in More. Feature-gated views remain hidden until enabled, and the trailing More tab is always present.
+The bottom navigation bar shared by tablet and desktop shows up to **five** quick-access destinations followed by the **More** menu. By default those five are Dashboard, Board, Planning, Missions, and Mailbox — Agents is not a direct destination and lives in **More**, alongside every other destination you have not promoted.
+
+In **Settings → General → Navigation quick access**, choose which destinations occupy those five slots and in which order: the selected list uses earlier/later controls, a remove action, and an add dropdown that disables itself once five destinations are selected. Every change previews in the live navigation bar while Settings remains open, then auto-saves. Unselected destinations stay reachable in **More**, feature-gated views remain hidden until their feature is enabled (a selected but gated destination simply does not appear), and the trailing **More** button is always present. Destinations with no bottom-bar entry — Chat, Notes, Secrets, Settings, Patchnode, Activity, Usage, Projects, Ideation — cannot be promoted and keep their existing owners (sidebar, right dock, mobile **More** sheet, Settings). The mobile phone bar keeps its own four fixed tabs and is unaffected; Agents remains reachable there from the **More** sheet.
 
 ## In-app reports
 

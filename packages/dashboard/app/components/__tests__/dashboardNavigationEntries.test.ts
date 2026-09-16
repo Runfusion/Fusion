@@ -17,13 +17,57 @@ describe("dashboardNavigationEntries", () => {
     expect(entries.map((entry) => entry.id)).not.toEqual(expect.arrayContaining(["patchnode", "chat", "notes"]));
     /*
      * FN-439 inverts FN-382's "List is a right-dock tool" assertion: List is a registry destination again, in the
-     * overflow tier, so the primary rail keeps exactly these six direct entries while the footer **More** menu owns
-     * List on tablet/desktop.
+     * overflow tier, so the footer **More** menu owns List on tablet/desktop.
+     * FN-446: the direct rail is no longer hardcoded — it is the core-resolved quick-access default, which is five
+     * destinations plus the trailing **More** button, and Agents is deliberately not one of them.
      */
-    expect(entries.filter((entry) => entry.placement === "direct").map((entry) => entry.id)).toEqual(["command-center", "board", "planning", "missions", "agents", "mailbox"]);
+    expect(entries.filter((entry) => entry.placement === "direct").map((entry) => entry.id)).toEqual(["command-center", "board", "planning", "missions", "mailbox"]);
     expect(entries.some((entry) => entry.id === "list")).toBe(true);
     expect(entries.find((entry) => entry.id === "settings")?.placement).toBe("external");
     expect(entries.filter((entry) => entry.placement !== "external").every((entry) => typeof entry.onSelect === "function")).toBe(true);
+  });
+
+  /*
+   * FN-446 : Agents quitte la rangée directe du pied de page par défaut mais reste une destination ordinaire du
+   * registre — donc toujours rendue par la barre latérale (qui ne lit que `kind`) et par le menu **More**.
+   */
+  it("garde Agents comme destination overflow du registre, sans le retirer", () => {
+    const entries = buildDashboardNavigationEntries(base);
+    const agents = entries.find((entry) => entry.id === "agents");
+    expect(agents).toBeDefined();
+    expect(agents?.placement).toBe("overflow");
+    expect(agents?.kind).toBe("main-page");
+    expect(agents?.view).toBe("agents");
+    expect(agents?.testId).toBe("desktop-nav-agents");
+  });
+
+  /*
+   * FN-446 : la sélection persistée pilote l'ordre exact de la rangée directe, en traduisant les identifiants du
+   * registre (`tasks` est déjà traduit en `board` par le core avant d'arriver ici).
+   */
+  it("respecte l'ordre exact de la sélection d'accès rapide", () => {
+    const entries = buildDashboardNavigationEntries({ ...base, quickAccessEntryIds: ["mailbox", "agents", "board"] });
+    expect(entries.filter((entry) => entry.placement === "direct").map((entry) => entry.id)).toEqual(["mailbox", "agents", "board"]);
+    expect(entries.find((entry) => entry.id === "command-center")?.placement).toBe("overflow");
+    expect(entries.filter((entry) => entry.id === "mailbox")).toHaveLength(1);
+  });
+
+  /* FN-446 : une destination sélectionnée mais désactivée par son gate est simplement absente, sans trou ni coquille. */
+  it("ignore une destination sélectionnée mais gatée off", () => {
+    const entries = buildDashboardNavigationEntries({ ...base, showAgents: false, quickAccessEntryIds: ["board", "agents", "mailbox"] });
+    expect(entries.filter((entry) => entry.placement === "direct").map((entry) => entry.id)).toEqual(["board", "mailbox"]);
+    expect(entries.some((entry) => entry.id === "agents")).toBe(false);
+  });
+
+  /* FN-446 : sélection vide, identifiants inconnus et doublons ne peuvent ni vider ni dupliquer la rangée directe. */
+  it("traite les sélections vides, inconnues et dupliquées sans coquille vide", () => {
+    const emptySelection = buildDashboardNavigationEntries({ ...base, quickAccessEntryIds: [] });
+    expect(emptySelection.filter((entry) => entry.placement === "direct")).toEqual([]);
+    expect(emptySelection.filter((entry) => entry.placement === "overflow").length).toBeGreaterThan(0);
+
+    const unknownSelection = buildDashboardNavigationEntries({ ...base, quickAccessEntryIds: ["nope", "board", "board"] });
+    expect(unknownSelection.filter((entry) => entry.placement === "direct").map((entry) => entry.id)).toEqual(["board"]);
+    expect(unknownSelection.filter((entry) => entry.id === "board")).toHaveLength(1);
   });
 
   /*

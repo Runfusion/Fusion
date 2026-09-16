@@ -115,6 +115,52 @@ describe("DesktopActionBar", () => {
     expect(alphaDesktopActionBarCss).toMatch(/\.desktop-action-bar__capacity \.engine-control-menu > \.engine-control-menu__popover\.card\s*\{[^}]*inset-inline-start:\s*0;[^}]*inset-inline-end:\s*auto;[^}]*min-inline-size:\s*min\(24rem,\s*calc\(100vw - \(var\(--space-lg\) \* 2\)\)\);[^}]*max-inline-size:\s*calc\(100vw - \(var\(--space-lg\) \* 2\)\);/s);
   });
 
+  /*
+   * FN-446 : Agents quitte la rangée directe du pied de page (défaut d'accès rapide à cinq destinations) et devient une
+   * entrée ordinaire du menu **More**, sans coquille de bouton ni `aria-label` orphelin laissé derrière lui.
+   */
+  it("place Agents dans le menu More et non dans le rail direct par défaut", async () => {
+    const onChangeView = vi.fn().mockResolvedValue(true);
+    render(<DesktopActionBar entries={entries(onChangeView)} activeId="board" tasks={[]} />);
+    const scroller = document.querySelector(".desktop-action-bar__scroller")!;
+    expect(Array.from(scroller.querySelectorAll<HTMLElement>(".desktop-action-bar__action")).map((button) => button.dataset.testid)).toEqual([
+      "desktop-nav-command-center",
+      "desktop-nav-board",
+      "desktop-nav-planning",
+      "desktop-nav-missions",
+      "desktop-nav-mailbox",
+    ]);
+    expect(screen.queryByTestId("desktop-nav-agents")).toBeNull();
+    expect(screen.queryByLabelText("Agents")).toBeNull();
+
+    const menu = openOverflowMenu();
+    const agentsEntry = within(menu).getByTestId("desktop-nav-agents");
+    expect(agentsEntry).toHaveAccessibleName("Agents");
+    fireEvent.click(agentsEntry);
+    expect(onChangeView).toHaveBeenCalledWith("agents");
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  });
+
+  /* FN-446 : une sélection personnalisée définit l'ordre exact des accès rapides rendus. */
+  it("rend la rangée directe dans l'ordre de la sélection d'accès rapide", () => {
+    render(<DesktopActionBar entries={entries(vi.fn(), { quickAccessEntryIds: ["mailbox", "agents", "board"] })} activeId="board" tasks={[]} />);
+    const scroller = document.querySelector(".desktop-action-bar__scroller")!;
+    expect(Array.from(scroller.querySelectorAll<HTMLElement>(".desktop-action-bar__action")).map((button) => button.dataset.testid)).toEqual([
+      "desktop-nav-mailbox",
+      "desktop-nav-agents",
+      "desktop-nav-board",
+    ]);
+    expect(within(openOverflowMenu()).getByTestId("desktop-nav-command-center")).toBeInTheDocument();
+  });
+
+  /* FN-446 : une sélection entièrement gatée off ne doit laisser aucune rangée directe vide dans le pied de page. */
+  it("ne rend aucune rangée directe vide quand la sélection ne résout aucune destination", () => {
+    render(<DesktopActionBar entries={entries(vi.fn(), { showAgents: false, quickAccessEntryIds: ["agents"] })} activeId="board" tasks={[]} />);
+    expect(document.querySelector(".desktop-action-bar__scroller")).toBeNull();
+    expect(screen.getByTestId("desktop-nav-more")).toBeInTheDocument();
+    expect(within(openOverflowMenu()).getByTestId("desktop-nav-board")).toBeInTheDocument();
+  });
+
   it("ne rend aucun trigger, panneau ou shell vide sans destination overflow", () => {
     const withoutOverflow = entries().filter((entry) => entry.placement !== "overflow");
     render(<DesktopActionBar entries={withoutOverflow} activeId="board" tasks={[]} />);

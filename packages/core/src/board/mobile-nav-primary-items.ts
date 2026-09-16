@@ -72,16 +72,57 @@ export const MOBILE_NAV_SELECTABLE_ITEM_LABEL_KEYS: Record<MobileNavSelectableIt
   "dev-server": "nav.devServer",
 };
 
-/** Destinations that Settings may promote into the mobile footer. */
+/*
+FNXC:Navigation 2026-09-16-04:15:
+FN-446 réutilise la clé projet `mobileNavPrimaryItems` (aucune migration, aucune nouvelle clé) pour piloter la rangée
+d'accès rapide de la barre de navigation partagée tablette/ordinateur, et plus seulement un libellé « mobile ».
+Une destination n'est donc promouvable que si elle possède une entrée correspondante dans le registre de navigation
+du pied de page : cette table est la source de vérité unique (identifiant persisté → identifiant d'entrée du registre),
+et `MOBILE_NAV_PRIMARY_SELECTABLE_ITEMS` en est dérivé. Les destinations sans entrée de pied de page (`chat`, `notes`,
+`secrets`, `settings`, `patchnode`, `activity`, `usage`, `projects`, `ideation`) deviennent non éligibles : elles
+restent atteignables par leurs propriétaires existants (barre latérale, feuille « More » mobile, right dock, Réglages)
+mais ne peuvent plus revendiquer un accès rapide qui n'existerait nulle part.
+*/
+export const MOBILE_NAV_PRIMARY_ITEM_NAVIGATION_ENTRY_IDS = {
+  "command-center": "command-center",
+  tasks: "board",
+  agents: "agents",
+  missions: "missions",
+  mailbox: "mailbox",
+  planning: "planning",
+  files: "files",
+  git: "git-manager",
+  workflows: "workflows",
+  automation: "automations",
+  "github-import": "import-tasks",
+  skills: "skills",
+  memory: "memory",
+  whiteboard: "whiteboard",
+  goals: "goals",
+  insights: "insights",
+  research: "research",
+  evals: "evals",
+  "dev-server": "dev-server",
+} as const satisfies Partial<Record<MobileNavSelectableItem, string>>;
+
+export type MobileNavPrimarySelectableItem = keyof typeof MOBILE_NAV_PRIMARY_ITEM_NAVIGATION_ENTRY_IDS;
+
+/** Destinations that Settings may promote into the shared quick-access row. */
 export const MOBILE_NAV_PRIMARY_SELECTABLE_ITEMS = MOBILE_NAV_SELECTABLE_ITEMS.filter(
-  (item): item is Exclude<MobileNavSelectableItem, "ideation"> => item !== "ideation",
+  (item): item is MobileNavPrimarySelectableItem => item in MOBILE_NAV_PRIMARY_ITEM_NAVIGATION_ENTRY_IDS,
 );
 
+/*
+FNXC:Navigation 2026-09-16-04:15:
+FN-446 : le défaut est Dashboard, Board, Planning, Missions, Mailbox — Agents quitte la rangée directe et redevient une
+entrée ordinaire du menu « More ». Le plafond passe à 5 parce que la rangée compte toujours un bouton « More » final.
+`tasks` est l'identifiant persisté historique du Board.
+*/
 export const DEFAULT_MOBILE_NAV_PRIMARY_ITEMS: MobileNavSelectableItem[] = [
-  "command-center", "tasks", "agents", "missions", "chat", "mailbox",
+  "command-center", "tasks", "planning", "missions", "mailbox",
 ];
 
-export const MAX_MOBILE_NAV_PRIMARY_ITEMS = 6;
+export const MAX_MOBILE_NAV_PRIMARY_ITEMS = 5;
 
 export interface ResolvedMobileNavPrimaryItems {
   primaryItems: MobileNavSelectableItem[];
@@ -109,4 +150,18 @@ export function resolveMobileNavPrimaryItems(settings?: Pick<ProjectSettings, "m
   }, []);
   const resolved = primaryItems.length > 0 ? primaryItems : [...DEFAULT_MOBILE_NAV_PRIMARY_ITEMS];
   return { primaryItems: resolved, omittedItems: MOBILE_NAV_SELECTABLE_ITEMS.filter((id) => !resolved.includes(id)) };
+}
+
+/*
+FNXC:Navigation 2026-09-16-04:15:
+FN-446 : identifiants d'entrées du registre de navigation à placer en accès direct, dans l'ordre persisté. Le résolveur
+existant conserve toute la normalisation (valeurs héritées `documents`/`recommendations` → `mailbox`, déduplication,
+plafond, repli sur le défaut) ; cette fonction ne fait que traduire le résultat vers les identifiants du registre.
+*/
+export function resolveNavigationQuickAccessEntryIds(settings?: Pick<ProjectSettings, "mobileNavPrimaryItems">): string[] {
+  return resolveMobileNavPrimaryItems(settings).primaryItems.reduce<string[]>((entryIds, item) => {
+    const entryId = (MOBILE_NAV_PRIMARY_ITEM_NAVIGATION_ENTRY_IDS as Partial<Record<MobileNavSelectableItem, string>>)[item];
+    if (entryId && !entryIds.includes(entryId)) entryIds.push(entryId);
+    return entryIds;
+  }, []);
 }

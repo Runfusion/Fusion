@@ -90,10 +90,10 @@ export const generalSearchEntries: SettingsSearchEntry[] = [
     sectionId: "general",
     key: "mobileNavPrimaryItems",
     labelKey: "settings.general.mobileNavPrimaryItems",
-    labelFallback: "Mobile footer quick actions",
+    labelFallback: "Navigation quick access",
     helpKey: "settings.general.mobileNavPrimaryItemsHint",
-    helpFallback: "Default: Dashboard, Tasks, Agents, Missions, Chat, Mailbox. Unselected destinations remain in More.",
-    keywords: ["mobile", "footer", "navigation", "planning", "more"],
+    helpFallback: "Default: Dashboard, Board, Planning, Missions, Mailbox. Choose up to 5 destinations and their order; every other destination remains in More.",
+    keywords: ["mobile", "footer", "navigation", "quick access", "planning", "agents", "more"],
   },
   {
     sectionId: "general",

@@ -39,6 +39,7 @@ import { MobileNavBar } from "./components/MobileNavBar";
 import { LeftSidebarNav } from "./components/LeftSidebarNav";
 import { DesktopActionBar } from "./components/DesktopActionBar";
 import { buildDashboardNavigationEntries } from "./components/dashboardNavigationEntries";
+import { resolveNavigationQuickAccessEntryIds } from "../../core/src/board/mobile-nav-primary-items";
 import { useRightDockController, type RightDockControllerInput } from "./components/useRightDockController";
 import { ToastContainer } from "./components/ToastContainer";
 import { ProjectOverview } from "./components/ProjectOverview";
@@ -1204,6 +1205,8 @@ function AppInner() {
     memoryEnabled,
     devServerEnabled,
     goalsEnabled,
+    /* FN-446: the reused project quick-access selection drives the shared footer's direct row. */
+    mobileNavPrimaryItems,
     setChatMessageLayoutImmediate,
     setNavigationPlacementImmediate,
     setRightSidebarEnabledImmediate,
@@ -2518,6 +2521,7 @@ function AppInner() {
     markGitHubStarPromptShown,
     setShowGitHubStarPrompt,
   };
+  const desktopQuickAccessEntryIds = useMemo(() => resolveNavigationQuickAccessEntryIds({ mobileNavPrimaryItems }), [mobileNavPrimaryItems]);
   const desktopNavigationEntries = buildDashboardNavigationEntries({
     view: taskView,
     onChangeView: async (target) => {
@@ -2538,6 +2542,12 @@ function AppInner() {
     flags: { memory: memoryEnabled, whiteboard: whiteboardEnabled, goals: goalsEnabled, insights: insightsEnabled, research: researchEnabled, ideation: ideationEnabled, evals: evalsEnabled },
     /* FN-426: Dev Server moved out of the right dock into primary navigation, keeping its existing experimental gate. */
     showDevServer: devServerEnabled,
+    /*
+    FNXC:DesktopNavigation 2026-09-16-04:15:
+    FN-446: reading the live hook value (not the saved settings payload) is what makes Settings' pre-save preview
+    (`setMobileNavPrimaryItemsImmediate`) reclassify the footer immediately.
+    */
+    quickAccessEntryIds: desktopQuickAccessEntryIds,
     mailboxUnreadCount,
     mailboxPendingApprovalCount,
     chatHasUnreadResponse,

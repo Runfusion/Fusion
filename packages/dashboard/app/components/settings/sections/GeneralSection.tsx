@@ -496,14 +496,20 @@ export function GeneralSection({ form, setForm, projectId, addToast, prefixError
         Render the selected quick actions in persisted order so move controls visibly reorder their rows.
         The add picker exposes only footer-eligible destinations, while each mutation updates the live footer before
         Settings is saved; More, Ideation, Terminal/scripts, shell controls, and plugin views remain unavailable here.
+
+        FNXC:Navigation 2026-09-16-04:15:
+        FN-446: this control now drives the quick-access row of the shared navigation bar, not a mobile-only footer, so
+        its label and help text drop the "mobile" framing and state the five-destination cap. The setting KEY, the
+        `htmlFor`/`id`, and both i18n keys stay unchanged so persisted preferences, the settings search index, and
+        `section-keys.ts` keep working without a migration.
         */}
       <SettingsFieldRow
         htmlFor="mobileNavPrimaryItems"
-        label={t("settings.general.mobileNavPrimaryItems", "Mobile footer quick actions")}
-        help={t("settings.general.mobileNavPrimaryItemsHint", "Default: Dashboard, Tasks, Agents, Missions, Chat, Mailbox. Add eligible destinations; unselected destinations remain in More.")}
+        label={t("settings.general.mobileNavPrimaryItems", "Navigation quick access")}
+        help={t("settings.general.mobileNavPrimaryItemsHint", "Default: Dashboard, Board, Planning, Missions, Mailbox. Choose up to 5 destinations and their order; every other destination remains in More.")}
         scope="project"
       >
-        <div role="group" aria-label={t("settings.general.mobileNavPrimaryItems", "Mobile footer quick actions")}>
+        <div role="group" aria-label={t("settings.general.mobileNavPrimaryItems", "Navigation quick access")}>
           {(() => {
             const selectedItems = Array.isArray(form.mobileNavPrimaryItems) && form.mobileNavPrimaryItems.length > 0
               ? form.mobileNavPrimaryItems.filter((item): item is typeof MOBILE_NAV_PRIMARY_SELECTABLE_ITEMS[number] => MOBILE_NAV_PRIMARY_SELECTABLE_ITEMS.includes(item as typeof MOBILE_NAV_PRIMARY_SELECTABLE_ITEMS[number]))
