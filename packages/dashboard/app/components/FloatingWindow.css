@@ -664,12 +664,15 @@ Project-scoped drawer FloatingWindows consume the shared canonical drawer block-
 
 FNXC:MobileDrawerMotion 2026-09-12-20:37:
 A drawer FloatingWindow enters through the shared bottom-edge animation on its geometry-owning panel. Individual translate animation composes with the explicit transform reset and runtime drag transform instead of replacing either contract.
+
+FNXC:MobileDrawer 2026-09-16-17:23:
+The revealed top band and the panel block-size derive from the same `--mobile-drawer-top-reveal` token, so all three drawer owners open at exactly the same height. The band stays non-zero so the scrim and the close gesture remain reachable.
 */
 html[data-mobile-drawers="true"][data-viewport-mode="mobile"] .floating-window-overlay--mobile-drawer {
   display: flex;
   align-items: flex-end;
   inset: 0 var(--icb-right-offset, 0px) 0 0;
-  padding-block-start: calc(env(safe-area-inset-top, 0px) + var(--space-2xl));
+  padding-block-start: calc(env(safe-area-inset-top, 0px) + var(--mobile-drawer-top-reveal));
   background: color-mix(in srgb, var(--bg) 38%, transparent);
   pointer-events: auto;
 }

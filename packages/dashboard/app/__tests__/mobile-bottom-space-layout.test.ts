@@ -102,6 +102,7 @@ describe("mobile bottom-space layout invariant", () => {
 
     expect(drawerRule).toContain("inset: 0 var(--icb-right-offset, 0px) 0 0");
     expect(drawerRule).toContain("z-index: var(--z-popover)");
+    expect(drawerRule).toContain("padding-block-start: calc(env(safe-area-inset-top, 0px) + var(--mobile-drawer-top-reveal))");
     expect(drawerRule).not.toContain("padding-block-end");
     expect(drawerPanelRule).toContain("height: var(--mobile-drawer-block-size)");
     expect(drawerPanelRule).toContain("max-height: var(--mobile-drawer-block-size)");
@@ -143,14 +144,17 @@ describe("mobile bottom-space layout invariant", () => {
     const terminalPanel = normalizeCss(extractRuleBlock(css, 'html[data-mobile-drawers="true"][data-viewport-mode="mobile"] .terminal-modal-overlay:not(.terminal-modal-overlay--docked) > .terminal-modal'));
 
     expect(floatingOverlay).toContain("inset: 0 var(--icb-right-offset, 0px) 0 0");
+    expect(floatingOverlay).toContain("padding-block-start: calc(env(safe-area-inset-top, 0px) + var(--mobile-drawer-top-reveal))");
     expect(floatingOverlay).not.toContain("padding-block-end");
     expect(floatingPanel).toContain("height: var(--mobile-drawer-block-size) !important");
     expect(floatingPanel).toContain("max-height: var(--mobile-drawer-block-size) !important");
     expect(floatingPanel).not.toContain("var(--mobile-nav-system-offset)");
     expect(floatingBody).toContain("padding-block-end: var(--mobile-nav-system-offset)");
+    expect(terminalOverlay).toContain("padding-block-start: calc(env(safe-area-inset-top, 0px) + var(--mobile-drawer-top-reveal))");
     expect(terminalOverlay).not.toContain("padding-block-end");
-    expect(terminalPanel).toContain("height: var(--mobile-drawer-block-size)");
-    expect(terminalPanel).toContain("max-height: var(--mobile-drawer-block-size)");
+    expect(terminalPanel).toContain("height: var(--mobile-drawer-block-size) !important");
+    expect(terminalPanel).toContain("min-height: 0 !important");
+    expect(terminalPanel).toContain("max-height: var(--mobile-drawer-block-size) !important");
     expect(terminalPanel).toContain("padding-block-end: var(--mobile-nav-system-offset)");
     expect(terminalPanel).not.toContain("var(--mobile-nav-height)");
   });
