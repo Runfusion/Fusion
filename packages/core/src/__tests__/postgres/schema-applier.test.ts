@@ -2873,7 +2873,17 @@ pgDescribe("schema-applier: VAL-SCHEMA-007 plugin-owned tables materialize via s
 
   it("roadmap plugin tables exist after the schema-init hook runs", async () => {
     ctx = await setupFreshDb();
-    await applySchemaBaseline(ctx.db, { pluginHooks: [roadmapPluginInitHook] });
+    /*
+    FNXC:PluginSchemaPerformance 2026-09-14-00:04:
+    This test exercises the Roadmap hook contract, not the full baseline applier; seed only the namespaces
+    the hook requires so the slow schema-applier file does not spend a full migration pass on hook-only coverage.
+    */
+    await ctx.db.execute(sql.raw(`
+      CREATE SCHEMA project;
+      CREATE SCHEMA central;
+      CREATE TABLE central.projects (id text PRIMARY KEY);
+    `));
+    await roadmapPluginInitHook.init(ctx.db);
     const rows = (await ctx.db.execute(sql`
       SELECT table_name FROM information_schema.tables
       WHERE table_schema = 'project'
@@ -3001,7 +3011,12 @@ pgDescribe("schema-applier: VAL-SCHEMA-007 plugin-owned tables materialize via s
 
   it("roadmap FK cascade: deleting a roadmap removes its milestones and features", async () => {
     ctx = await setupFreshDb();
-    await applySchemaBaseline(ctx.db, { pluginHooks: [roadmapPluginInitHook] });
+    await ctx.db.execute(sql.raw(`
+      CREATE SCHEMA project;
+      CREATE SCHEMA central;
+      CREATE TABLE central.projects (id text PRIMARY KEY);
+    `));
+    await roadmapPluginInitHook.init(ctx.db);
     await ctx.db.execute(sql`
       INSERT INTO project.roadmaps (id, project_id, title, created_at, updated_at)
       VALUES ('rm1', 'schema-test', 'R', '2026-01-01', '2026-01-01')

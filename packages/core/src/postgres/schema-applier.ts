@@ -1645,16 +1645,25 @@ export async function applySchemaBaseline(
       await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${WHITEBOARDS_SCHEMA_VERSION}) ON CONFLICT (version) DO NOTHING`);
       schemaChanged = true;
     }
-    const overlapRevalidationDrainNeeded = ((await tx.execute(sql`
-      SELECT CASE WHEN to_regclass('project.task_overlap_waits') IS NULL THEN false ELSE
-        EXISTS (SELECT 1 FROM project.task_overlap_waits WHERE phase IN ('revalidation-pending', 'repair-required'))
-        OR EXISTS (
-          SELECT 1 FROM pg_constraint
-          WHERE conname = 'ck_task_overlap_wait_phase'
-            AND pg_get_constraintdef(oid) LIKE '%revalidation-pending%'
-        )
-      END AS needed
-    `)) as unknown as Array<{ needed: boolean }>)[0]?.needed ?? true;
+    /*
+    FNXC:OverlapWaitSynchronization 2026-09-14-00:04:
+    PostgreSQL parses every relation in a CASE expression before evaluating `to_regclass`, so an already-stamped
+    but schema-empty database must probe the table catalog first instead of referencing `project.task_overlap_waits` unconditionally.
+    */
+    const overlapWaitTableExists = ((await tx.execute(sql`
+      SELECT to_regclass('project.task_overlap_waits') IS NOT NULL AS exists
+    `)) as unknown as Array<{ exists: boolean }>)[0]?.exists ?? false;
+    const overlapRevalidationDrainNeeded = !overlapWaitTableExists
+      ? false
+      : ((await tx.execute(sql`
+        SELECT
+          EXISTS (SELECT 1 FROM project.task_overlap_waits WHERE phase IN ('revalidation-pending', 'repair-required'))
+          OR EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conname = 'ck_task_overlap_wait_phase'
+              AND pg_get_constraintdef(oid) LIKE '%revalidation-pending%'
+          ) AS needed
+      `)) as unknown as Array<{ needed: boolean }>)[0]?.needed ?? true;
     if (!overlapRevalidationDrainAlreadyApplied || overlapRevalidationDrainNeeded) {
       const migrationSql = await readFile(OVERLAP_REVALIDATION_DRAIN_MIGRATION_PATH, "utf8");
       await tx.execute(sql.raw(migrationSql));
