@@ -5,7 +5,7 @@ import { useDashboardKeyboardShortcuts } from "../hooks/useDashboardKeyboardShor
 import { useNavigationHistory } from "../hooks/useNavigationHistory";
 import { usePoppedOutChats } from "../hooks/usePoppedOutChats";
 import { usePoppedOutNotes } from "../hooks/usePoppedOutNotes";
-import { closeViewShortcut, retainViewNavRevert } from "../utils/dashboardShortcutToggles";
+import { closeViewShortcut, readShortcutAnchorRect, resolveChatListShortcutTarget, retainViewNavRevert } from "../utils/dashboardShortcutToggles";
 
 function baseHandlers() {
   return {
@@ -13,6 +13,7 @@ function baseHandlers() {
     toggleSettings: vi.fn(),
     toggleCommandCenter: vi.fn(),
     toggleNewTask: vi.fn(),
+    toggleChatList: vi.fn(),
   };
 }
 
@@ -51,6 +52,7 @@ describe("App dashboard keyboard shortcuts", () => {
       toggleSettings: vi.fn(),
       toggleCommandCenter: vi.fn(),
       toggleNewTask: vi.fn(),
+      toggleChatList: vi.fn(),
     };
     renderHook(() => useDashboardKeyboardShortcuts({ ...handlers, shortcuts: { toggleModalVisibility: "Alt+M" } }));
 
@@ -61,6 +63,8 @@ describe("App dashboard keyboard shortcuts", () => {
       { key: ",", ctrlKey: true },
       { key: "k", ctrlKey: true },
       { key: "n", ctrlKey: true, shiftKey: true },
+      // FNXC:DashboardShortcuts 2026-09-16-02:27: FN-441's chat-list binding is part of the shipped default set.
+      { key: "l", ctrlKey: true, shiftKey: true },
     ];
     for (const binding of bindings) {
       press(binding);
@@ -338,6 +342,7 @@ describe("App dashboard keyboard shortcuts", () => {
       toggleSettings,
       toggleCommandCenter,
       toggleNewTask,
+      toggleChatList: vi.fn(),
     }));
 
     press({ key: "e", ctrlKey: true });
@@ -423,5 +428,74 @@ describe("App dashboard keyboard shortcuts", () => {
     expect(removeNav).toHaveBeenLastCalledWith(firstSettingsRevert);
     expect(restoreView).toHaveBeenLastCalledWith("list");
     expect(reverts.has("settings")).toBe(false);
+  });
+
+  /*
+  FNXC:DashboardShortcuts 2026-09-16-02:27:
+  FN-441 : la résolution d'hôte de la liste des chats doit être prouvable sans monter le shell dashboard. Les trois
+  cibles couvrent l'absence de projet (action inerte), le téléphone (tiroir) et tablette/ordinateur (popover).
+  */
+  /*
+  FNXC:DashboardShortcuts 2026-09-16-02:27:
+  FN-441 : le raccourci de liste des chats se déclenche sur son binding par défaut, reste inerte quand l'opérateur
+  le vide, et respecte les deux gardes de saisie — un champ, un éditeur ou un simple bouton focalisé conserve la frappe.
+  */
+  it("dispatches the FN-441 chat-list action behind both input guards", () => {
+    const toggleChatList = vi.fn();
+    renderHook(() => useDashboardKeyboardShortcuts({ ...baseHandlers(), toggleModalVisibility: vi.fn(), toggleTerminal: vi.fn(), toggleChatList }));
+
+    const event = press({ key: "l", ctrlKey: true, shiftKey: true });
+    expect(toggleChatList).toHaveBeenCalledTimes(1);
+    expect(event.defaultPrevented).toBe(true);
+
+    const input = document.createElement("input");
+    const textarea = document.createElement("textarea");
+    const button = document.createElement("button");
+    document.body.append(input, textarea, button);
+    press({ key: "l", ctrlKey: true, shiftKey: true }, input);
+    press({ key: "l", ctrlKey: true, shiftKey: true }, textarea);
+    press({ key: "l", ctrlKey: true, shiftKey: true }, button);
+    expect(toggleChatList).toHaveBeenCalledTimes(1);
+    input.remove();
+    textarea.remove();
+    button.remove();
+  });
+
+  it("keeps an emptied FN-441 chat-list binding inert", () => {
+    const toggleChatList = vi.fn();
+    renderHook(() => useDashboardKeyboardShortcuts({
+      ...baseHandlers(),
+      shortcuts: { openChatList: "" },
+      toggleModalVisibility: vi.fn(),
+      toggleTerminal: vi.fn(),
+      toggleChatList,
+    }));
+
+    const event = press({ key: "l", ctrlKey: true, shiftKey: true });
+    expect(toggleChatList).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  it("resolves the FN-441 chat-list shortcut host from project presence and the measured breakpoint", () => {
+    expect(resolveChatListShortcutTarget({ hasProject: false, isMobile: true })).toBe("none");
+    expect(resolveChatListShortcutTarget({ hasProject: false, isMobile: false })).toBe("none");
+    expect(resolveChatListShortcutTarget({ hasProject: true, isMobile: true })).toBe("drawer");
+    expect(resolveChatListShortcutTarget({ hasProject: true, isMobile: false })).toBe("popover");
+  });
+
+  it("reads the chat popover anchor from the same footer trigger the pointer uses", () => {
+    expect(readShortcutAnchorRect("desktop-nav-chat-panel")).toBeNull();
+
+    const trigger = document.createElement("button");
+    trigger.setAttribute("data-testid", "desktop-nav-chat-panel");
+    document.body.append(trigger);
+    const expected = trigger.getBoundingClientRect();
+
+    const rect = readShortcutAnchorRect("desktop-nav-chat-panel");
+    expect(rect).not.toBeNull();
+    expect(rect).toMatchObject({ top: expected.top, left: expected.left, width: expected.width, height: expected.height });
+
+    trigger.remove();
+    expect(readShortcutAnchorRect("desktop-nav-chat-panel")).toBeNull();
   });
 });

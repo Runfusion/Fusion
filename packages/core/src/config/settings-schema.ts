@@ -192,6 +192,13 @@ export const DEFAULT_GLOBAL_SETTINGS = {
     openSettings: "Ctrl+,",
     openCommandCenter: "Ctrl+K",
     newTask: "Ctrl+Shift+N",
+    /*
+    FNXC:DashboardShortcuts 2026-09-16-02:27:
+    FN-441: Ctrl+Shift+L opens the chat list. It avoids every binding already taken here (Ctrl+`, Ctrl+E,
+    Ctrl+, , Ctrl+K, Ctrl+Shift+N) and the browser-reserved combinations (Ctrl+Shift+C/I/J/K devtools,
+    Ctrl+Shift+N private window), so the shipped default set stays conflict-free.
+    */
+    openChatList: "Ctrl+Shift+L",
   },
   /*
   FNXC:ModalDismissal 2026-06-29-00:00:

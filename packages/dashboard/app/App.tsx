@@ -70,7 +70,7 @@ import { useKeyboardFocusPending } from "./hooks/useKeyboardFocusPending";
 import { useMobileKeyboardViewportLock, useMobileViewportRestoreReset } from "./hooks/useMobileScrollLock";
 import { computeMobileBarKeyboardFlags } from "./utils/mobileBarKeyboardFlags";
 import { recordActivity } from "./utils/activity-trace";
-import { closeViewShortcut, retainViewNavRevert } from "./utils/dashboardShortcutToggles";
+import { closeViewShortcut, readShortcutAnchorRect, resolveChatListShortcutTarget, retainViewNavRevert } from "./utils/dashboardShortcutToggles";
 import { normalizeNavigationPlacement, resolveChatHost, resolveNavigationSurfaces } from "./utils/navigationPlacement";
 /* FNXC:ToolSurfaces 2026-09-15-16:04: FN-426 — one decider for retired standalone tool destinations. */
 import { isRedirectedToolSurface, resolveToolSurfaceRoute } from "./utils/toolSurfaceRouting";
@@ -1862,6 +1862,31 @@ function AppInner() {
   const toggleDashboardWindowVisibility = useCallback(() => {
     dashboardWindowVisibility?.toggleVisibility();
   }, [dashboardWindowVisibility]);
+
+  /*
+  FNXC:DashboardShortcuts 2026-09-16-02:27:
+  FN-441 : le clavier doit choisir le MÊME hôte et la MÊME ancre que le pointeur. Sur téléphone la liste des chats
+  est la destination `chat` (tiroir plein écran de MainViewKeepAlive) ; sur tablette/ordinateur c'est la popover
+  `chat` du pied de page ancrée sur `desktop-nav-chat-panel`. La bascule réutilise intégralement les propriétaires
+  existants (handleTaskViewChange / closeViewShortcutWithNav côté vue, openToolPanel / closeToolPanel côté popover)
+  pour ne jamais créer une seconde entrée d'historique de navigation ni un second propriétaire de session de
+  conversation. Sans projet courant aucun hôte n'existe : l'action est inerte.
+  */
+  const toggleChatListShortcut = useCallback(() => {
+    const target = resolveChatListShortcutTarget({ hasProject: Boolean(currentProject), isMobile });
+    if (target === "none") return;
+    if (target === "drawer") {
+      if (taskView === "chat") closeViewShortcutWithNav("chat");
+      else handleTaskViewChange("chat");
+      return;
+    }
+    if (toolPanel?.kind === "chat") {
+      closeToolPanel();
+      return;
+    }
+    openToolPanel("chat", readShortcutAnchorRect("desktop-nav-chat-panel"));
+  }, [closeToolPanel, closeViewShortcutWithNav, currentProject, handleTaskViewChange, isMobile, openToolPanel, taskView, toolPanel?.kind]);
+
   useDashboardKeyboardShortcuts({
     shortcuts: dashboardKeyboardShortcuts,
     toggleModalVisibility: toggleDashboardWindowVisibility,
@@ -1871,6 +1896,7 @@ function AppInner() {
     toggleSettings: () => taskView === "settings" ? closeViewShortcutWithNav("settings") : openSettingsWithNav(),
     toggleCommandCenter: () => taskView === "command-center" ? closeViewShortcutWithNav("command-center") : openCommandCenterWithNav(),
     toggleNewTask: () => modalManager.newTaskModalOpen ? closeNewTaskWithNav() : openNewTaskWithNav(),
+    toggleChatList: toggleChatListShortcut,
   });
 
   const openFileInBrowser = useCallback((path: string, opts?: { workspace?: string; line?: number; col?: number }) => {

@@ -19,6 +19,12 @@ export interface DashboardKeyboardShortcutHandlers {
   toggleSettings: () => void;
   toggleCommandCenter: () => void;
   toggleNewTask: () => void;
+  /*
+  FNXC:DashboardShortcuts 2026-09-16-02:27:
+  FN-441 : bascule de la liste des chats. L'action reste derrière LES DEUX gardes de saisie, donc un composer de
+  chat, un éditeur ou un terminal conserve la frappe ; App choisit l'hôte (tiroir téléphone / popover pied de page).
+  */
+  toggleChatList: () => void;
 }
 
 export interface UseDashboardKeyboardShortcutsOptions extends DashboardKeyboardShortcutHandlers {
@@ -40,6 +46,7 @@ export function useDashboardKeyboardShortcuts({
   toggleSettings,
   toggleCommandCenter,
   toggleNewTask,
+  toggleChatList,
 }: UseDashboardKeyboardShortcutsOptions): void {
   useEffect(() => {
     if (!enabled || typeof document === "undefined") return;
@@ -99,10 +106,16 @@ export function useDashboardKeyboardShortcuts({
       if (shortcutMatchesEvent(resolved.newTask, event)) {
         event.preventDefault();
         toggleNewTask();
+        return;
+      }
+
+      if (shortcutMatchesEvent(resolved.openChatList, event)) {
+        event.preventDefault();
+        toggleChatList();
       }
     };
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [closeTopmostPopup, enabled, shortcuts, toggleCommandCenter, toggleFiles, toggleModalVisibility, toggleNewTask, toggleSettings, toggleTerminal]);
+  }, [closeTopmostPopup, enabled, shortcuts, toggleChatList, toggleCommandCenter, toggleFiles, toggleModalVisibility, toggleNewTask, toggleSettings, toggleTerminal]);
 }

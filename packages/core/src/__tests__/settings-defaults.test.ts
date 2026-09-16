@@ -78,6 +78,7 @@ describe("settings defaults invariants", () => {
       openSettings: "Ctrl+,",
       openCommandCenter: "Ctrl+K",
       newTask: "Ctrl+Shift+N",
+      openChatList: "Ctrl+Shift+L",
     });
     expect(GLOBAL_SETTINGS_KEYS).toContain("dashboardKeyboardShortcuts");
     expect(PROJECT_SETTINGS_KEYS).not.toContain("dashboardKeyboardShortcuts");

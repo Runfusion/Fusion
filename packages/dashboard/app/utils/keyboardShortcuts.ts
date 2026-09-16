@@ -8,7 +8,14 @@ export type DashboardShortcutAction =
   | "openFiles"
   | "openSettings"
   | "openCommandCenter"
-  | "newTask";
+  | "newTask"
+  /*
+  FNXC:DashboardShortcuts 2026-09-16-02:27:
+  FN-441 : ouvrir la liste des chats au clavier. L'action ne possède AUCUNE surface propre — elle bascule l'hôte
+  existant choisi par le point de rupture mesuré : destination `chat` (tiroir plein écran) sur téléphone, popover
+  `chat` du pied de page (ancrée sur `desktop-nav-chat-panel`) sur tablette/ordinateur.
+  */
+  | "openChatList";
 
 export type DashboardKeyboardShortcutMap = Partial<Record<DashboardShortcutAction, string>>;
 
@@ -23,6 +30,8 @@ export const DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS: Required<DashboardKeyboardSho
   openSettings: "Ctrl+,",
   openCommandCenter: "Ctrl+K",
   newTask: "Ctrl+Shift+N",
+  // FNXC:DashboardShortcuts 2026-09-16-02:27: must stay identical to DEFAULT_GLOBAL_SETTINGS.dashboardKeyboardShortcuts.openChatList.
+  openChatList: "Ctrl+Shift+L",
 };
 
 const ACTION_LABELS: Record<DashboardShortcutAction, string> = {
@@ -32,6 +41,7 @@ const ACTION_LABELS: Record<DashboardShortcutAction, string> = {
   openSettings: "Open Settings",
   openCommandCenter: "Open Command Center",
   newTask: "New Task",
+  openChatList: "Open Chat List",
 };
 
 export interface DashboardShortcutCategory {
@@ -45,7 +55,7 @@ FNXC:DashboardShortcuts 2026-07-04-00:00:
 Category grouping backs the dedicated Keyboard Shortcuts settings section (FN-7553) so actions render under headings instead of one flat list. This is UI-only metadata; resolution/conflict/validation logic never depends on category membership.
 */
 export const SHORTCUT_CATEGORIES: DashboardShortcutCategory[] = [
-  { id: "communication", label: "Communication", actions: ["toggleModalVisibility"] },
+  { id: "communication", label: "Communication", actions: ["toggleModalVisibility", "openChatList"] },
   { id: "workspace", label: "Workspace", actions: ["terminal", "openFiles"] },
   { id: "navigation", label: "Navigation", actions: ["openCommandCenter", "openSettings"] },
   { id: "tasks", label: "Tasks", actions: ["newTask"] },

@@ -23,6 +23,33 @@ export function retainViewNavRevert<TView>(
   return revert;
 }
 
+/*
+FNXC:DashboardShortcuts 2026-09-16-02:27:
+FN-441 : la liste des chats a DEUX hôtes déjà existants (tiroir plein écran sur téléphone, popover du pied de
+page sur tablette/ordinateur) et aucun nouvel hôte n'est créé. Le choix reste un seam PUR pour deux raisons :
+il doit être prouvable sans monter tout le shell dashboard, et il doit suivre le point de rupture MESURÉ
+(`useViewportMode`) plutôt qu'une supposition CSS. Sans projet courant, aucun hôte n'existe : l'action est inerte.
+*/
+export type ChatListShortcutTarget = "none" | "drawer" | "popover";
+
+export function resolveChatListShortcutTarget(options: { hasProject: boolean; isMobile: boolean }): ChatListShortcutTarget {
+  if (!options.hasProject) return "none";
+  return options.isMobile ? "drawer" : "popover";
+}
+
+/*
+FNXC:DashboardShortcuts 2026-09-16-02:27:
+Le clavier doit ancrer la popover sur le MÊME élément que le clic pointeur (`desktop-nav-chat-panel`), sans
+faire traverser une ref à travers DesktopActionBar. Une ancre absente (footer large inactif, montage tardif)
+renvoie `null`, que la géométrie de la popover tolère déjà — jamais une exception.
+*/
+export function readShortcutAnchorRect(testId: string): DOMRect | null {
+  if (typeof document === "undefined") return null;
+  const element = document.querySelector(`[data-testid="${testId}"]`);
+  if (!element) return null;
+  return element.getBoundingClientRect();
+}
+
 export function closeViewShortcut<TView>(
   view: TView,
   reverts: Map<TView, (() => void)[]>,

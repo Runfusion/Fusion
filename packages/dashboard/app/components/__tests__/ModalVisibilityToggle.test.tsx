@@ -76,6 +76,7 @@ function VisibilityShortcutHarness() {
     toggleSettings: () => undefined,
     toggleCommandCenter: () => undefined,
     toggleNewTask: () => undefined,
+    toggleChatList: () => undefined,
   });
   return null;
 }

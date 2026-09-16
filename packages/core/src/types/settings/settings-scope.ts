@@ -275,6 +275,13 @@ export interface DashboardKeyboardShortcuts {
   openCommandCenter?: string;
   /** Opens the New Task modal. Empty string disables this shortcut. Default: "Ctrl+Shift+N". */
   newTask?: string;
+  /*
+  FNXC:DashboardShortcuts 2026-09-16-02:27:
+  FN-441 adds a keyboard owner for the chat list: the full-screen drawer on phones, the footer popover on
+  desktop. It is a global-only setting like every other binding here, and shares the blank-to-disable contract.
+  */
+  /** Opens the chat list (mobile drawer / desktop footer popover). Empty string disables this shortcut. Default: "Ctrl+Shift+L". */
+  openChatList?: string;
 }
 
 export interface BackupSettingsMigrationCandidate {

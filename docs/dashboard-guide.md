@@ -157,10 +157,13 @@ Dashboard keyboard shortcuts are configurable global operator preferences. The d
 
 FNXC:DashboardShortcuts 2026-07-04-12:00:
 FN-7553 promotes shortcuts to a dedicated Settings section (Keyboard Shortcuts, moved out of General), adds a press-to-record capture control, and adds four more configurable actions (Open Files, Open Settings, Open Command Center, New Task) grouped into categories. The docs must state the new location, the capture control's record/manual/clear/Escape-cancels behavior, and the full action list with defaults so operators can find and rebind every shortcut, not just the original two.
+
+FNXC:DashboardShortcuts 2026-09-16-02:27:
+FN-441 adds Open Chat List. Its host depends on the measured breakpoint — the full-screen chat drawer on phones, the footer conversation popover on tablet/desktop — and it reuses those existing owners rather than adding a second chat host, so the docs must state which surface opens where and that a second press closes it.
 -->
 Open **Settings → Keyboard Shortcuts** (its own dedicated section, no longer under General) to configure dashboard-wide shortcut bindings. Actions are grouped by category:
 
-- **Windows:** Hide or restore dashboard windows (blank by default)
+- **Communication:** Hide or restore dashboard windows (blank by default), Open Chat List (`Ctrl+Shift+L`)
 - **Workspace:** Terminal (<kbd>Ctrl+`</kbd>), Open Files (`Ctrl+E`)
 - **Navigation:** Open Command Center (`Ctrl+K`), Open Settings (`Ctrl+,`)
 - **Tasks:** New Task (`Ctrl+Shift+N`)
@@ -176,6 +179,8 @@ Shortcut handling is intentionally guarded. Fusion ignores global shortcuts whil
 The far-right footer control and the optional `toggleModalVisibility` shortcut hide every currently visible managed dashboard window together. Activating either control again restores exactly that captured set with its prior content, geometry, stacking order, scroll position, and draft state. Windows opened after a hide are not added to the captured set, and windows that were already closed or hidden are not restored. Blocking confirmations, authentication prompts, and other surfaces that require an immediate decision are excluded and remain visible. The footer control is available even when there is nothing to hide; in that state it is a harmless no-op.
 
 Terminal, Files, Settings, Command Center, and New Task retain their ordinary open/close toggle behavior. For Settings and Command Center, the second press returns to the view that was active before the surface opened.
+
+**Open Chat List** (`Ctrl+Shift+L`) opens the conversation list on whichever surface your screen size already uses: the full-screen chat drawer on phones, and the footer conversation popover — the same one the bottom bar's chat control opens, anchored to that same control — on tablet and desktop. Pressing it again closes the list and returns you to what you were looking at. The shortcut does nothing when no project is open, and like every other shortcut it is ignored while you are typing in a field, editor, chat composer, or terminal. Rebind or blank it in **Settings → Keyboard Shortcuts** like any other action.
 
 Press `Escape` to close the current/topmost visible dashboard popup. Popped-out task and chat windows close before fixed app modals such as Terminal, Settings, Files, or Task Detail, and only one surface closes per key press. A window hidden by the dashboard-wide visibility control is never an Escape target. Nested editors and menus that already handle Escape keep first ownership by preventing the global handler.
 

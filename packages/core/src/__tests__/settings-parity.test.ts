@@ -539,8 +539,21 @@ describe("settings key parity", () => {
 
     expect(projectKeys).not.toContain("dashboardKeyboardShortcuts");
     expect(globalKeys).toContain("dashboardKeyboardShortcuts");
-    expect(DEFAULT_GLOBAL_SETTINGS.dashboardKeyboardShortcuts).toEqual({ toggleModalVisibility: "", terminal: "Ctrl+`", openFiles: "Ctrl+E", openSettings: "Ctrl+,", openCommandCenter: "Ctrl+K", newTask: "Ctrl+Shift+N" });
+    expect(DEFAULT_GLOBAL_SETTINGS.dashboardKeyboardShortcuts).toEqual({ toggleModalVisibility: "", terminal: "Ctrl+`", openFiles: "Ctrl+E", openSettings: "Ctrl+,", openCommandCenter: "Ctrl+K", newTask: "Ctrl+Shift+N", openChatList: "Ctrl+Shift+L" });
     expect((DEFAULT_PROJECT_SETTINGS as Record<string, unknown>).dashboardKeyboardShortcuts).toBeUndefined();
+  });
+
+  /*
+  FNXC:DashboardShortcuts 2026-09-16-02:27:
+  FN-441's chat-list binding is global-only like every other dashboard shortcut: it must never appear as a
+  project-scoped key, and the project defaults must carry no dashboard-shortcut map at all.
+  */
+  it("keeps the FN-441 chat-list shortcut global-only", () => {
+    const globalShortcuts = DEFAULT_GLOBAL_SETTINGS.dashboardKeyboardShortcuts as Record<string, unknown>;
+    expect(globalShortcuts.openChatList).toBe("Ctrl+Shift+L");
+    expect(GLOBAL_SETTINGS_KEYS as readonly string[]).toContain("dashboardKeyboardShortcuts");
+    expect(PROJECT_SETTINGS_KEYS as readonly string[]).not.toContain("dashboardKeyboardShortcuts");
+    expect((DEFAULT_PROJECT_SETTINGS as Record<string, unknown>).openChatList).toBeUndefined();
   });
 
   it("only intentional shared keys appear in both global and project scopes", () => {

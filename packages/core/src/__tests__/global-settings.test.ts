@@ -455,6 +455,7 @@ describe("GlobalSettingsStore", () => {
         openSettings: "Ctrl+,",
         openCommandCenter: "Ctrl+K",
         newTask: "Ctrl+Shift+N",
+        openChatList: "Ctrl+Shift+L",
       });
     });
 

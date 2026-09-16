@@ -8,6 +8,7 @@ function baseHandlers() {
     toggleSettings: vi.fn(),
     toggleCommandCenter: vi.fn(),
     toggleNewTask: vi.fn(),
+    toggleChatList: vi.fn(),
   };
 }
 
@@ -147,6 +148,7 @@ describe("FN-7553 new actions", () => {
       toggleSettings,
       toggleCommandCenter,
       toggleNewTask,
+      toggleChatList: vi.fn(),
     }));
 
     const filesEvent = press({ key: "e", ctrlKey: true });
@@ -175,6 +177,7 @@ describe("FN-7553 new actions", () => {
       toggleSettings: vi.fn(),
       toggleCommandCenter: vi.fn(),
       toggleNewTask: vi.fn(),
+      toggleChatList: vi.fn(),
     }));
 
     press({ key: "e", ctrlKey: true });

@@ -25,6 +25,7 @@ describe("keyboard shortcut utilities", () => {
       openSettings: "Ctrl+,",
       openCommandCenter: "Ctrl+K",
       newTask: "Ctrl+Shift+N",
+      openChatList: "Ctrl+Shift+L",
     });
     expect(normalizeKeyboardShortcut(" ").disabled).toBe(true);
     expect(normalizeKeyboardShortcut("Space")).toMatchObject({ valid: true, normalized: "Space", key: "Space" });
@@ -85,6 +86,31 @@ describe("keyboard shortcut utilities", () => {
     expect(shortcutMatchesEvent("Ctrl+K", keydown({ key: "k", ctrlKey: true }))).toBe(true);
     expect(shortcutMatchesEvent("Ctrl+Shift+N", keydown({ key: "n", ctrlKey: true, shiftKey: true }))).toBe(true);
     expect(describeShortcutValidation({ openFiles: "" })).toBeNull();
+  });
+
+  /*
+  FNXC:DashboardShortcuts 2026-09-16-02:27:
+  FN-441 : le raccourci « Open Chat List » doit se résoudre à son défaut documenté quand aucun réglage n'est
+  persisté, matcher exactement Ctrl+Shift+L (et pas Ctrl+L), rester vide quand l'opérateur le désactive, et
+  n'introduire aucun conflit dans le jeu de défauts livré.
+  */
+  it("resolves, matches, and validates the FN-441 chat-list action", () => {
+    expect(resolveDashboardKeyboardShortcuts(undefined).openChatList).toBe("Ctrl+Shift+L");
+    expect(resolveDashboardKeyboardShortcuts({ terminal: "Alt+T" }).openChatList).toBe("Ctrl+Shift+L");
+    expect(shortcutMatchesEvent("Ctrl+Shift+L", keydown({ key: "l", ctrlKey: true, shiftKey: true }))).toBe(true);
+    expect(shortcutMatchesEvent("Ctrl+Shift+L", keydown({ key: "l", ctrlKey: true }))).toBe(false);
+
+    expect(findShortcutConflicts(DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS)).toEqual([]);
+
+    const duplicated = { ...DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS, openChatList: "Ctrl+K" };
+    expect(findShortcutConflicts(duplicated)).toEqual([
+      { shortcut: "Ctrl+K", actions: ["openCommandCenter", "openChatList"], labels: ["Open Command Center", "Open Chat List"] },
+    ]);
+    expect(describeShortcutValidation(duplicated)).toContain("both use Ctrl+K");
+
+    expect(resolveDashboardKeyboardShortcuts({ openChatList: "" }).openChatList).toBe("");
+    expect(shortcutMatchesEvent("", keydown({ key: "l", ctrlKey: true, shiftKey: true }))).toBe(false);
+    expect(getShortcutActionLabel("openChatList")).toBe("Open Chat List");
   });
 
   it("identifies editable and interactive targets that should not be captured by global shortcuts", () => {
