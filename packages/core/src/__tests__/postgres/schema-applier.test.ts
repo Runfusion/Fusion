@@ -124,6 +124,7 @@ import {
   OVERLAP_WAIT_REPAIR_REQUIRED_PHASE_VERSION,
   OVERLAP_REVALIDATION_DRAIN_VERSION,
   WORKFLOW_IDENTITY_AND_MODEL_LANES_VERSION,
+  REVIEW_LANE_LEDGER_VERSION,
 } from "../../postgres/schema-applier.js";
 import { ProjectPartitionRekeyError, rekeyFallbackProjectPartition } from "../../postgres/migration-stamping.js";
 import type { PluginSchemaInitHook } from "../../postgres/plugin-schema-hook.js";
@@ -194,11 +195,14 @@ describe("schema-applier: immutable migration identities", () => {
     expect(SCHEMA_BASELINE_VERSION >= "0082").toBe(true);
     /*
     FNXC:HumanMergeApproval 2026-09-17-18:09:
-    FN-514's per-card delivery-lock column is migration 0083 and the new ceiling. Every identity above
-    stays pinned: this assertion exists so a renumbering of an ALREADY-PUBLISHED migration fails here
-    rather than silently skipping it on an upgraded database.
+    FN-514's per-card delivery-lock column is migration 0083. Every identity above stays pinned: this
+    assertion exists so a renumbering of an ALREADY-PUBLISHED migration fails here rather than silently
+    skipping it on an upgraded database.
+    FNXC:ReviewLaneDispatch 2026-09-18-00:30 (PR rebase onto the FN-493..526 wave): the ceiling is now
+    0084 — the unpublished review-lane ledger renumbered 0082 -> 0084 to clear published 0082/0083.
     */
-    expect(SCHEMA_BASELINE_VERSION).toBe("0083");
+    expect(REVIEW_LANE_LEDGER_VERSION).toBe("0084");
+    expect(SCHEMA_BASELINE_VERSION).toBe("0084");
   });
 
   it("keeps monitor and approval isolation assigned to version 0003", () => {
@@ -1959,6 +1963,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_PAUSE_ACCOUNTING_VERSION,
       "0082",
       "0083",
+      REVIEW_LANE_LEDGER_VERSION,
     ]);
     expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
   });
@@ -2068,6 +2073,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_PAUSE_ACCOUNTING_VERSION,
       "0082",
       "0083",
+      REVIEW_LANE_LEDGER_VERSION,
     ]);
   });
 
@@ -2310,6 +2316,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_PAUSE_ACCOUNTING_VERSION,
       "0082",
       "0083",
+      REVIEW_LANE_LEDGER_VERSION,
     ]);
   });
 
@@ -2433,6 +2440,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_PAUSE_ACCOUNTING_VERSION,
       "0082",
       "0083",
+      REVIEW_LANE_LEDGER_VERSION,
     ]);
   });
 
@@ -2556,6 +2564,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_PAUSE_ACCOUNTING_VERSION,
       "0082",
       "0083",
+      REVIEW_LANE_LEDGER_VERSION,
     ]);
   });
 });

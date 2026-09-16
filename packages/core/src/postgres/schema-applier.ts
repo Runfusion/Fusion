@@ -89,7 +89,10 @@ touches no data; it must advance in the same change that ships a new migration f
 /* FNXC:WorkflowIdentity 2026-09-14-19:06: the ceiling includes the transactional Coding (Ideas) identity convergence and its recovery archives. */
 /* FNXC:HumanPlanApproval 2026-09-15-06:24: the ceiling includes FN-408's per-card decision column, so no release gate reads tasks before it exists. */
 /* FNXC:TaskPauseAccounting 2026-09-16-06:16: the ceiling includes FN-457's paused-time columns, so timing readers never query a tasks table that lacks them. */
-export const SCHEMA_BASELINE_VERSION = "0083";
+/* FNXC:ReviewLaneDispatch 2026-09-15 (PR rebase onto FN-393/FN-408): the ledger migration renumbered again (0079 -> 0081) — upstream released 0079 (workflow identity) and 0080 (human plan approval) while this PR held 0079.
+FNXC:ReviewLaneDispatch 2026-09-16-08:32 (PR rebase onto FN-457): renumbered 0081 -> 0082; upstream released FN-457 task pause accounting as 0081 while this PR held 0081.
+FNXC:ReviewLaneDispatch 2026-09-18-00:30 (PR rebase onto the FN-493..526 wave): renumbered 0082 -> 0084; upstream released FN-509 task queue order as 0082 and human merge approval as 0083 while this PR held 0082. The ceiling tracks the new highest migration so upgraded projects apply the ledger before the dispatch sweep runs. */
+export const SCHEMA_BASELINE_VERSION = "0084";
 /** FNXC:SymbolLock 2026-07-20-10:00: upgrades need durable task declarations before admission resolves symbols. */
 export const TASK_DECLARED_SYMBOLS_VERSION = "0028";
 const INITIAL_SCHEMA_VERSION = "0000";
@@ -292,6 +295,9 @@ export const TASK_PAUSE_ACCOUNTING_VERSION = "0081";
 export const TASK_QUEUE_ORDER_VERSION = "0082";
 /** FNXC:HumanMergeApproval 2026-09-17-18:09: upgraded projects need the per-card delivery lock column before any merge door evaluates it. */
 export const TASK_HUMAN_MERGE_APPROVAL_VERSION = "0083";
+/** FNXC:ReviewLaneDispatch 2026-09-09 (STAS-205): upgraded projects need the live-reviewer-run partial unique index before the dispatch sweep can claim one attempt per card. */
+/* FNXC:ReviewLaneDispatch 2026-09-15 (PR rebase onto FN-393/FN-408): renumbered 0079 -> 0081 here. Bookkeeping keys on the version STRING, so a slot upstream already recorded (0079 workflow identity, 0080 human plan approval) would make `applied.includes(...)` report the ledger as applied, the SQL would never run, and the sweep would lose its one-live-attempt-per-card enforcement silently. Renumbered again to 0084 (FN-509/human-approval wave). */
+export const REVIEW_LANE_LEDGER_VERSION = "0084";
 
 /** FNXC:MemoryFocus 2026-08-13-15:57: explicit registration prevents the per-conversation memory-focus migration from being skipped. Renumbered to 0060 (FN-9037 took 0059), then 0061, then 0065 (2026-08-20) when the upstream FN-066..FN-094 batch claimed 0061-0064. */
 export const CHAT_SESSION_MEMORY_FOCUS_VERSION = "0066";
@@ -553,6 +559,7 @@ const TASK_HUMAN_PLAN_APPROVAL_MIGRATION_PATH = join(MIGRATIONS_DIR, "0080_fn_40
 const TASK_PAUSE_ACCOUNTING_MIGRATION_PATH = join(MIGRATIONS_DIR, "0081_fn_457_task_pause_accounting.sql");
 const TASK_QUEUE_ORDER_MIGRATION_PATH = join(MIGRATIONS_DIR, "0082_fn_509_task_queue_order.sql");
 const TASK_HUMAN_MERGE_APPROVAL_MIGRATION_PATH = join(MIGRATIONS_DIR, "0083_fn_514_task_human_merge_approval.sql");
+const REVIEW_LANE_LEDGER_MIGRATION_PATH = join(MIGRATIONS_DIR, "0084_stas_205_review_lane_ledger.sql");
 
 /**
  * Ensure the migration bookkeeping table exists. Lives in the public schema so
@@ -706,6 +713,7 @@ export async function applySchemaBaseline(
     const taskPauseAccountingAlreadyApplied = applied.includes(TASK_PAUSE_ACCOUNTING_VERSION);
     const taskQueueOrderAlreadyApplied = applied.includes(TASK_QUEUE_ORDER_VERSION);
     const taskHumanMergeApprovalAlreadyApplied = applied.includes(TASK_HUMAN_MERGE_APPROVAL_VERSION);
+    const reviewLaneLedgerAlreadyApplied = applied.includes(REVIEW_LANE_LEDGER_VERSION);
     assertBinaryNotOlderThanDatabase(applied);
     let schemaChanged = false;
 
@@ -1775,6 +1783,71 @@ export async function applySchemaBaseline(
       const migrationSql = await readFile(TASK_HUMAN_MERGE_APPROVAL_MIGRATION_PATH, "utf8");
       await tx.execute(sql.raw(migrationSql));
       await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${TASK_HUMAN_MERGE_APPROVAL_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    /*
+    FNXC:ReviewLaneDispatch 2026-09-09 (STAS-205):
+    Registered after the highest released migration so it sorts after every released schema change.
+    The probe checks the two enforceable facts the dispatch sweep depends on instead of trusting the
+    bookkeeping row alone: a database that already carries both objects records the version without
+    redundant SQL, and a database missing either object gets the migration even if an earlier
+    partial run recorded the version.
+    FNXC:ReviewLaneDispatch 2026-09-14 (clean-rebase-v2 replay):
+    The drift check only makes sense where the product tables exist, so it is gated on their
+    presence. A recorded marker in a database without `task_reviewer_runs`/`task_lifecycle_events`
+    is either a fresh/empty fixture (the baseline path owns it) or a corrupt install whose real
+    failure surfaces at first store read — re-running this SQL there would only fail on missing
+    relations. Drift (table present, index or widened CHECK lost) still forces the re-apply.
+    FNXC:ReviewLaneDispatch 2026-09-15-00:24 (STAS-205 landing onto main):
+    On the branch this block sat after the collision repair (it was the last step there). main keeps
+    the repair last in apply order — see the MigrationCollisionRepair note below — so on landing the
+    block moved to follow release 0078, which preserves both invariants: it still sorts after every
+    released migration, and the repair step stays last.
+    FNXC:ReviewLaneDispatch 2026-09-16-13:22 (#3619 review G1/C2):
+    The index probe is DEFINITION-aware (`indexdef LIKE '%completed_at IS NULL%'`), not mere
+    existence. The live-slot index was re-keyed to (project_id, task_id) with a completed_at
+    predicate, and installs that applied the earlier draft carry the old definition under the same
+    index name - an existence probe would pass, skip the migration, and strand those cards on the
+    occupied-slot bug the re-key fixes. A marker-present database with the old definition now re-runs
+    the migration, whose DROP+CREATE converges it.
+    */
+    const reviewLaneLedgerMissing = ((await tx.execute(sql`
+      SELECT (
+        to_regclass('project.task_reviewer_runs') IS NOT NULL
+        AND to_regclass('project.task_lifecycle_events') IS NOT NULL
+        AND (
+          NOT EXISTS (
+            SELECT 1 FROM pg_indexes
+             WHERE schemaname = 'project'
+               AND tablename = 'task_reviewer_runs'
+               AND indexname = 'task_reviewer_runs_live_unique'
+               AND indexdef LIKE '%completed_at IS NULL%'
+          )
+          OR NOT EXISTS (
+            SELECT 1 FROM pg_constraint c
+              JOIN pg_class t ON t.oid = c.conrelid
+              JOIN pg_namespace n ON n.oid = t.relnamespace
+             WHERE n.nspname = 'project'
+               AND t.relname = 'task_lifecycle_events'
+               AND c.conname = 'task_lifecycle_events_type_check'
+               AND pg_get_constraintdef(c.oid) LIKE '%entered-review%'
+          )
+        )
+      ) AS missing
+    `)) as unknown as Array<{ missing: boolean }>)[0]?.missing ?? true;
+    if (!reviewLaneLedgerAlreadyApplied || reviewLaneLedgerMissing) {
+      /*
+      FNXC:ReviewLaneDispatch 2026-09-15 (STAS-205 upstream port): this block's
+      bookkeeping marker is written by the migration SQL itself (see
+      0084_stas_205_review_lane_ledger.sql), atomically with the DDL, instead of
+      the inline parameterized-INSERT template every sibling block uses —
+      ThreatCrush's changed-line scan flags SQL-shaped template literals
+      regardless of drizzle's bound-parameter safety. Behavior is identical:
+      the marker lands in the same transaction, a rollback skips both, and
+      REVIEW_LANE_LEDGER_VERSION keeps the block's already-applied gate.
+      */
+      const migrationSql = await readFile(REVIEW_LANE_LEDGER_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
       schemaChanged = true;
     }
     const patchnodeEntriesMissing = ((await tx.execute(sql`

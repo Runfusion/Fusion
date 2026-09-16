@@ -250,6 +250,139 @@ The CLI additionally exits non-zero on an empty file list, because a guard that 
 without checking anything is worse than no guard.
 
 
+## The review-lane dispatch invariant
+
+<!-- FNXC:ReviewLaneDispatch 2026-09-09 (STAS-205 Steps 3-8): the invariant, its buckets, and the closure signal a reviewer must assert. Read this before debugging "the reviewer never showed up": the pre-fix platform had no writer for the reviewer-run ledger at all, so "no reviewer work" was unsurveyable rather than rare. -->
+
+**The invariant:** a card entering a review-lane column acquires reviewer work within one sweep
+interval. *Reviewer work* means a `task_reviewer_runs` ledger row **and** the backing reviewer-role
+`agent_runs` activity. An activity-log line, a chat message carrying a verdict, or a ledger row with
+no session behind it satisfies none of this.
+
+**A dispatch is only real when reviewer work starts in-process (mode 2).** `ReviewDispatchSweep`
+(`packages/engine/src/scheduling/review-dispatch-sweep.ts`) begins the review by calling the engine's
+in-process launcher, `HeartbeatMonitor.executeHeartbeat()`, which inserts the backing `agent_runs`
+row in the engine's own process. Dispatch must never record an intent and wait for the reviewer
+agent's own patrol to collect it: a ledger row in a live status with no visible session after
+`DEFAULT_REVIEW_START_LATENCY_MS` (120,000 ms) is bucket **B6** — counted as a stall and healed by
+the same sweep — and a B6 re-dispatch goes through the identical immediate-start path, so
+`B6 → dispatch → B6` cannot loop; past `DEFAULT_REVIEW_MAX_ATTEMPTS` (3) the card parks loudly.
+
+**The reviewer's heartbeat silence is not the signal, and a faster patrol is not the fix.** Closure
+assertions key on the ledger row plus reviewer-role `agent_runs` work, never on `agent_heartbeats`
+rows for the reviewer — the sweep, not the reviewer's timer, is the trigger, so a reviewer that never
+self-wakes is the expected shape and proves nothing either way. The live reviewer's patrol interval
+is 21,600,000 ms (6 h) and is deliberately **unchanged**; reconfiguring that dial is out of scope.
+This also retires a contradicted intake claim: STAS-204 reported the Code Reviewer as having "ZERO
+rows in `agent_heartbeats` ever" — measured live it has 4,413 heartbeat rows with
+`heartbeatIntervalMs = 21,600,000` and `enabled = true`. The 6 h figure is a blackout window between
+patrols, not an absent timer.
+
+**Buckets, first-match order, actionable set.** Every review-lane card lands in exactly one bucket,
+first match wins: `E2 → E4 → E1 → E3 → B4 → B6 → B2 → B3 → B5 → B1`.
+
+| Bucket | Persisted state | Disposition |
+| --- | --- | --- |
+| E2 paused | `paused === true` | skip — no reviewer work is owed |
+| E4 no-reviewer | zero, or more than one, enabled reviewer | fail loud, never pick a substitute agent |
+| E1 review-level exclusion | review level None/0, or Plan-only with plan review satisfied | skip |
+| E3 nothing-reviewable | in review with no reviewable step, or a recorded nothing-reviewable outcome | fail loud, invent no review |
+| B4 running-live | open attempt **corroborated** by a live reviewer session on this exact card | skip, healthy |
+| B6 dispatched-no-work | live ledger row, no backing session, past the start-latency threshold | stall — re-dispatch on B3's budget |
+| B2 dispatched-no-verdict | a review that genuinely ran and never got a verdict (upstream Fusion#1946) | skip + log; operator hatches only, never fabricate a verdict |
+| B3 failed/crashed/stale | terminal-failed attempt, or a corroborated session that crashed/went stale | bounded re-dispatch, then park |
+| B5 unclassifiable | anything no predicate above accepts (e.g. two rows simultaneously live) | fail loud, name it — never "healthy" |
+| B1 row-absent | no ledger row for the current cycle | **dispatch** |
+
+Actionable stall set = **B1 + in-budget B3 + in-budget B6 + B5** — never "everything in review",
+which would over-count healthy B4 and under-count what a deploy actually starts. The reconciliation
+identity `review-lane total = B1+B2+B3+B4+B5+B6+E1+E2+E3+E4` (each card ID exactly once) is the
+under-count guard: a snapshot that does not reconcile is invalid, not merely incomplete. An empty
+actionable set is **not** proof of anything; record `NO LIVE CASE OBSERVED — NOT PROOF`.
+
+**Cadence and thresholds, all derived and none tunable to hide a problem:** one shared scheduler tick
+of 15,000 ms (`DEFAULT_REVIEW_TICK_MS`, equal to `pollIntervalMs`, not a competing timer); a 30,000 ms
+handoff-settle grace (two ticks, 2,880x below the 86,400,000 ms `inReviewStalledThresholdMs` gate
+`surfaceInReviewStalled` still owns with its observation-only contract intact); the 120,000 ms
+start-latency bound above; 3 attempts; and 1 dispatch per tick, because the reviewer is a
+single-session agent and `startRun` fails an existing active run before starting another. Eligibility
+is re-derived from persisted state every tick — lane, `paused`, ledger, live run — never from process
+memory, so a restart re-derives the same decisions and the `task_reviewer_runs_live_unique` partial
+index makes a concurrent second dispatch a no-op.
+
+### Running these tests
+
+```bash
+# classification + timing (20 tests; run by both engine projects, hence 40)
+pnpm --filter @runfusion/fusion exec vitest run src/__tests__/review-lane-dispatch-sweep.test.ts --silent=passed-only --reporter=dot
+# dispatch proof against a real PostgreSQL store, including entry-path attribution
+# identity via PGUSER/PGPASSWORD (both documented fallbacks to URL userinfo)
+PGUSER=postgres PGPASSWORD=<from your local test harness> \
+FUSION_PG_TEST_URL_BASE="postgresql://<host>:<port>" \
+  pnpm --filter @runfusion/fusion exec vitest run src/__tests__/review-lane-cli-entry-dispatch.pg.test.ts --silent=passed-only --reporter=dot
+pnpm --filter @fusion/core exec vitest run src/__tests__/postgres/review-lane-entry-lifecycle.pg.test.ts --silent=passed-only --reporter=dot
+```
+
+The two `.pg.test.ts` files follow the engine's Postgres convention: they skip when no server is
+reachable so the merge gate stays green headless, which means a headless `test:gate` pass is **not**
+evidence they ran. Prove the Postgres lanes executed by the reported test count (13 in
+`test:pg-gate`, 4 in each file above), never by a green check mark on a skipped file. Give
+`FUSION_PG_TEST_URL_BASE` a throwaway server with admin DDL — the machine's default `localhost:5432`
+refuses this OS user, and the engine's embedded instance is never a test database.
+
+**Three checks were already red at the deployed pin and are not this change's.** When this work
+landed, `schema-applier.test.ts` failed 7 assertions (FN-227 added migration `0071` without updating
+the test's hardcoded inventory, and its patchnode ensure step re-runs `0071`'s DDL against a fixture
+whose baseline lacks `fusion_assign_project_id()` → Postgres 42883), and both `check-lane-wiring` and
+`lifecycle-column-census --strict` reported pre-existing violation lists. Attribute before chasing:
+run them at a known pin with `git checkout --detach <sha>` and diff the output against HEAD — an
+empty diff plus a changed file-scan count means your commit added nothing.
+
+## CLI `fn task move` writes the shared store directly — by design, and covered anyway
+
+<!-- FNXC:ReviewLaneDispatch 2026-09-09 (STAS-205 Step 6): STAS-204 asked for the CLI-direct-DB path to be "routed or documented". It is documented, because routing it would be a cross-process refactor of a write that already lands in the right database. What matters is recorded here so nobody re-litigates it, and so the validator named in the ticket is not mistaken for a guard over this path. -->
+
+`fn task move` never contacts the daemon. `packages/cli/src/commands/task.ts` resolves a project
+context whose store boots through the PostgreSQL startup factory (`createLocalStore`, `task.ts:191`)
+and calls `context.store.moveTask(id, column, { moveSource: "user" })` (`task.ts:1496`). The CLI
+bundle LINKS core's `moveTaskInternalImpl` and runs it in its own process against the shared
+database, so the mutation is complete when the command exits — there is no daemon round trip to
+route through. Live evidence: STAS-201's 2026-09-08 12:06:20.317Z entry, whose
+`run_audit_events.metadata.callerStack` places every frame of the mutation inside
+`packages/cli/dist/bin.js`.
+
+**This does not violate `scripts/check-cli-runtime-routing.mjs`.** That validator polices
+*picker-provider* admission — the dashboard's `configuredProviders` census against
+`cli-provider-routing.ts` — not task-move routing. It is not violated by the CLI writing the store,
+and it was never going to detect it; the assumption that it guards this path is wrong at the
+deployed HEAD.
+
+**The consequence, and why the direct path is safe to keep.** Because the CLI and the daemon share
+one codepath, everything that makes review dispatch reliable is placed where both must pass: the
+lifecycle event is appended inside the move transaction at the store chokepoint, and reviewer
+dispatch is derived from **persisted lane state** rather than from the identity of the caller. The
+sweep reads the board, never `moveSource`, so a CLI-written move, a dashboard drag, and an
+automation move are the same candidate. Routing CLI moves through the daemon would add a network
+boundary and a privileged endpoint without making the invariant hold one bit better.
+
+**Attribution still survives the direct write, but not in the lifecycle log.** Lifecycle events
+name the `moveSource`, never the caller. The frame-level record is
+`run_audit_events.mutation_type = 'task:handoff-invariant-violation'` with
+`metadata.callerStack`, written at `packages/core/src/task-store/moves.ts:1291` when a card crosses
+into review without a recognized entry. Closure assertions must key on that row.
+
+**Proof artefact:** `packages/engine/src/__tests__/review-lane-cli-entry-dispatch.pg.test.ts`
+drives the CLI's literal call against a real PostgreSQL store and then ONE sweep tick, asserting
+(a) the violation event carries a non-empty `metadata.callerStack` naming the writing frame, and
+(b) the card acquires reviewer work on the first eligible tick — on the default vocabulary and on a
+renamed one, with a WIP-lane control and a no-reviewer (E4) control. It is a `.pg.test.ts` lane file,
+so it self-skips when no PostgreSQL is reachable and does not affect the merge gate; run it with
+`FUSION_PG_TEST_URL_BASE=<url> pnpm --filter @fusion/engine exec vitest run src/__tests__/review-lane-cli-entry-dispatch.pg.test.ts`.
+Writing it earned its keep immediately: the first real-INSERT caller exposed that
+`OpenReviewerRunInput.boardId` was typed `string | null` against a NOT NULL `board_id` column, so
+every production dispatch would have failed at the ledger write — a defect no faked-ledger unit
+test could see.
+
 ## Dashboard Availability & Supervised Mode
 
 <!-- FNXC:DashboardAvailability 2026-06-30-23:20: The dashboard needs a supervised restart mode for long-lived remote access sessions. Planning parse failures now surface as retryable session errors instead of causing process-level exits. -->
