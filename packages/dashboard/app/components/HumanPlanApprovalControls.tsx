@@ -11,8 +11,14 @@ Module scope, never declared inside a host render: a component defined in anothe
 is a new element type every render, which would unmount the textarea mid-typing and silently discard
 the operator's message (AGENTS.md — "Never Declare a Component Inside Another Component").
 
-The draft lives in the HOST so the Task Detail banner and footer render the same text through one
-state; two independent drafts would desynchronize and lose whichever the operator did not submit in.
+The draft lives in the HOST, which also owns the decision handlers.
+
+FNXC:HumanPlanApproval 2026-09-16-05:01:
+FN-448 — there is exactly ONE decision surface per card: the Task Detail banner. The former sticky
+footer placement rendered this same component a second time, so a card awaiting a human plan decision
+showed two "Message (optional)" fields and two Reject/Approve pairs, which operators read as two
+different decisions. The `variant` prop is kept (it namespaces the field/error ids and testids) but
+admits only `banner`; re-adding a second placement would reintroduce the duplicate.
 */
 import { useTranslation } from "react-i18next";
 import { UserCheck } from "lucide-react";
@@ -30,8 +36,8 @@ export interface HumanPlanApprovalControlsProps {
   pending?: boolean;
   /** Error from the last failed decision. The draft is preserved so nothing is retyped. */
   error?: string | null;
-  /** Distinguishes the Task Detail banner from its sticky footer placement. */
-  variant: "banner" | "footer";
+  /** Only the Task Detail banner renders this surface; the value namespaces ids and testids. */
+  variant: "banner";
   /** Maximum accepted message length, mirrored from the server contract. */
   maxLength: number;
 }

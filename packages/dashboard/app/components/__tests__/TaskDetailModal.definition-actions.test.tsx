@@ -441,6 +441,63 @@ describe("TaskDetailModal", () => {
     });
 
     /*
+    FNXC:HumanPlanApproval 2026-09-16-05:01:
+    FN-448 symptom reproduction. Before the fix, a card armed for a human plan decision mounted
+    HumanPlanApprovalControls in BOTH the banner and the sticky footer, so the operator saw two
+    "Message (optional)" fields and two Reject/Approve pairs for a single decision. The decision is
+    now taken exactly once, from the banner.
+    */
+    it("renders a single messaged decision surface with no footer duplicate", () => {
+      render(
+        <TaskDetailContent
+          task={makeTask({
+            column: "todo",
+            status: "awaiting-approval",
+            prompt: "# Plan",
+            humanPlanApproval: { enabled: true },
+          } as Partial<Task>)}
+          initialTab="definition"
+          embedded
+          onRequestClose={noop}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      expect(screen.getAllByTestId(/^human-plan-approval-controls-/)).toHaveLength(1);
+      expect(screen.getByTestId("human-plan-approval-controls-banner")).toBeTruthy();
+      expect(screen.queryByTestId("human-plan-approval-controls-footer")).toBeNull();
+      expect(screen.getAllByLabelText("Message (optional)")).toHaveLength(1);
+      expect(screen.getAllByRole("button", { name: "Approve" })).toHaveLength(1);
+      expect(screen.getAllByRole("button", { name: "Reject" })).toHaveLength(1);
+      // The legacy bare footer buttons belong to unarmed holds only.
+      expect(screen.queryByTestId("detail-plan-approval-footer-approve")).toBeNull();
+      expect(screen.queryByTestId("detail-plan-approval-footer-reject")).toBeNull();
+    });
+
+    /* FNXC:HumanPlanApproval 2026-09-16-05:01: the unarmed control keeps its legacy footer buttons. */
+    it("keeps the legacy footer Approve/Reject Plan buttons for an unarmed hold", () => {
+      render(
+        <TaskDetailContent
+          task={makeTask({ column: "todo", status: "awaiting-approval", prompt: "# Plan" })}
+          initialTab="definition"
+          embedded
+          onRequestClose={noop}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      expect(screen.queryAllByTestId(/^human-plan-approval-controls-/)).toHaveLength(0);
+      expect(screen.getByTestId("detail-plan-approval-footer-approve")).toBeTruthy();
+      expect(screen.getByTestId("detail-plan-approval-footer-reject")).toBeTruthy();
+    });
+
+    /*
      * FNXC:ReleaseAuthorizationGate 2026-07-09-00:00: the triage release-authorization
      * gate was removed. A task still carrying the legacy release-authorization hold is
      * now treated as an ordinary manual plan-approval hold and renders Approve/Reject

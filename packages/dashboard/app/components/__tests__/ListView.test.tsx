@@ -936,7 +936,10 @@ describe("ListView", () => {
     });
 
     expect(screen.getByTestId("list-review-budget-exhausted-FN-BUDGET")).toHaveTextContent("Review budget exhausted");
-    expect(screen.getAllByText("Awaiting Approval")).toHaveLength(2);
+    /* FNXC:TaskStatusBadge 2026-09-16-05:01: FN-448 renamed the generic hold badge to "Needs you". */
+    expect(screen.getAllByText("Needs you")).toHaveLength(2);
+    expect(screen.queryAllByText("Awaiting Approval")).toHaveLength(0);
+    expect(document.querySelectorAll(".list-status-badge--needs-you")).toHaveLength(2);
     viewportSpy.mockRestore();
   });
 
@@ -951,7 +954,9 @@ describe("ListView", () => {
     });
 
     expect(screen.getByTestId("list-review-budget-exhausted-FN-BUDGET")).toHaveTextContent("Review budget exhausted");
-    expect(screen.getAllByText("Awaiting Approval")).toHaveLength(2);
+    expect(screen.getAllByText("Needs you")).toHaveLength(2);
+    expect(screen.queryAllByText("Awaiting Approval")).toHaveLength(0);
+    expect(document.querySelectorAll(".list-status-badge--needs-you")).toHaveLength(2);
     viewportSpy.mockRestore();
   });
 

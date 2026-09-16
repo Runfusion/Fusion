@@ -5696,12 +5696,17 @@ export function TaskDetailContent({
                   </p>
                   {/*
                   FNXC:PlanApproval 2026-08-01-06:34:
-                  Approval actions must sit beside the top approval message as well as in the persistent footer,
-                  so an operator can act without scrolling through a long task body.
+                  Approval actions sit beside the top approval message so an operator can act without
+                  scrolling through a long task body.
+
+                  FNXC:HumanPlanApproval 2026-09-16-05:01:
+                  FN-448 — for a MESSAGED (human) decision this banner is the ONLY surface: the footer's
+                  second HumanPlanApprovalControls duplicated the message field and the Reject/Approve
+                  pair on the same card. Legacy holds keep their bare footer buttons.
                   */}
                   {workingTask.prompt && (
                     requiresHumanPlanDecision ? (
-                      /* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 replaces the bare buttons with the messaged decision surface. */
+                      /* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 replaces the bare buttons with the messaged decision surface, and FN-448 makes it the single placement. */
                       <HumanPlanApprovalControls
                         taskId={task.id}
                         variant="banner"
@@ -7286,25 +7291,16 @@ export function TaskDetailContent({
             <>
               {/* Approve/Reject Plan buttons for manual plan-approval holds (also covers
                   legacy rows with awaitingApprovalReason === "release-authorization"). */}
-              {isAwaitingApproval && workingTask.prompt && (
-                requiresHumanPlanDecision ? (
-                  /*
-                  FNXC:HumanPlanApproval 2026-09-15-06:24:
-                  FN-408 — the footer shares the banner's draft and handlers, so text typed in one
-                  placement submits from the other.
-                  */
-                  <HumanPlanApprovalControls
-                    taskId={task.id}
-                    variant="footer"
-                    message={humanPlanDecisionMessage}
-                    onMessageChange={setHumanPlanDecisionMessage}
-                    onApprove={handleHumanPlanApprove}
-                    onReject={handleHumanPlanReject}
-                    pending={isPlanApprovalPending}
-                    error={humanPlanDecisionError}
-                    maxLength={HUMAN_PLAN_APPROVAL_MESSAGE_MAX_LENGTH_CLIENT}
-                  />
-                ) : (
+              {/*
+              FNXC:HumanPlanApproval 2026-09-16-05:01:
+              FN-448 — a human plan decision is taken EXACTLY ONCE, from the banner at the top of the
+              Definition tab. The footer used to mount a second HumanPlanApprovalControls sharing the
+              same draft, which printed "Message (optional)" and a Reject/Approve pair twice on one
+              card; operators read the duplicate as two different decisions. The legacy (non-messaged)
+              Approve/Reject Plan buttons below stay in the footer — they are a bare action pair, not a
+              second message field, and the banner is not always scrolled into view for them.
+              */}
+              {isAwaitingApproval && workingTask.prompt && !requiresHumanPlanDecision && (
                 <>
                   <UiButton className="btn btn-primary btn-sm" data-testid="detail-plan-approval-footer-approve" disabled={isPlanApprovalPending} onClick={handleApprovePlan}>
                     {t("taskDetail.plan.approveBtn", "Approve Plan")}
@@ -7313,7 +7309,6 @@ export function TaskDetailContent({
                     {t("taskDetail.plan.rejectBtn", "Reject Plan")}
                   </UiButton>
                 </>
-                )
               )}
 
               <div className="modal-actions-spacer" />

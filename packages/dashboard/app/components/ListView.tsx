@@ -81,8 +81,15 @@ type SortField = "title" | "status" | "column" | "retries";
 FNXC:MergeQueue 2026-07-15-10:45:
 List status column used to print raw engine statuses (landing/reviewing). Share the board badge mapper so list and card never diverge.
 */
+/*
+FNXC:TaskStatusBadge 2026-09-16-05:01:
+FN-448 — the three surfaces (Board card, compact List cards, List table rows) must speak with one
+voice: a card waiting for a human plan decision reads "Needs you" in blinking warning paint where it
+would otherwise read "Queued" or "Ready". The shared mappers stay untouched; each host maps this one
+status locally, exactly as the card does.
+*/
 function getTaskStatusLabel(status: string, t: TFunction<"app">, workflowStepLabel?: string, context?: TaskStatusBadgeContext): string {
-  if (status === "awaiting-approval") return t("tasks.awaitingApproval", "Awaiting Approval");
+  if (status === "awaiting-approval") return t("tasks.planApproval.needsYouBadge", "Needs you");
   return getTaskStatusBadgeLabel(status, t, workflowStepLabel, context);
 }
 type SortDirection = "asc" | "desc";
@@ -2543,7 +2550,7 @@ export function ListView({
                                   <span className="list-status-badge paused">{t("listView.pausedByAgent", "paused by agent")}</span>
                                 ) : hasStatus ? (
                                   <span
-                                    className={`list-status-badge list-status-badge--${task.column}${isReviewBudgetExhausted ? " list-status-badge--review-budget-exhausted" : ""}${isFailed ? " failed" : ""}${isAgentActive ? " pulsing" : ""}`}
+                                    className={`list-status-badge list-status-badge--${task.column}${isReviewBudgetExhausted ? " list-status-badge--review-budget-exhausted" : ""}${visualStatus === "awaiting-approval" && !isReviewBudgetExhausted ? " list-status-badge--needs-you" : ""}${isFailed ? " failed" : ""}${isAgentActive ? " pulsing" : ""}`}
                                     title={isReviewBudgetExhausted ? t("tasks.awaitingApprovalPlanReviewReplanCapTitle", "Plan Review requested revisions repeatedly without converging. Approve the current plan to proceed, or reject to regenerate it.") : undefined}
                                     aria-label={isTransientPlannerActive ? t("tasks.statusPlanning", "Planning") : undefined}
                                     data-testid={isReviewBudgetExhausted ? `list-review-budget-exhausted-${task.id}` : undefined}
@@ -2584,7 +2591,8 @@ export function ListView({
                               </div>
 
                               <ExternalBlockNotice task={task} variant="list" onOpenChatWithPrefill={onOpenChatWithPrefill} onRetryTask={onRetryTask} addToast={addToast} />
-                              <PlanApprovalNotice task={task} variant="list" projectId={projectId} addToast={addToast} isPlanningLane={isPlanningLaneForTask(task)} />
+                              {/* FNXC:HumanPlanApproval 2026-09-16-05:01: FN-448 wires the task-record route on BOTH list renders, so a messaged decision's "Review plan" button is never an inert disabled control. */}
+                              <PlanApprovalNotice task={task} variant="list" projectId={projectId} addToast={addToast} isPlanningLane={isPlanningLaneForTask(task)} onOpenTaskRecord={onOpenDetail} />
 
                               {(hasDependencies || hasProgress) && (
                                 <div className="list-card-row list-card-meta">
@@ -2816,12 +2824,13 @@ export function ListView({
                                 {visibleColumns.has("status") && (
                                   <td className="list-cell">
                                     <ExternalBlockNotice task={task} variant="list" onOpenChatWithPrefill={onOpenChatWithPrefill} onRetryTask={onRetryTask} addToast={addToast} />
-                                    <PlanApprovalNotice task={task} variant="list" projectId={projectId} addToast={addToast} isPlanningLane={isPlanningLaneForTask(task)} />
+                                    {/* FNXC:HumanPlanApproval 2026-09-16-05:01: FN-448 — same task-record route in the table status cell. */}
+                                    <PlanApprovalNotice task={task} variant="list" projectId={projectId} addToast={addToast} isPlanningLane={isPlanningLaneForTask(task)} onOpenTaskRecord={onOpenDetail} />
                                     {isPaused && task.pausedByAgentId ? (
                                       <span className="list-status-badge paused">{t("listView.pausedByAgent", "paused by agent")}</span>
                                     ) : showStatusBadge ? (
                                       <span
-                                        className={`list-status-badge list-status-badge--${task.column}${isReviewBudgetExhausted ? " list-status-badge--review-budget-exhausted" : ""}${isFailed ? " failed" : ""}${
+                                        className={`list-status-badge list-status-badge--${task.column}${isReviewBudgetExhausted ? " list-status-badge--review-budget-exhausted" : ""}${visualStatus === "awaiting-approval" && !isReviewBudgetExhausted ? " list-status-badge--needs-you" : ""}${isFailed ? " failed" : ""}${
                                           isAgentActive ? " pulsing" : ""
                                         }`}
                                         title={isReviewBudgetExhausted ? t("tasks.awaitingApprovalPlanReviewReplanCapTitle", "Plan Review requested revisions repeatedly without converging. Approve the current plan to proceed, or reject to regenerate it.") : undefined}

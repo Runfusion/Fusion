@@ -8910,7 +8910,8 @@
       "approving": "",
       "copy": "",
       "replanCapCopy": "",
-      "title": ""
+      "title": "",
+      "needsYouBadge": ""
     },
     "humanPlanApproval": {
       "toggle": "Exigir minha aprovação do plano antes da execução",

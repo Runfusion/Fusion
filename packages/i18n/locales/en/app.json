@@ -8782,7 +8782,8 @@
       "approving": "Approving...",
       "copy": "Review the plan before implementation starts.",
       "replanCapCopy": "Review the current plan, then approve it or request specific changes.",
-      "title": "Need Your Review"
+      "title": "Need Your Review",
+      "needsYouBadge": "Needs you"
     },
     "branch": "Branch",
     "branchMetadata": "Branch metadata",

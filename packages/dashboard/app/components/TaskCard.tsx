@@ -784,7 +784,12 @@ export function HumanPlanApprovalBadge({ task, variant }: { task: Task; variant:
 
 interface PlanApprovalNoticeProps {
   task: Task;
-  variant: "card" | "list" | "detail";
+  /*
+  FNXC:PlanApproval 2026-09-16-05:01:
+  FN-448 dropped the `card` variant: a board card communicates the wait through its status badge and
+  opens Task Detail, instead of being covered by an overlay that hid its own content.
+  */
+  variant: "list" | "detail";
   projectId?: string;
   addToast: (message: string, type?: ToastType) => void;
   onTaskUpdated?: (task: Task) => void;
@@ -3567,10 +3572,18 @@ function TaskCardComponent({
   states the card's own status ("Planning"). The two badges stay orthogonal: what the card IS, and
   which gate is RUNNING.
   */
+  /*
+  FNXC:TaskStatusBadge 2026-09-16-05:01:
+  FN-448 — operator contract: a card waiting for a human plan decision must SAY it needs the human,
+  in the same badge slot that otherwise reads "Queued" or "Ready". "Awaiting Approval" described the
+  card's state passively and looked like every other lifecycle chip; "Needs you" (blinking warning
+  paint, see `.card-status-badge.awaiting-approval`) is the only thing left announcing the wait now
+  that FN-448 removed the full-card overlay. The replan-cap escalation keeps its distinct message.
+  */
   const statusBadgeLabel = isPlanReviewReplanCapApproval
       ? t("tasks.reviewBudgetExhausted", "Review budget exhausted")
       : isAwaitingApproval
-        ? t("tasks.awaitingApproval", "Awaiting Approval")
+        ? t("tasks.planApproval.needsYouBadge", "Needs you")
         : isAwaitingInput
           ? t("tasks.needsInput", "Needs input")
           : isLivePlanning || isTransientPlannerActive
@@ -3732,17 +3745,15 @@ function TaskCardComponent({
           addToast={addToast}
         />
       )}
-      {!isExternalBlocked && isAwaitingApproval && (
-        <PlanApprovalNotice
-          task={task}
-          variant="card"
-          projectId={projectId}
-          addToast={addToast}
-          isPlanningLane={isPlanningLane}
-          /* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 routes a messaged decision to the task record instead of approving from the slim card. */
-          onOpenTaskRecord={onOpenDetail}
-        />
-      )}
+      {/*
+      FNXC:PlanApproval 2026-09-16-05:01:
+      FN-448 removed the card's "Need Your Review" overlay. It was absolutely positioned over the whole
+      card, so a task waiting for a human decision became unreadable: title, badges and metadata were
+      all hidden behind it. The card now stays legible and announces the wait through its header status
+      badge ("Needs you", blinking warning paint); opening the card leads to Task Detail, where the
+      decision is actually taken. The List notice is unchanged — it is inline, hides no row content and
+      carries the direct action.
+      */}
       <div className="card-header">
         <span className="card-id">{task.id}</span>
         {/*

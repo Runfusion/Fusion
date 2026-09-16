@@ -10,7 +10,7 @@ Surface enumeration:
     payload, independence from Fast, reset after success.
   • Badge: TaskCard plus BOTH ListView renders (mobile cards and desktop table), all three states,
     and absent/false/legacy data producing no badge shell.
-  • Decision: shared draft across banner and footer, both decisions carrying the message, double
+  • Decision: one banner placement (FN-448 removed the duplicate footer one), both decisions carrying the message, double
     submit sending once, failure preserving the draft, DOM identity preserved across a rerender.
   • Viewports: 390px (phone) and 1280px (desktop).
 */
@@ -295,26 +295,26 @@ describe("the decision surface offers one message field and both decisions", () 
     expect(onReject).toHaveBeenCalledTimes(1);
   });
 
-  it("renders the same controls in the footer placement with distinct ids", () => {
+  /*
+  FNXC:HumanPlanApproval 2026-09-16-05:01:
+  FN-448 — the decision surface is rendered exactly once. The former case here mounted a second
+  "footer" placement and only checked that its ids did not collide, which is precisely the duplicate
+  operators complained about; the surface now has a single message field and a single decision pair.
+  */
+  it("renders exactly one decision surface with one message field and one decision pair", () => {
     render(
-      <div>
-        <HumanPlanApprovalControls
-          taskId="FN-408" variant="banner" message="" onMessageChange={() => {}}
-          onApprove={() => {}} onReject={() => {}} maxLength={10_000}
-        />
-        <HumanPlanApprovalControls
-          taskId="FN-408" variant="footer" message="" onMessageChange={() => {}}
-          onApprove={() => {}} onReject={() => {}} maxLength={10_000}
-        />
-      </div>,
+      <HumanPlanApprovalControls
+        taskId="FN-408" variant="banner" message="" onMessageChange={() => {}}
+        onApprove={() => {}} onReject={() => {}} maxLength={10_000}
+      />,
     );
 
-    // Two placements may coexist; their field ids must not collide.
+    const surfaces = screen.getAllByTestId(/^human-plan-approval-controls-/);
+    expect(surfaces).toHaveLength(1);
     const banner = screen.getByTestId("human-plan-approval-controls-banner");
-    const footer = screen.getByTestId("human-plan-approval-controls-footer");
-    const bannerField = within(banner).getByTestId("human-plan-approval-message-banner");
-    const footerField = within(footer).getByTestId("human-plan-approval-message-footer");
-    expect(bannerField.id).not.toBe(footerField.id);
+    expect(within(banner).getAllByLabelText("Message (optional)")).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "Approve" })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "Reject" })).toHaveLength(1);
   });
 
   it("caps the field at the server's message limit", async () => {

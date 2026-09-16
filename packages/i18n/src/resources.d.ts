@@ -9143,6 +9143,7 @@ export default interface Resources {
         "approveFailed": "Failed to approve plan: {{error}}",
         "approving": "Approving...",
         "copy": "Review the plan before implementation starts.",
+        "needsYouBadge": "Needs you",
         "replanCapCopy": "Review the current plan, then approve it or request specific changes.",
         "title": "Need Your Review"
       },

@@ -8899,7 +8899,8 @@
       "approving": "",
       "copy": "",
       "replanCapCopy": "",
-      "title": ""
+      "title": "",
+      "needsYouBadge": ""
     },
     "humanPlanApproval": {
       "toggle": "执行前需要我批准计划",

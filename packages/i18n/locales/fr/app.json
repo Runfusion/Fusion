@@ -8918,7 +8918,8 @@
       "approving": "",
       "copy": "",
       "replanCapCopy": "",
-      "title": ""
+      "title": "",
+      "needsYouBadge": "Besoin de toi"
     },
     "humanPlanApproval": {
       "toggle": "Exiger ma validation du plan avant exécution",

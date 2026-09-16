@@ -733,7 +733,41 @@ rows while preserving their existing badge geometry.
   box-shadow: inset 0 0 0 var(--btn-border-width) color-mix(in srgb, var(--color-warning) 45%, transparent);
 }
 
+/*
+FNXC:TaskStatusBadge 2026-09-16-05:01:
+FN-448 — the List twin of the card's "Needs you" badge: same warning paint, same slow blink, so the
+Board and both List layouts announce a waiting human decision identically. Geometry is inherited from
+`.list-status-badge`; only paint and animation are set here.
+*/
+.list-status-badge--needs-you {
+  background: color-mix(in srgb, var(--color-warning) 14%, transparent);
+  color: var(--color-warning);
+  box-shadow: inset 0 0 0 var(--btn-border-width) color-mix(in srgb, var(--color-warning) 45%, transparent);
+  --needs-you-blink-duration: calc(var(--duration-slow) * 5);
+  animation: list-needs-you-blink var(--needs-you-blink-duration) ease-in-out infinite;
+}
+
+@keyframes list-needs-you-blink {
+  0%,
+  100% {
+    background: color-mix(in srgb, var(--color-warning) 14%, transparent);
+    opacity: 1;
+  }
+  50% {
+    background: color-mix(in srgb, var(--color-warning) 38%, transparent);
+    opacity: 0.65;
+  }
+}
+
+/* Reduced motion keeps the warning paint and drops the blink. */
+@media (prefers-reduced-motion: reduce) {
+  .list-status-badge--needs-you {
+    animation: none;
+  }
+}
+
 @media (max-width: 768px) {
+  .list-status-badge--needs-you,
   .list-status-badge--review-budget-exhausted {
     max-width: 100%;
     text-align: center;

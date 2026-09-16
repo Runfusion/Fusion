@@ -3078,10 +3078,13 @@ describe("TaskCard", () => {
   /*
    * FNXC:ReleaseAuthorizationGate 2026-07-09-00:00: the triage release-authorization
    * gate was removed. A legacy release-authorization hold now renders the generic
-   * "Awaiting Approval" badge like any manual plan-approval hold — no distinct
-   * release-authorization label or badge class.
+   * plan-approval badge like any manual hold — no distinct release-authorization label
+   * or badge class.
+   *
+   * FNXC:TaskStatusBadge 2026-09-16-05:01: FN-448 renamed that generic badge from the
+   * passive "Awaiting Approval" to the operator-facing "Needs you".
    */
-  it("renders the generic Awaiting Approval badge for a legacy release-authorization hold", () => {
+  it("renders the generic Needs you badge for a legacy release-authorization hold", () => {
     const { container: releaseContainer } = render(
       <TaskCard
         task={makeTask({ column: "triage", status: "awaiting-approval", awaitingApprovalReason: "release-authorization" } as any)}
@@ -3089,7 +3092,8 @@ describe("TaskCard", () => {
         addToast={noop}
       />,
     );
-    expect(within(releaseContainer).getByText("Awaiting Approval")).toBeDefined();
+    expect(within(releaseContainer).getByText("Needs you")).toBeDefined();
+    expect(within(releaseContainer).queryByText("Awaiting Approval")).toBeNull();
     expect(within(releaseContainer).queryByText("Awaiting Release Authorization")).toBeNull();
     const releaseBadge = releaseContainer.querySelector(".card-status-badge") as HTMLElement;
     expect(releaseBadge.className).not.toContain("awaiting-release-authorization");
@@ -3100,7 +3104,7 @@ describe("TaskCard", () => {
    * When Plan Review exhausts automatic REVISE replans, the card must not look like a
    * generic require-all hold — badge text + title explain the non-convergence reason.
    */
-  it("keeps the generic Awaiting Approval badge for an ordinary manual hold", () => {
+  it("keeps the generic Needs you badge for an ordinary manual hold", () => {
     const { container } = render(
       <TaskCard
         task={makeTask({ column: "triage", status: "awaiting-approval" } as any)}
@@ -3109,7 +3113,8 @@ describe("TaskCard", () => {
       />,
     );
 
-    expect(within(container).getByText("Awaiting Approval")).toBeDefined();
+    expect(within(container).getByText("Needs you")).toBeDefined();
+    expect(within(container).queryByText("Awaiting Approval")).toBeNull();
     expect(container.querySelector(".awaiting-approval--plan-review-replan-cap")).toBeNull();
   });
 
@@ -3127,6 +3132,7 @@ describe("TaskCard", () => {
     );
     expect(within(container).getByText("Review budget exhausted")).toBeDefined();
     expect(within(container).queryByText("Awaiting Approval")).toBeNull();
+    expect(within(container).queryByText("Needs you")).toBeNull();
     const badge = container.querySelector(".card-status-badge") as HTMLElement;
     expect(badge.className).toContain("awaiting-approval--plan-review-replan-cap");
     expect(badge.getAttribute("data-awaiting-approval-reason")).toBe("plan-review-replan-cap");

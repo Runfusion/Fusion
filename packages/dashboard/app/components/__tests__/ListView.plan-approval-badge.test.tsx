@@ -30,6 +30,7 @@ vi.mock("../../hooks/useConfirm", () => ({ useConfirm: () => ({ confirm: vi.fn()
 
 import { ListView } from "../ListView";
 import { ViewLayoutProvider } from "../../context/ViewLayoutContext";
+import { scopedKey } from "../../utils/projectStorage";
 import { writeBoardWorkflowsCache } from "../../utils/boardWorkflowsCache";
 import { fetchBoardWorkflows } from "../../api";
 
@@ -119,6 +120,23 @@ const LANE_PAYLOAD = {
   ],
   taskWorkflowIds: {},
 };
+
+function awaitingTask(id: string, status: string): Task {
+  return {
+    id,
+    title: "Waits for my decision",
+    description: "Plan approval hold",
+    column: "todo",
+    status,
+    dependencies: [],
+    steps: [],
+    currentStep: 0,
+    paused: false,
+    log: [],
+    createdAt: "2026-09-16T05:01:00.000Z",
+    updatedAt: "2026-09-16T05:01:00.000Z",
+  } as unknown as Task;
+}
 
 function listTask(id: string, armed: boolean): Task {
   return {
@@ -215,5 +233,62 @@ describe("ListView human plan approval badge real renders (FN-443)", () => {
     } finally {
       viewportSpy.mockRestore();
     }
+  });
+});
+
+/*
+FNXC:TaskStatusBadge 2026-09-16-05:01:
+FN-448 — a List row waiting for a plan decision must read "Needs you" in blinking warning paint
+where it would otherwise read "Queued"/"Ready". Both List presentations are mounted for real, and an
+ordinary queued row proves the badge is not applied to every status.
+*/
+describe("ListView Needs you status badge (FN-448)", () => {
+  beforeEach(() => {
+    window.sessionStorage.clear();
+    // The table only renders a status cell when the Status column is enabled; the compact cards always do.
+    localStorage.setItem(scopedKey("kb-dashboard-list-columns", TEST_PROJECT_ID), JSON.stringify(["title", "status"]));
+    vi.mocked(fetchBoardWorkflows).mockResolvedValue(LANE_PAYLOAD as never);
+    writeBoardWorkflowsCache(TEST_PROJECT_ID, LANE_PAYLOAD as never);
+  });
+
+  it.each([
+    ["mobile compact cards", "mobile" as const],
+    ["desktop table rows", "desktop" as const],
+  ])("labels an awaiting-approval row Needs you in %s", (_label, kind) => {
+    const viewportSpy = mockViewport(kind);
+    try {
+      const { container } = renderList([awaitingTask("FN-needs-you", "awaiting-approval")]);
+
+      expect(Boolean(container.querySelector("table.list-table"))).toBe(kind === "desktop");
+      expect(screen.getAllByText("Needs you").length).toBeGreaterThan(0);
+      expect(screen.queryByText("Awaiting Approval")).toBeNull();
+      const badges = container.querySelectorAll(".list-status-badge--needs-you");
+      expect(badges.length).toBeGreaterThan(0);
+      expect(badges[0]).toHaveTextContent("Needs you");
+    } finally {
+      viewportSpy.mockRestore();
+    }
+  });
+
+  it.each([
+    ["mobile compact cards", "mobile" as const],
+    ["desktop table rows", "desktop" as const],
+  ])("leaves an ordinary queued row without the Needs you badge in %s", (_label, kind) => {
+    const viewportSpy = mockViewport(kind);
+    try {
+      const { container } = renderList([awaitingTask("FN-queued", "queued")]);
+
+      expect(screen.queryByText("Needs you")).toBeNull();
+      expect(container.querySelectorAll(".list-status-badge--needs-you")).toHaveLength(0);
+    } finally {
+      viewportSpy.mockRestore();
+    }
+  });
+
+  it("blinks the badge with warning tokens and stops under reduced motion", () => {
+    const css = readAppFile("components/ListView.css");
+    expect(css).toMatch(/\.list-status-badge--needs-you \{[^}]*color: var\(--color-warning\);[^}]*animation: list-needs-you-blink/);
+    expect(css).toMatch(/@keyframes list-needs-you-blink/);
+    expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\) \{\s*\.list-status-badge--needs-you \{\s*animation: none;/);
   });
 });
