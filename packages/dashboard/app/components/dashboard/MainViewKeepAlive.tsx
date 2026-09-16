@@ -220,7 +220,6 @@ function renderListSubtree(
     retryCurrentTasksPagination,
     lastFetchTimeMs,
     autoMerge,
-    openMobileTasksInPopup,
     mergeStrategy,
   } = props;
   const workflowControlsInHeader = true;
@@ -260,7 +259,6 @@ function renderListSubtree(
         onRetryCurrentTasks={isRemote ? undefined : retryCurrentTasksPagination}
         lastFetchTimeMs={lastFetchTimeMs}
         autoMerge={autoMerge}
-        openMobileTasksInPopup={openMobileTasksInPopup}
         mergeStrategy={mergeStrategy}
         workflowControlsInHeader={workflowControlsInHeader}
         active={active}

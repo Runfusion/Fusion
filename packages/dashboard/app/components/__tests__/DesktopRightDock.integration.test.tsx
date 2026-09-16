@@ -113,7 +113,7 @@ function controllerInput(hostMode: "desktop" | "standard"): Omit<RightDockContro
     onTaskCreated: vi.fn(),
     prAuthAvailable: false,
     autoMerge: true,
-    taskDetailChatFirst: false,
+    taskDetailDefaultTab: "activity" as const,
     visibilityOptions: { hostMode, experimentalFeatures: {} },
     footerVisible: true,
   };

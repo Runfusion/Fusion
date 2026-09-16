@@ -5882,9 +5882,6 @@
       "languageAutoHint": "跟隨瀏覽器語言",
       "suppressTheLdquoNeedsYourInputRdquoBanner": "",
       "title": "外觀",
-      "openTasksInRightSidebarHelp": "",
-      "openMobileTasksInPopupHelp": "",
-      "taskDetailChatFirstHelp": "",
       "showCostBadgeOnCards": "",
       "showCostBadgeOnCardsHelp": "",
       "chatMessageLayout": "",
@@ -5896,7 +5893,8 @@
       "navigationPlacementSidebar": "",
       "navigationPlacementHelp": "",
       "rightSidebarEnabled": "顯示右側工具側邊欄",
-      "rightSidebarEnabledHelp": "啟用後，平板與桌面會顯示可選的右側側邊欄，包含檔案、聊天、清單與筆記捷徑。即使不啟用，所有工具仍可使用。專案範圍；預設：停用。"
+      "rightSidebarEnabledHelp": "啟用後，平板與桌面會顯示可選的右側側邊欄，包含檔案、聊天、清單與筆記捷徑。即使不啟用，所有工具仍可使用。專案範圍；預設：停用。",
+      "taskDetailDefaultTabHelp": ""
     },
     "auth": {
       "apiKeyCleared": "API 金鑰已清除",

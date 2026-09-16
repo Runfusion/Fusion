@@ -66,35 +66,67 @@ describe("useAppSettings", () => {
 
     act(() => {
       result.current.setChatMessageLayoutImmediate("full-width");
-      result.current.setOpenTasksInRightSidebarImmediate(true);
-      result.current.setOpenMobileTasksInPopupImmediate(true);
       result.current.setShowCostBadgeOnCardsImmediate(true);
-      result.current.setTaskDetailChatFirstImmediate(true);
+      result.current.setTaskDetailDefaultTabImmediate("chat");
     });
 
     expect(result.current.chatMessageLayout).toBe("full-width");
-    expect(result.current.openTasksInRightSidebar).toBe(true);
-    expect(result.current.openMobileTasksInPopup).toBe(true);
     expect(result.current.showCostBadgeOnCards).toBe(true);
-    expect(result.current.taskDetailChatFirst).toBe(true);
+    expect(result.current.taskDetailDefaultTab).toBe("chat");
     expect(mockFetchSettings).toHaveBeenCalledTimes(settingsFetchesBefore);
     expect(mockFetchConfig).toHaveBeenCalledTimes(configFetchesBefore);
 
     act(() => {
       result.current.setChatMessageLayoutImmediate("bubbles");
-      result.current.setOpenTasksInRightSidebarImmediate(false);
-      result.current.setOpenMobileTasksInPopupImmediate(false);
       result.current.setShowCostBadgeOnCardsImmediate(false);
-      result.current.setTaskDetailChatFirstImmediate(false);
+      result.current.setTaskDetailDefaultTabImmediate("definition");
     });
 
     expect(result.current.chatMessageLayout).toBe("bubbles");
-    expect(result.current.openTasksInRightSidebar).toBe(false);
-    expect(result.current.openMobileTasksInPopup).toBe(false);
     expect(result.current.showCostBadgeOnCards).toBe(false);
-    expect(result.current.taskDetailChatFirst).toBe(false);
+    expect(result.current.taskDetailDefaultTab).toBe("definition");
     expect(mockFetchSettings).toHaveBeenCalledTimes(settingsFetchesBefore);
     expect(mockFetchConfig).toHaveBeenCalledTimes(configFetchesBefore);
+  });
+
+  /*
+  FNXC:TaskDetailDefaultTab 2026-09-16-02:53:
+  FN-442 replaced the boolean Chat-first opt-in with a three-value project choice, so the shell must accept exactly the
+  three known values, fail closed to the historical `activity` landing tab for absent/unknown values, and still honor a
+  project that persisted `taskDetailChatFirst: true` before the rename. The new key always wins over the legacy one.
+  */
+  it.each([
+    [undefined, undefined, "activity"],
+    ["definition", undefined, "definition"],
+    ["chat", undefined, "chat"],
+    ["activity", undefined, "activity"],
+    ["planner-chat", undefined, "activity"],
+    [undefined, true, "chat"],
+    [undefined, false, "activity"],
+    ["activity", true, "activity"],
+    ["definition", true, "definition"],
+  ] as const)(
+    "resolves task detail default tab from stored %s (legacy chat-first %s) to %s",
+    async (storedTab, legacyChatFirst, expectedTab) => {
+      mockFetchSettings.mockResolvedValueOnce({ taskDetailDefaultTab: storedTab, taskDetailChatFirst: legacyChatFirst } as never);
+      const { result } = renderHook(() => useAppSettings("proj_123"));
+
+      await waitFor(() => expect(result.current.settingsLoaded).toBe(true));
+      expect(result.current.taskDetailDefaultTab).toBe(expectedTab);
+    },
+  );
+
+  it("resets task detail default tab to activity while a new project hydrates", async () => {
+    mockFetchSettings
+      .mockResolvedValueOnce({ taskDetailDefaultTab: "definition" } as never)
+      .mockResolvedValueOnce({ taskDetailDefaultTab: undefined } as never);
+    const { result, rerender } = renderHook(({ projectId }) => useAppSettings(projectId), { initialProps: { projectId: "project-a" } });
+
+    await waitFor(() => expect(result.current.taskDetailDefaultTab).toBe("definition"));
+    rerender({ projectId: "project-b" });
+    expect(result.current.taskDetailDefaultTab).toBe("activity");
+    await waitFor(() => expect(result.current.settingsLoaded).toBe(true));
+    expect(result.current.taskDetailDefaultTab).toBe("activity");
   });
 
   it("resets chat message layout to bubbles while a new project hydrates", async () => {

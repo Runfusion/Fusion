@@ -6095,14 +6095,12 @@ export default interface Resources {
         "navigationPlacementFooter": "Bottom bar",
         "navigationPlacementHelp": "Choose whether the main menu sits in the bottom bar or in a left sidebar. Only one is ever shown. Project-scoped; default: Bottom bar.",
         "navigationPlacementSidebar": "Left sidebar",
-        "openMobileTasksInPopupHelp": "When enabled, ordinary board task-card and List row/card clicks open the existing task popup so the board or list remains visible. Deep-tab and other task opens keep their current behavior. Default: disabled.",
-        "openTasksInRightSidebarHelp": "When enabled, board task cards open detail in the right sidebar when it is available; mobile and hidden-sidebar states keep the full task panel. Default: disabled.",
         "rightSidebarEnabled": "Show the right tool sidebar",
         "rightSidebarEnabledHelp": "When enabled, tablet and desktop show an optional right sidebar with Files, Chat, List, and Notes shortcuts. Every tool stays reachable without it. Project-scoped; default: disabled.",
         "showCostBadgeOnCards": "Show cost badges on task cards",
         "showCostBadgeOnCardsHelp": "Default: disabled. When enabled, board cards show derived model cost next to execution time; unavailable pricing displays — and tasks without token usage show no badge.",
         "suppressTheLdquoNeedsYourInputRdquoBanner": "Suppress the “needs your input” banner that appears when AI sessions are awaiting input or have failed.",
-        "taskDetailChatFirstHelp": "Off by default: task details list Activity first and omitted non-done opens land on Activity. Turn on to restore Chat-first order/default; explicit Chat links still work either way.",
+        "taskDetailDefaultTabHelp": "Choose which tab a task opens on and leads the task detail tab bar: Definition, Chat, or Activity. Explicit task links keep their destination. Project-scoped; default: Activity.",
         "title": "Appearance"
       },
       "auth": {

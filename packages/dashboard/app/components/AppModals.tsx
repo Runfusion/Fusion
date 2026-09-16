@@ -7,7 +7,7 @@ import { mergeTaskSnapshot } from "../hooks/useTasks";
 import type { ModalManager } from "../hooks/useModalManager";
 import type { NavEntry } from "../hooks/useNavigationHistory";
 import type { UseTaskHandlersResult } from "../hooks/useTaskHandlers";
-import type { ChatMessageLayout } from "../hooks/useAppSettings";
+import type { ChatMessageLayout, TaskDetailDefaultTab } from "../hooks/useAppSettings";
 import type { NavigationPlacement } from "../utils/navigationPlacement";
 import type { Toast, ToastType } from "../hooks/useToast";
 import { ModalErrorBoundary } from "./ErrorBoundary";
@@ -135,10 +135,10 @@ interface AppModalsProps {
   settings: {
     prAuthAvailable: boolean;
     autoMerge: boolean;
-    openTasksInRightSidebar: boolean;
-    openMobileTasksInPopup: boolean;
+
     showCostBadgeOnCards: boolean;
-    taskDetailChatFirst: boolean;
+    /* FNXC:TaskDetailDefaultTab 2026-09-16-02:53: FN-442 — project choice of the task-detail landing tab and tab-bar head order. */
+    taskDetailDefaultTab: TaskDetailDefaultTab;
     chatMessageLayout: ChatMessageLayout;
     /* FN-419: project choice of the single primary navigation surface. */
     navigationPlacement: NavigationPlacement;
@@ -159,10 +159,9 @@ interface AppModalsProps {
     setChatMessageLayoutImmediate: (layout: ChatMessageLayout) => void;
     setNavigationPlacementImmediate: (placement: NavigationPlacement) => void;
     setRightSidebarEnabledImmediate: (enabled: boolean) => void;
-    setOpenTasksInRightSidebarImmediate: (enabled: boolean) => void;
-    setOpenMobileTasksInPopupImmediate: (enabled: boolean) => void;
+
     setShowCostBadgeOnCardsImmediate: (enabled: boolean) => void;
-    setTaskDetailChatFirstImmediate: (enabled: boolean) => void;
+    setTaskDetailDefaultTabImmediate: (tab: TaskDetailDefaultTab) => void;
     setMobileNavPrimaryItemsImmediate: (items: string[]) => void;
   };
   /** Optional override for the settings modal close handler. When provided, this is called instead of modalManager.closeSettings. */
@@ -432,7 +431,7 @@ export function AppModals({
             addToast={addToast}
             prAuthAvailable={settings.prAuthAvailable}
             autoMergeEnabled={settings.autoMerge}
-            taskDetailChatFirst={settings.taskDetailChatFirst}
+            taskDetailDefaultTab={settings.taskDetailDefaultTab}
             /* FNXC:WorkflowEditorEmbedding 2026-09-15-05:29: FN-407 — close the task modal first, then navigate to the Workflows view for this task's workflow. */
             onOpenWorkflowEditor={(workflowId?: string) => {
               removeNav(detailNavCloseRef.current ?? modalManager.closeDetailTask);
@@ -486,14 +485,11 @@ export function AppModals({
               onNavigationPlacementChange={settings.setNavigationPlacementImmediate}
               rightSidebarEnabled={settings.rightSidebarEnabled}
               onRightSidebarEnabledChange={settings.setRightSidebarEnabledImmediate}
-              openTasksInRightSidebar={settings.openTasksInRightSidebar}
-              onOpenTasksInRightSidebarChange={settings.setOpenTasksInRightSidebarImmediate}
-              openMobileTasksInPopup={settings.openMobileTasksInPopup}
-              onOpenMobileTasksInPopupChange={settings.setOpenMobileTasksInPopupImmediate}
+
               showCostBadgeOnCards={settings.showCostBadgeOnCards}
               onShowCostBadgeOnCardsChange={settings.setShowCostBadgeOnCardsImmediate}
-              taskDetailChatFirst={settings.taskDetailChatFirst}
-              onTaskDetailChatFirstChange={settings.setTaskDetailChatFirstImmediate}
+              taskDetailDefaultTab={settings.taskDetailDefaultTab}
+              onTaskDetailDefaultTabChange={settings.setTaskDetailDefaultTabImmediate}
               onMobileNavPrimaryItemsChange={settings.setMobileNavPrimaryItemsImmediate}
               onReopenOnboarding={onReopenOnboarding}
               onOpenApprovals={onOpenApprovals}

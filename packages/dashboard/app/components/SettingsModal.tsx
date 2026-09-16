@@ -27,7 +27,7 @@ import {
   type DashboardShortcutAction,
 } from "../utils/keyboardShortcuts";
 import type { DashboardKeyboardShortcutMap } from "../utils/keyboardShortcuts";
-import { normalizeChatMessageLayout, type ChatMessageLayout } from "../hooks/useAppSettings";
+import { normalizeChatMessageLayout, normalizeTaskDetailDefaultTab, type ChatMessageLayout, type TaskDetailDefaultTab } from "../hooks/useAppSettings";
 import { normalizeNavigationPlacement, type NavigationPlacement } from "../utils/navigationPlacement";
 import { SettingsHelpTip } from "./settings/SettingsHelpTip";
 import { AppearanceSection } from "./settings/sections/AppearanceSection";
@@ -662,14 +662,11 @@ interface SettingsModalProps {
   rightSidebarEnabled?: boolean;
   onRightSidebarEnabledChange?: (enabled: boolean) => void;
   /** Current App-shell values and optimistic callbacks for mounted Appearance consumers. */
-  openTasksInRightSidebar?: boolean;
-  onOpenTasksInRightSidebarChange?: (enabled: boolean) => void;
-  openMobileTasksInPopup?: boolean;
-  onOpenMobileTasksInPopupChange?: (enabled: boolean) => void;
   showCostBadgeOnCards?: boolean;
   onShowCostBadgeOnCardsChange?: (enabled: boolean) => void;
-  taskDetailChatFirst?: boolean;
-  onTaskDetailChatFirstChange?: (enabled: boolean) => void;
+  /* FNXC:TaskDetailDefaultTab 2026-09-16-02:53: FN-442 — three-value project choice replacing the Chat-first opt-in. */
+  taskDetailDefaultTab?: TaskDetailDefaultTab;
+  onTaskDetailDefaultTabChange?: (tab: TaskDetailDefaultTab) => void;
   /** Mirrors pending mobile quick-action changes into the app shell immediately. */
   onMobileNavPrimaryItemsChange?: (items: string[]) => void;
   /** Optional callback when user wants to reopen the onboarding guide */
@@ -942,14 +939,10 @@ export function SettingsModal({
   onNavigationPlacementChange,
   rightSidebarEnabled,
   onRightSidebarEnabledChange,
-  openTasksInRightSidebar,
-  onOpenTasksInRightSidebarChange,
-  openMobileTasksInPopup,
-  onOpenMobileTasksInPopupChange,
   showCostBadgeOnCards,
   onShowCostBadgeOnCardsChange,
-  taskDetailChatFirst,
-  onTaskDetailChatFirstChange,
+  taskDetailDefaultTab,
+  onTaskDetailDefaultTabChange,
   onMobileNavPrimaryItemsChange,
   onReopenOnboarding,
   onOpenApprovals,
@@ -1005,10 +998,8 @@ export function SettingsModal({
     mergeAdvanceAutoSync: "stash-and-ff",
     merger: { mode: "ai", maxReviewPasses: 3, allowDirtyLocalCheckoutSync: true },
     showWorktreeGrouping: false,
-    openTasksInRightSidebar: false,
-    openMobileTasksInPopup: false,
     showCostBadgeOnCards: false,
-    taskDetailChatFirst: false,
+    taskDetailDefaultTab: "activity",
     chatMessageLayout: "bubbles",
     navigationPlacement: "footer",
     /* FNXC:RightSidebarOptional 2026-09-15-16:04: FN-426 — pre-hydration form value matches the default-off schema. */
@@ -1580,10 +1571,13 @@ export function SettingsModal({
           */
           showCostBadgeOnCards: s.showCostBadgeOnCards === true,
           /*
-          FNXC:TaskDetailActivityFirst 2026-06-30-23:59:
-          The Settings form normalizes missing taskDetailChatFirst to false so new and upgraded projects show the Activity-first default until an operator explicitly opts into Chat-first.
+          FNXC:TaskDetailDefaultTab 2026-09-16-02:53:
+          FN-442: the Settings form normalizes missing or malformed values to the historical `activity` landing tab, and
+          reads a legacy persisted `taskDetailChatFirst === true` as `chat` so an operator who had opted into Chat-first
+          finds the form pre-filled on Chat rather than silently reset. The explicit cast is deliberate: the legacy key is
+          no longer in the type but can still be present in a persisted value.
           */
-          taskDetailChatFirst: s.taskDetailChatFirst === true,
+          taskDetailDefaultTab: normalizeTaskDetailDefaultTab(s.taskDetailDefaultTab, (s as Record<string, unknown>).taskDetailChatFirst),
           /*
           FNXC:ChatMessageLayout 2026-08-18-20:27:
           Normalize legacy or malformed project values before they enter the form so the selector always has exactly its two valid choices and defaults to Bubbles.
@@ -4236,14 +4230,10 @@ export function SettingsModal({
             onNavigationPlacementChange={onNavigationPlacementChange}
             rightSidebarEnabled={rightSidebarEnabled}
             onRightSidebarEnabledChange={onRightSidebarEnabledChange}
-            openTasksInRightSidebar={openTasksInRightSidebar}
-            onOpenTasksInRightSidebarChange={onOpenTasksInRightSidebarChange}
-            openMobileTasksInPopup={openMobileTasksInPopup}
-            onOpenMobileTasksInPopupChange={onOpenMobileTasksInPopupChange}
             showCostBadgeOnCards={showCostBadgeOnCards}
             onShowCostBadgeOnCardsChange={onShowCostBadgeOnCardsChange}
-            taskDetailChatFirst={taskDetailChatFirst}
-            onTaskDetailChatFirstChange={onTaskDetailChatFirstChange}
+            taskDetailDefaultTab={taskDetailDefaultTab}
+            onTaskDetailDefaultTabChange={onTaskDetailDefaultTabChange}
             sessionBannersHidden={sessionBannersHidden}
             setSessionBannersHidden={setSessionBannersHidden}
           />

@@ -1490,20 +1490,14 @@ export interface ProjectSettings {
    * This is an explicit show/hide project setting. The default-off state hides worktree grouping and labels in both legacy and workflow-mode WIP columns; when enabled, operators see grouping in every WIP/processing column, including workflow-mode columns flagged as counting toward WIP.
    */
   showWorktreeGrouping?: boolean;
-  /**
-   * When true, board task-card clicks open task detail in the right dock when that dock surface is active; otherwise board clicks keep the full main-panel task detail. Default: false.
-   *
-   * FNXC:OpenTasksInRightSidebar 2026-06-28-00:00:
-   * This project-scoped setting is default-off so current board navigation is unchanged. When enabled, only Board card clicks may route to the tablet/desktop right dock; all non-board task-open paths and dock-inactive/mobile states must preserve the full-panel or existing modal behavior.
-   */
-  openTasksInRightSidebar?: boolean;
-  /**
-   * When true, ordinary board task-card clicks open task detail in the existing popped-out FloatingWindow task surface instead of the full main-panel task detail. Default: false.
-   *
-   * FNXC:MobileTaskPopups 2026-07-01-12:00:
-   * This project-scoped setting is default-off so board navigation is unchanged until operators opt in. When enabled, it applies to board-card clicks on every viewport with no deep initial tab and reuses the existing task pop-out/FloatingWindow path; the popup route takes precedence over right-dock routing for those ordinary clicks while all non-board task-open paths remain governed by their existing settings and handlers.
-   */
-  openMobileTasksInPopup?: boolean;
+  /*
+  FNXC:TaskDetailDefaultTab 2026-09-16-02:53:
+  FN-442 removes `openTasksInRightSidebar` and `openMobileTasksInPopup`. Opening a task from the board, from a detail
+  chip (Changes/Retries/Workflow), or from the list is now unconditionally the floating task window; the main panel
+  remains only as the mobile-drawer fallback. Both keys are unknown to the schema — a historical stored value is
+  neither applied nor rewritten, and no migration touches it. `rightSidebarEnabled` is untouched: the optional right
+  tool dock stays, only the "open tasks inside it" entry is gone.
+  */
   /*
   FNXC:TaskWindowIdentity 2026-09-14-17:46:
   FN-392 removes `taskPopupsBoardListOnly`. Task-detail windows are permanently project-scoped: one window per task,
@@ -1538,10 +1532,15 @@ export interface ProjectSettings {
    */
   rightSidebarEnabled?: boolean;
   /**
-   * FNXC:TaskDetailActivityFirst 2026-06-30-23:59:
-   * Default-off keeps task details Activity-first so omitted non-done opens land on the legacy `chat` Activity → Live surface. Operators can set true to restore Chat-first ordering/default while explicit Activity/Chat/Logs deep links remain stable.
+   * FNXC:TaskDetailDefaultTab 2026-09-16-02:53:
+   * FN-442: one project-scoped three-value choice carries BOTH the landing tab of a task open with no explicit tab
+   * AND the head order of the task-detail tab bar. `definition` maps to the `definition` tab, `chat` to the
+   * `planner-chat` tab, and `activity` to the legacy `chat` Activity → Live surface. Missing or invalid persisted
+   * values resolve to the historical `activity` default; a legacy persisted `taskDetailChatFirst === true` resolves
+   * to `chat` as a read-only compatibility fallback. Explicit deep links and the terminal-column `summary` tab are
+   * unaffected.
    */
-  taskDetailChatFirst?: boolean;
+  taskDetailDefaultTab?: "definition" | "chat" | "activity";
   /** When true, restores the legacy behavior of silently creating sibling
    *  branches like `fusion/FN-123-2` when the canonical task branch is already
    *  checked out elsewhere. Default: false. */

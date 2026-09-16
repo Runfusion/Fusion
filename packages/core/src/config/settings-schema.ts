@@ -646,12 +646,12 @@ export const DEFAULT_PROJECT_SETTINGS = {
   testCommand: undefined,
   buildCommand: undefined,
   showWorktreeGrouping: false,
-  openTasksInRightSidebar: false,
   /*
-  FNXC:MobileTaskPopups 2026-07-01-12:00:
-  Default off preserves current board-card task detail behavior. The dashboard only consults this project setting for ordinary board-card clicks without a deep tab across mobile, tablet, and desktop viewports, and reuses the existing task pop-out surface before falling back to right-dock or main-panel routing.
+  FNXC:TaskDetailDefaultTab 2026-09-16-02:53:
+  FN-442 removes `openTasksInRightSidebar` and `openMobileTasksInPopup`: opening a task from the board or the list is
+  now unconditionally the floating task window, so there is nothing left to opt into. The main panel survives only as
+  the mobile-drawer fallback. Historical stored values are unknown to the schema — neither applied nor rewritten.
   */
-  openMobileTasksInPopup: false,
   /*
   FNXC:TaskWindowIdentity 2026-09-14-17:46:
   FN-392 removed `taskPopupsBoardListOnly`: task windows are permanently project-scoped, so the key is absent from the
@@ -683,10 +683,13 @@ export const DEFAULT_PROJECT_SETTINGS = {
   */
   rightSidebarEnabled: false,
   /*
-  FNXC:TaskDetailActivityFirst 2026-06-30-23:59:
-  Project task-detail defaults are Activity-first unless this opt-in is true. Keeping the default false preserves explicit deep-link ids while making omitted non-done task opens land on Activity → Live.
+  FNXC:TaskDetailDefaultTab 2026-09-16-02:53:
+  FN-442 replaces the boolean `taskDetailChatFirst` with one three-value project choice that carries BOTH the landing
+  tab of task opens with no explicit tab AND the head order of the task-detail tab bar. `activity` is the historical
+  default, so new and upgraded projects are unchanged; a legacy persisted `taskDetailChatFirst === true` is read as a
+  compatibility fallback only (see `normalizeTaskDetailDefaultTab`) and is never written back.
   */
-  taskDetailChatFirst: false,
+  taskDetailDefaultTab: "activity",
   executorAllowSiblingBranchRename: false,
   worktrunk: {
     enabled: false,

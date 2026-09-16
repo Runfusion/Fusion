@@ -502,7 +502,7 @@ describe("TaskDetailModal", () => {
       const { baseElement: container } = render(
         <TaskDetailModal
           task={makeTask({ prompt: "# Hello\n\nContent", plannerOversightLevel: "off" })}
-          taskDetailChatFirst
+          taskDetailDefaultTab="chat"
           onClose={noop}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
@@ -1053,7 +1053,7 @@ describe("TaskDetailModal", () => {
             prompt: "# Hello\n\nContent",
             log: [{ timestamp: "2026-01-01T00:00:00Z", action: "Expanded feed entry", outcome: "visible" }],
           })}
-          taskDetailChatFirst
+          taskDetailDefaultTab="chat"
           onClose={noop}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
@@ -1129,7 +1129,7 @@ describe("TaskDetailModal", () => {
       const { baseElement: container } = render(
         <TaskDetailModal
           task={makeTask({ prompt: "# Hello\n\nContent", branchContext })}
-          taskDetailChatFirst
+          taskDetailDefaultTab="chat"
           onClose={noop}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
@@ -1164,7 +1164,7 @@ describe("TaskDetailModal", () => {
       const { baseElement: container } = render(
         <TaskDetailModal
           task={makeTask({ prompt: "# Hello\n\nContent", branchContext: undefined })}
-          taskDetailChatFirst
+          taskDetailDefaultTab="chat"
           onClose={noop}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
@@ -1266,7 +1266,7 @@ describe("TaskDetailModal", () => {
       const { baseElement: container, rerender } = render(
         <TaskDetailModal
           task={makeTask({ prompt: "# Hello\n\nContent" })}
-          taskDetailChatFirst
+          taskDetailDefaultTab="chat"
           onClose={noop}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
@@ -1294,7 +1294,7 @@ describe("TaskDetailModal", () => {
         <TaskDetailModal
           task={makeTask({ prompt: "# Hello\n\nContent" })}
           initialTab="logs"
-          taskDetailChatFirst
+          taskDetailDefaultTab="chat"
           onClose={noop}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
@@ -1344,7 +1344,7 @@ describe("TaskDetailModal", () => {
       const { baseElement: container } = render(
         <TaskDetailModal
           task={makeTask({ prompt: "# Hello\n\nContent" })}
-          taskDetailChatFirst
+          taskDetailDefaultTab="chat"
           onClose={noop}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
@@ -1380,7 +1380,7 @@ describe("TaskDetailModal", () => {
       render(
         <TaskDetailModal
           task={makeTask({ prompt: "# Hello\n\nContent" })}
-          taskDetailChatFirst
+          taskDetailDefaultTab="chat"
           onClose={noop}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}

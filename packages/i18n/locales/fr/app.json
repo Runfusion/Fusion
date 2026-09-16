@@ -5901,9 +5901,6 @@
       "languageAutoHint": "Suivre la langue du navigateur",
       "suppressTheLdquoNeedsYourInputRdquoBanner": "",
       "title": "Apparence",
-      "openTasksInRightSidebarHelp": "",
-      "openMobileTasksInPopupHelp": "",
-      "taskDetailChatFirstHelp": "",
       "showCostBadgeOnCards": "",
       "showCostBadgeOnCardsHelp": "",
       "chatMessageLayout": "",
@@ -5915,7 +5912,8 @@
       "navigationPlacementSidebar": "",
       "navigationPlacementHelp": "",
       "rightSidebarEnabled": "Afficher la barre d’outils de droite",
-      "rightSidebarEnabledHelp": "Une fois activée, les tablettes et ordinateurs affichent une barre latérale droite facultative avec les raccourcis Fichiers, Chat, Liste et Notes. Tous les outils restent accessibles sans elle. Portée projet ; par défaut : désactivée."
+      "rightSidebarEnabledHelp": "Une fois activée, les tablettes et ordinateurs affichent une barre latérale droite facultative avec les raccourcis Fichiers, Chat, Liste et Notes. Tous les outils restent accessibles sans elle. Portée projet ; par défaut : désactivée.",
+      "taskDetailDefaultTabHelp": ""
     },
     "auth": {
       "apiKeyCleared": "Clé API effacée",

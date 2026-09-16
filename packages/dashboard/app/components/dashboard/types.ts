@@ -9,6 +9,7 @@
 import type { Dispatch, LazyExoticComponent, SetStateAction } from "react";
 import type { TFunction } from "i18next";
 import type { ChatHost } from "../../utils/navigationPlacement";
+import type { TaskDetailDefaultTab } from "../../hooks/useAppSettings";
 import type {
   CapacityRiskSignal,
   ColorTheme,
@@ -145,18 +146,15 @@ export interface MainContentProps {
   mergeStrategy: string;
   planAutoApproveEnabled: boolean;
   settingsLoaded: boolean;
-  openTasksInRightSidebar: boolean;
-  openMobileTasksInPopup: boolean;
   showCostBadgeOnCards: boolean;
-  taskDetailChatFirst: boolean;
+  /* FNXC:TaskDetailDefaultTab 2026-09-16-02:53: FN-442 — project choice of the task-detail landing tab and tab-bar head order. */
+  taskDetailDefaultTab: TaskDetailDefaultTab;
   chatMessageLayout: "bubbles" | "full-width";
   /* FNXC:RightSidebarOptional 2026-09-15-16:04: FN-426 — the embedded Settings host mirrors the same live opt-in as the modal one. */
   rightSidebarEnabled: boolean;
   setRightSidebarEnabledImmediate: (enabled: boolean) => void;
-  setOpenTasksInRightSidebarImmediate: (enabled: boolean) => void;
-  setOpenMobileTasksInPopupImmediate: (enabled: boolean) => void;
   setShowCostBadgeOnCardsImmediate: (enabled: boolean) => void;
-  setTaskDetailChatFirstImmediate: (enabled: boolean) => void;
+  setTaskDetailDefaultTabImmediate: (tab: TaskDetailDefaultTab) => void;
   setChatMessageLayoutImmediate: (layout: "bubbles" | "full-width") => void;
   skillsEnabled: boolean;
   experimentalFeatures: Record<string, boolean>;

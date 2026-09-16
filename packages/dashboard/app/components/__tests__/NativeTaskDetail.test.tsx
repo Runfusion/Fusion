@@ -140,7 +140,6 @@ function RightDockStateHost() {
     subscribePluginEvents: () => noop,
     openDetailTask: noopOpenDetail,
     openTaskPopup: noopOpenDetail,
-    openMobileTasksInPopup: false,
     openFileInBrowser: noop,
     onMoveTask: asyncHostTask,
     onDeleteTask: asyncHostTask,
@@ -191,6 +190,27 @@ describe("native Task Detail", () => {
     view.rerender(<DetailFixture enabled />);
     expect(document.querySelectorAll("[data-task-detail-surface='true']")).toHaveLength(1);
     expect(document.querySelector("[data-task-detail-surface='true']")).toHaveAttribute("data-ui", "surface");
+  });
+
+  /*
+  FNXC:TaskDetailDefaultTab 2026-09-16-02:53:
+  FN-442: the embedded (main-panel / right-dock) host renders the same tab bar as the overlay, so the three-value project
+  choice must move the landing tab and the head order here too — the tab strip is built once in TaskDetailModal and shared
+  by every host.
+  */
+  it.each([
+    ["activity" as const, "Activity", ["Activity", "Chat", "Plan"]],
+    ["chat" as const, "Chat", ["Chat", "Activity", "Plan"]],
+    ["definition" as const, "Plan", ["Plan", "Activity", "Chat"]],
+  ])("lands the embedded host on %s and leads its tab bar with it", (setting, landingTabLabel, headOrder) => {
+    const view = render(
+      <TaskDetailContent {...sharedProps} embedded taskDetailDefaultTab={setting} task={makeTask({ id: "FN-DEFAULT-TAB", column: "in-progress" as never })} />,
+    );
+
+    const labels = Array.from(document.querySelectorAll<HTMLButtonElement>(".detail-tabs .detail-tab")).map((tab) => (tab.textContent ?? "").trim());
+    expect(labels.slice(0, 3)).toEqual(headOrder);
+    expect(screen.getByRole("button", { name: landingTabLabel })).toHaveClass("detail-tab-active");
+    view.unmount();
   });
 
   it("retains selected tabs, edit text, focus, and callbacks across live rerenders", async () => {

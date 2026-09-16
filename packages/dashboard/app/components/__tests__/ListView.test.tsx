@@ -1185,13 +1185,19 @@ describe("ListView", () => {
   });
 
 
-  it("routes desktop List row clicks and keyboard opens to the task popup when enabled", () => {
+  /*
+  FNXC:ListView 2026-09-16-02:53 (FN-442):
+  The `openMobileTasksInPopup` opt-in is gone: an ordinary List open routes to the shared pop-out seam whenever the host
+  provides one. The host seam (`openTaskDetailInWindow`) owns the mobile-drawer fallback, so ListView itself has no
+  viewport branch left to assert.
+  */
+  it("routes desktop List row clicks and keyboard opens to the task popup", () => {
     const viewportSpy = mockDesktopViewport();
     const tasks = [createMockTask({ id: "FN-001", title: "Test Task" })];
     const onOpenDetail = vi.fn();
     const onPopOut = vi.fn();
 
-    renderListView({ tasks, onOpenDetail, onPopOut, openMobileTasksInPopup: true });
+    renderListView({ tasks, onOpenDetail, onPopOut });
 
     const row = screen.getByText("FN-001").closest("tr") as HTMLElement;
     fireEvent.click(row);
@@ -1211,35 +1217,44 @@ describe("ListView", () => {
   });
 
 
-  it("calls onOpenDetail on mobile row click", () => {
+  /*
+  FNXC:ListView 2026-09-16-02:53 (FN-442):
+  Without a pop-out seam a mobile card still hands the task to the host's detail owner with its mobile origin, which is
+  the path the mobile drawer uses.
+  */
+  it("calls onOpenDetail on mobile row click when no pop-out seam is provided", () => {
     const viewportSpy = mockMobileViewport();
     const tasks = [createMockTask({ id: "FN-001", title: "Test Task" })];
     const mockOnOpenDetail = vi.fn();
-    const onPopOut = vi.fn();
 
-    renderListView({ tasks, onOpenDetail: mockOnOpenDetail, onPopOut });
+    renderListView({ tasks, onOpenDetail: mockOnOpenDetail });
 
     const card = document.querySelector('.list-card[data-id="FN-001"]');
     fireEvent.click(card!);
 
     expect(mockOnOpenDetail).toHaveBeenCalledWith(tasks[0], { origin: "list-mobile" });
     expect(mockOnOpenDetail).toHaveBeenCalledTimes(1);
-    expect(onPopOut).not.toHaveBeenCalled();
     expect(fetchTaskDetail).not.toHaveBeenCalled();
     viewportSpy.mockRestore();
   });
 
-  it("routes mobile and tablet List cards to the task popup when enabled", () => {
+  /*
+  FNXC:ListView 2026-09-16-02:53 (FN-442):
+  Tablet is a popup viewport with no setting to enable. The phone stays the single-detail-owner exception: its card open
+  keeps the `list-mobile` origin even when a pop-out seam is available, because that owner carries the back header and the
+  dismissible history entry (see `TaskDetail.swipe-back.test.tsx`).
+  */
+  it("routes tablet List cards to the task popup and keeps phones on their single detail owner", () => {
     const mobileViewportSpy = mockMobileViewport();
     const mobileTasks = [createMockTask({ id: "FN-001", title: "Mobile popup" })];
     const mobileOnOpenDetail = vi.fn();
     const mobileOnPopOut = vi.fn();
 
-    const mobileRender = renderListView({ tasks: mobileTasks, onOpenDetail: mobileOnOpenDetail, onPopOut: mobileOnPopOut, openMobileTasksInPopup: true });
+    const mobileRender = renderListView({ tasks: mobileTasks, onOpenDetail: mobileOnOpenDetail, onPopOut: mobileOnPopOut });
     fireEvent.click(document.querySelector('.list-card[data-id="FN-001"]') as HTMLElement);
 
-    expect(mobileOnPopOut).toHaveBeenCalledWith(mobileTasks[0]);
-    expect(mobileOnOpenDetail).not.toHaveBeenCalled();
+    expect(mobileOnOpenDetail).toHaveBeenCalledWith(mobileTasks[0], { origin: "list-mobile" });
+    expect(mobileOnPopOut).not.toHaveBeenCalled();
     expect(screen.queryByTestId("list-split-detail-content")).toBeNull();
     mobileRender.unmount();
     mobileViewportSpy.mockRestore();
@@ -1249,7 +1264,7 @@ describe("ListView", () => {
     const tabletOnOpenDetail = vi.fn();
     const tabletOnPopOut = vi.fn();
 
-    renderListView({ tasks: tabletTasks, onOpenDetail: tabletOnOpenDetail, onPopOut: tabletOnPopOut, openMobileTasksInPopup: true });
+    renderListView({ tasks: tabletTasks, onOpenDetail: tabletOnOpenDetail, onPopOut: tabletOnPopOut });
     fireEvent.click(document.querySelector('.list-card[data-id="FN-002"]') as HTMLElement);
 
     expect(tabletOnPopOut).toHaveBeenCalledWith(tabletTasks[0]);
@@ -2520,7 +2535,7 @@ describe("ListView", () => {
     }
   });
 
-  it("keeps the explicit popup preference above measured tablet split routing", async () => {
+  it("keeps the popup route above measured tablet split routing", async () => {
     const viewportSpy = mockTabletViewport();
     const resizeObserver = installControlledResizeObserver();
     const task = createMockTask({ id: "FN-8754-popup", title: "Popup wins" });
@@ -2528,7 +2543,7 @@ describe("ListView", () => {
     const onPopOut = vi.fn();
 
     try {
-      renderListView({ tasks: [task], onOpenDetail, onPopOut, openMobileTasksInPopup: true });
+      renderListView({ tasks: [task], onOpenDetail, onPopOut });
       await act(async () => resizeObserver.resize(LIST_MINIMUM_SPLIT_LAYOUT_WIDTH + 1));
       fireEvent.click(document.querySelector('tr[data-id="FN-8754-popup"]') as HTMLElement);
 

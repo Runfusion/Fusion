@@ -18,6 +18,20 @@ export function normalizeChatMessageLayout(value: unknown): ChatMessageLayout {
   return value === "full-width" ? "full-width" : "bubbles";
 }
 
+export type TaskDetailDefaultTab = "definition" | "chat" | "activity";
+
+/**
+ * FNXC:TaskDetailDefaultTab 2026-09-16-02:53:
+ * FN-442 replaced the boolean `taskDetailChatFirst` with this three-value project choice, so persisted values can be
+ * absent, stale, or written by an older build. Only the three known values are accepted; everything else fails closed
+ * to the historical `activity` landing tab. `legacyChatFirst` is a READ-ONLY compatibility fallback for a project that
+ * had opted into Chat-first before the rename — the new key always wins and the legacy key is never written back.
+ */
+export function normalizeTaskDetailDefaultTab(value: unknown, legacyChatFirst?: unknown): TaskDetailDefaultTab {
+  if (value === "definition" || value === "chat" || value === "activity") return value;
+  return legacyChatFirst === true ? "chat" : "activity";
+}
+
 /**
  * Settings state and actions consumed by the dashboard App shell.
  */
@@ -39,11 +53,13 @@ export interface UseAppSettingsResult {
   staleHighFanoutBlockerAgeThresholdMs: number;
   capacityRiskBannerEnabled: boolean;
   capacityRiskTodoThreshold: number;
-  openTasksInRightSidebar: boolean;
-  openMobileTasksInPopup: boolean;
   showCostBadgeOnCards: boolean;
   modelPricingOverrides?: ModelPricingOverrides;
-  taskDetailChatFirst: boolean;
+  /**
+   * FNXC:TaskDetailDefaultTab 2026-09-16-02:53:
+   * FN-442: project choice of the task-detail landing tab AND tab-bar head order (Definition / Chat / Activity).
+   */
+  taskDetailDefaultTab: TaskDetailDefaultTab;
   chatMessageLayout: ChatMessageLayout;
   /**
    * FNXC:Navigation 2026-09-15-14:41:
@@ -77,10 +93,8 @@ export interface UseAppSettingsResult {
   setChatMessageLayoutImmediate: (layout: ChatMessageLayout) => void;
   setNavigationPlacementImmediate: (placement: NavigationPlacement) => void;
   setRightSidebarEnabledImmediate: (enabled: boolean) => void;
-  setOpenTasksInRightSidebarImmediate: (enabled: boolean) => void;
-  setOpenMobileTasksInPopupImmediate: (enabled: boolean) => void;
   setShowCostBadgeOnCardsImmediate: (enabled: boolean) => void;
-  setTaskDetailChatFirstImmediate: (enabled: boolean) => void;
+  setTaskDetailDefaultTabImmediate: (tab: TaskDetailDefaultTab) => void;
   setMobileNavPrimaryItemsImmediate: (items: string[]) => void;
   /** Re-fetches settings from the backend to pick up changes made externally (e.g., by SettingsModal). */
   refresh: () => Promise<void>;
@@ -109,15 +123,13 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
   const [staleHighFanoutBlockerAgeThresholdMs, setStaleHighFanoutBlockerAgeThresholdMs] = useState(2 * 60 * 60 * 1000);
   const [capacityRiskBannerEnabled, setCapacityRiskBannerEnabled] = useState(false);
   const [capacityRiskTodoThreshold, setCapacityRiskTodoThreshold] = useState(20);
-  const [openTasksInRightSidebar, setOpenTasksInRightSidebar] = useState(false);
-  const [openMobileTasksInPopup, setOpenMobileTasksInPopup] = useState(false);
   /*
   FNXC:TaskPopupViewGating 2026-07-15-15:20:
   FN-8016 makes per-view popup scoping the default. Explicit persisted false remains the compatibility opt-out for globally shared popups; only an absent field falls back to true.
   */
   const [showCostBadgeOnCards, setShowCostBadgeOnCards] = useState(false);
   const [modelPricingOverrides, setModelPricingOverrides] = useState<ModelPricingOverrides | undefined>(undefined);
-  const [taskDetailChatFirst, setTaskDetailChatFirst] = useState(false);
+  const [taskDetailDefaultTab, setTaskDetailDefaultTab] = useState<TaskDetailDefaultTab>("activity");
   const [chatMessageLayout, setChatMessageLayout] = useState<ChatMessageLayout>("bubbles");
   const [navigationPlacement, setNavigationPlacement] = useState<NavigationPlacement>("footer");
   /* FNXC:RightSidebarOptional 2026-09-15-16:04: FN-426 — default-off availability of the right tool dock. */
@@ -197,8 +209,6 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
       setMaxTotalRetriesBeforeFail(settings.maxTotalRetriesBeforeFail ?? 25);
       setCapacityRiskBannerEnabled(settings.capacityRiskBannerEnabled === true);
       setCapacityRiskTodoThreshold(settings.capacityRiskTodoThreshold ?? 20);
-      setOpenTasksInRightSidebar(settings.openTasksInRightSidebar === true);
-      setOpenMobileTasksInPopup(settings.openMobileTasksInPopup === true);
       /*
       FNXC:TaskCardCostBadge 2026-07-11-12:15:
       The app shell exposes the default-off card cost badge setting to the board context only after settings hydration, preserving the no-badge default for upgraded projects.
@@ -206,10 +216,14 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
       setShowCostBadgeOnCards(settings.showCostBadgeOnCards === true);
       setModelPricingOverrides((settings as GlobalSettings).modelPricingOverrides);
       /*
-      FNXC:TaskDetailActivityFirst 2026-06-30-23:59:
-      App-level task-detail hosts need the project setting so Activity-first is the missing/false default and Chat-first is restored only by explicit opt-in.
+      FNXC:TaskDetailDefaultTab 2026-09-16-02:53:
+      App-level task-detail hosts need the project choice so an open with no explicit tab lands on the configured tab
+      and the tab bar leads with it. The explicit cast is deliberate: `taskDetailChatFirst` no longer exists in the
+      type, but a project persisted before FN-442 can still carry it, and unknown keys are tolerated on read.
       */
-      setTaskDetailChatFirst(settings.taskDetailChatFirst === true);
+      setTaskDetailDefaultTab(
+        normalizeTaskDetailDefaultTab(settings.taskDetailDefaultTab, (settings as Record<string, unknown>).taskDetailChatFirst),
+      );
       setChatMessageLayout(normalizeChatMessageLayout(settings.chatMessageLayout));
       setNavigationPlacement(normalizeNavigationPlacement(settings.navigationPlacement));
       /*
@@ -245,11 +259,9 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     project's settings land, so it falls back to the safe default rather than the outgoing value.
     */
     setRightSidebarEnabled(false);
-    setOpenTasksInRightSidebar(false);
-    setOpenMobileTasksInPopup(false);
     setShowCostBadgeOnCards(false);
     setModelPricingOverrides(undefined);
-    setTaskDetailChatFirst(false);
+    setTaskDetailDefaultTab("activity");
     setChatMessageLayout("bubbles");
     setNavigationPlacement("footer");
     setDashboardKeyboardShortcuts(DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS);
@@ -353,20 +365,17 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     setRightSidebarEnabled(enabled === true);
   }, []);
 
-  const setOpenTasksInRightSidebarImmediate = useCallback((enabled: boolean) => {
-    setOpenTasksInRightSidebar(enabled === true);
-  }, []);
-
-  const setOpenMobileTasksInPopupImmediate = useCallback((enabled: boolean) => {
-    setOpenMobileTasksInPopup(enabled === true);
-  }, []);
-
   const setShowCostBadgeOnCardsImmediate = useCallback((enabled: boolean) => {
     setShowCostBadgeOnCards(enabled === true);
   }, []);
 
-  const setTaskDetailChatFirstImmediate = useCallback((enabled: boolean) => {
-    setTaskDetailChatFirst(enabled === true);
+  const setTaskDetailDefaultTabImmediate = useCallback((tab: TaskDetailDefaultTab) => {
+    /*
+    FNXC:LiveAppearanceSettings 2026-08-19-18:07:
+    Mirrors the mounted Appearance control into the App shell during its input event. Like the other Immediate setters
+    it never persists: SettingsModal remains the only debounced writer and its reconciliation stays authoritative.
+    */
+    setTaskDetailDefaultTab(normalizeTaskDetailDefaultTab(tab));
   }, []);
 
   /*
@@ -395,11 +404,9 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     staleHighFanoutBlockerAgeThresholdMs,
     capacityRiskBannerEnabled,
     capacityRiskTodoThreshold,
-    openTasksInRightSidebar,
-    openMobileTasksInPopup,
     showCostBadgeOnCards,
     modelPricingOverrides,
-    taskDetailChatFirst,
+    taskDetailDefaultTab,
     chatMessageLayout,
     navigationPlacement,
     rightSidebarEnabled,
@@ -424,10 +431,8 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     setChatMessageLayoutImmediate,
     setNavigationPlacementImmediate,
     setRightSidebarEnabledImmediate,
-    setOpenTasksInRightSidebarImmediate,
-    setOpenMobileTasksInPopupImmediate,
     setShowCostBadgeOnCardsImmediate,
-    setTaskDetailChatFirstImmediate,
+    setTaskDetailDefaultTabImmediate,
     setMobileNavPrimaryItemsImmediate,
     refresh,
   };

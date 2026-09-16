@@ -164,10 +164,8 @@ function mainContentProps(overrides: Partial<MainContentProps> = {}): MainConten
     autoMerge: true,
     mergeStrategy: "direct",
     settingsLoaded: true,
-    openTasksInRightSidebar: false,
-    openMobileTasksInPopup: false,
     showCostBadgeOnCards: false,
-    taskDetailChatFirst: false,
+    taskDetailDefaultTab: "activity" as const,
     chatMessageLayout: "bubbles",
     skillsEnabled: true,
     experimentalFeatures: {},
@@ -355,19 +353,15 @@ describe("MainContent graph task pop-out wiring", () => {
     embeddedSettingsProps = undefined;
     const setters = {
       setChatMessageLayoutImmediate: vi.fn(),
-      setOpenTasksInRightSidebarImmediate: vi.fn(),
-      setOpenMobileTasksInPopupImmediate: vi.fn(),
       setShowCostBadgeOnCardsImmediate: vi.fn(),
-      setTaskDetailChatFirstImmediate: vi.fn(),
+      setTaskDetailDefaultTabImmediate: vi.fn(),
     };
 
     render(<MainContent {...mainContentProps({
       taskView: "settings",
       chatMessageLayout: "full-width",
-      openTasksInRightSidebar: true,
-      openMobileTasksInPopup: true,
       showCostBadgeOnCards: true,
-      taskDetailChatFirst: true,
+      taskDetailDefaultTab: "chat" as const,
       ...setters,
       _SettingsView: LazySettingsBridgeStub as MainContentProps["_SettingsView"],
     })} />);
@@ -375,26 +369,28 @@ describe("MainContent graph task pop-out wiring", () => {
     await screen.findByText("Embedded settings bridge");
     expect(embeddedSettingsProps).toMatchObject({
       chatMessageLayout: "full-width",
-      openTasksInRightSidebar: true,
-      openMobileTasksInPopup: true,
       showCostBadgeOnCards: true,
-      taskDetailChatFirst: true,
+      taskDetailDefaultTab: "chat",
     });
     // FN-392: the per-view task popup setting is gone, so embedded Settings receives neither value nor callback.
     expect(embeddedSettingsProps).not.toHaveProperty("taskPopupsBoardListOnly");
     expect(embeddedSettingsProps).not.toHaveProperty("onTaskPopupsBoardListOnlyChange");
+    /*
+    FNXC:TaskDetailDefaultTab 2026-09-16-02:53:
+    FN-442 deleted the two board task-open routing settings, so embedded Settings must receive neither value nor callback
+    for them — a leftover prop would re-mount a control whose behavior no longer exists.
+    */
+    for (const removed of ["openTasksInRightSidebar", "onOpenTasksInRightSidebarChange", "openMobileTasksInPopup", "onOpenMobileTasksInPopupChange", "taskDetailChatFirst", "onTaskDetailChatFirstChange"]) {
+      expect(embeddedSettingsProps).not.toHaveProperty(removed);
+    }
 
     (embeddedSettingsProps?.onChatMessageLayoutChange as (value: "bubbles" | "full-width") => void)("bubbles");
-    (embeddedSettingsProps?.onOpenTasksInRightSidebarChange as (value: boolean) => void)(false);
-    (embeddedSettingsProps?.onOpenMobileTasksInPopupChange as (value: boolean) => void)(false);
     (embeddedSettingsProps?.onShowCostBadgeOnCardsChange as (value: boolean) => void)(false);
-    (embeddedSettingsProps?.onTaskDetailChatFirstChange as (value: boolean) => void)(false);
+    (embeddedSettingsProps?.onTaskDetailDefaultTabChange as (value: "definition" | "chat" | "activity") => void)("definition");
 
     expect(setters.setChatMessageLayoutImmediate).toHaveBeenCalledWith("bubbles");
-    expect(setters.setOpenTasksInRightSidebarImmediate).toHaveBeenCalledWith(false);
-    expect(setters.setOpenMobileTasksInPopupImmediate).toHaveBeenCalledWith(false);
     expect(setters.setShowCostBadgeOnCardsImmediate).toHaveBeenCalledWith(false);
-    expect(setters.setTaskDetailChatFirstImmediate).toHaveBeenCalledWith(false);
+    expect(setters.setTaskDetailDefaultTabImmediate).toHaveBeenCalledWith("definition");
   });
 
   it("gives each enabled plugin destination host-owned canonical chrome", () => {

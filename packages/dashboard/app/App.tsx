@@ -277,26 +277,18 @@ export function useMobileBarKeyboardState({
   };
 }
 
-export function shouldOpenBoardTaskInDock(openTasksInRightSidebar: boolean, rightDockActive: boolean, initialTab?: DetailTaskTab): boolean {
-  return !initialTab && openTasksInRightSidebar && rightDockActive;
-}
+export type BoardTaskOpenRoute = "popup" | "main-panel";
 
-export type BoardTaskOpenRoute = "popup" | "dock" | "main-panel";
-
-export function getBoardTaskOpenRoute(options: {
-  isMobile: boolean;
-  openMobileTasksInPopup: boolean;
-  openTasksInRightSidebar: boolean;
-  rightDockActive: boolean;
-  initialTab?: DetailTaskTab;
-}): BoardTaskOpenRoute {
-  if (options.openMobileTasksInPopup) {
-    return "popup";
-  }
-  if (shouldOpenBoardTaskInDock(options.openTasksInRightSidebar, options.rightDockActive, options.initialTab)) {
-    return "dock";
-  }
-  return "main-panel";
+/*
+FNXC:TaskDetailDefaultTab 2026-09-16-02:53:
+FN-442 removed the `openTasksInRightSidebar` and `openMobileTasksInPopup` project settings, so the board/list/detail-chip
+task-open decision has exactly one input left: the floating task window is the unconditional route, and the main panel
+survives only as the mobile-drawer fallback (phones keep one detail owner). The board-card entry into the right dock is
+gone; `rightSidebarEnabled` and the dock's own task tools (`openTaskInDock`/`closeDockTask`) are untouched. The helper
+stays exported so the decision remains unit-testable on its own.
+*/
+export function getBoardTaskOpenRoute(options: { mobileDrawerActive: boolean }): BoardTaskOpenRoute {
+  return options.mobileDrawerActive ? "main-panel" : "popup";
 }
 
 export type CoexistingTaskOpenRoute = "task-window" | "main-panel";
@@ -1193,11 +1185,9 @@ function AppInner() {
     staleHighFanoutBlockerAgeThresholdMs,
     capacityRiskBannerEnabled,
     capacityRiskTodoThreshold,
-    openTasksInRightSidebar,
-    openMobileTasksInPopup,
     showCostBadgeOnCards,
     modelPricingOverrides,
-    taskDetailChatFirst,
+    taskDetailDefaultTab,
     chatMessageLayout,
     navigationPlacement,
     rightSidebarEnabled,
@@ -1217,10 +1207,8 @@ function AppInner() {
     setChatMessageLayoutImmediate,
     setNavigationPlacementImmediate,
     setRightSidebarEnabledImmediate,
-    setOpenTasksInRightSidebarImmediate,
-    setOpenMobileTasksInPopupImmediate,
     setShowCostBadgeOnCardsImmediate,
-    setTaskDetailChatFirstImmediate,
+    setTaskDetailDefaultTabImmediate,
     setMobileNavPrimaryItemsImmediate,
     toggleAutoMerge,
     togglePlanAutoApprove,
@@ -1650,25 +1638,18 @@ function AppInner() {
   }, [modalManager, pushNav]);
 
   /*
-  FNXC:TaskPopupDeepTabs 2026-07-21-00:00:
-  FN-8478 makes every board TaskCard deep-tab action, including files changed, honor Open tasks as popups. Route once to the popup with its requested tab so a click never opens both a FloatingWindow and a main-panel/modal detail surface.
+  FNXC:TaskPopupDeepTabs 2026-09-16-02:53:
+  FN-442: every board TaskCard deep-tab action (files changed, retries, workflow) routes to the floating task window with
+  its requested tab, unconditionally. Routing once is what keeps a single click from opening both a FloatingWindow and a
+  main-panel/modal detail surface; the mobile drawer keeps its main-panel fallback.
   */
   const handleOpenDetailWithTab = useCallback((task: Task | TaskDetail, initialTab: "changes" | "retries" | "workflow") => {
-    if (mobileDrawerActive) {
+    if (getBoardTaskOpenRoute({ mobileDrawerActive }) === "main-panel") {
       openTaskDetailInMainPanel(task, initialTab);
       return;
     }
-    if (openMobileTasksInPopup) {
-      popOutTaskDetailForCurrentView(task, initialTab);
-      return;
-    }
-    if (initialTab === "changes") {
-      openTaskDetailInMainPanel(task, "changes");
-      return;
-    }
-    modalManager.openDetailTask(task, initialTab);
-    pushNav({ type: "modal", close: modalManager.closeDetailTask });
-  }, [mobileDrawerActive, modalManager, openMobileTasksInPopup, openTaskDetailInMainPanel, popOutTaskDetailForCurrentView, pushNav]);
+    popOutTaskDetailForCurrentView(task, initialTab);
+  }, [mobileDrawerActive, openTaskDetailInMainPanel, popOutTaskDetailForCurrentView]);
 
   /*
   FNXC:Settings 2026-06-22-00:00:
@@ -2148,7 +2129,7 @@ function AppInner() {
   const { rightDock, windows: desktopRightDockWindows } = useAppDesktopRightDockComposition({
     projectId: currentProject?.id,
     owner: appRightDockWindows,
-    controllerInput: { active: rightDockActive, addToast, columnFlagsByTaskId: footerColumnFlagsByTaskId, settingsLoaded, researchReadinessVersion, goalAnchorId, tasks: boardSourceTasks, workflowSteps, subscribePluginEvents, openDetailTask: mobileDrawerActive ? openTaskDetailInMainPanel : openDetailTask, notesController, registerNotesGuard: registerDesktopDockNotesGuard, openFileInBrowser, onUpdateTask: updateTask, onDeleteTask: deleteTask, onRevertTask: revertTask, onRestoreRevertTask: restoreTaskRevert, onMergeTask: mergeTask, onRetryTask: retryTask, onOpenChatWithPrefill: openChatWithPrefill, onPauseTask: pauseTask, onUnpauseTask: unpauseTask, onBypassReview: bypassReview, onResetTask: resetTask, onDuplicateTask: duplicateTask, onTaskUpdated: (task: Task) => ingestCreatedTasks([task]), openSettings: (section?: string) => openSettingsWithNav(section as SectionId), onOpenUsage: openUsageWithNav, onOpenActivityLog: openActivityLogWithNav, onOpenGitHubImport: openGitHubImportWithNav, onOpenGitManager: openGitManagerWithNav, onOpenSchedules: openSchedulesWithNav, onSendSelectionToTask: modalManager.openNewTaskWithDescription, onCreateTaskFromInsight: handleInsightTaskCreate, onNavigateToMission: handleOpenMission, onTaskCreated: (task: Task) => ingestCreatedTasks([task]), prAuthAvailable, autoMerge, taskDetailChatFirst, renderListView: isMobile || taskView === "list" ? undefined : renderDockListView, onSendAsReport: handleSendChatMessageAsReport, visibilityOptions: { hostMode: desktopNavigationActive ? "desktop" : "standard", experimentalFeatures: { insights: insightsEnabled, memoryView: memoryEnabled, devServerView: devServerEnabled, researchView: researchEnabled, evalsView: evalsEnabled, goalsView: goalsEnabled }, showSkillsTab: skillsEnabled, pluginDashboardViews, listViewAvailable: !isMobile }, footerVisible: shellFooterReservationVisible },
+    controllerInput: { active: rightDockActive, addToast, columnFlagsByTaskId: footerColumnFlagsByTaskId, settingsLoaded, researchReadinessVersion, goalAnchorId, tasks: boardSourceTasks, workflowSteps, subscribePluginEvents, openDetailTask: mobileDrawerActive ? openTaskDetailInMainPanel : openDetailTask, notesController, registerNotesGuard: registerDesktopDockNotesGuard, openFileInBrowser, onUpdateTask: updateTask, onDeleteTask: deleteTask, onRevertTask: revertTask, onRestoreRevertTask: restoreTaskRevert, onMergeTask: mergeTask, onRetryTask: retryTask, onOpenChatWithPrefill: openChatWithPrefill, onPauseTask: pauseTask, onUnpauseTask: unpauseTask, onBypassReview: bypassReview, onResetTask: resetTask, onDuplicateTask: duplicateTask, onTaskUpdated: (task: Task) => ingestCreatedTasks([task]), openSettings: (section?: string) => openSettingsWithNav(section as SectionId), onOpenUsage: openUsageWithNav, onOpenActivityLog: openActivityLogWithNav, onOpenGitHubImport: openGitHubImportWithNav, onOpenGitManager: openGitManagerWithNav, onOpenSchedules: openSchedulesWithNav, onSendSelectionToTask: modalManager.openNewTaskWithDescription, onCreateTaskFromInsight: handleInsightTaskCreate, onNavigateToMission: handleOpenMission, onTaskCreated: (task: Task) => ingestCreatedTasks([task]), prAuthAvailable, autoMerge, taskDetailDefaultTab, renderListView: isMobile || taskView === "list" ? undefined : renderDockListView, onSendAsReport: handleSendChatMessageAsReport, visibilityOptions: { hostMode: desktopNavigationActive ? "desktop" : "standard", experimentalFeatures: { insights: insightsEnabled, memoryView: memoryEnabled, devServerView: devServerEnabled, researchView: researchEnabled, evalsView: evalsEnabled, goalsView: goalsEnabled }, showSkillsTab: skillsEnabled, pluginDashboardViews, listViewAvailable: !isMobile }, footerVisible: shellFooterReservationVisible },
     chatWindowProps: { addToast, experimentalFeatures, onSendAsReport: handleSendChatMessageAsReport },
     noteWindowProps: {
       addToast,
@@ -2254,37 +2235,18 @@ function AppInner() {
   listDockRouteRef.current = () => false;
 
   /*
-  FNXC:OpenTasksInRightSidebar 2026-06-28-00:00:
-  Board card clicks are the only task-open path governed by openTasksInRightSidebar. When the project setting is enabled and the tablet/desktop right dock is active, the board keeps its current view and asks the dock controller to render task detail; otherwise the existing full main-panel replacement remains the fallback, including mobile and hidden-footer states.
-
-  FNXC:MobileTaskPopups 2026-07-21-00:00:
-  FN-8478 makes board TaskCard deep-tab opens use the all-viewport popup route when enabled, preserving the requested tab. Popup routing remains first so neither dock nor main-panel detail can double-open behind the FloatingWindow.
+  FNXC:TaskDetailDefaultTab 2026-09-16-02:53:
+  FN-442: a board card click always opens the floating task window — on desktop, tablet, and phone alike, with or without
+  a deep initial tab — so the board stays visible behind it and there is no setting to enable. Only the mobile drawer
+  keeps the full main-panel replacement, because phones deliberately host exactly one task-detail owner.
   */
   const openBoardTaskDetail = useCallback((task: Task | TaskDetail, initialTab?: DetailTaskTab) => {
-    if (mobileDrawerActive) {
+    if (getBoardTaskOpenRoute({ mobileDrawerActive }) === "main-panel") {
       openTaskDetailInMainPanel(task, initialTab);
       return;
     }
-    const route = getBoardTaskOpenRoute({
-      isMobile,
-      openMobileTasksInPopup,
-      openTasksInRightSidebar,
-      rightDockActive,
-      initialTab,
-    });
-
-    if (route === "popup") {
-      popOutTaskDetailForCurrentView(task, initialTab);
-      return;
-    }
-
-    if (route === "dock") {
-      rightDock.openTaskInDock(task);
-      return;
-    }
-
-    openTaskDetailInMainPanel(task, initialTab);
-  }, [mobileDrawerActive, isMobile, openMobileTasksInPopup, openTaskDetailInMainPanel, openTasksInRightSidebar, popOutTaskDetailForCurrentView, rightDock, rightDockActive]);
+    popOutTaskDetailForCurrentView(task, initialTab);
+  }, [mobileDrawerActive, openTaskDetailInMainPanel, popOutTaskDetailForCurrentView]);
 
   /*
   FNXC:HistoryModalSurface 2026-09-15-19:12:
@@ -2301,11 +2263,6 @@ function AppInner() {
     popOutTaskDetailForCurrentView(task, initialTab);
   }, [mobileDrawerActive, openTaskDetailInMainPanel, popOutTaskDetailForCurrentView]);
 
-  useEffect(() => {
-    if (!openTasksInRightSidebar) {
-      rightDock.closeDockTask();
-    }
-  }, [openTasksInRightSidebar, rightDock]);
 
   /*
   FNXC:ProjectSwitchModalReset 2026-09-14-11:35:
@@ -2352,10 +2309,8 @@ function AppInner() {
     setChatMessageLayoutImmediate,
     rightSidebarEnabled,
     setRightSidebarEnabledImmediate,
-    setOpenTasksInRightSidebarImmediate,
-    setOpenMobileTasksInPopupImmediate,
     setShowCostBadgeOnCardsImmediate,
-    setTaskDetailChatFirstImmediate,
+    setTaskDetailDefaultTabImmediate,
     setMobileNavPrimaryItemsImmediate,
     reopenOnboardingWithNav,
     viewMode,
@@ -2382,10 +2337,8 @@ function AppInner() {
     mergeStrategy,
     planAutoApproveEnabled,
     settingsLoaded,
-    openTasksInRightSidebar,
-    openMobileTasksInPopup,
     showCostBadgeOnCards,
-    taskDetailChatFirst,
+    taskDetailDefaultTab,
     chatMessageLayout,
     skillsEnabled,
     experimentalFeatures,
@@ -3065,7 +3018,7 @@ function AppInner() {
           addToast,
           prAuthAvailable,
           autoMergeEnabled: autoMerge,
-          taskDetailChatFirst,
+          taskDetailDefaultTab,
         }}
       />
       <AppModals
@@ -3092,7 +3045,7 @@ function AppInner() {
         onOpenChatWithPrefill={openChatWithPrefill}
         taskOperations={{ moveTask, deleteTask, mergeTask, revertTask, restoreTaskRevert, retryTask, pauseTask, unpauseTask, bypassReview, resetTask, duplicateTask }}
         deepLink={{ handleDetailClose }}
-        settings={{ prAuthAvailable, autoMerge, openTasksInRightSidebar, openMobileTasksInPopup, showCostBadgeOnCards, taskDetailChatFirst, chatMessageLayout, navigationPlacement: normalizeNavigationPlacement(navigationPlacement), rightSidebarEnabled, themeMode, colorTheme, uiStyle, dashboardFontScalePct, shadcnCustomColors, resolvedThemeMode, setThemeMode, setColorTheme, setUiStyle, setDashboardFontScalePct, setShadcnCustomColors, setChatMessageLayoutImmediate, setNavigationPlacementImmediate, setRightSidebarEnabledImmediate, setOpenTasksInRightSidebarImmediate, setOpenMobileTasksInPopupImmediate, setShowCostBadgeOnCardsImmediate, setTaskDetailChatFirstImmediate, setMobileNavPrimaryItemsImmediate }}
+        settings={{ prAuthAvailable, autoMerge, showCostBadgeOnCards, taskDetailDefaultTab, chatMessageLayout, navigationPlacement: normalizeNavigationPlacement(navigationPlacement), rightSidebarEnabled, themeMode, colorTheme, uiStyle, dashboardFontScalePct, shadcnCustomColors, resolvedThemeMode, setThemeMode, setColorTheme, setUiStyle, setDashboardFontScalePct, setShadcnCustomColors, setChatMessageLayoutImmediate, setNavigationPlacementImmediate, setRightSidebarEnabledImmediate, setShowCostBadgeOnCardsImmediate, setTaskDetailDefaultTabImmediate, setMobileNavPrimaryItemsImmediate }}
         onSettingsClose={handleSettingsCloseWithNav}
         onReopenOnboarding={reopenOnboardingWithNav}
         onOpenWorkflowEditor={openWorkflowEditorWithNav}

@@ -241,8 +241,6 @@ interface ListViewProps {
   onPopOut pops the split-pane task detail into a movable, resizable, non-blocking FloatingWindow managed at App level. Wired to the Maximize2 "Pop out" button in TaskDetailContent's header.
   */
   onPopOut?: (task: Task | TaskDetail) => void;
-  /** Mirrors the Board/right-dock "Open tasks as popups" routing for ordinary List row/card opens. */
-  openMobileTasksInPopup?: boolean;
   addToast: (message: string, type?: ToastType) => void;
   globalPaused?: boolean;
   onNewTask?: (workflowId?: string | null) => void;
@@ -366,7 +364,6 @@ export function ListView({
   onDuplicateTask,
   onRefinementCreated,
   onPopOut,
-  openMobileTasksInPopup = false,
   onOpenDetail,
   addToast,
   globalPaused,
@@ -1934,10 +1931,15 @@ export function ListView({
       }
       closeContextMenu();
       /*
-      FNXC:ListView 2026-07-13-00:00 (FN-7945):
-      When "Open tasks as popups" is on, ordinary List row/card and keyboard opens route to the shared movable/resizable popped-out FloatingWindow (`onPopOut` → `popOutTaskDetail`) for Board parity and navigate-while-open behavior. When off, preserve the existing docked split-pane on desktop and docked modal on mobile/tablet.
+      FNXC:ListView 2026-09-16-02:53 (FN-442):
+      Ordinary List row/card and keyboard opens route to the shared movable/resizable popped-out FloatingWindow
+      (`onPopOut` → `popOutTaskDetail`) with no setting to enable, matching the Board and preserving navigate-while-open.
+      Phones are the one exception and keep handing the task to the host's detail owner with its `list-mobile` origin:
+      a phone deliberately hosts exactly one task-detail owner, and that owner is what carries the back header and the
+      dismissible history entry. The exception is keyed to the phone viewport, not to the single-pane layout, because a
+      narrow tablet is single-pane yet still gets the movable window. Hosts without a pop-out seam use the same owner.
       */
-      if (openMobileTasksInPopup && onPopOut) {
+      if (onPopOut && viewportMode !== "mobile") {
         onPopOut(task);
         return;
       }
@@ -1949,7 +1951,7 @@ export function ListView({
       setSelectedTaskId(task.id);
       onOpenDetail(task, useSinglePaneList ? { origin: "list-mobile" } : undefined);
     },
-    [closeContextMenu, onOpenDetail, onPopOut, openMobileTasksInPopup, useSinglePaneList]
+    [closeContextMenu, onOpenDetail, onPopOut, useSinglePaneList, viewportMode]
   );
 
   const handleListKeyDown = useCallback((event: React.KeyboardEvent, task: Task) => {

@@ -45,7 +45,7 @@ const ADVANCED_SECTION_IDS = new Set([
 
 const SETTINGS_SECTION_DEFINITIONS: readonly SettingsSectionDefinition[] = [
   { id: "__preferences_header", label: "Preferences", labelKey: "settings.nav.preferencesHeader", scope: undefined, isGroupHeader: true },
-  { id: "appearance", label: "Appearance", labelKey: "settings.nav.appearance", scope: "global", searchableText: ["theme", "color", "sidebar", "dock", "task popup", "task popups", "board list popups", "popup view attachment", "open tasks as popups", "chat window"] },
+  { id: "appearance", label: "Appearance", labelKey: "settings.nav.appearance", scope: "global", searchableText: ["theme", "color", "sidebar", "dock", "chat window", "open task details on", "task detail default tab", "landing tab", "tab order", "definition", "activity"] },
   { id: "keyboard-shortcuts", label: "Keyboard Shortcuts", labelKey: "settings.nav.keyboardShortcuts", scope: "global", searchableText: ["keyboard shortcuts", "hotkeys", "hide all windows", "restore windows", "window visibility shortcut", "terminal shortcut", "open files", "open settings", "command center", "new task shortcut", "record shortcut", "chat list", "conversations", "open chat list shortcut"] },
   { id: "notifications", label: "Notifications", labelKey: "settings.nav.notifications", scope: "global", searchableText: ["ntfy", "webhook", "events", "failure notifications", "sticky", "toast"] },
   { id: "global-general", label: "General · Global", labelKey: "settings.nav.globalGeneral", scope: "global", searchableText: ["global defaults", "modal outside dismiss", "agent logs", "persist tool output", "thinking logs"] },

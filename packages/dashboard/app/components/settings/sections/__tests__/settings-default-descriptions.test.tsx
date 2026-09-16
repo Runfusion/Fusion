@@ -105,10 +105,9 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   navigationPlacement: "appearance.navigationPlacementHelp",
   rightSidebarEnabled: "appearance.rightSidebarEnabledHelp",
   chatMessageLayout: "appearance.chatMessageLayoutHelp",
-  openTasksInRightSidebar: "appearance.openTasksInRightSidebarHelp",
-  openMobileTasksInPopup: "appearance.openMobileTasksInPopupHelp",
   showCostBadgeOnCards: "appearance.showCostBadgeOnCardsHelp",
-  taskDetailChatFirst: "appearance.taskDetailChatFirstHelp",
+  /* FNXC:TaskDetailDefaultTab 2026-09-16-02:53: FN-442 — the two routing toggles are gone and the Chat-first toggle is now a three-value selector. */
+  taskDetailDefaultTab: "appearance.taskDetailDefaultTabHelp",
   // AgentPermissionsSection
   defaultAgentPermissionPolicy: "agentPermissions.perAgentSettingsOverrideProjectDefaultsEachCategory",
   agentProvisioning: "agentPermissions.configureProjectLevelApprovalBehaviorForDurableProvisioning",

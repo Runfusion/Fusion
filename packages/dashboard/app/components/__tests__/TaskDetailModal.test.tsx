@@ -246,7 +246,7 @@ describe("TaskDetailModal planner Chat tab", () => {
     return render(
       <TaskDetailModal
         initialTab={initialTab}
-        taskDetailChatFirst
+        taskDetailDefaultTab="chat"
         task={makeTask({ column })}
         onClose={noop}
         onDeleteTask={noopDelete}
@@ -326,7 +326,7 @@ describe("TaskDetailModal planner Chat tab", () => {
     const { container, rerender } = render(
       <TaskDetailModal
         task={makeTask({ id: "FN-7324-A", column: "todo" as any })}
-        taskDetailChatFirst
+        taskDetailDefaultTab="chat"
         onClose={noop}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
@@ -342,7 +342,7 @@ describe("TaskDetailModal planner Chat tab", () => {
     rerender(
       <TaskDetailModal
         task={makeTask({ id: "FN-7324-B", column: "todo" as any })}
-        taskDetailChatFirst
+        taskDetailDefaultTab="chat"
         onClose={noop}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
@@ -378,7 +378,7 @@ describe("TaskDetailModal planner Chat tab", () => {
     render(
       <TaskDetailModal
         initialTab="planner-chat"
-        taskDetailChatFirst
+        taskDetailDefaultTab="chat"
         task={makeTask({ column: "todo" as any, status: "failed", error: "Planner failed hard" })}
         onClose={noop}
         onDeleteTask={noopDelete}
@@ -411,7 +411,7 @@ describe("TaskDetailModal planner Chat tab", () => {
     const { container } = render(
       <TaskDetailModal
         initialTab="chat"
-        taskDetailChatFirst
+        taskDetailDefaultTab="chat"
         task={makeTask({ column: "todo" as any, status: "failed", error: "Activity failure stays visible" })}
         onClose={noop}
         onDeleteTask={noopDelete}
@@ -442,7 +442,7 @@ describe("TaskDetailModal planner Chat tab", () => {
     const { container, rerender } = render(
       <TaskDetailModal
         initialTab="definition"
-        taskDetailChatFirst
+        taskDetailDefaultTab="chat"
         task={makeTask({ column: "todo" as any, status: "failed" })}
         onClose={noop}
         onDeleteTask={noopDelete}
@@ -462,7 +462,7 @@ describe("TaskDetailModal planner Chat tab", () => {
     rerender(
       <TaskDetailModal
         initialTab="definition"
-        taskDetailChatFirst
+        taskDetailDefaultTab="chat"
         task={makeTask({ column: "todo" as any, status: "in-progress", error: "Ignored because task is not failed" })}
         onClose={noop}
         onDeleteTask={noopDelete}
@@ -502,7 +502,7 @@ describe("TaskDetailModal planner Chat tab", () => {
     render(
       <TaskDetailModal
         initialTab="definition"
-        taskDetailChatFirst
+        taskDetailDefaultTab="chat"
         task={makeTask({ column: "todo" as any, status: "failed", error: "Workflow graph terminated with failure at node 'steps#0:step-execute'" })}
         onClose={noop}
         onDeleteTask={noopDelete}
@@ -556,7 +556,7 @@ describe("TaskDetailModal planner Chat tab", () => {
     render(
       <TaskDetailModal
         initialTab="definition"
-        taskDetailChatFirst
+        taskDetailDefaultTab="chat"
         task={makeTask({ column: "in-progress" as any, status: "failed", error: "Workflow graph terminated with failure at node 'unknown'" })}
         onClose={noop}
         onDeleteTask={noopDelete}
@@ -588,7 +588,7 @@ describe("TaskDetailModal planner Chat tab", () => {
     render(
       <TaskDetailModal
         initialTab="definition"
-        taskDetailChatFirst
+        taskDetailDefaultTab="chat"
         task={makeTask({ column: "in-progress" as any, status: "failed", error: "Workflow graph terminated with failure at node 'unknown'" })}
         onClose={noop}
         onDeleteTask={noopDelete}

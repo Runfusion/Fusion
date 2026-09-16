@@ -5882,9 +5882,6 @@
       "languageAutoHint": "브라우저 언어를 따릅니다",
       "suppressTheLdquoNeedsYourInputRdquoBanner": "",
       "title": "모양",
-      "openTasksInRightSidebarHelp": "",
-      "openMobileTasksInPopupHelp": "",
-      "taskDetailChatFirstHelp": "",
       "showCostBadgeOnCards": "",
       "showCostBadgeOnCardsHelp": "",
       "chatMessageLayout": "",
@@ -5896,7 +5893,8 @@
       "navigationPlacementSidebar": "",
       "navigationPlacementHelp": "",
       "rightSidebarEnabled": "오른쪽 도구 사이드바 표시",
-      "rightSidebarEnabledHelp": "활성화하면 태블릿과 데스크톱에 파일, 채팅, 목록, 메모 바로가기가 있는 선택적 오른쪽 사이드바가 표시됩니다. 사이드바 없이도 모든 도구를 사용할 수 있습니다. 프로젝트 범위, 기본값: 비활성화."
+      "rightSidebarEnabledHelp": "활성화하면 태블릿과 데스크톱에 파일, 채팅, 목록, 메모 바로가기가 있는 선택적 오른쪽 사이드바가 표시됩니다. 사이드바 없이도 모든 도구를 사용할 수 있습니다. 프로젝트 범위, 기본값: 비활성화.",
+      "taskDetailDefaultTabHelp": ""
     },
     "auth": {
       "apiKeyCleared": "API 키가 지워졌습니다",

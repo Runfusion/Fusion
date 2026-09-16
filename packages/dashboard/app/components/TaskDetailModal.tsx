@@ -24,6 +24,7 @@ import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
 import { useModalDismissPreference } from "../hooks/useOverlayDismiss";
 import { useColumnLabel } from "../i18n/labels";
 import type { DetailTaskTab } from "../hooks/useModalManager";
+import type { TaskDetailDefaultTab } from "../hooks/useAppSettings";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -397,8 +398,12 @@ The existing task activity/steering surface keeps the stable internal `chat` tab
 FNXC:TaskDetailPlannerChat 2026-06-30-22:30:
 Task detail separates Activity from planner-model Chat. `chat` remains the legacy Activity id for old links and Activity → Live (internal `current`)/Feed/Raw Logs/steering, while `planner-chat` is the top-level Chat tab for task-aware planning conversation.
 
-FNXC:TaskDetailActivityFirst 2026-06-30-23:59:
-Task details are Activity-first by default: render Activity before planner Chat and make omitted non-done opens land on Activity → Live. The project `taskDetailChatFirst` setting restores Chat-first ordering/default when true; explicit `initialTab` deep links always win.
+FNXC:TaskDetailDefaultTab 2026-09-16-02:53:
+FN-442 replaced the boolean Chat-first opt-in with the three-value project setting `taskDetailDefaultTab`. One value carries
+BOTH the landing tab of an open with no explicit tab AND the head order of the tab bar: `definition` → the `definition` tab,
+`chat` → the `planner-chat` tab, `activity` → the legacy `chat` Activity → Live surface. The chosen tab leads the bar and the
+remaining two of the Activity / Chat / Definition trio follow in that canonical order. `activity` is the historical default;
+explicit `initialTab` deep links and the terminal-column `summary` landing always win.
 
 FNXC:TaskDetailActivity 2026-06-30-15:50:
 Only an omitted initial tab is the implicit default. Preserve explicit `initialTab="chat"` requests from plugins and task-detail entrypoints so existing links continue to open Activity → Live (internal `current`). Legacy `initialTab="logs"` routes to Activity → Feed, and Raw Logs remains an Activity segment.
@@ -415,7 +420,7 @@ Activity exposes only Live, Feed, Raw, and an oversight-gated Interventions view
 FNXC:TaskHistory 2026-08-28-23:05:
 The compatibility router preserves every retired tab id without preserving duplicate content: `history` and `recommendations` route to Summary; `cost` routes to Stats; `attachments` routes to Artifacts; and `retries`, `routing`, and `debug` route to Details. `logs` remains Activity → Feed.
 */
-function resolveDefaultTab(initialTab: TabId | undefined, column: ColumnId, taskDetailChatFirst = false): TabId {
+function resolveDefaultTab(initialTab: TabId | undefined, column: ColumnId, taskDetailDefaultTab: TaskDetailDefaultTab = "activity"): TabId {
   switch (initialTab) {
     case "logs":
       return "chat";
@@ -445,7 +450,9 @@ function resolveDefaultTab(initialTab: TabId | undefined, column: ColumnId, task
   if (isCompleteColumnRole(undefined, column)) {
     return "summary";
   }
-  return taskDetailChatFirst ? "planner-chat" : "chat";
+  if (taskDetailDefaultTab === "definition") return "definition";
+  if (taskDetailDefaultTab === "chat") return "planner-chat";
+  return "chat";
 }
 
 function resolveDefaultActivitySegment(initialTab: TabId | undefined): ActivitySegment {
@@ -566,8 +573,8 @@ export interface TaskDetailModalProps {
   initialTab?: TabId;
   /** Mobile-only header affordance mode. */
   mobileHeaderMode?: "close" | "back";
-  /** Project setting: true restores Chat-first tab order/default; false or missing uses Activity-first. */
-  taskDetailChatFirst?: boolean;
+  /** Project setting: which of Definition / Chat / Activity leads the tab bar and is the landing tab. Default: activity. */
+  taskDetailDefaultTab?: TaskDetailDefaultTab;
   /** Pre-resolved workflow field defs for this task's workflow (U13/KTD-14).
    *  When provided, these remain authoritative for custom-field rendering.
    *  Move metadata still resolves independently because field definitions do not
@@ -962,11 +969,12 @@ export function TaskDetailContent({
   globalPaused = false,
   onOpenWorkflowEditor,
   /**
-   * FNXC:TaskDetailActivityFirst 2026-06-30-23:59:
-   * The Activity tab is still addressed as `chat` internally so existing callers and deep links do not break; the visible Chat tab uses `planner-chat` and only becomes the omitted non-done default when taskDetailChatFirst is true.
+   * FNXC:TaskDetailDefaultTab 2026-09-16-02:53:
+   * The Activity tab is still addressed as `chat` internally and the visible Chat tab as `planner-chat`, so existing
+   * callers, deep links, and plugins do not break when the project setting moves one of them to the front.
    */
   initialTab,
-  taskDetailChatFirst = false,
+  taskDetailDefaultTab = "activity",
   mobileHeaderMode: _mobileHeaderMode = "close",
   embedded = false,
   active = true,
@@ -986,7 +994,7 @@ export function TaskDetailContent({
   */
   const drawerPresentation = useDrawerPresentation();
   const columnLabel = useColumnLabel();
-  const [activeTab, setActiveTab] = useState<TabId>(() => resolveDefaultTab(initialTab, task.column, taskDetailChatFirst));
+  const [activeTab, setActiveTab] = useState<TabId>(() => resolveDefaultTab(initialTab, task.column, taskDetailDefaultTab));
   const [activitySegment, setActivitySegment] = useState<ActivitySegment>(() => resolveDefaultActivitySegment(initialTab));
   const [activityExpanded, setActivityExpanded] = useState(false);
   const [plannerChatExpanded, setPlannerChatExpanded] = useState(false);
@@ -1375,9 +1383,9 @@ export function TaskDetailContent({
 
   const previousInitialTabRef = useRef<TabId | undefined>(initialTab);
   const taskColumnRef = useRef(task.column);
-  const taskDetailChatFirstRef = useRef(taskDetailChatFirst);
+  const taskDetailDefaultTabRef = useRef(taskDetailDefaultTab);
   taskColumnRef.current = task.column;
-  taskDetailChatFirstRef.current = taskDetailChatFirst;
+  taskDetailDefaultTabRef.current = taskDetailDefaultTab;
 
   /*
   FNXC:TaskDetailTabPersistence 2026-07-17-17:46:
@@ -1389,7 +1397,7 @@ export function TaskDetailContent({
     if (initialTab === previousInitialTabRef.current) return;
 
     previousInitialTabRef.current = initialTab;
-    setActiveTab(resolveDefaultTab(initialTab, taskColumnRef.current, taskDetailChatFirstRef.current));
+    setActiveTab(resolveDefaultTab(initialTab, taskColumnRef.current, taskDetailDefaultTabRef.current));
     setActivitySegment(resolveDefaultActivitySegment(initialTab));
     setRetriesExpanded(initialTab === "retries");
     setRoutingExpanded(initialTab === "routing");
@@ -5029,17 +5037,24 @@ export function TaskDetailContent({
     </div>
   );
 
+  /*
+  FNXC:TaskDetailDefaultTab 2026-09-16-02:53:
+  FN-442: the Activity / Chat / Definition trio always occupies the head of the tab bar. The tab named by the project
+  setting leads, and the other two follow in their canonical order, so the setting moves one tab to the front rather than
+  reshuffling the whole strip. Everything after the trio is unchanged.
+  */
+  const activityTabItem: TaskDetailTabStripItem = { id: "chat", label: t("taskDetail.tabs.activity", "Activity"), node: renderActivityTab() };
+  const plannerChatTabItem: TaskDetailTabStripItem = { id: "planner-chat", label: t("taskDetail.tabs.chat", "Chat"), node: <TaskDetailTabButton selected={activeTab === "planner-chat"} onSelect={() => setActiveTab("planner-chat")}>{t("taskDetail.tabs.chat", "Chat")}</TaskDetailTabButton> };
+  const definitionTabItem: TaskDetailTabStripItem = { id: "definition", label: t("taskDetail.tabs.definition", "Plan"), node: <TaskDetailTabButton selected={activeTab === "definition"} onSelect={() => setActiveTab("definition")}>{t("taskDetail.tabs.definition", "Plan")}</TaskDetailTabButton> };
+  const canonicalHeadTabItems: TaskDetailTabStripItem[] =
+    taskDetailDefaultTab === "chat"
+      ? [plannerChatTabItem, activityTabItem, definitionTabItem]
+      : taskDetailDefaultTab === "definition"
+        ? [definitionTabItem, activityTabItem, plannerChatTabItem]
+        : [activityTabItem, plannerChatTabItem, definitionTabItem];
+
   const canonicalTabItems: TaskDetailTabStripItem[] = [
-    ...(taskDetailChatFirst
-      ? [
-          { id: "planner-chat", label: t("taskDetail.tabs.chat", "Chat"), node: <TaskDetailTabButton selected={activeTab === "planner-chat"} onSelect={() => setActiveTab("planner-chat")}>{t("taskDetail.tabs.chat", "Chat")}</TaskDetailTabButton> },
-          { id: "chat", label: t("taskDetail.tabs.activity", "Activity"), node: renderActivityTab() },
-        ]
-      : [
-          { id: "chat", label: t("taskDetail.tabs.activity", "Activity"), node: renderActivityTab() },
-          { id: "planner-chat", label: t("taskDetail.tabs.chat", "Chat"), node: <TaskDetailTabButton selected={activeTab === "planner-chat"} onSelect={() => setActiveTab("planner-chat")}>{t("taskDetail.tabs.chat", "Chat")}</TaskDetailTabButton> },
-        ]),
-    { id: "definition", label: t("taskDetail.tabs.definition", "Plan"), node: <TaskDetailTabButton selected={activeTab === "definition"} onSelect={() => setActiveTab("definition")}>{t("taskDetail.tabs.definition", "Plan")}</TaskDetailTabButton> },
+    ...canonicalHeadTabItems,
     ...((isWipColumn || isReviewColumn || isDoneColumn) ? [{ id: "changes", label: t("taskDetail.tabs.changes", "Changes"), node: <TaskDetailTabButton selected={activeTab === "changes"} onSelect={() => setActiveTab("changes")}>{t("taskDetail.tabs.changes", "Changes")}</TaskDetailTabButton> }] : []),
     { id: "summary", label: t("taskDetail.tabs.summary", "Summary"), node: <TaskDetailTabButton selected={activeTab === "summary"} onSelect={() => setActiveTab("summary")}>{t("taskDetail.tabs.summary", "Summary")}</TaskDetailTabButton> },
     { id: "stats", label: t("taskDetail.tabs.stats", "Stats"), node: <TaskDetailTabButton selected={activeTab === "stats"} onSelect={() => setActiveTab("stats")}>{t("taskDetail.tabs.stats", "Stats")}</TaskDetailTabButton> },

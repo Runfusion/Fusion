@@ -241,7 +241,6 @@ export function MainContentListView(props: AppMainPanelTaskDetailMainContentProp
     searchQuery,
     lastFetchTimeMs,
     autoMerge,
-    openMobileTasksInPopup,
     mergeStrategy,
   } = props;
 
@@ -275,7 +274,6 @@ export function MainContentListView(props: AppMainPanelTaskDetailMainContentProp
         searchQuery={searchQuery}
         lastFetchTimeMs={lastFetchTimeMs}
         autoMerge={autoMerge}
-        openMobileTasksInPopup={openMobileTasksInPopup}
         mergeStrategy={mergeStrategy}
         /*
         FNXC:ListInRightDock 2026-09-14-05:12:
@@ -329,10 +327,8 @@ export function MainContent(props: MainContentProps) {
   setChatMessageLayoutImmediate,
   rightSidebarEnabled,
   setRightSidebarEnabledImmediate,
-  setOpenTasksInRightSidebarImmediate,
-  setOpenMobileTasksInPopupImmediate,
   setShowCostBadgeOnCardsImmediate,
-  setTaskDetailChatFirstImmediate,
+  setTaskDetailDefaultTabImmediate,
   setMobileNavPrimaryItemsImmediate,
   reopenOnboardingWithNav,
   viewMode,
@@ -357,10 +353,8 @@ export function MainContent(props: MainContentProps) {
   prAuthAvailable,
   autoMerge,
   settingsLoaded,
-  openTasksInRightSidebar,
-  openMobileTasksInPopup,
   showCostBadgeOnCards,
-  taskDetailChatFirst,
+  taskDetailDefaultTab,
   chatMessageLayout,
   skillsEnabled,
   experimentalFeatures: _experimentalFeatures,
@@ -619,8 +613,10 @@ export function MainContent(props: MainContentProps) {
   FNXC:Settings 2026-06-22-00:00:
   Settings renders ahead of the overview branch so the header gear opens the embedded Settings view even when no project is selected (viewMode === "overview"), matching the prior modal which opened regardless of view mode.
 
-  FNXC:OpenTasksInRightSidebar 2026-06-28-00:00:
-  Embedded Settings closes must refresh App-scoped settings before returning to the board. The openTasksInRightSidebar routing hook reads project settings through useAppSettings, so saving the Appearance toggle needs the same refresh path as the modal settings close to make board-card routing change immediately without a reload.
+  FNXC:TaskDetailDefaultTab 2026-09-16-02:53:
+  FN-442: embedded Settings closes must refresh App-scoped settings before returning to the board. The task-detail
+  default-tab choice reaches every detail host through useAppSettings, so saving the Appearance selector needs the same
+  refresh path as the modal settings close to take effect without a reload.
   */
   if (taskView === "settings") {
     const closeSettingsView = () => {
@@ -651,14 +647,10 @@ export function MainContent(props: MainContentProps) {
             onChatMessageLayoutChange={setChatMessageLayoutImmediate}
             rightSidebarEnabled={rightSidebarEnabled}
             onRightSidebarEnabledChange={setRightSidebarEnabledImmediate}
-            openTasksInRightSidebar={openTasksInRightSidebar}
-            onOpenTasksInRightSidebarChange={setOpenTasksInRightSidebarImmediate}
-            openMobileTasksInPopup={openMobileTasksInPopup}
-            onOpenMobileTasksInPopupChange={setOpenMobileTasksInPopupImmediate}
             showCostBadgeOnCards={showCostBadgeOnCards}
             onShowCostBadgeOnCardsChange={setShowCostBadgeOnCardsImmediate}
-            taskDetailChatFirst={taskDetailChatFirst}
-            onTaskDetailChatFirstChange={setTaskDetailChatFirstImmediate}
+            taskDetailDefaultTab={taskDetailDefaultTab}
+            onTaskDetailDefaultTabChange={setTaskDetailDefaultTabImmediate}
             onMobileNavPrimaryItemsChange={setMobileNavPrimaryItemsImmediate}
             onReopenOnboarding={reopenOnboardingWithNav}
             onOpenApprovals={() => handleChangeTaskView("mailbox")}
@@ -1299,7 +1291,7 @@ export function MainContent(props: MainContentProps) {
               addToast={addToast}
               prAuthAvailable={prAuthAvailable}
               autoMergeEnabled={autoMerge}
-              taskDetailChatFirst={taskDetailChatFirst}
+              taskDetailDefaultTab={taskDetailDefaultTab}
             />
       </PageErrorBoundary>
     );

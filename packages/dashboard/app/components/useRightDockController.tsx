@@ -4,6 +4,7 @@ import { isNearDuplicateCanonicalInactive } from "../../../core/src/duplicates/n
 import type { ToastType } from "../hooks/useToast";
 import type { UseNotesController } from "../hooks/useNotes";
 import type { ChatSessionInfo } from "../hooks/useChat";
+import type { TaskDetailDefaultTab } from "../hooks/useAppSettings";
 import type { ChatReportHandoff } from "./chatReportHandoff";
 import type { DetailTaskTab } from "../hooks/useModalManager";
 import { fetchTaskDetail } from "../api";
@@ -69,7 +70,8 @@ export interface RightDockControllerInput {
   onTaskCreated: (task: Task) => void;
   prAuthAvailable: boolean;
   autoMerge: boolean;
-  taskDetailChatFirst: boolean;
+  /* FNXC:TaskDetailDefaultTab 2026-09-16-02:53: FN-442 — project choice of the task-detail landing tab and tab-bar head order. */
+  taskDetailDefaultTab: TaskDetailDefaultTab;
   visibilityOptions: OverflowViewVisibilityOptions;
   /** FN-382: the owner-supplied List surface rendered as a dock tool on non-mobile hosts. */
   renderListView?: () => ReactNode;
@@ -308,7 +310,7 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
       addToast={input.addToast}
       prAuthAvailable={input.prAuthAvailable}
       autoMergeEnabled={input.autoMerge}
-      taskDetailChatFirst={input.taskDetailChatFirst}
+      taskDetailDefaultTab={input.taskDetailDefaultTab}
     />
   ) : null;
 

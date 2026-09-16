@@ -220,30 +220,19 @@ describe("settings defaults invariants", () => {
     });
   });
 
-  describe("openTasksInRightSidebar default", () => {
-    it("keeps openTasksInRightSidebar explicitly false in project defaults", () => {
-      expect(DEFAULT_PROJECT_SETTINGS.openTasksInRightSidebar).toBe(false);
-      expect("openTasksInRightSidebar" in DEFAULT_PROJECT_SETTINGS).toBe(true);
-      expect(PROJECT_SETTINGS_KEYS).toContain("openTasksInRightSidebar");
-    });
-
-    it("keeps openTasksInRightSidebar project-scoped only", () => {
-      expect("openTasksInRightSidebar" in DEFAULT_GLOBAL_SETTINGS).toBe(false);
-      expect(GLOBAL_SETTINGS_KEYS).not.toContain("openTasksInRightSidebar");
-    });
-  });
-
-  describe("openMobileTasksInPopup default", () => {
-    it("keeps openMobileTasksInPopup explicitly false in project defaults", () => {
-      expect(DEFAULT_PROJECT_SETTINGS.openMobileTasksInPopup).toBe(false);
-      expect("openMobileTasksInPopup" in DEFAULT_PROJECT_SETTINGS).toBe(true);
-      expect(PROJECT_SETTINGS_KEYS).toContain("openMobileTasksInPopup");
-    });
-
-    it("keeps openMobileTasksInPopup project-scoped only", () => {
-      expect("openMobileTasksInPopup" in DEFAULT_GLOBAL_SETTINGS).toBe(false);
-      expect(GLOBAL_SETTINGS_KEYS).not.toContain("openMobileTasksInPopup");
-    });
+  /*
+  FNXC:TaskDetailDefaultTab 2026-09-16-02:53:
+  FN-442 deleted the `openTasksInRightSidebar` and `openMobileTasksInPopup` project settings: the floating task window
+  is now the unconditional route, so the opt-in booleans had no subject left. Their describe blocks are replaced by
+  the retirement case below rather than kept asserting a deliberately removed contract.
+  */
+  it("retires the board task-open routing settings", () => {
+    for (const key of ["openTasksInRightSidebar", "openMobileTasksInPopup", "taskDetailChatFirst"]) {
+      expect(Object.hasOwn(DEFAULT_PROJECT_SETTINGS, key)).toBe(false);
+      expect(PROJECT_SETTINGS_KEYS).not.toContain(key);
+      expect(Object.hasOwn(DEFAULT_GLOBAL_SETTINGS, key)).toBe(false);
+      expect(GLOBAL_SETTINGS_KEYS).not.toContain(key);
+    }
   });
 
   /*
@@ -314,16 +303,16 @@ describe("settings defaults invariants", () => {
     });
   });
 
-  describe("taskDetailChatFirst default", () => {
-    it("keeps taskDetailChatFirst explicitly false in project defaults", () => {
-      expect(DEFAULT_PROJECT_SETTINGS.taskDetailChatFirst).toBe(false);
-      expect("taskDetailChatFirst" in DEFAULT_PROJECT_SETTINGS).toBe(true);
-      expect(PROJECT_SETTINGS_KEYS).toContain("taskDetailChatFirst");
+  describe("taskDetailDefaultTab default", () => {
+    it("keeps taskDetailDefaultTab seeded to the historical activity landing tab", () => {
+      expect(DEFAULT_PROJECT_SETTINGS.taskDetailDefaultTab).toBe("activity");
+      expect("taskDetailDefaultTab" in DEFAULT_PROJECT_SETTINGS).toBe(true);
+      expect(PROJECT_SETTINGS_KEYS).toContain("taskDetailDefaultTab");
     });
 
-    it("keeps taskDetailChatFirst project-scoped only", () => {
-      expect("taskDetailChatFirst" in DEFAULT_GLOBAL_SETTINGS).toBe(false);
-      expect(GLOBAL_SETTINGS_KEYS).not.toContain("taskDetailChatFirst");
+    it("keeps taskDetailDefaultTab project-scoped only", () => {
+      expect("taskDetailDefaultTab" in DEFAULT_GLOBAL_SETTINGS).toBe(false);
+      expect(GLOBAL_SETTINGS_KEYS).not.toContain("taskDetailDefaultTab");
     });
   });
 

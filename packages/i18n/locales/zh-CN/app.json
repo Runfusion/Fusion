@@ -5882,9 +5882,6 @@
       "languageAutoHint": "跟随浏览器语言",
       "suppressTheLdquoNeedsYourInputRdquoBanner": "",
       "title": "外观",
-      "openTasksInRightSidebarHelp": "",
-      "openMobileTasksInPopupHelp": "",
-      "taskDetailChatFirstHelp": "",
       "showCostBadgeOnCards": "",
       "showCostBadgeOnCardsHelp": "",
       "chatMessageLayout": "",
@@ -5896,7 +5893,8 @@
       "navigationPlacementSidebar": "",
       "navigationPlacementHelp": "",
       "rightSidebarEnabled": "显示右侧工具栏",
-      "rightSidebarEnabledHelp": "启用后，平板和桌面会显示可选的右侧栏，包含文件、聊天、列表和笔记的快捷入口。即使不启用，所有工具仍可访问。项目级设置；默认：关闭。"
+      "rightSidebarEnabledHelp": "启用后，平板和桌面会显示可选的右侧栏，包含文件、聊天、列表和笔记的快捷入口。即使不启用，所有工具仍可访问。项目级设置；默认：关闭。",
+      "taskDetailDefaultTabHelp": ""
     },
     "auth": {
       "apiKeyCleared": "API 密钥已清除",

@@ -5,7 +5,7 @@ import { LanguageSelector } from "../../LanguageSelector";
 import { SettingsToggleRow } from "../SettingsToggleRow";
 import { SettingsSelectRow } from "../SettingsSelectRow";
 import type { SectionBaseProps } from "./context";
-import { normalizeChatMessageLayout, type ChatMessageLayout } from "../../../hooks/useAppSettings";
+import { normalizeChatMessageLayout, normalizeTaskDetailDefaultTab, type ChatMessageLayout, type TaskDetailDefaultTab } from "../../../hooks/useAppSettings";
 import { normalizeNavigationPlacement, type NavigationPlacement } from "../../../utils/navigationPlacement";
 export interface AppearanceSectionProps extends SectionBaseProps {
     themeMode: ThemeMode;
@@ -28,14 +28,11 @@ export interface AppearanceSectionProps extends SectionBaseProps {
     /* FNXC:RightSidebarOptional 2026-09-15-16:04: FN-426 — project opt-in for the otherwise-absent right tool dock. */
     rightSidebarEnabled?: boolean;
     onRightSidebarEnabledChange?: (enabled: boolean) => void;
-    openTasksInRightSidebar?: boolean;
-    onOpenTasksInRightSidebarChange?: (enabled: boolean) => void;
-    openMobileTasksInPopup?: boolean;
-    onOpenMobileTasksInPopupChange?: (enabled: boolean) => void;
     showCostBadgeOnCards?: boolean;
     onShowCostBadgeOnCardsChange?: (enabled: boolean) => void;
-    taskDetailChatFirst?: boolean;
-    onTaskDetailChatFirstChange?: (enabled: boolean) => void;
+    /* FNXC:TaskDetailDefaultTab 2026-09-16-02:53: FN-442 — three-value project choice replacing the Chat-first opt-in. */
+    taskDetailDefaultTab?: TaskDetailDefaultTab;
+    onTaskDetailDefaultTabChange?: (tab: TaskDetailDefaultTab) => void;
     sessionBannersHidden: boolean;
     setSessionBannersHidden: (hidden: boolean) => void;
 }
@@ -47,7 +44,7 @@ Rows render through the shared settings primitives rather than hand-rolled `form
 FNXC:SettingsScope 2026-07-15-17:35:
 Scope badges are per-row because this section genuinely mixes authority levels: theme, color, and font scale are global (DEFAULT_GLOBAL_SETTINGS), while every task-presentation toggle below is project-scoped (DEFAULT_PROJECT_SETTINGS). The nav labels the whole section "global", which is true only of the theme controls, so the badges are what tell an operator which of these travels between projects.
 */
-export function AppearanceSection({ form, setForm, themeMode, colorTheme, uiStyle, onUiStyleChange, dashboardFontScalePct, shadcnCustomColors = {}, resolvedThemeMode, onThemeModeChange, onColorThemeChange, onDashboardFontScaleChange, onShadcnCustomColorsChange, chatMessageLayout = "bubbles", onChatMessageLayoutChange, navigationPlacement = "footer", onNavigationPlacementChange, rightSidebarEnabled, onRightSidebarEnabledChange, openTasksInRightSidebar, onOpenTasksInRightSidebarChange, openMobileTasksInPopup, onOpenMobileTasksInPopupChange, showCostBadgeOnCards, onShowCostBadgeOnCardsChange, taskDetailChatFirst, onTaskDetailChatFirstChange, sessionBannersHidden, setSessionBannersHidden, }: AppearanceSectionProps) {
+export function AppearanceSection({ form, setForm, themeMode, colorTheme, uiStyle, onUiStyleChange, dashboardFontScalePct, shadcnCustomColors = {}, resolvedThemeMode, onThemeModeChange, onColorThemeChange, onDashboardFontScaleChange, onShadcnCustomColorsChange, chatMessageLayout = "bubbles", onChatMessageLayoutChange, navigationPlacement = "footer", onNavigationPlacementChange, rightSidebarEnabled, onRightSidebarEnabledChange, showCostBadgeOnCards, onShowCostBadgeOnCardsChange, taskDetailDefaultTab, onTaskDetailDefaultTabChange, sessionBannersHidden, setSessionBannersHidden, }: AppearanceSectionProps) {
     const { t } = useTranslation("app");
     return (<>
       <h4 className="settings-section-heading">{t("settings.appearance.title", "Appearance")}</h4>
@@ -135,35 +132,6 @@ export function AppearanceSection({ form, setForm, themeMode, colorTheme, uiStyl
           onRightSidebarEnabledChange?.(next);
         }}
       />
-      <SettingsToggleRow
-        descriptor={{
-          key: "openTasksInRightSidebar",
-          label: t("settings.appearance.openTasksInRightSidebar", "Open tasks in the right sidebar"),
-          help: t("settings.appearance.openTasksInRightSidebarHelp", "When enabled, board task cards open detail in the right sidebar when it is available; mobile and hidden-sidebar states keep the full task panel. Default: disabled."),
-          scope: "project",
-        }}
-        value={form.openTasksInRightSidebar ?? openTasksInRightSidebar === true}
-        onChange={(v) => {
-          const enabled = v === true;
-          setForm((f) => ({ ...f, openTasksInRightSidebar: enabled }));
-          onOpenTasksInRightSidebarChange?.(enabled);
-        }}
-      />
-      {/* FNXC:MobileTaskPopups 2026-07-21-00:00 (FN-8478): Keep the stored openMobileTasksInPopup key for compatibility and explain that board-card deep-tab chips now use the same popup routing, preserving the board behind Changes, Retries, or Workflow detail. */}
-      <SettingsToggleRow
-        descriptor={{
-          key: "openMobileTasksInPopup",
-          label: t("settings.appearance.openMobileTasksInPopup", "Open tasks as popups"),
-          help: t("settings.appearance.openMobileTasksInPopupHelp", "When enabled, board task-card clicks including Changes, Retries, and Workflow chips, plus ordinary List row/card clicks, open the existing movable task popup so the board or list remains visible. Other task opens keep their current behavior. Default: disabled."),
-          scope: "project",
-        }}
-        value={form.openMobileTasksInPopup ?? openMobileTasksInPopup === true}
-        onChange={(v) => {
-          const enabled = v === true;
-          setForm((f) => ({ ...f, openMobileTasksInPopup: enabled }));
-          onOpenMobileTasksInPopupChange?.(enabled);
-        }}
-      />
       {/* FNXC:TaskCardCostBadge 2026-07-11-12:15: This project setting is opt-in because board cards are already dense; when enabled, only tasks with recorded positive token usage render a read-time derived spend badge. */}
       <SettingsToggleRow
         descriptor={{
@@ -179,19 +147,29 @@ export function AppearanceSection({ form, setForm, themeMode, colorTheme, uiStyl
           onShowCostBadgeOnCardsChange?.(enabled);
         }}
       />
-      {/* FNXC:TaskDetailActivityFirst 2026-06-30-23:59: The project setting is opt-in because task details now default to Activity-first; explicit Activity/Chat/Logs links keep their destination regardless of this checkbox. */}
-      <SettingsToggleRow
+      {/*
+      FNXC:TaskDetailDefaultTab 2026-09-16-02:53:
+      FN-442: one three-value project choice replaces the Chat-first checkbox. It names the tab a task opens on when no
+      tab is requested AND the tab that leads the task-detail tab bar. `activity` is the historical default; explicit
+      Activity/Chat/Logs deep links keep their destination regardless of this choice.
+      */}
+      <SettingsSelectRow
         descriptor={{
-          key: "taskDetailChatFirst",
-          label: t("settings.appearance.taskDetailChatFirst", "Open task details with Chat first"),
-          help: t("settings.appearance.taskDetailChatFirstHelp", "Off by default: task details list Activity first and omitted non-done opens land on Activity. Turn on to restore Chat-first order/default; explicit Chat links still work either way."),
+          key: "taskDetailDefaultTab",
+          label: t("settings.appearance.taskDetailDefaultTab", "Open task details on"),
+          help: t("settings.appearance.taskDetailDefaultTabHelp", "Choose which tab a task opens on and leads the task detail tab bar: Definition, Chat, or Activity. Explicit task links keep their destination. Project-scoped; default: Activity."),
           scope: "project",
+          options: [
+            { value: "definition", label: t("settings.appearance.taskDetailDefaultTabDefinition", "Definition") },
+            { value: "chat", label: t("settings.appearance.taskDetailDefaultTabChat", "Chat") },
+            { value: "activity", label: t("settings.appearance.taskDetailDefaultTabActivity", "Activity") },
+          ],
         }}
-        value={form.taskDetailChatFirst ?? taskDetailChatFirst === true}
-        onChange={(v) => {
-          const enabled = v === true;
-          setForm((f) => ({ ...f, taskDetailChatFirst: enabled }));
-          onTaskDetailChatFirstChange?.(enabled);
+        value={normalizeTaskDetailDefaultTab(form.taskDetailDefaultTab ?? taskDetailDefaultTab)}
+        onChange={(value) => {
+          const nextTab = normalizeTaskDetailDefaultTab(value);
+          setForm((f) => ({ ...f, taskDetailDefaultTab: nextTab }));
+          onTaskDetailDefaultTabChange?.(nextTab);
         }}
       />
       {/*

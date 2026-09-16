@@ -331,8 +331,13 @@ vi.mock("../../components/TaskDetailModal", () => ({
       </div>
     </div>
   ),
-  TaskDetailContent: ({ task, onBackToBoard, onOpenDetail, onRequestClose }: { task: { id: string; title?: string }; onBackToBoard?: () => void; onOpenDetail?: (task: { id: string; title?: string }) => void; onRequestClose?: () => void }) => (
-    <section data-testid="main-panel-task-detail">
+  /*
+  FNXC:TaskDetailDefaultTab 2026-09-16-02:53:
+  FN-442: the stub surfaces `initialTab` so App-level routing tests can prove WHICH tab a board deep-tab chip asked the
+  floating task window for, without pulling the real (heavy, lazily hosted) task-detail tab strip into this suite.
+  */
+  TaskDetailContent: ({ task, initialTab, onBackToBoard, onOpenDetail, onRequestClose }: { task: { id: string; title?: string }; initialTab?: string; onBackToBoard?: () => void; onOpenDetail?: (task: { id: string; title?: string }) => void; onRequestClose?: () => void }) => (
+    <section data-testid="main-panel-task-detail" data-initial-tab={initialTab ?? ""}>
       {onBackToBoard && <button type="button" onClick={onBackToBoard}>Back to board</button>}
       {onRequestClose && !onBackToBoard && <button type="button" aria-label="Close" onClick={onRequestClose}>Close</button>}
       <h2>{task.title ?? task.id}</h2>
@@ -1044,10 +1049,14 @@ describe("FN-392 task windows travel across Board and other views", () => {
       updatedAt: "2026-08-01T00:00:00.000Z",
     };
     /* FN-419: the wide footer navigation entries used below belong to the footer placement. */
+    /*
+    FNXC:TaskDetailDefaultTab 2026-09-16-02:53:
+    FN-442 deleted the `openMobileTasksInPopup` opt-in this case used to set: opening a task from the board is now the
+    floating task window unconditionally, so the same click must reach the same window with no setting at all.
+    */
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
       navigationPlacement: "footer",
-      openMobileTasksInPopup: true,
     });
     mockUseTasks.mockImplementation(() => ({
       tasks: [sharedTask],
@@ -1091,6 +1100,66 @@ describe("FN-392 task windows travel across Board and other views", () => {
 
     fireEvent.keyDown(document, { key: "Escape" });
     await waitFor(() => expect(screen.queryByTestId(popupTestId)).toBeNull());
+  });
+
+  /*
+  FNXC:TaskDetailDefaultTab 2026-09-16-02:53:
+  FN-442: a board card's deep-tab chip is the second board task-open path, and it used to have its own modal/main-panel
+  branches behind `openMobileTasksInPopup`. This drives the shipped Changes chip on a real WIP card and proves it reaches
+  the same floating task window with the requested tab, with no project setting involved.
+  */
+  it("opens a board card Changes chip in the task window on the Changes tab", async () => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    const wipTask = {
+      id: "FN-8699",
+      title: "Deep tab chip regression task",
+      description: "Verify the Changes chip opens the task window.",
+      column: "in-progress",
+      status: "in-progress",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      modifiedFiles: ["packages/dashboard/app/App.tsx"],
+      createdAt: "2026-08-01T00:00:00.000Z",
+      updatedAt: "2026-08-01T00:00:00.000Z",
+    };
+    vi.mocked(fetchSettings).mockResolvedValue({ ...defaultSettings, navigationPlacement: "footer" });
+    mockUseTasks.mockImplementation(() => ({
+      tasks: [wipTask],
+      isStale: false,
+      createTask: mockCreateTask,
+      moveTask: vi.fn(),
+      pauseTask: vi.fn(),
+      unpauseTask: vi.fn(),
+      deleteTask: vi.fn(),
+      mergeTask: vi.fn(),
+      retryTask: vi.fn(),
+      resetTask: vi.fn(),
+      updateTask: vi.fn(),
+      duplicateTask: vi.fn(),
+      refreshTasks: vi.fn(),
+      ingestCreatedTasks: vi.fn(),
+      lastFetchTimeMs: Date.now(),
+    }));
+
+    render(<App />);
+    await waitForAppShell();
+
+    const chip = await waitFor(() => {
+      const node = document.querySelector('.card[data-id="FN-8699"] .card-session-files');
+      expect(node).toBeTruthy();
+      return node as HTMLElement;
+    });
+    fireEvent.click(chip);
+
+    await waitFor(() => expect(screen.getByTestId("floating-window-task-detail-FN-8699")).toBeTruthy());
+    const taskWindow = screen.getByTestId("floating-window-task-detail-FN-8699");
+    await waitFor(() => {
+      const hosted = taskWindow.querySelector('[data-testid="main-panel-task-detail"]');
+      expect(hosted?.getAttribute("data-initial-tab")).toBe("changes");
+    });
+    expect(screen.queryByTestId("floating-window-task-detail-FN-8699")).toBeTruthy();
   });
 });
 
@@ -3630,7 +3699,13 @@ describe("App deep link handling", () => {
     expect(window.history.replaceState).not.toHaveBeenCalled();
   });
 
-  it("closes board-opened main-panel task detail on one browser back", async () => {
+  /*
+  FNXC:TaskDetailDefaultTab 2026-09-16-02:53:
+  FN-442 routes a board card to the floating task window instead of the full main-panel task detail, so the surface that
+  a single dismissal has to close is that window. The invariant kept here is "one dismissal, detail gone, board back" —
+  only the surface and its dismissal gesture changed.
+  */
+  it("closes a board-opened task detail window on one dismissal", async () => {
     const boardTask = { id: "FN-6964", title: "Back nav task", description: "x", status: "todo", column: "todo", dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "", updatedAt: "" };
     mockUseTasks.mockImplementation(() => ({
       tasks: [boardTask],
@@ -3661,10 +3736,9 @@ describe("App deep link handling", () => {
     */
     fireEvent.click(await screen.findByText("Back nav task"));
     expect(await screen.findByTestId("main-panel-task-detail")).toBeTruthy();
+    expect(screen.getByTestId("floating-window-task-detail-FN-6964")).toBeTruthy();
 
-    act(() => {
-      window.dispatchEvent(new PopStateEvent("popstate", { state: { navIndex: 0 } }));
-    });
+    fireEvent.keyDown(document, { key: "Escape" });
 
     await waitFor(() => {
       expect(screen.queryByTestId("main-panel-task-detail")).toBeNull();
@@ -3672,7 +3746,12 @@ describe("App deep link handling", () => {
     });
   });
 
-  it("restores the previous main-panel task detail on nested detail browser back", async () => {
+  /*
+  FNXC:TaskDetailDefaultTab 2026-09-16-02:53:
+  FN-442: the board now opens the task window, and a nested task opened from inside it still layers on top. Backing out
+  of the nested detail must restore the originating one rather than closing everything.
+  */
+  it("restores the previous task detail on nested detail browser back", async () => {
     const boardTask = { id: "FN-6964", title: "Back nav task", description: "x", status: "todo", column: "todo", dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "", updatedAt: "" };
     mockUseTasks.mockImplementation(() => ({
       tasks: [boardTask],
@@ -3699,15 +3778,13 @@ describe("App deep link handling", () => {
     fireEvent.click(await screen.findByText("Back nav task"));
     expect(await screen.findByText("Open nested task")).toBeTruthy();
     fireEvent.click(screen.getByText("Open nested task"));
-    expect(await screen.findByText("Nested task")).toBeTruthy();
+    expect(await screen.findByTestId("floating-window-task-detail-FN-6965")).toBeTruthy();
 
-    act(() => {
-      window.dispatchEvent(new PopStateEvent("popstate", { state: { navIndex: 1 } }));
-    });
+    fireEvent.keyDown(document, { key: "Escape" });
 
     await waitFor(() => {
-      expect(screen.queryByText("Nested task")).toBeNull();
-      expect(screen.getByTestId("main-panel-task-detail")).toBeTruthy();
+      expect(screen.queryByTestId("floating-window-task-detail-FN-6965")).toBeNull();
+      expect(screen.getByTestId("floating-window-task-detail-FN-6964")).toBeTruthy();
       expect(screen.getAllByText("Back nav task").length).toBeGreaterThan(0);
     });
   });

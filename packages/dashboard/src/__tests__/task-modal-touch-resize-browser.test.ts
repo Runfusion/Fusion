@@ -856,7 +856,7 @@ describe.runIf(executablePath)("Task modal tablet touch resize browser regressio
       const page = await browser.newPage({ viewport: { width, height } });
       const cdp = await page.context().newCDPSession(page);
       await setDesktopMetrics(cdp, width, height);
-      await page.goto(`${baseUrl}app/task-modal-touch-resize-e2e-fixture.html?surface=board-card-click-app&openMobileTasksInPopup=true&reset=1`);
+      await page.goto(`${baseUrl}app/task-modal-touch-resize-e2e-fixture.html?surface=board-card-click-app&reset=1`);
       await page.waitForTimeout(350);
       const cardSelector = ".card[data-id='FN-TITLE-FLICKER'] .card-title";
       const boardSelector = "main.board-workflow-columns";
@@ -1100,7 +1100,7 @@ describe.runIf(executablePath)("Task modal tablet touch resize browser regressio
     const cdp = await page.context().newCDPSession(page);
     await cdp.send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, screenWidth: 390, screenHeight: 844, deviceScaleFactor: 1, mobile: true });
     await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
-    await page.goto(`${baseUrl}app/task-modal-touch-resize-e2e-fixture.html?surface=board-card-click-app&openMobileTasksInPopup=true&reset=1`);
+    await page.goto(`${baseUrl}app/task-modal-touch-resize-e2e-fixture.html?surface=board-card-click-app&reset=1`);
     await page.waitForTimeout(350);
     const card = await targetCenter(page, ".card[data-id='FN-TITLE-FLICKER'] .card-title");
     await touchTap(cdp, card);
