@@ -72,6 +72,13 @@ export const defaultChatState: UseChatReturn = {
   sendMessage: vi.fn(),
   editMessageAndResend: vi.fn(),
   /*
+  FNXC:ChatMessageEdit 2026-09-16-05:58:
+  FN-459. A rejected edit rescues the typed correction through these two fields instead of losing it
+  when the reload remounts the target row. The shared default is "nothing to restore".
+  */
+  editDraftRestore: null,
+  clearEditDraftRestore: vi.fn(),
+  /*
   FNXC:ChatStreamCancel 2026-08-23-23:20:
   stopStreaming resolves a durable cancellation promise, and ChatView's `/new` and `/clear` handlers
   chain `.then(...)` on it. A bare vi.fn() returns undefined and throws inside the handler, so the

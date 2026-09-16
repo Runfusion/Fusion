@@ -197,6 +197,77 @@ describe("streamChatResponse SSE parser", () => {
     });
   });
 
+  /*
+  FNXC:ChatMessageEdit 2026-09-16-05:58:
+  FN-459. A valid in-band `user_message` must reach `onUserMessage` carrying the persisted row, and a
+  malformed one must be skipped WITHOUT terminating the stream (`done` still arrives). Without the
+  in-band identity the optimistic `temp-<ts>` id survived and an edit produced a guaranteed 404.
+  */
+  it("delivers a valid user_message event to onUserMessage", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        createChunkedStream([
+          "event: user_message\n",
+          "data: {\"message\":{\"id\":\"msg-ab12cd34\",\"sessionId\":\"s-1\",\"role\":\"user\",\"content\":\"bonjour\",\"thinkingOutput\":null,\"metadata\":null,\"createdAt\":\"2026-09-16T00:00:00.000Z\"}}\n\n",
+          "event: done\n",
+          "data: {\"messageId\":\"msg-reply\"}\n\n",
+        ]),
+        { status: 200 },
+      ),
+    );
+
+    const userMessages: Array<{ message: { id: string; content: string } }> = [];
+    const donePayloads: Array<{ messageId: string }> = [];
+
+    streamChatResponse("s-1", "bonjour", {
+      onUserMessage: (data) => userMessages.push(data as { message: { id: string; content: string } }),
+      onDone: (data) => donePayloads.push(data),
+      onError: vi.fn(),
+    });
+
+    await vi.waitFor(() => {
+      expect(userMessages).toHaveLength(1);
+      expect(donePayloads).toHaveLength(1);
+    });
+    expect(userMessages[0]?.message.id).toBe("msg-ab12cd34");
+    expect(userMessages[0]?.message.content).toBe("bonjour");
+  });
+
+  it("skips a malformed user_message without terminating the stream", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        createChunkedStream([
+          "event: user_message\n",
+          "data: {\"message\":{\"sessionId\":\"s-1\"}}\n\n",
+          "event: user_message\n",
+          "data: not-json\n\n",
+          "event: text\n",
+          "data: \"still streaming\"\n\n",
+          "event: done\n",
+          "data: {\"messageId\":\"msg-reply\"}\n\n",
+        ]),
+        { status: 200 },
+      ),
+    );
+
+    const onUserMessage = vi.fn();
+    const textChunks: string[] = [];
+    const donePayloads: Array<{ messageId: string }> = [];
+
+    streamChatResponse("s-1", "bonjour", {
+      onUserMessage,
+      onText: (data) => textChunks.push(data),
+      onDone: (data) => donePayloads.push(data),
+      onError: vi.fn(),
+    });
+
+    await vi.waitFor(() => {
+      expect(donePayloads).toEqual([{ messageId: "msg-reply" }]);
+    });
+    expect(onUserMessage).not.toHaveBeenCalled();
+    expect(textChunks).toEqual(["still streaming"]);
+  });
+
   it("keeps accepted streams open when no real stream events arrive before timeout", async () => {
     vi.useFakeTimers();
     const encoder = new TextEncoder();

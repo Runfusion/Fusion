@@ -69,6 +69,16 @@ export interface StandardChatMessageItemProps {
    * false or `onEditMessage` is absent, no affordance renders at all — never a disabled/dead one.
    */
   canEdit?: boolean;
+  /**
+   * FNXC:ChatMessageEdit 2026-09-16-05:58:
+   * FN-459. Correction text rescued from a REJECTED edit. A rejected edit reloads the authoritative
+   * rows, which changes this row's id and remounts it (transcripts key by message id), destroying
+   * the inline editor's local `editedText`. When this becomes defined and the editor is not already
+   * open, reopen it pre-filled and acknowledge through `onEditDraftConsumed` so the surface clears
+   * the draft exactly once instead of reopening the editor forever.
+   */
+  initialEditDraft?: string;
+  onEditDraftConsumed?: (messageId: string) => void;
   /** Optional ChatView-only find presentation; omitted consumers remain unchanged. */
   isSearchMatch?: boolean;
   isSearchActive?: boolean;
@@ -636,6 +646,8 @@ export const StandardChatMessageItem = memo(function StandardChatMessageItem({
   toolCallRenderer,
   onEditMessage,
   canEdit = false,
+  initialEditDraft,
+  onEditDraftConsumed,
   isTopClipped = false,
   isSearchMatch = false,
   isSearchActive = false,
@@ -667,6 +679,18 @@ export const StandardChatMessageItem = memo(function StandardChatMessageItem({
     setIsEditing(false);
     setEditedText(message.content);
   }, [isSavingEdit, message.content]);
+
+  /*
+  FNXC:ChatMessageEdit 2026-09-16-05:58:
+  FN-459. Restore a rescued correction exactly once. Guarded on `isEditing` so an editor the operator
+  already reopened by hand is never overwritten mid-typing.
+  */
+  useEffect(() => {
+    if (initialEditDraft === undefined || isEditing) return;
+    setEditedText(initialEditDraft);
+    setIsEditing(true);
+    onEditDraftConsumed?.(message.id);
+  }, [initialEditDraft, isEditing, message.id, onEditDraftConsumed]);
 
   const saveEdit = useCallback(async () => {
     const trimmed = editedText.trim();

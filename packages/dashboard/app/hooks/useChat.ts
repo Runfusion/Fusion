@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import type { SetStateAction } from "react";
 import {
@@ -119,6 +119,7 @@ export interface ChatSessionInfo {
 // keep working — single source of truth lives in chatTypes.ts.
 export type { ChatMessageInfo, FailureInfo, FallbackInfo, ToolCallInfo } from "./chatTypes";
 import type { ChatMessageInfo, FailureInfo, FallbackInfo, ToolCallInfo } from "./chatTypes";
+import { isPersistedChatMessageId } from "./chatTypes";
 import { createChatStreamHandlers } from "./createChatStreamHandlers";
 import {
   getPersistedPendingChatMessages,
@@ -214,6 +215,15 @@ export interface UseChatReturn {
    * fences and rewinds before acceptance; the hook changes its local range only on acceptance.
    */
   editMessageAndResend: (messageId: string, newContent: string) => Promise<void>;
+  /**
+   * FNXC:ChatMessageEdit 2026-09-16-05:58:
+   * FN-459. A rejected edit reloads the authoritative rows, which changes the target row id and
+   * therefore remounts its virtualized row — destroying the inline editor's local `editedText` and
+   * losing the operator's correction. This publishes that correction (keyed by the RELOADED row id)
+   * so the surface can reopen the editor pre-filled instead of discarding typed work.
+   */
+  editDraftRestore: { messageId: string; content: string } | null;
+  clearEditDraftRestore: (messageId: string) => void;
   stopStreaming: () => Promise<void>;
   clearPendingMessage: (index?: number) => void;
   updatePendingMessage?: (index: number, content: string) => void;
@@ -440,6 +450,28 @@ export function appendChatMessageChronologically(
   return sortChatMessagesChronologically([...previous, message]);
 }
 
+/*
+FNXC:ChatMessageEdit 2026-09-16-05:58:
+FN-459. Deterministic replacement of the optimistic bubble by EXACT temp id, driven by the in-band
+`user_message` stream event. `reconcileOptimisticSentMessage` below matches on content equality,
+which cannot distinguish two identical consecutive sends and depends on an out-of-band echo that can
+never arrive — leaving a `temp-<ts>` id in the transcript and turning the first edit into a
+guaranteed `Message temp-… not found in session …` 404. When the temp row is gone (stream preempted,
+transcript reloaded), fall back to the content-based reconciliation, which stays the safety net.
+*/
+function replaceOptimisticSentMessageById(
+  previous: ChatMessageInfo[],
+  tempUserMessageId: string,
+  persisted: ChatMessageInfo,
+): ChatMessageInfo[] {
+  if (previous.some((message) => message.id === persisted.id)) return sortChatMessagesChronologically(previous);
+  const optimisticIndex = previous.findIndex((candidate) => candidate.id === tempUserMessageId);
+  if (optimisticIndex < 0) return reconcileOptimisticSentMessage(previous, persisted);
+  const next = [...previous];
+  next[optimisticIndex] = persisted;
+  return sortChatMessagesChronologically(next);
+}
+
 function reconcileOptimisticSentMessage(previous: ChatMessageInfo[], persisted: ChatMessageInfo): ChatMessageInfo[] {
   if (previous.some((message) => message.id === persisted.id)) return sortChatMessagesChronologically(previous);
   const optimisticIndex = previous.findIndex((candidate) =>
@@ -527,6 +559,15 @@ export function useChat(
   const [streamingThinking, setStreamingThinking] = useState("");
   const [streamingToolCalls, setStreamingToolCalls] = useState<ToolCallInfo[]>([]);
   const [pendingMessages, setPendingMessages] = useState<string[]>([]);
+  /*
+  FNXC:ChatMessageEdit 2026-09-16-05:58:
+  FN-459. Correction text rescued from a rejected edit. It is stored by transcript POSITION, not by
+  id, because the failure reload is exactly what changes the target row's id; the published id is
+  derived at render time from the settled transcript so it always names the row now on screen.
+  */
+  const [editDraftRestoreTarget, setEditDraftRestoreTarget] = useState<
+    { targetIndex: number; fallbackMessageId: string; content: string } | null
+  >(null);
   const [pendingQueueAction, setPendingQueueAction] = useState(false);
 
   // Search/filter
@@ -1968,6 +2009,17 @@ export function useChat(
           ));
           setActiveSession((prev) => prev && prev.id === sessionId ? { ...prev, ...nextModel } : prev);
         },
+        /*
+        FNXC:ChatMessageEdit 2026-09-16-05:58:
+        FN-459. In-band persisted identity for THIS turn's user bubble. Replacing by exact temp id
+        retires `temp-<ts>` before the reply even finishes, so the edit affordance and
+        `editMessageAndResend` always work against a server-known id.
+        */
+        onUserMessage: ({ message, tempUserMessageId }) => {
+          if (!ownsStream()) return;
+          const persistedUserMessage = mapChatMessageToInfo(message);
+          setMessages((previous) => replaceOptimisticSentMessageById(previous, tempUserMessageId, persistedUserMessage));
+        },
         onAgentMessage: ({ message }) => {
           if (!ownsStream()) return;
           const agentMessage = mapChatMessageToInfo(message);
@@ -2199,11 +2251,38 @@ export function useChat(
       if (!trimmed) return;
 
       const sessionId = activeSession.id;
-      const previousMessages = messagesRef.current;
-      const targetIndex = previousMessages.findIndex((message) => message.id === messageId);
+      const targetIndex = messagesRef.current.findIndex((message) => message.id === messageId);
       if (targetIndex === -1) return;
 
-      pendingReplacementRef.current = { sessionId, messageId };
+      /*
+      FNXC:ChatMessageEdit 2026-09-16-05:58:
+      FN-459. Never post a purely local id as `replacementMessageId`: the server's
+      `prepareReplacement` guard rejects it with a guaranteed 404 (`Message temp-… not found in
+      session …`). The in-band `user_message` event normally retires the optimistic id before the
+      pencil is even offered; this is the belt-and-braces realignment for a row that slipped through
+      (interrupted stream, stale surface). Re-resolve the SAME position from authoritative rows, and
+      refuse locally rather than provoking the 404. A row that is already persisted (`msg-…`) is sent
+      straight through: no extra fetch, no added latency.
+      */
+      let replacementMessageId = messageId;
+      let replacementTargetIndex = targetIndex;
+      if (!isPersistedChatMessageId(messageId)) {
+        try {
+          const data = await fetchChatMessages(sessionId, { limit: 50, order: "desc" }, projectId);
+          const authoritative = sortChatMessagesChronologically(data.messages.map(mapChatMessageToInfo));
+          const realigned = authoritative[targetIndex];
+          if (!realigned || realigned.role !== "user" || !isPersistedChatMessageId(realigned.id)) {
+            throw new Error("Message is not persisted yet");
+          }
+          replacementMessageId = realigned.id;
+          replacementTargetIndex = targetIndex;
+        } catch {
+          setEditDraftRestoreTarget({ targetIndex, fallbackMessageId: messageId, content: trimmed });
+          throw new Error("Failed to edit message");
+        }
+      }
+
+      pendingReplacementRef.current = { sessionId, messageId: replacementMessageId };
       await new Promise<void>((resolve, reject) => {
         sendMessage(
           trimmed,
@@ -2216,16 +2295,44 @@ export function useChat(
             onFailed: () => {
               void loadMessages(sessionId).finally(() => {
                 pendingReplacementRef.current = null;
+                /*
+                FNXC:ChatMessageEdit 2026-09-16-05:58:
+                FN-459. The reload changes the target row id, remounting the virtualized row and
+                destroying the inline editor's local state. Republish the correction against the
+                RELOADED id so the surface reopens the editor pre-filled instead of losing it.
+                */
+                setEditDraftRestoreTarget({
+                  targetIndex: replacementTargetIndex,
+                  fallbackMessageId: replacementMessageId,
+                  content: trimmed,
+                });
                 reject(new Error("Failed to edit message"));
               });
             },
           },
-          { replacementMessageId: messageId, replacementTargetIndex: targetIndex },
+          { replacementMessageId, replacementTargetIndex },
         );
       });
     },
-    [activeSession, loadMessages, sendMessage],
+    [activeSession, loadMessages, projectId, sendMessage],
   );
+
+  const editDraftRestore = useMemo(
+    () => (editDraftRestoreTarget
+      ? {
+          messageId: messages[editDraftRestoreTarget.targetIndex]?.id ?? editDraftRestoreTarget.fallbackMessageId,
+          content: editDraftRestoreTarget.content,
+        }
+      : null),
+    [editDraftRestoreTarget, messages],
+  );
+  const editDraftRestoreRef = useRef(editDraftRestore);
+  editDraftRestoreRef.current = editDraftRestore;
+
+  const clearEditDraftRestore = useCallback((messageId: string) => {
+    if (editDraftRestoreRef.current?.messageId !== messageId) return;
+    setEditDraftRestoreTarget(null);
+  }, []);
 
   /*
   FNXC:ChatSearch 2026-07-07-12:00:
@@ -2750,6 +2857,8 @@ export function useChat(
     setSessionTags,
     sendMessage,
     editMessageAndResend,
+    editDraftRestore,
+    clearEditDraftRestore,
     stopStreaming,
     clearPendingMessage,
     updatePendingMessage,

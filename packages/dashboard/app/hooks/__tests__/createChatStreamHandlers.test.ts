@@ -198,4 +198,60 @@ describe("createChatStreamHandlers", () => {
 
     vi.useRealTimers();
   });
+
+  /*
+  FNXC:ChatMessageEdit 2026-09-16-05:58:
+  FN-459. The factory must join the stream's own `tempUserMessageId` onto the in-band identity event
+  so the caller reconciles its optimistic bubble by EXACT temp id rather than by content equality
+  (two identical consecutive sends would otherwise collide and leave a `temp-<ts>` id behind).
+  */
+  it("joins the stream's tempUserMessageId onto the in-band user_message event", () => {
+    const onUserMessage = vi.fn();
+    const cancelStreamingFlushesRef = { current: null } as { current: (() => void) | null };
+
+    const { handlers } = createChatStreamHandlers({
+      sessionId: "s-1",
+      tempUserMessageId: "temp-1789537275231",
+      setStreamingText: vi.fn(),
+      setStreamingThinking: vi.fn(),
+      setStreamingToolCalls: vi.fn(),
+      cancelStreamingFlushesRef,
+      onUserMessage,
+      onDone: vi.fn(),
+      onError: vi.fn(),
+    });
+
+    const persisted = {
+      id: "msg-ab12cd34",
+      sessionId: "s-1",
+      role: "user" as const,
+      content: "bonjour",
+      thinkingOutput: null,
+      metadata: null,
+      createdAt: "2026-09-16T00:00:00.000Z",
+    };
+    handlers.onUserMessage?.({ message: persisted });
+
+    expect(onUserMessage).toHaveBeenCalledTimes(1);
+    expect(onUserMessage).toHaveBeenCalledWith({
+      message: persisted,
+      tempUserMessageId: "temp-1789537275231",
+    });
+  });
+
+  it("omits onUserMessage entirely when the caller does not opt in", () => {
+    const cancelStreamingFlushesRef = { current: null } as { current: (() => void) | null };
+    const { handlers } = createChatStreamHandlers({
+      sessionId: "s-1",
+      tempUserMessageId: "temp-1",
+      setStreamingText: vi.fn(),
+      setStreamingThinking: vi.fn(),
+      setStreamingToolCalls: vi.fn(),
+      cancelStreamingFlushesRef,
+      onDone: vi.fn(),
+      onError: vi.fn(),
+    });
+
+    expect(handlers.onUserMessage).toBeUndefined();
+  });
 });

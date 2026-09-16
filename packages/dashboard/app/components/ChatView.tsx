@@ -26,6 +26,7 @@ import {
   Bookmark,
 } from "lucide-react";
 import { FN_AGENT_ID, TASK_PLANNER_CHAT_AGENT_ID_PREFIX, useChat, type ChatMessageInfo, type ChatSessionInfo } from "../hooks/useChat";
+import { isPersistedChatMessageId } from "../hooks/chatTypes";
 import { useChatUnread } from "../hooks/useChatUnread";
 import { useVirtualizedChatTranscript } from "../hooks/useVirtualizedChatTranscript";
 import { useStickyBottomFollow } from "../hooks/useStickyBottomFollow";
@@ -485,6 +486,8 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
     setSessionTags,
     sendMessage,
     editMessageAndResend,
+    editDraftRestore,
+    clearEditDraftRestore,
     stopStreaming,
     pendingMessages,
     pendingQueueAction,
@@ -2992,6 +2995,13 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
    * FNXC:ChatMessageEdit 2026-08-24-03:34:
    * Editing is supported only for direct model-loop sessions: never CLI-agent-backed sessions
    * (a live PTY owns the transcript), and never while a generation is streaming.
+   *
+   * FNXC:ChatMessageEdit 2026-09-16-05:58:
+   * FN-459. It is additionally offered only on rows that actually exist on the server (see
+   * `isPersistedChatMessageId`, applied per-row below) — the same rule `TaskPlannerChatTab` already
+   * enforces. Editing a purely local bubble posted its `temp-<ts>` id and produced a guaranteed
+   * `Message temp-… not found in session …` 404 that also destroyed the typed correction. Persisted
+   * ids (`msg-<uuid8>`) stay editable: this narrows the affordance, it does not remove it.
    */
   const canEditChatMessages = !cliChatActive && !isStreaming;
 
@@ -3059,8 +3069,10 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
                 isAwaitingQuestionAnswer={message.role === "assistant" && index === messages.length - 1 && !isStreaming}
                 submittedQuestionAnswer={findSubmittedQuestionAnswer(messages, index)}
                 onQuestionSubmit={handleQuestionSubmit}
-                canEdit={canEditChatMessages}
+                canEdit={canEditChatMessages && isPersistedChatMessageId(message.id)}
                 onEditMessage={editMessageAndResend}
+                initialEditDraft={editDraftRestore?.messageId === message.id ? editDraftRestore.content : undefined}
+                onEditDraftConsumed={clearEditDraftRestore}
                 isSearchMatch={conversationSearchMatches.includes(message.id)}
                 isSearchActive={activeConversationMatchId === message.id}
               />

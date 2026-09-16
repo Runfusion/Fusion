@@ -1173,6 +1173,23 @@ export interface ChatFailureInfo {
   reference?: ChatFailureReference;
 }
 
+/**
+ * FNXC:ChatMessageEdit 2026-09-16-05:58:
+ * Wire shape of the persisted user row carried by the in-band `user_message` stream event. It is the
+ * `ChatMessage` structure narrowed to `role: "user"`; `ChatStore.addMessage` returns the persisted
+ * `msg-<uuid8>` id that the client uses to retire its optimistic `temp-<ts>` bubble.
+ */
+export interface ChatStreamUserMessagePayload {
+  id: string;
+  sessionId: string;
+  role: "user";
+  content: string;
+  thinkingOutput: string | null;
+  metadata: Record<string, unknown> | null;
+  attachments?: ChatAttachment[];
+  createdAt: string;
+}
+
 /** SSE event types for chat streaming */
 export type ChatStreamEvent =
   | { type: "thinking"; data: string }
@@ -1210,6 +1227,21 @@ export type ChatStreamEvent =
         dispatch?: "agents";
         failedAgentNames?: string[];
       };
+    }
+  /*
+  FNXC:ChatMessageEdit 2026-09-16-05:58:
+  The persisted identity of the user turn must travel in-band on the reply stream. The out-of-band
+  `chat:message:added` echo cannot be a correctness dependency for message identity: the `ChatStore`
+  instance resolved by `resolveProjectChatContext` on the send route is not necessarily the instance
+  subscribed by `createSSEHandler`, and `enrichChatMessageSsePayload` rejections are swallowed inside
+  a detached `void (async () => …)` in `sse.ts`. Without this event the optimistic `temp-<ts>` bubble
+  could keep its local id forever, and an edit saved against it produced a guaranteed 404
+  (`Message temp-… not found in session …`). The generic `writeSSEEvent(res, event.type, …)` bridge in
+  `register-chat-routes.ts` forwards this variant with no route change.
+  */
+  | {
+      type: "user_message";
+      data: { message: ChatStreamUserMessagePayload };
     }
   | {
       type: "agent_message";
@@ -2903,6 +2935,19 @@ export class ChatManager {
           attachments,
         });
         persistedUserMessageId = persistedUserMessage.id;
+        /*
+        FNXC:ChatMessageEdit 2026-09-16-05:58:
+        Broadcast the persisted user row on the reply stream as soon as it exists, BEFORE any early
+        return (the mentions dispatch path returns here), so the client can replace its optimistic
+        `temp-<ts>` bubble by exact temp id. Identity telemetry is best-effort and must never enter
+        the message-save failure path, exactly like the usage event below.
+        */
+        try {
+          chatStreamManager.broadcast(sessionId, {
+            type: "user_message",
+            data: { message: persistedUserMessage as ChatStreamUserMessagePayload },
+          }, broadcastOptions);
+        } catch { /* best-effort identity echo; never fail the accepted send */ }
         /*
         FNXC:CommandCenterActivity 2026-08-09-10:46:
         A persisted human chat turn contributes one content-free usage event. Analytics must never enter

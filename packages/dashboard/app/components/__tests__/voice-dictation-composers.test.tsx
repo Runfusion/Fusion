@@ -51,7 +51,7 @@ const chatState = {
   createSession: vi.fn(), archiveSession: vi.fn(), renameSession: vi.fn(), pinSession: vi.fn(), pinnedCount: 0,
   setSessionModel: vi.fn(), setSessionThinkingLevel: vi.fn(), deleteSession: vi.fn(), tags: [], selectedTagId: null,
   setSelectedTagId: vi.fn(), createTag: vi.fn(), renameTag: vi.fn(), deleteTag: vi.fn(), setSessionTags: vi.fn(),
-  sendMessage: vi.fn(), editMessageAndResend: vi.fn(), stopStreaming: vi.fn(), pendingMessages: [], clearPendingMessage: vi.fn(),
+  sendMessage: vi.fn(), editMessageAndResend: vi.fn(), editDraftRestore: null, clearEditDraftRestore: vi.fn(), stopStreaming: vi.fn(), pendingMessages: [], clearPendingMessage: vi.fn(),
   loadMoreMessages: vi.fn(), hasMoreMessages: false, searchQuery: "", setSearchQuery: vi.fn(), filteredSessions: [chatSession],
   agentsMap: new Map(),
 };

@@ -71,6 +71,9 @@ const defaultChatState: UseChatReturn = {
   deleteSession: vi.fn(),
   sendMessage: vi.fn(),
   editMessageAndResend: vi.fn(),
+  // FNXC:ChatMessageEdit 2026-09-16-05:58: FN-459 edit-draft rescue surface; nothing to restore here.
+  editDraftRestore: null,
+  clearEditDraftRestore: vi.fn(),
   stopStreaming: vi.fn(),
   pendingMessages: [],
   clearPendingMessage: vi.fn(),

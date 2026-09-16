@@ -12,6 +12,7 @@ import { useVirtualizedChatTranscript } from "../hooks/useVirtualizedChatTranscr
 import { getPersistedPendingChatMessages, setPersistedPendingChatMessages } from "../hooks/chatPendingMessageStorage";
 import { MicButton } from "./MicButton";
 import type { ChatMessageInfo, ToolCallInfo } from "../hooks/chatTypes";
+import { isPersistedChatMessageId } from "../hooks/chatTypes";
 import { attachChatStream, cancelChatResponse, ensureTaskPlannerChatSession, fetchChatMessages, fetchChatSession, fetchSettings, fetchTaskDetail, fetchTaskPlannerChatSession, streamChatResponse, updateChatSession, type ChatFailureInfo, type ChatStreamErrorMeta } from "../api";
 import { parseQuestionToolCall, type ParsedQuestionToolCall } from "../utils/parseQuestionToolCall";
 import { ChatQuestionResponse } from "./ChatQuestionResponse";
@@ -644,6 +645,13 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
     requestId: number;
     attach: boolean;
     queueReservation?: PendingQueueReservation;
+    /*
+    FNXC:ChatMessageEdit 2026-09-16-05:58:
+    FN-459. Id of the optimistic bubble this stream owns, so the in-band `user_message` event can
+    replace it by EXACT id. `mergePlannerTranscriptWithOptimistic` matches on content equality and
+    stays only as the fallback: two identical consecutive sends cannot be told apart that way.
+    */
+    optimisticUserMessageId?: string;
     replacementMessageId?: string;
     replacementTargetIndex?: number;
     replacementMessage?: ChatMessage;
@@ -657,6 +665,7 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
       requestId,
       attach,
       queueReservation,
+      optimisticUserMessageId,
       replacementMessageId,
       replacementTargetIndex,
       replacementMessage,
@@ -745,6 +754,22 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
         }
         updateStreamSnapshot();
         applyStreamingSnapshot(resolvedSessionId, accumulated, accumulatedThinking, streamingToolCalls);
+      },
+      /*
+      FNXC:ChatMessageEdit 2026-09-16-05:58:
+      FN-459. In-band persisted identity for this turn's user bubble. Replacing by exact optimistic id
+      retires `optimistic-<ts>` immediately, so the edit affordance only ever sees server-known rows.
+      */
+      onUserMessage: (data: { message: ChatMessage }) => {
+        if (!isCurrentStreamRequest()) return;
+        const optimisticId = optimisticUserMessageId ?? replacementMessage?.id;
+        if (!optimisticId) return;
+        setMessages((current) => {
+          if (current.some((candidate) => candidate.id === data.message.id)) return current;
+          const optimisticIndex = current.findIndex((candidate) => candidate.id === optimisticId);
+          if (optimisticIndex < 0) return current;
+          return sortMessages(current.map((candidate, index) => index === optimisticIndex ? data.message : candidate));
+        });
       },
       onDone: (data: { messageId: string; message?: ChatMessage }) => {
         if (!isCurrentStreamRequest()) return;
@@ -1082,7 +1107,8 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
     composerStateRef.current = "sending";
     setComposerState("sending");
     setError(null);
-    setMessages((currentMessages) => [...currentMessages, makeOptimisticUserMessage(resolvedSessionId, content)]);
+    const optimisticMessage = makeOptimisticUserMessage(resolvedSessionId, content);
+    setMessages((currentMessages) => [...currentMessages, optimisticMessage]);
     try {
       startPlannerStream({
         resolvedSessionId,
@@ -1090,6 +1116,7 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
         requestId: streamRequestId,
         attach: false,
         queueReservation: reservation,
+        optimisticUserMessageId: optimisticMessage.id,
       });
     } catch (err) {
       restorePendingQueueReservation(reservation);
@@ -1142,13 +1169,15 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
       // A brand-new planner session has no focus yet (whole-project scope); seed the
       // mirror from whatever the created session carries (always null today).
       setSessionMemoryFocus((session as { memoryFocus?: string | null }).memoryFocus ?? null);
-      setMessages((current) => [...current, makeOptimisticUserMessage(resolvedSessionId, content)]);
+      const optimisticMessage = makeOptimisticUserMessage(resolvedSessionId, content);
+      setMessages((current) => [...current, optimisticMessage]);
       if (!isCurrentStreamRequest()) return;
       startPlannerStream({
         resolvedSessionId,
         content,
         requestId: streamRequestId,
         attach: false,
+        optimisticUserMessageId: optimisticMessage.id,
       });
     } catch (err) {
       if (!isCurrentStreamRequest()) return;
@@ -1189,7 +1218,9 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
    */
   const editMessageAndResend = useCallback(async (messageId: string, newContent: string) => {
     if (composerStateRef.current === "sending" || !sessionId) return;
-    if (messageId.startsWith("optimistic-") || messageId === "streaming-assistant") return;
+    // FNXC:ChatMessageEdit 2026-09-16-05:58: FN-459 replaced the two literal local-id checks with the
+    // shared guard so both chat surfaces classify persisted rows identically (`msg-<uuid8>` stays editable).
+    if (!isPersistedChatMessageId(messageId)) return;
     const trimmed = newContent.trim();
     if (!trimmed) return;
 
@@ -1765,7 +1796,7 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
                   onQuestionSubmit={(answerText) => void sendMessageContent(answerText)}
                   toolCallRenderer={(toolCall, index) => renderPlannerToolCall(message, toolCall, index)}
                   onEditMessage={editMessageAndResend}
-                  canEdit={message.role === "user" && !message.id.startsWith("optimistic-") && composerState !== "sending"}
+                  canEdit={message.role === "user" && isPersistedChatMessageId(message.id) && composerState !== "sending"}
                 />
               </div>;
             })}
