@@ -246,11 +246,40 @@ La borne de hauteur est par ailleurs divisée par deux (18rem -> 9rem, mobile 12
 `What this delivers` et `Before -> After` restent visibles sans long défilement. Le confinement
 reste volontaire pour les surfaces flottantes (`.activity-view-menu`, `position: fixed`) et pour
 l'axe inline des bandeaux d'onglets (`overscroll-behavior-inline: contain`).
+
+FNXC:TaskDetailDefinition 2026-09-16-19:45:
+FN-472: tant que la description déborde de sa borne de hauteur, sa barre de défilement doit rester
+VISIBLE, afin que l'opérateur sache immédiatement qu'il reste du contenu masqué sous la ligne de
+coupe. Le thème global (`*::-webkit-scrollbar`) ne peint que le pouce sur une piste transparente et
+s'efface hors défilement sur les plateformes à barres « overlay »; on surcharge donc localement la
+piste ET le pouce avec des couleurs issues des tokens via `color-mix(...)`. `scrollbar-gutter:
+stable` réserve la gouttière pour qu'aucun texte ne se décale à l'apparition de la barre. On
+conserve `overflow-y: auto` (et non `scroll`): sans débordement, aucune barre parasite n'apparaît.
+La largeur reste héritée du thème global, pour ne pas coder de pixels en dur dans un CSS de
+composant.
 */
 .detail-definition-description-body {
   max-block-size: var(--task-detail-description-max-block-size, 9rem);
   overflow-y: auto;
   overscroll-behavior: auto;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text-muted) 55%, transparent) color-mix(in srgb, var(--border) 45%, transparent);
+}
+
+.detail-definition-description-body::-webkit-scrollbar-track {
+  background: color-mix(in srgb, var(--border) 45%, transparent);
+  border-radius: var(--radius-sm);
+}
+
+.detail-definition-description-body::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text-muted) 55%, transparent);
+  border-radius: var(--radius-sm);
+  min-block-size: var(--space-lg);
+}
+
+.detail-definition-description-body::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
 }
 
 .detail-definition-description-body:focus-visible {

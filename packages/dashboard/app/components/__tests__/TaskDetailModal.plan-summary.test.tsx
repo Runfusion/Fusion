@@ -311,6 +311,134 @@ describe("TaskDetailContent internal plan navigation", () => {
     });
   });
 
+  /*
+  FNXC:TaskDetailDefinition 2026-09-16-19:45:
+  FN-472: quand la description déborde, sa barre de défilement doit être visible en permanence pour
+  signaler le contenu masqué. jsdom ne peint aucune barre native et n'expose ni piste ni pouce: la
+  preuve déterministe porte donc sur la feuille de style effectivement chargée (`loadComponentCss`)
+  plus l'identité DOM du scroller, substitut déjà établi par FN-430 dans ce même fichier.
+  */
+  describe("FN-472 persistent description scrollbar", () => {
+    const longDescription = `${"Long description paragraph. ".repeat(60)}`;
+
+    function descriptionRule(): string {
+      const css = readTaskDetailModalCss();
+      const selectorIndex = css.indexOf(".detail-definition-description-body {");
+      expect(selectorIndex).toBeGreaterThan(-1);
+      return extractBlock(css, selectorIndex);
+    }
+
+    function pseudoBlock(selector: string): string {
+      const css = stripCssComments(readTaskDetailModalCss());
+      const selectorIndex = css.indexOf(selector);
+      expect(selectorIndex).toBeGreaterThan(-1);
+      return extractBlock(css, selectorIndex);
+    }
+
+    it("paints both the track and the thumb and reserves a stable gutter", () => {
+      renderDefinition({ description: longDescription });
+
+      const rule = descriptionRule();
+      expect(rule).toContain("scrollbar-gutter: stable");
+      expect(rule).toContain("scrollbar-width: thin");
+      expect(rule).not.toContain("scrollbar-width: none");
+
+      const colorMatch = /scrollbar-color:([^;]+);/.exec(rule);
+      expect(colorMatch).not.toBeNull();
+      const scrollbarColor = colorMatch?.[1] ?? "";
+      expect(scrollbarColor.match(/color-mix\(/g) ?? []).toHaveLength(2);
+      expect(scrollbarColor).not.toMatch(/\btransparent\s*$/);
+
+      expect(rule).toContain("overflow-y: auto");
+      expect(rule).not.toContain("overflow-y: scroll");
+      expect(rule).toContain("max-block-size: var(--task-detail-description-max-block-size, 9rem)");
+    });
+
+    it("declares painted WebKit track and thumb pseudo-elements", () => {
+      const track = pseudoBlock(".detail-definition-description-body::-webkit-scrollbar-track {");
+      const thumb = pseudoBlock(".detail-definition-description-body::-webkit-scrollbar-thumb {");
+
+      for (const block of [track, thumb]) {
+        expect(block).toMatch(/background:\s*color-mix\(/);
+        expect(block).not.toMatch(/background:\s*(transparent|none)\s*;/);
+      }
+      expect(thumb).toContain("min-block-size: var(--space-");
+
+      const css = stripCssComments(readTaskDetailModalCss());
+      const scrollbarSelector = /\.detail-definition-description-body::-webkit-scrollbar[\w-]*(:hover)?\s*\{/g;
+      for (let match = scrollbarSelector.exec(css); match; match = scrollbarSelector.exec(css)) {
+        expect(extractBlock(css, match.index)).not.toContain("display: none");
+      }
+    });
+
+    it("stays token-only and never re-declares a local pixel scrollbar width", () => {
+      const css = stripCssComments(readTaskDetailModalCss());
+      const blocks = [
+        descriptionRule(),
+        pseudoBlock(".detail-definition-description-body::-webkit-scrollbar-track {"),
+        pseudoBlock(".detail-definition-description-body::-webkit-scrollbar-thumb {"),
+      ];
+      for (const block of blocks) {
+        expect(block).not.toMatch(/#[0-9a-f]{3,}/i);
+        expect(block).not.toMatch(/[^s]rgb\(/i);
+        expect(block).not.toMatch(/\d+px/);
+      }
+
+      expect(css).not.toContain(".detail-definition-description-body::-webkit-scrollbar {");
+    });
+
+    it("keeps the mobile override to its height bound only", () => {
+      const css = readTaskDetailModalCss();
+      const mediaIndex = css.indexOf("@media (max-width: 768px) {");
+      expect(mediaIndex).toBeGreaterThan(-1);
+      const mediaBlock = extractBlock(css, mediaIndex);
+
+      const selectorIndex = mediaBlock.indexOf(".detail-definition-description-body {");
+      expect(selectorIndex).toBeGreaterThan(-1);
+      const rule = extractBlock(mediaBlock, selectorIndex);
+
+      expect(rule).toContain("max-block-size: var(--task-detail-description-max-block-size-mobile, 6rem)");
+      expect(rule).not.toContain("overscroll-behavior");
+      expect(rule).not.toContain("scrollbar-width: none");
+      expect(rule).not.toContain("display: none");
+    });
+
+    it.each([{ embedded: false }, { embedded: true }])("keeps the scroller identity stable across hosts and task changes (embedded: $embedded)", ({ embedded }) => {
+      const view = renderDefinition({ id: "FN-FIRST", description: longDescription, embedded });
+
+      const body = screen.getByTestId("task-detail-definition-description");
+      expect(body).toHaveClass("detail-definition-description-body");
+      expect(body).toHaveAttribute("tabindex", "0");
+      expect(body).toHaveAttribute("role", "group");
+
+      view.rerender(
+        <TaskDetailContent
+          task={makeTask({ id: "FN-SECOND", prompt: fullPrompt, description: `${"Another long paragraph. ".repeat(60)}` })}
+          initialTab="definition"
+          embedded={embedded}
+          onRequestClose={noop}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      const next = screen.getByTestId("task-detail-definition-description");
+      expect(next).toHaveClass("detail-definition-description-body");
+      expect(next).toHaveAttribute("tabindex", "0");
+      expect(next).toHaveAttribute("role", "group");
+    });
+
+    it("paints no scrollbar affordance when there is nothing to scroll", () => {
+      const { container } = renderDefinition({ description: "   " });
+
+      expect(screen.queryByTestId("task-detail-definition-description")).toBeNull();
+      expect(container.querySelector(".detail-definition-description-body")).toBeNull();
+      expect(container.querySelector(".detail-empty-inline")).not.toBeNull();
+    });
+  });
+
   it("uses token-only responsive styles for definition and plan navigation", () => {
     const css = readDashboardStylesSource();
     const selector = ".detail-definition-description {";
