@@ -37,3 +37,34 @@ html[data-mobile-drawers="true"][data-viewport-mode="mobile"] .mobile-drawer__bo
   block-size: 100%;
   max-block-size: 100%;
 }
+
+/*
+FNXC:ToolSurfaces 2026-09-16-16:12:
+FN-462 completes the host list. The FN-445 chain above is gated on the drawer opt-in, so the SAME page rendered
+INLINE on a phone — no `data-mobile-drawers` yet (pre-opt-in hydration), a non-project view mode, or no current
+project — still had `.dock-files-view` and `.view-layout__*` at `min-height: auto`, and the list grew past the
+viewport exactly as reported. The fill chain is therefore restated for every phone, host-independently, in BOTH the
+physical `min-height` and the logical `min-block-size` form, because one box left at `auto` is enough to unbound the
+whole chain. Desktop and the optional right dock (which is not inside `.files-view`) keep their geometry.
+*/
+html[data-viewport-mode="mobile"] .files-view,
+html[data-viewport-mode="mobile"] .files-view .view-layout__body,
+html[data-viewport-mode="mobile"] .files-view .view-layout__content,
+html[data-viewport-mode="mobile"] .files-view .dock-files-view,
+html[data-viewport-mode="mobile"] .files-view .file-browser {
+  min-height: 0;
+  min-block-size: 0;
+  overflow: hidden;
+}
+
+@media (max-width: 768px) {
+  html:not([data-viewport-mode]) .files-view,
+  html:not([data-viewport-mode]) .files-view .view-layout__body,
+  html:not([data-viewport-mode]) .files-view .view-layout__content,
+  html:not([data-viewport-mode]) .files-view .dock-files-view,
+  html:not([data-viewport-mode]) .files-view .file-browser {
+    min-height: 0;
+    min-block-size: 0;
+    overflow: hidden;
+  }
+}
