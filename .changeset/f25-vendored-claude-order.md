@@ -2,6 +2,6 @@
 "@runfusion/fusion": patch
 ---
 
-summary: Keep Fusion's vendored Claude CLI adapter first when reconciling extension paths.
+summary: Prevent installed Claude CLI adapters from overriding Fusion's bundled Claude integration.
 category: fix
-dev: Remove any existing vendored occurrence before prepending the canonical adapter path while filtering external aliases.
+dev: Centralize CLI extension-path finalization so dashboard, serve, and daemon apply the same vendored Claude precedence.
