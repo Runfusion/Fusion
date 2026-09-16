@@ -68,15 +68,15 @@ function compareUpdatedAtDesc(a: Task, b: Task): number {
 
 export class GitHubTrackingReconciler {
   private readonly deletedDiagnosticSignaturesByStore = new WeakMap<TaskStore, {
-    lastAuthSignature?: string;
+    authSignatures: Set<string>;
     taskSignatures: Set<string>;
   }>();
 
   private warnDeletedDiagnostic(store: TaskStore, signature: string, message: string): void {
-    const known = this.deletedDiagnosticSignaturesByStore.get(store) ?? { taskSignatures: new Set<string>() };
+    const known = this.deletedDiagnosticSignaturesByStore.get(store) ?? { authSignatures: new Set<string>(), taskSignatures: new Set<string>() };
     if (signature.startsWith("auth:")) {
-      if (known.lastAuthSignature === signature) return;
-      known.lastAuthSignature = signature;
+      if (known.authSignatures.has(signature)) return;
+      known.authSignatures.add(signature);
     } else {
       if (known.taskSignatures.has(signature)) return;
       known.taskSignatures.add(signature);
@@ -144,12 +144,12 @@ export class GitHubTrackingReconciler {
     const globalSettings = (await store.getGlobalSettingsStore?.()?.getSettings?.() ?? {}) as Pick<GlobalSettings, never>;
     const resolution = resolveGithubTrackingAuth({ projectSettings, globalSettings });
     if (!resolution.ok) {
-      for (const task of tasks) {
-        await safeLogTaskEntry(store, task.id, "Skipped GitHub tracking issue reconciliation", resolution.message, {
-          logger: severityAuditLog,
-          context: "github-tracking-reconcile",
-        });
-      }
+      /*
+      FNXC:TerminalTaskWrites 2026-09-15-21:41:
+      Authentication outages are service-level state. Per-task log writes churn terminal rows on every
+      sweep, so retain one deduplicated diagnostic while leaving live issue reconciliation unchanged.
+      */
+      this.warnDeletedDiagnostic(store, `auth:tracking:${resolution.message}`, `[github-tracking-reconcile] skipped ${tasks.length} GitHub tracking task(s): ${resolution.message}`);
       return { scanned: tasks.length, closed: 0, skipped: tasks.length, errors: 0 };
     }
 
@@ -212,12 +212,7 @@ export class GitHubTrackingReconciler {
     const globalSettings = (await store.getGlobalSettingsStore?.()?.getSettings?.() ?? {}) as Pick<GlobalSettings, never>;
     const resolution = resolveGithubTrackingAuth({ projectSettings, globalSettings });
     if (!resolution.ok) {
-      for (const task of tasks) {
-        await safeLogTaskEntry(store, task.id, "Skipped GitHub source issue reconciliation", resolution.message, {
-          logger: severityAuditLog,
-          context: "github-tracking-reconcile",
-        });
-      }
+      this.warnDeletedDiagnostic(store, `auth:source:${resolution.message}`, `[github-tracking-reconcile] skipped ${tasks.length} GitHub source issue task(s): ${resolution.message}`);
       return { scanned: tasks.length, closed: 0, skipped: tasks.length, errors: 0 };
     }
 
@@ -300,12 +295,7 @@ export class GitHubTrackingReconciler {
     const globalSettings = (await store.getGlobalSettingsStore?.()?.getSettings?.() ?? {}) as Pick<GlobalSettings, never>;
     const resolution = resolveGithubTrackingAuth({ projectSettings, globalSettings });
     if (!resolution.ok) {
-      for (const task of tasks) {
-        await safeLogTaskEntry(store, task.id, "Skipped GitHub source issue closed-at backfill", resolution.message, {
-          logger: severityAuditLog,
-          context: "github-tracking-reconcile",
-        });
-      }
+      this.warnDeletedDiagnostic(store, `auth:backfill:${resolution.message}`, `[github-tracking-reconcile] skipped ${tasks.length} GitHub source issue backfill task(s): ${resolution.message}`);
       return { scanned: tasks.length, filled: 0, skipped: tasks.length, errors: 0, hasMore };
     }
 

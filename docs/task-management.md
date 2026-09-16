@@ -1,5 +1,9 @@
 # Task Management
 
+## Terminal-row maintenance writes
+
+Archived, soft-deleted, and absent tasks are read-only for task-log and task-mutation writes. Maintenance code must classify canonical refusals with `isTaskLogWriteRefusal` or `safeLogTaskEntry`, emit a first-occurrence service diagnostic, isolate each candidate failure, and terminate asynchronous lifecycle listeners with a reporting `.catch(...)`. This quiescence rule does not suppress required tombstone or outbox cleanup.
+
 [← Docs index](./README.md)
 
 This guide covers task creation, lifecycle behavior, task metadata, and operational workflows.

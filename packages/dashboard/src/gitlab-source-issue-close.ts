@@ -1,4 +1,7 @@
-import type { ProjectSettings, Task, TaskStore } from "@fusion/core";
+import { createLogger, type ProjectSettings, Task, TaskStore } from "@fusion/core";
+import { reportTaskListenerFailure } from "./task-log-safety.js";
+
+const terminalTaskWriteLog = createLogger("gitlab-source-issue-close");
 import { resolveGitLabTarget, safeLogGitLabEntry } from "./gitlab-lifecycle.js";
 import { updateGitLabTargetState } from "./gitlab-tracking-state.js";
 import { decideIssueAction } from "./github-tracking-state.js";
@@ -17,7 +20,7 @@ export class GitLabSourceIssueCloseService {
 
   attach(store: TaskStore): void {
     if (this.listeners.has(store)) return;
-    const onTaskMoved = (event: TaskMovedEvent): void => { void this.handleTaskMoved(store, event); };
+    const onTaskMoved = (event: TaskMovedEvent): void => { void this.handleTaskMoved(store, event).catch((error) => reportTaskListenerFailure(terminalTaskWriteLog, "gitlab-source-issue-close", error)); };
     this.listeners.set(store, { onTaskMoved });
     if (this.started) store.on("task:moved", onTaskMoved);
   }

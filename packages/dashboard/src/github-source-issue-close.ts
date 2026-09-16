@@ -1,4 +1,7 @@
-import type { GlobalSettings, ProjectSettings, TaskStore } from "@fusion/core";
+import { createLogger, type GlobalSettings, type ProjectSettings, type TaskStore } from "@fusion/core";
+import { reportTaskListenerFailure, safeLogTaskEntry } from "./task-log-safety.js";
+
+const terminalTaskWriteLog = createLogger("github-source-issue-close");
 import { resolveGithubTrackingAuth } from "./github-auth.js";
 import { GitHubClient } from "./github.js";
 import { decideIssueAction, delay, isTransientGitHubError } from "./github-tracking-state.js";
@@ -47,7 +50,7 @@ export class GitHubSourceIssueCloseService {
     }
 
     const onTaskMoved = (event: TaskMovedEvent): void => {
-      void this.handleTaskMoved(store, event);
+      void this.handleTaskMoved(store, event).catch((error) => reportTaskListenerFailure(terminalTaskWriteLog, "github-source-issue-close", error));
     };
     this.listeners.set(store, { onTaskMoved });
 
@@ -65,6 +68,11 @@ export class GitHubSourceIssueCloseService {
     this.listeners.delete(store);
   }
 
+  /*
+  FNXC:TerminalTaskWrites 2026-09-15-21:55:
+  A move snapshot can become archived before any source-issue outcome is logged. Route every outcome
+  through the canonical refusal-aware seam so terminal rows remain read-only without hiding other errors.
+  */
   private async handleTaskMoved(store: TaskStore, event: TaskMovedEvent): Promise<void> {
     const settings = ((await store.getSettings()) ?? {}) as Pick<ProjectSettings, "githubCloseSourceIssueOnDone" | "githubAuthMode" | "githubAuthToken">;
     if (settings.githubCloseSourceIssueOnDone !== true) {
@@ -86,10 +94,12 @@ export class GitHubSourceIssueCloseService {
     const [owner, repo] = repository.split("/");
     const issueNumber = sourceIssue.issueNumber;
     if (!owner || !repo || !Number.isInteger(issueNumber)) {
-      await store.logEntry(
+      await safeLogTaskEntry(
+        store,
         event.task.id,
         "Failed to close linked GitHub source issue",
         `Invalid GitHub source issue metadata: ${repository}#${String(issueNumber)}`,
+        { logger: terminalTaskWriteLog, context: "github-source-issue-close" },
       );
       return;
     }
@@ -100,7 +110,7 @@ export class GitHubSourceIssueCloseService {
       const globalSettings = (await store.getGlobalSettingsStore?.()?.getSettings?.() ?? {}) as Pick<GlobalSettings, never>;
       const resolution = resolveGithubTrackingAuth({ projectSettings: settings, globalSettings });
       if (!resolution.ok) {
-        await store.logEntry(event.task.id, "Skipped closing GitHub source issue", resolution.message);
+        await safeLogTaskEntry(store, event.task.id, "Skipped closing GitHub source issue", resolution.message, { logger: terminalTaskWriteLog, context: "github-source-issue-close" });
         return;
       }
 
@@ -110,10 +120,12 @@ export class GitHubSourceIssueCloseService {
 
       const existing = await client.getIssue(owner, repo, issueNumberValue);
       if (!existing || existing.state === state) {
-        await store.logEntry(
+        await safeLogTaskEntry(
+          store,
           event.task.id,
           `Skipped ${action.action === "close" ? "closing" : "reopening"} GitHub source issue - issue not found or already ${state}`,
           `${owner}/${repo}#${issueNumberValue}`,
+          { logger: terminalTaskWriteLog, context: "github-source-issue-close" },
         );
         return;
       }
@@ -132,16 +144,20 @@ export class GitHubSourceIssueCloseService {
         await applyIssueAction();
       }
 
-      await store.logEntry(
+      await safeLogTaskEntry(
+        store,
         event.task.id,
         `${action.action === "close" ? "Closed" : "Reopened"} linked GitHub source issue`,
         `${owner}/${repo}#${issueNumberValue}`,
+        { logger: terminalTaskWriteLog, context: "github-source-issue-close" },
       );
     } catch (error) {
-      await store.logEntry(
+      await safeLogTaskEntry(
+        store,
         event.task.id,
         "Failed to close linked GitHub source issue",
         error instanceof Error ? error.message : String(error),
+        { logger: terminalTaskWriteLog, context: "github-source-issue-close" },
       );
     }
   }

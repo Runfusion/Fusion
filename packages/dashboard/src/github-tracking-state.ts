@@ -5,7 +5,7 @@ import type { GithubIssueAction, GlobalSettings, ProjectSettings, Task, TaskStor
 import { columnsWithFlag, declaresAnyLifecycleTrait, resolveWorkflowIrForTask } from "@fusion/core";
 import { GitHubClient } from "./github.js";
 import { resolveGithubTrackingAuth } from "./github-auth.js";
-import { safeLogTaskEntry } from "./task-log-safety.js";
+import { reportTaskListenerFailure, safeLogTaskEntry } from "./task-log-safety.js";
 
 /*
 FNXC:WorkflowResolvedColumns 2026-07-31-13:40 (fleet — inline fallback arms):
@@ -162,10 +162,10 @@ export class GitHubTrackingStateService {
     }
 
     const onTaskMoved = (event: TaskMovedEvent): void => {
-      void this.handleTaskMoved(store, event);
+      void this.handleTaskMoved(store, event).catch((error) => reportTaskListenerFailure(severityAuditLog, "github-tracking-state:moved", error));
     };
     const onTaskDeleted = (task: Task, meta?: TaskDeletedMeta): void => {
-      void this.handleTaskDeleted(store, task, meta);
+      void this.handleTaskDeleted(store, task, meta).catch((error) => reportTaskListenerFailure(severityAuditLog, "github-tracking-state:deleted", error));
     };
     this.listeners.set(store, { onTaskMoved, onTaskDeleted });
 

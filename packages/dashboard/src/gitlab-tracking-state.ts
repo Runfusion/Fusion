@@ -1,4 +1,7 @@
-import type { Task, TaskStore } from "@fusion/core";
+import { createLogger, type Task, TaskStore } from "@fusion/core";
+import { reportTaskListenerFailure } from "./task-log-safety.js";
+
+const terminalTaskWriteLog = createLogger("gitlab-tracking-state");
 import { GitLabApiError } from "./gitlab.js";
 import { resolveGitLabClient, resolveGitLabTargetFromItem, safeLogGitLabEntry, type GitLabLifecycleTarget } from "./gitlab-lifecycle.js";
 import { decideIssueAction, delay } from "./github-tracking-state.js";
@@ -34,7 +37,7 @@ export class GitLabTrackingStateService {
 
   attach(store: TaskStore): void {
     if (this.listeners.has(store)) return;
-    const onTaskMoved = (event: TaskMovedEvent): void => { void this.handleTaskMoved(store, event); };
+    const onTaskMoved = (event: TaskMovedEvent): void => { void this.handleTaskMoved(store, event).catch((error) => reportTaskListenerFailure(terminalTaskWriteLog, "gitlab-tracking-state", error)); };
     this.listeners.set(store, { onTaskMoved });
     if (this.started) store.on("task:moved", onTaskMoved);
   }

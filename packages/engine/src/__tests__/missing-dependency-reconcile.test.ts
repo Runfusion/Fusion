@@ -201,17 +201,21 @@ describe("missing dependency reconciliation deletion races", () => {
     expect(store.updateTaskDependencies).toHaveBeenCalledWith("FN-074", { operation: "remove", dependency: "FN-9999" });
   });
 
-  it("still surfaces non-lookup mutation faults", async () => {
-    const dependent = task("FN-073", ["FN-9999"]);
+  it("reports a non-refusal mutation fault and continues with later candidates", async () => {
+    const { unreadable, repairable } = twoLiveDependents();
     const store = {
-      listTasks: vi.fn().mockResolvedValue([dependent]),
-      getTask: vi.fn((id: string) => id === "FN-9999"
+      listTasks: vi.fn().mockResolvedValue([unreadable, repairable]),
+      getTask: vi.fn((id: string) => ["FN-9998", "FN-9999"].includes(id)
         ? Promise.reject(new TaskNotFoundError(id))
-        : Promise.resolve(dependent)),
-      updateTaskDependencies: vi.fn().mockRejectedValue(new Error("connection terminated unexpectedly")),
-      logEntry: vi.fn(),
+        : Promise.resolve(id === "FN-073" ? unreadable : repairable)),
+      updateTaskDependencies: vi.fn((id: string) => id === "FN-073"
+        ? Promise.reject(new Error("connection terminated unexpectedly"))
+        : Promise.resolve(undefined)),
+      logEntry: vi.fn().mockResolvedValue(undefined),
     };
 
-    await expect(createManager(store).reconcileMissingDependencies()).rejects.toThrow("connection terminated unexpectedly");
+    await expect(createManager(store).reconcileMissingDependencies()).resolves.toBe(1);
+    expect(store.updateTaskDependencies).toHaveBeenCalledWith("FN-074", { operation: "remove", dependency: "FN-9999" });
+    expect(store.logEntry).toHaveBeenCalledWith("FN-074", expect.any(String));
   });
 });

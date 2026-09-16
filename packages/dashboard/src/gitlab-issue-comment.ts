@@ -1,4 +1,7 @@
-import type { ProjectSettings, Task, TaskStore } from "@fusion/core";
+import { createLogger, type ProjectSettings, Task, TaskStore } from "@fusion/core";
+import { reportTaskListenerFailure } from "./task-log-safety.js";
+
+const terminalTaskWriteLog = createLogger("gitlab-issue-comment");
 import { resolveGitLabClient, resolveGitLabTarget, resolveGitLabTargetFromItem, safeLogGitLabEntry } from "./gitlab-lifecycle.js";
 import { completeColumnsForTask } from "./task-lifecycle-lanes.js";
 import { getCliPackageVersion } from "./cli-package-version.js";
@@ -51,7 +54,7 @@ export const DEFAULT_GITLAB_COMMENT_TEMPLATE = "✅ Task {taskId} ({taskTitle}) 
 export class GitLabIssueCommentService {
   private readonly store: TaskStore;
   private readonly getCurrentVersion: () => string;
-  private readonly onTaskMoved = (event: TaskMovedEvent): void => { void this.handleTaskMoved(event); };
+  private readonly onTaskMoved = (event: TaskMovedEvent): void => { void this.handleTaskMoved(event).catch((error) => reportTaskListenerFailure(terminalTaskWriteLog, "gitlab-issue-comment", error)); };
   private started = false;
 
   constructor(store: TaskStore, getCurrentVersion?: () => string) {

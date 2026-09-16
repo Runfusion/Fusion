@@ -1,4 +1,5 @@
 import { createLogger, resolveTaskLifecycleColumns } from "@fusion/core";
+import { reportTaskListenerFailure, safeLogTaskEntry } from "./task-log-safety.js";
 
 const severityAuditLog = createLogger("dashboard-github-tracking-comments");
 import type { GlobalSettings, MergeDetails, ProjectSettings, Task, TaskStore } from "@fusion/core";
@@ -204,7 +205,7 @@ export class GitHubTrackingCommentService {
   private readonly store: TaskStore;
   private readonly inProgressCommentClaims = new Set<string>();
   private readonly onTaskMoved = (event: TaskMovedEvent): void => {
-    void this.handleTaskMoved(event);
+    void this.handleTaskMoved(event).catch((error) => reportTaskListenerFailure(severityAuditLog, "github-tracking-comments", error));
   };
   private started = false;
 
@@ -224,17 +225,17 @@ export class GitHubTrackingCommentService {
     this.store.off("task:moved", this.onTaskMoved);
   }
 
+  /*
+  FNXC:TerminalTaskWrites 2026-09-15-22:07:
+  Tracking-comment moves can race archival or soft deletion after their event snapshot is emitted.
+  Use the shared refusal classifier so canonical terminal-row log refusals stay contained while
+  unrelated storage failures reach the listener's reporting boundary.
+  */
   private async safeLogDeletedTaskEntry(taskId: string, message: string, details: string): Promise<void> {
-    try {
-      await this.store.logEntry(taskId, message, details);
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      if (errorMessage.includes(`Task ${taskId} not found`)) {
-        severityAuditLog.warn(`[github-tracking-comments] Unable to write log entry for deleted task ${taskId}: ${message}`);
-        return;
-      }
-      throw error;
-    }
+    await safeLogTaskEntry(this.store, taskId, message, details, {
+      logger: severityAuditLog,
+      context: "github-tracking-comments",
+    });
   }
 
   private async handleTaskMoved(event: TaskMovedEvent): Promise<void> {
