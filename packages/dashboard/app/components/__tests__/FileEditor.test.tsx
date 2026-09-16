@@ -316,6 +316,72 @@ describe("FileEditor", () => {
     });
   });
 
+  /*
+  FNXC:FileEditor 2026-09-16-05:02:
+  FN-454 : symptôme d'origine — après avoir vidé le document A, ouvrir un document B réellement vide laissait le texte
+  de A visible et enregistrable, parce que `""` avait déjà été émis localement et était classé comme auto-écho périmé.
+  */
+  it("replaces the document with an empty incoming note when the file identity changes", async () => {
+    document.documentElement.dataset.theme = "dark";
+    const onChange = vi.fn();
+    const { rerender } = render(<FileEditor content="" onChange={onChange} filePath="a.md" />);
+
+    act(() => {
+      getEditorView().dispatch({ changes: { from: 0, insert: "note A" }, selection: { anchor: 6 } });
+    });
+    expect(onChange).toHaveBeenLastCalledWith("note A");
+    rerender(<FileEditor content="note A" onChange={onChange} filePath="a.md" />);
+    act(() => {
+      getEditorView().dispatch({ changes: { from: 6, insert: " modifi\u00e9" }, selection: { anchor: 14 } });
+    });
+    expect(onChange).toHaveBeenLastCalledWith("note A modifi\u00e9");
+    onChange.mockClear();
+
+    rerender(<FileEditor content="" onChange={onChange} filePath="b.md" />);
+
+    await waitFor(() => expect(getEditorView().state.doc.toString()).toBe(""));
+    expect(onChange).not.toHaveBeenCalled();
+    expect(getEditorView().state.selection.main.head).toBe(0);
+    expandEditorOptions();
+    const undoButton = screen.getByRole("button", { name: "Undo" });
+    expect(undoButton).toBeDisabled();
+    fireEvent.click(undoButton);
+    expect(getEditorView().state.doc.toString()).toBe("");
+
+    rerender(<FileEditor content="" onChange={onChange} filePath="b.md" />);
+    expect(getEditorView().state.doc.toString()).toBe("");
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  /*
+  FNXC:FileEditor 2026-09-16-05:02:
+  FN-454 : contrôle négatif — à identité INCHANGÉE, un accusé plus ancien reste ignoré et l'historique local survit.
+  Ce cas échoue si la remise à zéro d'identité est appliquée trop largement.
+  */
+  it("keeps the newest local edit and its history when a stale echo arrives for the same file identity", async () => {
+    document.documentElement.dataset.theme = "dark";
+    const onChange = vi.fn();
+    const { rerender } = render(<FileEditor content="note" onChange={onChange} filePath="a.md" />);
+
+    act(() => {
+      getEditorView().dispatch({ changes: { from: 4, insert: " un" }, selection: { anchor: 7 } });
+    });
+    rerender(<FileEditor content="note un" onChange={onChange} filePath="a.md" />);
+    act(() => {
+      getEditorView().dispatch({ changes: { from: 7, insert: " deux" }, selection: { anchor: 12 } });
+    });
+
+    rerender(<FileEditor content="note un" onChange={onChange} filePath="a.md" />);
+
+    await waitFor(() => expect(getEditorView().state.doc.toString()).toBe("note un deux"));
+    expandEditorOptions();
+    const undoButton = screen.getByRole("button", { name: "Undo" });
+    await waitFor(() => expect(undoButton).toBeEnabled());
+    fireEvent.click(undoButton);
+    // L'historique local a survécu à l'accusé périmé : l'annulation revient au texte antérieur du même document.
+    expect(getEditorView().state.doc.toString()).toBe("note");
+  });
+
   it("applies external content changes while preserving the clamped caret", async () => {
     document.documentElement.dataset.theme = "dark";
     const onChange = vi.fn();

@@ -3029,6 +3029,8 @@ La destination **Notes** est disponible dans la barre latérale sur ordinateur e
 
 Sous l’en-tête, Notes occupe tout le panneau disponible. Sur ordinateur et tablette, une séparation unique place la liste compacte à gauche et donne tout l’espace restant à l’éditeur; la note cliquée reçoit immédiatement un fond et un marqueur d’accent, sans attendre la fin de son chargement. Tant que la liste et l’éditeur sont visibles côte à côte, aucune commande de retour n’est rendue. Sur un écran étroit ou peu haut, la liste et le détail deviennent un parcours plein panneau, avec une commande **Back to notes** accessible pour revenir à la liste.
 
+L’en-tête de Notes porte le titre de la note confirmée dès qu’elle est ouverte, y compris quand la liste est masquée (téléphone, fenêtre détachée). Pendant le chargement d’une autre note, le détail affiche un état de chargement au lieu de la note précédente : le texte d’une note déjà ouverte n’est jamais présenté comme celui de la note demandée, et ouvrir une note vide affiche un éditeur vide.
+
 Le renommage et la suppression d’une note se font depuis la liste, via le menu d’actions de sa ligne, comme pour une conversation : **Rename** bascule la ligne en édition en place, **Delete** demande confirmation.
 
 Une fenêtre de note détachée suit le nom courant de sa note : renommer la note ailleurs met immédiatement à jour le titre de la fenêtre, sans la remonter au premier plan ni voler le focus. Tant qu’un brouillon non enregistré est en cours dans cette fenêtre, il n’est jamais remplacé par la version venue d’ailleurs.

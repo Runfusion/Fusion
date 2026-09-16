@@ -17,6 +17,7 @@ vi.mock("../FileEditor", () => ({ FileEditor: ({ content, onChange }: any) => <d
 const note = { id: "n", title: "Commande", content: "pnpm test", revision: 1, createdAt: "2026-01-01", updatedAt: "2026-01-01" };
 const noteB = { ...note, id: "b", title: "Journal", content: "logs B" };
 const noteC = { ...note, id: "c", title: "Journal", content: "logs C" };
+const emptyNote = { ...note, id: "e", title: "Vide", content: "" };
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason: unknown) => void;
@@ -159,6 +160,60 @@ describe("NotesView", () => {
     await act(async () => { selection.resolve(noteB); await selection.promise; });
     expect(await screen.findByLabelText("Markdown editor")).toHaveValue(noteB.content);
     expect(selected).toHaveAttribute("aria-current", "page");
+  });
+
+  /*
+  FNXC:ProjectNotes 2026-09-16-05:02:
+  FN-454 : symptôme d'origine — l'opérateur ne voyait pas quelle note était ouverte et, en ouvrant une note vide, il
+  voyait encore le contenu de la précédente. Pendant la lecture, la cible garde son marquage sémantique dans la liste
+  mais l'ancien éditeur disparaît ; après résolution, le titre confirmé est visible et le détail est vide.
+  */
+  it("ne présente jamais la note précédente comme la cible en attente et ouvre la note vide vide", async () => {
+    const selection = deferred<typeof emptyNote>();
+    api.fetchNotes.mockResolvedValue({ notes: [note, emptyNote] });
+    api.fetchNote.mockResolvedValueOnce(note).mockReturnValueOnce(selection.promise);
+    renderNotes();
+    fireEvent.click(await screen.findByRole("button", { name: /^Commande/ }));
+    expect(await screen.findByLabelText("Markdown editor")).toHaveValue(note.content);
+    expect(screen.getByRole("heading", { name: "Commande" })).toBeInTheDocument();
+
+    const target = screen.getByRole("button", { name: /^Vide/ });
+    fireEvent.click(target);
+    expect(target).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("button", { name: /^Commande/ })).not.toHaveAttribute("aria-current");
+    expect(screen.queryByLabelText("Markdown editor")).toBeNull();
+    expect(screen.queryByText(note.content)).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Commande" })).toBeNull();
+    expect(screen.getByTestId("notes-detail-pending")).toBeInTheDocument();
+
+    await act(async () => { selection.resolve(emptyNote); await selection.promise; });
+    expect(await screen.findByLabelText("Markdown editor")).toHaveValue("");
+    expect(screen.getByRole("heading", { name: "Vide" })).toBeInTheDocument();
+    expect(target).toHaveAttribute("aria-current", "page");
+    expect(screen.queryByTestId("notes-detail-pending")).toBeNull();
+  });
+
+  /*
+  FNXC:ProjectNotes 2026-09-16-05:02:
+  FN-454 : deux notes homonymes restent distinguées par leur identifiant, donc une résolution tardive de B ne peut pas
+  être confondue avec C simplement parce que les titres sont identiques.
+  */
+  it("distingue deux titres homonymes par identité pendant une résolution tardive", async () => {
+    const selectionB = deferred<typeof noteB>();
+    const selectionC = deferred<typeof noteC>();
+    api.fetchNotes.mockResolvedValue({ notes: [noteB, noteC] });
+    api.fetchNote.mockImplementation((_projectId: string, id: string) => id === noteB.id ? selectionB.promise : selectionC.promise);
+    renderNotes();
+    const duplicateTitles = await screen.findAllByRole("button", { name: /^Journal/ });
+    fireEvent.click(duplicateTitles[0]);
+    await act(async () => { selectionB.resolve(noteB); await selectionB.promise; });
+    expect(await screen.findByLabelText("Markdown editor")).toHaveValue(noteB.content);
+
+    fireEvent.click(duplicateTitles[1]);
+    expect(screen.queryByLabelText("Markdown editor")).toBeNull();
+    await act(async () => { selectionC.resolve(noteC); await selectionC.promise; });
+    expect(await screen.findByLabelText("Markdown editor")).toHaveValue(noteC.content);
+    expect(duplicateTitles[1]).toHaveAttribute("aria-current", "page");
   });
 
   it("keeps the latest rapid click as the sole semantic selection", async () => {
@@ -326,6 +381,30 @@ describe("NotesView", () => {
   son unique affordance de retour, libellée comme celle du chat. Le brouillon n'est plus perdu par une confirmation :
   il est enregistré avant de revenir à la liste.
   */
+  /*
+  FNXC:ProjectNotes 2026-09-16-05:02:
+  FN-454 : sur téléphone le rail liste est caché, donc l'en-tête est le SEUL endroit où l'identité de la note ouverte
+  peut être lue. Il doit révéler la note confirmée, jamais la précédente pendant la lecture.
+  */
+  it("révèle l'identité de la note confirmée dans l'en-tête téléphone", async () => {
+    const selection = deferred<typeof emptyNote>();
+    setPhoneViewport();
+    api.fetchNotes.mockResolvedValue({ notes: [note, emptyNote] });
+    api.fetchNote.mockResolvedValueOnce(note).mockReturnValueOnce(selection.promise);
+    renderNotes();
+    fireEvent.click(await screen.findByRole("button", { name: /^Commande/ }));
+    expect(await screen.findByRole("heading", { name: "Commande" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /^Vide/ }));
+    expect(screen.getByRole("heading", { name: "Notes" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Markdown editor")).toBeNull();
+    expect(screen.getByTestId("notes-back-btn")).toBeInTheDocument();
+
+    await act(async () => { selection.resolve(emptyNote); await selection.promise; });
+    expect(await screen.findByRole("heading", { name: "Vide" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Markdown editor")).toHaveValue("");
+  });
+
   it.each([
     { width: 390, height: 844, label: "portrait phone" },
     { width: 844, height: 480, label: "short landscape phone" },

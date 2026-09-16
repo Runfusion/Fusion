@@ -161,6 +161,18 @@ export function NotesView({ projectId, addToast, controller, compact = false, li
     if (created && listOnly) onOpenNote?.(created);
   };
   const activeNoteId = notes.pendingSelectedId ?? notes.selected?.id;
+  /*
+  FNXC:ProjectNotes 2026-09-16-05:02:
+  FN-454 : l'identité AFFICHÉE vient exclusivement de la note `selected` confirmée. Tant qu'une lecture est en cours pour
+  une AUTRE note, l'ancienne sélection ne doit être présentée ni comme la cible ni comme son contenu : l'opérateur
+  croirait autrement éditer la note demandée alors que toute frappe irait dans la précédente. Le détail affiche donc un
+  état de chargement, jamais l'éditeur périmé. La ligne de liste garde `notes-list-item--selected` et
+  `aria-current="page"` sur la cible en attente, seul retour de sélection immédiat exigé par FN-404.
+  */
+  const pendingSelection = Boolean(notes.pendingSelectedId && notes.pendingSelectedId !== notes.selected?.id);
+  const confirmedNote = pendingSelection ? null : notes.selected;
+  const confirmedNoteTitle = confirmedNote?.title?.trim() ? confirmedNote.title : null;
+  const detailPaneActive = dedicated || pendingSelection || Boolean(notes.selected);
   const handleSelect = async (id: string) => {
     if (listOnly) {
       const note = notes.notes.find((candidate) => candidate.id === id);
@@ -269,10 +281,10 @@ export function NotesView({ projectId, addToast, controller, compact = false, li
   </div>;
 
   const detail = <main className="notes-detail">
-    {notes.selected ? <>
+    {pendingSelection ? <div className="notes-state notes-detail-empty" data-testid="notes-detail-pending"><StickyNote aria-hidden="true" /><p>{t("common.loading", "Loading\u2026")}</p></div> : confirmedNote ? <>
       {notes.conflict ? <div className="notes-conflict" role="alert"><p>{t("notes.conflict", "This note changed elsewhere. Your draft is preserved.")}</p><button className="btn" type="button" onClick={() => void notes.reload()}><RefreshCw aria-hidden="true" />{t("notes.reload", "Reload server version")}</button><button className="btn btn-primary" type="button" onClick={() => void notes.overwrite()}>{t("notes.overwrite", "Overwrite with my draft")}</button></div> : null}
       {notes.error && !notes.conflict ? <div className="notes-error" role="alert">{notes.error}{notes.failedSelectionId || notes.errorOperation === "save" ? <button className="btn" type="button" onClick={() => void handleRetry()}>{t("common.retry", "Retry")}</button> : null}</div> : null}
-      <div className="notes-editor"><FileEditor content={notes.draftContent} onChange={handleContentChange} filePath={`${notes.selected.id}.md`} hideToolbar /></div>
+      <div className="notes-editor"><FileEditor content={notes.draftContent} onChange={handleContentChange} filePath={`${confirmedNote.id}.md`} hideToolbar /></div>
     </> : notes.error && notes.failedSelectionId ? <div className="notes-state notes-detail-empty" role="alert"><p>{notes.error}</p><button className="btn" type="button" onClick={() => void handleRetry()}>{t("common.retry", "Retry")}</button></div> : <div className="notes-state notes-detail-empty"><StickyNote aria-hidden="true" /><p>{notes.loading ? t("common.loading", "Loading…") : t("notes.select", "Select a note or create a new one")}</p></div>}
   </main>;
 
@@ -280,27 +292,27 @@ export function NotesView({ projectId, addToast, controller, compact = false, li
   FNXC:NotesCollectionLayout 2026-09-13-16:29:
   The standard Notes destination composes its existing controller through the shared rail and detail shell. Dedicated note windows remain detail-only and keep their independent dirty guard, draft, conflict, save, and floating-window lifecycle.
   */
-  const saveIndicator = notes.selected
+  const saveIndicator = confirmedNote
     ? <span className="notes-save-state" data-testid="notes-save-state" aria-live="polite" title={t("notes.autoSaved", "Changes are saved automatically")}>{notes.saving ? t("notes.saving", "Saving…") : t("notes.savedState", "Saved")}</span>
     : null;
   const createAction = !dedicated ? <ViewActionButton kind="create" label={t("notes.new", "New note")} onClick={() => void handleCreate()} disabled={!projectId || notes.saving} /> : null;
   const header = <ViewHeader
     icon={StickyNote}
-    title={dedicated ? (notes.draftTitle || t("nav.notes", "Notes")) : t("nav.notes", "Notes")}
+    title={confirmedNoteTitle ?? t("nav.notes", "Notes")}
     onClose={floating ? requestFloatingClose : undefined}
-    backAction={!dedicated && notes.selected && !listRailVisible ? { label: t("notes.backToList", "Back to notes"), onClick: () => void handleBackToList(), "data-testid": "notes-back-btn" } : undefined}
+    backAction={!dedicated && detailPaneActive && !listRailVisible ? { label: t("notes.backToList", "Back to notes"), onClick: () => void handleBackToList(), "data-testid": "notes-back-btn" } : undefined}
     actions={saveIndicator || createAction ? <>{saveIndicator}{createAction}</> : undefined}
   />;
-  const content = <section className={`notes-view${floating ? " notes-view--floating" : ""}${compact ? " notes-view--compact" : ""}${listOnly ? " notes-view--list-only" : ""}${dedicated ? " notes-view--dedicated" : ""}${notes.selected ? " notes-view--detail" : ""}`} aria-label={t("nav.notes", "Notes")}>
+  const content = <section className={`notes-view${floating ? " notes-view--floating" : ""}${compact ? " notes-view--compact" : ""}${listOnly ? " notes-view--list-only" : ""}${dedicated ? " notes-view--dedicated" : ""}${detailPaneActive ? " notes-view--detail" : ""}`} aria-label={t("nav.notes", "Notes")}>
     <ViewLayout
       header={header}
       sidebar={!dedicated ? <ViewSidebar ariaLabel={t("notes.list", "Notes list")} resizable={!compact}>{list}</ViewSidebar> : undefined}
-      mobilePane={dedicated || notes.selected ? "detail" : "list"}
+      mobilePane={detailPaneActive ? "detail" : "list"}
       contentOwnsScroll={!listOnly}
     >
       {!listOnly ? detail : <div />}
     </ViewLayout>
   </section>;
   if (!floating) return content;
-  return <FloatingWindow title={notes.draftTitle || t("nav.notes", "Notes")} ariaLabel={notes.draftTitle || t("nav.notes", "Notes")} onClose={() => void requestFloatingClose()} windowKey={dedicatedNoteId ? `note-${projectId}-${dedicatedNoteId}` : "notes-view"} hideHeader dragHandleSelector=".view-header" minSize={{ width: 360, height: 280 }} raiseToFrontSignal={floating.raiseToFrontSignal}><div onPointerDown={floating.onActivate} onFocusCapture={floating.onActivate}>{content}</div></FloatingWindow>;
+  return <FloatingWindow title={confirmedNoteTitle ?? t("nav.notes", "Notes")} ariaLabel={confirmedNoteTitle ?? t("nav.notes", "Notes")} onClose={() => void requestFloatingClose()} windowKey={dedicatedNoteId ? `note-${projectId}-${dedicatedNoteId}` : "notes-view"} hideHeader dragHandleSelector=".view-header" minSize={{ width: 360, height: 280 }} raiseToFrontSignal={floating.raiseToFrontSignal}><div onPointerDown={floating.onActivate} onFocusCapture={floating.onActivate}>{content}</div></FloatingWindow>;
 }

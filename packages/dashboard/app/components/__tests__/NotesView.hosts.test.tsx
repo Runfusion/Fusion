@@ -20,6 +20,7 @@ vi.mock("../FileEditor", () => ({
 }));
 
 const note = { id: "n", title: "Commande", content: "pnpm test", revision: 1, createdAt: "2026-01-01", updatedAt: "2026-01-01" };
+const emptyNote = { ...note, id: "e", title: "Vide", content: "" };
 
 /*
 FNXC:NotesEditing 2026-09-15-21:23:
@@ -95,6 +96,26 @@ describe("NotesView — invariant partagé par les cinq hôtes", () => {
     expect(within(menu).getByRole("menuitem", { name: "Delete" })).toBeInTheDocument();
   });
 
+  /*
+  FNXC:ProjectNotes 2026-09-16-05:02:
+  FN-454 : l'identité de la note confirmée doit être lisible dans CHAQUE hôte qui monte un éditeur, et une note vide doit
+  s'ouvrir vide. Le dock `listOnly` reste une simple délégation d'ouverture et ne monte toujours aucun éditeur.
+  */
+  it.each(hosts.filter((host) => host.hasEditor))("révèle la note confirmée et ouvre une note vide vide dans $name", async ({ props }) => {
+    api.fetchNotes.mockResolvedValue({ notes: [note, emptyNote] });
+    api.fetchNote.mockImplementation((_projectId: string, id: string) => Promise.resolve(id === emptyNote.id ? emptyNote : note));
+    const dedicatedProps = props.dedicatedNoteId ? { ...props, dedicatedNoteId: emptyNote.id } : props;
+    mount(dedicatedProps);
+    if (!props.dedicatedNoteId) {
+      fireEvent.click(await screen.findByRole("button", { name: /^Commande/ }));
+      expect(await screen.findByRole("heading", { name: "Commande" })).toBeInTheDocument();
+      expect(screen.getByLabelText("Markdown editor")).toHaveValue(note.content);
+      fireEvent.click(screen.getByRole("button", { name: /^Vide/ }));
+    }
+    expect(await screen.findByRole("heading", { name: "Vide" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Markdown editor")).toHaveValue("");
+  });
+
   it("la liste compacte du dock délègue toujours l'ouverture plutôt que de charger un détail", async () => {
     const onOpenNote = vi.fn();
     mount({ compact: true, listOnly: true, onOpenNote });
@@ -102,5 +123,7 @@ describe("NotesView — invariant partagé par les cinq hôtes", () => {
     await waitFor(() => expect(onOpenNote).toHaveBeenCalledWith(expect.objectContaining({ id: note.id })));
     expect(api.fetchNote).not.toHaveBeenCalled();
     expect(screen.queryByLabelText("Markdown editor")).toBeNull();
+    expect(screen.queryByTestId("notes-detail-pending")).toBeNull();
+    expect(screen.getByRole("heading", { name: "Notes" })).toBeInTheDocument();
   });
 });

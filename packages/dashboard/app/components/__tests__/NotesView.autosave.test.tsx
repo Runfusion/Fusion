@@ -16,6 +16,7 @@ vi.mock("../FileEditor", () => ({ FileEditor: ({ content, onChange }: any) => <d
 
 const note = { id: "n", title: "Commande", content: "pnpm test", revision: 1, createdAt: "2026-01-01", updatedAt: "2026-01-01" };
 const noteB = { ...note, id: "b", title: "Journal", content: "logs B" };
+const emptyNote = { ...note, id: "e", title: "Vide", content: "" };
 const AUTOSAVE_DELAY_MS = 800;
 
 /*
@@ -86,6 +87,37 @@ describe("NotesView — enregistrement automatique", () => {
     expect(api.updateNote).toHaveBeenCalledWith("p", note.id, { title: note.title, content: "modifié", expectedRevision: 1 });
     await advance(AUTOSAVE_DELAY_MS * 2);
     expect(api.updateNote).toHaveBeenCalledTimes(1);
+  });
+
+  /*
+  FNXC:NotesEditing 2026-09-16-05:02:
+  FN-454 : symptôme d'origine — après avoir modifié A puis ouvert une note B vide, la frappe suivante devait aller dans
+  B seule. L'écriture automatique porte l'identifiant, le contenu et la révision de B, et aucune minuterie résiduelle
+  ne réécrit A dans B.
+  */
+  it("n'enregistre que la note vide nouvellement sélectionnée après une modification de la précédente", async () => {
+    api.fetchNotes.mockResolvedValue({ notes: [note, emptyNote] });
+    api.fetchNote.mockImplementation((_projectId: string, id: string) => Promise.resolve(id === emptyNote.id ? { ...emptyNote, revision: 7 } : note));
+    await openNote();
+    type("modifi\u00e9");
+    api.updateNote.mockResolvedValueOnce({ ...note, content: "modifi\u00e9", revision: 2 });
+
+    fireEvent.click(screen.getByRole("button", { name: /^Vide/ }));
+    await settle();
+    await settle();
+    expect(api.updateNote).toHaveBeenCalledTimes(1);
+    expect(api.updateNote).toHaveBeenLastCalledWith("p", note.id, { title: note.title, content: "modifi\u00e9", expectedRevision: 1 });
+    expect(screen.getByLabelText("Markdown editor")).toHaveValue("");
+
+    api.updateNote.mockResolvedValueOnce({ ...emptyNote, content: "texte B", revision: 8 });
+    type("texte B");
+    await advance(AUTOSAVE_DELAY_MS);
+    await settle();
+    expect(api.updateNote).toHaveBeenCalledTimes(2);
+    expect(api.updateNote).toHaveBeenLastCalledWith("p", emptyNote.id, { title: emptyNote.title, content: "texte B", expectedRevision: 7 });
+
+    await advance(AUTOSAVE_DELAY_MS * 3);
+    expect(api.updateNote).toHaveBeenCalledTimes(2);
   });
 
   it("enregistre avant de revenir à la liste", async () => {
