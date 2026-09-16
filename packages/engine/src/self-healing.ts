@@ -43,6 +43,7 @@ import { loadWorkspaceConfig, type TaskMoveLanes, resolveColumnFlags, IN_REVIEW_
   classifyTaskBranchOrigin,
   isFusionDeletableBranch,
   isTaskExternallyBlocked,
+  isTaskLogWriteRefusal,
   fileScopeLeaseBlocksCandidate,
   normalizeOverlapScopeForTask,
 } from "@fusion/core";
@@ -7323,6 +7324,11 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
   /** Repair legacy dependency residue before it can re-enter executor dispatch. */
   async reconcileMissingDependencies(): Promise<number> {
+    /*
+    FNXC:TerminalTaskWrites 2026-09-15-21:41:
+    Snapshot rows are only candidates. A terminal transition may win before a maintenance write, so
+    each candidate remains isolated and a known read-only log refusal cannot starve later repairs.
+    */
     let repaired = 0;
     const archivedColumns = new Set(await Promise.resolve()
       .then(() => resolveProjectColumnsForRoles(this.store, ["archived"]))
@@ -7359,10 +7365,23 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         Missing means absent from both live and archived storage. A successful archive lookup is a
         terminal dependency, so deletedAt alone must never classify it as residue.
         */
-        if (await readLinkedTaskOrUndefined(this.store, dependencyId)) continue;
+        let linkedDependency: Task | undefined;
+        try {
+          linkedDependency = await readLinkedTaskOrUndefined(this.store, dependencyId);
+        } catch (error) {
+          log.warn(`reconcileMissingDependencies: failed to read ${snapshot.id} dependency ${dependencyId}: ${error instanceof Error ? error.message : String(error)}`);
+          continue;
+        }
+        if (linkedDependency) continue;
 
         // Recheck control and execution fences against the latest task before mutating it.
-        const current = await readLinkedTaskOrUndefined(this.store, snapshot.id);
+        let current: Task | undefined;
+        try {
+          current = await readLinkedTaskOrUndefined(this.store, snapshot.id);
+        } catch (error) {
+          log.warn(`reconcileMissingDependencies: failed to re-read ${snapshot.id}: ${error instanceof Error ? error.message : String(error)}`);
+          break;
+        }
         if (!current || current.userPaused || current.paused || current.autoMerge === false
           || current.checkedOutBy
           || activeSessionRegistry.pathsForTask(current.id).some((path) => activeSessionRegistry.isPathActive(path))
@@ -7384,12 +7403,23 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             continue;
           }
           // A concurrent dependency replacement wins; a later sweep re-discovers any surviving residue.
-          if (!/does not depend on/i.test(error instanceof Error ? error.message : String(error))) throw error;
+          if (!/does not depend on/i.test(error instanceof Error ? error.message : String(error))) {
+            log.warn(`reconcileMissingDependencies: failed to remove ${current.id} dependency ${dependencyId}: ${error instanceof Error ? error.message : String(error)}`);
+          }
         }
       }
       if (removed === 0) continue;
-      await this.store.logEntry(snapshot.id, `Auto-reconciled ${removed} missing dependency reference(s); replanning required.`);
-      repaired += 1;
+      try {
+        await this.store.logEntry(snapshot.id, `Auto-reconciled ${removed} missing dependency reference(s); replanning required.`);
+        repaired += 1;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (isTaskLogWriteRefusal(error, snapshot.id)) {
+          log.warn(`reconcileMissingDependencies: terminal task ${snapshot.id} refused its repair log`);
+          continue;
+        }
+        log.warn(`reconcileMissingDependencies: failed to log repair for ${snapshot.id}: ${message}`);
+      }
     }
     return repaired;
   }

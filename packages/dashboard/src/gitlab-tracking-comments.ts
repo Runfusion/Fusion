@@ -1,4 +1,7 @@
-import type { Task, TaskStore } from "@fusion/core";
+import { createLogger, type Task, TaskStore } from "@fusion/core";
+import { reportTaskListenerFailure } from "./task-log-safety.js";
+
+const terminalTaskWriteLog = createLogger("gitlab-tracking-comments");
 import { resolveTaskLifecycleColumns } from "@fusion/core";
 import { resolveGitLabClient, resolveGitLabTargetFromItem, safeLogGitLabEntry } from "./gitlab-lifecycle.js";
 import { getCliPackageVersion } from "./cli-package-version.js";
@@ -76,7 +79,7 @@ export function formatGitLabTrackingComment(
 
 export class GitLabTrackingCommentService {
   private readonly store: TaskStore;
-  private readonly onTaskMoved = (event: TaskMovedEvent): void => { void this.handleTaskMoved(event); };
+  private readonly onTaskMoved = (event: TaskMovedEvent): void => { void this.handleTaskMoved(event).catch((error) => reportTaskListenerFailure(terminalTaskWriteLog, "gitlab-tracking-comments", error)); };
   private started = false;
 
   constructor(store: TaskStore) { this.store = store; }

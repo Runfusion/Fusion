@@ -94,11 +94,12 @@ describe("GitHub tracking periodic reconcile sweep", () => {
     ];
     expect(offsets).toEqual([{ nextOffset: 0 }, { nextOffset: 0 }, { nextOffset: 0 }]);
     expect(store.logEntry).not.toHaveBeenCalled();
-    expect(warnSpy).toHaveBeenCalledTimes(1);
+    // Tracking and source-issue passes own separate first-occurrence diagnostics for this fixture.
+    expect(warnSpy).toHaveBeenCalledTimes(2);
 
     mockResolveGithubTrackingAuth.mockReturnValue({ ok: false, message: "auth changed" });
     await reconciler.runSweep(store, { offset: 0 });
-    expect(warnSpy).toHaveBeenCalledTimes(2);
+    expect(warnSpy).toHaveBeenCalledTimes(4);
     expect(errorSpy).not.toHaveBeenCalled();
     warnSpy.mockRestore();
     errorSpy.mockRestore();

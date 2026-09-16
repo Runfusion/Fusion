@@ -1,4 +1,7 @@
-import type { TaskStore } from "@fusion/core";
+import { createLogger, type TaskStore } from "@fusion/core";
+import { reportTaskListenerFailure, safeLogTaskEntry } from "./task-log-safety.js";
+
+const terminalTaskWriteLog = createLogger("github-issue-comment");
 import { GitHubClient } from "./github.js";
 import { completeColumnsForTask } from "./task-lifecycle-lanes.js";
 import { getCliPackageVersion } from "./cli-package-version.js";
@@ -89,7 +92,7 @@ export class GitHubIssueCommentService {
   private readonly getGitHubToken: () => string | undefined;
   private readonly getCurrentVersion: () => string;
   private readonly onTaskMoved = (event: TaskMovedEvent): void => {
-    void this.handleTaskMoved(event);
+    void this.handleTaskMoved(event).catch((error) => reportTaskListenerFailure(terminalTaskWriteLog, "github-issue-comment", error));
   };
   private started = false;
 
@@ -115,6 +118,11 @@ export class GitHubIssueCommentService {
     this.store.off("task:moved", this.onTaskMoved);
   }
 
+  /*
+  FNXC:TerminalTaskWrites 2026-09-15-21:55:
+  Completion listeners can observe an event after its task becomes terminal. All task-log outcomes use
+  safeLogTaskEntry so the read-only guard remains authoritative and the listener does not reject.
+  */
   private async handleTaskMoved(event: TaskMovedEvent): Promise<void> {
     /*
     FNXC:WorkflowResolvedColumns 2026-07-30-04:40 (batch-core, corrected after #2783 review):
@@ -146,10 +154,12 @@ export class GitHubIssueCommentService {
 
     const [owner, repo] = sourceIssue.repository.split("/");
     if (!owner || !repo) {
-      await this.store.logEntry(
+      await safeLogTaskEntry(
+        this.store,
         task.id,
         "Failed to post GitHub issue comment",
         `Invalid GitHub repository format: ${sourceIssue.repository}`,
+        { logger: terminalTaskWriteLog, context: "github-issue-comment" },
       );
       return;
     }
@@ -161,10 +171,12 @@ export class GitHubIssueCommentService {
        * not appearing on a tracked issue is surprising enough to need a breadcrumb. Once per task
        * completion, so this is not the high-frequency skip-log noise FN-8024 removed.
        */
-      await this.store.logEntry(
+      await safeLogTaskEntry(
+        this.store,
         task.id,
         "Skipped GitHub issue completion comment",
         `${sourceIssue.repository}#${sourceIssue.issueNumber} is tracked; GitHub tracking comment covers it`,
+        { logger: terminalTaskWriteLog, context: "github-issue-comment" },
       );
       return;
     }
@@ -182,17 +194,21 @@ export class GitHubIssueCommentService {
     try {
       const client = new GitHubClient(this.getGitHubToken());
       await client.commentOnIssue(owner, repo, sourceIssue.issueNumber, commentBody);
-      await this.store.logEntry(
+      await safeLogTaskEntry(
+        this.store,
         task.id,
         "Posted GitHub issue completion comment",
         `${sourceIssue.repository}#${sourceIssue.issueNumber}`,
+        { logger: terminalTaskWriteLog, context: "github-issue-comment" },
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      await this.store.logEntry(
+      await safeLogTaskEntry(
+        this.store,
         task.id,
         "Failed to post GitHub issue comment",
         message,
+        { logger: terminalTaskWriteLog, context: "github-issue-comment" },
       );
     }
   }

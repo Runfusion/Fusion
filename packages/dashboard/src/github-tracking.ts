@@ -1,6 +1,7 @@
 import {
   AiServiceError,
   columnsWithFlag,
+  createLogger,
   declaresAnyLifecycleTrait,
   parseRepoSlug,
   resolveTaskGithubTracking,
@@ -13,6 +14,7 @@ import {
   type TaskStore,
 } from "@fusion/core";
 import type { CreatedIssue } from "./github.js";
+import { safeLogTaskEntry } from "./task-log-safety.js";
 import { GitHubClient, isGitHubIssueAlreadyImported } from "./github.js";
 import { resolveGithubTrackingAuth } from "./github-auth.js";
 import {
@@ -23,6 +25,7 @@ import {
   scoreCandidateIssue,
 } from "./github-tracking-dedup.js";
 
+const terminalTaskWriteLog = createLogger("github-tracking");
 const TRACKING_ISSUE_TITLE_LIMIT = 240;
 const TRACKING_ISSUE_BODY_SUMMARY_LIMIT = 500;
 
@@ -268,6 +271,11 @@ FN-9054 / FN-9061: executionCompletedAt preceded issue.createdAt by 4–15 minut
 the issues stayed OPEN. After create or dedup-link, close immediately when the task is
 already in a complete or archived lane. Failures are logged and never undo the link.
 */
+/*
+FNXC:TerminalTaskWrites 2026-09-15-21:55:
+A terminal-move helper re-reads the task but can still race archival before its audit breadcrumb.
+Use safeLogTaskEntry for every completion outcome so terminal records never receive a raw maintenance write.
+*/
 async function closeTrackingIssueIfTaskAlreadyTerminal(
   task: Task,
   store: TaskStore,
@@ -294,9 +302,7 @@ async function closeTrackingIssueIfTaskAlreadyTerminal(
     }
     const stateReason = isArchived && !latest.executionCompletedAt ? "not_planned" : "completed";
     await client.setIssueState(issue.owner, issue.repo, issue.number, "closed", stateReason);
-    if (typeof store.logEntry === "function") {
-      await store.logEntry(latest.id, "Closed linked GitHub tracking issue", `${issue.owner}/${issue.repo}#${issue.number}`);
-    }
+    await safeLogTaskEntry(store, latest.id, "Closed linked GitHub tracking issue", `${issue.owner}/${issue.repo}#${issue.number}`, { logger: terminalTaskWriteLog, context: "github-tracking" });
     if (typeof store.recordActivity === "function") {
       await store.recordActivity({
         type: "task:updated",
@@ -312,9 +318,7 @@ async function closeTrackingIssueIfTaskAlreadyTerminal(
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (typeof store.logEntry === "function") {
-      await store.logEntry(latest.id, "Failed to close GitHub tracking issue", message);
-    }
+    await safeLogTaskEntry(store, latest.id, "Failed to close GitHub tracking issue", message, { logger: terminalTaskWriteLog, context: "github-tracking" });
   }
 }
 
@@ -397,7 +401,13 @@ export async function maybeCreateTrackingIssue(
         owner: sourceRepo.owner, repo: sourceRepo.repo, number: sourceIssue.issueNumber, url,
       });
       if (!adoption.adopted) {
-        await deps.taskStore.logEntry(task.id, `Source issue already tracked by ${adoption.holderTaskId ?? "another task"}`);
+        await safeLogTaskEntry(
+          deps.taskStore,
+          task.id,
+          `Source issue already tracked by ${adoption.holderTaskId ?? "another task"}`,
+          "",
+          { logger: terminalTaskWriteLog, context: "github-tracking" },
+        );
         return { created: false, reason: "source_issue_already_tracked_elsewhere" };
       }
       await deps.taskStore.recordActivity({

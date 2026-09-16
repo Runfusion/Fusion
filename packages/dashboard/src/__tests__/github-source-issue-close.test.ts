@@ -87,6 +87,20 @@ describe("GitHubSourceIssueCloseService", () => {
     expect(mockSetIssueState).not.toHaveBeenCalled();
   });
 
+  it("contains a terminal-row refusal from its real task:moved listener", async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+    store.logEntry.mockRejectedValue(new Error("Task FN-1 is archived — logging is read-only"));
+    service.start();
+    store.emit("task:moved", createEvent({ sourceIssue: { provider: "github", repository: "malformed", issueNumber: 42 } }));
+    await flushAsync();
+    process.off("unhandledRejection", onUnhandled);
+
+    expect(store.logEntry).toHaveBeenCalledOnce();
+    expect(unhandled).toEqual([]);
+  });
+
   it("logs malformed repository", async () => {
     service.start();
     store.emit("task:moved", createEvent({ sourceIssue: { provider: "github", repository: "bad", issueNumber: 42 } }));

@@ -1424,13 +1424,20 @@ export class Scheduler {
         }
         /* FNXC:WorkflowResolvedColumns 2026-07-31-06:35 (fleet): the answer only gates `schedule()`,
            which is async and fire-and-forget, so resolving it properly costs nothing observable. */
+        /*
+        FNXC:TerminalTaskWrites 2026-09-15-21:41:
+        Scheduler listener wakeups resolve lifecycle state asynchronously. Reporting their terminal
+        rejection preserves unrelated scheduling and prevents an event-emitter unhandled rejection.
+        */
         void (async () => {
           const unpausedParked = await resolveTaskParkedColumns(this.store, task.id, updatedSelectionCache);
           if (this.running && unpausedParked.wake.has(task.column)) {
             schedulerLog.log(`Task ${task.id} unpaused — triggering scheduling`);
             void this.schedule();
           }
-        })();
+        })().catch((error) => {
+          schedulerLog.warn(`Failed to resolve unpaused task parked columns for ${task.id}: ${error instanceof Error ? error.message : String(error)}`);
+        });
       }
 
       /*
@@ -1468,7 +1475,9 @@ export class Scheduler {
             schedulerLog.log(`Task ${task.id} finished planning — triggering scheduling`);
             void this.schedule();
           }
-        })();
+        })().catch((error) => {
+          schedulerLog.warn(`Failed to resolve planning task parked columns for ${task.id}: ${error instanceof Error ? error.message : String(error)}`);
+        });
       }
 
       if (task.status === "awaiting-approval") {
@@ -1499,7 +1508,9 @@ export class Scheduler {
             schedulerLog.log(`Task ${task.id} plan approval cleared — triggering scheduling`);
             void this.schedule();
           }
-        })();
+        })().catch((error) => {
+          schedulerLog.warn(`Failed to resolve approval task parked columns for ${task.id}: ${error instanceof Error ? error.message : String(error)}`);
+        });
       }
 
       if (!this.options.prMonitor) return;
@@ -1627,7 +1638,15 @@ export class Scheduler {
         } catch (error) {
           schedulerLog.error(`Failed event-driven soft-delete blocker reconciliation for ${task.id}`, error);
         }
-      })();
+      })().catch((error) => {
+        /*
+        FNXC:TerminalTaskWrites 2026-09-15-22:07:
+        Delete reconciliation has inner isolation for individual dependents, but setup reads may
+        still reject. Terminate the event-dispatched promise so no lifecycle listener leaks an
+        unhandled rejection while later scheduling events continue.
+        */
+        schedulerLog.error(`Failed event-driven soft-delete blocker reconciliation for ${task.id}`, error);
+      });
     });
   }
 

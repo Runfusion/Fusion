@@ -1,4 +1,5 @@
 import { createLogger, type GithubIssueAction, type Task, type TaskStore } from "@fusion/core";
+import { reportTaskListenerFailure } from "./task-log-safety.js";
 
 const gitLabDeleteCloseLog = createLogger("dashboard-gitlab-delete-close");
 import { formatGitLabTargetLabel, resolveGitLabTarget, safeLogGitLabEntry, type GitLabLifecycleTarget } from "./gitlab-lifecycle.js";
@@ -48,7 +49,7 @@ export class GitLabDeleteCloseService {
 
   attach(store: TaskStore): void {
     if (this.listeners.has(store)) return;
-    const onTaskDeleted = (task: Task, meta?: TaskDeletedMeta): void => { void this.handleTaskDeleted(store, task, meta); };
+    const onTaskDeleted = (task: Task, meta?: TaskDeletedMeta): void => { void this.handleTaskDeleted(store, task, meta).catch((error) => reportTaskListenerFailure(gitLabDeleteCloseLog, "gitlab-delete-close", error)); };
     this.listeners.set(store, { onTaskDeleted });
     if (this.started) store.on("task:deleted", onTaskDeleted);
   }

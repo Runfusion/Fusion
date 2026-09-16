@@ -1,4 +1,7 @@
-import type { TaskStore } from "@fusion/core";
+import { createLogger, type TaskStore } from "@fusion/core";
+import { reportTaskListenerFailure } from "./task-log-safety.js";
+
+const terminalTaskWriteLog = createLogger("knowledge-index-refresh");
 import { completeColumnsForTask } from "./task-lifecycle-lanes.js";
 import { refreshKnowledgeForTask } from "./knowledge-index.js";
 
@@ -46,7 +49,7 @@ export class KnowledgeIndexRefreshService {
   attach(store: TaskStore): void {
     if (this.listeners.has(store)) return;
     const onTaskMoved = (event: TaskMovedEvent): void => {
-      void this.handleTaskMoved(store, event);
+      void this.handleTaskMoved(store, event).catch((error) => reportTaskListenerFailure(terminalTaskWriteLog, "knowledge-index-refresh", error));
     };
     this.listeners.set(store, { onTaskMoved });
     if (this.started) {

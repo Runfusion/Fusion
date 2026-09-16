@@ -98,12 +98,14 @@ describe("GitHubTrackingReconciler.reconcileSourceIssues", () => {
     expect((store.logEntry as any)).toHaveBeenCalledWith("FN-10", "Failed to reconcile GitHub source issue", "write failed");
   });
 
-  it("skips and logs when auth resolution fails", async () => {
+  it("emits one service diagnostic without task-log writes when auth resolution fails", async () => {
     mockResolveGithubTrackingAuth.mockReturnValueOnce({ ok: false, message: "no auth" });
     const store = createStore([{ id: "FN-11", column: "done", sourceIssue: { provider: "github", repository: "owner/repo", issueNumber: 11 } }]);
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
     const result = await new GitHubTrackingReconciler().reconcileSourceIssues(store);
     expect(result.skipped).toBe(1);
-    expect((store.logEntry as any)).toHaveBeenCalledWith("FN-11", "Skipped GitHub source issue reconciliation", "no auth");
+    expect(store.logEntry).not.toHaveBeenCalled();
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining("skipped 1 GitHub source issue task(s): no auth"));
     expect(mockSetIssueState).not.toHaveBeenCalled();
   });
 });
@@ -183,14 +185,16 @@ describe("GitHubTrackingReconciler.backfillSourceIssueClosedAt", () => {
     expect((store.updateTask as any)).not.toHaveBeenCalled();
   });
 
-  it("returns all-skipped and logs when auth resolution fails", async () => {
+  it("returns all-skipped with one service diagnostic and no task-log writes when auth resolution fails", async () => {
     mockResolveGithubTrackingAuth.mockReturnValueOnce({ ok: false, message: "no auth" });
     const store = createStore([{ id: "FN-9", column: "archived", sourceIssue: { provider: "github", repository: "owner/repo", issueNumber: 9 } }]);
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     const result = await new GitHubTrackingReconciler().backfillSourceIssueClosedAt(store);
 
     expect(result).toEqual({ scanned: 1, filled: 0, skipped: 1, errors: 0, hasMore: false });
-    expect((store.logEntry as any)).toHaveBeenCalledWith("FN-9", "Skipped GitHub source issue closed-at backfill", "no auth");
+    expect(store.logEntry).not.toHaveBeenCalled();
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining("skipped 1 GitHub source issue backfill task(s): no auth"));
     expect(mockGetIssue).not.toHaveBeenCalled();
   });
 

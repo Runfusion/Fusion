@@ -163,7 +163,7 @@ describe("GitHubTrackingReconciler", () => {
     const result = await new GitHubTrackingReconciler().reconcile(store);
 
     expect(result.skipped).toBe(1);
-    expect((store.logEntry as any)).toHaveBeenCalledWith("FN-1", "Skipped GitHub tracking issue reconciliation", "no auth");
+    expect((store.logEntry as any)).not.toHaveBeenCalled();
   });
 
   it("respects concurrency cap", async () => {
