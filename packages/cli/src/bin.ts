@@ -522,7 +522,7 @@ PR:
 
 Options:
   --project, -P <name>       Target a specific project (bypasses CWD detection)
-  --port, -p <port>          Dashboard/serve port (default: 4040)
+  --port, -p <port>          Dashboard/serve port (dashboard: saved port or 4040; serve: 4040)
   --host <host>              Serve host (default: 127.0.0.1 — localhost only; pass 0.0.0.0 to expose)
   --token <token>            Dashboard/daemon bearer token. Default: $FUSION_DASHBOARD_TOKEN, $FUSION_DAEMON_TOKEN, or auto-generated.
   --no-auth                  Disable bearer-token auth for dashboard/desktop/serve (local-only; not recommended on 0.0.0.0)
