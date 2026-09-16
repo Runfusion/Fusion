@@ -9,6 +9,38 @@ const apiMocks = vi.hoisted(() => ({
 
 vi.mock("../../api", () => apiMocks);
 
+/*
+FNXC:SnippetsDestination 2026-09-16-21:44:
+FN-476: the cache learns about another client's write from ONE shared SSE subscription opened by the first consumer and
+released by the last. The bus is captured here so the suite drives the real subscription the cache opens — and asserts
+its lifecycle — without any network connection.
+*/
+interface CapturedSubscription {
+  url: string;
+  events: Record<string, (event: MessageEvent) => void>;
+  onReconnect?: () => void;
+  released: boolean;
+}
+
+const sseSubscriptions: CapturedSubscription[] = [];
+vi.mock("../../sse-bus", () => ({
+  subscribeSse: (url: string, sub: { events?: Record<string, (event: MessageEvent) => void>; onReconnect?: () => void }) => {
+    const entry: CapturedSubscription = { url, events: sub.events ?? {}, onReconnect: sub.onReconnect, released: false };
+    sseSubscriptions.push(entry);
+    return () => { entry.released = true; };
+  },
+}));
+
+function liveSubscriptions(): CapturedSubscription[] {
+  return sseSubscriptions.filter((entry) => !entry.released);
+}
+
+function emitSnippetsUpdated(): void {
+  for (const entry of liveSubscriptions()) {
+    entry.events["settings:chat-snippets-updated"]?.(new MessageEvent("message", { data: "{}" }));
+  }
+}
+
 import {
   __test_resetChatSnippetsCache,
   useChatSnippetsCache,
@@ -41,6 +73,7 @@ describe("useChatSnippetsCache", () => {
 
   beforeEach(() => {
     __test_resetChatSnippetsCache();
+    sseSubscriptions.length = 0;
     serverSnippets = [];
     apiMocks.fetchGlobalSettings.mockReset();
     apiMocks.updateGlobalSettings.mockReset();
@@ -70,8 +103,19 @@ describe("useChatSnippetsCache", () => {
     await act(async () => firstRead.resolve(response([{ name: "test", prompt: "prompt" }])));
     await waitFor(() => expect(second.result.current.hasLoaded).toBe(true));
     expect(first.result.current.snippets).toEqual([{ name: "test", prompt: "prompt" }]);
-    expect(getItemSpy).not.toHaveBeenCalled();
-    expect(setItemSpy).not.toHaveBeenCalled();
+    /*
+    FNXC:SnippetsDestination 2026-09-16-21:44:
+    FN-476: the invariant here is that PROMPT DEFINITIONS never reach persistent browser storage — not that the module
+    touches no storage key at all. The live subscription now runs through the shared SSE bus, whose multiplexer reads
+    its own client identifier from localStorage, so the assertion names that one allowed key instead of forbidding a
+    read that carries no snippet data.
+    */
+    const touchedKeys = [
+      ...getItemSpy.mock.calls.map((call) => String(call[0])),
+      ...setItemSpy.mock.calls.map((call) => String(call[0])),
+    ];
+    expect(touchedKeys.every((key) => key === "fusion:sse-client-id")).toBe(true);
+    expect(setItemSpy.mock.calls.some((call) => JSON.stringify(call[1] ?? "").includes("prompt"))).toBe(false);
 
     first.unmount();
     second.unmount();
@@ -300,5 +344,123 @@ describe("useChatSnippetsCache", () => {
     expect(apiMocks.fetchGlobalSettings).toHaveBeenCalledTimes(callsBeforeUnmount);
     addListener.mockRestore();
     removeListener.mockRestore();
+  });
+
+  it("ouvre une seule souscription partagée et la libère au dernier démontage", async () => {
+    const first = renderHook(() => useChatSnippetsCache());
+    const second = renderHook(() => useChatSnippetsCache());
+    await waitFor(() => expect(second.result.current.hasLoaded).toBe(true));
+
+    expect(liveSubscriptions()).toHaveLength(1);
+    expect(liveSubscriptions()[0]!.url).toBe("/api/events");
+
+    first.unmount();
+    expect(liveSubscriptions()).toHaveLength(1);
+    second.unmount();
+    expect(liveSubscriptions()).toHaveLength(0);
+  });
+
+  it("relit une seule fois après une rafale d'événements et publie le dernier état autoritaire", async () => {
+    serverSnippets = [{ name: "base", prompt: "base" }];
+    const view = renderHook(() => useChatSnippetsCache());
+    await waitFor(() => expect(view.result.current.hasLoaded).toBe(true));
+    const before = apiMocks.fetchGlobalSettings.mock.calls.length;
+
+    serverSnippets = [{ name: "base", prompt: "base" }, { name: "remote", prompt: "remote" }];
+    await act(async () => {
+      emitSnippetsUpdated();
+      emitSnippetsUpdated();
+      emitSnippetsUpdated();
+    });
+
+    await waitFor(() => expect(view.result.current.snippets).toEqual(serverSnippets));
+    const reads = apiMocks.fetchGlobalSettings.mock.calls.slice(before);
+    expect(reads.length).toBeLessThanOrEqual(2);
+    expect(reads.every((call) => call[0]?.forceFresh === true)).toBe(true);
+    view.unmount();
+  });
+
+  it("relit après une reconnexion ayant pu manquer un événement", async () => {
+    serverSnippets = [{ name: "base", prompt: "base" }];
+    const view = renderHook(() => useChatSnippetsCache());
+    await waitFor(() => expect(view.result.current.hasLoaded).toBe(true));
+
+    serverSnippets = [{ name: "pendant-coupure", prompt: "invisible" }];
+    await act(async () => { liveSubscriptions()[0]!.onReconnect?.(); });
+
+    await waitFor(() => expect(view.result.current.snippets).toEqual(serverSnippets));
+    view.unmount();
+  });
+
+  it("ne laisse pas une notification reçue pendant une mutation écraser le résultat du PUT", async () => {
+    serverSnippets = [{ name: "base", prompt: "base" }];
+    const view = renderHook(() => useChatSnippetsCache());
+    await waitFor(() => expect(view.result.current.hasLoaded).toBe(true));
+
+    const write = deferred<Settings>();
+    apiMocks.updateGlobalSettings.mockReturnValueOnce(write.promise);
+    let mutation!: Promise<void>;
+    act(() => { mutation = view.result.current.createSnippet({ name: "mien", prompt: "le mien" }); });
+
+    // Un autre client publie pendant la transaction : la lecture passive doit être différée, pas concurrente.
+    const readsBefore = apiMocks.fetchGlobalSettings.mock.calls.length;
+    emitSnippetsUpdated();
+    expect(apiMocks.fetchGlobalSettings).toHaveBeenCalledTimes(readsBefore);
+
+    serverSnippets = [{ name: "base", prompt: "base" }, { name: "mien", prompt: "le mien" }];
+    await act(async () => {
+      write.resolve({ chatSnippets: serverSnippets.map((snippet) => ({ ...snippet })) } as Settings);
+      await mutation;
+    });
+
+    await waitFor(() => expect(view.result.current.snippets).toEqual(serverSnippets));
+    expect(apiMocks.updateGlobalSettings).toHaveBeenCalledTimes(1);
+    view.unmount();
+  });
+
+  it("marque le cache périmé quand la notification arrive sans abonné et relit à la remontée", async () => {
+    serverSnippets = [{ name: "base", prompt: "base" }];
+    const view = renderHook(() => useChatSnippetsCache());
+    await waitFor(() => expect(view.result.current.hasLoaded).toBe(true));
+    view.unmount();
+
+    serverSnippets = [{ name: "apres", prompt: "apres" }];
+    emitSnippetsUpdated();
+
+    const remounted = renderHook(() => useChatSnippetsCache());
+    await waitFor(() => expect(remounted.result.current.snippets).toEqual(serverSnippets));
+    remounted.unmount();
+  });
+
+  it("préserve la normalisation quand la réponse n'a pas, ou duplique, des snippets", async () => {
+    apiMocks.fetchGlobalSettings.mockResolvedValueOnce({} as GlobalSettings);
+    const view = renderHook(() => useChatSnippetsCache());
+    await waitFor(() => expect(view.result.current.hasLoaded).toBe(true));
+    expect(view.result.current.snippets).toEqual([]);
+
+    apiMocks.fetchGlobalSettings.mockResolvedValueOnce({
+      chatSnippets: [{ name: "Dup", prompt: "un" }, { name: "dup", prompt: "deux" }],
+    } as GlobalSettings);
+    await act(async () => { emitSnippetsUpdated(); });
+
+    await waitFor(() => expect(view.result.current.snippets.length).toBeLessThanOrEqual(1));
+    view.unmount();
+  });
+
+  it("récupère après une relecture en échec déclenchée par une notification", async () => {
+    serverSnippets = [{ name: "base", prompt: "base" }];
+    const view = renderHook(() => useChatSnippetsCache());
+    await waitFor(() => expect(view.result.current.hasLoaded).toBe(true));
+
+    apiMocks.fetchGlobalSettings.mockRejectedValueOnce(new Error("lecture impossible"));
+    await act(async () => { emitSnippetsUpdated(); });
+    await waitFor(() => expect(view.result.current.error?.message).toBe("lecture impossible"));
+    // La dernière liste connue reste affichée plutôt que d'être vidée.
+    expect(view.result.current.snippets).toEqual([{ name: "base", prompt: "base" }]);
+
+    serverSnippets = [{ name: "rétabli", prompt: "ok" }];
+    await act(async () => { emitSnippetsUpdated(); });
+    await waitFor(() => expect(view.result.current.snippets).toEqual(serverSnippets));
+    view.unmount();
   });
 });

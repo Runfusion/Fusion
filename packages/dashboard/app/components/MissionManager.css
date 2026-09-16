@@ -55,11 +55,13 @@
 
 /* ── Header ── */
 /*
-FNXC:MissionManager 2026-06-23-03:00:
-Missions previously relied on the header's own border-bottom as the only divider. FNXC:MissionManager 2026-06-22-18:12 updates the main-content embedded view to remove the extra line below the header entirely; internal sidebar/detail pane borders remain, but the area directly under the top header is seamless.
-
 FNXC:MissionManager 2026-06-22-18:00:
-Mission headers define the shared header color: var(--surface), with no bottom divider. Other headers should match this background instead of drawing a separate line after the title row.
+Mission headers define the shared header color: var(--surface). Other headers match this background.
+
+FNXC:UniversalViewChrome 2026-09-16-21:44:
+FN-476 retires the "seamless area directly under the top header" requirement recorded here: Missions renders the shared
+`ViewHeader`, which now owns one universal separation for every destination. These `.mission-manager__header*` rules are
+no longer applied by `MissionManager.tsx` (it composes ViewLayout/ViewHeader) and are kept only as legacy styling.
 */
 /*
 FNXC:ViewHeader 2026-06-23-04:15:

@@ -14,6 +14,30 @@ const mockFetchGlobalSettings = vi.mocked(apiModule.fetchGlobalSettings);
 const mockUpdateGlobalSettings = vi.mocked(apiModule.updateGlobalSettings);
 
 /*
+FNXC:SnippetsDestination 2026-09-16-21:44:
+FN-476: the view has no refresh control, so a remote change is delivered by the shared SSE bus. The bus is replaced by
+this capture so the suite can drive the real subscription the cache opens — one handler for the snippets event and one
+reconnect path — without opening a network connection.
+*/
+const sseHandlers: { events: Record<string, (event: MessageEvent) => void>; onReconnect?: () => void }[] = [];
+vi.mock("../../sse-bus", () => ({
+  subscribeSse: (_url: string, sub: { events?: Record<string, (event: MessageEvent) => void>; onReconnect?: () => void }) => {
+    const entry = { events: sub.events ?? {}, onReconnect: sub.onReconnect };
+    sseHandlers.push(entry);
+    return () => {
+      const index = sseHandlers.indexOf(entry);
+      if (index >= 0) sseHandlers.splice(index, 1);
+    };
+  },
+}));
+
+function emitSnippetsUpdated(): void {
+  for (const entry of [...sseHandlers]) {
+    entry.events["settings:chat-snippets-updated"]?.(new MessageEvent("message", { data: "{}" }));
+  }
+}
+
+/*
 Snippets left SkillsView for its own destination. Every behaviour below used to run inside the Skills tab bar and is
 asserted here against the standalone view: same cache, same validation, same mutation contracts, no tab to activate.
 */
@@ -23,6 +47,7 @@ describe("SnippetsView", () => {
   beforeEach(() => {
     __test_resetChatSnippetsCache();
     vi.clearAllMocks();
+    sseHandlers.length = 0;
     chatSnippets = [];
     mockFetchGlobalSettings.mockImplementation(async () => ({ chatSnippets: chatSnippets.map((snippet) => ({ ...snippet })) }));
     mockUpdateGlobalSettings.mockImplementation(async (patch: Partial<GlobalSettings>) => {
@@ -111,7 +136,7 @@ describe("SnippetsView", () => {
     fireEvent.change(screen.getByLabelText("Prompt"), { target: { value: "keep editable" } });
     fireEvent.click(screen.getByRole("button", { name: "Add snippet" }));
 
-    expect(await screen.findByText("The snippet could not be saved. Refresh and try again.")).toBeTruthy();
+    expect(await screen.findByText("The snippet could not be saved. Try again.")).toBeTruthy();
     expect(screen.getByText("/existing")).toBeTruthy();
     expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("test");
     expect((screen.getByLabelText("Prompt") as HTMLTextAreaElement).value).toBe("keep editable");
@@ -149,12 +174,71 @@ describe("SnippetsView", () => {
     }
   });
 
-  it("closes through its owner when a close affordance is supplied", async () => {
-    const onClose = vi.fn();
-    render(<SnippetsView onClose={onClose} />);
-    await screen.findByTestId("snippets-empty");
+  /*
+  FNXC:SnippetsDestination 2026-09-16-21:44:
+  FN-476 REPLACES the previous "closes through its owner" case. Snippets is a destination reached by navigation, so a
+  close cross and a manual refresh are window chrome it must not carry; leaving that test in place would have required
+  re-adding the removed affordance to satisfy it. The view keeps its title, its count, its New action, and the Retry
+  that belongs to the error state.
+  */
+  it("ne porte ni Fermer ni Actualiser dans son en-tête, en bureau comme en téléphone", async () => {
+    chatSnippets = [{ name: "existing", prompt: "existing prompt" }];
+    const { container } = render(<SnippetsView />);
+    await screen.findByText("/existing");
 
-    fireEvent.click(screen.getByRole("button", { name: "Close" }));
-    expect(onClose).toHaveBeenCalledTimes(1);
+    const header = container.querySelector(".view-header") as HTMLElement;
+    expect(screen.queryByTestId("snippets-refresh")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Refresh snippets" })).toBeNull();
+    // Aucun shell vide ni label orphelin ne subsiste après le retrait des deux commandes.
+    for (const control of Array.from(header.querySelectorAll("button"))) {
+      const name = control.getAttribute("aria-label") ?? control.textContent?.trim() ?? "";
+      expect(name.length).toBeGreaterThan(0);
+      expect(name).not.toBe("×");
+    }
+    expect(header.querySelectorAll("button")).toHaveLength(1);
+    expect(screen.getByTestId("snippets-new")).toBeTruthy();
+    expect(screen.getByTestId("snippets-count")).toBeTruthy();
+  });
+
+  it("reflète une création, une modification et une suppression distantes sans aucun clic", async () => {
+    chatSnippets = [{ name: "existing", prompt: "existing prompt" }];
+    render(<SnippetsView />);
+    await screen.findByText("/existing");
+
+    chatSnippets = [{ name: "existing", prompt: "existing prompt" }, { name: "remote", prompt: "remote prompt" }];
+    await act(async () => { emitSnippetsUpdated(); });
+    expect(await screen.findByText("/remote")).toBeTruthy();
+
+    chatSnippets = [{ name: "existing", prompt: "existing prompt" }, { name: "renamed", prompt: "remote prompt" }];
+    await act(async () => { emitSnippetsUpdated(); });
+    expect(await screen.findByText("/renamed")).toBeTruthy();
+    expect(screen.queryByText("/remote")).toBeNull();
+
+    chatSnippets = [];
+    await act(async () => { emitSnippetsUpdated(); });
+    expect(await screen.findByTestId("snippets-empty")).toBeTruthy();
+  });
+
+  it("n'écrase pas un brouillon saisi caractère par caractère lors d'une actualisation distante", async () => {
+    chatSnippets = [{ name: "existing", prompt: "existing prompt" }];
+    render(<SnippetsView />);
+    await screen.findByText("/existing");
+
+    const name = screen.getByLabelText("Name") as HTMLInputElement;
+    const prompt = screen.getByLabelText("Prompt") as HTMLTextAreaElement;
+    for (const char of "draft") {
+      fireEvent.change(name, { target: { value: name.value + char } });
+    }
+    fireEvent.change(prompt, { target: { value: "texte en cours" } });
+    name.focus();
+
+    chatSnippets = [{ name: "existing", prompt: "existing prompt" }, { name: "remote", prompt: "remote prompt" }];
+    await act(async () => { emitSnippetsUpdated(); });
+    expect(await screen.findByText("/remote")).toBeTruthy();
+
+    expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("draft");
+    expect((screen.getByLabelText("Prompt") as HTMLTextAreaElement).value).toBe("texte en cours");
+    expect(document.activeElement).toBe(screen.getByLabelText("Name"));
   });
 });

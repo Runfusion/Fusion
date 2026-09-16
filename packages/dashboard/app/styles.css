@@ -249,7 +249,11 @@ html {
   FNXC:ViewHeader 2026-06-23-04:15:
   Canonical main-content view-header height. Headers with btn-sm action buttons render taller (~61px border-box) than title-only headers (~54px), so every canonical header (ViewHeader, Missions, embedded Planning, Goals, Automations, Import Tasks) pins this min-height to stay pixel-identical regardless of whether actions are present.
   FNXC:ViewHeader 2026-06-22-18:00:
-  The 1px reserve remains after removing header dividers so existing header height stays stable while the visible line disappears.
+  The 1px reserve was kept when header dividers were removed so header height stayed stable.
+
+  FNXC:UniversalViewChrome 2026-09-16-21:44:
+  FN-476 puts a visible separation back on every `.view-header`, and that reserved 1px is exactly its border box. The
+  token is therefore unchanged: the canonical ~61px header height holds whether or not a host also draws the line.
   */
   --view-header-min-height: calc(var(--space-lg) * 2 + 28px + 1px);
   /*

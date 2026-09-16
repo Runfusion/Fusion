@@ -29,6 +29,8 @@ const executablePath = [process.env.FUSION_BROWSER_SMOKE_BROWSER, process.env.CH
   .find((candidate): candidate is string => Boolean(candidate) && existsSync(candidate));
 
 const artifacts = path.resolve(process.cwd(), "../../artifacts/FN-379");
+/* FNXC:UniversalViewChrome 2026-09-16-21:44: FN-476 keeps its own capture directory so the FN-379 geometry proof stays readable. */
+const chromeArtifacts = path.resolve(process.cwd(), "../../artifacts/FN-476");
 
 type SurfaceGeometry = {
   headers: number;
@@ -37,6 +39,13 @@ type SurfaceGeometry = {
   createInsideHeader: boolean;
   createCount: number;
   documentPan: boolean;
+  /* FNXC:UniversalViewChrome 2026-09-16-21:44: rendered separation + action geometry, which only a real engine can resolve. */
+  headerBorderBottomWidth: number;
+  headerBorderBottomColor: string;
+  headerHeight: number;
+  headerActionHeights: number[];
+  doubleDivider: boolean;
+  viewportMode: string | null;
 };
 
 /** Measures the rendered chrome contract of whichever destination the fixture mounted. */
@@ -51,6 +60,23 @@ function measureSurface(): SurfaceGeometry {
     createInsideHeader: creates.every((create) => Boolean(header?.contains(create))),
     createCount: creates.length,
     documentPan: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
+    headerBorderBottomWidth: header ? Math.round(parseFloat(getComputedStyle(header).borderBottomWidth) || 0) : 0,
+    headerBorderBottomColor: header ? getComputedStyle(header).borderBottomColor : "",
+    headerHeight: header ? Math.round(header.getBoundingClientRect().height) : 0,
+    headerActionHeights: [...(header?.querySelectorAll(".view-header__actions > *") ?? [])]
+      .map((action) => Math.round(action.getBoundingClientRect().height)),
+    /*
+    A second bordered element pinned immediately under the header would read as a doubled bar. Look for any following
+    sibling that also paints a top/bottom rule at the exact boundary the header already draws.
+    */
+    doubleDivider: (() => {
+      const next = header?.nextElementSibling as HTMLElement | null;
+      if (!header || !next) return false;
+      const style = getComputedStyle(next);
+      return (parseFloat(style.borderTopWidth) || 0) > 0
+        && Math.abs(next.getBoundingClientRect().top - header.getBoundingClientRect().bottom) < 1;
+    })(),
+    viewportMode: document.documentElement.dataset.viewportMode ?? null,
   };
 }
 
@@ -75,6 +101,7 @@ describe.runIf(executablePath)("FN-379 standardized layout geometry in a real br
       ...(process.env.CI ? { args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"] } : {}),
     });
     await mkdir(artifacts, { recursive: true });
+    await mkdir(chromeArtifacts, { recursive: true });
   }, 60_000);
 
   afterAll(async () => {
@@ -117,6 +144,71 @@ describe.runIf(executablePath)("FN-379 standardized layout geometry in a real br
     expect(notesGeometry.railWidth).toBe(goalsGeometry.railWidth);
     expect(notesGeometry.railFontSize).toBe(goalsGeometry.railFontSize);
   }, 60_000);
+
+  /*
+  FNXC:UniversalViewChrome 2026-09-16-21:44:
+  FN-476: the operator's report was visual — Planning showed a bar under its header and the other destinations did not.
+  A rendered engine is the only place that can prove the separation actually paints, that it paints ONCE, and that the
+  canonical header height and action row did not move when it was added.
+  */
+  it("peint la même séparation visible et la même géométrie d'actions sur chaque destination", async () => {
+    const measured: Record<string, SurfaceGeometry> = {};
+    for (const [surface, viewport] of [
+      ["goals", { width: 1280, height: 900 }],
+      ["notes", { width: 1280, height: 900 }],
+      ["snippets", { width: 1280, height: 900 }],
+      ["goals", { width: 1280, height: 450 }],
+      ["goals", { width: 390, height: 844 }],
+      ["snippets", { width: 390, height: 844 }],
+    ] as const) {
+      const page = await openSurface(surface, viewport);
+      const geometry = await page.evaluate(measureSurface);
+      measured[`${surface}-${viewport.width}x${viewport.height}`] = geometry;
+      await page.screenshot({ path: path.join(chromeArtifacts, `view-chrome-${surface}-${viewport.width}x${viewport.height}.png`) });
+      await page.close();
+    }
+
+    for (const [key, geometry] of Object.entries(measured)) {
+      expect(geometry.headers, key).toBe(1);
+      expect(geometry.headerBorderBottomWidth, key).toBeGreaterThanOrEqual(1);
+      expect(geometry.headerBorderBottomColor, key).not.toBe("rgba(0, 0, 0, 0)");
+      expect(geometry.doubleDivider, key).toBe(false);
+      expect(geometry.documentPan, key).toBe(false);
+      for (const height of geometry.headerActionHeights) {
+        expect(height, key).toBeGreaterThan(0);
+      }
+    }
+
+    const goalsDesktop = measured["goals-1280x900"]!;
+    const notesDesktop = measured["notes-1280x900"]!;
+    const snippetsDesktop = measured["snippets-1280x900"]!;
+    expect(goalsDesktop.viewportMode).not.toBe("mobile");
+    /*
+    FNXC:UniversalViewChrome 2026-09-16-21:44:
+    Snippets is the destination the operator named for its window chrome, so its rendered header must match the others
+    exactly and expose neither a close nor a refresh control.
+    */
+    expect(snippetsDesktop.headerHeight).toBe(goalsDesktop.headerHeight);
+    expect(snippetsDesktop.railWidth).toBe(goalsDesktop.railWidth);
+    expect(snippetsDesktop.headerBorderBottomWidth).toBe(goalsDesktop.headerBorderBottomWidth);
+    expect(notesDesktop.headerHeight).toBe(goalsDesktop.headerHeight);
+    expect(notesDesktop.headerBorderBottomWidth).toBe(goalsDesktop.headerBorderBottomWidth);
+    for (const height of goalsDesktop.headerActionHeights) {
+      expect(height).toBeLessThanOrEqual(goalsDesktop.headerHeight);
+    }
+    /*
+    FNXC:UniversalViewChrome 2026-09-16-21:44:
+    Headless Chrome reports `window.screen` equal to the emulated viewport, so a 1280x450 page is classified
+    phone-class by the shared runtime classifier and legitimately takes the tactile tier. Compare heights only within
+    the SAME published mode; the short-desktop clamp itself is asserted as an applicable CSS rule in
+    `universal-view-chrome.test.tsx`, where the classifier can be controlled.
+    */
+    for (const [key, geometry] of Object.entries(measured)) {
+      if (geometry.viewportMode === goalsDesktop.viewportMode && key.endsWith("1280x900")) {
+        expect(geometry.headerHeight, key).toBe(goalsDesktop.headerHeight);
+      }
+    }
+  }, 120_000);
 
   it("shows only the collection pane on a phone and gives the detail return a real touch target", async () => {
     const page = await openSurface("goals", { width: 390, height: 844 });
@@ -166,6 +258,12 @@ describe.runIf(executablePath)("FN-379 standardized layout geometry in a real br
     predates FN-471 (last touched by FN-379) and still asserted the removed 44px box, so it failed the
     real Chromium render of the new geometry. Assert the canonical mobile icon size instead of the
     deleted floor — restoring 44px in product CSS would re-add behavior FN-471 deliberately removed.
+
+    FNXC:UniversalViewChrome 2026-09-17-04:07:
+    FN-476 (universal view chrome) reached the same conclusion independently and relaxed this to a >=36px
+    floor; the sync keeps the EXACT `toBe(36)` form because the shared icon-button square is a fixed
+    geometry, not a minimum — a drift upward (a re-added 44px box) is exactly the regression FN-471
+    removed, and a `toBeGreaterThanOrEqual` assertion would let it back in silently.
     */
     expect(detail.backWidth).toBe(36);
     expect(detail.backHeight).toBe(36);

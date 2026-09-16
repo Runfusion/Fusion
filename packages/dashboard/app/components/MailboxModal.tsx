@@ -1,6 +1,7 @@
 import { ModalCloseButton } from "./ModalCloseButton";
 import { HideInDrawer } from "./ViewDrawer";
 import { ViewHeader } from "./ViewHeader";
+import { MailboxCollectionTabs } from "./MailboxCollectionTabs";
 import { ViewActionButton } from "./ViewActionButton";
 import { ViewLayout } from "./ViewLayout";
 import "./MailboxModal.css";
@@ -1130,31 +1131,6 @@ export function MailboxModal({
       </>}
       >
 
-        {/*
-        FNXC:MailboxTwoTabs 2026-09-16-16:53:
-        Exactly two tabs: Inbox and Outbox. Completions, Archived and Agents became inbox SCOPES chosen
-        from the header filter button, so the retired tabs lose no capability.
-        */}
-        <div className="mailbox-tabs" data-testid="mailbox-tabs">
-          <button
-            className={`btn btn-sm btn-secondary mailbox-tab ${activeTab === "inbox" ? "active" : ""}`}
-            onClick={() => handleSelectTab("inbox")}
-            data-testid="mailbox-tab-inbox"
-          >
-            <InboxIcon size={14} />
-            <span>{t("mailbox.inboxTab", "Inbox")}</span>
-            {unreadCount > 0 && <span className="mailbox-tab-badge">{unreadCount}</span>}
-          </button>
-          <button
-            className={`btn btn-sm btn-secondary mailbox-tab ${activeTab === "outbox" ? "active" : ""}`}
-            onClick={() => handleSelectTab("outbox")}
-            data-testid="mailbox-tab-outbox"
-          >
-            <Send size={14} />
-            <span>{t("mailbox.outboxTab", "Outbox")}</span>
-          </button>
-        </div>
-
         {/* Content */}
         <div className="mailbox-content" data-testid="mailbox-content">
           {/* Message Detail View */}
@@ -1337,6 +1313,22 @@ export function MailboxModal({
           {/* Tab Content — message lists */}
           {!selectedMessage && !showComposer && (
             <>
+              {/*
+              FNXC:MailboxCollectionNavigation 2026-09-16-21:44:
+              FN-476: this window is single-pane, so its collection area IS the message list. The Inbox/Outbox pair
+              therefore sits at the top of THIS block rather than as a full-width row under the window title — the same
+              rule the full destination follows with its rail header, without inventing a second two-pane layout here.
+              While a message or the composer occupies the pane the block is not rendered, so Back returns to the list
+              together with its navigation. The window keeps its own close control.
+              */}
+              <MailboxCollectionTabs
+                activeTab={activeTab === "outbox" ? "outbox" : "inbox"}
+                unreadCount={unreadCount}
+                onSelectTab={handleSelectTab}
+                inboxLabel={t("mailbox.inboxTab", "Inbox")}
+                outboxLabel={t("mailbox.outboxTab", "Outbox")}
+                className="mailbox-tabs--collection"
+              />
               {/* Inbox Tab */}
               {activeCollection === "archived" && (
                 <div className="mailbox-list" data-testid="mailbox-archived-list">

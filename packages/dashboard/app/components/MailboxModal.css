@@ -134,6 +134,27 @@ placement and surface tokens live here — no forked button or popover variant.
   border-bottom: var(--btn-border-width) solid var(--border);
 }
 
+/*
+FNXC:MailboxCollectionNavigation 2026-09-16-21:44:
+FN-476: inside the shared rail header the band already supplies the inset AND the rule that separates it from the list,
+so the tab row must not paint a second one — two stacked hairlines is exactly the doubled chrome this task removes.
+Only the paint is reset; wrapping, scrolling, and tab metrics are untouched.
+*/
+.view-sidebar__header > .mailbox-tabs {
+  flex: 1 1 auto;
+  padding: 0;
+  border-bottom: none;
+}
+
+/*
+FNXC:MailboxCollectionNavigation 2026-09-16-21:44:
+The single-pane floating host renders the same pair at the top of its message list instead of a full-width row under
+the window title, so it keeps its separating rule and only loses the top inset the old row inherited.
+*/
+.mailbox-tabs--collection {
+  padding-top: 0;
+}
+
 .mailbox-tab {
   justify-content: center;
   min-height: 2rem;

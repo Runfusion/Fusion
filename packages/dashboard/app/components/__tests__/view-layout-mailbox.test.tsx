@@ -209,6 +209,75 @@ describe("FN-379 standardized Mailbox layout", () => {
     expect(await screen.findAllByTestId("mailbox-header-compose")).toHaveLength(1);
   });
 
+  /*
+  FNXC:MailboxCollectionNavigation 2026-09-16-21:44:
+  FN-476: Inbox/Outbox select which collection the LIST shows, so they must live in the list rail's own header — not in
+  the view header that spans both panes, and not as a full-width row above the whole content. These cases pin the
+  physical placement, the single pair, and that switching collections preserves the results and counts.
+  */
+  it("place l'unique paire d'onglets dans la zone de liste, jamais dans l'en-tête de vue", async () => {
+    renderMailbox();
+    await waitFor(() => expect(apiModule.fetchInbox).toHaveBeenCalled());
+
+    const tabs = screen.getByTestId("mailbox-tabs");
+    expect(screen.getAllByTestId("mailbox-tabs")).toHaveLength(1);
+    expect(within(screen.getByRole("banner")).queryByTestId("mailbox-tabs")).toBeNull();
+
+    const rail = screen.getByTestId("mailbox-split-list-pane");
+    expect(rail.contains(tabs)).toBe(true);
+    expect(tabs.closest("[data-testid='view-sidebar-header']")).not.toBeNull();
+    // Les onglets précèdent la liste qu'ils pilotent.
+    const list = within(rail).getByTestId("mailbox-inbox-list");
+    expect(tabs.compareDocumentPosition(list)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    // Le titre et les actions générales restent dans leur propriétaire.
+    expect(within(screen.getByRole("banner")).getByTestId("mailbox-inbox-filter")).toBeTruthy();
+  });
+
+  it("conserve résultats, portées et compteurs en passant Outbox puis Inbox", async () => {
+    renderMailbox();
+    await waitFor(() => expect(apiModule.fetchInbox).toHaveBeenCalled());
+    expect(await screen.findByText(/First message body/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("mailbox-tab-outbox"));
+    await waitFor(() => expect(screen.getByTestId("mailbox-outbox-list")).toBeInTheDocument());
+    expect(screen.getAllByTestId("mailbox-tabs")).toHaveLength(1);
+
+    fireEvent.click(screen.getByTestId("mailbox-tab-inbox"));
+    await waitFor(() => expect(screen.getByText(/First message body/)).toBeInTheDocument());
+    expect(screen.getAllByTestId("mailbox-tabs")).toHaveLength(1);
+    expect(within(screen.getByRole("banner")).queryByTestId("mailbox-tabs")).toBeNull();
+  });
+
+  it("sur téléphone, la navigation appartient à la liste et revient avec elle", async () => {
+    mockUseViewportMode.mockReturnValue("mobile");
+    renderMailbox();
+    await waitFor(() => expect(apiModule.fetchInbox).toHaveBeenCalled());
+
+    expect(screen.getAllByTestId("mailbox-tabs")).toHaveLength(1);
+    expect(within(screen.getByRole("banner")).queryByTestId("mailbox-tabs")).toBeNull();
+
+    fireEvent.click(await screen.findByTestId("mailbox-item-msg-1"));
+    await waitFor(() => expect(screen.getByTestId("mailbox-message-detail")).toBeInTheDocument());
+    // Le détail occupe le panneau unique : aucune barre d'onglets orpheline ne reste affichée.
+    expect(screen.queryByTestId("mailbox-tabs")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("mailbox-back-to-list"));
+    await waitFor(() => expect(screen.getByTestId("mailbox-tabs")).toBeInTheDocument());
+    expect(screen.getAllByTestId("mailbox-tabs")).toHaveLength(1);
+  });
+
+  it("expose les onglets au clavier et conserve le focus après le changement", async () => {
+    renderMailbox();
+    await waitFor(() => expect(apiModule.fetchInbox).toHaveBeenCalled());
+
+    const outbox = screen.getByTestId("mailbox-tab-outbox");
+    outbox.focus();
+    expect(document.activeElement).toBe(outbox);
+    fireEvent.click(outbox);
+    await waitFor(() => expect(screen.getByTestId("mailbox-outbox-list")).toBeInTheDocument());
+    expect(document.activeElement).toBe(screen.getByTestId("mailbox-tab-outbox"));
+  });
+
   it("never lets a slower project-A inbox response replace the project-B list", async () => {
     let resolveA!: (value: unknown) => void;
     vi.mocked(apiModule.fetchInbox).mockImplementationOnce(() => new Promise((resolve) => { resolveA = resolve; }) as never);

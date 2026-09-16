@@ -8,6 +8,7 @@ import {
   type GlobalSettings,
 } from "@fusion/core";
 import { fetchGlobalSettings, updateGlobalSettings } from "../api";
+import { subscribeSse } from "../sse-bus";
 
 export interface UseChatSnippetsCacheResult {
   snippets: ChatSnippet[];
@@ -52,8 +53,21 @@ let passiveRequest: Promise<void> | null = null;
 let needsRefresh = true;
 let processingQueue = false;
 let visibilityListening = false;
+/*
+FNXC:SnippetsDestination 2026-09-16-21:44:
+FN-476: Snippets is a destination with no manual refresh, so the cache learns about another client's write from one
+shared `/api/events` subscription opened by the FIRST consumer and closed by the LAST — never one connection per
+composer. `snippetsUnsubscribe` is that single handle. `deferredInvalidation` holds a notification that arrived while an
+explicit mutation was in flight: re-reading mid-FIFO could let a passive response overwrite an accepted PUT, so the
+re-read is deferred until the queue drains. Repeated events coalesce into one authoritative read.
+*/
+let snippetsUnsubscribe: (() => void) | null = null;
+let deferredInvalidation = false;
+let pendingRemoteRead = false;
 const listeners = new Set<() => void>();
 const intentQueue: PendingIntent[] = [];
+
+const SNIPPETS_UPDATED_SSE_EVENT = "settings:chat-snippets-updated";
 
 function cloneSnippets(snippets: readonly ChatSnippet[]): ChatSnippet[] {
   return snippets.map(({ name, prompt }) => ({ name, prompt }));
@@ -231,6 +245,8 @@ async function processIntentQueue(): Promise<void> {
     }
   } finally {
     processingQueue = false;
+    // A notification that landed mid-transaction becomes one authoritative re-read now that the queue is idle.
+    flushDeferredInvalidation();
   }
 }
 
@@ -248,12 +264,76 @@ function handleVisibilityChange(): void {
   void fetchPassive(true);
 }
 
+/**
+ * FNXC:SnippetsDestination 2026-09-16-21:44:
+ * Invalidates the shared snapshot after a remote write. The epoch bump fences any passive read already in flight so a
+ * response captured before the change cannot publish over the fresh one. While the mutation FIFO is busy the
+ * invalidation is only remembered: the queue's own forced authoritative read already ends on server truth, and reading
+ * underneath it is exactly how a stale response overwrites an accepted mutation.
+ */
+function invalidateFromRemoteChange(): void {
+  if (listeners.size === 0) {
+    needsRefresh = true;
+    return;
+  }
+  if (processingQueue || intentQueue.length > 0) {
+    deferredInvalidation = true;
+    return;
+  }
+  /*
+  Coalescing: a burst of notifications (a peer saving several snippets, or a reconnect landing on top of an event) must
+  not become a burst of GETs. While a read is already in flight the extra events collapse into ONE follow-up read,
+  which is still required because the in-flight response was captured before the latest change.
+  */
+  if (passiveRequest) {
+    pendingRemoteRead = true;
+    return;
+  }
+  startRemoteRead();
+}
+
+function startRemoteRead(): void {
+  deferredInvalidation = false;
+  epoch += 1;
+  passiveRequest = null;
+  void fetchPassive(true).finally(() => {
+    if (!pendingRemoteRead) return;
+    pendingRemoteRead = false;
+    if (listeners.size === 0) {
+      needsRefresh = true;
+      return;
+    }
+    startRemoteRead();
+  });
+}
+
+function flushDeferredInvalidation(): void {
+  if (!deferredInvalidation) return;
+  if (listeners.size === 0) {
+    deferredInvalidation = false;
+    needsRefresh = true;
+    return;
+  }
+  startRemoteRead();
+}
+
 function subscribe(listener: () => void): () => void {
   listeners.add(listener);
   if (listeners.size === 1) {
     if (!visibilityListening) {
       document.addEventListener("visibilitychange", handleVisibilityChange);
       visibilityListening = true;
+    }
+    if (!snippetsUnsubscribe) {
+      /*
+      Snippets are global, so the stream is the unscoped `/api/events` channel already multiplexed by the shared bus.
+      `onReconnect` re-reads because an event emitted while the socket was down (or while the tab was suspended) is
+      simply gone — the bus has no replay for it.
+      */
+      snippetsUnsubscribe = subscribeSse("/api/events", {
+        events: { [SNIPPETS_UPDATED_SSE_EVENT]: () => invalidateFromRemoteChange() },
+        onReconnect: () => invalidateFromRemoteChange(),
+      });
     }
     if (needsRefresh || !snapshot.hasLoaded) {
       void fetchPassive();
@@ -267,6 +347,12 @@ function subscribe(listener: () => void): () => void {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       visibilityListening = false;
     }
+    if (snippetsUnsubscribe) {
+      snippetsUnsubscribe();
+      snippetsUnsubscribe = null;
+    }
+    deferredInvalidation = false;
+    pendingRemoteRead = false;
     epoch += 1;
     passiveRequest = null;
     needsRefresh = true;
@@ -317,6 +403,10 @@ export function __test_resetChatSnippetsCache(): void {
   if (visibilityListening) {
     document.removeEventListener("visibilitychange", handleVisibilityChange);
   }
+  snippetsUnsubscribe?.();
+  snippetsUnsubscribe = null;
+  deferredInvalidation = false;
+  pendingRemoteRead = false;
   for (const pending of intentQueue.splice(0)) {
     pending.reject(new Error("Chat snippets cache reset"));
   }

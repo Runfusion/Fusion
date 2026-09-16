@@ -5,6 +5,7 @@ import { createFusionAuthStorage } from "@fusion/engine";
 import { basename } from "node:path";
 import { ApiError, badRequest, notFound } from "../api-error.js";
 import { invalidateAllGlobalSettingsCaches } from "../project-store-resolver.js";
+import { emitChatSnippetsUpdatedSseEvent } from "../sse.js";
 import {
   classifySyncStatusDenialReason,
   fetchFromRemoteNode,
@@ -375,6 +376,15 @@ export const registerSettingsSyncRoutes: ApiRouteRegistrar = (ctx) => {
       if (result.success && remoteSettings.global && typeof remoteSettings.global === "object") {
         await store.updateGlobalSettings(remoteSettings.global, resolveRequestActor(req));
         invalidateAllGlobalSettingsCaches();
+        /*
+        FNXC:SnippetsDestination 2026-09-16-21:44:
+        FN-476: a pulled sync is another writer of the global snippet list, so it owes connected clients the same
+        content-free staleness notification the direct write publishes — otherwise a synced rename would sit invisible
+        in a destination that no longer offers a refresh button.
+        */
+        if (Object.hasOwn(remoteSettings.global, "chatSnippets")) {
+          emitChatSnippetsUpdatedSseEvent();
+        }
       }
 
       // Record sync

@@ -284,6 +284,14 @@ describe("MailboxView", () => {
     mockFetchAgents.mockResolvedValue(mockAgents);
     mockSendMessage.mockResolvedValue({ ...mockMessage, id: "msg-sent" });
     mockFetchApprovals.mockResolvedValue({ requests: [], total: 0, pendingCount: 0 });
+    /*
+    FNXC:MailboxCollectionNavigation 2026-09-16-21:44:
+    The archived scope combines inbox, outbox and agent mail in one `Promise.all`, so every case that can reach it
+    needs all three readers to resolve. Without this default the agent reader returned `undefined` and the suite
+    emitted an unhandled rejection while still reporting green — a fixture gap, not a product behaviour.
+    */
+    mockFetchAllAgentMailbox.mockResolvedValue({ messages: [], total: 0 });
+    mockFetchOutbox.mockResolvedValue(makeOutboxResponse([]));
   });
 
   it("renders the mailbox view", async () => {
@@ -1487,7 +1495,17 @@ describe("MailboxView", () => {
       fireEvent.click(screen.getByTestId("mailbox-delete"));
       fireEvent.click(screen.getByTestId("mailbox-delete-confirm"));
     }],
-    ["an agent tab switch", async () => fireEvent.click(screen.getByTestId("mailbox-tab-outbox"))],
+    /*
+    FNXC:MailboxCollectionNavigation 2026-09-16-21:44:
+    FN-476 put Inbox/Outbox above the message list, so on a phone they are not rendered while a message occupies the
+    single pane: the reachable collection switch is Back → Outbox. The deep-link consumption invariant is unchanged and
+    still asserted through that real path; the desktop case, where the tabs stay visible beside an open message, is
+    covered separately below.
+    */
+    ["a collection switch reached from the list", async () => {
+      fireEvent.click(screen.getByTestId("mailbox-back-to-list"));
+      fireEvent.click(await screen.findByTestId("mailbox-tab-outbox"));
+    }],
   ])("consumes the message entry before %s", async (_label, close) => {
     mockUseViewportMode.mockReturnValue("mobile");
     mockFetchInbox.mockResolvedValue(makeInboxResponse([mockMessage], 1));

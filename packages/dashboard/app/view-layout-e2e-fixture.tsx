@@ -6,6 +6,8 @@ import type { Goal } from "@fusion/core";
 import "./styles.css";
 import { GoalsView } from "./components/GoalsView";
 import { NotesView } from "./components/NotesView";
+/* FNXC:UniversalViewChrome 2026-09-16-21:44: FN-476 measures the operator-named Snippets destination in a real engine too. */
+import { SnippetsView } from "./components/SnippetsView";
 import { ViewLayoutProvider } from "./context/ViewLayoutContext";
 import { NavigationHistoryProvider } from "./hooks/useNavigationHistory";
 import { ToastProvider } from "./hooks/useToast";
@@ -45,6 +47,9 @@ window.fetch = async (input: RequestInfo | URL): Promise<Response> => {
   }
   if (url.includes("/notes")) return jsonResponse({ notes });
   if (url.includes("/goals")) return jsonResponse(goals);
+  if (url.includes("/settings/global")) {
+    return jsonResponse({ chatSnippets: [{ name: "revue", prompt: "Relis le diff" }, { name: "tests", prompt: "Lance les tests" }] });
+  }
   if (url.includes("/missions")) return jsonResponse([]);
   return jsonResponse({});
 };
@@ -66,7 +71,9 @@ function Fixture() {
             <ViewLayoutProvider projectId="project-1">
               {surface === "notes"
                 ? <NotesView projectId="project-1" addToast={() => undefined} />
-                : <GoalsView projectId="project-1" initialGoals={goals} />}
+                : surface === "snippets"
+                  ? <SnippetsView />
+                  : <GoalsView projectId="project-1" initialGoals={goals} />}
             </ViewLayoutProvider>
           </NavigationHistoryProvider>
         </ConfirmDialogProvider>

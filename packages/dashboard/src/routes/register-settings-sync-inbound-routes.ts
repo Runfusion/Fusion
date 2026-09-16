@@ -2,6 +2,7 @@ import { isMovedSettingsKey, CONFIG_CHANGED_BY_API_VERIFIED_NODE_KEY } from "@fu
 import { createFusionAuthStorage } from "@fusion/engine";
 import { ApiError, badRequest } from "../api-error.js";
 import { invalidateAllGlobalSettingsCaches } from "../project-store-resolver.js";
+import { emitChatSnippetsUpdatedSseEvent } from "../sse.js";
 import { readStoredAuthProvidersFromDisk, toProviderAuthEntries } from "./register-settings-sync-helpers.js";
 import type { ConfigChangedBy } from "@fusion/core";
 import type { ApiRouteRegistrar } from "./types.js";
@@ -154,6 +155,14 @@ export const registerSettingsSyncInboundRoutes: ApiRouteRegistrar = (ctx) => {
         if (Object.keys(globalPatch).length > 0) {
           await store.updateGlobalSettings(globalPatch, CONFIG_CHANGED_BY_API_VERIFIED_NODE_KEY);
           invalidateAllGlobalSettingsCaches();
+          /*
+          FNXC:SnippetsDestination 2026-09-16-21:44:
+          FN-476: an inbound push is the third writer of the global snippet list and owes clients the same content-free
+          staleness notification, published only after the write and its cache invalidation succeeded.
+          */
+          if (Object.hasOwn(globalPatch, "chatSnippets")) {
+            emitChatSnippetsUpdatedSseEvent();
+          }
         }
       }
 

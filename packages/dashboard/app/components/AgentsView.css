@@ -62,7 +62,11 @@
 
 /*
 FNXC:Agents 2026-06-23-02:00:
-Agents renders the shared ViewHeader (.view-header). Its chrome reads identically to the Missions inline header (.mission-manager__header--inline): same --space-lg/--space-xl padding, surface background, no bottom divider, and a --todo-colored leading icon.
+Agents renders the shared ViewHeader (.view-header). Its chrome reads identically to the Missions inline header (.mission-manager__header--inline): same --space-lg/--space-xl padding, surface background, and a --todo-colored leading icon.
+
+FNXC:UniversalViewChrome 2026-09-16-21:44:
+FN-476: the "no bottom divider" half of the rule above is retired. Every destination header, Agents included, now shows
+one shared separation declared once on `.view-header`; Agents adds no local rule to obtain it.
 
 FNXC:ViewHeader 2026-06-23-03:45:
 The former scoped overrides (.agents-view .view-header padding/border/background and the --todo icon color) are removed: ViewHeader now supplies that canonical chrome by default, so the overrides were redundant. The legacy .agents-view-header/.agents-view-title rules below are retained only because the agents-view-mobile CSS string-match test asserts them; they no longer map to rendered DOM.

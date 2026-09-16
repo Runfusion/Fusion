@@ -6,7 +6,16 @@ FNXC:ViewHeader 2026-06-23-03:45:
 ViewHeader is now THE canonical top header for every left-sidebar/main-content view. Its defaults match the reference already implemented by Missions (.mission-manager__header--inline) and Agents (.agents-view .view-header): container padding var(--space-lg) var(--space-xl), background var(--surface), no bottom divider, flex-shrink:0, and a --todo-colored leading icon at size 20. The title is 1.125rem/600/var(--text) with a var(--space-sm) icon-title gap. The actions cluster is pushed right with margin-left:auto so refresh/new/filter buttons right-align consistently across views; those buttons should use the shared `btn btn-sm` sizing. Per-view headers must adopt ViewHeader with NO divergent overrides so navigating between any two views shows a pixel-consistent header (same height, icon color/size, title metrics, padding, and button sizing). The Agents scoped override (.agents-view .view-header) is now redundant and removed; these defaults supply that chrome directly.
 
 FNXC:ViewHeader 2026-06-22-18:00:
-All view headers use Missions' surface background without a dividing line after the header. Sidebar section headers follow the same no-post-header-line rule so the app chrome feels seamless across themes.
+All view headers use Missions' surface background. (SUPERSEDED for the divider by FNXC:UniversalViewChrome below: the
+seamless "no line after the header" rule is retired; sidebar section headers keep their own seamless rule.)
+
+FNXC:UniversalViewChrome 2026-09-16-21:44:
+FN-476: the visible separation under a destination title is owned HERE and nowhere else. Planning was the only view with
+a bar because `PlanningModeModal.css` drew it locally, so Missions, Agents, Goals, Snippets and every other producer
+read as a title bleeding into its content. Declaring it on `.view-header` gives every host the same line with no per-view
+copy, no second bordered wrapper, and no extra scroller. The `--view-header-min-height` token already reserves the 1px,
+so the canonical header height is unchanged. It is scoped to this element rather than `--chrome-divider-color`, which
+would repaint the right dock and the whole app shell indiscriminately.
 */
 /*
 FNXC:StandardizedViewHeader 2026-09-13-16:12:
@@ -20,6 +29,7 @@ The shared header reserves enough room for a 44px navigation target before its t
   gap: var(--space-sm);
   min-height: var(--view-header-min-height);
   padding: var(--space-lg) var(--space-xl);
+  border-bottom: var(--btn-border-width) solid var(--border);
   background: var(--surface);
 }
 
@@ -79,6 +89,17 @@ DESKTOP-ONLY canonical-height clamp. The mobile breakpoint is `(max-width: 768px
     white-space: nowrap;
   }
 
+  /*
+  FNXC:UniversalViewChrome 2026-09-16-21:44:
+  FN-476 centralizes the padding trim that individual views used to copy. A base `.btn` (8px 16px padding + an 18px
+  icon) is intrinsically ~36px, so bounding it to the 28px row alone would clip it; trimming its block padding to the
+  btn-sm box lets its CONTENT fit. Goals owned an identical per-view rule keyed on a class its button no longer
+  carries — one shared rule replaces it, so any header action gets the canonical geometry without a local override.
+  */
+  .view-header__actions > .btn:not(.btn-sm) {
+    padding-block: var(--space-xs);
+  }
+
   /* Legacy touch-target actions remain compact on desktop; the preceding back button is outside this cluster and keeps its full target. */
   .view-header__actions .touch-target {
     min-width: var(--view-header-content-row);
@@ -94,6 +115,35 @@ DESKTOP-ONLY canonical-height clamp. The mobile breakpoint is `(max-width: 768px
 
   .view-header__actions .view-toggle .view-toggle-btn {
     height: 100%;
+  }
+}
+
+/*
+FNXC:UniversalViewChrome 2026-09-16-21:44:
+FN-476: a WIDE but SHORT window (1280x450, or a desktop shrunk by a virtual keyboard) matched neither arm above: the
+desktop clamp requires `min-height: 481px`, and the phone rules below key on the mobile classifier or a narrow width.
+Its header therefore silently grew past the canonical row — measured 69px against 61px on the same destination — which
+is exactly the inconsistency this task removes. Per the project rule that a short desktop window stays desktop, restore
+the clamp there for every viewport the classifier has NOT called a phone; a landscape phone keeps the tactile rules.
+*/
+@media (min-width: 769px) and (max-height: 480px) {
+  html:not([data-viewport-mode="mobile"]) .view-header {
+    height: var(--view-header-min-height);
+  }
+
+  html:not([data-viewport-mode="mobile"]) .view-header__actions {
+    flex-wrap: nowrap;
+    height: var(--view-header-content-row);
+  }
+
+  html:not([data-viewport-mode="mobile"]) .view-header__actions > * {
+    min-height: 0;
+    max-height: var(--view-header-content-row);
+    white-space: nowrap;
+  }
+
+  html:not([data-viewport-mode="mobile"]) .view-header__actions > .btn:not(.btn-sm) {
+    padding-block: var(--space-xs);
   }
 }
 

@@ -54,6 +54,7 @@ import { MessageComposer, type NativeStructureCandidate } from "./MessageCompose
 import { ViewHeader } from "./ViewHeader";
 import { ViewActionButton } from "./ViewActionButton";
 import { ViewSidebar } from "./ViewSidebar";
+import { MailboxCollectionTabs } from "./MailboxCollectionTabs";
 import { ViewLayout } from "./ViewLayout";
 import { WorktrunkInstallApprovalDetails } from "./WorktrunkInstallApprovalDetails";
 import { GatedActionApprovalDetails } from "./GatedActionApprovalDetails";
@@ -1130,6 +1131,21 @@ export function MailboxView({
     );
   };
 
+  /*
+  FNXC:MailboxCollectionNavigation 2026-09-16-21:44:
+  One element, rendered wherever the list currently lives (rail header on desktop/tablet, above the list on a phone).
+  The controller stays here: `handleSelectTab` keeps owning collection resolution, scroll, and request fences.
+  */
+  const collectionTabs = (
+    <MailboxCollectionTabs
+      activeTab={activeTab === "outbox" ? "outbox" : "inbox"}
+      unreadCount={unreadCount}
+      onSelectTab={handleSelectTab}
+      inboxLabel={t("mailbox.inbox", "Inbox")}
+      outboxLabel={t("mailbox.outbox", "Outbox")}
+    />
+  );
+
   const renderListPane = () => (
     <>
       {activeCollection === "archived" && (
@@ -1675,27 +1691,15 @@ export function MailboxView({
       Exactly two tabs: Inbox and Outbox. Archived, Agents and Approvals became inbox SCOPES chosen from
       the header filter button, and the pending-approvals badge moved onto that filter trigger so an
       awaiting decision stays visible without opening any menu.
-      */}
-      <div className="mailbox-tabs" data-testid="mailbox-tabs">
-        <button
-          className={`btn btn-sm btn-secondary mailbox-tab ${activeTab === "inbox" ? "active" : ""}`}
-          onClick={() => handleSelectTab("inbox")}
-          data-testid="mailbox-tab-inbox"
-        >
-          <InboxIcon size={14} />
-          <span>{t("mailbox.inbox", "Inbox")}</span>
-          {unreadCount > 0 && <span className="mailbox-tab-badge">{unreadCount}</span>}
-        </button>
-        <button
-          className={`btn btn-sm btn-secondary mailbox-tab ${activeTab === "outbox" ? "active" : ""}`}
-          onClick={() => handleSelectTab("outbox")}
-          data-testid="mailbox-tab-outbox"
-        >
-          <Send size={14} />
-          <span>{t("mailbox.outbox", "Outbox")}</span>
-        </button>
-      </div>
 
+      FNXC:MailboxCollectionNavigation 2026-09-16-21:44:
+      FN-476 moves that pair OUT of this full-width row and into the header of the list rail, where it belongs: it
+      selects which collection the list shows, not what the whole destination is. The destination title plus Compose,
+      the filter with its approvals badge, and mark-all-read stay in the ViewHeader that spans both panes. On a phone
+      the single pane shows the list with its tabs, and they disappear only while a message, an approval, or the
+      composer occupies that pane — so the back affordance returns to the list AND its navigation. There is exactly
+      one pair in the DOM; nothing is duplicated and hidden with CSS.
+      */}
       <div className="mailbox-content" data-testid="mailbox-content" ref={mailboxContentRef}>
         {isSplitPane ? (
           <div className="mailbox-split-layout" data-testid="mailbox-split-layout">
@@ -1706,6 +1710,7 @@ export function MailboxView({
               panelTestId="mailbox-split-list-pane"
               separatorTestId="mailbox-split-resize-handle"
               className="mailbox-split-list-pane"
+              header={collectionTabs}
             >
               {renderListPane()}
             </ViewSidebar>
@@ -1733,7 +1738,12 @@ export function MailboxView({
                 addToast={addToast}
               />
             )}
-            {!selectedMessage && !selectedApproval && !showComposer && renderListPane()}
+            {!selectedMessage && !selectedApproval && !showComposer && (
+              <>
+                {collectionTabs}
+                {renderListPane()}
+              </>
+            )}
           </>
         )}
       </div>

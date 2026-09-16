@@ -108,19 +108,12 @@ The embedded planning header must be a visual SIBLING of MissionManager's inline
 */
 /* FNXC:ViewHeader 2026-06-23-04:15: Pin canonical --view-header-min-height (≈61px border-box) + box-sizing + vertical centering so embedded Planning's header matches the shared ViewHeader/Missions height exactly. */
 /*
-FNXC:StandardizedViewLayout 2026-09-14-05:58:
-Planning's header is a full-width bar over BOTH the session rail and the interview, exactly like Mailbox and Agents.
-It kept `border-bottom: none` from its modal past, so the title row bled into the panes below and the destination did
-not read as header-over-content the way every other collection does.
-
-The separator is declared on the LAYOUT, not on the modal wrapper: the embedded destination renders
-`.planning-modal-body > .view-header` and a rule scoped to the modal ancestor alone left the standalone/host cases
-without a bar.
+FNXC:UniversalViewChrome 2026-09-16-21:44:
+FN-476 removes the local `.planning-modal-body > .view-header` divider rule. Planning was the reference for the
+separation every other destination lacked, so the rule moved onto `.view-header` itself in `ViewHeader.css` and is now
+universal. Re-adding it here would be a per-view copy of shared chrome; the surface background is already the shared
+default. The embedded modal header below is a DIFFERENT element (`.modal-header--embedded`) and keeps its own bar.
 */
-.planning-modal-body > .view-header {
-  border-bottom: var(--btn-border-width) solid var(--border);
-  background: var(--surface);
-}
 
 .planning-modal--embedded .modal-header--embedded {
   box-sizing: border-box;

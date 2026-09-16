@@ -80,8 +80,25 @@ describe("mailbox chrome census (FN-464)", () => {
     }
 
     expect(code).toContain("mailbox-inbox-filter");
-    expect(code).toContain("mailbox-tab-inbox");
-    expect(code).toContain("mailbox-tab-outbox");
+    /*
+    FNXC:MailboxCollectionNavigation 2026-09-16-21:44:
+    FN-476 extracted the two-tab presentation into `MailboxCollectionTabs` so both hosts could move it above their
+    message list in one place. The census therefore checks that each host still RENDERS that single owner instead of
+    re-declaring the markup; the test ids themselves are asserted once, on the component that owns them.
+    */
+    expect(code).toContain("<MailboxCollectionTabs");
+    expect(code).not.toContain("data-testid=\"mailbox-tab-inbox\"");
+    expect(code).not.toContain("data-testid=\"mailbox-tab-outbox\"");
+  });
+
+  it("garde une unique déclaration partagée des deux onglets de collection", () => {
+    const shared = readAppFile("components/MailboxCollectionTabs.tsx");
+    expect(shared).toContain("mailbox-tab-inbox");
+    expect(shared).toContain("mailbox-tab-outbox");
+    expect(shared).toContain("data-testid=\"mailbox-tabs\"");
+    // La présentation partagée ne porte aucun contrôleur : les hôtes gardent leur logique métier.
+    expect(shared).not.toContain("useState");
+    expect(shared).not.toContain("useEffect");
   });
 
   it("keeps exactly one pending-approvals badge render point, in MailboxView", () => {

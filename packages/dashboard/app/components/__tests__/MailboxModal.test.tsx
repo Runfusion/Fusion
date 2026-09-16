@@ -735,12 +735,43 @@ describe("MailboxModal", () => {
       expect(screen.getByTestId("mailbox-message-detail")).toHaveAttribute("id", "message-msg-001");
     });
 
-    fireEvent.click(screen.getByTestId("mailbox-tab-outbox"));
+    /*
+    FNXC:MailboxCollectionNavigation 2026-09-16-21:44:
+    FN-476 moved Inbox/Outbox above the message list, so in this single-pane window they are not rendered while a
+    message occupies the pane. The reachable path is Back → Outbox, and the invariant is unchanged: the consumed deep
+    link must not restore the message when the collection changes.
+    */
+    expect(screen.queryByTestId("mailbox-tab-outbox")).toBeNull();
+    fireEvent.click(screen.getByTestId("mailbox-back-to-list"));
+    fireEvent.click(await screen.findByTestId("mailbox-tab-outbox"));
 
     await waitFor(() => {
       expect(screen.getByTestId("mailbox-outbox-empty")).toBeDefined();
       expect(screen.queryByTestId("mailbox-message-detail")).toBeNull();
     });
+
+    fireEvent.click(screen.getByTestId("mailbox-tab-inbox"));
+    await waitFor(() => expect(screen.getByTestId("mailbox-inbox-list")).toBeDefined());
+    expect(screen.queryByTestId("mailbox-message-detail")).toBeNull();
+  });
+
+  /*
+  FNXC:MailboxCollectionNavigation 2026-09-16-21:44:
+  FN-476: the floating host is the second producer of the same pair, so it gets the same rule — the tabs belong to the
+  collection area above the messages, never to the window title row, and the window keeps its own close control.
+  */
+  it("place les onglets au-dessus des messages et non dans l'en-tête de la fenêtre", async () => {
+    render(<MailboxModal {...defaultProps} />);
+    const tabs = await screen.findByTestId("mailbox-tabs");
+
+    expect(screen.getAllByTestId("mailbox-tabs")).toHaveLength(1);
+    expect(tabs.closest(".view-header")).toBeNull();
+    const content = screen.getByTestId("mailbox-content");
+    expect(content.contains(tabs)).toBe(true);
+    const list = await screen.findByTestId("mailbox-inbox-list");
+    expect(tabs.compareDocumentPosition(list)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    // La fenêtre conserve sa fermeture légitime.
+    expect(screen.getByTestId("mailbox-close")).toBeTruthy();
   });
 
   it("shows mark all read button when there are unread messages", async () => {

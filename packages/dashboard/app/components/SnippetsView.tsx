@@ -2,7 +2,7 @@ import "./SkillsView.css";
 import "./SnippetsView.css";
 import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Loader2, Pencil, Plus, RefreshCw, Trash2, Type } from "lucide-react";
+import { Loader2, Pencil, Plus, Trash2, Type } from "lucide-react";
 import { ViewHeader } from "./ViewHeader";
 import { ViewLayout } from "./ViewLayout";
 import { ViewSidebar } from "./ViewSidebar";
@@ -15,9 +15,14 @@ import {
 } from "@fusion/core";
 import { useChatSnippetsCache } from "../hooks/useChatSnippetsCache";
 
-interface SnippetsViewProps {
-  onClose?: () => void;
-}
+/*
+FNXC:SnippetsDestination 2026-09-16-21:44:
+FN-476: Snippets is a navigation destination, not a window. It therefore takes NO props: an operator leaves it by
+navigating, so a close cross is chrome that does not belong, and a manual Refresh button is an admission that the view
+can go stale. It stays current on its own — the shared cache is invalidated by a server notification, so a snippet
+created, renamed, or deleted elsewhere appears here without a click. The error state keeps its Retry, which is a
+recovery action rather than permanent header chrome.
+*/
 
 /*
 FNXC:SnippetsDestination 2026-09-14-04:12:
@@ -28,7 +33,7 @@ main panel — instead of a full-width workspace competing with the skills maste
 
 The snippet cache, validation rules, and mutation contracts are unchanged; only their host moved.
 */
-export function SnippetsView({ onClose }: SnippetsViewProps) {
+export function SnippetsView() {
   const { t } = useTranslation("app");
   const {
     snippets,
@@ -36,6 +41,7 @@ export function SnippetsView({ onClose }: SnippetsViewProps) {
     error: snippetsError,
     hasLoaded: snippetsHaveLoaded,
     createSnippet,
+    // `refresh` remains the error-state recovery action only; no permanent header control calls it.
     updateSnippet,
     deleteSnippet,
     refresh: refreshSnippets,
@@ -99,7 +105,7 @@ export function SnippetsView({ onClose }: SnippetsViewProps) {
       }
       resetSnippetForm();
     } catch {
-      setSnippetFormError(t("skills.snippetsSaveError", "The snippet could not be saved. Refresh and try again."));
+      setSnippetFormError(t("skills.snippetsSaveError", "The snippet could not be saved. Try again."));
     } finally {
       setSnippetMutationPending(null);
     }
@@ -121,7 +127,7 @@ export function SnippetsView({ onClose }: SnippetsViewProps) {
       await deleteSnippet(name);
       if (editingSnippetName === name) resetSnippetForm();
     } catch {
-      setSnippetFormError(t("skills.snippetsDeleteError", "The snippet could not be deleted. Refresh and try again."));
+      setSnippetFormError(t("skills.snippetsDeleteError", "The snippet could not be deleted. Try again."));
     } finally {
       setSnippetMutationPending(null);
     }
@@ -142,21 +148,6 @@ export function SnippetsView({ onClose }: SnippetsViewProps) {
             onClick={resetSnippetForm}
             data-testid="snippets-new"
           />
-          <button
-            type="button"
-            className="btn-icon"
-            onClick={() => void refreshSnippets()}
-            disabled={snippetsLoading}
-            aria-label={t("skills.snippetsRefresh", "Refresh snippets")}
-            data-testid="snippets-refresh"
-          >
-            <RefreshCw size={16} className={snippetsLoading ? "spin" : ""} />
-          </button>
-          {onClose ? (
-            <button type="button" className="btn-icon" onClick={onClose} aria-label={t("common.close", "Close")}>
-              ×
-            </button>
-          ) : null}
         </>
       }
     />

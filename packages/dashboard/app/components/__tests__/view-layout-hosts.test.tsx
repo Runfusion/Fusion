@@ -232,11 +232,22 @@ describe("FN-379 shared chrome on the real destination host", () => {
   const destinations: { taskView: string; label: string }[] = [
     { taskView: "agents", label: "Agents" },
     { taskView: "mailbox", label: "Mailbox" },
-    { taskView: "chat", label: "Chat" },
     { taskView: "goalsView", label: "Goals" },
     { taskView: "notes", label: "Notes" },
     { taskView: "secrets", label: "Secrets" },
   ];
+
+  /*
+  FNXC:UniversalViewChrome 2026-09-16-21:44:
+  FN-476: Chat is deliberately absent from the ROUTED list. FN-419/FN-468 made the retained keep-alive tree the only
+  primary Chat host, so `MainContent` returns null for `taskView="chat"` on this shell and the routed render paints no
+  chrome at all to assert. Its canonical-header contract is covered by the keep-alive case below, and the assertion
+  right here proves the routed shell yields instead of painting a second, competing header.
+  */
+  it("cède Chat à l'hôte keep-alive au lieu de peindre un second en-tête", () => {
+    renderHost("chat");
+    expect(document.querySelectorAll(".view-header")).toHaveLength(0);
+  });
 
   it.each(destinations)("routes $label through one canonical header with at most one creation entry", async ({ taskView }) => {
     renderHost(taskView);
@@ -295,6 +306,30 @@ describe("FN-379 shared chrome on the real destination host", () => {
     }
     for (const back of live.querySelectorAll("[data-testid$='-back'], .view-back-button")) {
       expect(back).toHaveClass("view-back-button");
+    }
+  });
+
+  /*
+  FNXC:UniversalViewChrome 2026-09-16-21:44:
+  FN-476: the operator's complaint was that Planning showed a header separated from its panes while Missions, Agents
+  and Goals did not. The separation is now a property of the shared header, so the host contract to protect is
+  STRUCTURAL: every destination's title row must be the shared `.view-header` sitting as a direct child of its
+  `.view-layout`, above the body — not a bespoke bar nested inside the content.
+  */
+  it.each(destinations)("place l'en-tête partagé de $label au-dessus du corps de la vue", async ({ taskView }) => {
+    renderHost(taskView);
+
+    await waitFor(() => expect(document.querySelectorAll(".view-header")).toHaveLength(1));
+    const header = document.querySelector(".view-header") as HTMLElement;
+    expect(header.tagName).toBe("HEADER");
+    // L'en-tête ouvre sa vue : rien ne se peint avant lui dans son propre conteneur.
+    expect(header.parentElement?.firstElementChild).toBe(header);
+    const layout = header.closest(".view-layout") as HTMLElement | null;
+    if (layout) {
+      // Les destinations composées avec ViewLayout gardent l'en-tête au-dessus du corps deux panneaux.
+      expect(header.parentElement).toBe(layout);
+      const body = layout.querySelector(".view-layout__body") as HTMLElement;
+      expect(header.compareDocumentPosition(body)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     }
   });
 

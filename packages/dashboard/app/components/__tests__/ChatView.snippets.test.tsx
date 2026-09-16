@@ -37,6 +37,29 @@ vi.mock("../../api", () => ({
   fetchChatSession: vi.fn().mockResolvedValue({ session: { memoryFocus: null } }),
 }));
 
+/*
+FNXC:SnippetsDestination 2026-09-16-21:44:
+FN-476: a composer must show a snippet another client just created, with no refresh control anywhere and no tab change.
+The shared SSE bus is captured so the suite can deliver the real notification the cache subscribes to.
+*/
+const sseHandlers: { events: Record<string, (event: MessageEvent) => void> }[] = [];
+vi.mock("../../sse-bus", () => ({
+  subscribeSse: (_url: string, sub: { events?: Record<string, (event: MessageEvent) => void> }) => {
+    const entry = { events: sub.events ?? {} };
+    sseHandlers.push(entry);
+    return () => {
+      const index = sseHandlers.indexOf(entry);
+      if (index >= 0) sseHandlers.splice(index, 1);
+    };
+  },
+}));
+
+function emitSnippetsUpdated(): void {
+  for (const entry of [...sseHandlers]) {
+    entry.events["settings:chat-snippets-updated"]?.(new MessageEvent("message", { data: "{}" }));
+  }
+}
+
 installChatViewEnv();
 
 const prompt = "lance toujours les tests avec chrome devtool mcp";
@@ -44,6 +67,7 @@ const commandContext = { taskId: "TASK-1", projectId: "proj-123", agentRunning: 
 
 beforeEach(() => {
   __test_resetChatSnippetsCache();
+  sseHandlers.length = 0;
   apiMocks.fetchGlobalSettings.mockResolvedValue({ chatSnippets: [{ name: "test", prompt }] });
   apiMocks.updateGlobalSettings.mockResolvedValue({ chatSnippets: [{ name: "test", prompt }] });
 });
@@ -73,6 +97,29 @@ describe("ChatView chat snippets", () => {
     expect(input).toHaveFocus();
     fireEvent.change(input, { target: { value: `${prompt}\neditable` } });
     expect(input).toHaveValue(`${prompt}\neditable`);
+  });
+
+  it("propose un snippet créé par un autre client sans bouton ni changement d'onglet", async () => {
+    setupMockChat({ activeSession: activeSessionFixture, messages: [] });
+    await renderChatDetailWithAct(
+      <ChatView projectId="proj-123" addToast={vi.fn()} chatCommandContext={commandContext} />,
+    );
+
+    const input = screen.getByTestId("chat-input");
+    await userEvent.type(input, "/");
+    const menu = await screen.findByRole("listbox", { name: /slash suggestions/i });
+    expect(within(menu).queryByRole("option", { name: /\/distant/i })).toBeNull();
+
+    apiMocks.fetchGlobalSettings.mockResolvedValue({
+      chatSnippets: [{ name: "test", prompt }, { name: "distant", prompt: "ajouté ailleurs" }],
+    });
+    emitSnippetsUpdated();
+
+    await waitFor(() => {
+      expect(within(screen.getByRole("listbox", { name: /slash suggestions/i })).getByRole("option", { name: /\/distant/i })).toBeTruthy();
+    });
+    // Le brouillon en cours n'est pas perdu par l'actualisation de la liste.
+    expect(input).toHaveValue("/");
   });
 
   it("expands the first submit without sending or losing attachments, then sends normally", async () => {

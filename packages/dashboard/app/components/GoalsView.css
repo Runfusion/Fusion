@@ -72,17 +72,11 @@ The goal rail uses the shared bounded sidebar while the selected card remains th
 }
 
 /*
-FNXC:ViewHeader 2026-06-23-05:00:
-The Add Goal button rides in the ViewHeader actions row, which is clamped to --view-header-content-row (28px). Base `.btn` padding (8px 16px) + an 18px icon is intrinsically ~36px and made the Goals header 69px. Reduce padding to the btn-sm box (4px 10px) so the button's CONTENT fits inside 28px without clipping (the 18px icon stays centered), bringing the header to the canonical 61px while keeping btn-primary color/border.
+FNXC:UniversalViewChrome 2026-09-16-21:44:
+FN-476 removes the `.goals-add-button` geometry override. The Add Goal control is a shared `ViewActionButton` and no
+longer carries that class at all (`goals-add-button` is only its test id), so the rule was dead weight that contradicted
+the canon. The header-row padding trim it described now lives once in `ViewHeader.css` for every destination.
 */
-.goals-add-button {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-sm);
-  padding: var(--space-xs) calc(var(--space-sm) + var(--space-xs) / 2);
-}
-
-.goals-add-button:focus-visible,
 .goals-card:focus-visible,
 .goals-activate-button:focus-visible {
   outline: none;

@@ -73,7 +73,7 @@ import { mkdir } from "node:fs/promises";
 import { promisify } from "node:util";
 import { ApiError, badRequest } from "../api-error.js";
 import { resolveGithubTrackingAuth } from "../github-auth.js";
-import { emitWorkflowSseEvent } from "../sse.js";
+import { emitChatSnippetsUpdatedSseEvent, emitWorkflowSseEvent } from "../sse.js";
 import { generateRemoteToken, issueRemoteAuthToken, maskRemoteToken } from "../remote-auth.js";
 import { invalidateAllGlobalSettingsCaches } from "../project-store-resolver.js";
 import type { ApiRoutesContext } from "./types.js";
@@ -2014,6 +2014,17 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
         for (const engine of engineManager.getAllEngines().values()) {
           engine.getTaskStore().getGlobalSettingsStore().invalidateCache();
         }
+      }
+
+      /*
+      FNXC:SnippetsDestination 2026-09-16-21:44:
+      FN-476: the Snippets destination dropped its manual refresh, so a successful snippet write must tell every open
+      client its cached list is stale. Published AFTER the write and after the cache invalidations above, and only when
+      this patch actually touched `chatSnippets` — an unrelated settings save must not churn every composer. The
+      notification is fact-only (a timestamp), never the settings body or a prompt.
+      */
+      if (Object.hasOwn(globalPatch, "chatSnippets")) {
+        emitChatSnippetsUpdatedSseEvent();
       }
 
       /* FNXC:SettingsBackups 2026-07-16-14:45: global writes own the single shared-cluster backup routine; project writes must not create competing schedules. */

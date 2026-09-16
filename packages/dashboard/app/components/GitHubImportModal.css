@@ -1774,7 +1774,11 @@ Embedded root drops its uniform --space-lg padding so the header can span edge-t
 
 /*
 FNXC:ViewHeader 2026-06-23-04:15:
-Import Tasks embedded header now adopts the canonical ViewHeader chrome — edge-to-edge --surface bg, no bottom divider, --space-lg/--space-xl padding, and the shared --view-header-min-height (≈61px border-box) — so it matches Agents/Mailbox/Missions/Automations height + padding exactly. (Previously a plain padding-bottom title row with no surface/min-height.)
+Import Tasks embedded header adopts the canonical ViewHeader chrome — edge-to-edge --surface bg, --space-lg/--space-xl padding, and the shared --view-header-min-height (≈61px border-box) — so it matches Agents/Mailbox/Missions/Automations height + padding exactly. (Previously a plain padding-bottom title row with no surface/min-height.)
+
+FNXC:UniversalViewChrome 2026-09-16-21:44:
+FN-476: this header is a bespoke element rather than a rendered `.view-header`, so it must state the universal
+separation itself to stay consistent with every destination. Its former `border-bottom: none` was the old seamless rule.
 */
 .github-import-modal__embedded-header {
   box-sizing: border-box;
@@ -1786,7 +1790,7 @@ Import Tasks embedded header now adopts the canonical ViewHeader chrome — edge
   min-height: var(--view-header-min-height);
   padding: var(--space-lg) var(--space-xl);
   background: var(--surface);
-  border-bottom: none;
+  border-bottom: var(--btn-border-width) solid var(--border);
 }
 
 .github-import-modal__embedded-title {

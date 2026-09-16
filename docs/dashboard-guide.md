@@ -2473,6 +2473,32 @@ the strip.
 rule into a component stylesheet. `packages/dashboard/app/__tests__/tab-strip-text-selection.test.ts`
 censuses every tab-strip class rendered by a component and fails on an uncovered one.
 
+### Universal view chrome
+
+Every dashboard destination composes the same primitives — `ViewLayout`, `ViewHeader`, `ViewSidebar`, and
+`ViewActionButton` — and the chrome they draw is declared **once, in those primitives**. Do not copy a divider,
+a header height, or an action size into a view stylesheet.
+
+- **The separation under a title belongs to `ViewHeader`.** `.view-header` draws one
+  `var(--btn-border-width) solid var(--border)` bottom border, so Missions, Agents, Goals, Snippets, Mailbox, and
+  Planning all read as header-over-content. Planning used to be the only view with that bar because it drew it
+  locally; that local rule is gone. The reserved 1px in `--view-header-min-height` is exactly this border, so the
+  canonical ~61px header height is unchanged. Do not re-add a per-view `border-bottom`, and do not reach for
+  `--chrome-divider-color`, which repaints the right dock and the app shell too.
+- **Action geometry is canonical.** Desktop header actions are bounded to `--view-header-content-row` (28px) and a
+  non-`btn-sm` button has its block padding trimmed centrally so its content fits without clipping; phones keep the
+  36px icon-only geometry from `ViewActionButton`. A view should not restate either size.
+- **Collection-scoped navigation belongs to the rail, not the destination header.** `ViewSidebar` accepts an optional
+  `header` slot rendered as a fixed band above the list, with the list scrolling underneath it. When the prop is
+  absent no wrapper is rendered at all. Mailbox's Inbox/Outbox tabs use this slot; the destination title, Compose,
+  filters, and mark-as-read stay in `ViewHeader`, which spans both panes.
+- **A destination has no window chrome.** A view reachable from navigation renders no close cross and no manual
+  refresh button — it stays current on its own. A genuine floating window keeps its close, an error state keeps its
+  Retry, and a list-to-detail `backAction` is navigation, not dismissal.
+
+`packages/dashboard/app/components/__tests__/universal-view-chrome.test.tsx` asserts the rendered structure and the
+applicable CSS rules, and the `view-layout-*` families exercise the real hosts.
+
 ### Mobile drawer conformance
 
 A surface presented as a phone drawer exposes **exactly one drag handle and no close cross**. The handle is always the

@@ -820,7 +820,8 @@ export function MainContent(props: MainContentProps) {
     return (
       <PageErrorBoundary>
         <Suspense fallback={null}>
-          <SnippetsView onClose={() => handleChangeTaskView("board")} />
+          {/* FNXC:SnippetsDestination 2026-09-16-21:44: FN-476 — a destination is left by navigating, so the host supplies no close callback. */}
+          <SnippetsView />
         </Suspense>
       </PageErrorBoundary>
     );

@@ -366,6 +366,39 @@ export function emitWorkflowSseEvent(event: WorkflowSseEventType, payload: unkno
 }
 
 /**
+ * FNXC:SnippetsDestination 2026-09-16-21:44:
+ * FN-476: chat snippets are a GLOBAL (user-level) resource edited from a destination that no longer offers a manual
+ * refresh, so a write has to tell every open client that its cached list is stale. This mirrors the workflow seam
+ * above because the global settings store has no EventEmitter the SSE stream can subscribe to.
+ *
+ * The notification carries NO settings content and no prompt text — only the fact that the snippet list changed, plus
+ * the write timestamp — so an unrelated tab learns nothing about the operator's saved prompts. It is deliberately
+ * UNSCOPED: snippets are global, so a client subscribed to another project must receive it too, which is why the
+ * forwarder below does not filter on project id. Publishing happens only AFTER a write succeeded and its caches were
+ * invalidated; a failed write publishes nothing, and a slow or disconnected client can never fail an accepted write.
+ */
+export type ChatSnippetsSseEventType = "settings:chat-snippets-updated";
+
+export interface ChatSnippetsSsePayload {
+  at: string;
+}
+
+type ChatSnippetsSseListener = (payload: ChatSnippetsSsePayload) => void;
+
+const chatSnippetsSseListeners = new Set<ChatSnippetsSseListener>();
+
+export function emitChatSnippetsUpdatedSseEvent(at: string = new Date().toISOString()): void {
+  const payload: ChatSnippetsSsePayload = { at };
+  for (const listener of [...chatSnippetsSseListeners]) {
+    try {
+      listener(payload);
+    } catch {
+      // A broken or closing stream must never turn an already-persisted settings write into a failure.
+    }
+  }
+}
+
+/**
  * Custom plugin events forwarded to connected SSE clients. This is the real
  * publish-to-`/api/events` seam plugins reach through `ctx.emitEvent`: the
  * dashboard wires a plugin route context's `emitEvent` to call this, and each
@@ -1010,6 +1043,11 @@ export function createSSE(
       send(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
     };
 
+    /* FNXC:SnippetsDestination 2026-09-16-21:44: global resource — forwarded to every stream, never project-filtered. */
+    const onChatSnippetsEvent: ChatSnippetsSseListener = (payload) => {
+      send(`event: settings:chat-snippets-updated\ndata: ${JSON.stringify(payload)}\n\n`);
+    };
+
     const onPluginCustomEvent: PluginCustomSseListener = (pluginId, event, payload, eventProjectId) => {
       // Scope match mirrors approvals: a project-scoped stream only forwards
       // events for its own project; the default stream forwards unscoped events.
@@ -1188,6 +1226,7 @@ export function createSSE(
       }
       approvalSseListeners.delete(onApprovalEvent);
       workflowSseListeners.delete(onWorkflowEvent);
+      chatSnippetsSseListeners.delete(onChatSnippetsEvent);
       pluginCustomSseListeners.delete(onPluginCustomEvent);
       cliSessionStateSseListeners.delete(onCliSessionStateEvent);
       if (chatStore) {
@@ -1350,6 +1389,7 @@ export function createSSE(
     // fire event listeners in the browser).
     approvalSseListeners.add(onApprovalEvent);
     workflowSseListeners.add(onWorkflowEvent);
+    chatSnippetsSseListeners.add(onChatSnippetsEvent);
     pluginCustomSseListeners.add(onPluginCustomEvent);
     cliSessionStateSseListeners.add(onCliSessionStateEvent);
 

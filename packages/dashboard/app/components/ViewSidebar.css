@@ -28,6 +28,23 @@ All collection rails share one surface, type scale, row geometry, and accessible
   min-block-size: var(--view-sidebar-row-min-height);
 }
 
+/*
+FNXC:UniversalViewChrome 2026-09-16-21:44:
+FN-476: the optional collection header is a fixed band at the top of the rail. `flex: none` keeps it visible while the
+list scrolls under it, and the bottom rule is the same token pair the destination header and the rail separator use, so
+the list reads as content below its own navigation.
+*/
+.view-sidebar__header {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-xs);
+  min-inline-size: 0;
+  padding: var(--space-sm) var(--space-md);
+  border-block-end: var(--btn-border-width) solid var(--border);
+  background: var(--surface);
+}
+
 .view-sidebar__separator {
   position: relative;
   z-index: 1;

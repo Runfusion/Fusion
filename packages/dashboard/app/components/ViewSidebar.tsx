@@ -38,6 +38,15 @@ export interface ViewSidebarProps extends Omit<HTMLAttributes<HTMLElement>, "chi
   panelTestId?: string;
   panelClassName?: string;
   separatorTestId?: string;
+  /*
+  FNXC:UniversalViewChrome 2026-09-16-21:44:
+  FN-476: collection-scoped navigation (Mailbox's Inbox/Outbox) belongs ABOVE its own list, not in the destination
+  header that spans both panes. This optional slot is the shared place for it. When it is absent no wrapper is
+  rendered at all, so every other rail keeps its exact current DOM; when present it is a non-scrolling band and the
+  list scrolls underneath it.
+  */
+  header?: ReactNode;
+  headerClassName?: string;
 }
 
 /*
@@ -56,6 +65,8 @@ export function ViewSidebar({
   className,
   panelClassName,
   panelTestId,
+  header,
+  headerClassName,
   separatorTestId = "view-sidebar-resize-handle",
   ...asideProps
 }: ViewSidebarProps) {
@@ -184,6 +195,11 @@ export function ViewSidebar({
       data-view-sidebar-scope={controller.scopeIdentity}
     >
       <aside {...asideProps} className={["view-sidebar__panel", panelClassName].filter(Boolean).join(" ")} aria-label={ariaLabel} data-testid={panelTestId}>
+        {header != null ? (
+          <div className={["view-sidebar__header", headerClassName].filter(Boolean).join(" ")} data-testid="view-sidebar-header">
+            {header}
+          </div>
+        ) : null}
         {children}
       </aside>
       {!mobile && resizable ? (
