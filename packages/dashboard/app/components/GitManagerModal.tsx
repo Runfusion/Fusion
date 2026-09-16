@@ -1435,6 +1435,8 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
       dragHandleSelector=".modal-header"
       className="floating-window--git-manager"
       defaultSize={{ width: Math.min(window.innerWidth * 0.95, 1400), height: window.innerHeight * 0.92 }}
+      /* FNXC:FloatingWindowGeometry 2026-09-16-05:45: FN-456 opens every window at the shared 1.43 ratio, but the operator excluded the integral views — "ça ne doit pas impacter les vues intégrales.. par exemple le gitmanager qui s'ouvre depuis le menu more du footer". Git Manager deliberately fills the work area, so its opening geometry stays exactly pre-FN-456. */
+      openingSizePolicy="full-view"
       minSize={{ width: 360, height: 280 }}
       suspendGeometryPersistenceOnMobile
       suspendGeometryPersistenceOnShortViewport

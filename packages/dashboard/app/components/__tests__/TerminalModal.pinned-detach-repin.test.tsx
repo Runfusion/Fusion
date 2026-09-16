@@ -462,7 +462,13 @@ describe("pinned terminal detach / footer-contact re-pin", () => {
   it.each([
     { mode: "maximized", to: { x: 700, y: HEADER_HEIGHT + 1 } },
     { mode: "left", to: { x: 4, y: 400 } },
-    { mode: "right", to: { x: window.innerWidth - 4, y: 400 } },
+    /*
+    FNXC:TerminalWindow 2026-09-16-05:45:
+    FN-456 changed the terminal's OPENING width, so a target computed from the viewport no longer lands the
+    window's own right edge on the wall. Dragging well past the wall is the documented gesture ("keep dragging
+    past the edge"): the position clamp pins the edge exactly on it whatever the window width.
+    */
+    { mode: "right", to: { x: 5000, y: 400 } },
   ])("stays detached for a $mode-snapped window resting on the footer line", async ({ mode, to }) => {
     const projectId = `repin-snap-${mode}`;
     renderTerminal(projectId, { mode: "floating" });

@@ -4,12 +4,18 @@ import { PoppedOutChatWindows } from "../PoppedOutChatWindows";
 import { usePoppedOutChats } from "../../hooks/usePoppedOutChats";
 import type { ChatSessionInfo } from "../../hooks/useChat";
 
-vi.mock("../FloatingWindow", () => ({
-  /* FNXC:ChatWindows 2026-09-15-04:01: FN-401 — the host reads the shared standard task-window size from this module, so the mock must expose it. */
-  FLOATING_WINDOW_TASK_STANDARD_WIDTH: 800,
-  FLOATING_WINDOW_TASK_STANDARD_HEIGHT: 680,
+vi.mock("../FloatingWindow", async () => {
+  const geometry = await import("../floatingWindowGeometry");
+  return {
+  /*
+  FNXC:ChatWindows 2026-09-15-04:01: FN-401 — the host reads the shared standard task-window size from this module, so the mock must expose it.
+  FNXC:ChatWindows 2026-09-16-05:45: FN-456 derives the standard task height from the shared 1.43 opening ratio, so the mock re-exports the real constants instead of freezing a stale 680 literal that the module no longer holds.
+  */
+  FLOATING_WINDOW_TASK_STANDARD_WIDTH: geometry.FLOATING_WINDOW_TASK_STANDARD_WIDTH,
+  FLOATING_WINDOW_TASK_STANDARD_HEIGHT: geometry.FLOATING_WINDOW_TASK_STANDARD_HEIGHT,
   FloatingWindow: ({ children, onClose, windowKey, raiseToFrontSignal, title, ariaLabel }: any) => <section data-testid={`window-${windowKey}`} data-raise-signal={raiseToFrontSignal} data-window-title={title} data-window-aria-label={ariaLabel}><button onClick={onClose}>close</button>{children}</section>,
-}));
+  };
+});
 vi.mock("../ChatView", () => ({
   ChatView: ({ initialDirectSession, initialDirectSessionNonce, onOpenSessionInNewWindow, onActiveSessionChange }: any) => <div data-testid={`chat-${initialDirectSession.id}`} data-session-nonce={initialDirectSessionNonce} data-session-title={initialDirectSession.title} onClick={() => onOpenSessionInNewWindow(initialDirectSession)}><button data-testid={`sync-${initialDirectSession.id}`} onClick={() => onActiveSessionChange?.({ ...initialDirectSession, title: "Nouveau" })}>sync</button></div>,
 }));

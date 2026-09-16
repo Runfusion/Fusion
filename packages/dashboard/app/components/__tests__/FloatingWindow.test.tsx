@@ -6,11 +6,27 @@ import { loadAllAppCss, loadStylesCss } from "../../test/cssFixture";
 import {
   FLOATING_WINDOW_CASCADE_STEP_PX,
   FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT,
-  FLOATING_WINDOW_STANDARD_HEIGHT_RATIO,
   FloatingWindow,
 } from "../FloatingWindow";
 import { readAppFile } from "../../test/cssFixture";
 import { dragWithTouch, expectFloatingWindowStructure, resizeWithTouch } from "./floatingWindowMigration.test-helpers";
+import { expectedOpeningSize } from "./floatingWindowOpeningFixture";
+
+/*
+FNXC:FloatingWindowGeometry 2026-09-16-05:45:
+FN-456 normalizes the OPENING shape to the shared 1.43 ratio, so a host's declared `defaultSize` is no longer
+the rectangle it opens at. These windows render without landmarks, so the work area is the whole viewport;
+expected rectangles come from the production seam through the shared opening fixture.
+*/
+function openingSize(requested: { width: number; height: number }, minSize?: { width: number; height: number }) {
+  return expectedOpeningSize(requested, {
+    minSize,
+    bounds: {
+      left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight,
+      width: window.innerWidth, height: window.innerHeight,
+    },
+  });
+}
 
 const floatingWindowCss = readAppFile("components/FloatingWindow.css");
 const chatViewCss = readAppFile("components/ChatView.css");
@@ -960,8 +976,9 @@ describe("FloatingWindow", () => {
     );
 
     const panel = screen.getByTestId("floating-window-persisted");
-    expect(panel.style.width).toBe("610px");
-    expect(panel.style.height).toBe("430px");
+    const standard = openingSize({ width: 610, height: 430 }, { width: 360, height: 280 });
+    expect(panel.style.width).toBe(`${standard.width}px`);
+    expect(panel.style.height).toBe(`${standard.height}px`);
     expect(setItem).not.toHaveBeenCalledWith("floating-window:test", expect.any(String));
     expect(localStorage.getItem("floating-window:test")).toBe(stored);
     setItem.mockRestore();
@@ -985,8 +1002,8 @@ describe("FloatingWindow", () => {
     derived from that contract rather than from the declared 480px. The identity invariant is unchanged: the
     replaced identity must open at the SAME standard rectangle, never the other project's stored one.
     */
-    const standardHeight = Math.min(480, Math.round(window.innerHeight * FLOATING_WINDOW_STANDARD_HEIGHT_RATIO));
-    expect(screen.getByTestId("floating-window-terminal-project-one")).toHaveStyle({ width: "640px", height: `${standardHeight}px` });
+    const standard = openingSize({ width: 640, height: 480 });
+    expect(screen.getByTestId("floating-window-terminal-project-one")).toHaveStyle({ width: `${standard.width}px`, height: `${standard.height}px` });
 
     rerender(
       <FloatingWindow windowKey="terminal-project-two" title="Terminal" onClose={() => {}} persistGeometryKey={secondKey} defaultSize={{ width: 640, height: 480 }}>
@@ -995,7 +1012,7 @@ describe("FloatingWindow", () => {
     );
 
     // A replaced identity is a NEW opening: the same standard size, never the other project's rectangle.
-    expect(screen.getByTestId("floating-window-terminal-project-two")).toHaveStyle({ width: "640px", height: `${standardHeight}px` });
+    expect(screen.getByTestId("floating-window-terminal-project-two")).toHaveStyle({ width: `${standard.width}px`, height: `${standard.height}px` });
     expect(JSON.parse(localStorage.getItem(firstKey) ?? "{}")).toEqual(firstGeometry);
   });
 
@@ -1016,8 +1033,9 @@ describe("FloatingWindow", () => {
     );
 
     const panel = screen.getByTestId("floating-window-malformed");
-    expect(panel.style.width).toBe("610px");
-    expect(panel.style.height).toBe("430px");
+    const standard = openingSize({ width: 610, height: 430 });
+    expect(panel.style.width).toBe(`${standard.width}px`);
+    expect(panel.style.height).toBe(`${standard.height}px`);
     expect(panel.style.left).toBe("80px");
     expect(panel.style.top).toBe("90px");
   });
@@ -1055,8 +1073,9 @@ describe("FloatingWindow", () => {
       </FloatingWindow>,
     );
     const desktopPanel = screen.getByTestId("floating-window-sheet-preserve-desktop");
-    expect(desktopPanel.style.width).toBe("520px");
-    expect(desktopPanel.style.height).toBe("410px");
+    const desktopStandard = openingSize({ width: 520, height: 410 });
+    expect(desktopPanel.style.width).toBe(`${desktopStandard.width}px`);
+    expect(desktopPanel.style.height).toBe(`${desktopStandard.height}px`);
     expect(JSON.parse(localStorage.getItem(key) ?? "{}")).toEqual(desktopGeometry);
   });
 
@@ -1174,10 +1193,11 @@ describe("FloatingWindow", () => {
 
     const first = screen.getByTestId("floating-window-task-detail-FN-001");
     const second = screen.getByTestId("floating-window-task-detail-FN-002");
+    const standard = openingSize({ width: 600, height: 400 });
     for (const panel of [first, second]) {
-      // Each window uses its OWN declared size; the 660x470 record for the shared key is ignored.
-      expect(panel.style.width).toBe("600px");
-      expect(panel.style.height).toBe("400px");
+      // Each window uses its OWN standard opening size; the 660x470 record for the shared key is ignored.
+      expect(panel.style.width).toBe(`${standard.width}px`);
+      expect(panel.style.height).toBe(`${standard.height}px`);
     }
     // Separating pristine windows is the window manager's cohort; see FloatingWindow.opening-policy.test.tsx.
     expect(localStorage.getItem("floating-window:shared-task-detail")).toContain("660");

@@ -2,10 +2,11 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DashboardWindowManagerProvider, useDashboardWindowLandmark } from "../../context/DashboardWindowManagerContext";
 import {
-  FLOATING_WINDOW_STANDARD_HEIGHT_RATIO,
   FLOATING_WINDOW_TASK_STANDARD_HEIGHT,
+  FLOATING_WINDOW_TASK_STANDARD_WIDTH,
   FloatingWindow,
 } from "../FloatingWindow";
+import { expectedOpeningSize } from "./floatingWindowOpeningFixture";
 import { TerminalModal, _resetInitialViewportHeight } from "../TerminalModal";
 
 /*
@@ -33,10 +34,16 @@ FNXC:TerminalWindow 2026-09-15-13:41:
 FN-418 caps the standard OPENING height at a proportion of the live work area, so the parity assertion derives
 the expected height from that contract. The parity invariant is unchanged: a detached terminal still opens at
 the same standard rectangle as a task window.
+
+FNXC:TerminalWindow 2026-09-16-05:45:
+FN-456 normalizes the opening shape to the shared 1.43 ratio, so BOTH axes are now derived from the production
+seam through the shared opening fixture. The parity invariant is again unchanged.
 */
-function standardOpeningHeight(): number {
-  const workArea = window.innerHeight - HEADER_HEIGHT - FOOTER_HEIGHT;
-  return Math.min(FLOATING_WINDOW_TASK_STANDARD_HEIGHT, Math.round(workArea * FLOATING_WINDOW_STANDARD_HEIGHT_RATIO));
+function standardOpeningSize() {
+  return expectedOpeningSize(
+    { width: FLOATING_WINDOW_TASK_STANDARD_WIDTH, height: FLOATING_WINDOW_TASK_STANDARD_HEIGHT },
+    { bounds: { left: 0, top: HEADER_HEIGHT, right: window.innerWidth, bottom: window.innerHeight - FOOTER_HEIGHT, width: window.innerWidth, height: window.innerHeight - HEADER_HEIGHT - FOOTER_HEIGHT } },
+  );
 }
 
 vi.mock("../../hooks/useTerminal", () => ({ useTerminal: vi.fn() }));
@@ -225,15 +232,15 @@ describe("detached terminal window parity", () => {
     renderDetachedTerminal("parity-size");
 
     const panel = await screen.findByTestId("floating-window-terminal-parity-size");
-    await waitFor(() => expect(rectOf(panel).width).toBe(800));
-    expect(rectOf(panel).height).toBe(standardOpeningHeight());
+    await waitFor(() => expect(rectOf(panel).width).toBe(standardOpeningSize().width));
+    expect(rectOf(panel).height).toBe(standardOpeningSize().height);
   });
 
   it("snaps the detached terminal to the right half from its own header", async () => {
     renderDetachedTerminal("parity-snap-right");
 
     const panel = await screen.findByTestId("floating-window-terminal-parity-snap-right");
-    await waitFor(() => expect(rectOf(panel).width).toBe(800));
+    await waitFor(() => expect(rectOf(panel).width).toBe(standardOpeningSize().width));
     const handle = panel.querySelector(".terminal-header") as HTMLElement;
 
     drag(handle, { from: { x: 600, y: 400 }, to: { x: 1000, y: 400 }, pointerId: 10, hold: true });
@@ -248,7 +255,7 @@ describe("detached terminal window parity", () => {
     renderDetachedTerminal("parity-snap-top");
 
     const panel = await screen.findByTestId("floating-window-terminal-parity-snap-top");
-    await waitFor(() => expect(rectOf(panel).width).toBe(800));
+    await waitFor(() => expect(rectOf(panel).width).toBe(standardOpeningSize().width));
     const handle = panel.querySelector(".terminal-header") as HTMLElement;
     const floating = rectOf(panel);
 
@@ -273,7 +280,7 @@ describe("detached terminal window parity", () => {
     renderDetachedTerminal("parity-undock-up");
 
     const panel = await screen.findByTestId("floating-window-terminal-parity-undock-up");
-    await waitFor(() => expect(rectOf(panel).width).toBe(800));
+    await waitFor(() => expect(rectOf(panel).width).toBe(standardOpeningSize().width));
     const handle = panel.querySelector(".terminal-header") as HTMLElement;
     const floating = rectOf(panel);
 

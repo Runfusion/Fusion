@@ -1,7 +1,8 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, beforeEach } from "vitest";
 import { DashboardWindowManagerProvider } from "../context/DashboardWindowManagerContext";
-import { FLOATING_WINDOW_STANDARD_HEIGHT_RATIO, FloatingWindow } from "../components/FloatingWindow";
+import { FloatingWindow } from "../components/FloatingWindow";
+import { expectedOpeningSize } from "../components/__tests__/floatingWindowOpeningFixture";
 
 /*
 FNXC:TaskWindowIdentity 2026-09-14-21:10:
@@ -14,14 +15,27 @@ FNXC:TaskWindowIdentity 2026-09-15-13:41:
 FN-418 caps the standard OPENING height at a proportion of the live work area, so the expected height is
 derived from that contract instead of the host's declared 620px literal. The identity invariant is unchanged:
 two task windows still open at the same standard rectangle and the legacy record is still ignored.
+
+FNXC:TaskWindowIdentity 2026-09-16-05:45:
+FN-456 normalizes the opening to the shared 1.43 ratio, so a task window no longer opens at its declared
+820x620. The identity invariant is again unchanged; the expected rectangle simply comes from the shared
+opening fixture, which reads the production seam, instead of a local re-implementation of the formula.
 */
 
 const LEGACY_TASK_DETAIL_GEOMETRY_KEY = "floating-window:task-detail";
 const TASK_DEFAULT_HEIGHT = 620;
+const TASK_DEFAULT_WIDTH = 820;
 
-/** Opening height under the FN-418 proportional cap. No landmarks here, so the work area is the viewport. */
-function openingHeight(): number {
-  return Math.min(TASK_DEFAULT_HEIGHT, Math.round(window.innerHeight * FLOATING_WINDOW_STANDARD_HEIGHT_RATIO));
+/** Opening rectangle of a task window. No landmarks here, so the work area is the whole viewport. */
+function taskOpeningSize() {
+  return expectedOpeningSize({ width: TASK_DEFAULT_WIDTH, height: TASK_DEFAULT_HEIGHT }, { bounds: workArea() });
+}
+
+function workArea() {
+  return {
+    left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight,
+    width: window.innerWidth, height: window.innerHeight,
+  };
 }
 
 function taskWindow(taskId: string) {
@@ -33,7 +47,7 @@ function taskWindow(taskId: string) {
       hideHeader
       dragHandleSelector=".task-detail-content--embedded > .modal-header"
       className="floating-window--task-detail"
-      defaultSize={{ width: 820, height: TASK_DEFAULT_HEIGHT }}
+      defaultSize={{ width: TASK_DEFAULT_WIDTH, height: TASK_DEFAULT_HEIGHT }}
       layer="task-detail"
     >
       <div className="task-detail-content--embedded">
@@ -63,15 +77,15 @@ describe("task-detail FloatingWindow geometry", () => {
 
     const first = renderTaskDetailPopup("FN-7459-A");
     const firstPanel = screen.getByTestId("floating-window-task-detail-FN-7459-A");
-    expect(firstPanel.style.width).toBe("820px");
-    expect(firstPanel.style.height).toBe(`${openingHeight()}px`);
+    expect(firstPanel.style.width).toBe(`${taskOpeningSize().width}px`);
+    expect(firstPanel.style.height).toBe(`${taskOpeningSize().height}px`);
 
     first.unmount();
     renderTaskDetailPopup("FN-7459-B");
 
     const secondPanel = screen.getByTestId("floating-window-task-detail-FN-7459-B");
-    expect(secondPanel.style.width).toBe("820px");
-    expect(secondPanel.style.height).toBe(`${openingHeight()}px`);
+    expect(secondPanel.style.width).toBe(`${taskOpeningSize().width}px`);
+    expect(secondPanel.style.height).toBe(`${taskOpeningSize().height}px`);
     expect(secondPanel).toHaveClass("floating-window--task-detail");
     // The legacy record is neither used nor rewritten; FN-394 performs no purge.
     expect(localStorage.getItem(LEGACY_TASK_DETAIL_GEOMETRY_KEY)).toBe(legacy);
@@ -111,8 +125,10 @@ describe("task-detail FloatingWindow geometry", () => {
 
     const taskPanel = screen.getByTestId("floating-window-task-detail-FN-7459");
     const missionPanel = screen.getByTestId("floating-window-mission");
-    expect(taskPanel.style.width).toBe("820px");
-    expect(missionPanel.style.width).toBe("700px");
+    expect(taskPanel.style.width).toBe(`${taskOpeningSize().width}px`);
+    expect(missionPanel.style.width).toBe(
+      `${expectedOpeningSize({ width: 700, height: 520 }, { bounds: workArea() }).width}px`,
+    );
     // Each window owns its own placement inside the shared pristine cohort.
     expect(missionPanel.style.left).not.toBe(taskPanel.style.left);
     expect(Number(missionPanel.style.zIndex)).toBeGreaterThan(Number(taskPanel.style.zIndex));

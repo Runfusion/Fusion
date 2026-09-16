@@ -3,9 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useDashboardWindowLandmark, DashboardWindowManagerProvider } from "../../context/DashboardWindowManagerContext";
 import {
   FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT,
-  FLOATING_WINDOW_STANDARD_HEIGHT_RATIO,
   FloatingWindow,
 } from "../FloatingWindow";
+import { expectedOpeningSize } from "./floatingWindowOpeningFixture";
 
 const rects = {
   header: { left: 0, top: 0, right: 1280, bottom: 64, width: 1280, height: 64 },
@@ -16,13 +16,24 @@ const rects = {
 
 let resizeObservers: Array<() => void> = [];
 
-/** FloatingWindow's default minimum height: it still wins over the FN-418 proportional opening cap. */
-const DEFAULT_MIN_HEIGHT = 280;
+/*
+FNXC:FloatingWindowBounds 2026-09-16-05:45:
+FN-456 derives the opening height from the width through the shared 1.43 ratio, so this fixture can no longer
+re-implement the formula locally. Expected rectangles now come from the production seam through the shared
+opening fixture; the bounds intent of each case is unchanged.
+*/
+function workArea(areaWidth: number, areaHeight: number, top = 64) {
+  return { left: 0, top, right: areaWidth, bottom: top + areaHeight, width: areaWidth, height: areaHeight };
+}
 
-/** Standard opening height of a 500px-tall host in a work area of `areaHeight` (FN-418 cap, then clamps). */
-function standardHeight(areaHeight: number): number {
-  const capped = Math.min(500, Math.round(areaHeight * FLOATING_WINDOW_STANDARD_HEIGHT_RATIO));
-  return Math.min(Math.max(capped, DEFAULT_MIN_HEIGHT), areaHeight);
+/** Standard opening size of a host in a work area of `areaWidth` x `areaHeight`. */
+function standardSize(
+  requested: { width: number; height: number },
+  areaWidth: number,
+  areaHeight: number,
+  minSize?: { width: number; height: number },
+) {
+  return expectedOpeningSize(requested, { bounds: workArea(areaWidth, areaHeight), minSize });
 }
 
 function domRect(value: Omit<DOMRect, "x" | "y" | "toJSON">): DOMRect {
@@ -126,9 +137,10 @@ describe("FloatingWindow available shell bounds", () => {
     expect(panel.style.top).toBe("64px");
     cancelTopLeft();
 
+    const edgeSize = standardSize({ width: 300, height: 200 }, 980, 700, { width: 100, height: 100 });
     const cancelBottomRight = holdDragTo(handle, 5000, 5000, 2);
-    expect(panel.style.left).toBe("680px");
-    expect(panel.style.top).toBe("564px");
+    expect(panel.style.left).toBe(`${980 - edgeSize.width}px`);
+    expect(panel.style.top).toBe(`${764 - edgeSize.height}px`);
     expect(Number.parseFloat(panel.style.left) + Number.parseFloat(panel.style.width)).toBe(980);
     expect(Number.parseFloat(panel.style.top) + Number.parseFloat(panel.style.height)).toBe(764);
     cancelBottomRight();
@@ -183,8 +195,8 @@ describe("FloatingWindow available shell bounds", () => {
     window.addEventListener(FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT, geometryEvents);
     // Opening height against the initial work area (header + standard footer) and, after the rerender, against
     // the taller alpha-footer work area — a still-pristine window re-resolves its standard size.
-    const openedHeight = standardHeight(800 - 64 - 36);
-    const alphaFooterHeight = standardHeight(800 - 64 - 48);
+    const openedHeight = standardSize({ width: 600, height: 500 }, 1280, 800 - 64 - 36).height;
+    const alphaFooterHeight = standardSize({ width: 600, height: 500 }, 980, 800 - 64 - 48).height;
     const { rerender } = render(
       <DashboardWindowManagerProvider>
         <Landmarks dock={false} />
@@ -209,10 +221,12 @@ describe("FloatingWindow available shell bounds", () => {
     Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 900 });
     Object.defineProperty(window, "innerHeight", { configurable: true, writable: true, value: 500 });
     fireEvent(window, new Event("resize"));
+    const shrunken = standardSize({ width: 600, height: 500 }, 900 - 300, 500 - 64 - 48);
     await waitFor(() => {
-      // Width still fills the shrunken work area; height follows the standard opening contract for it.
-      expect(Number.parseFloat(panel.style.width)).toBe(900 - 300);
-      expect(Number.parseFloat(panel.style.height)).toBe(standardHeight(500 - 64 - 48));
+      // Both axes follow the standard opening contract re-resolved against the shrunken work area.
+      expect(Number.parseFloat(panel.style.width)).toBe(shrunken.width);
+      expect(Number.parseFloat(panel.style.height)).toBe(shrunken.height);
+      expect(Number.parseFloat(panel.style.width)).toBeLessThanOrEqual(900 - 300);
     });
     expect(geometryEvents).toHaveBeenCalled();
     window.removeEventListener(FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT, geometryEvents);

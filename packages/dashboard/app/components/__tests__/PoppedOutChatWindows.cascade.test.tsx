@@ -3,11 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DashboardWindowManagerProvider } from "../../context/DashboardWindowManagerContext";
 import {
   FLOATING_WINDOW_CASCADE_STEP_PX,
-  FLOATING_WINDOW_STANDARD_HEIGHT_RATIO,
   FLOATING_WINDOW_TASK_STANDARD_HEIGHT,
   FLOATING_WINDOW_TASK_STANDARD_WIDTH,
   FloatingWindow,
 } from "../FloatingWindow";
+import { expectedOpeningSize } from "./floatingWindowOpeningFixture";
 import { PoppedOutChatWindows } from "../PoppedOutChatWindows";
 
 /*
@@ -26,6 +26,10 @@ FNXC:ChatWindows 2026-09-15-13:41:
 FN-418 caps the standard OPENING height at a proportion of the live work area, so the expected height is
 derived from that contract (`openingHeight()`) instead of the raw task-standard constant. The FN-401
 invariant is unchanged and still asserted: chat and task windows open at the SAME rectangle.
+
+FNXC:ChatWindows 2026-09-16-05:45:
+FN-456 normalizes the opening shape to the shared 1.43 ratio, so the expected rectangle is derived from the
+production seam through the shared opening fixture rather than from a local copy of the formula.
 */
 
 vi.mock("../ChatView", () => ({
@@ -34,9 +38,18 @@ vi.mock("../ChatView", () => ({
 
 const CHAT_WIDTH = FLOATING_WINDOW_TASK_STANDARD_WIDTH;
 
-/** Opening height under the FN-418 proportional cap. No landmarks here, so the work area is the viewport. */
-function openingHeight(requested = FLOATING_WINDOW_TASK_STANDARD_HEIGHT): number {
-  return Math.min(requested, Math.round(window.innerHeight * FLOATING_WINDOW_STANDARD_HEIGHT_RATIO));
+/** Standard opening size. No landmarks here, so the work area is the whole viewport. */
+function openingSize(requested = { width: CHAT_WIDTH, height: FLOATING_WINDOW_TASK_STANDARD_HEIGHT }) {
+  return expectedOpeningSize(requested, {
+    bounds: {
+      left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight,
+      width: window.innerWidth, height: window.innerHeight,
+    },
+  });
+}
+
+function openingHeight(): number {
+  return openingSize().height;
 }
 
 const entry = (id: string, projectId = "project-a") => ({

@@ -39,6 +39,7 @@ import {
   resolveOpeningRect,
   resolveSnapRect,
   shouldDetachSnappedWindow,
+  type FloatingWindowOpeningSizePolicy,
   type FloatingWindowPosition,
   type FloatingWindowRect,
   type FloatingWindowSize,
@@ -76,6 +77,14 @@ export interface FloatingWindowProps {
   defaultSize?: FloatingWindowSize;
   defaultPosition?: FloatingWindowPosition;
   minSize?: FloatingWindowSize;
+  /*
+  FNXC:FloatingWindowGeometry 2026-09-16-05:45:
+  FN-456: every window OPENS at the shared 1.43 landscape ratio. A host declares `full-view` only when its
+  opening deliberately fills the work area — Git Manager (header/footer "more" menu) and Planning mode — because
+  the operator explicitly refused to see those integral views shrunk or cropped by the ratio. Omitting the prop
+  means `aspect-ratio`, so no existing host changes. Resizing, dragging, and docking stay free either way.
+  */
+  openingSizePolicy?: FloatingWindowOpeningSizePolicy;
   /*
   FNXC:FloatingWindow 2026-06-22-12:20:
   Task detail pop-outs should look like the fixed "Open task" modal: one task header containing task id, status badge, edit, and close. `hideHeader` removes the generic window chrome, while `dragHandleSelector` lets that task header remain the drag handle so the modal stays movable and resizable.
@@ -226,6 +235,7 @@ export function FloatingWindow({
   ariaLabel,
   ariaLabelledBy,
   onDragGestureEnd,
+  openingSizePolicy = "aspect-ratio",
 }: FloatingWindowProps) {
   const { t } = useTranslation("app");
   const availableBounds = useDashboardWindowBounds();
@@ -298,7 +308,7 @@ export function FloatingWindow({
   const userAdjustedRef = useRef(false);
 
   const openingRect = useMemo(
-    () => resolveOpeningRect({ defaultSize, defaultPosition, minSize: resolvedMinSize, bounds: availableBounds, cascadeSlot: 0 }),
+    () => resolveOpeningRect({ defaultSize, defaultPosition, minSize: resolvedMinSize, bounds: availableBounds, cascadeSlot: 0, openingSizePolicy }),
     // Opening geometry is captured once per identity; later bounds changes clamp instead of re-opening.
     [windowKey],
   );
@@ -352,12 +362,13 @@ export function FloatingWindow({
       minSize: resolvedMinSize,
       bounds: boundsRef.current,
       cascadeSlot: slot,
+      openingSizePolicy,
     });
     floatingRectRef.current = rect;
     snapModeRef.current = "floating";
     setSnapMode("floating");
     applyRect(rect);
-  }, [applyRect, defaultPosition, defaultSize, resolvedMinSize]);
+  }, [applyRect, defaultPosition, defaultSize, openingSizePolicy, resolvedMinSize]);
   const openStandardRef = useRef(openStandard);
   openStandardRef.current = openStandard;
 

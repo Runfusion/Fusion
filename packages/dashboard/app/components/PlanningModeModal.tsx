@@ -3532,6 +3532,8 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       dragHandleSelector=".planning-modal .view-header"
       className="floating-window--planning-mode"
       defaultSize={{ width: Math.min(window.innerWidth * 0.95, 1200), height: window.innerHeight * 0.85 }}
+      /* FNXC:FloatingWindowGeometry 2026-09-16-05:45: FN-456 exempts the integral views from the shared 1.43 opening ratio (operator: "ça ne doit pas impacter les vues intégrales"). Planning mode is viewport-proportional by design, so its opening geometry stays exactly pre-FN-456. */
+      openingSizePolicy="full-view"
       minSize={{ width: 360, height: 480 }}
       suspendGeometryPersistenceOnMobile
       suspendGeometryPersistenceOnShortViewport

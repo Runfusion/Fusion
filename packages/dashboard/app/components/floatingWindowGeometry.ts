@@ -37,9 +37,40 @@ export interface FloatingWindowRect {
 /** Placement of a window inside the dashboard work area. `floating` is free geometry. */
 export type FloatingWindowSnapMode = "floating" | "left" | "right" | "maximized";
 
+/*
+FNXC:FloatingWindowGeometry 2026-09-16-05:45:
+FN-456: the operator asked that EVERY modal open at the SAME landscape shape — width / height = 1.43 —
+because each host declared its own `defaultSize` (520x320, 800x680, 900x660, 1100x720, 1200x720...), so the
+opening ratio ranged from ~1.18 to >1.9 and every dialog looked arbitrarily shaped. The rule is DRY: it lives
+ONLY here, applied by `resolveStandardSize`, so no host has to restate it.
+
+SCOPE — OPENING ONLY. "Après le redimensionnement est libre": manual resize, drag, snap/dock, restore after
+dock, cascade, re-clamp on bounds change, and mobile full-screen sheets are all untouched by the ratio.
+
+EXEMPTION 1 — FULL VIEWS (`openingSizePolicy: "full-view"`). A view that deliberately FILLS the work area
+(Git Manager opened from the header/footer "more" menu, Planning mode) would be shrunk and cropped by the
+ratio; the operator explicitly excluded them, so their opening geometry stays bit-for-bit pre-FN-456.
+
+EXEMPTION 2 — NESTED CSS DIALOGS. The raw `modal-overlay open` overlays inside `SettingsModal.tsx` (path
+pickers, nested confirmations) and the mobile drawer overlay of `NewTaskModal.tsx` own NO window geometry:
+their size comes from CSS flow (`.modal.modal-lg`), they are neither draggable nor resizable, so "resizing is
+free afterwards" does not apply to them. They stay out of scope deliberately, not accidentally.
+*/
+export const FLOATING_WINDOW_OPENING_ASPECT_RATIO = 1.43;
+
+/**
+ * Opening size policy for a window host.
+ * - `aspect-ratio` (default): normalized to {@link FLOATING_WINDOW_OPENING_ASPECT_RATIO} (FN-456).
+ * - `full-view`: exempt full-work-area views; opening geometry is exactly the pre-FN-456 behaviour.
+ */
+export type FloatingWindowOpeningSizePolicy = "aspect-ratio" | "full-view";
+
 /** Standard opening size used when a host declares no `defaultSize`. */
 export const FLOATING_WINDOW_STANDARD_WIDTH = 720;
-export const FLOATING_WINDOW_STANDARD_HEIGHT = 560;
+/** Derived from the shared opening ratio (FN-456) so the fallback cannot drift from the rule. */
+export const FLOATING_WINDOW_STANDARD_HEIGHT = Math.round(
+  FLOATING_WINDOW_STANDARD_WIDTH / FLOATING_WINDOW_OPENING_ASPECT_RATIO,
+);
 /*
 FNXC:FloatingWindowGeometry 2026-09-15-04:01:
 FN-401: a detached conversation used to open at 980x680 while a task window opened at 800x680, so every
@@ -47,9 +78,15 @@ chat pop-out looked oversized next to the task windows it sits beside. Task and 
 ONE standard opening size expressed by these constants, and every host (Task Detail modal, task pop-out,
 detached chat) reads them instead of repeating a literal. `minSize` stays per host: Chat keeps a narrower
 minimum so it remains usable inside a half-width snap column.
+
+FNXC:FloatingWindowGeometry 2026-09-16-05:45:
+FN-456 keeps the shared task/chat WIDTH as the host intent and DERIVES its height from the shared opening
+ratio, so the one place that states 1.43 stays the seam constant above (the former literal 680 opened at ~1.18).
 */
 export const FLOATING_WINDOW_TASK_STANDARD_WIDTH = 800;
-export const FLOATING_WINDOW_TASK_STANDARD_HEIGHT = 680;
+export const FLOATING_WINDOW_TASK_STANDARD_HEIGHT = Math.round(
+  FLOATING_WINDOW_TASK_STANDARD_WIDTH / FLOATING_WINDOW_OPENING_ASPECT_RATIO,
+);
 /*
 FNXC:FloatingWindowGeometry 2026-09-15-13:41:
 FN-418: an opening height expressed in FIXED PIXELS was only ever clamped DOWN to the work area, so any
@@ -62,6 +99,12 @@ inside the 60/65% the operator asked for). The cap applies at opening only: `min
 (`clampFloatingWindowSize` keeps its max-then-min order), the live work area still has the last word, and
 snapping, manual resizing, restore-after-snap, and mobile full-screen sheets are untouched. Width is never
 capped — the request was about height alone.
+
+FNXC:FloatingWindowGeometry 2026-09-16-05:45:
+FN-456 keeps this cap but changes HOW it is applied per opening policy:
+- `aspect-ratio`: the cap is applied THROUGH the ratio normalization, as a single scale factor reducing BOTH
+  axes, so an over-tall opening shrinks without breaking the 1.43 shape the operator asked for.
+- `full-view`: unchanged, still a plain `Math.min` on the height alone with the width left intact.
 */
 export const FLOATING_WINDOW_STANDARD_HEIGHT_RATIO = 0.62;
 /** Shared cascade step for the pristine-window cohort. Identical for every window type (DRY with chats). */
@@ -127,21 +170,50 @@ export function clampFloatingWindowRect(
 }
 
 /**
- * The window's own standard size: capped to {@link FLOATING_WINDOW_STANDARD_HEIGHT_RATIO} of the live work
- * area (height only, FN-418) and then clamped to that area. Never derived from another window.
+ * The window's own standard size. Never derived from another window.
+ *
+ * - `aspect-ratio` (default, FN-456): the host's requested WIDTH carries its intent, the height is derived
+ *   from {@link FLOATING_WINDOW_OPENING_ASPECT_RATIO}, then BOTH axes are reduced by one shared scale factor
+ *   so the FN-418 proportional height cap and the live work-area width still hold without breaking the shape.
+ * - `full-view` (FN-456 exemption): the pre-FN-456 branch verbatim — the FN-418 cap on the height alone, the
+ *   width untouched — so a work-area-filling view is never shrunk or cropped by the ratio.
+ *
+ * Both policies end on the existing `clampFloatingWindowSize` (max-then-min), so `minSize` and then the live
+ * work area keep exactly the priority they have today, and degenerate bounds behave exactly as before.
  */
 export function resolveStandardSize(
   defaultSize: FloatingWindowSize | undefined,
   minSize: FloatingWindowSize,
   bounds: DashboardWindowBounds,
+  openingSizePolicy: FloatingWindowOpeningSizePolicy = "aspect-ratio",
 ): FloatingWindowSize {
   const requested = defaultSize && finite(defaultSize.width, defaultSize.height)
     ? defaultSize
     : { width: FLOATING_WINDOW_STANDARD_WIDTH, height: FLOATING_WINDOW_STANDARD_HEIGHT };
-  const proportional = Number.isFinite(bounds.height) && bounds.height > 0
-    ? Math.min(requested.height, Math.round(bounds.height * FLOATING_WINDOW_STANDARD_HEIGHT_RATIO))
-    : requested.height;
-  return clampFloatingWindowSize({ width: requested.width, height: proportional }, minSize, bounds);
+  const hasHeightBound = Number.isFinite(bounds.height) && bounds.height > 0;
+
+  if (openingSizePolicy === "full-view") {
+    const proportional = hasHeightBound
+      ? Math.min(requested.height, Math.round(bounds.height * FLOATING_WINDOW_STANDARD_HEIGHT_RATIO))
+      : requested.height;
+    return clampFloatingWindowSize({ width: requested.width, height: proportional }, minSize, bounds);
+  }
+
+  const ratioWidth = requested.width;
+  const ratioHeight = ratioWidth / FLOATING_WINDOW_OPENING_ASPECT_RATIO;
+  const maxHeight = hasHeightBound
+    ? Math.min(bounds.height, Math.round(bounds.height * FLOATING_WINDOW_STANDARD_HEIGHT_RATIO))
+    : Number.POSITIVE_INFINITY;
+  const maxWidth = Number.isFinite(bounds.width) && bounds.width > 0 ? bounds.width : Number.POSITIVE_INFINITY;
+  const scales = [1];
+  if (Number.isFinite(maxHeight) && Number.isFinite(ratioHeight) && ratioHeight > 0) scales.push(maxHeight / ratioHeight);
+  if (Number.isFinite(maxWidth) && Number.isFinite(ratioWidth) && ratioWidth > 0) scales.push(maxWidth / ratioWidth);
+  const scale = Math.min(...scales);
+  const scaled = {
+    width: Math.round(ratioWidth * scale),
+    height: Math.round(ratioHeight * scale),
+  };
+  return clampFloatingWindowSize(scaled, minSize, bounds);
 }
 
 /** Centre of the live work area for a given size. */
@@ -190,8 +262,11 @@ export function resolveOpeningRect(input: {
   minSize: FloatingWindowSize;
   bounds: DashboardWindowBounds;
   cascadeSlot?: number;
+  /** FN-456 opening policy; omitted or unrecognized means `aspect-ratio`, so no existing host changes. */
+  openingSizePolicy?: FloatingWindowOpeningSizePolicy;
 }): FloatingWindowRect {
-  const size = resolveStandardSize(input.defaultSize, input.minSize, input.bounds);
+  const policy: FloatingWindowOpeningSizePolicy = input.openingSizePolicy === "full-view" ? "full-view" : "aspect-ratio";
+  const size = resolveStandardSize(input.defaultSize, input.minSize, input.bounds, policy);
   const base = input.defaultPosition && finite(input.defaultPosition.x, input.defaultPosition.y)
     ? clampFloatingWindowPosition(input.defaultPosition, size, input.bounds)
     : resolveCenteredPosition(size, input.bounds);

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { ScheduledTasksModal } from "../ScheduledTasksModal";
-import { FLOATING_WINDOW_STANDARD_HEIGHT_RATIO } from "../FloatingWindow";
+import { expectedOpeningSize } from "./floatingWindowOpeningFixture";
 import { readAppFile } from "../../test/cssFixture";
 import { assertModalGeometryRecoveryAndSheetContracts, assertRenderedModalTouchGeometry } from "./floatingWindowMigration.test-helpers";
 import type { Routine } from "@fusion/core";
@@ -96,9 +96,18 @@ vi.mock("../CustomModelDropdown", () => ({
 FNXC:AutomationsWindow 2026-09-15-13:41:
 FN-418 caps the standard OPENING height at a proportion of the live work area, so the expected height is
 derived from that contract instead of the 640px this host declares. The window-shell invariant is unchanged.
+
+FNXC:AutomationsWindow 2026-09-16-05:45:
+FN-456 normalizes the opening shape to the shared 1.43 ratio, so the expected rectangle now comes from the
+production seam through the shared opening fixture instead of a local copy of the formula.
 */
-function standardOpeningHeight(requested: number): number {
-  return Math.min(requested, Math.round(window.innerHeight * FLOATING_WINDOW_STANDARD_HEIGHT_RATIO));
+function standardOpeningSize(requested: { width: number; height: number }) {
+  return expectedOpeningSize(requested, {
+    bounds: {
+      left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight,
+      width: window.innerWidth, height: window.innerHeight,
+    },
+  });
 }
 
 function setViewport(width: number, height: number) {
@@ -167,8 +176,9 @@ describe("ScheduledTasksModal", () => {
     const panel = screen.getByTestId("floating-window-automation");
     expect(panel).toHaveClass("floating-window--automation");
     expect(panel).toHaveClass("floating-window--headerless");
-    expect(panel.style.width).toBe("720px");
-    expect(panel.style.height).toBe(`${standardOpeningHeight(640)}px`);
+    const standard = standardOpeningSize({ width: 720, height: 640 });
+    expect(panel.style.width).toBe(`${standard.width}px`);
+    expect(panel.style.height).toBe(`${standard.height}px`);
     expect(screen.queryByTestId("floating-window-drag-handle-automation")).toBeNull();
     expect(screen.getAllByRole("button", { name: "Close" })).toHaveLength(1);
 

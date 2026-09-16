@@ -390,16 +390,22 @@ describe("FloatingWindow snap gestures", () => {
   it("restores the pre-snap floating rect after left then right then maximized then a detaching drag", async () => {
     const { panel, handle } = renderWindow();
     await waitFor(() => expect(rectOf(panel).width).toBe(600));
+    const opened = rectOf(panel);
 
-    // A genuine free resize before any snap: this is the rectangle that must come back.
+    /*
+    FNXC:FloatingWindowSnap 2026-09-16-05:45:
+    FN-456 normalizes the OPENING height, so the pre-snap rectangle is expressed as the opened rectangle plus
+    the gesture's own travel rather than as a literal. Manual resizing itself is untouched by the ratio, which
+    is exactly what this delta asserts.
+    */
     const seHandle = screen.getByTestId("floating-window-resize-se");
     prepareCapture(seHandle);
     fireEvent.pointerDown(seHandle, { pointerId: 10, clientX: 500, clientY: 500 });
     fireEvent.pointerMove(seHandle, { pointerId: 10, clientX: 560, clientY: 540 });
     fireEvent.pointerUp(seHandle, { pointerId: 10, clientX: 560, clientY: 540 });
     const floating = rectOf(panel);
-    expect(floating.width).toBe(660);
-    expect(floating.height).toBe(440);
+    expect(floating.width).toBe(opened.width + 60);
+    expect(floating.height).toBe(opened.height + 40);
 
     drag(handle, { to: { x: 5, y: 400 }, pointerId: 11 });
     drag(handle, { from: { x: 300, y: 300 }, to: { x: 1278, y: 400 }, pointerId: 12 });
