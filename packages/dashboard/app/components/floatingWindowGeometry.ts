@@ -107,6 +107,27 @@ FN-456 keeps this cap but changes HOW it is applied per opening policy:
 - `full-view`: unchanged, still a plain `Math.min` on the height alone with the width left intact.
 */
 export const FLOATING_WINDOW_STANDARD_HEIGHT_RATIO = 0.62;
+/*
+FNXC:FloatingWindowGeometry 2026-09-16-07:38:
+FN-460: after FN-456 every modal opened at the right SHAPE but the operator judged them too small —
+"augmente la taille de 20%. même ratio". This single shared constant is the TARGET scale factor of the
+`aspect-ratio` opening formula, so both axes grow together and 1.43 is preserved by construction.
+
+WHY IT IS ALSO APPLIED THROUGH THE FN-418 CAP: on any real work area the opening size is already bound by
+the 62% proportional height cap (a 1024x768 laptop leaves 668px, and the cap is the binding constraint for
+every task/chat/settings host). Scaling only the un-capped branch would be entirely absorbed by that cap and
+the operator would see NO change on a laptop, which is exactly the surface the request came from. The cap is
+therefore carried by the same factor.
+
+ASSUMED CONSEQUENCE: the effective opening height cap moves from 62% to 74.4% of the live work area. The
+FN-418 intent ("a window never fills the band between header and footer") still holds because `bounds.height`
+remains a HARD bound in the `Math.min` below and in the final `clampFloatingWindowSize`.
+
+OUT OF SCOPE, deliberately: the `full-view` policy (Git Manager, Planning mode) keeps its FN-456 exemption
+bit-for-bit, and every non-opening trajectory (manual resize, drag, snap/dock, restore, cascade, mobile
+sheets) is untouched — the factor lives only in the opening branch.
+*/
+export const FLOATING_WINDOW_OPENING_SIZE_SCALE = 1.2;
 /** Shared cascade step for the pristine-window cohort. Identical for every window type (DRY with chats). */
 export const FLOATING_WINDOW_CASCADE_STEP_PX = 28;
 /*
@@ -173,8 +194,11 @@ export function clampFloatingWindowRect(
  * The window's own standard size. Never derived from another window.
  *
  * - `aspect-ratio` (default, FN-456): the host's requested WIDTH carries its intent, the height is derived
- *   from {@link FLOATING_WINDOW_OPENING_ASPECT_RATIO}, then BOTH axes are reduced by one shared scale factor
- *   so the FN-418 proportional height cap and the live work-area width still hold without breaking the shape.
+ *   from {@link FLOATING_WINDOW_OPENING_ASPECT_RATIO}, then BOTH axes are scaled by one shared factor so the
+ *   FN-418 proportional height cap and the live work-area width still hold without breaking the shape.
+ *   FN-460: that shared factor now TARGETS {@link FLOATING_WINDOW_OPENING_SIZE_SCALE} instead of 1, so the
+ *   host's requested width is a scaled BASE rather than a ceiling — the opening box is 20% larger on both
+ *   axes wherever no clamp binds, and the proportional cap is carried by the same factor.
  * - `full-view` (FN-456 exemption): the pre-FN-456 branch verbatim — the FN-418 cap on the height alone, the
  *   width untouched — so a work-area-filling view is never shrunk or cropped by the ratio.
  *
@@ -202,10 +226,13 @@ export function resolveStandardSize(
   const ratioWidth = requested.width;
   const ratioHeight = ratioWidth / FLOATING_WINDOW_OPENING_ASPECT_RATIO;
   const maxHeight = hasHeightBound
-    ? Math.min(bounds.height, Math.round(bounds.height * FLOATING_WINDOW_STANDARD_HEIGHT_RATIO))
+    ? Math.min(
+        bounds.height,
+        Math.round(bounds.height * FLOATING_WINDOW_STANDARD_HEIGHT_RATIO) * FLOATING_WINDOW_OPENING_SIZE_SCALE,
+      )
     : Number.POSITIVE_INFINITY;
   const maxWidth = Number.isFinite(bounds.width) && bounds.width > 0 ? bounds.width : Number.POSITIVE_INFINITY;
-  const scales = [1];
+  const scales = [FLOATING_WINDOW_OPENING_SIZE_SCALE];
   if (Number.isFinite(maxHeight) && Number.isFinite(ratioHeight) && ratioHeight > 0) scales.push(maxHeight / ratioHeight);
   if (Number.isFinite(maxWidth) && Number.isFinite(ratioWidth) && ratioWidth > 0) scales.push(maxWidth / ratioWidth);
   const scale = Math.min(...scales);

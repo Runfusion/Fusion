@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DashboardWindowManagerProvider, useDashboardWindowLandmark } from "../../context/DashboardWindowManagerContext";
 import { FloatingWindow } from "../FloatingWindow";
+import { expectedOpeningSize, harnessWorkArea } from "./floatingWindowOpeningFixture";
 
 /*
 FNXC:FloatingWindowSnap 2026-09-15-04:01:
@@ -14,6 +15,18 @@ and that it leaves no orphan node behind on release, cancellation, hiding, or un
 
 const HEADER_HEIGHT = 64;
 const FOOTER_HEIGHT = 36;
+
+/*
+FNXC:FloatingWindowSnap 2026-09-16-07:38:
+FN-460 opens the dragged window 20% larger, so its settle wait reads the production opening seam instead of
+the host's declared width. The preview-layer contract itself is untouched.
+*/
+function draggedOpeningWidth(): number {
+  return expectedOpeningSize(
+    { width: 600, height: 400 },
+    { minSize: { width: 320, height: 200 }, bounds: harnessWorkArea(HEADER_HEIGHT, FOOTER_HEIGHT) },
+  ).width;
+}
 
 function domRect(value: { left: number; top: number; right: number; bottom: number; width: number; height: number }): DOMRect {
   return { ...value, x: value.left, y: value.top, toJSON: () => ({}) } as DOMRect;
@@ -88,7 +101,7 @@ describe("FloatingWindow snap preview layer", () => {
 
   it("renders the armed preview outside every overlay and above all of them", async () => {
     renderTwoWindows();
-    await waitFor(() => expect(screen.getByTestId("floating-window-dragged").style.width).toBe("600px"));
+    await waitFor(() => expect(screen.getByTestId("floating-window-dragged").style.width).toBe(`${draggedOpeningWidth()}px`));
     expect(document.querySelectorAll(".floating-window-overlay").length).toBe(2);
 
     armLeftZone(1);
@@ -112,7 +125,7 @@ describe("FloatingWindow snap preview layer", () => {
 
   it("removes the preview node from the document on release", async () => {
     renderTwoWindows();
-    await waitFor(() => expect(screen.getByTestId("floating-window-dragged").style.width).toBe("600px"));
+    await waitFor(() => expect(screen.getByTestId("floating-window-dragged").style.width).toBe(`${draggedOpeningWidth()}px`));
     const handle = armLeftZone(2);
     expect(screen.getByTestId("floating-window-snap-preview-dragged")).toBeInTheDocument();
 
@@ -124,7 +137,7 @@ describe("FloatingWindow snap preview layer", () => {
 
   it("removes the preview node from the document on cancellation", async () => {
     renderTwoWindows();
-    await waitFor(() => expect(screen.getByTestId("floating-window-dragged").style.width).toBe("600px"));
+    await waitFor(() => expect(screen.getByTestId("floating-window-dragged").style.width).toBe(`${draggedOpeningWidth()}px`));
     const handle = armLeftZone(3);
     expect(screen.getByTestId("floating-window-snap-preview-dragged")).toBeInTheDocument();
 
@@ -136,7 +149,7 @@ describe("FloatingWindow snap preview layer", () => {
 
   it("leaves no orphan preview node in the body when the window unmounts mid-gesture", async () => {
     const { unmount } = renderTwoWindows();
-    await waitFor(() => expect(screen.getByTestId("floating-window-dragged").style.width).toBe("600px"));
+    await waitFor(() => expect(screen.getByTestId("floating-window-dragged").style.width).toBe(`${draggedOpeningWidth()}px`));
     armLeftZone(4);
     expect(screen.getByTestId("floating-window-snap-preview-dragged")).toBeInTheDocument();
 
@@ -148,7 +161,7 @@ describe("FloatingWindow snap preview layer", () => {
 
   it("shows no preview for a hidden window", async () => {
     const view = renderTwoWindows();
-    await waitFor(() => expect(screen.getByTestId("floating-window-dragged").style.width).toBe("600px"));
+    await waitFor(() => expect(screen.getByTestId("floating-window-dragged").style.width).toBe(`${draggedOpeningWidth()}px`));
     armLeftZone(5);
     expect(screen.getByTestId("floating-window-snap-preview-dragged")).toBeInTheDocument();
 

@@ -17,6 +17,12 @@ FNXC:FloatingWindowGeometry 2026-09-16-05:45:
 FN-456 normalizes the OPENING shape to the shared 1.43 ratio, so a host's declared `defaultSize` is no longer
 the rectangle it opens at. These windows render without landmarks, so the work area is the whole viewport;
 expected rectangles come from the production seam through the shared opening fixture.
+
+FNXC:FloatingWindowGeometry 2026-09-16-07:38:
+FN-460 opens every window 20% larger on both axes, so the remaining literal opening widths in this suite were
+pre-FN-460 values. They now read the same seam through `openingSize()`; each case still asserts exactly what
+it did before (sheet independence, stored-geometry rejection, touch gestures), only against the real opening
+rectangle instead of the host's declared one.
 */
 function openingSize(requested: { width: number; height: number }, minSize?: { width: number; height: number }) {
   return expectedOpeningSize(requested, {
@@ -466,7 +472,8 @@ describe("FloatingWindow", () => {
     fireEvent.pointerMove(eastHandle, { pointerId: 31, clientX: 440, clientY: 180 });
     fireEvent.pointerUp(eastHandle, { pointerId: 31, clientX: 440, clientY: 180 });
 
-    expect(panel.style.width).toBe("360px");
+    // Manual resize is NOT normalized: it adds the 40px of pointer travel to whatever the window opened at.
+    expect(panel.style.width).toBe(`${openingSize({ width: 320, height: 240 }, { width: 240, height: 180 }).width + 40}px`);
   });
 
   it("uses a theme-overridable gentle shadow token instead of an undefined shadow", () => {
@@ -1061,7 +1068,7 @@ describe("FloatingWindow", () => {
     );
 
     const sheetPanel = screen.getByTestId("floating-window-sheet-preserve-mobile");
-    expect(sheetPanel.style.width).toBe("500px");
+    expect(sheetPanel.style.width).toBe(`${openingSize({ width: 500, height: 400 }).width}px`);
     expect(sheetPanel.style.left).toBe("32px");
     expect(JSON.parse(localStorage.getItem(key) ?? "{}")).toEqual(desktopGeometry);
     unmount();
@@ -1101,7 +1108,7 @@ describe("FloatingWindow", () => {
     );
 
     const sheetPanel = screen.getByTestId("floating-window-short-sheet");
-    expect(sheetPanel.style.width).toBe("500px");
+    expect(sheetPanel.style.width).toBe(`${openingSize({ width: 500, height: 400 }).width}px`);
     expect(sheetPanel.style.left).toBe("32px");
     expect(JSON.parse(localStorage.getItem(key) ?? "{}")).toEqual(desktopGeometry);
   });
@@ -1120,7 +1127,7 @@ describe("FloatingWindow", () => {
     );
 
     const panel = screen.getByTestId("floating-window-landscape-phone");
-    expect(panel.style.width).toBe("580px");
+    expect(panel.style.width).toBe(`${openingSize({ width: 580, height: 420 }).width}px`);
     expect(screen.getByTestId("floating-window-resize-se")).toBeInTheDocument();
     expect(JSON.parse(localStorage.getItem(key) ?? "{}")).toEqual(stored);
   });
@@ -1166,7 +1173,7 @@ describe("FloatingWindow", () => {
     );
 
     const panel = screen.getByTestId("floating-window-sheet-default");
-    expect(panel.style.width).toBe("560px");
+    expect(panel.style.width).toBe(`${openingSize({ width: 560, height: 400 }).width}px`);
     expect(screen.getByTestId("floating-window-resize-se")).toBeInTheDocument();
     expect(JSON.parse(localStorage.getItem(key) ?? "{}")).toEqual(geometry);
   });
@@ -1333,10 +1340,11 @@ describe("FloatingWindow", () => {
     expect(Number.parseInt(panel.style.left, 10)).toBeGreaterThanOrEqual(0);
     expect(Number.parseInt(panel.style.top, 10)).toBeGreaterThanOrEqual(0);
 
-    expect(panel.style.width).toBe("500px");
+    const openedWidth = openingSize({ width: 500, height: 400 }, { width: 360, height: 280 }).width;
+    expect(panel.style.width).toBe(`${openedWidth}px`);
     dragWithTouch(screen.getByText(`Drag ${windowKey}`));
     resizeWithTouch(screen.getByTestId("floating-window-resize-se"));
-    expect(Number.parseFloat(panel.style.width)).toBeGreaterThan(500);
+    expect(Number.parseFloat(panel.style.width)).toBeGreaterThan(openedWidth);
     expect(Number.parseFloat(panel.style.left)).toBeGreaterThanOrEqual(0);
     expect(localStorage.getItem(geometryKey)).toBe(stored);
     unmount();
@@ -1357,7 +1365,7 @@ describe("FloatingWindow", () => {
       </FloatingWindow>,
     );
     const panel = screen.getByTestId(`floating-window-${windowKey}`);
-    expect(Number.parseInt(panel.style.width, 10)).toBe(500);
+    expect(Number.parseInt(panel.style.width, 10)).toBe(openingSize({ width: 500, height: 400 }).width);
   });
 
   it.each(FN_8606_WINDOW_IDENTITIES)("wires %s to its accessible shared-window identity", (component, windowKey) => {

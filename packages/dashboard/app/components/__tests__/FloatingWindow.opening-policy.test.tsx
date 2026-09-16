@@ -5,7 +5,11 @@ import {
   FLOATING_WINDOW_CASCADE_STEP_PX,
   FloatingWindow,
 } from "../FloatingWindow";
-import { FLOATING_WINDOW_OPENING_ASPECT_RATIO } from "../floatingWindowGeometry";
+import {
+  FLOATING_WINDOW_OPENING_ASPECT_RATIO,
+  FLOATING_WINDOW_OPENING_SIZE_SCALE,
+  FLOATING_WINDOW_STANDARD_HEIGHT_RATIO,
+} from "../floatingWindowGeometry";
 import {
   FLOATING_WINDOW_DEFAULT_MIN_SIZE,
   expectedOpeningSize,
@@ -29,6 +33,11 @@ FNXC:FloatingWindowGeometry 2026-09-16-05:45:
 FN-456 normalizes the OPENING shape to 1.43, so a host's declared `defaultSize` is no longer the rectangle it
 opens at. Every expectation here is now derived from the production seam through `expectedOpeningSize()`, the
 single shared test helper, which is the "en DRY" part of the request applied to the suites.
+
+FNXC:FloatingWindowGeometry 2026-09-16-07:38:
+FN-460 enlarges that opening box by 20% on both axes. Every remaining opening literal in this suite was a
+pre-FN-460 value, so they are replaced by `openingSize()` reads of the production seam; the laptop symptom
+case below additionally pins the 20% relationship itself on a REALLY MOUNTED window.
 */
 
 const HEADER_HEIGHT = 64;
@@ -124,7 +133,7 @@ describe("FloatingWindow opening policy", () => {
       </DashboardWindowManagerProvider>,
     );
     const panel = screen.getByTestId("floating-window-alpha");
-    await waitFor(() => expect(Number.parseFloat(panel.style.width)).toBe(600));
+    await waitFor(() => expect(Number.parseFloat(panel.style.width)).toBe(openingSize({ width: 600, height: 400 }).width));
     expectCentered(panel, { width: 600, height: 400 });
   });
 
@@ -162,11 +171,12 @@ describe("FloatingWindow opening policy", () => {
       </DashboardWindowManagerProvider>,
     );
     const panel = screen.getByTestId("floating-window-alpha");
-    await waitFor(() => expect(Number.parseFloat(panel.style.width)).toBe(600));
+    const alphaSize = openingSize({ width: 600, height: 400 });
+    await waitFor(() => expect(Number.parseFloat(panel.style.width)).toBe(alphaSize.width));
     expectCentered(panel, { width: 600, height: 400 });
 
     dragBy(screen.getByTestId("floating-window-drag-handle-alpha"), 120, 90);
-    expect(rectOf(panel).left).not.toBe((window.innerWidth - 600) / 2);
+    expect(rectOf(panel).left).not.toBe((window.innerWidth - alphaSize.width) / 2);
     expect(setItem).not.toHaveBeenCalledWith("floating-window:alpha", expect.any(String));
     // Historical values stay untouched in storage; no global purge.
     expect(localStorage.getItem("floating-window:alpha")).toContain("250");
@@ -180,7 +190,7 @@ describe("FloatingWindow opening policy", () => {
       </DashboardWindowManagerProvider>,
     );
     const alpha = screen.getByTestId("floating-window-alpha");
-    await waitFor(() => expect(Number.parseFloat(alpha.style.width)).toBe(600));
+    await waitFor(() => expect(Number.parseFloat(alpha.style.width)).toBe(openingSize({ width: 600, height: 400 }).width));
     dragBy(screen.getByTestId("floating-window-drag-handle-alpha"), 150, 100);
 
     rerender(
@@ -191,7 +201,7 @@ describe("FloatingWindow opening policy", () => {
       </DashboardWindowManagerProvider>,
     );
     const beta = screen.getByTestId("floating-window-beta");
-    await waitFor(() => expect(Number.parseFloat(beta.style.width)).toBe(600));
+    await waitFor(() => expect(Number.parseFloat(beta.style.width)).toBe(openingSize({ width: 600, height: 400 }).width));
     // Alpha left the pristine cohort when it was dragged, freeing slot 0 for Beta.
     expectCentered(beta, { width: 600, height: 400 });
   });
@@ -203,7 +213,11 @@ describe("FloatingWindow opening policy", () => {
         <FloatingWindow windowKey="alpha" title="Alpha" onClose={() => {}} defaultSize={{ width: 600, height: 400 }}>a</FloatingWindow>
       </DashboardWindowManagerProvider>,
     );
-    await waitFor(() => expect(Number.parseFloat(screen.getByTestId("floating-window-alpha").style.width)).toBe(600));
+    await waitFor(() =>
+      expect(Number.parseFloat(screen.getByTestId("floating-window-alpha").style.width)).toBe(
+        openingSize({ width: 600, height: 400 }).width,
+      ),
+    );
     dragBy(screen.getByTestId("floating-window-drag-handle-alpha"), 200, 140);
 
     rerender(<DashboardWindowManagerProvider><Landmarks /></DashboardWindowManagerProvider>);
@@ -216,7 +230,7 @@ describe("FloatingWindow opening policy", () => {
       </DashboardWindowManagerProvider>,
     );
     const reopened = screen.getByTestId("floating-window-alpha");
-    await waitFor(() => expect(Number.parseFloat(reopened.style.width)).toBe(600));
+    await waitFor(() => expect(Number.parseFloat(reopened.style.width)).toBe(openingSize({ width: 600, height: 400 }).width));
     expectCentered(reopened, { width: 600, height: 400 });
   });
 
@@ -245,10 +259,16 @@ describe("FloatingWindow opening policy", () => {
   FNXC:FloatingWindowGeometry 2026-09-15-13:41:
   FN-418 symptom assertion: on a realistic laptop work area (1024x768 viewport, 64px header, 36px footer =>
   668px), a host asking for 720px used to open at 668px — 100% of the band between header and footer, which is
-  exactly what the operator reported. The opening height must now land inside the requested 60/65% range while
-  the window stays centred, and a host already below the cap must be left alone.
+  exactly what the operator reported. The opening height must now land inside the cap while the window stays
+  centred, and a host already below the cap must be left alone.
+
+  FNXC:FloatingWindowGeometry 2026-09-16-07:38:
+  FN-460 symptom assertion, on the SAME laptop work area, because that is the surface the "too small" report
+  came from: the window this harness used to open at 414px of height must now open 20% taller (~497px) at the
+  unchanged 1.43 shape, and still strictly below the work area. The three facts are asserted together — a
+  bigger window that broke the shape, or one that filled the band, would not be the requested change.
   */
-  it("opens a tall window at about two thirds of the work area instead of filling it", async () => {
+  it("opens a tall window 20% larger than before, at about three quarters of the work area", async () => {
     Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 1024 });
     Object.defineProperty(window, "innerHeight", { configurable: true, writable: true, value: 768 });
     render(
@@ -263,11 +283,15 @@ describe("FloatingWindow opening policy", () => {
 
     expect(workAreaHeight()).toBe(668);
     const rect = rectOf(panel);
-    expect(rect.height).toBe(414);
+    // The pre-FN-460 opening height on this exact harness, recomputed from the seam constants (414px).
+    const preScaleHeight = Math.round(workAreaHeight() * FLOATING_WINDOW_STANDARD_HEIGHT_RATIO);
+    expect(rect.height).toBe(tall.height);
+    expect(Math.abs(rect.height - preScaleHeight * FLOATING_WINDOW_OPENING_SIZE_SCALE)).toBeLessThanOrEqual(1);
+    expect(rect.height).toBeGreaterThan(preScaleHeight);
     expect(rect.height).toBeLessThan(workAreaHeight());
     const ratio = rect.height / workAreaHeight();
-    expect(ratio).toBeGreaterThanOrEqual(0.6);
-    expect(ratio).toBeLessThanOrEqual(0.65);
+    expect(ratio).toBeGreaterThanOrEqual(0.72);
+    expect(ratio).toBeLessThanOrEqual(0.76);
     // FN-456: and the window it opens is the shared 1.43 landscape shape.
     expect(Math.abs(rect.width / rect.height - FLOATING_WINDOW_OPENING_ASPECT_RATIO)).toBeLessThan(0.01);
     expectCentered(panel, { width: 720, height: 720 });
@@ -283,7 +307,7 @@ describe("FloatingWindow opening policy", () => {
       </DashboardWindowManagerProvider>,
     );
     const panel = screen.getByTestId("floating-window-short");
-    await waitFor(() => expect(Number.parseFloat(panel.style.width)).toBe(520));
+    await waitFor(() => expect(Number.parseFloat(panel.style.width)).toBe(openingSize({ width: 520, height: 400 }).width));
     expectCentered(panel, { width: 520, height: 400 });
   });
 
@@ -352,7 +376,11 @@ describe("FloatingWindow opening policy", () => {
         <FloatingWindow windowKey="alpha" title="Alpha" onClose={() => {}} defaultSize={{ width: 600, height: 400 }}>a</FloatingWindow>
       </DashboardWindowManagerProvider>,
     );
-    await waitFor(() => expect(Number.parseFloat(screen.getByTestId("floating-window-alpha").style.width)).toBe(600));
+    await waitFor(() =>
+      expect(Number.parseFloat(screen.getByTestId("floating-window-alpha").style.width)).toBe(
+        openingSize({ width: 600, height: 400 }).width,
+      ),
+    );
 
     Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 1000 });
     fireEvent(window, new Event("resize"));
@@ -365,9 +393,10 @@ describe("FloatingWindow opening policy", () => {
       </DashboardWindowManagerProvider>,
     );
     const beta = screen.getByTestId("floating-window-beta");
-    await waitFor(() => expect(Number.parseFloat(beta.style.width)).toBe(600));
+    const betaWidth = openingSize({ width: 600, height: 400 }).width;
+    await waitFor(() => expect(Number.parseFloat(beta.style.width)).toBe(betaWidth));
     // Alpha is still pristine, so Beta must take the cascaded slot rather than the centre.
-    expect(rectOf(beta).left).toBe((window.innerWidth - 600) / 2 + FLOATING_WINDOW_CASCADE_STEP_PX);
+    expect(rectOf(beta).left).toBe((window.innerWidth - betaWidth) / 2 + FLOATING_WINDOW_CASCADE_STEP_PX);
   });
 
   it("gives two windows sharing one logical id two distinct slots", async () => {

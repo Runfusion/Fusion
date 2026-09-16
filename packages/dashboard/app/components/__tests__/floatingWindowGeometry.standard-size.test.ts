@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { DashboardWindowBounds } from "../../context/DashboardWindowManagerContext";
 import {
   FLOATING_WINDOW_OPENING_ASPECT_RATIO,
+  FLOATING_WINDOW_OPENING_SIZE_SCALE,
   FLOATING_WINDOW_STANDARD_HEIGHT_RATIO,
   FLOATING_WINDOW_STANDARD_WIDTH,
   FLOATING_WINDOW_TASK_STANDARD_HEIGHT,
@@ -25,6 +26,12 @@ the cap is applied as a scale factor on BOTH axes. Expectations are therefore ex
 `FLOATING_WINDOW_OPENING_ASPECT_RATIO` and `FLOATING_WINDOW_STANDARD_HEIGHT_RATIO` rather than as literals.
 The "width is deliberately untouched" assertion is no longer true for ordinary dialogs — FN-456 replaced that
 contract — so it lives on in the `full-view` cases below, where it still holds exactly.
+
+FNXC:FloatingWindowGeometry 2026-09-16-07:38:
+FN-460 carries the cap itself by `FLOATING_WINDOW_OPENING_SIZE_SCALE`, so the EFFECTIVE opening height cap is
+62% x 1.2 = 74.4% of the live work area. The structural promise is unchanged and still asserted: the opening
+height stays strictly below the work area, so a window never fills the band between header and footer. The
+`full-view` cases below keep the UNSCALED cap on purpose — that is the tested proof of the FN-456 exemption.
 */
 
 const minSize = { width: 320, height: 240 };
@@ -36,33 +43,41 @@ function boundsOf(height: number, width = 1280): DashboardWindowBounds {
 /** Laptop work area from the operator's report: 1024x768 viewport, 64px header, 36px footer. */
 const LAPTOP_WORK_AREA_HEIGHT = 668;
 const laptop = boundsOf(LAPTOP_WORK_AREA_HEIGHT, 1024);
-const cappedLaptopHeight = Math.round(LAPTOP_WORK_AREA_HEIGHT * FLOATING_WINDOW_STANDARD_HEIGHT_RATIO);
+/** FN-418 proportional cap, unscaled. Still the exact contract of the `full-view` exemption. */
+const fullViewCappedLaptopHeight = Math.round(LAPTOP_WORK_AREA_HEIGHT * FLOATING_WINDOW_STANDARD_HEIGHT_RATIO);
+/** FN-460 effective cap for the `aspect-ratio` policy: the same cap carried by the 20% opening factor. */
+const cappedLaptopHeight = Math.round(fullViewCappedLaptopHeight * FLOATING_WINDOW_OPENING_SIZE_SCALE);
 
-describe("resolveStandardSize opening height cap (FN-418, FN-456 shape)", () => {
-  it("caps a tall host default to ~62% of the work area instead of filling it", () => {
+describe("resolveStandardSize opening height cap (FN-418 cap, FN-456 shape, FN-460 scale)", () => {
+  it("caps a tall host default to ~three quarters of the work area instead of filling it", () => {
     for (const requestedHeight of [720, FLOATING_WINDOW_TASK_STANDARD_HEIGHT]) {
       const size = resolveStandardSize({ width: 800, height: requestedHeight }, minSize, laptop);
       expect(size.height).toBe(cappedLaptopHeight);
+      // The structural promise FN-418 bought: still strictly inside the band between header and footer.
+      expect(size.height).toBeLessThan(laptop.height);
       const ratio = size.height / laptop.height;
-      expect(ratio).toBeGreaterThanOrEqual(0.6);
-      expect(ratio).toBeLessThanOrEqual(0.65);
-      // FN-456: the width now follows the capped height through the shared opening ratio.
-      expect(size.width).toBe(Math.round(cappedLaptopHeight * FLOATING_WINDOW_OPENING_ASPECT_RATIO));
+      expect(ratio).toBeGreaterThanOrEqual(0.72);
+      expect(ratio).toBeLessThanOrEqual(0.76);
+      // FN-456: the width still follows the capped height through the shared opening ratio (±1px rounding).
+      expect(Math.abs(size.width - size.height * FLOATING_WINDOW_OPENING_ASPECT_RATIO)).toBeLessThanOrEqual(1);
     }
   });
 
   it("caps the no-defaultSize fallback and keeps it at the shared ratio", () => {
     const size = resolveStandardSize(undefined, minSize, laptop);
-    expect(FLOATING_WINDOW_STANDARD_WIDTH / FLOATING_WINDOW_OPENING_ASPECT_RATIO).toBeGreaterThan(cappedLaptopHeight);
+    expect(
+      (FLOATING_WINDOW_STANDARD_WIDTH * FLOATING_WINDOW_OPENING_SIZE_SCALE) / FLOATING_WINDOW_OPENING_ASPECT_RATIO,
+    ).toBeGreaterThan(cappedLaptopHeight);
     expect(size.height).toBe(cappedLaptopHeight);
     expect(Math.abs(size.width / size.height - FLOATING_WINDOW_OPENING_ASPECT_RATIO)).toBeLessThan(0.01);
   });
 
   it("leaves a small dialog default below the cap, at the shared ratio", () => {
-    // ConfirmDialog-sized window: already far below the cap, so no scale factor is applied.
+    // ConfirmDialog-sized window: already far below the cap, so it opens at the full FN-460 target scale.
     const size = resolveStandardSize({ width: 420, height: 320 }, minSize, laptop);
-    expect(size.width).toBe(420);
-    expect(size.height).toBe(Math.round(420 / FLOATING_WINDOW_OPENING_ASPECT_RATIO));
+    const scaledWidth = Math.round(420 * FLOATING_WINDOW_OPENING_SIZE_SCALE);
+    expect(size.width).toBe(scaledWidth);
+    expect(size.height).toBe(Math.round(scaledWidth / FLOATING_WINDOW_OPENING_ASPECT_RATIO));
     expect(size.height).toBeLessThan(cappedLaptopHeight);
   });
 
@@ -74,9 +89,14 @@ describe("resolveStandardSize opening height cap (FN-418, FN-456 shape)", () => 
 
   it("keeps the pre-cap behaviour for degenerate work areas", () => {
     // A zero-height work area (jsdom without measured landmarks) still clamps to 0, as before the cap.
+    // FN-460: it no longer bounds the target scale, so the box being clamped is the ENLARGED one.
     const zero = boundsOf(0);
+    const enlarged = {
+      width: Math.round(720 * FLOATING_WINDOW_OPENING_SIZE_SCALE),
+      height: Math.round((720 * FLOATING_WINDOW_OPENING_SIZE_SCALE) / FLOATING_WINDOW_OPENING_ASPECT_RATIO),
+    };
     expect(resolveStandardSize({ width: 720, height: 720 }, minSize, zero)).toEqual(
-      clampFloatingWindowSize({ width: 720, height: 720 }, minSize, zero),
+      clampFloatingWindowSize(enlarged, minSize, zero),
     );
 
     // A non-finite work area never reaches the cap branch, so the result is exactly the legacy clamp.
@@ -104,7 +124,7 @@ exemption a tested promise rather than a side effect.
 describe("resolveStandardSize under the full-view policy (FN-456 exemption)", () => {
   it("caps the height alone and leaves the width completely untouched", () => {
     const size = resolveStandardSize({ width: 1368, height: 828 }, minSize, laptop, "full-view");
-    expect(size.height).toBe(cappedLaptopHeight);
+    expect(size.height).toBe(fullViewCappedLaptopHeight);
     expect(size.width).toBe(laptop.width); // clamped only by the live work area, never by the ratio
   });
 

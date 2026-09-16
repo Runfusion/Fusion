@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import type { DashboardWindowBounds } from "../../context/DashboardWindowManagerContext";
 import {
   FLOATING_WINDOW_OPENING_ASPECT_RATIO,
+  FLOATING_WINDOW_OPENING_SIZE_SCALE,
   FLOATING_WINDOW_STANDARD_HEIGHT,
+  FLOATING_WINDOW_STANDARD_HEIGHT_RATIO,
   FLOATING_WINDOW_STANDARD_WIDTH,
   FLOATING_WINDOW_TASK_STANDARD_HEIGHT,
   FLOATING_WINDOW_TASK_STANDARD_WIDTH,
@@ -19,6 +21,13 @@ asserts the INVARIANT across a representative sample of real host `defaultSize` 
 areas — not a single reproduction. It also pins the deliberate exceptions, because a rule with silent
 exceptions is indistinguishable from a broken rule: `minSize` and the live work area keep the last word, and
 manual/snap/detach trajectories are never normalized.
+
+FNXC:FloatingWindowGeometry 2026-09-16-07:38:
+FN-460 keeps every FN-456 invariant and adds its own: the opening box is 20% larger on BOTH axes, so the
+shape is unchanged while the window is bigger. The expectations below are therefore expressed through
+`FLOATING_WINDOW_OPENING_SIZE_SCALE` rather than as literals, and the `minSize` negative control had to be
+re-targeted at a shorter work area — on the previous one the enlarged ratio box cleared the minimum, so the
+"the ratio is deliberately broken" assertion would have become a false green.
 */
 
 const minSize = { width: 320, height: 240 };
@@ -60,11 +69,34 @@ describe("FN-456 opening aspect ratio invariant", () => {
     expect(Math.abs(ratioOf(size) - FLOATING_WINDOW_OPENING_ASPECT_RATIO)).toBeLessThan(0.01);
   });
 
-  it("applies the ratio to the no-defaultSize fallback too", () => {
+  it("applies the ratio to the no-defaultSize fallback too, at the FN-460 enlarged size", () => {
     const size = resolveStandardSize(undefined, minSize, desktop);
     expect(Math.abs(ratioOf(size) - FLOATING_WINDOW_OPENING_ASPECT_RATIO)).toBeLessThan(0.01);
-    expect(size.width).toBe(FLOATING_WINDOW_STANDARD_WIDTH);
-    expect(size.height).toBe(FLOATING_WINDOW_STANDARD_HEIGHT);
+    // FN-460: the host's standard width is a scaled BASE now, no longer the opening width itself.
+    expect(size.width).toBe(Math.round(FLOATING_WINDOW_STANDARD_WIDTH * FLOATING_WINDOW_OPENING_SIZE_SCALE));
+    expect(size.height).toBe(
+      Math.round((FLOATING_WINDOW_STANDARD_WIDTH * FLOATING_WINDOW_OPENING_SIZE_SCALE) / FLOATING_WINDOW_OPENING_ASPECT_RATIO),
+    );
+    expect(size.width).toBeGreaterThan(FLOATING_WINDOW_STANDARD_WIDTH);
+    expect(size.height).toBeGreaterThan(FLOATING_WINDOW_STANDARD_HEIGHT);
+  });
+
+  /*
+  FNXC:FloatingWindowGeometry 2026-09-16-07:38:
+  FN-460 central invariant, asserted across the SAME representative host sample rather than on one repro:
+  wherever no clamp binds, every host opens at exactly 1.2x its pre-FN-460 rectangle and keeps the 1.43 shape.
+  The pre-FN-460 rectangle is recomputed locally from the ratio constant, so this case compares the seam
+  against the formula it replaced instead of against a frozen literal.
+  */
+  it.each(HOST_DEFAULTS)("opens %s exactly 20%% larger than pre-FN-460 when nothing clamps", (_name, defaultSize) => {
+    // Tall and wide enough that neither the proportional cap, the work-area width, nor minSize can bind.
+    const roomy = boundsOf(1400, 2400);
+    const size = resolveStandardSize(defaultSize, minSize, roomy);
+    const legacyWidth = defaultSize.width;
+    const legacyHeight = Math.round(defaultSize.width / FLOATING_WINDOW_OPENING_ASPECT_RATIO);
+    expect(Math.abs(size.width - legacyWidth * FLOATING_WINDOW_OPENING_SIZE_SCALE)).toBeLessThanOrEqual(1);
+    expect(Math.abs(size.height - legacyHeight * FLOATING_WINDOW_OPENING_SIZE_SCALE)).toBeLessThanOrEqual(1);
+    expect(Math.abs(ratioOf(size) - FLOATING_WINDOW_OPENING_ASPECT_RATIO)).toBeLessThan(0.01);
   });
 
   it("derives both standard heights from the shared ratio so no literal can drift", () => {
@@ -79,20 +111,34 @@ describe("FN-456 opening aspect ratio invariant", () => {
     );
   });
 
-  it("keeps the FN-418 proportional height cap while preserving the shape", () => {
-    // A 1200-wide host on the laptop area would want 839px of height; the 62% cap is 414.
+  it("keeps the FN-418 proportional height cap, carried by the FN-460 factor, while preserving the shape", () => {
+    // A 1200-wide host on the laptop area would want 839px of height; the effective cap is 62% x 1.2 = 74.4%.
+    const effectiveCap =
+      Math.round(laptop.height * FLOATING_WINDOW_STANDARD_HEIGHT_RATIO) * FLOATING_WINDOW_OPENING_SIZE_SCALE;
     const size = resolveStandardSize({ width: 1200, height: 720 }, minSize, laptop);
-    expect(size.height).toBeLessThanOrEqual(Math.round(laptop.height * 0.62));
+    expect(size.height).toBeLessThanOrEqual(Math.round(effectiveCap));
+    // FN-418's own intent survives FN-460: a window still never fills the band between header and footer.
+    expect(size.height).toBeLessThan(laptop.height);
     expect(Math.abs(ratioOf(size) - FLOATING_WINDOW_OPENING_ASPECT_RATIO)).toBeLessThan(0.01);
   });
 });
 
 describe("FN-456 deliberate exceptions: the clamps still have the last word", () => {
   it("lets a larger minSize break the ratio rather than open unusably small", () => {
-    // PrCreateModal-shaped minimum: taller than the ratio box the work area allows.
-    const size = resolveStandardSize({ width: 720, height: 720 }, { width: 480, height: 420 }, boundsOf(600, 1280));
-    expect(size.width).toBeGreaterThanOrEqual(480);
-    expect(size.height).toBeGreaterThanOrEqual(420);
+    /*
+    PrCreateModal-shaped minimum. FN-460 re-targets this case at a SHORTER work area: on the previous 600px
+    area the enlarged ratio box already cleared 480x420, so the minimum stopped being the limiting factor and
+    the assertion below would have passed for the wrong reason.
+    */
+    const shortArea = boundsOf(450, 1280);
+    const declaredMin = { width: 480, height: 420 };
+    const size = resolveStandardSize({ width: 720, height: 720 }, declaredMin, shortArea);
+    // The minimum really is what wins here: the result IS the declared minimum on both axes.
+    expect(size).toEqual(declaredMin);
+    // ... and the ratio box it replaced was genuinely smaller, on both axes.
+    const unclamped = resolveStandardSize({ width: 720, height: 720 }, { width: 0, height: 0 }, shortArea);
+    expect(unclamped.width).toBeLessThan(declaredMin.width);
+    expect(unclamped.height).toBeLessThan(declaredMin.height);
     expect(Math.abs(ratioOf(size) - FLOATING_WINDOW_OPENING_ASPECT_RATIO)).toBeGreaterThan(0.01);
   });
 
@@ -109,10 +155,15 @@ describe("FN-456 deliberate exceptions: the clamps still have the last word", ()
     expect(size.width).toBeLessThanOrEqual(narrow.width);
   });
 
-  it("keeps the pre-FN-456 result for degenerate work areas", () => {
+  it("keeps the plain-clamp result for degenerate work areas", () => {
+    // FN-460: a zero-height area no longer bounds the target scale, so the clamped box is the ENLARGED one.
     const zero = boundsOf(0, 1280);
+    const enlarged = {
+      width: Math.round(720 * FLOATING_WINDOW_OPENING_SIZE_SCALE),
+      height: Math.round((720 * FLOATING_WINDOW_OPENING_SIZE_SCALE) / FLOATING_WINDOW_OPENING_ASPECT_RATIO),
+    };
     expect(resolveStandardSize({ width: 720, height: 720 }, minSize, zero)).toEqual(
-      clampFloatingWindowSize({ width: 720, height: 720 }, minSize, zero),
+      clampFloatingWindowSize(enlarged, minSize, zero),
     );
 
     const nonFinite: DashboardWindowBounds = {
