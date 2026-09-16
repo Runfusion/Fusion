@@ -936,7 +936,7 @@ shared left/right edges and compact gaps. Keep the centered cluster desktop-only
 
 /*
 FNXC:NativeQuickEntry 2026-09-13-15:19:
-Quick Entry is input-first: the immediate attach/status/icon-only Save row remains visible, and routing options appear as a quiet second row only after disclosure. During the 500ms Start hold, a warning-colored mask rises from the bottom, covers the corresponding portion of Save, and reveals an undistorted Play icon. On mobile, every primary icon action shares the same `--ui-touch-height` square without imposing that fixed width on text option controls. Desktop/tablet metrics, the List host, legacy controls, and reduced-motion timing remain unchanged.
+Quick Entry is input-first: the immediate attach/status/icon-only Save row remains visible, and routing options appear as a quiet second row only after disclosure. During the Start hold, a warning-colored mask rises from the bottom, covers the corresponding portion of Save, and reveals an undistorted Play icon. On mobile, every primary icon action shares the same `--ui-touch-height` square without imposing that fixed width on text option controls. Desktop/tablet metrics, the List host, legacy controls, and reduced-motion timing remain unchanged.
 */
 .quick-entry-box {
   padding: var(--ui-density-sm);
@@ -1012,6 +1012,12 @@ Quick Entry is input-first: the immediate attach/status/icon-only Save row remai
   transform-origin: bottom;
 }
 
+/*
+FNXC:NativeQuickEntry 2026-09-16-02:15:
+The mask only animates once the press is an ENGAGED hold, so a brief click never flashes it. `--quick-entry-hold-duration`
+is therefore the REMAINING fill time after engagement, not the whole 500ms threshold, and the mask reaching full cover
+still coincides with Start. Releasing while the mask is filling cancels the gesture, so the mask simply disappears.
+*/
 .quick-entry-save[data-hold-state="holding"] .quick-entry-save-progress {
   animation: quick-entry-hold-progress var(--quick-entry-hold-duration) linear forwards;
 }

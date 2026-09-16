@@ -8724,7 +8724,7 @@
     "createPrTitle": "Créer une PR pour cette tâche",
     "createTaskTitle": "Créer une tâche",
     "saveHoldToStart": "Enregistrer la tâche ; maintenir pour démarrer",
-    "releaseToSaveHoldToStart": "Relâcher pour enregistrer ; continuer à maintenir pour démarrer",
+    "holdToStartReleaseCancels": "Continuer à maintenir pour démarrer ; relâcher pour annuler",
     "holdToStartProgress": "Continuer à maintenir pour démarrer",
     "startingTask": "Démarrage de la tâche",
     "creating": "Création en cours…",

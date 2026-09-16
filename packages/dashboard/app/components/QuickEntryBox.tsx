@@ -31,7 +31,18 @@ import { useQuickAddSubmitOnEnter } from "../hooks/useQuickAddSubmitOnEnter";
 
 const STORAGE_KEY = "kb-quick-entry-text";
 const QUICK_ADD_START_HOLD_DURATION_MS = 500;
+/*
+FNXC:NativeQuickEntry 2026-09-16-02:15:
+FN-453 separates a brief click from an ENGAGED hold. A press shorter than this engagement delay is an ordinary
+Save (no visual fill ever appears); once the fill starts, the press is an engaged hold whose release before the
+500ms threshold CANCELS the gesture instead of saving — releasing early now behaves as if the button was never
+clicked. The mask therefore animates over the remaining `QUICK_ADD_START_HOLD_FILL_MS` rather than the full hold.
+*/
+const QUICK_ADD_START_HOLD_ENGAGE_MS = 150;
+const QUICK_ADD_START_HOLD_FILL_MS = QUICK_ADD_START_HOLD_DURATION_MS - QUICK_ADD_START_HOLD_ENGAGE_MS;
 type QuickAddSaveGesture = { kind: "pointer"; pointerId: number } | { kind: "keyboard"; key: " " | "Enter" };
+/** One physical press. `id` scopes its synthetic-click barrier so no gesture can silence a later, independent one. */
+type QuickAddSaveGestureState = { id: number; input: QuickAddSaveGesture; engaged: boolean };
 const ALLOWED_TASK_ATTACHMENT_TYPES = new Set([
   "image/png",
   "image/jpeg",
@@ -193,11 +204,15 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
   const touchButtonRef = useRef<HTMLButtonElement | null>(null);
   const startIntentRef = useRef<ValidatedQuickAddWorkflow | null>(null);
   const quickAddSaveButtonRef = useRef<HTMLButtonElement | null>(null);
-  const quickAddSaveGestureRef = useRef<QuickAddSaveGesture | null>(null);
+  const quickAddSaveGestureRef = useRef<QuickAddSaveGestureState | null>(null);
+  const quickAddSaveGestureIdRef = useRef(0);
+  const quickAddSaveEngageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const quickAddSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Id of the gesture whose trailing synthetic click must be absorbed, or null when no click is owed. */
+  const quickAddSaveSuppressClickRef = useRef<number | null>(null);
   const quickAddSaveBarrierReleaseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const quickAddSaveSuppressClickRef = useRef(false);
   const quickAddStartWorkflowRef = useRef<ValidatedQuickAddWorkflow | null>(null);
+  const quickAddStartIdentityRef = useRef<string | null>(null);
   const [quickAddSaveState, setQuickAddSaveState] = useState<"idle" | "holding">("idle");
   const justResetRef = useRef(false);
   const draftPersistenceWarningShownRef = useRef(false);
@@ -453,6 +468,30 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
   */
   const canQuickAddStart = Boolean(validatedStartWorkflow && workflowSupportsQuickAddStart(validatedStartWorkflow) && startWorkflowTarget && (startInitialColumn || onMoveTask));
   const canQuickAddStartNow = canQuickAddStart && Boolean(description.trim()) && !isSubmitting;
+  /*
+  FNXC:QuickAddStart 2026-09-16-02:15:
+  FN-453 root cause: an in-flight hold used to be invalidated by OBJECT IDENTITY, so any refresh that re-instantiated
+  logically identical workflow metadata silently cancelled the hold and the button "did nothing". The hold is now
+  fenced by a VALUE snapshot of everything Start actually depends on — workflow id, the create-time column override,
+  the resolved Start destination, and the ordered visible-column routing facts. A re-instantiated equivalent workflow
+  keeps the gesture alive; a real change of identity, eligibility, or destination still cancels it without creating.
+  */
+  const quickAddStartIdentity = useMemo(() => {
+    if (!validatedStartWorkflow) return null;
+    return JSON.stringify({
+      id: validatedStartWorkflow.id,
+      initialColumn: startInitialColumn,
+      target: startWorkflowTarget,
+      columns: validatedStartWorkflow.columns.map((column) => [
+        column.id,
+        column.flags.intake === true,
+        column.flags.hold === true,
+        column.flags.manualIntake === true,
+        column.flags.complete === true,
+        column.flags.hiddenFromBoard === true,
+      ]),
+    });
+  }, [startInitialColumn, startWorkflowTarget, validatedStartWorkflow]);
 
   useEffect(() => {
     const parentChanged = previousWorkflowDefaultRef.current.workflowId !== workflowId
@@ -1729,77 +1768,127 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
   FNXC:QuickEntry 2026-06-30-00:00:
   Quick-add intentionally exposes no Plan button, disabled Plan state, tooltip, test id, or click target. Keep non-quick-add planning entry points such as the New Task dialog and model-menu planning lane intact.
   */
-  const cancelQuickAddSaveGesture = useCallback((suppressClick = false) => {
-    const hadActiveGesture = quickAddSaveGestureRef.current !== null;
+  /**
+   * Ends the active gesture (if any) and returns it. `suppressClick` arms the barrier for THAT gesture only,
+   * so the synthetic click a release produces is absorbed exactly once and never leaks into a later press.
+   */
+  const endQuickAddSaveGesture = useCallback((suppressClick: boolean) => {
+    const active = quickAddSaveGestureRef.current;
+    if (quickAddSaveEngageTimerRef.current) clearTimeout(quickAddSaveEngageTimerRef.current);
     if (quickAddSaveTimerRef.current) clearTimeout(quickAddSaveTimerRef.current);
+    quickAddSaveEngageTimerRef.current = null;
     quickAddSaveTimerRef.current = null;
     quickAddSaveGestureRef.current = null;
     quickAddStartWorkflowRef.current = null;
-    if (hadActiveGesture) quickAddSaveSuppressClickRef.current = suppressClick;
+    quickAddStartIdentityRef.current = null;
+    if (active && suppressClick) quickAddSaveSuppressClickRef.current = active.id;
     setQuickAddSaveState("idle");
+    return active;
   }, []);
 
+  const cancelQuickAddSaveGesture = useCallback(() => {
+    endQuickAddSaveGesture(true);
+  }, [endQuickAddSaveGesture]);
+
+  /**
+   * FNXC:NativeQuickEntry 2026-09-16-02:15:
+   * Second bound on the barrier, for the release events that DO produce a click: the browser dispatches that click in
+   * the same turn as pointerup/keyup, so a zero-delay fence drops a barrier whose click never arrived (the usual cause
+   * being a momentarily disabled Save swallowing it) without ever releasing it early. Cancellation routes deliberately
+   * do not schedule it; their barrier is dropped by the next press instead.
+   */
   const releaseQuickAddSaveClickBarrierAfterTerminalEvent = useCallback(() => {
-    if (!quickAddSaveSuppressClickRef.current || quickAddSaveBarrierReleaseTimerRef.current) return;
+    const armedGestureId = quickAddSaveSuppressClickRef.current;
+    if (armedGestureId === null || quickAddSaveBarrierReleaseTimerRef.current) return;
     quickAddSaveBarrierReleaseTimerRef.current = setTimeout(() => {
       quickAddSaveBarrierReleaseTimerRef.current = null;
-      quickAddSaveSuppressClickRef.current = false;
+      if (quickAddSaveSuppressClickRef.current === armedGestureId) quickAddSaveSuppressClickRef.current = null;
     }, 0);
   }, []);
 
-  const beginQuickAddSaveGesture = useCallback((gesture: QuickAddSaveGesture) => {
-    if (!canQuickAddStartNow || !validatedStartWorkflow || quickAddSaveGestureRef.current || quickAddSaveSuppressClickRef.current) return false;
-    quickAddSaveGestureRef.current = gesture;
+  const beginQuickAddSaveGesture = useCallback((input: QuickAddSaveGesture) => {
+    /*
+    FNXC:NativeQuickEntry 2026-09-16-02:15:
+    FN-453 root cause: the click barrier used to be a component-wide boolean that a cancellation could leave armed
+    with nothing left to consume it, after which EVERY later hold was refused and Save looked dead. A new physical
+    press always owns the barrier: whatever the previous gesture left behind is dropped here, which bounds the
+    barrier's lifetime to a single gesture without needing a timer race.
+    */
+    quickAddSaveSuppressClickRef.current = null;
+    if (quickAddSaveBarrierReleaseTimerRef.current) clearTimeout(quickAddSaveBarrierReleaseTimerRef.current);
+    quickAddSaveBarrierReleaseTimerRef.current = null;
+    if (!canQuickAddStartNow || !validatedStartWorkflow || quickAddSaveGestureRef.current) return false;
+    const id = quickAddSaveGestureIdRef.current + 1;
+    quickAddSaveGestureIdRef.current = id;
+    quickAddSaveGestureRef.current = { id, input, engaged: false };
     quickAddStartWorkflowRef.current = validatedStartWorkflow;
-    setQuickAddSaveState("holding");
+    quickAddStartIdentityRef.current = quickAddStartIdentity;
+    quickAddSaveEngageTimerRef.current = setTimeout(() => {
+      quickAddSaveEngageTimerRef.current = null;
+      const active = quickAddSaveGestureRef.current;
+      if (!active || active.id !== id) return;
+      active.engaged = true;
+      setQuickAddSaveState("holding");
+    }, QUICK_ADD_START_HOLD_ENGAGE_MS);
     quickAddSaveTimerRef.current = setTimeout(() => {
-      const workflowSnapshot = quickAddStartWorkflowRef.current;
       quickAddSaveTimerRef.current = null;
-      quickAddSaveGestureRef.current = null;
-      quickAddStartWorkflowRef.current = null;
-      quickAddSaveSuppressClickRef.current = true;
-      setQuickAddSaveState("idle");
+      const workflowSnapshot = quickAddStartWorkflowRef.current;
+      endQuickAddSaveGesture(true);
       handleStartClick(workflowSnapshot);
     }, QUICK_ADD_START_HOLD_DURATION_MS);
     return true;
-  }, [canQuickAddStartNow, handleStartClick, validatedStartWorkflow]);
+  }, [canQuickAddStartNow, endQuickAddSaveGesture, handleStartClick, quickAddStartIdentity, validatedStartWorkflow]);
 
   const completeQuickAddSaveGesture = useCallback((gesture: QuickAddSaveGesture) => {
     const active = quickAddSaveGestureRef.current;
-    const matches = active?.kind === gesture.kind && (active.kind === "pointer"
-      ? active.pointerId === (gesture as Extract<QuickAddSaveGesture, { kind: "pointer" }>).pointerId
-      : active.key === (gesture as Extract<QuickAddSaveGesture, { kind: "keyboard" }>).key);
-    if (!matches) return;
-    cancelQuickAddSaveGesture(true);
+    const matches = active?.input.kind === gesture.kind && (active.input.kind === "pointer"
+      ? active.input.pointerId === (gesture as Extract<QuickAddSaveGesture, { kind: "pointer" }>).pointerId
+      : active.input.key === (gesture as Extract<QuickAddSaveGesture, { kind: "keyboard" }>).key);
+    if (!active || !matches) return;
+    const wasEngaged = active.engaged;
+    endQuickAddSaveGesture(true);
+    /*
+    FNXC:NativeQuickEntry 2026-09-16-02:15:
+    FN-453 operator contract: releasing an ENGAGED hold before the 500ms threshold must behave as if the button was
+    never pressed — no create, no move, no duplicate lookup, draft preserved. Only a press released before the fill
+    engages is an ordinary Save, and that save is issued here (rather than through the native click) because Enter
+    fires its click on keydown; the gesture's own click is absorbed by the barrier so exactly one task is created.
+    */
+    if (wasEngaged) return;
     void handleSubmit();
-  }, [cancelQuickAddSaveGesture, handleSubmit]);
+  }, [endQuickAddSaveGesture, handleSubmit]);
 
   /*
   FNXC:NativeQuickEntry 2026-09-13-17:28:
-  Pointer and keyboard holds share one 500ms timer and one captured workflow snapshot. Only a primary pointer using
-  its primary button may begin a hold. Explicit cancellation never saves; an ordinary release before the threshold
-  saves exactly once and consumes its synthetic click. Reaching the threshold consumes Start exactly once, arms
-  suppression for late release/click events, and resets the visual state to Save immediately rather than tying
-  protection to rendered confirmation state. Workflow changes, submission, disablement, blur, Escape, capture loss,
-  and unmount invalidate a pending gesture.
+  Pointer and keyboard holds share one hold timer and one captured workflow snapshot. Only a primary pointer using
+  its primary button may begin a hold. Reaching the threshold consumes Start exactly once, arms suppression for late
+  release/click events, and resets the visual state to Save immediately rather than tying protection to rendered
+  confirmation state. Workflow changes, submission, disablement, blur, Escape, capture loss, and unmount invalidate a
+  pending gesture.
 
   FNXC:NativeQuickEntry 2026-09-12-21:38:
   A completed Start hold owns its synthetic-click barrier until the trailing click is consumed, independently of
   submission success, failure, or duplicate-dialog cancellation. Success can reset and re-enable the form before the
   pointer is released, while cancellation preserves the draft; neither outcome may let that same physical gesture
-  save a new or retained draft. After pointerup/keyup, a zero-delay terminal-event fence releases the barrier only
-  after the browser's associated click turn; this also prevents a click suppressed by a temporarily disabled native
-  button from consuming the next independent Save. A new hold cannot replace an unconsumed gesture barrier.
+  save a new or retained draft.
+
+  FNXC:NativeQuickEntry 2026-09-16-02:15:
+  FN-453 replaces the component-wide boolean barrier and its zero-delay release timer with a per-gesture id that the
+  NEXT press always clears. That is the fix for "holding Save sometimes does nothing": a cancellation whose click
+  never arrived (pointercancel, blur, capture loss, a disabled button swallowing the click) used to leave the barrier
+  armed forever, and `beginQuickAddSaveGesture` then refused every subsequent hold. Cancellation still absorbs its
+  OWN trailing click, and a completed Start still owns its barrier until that click is consumed.
   */
   useEffect(() => () => {
-    cancelQuickAddSaveGesture();
+    endQuickAddSaveGesture(false);
     if (quickAddSaveBarrierReleaseTimerRef.current) clearTimeout(quickAddSaveBarrierReleaseTimerRef.current);
-  }, [cancelQuickAddSaveGesture]);
+    quickAddSaveBarrierReleaseTimerRef.current = null;
+  }, [endQuickAddSaveGesture]);
   useEffect(() => {
-    if (quickAddSaveGestureRef.current && (isSubmitting || isDisabled || !canQuickAddStartNow || quickAddStartWorkflowRef.current !== validatedStartWorkflow)) {
-      cancelQuickAddSaveGesture(true);
+    if (quickAddSaveGestureRef.current && (isSubmitting || isDisabled || !canQuickAddStartNow || quickAddStartIdentityRef.current !== quickAddStartIdentity)) {
+      cancelQuickAddSaveGesture();
     }
-  }, [canQuickAddStartNow, cancelQuickAddSaveGesture, isDisabled, isSubmitting, validatedStartWorkflow]);
+  }, [canQuickAddStartNow, cancelQuickAddSaveGesture, isDisabled, isSubmitting, quickAddStartIdentity]);
 
   const truncate = (s: string, len: number) =>
     s.length > len ? s.slice(0, len) + "…" : s;
@@ -2602,8 +2691,8 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
                 type="button"
                 className="btn btn-task-create btn-sm btn-icon quick-entry-save"
                 onClick={() => {
-                  if (quickAddSaveSuppressClickRef.current) {
-                    quickAddSaveSuppressClickRef.current = false;
+                  if (quickAddSaveSuppressClickRef.current !== null) {
+                    quickAddSaveSuppressClickRef.current = null;
                     if (quickAddSaveBarrierReleaseTimerRef.current) clearTimeout(quickAddSaveBarrierReleaseTimerRef.current);
                     quickAddSaveBarrierReleaseTimerRef.current = null;
                     return;
@@ -2621,12 +2710,12 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
                   releaseQuickAddSaveClickBarrierAfterTerminalEvent();
                   if (event.currentTarget.hasPointerCapture?.(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
                 }}
-                onPointerCancel={() => cancelQuickAddSaveGesture(true)}
-                onPointerLeave={() => cancelQuickAddSaveGesture(true)}
-                onLostPointerCapture={() => cancelQuickAddSaveGesture(true)}
+                onPointerCancel={() => cancelQuickAddSaveGesture()}
+                onPointerLeave={() => cancelQuickAddSaveGesture()}
+                onLostPointerCapture={() => cancelQuickAddSaveGesture()}
                 onKeyDown={(event) => {
                   if (event.key === "Escape") {
-                    cancelQuickAddSaveGesture(true);
+                    cancelQuickAddSaveGesture();
                     return;
                   }
                   if ((event.key === " " || event.key === "Enter") && !event.repeat) {
@@ -2641,13 +2730,14 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
                     releaseQuickAddSaveClickBarrierAfterTerminalEvent();
                   }
                 }}
-                onBlur={() => cancelQuickAddSaveGesture(true)}
+                onBlur={() => cancelQuickAddSaveGesture()}
                 disabled={!description.trim() || isSubmitting}
-                style={{ "--quick-entry-hold-duration": `${QUICK_ADD_START_HOLD_DURATION_MS}ms` } as CSSProperties}
+                style={{ "--quick-entry-hold-duration": `${QUICK_ADD_START_HOLD_FILL_MS}ms` } as CSSProperties}
                 data-testid="quick-entry-save"
                 data-hold-state={quickAddSaveState}
+                /* FNXC:NativeQuickEntry 2026-09-16-02:15: an engaged hold no longer offers "release to save", because FN-453 makes an early release a cancellation. */
                 aria-label={quickAddSaveState === "holding"
-                  ? t("tasks.releaseToSaveHoldToStart", "Release to save; keep holding to start")
+                  ? t("tasks.holdToStartReleaseCancels", "Keep holding to start; release to cancel")
                   : t("tasks.saveHoldToStart", "Save task; hold to start")}
                 title={t("tasks.saveHoldToStart", "Save task; hold to start")}
               >

@@ -9084,6 +9084,7 @@ export default interface Resources {
       "groupBranch": "Group",
       "hideSteps": "Hide steps",
       "holdToStartProgress": "Keep holding to start",
+      "holdToStartReleaseCancels": "Keep holding to start; release to cancel",
       "humanPlanApproval": {
         "approve": "Approve",
         "approved": "Plan approved — {{id}} continues to execution",
@@ -9172,7 +9173,6 @@ export default interface Resources {
       "refinesOf": "Refines {{id}}",
       "refinesOfTitle": "Refinement of {{id}}",
       "refining": "Refining...",
-      "releaseToSaveHoldToStart": "Release to save; keep holding to start",
       "removeImage": "Remove image",
       "resetProgress": "Reset Progress",
       "resetProgressMessage": "Reset all step progress before moving this task?",

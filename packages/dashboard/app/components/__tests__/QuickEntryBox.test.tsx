@@ -5901,7 +5901,7 @@ describe("QuickEntryBox", () => {
       const { onCreate, save } = setup();
       expect(save).toHaveAccessibleName("Save task; hold to start");
       expect(save).not.toHaveTextContent("Save");
-      expect(save).toHaveStyle({ "--quick-entry-hold-duration": "500ms" });
+      expect(save).toHaveStyle({ "--quick-entry-hold-duration": "350ms" });
       expect(save.querySelectorAll("button")).toHaveLength(0);
       expect(save.querySelectorAll("svg")).toHaveLength(2);
       expect(save.querySelector(".quick-entry-save-icon--save")).toHaveAttribute("aria-hidden", "true");
@@ -5909,11 +5909,14 @@ describe("QuickEntryBox", () => {
       expect(screen.queryByTestId("quick-entry-save-start")).toBeNull();
 
       fireEvent.pointerDown(save, { pointerId: 7, pointerType, button: 0, isPrimary: true });
+      // The mask only engages after the brief-click window, so a plain tap never flashes it.
+      expect(save).toHaveAttribute("data-hold-state", "idle");
+      await act(async () => vi.advanceTimersByTime(150));
       expect(save).toHaveAttribute("data-hold-state", "holding");
-      expect(save).toHaveAccessibleName("Release to save; keep holding to start");
+      expect(save).toHaveAccessibleName("Keep holding to start; release to cancel");
       expect(screen.getByRole("status")).toHaveTextContent("Keep holding to start");
       expect(screen.getByRole("status")).not.toHaveTextContent("Starting task");
-      await act(async () => vi.advanceTimersByTime(500));
+      await act(async () => vi.advanceTimersByTime(350));
 
       expect(save).toHaveAttribute("data-hold-state", "idle");
       expect(save).toHaveAccessibleName("Save task; hold to start");
@@ -6011,12 +6014,17 @@ describe("QuickEntryBox", () => {
       expect(onCreate.mock.calls[0]![0]).toHaveProperty("column", "todo");
     });
 
-    it.each(["Enter", " "])("uses a 499ms keyboard release with %s as one ordinary Save", async (key) => {
+    /*
+    FN-453 replaces the cases that declared a 499ms release "one ordinary Save". Once the hold is ENGAGED (the mask
+    is filling), an early release is a cancellation, so a brief press and an engaged press are now two contracts.
+    */
+    it.each(["Enter", " "])("saves once from a brief keyboard press with %s released before the mask engages", async (key) => {
       const onMoveTask = vi.fn();
       const { onCreate, save } = setup({ onMoveTask });
       fireEvent.keyDown(save, { key });
-      await act(async () => vi.advanceTimersByTime(499));
-      expect(save).toHaveAccessibleName("Release to save; keep holding to start");
+      await act(async () => vi.advanceTimersByTime(100));
+      expect(save).toHaveAttribute("data-hold-state", "idle");
+      expect(save).toHaveAccessibleName("Save task; hold to start");
 
       fireEvent.keyUp(save, { key });
       fireEvent.click(save);
@@ -6029,12 +6037,12 @@ describe("QuickEntryBox", () => {
       expect(screen.getByTestId("quick-entry-save")).toHaveAttribute("data-hold-state", "idle");
     });
 
-    it.each(["mouse", "touch", "pen"])("uses a 499ms %s release as one ordinary Save", async (pointerType) => {
+    it.each(["mouse", "touch", "pen"])("saves once from a brief %s press released before the mask engages", async (pointerType) => {
       const onMoveTask = vi.fn();
       const { onCreate, save } = setup({ onMoveTask });
       fireEvent.pointerDown(save, { pointerId: 4, pointerType, button: 0, isPrimary: true });
-      await act(async () => vi.advanceTimersByTime(499));
-      expect(save).toHaveAccessibleName("Release to save; keep holding to start");
+      await act(async () => vi.advanceTimersByTime(100));
+      expect(save).toHaveAttribute("data-hold-state", "idle");
 
       fireEvent.pointerUp(save, { pointerId: 4, pointerType });
       fireEvent.click(save);
@@ -6044,6 +6052,122 @@ describe("QuickEntryBox", () => {
       expect(onMoveTask).not.toHaveBeenCalled();
       expect(checkDuplicateTasks).toHaveBeenCalledTimes(1);
       expect(screen.queryByText("Possible duplicates")).toBeNull();
+      expect(screen.getByTestId("quick-entry-save")).toHaveAttribute("data-hold-state", "idle");
+    });
+
+    /*
+    ## Symptom Verification (FN-453, second reported symptom)
+    Original symptom: starting a hold and letting go before the mask filled still saved a task.
+    Exact reproduction: press Save, reach the engaged fill, release at 499ms, then let the browser's synthetic click land.
+    Assertion it is gone: no create, no move, no duplicate lookup, and the draft text survives untouched.
+    */
+    it.each(["mouse", "touch", "pen"])("treats an engaged %s hold released before the threshold as if Save was never pressed", async (pointerType) => {
+      const onMoveTask = vi.fn();
+      const { onCreate, save } = setup({ onMoveTask });
+      fireEvent.pointerDown(save, { pointerId: 4, pointerType, button: 0, isPrimary: true });
+      await act(async () => vi.advanceTimersByTime(499));
+      expect(save).toHaveAttribute("data-hold-state", "holding");
+      expect(save).toHaveAccessibleName("Keep holding to start; release to cancel");
+
+      fireEvent.pointerUp(save, { pointerId: 4, pointerType });
+      fireEvent.click(save);
+      await act(async () => vi.advanceTimersByTime(500));
+
+      expect(onCreate).not.toHaveBeenCalled();
+      expect(onMoveTask).not.toHaveBeenCalled();
+      expect(checkDuplicateTasks).not.toHaveBeenCalled();
+      expect(screen.getByTestId("quick-entry-input")).toHaveValue("Alpha task");
+      expect(screen.getByTestId("quick-entry-save")).toHaveAttribute("data-hold-state", "idle");
+      expect(screen.getByTestId("quick-entry-save")).toHaveAccessibleName("Save task; hold to start");
+    });
+
+    it.each(["Enter", " "])("treats an engaged %s keyboard hold released before the threshold as a no-op", async (key) => {
+      const onMoveTask = vi.fn();
+      const { onCreate, save } = setup({ onMoveTask });
+      fireEvent.keyDown(save, { key });
+      await act(async () => vi.advanceTimersByTime(499));
+      expect(save).toHaveAttribute("data-hold-state", "holding");
+
+      fireEvent.keyUp(save, { key });
+      fireEvent.click(save);
+      await act(async () => vi.advanceTimersByTime(500));
+
+      expect(onCreate).not.toHaveBeenCalled();
+      expect(onMoveTask).not.toHaveBeenCalled();
+      expect(checkDuplicateTasks).not.toHaveBeenCalled();
+      expect(screen.getByTestId("quick-entry-input")).toHaveValue("Alpha task");
+    });
+
+    it("still starts the task when a cancelled hold is immediately retried", async () => {
+      const { onCreate, save } = setup();
+      fireEvent.pointerDown(save, { pointerId: 4, pointerType: "mouse", button: 0, isPrimary: true });
+      await act(async () => vi.advanceTimersByTime(300));
+      fireEvent.pointerUp(save, { pointerId: 4, pointerType: "mouse" });
+      fireEvent.click(save);
+      expect(onCreate).not.toHaveBeenCalled();
+
+      await completePointerHold(save, 5, "mouse");
+
+      await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+      expect(onCreate.mock.calls[0]![0]).toHaveProperty("column", "todo");
+    });
+
+    /*
+    ## Symptom Verification (FN-453, first reported symptom)
+    Original symptom: holding Save sometimes refused to start the task even when held to the end.
+    Exact reproduction: any cancellation that armed the component-wide click barrier with no click left to consume it,
+    followed by an independent full hold.
+    Assertion it is gone: after every cancellation route, the next 500ms hold starts exactly one task.
+    */
+    it.each(["pointerCancel", "pointerLeave", "lostPointerCapture", "blur", "escape"])("lets a later hold start the task after a %s cancellation", async (cancellation) => {
+      const { onCreate, save } = setup();
+      fireEvent.pointerDown(save, { pointerId: 9, pointerType: "touch", button: 0, isPrimary: true });
+      await act(async () => vi.advanceTimersByTime(200));
+      if (cancellation === "pointerCancel") fireEvent.pointerCancel(save, { pointerId: 9, pointerType: "touch" });
+      if (cancellation === "pointerLeave") fireEvent.pointerLeave(save, { pointerId: 9, pointerType: "touch" });
+      if (cancellation === "lostPointerCapture") fireEvent.lostPointerCapture(save, { pointerId: 9, pointerType: "touch" });
+      if (cancellation === "blur") fireEvent.blur(save);
+      if (cancellation === "escape") fireEvent.keyDown(save, { key: "Escape" });
+      await act(async () => vi.advanceTimersByTime(500));
+      expect(onCreate).not.toHaveBeenCalled();
+
+      await completePointerHold(save, 10, "touch");
+
+      await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+      expect(onCreate.mock.calls[0]![0]).toHaveProperty("column", "todo");
+      expect(onCreate.mock.calls[0]![0]).toHaveProperty("workflowId", ideasWorkflow.id);
+    });
+
+    it("keeps an in-flight hold alive when the workflow metadata is refreshed into an equivalent object", async () => {
+      const onCreate = vi.fn().mockResolvedValue({ ...CREATED_TASK, id: "FN-alpha-refresh", column: "todo", workflowId: ideasWorkflow.id });
+      const { rerender } = renderCompactQuickEntryBox({ onCreate, workflowId: ideasWorkflow.id, workflowOptions: [ideasWorkflow] });
+      fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Alpha task" } });
+      fireEvent.pointerDown(screen.getByTestId("quick-entry-save"), { pointerId: 3, pointerType: "mouse", button: 0, isPrimary: true });
+      await act(async () => vi.advanceTimersByTime(200));
+
+      // Same workflow, brand-new objects — exactly what a metadata refresh produces.
+      const refreshed = { ...ideasWorkflow, columns: ideasWorkflow.columns.map((column) => ({ ...column, flags: { ...column.flags } })) };
+      rerender(<QuickEntryBox onCreate={onCreate} addToast={vi.fn()} projectId={TEST_PROJECT_ID} workflowId={refreshed.id} workflowOptions={[refreshed]} />);
+      expect(screen.getByTestId("quick-entry-save")).toHaveAttribute("data-hold-state", "holding");
+      await act(async () => vi.advanceTimersByTime(300));
+
+      await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+      expect(onCreate.mock.calls[0]![0]).toHaveProperty("column", "todo");
+    });
+
+    it("cancels an in-flight hold when the refreshed workflow resolves a different Start destination", async () => {
+      const onCreate = vi.fn().mockResolvedValue(undefined);
+      const { rerender } = renderCompactQuickEntryBox({ onCreate, workflowId: ideasWorkflow.id, workflowOptions: [ideasWorkflow] });
+      fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Alpha task" } });
+      fireEvent.pointerDown(screen.getByTestId("quick-entry-save"), { pointerId: 3, pointerType: "mouse", button: 0, isPrimary: true });
+      await act(async () => vi.advanceTimersByTime(200));
+
+      // Same workflow id, but its routing columns changed: the captured destination is no longer provable.
+      const retargeted = { ...ideasWorkflow, columns: [{ id: "ideas", name: "Ideas", flags: { hold: true } }, { id: "triage", name: "Triage", flags: { intake: true } }] };
+      rerender(<QuickEntryBox onCreate={onCreate} addToast={vi.fn()} projectId={TEST_PROJECT_ID} workflowId={retargeted.id} workflowOptions={[retargeted]} />);
+      await act(async () => vi.advanceTimersByTime(300));
+
+      expect(onCreate).not.toHaveBeenCalled();
       expect(screen.getByTestId("quick-entry-save")).toHaveAttribute("data-hold-state", "idle");
     });
 
@@ -6445,10 +6569,10 @@ describe("QuickEntryBox", () => {
 
       // The Save button owns its own Space/Enter hold gesture; the textarea accelerator does not reach it.
       fireEvent.keyDown(save, { key: "Enter", ctrlKey: true });
-      expect(save).toHaveAttribute("data-hold-state", "holding");
+      expect(save).toHaveAttribute("data-hold-state", "idle");
       expect(onCreate).not.toHaveBeenCalled();
 
-      // Releasing before the 500ms threshold is still exactly one ordinary Save, with no Start column.
+      // A brief press released before the mask engages is still exactly one ordinary Save, with no Start column.
       await act(async () => vi.advanceTimersByTime(100));
       fireEvent.keyUp(save, { key: "Enter", ctrlKey: true });
 
