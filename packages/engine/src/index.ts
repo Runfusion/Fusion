@@ -568,6 +568,19 @@ export {
   type ExternalGitCheckoutInspection,
 } from "./execution/external-execution-checkout.js";
 export { createFnAgent, promptWithFallback, describeModel, setHostExtensionPaths, getHostExtensionPaths, wrapToolsWithActionGate, type AgentOptions, type AgentResult } from "./pi.js";
+/*
+FNXC:ChatContextGuardEscalation 2026-09-04-10:57:
+RUFU-182: the reason-preserving compaction outcome crosses the package boundary — the guard ladder
+and dashboard tests consume the union, its classifier, and the retry-legality predicate (exported
+precisely so no caller can hand-roll an illegal second `session.compact()` attempt).
+*/
+export {
+  compactSessionContext,
+  classifyCompactionFailure,
+  isRetryAfterCompactionFailureLegal,
+  type CompactionOutcome,
+  type PiCompactionReason,
+} from "./pi.js";
 export { resolveMcpServersForRuntime, resolveMcpServersForStore, type ResolvedMcpServersForRuntime } from "./mcp/mcp-resolution.js";
 export { discoverMcpServers, type DiscoverMcpServersOptions, type DiscoverMcpServersResult } from "./mcp/mcp-discovery-service.js";
 export { runtimeSupportsMcp, logMcpForwardingSkipped } from "./mcp/mcp-runtime-support.js";
@@ -992,6 +1005,28 @@ export { RoutineScheduler, type RoutineSchedulerOptions } from "./scheduling/rou
 export { StuckTaskDetector, type StuckTaskDetectorOptions, type DisposableSession } from "./healing/stuck-task-detector.js";
 export { HeartbeatMonitor, HeartbeatTriggerScheduler, type WakeContext } from "./agent-heartbeat.js";
 export { TokenCapDetector, type TokenCapCheckResult } from "./errors/token-cap-detector.js";
+/*
+FNXC:ChatContextGuard 2026-08-18-18:06:
+RUFU-118 phase 1: export the deterministic pre-overflow compaction gate for the
+chat/CLI pi-session path so the dashboard chat seams (sendMessage / sendRoomMessage)
+can enforce it before enginePromptWithFallback. tokenCap becomes an upper bound on the
+effective chat threshold here; the executor TokenCapDetector above keeps its
+undefined = disabled semantics.
+*/
+export {
+  buildAggressiveCompactionDirective,
+  ChatContextOverflowError,
+  computeCompactionThreshold,
+  ensureContextWithinCompactionThreshold,
+  estimateLoadedContextTokens,
+  estimatePendingRequestTokens,
+  type ChatContextOverflowReason,
+  type CompactionAuditContext,
+  type CompactionEscalationTier,
+  type CompactionGateOptions,
+  type CompactionGateResult,
+  type CompactionGateSession,
+} from "./chat-context-guard.js";
 export { SelfHealingManager, type SelfHealingOptions, type RebindResult, type LandedReviewReconcileResult } from "./self-healing.js";
 /*
 FNXC:MergeReliability 2026-07-15-21:45 (FN-8004 follow-up):
