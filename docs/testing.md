@@ -1061,6 +1061,7 @@ Copy this checklist into a bug-fix or UI-affordance add/remove task's `## Surfac
 - [ ] For worktree cleanup: active-session, successor-session after abort, raw/canonical path spellings, workspace sub-repository worktrees, and proof-gated ignored-only versus deliverable/unverifiable checkout content
 - [ ] Long-running subprocess or verification-active surfaces when the invariant involves engine liveness, stuck detection, or command execution (`fn_run_verification`, configured commands, timeout/deadline behavior)
 - [ ] Desktop + mobile breakpoints / platforms that exercise the behavior
+- [ ] Input CAPABILITY surfaces when the behavior depends on hover or pointer precision: fine-pointer hover, coarse pointer at mobile width, and coarse pointer ABOVE the mobile breakpoint (a touch tablet in landscape is reached by no `max-width: 768px` override, so a width-based guard leaves it regressive — FN-482)
 - [ ] Empty / undefined / duplicate / populated data states
 - [ ] Shared hooks / components / modules / helpers reusing the logic
 - [ ] Every component that renders the affordance (search the codebase for the icon/class/testid, not just the one the user pointed at)

@@ -2452,8 +2452,11 @@ FN-7825 makes .settings-navigation the sole owner of Settings rail width and rem
   }
 }
 
-.card-github-badge:hover {
-  filter: brightness(1.08);
+/* FNXC:TaskCardTouchHover 2026-09-16-22:27 (FN-482): garde de capacité — un pan tactile du board ne doit pas éclairer le badge GitHub d'une carte (survol émulé collant sur pointeur grossier). */
+@media (hover: hover) {
+  .card-github-badge:hover {
+    filter: brightness(1.08);
+  }
 }
 
 .card-github-badge:focus-visible {
@@ -3208,8 +3211,11 @@ Toast text must contrast its status background across every dashboard theme and 
   border-style: dashed;
   cursor: default;
 }
-.card.queued:hover {
-  cursor: default;
+/* FNXC:TaskCardTouchHover 2026-09-16-22:27 (FN-482): gardé par capacité avec les autres `:hover` de carte. Sans survol, le curseur est déjà fixé par `.card.queued` et `:active`, donc la garde est un no-op sur tactile. */
+@media (hover: hover) {
+  .card.queued:hover {
+    cursor: default;
+  }
 }
 .card.queued:active {
   cursor: default;

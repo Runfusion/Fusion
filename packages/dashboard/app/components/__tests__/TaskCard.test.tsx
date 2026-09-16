@@ -5100,7 +5100,16 @@ describe("TaskCard", () => {
     const css = loadAllAppCssBaseOnly();
 
     expect(css).toMatch(/\.card-time-indicator\s*,\s*\.card-cost-indicator\s*,\s*\.card-github-tracking-chip\s*,\s*\.card-retry-badge\s*,\s*\.card-create-pr-action\s*\{[^}]*display:\s*inline-flex;[^}]*font-family:\s*var\(--font-mono\);[^}]*\}/);
-    expect(css).toContain(".card-github-tracking-chip:hover");
+    /*
+    FNXC:TaskCardTouchHover 2026-09-16-22:27 (FN-482):
+    Le survol du chip existe toujours, mais il est désormais gardé par capacité pour qu'un pan
+    tactile du board ne l'allume pas. Il n'apparaît donc plus dans le CSS privé d'at-rules :
+    l'assertion se déplace sur le CSS complet et exige explicitement la garde `hover: hover`.
+    */
+    expect(css).not.toContain(".card-github-tracking-chip:hover");
+    expect(loadAllAppCss()).toMatch(
+      /@media\s*\(hover:\s*hover\)\s*\{[\s\S]*?\.card-github-tracking-chip:hover\s*\{[^}]*background:\s*var\(--card-hover\);[^}]*\}/,
+    );
     expect(css).toMatch(/\.card-github-tracking-chip:focus-visible\s*\{[^}]*--focus-ring-strong/);
     expect(css).toMatch(/\.card-time-indicator\s*,\s*\.card-cost-indicator\s*,\s*\.card-github-tracking-chip\s*,\s*\.card-retry-badge\s*,\s*\.card-create-pr-action\s*\{[^}]*padding:\s*var\(--space-xs\)\s+var\(--space-sm\);[^}]*height:\s*var\(--card-chip-height\);[^}]*border-radius:\s*var\(--radius-pill\);[^}]*font-size:\s*0\.6875rem;[^}]*line-height:\s*1;[^}]*\}/);
     expect(css).toMatch(/\.card-github-tracking-chip\s+\.provider-icon\s+svg\s*\{[^}]*width:\s*12px;[^}]*height:\s*12px;[^}]*\}/);

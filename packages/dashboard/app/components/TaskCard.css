@@ -33,9 +33,17 @@ Task cards keep metadata and status behavior intact while reducing persistent vi
   box-shadow: var(--shadow-sm);
 }
 
-.card:hover {
-  border-color: var(--text-muted);
-  box-shadow: var(--shadow-md);
+/*
+FNXC:TaskCardTouchHover 2026-09-16-22:27 (FN-482):
+Le pan horizontal du board mobile est un scroll natif (aucun JS : `useHorizontalMousePan` ignore `pointerType !== "mouse"`). Les navigateurs tactiles émulent alors `:hover` sur la carte survolée par le doigt et laissent l'état « collé » jusqu'au tap suivant ailleurs, ce qui allumait une carte pendant un simple défilement.
+Toutes les règles `:hover` des cartes sont donc gardées par CAPACITÉ (`@media (hover: hover)`) et non par largeur : les tablettes tactiles larges (> 768px) sont précisément la surface régressive qu'un garde `max-width` ne couvre pas.
+Le retour visuel équivalent est réservé au tap via `:active` sous `@media (hover: none)`, et les contrôles jusqu'ici révélés au survol restent inconditionnellement visibles sur tactile (bloc `@media (hover: none)` en fin de fichier).
+*/
+@media (hover: hover) {
+  .card:hover {
+    border-color: var(--text-muted);
+    box-shadow: var(--shadow-md);
+  }
 }
 
 .card-header {
@@ -64,10 +72,21 @@ The tile selectors remain at (0,3,0), and the text-entry carve-out is (0,3,1), b
   cursor: auto;
 }
 
-.card:hover {
-  background: var(--card-hover);
-  border-color: var(--text-muted);
+@media (hover: hover) {
+  .card:hover {
+    background: var(--card-hover);
+    border-color: var(--text-muted);
+  }
 }
+
+/* FNXC:TaskCardTouchHover 2026-09-16-22:27 (FN-482): contrepartie tactile — la carte ne s'allume qu'au tap réel, sans état rémanent après le relâchement. Spécificité (0,2,0), strictement sous la règle de pan `.board… is-mouse-panning` (0,4,0). */
+@media (hover: none) {
+  .card:active {
+    background: var(--card-hover);
+    border-color: var(--text-muted);
+  }
+}
+
 .card:focus-visible {
   box-shadow: var(--focus-ring-strong);
   border-color: var(--todo);
@@ -895,8 +914,10 @@ is the card's paint, not a cover.
   color: var(--color-error-dark);
 }
 
-.card-error-retry-btn:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--color-error) 16%, transparent);
+@media (hover: hover) {
+  .card-error-retry-btn:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--color-error) 16%, transparent);
+  }
 }
 
 .card-error-retry-btn:focus-visible {
@@ -987,9 +1008,11 @@ is the card's paint, not a cover.
   transition: color var(--transition-fast), text-decoration var(--transition-fast);
 }
 
-.card-dep-badge.clickable:hover {
-  color: var(--todo);
-  text-decoration: underline;
+@media (hover: hover) {
+  .card-dep-badge.clickable:hover {
+    color: var(--todo);
+    text-decoration: underline;
+  }
 }
 
 .card-dep-list {
@@ -1029,24 +1052,27 @@ is the card's paint, not a cover.
   padding-inline: calc(var(--space-xs) / 2);
 }
 
-.card-scope-badge[data-tooltip]:hover::after,
-.card-fanout-badge[data-tooltip]:hover::after {
-  content: attr(data-tooltip);
-  position: absolute;
-  bottom: 100%;
-  left: 50%;
-  transform: translateX(-50%);
-  background: var(--card);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: var(--space-xs) var(--space-sm);
-  font-size: 0.6875rem;
-  white-space: nowrap;
-  z-index: 10;
-  pointer-events: none;
-  margin-bottom: var(--space-xs);
-  box-shadow: var(--shadow-md);
+/* FNXC:TaskCardTouchHover 2026-09-16-22:27 (FN-482): ces bulles étaient le symptôme le plus visible d'un pan tactile — le doigt qui défile ouvrait des infobulles sur les badges traversés. */
+@media (hover: hover) {
+  .card-scope-badge[data-tooltip]:hover::after,
+  .card-fanout-badge[data-tooltip]:hover::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--card);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: var(--space-xs) var(--space-sm);
+    font-size: 0.6875rem;
+    white-space: nowrap;
+    z-index: 10;
+    pointer-events: none;
+    margin-bottom: var(--space-xs);
+    box-shadow: var(--shadow-md);
+  }
 }
 
 /*
@@ -1081,9 +1107,11 @@ at desktop and mobile breakpoints.
   height: 0.625rem;
 }
 
-.card-mission-badge:hover {
-  color: var(--badge-mission-text-hover);
-  background: var(--badge-mission-bg-hover);
+@media (hover: hover) {
+  .card-mission-badge:hover {
+    color: var(--badge-mission-text-hover);
+    background: var(--badge-mission-bg-hover);
+  }
 }
 
 .card-agent-row {
@@ -1243,8 +1271,10 @@ on narrow/mobile cards, so added terminal metadata cannot force horizontal scrol
   white-space: nowrap;
 }
 
-.card-session-files:hover {
-  color: var(--text);
+@media (hover: hover) {
+  .card-session-files:hover {
+    color: var(--text);
+  }
 }
 
 .card-session-files:disabled {
@@ -1350,9 +1380,11 @@ The execution-time badge is part of the footer's bottom-right chip cluster, so i
     box-shadow var(--transition-fast);
 }
 
-.card-github-tracking-chip:hover {
-  background: var(--card-hover);
-  color: var(--text);
+@media (hover: hover) {
+  .card-github-tracking-chip:hover {
+    background: var(--card-hover);
+    color: var(--text);
+  }
 }
 
 .card-github-tracking-chip:focus-visible {
@@ -1429,8 +1461,10 @@ The execution-time badge is part of the footer's bottom-right chip cluster, so i
   inset: calc(var(--space-sm) * -1);
 }
 
-.card-duplicate-dismiss:hover {
-  background: var(--card-hover);
+@media (hover: hover) {
+  .card-duplicate-dismiss:hover {
+    background: var(--card-hover);
+  }
 }
 
 .card-duplicate-dismiss:focus-visible {
@@ -1518,8 +1552,10 @@ so the icon needs no rule of its own.
     box-shadow var(--transition-fast);
 }
 
-.card-create-pr-action:hover:not(:disabled) {
-  background: var(--card-hover);
+@media (hover: hover) {
+  .card-create-pr-action:hover:not(:disabled) {
+    background: var(--card-hover);
+  }
 }
 
 .card-create-pr-action:disabled {
@@ -1585,8 +1621,10 @@ the established compact mobile interaction rhythm while the card remains the pri
   transition: color var(--transition-fast);
 }
 
-.card-steps-toggle:hover {
-  color: var(--text);
+@media (hover: hover) {
+  .card-steps-toggle:hover {
+    color: var(--text);
+  }
 }
 
 .card-steps-toggle:focus-visible {
@@ -1833,8 +1871,10 @@ The trailing actions cluster (Actions/Send-back and ⋯ menu) must share the tas
   transition: filter var(--transition-fast);
 }
 
-.card-answer-questions-btn:hover {
-  filter: brightness(1.1);
+@media (hover: hover) {
+  .card-answer-questions-btn:hover {
+    filter: brightness(1.1);
+  }
 }
 
 .card-answer-questions-btn:focus {
@@ -1842,13 +1882,15 @@ The trailing actions cluster (Actions/Send-back and ⋯ menu) must share the tas
   outline-offset: 1px;
 }
 
-.card:hover .card-edit-btn {
-  opacity: 1;
-}
+@media (hover: hover) {
+  .card:hover .card-edit-btn {
+    opacity: 1;
+  }
 
-.card-edit-btn:hover {
-  background: var(--border);
-  color: var(--text);
+  .card-edit-btn:hover {
+    background: var(--border);
+    color: var(--text);
+  }
 }
 
 .card-edit-btn:focus {
@@ -1882,14 +1924,20 @@ short-landscape variant (FN-5751 lesson: never a desktop-only or portrait-only f
     color var(--transition-fast);
 }
 
-.card:hover .card-menu-btn,
+/* FNXC:TaskCardTouchHover 2026-09-16-22:27 (FN-482): l'état « menu ouvert » est extrait du garde de capacité — un menu déployé doit rester visible sans survol, sur tout pointeur. */
 .card-menu-btn[aria-expanded="true"] {
   opacity: 1;
 }
 
-.card-menu-btn:hover {
-  background: var(--border);
-  color: var(--text);
+@media (hover: hover) {
+  .card:hover .card-menu-btn {
+    opacity: 1;
+  }
+
+  .card-menu-btn:hover {
+    background: var(--border);
+    color: var(--text);
+  }
 }
 
 .card-menu-btn:focus-visible {
@@ -1951,12 +1999,14 @@ The mobile/short-landscape 28px ⋯ touch target must not expand .card-header-ac
   transition: opacity var(--transition-fast), color var(--transition-fast);
 }
 
-.card:hover .card-delete-btn {
-  opacity: 1;
-}
+@media (hover: hover) {
+  .card:hover .card-delete-btn {
+    opacity: 1;
+  }
 
-.card-delete-btn:hover {
-  color: var(--color-error);
+  .card-delete-btn:hover {
+    color: var(--color-error);
+  }
 }
 
 .card-delete-btn:focus {
@@ -1984,14 +2034,16 @@ The mobile/short-landscape 28px ⋯ touch target must not expand .card-header-ac
     color var(--transition-fast), border-color var(--transition-fast);
 }
 
-.card:hover .card-revert-btn {
-  opacity: 1;
-}
+@media (hover: hover) {
+  .card:hover .card-revert-btn {
+    opacity: 1;
+  }
 
-.card-revert-btn:hover {
-  background: var(--card-hover);
-  color: var(--text);
-  border-color: color-mix(in srgb, var(--border) 70%, var(--text) 30%);
+  .card-revert-btn:hover {
+    background: var(--card-hover);
+    color: var(--text);
+    border-color: color-mix(in srgb, var(--border) 70%, var(--text) 30%);
+  }
 }
 
 .card-revert-btn:focus {
@@ -2025,14 +2077,16 @@ The three-dot menu is the sole card move/action entry point. Keep this shared bu
     color var(--transition-fast), border-color var(--transition-fast);
 }
 
-.card:hover .card-send-back-btn {
-  opacity: 1;
-}
+@media (hover: hover) {
+  .card:hover .card-send-back-btn {
+    opacity: 1;
+  }
 
-.card-send-back-btn:hover {
-  background: var(--card-hover);
-  color: var(--text);
-  border-color: color-mix(in srgb, var(--border) 70%, var(--text) 30%);
+  .card-send-back-btn:hover {
+    background: var(--card-hover);
+    color: var(--text);
+    border-color: color-mix(in srgb, var(--border) 70%, var(--text) 30%);
+  }
 }
 
 .card-send-back-btn:focus {
@@ -2050,9 +2104,11 @@ The three-dot menu is the sole card move/action entry point. Keep this shared bu
   color: var(--text);
 }
 
-.card-promote-action.card-send-back-btn:hover:not(:disabled) {
-  background: var(--card-hover);
-  color: var(--text);
+@media (hover: hover) {
+  .card-promote-action.card-send-back-btn:hover:not(:disabled) {
+    background: var(--card-hover);
+    color: var(--text);
+  }
 }
 
 .card-promote-action.card-send-back-btn:focus-visible {
@@ -2090,6 +2146,21 @@ The three-dot menu is the sole card move/action entry point. Keep this shared bu
 .card-edit-loading-text {
   font-size: 0.6875rem;
   color: var(--text-muted);
+}
+
+/*
+FNXC:TaskCardTouchHover 2026-09-16-22:27 (FN-482):
+Les cinq contrôles de carte n'étaient révélés que par `.card:hover`, désormais gardé par capacité. Sur tout pointeur sans survol ils doivent rester visibles et cliquables — y compris sur les tablettes tactiles au-delà de 768px, que les blocs `@media (max-width: 768px), (max-height: 480px)` existants ne couvrent pas.
+*/
+@media (hover: none) {
+  .card-edit-btn,
+  .card-menu-btn,
+  .card-delete-btn,
+  .card-revert-btn,
+  .card-send-back-btn,
+  .card-promote-action.card-send-back-btn {
+    opacity: 1;
+  }
 }
 
 /* === Mobile Responsive Overrides === */
