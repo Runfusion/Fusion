@@ -265,12 +265,13 @@ describe("homemade Alpha Chat", () => {
     const primaryRename = screen.getByTestId("chat-context-rename");
     const assignment = screen.getByTestId("chat-context-tag-tag-alpha");
     const laterAssignment = screen.getByTestId("chat-context-tag-tag-later");
-    const archive = screen.getByTestId("chat-context-archive");
+    /* FNXC:ChatArchived 2026-09-16-15:50: FN-465 removed the Archive entry; Delete is now the first maintenance-section item this navigation reaches. */
+    const maintenanceEntry = screen.getByTestId("chat-context-delete");
     const rename = screen.getByTestId("chat-context-rename-tag-tag-alpha");
     expect(screen.getAllByRole("menu")).toHaveLength(1);
     expect(conversationMenu).toContainElement(primaryRename);
     expect(conversationMenu).toContainElement(assignment);
-    expect(conversationMenu).toContainElement(archive);
+    expect(conversationMenu).toContainElement(maintenanceEntry);
     expect(assignment).not.toContainElement(rename);
     primaryRename.focus();
     await userEvent.keyboard("{ArrowDown}");
@@ -278,14 +279,14 @@ describe("homemade Alpha Chat", () => {
     await userEvent.keyboard("{ArrowDown}");
     expect(laterAssignment).toHaveFocus();
     await userEvent.keyboard("{ArrowDown}");
-    expect(archive).toHaveFocus();
+    expect(maintenanceEntry).toHaveFocus();
     await userEvent.keyboard("{ArrowUp}{ArrowUp}{ArrowUp}");
     expect(primaryRename).toHaveFocus();
-    archive.focus();
+    maintenanceEntry.focus();
     await userEvent.tab();
     expect(rename).toHaveFocus();
     await userEvent.tab({ shift: true });
-    expect(archive).toHaveFocus();
+    expect(maintenanceEntry).toHaveFocus();
     expect(rename.closest(".chat-tag-menu-item")).toHaveTextContent("Important");
     expect(conversationMenu.querySelector("button button")).toBeNull();
     fireEvent.click(assignment);

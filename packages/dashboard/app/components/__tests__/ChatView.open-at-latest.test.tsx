@@ -171,11 +171,17 @@ describe("ChatView keeps conversation-list scrolling independent", () => {
     }
   });
 
-  it("starts each active, searched, tagged, and archived collection at the beginning", async () => {
+  /*
+  FNXC:ChatArchived 2026-09-16-15:50:
+  FN-465 retire la collection archivée du Chat : la dernière étape de ce scénario passait par la
+  bascule « Archived ». Elle devient un changement de collection active équivalent (retour au tag
+  « all »), qui prouve la même invariante : toute nouvelle collection de liste commence en tête.
+  */
+  it("starts each active, searched, and tagged collection at the beginning", async () => {
     const active = conversationSessions(100);
     const searched = conversationSessions(100, { prefix: "searched" });
     const tagged = conversationSessions(100, { prefix: "tagged" });
-    const archived = conversationSessions(100, { prefix: "archived" });
+    const retagged = conversationSessions(100, { prefix: "retagged" });
     setupMockChat({ activeSession: null, sessions: active, filteredSessions: active, messages: [] });
     const view = await renderWithAct(<ChatView projectId="project" addToast={vi.fn()} />);
     const list = document.querySelector<HTMLElement>(".chat-session-list")!;
@@ -192,10 +198,10 @@ describe("ChatView keeps conversation-list scrolling independent", () => {
     expect(geometry.scrollTop).toBe(0);
 
     geometry.setScrollTop(500);
-    setupMockChat({ activeSession: null, sessions: active, filteredSessions: tagged, selectedTagId: "tag-1", archivedSessions: archived, messages: [] });
-    fireEvent.click(screen.getByTestId("chat-archived-toggle"));
+    setupMockChat({ activeSession: null, sessions: active, filteredSessions: retagged, selectedTagId: "tag-2", messages: [] });
+    view.rerender(<ChatView projectId="project" addToast={vi.fn()} />);
     expect(geometry.scrollTop).toBe(0);
-    expect(screen.getByTestId(`chat-archived-session-${archived[0]!.id}`)).toHaveTextContent("Première conversation");
+    expect(screen.getByTestId(`chat-session-${retagged[0]!.id}`)).toHaveTextContent("Première conversation");
   });
 
   it("keeps empty, small, and defensively duplicated inputs at the list start", async () => {

@@ -288,13 +288,7 @@ primary CTA while every production presentation can open the merge-aware form.
   background: var(--card-hover);
 }
 
-.mission-list__filters {
-  display: flex;
-  justify-content: flex-end;
-  margin: calc(var(--space-sm) * -1) calc(var(--space-sm) * -1) var(--space-sm);
-  padding: var(--space-sm) var(--space-md);
-  border-bottom: var(--btn-border-width) solid var(--border);
-}
+/* FNXC:StandardizedMissionLayout 2026-09-16-15:50: FN-465 removed the mission list archive filter bar, so its container rule is gone rather than left as an empty shell. */
 
 .mission-manager__detail-pane {
   flex: 1;

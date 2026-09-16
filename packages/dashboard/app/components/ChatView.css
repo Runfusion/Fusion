@@ -2228,16 +2228,14 @@ Shared ChatView hosts expose Direct-only tag filters and compact chips without i
 FNXC:ChatTags 2026-08-23-15:51:
 The tag filter select must use the sibling sidebar search input's comfortable token-based inner padding so "All tags" is not flush against its border across desktop, narrow, and mobile hosts.
 
-FNXC:ChatArchived 2026-08-23-16:27:
-The compact Archived toggle shares the narrowed tag-filter line, with tokenized row padding separating the search input and session list. Narrow and mobile sidebars may wrap the controls rather than clipping or horizontally overflowing them.
+FNXC:ChatArchived 2026-09-16-15:50:
+FN-465 : l'archivage n'est plus proposé dans le Chat, donc la ligne de filtres ne porte plus que le filtre par tag. Elle conserve son espacement tokenisé entre la recherche et la liste, et les sidebars étroites ou mobiles peuvent enrouler ses contrôles plutôt que les rogner ou déborder horizontalement.
 */
 .chat-sidebar-filter-row { display: flex; align-items: center; gap: var(--space-xs); padding: var(--space-xs) 0; min-width: 0; }
 .chat-tag-filter { display: flex; flex: 1 1 auto; align-items: center; gap: var(--space-xs); min-width: 0; overflow: hidden; color: var(--text-muted); }
 .chat-tag-filter > svg,
 .chat-tag-filter > .btn-icon { flex: 0 0 auto; }
 .chat-tag-filter select { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg); color: var(--text); padding: var(--space-sm) var(--space-md); }
-.chat-archived-toggle { flex: 0 0 auto; padding-inline: var(--space-sm); white-space: nowrap; }
-.chat-archived-toggle--active { background: color-mix(in srgb, var(--accent) 16%, var(--surface-2)); color: var(--accent-text); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
 .chat-session-tags { display: flex; flex-wrap: wrap; gap: var(--space-xs); overflow: hidden; }
 .chat-session-tag { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 var(--space-xs); border-radius: var(--radius-sm); background: var(--surface-2); color: var(--text-muted); font-size: var(--font-size-xs); }
 /* FNXC:ChatTags 2026-08-05-12:15: direct-conversation tag controls keep assignment, rename, and deletion in the existing context menu so shared Chat hosts do not grow another sidebar action row. */

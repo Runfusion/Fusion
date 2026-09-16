@@ -28,8 +28,6 @@ import {
   fetchAiSession,
   fetchAiSessions,
   deleteAiSession,
-  archiveAiSession,
-  unarchiveAiSession,
   parseConversationHistory,
   fetchModels,
   cancelPlanning,
@@ -57,7 +55,7 @@ import {
   clearPlanningActiveSession,
 } from "../hooks/modalPersistence";
 import { getRelativeTimeBucket } from "../utils/relativeTimeAgo";
-import { Lightbulb, X, Loader2, CheckCircle, ArrowLeft, ArrowRight, Sparkles, Trash2, RefreshCw, MessageSquarePlus, AlertCircle, Clock, HelpCircle, StopCircle, Archive, ArchiveRestore, Pencil, History } from "lucide-react";
+import { Lightbulb, X, Loader2, CheckCircle, ArrowLeft, ArrowRight, Sparkles, Trash2, RefreshCw, MessageSquarePlus, AlertCircle, Clock, HelpCircle, StopCircle, Pencil, History } from "lucide-react";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { ConversationHistory } from "./ConversationHistory";
 import { PlanningSessionPrompt } from "./PlanningSessionPrompt";
@@ -720,7 +718,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   */
   const [mobileShowDetail, setMobileShowDetail] = useState(false);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
-  const [showArchived, setShowArchived] = useState(false);
   const thinkingOutputRef = useRef<HTMLDivElement>(null);
   // Mirrors `streamingOutput` state for reading inside callbacks without
   // stale closure issues (e.g. capturing reasoning before onQuestion clears it).
@@ -2259,19 +2256,26 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   const refreshSessionsList = useCallback(async () => {
     setSessionsLoading(true);
     try {
+      /*
+      FNXC:PlanningMode 2026-09-16-15:50:
+      FN-465 retire l'archivage des sessions de planification de l'interface opérateur : la liste
+      n'affiche plus jamais de session archivée et n'expose ni bascule d'archives ni bouton
+      Archiver/Désarchiver. Les sessions archivées historiques restent en base, définitivement
+      masquées ici, d'où includeArchived en dur à false.
+      */
       const all = await fetchAiSessions(projectId, {
         includeCompleted: true,
-        includeArchived: showArchived,
+        includeArchived: false,
         type: "planning",
       });
-      const planning = all.filter((s) => s.type === "planning");
+      const planning = all.filter((s) => s.type === "planning" && s.archived !== true);
       setPlanningSessions(dedupeSessionsById(planning));
     } catch {
       // Best-effort: list errors should not block the modal
     } finally {
       setSessionsLoading(false);
     }
-  }, [projectId, showArchived]);
+  }, [projectId]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -2539,44 +2543,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       setPendingDeleteId(null);
     },
     [addToast, planningSessions, projectId, refreshSessionsList, resetDetailState, selectedSessionId],
-  );
-
-  const handleArchiveSession = useCallback(
-    async (sessionId: string) => {
-      const target = planningSessions.find((s) => s.id === sessionId);
-      const wasArchived = target?.archived === true;
-      try {
-        if (wasArchived) {
-          await unarchiveAiSession(sessionId);
-        } else {
-          await archiveAiSession(sessionId);
-        }
-      } catch {
-        // best-effort; SSE will reconcile on success and the row stays put on
-        // failure so the user can retry.
-        return;
-      }
-      // Optimistic local update — SSE will deliver the authoritative version.
-      // When hiding (archive while showArchived=false) drop the row; when
-      // unarchiving keep it visible with the new flag flipped.
-      setPlanningSessions((prev) => {
-        if (!wasArchived && !showArchived) {
-          return dedupeSessionsById(prev.filter((s) => s.id !== sessionId));
-        }
-        return dedupeSessionsById(prev.map((s) => (s.id === sessionId ? { ...s, archived: !wasArchived } : s)));
-      });
-      if (!wasArchived && selectedSessionId === sessionId && !showArchived) {
-        // The currently-open archived session is no longer in the visible list;
-        // collapse the detail pane so the user lands on a sensible default.
-        streamConnectionRef.current?.close();
-        streamConnectionRef.current = null;
-        resetDetailState();
-        clearPlanningActiveSession(projectId);
-        setSelectedSessionId(null);
-        setMobileShowDetail(false);
-      }
-    },
-    [planningSessions, resetDetailState, selectedSessionId, setMobileShowDetail, showArchived],
   );
 
   // Reset hasAutoStarted when modal closes
@@ -3579,9 +3545,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                 loading={sessionsLoading}
                 selectedSessionId={selectedSessionId}
                 pendingDeleteId={pendingDeleteId}
-                showArchived={showArchived}
-                onToggleShowArchived={() => setShowArchived((v) => !v)}
-                onArchive={(id) => void handleArchiveSession(id)}
                 onSelectSession={handleSelectSession}
                 onRequestDelete={setPendingDeleteId}
                 onConfirmDelete={(id) => void handleDeleteSession(id)}
@@ -4889,9 +4852,6 @@ interface PlanningSessionListProps {
   loading: boolean;
   selectedSessionId: string | null;
   pendingDeleteId: string | null;
-  showArchived: boolean;
-  onToggleShowArchived: () => void;
-  onArchive: (id: string) => void;
   onSelectSession: (id: string) => void;
   onRequestDelete: (id: string) => void;
   onConfirmDelete: (id: string) => void;
@@ -4909,9 +4869,6 @@ function PlanningSessionList({
   loading,
   selectedSessionId,
   pendingDeleteId,
-  showArchived,
-  onToggleShowArchived,
-  onArchive,
   onSelectSession,
   onRequestDelete,
   onConfirmDelete,
@@ -4924,18 +4881,15 @@ function PlanningSessionList({
   onCancelRename,
 }: PlanningSessionListProps) {
   const { t } = useTranslation("app");
+  /*
+  FNXC:PlanningMode 2026-09-16-15:50:
+  FN-465 : la liste latérale des sessions de planification n'expose plus aucune affordance
+  d'archivage — ni bascule « Show archived » (son conteneur de filtres disparaît avec elle plutôt
+  que de rester une barre vide), ni bouton Archiver/Désarchiver par ligne. Seuls Renommer et
+  Supprimer subsistent dans les actions de ligne.
+  */
   return (
     <div className="planning-sidebar">
-      <div className="planning-sidebar-filter">
-        <button
-          type="button"
-          className="btn btn-sm planning-sidebar-toggle-archived-link"
-          onClick={onToggleShowArchived}
-          aria-pressed={showArchived}
-        >
-          {showArchived ? t("planning.hideArchived", "Hide archived") : t("planning.showArchived", "Show archived")}
-        </button>
-      </div>
       <div className="planning-sidebar-list">
         {/*
         FNXC:PlanningMode 2026-07-15-00:00:
@@ -4966,8 +4920,6 @@ function PlanningSessionList({
         {sessions.map((session) => {
           const isSelected = session.id === selectedSessionId;
           const isPendingDelete = pendingDeleteId === session.id;
-          const isArchived = session.archived === true;
-          const isTerminal = session.status === "complete" || session.status === "error";
           const isRenaming = renamingSessionId === session.id;
           const displayTitle = session.status === "draft" && (!session.title || session.title === "New planning session")
             ? (session.preview ?? t("planning.newPlanningSession", "New planning session"))
@@ -4981,7 +4933,7 @@ function PlanningSessionList({
           return (
             <div
               key={session.id}
-              className={`planning-sidebar-item ${isSelected ? "selected" : ""} ${isPendingDelete ? "pending-delete" : ""} ${isArchived ? "archived" : ""}`}
+              className={`planning-sidebar-item ${isSelected ? "selected" : ""} ${isPendingDelete ? "pending-delete" : ""}`}
             >
               {isRenaming ? (
                 <input
@@ -5045,20 +4997,6 @@ function PlanningSessionList({
                 </div>
               ) : (
                 <div className="planning-sidebar-item-actions">
-                  {isTerminal && (
-                    <button
-                      type="button"
-                      className="planning-sidebar-item-archive"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onArchive(session.id);
-                      }}
-                      aria-label={isArchived ? t("planning.unarchiveSession", "Unarchive session") : t("planning.archiveSession", "Archive session")}
-                      title={isArchived ? t("planning.unarchiveSession", "Unarchive session") : t("planning.archiveSession", "Archive session")}
-                    >
-                      {isArchived ? <ArchiveRestore size={14} /> : <Archive size={14} />}
-                    </button>
-                  )}
                   <button
                     type="button"
                     className="planning-sidebar-item-rename"

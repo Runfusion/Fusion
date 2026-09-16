@@ -170,17 +170,21 @@ describe("Planning session rows own the rename affordance", () => {
     expect(within(row).queryByLabelText("Rename session")).toBeNull();
   });
 
-  it("(g) exposes the rename control on archived and draft rows too", async () => {
+  /*
+  FNXC:PlanningSessionRename 2026-09-16-15:50:
+  FN-465 retire l'archivage des sessions de planification : une session archivée n'est plus listée du
+  tout, donc la moitié « archived » de ce cas n'a plus de sujet et devient un contrôle négatif. La
+  garantie conservée est que le brouillon — l'autre ligne non ouvrable auparavant — reste renommable.
+  */
+  it("(g) exposes the rename control on draft rows and never lists an archived session", async () => {
     mockFetchAiSessions.mockResolvedValue([
       session({ id: "session-archived", title: "Archived session", archived: true }),
       session({ id: "session-draft", title: "New planning session", status: "draft", preview: "Draft preview" }),
     ]);
     renderPlanning();
 
-    const archivedRow = await findRow("Archived session");
-    expect(within(archivedRow).getByLabelText("Rename session")).toBeInTheDocument();
-
     const draftRow = await findRow("Draft preview");
+    expect(screen.queryByText("Archived session")).toBeNull();
     fireEvent.click(within(draftRow).getByLabelText("Rename session"));
     expect((within(draftRow).getByRole("textbox", { name: "Rename session" }) as HTMLInputElement).value).toBe("Draft preview");
   });
