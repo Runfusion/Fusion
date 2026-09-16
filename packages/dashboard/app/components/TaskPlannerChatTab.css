@@ -71,6 +71,59 @@ Planner Chat expansion should use the same in-view floating affordance as Activi
   background: var(--surface-subtle);
 }
 
+/*
+FNXC:TaskDetailPlannerChat 2026-09-16-04:39:
+FN-458 : viewport positionné qui accueille le scroller virtualisé et, en superposition, la commande de retour au dernier
+message. Le bouton doit se superposer à la transcription sans devenir un enfant mesuré du scroller virtualisé ni dépendre
+de la hauteur du compositeur.
+*/
+.task-planner-chat-transcript-viewport {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/*
+FNXC:TaskDetailPlannerChat 2026-09-16-04:39:
+FN-458 : après un geste manuel vers le haut, l'opérateur doit disposer d'une commande explicite qui ramène au dernier
+message et réarme le suivi de queue. Même affordance visuelle que `.task-chat-jump-to-bottom` et `.chat-jump-to-latest`.
+`z-index` strictement inférieur à celui de `.task-planner-chat-expand-toggle--overlay` (3) pour ne jamais masquer la
+bascule d'agrandissement.
+*/
+.task-planner-chat-jump-to-bottom {
+  position: absolute;
+  right: var(--space-md);
+  bottom: var(--space-md);
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-xs);
+  width: fit-content;
+  min-inline-size: var(--space-2xl);
+  min-block-size: var(--space-2xl);
+  padding: var(--space-xs) var(--space-sm);
+  color: var(--text-muted);
+  background: var(--surface);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.task-planner-chat-jump-to-bottom:hover {
+  background: var(--card-hover);
+  color: var(--text);
+}
+
+.task-planner-chat-jump-to-bottom:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
 .task-planner-chat-transcript {
   flex: 1 1 auto;
   min-height: 0;
@@ -310,6 +363,14 @@ height rather than relying on the global button minimum.
   .task-planner-chat-expand-toggle--overlay {
     top: var(--space-sm);
     right: var(--space-sm);
+  }
+
+  /* FNXC:TaskDetailPlannerChat 2026-09-16-04:39: FN-458 — cible tactile agrandie et marges resserrées sur mobile, comme `.task-chat-jump-to-bottom`. */
+  .task-planner-chat-jump-to-bottom {
+    right: var(--space-sm);
+    bottom: var(--space-sm);
+    min-inline-size: calc(var(--space-2xl) + var(--space-sm));
+    min-block-size: calc(var(--space-2xl) + var(--space-sm));
   }
 
   .task-planner-chat-composer {

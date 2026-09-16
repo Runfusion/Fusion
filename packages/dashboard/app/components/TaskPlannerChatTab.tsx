@@ -4,7 +4,7 @@ import { isWipColumnRole } from "../utils/columnRoles";
 import { getErrorMessage, isExperimentalFeatureEnabled, CHAT_FOCUS_FLAG } from "@fusion/core";
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { Loader2, Maximize2, Minimize2 } from "lucide-react";
+import { ChevronDown, Loader2, Maximize2, Minimize2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { ToastType } from "../hooks/useToast";
 import { useComposerDictation } from "../hooks/useComposerDictation";
@@ -933,6 +933,17 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
       isTranscriptAtBottomRef.current = following;
       setIsTranscriptAtBottom(following);
     },
+    /*
+    FNXC:TaskDetailPlannerChat 2026-09-16-07:31:
+    FN-458 : `virtualTranscript.scrollToBottom()` (déclenché par le bouton « Latest ») prend la PROPRIÉTÉ de
+    l'alignement terminal du virtualiseur ; tant qu'elle est détenue, chaque changement de géométrie réécrit
+    `scrollTop` en bas. Sans libération, un geste manuel vers le haut après le clic raccrocherait le lecteur au
+    dernier message pour le reste de la session. Comme `ChatView`, toute intention utilisateur clôt cette propriété
+    via l'API publique `cancelPendingScrollToBottom()` : le geste manuel reste autoritaire (FN-398).
+    */
+    onUserIntent: () => {
+      virtualTranscript.cancelPendingScrollToBottom();
+    },
   });
 
   const setTranscriptAtBottom = useCallback((atBottom: boolean) => {
@@ -946,6 +957,23 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
     stickyFollow.noteProgrammaticWrite(container.scrollTop);
     setTranscriptAtBottom(true);
   }, [setTranscriptAtBottom, stickyFollow]);
+
+  /*
+  FNXC:TaskDetailPlannerChat 2026-09-16-04:39:
+  FN-458 : après un geste manuel vers le haut, le suivi de queue se désengage volontairement (FN-398) et l'opérateur
+  n'avait plus AUCUNE commande de retour au dernier message dans l'onglet Chat de la modale de tâche — seule surface de
+  chat privée de cette affordance. Le clic est une commande utilisateur autoritaire : il reprend d'abord la propriété de
+  l'alignement terminal auprès du virtualiseur (`scrollToBottom`), car une écriture brute de `scrollTop` serait annulée
+  par une mesure de ligne tardive, puis fence l'écriture via `anchorTranscriptToBottom` (`noteProgrammaticWrite`) pour
+  qu'elle ne soit pas reclassée en intention utilisateur, et réarme le suivi afin que la croissance de streaming
+  suive de nouveau la queue.
+  */
+  const jumpToTranscriptBottom = useCallback(() => {
+    const container = transcriptRef.current;
+    if (!container) return;
+    virtualTranscript.scrollToBottom();
+    anchorTranscriptToBottom(container);
+  }, [anchorTranscriptToBottom, virtualTranscript.scrollToBottom]);
 
   /*
   FNXC:ChatMessagePagination 2026-09-06-13:40:
@@ -1640,6 +1668,15 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
           {expanded ? <Minimize2 aria-hidden="true" /> : <Maximize2 aria-hidden="true" />}
         </UiButton>
       )}
+      {/*
+      FNXC:TaskDetailPlannerChat 2026-09-16-04:39:
+      FN-458 : le bouton de retour au bas est un FRÈRE du scroller, posé en superposition dans un viewport dédié, et non
+      un enfant du scroller comme dans TaskChatTab (non virtualisé). Le transcript Planner est virtualisé :
+      `useVirtualizedChatTranscript` mesure les enfants du scroller et calcule `topSpacerHeight`/`bottomSpacerHeight`,
+      donc un enfant supplémentaire fausserait la géométrie. L'ancrage à ce viewport évite aussi tout décalage codé en
+      dur au-dessus d'un compositeur de hauteur variable, qui peut de surcroît être déporté via PlannerChatFooterPortal.
+      */}
+      <div className="task-planner-chat-transcript-viewport">
       <div className="task-planner-chat-transcript" ref={transcriptRef} onScroll={handleTranscriptScroll} data-testid="task-planner-chat-transcript">
         {hasMoreHistory && <div ref={historySentinelRef} className="task-planner-chat-history-sentinel" aria-hidden="true">{loadingOlder ? t("chat.loadingOlderMessages", "Loading older messages…") : null}</div>}
         {error && <div className="task-planner-chat-error" role="alert">{error}</div>}
@@ -1748,6 +1785,19 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
             )}
           </>
         )}
+      </div>
+      {!loading && !showEmptyState && messages.length > 0 && !isTranscriptAtBottom ? (
+        <UiButton
+          type="button"
+          className="task-planner-chat-jump-to-bottom"
+          onClick={jumpToTranscriptBottom}
+          aria-label={t("taskChat.jumpToLatestMessage", "Jump to latest message")}
+          data-testid="task-planner-chat-jump-to-bottom"
+        >
+          <ChevronDown aria-hidden="true" />
+          <span>{t("taskChat.latest", "Latest")}</span>
+        </UiButton>
+      ) : null}
       </div>
 
       <PlannerChatFooterPortal target={footerTarget}>

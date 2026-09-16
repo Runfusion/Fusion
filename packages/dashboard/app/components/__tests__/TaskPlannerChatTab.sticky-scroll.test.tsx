@@ -100,11 +100,11 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function renderPlanner() {
+function renderPlanner(expanded = false) {
   return render(<TaskPlannerChatTab
     task={{ id: "FN-398", description: "Task", column: "todo", dependencies: [], steps: [], currentStep: 0, createdAt: session.createdAt, updatedAt: session.updatedAt } as never}
     active
-    expanded={false}
+    expanded={expanded}
     taskChatModel={{ provider: "anthropic", modelId: "model" }}
     addToast={vi.fn()}
   />);
@@ -123,14 +123,14 @@ interface PlannerHarness {
   };
 }
 
-async function mountPlannerAtBottom(): Promise<PlannerHarness> {
+async function mountPlannerAtBottom(expanded = false): Promise<PlannerHarness> {
   let streamHandlers: PlannerHarness["stream"] | undefined;
   mocks.attachChatStream.mockImplementation(((_sessionId: string, handlers: PlannerHarness["stream"]) => {
     streamHandlers = handlers;
     return { close: vi.fn(), isConnected: () => true };
   }) as never);
 
-  renderPlanner();
+  renderPlanner(expanded);
   await waitFor(() => expect(mocks.fetchChatMessages).toHaveBeenCalled());
   await waitFor(() => expect(streamHandlers).toBeDefined());
 
@@ -200,5 +200,155 @@ describe("FN-398 TaskPlannerChatTab — a manual gesture always wins over tail f
     await act(async () => { planner.stream.onText("Suite du plan"); });
 
     expect(planner.scrollTop).toBe(planner.scrollHeight - 400);
+  });
+});
+
+/*
+FNXC:TaskDetailPlannerChat 2026-09-16-04:39:
+FN-458 — symptôme d'origine : dans l'onglet Chat de la modale de tâche, remonter manuellement laissait l'opérateur sans
+aucune commande de retour au dernier message, alors que Activity (`task-chat-jump-to-bottom`) et le chat principal
+(`chat-jump-to-latest`) en disposent. Ces cas rejouent exactement la reproduction (geste `wheel` deltaY=-30 sur la
+transcription peuplée) et couvrent l'invariant sur les états de données et le rendu agrandi.
+
+Note sur l'assertion de position : le harnais borne l'écriture de `scrollTop` à `scrollHeight - clientHeight`, comme le
+fait un navigateur réel. Écrire `scrollHeight` ramène donc au bas effectif `scrollHeight - 400`, qui est la position
+terminale assertée ici.
+*/
+describe("FN-458 TaskPlannerChatTab — jump-to-bottom control", () => {
+  const JUMP = "task-planner-chat-jump-to-bottom";
+
+  it("(1) renders no jump control while the populated transcript is anchored at the bottom", async () => {
+    const planner = await mountPlannerAtBottom();
+
+    expect(document.querySelector(`[data-testid="${JUMP}"]`)).toBeNull();
+    expect(planner.transcript).toBeTruthy();
+  });
+
+  it("(2) surfaces an accessible jump control after a 30px wheel-up", async () => {
+    const planner = await mountPlannerAtBottom();
+
+    wheelUp(planner.transcript);
+    planner.setScrollTop(3_570);
+    act(() => { fireEvent.scroll(planner.transcript); });
+
+    const button = await waitFor(() => {
+      const node = document.querySelector<HTMLElement>(`[data-testid="${JUMP}"]`);
+      expect(node).not.toBeNull();
+      return node!;
+    });
+    expect(button.getAttribute("aria-label")).toBeTruthy();
+  });
+
+  it("(3) returns to the last message on click, re-arms tail following, then hides itself", async () => {
+    const planner = await mountPlannerAtBottom();
+
+    wheelUp(planner.transcript);
+    planner.setScrollTop(3_570);
+    act(() => { fireEvent.scroll(planner.transcript); });
+
+    const button = await waitFor(() => {
+      const node = document.querySelector<HTMLElement>(`[data-testid="${JUMP}"]`);
+      expect(node).not.toBeNull();
+      return node!;
+    });
+
+    await act(async () => { fireEvent.click(button); });
+
+    expect(planner.scrollTop).toBe(planner.scrollHeight - 400);
+
+    planner.grow(200);
+    await act(async () => { planner.stream.onText("Suite du plan apr\u00e8s retour en bas"); });
+
+    expect(planner.scrollTop).toBe(planner.scrollHeight - 400);
+    await waitFor(() => expect(document.querySelector(`[data-testid="${JUMP}"]`)).toBeNull());
+  });
+
+  it("(4) never renders the control while loading or empty, and renders exactly one node while streaming", async () => {
+    // Loading: the history request never settles, so the transcript shows its loading state.
+    mocks.fetchChatMessages.mockReturnValue(new Promise(() => {}));
+    const loadingView = renderPlanner();
+    const loadingTranscript = await waitFor(() => {
+      const node = loadingView.container.querySelector<HTMLElement>(".task-planner-chat-transcript");
+      expect(node).not.toBeNull();
+      expect(node!.querySelector(".task-planner-chat-state")).not.toBeNull();
+      return node!;
+    });
+    wheelUp(loadingTranscript);
+    act(() => { fireEvent.scroll(loadingTranscript); });
+    expect(loadingView.container.querySelector(`[data-testid="${JUMP}"]`)).toBeNull();
+    loadingView.unmount();
+
+    // Empty: a released tail follow must still not produce a control with nothing to jump to.
+    // An idle (non-generating) session is required: an in-flight generation injects a streaming row, so the
+    // transcript would not be empty.
+    mocks.fetchTaskPlannerChatSession.mockResolvedValue({ session });
+    mocks.fetchChatSession.mockResolvedValue({ session });
+    mocks.fetchChatMessages.mockResolvedValue({ messages: [] });
+    const emptyView = renderPlanner();
+    const emptyTranscript = await waitFor(() => {
+      expect(emptyView.container.querySelector('[data-testid="task-planner-chat-empty"]')).not.toBeNull();
+      return emptyView.container.querySelector<HTMLElement>(".task-planner-chat-transcript")!;
+    });
+    wheelUp(emptyTranscript);
+    act(() => { fireEvent.scroll(emptyTranscript); });
+    expect(emptyView.container.querySelector(`[data-testid="${JUMP}"]`)).toBeNull();
+    emptyView.unmount();
+
+    // Populated + streaming with the reader scrolled up: exactly one control, never a duplicate.
+    mocks.fetchTaskPlannerChatSession.mockResolvedValue({ session: generatingSession });
+    mocks.fetchChatSession.mockResolvedValue({ session: generatingSession });
+    mocks.fetchChatMessages.mockResolvedValue({ messages: [...messages].reverse() });
+    const planner = await mountPlannerAtBottom();
+    wheelUp(planner.transcript);
+    planner.setScrollTop(3_570);
+    act(() => { fireEvent.scroll(planner.transcript); });
+    planner.grow(200);
+    await act(async () => { planner.stream.onText("Streaming pendant la remont\u00e9e"); });
+
+    await waitFor(() => expect(document.querySelectorAll(`[data-testid="${JUMP}"]`)).toHaveLength(1));
+  });
+
+  /*
+  FNXC:TaskDetailPlannerChat 2026-09-16-07:31:
+  FN-458 : le clic « Latest » prend la propriété de l'alignement terminal du virtualiseur. Sans libération sur
+  intention utilisateur, chaque geste manuel ultérieur était annulé par une réécriture forcée de `scrollTop` en bas :
+  l'opérateur restait cloué au dernier message pour le reste de la session. Ce cas prouve qu'un geste après le clic
+  reste autoritaire, y compris après une croissance de streaming.
+  */
+  it("(7) lets a manual gesture after the jump keep the reader detached from the bottom", async () => {
+    const planner = await mountPlannerAtBottom();
+
+    wheelUp(planner.transcript);
+    planner.setScrollTop(3_570);
+    act(() => { fireEvent.scroll(planner.transcript); });
+
+    const button = await waitFor(() => {
+      const node = document.querySelector<HTMLElement>(`[data-testid="${JUMP}"]`);
+      expect(node).not.toBeNull();
+      return node!;
+    });
+    await act(async () => { fireEvent.click(button); });
+    expect(planner.scrollTop).toBe(planner.scrollHeight - 400);
+
+    wheelUp(planner.transcript);
+    planner.setScrollTop(3_570);
+    act(() => { fireEvent.scroll(planner.transcript); });
+
+    expect(planner.scrollTop).toBe(3_570);
+
+    planner.grow(200);
+    await act(async () => { planner.stream.onText("Croissance après redétachement"); });
+
+    expect(planner.scrollTop).toBe(3_570);
+  });
+
+  it("(5) keeps the control available in the expanded modal rendering", async () => {
+    const planner = await mountPlannerAtBottom(true);
+
+    wheelUp(planner.transcript);
+    planner.setScrollTop(3_570);
+    act(() => { fireEvent.scroll(planner.transcript); });
+
+    await waitFor(() => expect(document.querySelector(`[data-testid="${JUMP}"]`)).not.toBeNull());
   });
 });
