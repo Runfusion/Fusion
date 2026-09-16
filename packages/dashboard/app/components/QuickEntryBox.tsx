@@ -9,7 +9,7 @@ import type { Task, Settings, TaskPriority, ResolvedWorkflowOptionalStep, Thinki
 import type { ModelInfo, Agent, CreateTaskInput, DuplicateMatch, BoardWorkflowDefinition, NodeInfo } from "../api";
 import { checkDuplicateTasks, fetchModels, fetchSettings, updateGlobalSettings, fetchAgents, uploadAttachment, fetchWorkflowOptionalSteps } from "../api";
 import { DuplicateWarningModal } from "./DuplicateWarningModal";
-import { Link, Paperclip, Brain, Lightbulb, Sparkles, Save, ChevronDown, ChevronUp, ChevronRight, Bot, Server, Zap, UserCheck, Eye, EyeOff, Play } from "lucide-react";
+import { Link, Paperclip, Brain, Lightbulb, Sparkles, Save, ChevronDown, ChevronUp, ChevronRight, Bot, Server, Zap, UserCheck, Eye, EyeOff } from "lucide-react";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { LoadingSpinner } from "./LoadingSpinner";
 import { getScopedItem, MAX_PERSISTED_DRAFT_BYTES, removeScopedItem, setScopedItem } from "../utils/projectStorage";
@@ -2741,16 +2741,33 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
                   : t("tasks.saveHoldToStart", "Save task; hold to start")}
                 title={t("tasks.saveHoldToStart", "Save task; hold to start")}
               >
-                {/* FNXC:NativeQuickEntry 2026-09-15-00:20: the Save/Start icon pair is always rendered; the hold gesture only drives its mask. */}
+                {/*
+                FNXC:NativeQuickEntry 2026-09-16-23:28:
+                FN-478 replaces the vertical fill mask + Play icon with a circular progress ring: the floppy Save icon fades out
+                while `.quick-entry-save-ring` fades in and its arc fills 0% -> 100% over the remaining hold time. Both layers are
+                always rendered and decorative (`aria-hidden`); only `data-hold-state` drives which one is visible, so an early
+                release simply restores the floppy without touching the gesture state machine or task creation.
+                */}
                 {(
                   <span className="quick-entry-save-icons">
                     <span className="quick-entry-save-icon quick-entry-save-icon--save" aria-hidden="true">
                       <Save size={12} />
                     </span>
-                    <span className="quick-entry-save-progress" aria-hidden="true">
-                      <span className="quick-entry-save-icon quick-entry-save-icon--start">
-                        <Play size={12} />
-                      </span>
+                    <span className="quick-entry-save-ring" aria-hidden="true">
+                      <svg viewBox="0 0 36 36" role="presentation" focusable="false">
+                        <circle className="quick-entry-save-ring__track" cx="18" cy="18" r="15" fill="none" />
+                        <circle
+                          className="quick-entry-save-ring__indicator"
+                          cx="18"
+                          cy="18"
+                          r="15"
+                          fill="none"
+                          pathLength={100}
+                          strokeDasharray="100"
+                          strokeDashoffset={100}
+                          strokeLinecap="round"
+                        />
+                      </svg>
                     </span>
                   </span>
                 )}

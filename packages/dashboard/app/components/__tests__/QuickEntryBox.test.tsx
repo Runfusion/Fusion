@@ -5905,11 +5905,12 @@ describe("QuickEntryBox", () => {
       expect(save.querySelectorAll("button")).toHaveLength(0);
       expect(save.querySelectorAll("svg")).toHaveLength(2);
       expect(save.querySelector(".quick-entry-save-icon--save")).toHaveAttribute("aria-hidden", "true");
-      expect(save.querySelector(".quick-entry-save-progress")).toHaveAttribute("aria-hidden", "true");
+      // FN-478: the fill affordance is a circular progress ring that replaces the floppy, not a vertical mask.
+      expect(save.querySelector(".quick-entry-save-ring")).toHaveAttribute("aria-hidden", "true");
       expect(screen.queryByTestId("quick-entry-save-start")).toBeNull();
 
       fireEvent.pointerDown(save, { pointerId: 7, pointerType, button: 0, isPrimary: true });
-      // The mask only engages after the brief-click window, so a plain tap never flashes it.
+      // The ring only engages after the brief-click window, so a plain tap never flashes it.
       expect(save).toHaveAttribute("data-hold-state", "idle");
       await act(async () => vi.advanceTimersByTime(150));
       expect(save).toHaveAttribute("data-hold-state", "holding");
@@ -5925,6 +5926,106 @@ describe("QuickEntryBox", () => {
 
       await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
       expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({ workflowId: ideasWorkflow.id, column: "todo" }));
+    });
+
+    /*
+     * FN-478: the hold affordance is a circular progress ring that REPLACES the floppy while holding and is
+     * restored on an early release. These cases assert the observable invariant on every enumerated surface:
+     * the ring exists in the button, only an engaged hold carries `data-hold-state="holding"`, and cancelling
+     * restores the floppy without creating anything.
+     */
+    const quickEntryHostCases = [
+      ["Board desktop", mockDesktopViewport, false],
+      ["Board mobile", mockMobileViewport, false],
+      ["List desktop", mockDesktopViewport, true],
+      ["List mobile", mockMobileViewport, true],
+    ] as const;
+
+    it("shows the floppy and no engaged ring before the hold engages", () => {
+      const { save } = setup();
+      expect(save).toHaveAttribute("data-hold-state", "idle");
+      expect(save.querySelector(".quick-entry-save-icon--save .lucide-save")).toBeInTheDocument();
+      expect(save.querySelector(".quick-entry-save-ring .quick-entry-save-ring__indicator")).toBeInTheDocument();
+
+      fireEvent.pointerDown(save, { pointerId: 41, pointerType: "mouse", button: 0, isPrimary: true });
+      expect(save).toHaveAttribute("data-hold-state", "idle");
+      act(() => { vi.advanceTimersByTime(149); });
+      expect(save).toHaveAttribute("data-hold-state", "idle");
+    });
+
+    it.each(quickEntryHostCases)(
+      "engages the progress ring after the hold threshold in the %s host",
+      async (_label, mockViewport, collapsedDisclosure) => {
+        mockViewport();
+        const { save } = setup({ defaultExpanded: !collapsedDisclosure });
+
+        fireEvent.pointerDown(save, { pointerId: 42, pointerType: "mouse", button: 0, isPrimary: true });
+        await act(async () => vi.advanceTimersByTime(150));
+
+        expect(save).toHaveAttribute("data-hold-state", "holding");
+        const ring = save.querySelector(".quick-entry-save-ring");
+        expect(ring).toBeInTheDocument();
+        expect(ring).toHaveAttribute("aria-hidden", "true");
+        expect(ring?.querySelector(".quick-entry-save-ring__track")).toBeInTheDocument();
+        expect(ring?.querySelector(".quick-entry-save-ring__indicator")).toBeInTheDocument();
+        // The floppy layer itself is never unmounted: CSS restores it when the state returns to idle.
+        expect(save.querySelector(".quick-entry-save-icon--save .lucide-save")).toBeInTheDocument();
+      },
+    );
+
+    it.each(quickEntryHostCases)(
+      "restores the floppy without creating anything when the hold is released early in the %s host",
+      async (_label, mockViewport, collapsedDisclosure) => {
+        mockViewport();
+        const { onCreate, save } = setup({ defaultExpanded: !collapsedDisclosure });
+
+        for (const release of [
+          () => fireEvent.pointerUp(save, { pointerId: 43, pointerType: "mouse", button: 0, isPrimary: true }),
+          () => fireEvent.pointerCancel(save, { pointerId: 43, pointerType: "mouse" }),
+          () => fireEvent.blur(save),
+        ]) {
+          fireEvent.pointerDown(save, { pointerId: 43, pointerType: "mouse", button: 0, isPrimary: true });
+          await act(async () => vi.advanceTimersByTime(200));
+          expect(save).toHaveAttribute("data-hold-state", "holding");
+
+          await act(async () => { release(); });
+
+          expect(save).toHaveAttribute("data-hold-state", "idle");
+          expect(save.querySelector(".quick-entry-save-icon--save .lucide-save")).toBeInTheDocument();
+          expect(onCreate).not.toHaveBeenCalled();
+          expect(screen.getByTestId("quick-entry-input")).toHaveValue("Alpha task");
+          await act(async () => vi.advanceTimersByTime(600));
+          expect(onCreate).not.toHaveBeenCalled();
+        }
+      },
+    );
+
+    it.each(quickEntryHostCases)(
+      "starts the task once and returns to the floppy after a complete hold in the %s host",
+      async (_label, mockViewport, collapsedDisclosure) => {
+        mockViewport();
+        const { onCreate, save } = setup({ defaultExpanded: !collapsedDisclosure });
+
+        await completePointerHold(save, 44, "mouse");
+
+        await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+        expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({ column: "todo" }));
+        expect(save).toHaveAttribute("data-hold-state", "idle");
+        expect(save.querySelector(".quick-entry-save-icon--save .lucide-save")).toBeInTheDocument();
+      },
+    );
+
+    it("never engages the ring while Save is disabled by an empty description", async () => {
+      const onCreate = vi.fn().mockResolvedValue(undefined);
+      renderCompactQuickEntryBox({ onCreate, workflowId: ideasWorkflow.id, workflowOptions: [ideasWorkflow] });
+      const save = screen.getByTestId("quick-entry-save");
+      expect(save).toBeDisabled();
+
+      fireEvent.pointerDown(save, { pointerId: 45, pointerType: "mouse", button: 0, isPrimary: true });
+      await act(async () => vi.advanceTimersByTime(600));
+
+      expect(save).toHaveAttribute("data-hold-state", "idle");
+      expect(onCreate).not.toHaveBeenCalled();
     });
 
     it("does not let a late cancellation event suppress the next independent Save", async () => {

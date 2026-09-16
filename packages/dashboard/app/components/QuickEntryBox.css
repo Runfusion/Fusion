@@ -992,7 +992,7 @@ Quick Entry is input-first: the immediate attach/status/icon-only Save row remai
 
 .quick-entry-save-icons,
 .quick-entry-save-icon,
-.quick-entry-save-progress {
+.quick-entry-save-ring {
   position: absolute;
   inset: 0;
   display: grid;
@@ -1002,34 +1002,70 @@ Quick Entry is input-first: the immediate attach/status/icon-only Save row remai
 
 .quick-entry-save-icon--save {
   z-index: 1;
-}
-
-.quick-entry-save > .quick-entry-save-icons > .quick-entry-save-progress {
-  z-index: 2;
-  background: var(--color-warning);
-  color: var(--provider-icon-contrast);
-  clip-path: inset(100% 0 0 0);
-  transform-origin: bottom;
+  transition: opacity var(--transition-fast), transform var(--transition-fast);
 }
 
 /*
-FNXC:NativeQuickEntry 2026-09-16-02:15:
-The mask only animates once the press is an ENGAGED hold, so a brief click never flashes it. `--quick-entry-hold-duration`
-is therefore the REMAINING fill time after engagement, not the whole 500ms threshold, and the mask reaching full cover
-still coincides with Start. Releasing while the mask is filling cancels the gesture, so the mask simply disappears.
+FNXC:NativeQuickEntry 2026-09-16-23:28:
+FN-478: the floppy turns INTO a circular progress ring. The ring only paints once the press is an ENGAGED hold, so a brief
+click never flashes it. `--quick-entry-hold-duration` is the REMAINING fill time after engagement, not the whole 500ms
+threshold, so the arc reaching 100% still coincides with Start. Releasing early cancels the gesture: the ring disappears and
+the floppy comes back. The SVG is sized as a percentage of the button so it stays inside `overflow: hidden` at both the
+desktop (`--ui-control-height`) and mobile (`--ui-touch-height`) control sizes.
 */
-.quick-entry-save[data-hold-state="holding"] .quick-entry-save-progress {
-  animation: quick-entry-hold-progress var(--quick-entry-hold-duration) linear forwards;
+.quick-entry-save > .quick-entry-save-icons > .quick-entry-save-ring {
+  z-index: 2;
+  opacity: 0;
+  transition: opacity var(--transition-fast);
 }
 
-@keyframes quick-entry-hold-progress {
-  to { clip-path: inset(0 0 0 0); }
+.quick-entry-save-ring > svg {
+  width: 70%;
+  height: 70%;
+  overflow: visible;
+}
+
+.quick-entry-save-ring__track,
+.quick-entry-save-ring__indicator {
+  stroke-width: 4;
+}
+
+.quick-entry-save-ring__track {
+  stroke: color-mix(in srgb, currentColor 25%, transparent);
+}
+
+.quick-entry-save-ring__indicator {
+  stroke: var(--color-warning);
+  transform: rotate(-90deg);
+  transform-origin: 50% 50%;
+}
+
+.quick-entry-save[data-hold-state="holding"] > .quick-entry-save-icons > .quick-entry-save-ring {
+  opacity: 1;
+}
+
+.quick-entry-save[data-hold-state="holding"] .quick-entry-save-icon--save {
+  opacity: 0;
+  transform: scale(0.6);
+}
+
+.quick-entry-save[data-hold-state="holding"] .quick-entry-save-ring__indicator {
+  animation: quick-entry-hold-ring var(--quick-entry-hold-duration) linear forwards;
+}
+
+@keyframes quick-entry-hold-ring {
+  to { stroke-dashoffset: 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .quick-entry-save[data-hold-state="holding"] .quick-entry-save-progress {
+  .quick-entry-save[data-hold-state="holding"] .quick-entry-save-icon--save,
+  .quick-entry-save[data-hold-state="holding"] > .quick-entry-save-icons > .quick-entry-save-ring {
+    transition: none;
+  }
+
+  .quick-entry-save[data-hold-state="holding"] .quick-entry-save-ring__indicator {
     animation: none;
-    clip-path: inset(50% 0 0 0);
+    stroke-dashoffset: 50;
   }
 }
 

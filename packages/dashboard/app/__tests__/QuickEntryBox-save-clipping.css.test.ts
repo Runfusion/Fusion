@@ -117,26 +117,38 @@ describe("QuickEntryBox.css — Save button is never clipped (mobile report)", (
     }
   });
 
-  it("keeps the Alpha icon-only hold mask inside fixed token-sized desktop and mobile targets", () => {
+  // FN-478 replaced the vertical clip-path mask + Play icon with a circular progress ring. The
+  // invariants that survive that change are the fixed token-sized target itself; the fill affordance
+  // assertions now describe the ring, and negative guards keep the removed mask from coming back.
+  it("keeps the Alpha icon-only hold ring inside fixed token-sized desktop and mobile targets", () => {
     const { body } = ruleBody('.quick-entry-primary-group [data-testid="quick-entry-save"]', "--ui-control-height");
     expect(body).toMatch(/min-width:\s*var\(--ui-control-height\)/);
     expect(body).toMatch(/width:\s*var\(--ui-control-height\)/);
     expect(body).toMatch(/overflow:\s*hidden/);
     expect(body).toMatch(/padding:\s*0/);
 
-    const progress = ruleBody('.quick-entry-save > .quick-entry-save-icons > .quick-entry-save-progress').body;
-    expect(css).toMatch(/\.quick-entry-save-progress\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?inset:\s*0/);
-    expect(progress).toMatch(/background:\s*var\(--color-warning\)/);
-    expect(progress).toMatch(/clip-path:\s*inset\(100% 0 0 0\)/);
-    expect(progress).toMatch(/transform-origin:\s*bottom/);
-    expect(css).toMatch(/animation:\s*quick-entry-hold-progress var\(--quick-entry-hold-duration\) linear forwards/);
-    // FN-453: the fill is scoped to the engaged hold state only, so a brief click never flashes the mask.
-    expect(css).toMatch(/\.quick-entry-save\[data-hold-state="holding"\] \.quick-entry-save-progress\s*\{\s*animation:/);
-    expect(css).not.toMatch(/\.quick-entry-save\s+\.quick-entry-save-progress\s*\{[^}]*animation:/);
-    expect(css).toMatch(/@keyframes quick-entry-hold-progress\s*\{[\s\S]*clip-path:\s*inset\(0 0 0 0\)/);
-    expect(css).not.toMatch(/scale[XY]\(/);
-    expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*animation:\s*none[\s\S]*clip-path:\s*inset\(50% 0 0 0\)/);
+    // The ring is an overlay layer covering the whole button, hidden until the hold engages.
+    expect(css).toMatch(/\.quick-entry-save-ring\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?inset:\s*0/);
+    const ring = ruleBody(".quick-entry-save > .quick-entry-save-icons > .quick-entry-save-ring").body;
+    expect(ring).toMatch(/opacity:\s*0/);
+    expect(ruleBody(".quick-entry-save-ring__indicator", "stroke:").body).toMatch(/stroke:\s*var\(--color-warning\)/);
+    // The SVG is sized relatively so it stays inside the button's `overflow: hidden` at both control sizes.
+    expect(ruleBody(".quick-entry-save-ring > svg").body).toMatch(/width:\s*\d+%/);
+
+    expect(css).toMatch(/animation:\s*quick-entry-hold-ring var\(--quick-entry-hold-duration\) linear forwards/);
+    // FN-453: the fill is scoped to the engaged hold state only, so a brief click never flashes the ring.
+    expect(css).toMatch(
+      /\.quick-entry-save\[data-hold-state="holding"\] \.quick-entry-save-ring__indicator\s*\{\s*animation:/,
+    );
+    expect(css).not.toMatch(/\.quick-entry-save\s+\.quick-entry-save-ring__indicator\s*\{[^}]*animation:/);
+    expect(css).toMatch(/@keyframes quick-entry-hold-ring\s*\{[\s\S]*stroke-dashoffset:\s*0/);
+    expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*animation:\s*none[\s\S]*stroke-dashoffset:\s*50/);
     expect(css).toMatch(/@media \(max-width: 768px\)[\s\S]*min-width:\s*var\(--ui-touch-height\)/);
+
+    // Negative guards: the removed vertical mask must not return.
+    expect(css).not.toContain("quick-entry-save-progress");
+    expect(css).not.toContain("quick-entry-hold-progress");
+    expect(css).not.toContain("clip-path");
   });
 
   it("keeps every Alpha primary icon in the same mobile touch square while desktop remains unchanged", () => {
