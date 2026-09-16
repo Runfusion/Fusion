@@ -1,0 +1,272 @@
+/*
+FNXC:ChatWindows 2026-09-16-05:30:
+FN-455: the server generates a conversation title in the background after the first message. When
+that `chat:session:updated` arrives while the authoritative selection snapshot is still in flight,
+the payload used to be dropped and the snapshot — read BEFORE the title write — restored the old
+title, so the list row showed the generated name while the chat window header kept "Untitled
+conversation". These cases pin the corrected invariant AND its bound: exactly `title` crosses the
+deferred reapplication, and every other field stays owned by the authoritative snapshot.
+*/
+
+import { act, renderHook, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { ChatSession } from "@fusion/core";
+
+vi.mock("../../api", () => ({
+  fetchChatSessions: vi.fn(),
+  fetchChatTags: vi.fn().mockResolvedValue({ tags: [] }),
+  fetchChatSession: vi.fn(),
+  createChatSession: vi.fn(),
+  fetchChatMessages: vi.fn(),
+  updateChatSession: vi.fn(),
+  deleteChatSession: vi.fn(),
+  streamChatResponse: vi.fn(),
+  attachChatStream: vi.fn(),
+  cancelChatResponse: vi.fn(),
+  fetchAgents: vi.fn().mockResolvedValue([]),
+}));
+
+vi.mock("../../utils/projectStorage", () => ({
+  getScopedItem: vi.fn(),
+  setScopedItem: vi.fn(),
+  removeScopedItem: vi.fn(),
+  getPersistedChatOpenSession: vi.fn(),
+  setPersistedChatOpenSession: vi.fn(),
+  clearPersistedChatOpenSession: vi.fn(),
+}));
+
+const { sseHandlers } = vi.hoisted(() => ({
+  sseHandlers: { current: {} as Record<string, (event: MessageEvent) => void> },
+}));
+
+vi.mock("../../sse-bus", () => ({
+  subscribeSse: vi.fn((_url: string, options: { events?: Record<string, (e: MessageEvent) => void> }) => {
+    if (options?.events) sseHandlers.current = options.events;
+    return () => {};
+  }),
+}));
+
+import { useChat } from "../useChat";
+import * as apiModule from "../../api";
+
+const mockFetchChatSessions = vi.mocked(apiModule.fetchChatSessions);
+const mockFetchChatSession = vi.mocked(apiModule.fetchChatSession);
+const mockFetchChatMessages = vi.mocked(apiModule.fetchChatMessages);
+const mockAttachChatStream = vi.mocked(apiModule.attachChatStream);
+
+function makeSession(overrides: Partial<ChatSession> = {}): ChatSession {
+  return {
+    id: "session-001",
+    agentId: "agent-001",
+    status: "active",
+    title: null,
+    projectId: null,
+    modelProvider: null,
+    modelId: null,
+    thinkingLevel: null,
+    createdAt: "2026-09-16T00:00:00.000Z",
+    updatedAt: "2026-09-16T00:00:00.000Z",
+    pinnedAt: null,
+    cliSessionFile: null,
+    cliExecutorAdapterId: null,
+    inFlightGeneration: null,
+    isGenerating: false,
+    ...overrides,
+  } as ChatSession;
+}
+
+function emitSessionUpdated(session: unknown): void {
+  act(() => {
+    sseHandlers.current["chat:session:updated"]?.({ data: JSON.stringify(session) } as MessageEvent);
+  });
+}
+
+/** A `fetchChatSession` promise the test resolves/rejects by hand. */
+function deferredSessionRead(): {
+  resolve: (session: unknown) => void;
+  reject: (error: unknown) => void;
+} {
+  let resolveFn!: (value: unknown) => void;
+  let rejectFn!: (reason: unknown) => void;
+  const promise = new Promise((resolve, reject) => {
+    resolveFn = resolve;
+    rejectFn = reject;
+  });
+  mockFetchChatSession.mockReturnValue(promise as never);
+  return {
+    resolve: (session) => {
+      resolveFn({ session });
+    },
+    reject: rejectFn,
+  };
+}
+
+describe("useChat — generated title reaches the open conversation", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    sseHandlers.current = {};
+    mockFetchChatMessages.mockResolvedValue({ messages: [] } as never);
+  });
+
+  async function renderWithSelectionInFlight(untitled = makeSession()) {
+    mockFetchChatSessions.mockResolvedValue({ sessions: [untitled] } as never);
+    const rendered = renderHook(() => useChat("proj-1"));
+    await waitFor(() => expect(rendered.result.current.sessions).toHaveLength(1));
+
+    const pending = deferredSessionRead();
+    act(() => {
+      rendered.result.current.selectSession(untitled.id);
+    });
+    await waitFor(() => expect(mockFetchChatSession).toHaveBeenCalled());
+    return { ...rendered, pending };
+  }
+
+  // (C1) The reported symptom: list row renamed, window header stuck on the old title.
+  it("applies a generated title delivered while the authoritative snapshot is in flight", async () => {
+    const { result, pending } = await renderWithSelectionInFlight();
+
+    emitSessionUpdated(makeSession({ title: "Titre généré" }));
+
+    // The authoritative read resolves with the PRE-title snapshot.
+    await act(async () => {
+      pending.resolve(makeSession({ title: null }));
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(result.current.activeSession?.title).toBe("Titre généré");
+      expect(result.current.sessions[0]?.title).toBe("Titre généré");
+    });
+  });
+
+  // (C2) Non-regression: with no authoritative read in flight, the payload applies directly.
+  it("applies a generated title immediately when no authoritative read is in flight", async () => {
+    const untitled = makeSession();
+    mockFetchChatSessions.mockResolvedValue({ sessions: [untitled] } as never);
+    mockFetchChatSession.mockResolvedValue({ session: untitled } as never);
+
+    const { result } = renderHook(() => useChat("proj-1"));
+    await waitFor(() => expect(result.current.sessions).toHaveLength(1));
+    await act(async () => {
+      result.current.selectSession("session-001");
+    });
+    await waitFor(() => expect(result.current.activeSession?.id).toBe("session-001"));
+
+    emitSessionUpdated(makeSession({ title: "Titre direct" }));
+
+    await waitFor(() => {
+      expect(result.current.activeSession?.title).toBe("Titre direct");
+      expect(result.current.sessions[0]?.title).toBe("Titre direct");
+    });
+  });
+
+  // (C6) A failing authoritative read leaves the deferred title as the only fresh data.
+  it("still applies the deferred title when the authoritative read rejects", async () => {
+    const { result, pending } = await renderWithSelectionInFlight();
+
+    emitSessionUpdated(makeSession({ title: "Titre malgré panne" }));
+
+    await act(async () => {
+      pending.reject(new Error("transport down"));
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(result.current.activeSession?.title).toBe("Titre malgré panne"));
+  });
+
+  // (C7) Negative control: a deferred title from a retired selection never reaches a new thread.
+  it("never applies a deferred title to a thread selected afterwards", async () => {
+    const first = makeSession({ id: "session-A" });
+    const second = makeSession({ id: "session-B", title: "Fil B" });
+    mockFetchChatSessions.mockResolvedValue({ sessions: [first, second] } as never);
+
+    const { result } = renderHook(() => useChat("proj-1"));
+    await waitFor(() => expect(result.current.sessions).toHaveLength(2));
+
+    const pendingA = deferredSessionRead();
+    act(() => {
+      result.current.selectSession("session-A");
+    });
+    await waitFor(() => expect(mockFetchChatSession).toHaveBeenCalled());
+
+    emitSessionUpdated(makeSession({ id: "session-A", title: "Titre du fil A" }));
+
+    // Operator switches to B before A's snapshot lands.
+    const pendingB = deferredSessionRead();
+    act(() => {
+      result.current.selectSession("session-B");
+    });
+    await act(async () => {
+      pendingA.resolve(makeSession({ id: "session-A", title: null }));
+      pendingB.resolve(second);
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(result.current.activeSession?.id).toBe("session-B"));
+    expect(result.current.activeSession?.title).toBe("Fil B");
+  });
+
+  /*
+   * (C8) Bounding negative control — the whole reason the deferral is allowlisted to `title`.
+   * The deferred payload also carries a STALE cursor/generation state; none of it may cross.
+   */
+  it("lets only the title cross: cursor and generation state stay authoritative", async () => {
+    const { result, pending } = await renderWithSelectionInFlight();
+
+    emitSessionUpdated({
+      ...makeSession({ title: "Titre généré" }),
+      isGenerating: true,
+      inFlightGeneration: { generationId: 7, lastEventId: 3, text: "périmé" },
+      status: "stale-status",
+      updatedAt: "2026-09-15T00:00:00.000Z",
+      lastMessagePreview: "aperçu périmé",
+      lastMessageAt: "2026-09-15T00:00:00.000Z",
+    });
+
+    const authoritative = {
+      ...makeSession({ title: null }),
+      isGenerating: false,
+      inFlightGeneration: null,
+      status: "active",
+      updatedAt: "2026-09-16T12:00:00.000Z",
+      lastMessagePreview: "aperçu autoritaire",
+      lastMessageAt: "2026-09-16T12:00:00.000Z",
+    };
+
+    await act(async () => {
+      pending.resolve(authoritative);
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(result.current.activeSession?.title).toBe("Titre généré"));
+
+    const active = result.current.activeSession!;
+    expect(active.isGenerating).toBe(false);
+    expect(active.inFlightGeneration).toBeNull();
+    expect(active.status).toBe("active");
+    expect(active.updatedAt).toBe("2026-09-16T12:00:00.000Z");
+    expect(active.lastMessagePreview).toBe("aperçu autoritaire");
+    expect(active.lastMessageAt).toBe("2026-09-16T12:00:00.000Z");
+    // No stream ownership is claimed from the deferred path.
+    expect(mockAttachChatStream).not.toHaveBeenCalled();
+  });
+
+  // (C9) A deferred payload without a usable title changes nothing.
+  it.each([
+    ["null", null],
+    ["whitespace", "   "],
+  ])("leaves the authoritative snapshot untouched for a %s deferred title", async (_label, deferredTitle) => {
+    const { result, pending } = await renderWithSelectionInFlight();
+
+    emitSessionUpdated(makeSession({ title: deferredTitle as string | null, pinnedAt: "2026-09-16T01:00:00.000Z" }));
+
+    await act(async () => {
+      pending.resolve(makeSession({ title: "Titre autoritaire", pinnedAt: null }));
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(result.current.activeSession?.title).toBe("Titre autoritaire"));
+    expect(result.current.activeSession?.pinnedAt).toBeNull();
+  });
+});

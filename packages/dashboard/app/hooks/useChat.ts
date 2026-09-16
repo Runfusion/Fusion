@@ -588,6 +588,16 @@ export function useChat(
   // distinguish an old A refresh from the newly re-entered A thread.
   const activeSessionSelectionRef = useRef(0);
   const authoritativeSelectionRefreshRef = useRef<{ sessionId: string; version: number } | null>(null);
+  /*
+  FNXC:ChatWindows 2026-09-16-05:27:
+  A `chat:session:updated` payload that lands while the authoritative selection snapshot is still
+  in flight used to be dropped entirely, and the snapshot (read BEFORE the server wrote the
+  generated title) then reinstated the old title — the list row showed the generated name while
+  the chat window header kept "Untitled conversation". Only the TITLE is deferred, and it is
+  stored as a bare string rather than the session object so no out-of-allowlist field can ever
+  leak through a future type change. Cursor/generation ownership stays with the snapshot.
+  */
+  const deferredSessionTitleRef = useRef<{ sessionId: string; version: number; title: string } | null>(null);
   sessionsRef.current = sessions;
   activeSessionRef.current = activeSession;
   messagesRef.current = messages;
@@ -1159,6 +1169,9 @@ export function useChat(
       const selectionVersion = ++activeSessionSelectionRef.current;
       streamRequestRef.current += 1;
       authoritativeSelectionRefreshRef.current = id ? { sessionId: id, version: selectionVersion } : null;
+      // A deferred title belongs to the selection incarnation that was awaiting a snapshot;
+      // a new selection retires it so it can never be applied to another thread.
+      deferredSessionTitleRef.current = null;
       // Close any existing stream before its transient state is reset.
       if (streamRef.current) {
         streamRef.current.close();
@@ -1184,6 +1197,7 @@ export function useChat(
                 && authoritativeSelectionRefreshRef.current?.version === selectionVersion
               ) {
                 authoritativeSelectionRefreshRef.current = null;
+                deferredSessionTitleRef.current = null;
                 if (session?.isGenerating && !streamRef.current) {
                   attachIfGenerating(id, session.inFlightGeneration, { silent: true });
                 }
@@ -1198,6 +1212,7 @@ export function useChat(
               must include the boolean and therefore cannot bypass snapshot reconciliation.
               */
               authoritativeSelectionRefreshRef.current = null;
+              deferredSessionTitleRef.current = null;
               if (session?.isGenerating && !streamRef.current) {
                 attachIfGenerating(id, session.inFlightGeneration, { silent: true });
               }
@@ -1205,7 +1220,22 @@ export function useChat(
             }
             const authoritativeSession = { ...activeSessionRef.current, ...refreshedSession };
             authoritativeSelectionRefreshRef.current = null;
-            setActiveSession(authoritativeSession);
+            /*
+            FNXC:ChatWindows 2026-09-16-05:28:
+            The authoritative snapshot is a read that PRECEDES the server's generated-title write,
+            so letting it win reinstates the stale title. Reapply the deferred value through a
+            CLOSED allowlist of exactly `{ title }` — never an object merge: the snapshot remains
+            sovereign for the cursor, generation state, and every other field, which is precisely
+            what the `awaitingAuthoritativeSnapshot` guard exists to protect. No stream ownership
+            is claimed from this path.
+            */
+            const deferredTitle = deferredSessionTitleRef.current;
+            const reconciledSession =
+              deferredTitle && deferredTitle.sessionId === id && deferredTitle.version === selectionVersion
+                ? { ...authoritativeSession, title: deferredTitle.title }
+                : authoritativeSession;
+            deferredSessionTitleRef.current = null;
+            setActiveSession(reconciledSession);
 
             /*
             FNXC:ChatStreaming 2026-07-20-19:15:
@@ -1237,6 +1267,18 @@ export function useChat(
             }
 
             authoritativeSelectionRefreshRef.current = null;
+            // A transport failure leaves the deferred title as the only fresh data available;
+            // apply that single field over the current active session and nothing else.
+            const deferredTitle = deferredSessionTitleRef.current;
+            deferredSessionTitleRef.current = null;
+            if (deferredTitle?.sessionId === id && deferredTitle.version === selectionVersion) {
+              const current = activeSessionRef.current;
+              if (current) {
+                const withTitle = { ...current, title: deferredTitle.title };
+                activeSessionRef.current = withTitle;
+                setActiveSession(withTitle);
+              }
+            }
             // A transport failure is not an idle verdict. Retain the prior recovery behavior,
             // but only for this still-current selection incarnation.
             if (session?.isGenerating && !streamRef.current) {
@@ -2495,6 +2537,21 @@ export function useChat(
         setActiveSession(updatedSession);
         if (updatedSession.isGenerating && !streamRef.current) {
           attachIfGenerating(updatedSession.id, updatedSession.inFlightGeneration);
+        }
+      } else if (awaitingAuthoritativeSnapshot) {
+        /*
+        FNXC:ChatWindows 2026-09-16-05:29:
+        Remember ONLY the title (and only when it is a usable non-empty string) so the pending
+        authoritative snapshot cannot silently discard a freshly generated conversation name.
+        The payload object itself is deliberately not retained.
+        */
+        const deferredTitle = typeof updatedSession.title === "string" ? updatedSession.title.trim() : "";
+        if (deferredTitle && pendingRefresh) {
+          deferredSessionTitleRef.current = {
+            sessionId: pendingRefresh.sessionId,
+            version: pendingRefresh.version,
+            title: updatedSession.title as string,
+          };
         }
       }
     };

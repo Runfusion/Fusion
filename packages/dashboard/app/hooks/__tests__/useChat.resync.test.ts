@@ -30,6 +30,11 @@ vi.mock("../../utils/projectStorage", () => ({
   getScopedItem: vi.fn(),
   setScopedItem: vi.fn(),
   removeScopedItem: vi.fn(),
+  // useChat restores its last open session through these; an incomplete mock makes the
+  // hook throw on mount, which failed every case in this file regardless of its subject.
+  getPersistedChatOpenSession: vi.fn(),
+  setPersistedChatOpenSession: vi.fn(),
+  clearPersistedChatOpenSession: vi.fn(),
 }));
 
 const { sseOptions } = vi.hoisted(() => ({

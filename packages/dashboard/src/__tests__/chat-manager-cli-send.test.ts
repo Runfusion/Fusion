@@ -8,6 +8,15 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+
+// Title generation is a shared server seam; stub the summarizer so the CLI branch can be
+// asserted without a model call.
+const { mockSummarizeTitle } = vi.hoisted(() => ({ mockSummarizeTitle: vi.fn() }));
+vi.mock("@fusion/core", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@fusion/core")>()),
+  summarizeTitle: mockSummarizeTitle,
+}));
+
 import { ChatManager } from "../chat.js";
 
 const mockChatStore = {
@@ -29,6 +38,57 @@ function makeManager(): ChatManager {
 describe("ChatManager.sendMessage — cli-agent send branch", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockSummarizeTitle.mockResolvedValue("Generated CLI Title");
+    mockChatStore.updateSession.mockResolvedValue(undefined);
+  });
+
+  /*
+   * (S2) Regression: a CLI-agent-backed session returns before the model loop, so before FN-455
+   * it never reached the title-generation block and stayed "Untitled conversation" forever.
+   */
+  it("generates a title for an untitled cli-executor session", async () => {
+    mockChatStore.getSession.mockReturnValue({
+      id: "chat-cli-title",
+      cliExecutorAdapterId: "claude-code",
+      projectId: "proj-1",
+      title: null,
+      modelProvider: "anthropic",
+      modelId: "claude-sonnet-4-5",
+    });
+    const manager = makeManager();
+    manager.setCliChatRunner({ ensureSession: vi.fn(async () => "s"), send: vi.fn(async () => "sent" as const) }, "proj-1");
+
+    await manager.sendMessage("chat-cli-title", "Explain the merge gate");
+
+    await vi.waitFor(() => expect(mockSummarizeTitle).toHaveBeenCalled());
+    expect(mockSummarizeTitle).toHaveBeenCalledWith(
+      "Explain the merge gate",
+      "/tmp/test",
+      "anthropic",
+      "claude-sonnet-4-5",
+      expect.anything(),
+    );
+    await vi.waitFor(() =>
+      expect(mockChatStore.updateSession).toHaveBeenCalledWith("chat-cli-title", { title: "Generated CLI Title" }),
+    );
+  });
+
+  // (S4) Negative control: an already-titled cli session must not be renamed.
+  it("does not generate a title for a cli-executor session that already has one", async () => {
+    mockChatStore.getSession.mockReturnValue({
+      id: "chat-cli-titled",
+      cliExecutorAdapterId: "claude-code",
+      projectId: "proj-1",
+      title: "Existing Title",
+    });
+    const manager = makeManager();
+    manager.setCliChatRunner({ ensureSession: vi.fn(async () => "s"), send: vi.fn(async () => "sent" as const) }, "proj-1");
+
+    await manager.sendMessage("chat-cli-titled", "Another message");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    expect(mockSummarizeTitle).not.toHaveBeenCalled();
+    expect(mockChatStore.updateSession).not.toHaveBeenCalled();
   });
 
   it("routes a cli-executor chat session's composer send to runner.send", async () => {

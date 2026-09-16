@@ -104,6 +104,70 @@ describe("ChatView active-session identity sync", () => {
     },
   );
 
+  /*
+  FNXC:ChatWindows 2026-09-16-05:31:
+  FN-455 symptom: a conversation opened before its server-generated title existed showed
+  "Untitled conversation" in the window header until it was closed and reopened. Once the live
+  session carries the generated title, the header and the host notification must follow it on
+  both breakpoints.
+  */
+  it.each([["desktop", 1280], ["mobile", 390]] as const)(
+    "shows a freshly generated title in an untitled dedicated conversation on %s",
+    async (mode, width) => {
+      const restoreRect = withMeasuredHost(width);
+      const restoreViewport = mockViewportMode(mode === "mobile" ? "mobile" : "desktop");
+      const onActiveSessionChange = vi.fn();
+      const initial = session("session-001", null);
+      useChatWith(initial);
+
+      const renderDedicated = () => (
+        <ChatView
+          projectId="proj-123"
+          addToast={vi.fn()}
+          floating
+          dedicatedConversation
+          initialDirectSession={initial}
+          initialDirectSessionNonce={1}
+          persistChatPreferences={false}
+          onActiveSessionChange={onActiveSessionChange}
+        />
+      );
+
+      const { rerender } = await renderWithAct(renderDedicated());
+      expect(headerTitleText()).toContain("Untitled conversation");
+      onActiveSessionChange.mockClear();
+
+      useChatWith(session("session-001", "Titre généré"));
+      await act(async () => { rerender(renderDedicated()); });
+
+      expect(onActiveSessionChange).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "session-001", title: "Titre généré" }),
+      );
+      expect(headerTitleText()).toContain("Titre généré");
+      expect(headerTitleText()).not.toContain("Untitled conversation");
+
+      restoreViewport.mockRestore();
+      restoreRect();
+    },
+  );
+
+  // (C5) Non-dedicated host: header switcher AND list row converge on the generated title.
+  it("shows a freshly generated title in the thread switcher and the conversation list", async () => {
+    const initial = session("session-001", null);
+    const other = session("session-002", "Beta");
+    useChatWith(initial, [other]);
+    const element = () => <ChatView projectId="proj-123" addToast={vi.fn()} />;
+    const { rerender } = await renderWithAct(element());
+    await userEvent.click(screen.getByTestId("chat-session-session-001"));
+    expect(screen.getByTestId("chat-thread-title-trigger")).toHaveTextContent("Untitled conversation");
+
+    useChatWith(session("session-001", "Titre généré"), [other]);
+    await act(async () => { rerender(element()); });
+
+    expect(screen.getByTestId("chat-thread-title-trigger")).toHaveTextContent("Titre généré");
+    expect(screen.getByTestId("chat-session-session-001")).toHaveTextContent("Titre généré");
+  });
+
   it("does not re-notify the host when no rendered identity field changed", async () => {
     const onActiveSessionChange = vi.fn();
     const initial = session("session-001", "Stable");
