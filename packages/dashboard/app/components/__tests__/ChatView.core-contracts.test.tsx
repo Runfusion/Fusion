@@ -70,6 +70,35 @@ describe("ChatView direct-only UI contract", () => {
   });
 });
 
+/*
+FNXC:ChatSidebarPerf 2026-09-16-02:15:
+FN-440 rehydrates task-linked conversations from the local snapshot on first paint, so the sidebar
+must never re-apply the common-feed gate the hook already resolved. These cases prove the rendered
+conversation list shows a `task-planner:` row at BOTH breakpoints, since desktop and mobile render
+the same `filteredSessions` through `.chat-session-list`.
+*/
+describe("ChatView task-linked conversation rows", () => {
+  const taskSession = {
+    ...activeSessionFixture,
+    id: "session-task-FN-7364",
+    agentId: "task-planner:FN-7364",
+    title: "Task FN-7364",
+  };
+
+  it.each(["desktop", "mobile"] as const)("renders a task-linked conversation row in the list (%s)", async (viewport) => {
+    mockViewportMode(viewport);
+    const sessions = [activeSessionFixture, taskSession];
+    setupMockChat({ activeSession: null, sessions, filteredSessions: sessions });
+
+    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} persistChatPreferences={false} />);
+
+    const list = document.querySelector(".chat-session-list");
+    expect(list).toBeInTheDocument();
+    expect(screen.getByTestId(`chat-session-${taskSession.id}`)).toBeInTheDocument();
+    expect(screen.getByTestId(`chat-session-${activeSessionFixture.id}`)).toBeInTheDocument();
+  });
+});
+
 describe("ChatView popped-out conversation contract", () => {
   it("verrouille une fenêtre dédiée sur son transcript sans navigation concurrente", async () => {
     setupMockChat({ activeSession: activeSessionFixture, sessions: [activeSessionFixture], filteredSessions: [activeSessionFixture] });

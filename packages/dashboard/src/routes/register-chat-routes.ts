@@ -549,6 +549,17 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
           })();
 
       /*
+      FNXC:ChatSidebarPerf 2026-09-16-02:15:
+      The common-feed task-chat gate lives in project settings, so a browser cannot reconstitute it
+      from a cached session list alone. Publishing the effective visibility with the list response
+      lets the client persist a self-describing snapshot; without it the local snapshot must discard
+      every `task-planner:` conversation on each cold open and wait for this round trip, which is the
+      visible delay this field removes. The value is always a strict boolean (never undefined), and
+      it is present even when the page is empty. `lookup=resume` responses stay exactly `{ sessions }`.
+      */
+      const showTaskChatsInCommonFeed = settings?.showTaskChatsInCommonFeed === true;
+
+      /*
       FNXC:ChatSidebarPerf 2026-09-08-04:48:
       Store previews arrive SQL-truncated to at most 101 characters, preserving this route's
       existing exact >100-character ellipsis boundary without changing response fields.
@@ -559,7 +570,6 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
         const lastMessages = await chatStore.getLastMessageForSessions(sessionIds);
 
         if (!isResumeLookup) {
-          const showTaskChatsInCommonFeed = settings?.showTaskChatsInCommonFeed === true;
           /*
           FNXC:TaskDetailPlannerChat 2026-06-30-18:35:
           Planner-chat sessions may appear in global Chat only after a user has sent at least one message. Lazy creation prevents most empty rows; this server-side guard keeps stale/legacy task-planner rows with no messages out of every global Chat surface while preserving normal direct and room sessions.
@@ -613,7 +623,11 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
         }
       }
 
-      res.json(isResumeLookup ? { sessions } : { sessions, ...pageMeta });
+      res.json(
+        isResumeLookup
+          ? { sessions }
+          : { sessions, ...pageMeta, taskChatsVisibleInCommonFeed: showTaskChatsInCommonFeed },
+      );
     } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;

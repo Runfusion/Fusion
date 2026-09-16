@@ -70,6 +70,17 @@ function isEmptyTaskPlannerSession(session: ChatSessionInfo): boolean {
   return isTaskPlannerSession(session) && !session.lastMessageAt && !session.lastMessagePreview;
 }
 
+/*
+FNXC:ChatSidebarPerf 2026-09-16-02:15:
+Self-describing envelope for the chat-session snapshot. It carries the server-applied common-feed
+visibility next to the rows so a cold open can rehydrate task-linked conversations without a network
+round trip. Legacy bare-array payloads remain readable and are treated as "visibility unknown".
+*/
+interface CachedChatSessionsPayload {
+  sessions: ChatSessionInfo[];
+  taskChatsVisibleInCommonFeed: boolean;
+}
+
 export interface ChatSessionInfo {
   id: string;
   title?: string | null;
@@ -470,15 +481,32 @@ export function useChat(
         return [] as ChatSessionInfo[];
       }
 
-      const cachedSessions = readCache<ChatSessionInfo[]>(cacheKey, { maxAgeMs: SWR_TASKS_MAX_AGE_MS }) ?? [];
       /*
-      FNXC:ChatModal 2026-07-01-00:00:
-      Server settings decide whether task-planner sessions belong in the common feed. Do not hydrate cached task chats before that filtered list returns, otherwise a stale cache can briefly expose hidden task-detail conversations and their controls.
+      FNXC:ChatSidebarPerf 2026-09-16-02:15:
+      The local snapshot is self-describing: it is only ever written from a server list response that
+      has ALREADY applied the project `showTaskChatsInCommonFeed` gate plus the "no empty planner row"
+      guard, and it persists that effective visibility alongside the rows. Replaying the persisted
+      decision offline is what lets task-linked conversations paint on first render instead of waiting
+      for `GET /api/chat/sessions` (the visible delay this replaces). Safety is preserved rather than
+      dropped: a persisted `false` or a legacy bare-array payload (visibility UNKNOWN) still filters
+      every `task-planner:` row exactly as before, empty planner rows are never rehydrated, and the
+      staleness window is bounded to one revalidation — the next refresh rewrites the flag and the
+      rows, so disabling the setting removes them on the following load.
 
       FNXC:MessageArchive 2026-08-12-22:36:
       Archived sessions must not flash from a cached list before the active-only refresh completes.
       */
-      return cachedSessions.filter((session) => !isTaskPlannerSession(session) && session.status !== "archived");
+      const cached = readCache<ChatSessionInfo[] | CachedChatSessionsPayload>(cacheKey, { maxAgeMs: SWR_TASKS_MAX_AGE_MS });
+      const isLegacyPayload = Array.isArray(cached);
+      const cachedSessions: ChatSessionInfo[] = isLegacyPayload ? cached : (cached?.sessions ?? []);
+      const taskChatsVisible = !isLegacyPayload && cached?.taskChatsVisibleInCommonFeed === true;
+
+      return cachedSessions.filter((session) => {
+        if (session.status === "archived") return false;
+        if (!isTaskPlannerSession(session)) return true;
+        if (!taskChatsVisible) return false;
+        return !isEmptyTaskPlannerSession(session);
+      });
     },
     [getChatSessionsCacheKey],
   );
@@ -656,7 +684,17 @@ export function useChat(
       setHasMoreSessions(data.hasMore === true);
       const cacheKey = !query && !tagId ? getChatSessionsCacheKey(projectId) : null;
       if (cacheKey) {
-        writeCache(cacheKey, next, { maxBytes: 500_000 });
+        /*
+        FNXC:ChatSidebarPerf 2026-09-16-02:15:
+        Persist the server's effective task-chat visibility with the rows so the next cold open can
+        replay that project gate instead of discarding every task conversation. Normalized to a strict
+        boolean: an older server omits the field, and "absent" must read back as not-visible.
+        */
+        const payload: CachedChatSessionsPayload = {
+          sessions: next,
+          taskChatsVisibleInCommonFeed: data.taskChatsVisibleInCommonFeed === true,
+        };
+        writeCache(cacheKey, payload, { maxBytes: 500_000 });
       }
     } catch {
       if (activeSessionListScopeRef.current !== scope || activeSessionListGenerationRef.current !== scopeGeneration) return;

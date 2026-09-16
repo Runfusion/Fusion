@@ -26,6 +26,14 @@ export interface ChatSessionListResponse {
   total?: number;
   hasMore?: boolean;
   nextCursor?: string | null;
+  /*
+  FNXC:ChatSidebarPerf 2026-09-16-02:15:
+  Effective project-level visibility of task-linked chats in the common feed, as already applied by
+  the list route. Optional on purpose: an older server behind a newer client omits it, and the client
+  must treat that absence as "visibility unknown" (task chats stay hidden until the refresh lands).
+  `lookup=resume` responses never carry it.
+  */
+  taskChatsVisibleInCommonFeed?: boolean;
 }
 
 export interface ChatSessionResponse {

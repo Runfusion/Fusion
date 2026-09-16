@@ -273,52 +273,135 @@ describe("useChat", () => {
     });
   });
 
-  it("does not hydrate cached task-planner sessions before server settings filtering returns", async () => {
-    const projectId = "proj-cache-task-planner";
-    localStorage.setItem(
-      chatSessionsCacheKey(projectId),
-      JSON.stringify({
-        savedAt: Date.now(),
-        data: [
-          makeSession({ id: "session-direct", agentId: "agent-001", updatedAt: "2026-04-08T00:00:00.000Z" }),
-          makeSession({ id: "session-planner", agentId: "task-planner:FN-7364", updatedAt: "2026-04-09T00:00:00.000Z" }),
-        ],
-      }),
-    );
+  /*
+  FNXC:ChatSidebarPerf 2026-09-16-02:15:
+  FN-440 replaced the previous "does not hydrate cached task-planner sessions before server settings
+  filtering returns" case, which asserted the removed behavior (cached task chats were always
+  discarded, so they only appeared after the network round trip). The snapshot is now
+  self-describing, so the invariant under test is: a permitted task chat paints on the FIRST render
+  while the sessions request is still pending, and a not-permitted, unknown-visibility (legacy
+  payload), empty, or archived row never does.
+  */
+  describe("cached task-planner session hydration", () => {
+    const plannerSession = (overrides: Partial<ChatSession> & Pick<ChatSession, "id" | "agentId">) =>
+      ({ ...makeSession(overrides), lastMessageAt: "2026-04-09T00:00:00.000Z", lastMessagePreview: "hello" }) as ChatSession;
 
-    let resolveFetch: ((value: { sessions: ChatSession[] }) => void) | undefined;
-    mockFetchChatSessions.mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          resolveFetch = resolve;
-        }),
-    );
+    const seedSnapshot = (projectId: string, data: unknown) =>
+      localStorage.setItem(chatSessionsCacheKey(projectId), JSON.stringify({ savedAt: Date.now(), data }));
 
-    const { result } = renderHook(() => useChat(projectId));
+    const pendingSessionsFetch = () => {
+      mockFetchChatSessions.mockImplementationOnce(() => new Promise(() => {}));
+    };
 
-    expect(result.current.sessions.map((session) => session.id)).toEqual(["session-direct"]);
-
-    await act(async () => {
-      resolveFetch?.({
+    it("paints permitted task chats on first render while the sessions request is still pending", () => {
+      const projectId = "proj-cache-task-planner-visible";
+      seedSnapshot(projectId, {
+        taskChatsVisibleInCommonFeed: true,
         sessions: [
-          makeSession({ id: "session-planner", agentId: "task-planner:FN-7364", updatedAt: "2026-04-09T00:00:00.000Z" }),
+          makeSession({ id: "session-direct", agentId: "agent-001", updatedAt: "2026-04-08T00:00:00.000Z" }),
+          plannerSession({ id: "session-planner", agentId: "task-planner:FN-7364", updatedAt: "2026-04-09T00:00:00.000Z" }),
         ],
       });
+      pendingSessionsFetch();
+
+      const { result } = renderHook(() => useChat(projectId));
+
+      expect(result.current.sessions.map((session) => session.id)).toEqual(["session-planner", "session-direct"]);
+      expect(result.current.sessionsLoading).toBe(false);
     });
 
-    await waitFor(() => {
-      expect(result.current.sessions.map((session) => session.id)).toEqual(["session-planner"]);
+    it("keeps task chats hidden when the snapshot persisted visibility false", () => {
+      const projectId = "proj-cache-task-planner-hidden";
+      seedSnapshot(projectId, {
+        taskChatsVisibleInCommonFeed: false,
+        sessions: [
+          makeSession({ id: "session-direct", agentId: "agent-001", updatedAt: "2026-04-08T00:00:00.000Z" }),
+          plannerSession({ id: "session-planner", agentId: "task-planner:FN-7364", updatedAt: "2026-04-09T00:00:00.000Z" }),
+        ],
+      });
+      pendingSessionsFetch();
+
+      const { result } = renderHook(() => useChat(projectId));
+
+      expect(result.current.sessions.map((session) => session.id)).toEqual(["session-direct"]);
+    });
+
+    it("treats a legacy bare-array snapshot as unknown visibility and hides task chats", () => {
+      const projectId = "proj-cache-task-planner-legacy";
+      seedSnapshot(projectId, [
+        makeSession({ id: "session-direct", agentId: "agent-001", updatedAt: "2026-04-08T00:00:00.000Z" }),
+        plannerSession({ id: "session-planner", agentId: "task-planner:FN-7364", updatedAt: "2026-04-09T00:00:00.000Z" }),
+      ]);
+      pendingSessionsFetch();
+
+      const { result } = renderHook(() => useChat(projectId));
+
+      expect(result.current.sessions.map((session) => session.id)).toEqual(["session-direct"]);
+    });
+
+    it("never rehydrates an empty task chat even when visibility is true", () => {
+      const projectId = "proj-cache-task-planner-empty";
+      seedSnapshot(projectId, {
+        taskChatsVisibleInCommonFeed: true,
+        sessions: [
+          makeSession({ id: "session-direct", agentId: "agent-001", updatedAt: "2026-04-08T00:00:00.000Z" }),
+          makeSession({ id: "session-planner-empty", agentId: "task-planner:FN-7365", updatedAt: "2026-04-09T00:00:00.000Z" }),
+        ],
+      });
+      pendingSessionsFetch();
+
+      const { result } = renderHook(() => useChat(projectId));
+
+      expect(result.current.sessions.map((session) => session.id)).toEqual(["session-direct"]);
+    });
+
+    it("never rehydrates an archived task chat even when visibility is true", () => {
+      const projectId = "proj-cache-task-planner-archived";
+      seedSnapshot(projectId, {
+        taskChatsVisibleInCommonFeed: true,
+        sessions: [
+          makeSession({ id: "session-direct", agentId: "agent-001", updatedAt: "2026-04-08T00:00:00.000Z" }),
+          plannerSession({ id: "session-planner-archived", agentId: "task-planner:FN-7366", status: "archived", updatedAt: "2026-04-09T00:00:00.000Z" }),
+        ],
+      });
+      pendingSessionsFetch();
+
+      const { result } = renderHook(() => useChat(projectId));
+
+      expect(result.current.sessions.map((session) => session.id)).toEqual(["session-direct"]);
+    });
+
+    it("leaves the cold-load state when the snapshot holds only permitted task chats", () => {
+      const projectId = "proj-cache-task-planner-only";
+      seedSnapshot(projectId, {
+        taskChatsVisibleInCommonFeed: true,
+        sessions: [
+          plannerSession({ id: "session-planner-a", agentId: "task-planner:FN-7367", updatedAt: "2026-04-09T00:00:00.000Z" }),
+          plannerSession({ id: "session-planner-b", agentId: "task-planner:FN-7368", updatedAt: "2026-04-08T00:00:00.000Z" }),
+        ],
+      });
+      pendingSessionsFetch();
+
+      const { result } = renderHook(() => useChat(projectId));
+
+      expect(result.current.sessions.map((session) => session.id)).toEqual(["session-planner-a", "session-planner-b"]);
+      expect(result.current.sessionsLoading).toBe(false);
     });
   });
 
-  it("writes sorted sessions to cache after successful refresh", async () => {
-    const projectId = "proj-write-through";
+  it.each([
+    { label: "true", responseVisibility: true, expected: true },
+    { label: "false", responseVisibility: false, expected: false },
+    { label: "absent", responseVisibility: undefined, expected: false },
+  ])("writes sorted sessions and persisted task-chat visibility ($label) to cache after successful refresh", async ({ responseVisibility, expected }) => {
+    const projectId = `proj-write-through-${String(responseVisibility)}`;
     mockFetchChatSessions.mockResolvedValueOnce({
       sessions: [
         makeSession({ id: "session-001", agentId: "agent-001", updatedAt: "2026-04-08T00:00:00.000Z" }),
         makeSession({ id: "session-003", agentId: "agent-003", updatedAt: "2026-04-10T00:00:00.000Z" }),
         makeSession({ id: "session-002", agentId: "agent-002", updatedAt: "2026-04-09T00:00:00.000Z" }),
       ],
+      ...(responseVisibility === undefined ? {} : { taskChatsVisibleInCommonFeed: responseVisibility }),
     });
 
     renderHook(() => useChat(projectId));
@@ -326,8 +409,9 @@ describe("useChat", () => {
     await waitFor(() => {
       const raw = localStorage.getItem(chatSessionsCacheKey(projectId));
       expect(raw).toBeTruthy();
-      const parsed = JSON.parse(raw ?? "null") as { data: ChatSession[] };
-      expect(parsed.data.map((session) => session.id)).toEqual(["session-003", "session-002", "session-001"]);
+      const parsed = JSON.parse(raw ?? "null") as { data: { sessions: ChatSession[]; taskChatsVisibleInCommonFeed: boolean } };
+      expect(parsed.data.sessions.map((session) => session.id)).toEqual(["session-003", "session-002", "session-001"]);
+      expect(parsed.data.taskChatsVisibleInCommonFeed).toBe(expected);
     });
   });
 
