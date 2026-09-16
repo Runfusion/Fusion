@@ -173,7 +173,12 @@ interface ColumnProps {
   /** Compatibility aliases retained for existing Done-column integrations. */
   doneSortMode?: DoneColumnSortMode;
   onDoneSortModeChange?: (mode: DoneColumnSortMode) => void;
-  /** Exact server count for a paged lane; defaults to the loaded task count. */
+  /**
+   * FNXC:BoardColumnCount 2026-09-16-21:24: FN-475 — exact task count for THIS column only, never a
+   * board-wide or collection-wide total. Supplied when a server-paged lane knows its own exact count
+   * (a complete lane outside search); otherwise omitted so the badge falls back to the loaded cards
+   * of this column.
+   */
   totalTaskCount?: number;
   serverHasMore?: boolean;
   serverLoadingMore?: boolean;

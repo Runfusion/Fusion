@@ -382,6 +382,22 @@ describe("Column count-flash", () => {
     expect(badge.textContent).not.toContain("/");
   });
 
+  /*
+  FNXC:BoardColumnCount 2026-09-16-21:24:
+  FN-475 — with no exact per-column server total, the badge follows THIS column's loaded cards, so two
+  lanes holding different card lists can never display the same number.
+  */
+  it("follows this column's own card list when no exact total is supplied", () => {
+    const { unmount } = render(<Column {...defaultProps} tasks={[makeTask("FN-001"), makeTask("FN-002"), makeTask("FN-003")]} />);
+    expect(screen.getByLabelText("3 tasks")).toHaveTextContent("3");
+    expect(screen.queryByLabelText("1 tasks")).toBeNull();
+    unmount();
+
+    render(<Column {...defaultProps} tasks={[makeTask("FN-004")]} />);
+    expect(screen.getByLabelText("1 tasks")).toHaveTextContent("1");
+    expect(screen.queryByLabelText("3 tasks")).toBeNull();
+  });
+
   it("renders the same single count at the mobile breakpoint", () => {
     const previousWidth = window.innerWidth;
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 375 });

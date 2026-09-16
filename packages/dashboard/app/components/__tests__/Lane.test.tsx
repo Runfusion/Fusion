@@ -80,6 +80,27 @@ describe("Lane", () => {
     expect(screen.getByTestId("lane-count-builtin:coding").textContent).toBe("2");
   });
 
+  /*
+  FNXC:BoardColumnCount 2026-09-16-21:24:
+  FN-475 negative control — Lane renders the real Column, so this proves the shipped `.column-count`
+  badge shows each column's own task count and never a lane-wide or board-wide total.
+  */
+  it("gives each column header its own task count, not the lane total", () => {
+    render(<Lane {...baseProps()} tasks={[
+      mkTask({ id: "FN-1" }),
+      mkTask({ id: "FN-2" }),
+      mkTask({ id: "FN-3" }),
+      mkTask({ id: "FN-4", column: "in-progress" }),
+    ]} />);
+
+    const countFor = (columnId: string) => document.querySelector(`[data-column="${columnId}"] .column-count`)?.textContent;
+    expect(countFor("todo")).toBe("3");
+    expect(countFor("in-progress")).toBe("1");
+    expect(countFor("in-review")).toBe("0");
+    expect(countFor("done")).toBe("0");
+    expect(screen.getByTestId("lane-count-builtin:coding").textContent).toBe("4");
+  });
+
   it("renders its workflow's columns in order, with archived hidden", () => {
     render(<Lane {...baseProps()} />);
     const headings = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
@@ -109,13 +130,19 @@ describe("Lane", () => {
     expect(screen.getByTestId("group-active-FN-9044")).toBeInTheDocument();
   });
 
-  it("renders creation controls only in the first visible column", () => {
+  /*
+  FNXC:BoardColumnCount 2026-09-16-21:24:
+  The "+ New Task" column assertions were deleted here, not weakened: the official design moved the sole
+  New Task action to the Header and Column deliberately renders no column-level button or click shell
+  (see Column.tsx "FNXC:OfficialDashboardDesign 2026-09-13-00:38"). Quick entry remains a real Lane
+  affordance and is still asserted.
+  */
+  it("renders quick entry only in the first visible column", () => {
     render(<Lane {...baseProps()} onQuickCreate={vi.fn()} onNewTask={vi.fn()} />);
 
     expect(screen.getAllByTestId("quick-entry-box")).toHaveLength(1);
-    expect(screen.getAllByText("+ New Task")).toHaveLength(1);
     expect(screen.getByTestId("quick-entry-box").closest("[data-column]")?.getAttribute("data-column")).toBe("triage");
-    expect(screen.getByText("+ New Task").closest("[data-column]")?.getAttribute("data-column")).toBe("triage");
+    expect(screen.queryByText("+ New Task")).toBeNull();
   });
 
   it("collapses the lane (hides columns) when collapsed", () => {
