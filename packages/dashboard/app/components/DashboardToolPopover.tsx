@@ -51,7 +51,8 @@ The `below` branch keeps the exact prior arithmetic so header anchors are a byte
 FNXC:ToolSurfaces 2026-09-15-22:15:
 FN-436 : l'alignement horizontal devient une option explicite. Aligner le bord droit du panneau sur celui de l'ANCRE
 est correct pour les déclencheurs d'en-tête (Activité, Notes), mais pas pour Chat : son bouton `desktop-nav-chat-panel`
-vit dans `.desktop-action-bar__right` et est SUIVI de Terminal, Réglages et de la bascule de visibilité des fenêtres,
+vit dans `.desktop-action-bar__right` et est SUIVI de Terminal (FN-469 a retiré Réglages de ce groupe) puis de la
+réserve de la bascule de visibilité des fenêtres,
 donc son bord droit est à plusieurs centaines de pixels de la bordure de l'écran et la popover s'ouvrait « trop à
 gauche ». `viewport-end` colle le panneau au bord droit du viewport (à `VIEWPORT_MARGIN` près) ; l'option reste opt-in
 et le défaut `anchor-end` conserve exactement l'arithmétique précédente, pour que les ancres d'en-tête ne régressent pas.

@@ -36,6 +36,7 @@ import {
   clampFloatingWindowSize,
   detectSnapZoneForRect,
   resolveDetachedRect,
+  resolveHandoffRect,
   resolveOpeningRect,
   resolveSnapRect,
   shouldDetachSnappedWindow,
@@ -173,6 +174,32 @@ export interface FloatingWindowProps {
   validate a placement. Owners that do not pass it observe no behavior change whatsoever.
   */
   onDragGestureEnd?: (info: FloatingWindowDragGestureEnd) => void;
+  /*
+  FNXC:FloatingWindowSnap 2026-09-16-18:31:
+  FN-469: a LIVE pointer gesture handed over by a host that just replaced its own docked presentation with this
+  window. The terminal's bottom dock is the motivating case: it used to call `endGesture()` and then swap to the
+  floating presentation, so the new window opened at the standard CENTRED rectangle and the drag was lost.
+
+  Given this descriptor the window instead opens under the pointer (`resolveHandoffRect`) and RESUMES the very same
+  drag loop an ordinary header press runs, with no synthetic `pointerdown` fabricated anywhere. Its listeners are
+  attached to `window` because the element that held the pointer capture has just been unmounted by the host — the
+  capture is implicitly released with it, so there is nothing left to re-capture; `pointerId` filtering keeps a
+  second finger out. A sheet presentation exposes no window geometry, so it ignores a handoff entirely.
+
+  `nonce` makes the handoff single-use: re-rendering the host, or returning to the docked presentation and detaching
+  again later, is a NEW gesture and must publish a new nonce.
+  */
+  dragHandoff?: FloatingWindowDragHandoff;
+}
+
+export interface FloatingWindowDragHandoff {
+  pointerId: number;
+  /** Live pointer position, in the same coordinate space as the work-area bounds. */
+  pointer: FloatingWindowPosition;
+  /** Point INSIDE the opened panel that must land on the pointer; defaults to the shared undock anchor. */
+  grabOffset?: FloatingWindowPosition;
+  /** Monotonic per-gesture token; a repeated value is ignored so one gesture is adopted exactly once. */
+  nonce: number;
 }
 
 export interface FloatingWindowDragGestureEnd {
@@ -193,6 +220,19 @@ const DEFAULT_MIN_HEIGHT = 280;
 FNXC:FloatingWindow 2026-06-22-21:30:
 Z-index now comes from the SHARED `floatingWindowStack` module (`nextFloatingZ`/`currentFloatingZ`) so FloatingWindow stacks in ONE counter with the right-dock pop-out, the floating terminal, and the floating New Task dialog — tapping ANY of them raises it above all the others regardless of type. The local `topZ`/`nextZ` counter this file previously owned is gone.
 */
+
+/*
+FNXC:FloatingWindowSnap 2026-09-16-18:31:
+FN-469: the shared drag loop only ever needs to attach/detach pointer listeners and, WHEN AVAILABLE, take pointer
+capture. Describing the target structurally lets the same loop run on the captured element (historical path) and on
+`window` (handed-over gesture, where the capturing element no longer exists) without a second implementation.
+*/
+interface PointerDragTarget {
+  addEventListener(type: string, listener: (event: PointerEvent) => void): void;
+  removeEventListener(type: string, listener: (event: PointerEvent) => void): void;
+  setPointerCapture?: (pointerId: number) => void;
+  releasePointerCapture?: (pointerId: number) => void;
+}
 
 type ResizeDirection = "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
 const RESIZE_DIRECTIONS: ResizeDirection[] = ["n", "s", "e", "w", "ne", "nw", "se", "sw"];
@@ -237,6 +277,7 @@ export function FloatingWindow({
   ariaLabelledBy,
   onDragGestureEnd,
   openingSizePolicy = "aspect-ratio",
+  dragHandoff,
 }: FloatingWindowProps) {
   const { t } = useTranslation("app");
   const availableBounds = useDashboardWindowBounds();
@@ -522,18 +563,26 @@ export function FloatingWindow({
     if (wasHidden && !hidden) bringToFront();
   }, [bringToFront, hidden]);
 
-  const handleDragPointerDown = useCallback(
-    (event: ReactPointerEvent<HTMLDivElement>) => {
-      /*
-      FNXC:ModalTouchGeometry 2026-07-26-13:35:
-      FN-8606 sheet callers must expose neither movable geometry nor resize chrome on phone and
-      short viewports. Do not begin a delegated or built-in header drag while persistence is
-      suspended; CSS alone cannot prevent the panel-level pointer handler from receiving touches.
-      */
-      /* FNXC:ModalTouchGeometry 2026-07-26-14:20: Delegated headers commonly contain links (for example Settings' GitHub/Discord actions), which must retain native activation rather than starting a window drag. */
-      if (!windowSurface.surfaceActive || sheetPresentation || (event.target as HTMLElement).closest("button, a, input, select, textarea, [contenteditable=\"true\"], [role=\"button\"], [role=\"link\"]")) return;
-      event.preventDefault();
-      event.stopPropagation();
+  /*
+  FNXC:FloatingWindowSnap 2026-09-16-18:31:
+  FN-469 extracts the BODY of the header drag verbatim so exactly one drag loop exists. Two callers reach it:
+  - `handleDragPointerDown`, which keeps every guard and passes the captured element (the historical path, whose
+    `setPointerCapture`/`releasePointerCapture` calls are unchanged);
+  - the handoff effect below, which passes `window`, where those optional capture calls are simply absent and
+    therefore skipped.
+
+  The handed-over gesture deliberately keeps the ordinary click threshold and starts as "not moved": the window is
+  already placed under the pointer by its opening rectangle, so releasing immediately must validate NOTHING — no snap
+  zone, and no end-of-gesture placement an owner could read as a deliberate dock. Anything else would let a short
+  pull-out immediately re-dock the window into the band its opening rectangle happens to touch.
+  */
+  const startPointerDrag = useCallback(
+    (
+      captureTarget: PointerDragTarget,
+      pointerId: number,
+      startX: number,
+      startY: number,
+    ) => {
       /*
       FNXC:ModalTouchGeometry 2026-07-26-12:19:
       A drag owns one captured pointer until matching up/cancel or unmount. Tear down any
@@ -542,11 +591,7 @@ export function FloatingWindow({
       */
       dragTeardownRef.current?.();
       bringToFront();
-      const captureTarget = event.currentTarget;
-      const pointerId = event.pointerId;
       captureTarget.setPointerCapture?.(pointerId);
-      const startX = event.clientX;
-      const startY = event.clientY;
       const gestureStartMode = snapModeRef.current;
       const gestureStartRect = geometryRef.current;
       const previousUserSelect = document.body.style.userSelect;
@@ -629,7 +674,20 @@ export function FloatingWindow({
           snapModeRef.current = "floating";
           setSnapMode("floating");
           applyRect(restored);
-          disarmedZone = gestureStartMode === "floating" ? null : gestureStartMode;
+          /*
+          FNXC:FloatingWindowSnap 2026-09-16-18:31:
+          FN-469 adds ONE case to this disarm, for the bottom band only. `resolveDetachedRect` re-anchors the window
+          HORIZONTALLY under the pointer (so a side contact after an undock still reflects where the operator put the
+          pointer) but VERTICALLY at a fixed 24px offset. A window taller than the pointer's distance to the bottom
+          wall is therefore clamped with its bottom edge exactly ON that wall as a pure artifact of the undock — it
+          would re-dock into the band the operator never asked for, and for common window sizes that is nearly every
+          undock in the lower half. The band is disarmed until the panel leaves the wall; travelling on to any other
+          wall in the same gesture keeps working exactly as FN-422 defined.
+          */
+          const restoredZone = detectSnapZoneForRect(restored, bounds);
+          disarmedZone = restoredZone === "bottom"
+            ? "bottom"
+            : gestureStartMode === "floating" ? null : gestureStartMode;
           // Fall through: the very event that detached the window may already sit inside another band.
         }
         if (!moved && Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) < FLOATING_WINDOW_DRAG_THRESHOLD_PX) return;
@@ -722,8 +780,56 @@ export function FloatingWindow({
       captureTarget.addEventListener("pointerup", handlePointerUp);
       captureTarget.addEventListener("pointercancel", handlePointerCancel);
     },
-    [applyRect, applySnapMode, bringToFront, markUserAdjusted, resolvedMinSize, sheetPresentation, windowKey, windowSurface.surfaceActive]
+    [applyRect, applySnapMode, bringToFront, markUserAdjusted, resolvedMinSize, windowKey]
   );
+  const startPointerDragRef = useRef(startPointerDrag);
+  startPointerDragRef.current = startPointerDrag;
+
+  const handleDragPointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      /*
+      FNXC:ModalTouchGeometry 2026-07-26-13:35:
+      FN-8606 sheet callers must expose neither movable geometry nor resize chrome on phone and
+      short viewports. Do not begin a delegated or built-in header drag while persistence is
+      suspended; CSS alone cannot prevent the panel-level pointer handler from receiving touches.
+      */
+      /* FNXC:ModalTouchGeometry 2026-07-26-14:20: Delegated headers commonly contain links (for example Settings' GitHub/Discord actions), which must retain native activation rather than starting a window drag. */
+      if (!windowSurface.surfaceActive || sheetPresentation || (event.target as HTMLElement).closest("button, a, input, select, textarea, [contenteditable=\"true\"], [role=\"button\"], [role=\"link\"]")) return;
+      event.preventDefault();
+      event.stopPropagation();
+      startPointerDrag(event.currentTarget, event.pointerId, event.clientX, event.clientY);
+    },
+    [sheetPresentation, startPointerDrag, windowSurface.surfaceActive],
+  );
+
+  /*
+  FNXC:FloatingWindowSnap 2026-09-16-18:31:
+  FN-469 adoption of a handed-over gesture. It runs in LAYOUT so the window is never painted at the centred opening
+  rectangle first, marks the window user-adjusted (it is a real gesture, so it also leaves the pristine cascade
+  cohort), and resumes the shared drag loop on `window`. `nonce` guards against re-adopting the same gesture on a
+  re-render; a sheet presentation or an inactive surface ignores it entirely and attaches no listener.
+  */
+  const adoptedHandoffNonceRef = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    if (!dragHandoff || sheetPresentation || !windowSurface.surfaceActive) return;
+    if (adoptedHandoffNonceRef.current === dragHandoff.nonce) return;
+    adoptedHandoffNonceRef.current = dragHandoff.nonce;
+    const rect = resolveHandoffRect({
+      size: geometryRef.current.size,
+      pointer: dragHandoff.pointer,
+      grabOffset: dragHandoff.grabOffset,
+      minSize: resolvedMinSize,
+      bounds: boundsRef.current,
+    });
+    floatingRectRef.current = rect;
+    snapModeRef.current = "floating";
+    setSnapMode("floating");
+    markUserAdjusted();
+    // The drag loop reads its start rectangle from this ref, and the state write above is not committed yet.
+    geometryRef.current = rect;
+    applyRect(rect);
+    startPointerDragRef.current(window, dragHandoff.pointerId, dragHandoff.pointer.x, dragHandoff.pointer.y);
+  }, [applyRect, dragHandoff, markUserAdjusted, resolvedMinSize, sheetPresentation, windowSurface.surfaceActive]);
 
   const handlePanelPointerDown = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -840,9 +946,16 @@ export function FloatingWindow({
 
   // FNXC:FloatingWindow 2026-06-22-20:45: Run any active drag/resize teardown on unmount so captured-element listeners + a pending rAF never outlive the window.
   useEffect(() => () => dragTeardownRef.current?.(), []);
+  /*
+  FNXC:FloatingWindowSnap 2026-09-16-18:31:
+  FN-469: a sheet presentation exposes NO window geometry, so an in-flight drag must not survive the transition into
+  one. This matters for a handed-over gesture, because the breakpoint classification can settle one tick after mount
+  (a phone resolves its viewport mode asynchronously), but it equally protects a tablet rotated mid-drag: without it
+  the gesture would keep suppressing text selection and holding listeners for a window that can no longer move.
+  */
   useEffect(() => {
-    if (!windowSurface.surfaceActive) dragTeardownRef.current?.();
-  }, [windowSurface.surfaceActive]);
+    if (!windowSurface.surfaceActive || sheetPresentation) dragTeardownRef.current?.();
+  }, [sheetPresentation, windowSurface.surfaceActive]);
 
   /*
   FNXC:TaskDetailActivity 2026-07-04-18:37:

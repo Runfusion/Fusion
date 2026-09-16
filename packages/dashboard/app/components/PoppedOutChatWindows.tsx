@@ -36,6 +36,14 @@ export interface PoppedOutChatWindowsProps {
 
 export function PoppedOutChatWindows({ entries, projectId, addToast, experimentalFeatures, onClose, onOpenSessionInNewWindow, onSendAsReport, onSessionSynced }: PoppedOutChatWindowsProps) {
   /*
+  FNXC:ChatWindows 2026-09-16-18:31:
+  FN-469: the operator asked for bottom docking "aussi pour les chats". A detached conversation gains it with NO chat
+  specific geometry: it is already a `FloatingWindow`, and the bottom band lives in the shared snap contract
+  (`floatingWindowGeometry`), so dragging its bottom edge onto the work area's bottom wall docks it full width over
+  the lower half, and one drag past the click threshold releases it in any direction. The narrow `minSize` below does
+  not fight the band either: a snapped rectangle is applied as-is and `.floating-window--snapped` neutralizes the CSS
+  minimums. Do not add a chat-owned bottom panel here; that would fork the geometry the shared contract now owns.
+
   FNXC:ChatWindows 2026-09-14-22:36:
   FN-394 removed Chat's own cascade bookkeeping and its durable geometry. Every detached conversation opens at the standard Chat size, centred, and the shared window manager decides whether an untouched neighbour earns one cascade offset — the same rule as every other dashboard window.
   */

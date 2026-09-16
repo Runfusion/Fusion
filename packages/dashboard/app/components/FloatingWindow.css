@@ -755,6 +755,19 @@ than the floating minimum and the body stays scrollable instead of overflowing t
 }
 
 /*
+FNXC:FloatingWindowSnap 2026-09-16-18:31:
+FN-469 bottom band. The rectangle itself comes from `resolveSnapRect("bottom")` like every other zone, so this rule
+is paint only: the band rests ON the bottom wall, so its bottom corners are squared exactly as the columns' outer
+edges read against their walls. It reuses the shared radius token and adds no parallel snapped variant.
+*/
+.floating-window--snap-bottom {
+  border-start-start-radius: var(--radius-md);
+  border-start-end-radius: var(--radius-md);
+  border-end-start-radius: 0;
+  border-end-end-radius: 0;
+}
+
+/*
 FNXC:FloatingWindowSnap 2026-09-14-21:10:
 The drop preview is paint-only: `pointer-events: none` plus `aria-hidden` in the component means it can
 never take focus, swallow the drag, or be clicked. It reuses existing accent/surface tokens so every

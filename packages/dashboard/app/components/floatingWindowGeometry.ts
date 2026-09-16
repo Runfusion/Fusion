@@ -34,8 +34,19 @@ export interface FloatingWindowRect {
   size: FloatingWindowSize;
 }
 
+/*
+FNXC:FloatingWindowSnap 2026-09-16-18:31:
+FN-469 adds `bottom` to the SHARED snap contract rather than to any single host. The operator asked for the
+terminal's bottom dock to behave "comme une modale classique à la seule différence que je peux l'ancrer en bas",
+and explicitly for conversations to gain the same affordance. Expressing the band here is the DRY way to give it
+to EVERY dashboard window at once (terminal, chats, task pop-outs, migrated dialogs) instead of re-implementing a
+per-host panel. The band is the full width of the live work area over its lower half.
+
+OUT OF SCOPE, deliberately: the terminal's in-flow `below` presentation (which reserves shell height through
+`onPinnedLayoutChange`) is untouched and remains its default, strongest bottom dock; `bottom` does not replace it.
+*/
 /** Placement of a window inside the dashboard work area. `floating` is free geometry. */
-export type FloatingWindowSnapMode = "floating" | "left" | "right" | "maximized";
+export type FloatingWindowSnapMode = "floating" | "left" | "right" | "bottom" | "maximized";
 
 /*
 FNXC:FloatingWindowGeometry 2026-09-16-05:45:
@@ -312,6 +323,8 @@ export function resolveSnapRect(mode: FloatingWindowSnapMode, bounds: DashboardW
   const width = Math.max(0, bounds.width);
   const height = Math.max(0, bounds.height);
   if (mode === "maximized") return { position: { x: bounds.left, y: bounds.top }, size: { width, height } };
+  // FNXC:FloatingWindowSnap 2026-09-16-18:31: FN-469 — the bottom band is full width over the lower half, mirroring the columns' half split on the other axis.
+  if (mode === "bottom") return { position: { x: bounds.left, y: bounds.top + height / 2 }, size: { width, height: height / 2 } };
   const half = width / 2;
   return {
     position: { x: mode === "left" ? bounds.left : bounds.left + (width - half), y: bounds.top },
@@ -334,6 +347,14 @@ Rules, in order:
 - AMBIGUITY: a panel as wide as the work area touches BOTH walls at once. Guessing a side there would snap a
   window the operator only meant to move, and such a panel is already equivalent to the filled work area, so
   nothing is armed; it detaches first like any docked window.
+
+FNXC:FloatingWindowSnap 2026-09-16-18:31:
+FN-469 appends `bottom` as the LAST rule, and the ordering is the whole point. A `left`/`right` column occupies the
+FULL height of the work area, so its bottom edge ALWAYS rests on the bottom wall; evaluating `bottom` before the
+sides would silently re-route every existing column snap to the band. Evaluating it last means no existing result
+changes and `bottom` is armed only where nothing was armed before — including the bottom corners, where the side
+still wins. The both-walls ambiguity refusal stays a SIDE rule: a panel as wide as the work area sitting on the
+bottom wall is unambiguous about the bottom, so it does arm `bottom`.
 */
 export function detectSnapZoneForRect(
   rect: FloatingWindowRect,
@@ -346,9 +367,9 @@ export function detectSnapZoneForRect(
   if (rect.position.y <= bounds.top + contact) return "maximized";
   const touchesLeft = rect.position.x <= bounds.left + contact;
   const touchesRight = rect.position.x + rect.size.width >= bounds.right - contact;
-  if (touchesLeft && touchesRight) return null;
-  if (touchesLeft) return "left";
-  if (touchesRight) return "right";
+  if (touchesLeft && !touchesRight) return "left";
+  if (touchesRight && !touchesLeft) return "right";
+  if (rect.position.y + rect.size.height >= bounds.bottom - contact) return "bottom";
   return null;
 }
 
@@ -371,6 +392,39 @@ export function resolveDetachedRect(
   return {
     size,
     position: clampFloatingWindowPosition({ x: pointer.x - size.width / 2, y: pointer.y - FLOATING_WINDOW_DETACH_PX }, size, bounds),
+  };
+}
+
+/*
+FNXC:FloatingWindowSnap 2026-09-16-18:31:
+FN-469 gesture handoff. When a host tears its own docked presentation down and replaces it with a floating window
+MID-DRAG (today: the terminal leaving its in-flow `below` panel), the new window must appear UNDER THE POINTER at
+the proportional grab point the operator was holding — not at the standard centred opening rectangle, which is
+exactly the reported "ça crée un élément centré" defect.
+
+`grabOffset` is the point INSIDE the panel that must land on the pointer, so the window is "recropped" around the
+finger rather than re-centred. It defaults to the same anchor `resolveDetachedRect` uses (horizontally centred,
+{@link FLOATING_WINDOW_DETACH_PX} below the top edge) so a host that cannot measure its own header — jsdom, an
+unpainted panel — degrades to the familiar undock placement instead of throwing. Non-finite pointer input falls
+back to the centred rectangle; every result is clamped into the live work area.
+*/
+export function resolveHandoffRect(input: {
+  size: FloatingWindowSize;
+  pointer: FloatingWindowPosition;
+  grabOffset?: FloatingWindowPosition;
+  minSize: FloatingWindowSize;
+  bounds: DashboardWindowBounds;
+}): FloatingWindowRect {
+  const requested = finite(input.size.width, input.size.height) ? input.size : input.minSize;
+  const size = clampFloatingWindowSize(requested, input.minSize, input.bounds);
+  if (!finite(input.pointer.x, input.pointer.y)) return { size, position: resolveCenteredPosition(size, input.bounds) };
+  const fallback = { x: size.width / 2, y: FLOATING_WINDOW_DETACH_PX };
+  const grab = input.grabOffset && finite(input.grabOffset.x, input.grabOffset.y) ? input.grabOffset : fallback;
+  const grabX = Math.min(Math.max(0, grab.x), Math.max(0, size.width));
+  const grabY = Math.min(Math.max(0, grab.y), Math.max(0, size.height));
+  return {
+    size,
+    position: clampFloatingWindowPosition({ x: input.pointer.x - grabX, y: input.pointer.y - grabY }, size, input.bounds),
   };
 }
 

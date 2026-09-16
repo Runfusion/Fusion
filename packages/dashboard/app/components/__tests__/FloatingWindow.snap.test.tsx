@@ -269,6 +269,37 @@ describe("FloatingWindow snap gestures", () => {
   });
 
   /*
+  FNXC:FloatingWindowSnap 2026-09-16-18:31:
+  FN-469 full cycle for the shared bottom band on the GENERIC host, so it is proven for every window type and not
+  only for the two hosts that motivated it: arming (preview), applying (rect + mode), and the omnidirectional
+  release. The release also pins the anti-re-dock rule — the restored rect is re-anchored under the pointer and
+  clamped, which puts its bottom edge back on the wall it just left, so the band must stay disarmed until the panel
+  leaves that wall.
+  */
+  it("arms, applies, and releases the shared bottom band", async () => {
+    const { panel, handle } = renderWindow();
+    await waitFor(() => expect(rectOf(panel).width).toBe(openedWidth()));
+    const floating = rectOf(panel);
+
+    drag(handle, { from: { x: 640, y: 400 }, to: { x: 640, y: 400 + window.innerHeight }, pointerId: 280, hold: true });
+    expect(screen.getByTestId("floating-window-snap-preview-snap").dataset.snapZone).toBe("bottom");
+    fireEvent.pointerUp(handle, { pointerId: 280, clientX: 640, clientY: 400 + window.innerHeight });
+
+    const workAreaHeight = 800 - HEADER_HEIGHT - FOOTER_HEIGHT;
+    expect(panel.dataset.snapMode).toBe("bottom");
+    expect(rectOf(panel)).toEqual({ left: 0, top: HEADER_HEIGHT + workAreaHeight / 2, width: 1280, height: workAreaHeight / 2 });
+
+    drag(handle, { from: { x: 640, y: 600 }, to: { x: 640, y: 540 }, pointerId: 281, hold: true });
+    // Disarmed: the re-anchored rect rests on the same wall, which must not instantly re-dock the window.
+    expect(screen.queryByTestId("floating-window-snap-preview-snap")).not.toBeInTheDocument();
+    fireEvent.pointerUp(handle, { pointerId: 281, clientX: 640, clientY: 540 });
+
+    expect(panel.dataset.snapMode).toBe("floating");
+    expect(rectOf(panel).width).toBe(floating.width);
+    expect(rectOf(panel).height).toBe(floating.height);
+  });
+
+  /*
   FNXC:FloatingWindowSnap 2026-09-15-14:07:
   FN-422 surface enumeration: both entry points into the single drag handler must inherit the omnidirectional
   undock — the native header (desktop mouse) and a delegated host header (touch tablet).
@@ -584,7 +615,13 @@ describe("FloatingWindow snap gestures", () => {
       const { onDragGestureEnd, panel, handle } = renderWithGestureEnd();
       await waitFor(() => expect(rectOf(panel).width).toBe(openedWidth()));
 
-      drag(handle, { from: { x: 600, y: 400 }, to: { x: 700, y: 500 }, pointerId: 70 });
+      /*
+      FNXC:FloatingWindowSnap 2026-09-16-18:31:
+      FN-469: this case is about the PAYLOAD of an unsnapped drag, so the gesture must land the panel clear of every
+      wall. The former destination pushed the panel's bottom edge onto the bottom wall, which now legitimately arms
+      the shared bottom band; the band's own payload is asserted by its dedicated case below.
+      */
+      drag(handle, { from: { x: 600, y: 400 }, to: { x: 700, y: 420 }, pointerId: 70 });
 
       expect(onDragGestureEnd).toHaveBeenCalledTimes(1);
       const info = onDragGestureEnd.mock.calls[0][0];

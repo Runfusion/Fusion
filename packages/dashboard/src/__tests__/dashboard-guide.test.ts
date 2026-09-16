@@ -63,8 +63,12 @@ describe("dashboard guide coverage for lazy-loaded views", () => {
   it("documents the responsive official Header and Quick Entry hold contract", () => {
     const guide = readDashboardGuide();
 
-    expect(guide).toContain("New Task** is absent from both the desktop footer and Header");
-    expect(guide).toContain("tablet and mobile retain the rightmost compact Header action");
+    /*
+     * FN-437 restored a permanent Header New Task action on desktop, so the guide states that it is absent from the
+     * FOOTER only. This assertion still pinned the superseded "absent from both" wording and could never pass again.
+     */
+    expect(guide).toContain("New Task** is absent from the desktop footer but present in the Header");
+    expect(guide).toContain("tablet and mobile keep the rightmost compact Header action");
     expect(guide).toContain("one non-wrapping row; long workflow names truncate before the Search icon moves");
     expect(guide).toContain("icon-only Save button");
     expect(guide).toContain("continuous 500 ms hold");
@@ -80,7 +84,13 @@ describe("dashboard guide coverage for lazy-loaded views", () => {
     const guide = readDashboardGuide();
 
     expect(guide).toContain("official tablet and desktop design uses one full-width navigation footer instead of ExecutorStatusBar");
-    expect(guide).toContain("Terminal** sits immediately left of **Settings");
+    /*
+     * FN-469 moved Settings out of the far-right group: it is now an icon-only action beside the capacity counter and
+     * the last entry of the More menu, so Terminal is the last right-hand action instead of Settings' left neighbour.
+     */
+    expect(guide).toContain("**Terminal** as the last action at the far right");
+    expect(guide).toContain("icon-only **Settings** action sits immediately to its right");
+    expect(guide).toContain("last entry of the **More** menu");
     expect(guide).toContain("Tablet retains its sidebar, compact Header, standard right dock, ordinary page routing, and no Alpha desktop windows or guards");
     expect(guide).toContain("continues to use More on mobile");
   });

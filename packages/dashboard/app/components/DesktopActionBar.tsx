@@ -79,8 +79,16 @@ export function DesktopActionBar({ entries, activeId, tasks, projectId, columnFl
     closeOverflow();
   };
   const direct = entries.filter((entry) => entry.placement === "direct");
+  /*
+  FNXC:DesktopNavigation 2026-09-16-18:31:
+  FN-469: the operator asked to remove Settings from the bottom-right corner, put it in the More list, and add an
+  icon-only Settings action next to the concurrency counter. Settings keeps `placement: "external"` in the shared
+  registry ("the host decides"), so the left sidebar and the mobile bar are untouched; only THIS bar's composition
+  changes. `find` also makes a duplicated `settings` entry render exactly one icon button and one More row.
+  */
   const overflow = entries.filter((entry) => entry.placement === "overflow");
   const settings = entries.find((entry) => entry.id === "settings");
+  const overflowEntries = settings ? [...overflow, settings] : overflow;
   const capacityText = loading ? t("commandCenter.controls.status.loading", "Loading…") : error ? t("commandCenter.controls.concurrency.error", "Unable to load concurrency settings") : `${stats.runningTaskCount} / ${stats.maxConcurrent}`;
   const capacityLabel = `${t("executor.engineControls", "Engine controls")}: ${capacityText}`;
   const renderButton = (entry: DashboardNavigationEntry, inOverflow = false) => {
@@ -95,8 +103,12 @@ export function DesktopActionBar({ entries, activeId, tasks, projectId, columnFl
     </button>;
   };
   /*
-  FNXC:DesktopNavigation 2026-09-13-02:40:
-  The wide footer shared by tablet and desktop keeps capacity at the far left, navigation in the middle, and its optional Terminal action immediately left of the single retained Settings action. Scripts remain on their existing owners, and omitting both right-side actions must leave no empty action-group shell.
+  FNXC:DesktopNavigation 2026-09-16-18:31:
+  The wide footer shared by tablet and desktop keeps capacity at the far left, now followed by an icon-only Settings
+  action in the same start track; navigation stays in the middle, and the right group holds only the optional Chat and
+  Terminal actions. Settings is reachable from the start-track icon and as the LAST entry of the More list; it is no
+  longer the retained right-side action. Scripts remain on their existing owners, and omitting both right-side actions
+  must leave no empty action-group shell (the group's presence no longer depends on Settings).
   */
   /*
   FNXC:PopoverLayering 2026-09-15-09:31:
@@ -106,7 +118,25 @@ export function DesktopActionBar({ entries, activeId, tasks, projectId, columnFl
   sticky token so a closed footer never dominates windows. Driven strictly by `overflowOpen`; no other behavior changes.
   */
   return <nav ref={dashboardWindowFooterRef} className={`desktop-action-bar${overflowOpen ? " desktop-action-bar--menu-open" : ""}`} aria-label={t("nav.primaryNavAriaLabel", "Primary navigation")} data-testid="desktop-action-bar">
-    <div className="desktop-action-bar__capacity"><EngineControlMenu projectId={projectId} triggerContent={<span data-testid="desktop-capacity-count">{capacityText}</span>} triggerLabel={capacityLabel} /></div>
+    <div className="desktop-action-bar__leading">
+      <div className="desktop-action-bar__capacity"><EngineControlMenu projectId={projectId} triggerContent={<span data-testid="desktop-capacity-count">{capacityText}</span>} triggerLabel={capacityLabel} /></div>
+      {/*
+      FNXC:DesktopNavigation 2026-09-16-18:31:
+      FN-469: the icon-only Settings action sits immediately after the capacity counter, in the start track. It reuses
+      `.desktop-action-bar__action` and `.desktop-action-bar__icon` rather than forking a button variant, carries the
+      entry's own label as its accessible name (no new i18n key), and is rendered ONLY when the entry exists, so no
+      empty shell is left behind.
+      */}
+      {settings ? <button
+        type="button"
+        className="desktop-action-bar__action desktop-action-bar__action--icon-only"
+        aria-label={settings.label}
+        data-testid="desktop-nav-settings-icon"
+        onClick={() => { void settings.onSelect?.(); }}
+      >
+        <span className="desktop-action-bar__icon"><settings.icon aria-hidden="true" /></span>
+      </button> : null}
+    </div>
     {/*
     FNXC:DesktopNavigation 2026-09-16-04:15:
     FN-446: the direct row is the operator-configured quick-access selection, so it can legitimately resolve to nothing
@@ -114,7 +144,7 @@ export function DesktopActionBar({ entries, activeId, tasks, projectId, columnFl
     destinations never leaves an empty row shell behind.
     */}
     <div className="desktop-action-bar__center">{direct.length ? <div className="desktop-action-bar__scroller">{direct.map((entry) => renderButton(entry))}</div> : null}
-    {overflow.length ? <div
+    {overflowEntries.length ? <div
       ref={overflowRef}
       className={`desktop-action-bar__more${overflowOpen ? " desktop-action-bar__more--open" : ""}`}
       onPointerEnter={cancelScheduledClose}
@@ -124,9 +154,9 @@ export function DesktopActionBar({ entries, activeId, tasks, projectId, columnFl
       onKeyDown={handleOverflowKeyDown}
     >
       <button type="button" className="desktop-action-bar__action" aria-label={t("header.moreViews", "More views")} aria-haspopup="menu" aria-expanded={overflowOpen} data-testid="desktop-nav-more" onPointerEnter={openOverflow} onClick={openOverflow}><ChevronUp aria-hidden="true" /><span>{t("nav.more", "More")}</span></button>
-      {overflowOpen ? <div className="desktop-action-bar__menu" role="menu">{overflow.map((entry) => renderButton(entry, true))}</div> : null}
+      {overflowOpen ? <div className="desktop-action-bar__menu" role="menu">{overflowEntries.map((entry) => renderButton(entry, true))}</div> : null}
     </div> : null}</div>
-    {onOpenChatPanel || onToggleTerminal || settings ? <div className="desktop-action-bar__right">
+    {onOpenChatPanel || onToggleTerminal ? <div className="desktop-action-bar__right">
       {onOpenChatPanel ? <button
         type="button"
         className={`desktop-action-bar__action${chatPanelOpen ? " desktop-action-bar__action--active" : ""}`}
@@ -144,7 +174,6 @@ export function DesktopActionBar({ entries, activeId, tasks, projectId, columnFl
         <span className="desktop-action-bar__icon"><Terminal aria-hidden="true" /></span>
         <span>{t("nav.terminal", "Terminal")}</span>
       </button> : null}
-      {settings ? renderButton(settings) : null}
     </div> : null}
     <DashboardWindowVisibilityToggle />
   </nav>;

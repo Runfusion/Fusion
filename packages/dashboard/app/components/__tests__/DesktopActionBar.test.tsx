@@ -52,6 +52,11 @@ function entries(onChangeView = vi.fn(), overrides: Partial<DashboardNavigationR
   return buildDashboardNavigationEntries({ view: "board", onChangeView, onNewTask: vi.fn(), onOpenSettings: vi.fn(), showAgents: true, ...overrides });
 }
 
+/* FN-469 : Settings est routé par `onOpenSettings`, pas par `onChangeView`; les deux affordances partagent ce même propriétaire. */
+function entriesWithSettingsOwner(onOpenSettings: () => void) {
+  return entries(vi.fn(), { onOpenSettings });
+}
+
 function openOverflowMenu() {
   fireEvent.pointerEnter(screen.getByTestId("desktop-nav-more"));
   return screen.getByRole("menu");
@@ -129,7 +134,7 @@ describe("DesktopActionBar", () => {
       "desktop-nav-more",
     ]);
     expect(center).not.toContainElement(screen.getByTestId("desktop-capacity-count"));
-    expect(center).not.toContainElement(screen.getByTestId("desktop-nav-settings"));
+    expect(center).not.toContainElement(screen.getByTestId("desktop-nav-settings-icon"));
     expect(center).not.toContainElement(screen.getByTestId("desktop-nav-terminal"));
 
     const menu = openOverflowMenu();
@@ -144,6 +149,12 @@ describe("DesktopActionBar", () => {
     expect(screen.getByTestId("desktop-action-bar")).toBeInTheDocument();
     expect(document.querySelector(".mobile-nav-bar")).toBeNull();
     expect(mobileNavBarCss).toMatch(/html:is\(\[data-viewport-mode="tablet"\], \[data-viewport-mode="desktop"\]\) \.mobile-nav-bar\s*\{\s*display:\s*none/);
+    /*
+     * FN-469 cas (x) : tablette et ordinateur partagent CE footer, donc les deux affordances Settings y sont rendues
+     * à l'identique — une seule composition, pas une variante par breakpoint.
+     */
+    expect(screen.getByTestId("desktop-nav-settings-icon")).toBeInTheDocument();
+    expect(within(openOverflowMenu()).getByTestId("desktop-nav-settings")).toBeInTheDocument();
   });
 
   it("affiche le footer principal sans les destinations du dock ou de Done", () => {
@@ -154,36 +165,88 @@ describe("DesktopActionBar", () => {
     expect(screen.getByTestId("desktop-nav-board")).toHaveAttribute("aria-current", "page");
     expect(screen.queryByTestId("desktop-nav-new-task")).toBeNull();
     expect(screen.getByTestId("desktop-capacity-count")).toHaveTextContent("0 / 4");
-    expect(screen.getByTestId("desktop-nav-settings")).toHaveAccessibleName("Settings");
+    /*
+     * FN-469 : Settings quitte le coin inférieur droit. Il est désormais une action en icône seule voisine du compteur
+     * de concurrence (piste de début) et la dernière entrée du menu More ; le groupe de droite ne le contient plus.
+     */
+    expect(screen.getByTestId("desktop-nav-settings-icon")).toHaveAccessibleName("Settings");
+    expect(document.querySelector(".desktop-action-bar__leading")).toContainElement(screen.getByTestId("desktop-nav-settings-icon"));
     expect(screen.queryByTestId("desktop-nav-terminal")).toBeNull();
-    expect(document.querySelector(".desktop-action-bar__right")).toContainElement(screen.getByTestId("desktop-nav-settings"));
+    expect(document.querySelector(".desktop-action-bar__right")).toBeNull();
     expect(screen.queryByTestId("desktop-nav-patchnode")).toBeNull();
     expect(screen.queryByTestId("desktop-nav-chat")).toBeNull();
     expect(screen.queryByTestId("desktop-nav-notes")).toBeNull();
   });
 
-  it("place un unique Terminal immédiatement avant Settings et appelle son propriétaire", () => {
+  /*
+   * FN-469 cas (v) : le groupe de droite ne conserve que Chat et Terminal, et une entrée `settings` DUPLIQUéE ne
+   * produit qu'un seul bouton icône et qu'une seule entrée More.
+   */
+  it("garde Terminal comme dernière action droite et dédoublonne Settings", () => {
     const onToggleTerminal = vi.fn();
     const populatedEntries = entries();
     const settings = populatedEntries.find((entry) => entry.id === "settings")!;
     render(<DesktopActionBar entries={[...populatedEntries, settings]} activeId="board" tasks={[]} onToggleTerminal={onToggleTerminal} />);
 
     const terminal = screen.getByTestId("desktop-nav-terminal");
-    const renderedSettings = screen.getByTestId("desktop-nav-settings");
     expect(screen.getAllByTestId("desktop-nav-terminal")).toHaveLength(1);
-    expect(screen.getAllByTestId("desktop-nav-settings")).toHaveLength(1);
+    expect(screen.getAllByTestId("desktop-nav-settings-icon")).toHaveLength(1);
     expect(terminal).toHaveAccessibleName("Terminal");
-    expect(renderedSettings).toHaveAccessibleName("Settings");
-    expect(terminal.nextElementSibling).toBe(renderedSettings);
+    expect(terminal.nextElementSibling).toBeNull();
+    expect(document.querySelector(".desktop-action-bar__right")).not.toContainElement(screen.getByTestId("desktop-nav-settings-icon"));
+    expect(within(openOverflowMenu()).getAllByTestId("desktop-nav-settings")).toHaveLength(1);
     fireEvent.click(terminal);
     expect(onToggleTerminal).toHaveBeenCalledTimes(1);
   });
 
-  it("omet Terminal et son shell quand le handler et Settings sont absents", () => {
+  /* FN-469 cas (w) : sans entrée `settings`, aucun bouton icône, aucune entrée More, et aucune coquille à droite. */
+  it("omet Terminal, Settings et le shell droit quand leurs propriétaires sont absents", () => {
     render(<DesktopActionBar entries={entries().filter((entry) => entry.id !== "settings")} activeId="board" tasks={[]} />);
     expect(screen.queryByTestId("desktop-nav-terminal")).toBeNull();
-    expect(screen.queryByTestId("desktop-nav-settings")).toBeNull();
+    expect(screen.queryByTestId("desktop-nav-settings-icon")).toBeNull();
+    expect(screen.queryByLabelText("Settings")).toBeNull();
     expect(document.querySelector(".desktop-action-bar__right")).toBeNull();
+    expect(within(openOverflowMenu()).queryByTestId("desktop-nav-settings")).toBeNull();
+  });
+
+  /* FN-469 cas (s)+(t) : le bouton icône suit immédiatement le compteur, n'a aucun texte visible et ouvre les réglages. */
+  it("rend un bouton Settings en icône seule juste après le compteur de concurrence", () => {
+    const onOpenSettings = vi.fn();
+    render(<DesktopActionBar entries={entriesWithSettingsOwner(onOpenSettings)} activeId="board" tasks={[]} />);
+
+    const capacity = document.querySelector(".desktop-action-bar__capacity")!;
+    const icon = screen.getByTestId("desktop-nav-settings-icon");
+    expect(capacity.nextElementSibling).toBe(icon);
+    expect(icon).toHaveClass("desktop-action-bar__action");
+    expect(icon.textContent).toBe("");
+    expect(icon).toHaveAccessibleName("Settings");
+    expect(icon.querySelector(".desktop-action-bar__icon")).not.toBeNull();
+    expect(alphaDesktopActionBarCss).toMatch(/\.desktop-action-bar__action--icon-only\s*\{[^}]*min-inline-size:\s*var\(--touch-target-min-size\)/s);
+
+    fireEvent.click(icon);
+    expect(onOpenSettings).toHaveBeenCalledTimes(1);
+  });
+
+  /* FN-469 cas (u) : Settings est la DERNIÈRE entrée de More, et la sélectionner referme le menu. */
+  it("place Settings en dernière position du menu More et referme après sélection", async () => {
+    const onOpenSettings = vi.fn();
+    render(<DesktopActionBar entries={entriesWithSettingsOwner(onOpenSettings)} activeId="board" tasks={[]} />);
+
+    const menu = openOverflowMenu();
+    const items = Array.from(menu.querySelectorAll<HTMLButtonElement>(":scope > .desktop-action-bar__action"));
+    expect(items.at(-1)?.dataset.testid).toBe("desktop-nav-settings");
+
+    fireEvent.click(within(menu).getByTestId("desktop-nav-settings"));
+    expect(onOpenSettings).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  });
+
+  /* FN-469 cas (u, bis) : sans aucune destination overflow, le périmètre More existe pour héberger Settings seul. */
+  it("rend le périmètre More pour le seul Settings quand aucune destination overflow ne reste", () => {
+    const withoutOverflow = entries().filter((entry) => entry.placement !== "overflow");
+    render(<DesktopActionBar entries={withoutOverflow} activeId="board" tasks={[]} />);
+    const menu = openOverflowMenu();
+    expect(Array.from(menu.querySelectorAll<HTMLButtonElement>(":scope > .desktop-action-bar__action")).map((item) => item.dataset.testid)).toEqual(["desktop-nav-settings"]);
   });
 
   it("conserve les actions droites hors du scroller avec une géométrie tokenisée", () => {
@@ -196,7 +259,7 @@ describe("DesktopActionBar", () => {
     render(<DesktopActionBar entries={longEntries} activeId="board" tasks={[]} onToggleTerminal={vi.fn()} />);
     const right = document.querySelector(".desktop-action-bar__right");
     expect(right).toContainElement(screen.getByTestId("desktop-nav-terminal"));
-    expect(right).toContainElement(screen.getByTestId("desktop-nav-settings"));
+    expect(right).not.toContainElement(screen.getByTestId("desktop-nav-settings-icon"));
     expect(document.querySelector(".desktop-action-bar__scroller")).not.toContainElement(screen.getByTestId("desktop-nav-terminal"));
     expect(alphaDesktopActionBarCss).toMatch(/\.desktop-action-bar__right\s*\{[^}]*gap:\s*var\(--space-xs\)/s);
   });
@@ -256,8 +319,12 @@ describe("DesktopActionBar", () => {
     expect(within(openOverflowMenu()).getByTestId("desktop-nav-board")).toBeInTheDocument();
   });
 
+  /*
+   * FN-469 : le périmètre More héberge désormais Settings, donc l'absence de coquille se prouve sans AUCUNE entrée
+   * à héberger — ni overflow, ni Settings.
+   */
   it("ne rend aucun trigger, panneau ou shell vide sans destination overflow", () => {
-    const withoutOverflow = entries().filter((entry) => entry.placement !== "overflow");
+    const withoutOverflow = entries().filter((entry) => entry.placement !== "overflow" && entry.id !== "settings");
     render(<DesktopActionBar entries={withoutOverflow} activeId="board" tasks={[]} />);
     expect(screen.queryByTestId("desktop-nav-more")).toBeNull();
     expect(screen.queryByRole("menu")).toBeNull();
@@ -292,7 +359,8 @@ describe("DesktopActionBar", () => {
   });
 
   it("rend une destination sur une seule rangée ascendante", () => {
-    const oneOverflowEntry = entries().filter((entry) => entry.placement !== "overflow" || entry.id === "automations");
+    // FN-469 : Settings rejoindrait la liste, donc il est exclu pour que la rangée unique reste unique.
+    const oneOverflowEntry = entries().filter((entry) => (entry.placement !== "overflow" || entry.id === "automations") && entry.id !== "settings");
     render(<DesktopActionBar entries={oneOverflowEntry} activeId="board" tasks={[]} />);
     const menu = openOverflowMenu();
     expect(menu.querySelectorAll(":scope > .desktop-action-bar__action")).toHaveLength(1);
@@ -309,7 +377,9 @@ describe("DesktopActionBar", () => {
         { pluginId: "plugin-earlier", view: { viewId: "shared", label: "Shared label", order: 1 } },
       ],
     });
-    const expectedOverflow = populatedEntries.filter((entry) => entry.placement === "overflow");
+    // FN-469 : la composition du menu est `[...overflow, settings]`, Settings restant en dernier.
+    const settingsEntry = populatedEntries.find((entry) => entry.id === "settings");
+    const expectedOverflow = [...populatedEntries.filter((entry) => entry.placement === "overflow"), ...(settingsEntry ? [settingsEntry] : [])];
     render(<DesktopActionBar entries={populatedEntries} activeId="board" tasks={[]} />);
     const menu = openOverflowMenu();
     const renderedItems = Array.from(menu.querySelectorAll<HTMLButtonElement>(":scope > .desktop-action-bar__action"));
@@ -326,7 +396,9 @@ describe("DesktopActionBar", () => {
         view: { viewId: "tool", label: `Plugin ${index}`, order: index },
       })),
     });
-    const overflowCount = longEntries.filter((entry) => entry.placement === "overflow").length;
+    // FN-469 : Settings est la dernière entrée composée du menu, donc il compte dans la liste bornée.
+    const overflowCount = longEntries.filter((entry) => entry.placement === "overflow").length
+      + (longEntries.some((entry) => entry.id === "settings") ? 1 : 0);
     render(<DesktopActionBar entries={longEntries} activeId="board" tasks={[]} />);
     const menu = openOverflowMenu();
     expect(menu.querySelectorAll(":scope > .desktop-action-bar__action")).toHaveLength(overflowCount);
@@ -461,7 +533,8 @@ describe("DesktopActionBar", () => {
 
   // (i)
   it("ne rend ni conteneur overflow ni modificateur d’élévation sans destination overflow", () => {
-    const withoutOverflow = entries().filter((entry) => entry.placement !== "overflow");
+    // FN-469 : le menu héberge aussi Settings, donc l'absence de conteneur se prouve sans aucune entrée à héberger.
+    const withoutOverflow = entries().filter((entry) => entry.placement !== "overflow" && entry.id !== "settings");
     render(<DesktopActionBar entries={withoutOverflow} activeId="board" tasks={[]} />);
     expect(document.querySelector(".desktop-action-bar__more")).toBeNull();
     expect(screen.getByTestId("desktop-action-bar")).not.toHaveClass("desktop-action-bar--menu-open");
