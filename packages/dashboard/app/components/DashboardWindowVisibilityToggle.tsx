@@ -25,6 +25,13 @@ function sameRect(left: PlaceholderRect | null, right: PlaceholderRect): boolean
 /*
 FNXC:DashboardWindowVisibility 2026-09-14-10:52:
 The window visibility control reserves the footer's final flex slot but portals its interactive button into a dedicated body layer above the live window/plugin ceiling. Only the aligned button accepts pointer events; the remainder of the layer stays click-through so global hiding cannot expose unrelated footer controls through a modal.
+
+FNXC:DashboardWindowVisibility 2026-09-16-22:49:
+FN-484: ce contrôle ne doit plus se peindre comme une dalle distincte du footer. `.btn-icon` est ABANDONNÉ ici (survol gris
+`var(--border)`, taille de bouton propre) au profit de la peinture du bouton Settings icône seule de la même barre
+(`.desktop-action-bar__action` + `--icon-only`), répliquée sur `.dashboard-window-visibility-toggle__button` parce que le
+bouton est portalisé dans `document.body` et ne peut hériter d'aucun sélecteur descendant de la barre. Le comportement
+(masquer/restaurer, `aria-label`, `aria-pressed`, `disabled`, restauration de focus) est inchangé.
 */
 export function DashboardWindowVisibilityToggle() {
   const { t } = useTranslation("app");
@@ -107,7 +114,7 @@ export function DashboardWindowVisibilityToggle() {
         <button
           ref={controller?.toggleControlRef}
           type="button"
-          className="btn-icon dashboard-window-visibility-toggle__button"
+          className="dashboard-window-visibility-toggle__button"
           style={buttonStyle}
           aria-label={label}
           aria-pressed={hidden}

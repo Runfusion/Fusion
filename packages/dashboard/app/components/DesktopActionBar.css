@@ -51,7 +51,17 @@ track itself becomes the flex row and `__capacity` becomes its first child. `__l
 .desktop-action-bar__leading { display: flex; grid-row: 1; grid-column: 1; justify-self: start; align-items: stretch; gap: var(--space-xs); }
 .desktop-action-bar__capacity, .desktop-action-bar__right { display: flex; grid-row: 1; align-items: stretch; }
 .desktop-action-bar__center { display: flex; grid-row: 1; grid-column: 2; min-inline-size: 0; justify-content: center; gap: var(--space-xs); }
-.desktop-action-bar > .dashboard-window-visibility-toggle__placeholder { grid-row: 1; grid-column: 3; justify-self: end; inline-size: var(--touch-target-min-size); }
+/*
+FNXC:DesktopNavigation 2026-09-16-22:49:
+FN-484: le contrôle de visibilité des fenêtres doit être « dans l'angle avec exactement le même espace en bas qu'à sa
+droite ». L'espace à droite est le `padding-inline: var(--space-sm)` de la barre; la barre ayant une hauteur fixe
+`var(--executor-footer-height)`, le seul moyen d'obtenir le même espace en bas est de centrer l'emplacement mesuré et de
+lui retirer ce MÊME token en haut et en bas. C'est l'unique déviation assumée par rapport au bouton Settings étiré: la
+peinture, les dimensions en ligne, le survol, le focus et la taille d'icône restent identiques (voir
+`DashboardWindowVisibilityToggle.css`), seule la hauteur est réduite. La règle hôte (spécificité 0,2,0) l'emporte sur le
+`align-self: stretch` partagé, donc ExecutorStatusBar conserve sa géométrie.
+*/
+.desktop-action-bar > .dashboard-window-visibility-toggle__placeholder { grid-row: 1; grid-column: 3; align-self: center; justify-self: end; inline-size: var(--touch-target-min-size); block-size: calc(var(--executor-footer-height) - var(--space-sm) * 2); }
 .desktop-action-bar__scroller { display: flex; justify-content: center; gap: var(--space-xs); overflow-x: auto; }
 .desktop-action-bar__capacity .engine-control-menu__trigger--text { block-size: 100%; min-inline-size: calc(var(--space-xl) * 2); border: 0; background: transparent; }
 /*

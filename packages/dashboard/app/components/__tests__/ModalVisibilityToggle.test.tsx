@@ -368,4 +368,61 @@ describe("Dashboard window visibility toggle", () => {
     await waitFor(() => expect(toggle).toHaveAttribute("aria-pressed", "true"));
     expect(screen.getByTestId("managed-visible-window")).toHaveAttribute("data-dashboard-window-globally-hidden", "true");
   });
+
+  /*
+  FNXC:DashboardWindowVisibility 2026-09-16-22:49:
+  FN-484 : le bouton abandonne `.btn-icon` pour reprendre la peinture du bouton Settings du footer. Seul l'EFFET VISUEL
+  change : la classe du composant, l'accessibilité et le cycle masquer/restaurer restent identiques.
+  */
+  it("abandonne .btn-icon sans changer l'accessibilité ni le cycle masquer/restaurer", async () => {
+    render(<ToggleHarness><ManagedFixture id="painted">body</ManagedFixture></ToggleHarness>);
+    const toggle = await screen.findByTestId("dashboard-window-visibility-toggle");
+
+    expect(toggle).toHaveClass("dashboard-window-visibility-toggle__button");
+    expect(toggle).not.toHaveClass("btn-icon");
+    expect(toggle).toHaveAttribute("aria-label");
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+
+    fireEvent.click(toggle);
+    await waitFor(() => expect(toggle).toHaveAttribute("aria-pressed", "true"));
+    expect(screen.getByTestId("managed-painted")).toHaveAttribute("data-dashboard-window-globally-hidden", "true");
+    expect(toggle).not.toHaveClass("btn-icon");
+
+    fireEvent.click(toggle);
+    await waitFor(() => expect(toggle).toHaveAttribute("aria-pressed", "false"));
+    expect(screen.getByTestId("managed-painted")).not.toHaveAttribute("data-dashboard-window-globally-hidden");
+  });
+
+  /* FN-484 : état de données « aucune surface visible » — le bouton reste désactivé et non pressé. */
+  it("reste désactivé sans surface visible et pressé quand l'instantané masqué est actif", async () => {
+    const { rerender } = render(<ToggleHarness />);
+    const toggle = await screen.findByTestId("dashboard-window-visibility-toggle");
+    expect(toggle).toBeDisabled();
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+
+    rerender(<ToggleHarness><ManagedFixture id="pressed-state">body</ManagedFixture></ToggleHarness>);
+    await waitFor(() => expect(toggle).not.toBeDisabled());
+    fireEvent.click(toggle);
+    await waitFor(() => expect(toggle).toHaveAttribute("aria-pressed", "true"));
+    expect(toggle).not.toBeDisabled();
+  });
+
+  /* FN-484 : sans contrôleur, l'affordance existe mais reste inerte ; le placeholder de mesure demeure l'ancre du portail. */
+  it("désactive le bouton sans contrôleur et conserve le placeholder", async () => {
+    render(<DashboardWindowVisibilityToggle />);
+    const toggle = await screen.findByTestId("dashboard-window-visibility-toggle");
+    expect(toggle).toBeDisabled();
+    expect(screen.getByTestId("dashboard-window-visibility-placeholder")).toBeInTheDocument();
+  });
+
+  /* FN-484 : rectangle non mesurable — aucun bouton portalisé, mais le placeholder reste rendu. */
+  it("ne portalise aucun bouton tant que le rectangle n'est pas mesurable", async () => {
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      return { left: NaN, top: NaN, right: NaN, bottom: NaN, width: NaN, height: NaN, x: NaN, y: NaN, toJSON() {} };
+    });
+    render(<ToggleHarness><ManagedFixture id="unmeasured">body</ManagedFixture></ToggleHarness>);
+
+    expect(await screen.findByTestId("dashboard-window-visibility-placeholder")).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByTestId("dashboard-window-visibility-toggle")).toBeNull());
+  });
 });

@@ -7,6 +7,14 @@ FN-432: ce contrôle global d'échappement doit rester visible et cliquable mêm
 dominante est ouverte. À `+2` il passait sous le footer élevé par le menu More ouvert (`+3`), dont le fond opaque
 recouvrait exactement le rectangle mesuré du bouton portalisé. Le calque réservé `+4` le place au-dessus de toutes ces
 surfaces; le host reste `pointer-events: none` et le masquage mobile est inchangé.
+
+FNXC:DashboardWindowVisibility 2026-09-16-22:49:
+FN-484: le bouton doit avoir EXACTEMENT l'effet visuel du bouton Settings icône seule du même footer. `.btn-icon` est
+retiré du composant (il apportait un survol gris `var(--border)`, une taille de bouton propre et des angles imposés), et
+la peinture de `.desktop-action-bar__action` + `.desktop-action-bar__action--icon-only` + `.desktop-action-bar__icon > svg`
+est répliquée ici valeur pour valeur: le bouton est portalisé dans `document.body`, donc aucun sélecteur descendant de la
+barre ne peut l'atteindre. Le trait séparateur `border-inline-start` du placeholder disparaît pour la même raison
+d'alignement; la mesure, la couche portail et le masquage ≤768 px restent intacts.
 */
 #dashboard-window-toggle-root {
   position: fixed;
@@ -20,24 +28,49 @@ surfaces; le host reste `pointer-events: none` et le masquage mobile est inchang
   align-self: stretch;
   flex: 0 0 var(--touch-target-min-size);
   min-inline-size: var(--touch-target-min-size);
-  border-inline-start: thin solid var(--border);
 }
 
 .dashboard-window-visibility-toggle__button {
   position: absolute;
   inset-inline-start: var(--dashboard-window-toggle-left);
   inset-block-start: var(--dashboard-window-toggle-top);
+  display: inline-flex;
   inline-size: var(--dashboard-window-toggle-width);
   block-size: var(--dashboard-window-toggle-height);
   min-inline-size: 0;
   min-block-size: 0;
-  border-radius: 0;
+  align-items: center;
+  justify-content: center;
+  padding-inline: var(--space-xs);
+  border: 0;
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
   pointer-events: auto;
 }
 
+.dashboard-window-visibility-toggle__button:hover:not(:disabled),
+.dashboard-window-visibility-toggle__button[aria-pressed="true"]:not(:disabled) {
+  color: var(--accent);
+  background: var(--bg-hover);
+}
+
+.dashboard-window-visibility-toggle__button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.dashboard-window-visibility-toggle__button:disabled {
+  color: var(--text-muted);
+  cursor: default;
+}
+
 .dashboard-window-visibility-toggle__button svg {
-  inline-size: var(--icon-size-sm);
-  block-size: var(--icon-size-sm);
+  inline-size: var(--icon-size-md);
+  block-size: var(--icon-size-md);
+  stroke: currentColor;
 }
 
 @media (max-width: 768px) {

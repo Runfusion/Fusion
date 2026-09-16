@@ -9,6 +9,7 @@ const alphaDesktopActionBarCss = readAppFile("components/DesktopActionBar.css");
 const headerCss = readAppFile("components/Header.css");
 const leftSidebarNavCss = readAppFile("components/LeftSidebarNav.css");
 const mobileNavBarCss = readAppFile("components/MobileNavBar.css");
+const windowVisibilityToggleCss = readAppFile("components/DashboardWindowVisibilityToggle.css");
 const overflowMenuRule = alphaDesktopActionBarCss.match(/\.desktop-action-bar__menu\s*\{([^}]*)\}/s)?.[1] ?? "";
 const overflowCorridorRule = alphaDesktopActionBarCss.match(/\.desktop-action-bar__more::before\s*\{([^}]*)\}/s)?.[1] ?? "";
 
@@ -115,6 +116,72 @@ describe("DesktopActionBar", () => {
     expect(declarationOf(placeholderRule, "grid-column")).toBe("3");
     expect(declarationOf(placeholderRule, "grid-row")).toBe("1");
     expect(declarationOf(placeholderRule, "inline-size")).toBe("var(--touch-target-min-size)");
+    expect(placeholderRule).not.toMatch(/\d+px/);
+  });
+
+  /*
+   * FN-484 : le contrôle de visibilité des fenêtres doit avoir EXACTEMENT la peinture du bouton Settings icône seule.
+   * Il est portalisé hors de la barre, donc la parité ne peut pas venir de l'héritage : elle se prouve déclaration par
+   * déclaration entre sa propre feuille et celle du bouton de référence.
+   */
+  it("peint le contrôle de visibilité des fenêtres comme le bouton Settings icône seule", () => {
+    const actionRule = ruleOf(alphaDesktopActionBarCss, ".desktop-action-bar__action");
+    const iconOnlyRule = ruleOf(alphaDesktopActionBarCss, ".desktop-action-bar__action--icon-only");
+    const actionIconRule = ruleOf(alphaDesktopActionBarCss, ".desktop-action-bar__icon > svg");
+    const actionHoverRule = ruleOf(alphaDesktopActionBarCss, ".desktop-action-bar__action:hover, .desktop-action-bar__action--active");
+    const actionFocusRule = ruleOf(alphaDesktopActionBarCss, ".desktop-action-bar__action:focus-visible");
+    expect(actionRule && iconOnlyRule && actionIconRule && actionHoverRule && actionFocusRule).toBeTruthy();
+
+    const toggleRule = ruleOf(windowVisibilityToggleCss, ".dashboard-window-visibility-toggle__button");
+    expect(toggleRule).toBeTruthy();
+    for (const property of ["border", "border-radius", "color", "background", "font", "cursor", "align-items", "justify-content"]) {
+      expect(declarationOf(toggleRule, property)).toBe(declarationOf(actionRule, property));
+    }
+    expect(declarationOf(toggleRule, "padding-inline")).toBe(declarationOf(iconOnlyRule, "padding-inline"));
+    expect(declarationOf(toggleRule, "border-radius")).not.toBe("0");
+    expect(toggleRule).not.toMatch(/border-radius:\s*0/);
+
+    const toggleHoverRule = ruleOf(
+      windowVisibilityToggleCss,
+      ".dashboard-window-visibility-toggle__button:hover:not(:disabled),\n.dashboard-window-visibility-toggle__button[aria-pressed=\"true\"]:not(:disabled)",
+    );
+    expect(declarationOf(toggleHoverRule, "color")).toBe(declarationOf(actionHoverRule, "color"));
+    expect(declarationOf(toggleHoverRule, "background")).toBe(declarationOf(actionHoverRule, "background"));
+
+    const toggleFocusRule = ruleOf(windowVisibilityToggleCss, ".dashboard-window-visibility-toggle__button:focus-visible");
+    expect(declarationOf(toggleFocusRule, "box-shadow")).toBe(declarationOf(actionFocusRule, "box-shadow"));
+    expect(declarationOf(toggleFocusRule, "outline")).toBe(declarationOf(actionFocusRule, "outline"));
+
+    const toggleIconRule = ruleOf(windowVisibilityToggleCss, ".dashboard-window-visibility-toggle__button svg");
+    expect(declarationOf(toggleIconRule, "inline-size")).toBe(declarationOf(actionIconRule, "inline-size"));
+    expect(declarationOf(toggleIconRule, "block-size")).toBe(declarationOf(actionIconRule, "block-size"));
+
+    /* Le trait séparateur qui détachait le contrôle du reste de la barre disparaît, sans coquille bordée résiduelle. */
+    const sharedPlaceholderRule = ruleOf(windowVisibilityToggleCss, ".dashboard-window-visibility-toggle__placeholder");
+    expect(sharedPlaceholderRule).toBeTruthy();
+    expect(sharedPlaceholderRule).not.toMatch(/border/);
+    expect(windowVisibilityToggleCss.replace(/\/\*[\s\S]*?\*\//g, "")).not.toMatch(/border-inline-start/);
+    /* La règle de masquage ≤768 px reste intacte. */
+    expect(windowVisibilityToggleCss).toMatch(/@media \(max-width: 768px\)/);
+  });
+
+  /*
+   * FN-484 : « dans l'angle avec exactement le même espace en bas qu'à sa droite ». L'espace à droite est le
+   * `padding-inline` de la barre ; l'espace en bas ne peut exister dans une barre de hauteur fixe que si le placeholder
+   * est centré et raccourci du MÊME token de chaque côté.
+   */
+  it("insère le contrôle dans l'angle avec un espace bas égal à son espace droit", () => {
+    const barRule = ruleOf(alphaDesktopActionBarCss, ".desktop-action-bar");
+    const inlineGutter = declarationOf(barRule, "padding-inline");
+    expect(inlineGutter).toBe("var(--space-sm)");
+
+    const placeholderRule = ruleOf(alphaDesktopActionBarCss, ".desktop-action-bar > .dashboard-window-visibility-toggle__placeholder");
+    expect(declarationOf(placeholderRule, "align-self")).toBe("center");
+    expect(declarationOf(placeholderRule, "inline-size")).toBe("var(--touch-target-min-size)");
+
+    const blockSize = declarationOf(placeholderRule, "block-size");
+    expect(blockSize).toBe(`calc(var(--executor-footer-height) - ${inlineGutter} * 2)`);
+    expect(declarationOf(barRule, "block-size")).toBe("var(--executor-footer-height)");
     expect(placeholderRule).not.toMatch(/\d+px/);
   });
 

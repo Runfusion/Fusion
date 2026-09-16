@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import fs from "fs";
 import path from "path";
 import { ExecutorStatusBar } from "../ExecutorStatusBar";
+import { readAppFile } from "../../test/cssFixture";
 
 const viewportModeMock = vi.hoisted(() => ({ value: "desktop" as "desktop" | "tablet" | "mobile" }));
 const mockFetchScripts = vi.hoisted(() => vi.fn());
@@ -203,6 +204,19 @@ describe("ExecutorStatusBar", () => {
       expect(statusBar.firstElementChild).not.toHaveClass("executor-status-bar__divider");
       expect(statusBar.lastElementChild).toHaveClass("dashboard-window-visibility-toggle__placeholder");
       expect(statusBar.lastElementChild?.previousElementSibling).toHaveClass("executor-status-bar__segment--engine-controls");
+    });
+
+    /*
+     * FN-484 : la feuille partagée du contrôle de visibilité ne peint plus de trait séparateur, donc aucune coquille
+     * bordée ne subsiste dans CE hôte non plus; sa géométrie partagée (`align-self: stretch`) reste inchangée, seule la
+     * règle hôte de DesktopActionBar dévie.
+     */
+    it("ne laisse aucun trait séparateur sur l'emplacement du contrôle de visibilité", () => {
+      const toggleCss = readAppFile("components/DashboardWindowVisibilityToggle.css").replace(/\/\*[\s\S]*?\*\//g, "");
+      const placeholderRule = toggleCss.match(/(?:^|\n)\.dashboard-window-visibility-toggle__placeholder\s*\{([^}]*)\}/)?.[1] ?? "";
+      expect(placeholderRule).toBeTruthy();
+      expect(placeholderRule).not.toMatch(/border/);
+      expect(placeholderRule).toMatch(/align-self:\s*stretch/);
     });
 
     it("shows overlap bottleneck summary with stable tie-break ordering", () => {
