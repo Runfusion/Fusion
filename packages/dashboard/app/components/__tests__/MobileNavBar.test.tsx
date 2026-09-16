@@ -81,14 +81,11 @@ FNXC:MobilePillPopover 2026-09-13-10:03:
 Scripts-state coverage resolves the pill and popover independently from the complete geometry style emitted by MobileNavBar. No rectangle is injected; a missing sibling lift therefore moves only the popover and makes the numerical non-overlap check fail.
 */
 function resolveRenderedPopover(nav: HTMLElement, popover: HTMLElement) {
-  const navLift = readRenderedLength(nav, "--mobile-nav-keyboard-lift");
-  const popoverLift = readRenderedLength(popover, "--mobile-nav-keyboard-lift");
   const navViewportTop = readRenderedLength(nav, "--mobile-nav-viewport-offset-top");
   const popoverViewportTop = readRenderedLength(popover, "--mobile-nav-viewport-offset-top");
-  const expectedStyle = createMobileNavGeometryStyle(navLift, navViewportTop);
+  const expectedStyle = createMobileNavGeometryStyle(navViewportTop);
   for (const property of [
     "--mobile-nav-floating-gap",
-    "--mobile-nav-keyboard-lift",
     "--mobile-nav-viewport-offset-top",
     "--mobile-nav-pill-bottom",
     "--mobile-nav-popover-bottom",
@@ -100,13 +97,11 @@ function resolveRenderedPopover(nav: HTMLElement, popover: HTMLElement) {
 
   const pillBottom = COMPONENT_GEOMETRY.layoutViewportHeight
     - COMPONENT_GEOMETRY.systemOffset
-    - COMPONENT_GEOMETRY.floatingGap
-    - navLift;
+    - COMPONENT_GEOMETRY.floatingGap;
   const pillTop = pillBottom - COMPONENT_GEOMETRY.pillHeight;
   const popoverBottom = COMPONENT_GEOMETRY.layoutViewportHeight
     - COMPONENT_GEOMETRY.systemOffset
     - COMPONENT_GEOMETRY.floatingGap
-    - popoverLift
     - COMPONENT_GEOMETRY.pillHeight
     - COMPONENT_GEOMETRY.popoverGap;
   const popoverMaxHeight = popoverBottom - popoverViewportTop - COMPONENT_GEOMETRY.safeTopInset;
@@ -121,10 +116,8 @@ function resolveRenderedPopover(nav: HTMLElement, popover: HTMLElement) {
 
   return {
     lastItem,
-    navLift,
     pill: { top: pillTop, bottom: pillBottom },
     popover: { top: popoverTop, bottom: popoverBottom, maxHeight: popoverMaxHeight },
-    popoverLift,
     viewportOffsetTop: popoverViewportTop,
     terminalItemBottom,
     terminalScrollTop,
@@ -240,16 +233,22 @@ describe("MobileNavBar official mobile shell", () => {
     }
 
     const geometry = resolveRenderedPopover(container.querySelector<HTMLElement>(".mobile-nav-bar")!, popover);
-    expect(geometry.navLift).toBe(300);
-    expect(geometry.popoverLift).toBe(geometry.navLift);
+    /*
+    FNXC:MobilePillKeyboard 2026-09-16-16:27:
+    FN-463 removed the keyboard lift, so the pill's bottom anchor is the layout-viewport placement alone even while
+    an input owns the keyboard. The popover therefore keeps its exclusive boundary one --space-xs above the pill
+    without any viewport-derived displacement.
+    */
     expect(geometry.viewportOffsetTop).toBe(COMPONENT_GEOMETRY.viewportOffsetTop);
+    expect(geometry.pill.bottom).toBe(
+      COMPONENT_GEOMETRY.layoutViewportHeight - COMPONENT_GEOMETRY.systemOffset - COMPONENT_GEOMETRY.floatingGap,
+    );
     expect(geometry.pill.top).toBeGreaterThanOrEqual(COMPONENT_GEOMETRY.viewportOffsetTop);
-    expect(geometry.pill.bottom).toBeLessThanOrEqual(COMPONENT_GEOMETRY.viewportOffsetTop + COMPONENT_GEOMETRY.visualViewportHeight);
     expect(geometry.popover.top).toBeGreaterThanOrEqual(COMPONENT_GEOMETRY.viewportOffsetTop + COMPONENT_GEOMETRY.safeTopInset);
     expect(geometry.popover.bottom).toBeLessThan(geometry.pill.top);
     expect(geometry.pill.top - geometry.popover.bottom).toBe(COMPONENT_GEOMETRY.popoverGap);
     expect(geometry.popover.maxHeight).toBeGreaterThan(0);
-    expect(geometry.terminalScrollTop).toBeGreaterThan(0);
+    expect(geometry.terminalScrollTop).toBeGreaterThanOrEqual(0);
     expect(geometry.terminalItemBottom).toBeLessThanOrEqual(geometry.popover.bottom);
     expect(geometry.lastItem).toBe(screen.getByTestId("mobile-more-item-settings"));
     expect(popover).toHaveAttribute("id", "mobile-navigation-popover");

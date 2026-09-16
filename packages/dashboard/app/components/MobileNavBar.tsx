@@ -40,7 +40,6 @@ import type { PluginDashboardViewEntry, ScriptEntry } from "../api";
 import { useViewportMode } from "./Header";
 import { NavigationHistoryContext } from "../hooks/useNavigationHistory";
 import type { TaskView } from "../hooks/useViewState";
-import { getMobileKeyboardLayoutViewportHeight } from "../utils/mobileBarKeyboardFlags";
 import { buildPluginTaskViewId, isPluginViewId } from "../plugins/pluginViewRegistry";
 import { getPluginDashboardViewNavIcon } from "./pluginNavIcon";
 import { ViewDrawerHandle } from "./ViewDrawer";
@@ -86,40 +85,29 @@ export interface MobileNavKeyboardMetrics {
   viewportOffsetTop: number;
 }
 
-export function computeMobileNavKeyboardLift({
-  keyboardOpen,
-  keyboardOverlap,
-  viewportHeight,
-  viewportOffsetTop,
-  layoutViewportHeight,
-}: MobileNavKeyboardMetrics & { keyboardOpen: boolean; layoutViewportHeight: number }): number {
-  if (!keyboardOpen || viewportHeight === null) return 0;
-  const visualOcclusion = Math.max(0, layoutViewportHeight - viewportOffsetTop - viewportHeight);
-  return keyboardOverlap > 0 ? Math.min(keyboardOverlap, visualOcclusion) : visualOcclusion;
-}
-
 /*
 FNXC:MobilePillPopover 2026-09-13-10:03:
-The official pill and popover are sibling fixed surfaces, so both receive the complete geometry declaration directly. A root-computed custom-property chain cannot consume a lift overridden only on one sibling; publishing the same local chain keeps their shared edge responsive to every keyboard sample.
+The official pill and popover are sibling fixed surfaces, so both receive the complete geometry declaration directly. A root-computed custom-property chain cannot consume a value overridden only on one sibling; publishing the same local chain keeps their shared edge consistent.
 
 FNXC:MobilePillPopover 2026-09-13-10:32:
-A shifted iOS visual viewport moves both its visible top and bottom. Publish that live top offset on both fixed siblings so the popover's CSS height cap cannot place its first controls above the visible viewport while the pill remains correctly lifted above the keyboard.
+A shifted iOS visual viewport moves its visible top. Publish that live top offset on both fixed siblings so the popover's CSS height cap cannot place its first controls above the visible viewport.
+
+FNXC:MobilePillKeyboard 2026-09-16-16:27:
+FN-463: the official pill stays anchored to the bottom of the screen INDEPENDENTLY of the software keyboard. It no longer lifts above the keyboard, so `--mobile-nav-pill-bottom` (and the popover bottom derived from it) contains no term derived from the visual viewport: opening, moving, and closing the keyboard leave the resolved bottom position numerically unchanged. `--mobile-nav-viewport-offset-top` survives for the popover height cap ONLY; it never participates in the bottom anchor.
 */
 export interface MobileNavGeometryStyle extends CSSProperties {
   "--mobile-nav-floating-gap": string;
-  "--mobile-nav-keyboard-lift": string;
   "--mobile-nav-viewport-offset-top": string;
   "--mobile-nav-pill-bottom": string;
   "--mobile-nav-popover-bottom": string;
 }
 
-export function createMobileNavGeometryStyle(keyboardLift: number, viewportOffsetTop = 0): MobileNavGeometryStyle {
+export function createMobileNavGeometryStyle(viewportOffsetTop = 0): MobileNavGeometryStyle {
   const visibleViewportTop = Number.isFinite(viewportOffsetTop) ? Math.max(0, viewportOffsetTop) : 0;
   return {
     "--mobile-nav-floating-gap": "var(--space-sm)",
-    "--mobile-nav-keyboard-lift": `${keyboardLift}px`,
     "--mobile-nav-viewport-offset-top": `${visibleViewportTop}px`,
-    "--mobile-nav-pill-bottom": "calc(var(--mobile-nav-system-offset) + var(--mobile-nav-floating-gap) + var(--mobile-nav-keyboard-lift))",
+    "--mobile-nav-pill-bottom": "calc(var(--mobile-nav-system-offset) + var(--mobile-nav-floating-gap))",
     "--mobile-nav-popover-bottom": "calc(var(--mobile-nav-pill-bottom) + var(--mobile-nav-pill-height) + var(--space-xs))",
   };
 }
@@ -646,27 +634,17 @@ export function MobileNavBar({
     return <button key={item} type="button" className="mobile-more-item" data-testid={destination.moreTestId} onClick={() => destination.navigate("more")}><span className="mobile-more-item-icon-wrapper">{destination.icon}{destination.indicator && <span className="status-dot status-dot--pending mobile-more-item-icon-dot" aria-label={destination.indicatorLabel} />}</span><span>{label}</span>{destination.badge && destination.badge > 0 ? <span className="mobile-more-item-badge" aria-label={destination.badgeLabel}>{formatCount(destination.badge)}</span> : null}{destination.alpha ? <span className="mobile-more-item-badge">{t("common.alpha", "Alpha")}</span> : null}</button>;
   };
 
-  const keyboardLift = computeMobileNavKeyboardLift({
-    keyboardOpen,
-    keyboardOverlap: keyboardMetrics?.keyboardOverlap ?? 0,
-    viewportHeight: keyboardMetrics?.viewportHeight ?? null,
-    viewportOffsetTop: keyboardMetrics?.viewportOffsetTop ?? 0,
-    layoutViewportHeight: getMobileKeyboardLayoutViewportHeight(),
-  });
   /*
   FNXC:MobileNav 2026-09-14-07:48:
-  Freeze the navigation geometry while the popover is open. Its position and max-height are anchored to
+  Freeze the navigation geometry while the popover is open. Its max-height is anchored to
   --mobile-nav-viewport-offset-top and 100dvh, both of which MOVE on a phone as soon as the user scrolls: the browser
   collapses its URL bar, visualViewport reports a new offset, and the popover re-anchors between touchstart and click.
   The tap then lands outside the moved surface, the outside-pointerdown guard dismisses the menu, and the destination
   never opens — which is why only entries reached AFTER scrolling were affected. Holding the last geometry while the
-  menu is open keeps the surface still for the whole gesture; it is released on close, so keyboard lift and safe-area
-  tracking resume untouched everywhere else.
+  menu is open keeps the surface still for the whole gesture; it is released on close, so safe-area tracking resumes
+  untouched everywhere else.
   */
-  const liveGeometryStyle = createMobileNavGeometryStyle(
-    keyboardLift,
-    keyboardMetrics?.viewportOffsetTop ?? 0,
-  );
+  const liveGeometryStyle = createMobileNavGeometryStyle(keyboardMetrics?.viewportOffsetTop ?? 0);
   if (!isMenuOpen) frozenGeometryRef.current = null;
   else if (!frozenGeometryRef.current) frozenGeometryRef.current = liveGeometryStyle;
   const mobileNavGeometryStyle = frozenGeometryRef.current ?? liveGeometryStyle;

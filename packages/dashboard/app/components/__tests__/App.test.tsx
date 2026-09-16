@@ -11,6 +11,12 @@ import type { AiSessionSummary, ProjectInfo } from "../../api";
 import { scopedKey } from "../../utils/projectStorage";
 import { ALL_WORKFLOWS_BOARD_VIEW_ID, BOARD_WORKFLOW_SELECTION_STORAGE_KEY } from "../../utils/boardWorkflowSelection";
 import { useFileBrowser } from "../../context/FileBrowserContext";
+import {
+  GEOMETRY_TOKEN_VALUES,
+  installGeometryTokenValues,
+  removeGeometryTokenValues,
+  resolveMobileNavAnchorPx,
+} from "../../test/mobileNavGeometry";
 
 // No mock needed - tests use localStorage directly
 
@@ -2219,6 +2225,8 @@ describe("official dashboard design production wiring", () => {
   });
 
   it("garde le popover détenu par App ouvert quand son focus referme le clavier", async () => {
+    installGeometryTokenValues();
+    try {
     mockUseViewportMode.mockReturnValue("mobile");
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
@@ -2246,8 +2254,22 @@ describe("official dashboard design production wiring", () => {
     expect(field).not.toHaveFocus();
     expect(popover).toHaveStyle({ "--mobile-nav-viewport-offset-top": "40px" });
 
-    const keyboardLift = popover.style.getPropertyValue("--mobile-nav-keyboard-lift");
-    expect(keyboardLift).not.toBe("0px");
+    /*
+    FNXC:MobilePillKeyboard 2026-09-16-16:27:
+    FN-463: the pill and its popover keep the SAME resolved bottom anchor before, during, and after the keyboard.
+    The published calc() strings are constants, so the contract is asserted on the resolved pixel values.
+    */
+    const anchoredGeometry = {
+      pillBottomPx: resolveMobileNavAnchorPx(popover, "--mobile-nav-pill-bottom"),
+      popoverBottomPx: resolveMobileNavAnchorPx(popover, "--mobile-nav-popover-bottom"),
+    };
+    expect(anchoredGeometry).toEqual({
+      pillBottomPx: GEOMETRY_TOKEN_VALUES["--mobile-nav-system-offset"] + GEOMETRY_TOKEN_VALUES["--space-sm"],
+      popoverBottomPx: GEOMETRY_TOKEN_VALUES["--mobile-nav-system-offset"]
+        + GEOMETRY_TOKEN_VALUES["--space-sm"]
+        + GEOMETRY_TOKEN_VALUES["--mobile-nav-pill-height"]
+        + GEOMETRY_TOKEN_VALUES["--space-xs"],
+    });
     mockUseMobileKeyboard.mockReturnValue({
       keyboardOverlap: 0,
       viewportHeight: null,
@@ -2265,10 +2287,11 @@ describe("official dashboard design production wiring", () => {
     await waitFor(() => expect(document.querySelector(".mobile-nav-bar")).toHaveClass("mobile-nav-bar--keyboard-open"));
     expect(screen.getByRole("menu", { name: "Navigate" })).toBe(popover);
     expect(trigger).toHaveAttribute("aria-expanded", "true");
-    expect(popover).toHaveStyle({
-      "--mobile-nav-keyboard-lift": keyboardLift,
-      "--mobile-nav-viewport-offset-top": "40px",
-    });
+    expect({
+      pillBottomPx: resolveMobileNavAnchorPx(popover, "--mobile-nav-pill-bottom"),
+      popoverBottomPx: resolveMobileNavAnchorPx(popover, "--mobile-nav-popover-bottom"),
+    }).toEqual(anchoredGeometry);
+    expect(popover).toHaveStyle({ "--mobile-nav-viewport-offset-top": "40px" });
 
     mockUseMobileKeyboard.mockReturnValue({
       keyboardOverlap: 0,
@@ -2281,10 +2304,19 @@ describe("official dashboard design production wiring", () => {
     await waitFor(() => expect(document.querySelector(".mobile-nav-bar")).not.toHaveClass("mobile-nav-bar--keyboard-open"));
     expect(screen.getByRole("menu", { name: "Navigate" })).toBe(popover);
     expect(trigger).toHaveAttribute("aria-expanded", "true");
-    expect(popover).toHaveStyle({
-      "--mobile-nav-keyboard-lift": "0px",
-      "--mobile-nav-viewport-offset-top": "0px",
-    });
+    expect({
+      pillBottomPx: resolveMobileNavAnchorPx(popover, "--mobile-nav-pill-bottom"),
+      popoverBottomPx: resolveMobileNavAnchorPx(popover, "--mobile-nav-popover-bottom"),
+    }).toEqual(anchoredGeometry);
+    /*
+    FNXC:MobileNav 2026-09-14-07:48:
+    The popover is still open, so the published geometry stays frozen at the sample captured when it opened; only a
+    close releases it. The bottom anchor is keyboard-independent either way.
+    */
+    expect(popover).toHaveStyle({ "--mobile-nav-viewport-offset-top": "40px" });
+    } finally {
+      removeGeometryTokenValues();
+    }
   });
 
   it.each([
