@@ -590,7 +590,7 @@ FNXC:StuckTagRemoval 2026-08-17-22:30: Operator removed stuck-task tagging from 
 */
 /*
 FNXC:ListView 2026-06-16-00:00:
-FN-6529 requires list-view agent-active tasks to use a simple static highlight instead of the animated board-card glow, so the list row keeps a flat inset indicator and subtle background without referencing agent-glow.
+FN-6529 requires list-view agent-active tasks to use a simple static highlight instead of the animated board-card halo, so the list row keeps a flat inset indicator and subtle background without referencing the board's shared agent-halo effect.
 */
 .list-row.agent-active {
   border-color: var(--in-progress);

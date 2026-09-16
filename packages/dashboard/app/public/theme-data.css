@@ -1125,47 +1125,23 @@ All shadcn-family themes should use one UI font family across app chrome, forms,
   --accent-text: #fff;
 }
 
+/*
+FNXC:ThemeAgentHalo 2026-09-16-22:50:
+FN-490 : le halo « agent au travail » est porté par `.card.agent-active::before` (TaskCard.css) avec une ombre STATIQUE dont seule l'`opacity` est animée.
+Un thème ne déclare donc plus ses propres `@keyframes` d'ombre : il surcharge soit les variables `--agent-halo-*` (couleur / rayon / intensité / durée), soit directement le `box-shadow` statique du pseudo-élément quand son identité exige plusieurs ombres.
+Les thèmes volontairement plats doivent neutraliser explicitement le pseudo-élément (`content: none`), sans quoi la règle `::before` plus spécifique leur rendrait un halo pulsant non voulu.
+*/
 [data-color-theme="factory"] .card.agent-active {
   border-color: var(--todo);
-  box-shadow:
-    0 0 6px color-mix(in srgb, #f59e0b 50%, transparent),
-    0 0 12px color-mix(in srgb, #f59e0b 20%, transparent);
-  animation: agent-glow-factory 2s ease-in-out infinite;
-}
-
-@keyframes agent-glow-factory {
-  0%,
-  100% {
-    box-shadow:
-      0 0 6px color-mix(in srgb, #f59e0b 50%, transparent),
-      0 0 12px color-mix(in srgb, #f59e0b 20%, transparent);
-  }
-  50% {
-    box-shadow:
-      0 0 10px color-mix(in srgb, #f59e0b 70%, transparent),
-      0 0 20px color-mix(in srgb, #f59e0b 40%, transparent);
-  }
+  --agent-halo-color: #f59e0b;
+  --agent-halo-blur: var(--space-md);
+  --agent-halo-strength: 45%;
 }
 
 [data-color-theme="factory"][data-theme="light"] .card.agent-active {
-  box-shadow:
-    0 0 6px color-mix(in srgb, #d97706 40%, transparent),
-    0 0 12px color-mix(in srgb, #d97706 15%, transparent);
-  animation: agent-glow-factory-light 2s ease-in-out infinite;
-}
-
-@keyframes agent-glow-factory-light {
-  0%,
-  100% {
-    box-shadow:
-      0 0 6px color-mix(in srgb, #d97706 40%, transparent),
-      0 0 12px color-mix(in srgb, #d97706 15%, transparent);
-  }
-  50% {
-    box-shadow:
-      0 0 10px color-mix(in srgb, #d97706 60%, transparent),
-      0 0 20px color-mix(in srgb, #d97706 30%, transparent);
-  }
+  --agent-halo-color: #d97706;
+  --agent-halo-blur: var(--space-md);
+  --agent-halo-strength: 35%;
 }
 
 [data-color-theme="factory"] .btn-primary,
@@ -1299,10 +1275,18 @@ Factory Mono is a monochrome Factory variant for FN-6724: keep the industrial mo
   animation: none;
 }
 
+[data-color-theme="factory-mono"] .card.agent-active::before {
+  content: none;
+}
+
 [data-color-theme="factory-mono"][data-theme="light"] .card.agent-active {
   border-color: var(--accent);
   box-shadow: none;
   animation: none;
+}
+
+[data-color-theme="factory-mono"][data-theme="light"] .card.agent-active::before {
+  content: none;
 }
 
 [data-color-theme="factory-mono"] .btn-primary,
@@ -1655,12 +1639,24 @@ FN-6816 keeps shadcn-custom visually identical to the base shadcn theme until sa
   animation: none;
 }
 
+[data-color-theme="shadcn"] .card.agent-active::before,
+[data-color-theme="shadcn-ember"] .card.agent-active::before,
+[data-color-theme="shadcn-custom"] .card.agent-active::before {
+  content: none;
+}
+
 [data-color-theme="shadcn"][data-theme="light"] .card.agent-active,
 [data-color-theme="shadcn-ember"][data-theme="light"] .card.agent-active,
 [data-color-theme="shadcn-custom"][data-theme="light"] .card.agent-active {
   border-color: var(--accent);
   box-shadow: none;
   animation: none;
+}
+
+[data-color-theme="shadcn"][data-theme="light"] .card.agent-active::before,
+[data-color-theme="shadcn-ember"][data-theme="light"] .card.agent-active::before,
+[data-color-theme="shadcn-custom"][data-theme="light"] .card.agent-active::before {
+  content: none;
 }
 
 [data-color-theme="shadcn"] .btn-primary,
@@ -3445,6 +3441,27 @@ FN-6815 adds Shadcn Gray Blue as the slate-neutral shadcn variant: the whole sur
   animation: none;
 }
 
+[data-color-theme="shadcn-blue"] .card.agent-active::before,
+[data-color-theme="shadcn-green"] .card.agent-active::before,
+[data-color-theme="shadcn-red"] .card.agent-active::before,
+[data-color-theme="shadcn-purple"] .card.agent-active::before,
+[data-color-theme="shadcn-pink"] .card.agent-active::before,
+[data-color-theme="shadcn-orange"] .card.agent-active::before,
+[data-color-theme="shadcn-yellow"] .card.agent-active::before,
+[data-color-theme="shadcn-mono"] .card.agent-active::before,
+[data-color-theme="shadcn-mono-red"] .card.agent-active::before,
+[data-color-theme="shadcn-mono-blue"] .card.agent-active::before,
+[data-color-theme="shadcn-mono-green"] .card.agent-active::before,
+[data-color-theme="shadcn-mono-purple"] .card.agent-active::before,
+[data-color-theme="shadcn-mono-pink"] .card.agent-active::before,
+[data-color-theme="shadcn-mono-orange"] .card.agent-active::before,
+[data-color-theme="shadcn-mono-yellow"] .card.agent-active::before,
+[data-color-theme="shadcn-black"] .card.agent-active::before,
+[data-color-theme="shadcn-gray"] .card.agent-active::before,
+[data-color-theme="shadcn-gray-blue"] .card.agent-active::before {
+  content: none;
+}
+
 [data-color-theme="shadcn-blue"][data-theme="light"] .card.agent-active,
 [data-color-theme="shadcn-green"][data-theme="light"] .card.agent-active,
 [data-color-theme="shadcn-red"][data-theme="light"] .card.agent-active,
@@ -3466,6 +3483,27 @@ FN-6815 adds Shadcn Gray Blue as the slate-neutral shadcn variant: the whole sur
   border-color: var(--accent);
   box-shadow: none;
   animation: none;
+}
+
+[data-color-theme="shadcn-blue"][data-theme="light"] .card.agent-active::before,
+[data-color-theme="shadcn-green"][data-theme="light"] .card.agent-active::before,
+[data-color-theme="shadcn-red"][data-theme="light"] .card.agent-active::before,
+[data-color-theme="shadcn-purple"][data-theme="light"] .card.agent-active::before,
+[data-color-theme="shadcn-pink"][data-theme="light"] .card.agent-active::before,
+[data-color-theme="shadcn-orange"][data-theme="light"] .card.agent-active::before,
+[data-color-theme="shadcn-yellow"][data-theme="light"] .card.agent-active::before,
+[data-color-theme="shadcn-mono"][data-theme="light"] .card.agent-active::before,
+[data-color-theme="shadcn-mono-red"][data-theme="light"] .card.agent-active::before,
+[data-color-theme="shadcn-mono-blue"][data-theme="light"] .card.agent-active::before,
+[data-color-theme="shadcn-mono-green"][data-theme="light"] .card.agent-active::before,
+[data-color-theme="shadcn-mono-purple"][data-theme="light"] .card.agent-active::before,
+[data-color-theme="shadcn-mono-pink"][data-theme="light"] .card.agent-active::before,
+[data-color-theme="shadcn-mono-orange"][data-theme="light"] .card.agent-active::before,
+[data-color-theme="shadcn-mono-yellow"][data-theme="light"] .card.agent-active::before,
+[data-color-theme="shadcn-black"][data-theme="light"] .card.agent-active::before,
+[data-color-theme="shadcn-gray"][data-theme="light"] .card.agent-active::before,
+[data-color-theme="shadcn-gray-blue"][data-theme="light"] .card.agent-active::before {
+  content: none;
 }
 
 [data-color-theme="shadcn-blue"] .btn-primary,
@@ -4817,39 +4855,19 @@ FN-6815 adds Shadcn Gray Blue as the slate-neutral shadcn variant: the whole sur
 
 [data-color-theme="neon-city"] .card.agent-active {
   border-color: var(--in-progress);
-  animation: neon-agent-pulse 2.2s ease-in-out infinite;
 }
 
-@keyframes neon-agent-pulse {
-  0%,
-  100% {
-    box-shadow:
-      0 0 8px color-mix(in srgb, #ff2d95 35%, transparent),
-      0 0 16px color-mix(in srgb, #00f0ff 25%, transparent);
-  }
-  50% {
-    box-shadow:
-      0 0 14px color-mix(in srgb, #ff2d95 65%, transparent),
-      0 0 24px color-mix(in srgb, #00f0ff 45%, transparent);
-  }
+/* Identité bi-colore rose/cyan : deux ombres STATIQUES, l'opacité pulse via le `agent-halo` partagé. */
+[data-color-theme="neon-city"] .card.agent-active::before {
+  box-shadow:
+    0 0 var(--space-md) color-mix(in srgb, #ff2d95 55%, transparent),
+    0 0 var(--space-xl) color-mix(in srgb, #00f0ff 40%, transparent);
 }
 
-[data-color-theme="neon-city"][data-theme="light"] .card.agent-active {
-  animation: neon-agent-pulse-light 2.2s ease-in-out infinite;
-}
-
-@keyframes neon-agent-pulse-light {
-  0%,
-  100% {
-    box-shadow:
-      0 0 8px color-mix(in srgb, #b1145f 22%, transparent),
-      0 0 16px color-mix(in srgb, #008e9b 18%, transparent);
-  }
-  50% {
-    box-shadow:
-      0 0 12px color-mix(in srgb, #b1145f 32%, transparent),
-      0 0 20px color-mix(in srgb, #008e9b 26%, transparent);
-  }
+[data-color-theme="neon-city"][data-theme="light"] .card.agent-active::before {
+  box-shadow:
+    0 0 var(--space-md) color-mix(in srgb, #b1145f 30%, transparent),
+    0 0 var(--space-lg) color-mix(in srgb, #008e9b 24%, transparent);
 }
 
 /* PARCHMENT - Warm manuscript aesthetic */

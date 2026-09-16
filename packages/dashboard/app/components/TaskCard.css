@@ -130,27 +130,47 @@ Mobile long-press opens the Board task context menu, so non-editing card text mu
   -webkit-touch-callout: default;
 }
 
-/* Agent-active glow: animated border glow when an agent is actively working on a task.
-   Uses the in-progress column color to stay consistent with the theme. */
+/*
+FNXC:TaskCardAgentHalo 2026-09-16-22:50:
+FN-490 exige que l'indicateur « agent au travail » cesse d'animer `box-shadow` : cette propriété n'est pas composable, donc l'ancien `agent-glow` provoquait un repaint de chaque carte active à chaque frame (CPU/GPU et batterie).
+La carte elle-même ne porte plus aucune animation ni `box-shadow` (pour ne pas écraser `.card` / `.card:hover`) ; un pseudo-élément `::before` porte une ombre STATIQUE et n'anime que `opacity`, propriété composée par le GPU sans repaint.
+Les thèmes ne définissent plus leurs propres `@keyframes` : ils surchargent soit les variables `--agent-halo-*`, soit le `box-shadow` statique du `::before` ; les thèmes volontairement plats neutralisent le pseudo-élément avec `content: none`.
+*/
 .card.agent-active {
   border-color: var(--in-progress);
-  box-shadow:
-    0 0 8px color-mix(in srgb, var(--in-progress) 40%, transparent),
-    0 0 20px color-mix(in srgb, var(--in-progress) 15%, transparent);
-  animation: agent-glow 2.5s ease-in-out infinite;
+  animation: none;
+  --agent-halo-color: var(--in-progress);
+  --agent-halo-blur: calc(var(--space-xl) + var(--space-xs));
+  --agent-halo-strength: 25%;
+  --agent-halo-duration: calc(var(--duration-slow) * 8);
 }
 
-@keyframes agent-glow {
+.card.agent-active::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow: 0 0 var(--agent-halo-blur)
+    color-mix(in srgb, var(--agent-halo-color) var(--agent-halo-strength), transparent);
+  animation: agent-halo var(--agent-halo-duration) ease-in-out infinite;
+}
+
+@keyframes agent-halo {
   0%,
   100% {
-    box-shadow:
-      0 0 8px color-mix(in srgb, var(--in-progress) 40%, transparent),
-      0 0 20px color-mix(in srgb, var(--in-progress) 15%, transparent);
+    opacity: 0.2;
   }
   50% {
-    box-shadow:
-      0 0 12px color-mix(in srgb, var(--in-progress) 60%, transparent),
-      0 0 28px color-mix(in srgb, var(--in-progress) 25%, transparent);
+    opacity: 0.8;
+  }
+}
+
+/* Respect an operating-system request for reduced motion: keep a steady halo, drop the pulse. */
+@media (prefers-reduced-motion: reduce) {
+  .card.agent-active::before {
+    animation: none;
+    opacity: 0.4;
   }
 }
 
