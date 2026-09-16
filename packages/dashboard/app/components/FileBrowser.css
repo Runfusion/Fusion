@@ -1224,3 +1224,26 @@ html[data-mobile-drawers="true"][data-viewport-mode="mobile"] .floating-window--
   overflow-y: auto;
   overscroll-behavior: contain;
 }
+
+/*
+FNXC:FileBrowser 2026-09-16-02:23:
+FN-445 completes FN-427. The invariant is the same on BOTH phone hosts: between the drawer panel and the file list
+there is exactly ONE vertical scroll owner, `.file-browser-list`, and no intermediate box is left at `min-height: auto`.
+FN-427 established that only for the standalone `FileBrowserModal` window
+(`.floating-window--file-browser.floating-window--mobile-drawer`), so the Files DESTINATION — hosted by
+`MainContentDrawer` inside `.mobile-drawer__body` — still had the drawer body scrolling against the list and its last
+entries were unreachable. The fill chain for that host lives in FilesView.css; the browser's own chrome/list split is
+declared here, next to the base rules it refines. `overscroll-behavior: contain` keeps a list fling from escalating
+into a drawer-dismissal gesture.
+*/
+html[data-mobile-drawers="true"][data-viewport-mode="mobile"] .mobile-drawer__body .files-view .file-browser-header {
+  flex: 0 0 auto;
+}
+
+html[data-mobile-drawers="true"][data-viewport-mode="mobile"] .mobile-drawer__body .files-view .file-browser-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-block-size: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}

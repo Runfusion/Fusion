@@ -9,3 +9,31 @@ full bounded content height instead of the dock column height it was authored ag
   display: flex;
   flex-direction: column;
 }
+
+/*
+FNXC:ToolSurfaces 2026-09-16-02:23:
+FN-445 drawer-host geometry. On a phone this page is rendered inside the MAIN mobile drawer, whose body is an
+`overflow: auto` scroller by default. The page already ends in its own bounded scroller (`.file-browser-list`), so the
+two competed for the same vertical gesture and the end of a long directory stayed unreachable. `MainContentDrawer` now
+declares content-owned scrolling for `files`, which stops the body scroller; these rules complete the other half by
+restating the fill chain in PHYSICAL `min-height` as well as its logical form, because a single box left at
+`min-height: auto` is enough to let the list grow past the panel again.
+
+Scoped to this host on purpose: desktop, a phone WITHOUT the `data-mobile-drawers` opt-in, and the optional right dock
+all keep their existing geometry. Never relax the global mobile `touch-action` lockdown in styles.css to reach this
+(see docs/solutions/ui-bugs/mobile-touch-action-ancestor-intersection-defeats-leaf-scroll.md).
+*/
+html[data-mobile-drawers="true"][data-viewport-mode="mobile"] .mobile-drawer__body .files-view,
+html[data-mobile-drawers="true"][data-viewport-mode="mobile"] .mobile-drawer__body .files-view .view-layout__body,
+html[data-mobile-drawers="true"][data-viewport-mode="mobile"] .mobile-drawer__body .files-view .view-layout__content,
+html[data-mobile-drawers="true"][data-viewport-mode="mobile"] .mobile-drawer__body .files-view .dock-files-view,
+html[data-mobile-drawers="true"][data-viewport-mode="mobile"] .mobile-drawer__body .files-view .file-browser {
+  min-height: 0;
+  min-block-size: 0;
+  overflow: hidden;
+}
+
+html[data-mobile-drawers="true"][data-viewport-mode="mobile"] .mobile-drawer__body .files-view {
+  block-size: 100%;
+  max-block-size: 100%;
+}

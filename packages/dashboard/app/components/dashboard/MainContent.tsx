@@ -126,6 +126,26 @@ interface MainContentDrawerProps {
 }
 
 /*
+FNXC:MobileDrawer 2026-09-16-02:23:
+FN-445 — scroll ownership is a PER-DESTINATION property of this drawer, not a constant. `MobileDrawer` documents that
+only a view providing its own bounded internal scroller may suppress the drawer body's scroller; every ordinary long
+view still depends on that body as its reachable vertical scroller, so the flag stays false by default.
+
+Files is the first destination that genuinely qualifies: `FilesView` composes `ViewLayout` with `contentOwnsScroll`
+and ends in `.file-browser-list`, a bounded scroller. With the body ALSO scrolling, the two competed for the same
+vertical gesture on a phone and the end of a long directory stayed unreachable. FN-427 fixed only the standalone
+`FileBrowserModal` window, never this host — which is why the operator still could not scroll the list.
+
+Keep this set minimal and evidence-driven: every added destination must bring its own proof that its hosted view
+really owns a complete bounded scroll chain.
+*/
+export const MOBILE_DRAWER_CONTENT_SCROLL_VIEWS: ReadonlySet<TaskView> = new Set<TaskView>(["files"]);
+
+export function mobileDrawerContentOwnsScroll(taskView: TaskView): boolean {
+  return MOBILE_DRAWER_CONTENT_SCROLL_VIEWS.has(taskView);
+}
+
+/*
 FNXC:MobileDrawer 2026-09-10-23:59:
 Ordinary and plugin destinations share this production bridge so header ownership is derived from the routed task view in one place. Browser smoke mounts this same bridge, preventing fixture copies from silently disagreeing with MainContent.
 */
@@ -145,7 +165,7 @@ export function MainContentDrawer({ taskView, open, title, onClose, children }: 
       keepMounted
       testId="mobile-drawer-main-content"
       contentOwnsHeader={!drawerOwnsHeader}
-      contentOwnsScroll={false}
+      contentOwnsScroll={mobileDrawerContentOwnsScroll(taskView)}
     >
       <PluginDashboardHostChromeContext.Provider value={{ hostOwnsHeader: drawerOwnsHeader }}>
         {children}
