@@ -1191,13 +1191,14 @@ separate approvals Back button outside this header or non-mobile mailbox layouts
   .mailbox-modal .mailbox-header-actions .modal-close,
   .mailbox-view .mailbox-header-actions .btn,
   .mailbox-view .mailbox-header-actions .btn-icon {
-    min-height: 2.25rem;
+    min-height: var(--icon-button-size-mobile);
   }
 
+  /* FNXC:IconOnlyButtonCanon 2026-09-16-19:05: FN-471 — même 36px, exprimés par le jeton d'icône canonique. */
   .mailbox-modal .mailbox-header-actions .btn-icon,
   .mailbox-modal .mailbox-header-actions .modal-close,
   .mailbox-view .mailbox-header-actions .btn-icon {
-    min-width: 2.25rem;
+    min-width: var(--icon-button-size-mobile);
     display: inline-flex;
     align-items: center;
     justify-content: center;

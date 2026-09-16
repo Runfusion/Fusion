@@ -1558,11 +1558,12 @@ AgentsView uses the measured SVG overlay as the single connector system so paren
     justify-content: center;
   }
 
+  /* FNXC:IconOnlyButtonCanon 2026-09-16-19:05: FN-471 — boîte d'icône canonique mobile au lieu d'un calcul bespoke. */
   .agents-view-primary-actions .btn-icon {
-    width: calc(var(--space-lg) * 2 + var(--space-xs));
-    height: calc(var(--space-lg) * 2 + var(--space-xs));
-    min-width: calc(var(--space-lg) * 2 + var(--space-xs));
-    min-height: calc(var(--space-lg) * 2 + var(--space-xs));
+    width: var(--icon-button-size-mobile);
+    height: var(--icon-button-size-mobile);
+    min-width: var(--icon-button-size-mobile);
+    min-height: var(--icon-button-size-mobile);
   }
 
   /* Title row: keep the Bot icon aligned with the compact control row. */

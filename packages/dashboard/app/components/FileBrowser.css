@@ -1273,7 +1273,8 @@ the layout half of the reported symptom: the header ate the panel and the list w
 No control is removed. The sort `<label>` and the create-button text are hidden with a clip technique rather than
 `display: none`, so the `<label for>` still names the `<select>` and the buttons keep their accessible name (each also
 carries an explicit `aria-label` built from the SAME existing i18n key — FN-462 adds no new key). Icon-only create
-buttons are still full `--touch-target-min-size` targets.
+buttons are icon-only, so FN-471 sizes them with the canonical shared icon box (28px desktop / 36px mobile)
+rather than the 44px labelled-control floor.
 */
 /*
 FNXC:FileBrowser 2026-09-16-16:38:
@@ -1340,16 +1341,16 @@ html[data-viewport-mode="mobile"] .file-browser .file-browser-sort-select {
 }
 
 html[data-viewport-mode="mobile"] .file-browser .file-browser-sort-direction {
-  min-inline-size: var(--touch-target-min-size);
-  min-block-size: var(--touch-target-min-size);
+  min-inline-size: var(--icon-button-size-mobile);
+  min-block-size: var(--icon-button-size-mobile);
 }
 
 html[data-viewport-mode="mobile"] .file-browser .file-browser-create-button {
   flex: 0 0 auto;
   justify-content: center;
-  min-inline-size: var(--touch-target-min-size);
-  min-block-size: var(--touch-target-min-size);
-  padding-inline: var(--space-sm);
+  min-inline-size: var(--icon-button-size-mobile);
+  min-block-size: var(--icon-button-size-mobile);
+  padding-inline: 0;
 }
 
 html[data-viewport-mode="mobile"] .file-browser .file-browser-new-menu-trigger {
@@ -1482,16 +1483,16 @@ html[data-viewport-mode="mobile"] .file-browser .file-browser-create-button__lab
   }
 
   html:not([data-viewport-mode]) .file-browser .file-browser-sort-direction {
-    min-inline-size: var(--touch-target-min-size);
-    min-block-size: var(--touch-target-min-size);
+    min-inline-size: var(--icon-button-size-mobile);
+    min-block-size: var(--icon-button-size-mobile);
   }
 
   html:not([data-viewport-mode]) .file-browser .file-browser-create-button {
     flex: 0 0 auto;
     justify-content: center;
-    min-inline-size: var(--touch-target-min-size);
-    min-block-size: var(--touch-target-min-size);
-    padding-inline: var(--space-sm);
+    min-inline-size: var(--icon-button-size-mobile);
+    min-block-size: var(--icon-button-size-mobile);
+    padding-inline: 0;
   }
 
   html:not([data-viewport-mode]) .file-browser .file-browser-new-menu-trigger {

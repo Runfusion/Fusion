@@ -173,6 +173,21 @@ html {
   44px accessibility floor without embedding a raw dimension in component-specific rules.
   */
   --touch-target-min-size: 44px;
+
+  /*
+  FNXC:IconOnlyButtonCanon 2026-09-16-19:05:
+  FN-471: l'application n'admet plus que DEUX variantes de bouton icône seule — sans bordure (`btn-icon`
+  seul) et avec bordure (`btn btn-icon btn-sm`). Les deux partagent cette géométrie carrée; toute boîte
+  bespoke de 40/44px pour un bouton icon-only est supprimée. La valeur mobile est 36px et non
+  `--touch-target-min-size` (44px) parce que 36px est déjà le plancher mobile historique de `.btn-icon`
+  et la hauteur de la rangée d'actions de Quick Entry, donc la référence visuelle que l'opérateur cite;
+  le plancher 44px reste réservé aux contrôles ÉTIQUETÉS, aux lignes de liste, aux onglets et aux `select`.
+  La règle de base qui consomme ces jetons reste volontairement au sélecteur nu `.btn-icon` (spécificité
+  0,1,0) : `styles.css` est chargé en DERNIER, donc toute élévation à 0,2,0 (`:not()`, sélecteur composé,
+  `!important`) écraserait par ordre les surcharges de composant existantes qui sont elles aussi à 0,2,0.
+  */
+  --icon-button-size: 28px;
+  --icon-button-size-mobile: 36px;
   /*
   FNXC:TaskModalResize 2026-07-26-10:40:
   Task-modal resize targets use the accessibility floor as an explicit hit-area
@@ -1044,6 +1059,56 @@ body {
   overflow: hidden;
 }
 
+/*
+FNXC:IconOnlyButtonCanon 2026-09-16-19:05:
+FN-471 : variante canonique n°1 — bouton icône SANS bordure (`btn-icon` seul). Cette peinture vivait dans
+`Header.css`, un fichier de composant, alors qu'elle est globale; elle est déplacée ici sans changer son
+sélecteur ni sa spécificité (0,1,0), de sorte que toutes les surcharges de composant à 0,2,0 continuent
+de la battre exactement comme avant.
+Elle est déclarée AVANT `.btn` à dessein : la variante encadrée hérite ainsi bordure, fond et couleur de
+`.btn` par ordre de document DANS UN SEUL FICHIER, au lieu de dépendre du hasard d'ordre d'injection entre
+`Header.css` et `styles.css` (`main.tsx` importe `./App` avant `./styles.css`).
+*/
+.btn-icon {
+  --btn-icon-size: var(--icon-size-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--icon-button-size);
+  height: var(--icon-button-size);
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  font-size: 18px;
+  line-height: 0;
+  cursor: pointer;
+  transition:
+    color var(--transition-fast),
+    background var(--transition-fast);
+}
+
+.btn-icon svg {
+  stroke: currentColor;
+}
+
+@media (hover: hover) {
+  .btn-icon:hover {
+    color: var(--text);
+    background: var(--border);
+  }
+}
+
+.btn-icon:focus-visible {
+  box-shadow: var(--focus-ring-strong);
+  outline: none;
+}
+
+.btn-icon:active {
+  opacity: 0.7;
+}
+
 /* === Buttons === */
 .btn {
   padding: var(--btn-padding);
@@ -1146,9 +1211,20 @@ body {
   gap: 4px;
 }
 
-.btn-icon {
-  --btn-icon-size: var(--icon-size-md);
-  line-height: 0;
+/*
+FNXC:IconOnlyButtonCanon 2026-09-16-19:05:
+FN-471 : variante canonique n°2 — bouton icône AVEC bordure (`btn btn-icon btn-sm`). Le seul rôle de ce
+sélecteur composé (0,2,0) est de garantir le cadre quel que soit l'ordre d'injection, puisque la base
+borderless au-dessus déclare `border: none`. Il ne déclare délibérément NI dimension, NI fond, NI couleur :
+- une dimension à 0,2,0 écraserait par ordre les géométries de composant à égalité de spécificité,
+  notamment le groupe primaire de Quick Entry, dont la taille est une décision opérateur;
+- un fond ou une couleur écraserait `.btn-primary`/`.btn-task-create` (0,1,0), utilisés conjointement avec
+  `btn-icon` (Quick Entry, GitManager, envoi du chat de tâche), et entrerait en conflit avec les thèmes.
+Bordure-couleur, fond et couleur viennent donc de `.btn`, déclaré juste après la base.
+*/
+.btn.btn-icon {
+  border-style: solid;
+  border-width: var(--btn-border-width);
 }
 
 .btn-icon > svg {
@@ -3756,9 +3832,14 @@ Toast text must contrast its status background across every dashboard theme and 
     min-height: 36px;
   }
 
+  /*
+  FNXC:IconOnlyButtonCanon 2026-09-16-19:05:
+  FN-471 : même plancher mobile qu'avant (36px), mais exprimé par le jeton canonique partagé avec la
+  géométrie de base, de sorte qu'aucune surface ne redéclare une boîte d'icône seule en dur.
+  */
   .btn-icon {
-    min-width: 36px;
-    min-height: 36px;
+    min-width: var(--icon-button-size-mobile);
+    min-height: var(--icon-button-size-mobile);
   }
 
   /* Column-header action buttons (e.g. archive) stay compact */

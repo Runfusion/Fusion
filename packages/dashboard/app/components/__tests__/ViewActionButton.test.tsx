@@ -8,14 +8,32 @@ import { ViewActionButton, ViewBackButton } from "../ViewActionButton";
 const css = readAppFile("components/ViewActionButton.css");
 
 describe("ViewActionButton", () => {
+  /*
+  FNXC:IconOnlyButtonCanon 2026-09-16-19:05:
+  FN-471 : la création réduite à son icône n'est plus un carré plein. `btn-primary` disparaît de la pile de
+  classes partagée ; l'emphase CTA vit sur `view-action-button--create`, que les blocs téléphone ramènent à
+  la variante encadrée canonique.
+  */
   it("construit une création Plus canonique avec nom conservé sur mobile", async () => {
     const onClick = vi.fn();
     render(<ViewActionButton kind="create" label="Nouvelle session" onClick={onClick} />);
     const button = screen.getByRole("button", { name: "Nouvelle session" });
-    expect(button).toHaveClass("btn", "btn-sm", "btn-primary", "view-action-button--mobile-icon-only");
+    expect(button).toHaveClass("btn", "btn-sm", "view-action-button--create", "view-action-button--mobile-icon-only");
+    expect(button).not.toHaveClass("btn-primary");
     expect(button.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
     await userEvent.click(button);
     expect(onClick).toHaveBeenCalledOnce();
+
+    // L'emphase CTA reste celle de la présentation ÉTIQUETÉE, et les blocs téléphone la neutralisent.
+    expect(css).toMatch(/\.view-action-button--create\s*\{[^}]*background:\s*var\(--cta-bg\)/s);
+    for (const host of ["html\\[data-viewport-mode=\"mobile\"\\]", "html:not\\(\\[data-viewport-mode\\]\\)"]) {
+      const rule = new RegExp(`${host} \\.view-action-button--mobile-icon-only\\s*\\{[^}]*\\}`, "s");
+      const matched = css.match(rule);
+      expect(matched, `bloc mobile manquant pour ${host}`).not.toBeNull();
+      expect(matched![0]).toContain("background: var(--card)");
+      expect(matched![0]).toContain("border-color: var(--border)");
+      expect(matched![0]).toContain("inline-size: var(--icon-button-size-mobile)");
+    }
   });
 
   /*
@@ -50,15 +68,22 @@ describe("ViewActionButton", () => {
     expect(onClick).toHaveBeenCalledTimes(2);
   });
 
-  it("rend le ChevronLeft dans une vraie cible tactile", async () => {
+  /*
+  FNXC:IconOnlyButtonCanon 2026-09-16-19:05:
+  FN-471 : le chevron de retour adopte la variante encadrée canonique et n'a plus de boîte propre. Le test
+  vérifie donc l'ABSENCE de toute géométrie bespoke plutôt que la présence de l'ancien carré de 44px.
+  */
+  it("rend le ChevronLeft dans la variante encadrée canonique", async () => {
     const onClick = vi.fn();
     render(<ViewBackButton label="Retour aux conversations" onClick={onClick} />);
     const back = screen.getByRole("button", { name: "Retour aux conversations" });
-    expect(back).toHaveClass("view-back-button", "btn-icon");
+    expect(back).toHaveClass("view-back-button", "btn", "btn-icon");
+    expect(back).not.toHaveClass("btn-primary");
     expect(back.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
     await userEvent.click(back);
     expect(onClick).toHaveBeenCalledOnce();
-    expect(css).toMatch(/\.view-back-button\s*\{[^}]*min-inline-size:\s*var\(--touch-target-min-size\)/s);
+    expect(css).not.toMatch(/\.view-back-button\s*\{[^}]*--touch-target-min-size/s);
+    expect(css).toMatch(/\.view-back-button\s*\{[^}]*flex:\s*none/s);
     expect(css).toMatch(/\.view-action-button--mobile-icon-only \.view-action-button__label\s*\{[^}]*clip-path:\s*inset\(50%\)/s);
   });
 });

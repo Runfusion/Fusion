@@ -2730,6 +2730,21 @@ Reuse existing primitives from `styles.css`:
 
 Don't create parallel button/form variants — add states (`:hover`, `:focus-visible`, `:active`) to the existing primitives.
 
+#### Icon-only buttons: exactly two canonical variants
+
+A button that shows only a glyph has **two** legal appearances, and no third:
+
+| Variant | Classes | Paint | Living reference |
+| --- | --- | --- | --- |
+| Borderless | `btn-icon` alone (no `btn`) | `background: none`, `border: none`, `color: var(--text-muted)`, hover `background: var(--border)` | Header search and header actions |
+| Bordered | `btn btn-icon btn-sm` | border and background inherited from `.btn`, glyph at `var(--icon-size-sm)` | Task Detail header actions, shared back chevron |
+
+- **Geometry is tokenized and shared:** `--icon-button-size` (28px) on desktop, `--icon-button-size-mobile` (36px) at `max-width: 768px`. No icon-only control may paint a 40px, 44px, `var(--touch-target-min-size)`, or `var(--ui-touch-height)` box.
+- **Specificity contract:** the borderless base stays on the bare `.btn-icon` selector (0,1,0) and must never be rewritten as `.btn-icon:not(.btn)`, given any other composed form, or marked `!important`. `styles.css` is loaded last, so a 0,2,0 base would win the order tiebreak against every existing 0,2,0 component override (Secrets, Agent prompts, Branch groups, Planning mode, New task, themes…) and silently erase them. The bordered variant is expressed as the composed `.btn.btn-icon` (0,2,0), which declares the border only — never a size, background, or colour, because those would collide with `btn-primary`/`btn-task-create` pairings and with component geometry such as Quick Entry's.
+- **No CTA fill on a glyph.** A create action reduced to its `+` uses the bordered variant; the CTA emphasis belongs to its labelled presentation.
+- **Labelled controls are out of scope.** A button showing visible text keeps its comfortable 44px touch target, as do list rows, tabs, `select`s, and resize handles. `--touch-target-min-size` and `--ui-touch-height` remain the tokens for those.
+- **Documented exemptions:** the Task Detail / planner chat send buttons and the Quick Entry primary group keep their operator-decided geometry. `packages/dashboard/app/components/__tests__/icon-only-button-canon.test.tsx` is the inventory guardrail that keeps an oversized icon square from reappearing.
+
 Small fixed notification cards (for example the first-task GitHub star prompt) should reuse `.card`, `.btn`, and `.btn-icon`, anchor themselves with tokenized `position: fixed` offsets, and include a mobile `@media (max-width: 768px)` override so they clear the mobile nav/FAB region.
 
 ### Mobile responsive

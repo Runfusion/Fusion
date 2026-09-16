@@ -2048,7 +2048,13 @@ describe("MailboxView", () => {
     });
 
     const headerComposeButton = screen.getByTestId("mailbox-header-compose");
-    expect(headerComposeButton).toHaveClass("btn", "btn-sm", "btn-primary");
+    /*
+    FNXC:IconOnlyButtonCanon 2026-09-16-19:05:
+    FN-471 : la création partagée ne porte plus `btn-primary`. Son emphase CTA vit sur
+    `view-action-button--create`, que la présentation icône seule du téléphone ramène à la variante encadrée.
+    */
+    expect(headerComposeButton).toHaveClass("btn", "btn-sm", "view-action-button--create");
+    expect(headerComposeButton).not.toHaveClass("btn-primary");
   });
 
   it("renders mailbox tabs and agent subtabs with shared button classes", async () => {
@@ -2873,8 +2879,8 @@ describe("MailboxView", () => {
       // Verify .mailbox-view selectors are in mobile section
       expect(mailboxMobileSection).toContain(".mailbox-view .mailbox-header");
       expect(mailboxMobileSection).toMatch(/\.mailbox-modal \.mailbox-header-actions,\s*\.mailbox-view \.mailbox-header-actions\s*\{[^}]*gap:\s*var\(--space-sm\);[^}]*\}/);
-      expect(mailboxMobileSection).toMatch(/\.mailbox-modal \.mailbox-header-actions \.btn,[^}]*\.mailbox-view \.mailbox-header-actions \.btn-icon\s*\{[^}]*min-height:\s*2\.25rem;[^}]*\}/);
-      expect(mailboxMobileSection).toMatch(/\.mailbox-modal \.mailbox-header-actions \.btn-icon,[^}]*\.mailbox-view \.mailbox-header-actions \.btn-icon\s*\{[^}]*min-width:\s*2\.25rem;[^}]*display:\s*inline-flex;[^}]*\}/);
+      expect(mailboxMobileSection).toMatch(/\.mailbox-modal \.mailbox-header-actions \.btn,[^}]*\.mailbox-view \.mailbox-header-actions \.btn-icon\s*\{[^}]*min-height:\s*var\(--icon-button-size-mobile\);[^}]*\}/);
+      expect(mailboxMobileSection).toMatch(/\.mailbox-modal \.mailbox-header-actions \.btn-icon,[^}]*\.mailbox-view \.mailbox-header-actions \.btn-icon\s*\{[^}]*min-width:\s*var\(--icon-button-size-mobile\);[^}]*display:\s*inline-flex;[^}]*\}/);
       expect(mailboxMobileSection).toContain(".mailbox-view .mailbox-tabs");
       expect(mailboxMobileSection).toContain(".mailbox-view .mailbox-content");
       expect(mailboxMobileSection).toContain(".mailbox-view .mailbox-split-layout");

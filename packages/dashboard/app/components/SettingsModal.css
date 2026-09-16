@@ -52,10 +52,18 @@
   FNXC:Settings 2026-07-11-00:00:
   FN-7848: Mobile Settings must still show the GitHub star count. FN-4375 kept the header in one row by collapsing promotional action labels; keep the count visible and rely on .settings-modal-heading min-width: 0 to truncate the title before the pill wraps. Only the redundant "Star" word stays collapsed to save horizontal room.
   */
+  /*
+  FNXC:IconOnlyButtonCanon 2026-09-16-19:05:
+  FN-471 : ces deux moitiés d'action sont réduites à leur pictogramme sur téléphone; elles adoptent donc la
+  boîte d'icône canonique (36px) au lieu du carré bespoke de 40px. La règle de base
+  `height: var(--settings-header-action-height)` n'est PAS supprimée : elle reste le contrat de hauteur
+  partagé du bandeau, simplement surchargée ici. Le compteur d'étoiles frangin reste visible (FN-7848).
+  */
   .settings-header-actions .settings-github-star-btn__action,
   .settings-header-actions .settings-header-discord-btn {
-    width: 40px;
-    min-width: 40px;
+    width: var(--icon-button-size-mobile);
+    min-width: var(--icon-button-size-mobile);
+    height: var(--icon-button-size-mobile);
     padding: 0;
     justify-content: center;
     font-size: 0;

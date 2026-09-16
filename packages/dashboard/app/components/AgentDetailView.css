@@ -1914,9 +1914,10 @@ Agent Settings composes native inputs, buttons, editors, and portaled controls. 
     right: 0;
   }
 
+  /* FNXC:IconOnlyButtonCanon 2026-09-16-19:05: FN-471 — boîte d'icône canonique mobile au lieu d'un calcul bespoke. */
   .agent-detail-utility-actions .btn-icon {
-    min-height: calc(var(--space-lg) + var(--space-md) + var(--space-xs));
-    min-width: calc(var(--space-lg) + var(--space-md) + var(--space-xs));
+    min-height: var(--icon-button-size-mobile);
+    min-width: var(--icon-button-size-mobile);
   }
 
   .agent-detail-import-btn {
@@ -1947,9 +1948,10 @@ Agent Settings composes native inputs, buttons, editors, and portaled controls. 
     height: calc(var(--space-sm) + var(--space-xs) * 1.5);
   }
 
+  /* FNXC:IconOnlyButtonCanon 2026-09-16-19:05: FN-471 — boîte d'icône canonique mobile au lieu d'un calcul bespoke. */
   .agent-detail-actions .btn-icon {
-    min-height: calc(var(--space-lg) + var(--space-md) + var(--space-xs));
-    min-width: calc(var(--space-lg) + var(--space-md) + var(--space-xs));
+    min-height: var(--icon-button-size-mobile);
+    min-width: var(--icon-button-size-mobile);
   }
 
   .agent-detail-tabs {

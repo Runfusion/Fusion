@@ -389,39 +389,21 @@ create button would be the control that compresses when a workflow name is long,
   flex: 1;
 }
 
-.btn-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 28px;
-  width: 28px;
-  background: none;
-  border: none;
-  color: var(--text-muted);
-  font-size: 18px;
-  cursor: pointer;
-  padding: 0;
-  border-radius: var(--radius-md);
-  transition:
-    color var(--transition-fast),
-    background var(--transition-fast);
-}
-.btn-icon svg {
-  stroke: currentColor;
-}
-@media (hover: hover) {
-  .btn-icon:hover {
-    color: var(--text);
-    background: var(--border);
-  }
-}
-.btn-icon:focus-visible {
-  box-shadow: var(--focus-ring-strong);
-  outline: none;
-}
-.btn-icon:active {
-  opacity: 0.7;
-}
+/*
+FNXC:IconOnlyButtonCanon 2026-09-16-19:05:
+FN-471 : la peinture de base de `.btn-icon` (boîte carrée, fond/bordure absents, survol, focus, actif)
+était définie ici, dans un fichier de composant, alors qu'elle est la variante canonique GLOBALE sans
+bordure. Elle vit désormais dans `styles.css`, au même sélecteur nu et à la même spécificité (0,1,0).
+Ce fichier ne conserve que les modificateurs propres au bandeau et sa surcharge scopée
+`.header-actions > .btn-icon`.
+
+FNXC:IconOnlyButtonCanon 2026-09-16-19:33:
+FN-471 : la base ayant migré dans `styles.css`, qui est importé APRÈS `Header.css` (`main.tsx` importe
+`./App` avant `./styles.css`), les modificateurs d'état ne peuvent plus gagner par ordre de document à
+spécificité égale. Ils sont donc écrits en sélecteur composé `.btn-icon.btn-icon--*` (0,2,0), ce qui les
+fait battre la base relocalisée sans jamais relever la spécificité de cette base. C'est la règle du
+projet : on scope la surcharge de composant, on ne touche pas à la primitive globale.
+*/
 .btn-icon--terminal:disabled {
   opacity: 0.4;
   cursor: not-allowed;
@@ -432,7 +414,7 @@ create button would be the control that compresses when a workflow name is long,
   background: none;
 }
 
-.btn-icon--active {
+.btn-icon.btn-icon--active {
   color: var(--text);
   background: var(--border);
   border-color: var(--todo);
@@ -456,25 +438,25 @@ create button would be the control that compresses when a workflow name is long,
   justify-content: center;
 }
 
-.btn-icon--paused {
+.btn-icon.btn-icon--paused {
   color: var(--triage);
 }
 @media (hover: hover) {
-  .btn-icon--paused:hover {
+  .btn-icon.btn-icon--paused:hover {
     color: var(--triage);
   }
 }
-.btn-icon--stopped {
+.btn-icon.btn-icon--stopped {
   color: var(--color-error);
 }
 @media (hover: hover) {
-  .btn-icon--stopped:hover {
+  .btn-icon.btn-icon--stopped:hover {
     color: var(--color-error);
   }
 }
 
 /* Header badge for active sessions */
-.btn-icon--has-indicator {
+.btn-icon.btn-icon--has-indicator {
   position: relative;
 }
 

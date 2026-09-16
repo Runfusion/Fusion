@@ -800,9 +800,10 @@ exactly when the surrounding chrome is gone.
     min-height: calc(var(--space-lg) + var(--space-lg) + var(--space-xs));
   }
 
+  /* FNXC:IconOnlyButtonCanon 2026-09-16-19:05: FN-471 — boîte d'icône canonique mobile au lieu d'un calcul bespoke. */
   .devserver-preview-actions .btn-icon {
-    min-width: calc(var(--space-lg) + var(--space-lg) + var(--space-xs));
-    min-height: calc(var(--space-lg) + var(--space-lg) + var(--space-xs));
+    min-width: var(--icon-button-size-mobile);
+    min-height: var(--icon-button-size-mobile);
   }
 
   .devserver-log-viewer__toolbar {

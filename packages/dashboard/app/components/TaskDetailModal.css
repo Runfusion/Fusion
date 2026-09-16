@@ -2480,7 +2480,7 @@ The canonical Task Detail header group now holds at most two controls: the "…"
   display: inline-flex;
   align-items: center;
   gap: var(--space-xs);
-  min-height: calc(var(--space-2xl) + var(--space-xs));
+  min-height: var(--icon-button-size-mobile);
   padding: 0 var(--space-sm);
   font-size: calc(var(--space-sm) + var(--space-xs) * 0.625);
   line-height: 1;
@@ -3089,9 +3089,10 @@ Feed's copy and expansion actions share one tokenized overlay group so the bound
     -webkit-overflow-scrolling: touch;
   }
 
+  /* FNXC:IconOnlyButtonCanon 2026-09-16-19:05: boîte mobile canonique, en remplacement du calcul bespoke. */
   .task-detail-mobile-back {
-    min-height: calc(var(--space-2xl) + var(--space-xs));
-    min-width: calc(var(--space-2xl) + var(--space-xs));
+    min-height: var(--icon-button-size-mobile);
+    min-width: var(--icon-button-size-mobile);
   }
 
 }
@@ -3640,9 +3641,15 @@ Les pills d’onglets occupent l’espace intérieur disponible dans chaque hôt
     padding-block: var(--ui-density-2xs);
   }
 
+  /*
+  FNXC:IconOnlyButtonCanon 2026-09-16-19:05:
+  FN-471 : ces contrôles d'en-tête sont des boutons icône seule et ne peuvent donc plus grossir jusqu'à
+  `--ui-touch-height`. Ils adoptent la boîte mobile canonique partagée avec la loupe du bandeau et les autres
+  icônes encadrées de l'application. Le jeton `--ui-touch-height` reste utilisé par les onglets et l'en-tête.
+  */
   :is(.task-detail-header-action, .modal-close, .task-detail-header-back-btn) {
-    min-inline-size: var(--ui-touch-height);
-    min-block-size: var(--ui-touch-height);
+    min-inline-size: var(--icon-button-size-mobile);
+    min-block-size: var(--icon-button-size-mobile);
   }
 
   /*

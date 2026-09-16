@@ -663,18 +663,14 @@ The worktree listbox must escape the mobile terminal header's clipped overflow. 
   letter-spacing: 0.04em;
 }
 
+/*
+FNXC:IconOnlyButtonCanon 2026-09-16-19:05:
+FN-471: this control is icon-only, so it re-declared the whole borderless paint at a bespoke 44px box. The
+canonical borderless variant now owns box, paint, colour and transition; only the flex behaviour is local. The
+old 44px square is replaced by the shared 28/36px geometry, not by a weaker guarantee.
+*/
 .terminal-close {
-  display: flex;
   flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  width: 44px;
-  height: 44px;
-  background: none;
-  border: none;
-  color: var(--text-muted);
-  cursor: pointer;
-  transition: color var(--transition-fast), background var(--transition-fast);
 }
 
 .terminal-close:hover {
@@ -1719,9 +1715,10 @@ The Android keyboard-open recurrence can start with a touch-primary visualViewpo
     font-size: 13px;
   }
 
+  /* FNXC:IconOnlyButtonCanon 2026-09-16-19:05: même valeur mobile qu'avant, exprimée par le jeton canonique. */
   .terminal-close {
-    width: 36px;
-    height: 36px;
+    width: var(--icon-button-size-mobile);
+    height: var(--icon-button-size-mobile);
   }
 
   .terminal-toolbar {
