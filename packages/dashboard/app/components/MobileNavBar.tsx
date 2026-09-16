@@ -43,7 +43,7 @@ import type { TaskView } from "../hooks/useViewState";
 import { buildPluginTaskViewId, isPluginViewId } from "../plugins/pluginViewRegistry";
 import { getPluginDashboardViewNavIcon } from "./pluginNavIcon";
 import { ViewDrawerHandle } from "./ViewDrawer";
-import { MOBILE_NAV_SELECTABLE_ITEMS, type MobileNavSelectableItem } from "../../../core/src/board/mobile-nav-primary-items";
+import { MOBILE_NAV_SELECTABLE_ITEMS, resolveMobileNavPrimaryItems, type MobileNavSelectableItem } from "../../../core/src/board/mobile-nav-primary-items";
 
 export interface PublishedMobileNavHeightInput {
   navOffsetHeight: number;
@@ -176,6 +176,15 @@ export interface MobileNavBarProps {
   };
   pluginDashboardViews?: PluginDashboardViewEntry[];
   shellConnectionControl?: ReactNode;
+  /*
+  FNXC:Navigation 2026-09-16-17:41:
+  FN-467: the pill's direct destinations are the project's persisted **Navigation quick access** selection
+  (`mobileNavPrimaryItems`), exactly like the shared tablet/desktop footer row — one setting, both hosts, same order.
+  The value is passed raw: `resolveMobileNavPrimaryItems` owns legacy normalization, deduplication, the cap of 5, and
+  the fallback to the default selection, so no dashboard-side copy of that logic may exist. Omitting the prop keeps the
+  default (Dashboard, Board, Planning, Missions, Mailbox).
+  */
+  quickAccessItems?: readonly string[];
   /** App-owned open state for the mobile navigation popover. */
   navigationMenuOpen?: boolean;
   /** Updates the App-owned mobile popover state. */
@@ -233,6 +242,7 @@ export function MobileNavBar({
   experimentalFeatures,
   pluginDashboardViews = [],
   shellConnectionControl,
+  quickAccessItems,
   navigationMenuOpen = false,
   onUiMenuOpenChange,
 }: MobileNavBarProps) {
@@ -264,7 +274,7 @@ export function MobileNavBar({
 
   /*
   FNXC:NativeShell 2026-09-11-15:01:
-  The navigation pill keeps its popover state controlled by App while the sole trigger is the trailing sibling of the pill's four-destination tablist. Standard mobile keeps its local More drawer; shell identity changes close either transient surface without creating another state owner.
+  The navigation pill keeps its popover state controlled by App while the sole trigger is the trailing sibling of the pill's destination tablist (FN-467: up to five destinations resolved from the project quick-access setting, never a fixed four). Standard mobile keeps its local More drawer; shell identity changes close either transient surface without creating another state owner.
   */
   useEffect(() => {
     setIsMoreOpen(false);
@@ -579,16 +589,16 @@ export function MobileNavBar({
     badgeLabel?: string;
     alpha?: boolean;
   }> = {
-    "command-center": { icon: <Gauge />, labelKey: "nav.commandCenter", fallback: "Dashboard", moreTestId: "mobile-more-item-command-center", isActive: view === "command-center", isAvailable: true, navigate: () => onChangeView("command-center") },
+    "command-center": { icon: <Gauge />, labelKey: "nav.commandCenter", fallback: "Dashboard", moreTestId: "mobile-more-item-command-center", isActive: view === "command-center", isAvailable: true, navigate: (surface) => surface === "primary" ? onChangeView("command-center") : handleMoreAction(() => onChangeView("command-center")) },
     /*
     FNXC:MobileTaskNavigation 2026-08-20-05:47:
     Issue #2226 requires independent mobile footer destinations: Tasks always returns to Board and List remains directly reachable without restoring Header's retired segmented switcher.
     */
-    tasks: { icon: <LayoutGrid />, labelKey: "nav.tasks", fallback: "Tasks", moreTestId: "mobile-more-item-tasks", isActive: view === "board", isAvailable: true, navigate: () => onChangeView("board") },
+    tasks: { icon: <LayoutGrid />, labelKey: "nav.tasks", fallback: "Tasks", moreTestId: "mobile-more-item-tasks", isActive: view === "board", isAvailable: true, navigate: (surface) => surface === "primary" ? onChangeView("board") : handleMoreAction(() => onChangeView("board")) },
     agents: { icon: <Bot />, labelKey: "nav.agents", fallback: "Agents", moreTestId: "mobile-more-item-agents", isActive: view === "agents", isAvailable: true, navigate: (surface) => surface === "primary" ? onChangeView("agents") : handleMoreAction(() => onChangeView("agents")) },
     missions: { icon: <Target />, labelKey: "nav.missions", fallback: "Missions", moreTestId: "mobile-more-item-missions", isActive: view === "missions", isAvailable: true, navigate: (surface) => surface === "primary" ? onChangeView("missions") : handleMoreAction(() => onChangeView("missions")) },
-    chat: { icon: <MessageSquare />, labelKey: "nav.chat", fallback: "Chat", moreTestId: "mobile-more-item-chat", isActive: view === "chat", isAvailable: true, navigate: () => onChangeView("chat"), indicator: chatHasUnreadResponse && view !== "chat", indicatorLabel: t("nav.chatUnreadAriaLabel", "Unread chat response") },
-    mailbox: { icon: <Mail />, labelKey: "nav.mailbox", fallback: "Mailbox", moreTestId: "mobile-more-item-mailbox", isActive: view === "mailbox", isAvailable: true, navigate: () => onChangeView("mailbox"), indicator: mailboxPendingApprovalCount > 0 && view !== "mailbox", indicatorLabel: t("nav.mailboxPendingAriaLabel", "Pending approvals"), badge: mailboxUnreadCount },
+    chat: { icon: <MessageSquare />, labelKey: "nav.chat", fallback: "Chat", moreTestId: "mobile-more-item-chat", isActive: view === "chat", isAvailable: true, navigate: (surface) => surface === "primary" ? onChangeView("chat") : handleMoreAction(() => onChangeView("chat")), indicator: chatHasUnreadResponse && view !== "chat", indicatorLabel: t("nav.chatUnreadAriaLabel", "Unread chat response") },
+    mailbox: { icon: <Mail />, labelKey: "nav.mailbox", fallback: "Mailbox", moreTestId: "mobile-more-item-mailbox", isActive: view === "mailbox", isAvailable: true, navigate: (surface) => surface === "primary" ? onChangeView("mailbox") : handleMoreAction(() => onChangeView("mailbox")), indicator: mailboxPendingApprovalCount > 0 && view !== "mailbox", indicatorLabel: t("nav.mailboxPendingAriaLabel", "Pending approvals"), badge: mailboxUnreadCount },
     /* FNXC:HistoryModalSurface 2026-09-15-04:29: FN-403: History is a modal surface, so it is never the active destination; invoking this entry opens the History modal over the current view. */
     patchnode: { icon: <History />, labelKey: "nav.patchnode", fallback: "History", moreTestId: "mobile-more-item-patchnode", isActive: false, isAvailable: true, navigate: (surface) => surface === "primary" ? onChangeView("patchnode") : handleMoreAction(() => onChangeView("patchnode")) },
     planning: { icon: <Lightbulb />, labelKey: "nav.planning", fallback: "Planning", moreTestId: "mobile-more-item-planning", isActive: view === "planning", isAvailable: true, navigate: (surface) => surface === "primary" ? planningHandler?.() : handleMoreAction(planningHandler), indicator: planningNeedsInput && view !== "planning", indicatorLabel: t("nav.planningNeedsInputAriaLabel", "Planning needs your input"), badge: activePlanningSessionCount },
@@ -614,13 +624,21 @@ export function MobileNavBar({
     "dev-server": { icon: <Monitor />, labelKey: "nav.devServer", fallback: "Dev Server", moreTestId: "mobile-more-item-dev-server", isActive: view === "dev-server" || view === "devserver", isAvailable: Boolean(experimentalFeatures?.devServerView), navigate: (surface) => surface === "primary" ? onChangeView("dev-server") : handleMoreAction(() => onChangeView("dev-server")) },
   };
   /*
-  FNXC:MobileDrawer 2026-09-10-04:41:
-  Board is the permanent mobile background, not a navigation destination. Keep the persisted standard-mobile `tasks` preference intact while excluding Tasks from both the pill's four direct destinations and its overflow registry.
+  FNXC:MobileDrawer 2026-09-16-17:41:
+  FN-467 replaces the former fixed four-destination pill (and its hard-coded exclusion of Board) with the project's
+  persisted **Navigation quick access** selection: up to five resolved destinations in the operator's order, the
+  hamburger always last. Board (`tasks`) is now an ordinary destination — a direct tab when selected, a menu entry
+  otherwise — because the drawer-returns-to-Kanban argument never justified making it unreachable from the menu too.
+  `patchnode` stays excluded: History is a modal surface, not a navigation destination.
   */
-  const primaryDestinationItems: MobileNavSelectableItem[] = ["command-center", "planning", "chat", "mailbox"];
+  /* Computed inline rather than memoized: this statement sits AFTER the component's early returns, so a hook here would
+  change the hook count between renders. The resolver is a pure array reduce over at most a handful of ids. */
+  const primaryDestinationItems: MobileNavSelectableItem[] = resolveMobileNavPrimaryItems({
+    mobileNavPrimaryItems: quickAccessItems ? [...quickAccessItems] : undefined,
+  }).primaryItems;
   const effectivePrimaryItems = primaryDestinationItems.filter((item) => destinationRegistry[item].isAvailable);
   const effectiveOmittedItems = MOBILE_NAV_SELECTABLE_ITEMS
-    .filter((item) => !primaryDestinationItems.includes(item) && item !== "patchnode" && item !== "tasks")
+    .filter((item) => !primaryDestinationItems.includes(item) && item !== "patchnode")
     .filter((item) => destinationRegistry[item].isAvailable);
   const isMoreActive = effectiveOmittedItems.some((item) => destinationRegistry[item].isActive)
     || view === "graph"

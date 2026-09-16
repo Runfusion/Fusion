@@ -12,6 +12,37 @@ const mobileNavBarCss = readAppFile("components/MobileNavBar.css");
 const overflowMenuRule = alphaDesktopActionBarCss.match(/\.desktop-action-bar__menu\s*\{([^}]*)\}/s)?.[1] ?? "";
 const overflowCorridorRule = alphaDesktopActionBarCss.match(/\.desktop-action-bar__more::before\s*\{([^}]*)\}/s)?.[1] ?? "";
 
+/*
+ * FN-467 : le centrage réel du groupe « rangée directe + More » n'est pas mesurable dans jsdom (aucune mise en page).
+ * La preuve exécutable porte donc sur le CONTRAT de pistes déclaré par la feuille de style : on découpe la valeur en
+ * pistes de premier niveau (parenthèses respectées) puis on compare la première et la dernière par égalité de chaînes.
+ */
+function ruleOf(css: string, selector: string): string {
+  return css.match(new RegExp(`(?:^|\\n)${selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\{([^}]*)\\}`))?.[1] ?? "";
+}
+
+function declarationOf(rule: string, property: string): string {
+  return rule.match(new RegExp(`(?:^|[;{\\s])${property}\\s*:\\s*([^;]+)`))?.[1]?.trim() ?? "";
+}
+
+function splitTopLevelTracks(value: string): string[] {
+  const tracks: string[] = [];
+  let depth = 0;
+  let current = "";
+  for (const char of value) {
+    if (char === "(") depth += 1;
+    if (char === ")") depth -= 1;
+    if (depth === 0 && /\s/.test(char)) {
+      if (current.trim()) tracks.push(current.trim().replace(/\s+/g, " "));
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+  if (current.trim()) tracks.push(current.trim().replace(/\s+/g, " "));
+  return tracks;
+}
+
 vi.mock("../../hooks/useExecutorStats", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../hooks/useExecutorStats")>();
   return { ...actual, useExecutorStats: vi.fn() };
@@ -49,6 +80,70 @@ describe("DesktopActionBar", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  /*
+   * FN-467 cas (a) — reproduction automatisée du symptôme : sur la base, `.desktop-action-bar` était un conteneur flex
+   * sans AUCUNE piste latérale, donc l'extraction ci-dessous ne produisait rien et l'égalité des deux pistes échouait.
+   */
+  it("déclare deux pistes latérales strictement identiques autour du groupe centré", () => {
+    const barRule = ruleOf(alphaDesktopActionBarCss, ".desktop-action-bar");
+    expect(barRule).toBeTruthy();
+    expect(declarationOf(barRule, "display")).toBe("grid");
+
+    const tracks = splitTopLevelTracks(declarationOf(barRule, "grid-template-columns"));
+    expect(tracks).toHaveLength(3);
+    expect(tracks[0]).toBe(tracks[2]);
+    expect(tracks[1]).toMatch(/^(auto|max-content|min-content|fit-content\(.*\))$/);
+    expect(tracks[0]).not.toMatch(/\d+px/);
+
+    const centerRule = ruleOf(alphaDesktopActionBarCss, ".desktop-action-bar__center");
+    expect(declarationOf(centerRule, "grid-column")).toBe("2");
+
+    const rightRule = ruleOf(alphaDesktopActionBarCss, ".desktop-action-bar__right");
+    expect(rightRule).not.toMatch(/margin-inline-start:\s*auto/);
+    expect(declarationOf(rightRule, "grid-column")).toBe("3");
+    expect(declarationOf(rightRule, "margin-inline-end")).toBe("var(--touch-target-min-size)");
+
+    const placeholderRule = ruleOf(alphaDesktopActionBarCss, ".desktop-action-bar > .dashboard-window-visibility-toggle__placeholder");
+    expect(placeholderRule).toBeTruthy();
+    expect(declarationOf(placeholderRule, "grid-column")).toBe("3");
+    expect(declarationOf(placeholderRule, "grid-row")).toBe("1");
+    expect(declarationOf(placeholderRule, "inline-size")).toBe("var(--touch-target-min-size)");
+    expect(placeholderRule).not.toMatch(/\d+px/);
+  });
+
+  /* FN-467 cas (b) : les cinq accès rapides ET le déclencheur More appartiennent au même groupe centré, dans l'ordre persisté. */
+  it("regroupe les accès rapides et More dans l'unique groupe centré", () => {
+    render(<DesktopActionBar entries={entries(vi.fn(), { quickAccessEntryIds: ["mailbox", "missions", "board", "planning", "command-center"] })} activeId="board" tasks={[]} onToggleTerminal={vi.fn()} />);
+    const centers = document.querySelectorAll(".desktop-action-bar__center");
+    expect(centers).toHaveLength(1);
+    const center = centers[0] as HTMLElement;
+
+    expect(Array.from(center.querySelectorAll<HTMLElement>(".desktop-action-bar__action")).map((button) => button.dataset.testid)).toEqual([
+      "desktop-nav-mailbox",
+      "desktop-nav-missions",
+      "desktop-nav-board",
+      "desktop-nav-planning",
+      "desktop-nav-command-center",
+      "desktop-nav-more",
+    ]);
+    expect(center).not.toContainElement(screen.getByTestId("desktop-capacity-count"));
+    expect(center).not.toContainElement(screen.getByTestId("desktop-nav-settings"));
+    expect(center).not.toContainElement(screen.getByTestId("desktop-nav-terminal"));
+
+    const menu = openOverflowMenu();
+    for (const testId of ["desktop-nav-mailbox", "desktop-nav-missions", "desktop-nav-board", "desktop-nav-planning", "desktop-nav-command-center"]) {
+      expect(within(menu).queryByTestId(testId)).toBeNull();
+    }
+  });
+
+  /* FN-467 cas (c) : contrôle de breakpoint — le footer partagé tablette/ordinateur est le seul rendu, la pill mobile est masquée. */
+  it("reste le seul propriétaire de navigation basse sur tablette et ordinateur", () => {
+    render(<DesktopActionBar entries={entries()} activeId="board" tasks={[]} />);
+    expect(screen.getByTestId("desktop-action-bar")).toBeInTheDocument();
+    expect(document.querySelector(".mobile-nav-bar")).toBeNull();
+    expect(mobileNavBarCss).toMatch(/html:is\(\[data-viewport-mode="tablet"\], \[data-viewport-mode="desktop"\]\) \.mobile-nav-bar\s*\{\s*display:\s*none/);
   });
 
   it("affiche le footer principal sans les destinations du dock ou de Done", () => {

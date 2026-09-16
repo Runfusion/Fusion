@@ -2383,7 +2383,9 @@ describe("official dashboard design production wiring", () => {
     });
 
     render(<App />);
-    fireEvent.click(await screen.findByTestId("mobile-nav-tab-chat"));
+    /* FN-467: Chat is not promotable into the quick-access row, so the phone menu is its single mobile owner. */
+    fireEvent.click(await screen.findByTestId("mobile-menu-trigger"));
+    fireEvent.click(await screen.findByTestId("mobile-more-item-chat"));
     const dialog = await screen.findByRole("dialog", { name: "Chat" });
     fireEvent.click(await within(dialog).findByTestId(`chat-session-${appChatSession.id}`));
     const input = await within(dialog).findByTestId("chat-input");
@@ -2475,13 +2477,42 @@ describe("official dashboard design production wiring", () => {
     await waitFor(() => expect(screen.getByTestId("mobile-menu-trigger")).toBeInTheDocument());
     expect(screen.getByTestId("dashboard-project-shell").querySelector(".project-content")).toHaveClass("project-content--with-mobile-nav");
     expect(screen.queryByTestId("mobile-nav-tab-more")).toBeNull();
+    /*
+     * FN-467: the pill is driven by the project quick-access selection, so this fixture's `["settings", "planning"]`
+     * resolves to Planning alone — Settings is not a promotable destination — and Board is absent because it was not
+     * selected, not because the pill hard-codes four destinations.
+     */
     expect(Array.from(document.querySelectorAll<HTMLElement>(".mobile-nav-bar--native > .mobile-nav-tab")).map((tab) => tab.dataset.testid)).toEqual([
-      "mobile-nav-tab-command-center",
       "mobile-nav-tab-planning",
-      "mobile-nav-tab-chat",
-      "mobile-nav-tab-mailbox",
     ]);
+    expect(screen.queryByTestId("mobile-nav-tab-settings")).toBeNull();
     expect(screen.queryByTestId("mobile-nav-tab-tasks")).toBeNull();
+  });
+
+  /*
+   * FN-467 cas (m) : la pill du téléphone et la rangée directe du footer partagé lisent le MÊME réglage projet, dans le
+   * même ordre, et l'aperçu avant enregistrement reclasse les deux surfaces.
+   */
+  it.each(["mobile", "desktop"] as const)("aligne la navigation d'accès rapide de %s sur le réglage projet", async (viewport) => {
+    mockUseViewportMode.mockReturnValue(viewport);
+    vi.mocked(fetchSettings).mockResolvedValue({ ...defaultSettings, mobileNavPrimaryItems: ["mailbox", "missions", "tasks"], navigationPlacement: "footer" });
+
+    render(<App />);
+    if (viewport === "mobile") {
+      await waitFor(() => expect(screen.getByTestId("mobile-menu-trigger")).toBeInTheDocument());
+      await waitFor(() => expect(Array.from(document.querySelectorAll<HTMLElement>(".mobile-nav-bar--native > .mobile-nav-tab")).map((tab) => tab.dataset.testid)).toEqual([
+        "mobile-nav-tab-mailbox",
+        "mobile-nav-tab-missions",
+        "mobile-nav-tab-tasks",
+      ]));
+    } else {
+      await waitFor(() => expect(document.querySelector(".desktop-action-bar__scroller")).not.toBeNull());
+      await waitFor(() => expect(Array.from(document.querySelectorAll<HTMLElement>(".desktop-action-bar__scroller .desktop-action-bar__action")).map((button) => button.dataset.testid)).toEqual([
+        "desktop-nav-mailbox",
+        "desktop-nav-missions",
+        "desktop-nav-board",
+      ]));
+    }
   });
 
   it("keeps Chat and Notes as inline dock tools without an expanded owner", async () => {
@@ -3295,9 +3326,11 @@ describe("App chat unread response indicator", () => {
       );
     });
 
-    const mobileChatNav = screen.getByTestId("mobile-nav-tab-chat");
+    /* FN-467: Chat moved from the fixed pill row into the phone navigation menu; the indicator contract is unchanged. */
+    fireEvent.click(screen.getByTestId("mobile-menu-trigger"));
+    const mobileChatNav = screen.getByTestId("mobile-more-item-chat");
     expect(mobileChatNav).toBeInTheDocument();
-    expect(mobileChatNav.querySelector(".mobile-nav-chat-unread-dot")).toBeNull();
+    expect(mobileChatNav.querySelector(".mobile-more-item-icon-dot")).toBeNull();
   });
 
   it("shows unread indicator for planner assistant messages visible in the common Chat feed", async () => {

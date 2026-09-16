@@ -142,8 +142,12 @@ Wrap every tab icon in the same token-sized icon slot and keep unread/pending do
 }
 
 /*
-FNXC:NativeShell 2026-09-10-03:16:
-The navigation pill stays visually overlaid but must never obscure the final content or system gesture area. Its four destinations remain the only tablist children and the trailing hamburger is an equally sized semantic sibling; the scroller reserves the measured pill border box plus its shared system placement exactly once.
+FNXC:NativeShell 2026-09-16-17:41:
+The navigation pill stays visually overlaid but must never obscure the final content or system gesture area. FN-467: its
+destinations are the project **Navigation quick access** selection — up to five resolved tabs, never a fixed four — and
+they remain the only tablist children, with the trailing hamburger always the last, equally sized semantic sibling. Six
+equal slots must therefore fit at 375px without dropping any target below --touch-target-min-size; the scroller reserves
+the measured pill border box plus its shared system placement exactly once.
 
 FNXC:MobilePillKeyboard 2026-09-16-16:27:
 FN-463: the official mobile pill stays anchored to the bottom of the screen regardless of the software keyboard. It remains visible and interactive, but it NEVER lifts above the keyboard: `--mobile-nav-pill-bottom` is `--mobile-nav-system-offset` plus `--mobile-nav-floating-gap` only, with no term derived from the visual viewport, so opening, moving, and closing the keyboard leave its resolved bottom position numerically unchanged. The legacy non-pill bar keeps its own keyboard-open hide rule above.

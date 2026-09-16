@@ -200,13 +200,22 @@ describe("Mobile Feature Access Regression Guard", () => {
     expect(screen.getByTestId("mobile-more-item-activity")).toBeInTheDocument();
   });
 
-  it("keeps Board as the permanent background without duplicate navigation", () => {
+  /*
+   * FN-467 : Board n'est plus exclu de la navigation mobile. L'invariant réel n'est pas son absence mais son unicité :
+   * selon la sélection d'accès rapide, il apparaît dans EXACTEMENT une surface — onglet direct OU menu — jamais dans
+   * les deux, le hamburger restant toujours le dernier enfant de la pill.
+   */
+  it("rend Board dans exactement une surface de navigation selon la sélection", () => {
     const props = createDefaultMobileNavProps();
-    render(<MobileNavBar {...props} view="list" navigationMenuOpen />);
-
-    expect(screen.queryByTestId("mobile-nav-tab-tasks")).toBeNull();
+    const selected = render(<MobileNavBar {...props} view="list" navigationMenuOpen quickAccessItems={["tasks", "planning"]} />);
+    expect(screen.getByTestId("mobile-nav-tab-tasks")).toBeInTheDocument();
     expect(screen.queryByTestId("mobile-more-item-tasks")).toBeNull();
-    expect(document.querySelectorAll(".mobile-nav-bar--native > .mobile-nav-tab")).toHaveLength(4);
+    expect(document.querySelector(".mobile-nav-bar--native")?.lastElementChild).toBe(screen.getByTestId("mobile-menu-trigger"));
+    selected.unmount();
+
+    render(<MobileNavBar {...props} view="list" navigationMenuOpen quickAccessItems={["planning"]} />);
+    expect(screen.queryByTestId("mobile-nav-tab-tasks")).toBeNull();
+    expect(screen.getByTestId("mobile-more-item-tasks")).toBeInTheDocument();
     expect(document.querySelector(".mobile-nav-bar--native")?.lastElementChild).toBe(screen.getByTestId("mobile-menu-trigger"));
   });
 
@@ -267,14 +276,18 @@ describe("Mobile Feature Access Regression Guard", () => {
     expect(screen.getByTestId("mobile-more-item-github")).toBeDefined();
     expect(screen.getByTestId("mobile-more-item-usage")).toBeDefined();
     expect(screen.queryByTestId("mobile-more-item-reliability")).toBeNull();
-    expect(screen.queryByTestId("mobile-more-item-chat")).toBeNull();
+    /* FN-467 : Chat n'étant pas promouvable en accès rapide, le menu en est désormais le propriétaire unique. */
+    expect(screen.getByTestId("mobile-more-item-chat")).toBeDefined();
+    expect(screen.queryByTestId("mobile-nav-tab-chat")).toBeNull();
     expect(screen.queryByTestId("mobile-more-item-nodes")).toBeNull();
     expect(screen.getByTestId("mobile-more-item-settings")).toBeDefined();
   });
 
   it("keeps enabled official destinations reachable without persisted footer customization", () => {
     render(<MobileNavBar {...createDefaultMobileNavProps()} navigationMenuOpen showSkillsTab={false} experimentalFeatures={{ insights: false, memoryView: false }} />);
-    expect(screen.getByTestId("mobile-more-item-missions")).toBeInTheDocument();
+    /* FN-467 : sans sélection persistée, Missions fait partie des cinq destinations par défaut de la rangée directe. */
+    expect(screen.getByTestId("mobile-nav-tab-missions")).toBeInTheDocument();
+    expect(screen.queryByTestId("mobile-more-item-missions")).toBeNull();
     expect(screen.queryByTestId("mobile-more-item-skills")).toBeNull();
   });
 
@@ -298,14 +311,19 @@ describe("Mobile Feature Access Regression Guard", () => {
     expect(props.onChangeView).toHaveBeenCalledWith("command-center");
   });
 
-  it("chat is accessible via the bottom nav while remaining absent from the More sheet", () => {
+  /*
+   * FN-467 : Chat n'est pas une destination promouvable en accès rapide (décision FN-446), il vit donc désormais dans
+   * le menu de navigation du téléphone, qui en est le propriétaire unique. Naviguer depuis le menu referme le menu.
+   */
+  it("chat reste joignable une seule fois, depuis le menu de navigation", () => {
     const props = createDefaultMobileNavProps();
-    render(<MobileNavBar {...props} view="board" />);
+    const onUiMenuOpenChange = vi.fn();
+    render(<MobileNavBar {...props} view="board" navigationMenuOpen onUiMenuOpenChange={onUiMenuOpenChange} />);
 
-    fireEvent.click(screen.getByTestId("mobile-nav-tab-chat"));
+    expect(screen.queryByTestId("mobile-nav-tab-chat")).toBeNull();
+    fireEvent.click(screen.getByTestId("mobile-more-item-chat"));
     expect(props.onChangeView).toHaveBeenCalledWith("chat");
-
-    expect(screen.queryByTestId("mobile-more-item-chat")).toBeNull();
+    expect(onUiMenuOpenChange).toHaveBeenCalledWith(false);
   });
 
   it("mobile nav bar renders only on mobile viewport and hides for modal, desktop, or project overview", () => {

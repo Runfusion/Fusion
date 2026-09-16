@@ -2938,6 +2938,13 @@ function AppInner() {
           onRunScript={runScriptWithNav}
         />
       )}
+      {/*
+      FNXC:Navigation 2026-09-16-17:41:
+      FN-467: the phone pill and the shared tablet/desktop footer row read the SAME live project setting
+      (`mobileNavPrimaryItems`), so a Settings preview before save reclassifies both surfaces at once instead of leaving
+      the phone on a hard-coded list. The raw persisted value is passed through; MobileNavBar delegates every
+      normalization step (legacy ids, dedup, cap, default fallback) to the core resolver.
+      */}
       <MobileNavBar
         view={taskView}
         onChangeView={mobileNavVisible ? handleTaskViewChange : () => {}}
@@ -2946,6 +2953,7 @@ function AppInner() {
         modalOpen={modalManager.anyModalOpen && !sharedModalDrawerOpen}
         keyboardOpen={mobileNavKeyboardOpen}
         keyboardMetrics={{ keyboardOverlap, viewportHeight, viewportOffsetTop }}
+        quickAccessItems={mobileNavPrimaryItems}
         navigationMenuOpen={navigationMenuOpen}
         onUiMenuOpenChange={setUiMenuOpen}
         onOpenSettings={openSettingsWithNav}
