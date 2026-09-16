@@ -30,7 +30,7 @@ vi.mock("../ArtifactImageViewer", () => ({
 }));
 vi.mock("lucide-react", () => ({
   Mail: () => null, Send: () => null, Inbox: () => null, Bot: () => null, Trash2: () => null, Archive: () => null,
-  CheckCheck: () => null, Loader2: () => null, RefreshCw: () => null, MessageSquare: () => null, User: () => null,
+  CheckCheck: () => null, Loader2: () => null, RefreshCw: () => null, Filter: () => null, MessageSquare: () => null, User: () => null,
   X: () => null, Check: () => null, ChevronRight: () => null, ChevronDown: () => null, AlertCircle: () => null,
   ChevronLeft: () => null, Map: () => null, Flag: () => null, Lightbulb: () => null, BarChart3: () => null, Target: () => null, CircleAlert: () => null,
 }));

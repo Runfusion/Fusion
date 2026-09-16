@@ -386,10 +386,16 @@ export function createSmokeHtml(options = {}) {
     </section>
   `;
 
+  /*
+  FNXC:MailboxTwoTabs 2026-09-16-16:53:
+  FN-464 made the mailbox header contextual: the inbox carries the scope filter (with the pending
+  approvals badge) and Mark all read, the outbox carries Compose, and the manual refresh control is gone.
+  These fixtures model that shipped chrome so the mobile overflow measurement stays truthful.
+  */
   const mailboxMobileHeaderFixtures = [
-    ["unread-inbox", '<span class="mailbox-unread-badge">9</span><button class="btn btn-sm btn-primary" data-testid="mailbox-header-compose" type="button"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M2 2h10v10H2z"/></svg><span>Compose</span></button><button class="btn btn-sm btn-secondary" data-testid="mailbox-mark-all-read" type="button"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M2 7l3 3 7-7"/></svg><span>Mark all read</span></button><button class="btn-icon" data-testid="mailbox-refresh" type="button" aria-label="Refresh"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M2 7a5 5 0 1 0 2-4"/></svg></button>'],
-    ["read-inbox", '<button class="btn btn-sm btn-primary" data-testid="mailbox-header-compose" type="button"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M2 2h10v10H2z"/></svg><span>Compose</span></button><button class="btn-icon" data-testid="mailbox-refresh" type="button" aria-label="Refresh"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M2 7a5 5 0 1 0 2-4"/></svg></button>'],
-    ["non-inbox", '<button class="btn btn-sm btn-primary" data-testid="mailbox-header-compose" type="button"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M2 2h10v10H2z"/></svg><span>Compose</span></button><button class="btn-icon" data-testid="mailbox-refresh" type="button" aria-label="Refresh"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M2 7a5 5 0 1 0 2-4"/></svg></button>'],
+    ["unread-inbox", '<span class="mailbox-unread-badge">9</span><button class="btn btn-sm btn-secondary mailbox-inbox-filter" data-testid="mailbox-inbox-filter" type="button" aria-haspopup="menu" aria-expanded="false"><svg class="mailbox-inbox-filter-icon" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M2 3h10L8 8v4L6 11V8z"/></svg><span>Filter</span><span class="mailbox-tab-badge" data-testid="mailbox-approvals-pending-badge">3</span></button><button class="btn btn-sm btn-secondary" data-testid="mailbox-mark-all-read" type="button"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M2 7l3 3 7-7"/></svg><span>Mark all read</span></button>'],
+    ["read-inbox", '<button class="btn btn-sm btn-secondary mailbox-inbox-filter" data-testid="mailbox-inbox-filter" type="button" aria-haspopup="menu" aria-expanded="false"><svg class="mailbox-inbox-filter-icon" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M2 3h10L8 8v4L6 11V8z"/></svg><span>Filter</span></button><button class="btn btn-sm btn-secondary" data-testid="mailbox-mark-all-read" type="button" disabled><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M2 7l3 3 7-7"/></svg><span>Mark all read</span></button>'],
+    ["non-inbox", '<button class="btn btn-sm btn-primary" data-testid="mailbox-header-compose" type="button"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M2 2h10v10H2z"/></svg><span>Compose</span></button>'],
   ].map(([state, actions]) => `
     <section class="mailbox-view mailbox-view--mobile" data-smoke="mailbox-mobile-header-${state}" style="width: 100%; max-width: 20rem;">
       <header class="view-header">

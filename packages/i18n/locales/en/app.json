@@ -3517,7 +3517,6 @@
     "outbox": "Outbox",
     "outboxTab": "Outbox",
     "pending": "Pending",
-    "refreshTitle": "Refresh",
     "reply": "Reply",
     "replyButton": "Reply",
     "replyingTo": "Replying to",
@@ -3588,7 +3587,11 @@
       "taskWedge": "{{taskId}} needs attention",
       "duplicateDecision": "{{taskId}} duplicate decision",
       "planningClarification": "Planning clarification"
-    }
+    },
+    "filter": "Filter",
+    "filterTitle": "Filter inbox",
+    "filterMenuLabel": "Inbox scope",
+    "filterPendingApprovalsLabel": "Filter inbox — {{count}} pending approvals"
   },
   "memory": {
     "auditChecksTitle": "Audit Checks",

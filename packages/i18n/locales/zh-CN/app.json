@@ -3508,7 +3508,6 @@
     "outbox": "发件箱",
     "outboxTab": "发件箱",
     "pending": "待定",
-    "refreshTitle": "刷新",
     "reply": "回复",
     "replyButton": "回复",
     "replyingTo": "回复 {{preview}}",
@@ -3579,7 +3578,11 @@
       "taskWedge": "{{taskId}} 需要处理",
       "duplicateDecision": "{{taskId}} 重复判定",
       "planningClarification": "规划澄清"
-    }
+    },
+    "filter": "筛选",
+    "filterTitle": "筛选收件箱",
+    "filterMenuLabel": "收件箱范围",
+    "filterPendingApprovalsLabel": "筛选收件箱 — {{count}} 项待处理审批"
   },
   "memory": {
     "auditChecksTitle": "审计检查",
