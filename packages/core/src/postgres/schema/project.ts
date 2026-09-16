@@ -559,6 +559,18 @@ export const legacyTaskReviewerRuns = projectSchema.table("task_reviewer_runs", 
   primaryKey({ columns: [t.projectId, t.id] }),
   index("idxLegacyTaskReviewerRunsTask").on(t.projectId, t.taskId),
   index("idxLegacyTaskReviewerRunsStatus").on(t.projectId, t.status),
+  /*
+  FNXC:ReviewLaneDispatch 2026-09-16-13:22 (#3619 review G1/C2):
+  The live slot is one unfinished attempt PER CARD: keyed on (projectId, taskId) and predicated on
+  both invalidated_at IS NULL AND completed_at IS NULL, mirroring the sweep classifier's own live
+  definition. The earlier draft keyed on the reviewer agent and dropped completed_at, so a completed
+  (e.g. dispatch-failed) attempt held the slot forever and the sweep's retry could never open a new
+  row. `migrations/0084_stas_205_review_lane_ledger.sql` is the source of truth; the drift probe in
+  schema-applier.ts is definition-aware so installs with the old definition re-converge.
+  */
+  uniqueIndex("task_reviewer_runs_live_unique")
+    .on(t.projectId, t.taskId)
+    .where(sql`${t.invalidatedAt} IS NULL AND ${t.completedAt} IS NULL`),
 ]);
 
 // ── Distributed task ID allocator ────────────────────────────────────
@@ -685,7 +697,7 @@ export const taskLifecycleEvents = projectSchema.table("task_lifecycle_events", 
 }, (t) => [
   primaryKey({ columns: [t.projectId, t.seq] }),
   unique("task_lifecycle_events_project_event_unique").on(t.projectId, t.eventId),
-  check("task_lifecycle_events_type_check", sql`${t.eventType} IN ('task:deleted')`),
+  check("task_lifecycle_events_type_check", sql`${t.eventType} IN ('task:deleted', 'task:entered-review')`),
   index("idxTaskLifecycleEventsTask").on(t.projectId, t.taskId),
 ]);
 

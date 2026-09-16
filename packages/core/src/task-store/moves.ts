@@ -9,6 +9,7 @@
 import {type TaskStore, type MoveTaskOptions, type MoveTaskInternalOptions, storeLog} from "../store.js";
 import { buildPatchnodeEntryInput } from "../board/patchnode.js";
 import { appendPatchnodeEntryInTransaction } from "./async/async-patchnode.js";
+import { appendTaskLifecycleEventInTransaction } from "./lifecycle-outbox.js";
 import * as schema from "../postgres/schema/index.js";
 import {TaskDeletedError, HandoffInvariantViolationError, TransitionRejectionError} from "./errors.js";
 
@@ -1262,6 +1263,37 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
           layer.projectId ?? "",
           buildPatchnodeEntryInput(task, "completed", task.columnMovedAt ?? movedAt),
         );
+      }
+      /*
+      FNXC:ReviewLaneDispatch 2026-09-09 (STAS-205):
+      Record lane entry as a lifecycle fact in the same transaction that moves the row, so
+      no entry path can produce a card in review with no committed evidence of how it got
+      there. Engine, scheduler, workflow graph, completion handoff, dashboard drag, and the
+      CLI bundle all funnel through this function, which is why the guarantee lives here
+      rather than at any call site; `moveSource` makes the path attributable from data.
+      */
+      /*
+      FNXC:ReviewLaneDispatch 2026-09-16-13:22 (#3619 review C3):
+      Entry detection is set membership over the board's REVIEW-family lanes (`resolveReviewColumns`
+      = merge-orchestration ∪ mergeBlocker ∪ human-review columns), the same broad set the handoff
+      guard above uses — with the same legacy fallback when no IR resolves. Comparing only against
+      `moveLifecycle.review`'s single lane missed boards whose review responsibility splits across
+      columns: a card entering a merge-blocker review lane left no entered-review evidence at all.
+      */
+      if ((moveReviewColumns ?? LEGACY_REVIEW_LANES).has(toColumn) && fromColumn !== toColumn) {
+        await appendTaskLifecycleEventInTransaction(tx, {
+          projectId: layer.projectId ?? "",
+          eventType: "task:entered-review",
+          taskId: id,
+          occurredAt: movedAt,
+          payload: {
+            taskId: id,
+            previousColumn: fromColumn,
+            toColumn,
+            enteredAt: movedAt,
+            actor: moveSource,
+          },
+        });
       }
 
       // Dequeue from merge queue on column exit (if leaving in-review).
