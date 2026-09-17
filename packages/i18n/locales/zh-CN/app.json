@@ -1252,6 +1252,7 @@
   "chat": {
     "archive": "归档",
     "attachFiles": "附加文件",
+    "backToConversations": "",
     "cancel": "取消",
     "cancelButton": "取消",
     "clearConversationFailed": "清除对话失败",

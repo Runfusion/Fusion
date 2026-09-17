@@ -1252,6 +1252,7 @@
   "chat": {
     "archive": "보관",
     "attachFiles": "파일 첨부",
+    "backToConversations": "",
     "cancel": "취소",
     "cancelButton": "취소",
     "clearConversationFailed": "대화 초기화 실패",
