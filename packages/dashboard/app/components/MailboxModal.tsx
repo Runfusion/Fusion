@@ -85,6 +85,14 @@ type MailboxInboxScope = "all" | "structural" | "completions" | "archived" | "ag
 
 type MailboxCollection = "inbox" | "outbox" | "completions" | "archived" | "agents";
 
+/**
+ * FNXC:LifecycleColumnCensus 2026-09-17-22:56:
+ * DELIBERATE-LITERAL — archived is a mailbox folder, independent of workflow lifecycle columns.
+ */
+function isMailboxArchivedCollection(collection: MailboxCollection): boolean {
+  return collection === "archived";
+}
+
 const MAILBOX_INBOX_SCOPES: MailboxInboxScope[] = ["all", "structural", "completions", "archived", "agents"];
 
 function resolveMailboxCollection(tab: MailboxTab, scope: MailboxInboxScope): MailboxCollection {
@@ -550,7 +558,7 @@ export function MailboxModal({
     if (!isOpen) return;
     if (activeCollection === "inbox" || activeCollection === "completions") loadInbox();
     else if (activeCollection === "outbox") loadOutbox();
-    else if (activeCollection === "archived") loadArchivedInbox();
+    else if (isMailboxArchivedCollection(activeCollection)) loadArchivedInbox();
   }, [isOpen, activeCollection, loadInbox, loadOutbox, loadArchivedInbox]);
 
   // Load agent mailbox when selected
@@ -587,7 +595,7 @@ export function MailboxModal({
         void loadInbox();
       } else if (activeCollection === "outbox") {
         void loadOutbox();
-      } else if (activeCollection === "archived") {
+      } else if (isMailboxArchivedCollection(activeCollection)) {
         void loadArchivedInbox();
       }
 
@@ -784,7 +792,7 @@ export function MailboxModal({
       closeMessageIfTarget(id);
       if (activeCollection === "inbox" || activeCollection === "completions") loadInbox();
       else if (activeCollection === "outbox") loadOutbox();
-      else if (activeCollection === "archived") loadArchivedInbox();
+      else if (isMailboxArchivedCollection(activeCollection)) loadArchivedInbox();
       else if (selectedAgentId === ALL_AGENTS_MAILBOX_ID) loadAllAgentsMailbox();
       else if (selectedAgentId) loadAgentMailbox(selectedAgentId);
       void refreshUnreadCount();
@@ -804,7 +812,7 @@ export function MailboxModal({
       // Refresh current tab
       if (activeCollection === "inbox" || activeCollection === "completions") loadInbox();
       else if (activeCollection === "outbox") loadOutbox();
-      else if (activeCollection === "archived") loadArchivedInbox();
+      else if (isMailboxArchivedCollection(activeCollection)) loadArchivedInbox();
       else if (selectedAgentId === ALL_AGENTS_MAILBOX_ID) loadAllAgentsMailbox();
       else if (selectedAgentId) loadAgentMailbox(selectedAgentId);
       addToast?.(t("mailbox.messageDeleted", "Message deleted"), "success");
@@ -1414,7 +1422,7 @@ export function MailboxModal({
                 className="mailbox-tabs--collection"
               />
               {/* Inbox Tab */}
-              {activeCollection === "archived" && (
+              {isMailboxArchivedCollection(activeCollection) && (
                 <div className="mailbox-list" data-testid="mailbox-archived-list">
                   {archivedInbox?.messages.length === 0 && <div className="mailbox-empty" data-testid="mailbox-archived-empty">{t("mailbox.noArchivedMessages", "No archived messages")}</div>}
                   {archivedInbox?.messages.map((message) => (

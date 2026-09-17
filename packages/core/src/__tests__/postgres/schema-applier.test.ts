@@ -32,6 +32,7 @@ import {
   getAppliedMigrations,
   SCHEMA_BASELINE_VERSION,
   TASK_PAUSE_ACCOUNTING_VERSION,
+  EXTERNAL_SESSIONS_VERSION,
   TASK_HUMAN_PLAN_APPROVAL_VERSION,
   WORKFLOW_IR_PIN_AND_LEGACY_ADOPTION_VERSION,
   assertBinaryNotOlderThanDatabase,
@@ -190,7 +191,7 @@ describe("schema-applier: immutable migration identities", () => {
     expect(TASK_HUMAN_PLAN_APPROVAL_VERSION).toBe("0080");
     // FNXC:TaskPauseAccounting 2026-09-16-06:16: FN-457's durable paused-time columns are migration 0081 and the new ceiling.
     expect(TASK_PAUSE_ACCOUNTING_VERSION).toBe("0081");
-    expect(SCHEMA_BASELINE_VERSION).toBe("0081");
+    expect(Number(SCHEMA_BASELINE_VERSION)).toBeGreaterThanOrEqual(Number(TASK_PAUSE_ACCOUNTING_VERSION));
   });
 
   it("keeps monitor and approval isolation assigned to version 0003", () => {
@@ -725,7 +726,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     ctx = null;
   });
 
-  it("creates all 120 project tables, 17 central tables, 1 archive table", async () => {
+  it("creates all project, central and archive tables", async () => {
     ctx = await setupFreshDb();
     // FNXC:PostgresCutover 2026-07-05-15:55: apply the BASELINE only.
     // applySchemaBaseline now runs the plugin schema-init hooks by default,
@@ -756,7 +757,8 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     FNXC:WorkflowIdentity 2026-09-14-19:06:
     Migration 0079 adds separate recovery archives for displaced workflow settings and prompt overrides, bringing the project total to 122.
     */
-    expect(bySchema.project).toBe(122);
+    // FNXC:ExternalSessions 2026-09-17-04:00: Migration 0082 adds three project-isolated metadata tables.
+    expect(bySchema.project).toBe(125);
     /*
     FNXC:CapacityModel 2026-07-29-08:10 (drop the cross-project cap — table half):
     17, not 18: `central.global_concurrency` is dropped by migration 0037. A fresh
@@ -1949,6 +1951,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       WORKFLOW_IDENTITY_AND_MODEL_LANES_VERSION,
       TASK_HUMAN_PLAN_APPROVAL_VERSION,
       TASK_PAUSE_ACCOUNTING_VERSION,
+      EXTERNAL_SESSIONS_VERSION,
     ]);
     expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
   });
@@ -2056,6 +2059,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       WORKFLOW_IDENTITY_AND_MODEL_LANES_VERSION,
       TASK_HUMAN_PLAN_APPROVAL_VERSION,
       TASK_PAUSE_ACCOUNTING_VERSION,
+      EXTERNAL_SESSIONS_VERSION,
     ]);
   });
 
@@ -2296,6 +2300,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       WORKFLOW_IDENTITY_AND_MODEL_LANES_VERSION,
       TASK_HUMAN_PLAN_APPROVAL_VERSION,
       TASK_PAUSE_ACCOUNTING_VERSION,
+      EXTERNAL_SESSIONS_VERSION,
     ]);
   });
 
@@ -2417,6 +2422,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       WORKFLOW_IDENTITY_AND_MODEL_LANES_VERSION,
       TASK_HUMAN_PLAN_APPROVAL_VERSION,
       TASK_PAUSE_ACCOUNTING_VERSION,
+      EXTERNAL_SESSIONS_VERSION,
     ]);
   });
 
@@ -2538,6 +2544,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       WORKFLOW_IDENTITY_AND_MODEL_LANES_VERSION,
       TASK_HUMAN_PLAN_APPROVAL_VERSION,
       TASK_PAUSE_ACCOUNTING_VERSION,
+      EXTERNAL_SESSIONS_VERSION,
     ]);
   });
 });

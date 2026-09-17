@@ -97,6 +97,7 @@ export {
   /* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408's per-card decision column version. */
   TASK_HUMAN_PLAN_APPROVAL_VERSION,
   TASK_PAUSE_ACCOUNTING_VERSION,
+  EXTERNAL_SESSIONS_VERSION,
   MIGRATION_BOOKKEEPING_TABLE,
 } from "./schema-applier.js";
 export {
