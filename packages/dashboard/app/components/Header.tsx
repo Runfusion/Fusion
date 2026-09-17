@@ -406,9 +406,16 @@ export function Header({
 
   const canShowNonMobileSearch = (view === "board" || view === "list") && !isMobile && onSearchChange;
   const showDesktopInlineSearch = Boolean(mode === "desktop" && canShowNonMobileSearch);
-  const closeInlineSearch = useCallback(() => {
+  /*
+  FNXC:TaskSearch 2026-09-17-07:43:
+  FN-494 — `restoreFocus` est à `true` par défaut, donc la croix et Escape rendent le focus au
+  déclencheur recréé comme avant. La SELECTION d'un résultat passe `false` : la fiche de tâche vient
+  de s'ouvrir et le `setTimeout(... .focus(), 0)` lui volerait le focus une frame plus tard.
+  */
+  const closeInlineSearch = useCallback((options?: { restoreFocus?: boolean }) => {
     setIsInlineSearchOpen(false);
     setInlineSearchQuery("");
+    if (options?.restoreFocus === false) return;
     window.setTimeout(() => inlineSearchTriggerRef.current?.focus(), 0);
   }, []);
 
@@ -789,7 +796,10 @@ export function Header({
          * Desktop and tablet header search must render after the workflow portal slot so a populated WorkflowSwitcher appears left of the search icon while preserving the mobile search trigger's existing position and behavior.
          *
          * FNXC:HeaderTaskSearch 2026-09-12-21:52:
-         * On desktop Board and List, Search alternates in this exact action slot between the magnifier and the shared inline combobox. Its transient query and task-detail selection remain isolated from the Board/List filter; close, Escape, and selection clear the field and restore focus to the recreated trigger without any modal or backdrop.
+         * On desktop Board and List, Search alternates in this exact action slot between the magnifier and the shared inline combobox. Its transient query and task-detail selection remain isolated from the Board/List filter; close, Escape, and selection clear the field without any modal or backdrop.
+         *
+         * FNXC:TaskSearch 2026-09-17-07:43:
+         * FN-494 nuance la restauration du focus : close et Escape le rendent toujours au déclencheur recréé, mais une SELECTION ne le fait plus — la fiche de tâche qui vient de s'ouvrir garde le focus.
          */}
         {showDesktopInlineSearch && onSearchChange && (
           isInlineSearchOpen ? (
@@ -804,9 +814,9 @@ export function Header({
               */
               onSelectTask={(task) => {
                 onSelectSearchTask?.(task);
-                closeInlineSearch();
+                closeInlineSearch({ restoreFocus: false });
               }}
-              onClose={closeInlineSearch}
+              onClose={() => closeInlineSearch()}
               autoFocus
               className="header-search--inline"
               testId="desktop-header-search-input"
@@ -1459,6 +1469,16 @@ export function Header({
         <TaskSearchInput
           query={searchQuery}
           onSearchChange={onSearchChange}
+          /*
+          FNXC:TaskSearch 2026-09-17-07:43:
+          FN-494 — sans ce gestionnaire, ce champ tombait dans l'ancienne branche de repli qui écrivait
+          l'identifiant de la tâche dans le filtre Board/List et n'ouvrait jamais la fiche. La
+          sélection remonte désormais la tâche à l'hôte et referme la surface de recherche elle-même.
+          */
+          onSelectTask={(task) => {
+            onSelectSearchTask?.(task);
+            handleNonMobileSearchClose();
+          }}
           onClose={handleNonMobileSearchClose}
           autoFocus
           {...(projectId ? { projectId } : {})}
@@ -1474,6 +1494,11 @@ export function Header({
         <TaskSearchInput
           query={searchQuery}
           onSearchChange={onSearchChange}
+          /* FNXC:TaskSearch 2026-09-17-07:43: FN-494 — même contrat sur téléphone : vider, fermer, ouvrir la fiche. */
+          onSelectTask={(task) => {
+            onSelectSearchTask?.(task);
+            handleMobileSearchClose();
+          }}
           onClose={handleMobileSearchClose}
           autoFocus
           className="mobile-search-expanded"

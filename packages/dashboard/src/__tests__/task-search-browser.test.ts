@@ -30,6 +30,15 @@ type Page = {
   waitForSelector(selector: string, options?: { timeout?: number }): Promise<unknown>;
   waitForTimeout(ms: number): Promise<void>;
   evaluate<T, Arg = undefined>(fn: (arg: Arg) => T, arg?: Arg): Promise<T>;
+  /*
+  FNXC:TaskSearch 2026-09-17-07:43:
+  FN-494 — le type local est étendu à la souris plutôt que d'ajouter une seconde dépendance au client
+  de protocole : la molette est le seul geste que jsdom ne peut pas prouver.
+  */
+  mouse: {
+    move(x: number, y: number): Promise<void>;
+    wheel(deltaX: number, deltaY: number): Promise<void>;
+  };
   screenshot(options: { path: string }): Promise<void>;
   close(): Promise<void>;
   on(event: "console" | "pageerror", listener: (message: { text?(): string; message?: string }) => void): void;
@@ -254,6 +263,56 @@ describe.runIf(executablePath)("FN-477 task search panel geometry in a real brow
     expect(geometry.scrollHeight).toBeGreaterThan(geometry.scrollClientHeight);
     // The cards themselves were NOT compressed to make the panel fit.
     expect(geometry.firstCardHeight).toBeGreaterThan(40);
+  });
+
+  /*
+  FNXC:TaskSearch 2026-09-17-07:43:
+  FN-494 — « je veux pouvoir scroll à l'intérieur de la popover ». La molette est un geste réel du
+  moteur de rendu : jsdom ne calcule ni `scrollTop` ni débordement de défilement, donc seule cette
+  lane peut prouver que le geste atteint la liste et n'emporte pas la page derrière.
+  */
+  it("scrolls the list with the wheel without scrolling the document behind it", async () => {
+    const page = await openPanel({ width: 1440, height: 900 });
+
+    const center = await page.evaluate(() => {
+      const scroll = document.querySelector<HTMLElement>(".task-search-results-scroll")!;
+      const rect = scroll.getBoundingClientRect();
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    });
+    await page.mouse.move(center.x, center.y);
+    await page.mouse.wheel(0, 600);
+    await page.waitForTimeout(150);
+
+    const afterWheel = await page.evaluate(() => ({
+      scrollTop: document.querySelector<HTMLElement>(".task-search-results-scroll")!.scrollTop,
+      documentScrollTop: window.scrollY,
+      panelPresent: Boolean(document.querySelector(".task-search-results")),
+    }));
+
+    // Puis jusqu'au dernier résultat, toujours à la molette.
+    for (let step = 0; step < 12; step += 1) await page.mouse.wheel(0, 900);
+    await page.waitForTimeout(150);
+
+    const atBottom = await page.evaluate(() => {
+      const scroll = document.querySelector<HTMLElement>(".task-search-results-scroll")!;
+      const rows = [...document.querySelectorAll<HTMLElement>(".task-search-result")];
+      const last = rows.at(-1)!;
+      const scrollRect = scroll.getBoundingClientRect();
+      const lastRect = last.getBoundingClientRect();
+      return {
+        lastVisible: lastRect.bottom <= scrollRect.bottom + 1 && lastRect.top >= scrollRect.top - 1,
+        documentScrollTop: window.scrollY,
+      };
+    });
+    await page.screenshot({ path: path.join(artifacts, "task-search-panel-wheel-scrolled.png") });
+    await page.close();
+
+    expect(afterWheel.scrollTop).toBeGreaterThan(0);
+    expect(afterWheel.documentScrollTop).toBe(0);
+    expect(afterWheel.panelPresent).toBe(true);
+    expect(atBottom.lastVisible).toBe(true);
+    // `overscroll-behavior: contain` : même arrivé en bout de liste, la page derrière ne bouge pas.
+    expect(atBottom.documentScrollTop).toBe(0);
   });
 
   it("renders a single result at the same reserved shape without fabricating a second card", async () => {

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { cleanup, render, screen, fireEvent, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { Header, resolveReportContextRefs } from "../Header";
 
 // Mock fetchScripts for overflow submenu
@@ -105,7 +105,15 @@ function renderHeader(props = {}, tier: ViewportTier = "tablet") {
   );
 }
 
-function SearchHeaderHarness({ tier: _tier }: { tier: ViewportTier }) {
+function SearchHeaderHarness({
+  tier: _tier,
+  onQueryChange,
+  onSelectSearchTask,
+}: {
+  tier: ViewportTier;
+  onQueryChange?: (query: string) => void;
+  onSelectSearchTask?: (task: { id: string }) => void;
+}) {
   const [query, setQuery] = useState("");
   return (
     <Header
@@ -114,14 +122,21 @@ function SearchHeaderHarness({ tier: _tier }: { tier: ViewportTier }) {
       view="board"
       projectId="project-a"
       searchQuery={query}
-      onSearchChange={setQuery}
+      onSearchChange={(next: string) => { onQueryChange?.(next); setQuery(next); }}
+      {...(onSelectSearchTask ? { onSelectSearchTask: onSelectSearchTask as never } : {})}
     />
   );
 }
 
-function renderSearchHeader(tier: ViewportTier) {
+function renderSearchHeader(
+  tier: ViewportTier,
+  options: {
+    onQueryChange?: (query: string) => void;
+    onSelectSearchTask?: (task: { id: string }) => void;
+  } = {},
+) {
   mockMatchMedia(tier);
-  return render(<SearchHeaderHarness tier={tier} />);
+  return render(<SearchHeaderHarness tier={tier} {...options} />);
 }
 
 describe("Header", () => {
@@ -220,7 +235,15 @@ describe("Header", () => {
     expect(onSearchChange).not.toHaveBeenCalled();
     expect(screen.queryByRole("combobox", { name: "Search tasks..." })).toBeNull();
     expect(screen.queryByTestId("alpha-task-search-overlay")).toBeNull();
-    await waitFor(() => expect(screen.getByTestId("desktop-inline-header-search-btn")).toHaveFocus());
+    expect(document.querySelector(".task-search-results")).toBeNull();
+    /*
+    FNXC:TaskSearch 2026-09-17-07:43:
+    FN-494 — (c1). L'ancienne assertion exigeait que le déclencheur reprenne le focus après une
+    SÉLECTION. Elle encodait précisément le défaut : la fiche de tâche vient de s'ouvrir et se faisait
+    voler le focus une frame plus tard. Close et Escape restaurent toujours le focus (cas suivant).
+    */
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    expect(document.activeElement).not.toBe(screen.getByTestId("desktop-inline-header-search-btn"));
   });
 
   it.each([
@@ -1678,17 +1701,19 @@ describe("Header", () => {
     });
 
     /*
-    FNXC:TaskSearch 2026-09-17-09:41:
-    FN-477 rewrote this case. Suffix and punctuation matching is now decided by the SERVER's shared
-    search predicate, so asserting a client-side filter here would be testing a rule the client no
-    longer owns. What the tablet/mobile hosts still own is the selection contract: with no
-    `onSelectTask`, selecting a result writes its id into the caller's filter query.
+    FNXC:TaskSearch 2026-09-17-07:43:
+    FN-494 remplace le cas « applique l'id sélectionné au filtre ». Ce contrat est supprimé : les deux
+    champs flottants ne fournissaient aucun `onSelectTask`, donc une sélection écrivait l'identifiant
+    dans le filtre Board/List et n'ouvrait jamais la fiche. La règle est désormais identique aux trois
+    hôtes : vider le champ, fermer la recherche, ouvrir la fiche.
     */
-    it.each(["tablet", "mobile"] as const)("applique l'id sélectionné au filtre sur %s", async (tier) => {
+    it.each(["tablet", "mobile"] as const)("(c2)/(c3) la sélection vide le champ, ferme la recherche et ouvre la fiche sur %s", async (tier) => {
       mockFetchTaskPage.mockResolvedValue(searchPage([
         { id: "FN-352", title: "Dans la barre de recherche" },
       ]) as never);
-      renderSearchHeader(tier);
+      const onQueryChange = vi.fn();
+      const onSelectSearchTask = vi.fn();
+      renderSearchHeader(tier, { onQueryChange, onSelectSearchTask });
       if (tier === "tablet") fireEvent.click(screen.getByTestId("desktop-header-search-btn"));
       if (tier === "mobile") fireEvent.click(screen.getByTestId("mobile-header-search-btn"));
 
@@ -1700,8 +1725,13 @@ describe("Header", () => {
 
       fireEvent.click(screen.getByText("FN-352"));
 
-      // The floating hosts keep their historical selection-applies-id-to-filter behaviour.
-      await waitFor(() => expect(screen.getByRole("combobox")).toHaveValue("FN-352"));
+      expect(onSelectSearchTask).toHaveBeenCalledTimes(1);
+      expect(onSelectSearchTask.mock.calls[0][0].id).toBe("FN-352");
+      expect(onQueryChange).toHaveBeenCalledWith("");
+      expect(onQueryChange).not.toHaveBeenCalledWith("FN-352");
+      // Ni panneau portalisé, ni champ de recherche encore monté.
+      await waitFor(() => expect(screen.queryByRole("combobox")).toBeNull());
+      expect(document.querySelector(".task-search-results")).toBeNull();
     });
 
     it("transmet la requête au serveur plutôt que de filtrer une collection chargée", async () => {

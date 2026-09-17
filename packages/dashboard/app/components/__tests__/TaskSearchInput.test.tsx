@@ -234,7 +234,14 @@ describe("TaskSearchInput — selection and dismissal", () => {
     expect(onSelectTask.mock.calls[0][0].id).toBe("FN-OUT-OF-PAGE");
   });
 
-  it("applies the id to the caller's query when the host supplies no selection handler", async () => {
+  /*
+  FNXC:TaskSearch 2026-09-17-07:43:
+  FN-494 remplace le cas « applies the id to the caller's query when the host supplies no selection
+  handler ». Ce contrat est supprimé : écrire l'identifiant de la tâche dans le champ est précisément
+  le défaut signalé par l'opérateur. Le nouveau contrat est unique pour tous les hôtes : vider le
+  champ, fermer le panneau, remonter la tâche.
+  */
+  it("(a1) vide le champ sans jamais y écrire l'identifiant, même sans gestionnaire de sélection", async () => {
     fetchTaskPage.mockResolvedValue(page([makeTask("FN-42")]));
     const onSearchChange = vi.fn();
     renderField({ onSearchChange });
@@ -243,9 +250,82 @@ describe("TaskSearchInput — selection and dismissal", () => {
     await settleDebounce();
     await waitFor(() => expect(screen.getByText("FN-42")).toBeInTheDocument());
 
-    fireEvent.click(screen.getByText("FN-42"));
+    await act(async () => { fireEvent.click(screen.getByText("FN-42")); });
 
-    expect(onSearchChange).toHaveBeenCalledWith("FN-42");
+    expect(onSearchChange).toHaveBeenCalledWith("");
+    expect(onSearchChange).not.toHaveBeenCalledWith("FN-42");
+    for (const call of onSearchChange.mock.calls) expect(call[0]).toBe("");
+    expect(screen.queryByTestId("task-search-results")).toBeNull();
+  });
+
+  it("(a2) remonte la tâche, vide le champ et ne laisse ni panneau ni référence ARIA pendante", async () => {
+    fetchTaskPage.mockResolvedValue(page([makeTask("FN-42")]));
+    const onSearchChange = vi.fn();
+    const onSelectTask = vi.fn();
+    renderField({ onSearchChange, onSelectTask });
+
+    const input = screen.getByRole("combobox");
+    fireEvent.focus(input);
+    await settleDebounce();
+    await waitFor(() => expect(screen.getByText("FN-42")).toBeInTheDocument());
+
+    await act(async () => { fireEvent.click(screen.getByText("FN-42")); });
+
+    expect(onSelectTask).toHaveBeenCalledTimes(1);
+    expect(onSelectTask.mock.calls[0][0].id).toBe("FN-42");
+    expect(onSearchChange).toHaveBeenCalledWith("");
+    expect(onSearchChange).not.toHaveBeenCalledWith("FN-42");
+    expect(screen.queryByTestId("task-search-results")).toBeNull();
+    expect(input).toHaveAttribute("aria-expanded", "false");
+    expect(input.getAttribute("aria-controls")).toBeNull();
+    expect(document.querySelector(".task-search-results")).toBeNull();
+  });
+
+  it.each(["Enter", " "] as const)("(a3) l'activation clavier %s d'une carte produit exactement le même triplet", async (key) => {
+    fetchTaskPage.mockResolvedValue(page([makeTask("FN-42")]));
+    const onSearchChange = vi.fn();
+    const onSelectTask = vi.fn();
+    renderField({ onSearchChange, onSelectTask });
+
+    const input = screen.getByRole("combobox");
+    fireEvent.focus(input);
+    await settleDebounce();
+    await waitFor(() => expect(screen.getByText("FN-42")).toBeInTheDocument());
+
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    const card = document.querySelector<HTMLElement>(".task-search-results .task-search-result .card");
+    expect(card).not.toBeNull();
+    expect(document.activeElement).toBe(card);
+
+    await act(async () => { fireEvent.keyDown(card as HTMLElement, { key }); });
+
+    expect(onSelectTask).toHaveBeenCalledTimes(1);
+    expect(onSelectTask.mock.calls[0][0].id).toBe("FN-42");
+    expect(onSearchChange).toHaveBeenCalledWith("");
+    expect(onSearchChange).not.toHaveBeenCalledWith("FN-42");
+    expect(screen.queryByTestId("task-search-results")).toBeNull();
+  });
+
+  it("(a4) une nouvelle saisie rouvre le panneau après une sélection", async () => {
+    fetchTaskPage.mockResolvedValue(page([makeTask("FN-42")]));
+    const onSelectTask = vi.fn();
+    const { rerender } = renderField({ onSelectTask });
+
+    fireEvent.focus(screen.getByRole("combobox"));
+    await settleDebounce();
+    await waitFor(() => expect(screen.getByText("FN-42")).toBeInTheDocument());
+    await act(async () => { fireEvent.click(screen.getByText("FN-42")); });
+    expect(screen.queryByTestId("task-search-results")).toBeNull();
+
+    // La saisie est émise AVANT que l'hôte ne republie la requête : sur un champ contrôlé, réécrire
+    // la valeur déjà rendue ne déclencherait aucun `change` React.
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "collapse encore" } });
+    rerender(
+      <TaskSearchInput query="collapse encore" projectId="project-a" onSearchChange={() => undefined} onSelectTask={onSelectTask} />,
+    );
+    await settleDebounce();
+
+    await waitFor(() => expect(screen.queryByTestId("task-search-results")).not.toBeNull());
   });
 
   it("closes on Escape and leaves no panel or dangling ARIA reference behind", async () => {

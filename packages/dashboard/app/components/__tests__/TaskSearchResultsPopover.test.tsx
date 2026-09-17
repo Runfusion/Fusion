@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import type { Task } from "@fusion/core";
 import { TaskSearchResultsPopover } from "../TaskSearchResultsPopover";
+import { readAppFile } from "../../test/cssFixture";
 import { TASK_SEARCH_PEEK_RATIO, TASK_SEARCH_VIEWPORT_MARGIN } from "../../utils/taskSearchGeometry";
 
 vi.mock("../../hooks/useToast", () => ({
@@ -360,5 +361,111 @@ describe("TaskSearchResultsPopover — content and behaviour", () => {
     for (const card of panel.querySelectorAll(".card")) {
       expect(card).not.toHaveAttribute("aria-haspopup", "menu");
     }
+  });
+});
+
+/*
+FNXC:TaskSearch 2026-09-17-07:43:
+FN-494 — le panneau doit être réellement défilable. Les trois défauts couverts ici sont : l'annulation
+globale du `mousedown` qui supprimait le glissement de la barre de défilement native, l'absence de
+confinement du geste, et la re-mesure complète du panneau déclenchée par son propre défilement.
+*/
+describe("TaskSearchResultsPopover — défilement (FN-494)", () => {
+  it.each(["text", "ai"] as const)("(b1)/(b3) une pression dans la zone défilante n'est pas annulée — lane %s", (lane) => {
+    renderPanel({ tasks: [makeTask("FN-1"), makeTask("FN-2")], lane });
+
+    const scroll = screen.getByTestId("task-search-results-scroll");
+    const mouseDown = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+    scroll.dispatchEvent(mouseDown);
+
+    // Le glissement natif de la barre de défilement reste possible et le panneau ne se ferme pas.
+    expect(mouseDown.defaultPrevented).toBe(false);
+    expect(screen.queryByTestId("task-search-results")).not.toBeNull();
+  });
+
+  it.each(["text", "ai"] as const)("(b2)/(b3) une pression sur le chrome reste annulée — lane %s", (lane) => {
+    const { container } = renderPanel({ tasks: [makeTask("FN-1")], lane });
+
+    const header = container.ownerDocument.querySelector(".task-search-results-header");
+    expect(header).not.toBeNull();
+    const mouseDown = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+    header?.dispatchEvent(mouseDown);
+
+    expect(mouseDown.defaultPrevented).toBe(true);
+    expect(screen.queryByTestId("task-search-results")).not.toBeNull();
+  });
+
+  it("(b5) ArrowDown/ArrowUp déplacent le focus entre deux cartes de résultat", () => {
+    renderPanel({ tasks: [makeTask("FN-1"), makeTask("FN-2")] });
+
+    const cards = [...document.querySelectorAll<HTMLElement>(".task-search-result .card")];
+    expect(cards).toHaveLength(2);
+
+    cards[0].focus();
+    fireEvent.keyDown(cards[0], { key: "ArrowDown" });
+    expect(document.activeElement).toBe(cards[1]);
+
+    fireEvent.keyDown(cards[1], { key: "ArrowUp" });
+    expect(document.activeElement).toBe(cards[0]);
+
+    // Depuis la première carte, ArrowUp ne quitte pas le panneau.
+    fireEvent.keyDown(cards[0], { key: "ArrowUp" });
+    expect(document.activeElement).toBe(cards[0]);
+  });
+
+  it.each([
+    { name: "chargement", props: { loading: true } },
+    { name: "erreur", props: { error: { kind: "ai", code: "AI_TASK_SEARCH_TIMEOUT", status: 504 } } },
+  ])("(b6) la zone défilante existe sans résultat — $name", ({ props }) => {
+    renderPanel({ tasks: [], ...(props as Record<string, unknown>) });
+
+    const scroll = screen.getByTestId("task-search-results-scroll");
+    expect(scroll).not.toBeNull();
+    expect(screen.getByTestId("task-search-results-status")).not.toBeNull();
+
+    const mouseDown = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+    scroll.dispatchEvent(mouseDown);
+    expect(mouseDown.defaultPrevented).toBe(false);
+  });
+
+  it("(b7) un défilement interne ne relance pas la mesure d'ancrage, un défilement extérieur si", () => {
+    const { field } = renderPanel({ tasks: [makeTask("FN-1"), makeTask("FN-2")] });
+    const measured = vi.spyOn(field, "getBoundingClientRect");
+
+    const scroll = screen.getByTestId("task-search-results-scroll");
+    act(() => { scroll.dispatchEvent(new Event("scroll", { bubbles: true })); });
+    expect(measured).not.toHaveBeenCalled();
+
+    act(() => { fireEvent.scroll(document); });
+    expect(measured.mock.calls.length).toBeGreaterThan(0);
+  });
+});
+
+describe("TaskSearchResultsPopover — garde CSS (FN-494)", () => {
+  /*
+  jsdom n'applique pas les feuilles de style : c'est une garde de CONSTRUCTION sur le propriétaire de
+  défilement, pas une assertion sur un commentaire.
+  */
+  it("(b4) `.task-search-results-scroll` déclare overflow-y, overscroll-behavior et touch-action", () => {
+    const css = readAppFile("components/TaskSearchResultsPopover.css");
+    const blocks = [...css.matchAll(/\.task-search-results-scroll\s*\{([^}]*)\}/g)].map((match) => match[1]);
+    expect(blocks.length).toBeGreaterThanOrEqual(2);
+
+    const base = blocks[0];
+    expect(base).toMatch(/overflow-y:\s*auto/);
+    expect(base).toMatch(/overscroll-behavior:\s*contain/);
+    expect(base).toMatch(/touch-action:\s*pan-y/);
+
+    // Le bloc téléphone ré-affirme le confinement après le reset global `* { touch-action: pan-y }`.
+    const mobileBlock = css.slice(css.indexOf("@media (max-width: 768px)"));
+    expect(mobileBlock).toMatch(/\.task-search-results-scroll\s*\{[^}]*overscroll-behavior:\s*contain/);
+    expect(mobileBlock).toMatch(/\.task-search-results-scroll\s*\{[^}]*touch-action:\s*pan-y/);
+  });
+
+  it("(b4) n'introduit pas un second propriétaire de défilement vertical", () => {
+    const css = readAppFile("components/TaskSearchResultsPopover.css");
+    const verticalOwners = [...css.matchAll(/([.#][\w-]+)\s*\{[^}]*overflow-y:\s*(auto|scroll)/g)]
+      .map((match) => match[1]);
+    expect(new Set(verticalOwners)).toEqual(new Set([".task-search-results-scroll"]));
   });
 });

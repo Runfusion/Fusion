@@ -42,7 +42,11 @@ export type SearchableTask = Pick<Task, "id" | "title"> & { description?: string
 export interface TaskSearchInputProps {
   query: string;
   onSearchChange: (query: string) => void;
-  /** Navigation mode selects the task without rewriting the caller's filter query. */
+  /**
+   * FNXC:TaskSearch 2026-09-17-07:43:
+   * FN-494 — l'hôte reçoit la tâche choisie pour ouvrir sa fiche. Le champ est de toute façon vidé
+   * via `onSearchChange("")` : aucun hôte ne reçoit jamais l'identifiant de tâche comme requête.
+   */
   onSelectTask?: (task: Task) => void;
   onClose?: () => void;
   autoFocus?: boolean;
@@ -118,11 +122,25 @@ export function TaskSearchInput({
     onClose?.();
   }, [closePanel, onClose]);
 
+  /*
+  FNXC:TaskSearch 2026-09-17-07:43:
+  FN-494 — choisir un résultat doit TOUJOURS faire la même chose, quel que soit l'hôte : vider le
+  champ, fermer la recherche, ouvrir la fiche de la tâche.
+
+  La branche de repli `onSearchChange(task.id)` est supprimée définitivement. Elle écrivait
+  l'identifiant de la tâche dans le champ — donc dans le filtre Board/List pour les deux hôtes
+  flottants du Header, qui ne fournissaient aucun `onSelectTask` — et n'ouvrait jamais la fiche :
+  l'opérateur voyait sa saisie remplacée par `FN-42` sans obtenir la tâche.
+
+  L'ordre est significatif : `closePanel()` ferme le panneau ET annule le travail texte/IA en vol
+  (`search.reset()`) avant que l'hôte ne re-rende, puis le champ est remis à vide, puis la tâche est
+  remontée à l'hôte qui ouvre la fiche.
+  */
   const selectTask = useCallback((task: Task) => {
-    setIsOpen(false);
-    if (onSelectTask) onSelectTask(task);
-    else onSearchChange(task.id);
-  }, [onSearchChange, onSelectTask]);
+    closePanel();
+    onSearchChange("");
+    onSelectTask?.(task);
+  }, [closePanel, onSearchChange, onSelectTask]);
 
   return (
     <div ref={rootRef} className={`task-search-input header-search ${className}`.trim()} data-testid={testId}>

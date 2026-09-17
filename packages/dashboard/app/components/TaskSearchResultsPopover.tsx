@@ -192,8 +192,21 @@ export function TaskSearchResultsPopover({
   useEffect(() => {
     if (typeof window === "undefined") return;
     const handle = () => measure();
+    /*
+    FNXC:TaskSearch 2026-09-17-07:43:
+    FN-494 — le `scroll` en capture sur `window` existe pour re-ancrer le panneau quand la PAGE (ou
+    une colonne du tableau) défile sous lui. Un défilement À L'INTÉRIEUR du panneau n'a aucun effet sur
+    son ancrage : le laisser passer relançait une passe de mesure complète — donc un rendu de toutes
+    les `TaskCard` — à chaque événement de défilement, ce que l'opérateur perçoit comme une liste qui
+    ne défile pas. Les événements issus du panneau sont donc ignorés ici, et seulement ceux-là.
+    */
+    const handleScroll = (event: Event) => {
+      const target = event.target as Node | null;
+      if (target && panelRef.current?.contains(target)) return;
+      measure();
+    };
     window.addEventListener("resize", handle);
-    window.addEventListener("scroll", handle, true);
+    window.addEventListener("scroll", handleScroll, true);
     window.visualViewport?.addEventListener("resize", handle);
     window.visualViewport?.addEventListener("scroll", handle);
 
@@ -225,7 +238,7 @@ export function TaskSearchResultsPopover({
 
     return () => {
       window.removeEventListener("resize", handle);
-      window.removeEventListener("scroll", handle, true);
+      window.removeEventListener("scroll", handleScroll, true);
       window.visualViewport?.removeEventListener("resize", handle);
       window.visualViewport?.removeEventListener("scroll", handle);
       if (frame !== undefined && typeof cancelAnimationFrame === "function") cancelAnimationFrame(frame);
@@ -289,8 +302,47 @@ export function TaskSearchResultsPopover({
       aria-label={laneLabel}
       data-lane={lane}
       data-testid="task-search-results"
-      /* The panel is non-modal: pressing inside it must never blur the still-active search field. */
-      onMouseDown={(event) => event.preventDefault()}
+      /*
+      FNXC:TaskSearch 2026-09-17-07:43:
+      Le panneau est non modal : une pression sur son CHROME (en-tête, statut) ne doit jamais faire
+      perdre le curseur au champ encore actif, d'où l'annulation.
+
+      FN-494 restreint cette annulation à ce chrome. Appliquée à tout le panneau, elle annulait aussi
+      le `mousedown` qui démarre le glissement de la barre de défilement native — la barre était
+      visible mais inutilisable, ce que l'opérateur a signalé comme « je ne peux pas scroller ». Un
+      `mousedown` sur la barre de défilement cible le conteneur défilant lui-même, donc toute cible
+      située dans `.task-search-results-scroll` est laissée au navigateur.
+      */
+      onMouseDown={(event) => {
+        const target = event.target;
+        if (target instanceof Element && target.closest(".task-search-results-scroll")) return;
+        event.preventDefault();
+      }}
+      /*
+      FNXC:TaskSearch 2026-09-17-07:43:
+      FN-494 — navigation clavier verticale entre cartes de résultat. Le gestionnaire vit sur le
+      panneau, jamais sur `TaskCard` : le mode `search-result` de la carte ne doit pas gagner de
+      nouveaux gestes. Les cibles interactives internes gardent leur propre comportement de flèches.
+      */
+      onKeyDown={(event) => {
+        if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+        const target = event.target;
+        if (!(target instanceof Element)) return;
+        const inner = target.closest("input, textarea, select, [contenteditable='true']");
+        if (inner) return;
+        const cards = [...(panelRef.current?.querySelectorAll<HTMLElement>(".task-search-result .card") ?? [])];
+        const current = target.closest<HTMLElement>(".task-search-result .card");
+        const index = current ? cards.indexOf(current) : -1;
+        if (index < 0) return;
+        const next = event.key === "ArrowDown"
+          ? cards[index + 1]
+          : cards[index - 1];
+        event.preventDefault();
+        // Depuis la première carte, ArrowUp ne quitte pas le panneau vers un élément arbitraire.
+        if (!next) return;
+        next.focus();
+        next.scrollIntoView?.({ block: "nearest" });
+      }}
     >
       <div className="task-search-results-header">
         <span className="task-search-results-lane" data-testid="task-search-lane-label">{laneLabel}</span>

@@ -49,9 +49,27 @@ rendered 18px narrower than the board card it referred to (measured in Chromium 
   color: var(--text-muted);
 }
 
+/*
+FNXC:TaskSearch 2026-09-17-07:43:
+FN-494 — `.task-search-results-scroll` est l'UNIQUE propriétaire de défilement vertical du panneau, et
+il doit contenir le geste.
+
+`overscroll-behavior: contain` : le panneau est ancré en `position: fixed`, donc sans confinement la
+molette et le geste tactile débordaient sur la page derrière dès que la liste atteignait une extrémité
+— l'opérateur voyait le tableau partir à la place de la liste.
+
+`touch-action: pan-y` : le reset mobile global `* { touch-action: pan-y }` de `styles.css` est chargé
+ailleurs ; la règle est ré-affirmée ici sur le propriétaire de défilement pour que le glissement
+vertical au doigt lui appartienne explicitement, aux deux points de rupture.
+
+`-webkit-overflow-scrolling: touch` : défilement inertiel sur les moteurs WebKit mobiles.
+*/
 .task-search-results-scroll {
   overflow-y: auto;
   overflow-x: hidden;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
   /*
   The reserve computed by taskSearchGeometry is applied inline as `block-size`, not `max-block-size`.
   A maximum alone only CAPS a tall list; with a single result the area collapsed to that one card's
@@ -105,5 +123,16 @@ longer complete.
 
   .task-search-results-header {
     padding-block-end: var(--space-3xs);
+  }
+
+  /*
+  FNXC:TaskSearch 2026-09-17-07:43:
+  FN-494 — le confinement et l'axe de geste sont ré-affirmés au point de rupture téléphone, après le
+  reset global `touch-action: pan-y`, pour qu'un glissement dans la liste ne fasse jamais défiler la
+  page derrière le panneau.
+  */
+  .task-search-results-scroll {
+    overscroll-behavior: contain;
+    touch-action: pan-y;
   }
 }
