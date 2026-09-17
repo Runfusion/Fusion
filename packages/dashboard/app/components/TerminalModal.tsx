@@ -32,6 +32,8 @@ import { useTerminalSessions } from "../hooks/useTerminalSessions";
 import { useWorkspaces } from "../hooks/useWorkspaces";
 import { getViewportMode, isMobileViewport } from "../hooks/useViewportMode";
 import { useDrawerDismissGesture } from "../hooks/useDrawerDismissGesture";
+import { readKeyboardViewportFrame, _resetKeyboardViewportStore } from "../utils/mobileKeyboardViewport";
+import { _resetInitialViewportHeight as _resetSharedKeyboardBaseline } from "../hooks/useMobileKeyboard";
 import { FloatingWindow, FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT } from "./FloatingWindow";
 import type { FloatingWindowDragGestureEnd, FloatingWindowDragHandoff } from "./FloatingWindow";
 import { FLOATING_WINDOW_DRAG_THRESHOLD_PX } from "./floatingWindowGeometry";
@@ -390,129 +392,46 @@ function isMacPlatform(): boolean {
   return /mac/i.test(platform) || /mac/i.test(userAgent);
 }
 
-function isKeyboardFocusableElement(el: Element | null): boolean {
-  if (!el) return false;
-  if (el instanceof HTMLTextAreaElement) return true;
-  if (el instanceof HTMLInputElement) {
-    const nonTextTypes = new Set(["checkbox", "radio", "button", "submit", "reset", "file", "range", "color", "hidden"]);
-    return !nonTextTypes.has(el.type);
-  }
-  return el instanceof HTMLElement && el.isContentEditable;
-}
+/*
+FNXC:MobileKeyboardViewport 2026-09-17-14:23:
+FN-512: how much the soft keyboard covers is the SHARED residual inset,
+`max(0, layoutHeight - visibleBottom)`, read from `utils/mobileKeyboardViewport.ts`. One measurement
+serves the terminal, Chat, drawers, and windows, so they can never disagree about where the visible
+area ends.
 
-/**
- * Compute how many CSS pixels the virtual keyboard covers from the bottom
- * of the layout viewport. Returns 0 on desktop or when visualViewport is
- * unavailable.
- *
- * Strategy:
- * - Primary: window.innerHeight - vv.offsetTop - vv.height
- *   Works on Chrome Android where window.innerHeight stays at full height.
- * - Fallback: initial viewport height - vv.height - vv.offsetTop
- *   Works on iOS Safari where window.innerHeight shrinks with the keyboard.
- */
-function getScreenViewportBaselineCandidate(viewportWidth: number, viewportHeight: number): number | null {
-  if (typeof window === "undefined" || !window.screen) return null;
-  const screenWidth = window.screen.width;
-  const screenHeight = window.screen.height;
-  if (!Number.isFinite(screenWidth) || !Number.isFinite(screenHeight) || screenWidth <= 0 || screenHeight <= 0) {
-    return null;
-  }
+This replaces a private baseline cascade that inferred the band from the previous closed viewport, or
+from `window.screen` when the first sample was already keyboard-open. Both were DETECTION heuristics
+used for PLACEMENT, and both erred the same way: when the browser has already reduced the layout
+viewport (Android `interactive-widget=resizes-content`, and the documented iOS first-sample case where
+`innerHeight`, `clientHeight`, and `visualViewport.height` are all already short), nothing is occluded
+and the correct reservation is ZERO. Subtracting a baseline-derived height there pushed the terminal
+input bar off the top of a 390px viewport and left a dead band above the keyboard.
 
-  const portraitLike = viewportHeight >= viewportWidth;
-  const candidate = portraitLike
-    ? Math.max(screenWidth, screenHeight)
-    : Math.min(screenWidth, screenHeight);
-  const gap = candidate - viewportHeight;
-  const minMeaningfulGap = portraitLike
-    ? Math.max(220, candidate * 0.25)
-    : Math.max(80, candidate * 0.25);
-
-  return gap >= minMeaningfulGap ? candidate : null;
-}
-
+Keyboard DETECTION still uses a guarded screen-derived candidate, but it lives in `useMobileKeyboard`
+and decides `keyboardOpen` only, never a pixel count. See
+`docs/solutions/ui-bugs/mobile-keyboard-single-viewport-owner.md`.
+*/
 function getKeyboardOverlap(): number {
   if (typeof window === "undefined" || !window.visualViewport) return 0;
-  const vv = window.visualViewport;
-  const viewportWidth = vv.width > 0 ? vv.width : window.innerWidth;
-  const layoutViewportHeight = Math.max(window.innerHeight, document.documentElement?.clientHeight || 0);
-  const viewportHeight = Math.max(layoutViewportHeight, vv.height);
-  const chromeOverlap = Math.max(0, layoutViewportHeight - vv.offsetTop - vv.height);
-  if (chromeOverlap > 0) return chromeOverlap;
-
-  /*
-  FNXC:Terminal 2026-06-30-08:48:
-  Folded phones can report an unfolded iOS fallback baseline first, then settle to a narrower closed-posture viewport before the keyboard opens. If that closed sample does not replace the old baseline, the terminal overestimates --keyboard-overlap, fits against a too-short/wrong-width box, and commands like `pnpm build` wrap into spaced glyphs. Re-baseline on settled width/posture changes before computing the iOS gap; do not touch xterm's symbols-free font stack.
-
-  FNXC:Terminal 2026-06-30-09:38:
-  A later folded-posture width sample can arrive while xterm's helper textarea is focused and the soft keyboard is already open. Never re-baseline from that focused keyboard-open sample, because it makes the keyboard height look like the closed viewport and clears --keyboard-overlap/--vv-height before the final fit.
-
-  FNXC:Terminal 2026-06-30-10:36:
-  The reported recurrence starts with the folded phone already focused and keyboard-open, so there is no prior closed visualViewport sample to seed the iOS fallback baseline. Prefer the current layout viewport height before falling back to visualViewport height; this preserves --keyboard-overlap/--vv-height and the post-layout xterm fit before any later unfold can repair stale geometry.
-
-  FNXC:Terminal 2026-06-30-11:42:
-  Touch-primary short landscape and folded closed postures can be <=480px tall. A keyboard-closed width/posture sample must replace an unfolded baseline even at that height, while focused keyboard-open samples remain excluded so xterm does not clear overlap before the first correct folded fit.
-
-  FNXC:Terminal 2026-07-02-18:12:
-  iOS Safari can deliver the very first terminal sample with the helper textarea focused, the soft keyboard already open, and both `innerHeight` and `documentElement.clientHeight` shrunk to the visual viewport. Seed that initial focused sample from the device screen only when the missing height is large enough to be a keyboard, so 10px/12px terminals publish --keyboard-overlap/--vv-height/--vv-width before any close/open, orientation, reconnect, or font reset side effect can repair spaced ASCII cells.
-  */
-  if (!isKeyboardFocusableElement(document.activeElement) && hasSettledViewportPostureChange(viewportWidth)) {
-    setInitialViewportBaseline(viewportHeight, viewportWidth);
-  }
-
-  // On iOS Safari, window.innerHeight shrinks to match visualViewport.
-  // Detect keyboard by checking if visual viewport is shorter than initial
-  // height by more than 80px (with a 30px noise filter).
-  const screenBaselineCandidate = isKeyboardFocusableElement(document.activeElement)
-    ? getScreenViewportBaselineCandidate(viewportWidth, viewportHeight)
-    : null;
-  const initialHeight = Math.max(
-    getInitialViewportHeight(viewportWidth, screenBaselineCandidate ?? viewportHeight),
-    screenBaselineCandidate ?? 0,
-  );
-  const gap = initialHeight - vv.offsetTop - vv.height;
-  // Minimum 30px gap required to filter noise (address bar, toolbar changes).
-  // Threshold of 80px: only consider keyboard present when gap exceeds this.
-  if (gap >= 30 && gap > 80) {
-    return gap;
-  }
-
-  setInitialViewportBaseline(viewportHeight, viewportWidth);
-  return 0;
+  const frame = readKeyboardViewportFrame();
+  if (!frame || !frame.coherent) return 0;
+  return frame.residualBottomInset;
 }
 
-/** Cached initial viewport height before any keyboard opened. */
-let _initialViewportHeight: number | null = null;
-let _initialViewportWidth: number | null = null;
+/*
+FNXC:MobileKeyboardViewport 2026-09-17-14:23:
+FN-512 deleted this module's private viewport baseline (`_initialViewportHeight`/`_initialViewportWidth`,
+its posture-change re-baselining, and its screen-derived seed). They existed only to feed the placement
+cascade removed above; the single surviving baseline lives in `useMobileKeyboard` and is detection-only.
 
-function setInitialViewportBaseline(height: number, width: number): void {
-  _initialViewportHeight = height;
-  _initialViewportWidth = width;
-}
-
-function hasSettledViewportPostureChange(width: number): boolean {
-  return (
-    _initialViewportHeight !== null &&
-    _initialViewportWidth !== null &&
-    Math.abs(width - _initialViewportWidth) >= 1
-  );
-}
-
-/**
- * Returns the viewport height at page load (before any keyboard opens).
- * Cached after first read.
- */
-function getInitialViewportHeight(width: number, height: number): number {
-  if (_initialViewportHeight === null) {
-    setInitialViewportBaseline(height, width);
-  }
-  return _initialViewportHeight ?? height;
-}
-
-/** Reset the cached initial viewport height. Exported for tests only. */
+The reset keeps its original exported name because many test files call it to clear keyboard state
+between cases. It now clears the shared baseline and the shared subscription store, which is the same
+intent expressed against the state that actually exists.
+*/
+/** Reset cached keyboard viewport state. Exported for tests only. */
 export function _resetInitialViewportHeight(): void {
-  _initialViewportHeight = null;
-  _initialViewportWidth = null;
+  _resetSharedKeyboardBaseline();
+  _resetKeyboardViewportStore();
 }
 
 interface TerminalModalProps {
@@ -1082,11 +1001,13 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
       Android Chrome can open the keyboard with a visual viewport narrower than the layout viewport while the terminal footer already shows the persisted 10px preference. Publish the current visual viewport width alongside --vv-height so the fullscreen mobile shell and xterm's first fit measure the visible keyboard-open box before any later orientation, unfold, reconnect, or manual font reset can repair stale wide columns.
       */
       setViewportWidth(vv.width);
-      // Scroll the modal so the status bar (bottom edge) stays visible
-      // when the virtual keyboard pushes the viewport up.
-      if (overlap > 0 && modalRef.current?.scrollIntoView) {
-        modalRef.current.scrollIntoView({ block: "end", behavior: "smooth" });
-      }
+      /*
+      FNXC:MobileKeyboardViewport 2026-09-17-14:23:
+      FN-512 removed a `scrollIntoView({ block: "end" })` on the modal here. The modal is already
+      sized to the visible rectangle by `--keyboard-overlap`/`--vv-height`, so the scroll corrected
+      nothing it owned — it scrolled every scrollable ancestor up to the document, which on WebKit can
+      abort the keyboard raise it was reacting to. Sizing is the fix; scrolling the page was not.
+      */
       // Re-fit xterm when viewport changes affect available height.
       // The keyboard opening/closing changes the modal's max-height via
       // CSS --keyboard-overlap, so xterm needs to recalculate rows/cols.

@@ -404,29 +404,33 @@ This clamp is class-gated rather than width-gated: iPhone landscape, iPad, compa
 narrow floating Chat can all have a visible keyboard outside a phone-width media query. The
 measured thread top accounts for host chrome above Chat instead of assuming only the app header.
 */
+/*
+FNXC:MobileKeyboardViewport 2026-09-17-14:23:
+FN-512: the bound is the thread's OWN measured usable height, published by
+`useKeyboardViewportSurface`. It is applied only when Chat is the owning container — inside an
+adapted drawer or floating window the class is never added, so the thread simply fills its bounded
+parent through the flex column and its own message scroller.
+
+The previous rule derived the height from `--vv-height` minus a measured thread top, which was one
+of several simultaneous adjustments to the same rectangle. No transform is declared here or applied
+in JS any more, so `.chat-thread` never establishes a containing block over the focused composer and
+WebKit has no reason to blur it and collapse the keyboard.
+*/
 .chat-thread--keyboard-active {
-  height: calc(var(--vv-height, calc(100dvh - var(--keyboard-overlap, 0px))) - var(--chat-thread-viewport-top, var(--header-height)));
-  max-height: calc(var(--vv-height, calc(100dvh - var(--keyboard-overlap, 0px))) - var(--chat-thread-viewport-top, var(--header-height)));
-  /* NOTE: the translateY drift compensation is applied imperatively in
-     JS (see ChatView's vv `apply()`), NOT here. Declaring
-     `transform`/`will-change: transform` in CSS keeps a non-`none`
-     transform on .chat-thread for the entire keyboard-active window —
-     and since .chat-thread is an ancestor of the focused composer
-     textarea, iOS Safari treats establishing that containing block as a
-     reason to blur the input and collapse the keyboard the instant it
-     opens. JS only sets a transform when there is real viewport drift
-     (offsetTop > 0); at the focus moment offsetTop is 0, so the
-     ancestor stays `transform: none` and the keyboard stays up. */
+  height: var(--chat-thread-visible-block-size, 100%);
+  max-height: var(--chat-thread-visible-block-size, 100%);
 }
 
 /*
-FNXC:ChatComposer 2026-09-01-05:36:
-When the keyboard covers the bottom gesture region, the composer must not reserve that
-safe-area inset again. Keep the accessory clearance because Safari does not subtract the
-input-assistant bar from visualViewport.height.
+FNXC:MobileKeyboardViewport 2026-09-17-14:23:
+FN-512 removed `--chat-keyboard-accessory-clearance`. It added a fixed ~48px band under the composer
+whenever an iOS keyboard was believed to be up — a constant, not a measurement — and it is the direct
+cause of the "gros espace entre le clavier et l'input" half of the report. Nothing replaces it: no
+other magic number and no user-agent test. The composer keeps its ordinary `--space-md` padding, and
+the bottom safe-area reserve is still dropped while the keyboard genuinely covers that region.
 */
 .chat-thread--keyboard-active .chat-input-area {
-  padding-bottom: calc(var(--space-md) + var(--chat-keyboard-accessory-clearance, 0px));
+  padding-bottom: var(--space-md);
 }
 
 .chat-thread-header {

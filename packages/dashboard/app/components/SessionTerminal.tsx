@@ -949,9 +949,17 @@ export function SessionTerminal({
             keyboardOpen ? " cli-session-terminal__mobile-bar--keyboard-open" : ""
           }`}
           data-testid="cli-terminal-mobile-bar"
+          /*
+          FNXC:MobileKeyboardViewport 2026-09-17-14:23:
+          FN-512: this fixed bar is anchored to the LAYOUT viewport, so the only correct lift is the
+          shared residual inset — which `keyboardOverlap` now is. It is zero whenever the browser
+          already resized the layout (Android `interactive-widget=resizes-content`) or whenever a
+          parent container has already been bounded, so the bar can no longer be lifted twice: once by
+          the reduced parent and once by an inferred keyboard height. Previously the value came from a
+          cached baseline and produced exactly that double lift.
+          */
           style={
-            // Lift the fixed footer above the virtual keyboard when it's open.
-            keyboardOpen ? { bottom: `${keyboardOverlap}px` } : undefined
+            keyboardOpen && keyboardOverlap > 0 ? { bottom: `${keyboardOverlap}px` } : undefined
           }
         >
           <div

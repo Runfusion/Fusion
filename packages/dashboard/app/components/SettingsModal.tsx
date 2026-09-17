@@ -86,6 +86,7 @@ import { appendTokenQuery, OAUTH_RELOGIN_SUCCESS_EVENT } from "../auth";
 import { openExternalUrl } from "../utils/open-external";
 import { useConfirm } from "../hooks/useConfirm";
 import { useMobileKeyboard } from "../hooks/useMobileKeyboard";
+import { useKeyboardViewportOwnedByAncestor } from "../hooks/useKeyboardViewportSurface";
 import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
 import { useEmbeddedPresentation, type ModalPresentation } from "../hooks/useEmbeddedPresentation";
 import { useNodes } from "../hooks/useNodes";
@@ -958,7 +959,9 @@ export function SettingsModal({
   const { keyboardOverlap, viewportHeight, viewportOffsetTop, keyboardOpen } = useMobileKeyboard({
     enabled: viewportMode === "mobile",
   });
-  const keyboardStyle: CSSProperties = keyboardOpen
+  // FNXC:MobileKeyboardViewport 2026-09-17-15:32: FN-512 single-owner rule — a drawer/window host that already adapted its bottom edge must not be compensated again from inside.
+  const keyboardOwnedByAncestor = useKeyboardViewportOwnedByAncestor();
+  const keyboardStyle: CSSProperties = keyboardOpen && !keyboardOwnedByAncestor
     ? ({
         "--keyboard-overlap": `${keyboardOverlap}px`,
         "--vv-offset-top": `${viewportOffsetTop}px`,

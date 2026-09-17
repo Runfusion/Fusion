@@ -23,7 +23,20 @@ describe("ChatView pop-out host inventory", () => {
     const sourceFiles = productionAppSourceFiles();
     /* `<ChatViewContent` is ChatView's own internal body, so match the exported element itself. */
     const mounts = sourceFiles.filter((file) => /<ChatView[\s/>]/.test(readAppFile(file)));
-    expect(mounts).toEqual(["components/PoppedOutChatWindows.tsx", "components/dashboard/MainViewKeepAlive.tsx", "components/overflowViewRegistry.tsx"]);
+    /*
+    FNXC:ChatSurfaceUnification 2026-09-17-14:23:
+    FN-512 re-ran this census and found a FOURTH live mount the list had fallen behind on: App's
+    desktop conversations popover (`chat-tool-popover`, added by FN-433/FN-447). It is a real host,
+    it routes `onOpenSessionInNewWindow`, and the only way to satisfy the old list would have been to
+    delete a working surface — so the list is corrected instead. The invariant this guard exists for
+    is unchanged: every production ChatView mount wires detached-conversation routing.
+    */
+    expect(mounts).toEqual([
+      "App.tsx",
+      "components/PoppedOutChatWindows.tsx",
+      "components/dashboard/MainViewKeepAlive.tsx",
+      "components/overflowViewRegistry.tsx",
+    ]);
     for (const file of mounts) expect(readAppFile(file)).toContain("onOpenSessionInNewWindow");
 
     const popOut = readAppFile("components/PoppedOutChatWindows.tsx");

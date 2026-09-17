@@ -52,6 +52,7 @@ import { useDiscoveredSkillsCache } from "../hooks/useDiscoveredSkillsCache";
 import { useChatSnippets } from "../hooks/useChatSnippetsCache";
 import { useAgentsMapCache } from "../hooks/useAgentsMapCache";
 import { useMobileKeyboard } from "../hooks/useMobileKeyboard";
+import { useKeyboardViewportSurface } from "../hooks/useKeyboardViewportSurface";
 import { useMobileKeyboardViewportLock, isIOS } from "../hooks/useMobileScrollLock";
 import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
 import { matchesAgentMentionFilter } from "./mentionMatching";
@@ -770,10 +771,13 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
   const chatThreadRef = useRef<HTMLDivElement | null>(null);
   const clippedMessageFrameRef = useRef<number | null>(null);
   const [topClippedMessageIds, setTopClippedMessageIds] = useState<Set<string>>(() => new Set());
-  // FN-5365: suppress transient visualViewport shrink samples so
-  // visualViewport shrink samples do not jerk the chat thread/composer.
-  const suppressVvShrinkRef = useRef(false);
-  const suppressVvShrinkTimeoutRef = useRef<number | null>(null);
+  /*
+  FNXC:MobileKeyboardViewport 2026-09-17-14:23:
+  FN-512 removed FN-5365's 450ms `suppressVvShrink` window along with the local viewport reader it
+  gated. Transient samples are now rejected where they are read: the shared frame marks a physically
+  impossible rectangle incoherent and holds the last coherent one, which is bounded and cancellable
+  instead of being a fixed delay that a fast close-then-refocus could outrun.
+  */
   // Deferred drift-reset scheduled on blur; cancelled on the next focus so a
   // quick re-tap never scrolls the document while iOS is raising the keyboard.
   const blurScrollResetTimeoutRef = useRef<number | null>(null);
@@ -795,7 +799,6 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
   const isMobile = mode === "mobile";
   const isTablet = mode === "tablet";
   const chatViewRef = useRef<HTMLDivElement>(null);
-  const appliedThreadTranslateYRef = useRef(0);
   const [floatingNarrow, setFloatingNarrow] = useState(false);
   /*
   FNXC:ChatModal 2026-06-22-14:38:
@@ -903,6 +906,23 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
   const { keyboardOverlap, keyboardOpen } = useMobileKeyboard({
     enabled: keyboardTrackedHost && !!activeSession,
     allowNonMobileViewport: keyboardTrackedHost,
+  });
+
+  /*
+  FNXC:MobileKeyboardViewport 2026-09-17-14:23:
+  FN-512: the thread measures ITS OWN rectangle against the shared visible bound, and only when no
+  ancestor already did. Before this, Chat recomputed occlusion locally from `window.innerHeight`
+  (which Android Chrome can report stale), clamped its height, translated itself by `offsetTop`, and
+  added a constant iOS accessory margin — all while a drawer or floating window was adapting the same
+  rectangle. Which adjustment won depended on the order the keyboard events arrived in, which is why
+  the operator saw the field either under the keyboard or far above it roughly every other time.
+
+  Inside an adapted owner the thread now adapts nothing: the flex column with `min-height: 0` and its
+  own message scroller already fit the bounded panel.
+  */
+  const chatKeyboardSurface = useKeyboardViewportSurface(chatThreadRef, {
+    enabled: keyboardTrackedHost && !!activeSession,
+    blockSizeProperty: "--chat-thread-visible-block-size",
   });
 
   const filteredSkills = useMemo(() => {
@@ -1400,7 +1420,15 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
   // applies, and pinning body to position:fixed afterwards blurs the input
   // on iOS, collapsing the keyboard the instant it opens. Restores
   // window.scrollTo(0, 0) on cleanup to recover from any iOS drift.
-  useMobileKeyboardViewportLock(isMobile && keyboardOpen);
+  /*
+  FNXC:MobileKeyboardViewport 2026-09-17-15:32:
+  FN-512 remediation: these two document-GLOBAL effects must follow the surface that actually owns the
+  focused field. `keyboardOpen` is derived from `document.activeElement`, so a retained-but-hidden
+  Chat (keep-alive route, hidden window) with a live session used to pin the body and cancel every
+  touchmove outside `.chat-messages` as soon as the operator focused a field in a VISIBLE form. The
+  activity gate (`active` = host active AND managed surface active) bounds them to the real surface.
+  */
+  useMobileKeyboardViewportLock(isMobile && keyboardOpen && active);
 
   /*
   FNXC:ChatComposer 2026-08-23-16:07:
@@ -1412,99 +1440,39 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
   Landscape-phone keyboard state newly reaches the existing touch guard while its body lock keeps
   its own phone-width iOS gate, so this does not add body pinning on wide hosts.
   */
+  /*
+  FNXC:MobileKeyboardViewport 2026-09-17-14:23:
+  FN-512 replaced ChatView's parallel viewport reader with the shared surface above. What remains
+  here is only the publication of that single decision onto the thread element.
+
+  Deliberately removed, and not to be reintroduced:
+  - the local `window.innerHeight - offsetTop - height` overlap, because Android Chrome can report a
+    stale `innerHeight` and the document-first layout height is the correct denominator;
+  - `--chat-keyboard-accessory-clearance`, a constant iOS margin that measured nothing and simply
+    added the empty band the operator reported. Nothing replaces it: no other constant, no user-agent
+    test. If the iOS accessory bar ever needs compensating, it has to come from observable geometry;
+  - the `translateY(offsetTop)` drift compensation, which stacked on top of whatever the owning
+    drawer or window had already applied. The anti-blur invariant it protected still holds, and now
+    trivially: the thread never receives a transform at all, so it can never establish a containing
+    block over the focused composer and make WebKit collapse the keyboard.
+  */
   useLayoutEffect(() => {
-    if (!keyboardTrackedHost || !activeSession) return;
-    if (typeof window === "undefined") return;
-
     const thread = chatThreadRef.current;
-    const vv = window.visualViewport;
-    if (!thread || !vv) return;
+    if (!thread) return;
 
-    const isKeyboardTrackingFocusable = (element: Element | null): boolean => {
-      if (!(element instanceof HTMLElement)) return false;
-      if (element.tagName === "TEXTAREA") return true;
-      if (element.tagName !== "INPUT") return false;
-      const inputType = (element as HTMLInputElement).type.toLowerCase();
-      return ["", "text", "search", "email", "url", "tel", "password", "number"].includes(inputType);
-    };
+    const bounded = chatKeyboardSurface.maxBlockSize !== null;
+    if (bounded) {
+      thread.style.setProperty("--chat-thread-visible-block-size", `${chatKeyboardSurface.maxBlockSize}px`);
+    } else {
+      thread.style.removeProperty("--chat-thread-visible-block-size");
+    }
+    thread.classList.toggle("chat-thread--keyboard-active", bounded);
 
-    const apply = () => {
-      if (suppressVvShrinkRef.current) {
-        thread.classList.remove("chat-thread--keyboard-active");
-        thread.style.setProperty("--chat-keyboard-accessory-clearance", "0px");
-        thread.style.removeProperty("--chat-thread-viewport-top");
-        thread.style.transform = "";
-        thread.style.willChange = "";
-        appliedThreadTranslateYRef.current = 0;
-        return;
-      }
-      const overlap = Math.max(0, window.innerHeight - vv.offsetTop - vv.height);
-      const offsetTop = vv.offsetTop || 0;
-      thread.style.setProperty("--vv-height", `${vv.height}px`);
-      thread.style.setProperty("--vv-offset-top", `${offsetTop}px`);
-      thread.style.setProperty("--keyboard-overlap", `${overlap}px`);
-
-      const threadRect = thread.getBoundingClientRect();
-      if (threadRect.height > 0) {
-        const untransformedTop = Math.max(0, threadRect.top - appliedThreadTranslateYRef.current - offsetTop);
-        const viewportTop = Math.min(vv.height, untransformedTop);
-        thread.style.setProperty("--chat-thread-viewport-top", `${viewportTop}px`);
-      } else {
-        thread.style.removeProperty("--chat-thread-viewport-top");
-      }
-
-      const keyboardActive = (overlap > 0 || offsetTop > 0) && isKeyboardTrackingFocusable(document.activeElement);
-      thread.classList.toggle("chat-thread--keyboard-active", keyboardActive);
-      /*
-      FNXC:ChatComposer 2026-07-04-09:42:
-      Mobile Chat's composer must stay fully visible above the soft keyboard and the iOS input-assistant/autofill bar, which Safari does not subtract from visualViewport.height. Keep the clearance ChatView-local and keyed to iOS keyboard-active state so the shared keyboard hook contract stays stable, .chat-thread does not gain a persistent transform (anti-blur invariant), and Android resizes-content does not regain an empty reserved gap.
-      */
-      thread.style.setProperty(
-        "--chat-keyboard-accessory-clearance",
-        keyboardActive && isIOS() ? "calc(var(--space-2xl) + var(--space-md))" : "0px",
-      );
-
-      // Drift compensation is applied here (not in CSS) so .chat-thread —
-      // an ancestor of the focused composer textarea — only gets a
-      // non-`none` transform when iOS actually shifts the visual viewport
-      // (offsetTop > 0). Keeping a transform/will-change on it at all times
-      // (as the old CSS did) makes iOS Safari blur the input and collapse
-      // the keyboard the moment it opens, because at focus time offsetTop
-      // is 0 and translateY(0) still establishes a containing block over
-      // the focused element.
-      if (keyboardActive && offsetTop > 0) {
-        thread.style.transform = `translateY(${offsetTop}px)`;
-        thread.style.willChange = "transform";
-        appliedThreadTranslateYRef.current = offsetTop;
-      } else {
-        thread.style.transform = "";
-        thread.style.willChange = "";
-        appliedThreadTranslateYRef.current = 0;
-      }
-    };
-
-    apply();
-    vv.addEventListener("resize", apply);
-    vv.addEventListener("scroll", apply);
-    document.addEventListener("focusin", apply);
-    document.addEventListener("focusout", apply);
-    window.addEventListener("pageshow", apply);
-    document.addEventListener("visibilitychange", apply);
     return () => {
-      vv.removeEventListener("resize", apply);
-      vv.removeEventListener("scroll", apply);
-      document.removeEventListener("focusin", apply);
-      document.removeEventListener("focusout", apply);
-      window.removeEventListener("pageshow", apply);
-      document.removeEventListener("visibilitychange", apply);
+      thread.style.removeProperty("--chat-thread-visible-block-size");
       thread.classList.remove("chat-thread--keyboard-active");
-      thread.style.setProperty("--chat-keyboard-accessory-clearance", "0px");
-      thread.style.removeProperty("--chat-thread-viewport-top");
-      thread.style.transform = "";
-      thread.style.willChange = "";
-      appliedThreadTranslateYRef.current = 0;
     };
-  }, [activeSession, keyboardTrackedHost]);
+  }, [chatKeyboardSurface.maxBlockSize]);
 
   // Close context menu on outside click
   useEffect(() => {
@@ -1526,7 +1494,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
   // React's synthetic onTouchMove is passive by default, so this has to
   // be a native addEventListener with { passive: false }.
   useEffect(() => {
-    if (!isMobile || !keyboardOpen) return;
+    if (!isMobile || !keyboardOpen || !active) return;
     const onTouchMove = (event: TouchEvent) => {
       const target = event.target as Element | null;
       if (target?.closest(".chat-messages")) return; // allow messages scroll
@@ -1536,7 +1504,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
     return () => {
       document.removeEventListener("touchmove", onTouchMove);
     };
-  }, [isMobile, keyboardOpen]);
+  }, [active, isMobile, keyboardOpen]);
 
   // NOTE: a previous iOS-only "resync" effect here force-blurred and
   // re-focused the active textarea on visibilitychange/pageshow to nudge
@@ -2364,15 +2332,6 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
 
   const handleInputBlur = useCallback(() => {
     if (typeof window !== "undefined" && window.innerWidth <= 768) {
-      suppressVvShrinkRef.current = true;
-      if (suppressVvShrinkTimeoutRef.current !== null) {
-        window.clearTimeout(suppressVvShrinkTimeoutRef.current);
-      }
-      suppressVvShrinkTimeoutRef.current = window.setTimeout(() => {
-        suppressVvShrinkRef.current = false;
-        suppressVvShrinkTimeoutRef.current = null;
-      }, 450);
-
       // Undo iOS layout-viewport drift HERE, on blur, not on the next focus.
       // After a keyboard dismiss iOS can leave window.scrollY > 0; if that
       // residual scroll is still present on the next focus, the keyboard
@@ -2415,11 +2374,6 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
   }, [fileMention]);
 
   const handleInputFocus = useCallback(() => {
-    suppressVvShrinkRef.current = false;
-    if (suppressVvShrinkTimeoutRef.current !== null) {
-      window.clearTimeout(suppressVvShrinkTimeoutRef.current);
-      suppressVvShrinkTimeoutRef.current = null;
-    }
     if (hideSkillMenuTimeoutRef.current !== null) {
       window.clearTimeout(hideSkillMenuTimeoutRef.current);
       hideSkillMenuTimeoutRef.current = null;
@@ -2441,9 +2395,6 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
 
   useEffect(() => {
     return () => {
-      if (suppressVvShrinkTimeoutRef.current !== null) {
-        window.clearTimeout(suppressVvShrinkTimeoutRef.current);
-      }
       if (blurScrollResetTimeoutRef.current !== null) {
         window.clearTimeout(blurScrollResetTimeoutRef.current);
       }

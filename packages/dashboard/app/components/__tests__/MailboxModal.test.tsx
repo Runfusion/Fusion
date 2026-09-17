@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { MailboxModal } from "../MailboxModal";
 import * as apiModule from "../../api";
 import * as mobileKeyboardModule from "../../hooks/useMobileKeyboard";
+import { KeyboardViewportOwnerProvider } from "../../hooks/useKeyboardViewportSurface";
 import * as headerModule from "../Header";
 import type { Agent } from "../../api";
 import type { Message } from "@fusion/core";
@@ -225,6 +226,31 @@ describe("MailboxModal", () => {
     const modal = await screen.findByTestId("mailbox-modal");
     expect(modal.getAttribute("style")).toContain("--vv-offset-top: 28px");
     expect(modal.getAttribute("style")).toContain("--vv-height: 460px");
+  });
+
+  /*
+  FNXC:MobileKeyboardViewport 2026-09-17-15:32:
+  FN-512 single-owner rule: inside a drawer/window host that already adapted its bottom edge, the
+  mailbox publishes nothing so the panel is not translated and shrunk a second time.
+  */
+  it("publishes no viewport variables when a host container already owns the adaptation", async () => {
+    mockUseMobileKeyboard.mockReturnValue({
+      keyboardOverlap: 220,
+      viewportHeight: 460,
+      viewportOffsetTop: 28,
+      keyboardOpen: true,
+    });
+
+    render(
+      <KeyboardViewportOwnerProvider value={{ owned: true }}>
+        <MailboxModal {...defaultProps} />
+      </KeyboardViewportOwnerProvider>,
+    );
+
+    const modal = await screen.findByTestId("mailbox-modal");
+    expect(modal.getAttribute("style") ?? "").not.toContain("--vv-offset-top");
+    expect(modal.getAttribute("style") ?? "").not.toContain("--vv-height");
+    expect(modal.getAttribute("style") ?? "").not.toContain("--keyboard-overlap");
   });
 
   it("shows the Mailbox title with unread count badge", async () => {

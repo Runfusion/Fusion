@@ -49,6 +49,32 @@ The revealed top band and the panel block-size derive from the same `--mobile-dr
   box-shadow: var(--shadow-lg);
 }
 
+/*
+FNXC:MobileKeyboardViewport 2026-09-17-14:23:
+FN-512: `--mobile-drawer-block-size` derives from `100dvh`, which WebKit does NOT shrink when the
+soft keyboard opens, so the drawer kept extending below the visible area and hid its own composer
+behind the keyboard — the "clavier par dessus l'input" half of the report.
+
+The adjustment belongs to the OVERLAY, not the panel. The overlay is `inset: 0` and bottom-aligns its
+panel, so pulling its bottom edge up by the residual inset moves the whole drawer inside the visible
+area in one step. Capping the panel's height instead is unstable: shortening a bottom-aligned box
+moves its own top, so a height derived from that top feeds back into itself (measured in Chromium:
+832px → 144px → 1px over successive observations).
+
+`--mobile-drawer-keyboard-inset` comes straight from the shared frame, is absent at rest, and leaves
+the resting geometry, top reveal, handle, and entry animation untouched. The drawer is the single
+owner of this adjustment; hosted content must not adapt again — see `KeyboardViewportOwnerProvider`
+in MobileDrawer.tsx.
+*/
+.mobile-drawer--keyboard-bounded {
+  bottom: var(--mobile-drawer-keyboard-inset, 0px);
+}
+
+.mobile-drawer--keyboard-bounded .mobile-drawer__panel {
+  height: 100%;
+  max-height: 100%;
+}
+
 .mobile-drawer--open .mobile-drawer__panel {
   animation: mobile-drawer-rise-in var(--duration-normal) ease-out;
 }
@@ -114,6 +140,17 @@ The revealed top band and the panel block-size derive from the same `--mobile-dr
 
 .mobile-drawer__panel--content-scroll .mobile-drawer__body {
   overflow: hidden;
+}
+
+/*
+FNXC:MobileKeyboardViewport 2026-09-17-14:23:
+FN-512: `--mobile-nav-system-offset` reserves room for the trigger pill and the bottom system inset.
+While the keyboard covers that region the reserve is pure dead space between the keyboard and the
+field — the second reported symptom. Drop it only while the panel is genuinely keyboard-bounded, so
+the resting safe-area and standalone clearance are unchanged.
+*/
+.mobile-drawer__panel--keyboard-bounded .mobile-drawer__body {
+  padding-block-end: 0;
 }
 
 .mobile-drawer__body > * {

@@ -31,7 +31,54 @@ describe("OAuthManualCodeForm", () => {
     vi.restoreAllMocks();
   });
 
-  it("scrolls the textarea into view on mobile focus and visual viewport resize", () => {
+  /*
+  FNXC:MobileKeyboardViewport 2026-09-17-14:23:
+  FN-512 replaced this form's page-moving assist. It used to call
+  `scrollIntoView({ block: "center" })` in an animation frame and AGAIN 120ms later; both scrolled
+  every scrollable ancestor up to the document, and the deferred one could fire after the user had
+  moved to a different field and drag that surface instead.
+
+  The contract is now: reveal the code field inside its own scroller, only while it is still the
+  focused connected control, with the pending frame cancelled on blur and unmount. The assertions
+  below follow that observable behaviour.
+  */
+  function mountInScroller() {
+    render(
+      <OAuthManualCodeForm
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        prompt="Paste code"
+      />,
+    );
+    const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
+    const scroller = textarea.closest(".oauth-manual-code") as HTMLElement;
+    Object.defineProperties(scroller, {
+      scrollHeight: { value: 2000, configurable: true },
+      clientHeight: { value: 400, configurable: true },
+    });
+    scroller.style.overflowY = "auto";
+    let scrollTop = 0;
+    Object.defineProperty(scroller, "scrollTop", {
+      configurable: true,
+      get: () => scrollTop,
+      set: (next: number) => { scrollTop = next; },
+    });
+    scroller.getBoundingClientRect = () => ({
+      top: 0, bottom: 400, height: 400, left: 0, right: 390, width: 390, x: 0, y: 0, toJSON: () => ({}),
+    }) as DOMRect;
+    textarea.getBoundingClientRect = () => {
+      const top = 440 - scrollTop;
+      return ({
+        top, bottom: top + 40, height: 40, left: 0, right: 390, width: 390, x: 0, y: top, toJSON: () => ({}),
+      }) as DOMRect;
+    };
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(textarea, "scrollIntoView", { value: scrollIntoView, writable: true });
+    return { textarea, scroller, scrollIntoView, readScrollTop: () => scroller.scrollTop };
+  }
+
+  it("reveals the textarea inside its own scroller on mobile focus and visual viewport resize", () => {
     mockMatchMedia({ mobile: true });
 
     const listeners: Record<string, (() => void) | undefined> = {};
@@ -47,40 +94,49 @@ describe("OAuthManualCodeForm", () => {
       },
     });
 
-    render(
-      <OAuthManualCodeForm
-        value=""
-        onChange={vi.fn()}
-        onSubmit={vi.fn()}
-        prompt="Paste code"
-      />,
-    );
+    const { textarea, scrollIntoView, readScrollTop } = mountInScroller();
 
-    const textarea = screen.getByRole("textbox");
-    const scrollIntoView = vi.fn();
-    Object.defineProperty(textarea, "scrollIntoView", {
-      value: scrollIntoView,
-      writable: true,
-    });
-
+    textarea.focus();
     fireEvent.focus(textarea);
     vi.runAllTimers();
 
-    expect(scrollIntoView).toHaveBeenCalledWith({
-      block: "center",
-      behavior: "smooth",
-      inline: "nearest",
-    });
-
-    Object.defineProperty(document, "activeElement", {
-      configurable: true,
-      get: () => textarea,
-    });
+    expect(readScrollTop()).toBe(80);
+    expect(scrollIntoView).not.toHaveBeenCalled();
 
     listeners.resize?.();
     vi.runAllTimers();
 
-    expect(scrollIntoView).toHaveBeenCalled();
+    // Already revealed, so the repeat converges instead of drifting further.
+    expect(readScrollTop()).toBe(80);
+  });
+
+  it("declines to move anything once focus has transferred to another field", () => {
+    mockMatchMedia({ mobile: true });
+    const listeners: Record<string, (() => void) | undefined> = {};
+    Object.defineProperty(window, "visualViewport", {
+      configurable: true,
+      value: {
+        addEventListener: vi.fn((event: string, callback: () => void) => { listeners[event] = callback; }),
+        removeEventListener: vi.fn((event: string) => { delete listeners[event]; }),
+      },
+    });
+
+    const { textarea, scrollIntoView, readScrollTop } = mountInScroller();
+    textarea.focus();
+    fireEvent.focus(textarea);
+    vi.runAllTimers();
+    const revealed = readScrollTop();
+
+    const elsewhere = document.createElement("input");
+    document.body.append(elsewhere);
+    elsewhere.focus();
+
+    listeners.resize?.();
+    vi.runAllTimers();
+
+    expect(readScrollTop()).toBe(revealed);
+    expect(scrollIntoView).not.toHaveBeenCalled();
+    elsewhere.remove();
   });
 
   it("does not trigger scroll assist on non-mobile layouts", () => {
@@ -102,11 +158,19 @@ describe("OAuthManualCodeForm", () => {
       value: scrollIntoView,
       writable: true,
     });
+    const scroller = textarea.closest(".oauth-manual-code") as HTMLElement;
+    let scrollTop = 0;
+    Object.defineProperty(scroller, "scrollTop", {
+      configurable: true,
+      get: () => scrollTop,
+      set: (next: number) => { scrollTop = next; },
+    });
 
     fireEvent.focus(textarea);
     vi.runAllTimers();
 
     expect(scrollIntoView).not.toHaveBeenCalled();
+    expect(scroller.scrollTop).toBe(0);
   });
 
   // FNXC:OAuthManualCodeForm 2026-07-14-00:00: regression coverage for FN-7953 —

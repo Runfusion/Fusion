@@ -682,7 +682,19 @@ describe("SessionTerminal (mobile) — keyboard-open behavior", () => {
         expect(root).toHaveAttribute("data-keyboard-open", "true");
         const bar = screen.getByTestId("cli-terminal-mobile-bar");
         expect(bar.className).toContain("cli-session-terminal__mobile-bar--keyboard-open");
-        expect(bar.style.bottom).toBe("454px");
+        /*
+        FNXC:MobileKeyboardViewport 2026-09-17-14:23:
+        FN-512: this fixture's layout viewport IS 390 — `innerHeight`, `clientHeight`, and
+        `visualViewport.height` all already reduced, which is exactly the state the comment above
+        describes. A `position: fixed; bottom: 0` bar is therefore fully visible and must NOT be
+        lifted. The previous assertion required a 454px lift derived from `window.screen`, which
+        inside a 390px-tall viewport pushed the input bar clean off the top of the screen.
+
+        The screen dimension still earns its keep as DETECTION — the keyboard-open class, the
+        `data-keyboard-open` attribute, and the 12px fit above all still hold — but it no longer
+        supplies placement pixels.
+        */
+        expect(bar.style.bottom).toBe("");
       });
       expect(mockTerm.options.fontSize).toBe(12);
       expectMeasurementSafeFontStack(mockTerm.options.fontFamily as string);
@@ -754,7 +766,7 @@ describe("SessionTerminal (mobile) — keyboard-open behavior", () => {
     }
   });
 
-  it("re-baselines folded iOS viewport before lifting the mobile input bar", async () => {
+  it("re-baselines a folded iOS viewport and still detects the keyboard without inventing a lift", async () => {
     const { listeners, mockVV } = installVisualViewport({ innerHeight: 844, vvHeight: 844 });
     Object.defineProperty(window, "innerWidth", { value: 700, writable: true, configurable: true });
     Object.defineProperty(mockVV, "width", { value: 700, writable: true, configurable: true });
@@ -787,7 +799,17 @@ describe("SessionTerminal (mobile) — keyboard-open behavior", () => {
     await waitFor(() => {
       const bar = screen.getByTestId("cli-terminal-mobile-bar");
       expect(bar.className).toContain("cli-session-terminal__mobile-bar--keyboard-open");
-      expect(bar.style.bottom).toBe("367px");
+      /*
+      FNXC:MobileKeyboardViewport 2026-09-17-14:23:
+      FN-512: the re-baselining contract this test guards is unchanged — the folded posture must
+      replace the unfolded baseline, and the keyboard must still be DETECTED afterwards (the
+      keyboard-open class above proves it). What changed is the lift.
+
+      This fixture shrinks the layout viewport to 300 together with the visual viewport, so nothing is
+      occluded and the bar at `bottom: 0` is already visible. The previous 367px came from the folded
+      baseline of 667 and, applied inside a 300px-tall viewport, placed the bar above the top edge.
+      */
+      expect(bar.style.bottom).toBe("");
     });
 
     input.remove();

@@ -57,3 +57,25 @@ Cover restore as a surface invariant, not only the single iOS reproduction:
 - Existing FN-5155 in-session impossible-sample coverage remains green, proving the normal guard was not removed.
 
 The hook-level test seam is preferable here because callers already consume the hook-provided `keyboardOpen` and viewport values; no consumer-specific behavior needed to change.
+
+## Update — FN-512 (2026-09-17)
+
+The restore *contract* above is unchanged and still enforced: returning from background with the
+keyboard collapsed must clear the stale open-keyboard state even while the input keeps focus, and a
+genuinely still-open restored keyboard must stay open.
+
+The *mechanism* changed. The per-hook listeners, the timed tail
+(50/200/500/1000/1500 ms) and the per-instance stability poll described above were replaced by one
+shared subscription in `packages/dashboard/app/utils/mobileKeyboardViewport.ts`, which deduplicates
+identical frames and runs a single bounded, cancellable stabilization poll. `pageshow` and
+`visibilitychange` remain distinct sampling paths that force a fresh sample plus a re-settle.
+
+The collapsed-restore special case is now largely structural rather than a bypass: a frame reporting a
+visual height that already fills the layout viewport **cannot** also carry a positive `offsetTop`, so
+that leftover offset is normalized to zero at read time. A stale restore sample therefore resolves into
+a coherent full-height rectangle on its own, instead of needing the impossible-sample hold to be
+suspended for it. Placement values are read from that rectangle; the cached baseline is now used only
+for keyboard *detection* and never contributes placement pixels.
+
+See [`mobile-keyboard-single-viewport-owner.md`](mobile-keyboard-single-viewport-owner.md) for the
+full measurement rule and the single-owner contract.

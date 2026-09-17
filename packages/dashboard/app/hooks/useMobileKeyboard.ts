@@ -1,10 +1,34 @@
 import { useEffect, useRef, useState } from "react";
-import { getMobileKeyboardLayoutViewportHeight } from "../utils/mobileBarKeyboardFlags";
+import {
+  IMPOSSIBLE_VIEWPORT_EPSILON_PX,
+  ZOOMED_SCALE_THRESHOLD,
+  getKeyboardViewportFrame,
+  subscribeKeyboardViewport,
+  type KeyboardViewportFrame,
+} from "../utils/mobileKeyboardViewport";
 
-const IOS_FALLBACK_MIN_GAP_PX = 30;
-const IOS_FALLBACK_MIN_FOCUSED_GAP_PX = 16;
+/*
+FNXC:MobileKeyboardViewport 2026-09-17-14:23:
+FN-512 turns this hook into a FAÇADE over the shared frame in `utils/mobileKeyboardViewport.ts`.
+It no longer installs its own listeners, tail timers, or stability poll — N mounted surfaces used to
+install N of each and could publish N different answers for one instant, which is the intermittent
+"1 fois sur 2" failure the operator reported.
+
+The hook now publishes two deliberately different kinds of value:
+
+- PLACEMENT (geometric, never heuristic): `keyboardOverlap` is the residual bottom inset of a
+  LAYOUT-anchored element, `viewportHeight`/`viewportOffsetTop` are the visible rectangle, and
+  `visibleBottom` is its bottom edge. `keyboardOverlap` is ZERO whenever the browser already shrank
+  the layout viewport, so a fixed bar or bounded container can never subtract a keyboard height from
+  a container that was already reduced. Before FN-512 the iOS branch derived this number from a
+  cached baseline, which double-subtracted on Android and left a dead band above the keyboard.
+- DETECTION (heuristic, tolerant): `keyboardOpen` still requires a focused editable element plus a
+  meaningful shrink against a baseline, because "is a keyboard up?" genuinely cannot be measured.
+
+A baseline may therefore QUALIFY a transition; it may never SUPPLY placement pixels.
+*/
+
 const IOS_VIEWPORT_SHRINK_MIN_PX = 16;
-const IMPOSSIBLE_VIEWPORT_EPSILON_PX = 2;
 const SETTLED_FOLDED_VIEWPORT_MIN_HEIGHT_PX = 480;
 
 /** Whether the current device is likely mobile (touch-primary, small viewport). */
@@ -25,40 +49,69 @@ function isMobileDevice(): boolean {
 }
 
 /**
- * Baseline viewport height captured while keyboard is likely closed.
- * Kept as max-observed value to recover if first sample was keyboard-open.
+ * Baseline viewport height captured while the keyboard is likely closed.
+ * DETECTION ONLY — see the module note. Never read for placement.
  */
 let _baselineViewportHeight: number | null = null;
 let _baselineViewportWidth: number | null = null;
-
-function getCurrentViewportWidth(): number {
-  return window.visualViewport?.width && window.visualViewport.width > 0
-    ? window.visualViewport.width
-    : window.innerWidth;
-}
 
 function setBaselineViewport(height: number, width: number): void {
   _baselineViewportHeight = height;
   _baselineViewportWidth = width;
 }
 
-function getBaselineViewportHeight(): number {
+function getBaselineViewportHeight(frame: KeyboardViewportFrame): number {
   if (_baselineViewportHeight === null) {
-    setBaselineViewport(window.visualViewport?.height ?? window.innerHeight, getCurrentViewportWidth());
+    setBaselineViewport(frame.visualHeight, frame.visualWidth);
   }
-  return _baselineViewportHeight ?? (window.visualViewport?.height ?? window.innerHeight);
+  return _baselineViewportHeight ?? frame.visualHeight;
 }
 
-function updateBaselineViewportHeight(nextHeight: number, nextWidth: number): void {
-  const current = getBaselineViewportHeight();
-  const widthChanged = _baselineViewportWidth !== null && Math.abs(nextWidth - _baselineViewportWidth) >= 1;
+function updateBaselineViewportHeight(frame: KeyboardViewportFrame): void {
+  const current = getBaselineViewportHeight(frame);
+  const widthChanged = _baselineViewportWidth !== null
+    && Math.abs(frame.visualWidth - _baselineViewportWidth) >= 1;
   /*
   FNXC:Terminal 2026-06-30-08:51:
-  SessionTerminal shares the folded-phone root cause: a keyboard-closed width/posture settle can be shorter than the previous unfolded baseline, so max-only baselines overestimate later iOS keyboard overlap and lift/refit the embedded terminal against stale geometry. Replace the baseline on settled folded posture changes while preserving the max-observed recovery for same-posture keyboard-open first samples.
+  SessionTerminal shares the folded-phone root cause: a keyboard-closed width/posture settle can be shorter than the previous unfolded baseline, so max-only baselines overestimate later iOS keyboard occlusion. Replace the baseline on settled folded posture changes while preserving the max-observed recovery for same-posture keyboard-open first samples.
   */
-  if (nextHeight > current || (widthChanged && nextHeight >= SETTLED_FOLDED_VIEWPORT_MIN_HEIGHT_PX)) {
-    setBaselineViewport(nextHeight, nextWidth);
+  if (frame.visualHeight > current
+    || (widthChanged && frame.visualHeight >= SETTLED_FOLDED_VIEWPORT_MIN_HEIGHT_PX)) {
+    setBaselineViewport(frame.visualHeight, frame.visualWidth);
   }
+}
+
+/*
+FNXC:Terminal 2026-07-02-18:18:
+iOS Safari can deliver the very FIRST sample with the helper textarea already focused, the soft
+keyboard already open, and `innerHeight`, `clientHeight`, and `visualViewport.height` all already
+reduced. There is then no closed sample anywhere to compare against, so a screen dimension is the only
+remaining evidence that a keyboard is up.
+
+FNXC:MobileKeyboardViewport 2026-09-17-14:23:
+FN-512 keeps this strictly as DETECTION. The candidate can make `keyboardOpen` true; it can never
+become `keyboardOverlap`. In exactly this state the layout viewport has already been reduced, so a
+layout-anchored bar at `bottom: 0` is visible and the correct reservation is ZERO — subtracting a
+screen-derived height here used to push the terminal input bar clean off the top of a 390px viewport.
+*/
+function getScreenViewportBaselineCandidate(frame: KeyboardViewportFrame): number | null {
+  if (typeof window === "undefined" || !window.screen) return null;
+  const screenWidth = window.screen.width;
+  const screenHeight = window.screen.height;
+  if (!Number.isFinite(screenWidth) || !Number.isFinite(screenHeight) || screenWidth <= 0 || screenHeight <= 0) {
+    return null;
+  }
+
+  const portraitLike = frame.visualHeight >= frame.visualWidth;
+  const candidate = portraitLike
+    ? Math.max(screenWidth, screenHeight)
+    : Math.min(screenWidth, screenHeight);
+  const gap = candidate - frame.visualHeight;
+  const minMeaningfulGap = portraitLike
+    ? Math.max(220, candidate * 0.25)
+    : Math.max(80, candidate * 0.25);
+
+  return gap >= minMeaningfulGap ? candidate : null;
 }
 
 function resetBaselineViewportHeight(): void {
@@ -66,25 +119,9 @@ function resetBaselineViewportHeight(): void {
   _baselineViewportWidth = null;
 }
 
-function isKeyboardFocusableElement(el: Element | null): boolean {
-  if (!el) return false;
-  if (el instanceof HTMLTextAreaElement) return true;
-  if (el instanceof HTMLInputElement) {
-    const nonTextTypes = new Set(["checkbox", "radio", "button", "submit", "reset", "file", "range", "color", "hidden"]);
-    return !nonTextTypes.has(el.type);
-  }
-  return el instanceof HTMLElement && el.isContentEditable;
-}
-
-interface KeyboardMetrics {
-  overlap: number;
-  open: boolean;
-  vvHeight: number | null;
-  vvOffsetTop: number;
-}
-
-interface NavigationViewportMetrics extends KeyboardMetrics {
-  baselineHeight: number | null;
+/** Reset cached viewport baseline. Exported for tests only. */
+export function _resetInitialViewportHeight(): void {
+  resetBaselineViewportHeight();
 }
 
 export interface MobileKeyboardNavigationViewport {
@@ -95,24 +132,23 @@ export interface MobileKeyboardNavigationViewport {
 }
 
 export interface MobileKeyboardState {
+  /**
+   * Residual bottom inset of a LAYOUT-anchored element, in CSS pixels. Geometric, never derived
+   * from a baseline or screen size, and zero when the layout viewport already shrank.
+   */
   keyboardOverlap: number;
+  /** Visible rectangle height (`visualViewport.height`), or null while no frame is tracked. */
   viewportHeight: number | null;
+  /** Visible rectangle top edge in layout coordinates. */
   viewportOffsetTop: number;
+  /** Visible rectangle bottom edge in layout coordinates, or null while no frame is tracked. */
+  visibleBottom: number | null;
+  /** Heuristic: a soft keyboard is believed to be up for a focused editable element. */
   keyboardOpen: boolean;
+  /** Raw shared frame, for consumers that measure their own container against it. */
+  frame: KeyboardViewportFrame | null;
   navigationViewport: MobileKeyboardNavigationViewport;
 }
-
-const CLOSED_KEYBOARD_METRICS: KeyboardMetrics = {
-  overlap: 0,
-  open: false,
-  vvHeight: null,
-  vvOffsetTop: 0,
-};
-
-const CLOSED_NAVIGATION_VIEWPORT_METRICS: NavigationViewportMetrics = {
-  ...CLOSED_KEYBOARD_METRICS,
-  baselineHeight: null,
-};
 
 const CLOSED_NAVIGATION_VIEWPORT: MobileKeyboardNavigationViewport = {
   active: false,
@@ -121,190 +157,94 @@ const CLOSED_NAVIGATION_VIEWPORT: MobileKeyboardNavigationViewport = {
   viewportOffsetTop: 0,
 };
 
-function hasImpossibleViewportSample(): boolean {
-  if (typeof window === "undefined" || !window.visualViewport) {
-    return false;
-  }
+const CLOSED_STATE: MobileKeyboardState = {
+  keyboardOverlap: 0,
+  viewportHeight: null,
+  viewportOffsetTop: 0,
+  visibleBottom: null,
+  keyboardOpen: false,
+  frame: null,
+  navigationViewport: CLOSED_NAVIGATION_VIEWPORT,
+};
 
-  return window.visualViewport.offsetTop + window.visualViewport.height > window.innerHeight + IMPOSSIBLE_VIEWPORT_EPSILON_PX;
-}
+/**
+ * Heuristic keyboard detection for one frame. Placement values are taken straight from the frame;
+ * only the boolean is inferred.
+ */
+function detectKeyboardOpen(frame: KeyboardViewportFrame): boolean {
+  // Pinch/accessibility zoom also shrinks the visual viewport. Android Chrome ignores
+  // user-scalable=no for a11y, so a zoomed user with a focused textarea would otherwise
+  // false-positive "keyboard open" and strip the mobile chrome.
+  if (frame.scale > ZOOMED_SCALE_THRESHOLD) return false;
 
-function isCollapsedRestoreViewportSample(baselineHeight: number): boolean {
-  if (typeof window === "undefined" || !window.visualViewport) {
-    return false;
-  }
+  // Focus is read from the frame, not from the DOM at commit time, so detection and placement
+  // always describe the same instant.
+  const focused = frame.editableFocused;
 
-  return window.visualViewport.height >= baselineHeight - IOS_VIEWPORT_SHRINK_MIN_PX;
-}
-
-function getScreenViewportBaselineCandidate(viewportWidth: number, viewportHeight: number): number | null {
-  if (typeof window === "undefined" || !window.screen) {
-    return null;
-  }
-  const screenWidth = window.screen.width;
-  const screenHeight = window.screen.height;
-  if (!Number.isFinite(screenWidth) || !Number.isFinite(screenHeight) || screenWidth <= 0 || screenHeight <= 0) {
-    return null;
-  }
-
-  const portraitLike = viewportHeight >= viewportWidth;
-  const candidate = portraitLike
-    ? Math.max(screenWidth, screenHeight)
-    : Math.min(screenWidth, screenHeight);
-  const gap = candidate - viewportHeight;
-  const minMeaningfulGap = portraitLike
-    ? Math.max(220, candidate * 0.25)
-    : Math.max(80, candidate * 0.25);
-
-  return gap >= minMeaningfulGap ? candidate : null;
-}
-
-function getKeyboardMetrics(
-  previousMetrics: KeyboardMetrics = CLOSED_KEYBOARD_METRICS,
-  { bypassImpossibleSampleHold = false }: { bypassImpossibleSampleHold?: boolean } = {},
-): KeyboardMetrics {
-  if (typeof window === "undefined" || !window.visualViewport) {
-    return CLOSED_KEYBOARD_METRICS;
-  }
-
-  const vv = window.visualViewport;
-  const focused = isKeyboardFocusableElement(document.activeElement);
-  const offsetTop = vv.offsetTop;
-
-  // Pinch-zoom also shrinks vv.height — distinguish from keyboard by
-  // checking vv.scale. Android Chrome ignores user-scalable=no for a11y,
-  // so a user can be zoomed in with a focused textarea, which otherwise
-  // makes (innerHeight - vv.height) huge and false-positives "keyboard open"
-  // → MobileNavBar disappears.
-  if (vv.scale > 1.01) {
-    return CLOSED_KEYBOARD_METRICS;
-  }
-
-  // Only refresh baseline while keyboard is likely closed.
+  // Refresh the baseline only while nothing editable is focused.
   if (!focused) {
-    updateBaselineViewportHeight(vv.height, getCurrentViewportWidth());
+    updateBaselineViewportHeight(frame);
+    return false;
   }
 
-  // FN-5155: iOS focus/restore can briefly report offsetTop from the keyboard
-  // transition while height is still near the pre-keyboard baseline. Reject
-  // that impossible snapshot and keep the last stable metrics until settle.
-  if (focused && hasImpossibleViewportSample() && !bypassImpossibleSampleHold) {
-    return previousMetrics;
-  }
+  // Layout-resizing browsers (Android + interactive-widget=resizes-content) prove occlusion
+  // directly: the visible rect no longer reaches the layout bottom.
+  if (frame.residualBottomInset > 0) return true;
 
-  // Android/Chrome style overlap. Only treat as open while an input is
-  // actually focused — without this, the (often slow) visualViewport
-  // dismissal animation keeps reporting overlap > 0 for hundreds of ms
-  // after the user has tapped Done, which leaves focus-owned layout (the
-  // executor footer and composer padding) stuck in keyboard-up mode and
-  // makes downstream components (ChatView) jump on settle. Navigation keeps
-  // a separate viewport-placement lifetime below without extending this flag.
-  //
-  // Prefer documentElement.clientHeight over window.innerHeight: Android
-  // Chrome can report a stale innerHeight (multi-window / shrink-to-fit
-  // edge cases — observed innerHeight=2848 while html.clientHeight=797),
-  // which makes the overlap calc explode and false-positives keyboard-open
-  // whenever a textarea has focus.
-  const layoutHeight = getMobileKeyboardLayoutViewportHeight();
-  const chromeOverlap = Math.max(0, layoutHeight - vv.offsetTop - vv.height);
-  if (chromeOverlap > 0 && focused) {
-    return { overlap: chromeOverlap, open: true, vvHeight: vv.height, vvOffsetTop: offsetTop };
-  }
+  // Otherwise the only available evidence is a shrink against the closed baseline, or — when the
+  // very first sample is already keyboard-open — against a guarded screen dimension. This is
+  // detection, not placement: neither gap is ever handed to a container.
+  const baseline = Math.max(
+    getBaselineViewportHeight(frame),
+    getScreenViewportBaselineCandidate(frame) ?? 0,
+  );
+  const shrink = Math.max(0, baseline - frame.offsetTop - frame.visualHeight);
+  if (shrink >= IOS_VIEWPORT_SHRINK_MIN_PX) return true;
 
-  // iOS fallback (window.innerHeight shrinks with keyboard). Same focused
-  // requirement as above — the dismissal animation otherwise leaves the
-  // gap > the open-threshold for the duration of the slide.
-  /*
-  FNXC:Terminal 2026-07-02-18:18:
-  SessionTerminal uses this shared hook, so it has the same initial iOS keyboard-open failure mode as TerminalModal: the first focused sample can have `innerHeight`, `clientHeight`, and `visualViewport.height` already shrunk. Use a guarded screen-derived baseline only when the missing height is large enough to be a real keyboard, keeping the mobile input bar and xterm resize bridge correct at 10px/12px before later viewport events can repair spacing.
-  */
-  const screenBaselineCandidate = focused
-    ? getScreenViewportBaselineCandidate(getCurrentViewportWidth(), vv.height)
-    : null;
-  const baselineHeight = Math.max(getBaselineViewportHeight(), screenBaselineCandidate ?? 0);
-  const gap = Math.max(0, baselineHeight - vv.offsetTop - vv.height);
-
-  if (gap >= IOS_FALLBACK_MIN_GAP_PX && focused) {
-    return { overlap: gap, open: true, vvHeight: vv.height, vvOffsetTop: offsetTop };
-  }
-
-  if (gap >= IOS_FALLBACK_MIN_FOCUSED_GAP_PX && focused) {
-    return { overlap: gap, open: true, vvHeight: vv.height, vvOffsetTop: offsetTop };
-  }
-
-  // Last-resort signal: focused input + meaningful viewport shrink.
-  const viewportShrink = Math.max(0, baselineHeight - vv.height);
-  if (focused && viewportShrink >= IOS_VIEWPORT_SHRINK_MIN_PX) {
-    return { overlap: 0, open: true, vvHeight: vv.height, vvOffsetTop: offsetTop };
-  }
-
-  return CLOSED_KEYBOARD_METRICS;
+  return Math.max(0, baseline - frame.visualHeight) >= IOS_VIEWPORT_SHRINK_MIN_PX;
 }
 
 /*
 FNXC:MobilePillKeyboard 2026-09-13-11:20:
-A keyboard interaction ends as soon as focus leaves the editor, so `keyboardOpen` must still release composers and the executor footer immediately. Fixed mobile navigation has a different placement lifetime: retain and refresh its last proven keyboard viewport until both the visual viewport height and top offset return to the captured closed baseline, preventing the pill and its open popover from falling behind the dismissing iOS keyboard.
+A keyboard interaction ends as soon as focus leaves the editor, so `keyboardOpen` must still release
+composers and the executor footer immediately. Fixed mobile navigation has a different placement
+lifetime: retain and refresh its last proven keyboard viewport until both the visual viewport height
+and top offset return to the captured closed baseline, preventing the pill and its open popover from
+falling behind the dismissing iOS keyboard.
+
+FNXC:MobileKeyboardViewport 2026-09-17-14:23:
+FN-512 keeps this lifetime intact but feeds it the shared frame. Its metrics remain navigation-only;
+they are not an authorization to move the pill above the keyboard.
 */
-function getNavigationViewportMetrics(
-  keyboardMetrics: KeyboardMetrics,
-  previousMetrics: NavigationViewportMetrics,
-  { forceClosed = false }: { forceClosed?: boolean } = {},
-): NavigationViewportMetrics {
-  if (forceClosed || typeof window === "undefined" || !window.visualViewport) {
-    return CLOSED_NAVIGATION_VIEWPORT_METRICS;
-  }
+function computeNavigationViewport(
+  frame: KeyboardViewportFrame,
+  keyboardOpen: boolean,
+  previous: MobileKeyboardNavigationViewport,
+): MobileKeyboardNavigationViewport {
+  if (frame.scale > ZOOMED_SCALE_THRESHOLD) return CLOSED_NAVIGATION_VIEWPORT;
 
-  const viewport = window.visualViewport;
-  if (viewport.scale > 1.01) {
-    return CLOSED_NAVIGATION_VIEWPORT_METRICS;
-  }
-
-  if (keyboardMetrics.open) {
-    const inferredBaseline = viewport.offsetTop + viewport.height + keyboardMetrics.overlap;
+  if (keyboardOpen) {
     return {
-      ...keyboardMetrics,
-      baselineHeight: Math.max(getBaselineViewportHeight(), inferredBaseline),
+      active: true,
+      keyboardOverlap: frame.residualBottomInset,
+      viewportHeight: frame.visualHeight,
+      viewportOffsetTop: frame.offsetTop,
     };
   }
 
-  if (!previousMetrics.open) {
-    return CLOSED_NAVIGATION_VIEWPORT_METRICS;
-  }
+  if (!previous.active) return CLOSED_NAVIGATION_VIEWPORT;
 
-  // A transient impossible sample cannot prove that the closing viewport has
-  // settled. Preserve the prior safe placement until a coherent sample lands.
-  if (hasImpossibleViewportSample()) {
-    return previousMetrics;
-  }
-
-  const baselineHeight = previousMetrics.baselineHeight ?? getBaselineViewportHeight();
-  const heightRestored = viewport.height >= baselineHeight - IOS_VIEWPORT_SHRINK_MIN_PX;
-  const topRestored = viewport.offsetTop <= IMPOSSIBLE_VIEWPORT_EPSILON_PX;
-  if (heightRestored && topRestored) {
-    return CLOSED_NAVIGATION_VIEWPORT_METRICS;
-  }
+  const baseline = getBaselineViewportHeight(frame);
+  const heightRestored = frame.visualHeight >= baseline - IOS_VIEWPORT_SHRINK_MIN_PX;
+  const topRestored = frame.offsetTop <= IMPOSSIBLE_VIEWPORT_EPSILON_PX;
+  if (heightRestored && topRestored) return CLOSED_NAVIGATION_VIEWPORT;
 
   return {
-    overlap: Math.max(0, baselineHeight - viewport.offsetTop - viewport.height),
-    open: true,
-    vvHeight: viewport.height,
-    vvOffsetTop: viewport.offsetTop,
-    baselineHeight,
+    active: true,
+    keyboardOverlap: frame.residualBottomInset,
+    viewportHeight: frame.visualHeight,
+    viewportOffsetTop: frame.offsetTop,
   };
-}
-
-function toNavigationViewport(metrics: NavigationViewportMetrics): MobileKeyboardNavigationViewport {
-  return {
-    active: metrics.open,
-    keyboardOverlap: metrics.overlap,
-    viewportHeight: metrics.vvHeight,
-    viewportOffsetTop: metrics.vvOffsetTop,
-  };
-}
-
-/** Reset cached viewport baseline. Exported for tests only. */
-export function _resetInitialViewportHeight(): void {
-  resetBaselineViewportHeight();
 }
 
 interface UseMobileKeyboardOptions {
@@ -315,228 +255,49 @@ interface UseMobileKeyboardOptions {
 export function useMobileKeyboard(
   { enabled = true, allowNonMobileViewport = false }: UseMobileKeyboardOptions = {},
 ): MobileKeyboardState {
-  const [keyboardOverlap, setKeyboardOverlap] = useState(0);
-  const [viewportHeight, setViewportHeight] = useState<number | null>(null);
-  const [viewportOffsetTop, setViewportOffsetTop] = useState(0);
-  const [keyboardOpen, setKeyboardOpen] = useState(false);
-  const [navigationViewport, setNavigationViewport] = useState<MobileKeyboardNavigationViewport>(CLOSED_NAVIGATION_VIEWPORT);
-  const stableMetricsRef = useRef<KeyboardMetrics>(CLOSED_KEYBOARD_METRICS);
-  const navigationViewportMetricsRef = useRef<NavigationViewportMetrics>(CLOSED_NAVIGATION_VIEWPORT_METRICS);
+  const [state, setState] = useState<MobileKeyboardState>(CLOSED_STATE);
+  const navigationRef = useRef<MobileKeyboardNavigationViewport>(CLOSED_NAVIGATION_VIEWPORT);
 
   useEffect(() => {
     if (!enabled || (!allowNonMobileViewport && !isMobileDevice())) {
-      setKeyboardOverlap(0);
-      setViewportHeight(null);
-      setViewportOffsetTop(0);
-      setKeyboardOpen(false);
-      setNavigationViewport(CLOSED_NAVIGATION_VIEWPORT);
-      navigationViewportMetricsRef.current = CLOSED_NAVIGATION_VIEWPORT_METRICS;
+      navigationRef.current = CLOSED_NAVIGATION_VIEWPORT;
+      setState(CLOSED_STATE);
       return;
     }
 
-    const vv = window.visualViewport;
-    if (!vv) {
-      setKeyboardOverlap(0);
-      setViewportHeight(null);
-      setViewportOffsetTop(0);
-      setKeyboardOpen(false);
-      setNavigationViewport(CLOSED_NAVIGATION_VIEWPORT);
-      stableMetricsRef.current = CLOSED_KEYBOARD_METRICS;
-      navigationViewportMetricsRef.current = CLOSED_NAVIGATION_VIEWPORT_METRICS;
-      return;
-    }
-
-    const commitNavigationViewport = (
-      metrics: KeyboardMetrics,
-      {
-        forceClosed = false,
-        preserveOffsetTop = false,
-      }: { forceClosed?: boolean; preserveOffsetTop?: boolean } = {},
-    ) => {
-      const nextMetrics = getNavigationViewportMetrics(
-        metrics,
-        navigationViewportMetricsRef.current,
-        { forceClosed },
-      );
-      navigationViewportMetricsRef.current = nextMetrics;
-      const nextViewport = toNavigationViewport(nextMetrics);
-      setNavigationViewport((current) => preserveOffsetTop && nextViewport.active
-        ? { ...nextViewport, viewportOffsetTop: current.viewportOffsetTop }
-        : nextViewport);
+    /*
+    FNXC:MobileKeyboardViewport 2026-09-17-14:23:
+    The legacy placement triple stays gated on `keyboardOpen`: consumers write
+    `--vv-height`/`--vv-offset-top`/`--keyboard-overlap` only while a keyboard is believed to be up,
+    so a closed keyboard must publish no geometry at all and leave resting layout untouched.
+    `frame` and `visibleBottom` are always available for container owners that measure their own
+    rectangle against the visible bound rather than consuming a keyboard height.
+    */
+    const commit = (frame: KeyboardViewportFrame) => {
+      const keyboardOpen = detectKeyboardOpen(frame);
+      const navigationViewport = computeNavigationViewport(frame, keyboardOpen, navigationRef.current);
+      navigationRef.current = navigationViewport;
+      setState({
+        keyboardOverlap: keyboardOpen ? frame.residualBottomInset : 0,
+        viewportHeight: keyboardOpen ? frame.visualHeight : null,
+        viewportOffsetTop: keyboardOpen ? frame.offsetTop : 0,
+        visibleBottom: frame.visibleBottom,
+        keyboardOpen,
+        frame,
+        navigationViewport,
+      });
     };
 
-    const commitMetrics = (
-      metrics: KeyboardMetrics,
-      { forceNavigationClosed = false }: { forceNavigationClosed?: boolean } = {},
-    ) => {
-      stableMetricsRef.current = metrics;
-      commitNavigationViewport(metrics, { forceClosed: forceNavigationClosed });
-      setKeyboardOverlap(metrics.overlap);
-      setViewportHeight(metrics.vvHeight);
-      setViewportOffsetTop(metrics.vvOffsetTop);
-      setKeyboardOpen(metrics.open);
-    };
-
-    // Full update — used on resize and focus transitions. These are the
-    // events that signal an actual keyboard open/close, so we want to
-    // re-snapshot offsetTop/height/overlap.
-    const update = () => {
-      commitMetrics(getKeyboardMetrics(stableMetricsRef.current));
-    };
-
-    // Scroll-only update — fires on every visualViewport pan (60fps on
-    // iOS during a swipe with the keyboard up). Updating offsetTop on
-    // each event amplifies jitter into the .chat-thread transform that
-    // tracks --vv-offset-top, visibly judders the thread, and can shift
-    // it hundreds of px. We deliberately skip offsetTop here and only
-    // update height/keyboardOpen if those changed; offsetTop stays
-    // pinned to whatever resize/focus last set it.
-    const updateScrollOnly = () => {
-      const metrics = getKeyboardMetrics(stableMetricsRef.current);
-      stableMetricsRef.current = metrics;
-      commitNavigationViewport(metrics, { preserveOffsetTop: true });
-      setKeyboardOverlap(metrics.overlap);
-      setViewportHeight(metrics.vvHeight);
-      setKeyboardOpen(metrics.open);
-    };
-
-    const timeoutIds: number[] = [];
-
-    const scheduleUpdate = (delayMs: number) => {
-      if (typeof window === "undefined") return;
-      const timeoutId = window.setTimeout(() => {
-        if (typeof window === "undefined") return;
-        update();
-      }, delayMs);
-      timeoutIds.push(timeoutId);
-    };
-
-    // Re-snapshot once iOS has settled. focusin/page-restore frequently
-    // fire while the visualViewport is still mid-transition; the
-    // synchronous read captures stale offsetTop and the chat-thread
-    // anchors wrong. We combine two strategies:
-    //   1. A short tail of timed updates (50/200/500/1000/1500 ms) for
-    //      cases where settlement is on a fixed schedule.
-    //   2. A rAF poll that stops once offsetTop is stable across two
-    //      frames, capped at 1.5s. Catches slow / variable settles
-    //      (e.g. switching tabs back with the keyboard up) where the
-    //      timed reads miss the right window.
-    let rafId: number | null = null;
-    let headRafId: number | null = null;
-    let pollDeadline = 0;
-    let lastOffsetTop = -1;
-    let stableFrames = 0;
-    const cancelHeadUpdate = () => {
-      if (headRafId !== null && typeof window !== "undefined") {
-        window.cancelAnimationFrame(headRafId);
-        headRafId = null;
-      }
-    };
-    const cancelPoll = () => {
-      if (rafId !== null && typeof window !== "undefined") {
-        window.cancelAnimationFrame(rafId);
-        rafId = null;
-      }
-    };
-    const pollFrame = () => {
-      if (typeof window === "undefined") return;
-      update();
-      const currentOffsetTop = window.visualViewport?.offsetTop ?? 0;
-      if (currentOffsetTop === lastOffsetTop) {
-        stableFrames += 1;
-      } else {
-        stableFrames = 0;
-        lastOffsetTop = currentOffsetTop;
-      }
-      if (stableFrames >= 2 || performance.now() > pollDeadline) {
-        rafId = null;
-        return;
-      }
-      rafId = window.requestAnimationFrame(pollFrame);
-    };
-    const startStabilityPoll = () => {
-      if (typeof window === "undefined") return;
-      cancelPoll();
-      pollDeadline = performance.now() + 1500;
-      lastOffsetTop = -1;
-      stableFrames = 0;
-      rafId = window.requestAnimationFrame(pollFrame);
-    };
-    const scheduleTailUpdates = () => {
-      scheduleUpdate(50);
-      scheduleUpdate(200);
-      scheduleUpdate(500);
-      scheduleUpdate(1000);
-      scheduleUpdate(1500);
-      startStabilityPoll();
-    };
-
-    const updateWithTail = () => {
-      cancelHeadUpdate();
-      if (isKeyboardFocusableElement(document.activeElement) && hasImpossibleViewportSample()) {
-        // FN-5155: focusin can arrive before visualViewport height catches up
-        // to the keyboard transition. Defer the head commit one frame so the
-        // tail/poll can converge instead of publishing the stale sample.
-        headRafId = window.requestAnimationFrame(() => {
-          headRafId = null;
-          update();
-        });
-      } else {
-        update();
-      }
-      scheduleTailUpdates();
-    };
-
-    const resetOnRestore = () => {
-      cancelHeadUpdate();
-      const baselineHeight = getBaselineViewportHeight();
-      const collapsedRestoreSample = isCollapsedRestoreViewportSample(baselineHeight);
-      if (collapsedRestoreSample) {
-        resetBaselineViewportHeight();
-      }
-      commitMetrics(getKeyboardMetrics(stableMetricsRef.current, {
-        bypassImpossibleSampleHold: collapsedRestoreSample,
-      }), { forceNavigationClosed: collapsedRestoreSample });
-      scheduleTailUpdates();
-    };
-
-    const handleVisibilityChange = () => {
-      if (document.visibilityState !== "visible") return;
-      resetOnRestore();
-    };
-
-    updateWithTail();
-    vv.addEventListener("resize", update);
-    vv.addEventListener("scroll", updateScrollOnly);
-    document.addEventListener("focusin", updateWithTail);
-    document.addEventListener("focusout", update);
-    // When the user navigates back to this view, force a fresh snapshot that
-    // can bypass the stale impossible-sample hold if the viewport has already
-    // returned to its closed baseline while the input retained focus.
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-    window.addEventListener("pageshow", resetOnRestore);
-
+    const unsubscribe = subscribeKeyboardViewport(commit);
     return () => {
-      vv.removeEventListener("resize", update);
-      vv.removeEventListener("scroll", updateScrollOnly);
-      document.removeEventListener("focusin", updateWithTail);
-      document.removeEventListener("focusout", update);
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
-      window.removeEventListener("pageshow", resetOnRestore);
-      for (const timeoutId of timeoutIds) {
-        clearTimeout(timeoutId);
-      }
-      cancelHeadUpdate();
-      cancelPoll();
-      stableMetricsRef.current = CLOSED_KEYBOARD_METRICS;
-      navigationViewportMetricsRef.current = CLOSED_NAVIGATION_VIEWPORT_METRICS;
-      setKeyboardOverlap(0);
-      setViewportHeight(null);
-      setViewportOffsetTop(0);
-      setKeyboardOpen(false);
-      setNavigationViewport(CLOSED_NAVIGATION_VIEWPORT);
+      unsubscribe();
+      navigationRef.current = CLOSED_NAVIGATION_VIEWPORT;
+      setState(CLOSED_STATE);
     };
   }, [allowNonMobileViewport, enabled]);
 
-  return { keyboardOverlap, viewportHeight, viewportOffsetTop, keyboardOpen, navigationViewport };
+  return state;
 }
+
+/** Read the current placement frame outside React. */
+export { getKeyboardViewportFrame };

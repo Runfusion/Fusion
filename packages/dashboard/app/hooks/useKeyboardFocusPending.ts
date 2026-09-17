@@ -1,16 +1,23 @@
 import { useEffect, useState } from "react";
-import { isKeyboardFocusableInputType } from "../utils/viewportOffset";
+import {
+  ZOOMED_SCALE_THRESHOLD,
+  isKeyboardEditableElement,
+} from "../utils/mobileKeyboardViewport";
 
-function isKeyboardFocusableElement(element: Element | null): boolean {
-  if (!element) return false;
-  if (element instanceof HTMLTextAreaElement) return true;
-  if (element instanceof HTMLInputElement) return isKeyboardFocusableInputType(element.type);
-  return element instanceof HTMLElement && element.isContentEditable === true;
-}
+/*
+FNXC:MobileKeyboardViewport 2026-09-17-14:23:
+FN-512 makes this hook share the canonical editable predicate and zoom threshold with keyboard
+detection, so a non-text control can never hide mobile chrome and the two cannot drift apart.
+
+It deliberately keeps its OWN direct listeners rather than subscribing to the shared frame: this
+flag must release the instant focus leaves an editor, and a blur frequently changes no geometry at
+all. A frame-change subscription would be deduplicated away and leave mobile chrome stuck
+keyboard-up for the whole dismissal animation.
+*/
 
 /**
  * Reports the focus transition that precedes a settled visual-viewport keyboard sample.
- * This intentionally shares the ICB predicate so non-text controls never hide mobile chrome.
+ * Released immediately on blur so composers and the executor footer are never stuck keyboard-up.
  */
 export function useKeyboardFocusPending(enabled: boolean): boolean {
   const [pending, setPending] = useState(false);
@@ -21,21 +28,27 @@ export function useKeyboardFocusPending(enabled: boolean): boolean {
       return;
     }
 
-    const update = () => {
+    const evaluate = () => {
       const scale = window.visualViewport?.scale ?? 1;
-      setPending(scale <= 1.01 && isKeyboardFocusableElement(document.activeElement));
+      setPending(
+        scale <= ZOOMED_SCALE_THRESHOLD
+        && isKeyboardEditableElement(document.activeElement),
+      );
     };
+
     const viewport = window.visualViewport;
-    window.addEventListener("focusin", update);
-    window.addEventListener("focusout", update);
-    viewport?.addEventListener("resize", update);
-    viewport?.addEventListener("scroll", update);
-    update();
+    window.addEventListener("focusin", evaluate);
+    window.addEventListener("focusout", evaluate);
+    viewport?.addEventListener("resize", evaluate);
+    viewport?.addEventListener("scroll", evaluate);
+    evaluate();
+
     return () => {
-      window.removeEventListener("focusin", update);
-      window.removeEventListener("focusout", update);
-      viewport?.removeEventListener("resize", update);
-      viewport?.removeEventListener("scroll", update);
+      window.removeEventListener("focusin", evaluate);
+      window.removeEventListener("focusout", evaluate);
+      viewport?.removeEventListener("resize", evaluate);
+      viewport?.removeEventListener("scroll", evaluate);
+      setPending(false);
     };
   }, [enabled]);
 

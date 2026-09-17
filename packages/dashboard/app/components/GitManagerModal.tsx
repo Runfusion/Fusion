@@ -12,6 +12,8 @@ import { FloatingWindow } from "./FloatingWindow";
 /* FNXC:ToolSurfaces 2026-09-15-16:04: FN-426 — the PR section reuses the existing view, lazily so Git's other sections do not pay for it. */
 const PullRequestView = lazy(() => import("./PullRequestView").then((m) => ({ default: m.PullRequestView })));
 import { useMobileKeyboard } from "../hooks/useMobileKeyboard";
+import { useKeyboardViewportOwnedByAncestor } from "../hooks/useKeyboardViewportSurface";
+import { isKeyboardEditableElement } from "../utils/mobileKeyboardViewport";
 import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
 import { useEmbeddedPresentation, type ModalPresentation } from "../hooks/useEmbeddedPresentation";
 import { useVirtualizedList } from "../hooks/useVirtualizedList";
@@ -253,13 +255,30 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
   const { keyboardOverlap, viewportHeight, viewportOffsetTop, keyboardOpen } = useMobileKeyboard({
     enabled: viewportMode === "mobile",
   });
-  const keyboardStyle: CSSProperties = keyboardOpen
+  /*
+  FNXC:MobileKeyboardViewport 2026-09-17-15:32:
+  FN-512 remediation: on a phone this modal is rendered INSIDE a container (mobile drawer, drawer-
+  presented FloatingWindow) that already pulled its own bottom edge to the visible bound. Publishing
+  `--keyboard-overlap`/`--vv-offset-top` there would translate and shrink the panel a second time,
+  which is exactly the competing-adjustment defect this task removes. One owner per container: when
+  an ancestor owns the adaptation, this surface emits nothing and keeps its resting geometry.
+  */
+  const keyboardOwnedByAncestor = useKeyboardViewportOwnedByAncestor();
+  const keyboardStyle: CSSProperties = keyboardOpen && !keyboardOwnedByAncestor
     ? ({
         "--keyboard-overlap": `${keyboardOverlap}px`,
         "--vv-offset-top": `${viewportOffsetTop}px`,
         ...(viewportHeight !== null ? { "--vv-height": `${viewportHeight}px` } : {}),
       } as CSSProperties)
     : {};
+  /*
+  FNXC:MobileKeyboardViewport 2026-09-17-14:23:
+  FN-512: the deferred drift reset must not outlive this close. The frame was previously
+  unconditional, so if the operator closed Git and immediately focused a field in another surface,
+  the queued `scrollTo(0, 0)` landed during THAT keyboard raise — which on WebKit is itself a reason
+  to abort the raise. The deferred pass now runs only while nothing editable has taken focus in the
+  meantime, and the immediate reset (with the keyboard already dismissing) is unchanged.
+  */
   const handleClose = useCallback(() => {
     if (viewportMode === "mobile") {
       const activeElement = document.activeElement;
@@ -268,6 +287,7 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
       }
       window.scrollTo(0, 0);
       requestAnimationFrame(() => {
+        if (isKeyboardEditableElement(document.activeElement)) return;
         window.scrollTo(0, 0);
       });
     }

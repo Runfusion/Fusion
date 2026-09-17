@@ -677,6 +677,23 @@ html[data-mobile-drawers="true"][data-viewport-mode="mobile"] .floating-window-o
   pointer-events: auto;
 }
 
+/*
+FNXC:MobileKeyboardViewport 2026-09-17-15:32:
+FN-512: the phone drawer presentation is sized with `!important` from `--mobile-drawer-block-size`,
+so an inline height cap on the panel cannot adapt it, and the overlay bottom-aligns its panel so a
+cap alone would keep the bottom edge under the keyboard anyway. The adjustment therefore belongs to
+the OVERLAY's bottom edge, exactly as in MobileDrawer.css: one owner, one inset, taken from the
+shared frame, absent at rest, and the panel then fills the reduced overlay.
+*/
+html[data-mobile-drawers="true"][data-viewport-mode="mobile"] .floating-window-overlay--mobile-drawer.floating-window-overlay--keyboard-bounded {
+  bottom: var(--mobile-drawer-keyboard-inset, 0px);
+}
+
+html[data-mobile-drawers="true"][data-viewport-mode="mobile"] .floating-window-overlay--keyboard-bounded .floating-window--mobile-drawer {
+  height: 100% !important;
+  max-height: 100% !important;
+}
+
 html[data-mobile-drawers="true"][data-viewport-mode="mobile"] .floating-window--mobile-drawer {
   position: relative !important;
   inset: auto !important;

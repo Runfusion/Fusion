@@ -65,6 +65,7 @@ import { GatedActionApprovalDetails } from "./GatedActionApprovalDetails";
 import { subscribeSse } from "../sse-bus";
 import { useViewportMode } from "../hooks/useViewportMode";
 import { useMobileKeyboard } from "../hooks/useMobileKeyboard";
+import { useKeyboardViewportOwnedByAncestor } from "../hooks/useKeyboardViewportSurface";
 import { NavigationHistoryContext } from "../hooks/useNavigationHistory";
 import { getRelativeTimeBucket } from "../utils/relativeTimeAgo";
 
@@ -311,8 +312,10 @@ export function MailboxView({
   const mailboxContentRef = useRef<HTMLDivElement>(null);
   const pendingScrollTopRef = useRef<number | null>(null);
   const { keyboardOverlap, viewportHeight, viewportOffsetTop, keyboardOpen } = useMobileKeyboard({ enabled: isMobile });
+  // FNXC:MobileKeyboardViewport 2026-09-17-15:32: FN-512 single-owner rule — a drawer/window host that already adapted its bottom edge must not be compensated again from inside.
+  const keyboardOwnedByAncestor = useKeyboardViewportOwnedByAncestor();
   const containerKeyboardStyle = useMemo<CSSProperties | undefined>(() => {
-    if (!keyboardOpen) {
+    if (!keyboardOpen || keyboardOwnedByAncestor) {
       return undefined;
     }
 
@@ -321,7 +324,7 @@ export function MailboxView({
       "--vv-offset-top": `${viewportOffsetTop}px`,
       ...(viewportHeight != null ? { "--vv-height": `${viewportHeight}px` } : {}),
     } as CSSProperties;
-  }, [keyboardOpen, keyboardOverlap, viewportHeight, viewportOffsetTop]);
+  }, [keyboardOpen, keyboardOwnedByAncestor, keyboardOverlap, viewportHeight, viewportOffsetTop]);
 
   const captureMailboxScroll = useCallback(() => {
     if (!isMobile) {

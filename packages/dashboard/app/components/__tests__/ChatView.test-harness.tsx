@@ -344,6 +344,36 @@ export function simulateKeyboardOpen({ vv, input, visualHeight }: { vv: VisualVi
 }
 
 /*
+FNXC:MobileKeyboardViewport 2026-09-17-14:23:
+FN-512 sizes a container from its OWN measured rectangle instead of applying a keyboard height
+blindly, which is the only reading that stays correct for a full-screen drawer, a small floating
+window, and an already-resized layout alike. jsdom performs no layout and returns an all-zero rect,
+so a test that wants to observe that decision must state the rectangle it is pretending to measure.
+
+Without this the adapter is correctly inert, and a test asserting "no bound published" would prove
+nothing about production.
+*/
+export function stubMeasuredRect(
+  element: HTMLElement,
+  { top, height, left = 0, width = 375 }: { top: number; height: number; left?: number; width?: number },
+) {
+  Object.defineProperty(element, "getBoundingClientRect", {
+    configurable: true,
+    value: () => ({
+      top,
+      bottom: top + height,
+      height,
+      left,
+      right: left + width,
+      width,
+      x: left,
+      y: top,
+      toJSON: () => ({}),
+    }),
+  });
+}
+
+/*
 FNXC:DashboardTests 2026-08-23-16:07:
 This reproduces a phone-class landscape screen: Chat resolves mobile from short height while the
 shared hook's width heuristic sees 932px, covering the previously mismatched gate.

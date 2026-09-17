@@ -103,9 +103,75 @@ gesture delivery enabled across `cap sync` regenerations.
 
 Planning Mode opens directly into the composer pane on mobile when no planning sessions exist, avoiding an empty-sidebar dead end. Every viewport uses the same sequential surface: idea, generated initial plan, then optional refinement questions. Plan review offers model-suggested focus choices plus **Write your own focus**, followed by **Refine** and **Validate**; refine asks one question and validate creates the task. Generation remains resumable across refreshes, and answer turns visibly report **Updating plan…** before returning to review. There is no three-pane interview or Question/Running plan/Answered questions tab switcher. On mobile, opening Planning with saved sessions lands on the full-pane, scrollable saved-session list with **New session** as its footer. **Sessions** and the mobile back control always return to that list, including from plan review and create retry.
 
+### Soft-keyboard geometry: one measurement, one owner
+
+When the virtual keyboard opens, Fusion decides where the visible area ends **once**, from one shared
+measurement, and lets exactly **one** container per surface act on it.
+
+**The measurement.** `packages/dashboard/app/utils/mobileKeyboardViewport.ts` reads a single atomic
+frame — layout viewport, visual viewport, offsets, scale, and whether an editable element holds focus
+— and publishes it to every consumer through one shared subscription. The canonical value is the
+*visible rectangle expressed in layout coordinates*: its bottom edge is `offsetTop + height`, which is
+the same coordinate space `getBoundingClientRect()` reports. The residual bottom inset of a
+layout-anchored element is `max(0, layoutHeight - visibleBottom)`, and it is **zero** when the browser
+has already shrunk the layout viewport with the keyboard (Android Chrome with
+`interactive-widget=resizes-content`, which `app/index.html` sets).
+
+Two browsers, one rule:
+
+| | layout viewport | visual viewport | residual inset |
+| --- | --- | --- | --- |
+| iOS / WebKit | unchanged | shrinks | the occluded band |
+| Android `resizes-content` | shrinks | shrinks | `0` — nothing is hidden |
+
+**The owner.** `app/hooks/useKeyboardViewportSurface.ts` adapts one container, matched to how that
+container is anchored:
+
+- `anchor: "measured"` — a top-anchored container (a floating window positioned by `top`, a region in
+  normal flow). Its top does not move when its height changes, so the height is capped at
+  `visibleBottom - top`. It never grows a container.
+- `anchor: "layout-bottom"` — a container anchored to the bottom of the layout viewport, like the
+  mobile drawer overlay. Shortening it moves its own top, so a height derived from that top feeds back
+  into itself; the bottom inset is taken straight from the frame instead, with no measurement at all.
+
+Ownership is published through React context: a descendant inside an adapted ancestor adapts nothing
+and simply fits through the flex column and its own scroller. `MobileDrawer`, `FloatingWindow`, and
+`TerminalModal` are the owners; Chat, forms, and terminals are content.
+
+**Detection is separate from placement.** `useMobileKeyboard` still answers "is a keyboard up?"
+heuristically (focused editable element plus a shrink against a closed baseline), because that genuinely
+cannot be measured. A baseline may *qualify* a transition; it may never *supply* placement pixels.
+Pinch and accessibility zoom shrink the visual viewport too and are never treated as occlusion.
+
+**Local reveal, never a page scroll.** `app/utils/scrollFocusedControlWithin.ts` brings a focused
+control into view by scrolling its own nearest scroller by the minimum amount. It refuses unless the
+element is still the focused, connected control, so a callback from a form the user already left cannot
+move the surface they are now using. `scrollIntoView({ block: "center" })` is deliberately not used:
+it scrolls every ancestor up to the document, and a document scroll during a WebKit keyboard raise can
+abort the raise.
+
+**Safe area.** The bottom system inset and the navigation reserve are dropped only while the keyboard
+genuinely covers that region, and restored exactly at rest. WebKit can keep reporting a bottom safe
+area with the keyboard up ([WebKit #217754](https://bugs.webkit.org/show_bug.cgi?id=217754)), so it is
+reserved once and never twice.
+
+**No constant compensations.** There is no fixed accessory-bar margin, no user-agent test, and no
+`navigator.virtualKeyboard.overlaysContent`. A previous constant iOS margin was the direct cause of the
+empty band operators saw between the keyboard and the composer; it was removed rather than retuned. If
+the iOS input-assistant bar ever needs compensating, it must come from observable geometry.
+
+**Validation limits.** The automated coverage is Vitest/jsdom for state, ownership, and cancellation,
+plus a real-Chromium lane that drives *simulated* viewport metrics against real CSS
+(`packages/dashboard/src/__tests__/mobile-keyboard-browser.test.ts`). Neither triggers a real iOS or
+Android keyboard. Physical-device validation on Safari/iOS, Chrome/Android, the installed PWA, and the
+Capacitor shell remains desirable and has **not** been performed for this work — WebKit can publish the
+settled height late in the keyboard animation
+([WebKit #265578](https://bugs.webkit.org/show_bug.cgi?id=265578)), which only a real device exercises.
+The Capacitor wrapper adds no keyboard plugin; it serves the same dashboard and inherits this behaviour.
+
 ### Chat and Quick Chat mobile scroll/readability behavior
 
-- Chat and Quick Chat must keep scrolling container-scoped (`.chat-messages` / `.quick-chat-panel-messages`) and must not switch to page-level scroll APIs (including `scrollIntoView()`) to avoid mobile Safari viewport drift.
+- Chat and Quick Chat must keep scrolling container-scoped (`.chat-messages` / `.quick-chat-panel-messages`) and must not switch to page-level scroll APIs (including `scrollIntoView()`) to avoid mobile Safari viewport drift. Use `scrollFocusedControlWithin` when a focused control must be revealed; it is bounded to that control's own scroller.
 - Full Chat direct-thread mobile headers include a title-triggered quick session switcher; preserve one-pane behavior (back-to-list still works) and keep the switcher scoped to direct sessions only (room threads keep existing room header/back behavior).
 - Both surfaces now pause live-tail autoscroll when the user scrolls away from bottom, show a temporary **Latest** jump control, and resume tail-follow only after jumping back.
 - Mobile bubble widths are intentionally slightly wider for readability, but safe-area padding, full-screen Quick Chat bounds, and compact mobile tool-call summaries must remain intact.

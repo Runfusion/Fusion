@@ -398,6 +398,13 @@ const browserTouchTests = [
   */
   "src/__tests__/file-browser-scroll-browser.test.ts",
   /*
+  FNXC:MobileKeyboardViewport 2026-09-17-14:23:
+  FN-512 : les deux moitiés du symptôme clavier (champ recouvert, bande vide) sont des résultats rendus — bord
+  calculé du conteneur propriétaire et distance réelle sous le champ. jsdom n'en calcule aucun, donc la preuve
+  passe par un vrai moteur ; la suite s'auto-gate sans Chromium local comme ses voisines.
+  */
+  "src/__tests__/mobile-keyboard-browser.test.ts",
+  /*
   FNXC:MobileDrawerGesture 2026-09-17-03:18:
   FN-486 : la fermeture d'un tiroir depuis une ligne de liste, le placement du menu d'appui long et la parité
   de géométrie entre le chevron Retour et le « + » sont des résultats RENDUS ; ils exigent un moteur réel et

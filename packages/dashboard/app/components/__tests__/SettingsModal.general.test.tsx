@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { act, render, screen, fireEvent, waitFor, within, cleanup } from "@testing-library/react";
 import path from "path";
 import { SettingsModal } from "../SettingsModal";
+import { KeyboardViewportOwnerProvider } from "../../hooks/useKeyboardViewportSurface";
 import { __test_resetSystemRestartRecovery, systemRestartRecovery } from "../../hooks/useSystemRestartRecovery";
 import { __test_resetPendingUpdateInstall } from "../../hooks/usePendingUpdateInstall";
 import { ModalDismissPreferenceProvider } from "../../hooks/useOverlayDismiss";
@@ -767,6 +768,32 @@ describe("SettingsModal", () => {
     expect(mockUseMobileKeyboard).toHaveBeenCalledWith({ enabled: true });
     expect(modal?.getAttribute("style")).toContain("--keyboard-overlap: 250px");
     expect(modal?.getAttribute("style")).toContain("--vv-height: 400px");
+  });
+
+  /*
+  FNXC:MobileKeyboardViewport 2026-09-17-15:32:
+  FN-512 single-owner rule: hosted inside a container that already adapted its bottom edge, this modal
+  must publish NOTHING, or the panel is translated and shrunk a second time.
+  */
+  it("publishes no keyboard variables when a host container already owns the adaptation", async () => {
+    mockUseMobileKeyboard.mockReturnValue({
+      keyboardOpen: true,
+      keyboardOverlap: 250,
+      viewportHeight: 400,
+      viewportOffsetTop: 50,
+    });
+
+    render(
+      <KeyboardViewportOwnerProvider value={{ owned: true }}>
+        <SettingsModal onClose={noop} addToast={noop} />
+      </KeyboardViewportOwnerProvider>,
+    );
+    await waitForSettingsModalReady();
+    const modal = document.querySelector(".settings-modal");
+
+    expect(modal?.getAttribute("style") ?? "").not.toContain("--keyboard-overlap");
+    expect(modal?.getAttribute("style") ?? "").not.toContain("--vv-height");
+    expect(modal?.getAttribute("style") ?? "").not.toContain("--vv-offset-top");
   });
 
   /*

@@ -47,16 +47,32 @@ describe("useMobileKeyboard", () => {
     vi.restoreAllMocks();
   });
 
+  /*
+  FNXC:MobileKeyboardViewport 2026-09-17-14:23:
+  FN-512 fixes this shared factory rather than each test that used it. It previously left
+  `document.documentElement.clientHeight` at jsdom's default 0, so the production document-first
+  layout reader fell back to `window.innerHeight` — and every keyboard step then shrank BOTH the
+  layout viewport and the visual viewport together. No browser behaves that way while occluding
+  content: if the layout viewport really shrank to the visual height, the page was already resized
+  and nothing is hidden. Those fixtures therefore described a state in which the correct residual
+  inset is zero, while asserting a non-zero one.
+
+  The factory now publishes an explicit layout height that keyboard steps do NOT touch (the iOS /
+  WebKit shape), and exposes `setLayoutHeight` so the tests that genuinely model a layout resize —
+  Android `interactive-widget=resizes-content` and a folded-posture settle — say so explicitly.
+  */
   function setupMobileVisualViewport({
     innerHeight,
     vvHeight,
     vvOffsetTop = 0,
     width = 375,
+    layoutHeight = innerHeight,
   }: {
     innerHeight: number;
     vvHeight: number;
     vvOffsetTop?: number;
     width?: number;
+    layoutHeight?: number;
   }) {
     (window as any).ontouchstart = null;
     Object.defineProperty(navigator, "maxTouchPoints", {
@@ -96,7 +112,16 @@ describe("useMobileKeyboard", () => {
       configurable: true,
     });
 
-    return { listeners, mockVV };
+    let currentLayoutHeight = layoutHeight;
+    Object.defineProperty(document.documentElement, "clientHeight", {
+      configurable: true,
+      get: () => currentLayoutHeight,
+    });
+    const setLayoutHeight = (next: number) => {
+      currentLayoutHeight = next;
+    };
+
+    return { listeners, mockVV, setLayoutHeight };
   }
 
   it("keeps keyboardOverlap at 0 when not on mobile", async () => {
@@ -233,7 +258,7 @@ describe("useMobileKeyboard", () => {
     input.remove();
   });
 
-  it("uses iOS Safari fallback when innerHeight shrinks with visualViewport", async () => {
+  it("reports the full occluded band when only the visual viewport shrinks (iOS/WebKit)", async () => {
     const { listeners, mockVV } = setupMobileVisualViewport({
       innerHeight: 844,
       vvHeight: 844,
@@ -274,7 +299,7 @@ describe("useMobileKeyboard", () => {
   });
 
   it("re-baselines iOS fallback after a folded viewport settles while the keyboard is closed", async () => {
-    const { listeners, mockVV } = setupMobileVisualViewport({
+    const { listeners, mockVV, setLayoutHeight } = setupMobileVisualViewport({
       innerHeight: 844,
       vvHeight: 844,
       width: 700,
@@ -289,6 +314,8 @@ describe("useMobileKeyboard", () => {
 
     Object.defineProperty(window, "innerWidth", { value: 375, writable: true, configurable: true });
     Object.defineProperty(window, "innerHeight", { value: 667, writable: true, configurable: true });
+    // A fold is a real layout resize, so the layout viewport follows the new posture.
+    setLayoutHeight(667);
     Object.defineProperty(mockVV, "width", { value: 375, writable: true, configurable: true });
     Object.defineProperty(mockVV, "height", { value: 667, writable: true, configurable: true });
 
@@ -400,10 +427,10 @@ describe("useMobileKeyboard", () => {
   });
 
   it("treats focused input + viewport shrink as keyboard-open even when overlap is 0", async () => {
-    // iOS last-resort path: chromeOverlap = 0 (innerHeight tracks offsetTop+vv.height),
-    // gap < 16 (focused-fallback doesn't fire), and viewportShrink >= 16 from the
-    // baseline so the focused-input shrink heuristic is the only signal left.
-    const { listeners, mockVV } = setupMobileVisualViewport({
+    // iOS last-resort path: the layout viewport itself tracks offsetTop + vv.height, so there is
+    // no residual band to reserve and the focused-input shrink heuristic against the closed
+    // baseline is the only remaining evidence that a keyboard is up.
+    const { listeners, mockVV, setLayoutHeight } = setupMobileVisualViewport({
       innerHeight: 844,
       vvHeight: 844,
     });
@@ -434,6 +461,7 @@ describe("useMobileKeyboard", () => {
       writable: true,
       configurable: true,
     });
+    setLayoutHeight(829);
 
     act(() => {
       for (const cb of listeners.resize) cb();

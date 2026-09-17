@@ -64,6 +64,7 @@ import { MailboxMessageContent } from "./MailboxMessageContent";
 import { OnboardingDisclosure } from "./OnboardingDisclosure";
 import { isShortViewport, useViewportMode } from "../hooks/useViewportMode";
 import { useMobileKeyboard } from "../hooks/useMobileKeyboard";
+import { subscribeKeyboardViewport } from "../utils/mobileKeyboardViewport";
 import { useNavigationHistoryContext } from "../hooks/useNavigationHistory";
 import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
 import { useAutosizeTextarea } from "../hooks/useAutosizeTextarea";
@@ -937,33 +938,30 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   keyboard (or outside the visible visual viewport) and looks "dismissed". Re-measure on
   vv resize/scroll so we can pin with `top` inside the visual viewport instead.
   */
+  /*
+  FNXC:MobileKeyboardViewport 2026-09-17-14:23:
+  FN-512 replaced this component's private viewport reader with the shared frame. It used to install
+  its own `resize`/`scroll` listeners and compute `layoutHeight` from `window.innerHeight` first — the
+  metric Android Chrome can report stale — so the selection comment could disagree with every other
+  surface about where the visible area ended.
+
+  The comment panel is `position: fixed` and portalled out of the modal box, so it is genuinely its
+  own containing block and legitimately keeps a bound of its own; what changes is that the bound now
+  comes from the same instant as everyone else's.
+  */
   const [mobileVvFrame, setMobileVvFrame] = useState<{ offsetTop: number; height: number; layoutHeight: number } | null>(null);
   useEffect(() => {
     if (!isCommentEditorOpen || viewportMode !== "mobile") {
       setMobileVvFrame(null);
       return;
     }
-    const vv = window.visualViewport;
-    if (!vv) {
-      setMobileVvFrame(null);
-      return;
-    }
-    const update = () => {
+    return subscribeKeyboardViewport((frame) => {
       setMobileVvFrame({
-        offsetTop: vv.offsetTop,
-        height: vv.height,
-        layoutHeight: window.innerHeight || document.documentElement.clientHeight || 0,
+        offsetTop: frame.offsetTop,
+        height: frame.visualHeight,
+        layoutHeight: frame.layoutHeight,
       });
-    };
-    update();
-    vv.addEventListener("resize", update);
-    vv.addEventListener("scroll", update);
-    window.addEventListener("resize", update);
-    return () => {
-      vv.removeEventListener("resize", update);
-      vv.removeEventListener("scroll", update);
-      window.removeEventListener("resize", update);
-    };
+    });
   }, [isCommentEditorOpen, viewportMode]);
 
   const commentEditorStyle = useMemo((): CSSProperties | undefined => {

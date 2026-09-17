@@ -1,6 +1,8 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useAutosizeTextarea } from "../hooks/useAutosizeTextarea";
+import { scrollFocusedControlWithin } from "../utils/scrollFocusedControlWithin";
+import { getKeyboardViewportFrame } from "../utils/mobileKeyboardViewport";
 import { Send, Loader2, Bot, AlertCircle } from "lucide-react";
 import type { DragEvent } from "react";
 import type { NativeStructureEmbed, NativeStructureRef, ParticipantType, MessageType } from "@fusion/core";
@@ -226,11 +228,20 @@ export function MessageComposer({
     if (ref) addNativeStructure(ref);
   }, [addNativeStructure, projectId]);
 
+  /*
+  FNXC:MobileKeyboardViewport 2026-09-17-14:23:
+  FN-512: reveal the composer inside ITS OWN scroller instead of `scrollIntoView({block:"center"})`.
+  That call scrolled every scrollable ancestor up to the document, so a composer in one surface could
+  shift the whole page; on WebKit a programmatic document scroll during the keyboard raise can also
+  abort the raise. It also re-centred an already-visible composer on every viewport event.
+
+  The helper refuses unless this textarea is still the focused, connected control, so a viewport
+  event arriving after the user moved to another field cannot move the surface they are now using.
+  */
   const scrollTextareaIntoView = useCallback(() => {
-    if (typeof textareaRef.current?.scrollIntoView !== "function") {
-      return;
-    }
-    textareaRef.current.scrollIntoView({ block: "center", behavior: "auto" });
+    scrollFocusedControlWithin(textareaRef.current, {
+      visibleBottom: getKeyboardViewportFrame()?.visibleBottom,
+    });
   }, []);
 
   useEffect(() => {

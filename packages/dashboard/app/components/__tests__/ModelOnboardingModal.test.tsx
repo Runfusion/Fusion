@@ -1183,7 +1183,14 @@ describe("ModelOnboardingModal", () => {
       expect(mockWindowOpen).toHaveBeenCalled();
     });
 
-    it("scrolls the onboarding manual-code input into view on mobile focus", async () => {
+    /*
+    FNXC:MobileKeyboardViewport 2026-09-17-14:23:
+    FN-512 replaced the onboarding manual-code assist's `scrollIntoView({ block: "center" })` — which
+    scrolled every ancestor up to the document — with a reveal bounded to the field's own scroller.
+    The invariant this test guards is unchanged: focusing the code field on a mobile layout brings it
+    into view. It is now asserted as scroller movement plus the absence of any document scroll.
+    */
+    it("reveals the onboarding manual-code input inside its own scroller on mobile focus", async () => {
       Object.defineProperty(window, "matchMedia", {
         writable: true,
         value: vi.fn().mockImplementation((query: string) => ({
@@ -1229,12 +1236,37 @@ describe("ModelOnboardingModal", () => {
         writable: true,
       });
 
+      const scroller = textarea.closest(".oauth-manual-code") as HTMLElement;
+      Object.defineProperties(scroller, {
+        scrollHeight: { value: 2000, configurable: true },
+        clientHeight: { value: 400, configurable: true },
+      });
+      scroller.style.overflowY = "auto";
+      let scrollTop = 0;
+      Object.defineProperty(scroller, "scrollTop", {
+        configurable: true,
+        get: () => scrollTop,
+        set: (next: number) => { scrollTop = next; },
+      });
+      scroller.getBoundingClientRect = () => ({
+        top: 0, bottom: 400, height: 400, left: 0, right: 390, width: 390, x: 0, y: 0, toJSON: () => ({}),
+      }) as DOMRect;
+      textarea.getBoundingClientRect = () => {
+        const top = 440 - scrollTop;
+        return ({ top, bottom: top + 40, height: 40, left: 0, right: 390, width: 390, x: 0, y: top, toJSON: () => ({}) }) as DOMRect;
+      };
+      const windowScrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+
+      textarea.focus();
       fireEvent.focus(textarea);
 
       await waitFor(() => {
-        expect(scrollIntoView).toHaveBeenCalled();
+        expect(scroller.scrollTop).toBe(80);
       });
+      expect(scrollIntoView).not.toHaveBeenCalled();
+      expect(windowScrollTo).not.toHaveBeenCalled();
       expect(mockWindowOpen).toHaveBeenCalled();
+      windowScrollTo.mockRestore();
     });
 
     it("renders github copilot device-code panel in onboarding", async () => {

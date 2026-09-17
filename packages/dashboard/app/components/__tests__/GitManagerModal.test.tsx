@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { GitManagerModal } from "../GitManagerModal";
+import { KeyboardViewportOwnerProvider } from "../../hooks/useKeyboardViewportSurface";
 import { assertModalGeometryRecoveryAndSheetContracts, assertRenderedModalTouchGeometry } from "./floatingWindowMigration.test-helpers";
 import type { Task } from "@fusion/core";
 import { loadAllAppCss } from "../../test/cssFixture";
@@ -453,6 +454,37 @@ describe("GitManagerModal", () => {
     expect(modal.style.getPropertyValue("--keyboard-overlap")).toBe("240px");
     expect(modal.style.getPropertyValue("--vv-height")).toBe("620px");
     expect(modal.style.getPropertyValue("--vv-offset-top")).toBe("18px");
+  });
+
+  /*
+  FNXC:MobileKeyboardViewport 2026-09-17-15:32:
+  FN-512: on a phone this modal is hosted inside a container (mobile drawer / drawer-presented
+  FloatingWindow) that already pulled its own bottom edge to the visible bound. Publishing these
+  variables there would translate and shrink the panel a SECOND time — the competing-adjustment defect
+  this task removes. One owner per container.
+  */
+  it("publishes no keyboard variables when a host container already owns the adaptation", async () => {
+    mockUseViewportMode.mockReturnValue("mobile");
+    mockUseMobileKeyboard.mockReturnValue({
+      keyboardOverlap: 240,
+      viewportHeight: 620,
+      viewportOffsetTop: 18,
+      keyboardOpen: true,
+    });
+
+    const { baseElement } = render(
+      <KeyboardViewportOwnerProvider value={{ owned: true }}>
+        <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
+      </KeyboardViewportOwnerProvider>,
+    );
+    await waitFor(() => {
+      expect(screen.getByText("Git Manager")).toBeInTheDocument();
+    });
+
+    const modal = baseElement.querySelector(".modal.gm-modal") as HTMLElement;
+    expect(modal.style.getPropertyValue("--keyboard-overlap")).toBe("");
+    expect(modal.style.getPropertyValue("--vv-offset-top")).toBe("");
+    expect(modal.style.getPropertyValue("--vv-height")).toBe("");
   });
 
   it("renders all navigation sections plus Refresh without a workspace selector by default", async () => {

@@ -9,6 +9,7 @@ import { NavigationHistoryProvider, useNavigationHistory, type UseNavigationHist
 import * as apiModule from "../../api";
 import * as viewportModule from "../../hooks/useViewportMode";
 import * as mobileKeyboardModule from "../../hooks/useMobileKeyboard";
+import { KeyboardViewportOwnerProvider } from "../../hooks/useKeyboardViewportSurface";
 import * as sseBusModule from "../../sse-bus";
 import type { Agent, InboxResponse, UnreadCountResponse } from "../../api";
 import type { Message } from "@fusion/core";
@@ -1434,6 +1435,33 @@ describe("MailboxView", () => {
     const mailboxView = await screen.findByTestId("mailbox-view");
     expect(mailboxView.getAttribute("style")).toContain("--vv-offset-top: 32px");
     expect(mailboxView.getAttribute("style")).toContain("--vv-height: 480px");
+  });
+
+  /*
+  FNXC:MobileKeyboardViewport 2026-09-17-15:32:
+  FN-512 single-owner rule: hosted in a drawer/window that already adapted its bottom edge, the view
+  publishes nothing so no second translate/shrink stacks on the host's adjustment.
+  */
+  it("publishes no viewport variables when a host container already owns the adaptation", async () => {
+    mockUseViewportMode.mockReturnValue("mobile");
+    mockUseMobileKeyboard.mockReturnValue({
+      keyboardOverlap: 240,
+      viewportHeight: 480,
+      viewportOffsetTop: 32,
+      keyboardOpen: true,
+    });
+    mockFetchInbox.mockResolvedValue({ messages: [], unreadCount: 0, total: 0 });
+
+    render(
+      <KeyboardViewportOwnerProvider value={{ owned: true }}>
+        <MailboxView {...defaultProps} />
+      </KeyboardViewportOwnerProvider>,
+    );
+
+    const mailboxView = await screen.findByTestId("mailbox-view");
+    expect(mailboxView.getAttribute("style") ?? "").not.toContain("--vv-offset-top");
+    expect(mailboxView.getAttribute("style") ?? "").not.toContain("--vv-height");
+    expect(mailboxView.getAttribute("style") ?? "").not.toContain("--keyboard-overlap");
   });
 
   it("dismisses a mobile message detail on browser popstate and drains its nav entry", async () => {

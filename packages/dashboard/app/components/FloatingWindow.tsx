@@ -17,6 +17,10 @@ import { isFullScreenSheetViewport, isShortViewport, isTabletTouchViewport, useV
 import { useDrawerDismissGesture } from "../hooks/useDrawerDismissGesture";
 import { currentFloatingZ, currentTaskDetailFloatingZ, nextFloatingZ, nextSnapPreviewZ, nextTaskDetailFloatingZ } from "./floatingWindowStack";
 import { isInsidePortalSafeSurface } from "../utils/portalSurfaces";
+import {
+  KeyboardViewportOwnerProvider,
+  useKeyboardViewportSurface,
+} from "../hooks/useKeyboardViewportSurface";
 import "./FloatingWindow.css";
 import { ModalCloseButton } from "./ModalCloseButton";
 import { DrawerPresentationProvider, ViewDrawerHandle, resolveDrawerPresentation } from "./ViewDrawer";
@@ -512,6 +516,7 @@ export function FloatingWindow({
   */
   const [zIndex, setZIndex] = useState<number>(() => claimFrontZ());
   const panelRef = useRef<HTMLDivElement | null>(null);
+  const overlayRef = useRef<HTMLElement | null>(null);
   const windowSurface = useDashboardWindowSurface({
     logicalId: windowKey,
     group: surfaceGroup ?? (mobileDrawer ? "drawer" : effectiveModal ? "dialog" : "window"),
@@ -1169,11 +1174,54 @@ export function FloatingWindow({
     };
   }, [effectiveHidden, effectiveModal]);
 
+  /*
+  FNXC:MobileKeyboardViewport 2026-09-17-14:23:
+  FN-512: a floating window is positioned in LAYOUT coordinates, so when the soft keyboard shrinks
+  only the visual viewport (WebKit) the window keeps its stored geometry and its footer controls can
+  end up behind the keyboard. The window measures its OWN rectangle against the visible bottom edge
+  and caps the rendered height; `size.height` — the persisted user preference — is never rewritten,
+  so closing the keyboard restores the saved dimensions exactly.
+
+  Publishing ownership prevents hosted forms and Chat from clamping a second time inside a window
+  that has already been bounded.
+  */
+  const keyboardSurface = useKeyboardViewportSurface(panelRef, {
+    enabled: !effectiveHidden && windowSurface.surfaceActive && !mobileDrawer,
+    standalone: true,
+    blockSizeProperty: "--floating-window-visible-block-size",
+  });
+  /*
+  FNXC:MobileKeyboardViewport 2026-09-17-15:32:
+  FN-512 remediation: on a phone this window is re-presented as a drawer, and that presentation is
+  NOT adaptable by an inline height cap. `.floating-window--mobile-drawer` sets `height` and
+  `max-height` with `!important`, which beats an inline style, and the overlay bottom-aligns its
+  panel, so even a respected cap would leave the panel's bottom edge glued to the layout bottom —
+  under the keyboard. The drawer presentation is therefore adapted exactly like `MobileDrawer`: the
+  OVERLAY's bottom edge is pulled up by the residual inset taken straight from the shared frame
+  (`anchor: "layout-bottom"`, no element measurement and therefore no feedback loop), and the panel
+  fills the reduced overlay through percentage sizing.
+
+  The two surfaces are mutually exclusive by `enabled`, so exactly one adaptation exists per window,
+  and ownership is published ONLY when an adaptation is really applied — otherwise descendants would
+  stand down for a clamp that never happened, which is the regression this fixes.
+  */
+  const drawerKeyboardSurface = useKeyboardViewportSurface(overlayRef, {
+    enabled: !effectiveHidden && windowSurface.surfaceActive && mobileDrawer,
+    standalone: true,
+    anchor: "layout-bottom",
+    bottomInsetProperty: "--mobile-drawer-keyboard-inset",
+  });
+  const drawerKeyboardBounded = mobileDrawer && drawerKeyboardSurface.bottomInset > 0;
+  const windowKeyboardBounded = !mobileDrawer && keyboardSurface.maxBlockSize !== null;
+  const keyboardBounded = drawerKeyboardBounded || windowKeyboardBounded;
+  const keyboardOwnership = useMemo(() => ({ owned: keyboardBounded }), [keyboardBounded]);
+
   const panelStyle = {
     left: `${position.x}px`,
     top: `${position.y}px`,
     width: `${size.width}px`,
     height: `${size.height}px`,
+    ...(windowKeyboardBounded ? { maxHeight: `${keyboardSurface.maxBlockSize}px` } : {}),
     zIndex,
   } as CSSProperties;
 
@@ -1221,8 +1269,11 @@ export function FloatingWindow({
     {snapPreviewLayer}
     {createPortal(
     <div
-      ref={windowSurface.rootRef}
-      className={`floating-window-overlay${effectiveModal ? " floating-window-overlay--modal" : ""}${mobileDrawer ? " floating-window-overlay--mobile-drawer" : ""}${effectiveHidden ? " floating-window-overlay--hidden" : ""}${overlayClassName ? ` ${overlayClassName}` : ""}`}
+      ref={(node) => {
+        overlayRef.current = node;
+        windowSurface.rootRef(node);
+      }}
+      className={`floating-window-overlay${effectiveModal ? " floating-window-overlay--modal" : ""}${mobileDrawer ? " floating-window-overlay--mobile-drawer" : ""}${drawerKeyboardBounded ? " floating-window-overlay--keyboard-bounded" : ""}${effectiveHidden ? " floating-window-overlay--hidden" : ""}${overlayClassName ? ` ${overlayClassName}` : ""}`}
       role="dialog"
       aria-modal={effectiveModal ? "true" : "false"}
       aria-hidden={effectiveHidden || undefined}
@@ -1243,11 +1294,13 @@ export function FloatingWindow({
       onTouchEnd={effectiveHidden ? undefined : backdropMouseHandlers?.onTouchEnd}
       // FNXC:ModalTouchGeometry 2026-07-27-12:00: FN-8619 keeps Agent Detail's paired mouse-only backdrop contract at the shared modal backdrop; this deliberately does not alter pointer-down dismissal.
       // FNXC:FloatingWindow 2026-06-22-23:00: The z-index MUST live on the position:fixed overlay (which creates a stacking context), not the panel. A panel z-index is trapped inside the overlay's context and loses to page elements that are stacking contexts in body's context (e.g. the right dock at position:absolute z-index:20). With z on the overlay, the whole window sits at the shared floating band in body's stacking context and reliably paints above page content + tap-to-front reorders correctly.
-      style={{ zIndex }}
+      style={{ zIndex, ...(mobileDrawer ? drawerKeyboardSurface.style : {}) } as CSSProperties}
+      data-keyboard-bounded={drawerKeyboardBounded || undefined}
     >
       <div
         ref={panelRef}
         data-snap-mode={snapMode}
+        data-keyboard-bounded={keyboardBounded || undefined}
         className={`floating-window${hideHeader ? " floating-window--headerless" : ""}${hasTabletTouchGeometry ? " floating-window--touch-geometry" : ""}${isTabletViewportMode ? " floating-window--tablet-viewport" : ""}${mobileDrawer ? " floating-window--mobile-drawer" : ""}${snapMode === "floating" ? "" : ` floating-window--snapped floating-window--snap-${snapMode}`}${className ? ` ${className}` : ""}`}
         style={panelStyle}
         data-testid={`floating-window-${windowKey}`}
@@ -1307,7 +1360,9 @@ export function FloatingWindow({
         )}
         <ViewLayoutContent className="floating-window__body" data-testid={`floating-window-body-${windowKey}`}>
           <DashboardWindowSurfaceActivityProvider active={windowSurface.surfaceActive}>
-            <DrawerPresentationProvider value={mobileDrawer}>{children}</DrawerPresentationProvider>
+            <KeyboardViewportOwnerProvider value={keyboardOwnership}>
+              <DrawerPresentationProvider value={mobileDrawer}>{children}</DrawerPresentationProvider>
+            </KeyboardViewportOwnerProvider>
           </DashboardWindowSurfaceActivityProvider>
         </ViewLayoutContent>
       </div>

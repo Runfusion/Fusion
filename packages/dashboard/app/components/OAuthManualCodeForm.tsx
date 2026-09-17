@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTouchActionGesture } from "../hooks/useTouchActionGesture";
+import { scrollFocusedControlWithin } from "../utils/scrollFocusedControlWithin";
+import { getKeyboardViewportFrame } from "../utils/mobileKeyboardViewport";
 import "./OAuthManualCodeForm.css";
 
 interface OAuthManualCodeFormProps {
@@ -48,12 +50,24 @@ export function OAuthManualCodeForm({
     return compactLayout || coarsePointer;
   }, []);
 
-  const getScrollBehavior = useCallback((): ScrollBehavior => {
-    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
-      return "auto";
-    }
 
-    return window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+  /*
+  FNXC:MobileKeyboardViewport 2026-09-17-14:23:
+  FN-512: reveal the code field inside its own scroller, once, after the geometry update.
+
+  The previous assist called `scrollIntoView({ block: "center" })` twice — in an animation frame and
+  again 120ms later — which scrolled every ancestor including the document. The second, deferred call
+  was the dangerous one: if the user moved to another field in the meantime it dragged THAT surface
+  instead. The helper below refuses unless this input is still the focused, connected control, and
+  the pending frame is cancelled on blur and unmount, so a transfer can never be overridden by the
+  previous field's callback.
+  */
+  const pendingRevealRef = useRef<number | null>(null);
+  const cancelPendingReveal = useCallback(() => {
+    if (pendingRevealRef.current !== null) {
+      cancelAnimationFrame(pendingRevealRef.current);
+      pendingRevealRef.current = null;
+    }
   }, []);
 
   const scrollInputIntoView = useCallback(() => {
@@ -61,21 +75,14 @@ export function OAuthManualCodeForm({
       return;
     }
 
-    const target = inputRef.current ?? formRef.current;
-    if (!target || typeof target.scrollIntoView !== "function") {
-      return;
-    }
-
-    const behavior = getScrollBehavior();
-    requestAnimationFrame(() => {
-      target.scrollIntoView({ block: "center", behavior, inline: "nearest" });
-      // Mobile keyboards can shift viewport after focus; a short follow-up call
-      // keeps the textarea visible when that deferred viewport resize completes.
-      window.setTimeout(() => {
-        target.scrollIntoView({ block: "center", behavior, inline: "nearest" });
-      }, 120);
+    cancelPendingReveal();
+    pendingRevealRef.current = requestAnimationFrame(() => {
+      pendingRevealRef.current = null;
+      scrollFocusedControlWithin(inputRef.current, {
+        visibleBottom: getKeyboardViewportFrame()?.visibleBottom,
+      });
     });
-  }, [getScrollBehavior, shouldUseMobileScrollAssist]);
+  }, [cancelPendingReveal, shouldUseMobileScrollAssist]);
 
   useEffect(() => {
     if (!inputFocused || !shouldUseMobileScrollAssist()) {
@@ -101,8 +108,11 @@ export function OAuthManualCodeForm({
     return () => {
       viewport.removeEventListener("resize", handleViewportShift);
       viewport.removeEventListener("scroll", handleViewportShift);
+      cancelPendingReveal();
     };
-  }, [inputFocused, scrollInputIntoView, shouldUseMobileScrollAssist]);
+  }, [cancelPendingReveal, inputFocused, scrollInputIntoView, shouldUseMobileScrollAssist]);
+
+  useEffect(() => cancelPendingReveal, [cancelPendingReveal]);
 
   return (
     <div ref={formRef} className="oauth-manual-code" data-testid={testId}>

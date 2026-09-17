@@ -6468,7 +6468,17 @@ describe("TerminalModal — virtual keyboard overlap handling", () => {
     expect(mockVV.removeEventListener).toHaveBeenCalledWith("scroll", scrollCalls[0][1]);
   });
 
-  it("scrolls modal into view when keyboard opens on mobile", async () => {
+  /*
+  FNXC:MobileKeyboardViewport 2026-09-17-14:23:
+  FN-512 removed the modal's `scrollIntoView({ block: "end" })` keyboard compensation. The modal is
+  already sized to the visible rectangle through `--keyboard-overlap`/`--vv-height`, so the scroll
+  corrected nothing it owned — it scrolled every scrollable ancestor up to the document, and on WebKit
+  a document scroll during the keyboard raise can abort the raise it was reacting to.
+
+  The invariant worth guarding is the SIZING, which this test now asserts, plus the absence of the
+  page-moving call. The sibling zero-overlap test keeps proving nothing happens without occlusion.
+  */
+  it("sizes the modal to the visible area when the keyboard opens on mobile, without scrolling the page", async () => {
     const scrollIntoViewSpy = vi.fn();
     const { listeners } = simulateMobileDevice(250);
 
@@ -6479,7 +6489,6 @@ describe("TerminalModal — virtual keyboard overlap handling", () => {
       expect(modal.style.getPropertyValue("--keyboard-overlap")).toBe("250px");
     });
 
-    // Attach the spy to the rendered modal element
     const modal = screen.getByTestId("terminal-modal");
     modal.scrollIntoView = scrollIntoViewSpy;
 
@@ -6488,7 +6497,8 @@ describe("TerminalModal — virtual keyboard overlap handling", () => {
       for (const cb of listeners.resize) cb();
     });
 
-    expect(scrollIntoViewSpy).toHaveBeenCalledWith({ block: "end", behavior: "smooth" });
+    expect(modal.style.getPropertyValue("--keyboard-overlap")).toBe("250px");
+    expect(scrollIntoViewSpy).not.toHaveBeenCalled();
   });
 
   it("does not scroll modal when keyboard overlap is zero", async () => {
@@ -7043,7 +7053,21 @@ describe("TerminalModal — FN-872 real-device keyboard overlap refinement", () 
    * the keyboard opens (both window.innerHeight and visualViewport.height
    * shrink together).
    */
-  function simulateIOSSafari(keyboardOpen: boolean, vvHeight?: number) {
+  /*
+  FNXC:MobileKeyboardViewport 2026-09-17-14:23:
+  FN-512 fixed this shared factory rather than each test built on it. It set `window.innerHeight` to
+  the VISUAL height ("iOS Safari: innerHeight matches visual viewport height") and never defined
+  `document.documentElement.clientHeight`, so the production document-first reader fell back to
+  `innerHeight` and saw layout and visual shrink together.
+
+  iOS Safari does not behave that way while occluding content: the layout viewport stays tall and only
+  the visual viewport shrinks. The old shape described a page the browser had already resized — where
+  the correct reservation is zero — while asserting a non-zero one.
+
+  The factory now publishes a stable layout height that keyboard steps do not touch, and tests that
+  genuinely model a layout resize (a fold) set it explicitly through the returned setter.
+  */
+  function simulateIOSSafari(keyboardOpen: boolean, vvHeight?: number, layoutHeightOverride?: number) {
     (window as any).ontouchstart = null;
     Object.defineProperty(window, "innerWidth", {
       value: 375,
@@ -7083,7 +7107,17 @@ describe("TerminalModal — FN-872 real-device keyboard overlap refinement", () 
       configurable: true,
     });
 
-    return { listeners, mockVV, initialHeight };
+    // ...but the LAYOUT viewport does not shrink with the keyboard, which is what production reads.
+    let currentLayoutHeight = layoutHeightOverride ?? initialHeight;
+    Object.defineProperty(document.documentElement, "clientHeight", {
+      configurable: true,
+      get: () => currentLayoutHeight,
+    });
+    const setLayoutHeight = (next: number) => {
+      currentLayoutHeight = next;
+    };
+
+    return { listeners, mockVV, initialHeight, setLayoutHeight };
   }
 
   it("remeasures the mobile keyboard-open terminal when reducing the persisted font size to 10px", async () => {
@@ -7261,9 +7295,24 @@ describe("TerminalModal — FN-872 real-device keyboard overlap refinement", () 
       await waitFor(() => {
         const modal = screen.getByTestId("terminal-modal");
         expect(modal).toHaveClass("terminal-modal--mobile");
-        expect(modal.style.getPropertyValue("--keyboard-overlap")).toBe("454px");
-        expect(modal.style.getPropertyValue("--vv-height")).toBe("390px");
-        expect(modal.style.getPropertyValue("--vv-width")).toBe("390px");
+        /*
+        FNXC:MobileKeyboardViewport 2026-09-17-14:23:
+        FN-512: this fixture's layout viewport IS 390 — `innerHeight`, `clientHeight`, and
+        `visualViewport.height` are all already reduced, which is the first-sample state the
+        surrounding comment describes. Nothing is occluded, so nothing is reserved. The previous
+        454px came from `window.screen` and, inside a 390px-tall viewport, described a band larger
+        than the whole visible area.
+
+        With nothing occluded the modal publishes no keyboard variables at all and keeps its ordinary
+        dynamic-viewport sizing — which on this device IS the visible box, because the layout viewport
+        is 390. The old route reached the same rendered height by clamping to `--vv-height: 390px`
+        after subtracting an invented 454px band.
+
+        The invariants this test exists for are untouched and asserted below: the 12px preference is
+        applied and xterm fits to 80x24 on the first pass, with no repair event.
+        */
+        expect(modal.style.getPropertyValue("--keyboard-overlap")).toBe("");
+        expect(modal.style.getPropertyValue("--vv-height")).toBe("");
       });
       await waitFor(() => expect(onDataListeners.length).toBeGreaterThan(0));
 
@@ -7317,9 +7366,16 @@ describe("TerminalModal — FN-872 real-device keyboard overlap refinement", () 
       await waitFor(() => expect(screen.getByTestId("terminal-font-size-value")).toHaveTextContent("10px"));
       await waitFor(() => {
         const modal = screen.getByTestId("terminal-modal");
-        expect(modal.style.getPropertyValue("--keyboard-overlap")).toBe("454px");
-        expect(modal.style.getPropertyValue("--vv-height")).toBe("390px");
-        expect(modal.style.getPropertyValue("--vv-width")).toBe("390px");
+        /*
+        FNXC:MobileKeyboardViewport 2026-09-17-14:23:
+        FN-512: the test name says it — the layout height has ALREADY shrunk to 390. A reduced layout
+        viewport means nothing is hidden, so nothing is reserved and no keyboard variable is written;
+        the modal's ordinary dynamic-viewport sizing already equals the visible box. The old 454px was
+        derived from `window.screen` and exceeded the entire visible area. The 10px fit to 80x24 below
+        is the behaviour this case protects.
+        */
+        expect(modal.style.getPropertyValue("--keyboard-overlap")).toBe("");
+        expect(modal.style.getPropertyValue("--vv-height")).toBe("");
       });
       await waitFor(() => expect(resizeForInitialIOSSmallFont).toHaveBeenCalledWith(80, 24));
       expectMeasurementSafeFontStack(mockTerminalInstance.options.fontFamily as string);
@@ -7569,7 +7625,7 @@ describe("TerminalModal — FN-872 real-device keyboard overlap refinement", () 
   });
 
   it("re-baselines iOS keyboard overlap after folded posture settles before input", async () => {
-    const { listeners, mockVV } = simulateIOSSafari(false, 844);
+    const { listeners, mockVV, setLayoutHeight } = simulateIOSSafari(false, 844, 844);
     Object.defineProperty(mockVV, "width", { value: 700, writable: true, configurable: true });
     Object.defineProperty(window, "innerWidth", { value: 700, writable: true, configurable: true });
 
@@ -7583,6 +7639,8 @@ describe("TerminalModal — FN-872 real-device keyboard overlap refinement", () 
     // viewport must replace the previous unfolded baseline before input opens.
     Object.defineProperty(window, "innerWidth", { value: 375, writable: true, configurable: true });
     Object.defineProperty(window, "innerHeight", { value: 667, writable: true, configurable: true });
+    // A fold is a real layout resize, so the layout viewport follows the new posture.
+    setLayoutHeight(667);
     Object.defineProperty(mockVV, "width", { value: 375, writable: true, configurable: true });
     Object.defineProperty(mockVV, "height", { value: 667, writable: true, configurable: true });
 
@@ -7594,6 +7652,7 @@ describe("TerminalModal — FN-872 real-device keyboard overlap refinement", () 
       expect(screen.getByTestId("terminal-modal").style.getPropertyValue("--keyboard-overlap")).toBe("");
     });
 
+    // The keyboard opens against that folded posture: only the visual viewport shrinks.
     Object.defineProperty(window, "innerHeight", { value: 300, writable: true, configurable: true });
     Object.defineProperty(mockVV, "height", { value: 300, writable: true, configurable: true });
 
@@ -7609,13 +7668,9 @@ describe("TerminalModal — FN-872 real-device keyboard overlap refinement", () 
   });
 
   it("re-baselines keyboard-closed folded landscape samples below 480px", async () => {
-    const { listeners, mockVV } = simulateIOSSafari(false, 844);
+    const { listeners, mockVV, setLayoutHeight } = simulateIOSSafari(false, 844, 844);
     Object.defineProperty(mockVV, "width", { value: 700, writable: true, configurable: true });
     Object.defineProperty(window, "innerWidth", { value: 700, writable: true, configurable: true });
-    Object.defineProperty(document.documentElement, "clientHeight", {
-      value: 844,
-      configurable: true,
-    });
 
     render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
 
@@ -7625,10 +7680,8 @@ describe("TerminalModal — FN-872 real-device keyboard overlap refinement", () 
 
     Object.defineProperty(window, "innerWidth", { value: 375, writable: true, configurable: true });
     Object.defineProperty(window, "innerHeight", { value: 375, writable: true, configurable: true });
-    Object.defineProperty(document.documentElement, "clientHeight", {
-      value: 375,
-      configurable: true,
-    });
+    // Folded landscape is a real layout resize.
+    setLayoutHeight(375);
     Object.defineProperty(mockVV, "width", { value: 375, writable: true, configurable: true });
     Object.defineProperty(mockVV, "height", { value: 375, writable: true, configurable: true });
 
@@ -7640,11 +7693,8 @@ describe("TerminalModal — FN-872 real-device keyboard overlap refinement", () 
       expect(screen.getByTestId("terminal-modal").style.getPropertyValue("--keyboard-overlap")).toBe("");
     });
 
+    // The keyboard then covers 125px of that 375px folded landscape layout.
     Object.defineProperty(window, "innerHeight", { value: 250, writable: true, configurable: true });
-    Object.defineProperty(document.documentElement, "clientHeight", {
-      value: 250,
-      configurable: true,
-    });
     Object.defineProperty(mockVV, "height", { value: 250, writable: true, configurable: true });
 
     act(() => {
@@ -7659,7 +7709,7 @@ describe("TerminalModal — FN-872 real-device keyboard overlap refinement", () 
   });
 
   it("does not re-baseline folded viewport width changes from focused keyboard-open samples", async () => {
-    const { listeners, mockVV } = simulateIOSSafari(false, 844);
+    const { listeners, mockVV } = simulateIOSSafari(false, 844, 844);
     Object.defineProperty(mockVV, "width", { value: 700, writable: true, configurable: true });
     Object.defineProperty(window, "innerWidth", { value: 700, writable: true, configurable: true });
 
@@ -7843,10 +7893,22 @@ describe("TerminalModal — FN-872 real-device keyboard overlap refinement", () 
     // Previously with the 150px threshold, 85px would NOT be detected.
     // With the new 80px threshold, it should be detected.
     ["detects keyboard with gap of 85px (above new 80px threshold)", 85, "85px"],
-    // Gap of 20px is below the 30px noise filter — should return 0.
-    ["does not detect keyboard with very small gap of 20px (noise filter)", 20, ""],
-    // 80 is NOT > 80, so should not be detected.
-    ["does not detect keyboard when gap is exactly 80px (boundary, not > 80)", 80, ""],
+    /*
+    FNXC:MobileKeyboardViewport 2026-09-17-14:23:
+    FN-512 removed the 30px "noise filter" and the 80px threshold from this value. They existed to
+    make a BASELINE-derived estimate safe: a cached closed height can be stale, so a small difference
+    against it might be an address bar rather than a keyboard, and guessing wrong meant reserving
+    pixels for nothing.
+
+    The value is now measured directly — `max(0, layoutHeight - (offsetTop + visualHeight))` — so a
+    20px result means 20px of the modal genuinely sit outside the visible rectangle, whatever caused
+    it. Reserving exactly that keeps the terminal's status bar reachable; discarding it would hide
+    real content. Thresholds on a direct measurement would only reintroduce guessing.
+
+    Keyboard DETECTION keeps its thresholds, in `useMobileKeyboard`, where a heuristic belongs.
+    */
+    ["reserves a measured 20px band rather than discarding it as noise", 20, "20px"],
+    ["reserves a measured 80px band with no threshold to clear", 80, "80px"],
     ["detects keyboard when gap is 81px (just above 80px boundary)", 81, "81px"],
   ] as const)("%s", async (_label, gap, expected) => {
     const { listeners, mockVV } = simulateIOSSafari(false, 667);

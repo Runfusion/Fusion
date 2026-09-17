@@ -62,3 +62,20 @@ Cover the invariant at the pure helper seam:
 - Non-mobile remains all-false.
 
 Prefer this narrow helper coverage over mock-heavy `App` rendering unless a future regression needs DOM-level evidence. `computeMobileBarKeyboardFlags` has a single production caller in `App.tsx`, making the seam small and reliable.
+
+## Update — FN-512 (2026-09-17)
+
+The isolation requirement in this document is unchanged: a fullscreen overlay's keyboard must never
+shift the board behind it, and board-layout padding stays settled while a modal or fullscreen overlay
+owns the viewport (`computeMobileBarKeyboardFlags`' `boardLayoutSuppressed`).
+
+Two updates to the surrounding mechanism:
+
+- The Quick Chat sheet itself no longer exists as a separate mobile host. The current owners of that
+  isolation are `MobileDrawer`, `FloatingWindow`, and `TerminalModal`; Chat is hosted content inside
+  them. Treat the host list here as historical and follow the owners named in
+  [`mobile-keyboard-single-viewport-owner.md`](mobile-keyboard-single-viewport-owner.md).
+- A hosting overlay no longer manages its viewport by writing `--vv-height`/`--vv-offset-top` and
+  translating itself. It measures its own rectangle against the shared visible bound and caps its
+  height, and it declares ownership so nested content does not adjust a second time. Adding a fresh
+  `--vv-*` writer to a mobile surface is the anti-pattern this fix removed.
