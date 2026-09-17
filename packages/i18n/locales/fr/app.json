@@ -1432,7 +1432,10 @@
     "conversationIdCopied": "ID de la conversation copié",
     "copyConversationId": "Copier l’ID de la conversation",
     "questionOptionalLabel": "",
-    "questionSelectHintWithOptional": ""
+    "questionSelectHintWithOptional": "",
+    "contextTruncationUnproven": "",
+    "contextTruncationNotice_one": "",
+    "contextTruncationNotice_other": ""
   },
   "chatRooms": {
     "error": {
@@ -6399,6 +6402,8 @@
       "stashUrlLabel": "",
       "stashUrlPlaceholder": "",
       "uploadTaskAgentLogTranscriptToStash": "",
+      "chatContextBudget": "",
+      "chatContextBudgetHelp": "",
       "03": "",
       "agentsGetMemorySearchMemoryGetAndMemory": "",
       "agentsSearchWithQmdFirstFallBackTo": "",
@@ -6447,7 +6452,9 @@
       "qmdInstallFailed": "",
       "qmdInstallUnavailable": "",
       "saveBeforeCompacting": "",
-      "saveBeforeSwitching": ""
+      "saveBeforeSwitching": "",
+      "preOverflowCompaction": "",
+      "preOverflowCompactionHelp": ""
     },
     "merge": {
       "abort": "",
