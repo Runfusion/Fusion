@@ -6,10 +6,12 @@ import { MAX_TASK_MESSAGE_LENGTH } from "@fusion/core";
 import { readAppFile } from "../../test/cssFixture";
 import { ModalDismissPreferenceProvider } from "../../hooks/useOverlayDismiss";
 import { TaskRefineDialog } from "../TaskRefineDialog";
-import { refineTask } from "../../api";
+import { followUpTask, refineTask } from "../../api";
 
 vi.mock("../../api", () => ({
   refineTask: vi.fn(),
+  /* FNXC:TaskFollowUp 2026-09-17-18:10: FN-513 routes the same composer's follow-up mode to its own endpoint. */
+  followUpTask: vi.fn(),
 }));
 
 function deferred<T>() {
@@ -232,5 +234,128 @@ describe.each([
     expect(source).not.toMatch(/#[0-9a-f]{3,8}\b/i);
     expect(source).not.toContain("rgba(");
     expect(source.replace("768px", "").replace(/env\([^)]*\)/g, "")).not.toMatch(/(?<![\w-])(?:[1-9]\d*|0?\.\d+)px\b/);
+  });
+});
+
+/*
+FNXC:TaskFollowUp 2026-09-17-18:10:
+FN-513 — the SAME composer in follow-up mode. What these cases protect is the separation: the mode
+decides which endpoint is called and which words are shown, and nothing else about the dialog changes
+— so the gestures, the anti-double-submit claim, the draft-on-error behavior, and the accessibility
+contract proved above continue to apply unchanged.
+*/
+describe("TaskRefineDialog in follow-up mode", () => {
+  beforeEach(() => {
+    vi.mocked(refineTask).mockReset();
+    vi.mocked(followUpTask).mockReset();
+    vi.mocked(followUpTask).mockResolvedValue({ id: "FN-900", column: "todo" } as never);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const renderFollowUp = (overrides: Partial<ComponentProps<typeof TaskRefineDialog>> = {}) =>
+    renderDialog({ mode: "follow-up", ...overrides });
+
+  it("names the successor relationship instead of reusing refinement wording", () => {
+    renderFollowUp();
+    expect(screen.getByRole("heading", { level: 3, name: "Follow-up" })).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Describe the follow-up work here...")).toBeInTheDocument();
+    expect(screen.getByTestId("task-refine-submit")).toHaveTextContent("Create Follow-up Task");
+    // The help text states the three facts the operator needs: separate, linked, planned from the source.
+    const help = document.querySelector(".task-refine-dialog__help")!.textContent ?? "";
+    expect(help).toContain("separate task");
+    expect(help).toContain("linked");
+    expect(help).toContain("plan");
+    expect(screen.queryByPlaceholderText("Enter your feedback here...")).not.toBeInTheDocument();
+  });
+
+  it("posts to the follow-up endpoint with the trimmed request and the project scope", async () => {
+    const user = userEvent.setup();
+    const { props } = renderFollowUp({ projectId: "project-b" });
+
+    await user.type(screen.getByPlaceholderText("Describe the follow-up work here..."), "  add a CSV export  ");
+    await user.click(screen.getByTestId("task-refine-submit"));
+
+    await waitFor(() => expect(followUpTask).toHaveBeenCalledWith("FN-400", "add a CSV export", "project-b"));
+    expect(refineTask).not.toHaveBeenCalled();
+    expect(props.onRefinementCreated).toHaveBeenCalledWith({ id: "FN-900", column: "todo" });
+    expect(props.onClose).toHaveBeenCalled();
+  });
+
+  it("claims the first click synchronously so a deferred success cannot create two children", async () => {
+    const gate = deferred<{ id: string; column: string }>();
+    vi.mocked(followUpTask).mockReturnValue(gate.promise as never);
+    renderFollowUp();
+
+    fireEvent.change(screen.getByPlaceholderText("Describe the follow-up work here..."), { target: { value: "one request" } });
+    const submit = screen.getByTestId("task-refine-submit");
+    fireEvent.click(submit);
+    fireEvent.click(submit);
+    fireEvent.click(submit);
+
+    expect(followUpTask).toHaveBeenCalledTimes(1);
+    gate.resolve({ id: "FN-900", column: "todo" });
+    await waitFor(() => expect(followUpTask).toHaveBeenCalledTimes(1));
+  });
+
+  it("keeps the draft and the mode after a 409, and never retries on its own", async () => {
+    vi.mocked(followUpTask).mockRejectedValueOnce(new Error("Cannot create a follow-up of FN-400: source-terminal"));
+    const { props } = renderFollowUp();
+
+    fireEvent.change(screen.getByPlaceholderText("Describe the follow-up work here..."), { target: { value: "worth keeping" } });
+    fireEvent.click(screen.getByTestId("task-refine-submit"));
+
+    await waitFor(() => expect(props.addToast).toHaveBeenCalledWith(expect.stringContaining("source-terminal"), "error"));
+    expect(props.onClose).not.toHaveBeenCalled();
+    expect(props.onRefinementCreated).not.toHaveBeenCalled();
+    expect((screen.getByPlaceholderText("Describe the follow-up work here...") as HTMLTextAreaElement).value).toBe("worth keeping");
+    expect(screen.getByRole("heading", { level: 3, name: "Follow-up" })).toBeInTheDocument();
+    expect(followUpTask).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses blank and over-long requests through the same bounds as Refine", async () => {
+    const { props } = renderFollowUp();
+    const textarea = screen.getByPlaceholderText("Describe the follow-up work here...") as HTMLTextAreaElement;
+
+    expect(screen.getByTestId("task-refine-submit")).toBeDisabled();
+    fireEvent.change(textarea, { target: { value: "   " } });
+    expect(screen.getByTestId("task-refine-submit")).toBeDisabled();
+    expect(textarea.maxLength).toBe(MAX_TASK_MESSAGE_LENGTH);
+    expect(followUpTask).not.toHaveBeenCalled();
+    expect(props.onRefinementCreated).not.toHaveBeenCalled();
+  });
+
+  it("keeps the same textarea node across an unrelated re-render so typing is never interrupted", async () => {
+    const user = userEvent.setup();
+    const { rerender } = renderDialog({ mode: "follow-up" });
+    const textarea = screen.getByPlaceholderText("Describe the follow-up work here...");
+
+    await user.type(textarea, "abc");
+    rerender(
+      <TaskRefineDialog
+        taskId="FN-400"
+        mode="follow-up"
+        addToast={vi.fn()}
+        onClose={vi.fn()}
+        onRefinementCreated={vi.fn()}
+      />,
+    );
+    await user.type(screen.getByPlaceholderText("Describe the follow-up work here..."), "def");
+
+    expect(screen.getByPlaceholderText("Describe the follow-up work here...")).toBe(textarea);
+    expect((textarea as HTMLTextAreaElement).value).toBe("abcdef");
+  });
+
+  it("leaves the default mode on the historical Refine endpoint", async () => {
+    vi.mocked(refineTask).mockResolvedValue({ id: "FN-401", column: "todo" } as never);
+    renderDialog();
+
+    fireEvent.change(screen.getByPlaceholderText("Enter your feedback here..."), { target: { value: "ordinary refinement" } });
+    fireEvent.click(screen.getByTestId("task-refine-submit"));
+
+    await waitFor(() => expect(refineTask).toHaveBeenCalledWith("FN-400", "ordinary refinement", undefined));
+    expect(followUpTask).not.toHaveBeenCalled();
   });
 });

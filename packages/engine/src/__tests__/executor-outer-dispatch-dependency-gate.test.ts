@@ -162,6 +162,51 @@ describe("executor outer dispatch dependency gate", () => {
     expect(graph).toHaveBeenCalledWith(child, { alreadyClaimed: true });
   });
 
+  /*
+  FNXC:TaskFollowUp 2026-09-17-16:10:
+  FN-513 adds no gate and removes none. A follow-up child is an ORDINARY dependent here: a source
+  still in implementation blocks it in place (no execution surface, and no backward column move),
+  while a source in review or complete releases it under the existing rules. Pinning both directions
+  is what stops the UI or the docs from promising that a follow-up waits until its source has merged.
+  */
+  const FOLLOW_UP_CHILD: Partial<TaskDetail> = {
+    sourceType: "task_refine",
+    sourceParentTaskId: "FN-PARENT",
+    sourceMetadata: { followUp: { version: 1 } },
+  } as Partial<TaskDetail>;
+
+  it("holds a follow-up child while its source is still in implementation, without moving it back", async () => {
+    resetExecutorMocks();
+    const child = task(FOLLOW_UP_CHILD);
+    const parent = task({ id: "FN-PARENT", column: "in-progress", dependencies: [] });
+    const store = prepareStore(child, [parent]);
+    const executor = new TaskExecutor(store, "/tmp/test");
+    const { graph } = spyOuterDispatch(executor);
+
+    await executor.execute(child);
+
+    expect(graph).not.toHaveBeenCalled();
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(store.transitionQueuedEpisode).toHaveBeenCalledWith(child.id, expect.objectContaining({
+      signature: "dependency:FN-PARENT",
+      blockedBy: parent.id,
+    }));
+  });
+
+  it.each(["in-review", "done"])("lets a follow-up child through when its source reaches %s", async (column) => {
+    resetExecutorMocks();
+    const child = task(FOLLOW_UP_CHILD);
+    const parent = task({ id: "FN-PARENT", column: column as TaskDetail["column"], dependencies: [] });
+    const store = prepareStore(child, [parent]);
+    const executor = new TaskExecutor(store, "/tmp/test");
+    const { graph } = spyOuterDispatch(executor);
+
+    await executor.execute(child);
+
+    expect(store.transitionQueuedEpisode).not.toHaveBeenCalled();
+    expect(graph).toHaveBeenCalledWith(child, { alreadyClaimed: true });
+  });
+
   it("allows missing or soft-deleted dependency residue past the outer gate", async () => {
     resetExecutorMocks();
     const child = task();

@@ -8473,6 +8473,14 @@
       "collapseRouting": "",
       "expandDebug": "",
       "collapseDebug": ""
+    },
+    "followUp": {
+      "btn": "",
+      "createBtn": "",
+      "help": "",
+      "modalTitle": "",
+      "placeholder": "",
+      "taskCreated": ""
     }
   },
   "taskDocuments": {
@@ -8949,7 +8957,9 @@
     "boosting": "正在优先…",
     "boostAriaLabel": "将 {{taskId}} 移到队列最前面",
     "boostTitle": "队列下次接纳工作时优先尝试此任务。这不会启动它，也不会解除任何阻塞。",
-    "boostFailed": "无法优先处理 {{taskId}}——它可能已开始或已移动。请刷新查看当前位置。"
+    "boostFailed": "无法优先处理 {{taskId}}——它可能已开始或已移动。请刷新查看当前位置。",
+    "followUpOf": "",
+    "followUpOfTitle": ""
   },
   "terminal": {
     "arrowKeysLabel": "",

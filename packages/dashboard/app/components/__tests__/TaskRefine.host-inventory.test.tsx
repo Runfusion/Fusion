@@ -19,15 +19,39 @@ describe("Refine host inventory", () => {
     expect(directHosts.sort()).toEqual([...menuHosts].sort());
 
     for (const name of menuHosts) {
-      expect(component(name)).toContain('import { TaskRefineDialog } from "./TaskRefineDialog";');
+      /*
+      FNXC:TaskFollowUp 2026-09-17-18:10:
+      FN-513 reuses this composer for Follow-up, so each host also imports its MODE type. The import
+      is asserted as a structural guarantee that the mode is a compile-time contract rather than a
+      loose string each host re-invents.
+      */
+      expect(component(name)).toContain('import { TaskRefineDialog, type TaskRefineDialogMode } from "./TaskRefineDialog";');
     }
   });
 
-  it("keeps every pass-through host free of the dialog and of the removed bubbling prop", () => {
+  /*
+  FNXC:TaskFollowUp 2026-09-17-18:10:
+  FN-513 adds a SECOND affordance to exactly the same three hosts. The inventory is asserted here too
+  so a fourth host — or a pass-through host that starts bubbling the intent upward again, which is the
+  deep-link shape FN-400 deleted — fails immediately.
+  */
+  it("keeps the direct Follow-up host inventory identical to the Refine one", () => {
+    const followUpHosts = listComponentFiles()
+      .filter((path) => !path.includes("__tests__/") && readAppFile(`components/${path}`).includes("onOpenFollowUp"))
+      .filter((path) => path !== "TaskContextMenu.tsx");
+    expect(followUpHosts.sort()).toEqual([...menuHosts].sort());
+
+    // The menu itself declares the prop and the descriptor; it never renders the composer.
+    expect(component("TaskContextMenu.tsx")).toContain("onOpenFollowUp");
+    expect(component("TaskContextMenu.tsx")).not.toContain("<TaskRefineDialog");
+  });
+
+  it("keeps every pass-through host free of the dialog and of the removed bubbling props", () => {
     for (const name of passThroughHosts) {
       const source = component(name);
       expect(source, name).not.toContain("TaskRefineDialog");
       expect(source, name).not.toContain("onOpenRefine");
+      expect(source, name).not.toContain("onOpenFollowUp");
     }
   });
 

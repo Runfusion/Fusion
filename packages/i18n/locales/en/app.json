@@ -8307,6 +8307,14 @@
       "undoTask": "Undo task",
       "title": "Provenance"
     },
+    "followUp": {
+      "btn": "Follow-up",
+      "createBtn": "Create Follow-up Task",
+      "help": "Describe the follow-up work. A separate task is created and linked to this one, and it is planned from this task's plan and its progress so far.",
+      "modalTitle": "Follow-up",
+      "placeholder": "Describe the follow-up work here...",
+      "taskCreated": "Follow-up task created: {{id}}"
+    },
     "recoveryState": "Recovery state",
     "refine": {
       "btn": "Refine",
@@ -9004,6 +9012,8 @@
     "toggleFastMode": "Toggle fast execution mode",
     "undoOf": "Undo of {{id}}",
     "undoOfTitle": "Created to undo {{id}}",
+    "followUpOf": "Follows up {{id}}",
+    "followUpOfTitle": "Follow-up of {{id}}",
     "refinesOf": "Refines {{id}}",
     "refinesOfTitle": "Refinement of {{id}}",
     "undoTask": "Undo task: {{id}}",

@@ -1,4 +1,4 @@
-import { createIngestedCheckResolver, createLogger, DuplicateWorkflowSelectionError, isCurrentSpecDriftReport, MAX_TASK_MESSAGE_LENGTH, resolveRequiredCheckNames } from "@fusion/core";
+import { createIngestedCheckResolver, createLogger, DuplicateWorkflowSelectionError, isCurrentSpecDriftReport, isFollowUpIneligibleError, MAX_TASK_MESSAGE_LENGTH, resolveRequiredCheckNames } from "@fusion/core";
 import type { Request, Response } from "express";
 
 const severityAuditLog = createLogger("dashboard-register-task-workflow-routes");
@@ -4526,6 +4526,49 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         : (err instanceof Error ? err.message : String(err)).includes("Feedback is required") ? 400
         : 500;
       throw new ApiError(status, err instanceof Error ? err.message : String(err));
+    }
+  });
+
+  /*
+  FNXC:TaskFollowUp 2026-09-17-17:30:
+  FN-513 — create a FOLLOW-UP of a task that is still planning, running, or in review.
+
+  Deliberately a SEPARATE route from `/refine` rather than a mode flag on it: the two have different
+  admission rules and different refusal codes, and widening `/refine` would change the behavior of
+  every existing caller (chat refinement, comments-ops, the CLI extension) that passes only feedback.
+
+  STATUS MAPPING comes from the store's TYPED refusal, never from string-matching a message. The old
+  `/refine` handler still matches `"must be in 'done' or 'in-review'"`, which names two English column
+  ids an operator on a renamed board does not have; a new route must not copy that.
+    400 invalid request text
+    404 no such source (or already deleted before the request)
+    409 the source is no longer an eligible follow-up origin, or the destination workflow declares no
+        usable planning lane
+  */
+  router.post("/tasks/:id/follow-up", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const { feedback } = req.body ?? {};
+      if (!feedback || typeof feedback !== "string") {
+        throw badRequest("feedback is required and must be a string");
+      }
+      if (!isTaskMessageWithinBounds(feedback)) {
+        throw badRequest(`feedback must be between 1 and ${MAX_TASK_MESSAGE_LENGTH} characters`);
+      }
+
+      const followUpTask = await scopedStore.refineTask(req.params.id, feedback.trim(), { mode: "follow-up" });
+      res.status(201).json(followUpTask);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      if (isFollowUpIneligibleError(err)) {
+        throw new ApiError(err.reason === "source-missing" ? 404 : 409, err.message);
+      }
+      const message = err instanceof Error ? err.message : String(err);
+      if (isTaskLookupMiss(err as NodeJS.ErrnoException)) throw new ApiError(404, message);
+      if (message.includes("Feedback is required") || message.includes("Feedback must be at most")) {
+        throw new ApiError(400, message);
+      }
+      throw new ApiError(500, message);
     }
   });
 

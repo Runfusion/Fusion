@@ -406,6 +406,13 @@ export interface TaskSource {
    * - near-duplicate markers: `nearDuplicateOf` (canonical task id),
    *   `nearDuplicateScore` (number), `nearDuplicateSharedTokens` (string[]),
    *   and optional `nearDuplicateDismissed` (boolean).
+   * - `followUp: { version: number }` (FNXC:TaskFollowUp 2026-09-17-15:55) marks FN-513's
+   *   FOLLOW-UP sub-type of `task_refine`: a child prepared from a still-running parent's plan and
+   *   in-flight implementation. It is a versioned marker rather than a new `SourceType` because a
+   *   follow-up IS a refinement for every lineage reader, delete guard, stranded-refinement
+   *   recovery lane, and provenance surface; forking the source type would require a migration and
+   *   a second copy of all of them. An absent or malformed marker degrades to an ordinary
+   *   refinement. Read it only through `isFollowUpTask` in `tasks/task-follow-up.ts`.
    */
   sourceMetadata?: Record<string, unknown>;
 }

@@ -8492,6 +8492,14 @@
       "collapseRouting": "",
       "expandDebug": "",
       "collapseDebug": ""
+    },
+    "followUp": {
+      "btn": "",
+      "createBtn": "",
+      "help": "",
+      "modalTitle": "",
+      "placeholder": "",
+      "taskCreated": ""
     }
   },
   "taskDocuments": {
@@ -8968,7 +8976,9 @@
     "boosting": "Priorisation…",
     "boostAriaLabel": "Placer {{taskId}} en tête de la file",
     "boostTitle": "Essayer cette tâche en premier au prochain départ possible. Cela ne la démarre pas et ne lève aucun blocage.",
-    "boostFailed": "Impossible de prioriser {{taskId}} — elle a peut-être démarré ou changé de colonne. Actualisez pour voir sa place actuelle."
+    "boostFailed": "Impossible de prioriser {{taskId}} — elle a peut-être démarré ou changé de colonne. Actualisez pour voir sa place actuelle.",
+    "followUpOf": "",
+    "followUpOfTitle": ""
   },
   "terminal": {
     "arrowKeysLabel": "",

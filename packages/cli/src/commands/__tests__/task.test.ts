@@ -374,6 +374,24 @@ describe("runTaskShow", () => {
     [{ sourceType: "dashboard_ui" }, "Source: Dashboard"],
     [{ sourceType: "agent_heartbeat", sourceAgentId: "agent-123" }, "Source: Agent (agent-123)"],
     [{ sourceType: "task_refine", sourceParentTaskId: "FN-2904" }, "Source: Refinement of FN-2904"],
+    /*
+    FNXC:TaskFollowUp 2026-09-17-18:10:
+    FN-513's follow-up is persisted as a `task_refine` sub-type, so the CLI must distinguish it by the
+    versioned marker. An unknown or malformed marker keeps the historical Refinement wording rather
+    than inventing a sub-type the row does not carry.
+    */
+    [
+      { sourceType: "task_refine", sourceParentTaskId: "FN-2904", sourceMetadata: { followUp: { version: 1 } } },
+      "Source: Follow-up of FN-2904",
+    ],
+    [
+      { sourceType: "task_refine", sourceParentTaskId: "FN-2904", sourceMetadata: { followUp: { version: 99 } } },
+      "Source: Refinement of FN-2904",
+    ],
+    [
+      { sourceType: "task_refine", sourceParentTaskId: "FN-2904", sourceMetadata: { followUp: "yes" } },
+      "Source: Refinement of FN-2904",
+    ],
     [{ sourceType: "task_duplicate", sourceParentTaskId: "FN-2905" }, "Source: Duplicate of FN-2905"],
     [
       { sourceType: "github_import", sourceMetadata: { issueUrl: "https://github.com/owner/repo/issues/42", issueNumber: 42 } },

@@ -5,7 +5,8 @@ import type { TFunction } from "i18next";
 import { memo, useCallback, useState, useRef, useEffect, useLayoutEffect, useMemo, type CSSProperties, type ReactElement } from "react";
 import { createPortal } from "react-dom";
 import { Link, Clock, Layers, Pencil, ChevronDown, Folder, Target, Bot, Trash2, RotateCw, Zap, UserCheck, GitBranch, GitPullRequest, AlertTriangle, Eye, MoreHorizontal, Sparkles, X } from "lucide-react";
-import { isTaskExternallyBlocked } from "@fusion/core";
+/* FNXC:TaskFollowUp 2026-09-17-18:10: FN-513's shared sub-type test, reachable through the browser-safe core leaf. */
+import { isFollowUpTask, isTaskExternallyBlocked } from "@fusion/core";
 import type { Task, TaskDetail, Column, ColumnId, PrInfo, IssueInfo, GithubIssueAction, MergeResult, PlannerOversightLevel } from "@fusion/core";
 import { resolveQueuePresence, resolveTaskColumnEntryAt } from "@fusion/core";
 import {
@@ -25,7 +26,7 @@ import { GitHubBadge } from "./GitHubBadge";
 import { GitLabBadge } from "./GitLabBadge";
 import { RuntimeFallbackBadge } from "./RuntimeFallbackBadge";
 import { PrCreateModal } from "./PrCreateModal";
-import { TaskRefineDialog } from "./TaskRefineDialog";
+import { TaskRefineDialog, type TaskRefineDialogMode } from "./TaskRefineDialog";
 import { TaskResetDialog } from "./TaskResetDialog";
 import { ProviderIcon } from "./ProviderIcon";
 import { PluginSlot } from "./PluginSlot";
@@ -1318,7 +1319,13 @@ function TaskCardComponent({
   const columnLabel = useColumnLabel();
   const [fileDragOver, setFileDragOver] = useState(false);
   const [showResetDialog, setShowResetDialog] = useState(false);
-  const [showRefineDialog, setShowRefineDialog] = useState(false);
+  /*
+  FNXC:TaskFollowUp 2026-09-17-18:10:
+  FN-513 — one composer, two questions. The MODE is captured when the dialog opens, so a source that
+  finishes while the operator is typing cannot silently change what the submit button does; the
+  server revalidates and answers 409 instead.
+  */
+  const [refineDialogMode, setRefineDialogMode] = useState<TaskRefineDialogMode | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [editDescription, setEditDescription] = useState(task.description || "");
   /*
@@ -2134,6 +2141,13 @@ function TaskCardComponent({
   */
   const refinesParentId = task.sourceType === "task_refine" ? task.sourceParentTaskId : undefined;
   const showRefinesChip = Boolean(refinesParentId);
+  /*
+  FNXC:TaskFollowUp 2026-09-17-18:10:
+  FN-513 — a follow-up is a refinement for every lineage reader, so it keeps this chip, its link and
+  its parent gate. Only the WORDING differs, because "Refines FN-1" is wrong for a card that was
+  prepared from a task that had not finished. The sub-type test is the shared core helper.
+  */
+  const isFollowUpCard = isFollowUpTask(task);
   /*
    * FNXC:TaskRevert 2026-07-16-00:00:
    * FN-8066 makes the source-task revert marker visible only in its completed
@@ -3102,7 +3116,12 @@ function TaskCardComponent({
   }, [onResetTask]);
 
   const handleTaskActionRefine = useCallback(() => {
-    setShowRefineDialog(true);
+    setRefineDialogMode("refine");
+  }, []);
+
+  /* FNXC:TaskFollowUp 2026-09-17-18:10: opens the SAME composer from the card, with no Task Detail mount and no deep link. */
+  const handleTaskActionFollowUp = useCallback(() => {
+    setRefineDialogMode("follow-up");
   }, []);
 
   const handleTaskActionDuplicate = useCallback(async () => {
@@ -3191,6 +3210,7 @@ function TaskCardComponent({
     onDelete: onDeleteTask ? handleTaskActionDelete : undefined,
     onDuplicate: onDuplicateTask ? handleTaskActionDuplicate : undefined,
     onOpenRefine: handleTaskActionRefine,
+    onOpenFollowUp: handleTaskActionFollowUp,
     onRetry: onRetryTask ? handleTaskActionRetry : undefined,
     onReset: onResetTask ? handleTaskActionReset : undefined,
     onTogglePause: (isPaused ? onUnpauseTask : onPauseTask) ? handleTaskActionTogglePause : undefined,
@@ -3566,12 +3586,18 @@ function TaskCardComponent({
       {showRefinesChip && (
         <span
           className="card-refine-chip"
-          title={t("tasks.refinesOfTitle", "Refinement of {{id}}", { id: String(refinesParentId) })}
-          aria-label={t("tasks.refinesOfTitle", "Refinement of {{id}}", { id: String(refinesParentId) })}
+          title={isFollowUpCard
+            ? t("tasks.followUpOfTitle", "Follow-up of {{id}}", { id: String(refinesParentId) })
+            : t("tasks.refinesOfTitle", "Refinement of {{id}}", { id: String(refinesParentId) })}
+          aria-label={isFollowUpCard
+            ? t("tasks.followUpOfTitle", "Follow-up of {{id}}", { id: String(refinesParentId) })
+            : t("tasks.refinesOfTitle", "Refinement of {{id}}", { id: String(refinesParentId) })}
         >
           {/* Decorative: the accessible name is already on the chip via aria-label. */}
           <Sparkles size={11} aria-hidden="true" />
-          <span>{t("tasks.refinesOf", "Refines {{id}}", { id: String(refinesParentId) })}</span>
+          <span>{isFollowUpCard
+            ? t("tasks.followUpOf", "Follows up {{id}}", { id: String(refinesParentId) })
+            : t("tasks.refinesOf", "Refines {{id}}", { id: String(refinesParentId) })}</span>
         </span>
       )}
       {showRevertedChip && (
@@ -4761,13 +4787,14 @@ function TaskCardComponent({
           onClose={() => setShowResetDialog(false)}
         />
       )}
-      {showRefineDialog && (
+      {refineDialogMode !== null && (
         <TaskRefineDialog
           taskId={task.id}
           projectId={projectId}
+          mode={refineDialogMode}
           addToast={addToast}
           onRefinementCreated={onRefinementCreated}
-          onClose={() => setShowRefineDialog(false)}
+          onClose={() => setRefineDialogMode(null)}
         />
       )}
       {(showCreatePrQuickAction || isPrCreateOpen) && (

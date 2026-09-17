@@ -73,6 +73,8 @@ vi.mock("../../api", async (importOriginal) => {
     rejectPlan: vi.fn().mockResolvedValue({}),
     duplicateTask: vi.fn().mockResolvedValue({}),
     refineTask: vi.fn().mockResolvedValue({}),
+    /* FNXC:TaskFollowUp 2026-09-17-18:10: FN-513's second composer endpoint, shared by every Task Detail host test. */
+    followUpTask: vi.fn().mockResolvedValue({}),
     addSteeringComment: vi.fn(),
     assignTask: vi.fn().mockResolvedValue({}),
     fetchAgents: vi.fn().mockResolvedValue([]),

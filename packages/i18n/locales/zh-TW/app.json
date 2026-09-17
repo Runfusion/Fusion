@@ -8473,6 +8473,14 @@
       "collapseRouting": "",
       "expandDebug": "",
       "collapseDebug": ""
+    },
+    "followUp": {
+      "btn": "",
+      "createBtn": "",
+      "help": "",
+      "modalTitle": "",
+      "placeholder": "",
+      "taskCreated": ""
     }
   },
   "taskDocuments": {
@@ -8949,7 +8957,9 @@
     "boosting": "正在優先…",
     "boostAriaLabel": "將 {{taskId}} 移到佇列最前面",
     "boostTitle": "佇列下次接納工作時優先嘗試此任務。這不會啟動它，也不會解除任何阻擋。",
-    "boostFailed": "無法優先處理 {{taskId}}——它可能已開始或已移動。請重新整理查看目前位置。"
+    "boostFailed": "無法優先處理 {{taskId}}——它可能已開始或已移動。請重新整理查看目前位置。",
+    "followUpOf": "",
+    "followUpOfTitle": ""
   },
   "terminal": {
     "arrowKeysLabel": "",

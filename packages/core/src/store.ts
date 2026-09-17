@@ -158,6 +158,7 @@ import type { OverlapWaitClaim, OverlapWaitDeliverySnapshot, OverlapWaitExecutio
 import { clearWorkflowRunBranchesImpl, projectMergeRequestToWorkflowWorkItemImpl, createCompletionHandoffWorkflowWorkImpl } from "./task-store/workflow-workitems-ops.js";
 import { flushAgentLogBufferImpl, appendAgentLogBatchImpl } from "./task-store/agent-logs.js";
 import { refineTaskImpl, updateTaskDependenciesImpl } from "./task-store/update-task-deps.js";
+import { createFollowUpTaskImpl, type CreateFollowUpTaskOptions } from "./task-store/follow-up-ops.js";
 import { createWorkflowStepImpl, updateWorkflowStepImpl, updateWorkflowDefinitionImpl, deleteWorkflowDefinitionImpl, setDefaultWorkflowIdImpl, selectTaskWorkflowImpl } from "./task-store/workflow-ops.js";
 import { initImpl, setupActivityLogListenersImpl, reconcileOrphanedTaskDirsImpl, watchImpl, migrateAgentLogEntriesImpl, migrateMovedSettingsImpl, recoverStaleTransitionPendingImpl, migrateLegacyWorkflowStepsImpl, emitTaskLifecycleEventSafelyImpl } from "./task-store/lifecycle-ops.js";
 import { TaskDeletedOutboxConsumer } from "./task-store/task-deleted-outbox-consumer.js";
@@ -1415,7 +1416,22 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   async duplicateTask(id: string, options?: { workflowId?: string | null }): Promise<Task> {
     return duplicateTaskImpl(this, id, options);
   }
-  async refineTask(id: string, feedback: string): Promise<Task> {
+  /*
+  FNXC:TaskFollowUp 2026-09-17-16:20:
+  FN-513 adds an ADDITIVE `mode` option. The default is byte-identical to the historical Refine call
+  — every existing caller (chat refinement, comments-ops, the CLI extension, the `/refine` route)
+  passes no options and keeps its exact behavior. Only `mode: "follow-up"` reaches the new path,
+  which creates a successor of a task that is still planning, running, or in review without touching
+  it. The rules live in `tasks/task-follow-up.ts`; the creation lives in `task-store/follow-up-ops.ts`.
+  */
+  async refineTask(
+    id: string,
+    feedback: string,
+    options?: { mode?: "refine" | "follow-up" } & CreateFollowUpTaskOptions,
+  ): Promise<Task> {
+    if (options?.mode === "follow-up") {
+      return createFollowUpTaskImpl(this, id, feedback, options);
+    }
     return refineTaskImpl(this, id, feedback);
   }
   /**

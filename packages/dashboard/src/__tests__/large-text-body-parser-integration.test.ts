@@ -137,17 +137,56 @@ describe("large-text body parser integration", () => {
     const editComment = await request(server.app, "PATCH", "/api/tasks/task-1/comments/comment-1/", textBody, { "content-type": "application/json" });
     const refine = await request(server.app, "POST", "/api/tasks/task-1/refine", feedbackBody, { "content-type": "application/json" });
     const revise = await request(server.app, "POST", "/api/tasks/task-1/spec/revise", feedbackBody, { "content-type": "application/json" });
+    /*
+    FNXC:TaskFollowUp 2026-09-17-17:45:
+    FN-513's follow-up request carries the same operator prose as refine, so it must sit inside the
+    same enlarged envelope. Both the bare path and the trailing-slash variant are exercised, because
+    Express treats them as equivalent while the parser boundary is a regular expression.
+    */
+    const followUp = await request(server.app, "POST", "/api/tasks/task-1/follow-up", feedbackBody, { "content-type": "application/json" });
+    const followUpTrailingSlash = await request(server.app, "POST", "/api/tasks/task-1/follow-up/", feedbackBody, { "content-type": "application/json" });
 
     expect(steer.status).toBe(200);
     expect(comment.status).toBe(200);
     expect(editComment.status).toBe(200);
     expect(refine.status).toBe(201);
     expect(revise.status).toBe(200);
+    expect(followUp.status).toBe(201);
+    expect(followUpTrailingSlash.status).toBe(201);
     expect(server.store.addSteeringComment).toHaveBeenCalledWith("task-1", LARGE_TASK_MESSAGE, "user");
     expect(server.store.addTaskComment).toHaveBeenCalledWith("task-1", LARGE_TASK_MESSAGE, "user");
     expect(server.store.updateTaskComment).toHaveBeenCalledWith("task-1", "comment-1", LARGE_TASK_MESSAGE);
-    expect(server.store.refineTask).toHaveBeenCalledWith("task-1", LARGE_TASK_MESSAGE);
+    expect(server.store.refineTask).toHaveBeenNthCalledWith(1, "task-1", LARGE_TASK_MESSAGE);
+    expect(server.store.refineTask).toHaveBeenNthCalledWith(2, "task-1", LARGE_TASK_MESSAGE, { mode: "follow-up" });
+    expect(server.store.refineTask).toHaveBeenNthCalledWith(3, "task-1", LARGE_TASK_MESSAGE, { mode: "follow-up" });
     expect(server.store.logEntry).toHaveBeenCalledWith("task-1", "AI spec revision requested", LARGE_TASK_MESSAGE);
+  });
+
+  /*
+  FNXC:TaskFollowUp 2026-09-17-17:45:
+  The APPLICATION limit and the TRANSPORT envelope are separate boundaries, and widening the second
+  must not relax the first. A request above `MAX_TASK_MESSAGE_LENGTH` is refused with 400 while still
+  fitting the 2 MiB envelope; a request above the envelope is refused with 413 before the handler.
+  */
+  it("keeps the follow-up application limit and transport envelope separate, and widens no neighbour", async () => {
+    const server = await app();
+
+    const overApplicationLimit = JSON.stringify({ feedback: "x".repeat(100_001) });
+    expect(Buffer.byteLength(overApplicationLimit)).toBeLessThanOrEqual(2 * 1024 * 1024);
+    const rejected = await request(server.app, "POST", "/api/tasks/task-1/follow-up", overApplicationLimit, { "content-type": "application/json" });
+    expect(rejected.status).toBe(400);
+
+    const overEnvelope = JSON.stringify({ feedback: "x".repeat(2 * 1024 * 1024) });
+    expect(Buffer.byteLength(overEnvelope)).toBeGreaterThan(2 * 1024 * 1024);
+    const tooLarge = await request(server.app, "POST", "/api/tasks/task-1/follow-up", overEnvelope, { "content-type": "application/json" });
+    expect(tooLarge.status).toBe(413);
+    expect(tooLarge.body).toEqual({ error: "payload-too-large" });
+
+    // A neighbouring /tasks route did NOT inherit the enlarged envelope.
+    const neighbour = await request(server.app, "POST", "/api/tasks/task-1/duplicate", overApplicationLimit, { "content-type": "application/json" });
+    expect(neighbour.status).not.toBe(201);
+
+    expect(server.store.refineTask).not.toHaveBeenCalled();
   });
 
   it("keeps the task-message transport envelope at 2 MiB", async () => {

@@ -11,7 +11,7 @@ import { isCompleteColumnRole, isIntakeColumnRole, isPreImplementationColumnRole
 import { batchUpdateTaskModels, fetchNodes, refreshPrStatus, updateTask } from "../api";
 import { ExternalBlockNotice, HumanPlanApprovalBadge, PlanApprovalNotice } from "./TaskCard";
 import { PrCreateModal } from "./PrCreateModal";
-import { TaskRefineDialog } from "./TaskRefineDialog";
+import { TaskRefineDialog, type TaskRefineDialogMode } from "./TaskRefineDialog";
 import { TaskResetDialog } from "./TaskResetDialog";
 import type { BoardWorkflowColumn, BoardWorkflowsPayload, ModelInfo, NodeInfo, RestoreTaskRevertOptions, RestoreTaskRevertResult, RevertTaskOptions, RevertTaskResult } from "../api";
 import { CustomModelDropdown } from "./CustomModelDropdown";
@@ -421,7 +421,12 @@ export function ListView({
   FN-400: the row hosts the Refine composer itself, like the Reset dialog beside it. Refine used to reopen the whole
   task record through the detail-open deep link, which is exactly the behaviour being removed.
   */
-  const [refineDialogTask, setRefineDialogTask] = useState<Task | null>(null);
+  /*
+  FNXC:TaskFollowUp 2026-09-17-18:10:
+  FN-513 — the row also hosts the FOLLOW-UP composer, which is the same dialog in a second mode. The
+  mode travels with the opened task so it is fixed at open time and cannot drift while typing.
+  */
+  const [refineDialogTask, setRefineDialogTask] = useState<{ task: Task; mode: TaskRefineDialogMode } | null>(null);
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressStartRef = useRef<{ x: number; y: number; pointerId: number } | null>(null);
@@ -1756,7 +1761,9 @@ export function ListView({
           loadBoardWorkflows: () => boardWorkflows,
         });
       } : undefined,
-      onOpenRefine: () => setRefineDialogTask(task),
+      onOpenRefine: () => setRefineDialogTask({ task, mode: "refine" }),
+      /* FNXC:TaskFollowUp 2026-09-17-18:10: opens the same composer from the row, with no detail-open deep link. */
+      onOpenFollowUp: () => setRefineDialogTask({ task, mode: "follow-up" }),
       /*
       FNXC:ColumnRestart 2026-09-17-09:16:
       FN-499: a WIP Retry offers the preserve-work checkbox, unchecked by default and without
@@ -2339,8 +2346,9 @@ export function ListView({
       )}
       {refineDialogTask && (
         <TaskRefineDialog
-          taskId={refineDialogTask.id}
+          taskId={refineDialogTask.task.id}
           projectId={projectId}
+          mode={refineDialogTask.mode}
           addToast={addToast}
           onRefinementCreated={onRefinementCreated}
           onClose={() => setRefineDialogTask(null)}

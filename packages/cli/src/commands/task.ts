@@ -1,4 +1,4 @@
-import { TaskStore, COLUMNS, COLUMN_LABELS, MAX_TASK_MESSAGE_LENGTH, resolveProjectColumnsForRoles, TERMINAL_ROLES, resolveReviewColumns, resolveTaskLifecycleColumns, resolveWorkflowIrForTask, resolveWorkflowIrForTaskWithProvenance, workflowHasColumn, CentralCore, buildAutoPauseClearPatch, buildManualRetryResetPatch, extractIntentSignature, findNearDuplicates, getTaskDuplicateLineage, isValidRepoSlug, isWorkspaceTask, reconcileDeterministicDuplicate, resolveTaskGithubTracking, runDeterministicDuplicateGuard, type Settings, type Column, type ColumnId, type StepStatus, type AgentLogType, type AgentLogEntry, type IntentSignature, type NearDuplicateCandidate, type NearDuplicateMatch, type TaskDependencyMutation } from "@fusion/core";
+import { TaskStore, COLUMNS, COLUMN_LABELS, isFollowUpTask, MAX_TASK_MESSAGE_LENGTH, resolveProjectColumnsForRoles, TERMINAL_ROLES, resolveReviewColumns, resolveTaskLifecycleColumns, resolveWorkflowIrForTask, resolveWorkflowIrForTaskWithProvenance, workflowHasColumn, CentralCore, buildAutoPauseClearPatch, buildManualRetryResetPatch, extractIntentSignature, findNearDuplicates, getTaskDuplicateLineage, isValidRepoSlug, isWorkspaceTask, reconcileDeterministicDuplicate, resolveTaskGithubTracking, runDeterministicDuplicateGuard, type Settings, type Column, type ColumnId, type StepStatus, type AgentLogType, type AgentLogEntry, type IntentSignature, type NearDuplicateCandidate, type NearDuplicateMatch, type TaskDependencyMutation } from "@fusion/core";
 import { admitTaskToWip, isFirstPlanningToWipAdmission, isInReviewMissingWorktreeSessionStartFailure, planTaskWorktreePath, runAiMerge, landWorkspaceTask, withWorkspaceMergeDispatchLease, clearOwnedMergeStamp, reconcileUnownedStaleMergeStamp, SelfHealingManager } from "@fusion/engine";
 import { createInterface } from "node:readline/promises";
 import type { PlanningQuestion, PlanningSummary } from "@fusion/core";
@@ -121,10 +121,23 @@ function formatTaskSource(task: {
       const context = getResearchSourceContext(task.sourceMetadata);
       return context ? `Research (${context})` : "Research";
     }
+    /*
+    FNXC:TaskFollowUp 2026-09-17-18:10:
+    FN-513's follow-up is persisted as a `task_refine` sub-type, so the CLI reads it through the same
+    shared helper the dashboard uses rather than re-deriving the marker. A malformed or absent marker
+    degrades to the historical Refinement wording.
+    */
     case "task_refine":
-      return task.sourceParentTaskId
-        ? `Refinement of ${task.sourceParentTaskId}`
-        : "Refinement";
+      if (!task.sourceParentTaskId) return "Refinement";
+      return isFollowUpTask({
+        sourceType: task.sourceType,
+        sourceParentTaskId: task.sourceParentTaskId,
+        sourceMetadata: (task.sourceMetadata && typeof task.sourceMetadata === "object" && !Array.isArray(task.sourceMetadata))
+          ? task.sourceMetadata as Record<string, unknown>
+          : undefined,
+      })
+        ? `Follow-up of ${task.sourceParentTaskId}`
+        : `Refinement of ${task.sourceParentTaskId}`;
     case "task_duplicate":
       return task.sourceParentTaskId
         ? `Duplicate of ${task.sourceParentTaskId}`

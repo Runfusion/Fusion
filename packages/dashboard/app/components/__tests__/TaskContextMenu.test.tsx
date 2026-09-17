@@ -37,6 +37,83 @@ describe("TaskContextMenu shared task action model", () => {
     expect(actionIds(makeTask({ column: "done" }), { onRetry, onReset: vi.fn(), onOpenRefine: vi.fn() })).toEqual(["refine", "delete"]);
   });
 
+  /*
+  FNXC:TaskFollowUp 2026-09-17-18:10:
+  FN-513 — where Follow-up appears, and where it must leave NOTHING behind.
+
+  The two facts that matter are complementarity (a review lane shows Follow-up INSTEAD OF Refine, so
+  no menu ever carries two near-identical composers) and strictness of the Planning exception (only a
+  CURRENT approving plan review qualifies). The descriptor is also absent — not disabled — wherever
+  it does not apply, because a disabled shell is a dead affordance.
+  */
+  describe("FN-513 Follow-up descriptor", () => {
+    const handlers = { onOpenRefine: vi.fn(), onOpenFollowUp: vi.fn() };
+    const approved = [{ workflowStepId: "plan-review", workflowStepName: "Plan Review", status: "passed" as const, verdict: "APPROVE" as const }];
+
+    const ids = (task: Partial<Task>, currentColumnFlags?: Record<string, boolean>) =>
+      actionIds(makeTask(task), { ...handlers, ...(currentColumnFlags ? { currentColumnFlags: currentColumnFlags as never } : {}) });
+
+    it("replaces Refine in implementation and review lanes, and keeps Refine on terminal ones", () => {
+      expect(ids({ column: "in-progress" }, { countsTowardWip: true })).toContain("follow-up");
+      expect(ids({ column: "in-progress" }, { countsTowardWip: true })).not.toContain("refine");
+      expect(ids({ column: "Relecture" }, { humanReview: true })).toContain("follow-up");
+      expect(ids({ column: "Relecture" }, { humanReview: true })).not.toContain("refine");
+      expect(ids({ column: "Livr\u00e9" }, { complete: true })).toContain("refine");
+      expect(ids({ column: "Livr\u00e9" }, { complete: true })).not.toContain("follow-up");
+    });
+
+    it("resolves renamed lanes by trait, with explicit flags beating the column id", () => {
+      // A column NAMED like a review lane but explicitly declared terminal is terminal.
+      expect(ids({ column: "in-review" }, { complete: true })).toContain("refine");
+      expect(ids({ column: "in-review" }, { complete: true })).not.toContain("follow-up");
+      // A column named "done" that really is an implementation lane offers Follow-up.
+      expect(ids({ column: "done" }, { countsTowardWip: true })).toContain("follow-up");
+    });
+
+    it("applies the strict Planning exception", () => {
+      expect(ids({ column: "todo" }, { hold: true })).not.toContain("follow-up");
+      expect(ids({ column: "todo", workflowStepResults: approved }, { hold: true })).toContain("follow-up");
+      // An approval a later round replaced does not qualify.
+      expect(ids({
+        column: "todo",
+        workflowStepResults: [...approved, { workflowStepId: "plan-review", workflowStepName: "Plan Review", status: "failed" as const, verdict: "REVISE" as const }],
+      }, { hold: true })).not.toContain("follow-up");
+      // A live replan does not qualify either.
+      expect(ids({ column: "todo", status: "needs-replan" as never, workflowStepResults: approved }, { hold: true })).not.toContain("follow-up");
+      // Manual capture has nothing planned to follow up on.
+      expect(ids({ column: "ideas", workflowStepResults: approved }, { intake: true, manualIntake: true })).not.toContain("follow-up");
+    });
+
+    it("is absent — not disabled — when the host wires no handler or the state is unsupported", () => {
+      const noHandler = buildTaskActionMenuModel({ task: makeTask({ column: "in-progress" }), t, currentColumnFlags: { countsTowardWip: true } as never });
+      expect(noHandler.actions.map((action) => action.id)).not.toContain("follow-up");
+
+      const unsupported = buildTaskActionMenuModel({
+        task: makeTask({ column: "parking" }),
+        t,
+        currentColumnFlags: { intake: false, hold: false, countsTowardWip: false, mergeBlocker: false, humanReview: false, complete: false } as never,
+        ...handlers,
+      });
+      expect(unsupported.actions.find((action) => action.id === "follow-up")).toBeUndefined();
+      expect(unsupported.actions.some((action) => action.disabled && action.id === "follow-up")).toBe(false);
+    });
+
+    it("invokes exactly the host's follow-up handler when selected", () => {
+      const onOpenFollowUp = vi.fn();
+      const onOpenRefine = vi.fn();
+      const model = buildTaskActionMenuModel({
+        task: makeTask({ column: "in-progress" }),
+        t,
+        currentColumnFlags: { countsTowardWip: true } as never,
+        onOpenFollowUp,
+        onOpenRefine,
+      });
+      model.actions.find((action) => action.id === "follow-up")!.onSelect!();
+      expect(onOpenFollowUp).toHaveBeenCalledTimes(1);
+      expect(onOpenRefine).not.toHaveBeenCalled();
+    });
+  });
+
   it("offers Bypass failed review for live and eligible archived pre-merge failures only", () => {
     const onBypassReview = vi.fn();
     const archivedFailure = {

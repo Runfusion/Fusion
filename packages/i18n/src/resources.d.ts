@@ -8362,6 +8362,14 @@ export default interface Resources {
       "executionTiming": "Execution Timing",
       "executionTimingMetricsAria": "Execution timing metrics",
       "firstUsed": "First used",
+      "followUp": {
+        "btn": "Follow-up",
+        "createBtn": "Create Follow-up Task",
+        "help": "Describe the follow-up work. A separate task is created and linked to this one, and it is planned from this task's plan and its progress so far.",
+        "modalTitle": "Follow-up",
+        "placeholder": "Describe the follow-up work here...",
+        "taskCreated": "Follow-up task created: {{id}}"
+      },
       "githubTracking": {
         "addTitleBeforeCreating": "Add a title before creating a tracking issue",
         "checking": "Checking tracking status",
@@ -9104,6 +9112,8 @@ export default interface Resources {
       "fastMode": "Fast mode",
       "filesChanged_one": "{{count}} file changed",
       "filesChanged_other": "{{count}} files changed",
+      "followUpOf": "Follows up {{id}}",
+      "followUpOfTitle": "Follow-up of {{id}}",
       "forceDeleteTitle": "Force Delete Task",
       "githubTrackingDefaultOff": "off",
       "githubTrackingDefaultOn": "on",

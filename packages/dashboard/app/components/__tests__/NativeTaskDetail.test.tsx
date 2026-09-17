@@ -609,7 +609,11 @@ describe("native Task Detail", () => {
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     editView.unmount();
 
-    // Review owns Refine while the editable hold task above proves TaskForm's adaptive branch.
+    /*
+    FNXC:TaskFollowUp 2026-09-17-18:10:
+    FN-513: the review lane's composer entry is now **Follow-up**, not Refine — exactly one entry, so
+    the dialog count this case exists to pin still proves there is no duplicate composer.
+    */
     render(
       <>
         <TaskDetailContent {...sharedProps} embedded task={makeTask({ id: "FN-REVIEW", column: "in-review" })} />
@@ -617,10 +621,11 @@ describe("native Task Detail", () => {
     );
     await user.click(screen.getByRole("button", { name: "Actions" }));
     const actions = await screen.findByRole("menu", { name: "Task actions" });
-    await user.click(within(actions).getByRole("menuitem", { name: "Refine" }));
-    expect(await screen.findAllByRole("dialog", { name: "Refine" })).toHaveLength(1);
+    expect(within(actions).queryByRole("menuitem", { name: "Refine" })).toBeNull();
+    await user.click(within(actions).getByRole("menuitem", { name: "Follow-up" }));
+    expect(await screen.findAllByRole("dialog", { name: "Follow-up" })).toHaveLength(1);
     await user.click(screen.getByRole("button", { name: "Cancel" }));
-    expect(screen.queryByRole("dialog", { name: "Refine" })).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Follow-up" })).toBeNull();
   });
 
   /*
@@ -642,20 +647,25 @@ describe("native Task Detail", () => {
         <TaskDetailContent
           {...sharedProps}
           embedded
-          task={makeTask({ id: "FN-REVIEW", column: "in-review" })}
+          task={makeTask({ id: "FN-DONE", column: "done" })}
           onRefinementCreated={onRefinementCreated}
           onRequestClose={onRequestClose}
         />
       </>,
     );
 
+    /*
+    FNXC:TaskFollowUp 2026-09-17-18:10:
+    Kept on a COMPLETED task deliberately: FN-513 must leave Refine on its exact historical endpoint
+    and arguments, so this is the witness for that unchanged contract.
+    */
     await user.click(screen.getByRole("button", { name: "Actions" }));
     await user.click(within(await screen.findByRole("menu", { name: "Task actions" })).getByRole("menuitem", { name: "Refine" }));
     const dialog = await screen.findByRole("dialog", { name: "Refine" });
     await user.type(within(dialog).getByPlaceholderText("Enter your feedback here..."), "Clarify the delivery evidence");
     await user.click(within(dialog).getByRole("button", { name: "Create Refinement Task" }));
 
-    await waitFor(() => expect(refineTask).toHaveBeenCalledWith("FN-REVIEW", "Clarify the delivery evidence", undefined));
+    await waitFor(() => expect(refineTask).toHaveBeenCalledWith("FN-DONE", "Clarify the delivery evidence", undefined));
     expect(onRefinementCreated).toHaveBeenCalledWith(child);
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Refine" })).toBeNull());
     // The detail host is not dismissed by a refinement; only the dialog closes.

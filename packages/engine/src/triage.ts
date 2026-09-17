@@ -20,6 +20,8 @@ import {
   TaskDeletedError,
   buildTriageMemoryInstructions,
   isUnplannedSeedPrompt,
+  // FNXC:TaskFollowUp 2026-09-17-16:10: FN-513's shared sub-type test; never re-derived here.
+  isFollowUpTask,
   isTaskAwaitingPlanning,
   isFastExecutionMode,
   getTaskDuplicateLineage,
@@ -206,6 +208,13 @@ import {
   recoverIdleSemaphoreLeakCandidate,
   type AgentSemaphore,
 } from "./concurrency/concurrency.js";
+/* FNXC:TaskFollowUp 2026-09-17-16:10: FN-513 — the bounded source-task context a follow-up's planning session receives. */
+import {
+  formatFollowUpContextUnavailableSection,
+  formatFollowUpParentContextSection,
+  loadFollowUpParentContext,
+  type FollowUpContextStore,
+} from "./triage-domain/follow-up-context.js";
 import { AgentLogger } from "./agents/agent-logger.js";
 import { attachAgentUsageTelemetry, emitAgentSessionStart } from "./agents/agent-usage-telemetry.js";
 import { emitApprovalMail } from "./agents/approval-mail.js";
@@ -3607,6 +3616,32 @@ export class TriageProcessor {
               ...extractCommandBinaries(settings?.buildCommand),
             ],
           }).catch((): EnvironmentCapabilityProbe => ({ capabilities: [], degraded: true }));
+          /*
+          FNXC:TaskFollowUp 2026-09-17-16:10:
+          FN-513 — a follow-up's planner must see what its SOURCE plans to deliver and what it has
+          delivered so far, or B is designed from a one-line request and duplicates A.
+
+          Loaded HERE, on the real planning entry, and re-read on EVERY attempt (including a replan):
+          A is concurrently moving, so a cached parent snapshot is exactly the staleness this exists
+          to prevent. A genuinely absent parent renders an explicit "unavailable" block; a transport
+          FAILURE is deliberately not flattened into that — it is rethrown into triage's existing
+          failure handling rather than planning B against silence.
+          */
+          let followUpParentContext: string | undefined;
+          const followUpOutcome = await loadFollowUpParentContext(
+            this.store as unknown as FollowUpContextStore,
+            currentTask ?? task,
+          );
+          if (followUpOutcome.kind === "failed") throw followUpOutcome.error;
+          if (followUpOutcome.kind === "loaded") {
+            followUpParentContext = formatFollowUpParentContextSection(followUpOutcome.context);
+          } else if (followUpOutcome.kind === "unavailable") {
+            followUpParentContext = formatFollowUpContextUnavailableSection(
+              (currentTask ?? task).sourceParentTaskId ?? "",
+              followUpOutcome.reason,
+            );
+          }
+
           const agentPrompt = buildSpecificationPrompt(
             detail,
             promptPath,
@@ -3619,6 +3654,7 @@ export class TriageProcessor {
               originalDescription: typeof originalDescriptionDocument?.content === "string" ? originalDescriptionDocument.content : undefined,
               planReviewFeedbackHistory,
               environmentCapabilities,
+              ...(followUpParentContext ? { followUpParentContext } : {}),
             },
             assignedAgent,
           );
@@ -5173,8 +5209,24 @@ export class TriageProcessor {
     const taskUpdates: Record<string, any> = { error: null };
 
     if (parsedDeps.length > 0) {
-      taskUpdates.dependencies = parsedDeps;
-      planLog.log(`${task.id} dependencies: ${parsedDeps.join(", ")}`);
+      /*
+      FNXC:TaskFollowUp 2026-09-17-16:10:
+      FN-513 — a follow-up's edge on its SOURCE is the whole point of the relationship, and this
+      write REPLACES the dependency list with whatever the planner happened to spell in PROMPT.md.
+      A planner that documents the relationship in prose instead of the dependency list would
+      therefore silently delete the edge, and B would dispatch against a parent that has not landed.
+
+      The repair is a deduplicated UNION with the parent id, and only while that id is still present
+      on the LIVE row: an operator (or an explicit unlink) who removed the edge on purpose must not
+      have it restored here. Ordinary tasks and ordinary refinements are untouched.
+      */
+      const followUpParentId = isFollowUpTask(task) ? task.sourceParentTaskId : undefined;
+      const parentEdgeStillLive = Boolean(followUpParentId)
+        && (task.dependencies ?? []).some((dependencyId) => dependencyId === followUpParentId);
+      taskUpdates.dependencies = parentEdgeStillLive && !parsedDeps.includes(followUpParentId!)
+        ? [...new Set([followUpParentId!, ...parsedDeps])]
+        : [...new Set(parsedDeps)];
+      planLog.log(`${task.id} dependencies: ${(taskUpdates.dependencies as string[]).join(", ")}`);
     }
 
     const parsedSteps = await this.store.parseStepsFromPrompt(task.id);
@@ -5898,6 +5950,13 @@ export function buildSpecificationPrompt(
     originalDescription?: string;
     planReviewFeedbackHistory?: string[];
     environmentCapabilities?: EnvironmentCapabilityProbe;
+    /*
+    FNXC:TaskFollowUp 2026-09-17-16:10:
+    FN-513's rendered SOURCE-TASK block. Passed as its own field — never merged into `plan` or
+    `originalDescription` — so the parent's plan can never be mistaken for this task's own
+    specification input or for the operator's verbatim Original Description.
+    */
+    followUpParentContext?: string;
   },
   memoryAgent?: Agent | null,
 ): string {
@@ -6084,7 +6143,7 @@ ${planInput ? `\n## Planning Mode plan.md\n\nTreat this validated lean plan as t
 \`\`\`text
 ${originalDescription}
 \`\`\`
-${task.dependencies.length > 0 ? `- **Dependencies:** ${task.dependencies.join(", ")}` : ""}${revisionSection}${subtaskSection}
+${task.dependencies.length > 0 ? `- **Dependencies:** ${task.dependencies.join(", ")}` : ""}${planningContext?.followUpParentContext ? `\n\n${planningContext.followUpParentContext}\n` : ""}${revisionSection}${subtaskSection}
 
 ## Instructions
 ${isRevision ? "1. Read the existing specification and revision feedback carefully\n2. Apply surgical PROMPT.md edits that fully resolve every blocking feedback item — do not rewrite from title/description alone\n3. Keep structure stable unless feedback requires rethink; preserve uncriticized content\n4. Keep `## Original Description` at the top (after title/metadata) with the operator description **verbatim**\n5. Ensure the revised specification is still detailed enough for an AI agent to execute" : isFreshRespecification ? "1. Read the project structure to understand context (package.json, source files, etc.)\n2. Treat the current task title and description as mandatory primary inputs for a new spec\n3. Produce a fresh complete PROMPT.md specification following the format in your system prompt\n4. Include `## Original Description` near the top with the exact Original Request text above (verbatim, never plan.md)\n5. Address the revision feedback without inventing extra scope\n6. Name actual files, functions, and patterns from the codebase — be specific" : "1. Read the project structure to understand context (package.json, source files, etc.)\n2. Produce a complete PROMPT.md specification following the format in your system prompt\n3. Include `## Original Description` immediately after title/`Created`/`Size` with the exact Original Request text above (verbatim — do not paraphrase; never use plan.md)\n4. The specification must be detailed enough for an autonomous AI agent to implement without asking questions\n5. Name actual files, functions, and patterns from the codebase — be specific"}

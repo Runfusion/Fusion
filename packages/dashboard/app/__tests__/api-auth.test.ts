@@ -33,6 +33,7 @@ import {
   fetchTaskComments,
   fetchGitRemotes,
   refineTask,
+  followUpTask,
   reviseTaskReviewItems,
   fetchBatchStatus,
   fetchWorkspaces,
@@ -638,6 +639,71 @@ describe("refineTask", () => {
     );
 
     await expect(refineTask("FN-001", "feedback")).rejects.toThrow("done' or 'in-review'");
+  });
+});
+
+/*
+FNXC:TaskFollowUp 2026-09-17-17:50:
+FN-513's client wrapper. It is a SEPARATE endpoint from `refineTask` on purpose — the case above
+pins Refine's exact historical URL and body, and these cases pin the follow-up's own URL, project
+scoping and 409 propagation, so neither can drift into the other.
+*/
+describe("followUpTask", () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const FAKE_FOLLOW_UP_TASK: Task = {
+    id: "FN-003",
+    description: "Add a CSV export\n\nFollows up on: FN-001",
+    column: "todo",
+    dependencies: ["FN-001"],
+    steps: [],
+    currentStep: 0,
+    log: [],
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  } as Task;
+
+  it("sends POST to the follow-up endpoint and returns the new child task", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, FAKE_FOLLOW_UP_TASK));
+
+    const result = await followUpTask("FN-001", "Add a CSV export");
+
+    expect(result.id).toBe("FN-003");
+    expect(result.dependencies).toContain("FN-001");
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001/follow-up", {
+      headers: API_JSON_HEADERS,
+      method: "POST",
+      body: JSON.stringify({ feedback: "Add a CSV export" }),
+    });
+  });
+
+  it("scopes the request to an explicitly chosen project", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, FAKE_FOLLOW_UP_TASK));
+
+    await followUpTask("FN-001", "Scoped request", "project-b");
+
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001/follow-up?projectId=project-b", {
+      headers: API_JSON_HEADERS,
+      method: "POST",
+      body: JSON.stringify({ feedback: "Scoped request" }),
+    });
+  });
+
+  it("propagates the 409 a stale menu click produces so the composer can keep the draft", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(
+      mockFetchResponse(false, { error: "Cannot create a follow-up of FN-001: source-terminal" }, 409)
+    );
+
+    await expect(followUpTask("FN-001", "Too late")).rejects.toThrow("source-terminal");
+  });
+
+  it("propagates a 404 for a source this project does not have", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(false, { error: "Task not found" }, 404));
+    await expect(followUpTask("FN-999", "No such parent")).rejects.toThrow("Task not found");
   });
 });
 

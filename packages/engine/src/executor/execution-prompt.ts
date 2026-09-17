@@ -10,7 +10,7 @@ import type {
   WorkflowFieldDefinition,
 } from "@fusion/core";
 /* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 delivers the approved operator note as implementation context. */
-import { buildExecutionMemoryInstructions, buildMemoryPreSteeringNudge, formatApprovedHumanPlanNoteSection, isFastExecutionMode, resolveTaskOutputLanguage, type WorkspaceConfig } from "@fusion/core";
+import { buildExecutionMemoryInstructions, buildMemoryPreSteeringNudge, formatApprovedHumanPlanNoteSection, isFastExecutionMode, isFollowUpTask, resolveTaskOutputLanguage, type WorkspaceConfig } from "@fusion/core";
 import { buildFastLanePrompt } from "../execution/step-session-executor.js";
 import { executorLog } from "../logger.js";
 import type { PluginRunner } from "../plugins/plugin-runner.js";
@@ -104,6 +104,21 @@ export function buildExecutionPrompt(
     : "";
 
   const sourceIssueRef = buildSourceIssueRef(task.sourceIssue);
+
+  /*
+  FNXC:TaskFollowUp 2026-09-17-16:10:
+  FN-513 — a follow-up was SPECIFIED against what its source planned to deliver, which may have been
+  only a plan at the time. By the time this executor runs, the source may have shipped something
+  different, or not shipped at all. The instruction is therefore narrow: re-read the source and check
+  the assumptions against the code actually present before implementing.
+
+  It changes no gate. The scheduler and the dependency dispatch gate still own whether this task may
+  run at all — a source in implementation blocks it, while a source in review may already release it
+  under the existing workflow — so this prompt must never promise that the source has merged.
+  */
+  const followUpSourceSection = isFollowUpTask(task) && task.sourceParentTaskId
+    ? `\n## Follow-up source\n\nThis task is a follow-up of **${task.sourceParentTaskId}**, and its specification was written from that task's plan and its progress at planning time.\n\n- Re-read ${task.sourceParentTaskId} with \`fn_task_show ${task.sourceParentTaskId}\` before you start.\n- Confirm every assumption this spec inherits against the code ACTUALLY PRESENT in this worktree. A step the source planned may not have been delivered, or may have been delivered differently.\n- If an inherited assumption is wrong, implement against what is really there and record the divergence; do not re-implement ${task.sourceParentTaskId}'s own work, and do not modify it.\n`
+    : "";
 
   // Build step progress for resume
   const hasProgress = task.steps.length > 0 && task.steps.some((s) => s.status !== "pending");
@@ -239,7 +254,7 @@ ${task.dependencies.length > 0 ? `Dependencies: ${task.dependencies.join(", ")}`
 ## PROMPT.md
 
 ${prompt}
-${attachmentsSection}${commandsSection}${memorySection}${progressSection}${options?.overlapResumeContext ? `\n## Overlap wait synchronization\n\n${options.overlapResumeContext}\n` : ""}${steeringSection}${customFieldsSection}
+${attachmentsSection}${commandsSection}${memorySection}${progressSection}${followUpSourceSection}${options?.overlapResumeContext ? `\n## Overlap wait synchronization\n\n${options.overlapResumeContext}\n` : ""}${steeringSection}${customFieldsSection}
 ## Review level: ${reviewLevel}
 
 Workflow review gates are handled by the workflow graph outside this implementation session. Do not request per-step plan review or per-step code review from inside execution; complete the implementation steps and let the graph run enabled Plan Review, Browser Verification, and Code Review nodes at their configured positions.

@@ -11,7 +11,7 @@ import {
 } from "./TaskDetailModal.test-helpers";
 import { TaskDetailModal } from "../TaskDetailModal";
 import { ModalDismissPreferenceProvider } from "../../hooks/useOverlayDismiss";
-import { refineTask } from "../../api";
+import { followUpTask, refineTask } from "../../api";
 import { MAX_TASK_MESSAGE_LENGTH } from "@fusion/core";
 
 setupTaskDetailModalHooks();
@@ -48,10 +48,16 @@ const openRefineFromActionsMenu = () => {
   fireEvent.click(screen.getByRole("menuitem", { name: "Refine" }));
 };
 
-const openRefineFromActionsMenuTouch = () => {
+/*
+FNXC:TaskFollowUp 2026-09-17-18:10:
+FN-513: a review-lane card's Actions menu now offers **Follow-up** IN PLACE OF Refine, so the touch
+helper names the entry its fixture actually has. The composer itself is the SAME dialog, which is why
+the dismissal invariants below are still the ones being proved.
+*/
+const openFollowUpFromActionsMenuTouch = () => {
   fireEvent.click(screen.getByRole("button", { name: "Actions" }));
-  const refineItem = screen.getByRole("menuitem", { name: "Refine" });
-  fireEvent.pointerUp(refineItem, { pointerType: "touch" });
+  const followUpItem = screen.getByRole("menuitem", { name: "Follow-up" });
+  fireEvent.pointerUp(followUpItem, { pointerType: "touch" });
 };
 
 const expectRefineComposerOpen = () => {
@@ -83,6 +89,8 @@ describe("TaskDetailModal refine modal dismissal invariant", () => {
   beforeEach(() => {
     vi.mocked(refineTask).mockClear();
     vi.mocked(refineTask).mockResolvedValue({ id: "FN-002", column: "todo" } as any);
+    vi.mocked(followUpTask).mockClear();
+    vi.mocked(followUpTask).mockResolvedValue({ id: "FN-900", column: "todo" } as any);
   });
 
   it("keeps the in-modal actions-menu refine dialog open through the desktop opening click", () => {
@@ -91,6 +99,42 @@ describe("TaskDetailModal refine modal dismissal invariant", () => {
     openRefineFromActionsMenu();
 
     expectRefineComposerOpen();
+  });
+
+  /*
+  FNXC:TaskFollowUp 2026-09-17-18:10:
+  FN-513 — Task Detail's own submit path, at both the desktop window size and the phone size. The
+  record stays open after the child is created: a follow-up is not a reason to dismiss the task the
+  operator is looking at.
+  */
+  it.each([
+    ["desktop", 1280],
+    ["phone", 420],
+  ])("creates a follow-up from the %s Actions menu without dismissing the record", async (_name, width) => {
+    const priorWidth = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: width });
+    try {
+      const created = { id: "FN-900", column: "todo", dependencies: ["FN-001"] };
+      vi.mocked(followUpTask).mockReset();
+      vi.mocked(followUpTask).mockResolvedValue(created as never);
+      const onRefinementCreated = vi.fn();
+      const onClose = vi.fn();
+      renderDoneTaskDetail({ column: "in-review", onRefinementCreated, onClose });
+
+      fireEvent.click(screen.getByRole("button", { name: "Actions" }));
+      fireEvent.click(screen.getByRole("menuitem", { name: "Follow-up" }));
+      fireEvent.change(screen.getByPlaceholderText("Describe the follow-up work here..."), { target: { value: "add the CSV export" } });
+      fireEvent.click(screen.getByTestId("task-refine-submit"));
+
+      await waitFor(() => expect(followUpTask).toHaveBeenCalledWith("FN-001", "add the CSV export", undefined));
+      expect(refineTask).not.toHaveBeenCalled();
+      expect(onRefinementCreated).toHaveBeenCalledWith(created);
+      await waitFor(() => expect(screen.queryByTestId("task-refine-dialog")).not.toBeInTheDocument());
+      expect(onClose).not.toHaveBeenCalled();
+      expect(screen.getByRole("button", { name: "Actions" })).toBeInTheDocument();
+    } finally {
+      Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: priorWidth });
+    }
   });
 
   /*
@@ -128,11 +172,17 @@ describe("TaskDetailModal refine modal dismissal invariant", () => {
     }
   });
 
-  it("keeps the in-review refine dialog open through mobile touch activation and Android compatibility mouse events", () => {
+  it("keeps the in-review follow-up dialog open through mobile touch activation and Android compatibility mouse events", () => {
     renderDoneTaskDetail({ column: "in-review" });
 
-    openRefineFromActionsMenuTouch();
-    expectRefineComposerOpen();
+    // FN-513: a review card offers Follow-up and NOT Refine — never both, and never an empty shell.
+    fireEvent.click(screen.getByRole("button", { name: "Actions" }));
+    expect(screen.queryByRole("menuitem", { name: "Refine" })).not.toBeInTheDocument();
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    openFollowUpFromActionsMenuTouch();
+    expect(screen.getByRole("heading", { level: 3, name: "Follow-up" })).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Describe the follow-up work here...")).toBeInTheDocument();
 
     const overlay = refineOverlay();
     fireEvent.touchEnd(document);
@@ -140,7 +190,8 @@ describe("TaskDetailModal refine modal dismissal invariant", () => {
     fireEvent.mouseUp(overlay);
     fireEvent.click(overlay);
 
-    expectRefineComposerOpen();
+    expect(screen.getByTestId("task-refine-dialog")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Describe the follow-up work here...")).toBeInTheDocument();
   });
 
   it("matches global backdrop-dismiss preference semantics", () => {

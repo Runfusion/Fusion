@@ -1051,7 +1051,14 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   const isChatMessagePath = (path: string): boolean =>
     /^\/api\/chat\/(?:sessions|rooms)\/[^/]+\/messages\/?$/.test(path);
   const isTaskMessagePath = (method: string, path: string): boolean =>
-    (method === "POST" && /^\/api\/tasks\/[^/]+\/(?:steer|comments|refine|spec\/revise)\/?$/.test(path))
+    /*
+    FNXC:TaskFollowUp 2026-09-17-17:30:
+    FN-513's follow-up request is operator prose bounded by the same `MAX_TASK_MESSAGE_LENGTH` limit
+    as steer/comment/refine, so it needs the same enlarged JSON envelope. The alternation is extended
+    by one EXACT path segment — never widened to the `/tasks` prefix — so neighbouring routes keep
+    the default parser and its smaller body ceiling.
+    */
+    (method === "POST" && /^\/api\/tasks\/[^/]+\/(?:steer|comments|refine|follow-up|spec\/revise)\/?$/.test(path))
     || (method === "PATCH" && /^\/api\/tasks\/[^/]+\/comments\/[^/]+\/?$/.test(path));
   const isTaskFileSavePath = (path: string): boolean =>
     /^\/api\/tasks\/[^/]+\/files\/.+\/?$/.test(path);

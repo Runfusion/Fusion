@@ -7925,3 +7925,272 @@ describe("recoverApprovedTask — the orphan-`triage` arm, with the intake short
     } as Partial<TaskStore>)).toBe(false);
   });
 });
+
+/*
+FNXC:TaskFollowUp 2026-09-17-16:10:
+FN-513 — the REAL planning entry, not the loader in isolation.
+
+A loader test proves the data can be read; only these prove the data reaches the planning session and
+survives the dependency-rewriting finalizer. Both were live failure modes: a context block assembled
+and never passed, and a dependency edge deleted by `parseDependenciesFromPrompt` replacing the list.
+*/
+describe("FN-513 follow-up context reaches the real planning session", () => {
+  const FOLLOW_UP_MARKER = { followUp: { version: 1 } };
+
+  const PARENT_PLAN = [
+    "# Task: FN-A — Build the importer",
+    "",
+    "## Mission",
+    "Build a streaming row importer with a pluggable column mapper.",
+    "",
+    "## Steps",
+    "",
+    "### Step 0: Preflight",
+    "- [ ] confirm the fixtures",
+    "",
+    "### Step 1: Streaming reader",
+    "- [ ] add the pluggable column mapper capability",
+  ].join("\n");
+
+  function parentRow(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "FN-A",
+      title: "Build the importer",
+      description: "Import rows from a spreadsheet",
+      column: "in-progress",
+      status: null,
+      dependencies: [],
+      steps: [
+        { name: "Preflight", status: "done" },
+        { name: "Streaming reader", status: "pending" },
+      ],
+      stepReports: [{
+        id: "r1", stepIndex: 0, stepName: "Preflight",
+        summary: "Confirmed the fixtures and the parser entry point.",
+        recordedAt: "2026-09-17T09:00:00.000Z", source: "agent", attempt: 1,
+      }],
+      currentStep: 1,
+      log: [],
+      createdAt: "2026-09-17T08:00:00.000Z",
+      updatedAt: "2026-09-17T09:00:00.000Z",
+      prompt: PARENT_PLAN,
+      attachments: [],
+      comments: [],
+      ...overrides,
+    };
+  }
+
+  function followUpTask(overrides: Partial<Task> = {}): Task {
+    return createTriageTask({
+      id: "FN-B",
+      title: "Add a CSV export",
+      description: "Add a CSV export for the imported rows",
+      dependencies: ["FN-A"],
+      sourceType: "task_refine",
+      sourceParentTaskId: "FN-A",
+      sourceMetadata: FOLLOW_UP_MARKER,
+      ...overrides,
+    } as Partial<Task>);
+  }
+
+  /*
+  Store whose task reads answer BOTH the child (FN-B) and its source (FN-A). The child read echoes the
+  task's own provenance because production re-reads the live row here, and that row carries the
+  follow-up marker — a fixture that dropped it would silently test the not-a-follow-up path.
+  */
+  function storeWithParent(parent: Record<string, unknown> | null, child: Task, extra: Partial<TaskStore> = {}): TaskStore {
+    const childDetail = {
+      ...mockTaskDetail,
+      id: child.id,
+      description: child.description,
+      dependencies: child.dependencies,
+      sourceType: child.sourceType,
+      sourceParentTaskId: child.sourceParentTaskId,
+      sourceMetadata: child.sourceMetadata,
+      attachments: [],
+      comments: [],
+    };
+    const read = vi.fn(async (id: string) => (id === "FN-A" ? parent : childDetail));
+    return createMockStore({ getTask: read, getTaskDetail: read, ...extra } as Partial<TaskStore>);
+  }
+
+  async function capturePlanningPrompt(store: TaskStore, task: Task): Promise<string> {
+    const { promptWithFallback } = await import("../pi.js");
+    const mocked = promptWithFallback as ReturnType<typeof vi.fn>;
+    mocked.mockReset();
+    mocked.mockResolvedValue(undefined);
+    mockCreateFnAgent.mockReset();
+    mockCreateFnAgent.mockResolvedValue({
+      session: {
+        state: {},
+        sessionManager: { getLeafId: vi.fn().mockReturnValue(null) },
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+        navigateTree: vi.fn(),
+      },
+    });
+
+    await new TriageProcessor(store, "/tmp/root").specifyTask(task);
+    expect(mocked).toHaveBeenCalled();
+    return String(mocked.mock.calls.at(-1)?.[1] ?? "");
+  }
+
+  it("hands the source's plan, its completed report and its pending step to the planning session", async () => {
+    const child = followUpTask();
+    const prompt = await capturePlanningPrompt(storeWithParent(parentRow(), child), child);
+
+    expect(prompt).toContain("## Source Task Context (follow-up)");
+    expect(prompt).toContain("FOLLOW-UP of **FN-A**");
+    // A capability that exists only in the SOURCE's plan reached the planner.
+    expect(prompt).toContain("pluggable column mapper");
+    expect(prompt).toContain("[done] Preflight");
+    expect(prompt).toContain("[pending] Streaming reader");
+    expect(prompt).toContain("Confirmed the fixtures and the parser entry point.");
+    // This task's own request stays its own instruction.
+    expect(prompt).toContain("Add a CSV export for the imported rows");
+    expect(prompt).toContain("Specify only the DELTA");
+  });
+
+  it("re-reads the source on a later attempt, including after it finished", async () => {
+    const child = followUpTask();
+    const first = await capturePlanningPrompt(storeWithParent(parentRow(), child), child);
+    expect(first).toContain("pluggable column mapper");
+    expect(first).toContain("Source lane: in-progress");
+
+    const evolved = parentRow({
+      column: "done",
+      prompt: `${PARENT_PLAN}\n\n### Step 2: Export hook\n- [ ] added after FN-B was created`,
+      stepReports: [{
+        id: "r2", stepIndex: 1, stepName: "Streaming reader",
+        summary: "Shipped the reader with a different mapper shape.",
+        recordedAt: "2026-09-17T11:00:00.000Z", source: "agent", attempt: 1,
+      }],
+    });
+    const second = await capturePlanningPrompt(storeWithParent(evolved, child), child);
+    expect(second).toContain("Export hook");
+    expect(second).toContain("different mapper shape");
+    expect(second).toContain("Source lane: done");
+  });
+
+  it("names an unavailable source instead of planning against silence", async () => {
+    const child = followUpTask();
+    const prompt = await capturePlanningPrompt(storeWithParent(null, child), child);
+    expect(prompt).toContain("context is UNAVAILABLE (parent-missing)");
+    expect(prompt).toContain("do not substitute a similarly named task");
+    expect(prompt).not.toContain("pluggable column mapper");
+  });
+
+  it("adds nothing for an ordinary refinement of the same parent", async () => {
+    const ordinaryRefinement = followUpTask({ sourceMetadata: undefined } as Partial<Task>);
+    const prompt = await capturePlanningPrompt(
+      storeWithParent(parentRow(), ordinaryRefinement),
+      ordinaryRefinement,
+    );
+    expect(prompt).not.toContain("## Source Task Context (follow-up)");
+    expect(prompt).not.toContain("pluggable column mapper");
+  });
+});
+
+/*
+FNXC:TaskFollowUp 2026-09-17-16:10:
+FN-513 — the finalizer REPLACES `dependencies` with whatever the planner spelled in PROMPT.md, so a
+follow-up whose planner documented the relationship in prose would silently lose its source edge and
+dispatch against a parent that has not landed.
+*/
+describe("FN-513 follow-up source edge survives spec finalization", () => {
+  const FOLLOW_UP_MARKER = { followUp: { version: 1 } };
+  let followUpRootDir: string;
+
+  beforeEach(async () => {
+    followUpRootDir = await createTriageFixtureRoot("fusion-triage-followup-dep-");
+    await mkdir(join(followUpRootDir, ".fusion", "tasks", "FN-B"), { recursive: true });
+    await writeFile(
+      join(followUpRootDir, ".fusion", "tasks", "FN-B", "PROMPT.md"),
+      "# Task: FN-B\n\n**Size:** M\n\n**No commits expected:** true\n\n## Review Level: 2\n\nFollow-up specification",
+    );
+  });
+
+  afterEach(async () => {
+    await cleanupTriageFixtureRoot(followUpRootDir);
+  });
+
+  async function finalize(input: {
+    parsedDeps: string[];
+    dependencies: string[];
+    sourceMetadata?: Record<string, unknown>;
+    sourceType?: string;
+  }): Promise<string[] | undefined> {
+    const store = createMockStore({
+      getSettings: vi.fn().mockResolvedValue({
+        maxConcurrent: 2, maxWorktrees: 4, pollIntervalMs: 10_000,
+        groupOverlappingFiles: false, autoMerge: true, requirePlanApproval: false,
+      } as Settings),
+      parseDependenciesFromPrompt: vi.fn().mockResolvedValue(input.parsedDeps),
+    });
+    await new TriageProcessor(store, followUpRootDir).recoverApprovedTask({
+      id: "FN-B",
+      description: "Follow-up task",
+      column: "triage",
+      status: "planning",
+      dependencies: input.dependencies,
+      sourceType: input.sourceType ?? "task_refine",
+      sourceParentTaskId: "FN-A",
+      sourceMetadata: input.sourceMetadata,
+      steps: [],
+      currentStep: 0,
+      log: [
+        { timestamp: "2026-01-01T00:00:00.000Z", action: "Spec review requested" },
+        { timestamp: "2026-01-01T00:01:00.000Z", action: "Spec review: APPROVE" },
+      ],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:02:00.000Z",
+    } as never);
+
+    const call = (store.updateTask as ReturnType<typeof vi.fn>).mock.calls
+      .find(([, patch]) => patch && Object.prototype.hasOwnProperty.call(patch, "dependencies"));
+    return call?.[1]?.dependencies as string[] | undefined;
+  }
+
+  it("restores the source edge a planner omitted, preserving the planner's own dependencies", async () => {
+    expect(await finalize({
+      parsedDeps: ["FN-C"],
+      dependencies: ["FN-A"],
+      sourceMetadata: FOLLOW_UP_MARKER,
+    })).toEqual(["FN-A", "FN-C"]);
+  });
+
+  it("does not duplicate an edge the planner did spell, and dedupes repeats", async () => {
+    expect(await finalize({
+      parsedDeps: ["FN-A", "FN-A", "FN-C"],
+      dependencies: ["FN-A"],
+      sourceMetadata: FOLLOW_UP_MARKER,
+    })).toEqual(["FN-A", "FN-C"]);
+  });
+
+  it("leaves dependencies untouched when the planner parsed none", async () => {
+    // An empty parse does not write the field at all, so the live edge already survives.
+    expect(await finalize({
+      parsedDeps: [],
+      dependencies: ["FN-A"],
+      sourceMetadata: FOLLOW_UP_MARKER,
+    })).toBeUndefined();
+  });
+
+  it("does NOT restore an edge that was explicitly removed from the live row", async () => {
+    expect(await finalize({
+      parsedDeps: ["FN-C"],
+      dependencies: [],
+      sourceMetadata: FOLLOW_UP_MARKER,
+    })).toEqual(["FN-C"]);
+  });
+
+  it("leaves an ordinary refinement and an ordinary task on the historical behavior", async () => {
+    expect(await finalize({ parsedDeps: ["FN-C"], dependencies: ["FN-A"] })).toEqual(["FN-C"]);
+    expect(await finalize({
+      parsedDeps: ["FN-C"],
+      dependencies: ["FN-A"],
+      sourceType: "dashboard",
+      sourceMetadata: FOLLOW_UP_MARKER,
+    })).toEqual(["FN-C"]);
+  });
+});

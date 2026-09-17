@@ -540,14 +540,22 @@ describe("TaskDetailModal", () => {
 
     // FNXC:TaskDetailModal 2026-08-15-00:00 (slow-test trim): refinement and API-created
     // parent-link cases shared one body; converted to it.each with both cases kept.
+    /*
+    FNXC:TaskFollowUp 2026-09-17-18:10:
+    FN-513 adds the follow-up sub-type row. It shares `task_refine` provenance, so it must keep the
+    SAME parent link and the same click-through — only the label differs. An unknown marker version
+    degrades to the historical Refinement label rather than claiming a sub-type the row does not have.
+    */
     it.each([
-      ["refinement provenance", "task_refine", "FN-001", /Created via Refinement/],
-      ["API-created planning tasks", "api", "FN-PLANNER", /Created via API/],
-    ] as const)("renders parent task link for %s", async (_label, sourceType, parentId, expectedText) => {
+      ["refinement provenance", "task_refine", "FN-001", /Created via Refinement/, undefined],
+      ["follow-up provenance", "task_refine", "FN-001", /Created via Follow-up/, { followUp: { version: 1 } }],
+      ["an unknown follow-up marker version", "task_refine", "FN-001", /Created via Refinement/, { followUp: { version: 99 } }],
+      ["API-created planning tasks", "api", "FN-PLANNER", /Created via API/, undefined],
+    ] as const)("renders parent task link for %s", async (_label, sourceType, parentId, expectedText, sourceMetadata) => {
       render(
         <TaskDetailModal
           initialTab="details"
-          task={makeTask({ sourceType, sourceParentTaskId: parentId })}
+          task={makeTask({ sourceType, sourceParentTaskId: parentId, ...(sourceMetadata ? { sourceMetadata } : {}) })}
           onClose={noop}
 
           onDeleteTask={noopDelete}

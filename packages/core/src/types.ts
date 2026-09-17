@@ -1729,6 +1729,30 @@ export type {
 } from "./tasks/task-queue-order.js";
 
 /*
+FNXC:TaskFollowUp 2026-09-17-15:55:
+FN-513's follow-up sub-type test and eligibility rule are ONE definition shared by the context menu,
+the store mode, the HTTP route, and the planner. The module is pure (types + browser-safe column-role
+predicates only), so it is safe in this browser leaf and the dashboard cannot fork the rule.
+*/
+export {
+  FOLLOW_UP_METADATA_KEY,
+  FOLLOW_UP_METADATA_VERSION,
+  buildFollowUpSourceMetadata,
+  evaluateFollowUpEligibility,
+  isFollowUpEligible,
+  isFollowUpTask,
+} from "./tasks/task-follow-up.js";
+export type {
+  FollowUpColumnFlags,
+  FollowUpEligibility,
+  FollowUpEligibilityInput,
+  FollowUpIneligibleReason,
+  FollowUpProvenanceInput,
+  FollowUpReviewResultInput,
+  FollowUpSourceMarker,
+} from "./tasks/task-follow-up.js";
+
+/*
 FNXC:MissionValidationRepair 2026-08-11-00:10:
 The dashboard aliases `@fusion/core` to this browser-safe leaf, so expose the pure repair
 eligibility rule here. Every visible repair control must consult the same policy as the store.

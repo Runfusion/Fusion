@@ -18,7 +18,7 @@ import {
 } from "./FloatingWindow";
 import { currentFloatingZ } from "./floatingWindowStack";
 import { ExternalBlockNotice } from "./TaskCard";
-import { TaskRefineDialog } from "./TaskRefineDialog";
+import { TaskRefineDialog, type TaskRefineDialogMode } from "./TaskRefineDialog";
 import { TaskResetDialog } from "./TaskResetDialog";
 import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
 import { useModalDismissPreference } from "../hooks/useOverlayDismiss";
@@ -34,6 +34,8 @@ import {
   REPO_OVERRIDE_RE,
   PLANNER_OVERSIGHT_LEVELS,
   getErrorMessage,
+  /* FNXC:TaskFollowUp 2026-09-17-18:10: FN-513's shared sub-type test for the provenance label. */
+  isFollowUpTask,
 } from "@fusion/core";
 import { resolveEffectivePlannerOversightLevel } from "../../../core/src/workflows/workflow-settings-resolver";
 import { resolveTaskSessionAdvisorEnabled } from "../../../core/src/agents/session-advisor";
@@ -824,9 +826,17 @@ function getProvenanceLabel(task: Task | TaskDetail, options: ProvenanceLabelOpt
         contextInfoFull: contextInfo,
       };
     }
+    /*
+    FNXC:TaskFollowUp 2026-09-17-18:10:
+    FN-513's follow-up shares the `task_refine` source type, so it keeps the parent link and every
+    lineage behavior. Only the LABEL distinguishes it, because calling a successor of a running task
+    a "Refinement" misstates what it is.
+    */
     case "task_refine":
       return {
-        label: tr ? tr("taskDetail.provenance.refinement", "Refinement") : "Refinement",
+        label: isFollowUpTask(task)
+          ? (tr ? tr("taskDetail.provenance.followUp", "Follow-up") : "Follow-up")
+          : (tr ? tr("taskDetail.provenance.refinement", "Refinement") : "Refinement"),
         parentTaskId: task.sourceParentTaskId,
       };
     case "task_duplicate":
@@ -1508,7 +1518,12 @@ export function TaskDetailContent({
   FN-424 removed the inline specification editor with the Edit action that opened it, so its saving,
   revision-request, draft and feedback state is deleted rather than left as unreachable machinery.
   */
-  const [showRefineModal, setShowRefineModal] = useState(false);
+  /*
+  FNXC:TaskFollowUp 2026-09-17-18:10:
+  FN-513 — the Actions menu opens the SAME composer in a second mode. The mode is captured at open
+  time so a lane change while the operator types cannot change what the submit button does.
+  */
+  const [refineModalMode, setRefineModalMode] = useState<TaskRefineDialogMode | null>(null);
   const [showResetDialog, setShowResetDialog] = useState(false);
 
   /*
@@ -3829,7 +3844,12 @@ export function TaskDetailContent({
   that existed solely to carry that hand-off is deleted.
   */
   const handleOpenRefineModal = useCallback(() => {
-    setShowRefineModal(true);
+    setRefineModalMode("refine");
+  }, []);
+
+  /* FNXC:TaskFollowUp 2026-09-17-18:10: FN-513's follow-up composer, from the Actions menu in every Task Detail presentation. */
+  const handleOpenFollowUpModal = useCallback(() => {
+    setRefineModalMode("follow-up");
   }, []);
 
   // Helper to close the retained header Actions overflow after an action.
@@ -3867,7 +3887,7 @@ export function TaskDetailContent({
   }, [addToast, closeMenus, isCheckingPrStatus, onTaskUpdated, projectId, task]);
 
   const handleCloseRefineModal = useCallback(() => {
-    setShowRefineModal(false);
+    setRefineModalMode(null);
   }, []);
 
   const uploadFile = useCallback(async (file: File) => {
@@ -4337,6 +4357,7 @@ export function TaskDetailContent({
     onDelete: handleDelete,
     onDuplicate: handleDuplicate,
     onOpenRefine: handleOpenRefineModal,
+    onOpenFollowUp: handleOpenFollowUpModal,
     onRetry: handleRetry,
     onReset: handleReset,
     /*
@@ -7295,10 +7316,11 @@ export function TaskDetailContent({
           onClose={() => setShowResetDialog(false)}
         />
       )}
-      {showRefineModal && (
+      {refineModalMode !== null && (
         <TaskRefineDialog
           taskId={task.id}
           projectId={projectId}
+          mode={refineModalMode}
           addToast={addToast}
           onRefinementCreated={onRefinementCreated}
           onClose={handleCloseRefineModal}

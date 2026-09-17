@@ -8474,6 +8474,14 @@
       "collapseRouting": "",
       "expandDebug": "",
       "collapseDebug": ""
+    },
+    "followUp": {
+      "btn": "",
+      "createBtn": "",
+      "help": "",
+      "modalTitle": "",
+      "placeholder": "",
+      "taskCreated": ""
     }
   },
   "taskDocuments": {
@@ -8950,7 +8958,9 @@
     "boosting": "Impulsando…",
     "boostAriaLabel": "Colocar {{taskId}} al frente de la cola",
     "boostTitle": "Intentar esta tarea primero cuando la cola admita trabajo. No la inicia ni elimina ningún bloqueo.",
-    "boostFailed": "No se pudo impulsar {{taskId}}: puede haber comenzado o cambiado de columna. Actualiza para ver su posición actual."
+    "boostFailed": "No se pudo impulsar {{taskId}}: puede haber comenzado o cambiado de columna. Actualiza para ver su posición actual.",
+    "followUpOf": "",
+    "followUpOfTitle": ""
   },
   "terminal": {
     "arrowKeysLabel": "",

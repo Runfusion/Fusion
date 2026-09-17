@@ -7,14 +7,25 @@ import type { Task } from "@fusion/core";
 import { useCallback, useRef, useState, type HTMLAttributes, type MouseEvent as ReactMouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 
-import { refineTask } from "../api";
+import { followUpTask, refineTask } from "../api";
 import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
 
 import type { ToastType } from "../hooks/useToast";
 
+/*
+FNXC:TaskFollowUp 2026-09-17-18:10:
+FN-513 reuses this composer for a second question instead of forking a near-identical dialog. The
+mode is fixed WHEN THE DIALOG OPENS and never re-derived from live task state: if the source finishes
+while the operator is typing, the draft must not silently change what the button does. The SERVER
+revalidates at submit and answers 409, which is the honest place for that race.
+*/
+export type TaskRefineDialogMode = "refine" | "follow-up";
+
 export interface TaskRefineDialogProps {
   taskId: string;
   projectId?: string;
+  /** Fixed at open time. Defaults to the historical Refine behavior. */
+  mode?: TaskRefineDialogMode;
   addToast: (message: string, type?: ToastType) => void;
   onClose: () => void;
   onRefinementCreated?: (task: Task) => void;
@@ -38,11 +49,13 @@ refineTask requests before the disabled pending state renders.
 export function TaskRefineDialog({
   taskId,
   projectId,
+  mode = "refine",
   addToast,
   onClose,
   onRefinementCreated,
 }: TaskRefineDialogProps) {
   const { t } = useTranslation("app");
+  const isFollowUp = mode === "follow-up";
   const [feedback, setFeedback] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const submissionRef = useRef(false);
@@ -85,16 +98,34 @@ export function TaskRefineDialog({
     submissionRef.current = true;
     setIsSubmitting(true);
     try {
-      const newTask = await refineTask(taskId, feedback.trim(), projectId);
+      /*
+      FNXC:TaskFollowUp 2026-09-17-18:10:
+      Two endpoints, one composer. Refine keeps its exact historical call; a follow-up posts to its
+      own route so the server can apply the narrower admission rule and return a typed refusal.
+      */
+      const newTask = isFollowUp
+        ? await followUpTask(taskId, feedback.trim(), projectId)
+        : await refineTask(taskId, feedback.trim(), projectId);
       /*
       FNXC:TaskRefinementBoardVisibility 2026-08-20-20:43:
       The returned child enters shared board state immediately rather than relying on delayed SSE delivery. Its
       server-selected column must remain untouched here.
       */
       onRefinementCreated?.(newTask);
-      addToast(t("taskDetail.refine.taskCreated", "Refinement task created: {{id}}", { id: newTask.id }), "success");
+      addToast(
+        isFollowUp
+          ? t("taskDetail.followUp.taskCreated", "Follow-up task created: {{id}}", { id: newTask.id })
+          : t("taskDetail.refine.taskCreated", "Refinement task created: {{id}}", { id: newTask.id }),
+        "success",
+      );
       onClose();
     } catch (error) {
+      /*
+      FNXC:TaskFollowUp 2026-09-17-18:10:
+      THE DRAFT SURVIVES EVERY FAILURE, including the 409 a source that finished mid-draft produces.
+      The operator can correct it, copy it out, or cancel; the composer never retries a creation on
+      its own, because a silent retry against a moving source is how a duplicate child appears.
+      */
       submissionRef.current = false;
       setIsSubmitting(false);
       addToast(getErrorMessage(error), "error");
@@ -114,20 +145,24 @@ export function TaskRefineDialog({
           className="modal-header"
           headingLevel={3}
           titleId={titleId}
-          title={t("taskDetail.refine.modalTitle", "Refine")}
+          title={isFollowUp ? t("taskDetail.followUp.modalTitle", "Follow-up") : t("taskDetail.refine.modalTitle", "Refine")}
           onClose={onClose}
           closeButtonProps={{ disabled: isSubmitting, "aria-label": t("common.close", "Close") }}
         />
         <div className="task-refine-dialog__body">
           <p className="task-refine-dialog__help">
-            {t("taskDetail.refine.help", "Describe what needs to be refined or improved...")}
+            {isFollowUp
+              ? t("taskDetail.followUp.help", "Describe the follow-up work. A separate task is created and linked to this one, and it is planned from this task's plan and its progress so far.")
+              : t("taskDetail.refine.help", "Describe what needs to be refined or improved...")}
           </p>
           <UiTextArea
             className="input task-refine-dialog__textarea"
             data-testid="task-refine-feedback"
             value={feedback}
             onChange={(event) => setFeedback(event.target.value)}
-            placeholder={t("taskDetail.refine.placeholder", "Enter your feedback here...")}
+            placeholder={isFollowUp
+              ? t("taskDetail.followUp.placeholder", "Describe the follow-up work here...")
+              : t("taskDetail.refine.placeholder", "Enter your feedback here...")}
             rows={6}
             maxLength={MAX_TASK_MESSAGE_LENGTH}
             autoFocus
@@ -146,7 +181,9 @@ export function TaskRefineDialog({
             >
               {isSubmitting
                 ? t("taskDetail.refine.creating", "Creating...")
-                : t("taskDetail.refine.createBtn", "Create Refinement Task")}
+                : isFollowUp
+                  ? t("taskDetail.followUp.createBtn", "Create Follow-up Task")
+                  : t("taskDetail.refine.createBtn", "Create Refinement Task")}
             </UiButton>
           </div>
         </div>

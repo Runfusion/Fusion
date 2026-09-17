@@ -2017,6 +2017,39 @@ export type {
   QueuePresenceVerdict,
   QueueUnavailableReason,
 } from "./tasks/task-queue-order.js";
+/*
+FNXC:TaskFollowUp 2026-09-17-15:55:
+FN-513's follow-up sub-type test and eligibility rule are ONE definition shared by the context menu,
+the store mode, the HTTP route, and the planner, so no surface can fork the rule.
+*/
+export {
+  FOLLOW_UP_METADATA_KEY,
+  FOLLOW_UP_METADATA_VERSION,
+  buildFollowUpSourceMetadata,
+  evaluateFollowUpEligibility,
+  isFollowUpEligible,
+  isFollowUpTask,
+} from "./tasks/task-follow-up.js";
+export type {
+  FollowUpColumnFlags,
+  FollowUpEligibility,
+  FollowUpEligibilityInput,
+  FollowUpIneligibleReason,
+  FollowUpProvenanceInput,
+  FollowUpReviewResultInput,
+  FollowUpSourceMarker,
+} from "./tasks/task-follow-up.js";
+
+/* FNXC:TaskFollowUp 2026-09-17-16:20: typed refusals + the server-side lane resolver the HTTP route maps to status codes. */
+export {
+  FollowUpIneligibleError,
+  evaluateFollowUpEligibilityForTask,
+  isFollowUpIneligibleError,
+  resolveFollowUpColumnFlagMap,
+  resolveFollowUpColumnFlagMapById,
+} from "./task-store/follow-up-ops.js";
+export type { CreateFollowUpTaskOptions, FollowUpRefusalReason } from "./task-store/follow-up-ops.js";
+
 export { fileScopeLeaseBlocksCandidate, normalizeOverlapScopeForTask, taskHoldsUnmergedCheckout } from "./tasks/file-scope-lease.js";
 export type { FileScopeLeaseClassification, FileScopeLeaseKind } from "./tasks/file-scope-lease.js";
 
