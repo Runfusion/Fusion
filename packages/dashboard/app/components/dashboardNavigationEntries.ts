@@ -109,9 +109,16 @@ export function buildDashboardNavigationEntries(options: DashboardNavigationRegi
   const settingsEntry = { id: "settings", label: "Settings", icon: Settings, kind: "existing-action" as const, placement: "external" as const, view: "settings" as TaskView, testId: "desktop-nav-settings", onSelect: options.onOpenSettings };
   /*
   FNXC:DesktopNavigation 2026-09-16-04:15:
-  FN-446: the direct row is the resolved quick-access selection (max 5 + the trailing **More** button), in the operator's
-  persisted order, restricted to destinations that actually exist under their gates so a gated-off selection leaves no
-  hole. Every other page entry keeps its natural relative order in `overflow`; Settings stays `external`.
+  FN-446: the direct row is the resolved quick-access selection, in the operator's persisted order, restricted to
+  destinations that actually exist under their gates so a gated-off selection leaves no hole. Every other page entry
+  keeps its natural relative order in `overflow`; Settings stays `external`.
+
+  FNXC:DesktopNavigation 2026-09-17-08:05:
+  FN-495: the cap is now **4** direct destinations plus the trailing **More** button, because the footer's fifth quick
+  slot belongs to Chat, which is deliberately NOT configurable. Chat has no page entry in this registry and must never
+  gain one: on the shared tablet/desktop footer it is the `desktop-nav-chat-panel` button of the right-hand group, and
+  on the mobile shell it is the More-menu row plus the footer swipe-up gesture. A `chat` entry here would give one
+  destination two owners in the same host.
   */
   const pages = [...leading, ...trailing];
   const quickAccessIds = options.quickAccessEntryIds ?? resolveNavigationQuickAccessEntryIds();

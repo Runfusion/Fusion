@@ -113,16 +113,22 @@ export const MOBILE_NAV_PRIMARY_SELECTABLE_ITEMS = MOBILE_NAV_SELECTABLE_ITEMS.f
 );
 
 /*
-FNXC:Navigation 2026-09-16-04:15:
-FN-446 : le défaut est Dashboard, Board, Planning, Missions, Mailbox — Agents quitte la rangée directe et redevient une
-entrée ordinaire du menu « More ». Le plafond passe à 5 parce que la rangée compte toujours un bouton « More » final.
+FNXC:Navigation 2026-09-17-08:05:
+FN-495 : le défaut est Dashboard, Board, Planning, Missions et le plafond est 4, pas 5. La rangée du pied de page
+compte toujours un bouton « More » final, mais le cinquième créneau appartient désormais au **Chat**, qui reste
+volontairement NON configurable : sur le footer partagé tablette/ordinateur c'est le bouton `desktop-nav-chat-panel`
+du groupe de droite, et sur le shell mobile c'est la ligne « Chat » du menu « Plus » plus le geste de glissement du
+pied de page vers le haut. `chat` reste donc délibérément hors de `MOBILE_NAV_PRIMARY_ITEM_NAVIGATION_ENTRY_IDS` et
+de `MOBILE_NAV_PRIMARY_SELECTABLE_ITEMS` : aucune nouvelle éligibilité, aucune clé de réglage, aucune migration.
+Une sélection persistée de cinq identifiants est simplement tronquée par le résolveur ci-dessous ; la cinquième
+destination bascule dans `omittedItems`, donc elle reste atteignable depuis « Plus ».
 `tasks` est l'identifiant persisté historique du Board.
 */
 export const DEFAULT_MOBILE_NAV_PRIMARY_ITEMS: MobileNavSelectableItem[] = [
-  "command-center", "tasks", "planning", "missions", "mailbox",
+  "command-center", "tasks", "planning", "missions",
 ];
 
-export const MAX_MOBILE_NAV_PRIMARY_ITEMS = 5;
+export const MAX_MOBILE_NAV_PRIMARY_ITEMS = 4;
 
 export interface ResolvedMobileNavPrimaryItems {
   primaryItems: MobileNavSelectableItem[];

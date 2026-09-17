@@ -499,20 +499,25 @@ export function GeneralSection({ form, setForm, projectId, addToast, prefixError
 
         FNXC:Navigation 2026-09-16-04:15:
         FN-446: this control now drives the quick-access row of the shared navigation bar, not a mobile-only footer, so
-        its label and help text drop the "mobile" framing and state the five-destination cap. The setting KEY, the
-        `htmlFor`/`id`, and both i18n keys stay unchanged so persisted preferences, the settings search index, and
-        `section-keys.ts` keep working without a migration.
+        its label and help text drop the "mobile" framing. The setting KEY, the `htmlFor`/`id`, and both i18n keys stay
+        unchanged so persisted preferences, the settings search index, and `section-keys.ts` keep working without a
+        migration.
+
+        FNXC:Navigation 2026-09-17-08:05:
+        FN-495: the cap is FOUR destinations, because the footer's fifth quick slot belongs to Chat and Chat is
+        deliberately not offered here. The rendered list is truncated to `MAX_MOBILE_NAV_PRIMARY_ITEMS` so a persisted
+        five-destination value never shows a fifth row whose reorder arrows the navigation hosts would ignore.
         */}
       <SettingsFieldRow
         htmlFor="mobileNavPrimaryItems"
         label={t("settings.general.mobileNavPrimaryItems", "Navigation quick access")}
-        help={t("settings.general.mobileNavPrimaryItemsHint", "Default: Dashboard, Board, Planning, Missions, Mailbox. Choose up to 5 destinations and their order; every other destination remains in More.")}
+        help={t("settings.general.mobileNavPrimaryItemsHint", "Default: Dashboard, Board, Planning, Missions. Choose up to 4 destinations and their order; every other destination — including Chat — remains in More. On mobile, swipe the bottom bar upwards to open Chat.")}
         scope="project"
       >
         <div role="group" aria-label={t("settings.general.mobileNavPrimaryItems", "Navigation quick access")}>
           {(() => {
             const selectedItems = Array.isArray(form.mobileNavPrimaryItems) && form.mobileNavPrimaryItems.length > 0
-              ? form.mobileNavPrimaryItems.filter((item): item is typeof MOBILE_NAV_PRIMARY_SELECTABLE_ITEMS[number] => MOBILE_NAV_PRIMARY_SELECTABLE_ITEMS.includes(item as typeof MOBILE_NAV_PRIMARY_SELECTABLE_ITEMS[number]))
+              ? form.mobileNavPrimaryItems.filter((item): item is typeof MOBILE_NAV_PRIMARY_SELECTABLE_ITEMS[number] => MOBILE_NAV_PRIMARY_SELECTABLE_ITEMS.includes(item as typeof MOBILE_NAV_PRIMARY_SELECTABLE_ITEMS[number])).slice(0, MAX_MOBILE_NAV_PRIMARY_ITEMS)
               : [...DEFAULT_MOBILE_NAV_PRIMARY_ITEMS];
             const updateItems = (nextItems: string[]) => {
               setForm((current) => ({ ...current, mobileNavPrimaryItems: nextItems }));

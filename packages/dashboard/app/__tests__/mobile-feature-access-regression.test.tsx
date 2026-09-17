@@ -321,8 +321,13 @@ describe("Mobile Feature Access Regression Guard", () => {
   it("official menu provides access to secondary mobile features", () => {
     render(<MobileNavBar {...createDefaultMobileNavProps()} navigationMenuOpen />);
 
-    expect(screen.getByTestId("mobile-nav-tab-mailbox")).toBeDefined();
-    expect(screen.queryByTestId("mobile-more-item-mailbox")).toBeNull();
+    /*
+     * FN-495 : le plafond d'accès rapide redescend à quatre parce que le cinquième créneau du pied de page appartient
+     * au Chat, non configurable. Mailbox quitte donc le défaut et redevient une entrée ordinaire du menu — toujours
+     * un seul propriétaire, seulement une autre surface.
+     */
+    expect(screen.queryByTestId("mobile-nav-tab-mailbox")).toBeNull();
+    expect(screen.getByTestId("mobile-more-item-mailbox")).toBeDefined();
     expect(screen.getByTestId("mobile-more-item-git")).toBeDefined();
     expect(screen.getByTestId("mobile-more-item-terminal")).toBeDefined();
     expect(screen.getByTestId("mobile-more-item-files")).toBeDefined();
@@ -341,7 +346,7 @@ describe("Mobile Feature Access Regression Guard", () => {
 
   it("keeps enabled official destinations reachable without persisted footer customization", () => {
     render(<MobileNavBar {...createDefaultMobileNavProps()} navigationMenuOpen showSkillsTab={false} experimentalFeatures={{ insights: false, memoryView: false }} />);
-    /* FN-467 : sans sélection persistée, Missions fait partie des cinq destinations par défaut de la rangée directe. */
+    /* FN-495 : sans sélection persistée, Missions fait partie des QUATRE destinations par défaut de la rangée directe. */
     expect(screen.getByTestId("mobile-nav-tab-missions")).toBeInTheDocument();
     expect(screen.queryByTestId("mobile-more-item-missions")).toBeNull();
     expect(screen.queryByTestId("mobile-more-item-skills")).toBeNull();

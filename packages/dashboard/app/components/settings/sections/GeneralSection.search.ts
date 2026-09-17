@@ -92,7 +92,7 @@ export const generalSearchEntries: SettingsSearchEntry[] = [
     labelKey: "settings.general.mobileNavPrimaryItems",
     labelFallback: "Navigation quick access",
     helpKey: "settings.general.mobileNavPrimaryItemsHint",
-    helpFallback: "Default: Dashboard, Board, Planning, Missions, Mailbox. Choose up to 5 destinations and their order; every other destination remains in More.",
+    helpFallback: "Default: Dashboard, Board, Planning, Missions. Choose up to 4 destinations and their order; every other destination — including Chat — remains in More. On mobile, swipe the bottom bar upwards to open Chat.",
     keywords: ["mobile", "footer", "navigation", "quick access", "planning", "agents", "more"],
   },
   {

@@ -410,24 +410,33 @@ describe("DesktopActionBar", () => {
   });
 
   /*
-   * FN-446 : Agents quitte la rangée directe du pied de page (défaut d'accès rapide à cinq destinations) et devient une
-   * entrée ordinaire du menu **More**, sans coquille de bouton ni `aria-label` orphelin laissé derrière lui.
+   * FN-446 : Agents quitte la rangée directe du pied de page et devient une entrée ordinaire du menu **More**, sans
+   * coquille de bouton ni `aria-label` orphelin laissé derrière lui.
+   *
+   * FN-495 : le défaut vaut désormais QUATRE destinations plus « More », le cinquième créneau étant le bouton Chat
+   * non configurable du groupe de droite. Mailbox rejoint donc le menu **More** avec Agents.
    */
   it("place Agents dans le menu More et non dans le rail direct par défaut", async () => {
     const onChangeView = vi.fn().mockResolvedValue(true);
-    render(<DesktopActionBar entries={entries(onChangeView)} activeId="board" tasks={[]} />);
+    render(<DesktopActionBar entries={entries(onChangeView)} activeId="board" tasks={[]} onOpenChatPanel={vi.fn()} />);
     const scroller = document.querySelector(".desktop-action-bar__scroller")!;
-    expect(Array.from(scroller.querySelectorAll<HTMLElement>(".desktop-action-bar__action")).map((button) => button.dataset.testid)).toEqual([
+    const directTestIds = Array.from(scroller.querySelectorAll<HTMLElement>(".desktop-action-bar__action")).map((button) => button.dataset.testid);
+    expect(directTestIds).toEqual([
       "desktop-nav-command-center",
       "desktop-nav-board",
       "desktop-nav-planning",
       "desktop-nav-missions",
-      "desktop-nav-mailbox",
     ]);
+    /* FN-495 : au plus quatre destinations dans la rangée centrale, et le cinquième créneau est le Chat, à droite. */
+    expect(directTestIds.length).toBeLessThanOrEqual(4);
+    expect(document.querySelector(".desktop-action-bar__right")).toContainElement(screen.getByTestId("desktop-nav-chat-panel"));
+    expect(scroller).not.toContainElement(screen.getByTestId("desktop-nav-chat-panel"));
     expect(screen.queryByTestId("desktop-nav-agents")).toBeNull();
     expect(screen.queryByLabelText("Agents")).toBeNull();
 
     const menu = openOverflowMenu();
+    /* FN-495 : la cinquième destination héritée (Mailbox) reste atteignable depuis **More**. */
+    expect(within(menu).getByTestId("desktop-nav-mailbox")).toBeInTheDocument();
     const agentsEntry = within(menu).getByTestId("desktop-nav-agents");
     expect(agentsEntry).toHaveAccessibleName("Agents");
     fireEvent.click(agentsEntry);
@@ -745,6 +754,15 @@ describe("DesktopActionBar", () => {
 
     fireEvent.pointerEnter(screen.getByTestId("desktop-nav-more"));
     expect(screen.getByRole("menu")).toBeInTheDocument();
+  });
+
+  /*
+   * FN-495 : exemption d'hôte assertée. Le geste de glissement vers le haut appartient EXCLUSIVEMENT à la pill du
+   * shell mobile ; le pied de page large ne le consomme pas, donc sa source ne doit pas référencer le hook.
+   */
+  it("n'adopte pas le geste de glissement du pied de page mobile", () => {
+    expect(readAppFile("components/DesktopActionBar.tsx")).not.toMatch(/useFooterSwipeUpGesture\(/);
+    expect(readAppFile("components/MobileNavBar.tsx")).toMatch(/useFooterSwipeUpGesture\(/);
   });
 
   // (f) exemption mobile: la feuille More du téléphone reste au tap, sans périmètre de survol.

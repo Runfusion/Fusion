@@ -11,14 +11,30 @@ import {
 
 describe("resolveMobileNavPrimaryItems", () => {
   /*
-   * FN-446 : la rangée d'accès rapide vaut cinq destinations plus « More », et Agents n'y figure plus par défaut.
+   * FN-495 : la rangée d'accès rapide vaut QUATRE destinations plus « More ». Le cinquième créneau appartient au
+   * Chat, non configurable, donc `mailbox` quitte le défaut et rejoint « Plus ». Agents n'y figure toujours pas.
    */
-  it("uses the five-destination quick-access default for unset or empty values", () => {
-    expect(DEFAULT_MOBILE_NAV_PRIMARY_ITEMS).toEqual(["command-center", "tasks", "planning", "missions", "mailbox"]);
+  it("uses the four-destination quick-access default for unset or empty values", () => {
+    expect(DEFAULT_MOBILE_NAV_PRIMARY_ITEMS).toEqual(["command-center", "tasks", "planning", "missions"]);
     expect(DEFAULT_MOBILE_NAV_PRIMARY_ITEMS).not.toContain("agents");
-    expect(MAX_MOBILE_NAV_PRIMARY_ITEMS).toBe(5);
+    expect(DEFAULT_MOBILE_NAV_PRIMARY_ITEMS).not.toContain("mailbox");
+    expect(MAX_MOBILE_NAV_PRIMARY_ITEMS).toBe(4);
     expect(resolveMobileNavPrimaryItems()).toMatchObject({ primaryItems: DEFAULT_MOBILE_NAV_PRIMARY_ITEMS });
     expect(resolveMobileNavPrimaryItems({ mobileNavPrimaryItems: [] })).toMatchObject({ primaryItems: DEFAULT_MOBILE_NAV_PRIMARY_ITEMS });
+    expect(resolveMobileNavPrimaryItems().omittedItems).toContain("mailbox");
+  });
+
+  /*
+   * FN-495 : une sélection héritée de cinq identifiants éligibles perd sa cinquième entrée, qui redevient atteignable
+   * depuis « Plus ». Aucune migration n'est nécessaire : la troncature du résolveur suffit.
+   */
+  it("truncates a legacy five-destination selection and routes its fifth entry to More", () => {
+    const resolved = resolveMobileNavPrimaryItems({
+      mobileNavPrimaryItems: ["command-center", "tasks", "planning", "missions", "mailbox"],
+    });
+    expect(resolved.primaryItems).toEqual(["command-center", "tasks", "planning", "missions"]);
+    expect(resolved.omittedItems).toContain("mailbox");
+    expect(resolved.omittedItems).toContain("chat");
   });
 
   it("accepts eligible destinations, preserves persisted order, and routes omitted destinations to More", () => {
@@ -44,11 +60,11 @@ describe("resolveMobileNavPrimaryItems", () => {
     },
   );
 
-  it("migrates retired category destinations to Mailbox, deduplicates, ignores unknowns, and clamps to five", () => {
+  it("migrates retired category destinations to Mailbox, deduplicates, ignores unknowns, and clamps to four", () => {
     const resolved = resolveMobileNavPrimaryItems({
       mobileNavPrimaryItems: ["tasks", "more", "documents", "recommendations", "tasks", "agents", "missions", "git", "files", "workflows", "unknown"],
     });
-    expect(resolved.primaryItems).toEqual(["tasks", "mailbox", "agents", "missions", "git"]);
+    expect(resolved.primaryItems).toEqual(["tasks", "mailbox", "agents", "missions"]);
     expect(resolved.primaryItems).toHaveLength(MAX_MOBILE_NAV_PRIMARY_ITEMS);
     expect(resolved.omittedItems).not.toContain("mailbox");
     expect(MOBILE_NAV_SELECTABLE_ITEMS).not.toContain("documents");
@@ -65,7 +81,7 @@ describe("resolveNavigationQuickAccessEntryIds", () => {
   });
 
   it("falls back to the default quick-access row for unset, empty, or fully ineligible selections", () => {
-    const expected = ["command-center", "board", "planning", "missions", "mailbox"];
+    const expected = ["command-center", "board", "planning", "missions"];
     expect(resolveNavigationQuickAccessEntryIds()).toEqual(expected);
     expect(resolveNavigationQuickAccessEntryIds({ mobileNavPrimaryItems: [] })).toEqual(expected);
     expect(resolveNavigationQuickAccessEntryIds({ mobileNavPrimaryItems: ["chat", "notes"] })).toEqual(expected);

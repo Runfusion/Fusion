@@ -6170,7 +6170,7 @@
       "learnMore": "Learn more",
       "loweringThisWindowMeansReliabilityMetricsChartsAnd": " Lowering this window means Reliability metrics/charts and the Activity feed will not show history older than the selected range. Per-task task detail history is unaffected. Default: 30 days. ",
       "mobileNavPrimaryItems": "Navigation quick access",
-      "mobileNavPrimaryItemsHint": "Default: Dashboard, Board, Planning, Missions, Mailbox. Choose up to 5 destinations and their order; every other destination remains in More.",
+      "mobileNavPrimaryItemsHint": "Default: Dashboard, Board, Planning, Missions. Choose up to 4 destinations and their order; every other destination — including Chat — remains in More. On mobile, swipe the bottom bar upwards to open Chat.",
       "addNavItem": "Add quick action",
       "selectNavItem": "Choose a destination",
       "removeNavItem": "Remove {{item}}",

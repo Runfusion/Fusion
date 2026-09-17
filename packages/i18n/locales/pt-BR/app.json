@@ -6095,7 +6095,7 @@
       "learnMore": "Saiba mais",
       "loweringThisWindowMeansReliabilityMetricsChartsAnd": " Reduzir esta janela significa que as métricas/gráficos de Confiabilidade e o feed de Atividade não mostrarão histórico mais antigo que o intervalo selecionado. O histórico de detalhes de cada tarefa individual não é afetado. Padrão: 30 dias. ",
       "mobileNavPrimaryItems": "Acessos rápidos de navegação",
-      "mobileNavPrimaryItemsHint": "Padrão: Painel, Quadro, Planejamento, Missões, Caixa de Entrada. Escolha até 5 destinos e sua ordem; todos os demais destinos permanecem em Mais.",
+      "mobileNavPrimaryItemsHint": "Padrão: Painel, Quadro, Planejamento, Missões. Escolha até 4 destinos e sua ordem; todos os demais destinos — incluindo o Chat — permanecem em Mais. No celular, deslize a barra inferior para cima para abrir o Chat.",
       "addNavItem": "Adicionar ação rápida",
       "selectNavItem": "Escolha um destino",
       "removeNavItem": "Remover {{item}}",

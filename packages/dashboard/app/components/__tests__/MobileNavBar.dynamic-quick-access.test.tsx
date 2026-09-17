@@ -119,7 +119,11 @@ function menuItems(): string[] {
   });
 }
 
-const BASE_ROW = ["command-center", "tasks", "planning", "missions", "mailbox"];
+/*
+ * FN-495 : la rangée de base vaut désormais QUATRE destinations plus « Plus ». Le cinquième créneau du pied de page
+ * appartient au Chat, qui n'est pas configurable : `mailbox` quitte le défaut et redevient une entrée du menu.
+ */
+const BASE_ROW = ["command-center", "tasks", "planning", "missions"];
 
 describe("MobileNavBar dynamic quick access", () => {
   const originalResizeObserver = globalThis.ResizeObserver;

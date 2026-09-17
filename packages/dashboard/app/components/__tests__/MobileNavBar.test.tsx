@@ -225,24 +225,32 @@ describe("MobileNavBar official mobile shell", () => {
   });
 
   /*
-   * FN-467 : la pill n'énumère plus quatre destinations figées. Elle rend jusqu'à CINQ destinations résolues depuis le
-   * réglage projet d'accès rapide, dans l'ordre persisté, le hamburger restant toujours le dernier enfant. Le cas (d)
-   * remplace l'ancien contrat à quatre onglets (qui excluait Board et incluait Chat, non promouvable en réglages).
+   * FN-467 : la pill n'énumère plus quatre destinations figées ; elle rend les destinations résolues depuis le réglage
+   * projet d'accès rapide, dans l'ordre persisté, le hamburger restant toujours le dernier enfant.
+   *
+   * FN-495 : le plafond configurable redescend à QUATRE, parce que le cinquième créneau du pied de page appartient au
+   * Chat — ligne `mobile-more-item-chat` du menu « Plus » sur mobile, bouton `desktop-nav-chat-panel` sur le footer
+   * large — et que le Chat n'est jamais un onglet épinglé de la pill.
    */
   // (d) reproduction du symptôme : sur la base, la sélection projet par défaut ne produisait que 4 onglets sans Board ni Missions.
-  it("rend les cinq destinations par défaut quand aucune sélection n'est fournie", () => {
+  it("rend les quatre destinations par défaut quand aucune sélection n'est fournie", () => {
     const { container } = render(<OfficialMobileShell />);
     expect(tabTestIds(container)).toEqual([
       "mobile-nav-tab-command-center",
       "mobile-nav-tab-tasks",
       "mobile-nav-tab-planning",
       "mobile-nav-tab-missions",
-      "mobile-nav-tab-mailbox",
     ]);
-    expect(tabTestIds(container)).toHaveLength(5);
+    expect(tabTestIds(container)).toHaveLength(4);
     expect(container.querySelector(".mobile-nav-bar")).toHaveClass("mobile-nav-bar--native");
     expect(pill(container).lastElementChild).toBe(screen.getByTestId("mobile-menu-trigger"));
     expect(screen.queryByTestId("mobile-nav-tab-more")).toBeNull();
+    // FN-495 : le Chat reste possédé par le menu, jamais par un onglet de la rangée directe.
+    expect(screen.queryByTestId("mobile-nav-tab-chat")).toBeNull();
+    expect(Array.from(pill(container).children).every((child) => (child.getAttribute("aria-label") ?? "").length > 0 && child.querySelector("svg"))).toBe(true);
+    fireEvent.click(screen.getByTestId("mobile-menu-trigger"));
+    expect(screen.getByTestId("mobile-more-item-chat")).toBeInTheDocument();
+    expect(screen.getByTestId("mobile-more-item-mailbox")).toBeInTheDocument();
   });
 
   // (e) sélection vide → même repli que l'absence de sélection.
@@ -253,8 +261,23 @@ describe("MobileNavBar official mobile shell", () => {
       "mobile-nav-tab-tasks",
       "mobile-nav-tab-planning",
       "mobile-nav-tab-missions",
-      "mobile-nav-tab-mailbox",
     ]);
+  });
+
+  /*
+   * FN-495 : une sélection héritée de cinq destinations éligibles perd sa cinquième, qui reste atteignable depuis le
+   * menu « Plus ». Aucune migration de réglage n'est requise.
+   */
+  it("tronque une sélection héritée de cinq destinations et bascule la cinquième dans le menu", () => {
+    const { container } = render(<OfficialMobileShell quickAccessItems={["command-center", "tasks", "planning", "missions", "mailbox"]} />);
+    expect(tabTestIds(container)).toEqual([
+      "mobile-nav-tab-command-center",
+      "mobile-nav-tab-tasks",
+      "mobile-nav-tab-planning",
+      "mobile-nav-tab-missions",
+    ]);
+    fireEvent.click(screen.getByTestId("mobile-menu-trigger"));
+    expect(screen.getByTestId("mobile-more-item-mailbox")).toBeInTheDocument();
   });
 
   // (f) sélection peuplée et réordonnée → exactement ces destinations, dans cet ordre.
@@ -268,16 +291,16 @@ describe("MobileNavBar official mobile shell", () => {
     expect(pill(container).lastElementChild).toBe(screen.getByTestId("mobile-menu-trigger"));
   });
 
-  // (g) doublons, identifiant inconnu et dépassement du plafond de cinq.
-  it("déduplique, rejette l'inconnu et plafonne la rangée à cinq destinations", () => {
+  // (g) doublons, identifiant inconnu et dépassement du plafond de quatre.
+  it("déduplique, rejette l'inconnu et plafonne la rangée à quatre destinations", () => {
     const { container } = render(<OfficialMobileShell quickAccessItems={["tasks", "tasks", "nope", "mailbox", "planning", "missions", "command-center", "agents"]} />);
     expect(tabTestIds(container)).toEqual([
       "mobile-nav-tab-tasks",
       "mobile-nav-tab-mailbox",
       "mobile-nav-tab-planning",
       "mobile-nav-tab-missions",
-      "mobile-nav-tab-command-center",
     ]);
+    expect(screen.queryByTestId("mobile-nav-tab-command-center")).toBeNull();
     expect(screen.queryByTestId("mobile-nav-tab-agents")).toBeNull();
     expect(pill(container).lastElementChild).toBe(screen.getByTestId("mobile-menu-trigger"));
   });
@@ -302,8 +325,8 @@ describe("MobileNavBar official mobile shell", () => {
       "mobile-nav-tab-tasks",
       "mobile-nav-tab-planning",
       "mobile-nav-tab-missions",
-      "mobile-nav-tab-mailbox",
     ]);
+    expect(screen.queryByTestId("mobile-nav-tab-chat")).toBeNull();
   });
 
   /*
@@ -499,16 +522,29 @@ describe("MobileNavBar official mobile shell", () => {
 
   /*
    * (i) FN-467 : Chat n'est plus un onglet par défaut (il n'est pas promouvable en réglages), donc sa pastille vit
-   * désormais dans le menu. Les compteurs Mailbox et Planning restent rendus sur leurs onglets comme avant.
+   * désormais dans le menu. Un indicateur suit la SURFACE de sa destination : onglet quand elle est en accès direct,
+   * ligne de menu sinon.
+   *
+   * FN-495 : le plafond descend à quatre, donc Mailbox quitte le défaut. La sélection explicite ci-dessous garde
+   * Mailbox en onglet pour prouver l'indicateur d'onglet, et le second cas prouve qu'au défaut ses indicateurs
+   * suivent la ligne du menu, comme le Chat.
    */
   it("preserves unread and planning indicators on official destinations", () => {
-    render(<OfficialMobileShell chatHasUnreadResponse mailboxUnreadCount={3} mailboxPendingApprovalCount={1} planningNeedsInput />);
+    const explicit = render(<OfficialMobileShell quickAccessItems={["command-center", "tasks", "planning", "mailbox"]} chatHasUnreadResponse mailboxUnreadCount={3} mailboxPendingApprovalCount={1} planningNeedsInput />);
     expect(screen.getByLabelText("Pending approvals")).toHaveClass("status-dot");
     expect(screen.getByLabelText("Planning needs your input")).toHaveClass("status-dot");
     expect(screen.getByText("3")).toHaveClass("mobile-nav-tab-badge");
 
     fireEvent.click(screen.getByTestId("mobile-menu-trigger"));
     expect(screen.getByLabelText("Unread chat response")).toHaveClass("status-dot");
+    explicit.unmount();
+
+    render(<OfficialMobileShell chatHasUnreadResponse mailboxUnreadCount={3} mailboxPendingApprovalCount={1} planningNeedsInput />);
+    expect(screen.getByLabelText("Planning needs your input")).toHaveClass("status-dot");
+    fireEvent.click(screen.getByTestId("mobile-menu-trigger"));
+    expect(screen.getByLabelText("Unread chat response")).toHaveClass("status-dot");
+    expect(screen.getByLabelText("Pending approvals")).toHaveClass("status-dot");
+    expect(screen.getByText("3")).toHaveClass("mobile-more-item-badge");
   });
 
   it("hides for modal, keyboard-independent hidden state, and desktop viewports", () => {
@@ -889,5 +925,101 @@ describe("MobileNavBar exclut les accès déjà possédés par le Header", () =>
     view.rerender(<MobileNavBar {...props} headerOwnedItems={["usage"]} navigationMenuOpen mailboxUnreadCount={3} onUiMenuOpenChange={vi.fn()} />);
 
     expect(document.activeElement).toBe(screen.getByTestId("mobile-more-item-notes"));
+  });
+});
+
+/*
+FNXC:MobileNavGesture 2026-09-17-08:05:
+FN-495 : « sur l'interface mobile pour ouvrir le chat plus vite on peut faire le geste de glissement vers le haut du
+footer ». Ces cas pilotent de VRAIS événements tactiles sur `.mobile-nav-bar--native` et prouvent que le geste passe
+par le MÊME propriétaire de navigation que la ligne `mobile-more-item-chat` du menu, sans ajouter d'onglet Chat.
+*/
+describe("MobileNavBar ouvre le Chat par un glissement du pied de page vers le haut", () => {
+  beforeEach(() => {
+    mockViewport("mobile");
+    vi.mocked(fetchScripts).mockReset();
+    vi.mocked(fetchScripts).mockResolvedValue({});
+  });
+
+  function dispatchTouch(target: EventTarget, type: "touchstart" | "touchmove" | "touchend", x: number, y: number, timeStamp: number): void {
+    const event = new Event(type, { bubbles: true, cancelable: true }) as TouchEvent;
+    const touch = { identifier: 3, clientX: x, clientY: y, target } as Touch;
+    Object.defineProperties(event, {
+      touches: { value: type === "touchend" ? [] : [touch] },
+      changedTouches: { value: [touch] },
+      timeStamp: { value: timeStamp },
+    });
+    target.dispatchEvent(event);
+  }
+
+  function swipeUp(start: Element): void {
+    dispatchTouch(start, "touchstart", 40, 300, 0);
+    dispatchTouch(document, "touchmove", 40, 200, 150);
+    dispatchTouch(document, "touchend", 40, 200, 150);
+  }
+
+  // (i) le geste ouvre le Chat exactement une fois.
+  it("appelle onChangeView une seule fois avec chat", () => {
+    const onChangeView = vi.fn();
+    const { container } = render(<OfficialMobileShell onChangeView={onChangeView} />);
+    swipeUp(pill(container));
+    expect(onChangeView).toHaveBeenCalledTimes(1);
+    expect(onChangeView).toHaveBeenCalledWith("chat");
+    // (vi) le geste n'ajoute aucun onglet Chat.
+    expect(screen.queryByTestId("mobile-nav-tab-chat")).toBeNull();
+  });
+
+  // (ii) démarré sur un onglet, le geste ouvre le Chat sans naviguer vers la destination de l'onglet.
+  it("ne navigue pas vers la destination de l'onglet sous le doigt", () => {
+    const onChangeView = vi.fn();
+    render(<OfficialMobileShell onChangeView={onChangeView} />);
+    const tab = screen.getByTestId("mobile-nav-tab-tasks");
+    swipeUp(tab);
+    fireEvent.click(tab);
+    expect(onChangeView).toHaveBeenCalledTimes(1);
+    expect(onChangeView).toHaveBeenCalledWith("chat");
+  });
+
+  // (iii) menu ouvert → geste inerte (le menu possède son propre geste).
+  it("reste inerte quand le menu de navigation est ouvert", () => {
+    const onChangeView = vi.fn();
+    const { container } = render(<MobileNavBar {...createDefaultProps()} onChangeView={onChangeView} navigationMenuOpen onUiMenuOpenChange={vi.fn()} />);
+    swipeUp(pill(container));
+    expect(onChangeView).not.toHaveBeenCalled();
+  });
+
+  // (iv) Chat déjà affiché → aucune seconde navigation.
+  it("reste inerte quand le Chat est déjà affiché", () => {
+    const onChangeView = vi.fn();
+    const { container } = render(<OfficialMobileShell view="chat" onChangeView={onChangeView} />);
+    swipeUp(pill(container));
+    expect(onChangeView).not.toHaveBeenCalled();
+  });
+
+  // Chat possédé par le Header de cet hôte → hook désactivé.
+  it("reste inerte quand le Header possède déjà le Chat", () => {
+    const onChangeView = vi.fn();
+    const { container } = render(<MobileNavBar {...createDefaultProps()} onChangeView={onChangeView} headerOwnedItems={["chat"]} onUiMenuOpenChange={vi.fn()} />);
+    swipeUp(pill(container));
+    expect(onChangeView).not.toHaveBeenCalled();
+  });
+
+  // (v) non-régression : un tap normal sur un onglet navigue toujours.
+  it("laisse un tap normal sur un onglet naviguer comme avant", () => {
+    const onChangeView = vi.fn();
+    render(<OfficialMobileShell onChangeView={onChangeView} />);
+    fireEvent.click(screen.getByTestId("mobile-nav-tab-missions"));
+    expect(onChangeView).toHaveBeenCalledWith("missions");
+  });
+
+  // Un glissement à la souris ne doit JAMAIS ouvrir le Chat : le geste est strictement tactile.
+  it("ignore un glissement à la souris ou au trackpad", () => {
+    const onChangeView = vi.fn();
+    const { container } = render(<OfficialMobileShell onChangeView={onChangeView} />);
+    const surface = pill(container);
+    fireEvent.pointerDown(surface, { pointerId: 1, clientX: 40, clientY: 300, button: 0, isPrimary: true, pointerType: "mouse" });
+    fireEvent.pointerMove(surface, { pointerId: 1, clientX: 40, clientY: 200, pointerType: "mouse" });
+    fireEvent.pointerUp(surface, { pointerId: 1, clientX: 40, clientY: 200, pointerType: "mouse" });
+    expect(onChangeView).not.toHaveBeenCalled();
   });
 });

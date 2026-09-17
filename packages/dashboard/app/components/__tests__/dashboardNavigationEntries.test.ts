@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { resolveNavigationQuickAccessEntryIds } from "../../../../core/src/board/mobile-nav-primary-items";
 import { buildDashboardNavigationEntries } from "../dashboardNavigationEntries";
 
 const base = { view: "board" as const, onChangeView: vi.fn(), onNewTask: vi.fn(), onOpenSettings: vi.fn(), showAgents: true, showSkills: true, flags: { memory: true, whiteboard: true, goals: true, insights: true, research: true, ideation: true, evals: true } };
@@ -18,10 +19,11 @@ describe("dashboardNavigationEntries", () => {
     /*
      * FN-439 inverts FN-382's "List is a right-dock tool" assertion: List is a registry destination again, in the
      * overflow tier, so the footer **More** menu owns List on tablet/desktop.
-     * FN-446: the direct rail is no longer hardcoded — it is the core-resolved quick-access default, which is five
-     * destinations plus the trailing **More** button, and Agents is deliberately not one of them.
+     * FN-446: the direct rail is no longer hardcoded — it is the core-resolved quick-access default.
+     * FN-495: that default is now FOUR destinations plus the trailing **More** button, because the fifth footer slot
+     * belongs to the non-configurable Chat button. Agents and Mailbox are deliberately not in the direct rail.
      */
-    expect(entries.filter((entry) => entry.placement === "direct").map((entry) => entry.id)).toEqual(["command-center", "board", "planning", "missions", "mailbox"]);
+    expect(entries.filter((entry) => entry.placement === "direct").map((entry) => entry.id)).toEqual(["command-center", "board", "planning", "missions"]);
     expect(entries.some((entry) => entry.id === "list")).toBe(true);
     expect(entries.find((entry) => entry.id === "settings")?.placement).toBe("external");
     expect(entries.filter((entry) => entry.placement !== "external").every((entry) => typeof entry.onSelect === "function")).toBe(true);
@@ -50,6 +52,23 @@ describe("dashboardNavigationEntries", () => {
     expect(entries.filter((entry) => entry.placement === "direct").map((entry) => entry.id)).toEqual(["mailbox", "agents", "board"]);
     expect(entries.find((entry) => entry.id === "command-center")?.placement).toBe("overflow");
     expect(entries.filter((entry) => entry.id === "mailbox")).toHaveLength(1);
+  });
+
+  /*
+   * FN-495 : une sélection héritée de cinq identifiants éligibles ne produit que QUATRE entrées `direct` ; la
+   * cinquième bascule en `overflow` (menu **More**). Le Chat n'apparaît jamais dans le registre, ni en direct ni en
+   * overflow : il est possédé par `desktop-nav-chat-panel`.
+   */
+  it("plafonne la rangée directe à quatre destinations et n'introduit jamais d'entrée chat", () => {
+    const entries = buildDashboardNavigationEntries({
+      ...base,
+      quickAccessEntryIds: resolveNavigationQuickAccessEntryIds({ mobileNavPrimaryItems: ["command-center", "tasks", "planning", "missions", "mailbox"] }),
+    });
+    const direct = entries.filter((entry) => entry.placement === "direct").map((entry) => entry.id);
+    expect(direct).toEqual(["command-center", "board", "planning", "missions"]);
+    expect(direct).toHaveLength(4);
+    expect(entries.find((entry) => entry.id === "mailbox")?.placement).toBe("overflow");
+    expect(entries.some((entry) => entry.id === "chat")).toBe(false);
   });
 
   /* FN-446 : une destination sélectionnée mais désactivée par son gate est simplement absente, sans trou ni coquille. */

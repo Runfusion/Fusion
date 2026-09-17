@@ -166,6 +166,14 @@ export function DesktopActionBar({ entries, activeId, tasks, projectId, columnFl
       <button type="button" className="desktop-action-bar__action" aria-label={t("header.moreViews", "More views")} aria-haspopup="menu" aria-expanded={overflowOpen} data-testid="desktop-nav-more" onPointerEnter={openOverflow} onClick={openOverflow}><ChevronUp aria-hidden="true" /><span>{t("nav.more", "More")}</span></button>
       {overflowOpen ? <div className="desktop-action-bar__menu" role="menu">{overflowEntries.map((entry) => renderButton(entry, true))}</div> : null}
     </div> : null}</div>
+    {/*
+    FNXC:DesktopNavigation 2026-09-17-08:05:
+    FN-495 : ce bouton Chat EST la cinquième action rapide du pied de page, et elle n'est délibérément pas
+    configurable. C'est la raison pour laquelle le plafond de `mobileNavPrimaryItems` passe à 4 : la rangée centrale
+    affiche au plus quatre destinations plus « More », et le cinquième créneau reste ici. Cet hôte n'adopte PAS le
+    geste tactile `useFooterSwipeUpGesture` du shell mobile : le pied de page large n'est pas glissable et son unique
+    producteur Chat reste ce bouton.
+    */}
     {onOpenChatPanel || onToggleTerminal ? <div className="desktop-action-bar__right">
       {onOpenChatPanel ? <button
         type="button"

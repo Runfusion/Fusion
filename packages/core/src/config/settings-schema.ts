@@ -1040,11 +1040,13 @@ export const DEFAULT_PROJECT_SETTINGS = {
   reflectionAfterTask: true,
   // reviewHandoffPolicy MOVED to workflow settings (U4) — see MOVED_SETTINGS_KEYS.
   /*
-  FNXC:Navigation 2026-09-16-04:15:
-  FN-446 : cette clé pilote désormais la rangée d'accès rapide de la barre de navigation partagée (max 5 + « More »).
-  Le défaut retire Agents de l'accès direct ; la clé est réutilisée telle quelle pour préserver les préférences persistées.
+  FNXC:Navigation 2026-09-17-08:05:
+  FN-495 : cette clé pilote la rangée d'accès rapide de la barre de navigation partagée, désormais bornée à 4 + « More ».
+  Le cinquième créneau appartient au Chat, non configurable (bouton bas-droit du footer large, menu « Plus » et geste de
+  glissement vers le haut sur mobile). La clé est réutilisée telle quelle : aucune migration, une valeur persistée de
+  cinq identifiants est tronquée par `resolveMobileNavPrimaryItems` et sa cinquième destination rejoint « Plus ».
   */
-  mobileNavPrimaryItems: ["command-center", "tasks", "planning", "missions", "mailbox"],
+  mobileNavPrimaryItems: ["command-center", "tasks", "planning", "missions"],
   /*
   FNXC:ChatModal 2026-07-01-00:00:
   Task-scoped planner chats stay available from each task's Chat tab, but the common Chat feed hides them by default. This project-level opt-in preserves the previous populated-task-chat feed behavior only for operators who request it.

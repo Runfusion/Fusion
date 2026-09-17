@@ -297,8 +297,10 @@ describe("SettingsModal", () => {
     });
 
     /*
-     * FN-446 : le contrôle pilote désormais les accès rapides de la barre de navigation partagée. Le défaut est à cinq
-     * destinations sans Agents, et le libellé du groupe n'est plus « mobile ».
+     * FN-446 : le contrôle pilote désormais les accès rapides de la barre de navigation partagée, et le libellé du
+     * groupe n'est plus « mobile ».
+     * FN-495 : le défaut vaut QUATRE destinations sans Agents ni Mailbox, et l'ajout se désactive dès quatre
+     * sélections — le cinquième créneau du pied de page appartient au Chat, non configurable.
      */
     it("reorders, adds, and removes navigation quick access before save", async () => {
       const onMobileNavPrimaryItemsChange = vi.fn();
@@ -311,26 +313,54 @@ describe("SettingsModal", () => {
         expect.stringContaining("tasks"),
         expect.stringContaining("planning"),
         expect.stringContaining("missions"),
-        expect.stringContaining("mailbox"),
       ]);
+      /* FN-495 : quatre destinations déjà sélectionnées → l'ajout est fermé, et le Chat n'est jamais proposable. */
+      const addSelect = screen.getByLabelText("Add quick action") as HTMLSelectElement;
+      expect(addSelect).toBeDisabled();
+      expect(Array.from(addSelect.options).map((option) => option.value)).not.toContain("chat");
 
       fireEvent.click(screen.getAllByRole("button", { name: /later$/i })[0]);
-      expect(onMobileNavPrimaryItemsChange).toHaveBeenLastCalledWith(["tasks", "command-center", "planning", "missions", "mailbox"]);
+      expect(onMobileNavPrimaryItemsChange).toHaveBeenLastCalledWith(["tasks", "command-center", "planning", "missions"]);
       const rows = Array.from(screen.getByRole("group", { name: "Navigation quick access" }).querySelectorAll(".settings-field-label-row"));
       expect(rows[0].textContent).toContain("tasks");
 
       fireEvent.click(screen.getByLabelText("Remove planning"));
-      expect(onMobileNavPrimaryItemsChange).toHaveBeenLastCalledWith(["tasks", "command-center", "missions", "mailbox"]);
+      expect(onMobileNavPrimaryItemsChange).toHaveBeenLastCalledWith(["tasks", "command-center", "missions"]);
 
       await settingsModalUser.selectOptions(screen.getByLabelText("Add quick action"), "git");
-      expect(onMobileNavPrimaryItemsChange).toHaveBeenLastCalledWith(["tasks", "command-center", "missions", "mailbox", "git"]);
+      expect(onMobileNavPrimaryItemsChange).toHaveBeenLastCalledWith(["tasks", "command-center", "missions", "git"]);
 
       fireEvent.click(screen.getByLabelText("Remove tasks"));
-      expect(onMobileNavPrimaryItemsChange).toHaveBeenLastCalledWith(["command-center", "missions", "mailbox", "git"]);
+      expect(onMobileNavPrimaryItemsChange).toHaveBeenLastCalledWith(["command-center", "missions", "git"]);
     });
 
-    /* FN-446 : le plafond est de cinq accès rapides plus « More », donc le sélecteur d'ajout se désactive à cinq. */
-    it("disables the quick-access picker once five destinations are selected", async () => {
+    /*
+     * FN-495 : une valeur persistée de cinq identifiants éligibles n'affiche que QUATRE lignes de destination — la
+     * cinquième n'apparaît pas avec des flèches inertes, puisque aucun hôte de navigation ne la rendrait.
+     */
+    it("tronque à quatre lignes une sélection persistée de cinq destinations", async () => {
+      const legacySelection = ["command-center", "tasks", "planning", "missions", "mailbox"];
+      mockFetchSettings.mockResolvedValueOnce({ ...defaultSettings, mobileNavPrimaryItems: legacySelection });
+      mockFetchSettingsByScope.mockResolvedValueOnce({
+        global: defaultSettings,
+        project: { mobileNavPrimaryItems: legacySelection },
+      });
+
+      renderModal({ initialSection: "general" });
+      await waitForSettingsModalReady();
+
+      const group = screen.getByRole("group", { name: "Navigation quick access" });
+      const rows = Array.from(group.querySelectorAll(".settings-field-label-row")).map((row) => row.textContent);
+      expect(rows).toHaveLength(4);
+      expect(rows.some((row) => row?.includes("mailbox"))).toBe(false);
+      expect(screen.getByLabelText("Add quick action")).toBeDisabled();
+    });
+
+    /*
+     * FN-495 : le plafond est de QUATRE accès rapides plus « More » — le cinquième créneau du pied de page est le
+     * bouton Chat non configurable — donc le sélecteur d'ajout se désactive à quatre et n'offre jamais `chat`.
+     */
+    it("disables the quick-access picker once four destinations are selected", async () => {
       const onMobileNavPrimaryItemsChange = vi.fn();
       renderModal({ initialSection: "general", onMobileNavPrimaryItemsChange });
       await waitForSettingsModalReady();
@@ -340,11 +370,11 @@ describe("SettingsModal", () => {
       expect(Array.from(picker.options).map((option) => option.value)).not.toContain("chat");
 
       fireEvent.click(screen.getByLabelText("Remove missions"));
-      expect(onMobileNavPrimaryItemsChange).toHaveBeenLastCalledWith(["command-center", "tasks", "planning", "mailbox"]);
+      expect(onMobileNavPrimaryItemsChange).toHaveBeenLastCalledWith(["command-center", "tasks", "planning"]);
       expect((screen.getByLabelText("Add quick action") as HTMLSelectElement).disabled).toBe(false);
 
       await settingsModalUser.selectOptions(screen.getByLabelText("Add quick action"), "agents");
-      expect(onMobileNavPrimaryItemsChange).toHaveBeenLastCalledWith(["command-center", "tasks", "planning", "mailbox", "agents"]);
+      expect(onMobileNavPrimaryItemsChange).toHaveBeenLastCalledWith(["command-center", "tasks", "planning", "agents"]);
       expect((screen.getByLabelText("Add quick action") as HTMLSelectElement).disabled).toBe(true);
     });
 

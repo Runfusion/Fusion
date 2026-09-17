@@ -6165,7 +6165,7 @@
       "restartUnavailable": "",
       "restarting": "",
       "mobileNavPrimaryItems": "导航快捷入口",
-      "mobileNavPrimaryItemsHint": "默认：仪表盘、看板、规划、任务组、邮箱。最多可选择 5 个目标并排序；其余目标仍在“更多”中。",
+      "mobileNavPrimaryItemsHint": "默认：仪表盘、看板、规划、任务组。最多可选择 4 个目标并排序；其余目标（包括聊天）仍在“更多”中。在移动端，向上滑动底部栏即可打开聊天。",
       "addNavItem": "添加快捷操作",
       "selectNavItem": "选择目标",
       "removeNavItem": "移除 {{item}}",

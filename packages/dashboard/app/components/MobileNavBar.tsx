@@ -43,6 +43,7 @@ import type { TaskView } from "../hooks/useViewState";
 import { buildPluginTaskViewId, isPluginViewId } from "../plugins/pluginViewRegistry";
 import { getPluginDashboardViewNavIcon } from "./pluginNavIcon";
 import { ViewDrawerHandle } from "./ViewDrawer";
+import { useFooterSwipeUpGesture } from "../hooks/useFooterSwipeUpGesture";
 import { MOBILE_NAV_SELECTABLE_ITEMS, resolveMobileNavPrimaryItems, type MobileNavSelectableItem } from "../../../core/src/board/mobile-nav-primary-items";
 
 export interface PublishedMobileNavHeightInput {
@@ -685,7 +686,25 @@ export function MobileNavBar({
   sans aucune navigation primaire. Seule l'appartenance au MODE est élargie : `modalOpen` et `hidden` conservent
   leur sémantique exacte et continuent à démonter la pill.
   */
-  if (!isMobileShellMode(mode) || modalOpen || hidden) {
+  /*
+  FNXC:MobileNavGesture 2026-09-17-08:05:
+  FN-495 : raccourci gestuel d'ouverture du Chat depuis le pied de page mobile. Le geste est armé UNIQUEMENT quand la
+  pill est réellement montée (`pillMounted` reproduit exactement la condition de démontage ci-dessous, ce qui garantit
+  que l'effet du hook se réexécute au moment où `navRef` porte enfin la `<nav>`), quand le Chat n'est pas déjà possédé
+  par le Header de cet hôte (FN-481), quand le menu est fermé (le menu a son propre geste) et quand le Chat n'est pas
+  déjà affiché. Le déclenchement passe par `onChangeView("chat")`, c'est-à-dire le MÊME propriétaire de navigation que
+  la ligne `mobile-more-item-chat` du menu : aucune entrée d'historique supplémentaire, aucun second producteur.
+  Le hook doit être appelé AVANT le retour anticipé ci-dessous pour que le nombre de hooks reste stable entre rendus.
+  */
+  const pillMounted = isMobileShellMode(mode) && !modalOpen && !hidden;
+  const openChatFromFooterGesture = useCallback(() => onChangeView("chat"), [onChangeView]);
+  useFooterSwipeUpGesture({
+    enabled: pillMounted && !(headerOwnedItems ?? []).includes("chat") && !isMenuOpen && view !== "chat",
+    surfaceRef: navRef,
+    onTrigger: openChatFromFooterGesture,
+  });
+
+  if (!pillMounted) {
     return null;
   }
 
@@ -783,6 +802,16 @@ export function MobileNavBar({
   hamburger always last. Board (`tasks`) is now an ordinary destination — a direct tab when selected, a menu entry
   otherwise — because the drawer-returns-to-Kanban argument never justified making it unreachable from the menu too.
   `patchnode` stays excluded: History is a modal surface, not a navigation destination.
+
+  FNXC:Navigation 2026-09-17-08:05:
+  FN-495 : décision opérateur explicite — le Chat n'est PAS une destination épinglée de la barre du bas. Le plafond
+  configurable passe à 4 dans `@fusion/core`, donc la pill affiche « 4 destinations + Plus », et le cinquième créneau
+  reste celui du Chat SANS onglet dédié : sur mobile le Chat est possédé par la ligne `mobile-more-item-chat` du menu
+  « Plus », sur le footer large par `desktop-nav-chat-panel`. Le raccourci mobile est le GESTE de glissement du pied de
+  page vers le haut (`useFooterSwipeUpGesture`), pas un second bouton : il appelle le même propriétaire de navigation
+  que la ligne du menu, donc aucune destination ne gagne un deuxième producteur d'affordance. Aucune composition n'est
+  modifiée ici : `MOBILE_NAV_DYNAMIC_PROMOTION_ORDER` (FN-468, qui peut toujours promouvoir `chat` sur un très large
+  écran du shell mobile) et `computeMobileNavDirectDestinationCount` restent inchangés.
   */
   /* Computed inline rather than memoized: this statement sits AFTER the component's early returns, so a hook here would
   change the hook count between renders. The resolver is a pure array reduce over at most a handful of ids. */

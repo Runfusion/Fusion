@@ -6359,7 +6359,7 @@ export default interface Resources {
         "maxRecommendationsPerTask": "Maximum recommendations per task",
         "maxRecommendationsPerTaskHelp": "Default: 3. Set 0 to disable recommendations; choose a whole number from 1 to 20 to cap each completed task.",
         "mobileNavPrimaryItems": "Navigation quick access",
-        "mobileNavPrimaryItemsHint": "Default: Dashboard, Board, Planning, Missions, Mailbox. Choose up to 5 destinations and their order; every other destination remains in More.",
+        "mobileNavPrimaryItemsHint": "Default: Dashboard, Board, Planning, Missions. Choose up to 4 destinations and their order; every other destination — including Chat — remains in More. On mobile, swipe the bottom bar upwards to open Chat.",
         "moveNavItemEarlier": "Move {{item}} earlier",
         "moveNavItemLater": "Move {{item}} later",
         "newTasksInheritThisCustomWorkflowsStepsOverridable": "New tasks inherit this custom workflow's steps (overridable per task). No default — unset (built-in default workflow).",

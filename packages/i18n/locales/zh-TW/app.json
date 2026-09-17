@@ -6165,7 +6165,7 @@
       "restartUnavailable": "",
       "restarting": "",
       "mobileNavPrimaryItems": "導覽快捷入口",
-      "mobileNavPrimaryItemsHint": "預設：儀表板、看板、規劃、任務組、信箱。最多可選擇 5 個目的地並排序；其餘目的地仍在「更多」中。",
+      "mobileNavPrimaryItemsHint": "預設：儀表板、看板、規劃、任務組。最多可選擇 4 個目的地並排序；其餘目的地（包含聊天）仍在「更多」中。在行動裝置上，向上滑動底部列即可開啟聊天。",
       "addNavItem": "新增快捷操作",
       "selectNavItem": "選擇目的地",
       "removeNavItem": "移除 {{item}}",

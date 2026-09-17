@@ -173,6 +173,14 @@ FN-463: the official mobile pill stays anchored to the bottom of the screen rega
   sous `--touch-target-min-size`.
   */
   --mobile-nav-direct-slot-min-width: calc(var(--touch-target-min-size) * 2);
+  /*
+  FNXC:MobileNavGesture 2026-09-17-08:05:
+  FN-495 : la pill est la seule surface qui porte le geste « glisser vers le haut pour ouvrir le Chat ». Elle ne
+  défile pas et n'est pas zoomable, donc `touch-action: none` rend le glissement vertical fiable au lieu de le laisser
+  être absorbé par un défilement ou un geste de navigation du navigateur. Les taps sur les onglets restent intacts :
+  seuls les gestes de défilement/zoom sont retirés, jamais l'activation des boutons.
+  */
+  touch-action: none;
   left: var(--space-md);
   right: calc(var(--icb-right-offset, 0px) + var(--space-md));
   bottom: var(--mobile-nav-pill-bottom);
