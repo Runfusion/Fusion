@@ -3212,3 +3212,5 @@ export * from "./cloud-link/index.js";
 export { TASK_LOG_READ_ONLY_SUFFIX, buildTaskLogReadOnlyMessage, buildTaskNotFoundMessage, isTaskLogWriteRefusal } from "./task-store/task-log-write-refusal.js";
 
 export { OVERLAP_DELIVERY_UNAVAILABLE_ERROR, isRecoverableOverlapWaitFailure } from "./tasks/overlap-wait-release.js";
+export * from "./external-sessions/contract.js";
+export { ExternalSessionStore } from "./external-sessions/store.js";

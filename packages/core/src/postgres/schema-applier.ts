@@ -89,7 +89,9 @@ touches no data; it must advance in the same change that ships a new migration f
 /* FNXC:WorkflowIdentity 2026-09-14-19:06: the ceiling includes the transactional Coding (Ideas) identity convergence and its recovery archives. */
 /* FNXC:HumanPlanApproval 2026-09-15-06:24: the ceiling includes FN-408's per-card decision column, so no release gate reads tasks before it exists. */
 /* FNXC:TaskPauseAccounting 2026-09-16-06:16: the ceiling includes FN-457's paused-time columns, so timing readers never query a tasks table that lacks them. */
-export const SCHEMA_BASELINE_VERSION = "0081";
+/** FNXC:ExternalSessions 2026-09-17-04:00: Register additive observation storage on fresh databases and upgrades. */
+export const SCHEMA_BASELINE_VERSION = "0082";
+export const EXTERNAL_SESSIONS_VERSION = "0082";
 /** FNXC:SymbolLock 2026-07-20-10:00: upgrades need durable task declarations before admission resolves symbols. */
 export const TASK_DECLARED_SYMBOLS_VERSION = "0028";
 const INITIAL_SCHEMA_VERSION = "0000";
@@ -393,6 +395,7 @@ function resolveMigrationsDir(): string {
 }
 
 const MIGRATIONS_DIR = resolveMigrationsDir();
+const EXTERNAL_SESSIONS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0082_external_sessions.sql");
 const BASELINE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0000_initial.sql");
 const AUTOMATION_ISOLATION_MIGRATION_PATH = join(
   MIGRATIONS_DIR,
@@ -1731,6 +1734,17 @@ export async function applySchemaBaseline(
       const migrationSql = await readFile(PATCHNODE_ENTRIES_MIGRATION_PATH, "utf8");
       await tx.execute(sql.raw(migrationSql));
       await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${PATCHNODE_ENTRIES_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    const externalSessionsMissing = ((await tx.execute(sql`
+      SELECT to_regclass('project.external_session_hosts') IS NULL
+        OR to_regclass('project.external_session_streams') IS NULL
+        OR to_regclass('project.external_sessions') IS NULL AS missing
+    `)) as unknown as Array<{ missing: boolean }>)[0]?.missing ?? true;
+    if (!applied.includes(EXTERNAL_SESSIONS_VERSION) || externalSessionsMissing) {
+      const migrationSql = await readFile(EXTERNAL_SESSIONS_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${EXTERNAL_SESSIONS_VERSION}) ON CONFLICT (version) DO NOTHING`);
       schemaChanged = true;
     }
     return { applied: schemaChanged, pluginHooksRun: pluginHooks.length };
