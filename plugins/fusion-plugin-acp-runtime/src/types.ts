@@ -162,6 +162,10 @@ export interface AcpSession {
   cwd: string;
   lastModelDescription: string;
   fusionToolBridgeError?: { reasonCode: "mcp-schema-server-missing" | "bridge-start-failed" };
+  /** True when Fusion custom tools were attached through the session MCP bridge. */
+  fusionToolBridgeActive?: boolean;
+  /** Names of the Fusion custom tools actually registered for this session. */
+  fusionToolBridgeToolNames?: ReadonlyArray<string>;
   callbacks: AcpCallbacks;
   /** Per-run permission gate captured at createSession (U5/U7 read this). */
   gate?: PermissionGate;

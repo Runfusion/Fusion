@@ -13,10 +13,12 @@ describe("tool-bridge", () => {
     expect(
       toolsToMcpToolDefs([
         { name: "read", description: "builtin", parameters: {} },
+        { name: "fn_not_runnable", description: "missing execute", parameters: {} },
         {
           name: "fn_task_list",
           description: "List tasks",
           parameters: { type: "object", properties: {} },
+          execute: async () => ({}),
         },
       ]),
     ).toEqual([
