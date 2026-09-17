@@ -194,6 +194,18 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   embeddedPostgresMaxConnections: "database.embeddedConnectionCapHelp",
   // MemorySection
   memoryEnabled: "memory.agentsGetMemorySearchMemoryGetAndMemory",
+  /*
+  FNXC:ChatContextGuard 2026-08-19-15:05:
+  RUFU-118 follow-up (2026-08-19): the pre-overflow compaction guard is an opt-out
+  project option (selectable feature, not always-on). Surfaced as a toggle in the
+  Settings Memory section; help states the schema default (on), matching
+  DEFAULT_SETTINGS in settings-schema.ts.
+  */
+  chatPreOverflowCompactionEnabled: "memory.preOverflowCompactionHelp",
+  // FNXC:ChatContextBudget 2026-08-20-16:20:
+  // RUFU-135 kill switch (runtime-disableable chat context budget); surfaced in
+  // MemorySection next to the guard toggle.
+  chatContextBudgetEnabled: "memory.chatContextBudgetHelp",
   memoryAutoSummarizeEnabled: "memory.automaticallyCompactMemoryWhenItExceedsTheThreshold",
   memoryAutoSummarizeThresholdChars: "memory.memoryWillBeCompactedWhenItExceedsThis",
   memoryAutoSummarizeSchedule: "memory.cronExpressionForAutoSummarizeScheduleDefaultDaily",
