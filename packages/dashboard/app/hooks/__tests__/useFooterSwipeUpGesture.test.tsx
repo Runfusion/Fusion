@@ -1,7 +1,8 @@
 /**
- * FN-495 — Geste « glisser le pied de page vers le haut pour ouvrir le Chat ».
+ * FN-511 — Geste « glisser le pied de page vers le haut pour ouvrir le MENU de navigation ».
  *
- * L'opérateur refuse d'épingler le Chat dans la barre du bas mobile et demande à la place un raccourci gestuel.
+ * L'opérateur demande une option mobile qui masque le bouton hamburger et ouvre la liste des destinations par ce geste ;
+ * le Chat, devenu une destination ordinaire des cinq créneaux configurables, n'est plus la destination du geste.
  * Ces cas pilotent de VRAIS événements `touchstart`/`touchmove`/`touchend`/`touchcancel` en jsdom et couvrent
  * l'énumération de surfaces du plan : geste abouti, flick rapide, geste descendant, horizontal, trop court et lent,
  * multi-touch, annulation, désactivation, démontage, suppression du clic fantôme, et classification pure.

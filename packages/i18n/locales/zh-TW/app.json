@@ -6165,7 +6165,7 @@
       "restartUnavailable": "",
       "restarting": "",
       "mobileNavPrimaryItems": "導覽快捷入口",
-      "mobileNavPrimaryItemsHint": "預設：儀表板、看板、規劃、任務組。最多可選擇 4 個目的地並排序；其餘目的地（包含聊天）仍在「更多」中。在行動裝置上，向上滑動底部列即可開啟聊天。",
+      "mobileNavPrimaryItemsHint": "桌面版與行動版共用五個快捷位，第五個位於底部列最右側。未設定的快捷位會依預設順序（儀表板、看板、規劃、任務組、聊天）自動補齊，因此若要讓聊天離開底部列，請明確設定五個目的地。未選擇的目的地仍留在「更多」中。",
       "addNavItem": "新增快捷操作",
       "selectNavItem": "選擇目的地",
       "removeNavItem": "移除 {{item}}",
@@ -6213,7 +6213,9 @@
       "maxRecommendationsPerTask": "",
       "maxRecommendationsPerTaskHelp": "",
       "requireTaskRecommendations": "",
-      "requireTaskRecommendationsHelp": ""
+      "requireTaskRecommendationsHelp": "",
+      "mobileNavMenuSwipeGesture": "以滑動開啟行動版選單",
+      "mobileNavMenuSwipeGestureHint": "在行動裝置上隱藏底部列的選單按鈕，向上滑動底部列即可以與列等寬的抽屜形式開啟目的地清單。對桌面版沒有影響。預設：關閉。"
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",

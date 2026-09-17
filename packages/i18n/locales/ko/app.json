@@ -6165,7 +6165,7 @@
       "restartUnavailable": "",
       "restarting": "",
       "mobileNavPrimaryItems": "내비게이션 빠른 접근",
-      "mobileNavPrimaryItemsHint": "기본값: 대시보드, 보드, 플래닝, 미션. 최대 4개의 대상과 순서를 선택하세요. 채팅을 포함한 나머지 대상은 모두 더보기에 유지됩니다. 모바일에서는 하단 바를 위로 밀면 채팅이 열립니다.",
+      "mobileNavPrimaryItemsHint": "데스크톱과 모바일이 공유하는 5개의 바로가기 자리이며, 다섯번째는 하단 바의 맨 오른쪽에 표시됩니다. 지정하지 않은 자리는 기본 순서(대시보드, 보드, 플래닝, 미션, 채팅)로 자동 채워지므로, 하단 바에서 채팅을 제외하려면 다섯 개의 대상을 모두 지정하세요. 선택하지 않은 대상은 모두 더보기에 유지됩니다.",
       "addNavItem": "빠른 작업 추가",
       "selectNavItem": "대상 선택",
       "removeNavItem": "{{item}} 제거",
@@ -6213,7 +6213,9 @@
       "maxRecommendationsPerTask": "",
       "maxRecommendationsPerTaskHelp": "",
       "requireTaskRecommendations": "",
-      "requireTaskRecommendationsHelp": ""
+      "requireTaskRecommendationsHelp": "",
+      "mobileNavMenuSwipeGesture": "스와이프로 모바일 메뉴 열기",
+      "mobileNavMenuSwipeGestureHint": "모바일에서 하단 바의 메뉴 버튼을 숨기고, 하단 바를 위로 밀어 대상 목록을 바와 같은 너비의 서랍으로 엽니다. 데스크톱에는 영향이 없습니다. 기본값: 끄기."
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",

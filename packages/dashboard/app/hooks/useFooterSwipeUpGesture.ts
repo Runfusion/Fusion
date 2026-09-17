@@ -1,22 +1,24 @@
 import { useCallback, useEffect, useRef, type RefObject } from "react";
 
 /*
-FNXC:MobileNavGesture 2026-09-17-08:05:
-FN-495 — exigence opérateur : « sur l'interface mobile, pour ouvrir le chat plus vite, on peut faire le geste de
-glissement vers le haut du footer ». Le Chat n'est PAS épinglé dans la barre du bas : il reste possédé par la ligne
-« Chat » du menu « Plus » sur mobile et par le bouton `desktop-nav-chat-panel` sur le footer large. Ce hook n'ajoute
-donc aucune affordance visible ; il branche un raccourci gestuel sur le MÊME propriétaire de navigation que la ligne
-du menu, sans entrée d'historique supplémentaire ni second producteur.
+FNXC:MobileNavGesture 2026-09-17-16:53:
+FN-511 réaffecte ce hook : le glissement vers le haut du pied de page mobile n'ouvre plus le Chat (devenu une
+destination ordinaire des cinq créneaux configurables) mais le MENU de navigation, sous l'option projet
+`mobileNavMenuSwipeGesture`. Quand cette option est active, le bouton hamburger n'est pas rendu et le geste est la
+seule affordance d'ouverture du menu ; quand elle est inactive, le hamburger est rendu et le geste reste désarmé. Le
+hook n'ajoute donc jamais une SECONDE affordance pour la même surface, et il appelle le même propriétaire d'état de
+menu que le hamburger — aucun second producteur d'ouverture.
 
 Choix assumés :
 - STRICTEMENT tactile. Aucun listener `pointer`/`mouse` : un glissement à la souris ou au trackpad ne doit jamais
-  transformer un clic maladroit en navigation, et le footer large (non tactile par construction) n'adopte pas ce geste.
+  transformer un clic maladroit en ouverture de menu, et le footer large (non tactile par construction) n'adopte pas ce
+  geste.
 - Seuil d'intention avant toute réclamation, et `preventDefault()` seulement APRÈS réclamation, pour ne casser ni le
   tap sur un onglet ni le défilement natif.
 - Dominance verticale ascendante : un geste descendant ou horizontal est rejeté immédiatement et définitivement pour
   ce contact, donc il ne peut pas « redevenir » un geste d'ouverture en cours de route.
 - Nettoyage intégral AVANT le callback (même discipline que `useDrawerDismissGesture`), pour qu'aucun listener
-  document, aucun état interne et aucun style ne survive à l'ouverture du Chat. `touchcancel`, `enabled: false` et le
+  document, aucun état interne et aucun style ne survive à l'ouverture du menu. `touchcancel`, `enabled: false` et le
   démontage nettoient sans jamais déclencher.
 - Suppression du clic fantôme : un geste réclamé neutralise exactement UN `click` suivant en phase de capture, sinon
   l'onglet situé sous le doigt naviguerait vers sa propre destination à la fin du glissement.
@@ -39,9 +41,9 @@ export interface FooterSwipeUpIntentInput {
 /**
  * Classification PURE de l'intention d'un contact tactile, testable sans DOM.
  *
- * FNXC:MobileNavGesture 2026-09-17-08:05:
+ * FNXC:MobileNavGesture 2026-09-17-16:53:
  * `rejected` est définitif pour ce contact : un mouvement descendant franc ou horizontalement dominant rend la main
- * au navigateur (défilement, tap) et ne peut plus revendiquer l'ouverture du Chat.
+ * au navigateur (défilement, tap) et ne peut plus revendiquer l'ouverture du menu.
  */
 export function resolveFooterSwipeUpIntent({ deltaX, deltaY }: FooterSwipeUpIntentInput): FooterSwipeUpIntent {
   const upward = -deltaY;
@@ -105,7 +107,7 @@ export function useFooterSwipeUpGesture({ enabled, surfaceRef, onTrigger }: UseF
     if (!enabled || !surface) return;
 
     /*
-    FNXC:MobileNavGesture 2026-09-17-08:05:
+    FNXC:MobileNavGesture 2026-09-17-16:53:
     Un geste réclamé neutralise exactement UN `click` suivant, en phase de capture sur la surface, pour que l'onglet
     sous le doigt ne navigue pas. Le suppresseur est retiré dès consommation, au `touchstart` suivant, à la
     désactivation et au démontage : il ne peut donc jamais avaler un vrai tap ultérieur.
@@ -141,7 +143,7 @@ export function useFooterSwipeUpGesture({ enabled, surfaceRef, onTrigger }: UseF
         const drag = dragRef.current;
         const current = findTouch(moveEvent.touches);
         if (!drag || !current) return;
-        /* Un second doigt annule le geste : c'est un pincement ou une manipulation, pas une ouverture du Chat. */
+        /* Un second doigt annule le geste : c'est un pincement ou une manipulation, pas une ouverture du menu. */
         if (moveEvent.touches.length !== 1) {
           reset();
           return;

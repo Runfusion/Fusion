@@ -2492,8 +2492,22 @@ export interface ProjectSettings {
    * Ordered quick-action ids shown before the always-present mobile More tab. Only command-center,
    * tasks, agents, missions, chat, mailbox, and planning are eligible; unset falls back to the
    * default order, invalid/overflow-only ids (including more) are ignored, and omitted ids stay in More.
+   *
+   * FNXC:Navigation 2026-09-17-16:53:
+   * FN-511 : cette clé unique définit CINQ créneaux partagés à l'identique par le pied de page large et la pill
+   * mobile ; `chat` y est une destination ordinaire et le cinquième créneau occupe la place tout à droite du pied de
+   * page large. Toute sélection plus courte est complétée au rendu par l'ordre par défaut (terminé par `chat`), donc
+   * aucune migration n'est nécessaire pour une valeur persistée de quatre destinations.
    */
   mobileNavPrimaryItems?: string[];
+  /*
+   * FNXC:MobileNavGesture 2026-09-17-16:53:
+   * FN-511 : option MOBILE uniquement. Quand elle est activée, le bouton hamburger du pied de page mobile n'est pas
+   * rendu et la liste des destinations s'ouvre par un glissement vers le haut du pied de page, présentée comme un
+   * tiroir de la largeur de la barre. Défaut : désactivé (hamburger visible, geste désarmé). Sans effet sur le pied
+   * de page large, qui n'est pas glissable.
+   */
+  mobileNavMenuSwipeGesture?: boolean;
   /**
    * FNXC:ChatModal 2026-07-01-00:00:
    * Task planner sessions (`task-planner:<taskId>`) are hidden from the common Chat feed by default to keep task-detail planning conversations out of Direct chat clutter. Operators can opt back into the previous shared-feed behavior with this project setting.

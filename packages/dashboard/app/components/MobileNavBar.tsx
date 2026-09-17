@@ -81,79 +81,15 @@ export function computePublishedMobileNavHeight({
 }
 
 /*
-FNXC:MobileNavDynamicQuickAccess 2026-09-16-19:44:
-FN-468 : « faut pas surcharger le menu flottant mais faire apparaître au fur et à mesure qu'il y a de l'espace ».
-La rangue directe part de la sélection d'accès rapide résolue (FN-467, inchangée au plus étroit) puis, quand la
-largeur mesurée le permet, promeut des destinations supplémentaires dans CET ordre stable. Les quatre premières
-sont celles citées par l'opérateur (Board, Fichiers, Gestionnaire git, Réglages) ; les suivantes complètent de
-manière déterministe pour qu'une largeur donnée produise toujours la même rangée. `patchnode` est exclu : History
-est une surface modale, pas une destination de navigation.
-
-FNXC:MobileNavDynamicQuickAccess 2026-09-17-01:43:
-FN-480 : le premier candidat promu reste le slot persisté `tasks`, mais il apparaît désormais comme **List** sur
-mobile, le Board étant la surface de fond permanente. L'ordre de promotion lui-même est inchangé.
+FNXC:Navigation 2026-09-17-16:53:
+FN-511 retire la promotion dynamique de destinations non configurées (`MOBILE_NAV_DYNAMIC_PROMOTION_ORDER`,
+`MAX_MOBILE_NAV_DIRECT_DESTINATIONS`, `computeMobileNavDirectDestinationCount`, la largeur de créneau mesurée). Elle
+était exactement ce qui empêchait « le paramétrage entre PC et mobile de rester strictement le même » : pour une
+même valeur de `mobileNavPrimaryItems`, une largeur différente rendait une rangée différente. La rangée de la pill
+est désormais STRICTEMENT la sélection résolue (cinq créneaux, `chat` compris comme destination ordinaire) filtrée
+par l'éligibilité, suivie du déclencheur de menu. Seule la mesure de HAUTEUR de la pill subsiste dans l'effet de
+mesure ci-dessous.
 */
-export const MOBILE_NAV_DYNAMIC_PROMOTION_ORDER: MobileNavSelectableItem[] = [
-  "tasks",
-  "files",
-  "git",
-  "settings",
-  "command-center",
-  "planning",
-  "missions",
-  "mailbox",
-  "chat",
-  "agents",
-  "notes",
-  "activity",
-  "workflows",
-  "automation",
-  "projects",
-  "usage",
-];
-
-/*
-FNXC:MobileNavDynamicQuickAccess 2026-09-16-19:44:
-FN-468 : garantie « ne pas surcharger le menu flottant ». Même sur un très large écran du shell mobile, la pill ne
-donne jamais plus de destinations directes que ce plafond ; tout le reste reste atteignable depuis le menu.
-*/
-export const MAX_MOBILE_NAV_DIRECT_DESTINATIONS = 8;
-
-/*
-FNXC:MobileNavDynamicQuickAccess 2026-09-16-19:44:
-Largeur de créneau de repli, utilisée quand la propriété personnalisée CSS n'est pas résolue en pixels (jsdom, avant
-hydratation, `calc()` non calculé). Elle vaut deux cibles tactiles minimales, exactement comme la déclaration CSS.
-*/
-export const MOBILE_NAV_DIRECT_SLOT_FALLBACK_WIDTH = 88;
-
-export interface MobileNavDirectDestinationCountInput {
-  availableWidth: number;
-  slotWidth: number;
-  baseCount: number;
-  maxCount: number;
-}
-
-/**
- * Nombre de destinations directes que la pill peut afficher à une largeur mesurée donnée.
- *
- * FNXC:MobileNavDynamicQuickAccess 2026-09-16-19:44:
- * FN-468 : fonction PURE, testable sans layout (même précédent que `computePublishedMobileNavHeight`). Une largeur
- * nulle, négative ou non finie — jsdom, SSR, avant première mesure — renvoie `baseCount`, donc la rangée n'est
- * JAMAIS plus courte que la sélection d'accès rapide de l'opérateur. Sinon la capacité est le nombre entier de
- * créneaux disponibles MOINS un créneau réservé au déclencheur de menu, bornée entre `baseCount` et `maxCount`.
- */
-export function computeMobileNavDirectDestinationCount({
-  availableWidth,
-  slotWidth,
-  baseCount,
-  maxCount,
-}: MobileNavDirectDestinationCountInput): number {
-  const ceiling = Math.max(baseCount, maxCount);
-  if (!Number.isFinite(availableWidth) || availableWidth <= 0) return baseCount;
-  if (!Number.isFinite(slotWidth) || slotWidth <= 0) return baseCount;
-  const capacity = Math.floor(availableWidth / slotWidth) - 1;
-  return Math.min(ceiling, Math.max(baseCount, capacity));
-}
 
 export interface MobileNavKeyboardMetrics {
   keyboardOverlap: number;
@@ -269,6 +205,14 @@ export interface MobileNavBarProps {
   n'a pas le droit de supposer qu'un accès existe ailleurs et conserve toutes ses destinations.
   */
   headerOwnedItems?: readonly string[];
+  /*
+  FNXC:MobileNavGesture 2026-09-17-16:53:
+  FN-511 : option projet `mobileNavMenuSwipeGesture`. Quand elle est vraie, le bouton hamburger n'est PAS rendu (aucune
+  coquille, aucun `aria-controls`/`aria-expanded` résiduel) et le menu s'ouvre par un glissement vers le haut du pied de
+  page, présenté comme un tiroir de la largeur de la barre. Quand elle est fausse, le hamburger est rendu et le geste
+  est désarmé : il n'y a jamais deux affordances d'ouverture simultanées, et le geste n'ouvre plus jamais le Chat.
+  */
+  menuGestureEnabled?: boolean;
   /** App-owned open state for the mobile navigation popover. */
   navigationMenuOpen?: boolean;
   /** Updates the App-owned mobile popover state. */
@@ -328,6 +272,7 @@ export function MobileNavBar({
   shellConnectionControl,
   quickAccessItems,
   headerOwnedItems,
+  menuGestureEnabled = false,
   navigationMenuOpen = false,
   onUiMenuOpenChange,
 }: MobileNavBarProps) {
@@ -341,16 +286,6 @@ export function MobileNavBar({
   const [dragOffset, setDragOffset] = useState(0);
   const [isSheetDragging, setIsSheetDragging] = useState(false);
   const [hasSheetDragged, setHasSheetDragged] = useState(false);
-  /*
-  FNXC:MobileNavDynamicQuickAccess 2026-09-16-19:44:
-  FN-468 : géométrie mesurée de la pill. Une largeur utile nulle — premier rendu, SSR, jsdom sans géométrie — fait
-  retomber la fonction pure sur la rangée de base, donc la rangée n'est jamais plus courte que la sélection
-  d'accès rapide de l'opérateur.
-  */
-  const [pillSlotMetrics, setPillSlotMetrics] = useState<{ availableWidth: number; slotWidth: number }>({
-    availableWidth: 0,
-    slotWidth: MOBILE_NAV_DIRECT_SLOT_FALLBACK_WIDTH,
-  });
   const navRef = useRef<HTMLElement | null>(null);
   const sheetRef = useRef<HTMLDivElement | null>(null);
   const sheetDragRef = useRef<{
@@ -617,6 +552,8 @@ export function MobileNavBar({
     if (hidden) {
       document.documentElement.style.removeProperty("--mobile-nav-height");
       document.documentElement.style.removeProperty("--mobile-nav-pill-height");
+      document.documentElement.style.removeProperty("--mobile-nav-pill-left");
+      document.documentElement.style.removeProperty("--mobile-nav-pill-width");
       return;
     }
 
@@ -628,25 +565,6 @@ export function MobileNavBar({
     const publishMeasuredHeight = () => {
       const computed = window.getComputedStyle(navEl);
       const paddingBottom = Number.parseFloat(computed.paddingBottom);
-      /*
-      FNXC:MobileNavDynamicQuickAccess 2026-09-16-19:44:
-      FN-468 : la largeur utile est mesurée ICI, en réutilisant le `ResizeObserver` déjà installé sur le `nav` —
-      aucun second observateur de géométrie n'est ajouté. La largeur de créneau vient de la propriété personnalisée
-      issue des jetons, avec repli sûr quand elle n'est pas résolue en pixels. L'état n'est écrit que lorsque la
-      capacité CHANGE, faute de quoi l'observateur se réveillerait à chaque publication de hauteur.
-      */
-      const declaredSlotWidth = Number.parseFloat(computed.getPropertyValue("--mobile-nav-direct-slot-min-width"));
-      const slotWidth = Number.isFinite(declaredSlotWidth) && declaredSlotWidth > 0
-        ? declaredSlotWidth
-        : MOBILE_NAV_DIRECT_SLOT_FALLBACK_WIDTH;
-      const horizontalPadding = (Number.parseFloat(computed.paddingLeft) || 0) + (Number.parseFloat(computed.paddingRight) || 0);
-      const measuredWidth = navEl.getBoundingClientRect().width;
-      const availableWidth = Number.isFinite(measuredWidth) ? Math.max(0, measuredWidth - horizontalPadding) : 0;
-      setPillSlotMetrics((current) => (
-        current.availableWidth === availableWidth && current.slotWidth === slotWidth
-          ? current
-          : { availableWidth, slotWidth }
-      ));
       const floatingGap = Number.parseFloat(computed.getPropertyValue("--mobile-nav-floating-gap"));
       const tabHeights = Array.from(navEl.querySelectorAll<HTMLElement>(".mobile-nav-tab"), (tab) => tab.getBoundingClientRect().height);
       const publishedHeight = computePublishedMobileNavHeight({
@@ -658,6 +576,17 @@ export function MobileNavBar({
       const pillHeight = Math.max(44, navEl.offsetHeight, ...tabHeights.filter((height) => Number.isFinite(height)));
       document.documentElement.style.setProperty("--mobile-nav-height", `${publishedHeight}px`);
       document.documentElement.style.setProperty("--mobile-nav-pill-height", `${Math.ceil(pillHeight)}px`);
+      /*
+      FNXC:MobileNavGesture 2026-09-17-16:53:
+      FN-511 : le tiroir gestuel doit occuper EXACTEMENT la largeur du pied de page et démarrer à son bord. On publie donc
+      la géométrie horizontale mesurée de la pill depuis ce même effet (aucun second observateur) ; les autres modes de
+      popover ne la consomment pas.
+      */
+      const pillRect = navEl.getBoundingClientRect();
+      if (Number.isFinite(pillRect.width) && pillRect.width > 0) {
+        document.documentElement.style.setProperty("--mobile-nav-pill-left", `${Math.round(pillRect.left)}px`);
+        document.documentElement.style.setProperty("--mobile-nav-pill-width", `${Math.round(pillRect.width)}px`);
+      }
     };
 
     publishMeasuredHeight();
@@ -674,6 +603,8 @@ export function MobileNavBar({
       observer?.disconnect();
       document.documentElement.style.removeProperty("--mobile-nav-height");
       document.documentElement.style.removeProperty("--mobile-nav-pill-height");
+      document.documentElement.style.removeProperty("--mobile-nav-pill-left");
+      document.documentElement.style.removeProperty("--mobile-nav-pill-width");
     };
   }, [hidden, modalOpen, mode]);
 
@@ -687,21 +618,20 @@ export function MobileNavBar({
   leur sémantique exacte et continuent à démonter la pill.
   */
   /*
-  FNXC:MobileNavGesture 2026-09-17-08:05:
-  FN-495 : raccourci gestuel d'ouverture du Chat depuis le pied de page mobile. Le geste est armé UNIQUEMENT quand la
-  pill est réellement montée (`pillMounted` reproduit exactement la condition de démontage ci-dessous, ce qui garantit
-  que l'effet du hook se réexécute au moment où `navRef` porte enfin la `<nav>`), quand le Chat n'est pas déjà possédé
-  par le Header de cet hôte (FN-481), quand le menu est fermé (le menu a son propre geste) et quand le Chat n'est pas
-  déjà affiché. Le déclenchement passe par `onChangeView("chat")`, c'est-à-dire le MÊME propriétaire de navigation que
-  la ligne `mobile-more-item-chat` du menu : aucune entrée d'historique supplémentaire, aucun second producteur.
+  FNXC:MobileNavGesture 2026-09-17-16:53:
+  FN-511 : le geste de glissement vers le haut du pied de page ouvre le MENU de navigation, plus le Chat. Il est armé
+  UNIQUEMENT quand l'option projet est active (le hamburger est alors masqué, donc le geste est la seule affordance),
+  quand la pill est réellement montée (`pillMounted` reproduit exactement la condition de démontage ci-dessous, ce qui
+  garantit que l'effet du hook se réexécute au moment où `navRef` porte enfin la `<nav>`) et quand le menu est fermé.
+  Le déclenchement passe par `onUiMenuOpenChange(true)`, c'est-à-dire le MÊME propriétaire d'état que le hamburger.
   Le hook doit être appelé AVANT le retour anticipé ci-dessous pour que le nombre de hooks reste stable entre rendus.
   */
   const pillMounted = isMobileShellMode(mode) && !modalOpen && !hidden;
-  const openChatFromFooterGesture = useCallback(() => onChangeView("chat"), [onChangeView]);
+  const openMenuFromFooterGesture = useCallback(() => onUiMenuOpenChange?.(true), [onUiMenuOpenChange]);
   useFooterSwipeUpGesture({
-    enabled: pillMounted && !(headerOwnedItems ?? []).includes("chat") && !isMenuOpen && view !== "chat",
+    enabled: pillMounted && menuGestureEnabled && !isMenuOpen,
     surfaceRef: navRef,
-    onTrigger: openChatFromFooterGesture,
+    onTrigger: openMenuFromFooterGesture,
   });
 
   if (!pillMounted) {
@@ -803,15 +733,13 @@ export function MobileNavBar({
   otherwise — because the drawer-returns-to-Kanban argument never justified making it unreachable from the menu too.
   `patchnode` stays excluded: History is a modal surface, not a navigation destination.
 
-  FNXC:Navigation 2026-09-17-08:05:
-  FN-495 : décision opérateur explicite — le Chat n'est PAS une destination épinglée de la barre du bas. Le plafond
-  configurable passe à 4 dans `@fusion/core`, donc la pill affiche « 4 destinations + Plus », et le cinquième créneau
-  reste celui du Chat SANS onglet dédié : sur mobile le Chat est possédé par la ligne `mobile-more-item-chat` du menu
-  « Plus », sur le footer large par `desktop-nav-chat-panel`. Le raccourci mobile est le GESTE de glissement du pied de
-  page vers le haut (`useFooterSwipeUpGesture`), pas un second bouton : il appelle le même propriétaire de navigation
-  que la ligne du menu, donc aucune destination ne gagne un deuxième producteur d'affordance. Aucune composition n'est
-  modifiée ici : `MOBILE_NAV_DYNAMIC_PROMOTION_ORDER` (FN-468, qui peut toujours promouvoir `chat` sur un très large
-  écran du shell mobile) et `computeMobileNavDirectDestinationCount` restent inchangés.
+  FNXC:Navigation 2026-09-17-16:53:
+  FN-511 : la rangée de la pill est STRICTEMENT la sélection d'accès rapide résolue — cinq créneaux, même clé, même
+  ordre que le pied de page large — suivie du déclencheur de menu. C'est l'exigence de parité PC/mobile : pour une même
+  valeur de réglage, les deux hôtes rendent la même liste. `chat` y est une destination ORDINAIRE : onglet direct quand
+  il est résolu, ligne du menu « Plus » sinon, jamais les deux. Aucune promotion dynamique liée à la largeur mesurée ne
+  subsiste, et le geste de glissement du pied de page n'ouvre plus le Chat mais le menu de navigation (étape 5).
+  `patchnode` reste exclu : History est une surface modale, pas une destination.
   */
   /* Computed inline rather than memoized: this statement sits AFTER the component's early returns, so a hook here would
   change the hook count between renders. The resolver is a pure array reduce over at most a handful of ids. */
@@ -830,24 +758,7 @@ export function MobileNavBar({
   const headerOwnedItemSet = new Set(headerOwnedItems ?? []);
   const isEligibleDestination = (item: MobileNavSelectableItem): boolean =>
     destinationRegistry[item].isAvailable && !headerOwnedItemSet.has(item);
-  const baseDirectItems = primaryDestinationItems.filter(isEligibleDestination);
-  /*
-  FNXC:MobileNavDynamicQuickAccess 2026-09-16-19:44:
-  FN-468 : la rangée directe est la rangée de base (ordre persisté, inchangée au plus étroit) SUIVIE des candidats
-  de l'ordre de promotion qui ne s'y trouvent pas déjà et qui sont disponibles — un drapeau expérimental désactivé
-  est ignoré sans laisser de bouton vide ni d'`aria-label` orphelin. La troncature au nombre calculé ne peut jamais
-  descendre sous la rangée de base, et toute destination promue quitte le menu déroulant, donc aucune n'est rendue
-  deux fois.
-  */
-  const directDestinationCount = computeMobileNavDirectDestinationCount({
-    availableWidth: pillSlotMetrics.availableWidth,
-    slotWidth: pillSlotMetrics.slotWidth,
-    baseCount: baseDirectItems.length,
-    maxCount: MAX_MOBILE_NAV_DIRECT_DESTINATIONS,
-  });
-  const promotedItems = MOBILE_NAV_DYNAMIC_PROMOTION_ORDER
-    .filter((item) => !baseDirectItems.includes(item) && isEligibleDestination(item));
-  const effectivePrimaryItems = [...baseDirectItems, ...promotedItems].slice(0, directDestinationCount);
+  const effectivePrimaryItems = primaryDestinationItems.filter(isEligibleDestination);
   const effectiveOmittedItems = MOBILE_NAV_SELECTABLE_ITEMS
     .filter((item) => !effectivePrimaryItems.includes(item) && item !== "patchnode")
     .filter(isEligibleDestination);
@@ -919,7 +830,13 @@ export function MobileNavBar({
           );
         })}
 
-        {officialDesignEnabled && (
+        {/*
+        FNXC:MobileNavGesture 2026-09-17-16:53:
+        FN-511 : sous l'option de geste, le hamburger n'est PAS rendu du tout — pas une coquille masquée. Aucun
+        `aria-label`, `aria-haspopup`, `aria-expanded` ni `aria-controls="mobile-navigation-popover"` ne subsiste alors
+        sur un élément de la barre, et le geste devient l'unique affordance d'ouverture du menu.
+        */}
+        {officialDesignEnabled && !menuGestureEnabled && (
           <button
             ref={menuTriggerRef}
             className="mobile-menu-trigger"
@@ -975,7 +892,13 @@ export function MobileNavBar({
               sheetRef.current = officialDesignEnabled ? null : element;
             }}
             id={officialDesignEnabled ? "mobile-navigation-popover" : undefined}
-            className={officialDesignEnabled ? "mobile-navigation-popover" : `mobile-more-sheet${isSheetDragging ? " mobile-more-sheet--dragging" : ""}${hasSheetDragged ? " mobile-more-sheet--gesture-ready" : ""}`}
+            /*
+            FNXC:MobileNavGesture 2026-09-17-16:53:
+            FN-511 : en mode geste, le menu se présente comme un TIROIR qui part du bord supérieur du pied de page et
+            occupe sa largeur. C'est un MODIFICATEUR de la surface existante, pas une seconde surface : toutes les règles
+            de `.mobile-navigation-popover` (couches, hauteur maximale, défilement, peinture) restent en vigueur.
+            */
+            className={officialDesignEnabled ? `mobile-navigation-popover${menuGestureEnabled ? " mobile-navigation-popover--footer-drawer" : ""}` : `mobile-more-sheet${isSheetDragging ? " mobile-more-sheet--dragging" : ""}${hasSheetDragged ? " mobile-more-sheet--gesture-ready" : ""}`}
             role="menu"
             aria-label={t("nav.moreSheetTitle", "Navigate")}
             style={officialDesignEnabled ? mobileNavGeometryStyle : { transform: `translateY(${dragOffset}px)` }}

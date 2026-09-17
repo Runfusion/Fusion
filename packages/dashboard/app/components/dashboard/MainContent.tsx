@@ -343,6 +343,7 @@ export function MainContent(props: MainContentProps) {
   setShowCostBadgeOnCardsImmediate,
   setTaskDetailDefaultTabImmediate,
   setMobileNavPrimaryItemsImmediate,
+  setMobileNavMenuSwipeGestureImmediate,
   reopenOnboardingWithNav,
   viewMode,
   projects,
@@ -681,6 +682,7 @@ export function MainContent(props: MainContentProps) {
             taskDetailDefaultTab={taskDetailDefaultTab}
             onTaskDetailDefaultTabChange={setTaskDetailDefaultTabImmediate}
             onMobileNavPrimaryItemsChange={setMobileNavPrimaryItemsImmediate}
+            onMobileNavMenuSwipeGestureChange={setMobileNavMenuSwipeGestureImmediate}
             onReopenOnboarding={reopenOnboardingWithNav}
             onOpenApprovals={() => handleChangeTaskView("mailbox")}
             /* FNXC:WorkflowEditorEmbedding 2026-09-15-05:29: FN-407 — the embedded Settings referral navigates to the Workflows view, exactly like the modal one. */

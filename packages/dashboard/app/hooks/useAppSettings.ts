@@ -73,6 +73,12 @@ export interface UseAppSettingsResult {
    */
   rightSidebarEnabled: boolean;
   mobileNavPrimaryItems: string[];
+  /**
+   * FNXC:MobileNavGesture 2026-09-17-16:53:
+   * FN-511 : option projet mobile — masque le bouton menu du pied de page et ouvre le menu de navigation par un
+   * glissement vers le haut, présenté comme un tiroir de la largeur de la barre. Absente ou invalide vaut `false`.
+   */
+  mobileNavMenuSwipeGesture: boolean;
   dashboardKeyboardShortcuts: Required<DashboardKeyboardShortcutMap>;
   dismissModalsOnOutsideClick: boolean;
   quickAddSubmitOnEnter: boolean;
@@ -96,6 +102,7 @@ export interface UseAppSettingsResult {
   setShowCostBadgeOnCardsImmediate: (enabled: boolean) => void;
   setTaskDetailDefaultTabImmediate: (tab: TaskDetailDefaultTab) => void;
   setMobileNavPrimaryItemsImmediate: (items: string[]) => void;
+  setMobileNavMenuSwipeGestureImmediate: (enabled: boolean) => void;
   /** Re-fetches settings from the backend to pick up changes made externally (e.g., by SettingsModal). */
   refresh: () => Promise<void>;
 }
@@ -135,6 +142,8 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
   /* FNXC:RightSidebarOptional 2026-09-15-16:04: FN-426 — default-off availability of the right tool dock. */
   const [rightSidebarEnabled, setRightSidebarEnabled] = useState(false);
   const [mobileNavPrimaryItems, setMobileNavPrimaryItems] = useState<string[]>(() => resolveMobileNavPrimaryItems().primaryItems);
+  /* FN-511 : défaut désactivé — le bouton hamburger reste l'affordance standard tant que l'opérateur n'active pas le geste. */
+  const [mobileNavMenuSwipeGesture, setMobileNavMenuSwipeGesture] = useState(false);
   const [dashboardKeyboardShortcuts, setDashboardKeyboardShortcuts] = useState<Required<DashboardKeyboardShortcutMap>>(DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS);
   const [dismissModalsOnOutsideClick, setDismissModalsOnOutsideClick] = useState(false);
   const [quickAddSubmitOnEnter, setQuickAddSubmitOnEnter] = useState(true);
@@ -201,6 +210,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
         settings.staleHighFanoutBlockerAgeThresholdMs ?? 2 * 60 * 60 * 1000,
       );
       setMobileNavPrimaryItems(resolveMobileNavPrimaryItems(settings).primaryItems);
+      setMobileNavMenuSwipeGesture(settings.mobileNavMenuSwipeGesture === true);
       setDashboardKeyboardShortcuts(resolveDashboardKeyboardShortcuts((settings as GlobalSettings).dashboardKeyboardShortcuts));
       setDismissModalsOnOutsideClick(settings.dismissModalsOnOutsideClick === true);
       setQuickAddSubmitOnEnter(settings.quickAddSubmitOnEnter !== false);
@@ -387,6 +397,15 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     setMobileNavPrimaryItems(resolveMobileNavPrimaryItems({ mobileNavPrimaryItems: items }).primaryItems);
   }, []);
 
+  /*
+  FNXC:MobileNavGesture 2026-09-17-16:53:
+  FN-511 : même motif d'aperçu live que les accès rapides — basculer l'option reclasse immédiatement le shell (hamburger
+  masqué, geste armé) avant toute sauvegarde ; la persistance reste possédée par `SettingsModal`.
+  */
+  const setMobileNavMenuSwipeGestureImmediate = useCallback((enabled: boolean) => {
+    setMobileNavMenuSwipeGesture(enabled === true);
+  }, []);
+
   return {
     maxConcurrent,
     maxWorktrees,
@@ -411,6 +430,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     navigationPlacement,
     rightSidebarEnabled,
     mobileNavPrimaryItems,
+    mobileNavMenuSwipeGesture,
     dashboardKeyboardShortcuts,
     dismissModalsOnOutsideClick,
     quickAddSubmitOnEnter,
@@ -434,6 +454,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     setShowCostBadgeOnCardsImmediate,
     setTaskDetailDefaultTabImmediate,
     setMobileNavPrimaryItemsImmediate,
+    setMobileNavMenuSwipeGestureImmediate,
     refresh,
   };
 }

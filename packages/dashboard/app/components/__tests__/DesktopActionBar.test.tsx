@@ -4,6 +4,7 @@ import { DesktopActionBar } from "../DesktopActionBar";
 import { useExecutorStats } from "../../hooks/useExecutorStats";
 import { buildDashboardNavigationEntries, type DashboardNavigationRegistryOptions } from "../dashboardNavigationEntries";
 import { readAppFile } from "../../test/cssFixture";
+import { resolveNavigationQuickAccessEntryIds } from "../../../../core/src/board/mobile-nav-primary-items";
 
 const alphaDesktopActionBarCss = readAppFile("components/DesktopActionBar.css");
 const headerCss = readAppFile("components/Header.css");
@@ -49,8 +50,13 @@ vi.mock("../../hooks/useExecutorStats", async (importOriginal) => {
   return { ...actual, useExecutorStats: vi.fn() };
 });
 
+/*
+ * FN-511 : le Chat est une entrée ORDINAIRE du registre, construite dès que l'hôte fournit son ouverture (production :
+ * dès qu'un projet est sélectionné). Le fixture partagé la fournit donc par défaut ; les cas qui veulent prouver
+ * l'absence d'entrée Chat passent explicitement `onOpenChatPanel: undefined`.
+ */
 function entries(onChangeView = vi.fn(), overrides: Partial<DashboardNavigationRegistryOptions> = {}) {
-  return buildDashboardNavigationEntries({ view: "board", onChangeView, onNewTask: vi.fn(), onOpenSettings: vi.fn(), showAgents: true, ...overrides });
+  return buildDashboardNavigationEntries({ view: "board", onChangeView, onNewTask: vi.fn(), onOpenSettings: vi.fn(), showAgents: true, onOpenChatPanel: vi.fn(), chatPanelId: "chat-tool-panel", ...overrides });
 }
 
 /* FN-469 : Settings est routé par `onOpenSettings`, pas par `onChangeView`; les deux affordances partagent ce même propriétaire. */
@@ -185,8 +191,11 @@ describe("DesktopActionBar", () => {
     expect(placeholderRule).not.toMatch(/\d+px/);
   });
 
-  /* FN-467 cas (b) : les cinq accès rapides ET le déclencheur More appartiennent au même groupe centré, dans l'ordre persisté. */
-  it("regroupe les accès rapides et More dans l'unique groupe centré", () => {
+  /*
+   * FN-467 cas (b), mis à jour par FN-511 : les QUATRE premiers accès rapides et le déclencheur More appartiennent au
+   * même groupe centré, dans l'ordre persisté ; le cinquième occupe désormais la piste de droite.
+   */
+  it("regroupe les quatre premiers accès rapides et More dans l'unique groupe centré", () => {
     render(<DesktopActionBar entries={entries(vi.fn(), { quickAccessEntryIds: ["mailbox", "missions", "board", "planning", "command-center"] })} activeId="board" tasks={[]} onToggleTerminal={vi.fn()} />);
     const centers = document.querySelectorAll(".desktop-action-bar__center");
     expect(centers).toHaveLength(1);
@@ -197,9 +206,9 @@ describe("DesktopActionBar", () => {
       "desktop-nav-missions",
       "desktop-nav-board",
       "desktop-nav-planning",
-      "desktop-nav-command-center",
       "desktop-nav-more",
     ]);
+    expect(document.querySelector(".desktop-action-bar__right")).toContainElement(screen.getByTestId("desktop-nav-command-center"));
     expect(center).not.toContainElement(screen.getByTestId("desktop-capacity-count"));
     expect(center).not.toContainElement(screen.getByTestId("desktop-nav-settings-icon"));
     expect(center).not.toContainElement(screen.getByTestId("desktop-nav-terminal"));
@@ -247,7 +256,8 @@ describe("DesktopActionBar", () => {
     expect(screen.getByTestId("desktop-nav-settings-icon")).toHaveAccessibleName("Settings");
     expect(document.querySelector(".desktop-action-bar__leading")).toContainElement(screen.getByTestId("desktop-nav-settings-icon"));
     expect(screen.queryByTestId("desktop-nav-terminal")).toBeNull();
-    expect(document.querySelector(".desktop-action-bar__right")).toBeNull();
+    /* FN-511 : sans Terminal, la piste de droite n'héberge plus que le cinquième raccourci résolu (le Chat par défaut). */
+    expect(Array.from(document.querySelectorAll<HTMLElement>(".desktop-action-bar__right .desktop-action-bar__action")).map((button) => button.dataset.testid)).toEqual(["desktop-nav-chat-panel"]);
     expect(screen.queryByTestId("desktop-nav-patchnode")).toBeNull();
     expect(screen.queryByTestId("desktop-nav-chat")).toBeNull();
     expect(screen.queryByTestId("desktop-nav-notes")).toBeNull();
@@ -274,9 +284,10 @@ describe("DesktopActionBar", () => {
     expect(onToggleTerminal).toHaveBeenCalledTimes(1);
   });
 
-  /* FN-469 cas (w) : sans entrée `settings`, aucun bouton icône, aucune entrée More, et aucune coquille à droite. */
+  /* FN-469 cas (w), mis à jour par FN-511 : sans entrée `settings`, sans Terminal et sans cinquième raccourci (Chat
+     non fourni), aucun bouton icône, aucune entrée More, et aucune coquille de piste droite. */
   it("omet Terminal, Settings et le shell droit quand leurs propriétaires sont absents", () => {
-    render(<DesktopActionBar entries={entries().filter((entry) => entry.id !== "settings")} activeId="board" tasks={[]} />);
+    render(<DesktopActionBar entries={entries(vi.fn(), { onOpenChatPanel: undefined }).filter((entry) => entry.id !== "settings")} activeId="board" tasks={[]} />);
     expect(screen.queryByTestId("desktop-nav-terminal")).toBeNull();
     expect(screen.queryByTestId("desktop-nav-settings-icon")).toBeNull();
     expect(screen.queryByLabelText("Settings")).toBeNull();
@@ -413,12 +424,12 @@ describe("DesktopActionBar", () => {
    * FN-446 : Agents quitte la rangée directe du pied de page et devient une entrée ordinaire du menu **More**, sans
    * coquille de bouton ni `aria-label` orphelin laissé derrière lui.
    *
-   * FN-495 : le défaut vaut désormais QUATRE destinations plus « More », le cinquième créneau étant le bouton Chat
-   * non configurable du groupe de droite. Mailbox rejoint donc le menu **More** avec Agents.
+   * FN-511 : le défaut vaut CINQ destinations configurables ; les quatre premières occupent la rangée centrale et la
+   * cinquième (le Chat par défaut) la piste de droite. Mailbox rejoint donc le menu **More** avec Agents.
    */
   it("place Agents dans le menu More et non dans le rail direct par défaut", async () => {
     const onChangeView = vi.fn().mockResolvedValue(true);
-    render(<DesktopActionBar entries={entries(onChangeView)} activeId="board" tasks={[]} onOpenChatPanel={vi.fn()} />);
+    render(<DesktopActionBar entries={entries(onChangeView)} activeId="board" tasks={[]} />);
     const scroller = document.querySelector(".desktop-action-bar__scroller")!;
     const directTestIds = Array.from(scroller.querySelectorAll<HTMLElement>(".desktop-action-bar__action")).map((button) => button.dataset.testid);
     expect(directTestIds).toEqual([
@@ -427,21 +438,75 @@ describe("DesktopActionBar", () => {
       "desktop-nav-planning",
       "desktop-nav-missions",
     ]);
-    /* FN-495 : au plus quatre destinations dans la rangée centrale, et le cinquième créneau est le Chat, à droite. */
+    /* FN-511 : au plus quatre destinations dans la rangée centrale ; le cinquième raccourci résolu occupe la droite. */
     expect(directTestIds.length).toBeLessThanOrEqual(4);
     expect(document.querySelector(".desktop-action-bar__right")).toContainElement(screen.getByTestId("desktop-nav-chat-panel"));
     expect(scroller).not.toContainElement(screen.getByTestId("desktop-nav-chat-panel"));
+    expect(screen.getAllByTestId("desktop-nav-chat-panel")).toHaveLength(1);
     expect(screen.queryByTestId("desktop-nav-agents")).toBeNull();
     expect(screen.queryByLabelText("Agents")).toBeNull();
 
     const menu = openOverflowMenu();
-    /* FN-495 : la cinquième destination héritée (Mailbox) reste atteignable depuis **More**. */
+    /* FN-511 : Mailbox, non sélectionnée, reste atteignable depuis **More**. */
     expect(within(menu).getByTestId("desktop-nav-mailbox")).toBeInTheDocument();
     const agentsEntry = within(menu).getByTestId("desktop-nav-agents");
     expect(agentsEntry).toHaveAccessibleName("Agents");
     fireEvent.click(agentsEntry);
     expect(onChangeView).toHaveBeenCalledWith("agents");
     await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  });
+
+  /*
+   * FN-511 cas (b) : NON-RÉGRESSION DE MISE À JOUR. Une valeur persistée de quatre destinations sans `chat` — l'état
+   * des opérateurs avant cette tâche — est complétée par le core, donc le Chat reste rendu dans la piste de droite et
+   * n'est PAS dupliqué dans le menu « More ».
+   */
+  it("garde le Chat à droite pour une sélection héritée de quatre destinations", () => {
+    render(<DesktopActionBar entries={entries(vi.fn(), { quickAccessEntryIds: resolveNavigationQuickAccessEntryIds({ mobileNavPrimaryItems: ["command-center", "tasks", "planning", "missions"] }) })} activeId="board" tasks={[]} />);
+    expect(document.querySelector(".desktop-action-bar__right")).toContainElement(screen.getByTestId("desktop-nav-chat-panel"));
+    expect(screen.getAllByTestId("desktop-nav-chat-panel")).toHaveLength(1);
+    expect(within(openOverflowMenu()).queryByTestId("desktop-nav-chat-panel")).toBeNull();
+  });
+
+  /*
+   * FN-511 cas (c) : une sélection explicite de cinq destinations sans `chat` place Planning à droite, et le Chat
+   * n'est plus rendu qu'une seule fois, dans le menu « More ».
+   */
+  it("place le cinquième raccourci configuré à droite et renvoie le Chat dans More", () => {
+    render(<DesktopActionBar entries={entries(vi.fn(), { quickAccessEntryIds: resolveNavigationQuickAccessEntryIds({ mobileNavPrimaryItems: ["command-center", "tasks", "missions", "mailbox", "planning"] }) })} activeId="board" tasks={[]} />);
+    const right = document.querySelector(".desktop-action-bar__right");
+    expect(right).toContainElement(screen.getByTestId("desktop-nav-planning"));
+    expect(document.querySelector(".desktop-action-bar__scroller")).not.toContainElement(screen.getByTestId("desktop-nav-planning"));
+    /* Menu fermé : le Chat n'est rendu nulle part dans la barre, donc surtout pas dans la piste de droite. */
+    expect(screen.queryByTestId("desktop-nav-chat-panel")).toBeNull();
+    const menu = openOverflowMenu();
+    expect(within(menu).getByTestId("desktop-nav-chat-panel")).toBeInTheDocument();
+    expect(screen.getAllByTestId("desktop-nav-chat-panel")).toHaveLength(1);
+  });
+
+  /*
+   * FN-511 cas (d) : le Chat placé en deuxième position est un onglet ordinaire du scroller, et la piste de droite se
+   * limite alors au Terminal. Son contrat d'accessibilité de panneau le suit où qu'il soit rendu.
+   */
+  it("rend le Chat dans le scroller quand il n'est pas le cinquième raccourci", () => {
+    const onOpenChatPanel = vi.fn();
+    render(<DesktopActionBar entries={entries(vi.fn(), { onOpenChatPanel, quickAccessEntryIds: resolveNavigationQuickAccessEntryIds({ mobileNavPrimaryItems: ["command-center", "chat", "tasks", "planning", "missions"] }) })} activeId="board" tasks={[]} onToggleTerminal={vi.fn()} />);
+    const chatButton = screen.getByTestId("desktop-nav-chat-panel");
+    expect(document.querySelector(".desktop-action-bar__scroller")).toContainElement(chatButton);
+    expect(chatButton).toHaveAttribute("aria-haspopup", "dialog");
+    expect(chatButton).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(chatButton);
+    expect(onOpenChatPanel).toHaveBeenCalledTimes(1);
+    const right = document.querySelector(".desktop-action-bar__right")!;
+    expect(Array.from(right.querySelectorAll<HTMLElement>(".desktop-action-bar__action")).map((button) => button.dataset.testid)).toEqual(["desktop-nav-missions", "desktop-nav-terminal"]);
+  });
+
+  /* FN-511 cas (e) : sans cinquième raccourci ni Terminal, la piste de droite n'est pas rendue du tout. */
+  it("ne laisse aucune coquille de piste droite sans cinquième raccourci ni Terminal", () => {
+    render(<DesktopActionBar entries={entries(vi.fn(), { onOpenChatPanel: undefined, quickAccessEntryIds: ["board"] })} activeId="board" tasks={[]} />);
+    expect(document.querySelector(".desktop-action-bar__right")).toBeNull();
+    expect(screen.queryByTestId("desktop-nav-chat-panel")).toBeNull();
+    expect(screen.queryByTestId("desktop-nav-terminal")).toBeNull();
   });
 
   /* FN-446 : une sélection personnalisée définit l'ordre exact des accès rapides rendus. */

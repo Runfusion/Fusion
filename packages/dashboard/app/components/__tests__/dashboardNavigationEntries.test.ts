@@ -6,7 +6,7 @@ const base = { view: "board" as const, onChangeView: vi.fn(), onNewTask: vi.fn()
 
 describe("dashboardNavigationEntries", () => {
   it("classe explicitement les destinations sans dupliquer History, Chat ou Notes", () => {
-    const entries = buildDashboardNavigationEntries(base);
+    const entries = buildDashboardNavigationEntries({ ...base, onOpenChatPanel: vi.fn() });
     expect(entries.every((entry) => ["main-page", "existing-action", "external-owner"].includes(entry.kind))).toBe(true);
     /*
      * FN-426: no destination may be owned by the right dock any more, because the dock is optional and default-off.
@@ -15,15 +15,16 @@ describe("dashboardNavigationEntries", () => {
      */
     expect(entries.filter((entry) => entry.kind === "external-owner")).toEqual([]);
     expect(entries.some((entry) => entry.id === "secrets" || entry.id === "pull-requests")).toBe(false);
-    expect(entries.map((entry) => entry.id)).not.toEqual(expect.arrayContaining(["patchnode", "chat", "notes"]));
+    /* FN-511 : `chat` est désormais une entrée ordinaire du registre (voir les cas dédiés ci-dessous) ; History et Notes restent hors registre. */
+    expect(entries.map((entry) => entry.id)).not.toEqual(expect.arrayContaining(["patchnode", "notes"]));
     /*
      * FN-439 inverts FN-382's "List is a right-dock tool" assertion: List is a registry destination again, in the
      * overflow tier, so the footer **More** menu owns List on tablet/desktop.
      * FN-446: the direct rail is no longer hardcoded — it is the core-resolved quick-access default.
-     * FN-495: that default is now FOUR destinations plus the trailing **More** button, because the fifth footer slot
-     * belongs to the non-configurable Chat button. Agents and Mailbox are deliberately not in the direct rail.
+     * FN-511: that default is now FIVE configurable destinations ending in Chat, whose fifth slot the host renders in
+     * the footer's right-hand track. Agents and Mailbox are deliberately not in the direct rail.
      */
-    expect(entries.filter((entry) => entry.placement === "direct").map((entry) => entry.id)).toEqual(["command-center", "board", "planning", "missions"]);
+    expect(entries.filter((entry) => entry.placement === "direct").map((entry) => entry.id)).toEqual(["command-center", "board", "planning", "missions", "chat"]);
     expect(entries.some((entry) => entry.id === "list")).toBe(true);
     expect(entries.find((entry) => entry.id === "settings")?.placement).toBe("external");
     expect(entries.filter((entry) => entry.placement !== "external").every((entry) => typeof entry.onSelect === "function")).toBe(true);
@@ -55,20 +56,64 @@ describe("dashboardNavigationEntries", () => {
   });
 
   /*
-   * FN-495 : une sélection héritée de cinq identifiants éligibles ne produit que QUATRE entrées `direct` ; la
-   * cinquième bascule en `overflow` (menu **More**). Le Chat n'apparaît jamais dans le registre, ni en direct ni en
-   * overflow : il est possédé par `desktop-nav-chat-panel`.
+   * FN-511 : une sélection EXPLICITE de cinq destinations sans `chat` produit cinq entrées `direct` et renvoie le Chat
+   * dans `overflow` (menu **More**) — exactement une fois, jamais les deux.
    */
-  it("plafonne la rangée directe à quatre destinations et n'introduit jamais d'entrée chat", () => {
+  it("rend cinq destinations directes et renvoie le Chat en overflow quand il n'est pas sélectionné", () => {
     const entries = buildDashboardNavigationEntries({
       ...base,
-      quickAccessEntryIds: resolveNavigationQuickAccessEntryIds({ mobileNavPrimaryItems: ["command-center", "tasks", "planning", "missions", "mailbox"] }),
+      onOpenChatPanel: vi.fn(),
+      quickAccessEntryIds: resolveNavigationQuickAccessEntryIds({ mobileNavPrimaryItems: ["command-center", "tasks", "missions", "mailbox", "planning"] }),
     });
     const direct = entries.filter((entry) => entry.placement === "direct").map((entry) => entry.id);
-    expect(direct).toEqual(["command-center", "board", "planning", "missions"]);
-    expect(direct).toHaveLength(4);
-    expect(entries.find((entry) => entry.id === "mailbox")?.placement).toBe("overflow");
-    expect(entries.some((entry) => entry.id === "chat")).toBe(false);
+    expect(direct).toEqual(["command-center", "board", "missions", "mailbox", "planning"]);
+    expect(direct).toHaveLength(5);
+    expect(entries.find((entry) => entry.id === "chat")?.placement).toBe("overflow");
+    expect(entries.filter((entry) => entry.id === "chat")).toHaveLength(1);
+  });
+
+  /*
+   * FN-511 : le Chat est une entrée ordinaire du registre, construite uniquement quand l'hôte fournit son ouverture.
+   * Elle porte son contrat d'accessibilité de panneau via les champs génériques, et le registre en est l'unique
+   * propriétaire : jamais deux entrées `chat`.
+   */
+  it("construit l'entrée Chat seulement quand onOpenChatPanel est fourni", () => {
+    const onOpenChatPanel = vi.fn();
+    const withChat = buildDashboardNavigationEntries({ ...base, onOpenChatPanel, chatHasUnreadResponse: true, chatPanelId: "chat-tool-panel" });
+    const chat = withChat.find((entry) => entry.id === "chat");
+    expect(chat).toBeDefined();
+    expect(chat?.kind).toBe("existing-action");
+    expect(chat?.testId).toBe("desktop-nav-chat-panel");
+    expect(chat?.ariaHasPopup).toBe("dialog");
+    expect(chat?.ariaExpanded).toBe(false);
+    expect(chat?.ariaControls).toBeUndefined();
+    expect(chat?.dot).toBe("pending");
+    expect(chat?.active).toBeFalsy();
+    chat?.onSelect?.();
+    expect(onOpenChatPanel).toHaveBeenCalledTimes(1);
+
+    const openChat = buildDashboardNavigationEntries({ ...base, onOpenChatPanel, chatHasUnreadResponse: true, chatPanelOpen: true, chatPanelId: "chat-tool-panel" }).find((entry) => entry.id === "chat");
+    expect(openChat?.ariaExpanded).toBe(true);
+    expect(openChat?.ariaControls).toBe("chat-tool-panel");
+    expect(openChat?.active).toBe(true);
+    expect(openChat?.dot).toBeUndefined();
+
+    expect(buildDashboardNavigationEntries(base).some((entry) => entry.id === "chat")).toBe(false);
+  });
+
+  /*
+   * FN-511 : cas de MISE À JOUR — une valeur persistée de quatre destinations sans `chat` est complétée par le core,
+   * donc l'entrée Chat devient `direct` et ne réapparaît pas dans le menu.
+   */
+  it("classe le Chat en direct pour une sélection héritée de quatre destinations", () => {
+    const entries = buildDashboardNavigationEntries({
+      ...base,
+      onOpenChatPanel: vi.fn(),
+      quickAccessEntryIds: resolveNavigationQuickAccessEntryIds({ mobileNavPrimaryItems: ["command-center", "tasks", "planning", "missions"] }),
+    });
+    const direct = entries.filter((entry) => entry.placement === "direct").map((entry) => entry.id);
+    expect(direct).toEqual(["command-center", "board", "planning", "missions", "chat"]);
+    expect(entries.filter((entry) => entry.id === "chat")).toHaveLength(1);
   });
 
   /* FN-446 : une destination sélectionnée mais désactivée par son gate est simplement absente, sans trou ni coquille. */

@@ -31,6 +31,8 @@ export interface GeneralSectionProps extends SectionBaseProps {
     setPrefixError: (value: string | null) => void;
     /** Updates the live footer without persisting the draft until Settings is saved. */
     onMobileNavPrimaryItemsChange?: (items: string[]) => void;
+    /* FN-511 : aperçu live de l'option de geste mobile avant sauvegarde, même motif que les accès rapides. */
+    onMobileNavMenuSwipeGestureChange?: (enabled: boolean) => void;
 }
 /*
 FNXC:SettingsStyling 2026-07-15-17:35:
@@ -44,7 +46,7 @@ Bespoke rows no longer render their help as inline `<small>` paragraphs. Their c
 FNXC:SourceControl 2026-07-15-20:30:
 GitHub/GitLab settings are NOT in this section. The tracking block, the tracking-repo select, and the GitLab disclosure moved to "Source Control · Project" (SourceControlSection.tsx), which also absorbed Merge's GitHub/GitLab auth blocks. Do not add source-control settings back here: `gitlabEnabled` was previously writable from both this section and Merge, and one owning section is what keeps that from recurring.
 */
-export function GeneralSection({ form, setForm, projectId, addToast, prefixError, setPrefixError, onMobileNavPrimaryItemsChange, }: GeneralSectionProps) {
+export function GeneralSection({ form, setForm, projectId, addToast, prefixError, setPrefixError, onMobileNavPrimaryItemsChange, onMobileNavMenuSwipeGestureChange, }: GeneralSectionProps) {
     const { t } = useTranslation("app");
     const [builtinWorkflows, setBuiltinWorkflows] = useState<WorkflowDefinition[]>([]);
     const [reportAction, setReportAction] = useState<ReportActionType | null>(null);
@@ -503,15 +505,17 @@ export function GeneralSection({ form, setForm, projectId, addToast, prefixError
         unchanged so persisted preferences, the settings search index, and `section-keys.ts` keep working without a
         migration.
 
-        FNXC:Navigation 2026-09-17-08:05:
-        FN-495: the cap is FOUR destinations, because the footer's fifth quick slot belongs to Chat and Chat is
-        deliberately not offered here. The rendered list is truncated to `MAX_MOBILE_NAV_PRIMARY_ITEMS` so a persisted
-        five-destination value never shows a fifth row whose reorder arrows the navigation hosts would ignore.
+        FNXC:Navigation 2026-09-17-16:53:
+        FN-511: the cap is FIVE destinations and Chat is an ORDINARY choice here, because the footer's fifth slot became
+        configurable. The help text must state the resolver's real rule: any undefined slot is completed with the default
+        order (Dashboard, Board, Planning, Missions, Chat), so removing Chat from the bottom bar requires defining five
+        destinations explicitly. The rendered list is still truncated to `MAX_MOBILE_NAV_PRIMARY_ITEMS` so an overflowing
+        persisted value never shows a row whose reorder arrows the navigation hosts would ignore.
         */}
       <SettingsFieldRow
         htmlFor="mobileNavPrimaryItems"
         label={t("settings.general.mobileNavPrimaryItems", "Navigation quick access")}
-        help={t("settings.general.mobileNavPrimaryItemsHint", "Default: Dashboard, Board, Planning, Missions. Choose up to 4 destinations and their order; every other destination — including Chat — remains in More. On mobile, swipe the bottom bar upwards to open Chat.")}
+        help={t("settings.general.mobileNavPrimaryItemsHint", "Five quick slots shared by desktop and mobile; the fifth sits at the far right of the bottom bar. Any slot you leave undefined is filled from the default order (Dashboard, Board, Planning, Missions, Chat), so define five destinations to keep Chat out of the bottom bar. Every destination you do not pick stays in More.")}
         scope="project"
       >
         <div role="group" aria-label={t("settings.general.mobileNavPrimaryItems", "Navigation quick access")}>
@@ -552,6 +556,26 @@ export function GeneralSection({ form, setForm, projectId, addToast, prefixError
           })()}
         </div>
       </SettingsFieldRow>
+      {/*
+        FNXC:MobileNavGesture 2026-09-17-16:53:
+        FN-511 : option MOBILE demandée par l'opérateur — masquer le bouton menu du pied de page et ouvrir la liste des
+        destinations par un glissement vers le haut, présentée comme un tiroir de la largeur de la barre. Désactivée par
+        défaut (le bouton menu reste l'affordance standard) et sans effet sur l'ordinateur, dont le pied de page n'est pas
+        glissable. Elle remplace l'ancien geste « glisser pour ouvrir le Chat », retiré par cette tâche.
+      */}
+      <SettingsToggleRow
+        descriptor={{
+          key: "mobileNavMenuSwipeGesture",
+          label: t("settings.general.mobileNavMenuSwipeGesture", "Open the mobile menu with a swipe"),
+          help: t("settings.general.mobileNavMenuSwipeGestureHint", "On mobile, hides the bottom-bar menu button and opens the destination list by swiping the bottom bar upwards, as a drawer as wide as the bar. No effect on desktop. Default: disabled."),
+          scope: "project",
+        }}
+        value={form.mobileNavMenuSwipeGesture === true}
+        onChange={(v) => {
+          setForm((f) => ({ ...f, mobileNavMenuSwipeGesture: v === true }));
+          onMobileNavMenuSwipeGestureChange?.(v === true);
+        }}
+      />
       <h4 className="settings-section-heading settings-section-heading--spaced">{t("settings.general.chatHistory", "Chat history")}</h4>
       {/*
         FNXC:ChatModal 2026-07-01-00:00:

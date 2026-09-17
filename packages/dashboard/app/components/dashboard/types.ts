@@ -112,6 +112,8 @@ export interface MainContentProps {
   setShadcnCustomColors: (colors: Record<string, string>) => void;
   resolvedThemeMode: "dark" | "light";
   setMobileNavPrimaryItemsImmediate: (items: string[]) => void;
+  /* FN-511 : aperçu live de l'option mobile de tiroir gestuel depuis les Réglages embarqués. */
+  setMobileNavMenuSwipeGestureImmediate: (enabled: boolean) => void;
   reopenOnboardingWithNav: () => void;
   viewMode: ViewMode;
   projects: ProjectInfoWithSource[];

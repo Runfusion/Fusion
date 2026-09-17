@@ -1040,13 +1040,21 @@ export const DEFAULT_PROJECT_SETTINGS = {
   reflectionAfterTask: true,
   // reviewHandoffPolicy MOVED to workflow settings (U4) — see MOVED_SETTINGS_KEYS.
   /*
-  FNXC:Navigation 2026-09-17-08:05:
-  FN-495 : cette clé pilote la rangée d'accès rapide de la barre de navigation partagée, désormais bornée à 4 + « More ».
-  Le cinquième créneau appartient au Chat, non configurable (bouton bas-droit du footer large, menu « Plus » et geste de
-  glissement vers le haut sur mobile). La clé est réutilisée telle quelle : aucune migration, une valeur persistée de
-  cinq identifiants est tronquée par `resolveMobileNavPrimaryItems` et sa cinquième destination rejoint « Plus ».
+  FNXC:Navigation 2026-09-17-16:53:
+  FN-511 : cette clé unique pilote les CINQ créneaux d'accès rapide de la barre de navigation partagée PC/mobile, le
+  cinquième occupant la place tout à droite du pied de page large. `chat` y est une destination ordinaire. Aucune
+  migration : `resolveMobileNavPrimaryItems` complète au rendu toute sélection plus courte que cinq par l'ordre par
+  défaut, qui se termine par `chat`, donc une valeur persistée de quatre destinations continue de rendre le Chat en
+  cinquième position.
   */
-  mobileNavPrimaryItems: ["command-center", "tasks", "planning", "missions"],
+  mobileNavPrimaryItems: ["command-center", "tasks", "planning", "missions", "chat"],
+  /*
+  FNXC:MobileNavGesture 2026-09-17-16:53:
+  FN-511 : masque le bouton hamburger du pied de page mobile et ouvre le menu de navigation par un glissement vers le
+  haut, sous forme de tiroir de la largeur de la barre. Désactivé par défaut pour que le hamburger reste l'affordance
+  standard ; sans effet sur le pied de page large.
+  */
+  mobileNavMenuSwipeGesture: false,
   /*
   FNXC:ChatModal 2026-07-01-00:00:
   Task-scoped planner chats stay available from each task's Chat tab, but the common Chat feed hides them by default. This project-level opt-in preserves the previous populated-task-chat feed behavior only for operators who request it.

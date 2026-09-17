@@ -1220,12 +1220,15 @@ function AppInner() {
     goalsEnabled,
     /* FN-446: the reused project quick-access selection drives the shared footer's direct row. */
     mobileNavPrimaryItems,
+    /* FN-511 : option mobile de tiroir gestuel — masque le hamburger et arme le geste d'ouverture du menu. */
+    mobileNavMenuSwipeGesture,
     setChatMessageLayoutImmediate,
     setNavigationPlacementImmediate,
     setRightSidebarEnabledImmediate,
     setShowCostBadgeOnCardsImmediate,
     setTaskDetailDefaultTabImmediate,
     setMobileNavPrimaryItemsImmediate,
+    setMobileNavMenuSwipeGestureImmediate,
     toggleAutoMerge,
     togglePlanAutoApprove,
     refresh: refreshAppSettings,
@@ -2382,6 +2385,7 @@ function AppInner() {
     setShowCostBadgeOnCardsImmediate,
     setTaskDetailDefaultTabImmediate,
     setMobileNavPrimaryItemsImmediate,
+    setMobileNavMenuSwipeGestureImmediate,
     reopenOnboardingWithNav,
     viewMode,
     projects,
@@ -2618,6 +2622,16 @@ function AppInner() {
     mailboxUnreadCount,
     mailboxPendingApprovalCount,
     chatHasUnreadResponse,
+    /*
+    FNXC:DesktopNavigation 2026-09-17-16:53:
+    FN-511 : le Chat entre dans la barre du bas par le REGISTRE, plus par une prop dédiée de `DesktopActionBar`. Son
+    ouverture réutilise l'ancrage existant du raccourci clavier (`readShortcutAnchorRect("desktop-nav-chat-panel")`),
+    donc le même propriétaire de popover qu'avant, où que l'hôte rende le bouton (piste de droite, rangée directe ou
+    menu « More »). Sans projet courant l'option est omise, donc aucune entrée n'est construite.
+    */
+    onOpenChatPanel: currentProject ? () => openToolPanel("chat", readShortcutAnchorRect("desktop-nav-chat-panel")) : undefined,
+    chatPanelOpen: toolPanel?.kind === "chat",
+    chatPanelId: CHAT_TOOL_PANEL_ID,
     planningNeedsInput,
   });
   const desktopActiveNavigationId = desktopViewWindows.topmost ?? taskView;
@@ -2862,7 +2876,7 @@ function AppInner() {
         </div>
         {rightDock.dock}
       </div>
-      {wideFooterActive ? <DesktopActionBar entries={desktopNavigationEntries} activeId={desktopActiveNavigationId} tasks={footerTasks} projectId={currentProject?.id} columnFlagsByTaskId={footerColumnFlagsByTaskId} onToggleTerminal={toggleTerminalWithNav} onOpenChatPanel={currentProject ? (anchorRect) => openToolPanel("chat", anchorRect) : undefined} chatPanelOpen={toolPanel?.kind === "chat"} chatPanelId={CHAT_TOOL_PANEL_ID} chatHasUnreadResponse={chatHasUnreadResponse} /> : null}
+      {wideFooterActive ? <DesktopActionBar entries={desktopNavigationEntries} activeId={desktopActiveNavigationId} tasks={footerTasks} projectId={currentProject?.id} columnFlagsByTaskId={footerColumnFlagsByTaskId} onToggleTerminal={toggleTerminalWithNav} /> : null}
       {/*
       FNXC:ToolSurfaces 2026-09-15-16:04:
       FN-426: the three navigation panels that replace right-dock-only hosting. Each mounts its body only while open,
@@ -3037,6 +3051,8 @@ function AppInner() {
         keyboardOpen={mobileNavKeyboardOpen}
         keyboardMetrics={{ keyboardOverlap, viewportHeight, viewportOffsetTop }}
         quickAccessItems={mobileNavPrimaryItems}
+        /* FNXC:MobileNavGesture 2026-09-17-16:53: FN-511 — sous cette option le hamburger n'est pas rendu et le glissement vers le haut ouvre le menu en tiroir. */
+        menuGestureEnabled={mobileNavMenuSwipeGesture}
         /* FNXC:HeaderNavigationOwnership 2026-09-17-02:14: FN-481 — un accès déjà présent dans le Header ne revient ni dans la rangée ni dans « More ». */
         headerOwnedItems={headerOwnedNavigationItems}
         navigationMenuOpen={navigationMenuOpen}
@@ -3155,7 +3171,7 @@ function AppInner() {
         onOpenChatWithPrefill={openChatWithPrefill}
         taskOperations={{ moveTask, deleteTask, mergeTask, revertTask, restoreTaskRevert, retryTask, pauseTask, unpauseTask, bypassReview, resetTask, duplicateTask }}
         deepLink={{ handleDetailClose }}
-        settings={{ prAuthAvailable, autoMerge, showCostBadgeOnCards, taskDetailDefaultTab, chatMessageLayout, navigationPlacement: normalizeNavigationPlacement(navigationPlacement), rightSidebarEnabled, themeMode, colorTheme, uiStyle, dashboardFontScalePct, shadcnCustomColors, resolvedThemeMode, setThemeMode, setColorTheme, setUiStyle, setDashboardFontScalePct, setShadcnCustomColors, setChatMessageLayoutImmediate, setNavigationPlacementImmediate, setRightSidebarEnabledImmediate, setShowCostBadgeOnCardsImmediate, setTaskDetailDefaultTabImmediate, setMobileNavPrimaryItemsImmediate }}
+        settings={{ prAuthAvailable, autoMerge, showCostBadgeOnCards, taskDetailDefaultTab, chatMessageLayout, navigationPlacement: normalizeNavigationPlacement(navigationPlacement), rightSidebarEnabled, themeMode, colorTheme, uiStyle, dashboardFontScalePct, shadcnCustomColors, resolvedThemeMode, setThemeMode, setColorTheme, setUiStyle, setDashboardFontScalePct, setShadcnCustomColors, setChatMessageLayoutImmediate, setNavigationPlacementImmediate, setRightSidebarEnabledImmediate, setShowCostBadgeOnCardsImmediate, setTaskDetailDefaultTabImmediate, setMobileNavPrimaryItemsImmediate, setMobileNavMenuSwipeGestureImmediate }}
         onSettingsClose={handleSettingsCloseWithNav}
         onReopenOnboarding={reopenOnboardingWithNav}
         onOpenWorkflowEditor={openWorkflowEditorWithNav}

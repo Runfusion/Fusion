@@ -303,6 +303,8 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   mailAutoCleanupDays: "general.deleteInboxOutboxMessagesOlderThanThisMany",
   operationalLogRetentionDays: "general.loweringThisWindowMeansReliabilityMetricsChartsAnd",
   mobileNavPrimaryItems: "general.mobileNavPrimaryItemsHint",
+  /* FN-511 : option mobile de tiroir gestuel du pied de page. */
+  mobileNavMenuSwipeGesture: "general.mobileNavMenuSwipeGestureHint",
   showTaskChatsInCommonFeed: "general.showTaskChatsInCommonFeedHint",
   taskPrefix: "general.prefixForNewTaskIDsEGKB",
   maxRecommendationsPerTask: "general.maxRecommendationsPerTaskHelp",

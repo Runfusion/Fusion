@@ -78,7 +78,7 @@ FN-446 réutilise la clé projet `mobileNavPrimaryItems` (aucune migration, aucu
 d'accès rapide de la barre de navigation partagée tablette/ordinateur, et plus seulement un libellé « mobile ».
 Une destination n'est donc promouvable que si elle possède une entrée correspondante dans le registre de navigation
 du pied de page : cette table est la source de vérité unique (identifiant persisté → identifiant d'entrée du registre),
-et `MOBILE_NAV_PRIMARY_SELECTABLE_ITEMS` en est dérivé. Les destinations sans entrée de pied de page (`chat`, `notes`,
+et `MOBILE_NAV_PRIMARY_SELECTABLE_ITEMS` en est dérivé. Les destinations sans entrée de pied de page (`notes`,
 `secrets`, `settings`, `patchnode`, `activity`, `usage`, `projects`, `ideation`) deviennent non éligibles : elles
 restent atteignables par leurs propriétaires existants (barre latérale, feuille « More » mobile, right dock, Réglages)
 mais ne peuvent plus revendiquer un accès rapide qui n'existerait nulle part.
@@ -86,6 +86,7 @@ mais ne peuvent plus revendiquer un accès rapide qui n'existerait nulle part.
 export const MOBILE_NAV_PRIMARY_ITEM_NAVIGATION_ENTRY_IDS = {
   "command-center": "command-center",
   tasks: "board",
+  chat: "chat",
   agents: "agents",
   missions: "missions",
   mailbox: "mailbox",
@@ -113,22 +114,27 @@ export const MOBILE_NAV_PRIMARY_SELECTABLE_ITEMS = MOBILE_NAV_SELECTABLE_ITEMS.f
 );
 
 /*
-FNXC:Navigation 2026-09-17-08:05:
-FN-495 : le défaut est Dashboard, Board, Planning, Missions et le plafond est 4, pas 5. La rangée du pied de page
-compte toujours un bouton « More » final, mais le cinquième créneau appartient désormais au **Chat**, qui reste
-volontairement NON configurable : sur le footer partagé tablette/ordinateur c'est le bouton `desktop-nav-chat-panel`
-du groupe de droite, et sur le shell mobile c'est la ligne « Chat » du menu « Plus » plus le geste de glissement du
-pied de page vers le haut. `chat` reste donc délibérément hors de `MOBILE_NAV_PRIMARY_ITEM_NAVIGATION_ENTRY_IDS` et
-de `MOBILE_NAV_PRIMARY_SELECTABLE_ITEMS` : aucune nouvelle éligibilité, aucune clé de réglage, aucune migration.
-Une sélection persistée de cinq identifiants est simplement tronquée par le résolveur ci-dessous ; la cinquième
-destination bascule dans `omittedItems`, donc elle reste atteignable depuis « Plus ».
+FNXC:Navigation 2026-09-17-16:53:
+FN-511 renverse la décision de FN-495 : le cinquième créneau du pied de page est CONFIGURABLE et `chat` y est une
+destination ordinaire. Trois invariants remplacent l'ancienne protection « chat non configurable » :
+(1) `chat` est éligible comme n'importe quelle autre destination — il entre dans
+    `MOBILE_NAV_PRIMARY_ITEM_NAVIGATION_ENTRY_IDS`, donc l'opérateur peut le placer n'importe où parmi les cinq
+    créneaux, ou l'exclure complètement du pied de page ;
+(2) le résolveur COMPLÈTE toute sélection valide jusqu'au plafond de cinq en puisant, dans l'ordre et sans doublon,
+    dans `DEFAULT_MOBILE_NAV_PRIMARY_ITEMS` qui se termine par `chat`. Une valeur persistée de quatre destinations
+    (l'état d'avant cette tâche) rend donc toujours le Chat en cinquième position : la mise à jour est transparente
+    sans migration de données ni seconde clé de réglage, et le seul moyen d'exclure le Chat du pied de page est de
+    définir cinq destinations explicites ;
+(3) une destination résolue ne peut jamais figurer aussi dans `omittedItems` (celui-ci est strictement le complément
+    de la rangée résolue), donc aucune destination n'est rendue deux fois sur un même hôte : rangée directe OU menu
+    « Plus », jamais les deux.
 `tasks` est l'identifiant persisté historique du Board.
 */
 export const DEFAULT_MOBILE_NAV_PRIMARY_ITEMS: MobileNavSelectableItem[] = [
-  "command-center", "tasks", "planning", "missions",
+  "command-center", "tasks", "planning", "missions", "chat",
 ];
 
-export const MAX_MOBILE_NAV_PRIMARY_ITEMS = 4;
+export const MAX_MOBILE_NAV_PRIMARY_ITEMS = 5;
 
 export interface ResolvedMobileNavPrimaryItems {
   primaryItems: MobileNavSelectableItem[];
@@ -154,7 +160,21 @@ export function resolveMobileNavPrimaryItems(settings?: Pick<ProjectSettings, "m
     }
     return items;
   }, []);
-  const resolved = primaryItems.length > 0 ? primaryItems : [...DEFAULT_MOBILE_NAV_PRIMARY_ITEMS];
+  /*
+  FNXC:Navigation 2026-09-17-16:53:
+  FN-511 : complément SYSTÉMATIQUE, et non plus repli réservé à la sélection vide. Toute sélection valide plus courte
+  que le plafond est complétée par les destinations par défaut manquantes, sans doublon, jusqu'à exactement cinq.
+  Le choix des destinations de complément privilégie la FIN de l'ordre par défaut, qui se termine par `chat`, parce que
+  la raison d'être de ce complément est précisément de préserver le Chat tout à droite du pied de page pour les
+  opérateurs ayant déjà personnalisé quatre raccourcis avant cette tâche (mise à jour transparente, sans migration ni
+  seconde clé). Les destinations retenues sont ensuite ajoutées dans l'ordre par défaut, donc une sélection vide rend
+  exactement `DEFAULT_MOBILE_NAV_PRIMARY_ITEMS`. Le complément est purement au rendu : la valeur persistée de
+  l'opérateur n'est jamais réécrite, et le seul moyen d'exclure `chat` du pied de page est de définir cinq
+  destinations explicites.
+  */
+  const missingDefaults = DEFAULT_MOBILE_NAV_PRIMARY_ITEMS.filter((item) => !primaryItems.includes(item));
+  const completionCount = Math.max(0, MAX_MOBILE_NAV_PRIMARY_ITEMS - primaryItems.length);
+  const resolved = [...primaryItems, ...missingDefaults.slice(Math.max(0, missingDefaults.length - completionCount))];
   return { primaryItems: resolved, omittedItems: MOBILE_NAV_SELECTABLE_ITEMS.filter((id) => !resolved.includes(id)) };
 }
 

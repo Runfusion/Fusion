@@ -670,6 +670,8 @@ interface SettingsModalProps {
   onTaskDetailDefaultTabChange?: (tab: TaskDetailDefaultTab) => void;
   /** Mirrors pending mobile quick-action changes into the app shell immediately. */
   onMobileNavPrimaryItemsChange?: (items: string[]) => void;
+  /* FN-511 : miroir immédiat de l'option mobile de tiroir gestuel dans le shell, avant sauvegarde. */
+  onMobileNavMenuSwipeGestureChange?: (enabled: boolean) => void;
   /** Optional callback when user wants to reopen the onboarding guide */
   onReopenOnboarding?: () => void;
   /** Optional callback to open approvals/mailbox view. */
@@ -945,6 +947,7 @@ export function SettingsModal({
   taskDetailDefaultTab,
   onTaskDetailDefaultTabChange,
   onMobileNavPrimaryItemsChange,
+  onMobileNavMenuSwipeGestureChange,
   onReopenOnboarding,
   onOpenApprovals,
   onOpenWorkflowSettings,
@@ -4084,6 +4087,7 @@ export function SettingsModal({
             prefixError={prefixError}
             setPrefixError={setPrefixError}
             onMobileNavPrimaryItemsChange={onMobileNavPrimaryItemsChange}
+            onMobileNavMenuSwipeGestureChange={onMobileNavMenuSwipeGestureChange}
           />
         );
       case "source-control":

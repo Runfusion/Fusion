@@ -92,8 +92,18 @@ export const generalSearchEntries: SettingsSearchEntry[] = [
     labelKey: "settings.general.mobileNavPrimaryItems",
     labelFallback: "Navigation quick access",
     helpKey: "settings.general.mobileNavPrimaryItemsHint",
-    helpFallback: "Default: Dashboard, Board, Planning, Missions. Choose up to 4 destinations and their order; every other destination — including Chat — remains in More. On mobile, swipe the bottom bar upwards to open Chat.",
-    keywords: ["mobile", "footer", "navigation", "quick access", "planning", "agents", "more"],
+    helpFallback: "Five quick slots shared by desktop and mobile; the fifth sits at the far right of the bottom bar. Any slot you leave undefined is filled from the default order (Dashboard, Board, Planning, Missions, Chat), so define five destinations to keep Chat out of the bottom bar. Every destination you do not pick stays in More.",
+    keywords: ["mobile", "footer", "navigation", "quick access", "planning", "agents", "more", "chat"],
+  },
+  /* FN-511 : nouvelle option projet mobile — tiroir gestuel du pied de page à la place du bouton hamburger. */
+  {
+    sectionId: "general",
+    key: "mobileNavMenuSwipeGesture",
+    labelKey: "settings.general.mobileNavMenuSwipeGesture",
+    labelFallback: "Open the mobile menu with a swipe",
+    helpKey: "settings.general.mobileNavMenuSwipeGestureHint",
+    helpFallback: "On mobile, hides the bottom-bar menu button and opens the destination list by swiping the bottom bar upwards, as a drawer as wide as the bar. No effect on desktop. Default: disabled.",
+    keywords: ["mobile", "geste", "gesture", "swipe", "drawer", "hamburger", "navigation", "menu"],
   },
   {
     sectionId: "general",

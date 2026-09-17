@@ -163,6 +163,8 @@ interface AppModalsProps {
     setShowCostBadgeOnCardsImmediate: (enabled: boolean) => void;
     setTaskDetailDefaultTabImmediate: (tab: TaskDetailDefaultTab) => void;
     setMobileNavPrimaryItemsImmediate: (items: string[]) => void;
+    /* FN-511 : aperçu live de l'option mobile de tiroir gestuel depuis les Réglages en modale. */
+    setMobileNavMenuSwipeGestureImmediate: (enabled: boolean) => void;
   };
   /** Optional override for the settings modal close handler. When provided, this is called instead of modalManager.closeSettings. */
   onSettingsClose?: () => void;
@@ -491,6 +493,7 @@ export function AppModals({
               taskDetailDefaultTab={settings.taskDetailDefaultTab}
               onTaskDetailDefaultTabChange={settings.setTaskDetailDefaultTabImmediate}
               onMobileNavPrimaryItemsChange={settings.setMobileNavPrimaryItemsImmediate}
+              onMobileNavMenuSwipeGestureChange={settings.setMobileNavMenuSwipeGestureImmediate}
               onReopenOnboarding={onReopenOnboarding}
               onOpenApprovals={onOpenApprovals}
               onOpenWorkflowSettings={() => {

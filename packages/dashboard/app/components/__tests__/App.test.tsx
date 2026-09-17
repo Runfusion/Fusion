@@ -2410,9 +2410,8 @@ describe("official dashboard design production wiring", () => {
     });
 
     render(<App />);
-    /* FN-467: Chat is not promotable into the quick-access row, so the phone menu is its single mobile owner. */
-    fireEvent.click(await screen.findByTestId("mobile-menu-trigger"));
-    fireEvent.click(await screen.findByTestId("mobile-more-item-chat"));
+    /* FN-511: Chat is the fifth default quick-access destination, so the pill tab is its single mobile owner here. */
+    fireEvent.click(await screen.findByTestId("mobile-nav-tab-chat"));
     const dialog = await screen.findByRole("dialog", { name: "Chat" });
     fireEvent.click(await within(dialog).findByTestId(`chat-session-${appChatSession.id}`));
     const input = await within(dialog).findByTestId("chat-input");
@@ -2832,24 +2831,32 @@ describe("official dashboard design production wiring", () => {
     expect(screen.getByTestId("dashboard-project-shell").querySelector(".project-content")).toHaveClass("project-content--with-mobile-nav");
     expect(screen.queryByTestId("mobile-nav-tab-more")).toBeNull();
     /*
-     * FN-467: the pill is driven by the project quick-access selection, so this fixture's `["settings", "planning"]`
-     * resolves to Planning alone — Settings is not a promotable destination — and Board is absent because it was not
-     * selected, not because the pill hard-codes four destinations.
+     * FN-511: the pill is driven by the project quick-access selection, whose FIVE slots are completed from the default
+     * order when the persisted value is shorter. This fixture's `["settings", "planning"]` keeps Planning (Settings is
+     * not a promotable destination) and is then completed with the default tail, which ends with Chat.
      */
     expect(Array.from(document.querySelectorAll<HTMLElement>(".mobile-nav-bar--native > .mobile-nav-tab")).map((tab) => tab.dataset.testid)).toEqual([
       "mobile-nav-tab-planning",
+      "mobile-nav-tab-command-center",
+      "mobile-nav-tab-tasks",
+      "mobile-nav-tab-missions",
+      "mobile-nav-tab-chat",
     ]);
     expect(screen.queryByTestId("mobile-nav-tab-settings")).toBeNull();
-    expect(screen.queryByTestId("mobile-nav-tab-tasks")).toBeNull();
   });
 
   /*
    * FN-467 cas (m) : la pill du téléphone et la rangée directe du footer partagé lisent le MÊME réglage projet, dans le
    * même ordre, et l'aperçu avant enregistrement reclasse les deux surfaces.
    */
+  /*
+   * FN-511 : parité stricte. Pour la MÊME valeur de réglage, la pill mobile et la rangée du pied de page large rendent la
+   * même liste de cinq destinations, dans le même ordre — les quatre premières au centre sur le pied de page large et la
+   * cinquième dans sa piste de droite.
+   */
   it.each(["mobile", "desktop"] as const)("aligne la navigation d'accès rapide de %s sur le réglage projet", async (viewport) => {
     mockUseViewportMode.mockReturnValue(viewport);
-    vi.mocked(fetchSettings).mockResolvedValue({ ...defaultSettings, mobileNavPrimaryItems: ["mailbox", "missions", "tasks"], navigationPlacement: "footer" });
+    vi.mocked(fetchSettings).mockResolvedValue({ ...defaultSettings, mobileNavPrimaryItems: ["mailbox", "missions", "tasks", "agents", "planning"], navigationPlacement: "footer" });
 
     render(<App />);
     if (viewport === "mobile") {
@@ -2858,6 +2865,8 @@ describe("official dashboard design production wiring", () => {
         "mobile-nav-tab-mailbox",
         "mobile-nav-tab-missions",
         "mobile-nav-tab-tasks",
+        "mobile-nav-tab-agents",
+        "mobile-nav-tab-planning",
       ]));
     } else {
       await waitFor(() => expect(document.querySelector(".desktop-action-bar__scroller")).not.toBeNull());
@@ -2865,7 +2874,9 @@ describe("official dashboard design production wiring", () => {
         "desktop-nav-mailbox",
         "desktop-nav-missions",
         "desktop-nav-board",
+        "desktop-nav-agents",
       ]));
+      await waitFor(() => expect(document.querySelector(".desktop-action-bar__right")).toContainElement(screen.getByTestId("desktop-nav-planning")));
     }
   });
 
@@ -3680,11 +3691,10 @@ describe("App chat unread response indicator", () => {
       );
     });
 
-    /* FN-467: Chat moved from the fixed pill row into the phone navigation menu; the indicator contract is unchanged. */
-    fireEvent.click(screen.getByTestId("mobile-menu-trigger"));
-    const mobileChatNav = screen.getByTestId("mobile-more-item-chat");
+    /* FN-511: Chat is the fifth default quick-access destination, so it is a direct pill tab; the indicator contract is unchanged. */
+    const mobileChatNav = screen.getByTestId("mobile-nav-tab-chat");
     expect(mobileChatNav).toBeInTheDocument();
-    expect(mobileChatNav.querySelector(".mobile-more-item-icon-dot")).toBeNull();
+    expect(mobileChatNav.querySelector(".mobile-nav-chat-unread-dot")).toBeNull();
   });
 
   it("shows unread indicator for planner assistant messages visible in the common Chat feed", async () => {

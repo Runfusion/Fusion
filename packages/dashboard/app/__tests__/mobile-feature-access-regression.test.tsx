@@ -140,6 +140,13 @@ const createProjects = () => [
   },
 ];
 
+/*
+ * FN-511 : la résolution des accès rapides complète toute sélection plus courte que CINQ par l'ordre par défaut, donc
+ * une sélection d'une seule destination ne laisse plus `tasks` dans le menu. Pour prouver qu'une destination reste
+ * atteignable depuis le menu, il faut une sélection EXPLICITE de cinq destinations qui l'exclut.
+ */
+const FN511_TASKS_EXCLUDED_SELECTION = ["planning", "missions", "agents", "git", "files"];
+
 describe("Mobile Feature Access Regression Guard", () => {
   beforeEach(() => {
     mockViewport("mobile");
@@ -152,7 +159,7 @@ describe("Mobile Feature Access Regression Guard", () => {
    */
   it("keeps List accessible from the official mobile navigation menu", () => {
     const props = createDefaultMobileNavProps();
-    render(<MobileNavBar {...props} view="board" navigationMenuOpen quickAccessItems={["planning"]} />);
+    render(<MobileNavBar {...props} view="board" navigationMenuOpen quickAccessItems={FN511_TASKS_EXCLUDED_SELECTION} />);
 
     expect(screen.queryByTestId("mobile-more-item-list")).toBeNull();
     fireEvent.click(screen.getByTestId("mobile-more-item-tasks"));
@@ -166,7 +173,7 @@ describe("Mobile Feature Access Regression Guard", () => {
    */
   it("garde Liste, Notes et Activité atteignables depuis le menu de la barre du bas", () => {
     const props = createDefaultMobileNavProps();
-    render(<MobileNavBar {...props} view="board" navigationMenuOpen quickAccessItems={["planning"]} />);
+    render(<MobileNavBar {...props} view="board" navigationMenuOpen quickAccessItems={FN511_TASKS_EXCLUDED_SELECTION} />);
 
     fireEvent.click(screen.getByTestId("mobile-more-item-tasks"));
     expect(props.onChangeView).toHaveBeenCalledWith("list");
@@ -194,7 +201,7 @@ describe("Mobile Feature Access Regression Guard", () => {
           onOpenActivityPanel={vi.fn()}
           onOpenNotesPanel={vi.fn()}
         />
-        <MobileNavBar {...navProps} view="board" navigationMenuOpen quickAccessItems={["planning"]} />
+        <MobileNavBar {...navProps} view="board" navigationMenuOpen quickAccessItems={FN511_TASKS_EXCLUDED_SELECTION} />
       </>,
     );
 
@@ -214,7 +221,8 @@ describe("Mobile Feature Access Regression Guard", () => {
    * `mobile-more-item-list` n'existe plus, `header-list-view-btn` reste absent, et le hamburger reste dernier enfant.
    */
   it("rend List dans exactement une surface de navigation selon la sélection", () => {
-    for (const selection of [["tasks", "planning"], ["planning"]]) {
+    /* FN-511 : la seconde sélection doit être explicitement complète, sinon le complément à cinq promeut `tasks`. */
+    for (const selection of [["tasks", "planning"], FN511_TASKS_EXCLUDED_SELECTION]) {
       const props = createDefaultMobileNavProps();
       const view = render(
         <>
@@ -322,9 +330,8 @@ describe("Mobile Feature Access Regression Guard", () => {
     render(<MobileNavBar {...createDefaultMobileNavProps()} navigationMenuOpen />);
 
     /*
-     * FN-495 : le plafond d'accès rapide redescend à quatre parce que le cinquième créneau du pied de page appartient
-     * au Chat, non configurable. Mailbox quitte donc le défaut et redevient une entrée ordinaire du menu — toujours
-     * un seul propriétaire, seulement une autre surface.
+     * FN-511 : le défaut vaut CINQ destinations terminées par le Chat, donc Mailbox reste une entrée ordinaire du menu
+     * — toujours un seul propriétaire, seulement une autre surface.
      */
     expect(screen.queryByTestId("mobile-nav-tab-mailbox")).toBeNull();
     expect(screen.getByTestId("mobile-more-item-mailbox")).toBeDefined();
@@ -337,16 +344,16 @@ describe("Mobile Feature Access Regression Guard", () => {
     expect(screen.getByTestId("mobile-more-item-github")).toBeDefined();
     expect(screen.getByTestId("mobile-more-item-usage")).toBeDefined();
     expect(screen.queryByTestId("mobile-more-item-reliability")).toBeNull();
-    /* FN-467 : Chat n'étant pas promouvable en accès rapide, le menu en est désormais le propriétaire unique. */
-    expect(screen.getByTestId("mobile-more-item-chat")).toBeDefined();
-    expect(screen.queryByTestId("mobile-nav-tab-chat")).toBeNull();
+    /* FN-511 : le Chat est la cinquième destination par défaut, donc un onglet direct — et jamais aussi une entrée du menu. */
+    expect(screen.getByTestId("mobile-nav-tab-chat")).toBeDefined();
+    expect(screen.queryByTestId("mobile-more-item-chat")).toBeNull();
     expect(screen.queryByTestId("mobile-more-item-nodes")).toBeNull();
     expect(screen.getByTestId("mobile-more-item-settings")).toBeDefined();
   });
 
   it("keeps enabled official destinations reachable without persisted footer customization", () => {
     render(<MobileNavBar {...createDefaultMobileNavProps()} navigationMenuOpen showSkillsTab={false} experimentalFeatures={{ insights: false, memoryView: false }} />);
-    /* FN-495 : sans sélection persistée, Missions fait partie des QUATRE destinations par défaut de la rangée directe. */
+    /* FN-511 : sans sélection persistée, Missions fait partie des CINQ destinations par défaut de la rangée directe. */
     expect(screen.getByTestId("mobile-nav-tab-missions")).toBeInTheDocument();
     expect(screen.queryByTestId("mobile-more-item-missions")).toBeNull();
     expect(screen.queryByTestId("mobile-more-item-skills")).toBeNull();
@@ -373,13 +380,19 @@ describe("Mobile Feature Access Regression Guard", () => {
   });
 
   /*
-   * FN-467 : Chat n'est pas une destination promouvable en accès rapide (décision FN-446), il vit donc désormais dans
-   * le menu de navigation du téléphone, qui en est le propriétaire unique. Naviguer depuis le menu referme le menu.
+   * FN-511 : le Chat est une destination ORDINAIRE des cinq créneaux configurables. Il a donc exactement un producteur
+   * par répartition : onglet direct quand il est résolu (cas du défaut), entrée du menu quand une sélection explicite de
+   * cinq destinations l'exclut — jamais les deux. Naviguer depuis le menu referme le menu.
    */
-  it("chat reste joignable une seule fois, depuis le menu de navigation", () => {
+  it("chat reste joignable une seule fois, dans exactement une surface", () => {
+    const asTab = render(<MobileNavBar {...createDefaultMobileNavProps()} view="board" navigationMenuOpen onUiMenuOpenChange={vi.fn()} />);
+    expect(screen.getByTestId("mobile-nav-tab-chat")).toBeInTheDocument();
+    expect(screen.queryByTestId("mobile-more-item-chat")).toBeNull();
+    asTab.unmount();
+
     const props = createDefaultMobileNavProps();
     const onUiMenuOpenChange = vi.fn();
-    render(<MobileNavBar {...props} view="board" navigationMenuOpen onUiMenuOpenChange={onUiMenuOpenChange} />);
+    render(<MobileNavBar {...props} view="board" navigationMenuOpen onUiMenuOpenChange={onUiMenuOpenChange} quickAccessItems={["command-center", "tasks", "missions", "mailbox", "planning"]} />);
 
     expect(screen.queryByTestId("mobile-nav-tab-chat")).toBeNull();
     fireEvent.click(screen.getByTestId("mobile-more-item-chat"));
@@ -603,7 +616,8 @@ describe("Mobile Feature Access Regression Guard", () => {
         view="missions"
         onChangeView={mobileNavOnChangeView}
         navigationMenuOpen
-        quickAccessItems={["planning"]}
+        /* FN-511 : sélection explicite de cinq destinations excluant `tasks` ET `agents`, pour qu'aucun complément ne les promeuve. */
+        quickAccessItems={["planning", "missions", "git", "files", "mailbox"]}
       />,
     );
 

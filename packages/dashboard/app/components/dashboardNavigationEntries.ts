@@ -1,6 +1,6 @@
 import type { ComponentType } from "react";
 import type { LucideProps } from "lucide-react";
-import { Bot, Brain, Clock, Folder, FolderGit2, Gauge, Lightbulb, LayoutGrid, List, Mail, Monitor, PanelsTopLeft, Search, Settings, Sparkles, Target, Type, Workflow, Zap } from "lucide-react";
+import { Bot, Brain, Clock, Folder, FolderGit2, Gauge, Lightbulb, LayoutGrid, List, Mail, MessageSquare, Monitor, PanelsTopLeft, Search, Settings, Sparkles, Target, Type, Workflow, Zap } from "lucide-react";
 import type { PluginDashboardViewEntry } from "../api";
 import type { TaskView } from "../hooks/useViewState";
 import { buildPluginTaskViewId } from "../plugins/pluginViewRegistry";
@@ -22,6 +22,17 @@ export interface DashboardNavigationEntry {
   badge?: number;
   dot?: "pending" | "online";
   onSelect?: () => void | boolean | Promise<void | boolean>;
+  /*
+  FNXC:DesktopNavigation 2026-09-17-16:53:
+  FN-511 : champs d'accessibilité GÉNÉRIQUES pour une entrée qui n'ouvre pas une page mais une surface (panneau,
+  menu). Ils existent pour qu'une telle entrée conserve exactement son contrat d'accessibilité quel que soit
+  l'emplacement où l'hôte la rend (rangée directe, groupe de droite, menu « More »). Ils ne sont spécifiques à aucune
+  destination : `active` sert à toute entrée dont l'état actif ne découle pas de la vue courante.
+  */
+  ariaHasPopup?: "dialog" | "menu";
+  ariaExpanded?: boolean;
+  ariaControls?: string;
+  active?: boolean;
 }
 
 export interface DashboardNavigationRegistryOptions {
@@ -36,6 +47,15 @@ export interface DashboardNavigationRegistryOptions {
   mailboxUnreadCount?: number;
   mailboxPendingApprovalCount?: number;
   chatHasUnreadResponse?: boolean;
+  /*
+  FNXC:DesktopNavigation 2026-09-17-16:53:
+  FN-511 : le Chat est une destination ORDINAIRE de ce registre, donc l'hôte fournit son ouverture et son état comme
+  pour toute autre entrée. L'entrée n'est construite que si `onOpenChatPanel` est fourni, donc aucun bouton orphelin
+  n'apparaît quand aucun projet n'est sélectionné.
+  */
+  onOpenChatPanel?: () => void;
+  chatPanelOpen?: boolean;
+  chatPanelId?: string;
   planningNeedsInput?: boolean;
   /* FN-426: Dev Server is a primary-navigation destination now that the right dock no longer hosts it. */
   showDevServer?: boolean;
@@ -67,6 +87,29 @@ export function buildDashboardNavigationEntries(options: DashboardNavigationRegi
     page("missions", "Missions", "missions", Target),
     ...(options.showAgents ? [page("agents", "Agents", "agents", Bot)] : []),
     { ...page("mailbox", "Mailbox", "mailbox", Mail), badge: options.mailboxUnreadCount, dot: options.view !== "mailbox" && (options.mailboxPendingApprovalCount ?? 0) > 0 ? "pending" as const : undefined },
+    /*
+    FNXC:DesktopNavigation 2026-09-17-16:53:
+    FN-511 renverse FN-495 : le Chat EST une entrée de ce registre. L'invariant qui remplace l'ancienne interdiction est
+    que ce registre en est l'UNIQUE propriétaire sur cet hôte : l'entrée est rendue exactement une fois (rangée directe
+    quand la sélection résolue la contient, sinon menu « More »), et aucun second producteur de
+    `desktop-nav-chat-panel` codé en dur ne peut exister dans la barre. Le Chat ouvre un panneau ancré, pas une page,
+    donc il porte ses attributs de dialogue via les champs génériques ci-dessus ; `aria-controls` n'est déclaré que
+    lorsque la popover est réellement montée.
+    */
+    ...(options.onOpenChatPanel ? [{
+      id: "chat",
+      label: "Chat",
+      icon: MessageSquare,
+      kind: "existing-action" as const,
+      placement: "overflow" as const,
+      testId: "desktop-nav-chat-panel",
+      dot: options.chatHasUnreadResponse && !options.chatPanelOpen ? "pending" as const : undefined,
+      active: options.chatPanelOpen,
+      ariaHasPopup: "dialog" as const,
+      ariaExpanded: Boolean(options.chatPanelOpen),
+      ariaControls: options.chatPanelOpen ? options.chatPanelId : undefined,
+      onSelect: options.onOpenChatPanel,
+    }] : []),
   ];
   const plugins = [...(options.pluginDashboardViews ?? [])].sort((a, b) => (a.view.order ?? Number.MAX_SAFE_INTEGER) - (b.view.order ?? Number.MAX_SAFE_INTEGER)).map((entry) => {
     const view = entry.pluginId === "fusion-plugin-dependency-graph" && entry.view.viewId === "graph" ? "graph" : buildPluginTaskViewId(entry.pluginId, entry.view.viewId);
@@ -113,12 +156,11 @@ export function buildDashboardNavigationEntries(options: DashboardNavigationRegi
   destinations that actually exist under their gates so a gated-off selection leaves no hole. Every other page entry
   keeps its natural relative order in `overflow`; Settings stays `external`.
 
-  FNXC:DesktopNavigation 2026-09-17-08:05:
-  FN-495: the cap is now **4** direct destinations plus the trailing **More** button, because the footer's fifth quick
-  slot belongs to Chat, which is deliberately NOT configurable. Chat has no page entry in this registry and must never
-  gain one: on the shared tablet/desktop footer it is the `desktop-nav-chat-panel` button of the right-hand group, and
-  on the mobile shell it is the More-menu row plus the footer swipe-up gesture. A `chat` entry here would give one
-  destination two owners in the same host.
+  FNXC:DesktopNavigation 2026-09-17-16:53:
+  FN-511 : le plafond est **5** créneaux configurables, et le cinquième est rendu par l'hôte dans la piste de droite du
+  pied de page large — l'emplacement qu'occupait le bouton Chat codé en dur. Le Chat est une entrée ordinaire (voir le
+  bloc ci-dessus), donc il traverse exactement la même classification `direct`/`overflow` que toute autre destination et
+  ne peut apparaître qu'une seule fois par hôte.
   */
   const pages = [...leading, ...trailing];
   const quickAccessIds = options.quickAccessEntryIds ?? resolveNavigationQuickAccessEntryIds();

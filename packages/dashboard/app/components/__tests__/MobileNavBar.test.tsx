@@ -228,28 +228,28 @@ describe("MobileNavBar official mobile shell", () => {
    * FN-467 : la pill n'énumère plus quatre destinations figées ; elle rend les destinations résolues depuis le réglage
    * projet d'accès rapide, dans l'ordre persisté, le hamburger restant toujours le dernier enfant.
    *
-   * FN-495 : le plafond configurable redescend à QUATRE, parce que le cinquième créneau du pied de page appartient au
-   * Chat — ligne `mobile-more-item-chat` du menu « Plus » sur mobile, bouton `desktop-nav-chat-panel` sur le footer
-   * large — et que le Chat n'est jamais un onglet épinglé de la pill.
+   * FN-511 : la rangée vaut CINQ destinations configurables, strictement identiques à celles du pied de page large, et
+   * `chat` y est une destination ordinaire : onglet direct quand il est résolu, ligne `mobile-more-item-chat` sinon,
+   * jamais les deux. Aucune promotion dynamique liée à la largeur ne subsiste.
    */
-  // (d) reproduction du symptôme : sur la base, la sélection projet par défaut ne produisait que 4 onglets sans Board ni Missions.
-  it("rend les quatre destinations par défaut quand aucune sélection n'est fournie", () => {
+  // (d) défaut : cinq onglets, le Chat en dernier, et aucune ligne Chat dupliquée dans le menu.
+  it("rend les cinq destinations par défaut avec le Chat en dernier quand aucune sélection n'est fournie", () => {
     const { container } = render(<OfficialMobileShell />);
     expect(tabTestIds(container)).toEqual([
       "mobile-nav-tab-command-center",
       "mobile-nav-tab-tasks",
       "mobile-nav-tab-planning",
       "mobile-nav-tab-missions",
+      "mobile-nav-tab-chat",
     ]);
-    expect(tabTestIds(container)).toHaveLength(4);
+    expect(tabTestIds(container)).toHaveLength(5);
     expect(container.querySelector(".mobile-nav-bar")).toHaveClass("mobile-nav-bar--native");
     expect(pill(container).lastElementChild).toBe(screen.getByTestId("mobile-menu-trigger"));
     expect(screen.queryByTestId("mobile-nav-tab-more")).toBeNull();
-    // FN-495 : le Chat reste possédé par le menu, jamais par un onglet de la rangée directe.
-    expect(screen.queryByTestId("mobile-nav-tab-chat")).toBeNull();
     expect(Array.from(pill(container).children).every((child) => (child.getAttribute("aria-label") ?? "").length > 0 && child.querySelector("svg"))).toBe(true);
     fireEvent.click(screen.getByTestId("mobile-menu-trigger"));
-    expect(screen.getByTestId("mobile-more-item-chat")).toBeInTheDocument();
+    // FN-511 : le Chat est déjà un onglet, donc il n'apparaît PAS aussi dans le menu.
+    expect(screen.queryByTestId("mobile-more-item-chat")).toBeNull();
     expect(screen.getByTestId("mobile-more-item-mailbox")).toBeInTheDocument();
   });
 
@@ -261,72 +261,112 @@ describe("MobileNavBar official mobile shell", () => {
       "mobile-nav-tab-tasks",
       "mobile-nav-tab-planning",
       "mobile-nav-tab-missions",
+      "mobile-nav-tab-chat",
     ]);
   });
 
   /*
-   * FN-495 : une sélection héritée de cinq destinations éligibles perd sa cinquième, qui reste atteignable depuis le
-   * menu « Plus ». Aucune migration de réglage n'est requise.
+   * FN-511 : NON-RÉGRESSION DE MISE À JOUR. Une valeur persistée de quatre destinations sans `chat` est complétée par
+   * le résolveur, donc la pill rend cinq onglets avec le Chat en dernier, sans ligne `mobile-more-item-chat`.
    */
-  it("tronque une sélection héritée de cinq destinations et bascule la cinquième dans le menu", () => {
-    const { container } = render(<OfficialMobileShell quickAccessItems={["command-center", "tasks", "planning", "missions", "mailbox"]} />);
+  it("complète une sélection héritée de quatre destinations avec le Chat en dernier onglet", () => {
+    const { container } = render(<OfficialMobileShell quickAccessItems={["command-center", "tasks", "planning", "missions"]} />);
     expect(tabTestIds(container)).toEqual([
       "mobile-nav-tab-command-center",
       "mobile-nav-tab-tasks",
       "mobile-nav-tab-planning",
       "mobile-nav-tab-missions",
+      "mobile-nav-tab-chat",
     ]);
     fireEvent.click(screen.getByTestId("mobile-menu-trigger"));
-    expect(screen.getByTestId("mobile-more-item-mailbox")).toBeInTheDocument();
+    expect(screen.queryByTestId("mobile-more-item-chat")).toBeNull();
   });
 
-  // (f) sélection peuplée et réordonnée → exactement ces destinations, dans cet ordre.
+  /*
+   * FN-511 : une sélection EXPLICITE de cinq destinations sans `chat` est rendue telle quelle, et le Chat redevient une
+   * ligne du menu — seul moyen de le retirer du pied de page.
+   */
+  it("rend une sélection explicite de cinq destinations sans Chat et renvoie le Chat dans le menu", () => {
+    const { container } = render(<OfficialMobileShell quickAccessItems={["command-center", "tasks", "missions", "mailbox", "planning"]} />);
+    expect(tabTestIds(container)).toEqual([
+      "mobile-nav-tab-command-center",
+      "mobile-nav-tab-tasks",
+      "mobile-nav-tab-missions",
+      "mobile-nav-tab-mailbox",
+      "mobile-nav-tab-planning",
+    ]);
+    expect(screen.queryByTestId("mobile-nav-tab-chat")).toBeNull();
+    fireEvent.click(screen.getByTestId("mobile-menu-trigger"));
+    expect(screen.getByTestId("mobile-more-item-chat")).toBeInTheDocument();
+  });
+
+  // (f) sélection peuplée et réordonnée → exactement ces destinations, dans cet ordre, puis le complément à cinq.
   it("respecte l'ordre exact d'une sélection personnalisée", () => {
     const { container } = render(<OfficialMobileShell quickAccessItems={["mailbox", "missions", "tasks"]} />);
     expect(tabTestIds(container)).toEqual([
       "mobile-nav-tab-mailbox",
       "mobile-nav-tab-missions",
       "mobile-nav-tab-tasks",
+      "mobile-nav-tab-planning",
+      "mobile-nav-tab-chat",
     ]);
     expect(pill(container).lastElementChild).toBe(screen.getByTestId("mobile-menu-trigger"));
   });
 
-  // (g) doublons, identifiant inconnu et dépassement du plafond de quatre.
-  it("déduplique, rejette l'inconnu et plafonne la rangée à quatre destinations", () => {
+  // (g) doublons, identifiant inconnu et dépassement du plafond de cinq.
+  it("déduplique, rejette l'inconnu et plafonne la rangée à cinq destinations", () => {
     const { container } = render(<OfficialMobileShell quickAccessItems={["tasks", "tasks", "nope", "mailbox", "planning", "missions", "command-center", "agents"]} />);
     expect(tabTestIds(container)).toEqual([
       "mobile-nav-tab-tasks",
       "mobile-nav-tab-mailbox",
       "mobile-nav-tab-planning",
       "mobile-nav-tab-missions",
+      "mobile-nav-tab-command-center",
     ]);
-    expect(screen.queryByTestId("mobile-nav-tab-command-center")).toBeNull();
     expect(screen.queryByTestId("mobile-nav-tab-agents")).toBeNull();
+    expect(screen.queryByTestId("mobile-nav-tab-chat")).toBeNull();
     expect(pill(container).lastElementChild).toBe(screen.getByTestId("mobile-menu-trigger"));
   });
 
-  // (h) sélection entièrement gatée off → aucune coquille de bouton, le hamburger reste seul.
-  it("ne laisse aucune coquille d'onglet quand la sélection est entièrement gatée off", () => {
-    const { container } = render(<OfficialMobileShell quickAccessItems={["memory"]} experimentalFeatures={{}} />);
+  /*
+   * (h) aucune destination rendable → aucune coquille de bouton, le hamburger reste seul. FN-511 : le complément à cinq
+   * rend les destinations par défaut toujours disponibles, donc la seule façon de vider la rangée est de rendre chaque
+   * destination résolue inéligible — ici par la propriété du Header (FN-481) combinée à un drapeau désactivé.
+   */
+  it("ne laisse aucune coquille d'onglet quand aucune destination résolue n'est éligible", () => {
+    const { container } = render(<OfficialMobileShell quickAccessItems={["memory"]} experimentalFeatures={{}} headerOwnedItems={["command-center", "tasks", "planning", "missions", "chat"]} />);
     expect(tabTestIds(container)).toEqual([]);
     expect(pill(container).children).toHaveLength(1);
     expect(pill(container).firstElementChild).toBe(screen.getByTestId("mobile-menu-trigger"));
     fireEvent.click(screen.getByTestId("mobile-menu-trigger"));
-    expect(screen.getByTestId("mobile-more-item-command-center")).toBeInTheDocument();
+    expect(screen.getByTestId("mobile-more-item-mailbox")).toBeInTheDocument();
   });
 
-  // (l) paysage téléphone : la répartition ne dépend pas de la largeur.
-  it("rend la même rangée sur un téléphone en paysage", () => {
+  /*
+   * (l) FN-511 : la répartition ne dépend PLUS de la largeur mesurée. Un téléphone en paysage, puis une tablette très
+   * large, rendent exactement la sélection résolue — aucune destination non configurée n'est promue.
+   */
+  it("rend la même rangée quelle que soit la largeur, sans promouvoir de destination non configurée", () => {
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 844 });
     Object.defineProperty(window, "innerHeight", { configurable: true, value: 390 });
-    const { container } = render(<OfficialMobileShell />);
-    expect(tabTestIds(container)).toEqual([
-      "mobile-nav-tab-command-center",
+    const landscape = render(<OfficialMobileShell quickAccessItems={["mailbox", "missions"]} />);
+    const narrowRow = tabTestIds(landscape.container);
+    expect(narrowRow).toEqual([
+      "mobile-nav-tab-mailbox",
+      "mobile-nav-tab-missions",
       "mobile-nav-tab-tasks",
       "mobile-nav-tab-planning",
-      "mobile-nav-tab-missions",
+      "mobile-nav-tab-chat",
     ]);
-    expect(screen.queryByTestId("mobile-nav-tab-chat")).toBeNull();
+    landscape.unmount();
+
+    mockViewport("tablet");
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1000 });
+    const wide = render(<OfficialMobileShell quickAccessItems={["mailbox", "missions"]} />);
+    expect(tabTestIds(wide.container)).toEqual(narrowRow);
+    expect(screen.queryByTestId("mobile-nav-tab-files")).toBeNull();
+    expect(screen.queryByTestId("mobile-nav-tab-git")).toBeNull();
+    wide.unmount();
   });
 
   /*
@@ -342,7 +382,8 @@ describe("MobileNavBar official mobile shell", () => {
     ["mailbox", "mobile-more-item-mailbox", "mailbox"],
   ])("navigue et referme le menu pour %s rendu dans la surface overflow", (_item, moreTestId, expectedView) => {
     const props = createDefaultProps();
-    render(<OfficialMobileShell {...props} quickAccessItems={["planning", "missions"]} />);
+    /* FN-511 : une sélection EXPLICITE de cinq destinations est nécessaire pour qu'aucun complément ne promeuve la destination testée. */
+    render(<OfficialMobileShell {...props} quickAccessItems={["planning", "missions", "agents", "git", "files"]} />);
     fireEvent.click(screen.getByTestId("mobile-menu-trigger"));
     expect(screen.getByRole("menu", { name: "Navigate" })).toBeInTheDocument();
 
@@ -447,7 +488,7 @@ describe("MobileNavBar official mobile shell", () => {
   it("opens the single navigation menu, routes List, and restores focus on Escape", async () => {
     const user = userEvent.setup();
     const props = createDefaultProps();
-    render(<OfficialMobileShell {...props} quickAccessItems={["planning", "missions"]} />);
+    render(<OfficialMobileShell {...props} quickAccessItems={["planning", "missions", "agents", "git", "files"]} />);
     const trigger = screen.getByTestId("mobile-menu-trigger");
     await user.click(trigger);
     expect(screen.getByRole("menu", { name: "Navigate" })).toHaveClass("mobile-navigation-popover");
@@ -771,7 +812,7 @@ describe("MobileNavBar navigation popover keeps its scroll position", () => {
 
   /* FN-480 : le producteur survivant de List dans le menu est `mobile-more-item-tasks` (slot hors accès rapide). */
   it("focuses once and routes the tapped destination without a navigation-history provider", () => {
-    const navProps = { ...createDefaultProps(), quickAccessItems: ["planning", "missions"] };
+    const navProps = { ...createDefaultProps(), quickAccessItems: ["planning", "missions", "agents", "git", "files"] };
     const view = render(<NavigationHistoryShell navProps={navProps} withProvider={false} mailboxUnreadCount={0} />);
     fireEvent.click(screen.getByTestId("mobile-menu-trigger"));
 
@@ -929,97 +970,10 @@ describe("MobileNavBar exclut les accès déjà possédés par le Header", () =>
 });
 
 /*
-FNXC:MobileNavGesture 2026-09-17-08:05:
-FN-495 : « sur l'interface mobile pour ouvrir le chat plus vite on peut faire le geste de glissement vers le haut du
-footer ». Ces cas pilotent de VRAIS événements tactiles sur `.mobile-nav-bar--native` et prouvent que le geste passe
-par le MÊME propriétaire de navigation que la ligne `mobile-more-item-chat` du menu, sans ajouter d'onglet Chat.
+FNXC:MobileNavGesture 2026-09-17-16:53:
+FN-511 supprime la suite « ouvre le Chat par un glissement du pied de page vers le haut » : le geste n'ouvre plus le
+Chat, donc le sujet de ces cas a disparu du produit. La couverture du geste vit désormais dans
+`MobileNavBar.menu-gesture.test.tsx`, où il ouvre le MENU de navigation derrière l'option projet
+`mobileNavMenuSwipeGesture`.
 */
-describe("MobileNavBar ouvre le Chat par un glissement du pied de page vers le haut", () => {
-  beforeEach(() => {
-    mockViewport("mobile");
-    vi.mocked(fetchScripts).mockReset();
-    vi.mocked(fetchScripts).mockResolvedValue({});
-  });
 
-  function dispatchTouch(target: EventTarget, type: "touchstart" | "touchmove" | "touchend", x: number, y: number, timeStamp: number): void {
-    const event = new Event(type, { bubbles: true, cancelable: true }) as TouchEvent;
-    const touch = { identifier: 3, clientX: x, clientY: y, target } as Touch;
-    Object.defineProperties(event, {
-      touches: { value: type === "touchend" ? [] : [touch] },
-      changedTouches: { value: [touch] },
-      timeStamp: { value: timeStamp },
-    });
-    target.dispatchEvent(event);
-  }
-
-  function swipeUp(start: Element): void {
-    dispatchTouch(start, "touchstart", 40, 300, 0);
-    dispatchTouch(document, "touchmove", 40, 200, 150);
-    dispatchTouch(document, "touchend", 40, 200, 150);
-  }
-
-  // (i) le geste ouvre le Chat exactement une fois.
-  it("appelle onChangeView une seule fois avec chat", () => {
-    const onChangeView = vi.fn();
-    const { container } = render(<OfficialMobileShell onChangeView={onChangeView} />);
-    swipeUp(pill(container));
-    expect(onChangeView).toHaveBeenCalledTimes(1);
-    expect(onChangeView).toHaveBeenCalledWith("chat");
-    // (vi) le geste n'ajoute aucun onglet Chat.
-    expect(screen.queryByTestId("mobile-nav-tab-chat")).toBeNull();
-  });
-
-  // (ii) démarré sur un onglet, le geste ouvre le Chat sans naviguer vers la destination de l'onglet.
-  it("ne navigue pas vers la destination de l'onglet sous le doigt", () => {
-    const onChangeView = vi.fn();
-    render(<OfficialMobileShell onChangeView={onChangeView} />);
-    const tab = screen.getByTestId("mobile-nav-tab-tasks");
-    swipeUp(tab);
-    fireEvent.click(tab);
-    expect(onChangeView).toHaveBeenCalledTimes(1);
-    expect(onChangeView).toHaveBeenCalledWith("chat");
-  });
-
-  // (iii) menu ouvert → geste inerte (le menu possède son propre geste).
-  it("reste inerte quand le menu de navigation est ouvert", () => {
-    const onChangeView = vi.fn();
-    const { container } = render(<MobileNavBar {...createDefaultProps()} onChangeView={onChangeView} navigationMenuOpen onUiMenuOpenChange={vi.fn()} />);
-    swipeUp(pill(container));
-    expect(onChangeView).not.toHaveBeenCalled();
-  });
-
-  // (iv) Chat déjà affiché → aucune seconde navigation.
-  it("reste inerte quand le Chat est déjà affiché", () => {
-    const onChangeView = vi.fn();
-    const { container } = render(<OfficialMobileShell view="chat" onChangeView={onChangeView} />);
-    swipeUp(pill(container));
-    expect(onChangeView).not.toHaveBeenCalled();
-  });
-
-  // Chat possédé par le Header de cet hôte → hook désactivé.
-  it("reste inerte quand le Header possède déjà le Chat", () => {
-    const onChangeView = vi.fn();
-    const { container } = render(<MobileNavBar {...createDefaultProps()} onChangeView={onChangeView} headerOwnedItems={["chat"]} onUiMenuOpenChange={vi.fn()} />);
-    swipeUp(pill(container));
-    expect(onChangeView).not.toHaveBeenCalled();
-  });
-
-  // (v) non-régression : un tap normal sur un onglet navigue toujours.
-  it("laisse un tap normal sur un onglet naviguer comme avant", () => {
-    const onChangeView = vi.fn();
-    render(<OfficialMobileShell onChangeView={onChangeView} />);
-    fireEvent.click(screen.getByTestId("mobile-nav-tab-missions"));
-    expect(onChangeView).toHaveBeenCalledWith("missions");
-  });
-
-  // Un glissement à la souris ne doit JAMAIS ouvrir le Chat : le geste est strictement tactile.
-  it("ignore un glissement à la souris ou au trackpad", () => {
-    const onChangeView = vi.fn();
-    const { container } = render(<OfficialMobileShell onChangeView={onChangeView} />);
-    const surface = pill(container);
-    fireEvent.pointerDown(surface, { pointerId: 1, clientX: 40, clientY: 300, button: 0, isPrimary: true, pointerType: "mouse" });
-    fireEvent.pointerMove(surface, { pointerId: 1, clientX: 40, clientY: 200, pointerType: "mouse" });
-    fireEvent.pointerUp(surface, { pointerId: 1, clientX: 40, clientY: 200, pointerType: "mouse" });
-    expect(onChangeView).not.toHaveBeenCalled();
-  });
-});

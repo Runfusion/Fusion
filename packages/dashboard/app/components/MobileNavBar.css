@@ -166,19 +166,13 @@ FN-463: the official mobile pill stays anchored to the bottom of the screen rega
 .mobile-nav-bar--native {
   --mobile-nav-floating-gap: var(--space-sm);
   /*
-  FNXC:MobileNavDynamicQuickAccess 2026-09-16-19:44:
-  FN-468 : largeur de créneau confortable d'une destination directe, déclarée à partir des jetons et lue par le
-  composant pour décider combien de raccourcis la largeur mesurée peut accueillir. Chaque créneau reste au moins
-  aussi large que deux cibles tactiles minimales, si bien que la rangée élargie ne peut jamais tasser un bouton
-  sous `--touch-target-min-size`.
-  */
-  --mobile-nav-direct-slot-min-width: calc(var(--touch-target-min-size) * 2);
-  /*
-  FNXC:MobileNavGesture 2026-09-17-08:05:
-  FN-495 : la pill est la seule surface qui porte le geste « glisser vers le haut pour ouvrir le Chat ». Elle ne
-  défile pas et n'est pas zoomable, donc `touch-action: none` rend le glissement vertical fiable au lieu de le laisser
-  être absorbé par un défilement ou un geste de navigation du navigateur. Les taps sur les onglets restent intacts :
-  seuls les gestes de défilement/zoom sont retirés, jamais l'activation des boutons.
+  FNXC:MobileNavGesture 2026-09-17-16:53:
+  FN-511 : la pill est la seule surface qui porte le geste « glisser vers le haut », désormais affecté à l'ouverture du
+  MENU de navigation (et non plus du Chat). Elle ne défile pas et n'est pas zoomable, donc `touch-action: none` rend le
+  glissement vertical fiable au lieu de le laisser être absorbé par un défilement ou un geste de navigation du
+  navigateur. Les taps sur les onglets restent intacts : seuls les gestes de défilement/zoom sont retirés, jamais
+  l'activation des boutons. La largeur de créneau `--mobile-nav-direct-slot-min-width` disparaît avec la promotion
+  dynamique : plus aucun sélecteur ni composant ne la consomme.
   */
   touch-action: none;
   left: var(--space-md);
@@ -323,6 +317,24 @@ from the live `--fusion-max-z` ceiling is effective. `.mobile-nav-bar` itself st
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-lg);
   overscroll-behavior: contain;
+}
+
+/*
+FNXC:MobileNavGesture 2026-09-17-16:53:
+FN-511 : modificateur de TIROIR du menu de navigation, actif quand l'option mobile de geste masque le hamburger. Le
+tiroir part du bord supérieur du pied de page (`--mobile-nav-popover-bottom`, hérité de la règle de base) et occupe
+exactement la largeur mesurée de la barre, publiée par le composant ; en l'absence de mesure il retombe sur les mêmes
+marges latérales que la pill. Seules les propriétés de géométrie horizontale et les coins bas sont redéclarés : couches,
+hauteur maximale, défilement et peinture restent ceux de `.mobile-navigation-popover`.
+*/
+.mobile-navigation-popover--footer-drawer {
+  left: var(--mobile-nav-pill-left, var(--space-md));
+  right: auto;
+  width: var(--mobile-nav-pill-width, calc(100vw - (var(--space-md) * 2) - var(--icb-right-offset, 0px)));
+  border-start-start-radius: var(--radius-lg);
+  border-start-end-radius: var(--radius-lg);
+  border-end-start-radius: var(--radius-sm);
+  border-end-end-radius: var(--radius-sm);
 }
 
 .mobile-navigation-popover .mobile-more-item:focus-visible,

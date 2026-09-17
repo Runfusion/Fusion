@@ -85,6 +85,8 @@ export const PROJECT_SECTION_KEYS: Readonly<Record<string, readonly string[]>> =
     "maxRecommendationsPerTask",
     "requireTaskRecommendations",
     "mobileNavPrimaryItems",
+    /* FN-511 : option mobile de tiroir gestuel, réinitialisable avec la section General comme les autres clés de navigation. */
+    "mobileNavMenuSwipeGesture",
     "operationalLogRetentionDays",
     "showTaskChatsInCommonFeed",
     "taskPrefix",

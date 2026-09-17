@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FocusEvent, type KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
-import { ChevronUp, MessageSquare, Terminal } from "lucide-react";
+import { ChevronUp, Terminal } from "lucide-react";
 import type { Task } from "@fusion/core";
 import type { ExecutorColumnFlags } from "../hooks/useExecutorStats";
 import { useExecutorStats } from "../hooks/useExecutorStats";
@@ -17,21 +17,11 @@ export interface DesktopActionBarProps {
   projectId?: string;
   columnFlagsByTaskId?: ReadonlyMap<string, ExecutorColumnFlags>;
   onToggleTerminal?: () => void;
-  /*
-  FNXC:ToolSurfaces 2026-09-15-16:04:
-  FN-426: the bottom bar owns the Chat entry point. It opens the conversation LIST as an anchored panel; picking or
-  creating a conversation hands off to the existing project-scoped window owner, so the footer never becomes a second
-  transcript host. The bar supplies only the trigger and its anchor rect.
-  */
-  onOpenChatPanel?: (anchorRect: DOMRect | null) => void;
-  chatPanelOpen?: boolean;
-  chatPanelId?: string;
-  chatHasUnreadResponse?: boolean;
 }
 
 const MORE_MENU_CLOSE_GRACE_MS = 150;
 
-export function DesktopActionBar({ entries, activeId, tasks, projectId, columnFlagsByTaskId, onToggleTerminal, onOpenChatPanel, chatPanelOpen = false, chatPanelId, chatHasUnreadResponse = false }: DesktopActionBarProps) {
+export function DesktopActionBar({ entries, activeId, tasks, projectId, columnFlagsByTaskId, onToggleTerminal }: DesktopActionBarProps) {
   /* FNXC:NativeNavigation 2026-09-12-00:36: Navigation labels, including its overflow trigger and landmark, must use the shared locale catalog rather than English-only literals. */
   const { t } = useTranslation("app");
   const dashboardWindowFooterRef = useDashboardWindowLandmark("footer");
@@ -80,6 +70,18 @@ export function DesktopActionBar({ entries, activeId, tasks, projectId, columnFl
   };
   const direct = entries.filter((entry) => entry.placement === "direct");
   /*
+  FNXC:DesktopNavigation 2026-09-17-16:53:
+  FN-511 : les cinq créneaux d'accès rapide sont configurables et partagés à l'identique avec la pill mobile. Cette
+  barre rend les QUATRE premiers au centre (scroller + déclencheur More) et le CINQUIÈME, quel qu'il soit, dans la
+  piste de droite — l'emplacement qu'occupait le bouton Chat codé en dur, désormais supprimé. Le plafond vaut 5 parce
+  que c'est le nombre d'emplacements que la barre peut rendre : quatre au centre plus celui de droite. Quand la
+  sélection résolue produit moins de cinq entrées rendables (gates), la piste de droite se limite au Terminal ; sans
+  l'un ni l'autre elle n'est pas rendue du tout, donc aucune coquille vide ne subsiste.
+  */
+  const CENTER_DIRECT_SLOTS = 4;
+  const centerDirect = direct.slice(0, CENTER_DIRECT_SLOTS);
+  const trailingDirect = direct.length > CENTER_DIRECT_SLOTS ? direct[CENTER_DIRECT_SLOTS] : undefined;
+  /*
   FNXC:DesktopNavigation 2026-09-16-18:31:
   FN-469: the operator asked to remove Settings from the bottom-right corner, put it in the More list, and add an
   icon-only Settings action next to the concurrency counter. Settings keeps `placement: "external"` in the shared
@@ -91,10 +93,16 @@ export function DesktopActionBar({ entries, activeId, tasks, projectId, columnFl
   const overflowEntries = settings ? [...overflow, settings] : overflow;
   const capacityText = loading ? t("commandCenter.controls.status.loading", "Loading…") : error ? t("commandCenter.controls.concurrency.error", "Unable to load concurrency settings") : `${stats.runningTaskCount} / ${stats.maxConcurrent}`;
   const capacityLabel = `${t("executor.engineControls", "Engine controls")}: ${capacityText}`;
+  /*
+  FNXC:DesktopNavigation 2026-09-17-16:53:
+  FN-511 : le rendu honore les champs d'accessibilité GÉNÉRIQUES du registre (`active`, `ariaHasPopup`, `ariaExpanded`,
+  `ariaControls`). C'est ce qui permet à une entrée qui ouvre une surface plutôt qu'une page — le Chat aujourd'hui — de
+  conserver exactement son contrat d'accessibilité où que l'hôte la rende : rangée centrale, piste de droite ou menu.
+  */
   const renderButton = (entry: DashboardNavigationEntry, inOverflow = false) => {
     const Icon = entry.icon;
-    const active = entry.id === activeId;
-    return <button key={entry.id} type="button" className={`desktop-action-bar__action${active ? " desktop-action-bar__action--active" : ""}`} aria-label={entry.label} aria-current={active && entry.kind === "main-page" ? "page" : undefined} data-testid={entry.testId} onClick={() => {
+    const active = entry.id === activeId || Boolean(entry.active);
+    return <button key={entry.id} type="button" className={`desktop-action-bar__action${active ? " desktop-action-bar__action--active" : ""}`} aria-label={entry.label} aria-current={active && entry.kind === "main-page" ? "page" : undefined} aria-haspopup={entry.ariaHasPopup} aria-expanded={entry.ariaExpanded} aria-controls={entry.ariaControls} data-testid={entry.testId} onClick={() => {
       const result = entry.onSelect?.();
       if (inOverflow) void Promise.resolve(result).then((accepted) => { if (accepted !== false) closeOverflow(); });
     }}>
@@ -153,7 +161,7 @@ export function DesktopActionBar({ entries, activeId, tasks, projectId, columnFl
     (every chosen destination gated off). Guard the scroller like the More perimeter already guards itself, so removing
     destinations never leaves an empty row shell behind.
     */}
-    <div className="desktop-action-bar__center">{direct.length ? <div className="desktop-action-bar__scroller">{direct.map((entry) => renderButton(entry))}</div> : null}
+    <div className="desktop-action-bar__center">{centerDirect.length ? <div className="desktop-action-bar__scroller">{centerDirect.map((entry) => renderButton(entry))}</div> : null}
     {overflowEntries.length ? <div
       ref={overflowRef}
       className={`desktop-action-bar__more${overflowOpen ? " desktop-action-bar__more--open" : ""}`}
@@ -167,27 +175,14 @@ export function DesktopActionBar({ entries, activeId, tasks, projectId, columnFl
       {overflowOpen ? <div className="desktop-action-bar__menu" role="menu">{overflowEntries.map((entry) => renderButton(entry, true))}</div> : null}
     </div> : null}</div>
     {/*
-    FNXC:DesktopNavigation 2026-09-17-08:05:
-    FN-495 : ce bouton Chat EST la cinquième action rapide du pied de page, et elle n'est délibérément pas
-    configurable. C'est la raison pour laquelle le plafond de `mobileNavPrimaryItems` passe à 4 : la rangée centrale
-    affiche au plus quatre destinations plus « More », et le cinquième créneau reste ici. Cet hôte n'adopte PAS le
-    geste tactile `useFooterSwipeUpGesture` du shell mobile : le pied de page large n'est pas glissable et son unique
-    producteur Chat reste ce bouton.
+    FNXC:DesktopNavigation 2026-09-17-16:53:
+    FN-511 : la piste de droite rend le DERNIER raccourci résolu, quel qu'il soit — le Chat par défaut, Planning si
+    l'opérateur le place en cinquième position — puis le Terminal. Le Chat n'a plus de producteur codé en dur ici : il
+    arrive par `entries`, donc il est rendu exactement une fois sur cet hôte. Cette barre n'adopte pas le geste tactile
+    du shell mobile : le pied de page large n'est pas glissable.
     */}
-    {onOpenChatPanel || onToggleTerminal ? <div className="desktop-action-bar__right">
-      {onOpenChatPanel ? <button
-        type="button"
-        className={`desktop-action-bar__action${chatPanelOpen ? " desktop-action-bar__action--active" : ""}`}
-        aria-label={t("nav.chat", "Chat")}
-        aria-haspopup="dialog"
-        aria-expanded={chatPanelOpen}
-        aria-controls={chatPanelOpen ? chatPanelId : undefined}
-        data-testid="desktop-nav-chat-panel"
-        onClick={(event) => onOpenChatPanel(event.currentTarget.getBoundingClientRect())}
-      >
-        <span className="desktop-action-bar__icon"><MessageSquare aria-hidden="true" />{chatHasUnreadResponse && !chatPanelOpen ? <span className="status-dot status-dot--pending" /> : null}</span>
-        <span>{t("nav.chat", "Chat")}</span>
-      </button> : null}
+    {trailingDirect || onToggleTerminal ? <div className="desktop-action-bar__right">
+      {trailingDirect ? renderButton(trailingDirect) : null}
       {onToggleTerminal ? <button type="button" className="desktop-action-bar__action" aria-label={t("nav.terminal", "Terminal")} data-testid="desktop-nav-terminal" onClick={onToggleTerminal}>
         <span className="desktop-action-bar__icon"><Terminal aria-hidden="true" /></span>
         <span>{t("nav.terminal", "Terminal")}</span>
