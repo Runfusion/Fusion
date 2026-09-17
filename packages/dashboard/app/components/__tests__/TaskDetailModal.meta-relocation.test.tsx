@@ -115,6 +115,12 @@ describe("Task Detail metadata relocation", () => {
     expect(document.querySelector(".detail-hidden-file-input")).toBeInTheDocument();
   });
 
+  /*
+  FNXC:TaskDetailTabRelocation 2026-09-17-11:48:
+  FN-510 moved AI merge review reconciliation out of the Definition tab into Details. This case now
+  renders on Details so its "outside the tab bar, after it in the document" assertion keeps covering
+  the real location instead of the retired one.
+  */
   it("keeps AI merge reconciliation in permanent content outside the tabs", () => {
     renderHost(makeTask({
       aiMergeReviewReconciliation: {
@@ -125,7 +131,7 @@ describe("Task Detail metadata relocation", () => {
         consecutiveCleanApprovals: 0,
         correctivePasses: 0,
       },
-    }));
+    }), { initialTab: "details" });
 
     const reconciliation = screen.getByRole("region", { name: "AI merge review reconciliation" });
     const tabs = document.querySelector<HTMLElement>(".detail-tabs");
