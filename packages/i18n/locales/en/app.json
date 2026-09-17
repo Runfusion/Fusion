@@ -6460,7 +6460,8 @@
       "qmdInstallUnavailable": "qmd install finished, but qmd is still unavailable",
       "saveBeforeCompacting": "Save or discard edits before compacting this file.",
       "saveBeforeSwitching": "Save or discard the current edits before switching files.",
-      "chatContextBudgetHelp": "Bounds the chat static context: oversized memory becomes a bounded heading index and chat sessions use the curated chat toolset, so agent chat fits 64K-window models. Disable to restore unbounded memory injection and the full tool set (pre-RUFU-135 behavior). Default: enabled."
+      "chatContextBudgetHelp": "Bounds the chat static context: oversized memory becomes a bounded heading index and chat sessions use the curated chat toolset, so agent chat fits 64K-window models. Disable to restore unbounded memory injection and the full tool set (pre-RUFU-135 behavior). Default: enabled.",
+      "preOverflowCompactionHelp": "Compacts the chat context at ~80% of the model window before a turn would overflow it, preventing single-token replies at the context wall. Default: enabled."
     },
     "merge": {
       "abort": "Abort",

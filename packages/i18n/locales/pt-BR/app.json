@@ -6910,7 +6910,8 @@
       "qmdInstallUnavailable": "A instalação do qmd foi concluída, mas o qmd ainda está indisponível",
       "saveBeforeCompacting": "",
       "saveBeforeSwitching": "",
-      "chatContextBudgetHelp": ""
+      "chatContextBudgetHelp": "",
+      "preOverflowCompactionHelp": ""
     },
     "backups": {
       "02": "0 2 * * *",

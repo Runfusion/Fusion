@@ -6418,7 +6418,8 @@
       "qmdInstallUnavailable": "",
       "saveBeforeCompacting": "",
       "saveBeforeSwitching": "",
-      "chatContextBudgetHelp": ""
+      "chatContextBudgetHelp": "",
+      "preOverflowCompactionHelp": ""
     },
     "merge": {
       "abort": "",
