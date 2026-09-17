@@ -457,7 +457,8 @@ describe("ensureContextWithinCompactionThreshold", () => {
     const { sink, events } = makeAuditSink();
     const result = await ensureContextWithinCompactionThreshold(session, { tokenCap: undefined, audit: { sink, sessionId: "s-1" } });
     expect(result.compacted).toBe(true);
-    expect(result.contextTokens).toBe(102400);
+    // Post-compaction whole-request count is returned (and audited), not the pre-compaction 102400.
+    expect(result.contextTokens).toBe(500);
     expect(result.threshold).toBe(102400);
     expect(compact).toHaveBeenCalledTimes(1);
     expect(compact.mock.calls[0][0]).toBe(COMPACTION_FALLBACK_INSTRUCTIONS);
@@ -714,7 +715,8 @@ describe("ensureContextWithinCompactionThreshold", () => {
     });
     const result = await ensureContextWithinCompactionThreshold(session, { tokenCap: undefined });
     expect(result.compacted).toBe(true);
-    expect(result.contextTokens).toBe(105000);
+    // Zero-usage shape: the returned count is the POST-compaction whole request, not the stale 105000.
+    expect(result.contextTokens).toBe(500);
     expect(compact).toHaveBeenCalledTimes(1);
   });
 
@@ -963,7 +965,7 @@ describe("ensureContextWithinCompactionThreshold", () => {
     const { sink } = makeAuditSink(true);
     await expect(
       ensureContextWithinCompactionThreshold(session, { tokenCap: undefined, audit: { sink, sessionId: "hostile" } }),
-    ).resolves.toMatchObject({ compacted: true, contextTokens: 120000, threshold: 102400 });
+    ).resolves.toMatchObject({ compacted: true, contextTokens: 500, threshold: 102400 });
     // The sink was actually reached (the row was attempted) and its throw absorbed.
     expect(sink.recordRunAuditEvent).toHaveBeenCalledTimes(1);
   });
