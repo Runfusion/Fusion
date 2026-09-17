@@ -71,11 +71,16 @@ describe("startFusionToolBridge", () => {
   it("requires a session capability and action-gate authorization before executing a custom tool", async () => {
     const execute = vi.fn().mockResolvedValue({ text: "done" });
     const bridge = await startFusionToolBridge(
-      [{ name: "fn_task_update", execute }],
+      [
+        { name: "fn_task_update", execute },
+        { name: "fn_not_runnable" },
+      ],
       { actionGateContext: { permissionPolicy: { rules: { task_agent_mutation: "allow" } } }, allowUnrestricted: true },
     );
     expect(bridge).not.toBeNull();
     if (!bridge) return;
+    expect(bridge.toolCount).toBe(1);
+    expect(bridge.toolNames).toEqual(["fn_task_update"]);
 
     const url = bridgeEnv(bridge, "FUSION_GROK_TOOL_BRIDGE_URL");
     const token = bridgeEnv(bridge, "FUSION_TOOL_BRIDGE_CAPABILITY");
