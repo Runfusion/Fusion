@@ -55,6 +55,7 @@ import {
   formatChatImageAttachmentHints,
   readChatAttachmentContents,
 } from "./chat-attachment-content.js";
+import { buildProvisionalChatTitle } from "./chat-title.js";
 import { buildTaskPlannerChatContext, TASK_PLANNER_CHAT_CONTEXT_PROMPT_GUIDANCE } from "./task-planner-chat-context.js";
 import { formatTaskPlannerChatMetrics } from "./task-planner-chat-metrics.js";
 import { emitWorkflowSseEvent, type WorkflowSseEventType } from "./sse.js";
@@ -2704,16 +2705,31 @@ export class ChatManager {
   The CLI-agent-backed branch returns before the model loop, so when the generation block lived
   inline after the agent-model resolution those conversations stayed "Untitled" forever.
   The store write is AWAITED inside the detached task because `ChatStore.updateSession` is what
-  emits `chat:session:updated`; awaiting it is how a failed write can fall back to the truncated
-  title instead of silently leaving the session unnamed. The task itself is never awaited by the
-  caller: message sending and response generation must never wait on the summary.
+  emits `chat:session:updated`. The task itself is never awaited by the caller: message sending
+  and response generation must never wait on the summary.
   Only `{ title }` is written — no other session field is touched on the way through.
+
+  FNXC:ChatTitleGeneration 2026-09-17-11:42:
+  FN-505 splits naming into two stages because this seam alone could never satisfy the operator
+  requirement "the conversation is named before the agent replies": `summarizeTitle` builds a full
+  pi agent session before emitting a character, so its write structurally landed after the main
+  response had begun. Stage one is now `applyProvisionalSessionTitle`, AWAITED before any model
+  work on all three `sendMessage` paths (model loop, CLI agent, and the `mentions` dispatch that
+  previously returned before the title was ever scheduled, leaving those conversations unnamed
+  forever). This detached stage two only REFINES that name.
+  Because the provisional title is already persisted, the refinement writes CONDITIONALLY: it
+  re-reads the session immediately before writing and keeps quiet unless the stored title is still
+  exactly the provisional one (or still empty). That compare-and-set is what keeps a manual rename
+  landing mid-generation authoritative. For the same reason the old "retry with the truncated
+  fallback" branch is REMOVED: the truncated title is now written up front, so retrying it here
+  would only emit a second, redundant `chat:session:updated`.
   */
   private scheduleSessionTitleGeneration(
     sessionId: string,
     content: string,
     modelProvider?: string,
     modelId?: string,
+    provisionalTitle: string | null = null,
   ): void {
     const titleSettingsPromise = this.getChatModelSettings();
     /*
@@ -2722,36 +2738,61 @@ export class ChatManager {
     settings only inside this detached title operation so message sending never waits on title work.
     */
     void (async () => {
-      const fallbackTitle = content.trim().slice(0, 60).trim();
-      let title = fallbackTitle;
+      let title: string | null = null;
       try {
         const titleLanguageTarget = resolveTaskOutputLanguage(await titleSettingsPromise, content.trim());
-        const generated = await summarizeTitle(
+        // The summarizer always receives the RAW first message, never the provisional title.
+        title = await summarizeTitle(
           content.trim(),
           this.rootDir,
           modelProvider,
           modelId,
           titleLanguageTarget,
         );
-        title = generated ?? fallbackTitle;
       } catch {
-        title = fallbackTitle;
+        // A failed summary keeps the already-persisted provisional title.
+        return;
       }
-      if (!title) return;
+      const refined = title?.trim();
+      if (!refined || refined === provisionalTitle) return;
       try {
-        await this.chatStore.updateSession(sessionId, { title });
+        // Compare-and-set: never clobber a title the user (or anything else) wrote meanwhile.
+        const current = await this.chatStore.getSession(sessionId);
+        const storedTitle = current?.title ?? null;
+        const storedIsProvisional = provisionalTitle !== null && storedTitle === provisionalTitle;
+        if (!storedIsProvisional && !this.sessionNeedsGeneratedTitle(storedTitle)) return;
+        await this.chatStore.updateSession(sessionId, { title: refined });
       } catch {
-        // A failed write must not escape the detached task. Retry once with the deterministic
-        // truncated fallback (when it differs), then swallow.
-        if (fallbackTitle && fallbackTitle !== title) {
-          try {
-            await this.chatStore.updateSession(sessionId, { title: fallbackTitle });
-          } catch {
-            // Swallow: title generation is best-effort and never blocks the conversation.
-          }
-        }
+        // Swallow: title refinement is best-effort and never blocks the conversation.
       }
     })();
+  }
+
+  /*
+  FNXC:ChatTitleGeneration 2026-09-17-11:42:
+  Stage one of FN-505's two-stage naming: a deterministic title derived from the first user message,
+  written and broadcast BEFORE any model work so the header never shows "Untitled conversation"
+  while the assistant is already replying. The store write is awaited (it is what emits
+  `chat:session:updated`), but a failing write is swallowed: naming is a nicety and must never fail
+  an accepted send. Only `{ title }` is written, and only when the session has no usable title yet.
+  The current title is passed in rather than re-read: `sendMessage` already holds the session, and
+  this write sits on the latency-critical path that must complete before any model work starts.
+  */
+  private async applyProvisionalSessionTitle(
+    sessionId: string,
+    content: string,
+    currentTitle: string | null | undefined,
+  ): Promise<string | null> {
+    try {
+      if (!this.sessionNeedsGeneratedTitle(currentTitle)) return null;
+      const title = buildProvisionalChatTitle(content);
+      if (!title) return null;
+      await this.chatStore.updateSession(sessionId, { title });
+      return title;
+    } catch {
+      // Swallow: an unnamed conversation is preferable to a rejected send.
+      return null;
+    }
   }
 
   /** True when a session carries no usable title yet and should be auto-named. */
@@ -2807,13 +2848,19 @@ export class ChatManager {
       FNXC:ChatTitleGeneration 2026-09-16-05:27:
       CLI-agent-backed chat returns before the model loop, so it must reach the shared title seam
       here or the conversation is never named. `summarizeTitle` already supports an absent model.
+
+      FNXC:ChatTitleGeneration 2026-09-17-11:42:
+      FN-505: the provisional name is awaited BEFORE `runner.ensureSession`, so the PTY handshake
+      (and everything it waits on) can no longer delay the conversation getting a readable name.
       */
       if (this.sessionNeedsGeneratedTitle(session.title)) {
+        const provisionalTitle = await this.applyProvisionalSessionTitle(sessionId, content, session.title);
         this.scheduleSessionTitleGeneration(
           sessionId,
           content,
           session.modelProvider ?? undefined,
           session.modelId ?? undefined,
+          provisionalTitle,
         );
       }
       try {
@@ -2974,7 +3021,29 @@ export class ChatManager {
         return;
       }
 
+      /*
+      FNXC:ChatTitleGeneration 2026-09-17-11:42:
+      FN-505: write the provisional title here — after the user message is persisted and echoed, and
+      before ANY model work on either remaining path. Placing it above the `mentions` dispatch is
+      what closes the real hole: that branch returns before the title was ever scheduled, so a first
+      message mentioning an agent left the conversation permanently unnamed.
+      */
+      const needsTitle = this.sessionNeedsGeneratedTitle(session.title);
+      const provisionalTitle = needsTitle
+        ? await this.applyProvisionalSessionTitle(sessionId, content, session.title)
+        : null;
+
       if (mentions.length > 0 && this.activeGenerations.get(sessionId)?.generationId === generationId) {
+        if (needsTitle) {
+          // The mentions path has no resolved chat model of its own; use the session's own pair.
+          this.scheduleSessionTitleGeneration(
+            sessionId,
+            content,
+            session.modelProvider ?? undefined,
+            session.modelId ?? undefined,
+            provisionalTitle,
+          );
+        }
         await this.dispatchMentionedAgentReplies({
           session,
           sessionId,
@@ -2995,8 +3064,6 @@ export class ChatManager {
       failureContextProvider = effectiveModelProvider;
       failureContextModelId = effectiveModelId;
       let hasExplicitAgentRuntimeModel = false;
-
-      const needsTitle = this.sessionNeedsGeneratedTitle(session.title);
 
       // Ensure engine is loaded
       await ensureEngineReady();
@@ -3084,10 +3151,16 @@ export class ChatManager {
         failureContextModelId = effectiveModelId;
       }
 
-      // Auto-generate chat title on first message if session has no title.
+      // Refine the already-persisted provisional chat title in the background.
       // Run after the agent fetch so the title-summarizer uses the agent's model.
       if (needsTitle) {
-        this.scheduleSessionTitleGeneration(sessionId, content, effectiveModelProvider, effectiveModelId);
+        this.scheduleSessionTitleGeneration(
+          sessionId,
+          content,
+          effectiveModelProvider,
+          effectiveModelId,
+          provisionalTitle,
+        );
       }
 
       if (mentions.length > 0) {

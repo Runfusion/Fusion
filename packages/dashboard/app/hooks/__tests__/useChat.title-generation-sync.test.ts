@@ -20,7 +20,7 @@ vi.mock("../../api", () => ({
   fetchChatMessages: vi.fn(),
   updateChatSession: vi.fn(),
   deleteChatSession: vi.fn(),
-  streamChatResponse: vi.fn(),
+  streamChatResponse: vi.fn(() => ({ close: vi.fn() })),
   attachChatStream: vi.fn(),
   cancelChatResponse: vi.fn(),
   fetchAgents: vi.fn().mockResolvedValue([]),
@@ -53,6 +53,7 @@ const mockFetchChatSessions = vi.mocked(apiModule.fetchChatSessions);
 const mockFetchChatSession = vi.mocked(apiModule.fetchChatSession);
 const mockFetchChatMessages = vi.mocked(apiModule.fetchChatMessages);
 const mockAttachChatStream = vi.mocked(apiModule.attachChatStream);
+const mockStreamChatResponse = vi.mocked(apiModule.streamChatResponse);
 
 function makeSession(overrides: Partial<ChatSession> = {}): ChatSession {
   return {
@@ -107,6 +108,8 @@ describe("useChat — generated title reaches the open conversation", () => {
     localStorage.clear();
     sseHandlers.current = {};
     mockFetchChatMessages.mockResolvedValue({ messages: [] } as never);
+    // A stream that never completes keeps `isStreaming` true for the duration of a case.
+    mockStreamChatResponse.mockReturnValue({ close: vi.fn() } as never);
   });
 
   async function renderWithSelectionInFlight(untitled = makeSession()) {
@@ -205,6 +208,72 @@ describe("useChat — generated title reaches the open conversation", () => {
 
     await waitFor(() => expect(result.current.activeSession?.id).toBe("session-B"));
     expect(result.current.activeSession?.title).toBe("Fil B");
+  });
+
+  /*
+   * (k) FN-505: naming is now a TWO-STAGE write — a provisional title lands before the assistant
+   * replies, then the refined one replaces it. Both updates arrive mid-stream, which is exactly the
+   * moment the operator reported the header going stale, so both must reach the header AND the list
+   * row without disturbing the live thread.
+   */
+  it("applies both the provisional and the refined title while streaming", async () => {
+    const untitled = makeSession();
+    mockFetchChatSessions.mockResolvedValue({ sessions: [untitled] } as never);
+    mockFetchChatSession.mockResolvedValue({ session: untitled } as never);
+
+    const { result } = renderHook(() => useChat("proj-1"));
+    await waitFor(() => expect(result.current.sessions).toHaveLength(1));
+    await act(async () => {
+      result.current.selectSession("session-001");
+    });
+    await waitFor(() => expect(result.current.activeSession?.id).toBe("session-001"));
+
+    act(() => {
+      result.current.sendMessage("Corrige le titre de la conversation");
+    });
+    await waitFor(() => expect(result.current.isStreaming).toBe(true));
+    const messageCount = result.current.messages.length;
+
+    emitSessionUpdated(makeSession({ title: "Corrige le titre de la conversation" }));
+    await waitFor(() => {
+      expect(result.current.activeSession?.title).toBe("Corrige le titre de la conversation");
+      expect(result.current.sessions[0]?.title).toBe("Corrige le titre de la conversation");
+    });
+
+    emitSessionUpdated(makeSession({ title: "Titre de conversation" }));
+    await waitFor(() => {
+      expect(result.current.activeSession?.title).toBe("Titre de conversation");
+      expect(result.current.sessions[0]?.title).toBe("Titre de conversation");
+    });
+
+    // The live thread is untouched: still the same session, still streaming, same messages.
+    expect(result.current.activeSession?.id).toBe("session-001");
+    expect(result.current.isStreaming).toBe(true);
+    expect(result.current.messages).toHaveLength(messageCount);
+  });
+
+  /*
+   * (l) The two-stage write also has to survive the FN-455 deferred path: a provisional title can
+   * land while the authoritative selection snapshot is still in flight, with the refined one right
+   * behind it. The refined title must win after reconciliation, and still nothing but `title` crosses.
+   */
+  it("ends on the refined title when the provisional one crosses the deferred path", async () => {
+    const { result, pending } = await renderWithSelectionInFlight();
+
+    emitSessionUpdated(makeSession({ title: "Corrige le titre de la conversation", pinnedAt: "2026-09-16T01:00:00.000Z" }));
+    emitSessionUpdated(makeSession({ title: "Titre de conversation", pinnedAt: "2026-09-16T01:00:00.000Z" }));
+
+    await act(async () => {
+      pending.resolve(makeSession({ title: null, pinnedAt: null }));
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(result.current.activeSession?.title).toBe("Titre de conversation");
+      expect(result.current.sessions[0]?.title).toBe("Titre de conversation");
+    });
+    // Only `title` crosses the deferred reapplication.
+    expect(result.current.activeSession?.pinnedAt).toBeNull();
   });
 
   /*

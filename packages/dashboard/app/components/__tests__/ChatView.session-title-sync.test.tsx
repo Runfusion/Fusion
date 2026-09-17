@@ -44,6 +44,19 @@ function useChatWith(active: ChatSessionInfo, others: ChatSessionInfo[] = []) {
   setupMockChat({ ...defaultChatState, activeSession: active, sessions, filteredSessions: sessions });
 }
 
+/** Same as {@link useChatWith}, with the assistant actively streaming its reply. */
+function useStreamingChatWith(active: ChatSessionInfo, others: ChatSessionInfo[] = []) {
+  const sessions = [active, ...others];
+  setupMockChat({
+    ...defaultChatState,
+    activeSession: active,
+    sessions,
+    filteredSessions: sessions,
+    isStreaming: true,
+    streamingText: "Je regarde ça",
+  });
+}
+
 function headerTitleText() {
   return document.querySelector(".chat-view .view-header__title-content")?.textContent ?? "";
 }
@@ -166,6 +179,82 @@ describe("ChatView active-session identity sync", () => {
 
     expect(screen.getByTestId("chat-thread-title-trigger")).toHaveTextContent("Titre généré");
     expect(screen.getByTestId("chat-session-session-001")).toHaveTextContent("Titre généré");
+  });
+
+  /*
+  FNXC:ChatWindows 2026-09-17-11:42:
+  FN-505 symptom acceptance on the rendered surfaces. The operator's report is specifically about
+  WHEN the name appears: the header still read "Untitled conversation" while the assistant was
+  already replying. Naming is now two-stage, so both the provisional and the refined title must
+  reach the header AND the conversation list row while `isStreaming` is true — on both breakpoints.
+  jsdom measures every host at zero width, so the breakpoint is forced through the rect stub.
+  */
+  it.each([["desktop", 1200], ["mobile", 720]] as const)(
+    "shows both naming stages in the header and the list row while streaming on %s",
+    async (mode, width) => {
+      const restoreRect = withMeasuredHost(width);
+      const restoreViewport = mockViewportMode(mode === "mobile" ? "mobile" : "desktop");
+      const other = session("session-002", "Beta");
+      useStreamingChatWith(session("session-001", null), [other]);
+      const element = () => <ChatView projectId="proj-123" addToast={vi.fn()} />;
+      const { rerender } = await renderWithAct(element());
+      await userEvent.click(screen.getByTestId("chat-session-session-001"));
+      expect(screen.getByTestId("chat-thread-title-trigger")).toHaveTextContent("Untitled conversation");
+
+      // Stage one: the provisional title lands while the reply is still streaming.
+      useStreamingChatWith(session("session-001", "Corrige le titre de la conversation"), [other]);
+      await act(async () => { rerender(element()); });
+      expect(screen.getByTestId("chat-thread-title-trigger")).toHaveTextContent("Corrige le titre de la conversation");
+      expect(screen.getByTestId("chat-session-session-001")).toHaveTextContent("Corrige le titre de la conversation");
+      expect(screen.getByTestId("chat-thread-title-trigger")).not.toHaveTextContent("Untitled conversation");
+
+      // Stage two: the refined title replaces it, still mid-stream.
+      useStreamingChatWith(session("session-001", "Titre de conversation"), [other]);
+      await act(async () => { rerender(element()); });
+      expect(screen.getByTestId("chat-thread-title-trigger")).toHaveTextContent("Titre de conversation");
+      expect(screen.getByTestId("chat-session-session-001")).toHaveTextContent("Titre de conversation");
+
+      restoreViewport.mockRestore();
+      restoreRect();
+    },
+  );
+
+  /*
+  FNXC:ChatWindows 2026-09-17-11:42:
+  FN-505 (o): detached chat windows render the session identity their host hands them, so each naming
+  stage must re-notify the host even when `title` is the only field that changed.
+  */
+  it("re-notifies a detached window host for each naming stage", async () => {
+    const onActiveSessionChange = vi.fn();
+    const initial = session("session-001", null);
+    useStreamingChatWith(initial);
+    const renderDedicated = () => (
+      <ChatView
+        projectId="proj-123"
+        addToast={vi.fn()}
+        floating
+        dedicatedConversation
+        initialDirectSession={initial}
+        initialDirectSessionNonce={1}
+        persistChatPreferences={false}
+        onActiveSessionChange={onActiveSessionChange}
+      />
+    );
+    const { rerender } = await renderWithAct(renderDedicated());
+    onActiveSessionChange.mockClear();
+
+    useStreamingChatWith(session("session-001", "Corrige le titre de la conversation"));
+    await act(async () => { rerender(renderDedicated()); });
+    expect(onActiveSessionChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({ id: "session-001", title: "Corrige le titre de la conversation" }),
+    );
+
+    useStreamingChatWith(session("session-001", "Titre de conversation"));
+    await act(async () => { rerender(renderDedicated()); });
+    expect(onActiveSessionChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({ id: "session-001", title: "Titre de conversation" }),
+    );
+    expect(headerTitleText()).toContain("Titre de conversation");
   });
 
   it("does not re-notify the host when no rendered identity field changed", async () => {

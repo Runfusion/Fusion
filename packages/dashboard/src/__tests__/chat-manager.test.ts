@@ -3584,8 +3584,9 @@ describe("ChatManager.sendMessage", () => {
       // Assert - summarizeTitle was called
       expect(mockSummarizeTitle).toHaveBeenCalled();
 
-      // Assert - session was updated with truncated content (first 60 chars)
+      // FN-505: an unusable summary writes nothing; the provisional truncated title already stands.
       expect(mockChatStore.updateSession).toHaveBeenCalledWith("chat-001", { title: "A".repeat(60) });
+      expect(mockChatStore.updateSession).toHaveBeenCalledTimes(1);
     } finally {
       vi.useRealTimers();
     }
@@ -3644,12 +3645,13 @@ describe("ChatManager.sendMessage", () => {
       const chatManager = createChatManager();
       await expect(chatManager.sendMessage("chat-001", "Store is offline right now")).resolves.toBeUndefined();
 
-      await vi.waitFor(() =>
-        expect(mockChatStore.updateSession).toHaveBeenCalledWith("chat-001", { title: "Write Fails" }),
-      );
-      // The single truncated retry also runs, and both failures are swallowed.
+      // FN-505: the provisional write runs first and fails; the refinement still attempts its own
+      // write afterwards, and both failures are swallowed.
       await vi.waitFor(() =>
         expect(mockChatStore.updateSession).toHaveBeenCalledWith("chat-001", { title: "Store is offline right now" }),
+      );
+      await vi.waitFor(() =>
+        expect(mockChatStore.updateSession).toHaveBeenCalledWith("chat-001", { title: "Write Fails" }),
       );
       await new Promise((resolve) => setTimeout(resolve, 10));
       expect(unhandled).not.toHaveBeenCalled();
@@ -3693,6 +3695,287 @@ describe("ChatManager.sendMessage", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  /*
+  FNXC:ChatTitleGeneration 2026-09-17-11:42:
+  FN-505 symptom acceptance. The original defect is an ORDERING defect: the conversation header still
+  read "Untitled conversation" while the assistant was already streaming, because the only title
+  write happened behind `summarizeTitle`, which builds a full pi agent session first. A green suite
+  that does not record WHEN the title is written cannot prove the fix, so every case below asserts
+  the provisional write's position in a shared call-order array.
+  */
+  describe("provisional title before any model work (FN-505)", () => {
+    function titleWrites(): string[] {
+      return mockChatStore.updateSession.mock.calls
+        .filter((call) => typeof call[1]?.title === "string" || call[1]?.title === null)
+        .map((call) => call[1].title as string);
+    }
+
+    // (a) Model-loop path: the name exists before the chat agent is even created.
+    it("writes the provisional title before creating the chat agent", async () => {
+      const order: string[] = [];
+      mockChatStore.updateSession.mockImplementation(async (_id: string, input: any) => {
+        if (input?.title !== undefined) order.push(`updateSession:${input.title}`);
+      });
+      mockSummarizeTitle.mockResolvedValue(null);
+      __setCreateFnAgent(async () => {
+        order.push("createFnAgent");
+        return {
+          session: { prompt: vi.fn().mockResolvedValue(undefined), dispose: vi.fn(), state: { messages: [] } },
+        };
+      });
+
+      const chatManager = createChatManager();
+      await chatManager.sendMessage("chat-001", "Fix the broken conversation header");
+
+      expect(order[0]).toBe("updateSession:Fix the broken conversation header");
+      expect(order).toContain("createFnAgent");
+      expect(order.indexOf("updateSession:Fix the broken conversation header")).toBeLessThan(
+        order.indexOf("createFnAgent"),
+      );
+      // Only `{ title }` crosses the title seam.
+      expect(mockChatStore.updateSession).toHaveBeenCalledWith("chat-001", {
+        title: "Fix the broken conversation header",
+      });
+    });
+
+    // (b) CLI-agent path: it returns before the model loop, so it needs its own early write.
+    it("writes the provisional title before the CLI runner opens its session", async () => {
+      const order: string[] = [];
+      mockChatStore.updateSession.mockImplementation(async (_id: string, input: any) => {
+        if (input?.title !== undefined) order.push(`updateSession:${input.title}`);
+      });
+      mockSummarizeTitle.mockResolvedValue(null);
+      mockChatStore.getSession.mockReturnValue({
+        id: "chat-001",
+        agentId: "agent-001",
+        status: "active",
+        projectId: "project-a",
+        cliExecutorAdapterId: "adapter-1",
+      });
+      const runner = {
+        ensureSession: vi.fn().mockImplementation(async () => {
+          order.push("runner.ensureSession");
+          return "cli-session-1";
+        }),
+        send: vi.fn().mockImplementation(async () => {
+          order.push("runner.send");
+          return "sent";
+        }),
+        getTokenUsageSnapshot: vi.fn().mockResolvedValue(undefined),
+        getSessionStats: vi.fn().mockResolvedValue(undefined),
+      };
+
+      const chatManager = createChatManager();
+      chatManager.setCliChatRunner(runner as any, "project-a");
+      await chatManager.sendMessage("chat-001", "Start the CLI agent conversation");
+
+      expect(order[0]).toBe("updateSession:Start the CLI agent conversation");
+      expect(order.indexOf("updateSession:Start the CLI agent conversation")).toBeLessThan(
+        order.indexOf("runner.ensureSession"),
+      );
+    });
+
+    // (c) Mentions path: it returned BEFORE title scheduling, so these conversations were never named.
+    it("names a conversation whose first message mentions an agent", async () => {
+      const order: string[] = [];
+      mockChatStore.updateSession.mockImplementation(async (_id: string, input: any) => {
+        if (input?.title !== undefined) order.push(`updateSession:${input.title}`);
+      });
+      mockSummarizeTitle.mockResolvedValue(null);
+      mockChatStore.addMessage.mockImplementation((_sessionId: string, input: any) => ({
+        id: input.role === "user" ? "user-msg" : "assistant-msg",
+        role: input.role,
+        sessionId: "chat-001",
+        content: input.content,
+        createdAt: "2026-09-17T00:00:00.000Z",
+      }));
+      __setCreateResolvedAgentSession((async () => {
+        order.push("createResolvedAgentSession");
+        return {
+          session: {
+            prompt: vi.fn().mockResolvedValue(undefined),
+            dispose: vi.fn(),
+            state: { messages: [{ role: "assistant", content: "On it" }] },
+          },
+        };
+      }) as any);
+
+      const chatManager = createChatManager();
+      await chatManager.sendMessage("chat-001", "@Avery please review the merge queue");
+
+      expect(titleWrites()).toEqual(["@Avery please review the merge queue"]);
+      expect(order[0]).toBe("updateSession:@Avery please review the merge queue");
+      expect(order).toContain("createResolvedAgentSession");
+      expect(order.indexOf("updateSession:@Avery please review the merge queue")).toBeLessThan(
+        order.indexOf("createResolvedAgentSession"),
+      );
+      // The mentions path also reaches the detached refinement it previously never scheduled.
+      await vi.waitFor(() => expect(mockSummarizeTitle).toHaveBeenCalled());
+    });
+
+    // (g) A whitespace-only stored title is not a title.
+    it("treats a whitespace-only stored title as unnamed", async () => {
+      mockChatStore.getSession.mockReturnValue({
+        id: "chat-001",
+        agentId: "agent-001",
+        status: "active",
+        title: "   ",
+      });
+      mockSummarizeTitle.mockResolvedValue(null);
+      __setCreateFnAgent(async () => ({
+        session: { prompt: vi.fn().mockResolvedValue(undefined), dispose: vi.fn(), state: { messages: [] } },
+      }));
+
+      const chatManager = createChatManager();
+      await chatManager.sendMessage("chat-001", "Blank titled session gets named");
+
+      expect(mockChatStore.updateSession).toHaveBeenCalledWith("chat-001", {
+        title: "Blank titled session gets named",
+      });
+    });
+
+    // (h) An already-named conversation is never renamed automatically.
+    it("writes nothing when the session already has a title", async () => {
+      mockChatStore.getSession.mockReturnValue({
+        id: "chat-001",
+        agentId: "agent-001",
+        status: "active",
+        title: "Operator chosen name",
+      });
+      __setCreateFnAgent(async () => ({
+        session: { prompt: vi.fn().mockResolvedValue(undefined), dispose: vi.fn(), state: { messages: [] } },
+      }));
+
+      const chatManager = createChatManager();
+      await chatManager.sendMessage("chat-001", "A later message must not rename anything");
+
+      expect(mockChatStore.updateSession).not.toHaveBeenCalled();
+      expect(mockSummarizeTitle).not.toHaveBeenCalled();
+    });
+
+    // (d) The background refinement replaces the provisional title once it lands.
+    it("replaces the provisional title with the refined one", async () => {
+      const writes: string[] = [];
+      mockChatStore.updateSession.mockImplementation(async (_id: string, input: any) => {
+        if (typeof input?.title === "string") writes.push(input.title);
+      });
+      mockSummarizeTitle.mockResolvedValue("Merge queue triage");
+      __setCreateFnAgent(async () => ({
+        session: { prompt: vi.fn().mockResolvedValue(undefined), dispose: vi.fn(), state: { messages: [] } },
+      }));
+
+      const chatManager = createChatManager();
+      await chatManager.sendMessage("chat-001", "Please triage the merge queue for me");
+
+      await vi.waitFor(() => expect(writes).toEqual([
+        "Please triage the merge queue for me",
+        "Merge queue triage",
+      ]));
+      // The summarizer always sees the raw first message, never the provisional title.
+      expect(mockSummarizeTitle).toHaveBeenCalledWith(
+        "Please triage the merge queue for me",
+        "/tmp/test",
+        undefined,
+        undefined,
+        expect.objectContaining({ mode: "english", locale: "en" }),
+      );
+    });
+
+    // (e) A manual rename landing mid-generation is never clobbered.
+    it("does not overwrite a manual rename that lands during generation", async () => {
+      const writes: string[] = [];
+      mockChatStore.updateSession.mockImplementation(async (_id: string, input: any) => {
+        if (typeof input?.title === "string") writes.push(input.title);
+      });
+      // The compare-and-set re-read observes the operator's own name, not the provisional one.
+      mockChatStore.getSession.mockImplementation(() => ({
+        id: "chat-001",
+        agentId: "agent-001",
+        status: "active",
+        title: writes.length > 0 ? "Operator renamed this" : undefined,
+      }));
+      let resolveSummary: ((title: string) => void) | undefined;
+      mockSummarizeTitle.mockReturnValue(new Promise<string>((resolve) => { resolveSummary = resolve; }));
+      __setCreateFnAgent(async () => ({
+        session: { prompt: vi.fn().mockResolvedValue(undefined), dispose: vi.fn(), state: { messages: [] } },
+      }));
+
+      const chatManager = createChatManager();
+      await chatManager.sendMessage("chat-001", "Investigate the flaky merge test");
+
+      expect(writes).toEqual(["Investigate the flaky merge test"]);
+      resolveSummary!("Flaky merge test");
+      await vi.waitFor(() => expect(mockSummarizeTitle).toHaveBeenCalled());
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Exactly one write: the provisional one. The rename wins.
+      expect(writes).toEqual(["Investigate the flaky merge test"]);
+    });
+
+    // (f) A rejecting or empty summary writes nothing more and never escapes the detached task.
+    it("writes nothing more when the summarizer rejects or returns nothing", async () => {
+      const unhandled = vi.fn();
+      process.on("unhandledRejection", unhandled);
+      try {
+        for (const summary of [Promise.reject(new Error("summarizer down")), Promise.resolve(null), Promise.resolve("   ")]) {
+          vi.clearAllMocks();
+          mockChatStore.getSession.mockReturnValue({ id: "chat-001", agentId: "agent-001", status: "active" });
+          mockChatStore.addMessage.mockReturnValue({ id: "msg-001", sessionId: "chat-001", role: "assistant", content: "" });
+          mockChatStore.getMessages.mockReturnValue([]);
+          const writes: string[] = [];
+          mockChatStore.updateSession.mockImplementation(async (_id: string, input: any) => {
+            if (typeof input?.title === "string") writes.push(input.title);
+          });
+          mockSummarizeTitle.mockReturnValue(summary);
+          __setCreateFnAgent(async () => ({
+            session: { prompt: vi.fn().mockResolvedValue(undefined), dispose: vi.fn(), state: { messages: [] } },
+          }));
+
+          const chatManager = createChatManager();
+          await chatManager.sendMessage("chat-001", "Summarizer is unhappy today");
+          await vi.waitFor(() => expect(mockSummarizeTitle).toHaveBeenCalled());
+          await new Promise((resolve) => setTimeout(resolve, 10));
+
+          expect(writes).toEqual(["Summarizer is unhappy today"]);
+        }
+        expect(unhandled).not.toHaveBeenCalled();
+      } finally {
+        process.off("unhandledRejection", unhandled);
+      }
+    });
+
+    // The detached refinement is never awaited: sending finishes while the summary is still in flight.
+    it("returns from sendMessage while the summary is still pending", async () => {
+      let settled = false;
+      mockSummarizeTitle.mockReturnValue(new Promise<string>(() => undefined));
+      mockChatStore.updateSession.mockResolvedValue(undefined);
+      __setCreateFnAgent(async () => ({
+        session: { prompt: vi.fn().mockResolvedValue(undefined), dispose: vi.fn(), state: { messages: [] } },
+      }));
+
+      const chatManager = createChatManager();
+      await chatManager.sendMessage("chat-001", "The send must not wait for the summary").then(() => { settled = true; });
+
+      expect(settled).toBe(true);
+      expect(mockChatStore.updateSession).toHaveBeenCalledWith("chat-001", {
+        title: "The send must not wait for the summary",
+      });
+    });
+
+    // (i) An empty first message must never persist an empty title.
+    it("writes nothing when the first message carries no usable text", async () => {
+      mockSummarizeTitle.mockResolvedValue(null);
+      __setCreateFnAgent(async () => ({
+        session: { prompt: vi.fn().mockResolvedValue(undefined), dispose: vi.fn(), state: { messages: [] } },
+      }));
+
+      const chatManager = createChatManager();
+      await chatManager.sendMessage("chat-001", "   \n\t ");
+
+      expect(titleWrites()).toEqual([]);
+    });
   });
 
   describe("native runtime interruption", () => {
