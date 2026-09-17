@@ -3519,7 +3519,6 @@
     "outbox": "Caixa de saída",
     "outboxTab": "Caixa de saída",
     "pending": "Pendente",
-    "refreshTitle": "Atualizar",
     "reply": "Responder",
     "replyButton": "Responder",
     "replyingTo": "Respondendo a",
@@ -3590,7 +3589,11 @@
       "taskWedge": "{{taskId}} requer atenção",
       "duplicateDecision": "{{taskId}}: decisão de duplicata",
       "planningClarification": "Esclarecimento de planejamento"
-    }
+    },
+    "filter": "Filtrar",
+    "filterTitle": "Filtrar a caixa de entrada",
+    "filterMenuLabel": "Escopo da caixa de entrada",
+    "filterPendingApprovalsLabel": "Filtrar a caixa de entrada — {{count}} aprovações pendentes"
   },
   "memory": {
     "auditChecksTitle": "Verificações de auditoria",

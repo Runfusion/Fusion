@@ -913,11 +913,20 @@ is the card's paint, not a cover.
     flex-direction: column;
   }
 
+  /*
+  FNXC:IconOnlyButtonCanon 2026-09-16-19:05:
+  FN-471 scinde cette règle : les boutons ÉTIQUETÉS gardent le plancher tactile de 44px, tandis que le
+  bouton icône seule du bandeau de blocage externe rejoint la boîte d'icône canonique (36px).
+  */
   .external-block-notice__actions .btn,
-  .external-block-notice__actions .btn-icon,
   .plan-approval-notice__actions .btn {
     min-width: var(--touch-target-min-size);
     min-height: var(--touch-target-min-size);
+  }
+
+  .external-block-notice__actions .btn-icon {
+    min-width: var(--icon-button-size-mobile);
+    min-height: var(--icon-button-size-mobile);
   }
 
   .plan-approval-notice,

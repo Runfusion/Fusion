@@ -189,7 +189,16 @@ export function Header({
   const isMobile = mode === "mobile";
   const isTablet = mode === "tablet";
   const isCompact = isMobile || isTablet;
-  const hideFullNav = isMobile && mobileNavEnabled;
+  /*
+  FNXC:Navigation 2026-09-16-19:44:
+  FN-468 : sous 1024 px — téléphone ET tablette — la pill flottante `MobileNavBar` est l'unique propriétaire de
+  la navigation primaire. Le Header doit donc retirer sa navigation de vues sur toute la bande compacte, pas
+  seulement sur téléphone : laisser les raccourcis de vues du Header pendant que la pill est montée recréerait
+  exactement les DEUX surfaces primaires simultanées que FN-419 a supprimées. `mobileNavEnabled` est alimenté par
+  le prédicat de shell partagé `isMobileShellMode`, et `hideHeaderViewNav` reste faux sur tablette (la colonne de
+  gauche n'y existe plus), si bien qu'un seul `#header-workflow-slot` est rendu.
+  */
+  const hideFullNav = isCompact && mobileNavEnabled;
   /*
   FNXC:Navigation 2026-06-19-00:00:
   When experimental left sidebar navigation is active on tablet/desktop, Header must suppress its view-toggle and More-views trigger so there is one canonical non-mobile navigation surface and no orphaned chevron remains.

@@ -3,15 +3,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   getViewportMode,
   isFullScreenSheetViewport,
+  isMobileShellMode,
   isMobileViewport,
   isTabletTouchViewport,
   MOBILE_MEDIA_QUERY,
   publishViewportMode,
+  TABLET_MEDIA_QUERY,
   useViewportMode,
   VIEWPORT_MODE_DATASET_KEY,
 } from "../useViewportMode";
 
-const TABLET_MEDIA_QUERY = "(min-width: 769px) and (max-width: 1024px)";
 const MOBILE_WIDTH_MEDIA_QUERY = "(max-width: 768px)";
 const FULL_SCREEN_SHEET_WIDTH_MEDIA_QUERY = "(max-width: 767.98px)";
 const MOBILE_HEIGHT_MEDIA_QUERY = "(max-height: 480px)";
@@ -150,7 +151,7 @@ describe("useViewportMode", () => {
         matches:
           query === MOBILE_MEDIA_QUERY || query === MOBILE_HEIGHT_MEDIA_QUERY
             ? true
-            : query === MOBILE_WIDTH_MEDIA_QUERY || query === "(min-width: 769px) and (max-width: 1024px)"
+            : query === MOBILE_WIDTH_MEDIA_QUERY || query === TABLET_MEDIA_QUERY
               ? false
               : false,
         media: query,
@@ -527,5 +528,95 @@ describe("useViewportMode", () => {
 
     expect(consoleErrorSpy).not.toHaveBeenCalled();
     consoleErrorSpy.mockRestore();
+  });
+
+  /*
+  FN-468 : la frontière ordinateur passe de « 1024 px inclus dans tablet » à « 1024 px est desktop ».
+  Ces cas pilotent un vrai évaluateur de media queries en fonction de la largeur/hauteur pour que la
+  requête du classificateur soit exercée telle qu'elle est écrite, sans réécrire le littéral ici.
+  */
+  describe("FN-468 mobile shell boundary", () => {
+    function installMeasuredMedia(width: number, height = 800) {
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
+      Object.defineProperty(window, "innerHeight", { configurable: true, value: height });
+      const evaluate = (query: string): boolean =>
+        query.split(",").some((clause) =>
+          clause.split(" and ").every((term) => {
+            const match = /\((max|min)-(width|height):\s*([\d.]+)px\)/.exec(term.trim());
+            if (!match) return false;
+            const value = match[2] === "width" ? width : height;
+            const threshold = Number(match[3]);
+            return match[1] === "max" ? value <= threshold : value >= threshold;
+          }),
+        );
+      vi.stubGlobal(
+        "matchMedia",
+        vi.fn((query: string) => ({
+          matches: evaluate(query),
+          media: query,
+          onchange: null,
+          addEventListener: vi.fn(),
+          removeEventListener: vi.fn(),
+          addListener: vi.fn(),
+          removeListener: vi.fn(),
+          dispatchEvent: vi.fn(() => true),
+        })),
+      );
+    }
+
+    // Cas (a) : les bornes du mode téléphone ne bougent pas.
+    it("keeps phone portrait and short landscape phones in mobile mode", () => {
+      stubScreen(390, 844);
+      installMeasuredMedia(375, 812);
+      expect(getViewportMode()).toBe("mobile");
+
+      stubScreen(844, 390);
+      installMeasuredMedia(844, 390);
+      expect(getViewportMode()).toBe("mobile");
+    });
+
+    // Cas (b) : 1023 px reste tablet, 1024 px devient desktop.
+    it("moves the desktop boundary to 1024px inclusive", () => {
+      const originalMaxTouchPoints = Object.getOwnPropertyDescriptor(navigator, "maxTouchPoints");
+      Object.defineProperty(navigator, "maxTouchPoints", { configurable: true, value: 1 });
+      try {
+        stubScreen(768, 1024);
+        installMeasuredMedia(768, 1024);
+        expect(getViewportMode()).toBe("tablet");
+
+        stubScreen(1024, 768);
+        installMeasuredMedia(1023, 768);
+        expect(getViewportMode()).toBe("tablet");
+
+        installMeasuredMedia(1024, 768);
+        expect(getViewportMode()).toBe("desktop");
+
+        stubScreen(1920, 1080);
+        installMeasuredMedia(1440, 900);
+        expect(getViewportMode()).toBe("desktop");
+      } finally {
+        if (originalMaxTouchPoints) Object.defineProperty(navigator, "maxTouchPoints", originalMaxTouchPoints);
+      }
+    });
+
+    // Cas (c) : la géométrie tactile tablette n'est pas affectée par le déplacement de frontière.
+    it("leaves tablet touch geometry intact at 1000px", () => {
+      const originalMaxTouchPoints = Object.getOwnPropertyDescriptor(navigator, "maxTouchPoints");
+      Object.defineProperty(navigator, "maxTouchPoints", { configurable: true, value: 1 });
+      try {
+        stubScreen(1024, 768);
+        installMeasuredMedia(1000, 768);
+        expect(getViewportMode()).toBe("tablet");
+        expect(isTabletTouchViewport()).toBe(true);
+      } finally {
+        if (originalMaxTouchPoints) Object.defineProperty(navigator, "maxTouchPoints", originalMaxTouchPoints);
+      }
+    });
+
+    it("owns the navigation shell for phone and tablet, never for desktop", () => {
+      expect(isMobileShellMode("mobile")).toBe(true);
+      expect(isMobileShellMode("tablet")).toBe(true);
+      expect(isMobileShellMode("desktop")).toBe(false);
+    });
   });
 });

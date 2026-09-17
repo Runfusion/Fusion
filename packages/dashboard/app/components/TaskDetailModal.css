@@ -246,11 +246,40 @@ La borne de hauteur est par ailleurs divisée par deux (18rem -> 9rem, mobile 12
 `What this delivers` et `Before -> After` restent visibles sans long défilement. Le confinement
 reste volontaire pour les surfaces flottantes (`.activity-view-menu`, `position: fixed`) et pour
 l'axe inline des bandeaux d'onglets (`overscroll-behavior-inline: contain`).
+
+FNXC:TaskDetailDefinition 2026-09-16-19:45:
+FN-472: tant que la description déborde de sa borne de hauteur, sa barre de défilement doit rester
+VISIBLE, afin que l'opérateur sache immédiatement qu'il reste du contenu masqué sous la ligne de
+coupe. Le thème global (`*::-webkit-scrollbar`) ne peint que le pouce sur une piste transparente et
+s'efface hors défilement sur les plateformes à barres « overlay »; on surcharge donc localement la
+piste ET le pouce avec des couleurs issues des tokens via `color-mix(...)`. `scrollbar-gutter:
+stable` réserve la gouttière pour qu'aucun texte ne se décale à l'apparition de la barre. On
+conserve `overflow-y: auto` (et non `scroll`): sans débordement, aucune barre parasite n'apparaît.
+La largeur reste héritée du thème global, pour ne pas coder de pixels en dur dans un CSS de
+composant.
 */
 .detail-definition-description-body {
   max-block-size: var(--task-detail-description-max-block-size, 9rem);
   overflow-y: auto;
   overscroll-behavior: auto;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text-muted) 55%, transparent) color-mix(in srgb, var(--border) 45%, transparent);
+}
+
+.detail-definition-description-body::-webkit-scrollbar-track {
+  background: color-mix(in srgb, var(--border) 45%, transparent);
+  border-radius: var(--radius-sm);
+}
+
+.detail-definition-description-body::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text-muted) 55%, transparent);
+  border-radius: var(--radius-sm);
+  min-block-size: var(--space-lg);
+}
+
+.detail-definition-description-body::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
 }
 
 .detail-definition-description-body:focus-visible {
@@ -2448,8 +2477,8 @@ stretches it on touch layouts, preserving a clear tap target without creating a 
 /* === Modal Edit Mode Styles === */
 
 /*
-FNXC:TaskDetailHeaderActions 2026-09-13-11:59:
-The canonical Task Detail header keeps lifecycle actions, secondary overflow, host utilities, and close/back controls in one non-draggable, wrapping group. Every icon/action control inherits btn/btn-icon/btn-sm geometry and an accessible name; only the semantic mobile Back action stays outside that stack, while danger actions retain a distinct border treatment.
+FNXC:TaskDetailHeaderActions 2026-09-16-18:07 (FN-470, supersedes 2026-09-13-11:59):
+The canonical Task Detail header group now holds at most two controls: the "…" Actions overflow trigger and the close control. Lifecycle actions, Edit task and Pop out moved into that overflow, so no direct header button carries a danger tone any more and the danger border treatment was removed with its last producer. Every remaining icon control still inherits btn/btn-icon/btn-sm geometry and an accessible name; only the semantic mobile Back action stays outside that stack.
 */
 .modal-header-actions {
   display: flex;
@@ -2463,11 +2492,6 @@ The canonical Task Detail header keeps lifecycle actions, secondary overflow, ho
 .task-detail-header-action {
   flex: 0 0 auto;
   touch-action: manipulation;
-}
-
-.task-detail-header-action--danger {
-  border-style: double;
-  color: var(--color-error);
 }
 
 .detail-actions-dropdown--header {
@@ -2485,7 +2509,7 @@ The canonical Task Detail header keeps lifecycle actions, secondary overflow, ho
   display: inline-flex;
   align-items: center;
   gap: var(--space-xs);
-  min-height: calc(var(--space-2xl) + var(--space-xs));
+  min-height: var(--icon-button-size-mobile);
   padding: 0 var(--space-sm);
   font-size: calc(var(--space-sm) + var(--space-xs) * 0.625);
   line-height: 1;
@@ -3094,9 +3118,10 @@ Feed's copy and expansion actions share one tokenized overlay group so the bound
     -webkit-overflow-scrolling: touch;
   }
 
+  /* FNXC:IconOnlyButtonCanon 2026-09-16-19:05: boîte mobile canonique, en remplacement du calcul bespoke. */
   .task-detail-mobile-back {
-    min-height: calc(var(--space-2xl) + var(--space-xs));
-    min-width: calc(var(--space-2xl) + var(--space-xs));
+    min-height: var(--icon-button-size-mobile);
+    min-width: var(--icon-button-size-mobile);
   }
 
 }
@@ -3645,9 +3670,15 @@ Les pills d’onglets occupent l’espace intérieur disponible dans chaque hôt
     padding-block: var(--ui-density-2xs);
   }
 
+  /*
+  FNXC:IconOnlyButtonCanon 2026-09-16-19:05:
+  FN-471 : ces contrôles d'en-tête sont des boutons icône seule et ne peuvent donc plus grossir jusqu'à
+  `--ui-touch-height`. Ils adoptent la boîte mobile canonique partagée avec la loupe du bandeau et les autres
+  icônes encadrées de l'application. Le jeton `--ui-touch-height` reste utilisé par les onglets et l'en-tête.
+  */
   :is(.task-detail-header-action, .modal-close, .task-detail-header-back-btn) {
-    min-inline-size: var(--ui-touch-height);
-    min-block-size: var(--ui-touch-height);
+    min-inline-size: var(--icon-button-size-mobile);
+    min-block-size: var(--icon-button-size-mobile);
   }
 
   /*

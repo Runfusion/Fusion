@@ -17,7 +17,7 @@ const BREAKPOINTS: BreakpointCase[] = [
 
 const MOBILE_WIDTH_MEDIA_QUERY = "(max-width: 768px)";
 const MOBILE_HEIGHT_MEDIA_QUERY = "(max-height: 480px)";
-const TABLET_MEDIA_QUERY = "(min-width: 769px) and (max-width: 1024px)";
+const TABLET_MEDIA_QUERY = "(min-width: 769px) and (max-width: 1023.98px)";
 const originalScreen = window.screen;
 
 function extractMediaBlocks(content: string, pattern: RegExp): string {

@@ -883,7 +883,6 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
   const [detailLoading, setDetailLoading] = useState(false);
   const isMobile = useViewportMode() === "mobile";
   const { pushNav } = useNavigationHistoryContext();
-  const [showArchived, setShowArchived] = useState(false);
   const [isCreateMenuOpen, setIsCreateMenuOpen] = useState(false);
   const [isCreatingMission, setIsCreatingMission] = useState(false);
   const [editingMissionId, setEditingMissionId] = useState<string | null>(null);
@@ -3537,7 +3536,15 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                       <option value="active">{t("missions.statusActive", "Active")}</option>
                       <option value="blocked">{t("missions.statusBlocked", "Blocked")}</option>
                       <option value="complete">{t("missions.statusComplete", "Complete")}</option>
-                      <option value="archived">{t("missions.statusArchived", "Archived")}</option>
+                      {/*
+                      FNXC:StandardizedMissionLayout 2026-09-16-15:50:
+                      FN-465 retire l’archivage des missions de l’interface : le statut « Archived » n’est plus une
+                      transition proposée. L’option n’est rendue que pour une mission DÉJÀ archivée, et désactivée, afin
+                      d’afficher fidèlement sa valeur courante sans la réétiqueter silencieusement.
+                      */}
+                      {missionForm.status === "archived" ? (
+                        <option value="archived" disabled>{t("missions.statusArchived", "Archived")}</option>
+                      ) : null}
                     </select>
                     <label className="mission-checkbox">
                       <input
@@ -5226,25 +5233,15 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
 
   const renderMissionListContent = () => {
     /*
-    FNXC:StandardizedMissionLayout 2026-09-13-16:30:
-    Archived missions are a list concern rather than a second destination. The filter stays with the collection while the one Plan New Mission action remains in the shared header at every breakpoint.
+    FNXC:StandardizedMissionLayout 2026-09-16-15:50:
+    FN-465 retire l’archivage des missions de l’interface : il n’existe plus de filtre « Show archived » ni de barre de filtres de liste, et les missions archivées historiques restent définitivement masquées. La seule action Plan New Mission demeure dans l’en-tête partagé à chaque breakpoint.
     */
-    const visibleMissions = missions.filter((mission) => showArchived || mission.status !== "archived");
+    const visibleMissions = missions.filter((mission) => mission.status !== "archived");
     const persistedInterviewMissions = visibleMissions.filter((mission) => mission.interviewState === "in_progress");
     const standardMissions = visibleMissions.filter((mission) => mission.interviewState !== "in_progress");
 
     return (
       <div className="mission-list">
-        <div className="mission-list__filters">
-          <button
-            type="button"
-            className="btn btn-sm"
-            aria-pressed={showArchived}
-            onClick={() => setShowArchived((visible) => !visible)}
-          >
-            {showArchived ? t("missions.hideArchived", "Hide archived") : t("missions.showArchived", "Show archived")}
-          </button>
-        </div>
 
         {/* Create mission form */}
               {isCreatingMission && (
@@ -5447,7 +5444,15 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                       <option value="active">{t("missions.statusActive", "Active")}</option>
                       <option value="blocked">{t("missions.statusBlocked", "Blocked")}</option>
                       <option value="complete">{t("missions.statusComplete", "Complete")}</option>
-                      <option value="archived">{t("missions.statusArchived", "Archived")}</option>
+                      {/*
+                      FNXC:StandardizedMissionLayout 2026-09-16-15:50:
+                      FN-465 retire l’archivage des missions de l’interface : le statut « Archived » n’est plus une
+                      transition proposée. L’option n’est rendue que pour une mission DÉJÀ archivée, et désactivée, afin
+                      d’afficher fidèlement sa valeur courante sans la réétiqueter silencieusement.
+                      */}
+                      {missionForm.status === "archived" ? (
+                        <option value="archived" disabled>{t("missions.statusArchived", "Archived")}</option>
+                      ) : null}
                     </select>
                     <label className="mission-checkbox">
                       <input

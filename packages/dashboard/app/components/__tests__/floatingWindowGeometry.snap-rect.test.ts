@@ -4,6 +4,7 @@ import {
   FLOATING_WINDOW_DRAG_THRESHOLD_PX,
   FLOATING_WINDOW_SNAP_CONTACT_PX,
   detectSnapZoneForRect,
+  resolveSnapRect,
   shouldDetachSnappedWindow,
   type FloatingWindowRect,
 } from "../floatingWindowGeometry";
@@ -86,6 +87,63 @@ describe("detectSnapZoneForRect", () => {
   it("honours a caller-supplied contact tolerance", () => {
     expect(detectSnapZoneForRect(rect(40, 300), bounds)).toBeNull();
     expect(detectSnapZoneForRect(rect(40, 300), bounds, 48)).toBe("left");
+  });
+
+  /*
+  FNXC:FloatingWindowSnap 2026-09-16-18:31:
+  FN-469 bottom band. These cases pin the DELIBERATE last-place priority: a full-height column always rests on the
+  bottom wall, so arming `bottom` before the sides would have re-routed every existing column snap.
+  */
+  it("arms the bottom band only when the panel's bottom edge touches the bottom wall", () => {
+    expect(detectSnapZoneForRect(rect(340, bounds.bottom - 400), bounds)).toBe("bottom");
+    expect(detectSnapZoneForRect(rect(340, bounds.bottom - 400 - 20), bounds)).toBeNull();
+  });
+
+  it("gives the side walls priority in both bottom corners", () => {
+    expect(detectSnapZoneForRect(rect(bounds.left, bounds.bottom - 400), bounds)).toBe("left");
+    expect(detectSnapZoneForRect(rect(bounds.right - 600, bounds.bottom - 400), bounds)).toBe("right");
+  });
+
+  it("arms the bottom band for a panel as wide as the work area resting on the bottom wall", () => {
+    // The both-walls refusal is a SIDE rule: such a panel is ambiguous about its side, never about its bottom.
+    expect(detectSnapZoneForRect(rect(bounds.left, bounds.bottom - 400, bounds.width), bounds)).toBe("bottom");
+  });
+
+  it("tolerates sub-pixel contact on the bottom wall", () => {
+    expect(detectSnapZoneForRect(rect(340, bounds.bottom - 400 - 0.25), bounds)).toBe("bottom");
+    expect(detectSnapZoneForRect(rect(340, bounds.bottom - 400 - FLOATING_WINDOW_SNAP_CONTACT_PX - 0.1), bounds)).toBeNull();
+  });
+
+  it("arms no bottom band for a degenerate or non-finite work area", () => {
+    expect(detectSnapZoneForRect(rect(340, bounds.bottom - 400), { ...bounds, height: 0 })).toBeNull();
+    expect(detectSnapZoneForRect(rect(340, bounds.bottom - 400), { ...bounds, bottom: Number.NaN })).toBeNull();
+  });
+});
+
+/*
+FNXC:FloatingWindowSnap 2026-09-16-18:31:
+FN-469: the bottom band rectangle is full width over the LOWER HALF of the live work area, mirroring the columns'
+half split on the other axis, and it degenerates exactly like every other mode.
+*/
+describe("resolveSnapRect bottom band", () => {
+  it("fills the full width of the lower half of the live work area", () => {
+    expect(resolveSnapRect("bottom", bounds)).toEqual({
+      position: { x: bounds.left, y: bounds.top + bounds.height / 2 },
+      size: { width: bounds.width, height: bounds.height / 2 },
+    });
+  });
+
+  it("re-derives from the live work area rather than any stored rectangle", () => {
+    const narrower = { ...bounds, right: 900, width: 900 };
+    expect(resolveSnapRect("bottom", narrower)?.size.width).toBe(900);
+  });
+
+  it("returns null for non-finite or degenerate bounds", () => {
+    expect(resolveSnapRect("bottom", { ...bounds, bottom: Number.NaN })).toBeNull();
+    expect(resolveSnapRect("bottom", { ...bounds, height: 0 })).toEqual({
+      position: { x: bounds.left, y: bounds.top },
+      size: { width: bounds.width, height: 0 },
+    });
   });
 });
 

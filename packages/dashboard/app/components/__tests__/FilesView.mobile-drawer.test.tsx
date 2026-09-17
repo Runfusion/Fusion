@@ -209,12 +209,16 @@ describe("Files destination inside the main mobile drawer (FN-445)", () => {
      * `.dock-files-view` is the probe because it carries only the LOGICAL `min-block-size: 0` in base CSS, which jsdom
      * does not resolve into `min-height`. `.files-view` cannot be used: `.mobile-drawer__body > *` already gives it a
      * physical `min-height: 0` on every host, so it could never prove attribute gating.
+     *
+     * FN-462 update: this case used to assert the OPPOSITE — that a phone WITHOUT the drawer opt-in stayed unbounded,
+     * which was the FN-445 scope, not a desirable behaviour. That gap is exactly why the operator reported the symptom
+     * a third time, so the page is now bounded on every phone and only desktop keeps the old geometry.
      */
-    it("leaves the page unbounded on a phone without the drawer opt-in", () => {
+    it("bounds the page on a phone without the drawer opt-in too", () => {
       setPhone({ drawers: false });
       renderFilesDrawer("files");
 
-      expect(getComputedStyle(document.querySelector<HTMLElement>(".dock-files-view")!).minHeight).not.toBe("0px");
+      expect(getComputedStyle(document.querySelector<HTMLElement>(".dock-files-view")!).minHeight).toBe("0px");
     });
 
     it("leaves the desktop page untouched", () => {

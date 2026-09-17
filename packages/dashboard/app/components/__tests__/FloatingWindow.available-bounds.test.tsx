@@ -189,14 +189,25 @@ describe("FloatingWindow available shell bounds", () => {
   FN-418 caps the standard OPENING height at a proportion of the live work area, so this fixture derives the
   opened height from that contract and asks for a `y` that is STILL clamped by the shorter alpha footer.
   The intent is unchanged: the mounted window must be re-clamped against the new work area on both axes.
+
+  FNXC:FloatingWindowBounds 2026-09-16-07:38:
+  FN-460 opens that window 20% wider, so the requested `x` of 680 no longer fits inside the work area and the
+  HORIZONTAL clamp now fires on the very first paint too. The expected lefts are therefore derived from the
+  same standard-size contract rather than written as literals; the case still asserts exactly what it always
+  did — the window is re-clamped on both axes against every new work area.
   */
   it("reclamps mounted geometry after dock, footer, and viewport changes and emits geometry", async () => {
     const geometryEvents = vi.fn();
     window.addEventListener(FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT, geometryEvents);
     // Opening height against the initial work area (header + standard footer) and, after the rerender, against
     // the taller alpha-footer work area — a still-pristine window re-resolves its standard size.
-    const openedHeight = standardSize({ width: 600, height: 500 }, 1280, 800 - 64 - 36).height;
-    const alphaFooterHeight = standardSize({ width: 600, height: 500 }, 980, 800 - 64 - 48).height;
+    const opened = standardSize({ width: 600, height: 500 }, 1280, 800 - 64 - 36);
+    const openedHeight = opened.height;
+    const alphaFooterSize = standardSize({ width: 600, height: 500 }, 980, 800 - 64 - 48);
+    const alphaFooterHeight = alphaFooterSize.height;
+    // The requested x, clamped so the window's right edge stays inside each work area.
+    const openedLeft = Math.min(680, 1280 - opened.width);
+    const alphaFooterLeft = Math.min(680, 980 - alphaFooterSize.width);
     const { rerender } = render(
       <DashboardWindowManagerProvider>
         <Landmarks dock={false} />
@@ -204,7 +215,7 @@ describe("FloatingWindow available shell bounds", () => {
       </DashboardWindowManagerProvider>,
     );
     const panel = screen.getByTestId("floating-window-dynamic");
-    await waitFor(() => expect(panel.style.left).toBe("680px"));
+    await waitFor(() => expect(panel.style.left).toBe(`${openedLeft}px`));
     expect(Number.parseFloat(panel.style.height)).toBe(openedHeight);
 
     rerender(
@@ -214,7 +225,7 @@ describe("FloatingWindow available shell bounds", () => {
       </DashboardWindowManagerProvider>,
     );
     resizeObservers.forEach((notify) => notify());
-    await waitFor(() => expect(panel.style.left).toBe("380px"));
+    await waitFor(() => expect(panel.style.left).toBe(`${alphaFooterLeft}px`));
     // Bottom of the alpha-footer work area minus the window height: the vertical clamp is still exercised.
     expect(panel.style.top).toBe(`${rects.alphaFooter.top - alphaFooterHeight}px`);
 

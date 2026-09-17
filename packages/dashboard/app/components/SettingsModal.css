@@ -52,10 +52,18 @@
   FNXC:Settings 2026-07-11-00:00:
   FN-7848: Mobile Settings must still show the GitHub star count. FN-4375 kept the header in one row by collapsing promotional action labels; keep the count visible and rely on .settings-modal-heading min-width: 0 to truncate the title before the pill wraps. Only the redundant "Star" word stays collapsed to save horizontal room.
   */
+  /*
+  FNXC:IconOnlyButtonCanon 2026-09-16-19:05:
+  FN-471 : ces deux moitiés d'action sont réduites à leur pictogramme sur téléphone; elles adoptent donc la
+  boîte d'icône canonique (36px) au lieu du carré bespoke de 40px. La règle de base
+  `height: var(--settings-header-action-height)` n'est PAS supprimée : elle reste le contrat de hauteur
+  partagé du bandeau, simplement surchargée ici. Le compteur d'étoiles frangin reste visible (FN-7848).
+  */
   .settings-header-actions .settings-github-star-btn__action,
   .settings-header-actions .settings-header-discord-btn {
-    width: 40px;
-    min-width: 40px;
+    width: var(--icon-button-size-mobile);
+    min-width: var(--icon-button-size-mobile);
+    height: var(--icon-button-size-mobile);
     padding: 0;
     justify-content: center;
     font-size: 0;
@@ -1966,11 +1974,57 @@ Fix the invariant: bordered boxes that are direct settings-content children alig
   max-width: min(960px, calc(100vw - var(--space-2xl)));
 }
 
+/*
+FNXC:SettingsNavigation 2026-09-16-16:12:
+FN-462: the three workspace pickers (ignored overlap path, worktrees directory, file to copy) all render the shared
+`FileBrowser` inside this body. As a `.modal-body` it carries `overflow-y: auto`, so it competed with
+`.file-browser-list` and the browser — whose base height is 100% — was bounded by nothing: on a phone the entries ran
+off screen and could not be selected, which is the "select" host of the report. The body stops scrolling and the
+browser fills it, leaving `.file-browser-list` as the single scroll owner.
+*/
 .settings-overlap-path-picker-body {
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
   max-height: min(70vh, 720px);
+  min-height: 0;
+  min-block-size: 0;
+  /* Longhands on purpose: `.modal-body` declares `overflow-y: auto`, which a shorthand cannot be relied on to beat. */
+  overflow-y: hidden;
+  overflow-x: hidden;
+}
+
+.settings-overlap-path-picker-body > .file-browser {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-block-size: 0;
+}
+
+.settings-overlap-path-picker-body > .settings-overlap-path-picker-note {
+  flex: 0 0 auto;
+}
+
+/*
+FNXC:SettingsNavigation 2026-09-16-16:12:
+Phone arm of the same contract, attribute-scoped so it also holds for a picker opened inside a drawer-hosted Settings
+surface where the viewport media query is not the only signal. Values mirror the `@media (max-width: 768px)` arm below.
+*/
+html[data-viewport-mode="mobile"] .settings-overlap-path-picker-modal {
+  min-height: 0;
+  min-block-size: 0;
+  max-block-size: 100dvh;
+}
+
+html[data-viewport-mode="mobile"] .settings-overlap-path-picker-body {
+  flex: 1 1 auto;
+  max-height: none;
+  max-block-size: none;
+}
+
+html[data-viewport-mode="mobile"] .settings-overlap-path-picker-modal .modal-actions {
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
 }
 
 .settings-overlap-path-picker-note {
@@ -2036,6 +2090,30 @@ Design tokens only (spacing/radius/color vars), no hardcoded px besides 0.
 
   .settings-overlap-path-picker-modal {
     max-width: calc(100vw - var(--space-md));
+  }
+
+  /*
+  FNXC:SettingsNavigation 2026-09-16-16:12:
+  FN-462 phone geometry for the pickers. `max-height: min(70vh, 720px)` on the body left the modal free to grow past
+  the viewport, pushing "Select current directory" / "Cancel" out of reach. The picker is bounded to the viewport, the
+  body takes the remaining space, and the action row stays pinned as non-shrinking chrome.
+  */
+  .settings-overlap-path-picker-modal {
+    min-height: 0;
+    min-block-size: 0;
+    max-block-size: 100dvh;
+  }
+
+  .settings-overlap-path-picker-body {
+    flex: 1 1 auto;
+    max-height: none;
+    max-block-size: none;
+  }
+
+  .settings-overlap-path-picker-modal .modal-actions {
+    flex: 0 0 auto;
+    flex-wrap: wrap;
+    gap: var(--space-sm);
   }
 
   .remote-provider-selector {

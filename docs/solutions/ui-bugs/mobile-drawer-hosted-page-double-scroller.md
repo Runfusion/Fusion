@@ -97,3 +97,10 @@ A leaf-rule string match is a floor, never the gate. The gate is an **ancestor-c
 
 `packages/dashboard/app/components/__tests__/FilesView.mobile-drawer.test.tsx`. Confirmed red on the pre-fix tree
 (6 failed / 2 passed) and green after. `FileBrowserModal.mobile-drawer.test.tsx` (FN-427) remains green unchanged.
+
+## Sequel: FN-462
+
+This fix, like FN-427 before it, was scoped to one host. The symptom returned from the hosts neither named — the
+inline Files page and the Settings pickers — so the invariant is now declared on the component itself. See
+[mobile-file-browser-mobile-layout.md](mobile-file-browser-mobile-layout.md); the analysis above is unchanged and the
+drawer-scoped rules it describes are still in force.

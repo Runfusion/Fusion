@@ -36,6 +36,16 @@ and dropped the bottom nav bar entirely while `MobileNavBar.css` still displayed
 `(max-width: 768px)` — JS and CSS disagreeing about the same device. The tablet
 carve-out only ever needed the 601-768px band (portrait tablets at the boundary).
 */
+/*
+FNXC:ViewportMode 2026-09-16-19:44:
+FN-468 déplace la frontière « interface mobile / interface ordinateur » : l'interface mobile couvre
+0–1023.98 px (téléphone ET tablette) et l'interface ordinateur commence à 1024 px inclus. La requête
+tablette est donc extraite ici en constante partagée pour que `getViewportMode` et l'abonnement de
+`useViewportMode` ne puissent jamais diverger. Les bornes du mode `mobile` (largeur ≤768, paysage court,
+classification par écran physique) restent INCHANGÉES : seule la borne haute de `tablet` bouge.
+*/
+export const TABLET_MEDIA_QUERY = "(min-width: 769px) and (max-width: 1023.98px)";
+
 const PHONE_WIDTH_MEDIA_QUERY = "(max-width: 600px)";
 const PHONE_MAX_CSS_WIDTH = 600;
 
@@ -146,7 +156,7 @@ export function getViewportMode(): ViewportMode {
   const isTabletBoundary = window.innerWidth <= 768 ||
     window.matchMedia(MOBILE_WIDTH_MEDIA_QUERY).matches ||
     (getTouchVisualViewportWidth() ?? Number.POSITIVE_INFINITY) <= 768;
-  if (window.matchMedia("(min-width: 769px) and (max-width: 1024px)").matches ||
+  if (window.matchMedia(TABLET_MEDIA_QUERY).matches ||
     (isTabletBoundary && isTabletClassTouchScreen())) return "tablet";
   return "desktop";
 }
@@ -162,6 +172,21 @@ export function getViewportMode(): ViewportMode {
  */
 export function isTabletTouchViewport(mode = getViewportMode()): boolean {
   return mode === "tablet" && hasTouchScreen() && !isPhoneClassScreen();
+}
+
+/**
+ * Whether a viewport mode belongs to the MOBILE NAVIGATION SHELL.
+ *
+ * FNXC:ViewportMode 2026-09-16-19:44:
+ * FN-468 : sous 1024 px — téléphone ET tablette — la navigation primaire appartient à la pill flottante
+ * `MobileNavBar` ; la colonne de gauche, le pied de page large et le dock droit n'existent qu'à partir de
+ * 1024 px. Ce prédicat décide UNIQUEMENT la propriété du shell de navigation, y compris le montage de la
+ * pill. Il ne décide JAMAIS la géométrie tactile (`isTabletTouchViewport`, FloatingWindow déplaçable), les
+ * feuilles plein écran, les drawers mobiles ni l'état du clavier virtuel : ces surfaces restent réservées au
+ * mode `mobile` (téléphone) et doivent continuer à tester `mode === "mobile"` directement.
+ */
+export function isMobileShellMode(mode: ViewportMode): boolean {
+  return mode === "mobile" || mode === "tablet";
 }
 
 export function useViewportMode(): ViewportMode {
@@ -187,7 +212,7 @@ export function useViewportMode(): ViewportMode {
     if (typeof window === "undefined") return;
 
     const mobileQuery = window.matchMedia(MOBILE_MEDIA_QUERY);
-    const tabletQuery = window.matchMedia("(min-width: 769px) and (max-width: 1024px)");
+    const tabletQuery = window.matchMedia(TABLET_MEDIA_QUERY);
 
     const updateMode = () => {
       setMode(getViewportMode());

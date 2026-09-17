@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DashboardWindowManagerProvider, useDashboardWindowLandmark } from "../../context/DashboardWindowManagerContext";
 import { FloatingWindow } from "../FloatingWindow";
+import { expectedOpeningSize, harnessWorkArea } from "./floatingWindowOpeningFixture";
 
 /*
 FNXC:FloatingWindowSnap 2026-09-14-21:10:
@@ -28,6 +29,20 @@ both drag handles; a sub-threshold gesture is still a click that preserves the d
 const HEADER_HEIGHT = 64;
 const FOOTER_HEIGHT = 36;
 const SIDEBAR_WIDTH = 200;
+
+/*
+FNXC:FloatingWindowSnap 2026-09-16-07:38:
+FN-460 opens every window 20% larger, so the settle waits below can no longer use the host's declared width as
+a literal. They read the production opening seam instead; what each case asserts — the snapped rectangles, the
+click threshold, the detach, the cancelled gesture — is unchanged, and those SNAP values stay literal on
+purpose: the opening scale must never leak into a docked rectangle.
+*/
+function openedWidth(
+  requested = { width: 600, height: 400 },
+  minSize = { width: 320, height: 200 },
+): number {
+  return expectedOpeningSize(requested, { minSize, bounds: harnessWorkArea(HEADER_HEIGHT, FOOTER_HEIGHT) }).width;
+}
 
 function domRect(value: { left: number; top: number; right: number; bottom: number; width: number; height: number }): DOMRect {
   return { ...value, x: value.left, y: value.top, toJSON: () => ({}) } as DOMRect;
@@ -142,7 +157,7 @@ describe("FloatingWindow snap gestures", () => {
     { name: "delegated host header", delegated: true, pointerType: "touch" as const },
   ])("snaps to the left half from the $name", async ({ delegated, pointerType }) => {
     const { panel, handle } = renderWindow({ delegated });
-    await waitFor(() => expect(rectOf(panel).width).toBe(600));
+    await waitFor(() => expect(rectOf(panel).width).toBe(openedWidth()));
 
     drag(handle, { to: { x: 8, y: 400 }, pointerType });
 
@@ -152,7 +167,7 @@ describe("FloatingWindow snap gestures", () => {
 
   it("snaps to the right half and fills the work area from the top band", async () => {
     const { panel, handle } = renderWindow();
-    await waitFor(() => expect(rectOf(panel).width).toBe(600));
+    await waitFor(() => expect(rectOf(panel).width).toBe(openedWidth()));
 
     drag(handle, { to: { x: 1276, y: 400 }, pointerId: 2 });
     expect(rectOf(panel)).toEqual({ left: 640, top: HEADER_HEIGHT, width: 640, height: 700 });
@@ -171,7 +186,7 @@ describe("FloatingWindow snap gestures", () => {
   */
   it("arms the right column from the panel's own edge while the pointer stays away from the band", async () => {
     const { panel, handle } = renderWindow();
-    await waitFor(() => expect(rectOf(panel).width).toBe(600));
+    await waitFor(() => expect(rectOf(panel).width).toBe(openedWidth()));
 
     drag(handle, { from: { x: 600, y: 400 }, to: { x: 1000, y: 400 }, pointerId: 70, hold: true });
     const preview = screen.getByTestId("floating-window-snap-preview-snap");
@@ -194,7 +209,7 @@ describe("FloatingWindow snap gestures", () => {
   */
   it("arms nothing while the docked window is still pinned, then re-docks on the other wall in one gesture", async () => {
     const { panel, handle } = renderWindow();
-    await waitFor(() => expect(rectOf(panel).width).toBe(600));
+    await waitFor(() => expect(rectOf(panel).width).toBe(openedWidth()));
 
     drag(handle, { to: { x: 6, y: 400 }, pointerId: 71 });
     expect(panel.dataset.snapMode).toBe("left");
@@ -238,7 +253,7 @@ describe("FloatingWindow snap gestures", () => {
     ),
   )("undocks a $mode window on a $direction gesture and restores its floating size", async ({ mode, delta, pointerId }) => {
     const { panel, handle } = renderWindow();
-    await waitFor(() => expect(rectOf(panel).width).toBe(600));
+    await waitFor(() => expect(rectOf(panel).width).toBe(openedWidth()));
     const floating = rectOf(panel);
 
     dock(handle, mode, pointerId);
@@ -254,6 +269,37 @@ describe("FloatingWindow snap gestures", () => {
   });
 
   /*
+  FNXC:FloatingWindowSnap 2026-09-16-18:31:
+  FN-469 full cycle for the shared bottom band on the GENERIC host, so it is proven for every window type and not
+  only for the two hosts that motivated it: arming (preview), applying (rect + mode), and the omnidirectional
+  release. The release also pins the anti-re-dock rule — the restored rect is re-anchored under the pointer and
+  clamped, which puts its bottom edge back on the wall it just left, so the band must stay disarmed until the panel
+  leaves that wall.
+  */
+  it("arms, applies, and releases the shared bottom band", async () => {
+    const { panel, handle } = renderWindow();
+    await waitFor(() => expect(rectOf(panel).width).toBe(openedWidth()));
+    const floating = rectOf(panel);
+
+    drag(handle, { from: { x: 640, y: 400 }, to: { x: 640, y: 400 + window.innerHeight }, pointerId: 280, hold: true });
+    expect(screen.getByTestId("floating-window-snap-preview-snap").dataset.snapZone).toBe("bottom");
+    fireEvent.pointerUp(handle, { pointerId: 280, clientX: 640, clientY: 400 + window.innerHeight });
+
+    const workAreaHeight = 800 - HEADER_HEIGHT - FOOTER_HEIGHT;
+    expect(panel.dataset.snapMode).toBe("bottom");
+    expect(rectOf(panel)).toEqual({ left: 0, top: HEADER_HEIGHT + workAreaHeight / 2, width: 1280, height: workAreaHeight / 2 });
+
+    drag(handle, { from: { x: 640, y: 600 }, to: { x: 640, y: 540 }, pointerId: 281, hold: true });
+    // Disarmed: the re-anchored rect rests on the same wall, which must not instantly re-dock the window.
+    expect(screen.queryByTestId("floating-window-snap-preview-snap")).not.toBeInTheDocument();
+    fireEvent.pointerUp(handle, { pointerId: 281, clientX: 640, clientY: 540 });
+
+    expect(panel.dataset.snapMode).toBe("floating");
+    expect(rectOf(panel).width).toBe(floating.width);
+    expect(rectOf(panel).height).toBe(floating.height);
+  });
+
+  /*
   FNXC:FloatingWindowSnap 2026-09-15-14:07:
   FN-422 surface enumeration: both entry points into the single drag handler must inherit the omnidirectional
   undock — the native header (desktop mouse) and a delegated host header (touch tablet).
@@ -263,7 +309,7 @@ describe("FloatingWindow snap gestures", () => {
     { name: "delegated host header", delegated: true, pointerType: "touch" as const, pointerId: 262 },
   ])("undocks a maximized window upward from the $name", async ({ delegated, pointerType, pointerId }) => {
     const { panel, handle } = renderWindow({ delegated });
-    await waitFor(() => expect(rectOf(panel).width).toBe(600));
+    await waitFor(() => expect(rectOf(panel).width).toBe(openedWidth()));
     const floating = rectOf(panel);
 
     dock(handle, "maximized", pointerId, pointerType);
@@ -287,7 +333,7 @@ describe("FloatingWindow snap gestures", () => {
     { direction: "diagonal", delta: { x: 3, y: -3 } },
   ])("keeps a docked window docked on a sub-threshold $direction gesture", async ({ delta }) => {
     const { panel, handle } = renderWindow();
-    await waitFor(() => expect(rectOf(panel).width).toBe(600));
+    await waitFor(() => expect(rectOf(panel).width).toBe(openedWidth()));
 
     dock(handle, "maximized", 280);
     const docked = rectOf(panel);
@@ -333,7 +379,7 @@ describe("FloatingWindow snap gestures", () => {
       </DashboardWindowManagerProvider>,
     );
     const panel = screen.getByTestId("floating-window-sheet");
-    await waitFor(() => expect(rectOf(panel).width).toBe(400));
+    await waitFor(() => expect(rectOf(panel).width).toBe(openedWidth({ width: 400, height: 300 })));
     const before = rectOf(panel);
 
     const handle = screen.getByTestId("floating-window-drag-handle-sheet");
@@ -346,7 +392,7 @@ describe("FloatingWindow snap gestures", () => {
 
   it("gives the top band priority over a side band in a corner", async () => {
     const { panel, handle } = renderWindow();
-    await waitFor(() => expect(rectOf(panel).width).toBe(600));
+    await waitFor(() => expect(rectOf(panel).width).toBe(openedWidth()));
 
     drag(handle, { to: { x: 4, y: HEADER_HEIGHT + 2 }, pointerId: 4 });
     expect(panel.dataset.snapMode).toBe("maximized");
@@ -354,7 +400,7 @@ describe("FloatingWindow snap gestures", () => {
 
   it("keeps free movement outside the bands and treats a sub-threshold move as a click", async () => {
     const { panel, handle } = renderWindow();
-    await waitFor(() => expect(rectOf(panel).width).toBe(600));
+    await waitFor(() => expect(rectOf(panel).width).toBe(openedWidth()));
     const before = rectOf(panel);
 
     drag(handle, { to: { x: 604, y: 403 }, pointerId: 5 });
@@ -365,13 +411,13 @@ describe("FloatingWindow snap gestures", () => {
     const moved = rectOf(panel);
     expect(moved.left).toBe(before.left + 100);
     expect(moved.top).toBe(before.top + 50);
-    expect(moved.width).toBe(600);
+    expect(moved.width).toBe(openedWidth());
     expect(panel.dataset.snapMode).toBe("floating");
   });
 
   it("previews the armed zone without applying it and never exposes an interactive preview", async () => {
     const { panel, handle } = renderWindow();
-    await waitFor(() => expect(rectOf(panel).width).toBe(600));
+    await waitFor(() => expect(rectOf(panel).width).toBe(openedWidth()));
     const before = rectOf(panel);
 
     drag(handle, { to: { x: 6, y: 400 }, pointerId: 7, hold: true });
@@ -389,7 +435,7 @@ describe("FloatingWindow snap gestures", () => {
 
   it("restores the pre-snap floating rect after left then right then maximized then a detaching drag", async () => {
     const { panel, handle } = renderWindow();
-    await waitFor(() => expect(rectOf(panel).width).toBe(600));
+    await waitFor(() => expect(rectOf(panel).width).toBe(openedWidth()));
     const opened = rectOf(panel);
 
     /*
@@ -424,7 +470,7 @@ describe("FloatingWindow snap gestures", () => {
 
   it("detaches a maximized window grabbed at its very top edge instead of re-arming the top band", async () => {
     const { panel, handle } = renderWindow();
-    await waitFor(() => expect(rectOf(panel).width).toBe(600));
+    await waitFor(() => expect(rectOf(panel).width).toBe(openedWidth()));
     const floating = rectOf(panel);
 
     drag(handle, { from: { x: 900, y: 300 }, to: { x: 900, y: HEADER_HEIGHT + 1 }, pointerId: 20 });
@@ -441,7 +487,7 @@ describe("FloatingWindow snap gestures", () => {
 
   it("re-splits both halves against the live work area when the sidebar opens and closes", async () => {
     const { panel, handle, rerender } = renderWindow();
-    await waitFor(() => expect(rectOf(panel).width).toBe(600));
+    await waitFor(() => expect(rectOf(panel).width).toBe(openedWidth()));
     drag(handle, { to: { x: 6, y: 400 }, pointerId: 20 });
     expect(rectOf(panel).width).toBe(640);
 
@@ -477,7 +523,7 @@ describe("FloatingWindow snap gestures", () => {
 
   it("validates nothing on pointercancel and returns to the pre-gesture placement", async () => {
     const { panel, handle } = renderWindow();
-    await waitFor(() => expect(rectOf(panel).width).toBe(600));
+    await waitFor(() => expect(rectOf(panel).width).toBe(openedWidth()));
     const before = rectOf(panel);
 
     drag(handle, { to: { x: 4, y: 400 }, pointerId: 30, cancel: true });
@@ -495,7 +541,7 @@ describe("FloatingWindow snap gestures", () => {
 
   it("ignores a second finger and never snaps from a resize handle", async () => {
     const { panel, handle } = renderWindow();
-    await waitFor(() => expect(rectOf(panel).width).toBe(600));
+    await waitFor(() => expect(rectOf(panel).width).toBe(openedWidth()));
     const before = rectOf(panel);
 
     prepareCapture(handle);
@@ -524,7 +570,7 @@ describe("FloatingWindow snap gestures", () => {
       </DashboardWindowManagerProvider>,
     );
     const panel = screen.getByTestId("floating-window-ctl");
-    await waitFor(() => expect(rectOf(panel).width).toBe(600));
+    await waitFor(() => expect(rectOf(panel).width).toBe(openedWidth()));
     const before = rectOf(panel);
     const button = screen.getByRole("button", { name: "Action" });
     prepareCapture(button);
@@ -567,9 +613,15 @@ describe("FloatingWindow snap gestures", () => {
 
     it("fires once per completed drag with the final clamped rectangle", async () => {
       const { onDragGestureEnd, panel, handle } = renderWithGestureEnd();
-      await waitFor(() => expect(rectOf(panel).width).toBe(600));
+      await waitFor(() => expect(rectOf(panel).width).toBe(openedWidth()));
 
-      drag(handle, { from: { x: 600, y: 400 }, to: { x: 700, y: 500 }, pointerId: 70 });
+      /*
+      FNXC:FloatingWindowSnap 2026-09-16-18:31:
+      FN-469: this case is about the PAYLOAD of an unsnapped drag, so the gesture must land the panel clear of every
+      wall. The former destination pushed the panel's bottom edge onto the bottom wall, which now legitimately arms
+      the shared bottom band; the band's own payload is asserted by its dedicated case below.
+      */
+      drag(handle, { from: { x: 600, y: 400 }, to: { x: 700, y: 420 }, pointerId: 70 });
 
       expect(onDragGestureEnd).toHaveBeenCalledTimes(1);
       const info = onDragGestureEnd.mock.calls[0][0];
@@ -584,7 +636,7 @@ describe("FloatingWindow snap gestures", () => {
 
     it("reports moved:false and no geometry change for a sub-threshold click", async () => {
       const { onDragGestureEnd, panel, handle } = renderWithGestureEnd();
-      await waitFor(() => expect(rectOf(panel).width).toBe(600));
+      await waitFor(() => expect(rectOf(panel).width).toBe(openedWidth()));
       const before = rectOf(panel);
 
       drag(handle, { from: { x: 600, y: 400 }, to: { x: 602, y: 402 }, pointerId: 71 });
@@ -596,7 +648,7 @@ describe("FloatingWindow snap gestures", () => {
 
     it("reports the retained snap mode and its full work-area rectangle", async () => {
       const { onDragGestureEnd, panel, handle } = renderWithGestureEnd();
-      await waitFor(() => expect(rectOf(panel).width).toBe(600));
+      await waitFor(() => expect(rectOf(panel).width).toBe(openedWidth()));
 
       drag(handle, { from: { x: 900, y: 300 }, to: { x: 900, y: HEADER_HEIGHT + 1 }, pointerId: 72 });
 
@@ -611,7 +663,7 @@ describe("FloatingWindow snap gestures", () => {
 
     it("never fires for an interrupted gesture", async () => {
       const { onDragGestureEnd, panel, handle } = renderWithGestureEnd();
-      await waitFor(() => expect(rectOf(panel).width).toBe(600));
+      await waitFor(() => expect(rectOf(panel).width).toBe(openedWidth()));
 
       drag(handle, { from: { x: 600, y: 400 }, to: { x: 4, y: 400 }, pointerId: 73, cancel: true });
 
@@ -621,7 +673,7 @@ describe("FloatingWindow snap gestures", () => {
 
   it("drops an armed preview when the window closes mid-gesture", async () => {
     const { panel, handle, rerender } = renderWindow();
-    await waitFor(() => expect(rectOf(panel).width).toBe(600));
+    await waitFor(() => expect(rectOf(panel).width).toBe(openedWidth()));
     drag(handle, { to: { x: 4, y: 400 }, pointerId: 60, hold: true });
     expect(screen.getByTestId("floating-window-snap-preview-snap")).toBeInTheDocument();
 

@@ -146,6 +146,10 @@ describe("shared drawer and Task Detail view layout", () => {
       }
       expect(within(header).queryByRole("button", { name: "Close" })).toBeNull();
       expect(within(header).queryByTestId("task-detail-pop-out")).toBeNull();
+      // ...and the single Actions overflow does not offer it either, now that it is the only action surface.
+      fireEvent.click(within(header).getByRole("button", { name: "Actions" }));
+      expect(within(screen.getByRole("menu")).queryByTestId("task-detail-pop-out")).toBeNull();
+      fireEvent.click(within(header).getByRole("button", { name: "Actions" }));
       expect(surface.querySelector('[data-view-layout-zone="content"]')).toBeInTheDocument();
       fireEvent.click(within(surface).getByRole("button", { name: "Activity" }));
       expect(within(surface).queryByTestId("task-chat-expand-toggle")).toBeNull();
@@ -171,6 +175,8 @@ describe("shared drawer and Task Detail view layout", () => {
       // The back control is the only visible way out here, because the canonical close stays hidden on every phone.
       expect(within(header).queryByRole("button", { name: "Close" })).toBeNull();
       expect(within(header).queryByTestId("task-detail-pop-out")).toBeNull();
+      fireEvent.click(within(header).getByRole("button", { name: "Actions" }));
+      expect(within(screen.getByRole("menu")).queryByTestId("task-detail-pop-out")).toBeNull();
       view.unmount();
     }
 
@@ -203,7 +209,10 @@ describe("shared drawer and Task Detail view layout", () => {
     setViewport("desktop");
     render(<TaskDetailModal {...sharedProps} onClose={noop} onPopOut={noop} />);
     expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
-    expect(screen.getByTestId("task-detail-pop-out")).toBeInTheDocument();
+    // Pop out is reachable from the single header overflow instead of a direct header button.
+    expect(screen.queryByTestId("task-detail-pop-out")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Actions" }));
+    expect(within(screen.getByRole("menu")).getByTestId("task-detail-pop-out")).toBeInTheDocument();
     expect(document.querySelectorAll(".floating-window__resize-handle").length).toBeGreaterThan(0);
     expect(screen.queryByRole("button", { name: "Back" })).toBeNull();
   });

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DashboardWindowManagerProvider, useDashboardWindowLandmark } from "../../context/DashboardWindowManagerContext";
 import { FloatingWindow } from "../FloatingWindow";
 import { migratedModalFixtures } from "./migratedModalFixtures";
+import { expectedOpeningSize, harnessWorkArea } from "./floatingWindowOpeningFixture";
 
 /*
 FNXC:FloatingWindowSnap 2026-09-14-21:10:
@@ -19,6 +20,16 @@ points, and the top-band gesture below is one continuous drag: down to detach, t
 const HEADER_HEIGHT = 64;
 const FOOTER_HEIGHT = 36;
 const hostFixtures = migratedModalFixtures.filter((fixture) => fixture.render && fixture.key);
+
+/*
+FNXC:FloatingWindowSnap 2026-09-16-07:38:
+FN-460 opens the generic neighbour 20% larger, so its width is read from the production opening seam rather
+than from its declared `defaultSize`. The contract asserted is unchanged: the hosted modal keeps its OWN size
+next to that neighbour and the neighbour is only displaced.
+*/
+function neighbourOpeningWidth(): number {
+  return expectedOpeningSize({ width: 480, height: 360 }, { bounds: harnessWorkArea(HEADER_HEIGHT, FOOTER_HEIGHT) }).width;
+}
 
 function domRect(value: { left: number; top: number; right: number; bottom: number; width: number; height: number }): DOMRect {
   return { ...value, x: value.left, y: value.top, toJSON: () => ({}) } as DOMRect;
@@ -144,8 +155,8 @@ describe("hosted modal snap contract", () => {
 
     const host = screen.getByTestId(`floating-window-${windowKey}`);
     const neighbour = screen.getByTestId("floating-window-neighbour");
-    await waitFor(() => expect(rectOf(neighbour).width).toBe(480));
-    expect(rectOf(host).width).not.toBe(480);
+    await waitFor(() => expect(rectOf(neighbour).width).toBe(neighbourOpeningWidth()));
+    expect(rectOf(host).width).not.toBe(neighbourOpeningWidth());
     // Two pristine windows, two cascade slots: the neighbour is displaced, never resized to match.
     expect(rectOf(neighbour).left).not.toBe(rectOf(host).left);
   });

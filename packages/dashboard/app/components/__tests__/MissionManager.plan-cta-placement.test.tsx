@@ -51,7 +51,7 @@ beforeEach(() => {
   mockFetchMissionInterviewDrafts.mockResolvedValue([]);
 });
 
-describe("MissionManager canonical creation and archive controls", () => {
+describe("MissionManager canonical creation controls", () => {
   it.each([
     { width: 1440, mobile: false },
     { width: 390, mobile: true },
@@ -74,7 +74,13 @@ describe("MissionManager canonical creation and archive controls", () => {
     expect(screen.getByTestId("mission-interview-panel").closest(".mission-manager__detail-pane")).not.toBeNull();
   });
 
-  it("keeps the archive filter in the list and reveals archived missions on demand", async () => {
+  /*
+  FNXC:StandardizedMissionLayout 2026-09-16-15:50:
+  FN-465 retire le filtre d'archives des Missions : ce cas devient un contrôle négatif — une mission
+  archivée n'est jamais révélable depuis la liste et le rail ne porte aucune commande d'archives.
+  L'absence détaillée des affordances est couverte par MissionManager.archive-affordance-absent.
+  */
+  it("never reveals archived missions from the list rail", async () => {
     setViewport({ width: 1440 });
     mockFetchMissions.mockResolvedValue([mission(), mission("archived")]);
     renderManager();
@@ -82,9 +88,8 @@ describe("MissionManager canonical creation and archive controls", () => {
     await screen.findByText("Header CTA Mission");
     expect(screen.queryByText("Archived Mission")).toBeNull();
     const sidebar = screen.getByTestId("mission-sidebar");
-    fireEvent.click(within(sidebar).getByRole("button", { name: "Show archived" }));
-    expect(screen.getByText("Archived Mission")).toBeInTheDocument();
-    expect(within(sidebar).getByRole("button", { name: "Hide archived" })).toBeInTheDocument();
+    expect(within(sidebar).queryByRole("button", { name: "Show archived" })).toBeNull();
+    expect(within(sidebar).queryByRole("button", { name: "Hide archived" })).toBeNull();
   });
 
   it("keeps a single header action in the empty list state", async () => {
@@ -94,6 +99,5 @@ describe("MissionManager canonical creation and archive controls", () => {
 
     await screen.findByText("No missions yet");
     expect(screen.getAllByRole("button", { name: "Plan New Mission", hidden: true })).toHaveLength(1);
-    expect(screen.getByTestId("mission-sidebar")).toContainElement(screen.getByRole("button", { name: "Show archived" }));
   });
 });

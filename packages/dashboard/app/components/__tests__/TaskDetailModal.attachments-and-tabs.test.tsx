@@ -1257,7 +1257,8 @@ describe("TaskDetailModal", () => {
       fireEvent.click(getVisibleByTestId("task-chat-expand-toggle"));
       expect(container.querySelector(".task-detail-content")).toHaveClass("task-detail-content--chat-expanded");
 
-      fireEvent.click(screen.getByLabelText("Edit task"));
+      fireEvent.click(screen.getByRole("button", { name: "Actions" }));
+      fireEvent.click(screen.getByTestId("task-detail-header-action-edit"));
       expect(container.querySelector(".task-detail-content--chat-expanded")).toBeNull();
       expect(visibleTestIds("task-chat-expand-toggle")).toHaveLength(0);
     });
@@ -1418,7 +1419,8 @@ describe("TaskDetailModal", () => {
       fireEvent.click(screen.getByRole("button", { name: "Activity" }));
       expect(container.querySelector(".detail-body--chat")).toBeTruthy();
 
-      fireEvent.click(screen.getByLabelText("Edit task"));
+      fireEvent.click(screen.getByRole("button", { name: "Actions" }));
+      fireEvent.click(screen.getByTestId("task-detail-header-action-edit"));
       expect(container.querySelector(".detail-body--chat")).toBeNull();
       expect(container.querySelector(".detail-section--chat")).toBeNull();
     });
@@ -1499,8 +1501,8 @@ describe("TaskDetailModal", () => {
       expect(container.querySelector(".detail-body--agent-log")).toBeTruthy();
 
       // Now enter edit mode via the pencil button in the header
-      const editBtn = screen.getByLabelText("Edit task");
-      fireEvent.click(editBtn);
+      fireEvent.click(screen.getByRole("button", { name: "Actions" }));
+      fireEvent.click(screen.getByTestId("task-detail-header-action-edit"));
 
       // The detail-body--agent-log class should be removed while editing
       expect(container.querySelector(".detail-body--agent-log")).toBeNull();

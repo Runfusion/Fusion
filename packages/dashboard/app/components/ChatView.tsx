@@ -7,7 +7,6 @@ import {
   Plus,
   Search,
   Trash2,
-  Archive,
   Pencil,
   Bot,
   Paperclip,
@@ -466,10 +465,6 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
     streamingToolCalls,
     selectSession,
     createSession,
-    archiveSession,
-    archivedSessions,
-    refreshArchivedSessions,
-    unarchiveSession,
     renameSession,
     pinSession,
     pinnedCount,
@@ -499,7 +494,6 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
     hasMoreMessages,
     loadMoreSessions,
     hasMoreSessions,
-    hasMoreArchivedSessions,
     sessionsLoadingMore,
     searchQuery,
     setSearchQuery,
@@ -518,7 +512,6 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
   double-fire from the menu.
   */
   const [stashBackfillBusyId, setStashBackfillBusyId] = useState<string | null>(null);
-  const [showArchivedSessions, setShowArchivedSessions] = useState(false);
   const contextMenuRef = useRef<HTMLDivElement>(null);
   /*
   FNXC:ChatMemoryFocus 2026-08-13:
@@ -2450,25 +2443,6 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
     };
   }, []);
 
-  // Handle archive
-  const handleArchive = useCallback(
-    async (id: string) => {
-      setContextMenu(null);
-      try {
-        await archiveSession(id);
-        addToast(t("chat.conversationArchived", "Conversation archived"), "success");
-      } catch {
-        addToast(t("chat.failedToArchiveConversation", "Failed to archive conversation"), "error");
-      }
-    },
-    [archiveSession, addToast],
-  );
-
-  const handleRestoreArchived = useCallback(async (id: string) => {
-    try { await unarchiveSession(id); addToast(t("chat.conversationRestored", "Conversation restored"), "success"); }
-    catch { addToast(t("chat.failedToRestoreConversation", "Failed to restore conversation"), "error"); }
-  }, [unarchiveSession, addToast, t]);
-
   const openRenameDialog = useCallback(
     (id: string) => {
       const session = filteredSessions.find((item) => item.id === id) ?? (activeSession?.id === id ? activeSession : null);
@@ -3355,14 +3329,18 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
   FNXC:ChatDirectOnly 2026-08-24-03:34:
   The session list is direct-chat only; the canonical ViewHeader carries New Chat and docked-list actions without a stale Rooms scope control.
   */
-  const visibleSidebarSessions = showArchivedSessions ? archivedSessions : filteredSessions;
+  /*
+  FNXC:ChatArchived 2026-09-16-15:50:
+  FN-465 retire l'archivage des conversations de l'interface opérateur : la liste latérale n'expose plus que la collection active (filtrée par recherche et par tag), sans bascule « Archived », sans action Restore et sans entrée de menu Archive. Les conversations archivées historiques restent en base mais ne sont ni listées ni restaurables ici.
+  */
+  const visibleSidebarSessions = filteredSessions;
   const sessionListRef = useRef<HTMLDivElement | null>(null);
   /*
   FNXC:ChatScrollAnchor 2026-09-08-20:49:
   La liste directe et le transcript possèdent deux politiques de défilement indépendantes : chaque collection active, archivée, recherchée ou filtrée commence en tête, tandis que seul le fil ouvert s’aligne sur son dernier message. L’ouverture ou la fermeture d’un fil ne doit donc jamais transmettre la commande terminale du transcript à la liste ni réinitialiser une position manuelle de celle-ci.
   */
   const virtualSessionList = useVirtualizedList({
-    collectionKey: `${projectId ?? "default"}:${showArchivedSessions ? "archived" : "active"}:${selectedTagId ?? "all"}:${searchQuery}`,
+    collectionKey: `${projectId ?? "default"}:active:${selectedTagId ?? "all"}:${searchQuery}`,
     keys: visibleSidebarSessions.map((session) => session.id),
     scrollRef: sessionListRef,
     estimateHeight: 76,
@@ -3376,9 +3354,9 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
   const unpinnedFilteredSessions = windowedSidebarSessions.filter((session) => session.pinnedAt == null);
   const sessionPagination = useAutoPaginationSentinel({
     rootRef: sessionListRef,
-    hasMore: showArchivedSessions ? hasMoreArchivedSessions : hasMoreSessions,
+    hasMore: hasMoreSessions,
     loading: sessionsLoadingMore,
-    onLoadMore: () => loadMoreSessions(showArchivedSessions ? "archived" : "active"),
+    onLoadMore: () => loadMoreSessions("active"),
     direction: "end",
   });
   const contextMenuSession = contextMenu
@@ -3515,8 +3493,8 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
                 />
               </div>
               {/*
-              FNXC:ChatArchived 2026-08-23-16:27:
-              The archived affordance is a compact Archived toggle sharing the tag-filter line, so the sidebar does not spend a full row on it. aria-pressed and active styling convey state instead of changing the visible label.
+              FNXC:ChatArchived 2026-09-16-15:50:
+              FN-465 : l'archivage n'est plus proposé à l'opérateur, donc la ligne de filtres ne porte plus que le filtre par tag. Elle reste une ligne dédiée (et non fusionnée avec la recherche) pour que les sidebars étroites et mobiles puissent l'enrouler sans rognage.
               */}
               <div className="chat-sidebar-filter-row">
                 <label className="chat-tag-filter" htmlFor="chat-tag-filter">
@@ -3533,24 +3511,13 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
                   </UiSelect>
                   {selectedTagId ? <UiButton type="button" className="btn-icon" aria-label={t("chat.clearTagFilter", "Clear tag filter")} onClick={() => setSelectedTagId(null)}><X size={14} /></UiButton> : null}
                 </label>
-                <UiButton
-                  type="button"
-                  className={`btn btn-sm chat-archived-toggle${showArchivedSessions ? " chat-archived-toggle--active" : ""}`}
-                  data-testid="chat-archived-toggle"
-                  aria-pressed={showArchivedSessions}
-                  title={t("chat.showArchivedConversations", "Show archived conversations")}
-                  aria-label={t("chat.showArchivedConversations", "Show archived conversations")}
-                  onClick={() => { const next = !showArchivedSessions; setShowArchivedSessions(next); if (next) void refreshArchivedSessions(); }}
-                >
-                  {t("chat.archived", "Archived")}
-                </UiButton>
               </div>
             </div>
             {/* Session list section */}
             <div className="chat-session-list chat-sidebar-list" ref={sessionListRef} onScroll={virtualSessionList.onScroll}>
               {sessionsLoading ? (
                 <div className="chat-empty-state chat-empty-state--padded">{t("chat.loadingConversations", "Loading...")}</div>
-              ) : ((showArchivedSessions ? archivedSessions : filteredSessions).length === 0) ? (
+              ) : (filteredSessions.length === 0) ? (
                 <div className="chat-empty-state chat-empty-state--padded">{t("chat.noConversationsYet", "No conversations yet")}</div>
               ) : (
                 <>
@@ -3573,7 +3540,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
                   FNXC:ChatWindows 2026-09-14-11:35:
                   The project-scoped set records only whether a dedicated conversation window exists; the global window registry owns temporary presentation independently.
                   */
-                  const isWindowOpen = !showArchivedSessions && (openChatWindows?.has(session.id) ?? false);
+                  const isWindowOpen = openChatWindows?.has(session.id) ?? false;
                   const isActive = listOnly ? false : isSelected;
                   const showUnreadDot = !isSelected && isUnread("direct", session.id, session.lastMessageAt ?? session.updatedAt);
                   const sessionResolvedModel = resolveSessionProvider(
@@ -3593,7 +3560,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
                         e.preventDefault();
                         openSessionMenu(session.id, e.clientX, e.clientY);
                       }}
-                      data-testid={showArchivedSessions ? `chat-archived-session-${session.id}` : `chat-session-${session.id}`}
+                      data-testid={`chat-session-${session.id}`}
                     >
                       {/*
                       FNXC:ChatSidebar 2026-07-16-00:00:
@@ -3641,7 +3608,6 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
                           {t("chat.matchedInMessage", "Matched: \"{{preview}}\"", { preview: session.matchedMessagePreview })}
                         </div>
                       ) : null}
-                      {showArchivedSessions ? <UiButton type="button" className="btn btn-sm btn-secondary" data-testid={`chat-archived-restore-${session.id}`} onClick={(event) => { event.stopPropagation(); void handleRestoreArchived(session.id); }}>{t("chat.restore", "Restore")}</UiButton> : null}
                       <div className="chat-session-meta">
                         <span className="chat-session-meta-model">
                           {sessionResolvedModel?.provider ? <ProviderIcon provider={sessionResolvedModel.provider} size="sm" /> : null}
@@ -3656,7 +3622,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
                     </section>
                   ))}
                   {virtualSessionList.bottomSpacerHeight > 0 ? <div aria-hidden="true" style={{ height: virtualSessionList.bottomSpacerHeight }} /> : null}
-                  {(showArchivedSessions ? hasMoreArchivedSessions : hasMoreSessions) ? (
+                  {hasMoreSessions ? (
                     <div ref={sessionPagination.sentinelRef} role="status" aria-live="polite" data-testid="chat-session-auto-pagination-sentinel">
                       {sessionsLoadingMore ? t("chat.loadingConversations", "Loading...") : null}
                     </div>
@@ -3684,7 +3650,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
           */}
           <UiMenu aria-label={t("chat.conversationActions", "Conversation actions")} className="chat-session-context-menu-section">
           <UiMenuSection aria-label={t("chat.conversationPrimaryActions", "Primary conversation actions")}>
-          {onOpenSessionInNewWindow && !showArchivedSessions && contextMenuSession ? (
+          {onOpenSessionInNewWindow && contextMenuSession ? (
             <UiMenuItem
               id="open-window"
               type="button"
@@ -3739,14 +3705,6 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
             </UiMenuSection>
           ) : null}
           <UiMenuSection aria-label={t("chat.conversationMaintenanceActions", "Conversation maintenance actions")}>
-          <UiMenuItem
-            id="archive"
-            onClick={() => handleArchive(contextMenu.sessionId)}
-            data-testid="chat-context-archive"
-          >
-            <Archive size={14} />
-            {t("chat.archive", "Archive")}
-          </UiMenuItem>
           {chatSettings?.memoryBackendType === "stash" && chatSettings.memoryEnabled !== false ? (
             <UiMenuItem
               id="stash-backfill"

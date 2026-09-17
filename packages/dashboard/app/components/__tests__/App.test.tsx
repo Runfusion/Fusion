@@ -11,6 +11,12 @@ import type { AiSessionSummary, ProjectInfo } from "../../api";
 import { scopedKey } from "../../utils/projectStorage";
 import { ALL_WORKFLOWS_BOARD_VIEW_ID, BOARD_WORKFLOW_SELECTION_STORAGE_KEY } from "../../utils/boardWorkflowSelection";
 import { useFileBrowser } from "../../context/FileBrowserContext";
+import {
+  GEOMETRY_TOKEN_VALUES,
+  installGeometryTokenValues,
+  removeGeometryTokenValues,
+  resolveMobileNavAnchorPx,
+} from "../../test/mobileNavGeometry";
 
 // No mock needed - tests use localStorage directly
 
@@ -2219,6 +2225,8 @@ describe("official dashboard design production wiring", () => {
   });
 
   it("garde le popover détenu par App ouvert quand son focus referme le clavier", async () => {
+    installGeometryTokenValues();
+    try {
     mockUseViewportMode.mockReturnValue("mobile");
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
@@ -2246,8 +2254,22 @@ describe("official dashboard design production wiring", () => {
     expect(field).not.toHaveFocus();
     expect(popover).toHaveStyle({ "--mobile-nav-viewport-offset-top": "40px" });
 
-    const keyboardLift = popover.style.getPropertyValue("--mobile-nav-keyboard-lift");
-    expect(keyboardLift).not.toBe("0px");
+    /*
+    FNXC:MobilePillKeyboard 2026-09-16-16:27:
+    FN-463: the pill and its popover keep the SAME resolved bottom anchor before, during, and after the keyboard.
+    The published calc() strings are constants, so the contract is asserted on the resolved pixel values.
+    */
+    const anchoredGeometry = {
+      pillBottomPx: resolveMobileNavAnchorPx(popover, "--mobile-nav-pill-bottom"),
+      popoverBottomPx: resolveMobileNavAnchorPx(popover, "--mobile-nav-popover-bottom"),
+    };
+    expect(anchoredGeometry).toEqual({
+      pillBottomPx: GEOMETRY_TOKEN_VALUES["--mobile-nav-system-offset"] + GEOMETRY_TOKEN_VALUES["--space-sm"],
+      popoverBottomPx: GEOMETRY_TOKEN_VALUES["--mobile-nav-system-offset"]
+        + GEOMETRY_TOKEN_VALUES["--space-sm"]
+        + GEOMETRY_TOKEN_VALUES["--mobile-nav-pill-height"]
+        + GEOMETRY_TOKEN_VALUES["--space-xs"],
+    });
     mockUseMobileKeyboard.mockReturnValue({
       keyboardOverlap: 0,
       viewportHeight: null,
@@ -2265,10 +2287,11 @@ describe("official dashboard design production wiring", () => {
     await waitFor(() => expect(document.querySelector(".mobile-nav-bar")).toHaveClass("mobile-nav-bar--keyboard-open"));
     expect(screen.getByRole("menu", { name: "Navigate" })).toBe(popover);
     expect(trigger).toHaveAttribute("aria-expanded", "true");
-    expect(popover).toHaveStyle({
-      "--mobile-nav-keyboard-lift": keyboardLift,
-      "--mobile-nav-viewport-offset-top": "40px",
-    });
+    expect({
+      pillBottomPx: resolveMobileNavAnchorPx(popover, "--mobile-nav-pill-bottom"),
+      popoverBottomPx: resolveMobileNavAnchorPx(popover, "--mobile-nav-popover-bottom"),
+    }).toEqual(anchoredGeometry);
+    expect(popover).toHaveStyle({ "--mobile-nav-viewport-offset-top": "40px" });
 
     mockUseMobileKeyboard.mockReturnValue({
       keyboardOverlap: 0,
@@ -2281,10 +2304,19 @@ describe("official dashboard design production wiring", () => {
     await waitFor(() => expect(document.querySelector(".mobile-nav-bar")).not.toHaveClass("mobile-nav-bar--keyboard-open"));
     expect(screen.getByRole("menu", { name: "Navigate" })).toBe(popover);
     expect(trigger).toHaveAttribute("aria-expanded", "true");
-    expect(popover).toHaveStyle({
-      "--mobile-nav-keyboard-lift": "0px",
-      "--mobile-nav-viewport-offset-top": "0px",
-    });
+    expect({
+      pillBottomPx: resolveMobileNavAnchorPx(popover, "--mobile-nav-pill-bottom"),
+      popoverBottomPx: resolveMobileNavAnchorPx(popover, "--mobile-nav-popover-bottom"),
+    }).toEqual(anchoredGeometry);
+    /*
+    FNXC:MobileNav 2026-09-14-07:48:
+    The popover is still open, so the published geometry stays frozen at the sample captured when it opened; only a
+    close releases it. The bottom anchor is keyboard-independent either way.
+    */
+    expect(popover).toHaveStyle({ "--mobile-nav-viewport-offset-top": "40px" });
+    } finally {
+      removeGeometryTokenValues();
+    }
   });
 
   it.each([
@@ -2351,7 +2383,9 @@ describe("official dashboard design production wiring", () => {
     });
 
     render(<App />);
-    fireEvent.click(await screen.findByTestId("mobile-nav-tab-chat"));
+    /* FN-467: Chat is not promotable into the quick-access row, so the phone menu is its single mobile owner. */
+    fireEvent.click(await screen.findByTestId("mobile-menu-trigger"));
+    fireEvent.click(await screen.findByTestId("mobile-more-item-chat"));
     const dialog = await screen.findByRole("dialog", { name: "Chat" });
     fireEvent.click(await within(dialog).findByTestId(`chat-session-${appChatSession.id}`));
     const input = await within(dialog).findByTestId("chat-input");
@@ -2443,13 +2477,42 @@ describe("official dashboard design production wiring", () => {
     await waitFor(() => expect(screen.getByTestId("mobile-menu-trigger")).toBeInTheDocument());
     expect(screen.getByTestId("dashboard-project-shell").querySelector(".project-content")).toHaveClass("project-content--with-mobile-nav");
     expect(screen.queryByTestId("mobile-nav-tab-more")).toBeNull();
+    /*
+     * FN-467: the pill is driven by the project quick-access selection, so this fixture's `["settings", "planning"]`
+     * resolves to Planning alone — Settings is not a promotable destination — and Board is absent because it was not
+     * selected, not because the pill hard-codes four destinations.
+     */
     expect(Array.from(document.querySelectorAll<HTMLElement>(".mobile-nav-bar--native > .mobile-nav-tab")).map((tab) => tab.dataset.testid)).toEqual([
-      "mobile-nav-tab-command-center",
       "mobile-nav-tab-planning",
-      "mobile-nav-tab-chat",
-      "mobile-nav-tab-mailbox",
     ]);
+    expect(screen.queryByTestId("mobile-nav-tab-settings")).toBeNull();
     expect(screen.queryByTestId("mobile-nav-tab-tasks")).toBeNull();
+  });
+
+  /*
+   * FN-467 cas (m) : la pill du téléphone et la rangée directe du footer partagé lisent le MÊME réglage projet, dans le
+   * même ordre, et l'aperçu avant enregistrement reclasse les deux surfaces.
+   */
+  it.each(["mobile", "desktop"] as const)("aligne la navigation d'accès rapide de %s sur le réglage projet", async (viewport) => {
+    mockUseViewportMode.mockReturnValue(viewport);
+    vi.mocked(fetchSettings).mockResolvedValue({ ...defaultSettings, mobileNavPrimaryItems: ["mailbox", "missions", "tasks"], navigationPlacement: "footer" });
+
+    render(<App />);
+    if (viewport === "mobile") {
+      await waitFor(() => expect(screen.getByTestId("mobile-menu-trigger")).toBeInTheDocument());
+      await waitFor(() => expect(Array.from(document.querySelectorAll<HTMLElement>(".mobile-nav-bar--native > .mobile-nav-tab")).map((tab) => tab.dataset.testid)).toEqual([
+        "mobile-nav-tab-mailbox",
+        "mobile-nav-tab-missions",
+        "mobile-nav-tab-tasks",
+      ]));
+    } else {
+      await waitFor(() => expect(document.querySelector(".desktop-action-bar__scroller")).not.toBeNull());
+      await waitFor(() => expect(Array.from(document.querySelectorAll<HTMLElement>(".desktop-action-bar__scroller .desktop-action-bar__action")).map((button) => button.dataset.testid)).toEqual([
+        "desktop-nav-mailbox",
+        "desktop-nav-missions",
+        "desktop-nav-board",
+      ]));
+    }
   });
 
   it("keeps Chat and Notes as inline dock tools without an expanded owner", async () => {
@@ -3263,9 +3326,11 @@ describe("App chat unread response indicator", () => {
       );
     });
 
-    const mobileChatNav = screen.getByTestId("mobile-nav-tab-chat");
+    /* FN-467: Chat moved from the fixed pill row into the phone navigation menu; the indicator contract is unchanged. */
+    fireEvent.click(screen.getByTestId("mobile-menu-trigger"));
+    const mobileChatNav = screen.getByTestId("mobile-more-item-chat");
     expect(mobileChatNav).toBeInTheDocument();
-    expect(mobileChatNav.querySelector(".mobile-nav-chat-unread-dot")).toBeNull();
+    expect(mobileChatNav.querySelector(".mobile-more-item-icon-dot")).toBeNull();
   });
 
   it("shows unread indicator for planner assistant messages visible in the common Chat feed", async () => {

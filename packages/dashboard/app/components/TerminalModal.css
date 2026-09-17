@@ -663,18 +663,14 @@ The worktree listbox must escape the mobile terminal header's clipped overflow. 
   letter-spacing: 0.04em;
 }
 
+/*
+FNXC:IconOnlyButtonCanon 2026-09-16-19:05:
+FN-471: this control is icon-only, so it re-declared the whole borderless paint at a bespoke 44px box. The
+canonical borderless variant now owns box, paint, colour and transition; only the flex behaviour is local. The
+old 44px square is replaced by the shared 28/36px geometry, not by a weaker guarantee.
+*/
 .terminal-close {
-  display: flex;
   flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  width: 44px;
-  height: 44px;
-  background: none;
-  border: none;
-  color: var(--text-muted);
-  cursor: pointer;
-  transition: color var(--transition-fast), background var(--transition-fast);
 }
 
 .terminal-close:hover {
@@ -1719,9 +1715,10 @@ The Android keyboard-open recurrence can start with a touch-primary visualViewpo
     font-size: 13px;
   }
 
+  /* FNXC:IconOnlyButtonCanon 2026-09-16-19:05: même valeur mobile qu'avant, exprimée par le jeton canonique. */
   .terminal-close {
-    width: 36px;
-    height: 36px;
+    width: var(--icon-button-size-mobile);
+    height: var(--icon-button-size-mobile);
   }
 
   .terminal-toolbar {
@@ -2038,10 +2035,16 @@ The drawer terminal consumes the same canonical drawer block-size and shared han
 
 FNXC:MobileDrawerMotion 2026-09-12-20:37:
 The drawer terminal applies the shared bottom-edge entry to its outer modal only. Reduced motion suppresses that animation while PTY state, keyboard geometry, backdrop, Escape, and drag dismissal remain unchanged.
+
+FNXC:MobileDrawer 2026-09-16-17:23:
+The revealed top band and the panel block-size derive from the same `--mobile-drawer-top-reveal` token, so all three drawer owners open at exactly the same height. The band stays non-zero so the scrim and the close gesture remain reachable.
+
+FNXC:MobileDrawer 2026-09-16-17:23:
+The mobile fullscreen shell (`.modal.terminal-modal.terminal-modal--mobile`) and its phone-width companion block both force all three height properties to the full viewport with forced precedence. Those declarations would otherwise beat the canonical drawer block-size, so the drawer rule below must carry forced precedence on min-height, height AND max-height, exactly like `.floating-window--mobile-drawer`. Neutralizing the minimum is mandatory: in CSS a minimum above the maximum wins, so leaving the fullscreen floor in force would re-pin the panel to the full viewport even with a corrected height.
 */
 html[data-mobile-drawers="true"][data-viewport-mode="mobile"] .terminal-modal-overlay:not(.terminal-modal-overlay--docked) {
   align-items: flex-end;
-  padding-block-start: calc(env(safe-area-inset-top, 0px) + var(--space-2xl));
+  padding-block-start: calc(env(safe-area-inset-top, 0px) + var(--mobile-drawer-top-reveal));
   background: color-mix(in srgb, var(--bg) 38%, transparent);
 }
 
@@ -2049,17 +2052,27 @@ html[data-mobile-drawers="true"][data-viewport-mode="mobile"] .terminal-modal-ov
   position: relative;
   inset: auto;
   width: 100%;
-  height: var(--mobile-drawer-block-size);
+  height: var(--mobile-drawer-block-size) !important;
   min-width: 0;
-  min-height: 0;
+  min-height: 0 !important;
   max-width: 100%;
-  max-height: var(--mobile-drawer-block-size);
+  max-height: var(--mobile-drawer-block-size) !important;
   padding-block-end: var(--mobile-nav-system-offset);
   border: var(--btn-border-width) solid var(--border);
   border-block-end: 0;
   border-radius: var(--radius-xl) var(--radius-xl) 0 0;
   box-shadow: var(--shadow-lg);
   animation: mobile-drawer-rise-in var(--duration-normal) ease-out;
+}
+
+/*
+FNXC:MobileDrawer 2026-09-16-17:23:
+The drawer terminal keeps its keyboard-aware shrink. The two existing keyboard rules already declare `min-height: auto !important` plus `height`/`max-height` `!important`, so this companion rule must win on all three properties; otherwise an open keyboard would leave the panel at the canonical drawer height and push its entry area under the keyboard. The panel is never taller than the canonical drawer height and never taller than the visual viewport.
+*/
+html[data-mobile-drawers="true"][data-viewport-mode="mobile"] .terminal-modal-overlay:not(.terminal-modal-overlay--docked) > .terminal-modal[style*="--keyboard-overlap"] {
+  min-height: 0 !important;
+  height: min(var(--mobile-drawer-block-size), var(--vv-height, calc(100dvh - var(--keyboard-overlap, 0px)))) !important;
+  max-height: min(var(--mobile-drawer-block-size), var(--vv-height, calc(100dvh - var(--keyboard-overlap, 0px)))) !important;
 }
 
 @media (prefers-reduced-motion: reduce) {

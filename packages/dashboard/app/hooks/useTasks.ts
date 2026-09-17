@@ -774,7 +774,7 @@ export function useTasks(options?: UseTasksOptions) {
   /*
   FNXC:MobileTabDiscard 2026-07-26-14:12:
   "Data as of" clock for everything derived from `tasks` (isTaskStuck / countStuckTasks, TaskCard's
-  isStuck + isAgentActive, Column's activeTaskCount, ExecutorStatusBar's stuck counters, and the
+  isStuck + isAgentActive, ExecutorStatusBar's stuck counters, and the
   taskRecovery affordances). It describes the AGE OF THE ROWS CURRENTLY IN `tasks`, not the age of
   this hook instance.
 

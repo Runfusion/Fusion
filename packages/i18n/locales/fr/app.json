@@ -3509,7 +3509,6 @@
     "outbox": "Boîte d'envoi",
     "outboxTab": "Boîte d'envoi",
     "pending": "En attente",
-    "refreshTitle": "Actualiser",
     "reply": "Répondre",
     "replyButton": "Répondre",
     "replyingTo": "Répondre à {{preview}}",
@@ -3580,7 +3579,11 @@
       "taskWedge": "{{taskId}} requiert une action",
       "duplicateDecision": "{{taskId}} : décision de doublon",
       "planningClarification": "Clarification de planification"
-    }
+    },
+    "filter": "Filtrer",
+    "filterTitle": "Filtrer la boîte de réception",
+    "filterMenuLabel": "Portée de la boîte de réception",
+    "filterPendingApprovalsLabel": "Filtrer la boîte de réception — {{count}} approbations en attente"
   },
   "memory": {
     "auditChecksTitle": "Vérifications d'audit",

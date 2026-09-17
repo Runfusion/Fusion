@@ -9,8 +9,6 @@ import { useTranslation } from "react-i18next";
 import {
   Bot,
   Brain,
-  ChevronLeft,
-  ChevronRight,
   Clock,
   Folder,
   FolderGit2,
@@ -21,6 +19,7 @@ import {
   Mail,
   MessageSquare,
   Monitor,
+  PanelLeft,
   PanelsTopLeft,
   Search,
   Settings,
@@ -591,6 +590,28 @@ export function LeftSidebarNav({
       aria-label={t("nav.sidebarAriaLabel", "Sidebar navigation")}
       style={isCollapsed ? undefined : { width: sidebarWidth, minWidth: sidebarWidth }}
     >
+      {/*
+      FNXC:Navigation 2026-09-16-20:52:
+      FN-473 moves the sidebar collapse affordance out of the footer and into a dedicated sidebar header region rendered
+      as the aside's first child, so both shell edges expose their panel toggle at the top. The button adopts the exact
+      design of Header's `header-right-dock-toggle`: the canonical borderless icon-only `btn-icon` variant (FN-471) with
+      a `PanelLeft` glyph mirroring `PanelRight`, a title/aria-label pair and no text label. State, `aria-pressed`, the
+      `toggleCollapsed` handler and `fusion:left-sidebar-collapsed` persistence are unchanged.
+      */}
+      <div className="left-sidebar-nav__header">
+        <button
+          type="button"
+          className="btn-icon left-sidebar-nav__collapse-toggle"
+          aria-label={isCollapsed ? t("nav.expandSidebar", "Expand sidebar") : t("nav.collapseSidebar", "Collapse sidebar")}
+          title={isCollapsed ? t("nav.expandSidebar", "Expand sidebar") : t("nav.collapseSidebar", "Collapse sidebar")}
+          aria-pressed={isCollapsed}
+          data-testid="sidebar-nav-collapse-toggle"
+          onClick={toggleCollapsed}
+        >
+          <PanelLeft size={16} />
+        </button>
+      </div>
+
       <nav className="left-sidebar-nav__list" aria-label={t("nav.primaryNavAriaLabel", "Primary navigation")}>
         <div className="left-sidebar-nav__section">{navEntries.map(renderEntry)}</div>
       </nav>
@@ -598,10 +619,11 @@ export function LeftSidebarNav({
       <div className="left-sidebar-nav__footer">
         {/* FNXC:StandardizedViewActions 2026-09-13-21:43: New Task is header-owned; the navigation footer contains navigation chrome only and must never expose a duplicate creation mutation. */}
         {/*
-        FNXC:Navigation 2026-09-15-14:41:
+        FNXC:Navigation 2026-09-15-14:41 (updated 2026-09-16-20:52):
         FN-419 relocates the shell controls that have no other wide host in `sidebar` placement: the engine control
-        menu and the Terminal action, both ABOVE Collapse. Omitting `onToggleTerminal` must leave no empty button
-        shell. `DashboardWindowVisibilityToggle` is intentionally absent here — the operator asked for it to disappear
+        menu and the Terminal action. Since FN-473 the collapse toggle no longer lives here — the footer holds the
+        engine capacity control, the optional Terminal action and Settings only. Omitting `onToggleTerminal` must
+        leave no empty button shell. `DashboardWindowVisibilityToggle` is intentionally absent here — the operator asked for it to disappear
         with the bottom bar, and it stays owned by `DesktopActionBar`/`ExecutorStatusBar`.
         */}
         {projectId ? (
@@ -626,22 +648,6 @@ export function LeftSidebarNav({
             <span className="left-sidebar-nav__label">{t("nav.terminal", "Terminal")}</span>
           </button>
         ) : null}
-        {/*
-        FNXC:Navigation 2026-06-21-00:00:
-        The sidebar collapse affordance belongs in the footer immediately above Settings, using the same row-item visual language. Expanded mode shows the Collapse label, while rail mode relies on the shared label-hiding rule so the button remains icon-only like Settings.
-        */}
-        <button
-          type="button"
-          className="btn left-sidebar-nav__item left-sidebar-nav__collapse-toggle"
-          aria-label={isCollapsed ? t("nav.expandSidebar", "Expand sidebar") : t("nav.collapseSidebar", "Collapse sidebar")}
-          title={isCollapsed ? t("nav.expandSidebar", "Expand sidebar") : t("nav.collapseSidebar", "Collapse sidebar")}
-          aria-pressed={isCollapsed}
-          data-testid="sidebar-nav-collapse-toggle"
-          onClick={toggleCollapsed}
-        >
-          {isCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
-          <span className="left-sidebar-nav__label">{t("nav.collapse", "Collapse")}</span>
-        </button>
         <button
           type="button"
           className="btn left-sidebar-nav__item left-sidebar-nav__settings"

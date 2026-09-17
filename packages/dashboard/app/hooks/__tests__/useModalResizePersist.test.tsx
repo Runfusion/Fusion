@@ -38,8 +38,8 @@ function setViewport(width: number, height = 800): void {
       ? width <= 768
       : query.includes("max-height: 480px")
         ? height <= 480
-        : query.includes("min-width: 769px") && query.includes("max-width: 1024px")
-          ? width >= 769 && width <= 1024
+        : query.includes("min-width: 769px") && query.includes("max-width: 1023.98px")
+          ? width >= 769 && width <= 1023.98
           : false,
     media: query,
     onchange: null,

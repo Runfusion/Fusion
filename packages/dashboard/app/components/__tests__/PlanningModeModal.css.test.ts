@@ -256,20 +256,21 @@ describe("PlanningModeModal CSS responsive action contract", () => {
   });
 
   /*
-  FN-402 moved rename onto the session row: the pencil must share the delete/archive geometry, reveal, hover and focus
+  FN-402 moved rename onto the session row: the pencil must share the delete geometry, reveal, hover and focus
   groups (and the mobile always-visible block), and the removed header title editor must leave no dead selector behind.
+  FN-465 removed the row archive control, so those groups now contain exactly delete and rename.
   */
   it("styles the session-row rename control with the shared row action groups", () => {
     const css = loadPlanningCss();
 
-    const baseGroup = findRule(css, ".planning-sidebar-item-delete,\n.planning-sidebar-item-archive,\n.planning-sidebar-item-rename");
+    const baseGroup = findRule(css, ".planning-sidebar-item-delete,\n.planning-sidebar-item-rename");
     expect(baseGroup).toBeTruthy();
     expect(baseGroup).toMatch(/display\s*:\s*none\s*;/);
     expect(baseGroup).toMatch(/border-radius\s*:\s*var\(--radius-sm\)\s*;/);
 
     expect(css).toMatch(/\.planning-sidebar-item:hover \.planning-sidebar-item-rename/);
     expect(css).toMatch(/\.planning-sidebar-item:focus-within \.planning-sidebar-item-rename/);
-    expect(findRule(css, ".planning-sidebar-item-archive:hover,\n.planning-sidebar-item-rename:hover"))
+    expect(findRule(css, ".planning-sidebar-item-rename:hover"))
       .toMatch(/color-mix\(in srgb, var\(--todo\) 15%, transparent\)/);
     expect(css).toMatch(/\.planning-sidebar-item-rename:focus-visible/);
 

@@ -7,7 +7,6 @@ import { useFlashOnIncrease } from "../hooks/useFlashOnIncrease";
 import { useConfirm } from "../hooks/useConfirm";
 import { rebuildTaskSpec } from "../api";
 import { COLUMN_LABELS, COLUMN_DESCRIPTIONS, type TaskColumnSortMode, type DoneColumnSortMode, type Task, type TaskDetail, type Column as ColumnType, type ColumnId, type TaskCreateInput, type GithubIssueAction, type MergeResult } from "@fusion/core";
-import { enrichRunningAgentTaskShapeFromFlags, isRunningAgentTask } from "../../../core/src/agents/live-agent-count";
 import { isNearDuplicateCanonicalInactive } from "../../../core/src/duplicates/near-duplicate-canonical";
 import { TaskCard } from "./TaskCard";
 import { WorktreeGroup } from "./WorktreeGroup";
@@ -341,28 +340,15 @@ function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeG
   */
   const showWorktreeGroups = showWorktreeGrouping === true && isWipProcessingColumn;
   /*
-  FNXC:BoardColumnCount 2026-07-21-19:30:
-  Column header is executing/total (e.g. 3/4). Executing uses the same Running predicate as the
-  footer (unpaused WIP, live planners, active review). Total is the card count in this lane.
-
-  FNXC:BoardColumnCount 2026-08-01-17:53:
-  Operator requirement: summing the lane headers must never exceed the engine's live-agent
-  population (the concurrency cap's admission truth). The former union with the card
-  activity-chrome predicate (FN-8494 REVISING chrome et al.) let the sum read cap+1 (e.g. 10
-  glowing cards under a 9-slot limit), which operators read as a capacity breach. The union is
-  removed and the chrome predicate itself (isTaskAgentActive) now delegates its positive arm to
-  the same shared Running predicate, so the header still agrees with the glowing cards below it:
-  glow is a strict subset of Running, never a superset.
+  FNXC:BoardColumnCount 2026-09-16-20:37:
+  Operator requirement: the column header shows ONLY the number of tasks in that lane (e.g. `4`),
+  never an `executing/total` ratio. The executing half was judged noisy — it duplicated signal that
+  already reads better on the cards themselves — so every column role (complete, WIP, hold, intake,
+  review, custom workflow lane) now renders the same single count with an `N tasks` aria-label.
+  The former header↔card-glow agreement constraint no longer applies to the header: the card glow
+  keeps its own shared predicate (`isTaskAgentActive` -> `isRunningAgentTask`) and the footer keeps
+  the live-agent Running population, so neither surface loses its meaning.
   */
-  const activeTaskCount = useMemo(
-    () => tasks.filter((task) =>
-      // FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (PR #2566 review — greptile): these
-      // tasks are IN this column, so the column's own flags are their column traits. Without
-      // them the header undercounts executing work on a merged planning lane.
-      isRunningAgentTask(enrichRunningAgentTaskShapeFromFlags(task, columnFlags)),
-    ).length,
-    [tasks, columnFlags],
-  );
   /*
   FNXC:BoardColumnWindowing 2026-09-07-16:03:
   Every ordinary Board lane mounts only its measured viewport window, including search results. The result signature resets geometry when a different search collection arrives; worktree grouping remains exempt because its provider is already bounded by execution capacity.
@@ -602,13 +588,9 @@ function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeG
         <h2>{workflowMode ? (columnDisplayName ?? COLUMN_LABELS[column] ?? column) : (COLUMN_LABELS[column] ?? column)}</h2>
         <span
           className={`column-count${countFlashing ? " count-flash" : ""}`}
-          aria-label={isCompleteColumn
-            ? t("column.taskCount", "{{total}} tasks", { total: displayedTaskCount.toLocaleString() })
-            : t("column.executingOfTotal", "{{active}} executing of {{total}}", { active: activeTaskCount, total: displayedTaskCount })}
+          aria-label={t("column.taskCount", "{{total}} tasks", { total: displayedTaskCount.toLocaleString() })}
         >
-          {isCompleteColumn
-            ? <span>{displayedTaskCount.toLocaleString()}</span>
-            : <><span>{activeTaskCount}</span>/<span>{displayedTaskCount}</span></>}
+          <span>{displayedTaskCount.toLocaleString()}</span>
         </span>
         {/* FNXC:NativeShell 2026-09-09-18:24: Every resolved complete lane, including custom empty lanes, owns the sole History entry point. */}
         {isCompleteColumn && onOpenHistory && (

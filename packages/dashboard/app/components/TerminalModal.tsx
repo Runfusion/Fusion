@@ -33,7 +33,7 @@ import { useWorkspaces } from "../hooks/useWorkspaces";
 import { getViewportMode, isMobileViewport } from "../hooks/useViewportMode";
 import { useDrawerDismissGesture } from "../hooks/useDrawerDismissGesture";
 import { FloatingWindow, FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT } from "./FloatingWindow";
-import type { FloatingWindowDragGestureEnd } from "./FloatingWindow";
+import type { FloatingWindowDragGestureEnd, FloatingWindowDragHandoff } from "./FloatingWindow";
 import { FLOATING_WINDOW_DRAG_THRESHOLD_PX } from "./floatingWindowGeometry";
 import { DashboardWindowSurfaceRoot } from "../context/DashboardWindowManagerContext";
 import { ModalCloseButton } from "./ModalCloseButton";
@@ -160,6 +160,25 @@ FNXC:TerminalLayout 2026-09-15-07:57:
 FN-409: the detached terminal opens at the same standard window size as a task pop-out and a detached chat.
 The value is duplicated here rather than imported so this change never collides with the shared geometry module.
 */
+/*
+FNXC:TerminalLayout 2026-09-16-18:31:
+FN-469: the pinned title bar spans the whole work area while the detached window is `TERMINAL_FLOAT_DEFAULT_WIDTH`
+wide, so "leave the window exactly under my mouse" means keeping the pointer at the same PROPORTION of the bar, not
+at the same pixel offset. The vertical offset is taken literally from the bar, since both bars have the same height.
+An unmeasurable header (jsdom, or a panel not painted yet) returns `undefined` so `resolveHandoffRect` applies its
+shared centred fallback instead of a fabricated point.
+*/
+function resolvePinnedGrabOffset(headerRect: DOMRect | undefined, pointerX: number, pointerY: number): { x: number; y: number } | undefined {
+  if (!headerRect || !Number.isFinite(headerRect.width) || headerRect.width <= 0) return undefined;
+  if (!Number.isFinite(headerRect.left) || !Number.isFinite(headerRect.top)) return undefined;
+  const ratio = Math.min(Math.max((pointerX - headerRect.left) / headerRect.width, 0), 1);
+  const height = Number.isFinite(headerRect.height) ? Math.max(0, headerRect.height) : 0;
+  return {
+    x: ratio * TERMINAL_FLOAT_DEFAULT_WIDTH,
+    y: Math.min(Math.max(pointerY - headerRect.top, 0), height),
+  };
+}
+
 const TERMINAL_FLOAT_DEFAULT_WIDTH = 800;
 const TERMINAL_FLOAT_DEFAULT_HEIGHT = 680;
 const TERMINAL_FLOAT_MIN_WIDTH = 480;
@@ -779,6 +798,28 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
   `FloatingWindow.handleDragPointerDown`) nor a tab surface; `preventDefault()` is called only after the press is
   retained, so a suppressed press keeps native activation and focus.
   */
+  /*
+  FNXC:TerminalLayout 2026-09-16-18:31:
+  FN-469: the detach now HANDS THE LIVE GESTURE OVER instead of ending it. The operator reported that pulling the
+  pinned terminal out "crée un élément centré" and loses the drag: the handler used to call `endGesture()` and then
+  switch presentation, so the floating window mounted at the standard centred opening rectangle with nothing
+  attached to the pointer.
+
+  Two facts are published to `FloatingWindow.dragHandoff` before the presentation switch:
+  - the live pointer, so the window opens under it;
+  - a PROPORTIONAL grab offset: the pointer keeps the same relative position along the title bar it was holding,
+    which is the requested "recrop" — the full-width pinned bar becomes an 800px window without the cursor jumping.
+    An unmeasurable header (jsdom, unpainted panel) falls back to the shared centred undock anchor.
+  The threshold is omnidirectional (`Math.hypot`, consistent with `shouldDetachSnappedWindow`) because a lateral or
+  diagonal pull is just as clearly "pull it out" as a vertical one.
+  */
+  const [pinnedDetachHandoff, setPinnedDetachHandoff] = useState<FloatingWindowDragHandoff | undefined>(undefined);
+  const pinnedDetachNonceRef = useRef(0);
+  /* The descriptor belongs to ONE gesture: returning to the pinned presentation must not re-place a later opening. */
+  useEffect(() => {
+    if (displayMode !== "floating") setPinnedDetachHandoff(undefined);
+  }, [displayMode]);
+
   const handlePinnedDetachPointerDown = useCallback((event: ReactPointerEvent<HTMLElement>) => {
     if (!isBelowMode || embedded || isMobileTerminal) return;
     const target = event.target as HTMLElement | null;
@@ -794,7 +835,9 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
     const captureTarget = event.currentTarget;
     const pointerId = event.pointerId;
     captureTarget.setPointerCapture?.(pointerId);
+    const startX = event.clientX;
     const startY = event.clientY;
+    const headerRect = captureTarget.getBoundingClientRect?.();
     const previousUserSelect = document.body.style.userSelect;
     document.body.style.userSelect = "none";
     let detached = false;
@@ -814,8 +857,15 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
 
     function handlePointerMove(moveEvent: PointerEvent) {
       if (moveEvent.pointerId !== pointerId || detached) return;
-      if (Math.abs(moveEvent.clientY - startY) < TERMINAL_DETACH_DRAG_THRESHOLD_PX) return;
+      if (Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) < TERMINAL_DETACH_DRAG_THRESHOLD_PX) return;
       detached = true;
+      pinnedDetachNonceRef.current += 1;
+      setPinnedDetachHandoff({
+        pointerId,
+        pointer: { x: moveEvent.clientX, y: moveEvent.clientY },
+        grabOffset: resolvePinnedGrabOffset(headerRect, moveEvent.clientX, moveEvent.clientY),
+        nonce: pinnedDetachNonceRef.current,
+      });
       endGesture();
       setDisplayMode("floating");
     }
@@ -946,9 +996,17 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
   fills the work area, so its bottom edge rests on the contact line permanently, hence `snapMode === "floating"`;
   and a click moves nothing, hence `moved === true`.
   */
+  /*
+  FNXC:TerminalLayout 2026-09-16-18:31:
+  FN-469: `bottom` is now a valid re-pin outcome. The shared contract gained a bottom band, and a window dragged onto
+  the footer line is EXACTLY the gesture that arms it — so without accepting it here the existing re-pin would have
+  regressed into a generic bottom dock. The terminal keeps its own in-flow `below` presentation as the result: the
+  band is only how the gesture is now reported. `left`, `right`, `maximized` and a click still re-pin nothing.
+  */
   const handleFloatingDragGestureEnd = useCallback((info: FloatingWindowDragGestureEnd) => {
     if (embedded || isMobileTerminal || !auxEffectsActive) return;
-    if (!info.moved || info.snapMode !== "floating") return;
+    if (!info.moved || (info.snapMode !== "floating" && info.snapMode !== "bottom")) return;
+    if (info.snapMode === "bottom") { setDisplayMode("below"); return; }
     const bottomEdge = info.rect.position.y + info.rect.size.height;
     if (!Number.isFinite(bottomEdge) || !Number.isFinite(info.bounds.bottom)) return;
     if (bottomEdge < info.bounds.bottom - TERMINAL_REPIN_CONTACT_PX) return;
@@ -3552,6 +3610,8 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
       hideHeader
       dragHandleSelector=".terminal-header"
       onDragGestureEnd={handleFloatingDragGestureEnd}
+      /* FNXC:TerminalLayout 2026-09-16-18:31: FN-469 — a detach in progress opens this window under the pointer and resumes the same drag. */
+      dragHandoff={pinnedDetachHandoff}
       suspendGeometryPersistenceOnMobile
       suspendGeometryPersistenceOnShortViewport
       ariaLabel={t("terminal.title", "Terminal")}

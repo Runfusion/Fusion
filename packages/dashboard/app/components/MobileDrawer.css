@@ -10,6 +10,9 @@ Body overflow is disabled only when a provider declares a complete internal scro
 
 FNXC:MobileDrawer 2026-09-12-20:37:
 Every opened mobile drawer animates only its outer panel from below through the shared rise keyframes. The individual translate property keeps the entry motion independent from transform-based drag dismissal, while reduced-motion removes the animation without changing geometry or close behavior.
+
+FNXC:MobileDrawer 2026-09-16-17:23:
+The revealed top band and the panel block-size derive from the same `--mobile-drawer-top-reveal` token, so all three drawer owners open at exactly the same height. The band stays non-zero so the scrim and the close gesture remain reachable.
 */
 .mobile-drawer {
   position: fixed;
@@ -18,7 +21,7 @@ Every opened mobile drawer animates only its outer panel from below through the 
   display: flex;
   align-items: flex-end;
   justify-content: stretch;
-  padding-block-start: calc(env(safe-area-inset-top, 0px) + var(--space-2xl));
+  padding-block-start: calc(env(safe-area-inset-top, 0px) + var(--mobile-drawer-top-reveal));
   background: color-mix(in srgb, var(--bg) 38%, transparent);
   overscroll-behavior: contain;
 }

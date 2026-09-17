@@ -50,7 +50,7 @@ function setViewport(width: number) {
     Object.defineProperty(window, "matchMedia", { value: vi.fn(), configurable: true, writable: true });
   }
   vi.spyOn(window, "matchMedia").mockImplementation((query: string) => ({
-    matches: query.includes("max-width: 768px") ? width <= 768 : query.includes("min-width: 769px") && query.includes("max-width: 1024px") ? width >= 769 && width <= 1024 : false,
+    matches: query.includes("max-width: 768px") ? width <= 768 : query.includes("min-width: 769px") && query.includes("max-width: 1023.98px") ? width >= 769 && width <= 1023.98 : false,
     media: query,
     onchange: null,
     addListener: vi.fn(),

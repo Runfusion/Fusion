@@ -3508,7 +3508,6 @@
     "outbox": "보낸 편지함",
     "outboxTab": "보낸 편지함",
     "pending": "대기 중",
-    "refreshTitle": "새로고침",
     "reply": "답장",
     "replyButton": "답장",
     "replyingTo": "답장 대상",
@@ -3579,7 +3578,11 @@
       "taskWedge": "{{taskId}} 조치 필요",
       "duplicateDecision": "{{taskId}} 중복 결정",
       "planningClarification": "계획 설명 요청"
-    }
+    },
+    "filter": "필터",
+    "filterTitle": "받은 편지함 필터",
+    "filterMenuLabel": "받은 편지함 범위",
+    "filterPendingApprovalsLabel": "받은 편지함 필터 — 대기 중인 승인 {{count}}건"
   },
   "memory": {
     "auditChecksTitle": "감사 검사",

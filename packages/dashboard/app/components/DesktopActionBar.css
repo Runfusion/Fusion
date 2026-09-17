@@ -5,6 +5,16 @@ Tablet and desktop share one edge-to-edge footer instead of a floating navigatio
 /*
 FNXC:DesktopNavigation 2026-09-11-23:41:
 The bar renders as a sibling of .dashboard-project-shell inside .dashboard-project-stack (App.tsx), and the stack does NOT declare --executor-footer-height. Only .dashboard-project-shell and .project-content--with-footer do, so the bar otherwise inherits the :root floor of 0px and sizes itself to zero height. Redeclare the token at this consumer exactly as .terminal-below-host--with-footer does for the same sibling-of-shell reason; tablet and desktop use the shared non-mobile footer height while mobile keeps its separate pill.
+
+FNXC:DesktopNavigation 2026-09-16-17:41:
+FN-467: the quick-access row + More group must be centered ON THE BAR, not on the residual space left over between the
+side controls. A flex distribution centered `__center` inside whatever remained after a narrow `__capacity` on one side
+and a wide `__right` (Chat/Terminal/Settings) plus the always-present window-visibility placeholder on the other, so the
+group visibly leaned toward the inline start. The bar is therefore a three-track grid whose START and END tracks are the
+SAME expression, with the middle track sized by its content: the middle track is centered by construction regardless of
+side content widths. The end track holds BOTH `__right` and the visibility placeholder on row 1, and `__right` declares
+the placeholder's reserve inline-end so the placeholder can never overlap the right actions nor skew track symmetry.
+Side-track floors stay at min-content so constrained widths degrade by shrinking the scroller instead of overlapping.
 */
 .desktop-action-bar {
   --executor-footer-height: 36px;
@@ -12,7 +22,8 @@ The bar renders as a sibling of .dashboard-project-shell inside .dashboard-proje
   inset-inline: 0;
   bottom: 0;
   z-index: var(--z-sticky);
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(min-content, 1fr) auto minmax(min-content, 1fr);
   block-size: var(--executor-footer-height);
   align-items: stretch;
   gap: var(--space-xs);
@@ -31,8 +42,16 @@ both depend on DOM parenthood. At rest the bar keeps `var(--z-sticky)`.
 .desktop-action-bar--menu-open {
   z-index: calc(var(--fusion-max-z) + 3);
 }
-.desktop-action-bar__capacity, .desktop-action-bar__right { display: flex; flex: 0 0 auto; align-items: stretch; }
-.desktop-action-bar__center { display: flex; flex: 1 1 auto; min-inline-size: 0; justify-content: center; gap: var(--space-xs); }
+/*
+FNXC:DesktopNavigation 2026-09-16-18:31:
+FN-469: the start track now holds TWO controls — the capacity counter and the icon-only Settings action — so the
+track itself becomes the flex row and `__capacity` becomes its first child. `__leading` keeps the exact placement
+`__capacity` had (`grid-column: 1`, `justify-self: start`), so FN-467's symmetric side tracks are preserved.
+*/
+.desktop-action-bar__leading { display: flex; grid-row: 1; grid-column: 1; justify-self: start; align-items: stretch; gap: var(--space-xs); }
+.desktop-action-bar__capacity, .desktop-action-bar__right { display: flex; grid-row: 1; align-items: stretch; }
+.desktop-action-bar__center { display: flex; grid-row: 1; grid-column: 2; min-inline-size: 0; justify-content: center; gap: var(--space-xs); }
+.desktop-action-bar > .dashboard-window-visibility-toggle__placeholder { grid-row: 1; grid-column: 3; justify-self: end; inline-size: var(--touch-target-min-size); }
 .desktop-action-bar__scroller { display: flex; justify-content: center; gap: var(--space-xs); overflow-x: auto; }
 .desktop-action-bar__capacity .engine-control-menu__trigger--text { block-size: 100%; min-inline-size: calc(var(--space-xl) * 2); border: 0; background: transparent; }
 /*
@@ -45,10 +64,17 @@ The capacity trigger sits against the footer's inline-start edge, so its shared 
   min-inline-size: min(24rem, calc(100vw - (var(--space-lg) * 2)));
   max-inline-size: calc(100vw - (var(--space-lg) * 2));
 }
-.desktop-action-bar__right { margin-inline-start: auto; gap: var(--space-xs); }
+.desktop-action-bar__right { grid-column: 3; justify-self: end; margin-inline-end: var(--touch-target-min-size); gap: var(--space-xs); }
 .desktop-action-bar__action { position: relative; display: inline-flex; flex: 0 0 auto; min-inline-size: calc(var(--space-xl) * 2); align-items: center; justify-content: center; gap: var(--space-xs); padding: var(--space-xs) var(--space-sm); border: 0; border-radius: var(--radius-md); color: var(--text-secondary); background: transparent; font: inherit; cursor: pointer; }
 .desktop-action-bar__action:hover, .desktop-action-bar__action--active { color: var(--accent); background: var(--bg-hover); }
 .desktop-action-bar__action:focus-visible { outline: none; box-shadow: var(--focus-ring-strong); }
+/*
+FNXC:DesktopNavigation 2026-09-16-18:31:
+FN-469: an icon-only action has no visible label, so it only needs a square touch target. It is a MODIFIER of the
+shared action, never a parallel button variant: colours, hover, focus ring, and icon sizing all still come from
+`.desktop-action-bar__action` and `.desktop-action-bar__icon`.
+*/
+.desktop-action-bar__action--icon-only { min-inline-size: var(--touch-target-min-size); padding-inline: var(--space-xs); }
 .desktop-action-bar__icon { position: relative; display: inline-flex; }
 .desktop-action-bar__icon > svg { inline-size: var(--icon-size-md); block-size: var(--icon-size-md); }
 .desktop-action-bar__more { position: relative; display: flex; }

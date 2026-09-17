@@ -41,6 +41,91 @@
   gap: var(--space-sm);
 }
 
+/*
+FNXC:MailboxTwoTabs 2026-09-16-16:53:
+The inbox scope menu is anchored to its header trigger and reuses the shared menu primitive, so only
+placement and surface tokens live here — no forked button or popover variant.
+*/
+.mailbox-inbox-filter-host {
+  position: relative;
+  display: inline-flex;
+}
+
+.mailbox-inbox-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.mailbox-inbox-filter-menu {
+  position: absolute;
+  inset-block-start: calc(100% + var(--space-xs));
+  inset-inline-end: 0;
+  min-inline-size: calc(var(--space-xl) * 8);
+  max-inline-size: calc(100vw - (var(--space-lg) * 2));
+  padding: var(--space-3xs) 0;
+  background: var(--surface);
+  border: thin solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  z-index: 50;
+}
+
+.mailbox-inbox-filter-option {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  width: 100%;
+  padding: var(--space-sm) var(--space-md);
+  border: none;
+  background: transparent;
+  color: var(--text);
+  text-align: start;
+  cursor: pointer;
+}
+
+.mailbox-inbox-filter-option:hover,
+.mailbox-inbox-filter-option:focus-visible {
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  outline: none;
+}
+
+.mailbox-inbox-filter-option[aria-checked="true"] {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.mailbox-inbox-filter-option-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mailbox-inbox-filter-option-count {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1rem;
+  height: 1rem;
+  padding: 0 var(--space-xs);
+  border-radius: var(--radius-pill);
+  background: var(--color-error);
+  color: var(--fab-text);
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+@media (max-width: 768px) {
+  .mailbox-inbox-filter-menu {
+    inset-inline-end: var(--space-xs);
+    min-inline-size: calc(var(--space-xl) * 7);
+  }
+}
+
 .mailbox-tabs {
   display: flex;
   flex-wrap: wrap;
@@ -64,10 +149,18 @@ Mailbox tab and sub-tab icons and badges must retain their intrinsic size on mob
 `.mailbox-view--mobile .mailbox-tab` track uses `flex: 1 1 0` with `min-width: 0`, and the
 badged Inbox tab was the first overflowing tab to collapse its icon to a dot.
 */
+/*
+FNXC:MailboxTwoTabs 2026-09-16-16:53:
+The pending-approvals badge moved from the Approvals tab onto the header filter trigger, so the
+no-shrink protection must follow it out of `.mailbox-tab` — otherwise the mobile header flex track
+compresses the badge and its icon. The existing tab and agent sub-tab selectors stay untouched.
+*/
 .mailbox-tab > svg,
 .mailbox-agent-subtab > svg,
 .mailbox-tab .mailbox-tab-badge,
-.mailbox-agent-subtab .mailbox-tab-badge {
+.mailbox-agent-subtab .mailbox-tab-badge,
+.mailbox-inbox-filter .mailbox-inbox-filter-icon,
+.mailbox-inbox-filter .mailbox-tab-badge {
   flex-shrink: 0;
 }
 
@@ -1098,13 +1191,14 @@ separate approvals Back button outside this header or non-mobile mailbox layouts
   .mailbox-modal .mailbox-header-actions .modal-close,
   .mailbox-view .mailbox-header-actions .btn,
   .mailbox-view .mailbox-header-actions .btn-icon {
-    min-height: 2.25rem;
+    min-height: var(--icon-button-size-mobile);
   }
 
+  /* FNXC:IconOnlyButtonCanon 2026-09-16-19:05: FN-471 — même 36px, exprimés par le jeton d'icône canonique. */
   .mailbox-modal .mailbox-header-actions .btn-icon,
   .mailbox-modal .mailbox-header-actions .modal-close,
   .mailbox-view .mailbox-header-actions .btn-icon {
-    min-width: 2.25rem;
+    min-width: var(--icon-button-size-mobile);
     display: inline-flex;
     align-items: center;
     justify-content: center;

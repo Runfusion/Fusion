@@ -170,7 +170,7 @@ describe("TaskDetailModal reset dialog", () => {
 
     expect(screen.getByTestId("task-detail-status-badge")).toHaveTextContent(/executing/i);
     fireEvent.click(screen.getByRole("button", { name: "Actions" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Reset" }));
+    fireEvent.click(await screen.findByTestId("task-detail-header-action-reset"));
     expect(screen.getByTestId("task-reset-description")).toHaveValue("Original detail request");
     fireEvent.change(screen.getByTestId("task-reset-description"), { target: { value: "Corrected detail request" } });
     fireEvent.click(screen.getByTestId("task-reset-submit"));
@@ -204,7 +204,7 @@ describe("TaskDetailModal reset dialog", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Actions" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Reset" }));
+    fireEvent.click(await screen.findByTestId("task-detail-header-action-reset"));
     fireEvent.click(await screen.findByTestId("task-reset-submit"));
 
     await waitFor(() => expect(onResetTask).toHaveBeenCalledWith("FN-001"));
@@ -227,7 +227,7 @@ describe("TaskDetailModal reset dialog", () => {
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: "Actions" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Reset" }));
+    fireEvent.click(await screen.findByTestId("task-detail-header-action-reset"));
     fireEvent.click(await screen.findByTestId("task-reset-submit"));
     await waitFor(() => expect(addToast).toHaveBeenCalledWith("partial cleanup; retry Reset", "error"));
     expect(addToast).not.toHaveBeenCalledWith(expect.stringContaining("fresh run will be allocated"), "success");
@@ -456,7 +456,9 @@ describe("TaskDetailModal planner Chat tab", () => {
     expect(screen.getByText("Task Failed")).toBeInTheDocument();
     expect(screen.getByText("The task failed before it could complete.")).toBeInTheDocument();
     expect(document.querySelector(".detail-error-message")?.textContent).not.toBe("");
-    await userEvent.setup().click(screen.getByTestId("task-detail-header-action-retry"));
+    const retryUser = userEvent.setup();
+    await retryUser.click(screen.getByRole("button", { name: "Actions" }));
+    await retryUser.click(screen.getByTestId("task-detail-header-action-retry"));
     expect(onRetryTask).toHaveBeenCalledWith("FN-099");
 
     rerender(
@@ -637,7 +639,8 @@ describe("TaskDetailModal base-branch editor", () => {
     vi.mocked(updateTask).mockResolvedValue(updated);
     const { onTaskUpdated } = renderEditableTask("mission/M-8811");
 
-    await user.click(screen.getByRole("button", { name: "Edit task" }));
+    await user.click(screen.getByRole("button", { name: "Actions" }));
+    await user.click(screen.getByTestId("task-detail-header-action-edit"));
     const baseBranch = screen.getByLabelText("Merge target / base branch");
     expect(baseBranch).toHaveValue("mission/M-8811");
 
@@ -655,7 +658,8 @@ describe("TaskDetailModal base-branch editor", () => {
     vi.mocked(updateTask).mockRejectedValueOnce(new Error("network unavailable"));
     const { onTaskUpdated } = renderEditableTask(undefined);
 
-    await user.click(screen.getByRole("button", { name: "Edit task" }));
+    await user.click(screen.getByRole("button", { name: "Actions" }));
+    await user.click(screen.getByTestId("task-detail-header-action-edit"));
     const baseBranch = screen.getByLabelText("Merge target / base branch");
     await user.type(baseBranch, "mission/M-8811");
     await user.click(screen.getByRole("button", { name: "Save" }));
@@ -667,7 +671,13 @@ describe("TaskDetailModal base-branch editor", () => {
 });
 
 describe("TaskDetailModal definition header actions (FN-391)", () => {
-  it("orders desktop board detail header actions as edit, pop-out, then close", () => {
+  /*
+  FNXC:TaskDetailHeaderActions 2026-09-16-18:07 (FN-470):
+  The former "edit, pop-out, then close" header order has no subject left: Edit task and Pop out moved into
+  the single Actions overflow, in that relative order, and the header keeps only the overflow trigger and the
+  close control.
+  */
+  it("orders desktop board detail header chrome as the Actions overflow, then close", () => {
     const onRequestClose = vi.fn();
     const onPopOut = vi.fn();
     renderSummarizeTitleModal(
@@ -677,14 +687,22 @@ describe("TaskDetailModal definition header actions (FN-391)", () => {
 
     const actions = document.querySelector(".modal-header-actions");
     expect(actions).not.toBeNull();
-    const editButton = screen.getByRole("button", { name: "Edit task" });
-    const popOutButton = screen.getByTestId("task-detail-pop-out");
     const closeButton = screen.getByRole("button", { name: "Close" });
+    const overflow = actions!.querySelector(".detail-actions-dropdown--header")!;
+    const trigger = screen.getByRole("button", { name: "Actions" });
 
-    expect(Array.from(actions!.children).slice(-3)).toEqual([editButton, popOutButton, closeButton]);
-    for (const action of [editButton, popOutButton, closeButton]) {
+    expect(Array.from(actions!.children)).toEqual([overflow, closeButton]);
+    expect(document.querySelector(".modal-edit-btn")).toBeNull();
+    expect(screen.queryByTestId("task-detail-pop-out")).toBeNull();
+    for (const action of [trigger, closeButton]) {
       expect(action).toHaveClass("btn", "btn-icon", "btn-sm");
     }
+
+    fireEvent.click(trigger);
+    const menu = screen.getByRole("menu");
+    const items = Array.from(menu.querySelectorAll<HTMLElement>("[data-testid]")).map((node) => node.getAttribute("data-testid"));
+    expect(items.indexOf("task-detail-header-action-edit")).toBeGreaterThanOrEqual(0);
+    expect(items.indexOf("task-detail-header-action-edit")).toBeLessThan(items.indexOf("task-detail-pop-out"));
   });
 
   /*
@@ -1427,7 +1445,7 @@ describe("TaskDetailModal branch group surfacing", () => {
 describe("TaskDetailModal delete affordance", () => {
   async function selectDelete(user: ReturnType<typeof userEvent.setup>) {
     await user.click(screen.getByRole("button", { name: "Actions" }));
-    await user.click(await screen.findByRole("button", { name: "Delete" }));
+    await user.click(await screen.findByTestId("task-detail-header-action-delete"));
   }
   function dependencyConflictError(dependentIds: string[]) {
     const error = new Error("Task has dependents");

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useMobileBarKeyboardState } from "../App";
 import { createMobileNavGeometryStyle, MobileNavBar } from "../components/MobileNavBar";
 import { _resetInitialViewportHeight } from "../hooks/useMobileKeyboard";
+import { GEOMETRY_TOKEN_VALUES, installGeometryTokenValues, resolveMobileNavAnchorPx } from "../test/mobileNavGeometry";
 
 const initialDescriptors = {
   clientHeight: Object.getOwnPropertyDescriptor(document.documentElement, "clientHeight"),
@@ -49,7 +50,7 @@ function installResponsiveMedia() {
             ? window.innerWidth <= 600
             : query === "(max-height: 480px)"
               ? window.innerHeight <= 480
-              : query === "(min-width: 769px) and (max-width: 1024px)"
+              : query === "(min-width: 769px) and (max-width: 1023.98px)"
                 ? window.innerWidth >= 769 && window.innerWidth <= 1024
                 : false;
       return {
@@ -68,20 +69,6 @@ function restoreDescriptor(target: object, property: string, descriptor?: Proper
   else delete (target as Record<string, unknown>)[property];
 }
 
-const GEOMETRY_TOKEN_VALUES = {
-  "--mobile-nav-system-offset": 16,
-  "--mobile-nav-pill-height": 44,
-  "--space-md": 12,
-  "--space-sm": 8,
-  "--space-xs": 4,
-} as const;
-
-function installGeometryTokenValues() {
-  for (const [property, value] of Object.entries(GEOMETRY_TOKEN_VALUES)) {
-    document.documentElement.style.setProperty(property, `${value}px`);
-  }
-}
-
 function readRenderedLength(element: HTMLElement, property: string): number {
   const value = element.style.getPropertyValue(property);
   if (!/^-?\d+(?:\.\d+)?px$/.test(value)) {
@@ -92,7 +79,10 @@ function readRenderedLength(element: HTMLElement, property: string): number {
 
 /*
 FNXC:MobilePillPopover 2026-09-13-10:03:
-The browser-independent matrix resolves each sibling from the geometry declarations rendered by the production component. It never supplies pill or popover rectangles: omitting the popover lift now produces an overlap, while the optional Blink smoke remains the layout-engine proof.
+The browser-independent matrix resolves each sibling from the geometry declarations rendered by the production component. It never supplies pill or popover rectangles.
+
+FNXC:MobilePillKeyboard 2026-09-16-16:27:
+FN-463: the resolved bottom anchors come from the shared numeric resolver, because the published `calc()` strings are constants and cannot express whether the pill actually moved. The keyboard-open scenarios below therefore compare pill.bottom / pill.top / popover.bottom NUMBERS across rest, keyboard-open, and restored samples.
 */
 function resolveRenderedOverlayGeometry({
   nav,
@@ -107,14 +97,11 @@ function resolveRenderedOverlayGeometry({
   viewportHeight: number;
   viewportOffsetTop: number;
 }) {
-  const navLift = readRenderedLength(nav, "--mobile-nav-keyboard-lift");
-  const popoverLift = readRenderedLength(popover, "--mobile-nav-keyboard-lift");
   const navViewportTop = readRenderedLength(nav, "--mobile-nav-viewport-offset-top");
   const popoverViewportTop = readRenderedLength(popover, "--mobile-nav-viewport-offset-top");
-  const expectedStyle = createMobileNavGeometryStyle(navLift, navViewportTop);
+  const expectedStyle = createMobileNavGeometryStyle(navViewportTop);
   for (const property of [
     "--mobile-nav-floating-gap",
-    "--mobile-nav-keyboard-lift",
     "--mobile-nav-viewport-offset-top",
     "--mobile-nav-pill-bottom",
     "--mobile-nav-popover-bottom",
@@ -130,12 +117,11 @@ function resolveRenderedOverlayGeometry({
   const pillHeight = GEOMETRY_TOKEN_VALUES["--mobile-nav-pill-height"];
   const popoverGap = GEOMETRY_TOKEN_VALUES["--space-xs"];
   const safeTop = popoverViewportTop + GEOMETRY_TOKEN_VALUES["--space-md"];
-  const pillBottom = layoutViewportHeight - systemOffset - floatingGap - navLift;
+  const pillBottom = layoutViewportHeight - systemOffset - floatingGap;
   const pillTop = pillBottom - pillHeight;
   const popoverBottom = layoutViewportHeight
     - systemOffset
     - floatingGap
-    - popoverLift
     - pillHeight
     - popoverGap;
   const popoverMaxHeight = Math.max(0, popoverBottom - safeTop);
@@ -149,17 +135,21 @@ function resolveRenderedOverlayGeometry({
 
   return {
     itemCount,
-    navLift,
     pill: { top: pillTop, bottom: pillBottom },
     popover: { top: popoverTop, bottom: popoverBottom, maxHeight: popoverMaxHeight },
-    popoverLift,
     terminalItemBottom,
     terminalScrollTop,
     visualBottom,
   };
 }
 
-function expectRenderedOverlayInsideViewport({
+/*
+FNXC:MobilePillKeyboard 2026-09-16-16:27:
+FN-463: the overlay keeps its exclusive stacking (popover strictly above the pill, one --space-xs apart, fully
+scrollable) in every viewport sample. Whether it MOVED between samples is proven separately by comparing the
+returned numbers across rest, keyboard-open, and restored states.
+*/
+function expectStackedOverlayGeometry({
   nav,
   popover,
   layoutViewportHeight,
@@ -180,16 +170,21 @@ function expectRenderedOverlayInsideViewport({
     viewportOffsetTop,
   });
 
-  expect(geometry.navLift).toBe(geometry.popoverLift);
-  expect(geometry.pill.top).toBeGreaterThanOrEqual(viewportOffsetTop);
-  expect(geometry.pill.bottom).toBeLessThanOrEqual(geometry.visualBottom);
-  expect(geometry.popover.top).toBeGreaterThanOrEqual(viewportOffsetTop);
   expect(geometry.popover.bottom).toBeLessThan(geometry.pill.top);
   expect(geometry.pill.top - geometry.popover.bottom).toBe(GEOMETRY_TOKEN_VALUES["--space-xs"]);
   expect(geometry.popover.maxHeight).toBeGreaterThan(0);
   expect(geometry.itemCount).toBeGreaterThan(0);
   expect(geometry.terminalScrollTop).toBeGreaterThanOrEqual(0);
   expect(geometry.terminalItemBottom).toBeLessThanOrEqual(geometry.popover.bottom);
+  return geometry;
+}
+
+/** Resolved bottom anchors of the pill, read straight from the production declarations. */
+function readNavAnchors(nav: HTMLElement) {
+  return {
+    pillBottomPx: resolveMobileNavAnchorPx(nav, "--mobile-nav-pill-bottom"),
+    popoverBottomPx: resolveMobileNavAnchorPx(nav, "--mobile-nav-popover-bottom"),
+  };
 }
 
 function MobileNavKeyboardHarness({ isMobile }: { isMobile: boolean }) {
@@ -211,14 +206,14 @@ function MobileNavKeyboardHarness({ isMobile }: { isMobile: boolean }) {
 }
 
 const keyboardScenarios = [
-  { label: "portrait iOS décalé focus puis resize", width: 390, layoutHeight: 844, visualHeight: 504, viewportOffsetTop: 40, platform: "ios", order: "focus-first", expectedLift: 300 },
-  { label: "portrait iOS décalé resize puis focus", width: 390, layoutHeight: 844, visualHeight: 504, viewportOffsetTop: 40, platform: "ios", order: "resize-first", expectedLift: 300 },
-  { label: "portrait Android focus puis resize", width: 390, layoutHeight: 844, visualHeight: 544, viewportOffsetTop: 0, platform: "android", order: "focus-first", expectedLift: 0 },
-  { label: "portrait Android resize puis focus", width: 390, layoutHeight: 844, visualHeight: 544, viewportOffsetTop: 0, platform: "android", order: "resize-first", expectedLift: 0 },
-  { label: "paysage iOS focus puis resize", width: 932, layoutHeight: 430, visualHeight: 220, viewportOffsetTop: 0, platform: "ios", order: "focus-first", expectedLift: 210 },
-  { label: "paysage iOS resize puis focus", width: 932, layoutHeight: 430, visualHeight: 220, viewportOffsetTop: 0, platform: "ios", order: "resize-first", expectedLift: 210 },
-  { label: "paysage Android focus puis resize", width: 932, layoutHeight: 430, visualHeight: 220, viewportOffsetTop: 0, platform: "android", order: "focus-first", expectedLift: 0 },
-  { label: "paysage Android resize puis focus", width: 932, layoutHeight: 430, visualHeight: 220, viewportOffsetTop: 0, platform: "android", order: "resize-first", expectedLift: 0 },
+  { label: "portrait iOS décalé focus puis resize", width: 390, layoutHeight: 844, visualHeight: 504, viewportOffsetTop: 40, platform: "ios", order: "focus-first" },
+  { label: "portrait iOS décalé resize puis focus", width: 390, layoutHeight: 844, visualHeight: 504, viewportOffsetTop: 40, platform: "ios", order: "resize-first" },
+  { label: "portrait Android focus puis resize", width: 390, layoutHeight: 844, visualHeight: 544, viewportOffsetTop: 0, platform: "android", order: "focus-first" },
+  { label: "portrait Android resize puis focus", width: 390, layoutHeight: 844, visualHeight: 544, viewportOffsetTop: 0, platform: "android", order: "resize-first" },
+  { label: "paysage iOS focus puis resize", width: 932, layoutHeight: 430, visualHeight: 220, viewportOffsetTop: 0, platform: "ios", order: "focus-first" },
+  { label: "paysage iOS resize puis focus", width: 932, layoutHeight: 430, visualHeight: 220, viewportOffsetTop: 0, platform: "ios", order: "resize-first" },
+  { label: "paysage Android focus puis resize", width: 932, layoutHeight: 430, visualHeight: 220, viewportOffsetTop: 0, platform: "android", order: "focus-first" },
+  { label: "paysage Android resize puis focus", width: 932, layoutHeight: 430, visualHeight: 220, viewportOffsetTop: 0, platform: "android", order: "resize-first" },
 ] as const;
 
 describe("App mobile keyboard and production pill seam", () => {
@@ -247,14 +242,13 @@ describe("App mobile keyboard and production pill seam", () => {
     restoreDescriptor(window, "visualViewport", initialDescriptors.visualViewport);
   });
 
-  it.each(keyboardScenarios)("garde la pill et son popover bornés puis restaure leur position — $label", ({
+  it.each(keyboardScenarios)("garde la pill et son popover immobiles pendant tout le cycle clavier — $label", ({
     width,
     layoutHeight,
     visualHeight,
     viewportOffsetTop,
     platform,
     order,
-    expectedLift,
   }) => {
     Object.defineProperties(window, {
       innerWidth: { configurable: true, value: width },
@@ -271,6 +265,7 @@ describe("App mobile keyboard and production pill seam", () => {
     expect(nav).not.toHaveClass("mobile-nav-bar--keyboard-open");
     const trigger = screen.getByTestId("mobile-menu-trigger");
     expect(trigger).toBeEnabled();
+    const restingAnchors = readNavAnchors(nav!);
 
     const shrinkViewport = () => {
       viewport.height = visualHeight;
@@ -282,7 +277,7 @@ describe("App mobile keyboard and production pill seam", () => {
     if (order === "focus-first") {
       act(() => textarea.focus());
       expect(nav).toHaveClass("mobile-nav-bar--keyboard-open");
-      expect(nav).toHaveStyle({ "--mobile-nav-keyboard-lift": "0px" });
+      expect(readNavAnchors(nav!)).toEqual(restingAnchors);
       expect(screen.getByTestId("footer-hidden")).toHaveTextContent("false");
       act(shrinkViewport);
     } else {
@@ -295,7 +290,7 @@ describe("App mobile keyboard and production pill seam", () => {
     expect(screen.getByTestId("keyboard-open")).toHaveTextContent("true");
     expect(screen.getByTestId("footer-hidden")).toHaveTextContent("true");
     expect(nav).toHaveClass("mobile-nav-bar--keyboard-open");
-    expect(nav).toHaveStyle({ "--mobile-nav-keyboard-lift": `${expectedLift}px` });
+    expect(readNavAnchors(nav!)).toEqual(restingAnchors);
 
     // Opening the production hamburger focuses its first menu item. The input
     // interaction ends immediately, but the viewport remains keyboard-sized
@@ -306,15 +301,21 @@ describe("App mobile keyboard and production pill seam", () => {
     expect(screen.getByTestId("keyboard-open")).toHaveTextContent("false");
     expect(screen.getByTestId("footer-hidden")).toHaveTextContent("false");
     expect(nav).toHaveClass("mobile-nav-bar--keyboard-open");
-    expect(nav).toHaveStyle({ "--mobile-nav-keyboard-lift": `${expectedLift}px` });
-    expect(popover).toHaveStyle({ "--mobile-nav-keyboard-lift": `${expectedLift}px` });
+    expect(readNavAnchors(nav!)).toEqual(restingAnchors);
+    expect(readNavAnchors(popover)).toEqual(restingAnchors);
     expect(trigger).toHaveAttribute("aria-expanded", "true");
-    expectRenderedOverlayInsideViewport({
+    /*
+    FNXC:MobileNav 2026-09-14-07:48:
+    Opening the popover freezes the published geometry, so --mobile-nav-viewport-offset-top keeps the sample captured
+    at open time for the whole gesture, including after the keyboard is dismissed.
+    */
+    const frozenViewportTop = readRenderedLength(nav!, "--mobile-nav-viewport-offset-top");
+    const keyboardOpenGeometry = expectStackedOverlayGeometry({
       nav: nav!,
       popover,
-      layoutViewportHeight: document.documentElement.clientHeight,
+      layoutViewportHeight: layoutHeight,
       viewportHeight: visualHeight,
-      viewportOffsetTop: viewport.offsetTop,
+      viewportOffsetTop: frozenViewportTop,
     });
 
     act(() => {
@@ -327,16 +328,24 @@ describe("App mobile keyboard and production pill seam", () => {
     expect(screen.getByTestId("keyboard-open")).toHaveTextContent("false");
     expect(screen.getByTestId("footer-hidden")).toHaveTextContent("false");
     expect(nav).not.toHaveClass("mobile-nav-bar--keyboard-open");
-    expect(nav).toHaveStyle({ "--mobile-nav-keyboard-lift": "0px" });
-    expect(popover).toHaveStyle({ "--mobile-nav-keyboard-lift": "0px" });
+    expect(readNavAnchors(nav!)).toEqual(restingAnchors);
+    expect(readNavAnchors(popover)).toEqual(restingAnchors);
     expect(trigger).toHaveAttribute("aria-expanded", "true");
-    expectRenderedOverlayInsideViewport({
+    const restoredGeometry = expectStackedOverlayGeometry({
       nav: nav!,
       popover,
       layoutViewportHeight: layoutHeight,
       viewportHeight: layoutHeight,
-      viewportOffsetTop: 0,
+      viewportOffsetTop: frozenViewportTop,
     });
+
+    /*
+    FNXC:MobilePillKeyboard 2026-09-16-16:27:
+    FN-463 immobility invariant: the pill's top/bottom and the popover's bottom are identical while the keyboard
+    occupies the screen and after it is dismissed. Before the fix these numbers differed by the occlusion band.
+    */
+    expect(keyboardOpenGeometry.pill).toEqual(restoredGeometry.pill);
+    expect(keyboardOpenGeometry.popover.bottom).toBe(restoredGeometry.popover.bottom);
   });
 
   it("never fabricates landscape keyboard state for a non-mobile host", () => {
@@ -365,7 +374,9 @@ describe("App mobile keyboard and production pill seam", () => {
     expect(appSource.match(/useMobileKeyboard\(/g)).toHaveLength(1);
     const seamStart = appSource.indexOf("export function useMobileBarKeyboardState");
     const hookCall = appSource.indexOf("useMobileKeyboard(");
-    const seamEnd = appSource.indexOf("export function shouldOpenBoardTaskInDock");
+    // The next exported declaration after the seam closes it. `shouldOpenBoardTaskInDock` no longer exists.
+    const seamEnd = appSource.indexOf("export type BoardTaskOpenRoute");
+    expect(seamEnd).toBeGreaterThan(seamStart);
     expect(hookCall).toBeGreaterThan(seamStart);
     expect(hookCall).toBeLessThan(seamEnd);
   });

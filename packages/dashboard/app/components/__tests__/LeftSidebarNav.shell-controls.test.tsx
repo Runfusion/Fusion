@@ -91,23 +91,36 @@ describe("LeftSidebarNav shell controls", () => {
     expect(container.querySelector(".dashboard-window-visibility-toggle__placeholder")).toBeNull();
 
     const footer = container.querySelector(".left-sidebar-nav__footer");
+    const header = container.querySelector(".left-sidebar-nav__header");
     expect(footer).not.toBeNull();
-    for (const button of Array.from(footer!.querySelectorAll("button"))) {
-      const hasContent = button.textContent!.trim().length > 0 || button.querySelector("svg") !== null;
-      expect(hasContent, `orphan button shell: ${button.getAttribute("data-testid") ?? button.outerHTML}`).toBe(true);
-      expect(button.getAttribute("aria-label")?.trim() ?? "not-set").not.toBe("");
+    expect(header).not.toBeNull();
+    for (const region of [footer!, header!]) {
+      for (const button of Array.from(region.querySelectorAll("button"))) {
+        const hasContent = button.textContent!.trim().length > 0 || button.querySelector("svg") !== null;
+        expect(hasContent, `orphan button shell: ${button.getAttribute("data-testid") ?? button.outerHTML}`).toBe(true);
+        expect(button.getAttribute("aria-label")?.trim() ?? "not-set").not.toBe("");
+      }
     }
   });
 
-  it("keeps the shell controls above the collapse toggle", () => {
+  /*
+  FNXC:Navigation 2026-09-16-20:52:
+  FN-473 moved the collapse toggle into the sidebar header, so the footer's remaining order is capacity -> Terminal ->
+  Settings and it must no longer contain the collapse affordance or a leftover wrapper where it used to sit.
+  */
+  it("orders the footer as capacity, Terminal, Settings with no collapse toggle left behind", () => {
     const { container } = renderSidebar({ onToggleTerminal: vi.fn() });
     const footer = container.querySelector(".left-sidebar-nav__footer")!;
     const order = Array.from(footer.children);
     const capacityIndex = order.findIndex((node) => node.classList.contains("left-sidebar-nav__capacity"));
     const terminalIndex = order.findIndex((node) => node.classList.contains("left-sidebar-nav__terminal"));
-    const collapseIndex = order.findIndex((node) => node.classList.contains("left-sidebar-nav__collapse-toggle"));
+    const settingsIndex = order.findIndex((node) => node.classList.contains("left-sidebar-nav__settings"));
     expect(capacityIndex).toBeGreaterThanOrEqual(0);
     expect(capacityIndex).toBeLessThan(terminalIndex);
-    expect(terminalIndex).toBeLessThan(collapseIndex);
+    expect(terminalIndex).toBeLessThan(settingsIndex);
+    expect(settingsIndex).toBe(order.length - 1);
+    expect(footer.querySelector(".left-sidebar-nav__collapse-toggle")).toBeNull();
+    expect(footer.querySelector('[data-testid="sidebar-nav-collapse-toggle"]')).toBeNull();
+    expect(container.querySelector(".left-sidebar-nav__header .left-sidebar-nav__collapse-toggle")).not.toBeNull();
   });
 });

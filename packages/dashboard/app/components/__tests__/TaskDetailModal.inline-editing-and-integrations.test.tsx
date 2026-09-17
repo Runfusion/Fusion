@@ -4,7 +4,7 @@ FN-7306 labels the stable internal `chat` tab as Activity and keeps it as the de
 */
 import { describe, it, expect, vi } from "vitest";
 import { useState, type Dispatch, type SetStateAction } from "react";
-import { render, screen, fireEvent, act, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, act, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { Task, TaskDetail } from "@fusion/core";
 import {
@@ -31,6 +31,28 @@ function openTaskDetailActionsMenu() {
   const trigger = screen.getByRole("button", { name: "Actions" });
   if (trigger.getAttribute("aria-expanded") !== "true") fireEvent.click(trigger);
   return screen.getByRole("menu");
+}
+
+/*
+FNXC:TaskDetailHeaderActions 2026-09-16-18:07 (FN-470):
+Edit task is no longer a direct header button: it is the penultimate entry of the single overflow menu.
+These two helpers are the suite's only edit entry points, so the relocation is expressed once instead of at
+each call site.
+*/
+function queryTaskDetailEditAction(): HTMLElement | null {
+  const trigger = screen.queryByRole("button", { name: "Actions" });
+  if (!trigger) return null;
+  const wasOpen = trigger.getAttribute("aria-expanded") === "true";
+  const menu = openTaskDetailActionsMenu();
+  const action = within(menu).queryByTestId("task-detail-header-action-edit");
+  if (!wasOpen) fireEvent.click(trigger);
+  return action;
+}
+
+function enterTaskDetailEditMode(): void {
+  const trigger = screen.getByRole("button", { name: "Actions" });
+  if (trigger.getAttribute("aria-expanded") !== "true") fireEvent.click(trigger);
+  fireEvent.click(within(screen.getByRole("menu")).getByTestId("task-detail-header-action-edit"));
 }
 
 function getMediaBlocks(css: string, mediaQuery: string): string[] {
@@ -230,7 +252,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(document.querySelector(".modal-edit-btn")!);
+      enterTaskDetailEditMode();
       fireEvent.click(screen.getByTestId("task-form-more-options-toggle"));
 
       await waitFor(() => {
@@ -263,7 +285,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(document.querySelector(".modal-edit-btn")!);
+      enterTaskDetailEditMode();
       fireEvent.click(screen.getByTestId("task-form-more-options-toggle"));
 
       await waitFor(() => {
@@ -305,7 +327,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(document.querySelector(".modal-edit-btn")!);
+      enterTaskDetailEditMode();
       fireEvent.click(screen.getByTestId("task-form-more-options-toggle"));
       fireEvent.change(screen.getByTestId("task-source-provider-input"), { target: { value: "gitlab" } });
       fireEvent.change(screen.getByTestId("task-source-repository-input"), { target: { value: "runfusion/dashboard" } });
@@ -354,7 +376,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(document.querySelector(".modal-edit-btn")!);
+      enterTaskDetailEditMode();
       fireEvent.click(screen.getByTestId("task-form-more-options-toggle"));
       fireEvent.change(screen.getByTestId("task-source-provider-input"), { target: { value: "" } });
       fireEvent.change(screen.getByTestId("task-source-repository-input"), { target: { value: "" } });
@@ -395,7 +417,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(document.querySelector(".modal-edit-btn")!);
+      enterTaskDetailEditMode();
       fireEvent.click(screen.getByTestId("task-form-more-options-toggle"));
       fireEvent.change(screen.getByTestId("task-source-provider-input"), { target: { value: "gitlab" } });
       fireEvent.click(screen.getByText("Save"));
@@ -544,7 +566,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      const editButton = document.querySelector(".modal-edit-btn");
+      const editButton = queryTaskDetailEditAction();
       expect(editButton).toBeTruthy();
     });
 
@@ -561,7 +583,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      const editButton = document.querySelector(".modal-edit-btn");
+      const editButton = queryTaskDetailEditAction();
       expect(editButton).toBeTruthy();
     });
 
@@ -578,7 +600,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      const editButton = document.querySelector(".modal-edit-btn");
+      const editButton = queryTaskDetailEditAction();
       expect(editButton).toBeNull();
     });
 
@@ -595,13 +617,12 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      // Enter edit mode
-      const editButton = document.querySelector(".modal-edit-btn");
-      expect(editButton).toBeTruthy();
-      fireEvent.click(editButton!);
+      // Enter edit mode through the overflow menu
+      expect(queryTaskDetailEditAction()).toBeTruthy();
+      enterTaskDetailEditMode();
 
-      // Edit button should be hidden now
-      expect(document.querySelector(".modal-edit-btn")).toBeNull();
+      // The edit entry is gone with the whole Actions overflow
+      expect(queryTaskDetailEditAction()).toBeNull();
       // But the TaskForm description field should be visible
       expect(document.querySelector("#task-form-description")).toBeTruthy();
     });
@@ -625,7 +646,7 @@ describe("TaskDetailModal", () => {
       expect(screen.getByTestId("task-detail-definition-description")).toHaveTextContent("Test description");
       expect(document.querySelector("#task-form-description")).toBeNull();
 
-      fireEvent.click(document.querySelector(".modal-edit-btn")!);
+      enterTaskDetailEditMode();
 
       expect(header).not.toHaveTextContent("Test task");
       expect(document.querySelector("h2.detail-title")).toBeNull();
@@ -647,7 +668,7 @@ describe("TaskDetailModal", () => {
       );
 
       // Enter edit mode
-      fireEvent.click(document.querySelector(".modal-edit-btn")!);
+      enterTaskDetailEditMode();
 
       // Change values
       const modifiedDescription = document.querySelector("#task-form-description") as HTMLTextAreaElement;
@@ -680,7 +701,7 @@ describe("TaskDetailModal", () => {
       );
 
       // Enter edit mode
-      fireEvent.click(document.querySelector(".modal-edit-btn")!);
+      enterTaskDetailEditMode();
 
       // Change values
       const descTextarea = document.querySelector("#task-form-description") as HTMLTextAreaElement;
@@ -714,7 +735,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(document.querySelector(".modal-edit-btn")!);
+      enterTaskDetailEditMode();
       fireEvent.change(document.querySelector("#task-form-description")!, { target: { value: "   \n\t" } });
       fireEvent.click(screen.getByText("Save"));
 
@@ -743,7 +764,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(document.querySelector(".modal-edit-btn")!);
+      enterTaskDetailEditMode();
       fireEvent.change(document.querySelector("#task-form-description")!, { target: { value: "" } });
       fireEvent.click(screen.getByText("Save"));
 
@@ -773,7 +794,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(document.querySelector(".modal-edit-btn")!);
+      enterTaskDetailEditMode();
       const description = document.querySelector("#task-form-description")!;
       fireEvent.change(description, { target: { value: "" } });
       fireEvent.click(screen.getByText("Save"));
@@ -805,7 +826,7 @@ describe("TaskDetailModal", () => {
           />,
         );
 
-        fireEvent.click(document.querySelector(".modal-edit-btn")!);
+        enterTaskDetailEditMode();
         fireEvent.change(document.querySelector("#task-form-description")!, { target: { value: "" } });
         fireEvent.click(screen.getByText("Save"));
         await act(async () => vi.advanceTimersByTimeAsync(1_500));
@@ -831,7 +852,7 @@ describe("TaskDetailModal", () => {
       );
 
       // Enter edit mode
-      fireEvent.click(document.querySelector(".modal-edit-btn")!);
+      enterTaskDetailEditMode();
 
       const saveButton = screen.getByText("Save");
       expect(saveButton.hasAttribute("disabled")).toBe(false);
@@ -856,7 +877,7 @@ describe("TaskDetailModal", () => {
       );
 
       // Enter edit mode
-      fireEvent.click(document.querySelector(".modal-edit-btn")!);
+      enterTaskDetailEditMode();
 
       const changedDescription = document.querySelector("#task-form-description") as HTMLTextAreaElement;
       fireEvent.change(changedDescription, { target: { value: "Changed description" } });
@@ -888,7 +909,7 @@ describe("TaskDetailModal", () => {
       );
 
       // Enter edit mode
-      fireEvent.click(document.querySelector(".modal-edit-btn")!);
+      enterTaskDetailEditMode();
 
       const changedDescription = document.querySelector("#task-form-description") as HTMLTextAreaElement;
       fireEvent.change(changedDescription, { target: { value: "Changed description" } });
@@ -924,7 +945,7 @@ describe("TaskDetailModal", () => {
       );
 
       // Enter edit mode
-      fireEvent.click(document.querySelector(".modal-edit-btn")!);
+      enterTaskDetailEditMode();
 
       const changedDescription = document.querySelector("#task-form-description") as HTMLTextAreaElement;
       fireEvent.change(changedDescription, { target: { value: "Changed description" } });
@@ -954,7 +975,7 @@ describe("TaskDetailModal", () => {
       );
 
       // Enter edit mode
-      fireEvent.click(document.querySelector(".modal-edit-btn")!);
+      enterTaskDetailEditMode();
       expect(document.querySelector("#task-form-description")).toBeTruthy();
 
       // Press Escape (handled via document-level keydown listener)
@@ -981,7 +1002,7 @@ describe("TaskDetailModal", () => {
       );
 
       // Enter edit mode
-      fireEvent.click(document.querySelector(".modal-edit-btn")!);
+      enterTaskDetailEditMode();
 
       // FNXC:TaskDescriptionEditing 2026-09-14-19:15: FN-391 removed the title field; only the description remains.
       expect(document.querySelector("#task-form-description")).toBeTruthy();
@@ -1002,7 +1023,7 @@ describe("TaskDetailModal", () => {
       );
 
       // Enter edit mode
-      fireEvent.click(document.querySelector(".modal-edit-btn")!);
+      enterTaskDetailEditMode();
 
       // Model configuration is present via TaskForm in edit mode.
       // U6/R3: the per-step "Workflow Steps" section was removed from TaskForm;
@@ -1029,7 +1050,7 @@ describe("TaskDetailModal", () => {
       );
 
       // Enter edit mode
-      fireEvent.click(document.querySelector(".modal-edit-btn")!);
+      enterTaskDetailEditMode();
 
       const descTextarea = document.querySelector("#task-form-description") as HTMLTextAreaElement;
       fireEvent.change(descTextarea, { target: { value: "Updated desc" } });
@@ -1061,7 +1082,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(document.querySelector(".modal-edit-btn")!);
+      enterTaskDetailEditMode();
 
       fireEvent.click(screen.getByText("Save"));
 
@@ -1069,7 +1090,7 @@ describe("TaskDetailModal", () => {
         expect(mockUpdate).not.toHaveBeenCalled();
       });
 
-      fireEvent.click(document.querySelector(".modal-edit-btn")!);
+      enterTaskDetailEditMode();
       fireEvent.click(screen.getByTestId("task-form-more-options-toggle"));
       fireEvent.change(document.querySelector("#task-priority") as HTMLSelectElement, { target: { value: "urgent" } });
       fireEvent.click(screen.getByText("Save"));
@@ -1103,14 +1124,14 @@ describe("TaskDetailModal", () => {
       );
 
       // No change → no updateTask call.
-      fireEvent.click(document.querySelector(".modal-edit-btn")!);
+      enterTaskDetailEditMode();
       fireEvent.click(screen.getByText("Save"));
       await waitFor(() => {
         expect(mockUpdate).not.toHaveBeenCalled();
       });
 
       // Selecting a level sends that value.
-      fireEvent.click(document.querySelector(".modal-edit-btn")!);
+      enterTaskDetailEditMode();
       fireEvent.click(screen.getByTestId("task-form-more-options-toggle"));
       const select = await screen.findByTestId("planner-oversight-level-select");
       fireEvent.change(select, { target: { value: "observe" } });
@@ -1142,7 +1163,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(document.querySelector(".modal-edit-btn")!);
+      enterTaskDetailEditMode();
       fireEvent.click(screen.getByTestId("task-form-more-options-toggle"));
       const select = await screen.findByTestId("planner-oversight-level-select");
       expect(select).toHaveValue("observe");
@@ -1170,7 +1191,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(document.querySelector(".modal-edit-btn")!);
+      enterTaskDetailEditMode();
       fireEvent.change(screen.getByTestId("task-form-execution-mode-select"), { target: { value: "fast" } });
       fireEvent.click(screen.getByText("Save"));
 
@@ -1196,7 +1217,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(document.querySelector(".modal-edit-btn")!);
+      enterTaskDetailEditMode();
       fireEvent.change(screen.getByTestId("task-form-execution-mode-select"), { target: { value: "standard" } });
       fireEvent.click(screen.getByText("Save"));
 
@@ -1229,7 +1250,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(document.querySelector(".modal-edit-btn")!);
+      enterTaskDetailEditMode();
       fireEvent.change(screen.getByTestId("task-form-execution-mode-select"), { target: { value: "standard" } });
       fireEvent.click(screen.getByText("Save"));
 
@@ -1258,7 +1279,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(document.querySelector(".modal-edit-btn")!);
+      enterTaskDetailEditMode();
       fireEvent.change(screen.getByTestId("task-form-execution-mode-select"), { target: { value: "fast" } });
       fireEvent.click(screen.getByText("Save"));
 
@@ -1286,7 +1307,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(document.querySelector(".modal-edit-btn")!);
+      enterTaskDetailEditMode();
       fireEvent.change(screen.getByTestId("task-form-execution-mode-select"), { target: { value: "standard" } });
       fireEvent.click(screen.getByText("Save"));
 
@@ -1317,7 +1338,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(document.querySelector(".modal-edit-btn")!);
+      enterTaskDetailEditMode();
       fireEvent.click(screen.getByText("Save"));
 
       await waitFor(() => {
@@ -1766,7 +1787,7 @@ describe("TaskDetailModal", () => {
       );
 
       // Enter edit mode
-      fireEvent.click(document.querySelector(".modal-edit-btn")!);
+      enterTaskDetailEditMode();
 
       const descTextarea = document.querySelector("#task-form-description") as HTMLTextAreaElement;
       expect(descTextarea.value).toBe("My Description");
@@ -1790,7 +1811,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(document.querySelector(".modal-edit-btn")!);
+      enterTaskDetailEditMode();
 
       const workingBranchInput = document.querySelector("#task-working-branch") as HTMLInputElement;
       const baseBranchInput = document.querySelector("#task-base-branch") as HTMLInputElement;
@@ -1822,7 +1843,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(document.querySelector(".modal-edit-btn")!);
+      enterTaskDetailEditMode();
       fireEvent.change(document.querySelector("#task-base-branch") as HTMLInputElement, { target: { value: "release/2026-05" } });
       fireEvent.click(screen.getByText("Save"));
 
@@ -1848,7 +1869,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(document.querySelector(".modal-edit-btn")!);
+      enterTaskDetailEditMode();
       fireEvent.change(document.querySelector("#task-working-branch") as HTMLInputElement, { target: { value: "" } });
       fireEvent.change(document.querySelector("#task-base-branch") as HTMLInputElement, { target: { value: "" } });
       fireEvent.click(screen.getByText("Save"));
@@ -1893,7 +1914,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(document.querySelector(".modal-edit-btn")!);
+      enterTaskDetailEditMode();
 
       const descTextarea = document.querySelector("#task-form-description") as HTMLTextAreaElement;
       fireEvent.change(descTextarea, { target: { value: "New Description" } });
@@ -2038,7 +2059,7 @@ describe("TaskDetailModal", () => {
         expect(addToast).not.toHaveBeenCalledWith(expect.any(String), "error");
       });
 
-      fireEvent.click(document.querySelector(".modal-edit-btn")!);
+      enterTaskDetailEditMode();
 
       await waitFor(() => {
         expect(screen.getByLabelText("Executor Model")).toHaveTextContent("Claude Sonnet 4.5");
@@ -2120,7 +2141,7 @@ describe("TaskDetailModal", () => {
       );
 
       // Enter edit mode
-      fireEvent.click(document.querySelector(".modal-edit-btn")!);
+      enterTaskDetailEditMode();
 
       // The edit form body should NOT contain the Save or Cancel action buttons
       const editForm = document.querySelector(".modal-edit-form");
@@ -2154,7 +2175,7 @@ describe("TaskDetailModal", () => {
       );
 
       // Enter edit mode
-      fireEvent.click(document.querySelector(".modal-edit-btn")!);
+      enterTaskDetailEditMode();
 
       // The hint should be in the modal-actions footer, not inside the edit form body
       const editForm = document.querySelector(".modal-edit-form");

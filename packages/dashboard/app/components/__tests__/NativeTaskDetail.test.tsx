@@ -224,7 +224,8 @@ describe("native Task Detail", () => {
 
     await user.click(screen.getByRole("button", { name: "Plan" }));
     expect(screen.getByRole("button", { name: "Plan" })).toHaveClass("detail-tab-active");
-    await user.click(screen.getByRole("button", { name: "Edit task" }));
+    await user.click(screen.getByRole("button", { name: "Actions" }));
+    await user.click(screen.getByTestId("task-detail-header-action-edit"));
     /*
     FNXC:TaskDescriptionEditing 2026-09-14-19:30:
     FN-391 removed the title field; the description is the text field whose draft and focus must
@@ -244,7 +245,15 @@ describe("native Task Detail", () => {
     expect(screen.getByLabelText("Description")).toHaveValue("Modern description");
     expect(screen.getByLabelText("Description")).toHaveFocus();
     expect(screen.queryByLabelText("Title")).toBeNull();
-    await user.click(screen.getByRole("button", { name: "Pop out" }));
+    /*
+    FNXC:TaskDetailHeaderActions 2026-09-16-18:07 (FN-470):
+    Pop out is the last entry of the single header overflow, and edit mode keeps only the close control in the
+    header, so the draft is dismissed before the overflow is reachable again.
+    */
+    expect(screen.queryByRole("button", { name: "Actions" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await user.click(screen.getByRole("button", { name: "Actions" }));
+    await user.click(screen.getByTestId("task-detail-pop-out"));
     expect(onPopOut).toHaveBeenCalledTimes(1);
   });
 
@@ -395,11 +404,8 @@ describe("native Task Detail", () => {
         />
       </>,
     );
+    // FNXC:TaskDetailHeaderActions 2026-09-16-18:07 (FN-470): every action, Duplicate and Delete included, is reached through the overflow.
     const chooseAction = async (name: string) => {
-      if (name === "Duplicate" || name === "Delete") {
-        await user.click(screen.getByRole("button", { name }));
-        return;
-      }
       await user.click(screen.getByRole("button", { name: "Actions" }));
       await user.click(within(await screen.findByRole("menu", { name: "Task actions" })).getByRole("menuitem", { name }));
     };
@@ -488,11 +494,14 @@ describe("native Task Detail", () => {
       </>,
     );
 
-    await user.click(screen.getByRole("button", { name: "Pause" }));
+    // FNXC:TaskDetailHeaderActions 2026-09-16-18:07 (FN-470): Pause and Retry are reached through the single header overflow.
+    await user.click(screen.getByRole("button", { name: "Actions" }));
+    await user.click(screen.getByTestId("task-detail-header-action-pause"));
     await waitFor(() => expect(onPauseTask).toHaveBeenCalledWith("FN-WIP"));
     expect(onTaskUpdated).toHaveBeenCalledWith(expect.objectContaining({ paused: true }));
 
-    await user.click(screen.getByRole("button", { name: "Retry" }));
+    await user.click(screen.getByRole("button", { name: "Actions" }));
+    await user.click(screen.getByTestId("task-detail-header-action-retry"));
     await waitFor(() => expect(onRetryTask).toHaveBeenCalledWith("FN-WIP"));
   });
 
@@ -590,7 +599,8 @@ describe("native Task Detail", () => {
       </>,
     );
 
-    await user.click(screen.getByRole("button", { name: "Edit task" }));
+    await user.click(screen.getByRole("button", { name: "Actions" }));
+    await user.click(screen.getByTestId("task-detail-header-action-edit"));
     // FNXC:TaskDescriptionEditing 2026-09-14-19:30: FN-391 — the description textarea is the adaptive text control now that the title field is gone.
     expect(screen.getByLabelText("Description")).toHaveAttribute("data-ui", "textarea");
     const alphaSelects = document.querySelectorAll<HTMLSelectElement>("select[data-ui='select']");

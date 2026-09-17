@@ -3508,7 +3508,6 @@
     "outbox": "寄件匣",
     "outboxTab": "寄件匣",
     "pending": "待定",
-    "refreshTitle": "重新整理",
     "reply": "回覆",
     "replyButton": "回復",
     "replyingTo": "回復 {{preview}}",
@@ -3579,7 +3578,11 @@
       "taskWedge": "{{taskId}} 需要處理",
       "duplicateDecision": "{{taskId}} 重複判定",
       "planningClarification": "規劃釐清"
-    }
+    },
+    "filter": "篩選",
+    "filterTitle": "篩選收件匣",
+    "filterMenuLabel": "收件匣範圍",
+    "filterPendingApprovalsLabel": "篩選收件匣 — {{count}} 項待處理核准"
   },
   "memory": {
     "auditChecksTitle": "稽核檢查",

@@ -36,6 +36,17 @@ vi.mock("lucide-react", async (importActual) => createLucideMock(importActual as
 
 import * as api from "../../api";
 
+/*
+FNXC:MailboxTwoTabs 2026-09-16-16:53:
+Archived, Completions and Agents are inbox SCOPES now, chosen from the single header filter button
+instead of their own tabs. Every former tab gesture in this suite goes through this one helper.
+*/
+async function selectInboxScope(scope: string, user: { click: (element: Element) => Promise<void> }) {
+  await user.click(await screen.findByTestId("mailbox-inbox-filter"));
+  await user.click(await screen.findByTestId(`mailbox-inbox-filter-option-${scope}`));
+}
+
+
 const agents = [
   { id: "agent-1", name: "Agent One", role: "executor", state: "idle", createdAt: "2026-09-09T00:00:00.000Z", updatedAt: "2026-09-09T00:00:00.000Z", metadata: {} },
 ];
@@ -139,7 +150,7 @@ describe("mailbox author + subject surfaces", () => {
       return { messages: [message], total: 1, unreadCount: 0 };
     }) as never);
     renderHost(Host);
-    await user.click(await screen.findByTestId("mailbox-tab-archived"));
+    await selectInboxScope("archived", user);
     const row = await screen.findByTestId("mailbox-item-msg-archived");
     expectAuthoredSubjectRow(row, "msg-archived", "FN-325 completed", "Agent One");
   });
@@ -167,7 +178,7 @@ describe("mailbox author + subject surfaces", () => {
       unreadCount: 0,
     } as never);
     renderHost(Host);
-    await user.click(await screen.findByTestId("mailbox-tab-agents"));
+    await selectInboxScope("agents", user);
     const row = await screen.findByTestId("mailbox-item-msg-all");
     expectAuthoredSubjectRow(row, "msg-all", "Handover", "Agent One");
   });
@@ -184,7 +195,7 @@ describe("mailbox author + subject surfaces", () => {
       outbox: [outboxMessage("msg-agent-out", { content: "## Review done\n\nShipped." })],
     } as never);
     renderHost(Host);
-    await user.click(await screen.findByTestId("mailbox-tab-agents"));
+    await selectInboxScope("agents", user);
     fireEvent.change(await screen.findByTestId("mailbox-agent-select"), { target: { value: "agent-1" } });
 
     const inboxRow = await screen.findByTestId("mailbox-item-msg-agent-in");
@@ -199,7 +210,7 @@ describe("mailbox author + subject surfaces", () => {
   it("renders author and subject in the MailboxModal completions list", async () => {
     const user = userEvent.setup({ delay: null, pointerEventsCheck: 0 });
     renderHost(hosts[1][1]);
-    await user.click(await screen.findByTestId("mailbox-tab-completions"));
+    await selectInboxScope("completions", user);
     const row = await within(screen.getByTestId("mailbox-completions-list")).findByTestId("mailbox-item-msg-completion");
     expectAuthoredSubjectRow(row, "msg-completion", "FN-325 completed", "Agent One");
   });
@@ -254,6 +265,8 @@ describe("mailbox author + subject surfaces", () => {
     const user = userEvent.setup({ delay: null, pointerEventsCheck: 0 });
     vi.mocked(api.sendMessage).mockResolvedValue({} as never);
     renderHost(hosts[0][1]);
+    // FNXC:MailboxTwoTabs 2026-09-16-16:53: Compose is the Outbox tab's header action.
+    await user.click(await screen.findByTestId("mailbox-tab-outbox"));
     await user.click(await screen.findByTestId("mailbox-header-compose"));
     fireEvent.change(await screen.findByTestId("message-composer-recipient"), { target: { value: "agent-1" } });
     fireEvent.change(screen.getByTestId("message-composer-subject"), { target: { value: "  Deployment window  " } });

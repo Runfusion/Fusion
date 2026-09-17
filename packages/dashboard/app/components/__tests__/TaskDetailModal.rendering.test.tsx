@@ -1826,7 +1826,8 @@ describe("TaskDetailModal", () => {
 
     expect(screen.getByRole("alert")).toHaveTextContent("Transient provider error");
     expect(screen.getByText("Automatic recovery is pending. You can Retry now to restart this stage.")).toBeInTheDocument();
-    expect(screen.getByTestId("task-detail-header-action-retry")).toBeInTheDocument();
+    // Retry lives only in the header overflow now, so it is absent until the Actions menu is opened.
+    expect(screen.queryByTestId("task-detail-header-action-retry")).toBeNull();
     expect(screen.getByRole("button", { name: "Retry with a different model/node" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Actions" }));
     expect(screen.getByTestId("task-detail-header-action-retry")).toBeInTheDocument();
@@ -2049,7 +2050,8 @@ describe("TaskDetailModal", () => {
       if (description) expect(screen.queryByTestId("task-detail-definition-description")).toBeNull();
 
       await userEvent.click(screen.getByRole("button", { name: "Plan" }));
-      await userEvent.click(screen.getByRole("button", { name: "Edit task" }));
+      await userEvent.click(screen.getByRole("button", { name: "Actions" }));
+      await userEvent.click(screen.getByTestId("task-detail-header-action-edit"));
       expect(header?.querySelector("h1, h2, h3, h4, h5, h6")).toBeNull();
       /*
       FNXC:TaskDescriptionEditing 2026-09-14-19:25:

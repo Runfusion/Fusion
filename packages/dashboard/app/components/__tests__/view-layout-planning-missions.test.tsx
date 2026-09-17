@@ -63,16 +63,22 @@ describe("standardized Planning and Missions layouts", () => {
     vi.mocked(api.fetchMissionInterviewDrafts).mockResolvedValue([]);
   });
 
-  it("owns creation in each shared header and keeps archive filters in the list rail", async () => {
+  /*
+  FNXC:StandardizedMissionLayout 2026-09-16-15:50:
+  FN-465 retire l'archivage de Planning et Missions : les rails de liste ne portent plus aucune
+  commande d'archives. Le cas conserve son intention d'origine — une seule action de création par
+  en-tête partagé — et y ajoute ce contrôle négatif.
+  */
+  it("owns creation in each shared header and keeps no archive control in the list rail", async () => {
     const planning = renderPlanning();
     expect(within(screen.getByRole("banner")).getByRole("button", { name: "New session" })).toBeInTheDocument();
-    expect(within(screen.getByTestId("planning-sidebar")).getByRole("button", { name: "Show archived" })).toBeInTheDocument();
+    expect(within(screen.getByTestId("planning-sidebar")).queryByRole("button", { name: "Show archived" })).toBeNull();
     planning.unmount();
 
     renderMissions();
     await waitFor(() => expect(api.fetchMissions).toHaveBeenCalled());
     expect(within(screen.getByRole("banner")).getByRole("button", { name: "Plan New Mission" })).toBeInTheDocument();
-    expect(within(screen.getByTestId("mission-sidebar")).getByRole("button", { name: "Show archived" })).toBeInTheDocument();
+    expect(within(screen.getByTestId("mission-sidebar")).queryByRole("button", { name: "Show archived" })).toBeNull();
   });
 
   it("starts phone Planning on the list even when empty", async () => {

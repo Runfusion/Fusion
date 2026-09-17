@@ -664,12 +664,15 @@ Project-scoped drawer FloatingWindows consume the shared canonical drawer block-
 
 FNXC:MobileDrawerMotion 2026-09-12-20:37:
 A drawer FloatingWindow enters through the shared bottom-edge animation on its geometry-owning panel. Individual translate animation composes with the explicit transform reset and runtime drag transform instead of replacing either contract.
+
+FNXC:MobileDrawer 2026-09-16-17:23:
+The revealed top band and the panel block-size derive from the same `--mobile-drawer-top-reveal` token, so all three drawer owners open at exactly the same height. The band stays non-zero so the scrim and the close gesture remain reachable.
 */
 html[data-mobile-drawers="true"][data-viewport-mode="mobile"] .floating-window-overlay--mobile-drawer {
   display: flex;
   align-items: flex-end;
   inset: 0 var(--icb-right-offset, 0px) 0 0;
-  padding-block-start: calc(env(safe-area-inset-top, 0px) + var(--space-2xl));
+  padding-block-start: calc(env(safe-area-inset-top, 0px) + var(--mobile-drawer-top-reveal));
   background: color-mix(in srgb, var(--bg) 38%, transparent);
   pointer-events: auto;
 }
@@ -749,6 +752,19 @@ than the floating minimum and the body stays scrollable instead of overflowing t
   min-width: 0;
   min-height: 0;
   border-radius: var(--radius-md);
+}
+
+/*
+FNXC:FloatingWindowSnap 2026-09-16-18:31:
+FN-469 bottom band. The rectangle itself comes from `resolveSnapRect("bottom")` like every other zone, so this rule
+is paint only: the band rests ON the bottom wall, so its bottom corners are squared exactly as the columns' outer
+edges read against their walls. It reuses the shared radius token and adds no parallel snapped variant.
+*/
+.floating-window--snap-bottom {
+  border-start-start-radius: var(--radius-md);
+  border-start-end-radius: var(--radius-md);
+  border-end-start-radius: 0;
+  border-end-end-radius: 0;
 }
 
 /*

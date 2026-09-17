@@ -1547,8 +1547,15 @@ describe("TerminalModal", () => {
       };
       header.setPointerCapture = vi.fn();
       header.releasePointerCapture = vi.fn();
-      fireEvent.pointerDown(header, { pointerId: 42, pointerType: "touch", clientX: 300, clientY: 100 });
-      fireEvent.pointerMove(header, { pointerId: 42, pointerType: "touch", clientX: 200, clientY: 140 });
+      /*
+      FNXC:TerminalModalControls 2026-09-16-07:38:
+      FN-460 opens this window 20% larger, so after the resize above a DOWNWARD drag lands its bottom edge on the
+      bottom bar and FN-438 legitimately re-pins the terminal to `below`, unmounting the floating panel mid-case.
+      The gesture therefore travels UP-left: the assertion here is horizontal movement, and staying clear of the
+      re-pin contact line keeps this case about floating movability rather than about re-pinning.
+      */
+      fireEvent.pointerDown(header, { pointerId: 42, pointerType: "touch", clientX: 300, clientY: 140 });
+      fireEvent.pointerMove(header, { pointerId: 42, pointerType: "touch", clientX: 200, clientY: 100 });
       fireEvent.pointerUp(header, { pointerId: 42, pointerType: "touch" });
 
       await waitFor(() => {
@@ -1662,7 +1669,7 @@ describe("TerminalModal", () => {
     Object.defineProperty(window, "screen", { configurable: true, value: { width: 1024, height: 768 } });
     Object.defineProperty(navigator, "maxTouchPoints", { configurable: true, value: 1 });
     vi.spyOn(window, "matchMedia").mockImplementation((query: string) => ({
-      matches: query === "(min-width: 769px) and (max-width: 1024px)",
+      matches: query === "(min-width: 769px) and (max-width: 1023.98px)",
       media: query,
       onchange: null,
       addListener: vi.fn(),
@@ -1718,9 +1725,15 @@ describe("TerminalModal", () => {
       */
       const tabStrip = screen.getByTestId("terminal-tabs");
       const preDragLeft = panel.style.left;
-      fireEvent.pointerDown(tabStrip, { pointerId: 65, pointerType: "touch", clientX: 300, clientY: 40 });
-      fireEvent.pointerMove(panel, { pointerId: 65, pointerType: "touch", clientX: 240, clientY: 90 });
-      fireEvent.pointerUp(panel, { pointerId: 65, pointerType: "touch", clientX: 240, clientY: 90 });
+      /*
+      FNXC:TerminalModalControls 2026-09-16-07:38:
+      FN-460 opens this window 20% larger, so a further DOWNWARD drag would put its bottom edge on the bottom bar
+      and trigger the FN-438 re-pin, unmounting the floating panel. This strip gesture therefore travels up-left;
+      what it proves — empty strip space is a drag surface — is unchanged.
+      */
+      fireEvent.pointerDown(tabStrip, { pointerId: 65, pointerType: "touch", clientX: 300, clientY: 90 });
+      fireEvent.pointerMove(panel, { pointerId: 65, pointerType: "touch", clientX: 240, clientY: 40 });
+      fireEvent.pointerUp(panel, { pointerId: 65, pointerType: "touch", clientX: 240, clientY: 40 });
       await waitFor(() => {
         expect(panel.setPointerCapture).toHaveBeenCalledTimes(2);
         expect(panel.style.left).not.toBe(preDragLeft);

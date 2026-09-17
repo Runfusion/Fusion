@@ -189,7 +189,7 @@ export function mockViewport(mode: "mobile" | "desktop" | "tablet") {
     writable: true,
     value: vi.fn().mockImplementation((query: string) => {
       const isMobileQuery = query === "(max-width: 768px)" || query === "(max-width: 768px), (max-height: 480px)";
-      const isTabletQuery = query === "(min-width: 769px) and (max-width: 1024px)";
+      const isTabletQuery = query === "(min-width: 769px) and (max-width: 1023.98px)";
       return {
         matches: mode === "mobile" ? isMobileQuery : mode === "tablet" ? isTabletQuery : false,
         media: query,

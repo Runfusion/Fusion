@@ -1978,11 +1978,16 @@ instead of resolving to a flat --card with no accent emphasis.
     width: 100%;
   }
 
-  /* Action buttons stay inline but shrink */
+  /*
+  FNXC:IconOnlyButtonCanon 2026-09-16-19:05:
+  FN-471 : Actualiser et Vider sont des boutons icône seule; ils partagent désormais la boîte canonique
+  mobile (36px) au lieu d'un carré bespoke de 44px. Le `flex-shrink: 0` qui les garde atteignables
+  quand les filtres optionnels s'affichent est conservé.
+  */
   .activity-log-refresh,
   .activity-log-clear {
-    width: 44px;
-    height: 44px;
+    width: var(--icon-button-size-mobile);
+    height: var(--icon-button-size-mobile);
     flex-shrink: 0;
   }
 

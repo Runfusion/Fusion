@@ -4,11 +4,12 @@ import { loadAllAppCss } from "../test/cssFixture";
 const css = loadAllAppCss();
 
 describe("mobile bottom bars keyboard-open css contract", () => {
-  it("keeps the official pill above the visual viewport occlusion", () => {
+  it("anchors the official pill to the bottom independently of the keyboard", () => {
     const alphaRule = css.match(/\.mobile-nav-bar--native\s*\{([^}]*)\}/m);
     expect(alphaRule).toBeTruthy();
     expect(alphaRule![1]).toContain("bottom: var(--mobile-nav-pill-bottom)");
-    expect(css).toContain("--mobile-nav-pill-bottom: calc(var(--mobile-nav-system-offset) + var(--mobile-nav-floating-gap) + var(--mobile-nav-keyboard-lift))");
+    expect(css).toContain("--mobile-nav-pill-bottom: calc(var(--mobile-nav-system-offset) + var(--mobile-nav-floating-gap))");
+    expect(css).not.toContain("--mobile-nav-keyboard-lift");
     expect(alphaRule![1]).not.toContain("translateY(100%)");
     expect(alphaRule![1]).not.toContain("pointer-events: none");
   });

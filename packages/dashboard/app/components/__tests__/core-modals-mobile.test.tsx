@@ -498,8 +498,13 @@ describe("core modals mobile css coverage", () => {
       /\.task-detail-mobile-back\s*\{[^}]+\}/,
     );
     expect(backControlMatch).not.toBeNull();
-    expect(backControlMatch![0]).toContain("min-height: calc(var(--space-2xl) + var(--space-xs))");
-    expect(backControlMatch![0]).toContain("min-width: calc(var(--space-2xl) + var(--space-xs))");
+    /*
+    FNXC:IconOnlyButtonCanon 2026-09-16-19:05:
+    FN-471 : le retour mobile de Task Detail est un bouton icône seule; sa boîte vient désormais du jeton
+    canonique partagé (36px) au lieu d'un calcul bespoke propre à ce fichier.
+    */
+    expect(backControlMatch![0]).toContain("min-height: var(--icon-button-size-mobile)");
+    expect(backControlMatch![0]).toContain("min-width: var(--icon-button-size-mobile)");
   });
 
   it("TaskDetailModal: Actions dropdown anchors toward available horizontal space", () => {

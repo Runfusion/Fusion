@@ -38,13 +38,13 @@ import { fetchScripts } from "../api";
 import { normalizeScriptCatalog } from "../api/system/workflows";
 import type { PluginDashboardViewEntry, ScriptEntry } from "../api";
 import { useViewportMode } from "./Header";
+import { isMobileShellMode } from "../hooks/useViewportMode";
 import { NavigationHistoryContext } from "../hooks/useNavigationHistory";
 import type { TaskView } from "../hooks/useViewState";
-import { getMobileKeyboardLayoutViewportHeight } from "../utils/mobileBarKeyboardFlags";
 import { buildPluginTaskViewId, isPluginViewId } from "../plugins/pluginViewRegistry";
 import { getPluginDashboardViewNavIcon } from "./pluginNavIcon";
 import { ViewDrawerHandle } from "./ViewDrawer";
-import { MOBILE_NAV_SELECTABLE_ITEMS, type MobileNavSelectableItem } from "../../../core/src/board/mobile-nav-primary-items";
+import { MOBILE_NAV_SELECTABLE_ITEMS, resolveMobileNavPrimaryItems, type MobileNavSelectableItem } from "../../../core/src/board/mobile-nav-primary-items";
 
 export interface PublishedMobileNavHeightInput {
   navOffsetHeight: number;
@@ -80,46 +80,106 @@ export function computePublishedMobileNavHeight({
   return Math.max(44, Math.ceil(contentHeight));
 }
 
+/*
+FNXC:MobileNavDynamicQuickAccess 2026-09-16-19:44:
+FN-468 : « faut pas surcharger le menu flottant mais faire apparaître au fur et à mesure qu'il y a de l'espace ».
+La rangue directe part de la sélection d'accès rapide résolue (FN-467, inchangée au plus étroit) puis, quand la
+largeur mesurée le permet, promeut des destinations supplémentaires dans CET ordre stable. Les quatre premières
+sont celles citées par l'opérateur (Board, Fichiers, Gestionnaire git, Réglages) ; les suivantes complètent de
+manière déterministe pour qu'une largeur donnée produise toujours la même rangée. `patchnode` est exclu : History
+est une surface modale, pas une destination de navigation.
+*/
+export const MOBILE_NAV_DYNAMIC_PROMOTION_ORDER: MobileNavSelectableItem[] = [
+  "tasks",
+  "files",
+  "git",
+  "settings",
+  "command-center",
+  "planning",
+  "missions",
+  "mailbox",
+  "chat",
+  "agents",
+  "notes",
+  "activity",
+  "workflows",
+  "automation",
+  "projects",
+  "usage",
+];
+
+/*
+FNXC:MobileNavDynamicQuickAccess 2026-09-16-19:44:
+FN-468 : garantie « ne pas surcharger le menu flottant ». Même sur un très large écran du shell mobile, la pill ne
+donne jamais plus de destinations directes que ce plafond ; tout le reste reste atteignable depuis le menu.
+*/
+export const MAX_MOBILE_NAV_DIRECT_DESTINATIONS = 8;
+
+/*
+FNXC:MobileNavDynamicQuickAccess 2026-09-16-19:44:
+Largeur de créneau de repli, utilisée quand la propriété personnalisée CSS n'est pas résolue en pixels (jsdom, avant
+hydratation, `calc()` non calculé). Elle vaut deux cibles tactiles minimales, exactement comme la déclaration CSS.
+*/
+export const MOBILE_NAV_DIRECT_SLOT_FALLBACK_WIDTH = 88;
+
+export interface MobileNavDirectDestinationCountInput {
+  availableWidth: number;
+  slotWidth: number;
+  baseCount: number;
+  maxCount: number;
+}
+
+/**
+ * Nombre de destinations directes que la pill peut afficher à une largeur mesurée donnée.
+ *
+ * FNXC:MobileNavDynamicQuickAccess 2026-09-16-19:44:
+ * FN-468 : fonction PURE, testable sans layout (même précédent que `computePublishedMobileNavHeight`). Une largeur
+ * nulle, négative ou non finie — jsdom, SSR, avant première mesure — renvoie `baseCount`, donc la rangée n'est
+ * JAMAIS plus courte que la sélection d'accès rapide de l'opérateur. Sinon la capacité est le nombre entier de
+ * créneaux disponibles MOINS un créneau réservé au déclencheur de menu, bornée entre `baseCount` et `maxCount`.
+ */
+export function computeMobileNavDirectDestinationCount({
+  availableWidth,
+  slotWidth,
+  baseCount,
+  maxCount,
+}: MobileNavDirectDestinationCountInput): number {
+  const ceiling = Math.max(baseCount, maxCount);
+  if (!Number.isFinite(availableWidth) || availableWidth <= 0) return baseCount;
+  if (!Number.isFinite(slotWidth) || slotWidth <= 0) return baseCount;
+  const capacity = Math.floor(availableWidth / slotWidth) - 1;
+  return Math.min(ceiling, Math.max(baseCount, capacity));
+}
+
 export interface MobileNavKeyboardMetrics {
   keyboardOverlap: number;
   viewportHeight: number | null;
   viewportOffsetTop: number;
 }
 
-export function computeMobileNavKeyboardLift({
-  keyboardOpen,
-  keyboardOverlap,
-  viewportHeight,
-  viewportOffsetTop,
-  layoutViewportHeight,
-}: MobileNavKeyboardMetrics & { keyboardOpen: boolean; layoutViewportHeight: number }): number {
-  if (!keyboardOpen || viewportHeight === null) return 0;
-  const visualOcclusion = Math.max(0, layoutViewportHeight - viewportOffsetTop - viewportHeight);
-  return keyboardOverlap > 0 ? Math.min(keyboardOverlap, visualOcclusion) : visualOcclusion;
-}
-
 /*
 FNXC:MobilePillPopover 2026-09-13-10:03:
-The official pill and popover are sibling fixed surfaces, so both receive the complete geometry declaration directly. A root-computed custom-property chain cannot consume a lift overridden only on one sibling; publishing the same local chain keeps their shared edge responsive to every keyboard sample.
+The official pill and popover are sibling fixed surfaces, so both receive the complete geometry declaration directly. A root-computed custom-property chain cannot consume a value overridden only on one sibling; publishing the same local chain keeps their shared edge consistent.
 
 FNXC:MobilePillPopover 2026-09-13-10:32:
-A shifted iOS visual viewport moves both its visible top and bottom. Publish that live top offset on both fixed siblings so the popover's CSS height cap cannot place its first controls above the visible viewport while the pill remains correctly lifted above the keyboard.
+A shifted iOS visual viewport moves its visible top. Publish that live top offset on both fixed siblings so the popover's CSS height cap cannot place its first controls above the visible viewport.
+
+FNXC:MobilePillKeyboard 2026-09-16-16:27:
+FN-463: the official pill stays anchored to the bottom of the screen INDEPENDENTLY of the software keyboard. It no longer lifts above the keyboard, so `--mobile-nav-pill-bottom` (and the popover bottom derived from it) contains no term derived from the visual viewport: opening, moving, and closing the keyboard leave the resolved bottom position numerically unchanged. `--mobile-nav-viewport-offset-top` survives for the popover height cap ONLY; it never participates in the bottom anchor.
 */
 export interface MobileNavGeometryStyle extends CSSProperties {
   "--mobile-nav-floating-gap": string;
-  "--mobile-nav-keyboard-lift": string;
   "--mobile-nav-viewport-offset-top": string;
   "--mobile-nav-pill-bottom": string;
   "--mobile-nav-popover-bottom": string;
 }
 
-export function createMobileNavGeometryStyle(keyboardLift: number, viewportOffsetTop = 0): MobileNavGeometryStyle {
+export function createMobileNavGeometryStyle(viewportOffsetTop = 0): MobileNavGeometryStyle {
   const visibleViewportTop = Number.isFinite(viewportOffsetTop) ? Math.max(0, viewportOffsetTop) : 0;
   return {
     "--mobile-nav-floating-gap": "var(--space-sm)",
-    "--mobile-nav-keyboard-lift": `${keyboardLift}px`,
     "--mobile-nav-viewport-offset-top": `${visibleViewportTop}px`,
-    "--mobile-nav-pill-bottom": "calc(var(--mobile-nav-system-offset) + var(--mobile-nav-floating-gap) + var(--mobile-nav-keyboard-lift))",
+    "--mobile-nav-pill-bottom": "calc(var(--mobile-nav-system-offset) + var(--mobile-nav-floating-gap))",
     "--mobile-nav-popover-bottom": "calc(var(--mobile-nav-pill-bottom) + var(--mobile-nav-pill-height) + var(--space-xs))",
   };
 }
@@ -188,6 +248,15 @@ export interface MobileNavBarProps {
   };
   pluginDashboardViews?: PluginDashboardViewEntry[];
   shellConnectionControl?: ReactNode;
+  /*
+  FNXC:Navigation 2026-09-16-17:41:
+  FN-467: the pill's direct destinations are the project's persisted **Navigation quick access** selection
+  (`mobileNavPrimaryItems`), exactly like the shared tablet/desktop footer row — one setting, both hosts, same order.
+  The value is passed raw: `resolveMobileNavPrimaryItems` owns legacy normalization, deduplication, the cap of 5, and
+  the fallback to the default selection, so no dashboard-side copy of that logic may exist. Omitting the prop keeps the
+  default (Dashboard, Board, Planning, Missions, Mailbox).
+  */
+  quickAccessItems?: readonly string[];
   /** App-owned open state for the mobile navigation popover. */
   navigationMenuOpen?: boolean;
   /** Updates the App-owned mobile popover state. */
@@ -245,6 +314,7 @@ export function MobileNavBar({
   experimentalFeatures,
   pluginDashboardViews = [],
   shellConnectionControl,
+  quickAccessItems,
   navigationMenuOpen = false,
   onUiMenuOpenChange,
 }: MobileNavBarProps) {
@@ -258,6 +328,16 @@ export function MobileNavBar({
   const [dragOffset, setDragOffset] = useState(0);
   const [isSheetDragging, setIsSheetDragging] = useState(false);
   const [hasSheetDragged, setHasSheetDragged] = useState(false);
+  /*
+  FNXC:MobileNavDynamicQuickAccess 2026-09-16-19:44:
+  FN-468 : géométrie mesurée de la pill. Une largeur utile nulle — premier rendu, SSR, jsdom sans géométrie — fait
+  retomber la fonction pure sur la rangée de base, donc la rangée n'est jamais plus courte que la sélection
+  d'accès rapide de l'opérateur.
+  */
+  const [pillSlotMetrics, setPillSlotMetrics] = useState<{ availableWidth: number; slotWidth: number }>({
+    availableWidth: 0,
+    slotWidth: MOBILE_NAV_DIRECT_SLOT_FALLBACK_WIDTH,
+  });
   const navRef = useRef<HTMLElement | null>(null);
   const sheetRef = useRef<HTMLDivElement | null>(null);
   const sheetDragRef = useRef<{
@@ -276,7 +356,7 @@ export function MobileNavBar({
 
   /*
   FNXC:NativeShell 2026-09-11-15:01:
-  The navigation pill keeps its popover state controlled by App while the sole trigger is the trailing sibling of the pill's four-destination tablist. Standard mobile keeps its local More drawer; shell identity changes close either transient surface without creating another state owner.
+  The navigation pill keeps its popover state controlled by App while the sole trigger is the trailing sibling of the pill's destination tablist (FN-467: up to five destinations resolved from the project quick-access setting, never a fixed four). Standard mobile keeps its local More drawer; shell identity changes close either transient surface without creating another state owner.
   */
   useEffect(() => {
     setIsMoreOpen(false);
@@ -509,6 +589,25 @@ export function MobileNavBar({
     const publishMeasuredHeight = () => {
       const computed = window.getComputedStyle(navEl);
       const paddingBottom = Number.parseFloat(computed.paddingBottom);
+      /*
+      FNXC:MobileNavDynamicQuickAccess 2026-09-16-19:44:
+      FN-468 : la largeur utile est mesurée ICI, en réutilisant le `ResizeObserver` déjà installé sur le `nav` —
+      aucun second observateur de géométrie n'est ajouté. La largeur de créneau vient de la propriété personnalisée
+      issue des jetons, avec repli sûr quand elle n'est pas résolue en pixels. L'état n'est écrit que lorsque la
+      capacité CHANGE, faute de quoi l'observateur se réveillerait à chaque publication de hauteur.
+      */
+      const declaredSlotWidth = Number.parseFloat(computed.getPropertyValue("--mobile-nav-direct-slot-min-width"));
+      const slotWidth = Number.isFinite(declaredSlotWidth) && declaredSlotWidth > 0
+        ? declaredSlotWidth
+        : MOBILE_NAV_DIRECT_SLOT_FALLBACK_WIDTH;
+      const horizontalPadding = (Number.parseFloat(computed.paddingLeft) || 0) + (Number.parseFloat(computed.paddingRight) || 0);
+      const measuredWidth = navEl.getBoundingClientRect().width;
+      const availableWidth = Number.isFinite(measuredWidth) ? Math.max(0, measuredWidth - horizontalPadding) : 0;
+      setPillSlotMetrics((current) => (
+        current.availableWidth === availableWidth && current.slotWidth === slotWidth
+          ? current
+          : { availableWidth, slotWidth }
+      ));
       const floatingGap = Number.parseFloat(computed.getPropertyValue("--mobile-nav-floating-gap"));
       const tabHeights = Array.from(navEl.querySelectorAll<HTMLElement>(".mobile-nav-tab"), (tab) => tab.getBoundingClientRect().height);
       const publishedHeight = computePublishedMobileNavHeight({
@@ -539,7 +638,16 @@ export function MobileNavBar({
     };
   }, [hidden, modalOpen, mode]);
 
-  if (mode !== "mobile" || modalOpen || hidden) {
+  /*
+  FNXC:NativeShell 2026-09-16-19:44:
+  FN-468 : le montage de la pill est désormais décidé par le prédicat de shell partagé `isMobileShellMode`, donc
+  la pill se monte en `mobile` ET en `tablet` (0–1023.98 px). C'est le SECOND des deux verrous qui l'excluaient de
+  la tablette : le CSS la masquait, mais ce prédicat l'empêchéait déjà de se monter du tout. Retirer la colonne de
+  gauche, le pied de page large et le dock droit de la bande tablette sans lever CE verrou laisserait la tablette
+  sans aucune navigation primaire. Seule l'appartenance au MODE est élargie : `modalOpen` et `hidden` conservent
+  leur sémantique exacte et continuent à démonter la pill.
+  */
+  if (!isMobileShellMode(mode) || modalOpen || hidden) {
     return null;
   }
 
@@ -591,16 +699,16 @@ export function MobileNavBar({
     badgeLabel?: string;
     alpha?: boolean;
   }> = {
-    "command-center": { icon: <Gauge />, labelKey: "nav.commandCenter", fallback: "Dashboard", moreTestId: "mobile-more-item-command-center", isActive: view === "command-center", isAvailable: true, navigate: () => onChangeView("command-center") },
+    "command-center": { icon: <Gauge />, labelKey: "nav.commandCenter", fallback: "Dashboard", moreTestId: "mobile-more-item-command-center", isActive: view === "command-center", isAvailable: true, navigate: (surface) => surface === "primary" ? onChangeView("command-center") : handleMoreAction(() => onChangeView("command-center")) },
     /*
     FNXC:MobileTaskNavigation 2026-08-20-05:47:
     Issue #2226 requires independent mobile footer destinations: Tasks always returns to Board and List remains directly reachable without restoring Header's retired segmented switcher.
     */
-    tasks: { icon: <LayoutGrid />, labelKey: "nav.tasks", fallback: "Tasks", moreTestId: "mobile-more-item-tasks", isActive: view === "board", isAvailable: true, navigate: () => onChangeView("board") },
+    tasks: { icon: <LayoutGrid />, labelKey: "nav.tasks", fallback: "Tasks", moreTestId: "mobile-more-item-tasks", isActive: view === "board", isAvailable: true, navigate: (surface) => surface === "primary" ? onChangeView("board") : handleMoreAction(() => onChangeView("board")) },
     agents: { icon: <Bot />, labelKey: "nav.agents", fallback: "Agents", moreTestId: "mobile-more-item-agents", isActive: view === "agents", isAvailable: true, navigate: (surface) => surface === "primary" ? onChangeView("agents") : handleMoreAction(() => onChangeView("agents")) },
     missions: { icon: <Target />, labelKey: "nav.missions", fallback: "Missions", moreTestId: "mobile-more-item-missions", isActive: view === "missions", isAvailable: true, navigate: (surface) => surface === "primary" ? onChangeView("missions") : handleMoreAction(() => onChangeView("missions")) },
-    chat: { icon: <MessageSquare />, labelKey: "nav.chat", fallback: "Chat", moreTestId: "mobile-more-item-chat", isActive: view === "chat", isAvailable: true, navigate: () => onChangeView("chat"), indicator: chatHasUnreadResponse && view !== "chat", indicatorLabel: t("nav.chatUnreadAriaLabel", "Unread chat response") },
-    mailbox: { icon: <Mail />, labelKey: "nav.mailbox", fallback: "Mailbox", moreTestId: "mobile-more-item-mailbox", isActive: view === "mailbox", isAvailable: true, navigate: () => onChangeView("mailbox"), indicator: mailboxPendingApprovalCount > 0 && view !== "mailbox", indicatorLabel: t("nav.mailboxPendingAriaLabel", "Pending approvals"), badge: mailboxUnreadCount },
+    chat: { icon: <MessageSquare />, labelKey: "nav.chat", fallback: "Chat", moreTestId: "mobile-more-item-chat", isActive: view === "chat", isAvailable: true, navigate: (surface) => surface === "primary" ? onChangeView("chat") : handleMoreAction(() => onChangeView("chat")), indicator: chatHasUnreadResponse && view !== "chat", indicatorLabel: t("nav.chatUnreadAriaLabel", "Unread chat response") },
+    mailbox: { icon: <Mail />, labelKey: "nav.mailbox", fallback: "Mailbox", moreTestId: "mobile-more-item-mailbox", isActive: view === "mailbox", isAvailable: true, navigate: (surface) => surface === "primary" ? onChangeView("mailbox") : handleMoreAction(() => onChangeView("mailbox")), indicator: mailboxPendingApprovalCount > 0 && view !== "mailbox", indicatorLabel: t("nav.mailboxPendingAriaLabel", "Pending approvals"), badge: mailboxUnreadCount },
     /* FNXC:HistoryModalSurface 2026-09-15-04:29: FN-403: History is a modal surface, so it is never the active destination; invoking this entry opens the History modal over the current view. */
     patchnode: { icon: <History />, labelKey: "nav.patchnode", fallback: "History", moreTestId: "mobile-more-item-patchnode", isActive: false, isAvailable: true, navigate: (surface) => surface === "primary" ? onChangeView("patchnode") : handleMoreAction(() => onChangeView("patchnode")) },
     planning: { icon: <Lightbulb />, labelKey: "nav.planning", fallback: "Planning", moreTestId: "mobile-more-item-planning", isActive: view === "planning", isAvailable: true, navigate: (surface) => surface === "primary" ? planningHandler?.() : handleMoreAction(planningHandler), indicator: planningNeedsInput && view !== "planning", indicatorLabel: t("nav.planningNeedsInputAriaLabel", "Planning needs your input"), badge: activePlanningSessionCount },
@@ -626,13 +734,38 @@ export function MobileNavBar({
     "dev-server": { icon: <Monitor />, labelKey: "nav.devServer", fallback: "Dev Server", moreTestId: "mobile-more-item-dev-server", isActive: view === "dev-server" || view === "devserver", isAvailable: Boolean(experimentalFeatures?.devServerView), navigate: (surface) => surface === "primary" ? onChangeView("dev-server") : handleMoreAction(() => onChangeView("dev-server")) },
   };
   /*
-  FNXC:MobileDrawer 2026-09-10-04:41:
-  Board is the permanent mobile background, not a navigation destination. Keep the persisted standard-mobile `tasks` preference intact while excluding Tasks from both the pill's four direct destinations and its overflow registry.
+  FNXC:MobileDrawer 2026-09-16-17:41:
+  FN-467 replaces the former fixed four-destination pill (and its hard-coded exclusion of Board) with the project's
+  persisted **Navigation quick access** selection: up to five resolved destinations in the operator's order, the
+  hamburger always last. Board (`tasks`) is now an ordinary destination — a direct tab when selected, a menu entry
+  otherwise — because the drawer-returns-to-Kanban argument never justified making it unreachable from the menu too.
+  `patchnode` stays excluded: History is a modal surface, not a navigation destination.
   */
-  const primaryDestinationItems: MobileNavSelectableItem[] = ["command-center", "planning", "chat", "mailbox"];
-  const effectivePrimaryItems = primaryDestinationItems.filter((item) => destinationRegistry[item].isAvailable);
+  /* Computed inline rather than memoized: this statement sits AFTER the component's early returns, so a hook here would
+  change the hook count between renders. The resolver is a pure array reduce over at most a handful of ids. */
+  const primaryDestinationItems: MobileNavSelectableItem[] = resolveMobileNavPrimaryItems({
+    mobileNavPrimaryItems: quickAccessItems ? [...quickAccessItems] : undefined,
+  }).primaryItems;
+  const baseDirectItems = primaryDestinationItems.filter((item) => destinationRegistry[item].isAvailable);
+  /*
+  FNXC:MobileNavDynamicQuickAccess 2026-09-16-19:44:
+  FN-468 : la rangée directe est la rangée de base (ordre persisté, inchangée au plus étroit) SUIVIE des candidats
+  de l'ordre de promotion qui ne s'y trouvent pas déjà et qui sont disponibles — un drapeau expérimental désactivé
+  est ignoré sans laisser de bouton vide ni d'`aria-label` orphelin. La troncature au nombre calculé ne peut jamais
+  descendre sous la rangée de base, et toute destination promue quitte le menu déroulant, donc aucune n'est rendue
+  deux fois.
+  */
+  const directDestinationCount = computeMobileNavDirectDestinationCount({
+    availableWidth: pillSlotMetrics.availableWidth,
+    slotWidth: pillSlotMetrics.slotWidth,
+    baseCount: baseDirectItems.length,
+    maxCount: MAX_MOBILE_NAV_DIRECT_DESTINATIONS,
+  });
+  const promotedItems = MOBILE_NAV_DYNAMIC_PROMOTION_ORDER
+    .filter((item) => !baseDirectItems.includes(item) && destinationRegistry[item].isAvailable);
+  const effectivePrimaryItems = [...baseDirectItems, ...promotedItems].slice(0, directDestinationCount);
   const effectiveOmittedItems = MOBILE_NAV_SELECTABLE_ITEMS
-    .filter((item) => !primaryDestinationItems.includes(item) && item !== "patchnode" && item !== "tasks")
+    .filter((item) => !effectivePrimaryItems.includes(item) && item !== "patchnode")
     .filter((item) => destinationRegistry[item].isAvailable);
   const isMoreActive = effectiveOmittedItems.some((item) => destinationRegistry[item].isActive)
     || view === "graph"
@@ -646,27 +779,17 @@ export function MobileNavBar({
     return <button key={item} type="button" className="mobile-more-item" data-testid={destination.moreTestId} onClick={() => destination.navigate("more")}><span className="mobile-more-item-icon-wrapper">{destination.icon}{destination.indicator && <span className="status-dot status-dot--pending mobile-more-item-icon-dot" aria-label={destination.indicatorLabel} />}</span><span>{label}</span>{destination.badge && destination.badge > 0 ? <span className="mobile-more-item-badge" aria-label={destination.badgeLabel}>{formatCount(destination.badge)}</span> : null}{destination.alpha ? <span className="mobile-more-item-badge">{t("common.alpha", "Alpha")}</span> : null}</button>;
   };
 
-  const keyboardLift = computeMobileNavKeyboardLift({
-    keyboardOpen,
-    keyboardOverlap: keyboardMetrics?.keyboardOverlap ?? 0,
-    viewportHeight: keyboardMetrics?.viewportHeight ?? null,
-    viewportOffsetTop: keyboardMetrics?.viewportOffsetTop ?? 0,
-    layoutViewportHeight: getMobileKeyboardLayoutViewportHeight(),
-  });
   /*
   FNXC:MobileNav 2026-09-14-07:48:
-  Freeze the navigation geometry while the popover is open. Its position and max-height are anchored to
+  Freeze the navigation geometry while the popover is open. Its max-height is anchored to
   --mobile-nav-viewport-offset-top and 100dvh, both of which MOVE on a phone as soon as the user scrolls: the browser
   collapses its URL bar, visualViewport reports a new offset, and the popover re-anchors between touchstart and click.
   The tap then lands outside the moved surface, the outside-pointerdown guard dismisses the menu, and the destination
   never opens — which is why only entries reached AFTER scrolling were affected. Holding the last geometry while the
-  menu is open keeps the surface still for the whole gesture; it is released on close, so keyboard lift and safe-area
-  tracking resume untouched everywhere else.
+  menu is open keeps the surface still for the whole gesture; it is released on close, so safe-area tracking resumes
+  untouched everywhere else.
   */
-  const liveGeometryStyle = createMobileNavGeometryStyle(
-    keyboardLift,
-    keyboardMetrics?.viewportOffsetTop ?? 0,
-  );
+  const liveGeometryStyle = createMobileNavGeometryStyle(keyboardMetrics?.viewportOffsetTop ?? 0);
   if (!isMenuOpen) frozenGeometryRef.current = null;
   else if (!frozenGeometryRef.current) frozenGeometryRef.current = liveGeometryStyle;
   const mobileNavGeometryStyle = frozenGeometryRef.current ?? liveGeometryStyle;

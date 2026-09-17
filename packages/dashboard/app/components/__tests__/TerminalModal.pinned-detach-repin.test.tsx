@@ -163,13 +163,20 @@ function liveXterm(): MockXterm | undefined {
   return mockXtermInstances.filter((instance) => instance.element !== null).at(-1);
 }
 
-/** Drags the pinned grip vertically by `deltaY`, returning nothing; the caller asserts the resulting mode. */
+/*
+Drags the pinned grip vertically by `deltaY`, returning nothing; the caller asserts the resulting mode.
+
+FNXC:TerminalLayout 2026-09-16-18:31:
+FN-469: the gesture now carries a HORIZONTAL coordinate too, because the detached window is placed under the pointer.
+An omitted `clientX` meant `0`, which pulled the window out flush against the left wall and made every later drag arm
+the left column — an artifact of the fixture, not of the product.
+*/
 function dragPinnedHandle(deltaY: number, pointerId = 1) {
   const handle = screen.getByTestId("terminal-pinned-drag-handle");
   prepareCapture(handle);
-  fireEvent.pointerDown(handle, { pointerId, clientY: 400 });
-  fireEvent.pointerMove(handle, { pointerId, clientY: 400 + deltaY });
-  fireEvent.pointerUp(handle, { pointerId, clientY: 400 + deltaY });
+  fireEvent.pointerDown(handle, { pointerId, clientX: 600, clientY: 400 });
+  fireEvent.pointerMove(handle, { pointerId, clientX: 600, clientY: 400 + deltaY });
+  fireEvent.pointerUp(handle, { pointerId, clientX: 600, clientY: 400 + deltaY });
 }
 
 /*
@@ -328,6 +335,102 @@ describe("pinned terminal detach / footer-contact re-pin", () => {
     expect(screen.getByTestId("terminal-modal")).toHaveClass("terminal-modal--below");
   });
 
+  /*
+  FNXC:TerminalLayout 2026-09-16-18:31:
+  FN-469 symptom acceptance. Reported: "quand c'est ancré en bas et que je veux la sortir, ça crée un élément centré,
+  au lieu de juste sortir la modale et juste la recrop tout en la laissant précisément sous ma souris en poursuivant
+  son déplacement". Before FN-469 the detach called `endGesture()` and then swapped presentation, so the floating
+  window mounted at the standard CENTRED rectangle and no further pointer event moved anything. The three assertions
+  below each fail on that behaviour: the window is not centred, the pointer is inside it, and the SAME pointer id
+  keeps dragging it on `window` with no new `pointerdown`.
+  */
+  it("pulls the pinned terminal out under the pointer and keeps the same gesture moving it", async () => {
+    renderTerminal("detach-handoff");
+    await screen.findByTestId("terminal-below-host");
+
+    const header = screen.getByTestId("terminal-modal").querySelector(".terminal-header") as HTMLElement;
+    // A painted pinned title bar spanning the work area, so the proportional grab point is measurable.
+    Object.defineProperty(header, "getBoundingClientRect", {
+      configurable: true,
+      value: () => domRect({ left: 0, top: 380, right: window.innerWidth, bottom: 416 }),
+    });
+    prepareCapture(header);
+
+    fireEvent.pointerDown(header, { pointerId: 77, pointerType: "mouse", button: 0, clientX: 1100, clientY: 400 });
+    fireEvent.pointerMove(header, { pointerId: 77, pointerType: "mouse", clientX: 1100, clientY: 340 });
+
+    const panel = await screen.findByTestId("floating-window-terminal-detach-handoff");
+    await waitFor(() => expect(Number.parseFloat(panel.style.width)).toBeGreaterThan(0));
+
+    const read = () => ({
+      left: Number.parseFloat(panel.style.left),
+      top: Number.parseFloat(panel.style.top),
+      width: Number.parseFloat(panel.style.width),
+      height: Number.parseFloat(panel.style.height),
+    });
+    const placed = read();
+
+    // (1) NOT the centred opening rectangle: the window sits at the proportional grab point under the pointer.
+    const centredLeft = (window.innerWidth - placed.width) / 2;
+    expect(placed.left).not.toBe(centredLeft);
+    // (2) the pointer is inside the panel it just pulled out.
+    expect(1100).toBeGreaterThanOrEqual(placed.left);
+    expect(1100).toBeLessThanOrEqual(placed.left + placed.width);
+    expect(340).toBeGreaterThanOrEqual(placed.top);
+    expect(340).toBeLessThanOrEqual(placed.top + placed.height);
+
+    // (3) the gesture continues: no new pointerdown, same pointer id, on window.
+    fireEvent.pointerMove(window, { pointerId: 77, pointerType: "mouse", clientX: 1040, clientY: 300 });
+    expect(read()).toEqual({ ...placed, left: placed.left - 60, top: placed.top - 40 });
+    fireEvent.pointerUp(window, { pointerId: 77, pointerType: "mouse", clientX: 1040, clientY: 300 });
+
+    const settled = read();
+    fireEvent.pointerMove(window, { pointerId: 77, pointerType: "mouse", clientX: 900, clientY: 200 });
+    expect(read()).toEqual(settled);
+    expect(storedMode("detach-handoff")).toBe("floating");
+  });
+
+  /* FN-469: the detach threshold is omnidirectional, so a purely LATERAL pull detaches too (it did not before). */
+  it("detaches on a purely horizontal pull of the pinned header", async () => {
+    renderTerminal("detach-lateral");
+    await screen.findByTestId("terminal-below-host");
+
+    const header = screen.getByTestId("terminal-modal").querySelector(".terminal-header") as HTMLElement;
+    prepareCapture(header);
+    fireEvent.pointerDown(header, { pointerId: 78, pointerType: "mouse", button: 0, clientX: 500, clientY: 400 });
+    fireEvent.pointerMove(header, { pointerId: 78, pointerType: "mouse", clientX: 560, clientY: 400 });
+
+    await waitFor(() => expect(storedMode("detach-lateral")).toBe("floating"));
+    fireEvent.pointerUp(window, { pointerId: 78, pointerType: "mouse", clientX: 560, clientY: 400 });
+  });
+
+  /* FN-469 negative controls: neither the embedded terminal nor a phone viewport detaches or hands a gesture over. */
+  it("never detaches or hands a gesture over from the embedded or phone presentations", async () => {
+    renderTerminal("detach-embedded", { embedded: true });
+    await screen.findByTestId("terminal-embedded-host");
+    const embeddedHeader = screen.getByTestId("terminal-modal").querySelector(".terminal-header") as HTMLElement;
+    prepareCapture(embeddedHeader);
+    fireEvent.pointerDown(embeddedHeader, { pointerId: 79, pointerType: "mouse", button: 0, clientX: 500, clientY: 400 });
+    fireEvent.pointerMove(embeddedHeader, { pointerId: 79, pointerType: "mouse", clientX: 500, clientY: 320 });
+    expect(storedMode("detach-embedded")).toBe("below");
+    expect(document.body.style.userSelect).toBe("");
+    cleanup();
+
+    Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 420 });
+    Object.defineProperty(window, "innerHeight", { configurable: true, writable: true, value: 720 });
+    _resetInitialViewportHeight();
+    renderTerminal("detach-phone");
+    const phoneHeader = await waitFor(() => {
+      const node = screen.getByTestId("terminal-modal").querySelector(".terminal-header");
+      expect(node).not.toBeNull();
+      return node as HTMLElement;
+    });
+    prepareCapture(phoneHeader);
+    fireEvent.pointerDown(phoneHeader, { pointerId: 80, pointerType: "touch", clientX: 200, clientY: 400 });
+    fireEvent.pointerMove(phoneHeader, { pointerId: 80, pointerType: "touch", clientX: 200, clientY: 320 });
+    expect(storedMode("detach-phone")).toBe("below");
+  });
+
   /* (b)+(c) Detach on drag, then re-pin, with the live xterm element following the current container each time. */
   it("detaches on a grip drag and keeps the console attached across pinned -> floating -> pinned", async () => {
     renderTerminal("detach-drag");
@@ -384,6 +487,28 @@ describe("pinned terminal detach / footer-contact re-pin", () => {
     expect(committedBottom).toBeLessThan(window.innerHeight - FOOTER_HEIGHT - 24);
     expect(storedMode("repin-above")).toBe("floating");
     expect(screen.queryByTestId("terminal-below-host")).toBeNull();
+  });
+
+  /*
+  FNXC:TerminalLayout 2026-09-16-18:31:
+  FN-469: the footer-contact re-pin gesture now arms the SHARED bottom band, so the validated payload reports
+  `snapMode: "bottom"`. The terminal must still re-pin into its own in-flow `below` presentation; without accepting
+  that mode the existing re-pin would silently regress into a generic bottom dock.
+  */
+  it("re-pins into the below presentation when the gesture arms the shared bottom band", async () => {
+    renderTerminal("repin-bottom-band", { mode: "floating" });
+    const panel = await screen.findByTestId("floating-window-terminal-repin-bottom-band");
+    const header = panel.querySelector(".terminal-header") as HTMLElement;
+    prepareCapture(header);
+
+    fireEvent.pointerDown(header, { pointerId: 91, pointerType: "mouse", button: 0, clientX: 600, clientY: 300 });
+    fireEvent.pointerMove(header, { pointerId: 91, pointerType: "mouse", clientX: 600, clientY: 300 + window.innerHeight });
+    // The band is armed by the panel's own bottom edge resting on the work area's bottom wall.
+    expect(screen.getByTestId("floating-window-snap-preview-terminal-repin-bottom-band").dataset.snapZone).toBe("bottom");
+    fireEvent.pointerUp(header, { pointerId: 91, pointerType: "mouse", clientX: 600, clientY: 300 + window.innerHeight });
+
+    await waitFor(() => expect(screen.getByTestId("terminal-below-host")).toBeInTheDocument());
+    expect(storedMode("repin-bottom-band")).toBe("below");
   });
 
   /* (e) A real move that brings the bottom edge onto the footer line re-pins on release. */
@@ -637,11 +762,18 @@ describe("pinned terminal detach / footer-contact re-pin", () => {
       await waitFor(() => expect(storedMode("tablet-gestures")).toBe("floating"));
       const panel = await screen.findByTestId("floating-window-terminal-tablet-gestures");
 
-      // A move that stops short of the footer line stays detached.
+      /*
+      A move that stops short of the footer line stays detached.
+
+      FNXC:TerminalLayout 2026-09-16-18:31:
+      FN-469: the window is now pulled out UNDER THE POINTER, so it starts low in the work area. The "stops short"
+      gesture therefore has to travel UPWARD to genuinely end clear of the bottom wall; travelling further down is no
+      longer a counter-proof, because reaching that wall is exactly what arms the shared bottom band.
+      */
       moveFloatingPanel(
         panel,
-        domRect({ left: 100, top: 100, right: 900, bottom: 500 }),
-        domRect({ left: 100, top: 150, right: 900, bottom: 550 }),
+        domRect({ left: 100, top: 500, right: 900, bottom: 900 }),
+        domRect({ left: 100, top: 450, right: 900, bottom: 850 }),
         11,
       );
       expect(storedMode("tablet-gestures")).toBe("floating");
