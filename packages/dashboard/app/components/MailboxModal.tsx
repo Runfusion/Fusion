@@ -86,7 +86,7 @@ type MailboxInboxScope = "all" | "structural" | "completions" | "archived" | "ag
 type MailboxCollection = "inbox" | "outbox" | "completions" | "archived" | "agents";
 
 /**
- * FNXC:LifecycleColumnCensus 2026-09-18-00:00:
+ * FNXC:LifecycleColumnCensus 2026-09-17-22:56:
  * DELIBERATE-LITERAL — archived is a mailbox folder, independent of workflow lifecycle columns.
  */
 function isMailboxArchivedCollection(collection: MailboxCollection): boolean {

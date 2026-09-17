@@ -33,7 +33,7 @@ export class ExternalSessionStore {
   async ingest(value: unknown): Promise<ExternalSessionAcknowledgement> {
     const input = externalSessionIngestionSchema.parse(value);
     const sessionId = externalSessionId(this.principal, input.session);
-    // FNXC:ExternalSessions 2026-09-18-00:00: Persist only fingerprints of redacted metadata; raw hashes would permit offline secret guessing.
+    // FNXC:ExternalSessions 2026-09-17-22:56: Persist only fingerprints of redacted metadata; raw hashes would permit offline secret guessing.
     const observation = { ...input.session,
       ...(input.session.title !== undefined ? { title: redactSecrets(input.session.title) } : {}),
       ...(input.session.projectPath !== undefined ? { projectPath: redactSecrets(input.session.projectPath) } : {}),

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * FNXC:ExternalSessions 2026-09-18-00:00:
+ * FNXC:ExternalSessions 2026-09-17-22:56:
  * Manual acceptance smoke for the built CLI: own temporary home/project/embedded database,
  * random ephemeral HTTP port, paused automation and disposable collector credential.
  * It never uses an ambient database or existing Fusion instance. Only owned children are stopped.
@@ -84,7 +84,12 @@ async function main() {
     while (Date.now() < deadline) {
       interrupted.signal.throwIfAborted();
       if (server.exitCode !== null || server.signalCode !== null) throw new Error("Owned server exited before health was ready");
-      try { ready = (await fetch(`${base}/api/health`, { signal: globalThis.AbortSignal.timeout(1_000) })).ok; } catch { /* startup is asynchronous */ }
+      try {
+        const response = await fetch(`${base}/api/health`, { signal: globalThis.AbortSignal.timeout(1_000) });
+        const health = await response.json();
+        // FNXC:ExternalSessions 2026-09-17-23:01: The migration holding server returns HTTP 200; wait until the actual API is ready.
+        ready = response.ok && health.holding !== true && (health.status === "ok" || health.status === "degraded");
+      } catch { /* startup is asynchronous */ }
       if (ready) break;
       await delay(250, undefined, { signal: interrupted.signal });
     }
@@ -107,7 +112,7 @@ async function main() {
   };
   const heartbeat = { schemaVersion: 1, collectorVersion: "manual-smoke" };
   const beat = await post("heartbeat", heartbeat);
-  assert.equal(beat.status, 200); assert.equal(beat.body.hostId, hostId);
+  assert.equal(beat.status, 200, `Heartbeat failed: ${JSON.stringify(beat.body)}`); assert.equal(beat.body.hostId, hostId);
   console.log("PASS: authenticated host heartbeat");
   const event = { schemaVersion: 1, collectorVersion: "manual-smoke", streamId: "smoke-spool", sequence: 1, eventId: "event-1",
     session: { provider: "manual-test", nativeSessionId: "session-1", revision: 1, activity: "working", observedAt: new Date().toISOString(), title: "Manual ingestion smoke" } };

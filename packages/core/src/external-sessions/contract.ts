@@ -53,12 +53,13 @@ export function externalSessionId(principal: ExternalSessionPrincipal, session: 
   return createHash("sha256").update(JSON.stringify([principal.projectId, principal.hostId, session.provider, session.nativeSessionId])).digest("hex");
 }
 
-/** Canonicalized validated data gives retries the same digest even when JSON key order differs. */
+/** Canonicalize validated metadata without revalidating text that redaction can expand. */
 export function externalSessionDigest(value: ExternalSessionObservation | ExternalSessionIngestion): string {
-  const canonical = "session" in value
-    ? externalSessionIngestionSchema.parse(value)
-    : externalSessionObservationSchema.parse(value);
-  return createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
+  const canonical = JSON.stringify(value, (_key, item: unknown) => {
+    if (item === null || typeof item !== "object" || Array.isArray(item)) return item;
+    return Object.fromEntries(Object.entries(item).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0));
+  });
+  return createHash("sha256").update(canonical).digest("hex");
 }
 
 /** Host connectivity and agent activity are independent signals, using distinct clocks. */

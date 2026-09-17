@@ -32,8 +32,8 @@ permission, then run:
 FUSION_PG_TEST_URL_BASE=postgresql://postgres@127.0.0.1:55479 pnpm test:external-sessions
 ```
 
-The harness creates and drops uniquely named databases on that server. CI runs these checks and the
-HTTP smoke in the Gate job. A sandbox blocking PostgreSQL shared memory cannot run the database or
+The harness creates and drops uniquely named databases on that server. These remain ordinary enabled core/dashboard regressions; the curated merge gate is unchanged.
+Run the HTTP smoke explicitly for acceptance. A sandbox blocking PostgreSQL shared memory cannot run the database or
 HTTP smoke; do not interpret skipped PostgreSQL cases as a successful acceptance check.
 
 ## Enable ingestion

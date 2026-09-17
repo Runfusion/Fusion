@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS project.external_sessions (
   CONSTRAINT external_sessions_revision CHECK (revision BETWEEN 1 AND 9007199254740991)
 );
 /*
-FNXC:ExternalSessions 2026-09-18-00:00: Repair missing columns on restored schemas even when the ledger survives.
+FNXC:ExternalSessions 2026-09-17-22:56: Repair missing columns on restored schemas even when the ledger survives.
 Required identity, revision and acknowledgement data cannot be invented for populated tables: missing required
 values fail startup transactionally and require a supported restore. Nullable display/receipt columns are additive.
 */

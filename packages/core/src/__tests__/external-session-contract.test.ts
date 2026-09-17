@@ -1,3 +1,4 @@
+import { redactSecrets } from "../secrets/redact-secrets.js";
 import { describe, expect, it } from "vitest";
 import { externalSessionIngestionSchema, externalSessionId, externalSessionDigest, externalSessionFreshness } from "../external-sessions/contract.js";
 
@@ -10,6 +11,17 @@ describe("external-session observation contract", () => {
     const b = externalSessionIngestionSchema.parse({ ...envelope, session: { ...Object.fromEntries(Object.entries(session).reverse()), observedAt: "2026-09-17T02:00:00+02:00" } });
     expect(a.session.observedAt).toBe("2026-09-17T00:00:00.000Z");
     expect(externalSessionDigest(a)).toBe(externalSessionDigest(b));
+  });
+
+  it("fingerprints redacted metadata even when replacement markers expand valid input text", () => {
+    const input = externalSessionIngestionSchema.parse({ ...envelope, session: { ...session, title: "key=a ".repeat(80) } });
+    const redacted = { ...input.session, title: redactSecrets(input.session.title!) };
+    expect(redacted.title.length).toBeGreaterThan(512);
+    const digest = externalSessionDigest(redacted);
+    expect(digest).toMatch(/^[a-f0-9]{64}$/);
+    const reordered = Object.fromEntries(Object.entries(redacted).reverse()) as typeof redacted;
+    expect(externalSessionDigest(reordered)).toBe(digest);
+    expect(externalSessionDigest({ ...input, session: reordered })).toBe(externalSessionDigest({ ...input, session: redacted }));
   });
 
   it("binds identity to project/host/provider/native id, independently of title/path", () => {
