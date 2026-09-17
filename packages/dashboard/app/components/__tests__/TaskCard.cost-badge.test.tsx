@@ -15,7 +15,7 @@ vi.mock("../../hooks/useTaskDiffStats", () => ({ useTaskDiffStats: () => ({ stat
 vi.mock("../../hooks/useBatchBadgeFetch", () => ({ getFreshBatchData: () => null }));
 vi.mock("../../hooks/useToast", () => ({ useOptionalToast: () => null, useToast: () => ({ addToast: vi.fn() }) }));
 vi.mock("../RuntimeFallbackBadge", () => ({ RuntimeFallbackBadge: () => null }));
-vi.mock("../../hooks/useConfirm", () => ({ useConfirm: () => ({ confirm: vi.fn(), confirmWithChoice: vi.fn() }) }));
+vi.mock("../../hooks/useConfirm", () => ({ useConfirm: () => ({ confirmWithCheckbox: async (options?: { checkbox?: { defaultChecked?: boolean } }) => ({ choice: "cancel" as const, checkboxValue: options?.checkbox?.defaultChecked ?? false }), confirm: vi.fn(), confirmWithChoice: vi.fn() }) }));
 vi.mock("../../api", () => ({
   addressPrFeedback: vi.fn(),
   fetchTaskDetail: vi.fn(),

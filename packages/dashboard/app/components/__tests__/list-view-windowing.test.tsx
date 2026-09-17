@@ -76,6 +76,8 @@ vi.mock("../TaskDetailModal", () => ({
 const confirmMocks = vi.hoisted(() => ({
   confirm: vi.fn(),
   confirmWithChoice: vi.fn(),
+  // FN-499: ListView's WIP Retry now resolves its preserve-work choice through confirmWithCheckbox.
+  confirmWithCheckbox: vi.fn(async () => ({ choice: "cancel" as const, checkboxValue: false })),
 }));
 
 vi.mock("../../hooks/useConfirm", () => ({

@@ -167,7 +167,14 @@ If the workflow you pick has no plan review at all, the combination is refused a
 
 ## Task Recovery
 
-Every live card, including an intake or planning card, offers **Retry**, **Reset**, and **Delete**. **Retry** stays in the current column: in planning it rebuilds the plan from the original request; during work it discards in-flight work and starts again on the approved plan; during review it discards review verdicts and reviews the produced work again. Workspace retries use the same in-place behavior while preserving every per-repository worktree and landing record, including repositories already delivered. **Reset** opens the task's original description in an editable dialog, then starts the task over from the confirmed text while discarding plan, work, and reviews. **Delete** removes the task.
+Every live card, including an intake or planning card, offers **Retry**, **Reset**, and **Delete**. **Retry** stays in the current column: in planning it rebuilds the plan from the original request; during work it asks whether to keep the work already produced; during review it discards review verdicts and reviews the produced work again.
+
+<!--
+FNXC:ColumnRestart 2026-09-17-09:16:
+FN-499 adds the operator choice to Retry during work. The default must stay destructive so nothing
+changes for operators who simply confirm, or who globally skipped confirmations.
+-->
+During work only, the Retry confirmation offers a **Keep the work already produced** checkbox. It is unchecked by default: confirming without ticking it behaves exactly as before, discarding the worktree, branch, and step progress and restarting from the first step. Ticking it keeps the worktree, branch, and finished steps and replays only the step that was running. Planning and review Retry do not offer this choice, and operators who disabled confirmations keep the destructive restart. Workspace retries use the same in-place behavior while preserving every per-repository worktree and landing record, including repositories already delivered. **Reset** opens the task's original description in an editable dialog, then starts the task over from the confirmed text while discarding plan, work, and reviews. **Delete** removes the task.
 
 Retry refuses workflow terminal columns, active merges across the whole merge pipeline (including its review phase), and columns without a workflow entry node of their own. An orphaned stale merge stamp remains retryable after Fusion confirms that no live merger owns it. A retry interrupted during publication leaves the card paused with `restart-stage-publishing`; this durable safety fence is retained for compatibility, and selecting **Retry** again safely resumes publication.
 

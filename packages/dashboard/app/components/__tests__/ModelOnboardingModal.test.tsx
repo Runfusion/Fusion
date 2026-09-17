@@ -119,7 +119,7 @@ vi.mock("../../hooks/useShellConnection", () => ({
 }));
 
 vi.mock("../../hooks/useConfirm", () => ({
-  useConfirm: () => ({ confirm: (...args: unknown[]) => mockConfirm(...args) }),
+  useConfirm: () => ({ confirmWithCheckbox: async (options?: { checkbox?: { defaultChecked?: boolean } }) => ({ choice: "cancel" as const, checkboxValue: options?.checkbox?.defaultChecked ?? false }), confirm: (...args: unknown[]) => mockConfirm(...args) }),
 }));
 
 vi.mock("../ProviderIcon", () => ({

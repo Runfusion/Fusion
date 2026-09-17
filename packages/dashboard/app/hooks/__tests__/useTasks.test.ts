@@ -2431,12 +2431,37 @@ describe("useTasks", () => {
         returned = await result.current.retryTask("FN-RETRY");
       });
 
-      expect(mockRetryTask).toHaveBeenCalledWith("FN-RETRY", "proj-1");
+      // FN-499: the options slot sits between the id and projectId; an option-free retry passes undefined.
+      expect(mockRetryTask).toHaveBeenCalledWith("FN-RETRY", undefined, "proj-1");
       expect(returned).toEqual(expect.objectContaining({ id: "FN-RETRY", column: "todo", status: null, error: null }));
       expect(result.current.tasks).toEqual([retried, keep]);
       expect(result.current.tasks.filter((task) => task.id === "FN-RETRY")).toHaveLength(1);
       expect(result.current.tasks.filter((task) => task.id === "FN-RETRY").every((task) => task.status === null && task.error === null)).toBe(true);
       expect(mockFetchTasks).toHaveBeenCalledTimes(1);
+    });
+
+    /*
+    FNXC:ColumnRestart 2026-09-17-09:16:
+    FN-499: the operator's preserve-work choice must survive the hook untouched, and an option-free
+    retry must stay wire-identical to today.
+    */
+    it("relays the preserve-work option to the API client", async () => {
+      const retried = createMockTask({ id: "FN-RETRY", column: "in-progress" as Column, status: null, error: null });
+      mockFetchTasks.mockResolvedValueOnce([createMockTask({ id: "FN-RETRY", column: "in-progress" as Column, status: "failed" })]);
+      mockRetryTask.mockResolvedValue(retried);
+
+      const { result } = renderHook(() => useTasks({ projectId: "proj-1" }));
+      await waitFor(() => expect(result.current.tasks).toHaveLength(1));
+
+      await act(async () => {
+        await result.current.retryTask("FN-RETRY", { preserveWork: true });
+      });
+      expect(mockRetryTask).toHaveBeenLastCalledWith("FN-RETRY", { preserveWork: true }, "proj-1");
+
+      await act(async () => {
+        await result.current.retryTask("FN-RETRY");
+      });
+      expect(mockRetryTask).toHaveBeenLastCalledWith("FN-RETRY", undefined, "proj-1");
     });
 
     it("leaves empty and missing-id task collections stable after retry success", async () => {

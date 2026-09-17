@@ -502,7 +502,7 @@ describe("native Task Detail", () => {
 
     await user.click(screen.getByRole("button", { name: "Actions" }));
     await user.click(screen.getByTestId("task-detail-header-action-retry"));
-    await waitFor(() => expect(onRetryTask).toHaveBeenCalledWith("FN-WIP"));
+    await waitFor(() => expect(onRetryTask).toHaveBeenCalledWith("FN-WIP", { preserveWork: expect.any(Boolean) }));
   });
 
   it.each([false, true])("keeps approval guards and review action disabled state with Alpha=%s", async (enabled) => {

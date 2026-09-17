@@ -137,8 +137,28 @@ export type RecoverBranchBindingOutcome =
   | { taskId: string; result: "applied"; branch: string; aheadCount: number; integrationBase: string; previousBranch: string | null }
   | { taskId: string; result: "skipped"; reason: "binding-intact" | "no-live-branch" | "ambiguous-candidates" | "no-unique-work"; candidates?: Array<{ branch: string; aheadCount: number }> };
 
-export function retryTask(id: string, projectId?: string): Promise<Task> {
-  return api<Task>(withProjectId(`/tasks/${id}/retry`, projectId), { method: "POST" });
+export interface TaskRetryOptions {
+  preserveWork?: boolean;
+}
+
+/*
+FNXC:ColumnRestart 2026-09-17-09:16:
+FN-499: Retry accepts the operator's preserve-work choice using the same options-second,
+projectId-last contract as resetTask and duplicateTask. The JSON body and its Content-Type are sent
+ONLY when the operator opted in, so the historical bodyless POST — used by every existing caller and
+by external HTTP clients — stays byte-identical on the wire.
+*/
+export function retryTask(
+  id: string,
+  options?: TaskRetryOptions,
+  projectId?: string,
+): Promise<Task> {
+  return api<Task>(withProjectId(`/tasks/${id}/retry`, projectId), {
+    method: "POST",
+    ...(options?.preserveWork === true
+      ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify({ preserveWork: true }) }
+      : {}),
+  });
 }
 
 /*

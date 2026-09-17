@@ -1915,8 +1915,13 @@ export function useTasks(options?: UseTasksOptions) {
     return api.mergeTask(id, projectId);
   }, [projectId]);
 
-  const retryTask = useCallback(async (id: string): Promise<Task> => {
-    const retriedTask = normalizeNonBoardTask(await api.retryTask(id, projectId));
+  /*
+  FNXC:ColumnRestart 2026-09-17-09:16:
+  FN-499: the optional preserve-work choice is relayed verbatim to the API client and changes no
+  part of the post-retry state reconciliation below; an option-free call stays identical to today.
+  */
+  const retryTask = useCallback(async (id: string, options?: api.TaskRetryOptions): Promise<Task> => {
+    const retriedTask = normalizeNonBoardTask(await api.retryTask(id, options, projectId));
     /*
     FNXC:DashboardTaskRetry 2026-06-30-12:57:
     Manual retry success is a user-visible state boundary. Replace matching rows in shared hook state and the project SWR cache as soon as the retry API returns so Board/List/detail/right-dock retry affordances do not depend on later SSE, polling, remount, or route re-entry to clear stale failed/stuck state.

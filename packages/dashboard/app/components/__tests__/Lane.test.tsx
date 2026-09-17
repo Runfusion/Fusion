@@ -28,7 +28,7 @@ vi.mock("lucide-react", () => ({
   AlertTriangle: () => null,
 }));
 const mockConfirm = vi.fn();
-vi.mock("../../hooks/useConfirm", () => ({ useConfirm: () => ({ confirm: mockConfirm }) }));
+vi.mock("../../hooks/useConfirm", () => ({ useConfirm: () => ({ confirmWithCheckbox: async (options?: { checkbox?: { defaultChecked?: boolean } }) => ({ choice: "cancel" as const, checkboxValue: options?.checkbox?.defaultChecked ?? false }), confirm: mockConfirm }) }));
 
 const WORKFLOW: BoardWorkflowDefinition = {
   id: "builtin:coding",

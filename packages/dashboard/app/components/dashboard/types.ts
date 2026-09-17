@@ -227,7 +227,8 @@ export interface MainContentProps {
     id: string,
     updates: { title?: string; description?: string; dependencies?: string[]; dismissNearDuplicate?: boolean },
   ) => Promise<Task>;
-  retryTask: (id: string) => Promise<Task>;
+  /* FNXC:ColumnRestart 2026-09-17-09:16 (FN-499): optional preserve-work choice; an option-free call keeps today's destructive restart. */
+  retryTask: (id: string, options?: { preserveWork?: boolean }) => Promise<Task>;
   revertTask: (id: string, body?: RevertTaskOptions) => Promise<RevertTaskResult>;
   /* FNXC:TaskRevert 2026-09-15-10:00 (FN-416): restore-the-revert operation forwarded to board/list surfaces. */
   restoreTaskRevert: (id: string, body?: RestoreTaskRevertOptions) => Promise<RestoreTaskRevertResult>;

@@ -16,6 +16,23 @@ describe("Retry host inventory", () => {
     }
   });
 
+  /*
+  FNXC:ColumnRestart 2026-09-17-09:16:
+  FN-499: the preserve-work choice belongs to the three menu hosts that own the Retry confirmation.
+  A pass-through host merely forwards the callback and must never grow its own prompt.
+  */
+  it("owns the preserve-work confirmation only in the menu hosts", () => {
+    for (const name of menuHosts) {
+      const source = component(name);
+      expect(source, name).toContain("confirmWithCheckbox");
+      expect(source, name).toContain("preserveWork");
+      expect(source, name).toContain("preserveWorkAvailable");
+    }
+    for (const name of passThroughHosts) {
+      expect(component(name), name).not.toContain("preserveWorkAvailable");
+    }
+  });
+
   it("keeps the direct Reset-dialog host inventory exact", () => {
     const directHosts = listComponentFiles()
       .filter((path) => !path.includes("__tests__/") && readAppFile(`components/${path}`).includes("<TaskResetDialog"));

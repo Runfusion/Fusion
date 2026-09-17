@@ -3760,6 +3760,13 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       stay outside the restart patch, while restart-refused legacy shapes continue through the
       established recovery classifier below.
       */
+      /*
+      FNXC:ColumnRestart 2026-09-17-09:16:
+      FN-499: `preserveWork` is an explicit opt-in read from the request body. An absent body, a
+      non-boolean value, and every existing caller therefore keep today's destructive restart, so no
+      wire-compatible client changes behavior.
+      */
+      const preserveWork = (req.body as { preserveWork?: unknown } | undefined)?.preserveWork === true;
       let stageRestartRefusal: Extract<Awaited<ReturnType<typeof restartTaskStage>>, { kind: "refused" }> | undefined;
       if (!isMissingWorktreeSessionRetry) {
         // FNXC:TaskRecoveryVocabulary 2026-08-28-01:11: Retry must ask the locked restart
@@ -3772,6 +3779,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           taskId: req.params.id,
           confirm: true,
           onRefusal: "signal",
+          preserveWork,
           activeMergeTaskId: selfHealingManager?.getActiveMergeTaskId?.() ?? null,
           getActiveMergeTaskId: () => selfHealingManager?.getActiveMergeTaskId?.() ?? null,
           staleMergingStatusMinAgeMs: selfHealingManager?.getStaleMergingStatusMinAgeMs?.(),

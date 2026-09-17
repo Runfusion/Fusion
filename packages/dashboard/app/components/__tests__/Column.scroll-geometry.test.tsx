@@ -9,7 +9,7 @@ vi.mock("../TaskCard", () => ({ TaskCard: ({ task }: { task: Task }) => <article
 vi.mock("../WorktreeGroup", () => ({ WorktreeGroup: () => null }));
 vi.mock("../QuickEntryBox", () => ({ QuickEntryBox: () => null }));
 vi.mock("../../hooks/usePluginUiSlots", () => ({ usePluginUiSlots: () => ({ slots: [], getSlotsForId: () => [], loading: false, error: null }) }));
-vi.mock("../../hooks/useConfirm", () => ({ useConfirm: () => ({ confirm: vi.fn() }) }));
+vi.mock("../../hooks/useConfirm", () => ({ useConfirm: () => ({ confirmWithCheckbox: async (options?: { checkbox?: { defaultChecked?: boolean } }) => ({ choice: "cancel" as const, checkboxValue: options?.checkbox?.defaultChecked ?? false }), confirm: vi.fn() }) }));
 
 function task(index: number): Task {
   return {

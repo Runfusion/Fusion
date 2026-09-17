@@ -9,6 +9,15 @@ export interface RetryStageCopy {
   confirmMessage: string;
   confirmLabel: string;
   successMessage: string;
+  /*
+  FNXC:ColumnRestart 2026-09-17-09:16:
+  FN-499: only the WIP stage owns in-flight execution artifacts, so only it may offer the
+  preserve-work checkbox. Planning and review confirmations stay exactly as they are.
+  */
+  preserveWorkAvailable: boolean;
+  preserveWorkLabel: string;
+  preserveWorkDescription: string;
+  preservedSuccessMessage: string;
 }
 
 /**
@@ -26,6 +35,10 @@ export function resolveRetryStageCopy(
   const common = {
     confirmTitle: t("taskDetail.retry.confirmTitle", "Retry this stage?"),
     confirmLabel: t("taskDetail.retry.confirmLabel", "Retry"),
+    preserveWorkAvailable: false,
+    preserveWorkLabel: t("taskDetail.retry.preserveWorkLabel", "Keep the work already produced"),
+    preserveWorkDescription: t("taskDetail.retry.preserveWorkDescription", "Keep the worktree, branch, and finished steps, and replay only the step that was running."),
+    preservedSuccessMessage: t("taskDetail.retry.implementationPreservedSuccess", "The current step will run again and the work already produced is kept."),
   };
   if (flags?.mergeBlocker || flags?.humanReview) {
     return {
@@ -39,6 +52,7 @@ export function resolveRetryStageCopy(
     return {
       stage: "implementation",
       ...common,
+      preserveWorkAvailable: true,
       confirmMessage: t("taskDetail.retry.implementationConfirmMessage", "Discard the in-flight work and start it again on the approved plan. This card stays in its current column."),
       successMessage: t("taskDetail.retry.implementationSuccess", "Work will restart in this column."),
     };

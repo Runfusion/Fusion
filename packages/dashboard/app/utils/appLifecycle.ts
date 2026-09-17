@@ -194,7 +194,8 @@ export function getCliActionDisabledReasonForBanner(session: AiSessionSummary, a
 
 export interface CliActionDeps {
   currentProjectId?: string;
-  retryTask: (id: string) => Promise<unknown>;
+  /* FNXC:ColumnRestart 2026-09-17-09:16 (FN-499): the second parameter is optional, so CLI-driven retries stay destructive and unchanged. */
+  retryTask: (id: string, options?: { preserveWork?: boolean }) => Promise<unknown>;
   /*
   FNXC:WorkflowLifecycleColumns 2026-08-01-02:10:
   `string`, not the literal type — the signature itself was pinning the destination.

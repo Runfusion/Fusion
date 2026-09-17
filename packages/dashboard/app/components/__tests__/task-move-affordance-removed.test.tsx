@@ -26,7 +26,7 @@ vi.mock("../../hooks/useToast", () => ({
 }));
 
 vi.mock("../../hooks/useConfirm", () => ({
-  useConfirm: () => ({ confirm: vi.fn().mockResolvedValue(true) }),
+  useConfirm: () => ({ confirmWithCheckbox: async (options?: { checkbox?: { defaultChecked?: boolean } }) => ({ choice: "cancel" as const, checkboxValue: options?.checkbox?.defaultChecked ?? false }), confirm: vi.fn().mockResolvedValue(true) }),
 }));
 
 setupTaskDetailModalHooks();

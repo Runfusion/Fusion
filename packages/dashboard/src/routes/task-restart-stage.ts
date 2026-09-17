@@ -26,6 +26,14 @@ export interface RestartTaskStageDeps {
   taskId: string;
   confirm?: boolean;
   onRefusal?: "throw" | "signal";
+  /*
+  FNXC:ColumnRestart 2026-09-17-09:16:
+  FN-499: opt-in operator choice to replay the current step without discarding in-flight work. The
+  planner honours it only for the WIP scope, so this relay refuses a non-implementation request
+  before the publication fence is raised — no durable write may happen for a request the planner
+  cannot satisfy, otherwise the operator's card would be destructively restarted against intent.
+  */
+  preserveWork?: boolean;
   activeMergeTaskId?: string | null;
   getActiveMergeTaskId?: () => string | null;
   staleMergingStatusMinAgeMs?: number;
@@ -103,10 +111,13 @@ export async function restartTaskStage(deps: RestartTaskStageDeps): Promise<Rest
       if (!task) throw notFound(`Task ${taskId} not found`);
       const ir = await resolveWorkflowIrForTask(store, task.id);
       const entryNode = resolveColumnResumeNode(ir, task.column);
-      const plan = planTaskColumnRestart({ task, ir, entryNode });
+      const plan = planTaskColumnRestart({ task, ir, entryNode, preserveWork: deps.preserveWork === true });
       if (plan.kind === "refused") {
         if (deps.onRefusal === "signal") return plan;
         throw refusalError(plan);
+      }
+      if (deps.preserveWork === true && !plan.preservedWork) {
+        throw badRequest("Retry can only preserve in-flight work while the card is being worked on");
       }
       if (isLiveMergeRestart(task, deps)) {
         throw conflict("Retry is unavailable while a merge is active");
@@ -208,7 +219,8 @@ export async function restartTaskStage(deps: RestartTaskStageDeps): Promise<Rest
       await store.pauseTask(taskId, false);
       fenced = false;
       const preservedWorkspaceRepositoryRecords = Object.keys(task.workspaceWorktrees ?? {}).length;
-      await store.logEntry(taskId, `Retry requested from dashboard (${plan.scope} restart in ${task.column}, discarded ${plan.discardedWorkflowStepIds.length} workflow step result(s), preserved ${preservedWorkspaceRepositoryRecords} workspace repository record(s), re-entering at ${plan.entryNodeId})`);
+      const workMode = plan.preservedWork ? "preserved in-flight work" : "discarded in-flight work";
+      await store.logEntry(taskId, `Retry requested from dashboard (${plan.scope} restart in ${task.column}, ${workMode}, discarded ${plan.discardedWorkflowStepIds.length} workflow step result(s), preserved ${preservedWorkspaceRepositoryRecords} workspace repository record(s), re-entering at ${plan.entryNodeId})`);
       /*
       FNXC:WorkflowRevisionBudget 2026-09-05-23:30:
       FN-1711: an explicit operator restart opens a NEW review episode, so the discarded gates start

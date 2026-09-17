@@ -898,7 +898,8 @@ interface TaskCardProps {
     githubIssueAction?: GithubIssueAction;
   }) => Promise<Task>;
   onPauseTask?: (id: string) => Promise<Task>;
-  onRetryTask?: (id: string) => Promise<Task>;
+  /* FNXC:ColumnRestart 2026-09-17-09:16 (FN-499): optional preserve-work choice for the WIP Retry confirmation. */
+  onRetryTask?: (id: string, options?: { preserveWork?: boolean }) => Promise<Task>;
   onOpenChatWithPrefill?: (prefillText: string) => void;
   onUnpauseTask?: (id: string) => Promise<Task>;
   onResetTask?: (id: string, options?: { description?: string }) => Promise<Task>;
@@ -1472,7 +1473,7 @@ function TaskCardComponent({
       ? previous
       : { projectId, agentsMap });
   }, [agentsMap, projectId]);
-  const { confirm, confirmWithSelect } = useConfirm();
+  const { confirm, confirmWithCheckbox, confirmWithSelect } = useConfirm();
   const retryWarningThreshold = useRetryWarning();
   const costBadge = useCostBadge();
   /*
@@ -2960,27 +2961,47 @@ function TaskCardComponent({
     void handleDeleteClick({ stopPropagation() {} } as React.MouseEvent<HTMLButtonElement>);
   }, [handleDeleteClick]);
 
+  /*
+  FNXC:ColumnRestart 2026-09-17-09:16:
+  FN-499: a WIP Retry asks whether the work already produced should be kept. The checkbox defaults to
+  unchecked and `alwaysAsk` is deliberately NOT set, so an operator who disabled confirmations keeps
+  today's destructive restart. Every other stage keeps its plain boolean confirmation unchanged.
+  */
   const handleTaskActionRetry = useCallback(async () => {
     if (!onRetryTask || isRetrying) return;
     const copy = resolveRetryStageCopy(t, taskColumnFlags, task.column);
-    const confirmed = await confirm({
-      title: copy.confirmTitle,
-      message: copy.confirmMessage,
-      confirmLabel: copy.confirmLabel,
-      cancelLabel: t("common.cancel", "Cancel"),
-      danger: true,
-    });
-    if (!confirmed) return;
+    let preserveWork = false;
+    if (copy.preserveWorkAvailable) {
+      const result = await confirmWithCheckbox({
+        title: copy.confirmTitle,
+        message: copy.confirmMessage,
+        confirmLabel: copy.confirmLabel,
+        cancelLabel: t("common.cancel", "Cancel"),
+        danger: true,
+        checkbox: { label: copy.preserveWorkLabel, description: copy.preserveWorkDescription, defaultChecked: false },
+      });
+      if (result.choice !== "primary") return;
+      preserveWork = result.checkboxValue;
+    } else {
+      const confirmed = await confirm({
+        title: copy.confirmTitle,
+        message: copy.confirmMessage,
+        confirmLabel: copy.confirmLabel,
+        cancelLabel: t("common.cancel", "Cancel"),
+        danger: true,
+      });
+      if (!confirmed) return;
+    }
     setIsRetrying(true);
     try {
-      await onRetryTask(task.id);
-      addToast(copy.successMessage, "success");
+      await onRetryTask(task.id, { preserveWork });
+      addToast(preserveWork ? copy.preservedSuccessMessage : copy.successMessage, "success");
     } catch (err) {
       addToast(t("tasks.retryFailed", "Failed to retry {{taskId}}: {{error}}", { taskId: task.id, error: getErrorMessage(err) }), "error");
     } finally {
       setIsRetrying(false);
     }
-  }, [addToast, confirm, isRetrying, onRetryTask, t, task.column, task.id, taskColumnFlags]);
+  }, [addToast, confirm, confirmWithCheckbox, isRetrying, onRetryTask, t, task.column, task.id, taskColumnFlags]);
 
   const handleTaskActionTogglePause = useCallback(async () => {
     try {

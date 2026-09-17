@@ -8626,10 +8626,13 @@ export default interface Resources {
         "genericConfirmMessage": "Repeat the current stage and keep this card in its current column.",
         "genericSuccess": "This stage will restart in its current column.",
         "implementationConfirmMessage": "Discard the in-flight work and start it again on the approved plan. This card stays in its current column.",
+        "implementationPreservedSuccess": "The current step will run again and the work already produced is kept.",
         "implementationSuccess": "Work will restart in this column.",
         "pendingAutomaticRecovery": "Automatic recovery is pending. You can Retry now to restart this stage.",
         "planConfirmMessage": "Rebuild the plan from the original request. This card stays in its current column.",
         "planSuccess": "Planning will restart in this column.",
+        "preserveWorkDescription": "Keep the worktree, branch, and finished steps, and replay only the step that was running.",
+        "preserveWorkLabel": "Keep the work already produced",
         "retried": "Retried {{id}}",
         "reviewConfirmMessage": "Discard the review verdicts and review the produced work again. This card stays in its current column.",
         "reviewSuccess": "Review will run again in this column."

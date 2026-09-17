@@ -23,5 +23,26 @@ describe("resolveRetryStageCopy", () => {
     const copy = resolveRetryStageCopy(t as never, undefined, "triage");
     expect(copy.stage).toBe("generic");
     expect(copy.confirmMessage).toContain("current column");
+    expect(copy.preserveWorkAvailable).toBe(false);
+  });
+
+  /*
+  FNXC:ColumnRestart 2026-09-17-09:16:
+  FN-499: the preserve-work checkbox is offered by the WIP stage only; every other stage, and the
+  unresolved first-paint state, must keep today's plain confirmation.
+  */
+  it.each([
+    [{ intake: true }, false],
+    [{ hold: true }, false],
+    [{ countsTowardWip: true }, true],
+    [{ mergeBlocker: true }, false],
+    [{ humanReview: true }, false],
+    [undefined, false],
+  ] as const)("offers preserve-work for %o: %s", (flags, available) => {
+    const copy = resolveRetryStageCopy(t as never, flags, "custom");
+    expect(copy.preserveWorkAvailable).toBe(available);
+    expect(copy.preserveWorkLabel.length).toBeGreaterThan(0);
+    expect(copy.preserveWorkDescription.length).toBeGreaterThan(0);
+    expect(copy.preservedSuccessMessage.length).toBeGreaterThan(0);
   });
 });

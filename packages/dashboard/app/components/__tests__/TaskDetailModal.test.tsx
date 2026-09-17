@@ -459,7 +459,8 @@ describe("TaskDetailModal planner Chat tab", () => {
     const retryUser = userEvent.setup();
     await retryUser.click(screen.getByRole("button", { name: "Actions" }));
     await retryUser.click(screen.getByTestId("task-detail-header-action-retry"));
-    expect(onRetryTask).toHaveBeenCalledWith("FN-099");
+    expect(onRetryTask).toHaveBeenCalledWith("FN-099", { preserveWork: false });
+    expect(mockConfirmWithCheckbox).not.toHaveBeenCalled();
 
     rerender(
       <TaskDetailModal
@@ -534,9 +535,54 @@ describe("TaskDetailModal planner Chat tab", () => {
     await act(async () => retryConfirmation.resolve(true));
 
     await waitFor(() => expect(updateTask).toHaveBeenCalledWith("FN-099", { modelProvider: "anthropic", modelId: "claude-alternate" }, undefined));
-    await waitFor(() => expect(onRetryTask).toHaveBeenCalledWith("FN-099"));
+    await waitFor(() => expect(onRetryTask).toHaveBeenCalledWith("FN-099", { preserveWork: false }));
     expect(mockConfirm.mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(updateTask).mock.invocationCallOrder[0]!);
     expect(vi.mocked(updateTask).mock.invocationCallOrder[0]).toBeLessThan(onRetryTask.mock.invocationCallOrder[0]!);
+  });
+
+  /*
+  FNXC:ColumnRestart 2026-09-17-09:16:
+  FN-499: Task Detail's Retry offers the preserve-work checkbox only while the card is being worked
+  on, defaults it unchecked, never sets `alwaysAsk`, and forwards the resolved choice to the caller.
+  */
+  it("offers the preserve-work choice for a work-lane card and forwards it", async () => {
+    const { fetchBoardWorkflows } = await import("../../api");
+    vi.mocked(fetchBoardWorkflows).mockResolvedValue({
+      flagEnabled: true,
+      defaultWorkflowId: "builtin:coding",
+      workflows: [{
+        id: "builtin:coding",
+        name: "Coding",
+        columns: [{ id: "in-progress", name: "In progress", flags: { countsTowardWip: true } }],
+      }],
+      taskWorkflowIds: {},
+    } as never);
+    mockConfirmWithCheckbox.mockResolvedValue({ choice: "primary", checkboxValue: true });
+    const onRetryTask = vi.fn().mockResolvedValue(makeTask());
+
+    render(
+      <TaskDetailModal
+        initialTab="definition"
+        task={makeTask({ column: "in-progress" as never, status: "failed" })}
+        onClose={noop}
+        onDeleteTask={noopDelete}
+        onMergeTask={noopMerge}
+        onOpenDetail={noopOpenDetail}
+        onRetryTask={onRetryTask}
+        addToast={noop}
+      />,
+    );
+
+    const user = userEvent.setup();
+    await waitFor(() => expect(fetchBoardWorkflows).toHaveBeenCalled());
+    await user.click(screen.getByRole("button", { name: "Actions" }));
+    await user.click(screen.getByTestId("task-detail-header-action-retry"));
+
+    await waitFor(() => expect(mockConfirmWithCheckbox).toHaveBeenCalledWith(expect.objectContaining({
+      checkbox: expect.objectContaining({ defaultChecked: false }),
+    })));
+    expect(mockConfirmWithCheckbox.mock.calls[0]?.[0]?.alwaysAsk).toBeUndefined();
+    await waitFor(() => expect(onRetryTask).toHaveBeenCalledWith("FN-099", { preserveWork: true }));
   });
 
   it("does not attribute a recovered historical tool error to an unknown graph failure", async () => {

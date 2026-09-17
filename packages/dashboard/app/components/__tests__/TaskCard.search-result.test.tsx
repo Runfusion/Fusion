@@ -43,7 +43,7 @@ vi.mock("../../hooks/useToast", () => ({
   useToast: () => ({ addToast: vi.fn(), removeToast: vi.fn(), toasts: [] }),
 }));
 vi.mock("../../hooks/useConfirm", () => ({
-  useConfirm: () => ({ confirm: vi.fn(), confirmWithChoice: vi.fn(), confirmWithSelect: vi.fn() }),
+  useConfirm: () => ({ confirmWithCheckbox: async (options?: { checkbox?: { defaultChecked?: boolean } }) => ({ choice: "cancel" as const, checkboxValue: options?.checkbox?.defaultChecked ?? false }), confirm: vi.fn(), confirmWithChoice: vi.fn(), confirmWithSelect: vi.fn() }),
 }));
 
 class FakeWebSocket {

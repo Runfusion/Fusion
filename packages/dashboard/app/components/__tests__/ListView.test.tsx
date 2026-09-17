@@ -225,8 +225,10 @@ import { readAppFile } from "../../test/cssFixture";
 const mockConfirm = vi.fn();
 const mockConfirmWithChoice = vi.fn();
 const mockConfirmWithSelect = vi.fn();
+// FN-499: the WIP Retry confirmation resolves the operator's preserve-work choice through this seam.
+const mockConfirmWithCheckbox = vi.fn();
 vi.mock("../../hooks/useConfirm", () => ({
-  useConfirm: () => ({ confirm: mockConfirm, confirmWithChoice: mockConfirmWithChoice, confirmWithSelect: mockConfirmWithSelect }),
+  useConfirm: () => ({ confirm: mockConfirm, confirmWithChoice: mockConfirmWithChoice, confirmWithCheckbox: mockConfirmWithCheckbox, confirmWithSelect: mockConfirmWithSelect }),
 }));
 
 const mockAddToast = vi.fn();
@@ -1350,6 +1352,50 @@ describe("ListView", () => {
     expect(onPauseTask).not.toHaveBeenCalled();
     expect(onRetryTask).not.toHaveBeenCalled();
     viewportSpy.mockRestore();
+  });
+
+  /*
+  FNXC:ColumnRestart 2026-09-17-09:16:
+  FN-499: the list Retry offers the preserve-work checkbox only for a WIP row. It is unchecked by
+  default and never `alwaysAsk`, so operators who disabled confirmations keep today's destructive
+  restart; planning and review rows keep their plain confirmation.
+  */
+  describe("preserve-work choice in the list Retry", () => {
+    async function openRetry(column: string, id = "FN-501") {
+      const onRetryTask = vi.fn(async () => createMockTask());
+      const task = createMockTask({ id, title: "Retryable", column: column as never, status: "failed" });
+      renderListView({ tasks: [task], onRetryTask });
+      const row = document.querySelector(`.list-row[data-id="${id}"]`) as HTMLElement;
+      fireEvent.contextMenu(row, { clientX: 40, clientY: 50 });
+      await waitFor(() => expect(screen.getByRole("menuitem", { name: "Retry" })).toBeInTheDocument());
+      fireEvent.click(screen.getByRole("menuitem", { name: "Retry" }));
+      return onRetryTask;
+    }
+
+    it("passes the checked choice through to onRetryTask", async () => {
+      mockConfirmWithCheckbox.mockResolvedValueOnce({ choice: "primary", checkboxValue: true });
+      const onRetryTask = await openRetry("in-progress");
+
+      await waitFor(() => expect(mockConfirmWithCheckbox).toHaveBeenCalledWith(expect.objectContaining({
+        checkbox: expect.objectContaining({ defaultChecked: false }),
+      })));
+      expect(mockConfirmWithCheckbox.mock.calls[0]?.[0]?.alwaysAsk).toBeUndefined();
+      await waitFor(() => expect(onRetryTask).toHaveBeenCalledWith("FN-501", { preserveWork: true }));
+    });
+
+    it("passes an unchecked choice as the destructive restart", async () => {
+      mockConfirmWithCheckbox.mockResolvedValueOnce({ choice: "primary", checkboxValue: false });
+      const onRetryTask = await openRetry("in-progress", "FN-502");
+      await waitFor(() => expect(onRetryTask).toHaveBeenCalledWith("FN-502", { preserveWork: false }));
+    });
+
+    it.each(["todo", "in-review"])("offers no checkbox for a %s row", async (column) => {
+      mockConfirm.mockResolvedValueOnce(true);
+      const onRetryTask = await openRetry(column, `FN-50${column.length}`);
+      await waitFor(() => expect(onRetryTask).toHaveBeenCalledWith(expect.any(String), { preserveWork: false }));
+      expect(mockConfirm).toHaveBeenCalled();
+      expect(mockConfirmWithCheckbox).not.toHaveBeenCalled();
+    });
   });
 
   it("replaces the populated desktop row with the confirmed Reset snapshot", async () => {

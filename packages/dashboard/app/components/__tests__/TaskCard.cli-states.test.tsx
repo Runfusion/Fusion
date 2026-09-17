@@ -69,7 +69,7 @@ vi.mock("../../api", () => ({
 }));
 
 vi.mock("../../hooks/useConfirm", () => ({
-  useConfirm: () => ({ confirm: vi.fn(), confirmWithChoice: vi.fn() }),
+  useConfirm: () => ({ confirmWithCheckbox: async (options?: { checkbox?: { defaultChecked?: boolean } }) => ({ choice: "cancel" as const, checkboxValue: options?.checkbox?.defaultChecked ?? false }), confirm: vi.fn(), confirmWithChoice: vi.fn() }),
 }));
 
 function makeTask(overrides: Partial<Task> = {}): Task {

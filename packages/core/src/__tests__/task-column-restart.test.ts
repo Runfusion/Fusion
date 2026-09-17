@@ -41,12 +41,14 @@ function plan(
   overrides: Partial<Task> = {},
   entryColumn = overrides.column ?? "planning",
   workflowIr: WorkflowIr | undefined = ir,
+  preserveWork?: boolean,
 ) {
   return planTaskColumnRestart({
     task: task(overrides),
     ir: workflowIr,
     entryNode: { id: "entry", column: entryColumn },
     now: "2026-08-28T00:00:00.000Z",
+    ...(preserveWork === undefined ? {} : { preserveWork }),
   });
 }
 
@@ -212,6 +214,81 @@ describe("planTaskColumnRestart", () => {
     const noEntry = plan(workspace, "building");
     expect(noEntry).toMatchObject({ kind: "refused", reason: "no-entry-node-in-column", detail: { resolvedEntryNodeColumn: "building" } });
     expect("patch" in noEntry).toBe(false);
+  });
+
+  /*
+  FNXC:ColumnRestart 2026-09-17-09:16:
+  FN-499: the preserve-work Retry mode must keep every execution artifact and replay only the
+  interrupted step. Every other scope must be byte-identical to the option-free plan so no existing
+  caller changes behavior.
+  */
+  describe("preserve-work mode", () => {
+    const wipTask: Partial<Task> = {
+      column: "building",
+      worktree: "/worktree",
+      branch: "fusion/fn-204",
+      baseCommitSha: "base-sha",
+      summary: "partial summary",
+      modifiedFiles: ["src/a.ts"],
+      declaredSymbols: ["sym"],
+      currentStep: 2,
+      executionCompletedAt: "2026-08-27T00:00:00.000Z",
+      steps: [
+        { description: "one", status: "done" },
+        { description: "two", status: "skipped" },
+        { description: "three", status: "in-progress" },
+        { description: "four", status: "pending" },
+      ],
+    };
+
+    it("keeps execution artifacts and replays only the in-progress step", () => {
+      const result = plan(wipTask, "building", ir, true);
+      expect(result).toMatchObject({ kind: "restart", scope: "implementation", preservedWork: true, releaseSymbolLocks: false });
+      if (result.kind !== "restart") return;
+      for (const key of ["worktree", "branch", "branchWriteOrigin", "executionStartBranch", "baseCommitSha", "executionStartedAt", "summary", "modifiedFiles", "declaredSymbols", "scopeAutoWiden", "currentStep"]) {
+        expect(key in result.patch).toBe(false);
+      }
+      expect(result.patch.executionCompletedAt).toBeNull();
+      expect(result.patch.steps?.map((step) => step.status)).toEqual(["done", "skipped", "pending", "pending"]);
+    });
+
+    it("ignores preserve-work outside the WIP scope", () => {
+      for (const column of ["planning", "review", "waiting"]) {
+        const preserved = plan({ ...wipTask, column }, column, ir, true);
+        const baseline = plan({ ...wipTask, column }, column);
+        expect(preserved).toMatchObject({ kind: "restart", preservedWork: false });
+        if (baseline.kind !== "restart") throw new Error("expected restart plan");
+        expect(preserved).toEqual({ ...baseline, preservedWork: false });
+      }
+    });
+
+    it("leaves the destructive WIP restart unchanged without the option", () => {
+      const result = plan(wipTask, "building");
+      expect(result).toMatchObject({ kind: "restart", preservedWork: false, releaseSymbolLocks: true });
+      if (result.kind !== "restart") return;
+      expect(result.patch).toMatchObject({ currentStep: 0, worktree: null, branch: null, summary: null });
+      expect(result.patch.steps?.every((step) => step.status === "pending")).toBe(true);
+    });
+
+    it("discards the same workflow step results in both modes", () => {
+      const workflowStepResults = [
+        { workflowStepId: "execute", status: "failed" },
+        { workflowStepId: "plan", status: "passed" },
+      ] as WorkflowStepResult[];
+      const preserved = plan({ ...wipTask, workflowStepResults }, "building", ir, true);
+      const destructive = plan({ ...wipTask, workflowStepResults }, "building");
+      if (preserved.kind !== "restart" || destructive.kind !== "restart") throw new Error("expected restart plans");
+      expect(preserved.discardedWorkflowStepIds).toEqual(["execute"]);
+      expect(preserved.discardedWorkflowStepIds).toEqual(destructive.discardedWorkflowStepIds);
+      expect(preserved.patch.workflowStepResults).toEqual(destructive.patch.workflowStepResults);
+    });
+
+    it("tolerates a task with no steps", () => {
+      const result = plan({ column: "building", steps: [] }, "building", ir, true);
+      expect(result).toMatchObject({ kind: "restart", preservedWork: true });
+      if (result.kind !== "restart") return;
+      expect(result.patch.steps).toEqual([]);
+    });
   });
 
   it("owns no pause lifecycle keys and resets every manual retry counter", () => {

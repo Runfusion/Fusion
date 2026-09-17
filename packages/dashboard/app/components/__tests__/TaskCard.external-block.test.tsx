@@ -9,7 +9,7 @@ vi.mock("../PrCreateModal", () => ({ PrCreateModal: () => null }));
 vi.mock("../../hooks/useTaskDiffStats", () => ({ useTaskDiffStats: () => ({ stats: null, loading: false }) }));
 vi.mock("../../hooks/useBadgeWebSocket", () => ({ useBadgeWebSocket: () => ({ badgeUpdates: new Map(), isConnected: true, subscribeToBadge: vi.fn(), unsubscribeFromBadge: vi.fn() }) }));
 vi.mock("../../hooks/useBatchBadgeFetch", () => ({ getFreshBatchData: vi.fn(() => null) }));
-vi.mock("../../hooks/useConfirm", () => ({ useConfirm: () => ({ confirm: vi.fn(), confirmWithChoice: vi.fn() }) }));
+vi.mock("../../hooks/useConfirm", () => ({ useConfirm: () => ({ confirmWithCheckbox: async (options?: { checkbox?: { defaultChecked?: boolean } }) => ({ choice: "cancel" as const, checkboxValue: options?.checkbox?.defaultChecked ?? false }), confirm: vi.fn(), confirmWithChoice: vi.fn() }) }));
 vi.mock("../../api", () => ({ fetchWorkflowSettingValues: vi.fn().mockResolvedValue({ stored: {}, effective: {}, orphaned: [] }) }));
 
 function task(overrides: Partial<Task> = {}): Task {
@@ -67,6 +67,12 @@ describe("TaskCard external Blocked overlay", () => {
     expect(onOpenChatWithPrefill).toHaveBeenCalledWith("Explain this error ENOSPC: no space left on device, write and how to resolve it.");
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(onRetryTask).toHaveBeenCalledWith("FN-209"));
+    /*
+    FNXC:ColumnRestart 2026-09-17-09:16:
+    FN-499 negative control: an externally blocked resume is short-circuited by the route before any
+    stage restart, so it must never gain a preserve-work confirmation or a second argument.
+    */
+    expect(onRetryTask.mock.calls[0]).toEqual(["FN-209"]);
   });
 
   it("keeps both mobile actions usable at the 768px breakpoint", () => {

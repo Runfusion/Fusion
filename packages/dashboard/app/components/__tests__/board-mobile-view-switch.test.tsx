@@ -25,7 +25,7 @@ vi.mock("../../api", () => ({
 }));
 
 vi.mock("../../hooks/useConfirm", () => ({
-  useConfirm: () => ({ confirm: vi.fn() }),
+  useConfirm: () => ({ confirmWithCheckbox: async (options?: { checkbox?: { defaultChecked?: boolean } }) => ({ choice: "cancel" as const, checkboxValue: options?.checkbox?.defaultChecked ?? false }), confirm: vi.fn() }),
 }));
 
 vi.mock("../../hooks/useBadgeWebSocket", () => ({

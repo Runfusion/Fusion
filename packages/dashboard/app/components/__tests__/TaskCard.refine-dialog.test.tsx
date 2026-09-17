@@ -26,7 +26,7 @@ vi.mock("../../hooks/useBatchBadgeFetch", () => ({
 }));
 
 vi.mock("../../hooks/useConfirm", () => ({
-  useConfirm: () => ({ confirm: vi.fn(), confirmWithChoice: vi.fn(), confirmWithSelect: vi.fn() }),
+  useConfirm: () => ({ confirmWithCheckbox: async (options?: { checkbox?: { defaultChecked?: boolean } }) => ({ choice: "cancel" as const, checkboxValue: options?.checkbox?.defaultChecked ?? false }), confirm: vi.fn(), confirmWithChoice: vi.fn(), confirmWithSelect: vi.fn() }),
 }));
 
 vi.mock("../../api", () => ({

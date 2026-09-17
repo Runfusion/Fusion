@@ -167,8 +167,9 @@ function createRestartStore(root: string, row: Task, options: { failAt?: "cancel
   return { store: store as unknown as TaskStore, calls, items };
 }
 
-async function postRetry(app: ReturnType<typeof createApp>, taskId = "FN-204") {
-  return performRequest(app, "POST", `/api/tasks/${taskId}/retry`);
+async function postRetry(app: ReturnType<typeof createApp>, taskId = "FN-204", body?: Record<string, unknown>) {
+  if (body === undefined) return performRequest(app, "POST", `/api/tasks/${taskId}/retry`);
+  return performRequest(app, "POST", `/api/tasks/${taskId}/retry`, JSON.stringify(body), { "content-type": "application/json" });
 }
 
 async function createPrompt(root: string, id = "FN-204") {
@@ -525,6 +526,79 @@ describe("POST /tasks/:id/retry", () => {
     expect(freshResponse.status).toBe(409);
     expect(JSON.stringify(freshResponse.body)).toContain("Retry is unavailable while a merge is active");
     expect(staleResponse.status).toBe(200);
+  });
+
+  /*
+  FNXC:ColumnRestart 2026-09-17-09:16:
+  FN-499: the operator's preserve-work choice must reach the planner, must keep the card's checkout
+  and step progress, and must be refused outright outside the WIP lane before any durable write.
+  A request with no body stays byte-identical to today's destructive restart.
+  */
+  describe("preserve-work option", () => {
+    function wipRow() {
+      return taskFixture({
+        column: "building",
+        worktree: "/worktree",
+        branch: "fusion/fn-204",
+        baseCommitSha: "base-sha",
+        summary: "partial",
+        currentStep: 1,
+        steps: [{ name: "Implement", status: "done" }, { name: "Verify", status: "in-progress" }],
+        workflowStepResults: [{ workflowStepId: "implement", status: "failed" }],
+      });
+    }
+
+    it("preserves the checkout and current step when the operator opts in", async () => {
+      const root = await mkdtemp(join(tmpdir(), "fusion-retry-preserve-"));
+      const row = wipRow();
+      const { store, calls, items } = createRestartStore(root, row);
+
+      const response = await postRetry(createApp(store), "FN-204", { preserveWork: true });
+
+      expect(response.status, JSON.stringify(response.body)).toBe(200);
+      expect(row).toMatchObject({
+        column: "building",
+        worktree: "/worktree",
+        branch: "fusion/fn-204",
+        baseCommitSha: "base-sha",
+        summary: "partial",
+        currentStep: 1,
+      });
+      expect(row.steps.map((step) => step.status)).toEqual(["done", "pending"]);
+      expect(row.workflowStepResults).toEqual([]);
+      expect(calls).toEqual(["fence", "retire", "patch", "arm", "unfence"]);
+      expect(items).toContainEqual(expect.objectContaining({ nodeId: "implement", state: "runnable" }));
+      expect(store.logEntry).toHaveBeenCalledWith("FN-204", expect.stringContaining("preserved in-flight work"));
+    });
+
+    it("reproduces today's destructive restart when the request carries no body", async () => {
+      const root = await mkdtemp(join(tmpdir(), "fusion-retry-preserve-absent-"));
+      const row = wipRow();
+      const { store } = createRestartStore(root, row);
+
+      const response = await postRetry(createApp(store));
+
+      expect(response.status).toBe(200);
+      expect(row).toMatchObject({ column: "building", worktree: null, branch: null, baseCommitSha: null, summary: null, currentStep: 0 });
+      expect(row.steps.map((step) => step.status)).toEqual(["pending", "pending"]);
+      expect(store.logEntry).toHaveBeenCalledWith("FN-204", expect.stringContaining("discarded in-flight work"));
+    });
+
+    it("refuses the option outside the work lane without any durable write", async () => {
+      const root = await mkdtemp(join(tmpdir(), "fusion-retry-preserve-refuse-"));
+      for (const column of ["planning", "signoff"]) {
+        const row = taskFixture({ column, steps: [{ name: "Implement", status: "done" }] });
+        const { store, calls } = createRestartStore(root, row);
+
+        const response = await postRetry(createApp(store), "FN-204", { preserveWork: true });
+
+        expect(response.status, column).toBe(400);
+        expect(JSON.stringify(response.body), column).toContain("preserve in-flight work");
+        expect(store.pauseTask, column).not.toHaveBeenCalled();
+        expect(store.updateTask, column).not.toHaveBeenCalled();
+        expect(calls, column).toEqual([]);
+      }
+    });
   });
 
   it("does not route the removed restart-stage endpoint", async () => {

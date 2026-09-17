@@ -126,6 +126,7 @@ export type {
   BranchGroupSummary,
   PromoteBranchGroupResult,
   RecoverBranchBindingOutcome,
+  TaskRetryOptions,
   OverseerControlResult,
   RevertTaskWorkspaceRepoResult,
   RevertTaskGitResult,

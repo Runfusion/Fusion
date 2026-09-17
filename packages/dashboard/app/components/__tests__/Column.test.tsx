@@ -76,7 +76,7 @@ vi.mock("../../hooks/usePluginUiSlots", () => ({
 const mockConfirm = vi.fn();
 
 vi.mock("../../hooks/useConfirm", () => ({
-  useConfirm: () => ({ confirm: mockConfirm }),
+  useConfirm: () => ({ confirmWithCheckbox: async (options?: { checkbox?: { defaultChecked?: boolean } }) => ({ choice: "cancel" as const, checkboxValue: options?.checkbox?.defaultChecked ?? false }), confirm: mockConfirm }),
 }));
 
 function makeTask(id: string): Task {

@@ -1915,7 +1915,7 @@ describe("TaskDetailModal", () => {
       // Modal should close immediately (optimistic close before API call)
       expect(onClose).toHaveBeenCalledTimes(1);
       // onRetryTask should still be called with the correct task ID
-      expect(onRetryTask).toHaveBeenCalledWith("FN-099");
+      expect(onRetryTask).toHaveBeenCalledWith("FN-099", { preserveWork: false });
     });
 
     it("shows exactly one success toast when retry succeeds", async () => {

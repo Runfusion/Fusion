@@ -60,7 +60,7 @@ vi.mock("../../hooks/useBadgeWebSocket", () => ({
 }));
 vi.mock("../../hooks/useBatchBadgeFetch", () => ({ getFreshBatchData: vi.fn(() => null) }));
 vi.mock("../../utils/highlightDiff", () => ({ highlightDiff: (diff: string) => diff }));
-vi.mock("../../hooks/useConfirm", () => ({ useConfirm: () => ({ confirm: vi.fn() }) }));
+vi.mock("../../hooks/useConfirm", () => ({ useConfirm: () => ({ confirmWithCheckbox: async (options?: { checkbox?: { defaultChecked?: boolean } }) => ({ choice: "cancel" as const, checkboxValue: options?.checkbox?.defaultChecked ?? false }), confirm: vi.fn() }) }));
 /*
 FNXC:RuntimeFallbackUI 2026-07-11-00:00:
 RuntimeFallbackBadge (commit 0bed997af / FUX-022) calls the shared useToast() hook directly. TaskCard

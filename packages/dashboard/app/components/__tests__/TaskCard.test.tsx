@@ -130,8 +130,10 @@ vi.mock("../../api", () => ({
 const mockConfirm = vi.fn<(options: ConfirmOptions) => Promise<boolean>>();
 const mockConfirmWithChoice = vi.fn<(options: ConfirmOptions) => Promise<"primary" | "tertiary" | "cancel">>();
 const mockConfirmWithSelect = vi.fn();
+// FN-499: the WIP Retry confirmation resolves the operator's preserve-work choice through this seam.
+const mockConfirmWithCheckbox = vi.fn<(options: ConfirmOptions) => Promise<{ choice: "primary" | "tertiary" | "cancel"; checkboxValue: boolean }>>();
 vi.mock("../../hooks/useConfirm", () => ({
-  useConfirm: () => ({ confirm: mockConfirm, confirmWithChoice: mockConfirmWithChoice, confirmWithSelect: mockConfirmWithSelect }),
+  useConfirm: () => ({ confirm: mockConfirm, confirmWithChoice: mockConfirmWithChoice, confirmWithCheckbox: mockConfirmWithCheckbox, confirmWithSelect: mockConfirmWithSelect }),
 }));
 
 import { addressPrFeedback, uploadAttachment, fetchMission, fetchAgent, fetchAgents, fetchBoardWorkflows, refreshPrStatus } from "../../api";
@@ -4064,7 +4066,7 @@ describe("TaskCard", () => {
 
     it("confirms the stage-specific retry before calling onRetryTask", async () => {
       const onRetryTask = vi.fn(async () => ({}) as Task);
-      mockConfirm.mockResolvedValueOnce(true);
+      mockConfirmWithCheckbox.mockResolvedValueOnce({ choice: "primary", checkboxValue: false });
       render(
         <TaskCard
           task={makeTask({ column: "todo", status: "failed", error: "Executor crashed" })}
@@ -4076,13 +4078,75 @@ describe("TaskCard", () => {
       );
 
       fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-      await waitFor(() => expect(mockConfirm).toHaveBeenCalledWith(expect.objectContaining({
+      await waitFor(() => expect(mockConfirmWithCheckbox).toHaveBeenCalledWith(expect.objectContaining({
         title: "Retry this stage?",
         message: "Discard the in-flight work and start it again on the approved plan. This card stays in its current column.",
         confirmLabel: "Retry",
         danger: true,
       })));
-      await waitFor(() => expect(onRetryTask).toHaveBeenCalledWith("FN-001"));
+      await waitFor(() => expect(onRetryTask).toHaveBeenCalledWith("FN-001", { preserveWork: false }));
+    });
+
+    /*
+    FNXC:ColumnRestart 2026-09-17-09:16:
+    FN-499: the WIP Retry confirmation offers an unchecked "keep the work" checkbox; planning and
+    review confirmations must keep their plain boolean dialog. The error-banner Retry delegates to
+    the same handler, so it inherits the choice without a second code path.
+    */
+    describe("preserve-work choice", () => {
+      function renderRetryCard(flags: Record<string, boolean> | undefined, onRetryTask: ReturnType<typeof vi.fn>) {
+        return render(
+          <TaskCard
+            task={makeTask({ column: "todo", status: "failed", error: "Executor crashed" })}
+            onOpenDetail={noop}
+            addToast={noop}
+            onRetryTask={onRetryTask}
+            taskColumnFlags={flags as never}
+          />,
+        );
+      }
+
+      it("passes preserveWork true when the operator checks the box", async () => {
+        const onRetryTask = vi.fn(async () => ({}) as Task);
+        mockConfirmWithCheckbox.mockResolvedValueOnce({ choice: "primary", checkboxValue: true });
+        renderRetryCard({ countsTowardWip: true }, onRetryTask);
+
+        fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+        await waitFor(() => expect(mockConfirmWithCheckbox).toHaveBeenCalledWith(expect.objectContaining({
+          checkbox: expect.objectContaining({ defaultChecked: false }),
+        })));
+        expect(mockConfirmWithCheckbox.mock.calls[0]?.[0]?.alwaysAsk).toBeUndefined();
+        await waitFor(() => expect(onRetryTask).toHaveBeenCalledWith("FN-001", { preserveWork: true }));
+      });
+
+      it("does not call onRetryTask when the checkbox confirmation is cancelled", async () => {
+        const onRetryTask = vi.fn(async () => ({}) as Task);
+        mockConfirmWithCheckbox.mockResolvedValueOnce({ choice: "cancel", checkboxValue: true });
+        renderRetryCard({ countsTowardWip: true }, onRetryTask);
+
+        fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+        await waitFor(() => expect(mockConfirmWithCheckbox).toHaveBeenCalled());
+        expect(onRetryTask).not.toHaveBeenCalled();
+      });
+
+      it.each([
+        ["planning", { hold: true }],
+        ["review", { mergeBlocker: true }],
+      ] as const)("offers no checkbox in the %s stage", async (_name, flags) => {
+        const onRetryTask = vi.fn(async () => ({}) as Task);
+        mockConfirm.mockClear();
+        mockConfirmWithCheckbox.mockClear();
+        mockConfirm.mockResolvedValueOnce(true);
+        renderRetryCard(flags as never, onRetryTask);
+
+        fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+        await waitFor(() => expect(onRetryTask).toHaveBeenCalledWith("FN-001", { preserveWork: false }));
+        expect(mockConfirm).toHaveBeenCalled();
+        expect(mockConfirmWithCheckbox).not.toHaveBeenCalled();
+      });
     });
 
     it("shows loading and disabled state while retry is in progress", async () => {

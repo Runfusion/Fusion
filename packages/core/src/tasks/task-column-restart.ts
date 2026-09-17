@@ -23,6 +23,7 @@ export interface TaskColumnRestartPlan {
   discardedWorkflowStepIds: string[];
   deletePrompt: boolean;
   releaseSymbolLocks: boolean;
+  preservedWork: boolean;
   patch: Partial<Task>;
 }
 
@@ -65,12 +66,26 @@ a wholesale restart write would both risk routing into the single-repository mer
 Phase-B sibling-clobber race. Implementation restart still clears the singular `worktree` and
 `branch` aliases because null is the healthy workspace steady state, while each remembered
 repository checkout is independently liveness-checked before re-acquisition.
+
+FNXC:ColumnRestart 2026-09-17-09:16:
+FN-499 adds an opt-in preserve-work mode for the WIP scope only. An operator who replays the
+current step must keep the artifacts that step is still producing, so the preserving branch writes
+neither the execution artifacts (`worktree`, `branch`, `baseCommitSha`, `summary`, `modifiedFiles`,
+`declaredSymbols`, `scopeAutoWiden`, `executionStartBranch`, `executionStartedAt`) nor `currentStep`.
+Only `in-progress` steps fall back to `pending` so the interrupted step reruns while completed work
+stays completed, and `executionCompletedAt` is cleared so a stale completion cannot survive the
+replay. `releaseSymbolLocks` is false in this mode for the same reason: the card still owns its
+checkout, so handing its symbol locks to another task would strand live work. The shared patch and
+the workflow-step-result discard predicate are deliberately identical in both modes so the graph
+node can always rerun. Preserve-work is rejected for plan/review/generic scopes because those
+scopes own no in-flight implementation artifacts to keep.
 */
 export function planTaskColumnRestart(input: {
   task: Task;
   ir: WorkflowIr | undefined;
   entryNode: TaskColumnRestartEntryNode | undefined;
   now?: string;
+  preserveWork?: boolean;
 }): TaskColumnRestartPlan | TaskColumnRestartRefusal {
   const { task, ir, entryNode } = input;
   if (!ir || !workflowDeclaresColumnModel(ir)) return { kind: "refused", reason: "no-column-model" };
@@ -95,6 +110,7 @@ export function planTaskColumnRestart(input: {
       : flags.intake || flags.hold
         ? "plan"
         : "generic";
+  const preservedWork = input.preserveWork === true && scope === "implementation";
   const columnNodeIds = ir.nodes.filter((node) => node.column === task.column).map((node) => node.id);
   const columnNodeIdSet = new Set(columnNodeIds);
   const declaredNodeIds = new Set(ir.nodes.map((node) => node.id));
@@ -150,6 +166,12 @@ export function planTaskColumnRestart(input: {
       approvedPlanFingerprint: null as unknown as Task["approvedPlanFingerprint"],
       awaitingApprovalReason: null as unknown as Task["awaitingApprovalReason"],
     });
+  } else if (scope === "implementation" && preservedWork) {
+    Object.assign(patch, {
+      // Terminal steps stay as delivered; every non-terminal step (including the interrupted one) returns to `pending` so the card replays exactly the work that did not finish.
+      steps: task.steps.map((step) => (step.status === "done" || step.status === "skipped" ? { ...step } : { ...step, status: "pending" })),
+      executionCompletedAt: null as unknown as Task["executionCompletedAt"],
+    });
   } else if (scope === "implementation") {
     Object.assign(patch, {
       steps: task.steps.map((step) => ({ ...step, status: "pending" })),
@@ -184,7 +206,8 @@ export function planTaskColumnRestart(input: {
     columnNodeIds,
     discardedWorkflowStepIds: discarded.map((result) => result.workflowStepId),
     deletePrompt: scope === "plan",
-    releaseSymbolLocks: scope === "implementation",
+    releaseSymbolLocks: scope === "implementation" && !preservedWork,
+    preservedWork,
     patch,
   };
 }

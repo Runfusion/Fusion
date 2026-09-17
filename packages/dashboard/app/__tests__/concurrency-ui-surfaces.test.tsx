@@ -39,7 +39,7 @@ vi.mock("../components/TaskCard", () => ({ TaskCard: () => <div /> }));
 vi.mock("../hooks/useAppSettings", () => ({
   useAppSettings: () => ({ globalPaused: false, enginePaused: false, toggleGlobalPause: vi.fn(), toggleEnginePause: vi.fn(), refresh: vi.fn() }),
 }));
-vi.mock("../hooks/useConfirm", () => ({ useConfirm: () => ({ confirm: vi.fn().mockResolvedValue(true) }) }));
+vi.mock("../hooks/useConfirm", () => ({ useConfirm: () => ({ confirmWithCheckbox: async (options?: { checkbox?: { defaultChecked?: boolean } }) => ({ choice: "cancel" as const, checkboxValue: options?.checkbox?.defaultChecked ?? false }), confirm: vi.fn().mockResolvedValue(true) }) }));
 vi.mock("../hooks/useGlobalConcurrency", () => ({
   useGlobalConcurrency: () => ({ status: "idle", currentlyActive: 0, projectActiveCount: () => 0 }),
 }));

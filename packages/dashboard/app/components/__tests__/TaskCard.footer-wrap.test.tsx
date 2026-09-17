@@ -66,7 +66,7 @@ vi.mock("../../api", () => ({
 }));
 
 vi.mock("../../hooks/useConfirm", () => ({
-  useConfirm: () => ({ confirm: vi.fn(async () => true) }),
+  useConfirm: () => ({ confirmWithCheckbox: async (options?: { checkbox?: { defaultChecked?: boolean } }) => ({ choice: "cancel" as const, checkboxValue: options?.checkbox?.defaultChecked ?? false }), confirm: vi.fn(async () => true) }),
 }));
 vi.mock("../../hooks/useToast", () => ({
   useOptionalToast: () => null,

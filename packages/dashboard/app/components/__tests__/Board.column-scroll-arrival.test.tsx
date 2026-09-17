@@ -36,7 +36,7 @@ vi.mock("../WorktreeGroup", () => ({ WorktreeGroup: () => null }));
 vi.mock("../QuickEntryBox", () => ({ QuickEntryBox: () => null }));
 vi.mock("../PluginSlot", () => ({ PluginSlot: () => null }));
 vi.mock("../../hooks/usePluginUiSlots", () => ({ usePluginUiSlots: () => ({ slots: [], getSlotsForId: () => [], loading: false, error: null }) }));
-vi.mock("../../hooks/useConfirm", () => ({ useConfirm: () => ({ confirm: vi.fn() }) }));
+vi.mock("../../hooks/useConfirm", () => ({ useConfirm: () => ({ confirmWithCheckbox: async (options?: { checkbox?: { defaultChecked?: boolean } }) => ({ choice: "cancel" as const, checkboxValue: options?.checkbox?.defaultChecked ?? false }), confirm: vi.fn() }) }));
 
 function task(id: string, column: ColumnType, timestamp = "2026-01-01T00:00:00.000Z"): Task {
   return {

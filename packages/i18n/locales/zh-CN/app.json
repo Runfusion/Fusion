@@ -8295,6 +8295,9 @@
       "genericConfirmMessage": "Repeat the current stage and keep this card in its current column.",
       "planSuccess": "Planning will restart in this column.",
       "implementationSuccess": "Work will restart in this column.",
+      "implementationPreservedSuccess": "The current step will run again and the work already produced is kept.",
+      "preserveWorkLabel": "Keep the work already produced",
+      "preserveWorkDescription": "Keep the worktree, branch, and finished steps, and replay only the step that was running.",
       "reviewSuccess": "Review will run again in this column.",
       "genericSuccess": "This stage will restart in its current column.",
       "pendingAutomaticRecovery": "Automatic recovery is pending. You can Retry now to restart this stage."
