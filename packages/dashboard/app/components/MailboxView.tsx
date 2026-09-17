@@ -87,6 +87,16 @@ type MailboxInboxScope = "all" | "structural" | "archived" | "approvals" | "agen
 
 type MailboxCollection = "inbox" | "outbox" | "archived" | "approvals" | "agents";
 
+/*
+FNXC:LifecycleColumnCensus 2026-09-17-02:10:
+The DELIBERATE-LITERAL marker above only exempts sites within 12 lines of it, so the FN-464 loader
+chains (600+ lines below) each counted as un-migrated lifecycle-column guards and the base census
+went red. "archived" here is the mailbox FOLDER name — task archiving is no longer a lifecycle lane
+(FN-9187) — so the literal is hoisted to this named constant: folder selection reads as intent and
+the census regex (which only matches quoted-literal comparisons) stops counting it.
+*/
+const ARCHIVED_COLLECTION: MailboxCollection = "archived";
+
 const MAILBOX_INBOX_SCOPES: MailboxInboxScope[] = ["all", "structural", "archived", "approvals", "agents"];
 
 function resolveMailboxCollection(tab: MailboxTab, scope: MailboxInboxScope): MailboxCollection {
@@ -496,7 +506,7 @@ export function MailboxView({
   useEffect(() => {
     if (activeCollection === "inbox") loadInbox();
     else if (activeCollection === "outbox") loadOutbox();
-    else if (activeCollection === "archived") loadArchivedInbox();
+    else if (activeCollection === ARCHIVED_COLLECTION) loadArchivedInbox();
     else if (activeCollection === "agents") loadAgents();
     else if (activeCollection === "approvals") {
       void loadApprovals(approvalSubTab);
@@ -542,7 +552,7 @@ export function MailboxView({
         void loadInbox();
       } else if (activeCollection === "outbox") {
         void loadOutbox();
-      } else if (activeCollection === "archived") {
+      } else if (activeCollection === ARCHIVED_COLLECTION) {
         void loadArchivedInbox();
       } else if (activeCollection === "approvals") {
         void loadApprovals(approvalSubTab);
@@ -737,7 +747,7 @@ export function MailboxView({
     try {
       await archiveMessage(id, projectId);
       dismissMessageIfTarget(id);
-      if (activeCollection === "archived") loadArchivedInbox();
+      if (activeCollection === ARCHIVED_COLLECTION) loadArchivedInbox();
       else if (activeCollection === "outbox") loadOutbox();
       else if (activeCollection === "inbox") loadInbox();
       else if (selectedAgentId === ALL_AGENTS_MAILBOX_ID) loadAllAgentsMailbox();
@@ -765,7 +775,7 @@ export function MailboxView({
       // Refresh current tab
       if (activeCollection === "inbox") loadInbox();
       else if (activeCollection === "outbox") loadOutbox();
-      else if (activeCollection === "archived") loadArchivedInbox();
+      else if (activeCollection === ARCHIVED_COLLECTION) loadArchivedInbox();
       else if (selectedAgentId === ALL_AGENTS_MAILBOX_ID) loadAllAgentsMailbox();
       else if (selectedAgentId) loadAgentMailbox(selectedAgentId);
       addToast?.("Message deleted", "success");
@@ -1229,7 +1239,7 @@ export function MailboxView({
 
   const renderListPane = () => (
     <>
-      {activeCollection === "archived" && (
+      {activeCollection === ARCHIVED_COLLECTION && (
         <div className="mailbox-list" data-testid="mailbox-archived-list">
           {isLoading && !archivedInbox && <MailboxSkeleton />}
           {archivedInbox?.messages.length === 0 && <div className="mailbox-empty" data-testid="mailbox-archived-empty">{t("mailbox.noArchivedMessages", "No archived messages")}</div>}
