@@ -1,4 +1,9 @@
 import { useCallback, useEffect, useRef, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
+import {
+  EXCLUDED_GESTURE_SELECTOR,
+  isQualifiedRowGestureTarget,
+  registerDrawerGestureCanceller,
+} from "../utils/listItemGesture";
 
 interface UseDrawerDismissGestureOptions {
   enabled: boolean;
@@ -31,8 +36,6 @@ const DISTANCE_RATIO = 0.25;
 const VELOCITY_THRESHOLD = 0.6;
 const INTENT_THRESHOLD = 6;
 const HANDLE_SELECTOR = ".mobile-drawer__handle-target, .floating-window__drawer-handle-target, .terminal-drawer-handle-target";
-const INTERACTIVE_SELECTOR = "button, input, select, textarea, a[href], [contenteditable='true'], [role='button'], [role='slider'], [role='textbox']";
-const EXCLUDED_GESTURE_SELECTOR = ".xterm, .xterm-screen, .xterm-viewport";
 
 function hasTextSelection(): boolean {
   const selection = typeof window === "undefined" ? null : window.getSelection?.();
@@ -49,10 +52,19 @@ function scrollOwnersAreAtTop(target: Element, panel: HTMLElement): boolean {
   return true;
 }
 
+/*
+FNXC:MobileDrawerGesture 2026-09-17-03:18:
+FN-486 : une ligne de LISTE qualifiée (`data-drawer-dismiss-row`) est désormais un point de départ légitime.
+L'ancienne règle refusait tout `button`/`[role='button']`, donc Planning, Notes et Missions — dont les lignes
+sont de vrais boutons accessibles — absorbaient le geste de fermeture alors que les listes Mailbox en `div`
+le laissaient passer. La qualification est EXPLICITE et locale : le contrôle interactif le plus proche de la
+cible doit être la ligne elle-même. Un champ de renommage, un lien, un bouton imbriqué ou un slider placé
+sous la ligne reste donc exclu, et aucune sémantique accessible n'est retirée pour obtenir ce résultat.
+*/
 function isEligibleStart(target: Element, panel: HTMLElement): boolean {
   const startedOnHandle = Boolean(target.closest(HANDLE_SELECTOR));
   return startedOnHandle || !(
-    target.closest(INTERACTIVE_SELECTOR)
+    !isQualifiedRowGestureTarget(target)
     || target.closest(EXCLUDED_GESTURE_SELECTOR)
     || hasTextSelection()
     || !scrollOwnersAreAtTop(target, panel)
@@ -109,6 +121,14 @@ export function useDrawerDismissGesture({
     if (!enabled || !open) reset();
     return reset;
   }, [enabled, open, reset]);
+
+  /*
+  FNXC:MobileDrawerGesture 2026-09-17-03:18:
+  FN-486 : l'ouverture d'un menu de ligne invalide immédiatement le candidat de fermeture encore en attente.
+  Appui long → menu et glissement → fermeture deviennent ainsi deux ordonnancements EXCLUSIFS : le premier
+  qui aboutit retire l'autre, sans capture anticipée ni `preventDefault` au démarrage du geste.
+  */
+  useEffect(() => registerDrawerGestureCanceller(() => { if (dragRef.current) reset(); }), [reset]);
 
   const paint = useCallback(() => {
     const drag = dragRef.current;

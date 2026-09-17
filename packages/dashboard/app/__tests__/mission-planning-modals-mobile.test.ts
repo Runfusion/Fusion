@@ -57,16 +57,17 @@ function findMobileBlockContaining(needle: string): string {
 }
 
 describe("mission + planning modal mobile CSS", () => {
-  it("MissionManager: mission icon button touch targets are 36px", () => {
+  /*
+  FNXC:MissionRowActions 2026-09-17-03:18:
+  FN-486 : les boutons icône PERMANENTS des lignes de Missions n'existent plus — leurs commandes vivent dans
+  le menu contextuel partagé, dont la rangée porte sa propre cible tactile de 44px sur téléphone. Le cas
+  garde donc l'invariant de cible tactile, mais sur l'affordance qui le porte réellement désormais.
+  */
+  it("MissionManager: removed permanent row icon buttons leave no touch-target rule behind", () => {
     const missionBlock = findMobileBlockContaining(".mission-manager-overlay");
-    /*
-    FNXC:Missions 2026-08-15-22:40:
-    FN-8947 (b82f1a41f3) appended `.mission-fix-feature__actions .mission-icon-btn` to this
-    touch-target selector list, so `.mission-feature__actions .mission-icon-btn` is no longer
-    the final selector before `{`. Match the selectors up to the fix-feature entry that now
-    closes the list, keeping the same 36px touch-target invariant.
-    */
-    expect(missionBlock).toMatch(/\.mission-list__item-actions \.mission-icon-btn,[\s\S]*?\.mission-feature__actions \.mission-icon-btn,[\s\S]*?\.mission-fix-feature__actions \.mission-icon-btn\s*\{[\s\S]*?min-width:\s*36px;[\s\S]*?min-height:\s*36px;/s);
+    expect(missionBlock).not.toMatch(/\.mission-list__item-actions \.mission-icon-btn/);
+    expect(missionBlock).not.toMatch(/\.mission-feature__actions \.mission-icon-btn/);
+    expect(missionBlock).not.toMatch(/\.mission-fix-feature__actions \.mission-icon-btn/);
   });
 
   it("MissionManager: body prevents horizontal overflow", () => {
@@ -74,9 +75,9 @@ describe("mission + planning modal mobile CSS", () => {
     expect(missionBlock).toMatch(/\.mission-manager__body\s*\{[^}]*overflow-x:\s*hidden;/s);
   });
 
-  it("MissionManager: feature actions wrap", () => {
+  it("MissionManager: no feature action container survives to wrap", () => {
     const missionBlock = findMobileBlockContaining(".mission-manager-overlay");
-    expect(missionBlock).toMatch(/\.mission-feature__actions\s*\{[^}]*flex-wrap:\s*wrap;/s);
+    expect(missionBlock).not.toMatch(/\.mission-feature__actions/);
   });
 
   it("MissionManager: detail view keeps content-only bottom padding", () => {

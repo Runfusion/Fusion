@@ -113,46 +113,12 @@ forkant un bouton propre à Notes.
   font-weight: var(--font-weight-semibold);
 }
 
-.notes-list-item-menu-btn {
-  align-self: center;
-  margin-inline-end: var(--space-sm);
-  flex-shrink: 0;
-  color: var(--color-text-muted);
-}
-
-.notes-list-item-menu {
-  position: absolute;
-  inset-block-start: 100%;
-  inset-inline-end: var(--space-sm);
-  z-index: 1;
-  display: flex;
-  flex-direction: column;
-  min-inline-size: calc(var(--space-3xl) * 2);
-  padding: var(--space-2xs);
-  border: var(--btn-border-width) solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-surface);
-  box-shadow: var(--shadow-lg);
-}
-
-.notes-list-item-menu-action {
-  padding: var(--space-xs) var(--space-sm);
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--color-text);
-  font-size: var(--font-size-sm);
-  text-align: start;
-  cursor: pointer;
-}
-
-.notes-list-item-menu-action:hover {
-  background: var(--color-surface-hover);
-}
-
-.notes-list-item-menu-action--danger {
-  color: var(--color-error);
-}
+/*
+FNXC:NotesRowActions 2026-09-17-03:18:
+FN-486 : le bouton « … » de la ligne et son menu positionné en absolu sont SUPPRIMÉS avec leurs règles. Les
+mêmes actions sont servies par le menu contextuel partagé, portalisé dans le viewport, donc atteignable depuis
+la popover d'en-tête, le tiroir téléphone et le dock sans être rogné par leur conteneur.
+*/
 
 .notes-list-item:hover {
   background: var(--color-surface-hover);

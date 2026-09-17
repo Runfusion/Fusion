@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MissionManager } from "../MissionManager";
 import { ConfirmDialogProvider } from "../../hooks/useConfirm";
@@ -55,29 +55,52 @@ describe("MissionManager validation repair controls", () => {
     await waitFor(() => expect(fetchMilestoneValidationTelemetry).toHaveBeenCalledWith("MS-1", "p1"));
     await waitFor(() => expect(container.querySelector(".mission-fix-feature__header")).not.toBeNull());
 
-    const featureRow = container.querySelector('[data-mission-feature-id="F-1"]')!;
-    const fixHeader = container.querySelector(".mission-fix-feature__header")!;
-    expect(featureRow.querySelectorAll('[aria-label="Clear validation badge"]')).toHaveLength(1);
-    expect(featureRow.querySelectorAll('[aria-label="Re-run validation"]')).toHaveLength(1);
-    expect(fixHeader.querySelectorAll('[aria-label="Clear validation badge"]')).toHaveLength(1);
-    expect(fixHeader.querySelectorAll('[aria-label="Re-run validation"]')).toHaveLength(1);
+    /*
+    FNXC:MissionRowActions 2026-09-17-03:18:
+    FN-486 : les deux surfaces de réparation restent ÉGALEMENT admissibles, mais sont servies par le menu
+    contextuel de leur ligne. Après la réparation, la ligne n'offre plus l'action — et n'expose aucune
+    coquille de conteneur résiduelle.
+    */
+    /* Les lignes sont re-rendues après chaque réparation : toujours re-interroger le nœud courant. */
+    const openMenu = (selector: string) => {
+      fireEvent.contextMenu(container.querySelector(selector) as HTMLElement, { clientX: 10, clientY: 10 });
+      return screen.getByTestId("mission-row-context-menu");
+    };
+    const FEATURE_ROW = '[data-mission-feature-id="F-1"] .mission-feature__header';
+    const FIX_ROW = ".mission-fix-feature__header";
 
-    fireEvent.click(featureRow.querySelector('[aria-label="Clear validation badge"]')!);
+    let menu = openMenu(FEATURE_ROW);
+    expect(within(menu).getByTestId("feature-menu-clear-validation-F-1")).toBeInTheDocument();
+    expect(within(menu).getByTestId("feature-menu-rerun-validation-F-1")).toBeInTheDocument();
+    fireEvent.click(within(menu).getByTestId("feature-menu-clear-validation-F-1"));
     await waitFor(() => expect(repairFeatureValidation).toHaveBeenCalledWith("F-1", "clear", undefined, "p1"));
-    await waitFor(() => expect(container.querySelector('[data-mission-feature-id="F-1"] [aria-label="Clear validation badge"]')).toBeNull());
-    expect(container.querySelector('[data-mission-feature-id="F-1"] [aria-label="Re-run validation"]')).toBeNull();
+    await waitFor(() => {
+      const reopened = openMenu(FEATURE_ROW);
+      expect(within(reopened).queryByTestId("feature-menu-clear-validation-F-1")).toBeNull();
+      expect(within(reopened).queryByTestId("feature-menu-rerun-validation-F-1")).toBeNull();
+    });
+    fireEvent.keyDown(document, { key: "Escape" });
 
-    fireEvent.click(fixHeader.querySelector('[aria-label="Clear validation badge"]')!);
+    menu = openMenu(FIX_ROW);
+    expect(within(menu).getByTestId("feature-menu-clear-validation-F-fix")).toBeInTheDocument();
+    expect(within(menu).getByTestId("feature-menu-rerun-validation-F-fix")).toBeInTheDocument();
+    fireEvent.click(within(menu).getByTestId("feature-menu-clear-validation-F-fix"));
     await waitFor(() => expect(repairFeatureValidation).toHaveBeenCalledWith("F-fix", "clear", undefined, "p1"));
-    await waitFor(() => expect(container.querySelector(".mission-fix-feature__header [aria-label=\"Clear validation badge\"]")).toBeNull());
-    expect(container.querySelector(".mission-fix-feature__header [aria-label=\"Re-run validation\"]")).toBeNull();
+    await waitFor(() => {
+      fireEvent.contextMenu(container.querySelector(".mission-fix-feature__header") as HTMLElement, { clientX: 10, clientY: 10 });
+      expect(screen.queryByTestId("mission-row-context-menu")).toBeNull();
+    });
     expect(container.querySelector(".mission-fix-feature__actions")).toBeNull();
+    expect(container.querySelector(".mission-feature__actions")).toBeNull();
   });
 
   it("does not render repair controls for healthy or live validation states", async () => {
     feature = { ...baseFeature, loopState: "validating" }; fixFeature = { ...baseFixFeature, loopState: "passed" };
     const { container } = render(<ConfirmDialogProvider><MissionManager isInline isOpen onClose={() => {}} addToast={vi.fn()} projectId="p1" targetMissionId="M-1" /></ConfirmDialogProvider>);
     await screen.findByText("Blocked feature"); await waitFor(() => expect(fetchMilestoneValidationTelemetry).toHaveBeenCalled());
-    expect(container.querySelectorAll('[aria-label="Re-run validation"]')).toHaveLength(0);
+    fireEvent.contextMenu(container.querySelector(".mission-fix-feature__header") as HTMLElement, { clientX: 10, clientY: 10 });
+    expect(screen.queryByTestId("mission-row-context-menu")).toBeNull();
+    fireEvent.contextMenu(container.querySelector('[data-mission-feature-id="F-1"] .mission-feature__header') as HTMLElement, { clientX: 10, clientY: 10 });
+    expect(within(screen.getByTestId("mission-row-context-menu")).queryByTestId("feature-menu-rerun-validation-F-1")).toBeNull();
   });
 });

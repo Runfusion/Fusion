@@ -6,7 +6,11 @@ import { ViewActionButton } from "./ViewActionButton";
 import { ViewLayout } from "./ViewLayout";
 import "./MailboxModal.css";
 import { FloatingWindow } from "./FloatingWindow";
-import { useState, useEffect, useCallback, useMemo, useRef, type CSSProperties } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useConfirm } from "../hooks/useConfirm";
+import { useListItemContextMenu } from "../hooks/useListItemContextMenu";
+import { ListItemContextMenu } from "./ListItemContextMenu";
+import { buildMailboxMessageActions, mailboxRowMenuKey, mailboxRowMenuMessageId } from "./mailboxMessageActions";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import {
@@ -323,6 +327,7 @@ export function MailboxModal({
   agents = [],
 }: MailboxModalProps) {
   const { t } = useTranslation("app");
+  const { confirm } = useConfirm();
   const cacheSuffix = projectId ?? "";
   const inboxCacheKey = `${SWR_CACHE_KEYS.MAILBOX_INBOX_PREFIX}${cacheSuffix}`;
   const outboxCacheKey = `${SWR_CACHE_KEYS.MAILBOX_OUTBOX_PREFIX}${cacheSuffix}`;
@@ -735,6 +740,19 @@ export function MailboxModal({
     setReplyContextErrors({});
   }, [consumeCurrentDeepLink]);
 
+  /*
+  FNXC:MailboxRowActions 2026-09-17-03:18:
+  FN-486 : même fence d'identité que la destination Mailbox. Une mutation déclenchée depuis une ligne non
+  sélectionnée ne ferme pas le détail ouvert et ne consomme pas son lien profond ; l'identité courante est
+  relue après l'attente réseau.
+  */
+  const selectedMessageRef = useRef<Message | null>(null);
+  selectedMessageRef.current = selectedMessage;
+  const closeMessageIfTarget = useCallback((id: string) => {
+    if (selectedMessageRef.current?.id !== id) return;
+    handleCloseMessage();
+  }, [handleCloseMessage]);
+
   const handleMarkAllRead = useCallback(async () => {
     try {
       const result = await markAllMessagesRead(projectId);
@@ -763,7 +781,7 @@ export function MailboxModal({
   const handleArchiveMessage = useCallback(async (id: string) => {
     try {
       await archiveMessage(id, projectId);
-      handleCloseMessage();
+      closeMessageIfTarget(id);
       if (activeCollection === "inbox" || activeCollection === "completions") loadInbox();
       else if (activeCollection === "outbox") loadOutbox();
       else if (activeCollection === "archived") loadArchivedInbox();
@@ -772,19 +790,17 @@ export function MailboxModal({
       void refreshUnreadCount();
       addToast?.("Message archived", "success");
     } catch { addToast?.("Failed to archive message", "error"); }
-  }, [projectId, activeCollection, selectedAgentId, loadInbox, loadOutbox, loadArchivedInbox, loadAgentMailbox, loadAllAgentsMailbox, refreshUnreadCount, addToast, handleCloseMessage]);
+  }, [projectId, activeCollection, selectedAgentId, loadInbox, loadOutbox, loadArchivedInbox, loadAgentMailbox, loadAllAgentsMailbox, refreshUnreadCount, addToast, closeMessageIfTarget]);
   const handleUnarchiveMessage = useCallback(async (id: string) => {
-    try { await unarchiveMessage(id, projectId); handleCloseMessage(); loadArchivedInbox(); void refreshUnreadCount(); addToast?.("Message restored", "success"); }
+    try { await unarchiveMessage(id, projectId); closeMessageIfTarget(id); loadArchivedInbox(); void refreshUnreadCount(); addToast?.("Message restored", "success"); }
     catch { addToast?.("Failed to restore message", "error"); }
-  }, [projectId, loadArchivedInbox, refreshUnreadCount, addToast, handleCloseMessage]);
+  }, [projectId, loadArchivedInbox, refreshUnreadCount, addToast, closeMessageIfTarget]);
 
   const handleDeleteMessage = useCallback(async (id: string) => {
-    consumeCurrentDeepLink();
     setPendingDeleteMessageId(null);
     try {
       await deleteMessage(id, projectId);
-      setSelectedMessage(null);
-      setConversationMessages([]);
+      closeMessageIfTarget(id);
       // Refresh current tab
       if (activeCollection === "inbox" || activeCollection === "completions") loadInbox();
       else if (activeCollection === "outbox") loadOutbox();
@@ -795,7 +811,7 @@ export function MailboxModal({
     } catch {
       addToast?.(t("mailbox.deleteFailed", "Failed to delete message"), "error");
     }
-  }, [projectId, activeCollection, selectedAgentId, loadInbox, loadOutbox, loadArchivedInbox, loadAgentMailbox, loadAllAgentsMailbox, addToast, t, consumeCurrentDeepLink]);
+  }, [projectId, activeCollection, selectedAgentId, loadInbox, loadOutbox, loadArchivedInbox, loadAgentMailbox, loadAllAgentsMailbox, addToast, t, closeMessageIfTarget]);
 
   const handleReply = useCallback((message: Message) => {
     consumeCurrentDeepLink();
@@ -941,6 +957,59 @@ export function MailboxModal({
 
   const filteredInboxMessages = useMemo(() => inboxScope === "structural" ? (inbox?.messages.filter((message) => isStructuralMail(message.metadata)) ?? []) : (inbox?.messages ?? []), [inbox, inboxScope]);
 
+  /*
+  FNXC:MailboxRowActions 2026-09-17-03:18:
+  FN-486 : toutes les variantes de ligne de message de cette fenêtre — y compris la branche `completions` —
+  partagent la même fabrique de props et le même modèle de commandes que la destination Mailbox.
+  */
+  const rowMenu = useListItemContextMenu({ enabled: isOpen, contextId: `${projectId ?? ""}:${activeCollection}:${selectedAgentId}:${agentSubTab}` });
+  const messageRowProps = useCallback((msg: Message) => {
+    const menuProps = rowMenu.getRowProps(mailboxRowMenuKey(msg.id));
+    return {
+      ...menuProps,
+      role: "button",
+      tabIndex: 0,
+      onKeyDown: (event: ReactKeyboardEvent<HTMLElement>) => {
+        menuProps.onKeyDown(event);
+        if (event.defaultPrevented || event.currentTarget !== event.target) return;
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        void handleOpenMessage(msg);
+      },
+    };
+  }, [handleOpenMessage, rowMenu]);
+
+  const rowMenuMessage = useMemo(() => {
+    const id = mailboxRowMenuMessageId(rowMenu.anchor?.key);
+    if (!id) return null;
+    const pools = [inbox?.messages, outbox?.messages, archivedInbox?.messages, allAgentsMailbox?.messages, agentMailbox?.inbox, agentMailbox?.outbox];
+    for (const pool of pools) {
+      const found = pool?.find((candidate) => candidate.id === id);
+      if (found) return found;
+    }
+    return null;
+  }, [agentMailbox, allAgentsMailbox, archivedInbox, inbox, outbox, rowMenu.anchor?.key]);
+  useEffect(() => {
+    if (rowMenu.anchor && !rowMenuMessage) rowMenu.close();
+  }, [rowMenu, rowMenuMessage]);
+
+  const rowMenuActions = rowMenuMessage
+    ? buildMailboxMessageActions(rowMenuMessage, t, {
+      onArchive: (message) => void handleArchiveMessage(message.id),
+      onRestore: (message) => void handleUnarchiveMessage(message.id),
+      onDelete: (message) => void (async () => {
+        if (!await confirm({
+          title: t("mailbox.deleteTitle", "Delete message?"),
+          message: t("mailbox.deleteBody", "This action cannot be undone."),
+          confirmLabel: t("mailbox.delete", "Delete"),
+          danger: true,
+        })) return;
+        await handleDeleteMessage(message.id);
+      })(),
+      onReply: (message) => handleReply(message),
+    })
+    : [];
+
   // ── Render ────────────────────────────────────────────────────────────
 
   /*
@@ -963,6 +1032,13 @@ export function MailboxModal({
     <FloatingWindow windowKey="mailbox" title={t("mailbox.title", "Mailbox")} ariaLabel={t("mailbox.title", "Mailbox")} onClose={onClose} hideHeader dragHandleSelector=".mailbox-modal .modal-header" className="floating-window--mailbox" defaultSize={{ width: 860, height: 680 }} minSize={{ width: 480, height: 360 }} suspendGeometryPersistenceOnMobile suspendGeometryPersistenceOnShortViewport closeOnOutsidePointerDown modal testId="mailbox-modal-overlay">
       {/* FNXC:ModalTouchGeometry 2026-07-26-16:22: Mailbox is a long-lived workspace; preserve outside dismissal and keep keyboard positioning inside the hosted panel. */}
       <ViewLayout className="modal modal-lg mailbox-modal" style={containerKeyboardStyle} data-testid="mailbox-modal" contentOwnsScroll header={<>
+        <ListItemContextMenu
+          anchor={rowMenu.anchor}
+          ariaLabel={t("mailbox.messageActionsAria", "Message actions")}
+          actions={rowMenuActions}
+          onClose={rowMenu.close}
+          data-testid="mailbox-row-context-menu"
+        />
         {/* FNXC:StandardizedMailboxLayout 2026-09-13-16:55: The floating mailbox shares the same header action and detail-return primitives as the full destination; its long-lived controller and compose draft remain mounted in this host. */}
         <ViewHeader
           className="modal-header mailbox-header"
@@ -1334,7 +1410,7 @@ export function MailboxModal({
                 <div className="mailbox-list" data-testid="mailbox-archived-list">
                   {archivedInbox?.messages.length === 0 && <div className="mailbox-empty" data-testid="mailbox-archived-empty">{t("mailbox.noArchivedMessages", "No archived messages")}</div>}
                   {archivedInbox?.messages.map((message) => (
-                    <button type="button" className="mailbox-item" key={message.id} onClick={() => void handleOpenMessage(message)} data-testid={`mailbox-item-${message.id}`}>
+                    <button type="button" className="mailbox-item" key={message.id} {...rowMenu.getRowProps(mailboxRowMenuKey(message.id))} onClick={() => void handleOpenMessage(message)} data-testid={`mailbox-item-${message.id}`}>
                       <div className="mailbox-item-avatar">{message.fromType === "agent" ? <Bot size={16} /> : <User size={16} />}</div>
                       <div className="mailbox-item-content">
                         <div className="mailbox-item-header">
@@ -1350,7 +1426,7 @@ export function MailboxModal({
               {activeCollection === "completions" && (
                 <div className="mailbox-list" data-testid="mailbox-completions-list">
                   {inbox?.messages.filter((message) => message.metadata?.kind === "task-completion-notice").map((message) => (
-                    <button type="button" className={`mailbox-item ${!message.read ? "unread" : ""}`} key={message.id} onClick={() => void handleOpenMessage(message)} data-testid={`mailbox-item-${message.id}`}>
+                    <button type="button" className={`mailbox-item ${!message.read ? "unread" : ""}`} key={message.id} {...rowMenu.getRowProps(mailboxRowMenuKey(message.id))} onClick={() => void handleOpenMessage(message)} data-testid={`mailbox-item-${message.id}`}>
                       <div className="mailbox-item-avatar">{message.fromType === "agent" ? <Bot size={16} /> : <User size={16} />}</div>
                       <div className="mailbox-item-content">
                         <div className="mailbox-item-header">
@@ -1384,6 +1460,7 @@ export function MailboxModal({
                       key={msg.id}
                       id={`message-${msg.id}`}
                       className={`mailbox-item ${!msg.read ? "unread" : ""}`}
+                      {...messageRowProps(msg)}
                       onClick={() => handleOpenMessage(msg)}
                       data-testid={`mailbox-item-${msg.id}`}
                     >
@@ -1421,6 +1498,7 @@ export function MailboxModal({
                       key={msg.id}
                       id={`message-${msg.id}`}
                       className="mailbox-item"
+                      {...messageRowProps(msg)}
                       onClick={() => handleOpenMessage(msg)}
                       data-testid={`mailbox-item-${msg.id}`}
                     >
@@ -1469,6 +1547,7 @@ export function MailboxModal({
                             key={msg.id}
                             id={`message-${msg.id}`}
                             className={`mailbox-item ${!msg.read ? "unread" : ""}`}
+                            {...messageRowProps(msg)}
                             onClick={() => handleOpenMessage(msg)}
                             data-testid={`mailbox-item-${msg.id}`}
                           >
@@ -1509,6 +1588,7 @@ export function MailboxModal({
                             key={msg.id}
                             id={`message-${msg.id}`}
                             className={`mailbox-item ${!msg.read ? "unread" : ""}`}
+                            {...messageRowProps(msg)}
                             onClick={() => handleOpenMessage(msg)}
                             data-testid={`mailbox-item-${msg.id}`}
                           >
@@ -1531,6 +1611,7 @@ export function MailboxModal({
                             key={msg.id}
                             id={`message-${msg.id}`}
                             className="mailbox-item"
+                            {...messageRowProps(msg)}
                             onClick={() => handleOpenMessage(msg)}
                             data-testid={`mailbox-item-${msg.id}`}
                           >

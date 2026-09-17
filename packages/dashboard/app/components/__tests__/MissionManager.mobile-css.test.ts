@@ -18,12 +18,20 @@ function getMissionMobileSection(css: string): string {
 }
 
 describe("MissionManager mobile styles", () => {
-  it("keeps repair controls touch-sized on feature and generated-fix surfaces", () => {
-    const section = getMissionMobileSection(loadAllAppCss());
-    expect(section).toContain(".mission-feature__actions .mission-icon-btn,");
-    expect(section).toContain(".mission-fix-feature__actions .mission-icon-btn");
-    expect(section).toContain("min-width: 36px;");
-    expect(section).toContain("min-height: 36px;");
+  /*
+  FNXC:MissionRowActions 2026-09-17-03:18:
+  FN-486 : les réparations de validation ne sont plus des boutons icône de ligne à dimensionner ; ce sont des
+  rangées du menu contextuel partagé, qui porte sa propre cible tactile. Les conteneurs d'actions de ligne et
+  leurs règles tactiles doivent donc avoir disparu de toute la feuille, sur les deux surfaces de feature.
+  */
+  it("keeps no touch-sizing rule for the removed hierarchy row action containers", () => {
+    const css = loadAllAppCss();
+    expect(css).not.toContain(".mission-feature__actions");
+    expect(css).not.toContain(".mission-fix-feature__actions");
+    expect(css).not.toContain(".mission-milestone__actions");
+    expect(css).not.toContain(".mission-slice__actions");
+    const menuRow = css.slice(css.indexOf(".list-item-context-menu__item {"));
+    expect(menuRow).toContain("min-block-size: var(--touch-target-min-size);");
   });
 
   it("keeps reconcile preview controls touch-sized", () => {
@@ -67,17 +75,21 @@ describe("MissionManager mobile styles", () => {
     expect(section).toContain("-webkit-line-clamp: 2;");
   });
 
-  it("stacks stacked-body mission cards and actions on mobile", () => {
+  /*
+  FNXC:MissionRowActions 2026-09-17-03:18:
+  FN-486 : la ligne empilée reste une colonne pleine largeur, mais elle n'héberge plus de conteneur d'actions
+  permanentes à empiler — ces commandes vivent dans le menu contextuel. Les règles correspondantes doivent
+  donc avoir disparu partout, et pas seulement être masquées sur téléphone.
+  */
+  it("stacks stacked-body mission cards on mobile and keeps no permanent row action container", () => {
     const css = loadAllAppCss();
     const section = getMissionMobileSection(css);
 
     expect(section).toContain(".mission-manager__body--stacked .mission-list__item {");
     expect(section).toContain("flex-direction: column;");
     expect(section).toContain("align-items: stretch;");
-    expect(section).toContain(".mission-manager__body--stacked .mission-list__item-actions {");
-    expect(section).toContain("width: 100%;");
-    expect(section).toContain("flex-wrap: wrap;");
-    expect(section).toContain(".mission-manager__body--stacked .mission-list__item-run-controls {");
+    expect(css).not.toContain(".mission-list__item-actions");
+    expect(css).not.toContain(".mission-list__item-run-controls");
   });
 
   it("keeps mission detail mobile bottom padding content-only (no shared nav duplication)", () => {

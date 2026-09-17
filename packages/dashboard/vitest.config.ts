@@ -398,6 +398,13 @@ const browserTouchTests = [
   */
   "src/__tests__/file-browser-scroll-browser.test.ts",
   /*
+  FNXC:MobileDrawerGesture 2026-09-17-03:18:
+  FN-486 : la fermeture d'un tiroir depuis une ligne de liste, le placement du menu d'appui long et la parité
+  de géométrie entre le chevron Retour et le « + » sont des résultats RENDUS ; ils exigent un moteur réel et
+  s'auto-désactivent lorsqu'aucun navigateur n'est disponible.
+  */
+  "src/__tests__/drawer-list-interactions-browser.test.ts",
+  /*
   FNXC:TaskSearch 2026-09-17-09:41:
   FN-477 : la largeur égale à une carte du tableau et la réserve de 1,5 carte sont des géométries
   rendues ; jsdom retourne des rectangles nuls et ne fait aucune mise en page flex/overflow. Collecté

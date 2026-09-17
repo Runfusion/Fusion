@@ -1,5 +1,9 @@
 import "./MailboxModal.css";
-import { useState, useEffect, useCallback, useContext, useMemo, useRef, type CSSProperties } from "react";
+import { useState, useEffect, useCallback, useContext, useMemo, useRef, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useConfirm } from "../hooks/useConfirm";
+import { useListItemContextMenu } from "../hooks/useListItemContextMenu";
+import { ListItemContextMenu } from "./ListItemContextMenu";
+import { buildMailboxMessageActions, mailboxRowMenuKey, mailboxRowMenuMessageId } from "./mailboxMessageActions";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import {
@@ -238,6 +242,7 @@ export function MailboxView({
   composePrefill,
 }: MailboxViewProps) {
   const { t } = useTranslation("app");
+  const { confirm } = useConfirm();
   const [activeTab, setActiveTab] = useState<MailboxTab>("inbox");
   const [inbox, setInbox] = useState<InboxResponse | null>(null);
   // FNXC:StructuralMail 2026-08-09-10:27: A consumed handoff must not leak into a later manually opened Quick composer.
@@ -681,6 +686,29 @@ export function MailboxView({
     handleCloseMessage();
   }, [handleCloseMessage, navigationHistory]);
 
+  /*
+  FNXC:MailboxRowActions 2026-09-17-03:18:
+  FN-486 : une mutation peut désormais venir d'une LIGNE non sélectionnée. Les gestionnaires fermaient le
+  détail et consommaient le lien profond sans comparer l'identifiant : muter B aurait fermé A. L'identité
+  courante est relue APRÈS l'attente réseau, via une référence, de sorte qu'une réponse tardive concernant B
+  ne ferme pas C ni le contenu d'un projet qui a changé entre-temps.
+  */
+  const selectedMessageRef = useRef<Message | null>(null);
+  selectedMessageRef.current = selectedMessage;
+  const dismissMessageIfTarget = useCallback((id: string) => {
+    if (selectedMessageRef.current?.id !== id) return;
+    consumeCurrentDeepLink();
+    dismissMessage();
+  }, [consumeCurrentDeepLink, dismissMessage]);
+
+  /** Mutation de ligne en cours : sa répétition est refusée tant que l'appel n'est pas retombé. */
+  const [mutatingMessageId, setMutatingMessageId] = useState<string | null>(null);
+  const runRowMutation = useCallback(async (id: string, run: () => Promise<void>) => {
+    if (mutatingMessageId) return;
+    setMutatingMessageId(id);
+    try { await run(); } finally { setMutatingMessageId(null); }
+  }, [mutatingMessageId]);
+
   const handleMarkAllRead = useCallback(async () => {
     try {
       const result = await markAllMessagesRead(projectId);
@@ -706,10 +734,9 @@ export function MailboxView({
   Archive is the default mailbox removal action. Delete remains an explicit destructive choice.
   */
   const handleArchiveMessage = useCallback(async (id: string) => {
-    consumeCurrentDeepLink();
     try {
       await archiveMessage(id, projectId);
-      dismissMessage();
+      dismissMessageIfTarget(id);
       if (activeCollection === "archived") loadArchivedInbox();
       else if (activeCollection === "outbox") loadOutbox();
       else if (activeCollection === "inbox") loadInbox();
@@ -718,24 +745,23 @@ export function MailboxView({
       refreshUnreadCount();
       addToast?.("Message archived", "success");
     } catch { addToast?.("Failed to archive message", "error"); }
-  }, [projectId, activeCollection, selectedAgentId, loadArchivedInbox, loadInbox, loadOutbox, loadAgentMailbox, loadAllAgentsMailbox, refreshUnreadCount, addToast, consumeCurrentDeepLink, dismissMessage]);
+  }, [projectId, activeCollection, selectedAgentId, loadArchivedInbox, loadInbox, loadOutbox, loadAgentMailbox, loadAllAgentsMailbox, refreshUnreadCount, addToast, dismissMessageIfTarget]);
 
   const handleUnarchiveMessage = useCallback(async (id: string) => {
     try {
       await unarchiveMessage(id, projectId);
-      dismissMessage();
+      dismissMessageIfTarget(id);
       loadArchivedInbox();
       refreshUnreadCount();
       addToast?.("Message restored", "success");
     } catch { addToast?.("Failed to restore message", "error"); }
-  }, [projectId, loadArchivedInbox, refreshUnreadCount, addToast, dismissMessage]);
+  }, [projectId, loadArchivedInbox, refreshUnreadCount, addToast, dismissMessageIfTarget]);
 
   const handleDeleteMessage = useCallback(async (id: string) => {
-    consumeCurrentDeepLink();
     setPendingDeleteMessageId(null);
     try {
       await deleteMessage(id, projectId);
-      dismissMessage();
+      dismissMessageIfTarget(id);
       // Refresh current tab
       if (activeCollection === "inbox") loadInbox();
       else if (activeCollection === "outbox") loadOutbox();
@@ -746,7 +772,7 @@ export function MailboxView({
     } catch {
       addToast?.("Failed to delete message", "error");
     }
-  }, [projectId, activeCollection, selectedAgentId, loadInbox, loadOutbox, loadArchivedInbox, loadAgentMailbox, loadAllAgentsMailbox, addToast, consumeCurrentDeepLink, dismissMessage]);
+  }, [projectId, activeCollection, selectedAgentId, loadInbox, loadOutbox, loadArchivedInbox, loadAgentMailbox, loadAllAgentsMailbox, addToast, dismissMessageIfTarget]);
 
   const handleReply = useCallback((message: Message) => {
     dismissMessage();
@@ -942,6 +968,61 @@ export function MailboxView({
   }, [inboxFilterOpen]);
 
   const filteredInboxMessages = useMemo(() => inboxScope === "structural" ? (inbox?.messages.filter((message) => isStructuralMail(message.metadata)) ?? []) : (inbox?.messages ?? []), [inbox, inboxScope]);
+
+  /*
+  FNXC:MailboxRowActions 2026-09-17-03:18:
+  FN-486 : toutes les variantes de `mailbox-item` d'un MESSAGE partagent une seule fabrique de props. Les
+  variantes qui étaient de simples `div` gagnent une activation clavier accessible ; celles déjà en `button`
+  gardent leur sémantique. Les demandes d'approbation ne sont PAS des messages et n'en reçoivent rien.
+  */
+  const rowMenu = useListItemContextMenu({ contextId: `${projectId ?? ""}:${activeCollection}:${selectedAgentId}:${agentSubTab}` });
+  const messageRowProps = useCallback((msg: Message) => {
+    const menuProps = rowMenu.getRowProps(mailboxRowMenuKey(msg.id));
+    return {
+      ...menuProps,
+      role: "button",
+      tabIndex: 0,
+      onKeyDown: (event: ReactKeyboardEvent<HTMLElement>) => {
+        menuProps.onKeyDown(event);
+        if (event.defaultPrevented || event.currentTarget !== event.target) return;
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        void handleOpenMessage(msg);
+      },
+    };
+  }, [handleOpenMessage, rowMenu]);
+
+  /* La cible est résolue dans les collections COURANTES : une ligne retirée ferme son menu. */
+  const rowMenuMessage = useMemo(() => {
+    const id = mailboxRowMenuMessageId(rowMenu.anchor?.key);
+    if (!id) return null;
+    const pools = [inbox?.messages, outbox?.messages, archivedInbox?.messages, allAgentsMailbox?.messages, agentMailbox?.inbox, agentMailbox?.outbox];
+    for (const pool of pools) {
+      const found = pool?.find((candidate) => candidate.id === id);
+      if (found) return found;
+    }
+    return null;
+  }, [agentMailbox, allAgentsMailbox, archivedInbox, inbox, outbox, rowMenu.anchor?.key]);
+  useEffect(() => {
+    if (rowMenu.anchor && !rowMenuMessage) rowMenu.close();
+  }, [rowMenu, rowMenuMessage]);
+
+  const rowMenuActions = rowMenuMessage
+    ? buildMailboxMessageActions(rowMenuMessage, t, {
+      onArchive: (message) => void runRowMutation(message.id, () => handleArchiveMessage(message.id)),
+      onRestore: (message) => void runRowMutation(message.id, () => handleUnarchiveMessage(message.id)),
+      onDelete: (message) => void runRowMutation(message.id, async () => {
+        if (!await confirm({
+          title: t("mailbox.deleteTitle", "Delete message?"),
+          message: t("mailbox.deleteBody", "This action cannot be undone."),
+          confirmLabel: t("mailbox.delete", "Delete"),
+          danger: true,
+        })) return;
+        await handleDeleteMessage(message.id);
+      }),
+      onReply: (message) => handleReply(message),
+    }).map((action) => ({ ...action, disabled: action.disabled || (mutatingMessageId !== null && mutatingMessageId !== rowMenuMessage.id) }))
+    : [];
 
   // ── Render ────────────────────────────────────────────────────────────
 
@@ -1153,7 +1234,7 @@ export function MailboxView({
           {isLoading && !archivedInbox && <MailboxSkeleton />}
           {archivedInbox?.messages.length === 0 && <div className="mailbox-empty" data-testid="mailbox-archived-empty">{t("mailbox.noArchivedMessages", "No archived messages")}</div>}
           {archivedInbox?.messages.map((message) => (
-            <button type="button" className="mailbox-item" key={message.id} onClick={() => void handleOpenMessage(message)} data-testid={`mailbox-item-${message.id}`}>
+            <button type="button" className="mailbox-item" key={message.id} {...rowMenu.getRowProps(mailboxRowMenuKey(message.id))} onClick={() => void handleOpenMessage(message)} data-testid={`mailbox-item-${message.id}`}>
               <div className="mailbox-item-avatar">
                 {message.fromType === "agent" ? <Bot size={16} /> : <User size={16} />}
               </div>
@@ -1188,6 +1269,7 @@ export function MailboxView({
               key={msg.id}
               id={listMessageAnchorId(msg.id)}
               className={`mailbox-item ${!msg.read ? "unread" : ""}`}
+              {...messageRowProps(msg)}
               onClick={() => handleOpenMessage(msg)}
               data-testid={`mailbox-item-${msg.id}`}
             >
@@ -1224,6 +1306,7 @@ export function MailboxView({
               key={msg.id}
               id={listMessageAnchorId(msg.id)}
               className="mailbox-item"
+              {...messageRowProps(msg)}
               onClick={() => handleOpenMessage(msg)}
               data-testid={`mailbox-item-${msg.id}`}
             >
@@ -1303,6 +1386,7 @@ export function MailboxView({
                     key={msg.id}
                     id={listMessageAnchorId(msg.id)}
                     className={`mailbox-item ${!msg.read ? "unread" : ""}`}
+                    {...messageRowProps(msg)}
                     onClick={() => handleOpenMessage(msg)}
                     data-testid={`mailbox-item-${msg.id}`}
                   >
@@ -1340,6 +1424,7 @@ export function MailboxView({
                     key={msg.id}
                     id={listMessageAnchorId(msg.id)}
                     className={`mailbox-item ${!msg.read ? "unread" : ""}`}
+                    {...messageRowProps(msg)}
                     onClick={() => handleOpenMessage(msg)}
                     data-testid={`mailbox-item-${msg.id}`}
                   >
@@ -1362,6 +1447,7 @@ export function MailboxView({
                     key={msg.id}
                     id={listMessageAnchorId(msg.id)}
                     className="mailbox-item"
+                    {...messageRowProps(msg)}
                     onClick={() => handleOpenMessage(msg)}
                     data-testid={`mailbox-item-${msg.id}`}
                   >
@@ -1498,6 +1584,13 @@ export function MailboxView({
       data-testid="mailbox-view"
       contentOwnsScroll
       header={<>
+      <ListItemContextMenu
+        anchor={rowMenu.anchor}
+        ariaLabel={t("mailbox.messageActionsAria", "Message actions")}
+        actions={rowMenuActions}
+        onClose={rowMenu.close}
+        data-testid="mailbox-row-context-menu"
+      />
       {/*
       FNXC:Navigation 2026-06-22-01:10:
       Mailbox adopts the shared ViewHeader (Command Center-modeled) for a consistent main-content title row. The unread count badge stays beside the title (preserving the mailbox-unread-badge test id), and Compose / Mark-all-read / Refresh controls move into the header actions cluster so they keep working. Tabs remain below the header as their own row.

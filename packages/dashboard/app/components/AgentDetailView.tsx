@@ -13,7 +13,7 @@ import {
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { AgentDetail, AgentState, AgentHeartbeatRun, AgentBudgetStatus, ModelInfo, MemoryFileInfo, AgentCapability, PluginRuntimeInfo, SkillContent, AgentOnboardingSummary, AgentMailboxResponse, AgentPromptSizePoint } from "../api";
-import { fetchAgent, updateAgent, updateAgentState, deleteAgent, isAgentHeartbeatEnabled, withAgentHeartbeatEnabled, fetchAgentLogsWithMeta, fetchAgentRunLogs, fetchAgentChildren, fetchAgentRuns, fetchAgentRunDetail, startAgentRun, stopAgentRun, updateAgentInstructions, updateAgentSoul, updateAgentMemory, fetchAgentMemoryFiles, fetchAgentMemoryFile, fetchAgentMemoryConsolidations, saveAgentMemoryFile, fetchAgentTasks, fetchChainOfCommand, fetchAgentBudgetStatus, resetAgentBudget, fetchWorkspaceFileContent, saveWorkspaceFileContent, fetchModels, fetchPluginRuntimes, fetchAgents, fetchSettings, fetchSettingsByScope, upgradeAgentHeartbeatProcedure, fetchSkillContent, uploadAgentAvatar, deleteAgentAvatar, fetchAgentMailbox, markMessageRead, fetchAgentPromptSizes } from "../api";
+import { fetchAgent, updateAgent, updateAgentState, deleteAgent, isAgentHeartbeatEnabled, withAgentHeartbeatEnabled, fetchAgentLogsWithMeta, fetchAgentRunLogs, fetchAgentChildren, fetchAgentRuns, fetchAgentRunDetail, startAgentRun, stopAgentRun, updateAgentInstructions, updateAgentSoul, updateAgentMemory, fetchAgentMemoryFiles, fetchAgentMemoryFile, fetchAgentMemoryConsolidations, saveAgentMemoryFile, fetchAgentTasks, fetchChainOfCommand, fetchAgentBudgetStatus, resetAgentBudget, fetchWorkspaceFileContent, saveWorkspaceFileContent, fetchModels, fetchPluginRuntimes, fetchAgents, fetchSettings, fetchSettingsByScope, upgradeAgentHeartbeatProcedure, fetchSkillContent, uploadAgentAvatar, deleteAgentAvatar, fetchAgentMailbox, markMessageRead, archiveMessage, unarchiveMessage, deleteMessage, fetchAgentPromptSizes } from "../api";
 import type { Agent, MemoryConsolidationEvent } from "../api";
 import type { AgentLogEntry, Task, Message, ParticipantType, AgentPermissionPolicy, AgentPermissionPolicyRules, AgentPermission, ThinkingLevel, Settings as CoreSettings } from "@fusion/core";
 import {
@@ -39,6 +39,9 @@ import { classifyAgentSkill, formatAgentSkillBadgeLabel } from "../utils/agentSk
 import { useDiscoveredSkillsCache } from "../hooks/useDiscoveredSkillsCache";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { useConfirm } from "../hooks/useConfirm";
+import { useListItemContextMenu } from "../hooks/useListItemContextMenu";
+import { ListItemContextMenu } from "./ListItemContextMenu";
+import { buildMailboxMessageActions, mailboxRowMenuKey, mailboxRowMenuMessageId } from "./mailboxMessageActions";
 import { FloatingWindow } from "./FloatingWindow";
 import { ModalCloseButton } from "./ModalCloseButton";
 import { HideInDrawer } from "./ViewDrawer";
@@ -1833,6 +1836,7 @@ function MailTab({
   onRefresh: () => void;
 }) {
   const { t } = useTranslation("app");
+  const { confirm } = useConfirm();
   const [activeSubtab, setActiveSubtab] = useState<"inbox" | "outbox">("inbox");
   const [knownAgents, setKnownAgents] = useState<Agent[]>([]);
 
@@ -1905,6 +1909,49 @@ function MailTab({
   };
 
   /*
+  FNXC:MailboxRowActions 2026-09-17-03:18:
+  FN-486 : l'onglet Mail d'un agent sert les mêmes commandes de ligne que les deux autres producteurs, par
+  le menu contextuel partagé. Il n'a PAS de composeur, donc aucune commande « Répondre » n'est fournie et
+  aucune édition n'est inventée ; la suppression garde une confirmation applicative et le rafraîchissement
+  existant. La fermeture du détail suit l'identité : muter une autre ligne ne referme pas le message ouvert.
+  */
+  const rowMenu = useListItemContextMenu({ contextId: `${projectId ?? ""}:${agent.id}:${activeSubtab}` });
+  const rowMenuMessage = useMemo(() => {
+    const id = mailboxRowMenuMessageId(rowMenu.anchor?.key);
+    if (!id) return null;
+    return [...(mailbox?.inbox ?? []), ...(mailbox?.outbox ?? [])].find((candidate) => candidate.id === id) ?? null;
+  }, [mailbox, rowMenu.anchor?.key]);
+  useEffect(() => {
+    if (rowMenu.anchor && !rowMenuMessage) rowMenu.close();
+  }, [rowMenu, rowMenuMessage]);
+
+  const runMailMutation = async (message: Message, run: () => Promise<unknown>, failure: string) => {
+    try {
+      await run();
+      if (selectedMessageId === message.id) setSelectedMessageId(null);
+      onRefresh();
+    } catch (err) {
+      addToast?.(getErrorMessage(err) || failure, "error");
+    }
+  };
+
+  const rowMenuActions = rowMenuMessage
+    ? buildMailboxMessageActions(rowMenuMessage, t, {
+      onArchive: (message) => void runMailMutation(message, () => archiveMessage(message.id, projectId), t("mailbox.archiveFailed", "Failed to archive message")),
+      onRestore: (message) => void runMailMutation(message, () => unarchiveMessage(message.id, projectId), t("mailbox.restoreFailed", "Failed to restore message")),
+      onDelete: (message) => void (async () => {
+        if (!await confirm({
+          title: t("mailbox.deleteTitle", "Delete message?"),
+          message: t("mailbox.deleteBody", "This action cannot be undone."),
+          confirmLabel: t("mailbox.delete", "Delete"),
+          danger: true,
+        })) return;
+        await runMailMutation(message, () => deleteMessage(message.id, projectId), t("mailbox.deleteFailed", "Failed to delete message"));
+      })(),
+    })
+    : [];
+
+  /*
   FNXC:MailboxSubject 2026-09-15-04:40:
   Operator requirement: every mail row shows an AUTHOR and a SUBJECT, never the raw head of the body
   (a completion notice used to render literally as "## Task completed: FN-325"). The subject comes
@@ -1918,6 +1965,7 @@ function MailTab({
       key={message.id}
       type="button"
       className={cn("mailbox-item", "agent-mail-tab-message", activeSubtab === "inbox" && !message.read && "unread", selectedMessageId === message.id && "agent-mail-tab-message--selected")}
+      {...rowMenu.getRowProps(mailboxRowMenuKey(message.id))}
       onClick={() => void handleMessageClick(message)}
       aria-pressed={selectedMessageId === message.id}
     >
@@ -1943,6 +1991,13 @@ function MailTab({
 
   return (
     <div className="agent-mail-tab">
+      <ListItemContextMenu
+        anchor={rowMenu.anchor}
+        ariaLabel={t("mailbox.messageActionsAria", "Message actions")}
+        actions={rowMenuActions}
+        onClose={rowMenu.close}
+        data-testid="agent-detail-mail-context-menu"
+      />
       <div className="agent-mail-tab-header">
         <h3>{t("agents.agentMail", "{{name}} Mail", { name: agent.name })}</h3>
         <button className="btn btn-sm" onClick={handleRefresh} disabled={isLoading}>

@@ -592,6 +592,11 @@ Mobile Missions keeps Plan New Mission above the list for immediate reachability
   font-weight: 600;
 }
 
+/*
+FNXC:MissionRowActions 2026-09-17-03:18:
+FN-486 : conservé pour la seule information d'exécution restée dans la ligne. Les commandes qui occupaient ce
+bloc (Reprendre, Réessayer, Revoir, Abandonner) vivent désormais dans le menu contextuel de la ligne.
+*/
 .mission-list__resume-actions {
   display: flex;
   flex-wrap: wrap;
@@ -843,10 +848,6 @@ Desktop owns the CTA in its sidebar bar, so the shared list header cannot duplic
   gap: var(--space-sm);
 }
 
-.mission-manager__sidebar .mission-list__item-actions {
-  justify-content: flex-end;
-}
-
 .mission-list__item-content {
   flex: 1;
   min-width: 0;
@@ -914,18 +915,15 @@ Desktop owns the CTA in its sidebar bar, so the shared list header cannot duplic
   overflow: hidden;
 }
 
-.mission-list__item-actions {
+/*
+FNXC:MissionRowActions 2026-09-17-03:18:
+FN-486 : le conteneur d'actions permanentes de la ligne et sa colonne de commandes d'exécution sont supprimés
+avec leurs règles. Seule subsiste la rangée d'AIDE, qui est une information et non une commande.
+*/
+.mission-list__item-run-help-row {
   display: flex;
-  align-items: center;
-  gap: calc(var(--space-xs) / 2);
-  flex-shrink: 0;
-}
-
-.mission-list__item-run-controls {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: calc(var(--space-xs) / 2);
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .mission-list__item-run-help {
@@ -1001,17 +999,13 @@ Desktop owns the CTA in its sidebar bar, so the shared list header cannot duplic
   background: var(--color-error);
 }
 
+/*
+FNXC:MissionRowActions 2026-09-17-03:18:
+FN-486 : le compteur d'échecs redevient une information lisible ; son accès est offert par le menu de la ligne.
+*/
 .mission-list__item-failed {
-  border: 0;
-  background: transparent;
   color: var(--color-error);
   font-size: 11px;
-  padding: 0;
-  cursor: pointer;
-}
-
-.mission-list__item-failed:hover {
-  text-decoration: underline;
 }
 
 .mission-relative-time {
@@ -1673,14 +1667,12 @@ Desktop owns the CTA in its sidebar bar, so the shared list header cannot duplic
   transition: width var(--transition-normal);
 }
 
-.mission-milestone__actions {
-  display: flex;
-  align-items: center;
-  gap: calc(var(--space-xs) / 2);
-  flex-shrink: 0;
-  margin-left: var(--space-xs);
-}
-
+/*
+FNXC:MissionRowActions 2026-09-17-03:18:
+FN-486 : les conteneurs d'actions permanentes des lignes hiérarchiques (jalon, slice, feature, feature
+corrective) sont supprimés avec leurs règles de base, leurs variantes empilées et leurs cibles tactiles.
+Leurs commandes vivent dans le menu contextuel partagé, qui porte sa propre cible tactile de ligne.
+*/
 .mission-milestone__body {
   padding: 0 var(--space-lg) var(--space-md);
   border-top: 1px solid var(--border);
@@ -1753,14 +1745,6 @@ Desktop owns the CTA in its sidebar bar, so the shared list header cannot duplic
   font-size: 11px;
   color: var(--text-dim);
   white-space: nowrap;
-}
-
-.mission-slice__actions {
-  display: flex;
-  align-items: center;
-  gap: calc(var(--space-xs) / 2);
-  flex-shrink: 0;
-  margin-left: var(--space-xs);
 }
 
 .mission-slice__body {
@@ -2094,10 +2078,11 @@ Desktop owns the CTA in its sidebar bar, so the shared list header cannot duplic
   white-space: nowrap;
 }
 
-/* ── Validate Button ── */
-.mission-icon-btn--validate {
-  color: var(--color-warning);
-}
+/*
+FNXC:MissionRowActions 2026-09-17-03:18:
+FN-486 : la variante « valider » et la variante « réparer » des boutons icône de ligne n'ont plus de
+consommateur : ces commandes sont des rangées du menu contextuel de la ligne.
+*/
 
 /* ── Features (nested inside slices) ── */
 .mission-features {
@@ -2157,22 +2142,6 @@ needs-review and unavailable visible without suggesting that a re-lock is a qual
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
-}
-
-.mission-feature__actions {
-  display: flex;
-  align-items: center;
-  gap: calc(var(--space-xs) / 2);
-  flex-shrink: 0;
-}
-
-.mission-icon-btn--repair {
-  color: var(--warning);
-}
-
-.mission-icon-btn--repair:hover:not(:disabled) {
-  color: var(--warning);
-  background: color-mix(in srgb, var(--warning) 14%, transparent);
 }
 
 .mission-feature__description {
@@ -2608,15 +2577,9 @@ needs-review and unavailable visible without suggesting that a re-lock is a qual
 
 /*
 FNXC:MissionValidationRepair 2026-08-11-00:07:
-Generated fix features can carry the same stale blocked state as ordinary rows. Keep their repair controls in the existing header layout so both presentations expose the identical, predicate-gated escape.
+Generated fix features can carry the same stale blocked state as ordinary rows. Keep their repair controls predicate-gated so both presentations expose the identical escape.
+FNXC:MissionRowActions 2026-09-17-03:18: FN-486 sert cet échappement par le menu contextuel de la ligne.
 */
-.mission-fix-feature__actions {
-  display: flex;
-  align-items: center;
-  gap: calc(var(--space-xs) / 2);
-  margin-left: auto;
-}
-
 .mission-fix-feature__title {
   border: none;
   background: transparent;
@@ -2761,13 +2724,6 @@ Generated fix features can carry the same stale blocked state as ordinary rows. 
     gap: var(--space-xs);
   }
 
-  .mission-milestone__actions {
-    width: 100%;
-    justify-content: flex-end;
-    margin-left: 0;
-    padding-top: var(--space-xs);
-  }
-
   .mission-milestone__body {
     padding: 0 var(--space-sm) var(--space-sm);
   }
@@ -2776,13 +2732,6 @@ Generated fix features can carry the same stale blocked state as ordinary rows. 
   .mission-slice__header {
     padding: var(--space-sm);
     gap: var(--space-xs);
-  }
-
-  .mission-slice__actions {
-    width: 100%;
-    justify-content: flex-end;
-    margin-left: 0;
-    padding-top: var(--space-xs);
   }
 
   .mission-slice__body {
@@ -2808,16 +2757,6 @@ Generated fix features can carry the same stale blocked state as ordinary rows. 
     gap: var(--space-sm);
   }
 
-  .mission-manager__body--stacked .mission-list__item-actions {
-    width: 100%;
-    flex-wrap: wrap;
-    justify-content: flex-start;
-  }
-
-  .mission-manager__body--stacked .mission-list__item-run-controls {
-    width: 100%;
-  }
-
   .mission-manager__body--stacked .mission-list__item-description,
   .mission-manager__body--stacked .mission-list__item-description .markdown-body {
     display: -webkit-box;
@@ -2829,17 +2768,6 @@ Generated fix features can carry the same stale blocked state as ordinary rows. 
 
   .mission-list__drafts-header {
     flex-wrap: wrap;
-  }
-
-  /* Touch-friendly controls */
-  .mission-list__item-actions .mission-icon-btn,
-  .mission-list__item-actions .mission-btn,
-  .mission-milestone__actions .mission-icon-btn,
-  .mission-slice__actions .mission-icon-btn,
-  .mission-feature__actions .mission-icon-btn,
-  .mission-fix-feature__actions .mission-icon-btn {
-    min-width: 36px;
-    min-height: 36px;
   }
 
   .mission-detail__run-controls > [data-testid="mission-reconcile-now"],
@@ -2876,17 +2804,6 @@ Generated fix features can carry the same stale blocked state as ordinary rows. 
   .mission-manager__header {
     flex-wrap: wrap;
     gap: var(--space-xs);
-  }
-
-  /* Fix touch targets to meet 36px minimum */
-  .mission-list__item-actions .mission-icon-btn,
-  .mission-list__item-actions .mission-btn,
-  .mission-milestone__actions .mission-icon-btn,
-  .mission-slice__actions .mission-icon-btn,
-  .mission-feature__actions .mission-icon-btn,
-  .mission-fix-feature__actions .mission-icon-btn {
-    min-width: 36px;
-    min-height: 36px;
   }
 
   /* Prevent horizontal overflow in body */
@@ -2965,11 +2882,6 @@ Generated fix features can carry the same stale blocked state as ordinary rows. 
 
   .mission-list__item-failed {
     width: fit-content;
-  }
-
-  /* Feature actions wrap on narrow screens */
-  .mission-feature__actions {
-    flex-wrap: wrap;
   }
 
   /* Progress bars fit narrow screens */

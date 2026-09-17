@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { ApiRequestError } from "../../api/client/client";
 import { normalizeMissionBlockers } from "../../api/missions/missions";
 import { MissionManager } from "../MissionManager";
@@ -43,6 +43,18 @@ function renderBlocked() {
   return render(<MissionManager isOpen isInline onClose={() => {}} addToast={() => {}} projectId="P-1" targetMissionId="M-1" />);
 }
 
+/*
+FNXC:MissionRowActions 2026-09-17-03:18:
+FN-486 : la réparation reste offerte sur ses DEUX surfaces propriétaires, mais celle de la LIGNE est
+désormais servie par son menu contextuel au lieu d'un bouton permanent. Les conditions d'affichage,
+l'état désactivé pendant l'appel et le rafraîchissement qui la retire sont inchangés.
+*/
+function openMissionRowMenu() {
+  const row = screen.getAllByText("Blocked mission")[0].closest(".mission-list__item") as HTMLElement;
+  fireEvent.contextMenu(row, { clientX: 10, clientY: 10 });
+  return screen.getByTestId("mission-row-context-menu");
+}
+
 describe("MissionManager blocked repair", () => {
   it("keeps linked-mission status in GoalsView read-only", () => {
     const goalsView = fs.readFileSync(path.resolve(import.meta.dirname, "../GoalsView.tsx"), "utf8");
@@ -71,13 +83,15 @@ describe("MissionManager blocked repair", () => {
 
   it("renders the clear control on both owning blocked badge surfaces and refreshes it away", async () => {
     renderBlocked();
-    await waitFor(() => expect(screen.getAllByRole("button", { name: "Clear blocked status" })).toHaveLength(2));
+    await waitFor(() => expect(screen.getAllByRole("button", { name: "Clear blocked status" })).toHaveLength(1));
     await waitFor(() => expect(screen.getByLabelText("Why blocked")).toHaveTextContent("F-1: budget-exhausted (feature-row)"));
     const rows = screen.getByLabelText("Why blocked").querySelectorAll("li");
     expect(rows).toHaveLength(canonicalBlockers.length);
     expect(new Set(canonicalBlockers.map((blocker) => `${blocker.rootFeatureId}\u0000${blocker.source}\u0000${blocker.reason}`)).size).toBe(rows.length);
     fetchMission.mockResolvedValueOnce({ ...blockedMission, status: "planning" });
     fetchMissions.mockResolvedValueOnce([{ ...blockedSummary, status: "planning" }]);
+    expect(within(openMissionRowMenu()).getByTestId("mission-menu-clear-blocked-M-1")).toBeInTheDocument();
+    fireEvent.keyDown(document, { key: "Escape" });
     fireEvent.click(screen.getAllByRole("button", { name: "Clear blocked status" })[0]);
     await waitFor(() => expect(clearMissionBlockedStatus).toHaveBeenCalledWith("M-1", {}, "P-1"));
     await waitFor(() => expect(screen.queryByRole("button", { name: "Clear blocked status" })).not.toBeInTheDocument());
@@ -96,7 +110,9 @@ describe("MissionManager blocked repair", () => {
     fetchMissionBlockedDiagnostics.mockRejectedValueOnce(new Error("offline"));
     renderBlocked();
     await waitFor(() => expect(screen.getByText("Blocker diagnostics are unavailable.")).toBeInTheDocument());
-    expect(screen.getAllByRole("button", { name: "Clear blocked status" })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: "Clear blocked status" })).toHaveLength(1);
+    expect(within(openMissionRowMenu()).getByTestId("mission-menu-clear-blocked-M-1")).toBeInTheDocument();
+    fireEvent.keyDown(document, { key: "Escape" });
     resumeMission.mockRejectedValueOnce(new ApiRequestError("conflict", 409, { code: "MISSION_RESUME_CONFLICT", blockerSchemaVersion: 1, blockers: canonicalBlockers }));
     fireEvent.click(screen.getAllByRole("button", { name: "Resume mission" })[0]);
     await waitFor(() => expect(screen.getByLabelText("Why blocked")).toHaveTextContent("F-1: budget-exhausted"));
@@ -108,6 +124,7 @@ describe("MissionManager blocked repair", () => {
     fetchMissionBlockedDiagnostics.mockResolvedValueOnce({ blockers: { malformed: true } });
     renderBlocked();
     await waitFor(() => expect(screen.getByText("Blocker diagnostics are unavailable.")).toBeInTheDocument());
-    expect(screen.getAllByRole("button", { name: "Clear blocked status" })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: "Clear blocked status" })).toHaveLength(1);
+    expect(within(openMissionRowMenu()).getByTestId("mission-menu-clear-blocked-M-1")).toBeInTheDocument();
   });
 });

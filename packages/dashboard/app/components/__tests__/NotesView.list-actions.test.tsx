@@ -35,19 +35,25 @@ describe("NotesView — actions par ligne de liste", () => {
   });
   afterEach(() => vi.clearAllMocks());
 
+  /*
+  FNXC:NotesRowActions 2026-09-17-03:18:
+  FN-486 : l'entrée n'est plus un bouton « … » mais la LIGNE elle-même, au clic droit (souris) ou par appui
+  long (tactile). Les assertions de mutation, de confirmation et de garde de brouillon sont conservées.
+  */
+  const rowTriggers = async () => screen.findAllByTestId("notes-list-item-context-row");
   const openRowMenu = async (index: number) => {
-    const triggers = await screen.findAllByTestId("notes-list-item-menu-btn");
-    fireEvent.click(triggers[index]);
+    const triggers = await rowTriggers();
+    fireEvent.contextMenu(triggers[index], { clientX: 24, clientY: 24 });
     return triggers[index];
   };
 
-  it("expose Renommer et Supprimer derrière le déclencheur à trois points", async () => {
+  it("expose Renommer et Supprimer au clic droit sur la ligne, sans bouton permanent", async () => {
     renderNotes();
     const trigger = await openRowMenu(1);
     expect(trigger).toHaveAttribute("aria-haspopup", "menu");
-    expect(trigger).toHaveAttribute("aria-expanded", "true");
-    expect(trigger).toHaveAccessibleName("Note actions for Journal");
+    expect(screen.queryByTestId("notes-list-item-menu-btn")).toBeNull();
     const menu = screen.getByRole("menu");
+    expect(menu).toHaveAccessibleName("Note actions for Journal");
     expect(within(menu).getByRole("menuitem", { name: "Rename" })).toBeInTheDocument();
     expect(within(menu).getByRole("menuitem", { name: "Delete" })).toBeInTheDocument();
   });
@@ -64,8 +70,7 @@ describe("NotesView — actions par ligne de liste", () => {
     fireEvent.click(await screen.findByRole("button", { name: /^Commande/ }));
     await screen.findByLabelText("Markdown editor");
 
-    const triggers = screen.getAllByTestId("notes-list-item-menu-btn");
-    fireEvent.click(triggers[1]);
+    await openRowMenu(1);
     fireEvent.click(screen.getByRole("menuitem", { name: "Rename" }));
     const input = screen.getByTestId("notes-list-item-rename-input");
     fireEvent.change(input, { target: { value: "Renommée" } });

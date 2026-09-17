@@ -9,7 +9,7 @@ desktop comme sur mobile, avec une liste vide comme peuplée. Prouve aussi que l
 plus jamais la collection archivée et qu'une session archivée résiduelle reste masquée.
 */
 
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PlanningModeModal } from "../PlanningModeModal";
 import { mockFetchAiSession, mockFetchAiSessions, mockTasks } from "./PlanningModeModal.test-helpers";
@@ -113,9 +113,18 @@ describe("PlanningModeModal archive affordance removal (FN-465)", () => {
     ]);
     renderPlanning();
 
+    /*
+    FNXC:PlanningSessionRowActions 2026-09-17-03:18:
+    FN-486 : Renommer et Supprimer restent offerts, mais par le menu contextuel de la ligne. Le contrôle
+    NÉGATIF de FN-465 est intact : aucune commande d'archivage, ni en ligne ni dans ce menu.
+    */
     const row = (await screen.findByText("Completed session")).closest(".planning-sidebar-item") as HTMLElement;
-    expect(within(row).getByLabelText("Rename session")).toBeInTheDocument();
-    expect(within(row).getByLabelText("Delete session")).toBeInTheDocument();
+    fireEvent.contextMenu(row.querySelector(".planning-sidebar-item-button") as HTMLElement, { clientX: 10, clientY: 10 });
+    const menu = screen.getByTestId("planning-session-context-menu");
+    expect(within(menu).getByTestId("planning-session-menu-rename")).toBeInTheDocument();
+    expect(within(menu).getByTestId("planning-session-menu-delete")).toBeInTheDocument();
+    expect(within(menu).queryByText(/archive/i)).toBeNull();
+    fireEvent.keyDown(document, { key: "Escape" });
     expect(screen.queryByText("Archived session")).toBeNull();
     expectNoArchiveAffordance();
   });

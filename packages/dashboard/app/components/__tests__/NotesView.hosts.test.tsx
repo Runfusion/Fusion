@@ -53,7 +53,7 @@ describe("NotesView — invariant partagé par les cinq hôtes", () => {
 
   it.each(hosts)("ne rend aucun contrôle d'édition dans $name", async ({ props, hasList, hasEditor }) => {
     mount(props);
-    if (hasList) await screen.findAllByTestId("notes-list-item-menu-btn");
+    if (hasList) await screen.findAllByTestId("notes-list-item-context-row");
     if (hasEditor && !props.dedicatedNoteId) {
       fireEvent.click(await screen.findByRole("button", { name: /^Commande/ }));
     }
@@ -86,11 +86,17 @@ describe("NotesView — invariant partagé par les cinq hôtes", () => {
     }
   });
 
+  /*
+  FNXC:NotesRowActions 2026-09-17-03:18:
+  FN-486 : chaque hôte à liste sert les mêmes actions par clic droit ou appui long sur la ligne. Aucun bouton
+  « … » ne subsiste dans aucun hôte, et la fenêtre dédiée (détail seul) ne gagne aucune affordance.
+  */
   it.each(hosts.filter((host) => host.hasList))("expose le menu d'actions par ligne dans $name", async ({ props }) => {
     mount(props);
-    const triggers = await screen.findAllByTestId("notes-list-item-menu-btn");
+    const triggers = await screen.findAllByTestId("notes-list-item-context-row");
     expect(triggers).toHaveLength(1);
-    fireEvent.click(triggers[0]);
+    expect(screen.queryByTestId("notes-list-item-menu-btn")).toBeNull();
+    fireEvent.contextMenu(triggers[0], { clientX: 12, clientY: 12 });
     const menu = screen.getByRole("menu");
     expect(within(menu).getByRole("menuitem", { name: "Rename" })).toBeInTheDocument();
     expect(within(menu).getByRole("menuitem", { name: "Delete" })).toBeInTheDocument();

@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiRequestError } from "../../api/client/client";
 import { MissionManager } from "../MissionManager";
@@ -47,31 +47,41 @@ describe("MissionManager manual validation in-flight conflict", () => {
     return { ...rendered, addToast };
   }
 
-  it.each([1280, 640])("shows the specific conflict and restores one enabled validate button at %ipx", async (width) => {
+  /*
+  FNXC:MissionRowActions 2026-09-17-03:18:
+  FN-486 : la validation manuelle s'ouvre depuis le menu contextuel de la ligne de feature. L'unicité de
+  l'affordance, sa désactivation pendant l'appel et son retour à l'état actif après conflit sont conservés.
+  */
+  function validateAction(container: HTMLElement): HTMLButtonElement {
+    fireEvent.contextMenu(container.querySelector(".mission-feature__header") as HTMLElement, { clientX: 10, clientY: 10 });
+    return within(screen.getByTestId("mission-row-context-menu")).getByTestId("feature-menu-validate-F-1") as HTMLButtonElement;
+  }
+
+  it.each([1280, 640])("shows the specific conflict and restores one enabled validate action at %ipx", async (width) => {
     Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
     window.dispatchEvent(new Event("resize"));
     triggerValidation.mockRejectedValueOnce(new ApiRequestError("Validation is already running for this feature", 409, { code: "VALIDATION_ALREADY_RUNNING" }));
     const { container, addToast } = renderManager();
     await screen.findByText("Ready feature");
-    const button = container.querySelector('[title="Validate feature"]') as HTMLButtonElement;
+    const button = validateAction(container);
     expect(button).not.toBeNull();
     fireEvent.click(button);
 
     await waitFor(() => expect(addToast).toHaveBeenCalledWith("Validation is already running for this feature", "info"));
     expect(addToast).not.toHaveBeenCalledWith("Failed to trigger validation", "error");
-    await waitFor(() => expect((container.querySelector('[title="Validate feature"]') as HTMLButtonElement).disabled).toBe(false));
-    expect(container.querySelectorAll('[title="Validate feature"]')).toHaveLength(1);
+    await waitFor(() => expect(validateAction(container).disabled).toBe(false));
+    expect(within(screen.getByTestId("mission-row-context-menu")).getAllByTestId("feature-menu-validate-F-1")).toHaveLength(1);
     expect(fetchValidationLoopState).toHaveBeenCalledWith("F-1", "p1");
   });
 
   it("preserves successful and generic validation feedback", async () => {
     const { container, addToast } = renderManager();
     await screen.findByText("Ready feature");
-    fireEvent.click(container.querySelector('[title="Validate feature"]')!);
+    fireEvent.click(validateAction(container));
     await waitFor(() => expect(addToast).toHaveBeenCalledWith("Validation triggered", "success"));
 
     triggerValidation.mockRejectedValueOnce(new Error("network unavailable"));
-    fireEvent.click(container.querySelector('[title="Validate feature"]')!);
+    fireEvent.click(validateAction(container));
     await waitFor(() => expect(addToast).toHaveBeenCalledWith("network unavailable", "error"));
   });
 });

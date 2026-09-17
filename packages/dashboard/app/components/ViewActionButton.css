@@ -22,6 +22,50 @@ rows, tabs, and selects. The collapsed create action is therefore bordered, neve
 }
 
 /*
+FNXC:ViewBackIconParity 2026-09-17-03:18:
+FN-486 : le retour et la création doivent avoir EXACTEMENT la même géométrie visible. La déclaration
+ci-dessus était inerte pour le chevron : `styles.css` est chargé en DERNIER et y repose `.btn-icon > svg`
+à spécificité égale (0,1,1) avec les propriétés PHYSIQUES `width`/`height`, qui l'emportaient donc par
+ordre de document et donnaient au chevron un pictogramme plus grand que celui du « + ». Cette règle porte
+la même intention à 0,2,1, en propriétés physiques, sans `!important` ni `:not()` : elle gagne de manière
+déterministe pour ce seul bouton, et ne touche ni les autres `btn-icon` ni la taille du « + ».
+*/
+.btn.view-back-button > svg {
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
+}
+
+/*
+FNXC:ViewBackIconParity 2026-09-17-03:18:
+Sur téléphone, la boîte du retour est la boîte canonique partagée, déclarée explicitement comme celle de
+l'action de création réduite à son icône : même carré, aucun padding résiduel, et `flex-shrink` empêché
+pour qu'un titre long ne puisse pas la comprimer. Aucune règle globale `.btn-icon` n'est modifiée.
+*/
+@media (max-width: 768px), (max-height: 480px) {
+  html[data-viewport-mode="mobile"] .btn.view-back-button {
+    inline-size: var(--icon-button-size-mobile);
+    min-inline-size: var(--icon-button-size-mobile);
+    block-size: var(--icon-button-size-mobile);
+    min-block-size: var(--icon-button-size-mobile);
+    flex: none;
+    justify-content: center;
+    padding: 0;
+  }
+}
+
+@media (max-width: 768px) {
+  html:not([data-viewport-mode]) .btn.view-back-button {
+    inline-size: var(--icon-button-size-mobile);
+    min-inline-size: var(--icon-button-size-mobile);
+    block-size: var(--icon-button-size-mobile);
+    min-block-size: var(--icon-button-size-mobile);
+    flex: none;
+    justify-content: center;
+    padding: 0;
+  }
+}
+
+/*
 FNXC:IconOnlyButtonCanon 2026-09-16-19:05:
 The back chevron is icon-only at every viewport, so it owns no box of its own: `btn btn-icon` already resolves
 to the canonical square through the global contract in `styles.css`. Only its flex behaviour stays local.

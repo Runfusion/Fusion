@@ -1,7 +1,7 @@
 import "./NotesView.css";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ProjectNoteSummary } from "@fusion/core";
-import { MoreHorizontal, RefreshCw, Search, StickyNote } from "lucide-react";
+import { RefreshCw, Search, StickyNote } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useConfirm } from "../hooks/useConfirm";
 import { useNotes, type UseNotesController } from "../hooks/useNotes";
@@ -12,6 +12,8 @@ import { ViewHeader } from "./ViewHeader";
 import { ViewLayout } from "./ViewLayout";
 import { ViewSidebar } from "./ViewSidebar";
 import { FloatingWindow } from "./FloatingWindow";
+import { useListItemContextMenu } from "../hooks/useListItemContextMenu";
+import { ListItemContextMenu, type ListItemMenuAction } from "./ListItemContextMenu";
 
 export interface NotesViewProps {
   projectId?: string;
@@ -61,7 +63,13 @@ export function NotesView({ projectId, addToast, controller, compact = false, li
   const dedicated = Boolean(dedicatedNoteId);
   const dedicatedSelectionRef = useRef<string | null>(null);
   const adoptedRevisionRef = useRef<number | null>(null);
-  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  /*
+  FNXC:NotesRowActions 2026-09-17-03:18:
+  FN-486 : la ligne de note n'expose plus de bouton « … ». Renommer et Supprimer s'ouvrent au clic droit, à la
+  touche Menu ou par appui long, par le menu contextuel PARTAGÉ. Ouvrir ce menu ne sélectionne pas la note :
+  aucune lecture, aucun brouillon écrasé, aucune vidange d'autosave déclenchée par le simple geste.
+  */
+  const rowMenu = useListItemContextMenu({ contextId: `${projectId ?? ""}:notes` });
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
 
@@ -213,7 +221,6 @@ export function NotesView({ projectId, addToast, controller, compact = false, li
   dialogue créerait une seconde couche modale par-dessus la première, que l'opérateur devrait fermer deux fois.
   */
   const startRename = (note: ProjectNoteSummary) => {
-    setOpenMenuId(null);
     setRenamingId(note.id);
     setRenameDraft(note.title);
   };
@@ -227,7 +234,6 @@ export function NotesView({ projectId, addToast, controller, compact = false, li
     onChanged?.();
   };
   const handleDeleteNote = async (note: ProjectNoteSummary) => {
-    setOpenMenuId(null);
     if (!await confirm.confirm({ title: t("notes.deleteTitle", "Delete note?"), message: t("notes.deleteMessage", "This action cannot be undone."), confirmLabel: t("common.delete", "Delete"), danger: true })) return;
     if (note.id === notes.selected?.id) cancelScheduledSave();
     if (!await notes.removeNote(note.id)) return;
@@ -235,6 +241,17 @@ export function NotesView({ projectId, addToast, controller, compact = false, li
     onChanged?.();
     if (dedicatedNoteId === note.id || (floating && note.id === notes.selected?.id)) floating?.onClose();
   };
+
+  /* La cible du menu est résolue à chaque rendu dans les données COURANTES : une note retirée par un
+     rafraîchissement ferme son menu au lieu d'exposer une action sur un objet périmé. */
+  const menuNote = rowMenu.anchor ? notes.notes.find((candidate) => `note:${candidate.id}` === rowMenu.anchor?.key) ?? null : null;
+  useEffect(() => {
+    if (rowMenu.anchor && !menuNote) rowMenu.close();
+  }, [menuNote, rowMenu]);
+  const menuActions: ListItemMenuAction[] = menuNote ? [
+    { id: "rename", label: t("notes.rename", "Rename"), testId: "notes-menu-rename", onSelect: () => startRename(menuNote) },
+    { id: "delete", label: t("common.delete", "Delete"), tone: "danger", testId: "notes-menu-delete", onSelect: () => void handleDeleteNote(menuNote) },
+  ] : [];
 
   const list = <div className="notes-list">
     <div className="notes-search">
@@ -265,24 +282,16 @@ export function NotesView({ projectId, addToast, controller, compact = false, li
               else if (event.key === "Escape") { event.preventDefault(); cancelRename(); }
             }}
           />
-          : <button type="button" className="notes-list-item-select" aria-current={isSelected ? "page" : undefined} onClick={() => void handleSelect(note.id)}><strong>{note.title}</strong><time dateTime={note.updatedAt}>{new Date(note.updatedAt).toLocaleString()}</time></button>}
-        <button
-          type="button"
-          className="btn-icon notes-list-item-menu-btn"
-          data-testid="notes-list-item-menu-btn"
-          aria-haspopup="menu"
-          aria-expanded={openMenuId === note.id}
-          aria-label={t("notes.actionsAria", "Note actions for {{title}}", { title: note.title })}
-          onClick={(event) => { event.stopPropagation(); setOpenMenuId((current) => (current === note.id ? null : note.id)); }}
-        >
-          <MoreHorizontal size={14} />
-        </button>
-        {openMenuId === note.id ? <div className="notes-list-item-menu" role="menu">
-          <button type="button" role="menuitem" className="notes-list-item-menu-action" onClick={(event) => { event.stopPropagation(); startRename(note); }}>{t("notes.rename", "Rename")}</button>
-          <button type="button" role="menuitem" className="notes-list-item-menu-action notes-list-item-menu-action--danger" onClick={(event) => { event.stopPropagation(); void handleDeleteNote(note); }}>{t("common.delete", "Delete")}</button>
-        </div> : null}
+          : <button type="button" className="notes-list-item-select" data-testid="notes-list-item-context-row" aria-current={isSelected ? "page" : undefined} {...rowMenu.getRowProps(`note:${note.id}`)} onClick={() => void handleSelect(note.id)}><strong>{note.title}</strong><time dateTime={note.updatedAt}>{new Date(note.updatedAt).toLocaleString()}</time></button>}
       </div>;
     })}</div>
+    <ListItemContextMenu
+      anchor={rowMenu.anchor}
+      ariaLabel={t("notes.actionsAria", "Note actions for {{title}}", { title: menuNote?.title ?? "" })}
+      actions={menuActions}
+      onClose={rowMenu.close}
+      data-testid="notes-list-item-context-menu"
+    />
   </div>;
 
   const detail = <main className="notes-detail">

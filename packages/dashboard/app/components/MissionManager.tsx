@@ -6,6 +6,8 @@ import "./MissionManager.css";
 import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { FloatingWindow } from "./FloatingWindow";
+import { useListItemContextMenu } from "../hooks/useListItemContextMenu";
+import { ListItemContextMenu, type ListItemMenuAction } from "./ListItemContextMenu";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -29,13 +31,11 @@ import {
   Check,
   Loader2,
   Link,
-  Unlink,
   Play,
   Square,
   Sparkles,
   Zap,
   Activity,
-  FileText,
   RefreshCw,
 } from "lucide-react";
 import { useConfirm } from "../hooks/useConfirm";
@@ -817,49 +817,13 @@ function MissionReconcilePreview({
   );
 }
 
-function FeatureValidationRepairActions({
-  feature,
-  busy,
-  onClear,
-  onReRun,
-  t,
-}: {
-  feature: Pick<MissionFeature, "id" | "status" | "loopState">;
-  busy: boolean;
-  onClear: (featureId: string) => void;
-  onReRun: (featureId: string) => void;
-  t: ReturnType<typeof useTranslation>["t"];
-}) {
-  const eligibility = featureValidationRepairEligibility(feature);
-  if (!eligibility.clear && !eligibility.reRun) return null;
-
-  return (
-    <>
-      {eligibility.clear && (
-        <button
-          className="mission-icon-btn mission-icon-btn--repair"
-          onClick={() => onClear(feature.id)}
-          title={t("missions.clearValidationBadge", "Clear validation badge")}
-          aria-label={t("missions.clearValidationBadge", "Clear validation badge")}
-          disabled={busy}
-        >
-          {busy ? <Loader2 size={14} className="spinner" /> : <X size={14} />}
-        </button>
-      )}
-      {eligibility.reRun && (
-        <button
-          className="mission-icon-btn mission-icon-btn--repair"
-          onClick={() => onReRun(feature.id)}
-          title={t("missions.rerunValidation", "Re-run validation")}
-          aria-label={t("missions.rerunValidation", "Re-run validation")}
-          disabled={busy}
-        >
-          {busy ? <Loader2 size={14} className="spinner" /> : <RefreshCw size={14} />}
-        </button>
-      )}
-    </>
-  );
-}
+/*
+FNXC:MissionRowActions 2026-09-17-03:18:
+FN-486 : le composant `FeatureValidationRepairActions` est SUPPRIMÉ avec ses deux boutons de ligne. Le
+prédicat d'admissibilité `featureValidationRepairEligibility` reste l'unique autorité et alimente désormais
+les entrées « Clear validation badge » et « Re-run validation » du menu contextuel des lignes de feature,
+ordinaires comme correctives ; l'état « réparation en cours » désactive toujours ces entrées.
+*/
 
 export function MissionManager({ isOpen, isInline = false, onClose, addToast, projectId, workflowId, onSelectTask, availableTasks = [], resumeSessionId, targetMissionId, milestoneSliceResumeSessionId, onMilestoneSliceResumeFetchError, onNavigateToGoal }: MissionManagerProps) {
   const { t } = useTranslation("app");
@@ -1063,6 +1027,45 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
 
   // Delete confirmation
   const [deleteConfirmId, setDeleteConfirmId] = useState<{ type: string; id: string; milestoneId?: string } | null>(null);
+
+  /*
+  FNXC:MissionRowActions 2026-09-17-03:18:
+  FN-486 : UN seul contrôleur de menu contextuel sert toutes les lignes de Missions — collection principale,
+  brouillons d'entretien et lignes hiérarchiques. La clé est COMPOSÉE (`<type>:<id>` plus l'identifiant du
+  parent quand un lien en dépend), donc une commande vise toujours la ligne touchée et jamais
+  `selectedMission`. Un seul menu peut être ouvert à la fois, ce qui interdit qu'un menu d'enfant se propage à
+  son parent. Le changement de projet ferme le menu, car sa cible n'appartient plus au contexte affiché.
+  */
+  const rowMenu = useListItemContextMenu({ enabled: isActive, contextId: `${projectId ?? ""}:missions` });
+  const rowMenuResolvedRef = useRef(false);
+
+  /*
+  FNXC:MissionRowActions 2026-09-17-04:36:
+  FN-486 : le clavier d'une ligne se COMPOSE, il ne s'écrase pas. L'ouverture par la touche Menu / Shift+F10
+  appartient au contrat partagé ; une ligne qui doit aussi s'activer par Entrée/Espace appelle d'abord
+  l'ouvreur du menu, sort si celui-ci a consommé la touche, puis applique sa propre activation. Redéclarer
+  `onKeyDown` après l'étalement des props supprimait le SEUL accès clavier aux commandes de la ligne, dont les
+  boutons secondaires ont été retirés.
+  */
+  const rowMenuProps = useCallback((key: string, onActivate?: () => void) => {
+    const menuProps = rowMenu.getRowProps(key);
+    return {
+      ...menuProps,
+      onKeyDown: (event: React.KeyboardEvent<HTMLElement>) => {
+        menuProps.onKeyDown(event);
+        if (event.defaultPrevented || event.currentTarget !== event.target) return;
+        if (!onActivate) return;
+        if (event.key === "Enter") {
+          onActivate();
+          return;
+        }
+        if (event.key === " ") {
+          event.preventDefault();
+          onActivate();
+        }
+      },
+    };
+  }, [rowMenu]);
 
   // Assertion panel state
   const [assertionsByMilestone, setAssertionsByMilestone] = useState<Map<string, MissionContractAssertion[]>>(new Map());
@@ -3169,6 +3172,16 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
     }
   }, [addToast, deleteConfirmId, handleDeleteAssertion, handleDeleteFeature, handleDeleteMilestone, handleDeleteSlice, handleDiscardInterviewSession, t]);
 
+  /*
+  FNXC:MissionRowActions 2026-09-17-03:18:
+  FN-486 : cet effet DOIT rester au-dessus du retour anticipé `if (!isActive) return null`, sinon le nombre de
+  hooks varie entre deux rendus. La résolution du menu, elle, se fait plus bas — elle ne consomme aucun hook
+  et sa valeur est publiée ici par une référence, de sorte qu'une cible disparue ferme le menu au rendu suivant.
+  */
+  useEffect(() => {
+    if (rowMenu.anchor && !rowMenuResolvedRef.current) rowMenu.close();
+  });
+
   if (!isActive) return null;
 
   const renderMissionDetailContent = () => {
@@ -3612,8 +3625,16 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
 
                   return (
                   <div key={milestone.id} className="mission-milestone">
-                    <div className="mission-milestone__header" draggable={isNativeStructureDragEnabled()} onDragStart={(event) => {
+                    {/*
+                    FNXC:MissionRowActions 2026-09-17-03:18:
+                    FN-486 : une EN-TÊTE DE LIGNE hiérarchique n'est pas un en-tête de modale : ses commandes
+                    secondaires passent au menu contextuel de la ligne. L'expansion, le glisser-déposer natif
+                    et les formulaires déjà ouverts restent inchangés ; le menu d'un enfant ne se propage pas
+                    à son parent parce qu'un seul menu, identifié par sa clé composée, peut être ouvert.
+                    */}
+                    <div className="mission-milestone__header" role="button" tabIndex={0} aria-label={milestone.title} {...rowMenuProps(`milestone:${milestone.id}`, () => toggleMilestoneExpanded(milestone.id))} draggable={isNativeStructureDragEnabled()} onDragStart={(event) => {
                       // FNXC:NativeStructureEmbed 2026-07-22-10:30: Milestones use the same transferable ref as missions and mail drops.
+                      rowMenu.close();
                       serializeNativeStructureRef(event.dataTransfer, { kind: "milestone", id: milestone.id, projectId });
                     }} onClick={() => toggleMilestoneExpanded(milestone.id)}>
                       <button className="mission-milestone__expand">
@@ -3663,39 +3684,6 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                           )}
                         </>
                       )}
-                      {milestone.status !== "complete" && (
-                        <button
-                          className="mission-icon-btn"
-                          onClick={() => setInterviewTarget({ type: "milestone", id: milestone.id, title: milestone.title })}
-                          title={t("missions.planMilestone", "Plan milestone")}
-                          aria-label={t("missions.planMilestone", "Plan milestone")}
-                        >
-                          <FileText size={14} />
-                        </button>
-                      )}
-                      <div className="mission-milestone__actions" onClick={(e) => e.stopPropagation()}>
-                        <button
-                          className="mission-icon-btn"
-                          onClick={() => handleCreateSlice(milestone.id)}
-                          title={t("missions.addSlice", "Add slice")}
-                        >
-                          <Plus size={14} />
-                        </button>
-                        <button
-                          className="mission-icon-btn"
-                          onClick={() => handleEditMilestone(milestone)}
-                          title={t("missions.editMilestone", "Edit milestone")}
-                        >
-                          <Pencil size={14} />
-                        </button>
-                        <button
-                          className="mission-icon-btn mission-icon-btn--danger"
-                          onClick={() => setDeleteConfirmId({ type: "milestone", id: milestone.id })}
-                          title={t("missions.deleteMilestone", "Delete milestone")}
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
                     </div>
 
                     {expandedMilestones.has(milestone.id) && (
@@ -3843,7 +3831,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                                 <div className="mission-fix-features__list">
                                   {milestoneFixFeatures.map((fixFeature) => (
                                     <div key={fixFeature.id} className="mission-fix-feature">
-                                      <div className="mission-fix-feature__header">
+                                      <div className="mission-fix-feature__header" tabIndex={0} aria-label={fixFeature.title} {...rowMenuProps(`fix-feature:${fixFeature.id}`)}>
                                         <button
                                           className="mission-fix-feature__title"
                                           onClick={() => focusFeature(fixFeature.id)}
@@ -3865,17 +3853,6 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                                             {fixFeature.loopState}
                                           </span>
                                         )}
-                                        {featureValidationRepairEligibility(fixFeature).clear || featureValidationRepairEligibility(fixFeature).reRun ? (
-                                          <div className="mission-fix-feature__actions">
-                                            <FeatureValidationRepairActions
-                                              feature={fixFeature}
-                                              busy={repairingValidationFeatures.has(fixFeature.id)}
-                                              onClear={handleClearValidationBadge}
-                                              onReRun={handleRerunValidation}
-                                              t={t}
-                                            />
-                                          </div>
-                                        ) : null}
                                       </div>
                                       <div className="mission-fix-feature__meta">
                                         <span>{t("missions.source", "Source:")}</span>
@@ -3918,7 +3895,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                         <div className="mission-slices">
                           {milestone.slices.map((slice) => (
                             <div key={slice.id} className="mission-slice">
-                              <div className="mission-slice__header" onClick={() => toggleSliceExpanded(slice.id)}>
+                              <div className="mission-slice__header" role="button" tabIndex={0} aria-label={slice.title} {...rowMenuProps(`slice:${slice.id}`, () => toggleSliceExpanded(slice.id))} onClick={() => toggleSliceExpanded(slice.id)}>
                                 <button className="mission-slice__expand">
                                   {expandedSlices.has(slice.id) ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                                 </button>
@@ -3935,58 +3912,6 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                                 </span>
                                 <span className="mission-slice__count">{t("missions.featuresCount", "{{count}} features", { count: slice.features?.length || 0 })}</span>
                                 <PlanStateIndicator state={slice.planState ?? "not_started"} />
-                                {slice.status !== "complete" && (
-                                  <button
-                                    className="mission-icon-btn"
-                                    onClick={() => setInterviewTarget({ type: "slice", id: slice.id, title: slice.title })}
-                                    title={t("missions.planSlice", "Plan slice")}
-                                    aria-label={t("missions.planSlice", "Plan slice")}
-                                  >
-                                    <FileText size={14} />
-                                  </button>
-                                )}
-                                <div className="mission-slice__actions" onClick={(e) => e.stopPropagation()}>
-                                  {slice.status === "pending" && (
-                                    <button
-                                      className="mission-icon-btn mission-icon-btn--success"
-                                      onClick={() => handleActivateSlice(slice.id)}
-                                      title={t("missions.activateSlice", "Activate slice")}
-                                    >
-                                      <Play size={14} />
-                                    </button>
-                                  )}
-                                  {slice.status === "active" && slice.features?.some((f) => f.status === "defined") && (
-                                    <button
-                                      className="mission-icon-btn"
-                                      onClick={() => handleTriageAllSliceFeatures(slice.id)}
-                                      title={t("missions.triageAllFeatures", "Triage all features")}
-                                      disabled={saving}
-                                    >
-                                      {saving ? <Loader2 size={14} className="spinner" /> : <Zap size={14} />}
-                                    </button>
-                                  )}
-                                  <button
-                                    className="mission-icon-btn"
-                                    onClick={() => handleCreateFeature(slice.id)}
-                                    title={t("missions.addFeature", "Add feature")}
-                                  >
-                                    <Plus size={14} />
-                                  </button>
-                                  <button
-                                    className="mission-icon-btn"
-                                    onClick={() => handleEditSlice(slice)}
-                                    title={t("missions.editSlice", "Edit slice")}
-                                  >
-                                    <Pencil size={14} />
-                                  </button>
-                                  <button
-                                    className="mission-icon-btn mission-icon-btn--danger"
-                                    onClick={() => setDeleteConfirmId({ type: "slice", id: slice.id })}
-                                    title={t("missions.deleteSlice", "Delete slice")}
-                                  >
-                                    <Trash2 size={14} />
-                                  </button>
-                                </div>
                               </div>
 
                               {expandedSlices.has(slice.id) && (
@@ -4072,7 +3997,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                                         className="mission-feature"
                                         data-mission-feature-id={feature.id}
                                       >
-                                        <div className="mission-feature__header">
+                                        <div className="mission-feature__header" tabIndex={0} aria-label={feature.title} {...rowMenuProps(`feature:${feature.id}`)}>
                                           <button
                                             className="mission-feature__expand"
                                             onClick={() => toggleFeatureExpanded(feature.id)}
@@ -4143,21 +4068,6 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                                               </span>
                                             );
                                           })()}
-                                          {/* Validation trigger button for implementing features */}
-                                          {feature.loopState === "implementing" && (
-                                            <button
-                                              className="mission-icon-btn mission-icon-btn--validate"
-                                              onClick={() => handleTriggerValidation(feature.id)}
-                                              title={t("missions.validateFeature", "Validate feature")}
-                                              disabled={validatingFeatures.has(feature.id)}
-                                            >
-                                              {validatingFeatures.has(feature.id) ? (
-                                                <Loader2 size={14} className="spinner" />
-                                              ) : (
-                                                <Sparkles size={14} />
-                                              )}
-                                            </button>
-                                          )}
                                           {feature.taskId && (
                                             <span
                                               className="mission-feature__task-link"
@@ -4167,60 +4077,6 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                                               {feature.taskId}
                                             </span>
                                           )}
-                                          <div className="mission-feature__actions">
-                                            <FeatureValidationRepairActions
-                                              feature={feature}
-                                              busy={repairingValidationFeatures.has(feature.id)}
-                                              onClear={handleClearValidationBadge}
-                                              onReRun={handleRerunValidation}
-                                              t={t}
-                                            />
-                                            {feature.status === "defined" && !feature.taskId && (
-                                              <button
-                                                className="mission-icon-btn"
-                                                onClick={() => handleTriageFeatureWithPreview(feature.id)}
-                                                title={t("missions.triageCreateTask", "Triage — create task")}
-                                                disabled={saving || triagePreviewLoading === feature.id}
-                                              >
-                                                {triagePreviewLoading === feature.id ? (
-                                                  <Loader2 size={14} className="spinner" />
-                                                ) : (
-                                                  <Zap size={14} />
-                                                )}
-                                              </button>
-                                            )}
-                                            {feature.taskId ? (
-                                              <button
-                                                className="mission-icon-btn"
-                                                onClick={() => handleUnlinkTask(feature.id)}
-                                                title={t("missions.unlinkTask", "Unlink task")}
-                                              >
-                                                <Unlink size={14} />
-                                              </button>
-                                            ) : feature.status !== "defined" ? (
-                                              <button
-                                                className="mission-icon-btn"
-                                                onClick={() => setLinkTaskFeatureId(feature.id)}
-                                                title={t("missions.linkToTask", "Link to task")}
-                                              >
-                                                <Link size={14} />
-                                              </button>
-                                            ) : null}
-                                            <button
-                                              className="mission-icon-btn"
-                                              onClick={() => handleEditFeature(feature)}
-                                              title={t("missions.editFeature", "Edit feature")}
-                                            >
-                                              <Pencil size={14} />
-                                            </button>
-                                            <button
-                                              className="mission-icon-btn mission-icon-btn--danger"
-                                              onClick={() => setDeleteConfirmId({ type: "feature", id: feature.id })}
-                                              title={t("missions.deleteFeature", "Delete feature")}
-                                            >
-                                              <Trash2 size={14} />
-                                            </button>
-                                          </div>
                                         </div>
 
                                         {feature.description && (
@@ -4537,7 +4393,12 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                                   className="mission-assertion"
                                   data-mission-assertion-id={assertion.id}
                                 >
-                                  <div className="mission-assertion__header">
+                                  <div
+                                    className="mission-assertion__header"
+                                    {...(editingAssertionId === assertion.id
+                                      ? {}
+                                      : { tabIndex: 0, "aria-label": assertion.title, ...rowMenuProps(`assertion:${milestone.id}:${assertion.id}`) })}
+                                  >
                                     {editingAssertionId === assertion.id ? (
                                       <div className="mission-form-card">
                                         <input
@@ -4599,21 +4460,6 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                                           title={t("missions.toggleDetails", "Toggle details")}
                                         >
                                           {expandedAssertionId === assertion.id ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                                        </button>
-                                        <button
-                                          className="mission-icon-btn"
-                                          onClick={() => handleEditAssertion(assertion)}
-                                          title={t("missions.editAssertion", "Edit assertion")}
-                                        >
-                                          <Pencil size={14} />
-                                        </button>
-                                        <button
-                                          className="mission-icon-btn mission-icon-btn--danger"
-                                          onClick={() => setDeleteConfirmId({ type: "assertion", id: assertion.id, milestoneId: milestone.id })}
-                                          title={t("missions.deleteAssertion", "Delete assertion")}
-                                          aria-label={t("missions.deleteAssertion", "Delete assertion")}
-                                        >
-                                          <Trash2 size={14} />
                                         </button>
                                       </>
                                     )}
@@ -4679,16 +4525,15 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                                             const key = `${feature.id}-${assertion.id}`;
                                             const isUnlinking = unlinkingFeatures.has(key);
                                             return (
-                                              <div key={feature.id} className="mission-assertion__linked-feature">
+                                              /*
+                                              FNXC:MissionRowActions 2026-09-17-03:18:
+                                              FN-486 : la ligne de lien assertion ↔ feature garde son identité COMPOSÉE
+                                              (assertion + feature), sans quoi délier l'un des deux liens toucherait
+                                              l'autre. L'état « déliaison en cours » reste visible dans la ligne.
+                                              */
+                                              <div key={feature.id} className="mission-assertion__linked-feature" tabIndex={0} aria-label={feature.title} {...rowMenuProps(`assertion-link:${assertion.id}:${feature.id}`)}>
                                                 <span className="mission-assertion__linked-feature-title">{feature.title}</span>
-                                                <button
-                                                  className="mission-icon-btn mission-icon-btn--danger"
-                                                  onClick={() => handleUnlinkFeatureFromAssertion(feature.id, assertion.id)}
-                                                  disabled={isUnlinking}
-                                                  title={t("missions.unlinkFeature", "Unlink feature")}
-                                                >
-                                                  {isUnlinking ? <Loader2 size={12} className="spinner" /> : <Unlink size={12} />}
-                                                </button>
+                                                {isUnlinking ? <Loader2 size={12} className="spinner" aria-label={t("missions.unlinkFeature", "Unlink feature")} /> : null}
                                               </div>
                                             );
                                           });
@@ -4956,10 +4801,6 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
     const isErrored = session.status === "error";
     const isGenerating = session.status === "generating";
     const isComplete = session.status === "complete";
-    const resumeActionLabel = session.status === "error" ? t("missions.interviewActionRetry", "Retry interview")
-      : session.status === "generating" ? t("missions.interviewActionGenerating", "Generating plan")
-      : session.status === "complete" ? t("missions.interviewActionReview", "Review plan")
-      : t("missions.interviewActionResume", "Resume interview");
     const description = isGenerating
       ? t("missions.interviewGenerating", "Generating mission hierarchy from interview context.")
       : isErrored
@@ -4976,18 +4817,8 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
         role="button"
         tabIndex={0}
         aria-label={t("missions.resumeInterviewAriaLabel", "Resume interview {{title}}", { title: session.title || t("missions.defaultInterviewTitle", "Mission interview") })}
+        {...rowMenuProps(`draft:${session.id}`, () => handleResumeInterviewSession(session.id))}
         onClick={() => handleResumeInterviewSession(session.id)}
-        onKeyDown={(event) => {
-          if (event.currentTarget !== event.target) return;
-          if (event.key === "Enter") {
-            handleResumeInterviewSession(session.id);
-            return;
-          }
-          if (event.key === " ") {
-            event.preventDefault();
-            handleResumeInterviewSession(session.id);
-          }
-        }}
       >
         <div className="mission-list__item-content">
           <div className="mission-list__item-header">
@@ -5000,31 +4831,35 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
             </span>
           </div>
           <p className="mission-list__item-description">{description}</p>
-        </div>
-        <div className="mission-list__item-actions mission-list__resume-actions" onClick={(event) => event.stopPropagation()}>
-          <button
-            className="mission-btn mission-btn--ghost mission-btn--sm"
-            onClick={() => handleResumeInterviewSession(session.id)}
-            title={resumeActionLabel}
-            aria-label={resumeActionLabel}
-            disabled={isGenerating}
-          >
-            {isGenerating ? <Loader2 size={14} className="spinner" /> : isErrored ? <RefreshCw size={14} /> : <Sparkles size={14} />}
-            <span>{actionText}</span>
-          </button>
-          <button
-            className="mission-btn mission-btn--danger mission-btn--sm"
-            onClick={() => setDeleteConfirmId({ type: "interview_draft", id: session.id })}
-            title={t("missions.discardDraft", "Discard draft")}
-            aria-label={t("missions.discardDraft", "Discard draft")}
-          >
-            <Trash2 size={14} />
-            <span>{t("missions.discardButton", "Discard")}</span>
-          </button>
+          {/*
+          FNXC:MissionRowActions 2026-09-17-03:18:
+          FN-486 : Reprendre/Réessayer/Revoir et Abandonner quittent la ligne pour son menu contextuel. L'ÉTAT
+          de génération reste visible dans la ligne (c'est une information, pas une commande) et l'action
+          correspondante reste désactivée dans le menu, exactement comme avant.
+          */}
+          {isGenerating ? (
+            <div className="mission-list__item-tags" data-testid={`mission-draft-generating-${session.id}`}>
+              <Loader2 size={14} className="spinner" aria-hidden="true" />
+              <span>{actionText}</span>
+            </div>
+          ) : null}
         </div>
       </div>
     );
   });
+
+  /** Commandes d'un brouillon d'entretien. Aucune édition n'est inventée : un brouillon ne s'édite pas. */
+  const buildInterviewDraftRowActions = (session: MissionInterviewDraftSummary): ListItemMenuAction[] => {
+    const isGenerating = session.status === "generating";
+    const resumeLabel = session.status === "error" ? t("missions.interviewActionRetry", "Retry interview")
+      : isGenerating ? t("missions.interviewActionGenerating", "Generating plan")
+        : session.status === "complete" ? t("missions.interviewActionReview", "Review plan")
+          : t("missions.interviewActionResume", "Resume interview");
+    return [
+      { id: "resume", label: resumeLabel, testId: `mission-draft-menu-resume-${session.id}`, disabled: isGenerating, onSelect: () => handleResumeInterviewSession(session.id) },
+      { id: "discard", label: t("missions.discardDraft", "Discard draft"), tone: "danger", testId: `mission-draft-menu-discard-${session.id}`, onSelect: () => setDeleteConfirmId({ type: "interview_draft", id: session.id }) },
+    ];
+  };
 
   const renderMissionListItems = (missionList: MissionWithSummary[], options?: { interviewStyle?: boolean }) => missionList.map((mission) => {
     const m = mission;
@@ -5054,22 +4889,14 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
         aria-label={t("missions.openMissionAriaLabel", "Open mission {{title}}", { title: m.title })}
         aria-pressed={isSelected}
         draggable={isNativeStructureDragEnabled()}
+        {...rowMenuProps(`mission:${m.id}`, () => handleSelectMission(mission))}
         onDragStart={(event) => {
           // FNXC:NativeStructureEmbed 2026-07-22-10:30: Mission cards emit the shared mail payload; coarse pointers rely on the accessible picker.
+          // FNXC:MissionRowActions 2026-09-17-03:18: un vrai glisser-déposer de structure annule le candidat d'appui long.
+          rowMenu.close();
           serializeNativeStructureRef(event.dataTransfer, { kind: "mission", id: m.id, projectId });
         }}
         onClick={() => handleSelectMission(mission)}
-        onKeyDown={(event) => {
-          if (event.currentTarget !== event.target) return;
-          if (event.key === "Enter") {
-            handleSelectMission(mission);
-            return;
-          }
-          if (event.key === " ") {
-            event.preventDefault();
-            handleSelectMission(mission);
-          }
-        }}
       >
         <div className="mission-list__item-content">
           <div className="mission-list__item-header">
@@ -5130,18 +4957,20 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
               <span className="mission-list__item-stat" data-testid={`mission-task-stats-${m.id}`}>
                 {t("missions.completedTasks", "{{completed}}/{{total}} tasks", { completed: tasksCompleted, total: totalTasks })}
               </span>
+              {/*
+              FNXC:MissionRowActions 2026-09-17-03:18:
+              FN-486 : l'information chiffrée des échecs reste visible, mais n'est plus un BOUTON d'action isolé
+              dans la ligne. Son accès — ouvrir la mission sur ses échecs — est proposé par le menu contextuel
+              avec le même résultat, donc aucune capacité n'est perdue et aucune coquille cliquable ne subsiste.
+              */}
               {tasksFailed > 0 && (
-                <button
+                <span
                   className="mission-list__item-failed"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    handleSelectMission(mission);
-                  }}
                   data-testid={`mission-failed-${m.id}`}
                   title={t("missions.viewMissionFailures", "View mission failures")}
                 >
                   {t("missions.tasksFailed", { count: tasksFailed, defaultValue_one: "{{count}} failed", defaultValue_other: "{{count}} failed" })}
-                </button>
+                </span>
               )}
               <div className={`mission-list__item-progress mission-list__item-progress--${healthState}`}>
                 <div
@@ -5159,77 +4988,44 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
             </div>
           )}
         </div>
-        <div className="mission-list__item-actions" onClick={(e) => e.stopPropagation()}>
-          <div className="mission-list__item-run-controls">
-            {m.status === "active" && (
-              <button
-                className="mission-btn mission-btn--danger mission-btn--sm"
-                onClick={() => handleStopMission(m.id)}
-                title={t("missions.stopMission", "Stop mission")}
-                aria-label={t("missions.stopMission", "Stop mission")}
-              >
-                <Square size={14} />
-                <span>{t("missions.stopMission", "Stop mission")}</span>
-              </button>
-            )}
-            {m.status === "blocked" && (
-              <button
-                className="mission-btn mission-btn--primary mission-btn--sm"
-                onClick={() => handleResumeMission(m.id)}
-                title={t("missions.resumeMission", "Resume mission")}
-                aria-label={t("missions.resumeMission", "Resume mission")}
-              >
-                <Play size={14} />
-                <span>{t("missions.resumeMission", "Resume mission")}</span>
-              </button>
-            )}
-            {getMissionBlockedRepairState(m, []).showClear && (
-              <button
-                className="mission-btn mission-btn--ghost mission-btn--sm"
-                onClick={() => handleClearMissionBlockedStatus(m.id)}
-                title={t("missions.clearBlockedStatus", "Clear blocked status")}
-                aria-label={t("missions.clearBlockedStatus", "Clear blocked status")}
-                disabled={clearingBlockedMissionId === m.id}
-              >
-                <Check size={14} />
-                <span>{t("missions.clearBlockedStatus", "Clear blocked status")}</span>
-              </button>
-            )}
-            {m.status === "planning" && (
-              <button
-                className="mission-btn mission-btn--primary mission-btn--sm"
-                onClick={() => handleStartMission(m.id)}
-                title={t("missions.startMission", "Start mission")}
-                aria-label={t("missions.startMission", "Start mission")}
-              >
-                <Play size={14} />
-                <span>{t("missions.startMission", "Start mission")}</span>
-              </button>
-            )}
-            {getMissionRunHelperText(m.status, t) && (
-              <span className="mission-list__item-run-help">{getMissionRunHelperText(m.status, t)}</span>
-            )}
+        {/*
+        FNXC:MissionRowActions 2026-09-17-03:18:
+        FN-486 : Démarrer, Arrêter, Reprendre, Effacer le badge bloqué, Modifier, Supprimer et l'accès aux
+        échecs quittent la ligne pour le menu contextuel partagé. Leurs CONDITIONS et leurs callbacks sont
+        inchangés ; seul le texte d'aide d'exécution, qui est une information et non une commande, reste dans
+        la ligne. Aucun conteneur d'actions vide ne subsiste.
+        */}
+        {getMissionRunHelperText(m.status, t) && (
+          <div className="mission-list__item-run-help-row">
+            <span className="mission-list__item-run-help">{getMissionRunHelperText(m.status, t)}</span>
           </div>
-          <button
-            className="mission-icon-btn"
-            onClick={() => handleEditMission(mission)}
-            title={t("missions.editMission", "Edit mission")}
-            aria-label={t("missions.editMission", "Edit mission")}
-          >
-            <Pencil size={14} />
-          </button>
-          <button
-            className="mission-icon-btn mission-icon-btn--danger"
-            onClick={() => void requestDeleteMission(m.id)}
-            title={t("missions.deleteMission", "Delete mission")}
-            aria-label={t("missions.deleteMission", "Delete mission")}
-          >
-            <Trash2 size={14} />
-          </button>
-        </div>
+        )}
       </div>
     );
   });
+
+  /** Commandes d'une mission de la collection principale, résolues sur la mission de la LIGNE. */
+  const buildMissionRowActions = (mission: MissionWithSummary): ListItemMenuAction[] => {
+    const actions: ListItemMenuAction[] = [];
+    if (mission.status === "planning") actions.push({ id: "start", label: t("missions.startMission", "Start mission"), testId: `mission-menu-start-${mission.id}`, onSelect: () => void handleStartMission(mission.id) });
+    if (mission.status === "active") actions.push({ id: "stop", label: t("missions.stopMission", "Stop mission"), testId: `mission-menu-stop-${mission.id}`, onSelect: () => void handleStopMission(mission.id) });
+    if (mission.status === "blocked") actions.push({ id: "resume", label: t("missions.resumeMission", "Resume mission"), testId: `mission-menu-resume-${mission.id}`, onSelect: () => void handleResumeMission(mission.id) });
+    if (getMissionBlockedRepairState(mission, []).showClear) {
+      actions.push({
+        id: "clear-blocked",
+        label: t("missions.clearBlockedStatus", "Clear blocked status"),
+        testId: `mission-menu-clear-blocked-${mission.id}`,
+        disabled: clearingBlockedMissionId === mission.id,
+        onSelect: () => void handleClearMissionBlockedStatus(mission.id),
+      });
+    }
+    if ((missionHealthById.get(mission.id)?.tasksFailed ?? 0) > 0) {
+      actions.push({ id: "view-failures", label: t("missions.viewMissionFailures", "View mission failures"), testId: `mission-menu-failures-${mission.id}`, onSelect: () => handleSelectMission(mission) });
+    }
+    actions.push({ id: "edit", label: t("missions.editMission", "Edit mission"), testId: `mission-menu-edit-${mission.id}`, onSelect: () => handleEditMission(mission) });
+    actions.push({ id: "delete", label: t("missions.deleteMission", "Delete mission"), tone: "danger", testId: `mission-menu-delete-${mission.id}`, onSelect: () => void requestDeleteMission(mission.id) });
+    return actions;
+  };
 
   const renderMissionListContent = () => {
     /*
@@ -5587,6 +5383,128 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
     />
   );
 
+  /*
+  FNXC:MissionRowActions 2026-09-17-03:18:
+  FN-486 : la cible du menu est résolue à CHAQUE rendu dans les données courantes, à partir de sa clé
+  composée. Une mise à jour SSE qui retire la mission, le brouillon ou la ligne hiérarchique laisse donc une
+  résolution vide, et le menu se ferme au lieu de muter un objet homonyme ou périmé.
+  */
+  function resolveRowMenuTarget(key: string | null): { label: string; actions: ListItemMenuAction[] } {
+    const empty = { label: "", actions: [] as ListItemMenuAction[] };
+    if (!key) return empty;
+    const separator = key.indexOf(":");
+    const kind = key.slice(0, separator);
+    const id = key.slice(separator + 1);
+    const named = (title: string, actions: ListItemMenuAction[]) => ({
+      label: t("missions.rowActionsAria", "Actions for {{title}}", { title }),
+      actions,
+    });
+    if (kind === "mission") {
+      const mission = missions.find((candidate) => candidate.id === id);
+      return mission ? named(mission.title, buildMissionRowActions(mission)) : empty;
+    }
+    if (kind === "draft") {
+      const draft = missionInterviewDrafts.find((candidate) => candidate.id === id);
+      return draft
+        ? named(draft.title || t("missions.defaultInterviewTitle", "Mission interview"), buildInterviewDraftRowActions(draft))
+        : empty;
+    }
+    /*
+    FNXC:MissionRowActions 2026-09-17-03:18:
+    FN-486 : les lignes hiérarchiques sont résolues dans la hiérarchie CHARGÉE. Une réconciliation qui retire
+    un jalon, une slice, une feature, une assertion ou un lien rend donc la résolution vide et ferme le menu,
+    au lieu de muter un homonyme. Les conditions d'admissibilité sont celles des anciens boutons, à l'identique.
+    */
+    const hierarchy = selectedMission;
+    if (!hierarchy) return empty;
+    if (kind === "milestone") {
+      const milestone = hierarchy.milestones.find((candidate) => candidate.id === id);
+      if (!milestone) return empty;
+      const actions: ListItemMenuAction[] = [];
+      if (milestone.status !== "complete") actions.push({ id: "plan", label: t("missions.planMilestone", "Plan milestone"), testId: `milestone-menu-plan-${milestone.id}`, onSelect: () => setInterviewTarget({ type: "milestone", id: milestone.id, title: milestone.title }) });
+      actions.push({ id: "add-slice", label: t("missions.addSlice", "Add slice"), testId: `milestone-menu-add-slice-${milestone.id}`, onSelect: () => handleCreateSlice(milestone.id) });
+      actions.push({ id: "edit", label: t("missions.editMilestone", "Edit milestone"), testId: `milestone-menu-edit-${milestone.id}`, onSelect: () => handleEditMilestone(milestone) });
+      actions.push({ id: "delete", label: t("missions.deleteMilestone", "Delete milestone"), tone: "danger", testId: `milestone-menu-delete-${milestone.id}`, onSelect: () => setDeleteConfirmId({ type: "milestone", id: milestone.id }) });
+      return named(milestone.title, actions);
+    }
+    if (kind === "slice") {
+      const slice = hierarchy.milestones.flatMap((milestone) => milestone.slices).find((candidate) => candidate.id === id);
+      if (!slice) return empty;
+      const actions: ListItemMenuAction[] = [];
+      if (slice.status !== "complete") actions.push({ id: "plan", label: t("missions.planSlice", "Plan slice"), testId: `slice-menu-plan-${slice.id}`, onSelect: () => setInterviewTarget({ type: "slice", id: slice.id, title: slice.title }) });
+      if (slice.status === "pending") actions.push({ id: "activate", label: t("missions.activateSlice", "Activate slice"), testId: `slice-menu-activate-${slice.id}`, onSelect: () => void handleActivateSlice(slice.id) });
+      if (slice.status === "active" && slice.features?.some((feature) => feature.status === "defined")) {
+        actions.push({ id: "triage-all", label: t("missions.triageAllFeatures", "Triage all features"), testId: `slice-menu-triage-all-${slice.id}`, disabled: saving, onSelect: () => void handleTriageAllSliceFeatures(slice.id) });
+      }
+      actions.push({ id: "add-feature", label: t("missions.addFeature", "Add feature"), testId: `slice-menu-add-feature-${slice.id}`, onSelect: () => handleCreateFeature(slice.id) });
+      actions.push({ id: "edit", label: t("missions.editSlice", "Edit slice"), testId: `slice-menu-edit-${slice.id}`, onSelect: () => handleEditSlice(slice) });
+      actions.push({ id: "delete", label: t("missions.deleteSlice", "Delete slice"), tone: "danger", testId: `slice-menu-delete-${slice.id}`, onSelect: () => setDeleteConfirmId({ type: "slice", id: slice.id }) });
+      return named(slice.title, actions);
+    }
+    /* Les entrées de réparation sont communes aux features ordinaires et correctives. */
+    const repairActions = (target: Pick<MissionFeature, "id" | "status" | "loopState">): ListItemMenuAction[] => {
+      const eligibility = featureValidationRepairEligibility(target);
+      const busy = repairingValidationFeatures.has(target.id);
+      const actions: ListItemMenuAction[] = [];
+      if (eligibility.clear) actions.push({ id: "clear-validation", label: t("missions.clearValidationBadge", "Clear validation badge"), testId: `feature-menu-clear-validation-${target.id}`, disabled: busy, onSelect: () => void handleClearValidationBadge(target.id) });
+      if (eligibility.reRun) actions.push({ id: "rerun-validation", label: t("missions.rerunValidation", "Re-run validation"), testId: `feature-menu-rerun-validation-${target.id}`, disabled: busy, onSelect: () => void handleRerunValidation(target.id) });
+      return actions;
+    };
+    if (kind === "fix-feature") {
+      /*
+      Une feature corrective vient de la télémétrie de validation, pas de la hiérarchie chargée, et n'offre
+      QUE les réparations admissibles — exactement comme son ancien bloc d'actions conditionnel.
+      */
+      const fixFeature = (selectedMilestoneTelemetry?.fixFeatures ?? []).find((candidate) => candidate.id === id);
+      if (!fixFeature) return empty;
+      const actions = repairActions(fixFeature);
+      return actions.length > 0 ? named(fixFeature.title, actions) : empty;
+    }
+    if (kind === "feature") {
+      const feature = hierarchy.milestones.flatMap((milestone) => milestone.slices).flatMap((slice) => slice.features ?? []).find((candidate) => candidate.id === id);
+      if (!feature) return empty;
+      const actions = repairActions(feature);
+      if (feature.loopState === "implementing") {
+        actions.push({ id: "validate", label: t("missions.validateFeature", "Validate feature"), testId: `feature-menu-validate-${feature.id}`, disabled: validatingFeatures.has(feature.id), onSelect: () => void handleTriggerValidation(feature.id) });
+      }
+      if (feature.status === "defined" && !feature.taskId) {
+        actions.push({ id: "triage", label: t("missions.triageCreateTask", "Triage — create task"), testId: `feature-menu-triage-${feature.id}`, disabled: saving || triagePreviewLoading === feature.id, onSelect: () => void handleTriageFeatureWithPreview(feature.id) });
+      }
+      if (feature.taskId) actions.push({ id: "unlink-task", label: t("missions.unlinkTask", "Unlink task"), testId: `feature-menu-unlink-task-${feature.id}`, onSelect: () => void handleUnlinkTask(feature.id) });
+      else if (feature.status !== "defined") actions.push({ id: "link-task", label: t("missions.linkToTask", "Link to task"), testId: `feature-menu-link-task-${feature.id}`, onSelect: () => setLinkTaskFeatureId(feature.id) });
+      actions.push({ id: "edit", label: t("missions.editFeature", "Edit feature"), testId: `feature-menu-edit-${feature.id}`, onSelect: () => handleEditFeature(feature) });
+      actions.push({ id: "delete", label: t("missions.deleteFeature", "Delete feature"), tone: "danger", testId: `feature-menu-delete-${feature.id}`, onSelect: () => setDeleteConfirmId({ type: "feature", id: feature.id }) });
+      return named(feature.title, actions);
+    }
+    if (kind === "assertion") {
+      const [milestoneId, assertionId] = [id.slice(0, id.indexOf(":")), id.slice(id.indexOf(":") + 1)];
+      const assertion = (assertionsByMilestone.get(milestoneId) ?? []).find((candidate) => candidate.id === assertionId);
+      if (!assertion) return empty;
+      return named(assertion.title, [
+        { id: "link-feature", label: t("missions.linkAFeature", "Link a feature"), testId: `assertion-menu-link-feature-${assertion.id}`, onSelect: () => { void handleToggleAssertionExpanded(assertion.id).then(() => setFeaturePickerOpenForAssertion(assertion.id)); } },
+        { id: "edit", label: t("missions.editAssertion", "Edit assertion"), testId: `assertion-menu-edit-${assertion.id}`, onSelect: () => handleEditAssertion(assertion) },
+        { id: "delete", label: t("missions.deleteAssertion", "Delete assertion"), tone: "danger", testId: `assertion-menu-delete-${assertion.id}`, onSelect: () => setDeleteConfirmId({ type: "assertion", id: assertion.id, milestoneId }) },
+      ]);
+    }
+    if (kind === "assertion-link") {
+      const [assertionId, featureId] = [id.slice(0, id.indexOf(":")), id.slice(id.indexOf(":") + 1)];
+      const linked = (linkedFeaturesByAssertion.get(assertionId) ?? []).find((candidate) => candidate.id === featureId);
+      if (!linked) return empty;
+      return named(linked.title, [{
+        id: "unlink-feature",
+        label: t("missions.unlinkFeature", "Unlink feature"),
+        tone: "danger",
+        testId: `assertion-link-menu-unlink-${assertionId}-${featureId}`,
+        disabled: unlinkingFeatures.has(`${featureId}-${assertionId}`),
+        onSelect: () => void handleUnlinkFeatureFromAssertion(featureId, assertionId),
+      }]);
+    }
+    return empty;
+  }
+
+  const rowMenuTarget = resolveRowMenuTarget(rowMenu.anchor?.key ?? null);
+  rowMenuResolvedRef.current = rowMenuTarget.actions.length > 0;
+
   const manager = (
     <div
       ref={modalRef}
@@ -5594,6 +5512,13 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
       /* FNXC:FloatingWindowDialogHosts 2026-09-14-22:36: the hosting window owns the dialog role and name, so this shell never declares a second nested dialog. */
       data-testid="mission-manager-dialog"
     >
+      <ListItemContextMenu
+        anchor={rowMenu.anchor}
+        ariaLabel={rowMenuTarget.label}
+        actions={rowMenuTarget.actions}
+        onClose={rowMenu.close}
+        data-testid="mission-row-context-menu"
+      />
       {/*
       FNXC:StandardizedMissionLayout 2026-09-13-16:30:
       Missions and its resumable interview drafts share the canonical header/list/detail shell. The shared sidebar keeps one project-scoped width across Planning and Missions, while all existing mission fetch, repair, interview, and navigation callbacks remain owned here.
@@ -5604,7 +5529,13 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
         header={(
           <ViewHeader
             icon={Target}
-            title={selectedMission && isMobile ? selectedMission.title : t("missions.title", "Missions")}
+            /*
+            FNXC:MissionsTitle 2026-09-17-03:18:
+            FN-486 : le titre SUPÉRIEUR de Missions reste celui de la VUE, y compris sur téléphone après
+            l'ouverture d'une mission ou d'un entretien. Le nom de la mission est déjà présenté juste en
+            dessous dans le détail : le substituer en haut remplaçait le repère de destination par un doublon.
+            */
+            title={t("missions.title", "Missions")}
             titleTestId="mission-header-title"
             /*
             FNXC:MissionsBackAffordance 2026-09-15-03:29:

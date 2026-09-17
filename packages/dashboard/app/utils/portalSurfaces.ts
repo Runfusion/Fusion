@@ -14,6 +14,13 @@ export const PORTAL_SAFE_SURFACE_SELECTOR = [
   ".agent-picker-dropdown--portal",
   ".priority-picker-dropdown--portal",
   ".activity-view-menu",
+  /*
+  FNXC:ListItemContextMenu 2026-09-17-03:18:
+  FN-486 : le menu contextuel d'une ligne de liste est un enfant LOGIQUE de la ligne qui l'a ouvert. Sans ce
+  marqueur, l'utiliser depuis une fenêtre flottante ou un popover de dock refermerait son hôte, alors que le
+  vrai appui extérieur doit continuer de fermer normalement.
+  */
+  "[data-portal-surface=\"list-item-menu\"]",
 ].join(", ");
 
 export const PORTALED_MODEL_MENU_SELECTOR = ".model-combobox-dropdown--portal, .model-nested-menu--portal, [data-portal-surface=\"model-menu\"]";

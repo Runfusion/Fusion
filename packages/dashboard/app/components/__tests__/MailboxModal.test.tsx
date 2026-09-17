@@ -1748,4 +1748,25 @@ describe("MailboxModal", () => {
     });
     expect(scrollIntoView).toHaveBeenCalled();
   });
+
+  /*
+  FNXC:MailboxRowActions 2026-09-17-03:18:
+  FN-486 : la fenêtre Mailbox est le deuxième producteur de lignes de mail. Elle sert le MÊME modèle de
+  commandes que la destination, sans bouton permanent de ligne, sans « Modifier », et sans ouvrir le
+  message ni le marquer lu au simple geste d'ouverture du menu.
+  */
+  it("offre les commandes de ligne par clic droit sans ouvrir ni marquer lu le message", async () => {
+    render(<MailboxModal {...defaultProps} />);
+    const row = await screen.findByTestId("mailbox-item-msg-001");
+    expect(row).toHaveAttribute("aria-haspopup", "menu");
+
+    fireEvent.contextMenu(row, { clientX: 24, clientY: 24 });
+    const menu = screen.getByTestId("mailbox-row-context-menu");
+    expect(within(menu).getByTestId("mailbox-menu-archive-msg-001")).toBeInTheDocument();
+    expect(within(menu).getByTestId("mailbox-menu-delete-msg-001")).toBeInTheDocument();
+    expect(within(menu).queryByTestId("mailbox-menu-restore-msg-001")).toBeNull();
+    expect(within(menu).queryByText(/edit/i)).toBeNull();
+    expect(mockMarkMessageRead).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("mailbox-message-detail")).toBeNull();
+  });
 });

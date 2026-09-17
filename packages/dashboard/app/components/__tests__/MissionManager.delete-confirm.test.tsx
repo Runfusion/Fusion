@@ -228,17 +228,32 @@ async function openAssertionDeletePanel(assertionId: string) {
   fireEvent.click(await findMissionListItem("Build Auth System"));
   await screen.findByText("Quality gate");
   const assertion = await screen.findByText(`Assertion ${assertionId}`);
-  const row = assertion.closest(".mission-assertion");
+  const row = assertion.closest(".mission-assertion__header");
   expect(row).not.toBeNull();
-  const deleteButton = (row as HTMLElement).querySelector('button[title="Delete assertion"]');
-  expect(deleteButton).not.toBeNull();
-  fireEvent.click(deleteButton as HTMLButtonElement);
+  expect((row as HTMLElement).querySelector('button[title="Delete assertion"]')).toBeNull();
+  selectRowMenuAction(row as HTMLElement, `assertion-menu-delete-${assertionId}`);
   return getConfirmPanel();
+}
+
+/*
+FNXC:MissionRowActions 2026-09-17-03:18:
+FN-486 : Supprimer et Abandonner ne sont plus des boutons permanents de ligne. L'entrée passe par le menu
+contextuel de la LIGNE ; la porte de confirmation (dialogue mission, panneau brouillon) et toutes ses issues
+— annulation, succès, 404, 409, toasts — restent identiques.
+*/
+function openRowMenu(row: HTMLElement): HTMLElement {
+  fireEvent.contextMenu(row, { clientX: 12, clientY: 12 });
+  return screen.getByTestId("mission-row-context-menu");
+}
+
+function selectRowMenuAction(row: HTMLElement, testId: string) {
+  fireEvent.click(within(openRowMenu(row)).getByTestId(testId));
 }
 
 async function openListDeleteDialog(title: string, container: HTMLElement) {
   const item = await findMissionListItem(title);
-  fireEvent.click(within(item).getByRole("button", { name: "Delete mission" }));
+  expect(within(item).queryByRole("button", { name: "Delete mission" })).toBeNull();
+  selectRowMenuAction(item, "mission-menu-delete-M-002");
   const dialog = await screen.findByRole("dialog", { name: "Delete mission" });
   expect(dialog).toHaveTextContent("Delete this mission? This cannot be undone.");
   expect(container.querySelector(".mission-confirm-panel")).toBeNull();
@@ -396,7 +411,7 @@ describe("MissionManager mission delete confirmation", () => {
     const planReady = await screen.findByText("Plan ready");
     const selectedDraft = planReady.closest(".mission-list__item");
     expect(selectedDraft).not.toBeNull();
-    fireEvent.click(within(selectedDraft as HTMLElement).getByRole("button", { name: "Discard draft" }));
+    selectRowMenuAction(selectedDraft as HTMLElement, "mission-draft-menu-discard-draft-duplicate-b");
 
     const panel = getConfirmPanel();
     expect(panel).toHaveTextContent("Discard this interview draft?");
@@ -425,7 +440,7 @@ describe("MissionManager mission delete confirmation", () => {
     const draftTitle = await screen.findByText("Mobile draft");
     const draftRow = draftTitle.closest(".mission-list__item");
     expect(draftRow).not.toBeNull();
-    fireEvent.click((draftRow as HTMLElement).querySelector('button[aria-label="Discard draft"]') as HTMLButtonElement);
+    selectRowMenuAction(draftRow as HTMLElement, "mission-draft-menu-discard-draft-mobile");
     clickConfirmPanelAction("Discard");
 
     await waitFor(() => {
@@ -447,7 +462,7 @@ describe("MissionManager mission delete confirmation", () => {
     const staleDraft = await screen.findByText("Stale draft");
     const draftRow = staleDraft.closest(".mission-list__item");
     expect(draftRow).not.toBeNull();
-    fireEvent.click((draftRow as HTMLElement).querySelector('button[aria-label="Discard draft"]') as HTMLButtonElement);
+    selectRowMenuAction(draftRow as HTMLElement, "mission-draft-menu-discard-draft-stale");
     clickConfirmPanelAction("Discard");
 
     await waitFor(() => {
@@ -469,14 +484,14 @@ describe("MissionManager mission delete confirmation", () => {
     const lockedDraft = await screen.findByText("Locked draft");
     const draftRow = lockedDraft.closest(".mission-list__item");
     expect(draftRow).not.toBeNull();
-    fireEvent.click((draftRow as HTMLElement).querySelector('button[aria-label="Discard draft"]') as HTMLButtonElement);
+    selectRowMenuAction(draftRow as HTMLElement, "mission-draft-menu-discard-draft-locked");
     clickConfirmPanelAction("Discard");
 
     await waitFor(() => {
       expect(mockDiscardMissionInterviewDraft).toHaveBeenCalledWith("draft-locked", projectId);
     });
     expect(screen.getByText("Locked draft")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Discard draft" })).toBeInTheDocument();
+    expect(within(openRowMenu(screen.getByText("Locked draft").closest(".mission-list__item") as HTMLElement)).getByTestId("mission-draft-menu-discard-draft-locked")).toBeInTheDocument();
     expect(document.querySelector(".mission-confirm-panel")).toBeNull();
     expect(addToast).toHaveBeenCalledWith("Draft is open in another tab", "error");
   });

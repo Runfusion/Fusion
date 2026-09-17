@@ -145,12 +145,15 @@ describe("PlanningModeModal CSS responsive action contract", () => {
 
   it("uses consistent full-width header controls without crowding the mobile session title", () => {
     const css = loadPlanningCss();
-    const backRule = findRule(css, ".planning-session-back");
+    /*
+    FNXC:ViewBackIconParity 2026-09-17-03:18:
+    FN-486 : Planning ne redeclare plus la boîte de son retour. La géométrie appartient au primitif partagé
+    `ViewBackButton`, de sorte que le retour et le « + » ne puissent plus diverger ; ce qui reste local ici,
+    c'est uniquement le comportement de mise en page de l'en-tête autour du titre.
+    */
+    expect(css).not.toMatch(/(^|\n)\.planning-session-back\s*\{/);
     expect(findRule(css, ".planning-header-controls")).toMatch(/gap\s*:\s*var\(--space-sm\)\s*;/);
     expect(findRule(css, ".planning-header-controls .btn")).toMatch(/min-height\s*:\s*calc\(var\(--space-2xl\) \+ var\(--space-sm\)\)\s*;/);
-    expect(backRule).toMatch(/display\s*:\s*inline-flex\s*;/);
-    expect(backRule).toMatch(/min-width\s*:\s*calc\(var\(--space-md\) \* 2\.25\)\s*;/);
-    expect(backRule).toMatch(/min-height\s*:\s*calc\(var\(--space-md\) \* 2\.25\)\s*;/);
 
     const mobileCss = getMediaBlocks(css, MOBILE_ACTIONS_QUERY).join("\n");
     expect(findRule(mobileCss, ".planning-modal--embedded .modal-header--embedded")).toMatch(/flex-wrap\s*:\s*wrap\s*;/);
@@ -256,26 +259,17 @@ describe("PlanningModeModal CSS responsive action contract", () => {
   });
 
   /*
-  FN-402 moved rename onto the session row: the pencil must share the delete geometry, reveal, hover and focus
-  groups (and the mobile always-visible block), and the removed header title editor must leave no dead selector behind.
-  FN-465 removed the row archive control, so those groups now contain exactly delete and rename.
+  FNXC:PlanningSessionRowActions 2026-09-17-03:18:
+  FN-486 retire les commandes PERMANENTES de ligne (renommer/supprimer et leur conteneur) au profit du menu
+  contextuel partagé : leurs règles disparaissent complètement au lieu d'être masquées, sur bureau comme sur
+  téléphone. L'éditeur de renommage EN PLACE et l'absence d'éditeur de titre d'en-tête restent inchangés.
   */
-  it("styles the session-row rename control with the shared row action groups", () => {
+  it("leaves no rule behind for the removed permanent row action controls", () => {
     const css = loadPlanningCss();
 
-    const baseGroup = findRule(css, ".planning-sidebar-item-delete,\n.planning-sidebar-item-rename");
-    expect(baseGroup).toBeTruthy();
-    expect(baseGroup).toMatch(/display\s*:\s*none\s*;/);
-    expect(baseGroup).toMatch(/border-radius\s*:\s*var\(--radius-sm\)\s*;/);
-
-    expect(css).toMatch(/\.planning-sidebar-item:hover \.planning-sidebar-item-rename/);
-    expect(css).toMatch(/\.planning-sidebar-item:focus-within \.planning-sidebar-item-rename/);
-    expect(findRule(css, ".planning-sidebar-item-rename:hover"))
-      .toMatch(/color-mix\(in srgb, var\(--todo\) 15%, transparent\)/);
-    expect(css).toMatch(/\.planning-sidebar-item-rename:focus-visible/);
-
-    const mobileShellCss = getMediaBlocks(css, MOBILE_PLANNING_SHELL_QUERY).join("\n");
-    expect(mobileShellCss).toMatch(/\.planning-sidebar-item-rename/);
+    expect(css).not.toMatch(/\.planning-sidebar-item-actions/);
+    expect(css).not.toMatch(/\.planning-sidebar-item-rename[^-]/);
+    expect(css).not.toMatch(/\.planning-sidebar-item-delete/);
 
     const inlineInputRule = findRule(css, ".planning-sidebar-item-title-input");
     expect(inlineInputRule).toBeTruthy();

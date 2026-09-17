@@ -65,6 +65,17 @@ function renderPlanning() {
   );
 }
 
+/*
+FNXC:PlanningSessionRowActions 2026-09-17-03:18:
+FN-486 : lentrée du scénario devient le clic droit sur la LIGNE (ou son appui long). Les assertions de
+mutation, de rollback et de confirmation sont conservées telles quelles : seul le geille douverture change.
+*/
+async function openRowMenu(row: HTMLElement) {
+  const trigger = row.querySelector(".planning-sidebar-item-button") as HTMLElement;
+  fireEvent.contextMenu(trigger, { clientX: 20, clientY: 20 });
+  return screen.getByTestId("planning-session-context-menu");
+}
+
 async function findRow(title: string) {
   const label = await screen.findByText(title);
   const row = label.closest(".planning-sidebar-item");
@@ -89,16 +100,18 @@ afterEach(() => {
 });
 
 describe("Planning session rows own the rename affordance", () => {
-  it("(a) renders Rename session next to Delete session on every row", async () => {
+  it("(a) offers Rename and Delete from each row context menu, with no permanent row buttons left", async () => {
     renderPlanning();
 
     for (const title of ["First session", "Second session"]) {
       const row = await findRow(title);
-      const actions = row.querySelector(".planning-sidebar-item-actions");
-      expect(actions).toBeTruthy();
-      const rename = within(actions as HTMLElement).getByLabelText("Rename session");
-      const remove = within(actions as HTMLElement).getByLabelText("Delete session");
-      expect(rename.nextElementSibling).toBe(remove);
+      expect(row.querySelector(".planning-sidebar-item-actions")).toBeNull();
+      expect(within(row).queryByLabelText("Rename session")).toBeNull();
+      expect(within(row).queryByLabelText("Delete session")).toBeNull();
+      const menu = await openRowMenu(row);
+      expect(within(menu).getByTestId("planning-session-menu-rename")).toBeInTheDocument();
+      expect(within(menu).getByTestId("planning-session-menu-delete")).toBeInTheDocument();
+      fireEvent.keyDown(document, { key: "Escape" });
     }
   });
 
@@ -106,7 +119,7 @@ describe("Planning session rows own the rename affordance", () => {
     renderPlanning();
     const row = await findRow("Second session");
 
-    fireEvent.click(within(row).getByLabelText("Rename session"));
+    fireEvent.click(within(await openRowMenu(row)).getByTestId("planning-session-menu-rename"));
     const input = within(row).getByRole("textbox", { name: "Rename session" }) as HTMLInputElement;
     expect(input.value).toBe("Second session");
     fireEvent.change(input, { target: { value: "Renamed second" } });
@@ -122,7 +135,7 @@ describe("Planning session rows own the rename affordance", () => {
     renderPlanning();
     const row = await findRow("First session");
 
-    fireEvent.click(within(row).getByLabelText("Rename session"));
+    fireEvent.click(within(await openRowMenu(row)).getByTestId("planning-session-menu-rename"));
     const input = within(row).getByRole("textbox", { name: "Rename session" });
     fireEvent.change(input, { target: { value: "Discarded" } });
     fireEvent.keyDown(input, { key: "Escape" });
@@ -137,7 +150,7 @@ describe("Planning session rows own the rename affordance", () => {
     renderPlanning();
     const row = await findRow("First session");
 
-    fireEvent.click(within(row).getByLabelText("Rename session"));
+    fireEvent.click(within(await openRowMenu(row)).getByTestId("planning-session-menu-rename"));
     const input = within(row).getByRole("textbox", { name: "Rename session" });
     fireEvent.change(input, { target: { value: "Doomed rename" } });
     fireEvent.keyDown(input, { key: "Enter" });
@@ -160,14 +173,15 @@ describe("Planning session rows own the rename affordance", () => {
     }
   });
 
-  it("(f) shows the delete confirmation instead of row actions while a delete is pending", async () => {
+  it("(f) shows the delete confirmation form once a delete is requested from the row menu", async () => {
     renderPlanning();
     const row = await findRow("First session");
 
-    fireEvent.click(within(row).getByLabelText("Delete session"));
+    fireEvent.click(within(await openRowMenu(row)).getByTestId("planning-session-menu-delete"));
 
     expect(within(row).getByRole("button", { name: "Delete" })).toBeInTheDocument();
-    expect(within(row).queryByLabelText("Rename session")).toBeNull();
+    expect(within(row).getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+    expect(screen.queryByTestId("planning-session-context-menu")).toBeNull();
   });
 
   /*
@@ -185,7 +199,7 @@ describe("Planning session rows own the rename affordance", () => {
 
     const draftRow = await findRow("Draft preview");
     expect(screen.queryByText("Archived session")).toBeNull();
-    fireEvent.click(within(draftRow).getByLabelText("Rename session"));
+    fireEvent.click(within(await openRowMenu(draftRow)).getByTestId("planning-session-menu-rename"));
     expect((within(draftRow).getByRole("textbox", { name: "Rename session" }) as HTMLInputElement).value).toBe("Draft preview");
   });
 });

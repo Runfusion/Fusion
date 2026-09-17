@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useDrawerDismissGesture } from "../useDrawerDismissGesture";
+import { cancelActiveDrawerGestures, listRowGestureAttributes } from "../../utils/listItemGesture";
 
 function Harness({ enabled = true, onDismiss = vi.fn() }: { enabled?: boolean; onDismiss?: () => void }) {
   const [open, setOpen] = useState(true);
@@ -14,6 +15,19 @@ function Harness({ enabled = true, onDismiss = vi.fn() }: { enabled?: boolean; o
         <div data-testid="handle" className="mobile-drawer__handle-target">handle</div>
         <div data-testid="shell"><div data-testid="scroller"><div data-testid="body">body</div></div></div>
         <button data-testid="control">control</button>
+        {/*
+        FNXC:MobileDrawerGesture 2026-09-17-03:18:
+        FN-486 : une LIGNE de liste qualifiée reste un vrai bouton accessible mais devient un départ légitime ;
+        ses descendants non interactifs (texte, icône) héritent de cette qualification, tandis qu'un contrôle
+        imbriqué ou un champ de renommage placé sous la ligne reste exclu.
+        */}
+        <button data-testid="row" {...listRowGestureAttributes()}>
+          <span data-testid="row-label">row label</span>
+          <svg data-testid="row-icon" />
+          <button data-testid="row-nested">nested</button>
+          <input data-testid="row-input" aria-label="rename" />
+          <a data-testid="row-link" href="#x">link</a>
+        </button>
         <div className="xterm" data-testid="xterm">terminal</div>
       </section>
     </>
@@ -141,6 +155,44 @@ describe("useDrawerDismissGesture", () => {
     fireEvent.pointerUp(body, { pointerId: 1, clientY: y, clientX: x, timeStamp: 1010 });
     expect(onDismiss).not.toHaveBeenCalled();
     expect(screen.getByTestId("panel").style.transform).toBe("");
+  });
+
+  it.each(["row", "row-label", "row-icon"])("ferme le tiroir depuis la ligne de liste qualifiée %s", async (targetId) => {
+    const onDismiss = vi.fn();
+    render(<Harness onDismiss={onDismiss} />);
+    const target = screen.getByTestId(targetId);
+    const panel = screen.getByTestId("panel");
+    vi.spyOn(panel, "getBoundingClientRect").mockReturnValue({ height: 400 } as DOMRect);
+    start(target);
+    move(target, 130);
+    await flushFrame();
+    fireEvent.pointerUp(target, { pointerId: 1, clientY: 130, timeStamp: 310 });
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["row-nested", "row-input", "row-link"])("laisse le geste natif au contrôle %s imbriqué sous une ligne qualifiée", (targetId) => {
+    const onDismiss = vi.fn();
+    render(<Harness onDismiss={onDismiss} />);
+    const target = screen.getByTestId(targetId);
+    start(target);
+    move(target, 300);
+    fireEvent.pointerUp(target, { pointerId: 1, clientY: 300 });
+    expect(onDismiss).not.toHaveBeenCalled();
+  });
+
+  it("invalide le candidat de fermeture dès qu'un menu de ligne s'ouvre", async () => {
+    const onDismiss = vi.fn();
+    render(<Harness onDismiss={onDismiss} />);
+    const row = screen.getByTestId("row");
+    const panel = screen.getByTestId("panel");
+    vi.spyOn(panel, "getBoundingClientRect").mockReturnValue({ height: 400 } as DOMRect);
+    start(row);
+    act(() => cancelActiveDrawerGestures());
+    move(row, 300);
+    await flushFrame();
+    fireEvent.pointerUp(row, { pointerId: 1, clientY: 300, timeStamp: 310 });
+    expect(onDismiss).not.toHaveBeenCalled();
+    expect(panel.style.transform).toBe("");
   });
 
   it.each(["control", "xterm"])("préserve les interactions %s", (targetId) => {

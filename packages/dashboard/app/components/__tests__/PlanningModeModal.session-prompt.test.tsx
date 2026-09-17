@@ -187,13 +187,18 @@ describe("Planning Mode initiating prompt history", () => {
     fireEvent.click(screen.getByRole("button", { name: "Close history" }));
 
     view.rerender(<PlanningModeModal {...modalProps} resumeSessionId="session-b-empty" />);
-    await screen.findByRole("heading", { name: "Session B empty" });
+    /*
+    FNXC:PlanningTitle 2026-09-17-03:18:
+    FN-486 : l'en-tête supérieur reste « Planning Mode », donc l'attente de bascule de session s'appuie
+    désormais sur la lecture effective de la session demandée et non sur un titre d'en-tête qui changeait.
+    */
+    await waitFor(() => expect(mockFetchAiSession).toHaveBeenCalledWith("session-b-empty"));
     expect(within(await openHistory()).queryByTestId("planning-history-initial-prompt")).toBeNull();
     expect(screen.queryByText("Prompt A")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Close history" }));
 
     view.rerender(<PlanningModeModal {...modalProps} resumeSessionId="session-b-prompt" />);
-    await screen.findByRole("heading", { name: "Session B prompt" });
+    await waitFor(() => expect(mockFetchAiSession).toHaveBeenCalledWith("session-b-prompt"));
     expect(within(await openHistory()).getByTestId("planning-history-initial-prompt")).toHaveValue("Prompt B");
     expect(screen.queryByText("Prompt A")).toBeNull();
   });

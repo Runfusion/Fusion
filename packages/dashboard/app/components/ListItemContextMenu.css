@@ -1,0 +1,69 @@
+/*
+FNXC:ListItemContextMenu 2026-09-17-03:18:
+FN-486 : chrome du menu de ligne partagé par Planning, Notes, Missions et Mailbox. Uniquement des jetons
+existants, et une hauteur bornée défilable pour qu'un menu riche (hiérarchie Missions) reste entièrement
+atteignable sur téléphone sans déborder du viewport ni créer de zone vide capturant les gestes.
+*/
+.list-item-context-menu {
+  position: fixed;
+  display: flex;
+  flex-direction: column;
+  min-inline-size: calc(var(--space-xl) * 5);
+  max-inline-size: min(calc(var(--space-xl) * 10), 90vw);
+  max-block-size: min(60vh, calc(var(--space-xl) * 14));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--space-xs);
+  background: var(--card);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+}
+
+.list-item-context-menu__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  inline-size: 100%;
+  padding: var(--space-xs) var(--space-sm);
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 13px;
+  text-align: start;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.list-item-context-menu__item:disabled {
+  color: var(--text-dim);
+  cursor: not-allowed;
+}
+
+@media (hover: hover) {
+  .list-item-context-menu__item:not(:disabled):hover {
+    background: var(--card-hover);
+  }
+}
+
+.list-item-context-menu__item:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.list-item-context-menu__item--danger {
+  color: var(--color-error);
+}
+
+/*
+FNXC:ListItemContextMenu 2026-09-17-03:18:
+Sur téléphone la rangée du menu adopte la cible tactile des LIGNES de liste (44px), pas la géométrie des
+boutons icône seule : ce sont des rangées étiquetées, que FN-471 laisse explicitement hors du canon icon-only.
+*/
+@media (max-width: 768px), (max-height: 480px) {
+  .list-item-context-menu__item {
+    min-block-size: var(--touch-target-min-size);
+    font-size: 14px;
+  }
+}

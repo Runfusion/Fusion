@@ -55,7 +55,9 @@ import {
   clearPlanningActiveSession,
 } from "../hooks/modalPersistence";
 import { getRelativeTimeBucket } from "../utils/relativeTimeAgo";
-import { Lightbulb, X, Loader2, CheckCircle, ArrowLeft, ArrowRight, Sparkles, Trash2, RefreshCw, MessageSquarePlus, AlertCircle, Clock, HelpCircle, StopCircle, Pencil, History } from "lucide-react";
+import { Lightbulb, X, Loader2, CheckCircle, ArrowLeft, ArrowRight, Sparkles, Trash2, RefreshCw, MessageSquarePlus, AlertCircle, Clock, HelpCircle, StopCircle, History } from "lucide-react";
+import { useListItemContextMenu } from "../hooks/useListItemContextMenu";
+import { ListItemContextMenu, type ListItemMenuAction } from "./ListItemContextMenu";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { ConversationHistory } from "./ConversationHistory";
 import { PlanningSessionPrompt } from "./PlanningSessionPrompt";
@@ -3237,17 +3239,14 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     }
   }, [projectId, runningSummary, t, view]);
 
-  const activeSessionTitle = planningSessions.find((session) => session.id === selectedSessionId)?.title ?? loadedSessionTitle;
   /*
-  FNXC:PlanningTitle 2026-09-14-08:05:
-  The header shows a session name only while that session's interview is ON SCREEN. Leaving it — Back to sessions, or
-  any state that returns to the list — keeps selectedSessionId for resume, so the title kept showing the session the
-  operator had just left and the destination read as if it were still open.
+  FNXC:PlanningTitle 2026-09-17-03:18:
+  FN-486 : le titre SUPÉRIEUR de Planning est toujours celui de la VUE. Il ne prend jamais le nom de la
+  session ouverte, parce que ce nom est déjà affiché juste en dessous dans le contenu : la substitution
+  d'identité précédente remplaçait donc une information par son doublon et faisait disparaître le repère de
+  destination. Le titre actif n'est plus dérivé ici du tout : le renommage résout sa cible dans
+  `planningSessions` (ou `loadedSessionTitle` pour la session ouverte), et le contenu conserve son propre nom.
   */
-  const showsSessionIdentity = !showSessionList
-    && Boolean(selectedSessionId)
-    && Boolean(activeSessionTitle)
-    && (view.type === "question" || view.type === "loading" || view.type === "session_loading" || view.type === "error");
   /*
   FNXC:PlanningSessionRename 2026-09-15-03:29:
   FN-402: rename targets the row's OWN session. The empty/unchanged guard compares against that session's current
@@ -3530,7 +3529,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                 className: "planning-session-back",
               } : undefined}
               /* FNXC:PlanningSessionRename 2026-09-15-03:29: FN-402 moved rename onto the session row, so the header owns identity only — no edit affordance and no leftover button shell. */
-              title={<span>{showsSessionIdentity ? activeSessionTitle : t("planning.title", "Planning Mode")}</span>}
+              title={<span>{t("planning.title", "Planning Mode")}</span>}
               actions={(
                 <ViewActionButton kind="create" label={t("planning.newSession", "New session")} onClick={handleNewSession} />
               )}
@@ -3543,6 +3542,13 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
               <PlanningSessionList
                 sessions={planningSessions}
                 loading={sessionsLoading}
+                /*
+                FNXC:PlanningSessionRowActions 2026-09-17-03:18:
+                FN-486 : un Planning GARDÉ MONTÉ mais inactif (KeepAlive) ne doit laisser survivre ni portail de
+                menu ni minuterie d'appui long en arrière-plan, et un changement de projet invalide la cible.
+                */
+                contextId={`${projectId ?? ""}:planning`}
+                menusEnabled={isOpen && active}
                 selectedSessionId={selectedSessionId}
                 pendingDeleteId={pendingDeleteId}
                 onSelectSession={handleSelectSession}
@@ -4850,6 +4856,10 @@ export function SummaryView({
 interface PlanningSessionListProps {
   sessions: AiSessionSummary[];
   loading: boolean;
+  /** Identité du contexte (projet + hôte). Tout changement ferme un menu de ligne encore ouvert. */
+  contextId?: string;
+  /** Faux lorsque l'hôte Planning est gardé monté mais masqué : aucun menu ni minuterie ne survit en arrière-plan. */
+  menusEnabled?: boolean;
   selectedSessionId: string | null;
   pendingDeleteId: string | null;
   onSelectSession: (id: string) => void;
@@ -4867,6 +4877,8 @@ interface PlanningSessionListProps {
 function PlanningSessionList({
   sessions,
   loading,
+  contextId,
+  menusEnabled = true,
   selectedSessionId,
   pendingDeleteId,
   onSelectSession,
@@ -4881,6 +4893,26 @@ function PlanningSessionList({
   onCancelRename,
 }: PlanningSessionListProps) {
   const { t } = useTranslation("app");
+  /*
+  FNXC:PlanningSessionRowActions 2026-09-17-03:18:
+  FN-486 : Renommer et Supprimer ne sont plus deux boutons permanents de la ligne. Ils vivent dans le menu
+  contextuel partagé, ouvert au clic droit, à la touche Menu ou par appui long. La cible est TOUJOURS la
+  session de la ligne (résolue à l'exécution dans `sessions`), jamais la session ouverte : une session non
+  sélectionnée ou portant le même titre qu'une autre reste modifiable par son propre identifiant. Le
+  formulaire de confirmation de suppression déjà engagé garde ses deux boutons : ce n'est pas une commande
+  permanente de ligne mais un formulaire ouvert.
+  */
+  const menu = useListItemContextMenu({ enabled: menusEnabled, contextId });
+  const menuSession = menu.anchor ? sessions.find((session) => `session:${session.id}` === menu.anchor?.key) ?? null : null;
+  /* La ligne a disparu pendant l'ouverture du menu : la cible n'existe plus, le menu se ferme. */
+  useEffect(() => {
+    if (menu.anchor && !menuSession) menu.close();
+  }, [menu, menuSession]);
+  const menuTitle = menuSession ? sessionDisplayTitle(menuSession, t) : "";
+  const menuActions: ListItemMenuAction[] = menuSession ? [
+    { id: "rename", label: t("planning.renameSession", "Rename session"), testId: "planning-session-menu-rename", onSelect: () => onRequestRename(menuSession.id, menuTitle) },
+    { id: "delete", label: t("planning.deleteSession", "Delete session"), tone: "danger", testId: "planning-session-menu-delete", onSelect: () => onRequestDelete(menuSession.id) },
+  ] : [];
   /*
   FNXC:PlanningMode 2026-09-16-15:50:
   FN-465 : la liste latérale des sessions de planification n'expose plus aucune affordance
@@ -4921,9 +4953,7 @@ function PlanningSessionList({
           const isSelected = session.id === selectedSessionId;
           const isPendingDelete = pendingDeleteId === session.id;
           const isRenaming = renamingSessionId === session.id;
-          const displayTitle = session.status === "draft" && (!session.title || session.title === "New planning session")
-            ? (session.preview ?? t("planning.newPlanningSession", "New planning session"))
-            : session.title || t("planning.untitledSession", "Untitled session");
+          const displayTitle = sessionDisplayTitle(session, t);
           /*
           FNXC:PlanningSessionRename 2026-09-15-03:29:
           FN-402: renaming belongs to the session ROW, right beside its delete control, so any listed session — draft,
@@ -4952,6 +4982,7 @@ function PlanningSessionList({
               <button
                 type="button"
                 className="planning-sidebar-item-button"
+                {...menu.getRowProps(`session:${session.id}`)}
                 onClick={() => onSelectSession(session.id)}
               >
                 <PlanningSessionStatusIcon status={session.status} />
@@ -4995,40 +5026,27 @@ function PlanningSessionList({
                     {t("common.cancel", "Cancel")}
                   </button>
                 </div>
-              ) : (
-                <div className="planning-sidebar-item-actions">
-                  <button
-                    type="button"
-                    className="planning-sidebar-item-rename"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onRequestRename(session.id, displayTitle);
-                    }}
-                    aria-label={t("planning.renameSession", "Rename session")}
-                    title={t("planning.renameSession", "Rename session")}
-                  >
-                    <Pencil size={14} />
-                  </button>
-                  <button
-                    type="button"
-                    className="planning-sidebar-item-delete"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onRequestDelete(session.id);
-                    }}
-                    aria-label={t("planning.deleteSession", "Delete session")}
-                    title={t("planning.deleteSession", "Delete session")}
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-              )}
+              ) : null}
             </div>
           );
         })}
       </div>
+      <ListItemContextMenu
+        anchor={menu.anchor}
+        ariaLabel={t("planning.sessionActionsAria", "Actions for {{title}}", { title: menuTitle })}
+        actions={menuActions}
+        onClose={menu.close}
+        data-testid="planning-session-context-menu"
+      />
     </div>
   );
+}
+
+/** Titre AFFICHÉ d'une session : un brouillon encore générique retombe sur l'aperçu de son contenu. */
+function sessionDisplayTitle(session: AiSessionSummary, t: TFunction<"app">): string {
+  return session.status === "draft" && (!session.title || session.title === "New planning session")
+    ? (session.preview ?? t("planning.newPlanningSession", "New planning session"))
+    : session.title || t("planning.untitledSession", "Untitled session");
 }
 
 function PlanningSessionStatusIcon({ status }: { status: AiSessionSummary["status"] }) {

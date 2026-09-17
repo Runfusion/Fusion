@@ -942,7 +942,10 @@ Use **Show worktree grouping on the board** in **Settings → Worktrees** when y
 Planning is a desktop/tablet main-content destination after **Command Center**. Its saved-session sidebar remains visible and resizable beside the active composer, question, loading state, error, or completed plan, including after selecting a session or starting a new one. Phone layouts continue to use compact list/detail navigation: selecting a session hides the list until **Back** returns to it. Planning Mode includes branch controls on the summary screen before you create a task.
 
 <!-- FNXC:PlanningMode 2026-09-16-15:50: FN-465 removed archiving from Planning; the session rail lists active sessions only and each row keeps rename and delete. -->
-Archiving is no longer offered in Planning: the saved-session rail has no **Show archived** filter and no per-row archive or unarchive control, and each row keeps only rename and delete. Sessions archived before this change stay stored but are no longer listed here.
+Archiving is no longer offered in Planning: the saved-session rail has no **Show archived** filter and no per-row archive or unarchive control, and each row offers only rename and delete. Sessions archived before this change stay stored but are no longer listed here.
+
+<!-- FNXC:PlanningSessionRowActions 2026-09-17-03:18: FN-486 moves the session row's rename and delete commands into the shared list-row context menu; the row keeps no permanent secondary buttons. -->
+Renommer et supprimer une session s’ouvrent depuis le **menu contextuel de sa ligne** : clic droit, touche **Menu** ou **Shift+F10**, appui long au doigt ou au stylet. La ligne ne porte plus de crayon ni de corbeille permanents. La cible est toujours la session de la LIGNE — une session non ouverte, un brouillon, ou deux sessions portant le même titre restent distinctes par leur identifiant. **Delete** conserve sa confirmation en place ; supprimer une session en cours de génération l’annule d’abord côté serveur. Les commandes de l’en-tête (**New session**, retour, fermeture) sont inchangées.
 
 <!-- FNXC:SessionBanner 2026-07-16-20:55: FN-8229 removes the redundant footer AI pill. The session notification banner preserves non-planning in-progress, needs-input, and error visibility while Planning sessions remain on their dedicated docked surface and navigation badge. -->
 
@@ -952,7 +955,7 @@ When a Planning session needs your input or needs attention, open the docked Pla
 When an active Planning AI generation appears stuck, Planning Mode automatically retries the same session up to three times and shows **Retrying… (attempt N of 3)** before falling back to the permanent **Retry**/**Dismiss** error panel. Any successful question or summary progress resets the automatic retry budget. Leaving Planning—including while a plan update or refined question is generating—and returning restores the last active interview for that project. Reopening or reloading a saved Planning session restores its saved question, plan review, thinking, or error without starting another generation; choose **Retry** explicitly from a restored error panel if you want to run it again.
 
 <!-- FNXC:PlanningMode 2026-07-19-15:55: FN-8400 replaces the duplicate prompt-recovery controls with a focused three-pane interview; restarting remains a deliberate New session action. -->
-Use **New session** to restart planning with a different idea. To rename a session, use the pencil on its own row in the session rail, next to the delete control; any listed session can be renamed without opening it first.
+Use **New session** to restart planning with a different idea. To rename a session, open its row's context menu (right-click, **Menu**/**Shift+F10**, or long-press) and choose **Rename session**; any listed session can be renamed without opening it first.
 
 <!-- FNXC:PlanningHistory 2026-08-28-03:34: FN-210 requires every Planning Mode Q&A history surface to preserve the initiating request as visible, read-only session context. -->
 The **History** panel, the error panel, and plan review's **Show user Q&A** section show the original request that started the session in a read-only box above the questions and answers. Reading, scrolling, selecting, or copying this text does not edit it or change the session. When an older or incomplete session has no saved starting text, Planning Mode omits the box entirely.
@@ -1208,6 +1211,16 @@ The footer **Chat** action opens the same project-scoped Chat experience used by
 - Scrolling away from the newest message stops automatic following and exposes **Latest**. Returning to the bottom resumes following.
 
 ## Mailbox View
+
+<!-- FNXC:MailboxRowActions 2026-09-17-03:18: FN-486 gives every mailbox row producer the same context-menu commands; header, tab, filter, compose, bulk and approval controls are unchanged. -->
+Les actions d’un **message** de la liste s’ouvrent par le **menu contextuel de sa ligne** : clic droit, touche **Menu** ou **Shift+F10**, appui long au doigt ou au stylet. Les mêmes commandes sont servies par la destination Mailbox, la fenêtre Mailbox et l’onglet **Mail** d’un agent, dans chacune de leurs collections (réception, envoi, archives, tous agents, réception et envoi d’un agent, notifications de fin de tâche).
+
+- **Archive** ou **Restore** selon l’état du message.
+- **Delete**, destructif, après confirmation ; il n’est plus nécessaire d’ouvrir le message pour atteindre sa confirmation.
+- **Reply** uniquement là où un composeur existe déjà et selon sa condition actuelle. L’onglet Mail d’un agent n’en propose donc pas.
+- Il n’existe aucune commande d’édition d’un message.
+
+Ouvrir ce menu ne sélectionne pas le message, ne le marque pas comme lu, ne charge pas sa conversation et ne consomme pas un lien profond. Une action lancée depuis une ligne **non sélectionnée** laisse le détail ouvert en place ; seule une action visant le message affiché le referme. Les demandes d’approbation ne sont pas des messages : elles conservent leurs contrôles de décision et n’exposent aucune commande destructive de message. Les en-têtes, onglets, filtres, composition et actions collectives sont inchangés.
 
 <!-- FNXC:MailboxTwoTabsDocs 2026-09-16-16:53: FN-464 reduced Mailbox to two tabs with a contextual header, moved the retired collections behind one filter button, kept the pending-approvals badge visible on that button, and removed manual refresh in favour of real-time updates. -->
 Mailbox has exactly two tabs: **Inbox** and **Outbox**. The header is contextual. On Inbox it offers a **Filter** button and **Mark all read** (disabled when nothing is unread); on Outbox it offers **Compose**. The filter button opens the inbox scope menu — **All**, **Reports & approvals**, **Archived**, **Approvals**, and **Agents** (the floating mailbox window offers **Completions** instead of Approvals) — so every collection that used to own a tab stays one click away. When approvals are waiting, the pending count is shown as a badge on the filter button itself, visible without opening the menu, and repeated beside the **Approvals** option inside it.
@@ -1635,6 +1648,15 @@ Features:
 For full lifecycle behavior, runtime/heartbeat settings, and budgets, see [Agents guide](./agents.md).
 
 ## Missions View
+
+<!-- FNXC:MissionRowActions 2026-09-17-03:18: FN-486 moves every secondary mission/draft/hierarchy row command into the shared list-row context menu; header and detail controls are unchanged. -->
+Les commandes d’une **ligne** de Missions s’ouvrent par son **menu contextuel** : clic droit, touche **Menu** ou **Shift+F10**, appui long au doigt ou au stylet. Aucune ligne ne porte plus de bouton ni de « … » permanent.
+
+- Mission de la collection principale : **Start**, **Stop**, **Resume**, **Clear blocked status**, l’accès aux échecs, **Edit mission**, **Delete mission**. Les conditions par statut, l’état désactivé d’une réparation déjà en cours et la confirmation de suppression sont inchangés. Le compteur d’échecs et le texte d’aide d’exécution restent lisibles dans la ligne, comme informations.
+- Brouillon d’entretien : **Resume**/**Retry**/**Review** selon son statut (l’état « Generating » reste désactivé) et **Discard draft**, avec sa confirmation distincte. Un brouillon ne s’édite pas.
+- Jalons, slices, features et assertions : leurs commandes suivent la même règle et les mêmes conditions qu’auparavant (planification, activation, triage groupé, validation et réparation, lien/déliaison de tâche, lien/déliaison d’assertion, modification, suppression). L’expansion, la consultation d’une tâche et les formulaires déjà ouverts gardent leurs propres contrôles.
+
+La commande vise toujours la ligne touchée, jamais la mission sélectionnée ; ouvrir un menu ne charge pas la mission, ne replie pas sa hiérarchie et ne déclenche aucune mutation. Les commandes de l’en-tête et du détail (créer, fermer, retour, réparations du panneau de détail) sont conservées telles quelles.
 
 Missions view manages mission hierarchies and task handoff from milestones, slices, and features.
 
@@ -2562,6 +2584,28 @@ Both halves are ratcheted by `packages/dashboard/app/components/__tests__/drawer
 bespoke handle in a phone media block or an unguarded close control fails the suite. Desktop and tablet **resize** grips
 are explicitly exempt — they are pointer-resize affordances, not drawer handles.
 
+#### Titres de vue et bouton Retour
+
+<!-- FNXC:ViewBackIconParity 2026-09-17-03:18: FN-486 keeps Planning and Missions top titles on the view name and gives the back chevron the create button's mobile geometry. -->
+Le titre du haut d’une destination reste **le nom de la vue**. Ouvrir une session de planification ou une mission ne remplace pas ce titre par le nom de l’élément : ce nom est déjà présenté juste en dessous, dans le contenu. Planning affiche donc toujours **Planning Mode** et Missions toujours **Missions**, en liste comme en détail, pendant un entretien, un chargement ou une erreur.
+
+Sur téléphone, le bouton **Retour** et le bouton de création « + » ont exactement la même géométrie : même carré canonique, même taille de pictogramme, aucun padding résiduel, et aucune compression possible par un titre long. Cette parité appartient aux primitifs partagés `ViewBackButton` et `ViewActionButton` ; aucune vue ne redeclare la géométrie de son retour.
+
+#### Dismissing from a list row
+
+Une **ligne de liste** est un point de départ légitime du geste de fermeture, même lorsqu’elle est un vrai bouton
+accessible. Une ligne se qualifie en portant `data-drawer-dismiss-row` (fourni par le contrat partagé
+`packages/dashboard/app/utils/listItemGesture.ts`) ; le geste n’est accepté que si le contrôle interactif le plus
+proche de la cible touchée est cette ligne. Un champ de renommage, un lien, un bouton imbriqué, un slider ou une
+surface de terminal placés sous la ligne restent donc natifs, et les conditions existantes ne changent pas : tous les
+conteneurs défilants entre la cible et le panneau doivent être au bord haut au moment du `pointerdown`.
+
+Trois gestes coexistent sans ambiguïté sur une ligne : le défilement reste natif, un glissement descendant depuis le
+haut ferme le tiroir, et un appui long immobile ouvre le menu contextuel de la ligne. Le premier des deux derniers qui
+aboutit annule l’autre : un mouvement au-delà du seuil annule l’appui long, et l’ouverture d’un menu invalide
+immédiatement le candidat de fermeture. Aucun `preventDefault` n’est émis au démarrage du geste, donc le défilement
+natif n’est jamais confisqué.
+
 ### Banners
 
 Use the shared `Banner` component for dashboard notices. Its `tone` selects semantic info, warning, error, success, or neutral tinting; `layout` selects inline cards or sticky chrome; and `density` selects compact or regular spacing. Banners use a tinted surface and `var(--btn-border-width)` hairline border, never a left accent bar. Declaration values use design tokens: raw px is allowed only in `@media` conditions, zero values, and `var()` fallbacks.
@@ -3168,7 +3212,7 @@ Sous l’en-tête, Notes occupe tout le panneau disponible. Sur ordinateur et ta
 
 L’en-tête de Notes porte le titre de la note confirmée dès qu’elle est ouverte, y compris quand la liste est masquée (téléphone, fenêtre détachée). Pendant le chargement d’une autre note, le détail affiche un état de chargement au lieu de la note précédente : le texte d’une note déjà ouverte n’est jamais présenté comme celui de la note demandée, et ouvrir une note vide affiche un éditeur vide.
 
-Le renommage et la suppression d’une note se font depuis la liste, via le menu d’actions de sa ligne, comme pour une conversation : **Rename** bascule la ligne en édition en place, **Delete** demande confirmation.
+Le renommage et la suppression d’une note se font depuis la liste, via le **menu contextuel de sa ligne** : clic droit à la souris, touche **Menu** ou **Shift+F10** au clavier, appui long au doigt ou au stylet. La ligne ne porte plus de bouton « … ». **Rename** bascule la ligne en édition en place, **Delete** demande confirmation. Ouvrir ce menu ne sélectionne pas la note, ne charge rien et n’écrase aucun brouillon en cours sur une autre note. La même interaction est disponible dans les quatre hôtes à liste (page, popover d’en-tête, tiroir téléphone, liste compacte du dock) ; une fenêtre de note détachée ne montre que le détail et n’acquiert aucune affordance de liste.
 
 Une fenêtre de note détachée suit le nom courant de sa note : renommer la note ailleurs met immédiatement à jour le titre de la fenêtre, sans la remonter au premier plan ni voler le focus. Tant qu’un brouillon non enregistré est en cours dans cette fenêtre, il n’est jamais remplacé par la version venue d’ailleurs.
 

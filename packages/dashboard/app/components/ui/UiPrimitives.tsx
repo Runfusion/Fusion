@@ -26,7 +26,14 @@ type UiInputProps = InputHTMLAttributes<HTMLInputElement>;
 type UiTextAreaProps = TextareaHTMLAttributes<HTMLTextAreaElement>;
 type UiSurfaceProps = HTMLAttributes<HTMLDivElement>;
 type UiSelectProps = SelectHTMLAttributes<HTMLSelectElement> & { "data-testid"?: string };
-type UiMenuProps = HTMLAttributes<HTMLDivElement> & { "aria-label": string };
+/*
+FNXC:NativeUiCollections 2026-09-17-03:18:
+FN-486 : `preventScrollOnFocus` est une OPTION, défaut inchangé (`false`). Un menu portalisé ouvert depuis une
+ligne de liste vit au-dessus d'un tiroir ou d'une colonne défilante qui se ferme au défilement : si l'entrée de
+focus faisait défiler un ancêtre, le menu se refermerait aussitôt après s'être ouvert. Le contrat clavier reste
+identique pour tous les autres appelants.
+*/
+type UiMenuProps = HTMLAttributes<HTMLDivElement> & { "aria-label": string; preventScrollOnFocus?: boolean };
 type UiMenuSectionProps = HTMLAttributes<HTMLElement> & { "aria-label": string };
 export type UiMenuItemProps = ButtonHTMLAttributes<HTMLButtonElement> & { id?: string };
 type UiMenuRowProps = UiMenuItemProps & { collectionLabel: string; auxiliary?: ReactNode; rowClassName?: string };
@@ -161,7 +168,7 @@ export function UiMenuSection({ children, ...props }: UiMenuSectionProps) {
   return <section role="group" {...props}>{children}</section>;
 }
 
-export const UiMenu = forwardRef<HTMLDivElement, UiMenuProps>(function UiMenu({ children, onKeyDown, onFocus, ...props }, ref) {
+export const UiMenu = forwardRef<HTMLDivElement, UiMenuProps>(function UiMenu({ children, onKeyDown, onFocus, preventScrollOnFocus = false, ...props }, ref) {
   const menuRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLElement | null>(null);
 
@@ -180,14 +187,15 @@ export const UiMenu = forwardRef<HTMLDivElement, UiMenuProps>(function UiMenu({ 
     const firstItem = menu.querySelector<HTMLElement>('[role^="menuitem"]:not(:disabled):not([aria-disabled="true"])');
     if (firstItem) {
       menu.querySelectorAll<HTMLElement>('[role^="menuitem"]').forEach((item) => { item.tabIndex = item === firstItem ? 0 : -1; });
-      firstItem.focus();
+      firstItem.focus({ preventScroll: preventScrollOnFocus });
     }
     return () => {
       const focused = document.activeElement;
       if (focused instanceof HTMLElement && (menu.contains(focused) || focused === document.body) && triggerRef.current?.isConnected) {
-        triggerRef.current.focus();
+        triggerRef.current.focus({ preventScroll: preventScrollOnFocus });
       }
     };
+    /* Le mode de focus est volontairement figé à l'ouverture du menu : la liste de dépendances reste vide. */
   }, []);
 
   return <div ref={(node) => {

@@ -143,9 +143,16 @@ describe("MissionManager auto-merge override", () => {
 
     render(<MissionManager isInline isOpen onClose={() => {}} addToast={() => {}} projectId="project-1" />);
     fireEvent.click(await screen.findByText("Single PR Mission"));
+    /*
+    FNXC:MissionRowActions 2026-09-17-03:18:
+    FN-486 : « Edit mission » n'est plus un bouton permanent de la ligne. L'entrée passe par le menu
+    contextuel de la LIGNE, et l'édition vise toujours la mission touchée — pas la mission sélectionnée.
+    */
     const listItem = screen.getByText("List Edit Mission").closest(".mission-list__item");
     if (!listItem) throw new Error("List edit mission row must be rendered");
-    fireEvent.click(within(listItem).getByRole("button", { name: "Edit mission" }));
+    expect(within(listItem).queryByRole("button", { name: "Edit mission" })).toBeNull();
+    fireEvent.contextMenu(listItem, { clientX: 12, clientY: 12 });
+    fireEvent.click(within(screen.getByTestId("mission-row-context-menu")).getByTestId("mission-menu-edit-M-002"));
 
     const listControl = await screen.findByLabelText("Mission auto-merge override") as HTMLSelectElement;
     expect(listControl.value).toBe(expected);

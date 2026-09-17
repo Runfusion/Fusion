@@ -4,7 +4,7 @@ MissionManager must include the active Missions header workflow in every UI tria
 */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { MissionManager } from "../MissionManager";
 
 const mockFetchMissions = vi.fn();
@@ -135,11 +135,22 @@ beforeEach(() => {
   mockTriageAllSliceFeatures.mockResolvedValue({ triaged: [{ id: "F-001", taskId: "FN-001" }], count: 1 });
 });
 
+/*
+FNXC:MissionRowActions 2026-09-17-03:18:
+FN-486 : le triage d'une feature et le triage groupé d'une slice s'ouvrent depuis le menu contextuel de leur
+ligne. Le flux de prévisualisation, le repli direct et le passage de `workflowId` sont inchangés.
+*/
+function selectRowAction(rowSelector: string, index: number, testId: string) {
+  const row = document.querySelectorAll(rowSelector)[index] as HTMLElement;
+  fireEvent.contextMenu(row, { clientX: 12, clientY: 12 });
+  fireEvent.click(within(screen.getByTestId("mission-row-context-menu")).getByTestId(testId));
+}
+
 describe("MissionManager workflow triage", () => {
   it("passes the selected workflow to preview-confirm feature triage", async () => {
     await openMission("wf-missions");
 
-    fireEvent.click(screen.getByTitle("Triage — create task"));
+    selectRowAction(".mission-feature__header", 0, "feature-menu-triage-F-001");
     fireEvent.click(await screen.findByText("Create Task"));
 
     await waitFor(() => {
@@ -154,7 +165,7 @@ describe("MissionManager workflow triage", () => {
     mockPreviewEnrichedDescription.mockRejectedValueOnce(new Error("preview unavailable"));
     await openMission("wf-missions");
 
-    fireEvent.click(screen.getByTitle("Triage — create task"));
+    selectRowAction(".mission-feature__header", 0, "feature-menu-triage-F-001");
 
     await waitFor(() => {
       expect(mockTriageFeature).toHaveBeenCalledWith("F-001", undefined, undefined, "project-a", {
@@ -167,7 +178,7 @@ describe("MissionManager workflow triage", () => {
   it("passes the selected workflow to slice bulk triage", async () => {
     await openMission("wf-missions");
 
-    fireEvent.click(screen.getByTitle("Triage all features"));
+    selectRowAction(".mission-slice__header", 0, "slice-menu-triage-all-SL-001");
 
     await waitFor(() => {
       expect(mockTriageAllSliceFeatures).toHaveBeenCalledWith("SL-001", "project-a", {
@@ -180,7 +191,7 @@ describe("MissionManager workflow triage", () => {
   it("omits workflowId from mission triage calls when no workflow is selected", async () => {
     await openMission(null);
 
-    fireEvent.click(screen.getByTitle("Triage all features"));
+    selectRowAction(".mission-slice__header", 0, "slice-menu-triage-all-SL-001");
 
     await waitFor(() => {
       expect(mockTriageAllSliceFeatures).toHaveBeenCalledWith("SL-001", "project-a", {
