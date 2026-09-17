@@ -12,6 +12,7 @@ import { NodeStatusIndicator } from "./NodeStatusIndicator";
 import { NodeHealthDot } from "./NodeHealthDot";
 import { PluginSlot } from "./PluginSlot";
 import { useViewportMode, type ViewportMode } from "../hooks/useViewportMode";
+import { resolveHeaderNavigationOwnership } from "../utils/headerNavigationOwnership";
 import { getTrailingPath } from "../utils/pathDisplay";
 import type { TaskView } from "../hooks/useViewState";
 import type { PluginDashboardViewEntry } from "../api";
@@ -227,6 +228,27 @@ export function Header({
   */
   const hideFullNav = isCompact && mobileNavEnabled;
   /*
+  FNXC:HeaderNavigationOwnership 2026-09-17-02:14:
+  FN-481 : le Header dérive ses propres accès avec la MÊME table que celle transmise à la navigation basse par App,
+  de sorte qu'aucune surface ne puisse supposer un accès que l'autre ne rend pas. Il s'en sert pour ne pas se
+  dupliquer lui-même : le menu de débordement du Header historique n'offre plus Projets quand son sélecteur compact
+  porte déjà l'action de gestion. Le repli existe encore quand ce sélecteur n'est pas montable.
+  */
+  const headerOwnedNavigationItems = useMemo(
+    () => resolveHeaderNavigationOwnership({
+      mode,
+      mobileNavEnabled: Boolean(mobileNavEnabled),
+      hasOpenUsage: Boolean(onOpenUsage),
+      hasOpenNotesPanel: Boolean(onOpenNotesPanel),
+      hasOpenActivityPanel: Boolean(onOpenActivityPanel),
+      projectCount: projects.length,
+      hasSelectProject: Boolean(onSelectProject),
+      hasViewAllProjects: Boolean(onViewAllProjects),
+    }),
+    [mobileNavEnabled, mode, onOpenActivityPanel, onOpenNotesPanel, onOpenUsage, onSelectProject, onViewAllProjects, projects.length],
+  );
+  const headerOwnsProjects = headerOwnedNavigationItems.includes("projects");
+  /*
   FNXC:Navigation 2026-06-19-00:00:
   When experimental left sidebar navigation is active on tablet/desktop, Header must suppress its view-toggle and More-views trigger so there is one canonical non-mobile navigation surface and no orphaned chevron remains.
 
@@ -254,6 +276,18 @@ export function Header({
   restriction Board/List de FN-439.
   */
   const workflowSlotVisible = (boardBackgroundActive && isMobile) || view === "board" || view === "list";
+  /*
+  FNXC:WorkflowControls 2026-09-17-02:14:
+  FN-481 : la suppression de la navigation primaire (`hideFullNav`, vraie sur TOUTE la bande compacte tant que la pill
+  est montée) et le PLACEMENT du slot workflow sont deux décisions distinctes. La disposition compacte — slot dans
+  `header-left`, juste après le sélecteur compact de projet — appartient au seul mode téléphone. La tablette garde la
+  navigation basse mobile mais organise son Header comme l'ordinateur : le sélecteur de projet complet reste dans
+  `header-left` et le slot vit dans `header-actions`, donc l'ordre reste projet, puis workflow, puis recherche — dans
+  le DOM comme au clavier, sans `order` CSS. Les deux branches sont mutuellement exclusives (`isMobile` contre non‑
+  téléphone), si bien qu'un seul `#header-workflow-slot` est rendu.
+  */
+  const workflowSlotInHeaderLeft = isMobile && Boolean(hideFullNav);
+  const workflowSlotInHeaderActions = hideHeaderViewNav || (isTablet && Boolean(mobileNavEnabled));
   /*
   FNXC:Navigation 2026-06-21-23:40:
   The right dock is persistent and owns its own collapse control, so Header must not render a duplicate right-dock toggle or repurpose the More views overflow trigger on tablet/desktop.
@@ -613,7 +647,7 @@ export function Header({
           </div>
         )}
 
-        {hideFullNav && workflowSlotVisible && (
+        {workflowSlotInHeaderLeft && workflowSlotVisible && (
           <div
             id="header-workflow-slot"
             className="header-workflow-slot header-workflow-slot--mobile"
@@ -742,7 +776,7 @@ export function Header({
           </button>
         )}
 
-        {hideHeaderViewNav && workflowSlotVisible && (
+        {workflowSlotInHeaderActions && workflowSlotVisible && (
           <div
             id="header-workflow-slot"
             className="header-workflow-slot"
@@ -1265,8 +1299,17 @@ export function Header({
             role="menu"
             aria-label={t("header.additionalHeaderActions", "Additional header actions")}
           >
-            {/* Projects - in overflow on mobile */}
-            {isMobile && projects.length >= 1 && onViewAllProjects && (
+            {/*
+            Projects — repli du menu de débordement.
+
+            FNXC:HeaderNavigationOwnership 2026-09-17-02:14:
+            FN-481 : quand le sélecteur compact `mobile-project-switch-trigger` est monté ET porte son action
+            `mobile-project-switch-view-all`, le Header possède déjà Projets et ne doit pas l'offrir une seconde fois
+            ici. Sans sélecteur montable (par exemple `onSelectProject` absent) mais avec l'action de gestion
+            disponible, cette entrée reste le seul chemin et est conservée : dédupliquer ne doit jamais rendre une
+            destination inatteignable.
+            */}
+            {isMobile && !headerOwnsProjects && projects.length >= 1 && onViewAllProjects && (
               <button
                 className="mobile-overflow-item"
                 onClick={() => handleOverflowAction(onViewAllProjects)}

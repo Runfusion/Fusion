@@ -759,3 +759,135 @@ describe("MobileNavBar navigation popover keeps its scroll position", () => {
     expect(recordedFocus).toHaveLength(0);
   });
 });
+
+/*
+FNXC:HeaderNavigationOwnership 2026-09-17-02:14:
+FN-481 : « si le bouton d'accès est présent dans le header à cette vue, il ne doit pas être présent en plus dans le
+footer ni dans "more" ». Ces cas prouvent le retrait des DEUX producteurs (rangée directe et menu) pour chaque
+destination possédée par le Header, la conservation de toutes les autres, et le fait qu'une pill sans Header ne perd
+rien.
+*/
+describe("MobileNavBar exclut les accès déjà possédés par le Header", () => {
+  beforeEach(() => {
+    mockViewport("mobile");
+    vi.mocked(fetchScripts).mockReset();
+    vi.mocked(fetchScripts).mockResolvedValue({});
+  });
+
+  function openMenuWith(props: Partial<React.ComponentProps<typeof MobileNavBar>> = {}) {
+    const rendered = render(<OfficialMobileShell {...props} />);
+    fireEvent.click(screen.getByTestId("mobile-menu-trigger"));
+    return rendered;
+  }
+
+  it("garde toutes les destinations quand aucune propriété de Header n'est déclarée", () => {
+    openMenuWith();
+    for (const item of ["usage", "projects", "notes", "activity"]) {
+      const inRow = screen.queryByTestId(`mobile-nav-tab-${item}`);
+      const inMenu = screen.queryByTestId(MORE_TEST_IDS[item]!);
+      expect(Boolean(inRow) || Boolean(inMenu)).toBe(true);
+    }
+  });
+
+  it.each([
+    ["téléphone", ["usage", "projects"]],
+    ["tablette", ["usage", "projects", "notes", "activity"]],
+  ])("retire les deux producteurs des destinations possédées en %s", (_label, owned) => {
+    openMenuWith({ headerOwnedItems: owned });
+    for (const item of owned) {
+      expect(screen.queryByTestId(`mobile-nav-tab-${item}`)).toBeNull();
+      expect(screen.queryByTestId(MORE_TEST_IDS[item]!)).toBeNull();
+    }
+  });
+
+  it("conserve Notes et Activity en bas sur téléphone, où le Header ne les rend pas", () => {
+    const props = createDefaultProps();
+    render(<MobileNavBar {...props} headerOwnedItems={["usage", "projects"]} navigationMenuOpen onUiMenuOpenChange={vi.fn()} />);
+
+    fireEvent.click(screen.getByTestId("mobile-more-item-notes"));
+    expect(props.onChangeView).toHaveBeenCalledWith("notes");
+    fireEvent.click(screen.getByTestId("mobile-more-item-activity"));
+    expect(props.onOpenActivityLog).toHaveBeenCalled();
+  });
+
+  it("précède la répartition : une destination sélectionnée ET promouvable est retirée partout", () => {
+    /* `settings` est à la fois sélectionnable en accès rapide et présent dans l'ordre de promotion. */
+    const { container } = openMenuWith({
+      quickAccessItems: ["settings", "planning"],
+      headerOwnedItems: ["settings"],
+    });
+
+    expect(tabTestIds(container)).not.toContain("mobile-nav-tab-settings");
+    expect(screen.queryByTestId("mobile-more-item-settings")).toBeNull();
+    /* Le séparateur ne doit pas rester seul quand son unique groupe a disparu. */
+    expect(document.querySelector(".mobile-more-separator")).toBeNull();
+    expect(screen.getByTestId("mobile-nav-tab-planning")).toBeInTheDocument();
+  });
+
+  it("n'ajoute aucun bouton vide et garde le hamburger en dernier", () => {
+    const { container } = openMenuWith({ headerOwnedItems: ["usage", "projects", "notes", "activity"] });
+
+    expect(pill(container).lastElementChild).toBe(screen.getByTestId("mobile-menu-trigger"));
+    for (const button of Array.from(document.querySelectorAll<HTMLElement>(".mobile-more-item"))) {
+      expect(button.textContent?.trim().length ?? 0).toBeGreaterThan(0);
+    }
+    for (const tab of Array.from(container.querySelectorAll<HTMLElement>(".mobile-nav-bar--native > .mobile-nav-tab"))) {
+      expect(tab.getAttribute("aria-label")?.trim().length ?? 0).toBeGreaterThan(0);
+    }
+  });
+
+  it("ne rend aucun bouton de repli inerte quand le callback de la destination est absent", () => {
+    render(
+      <MobileNavBar
+        {...createDefaultProps()}
+        onOpenUsage={undefined}
+        onViewAllProjects={undefined}
+        onOpenActivityLog={undefined}
+        navigationMenuOpen
+        onUiMenuOpenChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByTestId("mobile-more-item-usage")).toBeNull();
+    expect(screen.queryByTestId("mobile-more-item-projects")).toBeNull();
+    expect(screen.queryByTestId("mobile-more-item-activity")).toBeNull();
+    /* Notes passe par le routage de vue existant et reste donc disponible. */
+    expect(screen.getByTestId("mobile-more-item-notes")).toBeInTheDocument();
+  });
+
+  it("tolère une liste d'exclusions vide, dupliquée ou inconnue", () => {
+    const { unmount } = openMenuWith({ headerOwnedItems: [] });
+    expect(screen.getByTestId("mobile-more-item-usage")).toBeInTheDocument();
+    unmount();
+
+    openMenuWith({ headerOwnedItems: ["usage", "usage", "destination-inconnue"] });
+    expect(screen.queryByTestId("mobile-more-item-usage")).toBeNull();
+    expect(screen.getByTestId("mobile-more-item-projects")).toBeInTheDocument();
+  });
+
+  it("garde un focus utile quand la propriété du Header retire l'élément focalisé du menu ouvert", () => {
+    const props = createDefaultProps();
+    const view = render(<MobileNavBar {...props} headerOwnedItems={[]} navigationMenuOpen onUiMenuOpenChange={vi.fn()} />);
+
+    const usageEntry = screen.getByTestId("mobile-more-item-usage");
+    usageEntry.focus();
+    expect(document.activeElement).toBe(usageEntry);
+
+    view.rerender(<MobileNavBar {...props} headerOwnedItems={["usage"]} navigationMenuOpen onUiMenuOpenChange={vi.fn()} />);
+
+    expect(screen.queryByTestId("mobile-more-item-usage")).toBeNull();
+    const popover = screen.getByRole("menu", { name: "Navigate" });
+    expect(popover.contains(document.activeElement)).toBe(true);
+  });
+
+  it("ne vole pas le focus lors d'un simple rafraîchissement sans changement de propriétaire", () => {
+    const props = createDefaultProps();
+    const view = render(<MobileNavBar {...props} headerOwnedItems={["usage"]} navigationMenuOpen onUiMenuOpenChange={vi.fn()} />);
+    const notesEntry = screen.getByTestId("mobile-more-item-notes");
+    notesEntry.focus();
+
+    view.rerender(<MobileNavBar {...props} headerOwnedItems={["usage"]} navigationMenuOpen mailboxUnreadCount={3} onUiMenuOpenChange={vi.fn()} />);
+
+    expect(document.activeElement).toBe(screen.getByTestId("mobile-more-item-notes"));
+  });
+});

@@ -614,6 +614,74 @@ describe("Header", () => {
       expect(document.querySelector(".header-workflow-slot")).toBeNull();
     });
 
+    /*
+    FNXC:WorkflowControls 2026-09-17-02:14:
+    FN-481 : symptôme d'origine — « en vue tablette le sélecteur de projet se met à droite du sélecteur de workflow ».
+    La tablette garde la pill, donc `hideFullNav` y est vrai, mais son Header doit rester organisé comme l'ordinateur :
+    sélecteur de projet dans `header-left`, slot peuplé dans `header-actions`, et ordre DOM projet → workflow →
+    recherche. Le test monte un vrai portail dans le slot pour que le placement soit prouvé sur un nœud peuplé.
+    */
+    it.each([
+      ["tablet", "board"],
+      ["tablet", "list"],
+      ["desktop", "board"],
+      ["desktop", "list"],
+    ] as const)("garde la disposition ordinateur du slot workflow en %s sur %s", (mode, slotView) => {
+      const { container } = renderHeader(
+        {
+          onChangeView: noop,
+          /* Tablette : shell réel (pill propriétaire, pas de colonne de gauche). Ordinateur : navigation large. */
+          mobileNavEnabled: mode === "tablet",
+          leftSidebarNavActive: mode === "desktop",
+          view: slotView,
+          projects: [{ id: "p1", name: "Projet un", path: "/p1" }],
+          currentProject: { id: "p1", name: "Projet un", path: "/p1" },
+          onViewAllProjects: noop,
+          onSelectProject: noop,
+          onSearchChange: noop,
+          projectId: "p1",
+        },
+        mode,
+      );
+
+      const slots = screen.getAllByTestId("header-workflow-slot");
+      expect(slots).toHaveLength(1);
+      const slot = slots[0]!;
+      expect(slot).not.toHaveClass("header-workflow-slot--mobile");
+      expect(slot.closest(".header-actions")).not.toBeNull();
+      expect(slot.closest(".header-left")).toBeNull();
+
+      /* Portail réel : un slot vide serait masqué par `:empty` et ne prouverait aucun ordre visible. */
+      const populated = document.createElement("div");
+      populated.className = "board-workflow-toolbar";
+      populated.dataset.testid = "portal-workflow-control";
+      slot.appendChild(populated);
+
+      const projectTrigger = screen.getByTestId("project-selector-trigger");
+      expect(projectTrigger.closest(".header-left")).not.toBeNull();
+      const searchControl = container.querySelector<HTMLElement>(".header-actions [data-testid$=\"header-search-btn\"], .header-actions [data-testid$=\"header-search-input\"]");
+      expect(searchControl).not.toBeNull();
+
+      const projectBeforeSlot = projectTrigger.compareDocumentPosition(slot) & Node.DOCUMENT_POSITION_FOLLOWING;
+      expect(projectBeforeSlot).toBeTruthy();
+      const slotBeforeSearch = slot.compareDocumentPosition(searchControl!) & Node.DOCUMENT_POSITION_FOLLOWING;
+      expect(slotBeforeSearch).toBeTruthy();
+    });
+
+    /* FN-481 : la disposition compacte reste réservée au téléphone et n'apparaît pas sur tablette. */
+    it("ne rend aucun slot workflow compact sur tablette", () => {
+      renderHeader({ onChangeView: noop, mobileNavEnabled: true, view: "board" }, "tablet");
+      expect(document.querySelector(".header-workflow-slot--mobile")).toBeNull();
+      expect(screen.getAllByTestId("header-workflow-slot")).toHaveLength(1);
+    });
+
+    /* FN-481 : aucun slot orphelin sur une vue sans workflow, quel que soit le mode compact. */
+    it.each(["mobile", "tablet"] as const)("ne laisse aucun slot résiduel sur une vue sans workflow en %s", (mode) => {
+      renderHeader({ onChangeView: noop, mobileNavEnabled: true, view: "missions" }, mode);
+      expect(screen.queryByTestId("header-workflow-slot")).toBeNull();
+      expect(document.querySelector(".header-workflow-slot")).toBeNull();
+    });
+
     it("renders the workflow portal slot in the mobile top header when mobile nav owns view switching", () => {
       renderHeader({ onChangeView: noop, leftSidebarNavActive: true, mobileNavEnabled: true }, "mobile");
       const workflowSlot = screen.getByTestId("header-workflow-slot");

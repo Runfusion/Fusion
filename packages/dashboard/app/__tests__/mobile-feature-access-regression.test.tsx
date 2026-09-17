@@ -254,7 +254,13 @@ describe("Mobile Feature Access Regression Guard", () => {
     expect(props.onChangeView).toHaveBeenCalledWith("agents");
   });
 
-  it("project list is accessible via header overflow menu on mobile", () => {
+  /*
+  FNXC:HeaderNavigationOwnership 2026-09-17-02:14:
+  FN-481 : le Header historique sans pill portait DEUX accès Projets — son sélecteur compact, dont l'action « View
+  Projects » appelle déjà `onViewAllProjects`, et une entrée de menu de débordement. Le doublon disparaît ; l'accès
+  reste prouvé par le chemin conservé.
+  */
+  it("project management stays reachable once, through the compact selector, on the legacy mobile header", () => {
     const projects = createProjects();
     const onViewAllProjects = vi.fn();
     const { container } = render(
@@ -268,16 +274,48 @@ describe("Mobile Feature Access Regression Guard", () => {
       />,
     );
 
-    const overflowTrigger = container.querySelector(".compact-overflow-trigger");
-    expect(overflowTrigger).not.toBeNull();
-
+    expect(container.querySelector(".compact-overflow-trigger")).not.toBeNull();
+    fireEvent.click(screen.getByTitle("More header actions"));
+    expect(screen.queryByTestId("overflow-project-selector-btn")).toBeNull();
+    /* Usage n'a pas de raccourci direct dans cette variante : son entrée de débordement reste légitime. */
     fireEvent.click(screen.getByTitle("More header actions"));
 
+    fireEvent.click(screen.getByTestId("mobile-project-switch-trigger"));
+    fireEvent.click(screen.getByTestId("mobile-project-switch-view-all"));
+    expect(onViewAllProjects).toHaveBeenCalledOnce();
+  });
+
+  /* FN-481 : sans sélecteur montable, l'entrée de repli du menu de débordement reste le seul chemin et est conservée. */
+  it("keeps the header overflow Projects fallback when the compact selector cannot mount", () => {
+    const projects = createProjects();
+    const onViewAllProjects = vi.fn();
+    render(
+      <Header
+        projects={projects}
+        currentProject={projects[0]}
+        onViewAllProjects={onViewAllProjects}
+        onOpenSettings={vi.fn()}
+        mobileNavEnabled={false}
+      />,
+    );
+
+    expect(screen.queryByTestId("mobile-project-switch-trigger")).toBeNull();
+    fireEvent.click(screen.getByTitle("More header actions"));
     const projectsButton = screen.getByTestId("overflow-project-selector-btn");
     expect(projectsButton.textContent).toContain("Projects");
-
     fireEvent.click(projectsButton);
     expect(onViewAllProjects).toHaveBeenCalledOnce();
+  });
+
+  /* FN-481 : le raccourci Usage direct n'existe pas dans cette variante, donc son entrée de débordement est conservée. */
+  it("keeps the legacy header overflow Usage entry when no direct Usage shortcut exists", () => {
+    const onOpenUsage = vi.fn();
+    render(<Header onOpenSettings={vi.fn()} onOpenUsage={onOpenUsage} mobileNavEnabled={false} />);
+
+    expect(screen.queryByTestId("mobile-header-usage-btn")).toBeNull();
+    fireEvent.click(screen.getByTitle("More header actions"));
+    fireEvent.click(screen.getByTestId("overflow-usage-btn"));
+    expect(onOpenUsage).toHaveBeenCalledOnce();
   });
 
   it("official menu provides access to secondary mobile features", () => {

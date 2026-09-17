@@ -160,6 +160,13 @@ create button would be the control that compresses when a workflow name is long,
 
   FNXC:WorkflowControls 2026-06-23-21:12:
   The mobile workflow dropdown must visually match the board/list segmented toggle height exactly. Pin the toolbar wrapper, switcher, and trigger to the same 32px border-box and remove inherited vertical padding/line-height drift so the top and bottom edges align pixel-for-pixel.
+
+  FNXC:WorkflowControls 2026-09-17-02:14:
+  FN-481 : cette compaction appartient au MODE téléphone, pas à une largeur. Elle vise donc `.header-workflow-slot--mobile`,
+  la classe portée par la seule branche téléphone du slot. Une tablette tactile connue à 768 px CSS reste en mode
+  `tablet` : son slot vit dans `header-actions` sans cette classe et garde la présentation ordinateur (libellé et
+  compteurs visibles, largeur non brideée), exactement comme le sélecteur de projet que `ProjectSelector.css` rétablit
+  déjà par mode. Les autres règles téléphone de ce bloc (en-tête, marque, actions) restent inchangées.
   */
   .header {
     gap: var(--space-sm);
@@ -177,7 +184,7 @@ create button would be the control that compresses when a workflow name is long,
     flex-shrink: 0;
   }
 
-  .header-workflow-slot {
+  .header-workflow-slot--mobile {
     flex: 1 1 auto;
     justify-content: center;
     min-width: 0;
@@ -190,17 +197,17 @@ create button would be the control that compresses when a workflow name is long,
     gap: var(--space-sm);
   }
 
-  .header-workflow-slot:empty {
+  .header-workflow-slot--mobile:empty {
     display: none;
   }
 
-  .header-workflow-slot .board-workflow-toolbar,
-  .header-workflow-slot .list-workflow-control {
+  .header-workflow-slot--mobile .board-workflow-toolbar,
+  .header-workflow-slot--mobile .list-workflow-control {
     height: 32px;
     align-items: center;
   }
 
-  .header-workflow-slot .workflow-switcher {
+  .header-workflow-slot--mobile .workflow-switcher {
     width: clamp(calc(var(--space-2xl) * 3.25), 36vw, calc(var(--space-2xl) * 4));
     height: 32px;
     max-height: 32px;
@@ -209,11 +216,11 @@ create button would be the control that compresses when a workflow name is long,
     align-items: center;
   }
 
-  .header-workflow-slot .workflow-switcher-label {
+  .header-workflow-slot--mobile .workflow-switcher-label {
     display: none;
   }
 
-  .header-workflow-slot .workflow-switcher-trigger {
+  .header-workflow-slot--mobile .workflow-switcher-trigger {
     appearance: none;
     box-sizing: border-box;
     width: 100%;
@@ -227,15 +234,15 @@ create button would be the control that compresses when a workflow name is long,
     overflow: hidden;
   }
 
-  .header-workflow-slot .workflow-switcher-trigger-main {
+  .header-workflow-slot--mobile .workflow-switcher-trigger-main {
     gap: var(--space-xs);
   }
 
-  .header-workflow-slot .workflow-switcher-counts {
+  .header-workflow-slot--mobile .workflow-switcher-counts {
     display: none;
   }
 
-  .header-workflow-slot .workflow-switcher-merging-indicator {
+  .header-workflow-slot--mobile .workflow-switcher-merging-indicator {
     width: calc(var(--space-sm) - 2px);
     height: calc(var(--space-sm) - 2px);
   }

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { Header } from "../components/Header";
 import { Board } from "../components/Board";
+import { TABLET_MEDIA_QUERY } from "../hooks/useViewportMode";
 
 /*
 FNXC:WorkflowControls 2026-09-15-01:44:
@@ -49,13 +50,20 @@ vi.mock("../components/Column", () => ({ Column: () => null }));
 
 type ViewportTier = "mobile" | "tablet" | "desktop";
 
+/*
+FNXC:WorkflowControls 2026-09-17-02:14:
+FN-481 : la tablette entre dans ce harnais parce qu'elle garde la navigation basse mobile tout en devant conserver la
+disposition ordinateur du Header. Le niveau tablette utilise la constante partagée, jamais un littéral de largeur.
+*/
 function mockMatchMedia(tier: ViewportTier) {
-  Object.defineProperty(window, "innerWidth", { configurable: true, value: tier === "mobile" ? 375 : 1280 });
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: tier === "mobile" ? 375 : tier === "tablet" ? 900 : 1280 });
   Object.defineProperty(window, "matchMedia", {
     writable: true,
     configurable: true,
     value: vi.fn().mockImplementation((query: string) => ({
-      matches: tier === "mobile" && query.includes("max-width: 768px"),
+      matches: tier === "tablet"
+        ? query === TABLET_MEDIA_QUERY
+        : tier === "mobile" && query.includes("max-width: 768px"),
       media: query,
       onchange: null,
       addListener: vi.fn(),
@@ -86,15 +94,20 @@ function boardProps(overrides: Partial<React.ComponentProps<typeof Board>> = {})
   } as React.ComponentProps<typeof Board>;
 }
 
+const PROJECTS = [{ id: "p1", name: "Projet un", path: "/p1" }];
+
 function Shell({
   leftSidebarNavActive,
   mobileNavEnabled = false,
   headerKey = "header",
+  withProjects = false,
 }: {
   leftSidebarNavActive: boolean;
   mobileNavEnabled?: boolean;
   /** Remounting only the Header replaces the slot node while the Board instance is retained. */
   headerKey?: string;
+  /** Mounts the real project selector so the project → workflow → search order can be asserted. */
+  withProjects?: boolean;
 }) {
   return (
     <>
@@ -107,6 +120,9 @@ function Shell({
         view="board"
         leftSidebarNavActive={leftSidebarNavActive}
         mobileNavEnabled={mobileNavEnabled}
+        {...(withProjects
+          ? { projects: PROJECTS, currentProject: PROJECTS[0], onViewAllProjects: () => {}, onSelectProject: () => {} }
+          : {})}
       />
       <Board {...boardProps()} />
     </>
@@ -148,6 +164,64 @@ describe("header workflow slot placement", () => {
     // Same line, left of the magnifier: the populated slot precedes the search button.
     const search = searchButton();
     expect(slot.compareDocumentPosition(search) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  /*
+  FNXC:WorkflowControls 2026-09-17-02:14:
+  FN-481 : symptôme d'origine côté ordre — sur tablette le sélecteur de projet se retrouvait à DROITE du sélecteur de
+  workflow. Avec un portail réellement peuplé par le vrai Board, la tablette doit désormais présenter projet, puis
+  workflow, puis recherche, exactement comme l'ordinateur, tout en gardant sa navigation basse mobile.
+  */
+  it.each(["tablet", "desktop"] as const)("place le projet avant le slot peuplé, puis la recherche, en %s", async (tier) => {
+    mockMatchMedia(tier);
+    render(<Shell leftSidebarNavActive={tier === "desktop"} mobileNavEnabled={tier === "tablet"} withProjects />);
+
+    const slot = await screen.findByTestId("header-workflow-slot");
+    await waitFor(() => expect(slot.querySelector(".board-workflow-toolbar")).not.toBeNull());
+
+    expect(document.querySelectorAll("#header-workflow-slot")).toHaveLength(1);
+    expect(slot.className).not.toContain("header-workflow-slot--mobile");
+    expect(slot.closest(".header-actions")).not.toBeNull();
+    expect(document.querySelector(".board-workflow-view > .board-workflow-toolbar")).toBeNull();
+
+    const projectTrigger = screen.getByTestId("project-selector-trigger");
+    expect(projectTrigger.closest(".header-left")).not.toBeNull();
+    expect(projectTrigger.compareDocumentPosition(slot) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(slot.compareDocumentPosition(searchButton()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  /*
+  FN-481 : téléphone → tablette → ordinateur → tablette → téléphone sans recharger le propriétaire de vue. Un seul
+  slot connecté à chaque étape, la disposition compacte réservée au téléphone, et jamais de repli en ligne.
+  */
+  it("conserve un unique slot connecté pendant les transitions de mode", async () => {
+    mockMatchMedia("mobile");
+    const { rerender } = render(<Shell leftSidebarNavActive={false} mobileNavEnabled withProjects />);
+    await screen.findByTestId("header-workflow-slot");
+
+    for (const tier of ["tablet", "desktop", "tablet", "mobile"] as const) {
+      mockMatchMedia(tier);
+      act(() => {
+        window.dispatchEvent(new Event("resize"));
+      });
+      rerender(<Shell leftSidebarNavActive={tier === "desktop"} mobileNavEnabled={tier !== "desktop"} withProjects />);
+
+      await waitFor(() => {
+        const slot = screen.getByTestId("header-workflow-slot");
+        expect(slot.querySelector(".board-workflow-toolbar"), `portail peuplé @${tier}`).not.toBeNull();
+      });
+      const slot = screen.getByTestId("header-workflow-slot");
+      expect(document.querySelectorAll("#header-workflow-slot"), `slot unique @${tier}`).toHaveLength(1);
+      expect(document.querySelectorAll(".board-workflow-toolbar"), `un seul contrôle @${tier}`).toHaveLength(1);
+      expect(document.querySelector(".board-workflow-view > .board-workflow-toolbar"), `aucun repli @${tier}`).toBeNull();
+      if (tier === "mobile") {
+        expect(slot.className).toContain("header-workflow-slot--mobile");
+        expect(slot.closest(".header-left")).not.toBeNull();
+      } else {
+        expect(slot.className).not.toContain("header-workflow-slot--mobile");
+        expect(slot.closest(".header-actions")).not.toBeNull();
+      }
+    }
   });
 
   it("relocates the selector when the header slot mounts after the board", async () => {

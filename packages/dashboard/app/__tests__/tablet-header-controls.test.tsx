@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { Header } from "../components/Header";
+import { TABLET_MEDIA_QUERY } from "../hooks/useViewportMode";
 
 // Mock fetchScripts for overflow submenu
 const mockFetchScripts = vi.fn();
@@ -12,9 +13,15 @@ vi.mock("../api", () => ({
 /**
  * Tablet header controls test suite.
  *
- * Verifies that the tablet viewport tier (769px–1024px) renders the
- * header without the retired engine controls while moving lower-priority
- * actions into the overflow menu.
+ * Verifies that the tablet viewport tier renders the header without the retired engine controls while moving
+ * lower-priority actions into the overflow menu.
+ *
+ * FNXC:ViewportMode 2026-09-17-02:14:
+ * FN-481 : la borne haute de la requête tablette est `1023.98px` depuis FN-468, donc un filtre sur le littéral
+ * `1024px` ne correspondait plus à rien et chaque rendu « tablette » de ce fichier retombait silencieusement en
+ * ordinateur. La constante partagée est utilisée directement pour qu'un futur déplacement de borne ne puisse pas
+ * réintroduire la même dérive. Ces cas montent le Header SEUL, sans pill (`mobileNavEnabled` absent), et ne décrivent
+ * donc pas le shell applicatif tablette.
  */
 
 type ViewportTier = "mobile" | "tablet" | "desktop";
@@ -26,7 +33,7 @@ const mockMatchMedia = (tier: ViewportTier) => {
       let matches = false;
       if (tier === "mobile" && query.includes("max-width: 768px")) {
         matches = true;
-      } else if (tier === "tablet" && query.includes("769px") && query.includes("1024px")) {
+      } else if (tier === "tablet" && query === TABLET_MEDIA_QUERY) {
         matches = true;
       }
       return {
@@ -85,8 +92,14 @@ describe("tablet header controls", () => {
   it("renders view toggle inline on tablet", () => {
     renderTabletHeader({ onChangeView: noop, showAgentsTab: true });
     expect(screen.getByTitle("Board view")).toBeDefined();
-    // FN-382: tablet reaches List through the right dock, not the header toggle.
-    expect(screen.queryByTitle("List view")).toBeNull();
+    /*
+    FNXC:ToolSurfaces 2026-09-17-02:14:
+    FN-481 : assertion corrigée, pas affaiblie. Elle encodait le contrat FN-382 « la tablette atteint List par le dock
+    droit », que FN-426 a remplacé : le groupe de bascule rend List à côté de Board sur tout ce qui n'est pas un
+    téléphone. Elle ne pouvait plus le détecter parce que le mock tablette de ce fichier ne correspondait plus à la
+    requête réelle et rendait en fait un Header ordinateur.
+    */
+    expect(screen.getByTestId("header-list-view-btn")).toBeDefined();
     expect(screen.getByTitle("Agents view")).toBeDefined();
     expect(screen.getByTestId("view-toggle-command-center")).toBeDefined();
     expect(screen.queryByTitle("Artifacts view")).toBeNull();

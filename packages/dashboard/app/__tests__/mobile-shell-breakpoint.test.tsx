@@ -119,6 +119,11 @@ function ShellHarness({
         showAgentsTab={true}
         leftSidebarNavActive={surfaces.headerPrimaryNavSuppressed}
         rightDockAvailable={rightDockActive}
+        projects={projects}
+        currentProject={projects[0]}
+        onSelectProject={vi.fn()}
+        onViewAllProjects={vi.fn()}
+        onSearchChange={vi.fn()}
       />
       {surfaces.sidebarActive ? (
         <LeftSidebarNav
@@ -256,6 +261,45 @@ describe("FN-468 mobile shell breakpoint", () => {
       expect(container.querySelectorAll("#header-workflow-slot").length, navigationPlacement).toBe(1);
       unmount();
     }
+  });
+
+  /*
+  FNXC:WorkflowControls 2026-09-17-02:14:
+  FN-481 : la tablette garde la pill, mais son Header s'organise comme l'ordinateur. Le slot appartient donc à
+  `header-actions` et le sélecteur de projet complet le précède dans `header-left` — aucune disposition compacte
+  téléphone, aucun second slot.
+  */
+  it("garde le sélecteur de projet avant le slot workflow sur tablette, comme sur ordinateur", () => {
+    for (const navigationPlacement of PLACEMENTS) {
+      mockViewportWidth(1000);
+      const { container, unmount } = render(
+        <ShellHarness viewportMode="tablet" navigationPlacement={navigationPlacement} />,
+      );
+
+      const slot = container.querySelector<HTMLElement>("#header-workflow-slot")!;
+      expect(slot.className, navigationPlacement).not.toContain("header-workflow-slot--mobile");
+      expect(slot.closest(".header-actions"), navigationPlacement).not.toBeNull();
+
+      const projectTrigger = screen.getByTestId("project-selector-trigger");
+      expect(projectTrigger.closest(".header-left"), navigationPlacement).not.toBeNull();
+      expect(
+        projectTrigger.compareDocumentPosition(slot) & Node.DOCUMENT_POSITION_FOLLOWING,
+        navigationPlacement,
+      ).toBeTruthy();
+      /* La pill reste montée sur tablette : déplacer le slot ne doit pas lui retirer sa navigation. */
+      expect(screen.getByTestId("mobile-menu-trigger"), navigationPlacement).toBeInTheDocument();
+      unmount();
+    }
+  });
+
+  /* FN-481 : sur téléphone la disposition compacte est conservée telle quelle. */
+  it("conserve la disposition compacte du slot sur téléphone", () => {
+    mockViewportWidth(375);
+    const { container } = render(<ShellHarness viewportMode="mobile" navigationPlacement="footer" />);
+    const slot = container.querySelector<HTMLElement>("#header-workflow-slot")!;
+    expect(slot.className).toContain("header-workflow-slot--mobile");
+    expect(slot.closest(".header-left")).not.toBeNull();
+    expect(container.querySelectorAll("#header-workflow-slot").length).toBe(1);
   });
 
   // Cas (j) : le raccourci liste de conversations suit la même frontière.

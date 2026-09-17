@@ -74,6 +74,8 @@ import { computeMobileBarKeyboardFlags } from "./utils/mobileBarKeyboardFlags";
 import { recordActivity } from "./utils/activity-trace";
 import { closeViewShortcut, readShortcutAnchorRect, resolveChatListShortcutTarget, retainViewNavRevert } from "./utils/dashboardShortcutToggles";
 import { normalizeNavigationPlacement, resolveChatHost, resolveNavigationSurfaces } from "./utils/navigationPlacement";
+/* FNXC:HeaderNavigationOwnership 2026-09-17-02:14: FN-481 — table de décision partagée entre le Header et la pill. */
+import { resolveHeaderNavigationOwnership } from "./utils/headerNavigationOwnership";
 /* FNXC:ToolSurfaces 2026-09-15-16:04: FN-426 — one decider for retired standalone tool destinations. */
 import { isRedirectedToolSurface, resolveToolSurfaceRoute } from "./utils/toolSurfaceRouting";
 import { DashboardToolPopover } from "./components/DashboardToolPopover";
@@ -1352,6 +1354,28 @@ function AppInner() {
   }, []);
   const shellFooterReservationVisible = shellFooterVisible && !terminalPinnedBelow;
   const mobileNavVisible = projectShellPresent;
+  /*
+  FNXC:HeaderNavigationOwnership 2026-09-17-02:14:
+  FN-481 : App est l'unique composition du Header et de la pill, donc c'est ici que la navigation basse apprend ce que
+  le Header offre DÉJÀ. Les capacités passées au résolveur sont EXACTEMENT celles transmises au Header plus bas
+  (`onOpenUsage` toujours fourni, panneaux Notes/Activity liés à `currentProject`, projets effectifs, sélection et
+  gestion de projet), pour qu'aucune seconde table indépendante ne puisse dériver. Sur téléphone cela retire Projets
+  et Usage du bas ; sur tablette cela retire en plus Notes et Activity, sans jamais retirer une destination dont le
+  Header n'offre pas réellement l'accès.
+  */
+  const headerOwnedNavigationItems = useMemo(
+    () => resolveHeaderNavigationOwnership({
+      mode: viewportMode,
+      mobileNavEnabled: mobileShellActive,
+      hasOpenUsage: true,
+      hasOpenNotesPanel: Boolean(currentProject),
+      hasOpenActivityPanel: Boolean(currentProject),
+      projectCount: effectiveProjects.length,
+      hasSelectProject: true,
+      hasViewAllProjects: true,
+    }),
+    [currentProject, effectiveProjects.length, mobileShellActive, viewportMode],
+  );
   /*
   FNXC:MobileDrawer 2026-09-10-17:16:
   A shared drawer is the foreground layer, not a replacement for its navigation trigger. Keep the pill mounted behind Usage and modal-owned Task Detail while ordinary blocking modals continue to suppress mobile navigation.
@@ -2998,6 +3022,8 @@ function AppInner() {
         keyboardOpen={mobileNavKeyboardOpen}
         keyboardMetrics={{ keyboardOverlap, viewportHeight, viewportOffsetTop }}
         quickAccessItems={mobileNavPrimaryItems}
+        /* FNXC:HeaderNavigationOwnership 2026-09-17-02:14: FN-481 — un accès déjà présent dans le Header ne revient ni dans la rangée ni dans « More ». */
+        headerOwnedItems={headerOwnedNavigationItems}
         navigationMenuOpen={navigationMenuOpen}
         onUiMenuOpenChange={setUiMenuOpen}
         onOpenSettings={openSettingsWithNav}

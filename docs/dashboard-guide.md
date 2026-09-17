@@ -50,9 +50,15 @@ Fusion switches interfaces at 1024 pixels. Every screen narrower than that — p
 
 The pill adapts to the room it has. On a narrow phone it shows the project's **Navigation quick access** selection exactly as before; as the screen widens, it reveals additional shortcuts one at a time — the **Board** slot, which on mobile shows and opens **List**, then Files, Git Manager, Settings, and so on — up to a fixed limit so it is never overloaded and never overflows. A shortcut promoted into the pill is removed from the menu, so no destination is ever offered twice, and everything that does not fit stays reachable from the menu. The menu trigger always remains the last control in the pill.
 
+<!-- FNXC:HeaderNavigationOwnership 2026-09-17-02:14: FN-481 — the Header takes priority over the bottom navigation on every breakpoint, and the phone-only tools stay in the bottom menu. -->
+The Header takes priority over the bottom navigation. Whatever the screen size, a destination the Header already offers on that screen is removed from the pill row **and** from its **More** menu, so the same access is never presented twice. On a phone that removes **Projects** and **Usage** from the bottom navigation, because the header already carries the project switcher (with its **View Projects** action) and the one-tap Usage shortcut; **Notes** and **Activity Log** stay in the bottom menu there, since the phone header renders neither trigger. On a tablet the bottom pill is kept, but the header additionally carries **Notes** and **Activity Log**, so those two disappear from the bottom menu as well. The removal is derived from what the header actually renders: when a header access is unavailable — no project to switch to, a tool with no host — the bottom entry stays, so deduplication never makes a destination unreachable. It also never changes the saved **Navigation quick access** selection.
+
 Chat follows the same boundary. Below 1024 pixels the conversation opens as an ordinary main page, on tablet exactly as on a phone, because neither the right dock nor the navigation column exists there; the phone's full-screen drawer presentation itself stays reserved to phones. From 1024 pixels up, Chat keeps its existing desktop host — the right dock under the footer placement, or the main page under the left-sidebar placement.
 
 Tablet touch behaviour is deliberately untouched: movable and resizable windows, full-screen sheets, and the on-screen keyboard behave exactly as before. Only navigation ownership moved. The project switcher also stays in the tablet header.
+
+<!-- FNXC:WorkflowControls 2026-09-17-02:14: FN-481 — tablet keeps the mobile bottom navigation but arranges its header like desktop; the compact header layout belongs to phones only. -->
+A tablet takes the mobile bottom navigation, but its header is still arranged like a desktop one: the project selector comes first, then the workflow selector, then Search, in that reading and keyboard order. The compact header arrangement, where the workflow selector sits beside the logo and the compact project switcher, is reserved for phones.
 
 ### Desktop navigation footer and right dock
 

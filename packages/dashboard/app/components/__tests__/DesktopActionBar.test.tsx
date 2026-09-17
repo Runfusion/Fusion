@@ -215,7 +215,15 @@ describe("DesktopActionBar", () => {
     render(<DesktopActionBar entries={entries()} activeId="board" tasks={[]} />);
     expect(screen.getByTestId("desktop-action-bar")).toBeInTheDocument();
     expect(document.querySelector(".mobile-nav-bar")).toBeNull();
-    expect(mobileNavBarCss).toMatch(/html:is\(\[data-viewport-mode="tablet"\], \[data-viewport-mode="desktop"\]\) \.mobile-nav-bar\s*\{\s*display:\s*none/);
+    /*
+    FNXC:MobileShellBoundary 2026-09-17-02:14:
+    FN-481 : assertion corrigée vers la vérité actuelle, pas affaiblie. Elle exigeait encore que la pill soit masquée
+    en tablette ET en ordinateur, contrat supprimé par FN-468 : sous 1024 px — téléphone ET tablette — la pill EST la
+    navigation primaire, et seule la bande ordinateur la masque. Ce footer large reste malgré tout l'unique navigation
+    basse là où il est monté.
+    */
+    expect(mobileNavBarCss).toMatch(/html\[data-viewport-mode="desktop"\] \.mobile-nav-bar\s*\{\s*display:\s*none/);
+    expect(mobileNavBarCss).toMatch(/html:is\(\[data-viewport-mode="mobile"\], \[data-viewport-mode="tablet"\]\) \.mobile-nav-bar\s*\{/);
     /*
      * FN-469 cas (x) : tablette et ordinateur partagent CE footer, donc les deux affordances Settings y sont rendues
      * à l'identique — une seule composition, pas une variante par breakpoint.

@@ -2444,7 +2444,14 @@ describe("official dashboard design production wiring", () => {
     await waitFor(() => expect(listDrawer).toHaveClass("mobile-drawer--hidden"));
   });
 
-  it("garde Planning, Usage et Projects sur le même shell avec un seul propriétaire d’en-tête", async () => {
+  /*
+  FNXC:HeaderNavigationOwnership 2026-09-17-02:14:
+  FN-481 : ce cas prouvait la géométrie canonique des drawers en passant par des entrées basses Usage et Projects qui
+  n'existent plus sur téléphone — le Header y offre déjà les deux. Il conserve la preuve de géométrie pour les
+  drawers encore ouvrables par l'opérateur (Planning, puis Usage via le raccourci d'en-tête) ; le chemin Projets du
+  Header est prouvé séparément ci-dessous, avec sa sémantique d'aperçu existante et sans reccâblage vers le drawer.
+  */
+  it("garde Planning et Usage sur le même shell avec un seul propriétaire d’en-tête", async () => {
     mockUseViewportMode.mockReturnValue("mobile");
     appChatTestControl.renderProductionPlanningView = true;
     vi.mocked(fetchSettings).mockResolvedValue({
@@ -2466,8 +2473,12 @@ describe("official dashboard design production wiring", () => {
       canonicalHeights.push(window.getComputedStyle(planningDrawer.querySelector(".mobile-drawer__panel")!).height);
       dismissAlphaDrawerByHandle(planningDrawer);
 
+      /* Usage n'est plus une entrée basse sur téléphone : le Header en est l'unique propriétaire. */
       fireEvent.click(await screen.findByTestId("mobile-menu-trigger"));
-      fireEvent.click(screen.getByTestId("mobile-more-item-usage"));
+      expect(screen.queryByTestId("mobile-more-item-usage")).toBeNull();
+      expect(screen.queryByTestId("mobile-nav-tab-usage")).toBeNull();
+      fireEvent.click(screen.getByTestId("mobile-menu-trigger"));
+      fireEvent.click(await screen.findByTestId("mobile-header-usage-btn"));
       const usageDrawer = await screen.findByTestId("mobile-drawer-usage");
       expect(usageDrawer.className).toBe("mobile-drawer mobile-drawer--open");
       expectProductionAlphaDrawerOverlay(usageDrawer, systemOffset);
@@ -2475,18 +2486,10 @@ describe("official dashboard design production wiring", () => {
       canonicalHeights.push(window.getComputedStyle(usageDrawer.querySelector(".mobile-drawer__panel")!).height);
       dismissAlphaDrawerByHandle(usageDrawer);
 
-      fireEvent.click(screen.getByTestId("mobile-menu-trigger"));
-      fireEvent.click(screen.getByTestId("mobile-more-item-projects"));
-      const projectsDrawer = await screen.findByTestId("mobile-drawer-projects");
-      expectProductionAlphaDrawerOverlay(projectsDrawer, systemOffset);
-      expectSingleDrawerHeader(within(projectsDrawer).getByRole("dialog", { name: "Projects" }), ".view-header");
-      canonicalHeights.push(window.getComputedStyle(projectsDrawer.querySelector(".mobile-drawer__panel")!).height);
-      dismissAlphaDrawerByHandle(projectsDrawer);
-      await waitFor(() => expect(screen.queryByTestId("mobile-drawer-projects")).toBeNull());
-
       expect(new Set(canonicalHeights)).toEqual(new Set([canonicalHeights[0]]));
       expect(canonicalHeights[0]).not.toBe("");
       expect(board).toBeVisible();
+      /* Aucun de ces deux chemins n'a quitté le projet courant. */
       expect(mockCurrentProjectState.clearCurrentProject).not.toHaveBeenCalled();
     } finally {
       productionStyle.remove();
@@ -2675,15 +2678,19 @@ describe("official dashboard design production wiring", () => {
       expect(document.querySelectorAll(".list-workflow-control")).toHaveLength(0);
     };
 
+    /*
+    FNXC:HeaderNavigationOwnership 2026-09-17-02:14:
+    FN-481 : le menu bas n'offre plus Projets ni Usage sur téléphone — le Header les porte déjà. Le contrat FN-483
+    reste prouvé avec les ouvertures encore disponibles à l'opérateur : le menu ouvert (qui ne doit rien casser),
+    le raccourci Usage de l'en-tête, puis le détail de tâche.
+    */
     fireEvent.click(await screen.findByTestId("mobile-menu-trigger"));
-    fireEvent.click(await screen.findByTestId("mobile-more-item-projects"));
-    const projectsDrawer = await screen.findByTestId("mobile-drawer-projects");
+    expect(screen.queryByTestId("mobile-more-item-projects")).toBeNull();
+    expect(screen.queryByTestId("mobile-more-item-usage")).toBeNull();
     expectSingleStableSelector();
-    dismissAlphaDrawerByHandle(projectsDrawer);
-    await waitFor(() => expect(screen.queryByTestId("mobile-drawer-projects")).toBeNull());
+    fireEvent.click(screen.getByTestId("mobile-menu-trigger"));
 
-    fireEvent.click(await screen.findByTestId("mobile-menu-trigger"));
-    fireEvent.click(await screen.findByTestId("mobile-more-item-usage"));
+    fireEvent.click(await screen.findByTestId("mobile-header-usage-btn"));
     const usageDrawer = await screen.findByTestId("mobile-drawer-usage");
     expectSingleStableSelector();
     dismissAlphaDrawerByHandle(usageDrawer);
@@ -7899,5 +7906,137 @@ describe("FN-435/FN-437 hôtes d'outils par point de rupture", () => {
     view.rerender(<App />);
     await waitFor(() => expect(screen.queryByTestId("notes-tool-popover")).toBeNull());
     expect(screen.queryByTestId("mobile-drawer-notes")).toBeNull();
+  });
+});
+
+/*
+FN-481 — LE HEADER EST PRIORITAIRE SUR LA NAVIGATION BASSE.
+
+État initial : sur téléphone, Usage et Projets étaient offerts à la fois en haut et dans le menu bas ; sur tablette,
+Notes et Activity Log l'étaient aussi. Chaque cas monte le VRAI `<App />` — son Header ET sa pill — parce qu'un test
+de composant recomposé prouverait la règle sans voir le câblage, qui est la seule chose capable de laisser une
+destination inatteignable ou dupliquée.
+*/
+describe("FN-481 priorité du Header sur la navigation basse", () => {
+  const shellSettings = (overrides: Record<string, unknown> = {}) => ({
+    ...defaultSettings,
+    navigationPlacement: "footer" as const,
+    rightSidebarEnabled: false,
+    ...overrides,
+  });
+
+  beforeEach(() => {
+    mockProjectsState.projects = [{ ...DEFAULT_PROJECT }, { id: "proj_456", name: "Autre projet", path: "/autre", status: "active", isolationMode: "in-process", createdAt: "", updatedAt: "" }];
+    mockNotesApi.fetchNotes.mockResolvedValue({ notes: [] });
+  });
+
+  it("retire Usage et Projets du menu bas sur téléphone tout en gardant Notes et Activity", async () => {
+    mockUseViewportMode.mockReturnValue("mobile");
+    vi.mocked(fetchSettings).mockResolvedValue(shellSettings());
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByTestId("mobile-menu-trigger"));
+    for (const testId of ["mobile-more-item-usage", "mobile-more-item-projects", "mobile-nav-tab-usage", "mobile-nav-tab-projects"]) {
+      expect(screen.queryByTestId(testId), testId).toBeNull();
+    }
+    /* Notes et Activity restent en bas : le Header téléphone ne rend aucun de leurs déclencheurs. */
+    expect(screen.getByTestId("mobile-more-item-notes")).toBeInTheDocument();
+    expect(screen.getByTestId("mobile-more-item-activity")).toBeInTheDocument();
+  });
+
+  it("ouvre Usage depuis l'en-tête téléphone et atteint la gestion des projets par son sélecteur", async () => {
+    mockUseViewportMode.mockReturnValue("mobile");
+    vi.mocked(fetchSettings).mockResolvedValue(shellSettings());
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByTestId("mobile-header-usage-btn"));
+    expect(await screen.findByTestId("mobile-drawer-usage")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("mobile-project-switch-trigger"));
+    fireEvent.click(await screen.findByTestId("mobile-project-switch-view-all"));
+    /* Sémantique existante du chemin Header : l'aperçu des projets, après la garde de fermeture. */
+    await waitFor(() => expect(mockCurrentProjectState.clearCurrentProject).toHaveBeenCalled());
+  });
+
+  it("retire les quatre destinations du menu bas sur tablette en gardant la pill et les accès d'en-tête", async () => {
+    mockUseViewportMode.mockReturnValue("tablet");
+    vi.mocked(fetchSettings).mockResolvedValue(shellSettings());
+
+    render(<App />);
+
+    /* Les quatre accès existent en haut. */
+    expect(await screen.findByTestId("header-usage-btn")).toBeInTheDocument();
+    expect(screen.getByTestId("header-notes-panel-btn")).toBeInTheDocument();
+    expect(screen.getByTestId("header-activity-panel-btn")).toBeInTheDocument();
+    expect(screen.getByTestId("project-selector-trigger")).toBeInTheDocument();
+
+    /* La pill reste montée sur tablette, mais sans ces quatre destinations. */
+    fireEvent.click(screen.getByTestId("mobile-menu-trigger"));
+    for (const testId of [
+      "mobile-more-item-usage",
+      "mobile-more-item-projects",
+      "mobile-more-item-notes",
+      "mobile-more-item-activity",
+      "mobile-nav-tab-usage",
+      "mobile-nav-tab-projects",
+      "mobile-nav-tab-notes",
+      "mobile-nav-tab-activity",
+    ]) {
+      expect(screen.queryByTestId(testId), testId).toBeNull();
+    }
+    fireEvent.click(screen.getByTestId("mobile-menu-trigger"));
+
+    /* Les deux panneaux d'en-tête s'ouvrent toujours. */
+    fireEvent.click(screen.getByTestId("header-activity-panel-btn"));
+    expect(await screen.findByTestId("activity-tool-popover")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("header-notes-panel-btn"));
+    expect(await screen.findByTestId("notes-tool-popover")).toBeInTheDocument();
+  });
+
+  it("garde la navigation large de l'ordinateur sans ces quatre doublons", async () => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    vi.mocked(fetchSettings).mockResolvedValue(shellSettings());
+
+    render(<App />);
+
+    expect(await screen.findByTestId("header-usage-btn")).toBeInTheDocument();
+    expect(screen.queryByTestId("mobile-menu-trigger")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("desktop-nav-more"));
+    for (const testId of ["desktop-nav-usage", "desktop-nav-projects", "desktop-nav-notes", "desktop-nav-activity"]) {
+      expect(screen.queryByTestId(testId), testId).toBeNull();
+    }
+  });
+
+  it("conserve les accès d'en-tête en placement sidebar, sans barre basse", async () => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    vi.mocked(fetchSettings).mockResolvedValue(shellSettings({ navigationPlacement: "sidebar" }));
+
+    render(<App />);
+
+    expect(await screen.findByTestId("header-usage-btn")).toBeInTheDocument();
+    expect(screen.getByTestId("header-notes-panel-btn")).toBeInTheDocument();
+    expect(screen.queryByTestId("desktop-action-bar")).toBeNull();
+    expect(screen.queryByTestId("mobile-menu-trigger")).toBeNull();
+  });
+
+  it("restitue les entrées basses quand la liste de projets arrive plus tard ou disparaît", async () => {
+    mockProjectsState.projects = [];
+    mockUseViewportMode.mockReturnValue("mobile");
+    vi.mocked(fetchSettings).mockResolvedValue(shellSettings());
+
+    const view = render(<App />);
+
+    fireEvent.click(await screen.findByTestId("mobile-menu-trigger"));
+    /* Sans projet proposable, le Header ne possède pas Projets : l'entrée basse reste le chemin restant. */
+    expect(screen.getByTestId("mobile-more-item-projects")).toBeInTheDocument();
+
+    mockProjectsState.projects = [{ ...DEFAULT_PROJECT }];
+    view.rerender(<App />);
+    await waitFor(() => expect(screen.queryByTestId("mobile-more-item-projects")).toBeNull());
+    /* Le menu reste ouvert et utilisable après le changement de propriétaire. */
+    expect(screen.getByRole("menu", { name: "Navigate" })).toBeInTheDocument();
   });
 });

@@ -106,6 +106,35 @@ describe("Header mobile project favorites", () => {
     expect(screen.getByTestId("mobile-project-switch-dropdown").querySelector(".mobile-project-switch-divider")).toBeNull();
   });
 
+  /*
+  FNXC:HeaderNavigationOwnership 2026-09-17-02:14:
+  FN-481 : la déduplication ne doit toucher ni le classement des favoris, ni la sélection de projet, ni la garde de
+  fermeture. Ce cas ajoute le seul contrôle négatif manquant : aucun second accès Projets dans le menu de
+  débordement du même Header, pendant que l'action de gestion du sélecteur reste fonctionnelle.
+  */
+  it("ne double pas l'accès Projets pendant que favoris et gestion restent fonctionnels", () => {
+    const onViewAllProjects = vi.fn();
+    render(
+      <Header
+        projects={projects}
+        currentProject={projects[0]}
+        onSelectProject={vi.fn()}
+        onViewAllProjects={onViewAllProjects}
+        onOpenSettings={vi.fn()}
+        onOpenGitHubImport={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByTitle("More header actions"));
+    expect(screen.queryByTestId("overflow-project-selector-btn")).toBeNull();
+    fireEvent.click(screen.getByTitle("More header actions"));
+
+    fireEvent.click(screen.getByTestId("mobile-project-switch-trigger"));
+    expect(screen.getByTestId("mobile-project-switch-others")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("mobile-project-switch-view-all"));
+    expect(onViewAllProjects).toHaveBeenCalledOnce();
+  });
+
   it("toggles a bookmark without selecting a project or closing the switcher", async () => {
     const { onSelectProject } = renderMobileHeader();
 
