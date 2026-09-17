@@ -745,6 +745,9 @@ export type DatabaseMutationType =
   | "task:completed-blocked-parked"
   /** Metadata: { taskId, priorColumn, priorStatus, source } */
   | "task:completed-blocked-advanced"
+  /* FNXC:TaskQueueOrder 2026-09-17-12:07: historical compatibility only. FN-509 retired the starved
+     refinement priority nudge with the priority system, so no live engine path emits this event;
+     the union member is kept so persisted rows remain readable. */
   | "task:auto-recover-starved-refinement"
   /** Metadata: { rawDiffFileCount: number; attributedFileCount: number; foreignCommitCount: number; foreignCommitShas: string[]; source: string } */
   | "task:worktree-contamination-detected"

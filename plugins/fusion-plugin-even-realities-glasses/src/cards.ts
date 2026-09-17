@@ -186,7 +186,9 @@ export function taskToCard(
     kind: "task",
     title: truncateLine(`${task.id.toUpperCase()} ${title}`, maxCharsPerLine),
     lines: wrapLines(
-      `Priority ${task.priority ?? "normal"} Assignee ${task.assignedAgentId ?? task.assigneeUserId ?? "unassigned"} Age ${formatRelativeAge(task.createdAt ?? task.updatedAt, { now: opts.now })}`,
+      /* FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509 removed task priority, so the glasses card no
+         longer announces one. Age still conveys queue position: the queue is arrival-ordered. */
+      `Assignee ${task.assignedAgentId ?? task.assigneeUserId ?? "unassigned"} Age ${formatRelativeAge(task.createdAt ?? task.updatedAt, { now: opts.now })}`,
       { maxCharsPerLine, maxLines },
     ),
     badge: statusBadge(task.column),

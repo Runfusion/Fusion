@@ -1,16 +1,9 @@
-import { computeInsightFingerprint, type Task, type TaskPriority, type TaskStore, resolveProjectColumnsForRoles} from "@fusion/core";
+import { compareTasksByQueueOrder, computeInsightFingerprint, type Task, type TaskStore, resolveProjectColumnsForRoles} from "@fusion/core";
 import { createLogger } from "../logger.js";
 
 const reporterLog = createLogger("backlog-pressure");
 const TOP_CANDIDATES = 5;
 const TITLE_PREFIX = "Backlog pressure detected";
-
-const PRIORITY_WEIGHT: Record<TaskPriority, number> = {
-  urgent: 0,
-  high: 1,
-  normal: 2,
-  low: 3,
-};
 
 type BacklogPressureLogger = {
   warn: (message: string, ...args: unknown[]) => void;
@@ -115,12 +108,10 @@ export class BacklogPressureReporter {
       const byId = new Map(allTasks.map((task) => [task.id, task]));
       const candidates = todoFull
         .filter((task) => this.isRunnableCandidate(task, byId, dependencyFinishedColumns))
-        .sort((a, b) => {
-          const pa = PRIORITY_WEIGHT[a.priority ?? "normal"];
-          const pb = PRIORITY_WEIGHT[b.priority ?? "normal"];
-          if (pa !== pb) return pa - pb;
-          return Date.parse(a.createdAt) - Date.parse(b.createdAt);
-        })
+        /* FNXC:TaskQueueOrder 2026-09-17-12:07: the advisory names the cards the engine would
+           actually start next, so it reads the SAME queue order admission does. It is a report:
+           it never writes a Boost or any other rank. */
+        .sort(compareTasksByQueueOrder)
         .slice(0, TOP_CANDIDATES);
 
       if (candidates.length < 3) {
@@ -140,7 +131,6 @@ export class BacklogPressureReporter {
         candidates: candidates.map((candidate) => ({
           id: candidate.id,
           title: candidate.title,
-          priority: candidate.priority,
         })),
       };
       const content = JSON.stringify(contentPayload);

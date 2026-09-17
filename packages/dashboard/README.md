@@ -70,7 +70,7 @@ AI-guided interactive planning for creating well-specified tasks from high-level
    - Suggested dependencies from existing tasks
    - Key deliverables checklist
 5. Create the task directly from the summary
-6. Or use **Break into Tasks** to generate multiple subtasks where each description starts with subtask-specific implementation guidance, followed by a separate larger-plan context section (including planning interview context when available); each subtask also supports per-subtask priority selection (`low`, `normal`, `high`, `urgent`) before creation, and final task creation submits a compact payload that only includes edited subtask fields while keeping unchanged generated descriptions server-side
+6. Or use **Break into Tasks** to generate multiple subtasks where each description starts with subtask-specific implementation guidance, followed by a separate larger-plan context section (including planning interview context when available); subtasks carry no priority selection — tasks run in arrival order and an operator raises one with **Boost** on its card — and final task creation submits a compact payload that only includes edited subtask fields while keeping unchanged generated descriptions server-side
 
 **Features**:
 - **Rate Limiting**: Maximum 5 planning sessions per hour per IP

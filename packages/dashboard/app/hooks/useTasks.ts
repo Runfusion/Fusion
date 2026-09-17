@@ -4,7 +4,7 @@ import {
   releaseGateEvidenceFingerprint,
 } from "../utils/releaseGate";
 import { useState, useEffect, useCallback, useRef } from "react";
-import type { Task, Column, ColumnId, TaskCreateInput, MergeResult, GithubIssueAction, AgentLogEntry, TaskColumnSortMode } from "@fusion/core";
+import type { Task, Column, ColumnId, TaskCreateInput, MergeResult, GithubIssueAction, AgentLogEntry } from "@fusion/core";
 // FNXC:WorkflowLifecycleColumns 2026-07-30-11:50: these are AGENT ROLE comparisons, not
 // column guards — the planner LANE keeps the name `triage`; U11 removed only the COLUMN.
 import { PLANNER_AGENT_ROLE, normalizeColumnId } from "@fusion/core";
@@ -674,8 +674,9 @@ export function useTasks(options?: UseTasksOptions) {
   const completedOwnerRef = useRef<PaginationOwner | null>(null);
   const completedConsumedCursorsRef = useRef(new Set<string>());
   const refreshAbortRef = useRef<AbortController | null>(null);
-  const completedSortModeRef = useRef<TaskColumnSortMode>("completion-date-desc");
-  const [completedSortMode, setCompletedSortMode] = useState<TaskColumnSortMode>("completion-date-desc");
+  /* FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509 removed the selectable Complete order with the
+     column "…" menu. Done is always most-recent-arrival first, so there is no mode to hold, thread,
+     or persist — and no stale cursor minted under a different order to replay. */
   const [completedTotal, setCompletedTotal] = useState(0);
   const completedTotalRef = useRef(0);
   const [completedCounts, setCompletedCounts] = useState<NonNullable<api.CompletedTaskPageResponse["counts"]>>({ byColumn: {}, byWorkflow: {} });
@@ -875,12 +876,11 @@ export function useTasks(options?: UseTasksOptions) {
     }, PAGINATION_REQUEST_TIMEOUT_MS);
     const requestLiveMutationVersion = liveMutationVersionRef.current;
     const requestProjectId = projectId; // Capture the projectId for this request
-    const requestCompletedSortMode = completedSortModeRef.current;
     const query = options?.searchQueryOverride ?? searchQueryRef.current;
     try {
       const [currentPageOrSearch, completedPage] = await Promise.all([
         api.fetchTaskPage(requestProjectId, { limit: 100, query: query || undefined, signal: refreshController.signal }),
-        query ? Promise.resolve(undefined) : api.fetchCompletedTasks(requestProjectId, 50, undefined, requestCompletedSortMode, { signal: refreshController.signal }),
+        query ? Promise.resolve(undefined) : api.fetchCompletedTasks(requestProjectId, 50, undefined, { signal: refreshController.signal }),
       ]);
       const fetchedTasks = currentPageOrSearch.tasks;
       // Reject if the project/search scope changed or a newer request superseded this response.
@@ -1111,14 +1111,12 @@ export function useTasks(options?: UseTasksOptions) {
     projectId: string | undefined;
     query: string | undefined;
     searchIncarnation: number;
-    sort: TaskColumnSortMode;
   }) => (
     completedRequestGenerationRef.current === request.generation
     && fetchVersionRef.current === request.fetchVersion
     && projectId === request.projectId
     && searchIncarnationRef.current === request.searchIncarnation
     && searchQueryRef.current === request.query
-    && completedSortModeRef.current === request.sort
   ), [projectId]);
 
   /* DELIBERATE-LITERAL: the `column === "done"` below is intentional as the degraded fallback when the
@@ -1234,7 +1232,6 @@ export function useTasks(options?: UseTasksOptions) {
       projectId,
       query: searchQueryRef.current,
       searchIncarnation: searchIncarnationRef.current,
-      sort: completedSortModeRef.current,
     };
     const requestLiveMutationVersion = liveMutationVersionRef.current;
     const timeout = window.setTimeout(() => {
@@ -1242,7 +1239,7 @@ export function useTasks(options?: UseTasksOptions) {
       owner.controller.abort();
     }, PAGINATION_REQUEST_TIMEOUT_MS);
     try {
-      const page = await api.fetchCompletedTasks(projectId, 50, cursor, request.sort, { signal: owner.controller.signal });
+      const page = await api.fetchCompletedTasks(projectId, 50, cursor, { signal: owner.controller.signal });
       if (!completedRequestIsCurrent(request)) return;
       mergeCompletedPage(page.tasks, requestLiveMutationVersion);
       completedConsumedCursorsRef.current.add(cursor);
@@ -1270,27 +1267,6 @@ export function useTasks(options?: UseTasksOptions) {
       }
     }
   }, [completedHasMore, completedRequestIsCurrent, mergeCompletedPage, projectId]);
-
-  /*
-  FNXC:DonePagination 2026-09-04-19:28:
-  A Done sort change resets the accumulated server pages before adopting page zero in the new order.
-  The generation fence rejects an older Show-more response, while the shared refresh keeps current
-  lanes and the exact Done total synchronized in one authoritative snapshot.
-  */
-  const changeCompletedSortMode = useCallback(async (mode: TaskColumnSortMode) => {
-    if (completedSortModeRef.current === mode) return;
-    completedSortModeRef.current = mode;
-    setCompletedSortMode(mode);
-    completedRequestGenerationRef.current++;
-    completedTasksRef.current = [];
-    completedNextCursorRef.current = null;
-    completedConsumedCursorsRef.current.clear();
-    completedLoadingMoreRef.current = false;
-    setCompletedLoadingMore(false);
-    setCompletedPaginationError(null);
-    setCompletedHasMore(false);
-    await refreshTasks({ resetCompletedPages: true });
-  }, [refreshTasks]);
 
   // Debounced search effect - separate from refreshTasks to avoid dependency cycle
   const prevSearchQueryRef = useRef<string | undefined>(searchQuery);
@@ -1858,6 +1834,45 @@ export function useTasks(options?: UseTasksOptions) {
     return reconcileConfirmedTask(await api.moveTask(id, column, projectId, optionsOrPosition));
   }, [projectId, reconcileConfirmedTask]);
 
+  /*
+  FNXC:TaskQueueOrder 2026-09-17-12:07:
+  FN-509's Boost handler. It waits for the server's confirmation and reconciles the CANONICAL row;
+  it never optimistically reorders, because the rank is a durable server decision and a refused
+  click (409: the card became active, left its stay, or has no queue) must not leave a false success
+  on screen.
+
+  In-flight clicks on the same card are deduplicated by reusing the pending promise AND its
+  `requestId`, so a double click is one server intention rather than two sequences. A later click
+  after that settles is a genuinely new intention and mints a new id — that is how a card reclaims
+  the head from another card boosted in between.
+  */
+  const boostRequestsInFlight = useRef(new Map<string, Promise<Task>>());
+  const boostTask = useCallback(async (
+    id: string,
+    scope?: { expectedColumn?: string; expectedColumnEntryAt?: string },
+  ): Promise<Task> => {
+    const pending = boostRequestsInFlight.current.get(id);
+    if (pending) return pending;
+    const request = (async () => {
+      const confirmed = await api.boostTask(
+        id,
+        {
+          requestId: `boost-${id}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+          ...(scope?.expectedColumn !== undefined ? { expectedColumn: scope.expectedColumn } : {}),
+          ...(scope?.expectedColumnEntryAt !== undefined ? { expectedColumnEntryAt: scope.expectedColumnEntryAt } : {}),
+        },
+        projectId,
+      );
+      return reconcileConfirmedTask(confirmed);
+    })();
+    boostRequestsInFlight.current.set(id, request);
+    try {
+      return await request;
+    } finally {
+      boostRequestsInFlight.current.delete(id);
+    }
+  }, [projectId, reconcileConfirmedTask]);
+
   const pauseTask = useCallback(async (id: string): Promise<Task> => {
     return reconcileConfirmedTask(await api.pauseTask(id, projectId));
   }, [projectId, reconcileConfirmedTask]);
@@ -2203,11 +2218,11 @@ export function useTasks(options?: UseTasksOptions) {
   }, [completedPaginationError, loadMoreCompletedTasks, refreshTasks]);
 
   return {
-    tasks, isStale, lastRefreshErrorAt, createTask, moveTask, pauseTask, unpauseTask, deleteTask, mergeTask, retryTask, bypassReview, resetTask, duplicateTask, updateTask, revertTask, restoreTaskRevert,
+    tasks, isStale, lastRefreshErrorAt, createTask, moveTask, boostTask, pauseTask, unpauseTask, deleteTask, mergeTask, retryTask, bypassReview, resetTask, duplicateTask, updateTask, revertTask, restoreTaskRevert,
     loadMoreCurrentTasks, retryCurrentTasksPagination, currentTasksTotal, currentTasksHasMore, currentTasksLoadingMore, currentTasksPaginationError,
     currentTasksProgressKey: `${projectId ?? "default"}:${searchIncarnationRef.current}:${currentTasksProgress}`,
-    loadMoreCompletedTasks, retryCompletedTasksPagination, completedSortMode, changeCompletedSortMode, completedTotal, completedCounts, completedHasMore, completedLoadingMore, completedPaginationError,
-    completedProgressKey: `${projectId ?? "default"}:${completedSortMode}:${completedRequestGenerationRef.current}:${completedProgress}`,
+    loadMoreCompletedTasks, retryCompletedTasksPagination, completedTotal, completedCounts, completedHasMore, completedLoadingMore, completedPaginationError,
+    completedProgressKey: `${projectId ?? "default"}:${completedRequestGenerationRef.current}:${completedProgress}`,
     refreshTasks, ingestCreatedTasks, lastFetchTimeMs: lastFetchTimeMs.current,
   };
 }

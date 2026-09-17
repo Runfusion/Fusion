@@ -242,7 +242,6 @@ const asTaskSnapshot = (row: ReconcileTaskRow): Task => ({
   summary: row.summary ?? undefined,
   column: row.column as Column,
   currentStep: 0,
-  priority: "normal",
   steps: [],
   dependencies: [],
   log: [],

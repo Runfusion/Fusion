@@ -44,7 +44,7 @@ import {
   PLAN_REVIEW_GROUP_ID,
   ACTIVE_WORKFLOW_WORK_ITEM_STATES,
   resolveCapacityPoolId,
-  sortTasksByPriorityThenAgeAndId,
+  sortTasksByQueueOrder,
   TransitionRejectionError,
   resolveWorkflowIrForTask,
   isUnplannedSeedPrompt,
@@ -824,7 +824,7 @@ export async function runHoldReleaseSweep(
     dispatcher and board ordering cannot drift; retain allTasks as the occupancy
     and dependency snapshot rather than changing the global listTasks order.
     */
-    const tasksForReleaseEvaluation = sortTasksByPriorityThenAgeAndId(allTasks);
+    const tasksForReleaseEvaluation = sortTasksByQueueOrder(allTasks);
 
     let breakIndex: number | undefined;
     for (let index = 0; index < tasksForReleaseEvaluation.length; index += 1) {

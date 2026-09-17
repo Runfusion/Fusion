@@ -12,8 +12,18 @@ const active: FileScopeLeaseClassification = { kind: "active", waivedForTaskIds:
 const none: FileScopeLeaseClassification = { kind: "none", waivedForTaskIds: [] };
 const dormant: FileScopeLeaseClassification = { kind: "dormant", waivedForTaskIds: [] };
 
-function task(id: string, priority: "low" | "normal" | "high" | "urgent" = "normal", createdAt = "2026-01-01T00:00:00.000Z") {
-  return { id, priority, createdAt };
+/*
+FNXC:TaskQueueOrder 2026-09-17-12:07:
+FN-509 removed the priority argument from this fixture with the priority system. A dormant holder is
+now chosen by the shared queue order, so the fixture carries the stay identity the comparator reads
+(`column`/`columnMovedAt`) plus the optional durable Boost instead of a level.
+*/
+function task(
+  id: string,
+  createdAt = "2026-01-01T00:00:00.000Z",
+  queueBoost?: Task["queueBoost"],
+) {
+  return { id, createdAt, column: "todo", columnMovedAt: createdAt, ...(queueBoost ? { queueBoost } : {}) };
 }
 
 describe("fileScopeLeaseBlocksCandidate", () => {
@@ -36,22 +46,39 @@ describe("fileScopeLeaseBlocksCandidate", () => {
     expect(fileScopeLeaseBlocksCandidate(holder, unrelated, classification)).toBe(true);
   });
 
-  it("orders dormant holders by priority, age, then numeric task id", () => {
-    const candidate = task("FN-100", "normal", "2026-01-02T00:00:00.000Z");
+  it("orders dormant holders by the shared queue order: Boost, then age, then numeric task id", () => {
+    const candidate = task("FN-100", "2026-01-02T00:00:00.000Z");
 
-    expect(fileScopeLeaseBlocksCandidate(task("FN-001", "high"), candidate, dormant)).toBe(true);
-    expect(fileScopeLeaseBlocksCandidate(task("FN-001", "low"), candidate, dormant)).toBe(false);
-    expect(fileScopeLeaseBlocksCandidate(task("FN-001", "normal", "2026-01-01T00:00:00.000Z"), candidate, dormant)).toBe(true);
+    // Older holder blocks; newer holder does not.
+    expect(fileScopeLeaseBlocksCandidate(task("FN-001", "2026-01-01T00:00:00.000Z"), candidate, dormant)).toBe(true);
+    expect(fileScopeLeaseBlocksCandidate(task("FN-001", "2026-01-03T00:00:00.000Z"), candidate, dormant)).toBe(false);
+
+    // Equal ages fall back to the numeric id, deterministically and in one direction only, so the
+    // pair cannot both yield and deadlock.
     expect(fileScopeLeaseBlocksCandidate(
-      task("FN-001", "normal", candidate.createdAt),
-      task("FN-002", "normal", candidate.createdAt),
+      task("FN-001", candidate.createdAt),
+      task("FN-002", candidate.createdAt),
       dormant,
     )).toBe(true);
     expect(fileScopeLeaseBlocksCandidate(
-      task("FN-002", "normal", candidate.createdAt),
-      task("FN-001", "normal", candidate.createdAt),
+      task("FN-002", candidate.createdAt),
+      task("FN-001", candidate.createdAt),
       dormant,
     )).toBe(false);
+
+    // An effective Boost moves a NEWER dormant holder ahead of the candidate.
+    const boostedNewer = task("FN-900", "2026-01-03T00:00:00.000Z", {
+      sequence: "5",
+      workflowId: "builtin:coding",
+      column: "todo",
+      columnEntryAt: "2026-01-03T00:00:00.000Z",
+      requestId: "req-1",
+    });
+    expect(fileScopeLeaseBlocksCandidate(boostedNewer, candidate, dormant)).toBe(true);
+
+    // A legacy priority value has no effect at all.
+    const legacyUrgentNewer = { ...task("FN-901", "2026-01-03T00:00:00.000Z"), priority: "urgent" } as unknown as ReturnType<typeof task>;
+    expect(fileScopeLeaseBlocksCandidate(legacyUrgentNewer, candidate, dormant)).toBe(false);
   });
 
   it("never blocks when no lease exists", () => {

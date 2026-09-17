@@ -7,7 +7,7 @@ import type {
   TaskDetail,
   TaskCreateInput,
   ColumnId,
-  TaskPriority,
+
   TaskSourceIssue,
   TaskGitLabTracking,
   TaskGitLabTrackedItem,
@@ -16,7 +16,6 @@ import type {
   DriftReport,
   SpecLock,
   TaskRecommendationListItem,
-  TaskColumnSortMode,
 } from "@fusion/core";
 import { withTokenHeader } from "../../auth";
 import { api, ApiRequestError, buildApiUrl, proxyApi } from "../client/client.js";
@@ -71,6 +70,31 @@ export function fetchTaskPage(
   return api<TaskListPageResponse>(path, { signal: options?.signal });
 }
 
+/*
+FNXC:TaskQueueOrder 2026-09-17-13:51:
+FN-509: fetch the HEAD of one board lane in that lane's own server-side order. The generic board
+page is creation-ascending across every lane, so a boosted card or a newly captured Ideas card
+beyond its limit is absent from the payload entirely; sorting what already arrived cannot fix that.
+The cursor is the server's opaque lane keyset and must be replayed verbatim.
+*/
+export function fetchTaskQueuePage(
+  projectId?: string,
+  options?: {
+    columns: readonly string[];
+    order?: "queue" | "intake";
+    limit?: number;
+    cursor?: string;
+    signal?: AbortSignal;
+  },
+): Promise<TaskListPageResponse> {
+  const search = new URLSearchParams();
+  search.set("columns", (options?.columns ?? []).join(","));
+  if (options?.order) search.set("order", options.order);
+  if (options?.limit !== undefined) search.set("limit", String(options.limit));
+  if (options?.cursor) search.set("cursor", options.cursor);
+  return api<TaskListPageResponse>(withProjectId(`/tasks/page?${search.toString()}`, projectId), { signal: options?.signal });
+}
+
 export function fetchTasks(
   limit?: number,
   offset?: number,
@@ -104,13 +128,11 @@ export function fetchCompletedTasks(
   projectId?: string,
   limit?: number,
   cursor?: string,
-  sortMode?: TaskColumnSortMode,
   options?: { signal?: AbortSignal },
 ): Promise<CompletedTaskPageResponse> {
   const search = new URLSearchParams();
   if (limit !== undefined) search.set("limit", String(limit));
   if (cursor !== undefined) search.set("cursor", cursor);
-  if (sortMode !== undefined) search.set("sort", sortMode);
   const suffix = search.size > 0 ? `?${search.toString()}` : "";
   return api<CompletedTaskPageResponse>(withProjectId(`/tasks/done${suffix}`, projectId), { signal: options?.signal });
 }
@@ -354,7 +376,6 @@ export async function createTask(
     /* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 forwards ONLY the arming flag; a decision can never be created client-side. */
     humanPlanApproval,
     autoMerge,
-    priority,
     source,
     nodeId,
     branch,
@@ -398,7 +419,6 @@ export async function createTask(
       executionMode,
       humanPlanApproval,
       autoMerge,
-      priority,
       source,
       nodeId,
       branch,
@@ -491,7 +511,6 @@ export function updateTask(
     executionMode?: "standard" | "fast" | null;
     noCommitsExpected?: boolean;
     autoMerge?: boolean | null;
-    priority?: TaskPriority | null;
     sourceIssue?: TaskSourceIssue | null;
     nodeId?: string | null;
     branch?: string | null;

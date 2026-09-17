@@ -120,6 +120,7 @@ import {
   TASK_REPOSITORY_SCOPE_VERSION,
   TASK_REQUIRE_PLAN_APPROVAL_VERSION,
   TASK_HUMAN_PLAN_APPROVAL_VERSION,
+  TASK_QUEUE_ORDER_VERSION,
   TASK_SOURCE_AGENT_INDEX_VERSION,
   TASK_STEP_REPORTS_VERSION,
   TASK_VERIFICATION_REQUEST_VERSION,
@@ -368,6 +369,8 @@ export const RESTORED_SCHEMA_RELATION_SENTINELS: readonly RestoredSchemaRelation
   { version: TASK_REQUIRE_PLAN_APPROVAL_VERSION, columns: [tasksColumn("require_plan_approval")] },
   /* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408's per-card decision column participates in restore rewind detection. */
   { version: TASK_HUMAN_PLAN_APPROVAL_VERSION, columns: [tasksColumn("human_plan_approval")] },
+  /* FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509's durable Boost rank participates in restore rewind detection. */
+  { version: TASK_QUEUE_ORDER_VERSION, columns: [tasksColumn("queue_boost")] },
   { version: PATCHNODE_ENTRIES_VERSION, relations: ["project.patchnode_entries"] },
   { version: OVERLAP_WAIT_SYNC_VERSION, relations: ["project.task_overlap_waits"] },
   { version: WHITEBOARDS_SCHEMA_VERSION, relations: ["project.whiteboards", "project.whiteboard_revisions"] },

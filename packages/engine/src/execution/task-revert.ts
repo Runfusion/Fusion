@@ -1715,7 +1715,7 @@ export interface CreateAiUndoTaskDeps {
   createTask(input: TaskCreateInput): Promise<Task>;
   /** Idempotency lookup — see `REVERT_OF_METADATA_KEY`. Implemented by `TaskStore.findOpenRevertTaskForSource` (core). */
   findOpenRevertTaskForSource(sourceTaskId: string): Promise<Task | null>;
-  sourceTask: Pick<Task, "id" | "title" | "description" | "prompt" | "mergeDetails" | "priority">;
+  sourceTask: Pick<Task, "id" | "title" | "description" | "prompt" | "mergeDetails">;
   /**
    * FNXC:TaskRevert 2026-07-05-00:00 (FN-7556):
    * Workflow id to select for the created AI-undo task, forwarded verbatim
@@ -1754,7 +1754,6 @@ export async function createAiUndoTask(deps: CreateAiUndoTaskDeps): Promise<AiUn
     title: `Undo ${sourceTask.id}: ${sourceTask.title ?? sourceTask.description.slice(0, 80)}`,
     description,
     dependencies: [],
-    priority: sourceTask.priority,
     source: {
       sourceType: "recovery",
       sourceMetadata: { [REVERT_OF_METADATA_KEY]: sourceTask.id },
@@ -2058,7 +2057,7 @@ export interface CreateAiRestoreTaskDeps {
   createTask(input: TaskCreateInput): Promise<Task>;
   /** Idempotency lookup keyed on `RESTORE_OF_METADATA_KEY` — never on `revertOf`. */
   findOpenRestoreTaskForSource(sourceTaskId: string): Promise<Task | null>;
-  sourceTask: Pick<Task, "id" | "title" | "description" | "prompt" | "mergeDetails" | "priority" | "sourceMetadata">;
+  sourceTask: Pick<Task, "id" | "title" | "description" | "prompt" | "mergeDetails" | "sourceMetadata">;
   /** Workflow id resolved+validated by the caller (route), forwarded verbatim; blank/undefined inherits the project default. */
   workflowId?: string;
 }
@@ -2085,7 +2084,6 @@ export async function createAiRestoreTask(deps: CreateAiRestoreTaskDeps): Promis
     title: `Restore ${sourceTask.id}: ${sourceTask.title ?? sourceTask.description.slice(0, 80)}`,
     description,
     dependencies: [],
-    priority: sourceTask.priority,
     source: {
       sourceType: "recovery",
       sourceMetadata: { [RESTORE_OF_METADATA_KEY]: sourceTask.id },

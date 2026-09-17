@@ -41,16 +41,13 @@ import type {
   ArtifactType,
   PrInfo,
   WorkflowIr,
-  TaskColumnSortMode,
 } from "@fusion/core";
 import {
   COLUMNS,
   THINKING_LEVELS,
-  TASK_PRIORITIES,
   VALID_TRANSITIONS,
   computeContentFingerprint,
   isColumn,
-  isTaskPriority,
   REPO_OVERRIDE_RE,
   resolveTitleSummarizerSettingsModel,
   resolveTaskOutputLanguage,
@@ -72,6 +69,7 @@ import {
   isEphemeralAgent,
   parseExplicitDuplicateMarker,
   resolveExplicitDuplicateMarker,
+  resolveQueuePresence,
   resolveWorkflowIrForTask,
   resolveWorkflowIrForTaskWithProvenance,
   resolveReviewColumns,
@@ -154,7 +152,7 @@ import {
   type PrepareWorkspaceRevertPrBranchesResult,
   type WorkspaceRepoRevertPrBranch,
 } from "@fusion/engine";
-import { buildBoardWorkflowsPayload } from "./board-workflows.js";
+import { buildBoardWorkflowsPayload, resolveBoardColumnFlags } from "./board-workflows.js";
 import { resolveNativeStructurePreview } from "../native-structure-preview.js";
 import { isBackwardMoveBlockedByOpenPr, PR_OPEN_BLOCKS_MOVE_BACK_MESSAGE } from "./register-pull-requests-routes.js";
 import { allowsAutoMergeProcessing, computePlanApprovalFingerprint, isTaskAwaitingPlanning, isWorkspaceTask, type RunAuditEventInput } from "@fusion/core";
@@ -1544,10 +1542,34 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       if (!Number.isInteger(limit) || limit < 1 || limit > 200) throw badRequest("limit must be an integer between 1 and 200");
       const cursor = typeof req.query.cursor === "string" && req.query.cursor ? req.query.cursor : undefined;
       const query = typeof req.query.q === "string" && req.query.q.trim() ? req.query.q.trim() : undefined;
+      /*
+      FNXC:TaskQueueOrder 2026-09-17-13:51:
+      FN-509: an explicit `columns` scope selects ONE board lane in that lane's own SQL order
+      (`order=queue` for processing lanes, `order=intake` for manual capture) instead of the generic
+      creation-ascending board page. Without it a boosted card, or a freshly captured Ideas card,
+      that starts beyond the page limit can never reach the head of its column on reload. Requests
+      that name no scope keep the pre-existing payload byte-identical.
+      */
+      const columnsParam = typeof req.query.columns === "string" ? req.query.columns : undefined;
+      const columns = columnsParam?.split(",").map((value) => value.trim()).filter(Boolean) ?? [];
+      const orderParam = typeof req.query.order === "string" ? req.query.order : undefined;
+      if (orderParam !== undefined && orderParam !== "queue" && orderParam !== "intake") {
+        throw badRequest("order must be 'queue' or 'intake'");
+      }
+      if (columns.length > 0 && query) throw badRequest("columns cannot be combined with q");
       try {
+        if (columns.length > 0) {
+          res.json(await scopedStore.listTaskQueuePage({
+            columns,
+            limit,
+            ...(cursor ? { cursor } : {}),
+            ...(orderParam ? { order: orderParam } : {}),
+          }));
+          return;
+        }
         res.json(await scopedStore.listCurrentTasksPage({ limit, cursor, ...(query ? { query } : {}) }));
       } catch (error) {
-        if (error instanceof TypeError && error.message === "Invalid task list cursor") throw badRequest(error.message);
+        if (error instanceof TypeError && (error.message === "Invalid task list cursor" || error.message === "Invalid task queue cursor")) throw badRequest(error.message);
         throw error;
       }
     } catch (err: unknown) {
@@ -1608,9 +1630,11 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       if (rawLimit !== undefined && (typeof rawLimit !== "string" || rawLimit.trim() === "" || !Number.isInteger(Number(rawLimit)) || Number(rawLimit) <= 0)) {
         throw badRequest("limit must be a positive integer");
       }
-      const sort = req.query.sort;
-      if (sort !== undefined && sort !== "completion-date-desc" && sort !== "task-id-desc") {
-        throw badRequest("sort must be completion-date-desc or task-id-desc");
+      /* FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509 removed the selectable Done sort with the
+         column "..." menu. Done is always most-recent-arrival first; an explicit `sort` is refused
+         so a client cannot believe it selected an order the server will not honour. */
+      if (req.query.sort !== undefined) {
+        throw badRequest("sort is no longer supported: completed tasks are always ordered by most recent arrival");
       }
       if (req.query.cursor !== undefined && typeof req.query.cursor !== "string") {
         throw badRequest("cursor must be an opaque string");
@@ -1619,7 +1643,6 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         limit: rawLimit === undefined ? undefined : Number(rawLimit),
         cursor: req.query.cursor,
         slim: true,
-        sort: sort as TaskColumnSortMode | undefined,
       }));
     } catch (err: unknown) {
       if (err instanceof ApiError) throw err;
@@ -1818,9 +1841,15 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         throw badRequest("autoMergeProvenance is server-managed");
       }
 
-      // Validate priority if provided.
-      if (priority !== undefined && priority !== null && !isTaskPriority(priority)) {
-        throw badRequest(`priority must be one of: ${TASK_PRIORITIES.join(", ")}`);
+      /*
+      FNXC:TaskQueueOrder 2026-09-17-12:07:
+      FN-509 removed task priority. An explicit `priority` in a NEW request is REFUSED rather than
+      silently ignored: a caller that still sends a level believes it is choosing an order, and quietly
+      accepting it would hand back a card that does not behave the way the caller asked. Reading and
+      resuming OLD documents stays tolerant elsewhere — this strictness applies only to fresh writes.
+      */
+      if (priority !== undefined) {
+        throw badRequest("priority is no longer supported: tasks run in arrival order and are raised with Boost");
       }
 
       if (nodeId !== undefined && nodeId !== null && typeof nodeId !== "string") {
@@ -2202,7 +2231,6 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         executionMode: executionMode || undefined,
         humanPlanApproval: humanPlanApproval === true ? true : undefined,
         ...(typeof autoMerge === "boolean" ? { autoMerge } : {}),
-        priority: priority ?? undefined,
         source: {
           ...normalizedTaskSource,
           sourceMetadata: {
@@ -5072,6 +5100,81 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
   Agent-assigned tasks must remain manually recoverable from approval-gating and other pauses. The engine still owns automatic pauses recorded with pausedByAgentId, while pauseTask(id, false) clears pausedByAgentId and userPaused so a human unpause can resume dispatch.
   */
   // Pause task
+  /*
+  FNXC:TaskQueueOrder 2026-09-17-12:07:
+  FN-509's Boost endpoint. It moves ONE waiting card to the head of its queue and does nothing else:
+  it starts no work, moves no column, retries no error, lifts no pause, and clears no gate. The
+  refusals are deliberately distinguished so the client can react honestly rather than showing a
+  false success — 404 for a card that is not there, 409 for one that is already active, has left the
+  stay the click was aimed at, or sits in a lane with no automatic queue at all.
+
+  The optional `expectedColumn`/`expectedColumnEntryAt` preconditions are what make a stale click
+  safe: a card that moved between render and click is refused rather than boosted in its new lane,
+  and the response carries the canonical row so the client can resynchronise.
+  */
+  router.post("/tasks/:id/boost", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const body = (req.body ?? {}) as {
+        requestId?: unknown;
+        expectedColumn?: unknown;
+        expectedColumnEntryAt?: unknown;
+      };
+      if (typeof body.requestId !== "string" || body.requestId.trim() === "") {
+        throw badRequest("requestId must be a non-empty string");
+      }
+      if (body.expectedColumn !== undefined && typeof body.expectedColumn !== "string") {
+        throw badRequest("expectedColumn must be a string");
+      }
+      if (body.expectedColumnEntryAt !== undefined && typeof body.expectedColumnEntryAt !== "string") {
+        throw badRequest("expectedColumnEntryAt must be a string");
+      }
+
+      const task = await scopedStore.getTask(req.params.id);
+      if (!task) throw new ApiError(404, `Task ${req.params.id} not found`);
+
+      const selection = await scopedStore.getTaskWorkflowSelectionAsync(task.id);
+      const workflowId = selection?.workflowId ?? (await scopedStore.getDefaultWorkflowId()) ?? "builtin:coding";
+
+      /*
+      FNXC:TaskQueueOrder 2026-09-17-13:51:
+      The `no-queue` refusal has to be PRODUCED, not merely declared: without this precondition a
+      direct POST could persist a durable rank on a Complete or manual-capture card, where there is
+      no automatic queue for it to mean anything. The verdict comes from the same shared core
+      resolver the card uses, so client and server cannot disagree about which lanes have a queue.
+      Liveness is deliberately left to `boostTask`, which re-reads it under the row lock and answers
+      `active`; passing `isActive: false` here keeps this check about the LANE only.
+      */
+      const boostIr = await resolveWorkflowIrForTask(scopedStore, task.id);
+      const boostColumnFlags = resolveBoardColumnFlags(boostIr, task.column);
+      const lanePresence = resolveQueuePresence({
+        column: task.column,
+        ...(boostColumnFlags ? { columnFlags: boostColumnFlags } : {}),
+        isActive: false,
+        isDeleted: Boolean(task.deletedAt),
+      });
+      if (!lanePresence.hasQueue) {
+        throw new ApiError(409, `Task ${task.id} can no longer be boosted: no-queue`);
+      }
+
+      const outcome = await scopedStore.boostTask(task.id, {
+        requestId: body.requestId,
+        workflowId,
+        ...(body.expectedColumn !== undefined ? { expectedColumn: body.expectedColumn } : {}),
+        ...(body.expectedColumnEntryAt !== undefined ? { expectedColumnEntryAt: body.expectedColumnEntryAt } : {}),
+      });
+
+      if (!outcome.ok) {
+        if (outcome.reason === "not-found") throw new ApiError(404, `Task ${task.id} not found`);
+        throw new ApiError(409, `Task ${task.id} can no longer be boosted: ${outcome.reason}`);
+      }
+      res.json(outcome.task);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowTaskApiError(err, req.params.id);
+    }
+  });
+
   router.post("/tasks/:id/pause", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
@@ -6714,10 +6817,10 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         throw new Error(`executionMode must be one of: ${validExecutionModes.join(", ")}`);
       }
 
-      // Validate priority if provided. `null` resets to the default (`normal`)
-      // via store.updateTask's null-handling.
-      if (priority !== undefined && priority !== null && !isTaskPriority(priority)) {
-        throw new Error(`priority must be one of: ${TASK_PRIORITIES.join(", ")}`);
+      /* FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509 — see the create route above. A PATCH that
+         still carries a level is refused rather than dropped. */
+      if (priority !== undefined) {
+        throw new Error("priority is no longer supported: tasks run in arrival order and are raised with Boost");
       }
 
       if (enabledWorkflowSteps !== undefined) {
@@ -6976,7 +7079,6 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       if (title !== undefined) updates.title = title;
       if (description !== undefined) updates.description = description;
       if (prompt !== undefined) updates.prompt = prompt;
-      if (hasBodyField("priority")) updates.priority = priority;
       if (dependencies !== undefined) updates.dependencies = dependencies;
       if (enabledWorkflowSteps !== undefined) updates.enabledWorkflowSteps = enabledWorkflowSteps;
       if (hasBodyField("noCommitsExpected")) updates.noCommitsExpected = noCommitsExpected;
@@ -7137,7 +7239,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       if (isTaskLookupMiss(err)) {
         rethrowTaskApiError(err, req.params.id);
       }
-      const status = (err instanceof Error ? err.message : String(err)).includes("must be a string") || (err instanceof Error ? err.message : String(err)).includes("must be a non-empty string") || (err instanceof Error ? err.message : String(err)).includes("must be a string or null") || (err instanceof Error ? err.message : String(err)).includes("must be an array of strings") || (err instanceof Error ? err.message : String(err)).includes("must be a boolean") || (err instanceof Error ? err.message : String(err)).includes("thinkingLevel must be one of") || (err instanceof Error ? err.message : String(err)).includes("validatorThinkingLevel must be one of") || (err instanceof Error ? err.message : String(err)).includes("planningThinkingLevel must be one of") || (err instanceof Error ? err.message : String(err)).includes("reviewLevel must be an integer") || (err instanceof Error ? err.message : String(err)).includes("executionMode must be one of") || (err instanceof Error ? err.message : String(err)).includes("priority must be one of") || (err instanceof Error ? err.message : String(err)).includes("sourceIssue") || (err instanceof Error ? err.message : String(err)).includes("gitlabTracking") || (err instanceof Error ? err.message : String(err)).includes("status may only be cleared") ? 400 : 500;
+      const status = (err instanceof Error ? err.message : String(err)).includes("must be a string") || (err instanceof Error ? err.message : String(err)).includes("must be a non-empty string") || (err instanceof Error ? err.message : String(err)).includes("must be a string or null") || (err instanceof Error ? err.message : String(err)).includes("must be an array of strings") || (err instanceof Error ? err.message : String(err)).includes("must be a boolean") || (err instanceof Error ? err.message : String(err)).includes("thinkingLevel must be one of") || (err instanceof Error ? err.message : String(err)).includes("validatorThinkingLevel must be one of") || (err instanceof Error ? err.message : String(err)).includes("planningThinkingLevel must be one of") || (err instanceof Error ? err.message : String(err)).includes("reviewLevel must be an integer") || (err instanceof Error ? err.message : String(err)).includes("executionMode must be one of") || (err instanceof Error ? err.message : String(err)).includes("priority is no longer supported") || (err instanceof Error ? err.message : String(err)).includes("sourceIssue") || (err instanceof Error ? err.message : String(err)).includes("gitlabTracking") || (err instanceof Error ? err.message : String(err)).includes("status may only be cleared") ? 400 : 500;
       throw new ApiError(status, err instanceof Error ? err.message : String(err));
     }
   });

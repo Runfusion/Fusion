@@ -832,6 +832,8 @@ export class TriageProcessor {
         );
         return tasks.filter((task) => !this.coordinatorAdmittedTaskIds.has(task.id)).map((task) => ({
           taskId: task.id, projectId: this.rootDir, lane: "planning", consumesWorktree: false, createdAt: task.createdAt,
+          // FNXC:TaskQueueOrder 2026-09-17-12:07: Boost scope travels with the candidate.
+          column: task.column, ...(task.columnMovedAt ? { columnMovedAt: task.columnMovedAt } : {}), ...(task.queueBoost ? { queueBoost: task.queueBoost } : {}),
           reserve: () => registerPreHeldExecutorSlot(task.id, this.options.semaphore !== undefined),
           start: async () => {
             this.coordinatorAdmittedTaskIds.add(task.id);
@@ -1471,7 +1473,7 @@ export class TriageProcessor {
 
       /*
       FNXC:Triage 2026-07-16-18:29:
-      Stale-processing eviction must retain a task with a live, non-aborted triage session (`activeSessions.has(id) && !stuckAborted.has(id)`). Removing it would drop genuinely active planning from `getProcessingTaskIds()` and let self-healing prematurely finalize it to todo/awaiting-approval, clear planning status, or nudge priority. Hung promises without a session and stuck-aborted/disposed sessions remain evictable.
+      Stale-processing eviction must retain a task with a live, non-aborted triage session (`activeSessions.has(id) && !stuckAborted.has(id)`). Removing it would drop genuinely active planning from `getProcessingTaskIds()` and let self-healing prematurely finalize it to todo/awaiting-approval or clear planning status. Hung promises without a session and stuck-aborted/disposed sessions remain evictable.
 
       FNXC:TriageStuckKill 2026-07-18-21:05:
       Also retain Plan Review subagents and finalize handoffs after the main session is
@@ -2621,9 +2623,13 @@ export class TriageProcessor {
               lane: "planning",
               consumesWorktree: false,
               createdAt: task.createdAt,
+              // FNXC:TaskQueueOrder 2026-09-17-12:07: Boost scope travels with the candidate.
+              column: task.column,
+              ...(task.columnMovedAt ? { columnMovedAt: task.columnMovedAt } : {}),
+              ...(task.queueBoost ? { queueBoost: task.queueBoost } : {}),
               // FNXC:ConcurrencyAdmission 2026-08-05-10:00: the planner must
               // own the coordinator's real host reservation before it starts;
-              // deferring to semaphore.run would reintroduce priority overtaking.
+              // deferring to semaphore.run would reintroduce lane overtaking.
               reserve: () => registerPreHeldExecutorSlot(task.id, this.options.semaphore !== undefined),
               start: async () => {
                 admittedThisPoll.add(task.id);
@@ -3974,7 +3980,7 @@ export class TriageProcessor {
       const heldHostSlot = takePreHeldExecutorSlot(task.id, true);
       if (this.options.semaphore && heldHostSlot) {
         // Coordinator already owns this top-level slot; run directly so it
-        // cannot join the priority queue after age-based admission.
+        // cannot jump the arrival-ordered queue after age-based admission.
         try {
           await retryableWork();
         } finally {
@@ -4349,7 +4355,6 @@ export class TriageProcessor {
     const taskGetParams = Type.Object({
       id: Type.String({ description: "Task ID (e.g. KB-001)" }),
     });
-    const taskCreatePriorityValues = ["low", "normal", "high", "urgent"] as const;
     const taskSearchParams = Type.Object({
       query: Type.String({ minLength: 1, description: "Search query" }),
       limit: Type.Optional(Type.Number({ minimum: 1, maximum: 50, description: "Max results (default 20, max 50)" })),
@@ -4361,11 +4366,7 @@ export class TriageProcessor {
       dependencies: Type.Optional(
         Type.Array(Type.String({ description: "Task ID dependency (e.g. KB-001)" })),
       ),
-      priority: Type.Optional(
-        Type.Union(taskCreatePriorityValues.map((priority) => Type.Literal(priority)), {
-          description: "Task priority (low, normal, high, urgent)",
-        }),
-      ),
+      /* FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509 removed the `priority` parameter. */
       workflow_id: Type.Optional(
         Type.String({
           description: "Workflow ID to assign (e.g. 'builtin:coding', 'builtin:quick-fix'). Use fn_workflow_list to discover valid IDs.",
@@ -4529,7 +4530,6 @@ export class TriageProcessor {
             title: params.title,
             description: params.description,
             dependencies: requestedDeps,
-            priority: params.priority,
             workflowId: params.workflow_id,
             noCommitsExpected: params.noCommitsExpected,
             source: { sourceType: "agent_heartbeat", sourceParentTaskId: options.parentTaskId },

@@ -38,7 +38,8 @@ export interface TaskPlannerChatContextSnapshot {
   status?: string;
   progress?: string;
   currentStep?: string;
-  priority?: string;
+  /* FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509 removed the task priority field; the planner chat
+     snapshot no longer reads or reports one. */
   assignedAgent?: string;
   dependencies: TaskPlannerChatDependencyContext[];
   steps: string[];
@@ -222,7 +223,6 @@ function buildSnapshot(task: unknown, dependencies: TaskPlannerChatDependencyCon
     status: readString(record, "status"),
     progress: formatProgress(record),
     currentStep: formatCurrentStep(record),
-    priority: readString(record, "priority"),
     assignedAgent: readString(record, "assignedAgent", "assignedAgentId", "agentId", "executorAgentId"),
     dependencies,
     steps,
@@ -286,7 +286,6 @@ export function formatTaskPlannerChatContext(snapshot: TaskPlannerChatContextSna
     `Status: ${snapshot.status ?? "unknown"}`,
     snapshot.progress ? `Progress: ${snapshot.progress}` : "Progress: not available",
     snapshot.currentStep ? `Current step: ${snapshot.currentStep}` : "Current step: not available",
-    snapshot.priority ? `Priority: ${snapshot.priority}` : "Priority: not available",
     snapshot.assignedAgent ? `Assigned agent: ${snapshot.assignedAgent}` : "Assigned agent: not available",
   ];
 

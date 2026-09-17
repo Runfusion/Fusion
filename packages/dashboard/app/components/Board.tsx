@@ -1,4 +1,5 @@
-import { sortTasksForDisplayColumn, type TaskColumnSortMode, type Task, type TaskDetail, type Column as ColumnType, type ColumnId, type TaskCreateInput, type GithubIssueAction, type MergeResult } from "@fusion/core";
+import { isTaskAgentActive } from "../utils/taskActivity";
+import { sortTasksForDisplayColumn, type Task, type TaskDetail, type Column as ColumnType, type ColumnId, type TaskCreateInput, type GithubIssueAction, type MergeResult } from "@fusion/core";
 import { Column } from "./Column";
 import { UiSurface } from "./ui";
 import "./Lane.css";
@@ -18,6 +19,7 @@ import { WorkflowSwitcher } from "./WorkflowSwitcher";
 import { computeWorkflowStatusCounts } from "./workflowStatusCounts";
 import { writeBoardWorkflowsCache } from "../utils/boardWorkflowsCache";
 import { useBoardWorkflows } from "../hooks/useBoardWorkflows";
+import { useTaskQueuePages, type TaskQueueScope } from "../hooks/useTaskQueuePages";
 import { useHeaderWorkflowSlot } from "../hooks/useHeaderWorkflowSlot";
 import { useUnmappedWorkflowRefetch } from "../hooks/useUnmappedWorkflowRefetch";
 import { ALL_WORKFLOWS_BOARD_VIEW_ID } from "../utils/boardWorkflowSelection";
@@ -35,6 +37,9 @@ interface BoardProps {
   maxWorktrees: number;
   showWorktreeGrouping: boolean;
   onMoveTask: (id: string, column: ColumnId, optionsOrPosition?: { preserveProgress?: boolean; expectedColumn?: string } | number) => Promise<Task>;
+  /* FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509 — every host that renders a LIVE card forwards Boost,
+     so the affordance is not tied to one surface. Omitting it withholds the button. */
+  onBoostTask?: (id: string, scope: { expectedColumn: string; expectedColumnEntryAt: string }) => Promise<Task>;
   onPauseTask?: (id: string) => Promise<Task>;
   onUnpauseTask?: (id: string) => Promise<Task>;
   onResetTask?: (id: string, options?: { description?: string }) => Promise<Task>;
@@ -86,8 +91,8 @@ interface BoardProps {
   completedPaginationError?: "timeout" | "invalid-continuation" | "request-failed" | null;
   completedProgressKey?: string;
   onRetryCompletedTasks?: () => Promise<void>;
-  completedSortMode?: TaskColumnSortMode;
-  onCompletedSortModeChange?: (mode: TaskColumnSortMode) => void;
+  /* FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509 removed the selectable Complete order. Done is
+     always most-recent-arrival first, so there is nothing for a parent to choose or persist. */
   searchQuery?: string;
   availableModels?: ModelInfo[];
   /**
@@ -196,7 +201,7 @@ function BoardWorkflowSkeleton({ empty = false, t }: { empty?: boolean; t: TFunc
   );
 }
 
-function BoardContent({ tasks, projectId, maxConcurrent, maxWorktrees, showWorktreeGrouping, onMoveTask, onPauseTask, onUnpauseTask, onResetTask, onDuplicateTask, onMergeTask, onOpenDetail, onRefinementCreated, onOpenGroupModal, addToast, onQuickCreate, onNewTask: _onNewTask, autoMerge, mergeStrategy = "direct", onToggleAutoMerge, planAutoApproveEnabled, onTogglePlanAutoApprove, globalPaused, onUpdateTask, onRetryTask, onOpenChatWithPrefill, onRevertTask, onRestoreRevertTask, onDeleteTask, onLoadMoreCurrentTasks, currentTasksTotal: _currentTasksTotal, currentTasksHasMore, currentTasksLoadingMore, currentTasksPaginationError, currentTasksProgressKey, onRetryCurrentTasks, onLoadMoreCompletedTasks, completedCounts, completedHasMore, completedLoadingMore, completedPaginationError, completedProgressKey, onRetryCompletedTasks, completedSortMode = "completion-date-desc", onCompletedSortModeChange, searchQuery = "", availableModels, onPlanningMode, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, onOpenMission, staleHighFanoutBlockerAgeThresholdMs, lastFetchTimeMs, prAuthAvailable, workflowControlsInHeader = false, active = true, onOpenHistory }: BoardProps) {
+function BoardContent({ tasks: providedTasks, projectId, maxConcurrent, maxWorktrees, showWorktreeGrouping, onMoveTask, onBoostTask, onPauseTask, onUnpauseTask, onResetTask, onDuplicateTask, onMergeTask, onOpenDetail, onRefinementCreated, onOpenGroupModal, addToast, onQuickCreate, onNewTask: _onNewTask, autoMerge, mergeStrategy = "direct", onToggleAutoMerge, globalPaused, onUpdateTask, onRetryTask, onOpenChatWithPrefill, onRevertTask, onRestoreRevertTask, onDeleteTask, onLoadMoreCurrentTasks, currentTasksTotal: _currentTasksTotal, currentTasksHasMore, currentTasksLoadingMore, currentTasksPaginationError, currentTasksProgressKey, onRetryCurrentTasks, onLoadMoreCompletedTasks, completedCounts, completedHasMore, completedLoadingMore, completedPaginationError, completedProgressKey, onRetryCompletedTasks, searchQuery = "", availableModels, onPlanningMode, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, onOpenMission, staleHighFanoutBlockerAgeThresholdMs, lastFetchTimeMs, prAuthAvailable, workflowControlsInHeader = false, active = true, onOpenHistory }: BoardProps) {
   const { t } = useTranslation("app");
   /*
   FNXC:TaskColumnSorting 2026-08-18-21:24:
@@ -208,26 +213,13 @@ function BoardContent({ tasks, projectId, maxConcurrent, maxWorktrees, showWorkt
   A completion lane is controlled by useTasks because changing it must reload page zero from the
   server; sorting only the loaded slice would make Show more append rows from a different order.
   */
-  const [columnSortModes, setColumnSortModes] = useState<Record<string, TaskColumnSortMode>>({});
-  const getColumnSortMode = useCallback((laneKey: string, isCompletionColumn = false): TaskColumnSortMode => (
-    isCompletionColumn && onCompletedSortModeChange
-      ? completedSortMode
-      : (columnSortModes[laneKey] ?? "completion-date-desc")
-  ), [columnSortModes, completedSortMode, onCompletedSortModeChange]);
-  const changeColumnSortMode = useCallback((laneKey: string, mode: TaskColumnSortMode) => {
-    setColumnSortModes((current) => current[laneKey] === mode ? current : { ...current, [laneKey]: mode });
-  }, []);
-  const columnSortModeChangeBinder = useMemo(() => {
-    const bindings = new Map<string, (mode: TaskColumnSortMode) => void>();
-    return (laneKey: string) => {
-      let binding = bindings.get(laneKey);
-      if (!binding) {
-        binding = (mode: TaskColumnSortMode) => changeColumnSortMode(laneKey, mode);
-        bindings.set(laneKey, binding);
-      }
-      return binding;
-    };
-  }, [changeColumnSortMode]);
+  /*
+  FNXC:TaskQueueOrder 2026-09-17-12:07:
+  FN-509 deleted the per-lane sort state, its change binder, and the persisted Complete choice. Every
+  lane shares ONE order resolved by `sortTasksForDisplayColumn` from the column's own traits, so the
+  Board holds no ordering state at all and a lane's visible order can no longer diverge from the
+  order the engine will try candidates in.
+  */
   /*
   FNXC:WorkflowAggregation 2026-09-16-23:24:
   FN-483 : plus d'état agrégé local. La vue « All workflows » est désormais lue depuis `useBoardWorkflows`
@@ -439,6 +431,40 @@ function BoardContent({ tasks, projectId, maxConcurrent, maxWorktrees, showWorkt
     refreshBoardWorkflows,
     setBoardWorkflowsState,
   } = useBoardWorkflows({ projectId });
+
+  /*
+  FNXC:TaskQueueOrder 2026-09-17-13:51:
+  FN-509 : la page générique du board sélectionne le travail vivant par création croissante AVANT sa
+  limite. Une carte boostée — ou une idée récente — située au-delà de cette limite est donc absente
+  de la réponse, et aucun tri client ne peut la ramener en tête après un rechargement. On demande
+  donc au serveur la tête de CHAQUE colonne visible dans l'ordre propre de cette colonne
+  (`queue` = Boost puis arrivée, `intake` = plus récent d'abord) et on fusionne ces lignes par id.
+  L'instantané du board reste l'autorité pour un id qu'il détient déjà, donc SSE, mutations vivantes
+  et accumulateur Done ne changent pas de propriétaire ; une lane indisponible dégrade simplement
+  vers la page générique.
+  */
+  const queueHeadScopes = useMemo<TaskQueueScope[]>(() => {
+    const source = workflowMode && selectedWorkflow ? selectedWorkflow.columns : undefined;
+    if (!source) return [];
+    const scopes: TaskQueueScope[] = [];
+    for (const column of source) {
+      if (column.flags?.hiddenFromBoard === true) continue;
+      if (column.flags?.complete === true) continue;
+      scopes.push({
+        key: column.id,
+        columns: [column.id],
+        order: column.flags?.manualIntake === true ? "intake" : "queue",
+      });
+    }
+    return scopes;
+  }, [selectedWorkflow, workflowMode]);
+  const { tasks: queueHeadTasks } = useTaskQueuePages(projectId, queueHeadScopes, { enabled: active, limit: 50 });
+  const tasks = useMemo(() => {
+    if (queueHeadTasks.length === 0) return providedTasks;
+    const known = new Set(providedTasks.map((task) => task.id));
+    const additions = queueHeadTasks.filter((task) => !known.has(task.id));
+    return additions.length === 0 ? providedTasks : [...providedTasks, ...additions];
+  }, [providedTasks, queueHeadTasks]);
 
   /*
   FNXC:BoardNavigation 2026-09-17-09:49:
@@ -710,11 +736,11 @@ function BoardContent({ tasks, projectId, maxConcurrent, maxWorktrees, showWorkt
     for (const column of selectedWorkflow.columns) {
       grouped[column.id] = sortTasksForDisplayColumn(grouped[column.id] ?? [], column.id, {
         columnFlags: column.flags,
-        sortMode: getColumnSortMode(`${selectedWorkflow.id}:${column.id}`, Boolean(column.flags?.complete)),
+        isActive: (candidate) => isTaskAgentActive(candidate as Task, { globalPaused, columnFlags: column.flags }),
       });
     }
     return grouped;
-  }, [getColumnSortMode, selectedWorkflow, selectedWorkflowCreateColumnId, selectedWorkflowTasks]);
+  }, [globalPaused, selectedWorkflow, selectedWorkflowCreateColumnId, selectedWorkflowTasks]);
 
   // Card-placed field defs grouped by workflow id (U13/KTD-14). Only recomputes
   // when the board-workflows payload changes, not on every SSE task tick.
@@ -882,11 +908,11 @@ function BoardContent({ tasks, projectId, maxConcurrent, maxWorktrees, showWorkt
     for (const column of aggregateBoardColumns) {
       grouped[column.id] = sortTasksForDisplayColumn(grouped[column.id] ?? [], column.id, {
         columnFlags: column.flags,
-        sortMode: getColumnSortMode(`aggregate:${column.id}`, Boolean(column.flags?.complete)),
+        isActive: (candidate) => isTaskAgentActive(candidate as Task, { globalPaused, columnFlags: column.flags }),
       });
     }
     return grouped;
-  }, [aggregateBoardColumns, aggregateQuickCreateTarget, boardWorkflows, getColumnSortMode, getEffectiveTaskWorkflowId, tasks, workflowColumnsByWorkflowId]);
+  }, [aggregateBoardColumns, aggregateQuickCreateTarget, boardWorkflows, getEffectiveTaskWorkflowId, globalPaused, tasks, workflowColumnsByWorkflowId]);
 
 
   // FN-4380: GitHub badge state comes from persisted task fields (`task.prInfo`,
@@ -963,12 +989,6 @@ function BoardContent({ tasks, projectId, maxConcurrent, maxWorktrees, showWorkt
           >
             {aggregateBoardColumns.map((columnDef) => {
               const isCreateColumn = aggregateQuickCreateTarget?.columnId === columnDef.id;
-              const laneKey = `aggregate:${columnDef.id}`;
-              const isCompletionColumn = Boolean(columnDef.flags?.complete);
-              const laneSortMode = getColumnSortMode(laneKey, isCompletionColumn);
-              const laneSortModeChange = isCompletionColumn && onCompletedSortModeChange
-                ? onCompletedSortModeChange
-                : columnSortModeChangeBinder(laneKey);
               const laneTasks = aggregateTasksByColumn[columnDef.id] ?? [];
               const completeLaneTotal = completedCounts?.byColumn[columnDef.id];
               const laneBadgeTotal = resolveColumnBadgeTotal({ isSearchActive, isCompleteColumn: Boolean(columnDef.flags.complete), completeLaneTotal, loadedCount: laneTasks.length });
@@ -989,6 +1009,7 @@ function BoardContent({ tasks, projectId, maxConcurrent, maxWorktrees, showWorkt
                   maxWorktrees={maxWorktrees}
                   showWorktreeGrouping={showWorktreeGrouping}
                   onMoveTask={onMoveTask}
+                  onBoostTask={onBoostTask}
                   onPauseTask={onPauseTask}
                   onUnpauseTask={onUnpauseTask}
                   onResetTask={onResetTask}
@@ -1022,13 +1043,10 @@ function BoardContent({ tasks, projectId, maxConcurrent, maxWorktrees, showWorkt
                   prAuthAvailable={prAuthAvailable}
                   autoMerge={autoMerge}
                   mergeStrategy={mergeStrategy}
-                  // FNXC:PlanApproval 2026-07-07-00:00: FN-7653 — the plan auto-approve shortcut belongs only to the intake/planning column, never to hold (Todo-like) columns; the built-in Coding workflow's Todo column carries the hold trait and was wrongly receiving this prop pair.
-                  {...((columnDef.flags.intake && !columnDef.flags.complete && !columnDef.flags.countsTowardWip && !columnDef.flags.mergeBlocker && !columnDef.flags.humanReview) ? { planAutoApproveEnabled, onTogglePlanAutoApprove } : {})}
                   {...(isCreateColumn && aggregateQuickCreateTarget ? { workflowId: aggregateQuickCreateTarget.workflowId, workflowOptions, defaultWorkflowId: boardWorkflows?.defaultWorkflowId ?? null, onQuickCreate: handleAggregateWorkflowQuickCreate } : {})}
                   {...(columnDef.flags.mergeBlocker || columnDef.flags.humanReview ? { onToggleAutoMerge: handleToggleAutoMerge } : {})}
-                  {...{ sortMode: laneSortMode, onSortModeChange: laneSortModeChange, doneSortMode: laneSortMode, onDoneSortModeChange: laneSortModeChange }}
                   paginationActive={active}
-                  paginationCollectionKey={`${projectId ?? "default"}:aggregate:${columnDef.id}:${laneSortMode}:${searchQuery}`}
+                  paginationCollectionKey={`${projectId ?? "default"}:aggregate:${columnDef.id}:${searchQuery}`}
                   {...(isSearchActive
                     ? { serverHasMore: currentTasksHasMore, serverLoadingMore: currentTasksLoadingMore, serverPaginationError: currentTasksPaginationError, serverProgressKey: currentTasksProgressKey, onLoadMoreServer: onLoadMoreCurrentTasks, onRetryServer: onRetryCurrentTasks }
                     : columnDef.flags.complete
@@ -1054,12 +1072,6 @@ function BoardContent({ tasks, projectId, maxConcurrent, maxWorktrees, showWorkt
         >
           {selectedWorkflowColumns.map((columnDef) => {
             const isCreateColumn = columnDef.id === selectedWorkflowCreateColumnId;
-            const laneKey = `${selectedWorkflow.id}:${columnDef.id}`;
-            const isCompletionColumn = Boolean(columnDef.flags?.complete);
-            const laneSortMode = getColumnSortMode(laneKey, isCompletionColumn);
-            const laneSortModeChange = isCompletionColumn && onCompletedSortModeChange
-              ? onCompletedSortModeChange
-              : columnSortModeChangeBinder(laneKey);
             const laneTasks = selectedWorkflowTasksByColumn[columnDef.id] ?? [];
             const completeLaneTotal = completedCounts?.byWorkflow[selectedWorkflow.id]?.[columnDef.id];
             const laneBadgeTotal = resolveColumnBadgeTotal({ isSearchActive, isCompleteColumn: Boolean(columnDef.flags.complete), completeLaneTotal, loadedCount: laneTasks.length });
@@ -1082,6 +1094,7 @@ function BoardContent({ tasks, projectId, maxConcurrent, maxWorktrees, showWorkt
                 maxWorktrees={maxWorktrees}
                 showWorktreeGrouping={showWorktreeGrouping}
                 onMoveTask={onMoveTask}
+                onBoostTask={onBoostTask}
                 onPauseTask={onPauseTask}
                 onUnpauseTask={onUnpauseTask}
                   onResetTask={onResetTask}
@@ -1114,12 +1127,10 @@ function BoardContent({ tasks, projectId, maxConcurrent, maxWorktrees, showWorkt
                 autoMerge={autoMerge}
                 mergeStrategy={mergeStrategy}
                 // FNXC:PlanApproval 2026-07-07-00:00: FN-7653 — the plan auto-approve shortcut belongs only to the intake/planning column, never to hold (Todo-like) columns; the built-in Coding workflow's Todo column carries the hold trait and was wrongly receiving this prop pair.
-                {...((columnDef.flags.intake && !columnDef.flags.complete && !columnDef.flags.countsTowardWip && !columnDef.flags.mergeBlocker && !columnDef.flags.humanReview) ? { planAutoApproveEnabled, onTogglePlanAutoApprove } : {})}
                 {...(isCreateColumn ? { workflowOptions, defaultWorkflowId: selectedWorkflow.id, onQuickCreate: handleWorkflowQuickCreate } : {})}
                 {...(columnDef.flags.mergeBlocker || columnDef.flags.humanReview ? { onToggleAutoMerge: handleToggleAutoMerge } : {})}
-                {...{ sortMode: laneSortMode, onSortModeChange: laneSortModeChange, doneSortMode: laneSortMode, onDoneSortModeChange: laneSortModeChange }}
                 paginationActive={active}
-                paginationCollectionKey={`${projectId ?? "default"}:${selectedWorkflow.id}:${columnDef.id}:${laneSortMode}:${searchQuery}`}
+                paginationCollectionKey={`${projectId ?? "default"}:${selectedWorkflow.id}:${columnDef.id}:${searchQuery}`}
                 {...(isSearchActive
                   ? { serverHasMore: currentTasksHasMore, serverLoadingMore: currentTasksLoadingMore, serverPaginationError: currentTasksPaginationError, serverProgressKey: currentTasksProgressKey, onLoadMoreServer: onLoadMoreCurrentTasks, onRetryServer: onRetryCurrentTasks }
                   : columnDef.flags.complete

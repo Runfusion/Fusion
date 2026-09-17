@@ -827,7 +827,7 @@ function AppInner() {
       ?.columns.find((column) => column.id === task.column)?.flags;
   }, [footerBoardWorkflows, resolveTaskWorkflowId]);
 
-  const { tasks, isStale, createTask, moveTask, pauseTask, unpauseTask, deleteTask, mergeTask, retryTask, bypassReview, resetTask, updateTask, duplicateTask, revertTask, restoreTaskRevert, loadMoreCurrentTasks, retryCurrentTasksPagination, currentTasksTotal, currentTasksHasMore, currentTasksLoadingMore, currentTasksPaginationError, currentTasksProgressKey, loadMoreCompletedTasks, retryCompletedTasksPagination, completedSortMode, changeCompletedSortMode, completedCounts, completedHasMore, completedLoadingMore, completedPaginationError, completedProgressKey, ingestCreatedTasks, lastFetchTimeMs } = useTasks(
+  const { tasks, isStale, createTask, moveTask, boostTask, pauseTask, unpauseTask, deleteTask, mergeTask, retryTask, bypassReview, resetTask, updateTask, duplicateTask, revertTask, restoreTaskRevert, loadMoreCurrentTasks, retryCurrentTasksPagination, currentTasksTotal, currentTasksHasMore, currentTasksLoadingMore, currentTasksPaginationError, currentTasksProgressKey, loadMoreCompletedTasks, retryCompletedTasksPagination, completedCounts, completedHasMore, completedLoadingMore, completedPaginationError, completedProgressKey, ingestCreatedTasks, lastFetchTimeMs } = useTasks(
     {
       ...(currentProject ? { projectId: currentProject.id } : {}),
       searchQuery: searchQuery || undefined,
@@ -2455,6 +2455,8 @@ function AppInner() {
     maxWorktrees,
     showWorktreeGrouping,
     moveTask,
+    /* FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509 — Boost travels with the ordinary card mutations. */
+    boostTask,
     pauseTask,
     openBoardTaskDetail,
     openGroupModalWithNav,
@@ -2482,8 +2484,6 @@ function AppInner() {
     completedPaginationError,
     completedProgressKey,
     retryCompletedTasksPagination,
-    completedSortMode,
-    changeCompletedSortMode,
     searchQuery,
     availableModels,
     favoriteProviders,

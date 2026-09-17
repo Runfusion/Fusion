@@ -15,18 +15,18 @@
  *     `enqueueMergeQueueInTransaction(tx, ...)` helper is the building block
  *     the handoff path composes inside its `transactionImmediate(async (tx) => ...)`.
  *
- *   VAL-DATA-014 — Merge-queue lease semantics. Leases are acquired
- *     priority-first (urgent > high > normal > low), FIFO within priority
- *     (earliest `enqueued_at` first). Expired leases recover WITHOUT
+ *   VAL-DATA-014 — Merge-queue lease semantics. Leases are acquired in the shared
+ *     FN-509 queue order: an effective Boost first, then task arrival
+ *     (`tasks.created_at`) oldest-first. Expired leases recover WITHOUT
  *     incrementing `attempt_count` (the attempt counter only advances on an
  *     explicit failure release, not on a silent lease expiry).
  *
- * Priority ordering note:
- *   The SQLite path encoded the priority ordering in a raw `CASE` expression
- *   inside the UPDATE...RETURNING lease-acquire query. The async path mirrors
- *   the exact same ordering by computing a priority rank in SQL and ordering
- *   by (rank ASC, enqueued_at ASC). The rank mapping is identical to the sync
- *   CASE: urgent=0, high=1, normal=2, low=3, else=4.
+ * FNXC:TaskQueueOrder 2026-09-17-12:07 — ordering note:
+ *   FN-509 deleted the priority rank. The merge queue now orders by exactly the
+ *   same expression every other queue reader uses (`taskQueueOrderBy`), so a card
+ *   cannot lease out ahead of older work merely because its merge was requested
+ *   manually. A manual request keeps its result promise and permissions; it just
+ *   joins the common order.
  *
  * Transition context (see library/taskstore-persistence-notes.md):
  *   `getDatabase()` still returns the sync `Database` until U15 flips it. The
@@ -40,46 +40,34 @@ import { randomUUID } from "node:crypto";
 import * as schema from "../../postgres/schema/index.js";
 import type { AsyncDataLayer, DbTransaction } from "../../postgres/data-layer.js";
 import { recordRunAuditEventWithinTransaction, taskProjectScope } from "../../postgres/data-layer.js";
-import { normalizeTaskPriority } from "../../tasks/task-priority.js";
+import { taskQueueOrderBy } from "../task-queue-order-ops.js";
 import type {
   MergeQueueAcquireOptions,
   MergeQueueEnqueueOptions,
   MergeQueueEntry,
   MergeQueueReleaseOutcome,
-  TaskPriority,
 } from "../../types.js";
 import type { MergeQueueRow } from "../row-types.js";
 
-/**
- * FNXC:TaskStoreMergeCoordination 2026-06-24-05:05:
- * The priority-rank SQL fragment used to order the merge queue. This encodes
- * the priority-first ordering (VAL-DATA-014): urgent leases out before high,
- * high before normal, normal before low, and any unrecognized priority sorts
- * last. The mapping is identical to the sync `CASE mq.priority WHEN 'urgent' ...`
- * expression in store.ts so lease-acquisition order is byte-for-byte equivalent.
- */
-export const MERGE_QUEUE_PRIORITY_RANK = sql<number>`
-  CASE ${schema.project.mergeQueue.priority}
-    WHEN 'urgent' THEN 0
-    WHEN 'high'   THEN 1
-    WHEN 'normal' THEN 2
-    WHEN 'low'    THEN 3
-    ELSE 4
-  END
-`;
+/*
+FNXC:TaskQueueOrder 2026-09-17-12:07:
+The merge queue's ORDER BY. Every merge read (target diagnostics, queue-head acquire, peek) applies
+this BEFORE its LIMIT so a boosted card that starts beyond the candidate-scan bound is still found
+at the head. It reads the joined `project.tasks` row, which is why each of those queries joins tasks.
+*/
+export const MERGE_QUEUE_ORDER_BY = taskQueueOrderBy();
 
 /**
  * FNXC:TaskStoreMergeCoordination 2026-06-24-05:10:
  * Convert a raw `merge_queue` row into the public `MergeQueueEntry` shape.
- * The `priority` column is free-text in the schema; the public contract normalizes
- * it to the bounded `TaskPriority` union so callers never see an out-of-contract
- * value. This mirrors the sync `rowToMergeQueueEntry` exactly.
+ *
+ * FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509 removed `priority` from the entry. The free-text SQL
+ * column survives as inert historical data and is deliberately not surfaced.
  */
 export function rowToMergeQueueEntry(row: MergeQueueRow): MergeQueueEntry {
   return {
     taskId: row.taskId,
     enqueuedAt: row.enqueuedAt,
-    priority: normalizeTaskPriority(row.priority) as TaskPriority,
     leasedBy: row.leasedBy,
     leasedAt: row.leasedAt,
     leaseExpiresAt: row.leaseExpiresAt,
@@ -189,9 +177,9 @@ export async function enqueueMergeQueueInTransaction(
   audit?: { agentId?: string; runId?: string },
   reviewColumns?: ReadonlySet<string>,
 ): Promise<MergeQueueEntry> {
-  // Read the task row for the column check + priority.
+  // Read the task row for the review-column check.
   const taskRows = await tx
-    .select({ priority: schema.project.tasks.priority, column: schema.project.tasks.column })
+    .select({ column: schema.project.tasks.column })
     .from(schema.project.tasks)
     .where(eq(schema.project.tasks.id, taskId))
     .limit(1);
@@ -215,7 +203,6 @@ export async function enqueueMergeQueueInTransaction(
   }
 
   const now = opts.now ?? new Date().toISOString();
-  const priority = opts.priority ?? normalizeTaskPriority(taskRow.priority);
 
   // Idempotent insert: ON CONFLICT (task_id) DO NOTHING.
   await tx
@@ -223,7 +210,6 @@ export async function enqueueMergeQueueInTransaction(
     .values({
       taskId,
       enqueuedAt: now,
-      priority,
       attemptCount: 0,
     })
     .onConflictDoNothing();
@@ -248,7 +234,6 @@ export async function enqueueMergeQueueInTransaction(
     target: taskId,
     metadata: {
       taskId,
-      priority: inserted.priority,
       enqueuedAt: inserted.enqueuedAt,
       alreadyEnqueued: inserted.enqueuedAt !== now,
     },
@@ -394,7 +379,7 @@ export async function cleanupStaleMergeQueueRowsInTransaction(
 /**
  * FNXC:TaskStoreMergeCoordination 2026-06-24-05:25:
  * Acquire a merge-queue lease (VAL-DATA-014). Leases are acquired
- * priority-first (urgent > high > normal > low), FIFO within priority
+ * in the shared FN-509 queue order (Boost, then task arrival)
  * (earliest `enqueued_at` first). Only queue rows whose task is in `in-review`
  * and whose lease is available (no holder, or an expired lease) are eligible.
  *
@@ -404,7 +389,7 @@ export async function cleanupStaleMergeQueueRowsInTransaction(
  *     in `in-review`), record a `mergeQueue:lease-target-unavailable` audit
  *     event and return null (do NOT fall back to the queue head). This mirrors
  *     the sync targeted-acquire path.
- *   - **Queue head** (no target): lease the highest-priority, earliest-enqueued
+ *   - **Queue head** (no target): lease the queue-order head — a boosted card, else the earliest-created
  *     available row whose task is in `in-review`.
  *
  * Expired leases are treated as available: a row whose `lease_expires_at <= now`
@@ -481,7 +466,7 @@ export async function acquireMergeQueueLease(
             schema.project.tasks,
             eq(schema.project.tasks.id, schema.project.mergeQueue.taskId),
           )
-          .orderBy(MERGE_QUEUE_PRIORITY_RANK, schema.project.mergeQueue.enqueuedAt)
+          .orderBy(...MERGE_QUEUE_ORDER_BY)
           .limit(1);
         const head = headRows[0];
         await recordRunAuditEventWithinTransaction(tx, {
@@ -538,14 +523,13 @@ export async function acquireMergeQueueLease(
           taskId: entry.taskId,
           workerId,
           leaseExpiresAt: entry.leaseExpiresAt,
-          priority: entry.priority,
         },
       });
       return entry;
     }
 
     /*
-    ── Queue-head acquire: lease the highest-priority, earliest available row ──
+    ── Queue-head acquire: lease the queue-order head among available rows ──
 
     FNXC:WorkflowResolvedColumns 2026-07-30-14:20 (#2819 review):
     THE HEAD SELECT CANNOT NAME THE LANES, BECAUSE IT DOES NOT YET KNOW THE TASK.
@@ -578,7 +562,7 @@ export async function acquireMergeQueueLease(
           leaseAvailable(now),
         ),
       )
-      .orderBy(MERGE_QUEUE_PRIORITY_RANK, schema.project.mergeQueue.enqueuedAt)
+      .orderBy(...MERGE_QUEUE_ORDER_BY)
       .limit(opts.resolveReviewColumnsFor ? HEAD_CANDIDATE_SCAN_LIMIT : 1);
 
     let head: { taskId: string } | undefined;
@@ -639,7 +623,6 @@ export async function acquireMergeQueueLease(
         taskId: entry.taskId,
         workerId,
         leaseExpiresAt: entry.leaseExpiresAt,
-        priority: entry.priority,
       },
     });
     return entry;
@@ -833,14 +816,14 @@ export async function recoverExpiredMergeQueueLeases(
 }
 
 /**
- * Peek at the full merge queue, ordered priority-first then FIFO within priority.
+ * Peek at the full merge queue in the shared FN-509 queue order.
  * Read-only; does not take a lease.
  */
 export async function peekMergeQueue(layer: AsyncDataLayer): Promise<MergeQueueEntry[]> {
   const rows = await layer.db
     .select()
     .from(schema.project.mergeQueue)
-    .orderBy(MERGE_QUEUE_PRIORITY_RANK, schema.project.mergeQueue.enqueuedAt);
+    .orderBy(...MERGE_QUEUE_ORDER_BY);
   return rows.map((row) => rowToMergeQueueEntry(row as MergeQueueRow));
 }
 
@@ -862,7 +845,7 @@ export async function peekMergeQueueHead(
       schema.project.tasks,
       eq(schema.project.tasks.id, schema.project.mergeQueue.taskId),
     )
-    .orderBy(MERGE_QUEUE_PRIORITY_RANK, schema.project.mergeQueue.enqueuedAt)
+    .orderBy(...MERGE_QUEUE_ORDER_BY)
     .limit(1);
   return rows[0] ?? null;
 }

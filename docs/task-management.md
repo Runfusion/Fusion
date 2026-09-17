@@ -348,8 +348,23 @@ Auto-completion/finalization remains owned by existing recovery passes:
 5. **done** — merged/finalized. Done retains task history and is loaded in deterministic server-paginated pages of 50 while the board shows the exact total independently of the currently loaded cards.
 
 Board ordering behavior:
-- `todo` mirrors scheduler dispatch order: priority first (`urgent` → `low`), then oldest `createdAt` within a priority tier, then task ID as deterministic tie-break.
-- `triage`, `in-progress`, and `in-review` remain priority-first with task-ID tie-breaks (`in-review` still pins merge-active statuses above non-merging tasks).
+FN-509 removed task priority levels and the per-column sort menu. Every column now uses one shared, non-configurable order:
+
+- **Manual-intake lanes** (an `intake` column with `autoTriage: false`, such as Coding (Ideas)'s "Ideas") show the newest card at the top, so the list reads top-down as "what did I just think of".
+- **Processing lanes** (planning holds, WIP, review/merge) show genuinely ACTIVE cards first, then everything still waiting in the shared queue order: an effective **Boost** first, then oldest `createdAt` first, then the task-id tie-break. This is exactly the order the engine will try candidates in. Active cards are ordered among themselves by arrival and a Boost never moves a waiting card ahead of one already in flight.
+- **Complete lanes** keep arrival order, newest first (`columnMovedAt`, then `updatedAt`, then `createdAt`). Done is deliberately not re-sorted by creation date.
+
+### Boost
+
+**Boost** moves one waiting card to the head of its queue. It is the only way to change the order, and it is deliberately narrow:
+
+- **It is a move-to-head, not a level.** There are no tiers, no visible counter, no persistent "boosted mode" to select, and no un-boost button. Clicking Boost on another card takes the head; clicking the first card again reclaims it.
+- **It never starts anything.** Boost performs no column move, retries no error, lifts no pause, and clears no gate. A boosted card that is blocked by capacity, an overlapping file scope, an unmet dependency, a pending approval, a pause, or a retry cooldown keeps its place in the queue while admission moves on to the next admissible candidate. The visible order is the order of ATTEMPT, not permission to start.
+- **It never preempts.** A selection or reservation that has already been accepted is never taken back to serve a Boost that arrived afterwards.
+- **It lasts for one stay in one column.** A Boost belongs to the card's current stay in its current column of its current workflow, so it survives the different phases of that stay (planning, then waiting for capacity, in the same Planning column). It expires when the card moves, when the workflow changes, and on Reset; it does not become a standing priority in the next column. A successful reservation keeps its winner through the hold → WIP handoff. Duplicates, refinements, reverts, and restored snapshots never inherit a Boost.
+- **It is durable and shared.** The rank lives on the task, not in one browser, so every client and a restarted engine see the same order.
+
+The **Boost** button appears on a live, non-active card in a lane whose remaining processing is automatic. It is absent on manual intake, on Complete lanes, on history, on deleted cards, on work already in flight, in a column with no automatic processing, and on a review lane that is a purely human wait after auto-merge is disabled — unless an automatic review still has to run there, in which case the queue is real and Boost remains available.
 - The `done` column is recency-ordered by completion time (newest first), using `columnMovedAt` as primary and falling back to `updatedAt` then `createdAt` for legacy tasks.
 - The dashboard **list view default ordering matches these same per-column semantics** until a user clicks a sortable header (manual list sorting still overrides defaults).
 

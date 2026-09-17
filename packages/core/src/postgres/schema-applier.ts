@@ -89,7 +89,7 @@ touches no data; it must advance in the same change that ships a new migration f
 /* FNXC:WorkflowIdentity 2026-09-14-19:06: the ceiling includes the transactional Coding (Ideas) identity convergence and its recovery archives. */
 /* FNXC:HumanPlanApproval 2026-09-15-06:24: the ceiling includes FN-408's per-card decision column, so no release gate reads tasks before it exists. */
 /* FNXC:TaskPauseAccounting 2026-09-16-06:16: the ceiling includes FN-457's paused-time columns, so timing readers never query a tasks table that lacks them. */
-export const SCHEMA_BASELINE_VERSION = "0081";
+export const SCHEMA_BASELINE_VERSION = "0082";
 /** FNXC:SymbolLock 2026-07-20-10:00: upgrades need durable task declarations before admission resolves symbols. */
 export const TASK_DECLARED_SYMBOLS_VERSION = "0028";
 const INITIAL_SCHEMA_VERSION = "0000";
@@ -288,6 +288,8 @@ export const WORKFLOW_IDENTITY_AND_MODEL_LANES_VERSION = "0079";
 export const TASK_HUMAN_PLAN_APPROVAL_VERSION = "0080";
 /** FNXC:TaskPauseAccounting 2026-09-16-06:16: upgraded projects need the durable paused-time columns before the card chip subtracts pause from worked time. */
 export const TASK_PAUSE_ACCOUNTING_VERSION = "0081";
+/** FNXC:TaskQueueOrder 2026-09-17-12:07: upgraded projects need the durable Boost column and its ordering sequence before any queue read runs. */
+export const TASK_QUEUE_ORDER_VERSION = "0082";
 
 /** FNXC:MemoryFocus 2026-08-13-15:57: explicit registration prevents the per-conversation memory-focus migration from being skipped. Renumbered to 0060 (FN-9037 took 0059), then 0061, then 0065 (2026-08-20) when the upstream FN-066..FN-094 batch claimed 0061-0064. */
 export const CHAT_SESSION_MEMORY_FOCUS_VERSION = "0066";
@@ -547,6 +549,7 @@ const OVERLAP_REVALIDATION_DRAIN_MIGRATION_PATH = join(MIGRATIONS_DIR, "0078_fn_
 const WORKFLOW_IDENTITY_AND_MODEL_LANES_MIGRATION_PATH = join(MIGRATIONS_DIR, "0079_fn_393_workflow_identity_and_project_model_lanes.sql");
 const TASK_HUMAN_PLAN_APPROVAL_MIGRATION_PATH = join(MIGRATIONS_DIR, "0080_fn_408_task_human_plan_approval.sql");
 const TASK_PAUSE_ACCOUNTING_MIGRATION_PATH = join(MIGRATIONS_DIR, "0081_fn_457_task_pause_accounting.sql");
+const TASK_QUEUE_ORDER_MIGRATION_PATH = join(MIGRATIONS_DIR, "0082_fn_509_task_queue_order.sql");
 
 /**
  * Ensure the migration bookkeeping table exists. Lives in the public schema so
@@ -698,6 +701,7 @@ export async function applySchemaBaseline(
     const builtinWorkflowIdentityAlreadyApplied = applied.includes(WORKFLOW_IDENTITY_AND_MODEL_LANES_VERSION);
     const taskHumanPlanApprovalAlreadyApplied = applied.includes(TASK_HUMAN_PLAN_APPROVAL_VERSION);
     const taskPauseAccountingAlreadyApplied = applied.includes(TASK_PAUSE_ACCOUNTING_VERSION);
+    const taskQueueOrderAlreadyApplied = applied.includes(TASK_QUEUE_ORDER_VERSION);
     assertBinaryNotOlderThanDatabase(applied);
     let schemaChanged = false;
 
@@ -1722,6 +1726,29 @@ export async function applySchemaBaseline(
       const migrationSql = await readFile(TASK_PAUSE_ACCOUNTING_MIGRATION_PATH, "utf8");
       await tx.execute(sql.raw(migrationSql));
       await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${TASK_PAUSE_ACCOUNTING_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    /*
+    FNXC:TaskQueueOrder 2026-09-17-12:07:
+    Probe the column AND the sequence, not only the bookkeeping row: a restored database that
+    rewound the tasks table (or was dumped without sequences) must re-apply both halves rather than
+    trust a stale applied-version marker. Without the sequence, every boost write would fail.
+    */
+    const taskQueueOrderState = (await tx.execute(sql`
+      SELECT
+        to_regclass('project.tasks') IS NOT NULL AS tasks_exists,
+        EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'project' AND table_name = 'tasks' AND column_name = 'queue_boost'
+        ) AS queue_boost_exists,
+        to_regclass('project.task_queue_boost_seq') IS NOT NULL AS boost_sequence_exists
+    `)) as unknown as Array<{ tasks_exists: boolean; queue_boost_exists: boolean; boost_sequence_exists: boolean }>;
+    const taskQueueOrderMissing = taskQueueOrderState[0]?.tasks_exists
+      && (!taskQueueOrderState[0]?.queue_boost_exists || !taskQueueOrderState[0]?.boost_sequence_exists);
+    if (!taskQueueOrderAlreadyApplied || taskQueueOrderMissing) {
+      const migrationSql = await readFile(TASK_QUEUE_ORDER_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${TASK_QUEUE_ORDER_VERSION}) ON CONFLICT (version) DO NOTHING`);
       schemaChanged = true;
     }
     const patchnodeEntriesMissing = ((await tx.execute(sql`

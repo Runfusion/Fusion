@@ -8944,7 +8944,12 @@
       "badgeApproved": "計畫已由你核准",
       "approved": "計畫已核准 — {{id}} 繼續執行",
       "rejected": "計畫已拒絕 — {{id}} 返回重新擬定計畫"
-    }
+    },
+    "boost": "優先",
+    "boosting": "正在優先…",
+    "boostAriaLabel": "將 {{taskId}} 移到佇列最前面",
+    "boostTitle": "佇列下次接納工作時優先嘗試此任務。這不會啟動它，也不會解除任何阻擋。",
+    "boostFailed": "無法優先處理 {{taskId}}——它可能已開始或已移動。請重新整理查看目前位置。"
   },
   "terminal": {
     "arrowKeysLabel": "",

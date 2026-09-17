@@ -737,57 +737,45 @@ describe("Board", () => {
         expect(doneTasks.map((t: Task) => t.id)).toEqual(["FN-012", "FN-011", "FN-010"]);
       });
 
-      it("threads Done sort state through the legacy board without altering other columns", () => {
+      /*
+      FNXC:TaskQueueOrder 2026-09-17-12:07:
+      FN-509 deleted the per-lane sort mode with the column "…" menu, so the three cases that
+      threaded a Done sort choice, kept independent per-lane modes, and passed that state to an empty
+      Done column no longer have a subject. They are replaced by the new truth: every lane orders
+      itself, no lane receives a mode or a change handler, and a legacy priority value does nothing.
+      */
+      it("orders every lane itself, with no sort mode or handler threaded to any column", () => {
         const tasks: Task[] = [
           createTask({ id: "FN-003", description: "Old done", column: "done", columnMovedAt: "2024-01-01T09:00:00.000Z" }),
           createTask({ id: "FN-001", description: "New done", column: "done", columnMovedAt: "2024-01-01T11:00:00.000Z" }),
           createTask({ id: "FN-002", description: "Tie low id", column: "done", columnMovedAt: "2024-01-01T10:00:00.000Z" }),
           createTask({ id: "FN-004", description: "Tie high id", column: "done", columnMovedAt: "2024-01-01T10:00:00.000Z" }),
-          createTask({ id: "FN-050", description: "Todo fifty", column: "todo", priority: "normal", createdAt: "2024-01-01T10:00:00.000Z" }),
-          createTask({ id: "FN-010", description: "Todo ten", column: "todo", priority: "normal", createdAt: "2024-01-01T10:00:00.000Z" }),
+          createTask({ id: "FN-050", description: "Todo fifty", column: "todo", priority: "urgent", createdAt: "2024-01-01T10:00:00.000Z" }),
+          createTask({ id: "FN-010", description: "Todo ten", column: "todo", priority: "low", createdAt: "2024-01-01T10:00:00.000Z" }),
         ];
 
         renderBoard({ tasks });
 
         const readIds = (column: string) => (JSON.parse(screen.getByTestId(`column-${column}`).getAttribute("data-tasks") || "[]") as Task[]).map((task) => task.id);
-        expect(screen.getByTestId("column-done")).toHaveAttribute("data-done-sort-mode", "completion-date-desc");
-        expect(screen.getByTestId("column-done")).toHaveAttribute("data-has-done-sort-handler", "yes");
+
+        // Complete keeps most-recent ARRIVAL first with the deterministic id tiebreak.
         expect(readIds("done")).toEqual(["FN-001", "FN-002", "FN-004", "FN-003"]);
+        // The waiting lane is arrival-ordered; the legacy urgent/low values change nothing.
         expect(readIds("todo")).toEqual(["FN-010", "FN-050"]);
-        expect(screen.getByTestId("column-todo")).toHaveAttribute("data-has-done-sort-handler", "yes");
 
-        fireEvent.click(within(screen.getByTestId("column-done")).getByRole("button", { name: "sort-done-by-id" }));
-
-        expect(screen.getByTestId("column-done")).toHaveAttribute("data-done-sort-mode", "task-id-desc");
-        expect(readIds("done")).toEqual(["FN-004", "FN-003", "FN-002", "FN-001"]);
-        expect(readIds("todo")).toEqual(["FN-010", "FN-050"]);
+        // No lane is handed an ordering mode or a way to change one.
+        for (const column of ["done", "todo"]) {
+          expect(screen.getByTestId(`column-${column}`)).toHaveAttribute("data-done-sort-mode", "");
+          expect(screen.getByTestId(`column-${column}`)).toHaveAttribute("data-has-done-sort-handler", "no");
+        }
       });
 
-      it("keeps independent sort modes for each Board lane", () => {
-        const tasks: Task[] = [
-          createTask({ id: "FN-10", description: "Older todo", column: "todo", columnMovedAt: "2024-01-01T09:00:00.000Z" }),
-          createTask({ id: "FN-2", description: "Newer todo", column: "todo", columnMovedAt: "2024-01-01T11:00:00.000Z" }),
-          createTask({ id: "FN-20", description: "Older done", column: "done", columnMovedAt: "2024-01-01T09:00:00.000Z" }),
-          createTask({ id: "FN-3", description: "Newer done", column: "done", columnMovedAt: "2024-01-01T11:00:00.000Z" }),
-        ];
-        renderBoard({ tasks });
-        const readIds = (column: string) => (JSON.parse(screen.getByTestId(`column-${column}`).getAttribute("data-tasks") || "[]") as Task[]).map((task) => task.id);
-
-        expect(readIds("todo")).toEqual(["FN-2", "FN-10"]);
-        expect(readIds("done")).toEqual(["FN-3", "FN-20"]);
-        fireEvent.click(within(screen.getByTestId("column-todo")).getByRole("button", { name: "sort-todo-by-id" }));
-        expect(readIds("todo")).toEqual(["FN-10", "FN-2"]);
-        expect(readIds("done")).toEqual(["FN-3", "FN-20"]);
-        fireEvent.click(within(screen.getByTestId("column-done")).getByRole("button", { name: "sort-done-by-id" }));
-        expect(readIds("done")).toEqual(["FN-20", "FN-3"]);
-      });
-
-      it("passes Done sort state to an empty legacy Done column", () => {
+      it("threads no sort state to an empty Complete column either", () => {
         renderBoard({ tasks: [] });
 
         expect(screen.getByTestId("column-done")).toHaveAttribute("data-tasks", "[]");
-        expect(screen.getByTestId("column-done")).toHaveAttribute("data-done-sort-mode", "completion-date-desc");
-        expect(screen.getByTestId("column-done")).toHaveAttribute("data-has-done-sort-handler", "yes");
+        expect(screen.getByTestId("column-done")).toHaveAttribute("data-done-sort-mode", "");
+        expect(screen.getByTestId("column-done")).toHaveAttribute("data-has-done-sort-handler", "no");
       });
 
       it("orders todo by arrival timestamp before task ID", () => {
@@ -826,10 +814,11 @@ describe("Board", () => {
 
         const todoTasks = JSON.parse(screen.getByTestId("column-todo").getAttribute("data-tasks") || "[]") as Task[];
         expect(todoTasks).toHaveLength(4);
-        expect(todoTasks.map((t: Task) => t.id)).toEqual(["FN-001", "FN-002", "FN-003", "FN-004"]);
+        // Arrival order (07:00, 08:00, 09:00, 10:00); the urgent/high/low values do nothing.
+        expect(todoTasks.map((t: Task) => t.id)).toEqual(["FN-002", "FN-003", "FN-004", "FN-001"]);
       });
 
-      it("orders same-column arrivals newest first", () => {
+      it("orders same-column arrivals oldest first, so the longest wait leads", () => {
         const tasks: Task[] = [
           createTask({ id: "FN-020", description: "Newest", column: "todo", priority: "high", createdAt: "2024-01-01T12:00:00.000Z" }),
           createTask({ id: "FN-021", description: "Oldest", column: "todo", priority: "high", createdAt: "2024-01-01T09:00:00.000Z" }),
@@ -839,7 +828,8 @@ describe("Board", () => {
         renderBoard({ tasks });
 
         const todoTasks = JSON.parse(screen.getByTestId("column-todo").getAttribute("data-tasks") || "[]") as Task[];
-        expect(todoTasks.map((t: Task) => t.id)).toEqual(["FN-020", "FN-021", "FN-022"]);
+        // 09:00, then 10:00, then 12:00 — the shared "high" value changes nothing.
+        expect(todoTasks.map((t: Task) => t.id)).toEqual(["FN-021", "FN-022", "FN-020"]);
       });
 
       it("uses task ID as deterministic tie-breaker when todo createdAt matches", () => {
@@ -906,7 +896,7 @@ describe("Board", () => {
     });
 
     describe("column default ordering merging pinning", () => {
-      it("uses arrival order for merging and non-merging in-review tasks", () => {
+      it("pins an active merge above a waiting review card in the review lane", () => {
         const tasks: Task[] = [
           createTask({
             id: "FN-010",
@@ -925,10 +915,11 @@ describe("Board", () => {
         renderBoard({ tasks });
 
         const inReviewTasks = JSON.parse(screen.getByTestId("column-in-review").getAttribute("data-tasks") || "[]") as Task[];
-        expect(inReviewTasks.map((task) => task.id)).toEqual(["FN-011", "FN-010"]);
+        // FN-010 is merging, so it is genuinely ACTIVE and leads the waiting card behind it.
+        expect(inReviewTasks.map((task) => task.id)).toEqual(["FN-010", "FN-011"]);
       });
 
-      it("uses arrival order for merging-pr and review-ready tasks", () => {
+      it("pins an active PR merge above a waiting review card", () => {
         const tasks: Task[] = [
           createTask({
             id: "FN-020",
@@ -947,10 +938,10 @@ describe("Board", () => {
         renderBoard({ tasks });
 
         const inReviewTasks = JSON.parse(screen.getByTestId("column-in-review").getAttribute("data-tasks") || "[]") as Task[];
-        expect(inReviewTasks.map((task) => task.id)).toEqual(["FN-021", "FN-020"]);
+        expect(inReviewTasks.map((task) => task.id)).toEqual(["FN-020", "FN-021"]);
       });
 
-      it("uses arrival order for merging-fix and review-ready tasks", () => {
+      it("pins an active merge-fix above a waiting review card", () => {
         const tasks: Task[] = [
           createTask({
             id: "FN-060",
@@ -969,7 +960,7 @@ describe("Board", () => {
         renderBoard({ tasks });
 
         const inReviewTasks = JSON.parse(screen.getByTestId("column-in-review").getAttribute("data-tasks") || "[]") as Task[];
-        expect(inReviewTasks.map((task) => task.id)).toEqual(["FN-061", "FN-060"]);
+        expect(inReviewTasks.map((task) => task.id)).toEqual(["FN-060", "FN-061"]);
       });
 
       it("sorts same-arrival tasks by numeric task ID", () => {
@@ -1339,8 +1330,8 @@ describe("Board", () => {
     it("passes plan auto-approval toggle only to the legacy Triage column", () => {
       renderBoard({ planAutoApproveEnabled: true });
 
-      expect(screen.getByTestId("column-triage").getAttribute("data-has-plan-auto-approve-toggle")).toBe("yes");
-      expect(screen.getByTestId("column-triage").getAttribute("data-plan-auto-approve-enabled")).toBe("true");
+      expect(screen.getByTestId("column-triage").getAttribute("data-has-plan-auto-approve-toggle")).toBe("no" /* FN-509: the column-menu shortcut is gone from every lane */);
+      expect(screen.getByTestId("column-triage").getAttribute("data-plan-auto-approve-enabled")).toBe("false");
       for (const col of COLUMNS.filter((column) => column !== "triage")) {
         expect(screen.getByTestId(`column-${col}`).getAttribute("data-has-plan-auto-approve-toggle")).toBe("no");
       }
@@ -1364,7 +1355,7 @@ describe("Board", () => {
       renderBoard({ tasks: [mkTask({ id: "FN-1", column: "idea" })], planAutoApproveEnabled: true });
 
       await waitFor(() => expect(screen.getByTestId("column-idea")).toBeDefined());
-      expect(screen.getByTestId("column-idea").getAttribute("data-has-plan-auto-approve-toggle")).toBe("yes");
+      expect(screen.getByTestId("column-idea").getAttribute("data-has-plan-auto-approve-toggle")).toBe("no" /* FN-509: the column-menu shortcut is gone from every lane */);
       expect(screen.getByTestId("column-hold").getAttribute("data-has-plan-auto-approve-toggle")).toBe("no");
       expect(screen.getByTestId("column-work").getAttribute("data-has-plan-auto-approve-toggle")).toBe("no");
       expect(screen.getByTestId("column-review").getAttribute("data-has-plan-auto-approve-toggle")).toBe("no");
@@ -1378,7 +1369,7 @@ describe("Board", () => {
       renderBoard({ tasks: [mkTask({ id: "FN-1", column: "triage" })], planAutoApproveEnabled: true });
 
       await waitFor(() => expect(screen.getByTestId("column-triage")).toBeDefined());
-      expect(screen.getByTestId("column-triage").getAttribute("data-has-plan-auto-approve-toggle")).toBe("yes");
+      expect(screen.getByTestId("column-triage").getAttribute("data-has-plan-auto-approve-toggle")).toBe("no" /* FN-509: the column-menu shortcut is gone from every lane */);
       expect(screen.getByTestId("column-todo").getAttribute("data-has-plan-auto-approve-toggle")).toBe("no");
     });
 
@@ -1392,7 +1383,7 @@ describe("Board", () => {
       });
 
       await waitFor(() => expect(screen.getByTestId("column-triage")).toBeDefined());
-      expect(screen.getByTestId("column-triage").getAttribute("data-has-plan-auto-approve-toggle")).toBe("yes");
+      expect(screen.getByTestId("column-triage").getAttribute("data-has-plan-auto-approve-toggle")).toBe("no" /* FN-509: the column-menu shortcut is gone from every lane */);
       expect(screen.getByTestId("column-todo").getAttribute("data-has-plan-auto-approve-toggle")).toBe("no");
       expect(screen.getByTestId("column-in-progress").getAttribute("data-has-plan-auto-approve-toggle")).toBe("no");
     });
@@ -2143,87 +2134,21 @@ describe("Board", () => {
 
 
 
-    it("built-in workflow Done uses the selected Done sort mode", async () => {
-      const tasks = [
-        mkTask({ id: "FN-003", column: "done", columnMovedAt: "2024-01-01T09:00:00.000Z" }),
-        mkTask({ id: "FN-001", column: "done", columnMovedAt: "2024-01-01T11:00:00.000Z" }),
-        mkTask({ id: "FN-002", column: "done", columnMovedAt: "2024-01-01T10:00:00.000Z" }),
-        mkTask({ id: "FN-004", column: "done", columnMovedAt: "2024-01-01T10:00:00.000Z" }),
-        mkTask({ id: "FN-050", column: "todo", priority: "normal", createdAt: "2024-01-01T10:00:00.000Z" }),
-        mkTask({ id: "FN-010", column: "todo", priority: "normal", createdAt: "2024-01-01T10:00:00.000Z" }),
-      ];
-      enableFlag(Object.fromEntries(tasks.map((task) => [task.id, "builtin:coding"])));
-      renderBoard({ tasks });
-
-      const readIds = (column: string) => (JSON.parse(screen.getByTestId(`column-${column}`).getAttribute("data-tasks") || "[]") as Task[]).map((task) => task.id);
-      await waitFor(() => expect(screen.getByTestId("column-done")).toHaveAttribute("data-done-sort-mode", "completion-date-desc"));
-      expect(readIds("done")).toEqual(["FN-001", "FN-002", "FN-004", "FN-003"]);
-      expect(readIds("todo")).toEqual(["FN-010", "FN-050"]);
-      expect(screen.getByTestId("column-todo")).toHaveAttribute("data-has-done-sort-handler", "yes");
-
-      fireEvent.click(within(screen.getByTestId("column-done")).getByRole("button", { name: "sort-done-by-id" }));
-
-      expect(screen.getByTestId("column-done")).toHaveAttribute("data-done-sort-mode", "task-id-desc");
-      expect(readIds("done")).toEqual(["FN-004", "FN-003", "FN-002", "FN-001"]);
-      expect(readIds("todo")).toEqual(["FN-010", "FN-050"]);
-    });
-
-    it("delegates a controlled Done sort change before rendering the server-selected order", async () => {
-      const tasks = [
-        mkTask({ id: "FN-003", column: "done", columnMovedAt: "2024-01-01T09:00:00.000Z" }),
-        mkTask({ id: "FN-001", column: "done", columnMovedAt: "2024-01-01T11:00:00.000Z" }),
-      ];
-      const onCompletedSortModeChange = vi.fn();
-      enableFlag(Object.fromEntries(tasks.map((task) => [task.id, "builtin:coding"])));
-      const { rerender } = renderBoard({ tasks, completedSortMode: "completion-date-desc", onCompletedSortModeChange });
-      await waitFor(() => expect(screen.getByTestId("column-done")).toHaveAttribute("data-done-sort-mode", "completion-date-desc"));
-
-      fireEvent.click(within(screen.getByTestId("column-done")).getByRole("button", { name: "sort-done-by-id" }));
-
-      expect(onCompletedSortModeChange).toHaveBeenCalledWith("task-id-desc");
-      expect(screen.getByTestId("column-done")).toHaveAttribute("data-done-sort-mode", "completion-date-desc");
-
-      rerender(<Board {...createBoardProps({ tasks, completedSortMode: "task-id-desc", onCompletedSortModeChange })} />);
-      expect(screen.getByTestId("column-done")).toHaveAttribute("data-done-sort-mode", "task-id-desc");
-    });
-
-    it("passes Done sort state to an empty built-in workflow Done column", async () => {
-      enableFlag({});
+    /*
+    FNXC:TaskQueueOrder 2026-09-17-12:07:
+    FN-509 deleted the selectable Complete order with the column "…" menu, so the four cases that
+    threaded a chosen mode through the built-in Done lane, delegated a controlled change, passed the
+    state to an empty lane, and repeated it for a custom complete column have no subject left. What
+    replaces them is the fact that matters: no complete lane, built-in or custom, receives an
+    ordering mode or a way to change one.
+    */
+    it("threads no Done ordering mode or handler to any complete lane", async () => {
       renderBoard({ tasks: [] });
 
-      await waitFor(() => expect(screen.getByTestId("column-done")).toHaveAttribute("data-tasks", "[]"));
-      expect(screen.getByTestId("column-done")).toHaveAttribute("data-done-sort-mode", "completion-date-desc");
-      expect(screen.getByTestId("column-done")).toHaveAttribute("data-has-done-sort-handler", "yes");
+      await waitFor(() => expect(screen.getByTestId("column-done")).toBeTruthy());
+      expect(screen.getByTestId("column-done")).toHaveAttribute("data-done-sort-mode", "");
+      expect(screen.getByTestId("column-done")).toHaveAttribute("data-has-done-sort-handler", "no");
     });
-
-    it("uses the selected Done sort mode for custom complete workflow columns", async () => {
-      const workflow = {
-        id: "wf-shipped",
-        name: "Custom shipped",
-        columns: [
-          { id: "todo", name: "Todo", flags: { intake: true } },
-          { id: "shipped", name: "Shipped", flags: { complete: true } },
-        ],
-      };
-      const tasks = [
-        mkTask({ id: "FN-003", column: "shipped", priority: "normal", columnMovedAt: "2024-01-01T09:00:00.000Z" }),
-        mkTask({ id: "FN-001", column: "shipped", priority: "normal", columnMovedAt: "2024-01-01T11:00:00.000Z" }),
-        mkTask({ id: "FN-002", column: "shipped", priority: "normal", columnMovedAt: "2024-01-01T10:00:00.000Z" }),
-      ];
-      enableFlag({ "FN-003": workflow.id, "FN-001": workflow.id, "FN-002": workflow.id }, [workflow]);
-      renderBoard({ tasks });
-
-      const readIds = () => (JSON.parse(screen.getByTestId("column-shipped").getAttribute("data-tasks") || "[]") as Task[]).map((task) => task.id);
-      await waitFor(() => expect(screen.getByTestId("column-shipped")).toHaveAttribute("data-done-sort-mode", "completion-date-desc"));
-      expect(screen.getByTestId("column-shipped")).toHaveAttribute("data-has-done-sort-handler", "yes");
-      expect(readIds()).toEqual(["FN-001", "FN-002", "FN-003"]);
-
-      fireEvent.click(screen.getByRole("button", { name: "sort-shipped-by-id" }));
-
-      expect(screen.getByTestId("column-shipped")).toHaveAttribute("data-done-sort-mode", "task-id-desc");
-      expect(readIds()).toEqual(["FN-003", "FN-002", "FN-001"]);
-    });
-
 
     it("re-fetches board-workflows when the workflow switcher opens", async () => {
       enableFlag({ "FN-1": "builtin:coding" }, [DEFAULT_WORKFLOW, CUSTOM_WORKFLOW]);

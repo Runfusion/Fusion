@@ -1,7 +1,7 @@
 import {
   getCurrentRepo,
   computeBlockerFanoutMap,
-  compareTasksByPriorityThenAgeAndId,
+  compareTasksByQueueOrder,
   fileScopeLeaseBlocksCandidate,
   normalizeOverlapScopeForTask,
   taskHoldsUnmergedCheckout,
@@ -193,10 +193,20 @@ export function filterPathsByIgnoreList(
   });
 }
 
+/*
+FNXC:TaskQueueOrder 2026-09-17-12:07:
+FN-509: a dormant overlap holder is chosen by the SHARED queue order, so the card that overlap
+defers to is the same card admission would start next. The boost scope fields travel with the
+candidate because the comparator needs them; without `column`/`columnMovedAt` a boost would be
+silently ineffective here while being effective in admission, and the two would pick different
+winners on the same pair.
+*/
 export interface QueuedOverlapCandidate {
   id: string;
-  priority?: Task["priority"] | null;
   createdAt: string;
+  column?: string;
+  columnMovedAt?: string;
+  queueBoost?: Task["queueBoost"];
   scope: string[];
 }
 
@@ -660,8 +670,8 @@ export function findHigherPriorityQueuedOverlap(
     if (!queued.scope.length || !candidate.scope.length) continue;
     if (!overlap(candidate.scope, queued.scope)) continue;
 
-    if (compareTasksByPriorityThenAgeAndId(queued, candidate) < 0) {
-      if (!higher || compareTasksByPriorityThenAgeAndId(queued, higher) < 0) {
+    if (compareTasksByQueueOrder(queued, candidate) < 0) {
+      if (!higher || compareTasksByQueueOrder(queued, higher) < 0) {
         higher = queued;
       }
     }
@@ -1075,6 +1085,10 @@ export class Scheduler {
           lane: "execute",
           consumesWorktree: true,
           createdAt: task.createdAt,
+          // FNXC:TaskQueueOrder 2026-09-17-12:07: Boost scope travels with the candidate.
+          column: task.column,
+          ...(task.columnMovedAt ? { columnMovedAt: task.columnMovedAt } : {}),
+          ...(task.queueBoost ? { queueBoost: task.queueBoost } : {}),
           reserve: () => registerPreHeldExecutorSlot(task.id, this.options.semaphore !== undefined),
           start: async () => {
             this.coordinatorReadyTasks.delete(task.id);
@@ -2641,8 +2655,10 @@ export class Scheduler {
           } else {
             dormantScopes.set(task.id, {
               id: task.id,
-              priority: task.priority,
               createdAt: task.createdAt,
+              column: task.column,
+              ...(task.columnMovedAt ? { columnMovedAt: task.columnMovedAt } : {}),
+              ...(task.queueBoost ? { queueBoost: task.queueBoost } : {}),
               scope: filteredScope,
             });
             dormantScopeColumns.set(task.id, task.column);
@@ -2672,8 +2688,10 @@ export class Scheduler {
         const dormantHolder = findHigherPriorityQueuedOverlap(
           {
             id: candidate.id,
-            priority: candidate.priority,
             createdAt: candidate.createdAt,
+            column: candidate.column,
+            ...(candidate.columnMovedAt ? { columnMovedAt: candidate.columnMovedAt } : {}),
+            ...(candidate.queueBoost ? { queueBoost: candidate.queueBoost } : {}),
             scope: candidateScope,
           },
           Array.from(dormantScopes.values()).filter(
@@ -3279,6 +3297,10 @@ export class Scheduler {
               lane: "execute",
               consumesWorktree: true,
               createdAt: task.createdAt,
+              // FNXC:TaskQueueOrder 2026-09-17-12:07: Boost scope travels with the candidate.
+              column: task.column,
+              ...(task.columnMovedAt ? { columnMovedAt: task.columnMovedAt } : {}),
+              ...(task.queueBoost ? { queueBoost: task.queueBoost } : {}),
               reserve: () => registerPreHeldExecutorSlot(task.id, this.options.semaphore !== undefined),
               start: async () => {
                 projectSlotReserved = true;

@@ -20,7 +20,6 @@ import type {
   Task,
   TaskCreateInput,
   TaskDetail,
-  TaskColumnSortMode,
   ThemeMode,
   WorkflowStep,
   TraitFlags,
@@ -214,6 +213,8 @@ export interface MainContentProps {
     column: ColumnId,
     optionsOrPosition?: { preserveProgress?: boolean; expectedColumn?: string } | number,
   ) => Promise<Task>;
+  /* FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509's durable move-to-head; see `useTasks.boostTask`. */
+  boostTask: (id: string, scope?: { expectedColumn?: string; expectedColumnEntryAt?: string }) => Promise<Task>;
   pauseTask: (id: string) => Promise<Task>;
   openBoardTaskDetail: (task: Task | TaskDetail, initialTab?: DetailTaskTab) => void;
   openTaskDetailInMainPanel: (task: Task | TaskDetail, initialTab?: DetailTaskTab) => void;
@@ -258,8 +259,9 @@ export interface MainContentProps {
   completedPaginationError?: "timeout" | "invalid-continuation" | "request-failed" | null;
   completedProgressKey?: string;
   retryCompletedTasksPagination?: () => Promise<void>;
-  completedSortMode: TaskColumnSortMode;
-  changeCompletedSortMode: (mode: TaskColumnSortMode) => Promise<void>;
+  /* FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509 removed the selectable Complete order with the
+     column "…" menu. Done is always most-recent-arrival first, so there is no mode to hold, thread,
+     or persist — and no stale cursor minted under a different order to replay. */
   searchQuery: string;
   availableModels: ModelInfo[];
   favoriteProviders: string[];

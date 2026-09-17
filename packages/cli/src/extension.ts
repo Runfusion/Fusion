@@ -21,7 +21,6 @@ import {
   type Task,
   type ColumnId,
   type InsightCategory,
-  type TaskPriority,
   type InsightStatus,
   type InsightRunStatus,
   type InsightRunTrigger,
@@ -30,7 +29,6 @@ import {
   type AgentUpdateInput,
   getTaskDuplicateLineage,
   resolveAgentProvisioningPolicy,
-  TASK_PRIORITIES,
   MAX_TASK_LIST_TEXT_CHARS,
   MAX_TASK_MESSAGE_LENGTH,
   resolveSecretAccessPolicy,
@@ -1720,9 +1718,8 @@ export default function kbExtension(pi: ExtensionAPI) {
           description: "Agent ID to assign this task to (e.g. 'agent-abc123')",
         }),
       ),
-      priority: Type.Optional(
-        StringEnum([...TASK_PRIORITIES], { description: "Task priority (low, normal, high, urgent)" }) as unknown as TSchema,
-      ),
+      /* FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509 removed the `priority` parameter. Tasks run in
+         arrival order; an operator raises one explicitly with Boost on the card. */
       workflow_id: Type.Optional(
         Type.String({
           description:
@@ -1791,7 +1788,7 @@ export default function kbExtension(pi: ExtensionAPI) {
             ? new fusionCore.MessageStore(null, { asyncLayer: layer })
             : new fusionCore.MessageStore(store.getDatabase());
           const title = params.description.split(/\r?\n/, 1)[0]?.trim().slice(0, 80) || "Follow-up task";
-          await messageStore.sendMessage({ fromId: fnCtx.agentId ?? "ephemeral-worker", fromType: "agent", toId: fusionCore.DASHBOARD_USER_ID, toType: "user", type: "agent-to-user", content: `Task proposal awaiting validation: ${title}`, metadata: { kind: "task-proposal", proposalStatus: "pending", proposalIdempotencyKey: randomUUID(), proposedTask: { title, description: params.description, priority: params.priority as TaskPriority | undefined, workflowId: params.workflow_id, dependencies: params.depends } } });
+          await messageStore.sendMessage({ fromId: fnCtx.agentId ?? "ephemeral-worker", fromType: "agent", toId: fusionCore.DASHBOARD_USER_ID, toType: "user", type: "agent-to-user", content: `Task proposal awaiting validation: ${title}`, metadata: { kind: "task-proposal", proposalStatus: "pending", proposalIdempotencyKey: randomUUID(), proposedTask: { title, description: params.description, workflowId: params.workflow_id, dependencies: params.depends } } });
           return { content: [{ type: "text", text: "Task proposal submitted to the operator for validation; no task was created." }], details: { proposed: true } };
         }
       }
@@ -1856,7 +1853,6 @@ export default function kbExtension(pi: ExtensionAPI) {
           description: params.description.trim(),
           dependencies: params.depends,
           assignedAgentId: normalizedAgentId === null ? undefined : normalizedAgentId,
-          priority: params.priority as TaskPriority | undefined,
           ...(workflowId ? { workflowId } : {}),
           source: { sourceType: "api", sourceAgentId: fnCtx.agentId, sourceParentTaskId: fnCtx.taskId },
           githubTracking: resolvedTracking.enabled
@@ -1897,7 +1893,6 @@ export default function kbExtension(pi: ExtensionAPI) {
                 (task.assignedAgentId
                   ? `Assigned to: ${task.assignedAgentId}\n`
                   : "") +
-                `Priority: ${task.priority}\n` +
                 `Path: .fusion/tasks/${task.id}/`,
             },
           ],
@@ -1907,7 +1902,6 @@ export default function kbExtension(pi: ExtensionAPI) {
             column: task.column,
             dependencies: task.dependencies,
             assignedAgentId: task.assignedAgentId,
-            priority: task.priority,
           },
         };
       } catch (error) {
@@ -1930,11 +1924,11 @@ export default function kbExtension(pi: ExtensionAPI) {
     label: "fn: Update Task",
     description:
       "Update fields on an existing task. Supports modifying the title, " +
-      "description, dependencies, assigned agent, priority, and workflow_id after task creation. " +
+      "description, dependencies, assigned agent, and workflow_id after task creation. " +
       "Set workflow_id to a workflow ID to select it, or null to clear the workflow selection.",
     promptSnippet: "Update fields on an existing Fusion task",
     promptGuidelines: [
-      "Use fn_task_update to modify task title, description, dependencies, assigned agent, priority, or workflow_id after creation.",
+      "Use fn_task_update to modify task title, description, dependencies, assigned agent, or workflow_id after creation.",
       "Set workflow_id to null to clear a task's workflow selection and enabled workflow steps.",
       "At least one field must be provided to update.",
     ],
@@ -1960,9 +1954,8 @@ export default function kbExtension(pi: ExtensionAPI) {
           description: "Node ID override for this task, or null to clear",
         }),
       ),
-      priority: Type.Optional(
-        StringEnum([...TASK_PRIORITIES], { description: "Task priority (low, normal, high, urgent)" }) as unknown as TSchema,
-      ),
+      /* FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509 removed the `priority` parameter. Tasks run in
+         arrival order; an operator raises one explicitly with Boost on the card. */
       workflow_id: Type.Optional(
         Type.Union([Type.String(), Type.Null()], {
           description:
@@ -2090,10 +2083,7 @@ export default function kbExtension(pi: ExtensionAPI) {
         updates.nodeId = normalizedNodeId;
         updatedFields.push("nodeId");
       }
-      if (params.priority !== undefined) {
-        updates.priority = params.priority;
-        updatedFields.push("priority");
-      }
+      /* FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509 removed the `priority` parameter here too. */
       if (params.workflow_id !== undefined) {
         if (params.workflow_id === null) {
           await store.clearTaskWorkflowSelection(task.id);
@@ -2142,7 +2132,7 @@ export default function kbExtension(pi: ExtensionAPI) {
 
       if (updatedFields.length === 0) {
         return {
-          content: [{ type: "text", text: "No fields to update. Provide at least one of: title, description, depends, agentId, nodeId, priority, workflow_id." }],
+          content: [{ type: "text", text: "No fields to update. Provide at least one of: title, description, depends, agentId, nodeId, workflow_id." }],
           isError: true,
           details: { error: "No fields provided" },
         };

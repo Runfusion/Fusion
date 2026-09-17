@@ -592,21 +592,12 @@ describe("TaskForm", () => {
     expect(onExecutionModeChange).toHaveBeenCalledWith("fast");
   });
 
-  it("renders priority select with default normal value when enabled", () => {
-    renderTaskForm({ onPriorityChange: vi.fn() });
+  it("offers no priority select, in the advanced disclosure or anywhere else", () => {
+    renderTaskForm({});
 
     fireEvent.click(screen.getByTestId("task-form-more-options-toggle"));
-    expect(screen.getByTestId("task-priority-select")).toHaveValue("normal");
-  });
-
-  it("calls onPriorityChange when priority selection changes", () => {
-    const onPriorityChange = vi.fn();
-    renderTaskForm({ onPriorityChange });
-
-    fireEvent.click(screen.getByTestId("task-form-more-options-toggle"));
-    fireEvent.change(screen.getByTestId("task-priority-select"), { target: { value: "urgent" } });
-
-    expect(onPriorityChange).toHaveBeenCalledWith("urgent");
+    expect(screen.queryByTestId("task-priority-select")).toBeNull();
+    expect(screen.queryByTestId("task-form-inline-priority")).toBeNull();
   });
 
   it.each([false, true])("keeps every adaptive TaskForm select labelled and actionable with Alpha=%s", async (enabled) => {
@@ -614,7 +605,6 @@ describe("TaskForm", () => {
     const onNodeIdChange = vi.fn();
     const onBranchModeChange = vi.fn();
     const onBaseBranchChange = vi.fn();
-    const onPriorityChange = vi.fn();
     const onExecutionModeChange = vi.fn();
     const onPresetModeChange = vi.fn();
     const onPlannerOversightLevelChange = vi.fn();
@@ -635,8 +625,6 @@ describe("TaskForm", () => {
             onBranchModeChange={onBranchModeChange}
             baseBranch=""
             onBaseBranchChange={onBaseBranchChange}
-            priority="normal"
-            onPriorityChange={onPriorityChange}
             executionMode="standard"
             onExecutionModeChange={onExecutionModeChange}
             onPresetModeChange={onPresetModeChange}
@@ -669,7 +657,7 @@ describe("TaskForm", () => {
     await choose("Execution Node Override", "Remote (Online)");
     await choose("Branch strategy", "Use existing branch");
     await choose("Merge target / base branch", "main");
-    await choose("Priority", "Urgent");
+    /* FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509 removed the Priority select from this surface. */
     await choose("Execution mode", "Fast");
     await choose("Preset", "Custom");
     await choose("Planner oversight", "Autonomous recovery");
@@ -679,7 +667,6 @@ describe("TaskForm", () => {
     expect(onNodeIdChange).toHaveBeenCalledWith("node-remote");
     expect(onBranchModeChange).toHaveBeenCalledWith("existing");
     expect(onBaseBranchChange).toHaveBeenCalledWith("main");
-    expect(onPriorityChange).toHaveBeenCalledWith("urgent");
     expect(onExecutionModeChange).toHaveBeenCalledWith("fast");
     expect(onPresetModeChange).toHaveBeenCalledWith("custom");
     expect(onPlannerOversightLevelChange).toHaveBeenCalledWith("autonomous");
@@ -728,12 +715,6 @@ describe("TaskForm", () => {
       onBranchChange: vi.fn(),
       onBaseBranchChange: vi.fn(),
     });
-
-    expect(screen.getByTestId("task-form-more-options-toggle")).toHaveAttribute("aria-expanded", "true");
-  });
-
-  it("auto-expands more options when priority is non-default", () => {
-    renderTaskForm({ priority: "high", onPriorityChange: vi.fn() });
 
     expect(screen.getByTestId("task-form-more-options-toggle")).toHaveAttribute("aria-expanded", "true");
   });
@@ -1152,12 +1133,10 @@ describe("TaskForm description-adjacent actions layout (FN-781)", () => {
     renderTaskForm({
       onExecutionModeChange: vi.fn(),
       executionMode: "standard",
-      onPriorityChange: vi.fn(),
       onPlanningMode: vi.fn(),
     });
 
     expect(screen.getByTestId("task-form-inline-fast")).toHaveClass("task-form-inline-icon-btn");
-    expect(screen.getByTestId("task-form-inline-priority")).toHaveClass("task-form-inline-icon-btn");
     expect(screen.getByTestId("task-form-inline-attach")).not.toHaveClass("task-form-inline-icon-btn");
     expect(screen.getByTestId("task-form-inline-models")).not.toHaveClass("task-form-inline-icon-btn");
     expect(screen.getByTestId("task-form-plan-button")).not.toHaveClass("task-form-inline-icon-btn");

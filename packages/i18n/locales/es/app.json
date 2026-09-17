@@ -8945,7 +8945,12 @@
       "badgeApproved": "Plan aprobado por ti",
       "approved": "Plan aprobado — {{id}} continúa a la ejecución",
       "rejected": "Plan rechazado — {{id}} vuelve para un nuevo plan"
-    }
+    },
+    "boost": "Impulsar",
+    "boosting": "Impulsando…",
+    "boostAriaLabel": "Colocar {{taskId}} al frente de la cola",
+    "boostTitle": "Intentar esta tarea primero cuando la cola admita trabajo. No la inicia ni elimina ningún bloqueo.",
+    "boostFailed": "No se pudo impulsar {{taskId}}: puede haber comenzado o cambiado de columna. Actualiza para ver su posición actual."
   },
   "terminal": {
     "arrowKeysLabel": "",

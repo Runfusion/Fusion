@@ -4,8 +4,8 @@ import { useState, useCallback, useRef, useEffect, useMemo, type CSSProperties }
 import { useTranslation } from "react-i18next";
 import { createPortal } from "react-dom";
 import type { ToastType } from "../hooks/useToast";
-import { DEFAULT_TASK_PRIORITY, TASK_PRIORITIES, getErrorMessage } from "@fusion/core";
-import type { Task, Settings, TaskPriority, ResolvedWorkflowOptionalStep, ThinkingLevel, ColumnId } from "@fusion/core";
+import { getErrorMessage } from "@fusion/core";
+import type { Task, Settings, ResolvedWorkflowOptionalStep, ThinkingLevel, ColumnId } from "@fusion/core";
 import type { ModelInfo, Agent, CreateTaskInput, DuplicateMatch, BoardWorkflowDefinition, NodeInfo } from "../api";
 import { checkDuplicateTasks, fetchModels, fetchSettings, updateGlobalSettings, fetchAgents, uploadAttachment, fetchWorkflowOptionalSteps } from "../api";
 import { DuplicateWarningModal } from "./DuplicateWarningModal";
@@ -21,7 +21,6 @@ import { ProviderIcon } from "./ProviderIcon";
 import { WorkflowOptionalStepsDropdown } from "./WorkflowOptionalStepsDropdown";
 import { WorkflowIcon } from "./WorkflowIcon";
 import { PendingAttachmentPreviews } from "./PendingAttachmentPreviews";
-import { getPriorityColorVar, getPriorityIcon, getPriorityLabel } from "../utils/priorityIndicator";
 import { getTaskTitleDisplayText } from "../utils/taskTitleDisplay";
 import { validateQuickAddStartWorkflow, workflowSupportsQuickAddStart, resolveQuickAddStartInitialColumn, resolveQuickAddStartWorkflowTarget, resolveQuickAddStartTargetColumn, type ValidatedQuickAddWorkflow } from "../utils/quickAddStart";
 import { computeFixedMenuPosition, getLayoutViewportSize } from "../utils/fixedMenuPosition";
@@ -239,7 +238,13 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
   const [agentsProjectId, setAgentsProjectId] = useState<string | undefined>(undefined);
   const [showAgentPicker, setShowAgentPicker] = useState(false);
   const [showNodePicker, setShowNodePicker] = useState(false);
-  const [showPriorityPicker, setShowPriorityPicker] = useState(false);
+  /*
+  FNXC:TaskQueueOrder 2026-09-17-12:07:
+  FN-509 removed the task priority field and Quick Add's priority picker with it — the trigger, its
+  portal, its position state, and its outside-click/scroll/resize listeners. No empty button shell,
+  wrapper, or aria-label is left in the action cluster. Tasks run in arrival order; an operator
+  raises one explicitly with Boost on its card.
+  */
   const [agentsLoading, setAgentsLoading] = useState(false);
   const [isModelMenuOpen, setIsModelMenuOpen] = useState(false);
   const [activeModelSubmenu, setActiveModelSubmenu] = useState<"plan" | "executor" | "validator" | "merger" | null>(null);
@@ -269,8 +274,6 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
   const agentPickerOpenTokenRef = useRef(0);
   const nodePickerRef = useRef<HTMLDivElement>(null);
   const nodePickerPortalRef = useRef<HTMLDivElement>(null);
-  const priorityPickerRef = useRef<HTMLDivElement>(null);
-  const priorityPickerPortalRef = useRef<HTMLDivElement>(null);
   /*
   FNXC:QuickAddMenuAnchor 2026-08-01-07:11:
   Preserve both shared-helper vertical anchors in Quick Add state. Portal styles must use `bottom`
@@ -279,7 +282,6 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
   */
   const [agentPickerPosition, setAgentPickerPosition] = useState<{ top: number | null; bottom: number | null; left: number; width: number; maxHeight?: number } | null>(null);
   const [nodePickerPosition, setNodePickerPosition] = useState<{ top: number | null; bottom: number | null; left: number; width: number; maxHeight?: number } | null>(null);
-  const [priorityPickerPosition, setPriorityPickerPosition] = useState<{ top: number | null; bottom: number | null; left: number; width: number; maxHeight?: number } | null>(null);
   const [modelMenuPosition, setModelMenuPosition] = useState<{ top: number | null; bottom: number | null; left: number; width: number; maxHeight?: number } | null>(null);
   // Dependency dropdown portal refs and state
   const depTriggerRef = useRef<HTMLButtonElement>(null);
@@ -332,7 +334,6 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
   const [githubTrackingOverride, setGithubTrackingOverride] = useState<boolean | null>(null);
   // FNXC:PlannerOversight 2026-07-14-18:11: null = follow project sessionAdvisorEnabledByDefault.
   const [sessionAdvisorOverride, setSessionAdvisorOverride] = useState<boolean | null>(null);
-  const [priority, setPriority] = useState<TaskPriority>(DEFAULT_TASK_PRIORITY);
   const [nodeId, setNodeId] = useState<string | undefined>(undefined);
   const [duplicateMatches, setDuplicateMatches] = useState<DuplicateMatch[] | null>(null);
   const submitInFlightRef = useRef(false);
@@ -372,8 +373,6 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
     setAgentPickerPosition(null);
     setShowNodePicker(false);
     setNodePickerPosition(null);
-    setShowPriorityPicker(false);
-    setPriorityPickerPosition(null);
     setShowWorkflowPicker(false);
     setWorkflowPickerPosition(null);
     setIsModelMenuOpen(false);
@@ -793,21 +792,6 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
   }, [showAgentPicker]);
 
   useEffect(() => {
-    if (!showPriorityPicker) return;
-
-    const handleClickOutside = (e: MouseEvent) => {
-      const target = e.target as Node;
-      if (priorityPickerRef.current?.contains(target)) return;
-      if (priorityPickerPortalRef.current?.contains(target)) return;
-      setShowPriorityPicker(false);
-      setPriorityPickerPosition(null);
-    };
-
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [showPriorityPicker]);
-
-  useEffect(() => {
     if (!showWorkflowPicker) return;
 
     const handleClickOutside = (e: MouseEvent) => {
@@ -838,8 +822,6 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
     setAgentPickerPosition(null);
     setShowNodePicker(false);
     setNodePickerPosition(null);
-    setShowPriorityPicker(false);
-    setPriorityPickerPosition(null);
     setExecutorProvider(undefined);
     setExecutorModelId(undefined);
     setCredentialInstanceId(undefined);
@@ -864,7 +846,6 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
     setRequiresHumanPlanApproval(false);
     setGithubTrackingOverride(null);
     setSessionAdvisorOverride(null);
-    setPriority(DEFAULT_TASK_PRIORITY);
     setNodeId(undefined);
     setShowDeps(false);
     setIsModelMenuOpen(false);
@@ -1010,7 +991,6 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
         githubTracking: githubTrackingOverride !== null ? { enabled: githubTrackingOverride } : undefined,
         // FNXC:PlannerOversight 2026-07-14-18:11: only send when user toggled away from project default.
         sessionAdvisorEnabled: sessionAdvisorOverride !== null ? sessionAdvisorOverride : undefined,
-        priority,
         nodeId: effectiveNodeId,
         acknowledgedDuplicates: overrides?.acknowledgedDuplicates,
       });
@@ -1110,7 +1090,6 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
     settings,
     githubTrackingOverride,
     sessionAdvisorOverride,
-    priority,
     effectiveNodeId,
     pendingAttachments,
     projectId,
@@ -1272,11 +1251,6 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
           setNodePickerPosition(null);
           return;
         }
-        if (showPriorityPicker) {
-          setShowPriorityPicker(false);
-          setPriorityPickerPosition(null);
-          return;
-        }
         if (showWorkflowPicker) {
           setShowWorkflowPicker(false);
           setWorkflowPickerPosition(null);
@@ -1314,7 +1288,6 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
       showNodePicker,
       isModelMenuOpen,
       activeModelSubmenu,
-      showPriorityPicker,
       showWorkflowPicker,
       projectId,
       setIsDisclosureExpanded,
@@ -1348,7 +1321,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
 
   /*
   FNXC:QuickAddDepsMenu 2026-07-25-12:00:
-  All Quick Add portaled menus (Deps, Models, workflow, agent, node, priority) share anchor-first
+  All Quick Add portaled menus (Deps, Models, workflow, agent, node) share anchor-first
   layout-viewport positioning. Mixing visualViewport offsets with getBoundingClientRect, or deriving
   upward `top` from a height cap, made short menus float too high; upward portals consume `bottom`
   and `top: auto` so their rendered bottom remains attached regardless of content height.
@@ -1524,29 +1497,6 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
     });
   }, []);
 
-  const updatePriorityPickerPosition = useCallback(() => {
-    const trigger = priorityPickerRef.current?.querySelector("button") as HTMLButtonElement | null;
-    if (!trigger) return;
-
-    const rect = trigger.getBoundingClientRect();
-    const { width: viewportWidth, height: viewportHeight } = getLayoutViewportSize();
-    const position = computeFixedMenuPosition({
-      triggerRect: rect,
-      viewportWidth,
-      viewportHeight,
-      preferredWidth: Math.max(rect.width, 200),
-      preferredHeight: 220,
-      minWidth: 200,
-    });
-    setPriorityPickerPosition({
-      top: position.top,
-      bottom: position.bottom,
-      left: position.left,
-      width: position.width,
-      maxHeight: position.maxHeight,
-    });
-  }, []);
-
   // Keep model menu portal anchored during scroll/resize
   useEffect(() => {
     if (!isModelMenuOpen) return;
@@ -1671,31 +1621,6 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
       }
     };
   }, [showNodePicker, updateNodePickerPosition]);
-
-  // Keep priority picker portal anchored during scroll/resize
-  useEffect(() => {
-    if (!showPriorityPicker) return;
-
-    const handleReposition = () => updatePriorityPickerPosition();
-
-    window.addEventListener("resize", handleReposition);
-    window.addEventListener("scroll", handleReposition, true);
-
-    const vv = window.visualViewport;
-    if (vv) {
-      vv.addEventListener("resize", handleReposition);
-      vv.addEventListener("scroll", handleReposition);
-    }
-
-    return () => {
-      window.removeEventListener("resize", handleReposition);
-      window.removeEventListener("scroll", handleReposition, true);
-      if (vv) {
-        vv.removeEventListener("resize", handleReposition);
-        vv.removeEventListener("scroll", handleReposition);
-      }
-    };
-  }, [showPriorityPicker, updatePriorityPickerPosition]);
 
   const handlePlanningModelChange = useCallback((value: string) => {
     const next = parseModelSelection(value);
@@ -1982,9 +1907,6 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
   const sessionAdvisorToggleLabel = effectiveSessionAdvisor
     ? t("tasks.sessionAdvisorOn", "Session advisor ON for next task (project default: {{default}})", { default: projectSessionAdvisorDefault ? t("tasks.sessionAdvisorDefaultOn", "on") : t("tasks.sessionAdvisorDefaultOff", "off") })
     : t("tasks.sessionAdvisorOff", "Session advisor OFF for next task (project default: {{default}})", { default: projectSessionAdvisorDefault ? t("tasks.sessionAdvisorDefaultOn", "on") : t("tasks.sessionAdvisorDefaultOff", "off") });
-  const PriorityIcon = getPriorityIcon(priority);
-  const priorityLabel = getPriorityLabel(priority);
-  const priorityButtonLabel = t("tasks.quickEntryPriorityLabel", "Priority: {{priority}}", { priority: priorityLabel });
   const fastToggleLabel = t("tasks.toggleFastMode", "Toggle fast execution mode");
   /* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 toggle label; the tooltip states the actual consequence, not just the mode name. */
   const humanPlanApprovalToggleLabel = t(
@@ -2093,11 +2015,11 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
             First-run review flagged the quick-add composer as disorganized: chips wrapped into four
             arbitrary-looking rows with Save buried mid-row. Reorganize into two logical clusters inside
             the single wrapping action row: an options group (workflow, optional steps, deps,
-            models, node, agent) and a right-aligned primary group (attach, GitHub tracking, Priority,
+            models, node, agent) and a right-aligned primary group (attach, GitHub tracking,
             Fast, Save) so status controls sit beside attach and Save still reads last/right.
 
             FNXC:QuickAddActionRow 2026-07-10-21:45:
-            Priority and Fast are icon-only in the bottom primary group: priority uses the shared
+            Fast is icon-only in the bottom primary group: it uses the shared
             up/high, down/low, flag/normal, alert/urgent glyph helper, and Fast uses Zap while retaining
             title/aria-label/test-id semantics.
             */}
@@ -2122,8 +2044,6 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
                     setAgentPickerPosition(null);
                     setShowNodePicker(false);
                     setNodePickerPosition(null);
-                    setShowPriorityPicker(false);
-                    setPriorityPickerPosition(null);
                     setIsModelMenuOpen(false);
                     setModelMenuPosition(null);
                     setActiveModelSubmenu(null);
@@ -2241,8 +2161,6 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
                       setAgentPickerPosition(null);
                       setShowNodePicker(false);
                       setNodePickerPosition(null);
-                      setShowPriorityPicker(false);
-                      setPriorityPickerPosition(null);
                       // Position the dropdown before rendering
                       updateDepDropdownPosition();
                     } else {
@@ -2328,8 +2246,6 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
                 setAgentPickerPosition(null);
                 setShowNodePicker(false);
                 setNodePickerPosition(null);
-                setShowPriorityPicker(false);
-                setPriorityPickerPosition(null);
                 setActiveModelSubmenu(null);
                 setIsModelMenuOpen(true);
                 updateModelMenuPosition();
@@ -2353,8 +2269,6 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
                     setIsModelMenuOpen(false);
                     setModelMenuPosition(null);
                     setActiveModelSubmenu(null);
-                    setShowPriorityPicker(false);
-                    setPriorityPickerPosition(null);
                     setShowNodePicker((prev) => {
                       const next = !prev;
                       if (next) {
@@ -2443,8 +2357,6 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
                   } else {
                     setShowNodePicker(false);
                     setNodePickerPosition(null);
-                    setShowPriorityPicker(false);
-                    setPriorityPickerPosition(null);
                     void loadAgents();
                   }
                 }}
@@ -2521,7 +2433,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
 
             {/*
             FNXC:BoardComposer 2026-07-10-12:00:
-            Primary action cluster: attach + GitHub tracking + Priority + Fast sit directly beside Save,
+            Primary action cluster: attach + GitHub tracking + Fast sit directly beside Save,
             and Save is the LAST control in DOM order so it is right-aligned (margin-left auto on the
             cluster) and reads as the composer's primary action. Save keeps its distinct `btn-task-create`
             styling.
@@ -2530,7 +2442,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
             file input trigger, and pending-count badge.
 
             FNXC:QuickAddActionRow 2026-07-15-00:00:
-            Attach, GitHub, session advisor, Priority, and Fast are one icon-only cluster. Every control
+            Attach, GitHub, session advisor, and Fast are one icon-only cluster. Every control
             uses `btn-icon` so its SVG resolves to the shared `--icon-size-sm` token; do not fork
             ProviderIcon's shared size map to size this one GitHub use case.
             */}
@@ -2593,79 +2505,6 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
               >
                 {effectiveSessionAdvisor ? <Eye size={14} aria-hidden="true" /> : <EyeOff size={14} aria-hidden="true" />}
               </UiButton>
-
-              <div className="priority-trigger-wrap" ref={priorityPickerRef}>
-                <UiButton
-                  type="button"
-                  onMouseDown={(e) => e.preventDefault()}
-                  className="btn btn-icon btn-sm dep-trigger"
-                  data-testid="quick-entry-priority-button"
-                  title={priorityButtonLabel}
-                  aria-label={priorityButtonLabel}
-                  onClick={() => {
-                    setShowDeps(false);
-                    setShowAgentPicker(false);
-                    setAgentPickerPosition(null);
-                    setShowNodePicker(false);
-                    setNodePickerPosition(null);
-                    setIsModelMenuOpen(false);
-                    setModelMenuPosition(null);
-                    setActiveModelSubmenu(null);
-                    setShowPriorityPicker((prev) => {
-                      const next = !prev;
-                      if (next) {
-                        updatePriorityPickerPosition();
-                      } else {
-                        setPriorityPickerPosition(null);
-                      }
-                      return next;
-                    });
-                  }}
-                >
-                  {/* FNXC:PriorityColorCoding 2026-07-11-00:00: The quick-add icon-only priority trigger must preview urgency color from priorityIndicator without changing its label, test id, or picker behavior. */}
-                  <PriorityIcon size={14} aria-hidden="true" style={{ color: getPriorityColorVar(priority) }} />
-                </UiButton>
-              </div>
-
-              {showPriorityPicker && portalRoot && priorityPickerPosition && createPortal(
-                <div
-                  ref={priorityPickerPortalRef}
-                  className="dep-dropdown priority-picker-dropdown priority-picker-dropdown--portal"
-                  onMouseDown={(e) => e.preventDefault()}
-                  style={{
-                    position: "fixed",
-                    top: priorityPickerPosition.bottom === null ? `${priorityPickerPosition.top}px` : "auto",
-                    bottom: priorityPickerPosition.bottom === null ? undefined : `${priorityPickerPosition.bottom}px`,
-                    left: `${priorityPickerPosition.left}px`,
-                    width: `${priorityPickerPosition.width}px`,
-                    maxHeight: priorityPickerPosition.maxHeight ? `${priorityPickerPosition.maxHeight}px` : undefined,
-                    overflowY: priorityPickerPosition.maxHeight ? "auto" : undefined,
-                  }}
-                >
-                  <div className="dep-dropdown-search-header">{t("tasks.selectPriority", "Select priority")}</div>
-                  {TASK_PRIORITIES.map((taskPriority) => {
-                    const label = getPriorityLabel(taskPriority);
-                    const OptionPriorityIcon = getPriorityIcon(taskPriority);
-                    return (
-                      <div
-                        key={taskPriority}
-                        className={`dep-dropdown-item${priority === taskPriority ? " selected" : ""}`}
-                        data-testid={`quick-entry-priority-option-${taskPriority}`}
-                        onMouseDown={(e) => e.preventDefault()}
-                        onClick={() => {
-                          setPriority(taskPriority);
-                          setShowPriorityPicker(false);
-                          setPriorityPickerPosition(null);
-                        }}
-                      >
-                        <OptionPriorityIcon size={12} aria-hidden="true" style={{ color: getPriorityColorVar(taskPriority) }} />
-                        <span className="dep-dropdown-title">{label}</span>
-                      </div>
-                    );
-                  })}
-                </div>,
-                portalRoot,
-              )}
 
               <UiButton
                 type="button"

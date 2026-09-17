@@ -63,7 +63,7 @@ Based on the user's request, route to the appropriate workflow:
 <quick_reference>
 
 **Create a task:**
-Use `fn_task_create` with a descriptive message. Include the problem AND desired outcome, and set `priority` (`low`/`normal`/`high`/`urgent`) when urgency matters.
+Use `fn_task_create` with a descriptive message. Include the problem AND desired outcome. There is no priority parameter: tasks run in arrival order (oldest first), and an operator raises one to the head of the queue with the **Boost** button on its card.
 
 **List tasks:**
 Use `fn_task_list` to see all tasks grouped by column. Use `column` param to filter.

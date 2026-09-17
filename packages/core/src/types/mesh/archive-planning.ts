@@ -3,7 +3,7 @@
  * Archive log entries and planning-mode session types peeled from types.ts.
  */
 
-import type { Column, TaskPriority, ThinkingLevel } from "../board/board.js";
+import type { Column, ThinkingLevel } from "../board/board.js";
 import type { ExecutionMode, PlannerOversightLevel } from "../ui/execution-and-ui.js";
 import type { IssueInfo, PrInfo, TaskGitLabTracking, TaskGithubTracking, TaskSourceIssue } from "../task/task-tracking.js";
 import type { AgentCapability } from "../agents/agents.js";
@@ -36,7 +36,6 @@ export interface ArchivedTaskEntry {
    * Task importance level at archive time. Missing legacy values should be
    * interpreted as `normal` during restore/read flows.
    */
-  priority?: TaskPriority;
   column: "archived"; // Always archived when in the log
   /** Source column captured at archive time; absent on legacy archive entries. */
   preArchiveColumn?: Column;
@@ -864,7 +863,6 @@ export interface PlanningSummary {
   /** Observable pass/fail conditions for the implementation. */
   acceptanceCriteria?: string[];
   suggestedSize: "S" | "M" | "L";
-  priority?: TaskPriority;
   suggestedDependencies: string[];
   keyDeliverables: string[];
   /** Model-suggested areas the operator can choose for the next refinement question. */

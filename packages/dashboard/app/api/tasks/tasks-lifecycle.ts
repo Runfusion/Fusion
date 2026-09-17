@@ -222,6 +222,30 @@ export function duplicateTask(
   });
 }
 
+/*
+FNXC:TaskQueueOrder 2026-09-17-12:07:
+FN-509's Boost client. The SERVER is the authority for the rank: this returns the canonical task row
+and the caller writes THAT into its cache, rather than optimistically reordering and hoping.
+
+`requestId` makes a retried network call idempotent — the same id re-reads the existing rank instead
+of minting a new sequence — while a genuinely new click must carry a new id, because a second click
+after another card was boosted is a real new intention to reclaim the head.
+
+The optional `expectedColumn`/`expectedColumnEntryAt` are the stale-click fence: a card that moved
+between render and click is refused with 409 rather than boosted in a lane the operator never saw.
+*/
+export function boostTask(
+  id: string,
+  input: { requestId: string; expectedColumn?: string; expectedColumnEntryAt?: string },
+  projectId?: string,
+): Promise<Task> {
+  return api<Task>(withProjectId(`/tasks/${id}/boost`, projectId), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
 export function pauseTask(id: string, projectId?: string): Promise<Task> {
   return api<Task>(withProjectId(`/tasks/${id}/pause`, projectId), { method: "POST" });
 }

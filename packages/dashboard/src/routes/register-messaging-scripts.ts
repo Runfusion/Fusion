@@ -513,7 +513,7 @@ export function registerMessagingScriptRoutes(ctx: ApiRoutesContext): void {
       let task;
       try {
         const proposal = metadata.proposedTask;
-        task = await scopedStore.createTask({ title: proposal!.title, description: proposal!.description, priority: proposal!.priority, dependencies: proposal!.dependencies, workflowId: proposal!.workflowId, proposalClaimId: claim.idempotencyKey });
+        task = await scopedStore.createTask({ title: proposal!.title, description: proposal!.description, dependencies: proposal!.dependencies, workflowId: proposal!.workflowId, proposalClaimId: claim.idempotencyKey });
       } catch (error) {
         await msgStore.releaseProposalClaim(messageId, claim.claimOwnerToken);
         throw error;

@@ -30,7 +30,6 @@ export * from "./task-lineage.js";
 export * from "./task-list-format.js";
 export * from "./task-move-disposer.js";
 export * from "./task-prefix.js";
-export * from "./task-priority.js";
 export * from "./task-symbol-resolution.js";
 export * from "./task-timing.js";
 export * from "./task-title-id-drift.js";

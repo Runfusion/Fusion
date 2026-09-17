@@ -1,12 +1,10 @@
-import { memo, useMemo, useState, useCallback, useEffect, useRef } from "react";
-import { UiButton, UiInput, UiMenu, UiMenuItem, UiSurface } from "./ui";
+import { memo, useMemo, useCallback, useRef } from "react";
+import { UiButton, UiInput, UiSurface } from "./ui";
 import { useAutoPaginationSentinel } from "../hooks/useAutoPaginationSentinel";
 import { useVirtualizedList } from "../hooks/useVirtualizedList";
 import { useTranslation } from "react-i18next";
 import { useFlashOnIncrease } from "../hooks/useFlashOnIncrease";
-import { useConfirm } from "../hooks/useConfirm";
-import { rebuildTaskSpec } from "../api";
-import { COLUMN_LABELS, COLUMN_DESCRIPTIONS, type TaskColumnSortMode, type DoneColumnSortMode, type Task, type TaskDetail, type Column as ColumnType, type ColumnId, type TaskCreateInput, type GithubIssueAction, type MergeResult } from "@fusion/core";
+import { COLUMN_LABELS, COLUMN_DESCRIPTIONS, type Task, type TaskDetail, type Column as ColumnType, type ColumnId, type TaskCreateInput, type GithubIssueAction, type MergeResult } from "@fusion/core";
 import { isNearDuplicateCanonicalInactive } from "../../../core/src/duplicates/near-duplicate-canonical";
 import { TaskCard } from "./TaskCard";
 import { WorktreeGroup } from "./WorktreeGroup";
@@ -14,13 +12,12 @@ import { QuickEntryBox } from "./QuickEntryBox";
 import { PluginSlot } from "./PluginSlot";
 import { groupByWorktree } from "../utils/worktreeGrouping";
 import {
-  isPreImplementationColumnRole,
   isReviewColumnRole,
   isWipColumnRole,
 } from "../utils/columnRoles";
 import type { ToastType } from "../hooks/useToast";
 import type { TaskContextMenuColumnMetadata } from "./TaskContextMenu";
-import { History, MoreVertical } from "lucide-react";
+import { History } from "lucide-react";
 import type { BoardWorkflowDefinition, ModelInfo, BoardWorkflowColumnFlags, RestoreTaskRevertOptions, RestoreTaskRevertResult, RevertTaskOptions, RevertTaskResult } from "../api";
 import type { BlockerFanoutEntry } from "../hooks/useBlockerFanout";
 import "./Column.css";
@@ -129,6 +126,9 @@ interface ColumnProps {
   maxWorktrees: number;
   showWorktreeGrouping: boolean;
   onMoveTask: (id: string, column: ColumnId, optionsOrPosition?: { preserveProgress?: boolean; expectedColumn?: string } | number) => Promise<Task>;
+  /* FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509 — every host that renders a LIVE card forwards Boost,
+     so the affordance is not tied to one surface. Omitting it withholds the button. */
+  onBoostTask?: (id: string, scope: { expectedColumn: string; expectedColumnEntryAt: string }) => Promise<Task>;
   onPauseTask?: (id: string) => Promise<Task>;
   onUnpauseTask?: (id: string) => Promise<Task>;
   onResetTask?: (id: string, options?: { description?: string }) => Promise<Task>;
@@ -144,8 +144,9 @@ interface ColumnProps {
   /** Project merge strategy for Task Detail-equivalent card context actions. */
   mergeStrategy?: string;
   onToggleAutoMerge?: () => void;
-  planAutoApproveEnabled?: boolean;
-  onTogglePlanAutoApprove?: () => void;
+  /* FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509 removed the header overflow menu's auto-approve
+     shortcut along with that menu. The project approval setting itself is unchanged and still
+     lives in Settings. */
   globalPaused?: boolean;
   onUpdateTask?: (
     id: string,
@@ -166,13 +167,13 @@ interface ColumnProps {
     removeLineageReferences?: boolean;
     githubIssueAction?: GithubIssueAction;
   }) => Promise<Task>;
-  /** Current display order for this Board lane. */
-  sortMode?: TaskColumnSortMode;
-  /** Updates this lane's Board-local display order. */
-  onSortModeChange?: (mode: TaskColumnSortMode) => void;
-  /** Compatibility aliases retained for existing Done-column integrations. */
-  doneSortMode?: DoneColumnSortMode;
-  onDoneSortModeChange?: (mode: DoneColumnSortMode) => void;
+  /*
+  FNXC:TaskQueueOrder 2026-09-17-12:07:
+  FN-509 removed the per-column display-order props with the "…" menu that offered them. Ordering is
+  now a single non-configurable policy shared by Board, Lane, and ListView; do not reintroduce a
+  sort prop here, because a lane whose visible order can diverge from the queue order is exactly the
+  confusion this change removes.
+  */
   /**
    * FNXC:BoardColumnCount 2026-09-16-21:24: FN-475 — exact task count for THIS column only, never a
    * board-wide or collection-wide total. Supplied when a server-paged lane knows its own exact count
@@ -244,7 +245,7 @@ interface ColumnProps {
   onOpenHistory?: () => void;
 }
 
-function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeGrouping, onOpenHistory, onMoveTask, onPauseTask, onUnpauseTask, onResetTask, onDuplicateTask, onMergeTask, onOpenDetail, onRefinementCreated, onOpenGroupModal, addToast, onQuickCreate, autoMerge, mergeStrategy = "direct", onToggleAutoMerge, planAutoApproveEnabled, onTogglePlanAutoApprove, globalPaused, onUpdateTask, onRetryTask, onOpenChatWithPrefill, onRevertTask, onRestoreRevertTask, onDeleteTask, sortMode, onSortModeChange, doneSortMode, onDoneSortModeChange, totalTaskCount, serverHasMore, serverLoadingMore, serverPaginationError, serverProgressKey, paginationCollectionKey, paginationActive = true, onLoadMoreServer, onRetryServer, allTasks, availableModels, onPlanningMode, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, isSearchActive, onOpenMission, lastFetchTimeMs, taskCardFieldDefs, taskWorkflowBadges, blockerFanoutMap, prAuthAvailable, holdTaskIds, workflowMode, workflowId, workflowOptions, defaultWorkflowId, columnDisplayName, columnDescription, columnFlags, workflowContextMenuColumns, taskContextMenuColumnsByTaskId }: ColumnProps) {
+function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeGrouping, onOpenHistory, onMoveTask, onBoostTask, onPauseTask, onUnpauseTask, onResetTask, onDuplicateTask, onMergeTask, onOpenDetail, onRefinementCreated, onOpenGroupModal, addToast, onQuickCreate, autoMerge, mergeStrategy = "direct", onToggleAutoMerge, globalPaused, onUpdateTask, onRetryTask, onOpenChatWithPrefill, onRevertTask, onRestoreRevertTask, onDeleteTask, totalTaskCount, serverHasMore, serverLoadingMore, serverPaginationError, serverProgressKey, paginationCollectionKey, paginationActive = true, onLoadMoreServer, onRetryServer, allTasks, availableModels, onPlanningMode, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, isSearchActive, onOpenMission, lastFetchTimeMs, taskCardFieldDefs, taskWorkflowBadges, blockerFanoutMap, prAuthAvailable, holdTaskIds, workflowMode, workflowId, workflowOptions, defaultWorkflowId, columnDisplayName, columnDescription, columnFlags, workflowContextMenuColumns, taskContextMenuColumnsByTaskId }: ColumnProps) {
   const { t } = useTranslation("app");
   // Anchor the board.rejection.* catalog keys for the i18next extractor (it
   // scopes `t` to the useTranslation binding, so the shared translateRejection
@@ -258,22 +259,27 @@ function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeG
     staleMovePrecondition: t("board.rejection.staleMovePrecondition", "This card already moved on. Refresh to see where it is now."),
   }), [t]);
   void rejectionCopy;
-  const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const [isReplanning, setIsReplanning] = useState(false);
-  const [isPausingAll, setIsPausingAll] = useState(false);
+  /*
+  FNXC:TaskQueueOrder 2026-09-17-12:07:
+  FN-509 REMOVED the column "…" menu, so the menu-open flag, its outside-click/Escape listeners, its
+  container ref, and the two bulk-action busy flags are gone with it. The display order is now fixed
+  (see `sortTasksForDisplayColumn`), so there is nothing left for a per-column menu to configure.
+
+  The individual task operations the menu used to batch — replan, pause — and their endpoints are
+  untouched; only the column-level shortcuts are retired. History and the Auto-merge toggle were
+  always independent header controls and stay exactly where they were.
+  */
   /*
   FNXC:WorkflowColumnDescriptions 2026-07-22-12:30:
   Whitespace-only values can exist in pre-editor/custom IR. Treat them as
   absent so they retain lifecycle fallback rather than creating a blank shell.
   */
   const resolvedColumnDescription = columnDescription?.trim() ? columnDescription : COLUMN_DESCRIPTIONS[column];
-  const menuRef = useRef<HTMLDivElement | null>(null);
   /* DELIBERATE-LITERAL: the `column === "done"` is intentional as the degraded fallback when not in
      workflow mode and the column flags resolver is unavailable — `done` is the built-in Complete id. */
   const isCompleteColumn = columnFlags?.complete === true || (!workflowMode && column === "done");
   const displayedTaskCount = totalTaskCount ?? tasks.length;
   const countFlashing = useFlashOnIncrease(displayedTaskCount);
-  const { confirm } = useConfirm();
   const getTaskContextMenuColumns = useCallback((task: Task) => (
     taskContextMenuColumnsByTaskId?.get(task.id) ?? workflowContextMenuColumns
   ), [taskContextMenuColumnsByTaskId, workflowContextMenuColumns]);
@@ -303,25 +309,6 @@ function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeG
        reuse the row's flags. */
     return isNearDuplicateCanonicalInactive(canonical, canonical ? getTaskColumnFlags(canonical) : undefined);
   }, [allTasks, getTaskColumnFlags]);
-
-  // Close the column dropdown menu when the user clicks anywhere else.
-  useEffect(() => {
-    if (!isMenuOpen) return;
-    function onDocClick(e: MouseEvent) {
-      if (!menuRef.current?.contains(e.target as Node)) {
-        setIsMenuOpen(false);
-      }
-    }
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setIsMenuOpen(false);
-    }
-    document.addEventListener("mousedown", onDocClick);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDocClick);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [isMenuOpen]);
 
   /*
   FNXC:WorkflowResolvedColumns 2026-07-30-00:10 (fleet — one role question, one answer):
@@ -475,113 +462,13 @@ function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeG
   );
 
   /*
-  FNXC:BoardColumnMenu 2026-08-27-12:01:
-  FN-198 keeps bulk replanning server-owned: it rebuilds each task specification and never
-  chooses a destination column. `onMoveTask` is forwarded below only for manual-intake Start.
+  FNXC:TaskQueueOrder 2026-09-17-12:07:
+  FN-509 removed the column "…" menu and with it the column-level Replan All / Stop All shortcuts and
+  the per-column sort control. The individual task operations and their endpoints are untouched —
+  only the batch entry point is gone — and the review-lane role is still needed below for the
+  Auto-merge toggle, which was never part of that menu.
   */
-  const handleReplanAll = useCallback(async () => {
-    setIsMenuOpen(false);
-    if (tasks.length === 0) return;
-
-    const confirmed = await confirm({
-      title: t("column.replanAllTitle", "Replan All Tasks"),
-      message: t("column.replanAllMessage", "Replan {{count}} task{{plural}} from its original description? Its current plan will be discarded.", { count: tasks.length, plural: tasks.length === 1 ? "" : "s" }),
-    });
-    if (!confirmed) return;
-
-    setIsReplanning(true);
-    try {
-      const results = await Promise.allSettled(tasks.map((task) => rebuildTaskSpec(task.id, projectId)));
-      const failed = results.filter((result) => result.status === "rejected").length;
-      const replanned = results.length - failed;
-      if (failed === 0) {
-        addToast(t("column.replannedTasks", "Replanned {{count}} task{{plural}}", { count: replanned, plural: replanned === 1 ? "" : "s" }), "success");
-      } else {
-        addToast(t("column.replanPartialFailure", "Replanned {{replanned}} of {{total}} tasks; {{failed}} failed", { replanned, total: results.length, failed }), "error");
-      }
-    } finally {
-      setIsReplanning(false);
-    }
-  }, [addToast, confirm, projectId, t, tasks]);
-
-  const pauseEligibleTasks = useMemo(
-    () => tasks.filter((task) => !task.paused && !task.assignedAgentId),
-    [tasks],
-  );
-  const pauseEligibleCount = pauseEligibleTasks.length;
-  // Bulk-action eligibility (R9): workflow mode keys off trait flags instead of
-  // the literal column ids. Todo-equivalent = hold/intake (replan affordance);
-  // processing = wip/countsTowardWip; review = mergeBlocker/humanReview.
-  const isTodoLikeColumn = isPreImplementationColumnRole(columnFlags, column);
-  const isProcessingColumn = isWipColumnRole(columnFlags, column);
   const isReviewColumn = isReviewColumnRole(columnFlags, column);
-  const hasColumnBulkActions = isTodoLikeColumn || isProcessingColumn || isReviewColumn;
-  const isMenuBusy = isReplanning || isPausingAll;
-  const columnLabelText = workflowMode ? (columnDisplayName ?? COLUMN_LABELS[column] ?? column) : (COLUMN_LABELS[column] ?? column);
-
-  const handlePauseAll = useCallback(async () => {
-    if (!onPauseTask) return;
-
-    setIsMenuOpen(false);
-    if (pauseEligibleCount === 0) return;
-
-    const confirmed = await confirm({
-      title: t("column.stopAllTitle", "Stop All Tasks"),
-      message: t("column.stopAllMessage", "Stop all {{count}} {{columnLabel}} task{{plural}}?", { count: pauseEligibleCount, columnLabel: columnLabelText.toLowerCase(), plural: pauseEligibleCount === 1 ? "" : "s" }),
-      danger: true,
-    });
-    if (!confirmed) return;
-
-    setIsPausingAll(true);
-    try {
-      const results = await Promise.allSettled(
-        pauseEligibleTasks.map((task) => onPauseTask(task.id)),
-      );
-      const failed = results.filter((r) => r.status === "rejected").length;
-      const paused = results.length - failed;
-      if (failed === 0) {
-        addToast(t("column.stoppedTasks", "Stopped {{count}} task{{plural}}", { count: paused, plural: paused === 1 ? "" : "s" }), "success");
-      } else {
-        addToast(t("column.stopPartialFailure", "Stopped {{paused}} of {{total}} tasks; {{failed}} failed", { paused, total: results.length, failed }), "error");
-      }
-    } finally {
-      setIsPausingAll(false);
-    }
-  }, [onPauseTask, pauseEligibleCount, columnLabelText, pauseEligibleTasks, addToast, confirm, t]);
-
-
-  /*
-  FNXC:TaskColumnSorting 2026-09-04-10:36:
-  Every visible Board lane uses the same actions menu and keeps its own local ordering mode. Server pagination selects newest Done-page membership first; this control orders only the bounded rows already loaded.
-  */
-  const effectiveSortMode = sortMode ?? doneSortMode;
-  const effectiveSortModeChange = onSortModeChange ?? onDoneSortModeChange;
-  const showSortControl = effectiveSortMode !== undefined && !!effectiveSortModeChange;
-  /*
-  FNXC:PlanApproval 2026-07-01-08:44:
-  Triage and workflow intake/planning column actions need a Board shortcut that mirrors the project auto-approve plan override without replacing Settings modal's full workflow/auto-approve/require-all editor.
-
-  FNXC:PlanApproval 2026-07-07-00:00 (FN-7653 correction):
-  This shortcut belongs ONLY to the intake/planning column, never to hold (Todo-like) columns — the built-in Coding workflow's Todo column carries the hold trait and was wrongly surfacing this toggle. Board.tsx is the single source of truth gating which columns receive `onTogglePlanAutoApprove`; Column.tsx just renders whatever prop it is given, so the fix lives in Board.tsx's intake-only gate, not here.
-  */
-  const hasPlanAutoApproveAction = !!onTogglePlanAutoApprove;
-  const hasColumnMenu = hasColumnBulkActions || showSortControl || hasPlanAutoApproveAction;
-  const sortControlLabel = t("column.sortControlLabel", "Sort tasks in this column");
-  const sortOptions: Array<{ mode: TaskColumnSortMode; label: string }> = [
-    { mode: "completion-date-desc", label: t("column.sortArrivalDesc", "Arrival in this column — Completion date (newest first)") },
-    { mode: "task-id-desc", label: t("column.sortTaskIdDesc", "Task ID (newest first) — highest task number first") },
-  ];
-
-  const handleSortModeSelect = useCallback((mode: TaskColumnSortMode) => {
-    effectiveSortModeChange?.(mode);
-    setIsMenuOpen(false);
-  }, [effectiveSortModeChange]);
-
-  const handlePlanAutoApproveToggle = useCallback(() => {
-    onTogglePlanAutoApprove?.();
-    setIsMenuOpen(false);
-  }, [onTogglePlanAutoApprove]);
-
 
   return (
     <UiSurface
@@ -627,97 +514,9 @@ function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeG
           </label>
         )}
         {/* FNXC:OfficialDashboardDesign 2026-09-13-00:38: The Header owns the sole New Task action, so column headers retain no duplicate button or click shell. */}
-        {hasColumnMenu && (
-          <div className="column-menu" ref={menuRef}>
-            <UiButton
-              type="button"
-              className="btn btn-icon btn-sm"
-              onClick={() => setIsMenuOpen((v) => !v)}
-              aria-haspopup="menu"
-              aria-expanded={isMenuOpen}
-              aria-label={t("column.actionsAriaLabel", "{{columnLabel}} column actions", { columnLabel: columnLabelText })}
-              title={t("column.actionsTitle", "Column actions")}
-              disabled={isMenuBusy}
-            >
-              <MoreVertical />
-            </UiButton>
-            {isMenuOpen && (
-              <UiMenu className="column-menu-popover" aria-label={t("column.actionsAriaLabel", "{{columnLabel}} column actions", { columnLabel: columnLabelText })}>
-                {hasPlanAutoApproveAction && (
-                  <UiMenuItem className="column-menu-item auto-merge-toggle" role="menuitemcheckbox" aria-checked={!!planAutoApproveEnabled} onClick={handlePlanAutoApproveToggle}>
-                    <span className="column-menu-item-row">
-                      <span className="column-menu-item-check" aria-hidden="true">{planAutoApproveEnabled ? "✓" : ""}</span>
-                      <span>{t("column.planAutoApproveLabel", "Auto-approve plan")}</span>
-                    </span>
-                    <span className="column-menu-item-hint">
-                      {planAutoApproveEnabled
-                        ? t("column.planAutoApproveOnHint", "On bypasses manual plan approval for this project")
-                        : t("column.planAutoApproveOffHint", "Off uses the workflow/default plan approval setting")}
-                    </span>
-                  </UiMenuItem>
-                )}
-                {showSortControl && (
-                  <>
-                    <span className="visually-hidden">{sortControlLabel}</span>
-                    {sortOptions.map((option) => (
-                      <UiMenuItem
-                        id={option.mode}
-                        key={option.mode}
-                        type="button"
-                        role="menuitemradio"
-                        aria-checked={effectiveSortMode === option.mode}
-                        className="column-menu-item column-menu-item-radio"
-                        onClick={() => handleSortModeSelect(option.mode)}
-                      >
-                        <span className="column-menu-item-row">
-                          <span className="column-menu-item-check" aria-hidden="true">{effectiveSortMode === option.mode ? "✓" : ""}</span>
-                          <span>{option.label}</span>
-                        </span>
-                        <span className="column-menu-item-hint">
-                          {option.mode === "completion-date-desc"
-                            ? t("column.sortArrivalDescHint", "Show the newest arrivals in this column first")
-                            : t("column.sortTaskIdDescHint", "Show the highest task IDs first")}
-                        </span>
-                      </UiMenuItem>
-                    ))}
-                  </>
-                )}
-                {isTodoLikeColumn && (
-                  <UiMenuItem
-                    id="replan-all"
-                    type="button"
-                    className="column-menu-item"
-                    onClick={() => void handleReplanAll()}
-                    disabled={tasks.length === 0 || isReplanning}
-                  >
-                    {t("column.replanAll", "Replan All")}
-                    <span className="column-menu-item-hint">
-                      {t("column.replanAllHint", "Replan {{count}} task{{plural}} from its original description", { count: tasks.length, plural: tasks.length === 1 ? "" : "s" })}
-                    </span>
-                  </UiMenuItem>
-                )}
-                {(isProcessingColumn || isReviewColumn) && (
-                    <UiMenuItem
-                      id="pause-all"
-                      type="button"
-                      className="column-menu-item"
-                      onClick={() => void handlePauseAll()}
-                      disabled={pauseEligibleCount === 0 || isPausingAll || !onPauseTask}
-                    >
-                      {t("column.stopAll", "Stop All")}
-                      <span className="column-menu-item-hint">
-                        {tasks.length === 0
-                          ? t("column.noTasksInColumn", "No tasks in this column")
-                          : pauseEligibleCount === 0
-                            ? t("column.noManuallyPausableTasks", "No manually pausable tasks")
-                            : t("column.pauseHint", "Pause {{count}} active unassigned task{{plural}}", { count: pauseEligibleCount, plural: pauseEligibleCount === 1 ? "" : "s" })}
-                      </span>
-                    </UiMenuItem>
-                )}
-              </UiMenu>
-            )}
-          </div>
-        )}
+        {/* FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509 removed the column "…" menu. No empty button
+            shell, click target, popover container, or aria-label survives it — the header ends with
+            the History button and the Auto-merge toggle, which were never part of that menu. */}
       </div>
       {resolvedColumnDescription && (
         <p className="column-desc">{resolvedColumnDescription}</p>
@@ -779,6 +578,7 @@ function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeG
                   addToast={addToast}
                   globalPaused={globalPaused}
                   onUpdateTask={onUpdateTask}
+                  onBoostTask={onBoostTask}
                   onPauseTask={onPauseTask}
                   onRetryTask={onRetryTask}
                   onOpenChatWithPrefill={onOpenChatWithPrefill}
@@ -822,6 +622,7 @@ function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeG
                   addToast={addToast}
                   globalPaused={globalPaused}
                   onUpdateTask={onUpdateTask}
+                  onBoostTask={onBoostTask}
                   onPauseTask={onPauseTask}
                   onRetryTask={onRetryTask}
                   onOpenChatWithPrefill={onOpenChatWithPrefill}

@@ -31,7 +31,7 @@ import type {
 import type { TaskRow } from "./persistence.js";
 import { fromJson } from "../db/db.js";
 import { generateTaskLineageId } from "../tasks/task-lineage.js";
-import { normalizeTaskPriority } from "../tasks/task-priority.js";
+import { normalizeTaskQueueBoost } from "../tasks/task-queue-order.js";
 import { pickArchiveRestorableTaskFields } from "./archive-restoration-contract.js";
 import { normalizeTaskReviewState } from "./review-state.js";
 import {
@@ -68,7 +68,7 @@ export function rowToTask(row: TaskRow): Task {
     lineageId: row.lineageId || generateTaskLineageId(),
     title: row.title || undefined,
     description: row.description,
-    priority: normalizeTaskPriority(row.priority),
+    queueBoost: normalizeTaskQueueBoost(row.queueBoost) ?? undefined,
     column: row.column as Column,
     status: row.status || undefined,
     size: (row.size || undefined) as Task["size"],
@@ -370,7 +370,6 @@ export function archiveEntryToTask(
     lineageId: entry.lineageId || generateTaskLineageId(),
     title: entry.title,
     description: entry.description,
-    priority: normalizeTaskPriority(entry.priority),
     column: "archived",
     preArchiveColumn: entry.preArchiveColumn,
     dependencies: entry.dependencies ?? [],

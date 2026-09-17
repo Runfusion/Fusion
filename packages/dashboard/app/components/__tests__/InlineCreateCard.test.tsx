@@ -1091,27 +1091,26 @@ describe("InlineCreateCard button visibility when collapsed", () => {
     });
   });
 
-  it("includes priority in submit payload and resets to normal after successful create", async () => {
+  /*
+  FNXC:TaskQueueOrder 2026-09-17-12:07:
+  FN-509 deleted the inline priority select, so "submits the chosen level" has no subject. The
+  replacement invariant is that the control is gone and no level reaches the payload — a create is
+  an ordinary arrival-ordered task, raised later with Boost if the operator wants it sooner.
+  */
+  it("offers no priority control and submits no level", async () => {
     const mockOnSubmit = vi.fn().mockResolvedValue(createMockTask());
     renderCard([], { onSubmit: mockOnSubmit });
     expandCard();
 
-    fireEvent.change(screen.getByTestId("inline-create-priority-select"), { target: { value: "urgent" } });
+    expect(screen.queryByTestId("inline-create-priority-select")).toBeNull();
+
     fireEvent.change(screen.getByPlaceholderText("What needs to be done?"), {
-      target: { value: "Task with urgent priority" },
+      target: { value: "Ordinary arrival-ordered task" },
     });
     fireEvent.click(screen.getByTestId("save-button"));
 
-    await waitFor(() => {
-      expect(mockOnSubmit).toHaveBeenCalledWith(
-        expect.objectContaining({
-          priority: "urgent",
-        }),
-      );
-    });
-
-    expandCard();
-    expect(screen.getByTestId("inline-create-priority-select")).toHaveValue("normal");
+    await waitFor(() => expect(mockOnSubmit).toHaveBeenCalled());
+    expect(mockOnSubmit.mock.calls[0][0]).not.toHaveProperty("priority");
   });
 
   describe("Consolidated controls layout (FN-781, FN-1292)", () => {

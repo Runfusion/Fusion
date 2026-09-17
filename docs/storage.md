@@ -500,13 +500,33 @@ Backups in `.fusion/backups/` now capture the project DB and (when present) the 
 
 Database Backup automation failures are surfaced with DB-qualified detail. Project backup failures include the project DB source path, backup target or backup directory when available, and the underlying cause; central DB sub-failures keep the project backup run successful but include `Central DB backup failed` plus central source/target/cause detail in the run output.
 
+## Durable task queue rank (`project.tasks.queue_boost`, FN-509)
+
+<!-- FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509 replaced priority levels with one chronological queue plus an explicit operator Boost. Document the durable rank, its scope, its concurrency authority, and the inert status of the retired column. -->
+
+FN-509 removed task priority levels. An ordinary queue is strictly arrival-ordered (`created_at` ascending, then the id's numeric suffix, then the full id) and the only way to move a card forward is an operator **Boost**, persisted on the task itself so every client and a restarted engine agree.
+
+**Shape.** `project.tasks.queue_boost` is an additive, nullable `jsonb` column (migration `0082_fn_509_task_queue_order.sql`). Absent means ordinary arrival order. When present it records `{ sequence, workflowId, column, columnEntryAt, requestId }`.
+
+**Uniqueness and scoping.** There is no uniqueness constraint, because a Boost is not a slot: many cards may hold a rank and the comparator orders them by `sequence` descending, so the most recently accepted Boost is at the head. Every read and write is `(project_id, id)`-scoped, so two projects reusing the same task id cannot affect each other's queue.
+
+**Concurrency authority.** `sequence` is drawn from the PostgreSQL sequence `project.task_queue_boost_seq` inside the same transaction as the write. A browser clock cannot order two clicks that land in the same millisecond, and a read-modify-write counter would serialize behind the task row. The value is stored as a decimal STRING and compared with arbitrary precision, so a long-lived project does not silently lose ordering past `Number.MAX_SAFE_INTEGER`. A rolled-back boost only burns a value, leaving a gap the comparator does not care about.
+
+**Scope and invalidation.** A Boost belongs to the card's current stay in one column of one workflow. It stays effective across the phases of that stay (planning, then waiting for capacity, in the same Planning column) and becomes inert when the column changes, when `columnMovedAt` changes (so `A → B → A` never resurrects the first stay's rank), when the effective workflow changes, and on Reset or delete. Inertness is evaluated on read, so no sweep has to clean it up.
+
+**Single writer.** `TaskStore.boostTask` is the only writer. Creates, clones, refinements, imports, reverts, restored snapshots, every generic `updateTask`/`updateTaskAtomic` patch, and every self-healing sweep are forbidden from minting one — a rank a sweep can invent is a hidden priority. Nothing backfills the retired `priority` column into it.
+
+**Retired column.** `project.tasks.priority` is deliberately not dropped. It remains as inert historical data with no reader and no writer; it must never be re-emitted as a task field, migrated into a Boost, copied onto a new task, or used to sort.
+
+**Merge lease order.** The merge queue applies the same rank. See the `mergeQueue` row in the table below.
+
 ## 4) Legacy SQLite Tables Inventory (`packages/core/src/db.ts`, migration reference)
 
 | Table | Purpose |
 |---|---|
-| `tasks` | Core task metadata and JSON-backed nested fields (priority, dependencies, steps, log, attachments, comments, model overrides, workflow results, merge details, assignment, mission linkage). |
+| `tasks` | Core task metadata and JSON-backed nested fields (`queueBoost`, dependencies, steps, log, attachments, comments, model overrides, workflow results, merge details, assignment, mission linkage). The legacy `priority` column survives as inert historical data: FN-509 removed every reader and writer, and nothing may re-emit it as a task field, migrate it into a Boost, copy it onto a new task, or sort by it. |
 | `branch_groups` | Durable PostgreSQL shared-branch group records keyed by project plus `BG-*` id, with source linkage (`mission`/`planning`/`new-task`), branch/worktree metadata, optional PR tracking fields, lifecycle status, and per-group `autoMerge` override. These rows are authoritative after restart; task `sourceMetadata.fusionBranchContext.groupId` values should point at real `BG-*` rows, and stale references are cleared through `TaskStore.setTaskBranchGroup(taskId, null)` / `POST /api/branch-groups/assign` rather than direct SQL edits. |
-| `mergeQueue` | Durable merge handoff queue keyed by `taskId`. Stores enqueue ordering (`enqueuedAt`, mirrored `priority`), single-owner lease state (`leasedBy`, `leasedAt`, `leaseExpiresAt`), and retry diagnostics (`attemptCount`, `lastError`). Leasing is priority-first + FIFO within priority, and expired leases are recoverable without incrementing attempts. FN-5242 adds the persistence/lease primitive; FN-5241 and FN-5243 wire executor enqueue + merger consumption. |
+| `mergeQueue` | Durable merge handoff queue keyed by `taskId`. Stores enqueue ordering (`enqueuedAt`), single-owner lease state (`leasedBy`, `leasedAt`, `leaseExpiresAt`), and retry diagnostics (`attemptCount`, `lastError`). Leasing uses the shared FN-509 queue order applied to the JOINED task row — an effective Boost first, then task arrival oldest-first — so a manually requested merge keeps its result promise and permissions but no longer overtakes work that has waited longer. Its own `priority` column is inert historical data. Expired leases are recoverable without incrementing attempts. FN-5242 adds the persistence/lease primitive; FN-5241 and FN-5243 wire executor enqueue + merger consumption. |
 
 FN-5240/FN-5241/FN-5242 establish the handoff invariant: the only legal executor/self-healing path into `in-review` after execution finishes is `TaskStore.handoffToReview(...)`. That helper runs the column move, `mergeQueue` insert, and handoff audit fan-out inside one `BEGIN IMMEDIATE` transaction so observers never see `column = "in-review"` without the matching queue row. Direct `moveTask(taskId, "in-review")` writes remain allowed for explicit non-handoff/test paths but emit `task:handoff-invariant-violation` run-audit events unless the caller opts into the narrow allowlist flag.
 

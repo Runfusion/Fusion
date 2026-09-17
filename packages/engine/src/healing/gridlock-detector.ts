@@ -21,7 +21,7 @@ future cleanup revisits this, the question to ask is whether dependency and over
 deadlock are still possible — not whether capacity is simpler.
 */
 import type { MissionStore, Task, TaskStore, WorkflowIr } from "@fusion/core";
-import { compareTasksByPriorityThenAgeAndId, fileScopeLeaseBlocksCandidate, normalizeOverlapScopeForTask, resolveTaskLifecycleColumns, resolveWorkflowIrForTask, columnsWithFlag } from "@fusion/core";
+import { compareTasksByQueueOrder, fileScopeLeaseBlocksCandidate, normalizeOverlapScopeForTask, resolveTaskLifecycleColumns, resolveWorkflowIrForTask, columnsWithFlag } from "@fusion/core";
 import { createLogger } from "../logger.js";
 import { classifyFileScopeLease, filterPathsByIgnoreList, isCoordinationOnlyTask, pathsOverlap } from "../scheduler.js";
 
@@ -172,7 +172,7 @@ export class GridlockDetector {
       .sort((a, b) => a.id.localeCompare(b.id));
     const dormantLeaseHolders = leaseHolders
       .filter((task) => classifications.get(task.id)?.kind === "dormant")
-      .sort(compareTasksByPriorityThenAgeAndId);
+      .sort(compareTasksByQueueOrder);
     const leaseScopes = new Map<string, string[]>();
     if (settings.groupOverlappingFiles) {
       for (const holder of leaseHolders) {

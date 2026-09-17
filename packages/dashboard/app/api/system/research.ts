@@ -148,7 +148,7 @@ export function exportResearchRun(
 
 export function createTaskFromResearchRun(
   id: string,
-  input: { findingId?: string; title?: string; description?: string; priority?: "low" | "normal" | "high" | "urgent"; attachExport?: boolean },
+  input: { findingId?: string; title?: string; description?: string; attachExport?: boolean },
   projectId?: string,
 ): Promise<{ task: Task; documentKey: string; attachmentFilename?: string }> {
   const findingId = input.findingId ?? "finding-1";
@@ -159,7 +159,6 @@ export function createTaskFromResearchRun(
       body: JSON.stringify({
         title: input.title,
         description: input.description,
-        priority: input.priority,
         attachExport: input.attachExport,
       }),
     },

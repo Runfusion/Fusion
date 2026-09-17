@@ -6,9 +6,9 @@
 import type {
   Column,
   ColumnId,
-  TaskPriority,
   ThinkingLevel,
 } from "../board/board.js";
+import type { TaskQueueBoost } from "../../tasks/task-queue-order.js";
 import type {
   ExecutionMode,
   PlannerOversightLevel,
@@ -856,11 +856,14 @@ export interface Task {
   proposalClaimId?: string;
   title?: string;
   description: string;
-  /**
-   * Task importance level. Missing legacy values normalize to `normal` when
-   * tasks are hydrated from persistence.
-   */
-  priority?: TaskPriority;
+  /*
+  FNXC:TaskQueueOrder 2026-09-17-12:07:
+  FN-509: durable queue rank. Present ONLY while an operator Boost is in force for this card's
+  current stay in its current column; absent means ordinary arrival order. It is never written by
+  a create, clone, refinement, import, revert, or self-healing sweep — only by the explicit
+  `boostTask` mutation — and it is never derived from the retired `priority` column.
+  */
+  queueBoost?: TaskQueueBoost | null;
   /** The task's current column id. Widened to {@link ColumnId} so workflow-defined
    *  custom columns are representable; flag-OFF paths only ever store legacy ids. */
   column: ColumnId;
@@ -1725,10 +1728,6 @@ export interface TaskCreateInput {
   tokenUsage?: TaskTokenUsage;
   /** Provenance metadata for task creation. */
   source?: TaskSource;
-  /**
-   * Optional task importance level. Omitted values default to `normal`.
-   */
-  priority?: TaskPriority;
   /** Initial column id. Widened to {@link ColumnId} (#1403) so a custom-column
    *  task can be replicated/created; flag-OFF creation only ever uses legacy ids. */
   column?: ColumnId;

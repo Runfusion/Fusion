@@ -279,7 +279,10 @@ export async function materializeEvalFollowUps(input: MaterializeEvalFollowUpsIn
          `createTaskImpl` resolves the WORKFLOW'S intake column, and `input.column` would
          override it. Hard-coding `"triage"` created the card in a column the default
          lineage no longer declares (#2515), i.e. straight into the stranded state. */
-      priority: followUp.priority,
+      /* FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509 — the eval suggestion's own severity band is
+         NOT a task priority and is deliberately not converted into one. It still QUALIFIES which
+         suggestions become tasks (see the auto_create_qualified gate above); it just no longer
+         rides along as a rank on the created card. */
       source: {
         sourceType: "automation",
         sourceParentTaskId: parentTaskId,

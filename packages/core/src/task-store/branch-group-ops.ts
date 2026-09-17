@@ -11,6 +11,7 @@ import { emitBoundedRunAudit } from "../run-audit/emit-bounded-run-audit.js";
 import {TaskStore} from "../store.js";
 import {resolveTaskLifecycleColumns, columnsWithFlag} from "../workflows/workflow-lifecycle-traits.js";
 import {applyPauseAccounting, LEGACY_WIP_COLUMN_FALLBACK} from "../tasks/task-pause-accounting.js";
+import { compareTasksByQueueOrder } from "../tasks/task-queue-order.js";
 import {resolveWorkflowIrForTask} from "../workflows/workflow-ir-resolver.js";
 import type {WorkflowIr} from "../workflows/workflow-ir-types.js";
 import type {Task, ColumnId, ArtifactType, ArtifactWithTask, InboxTask, TaskLogEntry, RunMutationContext, Agent} from "../types.js";
@@ -136,11 +137,17 @@ export async function selectNextTaskForAgentImpl(store: TaskStore, agentId: stri
     const tasksById = new Map(tasks.map((task) => [task.id, task]));
     const isCheckoutAware = "checkoutTask" in store && typeof (store as Record<string, unknown>).checkoutTask === "function";
 
-    const sortByOldestColumnMove = (a: Task, b: Task) => {
-      const aSortAt = a.columnMovedAt ?? a.createdAt;
-      const bSortAt = b.columnMovedAt ?? b.createdAt;
-      return aSortAt.localeCompare(bSortAt);
-    };
+    /*
+    FNXC:TaskQueueOrder 2026-09-17-12:07:
+    FN-509: the inbox offers work in the SAME queue order every other admission path uses, so an
+    agent asking "what next" and the board showing "what next" cannot disagree. Role compatibility
+    and assignment policy remain FILTERS above this; they decide WHETHER a card is offerable, never
+    that it may overtake an older admissible one.
+
+    The previous key was the column-move stamp, which re-aged a card every time it bounced back into
+    a lane. Arrival is creation now, so a card that has waited longest genuinely comes first.
+    */
+    const sortByQueueOrder = (a: Task, b: Task) => compareTasksByQueueOrder(a, b);
 
     /*
     FNXC:AgentRouting 2026-07-12-12:05 (merge port from main):
@@ -185,7 +192,7 @@ export async function selectNextTaskForAgentImpl(store: TaskStore, agentId: stri
 
     const inProgress = assignedTasks
       .filter((task) => isWipTask(task) && isBindCompatible(task))
-      .sort(sortByOldestColumnMove);
+      .sort(sortByQueueOrder);
     if (inProgress.length > 0) {
       return {
         task: inProgress[0],
@@ -245,7 +252,7 @@ export async function selectNextTaskForAgentImpl(store: TaskStore, agentId: stri
         }
         return store.areAllDependenciesDone(task.dependencies, tasksById, satisfiedColumns);
       })
-      .sort(sortByOldestColumnMove);
+      .sort(sortByQueueOrder);
 
     if (readyTodo.length > 0) {
       return {
@@ -267,7 +274,7 @@ export async function selectNextTaskForAgentImpl(store: TaskStore, agentId: stri
 
         return task.dependencies.some((dependencyId) => isDoneLike(tasksById.get(dependencyId)));
       })
-      .sort(sortByOldestColumnMove);
+      .sort(sortByQueueOrder);
 
     if (actionableBlocked.length > 0) {
       return {

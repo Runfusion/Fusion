@@ -74,19 +74,24 @@ describe("GET /tasks/done pagination", () => {
     expect(listCompletedTasks).toHaveBeenCalledTimes(1);
   });
 
-  it("validates and forwards the selected server sort", async () => {
+  /*
+  FNXC:TaskQueueOrder 2026-09-17-13:51:
+  FN-509 deleted the selectable Done sort together with the column "..." menu: Done is always most
+  recent arrival first. This case previously asserted that `task-id-desc` was forwarded to the
+  store; keeping that assertion alive would require re-adding the removed contract, so it now
+  records the new truth — ANY explicit `sort` is refused before the store is read.
+  */
+  it("refuses any explicit server sort before reading the store", async () => {
     const listCompletedTasks = vi.fn(async () => ({ tasks: [], total: 0, hasMore: false }));
     const app = buildApp({ listCompletedTasks } as unknown as TaskStore);
 
-    expect((await request(app, "GET", "/api/tasks/done?sort=task-id-desc")).status).toBe(200);
-    expect(listCompletedTasks).toHaveBeenCalledWith({
-      limit: undefined,
-      cursor: undefined,
-      slim: true,
-      sort: "task-id-desc",
-    });
-    expect((await request(app, "GET", "/api/tasks/done?sort=oldest")).status).toBe(400);
-    expect(listCompletedTasks).toHaveBeenCalledTimes(1);
+    for (const sort of ["task-id-desc", "oldest", ""]) {
+      expect((await request(app, "GET", `/api/tasks/done?sort=${sort}`)).status).toBe(400);
+    }
+    expect(listCompletedTasks).not.toHaveBeenCalled();
+
+    expect((await request(app, "GET", "/api/tasks/done")).status).toBe(200);
+    expect(listCompletedTasks).toHaveBeenCalledWith({ limit: undefined, cursor: undefined, slim: true, sort: undefined });
   });
 
   it("maps a malformed or scope-mismatched opaque cursor to 400", async () => {

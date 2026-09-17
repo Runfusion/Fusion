@@ -8,10 +8,8 @@ import type { TFunction } from "i18next";
 import { useState, useCallback, useEffect, useRef, useMemo, type CSSProperties, type ReactNode, type PointerEvent as ReactPointerEvent } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { Task, PlanningQuestion, PlanningSummary, TaskPriority, ThinkingLevel } from "@fusion/core";
+import type { Task, PlanningQuestion, PlanningSummary, ThinkingLevel } from "@fusion/core";
 import {
-  DEFAULT_TASK_PRIORITY,
-  TASK_PRIORITIES,
   THINKING_LEVELS,
   formatPlanningPlanMd,
   getErrorMessage,
@@ -296,12 +294,8 @@ function getExamplePlans(t: TFunction<"app">): string[] {
   ];
 }
 
-function normalizeTaskPriority(priority?: TaskPriority): TaskPriority {
-  if (priority && (TASK_PRIORITIES as readonly string[]).includes(priority)) {
-    return priority;
-  }
-  return DEFAULT_TASK_PRIORITY;
-}
+/* FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509 removed the task priority field and every control
+   that set it. Tasks run in arrival order; an operator raises one explicitly with Boost. */
 
 function normalizeStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) {
@@ -347,7 +341,6 @@ function normalizePlanningSummary(summary: PlanningSummary): PlanningSummary {
     proposedChanges: normalizeStringArray(raw.proposedChanges),
     acceptanceCriteria: normalizeStringArray(raw.acceptanceCriteria),
     suggestedSize: raw.suggestedSize === "S" || raw.suggestedSize === "M" || raw.suggestedSize === "L" ? raw.suggestedSize : "M",
-    priority: normalizeTaskPriority(summary.priority),
     suggestedDependencies: normalizeStringArray(raw.suggestedDependencies),
     keyDeliverables: normalizeStringArray(raw.keyDeliverables),
     suggestedRefinements: normalizeStringArray(raw.suggestedRefinements),
@@ -4615,7 +4608,6 @@ export function SummaryView({
     onChange: (description) => onSummaryChange({ ...summary, description }),
     projectId,
   });
-  const selectedPriority = normalizeTaskPriority(summary.priority);
   const isBranchNameRequired = branchMode === "existing" || branchMode === "custom-new";
   const hasInvalidBranchSelection = isBranchNameRequired && !branchName.trim();
   const isLoading = isCreatingTask || isRefiningSummary;
@@ -4761,27 +4753,6 @@ export function SummaryView({
               </select>
             </div>
 
-            <div className="form-group">
-              <label htmlFor="planning-summary-priority">{t("planning.priority", "Priority")}</label>
-              <select
-                id="planning-summary-priority"
-                className="planning-size-select"
-                value={selectedPriority}
-                onChange={(event) =>
-                  onSummaryChange({
-                    ...summary,
-                    priority: event.target.value as TaskPriority,
-                  })
-                }
-                disabled={isLoading}
-              >
-                {TASK_PRIORITIES.map((priorityOption) => (
-                  <option key={priorityOption} value={priorityOption}>
-                    {priorityOption[0].toUpperCase() + priorityOption.slice(1)}
-                  </option>
-                ))}
-              </select>
-            </div>
           </div>
 
           {tasks.length > 0 && (

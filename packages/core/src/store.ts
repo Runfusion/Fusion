@@ -11,14 +11,15 @@ import { evaluateSpecDrift, hasPriorLockDivergence, type DriftReport } from "./p
 import * as schema from "./postgres/schema/index.js";
 import { type FSWatcher } from "node:fs";
 import { readFile } from "node:fs/promises";
-import type { Task, TaskDetail, TaskCreateInput, TaskAttachment, AgentLogEntry, BoardConfig, Column, ColumnId, CheckoutClaimPrecondition, MergeResult, Settings, GlobalSettings, ProjectSettings, ActivityLogEntry, ActivityEventType, TaskDocument, TaskDocumentRevision, TaskDocumentCreateInput, TaskDocumentWithTask, Artifact, ArtifactCreateInput, ArtifactType, ArtifactWithTask, InboxTask, TaskLogEntry, RunMutationContext, RunAuditEvent, RunAuditEventInput, RunAuditEventFilter, ArchivedTaskEntry, ArchiveAgentLogMode, TaskPriority, WorkflowStepTemplate, Agent, AutostashOrphanRecord, TaskCommitAssociation, CommitAssociationDiffBackfillReport, GithubIssueAction, MergeQueueEntry, MergeQueueEnqueueOptions, MergeQueueAcquireOptions, MergeQueueReleaseOutcome, HandoffToReviewOptions, GoalCitation, GoalCitationFilter, GoalCitationInput, GoalCitationSurface, BranchGroup, BranchGroupCreateInput, BranchGroupUpdate, TaskBranchAssignmentMode, MergeRequestRecord, MergeRequestState, MergeRequestWorkflowProjectionOptions, CompletionHandoffMarker, WorkflowWorkItem, WorkflowWorkItemDueFilter, WorkflowWorkItemKind, WorkflowWorkItemState, WorkflowWorkItemTransitionPatch, WorkflowWorkItemUpsertInput, PrEntity, PrEntityCreateInput, PrEntityUpdate, PrThreadState, PrThreadOutcome, PluginActivation, PluginActivationInput, TaskStep } from "./types.js";
+import type { Task, TaskDetail, TaskCreateInput, TaskAttachment, AgentLogEntry, BoardConfig, Column, ColumnId, CheckoutClaimPrecondition, MergeResult, Settings, GlobalSettings, ProjectSettings, ActivityLogEntry, ActivityEventType, TaskDocument, TaskDocumentRevision, TaskDocumentCreateInput, TaskDocumentWithTask, Artifact, ArtifactCreateInput, ArtifactType, ArtifactWithTask, InboxTask, TaskLogEntry, RunMutationContext, RunAuditEvent, RunAuditEventInput, RunAuditEventFilter, ArchivedTaskEntry, ArchiveAgentLogMode, WorkflowStepTemplate, Agent, AutostashOrphanRecord, TaskCommitAssociation, CommitAssociationDiffBackfillReport, GithubIssueAction, MergeQueueEntry, MergeQueueEnqueueOptions, MergeQueueAcquireOptions, MergeQueueReleaseOutcome, HandoffToReviewOptions, GoalCitation, GoalCitationFilter, GoalCitationInput, GoalCitationSurface, BranchGroup, BranchGroupCreateInput, BranchGroupUpdate, TaskBranchAssignmentMode, MergeRequestRecord, MergeRequestState, MergeRequestWorkflowProjectionOptions, CompletionHandoffMarker, WorkflowWorkItem, WorkflowWorkItemDueFilter, WorkflowWorkItemKind, WorkflowWorkItemState, WorkflowWorkItemTransitionPatch, WorkflowWorkItemUpsertInput, PrEntity, PrEntityCreateInput, PrEntityUpdate, PrThreadState, PrThreadOutcome, PluginActivation, PluginActivationInput, TaskStep } from "./types.js";
 import {
   fileScopeLeaseBlocksCandidate,
   normalizeOverlapScopeForTask,
   taskHoldsUnmergedCheckout,
   type FileScopeLeaseKind,
 } from "./tasks/file-scope-lease.js";
-import { compareTasksByPriorityThenAgeAndId } from "./tasks/task-priority.js";
+import { compareTasksByQueueOrder } from "./tasks/task-queue-order.js";
+import { boostTaskImpl } from "./task-store/task-queue-order-ops.js";
 
 /*
 FNXC:SpecLock 2026-08-09-21:01:
@@ -168,10 +169,9 @@ import type { TaskDeleteAuditContext } from "./task-delete-attribution.js";
 import { updateSettingsImpl, updateGlobalSettingsImpl } from "./task-store/settings-ops.js";
 import { mutateScriptImpl, type MutateScriptInput, type ScriptCatalogEntry } from "./task-store/script-ops.js";
 import { createTaskBackendImpl, _createTaskInternalBackendImpl, createTaskImpl, createTaskWithReservedIdImpl, _createTaskInternalImpl, _resolveSameAgentDuplicateIntakeImpl } from "./task-store/task-creation.js";
-import { getTaskImpl, listCompletedTasksImpl, listCurrentTasksPageImpl, listTasksImpl, searchTasksImpl, listTasksModifiedSinceImpl, getTaskVerificationRequestAsyncImpl, listTaskRecommendationsImpl, findTaskByProposalClaimIdImpl, listTasksBySourceLineageImpl, type CompletedTaskPage, type ListTasksOptions, type TaskListPage } from "./task-store/reads.js";
+import { getTaskImpl, listCompletedTasksImpl, listCurrentTasksPageImpl, listTaskQueuePageImpl, listTasksImpl, searchTasksImpl, listTasksModifiedSinceImpl, getTaskVerificationRequestAsyncImpl, listTaskRecommendationsImpl, findTaskByProposalClaimIdImpl, listTasksBySourceLineageImpl, type CompletedTaskPage, type ListTasksOptions, type TaskListPage, type TaskQueuePageOptions } from "./task-store/reads.js";
 import { drainArchivedTasksIntoDone, inspectArchivedTaskHistory, type ArchivedTaskHistoryInspection, type ArchivedTaskReintegrationResult } from "./task-store/archive-reintegration.js";
 import { supplementTaskHistoryFromEvidence, type SupplementTaskHistoryResult } from "./task-store/async/async-archive-lineage.js";
-import type { TaskColumnSortMode } from "./tasks/task-priority.js";
 import { updateTaskUnlockedImpl } from "./task-store/task-update.js";
 import { __setTaskActivityLogLimitsForTesting } from "./task-store/comments.js";
 import { columnsWithFlag, declaresAnyLifecycleTrait, resolveLifecycleColumns, resolveReviewColumns, type LifecycleColumns } from "./workflows/workflow-lifecycle-traits.js";
@@ -468,7 +468,7 @@ FNXC:OverlapScheduling 2026-08-29-06:04:
 Operator overlap repair must use the same lease lifetime as scheduler admission: terminal or deleted
 cards release immediately; WIP stays active before checkout acquisition; review stays active only
 while a singular or per-repository checkout exists; other retained checkouts are dormant and resolve contention
-by priority, age, then task id. The explicit archive/delete/checkout-clear escape hatch remains the only way to
+by the shared FN-509 queue order (Boost, then arrival, then id). The explicit archive/delete/checkout-clear escape hatch remains the only way to
 release unfinished work early.
 
 FNXC:OverlapScheduling 2026-09-01-14:49:
@@ -1731,7 +1731,18 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   async listCurrentTasksPage(options?: { limit?: number; cursor?: string; query?: string }): Promise<TaskListPage> {
     return listCurrentTasksPageImpl(this, options);
   }
-  async listCompletedTasks(options?: { limit?: number; cursor?: string; slim?: boolean; sort?: TaskColumnSortMode }): Promise<CompletedTaskPage> {
+
+  /*
+  FNXC:TaskQueueOrder 2026-09-17-13:51:
+  One board lane, paged in the order that lane renders in, so a boosted or newly captured card
+  beyond the generic board page still reaches the head of its column after a reload.
+  */
+  async listTaskQueuePage(options: TaskQueuePageOptions): Promise<TaskListPage> {
+    return listTaskQueuePageImpl(this, options);
+  }
+  /* FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509 removed the selectable Complete sort mode with the
+     column "..." menu. Done is always most-recent-arrival first. */
+  async listCompletedTasks(options?: { limit?: number; cursor?: string; slim?: boolean }): Promise<CompletedTaskPage> {
     return listCompletedTasksImpl(this, options);
   }
   /** Read-only archive inventory for project-scoped operational reconciliation. */
@@ -2015,7 +2026,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   }
   async updateTask(
     id: string,
-    updates: { title?: string; description?: string; priority?: TaskPriority | null; prompt?: string; worktree?: string | null; workspaceWorktrees?: import("./types.js").Task["workspaceWorktrees"]; externalBlock?: import("./types.js").Task["externalBlock"] | null; planningFailure?: import("./types.js").Task["planningFailure"] | null; humanPlanApproval?: import("./types.js").Task["humanPlanApproval"] | null; status?: string | null; awaitingApprovalReason?: import("./types.js").Task["awaitingApprovalReason"] | null; dependencies?: string[]; steps?: import("./types.js").TaskStep[]; customFields?: Record<string, unknown>; currentStep?: number; blockedBy?: string | null; overlapBlockedBy?: string | null; assignedAgentId?: string | null; pausedByAgentId?: string | null; pausedReason?: string | null; wedgeNotification?: import("./types.js").TaskWedgeNotificationState | null; tokenBudgetSoftAlertedAt?: string | null; worktrunkFallbackAlertedAt?: string | null; worktrunkFailure?: import("./types.js").Task["worktrunkFailure"] | null; tokenBudgetHardAlertedAt?: string | null; tokenBudgetOverride?: import("./types.js").TaskTokenBudgetOverride | null; dispatchStormCount?: number | null; lastDispatchAt?: string | null; assigneeUserId?: string | null; scopeOverride?: boolean | null; scopeOverrideReason?: string | null; scopeAutoWiden?: string[] | null; nodeId?: string | null; effectiveNodeId?: string | null; effectiveNodeSource?: string | null; checkedOutBy?: string | null; checkedOutAt?: string | null; checkoutNodeId?: string | null; checkoutRunId?: string | null; checkoutLeaseRenewedAt?: string | null; checkoutLeaseEpoch?: number | null; paused?: boolean; baseBranch?: string | null; autoMerge?: boolean | null; branch?: string | null; branchWriteOrigin?: "operator" | "engine"; branchContext?: import("./types.js").TaskBranchContext | null; executionStartBranch?: string | null; baseCommitSha?: string | null; size?: "S" | "M" | "L"; reviewLevel?: number; executionMode?: import("./types.js").ExecutionMode | null; mergeRetries?: number; aiMergeReviewReconciliation?: import("./types.js").Task["aiMergeReviewReconciliation"] | null; log?: import("./types.js").TaskLogEntry[]; workflowStepRetries?: number; stuckKillCount?: number | null; resumeLimboCount?: number | null; executeRequeueLoopCount?: number | null; graphResumeRetryCount?: number | null; consecutiveToolFailureRetryCount?: number | null; executorEscalationAttempted?: boolean | null; toolFailureDetectorLogCursor?: number | null; toolFailureRetryExhaustedAuditEmitted?: boolean | null; resumeLimboTipSha?: string | null; resumeLimboStepSignature?: string | null; executeRequeueLoopSignature?: string | null; postReviewFixCount?: number | null; planReviewReplanCount?: number | null; recoveryRetryCount?: number | null; sessionContentionHoldCount?: number | null; sessionContentionWaitReason?: string | null; taskDoneRetryCount?: number | null; bulkCompletionRefusalAt?: string | null; workflowIrPin?: string | null; workflowIrPinNodeId?: string | null; workflowIrPinColumnId?: string | null; legacyAdoptedAt?: string | null; worktreeSessionRetryCount?: number | null; completionHandoffLimboRecoveryCount?: number | null; verificationFailureCount?: number | null; mergeConflictBounceCount?: number | null; mergeAuditBounceCount?: number | null; mergeTransientRetryCount?: number | null; branchConflictRecoveryCount?: number | null; reviewerContextRetryCount?: number | null; reviewerFallbackRetryCount?: number | null; reviewConvergenceStage?: number | null; reviewConvergenceEscalationCount?: number | null; nextRecoveryAt?: string | null; enabledWorkflowSteps?: string[]; noCommitsExpected?: boolean | null; modelProvider?: string | null; credentialInstanceId?: string | null; modelId?: string | null; validatorModelProvider?: string | null; validatorCredentialInstanceId?: string | null; validatorModelId?: string | null; planningModelProvider?: string | null; planningCredentialInstanceId?: string | null; planningModelId?: string | null; mergerModelProvider?: string | null; mergerCredentialInstanceId?: string | null; mergerModelId?: string | null; thinkingLevel?: string | null; validatorThinkingLevel?: string | null; planningThinkingLevel?: string | null; mergerThinkingLevel?: string | null; error?: string | null; summary?: string | null; recommendations?: import("./types.js").TaskRecommendation[]; sessionFile?: string | null; firstExecutionAt?: string | null; cumulativeActiveMs?: number | null; cumulativePlanningMs?: number | null; planningStartedAt?: string | null; executionStartedAt?: string | null; executionCompletedAt?: string | null; review?: import("./types.js").TaskReview | null; reviewState?: import("./types.js").TaskReviewState | null; workflowStepResults?: import("./types.js").WorkflowStepResult[] | null; mergeDetails?: import("./types.js").MergeDetails | null; sourceIssue?: import("./types.js").TaskSourceIssue | null; sourceMetadataPatch?: Record<string, unknown> | null; githubTracking?: import("./types.js").TaskGithubTracking | null; tokenUsage?: import("./types.js").TaskTokenUsage | null; modifiedFiles?: string[] | null; declaredSymbols?: string[] | null | undefined; missionId?: string | null; sliceId?: string | null; workflowTransitionNotification?: import("./types.js").WorkflowTransitionNotificationMarker | undefined; plannerOversightLevel?: string | null; sessionAdvisorEnabled?: boolean | null; approvedPlanFingerprint?: string | null },    runContext?: RunMutationContext,
+    updates: { title?: string; description?: string; prompt?: string; worktree?: string | null; workspaceWorktrees?: import("./types.js").Task["workspaceWorktrees"]; externalBlock?: import("./types.js").Task["externalBlock"] | null; planningFailure?: import("./types.js").Task["planningFailure"] | null; humanPlanApproval?: import("./types.js").Task["humanPlanApproval"] | null; status?: string | null; awaitingApprovalReason?: import("./types.js").Task["awaitingApprovalReason"] | null; dependencies?: string[]; steps?: import("./types.js").TaskStep[]; customFields?: Record<string, unknown>; currentStep?: number; blockedBy?: string | null; overlapBlockedBy?: string | null; assignedAgentId?: string | null; pausedByAgentId?: string | null; pausedReason?: string | null; wedgeNotification?: import("./types.js").TaskWedgeNotificationState | null; tokenBudgetSoftAlertedAt?: string | null; worktrunkFallbackAlertedAt?: string | null; worktrunkFailure?: import("./types.js").Task["worktrunkFailure"] | null; tokenBudgetHardAlertedAt?: string | null; tokenBudgetOverride?: import("./types.js").TaskTokenBudgetOverride | null; dispatchStormCount?: number | null; lastDispatchAt?: string | null; assigneeUserId?: string | null; scopeOverride?: boolean | null; scopeOverrideReason?: string | null; scopeAutoWiden?: string[] | null; nodeId?: string | null; effectiveNodeId?: string | null; effectiveNodeSource?: string | null; checkedOutBy?: string | null; checkedOutAt?: string | null; checkoutNodeId?: string | null; checkoutRunId?: string | null; checkoutLeaseRenewedAt?: string | null; checkoutLeaseEpoch?: number | null; paused?: boolean; baseBranch?: string | null; autoMerge?: boolean | null; branch?: string | null; branchWriteOrigin?: "operator" | "engine"; branchContext?: import("./types.js").TaskBranchContext | null; executionStartBranch?: string | null; baseCommitSha?: string | null; size?: "S" | "M" | "L"; reviewLevel?: number; executionMode?: import("./types.js").ExecutionMode | null; mergeRetries?: number; aiMergeReviewReconciliation?: import("./types.js").Task["aiMergeReviewReconciliation"] | null; log?: import("./types.js").TaskLogEntry[]; workflowStepRetries?: number; stuckKillCount?: number | null; resumeLimboCount?: number | null; executeRequeueLoopCount?: number | null; graphResumeRetryCount?: number | null; consecutiveToolFailureRetryCount?: number | null; executorEscalationAttempted?: boolean | null; toolFailureDetectorLogCursor?: number | null; toolFailureRetryExhaustedAuditEmitted?: boolean | null; resumeLimboTipSha?: string | null; resumeLimboStepSignature?: string | null; executeRequeueLoopSignature?: string | null; postReviewFixCount?: number | null; planReviewReplanCount?: number | null; recoveryRetryCount?: number | null; sessionContentionHoldCount?: number | null; sessionContentionWaitReason?: string | null; taskDoneRetryCount?: number | null; bulkCompletionRefusalAt?: string | null; workflowIrPin?: string | null; workflowIrPinNodeId?: string | null; workflowIrPinColumnId?: string | null; legacyAdoptedAt?: string | null; worktreeSessionRetryCount?: number | null; completionHandoffLimboRecoveryCount?: number | null; verificationFailureCount?: number | null; mergeConflictBounceCount?: number | null; mergeAuditBounceCount?: number | null; mergeTransientRetryCount?: number | null; branchConflictRecoveryCount?: number | null; reviewerContextRetryCount?: number | null; reviewerFallbackRetryCount?: number | null; reviewConvergenceStage?: number | null; reviewConvergenceEscalationCount?: number | null; nextRecoveryAt?: string | null; enabledWorkflowSteps?: string[]; noCommitsExpected?: boolean | null; modelProvider?: string | null; credentialInstanceId?: string | null; modelId?: string | null; validatorModelProvider?: string | null; validatorCredentialInstanceId?: string | null; validatorModelId?: string | null; planningModelProvider?: string | null; planningCredentialInstanceId?: string | null; planningModelId?: string | null; mergerModelProvider?: string | null; mergerCredentialInstanceId?: string | null; mergerModelId?: string | null; thinkingLevel?: string | null; validatorThinkingLevel?: string | null; planningThinkingLevel?: string | null; mergerThinkingLevel?: string | null; error?: string | null; summary?: string | null; recommendations?: import("./types.js").TaskRecommendation[]; sessionFile?: string | null; firstExecutionAt?: string | null; cumulativeActiveMs?: number | null; cumulativePlanningMs?: number | null; planningStartedAt?: string | null; executionStartedAt?: string | null; executionCompletedAt?: string | null; review?: import("./types.js").TaskReview | null; reviewState?: import("./types.js").TaskReviewState | null; workflowStepResults?: import("./types.js").WorkflowStepResult[] | null; mergeDetails?: import("./types.js").MergeDetails | null; sourceIssue?: import("./types.js").TaskSourceIssue | null; sourceMetadataPatch?: Record<string, unknown> | null; githubTracking?: import("./types.js").TaskGithubTracking | null; tokenUsage?: import("./types.js").TaskTokenUsage | null; modifiedFiles?: string[] | null; declaredSymbols?: string[] | null | undefined; missionId?: string | null; sliceId?: string | null; workflowTransitionNotification?: import("./types.js").WorkflowTransitionNotificationMarker | undefined; plannerOversightLevel?: string | null; sessionAdvisorEnabled?: boolean | null; approvedPlanFingerprint?: string | null },    runContext?: RunMutationContext,
   ): Promise<Task> {
     /*
     FNXC:SpecLock 2026-08-09-20:34:
@@ -2374,6 +2385,18 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     repositoryScope: import("./types.js").TaskRepositoryScope | undefined,
   ): Promise<Task> {
     return updateTaskRepositoryScopeImpl(this, id, repositoryScope);
+  }
+  /*
+  FNXC:TaskQueueOrder 2026-09-17-12:07:
+  FN-509's ONLY writer of the durable queue rank. Boost is a move-to-head within the card's current
+  stay: it starts nothing, moves no column, lifts no pause, clears no blocker, and never preempts a
+  selection that has already been accepted.
+  */
+  async boostTask(
+    id: string,
+    options: import("./task-store/task-queue-order-ops.js").BoostTaskOptions,
+  ): Promise<import("./task-store/task-queue-order-ops.js").BoostTaskResult> {
+    return boostTaskImpl(this, id, options);
   }
   async updateWorkspaceReviewState(
     id: string,
@@ -2911,7 +2934,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   async projectMergeRequestToWorkflowWorkItem( taskId: string, opts: MergeRequestWorkflowProjectionOptions = {}, ): Promise<WorkflowWorkItem | null> {
     return projectMergeRequestToWorkflowWorkItemImpl(this, taskId, opts);
   }
-  async createCompletionHandoffWorkflowWork( task: Pick<Task, "id" | "autoMerge" | "priority">, opts: { runId?: string; now?: string; source?: string } = {}, tx?: import("./postgres/data-layer.js").DbTransaction, ): Promise<WorkflowWorkItem> {
+  async createCompletionHandoffWorkflowWork( task: Pick<Task, "id" | "autoMerge">, opts: { runId?: string; now?: string; source?: string } = {}, tx?: import("./postgres/data-layer.js").DbTransaction, ): Promise<WorkflowWorkItem> {
     return createCompletionHandoffWorkflowWorkImpl(this, task, opts, tx);
   }
   public getWorkflowWorkItemByIdentity( runId: string, taskId: string, nodeId: string, kind: WorkflowWorkItemKind, ): WorkflowWorkItem | null {
@@ -3404,7 +3427,9 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     FNXC:OverlapScheduling 2026-08-29-06:04:
     Reroute only to a holder that the shared lifetime classification says blocks this task. Paused and
     failed rows with retained worktrees still own unfinished files; dormant holders use the same
-    priority → age → id ordering as scheduler admission before repair records a fresh blocker edge.
+    shared FN-509 queue order (Boost, then arrival, then id) as scheduler admission before repair
+    records a fresh blocker edge. Repair and admission must agree, or the two can pick opposite
+    blockers and bounce a pair forever.
     */
     const candidatePool = tasks.filter(
       (candidate) => candidate.id !== task.id && candidate.id !== previousOverlapBlockedBy,
@@ -3429,16 +3454,13 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         kind: "dormant",
         waivedForTaskIds: [],
       }))
-      .sort(compareTasksByPriorityThenAgeAndId);
+      .sort(compareTasksByQueueOrder);
 
     for (const candidate of [...activeCandidates, ...dormantCandidates]) {
       const candidateScope = await getScope(candidate.id);
       if (repairScopesOverlap(taskScope, candidateScope)) return candidate.id;
     }
 
-    const priorityRank: Record<TaskPriority, number> = { urgent: 0, high: 1, normal: 2, low: 3 };
-    const taskRank = priorityRank[task.priority ?? "normal"] ?? 2;
-    const taskCreatedAt = Date.parse(task.createdAt);
     const queuedCandidates = candidatePool
       .filter((candidate) => {
         const lanes = candidateLanesByTaskId.get(candidate.id);
@@ -3446,23 +3468,10 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         if (!lanes) return candidate.column === "todo";
         return lanes.hold !== undefined && candidate.column === lanes.hold;
       })
-      .filter((candidate) => {
-        const candidateRank = priorityRank[candidate.priority ?? "normal"] ?? 2;
-        if (candidateRank < taskRank) return true;
-        if (candidateRank > taskRank) return false;
-        const candidateCreatedAt = Date.parse(candidate.createdAt);
-        if (Number.isFinite(candidateCreatedAt) && Number.isFinite(taskCreatedAt) && candidateCreatedAt !== taskCreatedAt) {
-          return candidateCreatedAt < taskCreatedAt;
-        }
-        return candidate.id.localeCompare(task.id) < 0;
-      })
-      .sort((a, b) => {
-        const priorityDiff = (priorityRank[a.priority ?? "normal"] ?? 2) - (priorityRank[b.priority ?? "normal"] ?? 2);
-        if (priorityDiff !== 0) return priorityDiff;
-        const ageDiff = Date.parse(a.createdAt) - Date.parse(b.createdAt);
-        if (Number.isFinite(ageDiff) && ageDiff !== 0) return ageDiff;
-        return a.id.localeCompare(b.id);
-      });
+      /* Only a candidate the shared queue order ranks AHEAD of this task can legitimately hold
+         it back; comparing with the same comparator admission uses keeps the two consistent. */
+      .filter((candidate) => compareTasksByQueueOrder(candidate, task) < 0)
+      .sort(compareTasksByQueueOrder);
 
     for (const candidate of queuedCandidates) {
       const candidateScope = await getScope(candidate.id);

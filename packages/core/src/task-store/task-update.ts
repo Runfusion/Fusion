@@ -23,7 +23,6 @@ import {existsSync} from "node:fs";
 import type {Task, Column, TaskLogEntry, RunMutationContext, TaskRecommendation} from "../types.js";
 import {validateCustomFieldPatch, CustomFieldRejectionError} from "../tasks/task-fields.js";
 import "../builtin-traits.js";
-import {normalizeTaskPriority} from "../tasks/task-priority.js";
 import {validateNodeOverrideChange, resolveNodeOverrideLanes} from "../mesh/node-override-guard.js";
 import {shouldInvalidateEffectiveRoute} from "../mesh/effective-route-invalidation.js";
 import {isTaskTerminalNodeIdAsync} from "../workflows/workflow-ir-resolver.js";
@@ -302,11 +301,10 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
           ...updates.sourceMetadataPatch,
         };
       }
-      if (updates.priority === null) {
-        task.priority = normalizeTaskPriority(undefined);
-      } else if (updates.priority !== undefined) {
-        task.priority = normalizeTaskPriority(updates.priority);
-      }
+      /* FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509 retired the priority field. A generic update
+         can no longer set one, and it deliberately cannot set `queueBoost` either — the durable
+         rank has exactly one writer (`boostTask`), so a stale generic snapshot can neither erase a
+         fresh Boost nor resurrect one a Reset invalidated. */
       if (updates.worktree === null) {
         task.worktree = undefined;
       } else if (updates.worktree !== undefined) {

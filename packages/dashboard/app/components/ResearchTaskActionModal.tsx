@@ -1,7 +1,7 @@
 import { ViewHeader } from "./ViewHeader";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { Task, TaskPriority } from "@fusion/core";
+import type { Task } from "@fusion/core";
 import { fetchTasks } from "../api";
 import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
 import { getTaskTitleDisplayText } from "../utils/taskTitleDisplay";
@@ -18,7 +18,7 @@ interface ResearchTaskActionModalProps {
   finding: { id: string; heading?: string; content?: string };
   projectId?: string;
   onClose: () => void;
-  onConfirm: (payload: { taskId?: string; title?: string; description?: string; priority?: TaskPriority; attachExport: boolean }) => Promise<void>;
+  onConfirm: (payload: { taskId?: string; title?: string; description?: string; attachExport: boolean }) => Promise<void>;
 }
 
 export function ResearchTaskActionModal({ open, mode, run, finding, projectId, onClose, onConfirm }: ResearchTaskActionModalProps) {
@@ -27,7 +27,8 @@ export function ResearchTaskActionModal({ open, mode, run, finding, projectId, o
   const [attachExport, setAttachExport] = useState(false);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [priority, setPriority] = useState<TaskPriority>("normal");
+  /* FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509 removed the task priority field and every control
+   that set it. Tasks run in arrival order; an operator raises one explicitly with Boost. */
   const [taskId, setTaskId] = useState("");
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loadingTasks, setLoadingTasks] = useState(false);
@@ -43,7 +44,7 @@ export function ResearchTaskActionModal({ open, mode, run, finding, projectId, o
   FNXC:ResearchTaskModal 2026-08-01-00:41 (an operator's typed title was wiped when board workflows resolved):
   These two jobs were one effect, and its dependency list carried workflow-derived terminal-column
   metadata for the fetch's sake. That metadata changes whenever board workflows resolve or revalidate,
-  and each change re-ran the whole effect, calling `setTitle`/`setDescription`/`setPriority`/`setTaskId`
+  and each change re-ran the whole effect, calling `setTitle`/`setDescription`/`setTaskId`
   over whatever the operator had already typed. Opening the modal and typing before the workflows settled silently reverted the form
   to its defaults.
 
@@ -57,7 +58,6 @@ export function ResearchTaskActionModal({ open, mode, run, finding, projectId, o
     setAttachExport(false);
     setTitle(`Research: ${finding.heading || run.title}`);
     setDescription(preview);
-    setPriority("normal");
     setTaskId("");
   }, [open, mode, finding.heading, preview, run.title]);
 
@@ -144,14 +144,6 @@ export function ResearchTaskActionModal({ open, mode, run, finding, projectId, o
               <label className="research-task-action-modal__field">{t("research.descriptionLabel", "Description")}
                 <textarea className="input research-task-action-modal__textarea" value={description} onChange={(event) => setDescription(event.target.value)} />
               </label>
-              <label className="research-task-action-modal__field">{t("research.priorityLabel", "Priority")}
-                <select className="select" value={priority} onChange={(event) => setPriority(event.target.value as TaskPriority)}>
-                  <option value="low">{t("research.priorityLow", "Low")}</option>
-                  <option value="normal">{t("research.priorityNormal", "Normal")}</option>
-                  <option value="high">{t("research.priorityHigh", "High")}</option>
-                  <option value="urgent">{t("research.priorityUrgent", "Urgent")}</option>
-                </select>
-              </label>
             </>
           ) : (
             <label className="research-task-action-modal__field">{t("research.targetTaskLabel", "Target task")}
@@ -189,7 +181,6 @@ export function ResearchTaskActionModal({ open, mode, run, finding, projectId, o
                 taskId: mode === "enrich" ? normalizedTaskId : undefined,
                 title: mode === "create" ? title.trim() : undefined,
                 description: mode === "create" ? description.trim() : undefined,
-                priority: mode === "create" ? priority : undefined,
                 attachExport,
               }).finally(() => setSaving(false));
             }}

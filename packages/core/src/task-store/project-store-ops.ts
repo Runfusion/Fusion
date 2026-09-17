@@ -23,7 +23,6 @@ import {getWorkflowExtensionRegistry} from "../workflows/workflow-extension-regi
 import type {WorkflowMovePolicyInput} from "../workflows/workflow-extension-types.js";
 import "../builtin-traits.js";
 import {normalizeWorkflowIcon, type WorkflowDefinition, type WorkflowDefinitionInput} from "../workflows/workflow-definition-types.js";
-import {normalizeTaskPriority} from "../tasks/task-priority.js";
 import type {AsyncDataLayer, DbTransaction} from "../postgres/data-layer.js";
 import {projectScopeFor, recordRunAuditEventWithinTransaction} from "../postgres/data-layer.js";
 import {EvalStore} from "../eval/eval-store.js";
@@ -375,7 +374,6 @@ export async function duplicateTaskImpl(
           lineageId: generateTaskLineageId(),
           title: normalizedTitle.title ?? undefined,
           description: `${sourceTask.description}\n\n(Duplicated from ${id})`,
-          priority: normalizeTaskPriority(sourceTask.priority),
           column: duplicateIntakeColumn as Task["column"],
           modelPresetId: sourceTask.modelPresetId,
           sourceType: "task_duplicate",

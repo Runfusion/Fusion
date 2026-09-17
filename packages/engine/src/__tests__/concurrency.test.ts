@@ -1127,7 +1127,9 @@ describe("ProjectAdmissionCoordinator", () => {
     expect(getPreHeldExecutorSlotsForTests()).toEqual([]);
   });
 
-  it("shares the final active-task slot across planning, execution, and merge lanes", async () => {
+  /* FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509 deleted the review→execute→planning rank, so the
+     single remaining slot now goes to the OLDEST waiting card whatever its lane. */
+  it("gives the final active-task slot to the oldest candidate across every lane", async () => {
     const coordinator = new ProjectAdmissionCoordinator();
     const started: string[] = [];
     const activeTaskLimit = resolveAgentCapacityLimit({ maxConcurrent: 12 });
@@ -1154,7 +1156,7 @@ describe("ProjectAdmissionCoordinator", () => {
       projectId: "project-a",
       maxConcurrent: activeTaskLimit,
       claimed: () => 11,
-    })).toBe("FN-MERGE");
+    })).toBe("FN-PLANNING");
     expect(await coordinator.reserveIfAvailable({
       projectId: "project-a",
       taskId: "FN-DIRECT-SCHEDULER",
@@ -1162,7 +1164,7 @@ describe("ProjectAdmissionCoordinator", () => {
       maxConcurrent: activeTaskLimit,
       claimed: () => 11,
     })).toBe(false);
-    expect(started).toEqual(["FN-MERGE"]);
+    expect(started).toEqual(["FN-PLANNING"]);
 
     // Once the selected task is durably live, its matching reservation is the
     // same slot—not a second occupant—so the next real slot remains usable.
@@ -1172,11 +1174,11 @@ describe("ProjectAdmissionCoordinator", () => {
       consumesWorktree: true,
       maxConcurrent: 13,
       claimed: () => 12,
-      claimedTaskIds: () => ["FN-MERGE"],
+      claimedTaskIds: () => ["FN-PLANNING"],
     })).toBe(true);
 
     coordinator.releaseReservation("FN-DIRECT-SCHEDULER");
-    coordinator.releaseReservation("FN-MERGE");
+    coordinator.releaseReservation("FN-PLANNING");
   });
 
   it("does not lose a holder that transfers from reservation to durable state during a claim read", async () => {
@@ -1491,7 +1493,9 @@ describe("ProjectAdmissionCoordinator", () => {
     semaphore.release();
   });
 
-  it("refreshes every lane and admits review before older execution and planning", async () => {
+  /* FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509 — every lane still refreshes, but the winner is
+     the oldest candidate; a newer review card no longer overtakes older work. */
+  it("refreshes every lane and admits the oldest candidate, not the review lane", async () => {
     const coordinator = new ProjectAdmissionCoordinator();
     const started: string[] = [];
     const register = (lane: "review" | "execute" | "planning", taskId: string, createdAt: string, name: string) => {
@@ -1505,10 +1509,13 @@ describe("ProjectAdmissionCoordinator", () => {
     register("review", "FN-3", "2026-01-03T00:00:00.000Z", "merge");
 
     await coordinator.admitNext({ projectId: "project-a", maxConcurrent: 1, claimed: () => 0 });
-    expect(started).toEqual(["merge"]);
+    expect(started).toEqual(["planner"]);
   });
 
-  it("uses oldest valid age then task ID only within one lifecycle lane", () => {
+  /* FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509 — age and task id now order the WHOLE candidate
+     list, not just one lane. An older planning card leads a newer execute card, and unparseable
+     timestamps still sort last with a deterministic id tiebreak. */
+  it("uses oldest valid age then task ID across every lifecycle lane", () => {
     const ordered = [
       { taskId: "bad", lane: "execute" as const, createdAt: "not-a-date" },
       { taskId: "FN-12", lane: "execute" as const, createdAt: "2026-01-01T00:00:00.000Z" },
@@ -1516,6 +1523,6 @@ describe("ProjectAdmissionCoordinator", () => {
       { taskId: "also-bad", lane: "execute" as const },
       { taskId: "FN-older-planning", lane: "planning" as const, createdAt: "2020-01-01T00:00:00.000Z" },
     ].sort(compareAdmissionCandidates);
-    expect(ordered.map((item) => item.taskId)).toEqual(["FN-2", "FN-12", "also-bad", "bad", "FN-older-planning"]);
+    expect(ordered.map((item) => item.taskId)).toEqual(["FN-older-planning", "FN-2", "FN-12", "also-bad", "bad"]);
   });
 });

@@ -9033,7 +9033,12 @@
       "badgeApproved": "Plan approved by you",
       "approved": "Plan approved — {{id}} continues to execution",
       "rejected": "Plan rejected — {{id}} goes back for a new plan"
-    }
+    },
+    "boost": "Boost",
+    "boosting": "Boosting…",
+    "boostAriaLabel": "Boost {{taskId}} to the front of the queue",
+    "boostTitle": "Try this task first when the queue next admits work. It does not start it or clear any blocker.",
+    "boostFailed": "Could not boost {{taskId}} — it may have started or moved. Refresh to see its current place."
   },
   "terminal": {
     "arrowKeysLabel": "Terminal arrow keys",

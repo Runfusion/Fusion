@@ -22,7 +22,7 @@ All skill/extension tool invocations in this catalog use the public `fn_*` names
 | `fn_trait_list` | List column traits available when authoring Fusion workflow IR columns. |
 | `fn_workflow_select` | Assign a workflow definition to a task by workflow ID. |
 | `fn_task_create` | Create a new task on the Fusion task board. The task enters the planning column where the AI planning agent will plan it into a full prompt with steps, file scope, and acceptance criteria. Optionally pass workflow_id to select a workflow at creation time; use fn_workflow_list to discover valid IDs. |
-| `fn_task_update` | Update fields on an existing task. Supports modifying the title, description, dependencies, assigned agent, priority, and workflow_id after task creation. Set workflow_id to a workflow ID to select it, or null to clear the workflow selection. |
+| `fn_task_update` | Update fields on an existing task. Supports modifying the title, description, dependencies, assigned agent, and workflow_id after task creation. Set workflow_id to a workflow ID to select it, or null to clear the workflow selection. |
 | `fn_task_list` | List all tasks on the Fusion board, grouped by column. |
 | `fn_task_show` | Show full details for a task including steps, progress, and log entries. |
 | `fn_task_logs_read` | Read a task's persisted agent log with pagination and optional type filtering. Tool detail is previewed per row by default; detail: full lifts the row preview while the whole response remains bounded. |

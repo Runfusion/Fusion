@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useComposerDictation } from "../hooks/useComposerDictation";
 import { MicButton } from "./MicButton";
-import { DEFAULT_TASK_PRIORITY, TASK_PRIORITIES, isValidTaskBranchName, type GlobalSettings, type Task, type TaskPriority, type Settings, type WorkflowDefinition, type ResolvedWorkflowOptionalStep } from "@fusion/core";
+import { isValidTaskBranchName, type GlobalSettings, type Task, type Settings, type WorkflowDefinition, type ResolvedWorkflowOptionalStep } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
 import { fetchModels, fetchSettings, fetchWorkflows, fetchWorkflowOptionalSteps, refineText, getRefineErrorMessage, updateGlobalSettings, fetchGlobalSettings, fetchGitBranches, type RefinementType, type ModelInfo, type NodeInfo } from "../api";
 import { WorkflowOptionalStepsDropdown } from "./WorkflowOptionalStepsDropdown";
@@ -13,7 +13,6 @@ import { NodeHealthDot } from "./NodeHealthDot";
 import { LoadingSpinner } from "./LoadingSpinner";
 import { Sparkles, ChevronUp, ChevronDown, Maximize2, Minimize2, Paperclip, Zap, UserCheck, Brain, Server } from "lucide-react";
 import { REPO_OVERRIDE_RE, resolveEffectiveGithubRepoDefault } from "./githubTracking";
-import { getPriorityColorVar, getPriorityIcon, getPriorityLabel } from "../utils/priorityIndicator";
 import { ProviderIcon } from "./ProviderIcon";
 import { WorkflowIcon } from "./WorkflowIcon";
 import { PendingAttachmentPreviews } from "./PendingAttachmentPreviews";
@@ -109,8 +108,9 @@ export interface TaskFormProps {
   nodeOverrideDisabledReason?: string;
 
   // Model configuration
-  priority?: TaskPriority;
-  onPriorityChange?: (value: TaskPriority) => void;
+  /* FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509 removed the task priority field and every control
+     that set it — the inline quick-add cycle button and the advanced select. Tasks run in arrival
+     order; an operator raises one explicitly with Boost on its card. */
   executorModel: string;
   onExecutorModelChange: (value: string, meta?: TaskFormValueChangeMeta) => void;
   credentialInstanceId?: string;
@@ -255,8 +255,6 @@ export function TaskForm({
   nodeOptions,
   nodeOverrideDisabled = false,
   nodeOverrideDisabledReason,
-  priority,
-  onPriorityChange,
   executorModel,
   onExecutorModelChange,
   credentialInstanceId,
@@ -339,7 +337,6 @@ export function TaskForm({
     (hideDependencies ? false : dependencies.length > 0) ||
     pendingImages.length > 0 ||
     presetMode !== "default" ||
-    (priority ?? DEFAULT_TASK_PRIORITY) !== DEFAULT_TASK_PRIORITY ||
     executorModel !== "" ||
     validatorModel !== "" ||
     (planningModel || "") !== "" ||
@@ -567,7 +564,6 @@ export function TaskForm({
     (hideDependencies ? false : dependencies.length > 0) ||
     pendingImages.length > 0 ||
     presetMode !== "default" ||
-    (priority ?? DEFAULT_TASK_PRIORITY) !== DEFAULT_TASK_PRIORITY ||
     executorModel !== "" ||
     validatorModel !== "" ||
     (planningModel || "") !== "" ||
@@ -966,10 +962,6 @@ export function TaskForm({
   const selectedNode = (nodeOptions ?? []).find((node) => node.id === nodeId);
   const nodeInlineLabel = selectedNode?.name ?? t("taskForm.nodeInlineDefault", "Node");
   const modelInlineLabel = selectedPreset?.name ?? (presetMode === "custom" ? t("taskForm.modelsCustom", "Models") : t("taskForm.modelsDefault", "Models"));
-  const inlinePriority = priority ?? DEFAULT_TASK_PRIORITY;
-  const InlinePriorityIcon = getPriorityIcon(inlinePriority);
-  const inlinePriorityLabel = getPriorityLabel(inlinePriority);
-  const inlinePriorityButtonLabel = t("taskForm.priorityInlineAria", "Priority: {{priority}}", { priority: inlinePriorityLabel });
   const inlineFastButtonLabel = t("taskForm.toggleFastMode", "Toggle fast execution mode");
   /* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 toggle label states the consequence, matching QuickEntryBox. */
   const inlineHumanPlanApprovalLabel = t(
@@ -1133,13 +1125,12 @@ export function TaskForm({
 
       {/*
       FNXC:NewTask 2026-06-23-00:10:
-      Common quick-add action row, adjacent to the description (create mode only). The deep/advanced controls stay collapsed behind the "Advanced" disclosure, but the buttons users reach for most — Attach, Fast (execution-mode), Priority — are surfaced INLINE here next to Plan, styled identically to QuickEntryBox's quick-add buttons (shared `.btn .btn-sm`, `.dep-trigger`, lucide icons at size 12). They are wired to TaskForm's existing state/handlers, NOT duplicated:
+      Common quick-add action row, adjacent to the description (create mode only). The deep/advanced controls stay collapsed behind the "Advanced" disclosure, but the buttons users reach for most — Attach and Fast (execution-mode) — are surfaced INLINE here next to Plan, styled identically to QuickEntryBox's quick-add buttons (shared `.btn .btn-sm`, `.dep-trigger`, lucide icons at size 12). They are wired to TaskForm's existing state/handlers, NOT duplicated:
         - Attach   → fileInputRef.click() (same hidden input the Advanced Attachments group uses; onImagesChange handles the file).
         - Fast     → toggles executionMode standard⇄fast via onExecutionModeChange (mirrors QuickEntryBox quick-entry-fast-toggle).
-        - Priority → cycles through TASK_PRIORITIES via onPriorityChange and uses the shared priorityIndicator glyph language.
 
       FNXC:NewTaskDialogAffordances 2026-07-10-21:45:
-      Priority and Fast are icon-only in the inline New Task row to match QuickEntryBox: priority uses the shared up/high, down/low, flag/normal, alert/urgent helper, and Fast uses Zap while title/aria-label/test-id semantics preserve accessibility and tests.
+Fast is icon-only in the inline New Task row to match QuickEntryBox, using Zap while title/aria-label/test-id semantics preserve accessibility and tests.
       Plan remains gated on its handoff callback. Model selectors, branch/base, node, review level, and GitHub tracking stay in the Advanced disclosure.
 
       FNXC:NewTaskDialogAffordances 2026-06-23-21:20:
@@ -1327,25 +1318,6 @@ export function TaskForm({
             </UiButton>
           )}
 
-          {/* FNXC:NewTask 2026-06-23-00:10: Priority — cycles TASK_PRIORITIES via onPriorityChange (shared icon-only glyph language, same accessible label shape as QuickEntryBox).
-          FNXC:PriorityColorCoding 2026-07-11-00:00: Tint the inline priority glyph from priorityIndicator so the New Task row shares quick-add/card urgency colors without changing button semantics. */}
-          {onPriorityChange && (
-            <UiButton
-              type="button"
-              className="btn btn-sm task-form-inline-icon-btn"
-              onClick={() => {
-                const idx = TASK_PRIORITIES.indexOf(inlinePriority);
-                const next = TASK_PRIORITIES[(idx + 1) % TASK_PRIORITIES.length];
-                onPriorityChange(next);
-              }}
-              aria-label={inlinePriorityButtonLabel}
-              disabled={disabled}
-              data-testid="task-form-inline-priority"
-              title={inlinePriorityButtonLabel}
-            >
-              <InlinePriorityIcon size={12} className="task-form-action-icon" aria-hidden="true" style={{ color: getPriorityColorVar(inlinePriority) }} />
-            </UiButton>
-          )}
         </div>
       )}
       </div>
@@ -1634,25 +1606,6 @@ export function TaskForm({
       {/* Model Selection */}
       <div className="form-group">
         <label>{t("taskForm.modelConfigLabel", "Model Configuration")}</label>
-        {onPriorityChange && (
-          <div className="model-select-row">
-            <label id="task-priority-label" htmlFor="task-priority" className="model-select-label">{t("taskForm.priorityLabel", "Priority")}</label>
-            <UiSelect
-              id="task-priority"
-              aria-labelledby="task-priority-label"
-              data-testid="task-priority-select"
-              value={priority ?? DEFAULT_TASK_PRIORITY}
-              onChange={(e) => onPriorityChange(e.target.value as TaskPriority)}
-              disabled={disabled}
-            >
-              {TASK_PRIORITIES.map((taskPriority) => (
-                <option key={taskPriority} value={taskPriority}>
-                  {t(`taskForm.priority_${taskPriority}`, taskPriority[0].toUpperCase() + taskPriority.slice(1))}
-                </option>
-              ))}
-            </UiSelect>
-          </div>
-        )}
         {onExecutionModeChange && executionMode !== undefined && (
           <div className="model-select-row">
             <label id="task-execution-mode-label" htmlFor="task-execution-mode" className="model-select-label">{t("taskForm.executionModeLabel", "Execution mode")}</label>

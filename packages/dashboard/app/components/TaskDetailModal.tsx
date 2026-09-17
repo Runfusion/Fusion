@@ -29,11 +29,9 @@ import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { sharedRehypePlugins, createMermaidCodeComponent } from "./markdownPipeline";
-import type { Task, TaskDetail, TaskAttachment, ColumnId, MergeResult, Settings, GlobalSettings, Agent, TaskPriority, TaskSourceIssue, WorkflowStepResult, GithubIssueAction, TaskGitLabTrackedItem, PlannerOversightLevel, PlannerOverseerRuntimeSnapshot, TaskVerificationRequest, ThinkingLevel } from "@fusion/core";
+import type { Task, TaskDetail, TaskAttachment, ColumnId, MergeResult, Settings, GlobalSettings, Agent, TaskSourceIssue, WorkflowStepResult, GithubIssueAction, TaskGitLabTrackedItem, PlannerOversightLevel, PlannerOverseerRuntimeSnapshot, TaskVerificationRequest, ThinkingLevel } from "@fusion/core";
 import {
-  DEFAULT_TASK_PRIORITY,
   REPO_OVERRIDE_RE,
-  TASK_PRIORITIES,
   PLANNER_OVERSIGHT_LEVELS,
   getErrorMessage,
 } from "@fusion/core";
@@ -108,7 +106,6 @@ import { getUnifiedTaskProgress } from "../utils/taskProgress";
 import { getStalePausedReviewCopy, shouldShowStalePausedReviewBadge } from "../utils/stalePausedReviewCopy";
 import { getTaskAgeStalenessCopy } from "../utils/taskAgeStalenessCopy";
 import { decideTaskPromptRefresh } from "../utils/taskPromptRefresh";
-import { getPriorityLabel } from "../utils/priorityIndicator";
 import { hasPendingAutomaticRecovery } from "../utils/taskRecovery";
 import { resolveRetryStageCopy } from "../utils/taskRetryCopy";
 import { findInReviewStallLogEntry, IN_REVIEW_STALL_LOG_REGEX } from "../utils/findInReviewStallLogEntry";
@@ -685,11 +682,9 @@ const OVERSIGHT_LEVEL_LABEL: Record<PlannerOversightLevel, string> = {
   autonomous: "Autonomous recovery",
 };
 
-function normalizeTaskPriorityValue(priority: Task["priority"]): TaskPriority {
-  return isStringValue(priority) && (TASK_PRIORITIES as readonly string[]).includes(priority)
-    ? (priority as TaskPriority)
-    : DEFAULT_TASK_PRIORITY;
-}
+/* FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509 removed the task priority field and every Task
+     Detail control that read or wrote it — the Actions-overflow priority group and the edit-mode
+     select. Tasks run in arrival order; an operator raises one with Boost on the card. */
 
 interface TaskWorkflowMetadata {
   id: string;
@@ -1810,7 +1805,6 @@ export function TaskDetailContent({
   const [editPlannerOversightLevel, setEditPlannerOversightLevel] = useState("");
   const [editPresetMode, setEditPresetMode] = useState<"default" | "preset" | "custom">("default");
   const [editReviewLevel, setEditReviewLevel] = useState<number | undefined>(undefined);
-  const [editPriority, setEditPriority] = useState<TaskPriority>(DEFAULT_TASK_PRIORITY);
   const [editNodeId, setEditNodeId] = useState<string | undefined>(task.nodeId);
   const [editExecutionMode, setEditExecutionMode] = useState<"standard" | "fast">(normalizeExecutionModeValue(task.executionMode));
   const [editSelectedPresetId, setEditSelectedPresetId] = useState("");
@@ -1825,8 +1819,6 @@ export function TaskDetailContent({
   const [editPendingImages, setEditPendingImages] = useState<PendingImage[]>([]);
   const [isSaving, setIsSaving] = useState(false);
 
-  const [inlinePriority, setInlinePriority] = useState<TaskPriority>(normalizeTaskPriorityValue(task.priority));
-  const [isSavingInlinePriority, setIsSavingInlinePriority] = useState(false);
   const [inlineExecutionMode, setInlineExecutionMode] = useState<"standard" | "fast">(normalizeExecutionModeValue(task.executionMode));
   const [isSavingInlineExecutionMode, setIsSavingInlineExecutionMode] = useState(false);
   const [inlineNoCommitsExpected, setInlineNoCommitsExpected] = useState<boolean>(task.noCommitsExpected === true);
@@ -2027,8 +2019,7 @@ export function TaskDetailContent({
   }, [task.id, task.enabledWorkflowSteps]);
 
   useEffect(() => {
-    setInlinePriority(normalizeTaskPriorityValue(task.priority));
-  }, [task.id, task.priority]);
+  }, [task.id]);
 
   useEffect(() => {
     setInlineExecutionMode(normalizeExecutionModeValue(task.executionMode));
@@ -2602,7 +2593,6 @@ export function TaskDetailContent({
     setEditSourceIssueUrl(task.sourceIssue?.url ?? "");
     setEditPendingImages([]);
     setEditReviewLevel(task.reviewLevel);
-    setEditPriority(normalizeTaskPriorityValue(task.priority));
   }, [canEdit, task]);
 
   const exitEditMode = useCallback(() => {
@@ -2616,11 +2606,10 @@ export function TaskDetailContent({
     setEditSourceIssueRepository(task.sourceIssue?.repository ?? "");
     setEditSourceIssueExternalId(task.sourceIssue?.externalIssueId ?? "");
     setEditSourceIssueUrl(task.sourceIssue?.url ?? "");
-    setEditPriority(normalizeTaskPriorityValue(task.priority));
     setEditExecutionMode(normalizeExecutionModeValue(task.executionMode));
     editPendingImages.forEach((img) => URL.revokeObjectURL(img.previewUrl));
     setEditPendingImages([]);
-  }, [task.title, task.description, task.dependencies, task.nodeId, task.priority, task.executionMode, editPendingImages]);
+  }, [task.title, task.description, task.dependencies, task.nodeId, task.executionMode, editPendingImages]);
 
   const [editAutoSaveStatus, setEditAutoSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const editAutoSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -2689,7 +2678,6 @@ export function TaskDetailContent({
     if (editPlannerOversightLevel !== currentPlannerOversightLevel) updates.plannerOversightLevel = editPlannerOversightLevel !== "" ? (editPlannerOversightLevel as "off" | "observe" | "steer" | "autonomous") : null;
     if ((task.nodeId ?? undefined) !== editNodeId) updates.nodeId = editNodeId ?? null;
     if (editReviewLevel !== task.reviewLevel) updates.reviewLevel = editReviewLevel;
-    if (editPriority !== normalizeTaskPriorityValue(task.priority)) updates.priority = editPriority;
     if (editExecutionMode !== normalizeExecutionModeValue(task.executionMode)) updates.executionMode = editExecutionMode === "fast" ? "fast" : null;
 
     const normalizedProvider = normalizeSourceIssueText(editSourceIssueProvider);
@@ -2727,7 +2715,7 @@ export function TaskDetailContent({
     }
 
     return { updates, error: null as string | null };
-  }, [editBaseBranch, editBranch, editDependencies, editDescription, editExecutionMode, editCredentialInstanceId, editExecutorModel, editNodeId, editPlanningCredentialInstanceId, editPlanningModel, editPriority, editReviewLevel, editSelectedWorkflowSteps, editSourceIssueExternalId, editSourceIssueProvider, editSourceIssueRepository, editSourceIssueUrl, editThinkingLevel, editPlannerOversightLevel, editValidatorCredentialInstanceId, editValidatorModel, task]);
+  }, [editBaseBranch, editBranch, editDependencies, editDescription, editExecutionMode, editCredentialInstanceId, editExecutorModel, editNodeId, editPlanningCredentialInstanceId, editPlanningModel, editReviewLevel, editSelectedWorkflowSteps, editSourceIssueExternalId, editSourceIssueProvider, editSourceIssueRepository, editSourceIssueUrl, editThinkingLevel, editPlannerOversightLevel, editValidatorCredentialInstanceId, editValidatorModel, task]);
 
   const requestBlankDescriptionDeletion = useCallback(async (descriptionAtRequest: string, force: boolean): Promise<boolean> => {
     if (blankDescriptionDeletePendingRef.current || (!force && lastBlankDescriptionDeleteAttemptRef.current === descriptionAtRequest)) return false;
@@ -2866,7 +2854,6 @@ export function TaskDetailContent({
     editPlannerOversightLevel,
     editNodeId,
     editReviewLevel,
-    editPriority,
     editExecutionMode,
     editSelectedWorkflowSteps,
     editSourceIssueProvider,
@@ -2875,34 +2862,6 @@ export function TaskDetailContent({
     editSourceIssueUrl,
     persistEditChanges,
   ]);
-
-  const handleInlinePriorityChange = useCallback(async (nextValue: string) => {
-    const normalizedNextPriority = normalizeTaskPriorityValue(nextValue as Task["priority"]);
-    const currentPriority = normalizeTaskPriorityValue(task.priority);
-
-    if (normalizedNextPriority === currentPriority) {
-      setInlinePriority(currentPriority);
-      return;
-    }
-
-    const previousPriority = inlinePriority;
-    setInlinePriority(normalizedNextPriority);
-    setIsSavingInlinePriority(true);
-
-    try {
-      const updatedTask = await updateTask(task.id, { priority: normalizedNextPriority }, projectId);
-      setInlinePriority(normalizeTaskPriorityValue(updatedTask.priority));
-      onTaskUpdated?.(updatedTask);
-      addToast(t("taskDetail.priority.updated", "Priority updated to {{priority}}", { priority: normalizeTaskPriorityValue(updatedTask.priority) }), "success");
-    } catch (err) {
-      setInlinePriority(previousPriority);
-      addToast(t("taskDetail.updateFailed", "Failed to update {{id}}: {{error}}", { id: task.id, error: getErrorMessage(err) }), "error");
-    } finally {
-      if (mountedRef.current) {
-        setIsSavingInlinePriority(false);
-      }
-    }
-  }, [task.id, task.priority, projectId, inlinePriority, onTaskUpdated, addToast]);
 
   const handleInlineExecutionModeToggle = useCallback(async () => {
     const currentMode = normalizeExecutionModeValue(task.executionMode);
@@ -4540,22 +4499,6 @@ export function TaskDetailContent({
     }
 
     items.push({
-      id: "detail-actions-priority-heading",
-      testId: "detail-actions-priority-heading",
-      label: t("taskDetail.actions.priorityHeading", "Priority"),
-      tone: "note",
-    });
-    for (const priority of TASK_PRIORITIES) {
-      items.push({
-        id: `detail-priority-option-${priority}`,
-        testId: `detail-priority-option-${priority}`,
-        label: getPriorityLabel(priority),
-        pressed: inlinePriority === priority,
-        disabled: isSavingInlinePriority,
-        onSelect: () => void handleInlinePriorityChange(priority),
-      });
-    }
-    items.push({
       id: "detail-execution-mode-toggle",
       testId: "detail-execution-mode-toggle",
       label: t("taskDetail.executionMode.ariaLabel", "Execution mode: {{mode}}", { mode: inlineExecutionMode }),
@@ -4594,9 +4537,6 @@ export function TaskDetailContent({
     handleStopOverseer,
     overseerExplainOpen,
     handleExplainOverseer,
-    inlinePriority,
-    isSavingInlinePriority,
-    handleInlinePriorityChange,
     inlineExecutionMode,
     isSavingInlineExecutionMode,
     handleInlineExecutionModeToggle,
@@ -5566,8 +5506,6 @@ export function TaskDetailContent({
                 onAutoSaveDescription={handleAutoSaveDescription}
                 reviewLevel={editReviewLevel}
                 onReviewLevelChange={setEditReviewLevel}
-                priority={editPriority}
-                onPriorityChange={setEditPriority}
                 nodeId={editNodeId}
                 onNodeIdChange={setEditNodeId}
                 nodeOptions={nodes}

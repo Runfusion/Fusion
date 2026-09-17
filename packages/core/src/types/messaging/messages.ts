@@ -7,7 +7,6 @@
  * mailbox contract. Keep those symbols in this peel so types.ts only re-exports.
  */
 
-import type { TaskPriority } from "../board/board.js";
 import type { NativeStructureRef } from "../../types.js";
 import type { DashboardInboxCategory } from "../../messaging/inbox-categories.js";
 
@@ -61,7 +60,6 @@ export function resolveEphemeralTaskCreationPolicy(settings: {
 export interface ProposedTaskMetadata {
   title: string;
   description: string;
-  priority?: TaskPriority;
   workflowId?: string;
   dependencies?: string[];
 }

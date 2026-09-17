@@ -4308,84 +4308,12 @@ Toast text must contrast its status background across every dashboard theme and 
 .text-secondary { color: var(--text-muted); }
 .text-dim { color: var(--text-dim, var(--text-muted)); }
 
-/* === Column header dropdown menu actions ================================ */
-.column-menu {
-  position: relative;
-  display: inline-flex;
-}
-
-.column-menu-popover {
-  position: absolute;
-  top: calc(100% + var(--space-xs));
-  right: 0;
-  min-width: calc(var(--space-2xl) * 6);
-  padding: var(--space-xs);
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-lg);
-  z-index: 30;
-  display: flex;
-  flex-direction: column;
-}
-
-.column-menu-group {
-  display: flex;
-  flex-direction: column;
-  gap: calc(var(--space-xs) / 2);
-  padding-bottom: var(--space-xs);
-  margin-bottom: var(--space-xs);
-  border-bottom: 1px solid var(--border);
-}
-
-.column-menu-item {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: calc(var(--space-xs) / 2);
-  padding: var(--space-sm) var(--space-md);
-  background: transparent;
-  border: 0;
-  border-radius: var(--radius-sm);
-  text-align: left;
-  font-size: 13px;
-  color: var(--text);
-  cursor: pointer;
-  transition: background var(--transition-fast);
-}
-
-.column-menu-item:hover:not(:disabled),
-.column-menu-item:focus-visible {
-  background: var(--card-hover);
-}
-
-.column-menu-item:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.column-menu-item-hint {
-  font-size: 11px;
-  color: var(--text-muted);
-}
-
-.column-menu-item-row {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-sm);
-}
-
-.column-menu-item-check {
-  width: 1em;
-  color: var(--color-success);
-  text-align: center;
-}
-
-@media (max-width: 768px) {
-  .column-menu-popover {
-    max-width: calc(100vw - (var(--space-lg) * 2));
-  }
-}
+/*
+FNXC:TaskQueueOrder 2026-09-17-12:07:
+FN-509 deleted the column header overflow menu and every rule that dressed it: the container, its
+popover, the grouped items with their hover/disabled/hint/row/check parts, and the mobile popover
+width override. The display order is fixed, so no column offers a menu at all.
+*/
 
 /*
 FNXC:Navigation 2026-06-22-00:00:

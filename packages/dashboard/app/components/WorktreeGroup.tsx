@@ -29,6 +29,9 @@ interface WorktreeGroupProps {
     id: string,
     updates: { title?: string; description?: string; dependencies?: string[] }
   ) => Promise<Task>;
+  /* FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509 — every host that renders a LIVE card forwards Boost,
+     so the affordance is not tied to one surface. Omitting it withholds the button. */
+  onBoostTask?: (id: string, scope: { expectedColumn: string; expectedColumnEntryAt: string }) => Promise<Task>;
   onPauseTask?: (id: string) => Promise<Task>;
   onRetryTask?: (id: string) => Promise<Task>;
   onOpenChatWithPrefill?: (prefillText: string) => void;
@@ -82,6 +85,7 @@ function WorktreeGroupComponent({
   addToast,
   globalPaused,
   onUpdateTask,
+  onBoostTask,
   onPauseTask,
   onRetryTask,
   onOpenChatWithPrefill,
@@ -153,6 +157,7 @@ function WorktreeGroupComponent({
           addToast={addToast}
           globalPaused={globalPaused}
           onUpdateTask={onUpdateTask}
+          onBoostTask={onBoostTask}
           onPauseTask={onPauseTask}
           onRetryTask={onRetryTask}
           onOpenChatWithPrefill={onOpenChatWithPrefill}
@@ -190,6 +195,7 @@ function WorktreeGroupComponent({
           addToast={addToast}
           globalPaused={globalPaused}
           onUpdateTask={onUpdateTask}
+          onBoostTask={onBoostTask}
           onPauseTask={onPauseTask}
           onRetryTask={onRetryTask}
           onOpenChatWithPrefill={onOpenChatWithPrefill}

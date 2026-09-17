@@ -67,7 +67,7 @@ export async function projectMergeRequestToWorkflowWorkItemImpl(store: TaskStore
     return item;
 }
 
-export async function createCompletionHandoffWorkflowWorkImpl(store: TaskStore, task: Pick<Task, "id" | "autoMerge" | "priority">, opts: { runId?: string; now?: string; source?: string } = {}, tx?: import("../postgres/data-layer.js").DbTransaction): Promise<WorkflowWorkItem> {
+export async function createCompletionHandoffWorkflowWorkImpl(store: TaskStore, task: Pick<Task, "id" | "autoMerge">, opts: { runId?: string; now?: string; source?: string } = {}, tx?: import("../postgres/data-layer.js").DbTransaction): Promise<WorkflowWorkItem> {
     const autoMerge = task.autoMerge !== false;
     const runId = opts.runId ?? `completion-handoff:${task.id}:${randomUUID()}`;
     const nodeId = autoMerge ? "merge-gate" : "merge-manual-hold";

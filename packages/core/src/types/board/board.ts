@@ -93,12 +93,13 @@ export function normalizeColumnId(value: unknown, fallback: ColumnId = DEFAULT_C
   return typeof value === "string" && value.length > 0 ? value : fallback;
 }
 
-/** Ordered task-priority levels for the core task domain contract. */
-export const TASK_PRIORITIES = ["low", "normal", "high", "urgent"] as const;
-export type TaskPriority = (typeof TASK_PRIORITIES)[number];
-
-/**
- * Default task priority used for legacy rows/entries and create flows when
- * callers omit the priority field.
- */
-export const DEFAULT_TASK_PRIORITY: TaskPriority = "normal";
+/*
+FNXC:TaskQueueOrder 2026-09-17-12:07:
+FN-509 DELETES the task-priority contract. `TASK_PRIORITIES`, `TaskPriority` and
+`DEFAULT_TASK_PRIORITY` are gone: there are no importance levels any more, ordinary queues are
+strictly arrival-ordered, and the only forward move is an explicit Boost (see
+`tasks/task-queue-order.ts`). Historical SQL columns and archived documents may still physically
+hold `"urgent"`/`"normal"` strings, but nothing reads them: they are inert compatibility data and
+are never re-emitted as a task field, migrated into a Boost, copied onto a new task, or used to
+sort. Do not re-add a level type to satisfy an old fixture.
+*/

@@ -251,6 +251,9 @@ export const tasks = projectSchema.table("tasks", {
   externalBlock: jsonb("external_block"),
   /* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 per-card human plan decision state. */
   humanPlanApproval: jsonb("human_plan_approval"),
+  /* FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509 durable per-stay Boost rank. The neighbouring
+     `priority` column is retired: it is retained as inert historical data and is never read. */
+  queueBoost: jsonb("queue_boost"),
   planningFailure: jsonb("planning_failure"),
   noCommitsExpected: integer("no_commits_expected").default(0),
   enabledWorkflowSteps: jsonb("enabled_workflow_steps").default([]),

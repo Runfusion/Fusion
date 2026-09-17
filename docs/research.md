@@ -151,7 +151,7 @@ Select a run from the history sidebar to see:
 
 Each finding has two task-facing actions:
 
-- **Create Task** — Opens a modal to create a new task from the finding, with pre-populated title, description, and priority. The finding content is attached as a task document (key: `research-{runId}`) and optionally as a Markdown attachment.
+- **Create Task** — Opens a modal to create a new task from the finding, with pre-populated title and description. There is no priority selection: tasks run in arrival order and an operator raises one with Boost. The finding content is attached as a task document (key: `research-{runId}`) and optionally as a Markdown attachment.
 - **Enrich Task** — Attaches the finding content to an existing task as a document and/or attachment.
 
 ### Status indicators

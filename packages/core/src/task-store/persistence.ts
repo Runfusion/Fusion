@@ -8,7 +8,7 @@
  * stays in lockstep with the named-column INSERT/UPSERT clauses generated below.
  */
 import type { Task } from "../types.js";
-import { normalizeTaskPriority } from "../tasks/task-priority.js";
+import { normalizeTaskQueueBoost } from "../tasks/task-queue-order.js";
 import { toJson, toJsonNullable, fromJson} from "../db/db.js";
 
 /** Database row shape for the tasks table (all columns). */
@@ -17,7 +17,10 @@ export interface TaskRow {
   lineageId: string | null;
   title: string | null;
   description: string;
+  /* FNXC:TaskQueueOrder 2026-09-17-12:07: inert historical column. Read-shape only — FN-509
+     removed every reader, and nothing writes it. Do not reintroduce it as a task field. */
   priority: string | null;
+  queueBoost: string | null;
   column: string;
   status: string | null;
   size: string | null;
@@ -268,7 +271,10 @@ export const TASK_COLUMN_DESCRIPTORS: TaskColumnDescriptor[] = [
   defineTaskColumn("lineageId", (_task, context) => context.lineageId),
   defineTaskColumn("title", (task) => task.title ?? null),
   defineTaskColumn("description", (task) => task.description ?? ""),
-  defineTaskColumn("priority", (task) => normalizeTaskPriority(task.priority)),
+  /* FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509 retired the `priority` descriptor. The SQL column
+     survives with its own default so historical rows stay readable, but nothing writes a level any
+     more and nothing reads one. The durable queue rank below replaces it. */
+  defineTaskColumn("queueBoost", (task) => toJsonNullable(normalizeTaskQueueBoost(task.queueBoost))),
   defineTaskColumn("column", (task) => task.column, '"column"'),
   defineTaskColumn("status", (task) => task.status ?? null),
   defineTaskColumn("size", (task) => task.size ?? null),

@@ -1,5 +1,5 @@
 import type { Task } from "../types.js";
-import { compareTasksByPriorityThenAgeAndId } from "./task-priority.js";
+import { compareTasksByQueueOrder } from "./task-queue-order.js";
 
 export type FileScopeLeaseKind = "none" | "active" | "dormant";
 
@@ -65,19 +65,25 @@ export function normalizeOverlapScopeForTask(
 /*
 FNXC:OverlapScheduling 2026-08-29-05:47:
 A file-scope claim lasts until the blocking task's work has landed rather than only while it occupies a
-particular board column. Active claims always serialize overlapping work; dormant claims use priority,
-age, then task id so two waiting holders choose one deterministic winner instead of freezing each other.
+particular board column. Active claims always serialize overlapping work; dormant claims use the shared
+queue order so two waiting holders choose one deterministic winner instead of freezing each other.
+
+FNXC:TaskQueueOrder 2026-09-17-12:07:
+FN-509 replaced the priority/age/id tiebreak with the Boost/FIFO queue order. An ACTIVE claim is
+untouched: Boost never moves a waiting card ahead of a holder that is already working. Only the
+dormant-vs-dormant tiebreak changed, so the two waiters still agree on one winner and cannot both
+yield (which is what would deadlock the pair).
 */
 export function fileScopeLeaseBlocksCandidate(
-  blocker: Pick<Task, "id" | "priority" | "createdAt">,
-  candidate: Pick<Task, "id" | "priority" | "createdAt">,
+  blocker: Pick<Task, "id" | "createdAt" | "column" | "columnMovedAt" | "queueBoost">,
+  candidate: Pick<Task, "id" | "createdAt" | "column" | "columnMovedAt" | "queueBoost">,
   classification: FileScopeLeaseClassification,
 ): boolean {
   if (blocker.id === candidate.id) return false;
   if (classification.waivedForTaskIds.includes(candidate.id)) return false;
   if (classification.kind === "active") return true;
   if (classification.kind === "dormant") {
-    return compareTasksByPriorityThenAgeAndId(blocker, candidate) < 0;
+    return compareTasksByQueueOrder(blocker, candidate) < 0;
   }
   return false;
 }

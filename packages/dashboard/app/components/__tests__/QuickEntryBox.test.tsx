@@ -8,11 +8,10 @@ import {
   QUICK_ADD_START_HOLD_FILL_MS,
 } from "../QuickEntryBox";
 import { expectStableTyping } from "./typingStability.test-helpers";
-import { TASK_PRIORITIES, type Task, type TaskPriority } from "@fusion/core";
+import { type Task } from "@fusion/core";
 import { checkDuplicateTasks, fetchSettings, fetchAgents, uploadAttachment, fetchWorkflowOptionalSteps } from "../../api";
 import { useNodes } from "../../hooks/useNodes";
 import { MAX_PERSISTED_DRAFT_BYTES, scopedKey } from "../../utils/projectStorage";
-import { getPriorityColorVar } from "../../utils/priorityIndicator";
 import { loadAllAppCss } from "../../test/cssFixture";
 import { readAppFile } from "../../test/cssFixture";
 
@@ -424,10 +423,6 @@ async function waitForSubmitSuccessToClear(textarea: HTMLTextAreaElement) {
   await waitFor(() => expect(textarea.value).toBe(""));
 }
 
-function openPriorityMenu() {
-  fireEvent.click(screen.getByTestId("quick-entry-priority-button"));
-}
-
 function mockDesktopViewport() {
   Object.defineProperty(window, "innerWidth", { value: 1280, configurable: true });
   return vi.spyOn(window, "matchMedia").mockImplementation((query: string) => ({
@@ -474,7 +469,6 @@ const QUICK_ENTRY_ACTION_BUTTONS = [
   ["Attach", "quick-entry-attach"],
   ["GitHub", "quick-entry-github-toggle"],
   ["Session advisor", "quick-entry-session-advisor-toggle"],
-  ["Priority", "quick-entry-priority-button"],
   ["Fast", "quick-entry-fast-toggle"],
   // FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 adds the per-card human plan approval toggle beside Fast.
   ["Human plan approval", "quick-entry-human-plan-approval-toggle"],
@@ -485,7 +479,6 @@ const QUICK_ENTRY_PRIMARY_ICON_BUTTON_IDS = [
   "quick-entry-attach",
   "quick-entry-github-toggle",
   "quick-entry-session-advisor-toggle",
-  "quick-entry-priority-button",
   "quick-entry-fast-toggle",
   "quick-entry-human-plan-approval-toggle",
 ] as const;
@@ -494,31 +487,6 @@ const ALPHA_QUICK_ENTRY_PRIMARY_ICON_BUTTON_IDS = [
   ...QUICK_ENTRY_PRIMARY_ICON_BUTTON_IDS,
   "quick-entry-save",
 ] as const;
-
-const QUICK_ENTRY_PRIORITY_ICON_CLASS: Record<TaskPriority, string> = {
-  low: "lucide-arrow-down",
-  normal: "lucide-flag",
-  high: "lucide-arrow-up",
-  urgent: "lucide-triangle-alert",
-};
-
-function expectQuickEntryPriorityButton(priority: TaskPriority) {
-  const label = `${priority[0].toUpperCase()}${priority.slice(1)}`;
-  const priorityButton = screen.getByTestId("quick-entry-priority-button");
-  expect(priorityButton).toHaveAttribute("title", `Priority: ${label}`);
-  expect(priorityButton).toHaveAttribute("aria-label", `Priority: ${label}`);
-  expect(priorityButton).not.toHaveTextContent(label);
-  const icon = priorityButton.querySelector("svg");
-  expect(icon?.classList.contains(QUICK_ENTRY_PRIORITY_ICON_CLASS[priority])).toBe(true);
-  expect(icon?.getAttribute("style")).toContain(`color: ${getPriorityColorVar(priority)}`);
-}
-
-function expectPriorityOptionColor(priority: TaskPriority) {
-  const option = screen.getByTestId(`quick-entry-priority-option-${priority}`);
-  const icon = option.querySelector("svg");
-  expect(icon?.classList.contains(QUICK_ENTRY_PRIORITY_ICON_CLASS[priority])).toBe(true);
-  expect(icon?.getAttribute("style")).toContain(`color: ${getPriorityColorVar(priority)}`);
-}
 
 /**
  * FNXC:QuickAddActionRow 2026-07-15-00:00:
@@ -688,10 +656,8 @@ describe("QuickEntryBox", () => {
     expect(screen.queryByTestId("quick-entry-workflow-menu")).toBeNull();
 
     fireEvent.click(toggle);
-    openPriorityMenu();
-    expect(screen.getByTestId("quick-entry-priority-option-normal")).toBeInTheDocument();
+
     fireEvent.click(toggle);
-    expect(screen.queryByTestId("quick-entry-priority-option-normal")).toBeNull();
   });
 
   /*
@@ -1033,8 +999,7 @@ describe("QuickEntryBox", () => {
       ["Models", "quick-entry-models"],
       ["Node", "quick-entry-node-button"],
       ["Agent", "quick-entry-agent-button"],
-      ["Priority", "quick-entry-priority-button"],
-    ] as const;
+        ] as const;
 
     const allActionButtons = QUICK_ENTRY_ACTION_BUTTONS;
     // FNXC:BoardComposer 2026-07-10-12:00: Save is already the last action in the reorganized row,
@@ -1096,11 +1061,12 @@ describe("QuickEntryBox", () => {
       expandQuickEntry();
 
       const actionButtonTestIds = getActionButtonTestIdsInDomOrder();
-      expect(actionButtonTestIds.slice(-7)).toEqual([
+      /* FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509 removed the priority trigger, so the tail is one
+         control shorter; the ordering invariant (status controls beside Attach, Save last) is intact. */
+      expect(actionButtonTestIds.slice(-6)).toEqual([
         "quick-entry-attach",
         "quick-entry-github-toggle",
         "quick-entry-session-advisor-toggle",
-        "quick-entry-priority-button",
         "quick-entry-fast-toggle",
         // FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 sits immediately after Fast and before Save.
         "quick-entry-human-plan-approval-toggle",
@@ -1108,11 +1074,11 @@ describe("QuickEntryBox", () => {
       ]);
 
       const primaryGroup = screen.getByTestId("quick-entry-primary-group");
-      for (const testId of ["quick-entry-attach", "quick-entry-github-toggle", "quick-entry-session-advisor-toggle", "quick-entry-priority-button", "quick-entry-fast-toggle", "quick-entry-human-plan-approval-toggle", "quick-entry-save"]) {
+      for (const testId of ["quick-entry-attach", "quick-entry-github-toggle", "quick-entry-session-advisor-toggle", "quick-entry-fast-toggle", "quick-entry-human-plan-approval-toggle", "quick-entry-save"]) {
         expect(primaryGroup.contains(screen.getByTestId(testId))).toBe(true);
       }
       const optionsGroup = screen.getByTestId("quick-entry-options-group");
-      for (const testId of ["quick-entry-github-toggle", "quick-entry-priority-button", "quick-entry-save"]) {
+      for (const testId of ["quick-entry-github-toggle", "quick-entry-save"]) {
         expect(optionsGroup.contains(screen.getByTestId(testId))).toBe(false);
       }
     });
@@ -1221,24 +1187,7 @@ describe("QuickEntryBox", () => {
       }
     });
 
-    it("captures an SVG touch target inside the priority button and opens the picker", async () => {
-      await renderMobileQuickEntryWithEnabledActions();
-      const priorityButton = screen.getByTestId("quick-entry-priority-button");
-      const svg = priorityButton.querySelector("svg");
-      expect(svg).not.toBeNull();
-
-      const { preventDefaultSpy } = fireCancelableTouchStart(svg!);
-      expect(preventDefaultSpy).toHaveBeenCalled();
-      await act(async () => {
-        fireEvent(svg!, new Event("touchend", { bubbles: true, cancelable: true }));
-        fireEvent.click(priorityButton);
-        vi.runOnlyPendingTimers();
-        vi.runOnlyPendingTimers();
-      });
-
-      expect(await screen.findByTestId("quick-entry-priority-option-normal")).toBeTruthy();
-    });
-
+    
     it("toggles Fast pressed state via mobile touch", async () => {
       await renderMobileQuickEntryWithEnabledActions();
       const fastToggle = screen.getByTestId("quick-entry-fast-toggle");
@@ -1309,30 +1258,10 @@ describe("QuickEntryBox", () => {
       expect(githubToggle.classList.contains("btn-primary")).toBe(true);
     });
 
-    it("opens the priority picker via mobile touch", async () => {
-      await renderMobileQuickEntryWithEnabledActions();
-      await touchActionButton(screen.getByTestId("quick-entry-priority-button"));
-
-      expect(await screen.findByTestId("quick-entry-priority-option-normal")).toBeTruthy();
-    });
-
-    it("selects a priority option after mobile touch opens the picker", async () => {
-      await renderMobileQuickEntryWithEnabledActions();
-      const priorityButton = screen.getByTestId("quick-entry-priority-button");
-
-      await touchActionButton(priorityButton);
-      const highOption = await screen.findByTestId("quick-entry-priority-option-high");
-      await touchPriorityOption(highOption);
-
-      expectQuickEntryPriorityButton("high");
-      await waitFor(() => {
-        expect(screen.queryByTestId("quick-entry-priority-option-normal")).toBeNull();
-      });
-    });
-
+    
+    
     it.each([
-      ["Priority", "quick-entry-priority-button"],
-      ["Models", "quick-entry-models"],
+          ["Models", "quick-entry-models"],
       ["Node", "quick-entry-node-button"],
       ["Agent", "quick-entry-agent-button"],
     ] as const)("captures SVG touches on the %s action button", async (_label, testId) => {
@@ -1464,9 +1393,6 @@ describe("QuickEntryBox", () => {
         case "quick-entry-session-advisor-toggle":
           expect(screen.getByTestId(testId)).toHaveAttribute("aria-pressed", "true");
           break;
-        case "quick-entry-priority-button":
-          expect(await screen.findByTestId("quick-entry-priority-option-normal")).toBeTruthy();
-          break;
         case "quick-entry-deps":
           expect(document.querySelector(".dep-dropdown")).toBeTruthy();
           break;
@@ -1510,24 +1436,7 @@ describe("QuickEntryBox", () => {
       },
     );
 
-    it("does not refocus textarea when selecting a priority option after blurred touch open", async () => {
-      const { textarea } = await renderBlurredMobileQuickEntry();
-      const priorityButton = screen.getByTestId("quick-entry-priority-button");
-
-      await touchActionButtonWithoutRefocus(priorityButton, textarea);
-      const highOption = await screen.findByTestId("quick-entry-priority-option-high");
-      await act(async () => {
-        fireEvent.touchStart(highOption);
-        fireEvent.touchEnd(highOption);
-        fireEvent.click(highOption);
-        vi.runOnlyPendingTimers();
-        vi.runOnlyPendingTimers();
-      });
-
-      expectQuickEntryPriorityButton("high");
-      expect(document.activeElement).not.toBe(textarea);
-    });
-
+    
     it("does not refocus textarea when selecting a dependency after blurred touch open", async () => {
       const { textarea } = await renderBlurredMobileQuickEntry();
       const depsButton = screen.getByTestId("quick-entry-deps");
@@ -2376,7 +2285,7 @@ describe("QuickEntryBox", () => {
       expect(fastToggle.querySelector("svg")?.classList.contains("lucide-zap")).toBe(true);
     });
 
-    it("keeps every primary icon control in one btn-icon cluster across toggle and priority states", () => {
+    it("keeps every primary icon control in one btn-icon cluster across toggle states", () => {
       renderQuickEntryBox({});
       expandQuickEntry();
 
@@ -2386,48 +2295,12 @@ describe("QuickEntryBox", () => {
       fireEvent.click(screen.getByTestId("quick-entry-fast-toggle"));
       expectFullQuickEntryPrimaryIconCluster();
 
-      for (const taskPriority of TASK_PRIORITIES) {
-        openPriorityMenu();
-        fireEvent.click(screen.getByTestId(`quick-entry-priority-option-${taskPriority}`));
-        expectQuickEntryPriorityButton(taskPriority);
-        expectFullQuickEntryPrimaryIconCluster();
-      }
+      /* FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509 removed the priority trigger from this cluster;
+         the remaining toggles above still prove the cluster survives state changes. */
     });
 
-    it("renders urgency-colored priority glyphs in the trigger and picker for every level", () => {
-      renderQuickEntryBox({});
-      expandQuickEntry();
-
-      for (const taskPriority of TASK_PRIORITIES) {
-        openPriorityMenu();
-        for (const optionPriority of TASK_PRIORITIES) {
-          expectPriorityOptionColor(optionPriority);
-        }
-        fireEvent.click(screen.getByTestId(`quick-entry-priority-option-${taskPriority}`));
-        expectQuickEntryPriorityButton(taskPriority);
-      }
-    });
-
-    it("submits selected priority through onCreate payload", async () => {
-      const { props } = renderQuickEntryBox({});
-      expandQuickEntry();
-      const textarea = screen.getByTestId("quick-entry-input");
-
-      fireEvent.change(textarea, { target: { value: "Priority payload task" } });
-      openPriorityMenu();
-      fireEvent.click(screen.getByTestId("quick-entry-priority-option-urgent"));
-      fireEvent.keyDown(textarea, { key: "Enter" });
-
-      await waitFor(() => {
-        expect(props.onCreate).toHaveBeenCalledWith(
-          expect.objectContaining({
-            description: "Priority payload task",
-            priority: "urgent",
-          }),
-        );
-      });
-    });
-
+    
+    
     it("does not render branch fields and does not include branch payload keys", async () => {
       const { props } = renderQuickEntryBox({});
       expandQuickEntry();
@@ -2461,8 +2334,7 @@ describe("QuickEntryBox", () => {
         "quick-entry-attach",
         "quick-entry-github-toggle",
         "quick-entry-session-advisor-toggle",
-        "quick-entry-priority-button",
-        "quick-entry-fast-toggle",
+              "quick-entry-fast-toggle",
         /*
         FNXC:HumanPlanApproval 2026-09-15-06:24:
         FN-408's per-card human plan approval toggle is a DIFFERENT control from the retired FN-234
@@ -3190,30 +3062,7 @@ describe("QuickEntryBox", () => {
       expect(secondPayload.executionMode).toBeUndefined();
     });
 
-    it("resets priority to normal after successful task creation", async () => {
-      const { props } = renderQuickEntryBox({});
-      expandQuickEntry();
-      const textarea = screen.getByTestId("quick-entry-input") as HTMLTextAreaElement;
-
-      fireEvent.change(textarea, { target: { value: "Priority reset after save" } });
-      await waitFor(() => {
-        expect(screen.getByTestId("quick-entry-priority-button")).toBeTruthy();
-      });
-      openPriorityMenu();
-      fireEvent.click(screen.getByTestId("quick-entry-priority-option-high"));
-      fireEvent.keyDown(textarea, { key: "Enter" });
-
-      await waitFor(() => {
-        expect(props.onCreate).toHaveBeenCalledTimes(1);
-      });
-      await waitForSubmitSuccessToClear(textarea);
-
-      expandQuickEntry();
-      await waitFor(() => {
-        expectQuickEntryPriorityButton("normal");
-      });
-    });
-
+    
     it("opens dependency dropdown when clicking deps button", () => {
       renderQuickEntryBox({});
       expandQuickEntry();
@@ -4626,7 +4475,7 @@ describe("QuickEntryBox", () => {
     it.each([
       { name: "desktop", width: 1280, height: 760 },
       { name: "mobile", width: 375, height: 760 },
-    ])("bottom-anchors short priority and populated model menus upward on $name", ({ width, height }) => {
+    ])("bottom-anchors the populated model menu upward on $name", ({ width, height }) => {
       const widthDescriptor = Object.getOwnPropertyDescriptor(document.documentElement, "clientWidth");
       const heightDescriptor = Object.getOwnPropertyDescriptor(document.documentElement, "clientHeight");
       Object.defineProperty(document.documentElement, "clientWidth", { configurable: true, value: width });
@@ -4635,15 +4484,6 @@ describe("QuickEntryBox", () => {
       try {
         renderQuickEntryBox({});
         expandQuickEntry();
-
-        const priorityTrigger = screen.getByTestId("quick-entry-priority-button");
-        vi.spyOn(priorityTrigger, "getBoundingClientRect").mockReturnValue({
-          top: 700, bottom: 728, left: 24, width: 80, right: 104, height: 28, x: 24, y: 700, toJSON: () => ({}),
-        });
-        openPriorityMenu();
-        const priorityMenu = screen.getByTestId("quick-entry-priority-option-normal").closest(".priority-picker-dropdown--portal") as HTMLElement;
-        expect(priorityMenu.style.top).toBe("auto");
-        expect(priorityMenu.style.bottom).toBe(`${height - 700 + 4}px`);
 
         const modelTrigger = screen.getByTestId("quick-entry-models");
         vi.spyOn(modelTrigger, "getBoundingClientRect").mockReturnValue({

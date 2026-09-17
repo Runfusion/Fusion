@@ -156,6 +156,21 @@ function isManualIntakeColumn(col: WorkflowIrColumn): boolean {
   return (intakeTrait?.config as { autoTriage?: boolean } | undefined)?.autoTriage === false;
 }
 
+/*
+FNXC:TaskQueueOrder 2026-09-17-13:51:
+FN-509: the SERVER needs the same column facts the board card reasons about, so the Boost endpoint
+can refuse a lane that has no automatic queue instead of persisting a durable rank on a Complete or
+manual-capture card. Reusing this module keeps `manualIntake` a single derivation.
+*/
+export function resolveBoardColumnFlags(
+  ir: WorkflowIr,
+  columnId: string,
+): BoardWorkflowColumn["flags"] | undefined {
+  const column = toV2(ir)?.columns.find((col) => col.id === columnId);
+  if (!column) return undefined;
+  return { ...resolveColumnFlags(column), ...(isManualIntakeColumn(column) ? { manualIntake: true } : {}) };
+}
+
 function describeColumns(ir: WorkflowIr, canonicalizeLifecycle = false): BoardWorkflowColumn[] {
   const v2 = toV2(ir);
   if (!v2) return [];

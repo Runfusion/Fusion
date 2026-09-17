@@ -11,7 +11,6 @@ import {readFile} from "node:fs/promises";
 import {join} from "node:path";
 import {existsSync, statSync} from "node:fs";
 import type {Task, TaskDetail, ColumnId, ArchivedTaskEntry, TaskVerificationRequest, TaskVerificationResultSummary, TaskVerificationStatus, TaskRecommendation, TaskRecommendationListItem, TaskRecommendationListPage} from "../types.js";
-import type { TaskColumnSortMode } from "../tasks/task-priority.js";
 import * as schema from "../postgres/schema/index.js";
 import { and, desc, eq, getTableColumns, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import "../builtin-traits.js";
@@ -34,6 +33,7 @@ import {computeRetrySummary} from "../tasks/retry-summary.js";
 import {TaskNotFoundError} from "../task-store/errors.js";
 import { ARCHIVED_SENTINEL_LANES, resolveProjectColumnsForRoles } from "../project-lane-vocabulary.js";
 import { taskProjectScope } from "../postgres/data-layer.js";
+import { taskQueuePageKey, type TaskQueuePageKey } from "./task-queue-order-ops.js";
 
 /** Merge storage tiers while preserving primary-source authority and order. */
 function mergePrimaryById<T extends { id: string }>(primary: T[], secondary: T[]): T[] {
@@ -336,6 +336,9 @@ export interface ListTasksOptions {
   /** Exclusive createdAt/id tuple used by bounded Board pages. */
   afterCreatedAt?: string;
   afterId?: string;
+  /** Exclusive keyset for the shared queue orders (see `task-queue-order-ops.ts`). */
+  afterQueueKey?: TaskQueuePageKey;
+  afterIntakeKey?: Pick<TaskQueuePageKey, "createdAt" | "id">;
   /** Historical compatibility snapshots participate only when explicitly requested. */
   includeArchived?: boolean;
   /** Omit heavy detail fields for board-style consumers. */
@@ -346,7 +349,7 @@ export interface ListTasksOptions {
   /** Exclude one or several custom-capable column ids. */
   excludeColumns?: readonly ColumnId[];
   /** Select the SQL page by creation or latest completion-lane entry. */
-  sort?: "created-asc" | "completion-desc" | TaskColumnSortMode;
+  sort?: "created-asc" | "completion-desc" | "completion-date-desc" | "queue-order" | "intake-desc";
   startupMemo?: boolean;
   /** Caller-owned per-pass workflow IR cache; shared only within one read pass. */
   irCache?: Map<string, WorkflowIr>;
@@ -453,6 +456,8 @@ export async function listTasksImpl(store: TaskStore, options?: ListTasksOptions
       sort: options?.sort,
       afterCreatedAt: options?.afterCreatedAt,
       afterId: options?.afterId,
+      afterQueueKey: options?.afterQueueKey,
+      afterIntakeKey: options?.afterIntakeKey,
       ...(boundedMergedPrefix !== undefined
         ? { limit: boundedMergedPrefix, offset: 0 }
         : sqlPaginated
@@ -592,10 +597,13 @@ export async function listTasksImpl(store: TaskStore, options?: ListTasksOptions
     FNXC:PostgresArchiveReadPerformance 2026-07-14-17:50:
     A global page ending at K can only contain rows from each source's first K entries. Bound both SQL reads to K, then apply live-ID authority and the exact shared comparator before slicing. Unbounded callers retain the complete-result contract.
     */
+    /* FNXC:TaskQueueOrder 2026-09-17-12:07: every SQL-ordered mode is already final; only the
+       default created-ascending merge below needs the cold-storage composition pass. */
     if (!includeColdStorage && (
       options?.sort === "completion-desc"
       || options?.sort === "completion-date-desc"
-      || options?.sort === "task-id-desc"
+      || options?.sort === "queue-order"
+      || options?.sort === "intake-desc"
     )) return tasks;
     const archiveEntries = includeColdStorage
       ? boundedMergedPrefix !== undefined
@@ -744,6 +752,99 @@ export async function listCurrentTasksPageImpl(store: TaskStore, options: { limi
   };
 }
 
+/*
+FNXC:TaskQueueOrder 2026-09-17-13:51:
+BOARD LANES ARE PAGED IN THEIR OWN ORDER. The generic board page is selected by creation ascending,
+so a boosted card — or a freshly captured Ideas card — that starts beyond the limit is simply not in
+the page, and no amount of client sorting can bring it to the head. This reader selects ONE lane
+scope with the same SQL order the lane renders in (`queue` = Boost then arrival, `intake` = newest
+first), so the head of every visible lane is loaded even for a project with thousands of live cards.
+
+The continuation is the server's own opaque keyset, bound to project, order and lane membership: a
+cursor minted for another lane or another order would interleave two total orders and silently skip
+or repeat rows, so it is rejected rather than replayed.
+*/
+export type TaskQueuePageOrder = "queue" | "intake";
+
+export interface TaskQueuePageOptions {
+  /** The lane scope: one or more column ids that share this order. */
+  columns: readonly string[];
+  order?: TaskQueuePageOrder;
+  limit?: number;
+  cursor?: string;
+}
+
+type TaskQueueCursorPayload = {
+  v: 1;
+  projectId: string;
+  order: TaskQueuePageOrder;
+  scope: string;
+  sequence: string;
+  createdAt: string;
+  id: string;
+};
+
+function taskQueueScopeSignature(columns: readonly string[]): string {
+  return [...new Set(columns)].sort().join("\u0000");
+}
+
+function decodeTaskQueueCursor(cursor: string, projectId: string, order: TaskQueuePageOrder, scope: string): TaskQueueCursorPayload {
+  try {
+    const parsed = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as Partial<TaskQueueCursorPayload>;
+    if (parsed.v !== 1 || parsed.projectId !== projectId || parsed.order !== order || parsed.scope !== scope
+      || typeof parsed.id !== "string" || !parsed.id
+      || typeof parsed.sequence !== "string" || !/^\d{1,32}$/.test(parsed.sequence)
+      || typeof parsed.createdAt !== "string" || Number.isNaN(Date.parse(parsed.createdAt))) {
+      throw new Error("mismatch");
+    }
+    return parsed as TaskQueueCursorPayload;
+  } catch {
+    throw new TypeError("Invalid task queue cursor");
+  }
+}
+
+/** Return one keyset page of a single board lane scope, ordered in SQL before the limit. */
+export async function listTaskQueuePageImpl(store: TaskStore, options: TaskQueuePageOptions): Promise<TaskListPage> {
+  const limit = Math.min(200, Math.max(1, Math.trunc(options.limit ?? 50) || 50));
+  const order: TaskQueuePageOrder = options.order === "intake" ? "intake" : "queue";
+  const columns = [...new Set(options.columns.filter((column) => typeof column === "string" && column.length > 0))];
+  const layer = store.asyncLayer;
+  if (!layer) throw new Error("Task pagination requires the async task backend");
+  if (columns.length === 0) return { tasks: [], total: 0, hasMore: false, nextCursor: null };
+  const scope = taskQueueScopeSignature(columns);
+  const cursor = options.cursor ? decodeTaskQueueCursor(options.cursor, layer.projectId ?? "", order, scope) : undefined;
+
+  const [total, rows] = await Promise.all([
+    countLiveTasks(layer, { columns }),
+    store.listTasks({
+      columns: columns as ColumnId[],
+      includeArchived: false,
+      slim: true,
+      limit: limit + 1,
+      sort: order === "intake" ? "intake-desc" : "queue-order",
+      startupMemo: false,
+      ...(cursor
+        ? order === "intake"
+          ? { afterIntakeKey: { createdAt: cursor.createdAt, id: cursor.id } }
+          : { afterQueueKey: { sequence: cursor.sequence, createdAt: cursor.createdAt, id: cursor.id } }
+        : {}),
+    }),
+  ]);
+  const hasMore = rows.length > limit;
+  const tasks = rows.slice(0, limit);
+  const last = tasks.at(-1);
+  const nextCursor = hasMore && last
+    ? Buffer.from(JSON.stringify({
+        v: 1,
+        projectId: layer.projectId ?? "",
+        order,
+        scope,
+        ...taskQueuePageKey(last),
+      } satisfies TaskQueueCursorPayload), "utf8").toString("base64url")
+    : null;
+  return { tasks, total, hasMore, nextCursor };
+}
+
 export interface CompletedTaskCounts {
   byColumn: Record<string, number>;
   byWorkflow: Record<string, Record<string, number>>;
@@ -757,21 +858,27 @@ export interface CompletedTaskPage {
   counts: CompletedTaskCounts;
 }
 
+/*
+FNXC:TaskQueueOrder 2026-09-17-12:07:
+The cursor contract version is bumped to 2 with FN-509's removal of the selectable Done sort. A v1
+cursor was minted under a sort the server no longer honours, so replaying it would interleave two
+different total orders and produce gaps or duplicates; rejecting it forces a clean restart at the
+head instead.
+*/
 type CompletedCursorPayload = {
-  v: 1;
+  v: 2;
   projectId: string;
-  sort: TaskColumnSortMode;
-  completionAt?: string;
+  completionAt: string;
   numericSuffix: string;
   id: string;
 };
 
-function decodeCompletedCursor(cursor: string, projectId: string, sort: TaskColumnSortMode): CompletedCursorPayload {
+function decodeCompletedCursor(cursor: string, projectId: string): CompletedCursorPayload {
   try {
     const parsed = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as Partial<CompletedCursorPayload>;
-    if (parsed.v !== 1 || parsed.projectId !== projectId || parsed.sort !== sort || typeof parsed.id !== "string"
+    if (parsed.v !== 2 || parsed.projectId !== projectId || typeof parsed.id !== "string"
       || typeof parsed.numericSuffix !== "string" || !/^\d+$/.test(parsed.numericSuffix)
-      || (sort === "completion-date-desc" && (typeof parsed.completionAt !== "string" || Number.isNaN(Date.parse(parsed.completionAt))))) {
+      || typeof parsed.completionAt !== "string" || Number.isNaN(Date.parse(parsed.completionAt))) {
       throw new Error("mismatch");
     }
     return parsed as CompletedCursorPayload;
@@ -788,18 +895,17 @@ function decodeCompletedCursor(cursor: string, projectId: string, sort: TaskColu
  */
 export async function listCompletedTasksImpl(
   store: TaskStore,
-  options?: { limit?: number; cursor?: string; slim?: boolean; sort?: TaskColumnSortMode },
+  options?: { limit?: number; cursor?: string; slim?: boolean },
 ): Promise<CompletedTaskPage> {
   const rawLimit = options?.limit ?? 50;
   const limit = Math.min(500, Math.max(1, Math.trunc(rawLimit) || 50));
-  const sort = options?.sort ?? "completion-date-desc";
   const completeColumns = [...await resolveProjectColumnsForRoles(store, ["complete"])] as ColumnId[];
   const layer = store.asyncLayer;
   if (!layer) throw new Error("Completed-task pagination requires the async task backend");
   const projectId = layer.projectId ?? "";
-  const cursor = options?.cursor ? decodeCompletedCursor(options.cursor, projectId, sort) : undefined;
+  const cursor = options?.cursor ? decodeCompletedCursor(options.cursor, projectId) : undefined;
   const defaultWorkflowId = (await store.getDefaultWorkflowId()) ?? "builtin:coding";
-  const result = await readCompletedTaskPage(layer, { columns: completeColumns, limit, sort, cursor, defaultWorkflowId });
+  const result = await readCompletedTaskPage(layer, { columns: completeColumns, limit, cursor, defaultWorkflowId });
   const hasMore = result.rows.length > limit;
   const pageRows = result.rows.slice(0, limit);
   const tasks = pageRows.map((row) => store.rowToTask(store.pgRowToTaskRow(row)));
@@ -807,7 +913,7 @@ export async function listCompletedTasksImpl(
   const completionAt = last ? (last.columnMovedAt ?? last.updatedAt ?? last.createdAt) : undefined;
   const numericSuffix = last?.id.match(/-([0-9]+)$/)?.[1] ?? "0";
   const nextCursor = hasMore && last
-    ? Buffer.from(JSON.stringify({ v: 1, projectId, sort, ...(sort === "completion-date-desc" ? { completionAt } : {}), numericSuffix, id: last.id } satisfies CompletedCursorPayload), "utf8").toString("base64url")
+    ? Buffer.from(JSON.stringify({ v: 2, projectId, completionAt: completionAt!, numericSuffix, id: last.id } satisfies CompletedCursorPayload), "utf8").toString("base64url")
     : null;
   return { tasks, total: result.total, hasMore, nextCursor, counts: result.counts };
 }

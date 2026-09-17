@@ -1,4 +1,4 @@
-import { AgentStore, type PluginContext, type PluginRouteDefinition, type PluginRouteResponse, type TaskCreateInput, type TaskPriority } from "@fusion/core";
+import { AgentStore, type PluginContext, type PluginRouteDefinition, type PluginRouteResponse, type TaskCreateInput } from "@fusion/core";
 
 type Request = { params: Record<string, string>; query?: Record<string, string | string[] | undefined>; body?: unknown };
 
@@ -42,10 +42,16 @@ function stringArray(input: unknown, field: string): string[] {
   return input;
 }
 
-function priority(input: unknown): TaskPriority | undefined {
-  if (input === undefined) return undefined;
-  if (input === "low" || input === "normal" || input === "high" || input === "urgent") return input;
-  throw new RequestValidationError("priority must be one of low, normal, high, urgent");
+/*
+FNXC:TaskQueueOrder 2026-09-17-12:07:
+FN-509 removed task priority. A caller that still sends one is REFUSED rather than silently ignored:
+it believes it is choosing an order, and quietly dropping the field would return a task that does
+not behave as asked. Promoted todos become ordinary arrival-ordered tasks; an operator raises one
+explicitly with Boost.
+*/
+function rejectRetiredPriority(input: unknown): void {
+  if (input === undefined) return;
+  throw new RequestValidationError("priority is no longer supported: tasks run in arrival order and are raised with Boost");
 }
 
 function optionalTrimmedString(input: unknown, field: string): string | undefined {
@@ -136,7 +142,7 @@ export function createTodoPluginRoutes(): PluginRouteDefinition[] {
     { method: "POST", path: "/todos/items/:id/create-task", handler: route(async (req, ctx) => {
       const input = req.body as { title?: unknown; priority?: unknown; workflowId?: unknown; assignedAgentId?: unknown };
       const taskTitle = optionalTaskTitle(input?.title);
-      const taskPriority = priority(input?.priority);
+      rejectRetiredPriority(input?.priority);
       const workflowId = optionalTrimmedString(input?.workflowId, "workflowId");
       const assignedAgentId = optionalTrimmedString(input?.assignedAgentId, "assignedAgentId");
       const scoped = await store(req, ctx);
@@ -145,7 +151,6 @@ export function createTodoPluginRoutes(): PluginRouteDefinition[] {
       const taskInput: TaskCreateInput = {
         title: taskTitle ?? item.text.slice(0, 200),
         description: item.text,
-        ...(taskPriority ? { priority: taskPriority } : {}),
         ...(workflowId ? { workflowId } : {}),
         ...(assignedAgentId ? { assignedAgentId } : {}),
         source: { sourceType: "api", sourceMetadata: { todoItemId: item.id, todoListId: item.listId } },

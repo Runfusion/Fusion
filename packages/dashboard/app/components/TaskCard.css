@@ -324,7 +324,6 @@ The card remains presentation-only: it neither persists a fallback nor restores 
 }
 
 .card-status-badge,
-.card-priority-badge,
 .card-size-badge,
 .card-no-commits-expected-badge,
 .card-workflow-badge {
@@ -681,26 +680,35 @@ Every task-card header badge must share the first-row vertical centerline. The d
   color: var(--triage);
 }
 
-.card-priority-badge {
-  /* FNXC:PriorityIconOnlyBadge 2026-07-12-00:00: FN-7867 removes visible priority text from board cards, so these shared spacing declarations no longer add card text width; keep them to preserve the Task Detail priority chip/select geometry that reuses the same badge class. */
+/*
+FNXC:TaskQueueOrder 2026-09-17-12:07:
+FN-509 deleted the priority badge and its urgency-tinted modifiers. The Boost ACTION below replaces
+it: the badge described a level that no longer exists, while Boost acts on the queue the card is
+actually waiting in.
+
+The row is ALWAYS laid out — never revealed on hover — because a hover-only control is unreachable
+on a touch device, and this is the operator's only way to change the queue. The button reuses the
+shared `.btn` primitive and token spacing rather than introducing a bespoke chip.
+*/
+.card-boost-row {
+  display: flex;
+  justify-content: flex-start;
+  margin-top: var(--space-xs);
+}
+
+.card-boost-button {
   flex-shrink: 0;
-  gap: var(--space-xs);
-  letter-spacing: 0.4px;
 }
 
-.card-priority-badge--low {
-  background: color-mix(in srgb, var(--color-info) 15%, transparent);
-  color: var(--color-info);
-}
+@media (max-width: 768px) {
+  /* Keep the tap target comfortable on a phone without changing the desktop chrome. */
+  .card-boost-row {
+    margin-top: var(--space-sm);
+  }
 
-.card-priority-badge--high {
-  background: color-mix(in srgb, var(--color-warning) 18%, transparent);
-  color: var(--color-warning);
-}
-
-.card-priority-badge--urgent {
-  background: color-mix(in srgb, var(--color-error) 20%, transparent);
-  color: var(--color-error-dark);
+  .card-boost-button {
+    min-height: var(--space-xl);
+  }
 }
 
 /*
@@ -736,7 +744,7 @@ Zap at the badge text size so it remains centered without making the header row 
 FNXC:PlannerOversight 2026-07-04-00:00:
 FN-7516 read-only effective-oversight-level badge, shown only for an explicit
 non-"off" per-task planner-oversight override. Mirrors the .card-status-badge/
-.card-priority-badge chip sizing so it participates in the same wrap/height
+.card-size-badge chip sizing so it participates in the same wrap/height
 invariants as the rest of .card-meta-badges. Level modifiers use existing
 semantic status tokens (info/warning/error family) rather than new hex values.
 */
@@ -2330,7 +2338,6 @@ Les cinq contrôles de carte n'étaient révélés que par `.card:hover`, désor
   its box diverge; text, icon-only, PR, oversight, and mission chips must remain one height.
   */
   .card-status-badge,
-  .card-priority-badge,
   .card-size-badge,
   .card-no-commits-expected-badge,
   .card-planner-overseer-state,

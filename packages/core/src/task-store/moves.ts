@@ -539,7 +539,7 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
               moveSource,
             },
           });
-          await enqueueMergeQueueInTransaction(tx, id, { priority: task.priority, now: internal.now }, {
+          await enqueueMergeQueueInTransaction(tx, id, { now: internal.now }, {
             agentId: internal.runContext?.agentId,
             runId: internal.runContext?.runId,
           }, moveReviewColumns);
@@ -1289,7 +1289,7 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
           .where(eq(schema.project.mergeQueue.taskId, id))
           .limit(1);
         alreadyEnqueued = existingRows.length > 0;
-        await enqueueMergeQueueInTransaction(tx, id, { priority: task.priority, now: internal.now }, {
+        await enqueueMergeQueueInTransaction(tx, id, { now: internal.now }, {
           agentId: internal.runContext?.agentId,
           runId: internal.runContext?.runId,
         }, moveReviewColumns);

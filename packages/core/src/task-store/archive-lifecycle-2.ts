@@ -17,7 +17,6 @@ import type {Task, ArchivedTaskEntry, GithubIssueAction} from "../types.js";
 import {buildDeleteCallerAuditFields, type TaskDeleteAuditContext} from "../task-delete-attribution.js";
 import {notifyOperatorOfNonOperatorDelete} from "../task-delete-notice.js";
 import "../builtin-traits.js";
-import {normalizeTaskPriority} from "../tasks/task-priority.js";
 import {clearTerminalFailureAutoRecoveryBudget} from "../tasks/terminal-failure-auto-recovery.js";
 import {generateTaskLineageId} from "../tasks/task-lineage.js";
 import {sanitizeFileScopeInPromptContent} from "../task-store/file-scope.js";
@@ -48,7 +47,6 @@ export async function taskToArchiveEntryImpl(store: TaskStore, task: Task, archi
       lineageId: task.lineageId || generateTaskLineageId(),
       title: task.title,
       description: task.description,
-      priority: normalizeTaskPriority(task.priority),
       column: "archived",
       /*
       FNXC:WorkflowLifecycleColumns 2026-08-01-11:30:
@@ -423,7 +421,6 @@ export async function restoreFromArchiveImpl(
       lineageId: entry.lineageId || generateTaskLineageId(),
       title: entry.title,
       description: entry.description,
-      priority: normalizeTaskPriority(entry.priority),
       column: options.targetColumn ?? "archived", // Historical carrier unless one-way reintegration targets Complete.
       preArchiveColumn: entry.preArchiveColumn,
       dependencies: entry.dependencies,

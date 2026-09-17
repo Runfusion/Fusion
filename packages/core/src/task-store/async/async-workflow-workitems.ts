@@ -28,6 +28,7 @@ import { randomUUID } from "node:crypto";
 import * as schema from "../../postgres/schema/index.js";
 import type { AsyncDataLayer, DbTransaction } from "../../postgres/data-layer.js";
 import { projectScopeFor, recordRunAuditEventWithinTransaction } from "../../postgres/data-layer.js";
+import { taskQueueOrderBy } from "../task-queue-order-ops.js";
 import { ACTIVE_WORKFLOW_WORK_ITEM_STATES } from "../../types.js";
 import type {
   WorkflowWorkItem,
@@ -607,8 +608,14 @@ export async function transitionWorkflowWorkItem(
  * FNXC:TaskStoreWorkflowWorkItems 2026-06-24-08:50:
  * List due workflow work items: items whose retryAfter has passed (or is null)
  * and whose lease has expired (or is null), optionally filtered by kinds and
- * states. This is the scheduler's due-poll query. Ordered by createdAt ASC
- * (FIFO within the due set).
+ * states. This is the scheduler's due-poll query.
+ *
+ * FNXC:TaskQueueOrder 2026-09-17-12:07:
+ * FN-509 orders the due set by the owning TASK's queue rank before the LIMIT, so a boosted card's
+ * continuation is found even when it starts beyond the bound. Within one task the work items keep
+ * their own `created_at` order, because a task's continuations are CAUSAL: reordering them would
+ * run a later graph step before the one it depends on. The task rank only decides which task's
+ * work is reached first.
  */
 export async function listDueWorkflowWorkItems(
   db: AsyncDataLayer["db"] | DbTransaction,
@@ -637,15 +644,22 @@ export async function listDueWorkflowWorkItems(
   }
 
   const query = db
-    .select()
+    .select({ item: schema.project.workflowWorkItems })
     .from(schema.project.workflowWorkItems)
+    .leftJoin(
+      schema.project.tasks,
+      and(
+        eq(schema.project.tasks.id, schema.project.workflowWorkItems.taskId),
+        eq(schema.project.tasks.projectId, schema.project.workflowWorkItems.projectId),
+      ),
+    )
     .where(and(...conditions))
-    .orderBy(asc(schema.project.workflowWorkItems.createdAt));
+    .orderBy(...taskQueueOrderBy(), asc(schema.project.workflowWorkItems.createdAt));
 
   const rows = filter.limit
     ? await query.limit(filter.limit)
     : await query;
-  return (rows as WorkflowWorkItemRow[]).map((row) => rowToWorkflowWorkItem(row));
+  return (rows as Array<{ item: WorkflowWorkItemRow }>).map((row) => rowToWorkflowWorkItem(row.item));
 }
 
 // ── Completion handoff markers ───────────────────────────────────────

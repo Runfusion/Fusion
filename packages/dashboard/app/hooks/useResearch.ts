@@ -316,9 +316,9 @@ export function useResearch(options?: { projectId?: string }) {
       title?: string,
       findingId?: string,
       description?: string,
-      priority?: "low" | "normal" | "high" | "urgent",
+      /* FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509 removed the priority argument. */
       attachExport?: boolean,
-    ) => createTaskFromResearchRun(runId, { title, findingId, description, priority, attachExport }, projectId),
+    ) => createTaskFromResearchRun(runId, { title, findingId, description, attachExport }, projectId),
     attachRunToTask: (runId: string, taskId: string, findingId?: string, attachExport?: boolean) =>
       attachResearchRunToTask(runId, { taskId, findingId, attachExport }, projectId),
     promoteFinding: (runId: string, input: { findingId: string; sliceId: string; title?: string; description?: string; acceptanceCriteria?: string; triage?: boolean; taskId?: string }) =>

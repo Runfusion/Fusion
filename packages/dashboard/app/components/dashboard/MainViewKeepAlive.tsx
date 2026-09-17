@@ -56,6 +56,7 @@ function renderBoardSubtree(
     maxWorktrees,
     showWorktreeGrouping,
     moveTask,
+    boostTask,
     pauseTask,
     openBoardTaskDetail,
     openGroupModalWithNav,
@@ -93,8 +94,6 @@ function renderBoardSubtree(
     completedPaginationError,
     completedProgressKey,
     retryCompletedTasksPagination,
-    completedSortMode,
-    changeCompletedSortMode,
     searchQuery,
     availableModels,
     handleOpenDetailWithTab,
@@ -116,6 +115,7 @@ function renderBoardSubtree(
         <CapacityRiskBanner signal={capacityRiskSignal} onDismiss={handleDismissCapacityRisk} />
       ) : null}
       <Board
+        onBoostTask={boostTask}
         tasks={filteredBoardTasks}
         projectId={currentProject?.id}
         maxConcurrent={maxConcurrent}
@@ -160,8 +160,6 @@ function renderBoardSubtree(
         completedPaginationError={isRemote ? null : completedPaginationError}
         completedProgressKey={isRemote ? undefined : completedProgressKey}
         onRetryCompletedTasks={isRemote ? undefined : retryCompletedTasksPagination}
-        completedSortMode={completedSortMode}
-        onCompletedSortModeChange={changeCompletedSortMode}
         searchQuery={searchQuery}
         availableModels={availableModels}
         onOpenDetailWithTab={handleOpenDetailWithTab}

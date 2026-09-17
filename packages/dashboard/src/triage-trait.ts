@@ -1,7 +1,6 @@
 import type {
   Task,
   TaskCreateInput,
-  TaskPriority,
   TaskStore,
   TraitDefinition,
 } from "@fusion/core";
@@ -85,7 +84,8 @@ export const TRIAGE_TRAIT_DEFINITION: TraitDefinition = {
 export type TriageItemKind = "signal" | "issue" | "pull_request";
 
 export interface TriageClassification {
-  priority: TaskPriority;
+  /* FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509 — incident severity below is the routing signal;
+     it is deliberately no longer mirrored onto the task as a priority field. */
   /** Coarse area bucket inferred from the title/body. */
   area: "bug" | "feature" | "dependency" | "docs" | "infra" | "chore" | "unknown";
   /** Suggested labels (deduped). */
@@ -100,15 +100,13 @@ const DOCS_RE = /\b(docs?|documentation|readme|typo)\b/i;
 const INFRA_RE = /\b(ci|pipeline|deploy|infra|docker|k8s|kubernetes|build)\b/i;
 const FEATURE_RE = /\b(feature|add|implement|support|enhanc)\b/i;
 
-function inferPriority(severity: unknown, text: string): TaskPriority {
-  const sev = typeof severity === "string" ? severity.toLowerCase() : "";
-  if (sev === "critical") return "urgent";
-  if (sev === "error") return "high";
-  if (/\b(urgent|critical|sev-?1|p0)\b/i.test(text)) return "urgent";
-  if (/\b(high|important|sev-?2|p1)\b/i.test(text)) return "high";
-  if (sev === "warning") return "normal";
-  return "normal";
-}
+/*
+FNXC:TaskQueueOrder 2026-09-17-12:07:
+FN-509 deleted `inferPriority` with the task priority field. The incident severity it read is still
+available to the classifier's callers as a routing signal; what is gone is the projection of that
+signal onto the created card as a rank. Do not reintroduce it: an automatically inferred rank is
+exactly the hidden priority the chronological queue replaces.
+*/
 
 /** Classify a triage item purely from its title/body + provenance. */
 export function classifyTriageItem(params: {
@@ -119,7 +117,7 @@ export function classifyTriageItem(params: {
   /** PR author login, when known (dependabot[bot], renovate[bot], …). */
   prAuthor?: string;
 }): TriageClassification {
-  const { kind, title, body, severity, prAuthor } = params;
+  const { kind, title, body, prAuthor } = params;
   const text = `${title}\n${body ?? ""}`;
   const labels: string[] = [];
 
@@ -141,7 +139,6 @@ export function classifyTriageItem(params: {
   if (kind === "signal") labels.push("signal");
 
   return {
-    priority: inferPriority(severity, text),
     area,
     labels: [...new Set(labels)],
     dependencyBump,
@@ -244,7 +241,7 @@ function alreadyTriaged(task: Task): boolean {
   return typeof meta[TRIAGE_DONE_META_KEY] === "string";
 }
 
-/** Mark the originating task as triaged + apply classification labels/priority.
+/** Mark the originating task as triaged + apply classification labels.
  *  Metadata is merged via `sourceMetadataPatch` (the store's merge seam), not by
  *  rebuilding `source`. */
 async function stampTriaged(
@@ -254,7 +251,6 @@ async function stampTriaged(
   extra: Record<string, unknown> = {},
 ): Promise<void> {
   await store.updateTask(task.id, {
-    priority: classification.priority,
     sourceMetadataPatch: {
       [TRIAGE_DONE_META_KEY]: new Date().toISOString(),
       triageArea: classification.area,
@@ -361,7 +357,6 @@ function buildFollowUpTaskInput(
     title,
     description: `${title}\n\nClassified as ${classification.area}. Follow-up to triaged inbound pull request.`,
     column: TRIAGE_DEFAULT_ROUTE_COLUMN as TaskCreateInput["column"],
-    priority: classification.priority,
     source: {
       sourceType: "automation",
       sourceParentTaskId: prTask.id,

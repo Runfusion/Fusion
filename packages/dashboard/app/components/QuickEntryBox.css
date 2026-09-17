@@ -469,22 +469,10 @@ FN-7682 — the tokenized-CSS test forbids raw px in the workflow-selector rules
   position: relative;
 }
 
-.node-trigger-wrap,
-.priority-trigger-wrap {
+/* FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509 removed Quick Add priority trigger and picker portal. */
+.node-trigger-wrap {
   position: relative;
   display: inline-flex;
-}
-
-.priority-picker-dropdown {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-lg);
-  background: var(--surface);
-  z-index: 1000;
-}
-
-.priority-picker-dropdown--portal {
-  position: fixed;
 }
 
 .node-picker-dropdown {

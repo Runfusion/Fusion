@@ -5,7 +5,6 @@
  * Extracted from types.ts; re-exported from the browser-safe types barrel.
  */
 
-import type { TaskPriority } from "../board/board.js";
 
 export const MERGE_REQUEST_STATES = [
   "queued",
@@ -158,10 +157,16 @@ export interface MergeRequestWorkflowProjectionOptions {
   now?: string;
 }
 
+/*
+FNXC:TaskQueueOrder 2026-09-17-12:07:
+FN-509 removed the merge queue's `priority` field. Merge leases out in the shared queue order
+(Boost, then enqueue arrival), so a manual merge request keeps its result promise and permissions
+but no longer overtakes work that has been waiting. The SQL column survives as inert historical
+data; the entry contract no longer exposes it.
+*/
 export interface MergeQueueEntry {
   taskId: string;
   enqueuedAt: string;
-  priority: TaskPriority;
   leasedBy: string | null;
   leasedAt: string | null;
   leaseExpiresAt: string | null;
@@ -185,7 +190,6 @@ export interface CompletionHandoffMarker {
 }
 
 export interface MergeQueueEnqueueOptions {
-  priority?: TaskPriority;
   now?: string;
 }
 

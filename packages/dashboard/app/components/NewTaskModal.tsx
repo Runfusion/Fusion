@@ -4,12 +4,10 @@ import { useState, useCallback, useEffect, useRef, type ChangeEvent } from "reac
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import {
-  DEFAULT_TASK_PRIORITY,
   getErrorMessage,
   isValidTaskBranchName,
   type ColumnId,
   type Task,
-  type TaskPriority,
   type ThinkingLevel,
 } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
@@ -417,7 +415,9 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
   const [boardWorkflows, setBoardWorkflows] = useState<BoardWorkflowsPayload | null>(null);
   const [reviewLevel, setReviewLevel] = useState<number | undefined>(undefined);
   const [autoMerge, setAutoMerge] = useState<boolean | undefined>(undefined);
-  const [priority, setPriority] = useState<TaskPriority>(DEFAULT_TASK_PRIORITY);
+  /* FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509 removed the task priority field and every control
+     that set it — the inline quick-add cycle button and the advanced select. Tasks run in arrival
+     order; an operator raises one explicitly with Boost on its card. */
   const [nodeId, setNodeId] = useState<string | undefined>(undefined);
   /**
    * FNXC:NewTaskDialogAffordances 2026-06-21-18:35:
@@ -672,7 +672,6 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
       selectedAgentId !== null ||
       reviewLevel !== undefined ||
       autoMerge !== undefined ||
-      priority !== DEFAULT_TASK_PRIORITY ||
       nodeId !== undefined ||
       executionMode === "fast" ||
       /* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 arming is a real unsaved choice; losing it silently on close would surprise the operator. */
@@ -683,7 +682,7 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
       githubTrackingEnabled !== initialDefaultValues.githubTrackingEnabled ||
       githubRepoOverrideTrimmed !== "";
     setHasDirtyState(isDirty);
-  }, [description, dependencies, pendingImages, selectedWorkflowId, hasUserSelectedEnabledWorkflowSteps, executorModel, validatorModel, planningModel, thinkingLevel, plannerOversightLevel, selectedAgentId, reviewLevel, autoMerge, priority, nodeId, executionMode, requiresHumanPlanApproval, branchMode, branch, baseBranch, githubTrackingEnabled, githubRepoOverrideTrimmed, initialDefaultValues]);
+  }, [description, dependencies, pendingImages, selectedWorkflowId, hasUserSelectedEnabledWorkflowSteps, executorModel, validatorModel, planningModel, thinkingLevel, plannerOversightLevel, selectedAgentId, reviewLevel, autoMerge, nodeId, executionMode, requiresHumanPlanApproval, branchMode, branch, baseBranch, githubTrackingEnabled, githubRepoOverrideTrimmed, initialDefaultValues]);
 
   const resetForm = useCallback(() => {
     // Clean up object URLs
@@ -710,7 +709,6 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
     setShowAgentPicker(false);
     setReviewLevel(undefined);
     setAutoMerge(undefined);
-    setPriority(DEFAULT_TASK_PRIORITY);
     setNodeId(undefined);
     setExecutionMode("standard");
     /* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 resets with the other creation choices after a successful create. */
@@ -800,7 +798,6 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
       ...(plannerOversightLevel !== "" ? { plannerOversightLevel: plannerOversightLevel as "off" | "observe" | "steer" | "autonomous" } : {}),
       reviewLevel,
       ...(autoMerge !== undefined ? { autoMerge } : {}),
-      priority,
       nodeId,
       ...(executionMode === "fast" ? { executionMode: "fast" } : {}),
       /* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 sends only the arming flag; the server owns Plan Review enforcement and every decision. */
@@ -880,7 +877,7 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
       addToast(t("newTaskModal.taskCreated", "Created {{taskId}}", { taskId: task.id }), "success");
     }
     onClose();
-  }, [executorModel, credentialInstanceId, validatorModel, validatorCredentialInstanceId, planningModel, planningCredentialInstanceId, thinkingLevel, plannerOversightLevel, dependencies, shouldSubmitEnabledWorkflowSteps, enabledWorkflowSteps, selectedAgentId, presetMode, selectedPresetId, reviewLevel, autoMerge, priority, nodeId, executionMode, requiresHumanPlanApproval, branchMode, isBranchNameRequired, branch, baseBranch, githubTrackingEnabled, githubRepoOverrideTrimmed, onCreateTask, onMoveTask, pendingImages, resetForm, addToast, t, onClose, projectId]);
+  }, [executorModel, credentialInstanceId, validatorModel, validatorCredentialInstanceId, planningModel, planningCredentialInstanceId, thinkingLevel, plannerOversightLevel, dependencies, shouldSubmitEnabledWorkflowSteps, enabledWorkflowSteps, selectedAgentId, presetMode, selectedPresetId, reviewLevel, autoMerge, nodeId, executionMode, requiresHumanPlanApproval, branchMode, isBranchNameRequired, branch, baseBranch, githubTrackingEnabled, githubRepoOverrideTrimmed, onCreateTask, onMoveTask, pendingImages, resetForm, addToast, t, onClose, projectId]);
 
   const handleSubmit = useCallback(async (startWorkflow: ValidatedQuickAddWorkflow | null = null) => {
     const workflowSelection = selectedWorkflowId;
@@ -1275,8 +1272,6 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
         onReviewLevelChange={setReviewLevel}
         autoMerge={autoMerge}
         onAutoMergeChange={setAutoMerge}
-        priority={priority}
-        onPriorityChange={setPriority}
         branch={branch}
         onBranchChange={setBranch}
         branchMode={branchMode}

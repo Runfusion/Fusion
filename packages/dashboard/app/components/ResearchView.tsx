@@ -491,11 +491,11 @@ export function ResearchView({ projectId, addToast, onOpenSettings, readinessVer
             finding={{ id: modalState.findingId, heading: finding.heading, content: finding.content }}
             projectId={projectId}
             onClose={() => setModalState(null)}
-            onConfirm={async ({ taskId, title, description, priority, attachExport }) => {
+            onConfirm={async ({ taskId, title, description, attachExport }) => {
               if (modalState.mode === "create") {
                 await runAction(
                   "create-task",
-                  () => createTaskFromRun(selectedRun.id, title, modalState.findingId, description, priority, attachExport),
+                  () => createTaskFromRun(selectedRun.id, title, modalState.findingId, description, attachExport),
                   t("research.taskCreatedFromResearch", "Task created from research"),
                 );
               } else if (taskId) {

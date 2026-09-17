@@ -3,7 +3,7 @@ import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { Brain, Link, Zap, ChevronDown, ChevronUp, Bot, Maximize2, Minimize2, Server } from "lucide-react";
-import { DEFAULT_TASK_PRIORITY, TASK_PRIORITIES, type Task, type TaskPriority, type Settings, type ResolvedWorkflowOptionalStep, type ThinkingLevel } from "@fusion/core";
+import { type Task, type Settings, type ResolvedWorkflowOptionalStep, type ThinkingLevel } from "@fusion/core";
 import { getErrorMessage } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
 import { checkDuplicateTasks, fetchModels, uploadAttachment, fetchSettings, updateGlobalSettings, fetchAgents, fetchWorkflowOptionalSteps, DuplicateCandidatesError } from "../api";
@@ -132,7 +132,8 @@ export function InlineCreateCard({
   const [mergerThinkingLevel, setMergerThinkingLevel] = useState<string>("");
   const [optionalSteps, setOptionalSteps] = useState<ResolvedWorkflowOptionalStep[]>([]);
   const [enabledOptionalStepIds, setEnabledOptionalStepIds] = useState<string[]>([]);
-  const [priority, setPriority] = useState<TaskPriority>(DEFAULT_TASK_PRIORITY);
+  /* FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509 removed the task priority field and every control
+   that set it. Tasks run in arrival order; an operator raises one explicitly with Boost. */
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelsError, setModelsError] = useState<string | null>(null);
   const [loadedModels, setLoadedModels] = useState<ModelInfo[]>(availableModels ?? []);
@@ -464,7 +465,6 @@ export function InlineCreateCard({
       setPlanningThinkingLevel("");
       setMergerThinkingLevel("");
       setEnabledOptionalStepIds([]);
-      setPriority(DEFAULT_TASK_PRIORITY);
       setDependencies([]);
       setSelectedAgentId(null);
       setNodeId(undefined);
@@ -535,7 +535,6 @@ export function InlineCreateCard({
       Inline create optional-step toggles are explicit task intent. When a workflow exposes optional steps and the operator unchecks all of them, submit `[]` so default-on Plan Review / Code Review stay disabled on the created task instead of reappearing from workflow defaults.
       */
       enabledWorkflowSteps: optionalSteps.length > 0 ? enabledOptionalStepIds : undefined,
-      priority,
       nodeId: effectiveNodeId,
     };
 
@@ -551,7 +550,7 @@ export function InlineCreateCard({
     }
 
     await submitTask(input);
-  }, [description, submitting, selectedWorkflowId, dependencies, selectedAgentId, selectedPresetId, hasExecutorOverride, executorProvider, credentialInstanceId, executorModelId, hasValidatorOverride, validatorProvider, validatorCredentialInstanceId, validatorModelId, hasPlanningOverride, planningProvider, planningCredentialInstanceId, planningModelId, hasMergerOverride, mergerProvider, mergerCredentialInstanceId, mergerModelId, thinkingLevel, validatorThinkingLevel, planningThinkingLevel, mergerThinkingLevel, optionalSteps.length, enabledOptionalStepIds, priority, effectiveNodeId, projectId, addToast, submitTask]);
+  }, [description, submitting, selectedWorkflowId, dependencies, selectedAgentId, selectedPresetId, hasExecutorOverride, executorProvider, credentialInstanceId, executorModelId, hasValidatorOverride, validatorProvider, validatorCredentialInstanceId, validatorModelId, hasPlanningOverride, planningProvider, planningCredentialInstanceId, planningModelId, hasMergerOverride, mergerProvider, mergerCredentialInstanceId, mergerModelId, thinkingLevel, validatorThinkingLevel, planningThinkingLevel, mergerThinkingLevel, optionalSteps.length, enabledOptionalStepIds, effectiveNodeId, projectId, addToast, submitTask]);
 
   const handleDuplicateProceed = useCallback(async () => {
     const matches = duplicateMatches;
@@ -1072,23 +1071,6 @@ export function InlineCreateCard({
               label="Workflow"
               disabled={submitting}
             />
-
-            <label className="inline-create-priority-wrap" htmlFor="inline-create-priority-select">
-              <span className="visually-hidden">{t("inline.priority", "Priority")}</span>
-              <select
-                id="inline-create-priority-select"
-                className="select inline-create-priority-select"
-                data-testid="inline-create-priority-select"
-                value={priority}
-                onChange={(e) => setPriority(e.target.value as TaskPriority)}
-              >
-                {TASK_PRIORITIES.map((taskPriority) => (
-                  <option key={taskPriority} value={taskPriority}>
-                    {t("inline.priorityLabel", "Priority: {{level}}", { level: `${taskPriority[0].toUpperCase()}${taskPriority.slice(1)}` })}
-                  </option>
-                ))}
-              </select>
-            </label>
 
             <div className="inline-create-model-wrap">
               <button

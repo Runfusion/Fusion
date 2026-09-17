@@ -12,7 +12,7 @@ export const PORTAL_SAFE_SURFACE_SELECTOR = [
   ".dep-dropdown--portal",
   ".node-picker-dropdown--portal",
   ".agent-picker-dropdown--portal",
-  ".priority-picker-dropdown--portal",
+  /* FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509 removed Quick Add's priority picker portal. */
   ".activity-view-menu",
   /*
   FNXC:ListItemContextMenu 2026-09-17-03:18:

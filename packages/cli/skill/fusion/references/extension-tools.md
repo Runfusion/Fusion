@@ -17,14 +17,12 @@ Create a new task on the Fusion task board. The task enters the planning column 
 | `description` | string | ✓ | What needs to be done — be descriptive |
 | `depends` | array | — | Task IDs this depends on (e.g. ['FN-001', 'FN-002']) |
 | `agentId` | string | — | Agent ID to assign this task to (e.g. 'agent-abc123') |
-| `priority` | string(enum) | — | Task priority (low, normal, high, urgent) |
-| `workflow_id` | string | — | Workflow ID to select for the new task (e.g. 'WF-003' or 'builtin:coding'). Omit to inherit the project default workflow. Use fn_workflow_list to discover valid IDs. |
 | `github_tracking` | boolean | — | Per-task GitHub issue tracking override. true links a tracking issue to this task; false disables tracking even when the project/global default enables it. Omit to inherit the project/global default. |
 | `github_repo` | string | — | "owner/repo" override for the GitHub tracking issue's repository. Omit to use the project/global default repo. |
 
 ### fn_task_update
 
-Update fields on an existing task. Supports modifying the title, description, dependencies, assigned agent, priority, and workflow_id after task creation. Set workflow_id to a workflow ID to select it, or null to clear the workflow selection.
+Update fields on an existing task. Supports modifying the title, description, dependencies, assigned agent, and workflow_id after task creation. Set workflow_id to a workflow ID to select it, or null to clear the workflow selection.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -34,8 +32,6 @@ Update fields on an existing task. Supports modifying the title, description, de
 | `depends` | array | — | New dependency list — replaces existing dependencies (e.g. ['FN-001', 'FN-002']) |
 | `agentId` | union | — | Agent ID to assign this task to, or null to clear (e.g. 'agent-abc123') |
 | `nodeId` | union | — | Node ID override for this task, or null to clear |
-| `priority` | string(enum) | — | Task priority (low, normal, high, urgent) |
-| `workflow_id` | union | — | Workflow ID to select for this task (e.g. 'WF-003' or 'builtin:coding'), or null to clear the workflow selection and revert to the project default. Use fn_workflow_list to discover valid IDs. |
 
 ### fn_task_list
 

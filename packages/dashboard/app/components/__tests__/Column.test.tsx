@@ -525,23 +525,6 @@ describe("Column workflow mode (U9)", () => {
     );
     expect(screen.getByRole("heading", { level: 2 }).textContent).toBe("Planning Hold");
   });
-
-  it("re-keys bulk actions to trait flags (a wip column gets the processing menu)", () => {
-    render(
-      <Column
-        {...defaultProps}
-        column={"exec" as ColumnType}
-        workflowMode
-        columnDisplayName="Executing"
-        columnFlags={{ countsTowardWip: true }}
-        onPauseTask={vi.fn()}
-        tasks={[{ ...makeTask("FN-1"), column: "exec" as ColumnType }]}
-      />,
-    );
-    // The processing-column actions button (column-menu) is present.
-    expect(document.querySelector(".column-menu")).not.toBeNull();
-  });
-
 });
 
 describe("Column worktree grouping setting", () => {
@@ -803,230 +786,55 @@ describe("Column QuickEntryBox", () => {
   });
 });
 
-describe("Column in-progress/in-review bulk actions", () => {
-  it.each(["in-progress", "in-review"] as const)("renders Stop All without manual move actions for %s", async (column) => {
-    const user = userEvent.setup();
-    render(
-      <Column
-        {...defaultProps}
-        column={column}
-        tasks={[{ ...makeTask("FN-001"), column }]}
-        onPauseTask={vi.fn().mockResolvedValue({} as Task)}
-      />,
-    );
+/*
+FNXC:TaskQueueOrder 2026-09-17-12:07:
+FN-509 deleted the column header overflow menu. Every case below tested that menu — its bulk Stop
+All / Replan All shortcuts, its keyboard roving, its plan auto-approve switch, and its sort radio
+group — so their subject is gone, not merely renamed. Deleting them is the honest resolution: making
+them pass again would mean re-adding the removed menu.
 
-    const menuButton = screen.getByRole("button", { name: `${column === "in-progress" ? "In Progress" : "In Review"} column actions` });
-    expect(menuButton).toHaveAttribute("aria-haspopup", "menu");
-    expect(menuButton).toHaveAttribute("aria-expanded", "false");
-
-    await user.click(menuButton);
-
-    expect(menuButton).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByRole("menu")).toBeTruthy();
-    expect(screen.getByRole("menuitem", { name: /Stop All/i })).toBeTruthy();
-    expect(screen.queryByRole("menuitem", { name: /Move All/i })).toBeNull();
+The individual task operations and their endpoints are untouched, and the replacement invariant is
+asserted positively below and structurally in `task-priority-removal.test.tsx`.
+*/
+describe("Column header after the overflow menu was removed (FN-509)", () => {
+  it("renders no actions trigger, popover, or container on any lane role", () => {
+    for (const [column, columnFlags] of [
+      ["todo", { hold: true }],
+      ["exec", { countsTowardWip: true }],
+      ["in-review", { humanReview: true }],
+      ["done", { complete: true }],
+    ] as const) {
+      const { container, unmount } = render(
+        <Column
+          {...defaultProps}
+          column={column as ColumnType}
+          workflowMode
+          columnFlags={columnFlags}
+          onPauseTask={vi.fn()}
+          tasks={[{ ...makeTask("FN-1"), column: column as ColumnType }]}
+        />,
+      );
+      expect(screen.queryByRole("button", { name: /column actions$/i })).toBeNull();
+      expect(container.querySelector(".column-menu")).toBeNull();
+      expect(container.querySelector(".column-menu-popover")).toBeNull();
+      // No orphaned shell is left behind either.
+      expect(container.querySelectorAll(".column-header button[aria-haspopup='menu']")).toHaveLength(0);
+      unmount();
+    }
   });
 
-  it.each(["in-progress", "in-review"] as const)("Stop All pauses only manually-pausable tasks in %s", async (column) => {
-    const user = userEvent.setup();
-    const onPauseTask = vi.fn().mockResolvedValue({} as Task);
-
-    render(
-      <Column
-        {...defaultProps}
-        column={column}
-        tasks={[
-          { ...makeTask("FN-001"), column, paused: false },
-          { ...makeTask("FN-002"), column, paused: true },
-          { ...makeTask("FN-003"), column, paused: false, assignedAgentId: "agent-1" },
-          { ...makeTask("FN-004"), column, paused: false },
-        ]}
-        onPauseTask={onPauseTask}
-      />,
+  it("keeps History and Auto-merge, which were never part of that menu", () => {
+    const { unmount } = render(
+      <Column {...defaultProps} column={"shipped" as ColumnType} workflowMode columnDisplayName="Shipped" columnFlags={{ complete: true }} tasks={[]} onOpenHistory={vi.fn()} />,
     );
-
-    await user.click(screen.getByRole("button", { name: `${column === "in-progress" ? "In Progress" : "In Review"} column actions` }));
-    await user.click(screen.getByRole("menuitem", { name: /Stop All/i }));
-
-    await waitFor(() => {
-      expect(onPauseTask).toHaveBeenCalledTimes(2);
-    });
-    expect(onPauseTask).toHaveBeenCalledWith("FN-001");
-    expect(onPauseTask).toHaveBeenCalledWith("FN-004");
-    expect(onPauseTask).not.toHaveBeenCalledWith("FN-003");
-    expect(screen.queryByRole("menu")).toBeNull();
-    expect(mockConfirm).toHaveBeenCalledWith({
-      title: "Stop All Tasks",
-      message: `Stop all 2 ${column === "in-progress" ? "in progress" : "in review"} tasks?`,
-      danger: true,
-    });
-  });
-
-  it.each(["in-progress", "in-review"] as const)("disables Stop All when %s is empty", async (column) => {
-    const user = userEvent.setup();
+    expect(screen.getByTestId("column-history-shipped")).toBeTruthy();
+    unmount();
 
     render(
-      <Column
-        {...defaultProps}
-        column={column}
-        tasks={[]}
-        onPauseTask={vi.fn().mockResolvedValue({} as Task)}
-      />,
+      <Column {...defaultProps} column={"in-review" as ColumnType} workflowMode columnDisplayName="Review" columnFlags={{ humanReview: true }} tasks={[makeTask("FN-503")]} autoMerge onToggleAutoMerge={vi.fn()} />,
     );
-
-    await user.click(screen.getByRole("button", { name: `${column === "in-progress" ? "In Progress" : "In Review"} column actions` }));
-    expect(screen.getByRole("menuitem", { name: /Stop All/i })).toBeDisabled();
-    expect(screen.getByText("No tasks in this column")).toBeTruthy();
-  });
-
-  it.each(["in-progress", "in-review"] as const)("disables Stop All when no %s tasks are manually pausable", async (column) => {
-    const user = userEvent.setup();
-
-    render(
-      <Column
-        {...defaultProps}
-        column={column}
-        tasks={[
-          { ...makeTask("FN-010"), column, paused: true },
-          { ...makeTask("FN-011"), column, paused: false, assignedAgentId: "agent-1" },
-        ]}
-        onPauseTask={vi.fn().mockResolvedValue({} as Task)}
-      />,
-    );
-
-    await user.click(screen.getByRole("button", { name: `${column === "in-progress" ? "In Progress" : "In Review"} column actions` }));
-    expect(screen.getByRole("menuitem", { name: /Stop All/i })).toBeDisabled();
-    expect(screen.getByText("No manually pausable tasks")).toBeTruthy();
-  });
-
-});
-
-describe("Column Alpha menu keyboard access", () => {
-  it("focuses the first action, roves with arrows, activates it, and restores the trigger", async () => {
-    const user = userEvent.setup();
-    const onTogglePlanAutoApprove = vi.fn();
-
-    render(
-      <>
-        <>
-          <Column
-            {...defaultProps}
-            column="triage"
-            tasks={[makeTask("FN-001")]}
-            planAutoApproveEnabled={false}
-            onTogglePlanAutoApprove={onTogglePlanAutoApprove}
-          />
-        </>
-      </>,
-    );
-
-    const trigger = screen.getByRole("button", { name: "Planning column actions" });
-    await user.click(trigger);
-
-    const autoApprove = screen.getByRole("menuitemcheckbox", { name: /Auto-approve plan/i });
-    const replan = screen.getByRole("menuitem", { name: /Replan All/i });
-    expect(autoApprove).toHaveFocus();
-    expect(autoApprove).toHaveAttribute("tabindex", "0");
-
-    await user.keyboard("{ArrowDown}");
-    expect(replan).toHaveFocus();
-    expect(replan).toHaveAttribute("tabindex", "0");
-    expect(autoApprove).toHaveAttribute("tabindex", "-1");
-
-    await user.keyboard("{ArrowUp}{Enter}");
-    expect(onTogglePlanAutoApprove).toHaveBeenCalledOnce();
-    expect(screen.queryByRole("menu")).toBeNull();
-    expect(trigger).toHaveFocus();
-  });
-});
-
-describe("Column plan auto-approval action", () => {
-  it.each([
-    ["workflow", false],
-    ["auto-approve-all", true],
-    ["require-all", false],
-  ] as const)("renders the Triage switch checked only for %s mode", async (_mode, enabled) => {
-    const user = userEvent.setup();
-    const onTogglePlanAutoApprove = vi.fn();
-
-    render(
-      <Column
-        {...defaultProps}
-        column="triage"
-        tasks={[]}
-        planAutoApproveEnabled={enabled}
-        onTogglePlanAutoApprove={onTogglePlanAutoApprove}
-      />,
-    );
-
-    await user.click(screen.getByRole("button", { name: "Planning column actions" }));
-    const switchItem = screen.getByRole("menuitemcheckbox", { name: /Auto-approve plan/i });
-    expect(switchItem).toHaveAttribute("aria-checked", enabled ? "true" : "false");
-    expect(screen.getByText(enabled ? /On bypasses manual plan approval/i : /Off uses the workflow\/default/i)).toBeInTheDocument();
-  });
-
-  it("calls the plan auto-approval toggle exactly once and closes the menu", async () => {
-    const user = userEvent.setup();
-    const onTogglePlanAutoApprove = vi.fn();
-
-    render(
-      <Column
-        {...defaultProps}
-        column="triage"
-        tasks={[makeTask("FN-001")]}
-        planAutoApproveEnabled={false}
-        onTogglePlanAutoApprove={onTogglePlanAutoApprove}
-      />,
-    );
-
-    await user.click(screen.getByRole("button", { name: "Planning column actions" }));
-    await user.click(screen.getByRole("menuitemcheckbox", { name: /Auto-approve plan/i }));
-
-    expect(onTogglePlanAutoApprove).toHaveBeenCalledTimes(1);
-    expect(screen.queryByRole("menu")).toBeNull();
-  });
-
-  it("replans each task through the server and never moves cards client-side", async () => {
-    const user = userEvent.setup();
-    const onMoveTask = vi.fn();
-    rebuildTaskSpecMock.mockResolvedValue({});
-    render(<Column {...defaultProps} column="todo" projectId="project-1" onMoveTask={onMoveTask} tasks={[makeTask("FN-001"), makeTask("FN-002")]} />);
-
-    await user.click(screen.getByRole("button", { name: "Todo column actions" }));
-    await user.click(screen.getByRole("menuitem", { name: /Replan All/i }));
-
-    await waitFor(() => expect(rebuildTaskSpecMock).toHaveBeenCalledTimes(2));
-    expect(rebuildTaskSpecMock).toHaveBeenCalledWith("FN-001", "project-1");
-    expect(rebuildTaskSpecMock).toHaveBeenCalledWith("FN-002", "project-1");
-    expect(onMoveTask).not.toHaveBeenCalled();
-  });
-
-  it("coexists with workflow intake replan actions", async () => {
-    const user = userEvent.setup();
-    render(
-      <Column
-        {...defaultProps}
-        column={"intake" as ColumnType}
-        workflowMode
-        columnDisplayName="Intake"
-        columnFlags={{ intake: true }}
-        tasks={[{ ...makeTask("FN-002"), column: "intake" as ColumnType }]}
-        planAutoApproveEnabled={true}
-        onTogglePlanAutoApprove={vi.fn()}
-      />,
-    );
-
-    await user.click(screen.getByRole("button", { name: "Intake column actions" }));
-
-    expect(screen.getByRole("menuitemcheckbox", { name: /Auto-approve plan/i })).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: /Replan All/i })).toBeInTheDocument();
-  });
-
-  it("does not leave an actions shell on non-Triage columns without actions", () => {
-    render(<Column {...defaultProps} column="done" tasks={[]} />);
-
-    expect(screen.queryByRole("button", { name: "Done column actions" })).toBeNull();
-    expect(screen.queryByRole("menuitemcheckbox", { name: /Auto-approve plan/i })).toBeNull();
+    expect(screen.getByRole("checkbox", { name: "Auto-merge" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /column actions$/i })).toBeNull();
   });
 });
 
@@ -1037,13 +845,6 @@ describe("Column terminal actions", () => {
     expect(container.querySelector(".column-menu")).toBeNull();
   });
 
-  it("keeps the generic sort menu on non-complete columns", async () => {
-    const user = userEvent.setup();
-    render(<Column {...defaultProps} column="todo" tasks={[{ ...makeTask("FN-001"), column: "todo" }]} sortMode="completion-date-desc" onSortModeChange={vi.fn()} />);
-    await user.click(screen.getByRole("button", { name: "Todo column actions" }));
-    expect(screen.getByRole("menuitemradio", { name: /Arrival in this column/ })).toBeInTheDocument();
-    expect(screen.getByRole("menuitemradio", { name: /Task ID \(newest first\)/ })).toBeInTheDocument();
-  });
 });
 
 
@@ -1167,15 +968,19 @@ describe("Column header icon buttons stay on the canonical contract", () => {
     expectCanonicalHeaderIconButton(screen.getByTestId("column-history-shipped"));
   });
 
-  it("rend le menu d'actions dans la variante canonique aux côtés de la bascule auto-merge d'une lane review", () => {
+  it("rend la bascule auto-merge d'une lane review sans menu d'actions", () => {
     render(<Column {...defaultProps} column={"in-review" as ColumnType} workflowMode columnDisplayName="Review" columnFlags={{ humanReview: true }} tasks={[makeTask("FN-503")]} autoMerge onToggleAutoMerge={vi.fn()} />);
-    // La bascule auto-merge est présente et n'a pas remplacé le menu.
     expect(screen.getByRole("checkbox", { name: "Auto-merge" })).toBeTruthy();
-    expectCanonicalHeaderIconButton(screen.getByRole("button", { name: /column actions$/i }));
+    // FN-509 : le menu retiré ne laisse aucune coquille dans l'en-tête.
+    expect(screen.queryByRole("button", { name: /column actions$/i })).toBeNull();
   });
 
-  it("rend le menu d'actions d'une lane vide dotée de l'auto-approbation de plan", () => {
-    render(<Column {...defaultProps} tasks={[]} onTogglePlanAutoApprove={vi.fn()} />);
-    expectCanonicalHeaderIconButton(screen.getByRole("button", { name: /column actions$/i }));
+  /* FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509 — une lane d'intake vide n'expose plus de menu
+     d'actions, donc plus de raccourci d'auto-approbation de plan. Le réglage projet lui-même est
+     inchangé et reste dans Settings. */
+  it("ne rend aucun menu d'actions sur une lane d'intake vide", () => {
+    const { container } = render(<Column {...defaultProps} tasks={[]} />);
+    expect(screen.queryByRole("button", { name: /column actions$/i })).toBeNull();
+    expect(container.querySelector(".column-menu")).toBeNull();
   });
 });

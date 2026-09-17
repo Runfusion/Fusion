@@ -94,20 +94,16 @@ import {
   DEFAULT_COLUMN,
   isColumn,
   normalizeColumnId,
-  TASK_PRIORITIES,
-  DEFAULT_TASK_PRIORITY,
 } from "./types/board/board.js";
-import type { ThinkingLevel, Column, ColumnId, TaskPriority } from "./types/board/board.js";
+import type { ThinkingLevel, Column, ColumnId } from "./types/board/board.js";
 export {
   THINKING_LEVELS,
   COLUMNS,
   DEFAULT_COLUMN,
   isColumn,
   normalizeColumnId,
-  TASK_PRIORITIES,
-  DEFAULT_TASK_PRIORITY,
 };
-export type { ThinkingLevel, Column, ColumnId, TaskPriority };
+export type { ThinkingLevel, Column, ColumnId };
 export type {
   PatchnodeEntryKind,
   PatchnodeEntry,
@@ -1626,7 +1622,6 @@ export function validateMessageMetadata(metadata: MessageMetadata | undefined): 
     const proposal = metadata.proposedTask;
     if (typeof proposal.title !== "string" || !proposal.title.trim() || typeof proposal.description !== "string" || !proposal.description.trim()) throw new Error("metadata.proposedTask requires non-empty title and description");
     if (proposal.dependencies !== undefined && (!Array.isArray(proposal.dependencies) || proposal.dependencies.some((id) => typeof id !== "string"))) throw new Error("metadata.proposedTask.dependencies must be string[]");
-    if (proposal.priority !== undefined && !["low", "normal", "high", "urgent"].includes(proposal.priority)) throw new Error("metadata.proposedTask.priority is invalid");
     if (metadata.proposalStatus !== undefined && !["pending", "creating", "created", "dismissed"].includes(metadata.proposalStatus)) throw new Error("metadata.proposalStatus is invalid");
     if (typeof metadata.proposalIdempotencyKey !== "string" || !metadata.proposalIdempotencyKey.trim()) throw new Error("task proposal requires proposalIdempotencyKey");
     if (metadata.claimStartedAt !== undefined && (typeof metadata.claimStartedAt !== "string" || Number.isNaN(Date.parse(metadata.claimStartedAt)))) throw new Error("metadata.claimStartedAt must be an ISO timestamp");
@@ -1707,10 +1702,31 @@ export {
 FNXC:TaskDisplaySorting 2026-08-03-22:53:
 The dashboard's package-root core alias resolves to this browser-safe leaf. Re-export the canonical
 sorter here so Board, Lane, and ListView share core policy without importing a Node-heavy core barrel.
-The sorter and its transitive role/merge/priority helpers are browser-safe.
+The sorter and its transitive role/merge helpers are browser-safe.
+
+FNXC:TaskQueueOrder 2026-09-17-12:07:
+FN-509 moved the sorter to the queue-order module and deleted the per-column sort MODES with the
+column "..." menu. Board, Lane and ListView now share one non-configurable order.
 */
-export { sortTasksForDisplayColumn } from "./tasks/task-priority.js";
-export type { TaskColumnSortMode, ColumnSortMode, DoneColumnSortMode, DisplayColumnSortOptions } from "./tasks/task-priority.js";
+export {
+  sortTasksForDisplayColumn,
+  sortTasksByQueueOrder,
+  compareTasksByQueueOrder,
+  compareTasksByIntakeDisplayOrder,
+  compareTasksByCompleteArrival,
+  compareTaskIdNumeric,
+  resolveEffectiveQueueBoost,
+  resolveTaskColumnEntryAt,
+  resolveQueuePresence,
+} from "./tasks/task-queue-order.js";
+export type {
+  DisplayColumnOrderOptions,
+  TaskQueueBoost,
+  TaskQueueSortable,
+  QueuePresenceInput,
+  QueuePresenceVerdict,
+  QueueUnavailableReason,
+} from "./tasks/task-queue-order.js";
 
 /*
 FNXC:MissionValidationRepair 2026-08-11-00:10:

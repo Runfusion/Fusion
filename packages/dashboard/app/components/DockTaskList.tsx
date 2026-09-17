@@ -18,6 +18,9 @@ export interface DockTaskListProps {
   onRestoreRevertTask?: (id: string, body?: RestoreTaskRevertOptions) => Promise<RestoreTaskRevertResult>;
   onUpdateTask?: (id: string, updates: { title?: string; description?: string; dependencies?: string[]; dismissNearDuplicate?: boolean; githubTracking?: { enabled?: boolean } }) => Promise<Task>;
   onDeleteTask?: (id: string, options?: { removeDependencyReferences?: boolean; removeLineageReferences?: boolean; githubIssueAction?: GithubIssueAction; allowResurrection?: boolean }) => Promise<Task>;
+  /* FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509 — every host that renders a LIVE card forwards Boost,
+     so the affordance is not tied to one surface. Omitting it withholds the button. */
+  onBoostTask?: (id: string, scope: { expectedColumn: string; expectedColumnEntryAt: string }) => Promise<Task>;
   onOpenChatWithPrefill?: (prefillText: string) => void;
   addToast?: (message: string, type?: ToastType) => void;
   prAuthAvailable?: boolean;
@@ -50,6 +53,7 @@ export function DockTaskList({ columnFlagsByTaskId,
   onDeleteTask,
   onRestoreRevertTask,
   onUpdateTask,
+  onBoostTask,
   onOpenChatWithPrefill,
   addToast = () => {},
   prAuthAvailable = false,
@@ -149,6 +153,7 @@ export function DockTaskList({ columnFlagsByTaskId,
             onDeleteTask={onDeleteTask}
             onRestoreRevertTask={onRestoreRevertTask}
             onUpdateTask={onUpdateTask}
+            onBoostTask={onBoostTask}
             onOpenChatWithPrefill={onOpenChatWithPrefill}
             addToast={addToast}
             prAuthAvailable={prAuthAvailable}

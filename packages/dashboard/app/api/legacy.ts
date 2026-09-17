@@ -35,6 +35,7 @@ export type {
 export {
   fetchTasks,
   fetchTaskPage,
+  fetchTaskQueuePage,
   fetchCompletedTasks,
   fetchTaskRecommendations,
   fetchTaskDetail,
@@ -109,6 +110,7 @@ export {
   recoverBranchBinding,
   resetTask,
   duplicateTask,
+  boostTask,
   pauseTask,
   unpauseTask,
   nudgeOverseer,

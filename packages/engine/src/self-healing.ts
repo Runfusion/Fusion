@@ -28,7 +28,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmdirSy
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { loadWorkspaceConfig, type TaskMoveLanes, resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, hasSharedBranchMemberAutoMergeHold, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, getLatestFailedPreMergeStepProgressAt, resolveInReviewStallDeadlockThreshold, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getPostMergeFinalizeBlocker, planConfirmedMergeChecklistReconciliation, getTaskMergeBlocker, isStaleContentApprovalBlocker, resolvePreMergeGateForTask, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isLiveSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, resolveExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, getBuiltinWorkflow, isBuiltinWorkflowId, resolveWorkflowIrForTask, resolveWorkflowIrForTaskWithProvenance, resolveRequiredPreMergeStepIds, resolveReboundTarget, columnsWithFlag, resolveLifecycleColumns, resolveTaskLifecycleColumns, isWipColumnRole, isReviewColumnRole, isTerminalColumnRole, workflowHasColumn, planLegacyAdoption, resolveOrphanedPendingStepResults, resolveUnprovenReviewApproval, resolveCollateralArchivedReviewGate, COLLATERAL_ARCHIVED_REVIEW_GATE_DIAGNOSTIC, classifyReviewLease, PLAN_REVIEW_LEASE_STALENESS_MS, DEFAULT_MAX_POST_REVIEW_FIXES, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type MoveTaskOptions, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult, type WorkflowIr, type WorkflowIrV2,
+import { loadWorkspaceConfig, type TaskMoveLanes, resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, hasSharedBranchMemberAutoMergeHold, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, getLatestFailedPreMergeStepProgressAt, resolveInReviewStallDeadlockThreshold, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getPostMergeFinalizeBlocker, planConfirmedMergeChecklistReconciliation, getTaskMergeBlocker, isStaleContentApprovalBlocker, resolvePreMergeGateForTask, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isLiveSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, resolveExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, getBuiltinWorkflow, isBuiltinWorkflowId, resolveWorkflowIrForTask, resolveWorkflowIrForTaskWithProvenance, resolveRequiredPreMergeStepIds, resolveReboundTarget, columnsWithFlag, resolveLifecycleColumns, resolveTaskLifecycleColumns, isWipColumnRole, isReviewColumnRole, isTerminalColumnRole, workflowHasColumn, planLegacyAdoption, resolveOrphanedPendingStepResults, resolveUnprovenReviewApproval, resolveCollateralArchivedReviewGate, COLLATERAL_ARCHIVED_REVIEW_GATE_DIAGNOSTIC, classifyReviewLease, PLAN_REVIEW_LEASE_STALENESS_MS, DEFAULT_MAX_POST_REVIEW_FIXES, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type MoveTaskOptions, type Settings, type Task, type MergeDetails, type MergeResult, type WorkflowStepResult, type WorkflowIr, type WorkflowIrV2,
 
   resolveNearDuplicateCanonicalFlags,
   LEGACY_COLUMN_IDS_BY_ROLE,
@@ -627,9 +627,6 @@ function isRecoveryRetryDue(task: Pick<Task, "nextRecoveryAt">, now: number): bo
   return !Number.isFinite(retryAt) || retryAt <= now;
 }
 
-const STARVED_REFINEMENT_RECOVERY_GRACE_MS = 10 * 60_000;
-const STARVED_PEER_PROGRESS_THRESHOLD = 3;
-const STARVED_REFINEMENT_ESCALATION_COOLDOWN_MS = STARVED_REFINEMENT_RECOVERY_GRACE_MS * 4;
 const ORPHANED_EXECUTION_RECOVERY_GRACE_MS = 60_000;
 /**
  * FN-6782 leaked-slot reaper grace: a worktree holder whose task has sat in a
@@ -760,19 +757,6 @@ const DEFAULT_UNBACKED_MERGING_FANOUT_GRACE_MS = 60_000;
 const DURABLE_ERROR_RECOVERY_BASE_COOLDOWN_MS = 30_000;
 const DURABLE_ERROR_RECOVERY_MAX_COOLDOWN_MS = 15 * 60_000;
 const RUNNING_ON_INACTIVE_TASK_STALE_RUN_MS = PARKED_AGENT_LINK_FRESH_RUN_MS;
-
-function bumpTaskPriority(priority: TaskPriority | undefined): TaskPriority {
-  switch (priority ?? "normal") {
-    case "low":
-      return "normal";
-    case "normal":
-      return "high";
-    case "high":
-      return "urgent";
-    case "urgent":
-      return "urgent";
-  }
-}
 
 type RebindOutcome =
   | {
@@ -16481,123 +16465,25 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     }
   }
 
-  /**
-   * Recover refinement tasks that have sat in triage long enough to indicate
-   * starvation while the rest of the board keeps progressing.
-   *
-   * Recovery is a bounded priority nudge only; tasks still route through the
-   * normal triage specification + approval pipeline.
-   */
+  /*
+  FNXC:TaskQueueOrder 2026-09-17-12:07:
+  FN-509 REMOVED this sweep's remediation. Its only action was a one-step priority nudge
+  (low -> normal -> high -> urgent), and priority no longer exists: an ordinary queue is strictly
+  arrival-ordered, so an old refinement is ALREADY ahead of every card created after it and there is
+  nothing left to nudge. Re-adding an automatic rank write here would be exactly the hidden priority
+  FN-509 removes — a boost the operator never asked for. Boost is operator-only, by design.
+
+  The sweep itself is kept, and still registered in both startup and maintenance passes, because it
+  also evicts stale triage processing markers. That eviction is an independent recovery and is not
+  part of the retired nudge.
+  */
   async recoverStarvedRefinementTriageTasks(): Promise<number> {
     try {
       this.options.evictStaleTriageProcessing?.();
-
-      const tasks = await this.store.listTasks({ slim: true, includeArchived: false });
-      /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-23:40:
-      Resolved WAITING membership for the two peer-progress counts below. The question is "are OTHER
-      queued cards moving while this refinement card starves", so it must include every lane a card
-      can wait in — hold and intake. Keyed on `todo` alone, a renamed board counted zero peers and
-      the starvation escalation never fired.
-      */
-      const starvedWaitingColumns = await resolveProjectColumnsForRoles(this.store, ["hold", "intake"]);
-      const planningIds = this.options.getPlanningTaskIds?.() ?? new Set<string>();
-      const now = Date.now();
-
-      // FNXC:WorkflowColumns 2026-07-29-09:30 (Phase B): intake role.
-      const intakeCandidates = await this.filterByPreWipRole(
-        tasks,
-        ["intake"],
-        new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>(),
-      );
-      const candidates = intakeCandidates.filter((task) => {
-        if (task.sourceType !== "task_refine") return false;
-        if (task.paused) return false;
-        if (task.status !== null && task.status !== "planning") return false;
-        if (planningIds.has(task.id)) return false;
-
-        const createdAtMs = new Date(task.createdAt).getTime();
-        const updatedAtMs = new Date(task.updatedAt).getTime();
-        if (!Number.isFinite(createdAtMs) || !Number.isFinite(updatedAtMs)) return false;
-        if (now - createdAtMs < STARVED_REFINEMENT_RECOVERY_GRACE_MS) return false;
-        if (now - updatedAtMs < STARVED_REFINEMENT_ESCALATION_COOLDOWN_MS) return false;
-
-        const peerProgressCount = tasks.filter((peer) =>
-          peer.id !== task.id &&
-          starvedWaitingColumns.has(peer.column) &&
-          peer.sourceType !== "task_refine" &&
-          new Date(peer.updatedAt).getTime() > createdAtMs,
-        ).length;
-
-        return peerProgressCount >= STARVED_PEER_PROGRESS_THRESHOLD;
-      });
-
-      if (candidates.length === 0) return 0;
-
-      log.warn(`Found ${candidates.length} starved refinement triage task(s)`);
-
-      let recovered = 0;
-      for (const task of candidates) {
-        try {
-          const nextPriority = bumpTaskPriority(task.priority);
-          if (nextPriority === task.priority) continue;
-
-          const createdAtMs = new Date(task.createdAt).getTime();
-          const peerProgressCount = tasks.filter((peer) =>
-            peer.id !== task.id &&
-            starvedWaitingColumns.has(peer.column) &&
-            peer.sourceType !== "task_refine" &&
-            new Date(peer.updatedAt).getTime() > createdAtMs,
-          ).length;
-
-          await this.store.updateTask(task.id, { priority: nextPriority });
-          await this.store.logEntry(
-            task.id,
-            `Auto-recovered starved refinement triage task: priority ${task.priority ?? "normal"} -> ${nextPriority} (age=${Math.max(0, now - createdAtMs)}ms, peerProgress=${peerProgressCount})`,
-          );
-
-          try {
-            const auditor = createRunAuditor(this.store, {
-              runId: generateSyntheticRunId("self-heal", task.id),
-              agentId: "self-healing",
-              taskId: task.id,
-              taskLineageId: task.lineageId ?? undefined,
-              phase: "triage-recovery",
-            });
-            await auditor.database({
-              type: "task:auto-recover-starved-refinement",
-              target: task.id,
-              metadata: {
-                taskId: task.id,
-                ageMs: Math.max(0, now - createdAtMs),
-                peerProgressCount,
-                escalation: "priority-bump",
-                previousPriority: task.priority ?? "normal",
-                nextPriority,
-                graceMs: STARVED_REFINEMENT_RECOVERY_GRACE_MS,
-                cooldownMs: STARVED_REFINEMENT_ESCALATION_COOLDOWN_MS,
-                peerThreshold: STARVED_PEER_PROGRESS_THRESHOLD,
-              },
-            });
-          } catch (auditErr: unknown) {
-            const auditErrMessage = auditErr instanceof Error ? auditErr.message : String(auditErr);
-            log.warn(`Failed to record starved refinement recovery audit for ${task.id}: ${auditErrMessage}`);
-          }
-
-          recovered++;
-        } catch (err: unknown) {
-          const errorMessage = err instanceof Error ? err.message : String(err);
-          log.error(`Failed to recover starved refinement task ${task.id}: ${errorMessage}`);
-        }
-      }
-
-      if (recovered > 0) {
-        log.log(`Recovered ${recovered} starved refinement triage task(s)`);
-      }
-      return recovered;
+      return 0;
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : String(err);
-      log.error(`Starved refinement triage recovery failed: ${errorMessage}`);
+      log.error(`Starved refinement triage processing eviction failed: ${errorMessage}`);
       return 0;
     }
   }

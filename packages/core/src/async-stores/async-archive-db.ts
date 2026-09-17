@@ -43,7 +43,13 @@ import { and, asc, desc, eq, ilike, inArray, or, sql, type SQL } from "drizzle-o
 import * as schema from "../postgres/schema/index.js";
 import type { AsyncDataLayer, DbTransaction } from "../postgres/data-layer.js";
 import type { ArchivedTaskEntry } from "../types.js";
-import type { TaskColumnSortMode } from "../tasks/task-priority.js";
+/*
+FNXC:TaskQueueOrder 2026-09-17-12:07:
+FN-509 removed the selectable sort from every LIVE column, but History is not a queue: it is a
+read-only archive browser with its own independent navigation, so its two orders stay here rather
+than borrowing the deleted board-wide mode type.
+*/
+export type ArchiveSortMode = "completion-date-desc" | "task-id-desc";
 import { buildTsqueryFragment, sanitizeSearchTokens } from "../task-store/async/async-search.js";
 
 /** A query-capable handle: either the top-level db or a transaction handle. */
@@ -187,7 +193,7 @@ export async function listArchivedTaskEntriesPage(
   limit: number,
   offset: number,
   projectId?: string,
-  sortMode: TaskColumnSortMode = "completion-date-desc",
+  sortMode: ArchiveSortMode = "completion-date-desc",
 ): Promise<ArchivedTaskEntry[]> {
   const numericTaskSuffix = sql`COALESCE(substring(${archivedTaskColumns.id} from '-([0-9]+)$')::numeric, 0)`;
   const orderBy = sortMode === "task-id-desc"

@@ -226,10 +226,8 @@ Pending-image previews share this compact tokenized footprint across QuickEntryB
   position: relative;
 }
 
-.inline-create-priority-wrap {
-  display: inline-flex;
-  align-items: center;
-}
+/* FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509 removed the inline priority select and its wrapper;
+   no empty shell is left in the quick-create control row. */
 
 .node-trigger-wrap {
   position: relative;
@@ -258,10 +256,6 @@ Pending-image previews share this compact tokenized footprint across QuickEntryB
   margin-left: auto;
   font-size: 12px;
   color: var(--text-muted);
-}
-
-.inline-create-priority-select {
-  max-width: 180px;
 }
 
 /* === Mobile Responsive Overrides === */
@@ -317,7 +311,4 @@ Pending-image previews share this compact tokenized footprint across QuickEntryB
     width: 100%;
   }
 
-  .inline-create-priority-select {
-    min-height: 36px;
-  }
 }

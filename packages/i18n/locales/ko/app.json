@@ -8944,7 +8944,12 @@
       "badgeApproved": "내가 승인한 계획",
       "approved": "계획 승인됨 — {{id}}이(가) 실행으로 진행합니다",
       "rejected": "계획 거부됨 — {{id}}이(가) 새 계획으로 돌아갑니다"
-    }
+    },
+    "boost": "우선 처리",
+    "boosting": "우선 처리 중…",
+    "boostAriaLabel": "{{taskId}}을(를) 대기열 맨 앞으로 이동",
+    "boostTitle": "대기열이 다음 작업을 받아들일 때 이 작업을 먼저 시도합니다. 작업을 시작하거나 차단을 해제하지는 않습니다.",
+    "boostFailed": "{{taskId}}을(를) 우선 처리할 수 없습니다. 이미 시작되었거나 이동했을 수 있습니다. 새로 고쳐 현재 위치를 확인하세요."
   },
   "terminal": {
     "arrowKeysLabel": "",

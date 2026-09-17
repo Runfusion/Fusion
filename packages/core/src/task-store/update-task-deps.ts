@@ -19,7 +19,6 @@ import {join} from "node:path";
 import {existsSync} from "node:fs";
 import type {Task, Column, RunMutationContext, RunAuditEventInput} from "../types.js";
 import "../builtin-traits.js";
-import {normalizeTaskPriority} from "../tasks/task-priority.js";
 import {extractTaskIdTokens, normalizeTitleForTaskId} from "../tasks/task-title-id-drift.js";
 import {generateTaskLineageId} from "../tasks/task-lineage.js";
 import {deriveFallbackTaskTitle} from "../ai/ai-summarize.js";
@@ -152,7 +151,6 @@ export async function refineTaskImpl(store: TaskStore, id: string, feedback: str
           lineageId: generateTaskLineageId(),
           title: normalizedTitle.title ?? "Refinement",
           description: `${feedback.trim()}\n\nRefines: ${id}`,
-          priority: normalizeTaskPriority(sourceTask.priority),
           column: refineIntakeColumn as Task["column"],
           dependencies: [id],
           sourceType: "task_refine",

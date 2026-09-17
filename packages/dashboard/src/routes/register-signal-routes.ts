@@ -138,7 +138,7 @@ export function signalToTaskInput(signal: Signal): Parameters<TaskStore["createT
     workflow's intake trait (byte-identical "triage" for builtin:coding; a custom
     default workflow's own intake column, e.g. Inbox, otherwise).
     */
-    priority: signal.severity === "critical" ? "high" : undefined,
+    /* FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509 — a signal's own severity is not a task rank. */
     source: {
       // Reuse the existing `api` source type — signals arrive over the API
       // webhook surface. Provenance is carried in sourceMetadata so we do not

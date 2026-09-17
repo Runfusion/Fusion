@@ -813,6 +813,10 @@ export async function admitPlanningContinuation(input: {
       lane: "execute",
       consumesWorktree: false,
       createdAt: input.item.createdAt ?? input.task.createdAt,
+      // FNXC:TaskQueueOrder 2026-09-17-12:07: Boost scope travels with the candidate.
+      column: input.task.column,
+      ...(input.task.columnMovedAt ? { columnMovedAt: input.task.columnMovedAt } : {}),
+      ...(input.task.queueBoost ? { queueBoost: input.task.queueBoost } : {}),
       start: async () => {
         // The preflight above is only a fast path. This serialized check is the
         // ownership authority when concurrent drains race the same durable row.

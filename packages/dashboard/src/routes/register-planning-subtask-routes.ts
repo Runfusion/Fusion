@@ -1,12 +1,9 @@
 import {
-  DEFAULT_TASK_PRIORITY,
   resolveEffectiveSettingsDetailedById,
   resolvePlanningSettingsModel,
   resolveTaskOutputLanguage,
-  TASK_PRIORITIES,
   THINKING_LEVELS,
   type PlanningSummary,
-  type TaskPriority,
   type TaskStore,
   type ThinkingLevel,
 } from "@fusion/core";
@@ -696,8 +693,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
     }
   });
 
-  const isTaskPriority = (value: unknown): value is TaskPriority =>
-    typeof value === "string" && (TASK_PRIORITIES as readonly string[]).includes(value);
+  /* FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509 deleted the local priority guard with the field. */
 
   const parsePlanningSummaryOverride = (summaryInput: unknown): PlanningSummary | undefined => {
     if (summaryInput === undefined) {
@@ -1078,7 +1074,9 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         title: summary.title,
         description: sourceContext ? appendSourceIssueBlock(planMd, sourceContext.markdown, sourceContext.sourceIssue.url ?? "") : planMd,
         dependencies: summary.suggestedDependencies.length > 0 ? summary.suggestedDependencies : undefined,
-        priority: isTaskPriority(summary.priority) ? summary.priority : DEFAULT_TASK_PRIORITY,
+        /* FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509 — a legacy saved summary may still carry a level in
+       its raw JSON. It is DROPPED here rather than converted into a rank, so resuming an old
+       planning session keeps working without reintroducing a priority. */
         ...(sourceContext ? { sourceIssue: sourceContext.sourceIssue, source: { sourceType: "github_import" as const, sourceMetadata: sourceContext.sourceMetadata }, ...(trackingDecision?.githubTracking ? { githubTracking: trackingDecision.githubTracking } : {}) } : { source: { sourceType: "api" as const } }),
         branch: resolvedBranch,
         ...(resolvedBranch !== undefined ? { branchWriteOrigin: "operator" as const } : {}),

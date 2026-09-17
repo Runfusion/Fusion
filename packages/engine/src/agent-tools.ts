@@ -44,7 +44,6 @@ import { reconcileMissionState } from "./missions/mission-state-reconcile.js";
 
 // ── Tool parameter schemas (canonical definitions) ────────────────────────
 
-const TASK_CREATE_PRIORITY_VALUES = ["low", "normal", "high", "urgent"] as const;
 
 /*
 FNXC:MissionAdmission 2026-07-22-13:07:
@@ -71,11 +70,8 @@ export const taskCreateParams = Type.Object({
   dependencies: Type.Optional(
     Type.Array(Type.String(), { description: "Task IDs this new task depends on (e.g. [\"KB-001\"])" }),
   ),
-  priority: Type.Optional(
-    Type.Union(TASK_CREATE_PRIORITY_VALUES.map((priority) => Type.Literal(priority)), {
-      description: "Task priority (low, normal, high, urgent)",
-    }),
-  ),
+  /* FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509 removed the `priority` parameter. Tasks run in
+     arrival order; an operator raises one explicitly with Boost on the card. */
   workflow_id: Type.Optional(
     Type.String({
       description:
@@ -1647,7 +1643,7 @@ export function createTaskCreateTool(
             await options.messageStore.sendMessage({
               fromId: options.sourceAgentId ?? provenance?.sourceAgentId ?? "ephemeral-worker", fromType: "agent", toId: DASHBOARD_USER_ID, toType: "user", type: "agent-to-user",
               content: `Task proposal awaiting validation: ${title}`,
-              metadata: { kind: "task-proposal", proposalStatus: "pending", proposalIdempotencyKey: randomUUID(), taskId: options.sourceTaskId, proposedTask: { title, description: params.description, priority: params.priority, workflowId: params.workflow_id, dependencies: params.dependencies } },
+              metadata: { kind: "task-proposal", proposalStatus: "pending", proposalIdempotencyKey: randomUUID(), taskId: options.sourceTaskId, proposedTask: { title, description: params.description, workflowId: params.workflow_id, dependencies: params.dependencies } },
             });
             return { content: [{ type: "text" as const, text: "Task proposal submitted to the operator for validation; no task was created." }], details: { proposed: true } };
           }
@@ -1683,7 +1679,6 @@ export function createTaskCreateTool(
         const { task, wasDuplicate } = await createAgentTask(store, {
           description: params.description,
           dependencies: params.dependencies,
-          priority: params.priority,
           ...(workflowId ? { workflowId } : {}),
           ...(lineage ? { missionId: lineage.missionId, sliceId: lineage.sliceId } : {}),
           ...definedFeatureBootstrapInput(store, lineage),

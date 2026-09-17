@@ -26,7 +26,7 @@ import {
   type TraitFlags,
   allowsAutoMergeProcessing,
   hasSharedBranchMemberAutoMergeHold,
-  compareTasksByPriorityThenAgeAndId,
+  compareTasksByQueueOrder,
   emitOverseerConfirmation,
   emitOverseerEscalation,
   emitOverseerObservation,
@@ -54,7 +54,7 @@ import {
   resolveMaxAutoMergeRetries,
   resolveTaskLifecycleColumns,
   resolveTaskSessionAdvisorEnabled,
-  sortTasksByPriorityThenAgeAndId,
+  sortTasksByQueueOrder,
   resolveWipTargetForTask,
   clearMergeConfirmedTransientStatus,
   classifyGhError,
@@ -945,6 +945,10 @@ export class ProjectEngine {
             lane: "review",
             consumesWorktree: false,
             createdAt: task.createdAt,
+            // FNXC:TaskQueueOrder 2026-09-17-12:07: Boost scope travels with the candidate.
+            column: task.column,
+            ...(task.columnMovedAt ? { columnMovedAt: task.columnMovedAt } : {}),
+            ...(task.queueBoost ? { queueBoost: task.queueBoost } : {}),
             start: async () => {
               // Do not run merge work in the coordinator; hand the exact queued
               // id back to the single-flight pump, which will consume this marker.
@@ -3006,7 +3010,7 @@ export class ProjectEngine {
 
     entries.sort((a, b) => {
       if (a.manual !== b.manual) return a.manual ? -1 : 1;
-      if (a.task && b.task) return compareTasksByPriorityThenAgeAndId(a.task, b.task);
+      if (a.task && b.task) return compareTasksByQueueOrder(a.task, b.task);
       if (a.task) return -1;
       if (b.task) return 1;
       return a.order - b.order;
@@ -3268,7 +3272,7 @@ export class ProjectEngine {
     for (const heldTaskId of [...this.mergeSweepHoldReasons.keys()]) {
       if (!candidateIds.has(heldTaskId)) this.mergeSweepHoldReasons.delete(heldTaskId);
     }
-    const eligible = sortTasksByPriorityThenAgeAndId(
+    const eligible = sortTasksByQueueOrder(
       candidates.filter((t, i) => {
         if (!allowFlags[i]) return false;
         const admission = admissions[i]!;
@@ -4497,6 +4501,10 @@ export class ProjectEngine {
                 lane: "review",
                 consumesWorktree: false,
                 createdAt: mergeCandidate?.createdAt,
+                // FNXC:TaskQueueOrder 2026-09-17-12:07: Boost scope travels with the candidate.
+                ...(mergeCandidate?.column !== undefined ? { column: mergeCandidate.column } : {}),
+                ...(mergeCandidate?.columnMovedAt ? { columnMovedAt: mergeCandidate.columnMovedAt } : {}),
+                ...(mergeCandidate?.queueBoost ? { queueBoost: mergeCandidate.queueBoost } : {}),
                 start: async () => {
                   selected = true;
                   return true;

@@ -89,7 +89,8 @@ function buildFixTaskInput(
     title,
     description: lines.join("\n"),
     column: MONITOR_FIX_ROUTE_COLUMN as TaskCreateInput["column"],
-    priority: signal.severity === "critical" ? "urgent" : "high",
+    /* FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509 — monitor severity stays a monitor concern and is
+       not converted into a task rank. */
     source: {
       sourceType: "automation",
       sourceMetadata: {

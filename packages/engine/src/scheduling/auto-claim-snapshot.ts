@@ -1,5 +1,5 @@
 import type { Task, TaskStore, WorkflowIr, WorkflowIrResolverStore } from "@fusion/core";
-import { resolveTaskLifecycleColumns } from "@fusion/core";
+import { compareTasksByQueueOrder, resolveTaskLifecycleColumns } from "@fusion/core";
 import { createLogger, type Logger } from "../logger.js";
 
 /**
@@ -222,11 +222,10 @@ export class AutoClaimSnapshotManager {
 
     const tasks = allTasks
       .filter((candidate) => isRunnableAutoClaimCandidate(candidate, tasksById, rolesByTask))
-      .sort((a, b) => {
-        const aSortAt = a.columnMovedAt ?? a.createdAt;
-        const bSortAt = b.columnMovedAt ?? b.createdAt;
-        return aSortAt.localeCompare(bSortAt);
-      })
+      /* FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509 — rank with the shared queue order BEFORE the
+         50-row bound, so a boosted card that would have sat beyond the cut is still in the snapshot.
+         Relevance scoring downstream remains a filter, not a way past an older admissible card. */
+      .sort(compareTasksByQueueOrder)
       .slice(0, 50)
       .map((candidate) => toAutoClaimCandidate(candidate, now));
 

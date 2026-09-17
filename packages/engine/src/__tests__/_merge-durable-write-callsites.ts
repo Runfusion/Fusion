@@ -347,6 +347,10 @@ const STORE_METHOD_CLASSIFICATION: Record<string, Omit<SurfaceClassification, "m
   resolveOrphanedWorkspaceLandIntent: { kind: "writer", reason: "persists workspace land write-ahead intent state" },
   resolveWorkspaceLandIntent: { kind: "writer", reason: "persists workspace land write-ahead intent state" },
   withValidWorkspaceLease: { kind: "writer", reason: "runs caller mutations transactionally under a validated workspace lease fence" },
+  /* FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509's durable queue rank has exactly one writer. It is
+     reached only from the project-scoped Boost route, so it contributes no merge-reachable call
+     site to the inventory below. */
+  boostTask: { kind: "writer", reason: "persists the durable task queue rank (queue_boost) under the task advisory lock" },
 };
 const NON_WRITER_REASONS: Record<string, string> = Object.fromEntries([
   "__invokeHandoffMergeQueueFailureInjectorForTesting",
@@ -615,6 +619,9 @@ const NON_WRITER_REASONS: Record<string, string> = Object.fromEntries([
   "listSpecLocks",
   "listStrandedRefinements",
   "listTaskRecommendations",
+  /* FNXC:TaskQueueOrder 2026-09-17-13:51: FN-509's lane-scoped board page — a bounded keyset READ
+     that applies the shared queue order before its LIMIT and persists nothing. */
+  "listTaskQueuePage",
   "listTasks",
   "listTasksByBranchGroup",
   "listTasksBySourceLineage",

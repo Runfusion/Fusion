@@ -10,7 +10,7 @@ A checkout-less planning peer is not a holder and cannot block this dispatch. A 
 retained execution checkout remains a dormant holder, preserving unmerged work across replan bounces.
 */
 import {
-  compareTasksByPriorityThenAgeAndId,
+  compareTasksByQueueOrder,
   fileScopeLeaseBlocksCandidate,
   normalizeOverlapScopeForTask,
   taskHoldsUnmergedCheckout,
@@ -147,7 +147,7 @@ export async function blockOuterDispatchWhenFileScopeLeaseHeld(
     );
   const dormantHolder = activeHolder ? undefined : holders
     .filter((holder) => holder.kind === "dormant")
-    .sort((left, right) => compareTasksByPriorityThenAgeAndId(left.task, right.task))
+    .sort((left, right) => compareTasksByQueueOrder(left.task, right.task))
     .find((holder) =>
       fileScopeLeaseBlocksCandidate(holder.task, liveTask, {
         kind: holder.kind,

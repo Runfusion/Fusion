@@ -8955,7 +8955,12 @@
       "badgeApproved": "Plano aprovado por você",
       "approved": "Plano aprovado — {{id}} segue para a execução",
       "rejected": "Plano recusado — {{id}} volta para um novo plano"
-    }
+    },
+    "boost": "Priorizar",
+    "boosting": "Priorizando…",
+    "boostAriaLabel": "Colocar {{taskId}} no início da fila",
+    "boostTitle": "Tentar esta tarefa primeiro quando a fila admitir trabalho. Não a inicia nem remove qualquer bloqueio.",
+    "boostFailed": "Não foi possível priorizar {{taskId}} — ela pode ter iniciado ou mudado de coluna. Atualize para ver sua posição atual."
   },
   "terminal": {
     "arrowKeysLabel": "Teclas de seta do terminal",

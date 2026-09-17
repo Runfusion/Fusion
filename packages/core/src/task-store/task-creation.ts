@@ -18,7 +18,6 @@ import "../builtin-traits.js";
 import {applyReviewLevelPreset} from "../tasks/review-level-preset.js";
 import {buildHumanPlanApprovalCreationState, resolveHumanPlanApprovalExecutionMode, resolveHumanPlanApprovalWorkflowSteps} from "../planner/human-plan-approval.js";
 import {PLAN_REVIEW_GROUP_ID} from "../workflows/builtin-plan-review-group.js";
-import {normalizeTaskPriority} from "../tasks/task-priority.js";
 import {sanitizeTitle, summarizeTitle} from "../ai/ai-summarize.js";
 import {resolveTaskOutputLanguage} from "../ai/ai-output-language.js";
 import {extractTaskIdTokens, normalizeTitleForTaskId} from "../tasks/task-title-id-drift.js";
@@ -754,7 +753,6 @@ export async function _createTaskInternalBackendImpl(store: TaskStore, input: Ta
       proposalClaimId: input.proposalClaimId,
       title: normalizedTitle.title ?? undefined,
       description: input.description,
-      priority: normalizeTaskPriority(input.priority),
       tokenUsage: input.tokenUsage,
       declaredSymbols,
       sourceIssue: input.sourceIssue,
@@ -1310,7 +1308,6 @@ export async function _createTaskInternalImpl(store: TaskStore, input: TaskCreat
       proposalClaimId: input.proposalClaimId,
       title: normalizedTitle.title ?? undefined,
       description: input.description,
-      priority: normalizeTaskPriority(input.priority),
       tokenUsage: input.tokenUsage,
       declaredSymbols,
       sourceIssue: input.sourceIssue,

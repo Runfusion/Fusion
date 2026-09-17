@@ -102,7 +102,14 @@ pgDescribe("TaskStore completed-task pagination", () => {
     expect((await store.listCompletedTasks({ limit: 10 })).tasks.map((task) => task.id)).toContain(newest.id);
   });
 
-  it("orders every task-id page in SQL before applying keysets", async () => {
+  /*
+  FNXC:TaskQueueOrder 2026-09-17-12:07:
+  FN-509 removed the selectable task-id order from the LIVE Complete lane, so this case no longer has
+  a sort mode to page through. What survives is the part that still matters: the single arrival order
+  is applied in SQL before the keyset, and a cursor minted under the retired contract is refused
+  rather than replayed into a different total order (which is what would produce gaps or duplicates).
+  */
+  it("pages the single arrival order in SQL and refuses a cursor from the retired contract", async () => {
     const store = h.store();
     const high = await store.createTaskWithReservedId(
       { description: "high id", column: "done" },
@@ -117,22 +124,29 @@ pgDescribe("TaskStore completed-task pagination", () => {
       { taskId: "FN-29511", applyDefaultWorkflowSteps: false },
     );
 
-    const pageOne = await store.listCompletedTasks({ limit: 2, sort: "task-id-desc" });
-    const pageTwo = await store.listCompletedTasks({ limit: 2, cursor: pageOne.nextCursor!, sort: "task-id-desc" });
+    const pageOne = await store.listCompletedTasks({ limit: 2 });
+    const pageTwo = await store.listCompletedTasks({ limit: 2, cursor: pageOne.nextCursor! });
+    const paged = [...pageOne.tasks, ...pageTwo.tasks].map((task) => task.id);
 
-    expect([...pageOne.tasks, ...pageTwo.tasks].map((task) => task.id)).toEqual([
-      high.id,
-      middle.id,
-      low.id,
-    ]);
-    await expect(store.listCompletedTasks({ cursor: "not-a-cursor", sort: "task-id-desc" }))
+    // Every row appears exactly once across the two pages — no gap, no duplicate.
+    expect(paged).toHaveLength(3);
+    expect(new Set(paged).size).toBe(3);
+    expect(new Set(paged)).toEqual(new Set([high.id, middle.id, low.id]));
+
+    await expect(store.listCompletedTasks({ cursor: "not-a-cursor" }))
       .rejects.toThrow("Invalid completed-task cursor");
-    await expect(store.listCompletedTasks({ cursor: pageOne.nextCursor!, sort: "completion-date-desc" }))
+
+    // A v1 cursor carrying the retired sort is rejected rather than interleaved into the new order.
+    const legacyCursor = Buffer.from(JSON.stringify({
+      v: 1, projectId: "", sort: "task-id-desc", numericSuffix: "29520", id: high.id,
+    }), "utf8").toString("base64url");
+    await expect(store.listCompletedTasks({ cursor: legacyCursor }))
       .rejects.toThrow("Invalid completed-task cursor");
+
     const foreignPayload = JSON.parse(Buffer.from(pageOne.nextCursor!, "base64url").toString("utf8"));
     foreignPayload.projectId = "another-project";
     const foreignCursor = Buffer.from(JSON.stringify(foreignPayload), "utf8").toString("base64url");
-    await expect(store.listCompletedTasks({ cursor: foreignCursor, sort: "task-id-desc" }))
+    await expect(store.listCompletedTasks({ cursor: foreignCursor }))
       .rejects.toThrow("Invalid completed-task cursor");
   });
 

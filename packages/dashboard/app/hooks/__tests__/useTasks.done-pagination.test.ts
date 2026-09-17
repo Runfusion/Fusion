@@ -72,8 +72,8 @@ describe("useTasks Done keyset pagination", () => {
     expect(ids).toHaveLength(205);
     expect(new Set(ids).size).toBe(205);
     expect(result.current.completedCounts.byColumn.done).toBe(205);
-    expect(fetchCompletedTasks).toHaveBeenNthCalledWith(1, "project-a", 50, undefined, "completion-date-desc", { signal: expect.any(AbortSignal) });
-    expect(fetchCompletedTasks).toHaveBeenLastCalledWith("project-a", 50, "cursor-200", "completion-date-desc", { signal: expect.any(AbortSignal) });
+    expect(fetchCompletedTasks).toHaveBeenNthCalledWith(1, "project-a", 50, undefined, { signal: expect.any(AbortSignal) });
+    expect(fetchCompletedTasks).toHaveBeenLastCalledWith("project-a", 50, "cursor-200", { signal: expect.any(AbortSignal) });
   });
 
   it("reconciles aggregate and selected-workflow counts for every live Complete transition", async () => {
@@ -208,7 +208,7 @@ describe("useTasks Done keyset pagination", () => {
     const { result } = renderHook(() => useTasks({ projectId: "project-a", sseEnabled: false }));
     await waitFor(() => expect(result.current.completedHasMore).toBe(true));
     await act(() => result.current.loadMoreCompletedTasks());
-    expect(fetchCompletedTasks).toHaveBeenLastCalledWith("project-a", 50, "opaque-boundary", "completion-date-desc", { signal: expect.any(AbortSignal) });
+    expect(fetchCompletedTasks).toHaveBeenLastCalledWith("project-a", 50, "opaque-boundary", { signal: expect.any(AbortSignal) });
     expect(result.current.tasks.filter((candidate) => candidate.column === "done")).toHaveLength(3);
   });
 
@@ -222,7 +222,7 @@ describe("useTasks Done keyset pagination", () => {
     await expect(act(() => result.current.loadMoreCompletedTasks())).rejects.toThrow("temporary");
     expect(result.current.completedLoadingMore).toBe(false);
     await act(() => result.current.loadMoreCompletedTasks());
-    expect(fetchCompletedTasks).toHaveBeenNthCalledWith(3, "project-a", 50, "retry-cursor", "completion-date-desc", { signal: expect.any(AbortSignal) });
+    expect(fetchCompletedTasks).toHaveBeenNthCalledWith(3, "project-a", 50, "retry-cursor", { signal: expect.any(AbortSignal) });
     expect(result.current.completedHasMore).toBe(false);
   });
 
@@ -284,7 +284,7 @@ describe("useTasks Done keyset pagination", () => {
   it("times out a continuation, preserves rows, and permits an explicit retry", async () => {
     fetchCompletedTasks
       .mockResolvedValueOnce(response([task("FN-2")], 2, "retry-cursor"))
-      .mockImplementationOnce((_projectId, _limit, _cursor, _sort, options) => new Promise((_, reject) => {
+      .mockImplementationOnce((_projectId, _limit, _cursor, options) => new Promise((_, reject) => {
         options?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
       }))
       .mockResolvedValueOnce(response([task("FN-1")], 2, null));
@@ -390,8 +390,8 @@ describe("useTasks Done keyset pagination", () => {
     await act(() => oldLoad);
     await act(() => result.current.loadMoreCompletedTasks());
 
-    expect(fetchCompletedTasks).toHaveBeenNthCalledWith(3, "project-a", 50, undefined, "completion-date-desc", { signal: expect.any(AbortSignal) });
-    expect(fetchCompletedTasks).toHaveBeenLastCalledWith("project-a", 50, "new-cursor", "completion-date-desc", { signal: expect.any(AbortSignal) });
+    expect(fetchCompletedTasks).toHaveBeenNthCalledWith(3, "project-a", 50, undefined, { signal: expect.any(AbortSignal) });
+    expect(fetchCompletedTasks).toHaveBeenLastCalledWith("project-a", 50, "new-cursor", { signal: expect.any(AbortSignal) });
     expect(result.current.tasks.some((candidate) => candidate.id === "FN-STALE-TAIL")).toBe(false);
     expect(result.current.tasks.filter((candidate) => candidate.column === "done").map((candidate) => candidate.id)).toEqual([
       "FN-NEW-HEAD",
@@ -399,23 +399,4 @@ describe("useTasks Done keyset pagination", () => {
     ]);
   });
 
-  it("fences a late page after changing sort and restarts at page zero", async () => {
-    const late = deferred<ReturnType<typeof response>>();
-    fetchCompletedTasks
-      .mockResolvedValueOnce(response([task("FN-OLD-2")], 2, "old-cursor"))
-      .mockReturnValueOnce(late.promise)
-      .mockResolvedValueOnce(response([task("FN-NEW-100")], 2, "new-cursor"))
-      .mockResolvedValueOnce(response([task("FN-NEW-99")], 2, null));
-    const { result } = renderHook(() => useTasks({ projectId: "project-a", sseEnabled: false }));
-    await waitFor(() => expect(result.current.completedHasMore).toBe(true));
-    let oldLoad!: Promise<void>;
-    await act(async () => { oldLoad = result.current.loadMoreCompletedTasks(); await Promise.resolve(); });
-    await act(() => result.current.changeCompletedSortMode("task-id-desc"));
-    late.resolve(response([task("FN-OLD-1")], 2, null));
-    await act(() => oldLoad);
-    await act(() => result.current.loadMoreCompletedTasks());
-    expect(fetchCompletedTasks).toHaveBeenNthCalledWith(3, "project-a", 50, undefined, "task-id-desc", { signal: expect.any(AbortSignal) });
-    expect(fetchCompletedTasks).toHaveBeenLastCalledWith("project-a", 50, "new-cursor", "task-id-desc", { signal: expect.any(AbortSignal) });
-    expect(result.current.tasks.filter((candidate) => candidate.column === "done").map((candidate) => candidate.id)).toEqual(["FN-NEW-100", "FN-NEW-99"]);
-  });
 });

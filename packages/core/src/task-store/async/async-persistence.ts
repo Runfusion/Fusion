@@ -33,9 +33,15 @@ import { and, Column, desc, eq, gt, inArray, is, isNull, notInArray, or, sql, ty
 import type { PgColumn } from "drizzle-orm/pg-core";
 import * as schema from "../../postgres/schema/index.js";
 import type { AsyncDataLayer, DbTransaction } from "../../postgres/data-layer.js";
-import type { TaskColumnSortMode } from "../../tasks/task-priority.js";
 import { isPostgresUniqueError } from "../../db/postgres-errors.js";
 import { taskProjectScope } from "../../postgres/data-layer.js";
+import {
+  taskIntakeDisplayCursorPredicate,
+  taskIntakeDisplayOrderBy,
+  taskQueueOrderBy,
+  taskQueueOrderCursorPredicate,
+  type TaskQueuePageKey,
+} from "../task-queue-order-ops.js";
 import {
   TASK_COLUMN_DESCRIPTORS,
   TASK_JSONB_COLUMNS,
@@ -459,7 +465,6 @@ export async function readCompletedTaskPage(
   input: {
     columns: readonly string[];
     limit: number;
-    sort: TaskColumnSortMode;
     cursor?: CompletedTaskCursorKey;
     defaultWorkflowId: string;
   },
@@ -471,20 +476,19 @@ export async function readCompletedTaskPage(
     const numericSuffix = sql`COALESCE(substring(${schema.project.tasks.id} from '-([0-9]+)$')::numeric, 0)`;
     const completionAt = sql`COALESCE(${schema.project.tasks.columnMovedAt}, ${schema.project.tasks.updatedAt}, ${schema.project.tasks.createdAt})`;
     const cursorSuffix = input.cursor?.numericSuffix ?? "0";
+    /* FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509 removed the task-id-desc alternative from the
+       LIVE Complete lane. Arrival order is the only order, so the keyset predicate and the ORDER BY
+       share exactly one total key and an old id-sorted cursor cannot be replayed into it. */
     const cursorPredicate = !input.cursor
       ? undefined
-      : input.sort === "task-id-desc"
-        ? sql`(${numericSuffix}, ${schema.project.tasks.id}) < (${cursorSuffix}::numeric, ${input.cursor.id})`
-        : sql`(${completionAt}, ${numericSuffix}, ${schema.project.tasks.id}) < (${input.cursor.completionAt!}, ${cursorSuffix}::numeric, ${input.cursor.id})`;
+      : sql`(${completionAt}, ${numericSuffix}, ${schema.project.tasks.id}) < (${input.cursor.completionAt!}, ${cursorSuffix}::numeric, ${input.cursor.id})`;
     const where = and(
       ACTIVE_TASK_FILTER,
       taskProjectScope(layer),
       inArray(schema.project.tasks.column, [...input.columns]),
       cursorPredicate,
     );
-    const order = input.sort === "task-id-desc"
-      ? [desc(numericSuffix), desc(schema.project.tasks.id)]
-      : [desc(completionAt), desc(numericSuffix), desc(schema.project.tasks.id)];
+    const order = [desc(completionAt), desc(numericSuffix), desc(schema.project.tasks.id)];
     const rows = await tx.select(TASK_SLIM_PROJECTION)
       .from(schema.project.tasks)
       .where(where)
@@ -529,7 +533,17 @@ export interface ReadLiveTaskRowsOptions {
   offset?: number;
   afterCreatedAt?: string;
   afterId?: string;
-  sort?: "created-asc" | "completion-desc" | TaskColumnSortMode;
+  sort?: "created-asc" | "completion-desc" | "completion-date-desc" | "queue-order" | "intake-desc";
+  /*
+  FNXC:TaskQueueOrder 2026-09-17-13:51:
+  The board's per-lane pages continue with the SAME total order they were selected by, so the
+  `created_at`/`id` tuple above cannot serve them: it knows nothing about the boost sequence that
+  ranks a boosted card ahead of every arrival. `afterQueueKey` carries the full queue key and
+  `afterIntakeKey` the newest-first intake key; both are exclusive and both are ignored unless the
+  matching `sort` is requested, so no existing caller changes shape.
+  */
+  afterQueueKey?: TaskQueuePageKey;
+  afterIntakeKey?: Pick<TaskQueuePageKey, "createdAt" | "id">;
 }
 
 export async function readLiveTaskRows(
@@ -582,26 +596,40 @@ export async function readLiveTaskRows(
         and(eq(schema.project.tasks.createdAt, options.afterCreatedAt), eq(numericTaskSuffix, cursorSuffix), gt(schema.project.tasks.id, options.afterId)),
       )
     : undefined;
+  const queueCursorScope = options?.sort === "queue-order" && options.afterQueueKey
+    ? taskQueueOrderCursorPredicate(options.afterQueueKey)
+    : options?.sort === "intake-desc" && options.afterIntakeKey
+      ? taskIntakeDisplayCursorPredicate(options.afterIntakeKey)
+      : undefined;
   const liveFilter = options?.includeDeleted
-    ? and(projectScope, columnScope, cursorScope)
-    : and(ACTIVE_TASK_FILTER, projectScope, columnScope, cursorScope);
+    ? and(projectScope, columnScope, cursorScope, queueCursorScope)
+    : and(ACTIVE_TASK_FILTER, projectScope, columnScope, cursorScope, queueCursorScope);
   const paginate = options?.limit !== undefined || (options?.offset ?? 0) > 0;
   /*
   FNXC:DonePagination 2026-09-04-10:36:
   Completed-task pages are selected by the latest terminal-lane entry before LIMIT/OFFSET. The deterministic id tie-break prevents gaps or duplicates while operators walk a large Done history.
   */
-  const createdAtIdOrder = options?.sort === "task-id-desc"
-    ? [desc(numericTaskSuffix), desc(schema.project.tasks.id)]
-    : options?.sort === "completion-desc" || options?.sort === "completion-date-desc"
-      ? [
-          desc(sql`COALESCE(${schema.project.tasks.columnMovedAt}, ${schema.project.tasks.updatedAt}, ${schema.project.tasks.createdAt})`),
-          desc(numericTaskSuffix),
-          desc(schema.project.tasks.id),
-        ]
-      : [
-          sql`${schema.project.tasks.createdAt} ASC`,
-          sql`${numericTaskSuffix} ASC`,
-        ];
+  /*
+  FNXC:TaskQueueOrder 2026-09-17-12:07:
+  FN-509 replaced the configurable `task-id-desc` board sort with two shared queue orders applied
+  in SQL BEFORE the LIMIT: `queue-order` (Boost, then arrival) for processing lanes and
+  `intake-desc` (newest first) for manual intake. Sorting a page the database already truncated
+  cannot surface a boosted card that started beyond the limit, which is the whole point.
+  */
+  const createdAtIdOrder = options?.sort === "queue-order"
+    ? taskQueueOrderBy()
+    : options?.sort === "intake-desc"
+      ? taskIntakeDisplayOrderBy()
+      : options?.sort === "completion-desc" || options?.sort === "completion-date-desc"
+        ? [
+            desc(sql`COALESCE(${schema.project.tasks.columnMovedAt}, ${schema.project.tasks.updatedAt}, ${schema.project.tasks.createdAt})`),
+            desc(numericTaskSuffix),
+            desc(schema.project.tasks.id),
+          ]
+        : [
+            sql`${schema.project.tasks.createdAt} ASC`,
+            sql`${numericTaskSuffix} ASC`,
+          ];
   const applyPagination = <Q extends { orderBy: (...o: SQL[]) => Q; limit: (n: number) => Q; offset: (n: number) => Q }>(query: Q): Q => {
     if (!paginate) return query;
     let q = query.orderBy(...createdAtIdOrder);
