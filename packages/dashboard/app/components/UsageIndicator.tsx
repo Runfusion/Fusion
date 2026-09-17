@@ -8,6 +8,7 @@ import type { CSSProperties, DragEvent } from "react";
 import { RefreshCw, Activity, TrendingUp, CheckCircle, AlertTriangle, Eye, GripVertical, ChevronUp, ChevronDown } from "lucide-react";
 import type { ProviderUsage, UsageWindow } from "../api";
 import { useUsageData } from "../hooks/useUsageData";
+import { useOutsidePointerDismiss } from "../hooks/useOutsidePointerDismiss";
 import { ProviderIcon } from "./ProviderIcon";
 import { inferProviderIconKey } from "../utils/providerIconKey";
 import { getScopedItem, setScopedItem } from "../utils/projectStorage";
@@ -872,7 +873,23 @@ export function UsageIndicator({ isOpen, onClose, projectId, anchorRect, present
     return () => document.removeEventListener("keydown", handleKey);
   }, [isEmbedded, isOpen, onClose, showDesktopPopover]);
 
-  // Close on overlay click
+  /*
+  FNXC:UsageIndicator 2026-09-17-05:48:
+  FN-491 : conséquence assumée de la garde `triggerSelector`. `header-usage-btn` n'a ni `aria-controls` ni bascule
+  (`onOpenUsage` OUVRE toujours), donc sans cette garde le `pointerdown` fermerait la popover et le `click` du même
+  geste la rouvrirait aussitôt — un cycle visible. Le prix est que re-cliquer cette icône pendant que la popover est
+  ouverte la LAISSE ouverte au lieu de la fermer ; c'est volontaire et acceptable, parce que le clic extérieur, Échap
+  et le bouton « Close » du panneau restent tous des fermetures. On ne transforme délibérément pas le déclencheur en
+  bascule dans `App.tsx` / `Header.tsx` : ce serait une modification de navigation hors périmètre.
+  */
+  const { onPointerDownCapture: onPopoverPointerDownCapture } = useOutsidePointerDismiss({
+    open: isOpen && !isEmbedded && showDesktopPopover,
+    onDismiss: onClose,
+    surfaceRefs: [modalRef],
+    triggerSelector: '[data-testid="header-usage-btn"]',
+  });
+
+  // Close on overlay click (FloatingWindow modal branch only)
   const handleOverlayClick = useCallback(
     (e: React.MouseEvent) => {
       if (e.target === e.currentTarget) {
@@ -907,6 +924,7 @@ export function UsageIndicator({ isOpen, onClose, projectId, anchorRect, present
   const usageContent = (
       <div
         ref={modalRef}
+        onPointerDownCapture={onPopoverPointerDownCapture}
         className={
           isEmbedded
             ? "usage-modal usage-modal--embedded"
@@ -1059,15 +1077,17 @@ export function UsageIndicator({ isOpen, onClose, projectId, anchorRect, present
     floatingWindowStack.ts's contract requires any surface compared in the `--fusion-max-z` band to live in the
     ROOT stacking context: an inline panel cannot beat siblings outside its own context whatever its z-index.
     The popover is already `position: fixed` with computed coordinates, so the portal is geometrically neutral,
-    and Escape / outside-click dismissal are document-level listeners and an explicit backdrop handler.
+    and Escape / outside-click dismissal are document-level listeners.
+
+    FNXC:UsageIndicator 2026-09-17-05:48:
+    FN-491 : la vitre `.usage-popover-backdrop` est SUPPRIMÉE. Ce calque plein écran transparent n'existait que pour
+    capter le clic extérieur ; il gelait le tableau derrière la popover (molette, défilement tactile, clics), de sorte
+    qu'un clic sur une carte refermait seulement la popover sans jamais atteindre la carte. La fermeture au clic
+    extérieur est portée par le hook partagé `useOutsidePointerDismiss`, qui ne monte aucun élément. Seule cette
+    branche ANCRÉE change : la branche `FloatingWindow` reste une vraie modale bloquante avec son `handleOverlayClick`.
     */
     return createPortal(
       <DashboardWindowSurfaceRoot logicalId="usage" group="dialog" className="dashboard-window-surface-root--contents">
-        <div
-          className="usage-popover-backdrop"
-          onClick={onClose}
-          data-testid="usage-modal-overlay"
-        />
         {usageContent}
       </DashboardWindowSurfaceRoot>,
       document.body

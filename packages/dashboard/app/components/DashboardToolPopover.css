@@ -4,14 +4,12 @@ FN-426: shared chrome for the header-anchored Activity and Notes panels. Layerin
 `--fusion-max-z` ceiling published by floatingWindowStack.ts, exactly like the Usage popover, so a panel opened before
 a dashboard window is still readable above it. No sizing constant is copied from UsageIndicator.css: the panel's own
 geometry is computed against the viewport by its component.
-*/
-.dashboard-tool-popover__backdrop {
-  position: fixed;
-  inset: 0;
-  background: transparent;
-  z-index: calc(var(--fusion-max-z) + 2);
-}
 
+FNXC:ToolSurfaces 2026-09-17-05:48:
+FN-491 : la règle `.dashboard-tool-popover__backdrop` est supprimée avec l'élément qu'elle habillait. Ce calque
+plein écran ne servait qu'à capter le clic extérieur et gelait le tableau (molette, défilement tactile, clics).
+La fermeture est portée par le hook `useOutsidePointerDismiss`, donc le panneau ne peint plus que sa propre boîte.
+*/
 .dashboard-tool-popover {
   position: fixed;
   z-index: calc(var(--fusion-max-z) + 3);

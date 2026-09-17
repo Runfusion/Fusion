@@ -598,13 +598,13 @@ FN-413: while the header-anchored Usage popover is OPEN it must stay above every
 window, including one opened AFTER it. The legacy static 100/101 pair sat far below the shared window
 stack (10100+), so any modal painted over it. Both surfaces now derive from the live `--fusion-max-z`
 ceiling published by floatingWindowStack.ts, per the transient-surface scale documented in styles.css.
+
+FNXC:UsageIndicator 2026-09-17-05:48:
+FN-491 : la règle `.usage-popover-backdrop` disparaît avec l'élément qu'elle habillait. Ce calque plein écran ne
+servait qu'à capter le clic extérieur et gelait le tableau derrière la popover ; la fermeture appartient désormais au
+hook partagé `useOutsidePointerDismiss`, qui ne monte aucun élément. `.usage-modal--popover` garde sa couche dérivée
+du plafond vivant, seule surface encore peinte par cette branche.
 */
-.usage-popover-backdrop {
-  position: fixed;
-  inset: 0;
-  background: transparent;
-  z-index: calc(var(--fusion-max-z) + 2);
-}
 
 .usage-modal--popover {
   width: 420px;

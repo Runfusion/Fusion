@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { act, render, screen, fireEvent, createEvent } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { UsageIndicator } from "../UsageIndicator";
 import "../UsageIndicator.css";
 import * as useUsageDataModule from "../../hooks/useUsageData";
@@ -672,7 +673,12 @@ describe("UsageIndicator", () => {
     expect(mockOnClose).toHaveBeenCalledTimes(1);
   });
 
-  it("calls onClose when desktop popover backdrop is clicked", () => {
+  /*
+   * FN-491: the anchored popover used to mount a full-screen transparent backdrop purely to catch the outside click.
+   * It froze the board behind it, so a click on a card only closed the popover and never reached the card. Dismissal
+   * now comes from the shared `useOutsidePointerDismiss` hook and no layer is mounted at all.
+   */
+  it("la popover ancrée ne monte aucun calque plein écran", () => {
     mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: mockProviders,
       loading: false,
@@ -682,16 +688,85 @@ describe("UsageIndicator", () => {
     }));
 
     render(
-      <UsageIndicator
-        isOpen={true}
-        onClose={mockOnClose}
-        projectId={TEST_PROJECT_ID}
-        anchorRect={createAnchorRect()}
-      />
+      <UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} anchorRect={createAnchorRect()} />
     );
 
-    fireEvent.click(screen.getByTestId("usage-modal-overlay"));
+    expect(screen.getByTestId("usage-modal")).toHaveClass("usage-modal--popover");
+    expect(document.querySelectorAll(".usage-popover-backdrop")).toHaveLength(0);
+    expect(screen.queryByTestId("usage-modal-overlay")).not.toBeInTheDocument();
+  });
+
+  it("le board reste cliquable derrière la popover Usage", async () => {
+    const user = userEvent.setup();
+    mockUseUsageData.mockReturnValue(createUsageDataState({
+      providers: mockProviders,
+      loading: false,
+      error: null,
+      lastUpdated: new Date(),
+      refresh: mockRefresh,
+    }));
+    const boardClicked = vi.fn();
+
+    render(
+      <>
+        <button type="button" data-testid="board-card" onClick={boardClicked}>Card</button>
+        <UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} anchorRect={createAnchorRect()} />
+      </>
+    );
+
+    await user.click(screen.getByTestId("board-card"));
+
+    expect(boardClicked).toHaveBeenCalledTimes(1);
     expect(mockOnClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("la popover Usage ne ferme pas au défilement", () => {
+    mockUseUsageData.mockReturnValue(createUsageDataState({
+      providers: mockProviders,
+      loading: false,
+      error: null,
+      lastUpdated: new Date(),
+      refresh: mockRefresh,
+    }));
+
+    render(
+      <UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} anchorRect={createAnchorRect()} />
+    );
+
+    fireEvent.wheel(document, { deltaY: 240 });
+    fireEvent.scroll(document);
+    fireEvent.wheel(window, { deltaY: -240 });
+    fireEvent.scroll(window);
+
+    expect(mockOnClose).not.toHaveBeenCalled();
+    expect(screen.getByTestId("usage-modal")).toBeInTheDocument();
+  });
+
+  /*
+   * FN-491 accepted consequence: `header-usage-btn` neither toggles nor carries `aria-controls`, so the trigger guard
+   * prevents a visible close-then-reopen cycle at the price of that icon no longer closing an open popover.
+   */
+  it("re-cliquer le déclencheur d'en-tête ne ferme pas et ne provoque aucun cycle", async () => {
+    const user = userEvent.setup();
+    mockUseUsageData.mockReturnValue(createUsageDataState({
+      providers: mockProviders,
+      loading: false,
+      error: null,
+      lastUpdated: new Date(),
+      refresh: mockRefresh,
+    }));
+
+    render(
+      <>
+        <button type="button" data-testid="header-usage-btn">Usage</button>
+        <UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} anchorRect={createAnchorRect()} />
+      </>
+    );
+
+    await user.click(screen.getByTestId("header-usage-btn"));
+
+    expect(mockOnClose).not.toHaveBeenCalled();
+    expect(screen.getByTestId("usage-modal")).toBeInTheDocument();
   });
 
   it("calls onClose when Escape key is pressed", () => {
@@ -3023,7 +3098,11 @@ describe("UsageIndicator — dominant transient popover layering (FN-413)", () =
 
       const modal = screen.getByTestId("usage-modal");
       expect(modal).toHaveClass("usage-modal--popover");
-      expect(screen.getByTestId("usage-modal-overlay")).toBeInTheDocument();
+      /*
+       * FN-491: the anchored branch no longer mounts the `usage-modal-overlay` backdrop — that pane froze the board.
+       * The portal proof below is what this case actually guards.
+       */
+      expect(screen.queryByTestId("usage-modal-overlay")).not.toBeInTheDocument();
 
       const surfaceRoot = modal.parentElement as HTMLElement;
       expect(surfaceRoot).not.toBeNull();
@@ -3060,10 +3139,12 @@ describe("UsageIndicator — dominant transient popover layering (FN-413)", () =
       <UsageIndicator isOpen={true} onClose={onClose} projectId={TEST_PROJECT_ID} anchorRect={null} />
     );
 
-    // NOTE: the shared-window branch reuses the `usage-modal-overlay` testId for its own overlay,
-    // so the popover-specific proof is the backdrop class, not that testId.
+    /*
+     * FN-491 removed the popover-only backdrop, so the falsifiable proof that this is the SHARED-WINDOW branch is the
+     * absence of `usage-modal--popover` together with the presence of the FloatingWindow overlay, which stays modal.
+     */
     expect(screen.getByTestId("usage-modal")).not.toHaveClass("usage-modal--popover");
-    expect(document.querySelectorAll(".usage-popover-backdrop")).toHaveLength(0);
+    expect(screen.getByTestId("usage-modal-overlay")).toBeInTheDocument();
     expect(container.querySelector(".usage-modal--popover")).toBeNull();
   });
 
@@ -3082,7 +3163,7 @@ describe("UsageIndicator — dominant transient popover layering (FN-413)", () =
     );
 
     expect(screen.getByTestId("usage-modal")).not.toHaveClass("usage-modal--popover");
-    expect(document.querySelectorAll(".usage-popover-backdrop")).toHaveLength(0);
+    expect(screen.getByTestId("usage-modal-overlay")).toBeInTheDocument();
   });
 
   // (k) the surface root must stay display:contents so it introduces no intermediate stacking context.

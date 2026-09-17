@@ -9,11 +9,16 @@ AFTER them. Their historic static layers (100 / 101 for the popover, 30 via --z-
 for the phone menu) all sat far below the shared window stack, which starts at 10100 and publishes its live ceiling
 through `--fusion-max-z` (floatingWindowStack.ts). This suite pins the whole inventory to that ceiling — as base
 rules, never media-scoped — and proves the original symptom is gone against a live, growing ceiling.
+
+FNXC:PopoverLayering 2026-09-17-05:48:
+FN-491 removed `.usage-popover-backdrop` from the product: that full-screen transparent pane existed only to catch the
+outside click and it froze the board behind the anchored Usage popover. Its inventory entry is dropped with it — an
+inventory line for a deleted surface would fail on a CSS rule that must no longer exist. The layering invariant is
+unchanged for the remaining surfaces.
 */
 
 /** Every dominant transient surface, with the transient-surface scale offset documented in styles.css. */
 const TRANSIENT_SURFACES: Array<{ selector: string; minimumOffset: number }> = [
-  { selector: ".usage-popover-backdrop", minimumOffset: 2 },
   { selector: ".usage-modal--popover", minimumOffset: 3 },
   { selector: ".desktop-action-bar--menu-open", minimumOffset: 3 },
   { selector: ".mobile-navigation-popover", minimumOffset: 3 },

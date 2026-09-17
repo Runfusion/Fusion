@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { DashboardWindowSurfaceRoot } from "../context/DashboardWindowManagerContext";
+import { useOutsidePointerDismiss } from "../hooks/useOutsidePointerDismiss";
 import "./DashboardToolPopover.css";
 
 const VIEWPORT_MARGIN = 8;
@@ -130,21 +131,38 @@ export interface DashboardToolPopoverProps {
 /*
 FNXC:ToolSurfaces 2026-09-15-16:04:
 FN-426 needs a reusable header-anchored panel for Activity and Notes, the two tools whose canonical host used to be
-the right dock. It deliberately reuses the SHAPE the Usage popover established — body portal, transparent dismiss
-backdrop, `--fusion-max-z` derived layering — rather than its business logic or its hard-coded sizing constants, which
-belong to Usage.
+the right dock. It reuses the SHAPE the Usage popover established — body portal, `--fusion-max-z` derived layering —
+rather than its business logic or its hard-coded sizing constants, which belong to Usage.
 
 Contract:
 - The body mounts only while open, so a closed panel runs no polling, no timers, and no subscriptions.
 - Geometry is bounded to the viewport and recomputed on resize, so a narrow or short window never pushes the panel
   off-screen; the panel owns a bounded internal scroll (`min-block-size: 0` on its body) instead of growing.
 - Escape and an outside pointer close it and return focus to the trigger, and a portalled CHILD (a select popup, a
-  nested menu) must not trigger that dismissal — the backdrop is an explicit sibling element, so only a click that
-  actually lands on it dismisses.
+  nested menu) must not trigger that dismissal.
+
+FNXC:ToolSurfaces 2026-09-17-05:48:
+FN-491 : le panneau est NON modal (`aria-modal="false"`) et ne doit donc JAMAIS geler le tableau derrière lui. La
+protection précédente était une vitre plein écran (`.dashboard-tool-popover__backdrop`, `position: fixed; inset: 0`)
+dont le seul rôle était de recevoir le clic extérieur ; elle interceptait du même coup la molette, le défilement
+tactile et tous les clics, si bien qu'un clic sur une carte ne faisait que refermer le panneau sans atteindre sa
+cible. Cet élément est supprimé : plus aucun calque n'est monté, et la fermeture au clic extérieur appartient
+désormais au hook partagé `useOutsidePointerDismiss`, seul propriétaire de la règle pour les quatre panneaux
+concernés (Conversations, Activité, Notes, Usage). L'appartenance « intérieur » y est marquée par IDENTITÉ
+D'ÉVÉNEMENT à travers l'arbre React — portails compris — ce qui garde un enfant portalisé utilisable, et la garde
+`triggerSelector` (l'`aria-controls` du déclencheur) évite le cycle fermeture-puis-réouverture d'un déclencheur à
+bascule. Le défilement ne ferme jamais.
 */
 export function DashboardToolPopover({ open, onClose, anchorRect, ariaLabel, id, testId, width = DEFAULT_WIDTH, preferredHeight, align, children }: DashboardToolPopoverProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const restoreFocusRef = useRef<HTMLElement | null>(null);
+  // Called unconditionally, before the closed early-return, so the hook order never changes between renders.
+  const { onPointerDownCapture } = useOutsidePointerDismiss({
+    open,
+    onDismiss: onClose,
+    surfaceRefs: [panelRef],
+    triggerSelector: `[aria-controls="${id}"]`,
+  });
   const [viewport, setViewport] = useState(() => ({
     width: typeof window === "undefined" ? 0 : window.innerWidth,
     height: typeof window === "undefined" ? 0 : window.innerHeight,
@@ -192,7 +210,6 @@ export function DashboardToolPopover({ open, onClose, anchorRect, ariaLabel, id,
 
   return createPortal(
     <DashboardWindowSurfaceRoot logicalId={id} group="dialog" className="dashboard-window-surface-root--contents">
-      <div className="dashboard-tool-popover__backdrop" data-testid={testId ? `${testId}-backdrop` : undefined} onClick={onClose} />
       <div
         ref={panelRef}
         id={id}
@@ -204,6 +221,7 @@ export function DashboardToolPopover({ open, onClose, anchorRect, ariaLabel, id,
         data-testid={testId}
         data-placement={geometry.placement}
         onKeyDown={handleKeyDown}
+        onPointerDownCapture={onPointerDownCapture}
         style={{ top: geometry.top, bottom: geometry.bottom, left: geometry.left, width: geometry.width, maxHeight: geometry.maxHeight, height: geometry.height }}
       >
         <div className="dashboard-tool-popover__body">{children}</div>
