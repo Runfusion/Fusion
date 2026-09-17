@@ -76,7 +76,8 @@ describe("pinned terminal footer reservation", () => {
     const app = readAppFile("App.tsx");
 
     // The shell consumers read the derived value; the terminal itself keeps the raw one.
-    expect(app).toContain("const shellFooterReservationVisible = shellFooterVisible && !terminalPinnedBelow;");
+    // FN-487 added the docked-window band as a second producer of the same reservation; the derivation still guards it.
+    expect(app).toContain("const shellFooterReservationVisible = shellFooterVisible && !terminalPinnedBelow && !bottomDockReservationActive;");
     expect(app).toContain("onPinnedLayoutChange={handleTerminalPinnedLayoutChange}");
     expect(app).toContain('shellFooterReservationVisible && (!isMobile || !mobileKeyboardOpen) ? " project-content--with-footer"');
   });

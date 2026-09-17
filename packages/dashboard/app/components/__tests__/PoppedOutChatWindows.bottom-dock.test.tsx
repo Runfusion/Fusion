@@ -1,6 +1,12 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { DashboardWindowManagerProvider, useDashboardWindowLandmark } from "../../context/DashboardWindowManagerContext";
+import { useState } from "react";
+import {
+  DashboardWindowManagerProvider,
+  useDashboardWindowBottomDockReservation,
+  useDashboardWindowLandmark,
+} from "../../context/DashboardWindowManagerContext";
+import { FloatingWindow } from "../FloatingWindow";
 import { PoppedOutChatWindows } from "../PoppedOutChatWindows";
 
 /*
@@ -9,6 +15,12 @@ FN-469 acceptance for "je devrais aussi avoir cette possibilité d'ancrage en ba
 conversation gains the bottom band purely from the SHARED window contract — no chat-owned panel, no extra prop — so
 these regressions drive real pointer gestures on the real `PoppedOutChatWindows` host and assert the applied
 rectangle, the retained mode, and the release.
+
+FNXC:FloatingWindowSnap 2026-09-17-04:51:
+FN-487 symptom acceptance: the original defect is that this exact gesture left `.dashboard-project-stack` with the same
+usable height as before, so the band covered the lower half of the board. The docked band must now reserve
+`window.innerHeight - rect.top` while docked and release it on undock. The terminal is the negative control: it swaps
+its floating window for its own in-flow `below` host, so it must leave no residual reservation behind.
 */
 
 const HEADER_HEIGHT = 64;
@@ -22,6 +34,16 @@ vi.mock("../ChatView", () => ({
 
 function domRect(value: { left: number; top: number; right: number; bottom: number; width: number; height: number }): DOMRect {
   return { ...value, x: value.left, y: value.top, toJSON: () => ({}) } as DOMRect;
+}
+
+/** Stands in for `.dashboard-project-stack`: it renders exactly the height the shell would reserve. */
+function Stack() {
+  const reserved = useDashboardWindowBottomDockReservation();
+  return <output data-testid="reservation">{reserved}</output>;
+}
+
+function reservation(): number {
+  return Number(screen.getByTestId("reservation").textContent);
 }
 
 function Landmarks() {
@@ -66,6 +88,7 @@ function renderChatWindow() {
   const view = render(
     <DashboardWindowManagerProvider>
       <Landmarks />
+      <Stack />
       <PoppedOutChatWindows
         entries={[entry]}
         projectId="project-a"
@@ -135,6 +158,67 @@ describe("detached conversation bottom dock", () => {
       width: window.innerWidth,
       height: workAreaHeight / 2,
     });
+  });
+
+  /*
+  (g) FN-487 symptom acceptance on the production host: while docked, the shell reserves the band's full height —
+  the board columns therefore recompose above it instead of being covered — and the space returns on undock.
+  */
+  it("reserves the band's height in the shell while docked and releases it on undock", async () => {
+    const { panel } = renderChatWindow();
+    await waitFor(() => expect(rectOf(panel).width).toBeGreaterThan(0));
+    expect(reservation()).toBe(0);
+
+    drag(panel, { x: 600, y: 300 }, { x: 600, y: 300 + window.innerHeight }, 45);
+    expect(panel.dataset.snapMode).toBe("bottom");
+    expect(reservation()).toBe(window.innerHeight - rectOf(panel).top);
+
+    drag(panel, { x: 600, y: 600 }, { x: 700, y: 360 }, 46);
+    expect(panel.dataset.snapMode).toBe("floating");
+    expect(reservation()).toBe(0);
+  });
+
+  /*
+  (m) Negative control for the terminal: it converts the bottom gesture into its own in-flow `below` presentation and
+  drops its floating window, so `.terminal-below-host` stays the only consumer and no residual band is published.
+  */
+  it("leaves no residual reservation when a window swaps its dock for an in-flow presentation", async () => {
+    function TerminalLikeHost() {
+      const [pinnedBelow, setPinnedBelow] = useState(false);
+      if (pinnedBelow) return <div data-testid="terminal-below-host">below</div>;
+      return (
+        <FloatingWindow
+          windowKey="terminal-like"
+          title="Terminal"
+          onClose={() => {}}
+          defaultSize={{ width: 600, height: 400 }}
+          minSize={{ width: 320, height: 200 }}
+          onDragGestureEnd={(info) => { if (info.snapMode === "bottom") setPinnedBelow(true); }}
+        >
+          body
+        </FloatingWindow>
+      );
+    }
+
+    render(
+      <DashboardWindowManagerProvider>
+        <Landmarks />
+        <Stack />
+        <TerminalLikeHost />
+      </DashboardWindowManagerProvider>,
+    );
+    const panel = screen.getByTestId("floating-window-terminal-like");
+    await waitFor(() => expect(rectOf(panel).width).toBeGreaterThan(0));
+
+    const handle = screen.getByTestId("floating-window-drag-handle-terminal-like");
+    prepareCapture(handle);
+    fireEvent.pointerDown(handle, { pointerId: 47, pointerType: "mouse", button: 0, clientX: 600, clientY: 300 });
+    fireEvent.pointerMove(handle, { pointerId: 47, pointerType: "mouse", clientX: 600, clientY: 300 + window.innerHeight });
+    fireEvent.pointerUp(handle, { pointerId: 47, pointerType: "mouse", clientX: 600, clientY: 300 + window.innerHeight });
+
+    expect(screen.getByTestId("terminal-below-host")).toBeInTheDocument();
+    expect(screen.queryByTestId("floating-window-terminal-like")).not.toBeInTheDocument();
+    expect(reservation()).toBe(0);
   });
 
   /*

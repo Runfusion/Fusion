@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useLayoutEffect, useMemo, useRef, lazy, Suspense } from "react";
+import { useState, useCallback, useEffect, useLayoutEffect, useMemo, useRef, lazy, Suspense, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import {
   type Task,
@@ -13,6 +13,7 @@ import { ViewLayoutProvider } from "./context/ViewLayoutContext";
 import {
   DashboardWindowManagerProvider,
   DashboardWindowManagerScope,
+  useDashboardWindowBottomDockReservation,
   useDashboardWindowGroupVisible,
   useDashboardWindowVisibility,
 } from "./context/DashboardWindowManagerContext";
@@ -1345,14 +1346,24 @@ function AppInner() {
   between the application content and the terminal. While the terminal reports itself pinned, the shell consumers
   (`.project-content--with-footer`, `.left-sidebar-nav--with-footer`, `.right-dock--with-footer`) stop reserving and
   `.terminal-below-host--with-footer` remains the single legitimate consumer of `--executor-footer-height` in the stack.
-  `TerminalModal` still receives the raw `shellFooterVisible`, and `MobileNavBar` keeps `executorFooterVisible`.
+  `MobileNavBar` keeps `executorFooterVisible`.
   The terminal is the source of truth for its EFFECTIVE presentation, so the shell never reads `localStorage` here.
+
+  FNXC:TerminalLayout 2026-09-17-04:51:
+  FN-487 adds the SECOND producer of a bottom reservation: any window docked along the bottom
+  (`snapMode: "bottom"`) publishes its band through the window manager, and this stack reserves it exactly like the
+  pinned terminal's host does. While such a band is active it already covers the fixed bottom bar, so the shell
+  consumers stop reserving that bar a second time and `TerminalModal` receives a disabled `footerVisible` — otherwise
+  FN-409's empty 36px band returns, this time above the docked window.
   */
   const [terminalPinnedBelow, setTerminalPinnedBelow] = useState(false);
   const handleTerminalPinnedLayoutChange = useCallback((pinned: boolean) => {
     setTerminalPinnedBelow(pinned);
   }, []);
-  const shellFooterReservationVisible = shellFooterVisible && !terminalPinnedBelow;
+  const bottomDockReservationPx = useDashboardWindowBottomDockReservation();
+  const bottomDockReservationActive = bottomDockReservationPx > 0;
+  const shellFooterReservationVisible = shellFooterVisible && !terminalPinnedBelow && !bottomDockReservationActive;
+  const terminalFooterVisible = shellFooterVisible && !bottomDockReservationActive;
   const mobileNavVisible = projectShellPresent;
   /*
   FNXC:HeaderNavigationOwnership 2026-09-17-02:14:
@@ -2735,7 +2746,11 @@ function AppInner() {
         }
       />
       <DashboardBanners {...dashboardBannersProps} />
-      <div className="dashboard-project-stack" data-testid="dashboard-project-stack">
+      <div
+        className={`dashboard-project-stack${bottomDockReservationActive ? " dashboard-project-stack--bottom-dock" : ""}`}
+        data-testid="dashboard-project-stack"
+        style={bottomDockReservationActive ? ({ "--bottom-dock-reservation": `${bottomDockReservationPx}px` } as CSSProperties) : undefined}
+      >
       <div className={`dashboard-project-shell${sidebarActive ? " dashboard-project-shell--with-sidebar" : ""}${rightDockActive ? " dashboard-project-shell--with-right-dock" : ""}`} data-testid="dashboard-project-shell">
         {sidebarActive && (
           <LeftSidebarNav
@@ -2983,7 +2998,7 @@ function AppInner() {
           initialCommand={modalManager.terminalInitialCommand}
           initialCommandGeneration={modalManager.terminalInitialCommandGeneration}
           projectId={currentProject.id}
-          footerVisible={shellFooterVisible}
+          footerVisible={terminalFooterVisible}
           onPinnedLayoutChange={handleTerminalPinnedLayoutChange}
           focusNonce={modalManager.terminalInitialCommandGeneration}
         />

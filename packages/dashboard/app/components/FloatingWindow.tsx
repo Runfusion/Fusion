@@ -23,6 +23,7 @@ import { DrawerPresentationProvider, ViewDrawerHandle, resolveDrawerPresentation
 import { ViewLayoutContent, ViewLayoutHeader } from "./ViewLayout";
 import {
   DashboardWindowSurfaceActivityProvider,
+  useDashboardWindowBottomDockReservationControl,
   useDashboardWindowBounds,
   useDashboardWindowCascade,
   useDashboardWindowFocusRestoring,
@@ -518,6 +519,33 @@ export function FloatingWindow({
   const globallyHiddenRef = useRef(windowSurface.globallyHidden);
   globallyHiddenRef.current = windowSurface.globallyHidden;
   const effectiveHidden = hidden || windowSurface.globallyHidden;
+  /*
+  FNXC:FloatingWindowSnap 2026-09-17-04:51:
+  FN-487 : « peu importe la modale que j'ancre tout en bas, ça doit faire exactement comme quand c'est le terminal ».
+  Une bande ancrée en bas est `position: fixed` : sans réservation elle RECOUVRE la moitié basse du board. La fenêtre
+  publie donc ici la hauteur à réserver et le shell recompose le contenu au-dessus, exactement comme
+  `.terminal-below-host` le fait pour le terminal épinglé.
+  La hauteur publiée va du BORD HAUT de la bande jusqu'au bas du viewport (et non la seule hauteur du panneau), pour
+  couvrir aussi la barre du bas fixe que la bande recouvre déjà — parité avec `.terminal-below-host--with-footer`.
+  Une présentation en feuille (téléphone) n'expose aucun ancrage, et une fenêtre masquée globalement ou localement ne
+  réserve rien : dans les deux cas la bande n'est pas peinte, donc réserver serait une bande vide.
+  */
+  const publishBottomDockReservation = useDashboardWindowBottomDockReservationControl();
+  const bottomDockToken = windowSurface.token;
+  useEffect(() => {
+    const docked = snapMode === "bottom" && !sheetPresentation && !effectiveHidden;
+    if (!docked) {
+      publishBottomDockReservation(bottomDockToken, null);
+      return;
+    }
+    const viewportBottom = typeof window !== "undefined" && Number.isFinite(window.innerHeight)
+      ? window.innerHeight
+      : availableBounds.bottom;
+    const reserved = Math.max(0, viewportBottom - position.y);
+    publishBottomDockReservation(bottomDockToken, reserved > 0 ? reserved : null);
+    return () => publishBottomDockReservation(bottomDockToken, null);
+  }, [availableBounds, bottomDockToken, effectiveHidden, position.y, publishBottomDockReservation, sheetPresentation, size.height, snapMode]);
+
   const dismissHandleProps = useDrawerDismissGesture({
     enabled: mobileDrawer && !effectiveHidden,
     open: !effectiveHidden,

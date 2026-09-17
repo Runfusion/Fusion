@@ -615,6 +615,17 @@
   width: 100%;
 }
 
+/*
+FNXC:FloatingWindowSnap 2026-09-17-04:51:
+FN-487: a window docked along the bottom is position:fixed, so without a reservation it COVERS the lower half of the
+board. This modifier reserves exactly the published band, so the application content — the board columns included —
+recomposes above it, at parity with `.terminal-below-host` for the pinned terminal. The base rule deliberately keeps
+no padding-bottom: the reservation must vanish the moment the window detaches, closes, or is hidden.
+*/
+.dashboard-project-stack--bottom-dock {
+  padding-bottom: var(--bottom-dock-reservation, 0px);
+}
+
 .dashboard-project-shell {
   /*
   FNXC:DashboardFooterLayout 2026-06-21-10:30:

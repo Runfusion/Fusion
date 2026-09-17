@@ -87,6 +87,8 @@ interface DashboardWindowManagerValue {
   visibleSurfaceCount: number;
   toggleControlRef: RefCallback<HTMLButtonElement>;
   resetScope: (scopeKey: string | null | undefined) => void;
+  bottomDockReservation: number;
+  setBottomDockReservation: (token: DashboardWindowSurfaceToken, px: number | null) => void;
   /*
   FNXC:DashboardWindowVisibility 2026-09-14-17:46:
   FN-392: restoring a global hide re-runs each surface's own focus effects. Window and dialog surfaces consult this
@@ -179,6 +181,26 @@ function focusFirstAvailable(root: HTMLElement): boolean {
   return false;
 }
 
+/*
+FNXC:FloatingWindowSnap 2026-09-17-04:51:
+FN-487 : l'opérateur exige qu'une fenêtre ancrée en bas se comporte comme le terminal épinglé, c'est-à-dire qu'elle
+REORGANISE l'application au lieu de la recouvrir. Les fenêtres ancrées publient donc ici la hauteur de leur bande et
+le shell la réserve. L'agrégation est un MAXIMUM, jamais une somme : deux fenêtres ancrées occupent la MÊME bande
+pleine largeur, donc additionner réserverait le double de l'espace réellement pris.
+
+Cette réservation est DÉLIBÉRÉMENT exclue de `resolveDashboardWindowBounds` / `measure()`. L'inclure créerait une
+boucle de rétroaction : la bande réduirait la zone de travail, la zone de travail réduite remonterait le bord haut de
+la bande, qui republierait une réservation plus grande, et ainsi de suite.
+*/
+export function resolveBottomDockReservation(values: Iterable<number>): number {
+  let max = 0;
+  for (const value of values) {
+    if (!Number.isFinite(value) || value <= 0) continue;
+    if (value > max) max = value;
+  }
+  return max;
+}
+
 function scheduleAfterPaint(callback: () => void): () => void {
   if (typeof requestAnimationFrame === "function") {
     const frame = requestAnimationFrame(callback);
@@ -220,6 +242,21 @@ export function DashboardWindowManagerProvider({ children }: DashboardWindowMana
   const [availableBounds, setAvailableBounds] = useState<DashboardWindowBounds>(viewportBounds);
   const [surfaceRevision, setSurfaceRevision] = useState(0);
   const [hiddenTokens, setHiddenTokens] = useState<ReadonlySet<DashboardWindowSurfaceToken>>(EMPTY_HIDDEN_TOKENS);
+  const bottomDockReservationsRef = useRef(new Map<DashboardWindowSurfaceToken, number>());
+  const [bottomDockReservation, setBottomDockReservationState] = useState(0);
+
+  /** `null` releases the token's band. The aggregate is republished only when its value really changes. */
+  const setBottomDockReservation = useCallback((token: DashboardWindowSurfaceToken, px: number | null) => {
+    const registry = bottomDockReservationsRef.current;
+    if (px === null || !Number.isFinite(px) || px <= 0) {
+      if (!registry.delete(token)) return;
+    } else {
+      if (registry.get(token) === px) return;
+      registry.set(token, px);
+    }
+    const next = resolveBottomDockReservation(registry.values());
+    setBottomDockReservationState((current) => (current === next ? current : next));
+  }, []);
 
   const measure = useCallback(() => {
     measureFrameRef.current = null;
@@ -402,6 +439,8 @@ export function DashboardWindowManagerProvider({ children }: DashboardWindowMana
 
   const removeSurface = useCallback((token: DashboardWindowSurfaceToken) => {
     cascadeSlotsRef.current.delete(token);
+    // An unmounted window must never leave a phantom band reserved in the shell.
+    setBottomDockReservation(token, null);
     if (!surfacesRef.current.delete(token)) return;
     const snapshot = hiddenSnapshotRef.current;
     if (snapshot?.delete(token)) {
@@ -414,7 +453,7 @@ export function DashboardWindowManagerProvider({ children }: DashboardWindowMana
       }
     }
     setSurfaceRevision((revision) => revision + 1);
-  }, []);
+  }, [setBottomDockReservation]);
 
   const toggleVisibility = useCallback(() => {
     if (hiddenSnapshotRef.current) {
@@ -440,6 +479,9 @@ export function DashboardWindowManagerProvider({ children }: DashboardWindowMana
     if (scopeKeyRef.current === scopeKey) return;
     scopeKeyRef.current = scopeKey;
     cascadeSlotsRef.current.clear();
+    // A project change closes the previous scope's windows: their band must not survive the switch.
+    bottomDockReservationsRef.current.clear();
+    setBottomDockReservationState(0);
     hiddenSnapshotRef.current = null;
     focusedBeforeHideRef.current = null;
     focusCleanupRef.current?.();
@@ -486,8 +528,12 @@ export function DashboardWindowManagerProvider({ children }: DashboardWindowMana
     toggleControlRef,
     resetScope,
     isFocusRestoring,
+    bottomDockReservation,
+    setBottomDockReservation,
   }), [
     availableBounds,
+    bottomDockReservation,
+    setBottomDockReservation,
     footerRef,
     headerRef,
     hiddenSnapshotActive,
@@ -511,6 +557,22 @@ export function DashboardWindowManagerProvider({ children }: DashboardWindowMana
 
 export function useDashboardWindowManager(): DashboardWindowManagerValue | null {
   return useContext(DashboardWindowManagerContext);
+}
+
+/*
+FNXC:FloatingWindowSnap 2026-09-17-04:51:
+FN-487 : côté shell, la hauteur agrégée à réserver sous le contenu applicatif. Hors provider (tests, hôtes
+autonomes) aucune fenêtre ne peut réserver quoi que ce soit, donc la valeur est `0`.
+*/
+export function useDashboardWindowBottomDockReservation(): number {
+  return useContext(DashboardWindowManagerContext)?.bottomDockReservation ?? 0;
+}
+
+const NOOP_BOTTOM_DOCK_RESERVATION = () => {};
+
+/** Producer side: a docked window publishes its band height, or `null` to release it. */
+export function useDashboardWindowBottomDockReservationControl(): (token: DashboardWindowSurfaceToken, px: number | null) => void {
+  return useContext(DashboardWindowManagerContext)?.setBottomDockReservation ?? NOOP_BOTTOM_DOCK_RESERVATION;
 }
 
 export function useDashboardWindowBounds(): DashboardWindowBounds {
