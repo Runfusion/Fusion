@@ -3,6 +3,16 @@ import { readAppFile } from "../../test/cssFixture";
 
 const css = readAppFile("components/Header.css");
 const taskSearchCss = readAppFile("components/TaskSearchInput.css");
+const taskSearchResultsCss = readAppFile("components/TaskSearchResultsPopover.css");
+
+/**
+ * Strip CSS comments before scanning for removed selectors. The FNXC notes that EXPLAIN a removal
+ * necessarily name the removed selector, and a guard that cannot tell documentation from a live rule
+ * would push authors to delete the explanation instead of the dead style.
+ */
+function withoutComments(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, "");
+}
 
 function extractRuleBlock(source: string, selector: string): string {
   const start = source.indexOf(`${selector} {`);
@@ -31,26 +41,45 @@ describe("Header CSS", () => {
     expect(block).toContain("border-bottom: none;");
   });
 
-  it("positions task suggestions above content with token-based paint and mobile touch sizing", () => {
-    const suggestions = extractRuleBlock(taskSearchCss, ".task-search-suggestions");
-    const option = extractRuleBlock(taskSearchCss, ".task-search-suggestion");
+  /*
+  FNXC:TaskSearch 2026-09-17-09:41:
+  FN-477 replaced the truncated suggestion dropdown with a portal panel of real task cards, so the
+  old `.task-search-suggestion*` rules are GONE rather than restyled. These assertions moved to the
+  panel that actually paints results; restoring the dead rules to satisfy the old wording would be
+  shipping styles nothing renders.
+  */
+  it("paints the task results panel with tokens and leaves no dead suggestion-row styles behind", () => {
+    const panel = extractRuleBlock(taskSearchResultsCss, ".task-search-results");
 
-    expect(suggestions).toContain("position: absolute;");
-    expect(suggestions).toContain("z-index: var(--z-dropdown);");
-    expect(suggestions).toContain("background: var(--surface);");
-    expect(suggestions).toContain("border: var(--btn-border-width) solid var(--border);");
-    expect(option).toContain("min-height: calc(var(--space-xl) + var(--space-md));");
-    expect(taskSearchCss).toMatch(/@media\s*\(max-width:\s*768px\)[\s\S]*?\.task-search-suggestion\s*\{[^}]*min-height:\s*calc\(var\(--space-xl\) \+ var\(--space-xl\)\);/);
+    expect(panel).toContain("z-index: var(--z-dropdown);");
+    expect(panel).toContain("background: var(--surface);");
+    expect(panel).toContain("border: var(--btn-border-width) solid var(--border);");
+    // The panel is positioned from measured geometry, so it is fixed to the viewport, not absolute
+    // inside a header that would clip it.
+    expect(panel).toContain("position: fixed;");
+
+    expect(withoutComments(taskSearchCss)).not.toContain(".task-search-suggestion");
+    expect(withoutComments(taskSearchResultsCss)).not.toContain(".task-search-suggestion");
   });
 
-  it("anchors Alpha desktop search inline with token-sized dropdown geometry and no overlay selectors", () => {
+  it("keeps result rows at card size with exactly one scroll owner", () => {
+    const scroll = extractRuleBlock(taskSearchResultsCss, ".task-search-results-scroll");
+    const result = extractRuleBlock(taskSearchResultsCss, ".task-search-result");
+
+    expect(scroll).toContain("overflow-y: auto;");
+    expect(scroll).toContain("overflow-x: hidden;");
+    // Load-bearing: without it the flex column compresses the cards, and "1.5 complete cards" would
+    // be satisfied only by cards that are no longer complete.
+    expect(result).toContain("flex: 0 0 auto;");
+    expect(taskSearchResultsCss).toMatch(/@media\s*\(max-width:\s*768px\)[\s\S]*?\.task-search-results\s*\{[^}]*max-inline-size:/);
+  });
+
+  it("anchors Alpha desktop search inline with token-sized geometry and no overlay selectors", () => {
     const inline = extractRuleBlock(css, ".header-search--inline");
-    const suggestions = extractRuleBlock(taskSearchCss, ".task-search-suggestions");
 
     expect(inline).toContain("flex: 0 1 calc(var(--space-2xl) * 8);");
     expect(inline).toContain("min-width: calc(var(--space-2xl) * 5);");
     expect(inline).toContain("max-width: calc(var(--space-2xl) * 10);");
-    expect(suggestions).toContain("inset-block-start: calc(100% + var(--space-xs));");
     expect(css).not.toContain(".alpha-task-search-overlay");
   });
 

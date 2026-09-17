@@ -1,0 +1,109 @@
+/*
+FNXC:TaskSearch 2026-09-17-09:41:
+FN-477 header search results panel. It carries real board cards, so its width follows the shared
+column token (overridden inline by the measured card width) and its cards are NEVER shrunk: the
+operator asked to see real task cards, and a flex-compressed card is not one.
+
+Exactly one vertical scroll owner (`.task-search-results-scroll`). The list itself does not scroll,
+and horizontal overflow is clipped rather than producing a second scrollbar. No line clamping is
+introduced here: title projection is the card's own contract.
+
+The panel is non-modal and has no backdrop — the search field stays visible and typeable behind it.
+*/
+
+/*
+FNXC:TaskSearch 2026-09-17-09:41:
+`content-box` is load-bearing. The inline width applied here is the CARD's width, and the requirement
+is that a result card measures like its board card — not that the panel's outer box does. Under the
+default `border-box`, the panel's own padding and border ate into that width and every result card
+rendered 18px narrower than the board card it referred to (measured in Chromium at 1440px).
+*/
+.task-search-results {
+  position: fixed;
+  z-index: var(--z-dropdown);
+  box-sizing: content-box;
+  display: flex;
+  flex-direction: column;
+  /*
+  No `min-inline-size` floor here. The shared column token is already the FALLBACK inside
+  `taskSearchGeometry`, used only when no board card is measurable; as a CSS floor it additionally
+  overrode a real measurement, pinning the panel to 300px against a 298px board card and defeating
+  the very contract this panel exists to honour.
+  */
+  padding: var(--task-search-panel-padding);
+  background: var(--surface);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+}
+
+.task-search-results-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3xs) var(--space-xs) var(--space-xs);
+}
+
+.task-search-results-lane {
+  font-size: var(--font-xs);
+  color: var(--text-muted);
+}
+
+.task-search-results-scroll {
+  overflow-y: auto;
+  overflow-x: hidden;
+  /*
+  The reserve computed by taskSearchGeometry is applied inline as `block-size`, not `max-block-size`.
+  A maximum alone only CAPS a tall list; with a single result the area collapsed to that one card's
+  height and the promised "one card and a half" space was not reserved at all (measured in Chromium:
+  67px of area for a 67px card where 100px was required). A fixed size both caps a long list — which
+  is what makes it scroll — and reserves the space when the list is shorter.
+  */
+  min-block-size: 0;
+}
+
+.task-search-results-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--task-search-card-gap);
+}
+
+/*
+`flex-shrink: 0` is the load-bearing declaration: without it the flex column would compress the cards
+to fit the panel, and the "1.5 complete cards" guarantee would be met only by cards that are no
+longer complete.
+*/
+.task-search-result {
+  flex: 0 0 auto;
+  min-block-size: 0;
+}
+
+.task-search-result > .card {
+  inline-size: 100%;
+}
+
+.task-search-results-sentinel {
+  flex: 0 0 auto;
+  block-size: var(--space-3xs);
+}
+
+.task-search-results-status {
+  margin: 0;
+  padding: var(--space-sm) var(--space-xs);
+  font-size: var(--font-sm);
+  color: var(--text-muted);
+}
+
+@media (max-width: 768px) {
+  .task-search-results {
+    /*
+    On a phone the board column width can exceed the viewport. Keep the panel inside the screen while
+    still preferring the card width, so results stay readable without horizontal panning.
+    */
+    max-inline-size: calc(100vw - var(--space-lg));
+  }
+
+  .task-search-results-header {
+    padding-block-end: var(--space-3xs);
+  }
+}

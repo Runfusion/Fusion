@@ -117,3 +117,68 @@ describe("useAgentsMapCache", () => {
     expect(mockFetchAgents).toHaveBeenCalledTimes(2);
   });
 });
+
+/*
+FNXC:TaskSearch 2026-09-17-09:41:
+FN-477 added an OPTIONAL `enabled` flag so a read-only card can be inert. These cases prove the
+default is untouched for the four existing consumers (NewTaskModal, ChatView, useChat,
+ProjectModelsSection) and that a disabled instance is inert at BOTH ends — no fetch AND no cache read,
+because a task id is unique only within a project.
+*/
+describe("useAgentsMapCache enabled flag", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    mockFetchAgents.mockResolvedValue([
+      { id: "agent-1", name: "Alpha", role: "executor", state: "idle", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z", metadata: {} },
+    ]);
+  });
+
+  it("behaves exactly as before when no options are passed", async () => {
+    const { result } = renderHook(() => useAgentsMapCache("proj-1"));
+    await waitFor(() => expect(mockFetchAgents).toHaveBeenCalledWith(undefined, "proj-1"));
+    expect(result.current.agentsMap.get("agent-1")?.name).toBe("Alpha");
+  });
+
+  it("performs no fetch and exposes no agents when disabled", async () => {
+    const { result } = renderHook(() => useAgentsMapCache("proj-1", { enabled: false }));
+    await act(async () => { await Promise.resolve(); });
+    expect(mockFetchAgents).not.toHaveBeenCalled();
+    expect(result.current.agents).toEqual([]);
+    expect(result.current.agentsMap.size).toBe(0);
+    expect(result.current.loading).toBe(false);
+  });
+
+  it("does not READ the project cache when disabled", async () => {
+    localStorage.setItem(
+      `${SWR_CACHE_KEYS.CHAT_AGENTS_MAP_PREFIX}proj-1`,
+      JSON.stringify({
+        savedAt: Date.now(),
+        data: [{ id: "agent-cached", name: "Cached", role: "reviewer", state: "idle", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z", metadata: {} }],
+      }),
+    );
+
+    const { result } = renderHook(() => useAgentsMapCache("proj-1", { enabled: false }));
+
+    expect(result.current.agentsMap.size).toBe(0);
+    await act(async () => { await Promise.resolve(); });
+    expect(mockFetchAgents).not.toHaveBeenCalled();
+  });
+
+  it("refresh is a no-op while disabled", async () => {
+    const { result } = renderHook(() => useAgentsMapCache("proj-1", { enabled: false }));
+    await act(async () => { await result.current.refresh(); });
+    expect(mockFetchAgents).not.toHaveBeenCalled();
+    expect(result.current.loading).toBe(false);
+  });
+
+  it("leaves an ENABLED consumer of the same project fully working alongside a disabled one", async () => {
+    const disabled = renderHook(() => useAgentsMapCache("proj-1", { enabled: false }));
+    const enabled = renderHook(() => useAgentsMapCache("proj-1"));
+
+    await waitFor(() => expect(enabled.result.current.agentsMap.get("agent-1")?.name).toBe("Alpha"));
+    // The disabled instance neither cleared the shared cache nor gained the data.
+    expect(disabled.result.current.agentsMap.size).toBe(0);
+    expect(localStorage.getItem(`${SWR_CACHE_KEYS.CHAT_AGENTS_MAP_PREFIX}proj-1`)).not.toBeNull();
+  });
+});

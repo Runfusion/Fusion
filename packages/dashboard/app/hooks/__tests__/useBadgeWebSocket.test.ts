@@ -830,3 +830,68 @@ describe("useBadgeWebSocket", () => {
     });
   });
 });
+
+/*
+FNXC:TaskSearch 2026-09-17-09:41:
+FN-477 added an OPTIONAL `enabled` flag. The store is a module SINGLETON, so the load-bearing
+guarantee is that a disabled instance never calls `setProjectId`: retargeting the singleton would
+clear snapshots and re-subscribe every ordinary card mounted beside a search panel, so a search
+result would visibly reset the live badges on the board behind it.
+*/
+describe("useBadgeWebSocket enabled flag", () => {
+  const originalWebSocketForFlag = globalThis.WebSocket;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    MockWebSocket.instances = [];
+    __resetBadgeWebSocketStoreForTests();
+    (globalThis as unknown as { WebSocket: typeof WebSocket }).WebSocket = MockWebSocket as unknown as typeof WebSocket;
+  });
+
+  afterEach(() => {
+    __resetBadgeWebSocketStoreForTests();
+    vi.useRealTimers();
+    (globalThis as unknown as { WebSocket: typeof WebSocket }).WebSocket = originalWebSocketForFlag;
+  });
+
+  it("opens no connection and reports no updates when disabled", () => {
+    const { result } = renderHook(() => useBadgeWebSocket("proj-A", { enabled: false }));
+
+    act(() => { result.current.subscribeToBadge("FN-063"); });
+
+    expect(MockWebSocket.instances).toHaveLength(0);
+    expect(result.current.badgeUpdates.size).toBe(0);
+    expect(result.current.isConnected).toBe(false);
+  });
+
+  it("does not retarget the shared singleton's project, so a live consumer keeps its badges", () => {
+    const live = renderHook(() => useBadgeWebSocket("proj-A"));
+    act(() => {
+      live.result.current.subscribeToBadge("FN-063");
+      MockWebSocket.instances[0].emitOpen();
+      MockWebSocket.instances[0].emitMessage({
+        type: "badge:updated",
+        taskId: "FN-063",
+        projectId: "proj-A",
+        prInfo: { url: "https://example.test/pull/1", number: 1, status: "open", title: "PR", headBranch: "feat", baseBranch: "main", commentCount: 0 },
+        timestamp: "2026-03-30T12:00:00.000Z",
+      });
+    });
+    expect(live.result.current.badgeUpdates.get("proj-A:FN-063")?.prInfo?.status).toBe("open");
+
+    // Mount a DISABLED consumer for a different project, as a remote-node search result would.
+    const disabled = renderHook(() => useBadgeWebSocket("proj-B", { enabled: false }));
+    act(() => { disabled.result.current.subscribeToBadge("FN-063"); });
+
+    // No new socket, and the live consumer's badge survived untouched.
+    expect(MockWebSocket.instances).toHaveLength(1);
+    expect(live.result.current.badgeUpdates.get("proj-A:FN-063")?.prInfo?.status).toBe("open");
+    expect(disabled.result.current.badgeUpdates.size).toBe(0);
+  });
+
+  it("keeps the default behaviour when no options are passed", () => {
+    const { result } = renderHook(() => useBadgeWebSocket("proj-A"));
+    act(() => { result.current.subscribeToBadge("FN-063"); });
+    expect(MockWebSocket.instances).toHaveLength(1);
+  });
+});

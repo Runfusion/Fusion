@@ -844,6 +844,24 @@ interface TaskCardProps {
   queued?: boolean;
   onOpenDetail: (task: Task | TaskDetail) => void;
   /**
+   * FNXC:TaskSearch 2026-09-17-09:41:
+   * FN-477 header search renders the CANONICAL card so a result looks and measures exactly like the
+   * board card it refers to — a hand-copied miniature would drift the moment the card changes.
+   *
+   * `"search-result"` is an explicit, opt-in READ-ONLY mode:
+   *  - The only interaction is activation, which selects/opens the task exactly once. Editing, file
+   *    drop, approval, retry, Refine, revert, delete, move, and the context menu are ABSENT, not
+   *    disabled shells — several of those are internal to the card, so omitting a few callbacks
+   *    would not have removed them.
+   *  - The card renders strictly from the `Task` snapshot it was handed. Every local enrichment is
+   *    gated at the READ, not merely at the fetch: mission/agent name caches, batch badge data,
+   *    workflow-oversight resolution, the badge WebSocket, the agents map, diff stats, the runtime
+   *    fallback badge, and plugin slots. A remote node's task legitimately shares an id with a local
+   *    one, so an ungated read would paint local data onto a remote card.
+   *  - Board cards keep the default `"board"` mode and are byte-identical to before.
+   */
+  interactionMode?: "board" | "search-result";
+  /**
    * Workflow selection carried by workflow-aware board cards.
    *
    * FNXC:TaskCardPlanning 2026-09-15-10:40:
@@ -1072,6 +1090,13 @@ function areTaskCardPropsEqual(previous: TaskCardProps, next: TaskCardProps): bo
   return (
     previous.queued === next.queued &&
     previous.projectId === next.projectId &&
+    /*
+    FNXC:TaskSearch 2026-09-17-09:41:
+    The interaction mode changes which enrichments the card owns and which affordances it renders, so
+    it must be identity-bearing here. Without it a memoized card could keep a board-mode render after
+    being reused as a read-only result, retaining subscriptions it no longer owns.
+    */
+    previous.interactionMode === next.interactionMode &&
     previous.globalPaused === next.globalPaused &&
     previous.prAuthAvailable === next.prAuthAvailable &&
     previous.autoMergeEnabled === next.autoMergeEnabled &&
@@ -1267,7 +1292,14 @@ function TaskCardComponent({
   onOpenPullRequest,
   cliSessionState,
   nearDuplicateCanonicalInactive,
+  interactionMode = "board",
 }: TaskCardProps) {
+  /*
+  FNXC:TaskSearch 2026-09-17-09:41:
+  Read-only search-result mode. Declared first so every enrichment and affordance below can gate on
+  it, and so the memo comparator can treat it as identity-bearing.
+  */
+  const isSearchResult = interactionMode === "search-result";
   const { t } = useTranslation("app");
   const { locale } = useLocaleFormat();
   const columnLabel = useColumnLabel();
@@ -1409,15 +1441,21 @@ function TaskCardComponent({
   */
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const [isInViewport, setIsInViewport] = useState(false);
-  const { badgeUpdates, subscribeToBadge, unsubscribeFromBadge } = useBadgeWebSocket(projectId);
-  const { agentsMap } = useAgentsMapCache(projectId);
+  /*
+  FNXC:TaskSearch 2026-09-17-09:41:
+  Both hooks are called unconditionally so React's hook order stays stable; the DISABLED option makes
+  them inert. A disabled badge hook must not retarget the shared WebSocket singleton's project, which
+  would reset the subscriptions of every ordinary board card mounted beside a search panel.
+  */
+  const { badgeUpdates, subscribeToBadge, unsubscribeFromBadge } = useBadgeWebSocket(projectId, { enabled: !isSearchResult });
+  const { agentsMap } = useAgentsMapCache(projectId, { enabled: !isSearchResult });
   const observedAgentsMapRef = useRef(agentsMap);
   const [scopedAgentsMap, setScopedAgentsMap] = useState<{
     projectId: string | undefined;
     agentsMap: ReadonlyMap<string, { name?: string | null }>;
   } | null>(() => projectId === undefined ? { projectId, agentsMap } : null);
-  const isAgentsMapCurrent = scopedAgentsMap !== null && scopedAgentsMap.projectId === projectId;
-  const agentsMapForCurrentProject = scopedAgentsMap !== null && scopedAgentsMap.projectId === projectId
+  const isAgentsMapCurrent = !isSearchResult && scopedAgentsMap !== null && scopedAgentsMap.projectId === projectId;
+  const agentsMapForCurrentProject = !isSearchResult && scopedAgentsMap !== null && scopedAgentsMap.projectId === projectId
     ? scopedAgentsMap.agentsMap
     : EMPTY_AGENT_NAME_MAP;
   /*
@@ -1469,13 +1507,14 @@ function TaskCardComponent({
   const missionResolutionKey = task.missionId
     ? getTaskCardEntityCacheKey(task.missionId, projectId)
     : undefined;
-  const missionTitle = task.missionId
+  const missionTitle = task.missionId && !isSearchResult
     ? missionTitleCache.get(missionResolutionKey!)
       ?? (missionTitleResolution?.key === missionResolutionKey ? missionTitleResolution?.title ?? null : null)
     : null;
 
   // Fetch mission title when missionId is set. The keyed result cannot leak across project A → B → A switches.
   useEffect(() => {
+    if (isSearchResult) return;
     if (!task.missionId || !missionResolutionKey || missionTitleCache.has(missionResolutionKey)) return;
 
     const key = missionResolutionKey;
@@ -1484,13 +1523,14 @@ function TaskCardComponent({
       if (!cancelled) setMissionTitleResolution({ key, title });
     });
     return () => { cancelled = true; };
-  }, [task.missionId, missionResolutionKey, projectId]);
+  }, [task.missionId, missionResolutionKey, projectId, isSearchResult]);
 
   const agentResolutionKey = task.assignedAgentId
     ? getTaskCardEntityCacheKey(task.assignedAgentId, projectId)
     : undefined;
   // Fetch assigned agent name when assignedAgentId is set. Render-time cache reads preserve first-paint labels.
   useEffect(() => {
+    if (isSearchResult) return;
     if (!task.assignedAgentId || !agentResolutionKey || !isAgentsMapCurrent) return;
 
     const cachedFromMap = getResolvedAgentNameFromMap(task.assignedAgentId, agentsMapForCurrentProject);
@@ -1511,7 +1551,7 @@ function TaskCardComponent({
       if (!cancelled) setAgentNameResolution({ key, name });
     });
     return () => { cancelled = true; };
-  }, [agentsMapForCurrentProject, isAgentsMapCurrent, task.assignedAgentId, agentResolutionKey, projectId]);
+  }, [agentsMapForCurrentProject, isAgentsMapCurrent, task.assignedAgentId, agentResolutionKey, projectId, isSearchResult]);
 
   /*
    * FNXC:PlannerOversight 2026-07-17-15:50:
@@ -1523,8 +1563,15 @@ function TaskCardComponent({
    * oversight is positively known active, while a valid task override remains
    * authoritative without a workflow fetch.
    */
-  const workflowIdForOversight = normalizeWorkflowId(workflowBadge?.workflowId)
-    ?? normalizeWorkflowId(planningWorkflowId);
+  /*
+  FNXC:TaskSearch 2026-09-17-09:41:
+  Search results never resolve workflow oversight. The resolution is a project-scoped cache read plus
+  a fetch and a settings-revision listener, none of which a read-only result may own — and a remote
+  node's workflow ids are not the local project's.
+  */
+  const workflowIdForOversight = isSearchResult
+    ? undefined
+    : normalizeWorkflowId(workflowBadge?.workflowId) ?? normalizeWorkflowId(planningWorkflowId);
   const workflowOversightCacheKey = workflowIdForOversight
     ? getWorkflowOversightCacheKey(workflowIdForOversight, projectId)
     : undefined;
@@ -1661,6 +1708,38 @@ function TaskCardComponent({
     if (isEditing) return; // Don't open detail when editing
     onOpenDetail(task);
   }, [task, onOpenDetail, isEditing]);
+
+  /*
+  FNXC:TaskSearch 2026-09-17-09:41:
+  Search-result activation. Deliberately separate from `handleCardClick`: that handler carries the
+  board's touch-open bookkeeping and long-press click suppression, which a result card does not use.
+  Interactive descendants (badge links, the PR link) keep their own behaviour and never double-fire
+  a selection.
+  */
+  /*
+  The card root itself carries `role="button"` in this mode, so the shared `isInteractiveTarget`
+  helper would classify the card as its own interactive descendant and swallow every activation.
+  Only a descendant that is NOT this card counts as an inner control.
+  */
+  const isInnerInteractiveTarget = useCallback((target: EventTarget | null): boolean => {
+    if (!(target instanceof Element)) return false;
+    const interactive = target.closest("button, a, input, textarea, select, label, [role='button']");
+    return Boolean(interactive) && interactive !== cardRef.current;
+  }, []);
+
+  const handleSearchResultActivate = useCallback((e: React.MouseEvent) => {
+    if (isInnerInteractiveTarget(e.target)) return;
+    onOpenDetail(task);
+  }, [isInnerInteractiveTarget, onOpenDetail, task]);
+
+  const handleSearchResultKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    if (isInnerInteractiveTarget(e.target)) return;
+    e.preventDefault();
+    // Stop here so the owning panel's key handling cannot select a second time for one press.
+    e.stopPropagation();
+    onOpenDetail(task);
+  }, [isInnerInteractiveTarget, onOpenDetail, task]);
 
   const handleCardClick = useCallback((e: React.MouseEvent) => {
     if (touchOpenHandledRef.current) {
@@ -1914,7 +1993,9 @@ function TaskCardComponent({
   against that exact text and the pencil disappears — the settings form in Task Detail is still
   reachable for the other parameters.
   */
-  const canEdit = isDescriptionEditableColumnRole(taskColumnFlags, task.column) && !isAgentActive && !isPaused && !queued && onUpdateTask;
+  // FNXC:TaskSearch 2026-09-17-09:41: a search result is never editable, so the edit affordance and
+  // the whole `isEditing` render branch are unreachable rather than rendered disabled.
+  const canEdit = !isSearchResult && isDescriptionEditableColumnRole(taskColumnFlags, task.column) && !isAgentActive && !isPaused && !queued && onUpdateTask;
   const githubTrackedIssue = task.githubTracking?.issue;
   const hasGithubTrackingLink = Boolean(githubTrackedIssue);
   const isGitHubImportedTask = task.sourceType === "github_import";
@@ -1993,7 +2074,7 @@ function TaskCardComponent({
     ? t("tasks.createdByAgentNamed", "Created by agent: {{name}}", { name: sourceAgentName })
     : t("tasks.createdByAgent", "Created by agent");
   const assignedAgentNameFromMap = getResolvedAgentNameFromMap(task.assignedAgentId, agentsMapForCurrentProject);
-  const assignedAgentNameFromCache = agentResolutionKey ? agentNameCache.get(agentResolutionKey) ?? null : null;
+  const assignedAgentNameFromCache = agentResolutionKey && !isSearchResult ? agentNameCache.get(agentResolutionKey) ?? null : null;
   const assignedAgentNameFromRequest = agentResolutionKey && agentNameResolution?.key === agentResolutionKey
     ? agentNameResolution.name
     : null;
@@ -2262,10 +2343,15 @@ function TaskCardComponent({
   */
   }, [task.createdAt, task.executionCompletedAt, task.archivedAt, task.column, locale, lifecycleNowMs, isCompleteColumn]);
 
-  const liveBadgeData = badgeUpdates.get(`${projectId ?? "default"}:${task.id}`);
+  // Enrichment READS are gated, not only the fetches: a shared cache entry keyed by an id that two
+  // projects/nodes both use would otherwise paint foreign data onto a search result.
+  const liveBadgeData = isSearchResult ? undefined : badgeUpdates.get(`${projectId ?? "default"}:${task.id}`);
 
   // Get fresh batch data if available
-  const batchData = useMemo(() => getFreshBatchData(task.id, projectId), [task.id, projectId]);
+  const batchData = useMemo(
+    () => isSearchResult ? undefined : getFreshBatchData(task.id, projectId),
+    [task.id, projectId, isSearchResult],
+  );
 
   const hasEverHadGitHubBadgeSourceRef = useRef(false);
   const hasCurrentGitHubBadgeSource = Boolean(
@@ -2282,7 +2368,7 @@ function TaskCardComponent({
   const hasGitHubBadgeSource = hasCurrentGitHubBadgeSource || hasEverHadGitHubBadgeSourceRef.current;
 
   useEffect(() => {
-    if (!hasGitHubBadgeSource || !isInViewport) {
+    if (isSearchResult || !hasGitHubBadgeSource || !isInViewport) {
       unsubscribeFromBadge(task.id);
       return;
     }
@@ -2291,7 +2377,7 @@ function TaskCardComponent({
     return () => {
       unsubscribeFromBadge(task.id);
     };
-  }, [hasGitHubBadgeSource, isInViewport, subscribeToBadge, task.id, unsubscribeFromBadge]);
+  }, [hasGitHubBadgeSource, isInViewport, isSearchResult, subscribeToBadge, task.id, unsubscribeFromBadge]);
 
   // Compute step version for diff stats refresh when steps change
   const isActiveColumn = isWipColumn || isReviewColumn;
@@ -2335,7 +2421,7 @@ function TaskCardComponent({
     task.mergeDetails?.commitSha,
     projectId,
     {
-      enabled: isInViewport,
+      enabled: isInViewport && !isSearchResult,
       // FNXC:WorkflowResolvedColumns 2026-07-31-03:30: the card already resolved these; the hook needs
       // them so its done/active decision is a role question rather than an id comparison.
       columnFlags: taskColumnFlags,
@@ -3080,7 +3166,14 @@ function TaskCardComponent({
     }
     return actions.filter((action) => "items" in action || action.tone === "note" || action.disabled === true || Boolean(action.onSelect));
   }, [handleTaskActionRestoreRevert, handleTaskActionRevert, isCompleteColumn, isRevertable, onDeleteTask, onDuplicateTask, onMergeTask, onPauseTask, onResetTask, onRestoreRevertTask, onRetryTask, onRevertTask, onUnpauseTask, onUpdateTask, showRevertedChip, taskActionMenuModel.actions, taskActionMenuModel.reviewAction]);
-  const hasContextMenuActions = contextMenuActions.length > 0;
+  /*
+  FNXC:TaskSearch 2026-09-17-09:41:
+  Forcing this false in search-result mode removes the context menu AND every affordance derived from
+  it in one place: the right-click handler, the Shift+F10 keyboard opener, the long-press pointer
+  path, the portal, and the card's `role`/`aria-haspopup="menu"` announcement. Leaving an empty menu
+  would leave exactly the orphaned click target and dangling ARIA this task must not ship.
+  */
+  const hasContextMenuActions = !isSearchResult && contextMenuActions.length > 0;
 
   const closeContextMenu = useCallback(() => {
     setContextMenuPosition(null);
@@ -3622,12 +3715,21 @@ function TaskCardComponent({
     || hasCardMetaBadges
     || task.noCommitsExpected === true
     || Boolean(task.missionId);
-  const hasHeaderActions = Boolean(isAwaitingInput && onOpenDetailWithTab)
-    || Boolean(canEdit)
-    || Boolean(isIntakeColumn && onDeleteTask)
-    || Boolean(isCompleteColumn && onRevertTask && isRevertable)
-    || Boolean(task.size)
-    || hasContextMenuActions;
+  /*
+  FNXC:TaskSearch 2026-09-17-09:41:
+  In search-result mode the header keeps only its non-actionable metadata (the size chip). Every
+  action in this cluster — jump-to-tab, edit, delete, revert, and the ⋯ menu — is a mutation or a
+  navigation this read-only card does not offer, and an empty `.card-header-actions` wrapper would be
+  exactly the orphaned click target this task must not leave behind.
+  */
+  const hasHeaderActions = isSearchResult
+    ? Boolean(task.size)
+    : Boolean(isAwaitingInput && onOpenDetailWithTab)
+      || Boolean(canEdit)
+      || Boolean(isIntakeColumn && onDeleteTask)
+      || Boolean(isCompleteColumn && onRevertTask && isRevertable)
+      || Boolean(task.size)
+      || hasContextMenuActions;
 
   if (isEditing) {
     return (
@@ -3672,22 +3774,31 @@ function TaskCardComponent({
       className={cardClass}
       data-id={task.id}
       data-column={task.column}
-      onDragOver={handleFileDragOver}
-      onDragLeave={handleFileDragLeave}
-      onDrop={handleFileDrop}
-      onClick={handleCardClick}
-      onContextMenu={handleContextMenu}
-      onKeyDown={handleKeyDown}
-      onPointerDown={handlePointerDown}
-      onPointerMove={handlePointerMove}
-      onPointerUp={handlePointerUpOrCancel}
-      onPointerCancel={handlePointerUpOrCancel}
-      onTouchStart={handleTouchStart}
-      onTouchMove={handleTouchMove}
-      onTouchEnd={handleTouchEnd}
-      onTouchCancel={handlePointerUpOrCancel}
-      onDoubleClick={handleDoubleClick}
-      tabIndex={hasContextMenuActions ? 0 : undefined}
+      data-interaction-mode={isSearchResult ? "search-result" : undefined}
+      /*
+      FNXC:TaskSearch 2026-09-17-09:41:
+      A search result has exactly ONE interaction: activation selects the task. File drag/drop,
+      right-click, long-press, and double-click-to-edit are not bound at all, so a stray gesture over
+      a result cannot start a mutation or an enrichment request. The card stays focusable and
+      keyboard-activatable through the button role, which is what makes the panel navigable.
+      */
+      onDragOver={isSearchResult ? undefined : handleFileDragOver}
+      onDragLeave={isSearchResult ? undefined : handleFileDragLeave}
+      onDrop={isSearchResult ? undefined : handleFileDrop}
+      onClick={isSearchResult ? handleSearchResultActivate : handleCardClick}
+      onContextMenu={isSearchResult ? undefined : handleContextMenu}
+      onKeyDown={isSearchResult ? handleSearchResultKeyDown : handleKeyDown}
+      onPointerDown={isSearchResult ? undefined : handlePointerDown}
+      onPointerMove={isSearchResult ? undefined : handlePointerMove}
+      onPointerUp={isSearchResult ? undefined : handlePointerUpOrCancel}
+      onPointerCancel={isSearchResult ? undefined : handlePointerUpOrCancel}
+      onTouchStart={isSearchResult ? undefined : handleTouchStart}
+      onTouchMove={isSearchResult ? undefined : handleTouchMove}
+      onTouchEnd={isSearchResult ? undefined : handleTouchEnd}
+      onTouchCancel={isSearchResult ? undefined : handlePointerUpOrCancel}
+      onDoubleClick={isSearchResult ? undefined : handleDoubleClick}
+      role={isSearchResult ? "button" : undefined}
+      tabIndex={isSearchResult || hasContextMenuActions ? 0 : undefined}
       aria-haspopup={hasContextMenuActions ? "menu" : undefined}
     >
       {contextMenuPosition && hasContextMenuActions && createPortal(
@@ -3717,7 +3828,13 @@ function TaskCardComponent({
         </div>,
         document.body,
       )}
-      {isExternalBlocked && (
+      {/*
+      FNXC:TaskSearch 2026-09-17-09:41:
+      The external-block notice carries Retry and chat-prefill ACTIONS, so it is absent (not disabled)
+      on a read-only search result. The block is still visible there through the card's status badge,
+      and opening the result leads to the full record where the recovery actually belongs.
+      */}
+      {isExternalBlocked && !isSearchResult && (
         <ExternalBlockNotice
           task={task}
           variant="card"
@@ -3993,7 +4110,8 @@ function TaskCardComponent({
         {task.gitlabTracking?.item && (
           <GitLabBadge item={task.gitlabTracking.item} />
         )}
-        <RuntimeFallbackBadge taskId={task.id} isInViewport={isInViewport} projectId={projectId} />
+        {/* FNXC:TaskSearch 2026-09-17-09:41: an independent project-scoped fetch; not owned by a result card. */}
+        {!isSearchResult && <RuntimeFallbackBadge taskId={task.id} isInViewport={isInViewport} projectId={projectId} />}
         {prNode && (
           prNode.state === "failed" ? (
             <UiButton
@@ -4519,7 +4637,8 @@ function TaskCardComponent({
           </span>
         </div>
       )}
-      <PluginSlot slotId="task-card-badge" projectId={projectId} />
+      {/* FNXC:TaskSearch 2026-09-17-09:41: plugin badge slots may fetch and act; a result card renders neither. */}
+      {!isSearchResult && <PluginSlot slotId="task-card-badge" projectId={projectId} />}
       {showResetDialog && onResetTask && (
         <TaskResetDialog
           taskId={task.id}

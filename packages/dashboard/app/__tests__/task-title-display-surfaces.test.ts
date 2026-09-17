@@ -17,7 +17,13 @@ fail loudly when the rule is bypassed.
 const TITLE_PROJECTION_SURFACES = [
   "components/TaskCard.tsx",
   "components/ListView.tsx",
-  "components/TaskSearchInput.tsx",
+  /*
+  FNXC:TaskSearch 2026-09-17-09:41:
+  `TaskSearchInput.tsx` left this census in FN-477. It no longer RENDERS a task label: its results
+  are canonical `TaskCard`s, which are themselves the first entry above and therefore still carry the
+  shared projection. Requiring the import here would have forced a dead import into a file with no
+  label to project. The forbidden inline-fallback scan below still covers every component file.
+  */
   "components/TaskForm.tsx",
   "components/QuickEntryBox.tsx",
   "components/NewTaskModal.tsx",

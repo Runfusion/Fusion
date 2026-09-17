@@ -397,6 +397,13 @@ const browserTouchTests = [
   pan tactile natif) ne peut être prouvée que par un moteur réel ; jsdom en calcule aucune des trois.
   */
   "src/__tests__/file-browser-scroll-browser.test.ts",
+  /*
+  FNXC:TaskSearch 2026-09-17-09:41:
+  FN-477 : la largeur égale à une carte du tableau et la réserve de 1,5 carte sont des géométries
+  rendues ; jsdom retourne des rectangles nuls et ne fait aucune mise en page flex/overflow. Collecté
+  une seule fois dans cette lane, avec auto-clôture sur la présence d'un Chromium local.
+  */
+  "src/__tests__/task-search-browser.test.ts",
 ];
 
 const qualityApiTests = [

@@ -7,6 +7,99 @@ const summarizeDiagnostics = createSessionDiagnostics("ai-summarize");
 
 export const registerAiTextAssistantRoutes: ApiRouteRegistrar = (ctx) => {
   const { router, getProjectContext } = ctx;
+
+/**
+ * POST /api/ai/search-tasks
+ * FNXC:TaskSearch 2026-09-17-09:41:
+ * FN-477's explicit AI lane for the header search field. The field's literal/lexical lane runs on
+ * every keystroke through `GET /tasks/page`; this route runs ONLY when the operator presses Enter.
+ *
+ * Body: `{ query: string }` — the client never selects a model, a lane, or a candidate set.
+ * Returns: `{ query, tasks }` where `tasks` is at most five verified, project-scoped rows, chosen by
+ * relevance and then ordered newest-first by creation.
+ *
+ * Validation runs before capacity is reserved and before any session exists, so a malformed request
+ * costs neither a model call nor a budget slot. Rate limiting is a dedicated 60/hour per (project,
+ * IP) budget, deliberately separate from the 10/hour refine/draft limiter so repeated searching
+ * cannot starve unrelated helpers.
+ */
+router.post("/ai/search-tasks", async (req, res) => {
+  const ip = req.ip || req.socket.remoteAddress || "unknown";
+  const { store: scopedStore, engine } = await getProjectContext(req);
+
+  const {
+    AI_TASK_SEARCH_ERROR_CODES,
+    AI_TASK_SEARCH_MAX_REQUESTS_PER_HOUR,
+    AiTaskSearchValidationError,
+    normalizeAiTaskSearchQuery,
+  } = await import("../shared/task-search.js");
+
+  let normalized;
+  try {
+    normalized = normalizeAiTaskSearchQuery(req.body);
+  } catch (err) {
+    if (err instanceof AiTaskSearchValidationError) throw badRequest(AI_TASK_SEARCH_ERROR_CODES.validation);
+    throw err;
+  }
+
+  const {
+    AiTaskSearchError,
+    checkAiTaskSearchRateLimit,
+    getAiTaskSearchRateLimitResetTime,
+    searchTasksWithAi,
+  } = await import("../ai-task-search.js");
+
+  const projectKey = scopedStore.getRootDir();
+  if (!checkAiTaskSearchRateLimit(projectKey, ip)) {
+    const resetTime = getAiTaskSearchRateLimitResetTime(projectKey, ip);
+    throw new ApiError(429, AI_TASK_SEARCH_ERROR_CODES.rateLimited, {
+      message: `Maximum ${AI_TASK_SEARCH_MAX_REQUESTS_PER_HOUR} task searches per hour. Reset at ${resetTime?.toISOString() || "unknown"}`,
+    });
+  }
+
+  /*
+  Bridge the downstream disconnect to the service so a closed panel stops the generation instead of
+  leaving a session pinned until its own budget elapses.
+  */
+  const upstream = new AbortController();
+  const onClientClose = () => upstream.abort();
+  req.on("close", onClientClose);
+
+  /*
+  FNXC:TaskSearch 2026-09-17-09:41:
+  Forward the project engine's real PluginRunner (it exposes `getRuntimeById`) so a CLI-runtime Fast
+  & Cheap selection resolves its runtime plugin. A bare loader would not, so it is deliberately not
+  substituted here — the shared session seam then surfaces the misconfiguration instead of silently
+  falling back to the default pi runtime.
+  */
+  const pluginRunner = engine?.getPluginRunner?.();
+
+  try {
+    const tasks = await searchTasksWithAi({
+      store: scopedStore,
+      query: normalized.query,
+      projectKey,
+      signal: upstream.signal,
+      ...(pluginRunner ? { pluginRunner } : {}),
+    });
+    res.json({ query: normalized.query, tasks });
+  } catch (err) {
+    if (err instanceof ApiError) throw err;
+    if (err instanceof AiTaskSearchError) {
+      const status = err.code === AI_TASK_SEARCH_ERROR_CODES.rateLimited
+        ? 429
+        : err.code === AI_TASK_SEARCH_ERROR_CODES.timeout
+          ? 504
+          : err.code === AI_TASK_SEARCH_ERROR_CODES.invalidModelResponse
+            ? 502
+            : 503;
+      throw new ApiError(status, err.code);
+    }
+    rethrowAsApiError(err, AI_TASK_SEARCH_ERROR_CODES.unavailable);
+  } finally {
+    req.off("close", onClientClose);
+  }
+});
 /**
  * POST /api/ai/refine-text
  * AI-powered text refinement for task descriptions.

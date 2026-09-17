@@ -6,9 +6,56 @@ import { Header, resolveReportContextRefs } from "../Header";
 // Mock fetchScripts for overflow submenu
 const mockFetchScripts = vi.fn();
 
+/*
+FNXC:TaskSearch 2026-09-17-09:41:
+FN-477 made the header search own a real paginated collection and render real task cards, so this
+file's API boundary is no longer just `fetchScripts`. Only the HTTP/session seams are doubled; the
+Header, the field, the controller hook, and the cards are all production code here.
+*/
+const mockFetchTaskPage = vi.hoisted(() => vi.fn(async () => ({ tasks: [], total: 0, hasMore: false, nextCursor: null })));
+const mockAiSearchTasks = vi.hoisted(() => vi.fn(async () => ({ query: "", tasks: [] })));
+
 vi.mock("../../api", () => ({
   fetchScripts: (...args: unknown[]) => mockFetchScripts(...args),
+  fetchTaskPage: mockFetchTaskPage,
+  addressPrFeedback: vi.fn(),
+  fetchTaskDetail: vi.fn(),
+  uploadAttachment: vi.fn(),
+  fetchMission: vi.fn(),
+  fetchAgent: vi.fn(),
+  fetchAgents: vi.fn(async () => []),
+  rebuildTaskSpec: vi.fn(),
+  refreshPrStatus: vi.fn(),
+  refineTask: vi.fn(),
+  fetchBoardWorkflows: vi.fn().mockResolvedValue({ flagEnabled: true, defaultWorkflowId: "wf-a", workflows: [], taskWorkflowIds: {} }),
+  fetchWorkflowSettingValues: vi.fn().mockResolvedValue({ stored: {}, effective: {}, orphaned: [] }),
 }));
+vi.mock("../../api/tasks/tasks-search", () => ({ aiSearchTasks: mockAiSearchTasks }));
+vi.mock("../../hooks/useToast", () => ({
+  useOptionalToast: () => null,
+  useToast: () => ({ addToast: vi.fn(), removeToast: vi.fn(), toasts: [] }),
+}));
+vi.mock("../../hooks/useConfirm", () => ({
+  useConfirm: () => ({ confirm: vi.fn(), confirmWithChoice: vi.fn(), confirmWithSelect: vi.fn() }),
+}));
+vi.mock("../../hooks/useBatchBadgeFetch", () => ({ getFreshBatchData: vi.fn(() => null) }));
+vi.mock("../../hooks/useTaskDiffStats", () => ({ useTaskDiffStats: () => ({ stats: null, loading: false }) }));
+
+function searchPage(tasks: { id: string; title?: string; description?: string }[]) {
+  return {
+    tasks: tasks.map((task) => ({
+      column: "todo",
+      steps: [],
+      dependencies: [],
+      description: "",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      ...task,
+    })),
+    total: tasks.length,
+    hasMore: false,
+    nextCursor: null,
+  };
+}
 
 const noop = () => {};
 
@@ -22,7 +69,16 @@ function mockMatchMedia(tier: ViewportTier) {
       let matches = false;
       if (tier === "mobile" && query.includes("max-width: 768px")) {
         matches = true;
-      } else if (tier === "tablet" && query.includes("769px") && query.includes("1024px")) {
+      } else if (tier === "tablet" && query.includes("769px")) {
+        /*
+        FNXC:TaskSearch 2026-09-17-09:41:
+        Matched on the tablet LOWER bound only. FN-468 moved the upper bound from `1024px` to
+        `1023.98px`, so the previous `includes("1024px")` clause silently stopped matching and every
+        tablet-tier render in this file fell through to desktop — which is why 19 cases here were
+        already red before FN-477 touched the file. The shared fixture is fixed once rather than
+        per test, and it must not pin an exact query string again: the next boundary change would
+        reintroduce exactly this silent drift.
+        */
         matches = true;
       }
       // desktop: neither mobile nor tablet query matches
@@ -49,20 +105,16 @@ function renderHeader(props = {}, tier: ViewportTier = "tablet") {
   );
 }
 
-function SearchHeaderHarness({ tier }: { tier: ViewportTier }) {
+function SearchHeaderHarness({ tier: _tier }: { tier: ViewportTier }) {
   const [query, setQuery] = useState("");
   return (
     <Header
       onOpenSettings={noop}
       onOpenGitHubImport={noop}
       view="board"
+      projectId="project-a"
       searchQuery={query}
       onSearchChange={setQuery}
-      taskSearchTasks={[
-        { id: "FN-352", title: "Dans la barre de recherche" },
-        { id: "FN-901", title: "retire de fichier txt" },
-        { id: "FN-902", title: "Add the bonjour.txt file" },
-      ]}
     />
   );
 }
@@ -139,17 +191,32 @@ describe("Header", () => {
     expect(screen.queryByRole("dialog", { name: "Search tasks..." })).toBeNull();
   });
 
-  it.each(["board", "list"] as const)("ouvre la droplist Alpha desktop sur %s sans modifier le filtre", async (view) => {
+  /*
+  FNXC:TaskSearch 2026-09-17-09:41:
+  FN-477 rewrote this case. It used to prove an OPTION inside a LISTBOX, sourced from the collection
+  the board had already loaded, could be clicked. Both halves are gone: results are cards fetched by
+  the field itself, so the interesting property is now that a task the board never loaded reaches the
+  host — which is exactly what the old collection lookup made impossible.
+  */
+  it.each(["board", "list"] as const)("ouvre le panneau Alpha desktop sur %s sans modifier le filtre", async (view) => {
+    mockFetchTaskPage.mockResolvedValue(searchPage([{ id: "FN-353", title: "Alpha shell" }]) as never);
     const onSearchChange = vi.fn();
     const onSelectSearchTask = vi.fn();
-    renderHeader({ view, searchQuery: "alpha", onSearchChange, onSelectSearchTask, taskSearchTasks: [{ id: "FN-353", title: "Alpha shell" }] }, "desktop");
+    renderHeader({ view, projectId: "project-a", searchQuery: "alpha", onSearchChange, onSelectSearchTask }, "desktop");
     expect(screen.queryByTestId("desktop-header-search-btn")).toBeNull();
     fireEvent.click(screen.getByTestId("desktop-inline-header-search-btn"));
     const input = screen.getByRole("combobox", { name: "Search tasks..." });
     fireEvent.change(input, { target: { value: "353" } });
-    expect(screen.getByRole("listbox")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("option", { name: "FN-353: Alpha shell" }));
-    expect(onSelectSearchTask).toHaveBeenCalledWith({ id: "FN-353", title: "Alpha shell" });
+
+    await waitFor(() => expect(screen.getByText("FN-353")).toBeInTheDocument());
+    // Cards, not options.
+    expect(screen.queryByRole("listbox")).toBeNull();
+
+    fireEvent.click(screen.getByText("FN-353"));
+
+    expect(onSelectSearchTask).toHaveBeenCalledTimes(1);
+    expect(onSelectSearchTask.mock.calls[0][0].id).toBe("FN-353");
+    // The desktop host's transient query never touches the Board/List filter.
     expect(onSearchChange).not.toHaveBeenCalled();
     expect(screen.queryByRole("combobox", { name: "Search tasks..." })).toBeNull();
     expect(screen.queryByTestId("alpha-task-search-overlay")).toBeNull();
@@ -157,21 +224,23 @@ describe("Header", () => {
   });
 
   it.each([
-    { name: "undefined", tasks: undefined },
-    { name: "vide", tasks: [] },
-    { name: "sans correspondance", tasks: [{ id: "FN-900", title: "Autre tâche" }] },
-  ])("garde le combobox Alpha utilisable avec une source $name", ({ tasks }) => {
-    renderHeader({ view: "board", onSearchChange: vi.fn(), taskSearchTasks: tasks }, "desktop");
+    { name: "vide", tasks: [] as { id: string; title: string }[] },
+    { name: "sans correspondance", tasks: [] as { id: string; title: string }[] },
+  ])("garde le combobox Alpha utilisable avec une réponse $name", async ({ tasks }) => {
+    mockFetchTaskPage.mockResolvedValue(searchPage(tasks) as never);
+    renderHeader({ view: "board", projectId: "project-a", onSearchChange: vi.fn() }, "desktop");
     fireEvent.click(screen.getByTestId("desktop-inline-header-search-btn"));
     const input = screen.getByRole("combobox", { name: "Search tasks..." });
     fireEvent.change(input, { target: { value: "353" } });
-    expect(input).toHaveAttribute("aria-expanded", "false");
-    expect(screen.queryByRole("listbox")).toBeNull();
+
+    // An empty answer shows the panel's empty state; it never resurrects a listbox.
+    await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
     expect(screen.queryByTestId("alpha-task-search-overlay")).toBeNull();
+    expect(input).toBeEnabled();
   });
 
   it("ferme et réinitialise le champ Alpha desktop par la croix et Escape", async () => {
-    renderHeader({ view: "board", onSearchChange: vi.fn(), taskSearchTasks: [{ id: "FN-353", title: "Alpha shell" }] }, "desktop");
+    renderHeader({ view: "board", projectId: "project-a", onSearchChange: vi.fn() }, "desktop");
 
     fireEvent.click(screen.getByTestId("desktop-inline-header-search-btn"));
     fireEvent.change(screen.getByRole("combobox", { name: "Search tasks..." }), { target: { value: "353" } });
@@ -1540,23 +1609,45 @@ describe("Header", () => {
       expect(onSearchChange).toHaveBeenCalledWith("alpha query");
     });
 
-    it.each(["tablet", "mobile"] as const)("suggests ID suffixes and literal punctuation on %s", (tier) => {
+    /*
+    FNXC:TaskSearch 2026-09-17-09:41:
+    FN-477 rewrote this case. Suffix and punctuation matching is now decided by the SERVER's shared
+    search predicate, so asserting a client-side filter here would be testing a rule the client no
+    longer owns. What the tablet/mobile hosts still own is the selection contract: with no
+    `onSelectTask`, selecting a result writes its id into the caller's filter query.
+    */
+    it.each(["tablet", "mobile"] as const)("applique l'id sélectionné au filtre sur %s", async (tier) => {
+      mockFetchTaskPage.mockResolvedValue(searchPage([
+        { id: "FN-352", title: "Dans la barre de recherche" },
+      ]) as never);
       renderSearchHeader(tier);
       if (tier === "tablet") fireEvent.click(screen.getByTestId("desktop-header-search-btn"));
       if (tier === "mobile") fireEvent.click(screen.getByTestId("mobile-header-search-btn"));
 
       const input = screen.getByRole("combobox");
       fireEvent.change(input, { target: { value: "52" } });
-      fireEvent.click(screen.getByRole("option", { name: "FN-352: Dans la barre de recherche" }));
-      expect(input).toHaveValue("FN-352");
+
+      await waitFor(() => expect(screen.getByText("FN-352")).toBeInTheDocument());
       expect(screen.queryByRole("listbox")).toBeNull();
 
-      fireEvent.change(input, { target: { value: ".txt" } });
-      expect(screen.getByRole("option", { name: "FN-902: Add the bonjour.txt file" })).toBeInTheDocument();
-      expect(screen.queryByRole("option", { name: "FN-901: retire de fichier txt" })).toBeNull();
-      fireEvent.click(screen.getByRole("option", { name: "FN-902: Add the bonjour.txt file" }));
-      expect(input).toHaveValue("FN-902");
-      expect(screen.queryByRole("listbox")).toBeNull();
+      fireEvent.click(screen.getByText("FN-352"));
+
+      // The floating hosts keep their historical selection-applies-id-to-filter behaviour.
+      await waitFor(() => expect(screen.getByRole("combobox")).toHaveValue("FN-352"));
+    });
+
+    it("transmet la requête au serveur plutôt que de filtrer une collection chargée", async () => {
+      mockFetchTaskPage.mockResolvedValue(searchPage([{ id: "FN-902", title: "Add the bonjour.txt file" }]) as never);
+      renderSearchHeader("tablet");
+      fireEvent.click(screen.getByTestId("desktop-header-search-btn"));
+
+      fireEvent.change(screen.getByRole("combobox"), { target: { value: ".txt" } });
+
+      // Suffixes and literal punctuation reach the shared server predicate untouched.
+      await waitFor(() => expect(mockFetchTaskPage).toHaveBeenCalledWith(
+        "project-a",
+        expect.objectContaining({ query: ".txt" }),
+      ));
     });
   });
 

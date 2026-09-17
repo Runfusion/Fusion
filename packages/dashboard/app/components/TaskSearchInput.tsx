@@ -1,7 +1,7 @@
 import {
+  useCallback,
   useEffect,
   useId,
-  useMemo,
   useRef,
   useState,
   type Ref,
@@ -9,72 +9,57 @@ import {
 import { Search, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { Task } from "@fusion/core";
-import { getTaskTitleDisplayText } from "../utils/taskTitleDisplay";
+import { useTaskSearch } from "../hooks/useTaskSearch";
+import { TaskSearchResultsPopover } from "./TaskSearchResultsPopover";
 import "./TaskSearchInput.css";
 
 /*
-FNXC:TaskTitleDisplay 2026-09-14-17:05:
-FN-391 widens the searchable shape with the optional description because the suggestion label is a
-projection of the task, not of its stored title alone. Callers already hand over full task rows.
+FNXC:TaskSearch 2026-09-17-09:41:
+FN-477 replaced this field's former contract entirely.
+
+Before: suggestions were filtered out of the collection the board had ALREADY paged in, capped at
+eight, rendered as one-line ellipsised rows, and Enter selected the highlighted row.
+
+Now:
+ - The searchable corpus is the whole project through `GET /tasks/page?q=...`, paginated, so a task
+   whose board page has not loaded is still findable. There is no fixed result ceiling.
+ - Results are real `TaskCard`s in a scrollable panel, so they carry the same information the board
+   shows.
+ - Enter in the field runs the AI lane (Fast & Cheap) for the field's current value. It NEVER selects
+   a highlighted row any more, even after arrowing into the panel \u2014 a single key cannot mean both
+   "search harder" and "open this".
+
+Arrow Down / Tab move focus into the panel, where a focused CARD is activated with Enter or Space by
+the card itself. The field stays typeable throughout: the panel is non-modal and takes no focus.
 */
+
+/**
+ * FNXC:TaskTitleDisplay 2026-09-14-17:05:
+ * Retained shape for hosts that hand over partial rows. The panel itself renders full `Task` rows.
+ */
 export type SearchableTask = Pick<Task, "id" | "title"> & { description?: string | null };
 
 export interface TaskSearchInputProps {
   query: string;
-  tasks?: readonly SearchableTask[];
   onSearchChange: (query: string) => void;
   /** Navigation mode selects the task without rewriting the caller's filter query. */
-  onSelectTask?: (task: SearchableTask) => void;
+  onSelectTask?: (task: Task) => void;
   onClose?: () => void;
   autoFocus?: boolean;
   inputRef?: Ref<HTMLInputElement>;
   className?: string;
   closeLabel?: string;
   testId?: string;
-}
-
-const MAX_TASK_SUGGESTIONS = 8;
-
-function suggestionRank(query: string, task: SearchableTask): number {
-  const normalizedId = task.id.toLocaleLowerCase();
-  if (normalizedId === query) return 0;
-  if (normalizedId.startsWith(query)) return 1;
-  if (normalizedId.includes(query)) return 2;
-  return 3;
-}
-
-function compareSuggestions(query: string, left: SearchableTask, right: SearchableTask): number {
-  return suggestionRank(query, left) - suggestionRank(query, right)
-    || left.id.localeCompare(right.id, undefined, { numeric: true, sensitivity: "base" })
-    || (left.title ?? "").localeCompare(right.title ?? "", undefined, { numeric: true, sensitivity: "base" });
-}
-
-/**
- * FNXC:TaskSearch 2026-09-11-22:33:
- * Suggestions match the case-insensitive literal substring the user typed in either task ID or title, including suffixes and punctuation. Exact, prefix, and internal ID matches precede title-only matches deterministically; results remain deduplicated, bounded, and sourced only from App's active project-scoped tasks without a competing fetch.
- */
-function buildTaskSuggestions(tasks: readonly SearchableTask[] | undefined, query: string): SearchableTask[] {
-  const trimmedQuery = query.trim();
-  if (!trimmedQuery || !tasks?.length) return [];
-
-  const normalizedQuery = trimmedQuery.toLocaleLowerCase();
-  const unique = new Map<string, SearchableTask>();
-
-  for (const task of tasks) {
-    const normalizedId = task.id.toLocaleLowerCase();
-    const normalizedTitle = (task.title ?? "").toLocaleLowerCase();
-    const matches = normalizedId.includes(normalizedQuery) || normalizedTitle.includes(normalizedQuery);
-    if (matches && !unique.has(normalizedId)) unique.set(normalizedId, task);
-  }
-
-  return [...unique.values()]
-    .sort((left, right) => compareSuggestions(normalizedQuery, left, right))
-    .slice(0, MAX_TASK_SUGGESTIONS);
+  /** Project that owns the search. Without it no request is issued. */
+  projectId?: string;
+  /** Selected node; a remote node routes both lanes through its proxy. */
+  nodeId?: string;
+  localNodeId?: string;
+  addToast?: (message: string, type?: "success" | "error" | "info" | "warning") => void;
 }
 
 export function TaskSearchInput({
   query,
-  tasks,
   onSearchChange,
   onSelectTask,
   onClose,
@@ -83,34 +68,61 @@ export function TaskSearchInput({
   className = "",
   closeLabel,
   testId,
+  projectId,
+  nodeId,
+  localNodeId,
+  addToast,
 }: TaskSearchInputProps) {
   const { t } = useTranslation("app");
   const rootRef = useRef<HTMLDivElement>(null);
-  const listboxId = useId();
-  const suggestions = useMemo(() => buildTaskSuggestions(tasks, query), [tasks, query]);
-  const suggestionSignature = suggestions.map((task) => task.id.toLocaleLowerCase()).join("\u0000");
+  const panelId = useId();
   const [isOpen, setIsOpen] = useState(false);
-  const [activeIndex, setActiveIndex] = useState(-1);
-  const showSuggestions = isOpen && suggestions.length > 0;
+  const composingRef = useRef(false);
 
-  useEffect(() => {
-    setActiveIndex(-1);
-  }, [query, suggestionSignature]);
+  const search = useTaskSearch({
+    query,
+    active: isOpen,
+    ...(projectId ? { projectId } : {}),
+    ...(nodeId ? { nodeId } : {}),
+    ...(localNodeId ? { localNodeId } : {}),
+  });
+
+  const hasPanelContent = Boolean(query.trim()) && (
+    search.tasks.length > 0 || search.loading || search.aiLoading || search.error !== null
+  );
+  const showPanel = isOpen && hasPanelContent;
+
+  const closePanel = useCallback(() => {
+    setIsOpen(false);
+    // Cancel in-flight text/AI work rather than letting a closed panel keep a generation alive.
+    search.reset();
+  }, [search]);
 
   useEffect(() => {
     const handleOutsidePress = (event: MouseEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setIsOpen(false);
+      const target = event.target as Node | null;
+      if (rootRef.current?.contains(target)) return;
+      /*
+      The panel lives in a body portal, so a press inside it is NOT an outside press. Treating it as
+      one would close the panel before the card's click could select anything.
+      */
+      if (target instanceof Element && target.closest(".task-search-results")) return;
+      setIsOpen(false);
     };
     document.addEventListener("mousedown", handleOutsidePress);
     return () => document.removeEventListener("mousedown", handleOutsidePress);
   }, []);
 
-  const selectSuggestion = (task: SearchableTask) => {
+  const handleCloseClick = useCallback(() => {
+    closePanel();
+    onClose?.();
+  }, [closePanel, onClose]);
+
+  const selectTask = useCallback((task: Task) => {
     setIsOpen(false);
-    setActiveIndex(-1);
     if (onSelectTask) onSelectTask(task);
     else onSearchChange(task.id);
-  };
+  }, [onSearchChange, onSelectTask]);
 
   return (
     <div ref={rootRef} className={`task-search-input header-search ${className}`.trim()} data-testid={testId}>
@@ -119,39 +131,46 @@ export function TaskSearchInput({
         ref={inputRef}
         autoFocus={autoFocus}
         type="text"
+        /*
+        The panel contains focusable CARDS, not options, so it is announced as a dialog rather than a
+        listbox. A listbox of nested buttons would be a false promise to assistive technology.
+        */
         role="combobox"
-        aria-autocomplete="list"
-        aria-expanded={showSuggestions}
-        aria-controls={showSuggestions ? listboxId : undefined}
-        aria-activedescendant={activeIndex >= 0 ? `${listboxId}-option-${activeIndex}` : undefined}
+        aria-expanded={showPanel}
+        aria-haspopup="dialog"
+        aria-controls={showPanel ? panelId : undefined}
         aria-label={t("header.searchTasks", "Search tasks...")}
         placeholder={t("header.searchTasks", "Search tasks...")}
+        title={t("header.taskSearchEnterHint", "Appuyez sur Entrée pour une recherche intelligente (Fast & Cheap)")}
         value={query}
         onChange={(event) => {
           onSearchChange(event.target.value);
           setIsOpen(true);
         }}
         onFocus={() => setIsOpen(true)}
+        onCompositionStart={() => { composingRef.current = true; }}
+        onCompositionEnd={() => { composingRef.current = false; }}
         onKeyDown={(event) => {
           if (event.key === "Escape") {
             event.preventDefault();
             event.stopPropagation();
-            setIsOpen(false);
-            setActiveIndex(-1);
+            closePanel();
             return;
           }
-          if (!suggestions.length) return;
-          if (event.key === "ArrowDown") {
+          if (event.key === "Enter") {
+            // An IME commit and an auto-repeated key are not an operator pressing Enter.
+            if (composingRef.current || event.nativeEvent.isComposing || event.repeat) return;
             event.preventDefault();
+            if (!query.trim()) return;
             setIsOpen(true);
-            setActiveIndex((index) => (index + 1) % suggestions.length);
-          } else if (event.key === "ArrowUp") {
+            void search.runAiSearch();
+            return;
+          }
+          if (event.key === "ArrowDown" && showPanel) {
             event.preventDefault();
-            setIsOpen(true);
-            setActiveIndex((index) => index <= 0 ? suggestions.length - 1 : index - 1);
-          } else if (event.key === "Enter" && showSuggestions && activeIndex >= 0) {
-            event.preventDefault();
-            selectSuggestion(suggestions[activeIndex]);
+            // Only one results panel is ever mounted, so the class selector is unambiguous and
+            // avoids escaping React's `useId` value into a CSS selector.
+            document.querySelector<HTMLElement>(".task-search-results .task-search-result .card")?.focus();
           }
         }}
         className="header-search-input"
@@ -160,41 +179,29 @@ export function TaskSearchInput({
         <button
           type="button"
           className="header-search-clear"
-          onClick={onClose}
+          onClick={handleCloseClick}
           aria-label={closeLabel ?? t("header.closeSearch", "Close search")}
         >
           <X size={14} />
         </button>
       )}
-      {showSuggestions && (
-        <ul
-          id={listboxId}
-          className="task-search-suggestions"
-          role="listbox"
-          aria-label={t("header.taskSuggestions", "Task suggestions")}
-        >
-          {suggestions.map((task, index) => (
-            <li
-              key={task.id.toLocaleLowerCase()}
-              id={`${listboxId}-option-${index}`}
-              className="task-search-suggestion"
-              role="option"
-              aria-label={`${task.id}: ${getTaskTitleDisplayText(task)}`}
-              aria-selected={activeIndex === index}
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={() => selectSuggestion(task)}
-            >
-              <span className="task-search-suggestion-id">{task.id}</span>
-              {/*
-              FNXC:TaskTitleDisplay 2026-09-14-17:05:
-              FN-391: a titleless task rendered an EMPTY suggestion label, so the only way to tell two
-              search hits apart was their ID. Route it through the shared projection so the row shows
-              the same 220-character description prefix the board and list already show.
-              */}
-              <span className="task-search-suggestion-title">{getTaskTitleDisplayText(task)}</span>
-            </li>
-          ))}
-        </ul>
+      {showPanel && (
+        <TaskSearchResultsPopover
+          anchorRef={rootRef}
+          panelId={panelId}
+          tasks={search.tasks}
+          lane={search.lane}
+          loading={search.loading}
+          aiLoading={search.aiLoading}
+          hasMore={search.hasMore}
+          error={search.error}
+          progressKey={search.progressKey}
+          collectionKey={search.collectionKey}
+          onLoadMore={search.loadMore}
+          onSelectTask={selectTask}
+          addToast={addToast ?? (() => undefined)}
+          {...(projectId ? { projectId } : {})}
+        />
       )}
     </div>
   );

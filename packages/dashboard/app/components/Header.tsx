@@ -98,9 +98,24 @@ export interface HeaderProps {
   showAgentsTab?: boolean;
   searchQuery?: string;
   onSearchChange?: (query: string) => void;
-  taskSearchTasks?: readonly Pick<Task, "id" | "title">[];
+  /*
+  FNXC:TaskSearch 2026-09-17-09:41:
+  FN-477 removed `taskSearchTasks`. The header no longer receives a catalogue to filter: the field
+  owns a paginated, project-scoped collection of its own, so a task whose board page has not loaded is
+  still findable. Availability of search must not depend on what the board happens to have loaded.
+  */
   /** Desktop inline search navigates to Task Detail without changing board filters. */
-  onSelectSearchTask?: (task: Pick<Task, "id" | "title">) => void;
+  onSelectSearchTask?: (task: Task) => void;
+  /** Toast sink handed to the result cards; they are read-only and never raise mutation toasts. */
+  addToast?: (message: string, type?: "success" | "error" | "info" | "warning") => void;
+  /*
+  FNXC:TaskSearch 2026-09-17-09:41:
+  The node the search must query. This is the SELECTED node id, not `currentNode?.id`: the selection
+  is authoritative from the moment the operator switches, while the resolved node object only appears
+  once the node list has loaded. Using the object would send the first search of a freshly selected
+  remote node to the LOCAL endpoint.
+  */
+  searchNodeId?: string;
   /** Multi-project props */
   projects?: ProjectInfo[];
   currentProject?: ProjectInfo | null;
@@ -173,8 +188,9 @@ export function Header({
   showAgentsTab,
   searchQuery = "",
   onSearchChange,
-  taskSearchTasks,
   onSelectSearchTask,
+  addToast,
+  searchNodeId,
   projects = [],
   currentProject,
   onSelectProject,
@@ -745,17 +761,24 @@ export function Header({
           isInlineSearchOpen ? (
             <TaskSearchInput
               query={inlineSearchQuery}
-              tasks={taskSearchTasks}
               onSearchChange={setInlineSearchQuery}
+              /*
+              FNXC:TaskSearch 2026-09-17-09:41:
+              The result is handed straight to the host. It used to be re-looked-up in the board's
+              loaded collection first, which silently dropped exactly the results this feature
+              exists to surface: anything outside the loaded pages.
+              */
               onSelectTask={(task) => {
-                const selected = taskSearchTasks?.find((candidate) => candidate.id.toLocaleLowerCase() === task.id.toLocaleLowerCase());
-                if (selected) onSelectSearchTask?.(selected);
+                onSelectSearchTask?.(task);
                 closeInlineSearch();
               }}
               onClose={closeInlineSearch}
               autoFocus
               className="header-search--inline"
               testId="desktop-header-search-input"
+              {...(projectId ? { projectId } : {})}
+              {...(searchNodeId ? { nodeId: searchNodeId } : {})}
+              {...(addToast ? { addToast } : {})}
             />
           ) : (
             <button
@@ -1384,10 +1407,12 @@ export function Header({
       <div className="header-floating-search">
         <TaskSearchInput
           query={searchQuery}
-          tasks={taskSearchTasks}
           onSearchChange={onSearchChange}
           onClose={handleNonMobileSearchClose}
           autoFocus
+          {...(projectId ? { projectId } : {})}
+          {...(searchNodeId ? { nodeId: searchNodeId } : {})}
+          {...(addToast ? { addToast } : {})}
         />
       </div>
     )}
@@ -1397,11 +1422,13 @@ export function Header({
       <div className="header-floating-search">
         <TaskSearchInput
           query={searchQuery}
-          tasks={taskSearchTasks}
           onSearchChange={onSearchChange}
           onClose={handleMobileSearchClose}
           autoFocus
           className="mobile-search-expanded"
+          {...(projectId ? { projectId } : {})}
+          {...(searchNodeId ? { nodeId: searchNodeId } : {})}
+          {...(addToast ? { addToast } : {})}
         />
       </div>
     )}

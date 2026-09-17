@@ -2645,11 +2645,19 @@ function AppInner() {
         showAgentsTab={agentsEnabled}
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
-        taskSearchTasks={boardSourceTasks}
-        onSelectSearchTask={(task) => {
-          const selected = boardSourceTasks.find((candidate) => candidate.id.toLocaleLowerCase() === task.id.toLocaleLowerCase());
-          if (selected) openDetailTask(selected);
-        }}
+        /*
+        FNXC:TaskSearch 2026-09-17-09:41:
+        FN-477: the header search no longer receives `boardSourceTasks` as its catalogue, and the
+        selected result is no longer re-looked-up inside it. That lookup was the second reason a task
+        outside the loaded board pages could not be opened even once the server had returned it — the
+        row was found, then discarded because the board had never paged it in.
+        The search collection is separate from `useTasks` and `useRemoteNodeData`, so neither a
+        result nor a search error can overwrite the board's own data.
+        */
+        onSelectSearchTask={(task) => { openDetailTask(task); }}
+        addToast={addToast}
+        /* The selected node id is authoritative from the switch, before the node object resolves. */
+        {...(currentNodeId ? { searchNodeId: currentNodeId } : {})}
         projects={effectiveProjects}
         currentProject={currentProject}
         onSelectProject={handleSelectProject}

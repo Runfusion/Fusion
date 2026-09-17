@@ -369,12 +369,31 @@ function hasMessageField(message: BadgeUpdatedMessage, field: "prInfo" | "issueI
   return Object.prototype.hasOwnProperty.call(message, field);
 }
 
-export function useBadgeWebSocket(projectId?: string): {
+/**
+ * FNXC:TaskSearch 2026-09-17-09:41:
+ * FN-477 added the OPTIONAL `enabled` flag, defaulting to true, so a read-only consumer (the header
+ * search result card) can be inert. `TaskCardBadge` and every board card pass no options and behave
+ * exactly as before.
+ *
+ * A DISABLED hook must not call `setProjectId`: the store is a module singleton, so retargeting its
+ * project would clear snapshots and re-subscribe every ordinary card mounted beside a search panel —
+ * a search result would then reset live badges on the board behind it. It also performs no
+ * subscribe/unsubscribe and exposes an empty snapshot, because reading a `${projectId}:${taskId}`
+ * entry is exactly the cross-project leak the scoped key exists to prevent.
+ */
+export interface UseBadgeWebSocketOptions {
+  enabled?: boolean;
+}
+
+const EMPTY_BADGE_UPDATES: Map<string, BadgeSnapshot> = new Map();
+
+export function useBadgeWebSocket(projectId?: string, options?: UseBadgeWebSocketOptions): {
   badgeUpdates: Map<string, BadgeSnapshot>;
   isConnected: boolean;
   subscribeToBadge: (taskId: string) => void;
   unsubscribeFromBadge: (taskId: string) => void;
 } {
+  const enabled = options?.enabled ?? true;
   const hookIdRef = useRef<string | null>(null);
   if (hookIdRef.current === null) {
     hookIdRef.current = `badge-hook-${nextHookId++}`;
@@ -386,17 +405,20 @@ export function useBadgeWebSocket(projectId?: string): {
   );
 
   const subscribeToBadge = useCallback((taskId: string) => {
+    if (!enabled) return;
     badgeWebSocketStore.subscribeTask(hookIdRef.current!, taskId);
-  }, []);
+  }, [enabled]);
 
   const unsubscribeFromBadge = useCallback((taskId: string) => {
+    if (!enabled) return;
     badgeWebSocketStore.unsubscribeTask(hookIdRef.current!, taskId);
-  }, []);
+  }, [enabled]);
 
   // Update project context when projectId changes
   useEffect(() => {
+    if (!enabled) return;
     badgeWebSocketStore.setProjectId(projectId ?? null);
-  }, [projectId]);
+  }, [enabled, projectId]);
 
   useEffect(() => {
     return () => {
@@ -405,8 +427,8 @@ export function useBadgeWebSocket(projectId?: string): {
   }, []);
 
   return {
-    badgeUpdates: snapshot.badgeUpdates,
-    isConnected: snapshot.isConnected,
+    badgeUpdates: enabled ? snapshot.badgeUpdates : EMPTY_BADGE_UPDATES,
+    isConnected: enabled ? snapshot.isConnected : false,
     subscribeToBadge,
     unsubscribeFromBadge,
   };

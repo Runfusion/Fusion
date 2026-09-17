@@ -44,20 +44,42 @@ async function fetchSharedAgents(projectId?: string): Promise<Agent[]> {
   return request;
 }
 
-export function useAgentsMapCache(projectId?: string): UseAgentsMapCacheResult {
-  const [agents, setAgents] = useState<Agent[]>(() => readCachedAgents(projectId) ?? []);
-  const [loading, setLoading] = useState(() => readCachedAgents(projectId) === null);
-  const hasCachedStateRef = useRef(readCachedAgents(projectId) !== null);
+/**
+ * FNXC:TaskSearch 2026-09-17-09:41:
+ * FN-477 added the OPTIONAL `enabled` flag, defaulting to true, so a read-only consumer (the header
+ * search result card) can be inert without changing any existing consumer. `NewTaskModal`, `ChatView`,
+ * `useChat`, and `ProjectModelsSection` pass no options and therefore behave exactly as before.
+ *
+ * Disabled means inert at BOTH ends: no fetch, no shared-listener registration, and no cache READ.
+ * The read matters on its own — a task id is unique only within a project, so a cached entry from the
+ * viewer's own project would otherwise be painted onto a remote node's task with the same id.
+ */
+export interface UseAgentsMapCacheOptions {
+  enabled?: boolean;
+}
+
+export function useAgentsMapCache(projectId?: string, options?: UseAgentsMapCacheOptions): UseAgentsMapCacheResult {
+  const enabled = options?.enabled ?? true;
+  const [agents, setAgents] = useState<Agent[]>(() => enabled ? readCachedAgents(projectId) ?? [] : []);
+  const [loading, setLoading] = useState(() => enabled ? readCachedAgents(projectId) === null : false);
+  const hasCachedStateRef = useRef(enabled ? readCachedAgents(projectId) !== null : false);
   const projectKey = getProjectKey(projectId);
 
   useEffect(() => {
+    if (!enabled) {
+      setAgents([]);
+      setLoading(false);
+      hasCachedStateRef.current = false;
+      return;
+    }
     const cachedAgents = readCachedAgents(projectId) ?? [];
     setAgents(cachedAgents);
     setLoading(readCachedAgents(projectId) === null);
     hasCachedStateRef.current = readCachedAgents(projectId) !== null;
-  }, [projectId]);
+  }, [enabled, projectId]);
 
   useEffect(() => {
+    if (!enabled) return;
     const listeners = listenersByProject.get(projectKey) ?? new Set<(agents: Agent[]) => void>();
     listeners.add(setAgents);
     listenersByProject.set(projectKey, listeners);
@@ -67,9 +89,10 @@ export function useAgentsMapCache(projectId?: string): UseAgentsMapCacheResult {
         listenersByProject.delete(projectKey);
       }
     };
-  }, [projectKey]);
+  }, [enabled, projectKey]);
 
   const load = useCallback(async () => {
+    if (!enabled) return;
     try {
       const nextAgents = await fetchSharedAgents(projectId);
       hasCachedStateRef.current = true;
@@ -82,16 +105,17 @@ export function useAgentsMapCache(projectId?: string): UseAgentsMapCacheResult {
     } finally {
       setLoading(false);
     }
-  }, [projectId, projectKey]);
+  }, [enabled, projectId, projectKey]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
   const refresh = useCallback(async () => {
+    if (!enabled) return;
     setLoading(true);
     await load();
-  }, [load]);
+  }, [enabled, load]);
 
   const agentsMap = useMemo(() => {
     const nextMap = new Map<string, Agent>();

@@ -1,61 +1,15 @@
+/*
+FNXC:TaskSearch 2026-09-17-09:41:
+FN-477 removed the truncated suggestion list this file used to style
+(`.task-search-suggestions`, `.task-search-suggestion`, and the `-id`/`-title` spans). Results are now
+real board cards rendered by `TaskSearchResultsPopover`, which owns its own stylesheet and positions
+itself in a body portal from measured geometry — so there is no absolutely positioned dropdown here
+any more, and no ellipsis rule: title projection belongs to the card.
+
+Only the field's own positioning context remains. It is still needed: the field is the panel's anchor
+element and its rectangle is what the panel measures.
+*/
+
 .task-search-input {
   position: relative;
-}
-
-.task-search-suggestions {
-  position: absolute;
-  inset-block-start: calc(100% + var(--space-xs));
-  inset-inline: 0;
-  z-index: var(--z-dropdown);
-  display: flex;
-  flex-direction: column;
-  margin: 0;
-  padding: var(--space-xs);
-  list-style: none;
-  background: var(--surface);
-  border: var(--btn-border-width) solid var(--border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-lg);
-}
-
-.task-search-suggestion {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  gap: var(--space-sm);
-  min-height: calc(var(--space-xl) + var(--space-md));
-  padding: var(--space-sm) var(--space-md);
-  color: var(--text);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-}
-
-.task-search-suggestion:hover,
-.task-search-suggestion:active,
-.task-search-suggestion[aria-selected="true"] {
-  background: var(--surface-hover);
-}
-
-.task-search-suggestion:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
-
-.task-search-suggestion-id {
-  color: var(--text-muted);
-  font-family: var(--font-mono);
-  font-size: var(--font-size-sm);
-  white-space: nowrap;
-}
-
-.task-search-suggestion-title {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-@media (max-width: 768px) {
-  .task-search-suggestion {
-    min-height: calc(var(--space-xl) + var(--space-xl));
-  }
 }

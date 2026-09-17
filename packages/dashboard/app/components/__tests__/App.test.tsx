@@ -91,10 +91,27 @@ vi.mock("../../sse-bus", () => ({
   subscribeSse: (...args: any[]) => mockSubscribeSse(...args),
 }));
 
+/*
+FNXC:TaskSearch 2026-09-17-09:41:
+FN-477 header-search HTTP seams. Only the transport is doubled: `Header`, `TaskSearchInput`,
+`useTaskSearch`, `TaskSearchResultsPopover`, and the result `TaskCard`s are all production code in
+these scenarios, which is what makes the Symptom Verification case meaningful.
+*/
+const mockFetchTaskPage = vi.hoisted(() => vi.fn(async () => ({ tasks: [], total: 0, hasMore: false, nextCursor: null })));
+const mockAiSearchTasks = vi.hoisted(() => vi.fn(async () => ({ query: "", tasks: [] })));
+vi.mock("../../api/tasks/tasks-search", () => ({ aiSearchTasks: mockAiSearchTasks }));
+
 vi.mock("../../api", async (importOriginal) => {
   const { createDashboardApiMock } = await import("../../test/mockApi");
   return createDashboardApiMock(() => importOriginal<typeof import("../../api")>(), {
     fetchTasks: vi.fn(() => Promise.resolve([])),
+    /*
+    FNXC:TaskSearch 2026-09-17-09:41:
+    FN-477: the header search reads its own paginated collection instead of filtering whatever the
+    board had already loaded, so this is the seam the search scenarios drive. The default empty page
+    keeps every unrelated App test issuing no search work.
+    */
+    fetchTaskPage: mockFetchTaskPage,
     fetchPatchnode: vi.fn(() => Promise.resolve({ days: [], totalEntries: 0, hasMore: false })),
     fetchConfig: vi.fn(() => Promise.resolve({ maxConcurrent: 2, rootDir: "/workspace/project" })),
     fetchSettings: vi.fn(() => Promise.resolve({ ...defaultSettings })),
@@ -6789,7 +6806,24 @@ describe("FN-3290: modal keyboard isolation for mobile dashboard layout", () => 
 });
 
 describe("App task search suggestions", () => {
-  beforeEach(() => mockUseViewportMode.mockReturnValue("desktop"));
+  beforeEach(() => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    mockFetchTaskPage.mockReset();
+    mockFetchTaskPage.mockResolvedValue({ tasks: [], total: 0, hasMore: false, nextCursor: null });
+    mockAiSearchTasks.mockReset();
+    mockAiSearchTasks.mockResolvedValue({ query: "", tasks: [] });
+  });
+
+  /** One server page of search results for the header's own paginated collection. */
+  function searchServerPage(tasks: ReturnType<typeof makeSearchTask>[], nextCursor: string | null = null) {
+    return { tasks, total: tasks.length, hasMore: Boolean(nextCursor), nextCursor };
+  }
+
+  /** Settle the field's 200ms text debounce and the resulting request. */
+  async function settleSearch() {
+    await waitFor(() => expect(mockFetchTaskPage).toHaveBeenCalled());
+  }
+
   function makeSearchTask(id: string, title: string, column = "todo") {
     return {
       id,
@@ -6827,15 +6861,87 @@ describe("App task search suggestions", () => {
     });
   }
 
-  it("ouvre une tâche locale terminée depuis la recherche Alpha sans filtrer Board ou List", async () => {
+  /*
+  FNXC:TaskSearch 2026-09-17-09:41:
+  SYMPTOM VERIFICATION for FN-477, driven through the real Header, field, controller hook, panel, and
+  cards — only the HTTP/session boundaries are doubled.
+
+  Original symptom: an operator could not find a task by a word in its title, got a list capped at
+  eight truncated rows, and Enter ran no intelligent search.
+
+  On the pre-FN-477 code every assertion below fails: the target task is absent from the board's
+  loaded collection so it was never suggested, the ninth result did not exist, and no AI request was
+  ever issued.
+  */
+  it("retrouve par titre une tâche absente des pages chargées, au-delà de huit, puis lance l'IA sur Entrée", async () => {
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
       experimentalFeatures: { ...defaultSettings.experimentalFeatures },
     });
-    const source = [
-      makeSearchTask("FN-351", "Active Alpha task"),
-      makeSearchTask("FN-353", "Completed Alpha task", "done"),
+
+    // The board holds ONE unrelated task. The searched task was never paged in.
+    mockUseTasks.mockImplementation(() => ({
+      tasks: [makeSearchTask("FN-001", "Une autre tâche")],
+      createTask: mockCreateTask,
+      moveTask: vi.fn(),
+      deleteTask: vi.fn(),
+      mergeTask: vi.fn(),
+      retryTask: vi.fn(),
+      updateTask: vi.fn(),
+      duplicateTask: vi.fn(),
+      refreshTasks: vi.fn(),
+    }));
+
+    const exactTitle = "le bouton collapse du leftsidebar doit être au header de la sidebar et être du meme design que le bouton qui collapse la rightsidebar.";
+    const firstPage = [
+      makeSearchTask("FN-331", exactTitle),
+      ...Array.from({ length: 7 }, (_unused, index) => makeSearchTask(`FN-40${index}`, `collapse ${index}`)),
     ];
+    const secondPage = Array.from({ length: 4 }, (_unused, index) => makeSearchTask(`FN-5${index}`, `collapse suite ${index}`));
+    mockFetchTaskPage
+      .mockResolvedValueOnce(searchServerPage(firstPage, "cursor-1") as never)
+      .mockResolvedValueOnce(searchServerPage(secondPage) as never);
+
+    render(<App />);
+    await waitForAppShell();
+    const board = within(screen.getByTestId("board-keep-alive"));
+    expect(board.queryByText(exactTitle)).toBeNull();
+
+    fireEvent.click(screen.getByTestId("desktop-inline-header-search-btn"));
+    fireEvent.change(screen.getByRole("combobox", { name: "Search tasks..." }), { target: { value: "collapse" } });
+
+    // The exact requested title is reachable without the board ever loading its page …
+    await settleSearch();
+    await waitFor(() => expect(screen.getByText(exactTitle)).toBeInTheDocument());
+    // … as a real card, not a truncated suggestion row.
+    expect(document.querySelectorAll(".task-search-result .card").length).toBeGreaterThan(0);
+    expect(document.querySelector(".task-search-suggestion")).toBeNull();
+    // … and the collection is not capped at the former eight.
+    expect(mockFetchTaskPage.mock.calls[0][1]).toMatchObject({ query: "collapse" });
+    expect(document.querySelectorAll(".task-search-result")).toHaveLength(8);
+    expect(screen.getByTestId("task-search-results-sentinel")).toBeInTheDocument();
+
+    // A paraphrase with no literal match still reaches the AI lane on Enter.
+    mockAiSearchTasks.mockResolvedValue({
+      query: "replier le panneau lateral",
+      tasks: [makeSearchTask("FN-331", exactTitle)],
+    } as never);
+    fireEvent.change(screen.getByRole("combobox", { name: "Search tasks..." }), { target: { value: "replier le panneau lateral" } });
+    await act(async () => {
+      fireEvent.keyDown(screen.getByRole("combobox", { name: "Search tasks..." }), { key: "Enter" });
+    });
+
+    expect(mockAiSearchTasks).toHaveBeenCalledTimes(1);
+    expect(mockAiSearchTasks.mock.calls[0][0]).toBe("replier le panneau lateral");
+    await waitFor(() => expect(screen.getByTestId("task-search-results")).toHaveAttribute("data-lane", "ai"));
+  });
+
+  it("ouvre une tâche terminée absente du tableau sans filtrer Board ou List", async () => {
+    vi.mocked(fetchSettings).mockResolvedValue({
+      ...defaultSettings,
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures },
+    });
+    const source = [makeSearchTask("FN-351", "Active Alpha task")];
     const observedQueries: Array<string | undefined> = [];
     mockUseTasks.mockImplementation((options) => {
       observedQueries.push(options?.searchQuery);
@@ -6851,32 +6957,35 @@ describe("App task search suggestions", () => {
         refreshTasks: vi.fn(),
       };
     });
+    // The completed task exists on the server only; the board never loaded it.
+    mockFetchTaskPage.mockResolvedValue(searchServerPage([
+      makeSearchTask("FN-353", "Completed Alpha task", "done"),
+    ]) as never);
 
     render(<App />);
     await waitForAppShell();
     const board = within(screen.getByTestId("board-keep-alive"));
     expect(board.getByText("Active Alpha task")).toBeInTheDocument();
-    expect(board.getByText("Completed Alpha task")).toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId("desktop-inline-header-search-btn"));
     const inlineSearch = screen.getByTestId("desktop-header-search-input");
     expect(inlineSearch.parentElement).toBe(document.querySelector(".header-actions"));
     fireEvent.change(screen.getByRole("combobox", { name: "Search tasks..." }), { target: { value: "353" } });
-    expect(screen.queryByRole("dialog", { name: "Search tasks..." })).toBeNull();
-    fireEvent.click(screen.getByRole("option", { name: "FN-353: Completed Alpha task" }));
+    await settleSearch();
 
-    expect(screen.queryByTestId("alpha-task-search-overlay")).toBeNull();
+    await waitFor(() => expect(screen.getByText("Completed Alpha task")).toBeInTheDocument());
+    fireEvent.click(screen.getByText("FN-353"));
+
+    // The result opens even though `boardSourceTasks` never contained it.
     expect(screen.getAllByRole("dialog", { name: "Completed Alpha task" })).toHaveLength(1);
     expect(board.getByText("Active Alpha task")).toBeInTheDocument();
-    expect(board.getByText("Completed Alpha task")).toBeInTheDocument();
+    // The desktop host's transient query never reaches the Board/List filter.
     expect(observedQueries.every((query) => query === undefined)).toBe(true);
 
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     fireEvent.click(screen.getByTestId("sidebar-nav-list"));
     await waitFor(() => expect(screen.getByTestId("list-keep-alive")).not.toHaveAttribute("aria-hidden"));
-    const list = within(screen.getByTestId("list-keep-alive"));
-    expect(list.getByText("Active Alpha task")).toBeInTheDocument();
-    expect(list.getByText("Completed Alpha task")).toBeInTheDocument();
+    expect(within(screen.getByTestId("list-keep-alive")).getByText("Active Alpha task")).toBeInTheDocument();
   });
 
   it("ouvre une tâche distante autoritative depuis Alpha sans propager la requête transitoire", async () => {
@@ -6900,6 +7009,11 @@ describe("App task search suggestions", () => {
       };
     });
 
+    // The remote node's OWN search endpoint answers; nothing local may substitute for it.
+    mockFetchTaskPage.mockResolvedValue(searchServerPage([
+      makeSearchTask("REMOTE-353", "Remote completed Alpha task", "done"),
+    ]) as never);
+
     render(<App />);
     await waitForAppShell();
     const board = within(screen.getByTestId("board-keep-alive"));
@@ -6909,7 +7023,16 @@ describe("App task search suggestions", () => {
     fireEvent.click(screen.getByTestId("desktop-inline-header-search-btn"));
     expect(screen.getByTestId("desktop-header-search-input").parentElement).toBe(document.querySelector(".header-actions"));
     fireEvent.change(screen.getByRole("combobox", { name: "Search tasks..." }), { target: { value: "353" } });
-    fireEvent.click(screen.getByRole("option", { name: "REMOTE-353: Remote completed Alpha task" }));
+    await settleSearch();
+
+    // The request is routed to the selected node, never answered from the local store.
+    expect(mockFetchTaskPage.mock.calls[0][1]).toMatchObject({ nodeId: "node-alpha", query: "353" });
+    // Scope to the panel: the board legitimately renders the same remote task behind it.
+    const panel = await screen.findByTestId("task-search-results");
+    await waitFor(() => expect(within(panel).getByText("REMOTE-353")).toBeInTheDocument());
+    expect(within(panel).queryByText("LOCAL-353")).toBeNull();
+
+    fireEvent.click(within(panel).getByText("REMOTE-353"));
 
     expect(screen.queryByTestId("alpha-task-search-overlay")).toBeNull();
     expect(screen.getAllByRole("dialog", { name: "Remote completed Alpha task" })).toHaveLength(1);
@@ -6958,11 +7081,16 @@ describe("App task search suggestions", () => {
 
     render(<App />);
     await waitForAppShell();
+    mockFetchTaskPage.mockResolvedValue(searchServerPage([
+      makeSearchTask("REMOTE-331", "Remote completed task", "done"),
+    ]) as never);
     fireEvent.click(screen.getByTestId("desktop-inline-header-search-btn"));
     fireEvent.change(screen.getByRole("combobox", { name: "Search tasks..." }), { target: { value: "331" } });
+    await settleSearch();
 
-    expect(screen.getByRole("option", { name: "REMOTE-331: Remote completed task" })).toBeInTheDocument();
-    expect(screen.queryByRole("option", { name: /LOCAL-331/ })).toBeNull();
+    const panel = await screen.findByTestId("task-search-results");
+    await waitFor(() => expect(within(panel).getByText("REMOTE-331")).toBeInTheDocument());
+    expect(within(panel).queryByText("LOCAL-331")).toBeNull();
     remoteSpy.mockRestore();
   });
 
@@ -6978,13 +7106,17 @@ describe("App task search suggestions", () => {
       error: null,
       refresh: vi.fn(),
     });
+    // The remote node genuinely has no match. A local fallback here would show another store's rows.
+    mockFetchTaskPage.mockResolvedValue(searchServerPage([]) as never);
 
     render(<App />);
     await waitForAppShell();
     fireEvent.click(screen.getByTestId("desktop-inline-header-search-btn"));
     fireEvent.change(screen.getByRole("combobox", { name: "Search tasks..." }), { target: { value: "331" } });
+    await settleSearch();
 
-    expect(screen.queryByRole("option", { name: /LOCAL-331/ })).toBeNull();
+    await waitFor(() => expect(mockFetchTaskPage).toHaveBeenCalled());
+    expect(screen.queryByText("LOCAL-331")).toBeNull();
     expect(within(screen.getByTestId("board-keep-alive")).queryByText("Local task")).toBeNull();
 
     remoteSpy.mockRestore();
@@ -7006,35 +7138,56 @@ describe("App task search suggestions", () => {
       refresh: vi.fn(),
     }));
 
+    /*
+    FNXC:TaskSearch 2026-09-17-09:41:
+    Two nodes legitimately reuse a task id, so the load-bearing property is that switching node clears
+    the previous node's rows BEFORE any new response can arrive — otherwise node 1's card is shown
+    under node 2's identity for as long as the new request takes.
+    */
+    mockFetchTaskPage.mockResolvedValue(searchServerPage([
+      makeSearchTask("NODE1-331", "First node task"),
+    ]) as never);
+
     const { rerender } = render(<App />);
     await waitForAppShell();
     fireEvent.click(screen.getByTestId("desktop-inline-header-search-btn"));
     fireEvent.change(screen.getByRole("combobox", { name: "Search tasks..." }), { target: { value: "331" } });
-    expect(screen.getByRole("option", { name: "NODE1-331: First node task" })).toBeInTheDocument();
+    await settleSearch();
+    const firstNodePanel = await screen.findByTestId("task-search-results");
+    await waitFor(() => expect(within(firstNodePanel).getByText("NODE1-331")).toBeInTheDocument());
+
+    // Node switch: the previous node's rows must be gone immediately, with no local substitute.
+    let resolveSecondNode: ((value: unknown) => void) | undefined;
+    mockFetchTaskPage.mockReturnValue(new Promise((resolve) => { resolveSecondNode = resolve; }) as never);
     mockNodeContextValue.currentNodeId = "node-2";
+    remoteTasks = [];
     rerender(<App />);
-    expect(screen.queryByRole("option", { name: /NODE1-331/ })).toBeNull();
-    expect(screen.queryByRole("option", { name: /LOCAL-331/ })).toBeNull();
+
+    expect(screen.queryByTestId("task-search-results")?.textContent ?? "").not.toContain("NODE1-331");
+    expect(screen.queryByTestId("task-search-results")?.textContent ?? "").not.toContain("LOCAL-331");
     const boardDuringNodeChange = within(screen.getByTestId("board-keep-alive"));
     expect(boardDuringNodeChange.queryByText("First node task")).toBeNull();
     expect(boardDuringNodeChange.queryByText("Local task")).toBeNull();
 
-    remoteLoading = true;
-    rerender(<App />);
+    // A remote failure never falls back to local rows either.
     remoteLoading = false;
     remoteError = "Remote node unavailable";
     rerender(<App />);
-    expect(screen.queryByRole("option", { name: /NODE1-331/ })).toBeNull();
+    expect(screen.queryByTestId("task-search-results")?.textContent ?? "").not.toContain("NODE1-331");
+    expect(screen.queryByTestId("task-search-results")?.textContent ?? "").not.toContain("LOCAL-331");
 
-    remoteLoading = true;
+    // The second node's own answer finally lands and is the only thing shown.
     remoteError = null;
-    rerender(<App />);
     remoteTasks = [makeSearchTask("NODE2-331", "Second node task")];
-    remoteLoading = false;
     rerender(<App />);
+    await act(async () => {
+      resolveSecondNode?.(searchServerPage([makeSearchTask("NODE2-331", "Second node task")]));
+      await Promise.resolve();
+    });
 
-    expect(screen.getByRole("option", { name: "NODE2-331: Second node task" })).toBeInTheDocument();
-    expect(screen.queryByRole("option", { name: /NODE1-331/ })).toBeNull();
+    const settledPanel = await screen.findByTestId("task-search-results");
+    await waitFor(() => expect(within(settledPanel).getByText("NODE2-331")).toBeInTheDocument());
+    expect(within(settledPanel).queryByText("NODE1-331")).toBeNull();
     remoteSpy.mockRestore();
   });
 });

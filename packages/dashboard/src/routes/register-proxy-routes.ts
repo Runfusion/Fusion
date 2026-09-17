@@ -3,6 +3,7 @@ import type { TaskStore } from "@fusion/core";
 import type { RuntimeLogger } from "../runtime-logger.js";
 import { ApiError, badRequest, internalError, notFound } from "../api-error.js";
 import { emitRemoteRouteDiagnostic } from "./context.js";
+import { AI_TASK_SEARCH_PROXY_TIMEOUT_MS } from "../shared/task-search.js";
 
 export interface ProxyRoutesDeps {
   store: TaskStore;
@@ -21,17 +22,37 @@ function rethrowAsApiError(error: unknown, fallbackMessage = "Internal server er
   throw internalError(fallbackMessage);
 }
 
+/*
+FNXC:TaskSearch 2026-09-17-09:41:
+FN-477 needs two NEW remote-node forwards: the paginated text search (`GET /tasks/page`) and the AI
+search (`POST /ai/search-tasks`). The generic wildcard builds its target path differently and is
+shared by unrelated callers, so these get explicit routes ahead of it instead.
+
+This helper therefore gained an optional method/body/abort shape. It stays GET-with-no-body by
+default, so the four pre-existing callers (`health`, `projects`, `tasks`, `project-health`) keep
+their exact method, path, headers, and behaviour.
+*/
+interface ProxyForwardOptions {
+  timeoutMs?: number;
+  method?: "GET" | "POST";
+  /** Already-parsed JSON body to forward. Serialized here so the upstream sees canonical JSON. */
+  jsonBody?: unknown;
+  /** Aborted when the downstream client disconnects, so an upstream generation is not orphaned. */
+  upstreamSignal?: AbortSignal;
+}
+
 async function proxyToRemoteNode(
   req: Request,
   res: Response,
   remotePath: string,
   deps: ProxyRoutesDeps,
-  proxyOptions?: { timeoutMs?: number },
+  proxyOptions?: ProxyForwardOptions,
 ): Promise<void> {
   const { store, runtimeLogger } = deps;
   const proxyLogger = runtimeLogger.child("proxy");
   const nodeId = req.params.nodeId as string;
   const timeoutMs = proxyOptions?.timeoutMs ?? 10_000;
+  const method = proxyOptions?.method ?? "GET";
 
   const { CentralCore } = await import("@fusion/core");
   // FNXC:GlobalDirGuard 2026-06-25-22:40: Node proxy state is GLOBAL — use getGlobalSettingsDir(), never getFusionDir() (project .fusion/), which spawns a stray per-project central DB and resets global settings. See register-settings-sync-inbound-routes.ts for full rationale.
@@ -57,9 +78,28 @@ async function proxyToRemoteNode(
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    const onUpstreamAbort = () => controller.abort();
+    proxyOptions?.upstreamSignal?.addEventListener("abort", onUpstreamAbort, { once: true });
 
-    const response = await fetch(targetUrl, { headers, signal: controller.signal });
-    clearTimeout(timeout);
+    let body: string | undefined;
+    if (method === "POST") {
+      headers["Content-Type"] = "application/json";
+      const raw = proxyOptions?.jsonBody ?? (req as Request & { rawBody?: unknown }).rawBody ?? req.body;
+      body = typeof raw === "string" ? raw : JSON.stringify(raw ?? {});
+    }
+
+    let response: globalThis.Response;
+    try {
+      response = await fetch(targetUrl, {
+        method,
+        headers,
+        ...(body !== undefined ? { body } : {}),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeout);
+      proxyOptions?.upstreamSignal?.removeEventListener("abort", onUpstreamAbort);
+    }
 
     const hopByHopHeaders = new Set([
       "transfer-encoding",
@@ -164,6 +204,52 @@ export function registerProxyRoutes(router: Router, deps: ProxyRoutesDeps): void
         throw err;
       }
       rethrowAsApiError(err);
+    }
+  });
+
+  /*
+  FNXC:TaskSearch 2026-09-17-09:41:
+  FN-477 header search forwards. Both MUST sit ahead of the wildcard catch-all: the wildcard builds
+  its upstream path without this helper's `/api` prefix, so routing the new requests through it would
+  hit the wrong upstream path. Query parameters (`projectId`, `limit`, `cursor`, `q`) ride along via
+  the helper's `req.url` search string; the node's API key is applied exactly as for the other
+  forwards. There is deliberately no local-store fallback: a failing remote search must surface as
+  the remote's own status, never as silently local results for a different project.
+  */
+  router.get("/proxy/:nodeId/tasks/page", async function (req, res) {
+    try {
+      await proxyToRemoteNode(req, res, "/tasks/page", deps);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
+    }
+  });
+
+  /*
+  The AI search forward gets the longer 30s budget because the upstream service's own generation
+  budget is 25s plus bounded teardown; a 10s proxy timeout would mask every real answer as a gateway
+  timeout. A downstream disconnect aborts the upstream request rather than orphaning its generation.
+  */
+  router.post("/proxy/:nodeId/ai/search-tasks", async function (req, res) {
+    const upstream = new AbortController();
+    const onClientClose = () => upstream.abort();
+    req.on("close", onClientClose);
+    try {
+      await proxyToRemoteNode(req, res, "/ai/search-tasks", deps, {
+        method: "POST",
+        timeoutMs: AI_TASK_SEARCH_PROXY_TIMEOUT_MS,
+        jsonBody: req.body,
+        upstreamSignal: upstream.signal,
+      });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
+    } finally {
+      req.off("close", onClientClose);
     }
   });
 

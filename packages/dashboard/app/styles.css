@@ -207,6 +207,18 @@ html {
   --quick-entry-action-row-height-desktop: 28px;
   --quick-entry-action-row-height-mobile: 36px;
 
+  /*
+  FNXC:TaskSearch 2026-09-17-09:41:
+  FN-477 renders real board cards inside the header search results panel, so the panel must be as wide
+  as a board column's content. These are the SHARED dimensions the board already uses (the 300px
+  column minimum and the column body padding); the board's own declarations are deliberately left
+  untouched, so no existing board geometry changes. The panel reads them as its fallback before it has
+  measured a live card, and the measured card wins as soon as one exists.
+  */
+  --task-search-card-min-width: 300px;
+  --task-search-panel-padding: var(--space-sm);
+  --task-search-card-gap: var(--space-sm);
+
   /* Border Radius Scale */
   --radius-sm: 4px;
   --radius-md: 8px;
