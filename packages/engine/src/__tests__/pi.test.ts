@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { describeModel, formatModelMarkerDetails, compactSessionContext, COMPACTION_FALLBACK_INSTRUCTIONS, createFnAgent, getProjectRootFromWorktree, isModelAuthTierIncompatibilityError, isRetryableModelSelectionError, promptWithFallback, type AgentOptions } from "../pi.js";
+import { describeModel, formatModelMarkerDetails, compactSessionContext, classifyCompactionFailure, isRetryAfterCompactionFailureLegal, COMPACTION_FALLBACK_INSTRUCTIONS, createFnAgent, getProjectRootFromWorktree, isModelAuthTierIncompatibilityError, isRetryableModelSelectionError, promptWithFallback, type AgentOptions, type CompactionOutcome } from "../pi.js";
 import { createAgentSession, ModelRegistry, ModelRuntime, type AgentSession } from "@earendil-works/pi-coding-agent";
 import { piLog } from "../logger.js";
 
@@ -56,6 +56,29 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
   }),
   DefaultPackageManager: vi.fn(),
   discoverAndLoadExtensions: vi.fn().mockResolvedValue({ errors: [], runtime: { pendingProviderRegistrations: [] } }),
+  /*
+  FNXC:CompactionNoProgress 2026-09-04-16:35:
+  RUFU-187: `compactSessionContext`'s `estimatedTokensAfter`-absent fallback calls pi's per-message
+  estimator, so the mock mirrors pi's chars/4 text/thinking semantics (real implementation:
+  `dist/core/compaction/compaction.js` `estimateTokens`). Without it the symbol would be undefined
+  inside the helper, every message would count as 0, and the `pure-estimate` basis would be
+  untestable (0 >= 0 collapses every session into no-progress).
+  */
+  estimateTokens: (message: unknown) => {
+    const blocks = Array.isArray((message as { content?: unknown })?.content)
+      ? ((message as { content: unknown[] }).content)
+      : [];
+    const chars = blocks
+      .map((block) => {
+        const b = block as { type?: string; text?: string; thinking?: string };
+        if (b?.type === "text") return String(b.text ?? "");
+        if (b?.type === "thinking") return String(b.thinking ?? "");
+        return "";
+      })
+      .join("")
+      .length;
+    return Math.ceil(chars / 4);
+  },
   getAgentDir: vi.fn(() => "/test/agent-dir"),
   ModelRuntime: {
     create: vi.fn(async () => ({ getAuth: vi.fn(async () => undefined) })),
@@ -194,33 +217,46 @@ describe("COMPACTION_FALLBACK_INSTRUCTIONS", () => {
   });
 });
 
+/*
+FNXC:ChatContextGuardEscalation 2026-09-04-10:57:
+RUFU-182: `compactSessionContext` no longer launders every refusal into `null`. Each test
+pins one arm of the reason-preserving `CompactionOutcome` union, and the classifier/truth-
+table describes below pin the literals the ladder's retry legality keys on. No tier logic is
+asserted here — escalation belongs to `chat-context-guard.ts`.
+*/
 describe("compactSessionContext", () => {
-  it("returns null when session does not have compact method", async () => {
+  it("returns the unsupported arm when session does not have compact method", async () => {
     const session = {} as AgentSession;
     const result = await compactSessionContext(session);
-    expect(result).toBeNull();
+    expect(result).toEqual({ reason: "unsupported", branchMutated: false, engineMessage: null });
   });
 
   it("calls session.compact with default instructions when no custom instructions provided", async () => {
-    const compact = async (instructions: string) => ({
-      summary: "Compacted",
-      tokensBefore: 100000,
-    });
+    let capturedInstructions: string | undefined;
+    const compact = async (instructions: string) => {
+      capturedInstructions = instructions;
+      return { summary: "Compacted", tokensBefore: 100000 };
+    };
     const session = { compact } as unknown as AgentSession;
 
     const result = await compactSessionContext(session);
 
+    expect(capturedInstructions).toBe(COMPACTION_FALLBACK_INSTRUCTIONS);
     expect(result).toEqual({
+      reason: "compacted",
+      branchMutated: true,
       summary: "Compacted",
       tokensBefore: 100000,
+      estimatedTokensAfter: null,
+      reduced: false,
     });
   });
 
-  it("calls session.compact with custom instructions when provided", async () => {
+  it("calls session.compact with custom instructions and reports strict reduction", async () => {
     let capturedInstructions: string | undefined;
     const compact = async (instructions: string) => {
       capturedInstructions = instructions;
-      return { summary: "Custom", tokensBefore: 50000 };
+      return { summary: "Custom", tokensBefore: 50000, estimatedTokensAfter: 30000 };
     };
     const session = { compact } as unknown as AgentSession;
 
@@ -228,37 +264,288 @@ describe("compactSessionContext", () => {
 
     expect(capturedInstructions).toBe("Focus on step 3");
     expect(result).toEqual({
+      reason: "compacted",
+      branchMutated: true,
       summary: "Custom",
       tokensBefore: 50000,
+      estimatedTokensAfter: 30000,
+      reduced: true,
     });
   });
 
-  it("returns null when session.compact throws", async () => {
-    const compact = async () => { throw new Error("compaction failed"); };
+  /*
+  FNXC:CompactionNoProgress 2026-09-04-16:35:
+  RUFU-187 replaced the old `reduced=false` on the `compacted` arm for a non-shrinking after-count:
+  that kept a no-space-saved compaction inside the success shape, which is the dishonesty this card
+  removes. An after-count that does not beat `tokensBefore` is now its own kind, so the executor
+  and the chat guard cannot read it as progress. Both non-reducing relations are pinned (equal AND
+  greater) because pi's mixed basis (preparation-time `tokensBefore` vs post-compaction
+  `estimatedTokensAfter`) can legitimately produce either.
+  */
+  it.each([
+    { label: "equals", after: 50000 },
+    { label: "exceeds", after: 51000 },
+  ])(
+    "reports the no-progress arm on the pi-reported basis when estimatedTokensAfter $label tokensBefore",
+    async ({ after }) => {
+      const compact = async () => ({ summary: "Same", tokensBefore: 50000, estimatedTokensAfter: after });
+      const session = { compact } as unknown as AgentSession;
+
+      const result = await compactSessionContext(session);
+
+      expect(result).toEqual({
+        reason: "no-progress",
+        branchMutated: true,
+        tokensBefore: 50000,
+        estimatedTokensAfter: after,
+        basis: "pi-reported",
+      });
+    },
+  );
+
+  it("reports reduced=true only for a strict pi-reported reduction", async () => {
+    const compact = async () => ({ summary: "Smaller", tokensBefore: 50000, estimatedTokensAfter: 49999 });
     const session = { compact } as unknown as AgentSession;
 
     const result = await compactSessionContext(session);
 
-    expect(result).toBeNull();
+    expect(result.reason).toBe("compacted");
+    if (result.reason === "compacted") expect(result.reduced).toBe(true);
   });
 
-  it("returns null when session.compact returns null", async () => {
+  /*
+  FNXC:CompactionNoProgress 2026-09-04-16:35:
+  Fallback basis: pi gave NO usable `estimatedTokensAfter`, so the helper must decide from its own
+  char-based estimate over the session's messages, taken before and after the call. The control (a
+  genuine shrink under the same estimator) is what makes the refusal non-vacuous: it proves the
+  `pure-estimate` arm fires because the context did not shrink, not because the estimator is stuck
+  at a constant. The reported pair is the helper's own before/after, never pi's preparation-time
+  `tokensBefore` — the two are not comparable (the RUFU-118 blind-estimator lesson).
+  */
+  function createEstimatableSession(opts: { keepMessages: boolean }) {
+    const message = (marker: string) => ({
+      role: "user" as const,
+      content: [{ type: "text" as const, text: `${marker}${"x".repeat(3999)}` }],
+    });
+    const state = { messages: [message("a"), message("b"), message("c")] };
+    const session = {
+      state,
+      compact: async () => {
+        // pi rebuilds the message list in place on success (agent-session.js reassigns
+        // agent.state.messages), so the fake mirrors that by mutating the same state object.
+        if (!opts.keepMessages) {
+          state.messages = [message("a")];
+        }
+        return { summary: "Summarised", tokensBefore: 120000 };
+      },
+    } as unknown as AgentSession;
+    return session;
+  }
+
+  it("reports the no-progress arm on the pure-estimate basis when pi reports no after-count and the messages did not shrink", async () => {
+    const session = createEstimatableSession({ keepMessages: true });
+
+    const result = await compactSessionContext(session);
+
+    expect(result).toEqual({
+      reason: "no-progress",
+      branchMutated: true,
+      tokensBefore: 3000,
+      estimatedTokensAfter: 3000,
+      basis: "pure-estimate",
+    });
+  });
+
+  it("keeps the compacted arm when pi reports no after-count and the message estimate strictly shrinks", async () => {
+    const session = createEstimatableSession({ keepMessages: false });
+
+    const result = await compactSessionContext(session);
+
+    expect(result).toEqual({
+      reason: "compacted",
+      branchMutated: true,
+      summary: "Summarised",
+      tokensBefore: 120000,
+      estimatedTokensAfter: null,
+      reduced: false,
+    });
+  });
+
+  it("does not launder an empty message list into no-progress when pi reports no after-count", async () => {
+    // The fallback compares the SAME estimator before and after, so it is only meaningful when
+    // there IS a baseline to compare against. A session whose message list is empty carries its
+    // weight in prompt/tools/recorded usage the message array cannot see, so `after >= 0` would
+    // fire on any non-empty summary and invent a non-reduction. Deferring to the compacted arm
+    // keeps the RUFU-118 "unknown is not evidence of a non-reduction" rule intact.
+    const session = {
+      state: { messages: [] },
+      compact: async () => ({ summary: "Summarised", tokensBefore: 120000 }),
+    } as unknown as AgentSession;
+
+    const result = await compactSessionContext(session);
+
+    expect(result).toEqual({
+      reason: "compacted",
+      branchMutated: true,
+      summary: "Summarised",
+      tokensBefore: 120000,
+      estimatedTokensAfter: null,
+      reduced: false,
+    });
+  });
+
+  it("skips the no-progress classification for an empty summary even when the after-count does not shrink", async () => {
+    // RUFU-182's empty-summary judgement belongs to the chat guard's `empty-summary` reason; a
+    // blank summary must not be relabelled, or the guard would lose its own reason code.
+    const compact = async () => ({ summary: "   ", tokensBefore: 50000, estimatedTokensAfter: 50000 });
+    const session = { compact } as unknown as AgentSession;
+
+    const result = await compactSessionContext(session);
+
+    expect(result.reason).toBe("compacted");
+    if (result.reason === "compacted") expect(result.reduced).toBe(false);
+  });
+
+  it("treats a no-progress outcome as terminal for retry legality", () => {
+    const outcome: CompactionOutcome = {
+      reason: "no-progress",
+      branchMutated: true,
+      tokensBefore: 1000,
+      estimatedTokensAfter: 1000,
+      basis: "pi-reported",
+    };
+
+    // pi already appended the CompactionEntry, so a second compact() can only be refused.
+    expect(isRetryAfterCompactionFailureLegal(outcome)).toBe(false);
+  });
+
+  it("returns the error arm with the engine message when session.compact throws", async () => {
+    const compact = async () => {
+      throw new Error("compaction failed");
+    };
+    const session = { compact } as unknown as AgentSession;
+
+    const result = await compactSessionContext(session);
+
+    expect(result).toEqual({ reason: "error", branchMutated: false, engineMessage: "compaction failed" });
+  });
+
+  it("returns the already-compacted arm when session.compact throws pi's refusal literal", async () => {
+    const compact = async () => {
+      throw new Error("Already compacted");
+    };
+    const session = { compact } as unknown as AgentSession;
+
+    const result = await compactSessionContext(session);
+
+    expect(result).toEqual({ reason: "already-compacted", branchMutated: false, engineMessage: "Already compacted" });
+  });
+
+  it("returns the nothing-to-compact arm when session.compact throws the too-small literal", async () => {
+    const compact = async () => {
+      throw new Error("Nothing to compact (session too small)");
+    };
+    const session = { compact } as unknown as AgentSession;
+
+    const result = await compactSessionContext(session);
+
+    expect(result).toEqual({
+      reason: "nothing-to-compact",
+      branchMutated: false,
+      engineMessage: "Nothing to compact (session too small)",
+    });
+  });
+
+  it("treats a falsy resolve as the error arm, not a refusal", async () => {
     const compact = async () => null;
     const session = { compact } as unknown as AgentSession;
 
     const result = await compactSessionContext(session);
 
-    expect(result).toBeNull();
+    expect(result.reason).toBe("error");
+    if (result.reason === "error") {
+      expect(result.engineMessage).toContain("produced no compaction result");
+    }
   });
 
-  it("returns result with empty summary when session.compact returns object without summary", async () => {
+  it("returns an empty-summary compacted arm when session.compact returns object without summary", async () => {
     const compact = async () => ({});
     const session = { compact } as unknown as AgentSession;
 
     const result = await compactSessionContext(session);
 
-    // Should still return a result with empty summary since the guard checks for object
-    expect(result).toEqual({ summary: "", tokensBefore: 0 });
+    // An empty summary is pi's problem until the guard's acceptance rule judges it;
+    // the helper stays a pure reporter of what the engine appended.
+    expect(result).toEqual({
+      reason: "compacted",
+      branchMutated: true,
+      summary: "",
+      tokensBefore: 0,
+      estimatedTokensAfter: null,
+      reduced: false,
+    });
+  });
+});
+
+describe("classifyCompactionFailure", () => {
+  const outcome = (err: unknown): CompactionOutcome => classifyCompactionFailure(err);
+
+  it("recognizes pi's already-compacted refusal case-insensitively", () => {
+    expect(outcome(new Error("already COMPACTED"))).toEqual({
+      reason: "already-compacted",
+      branchMutated: false,
+      engineMessage: "already COMPACTED",
+    });
+  });
+
+  it("recognizes pi's nothing-to-compact refusal case-insensitively", () => {
+    expect(outcome(new Error("NOTHING TO COMPACT (session too small)"))).toEqual({
+      reason: "nothing-to-compact",
+      branchMutated: false,
+      engineMessage: "NOTHING TO COMPACT (session too small)",
+    });
+  });
+
+  it("falls back to the error arm for a generic throw", () => {
+    expect(outcome(new Error("boom"))).toEqual({ reason: "error", branchMutated: false, engineMessage: "boom" });
+  });
+
+  it("stringifies non-Error throws into engineMessage", () => {
+    expect(outcome("socket hang up")).toEqual({
+      reason: "error",
+      branchMutated: false,
+      engineMessage: "socket hang up",
+    });
+  });
+
+  it("keeps engineMessage null for a missing failure value", () => {
+    expect(outcome(undefined)).toEqual({ reason: "error", branchMutated: false, engineMessage: null });
+  });
+});
+
+describe("isRetryAfterCompactionFailureLegal", () => {
+  it("allows a retry only after the error arm", () => {
+    const errorOutcome: CompactionOutcome = { reason: "error", branchMutated: false, engineMessage: "x" };
+    expect(isRetryAfterCompactionFailureLegal(errorOutcome)).toBe(true);
+  });
+
+  it("keeps every other outcome terminal", () => {
+    const terminal: CompactionOutcome[] = [
+      {
+        reason: "compacted",
+        branchMutated: true,
+        summary: "s",
+        tokensBefore: 10,
+        estimatedTokensAfter: 5,
+        reduced: true,
+      },
+      { reason: "already-compacted", branchMutated: false, engineMessage: "Already compacted" },
+      { reason: "nothing-to-compact", branchMutated: false, engineMessage: "Nothing to compact (session too small)" },
+      { reason: "unsupported", branchMutated: false, engineMessage: null },
+    ];
+    for (const outcome of terminal) {
+      expect(isRetryAfterCompactionFailureLegal(outcome)).toBe(false);
+    }
   });
 });
 
@@ -696,8 +983,9 @@ describe("promptWithFallback auto-compaction", () => {
 });
 
 describe("session failure diagnostics", () => {
-  it("logs warning when compaction fails during promptWithFallback", async () => {
+  it("logs the compaction refusal reason when compaction fails during promptWithFallback", async () => {
     const warnSpy = vi.spyOn(piLog, "warn");
+    const errorSpy = vi.spyOn(piLog, "error");
     const session = {
       prompt: vi.fn().mockRejectedValueOnce(
         new Error("prompt is too long: 210000 tokens > 200000 maximum"),
@@ -709,10 +997,20 @@ describe("session failure diagnostics", () => {
       "prompt is too long: 210000 tokens > 200000 maximum",
     );
 
+    /*
+    FNXC:ChatContextGuardEscalation 2026-09-04-10:57:
+    RUFU-182: the auto-compaction failure log names the CompactionOutcome reason and pi's
+    engine message instead of the old null-contract sentence, so an operator can tell a
+    refusal from a transient failure without re-running the send.
+    */
     expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Context compaction failed (will fall through to kill/requeue): compaction exploded"),
+      expect.stringContaining("attempting auto-compaction"),
+    );
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("compaction unavailable (error (compaction exploded))"),
     );
 
+    errorSpy.mockRestore();
     warnSpy.mockRestore();
   });
 
