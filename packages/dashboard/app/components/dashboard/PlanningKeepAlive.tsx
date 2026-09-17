@@ -18,6 +18,13 @@ Planning Mode lives as a kept-alive sibling of MainContent so navigation preserv
 */
 export interface PlanningKeepAliveProps {
   active: boolean;
+  /*
+  FNXC:WorkflowControls 2026-09-16-23:24:
+  FN-483 : sur téléphone, Planning s'ouvre dans un drawer AU-DESSUS d'un Board de fond actif qui possède déjà
+  `#header-workflow-slot`. Planning garde son effet de sélection (donc le workflow de création) mais ne rend plus de
+  contrôle dans ce header. Défaut compatible : `true` pour les pages tablette/ordinateur.
+  */
+  showWorkflowControls?: boolean;
   projectId: string;
   tasks: Task[];
   bgPlanningSessions: AiSessionSummary[];
@@ -30,6 +37,7 @@ export interface PlanningKeepAliveProps {
 
 export function PlanningKeepAlive({
   active,
+  showWorkflowControls = true,
   projectId,
   tasks,
   bgPlanningSessions,
@@ -53,6 +61,7 @@ export function PlanningKeepAlive({
           <PlanningWorkflowSwitcherSlot
             projectId={projectId}
             onWorkflowSelectionChange={(selection) => setPlanningHeaderWorkflowId(selection && !selection.isAllWorkflowsSelected ? selection.selectedWorkflow.id : null)}
+            showWorkflowControls={showWorkflowControls}
           />
         ) : null}
         {/*

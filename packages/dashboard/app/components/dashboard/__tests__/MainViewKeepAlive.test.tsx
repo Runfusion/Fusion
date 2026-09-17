@@ -69,15 +69,21 @@ vi.mock("../../Column", () => ({
     );
   }),
 }));
+/*
+FNXC:WorkflowControls 2026-09-16-23:24:
+FN-483 : ce double reflète le contrat réel de ListView — publier dans le slot demande à la fois d'être actif ET d'y
+être autorisé. Un double qui ne lirait que `active` ne pourrait pas détecter le doublon de sélecteurs signalé.
+*/
 vi.mock("../../ListView", () => ({
-  ListView: ({ active }: { active?: boolean }) => {
+  ListView: ({ active, showWorkflowControls }: { active?: boolean; showWorkflowControls?: boolean }) => {
     const isActive = active ?? true;
+    const controlsAllowed = showWorkflowControls ?? true;
     activeByView.list.push(isActive);
     const slot = document.getElementById("header-workflow-slot");
     return (
       <>
-        <output data-testid="list-child" data-active={String(isActive)} />
-        {isActive && slot ? createPortal(<output data-testid="list-header-control">List controls</output>, slot) : null}
+        <output data-testid="list-child" data-active={String(isActive)} data-workflow-controls={String(controlsAllowed)} />
+        {isActive && controlsAllowed && slot ? createPortal(<output data-testid="list-header-control">List controls</output>, slot) : null}
       </>
     );
   },
@@ -293,6 +299,51 @@ describe("MainViewKeepAlive", () => {
     slot.remove();
   });
 
+  /*
+   * FN-483 : sous un drawer téléphone, Board reste le propriétaire unique du sélecteur. List reste ACTIVE (ses
+   * tâches et ses effets continuent) mais ne publie aucun contrôle : c'est le second symptôme signalé.
+   */
+  it("laisse le Board de fond seul propriétaire du slot quand List s'ouvre en drawer téléphone", () => {
+    const slot = createHeaderSlot();
+    render(
+      <MainViewKeepAlive
+        activeId="list"
+        mountedIds={["board", "list"]}
+        projectKey="project-1"
+        mainContentProps={mainContentProps()}
+        mobileDrawer={{ activeId: "list", title: "List", onClose: vi.fn() }}
+      />,
+    );
+
+    expect(screen.getByTestId("board-keep-alive")).not.toHaveAttribute("aria-hidden");
+    expect(screen.getByTestId("list-child")).toHaveAttribute("data-active", "true");
+    expect(screen.getByTestId("list-child")).toHaveAttribute("data-workflow-controls", "false");
+    expect(screen.queryByTestId("list-header-control")).toBeNull();
+    /* Le Board de fond reste le seul producteur : exactement un sélecteur, et aucun toolbar en dehors du slot. */
+    expect(slot.querySelectorAll("[data-testid='workflow-switcher']")).toHaveLength(1);
+    expect(document.querySelectorAll("[data-testid='workflow-switcher']")).toHaveLength(1);
+    expect(slot.querySelectorAll("[data-testid$='header-control']")).toHaveLength(0);
+    slot.remove();
+  });
+
+  /* FN-483 : fond explicitement désactivé (vue globale / erreur backend) — List redevient propriétaire légitime. */
+  it("rend le slot à List quand le Board de fond est explicitement désactivé", () => {
+    const slot = createHeaderSlot();
+    render(
+      <MainViewKeepAlive
+        activeId="list"
+        mountedIds={["board", "list"]}
+        projectKey="project-1"
+        mainContentProps={mainContentProps()}
+        mobileDrawer={{ activeId: "list", title: "List", backgroundActive: false, onClose: vi.fn() }}
+      />,
+    );
+
+    expect(screen.getByTestId("list-child")).toHaveAttribute("data-workflow-controls", "true");
+    expect(slot.querySelectorAll("[data-testid$='header-control']")).toHaveLength(1);
+    slot.remove();
+  });
+
   it("keeps the canonical Chat and workflow-header host census explicit", () => {
     const sourceFiles = productionAppSourceFiles();
     const chatHosts = sourceFiles
@@ -330,7 +381,12 @@ describe("MainViewKeepAlive", () => {
      * the resolved page host, and a non-page shell still evicts a retained Chat entry.
      */
     const mainContent = readAppFile("components/dashboard/MainContent.tsx");
-    expect(mainContent).toContain('const chatPageHostEnabled = mobileDrawerEnabled || chatPageHost === "sidebar-page"');
+    /*
+     * Assertion périmée réparée ici : la dérivation est désormais écrite sur plusieurs lignes, et FN-468 y a ajouté
+     * l'hôte `"mobile-page"`. Le garde structurel vise les constituants du portillon, pas leur mise en forme.
+     */
+    expect(mainContent).toContain("const chatPageHostEnabled = mobileDrawerEnabled");
+    expect(mainContent).toContain('chatPageHost === "sidebar-page"');
     expect(mainContent).toContain('taskView === "chat" && !chatPageHostEnabled ? null : taskView');
     expect(mainContent).toContain('!chatPageHostEnabled && storedKeepAliveIds.includes("chat")');
     expect(mainContent).toContain('storedKeepAliveIds.filter((id) => id !== "chat")');

@@ -21,6 +21,12 @@ interface GraphWorkflowSwitcherSlotProps {
   is reachable exclusively from the Workflows view, so this slot carries no edit or create callback.
   */
   onWorkflowSelectionChange?: (selection: GraphWorkflowSelection | null) => void;
+  /*
+  FNXC:WorkflowControls 2026-09-16-23:24:
+  FN-483 : même permission de rendu que le slot Planning/Missions. Graph continue de publier sa sélection (donc son
+  filtrage de tâches) quand un Board de fond téléphone possède déjà le slot, mais ne rend plus de contrôle.
+  */
+  showWorkflowControls?: boolean;
 }
 
 const EMPTY_COUNTS: Map<string, WorkflowStatusCounts> = new Map();
@@ -48,6 +54,7 @@ export function filterTasksByGraphWorkflowSelection<T extends { id: string }>(
 export function GraphWorkflowSwitcherSlot({
   projectId,
   onWorkflowSelectionChange,
+  showWorkflowControls = true,
 }: GraphWorkflowSwitcherSlotProps) {
   const {
     boardWorkflows,
@@ -67,7 +74,7 @@ export function GraphWorkflowSwitcherSlot({
   List, Graph, and the Planning/Missions slot, so all four surfaces survive a late-mounted or replaced
   slot identically instead of drifting apart.
   */
-  const headerWorkflowSlot = useHeaderWorkflowSlot({ enabled: true });
+  const headerWorkflowSlot = useHeaderWorkflowSlot({ enabled: showWorkflowControls });
 
   const selection = useMemo<GraphWorkflowSelection | null>(() => {
     if (!workflowMode || !boardWorkflows || !selectedWorkflow) return null;
@@ -82,7 +89,7 @@ export function GraphWorkflowSwitcherSlot({
     return () => onWorkflowSelectionChange?.(null);
   }, [onWorkflowSelectionChange]);
 
-  if (!workflowMode || !selectedWorkflow || workflowOptions.length < 2 || !headerWorkflowSlot) {
+  if (!showWorkflowControls || !workflowMode || !selectedWorkflow || workflowOptions.length < 2 || !headerWorkflowSlot) {
     return null;
   }
 

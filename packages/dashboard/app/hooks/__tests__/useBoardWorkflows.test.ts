@@ -7,6 +7,7 @@ import {
   __test_clearWorkflowSettingValuesRevisions,
   getWorkflowSettingValuesRevision,
 } from "../../utils/workflowSettingValuesEvents";
+import { __test_clearBoardWorkflowSelectionListeners } from "../../utils/boardWorkflowSelectionEvents";
 
 function makePayload(overrides: Partial<BoardWorkflowsPayload> = {}): BoardWorkflowsPayload {
   return {
@@ -31,6 +32,8 @@ describe("useBoardWorkflows", () => {
     localStorage.clear();
     sessionStorage.clear();
     __test_clearWorkflowSettingValuesRevisions();
+    /* FN-483 : la notification inter-consommateurs est un module partagé ; repartir d'un registre vide entre cas. */
+    __test_clearBoardWorkflowSelectionListeners();
   });
 
   function makeDeps(fetchImpl: () => Promise<BoardWorkflowsPayload>) {
@@ -304,21 +307,81 @@ describe("useBoardWorkflows", () => {
     expect(localStorage.getItem("kb:p1:kb-dashboard-board-workflow-selection")).toBe("wf-b");
   });
 
-  it("keeps selected workflow state isolated per hook consumer", async () => {
+  /*
+  FNXC:BoardWorkflowSelection 2026-09-16-23:24:
+  FN-483 remplace « keeps selected workflow state isolated per hook consumer ». Ce contrat d'isolation par instance
+  montée est devenu faux POUR UN MÊME PROJET : un seul sélecteur contextuel subsiste par en-tête, donc une List ou un
+  Graph conservés doivent suivre le choix explicite de l'opérateur. L'isolation entre projets — et avec le contexte
+  sans projet — reste garantie, et les dépendances (fetch/SSE/cache) restent strictement par instance.
+  */
+  it("partage le choix explicite entre consommateurs du même projet et l'isole des autres projets", async () => {
     const depsOne = makeDeps(() => Promise.resolve(makePayload()));
     const depsTwo = makeDeps(() => Promise.resolve(makePayload()));
+    const depsOther = makeDeps(() => Promise.resolve(makePayload()));
+    const depsNoProject = makeDeps(() => Promise.resolve(makePayload()));
 
     const first = renderHook(() => useBoardWorkflows({ projectId: "p1", ...depsOne }));
     const second = renderHook(() => useBoardWorkflows({ projectId: "p1", ...depsTwo }));
+    const other = renderHook(() => useBoardWorkflows({ projectId: "q1", ...depsOther }));
+    const noProject = renderHook(() => useBoardWorkflows({ ...depsNoProject }));
 
     await waitFor(() => expect(first.result.current.selectedWorkflow?.id).toBe("wf-a"));
     await waitFor(() => expect(second.result.current.selectedWorkflow?.id).toBe("wf-a"));
+    await waitFor(() => expect(other.result.current.selectedWorkflow?.id).toBe("wf-a"));
+    await waitFor(() => expect(noProject.result.current.selectedWorkflow?.id).toBe("wf-a"));
 
     act(() => { first.result.current.setSelectedWorkflowId("wf-b"); });
 
     await waitFor(() => expect(first.result.current.selectedWorkflow?.id).toBe("wf-b"));
-    expect(second.result.current.selectedWorkflow?.id).toBe("wf-a");
-    expect(second.result.current.selectedWorkflowId).toBe("wf-a");
+    await waitFor(() => expect(second.result.current.selectedWorkflow?.id).toBe("wf-b"));
+    expect(second.result.current.selectedWorkflowId).toBe("wf-b");
+    /* Contrôle négatif : un autre projet et le contexte sans projet ne bougent pas. */
+    expect(other.result.current.selectedWorkflow?.id).toBe("wf-a");
+    expect(noProject.result.current.selectedWorkflow?.id).toBe("wf-a");
+
+    /* Un choix produit AU PLUS UN miroir serveur, pas un par abonné. */
+    await waitFor(() => expect(depsOne.persistBoardWorkflowSelection).toHaveBeenCalledTimes(1));
+    expect(depsTwo.persistBoardWorkflowSelection).not.toHaveBeenCalled();
+    expect(depsOther.persistBoardWorkflowSelection).not.toHaveBeenCalled();
+
+    /* Le démontage retire l'écoute : le récepteur démonté ne peut plus être mis à jour. */
+    second.unmount();
+    act(() => { first.result.current.setSelectedWorkflowId("wf-a"); });
+    await waitFor(() => expect(first.result.current.selectedWorkflow?.id).toBe("wf-a"));
+    expect(second.result.current.selectedWorkflow?.id).toBe("wf-b");
+  });
+
+  /* FN-483 : la vue agrégée suit le même chemin partagé et n'est jamais envoyée au miroir serveur. */
+  it("partage la vue agrégée sans l'envoyer au miroir serveur", async () => {
+    const depsOne = makeDeps(() => Promise.resolve(makePayload()));
+    const depsTwo = makeDeps(() => Promise.resolve(makePayload()));
+
+    const first = renderHook(() => useBoardWorkflows({ projectId: "p-all", ...depsOne }));
+    const second = renderHook(() => useBoardWorkflows({ projectId: "p-all", ...depsTwo }));
+    await waitFor(() => expect(second.result.current.selectedWorkflow?.id).toBe("wf-a"));
+
+    act(() => { first.result.current.setSelectedWorkflowId(ALL_WORKFLOWS_BOARD_VIEW_ID); });
+
+    await waitFor(() => expect(second.result.current.isAllWorkflowsSelected).toBe(true));
+    expect(first.result.current.isAllWorkflowsSelected).toBe(true);
+    expect(localStorage.getItem("kb:p-all:kb-dashboard-board-workflow-selection")).toBe(ALL_WORKFLOWS_BOARD_VIEW_ID);
+    await waitFor(() => expect(depsOne.persistBoardWorkflowSelection).toHaveBeenCalledWith(null, "p-all"));
+    expect(depsTwo.persistBoardWorkflowSelection).not.toHaveBeenCalled();
+  });
+
+  /*
+  FN-483 : l'agrégat doit survivre à un projet ne proposant qu'un seul workflow sélectionnable — c'est la capacité
+  que Board portait dans son état local avant d'emprunter ce chemin commun.
+  */
+  it("conserve la vue agrégée avec un unique workflow sélectionnable", async () => {
+    localStorage.setItem("kb:p-single:kb-dashboard-board-workflow-selection", ALL_WORKFLOWS_BOARD_VIEW_ID);
+    const deps = makeDeps(() => Promise.resolve(makePayload({ workflows: [makePayload().workflows[0]] })));
+
+    const { result } = renderHook(() => useBoardWorkflows({ projectId: "p-single", ...deps }));
+
+    await waitFor(() => expect(result.current.boardWorkflows).not.toBeNull());
+    expect(result.current.isAllWorkflowsSelected).toBe(true);
+    expect(localStorage.getItem("kb:p-single:kb-dashboard-board-workflow-selection")).toBe(ALL_WORKFLOWS_BOARD_VIEW_ID);
   });
 
   it("unmount removes visibility/focus listeners and unsubscribes from SSE", async () => {

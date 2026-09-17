@@ -211,7 +211,7 @@ FN-382: the List surface is defined ONCE here and mounted by two hosts — the m
 fallback route) and the non-mobile right dock. Extracting it keeps a single wiring of tasks, handlers, workflow
 controls and Quick Entry, so reading or creating a task from the dock cannot drift from the dedicated view.
 */
-export function MainContentListView(props: AppMainPanelTaskDetailMainContentProps & { listHost?: "route" | "dock" }) {
+export function MainContentListView(props: AppMainPanelTaskDetailMainContentProps & { listHost?: "route" | "dock"; showWorkflowControls?: boolean }) {
   const {
     tasks,
     isRemote,
@@ -282,6 +282,12 @@ export function MainContentListView(props: AppMainPanelTaskDetailMainContentProp
         header would carry two identical controls.
         */
         workflowControlsInHeader={props.listHost !== "dock"}
+        /*
+        FNXC:WorkflowControls 2026-09-16-23:24:
+        FN-483 : le repli de route hérite de la même règle que la List conservée — quand un Board de fond téléphone
+        possède déjà le slot, cette instance ne rend aucun contrôle, ni portalé ni en ligne.
+        */
+        showWorkflowControls={props.showWorkflowControls ?? true}
         compact={props.listHost === "dock"}
         /*
         FNXC:ListInRightDock 2026-09-14-08:05:
@@ -576,6 +582,14 @@ export function MainContent(props: MainContentProps) {
   or connection error must instead release Board's shared header without reparenting retained Chat.
   */
   const activeKeepAliveId = earlyHidden ? null : selectedKeepAliveId;
+  /*
+  FNXC:WorkflowControls 2026-09-16-23:24:
+  FN-483 : un Board de fond téléphone réellement actif est l'unique propriétaire du sélecteur contextuel du Header.
+  Toutes les surfaces hébergées AU-DESSUS de lui (List de repli, Graph, Missions) suppriment alors leur propre
+  contrôle sans perdre leurs effets de sélection. Même dérivation que `backgroundActive` du drawer ci-dessous, et que
+  `boardBackgroundActive` passé au Header par App.
+  */
+  const boardBackgroundOwnsHeaderSlot = mobileDrawerEnabled && !earlyHidden;
   const closeMobileDrawer = () => {
     if (taskView === "task-detail") {
       closeTaskDetailMainPanel();
@@ -732,6 +746,8 @@ export function MainContent(props: MainContentProps) {
           <GraphWorkflowSwitcherSlot
             projectId={currentProject?.id}
             onWorkflowSelectionChange={setGraphWorkflowSelection}
+            /* FNXC:WorkflowControls 2026-09-16-23:24: FN-483 — Graph garde son filtrage mais ne double pas le sélecteur du Board de fond. */
+            showWorkflowControls={!boardBackgroundOwnsHeaderSlot}
           />
         ) : null}
         <PluginDashboardViewHost
@@ -885,6 +901,8 @@ export function MainContent(props: MainContentProps) {
         <HeaderWorkflowSwitcherSlot
           projectId={currentProject?.id}
           onWorkflowSelectionChange={(selection) => setMissionWorkflowId(selection && !selection.isAllWorkflowsSelected ? selection.selectedWorkflow.id : null)}
+          /* FNXC:WorkflowControls 2026-09-16-23:24: FN-483 — Missions conserve sa sélection de création sans rendre un second contrôle au-dessus du Board de fond. */
+          showWorkflowControls={!boardBackgroundOwnsHeaderSlot}
         />
         {/*
         FNXC:ProjectSwitchModalReset 2026-07-23-00:00:
@@ -1324,7 +1342,7 @@ export function MainContent(props: MainContentProps) {
     */
     return null;
   }
-  return <MainContentListView {...props} />;
+  return <MainContentListView {...props} showWorkflowControls={!boardBackgroundOwnsHeaderSlot} />;
   };
 
   const switchView = renderSwitchView();

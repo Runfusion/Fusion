@@ -110,6 +110,16 @@ export interface HeaderProps {
   shellHost?: ShellHostContext;
   /** When true, the mobile bottom nav bar handles primary navigation and header nav controls are hidden. */
   mobileNavEnabled?: boolean;
+  /*
+  FNXC:WorkflowControls 2026-09-16-23:24:
+  FN-483 : sur téléphone, le Board reste MONTÉ ET ACTIF derrière chaque drawer (`MainViewKeepAlive` garde
+  `backgroundActive`). Le Header doit donc distinguer la destination réellement ouverte (`view`, qui continue
+  d'alimenter la navigation) du CONTEXTE visuel de fond. Sans cette distinction, ouvrir Command Center retirait le
+  slot et le Board repliait son sélecteur en ligne SOUS le header — exactement le symptôme signalé. Cette prop ne
+  décide que de la visibilité du slot ; elle est fausse en vue globale et en page d'erreur backend, et n'a d'effet que
+  sur téléphone — les vraies pages tablette/ordinateur gardent la restriction Board/List de FN-439.
+  */
+  boardBackgroundActive?: boolean;
   /** When true on non-mobile screens, persistent left sidebar owns primary view navigation. */
   leftSidebarNavActive?: boolean;
   /*
@@ -172,6 +182,7 @@ export function Header({
   projectId,
   shellHost = { kind: "browser" },
   mobileNavEnabled,
+  boardBackgroundActive = false,
   leftSidebarNavActive = false,
   rightDockAvailable = false,
   rightDockOpen = false,
@@ -218,8 +229,15 @@ export function Header({
   guarantee is preserved because the node stays single-sourced; the view condition only narrows where it exists.
   */
   const hideHeaderViewNav = leftSidebarNavActive && !isMobile;
-  /* FN-439: single explicit derivation shared by both producers of `#header-workflow-slot`. */
-  const workflowSlotVisible = view === "board" || view === "list";
+  /*
+  FN-439: single explicit derivation shared by both producers of `#header-workflow-slot`.
+
+  FNXC:WorkflowControls 2026-09-16-23:24:
+  FN-483 ajoute le contexte de Board de fond : quand un drawer téléphone est ouvert au-dessus d'un Board actif, le
+  slot survit à l'ouverture/fermeture et garde le MÊME nœud DOM. Les vraies pages tablette/ordinateur conservent la
+  restriction Board/List de FN-439.
+  */
+  const workflowSlotVisible = (boardBackgroundActive && isMobile) || view === "board" || view === "list";
   /*
   FNXC:Navigation 2026-06-21-23:40:
   The right dock is persistent and owns its own collapse control, so Header must not render a duplicate right-dock toggle or repurpose the More views overflow trigger on tablet/desktop.

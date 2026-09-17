@@ -482,8 +482,13 @@ describe("Header", () => {
       }
     });
 
-    /* FN-439 cas (b) : même contrat pour le producteur mobile de `header-left`. */
-    it("ne rend le slot workflow mobile que sur board et list", () => {
+    /*
+     * FN-439 cas (b) : même contrat pour le producteur mobile de `header-left`, SANS Board de fond.
+     *
+     * FNXC:WorkflowControls 2026-09-16-23:24:
+     * FN-483 : ce cas reste le contrat de la route seule. Le contexte de Board de fond est couvert juste en dessous.
+     */
+    it("ne rend le slot workflow mobile que sur board et list sans Board de fond", () => {
       for (const view of ["board", "list"] as const) {
         const rendered = renderHeader({ onChangeView: noop, mobileNavEnabled: true, view }, "mobile");
         expect(screen.getByTestId("header-workflow-slot")).toHaveClass("header-workflow-slot--mobile");
@@ -491,6 +496,51 @@ describe("Header", () => {
       }
 
       renderHeader({ onChangeView: noop, mobileNavEnabled: true, view: "missions" }, "mobile");
+      expect(screen.queryByTestId("header-workflow-slot")).toBeNull();
+      expect(document.querySelector(".header-workflow-slot")).toBeNull();
+    });
+
+    /*
+     * FN-483 : le symptôme d'origine. Sur téléphone, le Board reste actif derrière chaque drawer, donc le slot doit
+     * survivre au changement de destination — même nœud DOM avant, pendant et après — sinon le Board replie son
+     * sélecteur en ligne sous le header.
+     */
+    it("garde le même nœud de slot pendant que la destination change au-dessus d'un Board de fond", () => {
+      function BackgroundBoardHeaderHarness() {
+        const [view, setView] = useState<"board" | "command-center" | "list" | "planning">("board");
+        return (
+          <>
+            <button data-testid="go-command-center" onClick={() => setView("command-center")} />
+            <button data-testid="go-list" onClick={() => setView("list")} />
+            <button data-testid="go-planning" onClick={() => setView("planning")} />
+            <button data-testid="go-board" onClick={() => setView("board")} />
+            <Header
+              onOpenSettings={noop}
+              onOpenGitHubImport={noop}
+              onChangeView={noop}
+              mobileNavEnabled
+              boardBackgroundActive
+              view={view}
+            />
+          </>
+        );
+      }
+
+      mockMatchMedia("mobile");
+      render(<BackgroundBoardHeaderHarness />);
+      const initialSlot = screen.getByTestId("header-workflow-slot");
+
+      for (const destination of ["go-command-center", "go-list", "go-planning", "go-board"] as const) {
+        fireEvent.click(screen.getByTestId(destination));
+        expect(screen.getAllByTestId("header-workflow-slot")).toHaveLength(1);
+        expect(screen.getByTestId("header-workflow-slot")).toBe(initialSlot);
+        expect(initialSlot.isConnected).toBe(true);
+      }
+    });
+
+    /* FN-483 : le contexte de fond ne s'applique pas aux vraies pages tablette/ordinateur. */
+    it.each(["tablet", "desktop"] as const)("ignore le contexte de Board de fond sur une vraie page %s", (mode) => {
+      renderHeader({ onChangeView: noop, leftSidebarNavActive: true, view: "missions", boardBackgroundActive: true }, mode);
       expect(screen.queryByTestId("header-workflow-slot")).toBeNull();
       expect(document.querySelector(".header-workflow-slot")).toBeNull();
     });

@@ -2319,6 +2319,65 @@ describe("ListView", () => {
   });
 
   /*
+   * FN-483 : quand le Board de fond téléphone possède déjà le slot, List reste ACTIVE et affiche ses tâches, mais ne
+   * rend aucun sélecteur — ni portalé dans le header, ni en ligne, ni coquille résiduelle.
+   */
+  it("n'ajoute aucun sélecteur quand les contrôles de workflow lui sont interdits", async () => {
+    const headerSlot = document.createElement("div");
+    headerSlot.id = "header-workflow-slot";
+    headerSlot.className = "header-workflow-slot";
+    document.body.appendChild(headerSlot);
+    vi.mocked(fetchBoardWorkflows).mockResolvedValue({
+      flagEnabled: true,
+      defaultWorkflowId: "builtin:coding",
+      workflows: [
+        { id: "builtin:coding", name: "Coding", columns: [{ id: "triage", name: "Triage", flags: { intake: true } }] },
+        { id: "wf-custom", name: "Custom", columns: [{ id: "backlog", name: "Backlog", flags: { intake: true } }] },
+      ],
+      taskWorkflowIds: { "FN-001": "builtin:coding" },
+    });
+    try {
+      const listTasks = [createMockTask({ id: "FN-001", column: "triage", title: "Coding task" })];
+      const rendered = renderListView({
+        tasks: listTasks,
+        workflowControlsInHeader: true,
+        showWorkflowControls: false,
+      });
+
+      expect(await screen.findByText("Coding task")).toBeInTheDocument();
+      expect(screen.queryByTestId("workflow-switcher")).toBeNull();
+      expect(document.querySelectorAll(".list-workflow-control")).toHaveLength(0);
+      expect(headerSlot).toBeEmptyDOMElement();
+      expect(screen.queryByLabelText(/Select workflow/)).toBeNull();
+
+      /* La permission rétablie restitue le comportement normal du header. */
+      rendered.rerender(
+        <ViewLayoutProvider projectId={TEST_PROJECT_ID}>
+          <ListView
+            tasks={listTasks}
+            onMoveTask={vi.fn(async () => createMockTask())}
+            onRetryTask={vi.fn(async () => createMockTask())}
+            onDeleteTask={vi.fn(async () => createMockTask())}
+            onMergeTask={vi.fn(async () => ({ merged: false }))}
+            onResetTask={vi.fn(async () => createMockTask())}
+            onDuplicateTask={vi.fn(async () => createMockTask())}
+            onOpenDetail={vi.fn()}
+            addToast={mockAddToast}
+            globalPaused={false}
+            onNewTask={vi.fn()}
+            projectId={TEST_PROJECT_ID}
+            workflowControlsInHeader
+            showWorkflowControls
+          />
+        </ViewLayoutProvider>,
+      );
+      await waitFor(() => expect(headerSlot.querySelector(".list-workflow-control")).not.toBeNull());
+    } finally {
+      headerSlot.remove();
+    }
+  });
+
+  /*
   FNXC:WorkflowControls 2026-09-15-01:44:
   FN-405 symptom regression: List resolved `#header-workflow-slot` once and never retried, so a header
   slot mounted after the view (or replaced on a breakpoint swap) pinned the control to its inline

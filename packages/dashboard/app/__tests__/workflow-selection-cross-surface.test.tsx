@@ -98,7 +98,11 @@ afterEach(() => {
 describe("workflow selection across dashboard surfaces", () => {
   /*
   FNXC:BoardWorkflowSelection 2026-06-29-13:30:
-  Board workflow selectors keep independent mounted state for Header and Graph, but remounts intentionally hydrate from the same project-scoped durable workflow selection so fetch latency cannot bounce operators back to the default workflow.
+  Board workflow selectors hydrate from the same project-scoped durable workflow selection on remount, so fetch latency cannot bounce operators back to the default workflow.
+
+  FNXC:BoardWorkflowSelection 2026-09-16-23:24:
+  FN-483 : « état monté indépendant » ne décrit plus les surfaces d'un MÊME projet — un choix explicite est désormais
+  partagé. Restent strictement par instance : le fetch, l'abonnement SSE, le fencing par séquence et le payload.
   */
   it("hydrates remounted Header and Graph surfaces from durable storage while fetch is pending", async () => {
     const { unmount } = render(<CrossSurfaceHarness />);
@@ -149,7 +153,14 @@ describe("workflow selection across dashboard surfaces", () => {
     expect(await screen.findByTestId("workflow-switcher-option-wf-chat")).toHaveTextContent("Chat Created");
   });
 
-  it("keeps mounted Graph and Header workflow selections isolated while Graph filtering follows only Graph", async () => {
+  /*
+  FNXC:BoardWorkflowSelection 2026-09-16-23:24:
+  FN-483 remplace l'ancien contrat « sélections isolées par surface montée » POUR UN MÊME PROJET. Depuis qu'un seul
+  sélecteur contextuel subsiste par en-tête, une surface conservée (List, Graph, Planning) doit suivre le choix
+  effectué ailleurs, sinon l'opérateur verrait des tâches d'une autre lane que celle affichée. L'isolation entre
+  PROJETS reste intacte (voir « rehydrates selection per project ») et chaque instance garde ses propres fetch/SSE.
+  */
+  it("partage le choix de workflow entre surfaces montées du même projet et filtre Graph en conséquence", async () => {
     render(<CrossSurfaceHarness />);
 
     const switchers = await screen.findAllByTestId("workflow-switcher");
@@ -164,25 +175,48 @@ describe("workflow selection across dashboard surfaces", () => {
     expect(within(graphTasks).getByTestId("graph-task-FN-deleted")).toBeInTheDocument();
     expect(within(graphTasks).queryByTestId("graph-task-FN-graph")).toBeNull();
 
+    /* Choix effectué sur le fournisseur réel Graph : les DEUX surfaces suivent, et le filtrage Graph suit aussi. */
     fireEvent.click(switchers[1]);
     fireEvent.click(screen.getByTestId(`workflow-switcher-option-${GRAPH_WORKFLOW.id}`));
 
     await waitFor(() => {
       expect(screen.getByTestId("graph-selection")).toHaveTextContent(GRAPH_WORKFLOW.id);
-      expect(screen.getByTestId("header-selection")).toHaveTextContent(DEFAULT_WORKFLOW.id);
+      expect(screen.getByTestId("header-selection")).toHaveTextContent(GRAPH_WORKFLOW.id);
       expect(within(graphTasks).getByTestId("graph-task-FN-graph")).toBeInTheDocument();
       expect(within(graphTasks).queryByTestId("graph-task-FN-default")).toBeNull();
       expect(within(graphTasks).queryByTestId("graph-task-FN-deleted")).toBeNull();
     });
 
+    /* Et réciproquement depuis le fournisseur Header/Planning. */
     fireEvent.click(switchers[0]);
     fireEvent.click(screen.getByTestId(`workflow-switcher-option-${HEADER_WORKFLOW.id}`));
 
     await waitFor(() => {
       expect(screen.getByTestId("header-selection")).toHaveTextContent(HEADER_WORKFLOW.id);
-      expect(screen.getByTestId("graph-selection")).toHaveTextContent(GRAPH_WORKFLOW.id);
-      expect(within(graphTasks).getByTestId("graph-task-FN-graph")).toBeInTheDocument();
+      expect(screen.getByTestId("graph-selection")).toHaveTextContent(HEADER_WORKFLOW.id);
+      expect(within(graphTasks).queryByTestId("graph-task-FN-graph")).toBeNull();
     });
+    expect(localStorage.getItem("kb:project-cross:kb-dashboard-board-workflow-selection")).toBe(HEADER_WORKFLOW.id);
+  });
+
+  /* FN-483 : la vue agrégée emprunte le même chemin partagé, y compris pour le filtrage Graph. */
+  it("partage aussi le passage à All workflows entre surfaces montées", async () => {
+    render(<CrossSurfaceHarness />);
+
+    const switchers = await screen.findAllByTestId("workflow-switcher");
+    await waitFor(() => expect(screen.getByTestId("graph-selection")).toHaveTextContent(DEFAULT_WORKFLOW.id));
+
+    fireEvent.click(switchers[0]);
+    fireEvent.click(screen.getByTestId(`workflow-switcher-option-${ALL_WORKFLOWS_BOARD_VIEW_ID}`));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("header-selection")).toHaveTextContent(ALL_WORKFLOWS_BOARD_VIEW_ID);
+      expect(screen.getByTestId("graph-selection")).toHaveTextContent(ALL_WORKFLOWS_BOARD_VIEW_ID);
+    });
+    for (const task of TASKS) {
+      expect(screen.getByTestId(`graph-task-${task.id}`)).toBeInTheDocument();
+    }
+    expect(localStorage.getItem("kb:project-cross:kb-dashboard-board-workflow-selection")).toBe(ALL_WORKFLOWS_BOARD_VIEW_ID);
   });
 
   it("keeps non-default board/list workflow selection after refinement return refetch includes the new task", async () => {

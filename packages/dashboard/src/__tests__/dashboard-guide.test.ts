@@ -83,7 +83,12 @@ describe("dashboard guide coverage for lazy-loaded views", () => {
   it("documents the shared tablet/desktop footer without broadening desktop-only behavior", () => {
     const guide = readDashboardGuide();
 
-    expect(guide).toContain("official tablet and desktop design uses one full-width navigation footer instead of ExecutorStatusBar");
+    /*
+     * Assertion périmée réparée ici : FN-468 a restreint le pied de page large à 1024 px et plus — sous ce seuil, la
+     * pill possède la navigation primaire, tablette comprise. Le guide décrit désormais cette règle ; le garde suit la
+     * documentation en vigueur au lieu d'exiger une formulation « tablette et ordinateur » qui n'est plus vraie.
+     */
+    expect(guide).toContain("official desktop design (1024 pixels and wider) uses one full-width navigation footer instead of ExecutorStatusBar");
     /*
      * FN-469 moved Settings out of the far-right group: it is now an icon-only action beside the capacity counter and
      * the last entry of the More menu, so Terminal is the last right-hand action instead of Settings' left neighbour.

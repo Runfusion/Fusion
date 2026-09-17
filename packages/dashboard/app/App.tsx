@@ -2097,6 +2097,16 @@ function AppInner() {
     Boolean(projectsError) &&
     !isSuppressedProjectResumeError;
 
+  /*
+  FNXC:WorkflowControls 2026-09-16-23:24:
+  FN-483 : contexte visuel du Board de fond, distinct de `taskView`. Sur téléphone avec un projet, `MainViewKeepAlive`
+  garde le Board monté ET actif sous chaque drawer, donc le Header doit continuer d'exposer `#header-workflow-slot`
+  pendant toute la navigation entre drawers ; sinon le Board replie son sélecteur en ligne sous le header. La vue
+  globale et la page d'erreur backend désactivent ce fond (même condition qu'`earlyHidden` dans MainContent), donc
+  elles reviennent au contrat Board/List de la route active.
+  */
+  const boardBackgroundActive = mobileDrawerActive && !showBackendConnectionErrorPage;
+
   // Props for the extracted <MainContent> switch (see components/dashboard/MainContent.tsx).
   // Every value is passed by its App name; the switch renders the same subtrees as before.
   const notesDirtyRef = useRef(notesController.dirty);
@@ -2646,6 +2656,8 @@ function AppInner() {
         onViewAllProjects={handleViewAllProjects}
         projectId={currentProject?.id}
         mobileNavEnabled={mobileShellActive}
+        /* FNXC:WorkflowControls 2026-09-16-23:24: FN-483 — le Board de fond garde la propriété du slot pendant les drawers téléphone. */
+        boardBackgroundActive={boardBackgroundActive}
         /* FNXC:Navigation 2026-09-15-14:41: Any wide primary surface (footer OR sidebar) owns routing, so Header must not re-render its view shortcuts and create a third navigation. */
         leftSidebarNavActive={navigationSurfaces.headerPrimaryNavSuppressed}
         rightDockAvailable={rightDockActive}
@@ -2773,6 +2785,8 @@ function AppInner() {
                 <PlanningKeepAlive
                   key={`${currentProject.id}:${modalManager.planningEntryGeneration}`}
                   active={planningViewActive}
+                  /* FNXC:WorkflowControls 2026-09-16-23:24: FN-483 — le drawer Planning téléphone est hébergé au-dessus du Board de fond, qui possède déjà le slot. */
+                  showWorkflowControls={!boardBackgroundActive}
                   projectId={currentProject.id}
                   tasks={tasks}
                   bgPlanningSessions={bgPlanningSessions}

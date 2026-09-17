@@ -801,6 +801,16 @@ vi.mock("../../hooks/useViewportMode", () => ({
   only spelling that can distinguish the two.
   */
   isShortViewport: () => mockIsShortViewport(),
+  /*
+  FNXC:TestViewportMock 2026-09-16-23:24:
+  Mock périmé réparé ici : FN-468 a introduit `isMobileShellMode`, consommé par `AppInner`, et ce double ne
+  l'exposait pas — tout rendu de `<App />` de ce fichier levait donc avant la première assertion. Le prédicat
+  garde sa sémantique de production (téléphone ET tablette), pilotée par le mode simulé.
+  */
+  isMobileShellMode: (mode?: string) => {
+    const resolved = mode ?? mockUseViewportMode();
+    return resolved === "mobile" || resolved === "tablet";
+  },
 }));
 
 // Mock isIOS so FN-3290 keyboard-open behavior is testable in jsdom
@@ -2463,6 +2473,320 @@ describe("official dashboard design production wiring", () => {
       expect(mockCurrentProjectState.clearCurrentProject).not.toHaveBeenCalled();
     } finally {
       productionStyle.remove();
+    }
+  });
+
+  /*
+   * FN-483 — reproduction symptomatique. Sur téléphone, ouvrir un drawer retirait le slot du Header : le Board, qui
+   * reste actif derrière, repliait son sélecteur en ligne SOUS l'en-tête. Ouvrir List ajoutait de surcroît un second
+   * `workflow-switcher` dans le même slot. Le contrat vérifié ici : même nœud de slot et même déclencheur avant,
+   * pendant et après chaque ouverture, exactement un sélecteur contextuel, aucun toolbar sous le Header.
+   */
+  it("garde le même sélecteur de workflow dans l'en-tête à l'ouverture des drawers téléphone", async () => {
+    mockUseViewportMode.mockReturnValue("mobile");
+    vi.mocked(fetchSettings).mockResolvedValue({
+      ...defaultSettings,
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures },
+    });
+    vi.mocked(fetchBoardWorkflows).mockResolvedValue({
+      ...DEFAULT_BOARD_WORKFLOWS,
+      workflows: [
+        DEFAULT_BOARD_WORKFLOWS.workflows[0],
+        {
+          id: "wf-custom",
+          name: "Livraison",
+          columns: [
+            { id: "todo", name: "Todo", flags: { hold: true, intake: true } },
+            { id: "done", name: "Done", flags: { complete: true } },
+          ],
+        },
+      ],
+      taskWorkflowIds: { "FN-483-A": "builtin:coding", "FN-483-B": "wf-custom" },
+    });
+    const emptyResult = mockUseTasks();
+    mockUseTasks.mockReturnValue({
+      ...emptyResult,
+      tasks: [
+        { id: "FN-483-A", title: "Tâche Coding", description: "x", status: null, column: "todo", dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "", updatedAt: "" },
+        { id: "FN-483-B", title: "Tâche Livraison", description: "x", status: null, column: "todo", dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "", updatedAt: "" },
+      ],
+    });
+
+    render(<App />);
+
+    const slot = await screen.findByTestId("header-workflow-slot");
+    const switcher = await screen.findByTestId("workflow-switcher");
+    await waitFor(() => expect(slot.contains(switcher)).toBe(true));
+
+    const expectSingleStableSelector = () => {
+      expect(screen.getByTestId("header-workflow-slot")).toBe(slot);
+      expect(screen.getAllByTestId("header-workflow-slot")).toHaveLength(1);
+      expect(screen.getAllByTestId("workflow-switcher")).toHaveLength(1);
+      expect(screen.getByTestId("workflow-switcher")).toBe(switcher);
+      expect(slot.contains(switcher)).toBe(true);
+      expect(document.querySelector(".board-workflow-view > .board-workflow-toolbar")).toBeNull();
+      expect(document.querySelectorAll(".list-workflow-control")).toHaveLength(0);
+    };
+
+    /* Destination ordinaire : le changement de `taskView` ne doit plus déplacer le sélecteur. */
+    fireEvent.click(await screen.findByTestId("mobile-nav-tab-command-center"));
+    const commandCenterDrawer = await screen.findByTestId("mobile-drawer-main-content");
+    expectSingleStableSelector();
+    dismissAlphaDrawerByHandle(commandCenterDrawer);
+    await waitFor(() => expect(screen.queryByTestId("mobile-drawer-main-content")).toBeNull());
+    expectSingleStableSelector();
+
+    /* List : deux vues actives ne doivent plus publier deux sélecteurs dans le même slot. */
+    fireEvent.click(await screen.findByTestId("mobile-menu-trigger"));
+    fireEvent.click(await screen.findByTestId("mobile-more-item-list"));
+    const listDrawer = await screen.findByTestId("mobile-drawer-list");
+    expect(await within(listDrawer).findByText("Tâche Coding")).toBeInTheDocument();
+    expectSingleStableSelector();
+    expect(within(listDrawer).queryByTestId("workflow-switcher")).toBeNull();
+
+    dismissAlphaDrawerByHandle(listDrawer);
+    await waitFor(() => expect(listDrawer).toHaveClass("mobile-drawer--hidden"));
+    expectSingleStableSelector();
+
+    /* Planning : même contrat pour un drawer possédant son propre relais de slot. */
+    fireEvent.click(await screen.findByTestId("mobile-nav-tab-planning"));
+    await screen.findByTestId("mobile-drawer-planning");
+    expectSingleStableSelector();
+  });
+
+  /*
+   * FN-483 : une List déjà visitée n'a plus de sélecteur à elle ; elle doit donc suivre le choix ensuite effectué sur
+   * l'unique sélecteur du Board, y compris « All workflows », et afficher les tâches correspondantes.
+   */
+  it("fait suivre à la List conservée le workflow choisi ensuite sur le Board", async () => {
+    mockUseViewportMode.mockReturnValue("mobile");
+    vi.mocked(fetchSettings).mockResolvedValue({
+      ...defaultSettings,
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures },
+    });
+    vi.mocked(fetchBoardWorkflows).mockResolvedValue({
+      ...DEFAULT_BOARD_WORKFLOWS,
+      workflows: [
+        DEFAULT_BOARD_WORKFLOWS.workflows[0],
+        {
+          id: "wf-custom",
+          name: "Livraison",
+          columns: [
+            { id: "todo", name: "Todo", flags: { hold: true, intake: true } },
+            { id: "done", name: "Done", flags: { complete: true } },
+          ],
+        },
+      ],
+      taskWorkflowIds: { "FN-483-A": "builtin:coding", "FN-483-B": "wf-custom" },
+    });
+    const emptyResult = mockUseTasks();
+    mockUseTasks.mockReturnValue({
+      ...emptyResult,
+      tasks: [
+        { id: "FN-483-A", title: "Tâche Coding", description: "x", status: null, column: "todo", dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "", updatedAt: "" },
+        { id: "FN-483-B", title: "Tâche Livraison", description: "x", status: null, column: "todo", dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "", updatedAt: "" },
+      ],
+    });
+
+    render(<App />);
+    await screen.findByTestId("header-workflow-slot");
+
+    /* Première visite de List : elle hérite du workflow déjà sélectionné sur le Board. */
+    fireEvent.click(await screen.findByTestId("mobile-menu-trigger"));
+    fireEvent.click(await screen.findByTestId("mobile-more-item-list"));
+    const listDrawer = await screen.findByTestId("mobile-drawer-list");
+    expect(await within(listDrawer).findByText("Tâche Coding")).toBeInTheDocument();
+    expect(within(listDrawer).queryByText("Tâche Livraison")).toBeNull();
+
+    dismissAlphaDrawerByHandle(listDrawer);
+    await waitFor(() => expect(listDrawer).toHaveClass("mobile-drawer--hidden"));
+
+    /* Choix effectué sur l'unique sélecteur de l'en-tête (le Board de fond). */
+    fireEvent.click(screen.getByTestId("workflow-switcher"));
+    fireEvent.click(await screen.findByTestId("workflow-switcher-option-wf-custom"));
+
+    fireEvent.click(await screen.findByTestId("mobile-menu-trigger"));
+    fireEvent.click(await screen.findByTestId("mobile-more-item-list"));
+    const reopenedList = await screen.findByTestId("mobile-drawer-list");
+    expect(await within(reopenedList).findByText("Tâche Livraison")).toBeInTheDocument();
+    await waitFor(() => expect(within(reopenedList).queryByText("Tâche Coding")).toBeNull());
+
+    /* Et la vue agrégée se propage de la même façon. */
+    fireEvent.click(screen.getByTestId("workflow-switcher"));
+    fireEvent.click(await screen.findByTestId(`workflow-switcher-option-${ALL_WORKFLOWS_BOARD_VIEW_ID}`));
+    expect(await within(reopenedList).findByText("Tâche Coding")).toBeInTheDocument();
+    expect(within(reopenedList).getByText("Tâche Livraison")).toBeInTheDocument();
+    expect(screen.getAllByTestId("workflow-switcher")).toHaveLength(1);
+  });
+
+  /*
+   * FN-483 : le reste de la matrice des propriétaires. Projects, Usage et le détail de tâche routé sont hébergés par
+   * d'autres surfaces qu'un drawer de contenu principal ; ils ne doivent pas non plus déplacer ni dupliquer le
+   * sélecteur du Board de fond.
+   */
+  it("garde un seul sélecteur pour Projects, Usage et le détail de tâche téléphone", async () => {
+    mockUseViewportMode.mockReturnValue("mobile");
+    vi.mocked(fetchSettings).mockResolvedValue({
+      ...defaultSettings,
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures },
+    });
+    vi.mocked(fetchBoardWorkflows).mockResolvedValue({
+      ...DEFAULT_BOARD_WORKFLOWS,
+      workflows: [
+        DEFAULT_BOARD_WORKFLOWS.workflows[0],
+        { id: "wf-custom", name: "Livraison", columns: [{ id: "todo", name: "Todo", flags: { hold: true, intake: true } }] },
+      ],
+      taskWorkflowIds: { "FN-483-A": "builtin:coding" },
+    });
+    const emptyResult = mockUseTasks();
+    mockUseTasks.mockReturnValue({
+      ...emptyResult,
+      tasks: [
+        { id: "FN-483-A", title: "Tâche Coding", description: "x", status: null, column: "todo", dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "", updatedAt: "" },
+      ],
+    });
+
+    render(<App />);
+    const slot = await screen.findByTestId("header-workflow-slot");
+    const switcher = await screen.findByTestId("workflow-switcher");
+
+    const expectSingleStableSelector = () => {
+      expect(screen.getByTestId("header-workflow-slot")).toBe(slot);
+      expect(screen.getAllByTestId("workflow-switcher")).toHaveLength(1);
+      expect(screen.getByTestId("workflow-switcher")).toBe(switcher);
+      expect(document.querySelector(".board-workflow-view > .board-workflow-toolbar")).toBeNull();
+      expect(document.querySelectorAll(".list-workflow-control")).toHaveLength(0);
+    };
+
+    fireEvent.click(await screen.findByTestId("mobile-menu-trigger"));
+    fireEvent.click(await screen.findByTestId("mobile-more-item-projects"));
+    const projectsDrawer = await screen.findByTestId("mobile-drawer-projects");
+    expectSingleStableSelector();
+    dismissAlphaDrawerByHandle(projectsDrawer);
+    await waitFor(() => expect(screen.queryByTestId("mobile-drawer-projects")).toBeNull());
+
+    fireEvent.click(await screen.findByTestId("mobile-menu-trigger"));
+    fireEvent.click(await screen.findByTestId("mobile-more-item-usage"));
+    const usageDrawer = await screen.findByTestId("mobile-drawer-usage");
+    expectSingleStableSelector();
+    dismissAlphaDrawerByHandle(usageDrawer);
+    await waitFor(() => expect(screen.queryByTestId("mobile-drawer-usage")).toBeNull());
+
+    /* Détail de tâche routé dans le panneau principal téléphone. */
+    fireEvent.click(await screen.findByText("Tâche Coding"));
+    await screen.findByTestId("mobile-drawer-main-content");
+    expectSingleStableSelector();
+  });
+
+  /*
+   * FN-483 : bascule réelle de point de rupture avec List déjà visitée. Le nœud de slot peut légitimement être
+   * remplacé, mais il ne doit jamais exister deux contrôles, et la propriété doit revenir au bon hôte.
+   */
+  it("transfère la propriété du sélecteur au bon hôte des deux côtés d'un changement de point de rupture", async () => {
+    mockUseViewportMode.mockReturnValue("mobile");
+    vi.mocked(fetchSettings).mockResolvedValue({
+      ...defaultSettings,
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures },
+    });
+    vi.mocked(fetchBoardWorkflows).mockResolvedValue({
+      ...DEFAULT_BOARD_WORKFLOWS,
+      workflows: [
+        DEFAULT_BOARD_WORKFLOWS.workflows[0],
+        { id: "wf-custom", name: "Livraison", columns: [{ id: "todo", name: "Todo", flags: { hold: true, intake: true } }] },
+      ],
+      taskWorkflowIds: { "FN-483-A": "builtin:coding" },
+    });
+    const emptyResult = mockUseTasks();
+    mockUseTasks.mockReturnValue({
+      ...emptyResult,
+      tasks: [
+        { id: "FN-483-A", title: "Tâche Coding", description: "x", status: null, column: "todo", dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "", updatedAt: "" },
+      ],
+    });
+
+    const view = render(<App />);
+    await screen.findByTestId("workflow-switcher");
+
+    fireEvent.click(await screen.findByTestId("mobile-menu-trigger"));
+    fireEvent.click(await screen.findByTestId("mobile-more-item-list"));
+    await screen.findByTestId("mobile-drawer-list");
+    await waitFor(() => expect(screen.getAllByTestId("workflow-switcher")).toHaveLength(1));
+    expect(document.querySelectorAll(".list-workflow-control")).toHaveLength(0);
+
+    /*
+     * Téléphone -> ordinateur : List devient une vraie page et reprend la propriété du slot. Le Board désactivé garde
+     * son repli en ligne DANS son enveloppe cachée — comportement antérieur préservé —, donc on compte les contrôles
+     * du slot, pas ceux d'un sous-arbre masqué.
+     */
+    mockUseViewportMode.mockReturnValue("desktop");
+    view.rerender(<App />);
+    await waitFor(() => expect(document.querySelectorAll(".list-workflow-control")).toHaveLength(1));
+    const desktopSlot = screen.getByTestId("header-workflow-slot");
+    await waitFor(() => expect(desktopSlot.querySelectorAll('[data-testid="workflow-switcher"]')).toHaveLength(1));
+    expect(desktopSlot.querySelector(".list-workflow-control")).not.toBeNull();
+    expect(desktopSlot.querySelector(".board-workflow-toolbar")).toBeNull();
+
+    /* Et retour : le Board de fond redevient l'unique propriétaire, sans contrôle résiduel de List. */
+    mockUseViewportMode.mockReturnValue("mobile");
+    view.rerender(<App />);
+    await waitFor(() => expect(document.querySelectorAll(".list-workflow-control")).toHaveLength(0));
+    const mobileSlot = screen.getByTestId("header-workflow-slot");
+    await waitFor(() => expect(mobileSlot.querySelectorAll('[data-testid="workflow-switcher"]')).toHaveLength(1));
+    expect(mobileSlot.querySelector(".board-workflow-toolbar")).not.toBeNull();
+    expect(screen.getAllByTestId("workflow-switcher")).toHaveLength(1);
+  });
+
+  /*
+   * FN-483 : transitions de données pendant qu'un drawer est ouvert. Un chargement différé doit aboutir DANS le slot,
+   * jamais dans un repli en ligne sous l'en-tête ; un projet mono-workflow ne laisse aucune coquille.
+   */
+  it("place un chargement différé de workflows dans le slot même drawer ouvert, et ne laisse aucune coquille à un seul workflow", async () => {
+    mockUseViewportMode.mockReturnValue("mobile");
+    vi.mocked(fetchSettings).mockResolvedValue({
+      ...defaultSettings,
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures },
+    });
+    const twoWorkflows = {
+      ...DEFAULT_BOARD_WORKFLOWS,
+      workflows: [
+        DEFAULT_BOARD_WORKFLOWS.workflows[0],
+        { id: "wf-custom", name: "Livraison", columns: [{ id: "todo", name: "Todo", flags: { hold: true, intake: true } }] },
+      ],
+      taskWorkflowIds: {},
+    };
+    /* Une SEULE promesse contrôlée, partagée par tous les consommateurs montés, sinon seul le dernier se résoudrait. */
+    let resolveWorkflows: ((payload: typeof twoWorkflows) => void) | undefined;
+    const deferredWorkflows = new Promise<typeof twoWorkflows>((resolve) => { resolveWorkflows = resolve; });
+    vi.mocked(fetchBoardWorkflows).mockImplementation(() => deferredWorkflows);
+
+    const view = render(<App />);
+    await screen.findByTestId("dashboard-project-shell");
+
+    fireEvent.click(await screen.findByTestId("mobile-nav-tab-command-center"));
+    await screen.findByTestId("mobile-drawer-main-content");
+    /* Aucun repli en ligne sous l'en-tête pendant que la métadonnée est encore en vol. */
+    expect(document.querySelector(".board-workflow-view > .board-workflow-toolbar")).toBeNull();
+
+    await act(async () => {
+      resolveWorkflows?.(twoWorkflows);
+      await Promise.resolve();
+    });
+
+    const slot = await screen.findByTestId("header-workflow-slot");
+    const switcher = await screen.findByTestId("workflow-switcher");
+    expect(slot.contains(switcher)).toBe(true);
+    expect(document.querySelector(".board-workflow-view > .board-workflow-toolbar")).toBeNull();
+
+    /* Projet sans aucun workflow : aucun sélecteur, aucune coquille, aucun bouton vide dans l'en-tête. */
+    vi.mocked(fetchBoardWorkflows).mockResolvedValue({ ...DEFAULT_BOARD_WORKFLOWS, defaultWorkflowId: "", workflows: [], taskWorkflowIds: {} });
+    fireEvent.focus(window);
+    view.rerender(<App />);
+
+    await waitFor(() => expect(screen.queryByTestId("workflow-switcher")).toBeNull());
+    expect(document.querySelectorAll(".board-workflow-toolbar")).toHaveLength(0);
+    expect(document.querySelectorAll(".list-workflow-control")).toHaveLength(0);
+    for (const button of document.querySelectorAll("header.header button")) {
+      expect(button.querySelector("svg") !== null || (button.textContent ?? "").trim().length > 0).toBe(true);
     }
   });
 

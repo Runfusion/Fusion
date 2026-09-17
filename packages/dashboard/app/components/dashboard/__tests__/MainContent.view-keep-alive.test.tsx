@@ -26,11 +26,18 @@ const workflow = {
   ],
 };
 
+/*
+FNXC:WorkflowControls 2026-09-16-23:24:
+FN-483 : deux workflows sélectionnables, sinon FN-407 supprime légitimement tout sélecteur et les assertions de
+propriété du slot ne prouvent plus rien (elles vérifiaient un contrôle qui ne pouvait pas exister).
+*/
+const secondaryWorkflow = { ...workflow, id: "builtin:research", name: "Research" };
+
 vi.mock("../../../hooks/useBoardWorkflows", () => ({
   useBoardWorkflows: () => ({
-    boardWorkflows: { defaultWorkflowId: workflow.id, workflows: [workflow], taskWorkflowIds: {} },
+    boardWorkflows: { defaultWorkflowId: workflow.id, workflows: [workflow, secondaryWorkflow], taskWorkflowIds: {} },
     workflowMode: true,
-    workflowOptions: [workflow],
+    workflowOptions: [workflow, secondaryWorkflow],
     selectedWorkflow: workflow,
     selectedWorkflowId: workflow.id,
     isAllWorkflowsSelected: false,
@@ -363,6 +370,26 @@ describe("MainContent main-view keep alive", () => {
     expect(screen.getByTestId("list-keep-alive")).toHaveAttribute("aria-hidden", "true");
     expect(switchFallbackList).not.toBe(retainedList);
     expect(slot.querySelectorAll(".list-workflow-control")).toHaveLength(1);
+    slot.remove();
+  });
+
+  /*
+   * FN-483 : sur téléphone, la List de repli est hébergée dans un drawer au-dessus d'un Board de fond actif. Le Board
+   * garde le slot ; la List de repli ne publie ni portail ni contrôle en ligne, et ne laisse aucune coquille.
+   */
+  it("laisse le Board de fond seul propriétaire du slot pendant une route de repli téléphone", async () => {
+    const slot = addHeaderSlot();
+    const result = render(<MainContent {...mainContentProps({ taskView: "list", isMobile: true })} />);
+    await screen.findByTestId("list-view-body");
+
+    result.rerender(<MainContent {...mainContentProps({ taskView: "unsupported-view" as MainContentProps["taskView"], isMobile: true })} />);
+
+    await waitFor(() => expect(screen.getAllByTestId("list-view-body")).toHaveLength(2));
+    expect(document.querySelectorAll(".list-workflow-control")).toHaveLength(0);
+    expect(slot.querySelectorAll("[data-testid='workflow-switcher']")).toHaveLength(1);
+    expect(document.querySelectorAll("[data-testid='workflow-switcher']")).toHaveLength(1);
+    expect(document.querySelector(".board-workflow-view > .board-workflow-toolbar")).toBeNull();
+    slot.remove();
   });
 
   it("keeps one active Board visible beneath the Alpha mobile Task Detail drawer", async () => {

@@ -292,6 +292,15 @@ interface ListViewProps {
   /** Relocates workflow controls into the Header portal slot when sidebar navigation owns the inline chrome. */
   workflowControlsInHeader?: boolean;
   /*
+  FNXC:WorkflowControls 2026-09-16-23:24:
+  FN-483 : permission de RENDU du sélecteur contextuel, distincte de `active` (visibilité/effets) et de `compact`
+  (présentation du dock). Sur téléphone, List est hébergée au-dessus d'un Board de fond qui possède déjà le slot :
+  les deux vues actives publiaient alors DEUX `workflow-switcher` dans le même header. `workflowControlsInHeader=false`
+  ne suffirait pas — il déplacerait le contrôle en ligne au lieu de le retirer — et désactiver List ou forcer son mode
+  compact changerait son contenu. Ici, seul le contrôle disparaît : tâches, filtrage et données restent intacts.
+  */
+  showWorkflowControls?: boolean;
+  /*
   FNXC:ListInRightDock 2026-09-14-05:42:
   A compact host (the right dock) renders the card list, never the wide table, whatever its measured width reports,
   and shows NO workflow selector: the workflow is whatever the board already selected, read from the same
@@ -394,6 +403,7 @@ export function ListView({
   autoMerge,
   mergeStrategy = "direct",
   workflowControlsInHeader = false,
+  showWorkflowControls = true,
   compact = false,
   active = true,
 }: ListViewProps) {
@@ -440,7 +450,7 @@ export function ListView({
   the header. The shared resolver keeps re-resolving while the view is active; an inactive List passes
   `enabled: false` so it never claims the shared slot.
   */
-  const headerWorkflowSlot = useHeaderWorkflowSlot({ enabled: active && workflowControlsInHeader });
+  const headerWorkflowSlot = useHeaderWorkflowSlot({ enabled: active && workflowControlsInHeader && showWorkflowControls });
   const viewportMode = useViewportMode();
   const isMobile = viewportMode === "mobile";
   const [listContainerWidth, setListContainerWidth] = useState<number | null>(null);
@@ -1994,6 +2004,12 @@ export function ListView({
   };
 
   const renderWorkflowSelector = () => {
+    /*
+    FNXC:WorkflowControls 2026-09-16-23:24:
+    FN-483 : refus AVANT toute construction de markup, donc aucune coquille — ni `.list-workflow-control`, ni bouton
+    vide, ni label Workflow orphelin — ne subsiste quand le Board de fond possède le slot.
+    */
+    if (!showWorkflowControls) return null;
     if (compact) return null;
     if (!workflowMode || !selectedWorkflow) return null;
     /*

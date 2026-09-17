@@ -21,6 +21,14 @@ interface HeaderWorkflowSwitcherSlotProps {
   dropdown at all — it lives in the Workflows view — so the slot carries no edit or create callback.
   */
   onWorkflowSelectionChange?: (selection: HeaderWorkflowSelection | null) => void;
+  /*
+  FNXC:WorkflowControls 2026-09-16-23:24:
+  FN-483 : permission de RENDU distincte de l'activité. Quand un Board de fond possède déjà le slot téléphone,
+  Planning/Missions ne doivent publier AUCUN contrôle (sinon le header porterait deux sélecteurs), mais leurs effets
+  de sélection continuent de s'exécuter : ils tournent avant l'early return, et le résolveur de portail est inhibé
+  pour qu'un ancien slot mémorisé ne puisse pas non plus être réutilisé. Défaut compatible : `true`.
+  */
+  showWorkflowControls?: boolean;
 }
 
 // Counts require live task/column data that non-board header slots do not thread here.
@@ -30,6 +38,7 @@ const EMPTY_COUNTS: Map<string, WorkflowStatusCounts> = new Map();
 export function HeaderWorkflowSwitcherSlot({
   projectId,
   onWorkflowSelectionChange,
+  showWorkflowControls = true,
 }: HeaderWorkflowSwitcherSlotProps) {
   const {
     boardWorkflows,
@@ -49,7 +58,7 @@ export function HeaderWorkflowSwitcherSlot({
   List, Graph, and this slot, so a late-mounted or replaced header slot is handled identically on every
   surface instead of four divergent copies.
   */
-  const headerWorkflowSlot = useHeaderWorkflowSlot({ enabled: true });
+  const headerWorkflowSlot = useHeaderWorkflowSlot({ enabled: showWorkflowControls });
 
   const selection = useMemo<HeaderWorkflowSelection | null>(() => {
     if (!workflowMode || !boardWorkflows || !selectedWorkflow) return null;
@@ -64,7 +73,7 @@ export function HeaderWorkflowSwitcherSlot({
     return () => onWorkflowSelectionChange?.(null);
   }, [onWorkflowSelectionChange]);
 
-  if (!workflowMode || !selectedWorkflow || workflowOptions.length < 2 || !headerWorkflowSlot) {
+  if (!showWorkflowControls || !workflowMode || !selectedWorkflow || workflowOptions.length < 2 || !headerWorkflowSlot) {
     return null;
   }
 

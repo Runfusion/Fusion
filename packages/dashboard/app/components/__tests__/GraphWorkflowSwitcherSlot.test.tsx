@@ -294,6 +294,45 @@ describe("GraphWorkflowSwitcherSlot", () => {
     expect(screen.getAllByRole("option").length).toBeGreaterThan(1);
   });
 
+  /*
+   * FN-483 : au-dessus d'un Board de fond téléphone, Graph n'a plus le droit de rendre un contrôle, même si le slot
+   * existe (il appartient au Board). Le filtrage du graphe doit continuer : la sélection reste publiée.
+   */
+  it("publie sa sélection sans rendre de contrôle quand le Board de fond possède le slot", async () => {
+    const headerSlot = appendHeaderWorkflowSlot();
+    const onWorkflowSelectionChange = vi.fn();
+
+    const { rerender } = render(
+      <GraphWorkflowSwitcherSlot
+        projectId="project-graph-background"
+        onWorkflowSelectionChange={onWorkflowSelectionChange}
+        showWorkflowControls={false}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(onWorkflowSelectionChange).toHaveBeenLastCalledWith({
+        boardWorkflows: workflowPayload(),
+        selectedWorkflow: DEFAULT_WORKFLOW,
+        isAllWorkflowsSelected: false,
+      });
+    });
+    expect(screen.queryByTestId("workflow-switcher")).toBeNull();
+    expect(headerSlot.childElementCount).toBe(0);
+    expect(document.querySelector(".board-workflow-toolbar")).toBeNull();
+
+    /* Rendre la permission restitue exactement le comportement normal. */
+    rerender(
+      <GraphWorkflowSwitcherSlot
+        projectId="project-graph-background"
+        onWorkflowSelectionChange={onWorkflowSelectionChange}
+        showWorkflowControls
+      />,
+    );
+    const selector = await screen.findByTestId("workflow-switcher");
+    expect(headerSlot.contains(selector)).toBe(true);
+  });
+
   it("renders no dropdown shell when the header slot is absent", async () => {
     render(<GraphWorkflowSwitcherSlot projectId="project-no-slot" />);
 

@@ -185,6 +185,7 @@ function renderListSubtree(
   props: MainContentProps,
   active: boolean,
   onRefinementCreated: NonNullable<ComponentProps<typeof Board>["onRefinementCreated"]>,
+  showWorkflowControls: boolean,
 ) {
   const {
     isRemote,
@@ -261,6 +262,13 @@ function renderListSubtree(
         autoMerge={autoMerge}
         mergeStrategy={mergeStrategy}
         workflowControlsInHeader={workflowControlsInHeader}
+        /*
+        FNXC:WorkflowControls 2026-09-16-23:24:
+        FN-483 : sous un drawer téléphone, Board reste actif derrière List et possède déjà `#header-workflow-slot`.
+        List reste entièrement active — ses tâches et son filtrage suivent la sélection partagée — mais ne publie plus
+        de second sélecteur dans ce header.
+        */
+        showWorkflowControls={showWorkflowControls}
         active={active}
       />
     </PageErrorBoundary>
@@ -303,12 +311,13 @@ function renderMainViewSubtree(
   active: boolean,
   onOpenHistory: () => void,
   onRefinementCreated: NonNullable<ComponentProps<typeof Board>["onRefinementCreated"]>,
+  listShowsWorkflowControls: boolean,
 ) {
   switch (id) {
     case "board":
       return renderBoardSubtree(props, active, onOpenHistory, onRefinementCreated);
     case "list":
-      return renderListSubtree(props, active, onRefinementCreated);
+      return renderListSubtree(props, active, onRefinementCreated, listShowsWorkflowControls);
     case "chat":
       return renderChatSubtree(props, active);
   }
@@ -340,9 +349,15 @@ export function MainViewKeepAlive({ activeId, mountedIds, projectKey, mainConten
       {mountedIds.map((id) => {
         const isDrawerView = mobileDrawer !== undefined && id !== "board";
         const isActive = activeId === id || (mobileDrawer !== undefined && mobileDrawer.backgroundActive !== false && id === "board");
+        /*
+        FNXC:WorkflowControls 2026-09-16-23:24:
+        FN-483 : un Board de fond ACTIF est l'unique propriétaire du sélecteur contextuel. Sur une vraie page large
+        (aucun drawer), ou quand le fond est explicitement désactivé, List reprend ce rôle normalement.
+        */
+        const boardBackgroundOwnsHeaderSlot = mobileDrawer !== undefined && mobileDrawer.backgroundActive !== false;
         const subtree = (
           <KeepAliveView key={`${projectKey}:${id}`} hidden={!isActive} testId={`${id}-keep-alive`}>
-            {renderMainViewSubtree(id, mainContentProps, isActive, handleOpenHistory, handleRefinementCreated)}
+            {renderMainViewSubtree(id, mainContentProps, isActive, handleOpenHistory, handleRefinementCreated, !boardBackgroundOwnsHeaderSlot)}
           </KeepAliveView>
         );
         if (!isDrawerView) return subtree;

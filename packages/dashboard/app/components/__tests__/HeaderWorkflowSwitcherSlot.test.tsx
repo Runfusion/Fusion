@@ -224,6 +224,43 @@ describe("HeaderWorkflowSwitcherSlot", () => {
     expect(screen.getByTestId("header-workflow-slot")).toBeEmptyDOMElement();
   });
 
+  /*
+   * FN-483 : Planning et Missions passent par ce slot. Sur téléphone, ils sont hébergés au-dessus d'un Board de fond
+   * qui possède déjà le slot : ils ne rendent plus de contrôle, mais leur sélection (donc le workflow de création de
+   * tâches) reste publiée.
+   */
+  it("publie sa sélection sans rendre de contrôle quand le Board de fond possède le slot", async () => {
+    const onWorkflowSelectionChange = vi.fn();
+    const rendered = renderWithHeader(
+      <HeaderWorkflowSwitcherSlot
+        projectId="project-header-background"
+        onWorkflowSelectionChange={onWorkflowSelectionChange}
+        showWorkflowControls={false}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(onWorkflowSelectionChange).toHaveBeenLastCalledWith(expect.objectContaining({
+        selectedWorkflow: expect.objectContaining({ id: DEFAULT_WORKFLOW.id }),
+      }));
+    });
+    expect(screen.queryByTestId("workflow-switcher")).toBeNull();
+    expect(screen.getByTestId("header-workflow-slot")).toBeEmptyDOMElement();
+    expect(document.querySelector(".board-workflow-toolbar")).toBeNull();
+
+    rendered.rerender(
+      <>
+        <div id="header-workflow-slot" data-testid="header-workflow-slot" />
+        <HeaderWorkflowSwitcherSlot
+          projectId="project-header-background"
+          onWorkflowSelectionChange={onWorkflowSelectionChange}
+          showWorkflowControls
+        />
+      </>,
+    );
+    expect(await screen.findByTestId("workflow-switcher")).toBeInTheDocument();
+  });
+
   it("renders no toolbar shell when the header slot is absent", async () => {
     render(<HeaderWorkflowSwitcherSlot projectId="project-mobile" />);
 

@@ -20,12 +20,7 @@ import { writeBoardWorkflowsCache } from "../utils/boardWorkflowsCache";
 import { useBoardWorkflows } from "../hooks/useBoardWorkflows";
 import { useHeaderWorkflowSlot } from "../hooks/useHeaderWorkflowSlot";
 import { useUnmappedWorkflowRefetch } from "../hooks/useUnmappedWorkflowRefetch";
-import {
-  ALL_WORKFLOWS_BOARD_VIEW_ID,
-  readBoardWorkflowViewSelection,
-  removeBoardWorkflowSelection,
-  writeBoardWorkflowSelection,
-} from "../utils/boardWorkflowSelection";
+import { ALL_WORKFLOWS_BOARD_VIEW_ID } from "../utils/boardWorkflowSelection";
 import type { TaskContextMenuColumnMetadata } from "./TaskContextMenu";
 import { resetBoardColumnsOnArrival } from "../utils/boardScrollSnapshot";
 import { isTaskReverted } from "../utils/taskRevert";
@@ -233,9 +228,11 @@ function BoardContent({ tasks, projectId, maxConcurrent, maxWorktrees, showWorkt
       return binding;
     };
   }, [changeColumnSortMode]);
-  const [isAllWorkflowsViewSelected, setIsAllWorkflowsViewSelected] = useState(
-    () => readBoardWorkflowViewSelection(projectId) === ALL_WORKFLOWS_BOARD_VIEW_ID,
-  );
+  /*
+  FNXC:WorkflowAggregation 2026-09-16-23:24:
+  FN-483 : plus d'état agrégé local. La vue « All workflows » est désormais lue depuis `useBoardWorkflows`
+  (`isAllWorkflowsSelected`, plus bas), unique propriétaire de la sélection de vue et de sa persistance.
+  */
   const boardRef = useRef<HTMLElement | null>(null);
   const [boardElement, setBoardElement] = useState<HTMLElement | null>(null);
   /*
@@ -438,6 +435,7 @@ function BoardContent({ tasks, projectId, maxConcurrent, maxWorktrees, showWorkt
     workflowOptions,
     selectedWorkflow,
     selectedWorkflowId,
+    isAllWorkflowsSelected: isAllWorkflowsViewSelected,
     setSelectedWorkflowId,
     refreshBoardWorkflows,
     setBoardWorkflowsState,
@@ -482,32 +480,19 @@ function BoardContent({ tasks, projectId, maxConcurrent, maxWorktrees, showWorkt
     return computeWorkflowStatusCounts(tasks, boardWorkflows);
   }, [boardWorkflows, tasks]);
 
-  useEffect(() => {
-    setIsAllWorkflowsViewSelected(readBoardWorkflowViewSelection(projectId) === ALL_WORKFLOWS_BOARD_VIEW_ID);
-  }, [projectId]);
-
   const handleWorkflowSwitcherChange = useCallback((workflowId: string) => {
     /*
     FNXC:WorkflowBoard 2026-06-30-00:00:
     "All workflows" is a Board-only aggregate filter sentinel. It is now persisted in the same project-scoped Board view preference as real workflow ids so refresh/remount restores whichever Board view the operator last selected, while `useBoardWorkflows` filters the sentinel away from shared real-workflow consumers and backend-bound APIs.
-    */
-    if (workflowId === ALL_WORKFLOWS_BOARD_VIEW_ID) {
-      setIsAllWorkflowsViewSelected(true);
-      writeBoardWorkflowSelection(projectId, ALL_WORKFLOWS_BOARD_VIEW_ID);
-      return;
-    }
-    setIsAllWorkflowsViewSelected(false);
-    setSelectedWorkflowId(workflowId);
-  }, [projectId, setSelectedWorkflowId]);
 
-  useEffect(() => {
-    if (boardWorkflows && !workflowMode) {
-      setIsAllWorkflowsViewSelected(false);
-      if (readBoardWorkflowViewSelection(projectId) === ALL_WORKFLOWS_BOARD_VIEW_ID) {
-        removeBoardWorkflowSelection(projectId);
-      }
-    }
-  }, [boardWorkflows, projectId, workflowMode]);
+    FNXC:WorkflowAggregation 2026-09-16-23:24:
+    FN-483 : le sentinel agrégé emprunte désormais LE MÊME setter partagé que les workflows réels. Board écrivait
+    auparavant le stockage directement en gardant un état local parallèle : deux états pouvaient diverger, et surtout
+    une List conservée ne pouvait pas suivre un passage à « All workflows ». `useBoardWorkflows` continue de ne jamais
+    envoyer le sentinel au miroir serveur (il y devient `null`) ni aux chemins de création de tâches.
+    */
+    setSelectedWorkflowId(workflowId);
+  }, [setSelectedWorkflowId]);
 
   const knownWorkflowIds = useMemo(() => new Set(boardWorkflows?.workflows.map((workflow) => workflow.id) ?? []), [boardWorkflows]);
 
