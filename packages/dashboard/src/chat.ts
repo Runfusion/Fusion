@@ -1803,6 +1803,13 @@ export class ChatManager {
       return;
     }
 
+    /*
+     * FNXC:ChatCancellation 2026-09-12-20:50:
+     * RUFU-230. A baked streamed prefix is an INTERRUPTED turn, not a completed one, so it is recorded with
+     * pi-ai's legal `"aborted"` stopReason instead of `"stop"`. Honest state matters twice over here: the model
+     * still sees the prefix it already produced, and the done-handler authoritative-reply join can now filter the
+     * ghost slice out of the next turn's persisted text instead of prepending it ("Sk" before "Skúsim — priamo.").
+     */
     sessionManager.appendMessage({
       role: "assistant",
       content: [{ type: "text", text }],
@@ -1817,7 +1824,7 @@ export class ChatManager {
         totalTokens: 0,
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
       },
-      stopReason: "stop",
+      stopReason: "aborted",
       timestamp: Date.now(),
     });
   }
@@ -3511,6 +3518,15 @@ export class ChatManager {
       interface AgentMessage {
         role: string;
         content?: string | Array<{ type: string; text: string }>;
+        /**
+         * FNXC:ChatPersistence 2026-09-12-22:47:
+         * pi-shaped runtimes report the pi-ai assistant `stopReason` ("stop" | "aborted" | "error" | …)
+         * on state messages; plugin CLI runtimes may omit it. The value is READ, not just carried:
+         * the authoritative-reply join below excludes "aborted" (a cancelled turn whose half-typed
+         * prefix `persistInterruptedSessionContext` bakes as its own assistant message) and "error"
+         * (provider failure) slices, so an interrupted or failed slice can never prefix the persisted reply.
+         */
+        stopReason?: string;
       }
       /*
        * FNXC:Chat 2026-07-10-00:00:
@@ -3558,14 +3574,26 @@ export class ChatManager {
 
       const lastUserIndex = agentMessages.map((message) => message.role).lastIndexOf("user");
       const turnMessages = lastUserIndex >= 0 ? agentMessages.slice(lastUserIndex + 1) : agentMessages;
-      const authoritativeText = turnMessages
-        .filter((message) => message.role === "assistant")
+      const assistantSliceTexts = turnMessages
+        .filter((message) => message.role === "assistant" && message.stopReason !== "error" && message.stopReason !== "aborted")
         .map((message) => typeof message.content === "string"
           ? message.content
           : Array.isArray(message.content)
             ? message.content.filter((part): part is { type: "text"; text: string } => part.type === "text" && typeof part.text === "string").map((part) => part.text).join("")
             : "")
-        .filter(Boolean)
+        .filter(Boolean);
+      /*
+       FNXC:ChatPersistence 2026-09-12-20:50:
+       RUFU-230 authoritative-reply reconciliation. `turnMessages` is the pi transcript for this turn, so it can
+       hold slices that must never reach the persisted reply: (1) a turn whose stopReason is "error" or "aborted"
+       (a Stop or a provider failure bakes a half-typed prefix as its own assistant message — see
+       `persistInterruptedSessionContext`), and (2) a retry ghost whose text is a STRICT prefix of a later
+       assistant slice in the same turn (the "Sk" before "Skúsim — priamo." shape). Either way the ghost join is
+       LONGER than the streamed text, so the length comparison below would otherwise prefer it and persist the
+       stutter. A legitimate multi-part assistant turn (no slice a prefix of another) still joins with "\n\n".
+       */
+      const authoritativeText = assistantSliceTexts
+        .filter((text, index) => !assistantSliceTexts.slice(index + 1).some((later) => later !== text && later.startsWith(text)))
         .join("\n\n");
       /*
        FNXC:AssistantTextCapture 2026-09-08-14:13:
