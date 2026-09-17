@@ -36,7 +36,7 @@ FN-5707's original Android concern (stripping nav padding mid-focus could make A
 FNXC:MobileChatKeyboardLayout 2026-09-01-05:36:
 The footer bottom reservation is only correct while the nav bar is on screen. Use the nav bar's unsettled-tolerant trigger for the footer collapse on both platforms; otherwise a rendered footer rises with an empty mobile-nav-height and safe-area band beneath it.
 
-Fullscreen mobile overlays (for example Quick Chat's sheet) own their own visual viewport handling. Treat them like modals for board-layout padding so overlay-local keyboards never shift the underlying board.
+Fullscreen mobile drawers own their own visual viewport handling. Treat them like modals for board-layout padding so drawer-local keyboards never shift the underlying board.
 */
 export function computeMobileBarKeyboardFlags({
   isMobile,

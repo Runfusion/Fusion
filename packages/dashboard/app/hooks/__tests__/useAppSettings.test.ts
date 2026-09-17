@@ -39,7 +39,6 @@ describe("useAppSettings", () => {
       prAuthAvailable: true,
       taskStuckTimeoutMs: 600000,
       staleHighFanoutBlockerAgeThresholdMs: 7200000,
-      showQuickChatFAB: false,
       capacityRiskBannerEnabled: false,
     } as never);
 
@@ -67,39 +66,67 @@ describe("useAppSettings", () => {
 
     act(() => {
       result.current.setChatMessageLayoutImmediate("full-width");
-      result.current.setOpenTasksInRightSidebarImmediate(true);
-      result.current.setOpenMobileTasksInPopupImmediate(true);
-      result.current.setTaskPopupsBoardListOnlyImmediate(false);
       result.current.setShowCostBadgeOnCardsImmediate(true);
-      result.current.setTaskDetailChatFirstImmediate(true);
+      result.current.setTaskDetailDefaultTabImmediate("chat");
     });
 
     expect(result.current.chatMessageLayout).toBe("full-width");
-    expect(result.current.openTasksInRightSidebar).toBe(true);
-    expect(result.current.openMobileTasksInPopup).toBe(true);
-    expect(result.current.taskPopupsBoardListOnly).toBe(false);
     expect(result.current.showCostBadgeOnCards).toBe(true);
-    expect(result.current.taskDetailChatFirst).toBe(true);
+    expect(result.current.taskDetailDefaultTab).toBe("chat");
     expect(mockFetchSettings).toHaveBeenCalledTimes(settingsFetchesBefore);
     expect(mockFetchConfig).toHaveBeenCalledTimes(configFetchesBefore);
 
     act(() => {
       result.current.setChatMessageLayoutImmediate("bubbles");
-      result.current.setOpenTasksInRightSidebarImmediate(false);
-      result.current.setOpenMobileTasksInPopupImmediate(false);
-      result.current.setTaskPopupsBoardListOnlyImmediate(true);
       result.current.setShowCostBadgeOnCardsImmediate(false);
-      result.current.setTaskDetailChatFirstImmediate(false);
+      result.current.setTaskDetailDefaultTabImmediate("definition");
     });
 
     expect(result.current.chatMessageLayout).toBe("bubbles");
-    expect(result.current.openTasksInRightSidebar).toBe(false);
-    expect(result.current.openMobileTasksInPopup).toBe(false);
-    expect(result.current.taskPopupsBoardListOnly).toBe(true);
     expect(result.current.showCostBadgeOnCards).toBe(false);
-    expect(result.current.taskDetailChatFirst).toBe(false);
+    expect(result.current.taskDetailDefaultTab).toBe("definition");
     expect(mockFetchSettings).toHaveBeenCalledTimes(settingsFetchesBefore);
     expect(mockFetchConfig).toHaveBeenCalledTimes(configFetchesBefore);
+  });
+
+  /*
+  FNXC:TaskDetailDefaultTab 2026-09-16-02:53:
+  FN-442 replaced the boolean Chat-first opt-in with a three-value project choice, so the shell must accept exactly the
+  three known values, fail closed to the historical `activity` landing tab for absent/unknown values, and still honor a
+  project that persisted `taskDetailChatFirst: true` before the rename. The new key always wins over the legacy one.
+  */
+  it.each([
+    [undefined, undefined, "activity"],
+    ["definition", undefined, "definition"],
+    ["chat", undefined, "chat"],
+    ["activity", undefined, "activity"],
+    ["planner-chat", undefined, "activity"],
+    [undefined, true, "chat"],
+    [undefined, false, "activity"],
+    ["activity", true, "activity"],
+    ["definition", true, "definition"],
+  ] as const)(
+    "resolves task detail default tab from stored %s (legacy chat-first %s) to %s",
+    async (storedTab, legacyChatFirst, expectedTab) => {
+      mockFetchSettings.mockResolvedValueOnce({ taskDetailDefaultTab: storedTab, taskDetailChatFirst: legacyChatFirst } as never);
+      const { result } = renderHook(() => useAppSettings("proj_123"));
+
+      await waitFor(() => expect(result.current.settingsLoaded).toBe(true));
+      expect(result.current.taskDetailDefaultTab).toBe(expectedTab);
+    },
+  );
+
+  it("resets task detail default tab to activity while a new project hydrates", async () => {
+    mockFetchSettings
+      .mockResolvedValueOnce({ taskDetailDefaultTab: "definition" } as never)
+      .mockResolvedValueOnce({ taskDetailDefaultTab: undefined } as never);
+    const { result, rerender } = renderHook(({ projectId }) => useAppSettings(projectId), { initialProps: { projectId: "project-a" } });
+
+    await waitFor(() => expect(result.current.taskDetailDefaultTab).toBe("definition"));
+    rerender({ projectId: "project-b" });
+    expect(result.current.taskDetailDefaultTab).toBe("activity");
+    await waitFor(() => expect(result.current.settingsLoaded).toBe(true));
+    expect(result.current.taskDetailDefaultTab).toBe("activity");
   });
 
   it("resets chat message layout to bubbles while a new project hydrates", async () => {
@@ -134,19 +161,74 @@ describe("useAppSettings", () => {
     expect(result.current.chatMessageLayout).toBe("bubbles");
   });
 
-  it("defaults omitted task popup scoping to enabled during hydration", async () => {
+  /*
+  FN-426: the right tool dock is availability-gated by this project setting alone. Anything other than the exact
+  boolean `true` must resolve to disabled, because every tool it hosts is reachable without it and a stale value must
+  never resurrect a shell surface the operator did not ask for.
+  */
+  it.each([
+    [true, true],
+    [false, false],
+    [undefined, false],
+    ["true", false],
+    [1, false],
+  ] as const)("normalizes a persisted rightSidebarEnabled %s to %s", async (stored, expected) => {
+    mockFetchSettings.mockResolvedValueOnce({ rightSidebarEnabled: stored } as never);
     const { result } = renderHook(() => useAppSettings("proj_123"));
 
     await waitFor(() => expect(result.current.settingsLoaded).toBe(true));
-    expect(result.current.taskPopupsBoardListOnly).toBe(true);
+    expect(result.current.rightSidebarEnabled).toBe(expected);
   });
 
-  it("preserves an explicit false task popup scoping opt-out during hydration", async () => {
-    mockFetchSettings.mockResolvedValueOnce({ taskPopupsBoardListOnly: false } as never);
+  it("keeps project right-sidebar availability isolated and ignores a previous project's late response", async () => {
+    let resolveProjectA!: (value: never) => void;
+    mockFetchSettings
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveProjectA = resolve as (value: never) => void; }))
+      .mockResolvedValueOnce({ rightSidebarEnabled: false } as never);
+
+    const { result, rerender } = renderHook(({ projectId }) => useAppSettings(projectId), { initialProps: { projectId: "project-a" } });
+    rerender({ projectId: "project-b" });
+
+    await waitFor(() => expect(result.current.settingsLoaded).toBe(true));
+    expect(result.current.rightSidebarEnabled).toBe(false);
+
+    await act(async () => {
+      resolveProjectA({ rightSidebarEnabled: true } as never);
+    });
+
+    expect(result.current.rightSidebarEnabled).toBe(false);
+  });
+
+  it("mirrors the Appearance right-sidebar opt-in into the shell without persisting", async () => {
+    mockFetchSettings.mockResolvedValueOnce({ rightSidebarEnabled: false } as never);
     const { result } = renderHook(() => useAppSettings("proj_123"));
 
     await waitFor(() => expect(result.current.settingsLoaded).toBe(true));
-    expect(result.current.taskPopupsBoardListOnly).toBe(false);
+    const updatesBefore = mockUpdateSettings.mock.calls.length;
+
+    act(() => { result.current.setRightSidebarEnabledImmediate(true); });
+    expect(result.current.rightSidebarEnabled).toBe(true);
+    act(() => { result.current.setRightSidebarEnabledImmediate(false); });
+    expect(result.current.rightSidebarEnabled).toBe(false);
+    expect(mockUpdateSettings.mock.calls.length).toBe(updatesBefore);
+  });
+
+  /*
+  FNXC:TaskWindowIdentity 2026-09-14-17:46:
+  FN-392: a historical `taskPopupsBoardListOnly` value — absent, true, or false — hydrates without being exposed or
+  applied. The hook publishes no such state and no setter, so no surface can read or rewrite it.
+  */
+  it.each([
+    ["absent", {}],
+    ["true", { taskPopupsBoardListOnly: true }],
+    ["false", { taskPopupsBoardListOnly: false }],
+  ])("ignores a historical %s task popup scoping value during hydration", async (_label, stored) => {
+    mockFetchSettings.mockResolvedValueOnce(stored as never);
+    const { result } = renderHook(() => useAppSettings("proj_123"));
+
+    await waitFor(() => expect(result.current.settingsLoaded).toBe(true));
+    expect(result.current).not.toHaveProperty("taskPopupsBoardListOnly");
+    expect(result.current).not.toHaveProperty("setTaskPopupsBoardListOnlyImmediate");
   });
 
   it("loads settings state from API", async () => {
@@ -164,8 +246,6 @@ describe("useAppSettings", () => {
       expect(result.current.settingsLoaded).toBe(true);
       expect(result.current.taskStuckTimeoutMs).toBe(600000);
       expect(result.current.staleHighFanoutBlockerAgeThresholdMs).toBe(7200000);
-      expect(result.current.showQuickChatFAB).toBe(false);
-      expect(result.current.quickChatCloseOnOutsideClick).toBe(true);
       expect(result.current.capacityRiskBannerEnabled).toBe(false);
       expect(result.current.capacityRiskTodoThreshold).toBe(20);
       expect(result.current.planApprovalMode).toBe("auto-approve-all");
@@ -188,7 +268,6 @@ describe("useAppSettings", () => {
       enginePaused: false,
       prAuthAvailable: true,
       taskStuckTimeoutMs: 600000,
-      showQuickChatFAB: false,
       ...(apiMode === undefined ? {} : { planApprovalMode: apiMode }),
     } as never);
 
@@ -207,7 +286,6 @@ describe("useAppSettings", () => {
       enginePaused: false,
       prAuthAvailable: true,
       taskStuckTimeoutMs: 600000,
-      showQuickChatFAB: false,
       planApprovalMode: "workflow",
     } as never);
 
@@ -233,7 +311,6 @@ describe("useAppSettings", () => {
       enginePaused: false,
       prAuthAvailable: true,
       taskStuckTimeoutMs: 600000,
-      showQuickChatFAB: false,
       planApprovalMode: "auto-approve-all",
     } as never);
 
@@ -259,7 +336,6 @@ describe("useAppSettings", () => {
       enginePaused: false,
       prAuthAvailable: true,
       taskStuckTimeoutMs: 600000,
-      showQuickChatFAB: false,
       planApprovalMode: "require-all",
     } as never);
 
@@ -285,7 +361,6 @@ describe("useAppSettings", () => {
       enginePaused: false,
       prAuthAvailable: true,
       taskStuckTimeoutMs: 600000,
-      showQuickChatFAB: false,
       planApprovalMode: "workflow",
     } as never);
     mockUpdateSettings.mockRejectedValueOnce(new Error("network"));
@@ -391,7 +466,6 @@ describe("useAppSettings", () => {
       enginePaused: false,
       prAuthAvailable: true,
       taskStuckTimeoutMs: 600000,
-      showQuickChatFAB: false,
     } as never);
 
     const { result } = renderHook(() => useAppSettings("proj_123"));
@@ -418,7 +492,6 @@ describe("useAppSettings", () => {
       enginePaused: false,
       prAuthAvailable: true,
       taskStuckTimeoutMs: 600000,
-      showQuickChatFAB: false,
       defaultProvider: "mock",
     } as never);
 
@@ -437,7 +510,6 @@ describe("useAppSettings", () => {
       enginePaused: false,
       prAuthAvailable: true,
       taskStuckTimeoutMs: 600000,
-      showQuickChatFAB: false,
     } as never);
 
     const { result } = renderHook(() => useAppSettings("proj_123"));
@@ -454,7 +526,6 @@ describe("useAppSettings", () => {
       enginePaused: false,
       prAuthAvailable: true,
       taskStuckTimeoutMs: 600000,
-      showQuickChatFAB: false,
     } as never);
 
     const { result } = renderHook(() => useAppSettings("proj_123"));
@@ -464,65 +535,22 @@ describe("useAppSettings", () => {
     });
   });
 
-  it("loads Quick Chat outside-click dismissal as default-on unless explicitly disabled", async () => {
-    const { result, rerender } = renderHook(({ projectId }) => useAppSettings(projectId), {
-      initialProps: { projectId: "proj_123" },
-    });
-
-    await waitFor(() => {
-      expect(result.current.quickChatCloseOnOutsideClick).toBe(true);
-    });
-
+  it("ignores retired project Quick Chat preferences", async () => {
     mockFetchSettings.mockResolvedValueOnce({
       autoMerge: false,
-      globalPause: false,
-      enginePaused: false,
-      prAuthAvailable: true,
-      taskStuckTimeoutMs: 600000,
-      showQuickChatFAB: false,
+      quickChatButtonMode: "floating",
       quickChatCloseOnOutsideClick: false,
+      showQuickChatFAB: true,
     } as never);
 
-    rerender({ projectId: "proj_456" });
-
-    await waitFor(() => {
-      expect(result.current.quickChatCloseOnOutsideClick).toBe(false);
-    });
-  });
-
-  it("refresh() live-applies saved Quick Chat outside-click setting changes", async () => {
-    mockFetchSettings.mockResolvedValueOnce({
-      autoMerge: false,
-      globalPause: false,
-      enginePaused: false,
-      prAuthAvailable: true,
-      taskStuckTimeoutMs: 600000,
-      showQuickChatFAB: false,
-      quickChatCloseOnOutsideClick: false,
-    } as never);
     const { result } = renderHook(() => useAppSettings("proj_123"));
 
-    await waitFor(() => {
-      expect(result.current.quickChatCloseOnOutsideClick).toBe(false);
-    });
-
-    mockFetchSettings.mockResolvedValueOnce({
-      autoMerge: false,
-      globalPause: false,
-      enginePaused: false,
-      prAuthAvailable: true,
-      taskStuckTimeoutMs: 600000,
-      showQuickChatFAB: false,
-      quickChatCloseOnOutsideClick: true,
-    } as never);
-
-    await act(async () => {
-      await result.current.refresh();
-    });
-
-    await waitFor(() => {
-      expect(result.current.quickChatCloseOnOutsideClick).toBe(true);
-    });
+    await waitFor(() => expect(result.current.settingsLoaded).toBe(true));
+    expect(result.current).not.toHaveProperty("quickChatButtonMode");
+    expect(result.current).not.toHaveProperty("quickChatCloseOnOutsideClick");
+    expect(result.current).not.toHaveProperty("showQuickChatFAB");
+    expect(result.current).not.toHaveProperty("toggleShowQuickChatFAB");
+    expect(result.current).not.toHaveProperty("setQuickChatButtonModeImmediate");
   });
 
   it("propagates capacity risk settings from fetchSettings", async () => {
@@ -532,7 +560,6 @@ describe("useAppSettings", () => {
       enginePaused: false,
       prAuthAvailable: true,
       taskStuckTimeoutMs: 600000,
-      showQuickChatFAB: false,
       capacityRiskBannerEnabled: true,
       capacityRiskTodoThreshold: 30,
     } as never);
@@ -548,32 +575,21 @@ describe("useAppSettings", () => {
   it("refresh() re-fetches and updates state", async () => {
     const { result } = renderHook(() => useAppSettings("proj_123"));
 
-    // Initial state from first mock
-    await waitFor(() => {
-      expect(result.current.showQuickChatFAB).toBe(false);
-    });
-
-    // Change mock to return different value
     mockFetchSettings.mockResolvedValueOnce({
       autoMerge: false,
       globalPause: true,
       enginePaused: false,
       prAuthAvailable: true,
       taskStuckTimeoutMs: 600000,
-      showQuickChatFAB: true,
     } as never);
 
-    // Call refresh
     await act(async () => {
       await result.current.refresh();
     });
 
-    // Verify state was updated
     await waitFor(() => {
-      expect(result.current.showQuickChatFAB).toBe(true);
+      expect(result.current.globalPaused).toBe(true);
     });
-
-    // Verify fetchSettings was called again with correct projectId
     expect(mockFetchSettings).toHaveBeenCalledWith("proj_123");
   });
 
@@ -598,7 +614,6 @@ describe("useAppSettings", () => {
       enginePaused: false,
       prAuthAvailable: true,
       taskStuckTimeoutMs: 600000,
-      showQuickChatFAB: false,
       experimentalFeatures: {
         devServer: true,
       },
@@ -625,7 +640,6 @@ describe("useAppSettings", () => {
       enginePaused: false,
       prAuthAvailable: true,
       taskStuckTimeoutMs: 600000,
-      showQuickChatFAB: false,
       experimentalFeatures: {
         todoView: true,
       },
@@ -646,7 +660,6 @@ describe("useAppSettings", () => {
       enginePaused: false,
       prAuthAvailable: true,
       taskStuckTimeoutMs: 600000,
-      showQuickChatFAB: false,
       experimentalFeatures: {
         goalsView: true,
       },

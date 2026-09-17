@@ -44,7 +44,7 @@ import {
   type PipelineTerminalState,
 } from "./_pipeline-terminal-state.js";
 
-export type PipelineBuiltinWorkflow = "builtin:coding-ideas-v2" | "builtin:coding";
+export type PipelineBuiltinWorkflow = "builtin:coding-ideas" | "builtin:coding";
 export type PipelineWorkflowId = PipelineBuiltinWorkflow | string;
 
 export type PipelineTaskSeed = {
@@ -1287,7 +1287,7 @@ export class PipelineSmokeHarness {
 
   So the test's outcome depended on whether recovery beat a single read — passing in isolation (19/19
   across 8 runs) and failing intermittently under full-lane load, where the machine is busy. That is a
-  property of how fast the suite happens to run, not of the product. `builtin:coding-ideas-v2` is the
+  property of how fast the suite happens to run, not of the product. `builtin:coding-ideas` is the
   variant that surfaced it because its extra in-review milestone lands the restart in the racy window
   more often.
 

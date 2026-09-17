@@ -1,7 +1,7 @@
 import { ViewHeader } from "./ViewHeader";
 import { ViewLayoutContent } from "./ViewLayout";
 import "./ScriptsModal.css";
-import { useState, useEffect, useCallback, useRef, useMemo, type CSSProperties } from "react";
+import { Suspense, lazy, useState, useEffect, useCallback, useRef, useMemo, type CSSProperties } from "react";
 import { useTranslation, Trans } from "react-i18next";
 import type { Task } from "@fusion/core";
 import { getErrorMessage } from "@fusion/core";
@@ -9,6 +9,8 @@ import type { ToastType } from "../hooks/useToast";
 import { useConfirm } from "../hooks/useConfirm";
 import { getPathBasename } from "../utils/pathDisplay";
 import { FloatingWindow } from "./FloatingWindow";
+/* FNXC:ToolSurfaces 2026-09-15-16:04: FN-426 — the PR section reuses the existing view, lazily so Git's other sections do not pay for it. */
+const PullRequestView = lazy(() => import("./PullRequestView").then((m) => ({ default: m.PullRequestView })));
 import { useMobileKeyboard } from "../hooks/useMobileKeyboard";
 import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
 import { useEmbeddedPresentation, type ModalPresentation } from "../hooks/useEmbeddedPresentation";
@@ -104,7 +106,13 @@ import {
 
 // ── Types & Constants ─────────────────────────────────────────────
 
-type SectionId = "status" | "changes" | "commits" | "branches" | "worktrees" | "stashes" | "recovery" | "remotes";
+/*
+FNXC:ToolSurfaces 2026-09-15-16:04:
+FN-426 folds Pull Requests into Git Manager as a section instead of leaving it a standalone destination. Git already
+owns branches, remotes, and worktrees, so a pull request belongs beside them; the PR view, its routes, and its actions
+are reused verbatim rather than reimplemented here.
+*/
+export type SectionId = "status" | "changes" | "commits" | "branches" | "worktrees" | "stashes" | "recovery" | "remotes" | "pull-requests";
 
 
 const SECTIONS: { id: SectionId; label: string; icon: React.ComponentType<{ size?: number }> }[] = [
@@ -120,6 +128,7 @@ const SECTIONS: { id: SectionId; label: string; icon: React.ComponentType<{ size
   */
   { id: "recovery", label: "Recovery", icon: History },
   { id: "remotes", label: "Remotes", icon: GitMerge },
+  { id: "pull-requests", label: "Pull Requests", icon: GitPullRequest },
 ];
 
 // ── Helper Utilities ──────────────────────────────────────────────
@@ -223,11 +232,18 @@ interface GitManagerModalProps {
   Embedded mode must disable modal-only behaviors (scroll lock, resize persistence, Escape-to-close, overlay click dismiss) since they break the host page.
   */
   presentation?: ModalPresentation;
+  /*
+  FNXC:ToolSurfaces 2026-09-15-16:04:
+  FN-426: an old `pull-requests` link or a Pull Requests navigation click lands on Git Manager already showing that
+  section, optionally with the linked PR selected. Absent props keep the historical Status landing.
+  */
+  initialSection?: SectionId;
+  selectedPullRequestId?: string;
 }
 
 // ── Main Component ────────────────────────────────────────────────
 
-export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, projectId, presentation = "modal" }: GitManagerModalProps) {
+export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, projectId, presentation = "modal", initialSection, selectedPullRequestId }: GitManagerModalProps) {
   const { t } = useTranslation("app");
   const confirmContext = useConfirm();
   const viewportMode = useViewportMode();
@@ -257,7 +273,18 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
     }
     onClose();
   }, [onClose, viewportMode]);
-  const [activeSection, setActiveSection] = useState<SectionId>("status");
+  const [activeSection, setActiveSection] = useState<SectionId>(initialSection ?? "status");
+  /*
+  FNXC:ToolSurfaces 2026-09-15-16:04:
+  FN-426: a later request for a different section (a second Pull Requests link while Git is already open) must move
+  the panel, while an unchanged prop must never fight the operator's own tab clicks.
+  */
+  const lastRequestedSectionRef = useRef<SectionId | undefined>(initialSection);
+  useEffect(() => {
+    if (!initialSection || lastRequestedSectionRef.current === initialSection) return;
+    lastRequestedSectionRef.current = initialSection;
+    setActiveSection(initialSection);
+  }, [initialSection]);
   const [loading, setLoading] = useState(false);
   const [sectionError, setSectionError] = useState<string | null>(null);
   const modalRef = useRef<HTMLDivElement>(null);
@@ -1173,6 +1200,7 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
                     stashes: t("git.sectionStashes", "Stashes"),
                     recovery: t("git.sectionRecovery", "Recovery"),
                     remotes: t("git.sectionRemotes", "Remotes"),
+                    "pull-requests": t("pr.view.title", "Pull Requests"),
                   }[section.id] ?? section.label;
                   return (
                     <button
@@ -1225,6 +1253,18 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
                       {t("git.retry", "Retry")}
                     </button>
                   </div>
+                )}
+
+                {/*
+                FNXC:ToolSurfaces 2026-09-15-16:04:
+                FN-426: the PR section renders the SAME PullRequestView the standalone page used, with the same
+                project scope and the same linked-detail selection. It owns its own loading and error states, so it is
+                deliberately outside Git's section `loading` gate and fetches nothing through `fetchSectionData`.
+                */}
+                {activeSection === "pull-requests" && (
+                  <Suspense fallback={null}>
+                    <PullRequestView pullRequestId={selectedPullRequestId} projectId={projectId} />
+                  </Suspense>
                 )}
 
                 {/* ── Status Panel ── */}
@@ -1395,8 +1435,9 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
       dragHandleSelector=".modal-header"
       className="floating-window--git-manager"
       defaultSize={{ width: Math.min(window.innerWidth * 0.95, 1400), height: window.innerHeight * 0.92 }}
+      /* FNXC:FloatingWindowGeometry 2026-09-16-05:45: FN-456 opens every window at the shared 1.43 ratio, but the operator excluded the integral views — "ça ne doit pas impacter les vues intégrales.. par exemple le gitmanager qui s'ouvre depuis le menu more du footer". Git Manager deliberately fills the work area, so its opening geometry stays exactly pre-FN-456. */
+      openingSizePolicy="full-view"
       minSize={{ width: 360, height: 280 }}
-      persistGeometryKey="floating-window:git-manager"
       suspendGeometryPersistenceOnMobile
       suspendGeometryPersistenceOnShortViewport
       /* FNXC:ModalTouchGeometry 2026-07-26-16:10: Git Manager keeps the global default-off backdrop preference; FloatingWindow's guarded pointer listener preserves drag-safe outside dismissal. */

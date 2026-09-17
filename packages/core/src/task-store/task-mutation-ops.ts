@@ -67,9 +67,9 @@ export function getTaskSelectClauseWithActivityLogLimitImpl(store: TaskStore, li
       "workflowIrPin", "workflowIrPinNodeId", "workflowIrPinColumnId", "legacyAdoptedAt",
       "error", "summary", "thinkingLevel", "validatorThinkingLevel", "planningThinkingLevel", "mergerThinkingLevel", "executionMode",
       "tokenUsageInputTokens", "tokenUsageOutputTokens", "tokenUsageCachedTokens", "tokenUsageCacheWriteTokens", "tokenUsageTotalTokens", "tokenUsageFirstUsedAt", "tokenUsageLastUsedAt", "tokenUsageModelProvider", "tokenUsageModelId", "tokenUsagePerModel", "tokenBudgetSoftAlertedAt", "tokenBudgetHardAlertedAt", "tokenBudgetOverride",
-      "createdAt", "updatedAt", "columnMovedAt", "firstExecutionAt", "cumulativeActiveMs", "cumulativePlanningMs", "planningStartedAt", "executionStartedAt", "executionCompletedAt",
+      "createdAt", "updatedAt", "columnMovedAt", "firstExecutionAt", "cumulativeActiveMs", "cumulativePlanningMs", "planningStartedAt", "cumulativePausedMs", "pausedStartedAt", "executionStartedAt", "executionCompletedAt",
       "dependencies", "steps", "customFields", "attachments", "steeringComments",
-      "comments", "review", "reviewState", "workflowStepResults", "prInfo", "prInfos", "issueInfo", "githubTracking", "sourceIssueProvider", "sourceIssueRepository", "sourceIssueExternalIssueId", "sourceIssueNumber", "sourceIssueUrl", "sourceIssueClosedAt", "mergeDetails", "workspaceWorktrees", "repositoryScope", "externalBlock", "planningFailure",
+      "comments", "review", "reviewState", "workflowStepResults", "prInfo", "prInfos", "issueInfo", "githubTracking", "sourceIssueProvider", "sourceIssueRepository", "sourceIssueExternalIssueId", "sourceIssueNumber", "sourceIssueUrl", "sourceIssueClosedAt", "mergeDetails", "workspaceWorktrees", "repositoryScope", "externalBlock", "planningFailure", "humanPlanApproval",
       "noCommitsExpected", "enabledWorkflowSteps", "modifiedFiles", "declaredSymbols",
       "missionId", "sliceId", "scopeOverride", "scopeOverrideReason", "scopeAutoWiden", "assignedAgentId", "pausedByAgentId", "assigneeUserId", "nodeId", "effectiveNodeId", "effectiveNodeSource",
       "sourceType", "sourceAgentId", "sourceRunId", "sourceSessionId", "sourceMessageId", "sourceParentTaskId", "sourceMetadata",
@@ -388,7 +388,16 @@ export type FencedWorkflowStepResultsPatch = Pick<
   | "approvedPlanFingerprint"
   | "reviewConvergenceStage"
   | "reviewConvergenceEscalationCount"
->;
+> & {
+  /*
+  FNXC:HumanPlanApproval 2026-09-15-06:24:
+  FN-408 — the per-card decision hold must be published in the SAME advisory-locked transaction as
+  the satisfied Plan Review result, so no observer can ever see a satisfied review with no pending
+  decision marker. These two fields are therefore part of this field-bounded fenced writer.
+  */
+  status?: Task["status"] | null;
+  awaitingApprovalReason?: Task["awaitingApprovalReason"] | null;
+};
 
 export type WorkflowStepResultsFencedCompute = (
   current: Task,
@@ -470,6 +479,15 @@ export async function applyInReviewStallObservationFencedImpl(
         log: toJson(log),
         updatedAt: new Date().toISOString(),
       };
+      /*
+      FNXC:TaskPauseAccounting 2026-09-16-06:16:
+      FN-457 — DELIBERATELY NOT ACCOUNTED, recorded rather than left silent. This SQL patch path
+      serves the in-review stall observer, which by construction only ever observes a card in the
+      REVIEW lane (`tasks/in-review-stalled.ts` returns early otherwise). A pause taken outside the
+      WIP lane opens no segment, and this path never un-pauses, so there is nothing to open and
+      nothing to bank. `pause-active-time-accounting.test.ts` locks this with a negative control so
+      the exemption is a tested claim, not a comment.
+      */
       if (Object.prototype.hasOwnProperty.call(patch, "paused")) values.paused = patch.paused ? 1 : 0;
       if (Object.prototype.hasOwnProperty.call(patch, "pausedReason")) values.pausedReason = patch.pausedReason ?? null;
       if (Object.prototype.hasOwnProperty.call(patch, "status")) values.status = patch.status ?? null;
@@ -519,8 +537,17 @@ export async function updateWorkflowStepResultsFencedImpl(
         approvedPlanFingerprint?: string | null;
         reviewConvergenceStage?: number | null;
         reviewConvergenceEscalationCount?: number | null;
+        status?: string | null;
+        awaitingApprovalReason?: string | null;
         updatedAt: string;
       } = { updatedAt: new Date().toISOString() };
+      /* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408's decision hold commits with its review result. */
+      if (Object.prototype.hasOwnProperty.call(patch, "status")) {
+        values.status = patch.status ?? null;
+      }
+      if (Object.prototype.hasOwnProperty.call(patch, "awaitingApprovalReason")) {
+        values.awaitingApprovalReason = patch.awaitingApprovalReason ?? null;
+      }
       if (Object.prototype.hasOwnProperty.call(patch, "workflowStepResults")) {
         values.workflowStepResults = patch.workflowStepResults ?? [];
       }

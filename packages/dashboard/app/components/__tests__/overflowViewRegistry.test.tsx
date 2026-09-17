@@ -1,59 +1,43 @@
-import { render } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
-import { getVisibleOverflowViewEntries, STATIC_OVERFLOW_VIEW_ENTRIES } from "../overflowViewRegistry";
+import { describe, expect, it } from "vitest";
+import { getVisibleOverflowViewEntries, OPTIONAL_RIGHT_DOCK_TOOL_KEYS, STATIC_OVERFLOW_VIEW_ENTRIES } from "../overflowViewRegistry";
 import type { PluginDashboardViewEntry } from "../../api";
-import { NATIVE_STRUCTURE_DRAG_MIME } from "../../utils/nativeStructureDrag";
 
-const { receivedPluginContexts } = vi.hoisted(() => ({
-  receivedPluginContexts: [] as Array<{ beginNativeStructureDrag?: (dataTransfer: DataTransfer, ref: { kind: "roadmap-item"; id: string; projectId?: string }) => boolean }>,
-}));
-
-vi.mock("../../plugins/PluginDashboardViewHost", () => ({
-  PluginDashboardViewHost: ({ context }: { context: (typeof receivedPluginContexts)[number] }) => {
-    receivedPluginContexts.push(context);
-    return null;
-  },
-}));
-
+/*
+ * FN-426: the right dock is optional and default-off, so it may no longer be the OWNER of anything. This registry is
+ * now a shortcut list of exactly four tools that each keep a canonical host elsewhere (Files and Chat pages, the List
+ * route, the Notes popover). Every tool that used to live only here — Git Manager, Activity Log, Secrets, Pull
+ * Requests, Dev Server, and plugin dashboard views — moved to a destination of its own and must be absent.
+ */
 describe("overflowViewRegistry", () => {
-  it("exposes static right-dock tools in order", () => {
-    const entries = getVisibleOverflowViewEntries({ experimentalFeatures: { devServerView: true } });
-    const keys = entries.map((entry) => entry.key);
-
-    expect(keys).toEqual([
-      "files", "chat", "activity-log", "git-manager", "devserver", "secrets", "pull-requests",
-    ]);
-    expect(entries.filter((entry) => entry.render).map((entry) => entry.key)).toEqual(keys);
+  it("exposes exactly the four optional dock shortcuts in order", () => {
+    const entries = getVisibleOverflowViewEntries({ experimentalFeatures: { devServerView: true }, listViewAvailable: true });
+    expect(entries.map((entry) => entry.key)).toEqual(["files", "chat", "list", "notes"]);
+    expect(entries.map((entry) => entry.key)).toEqual([...OPTIONAL_RIGHT_DOCK_TOOL_KEYS]);
+    expect(entries.filter((entry) => entry.render).map((entry) => entry.key)).toEqual(entries.map((entry) => entry.key));
     expect(entries.filter((entry) => entry.onActivate)).toEqual([]);
   });
 
-  it("hides flag-gated static dock tools", () => {
-    const keys = getVisibleOverflowViewEntries().map((entry) => entry.key);
-    expect(keys).toEqual(["files", "chat", "activity-log", "git-manager", "secrets", "pull-requests"]);
-    expect(keys).not.toContain("devserver");
-    expect(keys).not.toContain("todos");
-    expect(keys).not.toContain("usage");
+  it("offers Notes on tablet hosts too, since the dock is now an explicit opt-in", () => {
+    expect(getVisibleOverflowViewEntries({ hostMode: "standard" }).map((entry) => entry.key)).toContain("notes");
+    expect(getVisibleOverflowViewEntries({ hostMode: "desktop" }).map((entry) => entry.key)).toContain("notes");
   });
 
-  it("does not expose left-sidebar content views or removed dock tools in the registry", () => {
-    const removedKeys = ["tasks", "documents", "recommendations", "research", "insights", "skills", "memory", "stash-recovery", "evals", "goalsView", "github-import", "automation", "usage", "todos"];
+  it("hosts no tool that would become unreachable when the dock is disabled", () => {
+    const relocated = ["activity-log", "git-manager", "secrets", "pull-requests", "devserver", "dev-server", "usage", "tasks", "documents", "recommendations", "research", "insights", "skills", "memory", "stash-recovery", "evals", "goalsView", "github-import", "automation", "todos"];
     const keys = getVisibleOverflowViewEntries({
       experimentalFeatures: { insights: true, memoryView: true, devServerView: true, researchView: true, evalsView: true, goalsView: true },
       showSkillsTab: true,
+      listViewAvailable: true,
     }).map((entry) => entry.key);
 
-    // `notes` and `list` are host-gated: neither appears without its host opting in.
-    expect(keys).toEqual(STATIC_OVERFLOW_VIEW_ENTRIES.filter((entry) => entry.key !== "notes" && entry.key !== "list").map((entry) => entry.key));
-    expect(keys).not.toContain("notes");
-    expect(keys).not.toContain("list");
-    for (const key of removedKeys) expect(keys).not.toContain(key);
-    for (const key of ["secrets", "pull-requests", "devserver"]) expect(keys).toContain(key);
+    expect(keys).toEqual(STATIC_OVERFLOW_VIEW_ENTRIES.map((entry) => entry.key));
+    for (const key of relocated) expect(keys).not.toContain(key);
   });
 
   /*
-  FN-382: List is a dock tool only where the host supplies the real List surface — the non-mobile dock. A phone host,
-  or any caller that does not provide the renderer, must not get a tab that could render an empty body.
-  */
+   * FN-382 (retained): List is a dock tool only where the host supplies the real List surface — the non-mobile dock.
+   * A phone host, or any caller that does not provide the renderer, must not get a tab that could render an empty body.
+   */
   it("exposes the List tool only when its host supplies the surface, and never expandable", () => {
     const withoutList = getVisibleOverflowViewEntries({}).map((entry) => entry.key);
     expect(withoutList).not.toContain("list");
@@ -68,83 +52,20 @@ describe("overflowViewRegistry", () => {
     expect(list!.render?.({ addToast: () => {}, key: "list" } as never)).toBeNull();
   });
 
-  it("adds enabled non-primary plugin views after static tool entries", () => {
+  /*
+   * FN-426: plugin dashboard views keep their primary-navigation destinations and are no longer duplicated into the
+   * optional dock, where they would have had no owner at all once an operator turns it off.
+   */
+  it("adds no plugin dashboard views to the optional dock", () => {
     const pluginDashboardViews: PluginDashboardViewEntry[] = [
       { pluginId: "fusion-plugin-todos", view: { viewId: "todos", label: "Todos", placement: "overflow", order: 70 } },
       { pluginId: "plugin-a", view: { viewId: "primary", label: "Primary", placement: "primary" } },
       { pluginId: "plugin-a", view: { viewId: "tools", label: "Tools", placement: "overflow", order: 2 } },
-      { pluginId: "plugin-b", view: { viewId: "audit", label: "Audit", placement: "secondary", order: 1 } },
-    ];
-
-    const entries = getVisibleOverflowViewEntries({ experimentalFeatures: { devServerView: true }, pluginDashboardViews });
-    expect(entries.map((entry) => entry.key)).toEqual([
-      "files", "chat", "activity-log", "git-manager", "devserver", "secrets", "pull-requests",
-      "plugin:plugin-b:audit", "plugin:plugin-a:tools", "plugin:fusion-plugin-todos:todos",
-    ]);
-    expect(entries.some((entry) => entry.key === "plugin:plugin-a:primary")).toBe(false);
-  });
-
-  it("excludes the dependency-graph plugin from the right dock", () => {
-    const pluginDashboardViews: PluginDashboardViewEntry[] = [
       { pluginId: "fusion-plugin-dependency-graph", view: { viewId: "graph", label: "Dependency Graph", placement: "overflow", order: 1 } },
-      { pluginId: "plugin-c", view: { viewId: "report", label: "Report", placement: "overflow", order: 2 } },
     ];
 
-    const keys = getVisibleOverflowViewEntries({ pluginDashboardViews }).map((entry) => entry.key);
-    expect(keys).not.toContain("plugin:fusion-plugin-dependency-graph:graph");
-    expect(keys).toContain("plugin:plugin-c:report");
-  });
-
-  it("injects the native-structure drag hook into a prebuilt right-dock plugin context", () => {
-    receivedPluginContexts.length = 0;
-    const entry = getVisibleOverflowViewEntries({
-      pluginDashboardViews: [{ pluginId: "fusion-plugin-roadmap", view: { viewId: "roadmaps", label: "Roadmaps", placement: "overflow" } }],
-    }).find((candidate) => candidate.key === "plugin:fusion-plugin-roadmap:roadmaps");
-    expect(entry?.render).toBeTypeOf("function");
-
-    render(<>{entry?.render?.({
-      projectId: "project-1",
-      addToast: vi.fn(),
-      pluginContext: {
-        projectId: "project-1",
-        tasks: [],
-        workflowSteps: [],
-        openTaskDetail: vi.fn(),
-        openFile: vi.fn(),
-      },
-    })}</>);
-
-    const beginNativeStructureDrag = receivedPluginContexts.at(-1)?.beginNativeStructureDrag;
-    expect(beginNativeStructureDrag).toBeTypeOf("function");
-    const values = new Map<string, string>();
-    const dataTransfer = {
-      effectAllowed: "move",
-      setData: (type: string, value: string) => values.set(type, value),
-      getData: (type: string) => values.get(type) ?? "",
-    } as unknown as DataTransfer;
-
-    expect(beginNativeStructureDrag?.(dataTransfer, { kind: "roadmap-item", id: "RF-1", projectId: "project-1" })).toBe(true);
-    expect(dataTransfer.getData(NATIVE_STRUCTURE_DRAG_MIME)).toBe(JSON.stringify({ kind: "roadmap-item", id: "RF-1", projectId: "project-1" }));
-  });
-
-  it("keeps right-dock plugin drag payloads inert on coarse pointers", () => {
-    receivedPluginContexts.length = 0;
-    vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: true })));
-    const entry = getVisibleOverflowViewEntries({
-      pluginDashboardViews: [{ pluginId: "fusion-plugin-roadmap", view: { viewId: "roadmaps", label: "Roadmaps", placement: "overflow" } }],
-    }).find((candidate) => candidate.key === "plugin:fusion-plugin-roadmap:roadmaps");
-
-    render(<>{entry?.render?.({ projectId: "project-1", addToast: vi.fn() })}</>);
-    const values = new Map<string, string>();
-    const dataTransfer = {
-      effectAllowed: "move",
-      setData: (type: string, value: string) => values.set(type, value),
-      getData: (type: string) => values.get(type) ?? "",
-    } as unknown as DataTransfer;
-
-    expect(receivedPluginContexts.at(-1)?.beginNativeStructureDrag?.(dataTransfer, { kind: "roadmap-item", id: "RF-1" })).toBe(false);
-    expect(values.size).toBe(0);
-    expect(dataTransfer.effectAllowed).toBe("move");
-    vi.unstubAllGlobals();
+    const keys = getVisibleOverflowViewEntries({ experimentalFeatures: { devServerView: true }, listViewAvailable: true, pluginDashboardViews }).map((entry) => entry.key);
+    expect(keys).toEqual(["files", "chat", "list", "notes"]);
+    expect(keys.some((key) => key.startsWith("plugin:"))).toBe(false);
   });
 });

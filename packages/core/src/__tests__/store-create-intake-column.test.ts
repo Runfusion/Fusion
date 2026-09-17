@@ -96,6 +96,54 @@ pgTest("createTask intake-column wiring (Coding (Ideas))", () => {
     expect(persisted?.title).toBeUndefined();
   });
 
+  /*
+  FNXC:TitleSummarization 2026-09-14-16:45:
+  FN-391 operator contract: "peu importe la longueur de la description, même s'il fait 5 mots ou 400
+  caractères, ça sera résumé". The length-parameterized cases above use a single repeated character,
+  which cannot distinguish a character threshold from a WORD-count threshold. These two shapes are
+  the operator's own examples: a five-word description and an exactly-400-character prose
+  description. Both must summarize exactly once when enabled, and neither must store a title when
+  disabled — the display fallback supplies the label instead.
+  */
+  const FIVE_WORD_DESCRIPTION = "Corriger le bouton de partage";
+  const FOUR_HUNDRED_CHAR_DESCRIPTION = "Refondre la hiérarchie des tâches. ".repeat(20).slice(0, 400);
+
+  it.each([
+    { label: "five words", description: FIVE_WORD_DESCRIPTION },
+    { label: "exactly 400 characters", description: FOUR_HUNDRED_CHAR_DESCRIPTION },
+  ])("summarizes a titleless description of $label when enabled", async ({ description }) => {
+    const store = h.store();
+    await store.updateSettings({ autoSummarizeTitles: true });
+    let summarizeCalls = 0;
+    const hook = observeTaskCreatedHook();
+    const created = await store.createTask(
+      { description },
+      { onSummarize: async () => { summarizeCalls += 1; return "Titre généré"; } },
+    );
+
+    await settleTaskCreatedHook(hook);
+    expect(summarizeCalls).toBe(1);
+    expect((await store.getTask(created.id))?.title).toBe("Titre généré");
+  });
+
+  it.each([
+    { label: "five words", description: FIVE_WORD_DESCRIPTION },
+    { label: "exactly 400 characters", description: FOUR_HUNDRED_CHAR_DESCRIPTION },
+  ])("stores no title for a titleless description of $label when disabled", async ({ description }) => {
+    const store = h.store();
+    await store.updateSettings({ autoSummarizeTitles: false });
+    let summarizeCalls = 0;
+    const hook = observeTaskCreatedHook();
+    const created = await store.createTask(
+      { description },
+      { onSummarize: async () => { summarizeCalls += 1; return "Should not be used"; } },
+    );
+
+    await settleTaskCreatedHook(hook);
+    expect(summarizeCalls).toBe(0);
+    expect((await store.getTask(created.id))?.title).toBeUndefined();
+  });
+
   it("preserves an explicit title and allows summarize:true to force generation", async () => {
     const store = h.store();
     await store.updateSettings({ autoSummarizeTitles: false });
@@ -237,7 +285,7 @@ pgTest("createTask intake-column wiring (Coding (Ideas))", () => {
     const store = h.store();
     const task = await store.createTask({
       description: "ideas workflow task",
-      workflowId: "builtin:coding-ideas-v2",
+      workflowId: "builtin:coding-ideas",
     });
     expect(task.column).toBe("ideas");
   });
@@ -313,7 +361,7 @@ pgTest("createTask intake-column wiring (Coding (Ideas))", () => {
 
   it("lands a Coding (Ideas) task in ideas even when enabledWorkflowSteps is supplied", async () => {
     const store = h.store();
-    await store.setDefaultWorkflowId("builtin:coding-ideas-v2");
+    await store.setDefaultWorkflowId("builtin:coding-ideas");
     const task = await store.createTask({
       description: "ideas task created with explicit optional-group toggles",
       enabledWorkflowSteps: [],
@@ -323,7 +371,7 @@ pgTest("createTask intake-column wiring (Coding (Ideas))", () => {
 
   it("writes a bootstrap PROMPT.md for that same create (so triage can still discover it)", async () => {
     const store = h.store();
-    await store.setDefaultWorkflowId("builtin:coding-ideas-v2");
+    await store.setDefaultWorkflowId("builtin:coding-ideas");
     const task = await store.createTask({
       description: "ideas task created with explicit optional-group toggles",
       enabledWorkflowSteps: [],
@@ -334,7 +382,7 @@ pgTest("createTask intake-column wiring (Coding (Ideas))", () => {
 
   it("lands a Coding (Ideas) task in ideas when it is the project default workflow", async () => {
     const store = h.store();
-    await store.setDefaultWorkflowId("builtin:coding-ideas-v2");
+    await store.setDefaultWorkflowId("builtin:coding-ideas");
     const task = await store.createTask({ description: "default ideas task" });
     expect(task.column).toBe("ideas");
   });
@@ -348,7 +396,7 @@ pgTest("createTask intake-column wiring (Coding (Ideas))", () => {
   */
   it("lands a task explicitly selecting builtin:coding in ITS intake column, even when the project default is coding-ideas", async () => {
     const store = h.store();
-    await store.setDefaultWorkflowId("builtin:coding-ideas-v2");
+    await store.setDefaultWorkflowId("builtin:coding-ideas");
     const task = await store.createTask({
       description: "explicit default coding workflow task",
       workflowId: "builtin:coding",
@@ -360,7 +408,7 @@ pgTest("createTask intake-column wiring (Coding (Ideas))", () => {
 
   it("does not throw and falls back to triage when workflowId is explicitly null (\"No workflow\")", async () => {
     const store = h.store();
-    await store.setDefaultWorkflowId("builtin:coding-ideas-v2");
+    await store.setDefaultWorkflowId("builtin:coding-ideas");
     const task = await store.createTask({
       description: "explicit no-workflow task",
       workflowId: null,
@@ -372,7 +420,7 @@ pgTest("createTask intake-column wiring (Coding (Ideas))", () => {
     const store = h.store();
     const task: Task = await store.createTask({
       description: "ideas bootstrap prompt task",
-      workflowId: "builtin:coding-ideas-v2",
+      workflowId: "builtin:coding-ideas",
     });
     const prompt = await readFile(
       join(h.rootDir(), ".fusion", "tasks", task.id, "PROMPT.md"),
@@ -402,7 +450,7 @@ pgTest("createTask intake-column wiring (Coding (Ideas))", () => {
     const store = h.store();
     const task = await store.createTask({
       description: "quick add start task",
-      workflowId: "builtin:coding-ideas-v2",
+      workflowId: "builtin:coding-ideas",
       column: "todo",
     });
     expect(task.column).toBe("todo");
@@ -457,7 +505,7 @@ pgTest("createTask intake-column wiring (Coding (Ideas))", () => {
     const store = h.store();
     const task = await store.createTask({
       description: "direct ideas create past planning",
-      workflowId: "builtin:coding-ideas-v2",
+      workflowId: "builtin:coding-ideas",
       column: "in-review",
     });
     expect(task.column).toBe("in-review");
@@ -471,7 +519,7 @@ pgTest("createTask intake-column wiring (Coding (Ideas))", () => {
     const store = h.store();
     const task = await store.createTask({
       description: "ideas quick-add start",
-      workflowId: "builtin:coding-ideas-v2",
+      workflowId: "builtin:coding-ideas",
       column: "todo",
     });
     expect(task.column).toBe("todo");
@@ -502,7 +550,7 @@ pgTest("createTask intake-column wiring (Coding (Ideas))", () => {
     // invalidates the cached workflow signature, causing a stale preflight).
     const task = await store.createTask({
       description: "ideas lifecycle promotion task",
-      workflowId: "builtin:coding-ideas-v2",
+      workflowId: "builtin:coding-ideas",
     });
     expect(task.column).toBe("ideas");
 

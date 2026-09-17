@@ -96,31 +96,31 @@ The closed grabbing hand must remain visible across every Board descendant even 
 }
 
 /*
-FNXC:AlphaBoardHeight 2026-09-11-16:14:
+FNXC:NativeBoardHeight 2026-09-11-16:14:
 The live Board, loading skeleton, and empty workflow state share the same parent-relative flex height and symmetric block padding. The project shell alone reserves the desktop footer or mobile pill, so columns end one Board padding token above that boundary without viewport calculations or duplicated safe-area terms.
 */
-[data-alpha-surface="true"] .board {
-  --board-padding: var(--alpha-density-3);
-  --column-gap: var(--alpha-density-3);
+.board {
+  --board-padding: var(--ui-density-md);
+  --column-gap: var(--ui-density-md);
 }
 
-[data-alpha-surface="true"] .board-workflow-toolbar {
-  gap: var(--alpha-density-2);
-  padding: var(--alpha-density-2) var(--alpha-density-3);
-  background: var(--alpha-neutral-background);
+.board-workflow-toolbar {
+  gap: var(--ui-density-sm);
+  padding: var(--ui-density-sm) var(--ui-density-md);
+  background: var(--bg);
 }
 
-[data-alpha-surface="true"] .board-workflows-skeleton__column {
-  gap: var(--alpha-density-2);
-  padding: var(--alpha-density-3);
+.board-workflows-skeleton__column {
+  gap: var(--ui-density-sm);
+  padding: var(--ui-density-md);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sm);
 }
 
 @media (max-width: 768px) {
-  [data-alpha-surface="true"] .board {
-    --board-padding: var(--alpha-density-2);
-    --column-gap: var(--alpha-density-2);
+  .board {
+    --board-padding: var(--ui-density-sm);
+    --column-gap: var(--ui-density-sm);
   }
 
   .board.board-workflows-skeleton {

@@ -471,6 +471,19 @@ describe("Full suite workflow (.github/workflows/full-suite.yml)", () => {
     expect(workflow.on?.pull_request).toBeUndefined();
   });
 
+  it("checks lifecycle-column drift after main receives a merge", () => {
+    const job = workflow.jobs?.["lifecycle-ratchet-drift"];
+    const steps = job?.steps ?? [];
+
+    expect(job).toBeDefined();
+    expect(steps.some((step: any) => step.uses === "./.github/actions/setup-node-pnpm")).toBe(true);
+    const ratchet = steps.find(
+      (step: any) => typeof step.run === "string" && step.run.includes("pnpm check:lifecycle-columns"),
+    );
+    expect(ratchet).toBeDefined();
+    expect(ratchet?.["continue-on-error"]).not.toBe(true);
+  });
+
   it("carries the demoted tier: 4-way shards, engine slow, inventory guard", () => {
     expect(workflow.jobs?.["test-shards"]?.strategy?.matrix?.shard).toEqual([1, 2, 3, 4]);
     expect(content).toContain("pnpm test:ci:shard --shard ${{ matrix.shard }} --total 4");

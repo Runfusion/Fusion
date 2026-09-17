@@ -5,8 +5,8 @@ import { resolveMobileNavPrimaryItems } from "../../../core/src/board/mobile-nav
 import type { ModelPricingOverrides } from "../../../core/src/ai/model-pricing";
 import { DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS, resolveDashboardKeyboardShortcuts, type DashboardKeyboardShortcutMap } from "../utils/keyboardShortcuts";
 import { normalizeChatSubmitOnEnterMode, type ChatSubmitOnEnterMode } from "../context/ChatSubmitOnEnterContext";
+import { normalizeNavigationPlacement, type NavigationPlacement } from "../utils/navigationPlacement";
 
-export type QuickChatButtonMode = "floating" | "footer" | "off";
 export type ChatMessageLayout = "bubbles" | "full-width";
 export type PlanApprovalMode = NonNullable<ProjectSettings["planApprovalMode"]>;
 
@@ -16,6 +16,20 @@ export type PlanApprovalMode = NonNullable<ProjectSettings["planApprovalMode"]>;
  */
 export function normalizeChatMessageLayout(value: unknown): ChatMessageLayout {
   return value === "full-width" ? "full-width" : "bubbles";
+}
+
+export type TaskDetailDefaultTab = "definition" | "chat" | "activity";
+
+/**
+ * FNXC:TaskDetailDefaultTab 2026-09-16-02:53:
+ * FN-442 replaced the boolean `taskDetailChatFirst` with this three-value project choice, so persisted values can be
+ * absent, stale, or written by an older build. Only the three known values are accepted; everything else fails closed
+ * to the historical `activity` landing tab. `legacyChatFirst` is a READ-ONLY compatibility fallback for a project that
+ * had opted into Chat-first before the rename — the new key always wins and the legacy key is never written back.
+ */
+export function normalizeTaskDetailDefaultTab(value: unknown, legacyChatFirst?: unknown): TaskDetailDefaultTab {
+  if (value === "definition" || value === "chat" || value === "activity") return value;
+  return legacyChatFirst === true ? "chat" : "activity";
 }
 
 /**
@@ -39,22 +53,31 @@ export interface UseAppSettingsResult {
   staleHighFanoutBlockerAgeThresholdMs: number;
   capacityRiskBannerEnabled: boolean;
   capacityRiskTodoThreshold: number;
-  openTasksInRightSidebar: boolean;
-  openMobileTasksInPopup: boolean;
-  taskPopupsBoardListOnly: boolean;
   showCostBadgeOnCards: boolean;
   modelPricingOverrides?: ModelPricingOverrides;
-  taskDetailChatFirst: boolean;
+  /**
+   * FNXC:TaskDetailDefaultTab 2026-09-16-02:53:
+   * FN-442: project choice of the task-detail landing tab AND tab-bar head order (Definition / Chat / Activity).
+   */
+  taskDetailDefaultTab: TaskDetailDefaultTab;
   chatMessageLayout: ChatMessageLayout;
-  quickChatButtonMode: QuickChatButtonMode;
+  /**
+   * FNXC:Navigation 2026-09-15-14:41:
+   * FN-419: project choice of the single primary navigation surface (bottom footer vs left sidebar).
+   */
+  navigationPlacement: NavigationPlacement;
+  /**
+   * FNXC:RightSidebarOptional 2026-09-15-16:04:
+   * FN-426: project opt-in for the right tool dock. Availability only — the dock's local open/pin/width/tool
+   * preferences never substitute for it. Absent, invalid, and pre-hydration states are all `false`.
+   */
+  rightSidebarEnabled: boolean;
   mobileNavPrimaryItems: string[];
-  quickChatCloseOnOutsideClick: boolean;
   dashboardKeyboardShortcuts: Required<DashboardKeyboardShortcutMap>;
   dismissModalsOnOutsideClick: boolean;
   quickAddSubmitOnEnter: boolean;
   chatSubmitOnEnter: ChatSubmitOnEnterMode;
   skipConfirmationDialogs: boolean;
-  showQuickChatFAB: boolean;
   maxTotalRetriesBeforeFail: number;
   prAuthAvailable: boolean;
   settingsLoaded: boolean;
@@ -67,14 +90,11 @@ export interface UseAppSettingsResult {
   togglePlanAutoApprove: () => Promise<void>;
   toggleGlobalPause: () => Promise<void>;
   toggleEnginePause: () => Promise<void>;
-  toggleShowQuickChatFAB: () => Promise<void>;
-  setQuickChatButtonModeImmediate: (mode: QuickChatButtonMode) => void;
   setChatMessageLayoutImmediate: (layout: ChatMessageLayout) => void;
-  setOpenTasksInRightSidebarImmediate: (enabled: boolean) => void;
-  setOpenMobileTasksInPopupImmediate: (enabled: boolean) => void;
-  setTaskPopupsBoardListOnlyImmediate: (enabled: boolean) => void;
+  setNavigationPlacementImmediate: (placement: NavigationPlacement) => void;
+  setRightSidebarEnabledImmediate: (enabled: boolean) => void;
   setShowCostBadgeOnCardsImmediate: (enabled: boolean) => void;
-  setTaskDetailChatFirstImmediate: (enabled: boolean) => void;
+  setTaskDetailDefaultTabImmediate: (tab: TaskDetailDefaultTab) => void;
   setMobileNavPrimaryItemsImmediate: (items: string[]) => void;
   /** Re-fetches settings from the backend to pick up changes made externally (e.g., by SettingsModal). */
   refresh: () => Promise<void>;
@@ -103,26 +123,23 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
   const [staleHighFanoutBlockerAgeThresholdMs, setStaleHighFanoutBlockerAgeThresholdMs] = useState(2 * 60 * 60 * 1000);
   const [capacityRiskBannerEnabled, setCapacityRiskBannerEnabled] = useState(false);
   const [capacityRiskTodoThreshold, setCapacityRiskTodoThreshold] = useState(20);
-  const [openTasksInRightSidebar, setOpenTasksInRightSidebar] = useState(false);
-  const [openMobileTasksInPopup, setOpenMobileTasksInPopup] = useState(false);
   /*
   FNXC:TaskPopupViewGating 2026-07-15-15:20:
   FN-8016 makes per-view popup scoping the default. Explicit persisted false remains the compatibility opt-out for globally shared popups; only an absent field falls back to true.
   */
-  const [taskPopupsBoardListOnly, setTaskPopupsBoardListOnly] = useState(true);
   const [showCostBadgeOnCards, setShowCostBadgeOnCards] = useState(false);
   const [modelPricingOverrides, setModelPricingOverrides] = useState<ModelPricingOverrides | undefined>(undefined);
-  const [taskDetailChatFirst, setTaskDetailChatFirst] = useState(false);
+  const [taskDetailDefaultTab, setTaskDetailDefaultTab] = useState<TaskDetailDefaultTab>("activity");
   const [chatMessageLayout, setChatMessageLayout] = useState<ChatMessageLayout>("bubbles");
-  const [quickChatButtonMode, setQuickChatButtonMode] = useState<QuickChatButtonMode>("off");
+  const [navigationPlacement, setNavigationPlacement] = useState<NavigationPlacement>("footer");
+  /* FNXC:RightSidebarOptional 2026-09-15-16:04: FN-426 — default-off availability of the right tool dock. */
+  const [rightSidebarEnabled, setRightSidebarEnabled] = useState(false);
   const [mobileNavPrimaryItems, setMobileNavPrimaryItems] = useState<string[]>(() => resolveMobileNavPrimaryItems().primaryItems);
-  const [quickChatCloseOnOutsideClick, setQuickChatCloseOnOutsideClick] = useState(true);
   const [dashboardKeyboardShortcuts, setDashboardKeyboardShortcuts] = useState<Required<DashboardKeyboardShortcutMap>>(DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS);
   const [dismissModalsOnOutsideClick, setDismissModalsOnOutsideClick] = useState(false);
   const [quickAddSubmitOnEnter, setQuickAddSubmitOnEnter] = useState(true);
   const [chatSubmitOnEnter, setChatSubmitOnEnter] = useState<ChatSubmitOnEnterMode>("auto");
   const [skipConfirmationDialogs, setSkipConfirmationDialogs] = useState(false);
-  const [showQuickChatFAB, setShowQuickChatFAB] = useState(false);
   const [maxTotalRetriesBeforeFail, setMaxTotalRetriesBeforeFail] = useState(25);
   const [prAuthAvailable, setPrAuthAvailable] = useState(false);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
@@ -183,27 +200,15 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
       setStaleHighFanoutBlockerAgeThresholdMs(
         settings.staleHighFanoutBlockerAgeThresholdMs ?? 2 * 60 * 60 * 1000,
       );
-      const nextQuickChatButtonMode: QuickChatButtonMode =
-        settings.quickChatButtonMode === "floating" || settings.quickChatButtonMode === "footer" || settings.quickChatButtonMode === "off"
-          ? settings.quickChatButtonMode
-          : settings.showQuickChatFAB === true
-            ? "floating"
-            : "off";
-      setQuickChatButtonMode(nextQuickChatButtonMode);
       setMobileNavPrimaryItems(resolveMobileNavPrimaryItems(settings).primaryItems);
-      setQuickChatCloseOnOutsideClick(settings.quickChatCloseOnOutsideClick !== false);
       setDashboardKeyboardShortcuts(resolveDashboardKeyboardShortcuts((settings as GlobalSettings).dashboardKeyboardShortcuts));
       setDismissModalsOnOutsideClick(settings.dismissModalsOnOutsideClick === true);
       setQuickAddSubmitOnEnter(settings.quickAddSubmitOnEnter !== false);
       setChatSubmitOnEnter(normalizeChatSubmitOnEnterMode(settings.chatSubmitOnEnter));
       setSkipConfirmationDialogs(settings.skipConfirmationDialogs === true);
-      setShowQuickChatFAB(nextQuickChatButtonMode === "floating");
       setMaxTotalRetriesBeforeFail(settings.maxTotalRetriesBeforeFail ?? 25);
       setCapacityRiskBannerEnabled(settings.capacityRiskBannerEnabled === true);
       setCapacityRiskTodoThreshold(settings.capacityRiskTodoThreshold ?? 20);
-      setOpenTasksInRightSidebar(settings.openTasksInRightSidebar === true);
-      setOpenMobileTasksInPopup(settings.openMobileTasksInPopup === true);
-      setTaskPopupsBoardListOnly(settings.taskPopupsBoardListOnly !== false);
       /*
       FNXC:TaskCardCostBadge 2026-07-11-12:15:
       The app shell exposes the default-off card cost badge setting to the board context only after settings hydration, preserving the no-badge default for upgraded projects.
@@ -211,11 +216,22 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
       setShowCostBadgeOnCards(settings.showCostBadgeOnCards === true);
       setModelPricingOverrides((settings as GlobalSettings).modelPricingOverrides);
       /*
-      FNXC:TaskDetailActivityFirst 2026-06-30-23:59:
-      App-level task-detail hosts need the project setting so Activity-first is the missing/false default and Chat-first is restored only by explicit opt-in.
+      FNXC:TaskDetailDefaultTab 2026-09-16-02:53:
+      App-level task-detail hosts need the project choice so an open with no explicit tab lands on the configured tab
+      and the tab bar leads with it. The explicit cast is deliberate: `taskDetailChatFirst` no longer exists in the
+      type, but a project persisted before FN-442 can still carry it, and unknown keys are tolerated on read.
       */
-      setTaskDetailChatFirst(settings.taskDetailChatFirst === true);
+      setTaskDetailDefaultTab(
+        normalizeTaskDetailDefaultTab(settings.taskDetailDefaultTab, (settings as Record<string, unknown>).taskDetailChatFirst),
+      );
       setChatMessageLayout(normalizeChatMessageLayout(settings.chatMessageLayout));
+      setNavigationPlacement(normalizeNavigationPlacement(settings.navigationPlacement));
+      /*
+      FNXC:RightSidebarOptional 2026-09-15-16:04:
+      FN-426: strictly `=== true`. A stale string, number, or absent field must never mount a shell surface the
+      operator did not ask for, because every tool is reachable without it.
+      */
+      setRightSidebarEnabled(settings.rightSidebarEnabled === true);
       setExperimentalFeatures(settings.experimentalFeatures ?? {});
       const features = settings.experimentalFeatures ?? {};
       /*
@@ -237,13 +253,17 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     setInsightsEnabled(true);
     setMemoryEnabled(true);
     setDevServerEnabled(false);
-    setOpenTasksInRightSidebar(false);
-    setOpenMobileTasksInPopup(false);
+    /*
+    FNXC:RightSidebarOptional 2026-09-15-16:04:
+    FN-426: a project switch must not carry the previous project's dock availability across the gap before the new
+    project's settings land, so it falls back to the safe default rather than the outgoing value.
+    */
+    setRightSidebarEnabled(false);
     setShowCostBadgeOnCards(false);
     setModelPricingOverrides(undefined);
-    setTaskDetailChatFirst(false);
+    setTaskDetailDefaultTab("activity");
     setChatMessageLayout("bubbles");
-    setQuickChatCloseOnOutsideClick(true);
+    setNavigationPlacement("footer");
     setDashboardKeyboardShortcuts(DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS);
     setDismissModalsOnOutsideClick(false);
     setPlanApprovalMode("workflow");
@@ -319,28 +339,6 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     }
   }, [enginePaused, projectId]);
 
-  const toggleShowQuickChatFAB = useCallback(async () => {
-    const next = !showQuickChatFAB;
-    setShowQuickChatFAB(next);
-    setQuickChatButtonMode(next ? "floating" : "off");
-
-    try {
-      await updateSettings({ quickChatButtonMode: next ? "floating" : "off", showQuickChatFAB: next }, projectId);
-    } catch {
-      setShowQuickChatFAB(!next);
-      setQuickChatButtonMode(!next ? "floating" : "off");
-    }
-  }, [showQuickChatFAB, projectId]);
-
-  const setQuickChatButtonModeImmediate = useCallback((mode: QuickChatButtonMode) => {
-    /*
-    FNXC:QuickChat 2026-06-22-18:55:
-    The Quick Chat launcher setting must move the visible launcher immediately between floating FAB, footer button, and off while Settings is still open. Persistence still flows through SettingsModal save; this mirrors the pending selection in the app shell.
-    */
-    setQuickChatButtonMode(mode);
-    setShowQuickChatFAB(mode === "floating");
-  }, []);
-
   const setChatMessageLayoutImmediate = useCallback((layout: ChatMessageLayout) => {
     /*
     FNXC:LiveAppearanceSettings 2026-08-19-18:07:
@@ -349,24 +347,35 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     setChatMessageLayout(normalizeChatMessageLayout(layout));
   }, []);
 
-  const setOpenTasksInRightSidebarImmediate = useCallback((enabled: boolean) => {
-    setOpenTasksInRightSidebar(enabled === true);
+  const setNavigationPlacementImmediate = useCallback((placement: NavigationPlacement) => {
+    /*
+    FNXC:Navigation 2026-09-15-14:41:
+    FN-419 mirrors the Appearance placement control into the shell during its input event so the menu moves live.
+    Like the other Immediate setters this never persists: SettingsModal stays the sole debounced writer.
+    */
+    setNavigationPlacement(normalizeNavigationPlacement(placement));
   }, []);
 
-  const setOpenMobileTasksInPopupImmediate = useCallback((enabled: boolean) => {
-    setOpenMobileTasksInPopup(enabled === true);
-  }, []);
-
-  const setTaskPopupsBoardListOnlyImmediate = useCallback((enabled: boolean) => {
-    setTaskPopupsBoardListOnly(enabled === true);
+  const setRightSidebarEnabledImmediate = useCallback((enabled: boolean) => {
+    /*
+    FNXC:RightSidebarOptional 2026-09-15-16:04:
+    FN-426 mirrors the Appearance opt-in into the shell during its input event so the dock appears/disappears live.
+    Like the sibling Immediate setters it never persists; SettingsModal stays the sole debounced writer.
+    */
+    setRightSidebarEnabled(enabled === true);
   }, []);
 
   const setShowCostBadgeOnCardsImmediate = useCallback((enabled: boolean) => {
     setShowCostBadgeOnCards(enabled === true);
   }, []);
 
-  const setTaskDetailChatFirstImmediate = useCallback((enabled: boolean) => {
-    setTaskDetailChatFirst(enabled === true);
+  const setTaskDetailDefaultTabImmediate = useCallback((tab: TaskDetailDefaultTab) => {
+    /*
+    FNXC:LiveAppearanceSettings 2026-08-19-18:07:
+    Mirrors the mounted Appearance control into the App shell during its input event. Like the other Immediate setters
+    it never persists: SettingsModal remains the only debounced writer and its reconciliation stays authoritative.
+    */
+    setTaskDetailDefaultTab(normalizeTaskDetailDefaultTab(tab));
   }, []);
 
   /*
@@ -395,22 +404,18 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     staleHighFanoutBlockerAgeThresholdMs,
     capacityRiskBannerEnabled,
     capacityRiskTodoThreshold,
-    openTasksInRightSidebar,
-    openMobileTasksInPopup,
-    taskPopupsBoardListOnly,
     showCostBadgeOnCards,
     modelPricingOverrides,
-    taskDetailChatFirst,
+    taskDetailDefaultTab,
     chatMessageLayout,
-    quickChatButtonMode,
+    navigationPlacement,
+    rightSidebarEnabled,
     mobileNavPrimaryItems,
-    quickChatCloseOnOutsideClick,
     dashboardKeyboardShortcuts,
     dismissModalsOnOutsideClick,
     quickAddSubmitOnEnter,
     chatSubmitOnEnter,
     skipConfirmationDialogs,
-    showQuickChatFAB,
     maxTotalRetriesBeforeFail,
     prAuthAvailable,
     settingsLoaded,
@@ -423,14 +428,11 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     togglePlanAutoApprove,
     toggleGlobalPause,
     toggleEnginePause,
-    toggleShowQuickChatFAB,
-    setQuickChatButtonModeImmediate,
     setChatMessageLayoutImmediate,
-    setOpenTasksInRightSidebarImmediate,
-    setOpenMobileTasksInPopupImmediate,
-    setTaskPopupsBoardListOnlyImmediate,
+    setNavigationPlacementImmediate,
+    setRightSidebarEnabledImmediate,
     setShowCostBadgeOnCardsImmediate,
-    setTaskDetailChatFirstImmediate,
+    setTaskDetailDefaultTabImmediate,
     setMobileNavPrimaryItemsImmediate,
     refresh,
   };

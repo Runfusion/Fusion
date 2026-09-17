@@ -1,5 +1,8 @@
 import { ViewHeader } from "./ViewHeader";
+import { DashboardWindowSurfaceRoot } from "../context/DashboardWindowManagerContext";
+import { FloatingWindow } from "./FloatingWindow";
 import { useState, useEffect, useCallback, useRef } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import type { CSSProperties, DragEvent } from "react";
 import { RefreshCw, Activity, TrendingUp, CheckCircle, AlertTriangle, Eye, GripVertical, ChevronUp, ChevronDown } from "lucide-react";
@@ -845,11 +848,19 @@ export function UsageIndicator({ isOpen, onClose, projectId, anchorRect, present
     setIsRefreshing(false);
   }, [refresh]);
 
+  /* FNXC:FloatingWindowDialogHosts 2026-09-14-22:36: resolved before the Escape effect so that effect can tell the anchored popover from the hosted window without a temporal dead zone. */
+  const showDesktopPopover = Boolean(anchorRect && isDesktopViewport);
+
   // Close on Escape key
   // FNXC:UsageIndicator 2026-06-22-00:00: embedded presentation has no modal to
   // dismiss, so Escape-to-close is a modal-only behavior.
+  /*
+  FNXC:FloatingWindowDialogHosts 2026-09-14-22:36:
+  FN-394 hosts the non-anchored presentation in FloatingWindow, whose modal boundary already closes on Escape.
+  Only the anchored popover still needs this local listener; keeping both would close and report twice.
+  */
   useEffect(() => {
-    if (isEmbedded || !isOpen) return;
+    if (isEmbedded || !isOpen || !showDesktopPopover) return;
 
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -859,7 +870,7 @@ export function UsageIndicator({ isOpen, onClose, projectId, anchorRect, present
 
     document.addEventListener("keydown", handleKey);
     return () => document.removeEventListener("keydown", handleKey);
-  }, [isEmbedded, isOpen, onClose]);
+  }, [isEmbedded, isOpen, onClose, showDesktopPopover]);
 
   // Close on overlay click
   const handleOverlayClick = useCallback(
@@ -873,7 +884,6 @@ export function UsageIndicator({ isOpen, onClose, projectId, anchorRect, present
 
   if (!isOpen) return null;
 
-  const showDesktopPopover = Boolean(anchorRect && isDesktopViewport);
   const defaultPopoverWidth = 420;
   const popoverWidth = savedSize?.width ?? defaultPopoverWidth;
   const desktopTop = showDesktopPopover
@@ -1043,21 +1053,53 @@ export function UsageIndicator({ isOpen, onClose, projectId, anchorRect, present
   }
 
   if (showDesktopPopover) {
-    return (
-      <>
+    /*
+    FNXC:PopoverLayering 2026-09-15-09:31:
+    FN-413 portals the anchored popover (backdrop + panel) to document.body like CustomModelDropdown does.
+    floatingWindowStack.ts's contract requires any surface compared in the `--fusion-max-z` band to live in the
+    ROOT stacking context: an inline panel cannot beat siblings outside its own context whatever its z-index.
+    The popover is already `position: fixed` with computed coordinates, so the portal is geometrically neutral,
+    and Escape / outside-click dismissal are document-level listeners and an explicit backdrop handler.
+    */
+    return createPortal(
+      <DashboardWindowSurfaceRoot logicalId="usage" group="dialog" className="dashboard-window-surface-root--contents">
         <div
           className="usage-popover-backdrop"
           onClick={onClose}
           data-testid="usage-modal-overlay"
         />
         {usageContent}
-      </>
+      </DashboardWindowSurfaceRoot>,
+      document.body
     );
   }
 
+  /*
+  FNXC:FloatingWindowDialogHosts 2026-09-14-22:36:
+  FN-394 hosts the non-anchored Usage dialog in the shared window. The anchored desktop presentation above stays
+  a popover and the embedded right-dock presentation stays embedded; on a phone the shared host still renders a
+  full-screen sheet with no drag or resize affordance.
+  */
   return (
-    <div className="modal-overlay open usage-modal-overlay" onClick={handleOverlayClick} data-testid="usage-modal-overlay">
+    <FloatingWindow
+      windowKey="usage"
+      modal
+      hideHeader
+      surfaceGroup="dialog"
+      title={t("usage.title", "Usage")}
+      ariaLabel={t("usage.title", "Usage")}
+      onClose={onClose}
+      dragHandleSelector=".usage-modal .modal-header"
+      className="floating-window--dialog floating-window--usage"
+      overlayClassName="usage-modal-overlay"
+      testId="usage-modal-overlay"
+      defaultSize={{ width: 900, height: 640 }}
+      minSize={{ width: 320, height: 280 }}
+      suspendGeometryPersistenceOnMobile
+      suspendGeometryPersistenceOnShortViewport
+      backdropMouseHandlers={{ onClick: handleOverlayClick }}
+    >
       {usageContent}
-    </div>
+    </FloatingWindow>
   );
 }

@@ -11,7 +11,14 @@ import { registerBundledPluginViews } from "./plugins/registerBundledPluginViews
 import { i18nReady } from "./i18n";
 import "@fontsource/pixelify-sans/400.css";
 import "./styles.css";
-import "./alpha-ui.css";
+/*
+FNXC:UiStyleAxis 2026-09-15-00:20:
+The interface-style catalogue and the native presentation sheet are STATIC imports alongside the base
+stylesheet, so a `data-ui-style` published by the pre-hydration bootstrap is already backed by real
+declarations at first paint rather than by a deferred effect.
+*/
+import "./ui-style-tokens.css";
+import "./native-ui.css";
 
 /*
 FNXC:AuthTokenRecovery 2026-09-10-21:28:

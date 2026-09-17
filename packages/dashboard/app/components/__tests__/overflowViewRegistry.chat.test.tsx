@@ -3,15 +3,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   findOverflowViewEntry,
   getVisibleOverflowViewEntries,
-  isOverflowViewKeyVisible,
   isOverflowViewEntryExpandable,
+  isOverflowViewEntryInline,
+  isOverflowViewKeyVisible,
   type OverflowViewRenderProps,
 } from "../overflowViewRegistry";
 import { readStoredRightDockView, RIGHT_DOCK_VIEW_STORAGE_KEY } from "../RightDock";
 import type { ChatViewProps } from "../ChatView";
 
 vi.mock("../ChatView", () => ({
-  ChatView: ({ projectId, addToast, floating, compactLayout, listOnly, openChatWindows, onPopOut, onMaximize, onClose, onOpenSessionInNewWindow }: ChatViewProps) => (
+  ChatView: ({ projectId, addToast, floating, compactLayout, listOnly, openChatWindows, onPopOut, onMaximize, onClose, onOpenSessionInNewWindow, initialComposerDraft, onSendAsReport }: ChatViewProps) => (
     <div
       data-testid="mock-chat-view"
       data-project-id={projectId}
@@ -21,8 +22,10 @@ vi.mock("../ChatView", () => ({
       data-open-window-count={String(openChatWindows?.size ?? 0)}
       data-has-dock-chrome-props={String(Boolean(floating || onPopOut || onMaximize || onClose))}
       data-has-open-window={String(typeof onOpenSessionInNewWindow === "function")}
+      data-prefill={initialComposerDraft}
+      data-has-report={String(typeof onSendAsReport === "function")}
     >
-      Chat dock view
+      Chat window view
     </div>
   ),
 }));
@@ -32,76 +35,60 @@ const renderProps: OverflowViewRenderProps = {
   addToast: vi.fn(),
   onOpenSessionInNewWindow: vi.fn(),
   experimentalFeatures: {},
-  openChatWindows: new Map([["session-1", "open" as const]]),
+  openChatWindows: new Set(["session-1"]),
+  onSendAsReport: vi.fn(),
 };
 
 describe("overflowViewRegistry chat entry", () => {
-  beforeEach(() => {
-    window.localStorage.clear();
-  });
-
+  beforeEach(() => window.localStorage.clear());
   afterEach(() => {
     cleanup();
     window.localStorage.clear();
     vi.clearAllMocks();
   });
 
-  it("registers Chat as an always-visible inline right-dock entry", () => {
+  /*
+  FNXC:ChatSurfaceUnification 2026-09-14-17:46:
+  FN-392 symptom: FN-390 turned the dock's Chat list into a launcher for an expanded window. Chat must be an inline,
+  selectable, NON-expandable dock tool again on both wide hosts, so no route, stored preference, or programmatic
+  request can ever produce a Chat expand modal.
+  */
+  it("registers Chat as an always-visible inline, non-expandable dock tool in every wide host", () => {
     const chatEntry = getVisibleOverflowViewEntries({}).find((entry) => entry.key === "chat");
 
     expect(chatEntry).toBeTruthy();
     expect(chatEntry?.testId).toBe("right-dock-tab-chat");
     expect(chatEntry?.render).toBeTypeOf("function");
     expect(chatEntry?.onActivate).toBeUndefined();
-    expect(isOverflowViewEntryExpandable(chatEntry, {})).toBe(true);
-    expect(isOverflowViewEntryExpandable(chatEntry, { hostMode: "alpha-desktop" })).toBe(false);
-    expect(getVisibleOverflowViewEntries({}).map((entry) => entry.key)).toContain("chat");
-  });
-
-  it("resolves Chat through registry helpers as a renderable visible view", () => {
-    const chatEntry = findOverflowViewEntry("chat");
-
-    expect(chatEntry?.key).toBe("chat");
-    expect(chatEntry?.render).toBeTypeOf("function");
-    expect(chatEntry?.onActivate).toBeUndefined();
+    expect(isOverflowViewEntryInline(chatEntry, {})).toBe(true);
+    expect(isOverflowViewEntryInline(chatEntry, { hostMode: "desktop" })).toBe(true);
+    expect(isOverflowViewEntryExpandable(chatEntry, {})).toBe(false);
+    expect(isOverflowViewEntryExpandable(chatEntry, { hostMode: "desktop" })).toBe(false);
     expect(isOverflowViewKeyVisible("chat")).toBe(true);
   });
 
-  it("renders ChatView for both compact dock and expanded pop-out surfaces", async () => {
+  it("uses the real registry renderer for a compact list that delegates conversations to dedicated windows", async () => {
     const chatEntry = findOverflowViewEntry("chat");
-    if (!chatEntry?.render) throw new Error("Expected chat registry entry to render inline");
+    if (!chatEntry?.render) throw new Error("Expected the Chat registry entry to render");
 
-    const compact = render(<>{chatEntry.render({ ...renderProps, surface: "dock", dockWidth: 360 })}</>);
-    const compactChat = await screen.findByTestId("mock-chat-view");
-    expect(compactChat).toHaveAttribute("data-project-id", "project-chat");
-    expect(compactChat).toHaveAttribute("data-has-toast", "true");
-    expect(compactChat).toHaveAttribute("data-compact-layout", "true");
-    expect(compactChat).toHaveAttribute("data-has-dock-chrome-props", "false");
-    expect(compactChat).toHaveAttribute("data-has-open-window", "true");
-    expect(compactChat).toHaveAttribute("data-list-only", "false");
-    compact.unmount();
-
-    const alphaDesktop = render(<>{chatEntry.render({ ...renderProps, hostMode: "alpha-desktop", surface: "dock", dockWidth: 900 })}</>);
-    expect(await screen.findByTestId("mock-chat-view")).toHaveAttribute("data-list-only", "true");
-    expect(screen.getByTestId("mock-chat-view")).toHaveAttribute("data-open-window-count", "1");
-    alphaDesktop.unmount();
-
-    const wideDock = render(<>{chatEntry.render({ ...renderProps, surface: "dock", dockWidth: 900 })}</>);
-    const wideDockChat = await screen.findByTestId("mock-chat-view");
-    expect(wideDockChat).toHaveAttribute("data-compact-layout", "false");
-    wideDock.unmount();
-
-    render(<>{chatEntry.render({ ...renderProps, surface: "expand" })}</>);
-    const expandedChat = await screen.findByTestId("mock-chat-view");
-    expect(expandedChat).toHaveAttribute("data-project-id", "project-chat");
-    expect(expandedChat).toHaveAttribute("data-has-toast", "true");
-    expect(expandedChat).toHaveAttribute("data-compact-layout", "false");
-    expect(expandedChat).toHaveAttribute("data-has-dock-chrome-props", "false");
-    expect(expandedChat).toHaveAttribute("data-has-open-window", "true");
+    render(<>{chatEntry.render({ ...renderProps, surface: "dock" })}</>);
+    const chat = await screen.findByTestId("mock-chat-view");
+    expect(chat).toHaveAttribute("data-project-id", "project-chat");
+    expect(chat).toHaveAttribute("data-has-toast", "true");
+    expect(chat).toHaveAttribute("data-compact-layout", "true");
+    expect(chat).toHaveAttribute("data-list-only", "true");
+    expect(chat).toHaveAttribute("data-open-window-count", "1");
+    expect(chat).toHaveAttribute("data-has-dock-chrome-props", "false");
+    expect(chat).toHaveAttribute("data-has-open-window", "true");
+    expect(chat).toHaveAttribute("data-has-report", "true");
+    // The list owns no composer, so it must never receive an external prefill: that belongs to the opened window.
+    expect(chat).not.toHaveAttribute("data-prefill");
   });
 
-  it("keeps Files as the default right-dock view when no selection is persisted", () => {
-    expect(window.localStorage.getItem(RIGHT_DOCK_VIEW_STORAGE_KEY)).toBeNull();
+  it("keeps Files as the default while restoring a persisted inline Chat selection", () => {
     expect(readStoredRightDockView({})).toBe("files");
+    window.localStorage.setItem(RIGHT_DOCK_VIEW_STORAGE_KEY, "chat");
+    expect(readStoredRightDockView({})).toBe("chat");
+    expect(readStoredRightDockView({ hostMode: "desktop" })).toBe("chat");
   });
 });

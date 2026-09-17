@@ -5,8 +5,11 @@ import {
   extractExecutorModelFromLog,
   extractPlanningModelFromLog,
   extractReviewerModelFromLog,
+  extractThinkingLevelFromLog,
   parseRuntimeModelMarker,
+  parseRuntimeModelMarkerThinkingLevel,
   resolveEffectiveExecutor,
+  resolveEffectiveThinkingLevel,
   resolveEffectivePlanning,
   resolveEffectiveTaskChat,
   resolveEffectiveValidator,
@@ -180,5 +183,129 @@ describe("effective model resolution", () => {
       defaultProvider: "mock",
       defaultModelId: "ignored",
     } as Settings)).toEqual({ provider: "mock", modelId: "scripted" });
+  });
+});
+
+/*
+FNXC:TaskLogModelThinking 2026-09-15-08:46:
+FN-410: Activity Live shows the thinking effort that actually ran. These cases pin the two halves of
+that promise: the engine's marker annotation is read wherever it sits among the parenthesized
+suffixes, and when no marker exists the displayed value follows the same lane precedence the engine
+applies — never an invented level.
+*/
+describe("effective thinking level resolution", () => {
+  it("extracts the thinking effort annotation from a runtime marker", () => {
+    expect(parseRuntimeModelMarkerThinkingLevel("Executor using model: openai/gpt-4o (thinking effort: high)", "Executor")).toBe("high");
+  });
+
+  it("finds the annotation among multiple parenthesized suffixes in any order", () => {
+    expect(
+      parseRuntimeModelMarkerThinkingLevel(
+        "Executor using model: openai/gpt-4o (thinking effort: xhigh) (fallback after timeout)",
+        "Executor",
+      ),
+    ).toBe("xhigh");
+    expect(
+      parseRuntimeModelMarkerThinkingLevel(
+        "Executor using model: openai/gpt-4o (workflow step override) (thinking effort: minimal)",
+        "Executor",
+      ),
+    ).toBe("minimal");
+  });
+
+  it("returns undefined for a marker without the annotation and for a non-matching role", () => {
+    expect(parseRuntimeModelMarkerThinkingLevel("Executor using model: openai/gpt-4o", "Executor")).toBeUndefined();
+    expect(parseRuntimeModelMarkerThinkingLevel("Reviewer using model: openai/gpt-4o (thinking effort: high)", "Executor")).toBeUndefined();
+    expect(parseRuntimeModelMarkerThinkingLevel("some unrelated line (thinking effort: high)", "Executor")).toBeUndefined();
+  });
+
+  it("treats Planning and Triage markers as one planning lane and keeps the latest value", () => {
+    const entries = [
+      log("triage", "Triage using model: legacy/legacy-model (thinking effort: low)"),
+      log("triage", "Planning using model: planning/planning-model (thinking effort: medium)"),
+    ];
+    expect(extractThinkingLevelFromLog(entries, "planning")).toBe("medium");
+    expect(extractThinkingLevelFromLog([entries[0]], "planning")).toBe("low");
+  });
+
+  it("accepts both status and text marker rows and ignores other agents", () => {
+    const entries = [
+      { ...log("executor", "Executor using model: openai/gpt-4o (thinking effort: high)"), type: "status" as const },
+      log("reviewer", "Reviewer using model: openai/o3 (thinking effort: max)"),
+    ];
+    expect(extractThinkingLevelFromLog(entries, "execution")).toBe("high");
+    expect(extractThinkingLevelFromLog(entries, "validation")).toBe("max");
+    expect(extractThinkingLevelFromLog(entries, "merger")).toBeUndefined();
+  });
+
+  it("prefers the runtime marker over every configured lane value", () => {
+    const entries = [log("executor", "Executor using model: openai/gpt-4o (thinking effort: minimal)")];
+    const task = { ...baseTask, thinkingLevel: "max" } as Task;
+    expect(
+      resolveEffectiveThinkingLevel(task, entries, "execution", { ...settings, executionThinkingLevel: "high" } as Settings),
+    ).toBe("minimal");
+  });
+
+  it("falls back to task override, then project lane, global lane, and default levels", () => {
+    const full = {
+      ...settings,
+      executionThinkingLevel: "high",
+      executionGlobalThinkingLevel: "medium",
+      defaultThinkingLevelOverride: "low",
+      defaultThinkingLevel: "minimal",
+    } as Settings;
+
+    expect(resolveEffectiveThinkingLevel({ ...baseTask, thinkingLevel: "max" } as Task, [], "execution", full)).toBe("max");
+    expect(resolveEffectiveThinkingLevel(baseTask, [], "execution", full)).toBe("high");
+    expect(
+      resolveEffectiveThinkingLevel(baseTask, [], "execution", {
+        ...full,
+        executionThinkingLevel: undefined,
+      } as Settings),
+    ).toBe("medium");
+    expect(
+      resolveEffectiveThinkingLevel(baseTask, [], "execution", {
+        ...full,
+        executionThinkingLevel: undefined,
+        executionGlobalThinkingLevel: undefined,
+      } as Settings),
+    ).toBe("low");
+    expect(
+      resolveEffectiveThinkingLevel(baseTask, [], "execution", {
+        ...full,
+        executionThinkingLevel: undefined,
+        executionGlobalThinkingLevel: undefined,
+        defaultThinkingLevelOverride: undefined,
+      } as Settings),
+    ).toBe("minimal");
+  });
+
+  it("applies the per-lane task overrides the engine applies for every phase", () => {
+    const task = {
+      ...baseTask,
+      thinkingLevel: "medium",
+      planningThinkingLevel: "high",
+      validatorThinkingLevel: "low",
+      mergerThinkingLevel: "xhigh",
+    } as Task;
+
+    expect(resolveEffectiveThinkingLevel(task, [], "planning", settings)).toBe("high");
+    expect(resolveEffectiveThinkingLevel(task, [], "execution", settings)).toBe("medium");
+    expect(resolveEffectiveThinkingLevel(task, [], "validation", settings)).toBe("low");
+    expect(resolveEffectiveThinkingLevel(task, [], "merger", settings)).toBe("xhigh");
+
+    // Planning and validation inherit the shared task level when their own override is unset;
+    // merger is independent and does NOT inherit it, matching merger.ts.
+    const shared = { ...baseTask, thinkingLevel: "medium" } as Task;
+    expect(resolveEffectiveThinkingLevel(shared, [], "planning", settings)).toBe("medium");
+    expect(resolveEffectiveThinkingLevel(shared, [], "validation", settings)).toBe("medium");
+    expect(resolveEffectiveThinkingLevel(shared, [], "merger", settings)).toBeUndefined();
+  });
+
+  it("returns undefined when no marker and no setting provides a level", () => {
+    for (const phase of ["planning", "execution", "validation", "merger"] as const) {
+      expect(resolveEffectiveThinkingLevel(baseTask, [], phase, settings)).toBeUndefined();
+      expect(resolveEffectiveThinkingLevel(baseTask, [], phase, undefined)).toBeUndefined();
+    }
   });
 });

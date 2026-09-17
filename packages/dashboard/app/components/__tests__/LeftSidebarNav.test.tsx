@@ -66,22 +66,50 @@ function expectNoSidebarBrandOrProjectAffordances(container: HTMLElement) {
   expect(container.querySelector(".left-sidebar-nav__wordmark")).toBeNull();
 }
 
-function expectCollapseToggleImmediatelyBeforeSettings() {
-  const footer = screen.getByTestId("sidebar-nav-settings").closest(".left-sidebar-nav__footer");
+/*
+FNXC:Navigation 2026-09-16-20:52:
+FN-473 moved the collapse toggle out of the footer into a sidebar header region rendered as the aside's first child.
+The old helpers asserted the retired footer contract (footer membership, `left-sidebar-nav__item` row styling, the
+"Collapse" text label); this helper encodes the new one, including the surface census that the affordance stays unique.
+*/
+function expectCollapseToggleInSidebarHeader() {
+  const sidebar = screen.getByTestId("left-sidebar-nav");
+  const header = sidebar.querySelector(".left-sidebar-nav__header");
   const toggle = screen.getByTestId("sidebar-nav-collapse-toggle");
-  const settings = screen.getByTestId("sidebar-nav-settings");
-  expect(footer).not.toBeNull();
-  expect(toggle.closest(".left-sidebar-nav__footer")).toBe(footer);
-  expect(toggle).toHaveClass("left-sidebar-nav__item");
+  const footer = screen.getByTestId("sidebar-nav-settings").closest(".left-sidebar-nav__footer");
+
+  expect(document.querySelectorAll('[data-testid="sidebar-nav-collapse-toggle"]')).toHaveLength(1);
+  expect(header).not.toBeNull();
+  expect(sidebar.firstElementChild).toBe(header);
+  expect(toggle.closest(".left-sidebar-nav__header")).toBe(header);
+  expect(toggle.closest(".left-sidebar-nav__footer")).toBeNull();
   expect(toggle).toHaveClass("left-sidebar-nav__collapse-toggle");
   expect(toggle).not.toHaveClass(obsoleteCollapseToggleFloatingClass);
-  expect(footer?.children[0]).toBe(toggle);
-  expect(toggle.nextElementSibling).toBe(settings);
-  expect(footer?.lastElementChild).toBe(settings);
+  expect(footer).not.toBeNull();
+  expect(footer?.querySelector(".left-sidebar-nav__collapse-toggle")).toBeNull();
+  expect(footer?.lastElementChild).toBe(screen.getByTestId("sidebar-nav-settings"));
+}
+
+/*
+FNXC:Navigation 2026-09-16-20:52:
+FN-473 rebuilds the toggle with the exact design of Header's `header-right-dock-toggle`: the canonical borderless
+icon-only `btn-icon` variant (FN-471), one svg glyph, no text label, and a matching title/accessible-name pair.
+*/
+function expectRightDockToggleDesignParity(expectedName: string, expectedPressed: "true" | "false") {
+  const toggle = screen.getByTestId("sidebar-nav-collapse-toggle");
+  expect(toggle).toHaveClass("btn-icon");
+  expect(toggle).not.toHaveClass("btn");
+  expect(toggle).not.toHaveClass("btn-sm");
+  expect(toggle).not.toHaveClass("left-sidebar-nav__item");
+  expect(toggle.textContent?.trim() ?? "").toBe("");
+  expect(toggle.querySelectorAll("svg")).toHaveLength(1);
+  expect(toggle).toHaveAccessibleName(expectedName);
+  expect(toggle).toHaveAttribute("title", expectedName);
+  expect(toggle).toHaveAttribute("aria-pressed", expectedPressed);
 }
 
 function expectSettingsLastInFooter() {
-  expectCollapseToggleImmediatelyBeforeSettings();
+  expectCollapseToggleInSidebarHeader();
 }
 
 function renderSidebar(overrides: Partial<ComponentProps<typeof LeftSidebarNav>> = {}) {
@@ -125,6 +153,22 @@ describe("LeftSidebarNav", () => {
     expect(within(entry).getByText("Alpha")).toBeInTheDocument();
     fireEvent.click(entry);
     expect(onChangeView).toHaveBeenCalledWith("whiteboard");
+  });
+
+  /*
+   * FN-439 cas (h) : sous la disposition barre latérale, la sidebar est le propriétaire unique de la destination List
+   * maintenant que le Header ne la produit plus sur tablette/ordinateur.
+   */
+  it("rend List comme destination de la barre latérale et route vers la vue list", () => {
+    const active = renderSidebar({ view: "list" });
+    expect(screen.getByTestId("sidebar-nav-list")).toHaveAttribute("aria-current", "page");
+    active.unmount();
+
+    const { onChangeView } = renderSidebar();
+    const entry = screen.getByTestId("sidebar-nav-list");
+    expect(entry).not.toHaveAttribute("aria-current");
+    fireEvent.click(entry);
+    expect(onChangeView).toHaveBeenCalledWith("list");
   });
 
   it("keeps general History out after the official design promotion", () => {
@@ -216,6 +260,7 @@ describe("LeftSidebarNav", () => {
     const orderedTestIds = [
       "sidebar-nav-command-center",
       "sidebar-nav-board",
+      "sidebar-nav-list",
       "sidebar-nav-planning",
       "sidebar-nav-missions",
       "sidebar-nav-agents",
@@ -236,7 +281,9 @@ describe("LeftSidebarNav", () => {
     expect(orderedIndices).toEqual([...orderedIndices].sort((a, b) => a - b));
     expect(orderedIndices.every((index) => index >= 0)).toBe(true);
     expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-command-center"))).toBeLessThan(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-agents")));
-    expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-planning"))).toBe(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-board")) + 1);
+    /* FN-439: List sits immediately after Board again, so Planning follows List instead of Board. */
+    expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-list"))).toBe(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-board")) + 1);
+    expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-planning"))).toBe(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-list")) + 1);
     expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-missions"))).toBe(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-planning")) + 1);
     expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-agents"))).toBe(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-missions")) + 1);
     expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-skills"))).toBe(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-mailbox")) + 1);
@@ -319,8 +366,8 @@ describe("LeftSidebarNav", () => {
 
     expect(screen.getByTestId("left-sidebar-nav")).toHaveStyle({ width: "224px", minWidth: "224px" });
     expect(screen.getByTestId("sidebar-nav-board")).toHaveAccessibleName("Board");
-    // FN-382: List is a right-dock tool on this host, so the rail offers no List page.
-    expect(screen.queryByTestId("sidebar-nav-list")).toBeNull();
+    // FN-439: List is a rail destination again (the Header stopped producing it on tablet/desktop), with the shortened label.
+    expect(screen.getByTestId("sidebar-nav-list")).toHaveAccessibleName("List");
     expect(screen.getByTestId("sidebar-nav-agents")).toHaveAccessibleName("Agents");
     expect(screen.getByTestId("sidebar-nav-missions")).toHaveAccessibleName("Missions");
     expect(screen.queryByRole("button", { name: /view$/i })).toBeNull();
@@ -455,31 +502,37 @@ describe("LeftSidebarNav", () => {
     },
   );
 
-  it("renders the collapse toggle in the footer above Settings in expanded and collapsed states", () => {
+  it("renders the collapse toggle in the sidebar header with right-dock design parity in expanded and collapsed states", () => {
     const { container } = renderSidebar();
     const sidebar = screen.getByTestId("left-sidebar-nav");
     const expandedToggle = screen.getByTestId("sidebar-nav-collapse-toggle");
 
     expectNoSidebarBrandOrProjectAffordances(container);
-    expectCollapseToggleImmediatelyBeforeSettings();
-    expect(expandedToggle).toHaveAttribute("aria-pressed", "false");
-    expect(expandedToggle).toHaveAccessibleName("Collapse sidebar");
-    expect(expandedToggle).toHaveAttribute("title", "Collapse sidebar");
-    expect(expandedToggle).toHaveTextContent("Collapse");
-    expect(expandedToggle.querySelector("svg")).not.toBeNull();
+    expectCollapseToggleInSidebarHeader();
+    expectRightDockToggleDesignParity("Collapse sidebar", "false");
     expect(within(sidebar).getAllByRole("button").at(-1)).toBe(screen.getByTestId("sidebar-nav-settings"));
 
     fireEvent.click(expandedToggle);
 
-    const collapsedToggle = screen.getByTestId("sidebar-nav-collapse-toggle");
     expect(sidebar.className).toContain("left-sidebar-nav--collapsed");
     expectNoSidebarBrandOrProjectAffordances(container);
-    expectCollapseToggleImmediatelyBeforeSettings();
-    expect(collapsedToggle).toHaveAttribute("aria-pressed", "true");
-    expect(collapsedToggle).toHaveAccessibleName("Expand sidebar");
-    expect(collapsedToggle).toHaveAttribute("title", "Expand sidebar");
-    expect(collapsedToggle.querySelector("svg")).not.toBeNull();
+    expectCollapseToggleInSidebarHeader();
+    expectRightDockToggleDesignParity("Expand sidebar", "true");
     expect(within(sidebar).getAllByRole("button").at(-1)).toBe(screen.getByTestId("sidebar-nav-settings"));
+  });
+
+  it("renders exactly one collapse affordance and keeps it in the header after a collapsed remount", () => {
+    const firstRender = renderSidebar();
+    expectCollapseToggleInSidebarHeader();
+    expectRightDockToggleDesignParity("Collapse sidebar", "false");
+
+    firstRender.unmount();
+    window.localStorage.setItem("fusion:left-sidebar-collapsed", "true");
+    renderSidebar();
+
+    expect(screen.getByTestId("left-sidebar-nav")).toHaveClass("left-sidebar-nav--collapsed");
+    expectCollapseToggleInSidebarHeader();
+    expectRightDockToggleDesignParity("Expand sidebar", "true");
   });
 
   it("keeps expanded depth above board content while collapsed and mobile navigation remain flat", () => {
@@ -508,9 +561,23 @@ describe("LeftSidebarNav", () => {
 
     const toggleRule = getCssRuleBlock(leftSidebarNavCss, ".left-sidebar-nav__collapse-toggle");
     expect(toggleRule).toContain("flex-shrink: 0");
-    expect(toggleRule).toContain("justify-content: flex-start");
+    // FN-473 retired the full-width footer row, so the old flex-start alignment must not linger as a dead declaration.
+    expect(toggleRule).not.toContain("justify-content");
     expect(toggleRule).not.toMatch(/#|rgb\(/i);
     expect(toggleRule).not.toMatch(/position:\s*absolute/);
+    // FN-471 canon: geometry is owned by the shared .btn-icon base, never re-declared with a forbidden box here.
+    expect(toggleRule).not.toMatch(/(?:min-)?(?:width|height|inline-size|block-size)\s*:/);
+
+    const headerRule = getCssRuleBlock(leftSidebarNavCss, ".left-sidebar-nav__header");
+    expect(headerRule).toContain("display: flex");
+    expect(headerRule).toContain("align-items: center");
+    expect(headerRule).toContain("justify-content: flex-end");
+    expect(headerRule).toContain("padding: var(--space-sm)");
+    expect(headerRule).not.toMatch(/\d+px|#|rgb\(/i);
+    expect(headerRule).not.toMatch(/40px|44px|48px|56px|64px|--touch-target-min-size|--ui-touch-height/);
+
+    const collapsedHeaderRule = getCssRuleBlock(leftSidebarNavCss, ".left-sidebar-nav--collapsed .left-sidebar-nav__header");
+    expect(collapsedHeaderRule).toContain("justify-content: center");
 
     const itemRule = getCssRuleBlock(leftSidebarNavCss, ".left-sidebar-nav__item");
     expect(itemRule).toContain("gap: var(--space-sm)");
@@ -519,7 +586,7 @@ describe("LeftSidebarNav", () => {
     expect(itemRule).not.toMatch(/#|rgb\(/i);
   });
 
-  it("toggles collapsed rail mode, keeps bottom settings reachable, and restores it on remount", () => {
+  it("toggles collapsed rail mode from the header, keeps bottom settings reachable, and restores it on remount", () => {
     const firstRender = renderSidebar();
     const sidebar = screen.getByTestId("left-sidebar-nav");
 

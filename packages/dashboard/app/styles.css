@@ -159,11 +159,35 @@ html {
   --space-2xl: 32px;
 
   /*
+  FNXC:MobileDrawer 2026-09-16-17:23:
+  Every mobile drawer opens at the same height, nearly at the top of the screen, so the usable content
+  area never changes between drawer owners. This token is the single top reveal band shared by the three
+  drawer overlays (`padding-block-start`) and by the canonical `--mobile-drawer-block-size` computation,
+  so the revealed strip that carries the scrim and the close gesture stays constant and non-zero.
+  */
+  --mobile-drawer-top-reveal: var(--space-md);
+
+  /*
   FNXC:DashboardStyling 2026-07-23-13:05:
   Mobile action controls need one shared minimum hit-area token so compact layouts can retain the
   44px accessibility floor without embedding a raw dimension in component-specific rules.
   */
   --touch-target-min-size: 44px;
+
+  /*
+  FNXC:IconOnlyButtonCanon 2026-09-16-19:05:
+  FN-471: l'application n'admet plus que DEUX variantes de bouton icône seule — sans bordure (`btn-icon`
+  seul) et avec bordure (`btn btn-icon btn-sm`). Les deux partagent cette géométrie carrée; toute boîte
+  bespoke de 40/44px pour un bouton icon-only est supprimée. La valeur mobile est 36px et non
+  `--touch-target-min-size` (44px) parce que 36px est déjà le plancher mobile historique de `.btn-icon`
+  et la hauteur de la rangée d'actions de Quick Entry, donc la référence visuelle que l'opérateur cite;
+  le plancher 44px reste réservé aux contrôles ÉTIQUETÉS, aux lignes de liste, aux onglets et aux `select`.
+  La règle de base qui consomme ces jetons reste volontairement au sélecteur nu `.btn-icon` (spécificité
+  0,1,0) : `styles.css` est chargé en DERNIER, donc toute élévation à 0,2,0 (`:not()`, sélecteur composé,
+  `!important`) écraserait par ordre les surcharges de composant existantes qui sont elles aussi à 0,2,0.
+  */
+  --icon-button-size: 28px;
+  --icon-button-size-mobile: 36px;
   /*
   FNXC:TaskModalResize 2026-07-26-10:40:
   Task-modal resize targets use the accessibility floor as an explicit hit-area
@@ -187,6 +211,16 @@ html {
   --radius-sm: 4px;
   --radius-md: 8px;
   --radius-lg: 12px;
+  /*
+  FNXC:ModalChrome 2026-09-15-13:41:
+  FN-418: a dialog laid directly on `.modal-overlay` used to open up to 80vh, which reads as a full-height
+  panel on an ordinary laptop. Its default ceiling now matches the FN-418 window opening ratio (~62% of the
+  viewport) so both dialog families look like windows rather than full screens. This ceiling applies ONLY to
+  those non-hosted dialogs (SettingsModal's nested sub-dialogs, NewTaskModal's mobile drawer): a modal hosted
+  by FloatingWindow is neutralised by `height: 100%; max-height: none` in FloatingWindow.css, so the JS
+  geometry keeps sole authority over a window's size. `dvh` follows mobile browser chrome as it retracts.
+  */
+  --modal-default-max-height: 62dvh;
   --radius-xl: 16px;
   --radius-pill: 10px;
 
@@ -248,9 +282,15 @@ html {
 
   /* Shadow tokens */
   /* FNXC:DashboardTheming 2026-06-15-00:00: Global token translucency uses color-mix(in srgb, var(--token) N%, transparent); raw RGB alpha color calls are banned outside var() fallbacks for FN-6489. */
-  --shadow-sm: 0 1px 2px color-mix(in srgb, #000000 10%, transparent);
-  --shadow-md: 0 4px 6px color-mix(in srgb, #000000 10%, transparent);
-  --shadow-lg: 0 4px 24px color-mix(in srgb, #000000 40%, transparent);
+  /*
+  FNXC:UiStyleAxis 2026-09-15-00:20:
+  Shadow GEOMETRY (offset/blur/spread) belongs to the interface-style catalogue in ui-style-tokens.css;
+  only the colour half stays here and in the colour presets, so a style can soften every elevation
+  without touching a single hue.
+  */
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in srgb, #000000 10%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, #000000 10%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, #000000 40%, transparent);
 
   /*
   FNXC:DashboardStyling 2026-07-19-14:00:
@@ -277,12 +317,31 @@ html {
   */
   --fusion-max-z: 11001;
 
-  --shadow-glow: 0 0 8px color-mix(in srgb, var(--todo) 30%, transparent);
-  --glow-success: 0 0 8px color-mix(in srgb, var(--cta-border) 30%, transparent);
-  --glow-warning: 0 0 8px color-mix(in srgb, #e3b541 30%, transparent);
-  --glow-danger: 0 0 8px color-mix(in srgb, var(--color-error) 30%, transparent);
-  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--todo) 15%, transparent);
-  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--todo) 30%, transparent);
+  /*
+  FNXC:PopoverLayering 2026-09-15-09:31:
+  FN-413 fixes dominant TRANSIENT shell surfaces (the header-anchored Usage popover, the footer "More"
+  menu on desktop/tablet/phone) that were painted on the legacy 30-101 band and therefore disappeared
+  behind any dashboard-managed window, whose shared stack starts at 10100 (floatingWindowStack.ts).
+  While such a surface is OPEN it must stay in front of every dashboard-managed window, including one
+  opened AFTER it, so it derives its layer from the LIVE ceiling instead of a static value:
+    backdrop / click-catcher : calc(var(--fusion-max-z) + 2)
+    panel                    : calc(var(--fusion-max-z) + 3)
+    global window-visibility control : calc(var(--fusion-max-z) + 4)
+  FNXC:PopoverLayering 2026-09-15-19:42:
+  FN-432 reserves the `+ 4` step for the GLOBAL window-visibility control (#dashboard-window-toggle-root). It is the
+  escape hatch that hides every dashboard-managed window, so it must never be painted under a transient panel: at `+ 2`
+  the opaque footer raised by an open More menu (`+ 3`) covered it entirely. No other surface may claim `+ 4`.
+  The ceiling is only ever CONSUMED here; FUSION_MAX_Z_FLOOR and the stack counter are never redefined
+  from CSS. Ties with other ceiling-derived consumers resolve by DOM order, which is acceptable because
+  these surfaces are mutually exclusive in practice and close on outside click/Escape/selection.
+  */
+
+  --shadow-glow: var(--ui-shadow-glow-geometry) color-mix(in srgb, var(--todo) 30%, transparent);
+  --glow-success: var(--ui-shadow-glow-geometry) color-mix(in srgb, var(--cta-border) 30%, transparent);
+  --glow-warning: var(--ui-shadow-glow-geometry) color-mix(in srgb, #e3b541 30%, transparent);
+  --glow-danger: var(--ui-shadow-glow-geometry) color-mix(in srgb, var(--color-error) 30%, transparent);
+  --focus-ring: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--todo) 15%, transparent);
+  --focus-ring-strong: var(--ui-focus-ring-geometry) color-mix(in srgb, var(--todo) 30%, transparent);
 
   /* Animation tokens.
      --duration-* are bare durations, safe anywhere (animation shorthands,
@@ -671,10 +730,10 @@ svg.spinning {
   --status-color-modified: #0969da;
   --status-color-deleted: #cf222e;
   --status-color-unknown: #6e7781;
-  --shadow-sm: 0 1px 2px color-mix(in srgb, var(--text) 8%, transparent);
-  --shadow-md: 0 4px 6px color-mix(in srgb, var(--text) 12%, transparent);
-  --shadow-lg: 0 4px 24px color-mix(in srgb, var(--text) 15%, transparent);
-  --shadow-glow: 0 0 8px color-mix(in srgb, var(--todo) 18%, transparent);
+  --shadow-sm: var(--ui-shadow-sm-geometry) color-mix(in srgb, var(--text) 8%, transparent);
+  --shadow-md: var(--ui-shadow-md-geometry) color-mix(in srgb, var(--text) 12%, transparent);
+  --shadow-lg: var(--ui-shadow-lg-geometry) color-mix(in srgb, var(--text) 15%, transparent);
+  --shadow-glow: var(--ui-shadow-glow-geometry) color-mix(in srgb, var(--todo) 18%, transparent);
   --glow-success: 0 0 8px color-mix(in srgb, var(--color-success) 30%, transparent);
   --glow-warning: 0 0 8px color-mix(in srgb, var(--color-warning) 30%, transparent);
   --glow-danger: 0 0 8px color-mix(in srgb, var(--color-error) 30%, transparent);
@@ -1000,6 +1059,56 @@ body {
   overflow: hidden;
 }
 
+/*
+FNXC:IconOnlyButtonCanon 2026-09-16-19:05:
+FN-471 : variante canonique n°1 — bouton icône SANS bordure (`btn-icon` seul). Cette peinture vivait dans
+`Header.css`, un fichier de composant, alors qu'elle est globale; elle est déplacée ici sans changer son
+sélecteur ni sa spécificité (0,1,0), de sorte que toutes les surcharges de composant à 0,2,0 continuent
+de la battre exactement comme avant.
+Elle est déclarée AVANT `.btn` à dessein : la variante encadrée hérite ainsi bordure, fond et couleur de
+`.btn` par ordre de document DANS UN SEUL FICHIER, au lieu de dépendre du hasard d'ordre d'injection entre
+`Header.css` et `styles.css` (`main.tsx` importe `./App` avant `./styles.css`).
+*/
+.btn-icon {
+  --btn-icon-size: var(--icon-size-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--icon-button-size);
+  height: var(--icon-button-size);
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  font-size: 18px;
+  line-height: 0;
+  cursor: pointer;
+  transition:
+    color var(--transition-fast),
+    background var(--transition-fast);
+}
+
+.btn-icon svg {
+  stroke: currentColor;
+}
+
+@media (hover: hover) {
+  .btn-icon:hover {
+    color: var(--text);
+    background: var(--border);
+  }
+}
+
+.btn-icon:focus-visible {
+  box-shadow: var(--focus-ring-strong);
+  outline: none;
+}
+
+.btn-icon:active {
+  opacity: 0.7;
+}
+
 /* === Buttons === */
 .btn {
   padding: var(--btn-padding);
@@ -1102,9 +1211,20 @@ body {
   gap: 4px;
 }
 
-.btn-icon {
-  --btn-icon-size: var(--icon-size-md);
-  line-height: 0;
+/*
+FNXC:IconOnlyButtonCanon 2026-09-16-19:05:
+FN-471 : variante canonique n°2 — bouton icône AVEC bordure (`btn btn-icon btn-sm`). Le seul rôle de ce
+sélecteur composé (0,2,0) est de garantir le cadre quel que soit l'ordre d'injection, puisque la base
+borderless au-dessus déclare `border: none`. Il ne déclare délibérément NI dimension, NI fond, NI couleur :
+- une dimension à 0,2,0 écraserait par ordre les géométries de composant à égalité de spécificité,
+  notamment le groupe primaire de Quick Entry, dont la taille est une décision opérateur;
+- un fond ou une couleur écraserait `.btn-primary`/`.btn-task-create` (0,1,0), utilisés conjointement avec
+  `btn-icon` (Quick Entry, GitManager, envoi du chat de tâche), et entrerait en conflit avec les thèmes.
+Bordure-couleur, fond et couleur viennent donc de `.btn`, déclaré juste après la base.
+*/
+.btn.btn-icon {
+  border-style: solid;
+  border-width: var(--btn-border-width);
 }
 
 .btn-icon > svg {
@@ -1361,12 +1481,37 @@ Operator feedback requires one readable pixel face for ordinary prose, links, da
 }
 
 /*
-FNXC:DashboardTheming 2026-08-28-07:45:
-The shared .btn rule hardcodes its font size, so Cozy Cartoon needs this single token-backed typography override to make ordinary buttons visibly larger. The compact exclusions preserve every .btn-sm/.btn--sm control, including the height-pinned Quick Add action row, while omitting height and min-height lets the desktop ViewHeader clamp keep trimming enlarged button padding without stretching headers.
+FNXC:UiStyleAxis 2026-09-15-00:20:
+REMOVED: the Cozy Cartoon button typography override (`--cozy-cartoon-btn-font-size` /
+`--cozy-cartoon-btn-font-weight`). Since FN-399 a colour preset decides colour, never shape, so button
+type scale and weight belong to the interface style. Reinstating a per-theme shape rule here would
+re-couple the two axes the product now presents as independent.
 */
-[data-color-theme="cozy-cartoon"] .btn:not(.btn-sm):not(.btn--sm) {
-  font-size: var(--cozy-cartoon-btn-font-size);
-  font-weight: var(--cozy-cartoon-btn-font-weight);
+
+/*
+FNXC:TabStripTextSelection 2026-09-15-14:23:
+FN-423: a click-drag on a tab row must only scroll the row, never start a native text selection.
+The suppression is UNCONDITIONAL rather than tied to the panning state because `useHorizontalMousePan`
+can only `preventDefault()` after its 4px intent threshold, so the browser has already begun a
+selection (blue highlight plus selection-autoscroll) before any `is-mouse-panning` class exists.
+This primitive lives in the global stylesheet because it is transversal to a dozen tab-strip
+components; duplicating it into each component CSS is exactly the drift the reuse rule forbids.
+The selector list is `[role="tablist"]` plus the audited inventory of tab rows that carry no role.
+Grammar, specificity and source order copy `FNXC:BoardTextSelection` in `Board.css` literally: broad
+suppression first, then a MORE SPECIFIC editable carve-out so inputs inside a strip keep native
+selection independently of CSS import order.
+*/
+:is([role="tablist"], .mailbox-tabs, .mailbox-agent-subtabs, .terminal-tabs, .terminal-mobile-tabs, .settings-sidebar, .agent-detail-tabs, .wf-mobile-tabs, .prompt-manager-tabs, .project-filter-tabs),
+:is([role="tablist"], .mailbox-tabs, .mailbox-agent-subtabs, .terminal-tabs, .terminal-mobile-tabs, .settings-sidebar, .agent-detail-tabs, .wf-mobile-tabs, .prompt-manager-tabs, .project-filter-tabs) * {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+:is([role="tablist"], .mailbox-tabs, .mailbox-agent-subtabs, .terminal-tabs, .terminal-mobile-tabs, .settings-sidebar, .agent-detail-tabs, .wf-mobile-tabs, .prompt-manager-tabs, .project-filter-tabs) :is(input, textarea, select, [contenteditable="true"]) {
+  user-select: text;
+  -webkit-user-select: text;
+  -webkit-touch-callout: default;
 }
 
 .modal {
@@ -1375,7 +1520,7 @@ The shared .btn rule hardcodes its font size, so Cozy Cartoon needs this single 
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   width: 480px;
-  max-height: 80vh;
+  max-height: var(--modal-default-max-height, 62dvh);
   box-shadow: var(--shadow-lg);
   display: flex;
   flex-direction: column;
@@ -2760,119 +2905,12 @@ Task cards reuse the compact badge chip dimensions for GitLab links, but stale G
   flex-shrink: 0;
 }
 
-/* === Step Progress === */
 /*
-FNXC:TaskDetailDefinition 2026-09-12-22:52:
-La progression de Définition est une liste lisible plutôt qu’une rangée de segments sans libellé. La barre résume l’avancement et chaque ligne conserve nom, origine et statut accessibles avec les couleurs sémantiques existantes.
+FNXC:TaskDetailDefinition 2026-09-14-20:00:
+FN-391 moved the Task Detail step-progress rules out of this global file and into
+TaskDetailModal.css, where the component's own CSS belongs. Only tokens, primitives and
+cross-component media overrides stay here.
 */
-.detail-step-progress {
-  margin-top: var(--space-lg);
-}
-
-.detail-progress-heading {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-md);
-  margin-bottom: var(--space-sm);
-}
-
-.detail-step-progress h4,
-.detail-definition-description h4 {
-  margin: 0;
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
-  font-weight: 600;
-}
-
-.step-progress-track {
-  block-size: var(--space-xs);
-  overflow: hidden;
-  border-radius: var(--radius-pill);
-  background: var(--bg-tertiary);
-}
-
-.step-progress-track > span {
-  display: block;
-  block-size: 100%;
-  border-radius: inherit;
-  background: var(--color-success);
-  transition: inline-size var(--transition-normal);
-}
-
-.detail-step-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-xs);
-  margin: var(--space-md) 0 0;
-  padding: 0;
-  list-style: none;
-}
-
-.detail-step-item {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
-  align-items: center;
-  gap: var(--space-sm);
-  padding: var(--space-sm);
-  border-radius: var(--radius-md);
-  color: var(--text);
-}
-
-.detail-step-item:is(:hover, :focus-within) {
-  background: var(--surface-hover);
-}
-
-.detail-step-indicator {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  inline-size: var(--space-lg);
-  block-size: var(--space-lg);
-  border: var(--border-width) solid currentColor;
-  border-radius: var(--radius-sm);
-}
-
-.detail-step-indicator .status-dot {
-  background: currentColor;
-}
-
-.detail-step-name {
-  min-inline-size: 0;
-  overflow-wrap: anywhere;
-}
-
-.detail-step-origin,
-.detail-step-status,
-.step-progress-label {
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
-}
-
-.detail-step-origin {
-  padding: calc(var(--space-xs) / 2) var(--space-sm);
-  border-radius: var(--radius-pill);
-  background: var(--bg-secondary);
-}
-
-.detail-step-status {
-  min-inline-size: max-content;
-}
-
-.step-progress-empty {
-  color: var(--text-dim);
-  font-size: var(--font-size-sm);
-}
-
-@media (max-width: 768px) {
-  .detail-step-item {
-    grid-template-columns: auto minmax(0, 1fr) auto;
-  }
-
-  .detail-step-origin {
-    display: none;
-  }
-}
 
 /* === Activity Timeline === */
 /*
@@ -3020,6 +3058,19 @@ The supported plugin overlay mount spans the viewport in the root stacking conte
   inset: 0;
   z-index: calc(var(--fusion-max-z, 11001) + 1);
   pointer-events: none;
+}
+
+/*
+FNXC:DashboardWindowVisibility 2026-09-14-10:52:
+Every declaratively registered modal host remains mounted while a global snapshot is hidden. The shared marker removes it from paint, hit testing, and accessibility interaction without changing owner visibility, geometry, or stack order.
+*/
+[data-dashboard-window-globally-hidden="true"] {
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+.dashboard-window-surface-root--contents {
+  display: contents;
 }
 
 /* === Toasts === */
@@ -3781,9 +3832,14 @@ Toast text must contrast its status background across every dashboard theme and 
     min-height: 36px;
   }
 
+  /*
+  FNXC:IconOnlyButtonCanon 2026-09-16-19:05:
+  FN-471 : même plancher mobile qu'avant (36px), mais exprimé par le jeton canonique partagé avec la
+  géométrie de base, de sorte qu'aucune surface ne redéclare une boîte d'icône seule en dur.
+  */
   .btn-icon {
-    min-width: 36px;
-    min-height: 36px;
+    min-width: var(--icon-button-size-mobile);
+    min-height: var(--icon-button-size-mobile);
   }
 
   /* Column-header action buttons (e.g. archive) stay compact */
@@ -4219,7 +4275,7 @@ FNXC:Navigation 2026-06-22-00:00:
 Board card clicks open task detail as a full main-content view that replaces the board ("Full main panel" design). This layout fills the main content area with a scrollable embedded TaskDetailContent body. Theme tokens only; mobile shell renders it unchanged because the panel just fills its host.
 
 FNXC:TaskDetailDrawerNavigation 2026-09-12-20:37:
-The panel and its body remain width-bounded so embedded detail cannot exceed the full-width host; the body scrolls vertically only. Desktop Board presentation keeps Back to board inside the TaskDetailContent header, while Alpha mobile uses its canonical Close action instead.
+The panel and its body remain width-bounded so embedded detail cannot exceed the full-width host; the body scrolls vertically only. Desktop Board presentation keeps Back to board inside the TaskDetailContent header, while the mobile drawer uses its canonical Close action instead.
 */
 .task-detail-main-panel {
   display: flex;
@@ -4243,12 +4299,12 @@ The panel and its body remain width-bounded so embedded detail cannot exceed the
 
 /*
 FNXC:MobileDrawerMotion 2026-09-12-20:37:
-All mobile drawer presentations share one bottom-edge entry contract. Animate the individual translate property so FloatingWindow geometry and drag-dismiss transforms remain independent; nested Task Detail content opts out when the Alpha shell already owns this motion. The mobile gate and reduced-motion override preserve desktop, tablet, and motion-sensitive presentations.
+All mobile drawer presentations share one bottom-edge entry contract. Animate the individual translate property so FloatingWindow geometry and drag-dismiss transforms remain independent; nested Task Detail content opts out when the drawer shell already owns this motion. The mobile gate and reduced-motion override preserve desktop, tablet, and motion-sensitive presentations.
 
 FNXC:MobileDrawerMotion 2026-09-12-21:02:
 Task Detail motion follows the canonical viewport-mode attribute rather than the width breakpoint. A phone-class physical screen remains mobile in a short landscape viewport wider than 768 CSS pixels and must retain the same bottom-edge entry.
 */
-@keyframes alpha-mobile-drawer-rise-in {
+@keyframes mobile-drawer-rise-in {
   from {
     opacity: 0;
     translate: 0 var(--space-xl);
@@ -4261,7 +4317,7 @@ Task Detail motion follows the canonical viewport-mode attribute rather than the
 }
 
 html[data-viewport-mode="mobile"] .task-detail-main-panel--mobile-transition {
-  animation: alpha-mobile-drawer-rise-in var(--duration-normal) ease-out;
+  animation: mobile-drawer-rise-in var(--duration-normal) ease-out;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -4271,25 +4327,25 @@ html[data-viewport-mode="mobile"] .task-detail-main-panel--mobile-transition {
 }
 
 /*
-FNXC:AlphaMobileDrawer 2026-09-10-04:41:
-Every Alpha mobile destination and utility must fit the shared narrow drawer without making the viewport its horizontal scroller. Existing responsive components keep their own semantic layout; this cross-component boundary only supplies shrinkability, wrapped headers/actions, local table overflow, and one-column form containment.
+FNXC:MobileDrawer 2026-09-10-04:41:
+Every mobile destination and utility must fit the shared narrow drawer without making the viewport its horizontal scroller. Existing responsive components keep their own semantic layout; this cross-component boundary only supplies shrinkability, wrapped headers/actions, local table overflow, and one-column form containment.
 */
-html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] {
-  --alpha-mobile-drawer-block-size: calc(100dvh - env(safe-area-inset-top, 0px) - var(--space-2xl));
+html[data-mobile-drawers="true"][data-viewport-mode="mobile"] {
+  --mobile-drawer-block-size: calc(100dvh - env(safe-area-inset-top, 0px) - var(--mobile-drawer-top-reveal));
 }
 
-html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] :is(.alpha-mobile-drawer__body, .floating-window--alpha-mobile-drawer .floating-window__body) {
+html[data-mobile-drawers="true"][data-viewport-mode="mobile"] :is(.mobile-drawer__body, .floating-window--mobile-drawer .floating-window__body) {
   min-width: 0;
   max-width: 100%;
   overflow-x: hidden;
 }
 
-html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] :is(.alpha-mobile-drawer__body, .floating-window--alpha-mobile-drawer) :is(.view-header, .modal-header, .modal-actions) {
+html[data-mobile-drawers="true"][data-viewport-mode="mobile"] :is(.mobile-drawer__body, .floating-window--mobile-drawer) :is(.view-header, .modal-header, .modal-actions) {
   flex-wrap: wrap;
   max-width: 100%;
 }
 
-html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] :is(.alpha-mobile-drawer__body, .floating-window--alpha-mobile-drawer) :is(table, form, fieldset, .settings-layout, .github-import-content) {
+html[data-mobile-drawers="true"][data-viewport-mode="mobile"] :is(.mobile-drawer__body, .floating-window--mobile-drawer) :is(table, form, fieldset, .settings-layout, .github-import-content) {
   min-width: 0;
   max-width: 100%;
 }

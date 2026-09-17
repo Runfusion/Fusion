@@ -1,0 +1,48 @@
+/*
+FNXC:DashboardWindowVisibility 2026-09-14-10:52:
+The placeholder owns footer layout while the body portal follows its painted rectangle above the live dashboard z ceiling. The full-screen host never accepts pointers; only its token-styled control is interactive.
+
+FNXC:DashboardWindowVisibility 2026-09-15-19:42:
+FN-432: ce contrôle global d'échappement doit rester visible et cliquable même pendant qu'une surface transitoire
+dominante est ouverte. À `+2` il passait sous le footer élevé par le menu More ouvert (`+3`), dont le fond opaque
+recouvrait exactement le rectangle mesuré du bouton portalisé. Le calque réservé `+4` le place au-dessus de toutes ces
+surfaces; le host reste `pointer-events: none` et le masquage mobile est inchangé.
+*/
+#dashboard-window-toggle-root {
+  position: fixed;
+  inset: 0;
+  z-index: calc(var(--fusion-max-z) + 4);
+  pointer-events: none;
+}
+
+.dashboard-window-visibility-toggle__placeholder {
+  display: block;
+  align-self: stretch;
+  flex: 0 0 var(--touch-target-min-size);
+  min-inline-size: var(--touch-target-min-size);
+  border-inline-start: thin solid var(--border);
+}
+
+.dashboard-window-visibility-toggle__button {
+  position: absolute;
+  inset-inline-start: var(--dashboard-window-toggle-left);
+  inset-block-start: var(--dashboard-window-toggle-top);
+  inline-size: var(--dashboard-window-toggle-width);
+  block-size: var(--dashboard-window-toggle-height);
+  min-inline-size: 0;
+  min-block-size: 0;
+  border-radius: 0;
+  pointer-events: auto;
+}
+
+.dashboard-window-visibility-toggle__button svg {
+  inline-size: var(--icon-size-sm);
+  block-size: var(--icon-size-sm);
+}
+
+@media (max-width: 768px) {
+  #dashboard-window-toggle-root,
+  .dashboard-window-visibility-toggle__placeholder {
+    display: none;
+  }
+}

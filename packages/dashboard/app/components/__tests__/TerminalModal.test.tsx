@@ -48,21 +48,52 @@ function defineMetric(element: Element, property: "clientWidth" | "scrollWidth",
   Object.defineProperty(element, property, { configurable: true, value });
 }
 
-function expectTerminalDisplayModeControlsBeforeClose(): void {
+/*
+FN-409 gave the header exactly ONE presentation control (detach / re-attach). FN-438 REMOVED it: switching
+presentation is a pointer gesture, so the header must carry NO presentation control at all, and the removal must
+leave no empty shell or orphaned wrapper — close stays the final header child.
+*/
+function expectNoTerminalDisplayModeControls(): void {
   const header = document.querySelector<HTMLElement>(".terminal-header");
   expect(header).not.toBeNull();
 
-  const pinToggle = screen.getByTestId("terminal-pin-toggle");
-  const popoutToggle = screen.getByTestId("terminal-popout-toggle");
-  const closeButton = screen.getByTestId("terminal-close-btn");
-
-  for (const control of [pinToggle, popoutToggle]) {
-    expect(control.parentElement).toBe(header);
-    expect(control.compareDocumentPosition(closeButton) & Node.DOCUMENT_POSITION_FOLLOWING)
-      .toBe(Node.DOCUMENT_POSITION_FOLLOWING);
-  }
-  expect(popoutToggle.nextElementSibling).toBe(closeButton);
+  expect(screen.queryByTestId("terminal-pin-toggle")).toBeNull();
+  expect(screen.queryByTestId("terminal-popout-toggle")).toBeNull();
   expect(header!.querySelector(".terminal-actions")).toBeNull();
+  expect(header!.querySelector("[data-testid='terminal-popout-toggle']")).toBeNull();
+
+  const closeButton = screen.getByTestId("terminal-close-btn");
+  expect(closeButton.parentElement).toBe(header);
+  expect(closeButton.nextElementSibling).toBeNull();
+}
+
+function prepareTerminalPointerCapture(target: HTMLElement) {
+  Object.defineProperty(target, "setPointerCapture", { configurable: true, value: vi.fn() });
+  Object.defineProperty(target, "releasePointerCapture", { configurable: true, value: vi.fn() });
+}
+
+/*
+FN-438: the pinned header IS the detach handle. Tests that used to click the removed pop-out button now replay
+the real gesture.
+*/
+function detachTerminalByHeaderDrag(pointerId = 201): void {
+  const header = document.querySelector<HTMLElement>(".terminal-header")!;
+  prepareTerminalPointerCapture(header);
+  fireEvent.pointerDown(header, { pointerId, pointerType: "mouse", button: 0, clientX: 500, clientY: 400 });
+  fireEvent.pointerMove(header, { pointerId, pointerType: "mouse", clientX: 500, clientY: 340 });
+  fireEvent.pointerUp(header, { pointerId, pointerType: "mouse", clientX: 500, clientY: 340 });
+}
+
+/*
+FN-438: re-pinning is a drag that brings the detached window's bottom edge onto the bottom bar. The travel is
+larger than the viewport so the position clamp lands the bottom edge exactly on the contact line.
+*/
+function repinTerminalByFooterContact(pointerId = 202): void {
+  const header = document.querySelector<HTMLElement>(".terminal-header")!;
+  prepareTerminalPointerCapture(header);
+  fireEvent.pointerDown(header, { pointerId, pointerType: "mouse", button: 0, clientX: 500, clientY: 300 });
+  fireEvent.pointerMove(header, { pointerId, pointerType: "mouse", clientX: 500, clientY: 300 + window.innerHeight });
+  fireEvent.pointerUp(header, { pointerId, pointerType: "mouse", clientX: 500, clientY: 300 + window.innerHeight });
 }
 
 function expectTerminalCloseAfterNewTerminal(newTerminalTestId: string): void {
@@ -703,7 +734,7 @@ describe("TerminalModal", () => {
     render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
 
     const modal = await screen.findByTestId("terminal-modal");
-    expect(modal).toHaveClass("terminal-modal--docked");
+    expect(modal).toHaveClass("terminal-modal--below");
     const trigger = screen.getByLabelText("Select terminal workspace: Project Root");
     expect(trigger).toHaveAttribute("aria-haspopup", "listbox");
     expect(trigger).toHaveAttribute("aria-expanded", "false");
@@ -784,11 +815,11 @@ describe("TerminalModal", () => {
     expect(screen.getByText("No worktree").closest("button")).toBeDisabled();
   });
 
+  // FN-409 removed the docked presentation; the non-mobile matrix is now pinned (`below`) and detached (`floating`).
   it.each([
-    ["docked", { projectId: "workspace-picker-docked", displayMode: "docked", embedded: false, mobile: false }],
-    ["below", { projectId: "workspace-picker-below", displayMode: "below", embedded: false, mobile: false }],
-    ["embedded", { projectId: "workspace-picker-embedded", displayMode: "docked", embedded: true, mobile: false }],
-    ["mobile", { projectId: "workspace-picker-mobile", displayMode: "docked", embedded: false, mobile: true }],
+    ["pinned", { projectId: "workspace-picker-below", displayMode: "below", embedded: false, mobile: false }],
+    ["embedded", { projectId: "workspace-picker-embedded", displayMode: "below", embedded: true, mobile: false }],
+    ["mobile", { projectId: "workspace-picker-mobile", displayMode: "below", embedded: false, mobile: true }],
   ])("keeps the workspace picker positioned in %s terminal mode", async (_label, config) => {
     mockPopulatedTerminalWorkspaces();
     const previousInnerWidth = window.innerWidth;
@@ -820,9 +851,7 @@ describe("TerminalModal", () => {
         expect(screen.getByTestId("terminal-embedded-host")).toBeInTheDocument();
       } else if (config.mobile) {
         expect(modal).not.toHaveClass("terminal-modal--floating");
-        expect(modal).not.toHaveClass("terminal-modal--docked");
-      } else {
-        expect(modal).toHaveClass("terminal-modal--docked");
+        expect(modal).not.toHaveClass("terminal-modal--below");
       }
 
       const trigger = screen.getByLabelText("Select terminal workspace: Project Root");
@@ -880,7 +909,7 @@ describe("TerminalModal", () => {
     try {
       render(<TerminalModal isOpen={true} onClose={mockOnClose} projectId="mobile-picker" />);
       const mobileModal = await screen.findByTestId("terminal-modal");
-      expect(mobileModal).not.toHaveClass("terminal-modal--docked");
+      expect(mobileModal).not.toHaveClass("terminal-modal--below");
       expect(mobileModal).not.toHaveClass("terminal-modal--floating");
       const trigger = screen.getByLabelText("Select terminal workspace: Project Root");
       vi.spyOn(trigger, "getBoundingClientRect").mockReturnValue({
@@ -987,111 +1016,232 @@ describe("TerminalModal", () => {
     expect(mobileRule).toContain("-webkit-overflow-scrolling: touch;");
   });
 
-  it("renders desktop terminal as a docked bottom panel and refits after top-handle resize", async () => {
-    const projectId = "docked-resize-test";
+  /*
+  FN-434 symptom acceptance (1): the pinned panel is a FIXED height. The retired gesture computed
+  `startHeight + (clientY - startY)` from a TOP-edge grip, so dragging UP (the enlarge gesture) shrank the panel.
+  Both directions must now leave the panel height untouched and must write no height preference at all.
+  */
+  it("renders the desktop terminal pinned below the application at a fixed height that no drag can change", async () => {
+    const projectId = "pinned-resize-test";
     window.localStorage.removeItem(`fusion:terminal-docked-height-${projectId}`);
 
     render(<TerminalModal isOpen={true} onClose={mockOnClose} projectId={projectId} />);
 
     const modal = await screen.findByTestId("terminal-modal");
     await waitFor(() => expect(mockTerminalInstance.open).toHaveBeenCalled());
-    expect(modal).toHaveClass("terminal-modal--docked");
+    // FN-409: pinned is the DEFAULT non-mobile presentation; the docked overlay it replaced no longer exists.
+    expect(modal).toHaveClass("terminal-modal--below");
     expect(modal).not.toHaveClass("terminal-modal--floating");
+    expect(screen.getByTestId("terminal-below-host")).toBeInTheDocument();
 
-    const fitCallBaseline = mockFitAddonFit.mock.calls.length;
-    // FNXC:Terminal 2026-06-22-19:50: The resize handlers now capture the pointer and listen on the CAPTURED handle element (not document), so move/up are fired on the handle with the matching pointerId; stub setPointerCapture/releasePointerCapture (jsdom no-ops).
-    const handle = screen.getByTestId("terminal-docked-resize-handle") as HTMLElement & { setPointerCapture: (pointerId: number) => void; releasePointerCapture: (pointerId: number) => void };
-    handle.setPointerCapture = vi.fn();
-    handle.releasePointerCapture = vi.fn();
+    const initialHeight = modal.style.getPropertyValue("--terminal-below-height");
+    expect(initialHeight).not.toBe("");
 
-    fireEvent.pointerDown(handle, { pointerId: 1, clientY: 500 });
-    fireEvent.pointerMove(handle, { pointerId: 1, clientY: 420 });
-    fireEvent.pointerUp(handle, { pointerId: 1 });
+    const grabPinnedHandle = (): HTMLElement => {
+      const handle = screen.getByTestId("terminal-pinned-drag-handle") as HTMLElement & {
+        setPointerCapture: (pointerId: number) => void;
+        releasePointerCapture: (pointerId: number) => void;
+      };
+      handle.setPointerCapture = vi.fn();
+      handle.releasePointerCapture = vi.fn();
+      return handle;
+    };
+    const pinnedHeight = (): string =>
+      screen.getByTestId("terminal-modal").style.getPropertyValue("--terminal-below-height");
 
-    await waitFor(() => {
-      expect(window.localStorage.getItem(`fusion:terminal-docked-height-${projectId}`)).toBe("440");
-      expect(mockFitAddonFit.mock.calls.length).toBeGreaterThan(fitCallBaseline);
-    });
+    /*
+    FN-438 lowered the detach threshold to FloatingWindow's shared 6px click threshold, so these sub-threshold
+    gestures are the ones that must remain plain clicks: they change no height AND leave the panel pinned.
+    */
+    const upHandle = grabPinnedHandle();
+    fireEvent.pointerDown(upHandle, { pointerId: 1, clientY: 500 });
+    fireEvent.pointerMove(upHandle, { pointerId: 1, clientY: 496 });
+    expect(pinnedHeight()).toBe(initialHeight);
+    fireEvent.pointerUp(upHandle, { pointerId: 1 });
+    expect(pinnedHeight()).toBe(initialHeight);
+    expect(screen.getByTestId("terminal-modal")).toHaveClass("terminal-modal--below");
+
+    const downHandle = grabPinnedHandle();
+    fireEvent.pointerDown(downHandle, { pointerId: 2, clientY: 500 });
+    fireEvent.pointerMove(downHandle, { pointerId: 2, clientY: 504 });
+    expect(pinnedHeight()).toBe(initialHeight);
+    fireEvent.pointerUp(downHandle, { pointerId: 2 });
+    expect(pinnedHeight()).toBe(initialHeight);
+    expect(screen.getByTestId("terminal-modal")).toHaveClass("terminal-modal--below");
+
+    // A gesture past the threshold detaches instead of resizing: still no height is ever recorded.
+    const detachHandle = grabPinnedHandle();
+    fireEvent.pointerDown(detachHandle, { pointerId: 3, clientY: 500 });
+    fireEvent.pointerMove(detachHandle, { pointerId: 3, clientY: 540 });
+    fireEvent.pointerUp(detachHandle, { pointerId: 3 });
+    await waitFor(() => expect(screen.getByTestId("terminal-modal")).toHaveClass("terminal-modal--floating"));
+
+    expect(window.localStorage.getItem(`fusion:terminal-docked-height-${projectId}`)).toBeNull();
   });
 
-  it("toggles between docked and floating terminal modes with the pop-out control", async () => {
+  /*
+  FN-438: the pop-out button is gone; this round trip is now driven by the two real gestures — drag the pinned
+  header out, drag the window back down onto the bottom bar.
+  */
+  it("toggles between the pinned panel and the detached window with drag gestures alone", async () => {
     render(<TerminalModal isOpen={true} onClose={mockOnClose} projectId="popout-toggle-test" />);
 
     const modal = await screen.findByTestId("terminal-modal");
-    expect(modal).toHaveClass("terminal-modal--docked");
+    expect(modal).toHaveClass("terminal-modal--below");
     expect(screen.queryByTestId("terminal-drag-grip")).toBeNull();
-    expect(screen.getByTestId("terminal-docked-resize-handle")).toBeInTheDocument();
+    expect(screen.getByTestId("terminal-pinned-drag-handle")).toBeInTheDocument();
+    expect(screen.queryByTestId("terminal-popout-toggle")).toBeNull();
 
-    fireEvent.click(screen.getByTestId("terminal-popout-toggle"));
+    detachTerminalByHeaderDrag();
 
     await waitFor(() => {
       expect(screen.getByTestId("terminal-modal")).toHaveClass("terminal-modal--floating");
-      expect(screen.getByTestId("terminal-modal")).not.toHaveClass("terminal-modal--docked");
+      expect(screen.getByTestId("terminal-modal")).not.toHaveClass("terminal-modal--below");
       expect(screen.queryByTestId("terminal-drag-grip")).toBeNull();
       expect(screen.getByTestId("floating-window-resize-se")).toBeInTheDocument();
     });
+    expect(screen.queryByTestId("terminal-popout-toggle")).toBeNull();
 
-    const floatingWindow = screen.getByTestId("floating-window-terminal-popout-toggle-test") as HTMLElement & {
-      setPointerCapture: (pointerId: number) => void;
-    };
-    floatingWindow.setPointerCapture = vi.fn();
-    fireEvent.pointerDown(screen.getByTestId("terminal-popout-toggle"), { pointerId: 73, clientX: 100, clientY: 100 });
-    expect(floatingWindow.setPointerCapture).not.toHaveBeenCalled();
+    repinTerminalByFooterContact();
 
-    fireEvent.click(screen.getByTestId("terminal-popout-toggle"));
-
+    // Re-attaching returns to the pinned presentation, not to a removed overlay presentation.
     await waitFor(() => {
-      expect(modal).toHaveClass("terminal-modal--docked");
-      expect(screen.getByTestId("terminal-docked-resize-handle")).toBeInTheDocument();
+      expect(screen.getByTestId("terminal-modal")).toHaveClass("terminal-modal--below");
+      expect(screen.getByTestId("terminal-below-host")).toBeInTheDocument();
+      expect(screen.getByTestId("terminal-pinned-drag-handle")).toBeInTheDocument();
+      expect(window.localStorage.getItem("fusion:terminal-display-mode-popout-toggle-test")).toBe("below");
     });
   });
 
-  it("defaults missing and invalid display-mode storage to overlay docked mode", async () => {
-    const missingProjectId = "missing-display-mode-test";
-    window.localStorage.removeItem(`fusion:terminal-display-mode-${missingProjectId}`);
+  /*
+  FN-409 symptom acceptance (1): with nothing stored, with the retired "docked" value stored, and with an invalid
+  value stored, the non-mobile terminal must render pinned and must NEVER apply the removed docked class.
+  Replaces "defaults missing and invalid display-mode storage to overlay docked mode", whose subject (the docked
+  default) was removed by FN-409.
+  */
+  it.each([
+    ["missing storage", null],
+    ["legacy docked storage", "docked"],
+    ["explicit below storage", "below"],
+    ["invalid storage", "garbage"],
+  ])("opens the non-mobile terminal pinned with %s", async (label, stored) => {
+    const projectId = `default-pinned-${label.replace(/\s+/g, "-")}`;
+    if (stored === null) {
+      window.localStorage.removeItem(`fusion:terminal-display-mode-${projectId}`);
+    } else {
+      window.localStorage.setItem(`fusion:terminal-display-mode-${projectId}`, stored);
+    }
 
-    const { unmount } = render(<TerminalModal isOpen={true} onClose={mockOnClose} projectId={missingProjectId} />);
-    expect(await screen.findByTestId("terminal-modal")).toHaveClass("terminal-modal--docked");
-    expect(screen.getByTestId("terminal-modal-overlay")).toBeInTheDocument();
-    expect(screen.queryByTestId("terminal-below-host")).toBeNull();
-    unmount();
-
-    const invalidProjectId = "invalid-display-mode-test";
-    window.localStorage.setItem(`fusion:terminal-display-mode-${invalidProjectId}`, "sideways");
-    render(<TerminalModal isOpen={true} onClose={mockOnClose} projectId={invalidProjectId} />);
-
-    expect(await screen.findByTestId("terminal-modal")).toHaveClass("terminal-modal--docked");
-    expect(screen.getByTestId("terminal-modal-overlay")).toBeInTheDocument();
-    expect(screen.queryByTestId("terminal-below-host")).toBeNull();
-  });
-
-  it("pins and persists the terminal below the application with right-dock-style labels", async () => {
-    const projectId = "below-pin-test";
     render(<TerminalModal isOpen={true} onClose={mockOnClose} projectId={projectId} />);
 
-    const pin = await screen.findByTestId("terminal-pin-toggle");
-    expect(pin).toHaveAttribute("aria-label", "Pin terminal (push content)");
-    expect(pin).toHaveAttribute("title", "Pin terminal (push content)");
-    expect(pin).toHaveAttribute("aria-pressed", "false");
-
-    fireEvent.click(pin);
-
-    await waitFor(() => {
-      expect(window.localStorage.getItem(`fusion:terminal-display-mode-${projectId}`)).toBe("below");
-      expect(screen.getByTestId("terminal-below-host")).toBeInTheDocument();
-      expect(screen.queryByTestId("terminal-modal-overlay")).toBeNull();
-      expect(screen.getByTestId("terminal-modal")).toHaveClass("terminal-modal--below");
-    });
-    expect(screen.getByTestId("terminal-pin-toggle")).toHaveAttribute("aria-label", "Unpin terminal (overlay content)");
-    expect(screen.getByTestId("terminal-pin-toggle")).toHaveAttribute("aria-pressed", "true");
-
-    fireEvent.click(screen.getByTestId("terminal-pin-toggle"));
-    await waitFor(() => {
-      expect(window.localStorage.getItem(`fusion:terminal-display-mode-${projectId}`)).toBe("docked");
-      expect(screen.getByTestId("terminal-modal-overlay")).toBeInTheDocument();
-      expect(screen.queryByTestId("terminal-below-host")).toBeNull();
-    });
+    const modal = await screen.findByTestId("terminal-modal");
+    expect(modal).toHaveClass("terminal-modal--below");
+    expect(modal).not.toHaveClass("terminal-modal--docked");
+    expect(screen.getByTestId("terminal-below-host")).toBeInTheDocument();
+    expect(screen.queryByTestId("terminal-modal-overlay")).toBeNull();
+    // Reading a legacy/invalid value normalizes in memory only; nothing is written back at load time.
+    expect(window.localStorage.getItem(`fusion:terminal-display-mode-${projectId}`)).toBe(stored);
   });
+
+  /*
+  FNXC:TerminalLayout 2026-09-15-07:57:
+  FN-409: the terminal is the single source of truth for its EFFECTIVE presentation, so it publishes that to the
+  shell instead of letting App re-read `localStorage`. The shell drops its own bottom-bar reservation exactly while
+  this reports `true`; the App side of the contract is asserted in App.test.tsx.
+  */
+  it("reports its pinned layout to the shell and clears it on unmount", async () => {
+    const onPinnedLayoutChange = vi.fn();
+    const { unmount } = render(
+      <TerminalModal isOpen={true} onClose={mockOnClose} projectId="pinned-signal" onPinnedLayoutChange={onPinnedLayoutChange} />,
+    );
+
+    await screen.findByTestId("terminal-below-host");
+    await waitFor(() => expect(onPinnedLayoutChange).toHaveBeenLastCalledWith(true));
+
+    detachTerminalByHeaderDrag(211);
+    await waitFor(() => expect(onPinnedLayoutChange).toHaveBeenLastCalledWith(false));
+
+    repinTerminalByFooterContact(212);
+    await waitFor(() => expect(onPinnedLayoutChange).toHaveBeenLastCalledWith(true));
+
+    unmount();
+    expect(onPinnedLayoutChange).toHaveBeenLastCalledWith(false);
+  });
+
+  it("never reports a pinned layout for the embedded terminal", async () => {
+    const onPinnedLayoutChange = vi.fn();
+    render(
+      <TerminalModal
+        isOpen={true}
+        onClose={mockOnClose}
+        projectId="pinned-signal-embedded"
+        embedded
+        scopeId="FN-409"
+        onPinnedLayoutChange={onPinnedLayoutChange}
+      />,
+    );
+
+    await screen.findByTestId("terminal-embedded-host");
+    expect(onPinnedLayoutChange).toHaveBeenCalledWith(false);
+    expect(onPinnedLayoutChange).not.toHaveBeenCalledWith(true);
+  });
+
+  it("never reports a pinned layout on the mobile sheet", async () => {
+    const previousInnerWidth = window.innerWidth;
+    const previousOntouchstart = window.ontouchstart;
+    Object.defineProperty(window, "innerWidth", { value: 390, configurable: true });
+    Object.defineProperty(window, "ontouchstart", { value: null, configurable: true });
+    _resetInitialViewportHeight();
+
+    try {
+      const onPinnedLayoutChange = vi.fn();
+      render(
+        <TerminalModal isOpen={true} onClose={mockOnClose} projectId="pinned-signal-mobile" onPinnedLayoutChange={onPinnedLayoutChange} />,
+      );
+
+      await screen.findByTestId("terminal-modal");
+      expect(screen.queryByTestId("terminal-below-host")).toBeNull();
+      expect(onPinnedLayoutChange).toHaveBeenCalledWith(false);
+      expect(onPinnedLayoutChange).not.toHaveBeenCalledWith(true);
+    } finally {
+      Object.defineProperty(window, "innerWidth", { value: previousInnerWidth, configurable: true });
+      if (previousOntouchstart === undefined) {
+        delete (window as any).ontouchstart;
+      } else {
+        Object.defineProperty(window, "ontouchstart", { value: previousOntouchstart, configurable: true });
+      }
+      _resetInitialViewportHeight();
+    }
+  });
+
+  /*
+  FN-409 negative control: removing the TERMINAL's pin affordance must not spill into the product's other pin
+  affordances. This is a code-construct guard (not prose), because rendering the right dock or chat here would
+  require their full data surfaces without proving anything more.
+  */
+  it("leaves the other pin affordances of the product intact", () => {
+    const rightDock = readAppFile("components/RightDock.tsx");
+    expect(rightDock).toContain('data-testid="right-dock-pin"');
+    expect(rightDock).toContain("onTogglePin");
+    expect(readAppFile("components/ChatThreadTitleSwitcher.tsx")).toMatch(/pin/i);
+  });
+
+  it.each(["docked", "below", "floating", "garbage"])(
+    "exposes no pin affordance for stored display mode %s",
+    async (stored) => {
+      const projectId = `no-pin-${stored}`;
+      window.localStorage.setItem(`fusion:terminal-display-mode-${projectId}`, stored);
+
+      render(<TerminalModal isOpen={true} onClose={mockOnClose} projectId={projectId} />);
+
+      await screen.findByTestId("terminal-modal");
+      expect(screen.queryByTestId("terminal-pin-toggle")).toBeNull();
+      expect(screen.queryByLabelText("Pin terminal (push content)")).toBeNull();
+      expect(screen.queryByLabelText("Unpin terminal (overlay content)")).toBeNull();
+      // FN-438: and no presentation toggle either — the header exposes no display-mode control at all.
+      expect(screen.queryByTestId("terminal-popout-toggle")).toBeNull();
+    },
+  );
 
   // FN-7897: below-mode is reachable at both true desktop (>1024px) and tablet
   // (769-1024px) widths — isBelowMode has no additional breakpoint gating beyond
@@ -1112,8 +1262,8 @@ describe("TerminalModal", () => {
           <TerminalModal isOpen={true} onClose={mockOnClose} projectId={projectId} footerVisible={true} />,
         );
 
-        const pin = await screen.findByTestId("terminal-pin-toggle");
-        fireEvent.click(pin);
+        // FN-409: pinned is the default, so there is no pin click to perform first.
+        await screen.findByTestId("terminal-modal");
 
         await waitFor(() => {
           const host = screen.getByTestId("terminal-below-host");
@@ -1131,8 +1281,7 @@ describe("TerminalModal", () => {
     const projectId = "below-pin-footer-hidden";
     render(<TerminalModal isOpen={true} onClose={mockOnClose} projectId={projectId} />);
 
-    const pin = await screen.findByTestId("terminal-pin-toggle");
-    fireEvent.click(pin);
+    await screen.findByTestId("terminal-modal");
 
     await waitFor(() => {
       const host = screen.getByTestId("terminal-below-host");
@@ -1150,9 +1299,6 @@ describe("TerminalModal", () => {
         footerVisible={false}
       />,
     );
-    const pins = await screen.findAllByTestId("terminal-pin-toggle");
-    fireEvent.click(pins[pins.length - 1]);
-
     await waitFor(() => {
       const hosts = screen.getAllByTestId("terminal-below-host");
       const lastHost = hosts[hosts.length - 1];
@@ -1160,14 +1306,13 @@ describe("TerminalModal", () => {
     });
   });
 
-  it("tracks footerVisible across re-renders with no stale --with-footer class (pin \u2192 unpin \u2192 re-pin, FN-7897)", async () => {
+  it("tracks footerVisible across re-renders with no stale --with-footer class (pinned \u2192 detached \u2192 re-attached, FN-7897)", async () => {
     const projectId = "below-pin-footer-toggle-sequence";
     const { rerender } = render(
       <TerminalModal isOpen={true} onClose={mockOnClose} projectId={projectId} footerVisible={true} />,
     );
 
-    const pin = await screen.findByTestId("terminal-pin-toggle");
-    fireEvent.click(pin);
+    await screen.findByTestId("terminal-modal");
     await waitFor(() => {
       expect(screen.getByTestId("terminal-below-host")).toHaveClass("terminal-below-host--with-footer");
     });
@@ -1180,8 +1325,8 @@ describe("TerminalModal", () => {
       expect(screen.getByTestId("terminal-below-host")).not.toHaveClass("terminal-below-host--with-footer");
     });
 
-    // Unpin (back to overlay docked mode), then re-pin with footerVisible restored to true.
-    fireEvent.click(screen.getByTestId("terminal-pin-toggle"));
+    // FN-438: detach/re-attach is a pointer gesture, and it is what leaves and returns to the pinned host.
+    detachTerminalByHeaderDrag(221);
     await waitFor(() => {
       expect(screen.queryByTestId("terminal-below-host")).toBeNull();
     });
@@ -1189,7 +1334,7 @@ describe("TerminalModal", () => {
     rerender(
       <TerminalModal isOpen={true} onClose={mockOnClose} projectId={projectId} footerVisible={true} />,
     );
-    fireEvent.click(screen.getByTestId("terminal-pin-toggle"));
+    repinTerminalByFooterContact(222);
     await waitFor(() => {
       const host = screen.getByTestId("terminal-below-host");
       expect(host).toHaveClass("terminal-below-host--with-footer");
@@ -1257,6 +1402,23 @@ describe("TerminalModal", () => {
     expect(hostRule).not.toContain("padding-bottom");
   });
 
+  it("keeps the pinned detach grip bar-sized so it cannot swallow header controls (FN-438)", () => {
+    // FN-438 review fix: this grip is absolutely positioned with z-index over a statically positioned
+    // `.terminal-header`, so any height beyond the painted bar intercepts presses aimed at the tabs,
+    // the workspace picker, and the close button. The hit area must equal the bar: `::before` starts at
+    // half a --space-xs and is half a --space-xs thick, so --space-xs contains it exactly.
+    const handleRule = terminalModalCss.match(/\.terminal-below-drag-handle\s*\{([^}]*)\}/)?.[1] ?? "";
+    const barRule = terminalModalCss.match(/\.terminal-below-drag-handle::before\s*\{([^}]*)\}/)?.[1] ?? "";
+
+    expect(handleRule).toContain("height: var(--space-xs);");
+    expect(handleRule).not.toContain("height: calc(var(--space-md) + var(--space-sm));");
+    expect(handleRule).toContain("touch-action: none;");
+    expect(handleRule).not.toMatch(/top:\s*calc\(var\(--space-sm\) \* -1\)/);
+    expect(handleRule).toContain("top: 0;");
+    expect(barRule).toContain("top: calc(var(--space-xs) / 2);");
+    expect(barRule).toContain("height: calc(var(--space-xs) / 2);");
+  });
+
   it("reserves executor footer height on the pinned terminal host only when footerVisible (FN-7897)", () => {
     // .terminal-below-host is a SIBLING of .dashboard-project-shell inside .dashboard-project-stack
     // (not a descendant), so it cannot rely on --executor-footer-height being inherited from the
@@ -1286,6 +1448,8 @@ describe("TerminalModal", () => {
     expect(screen.getByTestId("floating-window-resize-se")).toBeInTheDocument();
 
     const fitCallBaseline = mockFitAddonFit.mock.calls.length;
+    const widthBeforeResize = Number.parseFloat(screen.getByTestId(`floating-window-terminal-${projectId}`).style.width);
+    const heightBeforeResize = Number.parseFloat(screen.getByTestId(`floating-window-terminal-${projectId}`).style.height);
     // FNXC:Terminal 2026-06-22-19:50: Floating resize/drag now capture the pointer and listen on the CAPTURED element (not document); fire move/up on that element with the matching pointerId and stub set/releasePointerCapture.
     const resizeHandle = screen.getByTestId("floating-window-resize-se") as HTMLElement & { setPointerCapture: (pointerId: number) => void; releasePointerCapture: (pointerId: number) => void };
     resizeHandle.setPointerCapture = vi.fn();
@@ -1295,11 +1459,19 @@ describe("TerminalModal", () => {
     fireEvent.pointerMove(resizeHandle, { pointerId: 1, clientX: 140, clientY: 130 });
     fireEvent.pointerUp(resizeHandle, { pointerId: 1 });
 
+    /*
+    FN-394 retired durable floating geometry (FloatingWindow reads and writes nothing), so the assertions that
+    read `fusion:terminal-float-geometry-*` no longer had a subject. They are replaced by the RENDERED rectangle,
+    which is what the resize and move gestures actually have to change.
+    */
+    const panel = screen.getByTestId(`floating-window-terminal-${projectId}`);
     await waitFor(() => {
-      expect(JSON.parse(window.localStorage.getItem(`fusion:terminal-float-geometry-${projectId}`) ?? "{}").size).toEqual({ width: 992, height: 590 });
+      expect(Number.parseFloat(panel.style.width)).toBeGreaterThan(widthBeforeResize);
+      expect(Number.parseFloat(panel.style.height)).toBeGreaterThan(heightBeforeResize);
       expect(mockFitAddonFit.mock.calls.length).toBeGreaterThan(fitCallBaseline);
     });
 
+    const leftBeforeMove = Number.parseFloat(panel.style.left);
     const header = modal.querySelector(".terminal-header") as HTMLElement & { setPointerCapture: (pointerId: number) => void; releasePointerCapture: (pointerId: number) => void };
     header.setPointerCapture = vi.fn();
     header.releasePointerCapture = vi.fn();
@@ -1308,7 +1480,7 @@ describe("TerminalModal", () => {
     fireEvent.pointerUp(header, { pointerId: 2, pointerType: "touch" });
 
     await waitFor(() => {
-      expect(window.localStorage.getItem(`fusion:terminal-float-geometry-${projectId}`)).toBeTruthy();
+      expect(Number.parseFloat(panel.style.left)).not.toBe(leftBeforeMove);
     });
   });
 
@@ -1346,7 +1518,11 @@ describe("TerminalModal", () => {
       expect(modal).toHaveClass("terminal-modal--floating");
       expect(screen.getByTestId("floating-window-resize-se")).toHaveAttribute("aria-label", "Resize floating window");
 
+      // FN-394 retired durable floating geometry, so these gestures are proven on the RENDERED rectangle.
+      const panel = screen.getByTestId(`floating-window-terminal-${projectId}`);
       const fitCallBaseline = mockFitAddonFit.mock.calls.length;
+      const widthBeforeResize = Number.parseFloat(panel.style.width);
+      const heightBeforeResize = Number.parseFloat(panel.style.height);
       const resizeHandle = screen.getByTestId("floating-window-resize-se") as HTMLElement & {
         setPointerCapture: (pointerId: number) => void;
         releasePointerCapture: (pointerId: number) => void;
@@ -1359,28 +1535,39 @@ describe("TerminalModal", () => {
       fireEvent.pointerUp(resizeHandle, { pointerId: 41, pointerType: "touch" });
 
       await waitFor(() => {
-        expect(JSON.parse(window.localStorage.getItem(`fusion:terminal-float-geometry-${projectId}`) ?? "{}").size).toEqual({ width: 1040, height: 630 });
+        expect(Number.parseFloat(panel.style.width)).toBeGreaterThan(widthBeforeResize);
+        expect(Number.parseFloat(panel.style.height)).toBeGreaterThan(heightBeforeResize);
         expect(mockFitAddonFit.mock.calls.length).toBeGreaterThan(fitCallBaseline);
       });
 
+      const leftBeforeMove = Number.parseFloat(panel.style.left);
       const header = modal.querySelector(".terminal-header") as HTMLElement & {
         setPointerCapture: (pointerId: number) => void;
         releasePointerCapture: (pointerId: number) => void;
       };
       header.setPointerCapture = vi.fn();
       header.releasePointerCapture = vi.fn();
-      fireEvent.pointerDown(header, { pointerId: 42, pointerType: "touch", clientX: 300, clientY: 100 });
-      fireEvent.pointerMove(header, { pointerId: 42, pointerType: "touch", clientX: 200, clientY: 140 });
+      /*
+      FNXC:TerminalModalControls 2026-09-16-07:38:
+      FN-460 opens this window 20% larger, so after the resize above a DOWNWARD drag lands its bottom edge on the
+      bottom bar and FN-438 legitimately re-pins the terminal to `below`, unmounting the floating panel mid-case.
+      The gesture therefore travels UP-left: the assertion here is horizontal movement, and staying clear of the
+      re-pin contact line keeps this case about floating movability rather than about re-pinning.
+      */
+      fireEvent.pointerDown(header, { pointerId: 42, pointerType: "touch", clientX: 300, clientY: 140 });
+      fireEvent.pointerMove(header, { pointerId: 42, pointerType: "touch", clientX: 200, clientY: 100 });
       fireEvent.pointerUp(header, { pointerId: 42, pointerType: "touch" });
 
       await waitFor(() => {
-        expect(JSON.parse(window.localStorage.getItem(`fusion:terminal-float-geometry-${projectId}`) ?? "{}").position.x).toBe(44);
+        expect(Number.parseFloat(panel.style.left)).toBeLessThan(leftBeforeMove);
       });
 
+      // An interrupted gesture must validate nothing: the rectangle stays where the completed move left it.
+      const leftAfterMove = Number.parseFloat(panel.style.left);
       fireEvent.pointerDown(header, { pointerId: 43, pointerType: "touch", clientX: 200, clientY: 140 });
       fireEvent.pointerMove(header, { pointerId: 43, pointerType: "touch", clientX: 100, clientY: 140 });
       fireEvent.pointerCancel(header, { pointerId: 43, pointerType: "touch" });
-      expect(JSON.parse(window.localStorage.getItem(`fusion:terminal-float-geometry-${projectId}`) ?? "{}").position.x).toBe(16);
+      expect(Number.parseFloat(panel.style.left)).toBe(leftAfterMove);
     } finally {
       Object.defineProperty(window, "innerWidth", { configurable: true, value: previousInnerWidth });
       Object.defineProperty(window, "innerHeight", { configurable: true, value: previousInnerHeight });
@@ -1423,11 +1610,13 @@ describe("TerminalModal", () => {
       expect(modal).not.toHaveClass("terminal-modal--mobile");
       expect(screen.getByTestId("terminal-drag-grip")).toBeInTheDocument();
       // The 768px CSS fallback is full-screen only for true phones. A known
-      // tablet must win that cascade with its stored floating geometry.
-      const modalStyle = screen.getByTestId(`floating-window-terminal-${projectId}`).style;
-      expect(modalStyle.width).not.toBe("");
-      expect(modalStyle.height).not.toBe("");
+      // tablet must win that cascade with a real floating rectangle.
+      const panel = screen.getByTestId(`floating-window-terminal-${projectId}`);
+      expect(panel.style.width).not.toBe("");
+      expect(panel.style.height).not.toBe("");
 
+      // FN-394 retired durable floating geometry; these gestures are proven on the rendered rectangle.
+      const widthBeforeResize = Number.parseFloat(panel.style.width);
       const resizeHandle = screen.getByTestId("floating-window-resize-se") as HTMLElement & {
         setPointerCapture: (pointerId: number) => void;
         releasePointerCapture: (pointerId: number) => void;
@@ -1438,9 +1627,10 @@ describe("TerminalModal", () => {
       fireEvent.pointerMove(resizeHandle, { pointerId: 51, pointerType: "touch", clientX: 120, clientY: 180 });
       fireEvent.pointerUp(resizeHandle, { pointerId: 51, pointerType: "touch" });
       await waitFor(() => {
-        expect(JSON.parse(window.localStorage.getItem(`fusion:terminal-float-geometry-${projectId}`) ?? "{}").size).toEqual({ width: 656, height: 540 });
+        expect(Number.parseFloat(panel.style.width)).toBeLessThan(widthBeforeResize);
       });
 
+      const leftBeforeMove = Number.parseFloat(panel.style.left);
       const header = modal.querySelector(".terminal-header") as HTMLElement & {
         setPointerCapture: (pointerId: number) => void;
         releasePointerCapture: (pointerId: number) => void;
@@ -1451,7 +1641,7 @@ describe("TerminalModal", () => {
       fireEvent.pointerMove(header, { pointerId: 52, pointerType: "touch", clientX: 180, clientY: 140 });
       fireEvent.pointerUp(header, { pointerId: 52, pointerType: "touch" });
       await waitFor(() => {
-        expect(JSON.parse(window.localStorage.getItem(`fusion:terminal-float-geometry-${projectId}`) ?? "{}").position.x).toBe(96);
+        expect(Number.parseFloat(panel.style.left)).toBeGreaterThan(leftBeforeMove);
       });
     } finally {
       styleEl.remove();
@@ -1479,7 +1669,7 @@ describe("TerminalModal", () => {
     Object.defineProperty(window, "screen", { configurable: true, value: { width: 1024, height: 768 } });
     Object.defineProperty(navigator, "maxTouchPoints", { configurable: true, value: 1 });
     vi.spyOn(window, "matchMedia").mockImplementation((query: string) => ({
-      matches: query === "(min-width: 769px) and (max-width: 1024px)",
+      matches: query === "(min-width: 769px) and (max-width: 1023.98px)",
       media: query,
       onchange: null,
       addListener: vi.fn(),
@@ -1510,14 +1700,16 @@ describe("TerminalModal", () => {
 
       const initialLeft = panel.style.left;
       const initialTop = panel.style.top;
+      // Drag toward the bottom-right: the standard opening rectangle can already sit against the top-left wall,
+      // where a further up-left move would be clamped to the same coordinates and prove nothing.
       fireEvent.pointerDown(grip, { pointerId: 63, pointerType: "touch", clientX: 100, clientY: 100 });
-      fireEvent.pointerMove(grip, { pointerId: 63, pointerType: "touch", clientX: 20, clientY: 20 });
-      fireEvent.pointerUp(grip, { pointerId: 63, pointerType: "touch" });
+      fireEvent.pointerMove(grip, { pointerId: 63, pointerType: "touch", clientX: 150, clientY: 140 });
+      fireEvent.pointerUp(grip, { pointerId: 63, pointerType: "touch", clientX: 150, clientY: 140 });
       await waitFor(() => {
         expect(panel.setPointerCapture).toHaveBeenCalledWith(63);
         expect(panel.style.left).not.toBe(initialLeft);
         expect(panel.style.top).not.toBe(initialTop);
-        expect(JSON.parse(window.localStorage.getItem(`fusion:terminal-float-geometry-${projectId}`) ?? "{}").position).toEqual({ x: 16, y: 80 });
+        // FN-394 retired durable floating geometry; the rendered rectangle is the only geometry contract left.
       });
 
       fireEvent.pointerDown(screen.getAllByRole("tab")[1], { pointerId: 64, pointerType: "touch" });
@@ -1533,9 +1725,15 @@ describe("TerminalModal", () => {
       */
       const tabStrip = screen.getByTestId("terminal-tabs");
       const preDragLeft = panel.style.left;
-      fireEvent.pointerDown(tabStrip, { pointerId: 65, pointerType: "touch", clientX: 300, clientY: 40 });
-      fireEvent.pointerMove(panel, { pointerId: 65, pointerType: "touch", clientX: 380, clientY: 90 });
-      fireEvent.pointerUp(panel, { pointerId: 65, pointerType: "touch", clientX: 380, clientY: 90 });
+      /*
+      FNXC:TerminalModalControls 2026-09-16-07:38:
+      FN-460 opens this window 20% larger, so a further DOWNWARD drag would put its bottom edge on the bottom bar
+      and trigger the FN-438 re-pin, unmounting the floating panel. This strip gesture therefore travels up-left;
+      what it proves — empty strip space is a drag surface — is unchanged.
+      */
+      fireEvent.pointerDown(tabStrip, { pointerId: 65, pointerType: "touch", clientX: 300, clientY: 90 });
+      fireEvent.pointerMove(panel, { pointerId: 65, pointerType: "touch", clientX: 240, clientY: 40 });
+      fireEvent.pointerUp(panel, { pointerId: 65, pointerType: "touch", clientX: 240, clientY: 40 });
       await waitFor(() => {
         expect(panel.setPointerCapture).toHaveBeenCalledTimes(2);
         expect(panel.style.left).not.toBe(preDragLeft);
@@ -1585,7 +1783,7 @@ describe("TerminalModal", () => {
     expect(floatingWindowCss).not.toContain("var(--shadow-xl)");
   });
 
-  it("keeps mobile terminal on the full-screen modal path without docked or floating controls", async () => {
+  it("keeps mobile terminal on the full-screen modal path without pinned or floating controls", async () => {
     const previousInnerWidth = window.innerWidth;
     const previousOntouchstart = window.ontouchstart;
     Object.defineProperty(window, "innerWidth", { value: 500, configurable: true });
@@ -1595,10 +1793,11 @@ describe("TerminalModal", () => {
       render(<TerminalModal isOpen={true} onClose={mockOnClose} projectId="mobile-fullscreen-test" />);
 
       const modal = await screen.findByTestId("terminal-modal");
-      expect(modal).not.toHaveClass("terminal-modal--docked");
+      expect(modal).not.toHaveClass("terminal-modal--below");
       expect(modal).not.toHaveClass("terminal-modal--floating");
-      expect(screen.queryByTestId("terminal-docked-resize-handle")).toBeNull();
+      expect(screen.queryByTestId("terminal-pinned-drag-handle")).toBeNull();
       expect(screen.queryByTestId("terminal-popout-toggle")).toBeNull();
+      expect(screen.queryByTestId("terminal-pin-toggle")).toBeNull();
       expect(screen.queryByTestId("terminal-drag-grip")).toBeNull();
       expect(screen.queryByTestId("floating-window-resize-se")).toBeNull();
     } finally {
@@ -2373,23 +2572,14 @@ describe("TerminalModal", () => {
     expect(mockOnClose).toHaveBeenCalled();
   });
 
-  it("closes modal on overlay click", async () => {
-    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
-
-    await waitFor(() => {
-      const overlay = screen.getByTestId("terminal-modal-overlay");
-      // Overlay dismiss is wired via mousedown→mouseup so a resize-drag that
-      // ends on the overlay (after starting inside the modal) doesn't close.
-      // A real click on the overlay fires both events on the overlay.
-      fireEvent.mouseDown(overlay);
-      fireEvent.mouseUp(overlay);
-    });
-
-    expect(mockOnClose).toHaveBeenCalled();
-  });
-
+  /*
+  FN-409 removed the docked overlay presentation, which was the only terminal surface that closed on an
+  overlay click; the "closes modal on overlay click" case is deleted with its subject. The detached window is a
+  persistent pop-out, so the negative case below keeps guarding that stray overlay mouse events never dismiss it.
+  */
   it("does NOT close when mousedown is on the modal but mouseup is on the overlay (resize drag)", async () => {
-    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+    window.localStorage.setItem("fusion:terminal-display-mode-overlay-drag", "floating");
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} projectId="overlay-drag" />);
 
     await waitFor(() => {
       const overlay = screen.getByTestId("terminal-modal-overlay");
@@ -4710,7 +4900,7 @@ describe("TerminalModal — mobile layout contract", () => {
     });
   });
 
-  it("puts desktop display-mode controls immediately before close while footer retains actions", async () => {
+  it("keeps desktop footer actions in the footer while the header exposes no display-mode control", async () => {
     const previousInnerWidth = window.innerWidth;
     Object.defineProperty(window, "innerWidth", { value: 1280, configurable: true });
 
@@ -4725,8 +4915,6 @@ describe("TerminalModal — mobile layout contract", () => {
         const shortcutToggle = screen.getByTestId("terminal-shortcut-toggle");
         const preferencesToggle = screen.getByTestId("terminal-preferences-toggle");
         const fontSizeValue = screen.getByTestId("terminal-font-size-value");
-        const pinToggle = screen.getByTestId("terminal-pin-toggle");
-        const popoutToggle = screen.getByTestId("terminal-popout-toggle");
         const connectionStatus = footer.querySelector(".terminal-connection-status");
 
         expect(connectionStatus?.textContent).toBe("Disconnected");
@@ -4735,13 +4923,11 @@ describe("TerminalModal — mobile layout contract", () => {
           expect(footer.contains(control)).toBe(true);
           expect(header?.contains(control)).toBe(false);
         }
-        for (const control of [pinToggle, popoutToggle]) {
-          expect(footer.contains(control)).toBe(false);
-          expect(header?.contains(control)).toBe(true);
-        }
+        // FN-438: no presentation control survives anywhere — neither in the header nor pushed into the footer.
+        expect(footer.querySelector("[data-testid='terminal-popout-toggle']")).toBeNull();
         expect(screen.queryByTestId("terminal-actions")).toBeNull();
         expect(screen.queryByTestId("terminal-workspace-picker")).toBeNull();
-        expectTerminalDisplayModeControlsBeforeClose();
+        expectNoTerminalDisplayModeControls();
         expect(header?.contains(screen.getByTestId("terminal-close-btn"))).toBe(true);
         expect(header?.contains(screen.getByTestId("terminal-tabs"))).toBe(true);
       });
@@ -4753,7 +4939,7 @@ describe("TerminalModal — mobile layout contract", () => {
   it.each([
     ["desktop", 1280],
     ["tablet", 900],
-  ])("keeps populated %s workspace picker before header display-mode controls", async (_label, width) => {
+  ])("keeps the populated %s workspace picker before the header close control", async (_label, width) => {
     const previousInnerWidth = window.innerWidth;
     Object.defineProperty(window, "innerWidth", { value: width, configurable: true });
     fireEvent(window, new Event("resize"));
@@ -4773,8 +4959,9 @@ describe("TerminalModal — mobile layout contract", () => {
         const header = document.querySelector<HTMLElement>(".terminal-header");
         const workspacePicker = screen.getByTestId("terminal-workspace-picker");
         expect(header?.contains(workspacePicker)).toBe(true);
-        expectTerminalDisplayModeControlsBeforeClose();
-        expect(workspacePicker.compareDocumentPosition(screen.getByTestId("terminal-pin-toggle")) & Node.DOCUMENT_POSITION_FOLLOWING)
+        expectNoTerminalDisplayModeControls();
+        // FN-438: the picker is followed by close, which is now the last header child.
+        expect(workspacePicker.compareDocumentPosition(screen.getByTestId("terminal-close-btn")) & Node.DOCUMENT_POSITION_FOLLOWING)
           .toBe(Node.DOCUMENT_POSITION_FOLLOWING);
       });
     } finally {
@@ -4885,9 +5072,9 @@ describe("TerminalModal — mobile layout contract", () => {
     }
   });
 
-  it("puts tablet display-mode controls immediately before close while footer retains actions", async () => {
-    // Tablets retain the desktop pin/pop-out presentation modes and tab strip,
-    // while their remaining action controls stay in the shared footer fragment.
+  it("keeps tablet footer actions in the footer while the header exposes no display-mode control", async () => {
+    // FN-438: tablets retain the desktop tab strip and gesture-driven presentation switching, but no
+    // presentation control; their remaining action controls stay in the shared footer fragment.
     const previousInnerWidth = window.innerWidth;
     Object.defineProperty(window, "innerWidth", { value: 900, configurable: true });
     fireEvent(window, new Event("resize"));
@@ -4903,8 +5090,6 @@ describe("TerminalModal — mobile layout contract", () => {
         const shortcutToggle = screen.getByTestId("terminal-shortcut-toggle");
         const preferencesToggle = screen.getByTestId("terminal-preferences-toggle");
         const fontSizeValue = screen.getByTestId("terminal-font-size-value");
-        const pinToggle = screen.getByTestId("terminal-pin-toggle");
-        const popoutToggle = screen.getByTestId("terminal-popout-toggle");
 
         // Footer controls remain in the single shared footer fragment.
         expect(footer.contains(clearBtn)).toBe(true);
@@ -4917,11 +5102,8 @@ describe("TerminalModal — mobile layout contract", () => {
         for (const control of [clearBtn, shortcutToggle, preferencesToggle, fontSizeValue]) {
           expect(header?.contains(control)).toBe(false);
         }
-        for (const control of [pinToggle, popoutToggle]) {
-          expect(footer.contains(control)).toBe(false);
-          expect(header?.contains(control)).toBe(true);
-        }
-        expectTerminalDisplayModeControlsBeforeClose();
+        expect(footer.querySelector("[data-testid='terminal-popout-toggle']")).toBeNull();
+        expectNoTerminalDisplayModeControls();
 
         // No empty .terminal-actions shell renders in the tablet header.
         expect(header?.querySelector(".terminal-actions")).toBeNull();
@@ -4953,12 +5135,12 @@ describe("TerminalModal — mobile layout contract", () => {
   it("ferme le terminal Alpha depuis le corps au bord haut et préserve son scroll", async () => {
     const previousInnerWidth = window.innerWidth;
     Object.defineProperty(window, "innerWidth", { value: 390, configurable: true });
-    document.documentElement.dataset.alphaMobileDrawers = "true";
+    document.documentElement.dataset.mobileDrawers = "true";
 
     try {
       render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
       await waitFor(() => expect(screen.getByTestId("terminal-drawer-handle")).toBeInTheDocument());
-      expect(terminalModalCss).toMatch(/\.terminal-modal-overlay:not\(\.terminal-modal-overlay--docked\) > \.terminal-modal\s*\{[^}]*animation: alpha-mobile-drawer-rise-in/);
+      expect(terminalModalCss).toMatch(/\.terminal-modal-overlay:not\(\.terminal-modal-overlay--docked\) > \.terminal-modal\s*\{[^}]*animation: mobile-drawer-rise-in/);
       expect(terminalModalCss).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.terminal-modal-overlay:not\(\.terminal-modal-overlay--docked\) > \.terminal-modal\s*\{[^}]*animation: none/);
       expect(screen.queryByTestId("terminal-close-btn")).toBeNull();
       const modal = screen.getByTestId("terminal-modal");
@@ -4976,7 +5158,7 @@ describe("TerminalModal — mobile layout contract", () => {
       expect(mockOnClose).not.toHaveBeenCalled();
       expect(modal.style.transform).toBe("");
     } finally {
-      delete document.documentElement.dataset.alphaMobileDrawers;
+      delete document.documentElement.dataset.mobileDrawers;
       Object.defineProperty(window, "innerWidth", { value: previousInnerWidth, configurable: true });
     }
   });
@@ -7278,7 +7460,7 @@ describe("TerminalModal — FN-872 real-device keyboard overlap refinement", () 
     await waitFor(() => expect(screen.getByTestId("terminal-font-size-value")).toHaveTextContent("10px"));
     await waitFor(() => {
       const modal = screen.getByTestId("terminal-modal");
-      expect(modal).not.toHaveClass("terminal-modal--docked");
+      expect(modal).not.toHaveClass("terminal-modal--below");
       expect(modal).not.toHaveClass("terminal-modal--floating");
       expect(modal.style.getPropertyValue("--keyboard-overlap")).toBe("380px");
       expect(modal.style.getPropertyValue("--vv-height")).toBe("320px");

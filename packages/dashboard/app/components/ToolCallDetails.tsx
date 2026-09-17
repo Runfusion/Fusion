@@ -1,5 +1,5 @@
 import { useId, useState, type ReactNode } from "react";
-import { AlphaButton } from "./alpha-ui";
+import { UiButton } from "./ui";
 import { useTranslation } from "react-i18next";
 import "./ToolCallDetails.css";
 
@@ -110,7 +110,7 @@ function ToolCallDetailsRow({
           {renderValue(text)}
         </pre>
         {canClamp ? (
-          <AlphaButton
+          <UiButton
             type="button"
             className="tool-call-details-reveal"
             aria-expanded={expanded}
@@ -118,7 +118,7 @@ function ToolCallDetailsRow({
             onClick={() => setExpanded((value) => !value)}
           >
             {expanded ? t("toolCallDetails.showLess", "Show less") : revealLabel}
-          </AlphaButton>
+          </UiButton>
         ) : null}
       </div>
     </div>

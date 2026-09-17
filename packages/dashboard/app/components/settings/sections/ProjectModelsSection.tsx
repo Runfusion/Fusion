@@ -1,7 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { ModelPreset, Settings } from "@fusion/core";
-import { ApiRequestError, fetchWorkflow, fetchWorkflowSettingValues, updateWorkflowSettingValues, type ModelInfo, type WorkflowSettingDefinition, type WorkflowSettingRejection, type WorkflowSettingValuesPayload, } from "../../../api";
+import type { ModelInfo } from "../../../api";
 import { CustomModelDropdown } from "../../CustomModelDropdown";
 import { SettingsToggleRow } from "../SettingsToggleRow";
 import { SettingsSelectRow } from "../SettingsSelectRow";
@@ -10,127 +9,23 @@ import { SettingsTextareaRow } from "../SettingsTextareaRow";
 import { SettingsFieldRow } from "../SettingsFieldRow";
 import { SettingsHelpTip } from "../SettingsHelpTip";
 import { applyPresetToSelection } from "../../../utils/modelPresets";
-import type { ToastType } from "../../../hooks/useToast";
-import type { ModelLane, SectionBaseProps, SectionSaveHandler, SettingsFormState } from "./context";
+import type { ModelLane, SectionBaseProps, SettingsFormState } from "./context";
 import { LoadingSpinner } from "../../LoadingSpinner";
 import { useAgentsMapCache } from "../../../hooks/useAgentsMapCache";
 type LaneStatus = "inherited" | "overridden";
-type WorkflowModelPair = {
-    id: "planning" | "execution" | "validator" | "execution-fallback" | "planning-fallback" | "validator-fallback";
-    providerId: string;
-    modelId: string;
-    thinkingId?: string;
-    credentialInstanceId?: string;
-    label: string;
-    help: string;
-};
-const DEFAULT_WORKFLOW_ID = "builtin:coding";
-
 /*
-FNXC:SettingsCredentialInstance 2026-08-01-10:19:
-Project lanes that own persisted model overrides must carry their credential instance through the same form state. The empty Default choice deletes only that instance key, preserving provider/model selection while returning resolution to the provider default.
+FNXC:ProjectModels 2026-09-14-19:05:
+Project Models owns project-scoped role lanes only. Each pipeline role keeps its credential and retry model directly beside its primary model; workflow-scoped values are edited exclusively on the workflow page.
 */
 const PROJECT_LANE_CREDENTIAL_INSTANCE_KEYS = {
     default: "defaultCredentialInstanceIdOverride",
+    planning: "planningCredentialInstanceId",
+    execution: "executionCredentialInstanceId",
+    validator: "validatorCredentialInstanceId",
     merger: "mergerCredentialInstanceId",
     "import-translate": "importTranslateCredentialInstanceId",
     "fast-cheap": "fastCheapCredentialInstanceId",
 } as const satisfies Partial<Record<string, keyof Settings>>;
-/*
-FNXC:SettingsModels 2026-06-16-19:58:
-Fallback model lanes must be configurable in all Settings surfaces: General uses the global Fallback Model, Workflow Values uses declared workflow settings, and Project Models exposes workflow fallback pairs declared by the active default workflow plus project-scoped title-summarizer fallback keys so saves never PATCH undeclared keys.
-
-FNXC:Settings-ThinkingLevel 2026-07-10-12:08:
-Workflow fallback lanes may expose an inline thinking selector only when the active workflow declares the matching companion setting, while the title-summarizer fallback uses project-scoped keys below. Reset must clear both the model pair and the thinking companion; undeclared rows intentionally render no orphan thinking shell.
-
-FNXC:SettingsModels 2026-07-16-00:00:
-FN-8169 requires each workflow fallback lane to render directly under its primary lane so operators configure a model and its retry model together. Keep this catalog interleaved while preserving every lane key and declaration filter.
-*/
-const WORKFLOW_MODEL_PAIRS: WorkflowModelPair[] = [
-    {
-        id: "planning",
-        providerId: "planningProvider",
-        modelId: "planningModelId",
-        thinkingId: "planningThinkingLevel",
-        credentialInstanceId: "planningCredentialInstanceId",
-        label: "Plan/Triage Model",
-        help: "Provider and model used when planning or triaging tasks. Leave unset to fall through to the global lane, then the selected workflow.",
-    },
-    {
-        id: "planning-fallback",
-        providerId: "planningFallbackProvider",
-        modelId: "planningFallbackModelId",
-        thinkingId: "planningFallbackThinkingLevel",
-        credentialInstanceId: "planningFallbackCredentialInstanceId",
-        label: "Planning Fallback Model",
-        help: "Fallback provider and model used when the primary Plan/Triage model cannot be used.",
-    },
-    {
-        id: "execution",
-        providerId: "executionProvider",
-        modelId: "executionModelId",
-        thinkingId: "executionThinkingLevel",
-        credentialInstanceId: "executionCredentialInstanceId",
-        label: "Executor Model",
-        help: "Provider and model used while executing workflow steps. Leave unset to fall through to the global lane, then the selected workflow.",
-    },
-    {
-        id: "execution-fallback",
-        providerId: "executionFallbackProvider",
-        modelId: "executionFallbackModelId",
-        thinkingId: "executionFallbackThinkingLevel",
-        credentialInstanceId: "executionFallbackCredentialInstanceId",
-        label: "Executor Fallback Model",
-        help: "Fallback provider and model used when the primary Executor model cannot be used.",
-    },
-    {
-        id: "validator",
-        providerId: "validatorProvider",
-        modelId: "validatorModelId",
-        thinkingId: "validatorThinkingLevel",
-        credentialInstanceId: "validatorCredentialInstanceId",
-        label: "Reviewer Model",
-        help: "Provider and model used for workflow review or validation lanes. Leave unset to fall through to the global lane, then the selected workflow.",
-    },
-    {
-        id: "validator-fallback",
-        providerId: "validatorFallbackProvider",
-        modelId: "validatorFallbackModelId",
-        thinkingId: "validatorFallbackThinkingLevel",
-        credentialInstanceId: "validatorFallbackCredentialInstanceId",
-        label: "Reviewer Fallback Model",
-        help: "Fallback provider and model used when the primary Reviewer model cannot be used.",
-    },
-];
-function declaredWorkflowModelPairs(settings?: WorkflowSettingDefinition[]): WorkflowModelPair[] {
-    const settingsById = new Map((settings ?? []).map((setting) => [setting.id, setting]));
-    return WORKFLOW_MODEL_PAIRS.filter((pair) => {
-        const provider = settingsById.get(pair.providerId);
-        const model = settingsById.get(pair.modelId);
-        const thinking = pair.thinkingId ? settingsById.get(pair.thinkingId) : undefined;
-        return provider?.type === "string" && model?.type === "string" && (!pair.thinkingId || thinking?.type === "enum" || thinking?.type === "string");
-    }).map((pair) => ({
-        ...pair,
-        credentialInstanceId: settingsById.get(pair.credentialInstanceId ?? "")?.type === "string"
-            ? pair.credentialInstanceId
-            : undefined,
-    }));
-}
-function modelPairValue(values: Record<string, unknown>, pair: WorkflowModelPair): string {
-    const provider = values[pair.providerId];
-    const modelId = values[pair.modelId];
-    return typeof provider === "string" && typeof modelId === "string" && provider && modelId
-        ? `${provider}/${modelId}`
-        : "";
-}
-function workflowPendingValueEquals(a: unknown, b: unknown): boolean {
-    if (Object.is(a, b))
-        return true;
-    if (Array.isArray(a) && Array.isArray(b)) {
-        return a.length === b.length && a.every((value, index) => Object.is(value, b[index]));
-    }
-    return false;
-}
 export interface ProjectModelsSectionModelProps {
     modelLanes: ModelLane[];
     getLaneStatus: (lane: ModelLane) => LaneStatus;
@@ -157,195 +52,17 @@ export interface ProjectModelsSectionModelProps {
         danger?: boolean;
     }) => Promise<boolean>;
 }
-export class WorkflowLaneFlushRejection extends Error {
-    readonly rejections: WorkflowSettingRejection[];
-    constructor(rejections: WorkflowSettingRejection[]) {
-        super("Workflow model lane settings were rejected");
-        this.name = "WorkflowLaneFlushRejection";
-        this.rejections = rejections;
-    }
-}
 export interface ProjectModelsSectionProps extends SectionBaseProps {
     models: ProjectModelsSectionModelProps;
     projectId?: string;
-    addToast: (message: string, type?: ToastType) => void;
-    onOpenWorkflowSettings?: () => void;
-    registerWorkflowLaneSaver?: (saver: SectionSaveHandler | null) => void;
-    onWorkflowLanesChange?: () => void;
 }
-export function ProjectModelsSection({ form, setForm, models, projectId, onOpenWorkflowSettings, registerWorkflowLaneSaver, onWorkflowLanesChange, }: ProjectModelsSectionProps) {
+export function ProjectModelsSection({ form, setForm, models, projectId }: ProjectModelsSectionProps) {
     const { t } = useTranslation("app");
     const { agents, loading: agentsLoading } = useAgentsMapCache(projectId);
     const { modelLanes, getLaneStatus, getLaneValue, updateLaneValue, resetLaneValue, getLaneThinkingValue, updateLaneThinkingValue, resetLaneThinkingValue, availableModels, modelsLoading, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, editingPresetId, setEditingPresetId, presetDraft, setPresetDraft, onSavePresetDraft, confirmDelete, } = models;
     const presets = form.modelPresets || [];
     const presetOptions = presets.map((preset) => ({ id: preset.id, name: preset.name }));
     const inUsePresetIds = new Set(Object.values(form.defaultPresetBySize || {}).filter(Boolean));
-    const configuredWorkflowId = typeof form.defaultWorkflowId === "string" && form.defaultWorkflowId.trim()
-        ? form.defaultWorkflowId
-        : DEFAULT_WORKFLOW_ID;
-    const [workflowId, setWorkflowId] = useState(configuredWorkflowId);
-    const [workflowPayload, setWorkflowPayload] = useState<WorkflowSettingValuesPayload | null>(null);
-    const [workflowLoading, setWorkflowLoading] = useState(false);
-    const [workflowPending, setWorkflowPending] = useState<Record<string, unknown>>({});
-    const [workflowRejections, setWorkflowRejections] = useState<Record<string, WorkflowSettingRejection>>({});
-    const [workflowModelPairs, setWorkflowModelPairs] = useState<WorkflowModelPair[]>([]);
-    const workflowReqSeq = useRef(0);
-    const workflowDirty = Object.keys(workflowPending).length > 0;
-    useEffect(() => {
-        setWorkflowId(configuredWorkflowId);
-    }, [configuredWorkflowId]);
-    useEffect(() => {
-        if (!projectId) {
-            setWorkflowPayload(null);
-            setWorkflowPending({});
-            setWorkflowRejections({});
-            setWorkflowModelPairs([]);
-            return;
-        }
-        const seq = ++workflowReqSeq.current;
-        setWorkflowLoading(true);
-        Promise.all([
-            fetchWorkflow(workflowId, projectId),
-            fetchWorkflowSettingValues(workflowId, projectId),
-        ])
-            .then(([definition, payload]) => {
-            if (workflowReqSeq.current !== seq)
-                return;
-            setWorkflowPayload(payload);
-            setWorkflowPending({});
-            setWorkflowRejections({});
-            const declarations = "settings" in definition.ir ? definition.ir.settings : undefined;
-            setWorkflowModelPairs(declaredWorkflowModelPairs(declarations));
-        })
-            .catch((err) => {
-            if (workflowReqSeq.current !== seq)
-                return;
-            if (err instanceof ApiRequestError && err.status === 404 && workflowId !== DEFAULT_WORKFLOW_ID) {
-                setWorkflowId(DEFAULT_WORKFLOW_ID);
-                return;
-            }
-            setWorkflowPayload({ stored: {}, effective: {}, orphaned: [] });
-            setWorkflowModelPairs([]);
-        })
-            .finally(() => {
-            if (workflowReqSeq.current === seq)
-                setWorkflowLoading(false);
-        });
-    }, [projectId, workflowId]);
-    const effectiveWorkflowValues = useMemo(() => ({
-        ...(workflowPayload?.effective ?? {}),
-        ...Object.fromEntries(Object.entries(workflowPending).filter(([, value]) => value !== null)),
-    }), [workflowPayload, workflowPending]);
-    const setWorkflowPairValue = useCallback((pair: WorkflowModelPair, value: string) => {
-        /*
-        FNXC:SettingsAutoSave 2026-07-20-01:00:
-        FN-8395 removes the primary Save button. Notify the Settings shell for
-        every workflow-lane mutation because these pending overrides are local
-        section state rather than keys in its shared form.
-        */
-        onWorkflowLanesChange?.();
-        setWorkflowRejections((current) => {
-            const next = { ...current };
-            delete next[pair.providerId];
-            delete next[pair.modelId];
-            if (pair.credentialInstanceId) delete next[pair.credentialInstanceId];
-            return next;
-        });
-        setWorkflowPending((current) => {
-            if (!value) {
-                return { ...current, [pair.providerId]: null, [pair.modelId]: null, ...(pair.credentialInstanceId ? { [pair.credentialInstanceId]: null } : {}) };
-            }
-            const slashIdx = value.indexOf("/");
-            if (slashIdx <= 0)
-                return current;
-            return {
-                ...current,
-                [pair.providerId]: value.slice(0, slashIdx),
-                [pair.modelId]: value.slice(slashIdx + 1),
-                // FNXC:ModelDropdown 2026-08-01-10:45: A user-selected provider/model pair must clear its prior credential-instance companion.
-                ...(pair.credentialInstanceId ? { [pair.credentialInstanceId]: null } : {}),
-            };
-        });
-    }, [onWorkflowLanesChange]);
-    const setWorkflowCredentialInstanceValue = useCallback((pair: WorkflowModelPair, value: string) => {
-        if (!pair.credentialInstanceId) return;
-        onWorkflowLanesChange?.();
-        setWorkflowRejections((current) => {
-            if (!current[pair.credentialInstanceId as string]) return current;
-            const next = { ...current };
-            delete next[pair.credentialInstanceId as string];
-            return next;
-        });
-        setWorkflowPending((current) => ({ ...current, [pair.credentialInstanceId as string]: value || null }));
-    }, [onWorkflowLanesChange]);
-    const setWorkflowThinkingValue = useCallback((pair: WorkflowModelPair, value: string) => {
-        if (!pair.thinkingId)
-            return;
-        onWorkflowLanesChange?.();
-        setWorkflowRejections((current) => {
-            if (!pair.thinkingId || !current[pair.thinkingId])
-                return current;
-            const next = { ...current };
-            delete next[pair.thinkingId];
-            return next;
-        });
-        setWorkflowPending((current) => ({ ...current, [pair.thinkingId as string]: value || null }));
-    }, [onWorkflowLanesChange]);
-    const resetWorkflowPairValue = useCallback((pair: WorkflowModelPair) => {
-        setWorkflowPairValue(pair, "");
-        setWorkflowThinkingValue(pair, "");
-        setWorkflowCredentialInstanceValue(pair, "");
-    }, [setWorkflowCredentialInstanceValue, setWorkflowPairValue, setWorkflowThinkingValue]);
-    const saveWorkflowLanes = useCallback(async () => {
-        if (!projectId || !workflowDirty)
-            return;
-        const pendingSnapshot = { ...workflowPending };
-        const savedKeys = Object.keys(pendingSnapshot);
-        try {
-            const payload = await updateWorkflowSettingValues(workflowId, pendingSnapshot, projectId);
-            setWorkflowPayload(payload);
-            setWorkflowPending((current) => {
-                const next = { ...current };
-                /*
-                 * FNXC:ProjectModelsWorkflowLanes 2026-07-02-13:30:
-                 * The registered Settings saver can resolve after workflow lane dropdowns changed again. Clear only snapshot-matching keys so Project Models follows the same no-lost-pending-edits invariant as Workflow Settings Values.
-                 */
-                for (const key of savedKeys) {
-                    if (workflowPendingValueEquals(current[key], pendingSnapshot[key]))
-                        delete next[key];
-                }
-                return next;
-            });
-            setWorkflowRejections({});
-        }
-        catch (err) {
-            if (err instanceof ApiRequestError && err.status === 400 && err.details) {
-                const rejections = (err.details.rejections as WorkflowSettingRejection[] | undefined) ?? [];
-                if (rejections.length > 0) {
-                    setWorkflowRejections(Object.fromEntries(rejections.map((rejection) => [rejection.settingId, rejection])));
-                    throw new WorkflowLaneFlushRejection(rejections);
-                }
-            }
-            throw err;
-        }
-    }, [projectId, workflowDirty, workflowId, workflowPending]);
-    useEffect(() => {
-        registerWorkflowLaneSaver?.(saveWorkflowLanes);
-        return () => registerWorkflowLaneSaver?.(null);
-    }, [registerWorkflowLaneSaver, saveWorkflowLanes]);
-    // The project DEFAULT, title-summarizer, merger, import-translate, and Fast & Cheap lanes remain editable
-    // here. Execution/planning/validator workflow-specific lanes still redirect to
-    // workflow settings below.
-    // FNXC:Settings-MergerModel 2026-07-13-07:52: Merger is project-scoped (like summarization), not workflow-moved.
-    // FNXC:GitHubImportTranslate 2026-07-15-09:30: The import-translate lane is project-scoped (like merger/summarization), so its project override must be editable here — otherwise the lane's projectProviderKey/projectModelKey would be unreachable and only the global lane could ever be set.
-    /*
-    FNXC:FastLane 2026-08-29-02:51:
-    Fast tasks resolve a project Fast & Cheap override before the global lane. Keep this lane in the
-    project picker list; defining it only in MODEL_LANES would render it globally but make the
-    documented project override impossible to save through the UI.
-    */
-    // FNXC:SettingsModels 2026-08-18-06:41: Summarization remains project-scoped but stays with its AI summarization enable toggles instead of the Model Overrides group.
-    const projectModelLanes = modelLanes.filter((lane) => ["default", "merger", "import-translate", "fast-cheap"].includes(lane.laneId));
     const credentialInstanceKeyForLane = (lane: ModelLane): keyof Settings | undefined => PROJECT_LANE_CREDENTIAL_INSTANCE_KEYS[lane.laneId as keyof typeof PROJECT_LANE_CREDENTIAL_INSTANCE_KEYS];
     const credentialInstanceValueForLane = (lane: ModelLane): string => {
         const key = credentialInstanceKeyForLane(lane);
@@ -359,10 +76,7 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
     const summarizationLane = modelLanes.find((lane) => lane.laneId === "summarization");
     const getProjectLaneLabel = (lane: ModelLane) => {
         if (lane.laneId === "default") {
-            return "Project Default Model";
-        }
-        if (lane.laneId === "merger") {
-            return "Project Merger Model";
+            return "Default Model";
         }
         if (lane.laneId === "summarization") {
             return "Project Summarization Model";
@@ -374,10 +88,7 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
     };
     const getProjectLaneHelperText = (lane: ModelLane) => {
         if (lane.laneId === "default") {
-            return "Project-wide default AI model used when no more specific task or project lane override is set.";
-        }
-        if (lane.laneId === "merger") {
-            return "Model used for merge conflict resolution, clean-room merge, stash-conflict recovery, and related merger agent sessions.";
+            return "Project-wide default AI model used when no task, workflow, project or global role model is configured.";
         }
         if (lane.laneId === "summarization") {
             return "Model used for title auto-summarization, merge commit summaries, GitHub tracking issue titles, and PR title/body generation.";
@@ -387,57 +98,6 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
         }
         return lane.helperText;
     };
-    /*
-     * FNXC:SettingsModels 2026-07-16-00:00:
-     * The merger fallback is project-scoped and must sit directly after Project Merger
-     * in Project lanes so operators configure the primary and retry models together.
-     */
-    const mergerFallbackValue = form.mergerFallbackProvider && form.mergerFallbackModelId
-        ? `${form.mergerFallbackProvider}/${form.mergerFallbackModelId}`
-        : "";
-    const mergerFallbackThinkingValue = typeof form.mergerFallbackThinkingLevel === "string"
-        ? form.mergerFallbackThinkingLevel
-        : "";
-    const mergerFallbackCustomized = Boolean(mergerFallbackValue || mergerFallbackThinkingValue || form.mergerFallbackCredentialInstanceId);
-    const setMergerFallbackValue = (value: string) => {
-        if (!value) {
-            setForm((f) => ({ ...f, mergerFallbackProvider: undefined, mergerFallbackModelId: undefined, mergerFallbackThinkingLevel: undefined, mergerFallbackCredentialInstanceId: undefined } as SettingsFormState));
-            return;
-        }
-        const slashIdx = value.indexOf("/");
-        setForm((f) => ({
-            ...f,
-            mergerFallbackProvider: value.slice(0, slashIdx),
-            mergerFallbackModelId: value.slice(slashIdx + 1),
-            // FNXC:ModelDropdown 2026-08-01-10:45: Explicit model selection clears the prior provider's credential-instance override.
-            mergerFallbackCredentialInstanceId: undefined,
-        } as SettingsFormState));
-    };
-    const setMergerFallbackThinkingValue = (value: string) => {
-        setForm((f) => ({ ...f, mergerFallbackThinkingLevel: value || undefined } as SettingsFormState));
-    };
-    const resetMergerFallbackValue = () => {
-        setForm((f) => ({ ...f, mergerFallbackProvider: undefined, mergerFallbackModelId: undefined, mergerFallbackThinkingLevel: undefined, mergerFallbackCredentialInstanceId: undefined } as SettingsFormState));
-    };
-    const renderMergerFallbackLane = () => (
-      <div className="form-group" data-testid="project-model-lane-merger-fallback">
-        <div className="settings-model-lane-label-row">
-          <label htmlFor="mergerFallbackModel">{t("settings.projectModels.mergerFallbackModel", "Merger Fallback Model")}</label>
-          <span className={`settings-lane-badge ${mergerFallbackCustomized ? "settings-lane-badge--override" : "settings-lane-badge--inherited"}`} title={mergerFallbackCustomized ? "Explicitly set for this project" : "Inherited from global settings"}>
-            {mergerFallbackCustomized ? "Override (Project)" : "Inherited (Global)"}
-          </span>
-          <SettingsHelpTip settingKey="mergerFallbackModel">
-            {t("settings.projectModels.mergerFallbackHelp", "Fallback provider and model used when a merger session retries. Leave unset to use the shared global fallback model pair.")}
-          </SettingsHelpTip>
-        </div>
-        <div className="settings-model-lane-control-row">
-          <div className="settings-model-lane-control-main">
-            <CustomModelDropdown id="mergerFallbackModel" label="Merger Fallback Model" models={availableModels} value={mergerFallbackValue} onChange={setMergerFallbackValue} placeholder={t("settings.projectModels.useGlobal", "Use global")} favoriteProviders={favoriteProviders} onToggleFavorite={onToggleFavorite} favoriteModels={favoriteModels} onToggleModelFavorite={onToggleModelFavorite} menuWidth="readable" showThinkingLevel={true} thinkingLevel={mergerFallbackThinkingValue} onThinkingLevelChange={setMergerFallbackThinkingValue} credentialInstanceId={form.mergerFallbackCredentialInstanceId} onCredentialInstanceChange={(instanceId) => setForm((f) => ({ ...f, mergerFallbackCredentialInstanceId: instanceId || undefined } as SettingsFormState))} defaultThinkingLevel={form.defaultThinkingLevel}/>
-          </div>
-          {mergerFallbackCustomized && (<button type="button" className="btn btn-ghost btn-sm" title={t("settings.projectModels.resetToInheritFromGlobal", "Reset to inherit from global")} onClick={resetMergerFallbackValue}>{t("settings.projectModels.reset", " Reset ")}</button>)}
-        </div>
-      </div>
-    );
     const titleSummarizerFallbackValue = form.titleSummarizerFallbackProvider && form.titleSummarizerFallbackModelId
         ? `${form.titleSummarizerFallbackProvider}/${form.titleSummarizerFallbackModelId}`
         : "";
@@ -500,6 +160,35 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
         </div>
       </div>);
     };
+    const renderProjectFallbackLane = (lane: ModelLane) => {
+        if (!lane.projectFallbackProviderKey || !lane.projectFallbackModelKey) return null;
+        const provider = form[lane.projectFallbackProviderKey] as string | undefined;
+        const model = form[lane.projectFallbackModelKey] as string | undefined;
+        const value = provider && model ? `${provider}/${model}` : "";
+        const thinkingValue = lane.projectFallbackThinkingKey ? form[lane.projectFallbackThinkingKey] as string | undefined : undefined;
+        const credentialKey = `${lane.laneId === "validator" ? "validator" : lane.laneId}FallbackCredentialInstanceId` as keyof Settings;
+        const credentialInstanceId = form[credentialKey] as string | undefined;
+        const customized = Boolean(value || thinkingValue || credentialInstanceId);
+        const role = lane.label.replace(/ Model$/, "");
+        return (<div className="form-group" key={`${lane.laneId}-fallback`} data-testid={`project-model-lane-${lane.laneId}-fallback`} data-settings-key={lane.projectFallbackModelKey}>
+          <div className="settings-model-lane-label-row">
+            <label htmlFor={`${lane.laneId}FallbackModel`}>{role} {t("settings.models.fallbackModel", "Fallback Model")}</label>
+            <span className={`settings-lane-badge ${customized ? "settings-lane-badge--override" : "settings-lane-badge--inherited"}`}>
+              {customized ? "Override (Project)" : "Inherited (Global)"}
+            </span>
+            <SettingsHelpTip settingKey={`${lane.laneId}FallbackModel`}>{t("settings.models.roleFallbackHelp", "Used when this role's primary model encounters a retryable provider error.")}</SettingsHelpTip>
+          </div>
+          {customized && <button type="button" className="btn btn-ghost btn-sm" title={t("settings.projectModels.resetToInheritFromGlobal", "Reset to inherit from global")} onClick={() => setForm((f) => ({ ...f, [lane.projectFallbackProviderKey!]: undefined, [lane.projectFallbackModelKey!]: undefined, ...(lane.projectFallbackThinkingKey ? { [lane.projectFallbackThinkingKey]: undefined } : {}), [credentialKey]: undefined } as SettingsFormState))}>{t("settings.projectModels.reset", "Reset")}</button>}
+          <CustomModelDropdown id={`${lane.laneId}FallbackModel`} label={`${role} Fallback Model`} models={availableModels} value={value} onChange={(next) => {
+            if (!next) {
+              setForm((f) => ({ ...f, [lane.projectFallbackProviderKey!]: undefined, [lane.projectFallbackModelKey!]: undefined, ...(lane.projectFallbackThinkingKey ? { [lane.projectFallbackThinkingKey]: undefined } : {}), [credentialKey]: undefined } as SettingsFormState));
+              return;
+            }
+            const slashIdx = next.indexOf("/");
+            setForm((f) => ({ ...f, [lane.projectFallbackProviderKey!]: next.slice(0, slashIdx), [lane.projectFallbackModelKey!]: next.slice(slashIdx + 1), [credentialKey]: undefined } as SettingsFormState));
+          }} credentialInstanceId={credentialInstanceId} onCredentialInstanceChange={(instanceId) => setForm((f) => ({ ...f, [credentialKey]: instanceId || undefined } as SettingsFormState))} placeholder={t("settings.projectModels.useGlobal", "Use global")} favoriteProviders={favoriteProviders} onToggleFavorite={onToggleFavorite} favoriteModels={favoriteModels} onToggleModelFavorite={onToggleModelFavorite} menuWidth="readable" showThinkingLevel={Boolean(lane.projectFallbackThinkingKey)} thinkingLevel={thinkingValue || ""} onThinkingLevelChange={lane.projectFallbackThinkingKey ? (level) => setForm((f) => ({ ...f, [lane.projectFallbackThinkingKey!]: level || undefined } as SettingsFormState)) : undefined} defaultThinkingLevel={form.defaultThinkingLevel}/>
+        </div>);
+    };
     const chatDefaultKind = form.chatDefaultKind ?? "model";
     const chatDefaultModelValue = form.chatDefaultModelProvider && form.chatDefaultModelId
         ? `${form.chatDefaultModelProvider}/${form.chatDefaultModelId}`
@@ -536,7 +225,7 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
 
       {/*
       FNXC:SettingsModels 2026-08-18-06:41:
-      Operators configure which model does what in one pass, so project lanes and workflow lanes must remain one contiguous Model Overrides group. Chat, presets, and token-cap controls must not split the groups; summarization stays with its enable toggles below, with this pointer instead of moving the gated controls.
+      Operators configure the project model baseline in one pass. Keep Default and the four pipeline roles first, with each role fallback immediately after its primary; workflow overrides belong only to Workflow Settings. Other project model options follow without interleaving the pipeline.
       */}
       <div className="settings-field-label-row">
         <h4 className="settings-section-heading">{t("settings.projectModels.modelOverrides", "Model Overrides")}</h4>
@@ -545,6 +234,11 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
       <div data-testid="project-models-project-lanes">
         <h5 className="settings-section-heading">{t("settings.projectModels.projectLanesSubheading", "Project lanes")}</h5>
       {/* --- Project lanes --- */}
+      {modelsLoading ? (<div className="settings-empty-state"><LoadingSpinner label={t("settings.projectModels.loadingAvailableModels", "Loading available models\u2026")} /></div>) : availableModels.length === 0 ? (<div className="settings-empty-state settings-muted">{t("settings.projectModels.noModelsAvailableConfigureAuthenticationFirst", " No models available. Configure authentication first. ")}</div>) : (<>
+          {modelLanes.filter((lane) => ["default", "planning", "execution", "validator", "merger"].includes(lane.laneId)).flatMap((lane) => [renderProjectLane(lane), renderProjectFallbackLane(lane)])}
+          {modelLanes.filter((lane) => lane.laneId === "fast-cheap" || lane.laneId === "import-translate").map(renderProjectLane)}
+        </>)}
+
       {/*
       FNXC:ExecutorEscalation 2026-08-03-05:43:
       The alternate executor target is a project model choice, while Scheduling owns only the retry policy and optional node routing. Use the shared provider-aware dropdown so complete persisted pairs hydrate together, selecting a model updates both existing keys, and the default choice clears both without accepting arbitrary text.
@@ -583,68 +277,7 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
           menuWidth="readable"
         />
       </SettingsFieldRow>
-      {modelsLoading ? (<div className="settings-empty-state"><LoadingSpinner label={t("settings.projectModels.loadingAvailableModels", "Loading available models\u2026")} /></div>) : availableModels.length === 0 ? (<div className="settings-empty-state settings-muted">{t("settings.projectModels.noModelsAvailableConfigureAuthenticationFirst", " No models available. Configure authentication first. ")}</div>) : (<>
-          {projectModelLanes.filter((lane) => lane.laneId === "default" || lane.laneId === "merger" || lane.laneId === "fast-cheap").map(renderProjectLane)}
-          {renderMergerFallbackLane()}
-          {projectModelLanes.filter((lane) => lane.laneId === "import-translate").map(renderProjectLane)}
-        </>)}
-
         <p className="settings-field-help" data-testid="project-models-summarization-pointer">{t("settings.projectModels.summarizationPointer", "Summarization models are configured under AI Title and Git Commit Message Summarization below.")}</p>
-      </div>
-      <div data-testid="project-models-workflow-lanes">
-      {/* --- Workflow lanes --- */}
-      {/* FNXC:ProjectWorkflowModelBaseline 2026-07-22-00:00: These controls persist on the active default workflow as the cross-workflow project baseline. Runtime precedence is task-specific selection > project baseline > global lane > selected-workflow lane; keep this explanation in the shared heading help tip rather than restoring per-control prose. */}
-      <div className="settings-field-label-row">
-        <h5 className="settings-section-heading">{t("settings.projectModels.workflowLanesSubheading", "Workflow lanes")}</h5>
-        <SettingsHelpTip settingKey="default-workflow-model-lanes">
-          {t("settings.movedStub.modelLanes", "Per-phase model lanes (execution, planning, reviewer, and their fallbacks) are stored on the active default workflow.")}{t("settings.projectModels.theseProjectOverridesApplyToTheActiveDefault", " They apply as the project baseline for every workflow and take precedence over global and per-workflow values; task-specific selections still win. ")}</SettingsHelpTip>
-      </div>
-      {!projectId ? (<div className="settings-empty-state settings-muted">{t("settings.projectModels.openAProjectToEditWorkflowModelLanes", "Open a project to edit workflow model lanes.")}</div>) : workflowLoading ? (<div className="settings-empty-state"><LoadingSpinner label={t("settings.projectModels.loadingWorkflowModelLanes", "Loading workflow model lanes\u2026")} /></div>) : availableModels.length === 0 ? (<div className="settings-empty-state settings-muted">{t("settings.projectModels.noModelsAvailableConfigureAuthenticationBeforeSelectingWorkflow", " No models available. Configure authentication before selecting workflow model lanes. ")}</div>) : (<>
-          {workflowModelPairs.map((pair) => {
-                const value = modelPairValue(effectiveWorkflowValues, pair);
-                const rawThinkingValue = pair.thinkingId ? effectiveWorkflowValues[pair.thinkingId] : undefined;
-                const thinkingValue: string = typeof rawThinkingValue === "string" ? rawThinkingValue : "";
-                const rawCredentialInstanceId = pair.credentialInstanceId ? effectiveWorkflowValues[pair.credentialInstanceId] : undefined;
-                const credentialInstanceId = typeof rawCredentialInstanceId === "string" ? rawCredentialInstanceId : "";
-                const modelCustomized = Object.prototype.hasOwnProperty.call(workflowPending, pair.providerId)
-                    ? workflowPending[pair.providerId] !== null
-                    : Boolean(workflowPayload?.stored && (Object.prototype.hasOwnProperty.call(workflowPayload.stored, pair.providerId)
-                        || Object.prototype.hasOwnProperty.call(workflowPayload.stored, pair.modelId)));
-                const thinkingCustomized = pair.thinkingId
-                    ? (Object.prototype.hasOwnProperty.call(workflowPending, pair.thinkingId)
-                        ? workflowPending[pair.thinkingId] !== null
-                        : Boolean(workflowPayload?.stored && Object.prototype.hasOwnProperty.call(workflowPayload.stored, pair.thinkingId)))
-                    : false;
-                const credentialInstanceCustomized = pair.credentialInstanceId
-                    ? (Object.prototype.hasOwnProperty.call(workflowPending, pair.credentialInstanceId)
-                        ? workflowPending[pair.credentialInstanceId] !== null
-                        : Boolean(workflowPayload?.stored && Object.prototype.hasOwnProperty.call(workflowPayload.stored, pair.credentialInstanceId)))
-                    : false;
-                const customized = modelCustomized || thinkingCustomized || credentialInstanceCustomized;
-                const error = workflowRejections[pair.providerId]?.message ?? workflowRejections[pair.modelId]?.message ?? (pair.thinkingId ? workflowRejections[pair.thinkingId]?.message : undefined) ?? (pair.credentialInstanceId ? workflowRejections[pair.credentialInstanceId]?.message : undefined);
-                return (<div className="form-group" key={pair.id} data-testid={`workflow-model-lane-${pair.id}`}>
-                <div className="settings-model-lane-label-row">
-                  <label htmlFor={`workflow-${pair.id}-model`}>{pair.label}</label>
-                  <span className={`settings-lane-badge ${customized ? "settings-lane-badge--override" : "settings-lane-badge--inherited"}`} title={customized ? "Explicitly set as the project baseline" : "Inherited from global, workflow, or default settings"}>
-                    {customized ? "Project baseline" : "Inherited (Workflow)"}
-                  </span>
-                  {/* FNXC:SettingsHelp 2026-07-15-23:10: Same affordance as the project lanes above — a workflow lane is the same shape, so its help hangs off the label row too rather than sitting under the dropdown as prose. */}
-                  {pair.help ? <SettingsHelpTip settingKey={`workflow-${pair.id}-model`}>{pair.help}</SettingsHelpTip> : null}
-                </div>
-                <div className="settings-model-lane-control-row">
-                  <div className="settings-model-lane-control-main">
-                    <CustomModelDropdown id={`workflow-${pair.id}-model`} label={pair.label} models={availableModels} value={value} onChange={(next) => setWorkflowPairValue(pair, next)} placeholder={t("settings.projectModels.useWorkflowDefault", "Use workflow default")} defaultOptionLabel="Use workflow default" favoriteProviders={favoriteProviders} onToggleFavorite={onToggleFavorite} favoriteModels={favoriteModels} onToggleModelFavorite={onToggleModelFavorite} menuWidth="readable" credentialInstanceId={credentialInstanceId} onCredentialInstanceChange={pair.credentialInstanceId ? (instanceId) => setWorkflowCredentialInstanceValue(pair, instanceId) : undefined} showThinkingLevel={Boolean(pair.thinkingId)} thinkingLevel={thinkingValue} onThinkingLevelChange={pair.thinkingId ? (level) => setWorkflowThinkingValue(pair, level) : undefined} defaultThinkingLevel={typeof form.defaultThinkingLevel === "string" ? form.defaultThinkingLevel : "off"}/>
-                  </div>
-                  {customized && (<button type="button" className="btn btn-ghost btn-sm" title={t("settings.projectModels.resetToInheritFromWorkflow", "Reset to inherit from workflow")} onClick={() => resetWorkflowPairValue(pair)} style={{ whiteSpace: "nowrap" }}>{t("settings.projectModels.reset", " Reset ")}</button>)}
-                </div>
-                {error ? <small className="settings-error" data-testid={`workflow-model-lane-error-${pair.id}`}>{error}</small> : null}
-              </div>);
-            })}
-          {onOpenWorkflowSettings ? (<div className="settings-model-lane-actions" aria-label={t("settings.projectModels.defaultWorkflowModelLaneActions", "Default workflow model lane actions")}>
-              <button type="button" className="btn btn-ghost btn-sm" onClick={onOpenWorkflowSettings}>{t("settings.projectModels.advancedWorkflowPolicy", " Advanced workflow policy ")}</button>
-            </div>) : null}
-        </>)}
-
       </div>
       {/* FNXC:ChatModels 2026-07-12-20:45: Project Models owns the Direct-chat default because New Chat needs a project-scoped model-or-agent target without changing workflow or in-chat switcher settings. */}
       {/* FNXC:SettingsHelp 2026-07-16-12:45: Section description moved behind the shared "?" affordance beside the heading — operator requirement: no inline description paragraphs in Settings. */}
@@ -869,7 +502,7 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
         descriptor={{
           key: "autoSummarizeTitles",
           label: t("settings.projectModels.autoSummarizeLongDescriptionsAsTitles", " Auto-summarize task titles "),
-          help: t("settings.projectModels.whenEnabledTasksCreatedWithoutATitleBut", " When enabled, every non-empty task description created without a title receives an AI-generated title (max 60 characters). Explicit titles are preserved, and manual or explicit force requests remain available when this is disabled. The same model is also used for merge commit summaries and GitHub tracking issue titles. Default: disabled. "),
+          help: t("settings.projectModels.whenEnabledTasksCreatedWithoutATitleBut", " When enabled, every non-empty task description created without a title receives an AI-generated title in the language selected above (max 60 characters), whatever the description length. When disabled, no title is stored and cards show the first 220 characters of the description instead. Explicit titles are always preserved. The same model is also used for merge commit summaries and GitHub tracking issue titles. Default: disabled. "),
           scope: "project",
         }}
         value={form.autoSummarizeTitles || false}
@@ -949,7 +582,6 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
         onChange={(v) => setForm((f) => ({ ...f, prDescriptionPromptInstructions: v ?? "" }))}
       />
       </section>
-    </>)
       {/* --- Token Cap --- */}
       <h4 className="settings-section-heading">{t("settings.projectModels.tokenCap", "Token Cap")}</h4>
       {/*
@@ -969,7 +601,6 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
         onChange={(v) => setForm((f) => ({ ...f, tokenCap: v ? Math.trunc(v) : null } as SettingsFormState))}
         clearable={form.tokenCap != null}
       />
-
-;
+    </>);
 }
 export default ProjectModelsSection;

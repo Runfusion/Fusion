@@ -87,6 +87,26 @@ describe("workflow fast-lane route", () => {
     }
   });
 
+  /*
+  FN-408: a card armed with the per-card human plan approval is never fast. Fast bypasses plan
+  review and the planning seam, so an armed fast card could never produce the plan the operator is
+  asked to validate, and would sit immobilized with no decision ever becoming possible.
+  */
+  it("is inactive for a card armed with human plan approval, whatever executionMode says", () => {
+    const armedFast = { executionMode: "fast", humanPlanApproval: { enabled: true } };
+    expect(isFastExecutionMode(armedFast)).toBe(false);
+
+    const route = resolveFastLaneRoute(BUILTIN_CODING_IDEAS_WORKFLOW_IR, armedFast);
+    expect(route.active).toBe(false);
+    expect(route.bypassedNodeIds).toEqual(new Set());
+    expect(route.parseStepsNodeIds).toEqual(new Set());
+
+    // A disabled or absent requirement leaves Fast exactly as it was.
+    expect(isFastExecutionMode({ executionMode: "fast", humanPlanApproval: { enabled: false } })).toBe(true);
+    expect(isFastExecutionMode({ executionMode: "fast", humanPlanApproval: null })).toBe(true);
+    expect(isFastExecutionMode({ executionMode: "fast" })).toBe(true);
+  });
+
   it("preserves the custom-node carve-outs when classifying Fast skips", () => {
     expect(isFastLaneSkippableCustomNode({ id: "check", kind: "prompt" })).toBe(true);
     expect(isFastLaneSkippableCustomNode({ id: "completion-summary", kind: "prompt" })).toBe(false);

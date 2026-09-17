@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, act, within } from "@testing-library/react";
+// FN-435: the note editor no longer exposes a title input, so App-level draft cases dirty the real CodeMirror document.
+import { EditorView } from "@codemirror/view";
 import type { UseChatReturn, ChatSessionInfo } from "../../hooks/useChat";
 import type { UseChatRoomsResult } from "../../hooks/useChatRooms";
 import userEvent from "@testing-library/user-event";
@@ -9,6 +11,12 @@ import type { AiSessionSummary, ProjectInfo } from "../../api";
 import { scopedKey } from "../../utils/projectStorage";
 import { ALL_WORKFLOWS_BOARD_VIEW_ID, BOARD_WORKFLOW_SELECTION_STORAGE_KEY } from "../../utils/boardWorkflowSelection";
 import { useFileBrowser } from "../../context/FileBrowserContext";
+import {
+  GEOMETRY_TOKEN_VALUES,
+  installGeometryTokenValues,
+  removeGeometryTokenValues,
+  resolveMobileNavAnchorPx,
+} from "../../test/mobileNavGeometry";
 
 // No mock needed - tests use localStorage directly
 
@@ -34,6 +42,23 @@ const defaultSettings: Settings = {
    * App.test.tsx now mirrors the shipped left-sidebar navigation default because graduated destinations (Insights, Memory, Todo, Goals, Agents) must stay visible even when stale experimental flags are false. Individual legacy header-toggle tests opt out explicitly instead of making the whole fixture hide sidebar controls.
    */
   experimentalFeatures: { insights: true, skillsView: true, agentsView: true, memoryView: true, evalsView: true, leftSidebarNav: true },
+  /*
+   * FNXC:DashboardTests 2026-09-15-14:41:
+   * FN-419 makes the primary navigation surface an explicit project choice whose SHIPPED default is the bottom
+   * footer. The great majority of this file's cases exercise routing THROUGH THE LEFT COLUMN (`sidebar-nav-*`), so
+   * the shared fixture opts into the sidebar placement once, here, instead of rewriting each case. Cases that are
+   * about the footer placement (or about the shipped default) override `navigationPlacement` explicitly in their own
+   * `fetchSettings` payload.
+   */
+  navigationPlacement: "sidebar" as const,
+  /*
+   * FNXC:DashboardTests 2026-09-15-16:04:
+   * FN-426 makes the right tool sidebar an opt-in whose shipped default is OFF. The great majority of this file's
+   * existing cases were written against the historical always-on panel, so the shared fixture opts into it once here
+   * instead of rewriting each case. The FN-426 block at the end of this file overrides it explicitly, in both
+   * directions, because the default-off behavior is exactly what it proves.
+   */
+  rightSidebarEnabled: true,
 };
 
 const mockAgentStats = {
@@ -312,8 +337,13 @@ vi.mock("../../components/TaskDetailModal", () => ({
       </div>
     </div>
   ),
-  TaskDetailContent: ({ task, onBackToBoard, onOpenDetail, onRequestClose }: { task: { id: string; title?: string }; onBackToBoard?: () => void; onOpenDetail?: (task: { id: string; title?: string }) => void; onRequestClose?: () => void }) => (
-    <section data-testid="main-panel-task-detail">
+  /*
+  FNXC:TaskDetailDefaultTab 2026-09-16-02:53:
+  FN-442: the stub surfaces `initialTab` so App-level routing tests can prove WHICH tab a board deep-tab chip asked the
+  floating task window for, without pulling the real (heavy, lazily hosted) task-detail tab strip into this suite.
+  */
+  TaskDetailContent: ({ task, initialTab, onBackToBoard, onOpenDetail, onRequestClose }: { task: { id: string; title?: string }; initialTab?: string; onBackToBoard?: () => void; onOpenDetail?: (task: { id: string; title?: string }) => void; onRequestClose?: () => void }) => (
+    <section data-testid="main-panel-task-detail" data-initial-tab={initialTab ?? ""}>
       {onBackToBoard && <button type="button" onClick={onBackToBoard}>Back to board</button>}
       {onRequestClose && !onBackToBoard && <button type="button" aria-label="Close" onClick={onRequestClose}>Close</button>}
       <h2>{task.title ?? task.id}</h2>
@@ -393,30 +423,52 @@ App.tsx ~1927 exists to remove — passed the whole suite.
 invoked at all, and whether it was unmounted. Existing DOM-level tests are unaffected; the markup is
 unchanged.
 */
+/*
+FNXC:TerminalLayout 2026-09-15-07:57:
+FN-409: the stand-in also models the terminal's pinned-layout SIGNAL, because the shell's footer reservation now
+depends on it. `pinnedDefault` mirrors the real component's default (pinned on non-mobile, never pinned on a phone),
+and the stand-in's pop-out button reports the detached state exactly as the real control does. The real component's
+side of this contract is proven against the real TerminalModal in TerminalModal.test.tsx.
+*/
 const terminalLifecycle = {
   renders: [] as boolean[],
   mounts: 0,
   unmounts: 0,
+  pinnedDefault: true,
   reset(): void {
     this.renders = [];
     this.mounts = 0;
     this.unmounts = 0;
+    this.pinnedDefault = true;
   },
 };
 
 vi.mock("../../components/TerminalModal", async () => {
-  const { useEffect } = await import("react");
+  const { useEffect, useState } = await import("react");
   return {
-    TerminalModal: ({ isOpen, onClose, footerVisible }: { isOpen: boolean; onClose: () => void; footerVisible?: boolean }) => {
+    TerminalModal: ({ isOpen, onClose, footerVisible, onPinnedLayoutChange }: { isOpen: boolean; onClose: () => void; footerVisible?: boolean; onPinnedLayoutChange?: (pinned: boolean) => void }) => {
       terminalLifecycle.renders.push(isOpen);
+      const [pinned, setPinned] = useState(terminalLifecycle.pinnedDefault);
       useEffect(() => {
         terminalLifecycle.mounts += 1;
         return () => {
           terminalLifecycle.unmounts += 1;
         };
       }, []);
+      useEffect(() => {
+        onPinnedLayoutChange?.(pinned);
+        return () => onPinnedLayoutChange?.(false);
+      }, [onPinnedLayoutChange, pinned]);
       return isOpen ? (
-        <div className="modal-overlay open" data-testid="terminal-modal" data-footer-visible={String(footerVisible === true)}>
+        <div className="modal-overlay open" data-testid="terminal-modal" data-footer-visible={String(footerVisible === true)} data-pinned={String(pinned)}>
+          {/*
+          FN-438: a test-only probe that flips this stub's pinned state so the App-level footer reservation can be
+          exercised. It was named after the real header button, which FN-438 deleted; the rename keeps the two
+          unambiguous — the product terminal exposes no presentation toggle at all.
+          */}
+          <button type="button" data-testid="terminal-pinned-layout-probe" onClick={() => setPinned((current) => !current)}>
+            Toggle pinned layout
+          </button>
           <button type="button" data-testid="terminal-close-btn" onClick={onClose}>
             Close
           </button>
@@ -486,7 +538,7 @@ vi.mock("../../components/ChatView", async (importOriginal) => {
     ChatView: (props: Parameters<typeof actual.ChatView>[0]) => {
       if (appChatTestControl.renderProductionView) return <actual.ChatView {...props} />;
       return (
-        <div className="chat-view" data-testid={props.floating ? "quick-chat-host" : "main-chat-host"}>
+        <div className="chat-view" data-testid={props.floating ? "detached-chat-host" : "canonical-chat-host"}>
           <header className="view-header"><h2>Chat</h2><button type="button">New Chat</button><button type="button" aria-label="Pop out chat">Pop out</button></header>
           <button type="button" data-testid="app-chat-session-fixture">Conversation fixture</button>
           <textarea className="chat-input" data-testid="chat-input" aria-label="Message" />
@@ -511,10 +563,6 @@ vi.mock("../../components/DashboardLoader", async (importOriginal) => {
     },
   };
 });
-
-vi.mock("../../components/QuickChatFAB", () => ({
-  QuickChatFAB: ({ onToggle }: { onToggle: () => void }) => <button type="button" data-testid="quick-chat-fab-host" onClick={onToggle}>Quick Chat</button>,
-}));
 
 vi.mock("../../components/SetupWizardModal", () => ({
   SetupWizardModal: () => <div className="modal-overlay open">Welcome to Fusion</div>,
@@ -790,8 +838,8 @@ function extractProductionDeclaration(rule: string, property: string): string {
 
 function installProductionAlphaReserveRule(): HTMLStyleElement {
   const css = readAppFile("components/MobileNavBar.css");
-  const selector = 'html[data-viewport-mode="mobile"] .project-content--with-alpha-nav';
-  const boardSelector = '[data-alpha-surface="true"] .board';
+  const selector = 'html[data-viewport-mode="mobile"] .project-content--with-mobile-nav';
+  const boardSelector = '.board';
   const boardCss = readAppFile("components/Board.css");
   const style = document.createElement("style");
   style.textContent = `${selector} { ${extractProductionRule(css, selector)} } ${boardSelector} { ${extractProductionRule(boardCss, boardSelector)} }`;
@@ -800,12 +848,12 @@ function installProductionAlphaReserveRule(): HTMLStyleElement {
 }
 
 function installProductionAlphaDrawerRules(systemOffset: number): HTMLStyleElement {
-  const drawerCss = readAppFile("components/AlphaMobileDrawer.css");
+  const drawerCss = readAppFile("components/MobileDrawer.css");
   const navCss = readAppFile("components/MobileNavBar.css");
   const tokenCss = readAppFile("styles.css");
-  const drawerRule = extractProductionRule(drawerCss, ".alpha-mobile-drawer");
-  const panelRule = extractProductionRule(drawerCss, ".alpha-mobile-drawer__panel");
-  const bodyRule = extractProductionRule(drawerCss, ".alpha-mobile-drawer__body");
+  const drawerRule = extractProductionRule(drawerCss, ".mobile-drawer");
+  const panelRule = extractProductionRule(drawerCss, ".mobile-drawer__panel");
+  const bodyRule = extractProductionRule(drawerCss, ".mobile-drawer__body");
   const navRule = extractProductionRule(navCss, ".mobile-nav-bar");
   const inset = extractProductionDeclaration(drawerRule, "inset");
   const insetParts = inset.match(/^([^\s]+)\s+(var\(--icb-right-offset,\s*[^)]+\))\s+([^\s]+)\s+([^\s]+)$/);
@@ -817,18 +865,18 @@ function installProductionAlphaDrawerRules(systemOffset: number): HTMLStyleEleme
   if (!drawerZ) throw new Error(`Production z-index token is missing: ${drawerZToken}`);
 
   const bodyPadding = extractProductionDeclaration(bodyRule, "padding-block-end");
-  if (bodyPadding !== "var(--mobile-nav-alpha-system-offset)") {
+  if (bodyPadding !== "var(--mobile-nav-system-offset)") {
     throw new Error(`Production drawer must keep system clearance inside its body: ${bodyPadding}`);
   }
 
   /*
-  FNXC:AlphaMobileDrawer 2026-09-10-17:16:
+  FNXC:MobileDrawer 2026-09-10-17:16:
   The App regression must click the shipped pill and hamburger paths, then observe the real production declarations as a resolved cascade. Materialize only environment/custom-property values that jsdom cannot resolve so a bottom offset, layer regression, or external safe-area reserve fails at the real shell boundary.
   */
   const style = document.createElement("style");
   style.textContent = `
     .mobile-nav-bar { position: ${extractProductionDeclaration(navRule, "position")}; z-index: ${extractProductionDeclaration(navRule, "z-index")}; }
-    .alpha-mobile-drawer {
+    .mobile-drawer {
       position: ${extractProductionDeclaration(drawerRule, "position")};
       top: ${insetParts[1]};
       right: 0;
@@ -839,8 +887,8 @@ function installProductionAlphaDrawerRules(systemOffset: number): HTMLStyleEleme
       align-items: ${extractProductionDeclaration(drawerRule, "align-items")};
       pointer-events: auto;
     }
-    .alpha-mobile-drawer__panel { height: ${extractProductionDeclaration(panelRule, "height")}; }
-    .alpha-mobile-drawer__body { padding-block-end: ${systemOffset}px; }
+    .mobile-drawer__panel { height: ${extractProductionDeclaration(panelRule, "height")}; }
+    .mobile-drawer__body { padding-block-end: ${systemOffset}px; }
   `;
   document.head.append(style);
   return style;
@@ -848,8 +896,8 @@ function installProductionAlphaDrawerRules(systemOffset: number): HTMLStyleEleme
 
 function expectProductionAlphaDrawerOverlay(drawer: HTMLElement, systemOffset: number): void {
   const nav = document.querySelector<HTMLElement>(".mobile-nav-bar");
-  const panel = drawer.querySelector<HTMLElement>(".alpha-mobile-drawer__panel");
-  const body = drawer.querySelector<HTMLElement>(".alpha-mobile-drawer__body");
+  const panel = drawer.querySelector<HTMLElement>(".mobile-drawer__panel");
+  const body = drawer.querySelector<HTMLElement>(".mobile-drawer__body");
   expect(nav).not.toBeNull();
   expect(panel).not.toBeNull();
   expect(body).not.toBeNull();
@@ -867,14 +915,14 @@ function expectProductionAlphaDrawerOverlay(drawer: HTMLElement, systemOffset: n
 }
 
 function expectSingleDrawerHeader(dialog: HTMLElement, headerSelector: string): void {
-  expect(dialog.querySelector(".alpha-mobile-drawer__header")).toBeNull();
+  expect(dialog.querySelector(".mobile-drawer__header")).toBeNull();
   expect(dialog.querySelectorAll(headerSelector)).toHaveLength(1);
-  expect(dialog.querySelectorAll(".alpha-mobile-drawer__close")).toHaveLength(0);
-  expect(dialog.querySelectorAll(".alpha-mobile-drawer__handle-target")).toHaveLength(1);
+  expect(dialog.querySelectorAll(".mobile-drawer__close")).toHaveLength(0);
+  expect(dialog.querySelectorAll(".mobile-drawer__handle-target")).toHaveLength(1);
 }
 
 function dismissAlphaDrawerByHandle(drawer: Element): void {
-  const handle = drawer.querySelector(".alpha-mobile-drawer__handle-target");
+  const handle = drawer.querySelector(".mobile-drawer__handle-target");
   if (!handle) throw new Error("Alpha drawer handle is missing");
   fireEvent.pointerDown(handle, { pointerId: 1, clientY: 0, button: 0, isPrimary: true });
   fireEvent.pointerMove(handle, { pointerId: 1, clientY: 1000 });
@@ -929,6 +977,9 @@ function configureProductionAppChat(): void {
       deleteSession: vi.fn(),
       sendMessage: vi.fn(),
       editMessageAndResend: vi.fn(),
+      // FNXC:ChatMessageEdit 2026-09-16-05:58: FN-459 edit-draft rescue surface; nothing to restore here.
+      editDraftRestore: null,
+      clearEditDraftRestore: vi.fn(),
       stopStreaming: vi.fn().mockResolvedValue(undefined),
       pendingMessages: [],
       clearPendingMessage: vi.fn(),
@@ -957,15 +1008,23 @@ function configureProductionAppChat(): void {
   } satisfies UseChatRoomsResult);
 }
 
+/*
+ * FNXC:DashboardTests 2026-09-15-14:41:
+ * FN-419: a wide project shell mounts EXACTLY ONE primary navigation surface, chosen by `navigationPlacement`. The
+ * shared readiness helper therefore waits for whichever surface the shell owns instead of pinning the footer, and
+ * asserts the exclusivity invariant while it is at it.
+ */
 async function waitForAppShell(): Promise<void> {
   await waitFor(() => {
     expect(fetchSettings).toHaveBeenCalled();
     if (mockUseViewportMode() === "mobile") {
       expect(screen.getByTestId("mobile-nav-tab-command-center")).toBeTruthy();
       expect(screen.getByTestId("mobile-nav-tab-planning")).toBeTruthy();
-    } else {
-      expect(screen.getByTestId("alpha-desktop-action-bar")).toBeTruthy();
+      return;
     }
+    const footer = screen.queryByTestId("desktop-action-bar");
+    const sidebar = screen.queryByTestId("left-sidebar-nav");
+    expect(Boolean(footer) !== Boolean(sidebar)).toBe(true);
   });
 }
 
@@ -975,23 +1034,20 @@ function expectBoardToBeInactive(): void {
   expect(board?.closest('[aria-hidden="true"]')).toBeTruthy();
 }
 
-describe("FN-8698 retained Board and List task popups", () => {
-  it.each([
-    ["desktop", "board", "list"],
-    ["desktop", "list", "board"],
-  ] as const)("opens %s %s then %s independently through real view affordances", async (viewport, firstView, secondView) => {
-    /*
-    FNXC:TaskPopupViewGating 2026-08-01-16:47:
-    FN-8698 requires the real Board and List callback chain to preserve the origin view in both
-    directions at desktop and phone breakpoints. A hook-only harness cannot catch a callback that
-    drops that origin or mobile's separate header navigation path, so this App-level regression
-    clicks each shipped card/row and view-switch affordance and closes each instance independently.
-    */
-    mockUseViewportMode.mockReturnValue(viewport);
+/*
+FNXC:TaskWindowIdentity 2026-09-14-17:46:
+FN-392 supersedes FN-8698's per-view popup identity: a task owns ONE window for the whole project. This App-level
+regression clicks the shipped Board card and List row affordances and the real view-switch controls, then proves the
+same window node stays visible across views, that reopening the task from the other view focuses it instead of adding
+a second window, and that one close removes it everywhere.
+*/
+describe("FN-392 task windows travel across Board and other views", () => {
+  it("keeps one window for a task opened from Board and reopened after navigating away", async () => {
+    mockUseViewportMode.mockReturnValue("desktop");
     const sharedTask = {
       id: "FN-8698",
       title: "Retained popup regression task",
-      description: "Verify Board and List popup identities remain independent.",
+      description: "Verify one task window survives view changes.",
       column: "todo",
       status: "todo",
       dependencies: [],
@@ -1001,10 +1057,15 @@ describe("FN-8698 retained Board and List task popups", () => {
       createdAt: "2026-08-01T00:00:00.000Z",
       updatedAt: "2026-08-01T00:00:00.000Z",
     };
+    /* FN-419: the wide footer navigation entries used below belong to the footer placement. */
+    /*
+    FNXC:TaskDetailDefaultTab 2026-09-16-02:53:
+    FN-442 deleted the `openMobileTasksInPopup` opt-in this case used to set: opening a task from the board is now the
+    floating task window unconditionally, so the same click must reach the same window with no setting at all.
+    */
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
-      openMobileTasksInPopup: true,
-      taskPopupsBoardListOnly: true,
+      navigationPlacement: "footer",
     });
     mockUseTasks.mockImplementation(() => ({
       tasks: [sharedTask],
@@ -1027,49 +1088,93 @@ describe("FN-8698 retained Board and List task popups", () => {
     render(<App />);
     await waitForAppShell();
 
-    const taskSelector = (view: "board" | "list") => view === "board"
-      ? '.card[data-id="FN-8698"]'
-      : viewport === "mobile"
-        ? '.list-card[data-id="FN-8698"]'
-        : '.list-row[data-id="FN-8698"]';
-    const popupFor = (view: "board" | "list") => `floating-window-task-detail-FN-8698-${view}`;
-    const overlayFor = (view: "board" | "list") => `floating-window-overlay-task-detail-FN-8698-${view}`;
-    const showView = async (view: "board" | "list") => {
-      const navigationTestId = viewport === "mobile"
-        ? `mobile-nav-tab-${view === "board" ? "tasks" : "list"}`
-        : `alpha-desktop-nav-${view}`;
-      fireEvent.click(screen.getByTestId(navigationTestId));
-      await waitFor(() => expect(document.querySelector(taskSelector(view))).toBeTruthy());
+    const boardCard = '.card[data-id="FN-8698"]';
+    const popupTestId = "floating-window-task-detail-FN-8698";
+    const overlayTestId = "floating-window-overlay-task-detail-FN-8698";
+
+    fireEvent.click(document.querySelector(boardCard)!);
+    await waitFor(() => expect(screen.getByTestId(popupTestId)).toBeTruthy());
+    const taskWindow = screen.getByTestId(popupTestId);
+
+    /*
+     * FN-446: Agents is no longer a direct quick-access destination of the footer, so reaching it now means opening the
+     * **More** menu first — which is the real operator path. The invariant under test is unchanged: the task window
+     * survives navigation to any other view.
+     */
+    for (const view of ["planning", "agents", "board"] as const) {
+      if (!screen.queryByTestId(`desktop-nav-${view}`)) fireEvent.pointerEnter(screen.getByTestId("desktop-nav-more"));
+      fireEvent.click(screen.getByTestId(`desktop-nav-${view}`));
+      expect(screen.getByTestId(popupTestId)).toBe(taskWindow);
+      expect(screen.getByTestId(overlayTestId)).not.toHaveAttribute("aria-hidden");
+    }
+
+    await waitFor(() => expect(document.querySelector(boardCard)).toBeTruthy());
+    fireEvent.click(document.querySelector(boardCard)!);
+    await waitFor(() => expect(screen.getAllByTestId(popupTestId)).toHaveLength(1));
+    expect(screen.getByTestId(popupTestId)).toBe(taskWindow);
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByTestId(popupTestId)).toBeNull());
+  });
+
+  /*
+  FNXC:TaskDetailDefaultTab 2026-09-16-02:53:
+  FN-442: a board card's deep-tab chip is the second board task-open path, and it used to have its own modal/main-panel
+  branches behind `openMobileTasksInPopup`. This drives the shipped Changes chip on a real WIP card and proves it reaches
+  the same floating task window with the requested tab, with no project setting involved.
+  */
+  it("opens a board card Changes chip in the task window on the Changes tab", async () => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    const wipTask = {
+      id: "FN-8699",
+      title: "Deep tab chip regression task",
+      description: "Verify the Changes chip opens the task window.",
+      column: "in-progress",
+      status: "in-progress",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      modifiedFiles: ["packages/dashboard/app/App.tsx"],
+      createdAt: "2026-08-01T00:00:00.000Z",
+      updatedAt: "2026-08-01T00:00:00.000Z",
     };
+    vi.mocked(fetchSettings).mockResolvedValue({ ...defaultSettings, navigationPlacement: "footer" });
+    mockUseTasks.mockImplementation(() => ({
+      tasks: [wipTask],
+      isStale: false,
+      createTask: mockCreateTask,
+      moveTask: vi.fn(),
+      pauseTask: vi.fn(),
+      unpauseTask: vi.fn(),
+      deleteTask: vi.fn(),
+      mergeTask: vi.fn(),
+      retryTask: vi.fn(),
+      resetTask: vi.fn(),
+      updateTask: vi.fn(),
+      duplicateTask: vi.fn(),
+      refreshTasks: vi.fn(),
+      ingestCreatedTasks: vi.fn(),
+      lastFetchTimeMs: Date.now(),
+    }));
 
-    if (firstView !== "board") await showView(firstView);
-    fireEvent.click(document.querySelector(taskSelector(firstView))!);
-    await waitFor(() => expect(screen.getByTestId(popupFor(firstView))).toBeTruthy());
+    render(<App />);
+    await waitForAppShell();
 
-    await showView(secondView);
-    expect(screen.getByTestId(overlayFor(firstView))).toHaveAttribute("aria-hidden", "true");
+    const chip = await waitFor(() => {
+      const node = document.querySelector('.card[data-id="FN-8699"] .card-session-files');
+      expect(node).toBeTruthy();
+      return node as HTMLElement;
+    });
+    fireEvent.click(chip);
 
-    fireEvent.click(document.querySelector(taskSelector(secondView))!);
-    await waitFor(() => expect(screen.getByTestId(popupFor(secondView))).toBeTruthy());
-    expect(screen.getByTestId(overlayFor(secondView))).not.toHaveAttribute("aria-hidden");
-    expect(screen.getByTestId(overlayFor(firstView))).toHaveAttribute("aria-hidden", "true");
-
-    if (viewport === "mobile") {
-      fireEvent.click(within(screen.getByTestId(popupFor(secondView))).getByRole("button", { name: "Close" }));
-    } else {
-      fireEvent.keyDown(document, { key: "Escape" });
-    }
-    await waitFor(() => expect(screen.queryByTestId(popupFor(secondView))).toBeNull());
-    expect(screen.getByTestId(popupFor(firstView))).toBeTruthy();
-
-    await showView(firstView);
-    await waitFor(() => expect(screen.getByTestId(overlayFor(firstView))).not.toHaveAttribute("aria-hidden"));
-    if (viewport === "mobile") {
-      fireEvent.click(within(screen.getByTestId(popupFor(firstView))).getByRole("button", { name: "Close" }));
-    } else {
-      fireEvent.keyDown(document, { key: "Escape" });
-    }
-    await waitFor(() => expect(screen.queryByTestId(popupFor(firstView))).toBeNull());
+    await waitFor(() => expect(screen.getByTestId("floating-window-task-detail-FN-8699")).toBeTruthy());
+    const taskWindow = screen.getByTestId("floating-window-task-detail-FN-8699");
+    await waitFor(() => {
+      const hosted = taskWindow.querySelector('[data-testid="main-panel-task-detail"]');
+      expect(hosted?.getAttribute("data-initial-tab")).toBe("changes");
+    });
+    expect(screen.queryByTestId("floating-window-task-detail-FN-8699")).toBeTruthy();
   });
 });
 
@@ -1249,15 +1354,189 @@ beforeEach(() => {
   mockAgentStats.idleNonEphemeralCount = 1;
 });
 
+/*
+ * FN-419 — AUTHORITATIVE SYMPTOM PROOF.
+ *
+ * Original symptom: at one screen size (the `tablet` tier) the primary menu appeared TWICE — in the left sidebar AND
+ * in the bottom footer. Exact reproduction: render the real `<App />` in the project shell at `tablet` with project
+ * settings that do not carry `navigationPlacement`, and count the mounted primary navigation surfaces.
+ *
+ * Every case below renders the real `<App />` (the shipped shell composition), never a recomposed harness.
+ */
+describe("placement du menu de navigation", () => {
+  const settingsWith = (overrides: Record<string, unknown>) => {
+    const base: Record<string, unknown> = { ...defaultSettings };
+    delete base.navigationPlacement;
+    return { ...base, ...overrides };
+  };
+
+  const mountedPrimarySurfaces = () => ({
+    footer: screen.queryByTestId("desktop-action-bar"),
+    sidebar: screen.queryByTestId("left-sidebar-nav"),
+  });
+
+  const expectExactlyOneSurface = (expected: "footer" | "sidebar") => {
+    const { footer, sidebar } = mountedPrimarySurfaces();
+    expect([footer, sidebar].filter(Boolean)).toHaveLength(1);
+    if (expected === "footer") {
+      expect(footer).not.toBeNull();
+      expect(sidebar).toBeNull();
+    } else {
+      expect(sidebar).not.toBeNull();
+      expect(footer).toBeNull();
+      expect(document.querySelector(".executor-status-bar")).toBeNull();
+    }
+    // Neither placement may let the Header re-add a third navigation.
+    expect(screen.queryByTitle("Board view")).toBeNull();
+    expect(screen.queryByTestId("view-toggle-overflow-trigger")).toBeNull();
+  };
+
+  it.each(["tablet", "desktop"] as const)(
+    "ne monte que le footer sans la clé navigationPlacement en %s (reproduction exacte du bug)",
+    async (mode) => {
+      mockUseViewportMode.mockReturnValue(mode);
+      vi.mocked(fetchSettings).mockResolvedValue(settingsWith({}));
+
+      render(<App />);
+
+      expect(await screen.findByTestId("desktop-action-bar")).toBeInTheDocument();
+      expectExactlyOneSurface("footer");
+    },
+  );
+
+  it.each(["tablet", "desktop"] as const)(
+    "traite une valeur persistée invalide comme le défaut footer en %s",
+    async (mode) => {
+      mockUseViewportMode.mockReturnValue(mode);
+      vi.mocked(fetchSettings).mockResolvedValue(settingsWith({ navigationPlacement: "left" }));
+
+      render(<App />);
+
+      expect(await screen.findByTestId("desktop-action-bar")).toBeInTheDocument();
+      expectExactlyOneSurface("footer");
+    },
+  );
+
+  it.each(["tablet", "desktop"] as const)(
+    "ne monte que la sidebar, sans aucune barre basse ni réservation, en %s",
+    async (mode) => {
+      mockUseViewportMode.mockReturnValue(mode);
+      localStorage.setItem("fusion:right-dock-open", "true");
+      vi.mocked(fetchSettings).mockResolvedValue(settingsWith({ navigationPlacement: "sidebar" }));
+
+      render(<App />);
+
+      const sidebar = await screen.findByTestId("left-sidebar-nav");
+      expectExactlyOneSurface("sidebar");
+
+      // No bottom bar at all => no `--executor-footer-height` reservation anywhere in the shell.
+      const shell = screen.getByTestId("dashboard-project-shell");
+      expect(shell).toHaveClass("dashboard-project-shell--with-sidebar");
+      expect(shell.querySelector(".project-content")).not.toHaveClass("project-content--with-footer");
+      expect(sidebar).not.toHaveClass("left-sidebar-nav--with-footer");
+      const dock = await screen.findByTestId("right-dock");
+      expect(dock).not.toHaveClass("right-dock--with-footer");
+    },
+  );
+
+  it("monte quand même la sidebar avec un drapeau hérité leftSidebarNav à false", async () => {
+    mockUseViewportMode.mockReturnValue("tablet");
+    vi.mocked(fetchSettings).mockResolvedValue(
+      settingsWith({
+        navigationPlacement: "sidebar",
+        experimentalFeatures: { ...defaultSettings.experimentalFeatures, leftSidebarNav: false },
+      }),
+    );
+
+    render(<App />);
+
+    // A stale opt-out flag must never combine with an explicit sidebar placement into zero navigation surfaces.
+    expect(await screen.findByTestId("left-sidebar-nav")).toBeInTheDocument();
+    expectExactlyOneSurface("sidebar");
+  });
+
+  it("donne à la sidebar le contrôle moteur et Terminal, sans le bouton de visibilité des fenêtres", async () => {
+    mockUseViewportMode.mockReturnValue("tablet");
+    terminalLifecycle.reset();
+    vi.mocked(fetchSettings).mockResolvedValue(settingsWith({ navigationPlacement: "sidebar" }));
+
+    render(<App />);
+
+    await screen.findByTestId("left-sidebar-nav");
+    expect(await screen.findByTestId("sidebar-capacity-count")).toBeInTheDocument();
+    expect(screen.queryByTestId("dashboard-window-visibility-toggle")).toBeNull();
+
+    fireEvent.click(await screen.findByTestId("sidebar-nav-terminal"));
+    const terminal = await screen.findByTestId("terminal-modal");
+    expect(terminal).toHaveAttribute("data-footer-visible", "false");
+  });
+
+  it("ouvre le Chat en page principale depuis le menu de gauche, sans ouvrir le dock", async () => {
+    mockUseViewportMode.mockReturnValue("tablet");
+    vi.mocked(fetchSettings).mockResolvedValue(settingsWith({ navigationPlacement: "sidebar" }));
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByTestId("sidebar-nav-chat"));
+
+    const chatHost = await screen.findByTestId("chat-keep-alive");
+    expect(chatHost).toBeInTheDocument();
+    // Exactly one primary Chat host, mounted inside the main content — like Notes, not in a drawer or the dock.
+    const chatSurfaces = await screen.findAllByTestId("canonical-chat-host");
+    expect(chatSurfaces).toHaveLength(1);
+    expect(chatHost.contains(chatSurfaces[0])).toBe(true);
+    expect(screen.queryByTestId("detached-chat-host")).toBeNull();
+    // The right dock must not have been hijacked into the Chat tool.
+    expect(screen.queryByTestId("right-dock-body")).toBeNull();
+  });
+
+  /*
+  FN-419: the dock's selected tool is persisted, so an operator arriving in `sidebar` placement very often still has
+  "chat" stored from a previous `footer` session. The main page owning Chat must re-point that stored selection, never
+  close the dock: closing it on every render made the Header toggle look dead and hid the tab strip.
+  */
+  it("garde le dock ouvrable en placement sidebar malgré une vue « chat » persistée", async () => {
+    mockUseViewportMode.mockReturnValue("tablet");
+    localStorage.setItem("fusion:right-dock-view", "chat");
+    vi.mocked(fetchSettings).mockResolvedValue(settingsWith({ navigationPlacement: "sidebar" }));
+
+    render(<App />);
+
+    await screen.findByTestId("left-sidebar-nav");
+    fireEvent.click(await screen.findByTestId("header-right-dock-toggle"));
+
+    // The dock stays open and its body is reachable, so the tab strip can be used to pick another tool.
+    const dockBody = await screen.findByTestId("right-dock-body");
+    expect(dockBody).toBeInTheDocument();
+    expect(await screen.findByTestId("right-dock-tab-chat")).toBeInTheDocument();
+    // Chat stays a main-page destination: the dock must not host it in this placement.
+    expect(within(dockBody).queryByTestId("canonical-chat-host")).toBeNull();
+  });
+});
+
 describe("official dashboard design production wiring", () => {
-  it("keeps Quick Chat available under the official design", async () => {
+  /*
+  FNXC:ChatSurfaceUnification 2026-09-14-17:46:
+  FN-392: the wide primary Chat host is the dock's inline list again. Selecting it keeps the panel open with exactly one
+  Chat surface inside it, produces no expand modal and no parallel page host, and opens nothing detached by itself.
+  */
+  it("opens Chat as the inline dock list without an expanded or parallel page host", async () => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    localStorage.setItem("fusion:right-dock-open", "true");
+    /* FN-419: the dock is the primary Chat host only in the footer placement; sidebar placement uses the main page. */
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
+      navigationPlacement: "footer",
       experimentalFeatures: { ...defaultSettings.experimentalFeatures },
     });
     render(<App />);
-    fireEvent.click(await screen.findByTestId("quick-chat-fab-host"));
-    expect(await screen.findByTestId("quick-chat-host")).toBeInTheDocument();
+    fireEvent.click(await screen.findByTestId("right-dock-tab-chat"));
+    const dockBody = await screen.findByTestId("right-dock-body");
+    expect(await screen.findAllByTestId("canonical-chat-host")).toHaveLength(1);
+    expect(within(dockBody).getByTestId("canonical-chat-host")).toBeInTheDocument();
+    expect(screen.queryByTestId("right-dock-expand-modal")).toBeNull();
+    expect(screen.queryByTestId("chat-keep-alive")).toBeNull();
+    expect(screen.queryByTestId("detached-chat-host")).toBeNull();
   });
 
   /*
@@ -1270,6 +1549,7 @@ describe("official dashboard design production wiring", () => {
     ["enabled", true],
   ] as const)("keeps every production Board state on the official shell when Alpha is %s", async (_flagState, alphaUpdates) => {
     mockUseViewportMode.mockReturnValue("desktop");
+    /* FN-419: the bottom bar and its `--with-footer` reservations exist only in the footer placement (set per state below). */
     const states = ["skeleton", "sans-workflow", "selection-vide", "selection-debordante", "aggregate-debordant"] as const;
     const overflowTasks = Array.from({ length: 3 }, (_, index) => ({
       id: `FN-362-${index}`,
@@ -1290,7 +1570,7 @@ describe("official dashboard design production wiring", () => {
       const experimentalFeatures = { ...defaultSettings.experimentalFeatures };
       delete experimentalFeatures.alphaUpdates;
       if (alphaUpdates !== undefined) experimentalFeatures.alphaUpdates = alphaUpdates;
-      vi.mocked(fetchSettings).mockResolvedValue({ ...defaultSettings, experimentalFeatures });
+      vi.mocked(fetchSettings).mockResolvedValue({ ...defaultSettings, navigationPlacement: "footer", experimentalFeatures });
       if (state === "skeleton") {
         vi.mocked(fetchBoardWorkflows).mockImplementation(() => new Promise(() => {}));
       } else if (state === "sans-workflow") {
@@ -1338,9 +1618,15 @@ describe("official dashboard design production wiring", () => {
       expect(content).toHaveClass("project-content--with-footer");
       expect(content?.contains(keepAlive)).toBe(true);
       expect(keepAlive.contains(board)).toBe(true);
-      expect(board.closest("[data-alpha-surface]")).toHaveAttribute("data-alpha-surface", "true");
+      /*
+      FNXC:NativeUiPresentation 2026-09-15-00:20:
+      The perimeter element is gone, so Board is a direct occupant of its keep-alive host with no extra box
+      between them. That containment — not a marker on a wrapper — is what this case always protected.
+      */
+      expect(board.closest("[data-alpha-surface]")).toBeNull();
+      expect(board.parentElement && keepAlive.contains(board.parentElement)).toBe(true);
       expect(document.querySelector(".executor-status-bar")).not.toBeInTheDocument();
-      expect(screen.getByTestId("alpha-desktop-action-bar")).toBeInTheDocument();
+      expect(screen.getByTestId("desktop-action-bar")).toBeInTheDocument();
 
       if (state === "skeleton") expect(screen.getByTestId("board-workflows-skeleton")).toBe(board);
       if (state === "sans-workflow") expect(screen.getByTestId("board-workflows-empty")).toBe(board);
@@ -1372,8 +1658,14 @@ describe("official dashboard design production wiring", () => {
         tasks: [{ id: "FN-340", title: "Footer regression", description: "x", status: "in-progress", column: "in-progress", dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "", updatedAt: "" }],
       });
     }
+    /*
+     * FN-419: this case is about the FOOTER placement, so it opts in explicitly. Under that placement the left
+     * sidebar must be ABSENT on both wide tiers — the previous expectation (tablet showing the sidebar WITH the
+     * footer) encoded the very double-navigation bug this task removes.
+     */
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
+      navigationPlacement: "footer",
       experimentalFeatures: { ...defaultSettings.experimentalFeatures },
     });
     localStorage.setItem("fusion:right-dock-open", "true");
@@ -1384,28 +1676,22 @@ describe("official dashboard design production wiring", () => {
     expect(document.querySelector(".executor-status-bar")).toBeNull();
     const shell = screen.getByTestId("dashboard-project-shell");
     const content = shell.querySelector(".project-content");
-    const sidebar = mode === "tablet" ? await screen.findByTestId("left-sidebar-nav") : null;
     const rightDock = await waitFor(() => {
       const dock = document.querySelector(".right-dock");
       expect(dock).not.toBeNull();
       return dock;
     });
     expect(content).toHaveClass("project-content--with-footer");
-    expect(content).not.toHaveClass("project-content--with-alpha-nav", "project-content--with-mobile-nav");
-    expect(screen.getByTestId("alpha-desktop-action-bar")).toBeInTheDocument();
-    const moreTrigger = screen.getByTestId("alpha-desktop-nav-more");
+    expect(content).not.toHaveClass("project-content--with-mobile-nav", "project-content--with-mobile-nav");
+    expect(screen.getByTestId("desktop-action-bar")).toBeInTheDocument();
+    const moreTrigger = screen.getByTestId("desktop-nav-more");
     expect(moreTrigger).toHaveAttribute("aria-expanded", "false");
     fireEvent.pointerEnter(moreTrigger);
     expect(screen.getByRole("menu")).toBeInTheDocument();
     expect(moreTrigger).toHaveAttribute("aria-expanded", "true");
-    if (mode === "desktop") {
-      expect(sidebar).toBeNull();
-      expect(shell).not.toHaveClass("dashboard-project-shell--with-sidebar");
-    } else {
-      expect(sidebar).toHaveClass("left-sidebar-nav--with-footer");
-      expect(shell).toHaveClass("dashboard-project-shell--with-sidebar");
-      expect(document.querySelector("header.header")).toBeInTheDocument();
-    }
+    expect(screen.queryByTestId("left-sidebar-nav")).toBeNull();
+    expect(shell).not.toHaveClass("dashboard-project-shell--with-sidebar");
+    if (mode === "tablet") expect(document.querySelector("header.header")).toBeInTheDocument();
     expect(rightDock).toHaveClass("right-dock--with-footer");
     expect(shell).toHaveClass("dashboard-project-shell--with-right-dock");
     expect(screen.queryByTestId("executor-terminal-launcher-segment")).toBeNull();
@@ -1415,11 +1701,13 @@ describe("official dashboard design production wiring", () => {
   it.each(["tablet", "desktop"] as const)("ouvre et démonte Terminal depuis le footer large en mode %s", async (mode) => {
     mockUseViewportMode.mockReturnValue(mode);
     terminalLifecycle.reset();
+    /* FN-419: the wide footer Terminal action only exists in the footer placement. */
+    vi.mocked(fetchSettings).mockResolvedValue({ ...defaultSettings, navigationPlacement: "footer" });
     localStorage.setItem("fusion:right-dock-open", "true");
 
     render(<App />);
 
-    const terminal = await screen.findByTestId("alpha-desktop-nav-terminal");
+    const terminal = await screen.findByTestId("desktop-nav-terminal");
     expect(screen.queryByTestId("terminal-modal")).toBeNull();
     expect(terminalLifecycle.mounts).toBe(0);
     fireEvent.click(terminal);
@@ -1430,11 +1718,69 @@ describe("official dashboard design production wiring", () => {
     expect(terminalLifecycle.unmounts).toBe(1);
 
     if (mode === "tablet") {
-      expect(screen.getByTestId("dashboard-project-shell")).toHaveClass("dashboard-project-shell--with-sidebar");
-      expect(await screen.findByTestId("left-sidebar-nav")).toBeInTheDocument();
+      // FN-419: the footer placement owns navigation on both wide tiers, so no sidebar accompanies it.
+      expect(screen.getByTestId("dashboard-project-shell")).not.toHaveClass("dashboard-project-shell--with-sidebar");
+      expect(screen.queryByTestId("left-sidebar-nav")).toBeNull();
       expect(document.querySelector(".right-dock")).toBeInTheDocument();
       expect(document.querySelector("[data-testid^='floating-window-overlay-']")).toBeNull();
     }
+  });
+
+  /*
+  FNXC:TerminalLayout 2026-09-15-07:57:
+  FN-409 symptom acceptance (2): the bottom bar's height must be reserved EXACTLY ONCE. While the pinned terminal is
+  shown it is the only element the fixed bar covers, so the shell consumers stop reserving; closing the terminal or
+  detaching it restores their reservation.
+  */
+  it.each(["tablet", "desktop"] as const)("ne r\u00e9serve la hauteur de la barre du bas qu'une seule fois quand le terminal est \u00e9pingl\u00e9 (%s)", async (mode) => {
+    mockUseViewportMode.mockReturnValue(mode);
+    terminalLifecycle.reset();
+    /*
+     * FN-419: a bottom bar only exists in the footer placement, so the reservation contract is asserted there. The
+     * sidebar is absent under that placement, so it can no longer carry a `--with-footer` modifier at all.
+     */
+    vi.mocked(fetchSettings).mockResolvedValue({ ...defaultSettings, navigationPlacement: "footer" });
+    localStorage.setItem("fusion:right-dock-open", "true");
+
+    render(<App />);
+
+    const shell = await screen.findByTestId("dashboard-project-shell");
+    const content = shell.querySelector(".project-content")!;
+    const dock = await screen.findByTestId("right-dock");
+    expect(screen.queryByTestId("left-sidebar-nav")).toBeNull();
+
+    // Terminal closed: the shell owns the reservation.
+    expect(content).toHaveClass("project-content--with-footer");
+    expect(dock).toHaveClass("right-dock--with-footer");
+
+    fireEvent.click(await screen.findByTestId("desktop-nav-terminal"));
+    const terminal = await screen.findByTestId("terminal-modal");
+    expect(terminal).toHaveAttribute("data-pinned", "true");
+
+    // Pinned terminal: only the terminal host reserves, so no empty band is left above it.
+    await waitFor(() => {
+      expect(content).not.toHaveClass("project-content--with-footer");
+      expect(dock).not.toHaveClass("right-dock--with-footer");
+      // The terminal itself keeps receiving the raw footer visibility: it is the single legitimate consumer.
+      expect(terminal).toHaveAttribute("data-footer-visible", "true");
+    });
+
+    // Detaching the terminal takes it out of the flow, so the shell reservation returns.
+    fireEvent.click(screen.getByTestId("terminal-pinned-layout-probe"));
+    await waitFor(() => {
+      expect(content).toHaveClass("project-content--with-footer");
+      expect(dock).toHaveClass("right-dock--with-footer");
+    });
+
+    // Re-pinning drops it again, and closing the terminal restores it for good.
+    fireEvent.click(screen.getByTestId("terminal-pinned-layout-probe"));
+    await waitFor(() => expect(content).not.toHaveClass("project-content--with-footer"));
+    fireEvent.click(screen.getByTestId("terminal-close-btn"));
+    await waitFor(() => {
+      expect(screen.queryByTestId("terminal-modal")).toBeNull();
+      expect(content).toHaveClass("project-content--with-footer");
+      expect(dock).toHaveClass("right-dock--with-footer");
+    });
   });
 
   it.each([
@@ -1448,32 +1794,45 @@ describe("official dashboard design production wiring", () => {
     const experimentalFeatures = { ...defaultSettings.experimentalFeatures };
     delete experimentalFeatures.alphaUpdates;
     if (alphaUpdates !== undefined) experimentalFeatures.alphaUpdates = alphaUpdates;
-    vi.mocked(fetchSettings).mockResolvedValue({ ...defaultSettings, experimentalFeatures });
+    /*
+     * FN-419: the dock Chat hand-off asserted below belongs to the FOOTER placement (sidebar placement routes Chat to
+     * the main page instead), and the tablet shell now mounts exactly one primary surface — the footer.
+     */
+    vi.mocked(fetchSettings).mockResolvedValue({ ...defaultSettings, navigationPlacement: "footer", experimentalFeatures });
 
     render(<App />);
     const shell = await screen.findByTestId("dashboard-project-shell");
-    expect(shell).toHaveClass("dashboard-project-shell--with-sidebar", "dashboard-project-shell--with-right-dock");
+    expect(shell).toHaveClass("dashboard-project-shell--with-right-dock");
+    expect(shell).not.toHaveClass("dashboard-project-shell--with-sidebar");
     expect(shell.querySelector(".project-content")).toHaveClass("project-content--with-footer");
-    expect(await screen.findByTestId("left-sidebar-nav")).toHaveClass("left-sidebar-nav--with-footer");
+    expect(screen.queryByTestId("left-sidebar-nav")).toBeNull();
     expect(screen.queryByTestId("executor-terminal-launcher-segment")).toBeNull();
-    expect(screen.getByTestId("alpha-desktop-action-bar")).toBeInTheDocument();
+    expect(screen.getByTestId("desktop-action-bar")).toBeInTheDocument();
     expect(document.querySelector(".executor-status-bar")).toBeNull();
     expect(document.querySelector(".mobile-nav-bar")).toBeNull();
 
-    fireEvent.click(await screen.findByTestId("right-dock-tab-chat"));
     const dock = screen.getByTestId("right-dock");
     expect(dock).toHaveClass("right-dock--with-footer");
-    expect(within(dock).queryByTestId("right-dock-tab-notes")).toBeNull();
-    expect(within(dock).getByTestId("right-dock-expand")).toBeInTheDocument();
+    /*
+     * FN-426: the opted-in panel offers the same four shortcuts on tablet and desktop. The old desktop-only Notes gate
+     * existed to stop a stale selection creating a hidden Notes owner in a panel nobody chose; the panel is chosen
+     * explicitly now, and the canonical Notes list is the header popover either way.
+     */
+    expect(within(dock).getByTestId("right-dock-tab-notes")).toBeInTheDocument();
+    fireEvent.click(await within(dock).findByTestId("right-dock-tab-chat"));
 
-    fireEvent.click(await within(dock).findByTestId(`chat-session-${appChatSession.id}`));
-    expect(await within(dock).findByText("Bonjour")).toBeInTheDocument();
-    expect(dock.querySelector(".chat-thread")).not.toBeNull();
-    expect(screen.queryByTestId(`floating-window-overlay-chat-window-${DEFAULT_PROJECT_ID}-${appChatSession.id}`)).toBeNull();
-
-    fireEvent.click(within(dock).getByTestId("right-dock-expand"));
-    const expandedChat = await screen.findByTestId("right-dock-expand-modal");
-    expect(expandedChat.querySelector(".chat-view")).not.toBeNull();
+    /*
+    FNXC:ChatSurfaceUnification 2026-09-14-17:46:
+    FN-392: the tablet dock keeps the Chat list inline; clicking a conversation opens its dedicated window instead of a
+    transcript inside the panel, and no expand modal is ever created for Chat.
+    */
+    const dockBody = await screen.findByTestId("right-dock-body");
+    expect(dockBody.querySelectorAll(".chat-view")).toHaveLength(1);
+    expect(screen.queryByTestId("right-dock-expand-modal")).toBeNull();
+    expect(screen.getByTestId("right-dock")).toBeInTheDocument();
+    fireEvent.click(await within(dockBody).findByTestId(`chat-session-${appChatSession.id}`));
+    expect(await screen.findByTestId(`floating-window-overlay-chat-window-${DEFAULT_PROJECT_ID}-${appChatSession.id}`)).toBeInTheDocument();
+    expect(within(dockBody).queryByTestId("chat-input")).toBeNull();
   });
 
   it("removes the Alpha footer and all footer reservations only on mobile", async () => {
@@ -1485,7 +1844,7 @@ describe("official dashboard design production wiring", () => {
 
     render(<App />);
 
-    await waitFor(() => expect(document.querySelector(".mobile-nav-bar")).toHaveClass("mobile-nav-bar--alpha"));
+    await waitFor(() => expect(document.querySelector(".mobile-nav-bar")).toHaveClass("mobile-nav-bar--native"));
     const shell = screen.getByTestId("dashboard-project-shell");
     const content = shell.querySelector(".project-content");
     const nav = document.querySelector(".mobile-nav-bar");
@@ -1493,7 +1852,7 @@ describe("official dashboard design production wiring", () => {
     expect(screen.queryByTestId("executor-terminal-launcher-segment")).toBeNull();
     expect(content).not.toHaveClass("project-content--with-footer", "project-content--with-mobile-nav");
     expect(nav).not.toHaveClass("mobile-nav-bar--with-footer");
-    expect(content).toHaveClass("project-content--with-alpha-nav");
+    expect(content).toHaveClass("project-content--with-mobile-nav");
     expect(screen.queryByTestId("left-sidebar-nav")).toBeNull();
     expect(document.querySelector(".right-dock")).toBeNull();
   });
@@ -1518,9 +1877,9 @@ describe("official dashboard design production wiring", () => {
     ["portrait with iOS inset", { viewportHeight: 640, contentHeight: 720, systemOffset: 46 }],
     ["landscape with Android ICB", { viewportHeight: 360, contentHeight: 720, systemOffset: 48 }],
     ["standalone display", { viewportHeight: 640, contentHeight: 720, systemOffset: 60 }],
-  ] as const)("scrolls a real App final control above the measured Alpha pill in %s", async (_scenario, layout) => {
+  ] as const)("scrolls a real App final control above the measured navigation pill in %s", async (_scenario, layout) => {
     /*
-    FNXC:AlphaUpdates 2026-09-10-04:03:
+    FNXC:NativeShell 2026-09-10-04:03:
     The regression must exercise App's real project scroller and MobileNavBar publication path. This test imports the production reserve declaration and simulates only jsdom's absent box layout, so removing the class, CSS rule, or measured custom property breaks final-control clearance instead of satisfying a duplicated arithmetic fixture.
     */
     mockUseViewportMode.mockReturnValue("mobile");
@@ -1529,9 +1888,9 @@ describe("official dashboard design production wiring", () => {
       experimentalFeatures: { ...defaultSettings.experimentalFeatures },
     });
     document.documentElement.dataset.viewportMode = "mobile";
-    document.documentElement.style.setProperty("--mobile-nav-alpha-system-offset", `${layout.systemOffset}px`);
+    document.documentElement.style.setProperty("--mobile-nav-system-offset", `${layout.systemOffset}px`);
     document.documentElement.style.setProperty("--space-xs", "4px");
-    document.documentElement.style.setProperty("--alpha-density-3", "12px");
+    document.documentElement.style.setProperty("--ui-density-md", "12px");
     const productionStyle = installProductionAlphaReserveRule();
     const nativeGetComputedStyle = window.getComputedStyle.bind(window);
     const offsetHeight = vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function () {
@@ -1555,7 +1914,7 @@ describe("official dashboard design production wiring", () => {
       render(<App />);
 
       const pill = await waitFor(() => {
-        const candidate = document.querySelector<HTMLElement>(".mobile-nav-bar--alpha");
+        const candidate = document.querySelector<HTMLElement>(".mobile-nav-bar--native");
         expect(candidate).not.toBeNull();
         expect(document.documentElement.style.getPropertyValue("--mobile-nav-height")).toBe("62px");
         return candidate!;
@@ -1567,14 +1926,14 @@ describe("official dashboard design production wiring", () => {
       expect(scroller).not.toBeNull();
       expect(board).not.toBeNull();
       expect(columns.length).toBeGreaterThan(0);
-      expect(scroller).toHaveClass("project-content--with-alpha-nav");
+      expect(scroller).toHaveClass("project-content--with-mobile-nav");
       expect(scroller!.style.paddingBottom).toBe("");
 
       const productionPadding = nativeGetComputedStyle(scroller!).paddingBottom;
       expect(productionPadding).toContain("var(--mobile-nav-height)");
-      expect(productionPadding).toContain("var(--mobile-nav-alpha-system-offset)");
+      expect(productionPadding).toContain("var(--mobile-nav-system-offset)");
       const reserve = resolvePixelCalcFromRoot(productionPadding);
-      expect(productionStyle.textContent).toContain("--board-padding: var(--alpha-density-3)");
+      expect(productionStyle.textContent).toContain("--board-padding: var(--ui-density-md)");
       let scrollTop = 0;
       Object.defineProperties(scroller!, {
         clientHeight: { configurable: true, value: layout.viewportHeight },
@@ -1627,10 +1986,10 @@ describe("official dashboard design production wiring", () => {
       offsetHeight.mockRestore();
       rect.mockRestore();
       computedStyle.mockRestore();
-      document.documentElement.style.removeProperty("--mobile-nav-alpha-system-offset");
+      document.documentElement.style.removeProperty("--mobile-nav-system-offset");
       document.documentElement.style.removeProperty("--mobile-nav-height");
       document.documentElement.style.removeProperty("--space-xs");
-      document.documentElement.style.removeProperty("--alpha-density-3");
+      document.documentElement.style.removeProperty("--ui-density-md");
       delete document.documentElement.dataset.viewportMode;
     }
   });
@@ -1663,9 +2022,9 @@ describe("official dashboard design production wiring", () => {
     const systemOffset = 46;
     const allowedGap = 12;
     document.documentElement.dataset.viewportMode = "mobile";
-    document.documentElement.style.setProperty("--mobile-nav-alpha-system-offset", `${systemOffset}px`);
+    document.documentElement.style.setProperty("--mobile-nav-system-offset", `${systemOffset}px`);
     document.documentElement.style.setProperty("--space-xs", "4px");
-    document.documentElement.style.setProperty("--alpha-density-3", `${allowedGap}px`);
+    document.documentElement.style.setProperty("--ui-density-md", `${allowedGap}px`);
     const productionStyle = installProductionAlphaReserveRule();
     const nativeGetComputedStyle = window.getComputedStyle.bind(window);
     const offsetHeight = vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function () {
@@ -1688,7 +2047,7 @@ describe("official dashboard design production wiring", () => {
     try {
       render(<App />);
       const pill = await waitFor(() => {
-        const candidate = document.querySelector<HTMLElement>(".mobile-nav-bar--alpha");
+        const candidate = document.querySelector<HTMLElement>(".mobile-nav-bar--native");
         expect(candidate).not.toBeNull();
         expect(document.documentElement.style.getPropertyValue("--mobile-nav-height")).toBe("62px");
         return candidate!;
@@ -1706,9 +2065,9 @@ describe("official dashboard design production wiring", () => {
 
       const scroller = screen.getByTestId("dashboard-project-shell").querySelector<HTMLElement>(".project-content");
       expect(scroller).not.toBeNull();
-      expect(scroller).toHaveClass("project-content--with-alpha-nav");
+      expect(scroller).toHaveClass("project-content--with-mobile-nav");
       const reserve = resolvePixelCalcFromRoot(nativeGetComputedStyle(scroller!).paddingBottom);
-      const boardSelector = '[data-alpha-surface="true"] .board';
+      const boardSelector = '.board';
       const boardPadding = resolvePixelCalcFromRoot(extractProductionDeclaration(extractProductionRule(readAppFile("components/Board.css"), boardSelector), "--board-padding"));
       const pillTop = viewportHeight - systemOffset - 8 - 54;
       const columnBottom = viewportHeight - reserve - boardPadding;
@@ -1727,10 +2086,10 @@ describe("official dashboard design production wiring", () => {
       offsetHeight.mockRestore();
       rect.mockRestore();
       computedStyle.mockRestore();
-      document.documentElement.style.removeProperty("--mobile-nav-alpha-system-offset");
+      document.documentElement.style.removeProperty("--mobile-nav-system-offset");
       document.documentElement.style.removeProperty("--mobile-nav-height");
       document.documentElement.style.removeProperty("--space-xs");
-      document.documentElement.style.removeProperty("--alpha-density-3");
+      document.documentElement.style.removeProperty("--ui-density-md");
       delete document.documentElement.dataset.viewportMode;
       sessionStorage.clear();
     }
@@ -1738,8 +2097,10 @@ describe("official dashboard design production wiring", () => {
 
   it.each(["mobile", "tablet", "desktop"] as const)("keeps the official footer and reservations with stale false settings in %s", async (mode) => {
     mockUseViewportMode.mockReturnValue(mode);
+    /* FN-419: the footer and its height reservations belong to the footer placement; both wide tiers behave alike now. */
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
+      navigationPlacement: "footer",
       experimentalFeatures: { ...defaultSettings.experimentalFeatures },
     });
 
@@ -1749,20 +2110,24 @@ describe("official dashboard design production wiring", () => {
     const shell = screen.getByTestId("dashboard-project-shell");
     const content = shell.querySelector(".project-content");
     expect(document.querySelector(".executor-status-bar")).toBeNull();
-    expect(content).toHaveClass(mode === "mobile" ? "project-content--with-alpha-nav" : "project-content--with-footer");
+    expect(content).toHaveClass(mode === "mobile" ? "project-content--with-mobile-nav" : "project-content--with-footer");
+    // The left sidebar never mounts under the footer placement, on any tier.
+    expect(screen.queryByTestId("left-sidebar-nav")).toBeNull();
     if (mode === "mobile") {
-      expect(document.querySelector(".mobile-nav-bar")).toHaveClass("mobile-nav-bar--alpha");
-      expect(screen.queryByTestId("left-sidebar-nav")).toBeNull();
-    } else if (mode === "tablet") {
-      expect(await screen.findByTestId("left-sidebar-nav")).toHaveClass("left-sidebar-nav--with-footer");
-      expect(screen.getByTestId("alpha-desktop-action-bar")).toBeInTheDocument();
+      expect(document.querySelector(".mobile-nav-bar")).toHaveClass("mobile-nav-bar--native");
+      expect(screen.queryByTestId("desktop-action-bar")).toBeNull();
     } else {
-      expect(screen.getByTestId("alpha-desktop-action-bar")).toBeInTheDocument();
-      expect(screen.queryByTestId("left-sidebar-nav")).toBeNull();
+      expect(screen.getByTestId("desktop-action-bar")).toBeInTheDocument();
     }
   });
 
-  it("retire Nouvelle tâche du Header Alpha desktop sans ouvrir de modale", async () => {
+  /*
+  FNXC:StandardizedViewActions 2026-09-16-23:06:
+  FN-437 remplaçant du test « retire Nouvelle tâche du Header Alpha desktop » : la création ne doit plus dépendre de
+  l'écran affiché, donc le Header desktop expose désormais cette action — sans pour autant ouvrir la modale tant que
+  l'opérateur ne clique pas.
+  */
+  it("expose Nouvelle tâche dans le Header desktop sans ouvrir la modale d'emblée", async () => {
     mockUseViewportMode.mockReturnValue("desktop");
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
@@ -1773,9 +2138,13 @@ describe("official dashboard design production wiring", () => {
 
     await screen.findByTestId("dashboard-project-shell");
     const header = document.querySelector("header.header");
-    expect(header?.querySelector('[data-testid="mobile-header-new-task"]')).toBeNull();
-    expect(header?.querySelector('[aria-label="New Task"]')).toBeNull();
+    const action = header?.querySelector('[data-testid="mobile-header-new-task"]');
+    expect(action).not.toBeNull();
+    expect(header?.querySelectorAll('[data-testid="mobile-header-new-task"]')).toHaveLength(1);
     expect(screen.queryByRole("heading", { name: "New Task" })).toBeNull();
+
+    fireEvent.click(action as HTMLElement);
+    expect(await screen.findByRole("heading", { name: "New Task" })).toBeInTheDocument();
   });
 
   it("garde le workflow réel du Board et la loupe Alpha desktop sur une seule rangée", async () => {
@@ -1804,7 +2173,7 @@ describe("official dashboard design production wiring", () => {
     render(<App />);
 
     const switcher = await screen.findByTestId("workflow-switcher");
-    const search = screen.getByTestId("alpha-desktop-header-search-btn");
+    const search = screen.getByTestId("desktop-inline-header-search-btn");
     const actions = document.querySelector(".header-actions");
     const slot = screen.getByTestId("header-workflow-slot");
     await waitFor(() => expect(slot.contains(switcher)).toBe(true));
@@ -1813,7 +2182,14 @@ describe("official dashboard design production wiring", () => {
     expect(search.parentElement).toBe(actions);
     expect(Array.from(actions?.children ?? []).indexOf(slot)).toBeLessThan(Array.from(actions?.children ?? []).indexOf(search));
     expect(document.querySelector(".board-workflow-view > .board-workflow-toolbar")).toBeNull();
-    expect(screen.queryByTestId("mobile-header-new-task")).toBeNull();
+    /*
+    FN-437 : l'action Nouvelle tâche est désormais une entrée permanente du Header desktop. La contrainte que ce test
+    protège reste la rangée unique, donc on asserte qu'elle vit dans `header-actions` après la recherche, sans faire
+    déborder la rangée sur une seconde ligne.
+    */
+    const newTask = screen.getByTestId("mobile-header-new-task");
+    expect(newTask.parentElement).toBe(actions);
+    expect(Array.from(actions?.children ?? []).indexOf(search)).toBeLessThan(Array.from(actions?.children ?? []).indexOf(newTask));
   });
 
   it("conserve la pill et sa réserve avec le clavier mais les retire pour une modale", async () => {
@@ -1830,25 +2206,27 @@ describe("official dashboard design production wiring", () => {
     });
 
     const keyboardRender = render(<App />);
-    await screen.findByTestId("alpha-mobile-menu-trigger");
+    await screen.findByTestId("mobile-menu-trigger");
     expect(document.querySelector(".executor-status-bar")).toBeNull();
     expect(document.querySelector(".mobile-nav-bar")).toHaveClass("mobile-nav-bar--keyboard-open");
     expect(document.querySelector(".mobile-nav-bar")).not.toHaveStyle({ pointerEvents: "none" });
-    expect(screen.getByTestId("dashboard-project-shell").querySelector(".project-content")).toHaveClass("project-content--with-alpha-nav");
+    expect(screen.getByTestId("dashboard-project-shell").querySelector(".project-content")).toHaveClass("project-content--with-mobile-nav");
     keyboardRender.unmount();
 
     mockUseMobileKeyboard.mockReturnValue({ keyboardOverlap: 0, viewportHeight: null, viewportOffsetTop: 0, keyboardOpen: false });
     const modalRender = render(<App />);
-    await screen.findByTestId("alpha-mobile-menu-trigger");
+    await screen.findByTestId("mobile-menu-trigger");
     fireEvent.click(screen.getByTestId("mobile-header-new-task"));
     await screen.findByRole("heading", { name: "New Task" });
     expect(document.querySelector(".mobile-nav-bar")).toBeNull();
-    expect(screen.getByTestId("dashboard-project-shell").querySelector(".project-content")).not.toHaveClass("project-content--with-alpha-nav");
+    expect(screen.getByTestId("dashboard-project-shell").querySelector(".project-content")).not.toHaveClass("project-content--with-mobile-nav");
     expect(document.querySelector(".executor-status-bar")).toBeNull();
     modalRender.unmount();
   });
 
   it("garde le popover détenu par App ouvert quand son focus referme le clavier", async () => {
+    installGeometryTokenValues();
+    try {
     mockUseViewportMode.mockReturnValue("mobile");
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
@@ -1857,7 +2235,7 @@ describe("official dashboard design production wiring", () => {
 
     const view = render(<><textarea aria-label="Champ avant navigation" /><App /></>);
     const field = screen.getByRole("textbox", { name: "Champ avant navigation" });
-    const trigger = await screen.findByTestId("alpha-mobile-menu-trigger");
+    const trigger = await screen.findByTestId("mobile-menu-trigger");
     field.focus();
     expect(field).toHaveFocus();
 
@@ -1876,8 +2254,22 @@ describe("official dashboard design production wiring", () => {
     expect(field).not.toHaveFocus();
     expect(popover).toHaveStyle({ "--mobile-nav-viewport-offset-top": "40px" });
 
-    const keyboardLift = popover.style.getPropertyValue("--mobile-nav-keyboard-lift");
-    expect(keyboardLift).not.toBe("0px");
+    /*
+    FNXC:MobilePillKeyboard 2026-09-16-16:27:
+    FN-463: the pill and its popover keep the SAME resolved bottom anchor before, during, and after the keyboard.
+    The published calc() strings are constants, so the contract is asserted on the resolved pixel values.
+    */
+    const anchoredGeometry = {
+      pillBottomPx: resolveMobileNavAnchorPx(popover, "--mobile-nav-pill-bottom"),
+      popoverBottomPx: resolveMobileNavAnchorPx(popover, "--mobile-nav-popover-bottom"),
+    };
+    expect(anchoredGeometry).toEqual({
+      pillBottomPx: GEOMETRY_TOKEN_VALUES["--mobile-nav-system-offset"] + GEOMETRY_TOKEN_VALUES["--space-sm"],
+      popoverBottomPx: GEOMETRY_TOKEN_VALUES["--mobile-nav-system-offset"]
+        + GEOMETRY_TOKEN_VALUES["--space-sm"]
+        + GEOMETRY_TOKEN_VALUES["--mobile-nav-pill-height"]
+        + GEOMETRY_TOKEN_VALUES["--space-xs"],
+    });
     mockUseMobileKeyboard.mockReturnValue({
       keyboardOverlap: 0,
       viewportHeight: null,
@@ -1895,10 +2287,11 @@ describe("official dashboard design production wiring", () => {
     await waitFor(() => expect(document.querySelector(".mobile-nav-bar")).toHaveClass("mobile-nav-bar--keyboard-open"));
     expect(screen.getByRole("menu", { name: "Navigate" })).toBe(popover);
     expect(trigger).toHaveAttribute("aria-expanded", "true");
-    expect(popover).toHaveStyle({
-      "--mobile-nav-keyboard-lift": keyboardLift,
-      "--mobile-nav-viewport-offset-top": "40px",
-    });
+    expect({
+      pillBottomPx: resolveMobileNavAnchorPx(popover, "--mobile-nav-pill-bottom"),
+      popoverBottomPx: resolveMobileNavAnchorPx(popover, "--mobile-nav-popover-bottom"),
+    }).toEqual(anchoredGeometry);
+    expect(popover).toHaveStyle({ "--mobile-nav-viewport-offset-top": "40px" });
 
     mockUseMobileKeyboard.mockReturnValue({
       keyboardOverlap: 0,
@@ -1911,10 +2304,19 @@ describe("official dashboard design production wiring", () => {
     await waitFor(() => expect(document.querySelector(".mobile-nav-bar")).not.toHaveClass("mobile-nav-bar--keyboard-open"));
     expect(screen.getByRole("menu", { name: "Navigate" })).toBe(popover);
     expect(trigger).toHaveAttribute("aria-expanded", "true");
-    expect(popover).toHaveStyle({
-      "--mobile-nav-keyboard-lift": "0px",
-      "--mobile-nav-viewport-offset-top": "0px",
-    });
+    expect({
+      pillBottomPx: resolveMobileNavAnchorPx(popover, "--mobile-nav-pill-bottom"),
+      popoverBottomPx: resolveMobileNavAnchorPx(popover, "--mobile-nav-popover-bottom"),
+    }).toEqual(anchoredGeometry);
+    /*
+    FNXC:MobileNav 2026-09-14-07:48:
+    The popover is still open, so the published geometry stays frozen at the sample captured when it opened; only a
+    close releases it. The bottom anchor is keyboard-independent either way.
+    */
+    expect(popover).toHaveStyle({ "--mobile-nav-viewport-offset-top": "40px" });
+    } finally {
+      removeGeometryTokenValues();
+    }
   });
 
   it.each([
@@ -1936,8 +2338,8 @@ describe("official dashboard design production wiring", () => {
     try {
       const view = render(<App />);
       fireEvent.click(await screen.findByTestId("mobile-nav-tab-command-center"));
-      const drawer = await screen.findByTestId("alpha-mobile-drawer-main-content");
-      expect(drawer.className).toBe("alpha-mobile-drawer alpha-mobile-drawer--open");
+      const drawer = await screen.findByTestId("mobile-drawer-main-content");
+      expect(drawer.className).toBe("mobile-drawer mobile-drawer--open");
       expectProductionAlphaDrawerOverlay(drawer, viewport.systemOffset);
 
       mockUseMobileKeyboard.mockReturnValue({ keyboardOverlap: 240, viewportHeight: 400, viewportOffsetTop: 0, keyboardOpen: true });
@@ -1945,7 +2347,7 @@ describe("official dashboard design production wiring", () => {
       await waitFor(() => expect(document.querySelector(".mobile-nav-bar")).toHaveClass("mobile-nav-bar--keyboard-open"));
       expectProductionAlphaDrawerOverlay(drawer, viewport.systemOffset);
       dismissAlphaDrawerByHandle(drawer);
-      await waitFor(() => expect(screen.queryByTestId("alpha-mobile-drawer-main-content")).toBeNull());
+      await waitFor(() => expect(screen.queryByTestId("mobile-drawer-main-content")).toBeNull());
     } finally {
       productionStyle.remove();
       Object.defineProperties(window, {
@@ -1960,7 +2362,7 @@ describe("official dashboard design production wiring", () => {
     ["paysage court avec clavier", { width: 844, height: 390, keyboardOverlap: 156 }],
   ] as const)("route la pill vers le vrai Chat et garde son composeur rendu en %s", async (_name, geometry) => {
     /*
-    FNXC:AlphaMobileDrawer 2026-09-10-23:02:
+    FNXC:MobileDrawer 2026-09-10-23:02:
     The symptom regression must cross App's shipped pill into the production ChatView, select a real hook-backed conversation, and measure the resulting composer against the drawer. A component stand-in can prove routing but cannot protect ChatView's own header, selection, or flex chain.
     */
     mockUseViewportMode.mockReturnValue("mobile");
@@ -1981,7 +2383,9 @@ describe("official dashboard design production wiring", () => {
     });
 
     render(<App />);
-    fireEvent.click(await screen.findByTestId("mobile-nav-tab-chat"));
+    /* FN-467: Chat is not promotable into the quick-access row, so the phone menu is its single mobile owner. */
+    fireEvent.click(await screen.findByTestId("mobile-menu-trigger"));
+    fireEvent.click(await screen.findByTestId("mobile-more-item-chat"));
     const dialog = await screen.findByRole("dialog", { name: "Chat" });
     fireEvent.click(await within(dialog).findByTestId(`chat-session-${appChatSession.id}`));
     const input = await within(dialog).findByTestId("chat-input");
@@ -1990,25 +2394,27 @@ describe("official dashboard design production wiring", () => {
     expect(dialog).toContainElement(document.querySelector(".chat-view"));
     expect(Array.from(dialog.querySelectorAll("h1,h2,h3")).filter((heading) => heading.textContent === "Chat" && !heading.classList.contains("visually-hidden"))).toHaveLength(1);
     expect(within(dialog).getByTestId("chat-new-btn")).toBeEnabled();
-    expect(within(dialog).getByTestId("chat-pop-out")).toBeEnabled();
+    /* The phone drawer is the only Chat host on mobile: no whole-view pop-out and no floating window shell. */
+    expect(within(dialog).queryByTestId("chat-pop-out")).toBeNull();
+    expect(within(dialog).queryByLabelText("Pop out chat")).toBeNull();
     expect(within(dialog).queryByRole("button", { name: "Close" })).toBeNull();
-    expect(dialog.querySelectorAll(".alpha-mobile-drawer__handle-target")).toHaveLength(1);
+    expect(dialog.querySelectorAll(".mobile-drawer__handle-target")).toHaveLength(1);
     expect(input).toHaveClass("chat-input-textarea");
-    expect(input.closest(".alpha-mobile-drawer__panel")).toBe(dialog);
+    expect(input.closest(".mobile-drawer__panel")).toBe(dialog);
     expect(input).toHaveFocus();
 
-    const chatDrawer = screen.getByTestId("alpha-mobile-drawer-chat");
+    const chatDrawer = screen.getByTestId("mobile-drawer-chat");
     dismissAlphaDrawerByHandle(chatDrawer);
-    await waitFor(() => expect(chatDrawer).toHaveClass("alpha-mobile-drawer--hidden"));
+    await waitFor(() => expect(chatDrawer).toHaveClass("mobile-drawer--hidden"));
 
-    fireEvent.click(screen.getByTestId("alpha-mobile-menu-trigger"));
+    fireEvent.click(screen.getByTestId("mobile-menu-trigger"));
     fireEvent.click(screen.getByTestId("mobile-more-item-list"));
-    const listDrawer = await screen.findByTestId("alpha-mobile-drawer-list");
+    const listDrawer = await screen.findByTestId("mobile-drawer-list");
     const listDialog = within(listDrawer).getByRole("dialog", { name: "List" });
-    expect(listDialog.querySelectorAll(".alpha-mobile-drawer__close")).toHaveLength(0);
-    expect(listDialog.querySelectorAll(".alpha-mobile-drawer__handle-target")).toHaveLength(1);
+    expect(listDialog.querySelectorAll(".mobile-drawer__close")).toHaveLength(0);
+    expect(listDialog.querySelectorAll(".mobile-drawer__handle-target")).toHaveLength(1);
     dismissAlphaDrawerByHandle(listDrawer);
-    await waitFor(() => expect(listDrawer).toHaveClass("alpha-mobile-drawer--hidden"));
+    await waitFor(() => expect(listDrawer).toHaveClass("mobile-drawer--hidden"));
   });
 
   it("garde Planning, Usage et Projects sur le même shell avec un seul propriétaire d’en-tête", async () => {
@@ -2027,29 +2433,29 @@ describe("official dashboard design production wiring", () => {
       const canonicalHeights: string[] = [];
 
       fireEvent.click(await screen.findByTestId("mobile-nav-tab-planning"));
-      const planningDrawer = await screen.findByTestId("alpha-mobile-drawer-planning");
+      const planningDrawer = await screen.findByTestId("mobile-drawer-planning");
       expectProductionAlphaDrawerOverlay(planningDrawer, systemOffset);
       expectSingleDrawerHeader(within(planningDrawer).getByRole("dialog", { name: "Planning" }), ".modal-header--embedded");
-      canonicalHeights.push(window.getComputedStyle(planningDrawer.querySelector(".alpha-mobile-drawer__panel")!).height);
+      canonicalHeights.push(window.getComputedStyle(planningDrawer.querySelector(".mobile-drawer__panel")!).height);
       dismissAlphaDrawerByHandle(planningDrawer);
 
-      fireEvent.click(await screen.findByTestId("alpha-mobile-menu-trigger"));
+      fireEvent.click(await screen.findByTestId("mobile-menu-trigger"));
       fireEvent.click(screen.getByTestId("mobile-more-item-usage"));
-      const usageDrawer = await screen.findByTestId("alpha-mobile-drawer-usage");
-      expect(usageDrawer.className).toBe("alpha-mobile-drawer alpha-mobile-drawer--open");
+      const usageDrawer = await screen.findByTestId("mobile-drawer-usage");
+      expect(usageDrawer.className).toBe("mobile-drawer mobile-drawer--open");
       expectProductionAlphaDrawerOverlay(usageDrawer, systemOffset);
       expectSingleDrawerHeader(within(usageDrawer).getByRole("dialog", { name: "Usage" }), ".modal-header");
-      canonicalHeights.push(window.getComputedStyle(usageDrawer.querySelector(".alpha-mobile-drawer__panel")!).height);
+      canonicalHeights.push(window.getComputedStyle(usageDrawer.querySelector(".mobile-drawer__panel")!).height);
       dismissAlphaDrawerByHandle(usageDrawer);
 
-      fireEvent.click(screen.getByTestId("alpha-mobile-menu-trigger"));
+      fireEvent.click(screen.getByTestId("mobile-menu-trigger"));
       fireEvent.click(screen.getByTestId("mobile-more-item-projects"));
-      const projectsDrawer = await screen.findByTestId("alpha-mobile-drawer-projects");
+      const projectsDrawer = await screen.findByTestId("mobile-drawer-projects");
       expectProductionAlphaDrawerOverlay(projectsDrawer, systemOffset);
       expectSingleDrawerHeader(within(projectsDrawer).getByRole("dialog", { name: "Projects" }), ".view-header");
-      canonicalHeights.push(window.getComputedStyle(projectsDrawer.querySelector(".alpha-mobile-drawer__panel")!).height);
+      canonicalHeights.push(window.getComputedStyle(projectsDrawer.querySelector(".mobile-drawer__panel")!).height);
       dismissAlphaDrawerByHandle(projectsDrawer);
-      await waitFor(() => expect(screen.queryByTestId("alpha-mobile-drawer-projects")).toBeNull());
+      await waitFor(() => expect(screen.queryByTestId("mobile-drawer-projects")).toBeNull());
 
       expect(new Set(canonicalHeights)).toEqual(new Set([canonicalHeights[0]]));
       expect(canonicalHeights[0]).not.toBe("");
@@ -2068,54 +2474,98 @@ describe("official dashboard design production wiring", () => {
     vi.mocked(fetchSettings).mockResolvedValue({ ...defaultSettings, mobileNavPrimaryItems: ["settings", "planning"], experimentalFeatures });
 
     render(<App />);
-    await waitFor(() => expect(screen.getByTestId("alpha-mobile-menu-trigger")).toBeInTheDocument());
-    expect(screen.getByTestId("dashboard-project-shell").querySelector(".project-content")).toHaveClass("project-content--with-alpha-nav");
+    await waitFor(() => expect(screen.getByTestId("mobile-menu-trigger")).toBeInTheDocument());
+    expect(screen.getByTestId("dashboard-project-shell").querySelector(".project-content")).toHaveClass("project-content--with-mobile-nav");
     expect(screen.queryByTestId("mobile-nav-tab-more")).toBeNull();
-    expect(Array.from(document.querySelectorAll<HTMLElement>(".mobile-nav-bar--alpha > .mobile-nav-tab")).map((tab) => tab.dataset.testid)).toEqual([
-      "mobile-nav-tab-command-center",
+    /*
+     * FN-467: the pill is driven by the project quick-access selection, so this fixture's `["settings", "planning"]`
+     * resolves to Planning alone — Settings is not a promotable destination — and Board is absent because it was not
+     * selected, not because the pill hard-codes four destinations.
+     */
+    expect(Array.from(document.querySelectorAll<HTMLElement>(".mobile-nav-bar--native > .mobile-nav-tab")).map((tab) => tab.dataset.testid)).toEqual([
       "mobile-nav-tab-planning",
-      "mobile-nav-tab-chat",
-      "mobile-nav-tab-mailbox",
     ]);
+    expect(screen.queryByTestId("mobile-nav-tab-settings")).toBeNull();
     expect(screen.queryByTestId("mobile-nav-tab-tasks")).toBeNull();
   });
 
-  it("remplace les deux barres et héberge Chat liste-seule et Notes inline", async () => {
+  /*
+   * FN-467 cas (m) : la pill du téléphone et la rangée directe du footer partagé lisent le MÊME réglage projet, dans le
+   * même ordre, et l'aperçu avant enregistrement reclasse les deux surfaces.
+   */
+  it.each(["mobile", "desktop"] as const)("aligne la navigation d'accès rapide de %s sur le réglage projet", async (viewport) => {
+    mockUseViewportMode.mockReturnValue(viewport);
+    vi.mocked(fetchSettings).mockResolvedValue({ ...defaultSettings, mobileNavPrimaryItems: ["mailbox", "missions", "tasks"], navigationPlacement: "footer" });
+
+    render(<App />);
+    if (viewport === "mobile") {
+      await waitFor(() => expect(screen.getByTestId("mobile-menu-trigger")).toBeInTheDocument());
+      await waitFor(() => expect(Array.from(document.querySelectorAll<HTMLElement>(".mobile-nav-bar--native > .mobile-nav-tab")).map((tab) => tab.dataset.testid)).toEqual([
+        "mobile-nav-tab-mailbox",
+        "mobile-nav-tab-missions",
+        "mobile-nav-tab-tasks",
+      ]));
+    } else {
+      await waitFor(() => expect(document.querySelector(".desktop-action-bar__scroller")).not.toBeNull());
+      await waitFor(() => expect(Array.from(document.querySelectorAll<HTMLElement>(".desktop-action-bar__scroller .desktop-action-bar__action")).map((button) => button.dataset.testid)).toEqual([
+        "desktop-nav-mailbox",
+        "desktop-nav-missions",
+        "desktop-nav-board",
+      ]));
+    }
+  });
+
+  it("keeps Chat and Notes as inline dock tools without an expanded owner", async () => {
     mockUseViewportMode.mockReturnValue("desktop");
     configureProductionAppChat();
     localStorage.setItem("fusion:right-dock-open", "true");
     const note = { id: "note-alpha", title: "Note Alpha", content: "Initial", revision: 1, createdAt: "2026-09-11", updatedAt: "2026-09-11" };
     mockNotesApi.fetchNotes.mockReset().mockResolvedValue({ notes: [note] });
     mockNotesApi.fetchNote.mockReset().mockResolvedValue(note);
+    /* FN-419: the desktop pilot dock tools require the footer placement. */
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
+      navigationPlacement: "footer",
       experimentalFeatures: { ...defaultSettings.experimentalFeatures },
     });
 
     render(<App />);
-    expect(await screen.findByTestId("alpha-desktop-action-bar")).toBeInTheDocument();
+    expect(await screen.findByTestId("desktop-action-bar")).toBeInTheDocument();
     expect(document.querySelector(".executor-status-bar")).toBeNull();
-    expect(screen.queryByTestId("alpha-desktop-nav-patchnode")).toBeNull();
-    expect(screen.queryByTestId("alpha-desktop-nav-chat")).toBeNull();
-    expect(screen.queryByTestId("alpha-desktop-nav-notes")).toBeNull();
+    expect(screen.queryByTestId("desktop-nav-patchnode")).toBeNull();
+    expect(screen.queryByTestId("desktop-nav-chat")).toBeNull();
+    expect(screen.queryByTestId("desktop-nav-notes")).toBeNull();
 
+    /*
+    FNXC:ChatSurfaceUnification 2026-09-14-17:46:
+    FN-392: Chat and Notes are peer inline dock tools. Selecting Chat keeps the dock mounted with one Chat surface in its
+    body and creates neither an expand affordance nor an expanded window.
+    */
     fireEvent.click(await screen.findByTestId("right-dock-tab-chat"));
+    const dockBody = await screen.findByTestId("right-dock-body");
+    await waitFor(() => expect(dockBody.querySelectorAll(".chat-view")).toHaveLength(1));
+    expect(document.querySelectorAll(".chat-view")).toHaveLength(1);
+    expect(screen.getByTestId("right-dock")).toBeInTheDocument();
+    expect(screen.queryByTestId("right-dock-expand-modal")).toBeNull();
     expect(screen.queryByTestId("right-dock-expand")).toBeNull();
-    fireEvent.click(await within(screen.getByTestId("right-dock")).findByTestId(`chat-session-${appChatSession.id}`));
-    const chatWindow = await screen.findByTestId(`floating-window-overlay-chat-window-${DEFAULT_PROJECT_ID}-${appChatSession.id}`);
-    fireEvent.click(within(screen.getByTestId("right-dock")).getByTestId(`chat-session-${appChatSession.id}`));
-    expect(screen.getAllByTestId(`floating-window-overlay-chat-window-${DEFAULT_PROJECT_ID}-${appChatSession.id}`)).toEqual([chatWindow]);
 
-    fireEvent.click(screen.getByTestId("right-dock-tab-notes"));
+    fireEvent.click(await screen.findByTestId("right-dock-tab-notes"));
     expect(screen.queryByTestId("right-dock-expand")).toBeNull();
     expect(await within(screen.getByTestId("right-dock")).findByText("Note Alpha")).toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: "Notes" })).toBeNull();
     expect(document.querySelector(".right-dock .notes-view--compact")).not.toBeNull();
   });
 
+  /*
+  FNXC:HistoryModalSurface 2026-09-15-04:29:
+  FN-403: History has ONE render owner on every breakpoint — the modal surface. It must mount exactly one
+  PatchnodeView, leave the Board nodes untouched, and never rewrite the persisted view value. Tablet is included
+  because it previously had no window owner at all and fell back to the full-page History destination.
+  */
   it.each([
     ["selected", "desktop", 1200, undefined, "loading"],
     ["aggregate", "desktop", 1200, ALL_WORKFLOWS_BOARD_VIEW_ID, "empty"],
+    ["selected", "tablet", 900, undefined, "populated"],
     ["selected", "mobile", 600, undefined, "error"],
     ["aggregate", "mobile", 600, ALL_WORKFLOWS_BOARD_VIEW_ID, "populated"],
   ] as const)("routes complete-column History through the %s Board production chain on %s", async (_mode, viewport, width, selection, historyState) => {
@@ -2182,21 +2632,25 @@ describe("official dashboard design production wiring", () => {
       expect(boardBefore).not.toBeNull();
       expect(screen.queryByTestId("sidebar-nav-patchnode")).toBeNull();
 
+      const persistedViewBefore = localStorage.getItem(taskViewStorageKey());
+
       fireEvent.click(historyButton);
       const historyDialog = await screen.findByRole("dialog", { name: "History" });
-      expect(historyDialog).toHaveAttribute("aria-modal", viewport === "desktop" ? "false" : "true");
+      expect(historyDialog).toHaveAttribute("aria-modal", viewport === "mobile" ? "true" : "false");
+      expect(document.querySelectorAll('[data-testid="patchnode-view"]')).toHaveLength(1);
+      expect(document.querySelectorAll("#patchnode-title")).toHaveLength(1);
       expect(document.querySelector(".board")).toBe(boardBefore);
       expect(Array.from(document.querySelectorAll(".board > .column"))).toEqual(columnsBefore);
       expect(document.querySelectorAll(".board")).toHaveLength(1);
-      if (viewport === "desktop") {
-        expect(localStorage.getItem(taskViewStorageKey())).toBe("board");
-      } else {
-        expect(screen.getByTestId("alpha-mobile-drawer-main-content")).toContainElement(historyDialog);
+      expect(screen.queryByTestId("mobile-drawer-main-content")).toBeNull();
+      expect(localStorage.getItem(taskViewStorageKey())).toBe(persistedViewBefore);
+      if (viewport === "mobile") {
         expect(screen.getByTestId("board-keep-alive")).not.toHaveAttribute("aria-hidden");
       }
 
       fireEvent.click(historyButton);
       expect(screen.getAllByRole("dialog", { name: "History" })).toHaveLength(1);
+      expect(document.querySelectorAll('[data-testid="patchnode-view"]')).toHaveLength(1);
       expect(document.querySelector(".board")).toBe(boardBefore);
 
       if (historyState === "loading") {
@@ -2210,9 +2664,57 @@ describe("official dashboard design production wiring", () => {
       }
       expect(document.querySelector(".board")).toBe(boardBefore);
       expect(Array.from(document.querySelectorAll(".board > .column"))).toEqual(columnsBefore);
+
+      fireEvent.click(within(historyDialog).getByRole("button", { name: "Close History" }));
+      await waitFor(() => expect(document.querySelectorAll('[data-testid="patchnode-view"]')).toHaveLength(0));
+      expect(document.querySelector(".board")).toBe(boardBefore);
     } finally {
       Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth });
     }
+  });
+
+  /*
+  FNXC:HistoryModalSurface 2026-09-15-04:29:
+  FN-403 symptom reproduction: a persisted legacy `patchnode` view value used to render the full-page History AND
+  let the pilot window open a second instance. It must now resolve to Board with exactly one History modal, and the
+  legacy value must never be written back.
+  */
+  it.each(["desktop", "tablet", "mobile"] as const)("résout une vue patchnode persistée en une seule instance History sur %s", async (viewport) => {
+    mockUseViewportMode.mockReturnValue(viewport);
+    vi.mocked(fetchSettings).mockResolvedValue({
+      ...defaultSettings,
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures },
+    });
+    vi.mocked(fetchPatchnode).mockResolvedValue({ days: [], totalEntries: 0, hasMore: false });
+    localStorage.setItem(taskViewStorageKey(), "patchnode");
+
+    render(<App />);
+
+    await screen.findByRole("dialog", { name: "History" });
+    expect(document.querySelectorAll('[data-testid="patchnode-view"]')).toHaveLength(1);
+    expect(document.querySelectorAll("#patchnode-title")).toHaveLength(1);
+    expect(localStorage.getItem(taskViewStorageKey())).toBe("board");
+    await waitFor(() => expect(document.querySelector(".board")).not.toBeNull());
+  });
+
+  it("ferme l'Historique avec le retour arrière du navigateur", async () => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    vi.mocked(fetchSettings).mockResolvedValue({
+      ...defaultSettings,
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures },
+    });
+    vi.mocked(fetchPatchnode).mockResolvedValue({ days: [], totalEntries: 0, hasMore: false });
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByTestId("column-history-done"));
+    await screen.findByRole("dialog", { name: "History" });
+
+    act(() => {
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+
+    await waitFor(() => expect(document.querySelectorAll('[data-testid="patchnode-view"]')).toHaveLength(0));
   });
 });
 
@@ -2325,7 +2827,12 @@ describe("FN-4250 FileBrowserProvider coverage", () => {
 
     render(<App />);
 
-    expect(screen.getByTitle("Settings")).toBeInTheDocument();
+    /*
+     * FN-419: assert the shell itself rather than a control that only one placement labels with a `title`. Before
+     * settings hydrate, the shell paints the shipped default placement; the point of this case is that it paints at
+     * all, immediately, with no probe loader.
+     */
+    expect(screen.getByTestId("dashboard-project-shell")).toBeInTheDocument();
     expect(screen.queryByTestId("fb-probe-loader")).not.toBeInTheDocument();
   });
 
@@ -2747,11 +3254,21 @@ describe("App chat unread response indicator", () => {
       expect(mockSubscribeSse).toHaveBeenCalled();
     });
 
-    const chatSubscriptionCall = mockSubscribeSse.mock.calls.find(
+    return latestChatEvents();
+  };
+
+  /*
+  FNXC:ChatBadge 2026-09-14-12:57:
+  The unread subscription re-registers whenever effective Chat visibility changes, so a test that keeps the
+  first handler set would dispatch into a closure that still believes Chat is closed. Always read the latest
+  registration before dispatching an event that must respect the current surface state.
+  */
+  const latestChatEvents = () => {
+    const chatSubscriptionCalls = mockSubscribeSse.mock.calls.filter(
       ([url, sub]) => String(url).startsWith("/api/events") && typeof (sub as { events?: Record<string, unknown> })?.events?.["chat:message:added"] === "function",
     );
 
-    return (chatSubscriptionCall?.[1] as {
+    return (chatSubscriptionCalls.at(-1)?.[1] as {
       events: Record<string, (event: MessageEvent) => void>;
     }).events;
   };
@@ -2809,9 +3326,11 @@ describe("App chat unread response indicator", () => {
       );
     });
 
-    const mobileChatNav = screen.getByTestId("mobile-nav-tab-chat");
+    /* FN-467: Chat moved from the fixed pill row into the phone navigation menu; the indicator contract is unchanged. */
+    fireEvent.click(screen.getByTestId("mobile-menu-trigger"));
+    const mobileChatNav = screen.getByTestId("mobile-more-item-chat");
     expect(mobileChatNav).toBeInTheDocument();
-    expect(mobileChatNav.querySelector(".mobile-nav-chat-unread-dot")).toBeNull();
+    expect(mobileChatNav.querySelector(".mobile-more-item-icon-dot")).toBeNull();
   });
 
   it("shows unread indicator for planner assistant messages visible in the common Chat feed", async () => {
@@ -2895,13 +3414,20 @@ describe("App chat unread response indicator", () => {
     });
 
     fireEvent.click(screen.getByTestId("sidebar-nav-chat"));
+    /*
+     * FN-419 (operator requirement 3): from the LEFT COLUMN, Chat opens in the main page like Notes — it no longer
+     * hijacks the right dock — so the page host is the surface that becomes visible and clears the badge.
+     */
+    expect(await screen.findByTestId("chat-keep-alive")).toBeInTheDocument();
+    expect(screen.queryByTestId("right-dock-body")).toBeNull();
 
     await waitFor(() => {
       expect(chatUnreadDot()).toBeNull();
     });
 
+    const eventsWhileChatVisible = latestChatEvents();
     await act(async () => {
-      events["chat:room:message:added"](
+      eventsWhileChatVisible["chat:room:message:added"](
         new MessageEvent("chat:room:message:added", {
           data: JSON.stringify({ role: "assistant", roomId: "room-1", id: "msg-4", content: "while-open", createdAt: new Date().toISOString() }),
         }),
@@ -3247,7 +3773,13 @@ describe("App deep link handling", () => {
     expect(window.history.replaceState).not.toHaveBeenCalled();
   });
 
-  it("closes board-opened main-panel task detail on one browser back", async () => {
+  /*
+  FNXC:TaskDetailDefaultTab 2026-09-16-02:53:
+  FN-442 routes a board card to the floating task window instead of the full main-panel task detail, so the surface that
+  a single dismissal has to close is that window. The invariant kept here is "one dismissal, detail gone, board back" —
+  only the surface and its dismissal gesture changed.
+  */
+  it("closes a board-opened task detail window on one dismissal", async () => {
     const boardTask = { id: "FN-6964", title: "Back nav task", description: "x", status: "todo", column: "todo", dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "", updatedAt: "" };
     mockUseTasks.mockImplementation(() => ({
       tasks: [boardTask],
@@ -3278,10 +3810,9 @@ describe("App deep link handling", () => {
     */
     fireEvent.click(await screen.findByText("Back nav task"));
     expect(await screen.findByTestId("main-panel-task-detail")).toBeTruthy();
+    expect(screen.getByTestId("floating-window-task-detail-FN-6964")).toBeTruthy();
 
-    act(() => {
-      window.dispatchEvent(new PopStateEvent("popstate", { state: { navIndex: 0 } }));
-    });
+    fireEvent.keyDown(document, { key: "Escape" });
 
     await waitFor(() => {
       expect(screen.queryByTestId("main-panel-task-detail")).toBeNull();
@@ -3289,7 +3820,12 @@ describe("App deep link handling", () => {
     });
   });
 
-  it("restores the previous main-panel task detail on nested detail browser back", async () => {
+  /*
+  FNXC:TaskDetailDefaultTab 2026-09-16-02:53:
+  FN-442: the board now opens the task window, and a nested task opened from inside it still layers on top. Backing out
+  of the nested detail must restore the originating one rather than closing everything.
+  */
+  it("restores the previous task detail on nested detail browser back", async () => {
     const boardTask = { id: "FN-6964", title: "Back nav task", description: "x", status: "todo", column: "todo", dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "", updatedAt: "" };
     mockUseTasks.mockImplementation(() => ({
       tasks: [boardTask],
@@ -3316,15 +3852,13 @@ describe("App deep link handling", () => {
     fireEvent.click(await screen.findByText("Back nav task"));
     expect(await screen.findByText("Open nested task")).toBeTruthy();
     fireEvent.click(screen.getByText("Open nested task"));
-    expect(await screen.findByText("Nested task")).toBeTruthy();
+    expect(await screen.findByTestId("floating-window-task-detail-FN-6965")).toBeTruthy();
 
-    act(() => {
-      window.dispatchEvent(new PopStateEvent("popstate", { state: { navIndex: 1 } }));
-    });
+    fireEvent.keyDown(document, { key: "Escape" });
 
     await waitFor(() => {
-      expect(screen.queryByText("Nested task")).toBeNull();
-      expect(screen.getByTestId("main-panel-task-detail")).toBeTruthy();
+      expect(screen.queryByTestId("floating-window-task-detail-FN-6965")).toBeNull();
+      expect(screen.getByTestId("floating-window-task-detail-FN-6964")).toBeTruthy();
       expect(screen.getAllByText("Back nav task").length).toBeGreaterThan(0);
     });
   });
@@ -3919,7 +4453,8 @@ describe("App view switching", () => {
     });
 
     // List view should be active
-    expect(screen.getByTestId("sidebar-nav-list").className).toContain("active");
+    /* FN-439: List became a sidebar destination, so its active state is the nav entry aria-current. */
+    expect(screen.getByTestId("sidebar-nav-list")).toHaveAttribute("aria-current", "page");
 
     // Cleanup
     localStorage.removeItem(taskViewStorageKey());
@@ -3964,10 +4499,10 @@ describe("App view switching", () => {
 
     const dialog = await screen.findByRole("dialog", { name: "Graph" });
     expect(dialog).toContainElement(await screen.findByTestId("dependency-graph"));
-    expect(dialog.querySelectorAll(".alpha-mobile-drawer__header")).toHaveLength(1);
-    expect(dialog.querySelectorAll(".alpha-mobile-drawer__title")).toHaveLength(1);
-    expect(dialog.querySelectorAll(".alpha-mobile-drawer__close")).toHaveLength(0);
-    expect(dialog.querySelectorAll(".alpha-mobile-drawer__handle-target")).toHaveLength(1);
+    expect(dialog.querySelectorAll(".mobile-drawer__header")).toHaveLength(1);
+    expect(dialog.querySelectorAll(".mobile-drawer__title")).toHaveLength(1);
+    expect(dialog.querySelectorAll(".mobile-drawer__close")).toHaveLength(0);
+    expect(dialog.querySelectorAll(".mobile-drawer__handle-target")).toHaveLength(1);
     expect(Array.from(dialog.querySelectorAll("h1,h2,h3")).filter((heading) => heading.textContent === "Graph" && !heading.classList.contains("visually-hidden"))).toHaveLength(1);
   });
 
@@ -4348,7 +4883,15 @@ describe("App view switching", () => {
     localStorage.removeItem(taskViewStorageKey());
   });
 
-  it("project switch renders and restores each project's own scoped main view", async () => {
+  /*
+  FNXC:ChatSurfaceUnification 2026-09-14-17:46:
+  FN-392: a restored wide `chat` selection is consumed once into the dock's inline Chat list, so the page selection
+  settles on Board while the sidebar entry stays non-active. Ordinary page destinations remain project-scoped and
+  restored, and no expand modal is ever created for Chat.
+  */
+  it("project switch consumes a restored wide Chat selection and restores ordinary page views", async () => {
+    /* FN-419: the dock consumes a restored wide `chat` selection only in the footer placement. */
+    vi.mocked(fetchSettings).mockResolvedValue({ ...defaultSettings, navigationPlacement: "footer" });
     const projectA = { id: "proj_a", name: "Project A", path: "/a", status: "active" as const, isolationMode: "in-process" as const, createdAt: "", updatedAt: "" };
     const projectB = { id: "proj_b", name: "Project B", path: "/b", status: "active" as const, isolationMode: "in-process" as const, createdAt: "", updatedAt: "" };
 
@@ -4358,21 +4901,29 @@ describe("App view switching", () => {
     mockCurrentProjectState.currentProject = projectA;
 
     const view = render(<App />);
-    await waitFor(() => expect(screen.getByTestId("fb-probe-chat")).toBeTruthy());
-    expect(screen.getByTestId("sidebar-nav-chat").className).toContain("active");
-    expect(localStorage.getItem("kb:proj_a:kb-dashboard-task-view")).toBe("chat");
+    expect(await screen.findByTestId("right-dock-body")).toBeInTheDocument();
+    expect(screen.queryByTestId("right-dock-expand-modal")).toBeNull();
+    expect(screen.getByTestId("fb-probe-chat")).toBeTruthy();
+    /*
+     * FN-419: this case runs in the FOOTER placement, so the left column is absent by design. The invariant it
+     * guards — the restored wide `chat` selection is consumed into the dock and never becomes a parallel PAGE host —
+     * is asserted on the page tree itself instead of on a nav item that belongs to the other placement.
+     */
+    expect(screen.queryByTestId("chat-keep-alive")).toBeNull();
+    await waitFor(() => expect(localStorage.getItem("kb:proj_a:kb-dashboard-task-view")).toBe("board"));
 
     mockCurrentProjectState.currentProject = projectB;
     view.rerender(<App />);
     await waitFor(() => expect(document.querySelector(".insights-view")).toBeTruthy());
-    expect(screen.getByTestId("sidebar-nav-insights").className).toContain("active");
+    expect(screen.queryByTestId("right-dock-expand-modal")).toBeNull();
     expect(localStorage.getItem("kb:proj_b:kb-dashboard-task-view")).toBe("insights");
 
     mockCurrentProjectState.currentProject = projectA;
     view.rerender(<App />);
-    await waitFor(() => expect(screen.getByTestId("fb-probe-chat")).toBeTruthy());
-    expect(screen.getByTestId("sidebar-nav-chat").className).toContain("active");
-    expect(localStorage.getItem("kb:proj_a:kb-dashboard-task-view")).toBe("chat");
+    // FN-419: footer placement — the active destination is read from the footer's Board entry.
+    await waitFor(() => expect(screen.getByTestId("desktop-nav-board")).toHaveAttribute("aria-current", "page"));
+    expect(screen.queryByTestId("right-dock-expand-modal")).toBeNull();
+    expect(localStorage.getItem("kb:proj_a:kb-dashboard-task-view")).toBe("board");
     expect(localStorage.getItem("kb:proj_b:kb-dashboard-task-view")).toBe("insights");
   });
 
@@ -4824,7 +5375,7 @@ describe("Script-to-terminal modal handoff", () => {
   });
 
   async function openScriptsModalFromMobileMenu() {
-    fireEvent.click(await screen.findByTestId("alpha-mobile-menu-trigger"));
+    fireEvent.click(await screen.findByTestId("mobile-menu-trigger"));
     fireEvent.click(screen.getByTestId("mobile-more-terminal-split-toggle"));
     fireEvent.click(await screen.findByTestId("mobile-more-scripts-manage"));
     await screen.findByTestId("scripts-modal");
@@ -4904,6 +5455,11 @@ describe("Script-to-terminal modal handoff", () => {
 });
 
 describe("App footer-safe project layout", () => {
+  /* FN-419: footer-safe containment is a property of the FOOTER placement; the sidebar placement has no bottom bar. */
+  beforeEach(() => {
+    vi.mocked(fetchSettings).mockResolvedValue({ ...defaultSettings, navigationPlacement: "footer" });
+  });
+
   afterEach(() => {
     localStorage.removeItem("kb-dashboard-view-mode");
     localStorage.removeItem(taskViewStorageKey());
@@ -4932,7 +5488,7 @@ describe("App footer-safe project layout", () => {
 
     render(<App />);
 
-    fireEvent.click(await screen.findByTestId("alpha-mobile-menu-trigger"));
+    fireEvent.click(await screen.findByTestId("mobile-menu-trigger"));
     fireEvent.click(screen.getByTestId("mobile-more-item-files"));
 
     await waitFor(() => {
@@ -5035,130 +5591,70 @@ describe("App footer-safe project layout", () => {
 });
 
 describe("App node mode switching", () => {
-  beforeEach(() => mockUseViewportMode.mockReturnValue("desktop"));
-  // FNXC:AlphaDesktopWindows 2026-09-12-05:41: A dock selection now opens an independent dedicated note window, so it no longer transfers clean editor ownership into the later tablet page; the page-only transition remains the guard contract here.
-  it.each([
-    ["sans ouverture préalable du dock", false],
-  ] as const)("protège un brouillon devenu sale sur la page tablette %s", async (_label, openCleanDockNote) => {
+  /*
+   * FN-419: every case in this block exercises the DESKTOP PILOT (dock Notes tool, pilot windows, node guards), which
+   * is bound to the footer placement. Opt the whole block in once rather than per case.
+   */
+  beforeEach(() => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    vi.mocked(fetchSettings).mockResolvedValue({ ...defaultSettings, navigationPlacement: "footer" });
+  });
+  /*
+  FNXC:NotesEditing 2026-09-15-21:23:
+  FN-435 a supprimé le champ titre de l'éditeur de note ET restreint la garde d'abandon : le contenu est désormais
+  enregistré automatiquement, donc un brouillon simplement non encore écrit n'a plus rien à perdre et ne doit plus
+  bloquer un changement de projet ou de nœud derrière un dialogue « Abandonner les modifications ? ». Les cinq cas qui
+  pilotaient cette garde en tapant dans le champ titre affirmaient exactement le contrat supprimé ; ils sont remplacés
+  par les deux cas ci-dessous, qui exercent le MÊME câblage (dock → fenêtre de note dédiée, page tablette, sélecteurs
+  de projet et de nœud) contre le nouveau contrat. La garde subsistante — conflit de révision et échec
+  d'enregistrement, les deux seuls états qu'aucune automatisation ne résout — est couverte au niveau de NotesView dans
+  `NotesView.autosave.test.tsx`.
+  */
+  const typeInOpenNoteEditor = (value: string) => {
+    const host = document.querySelector(".notes-editor .cm-editor") as HTMLElement | null;
+    if (!host) throw new Error("Expected an open note editor");
+    const view = EditorView.findFromDOM(host);
+    if (!view) throw new Error("Expected a CodeMirror EditorView for the open note");
+    act(() => {
+      view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: value } });
+    });
+  };
+
+  it("laisse un brouillon Notes enregistré automatiquement changer de projet sans dialogue", async () => {
     const project2 = { ...DEFAULT_PROJECT, id: "proj_456", name: "Second Project", path: "/second" };
     mockProjectsState.projects = [{ ...DEFAULT_PROJECT }, project2];
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
+      navigationPlacement: "sidebar",
       experimentalFeatures: { ...defaultSettings.experimentalFeatures },
     });
     const note = { id: "note-transition", title: "Transition", content: "Initial", revision: 1, createdAt: "2026-09-11", updatedAt: "2026-09-11" };
     mockNotesApi.fetchNotes.mockResolvedValue({ notes: [note] });
     mockNotesApi.fetchNote.mockResolvedValue(note);
-    if (openCleanDockNote) localStorage.setItem("fusion:right-dock-open", "true");
+    mockNotesApi.updateNote.mockResolvedValue({ ...note, content: "Sale après transition", revision: 2 });
 
     const view = render(<App />);
-    if (openCleanDockNote) {
-      fireEvent.click(await screen.findByTestId("right-dock-tab-notes"));
-      fireEvent.click(await within(screen.getByTestId("right-dock")).findByRole("button", { name: /Transition/ }));
-      await waitFor(() => expect(screen.getByLabelText("Note title")).toHaveValue("Transition"));
-    }
-
     mockUseViewportMode.mockReturnValue("tablet");
     view.rerender(<App />);
+
     fireEvent.click(await screen.findByTestId("sidebar-nav-notes"));
     const notesPage = await waitFor(() => {
       const candidate = document.querySelector<HTMLElement>(".notes-view:not(.notes-view--compact)");
       expect(candidate).not.toBeNull();
       return candidate!;
     });
-    fireEvent.click(await within(notesPage).findByRole("button", { name: /Transition/ }));
-    const title = await within(notesPage).findByLabelText("Note title");
-    await waitFor(() => expect(title).toHaveValue("Transition"));
-    fireEvent.change(title, { target: { value: "Sale après transition" } });
-    const projectChangesBeforeGuard = mockCurrentProjectState.setCurrentProject.mock.calls.length;
+    fireEvent.click(await within(notesPage).findByRole("button", { name: /^Transition/ }));
+    await waitFor(() => expect(document.querySelector(".notes-editor .cm-editor")).not.toBeNull());
+    typeInOpenNoteEditor("Sale après transition");
 
     fireEvent.click(screen.getByTestId("project-selector-trigger"));
     fireEvent.click(await screen.findByTestId(`project-selector-item-${project2.id}`));
-    expect(await screen.findByRole("dialog", { name: "Discard changes?" })).toBeInTheDocument();
-    expect(mockCurrentProjectState.setCurrentProject).toHaveBeenCalledTimes(projectChangesBeforeGuard);
 
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Discard changes?" })).toBeNull());
-    expect(mockCurrentProjectState.setCurrentProject).toHaveBeenCalledTimes(projectChangesBeforeGuard);
-    expect(screen.getByLabelText("Note title")).toHaveValue("Sale après transition");
-
-    fireEvent.click(screen.getByTestId("project-selector-trigger"));
-    fireEvent.click(await screen.findByTestId(`project-selector-item-${project2.id}`));
-    fireEvent.click(await screen.findByRole("button", { name: "Discard" }));
-    await waitFor(() => expect(mockCurrentProjectState.setCurrentProject).toHaveBeenCalledWith(project2));
-  });
-
-  it("transfère la garde du brouillon Notes vers la page tablette avant le changement de projet", async () => {
-    const project2 = { ...DEFAULT_PROJECT, id: "proj_456", name: "Second Project", path: "/second" };
-    mockProjectsState.projects = [{ ...DEFAULT_PROJECT }, project2];
-    vi.mocked(fetchSettings).mockResolvedValue({
-      ...defaultSettings,
-      experimentalFeatures: { ...defaultSettings.experimentalFeatures },
-    });
-    const note = { id: "note-transition", title: "Transition", content: "Initial", revision: 1, createdAt: "2026-09-11", updatedAt: "2026-09-11" };
-    mockNotesApi.fetchNotes.mockResolvedValue({ notes: [note] });
-    mockNotesApi.fetchNote.mockResolvedValue(note);
-    localStorage.setItem("fusion:right-dock-open", "true");
-
-    const view = render(<App />);
-    fireEvent.click(await screen.findByTestId("right-dock-tab-notes"));
-    fireEvent.click(await screen.findByRole("button", { name: /Transition/ }));
-    fireEvent.change(await screen.findByLabelText("Note title"), { target: { value: "Transition non sauvegardée" } });
-
-    mockUseViewportMode.mockReturnValue("tablet");
-    view.rerender(<App />);
-    await waitFor(() => expect(document.querySelector(".notes-view:not(.notes-view--compact)")).not.toBeNull());
-    expect(screen.getByLabelText("Note title")).toHaveValue("Transition non sauvegardée");
-    const projectChangesBeforeGuard = mockCurrentProjectState.setCurrentProject.mock.calls.length;
-
-    fireEvent.click(screen.getByTestId("project-selector-trigger"));
-    fireEvent.click(await screen.findByTestId(`project-selector-item-${project2.id}`));
-    expect(await screen.findByRole("dialog", { name: "Discard changes?" })).toBeInTheDocument();
-    expect(mockCurrentProjectState.setCurrentProject).toHaveBeenCalledTimes(projectChangesBeforeGuard);
-
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Discard changes?" })).toBeNull());
-    expect(mockCurrentProjectState.setCurrentProject).toHaveBeenCalledTimes(projectChangesBeforeGuard);
-    expect(screen.getByLabelText("Note title")).toHaveValue("Transition non sauvegardée");
-
-    fireEvent.click(screen.getByTestId("project-selector-trigger"));
-    fireEvent.click(await screen.findByTestId(`project-selector-item-${project2.id}`));
-    fireEvent.click(await screen.findByRole("button", { name: "Discard" }));
-    await waitFor(() => expect(mockCurrentProjectState.setCurrentProject).toHaveBeenCalledWith(project2));
-  });
-
-  it("n’applique pas l’ancien état sale du dock après sauvegarde sur la page tablette", async () => {
-    const project2 = { ...DEFAULT_PROJECT, id: "proj_456", name: "Second Project", path: "/second" };
-    mockProjectsState.projects = [{ ...DEFAULT_PROJECT }, project2];
-    vi.mocked(fetchSettings).mockResolvedValue({
-      ...defaultSettings,
-      experimentalFeatures: { ...defaultSettings.experimentalFeatures },
-    });
-    const note = { id: "note-transition", title: "Transition", content: "Initial", revision: 1, createdAt: "2026-09-11", updatedAt: "2026-09-11" };
-    mockNotesApi.fetchNotes.mockResolvedValue({ notes: [note] });
-    mockNotesApi.fetchNote.mockResolvedValue(note);
-    mockNotesApi.updateNote.mockResolvedValue({ ...note, title: "Transition sauvegardée", revision: 2 });
-    localStorage.setItem("fusion:right-dock-open", "true");
-
-    const view = render(<App />);
-    fireEvent.click(await screen.findByTestId("right-dock-tab-notes"));
-    fireEvent.click(await screen.findByRole("button", { name: /Transition/ }));
-    fireEvent.change(await screen.findByLabelText("Note title"), { target: { value: "Transition sauvegardée" } });
-
-    mockUseViewportMode.mockReturnValue("tablet");
-    view.rerender(<App />);
-    await waitFor(() => expect(document.querySelector(".notes-view:not(.notes-view--compact)")).not.toBeNull());
-    fireEvent.click(screen.getByRole("button", { name: /^Save$/ }));
-    await waitFor(() => expect(mockNotesApi.updateNote).toHaveBeenCalledTimes(1));
-    expect(screen.getByText("Saved")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByTestId("project-selector-trigger"));
-    fireEvent.click(await screen.findByTestId(`project-selector-item-${project2.id}`));
     await waitFor(() => expect(mockCurrentProjectState.setCurrentProject).toHaveBeenCalledWith(project2));
     expect(screen.queryByRole("dialog", { name: "Discard changes?" })).toBeNull();
   });
 
-  it("attend la garde Notes avant de changer de nœud et conserve la portée sur Cancel", async () => {
+  it("laisse un brouillon de fenêtre de note dédiée changer de nœud sans dialogue", async () => {
     const { useNodes } = await import("../../hooks/useNodes");
     const remoteNode = {
       id: "node_remote_1",
@@ -5175,110 +5671,32 @@ describe("App node mode switching", () => {
     });
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
+      navigationPlacement: "footer",
       experimentalFeatures: { ...defaultSettings.experimentalFeatures },
     });
     const note = { id: "note-1", title: "Brouillon", content: "Initial", revision: 1, createdAt: "2026-09-11", updatedAt: "2026-09-11" };
     mockNotesApi.fetchNotes.mockResolvedValue({ notes: [note] });
     mockNotesApi.fetchNote.mockResolvedValue(note);
+    mockNotesApi.updateNote.mockResolvedValue({ ...note, content: "Brouillon modifié", revision: 2 });
     localStorage.setItem("fusion:right-dock-open", "true");
 
-    render(<App />);
-    fireEvent.click(await screen.findByTestId("right-dock-tab-notes"));
-    fireEvent.click(await screen.findByRole("button", { name: /Brouillon/ }));
-    const title = await screen.findByLabelText("Note title");
-    fireEvent.change(title, { target: { value: "Brouillon modifié" } });
+    try {
+      render(<App />);
+      fireEvent.click(await screen.findByTestId("right-dock-tab-notes"));
+      fireEvent.click(await screen.findByRole("button", { name: /^Brouillon/ }));
+      await waitFor(() => expect(document.querySelector(".notes-editor .cm-editor")).not.toBeNull());
+      typeInOpenNoteEditor("Brouillon modifié");
 
-    fireEvent.click(screen.getByTestId("node-selector-trigger"));
-    fireEvent.click(await screen.findByTestId("node-option-node_remote_1"));
-    expect(await screen.findByRole("dialog", { name: "Discard changes?" })).toBeInTheDocument();
-    expect(mockNodeContextValue.setCurrentNode).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      fireEvent.click(screen.getByTestId("node-selector-trigger"));
+      fireEvent.click(await screen.findByTestId("node-option-node_remote_1"));
 
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Discard changes?" })).toBeNull());
-    expect(mockNodeContextValue.setCurrentNode).not.toHaveBeenCalled();
-    expect(screen.getByLabelText("Note title")).toHaveValue("Brouillon modifié");
-    expect(screen.getByTestId("node-option-node_remote_1")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByTestId("node-option-node_remote_1"));
-    fireEvent.click(await screen.findByRole("button", { name: "Discard" }));
-    await waitFor(() => expect(mockNodeContextValue.setCurrentNode).toHaveBeenCalledWith(remoteNode));
-    expect(screen.queryByRole("dialog", { name: "Notes" })).toBeNull();
-    vi.mocked(useNodes).mockReturnValue({
-      nodes: [], loading: false, error: null, refresh: vi.fn(), register: vi.fn(), update: vi.fn(), unregister: vi.fn(), healthCheck: vi.fn(),
-    });
-  });
-
-  it("garde la disparition automatique du nœud courant avec Cancel puis Discard", async () => {
-    const { useNodes } = await import("../../hooks/useNodes");
-    const currentRemoteNode = {
-      id: "node_remote_current",
-      name: "Current remote",
-      type: "remote" as const,
-      url: "http://remote-current:4040",
-      status: "online" as const,
-      maxConcurrent: 2,
-      createdAt: "",
-      updatedAt: "",
-    };
-    const survivingNode = { ...currentRemoteNode, id: "node_remote_other", name: "Other remote" };
-    const nodesResult = (nodes: typeof currentRemoteNode[]) => ({
-      nodes,
-      loading: false,
-      error: null,
-      refresh: vi.fn(),
-      register: vi.fn(),
-      update: vi.fn(),
-      unregister: vi.fn(),
-      healthCheck: vi.fn(),
-    });
-    vi.mocked(useNodes).mockReturnValue(nodesResult([currentRemoteNode]));
-    mockNodeContextValue.currentNode = currentRemoteNode;
-    mockNodeContextValue.currentNodeId = currentRemoteNode.id;
-    mockNodeContextValue.isRemote = true;
-    vi.mocked(fetchSettings).mockResolvedValue({
-      ...defaultSettings,
-      experimentalFeatures: { ...defaultSettings.experimentalFeatures },
-    });
-    const note = { id: "note-node-fallback", title: "Portée", content: "Initial", revision: 1, createdAt: "2026-09-11", updatedAt: "2026-09-11" };
-    mockNotesApi.fetchNotes.mockResolvedValue({ notes: [note] });
-    mockNotesApi.fetchNote.mockResolvedValue(note);
-    localStorage.setItem("fusion:right-dock-open", "true");
-
-    const { rerender } = render(<App />);
-    fireEvent.click(await screen.findByTestId("right-dock-tab-notes"));
-    fireEvent.click(await screen.findByRole("button", { name: /Portée/ }));
-    fireEvent.change(await screen.findByLabelText("Note title"), { target: { value: "Portée modifiée" } });
-
-    vi.mocked(useNodes).mockReturnValue(nodesResult([survivingNode]));
-    rerender(<App />);
-    expect(await screen.findByRole("dialog", { name: "Discard changes?" })).toBeInTheDocument();
-    expect(mockNodeContextValue.clearCurrentNode).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Discard changes?" })).toBeNull());
-    expect(mockNodeContextValue.clearCurrentNode).not.toHaveBeenCalled();
-    expect(screen.getByLabelText("Note title")).toHaveValue("Portée modifiée");
-
-    vi.mocked(useNodes).mockReturnValue(nodesResult([currentRemoteNode, survivingNode]));
-    rerender(<App />);
-    vi.mocked(useNodes).mockReturnValue(nodesResult([survivingNode]));
-    rerender(<App />);
-    expect(await screen.findByRole("dialog", { name: "Discard changes?" })).toBeInTheDocument();
-
-    // The authoritative node reappears while the destructive verdict is still pending.
-    vi.mocked(useNodes).mockReturnValue(nodesResult([currentRemoteNode, survivingNode]));
-    rerender(<App />);
-    fireEvent.click(screen.getByRole("button", { name: "Discard" }));
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Discard changes?" })).toBeNull());
-    expect(mockNodeContextValue.clearCurrentNode).not.toHaveBeenCalled();
-    expect(document.querySelector(".right-dock .notes-view--compact")).not.toBeNull();
-    expect(screen.getByLabelText("Note title")).toHaveValue("Portée modifiée");
-
-    vi.mocked(useNodes).mockReturnValue(nodesResult([survivingNode]));
-    rerender(<App />);
-    fireEvent.click(await screen.findByRole("button", { name: "Discard" }));
-    await waitFor(() => expect(mockNodeContextValue.clearCurrentNode).toHaveBeenCalledTimes(1));
-    expect(screen.queryByRole("dialog", { name: "Notes" })).toBeNull();
-    vi.mocked(useNodes).mockReturnValue(nodesResult([]));
+      await waitFor(() => expect(mockNodeContextValue.setCurrentNode).toHaveBeenCalledWith(remoteNode));
+      expect(screen.queryByRole("dialog", { name: "Discard changes?" })).toBeNull();
+    } finally {
+      vi.mocked(useNodes).mockReturnValue({
+        nodes: [], loading: false, error: null, refresh: vi.fn(), register: vi.fn(), update: vi.fn(), unregister: vi.fn(), healthCheck: vi.fn(),
+      });
+    }
   });
 
   it("does not render node selector when no remote nodes are available", async () => {
@@ -5685,10 +6103,11 @@ describe("App onboarding reopen", () => {
         defaultModelId: "claude-sonnet-4-5",
       });
 
-    // Mock Settings and auth
+    /* FN-419: this case opens Settings from the primary navigation Settings item, which the sidebar placement labels with a title. */
     (fetchSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       maxConcurrent: 2,
       maxWorktrees: 4,
+      navigationPlacement: "sidebar",
     });
     (fetchAuthStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
       providers: [
@@ -5745,10 +6164,11 @@ describe("App onboarding reopen", () => {
       defaultModelId: "claude-sonnet-4-5",
     });
 
-    // Mock Settings and auth
+    /* FN-419: this case opens Settings from the primary navigation Settings item, which the sidebar placement labels with a title. */
     (fetchSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       maxConcurrent: 2,
       maxWorktrees: 4,
+      navigationPlacement: "sidebar",
     });
     (fetchAuthStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
       providers: [
@@ -5958,8 +6378,14 @@ describe("FN-3290: modal keyboard isolation for mobile dashboard layout", () => 
     });
 
     const wrapper = document.querySelector(".project-content");
-    // Without a modal, the keyboard-open state should remove the mobile nav padding
-    expect(wrapper?.classList.contains("project-content--with-mobile-nav")).toBe(false);
+    /*
+    FNXC:NativeShell 2026-09-15-00:20:
+    Before FN-399 this asserted the absence of a class App never published (it published the perimeter's
+    own name), so it passed vacuously. The shell's real contract is that the navigation pill — and its
+    content reservation — stay mounted while the keyboard is open with no modal, so the operator can still
+    reach every destination; only a blocking modal or the Chat destination removes it.
+    */
+    expect(wrapper?.classList.contains("project-content--with-mobile-nav")).toBe(true);
   });
 
   it("keeps the official mobile navigation reservation removed while a modal keyboard is open", async () => {
@@ -5991,10 +6417,15 @@ describe("FN-3290: modal keyboard isolation for mobile dashboard layout", () => 
 
     const wrapper = document.querySelector(".project-content");
     expect(wrapper).toBeTruthy();
-    expect(wrapper).not.toHaveClass("project-content--with-alpha-nav", "project-content--with-mobile-nav");
+    expect(wrapper).not.toHaveClass("project-content--with-mobile-nav", "project-content--with-mobile-nav");
   });
 
-  it("removes mobile nav class when modal closes while keyboard stays open", async () => {
+  /*
+  FNXC:NativeShell 2026-09-15-00:20:
+  Restored to the shell's real contract now that App publishes this class: a blocking modal removes the
+  navigation reservation, and closing that modal restores it even while the keyboard is still open.
+  */
+  it("restores the mobile nav reservation when a modal closes while the keyboard stays open", async () => {
     Object.defineProperty(window, "location", {
       configurable: true,
       value: new URL("http://localhost:3000/?task=FN-456"),
@@ -6017,7 +6448,7 @@ describe("FN-3290: modal keyboard isolation for mobile dashboard layout", () => 
     });
 
     let wrapper = document.querySelector(".project-content");
-    expect(wrapper).not.toHaveClass("project-content--with-alpha-nav", "project-content--with-mobile-nav");
+    expect(wrapper).not.toHaveClass("project-content--with-mobile-nav", "project-content--with-mobile-nav");
 
     // Close the modal via close button
     const closeBtn = document.querySelector(".modal-overlay.open .modal-close") as HTMLElement;
@@ -6025,11 +6456,10 @@ describe("FN-3290: modal keyboard isolation for mobile dashboard layout", () => 
     fireEvent.click(closeBtn);
     rerender(<App />);
 
-    // Keyboard is still open, but modal is now closed — mobileKeyboardOpen becomes true,
-    // so the mobile nav class should be removed
+    // Keyboard is still open, but the modal is closed, so navigation — and its reservation — come back.
     await waitFor(() => {
       wrapper = document.querySelector(".project-content");
-      expect(wrapper?.classList.contains("project-content--with-mobile-nav")).toBe(false);
+      expect(wrapper?.classList.contains("project-content--with-mobile-nav")).toBe(true);
     });
   });
 });
@@ -6104,8 +6534,8 @@ describe("App task search suggestions", () => {
     expect(board.getByText("Active Alpha task")).toBeInTheDocument();
     expect(board.getByText("Completed Alpha task")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByTestId("alpha-desktop-header-search-btn"));
-    const inlineSearch = screen.getByTestId("alpha-desktop-header-search-input");
+    fireEvent.click(screen.getByTestId("desktop-inline-header-search-btn"));
+    const inlineSearch = screen.getByTestId("desktop-header-search-input");
     expect(inlineSearch.parentElement).toBe(document.querySelector(".header-actions"));
     fireEvent.change(screen.getByRole("combobox", { name: "Search tasks..." }), { target: { value: "353" } });
     expect(screen.queryByRole("dialog", { name: "Search tasks..." })).toBeNull();
@@ -6118,7 +6548,7 @@ describe("App task search suggestions", () => {
     expect(observedQueries.every((query) => query === undefined)).toBe(true);
 
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
-    fireEvent.click(screen.getByTestId("alpha-desktop-nav-list"));
+    fireEvent.click(screen.getByTestId("sidebar-nav-list"));
     await waitFor(() => expect(screen.getByTestId("list-keep-alive")).not.toHaveAttribute("aria-hidden"));
     const list = within(screen.getByTestId("list-keep-alive"));
     expect(list.getByText("Active Alpha task")).toBeInTheDocument();
@@ -6152,8 +6582,8 @@ describe("App task search suggestions", () => {
     expect(board.getByText("Remote completed Alpha task")).toBeInTheDocument();
     expect(board.queryByText("Local task")).toBeNull();
 
-    fireEvent.click(screen.getByTestId("alpha-desktop-header-search-btn"));
-    expect(screen.getByTestId("alpha-desktop-header-search-input").parentElement).toBe(document.querySelector(".header-actions"));
+    fireEvent.click(screen.getByTestId("desktop-inline-header-search-btn"));
+    expect(screen.getByTestId("desktop-header-search-input").parentElement).toBe(document.querySelector(".header-actions"));
     fireEvent.change(screen.getByRole("combobox", { name: "Search tasks..." }), { target: { value: "353" } });
     fireEvent.click(screen.getByRole("option", { name: "REMOTE-353: Remote completed Alpha task" }));
 
@@ -6173,15 +6603,15 @@ describe("App task search suggestions", () => {
 
     render(<App />);
     await waitForAppShell();
-    fireEvent.click(screen.getByTestId("alpha-desktop-header-search-btn"));
+    fireEvent.click(screen.getByTestId("desktop-inline-header-search-btn"));
     fireEvent.change(screen.getByRole("combobox", { name: "Search tasks..." }), { target: { value: "353" } });
     fireEvent.click(screen.getByRole("button", { name: "Close search" }));
-    await waitFor(() => expect(screen.getByTestId("alpha-desktop-header-search-btn")).toHaveFocus());
+    await waitFor(() => expect(screen.getByTestId("desktop-inline-header-search-btn")).toHaveFocus());
 
-    fireEvent.click(screen.getByTestId("alpha-desktop-header-search-btn"));
+    fireEvent.click(screen.getByTestId("desktop-inline-header-search-btn"));
     expect(screen.getByRole("combobox", { name: "Search tasks..." })).toHaveValue("");
     fireEvent.keyDown(screen.getByRole("combobox", { name: "Search tasks..." }), { key: "Escape" });
-    await waitFor(() => expect(screen.getByTestId("alpha-desktop-header-search-btn")).toHaveFocus());
+    await waitFor(() => expect(screen.getByTestId("desktop-inline-header-search-btn")).toHaveFocus());
     expect(screen.queryByTestId("alpha-task-search-overlay")).toBeNull();
     expect(screen.queryByRole("dialog", { name: "Alpha task" })).toBeNull();
   });
@@ -6204,7 +6634,7 @@ describe("App task search suggestions", () => {
 
     render(<App />);
     await waitForAppShell();
-    fireEvent.click(screen.getByTestId("alpha-desktop-header-search-btn"));
+    fireEvent.click(screen.getByTestId("desktop-inline-header-search-btn"));
     fireEvent.change(screen.getByRole("combobox", { name: "Search tasks..." }), { target: { value: "331" } });
 
     expect(screen.getByRole("option", { name: "REMOTE-331: Remote completed task" })).toBeInTheDocument();
@@ -6227,7 +6657,7 @@ describe("App task search suggestions", () => {
 
     render(<App />);
     await waitForAppShell();
-    fireEvent.click(screen.getByTestId("alpha-desktop-header-search-btn"));
+    fireEvent.click(screen.getByTestId("desktop-inline-header-search-btn"));
     fireEvent.change(screen.getByRole("combobox", { name: "Search tasks..." }), { target: { value: "331" } });
 
     expect(screen.queryByRole("option", { name: /LOCAL-331/ })).toBeNull();
@@ -6254,7 +6684,7 @@ describe("App task search suggestions", () => {
 
     const { rerender } = render(<App />);
     await waitForAppShell();
-    fireEvent.click(screen.getByTestId("alpha-desktop-header-search-btn"));
+    fireEvent.click(screen.getByTestId("desktop-inline-header-search-btn"));
     fireEvent.change(screen.getByRole("combobox", { name: "Search tasks..." }), { target: { value: "331" } });
     expect(screen.getByRole("option", { name: "NODE1-331: First node task" })).toBeInTheDocument();
     mockNodeContextValue.currentNodeId = "node-2";
@@ -6459,10 +6889,12 @@ always-mounted silently green.
 describe("terminal mount lifecycle (App mounts the terminal only while open)", () => {
   it("never mounts TerminalModal while the terminal is closed, and unmounts it on close", async () => {
     terminalLifecycle.reset();
+    /* FN-419: this case opens the terminal through the wide FOOTER action, so it opts into that placement. */
+    vi.mocked(fetchSettings).mockResolvedValue({ ...defaultSettings, navigationPlacement: "footer" });
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByTitle("Settings")).toBeTruthy();
+      expect(screen.getByTestId("desktop-action-bar")).toBeTruthy();
     });
 
     expect(
@@ -6473,7 +6905,7 @@ describe("terminal mount lifecycle (App mounts the terminal only while open)", (
 
     // Open the terminal through the wide footer's canonical action.
     await act(async () => {
-      fireEvent.click(await screen.findByTestId("alpha-desktop-nav-terminal"));
+      fireEvent.click(await screen.findByTestId("desktop-nav-terminal"));
     });
     await waitFor(() => {
       expect(screen.getByTestId("terminal-modal")).toBeTruthy();
@@ -6503,5 +6935,492 @@ describe("terminal mount lifecycle (App mounts the terminal only while open)", (
       terminalLifecycle.renders.length,
       "App re-rendered TerminalModal after close; it must not be mounted at all while closed.",
     ).toBe(rendersWhileOpen);
+  });
+});
+
+/*
+FN-426 — AUTHORITATIVE PROOF THAT NOTHING REQUIRES THE RIGHT SIDEBAR.
+
+Original state: Git Manager, Activity Log, Secrets, Pull Requests, Files, Chat, and List were reachable only through
+the right sidebar, which mounted unconditionally on every tablet/desktop project screen. The sidebar is now an explicit
+project opt-in that defaults OFF, so each of those tools must have a canonical host of its own.
+
+Every case renders the real `<App />` rather than a recomposed harness: a resolver-level test would prove the mapping
+and miss the wiring, and the wiring is the only thing that can strand a tool.
+*/
+describe("FN-426 tool surfaces without the right sidebar", () => {
+  const toolSettings = (overrides: Record<string, unknown> = {}) => ({
+    ...defaultSettings,
+    navigationPlacement: "footer" as const,
+    /* The shipped default: this block exists to prove every tool works without the panel. */
+    rightSidebarEnabled: false,
+    ...overrides,
+  });
+
+  it.each(["tablet", "desktop"] as const)("mounts no right sidebar shell at all by default on %s", async (mode) => {
+    mockUseViewportMode.mockReturnValue(mode);
+    vi.mocked(fetchSettings).mockResolvedValue(toolSettings());
+
+    render(<App />);
+
+    await screen.findByTestId("desktop-action-bar");
+    expect(screen.queryByTestId("right-dock")).toBeNull();
+    expect(screen.queryByTestId("right-dock-body")).toBeNull();
+    expect(screen.queryByTestId("header-right-dock-toggle")).toBeNull();
+    expect(screen.getByTestId("dashboard-project-shell")).not.toHaveClass("dashboard-project-shell--with-right-dock");
+  });
+
+  /*
+   * A pre-FN-426 browser carries a stored open preference. That is a LOCAL record of how the panel was last used; it
+   * must never re-enable a panel the project has turned off.
+   */
+  it("keeps the sidebar absent despite a stored open preference", async () => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    localStorage.setItem("fusion:right-dock-open", "true");
+    localStorage.setItem("fusion:right-dock-pinned", "true");
+    vi.mocked(fetchSettings).mockResolvedValue(toolSettings());
+
+    render(<App />);
+
+    await screen.findByTestId("desktop-action-bar");
+    expect(screen.queryByTestId("right-dock")).toBeNull();
+    expect(screen.queryByTestId("header-right-dock-toggle")).toBeNull();
+  });
+
+  it("mounts the sidebar with exactly the four opt-in tools when the project enables it", async () => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    localStorage.setItem("fusion:right-dock-open", "true");
+    vi.mocked(fetchSettings).mockResolvedValue(toolSettings({ rightSidebarEnabled: true }));
+
+    render(<App />);
+
+    expect(await screen.findByTestId("header-right-dock-toggle")).toBeInTheDocument();
+    expect(await screen.findByTestId("right-dock-body")).toBeInTheDocument();
+    for (const tool of ["files", "chat", "list", "notes"]) {
+      expect(await screen.findByTestId(`right-dock-tab-${tool}`)).toBeInTheDocument();
+    }
+    for (const relocated of ["git-manager", "activity-log", "secrets", "pull-requests", "devserver"]) {
+      expect(screen.queryByTestId(`right-dock-tab-${relocated}`)).toBeNull();
+    }
+  });
+
+  it("opens Git Manager as a real page from the bottom bar, with no sidebar", async () => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    vi.mocked(fetchSettings).mockResolvedValue(toolSettings());
+
+    render(<App />);
+
+    fireEvent.pointerEnter(await screen.findByTestId("desktop-nav-more"));
+    fireEvent.click(await screen.findByTestId("desktop-nav-git-manager"));
+
+    expect(await screen.findByTestId("git-manager-view")).toBeInTheDocument();
+    expect(screen.queryByTestId("right-dock")).toBeNull();
+  });
+
+  it("opens Files as a real page from the bottom bar", async () => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    vi.mocked(fetchSettings).mockResolvedValue(toolSettings());
+
+    render(<App />);
+
+    fireEvent.pointerEnter(await screen.findByTestId("desktop-nav-more"));
+    fireEvent.click(await screen.findByTestId("desktop-nav-files"));
+
+    expect(await screen.findByTestId("files-view")).toBeInTheDocument();
+  });
+
+  it("opens Activity and Notes as header panels, one at a time", async () => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    vi.mocked(fetchSettings).mockResolvedValue(toolSettings());
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByTestId("header-activity-panel-btn"));
+    expect(await screen.findByTestId("activity-tool-popover")).toBeInTheDocument();
+    expect(screen.queryByTestId("notes-tool-popover")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("header-notes-panel-btn"));
+    expect(await screen.findByTestId("notes-tool-popover")).toBeInTheDocument();
+    expect(screen.queryByTestId("activity-tool-popover")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("header-notes-panel-btn"));
+    await waitFor(() => expect(screen.queryByTestId("notes-tool-popover")).toBeNull());
+  });
+
+  it("keeps the Activity task-ID search visible inside the header panel", async () => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    vi.mocked(fetchSettings).mockResolvedValue(toolSettings());
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByTestId("header-activity-panel-btn"));
+    const popover = await screen.findByTestId("activity-tool-popover");
+    expect(within(popover).getByTestId("activity-task-search")).toBeInTheDocument();
+  });
+
+  it("opens the conversation list from the bottom bar instead of the sidebar", async () => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    vi.mocked(fetchSettings).mockResolvedValue(toolSettings());
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByTestId("desktop-nav-chat-panel"));
+    expect(await screen.findByTestId("chat-tool-popover")).toBeInTheDocument();
+    expect(screen.queryByTestId("right-dock-body")).toBeNull();
+  });
+
+  /*
+   * FN-447 symptom: from the bottom-bar Conversations popover, Ctrl/Cmd-clicking a conversation — or using the
+   * right-click "Open in new window" action — opened the window AND dismissed the list, so opening several
+   * conversations in a row meant reopening the list every time. The host called closeToolPanel() unconditionally.
+   * These cases replay both gestures against the real ChatView and assert the popover survives while the detached
+   * window appears; the plain-click case asserts the unchanged dismiss-on-select behavior.
+   */
+  const chatWindowTestId = `floating-window-chat-window-${DEFAULT_PROJECT_ID}-${appChatSession.id}`;
+
+  it("garde la liste de conversations ouverte lors d’un Ctrl+clic sur une conversation", async () => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    configureProductionAppChat();
+    vi.mocked(fetchSettings).mockResolvedValue(toolSettings());
+
+    render(<App />);
+    await waitForAppShell();
+
+    fireEvent.click(await screen.findByTestId("desktop-nav-chat-panel"));
+    const panel = await screen.findByTestId("chat-tool-popover");
+    fireEvent.click(await within(panel).findByTestId(`chat-session-${appChatSession.id}`), { ctrlKey: true });
+
+    expect(await screen.findByTestId(chatWindowTestId)).toBeInTheDocument();
+    expect(screen.getByTestId("chat-tool-popover")).toBeInTheDocument();
+
+    /* Escape stays the explicit dismissal of the popover. */
+    fireEvent.keyDown(screen.getByTestId("chat-tool-popover"), { key: "Escape" });
+    await waitFor(() => expect(screen.queryByTestId("chat-tool-popover")).toBeNull());
+  });
+
+  it("garde la liste de conversations ouverte via l’action « Open in new window »", async () => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    configureProductionAppChat();
+    vi.mocked(fetchSettings).mockResolvedValue(toolSettings());
+
+    render(<App />);
+    await waitForAppShell();
+
+    fireEvent.click(await screen.findByTestId("desktop-nav-chat-panel"));
+    const panel = await screen.findByTestId("chat-tool-popover");
+    fireEvent.contextMenu(await within(panel).findByTestId(`chat-session-${appChatSession.id}`), { clientX: 12, clientY: 12 });
+    fireEvent.click(await screen.findByTestId("chat-context-open-window"));
+
+    expect(await screen.findByTestId(chatWindowTestId)).toBeInTheDocument();
+    expect(screen.getByTestId("chat-tool-popover")).toBeInTheDocument();
+  });
+
+  it("referme toujours la liste de conversations sur un clic simple", async () => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    configureProductionAppChat();
+    vi.mocked(fetchSettings).mockResolvedValue(toolSettings());
+
+    render(<App />);
+    await waitForAppShell();
+
+    fireEvent.click(await screen.findByTestId("desktop-nav-chat-panel"));
+    const panel = await screen.findByTestId("chat-tool-popover");
+    fireEvent.click(await within(panel).findByTestId(`chat-session-${appChatSession.id}`));
+
+    expect(await screen.findByTestId(chatWindowTestId)).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByTestId("chat-tool-popover")).toBeNull());
+  });
+
+  /*
+   * FN-433 symptom: the bottom bar is `position: fixed; bottom: 0`, so the Chat trigger's rect bottom is the window
+   * bottom. Placing the panel below it laid the whole dialog out past the bottom edge — present in the DOM, invisible
+   * on screen, which is exactly "clicking Chat shows nothing". jsdom's default zero rect hides that, so this case feeds
+   * the real footer geometry and asserts the panel opens ABOVE the trigger, fully inside the viewport.
+   */
+  it("opens the bottom-bar conversation list above its trigger and inside the viewport", async () => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    vi.mocked(fetchSettings).mockResolvedValue(toolSettings());
+    // Earlier mobile-viewport cases redefine innerHeight as a non-writable property, so define rather than assign.
+    const priorHeight = window.innerHeight;
+    Object.defineProperty(window, "innerHeight", { configurable: true, writable: true, value: 800 });
+
+    render(<App />);
+
+    const trigger = await screen.findByTestId("desktop-nav-chat-panel");
+    const rectSpy = vi.spyOn(trigger, "getBoundingClientRect").mockReturnValue({
+      x: 1100, y: 764, top: 764, bottom: 800, left: 1100, right: 1180, width: 80, height: 36, toJSON: () => ({}),
+    } as DOMRect);
+
+    try {
+      fireEvent.click(trigger);
+      const panel = await screen.findByTestId("chat-tool-popover");
+
+      expect(panel).toHaveAttribute("data-placement", "above");
+      expect(panel.style.top).toBe("");
+      expect(panel.style.bottom).not.toBe("");
+
+      const bottom = Number.parseInt(panel.style.bottom, 10);
+      const height = Number.parseInt(panel.style.height || panel.style.maxHeight, 10);
+      const bottomEdge = 800 - bottom;
+      expect(bottomEdge).toBeLessThanOrEqual(764 - 8);
+      expect(bottomEdge - height).toBeGreaterThanOrEqual(8);
+    } finally {
+      rectSpy.mockRestore();
+      Object.defineProperty(window, "innerHeight", { configurable: true, writable: true, value: priorHeight });
+    }
+  });
+
+  /*
+   * FN-436 symptom: the Chat trigger is followed in the bottom bar by Terminal, Settings and the window-visibility
+   * toggle, so aligning the panel's right edge with the TRIGGER's right edge opened it ~100px short of the screen edge —
+   * the operator reported the popover as "too far left". This case replays the exact FN-433 trigger rect and asserts the
+   * panel's right edge now sits VIEWPORT_MARGIN (8px) from the viewport edge, while its `above` placement is unchanged.
+   */
+  it("pins the bottom-bar conversation list to the right edge of the screen", async () => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    vi.mocked(fetchSettings).mockResolvedValue(toolSettings());
+    const priorWidth = window.innerWidth;
+    const priorHeight = window.innerHeight;
+    Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 1280 });
+    Object.defineProperty(window, "innerHeight", { configurable: true, writable: true, value: 800 });
+
+    render(<App />);
+
+    const trigger = await screen.findByTestId("desktop-nav-chat-panel");
+    const rectSpy = vi.spyOn(trigger, "getBoundingClientRect").mockReturnValue({
+      x: 1100, y: 764, top: 764, bottom: 800, left: 1100, right: 1180, width: 80, height: 36, toJSON: () => ({}),
+    } as DOMRect);
+
+    try {
+      fireEvent.click(trigger);
+      const panel = await screen.findByTestId("chat-tool-popover");
+
+      expect(panel.style.left).toBe("852px");
+      expect(Number.parseInt(panel.style.left, 10) + Number.parseInt(panel.style.width, 10)).toBe(1280 - 8);
+      expect(panel).toHaveAttribute("data-placement", "above");
+    } finally {
+      rectSpy.mockRestore();
+      Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: priorWidth });
+      Object.defineProperty(window, "innerHeight", { configurable: true, writable: true, value: priorHeight });
+    }
+  });
+
+  /*
+   * FN-436 non-regression: only Chat opts into viewport alignment. The header Activity panel must keep its right edge on
+   * its own trigger, not on the screen edge.
+   */
+  it("keeps the header Activity panel aligned on its trigger, not on the screen edge", async () => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    vi.mocked(fetchSettings).mockResolvedValue(toolSettings());
+    const priorWidth = window.innerWidth;
+    const priorHeight = window.innerHeight;
+    Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 1280 });
+    Object.defineProperty(window, "innerHeight", { configurable: true, writable: true, value: 800 });
+
+    render(<App />);
+
+    const trigger = await screen.findByTestId("header-activity-panel-btn");
+    const rectSpy = vi.spyOn(trigger, "getBoundingClientRect").mockReturnValue({
+      x: 640, y: 40, top: 40, bottom: 60, left: 640, right: 700, width: 60, height: 20, toJSON: () => ({}),
+    } as DOMRect);
+
+    try {
+      fireEvent.click(trigger);
+      const panel = await screen.findByTestId("activity-tool-popover");
+
+      // width=520 anchored on the trigger's right edge: 700 - 520 = 180, far from the 1280-520-8=752 viewport edge.
+      expect(panel.style.left).toBe("180px");
+      expect(panel).toHaveAttribute("data-placement", "below");
+    } finally {
+      rectSpy.mockRestore();
+      Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: priorWidth });
+      Object.defineProperty(window, "innerHeight", { configurable: true, writable: true, value: priorHeight });
+    }
+  });
+
+  /*
+   * FN-433 non-regression: the header-anchored panels have room below their trigger, so they must keep resolving to the
+   * unchanged `below` placement.
+   */
+  it("keeps the header Activity and Notes panels anchored below their triggers", async () => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    vi.mocked(fetchSettings).mockResolvedValue(toolSettings());
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByTestId("header-activity-panel-btn"));
+    expect(await screen.findByTestId("activity-tool-popover")).toHaveAttribute("data-placement", "below");
+    fireEvent.keyDown(screen.getByTestId("activity-tool-popover"), { key: "Escape" });
+    await waitFor(() => expect(screen.queryByTestId("activity-tool-popover")).toBeNull());
+
+    fireEvent.click(screen.getByTestId("header-notes-panel-btn"));
+    expect(await screen.findByTestId("notes-tool-popover")).toHaveAttribute("data-placement", "below");
+  });
+
+  /*
+   * FN-439: the Header no longer produces a List button on tablet/desktop. Under the footer placement the **More**
+   * menu is List's single owner, so reaching the List view must go through it — that is the replacement for FN-426's
+   * header toggle this test used to assert.
+   */
+  it("reaches List from the footer More menu without a sidebar", async () => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    vi.mocked(fetchSettings).mockResolvedValue(toolSettings());
+
+    render(<App />);
+
+    expect(screen.queryByTestId("header-list-view-btn")).toBeNull();
+    fireEvent.pointerEnter(await screen.findByTestId("desktop-nav-more"));
+    fireEvent.click(await screen.findByTestId("desktop-nav-list"));
+    expect(await screen.findByTestId("list-keep-alive")).toBeInTheDocument();
+    expect(screen.queryByTestId("right-dock-body")).toBeNull();
+  });
+
+  /*
+   * Pull Requests and Secrets keep their ids so bookmarks and persisted views still resolve, but they are no longer
+   * destinations: the first is a Git section and the second a Settings section.
+   */
+  it("routes a legacy pull-requests request into the Git page", async () => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    vi.mocked(fetchSettings).mockResolvedValue(toolSettings());
+    localStorage.setItem(scopedKey("kb-dashboard-task-view", "proj_123"), "pull-requests");
+
+    render(<App />);
+
+    expect(await screen.findByTestId("git-manager-view")).toBeInTheDocument();
+  });
+});
+
+/*
+FN-435 — L'HÔTE DES SURFACES ACTIVITY ET NOTES EST RÉSOLU PAR LE POINT DE RUPTURE MESURÉ.
+
+État initial : les deux outils s'ouvraient dans la MÊME popover ancrée à l'en-tête quel que soit le format d'écran ;
+sur téléphone elle était réduite à la largeur du viewport et devenait inutilisable, et la popover Notes n'affichait
+qu'une liste dont le clic ouvrait une fenêtre flottante dédiée. Chaque cas monte le VRAI `<App />` plutôt qu'un harnais
+recomposé : un test au niveau du résolveur prouverait la règle et manquerait le câblage, qui est la seule chose qui
+peut laisser un outil inatteignable.
+*/
+describe("FN-435/FN-437 hôtes d'outils par point de rupture", () => {
+  const toolSettings = (overrides: Record<string, unknown> = {}) => ({
+    ...defaultSettings,
+    navigationPlacement: "footer" as const,
+    rightSidebarEnabled: false,
+    ...overrides,
+  });
+
+  beforeEach(() => {
+    mockNotesApi.fetchNotes.mockResolvedValue({ notes: [{ id: "note-1", title: "Commande", revision: 1, createdAt: "2026-01-01", updatedAt: "2026-01-01" }] });
+    mockNotesApi.fetchNote.mockResolvedValue({ id: "note-1", title: "Commande", content: "pnpm test", revision: 1, createdAt: "2026-01-01", updatedAt: "2026-01-01" });
+  });
+
+  /*
+  FNXC:ToolSurfaces 2026-09-16-23:06:
+  FN-437 cas (d1) : le Header mobile n'expose plus `header-activity-panel-btn`. La destination est inchangée (même
+  modale plein écran) mais son propriétaire est maintenant l'entrée `mobile-more-item-activity` du menu du pied de
+  page. Ce test remplace la version FN-435 qui cliquait le déclencheur du Header.
+  */
+  it("ouvre le journal d'activité dans la modale plein écran depuis le menu du pied de page sur téléphone", async () => {
+    mockUseViewportMode.mockReturnValue("mobile");
+    vi.mocked(fetchSettings).mockResolvedValue(toolSettings());
+
+    render(<App />);
+
+    expect(screen.queryByTestId("header-activity-panel-btn")).toBeNull();
+    fireEvent.click(await screen.findByTestId("mobile-menu-trigger"));
+    fireEvent.click(await screen.findByTestId("mobile-more-item-activity"));
+    expect(await screen.findByTestId("activity-log-modal")).toBeInTheDocument();
+    expect(screen.queryByTestId("activity-tool-popover")).toBeNull();
+  });
+
+  it("garde le journal d'activité dans la popover sur ordinateur", async () => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    vi.mocked(fetchSettings).mockResolvedValue(toolSettings());
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByTestId("header-activity-panel-btn"));
+    const popover = await screen.findByTestId("activity-tool-popover");
+    expect(within(popover).getByTestId("activity-log-modal")).toBeInTheDocument();
+  });
+
+  /*
+  FNXC:ToolSurfaces 2026-09-16-23:06:
+  FN-437 cas (d2)+(d3) : remplaçant du test FN-435 « ouvre Notes dans un tiroir… », dont le sujet — le tiroir d'outil
+  `mobile-drawer-notes` — est retiré parce que le Header n'expose plus son déclencheur sur téléphone. Le propriétaire
+  mobile de Notes est désormais l'entrée du menu du pied de page, qui ouvre la vue Notes plein écran dans
+  `MainContentDrawer` avec la même navigation interne liste → éditeur, et cet hôte retiré n'est jamais monté.
+  */
+  it("ouvre Notes en plein écran depuis le menu du pied de page avec navigation liste puis éditeur sur téléphone", async () => {
+    mockUseViewportMode.mockReturnValue("mobile");
+    vi.mocked(fetchSettings).mockResolvedValue(toolSettings());
+
+    render(<App />);
+
+    expect(screen.queryByTestId("header-notes-panel-btn")).toBeNull();
+    fireEvent.click(await screen.findByTestId("mobile-menu-trigger"));
+    fireEvent.click(await screen.findByTestId("mobile-more-item-notes"));
+
+    const drawer = await screen.findByTestId("mobile-drawer-main-content");
+    expect(screen.queryByTestId("notes-tool-popover")).toBeNull();
+    // (d3) l'hôte d'outil Notes mobile retiré par FN-437 n'est jamais monté.
+    expect(screen.queryByTestId("mobile-drawer-notes")).toBeNull();
+
+    const row = await within(drawer).findByRole("button", { name: /^Commande/ });
+    fireEvent.click(row);
+    expect(await within(drawer).findByLabelText(/Editor for|File editor/)).toBeInTheDocument();
+    expect(screen.getAllByTestId("mobile-drawer-main-content")).toHaveLength(1);
+  });
+
+  it("héberge le rail liste ET l'éditeur dans la popover sur ordinateur sans fenêtre détachée", async () => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    vi.mocked(fetchSettings).mockResolvedValue(toolSettings());
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByTestId("header-notes-panel-btn"));
+    const popover = await screen.findByTestId("notes-tool-popover");
+    const row = await within(popover).findByRole("button", { name: /^Commande/ });
+    fireEvent.click(row);
+
+    expect(await within(popover).findByLabelText(/Editor for|File editor/)).toBeInTheDocument();
+    expect(popover.querySelector(".notes-list")).not.toBeNull();
+    expect(screen.queryByTestId("notes-back-btn")).toBeNull();
+    expect(screen.getAllByTestId("notes-tool-popover")).toHaveLength(1);
+    expect(document.querySelectorAll('[data-window-key^="note-"]')).toHaveLength(0);
+  });
+
+  it("ferme la popover d'activité orpheline quand le point de rupture passe en téléphone", async () => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    vi.mocked(fetchSettings).mockResolvedValue(toolSettings());
+
+    const view = render(<App />);
+
+    fireEvent.click(await screen.findByTestId("header-activity-panel-btn"));
+    await screen.findByTestId("activity-tool-popover");
+
+    mockUseViewportMode.mockReturnValue("mobile");
+    view.rerender(<App />);
+    await waitFor(() => expect(screen.queryByTestId("activity-tool-popover")).toBeNull());
+    expect(screen.queryByTestId("activity-log-modal")).toBeNull();
+  });
+
+  /*
+  FNXC:ToolSurfaces 2026-09-16-23:06:
+  FN-437 cas (d4), jumeau Notes du cas ci-dessus. Puisque le Header mobile n'expose plus de déclencheur Notes et que
+  l'hôte mobile est retiré, un panneau Notes ouvert sur ordinateur deviendrait un état orphelin — sans hôte NI moyen
+  de le refermer — après une bascule vers le point de rupture téléphone.
+  */
+  it("ferme le panneau Notes orphelin quand le point de rupture passe en téléphone", async () => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    vi.mocked(fetchSettings).mockResolvedValue(toolSettings());
+
+    const view = render(<App />);
+
+    fireEvent.click(await screen.findByTestId("header-notes-panel-btn"));
+    await screen.findByTestId("notes-tool-popover");
+
+    mockUseViewportMode.mockReturnValue("mobile");
+    view.rerender(<App />);
+    await waitFor(() => expect(screen.queryByTestId("notes-tool-popover")).toBeNull());
+    expect(screen.queryByTestId("mobile-drawer-notes")).toBeNull();
   });
 });

@@ -780,12 +780,14 @@ fn task steer FN-001 "Reuse existing auth middleware"
 ```bash
 fn task attach FN-001 ./trace.log
 fn task merge FN-001
+fn task reconcile FN-001
 fn task duplicate FN-001
 fn task refine FN-001 --feedback "Add rollback handling"
 fn task delete FN-001 --force
 ```
 
 Notes:
+- `fn task reconcile <id>` closes an in-review card only when its base branch carries an ownership-anchored landed commit. It refuses paused, leased, live, raced, or unproven cards and never bypasses review approval; use `fn task merge` for the normal live-branch path.
 - Interrupting `fn task merge` aborts its merge and clears its transient merge status: Ctrl-C (`SIGINT`) exits 130, `SIGTERM` exits 143, and a closed terminal (`SIGHUP`) exits 129. Unlike `fn serve`, `fn dashboard`, and the daemon, this one-shot foreground command deliberately does not survive terminal disconnects.
 
 ### Branch conflict handling

@@ -135,7 +135,6 @@ export function ChangesDiffModal({ columnFlags,
       className="floating-window--changes-diff"
       defaultSize={{ width: 960, height: 640 }}
       minSize={{ width: 360, height: 280 }}
-      persistGeometryKey="floating-window:changes-diff"
       suspendGeometryPersistenceOnMobile
       suspendGeometryPersistenceOnShortViewport
       /* FNXC:ModalTouchGeometry 2026-07-26-16:10: Keep Changes' historical preference-gated backdrop dismissal while FloatingWindow ignores active drag and resize gestures. */

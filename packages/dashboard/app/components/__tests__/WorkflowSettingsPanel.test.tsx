@@ -217,7 +217,7 @@ describe("WorkflowSettingsPanel — Values tab", () => {
     expect(within(screen.getByTestId("wf-settings-group-review")).getByText("Review & Approval")).toBeInTheDocument();
     expect(within(screen.getByTestId("wf-settings-group-steps")).getByText("Step Execution")).toBeInTheDocument();
     expect(within(screen.getByTestId("wf-settings-group-advanced")).getByText("Advanced")).toBeInTheDocument();
-    expect(screen.getByLabelText("Plan/Triage Model")).toBeInTheDocument();
+    expect(screen.getByLabelText("Planner Model")).toBeInTheDocument();
     expect(screen.getByLabelText("Reviewer provider")).toBeInTheDocument();
     expect(screen.getByLabelText("Plan Review revision cap")).toBeInTheDocument();
     expect(screen.getByText(/Leave empty for unbounded automatic Plan Review\/spec revision/i)).toBeInTheDocument();
@@ -539,6 +539,7 @@ describe("WorkflowSettingsPanel — Values tab", () => {
   });
 
   const modelDecls: WorkflowSettingDefinition[] = [
+    ...["planning", "execution", "validator", "merger"].flatMap(role => [role, role + "Fallback"]).map(prefix => ({ id: prefix + "CredentialInstanceId", name: prefix + " credential", type: "string" as const })),
     { id: "planningProvider", name: "Planning provider", type: "string" },
     { id: "planningModelId", name: "Planning model", type: "string" },
     { id: "planningThinkingLevel", name: "Planning thinking level", type: "enum", options: [{ value: "high", label: "High" }] },
@@ -557,6 +558,12 @@ describe("WorkflowSettingsPanel — Values tab", () => {
     { id: "validatorFallbackProvider", name: "Validator fallback provider", type: "string" },
     { id: "validatorFallbackModelId", name: "Validator fallback model", type: "string" },
     { id: "validatorFallbackThinkingLevel", name: "Validator fallback thinking level", type: "enum", options: [{ value: "low", label: "Low" }] },
+    { id: "mergerProvider", name: "Merger provider", type: "string" },
+    { id: "mergerModelId", name: "Merger model", type: "string" },
+    { id: "mergerThinkingLevel", name: "Merger thinking level", type: "enum", options: [{ value: "high", label: "High" }] },
+    { id: "mergerFallbackProvider", name: "Merger fallback provider", type: "string" },
+    { id: "mergerFallbackModelId", name: "Merger fallback model", type: "string" },
+    { id: "mergerFallbackThinkingLevel", name: "Merger fallback thinking level", type: "enum", options: [{ value: "low", label: "Low" }] },
     { id: "customModelProvider", name: "Custom model provider", type: "string" },
   ];
 
@@ -575,6 +582,8 @@ describe("WorkflowSettingsPanel — Values tab", () => {
       "execution-fallback",
       "validator",
       "validator-fallback",
+      "merger",
+      "merger-fallback",
     ]);
   });
 
@@ -589,6 +598,8 @@ describe("WorkflowSettingsPanel — Values tab", () => {
       "wf-settings-value-execution-fallback",
       "wf-settings-value-validator",
       "wf-settings-value-validator-fallback",
+      "wf-settings-value-merger",
+      "wf-settings-value-merger-fallback",
     ]);
     const renderedLaneTestIds = Array.from(document.querySelectorAll<HTMLElement>("[data-testid^='wf-settings-value-']"))
       .map((element) => element.dataset.testid)
@@ -601,6 +612,8 @@ describe("WorkflowSettingsPanel — Values tab", () => {
       "wf-settings-value-execution-fallback",
       "wf-settings-value-validator",
       "wf-settings-value-validator-fallback",
+      "wf-settings-value-merger",
+      "wf-settings-value-merger-fallback",
     ]);
   });
 
@@ -626,7 +639,7 @@ describe("WorkflowSettingsPanel — Values tab", () => {
   });
 
   async function openPlanningDropdown() {
-    const trigger = await screen.findByLabelText("Plan/Triage Model");
+    const trigger = await screen.findByLabelText("Planner Model");
     fireEvent.click(trigger);
     return trigger;
   }
@@ -641,10 +654,10 @@ describe("WorkflowSettingsPanel — Values tab", () => {
     render(<Host initial={modelDecls} readOnly />);
 
     await waitFor(() => expect(mockFetchModels).toHaveBeenCalledTimes(1));
-    expect(screen.getByLabelText("Plan/Triage Model")).toHaveTextContent("GPT-5");
+    expect(screen.getByLabelText("Planner Model")).toHaveTextContent("GPT-5");
     expect(screen.getByLabelText("Executor Model")).toBeInTheDocument();
     expect(screen.getByLabelText("Reviewer Model")).toBeInTheDocument();
-    expect(screen.getByLabelText("Planning Fallback Model")).toBeInTheDocument();
+    expect(screen.getByLabelText("Planner Fallback Model")).toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: "Plan/Triage provider" })).not.toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: "Plan/Triage model" })).not.toBeInTheDocument();
     expect(screen.getByLabelText("Custom model provider")).toBeInTheDocument();
@@ -699,7 +712,7 @@ describe("WorkflowSettingsPanel — Values tab", () => {
     render(<Host initial={modelDecls} readOnly />);
     await waitFor(() => expect(mockFetchModels).toHaveBeenCalled());
 
-    fireEvent.click(await screen.findByLabelText("Planning Fallback Model"));
+    fireEvent.click(await screen.findByLabelText("Planner Fallback Model"));
     fireEvent.change(screen.getByTestId("custom-model-dropdown-thinking"), { target: { value: "high" } });
     fireEvent.click(screen.getByTestId("wf-settings-save-values"));
 
@@ -725,8 +738,9 @@ describe("WorkflowSettingsPanel — Values tab", () => {
     render(<Host initial={withoutThinking} readOnly />);
     await waitFor(() => expect(mockFetchModels).toHaveBeenCalled());
 
-    expect(screen.queryByLabelText("Plan/Triage Model")).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Planning Fallback Model")).toBeInTheDocument();
+    expect(screen.getByLabelText("Planner Model")).toBeInTheDocument();
+    await openPlanningDropdown();
+    expect(screen.queryByTestId("custom-model-dropdown-thinking")).not.toBeInTheDocument();
   });
 
   it("clearing a workflow model dropdown writes paired null values", async () => {
@@ -781,7 +795,7 @@ describe("WorkflowSettingsPanel — Values tab", () => {
       resolveSave(payload({ stored: { customModelProvider: "saved" }, effective: { customModelProvider: "saved" } }));
     });
 
-    expect(screen.getByLabelText("Plan/Triage Model")).toHaveTextContent("Claude Sonnet");
+    expect(screen.getByLabelText("Planner Model")).toHaveTextContent("Claude Sonnet");
     await waitFor(() => expect(screen.getByTestId("wf-settings-save-values")).not.toBeDisabled());
     fireEvent.click(screen.getByTestId("wf-settings-save-values"));
     await waitFor(() => expect(mockUpdateValues).toHaveBeenCalledTimes(2));
@@ -796,7 +810,7 @@ describe("WorkflowSettingsPanel — Values tab", () => {
   it("shows inherited/default dropdown state for undefined values without a customized badge", async () => {
     render(<Host initial={modelDecls} readOnly />);
     await waitFor(() => expect(mockFetchValues).toHaveBeenCalledWith("wf-1", "proj-1"));
-    expect(screen.getByLabelText("Plan/Triage Model")).toHaveTextContent("Use inherited/default model");
+    expect(screen.getByLabelText("Planner Model")).toHaveTextContent("Use inherited/default model");
     expect(screen.queryByTestId("wf-settings-customized-planning")).not.toBeInTheDocument();
   });
 
@@ -805,7 +819,7 @@ describe("WorkflowSettingsPanel — Values tab", () => {
     render(<Host initial={modelDecls} readOnly />);
 
     await waitFor(() => expect(mockFetchModels).toHaveBeenCalled());
-    const trigger = screen.getByLabelText("Plan/Triage Model");
+    const trigger = screen.getByLabelText("Planner Model");
     expect(trigger).toBeDisabled();
     expect(screen.getAllByText(/No models are available/i).length).toBeGreaterThan(0);
     expect(screen.queryByLabelText(/^Plan\/Triage provider$/i)).not.toBeInTheDocument();
@@ -826,7 +840,7 @@ describe("WorkflowSettingsPanel — Values tab", () => {
 
     const row = await screen.findByTestId("wf-settings-value-planning");
     expect(within(row).getByRole("alert")).toHaveTextContent("model is invalid");
-    expect(within(row).getByLabelText("Plan/Triage Model")).toHaveTextContent("Claude Sonnet");
+    expect(within(row).getByLabelText("Planner Model")).toHaveTextContent("Claude Sonnet");
     expect(mockUpdateValues).toHaveBeenCalledWith(
       "wf-1",
       { planningProvider: "anthropic", planningModelId: "claude-sonnet", planningCredentialInstanceId: null },

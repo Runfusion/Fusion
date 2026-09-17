@@ -102,7 +102,6 @@ function mainContentProps(): MainContentProps {
     filteredBoardTasks: [],
     remoteData: { tasks: [] },
     addToast: vi.fn(),
-    setQuickChatOpen: vi.fn(),
   } as unknown as MainContentProps;
 }
 
@@ -117,12 +116,19 @@ function renderHost(activeId: "board" | "list" | "chat" | null) {
   );
 }
 
+/*
+FNXC:HistoryModalSurface 2026-09-15-04:29:
+FN-403: the complete-lane History action is a modal request. It calls the `openHistory` owner and must never route
+through `handleChangeTaskView`, so the retained Board subtree keeps its identity and its memoized column callbacks.
+*/
 function HistoryWindowHost() {
   const [historyOpen, setHistoryOpen] = useState(false);
+  const viewChanges: string[] = trackedViewChanges;
   const [props] = useState(() => ({
     ...mainContentProps(),
+    openHistory: () => setHistoryOpen(true),
     handleChangeTaskView: (view: MainContentProps["taskView"]) => {
-      if (view === "patchnode") setHistoryOpen(true);
+      viewChanges.push(String(view));
     },
   } as MainContentProps));
   return (
@@ -137,6 +143,8 @@ function HistoryWindowHost() {
     </>
   );
 }
+
+const trackedViewChanges: string[] = [];
 
 function createHeaderSlot() {
   const slot = document.createElement("div");
@@ -155,7 +163,8 @@ function productionAppSourceFiles(): string[] {
 }
 
 describe("MainViewKeepAlive", () => {
-  it("keeps the complete-column History callback stable when its Alpha window opens", () => {
+  it("keeps the complete-column History callback stable when the History modal opens", () => {
+    trackedViewChanges.length = 0;
     activeByView.historyCallbacks.length = 0;
     activeByView.historyColumnRenders = 0;
     render(<HistoryWindowHost />);
@@ -169,9 +178,32 @@ describe("MainViewKeepAlive", () => {
     fireEvent.click(screen.getByTestId("column-history-done"));
 
     expect(screen.getByTestId("history-window")).toBeInTheDocument();
+    expect(trackedViewChanges).toEqual([]);
     expect(screen.getByTestId("board-child")).toBe(boardBefore);
     expect(activeByView.historyCallbacks.at(-1)).toBe(callbackBefore);
     expect(activeByView.historyColumnRenders).toBe(rendersBeforeOpen);
+  });
+
+  /*
+   * FN-419: in `sidebar` navigation placement Chat is an ordinary main page, exactly like Notes — no drawer wrapper,
+   * and still exactly ONE mounted primary Chat instance (FN-392 invariant).
+   */
+  it("mounts Chat as a page with no drawer wrapper and a single instance for the sidebar page host", () => {
+    activeByView.chat.length = 0;
+    const { container } = render(
+      <MainViewKeepAlive
+        activeId="chat"
+        mountedIds={["board", "chat"]}
+        projectKey="project-1"
+        mainContentProps={mainContentProps()}
+      />,
+    );
+
+    expect(screen.getAllByTestId("chat-child")).toHaveLength(1);
+    expect(screen.getByTestId("chat-child")).toHaveAttribute("data-active", "true");
+    expect(screen.getByTestId("chat-keep-alive")).not.toHaveAttribute("aria-hidden");
+    expect(container.querySelector(".mobile-drawer")).toBeNull();
+    expect(container.querySelector("[data-testid='main-view-mobile-drawer']")).toBeNull();
   });
 
   it("exposes History whenever the official complete lane has a route handler", () => {
@@ -212,15 +244,15 @@ describe("MainViewKeepAlive", () => {
         mountedIds={["board", activeId]}
         projectKey="project-1"
         mainContentProps={mainContentProps()}
-        alphaMobileDrawer={{ activeId, title: activeId === "chat" ? "Chat" : "List", onClose: close }}
+        mobileDrawer={{ activeId, title: activeId === "chat" ? "Chat" : "List", onClose: close }}
       />,
     );
 
     expect(screen.getByTestId("board-keep-alive")).not.toHaveAttribute("aria-hidden");
     const dialog = screen.getByRole("dialog", { name: activeId === "chat" ? "Chat" : "List" });
     expect(dialog).toContainElement(screen.getByTestId(`${activeId}-child`));
-    expect(dialog.querySelector(".alpha-mobile-drawer__close")).toBeNull();
-    const handle = dialog.querySelector(".alpha-mobile-drawer__handle-target")!;
+    expect(dialog.querySelector(".mobile-drawer__close")).toBeNull();
+    const handle = dialog.querySelector(".mobile-drawer__handle-target")!;
     fireEvent.pointerDown(handle, { pointerId: 1, clientY: 0, button: 0, isPrimary: true });
     fireEvent.pointerMove(handle, { pointerId: 1, clientY: 200 });
     fireEvent.pointerUp(handle, { pointerId: 1, clientY: 200 });
@@ -261,12 +293,18 @@ describe("MainViewKeepAlive", () => {
     slot.remove();
   });
 
-  it("keeps the production Chat and workflow-header host census explicit", () => {
+  it("keeps the canonical Chat and workflow-header host census explicit", () => {
     const sourceFiles = productionAppSourceFiles();
     const chatHosts = sourceFiles
       .filter((file) => readAppFile(file).includes("<ChatView"))
       .sort();
+    /*
+     * FN-426: App.tsx joins this census as the footer Conversations popover host. It is mounted only while that
+     * popover is open and renders ChatView in `listOnly` mode, so it never adds a second retained transcript — the
+     * conversation itself still opens through the existing popped-out chat windows.
+     */
     expect(chatHosts).toEqual([
+      "App.tsx",
       "components/ChatView.tsx",
       "components/PoppedOutChatWindows.tsx",
       "components/dashboard/MainViewKeepAlive.tsx",
@@ -286,7 +324,24 @@ describe("MainViewKeepAlive", () => {
       "components/ListView.tsx",
     ]);
 
-    const quickChatHost = readAppFile("App.tsx");
-    expect(quickChatHost).toContain("hidden={!quickChatOpen}");
+    /*
+     * FN-419: the keep-alive Chat gate is no longer mobile-drawer-only — the `sidebar` navigation placement is a
+     * second page host. The structural guard follows the new gate: Chat enters the tree exactly when this shell is
+     * the resolved page host, and a non-page shell still evicts a retained Chat entry.
+     */
+    const mainContent = readAppFile("components/dashboard/MainContent.tsx");
+    expect(mainContent).toContain('const chatPageHostEnabled = mobileDrawerEnabled || chatPageHost === "sidebar-page"');
+    expect(mainContent).toContain('taskView === "chat" && !chatPageHostEnabled ? null : taskView');
+    expect(mainContent).toContain('!chatPageHostEnabled && storedKeepAliveIds.includes("chat")');
+    expect(mainContent).toContain('storedKeepAliveIds.filter((id) => id !== "chat")');
+    // The drawer wrapper stays strictly mobile: sidebar placement must mount Chat as a page.
+    expect(mainContent).toContain("mobileDrawer={mobileDrawerEnabled ?");
+    /*
+     * Pre-existing stale assertion repaired here (unrelated to FN-419): the dock Chat entry expresses its restricted
+     * capability through `isExpandable`, not `isInline` — the `isInline: () => false` literal this line pinned was
+     * removed from the registry by a later change, so the guard was asserting a construct that no longer exists.
+     */
+    const registry = readAppFile("components/overflowViewRegistry.tsx");
+    expect(registry).toContain("isExpandable: () => false");
   });
 });

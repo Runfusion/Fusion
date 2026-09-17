@@ -117,17 +117,25 @@ describe("FloatingWindow tablet touch geometry", () => {
     Object.defineProperty(handle, "setPointerCapture", { configurable: true, value: setPointerCapture });
     Object.defineProperty(handle, "releasePointerCapture", { configurable: true, value: releasePointerCapture });
 
+    /*
+    FNXC:ModalTouchGeometry 2026-09-16-05:45:
+    FN-456 normalizes the OPENING height, so the committed rectangle is asserted as the opened rectangle plus
+    the gesture's own 40px travel rather than as a literal. Resizing itself is untouched by the opening ratio,
+    which is precisely what this delta proves.
+    */
+    const opened = { width: Number.parseFloat(panel.style.width), height: Number.parseFloat(panel.style.height) };
     fireEvent.pointerDown(handle, { pointerType: "touch", pointerId: 1, clientX: 400, clientY: 330 });
     fireEvent.pointerMove(handle, { pointerType: "touch", pointerId: 2, clientX: 650, clientY: 600 });
-    expect(panel.style.width).toBe("320px");
+    expect(panel.style.width).toBe(`${opened.width}px`);
     fireEvent.pointerMove(handle, { pointerType: "touch", pointerId: 1, clientX: 440, clientY: 370 });
     fireEvent.pointerUp(handle, { pointerType: "touch", pointerId: 1, clientX: 440, clientY: 370 });
 
     expect(setPointerCapture).toHaveBeenCalledWith(1);
     expect(releasePointerCapture).toHaveBeenCalledWith(1);
-    expect(panel.style.width).toBe("360px");
-    expect(panel.style.height).toBe("280px");
-    expect(JSON.parse(localStorage.getItem("fusion:resize") ?? "{}")).toMatchObject({ size: { width: 360, height: 280 } });
+    expect(panel.style.width).toBe(`${opened.width + 40}px`);
+    expect(panel.style.height).toBe(`${opened.height + 40}px`);
+    // FN-394: the clamped result lives in the rendered rectangle only; nothing is written to storage.
+    expect(localStorage.getItem("fusion:resize")).toBeNull();
   });
 
   it("tears down a cancelled touch drag without retaining selection suppression", () => {

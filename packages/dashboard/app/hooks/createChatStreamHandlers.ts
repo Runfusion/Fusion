@@ -43,6 +43,14 @@ export interface CreateChatStreamHandlersOptions {
   addToast?: (message: string, level: "error" | "warning" | "success") => void;
   /** Caller-supplied terminal handlers — bind in their own state setters. */
   onAgentMessage?: (data: { message: ChatMessage; senderAgentId: string; senderAgentName: string }) => void;
+  /*
+  FNXC:ChatMessageEdit 2026-09-16-05:58:
+  In-band identity of the user turn the server persisted for THIS stream. The factory joins the
+  stream's own `tempUserMessageId` so callers reconcile their optimistic bubble by EXACT temp id.
+  Content equality is deliberately not the join key: two identical consecutive sends would collide,
+  which is the very defect (`Message temp-… not found in session …`) this event removes.
+  */
+  onUserMessage?: (data: { message: ChatMessage; tempUserMessageId: string }) => void;
   onDone: (data: {
     messageId: string;
     message?: ChatMessage;
@@ -70,6 +78,7 @@ export interface ChatStreamHandlers {
   onToolEnd: (data: { toolName: string; isError: boolean; result?: unknown }) => void;
   onFallback: (data: FallbackInfo) => void;
   onAgentMessage?: (data: { message: ChatMessage; senderAgentId: string; senderAgentName: string }) => void;
+  onUserMessage?: (data: { message: ChatMessage }) => void;
   onDone: (data: { messageId: string; message?: ChatMessage; dispatch?: "agents"; failedAgentNames?: string[] }) => void;
   onError: (data: string | ChatFailureInfo, meta?: ChatStreamErrorMeta) => void;
 }
@@ -111,6 +120,7 @@ export function createChatStreamHandlers(
     onDone,
     onError,
     onAgentMessage,
+    onUserMessage,
     onFallbackSession,
   } = options;
 
@@ -207,6 +217,9 @@ export function createChatStreamHandlers(
       addToast?.(`Primary model unavailable. Switched to fallback ${data.fallbackModel}.`, "warning");
     },
     onAgentMessage,
+    ...(onUserMessage
+      ? { onUserMessage: (data: { message: ChatMessage }) => onUserMessage({ message: data.message, tempUserMessageId }) }
+      : {}),
     onDone: (data: { messageId: string; message?: ChatMessage; dispatch?: "agents"; failedAgentNames?: string[] }) => {
       cancelFlushes();
       onDone({

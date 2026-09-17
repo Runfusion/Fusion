@@ -43,7 +43,7 @@ describeIfReady("pipeline smoke: code review remediation", () => {
   afterAll(pg.afterAll);
 
   it("turns a Code Review rejection into named implementation work that converges to a merge", async () => {
-    const task = await harness.createPipelineTask("builtin:coding-ideas-v2", {
+    const task = await harness.createPipelineTask("builtin:coding-ideas", {
       idPrefix: "REM",
       initialColumn: "hold",
     });

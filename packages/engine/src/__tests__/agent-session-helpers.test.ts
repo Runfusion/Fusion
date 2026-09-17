@@ -110,7 +110,7 @@ describe("resolve model-lane thinking levels", () => {
     expect(resolveValidatorThinkingLevel(nodeThinkingLevel ?? task.validatorThinkingLevel ?? task.thinkingLevel, settings)).toBe("minimal");
   });
 
-  it("resolves primary thinking as task → project → global → selected workflow", () => {
+  it("resolves primary thinking as task → selected workflow → project → global", () => {
     const settings = {
       executionThinkingLevel: "minimal",
       executionGlobalThinkingLevel: "low",
@@ -126,8 +126,8 @@ describe("resolve model-lane thinking levels", () => {
     } as const;
 
     expect(resolveExecutorThinkingLevel("xhigh", settings)).toBe("xhigh");
-    expect(resolveExecutorThinkingLevel(undefined, settings)).toBe("minimal");
-    expect(resolvePlanningThinkingLevel({ ...settings, planningThinkingLevel: undefined })).toBe("low");
+    expect(resolveExecutorThinkingLevel(undefined, settings)).toBe("high");
+    expect(resolvePlanningThinkingLevel({ ...settings, planningThinkingLevel: undefined })).toBe("high");
     expect(resolveValidatorThinkingLevel(undefined, {
       ...settings,
       validatorThinkingLevel: undefined,
@@ -142,7 +142,7 @@ describe("resolve model-lane thinking levels", () => {
     expect(resolveExecutorFallbackThinkingLevel(undefined, { defaultThinkingLevel: "low" })).toBe("low");
   });
 
-  it("resolves project fallback thinking before global fallback then selected-workflow and lane defaults", () => {
+  it("resolves workflow, project, role-global, then shared fallback thinking", () => {
     expect(resolvePlanningFallbackThinkingLevel({ planningFallbackThinkingLevel: "xhigh", fallbackThinkingLevel: "high", planningThinkingLevel: "low" })).toBe("xhigh");
     expect(resolvePlanningFallbackThinkingLevel({ fallbackThinkingLevel: "high", planningThinkingLevel: "low" })).toBe("high");
     expect(resolvePlanningFallbackThinkingLevel({ planningThinkingLevel: "low", defaultThinkingLevel: "minimal" })).toBe("low");
@@ -162,10 +162,12 @@ describe("resolve model-lane thinking levels", () => {
         validatorFallbackThinkingLevel: "low",
       },
     } as const;
-    expect(resolvePlanningFallbackThinkingLevel(selectedWorkflowFallbacks)).toBe("high");
+    expect(resolvePlanningFallbackThinkingLevel(selectedWorkflowFallbacks)).toBe("low");
     expect(resolvePlanningFallbackThinkingLevel({ ...selectedWorkflowFallbacks, fallbackThinkingLevel: undefined })).toBe("low");
-    expect(resolveValidatorFallbackThinkingLevel(undefined, selectedWorkflowFallbacks)).toBe("high");
+    expect(resolveValidatorFallbackThinkingLevel(undefined, selectedWorkflowFallbacks)).toBe("low");
     expect(resolveValidatorFallbackThinkingLevel(undefined, { ...selectedWorkflowFallbacks, fallbackThinkingLevel: undefined })).toBe("low");
+    expect(resolvePlanningFallbackThinkingLevel({ planningGlobalFallbackThinkingLevel: "medium", fallbackThinkingLevel: "minimal" })).toBe("medium");
+    expect(resolveValidatorFallbackThinkingLevel(undefined, { validatorGlobalFallbackThinkingLevel: "medium", fallbackThinkingLevel: "minimal" })).toBe("medium");
   });
 
   it("resolves title summarizer and merger fallback thinking through fallback and default chains", () => {
@@ -182,7 +184,12 @@ describe("resolve model-lane thinking levels", () => {
     expect(resolveMergerFallbackThinkingLevel({ defaultThinkingLevel: "low" })).toBe("low");
   });
 
-  it("applies project merger thinking > global merger thinking > default thinking for merger sessions", () => {
+  it("applies workflow > project > global > default thinking for merger sessions", () => {
+    expect(resolveMergerThinkingLevel({
+      selectedWorkflowModelLanes: { mergerThinkingLevel: "high" },
+      mergerThinkingLevel: "xhigh",
+      mergerGlobalThinkingLevel: "low",
+    })).toBe("high");
     expect(resolveMergerThinkingLevel({
       mergerThinkingLevel: "xhigh",
       mergerGlobalThinkingLevel: "high",

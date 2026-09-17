@@ -4,7 +4,6 @@ import { loadStylesCss } from "../../test/cssFixture";
 import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Column } from "../Column";
-import { AlphaBoundary, AlphaProvider } from "../../context/AlphaContext";
 import type { Task, Column as ColumnType } from "@fusion/core";
 
 const { rebuildTaskSpecMock } = vi.hoisted(() => ({ rebuildTaskSpecMock: vi.fn() }));
@@ -34,7 +33,7 @@ vi.mock("../WorktreeGroup", () => ({
 vi.mock("../QuickEntryBox", () => ({
   QuickEntryBox: ({ favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, autoExpand, onCreate, onMoveTask, workflowId, workflowOptions }: { favoriteProviders?: string[]; favoriteModels?: string[]; onToggleFavorite?: (provider: string) => void; onToggleModelFavorite?: (modelId: string) => void; autoExpand?: boolean; onCreate?: (input: { description: string; workflowId?: string; column?: string }) => void; onMoveTask?: (id: string, column: string) => Promise<unknown>; workflowId?: string; workflowOptions?: { id: string; columns?: { flags?: { manualIntake?: boolean } }[] }[] }) => {
     const selectedWorkflow = workflowOptions?.find((option) => option.id === workflowId);
-    const showStart = workflowId === "builtin:coding-ideas-v2" || selectedWorkflow?.columns?.[0]?.flags?.manualIntake === true;
+    const showStart = workflowId === "builtin:coding-ideas" || selectedWorkflow?.columns?.[0]?.flags?.manualIntake === true;
     return (
     <div
       data-testid="quick-entry-box"
@@ -45,7 +44,7 @@ vi.mock("../QuickEntryBox", () => ({
       data-auto-expand={autoExpand === false ? "false" : "true"}
     >
       <button type="button" onClick={() => onCreate?.({ description: "Quick task" })}>create</button>
-      {showStart && <button type="button" data-testid="quick-entry-start" onClick={() => onCreate?.({ description: "Started task", workflowId: "builtin:coding-ideas-v2", column: "todo" })}>start</button>}
+      {showStart && <button type="button" data-testid="quick-entry-start" onClick={() => onCreate?.({ description: "Started task", workflowId: "builtin:coding-ideas", column: "todo" })}>start</button>}
       <button type="button" data-testid="quick-entry-move" onClick={() => void onMoveTask?.("FN-created", "todo")}>move</button>
     </div>
     );
@@ -139,11 +138,12 @@ describe("Column count-flash", () => {
     const tasks = [makeTask("FN-001")];
     render(<Column {...defaultProps} tasks={tasks} />);
 
-    // Badge is active/total (0/1 for triage without a live planner).
+    // Badge is the plain task count for the lane (FN-474).
     const badge = screen.getByText("1").parentElement!;
     expect(badge.className).toContain("column-count");
     expect(badge.className).not.toContain("count-flash");
-    expect(badge).toHaveTextContent("0/1");
+    expect(badge).toHaveTextContent("1");
+    expect(badge.textContent).not.toContain("/");
   });
 
   it("applies count-flash class when task count increases", () => {
@@ -155,7 +155,8 @@ describe("Column count-flash", () => {
 
     const badge = screen.getByText("2").parentElement!;
     expect(badge.className).toContain("count-flash");
-    expect(badge).toHaveTextContent("0/2");
+    expect(badge).toHaveTextContent("2");
+    expect(badge.textContent).not.toContain("/");
   });
 
   it("does not apply count-flash class when task count decreases", () => {
@@ -253,7 +254,13 @@ describe("Column count-flash", () => {
     }
   });
 
-  it("shows accurate executing/total for WIP (unpaused active over card total)", () => {
+  /*
+  FNXC:BoardColumnCount 2026-09-16-20:37:
+  The header badge shows ONLY the lane's task count. These four fixtures keep their original activity
+  shapes (paused/userPaused WIP, live planner vs queued, parked needs-replan, pending code-review
+  lease) precisely to prove the displayed number no longer depends on activity at all.
+  */
+  it("shows the plain task count for WIP regardless of paused/active mix", () => {
     const tasks = [
       { ...makeTask("FN-001"), column: "in-progress" as ColumnType },
       { ...makeTask("FN-002"), column: "in-progress" as ColumnType },
@@ -269,10 +276,12 @@ describe("Column count-flash", () => {
       />,
     );
 
-    expect(screen.getByLabelText("2 executing of 4")).toHaveTextContent("2/4");
+    const badge = screen.getByLabelText("4 tasks");
+    expect(badge).toHaveTextContent("4");
+    expect(badge.textContent).not.toContain("/");
   });
 
-  it("counts only live planners as executing in todo (queued is not executing)", () => {
+  it("shows the plain task count in todo whether cards are planning or queued", () => {
     const tasks = [
       { ...makeTask("FN-001"), column: "todo" as ColumnType, status: "planning" as any },
       { ...makeTask("FN-002"), column: "todo" as ColumnType, status: "queued" as any },
@@ -288,13 +297,12 @@ describe("Column count-flash", () => {
       />,
     );
 
-    expect(screen.getByLabelText("1 executing of 4")).toHaveTextContent("1/4");
+    const badge = screen.getByLabelText("4 tasks");
+    expect(badge).toHaveTextContent("4");
+    expect(badge.textContent).not.toContain("/");
   });
 
-  it("does NOT count a parked REVISING (needs-replan) todo card — it holds no concurrency slot", () => {
-    // FNXC:BoardColumnCount 2026-08-01-17:53: summing lane headers must never exceed the
-    // engine's live-agent population, so the header counts only the shared Running predicate.
-    // A parked replan glows nothing and counts nothing; a live planning card counts.
+  it("counts a parked REVISING (needs-replan) todo card like any other card", () => {
     const tasks = [
       { ...makeTask("FN-001"), column: "todo" as ColumnType, status: "needs-replan" as any },
       { ...makeTask("FN-002"), column: "todo" as ColumnType, status: "planning" as any },
@@ -307,10 +315,12 @@ describe("Column count-flash", () => {
         tasks={tasks}
       />,
     );
-    expect(screen.getByLabelText("1 executing of 2")).toHaveTextContent("1/2");
+    const badge = screen.getByLabelText("2 tasks");
+    expect(badge).toHaveTextContent("2");
+    expect(badge.textContent).not.toContain("/");
   });
 
-  it("counts an in-review card whose code-review gate holds a pending step lease", () => {
+  it("counts an in-review card whose code-review gate holds a pending step lease like any other card", () => {
     const tasks = [
       {
         ...makeTask("FN-001"),
@@ -327,7 +337,73 @@ describe("Column count-flash", () => {
         tasks={tasks}
       />,
     );
-    expect(screen.getByLabelText("1 executing of 2")).toHaveTextContent("1/2");
+    const badge = screen.getByLabelText("2 tasks");
+    expect(badge).toHaveTextContent("2");
+    expect(badge.textContent).not.toContain("/");
+  });
+
+  it.each([
+    ["complete", { column: "done" as ColumnType, columnFlags: { complete: true } }],
+    ["WIP", { column: "in-progress" as ColumnType, columnFlags: { countsTowardWip: true } }],
+    ["hold", { column: "todo" as ColumnType, columnFlags: { hold: true } }],
+    ["intake", { column: "ideas" as ColumnType, columnFlags: { manualIntake: true } }],
+    ["review", { column: "in-review" as ColumnType, columnFlags: { mergeBlocker: true } }],
+    ["custom workflow lane without resolved flags", { column: "shipping" as ColumnType, workflowMode: true, columnDisplayName: "Shipping" }],
+  ])("renders a single unratioed count for the %s column role", (_role, props) => {
+    const tasks = [makeTask("FN-001"), makeTask("FN-002"), makeTask("FN-003")];
+    render(<Column {...defaultProps} {...(props as Record<string, unknown>)} tasks={tasks} />);
+
+    const badge = screen.getByLabelText("3 tasks");
+    expect(badge.className).toContain("column-count");
+    expect(badge).toHaveTextContent("3");
+    expect(badge.textContent).not.toContain("/");
+  });
+
+  it("renders 0 for an empty column", () => {
+    render(<Column {...defaultProps} tasks={[]} />);
+    const badge = screen.getByLabelText("0 tasks");
+    expect(badge).toHaveTextContent("0");
+    expect(badge.textContent).not.toContain("/");
+  });
+
+  it("prefers the server-paginated total over the number of loaded cards", () => {
+    const tasks = [makeTask("FN-001"), makeTask("FN-002")];
+    render(
+      <Column
+        {...defaultProps}
+        column={"done" as ColumnType}
+        columnFlags={{ complete: true }}
+        tasks={tasks}
+        totalTaskCount={57}
+      />,
+    );
+    const badge = screen.getByLabelText("57 tasks");
+    expect(badge).toHaveTextContent("57");
+    expect(badge.textContent).not.toContain("/");
+  });
+
+  it("renders the same single count at the mobile breakpoint", () => {
+    const previousWidth = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 375 });
+    try {
+      const tasks = [
+        { ...makeTask("FN-001"), column: "in-progress" as ColumnType },
+        { ...makeTask("FN-002"), column: "in-progress" as ColumnType, paused: true },
+      ];
+      render(
+        <Column
+          {...defaultProps}
+          column={"in-progress" as ColumnType}
+          columnFlags={{ countsTowardWip: true }}
+          tasks={tasks}
+        />,
+      );
+      const badge = screen.getByLabelText("2 tasks");
+      expect(badge).toHaveTextContent("2");
+      expect(badge.textContent).not.toContain("/");
+    } finally {
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: previousWidth });
+    }
   });
 });
 
@@ -671,13 +747,13 @@ describe("Column QuickEntryBox", () => {
 
   it("preserves the explicit Coding Ideas Start column in workflow mode", async () => {
     const onQuickCreate = vi.fn().mockResolvedValue({});
-    render(<Column {...defaultProps} column="ideas" workflowMode workflowId="builtin:coding-ideas-v2" workflowOptions={[{ id: "builtin:coding-ideas-v2", name: "Coding (Ideas)", columns: [{ id: "ideas", name: "Ideas", flags: { intake: true, hold: true, manualIntake: true } }] }]} tasks={[]} onQuickCreate={onQuickCreate} />);
+    render(<Column {...defaultProps} column="ideas" workflowMode workflowId="builtin:coding-ideas" workflowOptions={[{ id: "builtin:coding-ideas", name: "Coding (Ideas)", columns: [{ id: "ideas", name: "Ideas", flags: { intake: true, hold: true, manualIntake: true } }] }]} tasks={[]} onQuickCreate={onQuickCreate} />);
 
     fireEvent.click(screen.getByTestId("quick-entry-start"));
 
     await waitFor(() => expect(onQuickCreate).toHaveBeenCalledWith({
       description: "Started task",
-      workflowId: "builtin:coding-ideas-v2",
+      workflowId: "builtin:coding-ideas",
       column: "todo",
     }));
   });
@@ -815,8 +891,8 @@ describe("Column Alpha menu keyboard access", () => {
     const onTogglePlanAutoApprove = vi.fn();
 
     render(
-      <AlphaProvider enabled>
-        <AlphaBoundary>
+      <>
+        <>
           <Column
             {...defaultProps}
             column="triage"
@@ -824,8 +900,8 @@ describe("Column Alpha menu keyboard access", () => {
             planAutoApproveEnabled={false}
             onTogglePlanAutoApprove={onTogglePlanAutoApprove}
           />
-        </AlphaBoundary>
-      </AlphaProvider>,
+        </>
+      </>,
     );
 
     const trigger = screen.getByRole("button", { name: "Planning column actions" });

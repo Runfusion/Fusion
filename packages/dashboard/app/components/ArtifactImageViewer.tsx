@@ -305,7 +305,6 @@ export function ArtifactImageViewer({ artifactId, title, projectId, taskId, onOp
       ariaLabel="Artifact media preview"
       suspendGeometryPersistenceOnMobile
       suspendGeometryPersistenceOnShortViewport
-      persistGeometryKey="fn-artifact-image-viewer-geometry"
       defaultSize={{ width: 1024, height: 720 }}
       minSize={{ width: 320, height: 280 }}
     >

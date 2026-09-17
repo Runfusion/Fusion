@@ -35,6 +35,9 @@ function populatedEntry(): ArchivedTaskEntry {
     cumulativeActiveMs: 0,
     cumulativePlanningMs: 350,
     planningStartedAt: "2026-07-20T09:00:00.000Z",
+    /* FN-457: paused-time accounting is durable display evidence, including an explicit 0. */
+    cumulativePausedMs: 0,
+    pausedStartedAt: "2026-07-22T11:00:00.000Z",
     executionStartedAt: "2026-07-20T10:00:00.000Z",
     createdAt: "2026-07-20T10:00:00.000Z",
     updatedAt: "2026-07-23T10:00:00.000Z",
@@ -64,6 +67,8 @@ describe("archive history serialization", () => {
       sessionAdvisorEnabled: false,
       cumulativeActiveMs: 0,
       cumulativePlanningMs: 350,
+      cumulativePausedMs: 0,
+      pausedStartedAt: "2026-07-22T11:00:00.000Z",
       columnDwellMs: { planning: 0, "in-progress": 1250 },
       tokenUsage: entry.tokenUsage,
       modifiedFiles: [],

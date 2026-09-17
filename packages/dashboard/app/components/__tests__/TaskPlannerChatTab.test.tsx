@@ -6,7 +6,6 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import { TaskPlannerChatTab } from "../TaskPlannerChatTab";
 import { ChatMessageLayoutProvider } from "../../context/ChatMessageLayoutContext";
-import { AlphaProvider, AlphaBoundary } from "../../context/AlphaContext";
 import { clampChatInputHeight, getChatInputAutomaticMaxHeight, getChatInputBoxMetrics } from "../../utils/chatInputAutosize";
 import { __test_resetChatSnippetsCache } from "../../hooks/useChatSnippetsCache";
 
@@ -241,23 +240,23 @@ describe("TaskPlannerChatTab", () => {
 
   it("renders the real planner composer through the shared Alpha boundary", async () => {
     const view = render(
-      <AlphaProvider enabled>
-        <AlphaBoundary>
+      <>
+        <>
           <TaskPlannerChatTab task={makeTask("FN-7310")} active taskChatModel={{ provider: "anthropic", modelId: "claude-plan" }} addToast={vi.fn()} />
-        </AlphaBoundary>
-      </AlphaProvider>,
+        </>
+      </>,
     );
-    expect(await screen.findByLabelText("Message task chat")).toHaveAttribute("data-alpha-ui", "textarea");
-    expect(view.container.querySelector('[data-alpha-ui="button"]')).not.toBeNull();
+    expect(await screen.findByLabelText("Message task chat")).toHaveAttribute("data-ui", "textarea");
+    expect(view.container.querySelector('[data-ui="button"]')).not.toBeNull();
 
     view.rerender(
-      <AlphaProvider enabled={false}>
-        <AlphaBoundary>
+      <>
+        <>
           <TaskPlannerChatTab task={makeTask("FN-7310")} active taskChatModel={{ provider: "anthropic", modelId: "claude-plan" }} addToast={vi.fn()} />
-        </AlphaBoundary>
-      </AlphaProvider>,
+        </>
+      </>,
     );
-    expect(screen.getByLabelText("Message task chat")).not.toHaveAttribute("data-alpha-ui");
+    expect(screen.getByLabelText("Message task chat")).not.toHaveAttribute("data-ui");
   });
 
   afterEach(() => {
@@ -2778,6 +2777,51 @@ describe("TaskPlannerChatTab", () => {
       await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Failed to save the interrupted planner response"));
       expect(screen.getByText("Retain me")).toBeInTheDocument();
       expect(mockStreamChatResponse).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  /*
+  FNXC:TaskDetailPlannerChat 2026-09-16-04:39:
+  FN-458 — TaskPlannerChatTab n'a AUCUNE branche JavaScript de breakpoint : sa responsivité est exclusivement CSS. La
+  surface mobile de la commande de retour au bas est donc vérifiée par lecture du feuillet, comme les autres règles
+  mobiles de ce composant. Le cas inter-surfaces assert des constructions de code (noms de classes / testids), jamais
+  une prose ou un commentaire de source.
+  */
+  describe("FN-458 jump-to-bottom affordance", () => {
+    it("styles the jump control with design tokens only and overrides it at the mobile breakpoint", () => {
+      const mobileQueryStart = taskPlannerChatCss.indexOf("@media (max-width: 768px)");
+      expect(mobileQueryStart).toBeGreaterThan(-1);
+      const desktopCss = taskPlannerChatCss.slice(0, mobileQueryStart);
+      const mobileCss = taskPlannerChatCss.slice(mobileQueryStart);
+
+      const baseRule = desktopCss.match(/\.task-planner-chat-jump-to-bottom\s*\{[^}]*\}/)?.[0] ?? "";
+      expect(baseRule).not.toBe("");
+      expect(baseRule).toContain("position: absolute");
+      // Tokens only: no hardcoded px, hex, or rgba() anywhere in the control's base rule.
+      expect(baseRule).not.toMatch(/\d+px/);
+      expect(baseRule).not.toContain("#");
+      expect(baseRule).not.toContain("rgba(");
+
+      const mobileRule = mobileCss.match(/\.task-planner-chat-jump-to-bottom\s*\{[^}]*\}/)?.[0] ?? "";
+      expect(mobileRule).not.toBe("");
+      expect(mobileRule).not.toMatch(/\d+px/);
+      expect(mobileRule).not.toContain("#");
+      expect(mobileRule).not.toContain("rgba(");
+
+      // The control must never cover the expand toggle overlay.
+      expect(desktopCss).toMatch(/\.task-planner-chat-expand-toggle--overlay\s*\{[^}]*z-index:\s*3/);
+      expect(baseRule).toMatch(/z-index:\s*2/);
+
+      // The control is a sibling of the virtualized scroller inside a dedicated positioned viewport.
+      expect(desktopCss).toMatch(/\.task-planner-chat-transcript-viewport\s*\{[^}]*position: relative/);
+    });
+
+    it("keeps the sibling jump affordance rendered by the other chat transcript surfaces", () => {
+      const taskChatTabSource = readFileSync(resolve(__dirname, "../TaskChatTab.tsx"), "utf8");
+      const chatViewSource = readFileSync(resolve(__dirname, "../ChatView.tsx"), "utf8");
+
+      expect(taskChatTabSource).toContain('data-testid="task-chat-jump-to-bottom"');
+      expect(chatViewSource).toContain('data-testid="chat-jump-to-latest"');
     });
   });
 });

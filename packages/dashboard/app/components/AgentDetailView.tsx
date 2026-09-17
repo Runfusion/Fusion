@@ -26,7 +26,9 @@ import {
 import { AgentLogViewer } from "./AgentLogViewer";
 import { LoadingSpinner } from "./LoadingSpinner";
 import { AgentReflectionsTab } from "./AgentReflectionsTab";
+import { resolveMailboxMessageSubject } from "./mailboxSubject";
 import { getAgentHealthStatus } from "../utils/agentHealth";
+import { getTaskTitleDisplayText } from "../utils/taskTitleDisplay";
 import type { AgentHealthStatus } from "../utils/agentHealth";
 import { SkillMultiselect } from "./SkillMultiselect";
 import { subscribeSse } from "../sse-bus";
@@ -39,6 +41,7 @@ import { CustomModelDropdown } from "./CustomModelDropdown";
 import { useConfirm } from "../hooks/useConfirm";
 import { FloatingWindow } from "./FloatingWindow";
 import { ModalCloseButton } from "./ModalCloseButton";
+import { HideInDrawer } from "./ViewDrawer";
 import { ViewHeader } from "./ViewHeader";
 import { ViewLayout } from "./ViewLayout";
 import { AgentAvatar } from "./AgentAvatar";
@@ -908,7 +911,6 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
         Legacy Agent Detail stored only size, while FloatingWindow requires size plus position.
         Use a new key for a deliberate one-time geometry reset rather than restoring an ambiguous partial payload.
         */
-        persistGeometryKey={`floating-window:${floatingWindowKey}`}
         suspendGeometryPersistenceOnMobile
         suspendGeometryPersistenceOnShortViewport
         /*
@@ -1123,8 +1125,15 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
               <button className="btn-icon" onClick={() => void loadAgent()} title={t("common.refresh", "Refresh")} aria-label={t("common.refresh", "Refresh")}>
                 <RefreshCw size={16} />
               </button>
+              {/*
+              FNXC:StandardizedDrawers 2026-09-15-04:56:
+              FN-406: one shared rule decides drawer chrome. HideInDrawer removes this close only in phone drawer
+              presentation; inline hosting keeps its existing owner-provided dismissal.
+              */}
               {!inline && (
-                <ModalCloseButton onClick={onClose} aria-label={t("common.close", "Close")} title={t("common.close", "Close")} />
+                <HideInDrawer>
+                  <ModalCloseButton onClick={onClose} aria-label={t("common.close", "Close")} title={t("common.close", "Close")} />
+                </HideInDrawer>
               )}
             </div>
           </div>}
@@ -1325,7 +1334,6 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
       defaultSize={{ width: 608, height: 640 }}
       minSize={{ width: 400, height: 320 }}
       /* FNXC:ModalTouchGeometry 2026-07-26-19:05: The legacy size-only key is deliberately replaced by FloatingWindow geometry, causing one intentional reset per user. */
-      persistGeometryKey={`floating-window:${floatingWindowKey}`}
       suspendGeometryPersistenceOnMobile
       suspendGeometryPersistenceOnShortViewport
       /* FNXC:ModalTouchGeometry 2026-07-26-19:05: Preserve Agent Detail's unconditional paired mouse-only dismissal instead of broader pointer-down/touch dismissal. */
@@ -1896,7 +1904,16 @@ function MailTab({
     onRefresh();
   };
 
-  const renderMessage = (message: Message) => (
+  /*
+  FNXC:MailboxSubject 2026-09-15-04:40:
+  Operator requirement: every mail row shows an AUTHOR and a SUBJECT, never the raw head of the body
+  (a completion notice used to render literally as "## Task completed: FN-325"). The subject comes
+  from the shared resolveMailboxMessageSubject used by MailboxView/MailboxModal, and the preview
+  element is omitted entirely when the body holds nothing beyond the subject line.
+  */
+  const renderMessage = (message: Message) => {
+    const { subject, bodyPreview } = resolveMailboxMessageSubject(message, t);
+    return (
     <button
       key={message.id}
       type="button"
@@ -1916,11 +1933,13 @@ function MailTab({
           )}
           <span className="mailbox-item-time">{formatMailboxTimestamp(message.createdAt, t)}</span>
         </div>
-        <div className="mailbox-item-preview">{message.content.slice(0, 80)}{message.content.length > 80 ? "…" : ""}</div>
+        <div className="mailbox-item-subject" data-testid={`mailbox-item-subject-${message.id}`}>{subject}</div>
+        {bodyPreview ? <div className="mailbox-item-preview">{bodyPreview}</div> : null}
       </div>
       {activeSubtab === "inbox" && !message.read ? <div className="mailbox-item-unread-dot" aria-label={t("agents.unreadMessage", "Unread message")} /> : null}
     </button>
-  );
+    );
+  };
 
   return (
     <div className="agent-mail-tab">
@@ -1977,6 +1996,11 @@ function MailTab({
               {activeSubtab === "inbox" ? t("agents.backToInbox", "Back to Inbox") : t("agents.backToOutbox", "Back to Outbox")}
             </button>
             <div className="agent-mail-tab-detail-meta">
+              {/* FNXC:MailboxSubject 2026-09-15-04:40: An opened agent mail states its subject before the participants, matching the mailbox detail views. */}
+              <div className="agent-mail-tab-detail-row">
+                <span className="agent-mail-tab-detail-label">{t("agents.mailSubject", "Subject")}</span>
+                <span data-testid="agent-mail-tab-detail-subject">{resolveMailboxMessageSubject(selectedMessage, t).subject}</span>
+              </div>
               <div className="agent-mail-tab-detail-row">
                 <span className="agent-mail-tab-detail-label">{t("agents.mailFrom", "From")}</span>
                 <span>{mailboxParticipantLabel(selectedMessage.fromId, selectedMessage.fromType, agentNamesById, t)}</span>
@@ -2597,8 +2621,14 @@ function formatDuration(start: Date, end: Date): string {
   return `${Math.floor(diff / 3600)}h ${Math.floor((diff % 3600) / 60)}m`;
 }
 
+/*
+FNXC:TaskTitleDisplay 2026-09-14-17:05:
+FN-391: the LABEL SOURCE is the shared projection (explicit title in full, else the description's
+exact 220-character prefix, else the ID). The 80-character shortening here stays because it is this
+row's own geometry constraint, applied on top of the canonical text — it is not a second title rule.
+*/
 function truncateTaskLabel(task: Task): string {
-  const source = task.title?.trim() || task.description?.trim() || task.id;
+  const source = getTaskTitleDisplayText(task);
   return source.length > 80 ? `${source.slice(0, 77)}...` : source;
 }
 
@@ -2677,7 +2707,7 @@ function TasksTab({
               } as Record<string, string>)[task.column] ?? task.column
             }</span>
           </div>
-          <div className="agent-task-title" title={task.title || task.description || task.id}>
+          <div className="agent-task-title" title={getTaskTitleDisplayText(task)}>
             {truncateTaskLabel(task)}
           </div>
           <div className="agent-task-status">

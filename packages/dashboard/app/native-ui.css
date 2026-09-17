@@ -1,0 +1,65 @@
+/*
+FNXC:NativeUiPresentation 2026-09-15-00:20:
+This stylesheet was `alpha-ui.css`. Fusion's homemade presentation is native, not an Alpha feature, so
+there is no enable-able perimeter any more: there is no provider, no boundary element, and no
+`data-alpha-surface` marker. Primitives publish purely descriptive `data-ui` / `data-ui-portal`
+markers and this file styles them directly.
+
+FNXC:NativeUiPresentation 2026-09-15-00:20:
+REMOVED, deliberately and permanently: the two fixed `--alpha-neutral-*` palettes and the `@scope`
+block that reassigned `--bg`, `--surface*`, `--card`, `--border`, `--text*`, `--accent`, the workflow
+status hues, every `--status-*-bg`, `--badge-*`, `--radius-*` and `--shadow-*` inside those
+boundaries. That block is exactly why a `data-color-theme` change could not recolour Board, Chat,
+Task Detail or their body-portaled overlays. Colour now comes from the selected theme everywhere,
+which is an intentional, documented difference from the previous pixels; non-chromatic grammar comes
+from `ui-style-tokens.css`. Do not reintroduce a literal palette here — a style decides shape, a
+theme decides colour.
+*/
+
+/*
+FNXC:NativeUiPresentation 2026-09-15-00:20:
+Native controls inherit the surrounding typography instead of the browser's form defaults. Markers are
+presentation hooks only: they never replace a business callback, ref, controlled value, disabled state
+or accessible name.
+*/
+[data-ui] {
+  font: inherit;
+  color: inherit;
+}
+
+[data-ui="button"],
+[data-ui="menu-item"],
+[data-ui="listbox-item"] {
+  cursor: pointer;
+}
+
+[data-ui="button"]:disabled,
+[data-ui="menu-item"]:disabled,
+[data-ui="listbox-item"][aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: var(--ui-disabled-opacity);
+}
+
+/*
+FNXC:NativeUiPresentation 2026-09-15-00:20:
+Body-portaled popovers, menus, listboxes and dialog surfaces sit outside their owner's DOM subtree, so
+they must still resolve the same theme and style tokens. They inherit both from the document root, and
+this rule only guarantees the portal keeps a readable owner colour and the shared focus contract.
+*/
+[data-ui-portal="true"] {
+  color: var(--text);
+}
+
+[data-ui]:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+/*
+FNXC:NativeUiPresentation 2026-09-15-00:20:
+Motion inside native controls follows the interface style's own duration tokens, so the reduced-motion
+preference is honoured once in the catalogue rather than per component.
+*/
+[data-ui] {
+  transition-duration: var(--ui-duration-fast);
+}

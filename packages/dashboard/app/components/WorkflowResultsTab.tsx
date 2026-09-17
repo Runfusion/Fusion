@@ -4,6 +4,7 @@ import { isCompleteColumnRole, isReviewColumnRole } from "../utils/columnRoles";
 import "./WorkflowResultsTab.css";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { FloatingWindow } from "./FloatingWindow";
 
 /*
 FNXC:i18n-Localize 2026-06-20-00:00:
@@ -27,6 +28,7 @@ import { linkifyFilePaths, linkifyReactChildren } from "../utils/filePathLinkify
 import { workflowResultTextsAreEquivalent } from "../utils/workflowResultText";
 import { resolveEffectiveExecutor, resolveEffectivePlanning, resolveEffectiveValidator } from "./effective-model-resolution";
 import { isWorkflowStepNotRun } from "../utils/taskProgress";
+import { useStickyBottomFollow } from "../hooks/useStickyBottomFollow";
 
 // Markdown rendering components for workflow output
 const markdownComponents: Components = {
@@ -266,8 +268,15 @@ function LiveAgentLogOutput({
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
-  const isFollowingRef = useRef(true);
   const startedAtMs = new Date(startedAt).getTime();
+  /*
+  FNXC:StickyBottomScroll 2026-09-14-20:19:
+  FN-398 : le journal de workflow en direct partage le propriétaire unique du suivi du bas. L'intention utilisateur
+  relâche le suivi de façon synchrone, indépendamment du seuil de 50 px ; `followTail` et le `ResizeObserver` du
+  contenu cessent alors d'écrire dès la frame du geste.
+  */
+  const stickyFollow = useStickyBottomFollow(containerRef, { rearmThresholdPx: BOTTOM_FOLLOW_THRESHOLD_PX });
+  const isFollowingRef = stickyFollow.isFollowingRef;
 
   // Filter entries to only show those from this step's time window
   const stepEntries = entries.filter((entry) => {
@@ -275,21 +284,12 @@ function LiveAgentLogOutput({
     return entryMs >= startedAtMs;
   });
 
-  const isNearBottom = useCallback((container: HTMLDivElement) => (
-    container.scrollHeight - (container.scrollTop + container.clientHeight) <= BOTTOM_FOLLOW_THRESHOLD_PX
-  ), []);
-
   const followTail = useCallback(() => {
     const container = containerRef.current;
     if (!container || !isFollowingRef.current) return;
     container.scrollTop = container.scrollHeight;
-  }, []);
-
-  const handleScroll = useCallback(() => {
-    const container = containerRef.current;
-    if (!container) return;
-    isFollowingRef.current = isNearBottom(container);
-  }, [isNearBottom]);
+    stickyFollow.noteProgrammaticWrite(container.scrollTop);
+  }, [isFollowingRef, stickyFollow]);
 
   /*
   FNXC:WorkflowLiveLog 2026-07-18-16:10:
@@ -321,7 +321,6 @@ function LiveAgentLogOutput({
       ref={containerRef}
       className="workflow-live-log"
       data-testid={`workflow-live-log-${stepId}`}
-      onScroll={handleScroll}
     >
       <div ref={contentRef}>
         {stepEntries.map((entry, i) => {
@@ -1345,14 +1344,26 @@ export function WorkflowResultsTab({
         const phase = (result.phase || "pre-merge") as "pre-merge" | "post-merge";
 
         return (
-          <div
-            className="workflow-output-modal-overlay"
-            onClick={(e) => {
-              if (e.target === e.currentTarget) closeExpandedView();
-            }}
-            data-testid="workflow-output-modal"
+          /* FNXC:FloatingWindowDialogHosts 2026-09-14-22:36: FN-394 hosts the expanded workflow output in the shared window so a long report can be snapped to a half or to the whole work area. */
+          <FloatingWindow
+            windowKey={`workflow-output-${result.workflowStepId}`}
+            modal
+            hideHeader
+            surfaceGroup="dialog"
+            title={result.workflowStepName}
+            ariaLabel={result.workflowStepName}
+            onClose={closeExpandedView}
+            dragHandleSelector=".workflow-output-modal .workflow-output-modal-header"
+            className="floating-window--dialog floating-window--workflow-output"
+            overlayClassName="workflow-output-modal-overlay"
+            testId="workflow-output-modal"
+            defaultSize={{ width: 900, height: 660 }}
+            minSize={{ width: 320, height: 280 }}
+            suspendGeometryPersistenceOnMobile
+            suspendGeometryPersistenceOnShortViewport
+            backdropMouseHandlers={{ onClick: (event) => { if (event.target === event.currentTarget) closeExpandedView(); } }}
           >
-            <div className="workflow-output-modal" role="dialog" aria-modal="true">
+            <div className="workflow-output-modal">
               {/*
               FNXC:StandardizedViewLayout 2026-09-13-21:49:
               The expanded workflow output dialog uses the shared header: rich step identity plus the phase badge as
@@ -1404,7 +1415,7 @@ export function WorkflowResultsTab({
                 </div>
               </div>
             </div>
-          </div>
+          </FloatingWindow>
         );
       })()}
     </div>

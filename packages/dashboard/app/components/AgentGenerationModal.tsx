@@ -161,7 +161,7 @@ export function AgentGenerationModal({
     roleDescription.trim().length <= MAX_ROLE_LENGTH;
 
   return (
-        <FloatingWindow windowKey="agent-generation" modal title={t("agents.generation.title", "Generate Agent")} ariaLabel={t("agents.generateWithAiLabel", "Generate agent with AI")} onClose={handleCancel} hideHeader dragHandleSelector=".agent-generation-modal .agent-dialog-header" className="floating-window--agent-generation" defaultSize={{ width: 640, height: 560 }} minSize={{ width: 400, height: 300 }} persistGeometryKey="floating-window:agent-generation" suspendGeometryPersistenceOnMobile suspendGeometryPersistenceOnShortViewport closeOnOutsidePointerDown>
+        <FloatingWindow windowKey="agent-generation" modal title={t("agents.generation.title", "Generate Agent")} ariaLabel={t("agents.generateWithAiLabel", "Generate agent with AI")} onClose={handleCancel} hideHeader dragHandleSelector=".agent-generation-modal .agent-dialog-header" className="floating-window--agent-generation" defaultSize={{ width: 640, height: 560 }} minSize={{ width: 400, height: 300 }} suspendGeometryPersistenceOnMobile suspendGeometryPersistenceOnShortViewport closeOnOutsidePointerDown>
       {/* FNXC:ModalTouchGeometry 2026-07-26-16:07: Generation can dwell while AI responds; persist shared geometry and preserve overlay dismissal. */}
       <div className="agent-dialog agent-generation-modal">
         {/*

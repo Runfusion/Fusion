@@ -5,6 +5,7 @@ import { ViewSidebar } from "./ViewSidebar";
 import "./MissionManager.css";
 import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { FloatingWindow } from "./FloatingWindow";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -129,6 +130,7 @@ import {
 import type { AutopilotState, MissionInterviewDraftSummary } from "./mission-types";
 import { readCache, SWR_CACHE_KEYS, writeCache } from "../utils/swrCache";
 import { getRelativeTimeBucket } from "../utils/relativeTimeAgo";
+import { getTaskTitleDisplayText } from "../utils/taskTitleDisplay";
 import { isNativeStructureDragEnabled, serializeNativeStructureRef } from "../utils/nativeStructureDrag";
 
 interface MissionManagerProps {
@@ -881,7 +883,6 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
   const [detailLoading, setDetailLoading] = useState(false);
   const isMobile = useViewportMode() === "mobile";
   const { pushNav } = useNavigationHistoryContext();
-  const [showArchived, setShowArchived] = useState(false);
   const [isCreateMenuOpen, setIsCreateMenuOpen] = useState(false);
   const [isCreatingMission, setIsCreatingMission] = useState(false);
   const [editingMissionId, setEditingMissionId] = useState<string | null>(null);
@@ -3535,7 +3536,15 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                       <option value="active">{t("missions.statusActive", "Active")}</option>
                       <option value="blocked">{t("missions.statusBlocked", "Blocked")}</option>
                       <option value="complete">{t("missions.statusComplete", "Complete")}</option>
-                      <option value="archived">{t("missions.statusArchived", "Archived")}</option>
+                      {/*
+                      FNXC:StandardizedMissionLayout 2026-09-16-15:50:
+                      FN-465 retire l’archivage des missions de l’interface : le statut « Archived » n’est plus une
+                      transition proposée. L’option n’est rendue que pour une mission DÉJÀ archivée, et désactivée, afin
+                      d’afficher fidèlement sa valeur courante sans la réétiqueter silencieusement.
+                      */}
+                      {missionForm.status === "archived" ? (
+                        <option value="archived" disabled>{t("missions.statusArchived", "Archived")}</option>
+                      ) : null}
                     </select>
                     <label className="mission-checkbox">
                       <input
@@ -5224,25 +5233,15 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
 
   const renderMissionListContent = () => {
     /*
-    FNXC:StandardizedMissionLayout 2026-09-13-16:30:
-    Archived missions are a list concern rather than a second destination. The filter stays with the collection while the one Plan New Mission action remains in the shared header at every breakpoint.
+    FNXC:StandardizedMissionLayout 2026-09-16-15:50:
+    FN-465 retire l’archivage des missions de l’interface : il n’existe plus de filtre « Show archived » ni de barre de filtres de liste, et les missions archivées historiques restent définitivement masquées. La seule action Plan New Mission demeure dans l’en-tête partagé à chaque breakpoint.
     */
-    const visibleMissions = missions.filter((mission) => showArchived || mission.status !== "archived");
+    const visibleMissions = missions.filter((mission) => mission.status !== "archived");
     const persistedInterviewMissions = visibleMissions.filter((mission) => mission.interviewState === "in_progress");
     const standardMissions = visibleMissions.filter((mission) => mission.interviewState !== "in_progress");
 
     return (
       <div className="mission-list">
-        <div className="mission-list__filters">
-          <button
-            type="button"
-            className="btn btn-sm"
-            aria-pressed={showArchived}
-            onClick={() => setShowArchived((visible) => !visible)}
-          >
-            {showArchived ? t("missions.hideArchived", "Hide archived") : t("missions.showArchived", "Show archived")}
-          </button>
-        </div>
 
         {/* Create mission form */}
               {isCreatingMission && (
@@ -5445,7 +5444,15 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                       <option value="active">{t("missions.statusActive", "Active")}</option>
                       <option value="blocked">{t("missions.statusBlocked", "Blocked")}</option>
                       <option value="complete">{t("missions.statusComplete", "Complete")}</option>
-                      <option value="archived">{t("missions.statusArchived", "Archived")}</option>
+                      {/*
+                      FNXC:StandardizedMissionLayout 2026-09-16-15:50:
+                      FN-465 retire l’archivage des missions de l’interface : le statut « Archived » n’est plus une
+                      transition proposée. L’option n’est rendue que pour une mission DÉJÀ archivée, et désactivée, afin
+                      d’afficher fidèlement sa valeur courante sans la réétiqueter silencieusement.
+                      */}
+                      {missionForm.status === "archived" ? (
+                        <option value="archived" disabled>{t("missions.statusArchived", "Archived")}</option>
+                      ) : null}
                     </select>
                     <label className="mission-checkbox">
                       <input
@@ -5533,7 +5540,8 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                   className="mission-task-suggestions__item"
                   onClick={() => setSelectedTaskId(task.id)}
                 >
-                  {task.id}: {task.title || t("missions.untitled", "Untitled")}
+                  {/* FNXC:TaskTitleDisplay 2026-09-14-17:05: FN-391 — one shared label projection; a titleless task shows its description prefix instead of a generic "Untitled". */}
+                  {task.id}: {getTaskTitleDisplayText(task)}
                 </button>
               ))}
             </div>
@@ -5551,13 +5559,39 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
     </div>
   );
 
+  /*
+  FNXC:MissionInterviewMainContent 2026-09-15-03:29:
+  FN-402: Plan Mission with AI is a main-content destination, and it now occupies the mission DETAIL PANE instead of
+  replacing the whole mission manager body. Replacing the body unmounted the mission list under the operator, who lost
+  all list context the moment an interview opened; the interview now simply takes the region that otherwise shows
+  "Select a mission to view details", exactly like Planning renders session detail beside its persistent session rail.
+  The sidebar and header stay mounted in both hosts (the inline MainContent mount and the overlay surface). Closing
+  hands the detail pane back to its empty state; goal draft, resume and send-to-background flows are unchanged
+  (the draft is persisted by the interview's own close/unmount path).
+  */
+  const interviewSurface = (
+    <MissionInterviewModal
+      key={interviewModalKey}
+      isOpen={showInterviewModal}
+      onClose={handleInterviewModalClose}
+      onSendToBackground={handleInterviewModalClose}
+      showSendToBackgroundButton={interviewLaunchMode === "resume"}
+      /* FNXC:MissionInterviewMainContent 2026-09-15-03:29: nested under the Missions h2, so the interview declares h3 and never adds a sibling h2 to the document outline. */
+      headingLevel={3}
+      onMissionCreated={() => {
+        loadMissions();
+        addToast(t("missions.createdFromInterview", "Mission created from AI interview"), "success");
+      }}
+      projectId={projectId}
+      resumeSessionId={interviewLaunchMode === "resume" ? effectiveResumeSessionId : undefined}
+    />
+  );
+
   const manager = (
     <div
       ref={modalRef}
       className={`mission-manager mission-manager--desktop${isInline ? " mission-manager--inline" : ""}`}
-      role={isInline ? undefined : "dialog"}
-      aria-modal={isInline ? undefined : true}
-      aria-label={isInline ? undefined : t("missions.missionManagerAriaLabel", "Mission Manager")}
+      /* FNXC:FloatingWindowDialogHosts 2026-09-14-22:36: the hosting window owns the dialog role and name, so this shell never declares a second nested dialog. */
       data-testid="mission-manager-dialog"
     >
       {/*
@@ -5566,15 +5600,23 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
       */}
       <ViewLayout
         contentOwnsScroll
-        mobilePane={selectedMission ? "detail" : "list"}
+        mobilePane={showInterviewModal || selectedMission ? "detail" : "list"}
         header={(
           <ViewHeader
             icon={Target}
             title={selectedMission && isMobile ? selectedMission.title : t("missions.title", "Missions")}
             titleTestId="mission-header-title"
-            backAction={selectedMission ? {
+            /*
+            FNXC:MissionsBackAffordance 2026-09-15-03:29:
+            FN-402: Missions follows the Planning grammar (`canReturnToSessionList = isMobile && …`). On desktop and
+            tablet the list and the detail pane are mounted side by side, so there is nowhere to go back TO and the
+            control is not rendered at all — no empty button shell, no dangling aria-label. Only the phone viewport,
+            which shows a single pane at a time, keeps it: it closes the interview when one is open, otherwise it
+            deselects the mission.
+            */
+            backAction={isMobile && (showInterviewModal || selectedMission) ? {
               label: t("missions.backToMissionsList", "Back to missions list"),
-              onClick: handleBackToList,
+              onClick: showInterviewModal ? handleInterviewModalClose : handleBackToList,
               "data-testid": "mission-back-btn",
             } : undefined}
             actions={!isCreatingMission ? (
@@ -5624,8 +5666,8 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
           </ViewSidebar>
         )}
       >
-        <div className="mission-manager__detail-pane">
-          {detailLoading && !selectedMission ? (
+        <div className={`mission-manager__detail-pane${showInterviewModal ? " mission-manager__detail-pane--interview" : ""}`}>
+          {showInterviewModal ? interviewSurface : detailLoading && !selectedMission ? (
             <div className="mission-manager__loading">
               <Loader2 size={24} className="spinner" />
               <span>{t("missions.loadingMissionDetails", "Loading mission details...")}</span>
@@ -5641,22 +5683,6 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
         </div>
       </ViewLayout>
     </div>
-  );
-
-  const interviewModal = (
-    <MissionInterviewModal
-      key={interviewModalKey}
-      isOpen={showInterviewModal}
-      onClose={handleInterviewModalClose}
-      onSendToBackground={handleInterviewModalClose}
-      showSendToBackgroundButton={interviewLaunchMode === "resume"}
-      onMissionCreated={() => {
-        loadMissions();
-        addToast(t("missions.createdFromInterview", "Mission created from AI interview"), "success");
-      }}
-      projectId={projectId}
-      resumeSessionId={interviewLaunchMode === "resume" ? effectiveResumeSessionId : undefined}
-    />
   );
 
   const milestoneSliceInterviewModal = interviewTarget ? (
@@ -5676,11 +5702,12 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
     />
   ) : null;
 
+  const managerBody = manager;
+
   if (isInline) {
     return (
       <>
-        {manager}
-        {interviewModal}
+        {managerBody}
         {milestoneSliceInterviewModal}
       </>
     );
@@ -5688,16 +5715,27 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
 
   return (
     <>
-      <div
-        className="mission-manager-overlay open"
-        onClick={(e) => e.target === e.currentTarget && onClose()}
-        data-testid="mission-manager-overlay"
-        role="dialog"
-        aria-modal="true"
+      {/* FNXC:FloatingWindowDialogHosts 2026-09-14-22:36: FN-394 hosts the Missions dialog in the shared window; its inline destination stays a plain embedded view. */}
+      <FloatingWindow
+        windowKey="mission-manager"
+        modal
+        hideHeader
+        surfaceGroup="dialog"
+        title={t("missions.title", "Missions")}
+        ariaLabel={t("missions.missionManagerAriaLabel", "Mission Manager")}
+        onClose={onClose}
+        dragHandleSelector=".mission-manager .view-header"
+        className="floating-window--dialog floating-window--mission-manager"
+        overlayClassName="mission-manager-overlay"
+        testId="mission-manager-overlay"
+        defaultSize={{ width: 1000, height: 700 }}
+        minSize={{ width: 360, height: 300 }}
+        suspendGeometryPersistenceOnMobile
+        suspendGeometryPersistenceOnShortViewport
+        backdropMouseHandlers={{ onClick: (event) => { if (event.target === event.currentTarget) onClose(); } }}
       >
-        {manager}
-      </div>
-      {interviewModal}
+        {managerBody}
+      </FloatingWindow>
       {milestoneSliceInterviewModal}
     </>
   );

@@ -1,0 +1,98 @@
+[
+  {
+    "theme": "default",
+    "shape": {
+      "surfaceRadius": "8px",
+      "surfacePadding": "10px",
+      "buttonRadius": "8px",
+      "buttonPadding": "7px 14px",
+      "tabPadding": "7px 0px",
+      "tabFontSize": "14px",
+      "tabsGap": "14px"
+    }
+  },
+  {
+    "theme": "ocean",
+    "shape": {
+      "surfaceRadius": "8px",
+      "surfacePadding": "10px",
+      "buttonRadius": "8px",
+      "buttonPadding": "7px 14px",
+      "tabPadding": "7px 0px",
+      "tabFontSize": "14px",
+      "tabsGap": "14px"
+    }
+  },
+  {
+    "theme": "factory",
+    "shape": {
+      "surfaceRadius": "8px",
+      "surfacePadding": "10px",
+      "buttonRadius": "8px",
+      "buttonPadding": "7px 14px",
+      "tabPadding": "7px 0px",
+      "tabFontSize": "14px",
+      "tabsGap": "14px"
+    }
+  },
+  {
+    "theme": "brutalist",
+    "shape": {
+      "surfaceRadius": "8px",
+      "surfacePadding": "10px",
+      "buttonRadius": "8px",
+      "buttonPadding": "7px 14px",
+      "tabPadding": "7px 0px",
+      "tabFontSize": "14px",
+      "tabsGap": "14px"
+    }
+  },
+  {
+    "theme": "terminal",
+    "shape": {
+      "surfaceRadius": "8px",
+      "surfacePadding": "10px",
+      "buttonRadius": "8px",
+      "buttonPadding": "7px 14px",
+      "tabPadding": "7px 0px",
+      "tabFontSize": "14px",
+      "tabsGap": "14px"
+    }
+  },
+  {
+    "theme": "cozy-cartoon",
+    "shape": {
+      "surfaceRadius": "8px",
+      "surfacePadding": "10px",
+      "buttonRadius": "8px",
+      "buttonPadding": "7px 14px",
+      "tabPadding": "7px 0px",
+      "tabFontSize": "14px",
+      "tabsGap": "14px"
+    }
+  },
+  {
+    "theme": "shadcn-purple",
+    "shape": {
+      "surfaceRadius": "8px",
+      "surfacePadding": "10px",
+      "buttonRadius": "8px",
+      "buttonPadding": "7px 14px",
+      "tabPadding": "7px 0px",
+      "tabFontSize": "14px",
+      "tabsGap": "14px"
+    }
+  },
+  {
+    "theme": "air",
+    "shape": {
+      "surfaceRadius": "8px",
+      "surfacePadding": "10px",
+      "buttonRadius": "8px",
+      "buttonPadding": "7px 14px",
+      "tabPadding": "7px 0px",
+      "tabFontSize": "14px",
+      "tabsGap": "14px"
+    }
+  }
+]

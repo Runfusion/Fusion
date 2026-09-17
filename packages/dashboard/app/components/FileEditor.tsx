@@ -25,6 +25,15 @@ interface FileEditorProps {
   canToggleAutoSave?: boolean;
   toolbarExpanded?: boolean;
   forceToolbarActionsVisible?: boolean;
+  /*
+  FNXC:NotesEditing 2026-09-15-21:23:
+  FN-435 : hôte opt-in sans chrome d'édition (l'éditeur de note, dont la demande explicite est « retirer tous les
+  boutons »). Masquer la barre IMPOSE le mode édition pour cette instance : sans bascule Modifier/Aperçu visible, une
+  préférence « Aperçu » persistée enfermerait l'opérateur dans une note en lecture seule sans aucun moyen d'en sortir.
+  Le forçage est dérivé, jamais écrit : cet hôte ne doit pas toucher la préférence localStorage partagée avec le
+  navigateur de fichiers, sinon ouvrir une note reconfigurerait silencieusement le navigateur de fichiers.
+  */
+  hideToolbar?: boolean;
   toolbarActionsId?: string;
   onSendSelectionToTask?: (description: string) => void;
 }
@@ -78,6 +87,7 @@ export function FileEditor({
   canToggleAutoSave = true,
   toolbarExpanded,
   forceToolbarActionsVisible = false,
+  hideToolbar = false,
   toolbarActionsId: externalToolbarActionsId,
   onSendSelectionToTask,
 }: FileEditorProps) {
@@ -105,6 +115,17 @@ export function FileEditor({
   const localEditVersionRef = useRef(0);
   const contentEditVersionsRef = useRef<Map<string, number>>(new Map([[content, 0]]));
   const lastPropEditVersionRef = useRef(0);
+  /*
+  FNXC:FileEditor 2026-09-16-05:02:
+  FN-454 : les accusés d'auto-écho et l'historique CodeMirror sont bornés au document courant. La carte de versions est
+  indexée par CONTENU, donc sans cette frontière une chaîne déjà émise localement pour un document (typiquement `""`
+  après suppression du texte) était classée comme auto-écho périmé lorsqu'un AUTRE document arrivait avec la même
+  chaîne : l'éditeur gardait alors visible — et enregistrable — le texte du document précédent. Un changement de
+  `filePath` est un changement d'identité : les accusés et l'historique sont repartis à zéro et le contenu entrant est
+  toujours accepté, `""` compris. À identité INCHANGÉE le classement d'auto-écho périmé reste intact, afin qu'une
+  réponse serveur tardive n'écrase pas une frappe locale plus récente.
+  */
+  const documentIdentityRef = useRef(filePath);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
 
@@ -120,7 +141,7 @@ export function FileEditor({
   const toolbarActionsId = externalToolbarActionsId ?? generatedToolbarActionsId;
   const [darkThemeActive, setDarkThemeActive] = useState(() => isDarkTheme());
 
-  const effectiveShowPreview = isMarkdown && (readOnly ? true : showPreview);
+  const effectiveShowPreview = !hideToolbar && isMarkdown && (readOnly ? true : showPreview);
   const shouldRenderLineNumbers = showLineNumbers && !readOnly && !effectiveShowPreview;
   const shouldShowLineNumbersToggle = Boolean(onToggleLineNumbers) && canToggleLineNumbers && !readOnly && !effectiveShowPreview;
   const shouldShowAutoSaveToggle = Boolean(onToggleAutoSave) && canToggleAutoSave && !readOnly && !effectiveShowPreview;
@@ -172,8 +193,10 @@ export function FileEditor({
   ) : null;
 
   useEffect(() => {
+    // FNXC:NotesEditing 2026-09-15-21:23: un hôte sans barre n'a aucune bascule à mémoriser; il ne réécrit donc jamais la préférence partagée.
+    if (hideToolbar) return;
     writeBooleanPref(FILE_EDITOR_MARKDOWN_PREVIEW_STORAGE_KEY, showPreview);
-  }, [showPreview]);
+  }, [hideToolbar, showPreview]);
 
   useEffect(() => {
     if (!editorHostRef.current || effectiveShowPreview) {
@@ -292,6 +315,12 @@ export function FileEditor({
   useEffect(() => {
     const view = editorViewRef.current;
     if (!view) return;
+    const identityChanged = documentIdentityRef.current !== filePath;
+    if (identityChanged) {
+      documentIdentityRef.current = filePath;
+      contentEditVersionsRef.current = new Map([[content, localEditVersionRef.current]]);
+      lastPropEditVersionRef.current = localEditVersionRef.current;
+    }
     const currentContent = view.state.doc.toString();
     if (currentContent === content) {
       const acknowledgedVersion = contentEditVersionsRef.current.get(content) ?? localEditVersionRef.current;
@@ -300,10 +329,12 @@ export function FileEditor({
       return;
     }
 
-    const incomingEditVersion = contentEditVersionsRef.current.get(content);
-    const currentEditVersion = contentEditVersionsRef.current.get(currentContent) ?? localEditVersionRef.current;
-    const isStaleSelfEcho = incomingEditVersion !== undefined && incomingEditVersion < Math.max(currentEditVersion, lastPropEditVersionRef.current);
-    if (isStaleSelfEcho) return;
+    if (!identityChanged) {
+      const incomingEditVersion = contentEditVersionsRef.current.get(content);
+      const currentEditVersion = contentEditVersionsRef.current.get(currentContent) ?? localEditVersionRef.current;
+      const isStaleSelfEcho = incomingEditVersion !== undefined && incomingEditVersion < Math.max(currentEditVersion, lastPropEditVersionRef.current);
+      if (isStaleSelfEcho) return;
+    }
 
     const previousSelection = view.state.selection.main;
     const nextLength = content.length;
@@ -312,10 +343,12 @@ export function FileEditor({
     try {
       const createEditorState = createEditorStateRef.current;
       if (!createEditorState) return;
-      view.setState(createEditorState(content, {
-        anchor: clampPosition(previousSelection.anchor),
-        head: clampPosition(previousSelection.head),
-      }));
+      view.setState(createEditorState(content, identityChanged
+        ? { anchor: 0, head: 0 }
+        : {
+          anchor: clampPosition(previousSelection.anchor),
+          head: clampPosition(previousSelection.head),
+        }));
       setHistoryAvailability({ undo: false, redo: false });
       const externalContentVersion = localEditVersionRef.current;
       contentEditVersionsRef.current.set(content, externalContentVersion);
@@ -323,11 +356,11 @@ export function FileEditor({
     } finally {
       syncingFromPropsRef.current = false;
     }
-  }, [content]);
+  }, [content, filePath]);
 
   return (
     <div className="file-editor-container">
-      {hasToolbarActions && (expanded || !isControlled) ? (
+      {!hideToolbar && hasToolbarActions && (expanded || !isControlled) ? (
         <div className={`file-editor-toolbar ${expanded ? "file-editor-toolbar--expanded" : ""}`}>
           {showToolbarDisclosure && (
             <button className="btn btn-sm btn-icon file-editor-toolbar-button" onClick={handleToolbarActionsToggle} aria-label={t("fileEditor.toggleOptions", "Toggle editor options")} title={t("fileEditor.toggleOptions", "Toggle editor options")} aria-expanded={expanded} aria-controls={toolbarActionsId}>

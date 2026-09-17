@@ -9,31 +9,40 @@ import { useTranslation } from "react-i18next";
 import {
   Bot,
   Brain,
-  ChevronLeft,
-  ChevronRight,
   Clock,
+  Folder,
+  FolderGit2,
   Gauge,
   Lightbulb,
   LayoutGrid,
+  List,
   Mail,
   MessageSquare,
+  Monitor,
+  PanelLeft,
   PanelsTopLeft,
   Search,
   Settings,
   Sparkles,
   StickyNote,
   Target,
+  Terminal,
   Workflow,
   Zap,
   type LucideProps,
 } from "lucide-react";
+import type { Task } from "@fusion/core";
 import type { ProjectInfo, PluginDashboardViewEntry } from "../api";
+import type { ExecutorColumnFlags } from "../hooks/useExecutorStats";
+import { useExecutorStats } from "../hooks/useExecutorStats";
+import { EngineControlMenu } from "./EngineControlMenu";
 import type { TaskView } from "../hooks/useViewState";
 import { buildPluginTaskViewId } from "../plugins/pluginViewRegistry";
 import { getPluginDashboardViewNavIcon } from "./pluginNavIcon";
 import { GithubIcon } from "./GithubIcon";
 import { getDashboardViewLabel } from "../../src/shared/dashboard-views";
 import { buildDashboardNavigationEntries } from "./dashboardNavigationEntries";
+import { useDashboardWindowLandmark } from "../context/DashboardWindowManagerContext";
 
 export interface LeftSidebarExperimentalFeatures {
   insights?: boolean;
@@ -130,6 +139,18 @@ export interface LeftSidebarNavProps {
   onSelectProject?: (project: ProjectInfo) => void;
   onViewAllProjects?: () => void;
   footerVisible?: boolean;
+  /*
+  FNXC:Navigation 2026-09-15-14:41:
+  FN-419: in `sidebar` placement the shell has NO bottom bar, so the engine control menu and the Terminal action
+  would otherwise lose their only wide entry point. The sidebar hosts them here instead. Because the two primary
+  surfaces are mutually exclusive, `EngineControlMenu` can never be mounted twice at once.
+  `DashboardWindowVisibilityToggle` is deliberately NOT relocated: the operator asked for that control to disappear
+  in sidebar placement, and it remains footer-only (still rendered by `DesktopActionBar` and `ExecutorStatusBar`).
+  */
+  tasks?: Task[];
+  projectId?: string;
+  columnFlagsByTaskId?: ReadonlyMap<string, ExecutorColumnFlags>;
+  onToggleTerminal?: () => void;
 }
 
 function formatCount(count: number): string {
@@ -174,8 +195,19 @@ export function LeftSidebarNav({
   showAgentsTab = false,
   showSkillsTab = false,
   footerVisible = false,
+  tasks,
+  projectId,
+  columnFlagsByTaskId,
+  onToggleTerminal,
 }: LeftSidebarNavProps) {
   const { t } = useTranslation("app");
+  /*
+  FNXC:DashboardWindowBounds 2026-09-14-21:10:
+  FN-394: the sidebar declares its own right edge so dashboard windows treat it as shell, not content.
+  Collapsing, resizing, or unmounting it re-measures immediately and snapped columns re-split; the
+  sidebar itself is never closed to make room for a window.
+  */
+  const dashboardWindowLeftNavRef = useDashboardWindowLandmark("left-nav");
   const [sidebarWidth, setSidebarWidth] = useState(readStoredSidebarWidth);
   const [isCollapsed, setIsCollapsed] = useState(readStoredCollapsed);
   /*
@@ -194,6 +226,21 @@ export function LeftSidebarNav({
       return next;
     });
   }, []);
+
+  /*
+  FNXC:Navigation 2026-09-15-14:41:
+  FN-419: the engine control trigger mirrors the footer's contract exactly — same `executor.engineControls` label and
+  the same `running / maxConcurrent` trigger content — so moving the menu between placements does not change what an
+  operator reads. The hook runs unconditionally (Rules of Hooks); the host renders only when a project is present.
+  */
+  const emptyTasks = useMemo<Task[]>(() => [], []);
+  const { stats: executorStats, loading: executorStatsLoading, error: executorStatsError } = useExecutorStats(tasks ?? emptyTasks, projectId, columnFlagsByTaskId);
+  const capacityText = executorStatsLoading
+    ? t("commandCenter.controls.status.loading", "Loading…")
+    : executorStatsError
+      ? t("commandCenter.controls.concurrency.error", "Unable to load concurrency settings")
+      : `${executorStats.runningTaskCount} / ${executorStats.maxConcurrent}`;
+  const capacityLabel = `${t("executor.engineControls", "Engine controls")}: ${capacityText}`;
 
   const handleResizeStart = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (isCollapsed) return;
@@ -315,10 +362,22 @@ export function LeftSidebarNav({
       onSelect: () => onChangeView("board"),
     },
     /*
-    FNXC:ListInRightDock 2026-09-14-04:42:
-    FN-382: List is a right-dock tool on every non-mobile host, so this rail no longer offers it as a page. The phone
-    navigation keeps both of its List producers.
+    FNXC:ListInRightDock 2026-09-15-23:37:
+    FN-382 had made List a right-dock tool, which is why this rail stopped offering it as a page. FN-426 then made the
+    dock optional, so the destination survived only through a standalone Header button. FN-439 returns List to the
+    primary navigation itself and removes that Header producer on tablet/desktop; the replacement guarantee is exactly
+    one producer per host: this entry under the sidebar placement, `desktop-nav-list` in the footer **More** menu under
+    the footer placement, and `mobile-more-item-list` on a phone.
     */
+    {
+      id: "list",
+      label: t("nav.list", getDashboardViewLabel("list")),
+      view: "list",
+      isActive: view === "list",
+      icon: List,
+      testId: "sidebar-nav-list",
+      onSelect: () => onChangeView("list"),
+    },
     ...(graphPluginEntry ? [mapPluginEntry(graphPluginEntry)] : []),
     /*
     FNXC:Navigation 2026-06-23-01:30:
@@ -403,6 +462,34 @@ export function LeftSidebarNav({
     FNXC:Navigation 2026-06-22-00:00 (reordered 2026-06-23-01:45):
     Workflows, Import Tasks, and Automations are left-sidebar destinations that load in the main content area (not modals). Import Tasks is the GitHub import view (labeled "Import Tasks", not "Import from GitHub"). Automations + Import Tasks sit directly ABOVE Compound Eng per user request.
     */
+    /*
+    FNXC:ToolSurfaces 2026-09-15-16:04:
+    FN-426: Files and Git Manager are sidebar destinations too. They were the last two tools reachable only through the
+    right dock, so this rail — which is a full replacement for the footer under `navigationPlacement: "sidebar"` — must
+    offer them, otherwise turning the dock off would strand them on that placement. Pull Requests stays a Git section
+    and Secrets stays a Settings section, so neither gains a rail entry.
+    */
+    {
+      id: "files",
+      label: t("nav.files", getDashboardViewLabel("files")),
+      view: "files" as TaskView,
+      isActive: view === "files",
+      icon: Folder,
+      testId: "sidebar-nav-files",
+      onSelect: () => onChangeView("files"),
+    },
+    {
+      id: "git-manager",
+      label: t("nav.gitManager", getDashboardViewLabel("git-manager")),
+      view: "git-manager" as TaskView,
+      isActive: view === "git-manager",
+      icon: FolderGit2,
+      testId: "sidebar-nav-git-manager",
+      onSelect: () => onChangeView("git-manager"),
+    },
+    ...(experimentalFeatures?.devServerView
+      ? [{ id: "dev-server", label: t("nav.devServer", getDashboardViewLabel("dev-server")), view: "dev-server" as TaskView, isActive: view === "dev-server" || view === "devserver", icon: Monitor, testId: "sidebar-nav-dev-server", onSelect: () => onChangeView("dev-server") }]
+      : []),
     {
       id: "automations",
       label: t("nav.automations", getDashboardViewLabel("automations")),
@@ -455,6 +542,7 @@ export function LeftSidebarNav({
     showAgents: showAgentsTab,
     showSkills: showSkillsTab,
     flags: { memory: experimentalFeatures?.memoryView, whiteboard: experimentalFeatures?.whiteboardView, goals: experimentalFeatures?.goalsView, insights: experimentalFeatures?.insights, research: experimentalFeatures?.researchView, ideation: experimentalFeatures?.ideationView, evals: experimentalFeatures?.evalsView },
+    showDevServer: experimentalFeatures?.devServerView === true,
   });
   const sharedKinds = new Map(sharedRegistry.map((entry) => [entry.view ?? entry.id, entry.kind]));
 
@@ -496,11 +584,34 @@ export function LeftSidebarNav({
 
   return (
     <aside
+      ref={dashboardWindowLeftNavRef}
       className={`left-sidebar-nav${isCollapsed ? " left-sidebar-nav--collapsed" : ""}${footerVisible ? " left-sidebar-nav--with-footer" : ""}`}
       data-testid="left-sidebar-nav"
       aria-label={t("nav.sidebarAriaLabel", "Sidebar navigation")}
       style={isCollapsed ? undefined : { width: sidebarWidth, minWidth: sidebarWidth }}
     >
+      {/*
+      FNXC:Navigation 2026-09-16-20:52:
+      FN-473 moves the sidebar collapse affordance out of the footer and into a dedicated sidebar header region rendered
+      as the aside's first child, so both shell edges expose their panel toggle at the top. The button adopts the exact
+      design of Header's `header-right-dock-toggle`: the canonical borderless icon-only `btn-icon` variant (FN-471) with
+      a `PanelLeft` glyph mirroring `PanelRight`, a title/aria-label pair and no text label. State, `aria-pressed`, the
+      `toggleCollapsed` handler and `fusion:left-sidebar-collapsed` persistence are unchanged.
+      */}
+      <div className="left-sidebar-nav__header">
+        <button
+          type="button"
+          className="btn-icon left-sidebar-nav__collapse-toggle"
+          aria-label={isCollapsed ? t("nav.expandSidebar", "Expand sidebar") : t("nav.collapseSidebar", "Collapse sidebar")}
+          title={isCollapsed ? t("nav.expandSidebar", "Expand sidebar") : t("nav.collapseSidebar", "Collapse sidebar")}
+          aria-pressed={isCollapsed}
+          data-testid="sidebar-nav-collapse-toggle"
+          onClick={toggleCollapsed}
+        >
+          <PanelLeft size={16} />
+        </button>
+      </div>
+
       <nav className="left-sidebar-nav__list" aria-label={t("nav.primaryNavAriaLabel", "Primary navigation")}>
         <div className="left-sidebar-nav__section">{navEntries.map(renderEntry)}</div>
       </nav>
@@ -508,21 +619,35 @@ export function LeftSidebarNav({
       <div className="left-sidebar-nav__footer">
         {/* FNXC:StandardizedViewActions 2026-09-13-21:43: New Task is header-owned; the navigation footer contains navigation chrome only and must never expose a duplicate creation mutation. */}
         {/*
-        FNXC:Navigation 2026-06-21-00:00:
-        The sidebar collapse affordance belongs in the footer immediately above Settings, using the same row-item visual language. Expanded mode shows the Collapse label, while rail mode relies on the shared label-hiding rule so the button remains icon-only like Settings.
+        FNXC:Navigation 2026-09-15-14:41 (updated 2026-09-16-20:52):
+        FN-419 relocates the shell controls that have no other wide host in `sidebar` placement: the engine control
+        menu and the Terminal action. Since FN-473 the collapse toggle no longer lives here — the footer holds the
+        engine capacity control, the optional Terminal action and Settings only. Omitting `onToggleTerminal` must
+        leave no empty button shell. `DashboardWindowVisibilityToggle` is intentionally absent here — the operator asked for it to disappear
+        with the bottom bar, and it stays owned by `DesktopActionBar`/`ExecutorStatusBar`.
         */}
-        <button
-          type="button"
-          className="btn left-sidebar-nav__item left-sidebar-nav__collapse-toggle"
-          aria-label={isCollapsed ? t("nav.expandSidebar", "Expand sidebar") : t("nav.collapseSidebar", "Collapse sidebar")}
-          title={isCollapsed ? t("nav.expandSidebar", "Expand sidebar") : t("nav.collapseSidebar", "Collapse sidebar")}
-          aria-pressed={isCollapsed}
-          data-testid="sidebar-nav-collapse-toggle"
-          onClick={toggleCollapsed}
-        >
-          {isCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
-          <span className="left-sidebar-nav__label">{t("nav.collapse", "Collapse")}</span>
-        </button>
+        {projectId ? (
+          <div className="left-sidebar-nav__capacity">
+            <EngineControlMenu
+              projectId={projectId}
+              triggerContent={<span data-testid="sidebar-capacity-count">{capacityText}</span>}
+              triggerLabel={capacityLabel}
+            />
+          </div>
+        ) : null}
+        {onToggleTerminal ? (
+          <button
+            type="button"
+            className="btn left-sidebar-nav__item left-sidebar-nav__terminal"
+            aria-label={t("nav.terminal", "Terminal")}
+            title={t("nav.terminal", "Terminal")}
+            data-testid="sidebar-nav-terminal"
+            onClick={onToggleTerminal}
+          >
+            <Terminal size={16} />
+            <span className="left-sidebar-nav__label">{t("nav.terminal", "Terminal")}</span>
+          </button>
+        ) : null}
         <button
           type="button"
           className="btn left-sidebar-nav__item left-sidebar-nav__settings"

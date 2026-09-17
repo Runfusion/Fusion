@@ -3591,6 +3591,74 @@ describe("ChatManager.sendMessage", () => {
     }
   });
 
+  // (S3) A whitespace-only title is not a title: the session must still be auto-named.
+  it("generates title when the session title is whitespace only", async () => {
+    mockChatStore.getSession.mockReturnValue({
+      id: "chat-001",
+      agentId: "agent-001",
+      status: "active",
+      title: "   ",
+    });
+    mockSummarizeTitle.mockResolvedValue("Blank Title Replaced");
+
+    __setCreateFnAgent(async () => ({
+      session: { prompt: vi.fn().mockResolvedValue(undefined), dispose: vi.fn(), state: { messages: [] } },
+    }));
+
+    const chatManager = createChatManager();
+    await chatManager.sendMessage("chat-001", "Whitespace titled session");
+    await vi.waitFor(() =>
+      expect(mockChatStore.updateSession).toHaveBeenCalledWith("chat-001", { title: "Blank Title Replaced" }),
+    );
+  });
+
+  // (S5) A rejecting summarizer must still name the session from the truncated content.
+  it("falls back to truncated content when summarizeTitle rejects", async () => {
+    mockSummarizeTitle.mockRejectedValue(new Error("summarizer unavailable"));
+
+    __setCreateFnAgent(async () => ({
+      session: { prompt: vi.fn().mockResolvedValue(undefined), dispose: vi.fn(), state: { messages: [] } },
+    }));
+
+    const chatManager = createChatManager();
+    const longMessage = "B".repeat(300);
+    await chatManager.sendMessage("chat-001", longMessage);
+
+    await vi.waitFor(() =>
+      expect(mockChatStore.updateSession).toHaveBeenCalledWith("chat-001", { title: "B".repeat(60) }),
+    );
+  });
+
+  // (S6) A rejecting session write must not escape the detached title task nor break sending.
+  it("does not surface an unhandled rejection when the title write fails", async () => {
+    mockSummarizeTitle.mockResolvedValue("Write Fails");
+    mockChatStore.updateSession.mockRejectedValue(new Error("store offline"));
+    const unhandled = vi.fn();
+    process.on("unhandledRejection", unhandled);
+
+    try {
+      __setCreateFnAgent(async () => ({
+        session: { prompt: vi.fn().mockResolvedValue(undefined), dispose: vi.fn(), state: { messages: [] } },
+      }));
+
+      const chatManager = createChatManager();
+      await expect(chatManager.sendMessage("chat-001", "Store is offline right now")).resolves.toBeUndefined();
+
+      await vi.waitFor(() =>
+        expect(mockChatStore.updateSession).toHaveBeenCalledWith("chat-001", { title: "Write Fails" }),
+      );
+      // The single truncated retry also runs, and both failures are swallowed.
+      await vi.waitFor(() =>
+        expect(mockChatStore.updateSession).toHaveBeenCalledWith("chat-001", { title: "Store is offline right now" }),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(unhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off("unhandledRejection", unhandled);
+      mockChatStore.updateSession.mockReset();
+    }
+  });
+
   it("does not generate title when session already has a title", async () => {
     mockChatStore.getSession.mockReturnValue({
       id: "chat-001",

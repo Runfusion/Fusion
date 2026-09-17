@@ -1,14 +1,12 @@
 // ChatView.css is imported eagerly from App.tsx to avoid a flash of
 // unstyled content when the lazy chunk loads. Do not re-import here.
-import { AlphaButton, AlphaDialogBackdrop, AlphaInput, AlphaListBox, AlphaListBoxItem, AlphaMenu, AlphaMenuItem, AlphaMenuSection, AlphaSelect, AlphaTextArea } from "./alpha-ui";
+import { UiButton, UiDialogBackdrop, UiInput, UiListBox, UiListBoxItem, UiMenu, UiMenuItem, UiMenuSection, UiSelect, UiTextArea } from "./ui";
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { AlphaBoundary } from "../context/AlphaContext";
 import {
   MessageSquare,
   Plus,
   Search,
   Trash2,
-  Archive,
   Pencil,
   Bot,
   Paperclip,
@@ -27,8 +25,10 @@ import {
   Bookmark,
 } from "lucide-react";
 import { FN_AGENT_ID, TASK_PLANNER_CHAT_AGENT_ID_PREFIX, useChat, type ChatMessageInfo, type ChatSessionInfo } from "../hooks/useChat";
+import { isPersistedChatMessageId } from "../hooks/chatTypes";
 import { useChatUnread } from "../hooks/useChatUnread";
 import { useVirtualizedChatTranscript } from "../hooks/useVirtualizedChatTranscript";
+import { useStickyBottomFollow } from "../hooks/useStickyBottomFollow";
 import { useVirtualizedList } from "../hooks/useVirtualizedList";
 import { useAutoPaginationSentinel } from "../hooks/useAutoPaginationSentinel";
 import { useComposerDictation } from "../hooks/useComposerDictation";
@@ -81,6 +81,7 @@ import { buildChatReportHandoff, type ChatReportHandoff } from "./chatReportHand
 import { matchChatCommand, filterChatCommands, getSlashTriggerMatch, selectChatCommands, type ChatCommand } from "./chat-commands";
 import { applySnippetToDraft, filterChatSnippets, matchStandaloneSnippetInvocation } from "./chat-snippets";
 import { useChatMessageLayout } from "../context/ChatMessageLayoutContext";
+import { useDashboardWindowSurfaceActivity } from "../context/DashboardWindowManagerContext";
 import { useChatEnterSubmits } from "../context/ChatSubmitOnEnterContext";
 import {
   createChatInputAutosizeController,
@@ -124,10 +125,7 @@ export interface ChatViewProps {
   addToast: (msg: string, type?: "success" | "error" | "warning") => void;
   experimentalFeatures?: Record<string, boolean>;
   floating?: boolean;
-  /**
-   * FNXC:ChatFind 2026-08-21-16:44:
-   * A retained-but-hidden Quick Chat must release document Find ownership; visible hosts retain the default.
-   */
+  /** Whether this host may own document Find; managed window visibility is composed automatically. */
   findActive?: boolean;
   /*
   FNXC:MainViewKeepAlive 2026-08-30-19:05:
@@ -144,15 +142,24 @@ export interface ChatViewProps {
   compactLayout?: boolean;
   /** Keeps this host on the conversation list and delegates every open/create to a chat window. */
   listOnly?: boolean;
-  /** Project-scoped state of dedicated windows, keyed by conversation id. */
-  openChatWindows?: ReadonlyMap<string, "open" | "minimized">;
+  /** Project-scoped identities of conversations already open in dedicated windows. */
+  openChatWindows?: ReadonlySet<string>;
   /** Locks this host to initialDirectSession and removes every cross-conversation navigation control. */
   dedicatedConversation?: boolean;
   onPopOut?: () => void;
   onMaximize?: () => void;
   onClose?: () => void;
-  /** Opens this exact active Direct session in a separate in-app Quick Chat. */
-  onOpenSessionInNewWindow?: (session: ChatSessionInfo) => void;
+  /*
+  FNXC:ChatWindows 2026-09-16-04:37:
+  FN-447: the optional second argument carries the operator's INTENT, not a host preference.
+  `keepListOpen: true` means the operator explicitly asked for a separate window (Ctrl/Cmd-click on a
+  list row, or the "Open in new window" context-menu action), so a host that normally dismisses itself
+  on selection (the footer Conversations popover) must stay open and let several conversations be opened
+  in a row. A plain click reports `keepListOpen: false` and keeps the existing dismiss-on-select behavior.
+  Hosts that never dismiss themselves simply ignore the option.
+  */
+  /** Opens or focuses this exact Direct session in a separate in-app window. */
+  onOpenSessionInNewWindow?: (session: ChatSessionInfo, options?: { keepListOpen?: boolean }) => void;
   /** Secondary windows start in Direct and keep selection/scope storage private. */
   initialDirectSession?: ChatSessionInfo;
   /** Monotonic pop-out focus signal; a repeated open restores this window's detail view. */
@@ -162,6 +169,13 @@ export interface ChatViewProps {
   initialComposerDraft?: string;
   initialComposerDraftNonce?: number;
   onSendAsReport?: (handoff: ChatReportHandoff) => void;
+  /*
+  FNXC:ChatWindows 2026-09-14-23:48:
+  FN-396: a host that renders this conversation's identity outside the view (a detached window's header and accessible
+  name) cannot keep the snapshot it opened with. This reports the live active session whenever a rendered identity
+  field changes. It is a pure notification: it never selects a session and never writes into useChat.
+  */
+  onActiveSessionChange?: (session: ChatSessionInfo) => void;
 }
 
 const CHAT_CONTEXT_MENU_FALLBACK_WIDTH_PX = 200;
@@ -355,13 +369,16 @@ export function resolveSessionProvider(
  */
 function ChatDialogBackdrop({ children, onClose }: { children: React.ReactElement<React.HTMLAttributes<HTMLElement>>; onClose: () => void }) {
   const overlayDismiss = useOverlayDismiss(onClose, { enabled: true });
-  return <AlphaDialogBackdrop overlayClassName="chat-new-dialog-backdrop chat-view-dialog-backdrop" onClose={onClose}>{React.cloneElement(children, overlayDismiss)}</AlphaDialogBackdrop>;
+  return <UiDialogBackdrop overlayClassName="chat-new-dialog-backdrop chat-view-dialog-backdrop" onClose={onClose}>{React.cloneElement(children, overlayDismiss)}</UiDialogBackdrop>;
 }
 
 type CopyFeedbackState = "success" | "error" | null;
 
-function ChatViewContent({ projectId, addToast, floating = false, compactLayout = false, listOnly = false, openChatWindows, dedicatedConversation = false, findActive = true, active = true, onPopOut, onMaximize, onClose, onOpenSessionInNewWindow, initialDirectSession, initialDirectSessionNonce, persistChatPreferences = true, chatCommandContext, initialComposerDraft, initialComposerDraftNonce, onSendAsReport }: ChatViewProps) {
+function ChatViewContent({ projectId, addToast, floating = false, compactLayout = false, listOnly = false, openChatWindows, dedicatedConversation = false, findActive: hostFindActive = true, active: hostActive = true, onPopOut, onMaximize, onClose, onOpenSessionInNewWindow, initialDirectSession, initialDirectSessionNonce, persistChatPreferences = true, chatCommandContext, initialComposerDraft, initialComposerDraftNonce, onSendAsReport, onActiveSessionChange }: ChatViewProps) {
   const { t } = useTranslation("app");
+  const managedSurfaceActive = useDashboardWindowSurfaceActivity();
+  const active = hostActive && managedSurfaceActive;
+  const findActive = hostFindActive && managedSurfaceActive;
   const chatMessageLayout = useChatMessageLayout();
   const enterSubmits = useChatEnterSubmits();
   useEffect(() => {
@@ -448,10 +465,6 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
     streamingToolCalls,
     selectSession,
     createSession,
-    archiveSession,
-    archivedSessions,
-    refreshArchivedSessions,
-    unarchiveSession,
     renameSession,
     pinSession,
     pinnedCount,
@@ -468,6 +481,8 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
     setSessionTags,
     sendMessage,
     editMessageAndResend,
+    editDraftRestore,
+    clearEditDraftRestore,
     stopStreaming,
     pendingMessages,
     pendingQueueAction,
@@ -479,7 +494,6 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
     hasMoreMessages,
     loadMoreSessions,
     hasMoreSessions,
-    hasMoreArchivedSessions,
     sessionsLoadingMore,
     searchQuery,
     setSearchQuery,
@@ -498,7 +512,6 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
   double-fire from the menu.
   */
   const [stashBackfillBusyId, setStashBackfillBusyId] = useState<string | null>(null);
-  const [showArchivedSessions, setShowArchivedSessions] = useState(false);
   const contextMenuRef = useRef<HTMLDivElement>(null);
   /*
   FNXC:ChatMemoryFocus 2026-08-13:
@@ -722,10 +735,35 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
     keys: transcriptKeys,
     scrollRef: messagesContainerRef,
   });
+  /*
+  FNXC:StickyBottomScroll 2026-09-14-20:19:
+  FN-398 : `.chat-messages` a désormais un propriétaire unique du suivi du bas. L'intention utilisateur (molette,
+  pan tactile, touche de navigation, glissement de barre de défilement) désengage le suivi de façon synchrone et
+  INDÉPENDAMMENT de la géométrie ; auparavant un geste de 30 px restait sous le seuil de 50 px, ne désengageait rien,
+  et la boucle d'ancrage suivante réécrivait `scrollTop` en bas. Le seuil ne sert plus qu'au RÉENGAGEMENT. Toute
+  intention clôt aussi la propriété d'alignement terminal du virtualiseur et l'ancrage différé de 250 ms, qui étaient
+  les deux autres écrivains capables de raccrocher le lecteur.
+  */
+  const stickyFollow = useStickyBottomFollow(messagesContainerRef, {
+    rearmThresholdPx: CHAT_BOTTOM_FOLLOW_THRESHOLD_PX,
+    attachKey: `${activeSession?.id ?? ""}:${detailOpen}`,
+    onFollowingChange: (following) => {
+      isUserScrollingRef.current = !following;
+      setIsUserScrolling(!following);
+    },
+    onUserIntent: () => {
+      directThreadAnchorGenerationRef.current += 1;
+      virtualTranscript.cancelPendingScrollToBottom();
+      if (directThreadDeferredAnchorTimeoutRef.current !== null) {
+        window.clearTimeout(directThreadDeferredAnchorTimeoutRef.current);
+        directThreadDeferredAnchorTimeoutRef.current = null;
+      }
+    },
+  });
   const chatThreadRef = useRef<HTMLDivElement | null>(null);
   const clippedMessageFrameRef = useRef<number | null>(null);
   const [topClippedMessageIds, setTopClippedMessageIds] = useState<Set<string>>(() => new Set());
-  // FN-5365: mirror QuickChat's mid-dismiss suppress gate so transient
+  // FN-5365: suppress transient visualViewport shrink samples so
   // visualViewport shrink samples do not jerk the chat thread/composer.
   const suppressVvShrinkRef = useRef(false);
   const suppressVvShrinkTimeoutRef = useRef<number | null>(null);
@@ -743,8 +781,8 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
   const mentionCursorPosRef = useRef(0);
   const copyFeedbackTimeoutsRef = useRef<Map<string, number>>(new Map());
   /*
-  FNXC:ChatSendDedupe 2026-06-17-08:36:
-  FN-6576 refines FN-6563 by matching QuickChatFAB's two-latch touch contract: pointerdown/touchstart claim a per-input-task gesture so one mobile tap sends exactly once, while the separate 700ms latch is consumed only by a trailing click. A suppressed iOS click must never leave the long latch blocking the next tap; a send-to-stop DOM swap must consume the trailing click without swallowing a genuine later stop tap.
+  FNXC:ChatSendDedupe 2026-09-14-11:35:
+  Pointerdown/touchstart claim one composer gesture so a mobile tap sends exactly once; a separate trailing-click latch cannot swallow a later stop tap when Send changes to Stop.
   */
   const mode = useViewportMode();
   const isMobile = mode === "mobile";
@@ -994,18 +1032,18 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
     });
   }, [updateTopClippedMessages]);
 
-  const captureScrollSnapshot = useCallback((synchronizeOwnershipFromGeometry = false) => {
+  const captureScrollSnapshot = useCallback(() => {
     const messagesContainer = messagesContainerRef.current;
     const threadId = getActiveThreadId();
     if (!messagesContainer || !threadId) return;
 
-    let isDetached = isUserScrollingRef.current;
-    if (synchronizeOwnershipFromGeometry) {
-      const atBottom = messagesContainer.scrollTop + messagesContainer.clientHeight >= messagesContainer.scrollHeight - CHAT_BOTTOM_FOLLOW_THRESHOLD_PX;
-      isDetached = !atBottom;
-      isUserScrollingRef.current = isDetached;
-      setIsUserScrolling(isDetached);
-    }
+    /*
+    FNXC:StickyBottomScroll 2026-09-14-20:19:
+    FN-398 : la propriété du viewport n'est plus redéduite de la géométrie ici. L'écouteur natif du propriétaire
+    unique s'exécute sur l'élément avant la délégation React, donc `isUserScrollingRef` est déjà à jour ;
+    recalculer un « suis-je à moins de 50 px ? » ici réengageait le suivi qu'un petit geste venait de relâcher.
+    */
+    const isDetached = isUserScrollingRef.current;
 
     const scrollTop = messagesContainer.scrollTop;
     const messageElements = messagesContainer.querySelectorAll<HTMLElement>(".chat-message[data-message-id]");
@@ -1031,13 +1069,9 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
     const messagesContainer = messagesContainerRef.current;
     if (!messagesContainer) return;
 
-    captureScrollSnapshot(true);
-    if (isUserScrollingRef.current) {
-      directThreadAnchorGenerationRef.current += 1;
-      virtualTranscript.cancelPendingScrollToBottom();
-    }
+    captureScrollSnapshot();
     scheduleTopClippedMessageUpdate();
-  }, [captureScrollSnapshot, scheduleTopClippedMessageUpdate, virtualTranscript.cancelPendingScrollToBottom]);
+  }, [captureScrollSnapshot, scheduleTopClippedMessageUpdate]);
 
   /*
   FNXC:ChatScrollAnchor 2026-09-07-23:09:
@@ -1050,6 +1084,13 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
     }
 
     const generation = ++directThreadAnchorGenerationRef.current;
+    /*
+    FNXC:StickyBottomScroll 2026-09-14-20:19:
+    FN-398 : chaque frame de la boucle (y compris la première et le chemin `force`) abandonne dès qu'une intention
+    utilisateur est arrivée depuis le début de la boucle. Auparavant seule la géométrie gardait cette boucle, et un
+    geste sous le seuil la laissait réécrire `scrollTop` en bas frame après frame.
+    */
+    const intentGenerationAtStart = stickyFollow.intentGenerationRef.current;
     let frame = 0;
     let stableFrames = 0;
     let lastScrollHeight = -1;
@@ -1057,11 +1098,13 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
 
     const writeBottom = () => {
       if (!container.isConnected || generation !== directThreadAnchorGenerationRef.current) return;
+      if (stickyFollow.intentGenerationRef.current !== intentGenerationAtStart) return;
       if (isUserScrollingRef.current && frame > 0) {
         return;
       }
 
       virtualTranscript.scrollToBottom();
+      stickyFollow.noteProgrammaticWrite(container.scrollTop);
       if (container.scrollHeight === lastScrollHeight) {
         stableFrames += 1;
       } else {
@@ -1071,8 +1114,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
 
       frame += 1;
       if (frame >= maxFrames || stableFrames >= 2) {
-        setIsUserScrolling(false);
-        isUserScrollingRef.current = false;
+        if (stickyFollow.intentGenerationRef.current === intentGenerationAtStart) stickyFollow.setFollowing(true);
         return;
       }
 
@@ -1080,7 +1122,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
     };
 
     writeBottom();
-  }, [virtualTranscript.scrollToBottom]);
+  }, [stickyFollow, virtualTranscript.scrollToBottom]);
 
   const activeThreadMessages = messages;
   const conversationSearchMatches = useMemo(() => {
@@ -1136,6 +1178,8 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
     }
 
     messagesContainer.scrollTop = Math.max(0, restoredScrollTop);
+    // Restauration d'ancre : écriture programmatique fencée par position attendue, pas par minuterie.
+    stickyFollow.noteProgrammaticWrite(messagesContainer.scrollTop);
     scrollRestoreSnapshotRef.current = {
       ...snapshot,
       scrollTop: messagesContainer.scrollTop,
@@ -1143,9 +1187,8 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
       clientHeight: messagesContainer.clientHeight,
       capturedAtMs: typeof performance !== "undefined" ? performance.now() : Date.now(),
     };
-    isUserScrollingRef.current = true;
-    setIsUserScrolling(true);
-  }, [getActiveThreadId, getMessageElement]);
+    stickyFollow.setFollowing(false);
+  }, [getActiveThreadId, getMessageElement, stickyFollow]);
 
   /*
   FNXC:ChatTranscriptVirtualization 2026-09-06-14:15:
@@ -1206,9 +1249,9 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
     if (!messagesContainer) return;
     // Cancel any pending scroll restoration so it doesn't override the explicit jump-to-bottom.
     scrollRestoreSnapshotRef.current = null;
-    isUserScrollingRef.current = false;
+    stickyFollow.setFollowing(true);
     anchorToBottom(messagesContainer);
-  }, [anchorToBottom, logScrollDebug]);
+  }, [anchorToBottom, logScrollDebug, stickyFollow]);
 
   useLayoutEffect(() => {
     if (directThreadDeferredAnchorTimeoutRef.current !== null) {
@@ -1252,8 +1295,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
     const shouldTakeViewportOwnership = previousState === null || isThreadChanged;
     if (shouldTakeViewportOwnership) {
       scrollRestoreSnapshotRef.current = null;
-      isUserScrollingRef.current = false;
-      setIsUserScrolling(false);
+      stickyFollow.setFollowing(true);
     }
     anchorToBottom(messagesContainer, { force: shouldTakeViewportOwnership });
     {
@@ -1649,8 +1691,8 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
   */
   const handleNewChat = useCallback((event?: React.MouseEvent<HTMLButtonElement>) => {
     /*
-    FNXC:AlphaDesktopRightDock 2026-09-11-21:48:
-    The Alpha desktop dock is a list owner, never a transcript owner. New Chat therefore preserves the host selection and opens the returned identity immediately; standard hosts keep plain-click in-place creation and modifier-click pop-out.
+    FNXC:DesktopRightDock 2026-09-11-21:48:
+    The desktop dock is a list owner, never a transcript owner. New Chat therefore preserves the host selection and opens the returned identity immediately; standard hosts keep plain-click in-place creation and modifier-click pop-out.
     */
     const openInNewWindow = Boolean(onOpenSessionInNewWindow && (listOnly || event?.ctrlKey || event?.metaKey));
     if (chatDefaultTarget?.kind === "agent") {
@@ -1927,7 +1969,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
     }
 
     const sentFiles = new Set(files);
-    captureScrollSnapshot(true);
+    captureScrollSnapshot();
     snippetDraftEphemeralRef.current = false;
     setMessageInput("");
     try {
@@ -2258,7 +2300,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
     const cursorPos = textarea.selectionStart ?? nextValue.length;
 
     // Resize BEFORE the state update so the textarea grows in the same frame
-    // the user typed in (matches QuickChat). Doing it after setMessageInput
+    // the user typed in. Doing it after setMessageInput
     // works in tests but can lose the height in production because React 18
     // batches the state update and the controlled-component value reset can
     // happen before our direct DOM height assignment lands.
@@ -2385,7 +2427,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
     // event fires while iOS is still raising the soft keyboard, and iOS treats
     // a programmatic scroll mid-raise as a reason to abort it — the keyboard
     // opens then immediately dismisses, so the input can't be typed in. This
-    // mirrors QuickChatFAB's handleInputFocus, which does not scroll and works.
+    // matches the proven composer focus path, which does not scroll during keyboard raise.
     // Drift is instead reset on blur (see handleInputBlur), so by the time this
     // focus runs the document is already at scrollY 0.
   }, []);
@@ -2400,25 +2442,6 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
       }
     };
   }, []);
-
-  // Handle archive
-  const handleArchive = useCallback(
-    async (id: string) => {
-      setContextMenu(null);
-      try {
-        await archiveSession(id);
-        addToast(t("chat.conversationArchived", "Conversation archived"), "success");
-      } catch {
-        addToast(t("chat.failedToArchiveConversation", "Failed to archive conversation"), "error");
-      }
-    },
-    [archiveSession, addToast],
-  );
-
-  const handleRestoreArchived = useCallback(async (id: string) => {
-    try { await unarchiveSession(id); addToast(t("chat.conversationRestored", "Conversation restored"), "success"); }
-    catch { addToast(t("chat.failedToRestoreConversation", "Failed to restore conversation"), "error"); }
-  }, [unarchiveSession, addToast, t]);
 
   const openRenameDialog = useCallback(
     (id: string) => {
@@ -2510,11 +2533,17 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
 
   // Handle session click
   const handleSessionClick = useCallback(
-    (id: string) => {
+    (id: string, modifiers?: { ctrlKey?: boolean; metaKey?: boolean }) => {
       const selectedSession = filteredSessions.find((session) => session.id === id);
       markRead("direct", id, selectedSession?.lastMessageAt ?? selectedSession?.updatedAt);
       if (listOnly) {
-        if (selectedSession) onOpenSessionInNewWindow?.(selectedSession);
+        /*
+        FNXC:ChatWindows 2026-09-16-04:37:
+        FN-447: a list-only host always opens a window, but only a modifier-click is an EXPLICIT
+        "open beside" gesture. The flag is always sent as a real boolean so the host condition stays
+        deterministic instead of depending on an absent option.
+        */
+        if (selectedSession) onOpenSessionInNewWindow?.(selectedSession, { keepListOpen: Boolean(modifiers?.ctrlKey || modifiers?.metaKey) });
         return;
       }
       selectSession(id);
@@ -2556,7 +2585,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
       <div className="chat-empty-state">
         <MessageSquare size={48} strokeWidth={1.5} />
         <h2>{t("chat.startNewConversation", "Start a new conversation")}</h2>
-        <AlphaButton
+        <UiButton
           className="btn btn-primary"
           onClick={handleNewChat}
           data-testid="chat-new-btn-empty"
@@ -2564,7 +2593,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
         >
           <Plus size={16} />
           {t("chat.newChat", "New Chat")}
-        </AlphaButton>
+        </UiButton>
       </div>
     );
   };
@@ -2616,8 +2645,8 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
   const suppressComposerFocus = isMobile || isTabletTouchViewport(mode);
 
   /*
-  FNXC:ChatComposerFocus 2026-09-01-01:04:
-  Opening or creating a conversation must put the caret in its composer so operators can type immediately without a mouse click. `findActive` is the focus-ownership gate because a retained-but-hidden Quick Chat stays mounted and portaled; reopening it onto an existing thread is itself an open.
+  FNXC:ChatComposerFocus 2026-09-14-11:35:
+  Opening or creating a conversation puts the caret in its composer. Managed activity and `findActive` gate focus ownership because retained canonical and detached hosts stay mounted while presentation-hidden.
 
   Phone and touch-tablet hosts deliberately keep focus off the composer: an unsolicited software keyboard would cover a freshly opened thread, and programmatic focus without a user gesture cannot reliably raise the iOS keyboard. Record the thread before that suppression so a later viewport or orientation change cannot retroactively steal focus.
   */
@@ -2743,11 +2772,11 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
       : t("chat.conversationSearchMatchCount", "{{current}} of {{count}} matches", { current: conversationSearchIndex + 1, count });
     return <div className="chat-conversation-search" data-testid="chat-conversation-search">
       <Search size={14} aria-hidden="true" />
-      <AlphaInput ref={conversationSearchInputRef} className="input chat-conversation-search-input" value={conversationSearchQuery} onChange={(event) => { setConversationSearchQuery(event.target.value); setConversationSearchIndex(0); }} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); closeConversationSearch(); } else if (event.key === "Enter") { event.preventDefault(); navigateConversationSearch(event.shiftKey ? -1 : 1); } }} placeholder={t("chat.conversationSearchPlaceholder", "Find in conversation") } aria-label={t("chat.conversationSearchLabel", "Find in conversation")} data-testid="chat-conversation-search-input" />
+      <UiInput ref={conversationSearchInputRef} className="input chat-conversation-search-input" value={conversationSearchQuery} onChange={(event) => { setConversationSearchQuery(event.target.value); setConversationSearchIndex(0); }} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); closeConversationSearch(); } else if (event.key === "Enter") { event.preventDefault(); navigateConversationSearch(event.shiftKey ? -1 : 1); } }} placeholder={t("chat.conversationSearchPlaceholder", "Find in conversation") } aria-label={t("chat.conversationSearchLabel", "Find in conversation")} data-testid="chat-conversation-search-input" />
       <span className="chat-conversation-search-status" role="status" aria-live="polite">{status}</span>
-      <AlphaButton type="button" className="btn-icon" aria-label={t("chat.conversationSearchPrevious", "Previous match")} disabled={count === 0} onClick={() => navigateConversationSearch(-1)}><ChevronUp size={14} /></AlphaButton>
-      <AlphaButton type="button" className="btn-icon" aria-label={t("chat.conversationSearchNext", "Next match")} disabled={count === 0} onClick={() => navigateConversationSearch(1)}><ChevronDown size={14} /></AlphaButton>
-      <AlphaButton type="button" className="btn-icon" aria-label={t("chat.conversationSearchClose", "Close search")} onClick={closeConversationSearch}><X size={14} /></AlphaButton>
+      <UiButton type="button" className="btn-icon" aria-label={t("chat.conversationSearchPrevious", "Previous match")} disabled={count === 0} onClick={() => navigateConversationSearch(-1)}><ChevronUp size={14} /></UiButton>
+      <UiButton type="button" className="btn-icon" aria-label={t("chat.conversationSearchNext", "Next match")} disabled={count === 0} onClick={() => navigateConversationSearch(1)}><ChevronDown size={14} /></UiButton>
+      <UiButton type="button" className="btn-icon" aria-label={t("chat.conversationSearchClose", "Close search")} onClick={closeConversationSearch}><X size={14} /></UiButton>
     </div>;
   };
 
@@ -2773,8 +2802,38 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
   FNXC:ChatNavigation 2026-08-20-05:25:
   FN-068 makes the saved conversation title the direct-thread identity for every host. Model metadata remains secondary, and titleless legacy sessions use a stable label rather than promoting a model name into the title slot.
   */
+  /*
+  FNXC:ChatWindows 2026-09-14-23:48:
+  FN-396: report the live conversation identity to the host exactly when a field it renders moves. Comparing the
+  rendered fields rather than object identity keeps an unrelated refresh (a new preview, a streaming flag) from
+  looping the host's state writer.
+  */
+  const lastReportedSessionRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!onActiveSessionChange || !activeSession) return;
+    const signature = JSON.stringify([
+      activeSession.id,
+      activeSession.title ?? null,
+      activeSession.updatedAt,
+      activeSession.status,
+      activeSession.agentId,
+      activeSession.modelProvider ?? null,
+      activeSession.modelId ?? null,
+      activeSession.pinnedAt ?? null,
+    ]);
+    if (lastReportedSessionRef.current === signature) return;
+    lastReportedSessionRef.current = signature;
+    onActiveSessionChange(activeSession);
+  }, [activeSession, onActiveSessionChange]);
+
+  /*
+  FNXC:ChatWindows 2026-09-14-23:48:
+  FN-396: the requested session is only a first-paint fallback for a dedicated host that has not resolved its
+  conversation yet. Once the live session exists it is authoritative, including when its title is cleared — otherwise
+  a cleared title silently resurrects the name the window was opened with.
+  */
   const threadHeaderTitle = activeSession?.title?.trim()
-    || (dedicatedConversation ? initialDirectSession?.title?.trim() : "")
+    || (dedicatedConversation && !activeSession ? initialDirectSession?.title?.trim() : "")
     || t("chat.untitledConversation", "Untitled conversation");
 
   const showThreadHeaderModelTag = Boolean(activeModelTag);
@@ -2811,8 +2870,8 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
 
   // The model tag is already visible in the thread header — repeating it on
   // every assistant message is noise. Keep it suppressed for regular chat
-  // (real agent name is the identity); QuickChat already collapses the tag
-  // because its `agentName` IS the model tag, so the per-message slot was
+  // (real agent name is the identity); compact hosts already collapse the tag
+  // because their `agentName` is the model tag, so the per-message slot was
   // always empty there too.
   const showAssistantModelTag = false;
 
@@ -2895,10 +2954,10 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
     const report = allowReport && role === "assistant" && onSendAsReport ? buildChatReportHandoff(content, t("chat.reportFallbackTitle", "Chat report")) : null;
     if (!canCopy && !report?.handoff) return undefined;
     return <>
-      {canCopy && <AlphaButton type="button" className={`btn-icon chat-message-copy-action${copyFeedbackByMessageId[messageId] === "success" ? " chat-message-copy-action--success" : ""}${copyFeedbackByMessageId[messageId] === "error" ? " chat-message-copy-action--error" : ""}`} data-testid={testId ?? `chat-copy-response-${messageId}`} aria-label={copyFeedbackByMessageId[messageId] === "success" ? t("chat.responseCopied", "Response copied") : copyFeedbackByMessageId[messageId] === "error" ? t("chat.copyFailed", "Copy failed") : t("chat.copyResponse", "Copy response")} onClick={() => { void handleCopyResponse(messageId, content); }}>
+      {canCopy && <UiButton type="button" className={`btn-icon chat-message-copy-action${copyFeedbackByMessageId[messageId] === "success" ? " chat-message-copy-action--success" : ""}${copyFeedbackByMessageId[messageId] === "error" ? " chat-message-copy-action--error" : ""}`} data-testid={testId ?? `chat-copy-response-${messageId}`} aria-label={copyFeedbackByMessageId[messageId] === "success" ? t("chat.responseCopied", "Response copied") : copyFeedbackByMessageId[messageId] === "error" ? t("chat.copyFailed", "Copy failed") : t("chat.copyResponse", "Copy response")} onClick={() => { void handleCopyResponse(messageId, content); }}>
         {copyFeedbackByMessageId[messageId] === "success" ? <Check size={14} /> : <Copy size={14} />}
-      </AlphaButton>}
-      {report?.handoff && <AlphaButton type="button" className="btn-icon" data-testid={`chat-send-as-report-${messageId}`} aria-label={t("chat.sendAsReport", "Send as report")} onClick={() => { if (report.truncated) addToast(t("chat.reportTrimmed", "Message trimmed to 2000 characters for mail"), "warning"); onSendAsReport?.(report.handoff!); }}><FileText size={14} /></AlphaButton>}
+      </UiButton>}
+      {report?.handoff && <UiButton type="button" className="btn-icon" data-testid={`chat-send-as-report-${messageId}`} aria-label={t("chat.sendAsReport", "Send as report")} onClick={() => { if (report.truncated) addToast(t("chat.reportTrimmed", "Message trimmed to 2000 characters for mail"), "warning"); onSendAsReport?.(report.handoff!); }}><FileText size={14} /></UiButton>}
     </>;
   }, [addToast, copyFeedbackByMessageId, handleCopyResponse, onSendAsReport, showProviderResponseCopy, t]);
 
@@ -2910,6 +2969,13 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
    * FNXC:ChatMessageEdit 2026-08-24-03:34:
    * Editing is supported only for direct model-loop sessions: never CLI-agent-backed sessions
    * (a live PTY owns the transcript), and never while a generation is streaming.
+   *
+   * FNXC:ChatMessageEdit 2026-09-16-05:58:
+   * FN-459. It is additionally offered only on rows that actually exist on the server (see
+   * `isPersistedChatMessageId`, applied per-row below) — the same rule `TaskPlannerChatTab` already
+   * enforces. Editing a purely local bubble posted its `temp-<ts>` id and produced a guaranteed
+   * `Message temp-… not found in session …` 404 that also destroyed the typed correction. Persisted
+   * ids (`msg-<uuid8>`) stay editable: this narrows the affordance, it does not remove it.
    */
   const canEditChatMessages = !cliChatActive && !isStreaming;
 
@@ -2977,8 +3043,10 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
                 isAwaitingQuestionAnswer={message.role === "assistant" && index === messages.length - 1 && !isStreaming}
                 submittedQuestionAnswer={findSubmittedQuestionAnswer(messages, index)}
                 onQuestionSubmit={handleQuestionSubmit}
-                canEdit={canEditChatMessages}
+                canEdit={canEditChatMessages && isPersistedChatMessageId(message.id)}
                 onEditMessage={editMessageAndResend}
+                initialEditDraft={editDraftRestore?.messageId === message.id ? editDraftRestore.content : undefined}
+                onEditDraftConsumed={clearEditDraftRestore}
                 isSearchMatch={conversationSearchMatches.includes(message.id)}
                 isSearchActive={activeConversationMatchId === message.id}
               />
@@ -2993,7 +3061,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
 
   const renderSessionComposerPane = () => (
     <div className="chat-input-area">
-      <AlphaInput
+      <UiInput
         ref={fileInputRef}
         type="file"
         data-testid="chat-file-input"
@@ -3006,7 +3074,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
         }}
       />
       {showSkillMenu && (
-        <AlphaListBox className="chat-skill-menu" data-testid="chat-skill-menu" aria-label={t("chat.slashSuggestions", "Slash suggestions")}>
+        <UiListBox className="chat-skill-menu" data-testid="chat-skill-menu" aria-label={t("chat.slashSuggestions", "Slash suggestions")}>
           {skillsLoading && skillMenuEntries.length === 0 ? (
             <div className="chat-skill-menu-empty">{t("chat.loadingSlashSuggestions", "Loading suggestions…")}</div>
           ) : skillMenuEntries.length === 0 ? (
@@ -3016,7 +3084,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
           ) : (
             skillMenuEntries.map((entry, index) =>
               entry.kind === "command" ? (
-                <AlphaListBoxItem
+                <UiListBoxItem
                   key={`command-${entry.command.trigger}`}
                   id={`command-${entry.command.trigger}`}
                   textValue={entry.command.trigger}
@@ -3035,9 +3103,9 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
                       ? t("chat.commandNoRunningAgentHint", "No running agent to steer")
                       : entry.command.description}
                   </span>
-                </AlphaListBoxItem>
+                </UiListBoxItem>
               ) : entry.kind === "snippet" ? (
-                <AlphaListBoxItem
+                <UiListBoxItem
                   key={`snippet-${entry.snippet.name}`}
                   id={`snippet-${entry.snippet.name}`}
                   textValue={entry.snippet.name}
@@ -3052,9 +3120,9 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
                   <span className="chat-skill-menu-item-description">
                     {t("chat.snippetSuggestion", "Insert saved prompt")}
                   </span>
-                </AlphaListBoxItem>
+                </UiListBoxItem>
               ) : (
-                <AlphaListBoxItem
+                <UiListBoxItem
                   key={entry.skill.id}
                   id={entry.skill.id}
                   textValue={entry.skill.name}
@@ -3069,11 +3137,11 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
                   <span className="chat-skill-menu-item-description" title={entry.skill.relativePath}>
                     {entry.skill.relativePath}
                   </span>
-                </AlphaListBoxItem>
+                </UiListBoxItem>
               ),
             )
           )}
-        </AlphaListBox>
+        </UiListBox>
       )}
       {pendingAttachments.length > 0 && (
         <div className="chat-attachment-previews" data-testid="chat-attachment-previews">
@@ -3088,7 +3156,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
               ) : (
                 <span className="chat-attachment-preview-name">{attachment.file.name}</span>
               )}
-              <AlphaButton
+              <UiButton
                 type="button"
                 className="chat-attachment-remove"
                 onClick={() => removeAttachment(index)}
@@ -3096,7 +3164,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
                 aria-label={`Remove ${attachment.file.name}`}
               >
                 ×
-              </AlphaButton>
+              </UiButton>
             </div>
           ))}
         </div>
@@ -3111,7 +3179,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
         testIdPrefix="chat-pending"
       />
       <div className="chat-input-row">
-        <AlphaButton
+        <UiButton
           type="button"
           className="btn-icon chat-attach-btn"
           data-testid="chat-attach-btn"
@@ -3120,7 +3188,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
           disabled={pendingQueueAction}
         >
           <Paperclip size={16} />
-        </AlphaButton>
+        </UiButton>
         {/*
         FNXC:ChatMemoryFocus 2026-08-24-04:21:
         Per-conversation memory focus is opt-in. Hide its direct-session chip until Settings
@@ -3149,8 +3217,8 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
             onToggleFavorite={handleToggleFavoriteProvider}
             favoriteModels={favoriteModels}
             onToggleModelFavorite={handleToggleFavoriteModel}
-            agents={Array.from(agentsMap.values())}
             agentId={activeSession?.agentId}
+            agentName={activeSession?.agentId ? agentsMap.get(activeSession.agentId)?.name : undefined}
             modelProvider={activeSession?.modelProvider}
             modelId={activeSession?.modelId}
             targetKey={activeSession?.id ?? null}
@@ -3180,7 +3248,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
             handleAttachmentFiles(event.dataTransfer.files);
           }}
         >
-          <AlphaTextArea
+          <UiTextArea
             ref={handleComposerRef}
             className="chat-input-textarea"
             placeholder={t("chat.typeMessage", "Type a message...")}
@@ -3261,14 +3329,18 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
   FNXC:ChatDirectOnly 2026-08-24-03:34:
   The session list is direct-chat only; the canonical ViewHeader carries New Chat and docked-list actions without a stale Rooms scope control.
   */
-  const visibleSidebarSessions = showArchivedSessions ? archivedSessions : filteredSessions;
+  /*
+  FNXC:ChatArchived 2026-09-16-15:50:
+  FN-465 retire l'archivage des conversations de l'interface opérateur : la liste latérale n'expose plus que la collection active (filtrée par recherche et par tag), sans bascule « Archived », sans action Restore et sans entrée de menu Archive. Les conversations archivées historiques restent en base mais ne sont ni listées ni restaurables ici.
+  */
+  const visibleSidebarSessions = filteredSessions;
   const sessionListRef = useRef<HTMLDivElement | null>(null);
   /*
   FNXC:ChatScrollAnchor 2026-09-08-20:49:
   La liste directe et le transcript possèdent deux politiques de défilement indépendantes : chaque collection active, archivée, recherchée ou filtrée commence en tête, tandis que seul le fil ouvert s’aligne sur son dernier message. L’ouverture ou la fermeture d’un fil ne doit donc jamais transmettre la commande terminale du transcript à la liste ni réinitialiser une position manuelle de celle-ci.
   */
   const virtualSessionList = useVirtualizedList({
-    collectionKey: `${projectId ?? "default"}:${showArchivedSessions ? "archived" : "active"}:${selectedTagId ?? "all"}:${searchQuery}`,
+    collectionKey: `${projectId ?? "default"}:active:${selectedTagId ?? "all"}:${searchQuery}`,
     keys: visibleSidebarSessions.map((session) => session.id),
     scrollRef: sessionListRef,
     estimateHeight: 76,
@@ -3282,9 +3354,9 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
   const unpinnedFilteredSessions = windowedSidebarSessions.filter((session) => session.pinnedAt == null);
   const sessionPagination = useAutoPaginationSentinel({
     rootRef: sessionListRef,
-    hasMore: showArchivedSessions ? hasMoreArchivedSessions : hasMoreSessions,
+    hasMore: hasMoreSessions,
     loading: sessionsLoadingMore,
-    onLoadMore: () => loadMoreSessions(showArchivedSessions ? "archived" : "active"),
+    onLoadMore: () => loadMoreSessions("active"),
     direction: "end",
   });
   const contextMenuSession = contextMenu
@@ -3359,7 +3431,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
               title={onOpenSessionInNewWindow ? t("chat.newChatOpenInNewWindowHint", "Ctrl/Cmd + click to open the new conversation in a separate window") : undefined}
             /> : null}
             {!floating && onPopOut ? (
-              <AlphaButton
+              <UiButton
                 type="button"
                 className="btn-icon chat-view-header-icon"
                 onClick={onPopOut}
@@ -3368,10 +3440,10 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
                 data-testid="chat-pop-out"
               >
                 <Maximize2 size={16} />
-              </AlphaButton>
+              </UiButton>
             ) : null}
             {floating && onMaximize ? (
-              <AlphaButton
+              <UiButton
                 type="button"
                 className="btn-icon chat-view-header-icon"
                 onClick={onMaximize}
@@ -3380,7 +3452,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
                 data-testid="chat-modal-maximize"
               >
                 <Maximize2 size={16} />
-              </AlphaButton>
+              </UiButton>
             ) : null}
           </>
         }
@@ -3410,7 +3482,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
             <div className="chat-sidebar-search-container">
               <div className="chat-sidebar-search-wrapper">
                 <Search size={14} className="chat-sidebar-search-icon" />
-                <AlphaInput
+                <UiInput
                   ref={listSearchInputRef}
                   type="text"
                   className="chat-sidebar-search"
@@ -3421,13 +3493,13 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
                 />
               </div>
               {/*
-              FNXC:ChatArchived 2026-08-23-16:27:
-              The archived affordance is a compact Archived toggle sharing the tag-filter line, so the sidebar does not spend a full row on it. aria-pressed and active styling convey state instead of changing the visible label.
+              FNXC:ChatArchived 2026-09-16-15:50:
+              FN-465 : l'archivage n'est plus proposé à l'opérateur, donc la ligne de filtres ne porte plus que le filtre par tag. Elle reste une ligne dédiée (et non fusionnée avec la recherche) pour que les sidebars étroites et mobiles puissent l'enrouler sans rognage.
               */}
               <div className="chat-sidebar-filter-row">
                 <label className="chat-tag-filter" htmlFor="chat-tag-filter">
                   <Tag size={14} aria-hidden="true" />
-                  <AlphaSelect
+                  <UiSelect
                     id="chat-tag-filter"
                     value={selectedTagId ?? ""}
                     onChange={(event) => setSelectedTagId(event.target.value || null)}
@@ -3436,27 +3508,16 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
                   >
                     <option value="">{t("chat.allTags", "All tags")}</option>
                     {tags.map((tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}
-                  </AlphaSelect>
-                  {selectedTagId ? <AlphaButton type="button" className="btn-icon" aria-label={t("chat.clearTagFilter", "Clear tag filter")} onClick={() => setSelectedTagId(null)}><X size={14} /></AlphaButton> : null}
+                  </UiSelect>
+                  {selectedTagId ? <UiButton type="button" className="btn-icon" aria-label={t("chat.clearTagFilter", "Clear tag filter")} onClick={() => setSelectedTagId(null)}><X size={14} /></UiButton> : null}
                 </label>
-                <AlphaButton
-                  type="button"
-                  className={`btn btn-sm chat-archived-toggle${showArchivedSessions ? " chat-archived-toggle--active" : ""}`}
-                  data-testid="chat-archived-toggle"
-                  aria-pressed={showArchivedSessions}
-                  title={t("chat.showArchivedConversations", "Show archived conversations")}
-                  aria-label={t("chat.showArchivedConversations", "Show archived conversations")}
-                  onClick={() => { const next = !showArchivedSessions; setShowArchivedSessions(next); if (next) void refreshArchivedSessions(); }}
-                >
-                  {t("chat.archived", "Archived")}
-                </AlphaButton>
               </div>
             </div>
             {/* Session list section */}
             <div className="chat-session-list chat-sidebar-list" ref={sessionListRef} onScroll={virtualSessionList.onScroll}>
               {sessionsLoading ? (
                 <div className="chat-empty-state chat-empty-state--padded">{t("chat.loadingConversations", "Loading...")}</div>
-              ) : ((showArchivedSessions ? archivedSessions : filteredSessions).length === 0) ? (
+              ) : (filteredSessions.length === 0) ? (
                 <div className="chat-empty-state chat-empty-state--padded">{t("chat.noConversationsYet", "No conversations yet")}</div>
               ) : (
                 <>
@@ -3465,7 +3526,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
                   FNXC:ChatPinned 2026-07-19-00:00:
                   Direct conversation pins must be two explicit sections on every session-list surface.
                   Do not flatten Recent rows beneath Pinned: labels and wrappers make the pin boundary
-                  clear for desktop, mobile, full Chat, and Quick Chat (all share this component).
+                  clear in canonical and detached Chat hosts because all share this component.
                   */}
                   {[
                     { id: "pinned", label: t("chat.pinned", "Pinned"), testId: "chat-pinned-divider", sessions: pinnedFilteredSessions },
@@ -3476,11 +3537,10 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
                       {group.sessions.map((session) => {
                   const isSelected = activeSession?.id === session.id;
                   /*
-                  FNXC:ChatWindows 2026-09-12-23:47:
-                  Chaque fenêtre visible du dock Alpha doit surligner sa propre ligne, indépendamment de l’unique sélection interne. Cet état appartient exclusivement au mode listOnly : une fenêtre minimisée ou absente n’est pas surlignée, et les hôtes Chat standard ignorent la map de fenêtres pour conserver leur sélection unique.
+                  FNXC:ChatWindows 2026-09-14-11:35:
+                  The project-scoped set records only whether a dedicated conversation window exists; the global window registry owns temporary presentation independently.
                   */
-                  const windowState = listOnly && !showArchivedSessions ? openChatWindows?.get(session.id) : undefined;
-                  const isWindowOpen = windowState === "open";
+                  const isWindowOpen = openChatWindows?.has(session.id) ?? false;
                   const isActive = listOnly ? false : isSelected;
                   const showUnreadDot = !isSelected && isUnread("direct", session.id, session.lastMessageAt ?? session.updatedAt);
                   const sessionResolvedModel = resolveSessionProvider(
@@ -3495,18 +3555,18 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
                     <div
                       key={session.id}
                       className={`chat-session-item${isActive ? " chat-session-item--active" : ""}${isWindowOpen ? " chat-session-item--window-open" : ""}`}
-                      onClick={() => handleSessionClick(session.id)}
+                      onClick={(event) => handleSessionClick(session.id, event)}
                       onContextMenu={(e) => {
                         e.preventDefault();
                         openSessionMenu(session.id, e.clientX, e.clientY);
                       }}
-                      data-testid={showArchivedSessions ? `chat-archived-session-${session.id}` : `chat-session-${session.id}`}
+                      data-testid={`chat-session-${session.id}`}
                     >
                       {/*
                       FNXC:ChatSidebar 2026-07-16-00:00:
                       FN-8173 consolidates Pin, Rename, and Delete into this single three-dot trigger so long conversation titles retain usable row width. It opens the existing context-menu state so click and right-click share the same labeled action list and handlers.
                       */}
-                      <AlphaButton
+                      <UiButton
                         type="button"
                         className="btn-icon chat-session-menu-btn"
                         data-testid="chat-session-menu-btn"
@@ -3524,7 +3584,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
                         }}
                       >
                         <MoreHorizontal size={14} />
-                      </AlphaButton>
+                      </UiButton>
                       <div className="chat-session-title">
                         {sessionTitle}
                         {session.pinnedAt ? <Pin className="chat-session-pinned-indicator" size={14} data-testid={`chat-session-pinned-indicator-${session.id}`} aria-label={t("chat.pinned", "Pinned")} /> : null}
@@ -3536,8 +3596,8 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
                           />
                         ) : null}
                       </div>
-                      {windowState ? <span className="chat-session-window-state" data-testid={`chat-session-window-state-${session.id}`}>
-                        {windowState === "minimized" ? t("chat.windowMinimized", "Minimized") : t("chat.windowOpen", "Open")}
+                      {isWindowOpen ? <span className="chat-session-window-state" data-testid={`chat-session-window-state-${session.id}`}>
+                        {t("chat.windowOpen", "Open")}
                       </span> : null}
                       <div className="chat-session-preview">
                         {session.lastMessagePreview || t("chat.noMessages", "No messages")}
@@ -3548,7 +3608,6 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
                           {t("chat.matchedInMessage", "Matched: \"{{preview}}\"", { preview: session.matchedMessagePreview })}
                         </div>
                       ) : null}
-                      {showArchivedSessions ? <AlphaButton type="button" className="btn btn-sm btn-secondary" data-testid={`chat-archived-restore-${session.id}`} onClick={(event) => { event.stopPropagation(); void handleRestoreArchived(session.id); }}>{t("chat.restore", "Restore")}</AlphaButton> : null}
                       <div className="chat-session-meta">
                         <span className="chat-session-meta-model">
                           {sessionResolvedModel?.provider ? <ProviderIcon provider={sessionResolvedModel.provider} size="sm" /> : null}
@@ -3563,7 +3622,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
                     </section>
                   ))}
                   {virtualSessionList.bottomSpacerHeight > 0 ? <div aria-hidden="true" style={{ height: virtualSessionList.bottomSpacerHeight }} /> : null}
-                  {(showArchivedSessions ? hasMoreArchivedSessions : hasMoreSessions) ? (
+                  {hasMoreSessions ? (
                     <div ref={sessionPagination.sentinelRef} role="status" aria-live="polite" data-testid="chat-session-auto-pagination-sentinel">
                       {sessionsLoadingMore ? t("chat.loadingConversations", "Loading...") : null}
                     </div>
@@ -3583,29 +3642,30 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
           ref={contextMenuRef}
           style={{ top: contextMenu.y, left: contextMenu.x }}
           onClick={(e) => e.stopPropagation()}
-          data-alpha-menu-layout="conversation-actions"
+          data-menu-layout="conversation-actions"
         >
           {/*
-          FNXC:AlphaCollections 2026-09-10-20:43:
-          A conversation owns one sectioned homemade Alpha menu so arrow keys cross primary actions, every tag assignment, and maintenance actions. Tag editing remains a visibly labelled sibling rail after the collection because its buttons are auxiliary controls rather than competing menu items.
+          FNXC:NativeUiCollections 2026-09-10-20:43:
+          A conversation owns one sectioned native menu so arrow keys cross primary actions, every tag assignment, and maintenance actions. Tag editing remains a visibly labelled sibling rail after the collection because its buttons are auxiliary controls rather than competing menu items.
           */}
-          <AlphaMenu aria-label={t("chat.conversationActions", "Conversation actions")} className="chat-session-context-menu-section">
-          <AlphaMenuSection aria-label={t("chat.conversationPrimaryActions", "Primary conversation actions")}>
-          {onOpenSessionInNewWindow && !showArchivedSessions && contextMenuSession ? (
-            <AlphaMenuItem
+          <UiMenu aria-label={t("chat.conversationActions", "Conversation actions")} className="chat-session-context-menu-section">
+          <UiMenuSection aria-label={t("chat.conversationPrimaryActions", "Primary conversation actions")}>
+          {onOpenSessionInNewWindow && contextMenuSession ? (
+            <UiMenuItem
               id="open-window"
               type="button"
               data-testid="chat-context-open-window"
               onClick={() => {
-                onOpenSessionInNewWindow(contextMenuSession);
+                // FNXC:ChatWindows 2026-09-16-04:37: FN-447 — this menu action is an explicit new-window request, so the host list stays open.
+                onOpenSessionInNewWindow(contextMenuSession, { keepListOpen: true });
                 setContextMenu(null);
               }}
             >
               <ExternalLink size={14} />
               {t("chat.openInNewWindow", "Open in new window")}
-            </AlphaMenuItem>
+            </UiMenuItem>
           ) : null}
-          <AlphaMenuItem
+          <UiMenuItem
             id="copy-id"
             type="button"
             data-testid="chat-context-copy-id"
@@ -3613,8 +3673,8 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
           >
             <Copy size={14} />
             {t("chat.copyConversationId", "Copy conversation ID")}
-          </AlphaMenuItem>
-          <AlphaMenuItem
+          </UiMenuItem>
+          <UiMenuItem
             id="pin"
             onClick={() => handlePin(
               contextMenu.sessionId,
@@ -3626,35 +3686,27 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
           >
             {contextMenuSession?.pinnedAt ? <PinOff size={14} /> : <Pin size={14} />}
             {contextMenuSession?.pinnedAt ? t("chat.unpin", "Unpin") : t("chat.pin", "Pin")}
-          </AlphaMenuItem>
-          <AlphaMenuItem
+          </UiMenuItem>
+          <UiMenuItem
             id="rename"
             onClick={() => openRenameDialog(contextMenu.sessionId)}
             data-testid="chat-context-rename"
           >
             <Pencil size={14} />
             {t("chat.rename", "Rename")}
-          </AlphaMenuItem>
-          </AlphaMenuSection>
+          </UiMenuItem>
+          </UiMenuSection>
           {tags.length > 0 ? (
-            <AlphaMenuSection aria-label={t("chat.conversationTags", "Conversation tags")}>
+            <UiMenuSection aria-label={t("chat.conversationTags", "Conversation tags")}>
               {tags.map((tag) => {
                 const assigned = (contextMenuSession?.tags ?? []).some((candidate) => candidate.id === tag.id);
-                return <AlphaMenuItem key={tag.id} id={`tag-${tag.id}`} role="menuitemcheckbox" aria-checked={assigned} data-testid={`chat-context-tag-${tag.id}`} onClick={() => void setSessionTags(contextMenu.sessionId, assigned ? (contextMenuSession?.tags ?? []).filter((candidate) => candidate.id !== tag.id).map((candidate) => candidate.id) : [...(contextMenuSession?.tags ?? []).map((candidate) => candidate.id), tag.id]).catch(() => addToast(t("chat.failedToUpdateTags", "Failed to update tags"), "error"))}>{assigned ? "✓ " : ""}{tag.name}</AlphaMenuItem>;
+                return <UiMenuItem key={tag.id} id={`tag-${tag.id}`} role="menuitemcheckbox" aria-checked={assigned} data-testid={`chat-context-tag-${tag.id}`} onClick={() => void setSessionTags(contextMenu.sessionId, assigned ? (contextMenuSession?.tags ?? []).filter((candidate) => candidate.id !== tag.id).map((candidate) => candidate.id) : [...(contextMenuSession?.tags ?? []).map((candidate) => candidate.id), tag.id]).catch(() => addToast(t("chat.failedToUpdateTags", "Failed to update tags"), "error"))}>{assigned ? "✓ " : ""}{tag.name}</UiMenuItem>;
               })}
-            </AlphaMenuSection>
+            </UiMenuSection>
           ) : null}
-          <AlphaMenuSection aria-label={t("chat.conversationMaintenanceActions", "Conversation maintenance actions")}>
-          <AlphaMenuItem
-            id="archive"
-            onClick={() => handleArchive(contextMenu.sessionId)}
-            data-testid="chat-context-archive"
-          >
-            <Archive size={14} />
-            {t("chat.archive", "Archive")}
-          </AlphaMenuItem>
+          <UiMenuSection aria-label={t("chat.conversationMaintenanceActions", "Conversation maintenance actions")}>
           {chatSettings?.memoryBackendType === "stash" && chatSettings.memoryEnabled !== false ? (
-            <AlphaMenuItem
+            <UiMenuItem
               id="stash-backfill"
               onClick={() => void handleBackfillStash(contextMenu.sessionId)}
               data-testid="chat-context-stash-backfill"
@@ -3665,9 +3717,9 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
               {stashBackfillBusyId === contextMenu.sessionId
                 ? t("chat.preserveToStashWorking", "Uploading to Stash…")
                 : t("chat.preserveToStash", "Preserve to Stash")}
-            </AlphaMenuItem>
+            </UiMenuItem>
           ) : null}
-          <AlphaMenuItem
+          <UiMenuItem
             id="delete"
             onClick={() => {
               setContextMenu(null);
@@ -3677,16 +3729,16 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
           >
             <Trash2 size={14} />
             {t("chat.delete", "Delete")}
-          </AlphaMenuItem>
-          </AlphaMenuSection>
-          </AlphaMenu>
+          </UiMenuItem>
+          </UiMenuSection>
+          </UiMenu>
           <div className="chat-session-tag-menu">
             <div className="chat-tag-action-rail" aria-label={t("chat.tagActions", "Tag actions")}>
-              {tags.map((tag) => <div className="chat-tag-menu-item" key={tag.id}><span className="chat-tag-action-label">{tag.name}</span><AlphaButton type="button" className="btn-icon" aria-label={t("chat.renameTag", "Rename tag {{name}}", { name: tag.name })} data-testid={`chat-context-rename-tag-${tag.id}`} onClick={() => { setRenameTagName(tag.name); setRenameTagDialog(tag); }}><Pencil size={14} /></AlphaButton><AlphaButton type="button" className="btn-icon" aria-label={t("chat.deleteTag", "Delete tag {{name}}", { name: tag.name })} data-testid={`chat-context-delete-tag-${tag.id}`} onClick={() => setConfirmDeleteTag(tag)}><Trash2 size={14} /></AlphaButton></div>)}
+              {tags.map((tag) => <div className="chat-tag-menu-item" key={tag.id}><span className="chat-tag-action-label">{tag.name}</span><UiButton type="button" className="btn-icon" aria-label={t("chat.renameTag", "Rename tag {{name}}", { name: tag.name })} data-testid={`chat-context-rename-tag-${tag.id}`} onClick={() => { setRenameTagName(tag.name); setRenameTagDialog(tag); }}><Pencil size={14} /></UiButton><UiButton type="button" className="btn-icon" aria-label={t("chat.deleteTag", "Delete tag {{name}}", { name: tag.name })} data-testid={`chat-context-delete-tag-${tag.id}`} onClick={() => setConfirmDeleteTag(tag)}><Trash2 size={14} /></UiButton></div>)}
             </div>
             <div className="chat-tag-create-row">
-              <AlphaInput className="input" value={newTagName} placeholder={t("chat.newTag", "New tag")} aria-label={t("chat.newTag", "New tag")} onChange={(event) => setNewTagName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void handleCreateTagForSession(); } }} />
-              <AlphaButton type="button" className="btn btn-sm" onClick={() => void handleCreateTagForSession()}>{t("chat.addTag", "Add")}</AlphaButton>
+              <UiInput className="input" value={newTagName} placeholder={t("chat.newTag", "New tag")} aria-label={t("chat.newTag", "New tag")} onChange={(event) => setNewTagName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void handleCreateTagForSession(); } }} />
+              <UiButton type="button" className="btn btn-sm" onClick={() => void handleCreateTagForSession()}>{t("chat.addTag", "Add")}</UiButton>
             </div>
           </div>
         </div>
@@ -3706,7 +3758,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
             <label className="chat-rename-label" htmlFor="chat-rename-input">
               {t("chat.conversationName", "Conversation name")}
             </label>
-            <AlphaInput
+            <UiInput
               id="chat-rename-input"
               className="input chat-rename-input"
               type="text"
@@ -3723,16 +3775,16 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
               autoFocus
             />
             <div className="chat-new-dialog-actions">
-              <AlphaButton className="btn btn-sm" onClick={() => setRenameDialog(null)}>
+              <UiButton className="btn btn-sm" onClick={() => setRenameDialog(null)}>
                 {t("chat.cancel", "Cancel")}
-              </AlphaButton>
-              <AlphaButton
+              </UiButton>
+              <UiButton
                 className="btn btn-sm btn-primary"
                 onClick={() => void handleRename()}
                 data-testid="chat-rename-save"
               >
                 {t("chat.save", "Save")}
-              </AlphaButton>
+              </UiButton>
             </div>
           </div>
         </ChatDialogBackdrop>
@@ -3743,10 +3795,10 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
           <div className="chat-new-dialog chat-view-dialog" aria-labelledby="chat-rename-tag-dialog-title" onClick={(event) => event.stopPropagation()}>
             <h3 id="chat-rename-tag-dialog-title">{t("chat.renameTagTitle", "Rename tag")}</h3>
             <label className="chat-rename-label" htmlFor="chat-rename-tag-input">{t("chat.tagName", "Tag name")}</label>
-            <AlphaInput id="chat-rename-tag-input" className="input chat-rename-input" value={renameTagName} data-testid="chat-rename-tag-input" onChange={(event) => setRenameTagName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void renameTag(renameTagDialog.id, renameTagName).then(() => setRenameTagDialog(null)).catch(() => addToast(t("chat.failedToRenameTag", "Failed to rename tag"), "error")); } }} autoFocus />
+            <UiInput id="chat-rename-tag-input" className="input chat-rename-input" value={renameTagName} data-testid="chat-rename-tag-input" onChange={(event) => setRenameTagName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void renameTag(renameTagDialog.id, renameTagName).then(() => setRenameTagDialog(null)).catch(() => addToast(t("chat.failedToRenameTag", "Failed to rename tag"), "error")); } }} autoFocus />
             <div className="chat-new-dialog-actions">
-              <AlphaButton className="btn btn-sm" onClick={() => setRenameTagDialog(null)}>{t("chat.cancel", "Cancel")}</AlphaButton>
-              <AlphaButton className="btn btn-sm btn-primary" data-testid="chat-rename-tag-save" onClick={() => void renameTag(renameTagDialog.id, renameTagName).then(() => setRenameTagDialog(null)).catch(() => addToast(t("chat.failedToRenameTag", "Failed to rename tag"), "error"))}>{t("chat.save", "Save")}</AlphaButton>
+              <UiButton className="btn btn-sm" onClick={() => setRenameTagDialog(null)}>{t("chat.cancel", "Cancel")}</UiButton>
+              <UiButton className="btn btn-sm btn-primary" data-testid="chat-rename-tag-save" onClick={() => void renameTag(renameTagDialog.id, renameTagName).then(() => setRenameTagDialog(null)).catch(() => addToast(t("chat.failedToRenameTag", "Failed to rename tag"), "error"))}>{t("chat.save", "Save")}</UiButton>
             </div>
           </div>
         </ChatDialogBackdrop>
@@ -3758,8 +3810,8 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
             <h3 id="chat-delete-tag-dialog-title">{t("chat.deleteTagTitle", "Delete tag?")}</h3>
             <p className="chat-view-delete-dialog-copy">{t("chat.deleteTagBody", "This removes the tag from all conversations, but does not delete conversations.")}</p>
             <div className="chat-new-dialog-actions">
-              <AlphaButton className="btn btn-sm" onClick={() => setConfirmDeleteTag(null)}>{t("chat.cancel", "Cancel")}</AlphaButton>
-              <AlphaButton className="btn btn-sm btn-danger" data-testid="chat-delete-tag-confirm" onClick={() => void deleteTag(confirmDeleteTag.id).then(() => setConfirmDeleteTag(null)).catch(() => addToast(t("chat.failedToDeleteTag", "Failed to delete tag"), "error"))}>{t("chat.delete", "Delete")}</AlphaButton>
+              <UiButton className="btn btn-sm" onClick={() => setConfirmDeleteTag(null)}>{t("chat.cancel", "Cancel")}</UiButton>
+              <UiButton className="btn btn-sm btn-danger" data-testid="chat-delete-tag-confirm" onClick={() => void deleteTag(confirmDeleteTag.id).then(() => setConfirmDeleteTag(null)).catch(() => addToast(t("chat.failedToDeleteTag", "Failed to delete tag"), "error"))}>{t("chat.delete", "Delete")}</UiButton>
             </div>
           </div>
         </ChatDialogBackdrop>
@@ -3774,15 +3826,15 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
               {t("chat.deleteConversationBody", "This action cannot be undone. All messages in this conversation will be permanently deleted.")}
             </p>
             <div className="chat-new-dialog-actions">
-              <AlphaButton className="btn btn-sm" onClick={() => setConfirmDelete(null)}>
+              <UiButton className="btn btn-sm" onClick={() => setConfirmDelete(null)}>
                 {t("chat.cancel", "Cancel")}
-              </AlphaButton>
-              <AlphaButton
+              </UiButton>
+              <UiButton
                 className="btn btn-sm btn-danger"
                 onClick={() => void handleDelete(confirmDelete)}
               >
                 {t("chat.delete", "Delete")}
-              </AlphaButton>
+              </UiButton>
             </div>
           </div>
         </ChatDialogBackdrop>
@@ -3851,7 +3903,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
             {renderConversationSearch()}
             {renderSessionMessagesPane()}
             {isUserScrolling && (
-              <AlphaButton
+              <UiButton
                 type="button"
                 className="btn btn-sm chat-jump-to-latest"
                 data-testid="chat-jump-to-latest"
@@ -3859,7 +3911,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
               >
                 <ChevronDown size={14} />
                 {t("chat.latest", "Latest")}
-              </AlphaButton>
+              </UiButton>
             )}
             {activeSession && renderSessionComposerPane()}
           </>
@@ -3873,10 +3925,11 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
   );
 }
 
+/*
+FNXC:NativeUiPresentation 2026-09-15-00:20:
+REMOVED: the Alpha boundary wrapper. Chat keeps its canonical flex sizing and scroll owner, and the
+selected colour theme now actually recolours its transcript, composer and body-portaled menus.
+*/
 export function ChatView(props: ChatViewProps) {
-  return (
-    <AlphaBoundary>
-      <ChatViewContent {...props} />
-    </AlphaBoundary>
-  );
+  return <ChatViewContent {...props} />;
 }

@@ -6,8 +6,28 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PrCreateModal } from "../PrCreateModal";
 import type { PrInfo } from "@fusion/core";
 import { readAppFile } from "../../test/cssFixture";
+import { expectedOpeningSize } from "./floatingWindowOpeningFixture";
 
 const prCreateModalCss = readAppFile("components/PrCreateModal.css");
+
+/*
+FNXC:FloatingWindowGeometry 2026-09-16-05:45:
+FN-456 normalizes the OPENING shape to the shared 1.43 ratio (and FN-418 already capped the height), so this
+host no longer opens at its declared 720x680. The shell invariant is unchanged; the expected rectangle is
+derived from the production seam through the shared opening fixture instead of stale literals.
+*/
+function prCreateOpeningSize() {
+  return expectedOpeningSize(
+    { width: 720, height: 680 },
+    {
+      minSize: { width: 480, height: 420 },
+      bounds: {
+        left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight,
+        width: window.innerWidth, height: window.innerHeight,
+      },
+    },
+  );
+}
 
 const mocks = vi.hoisted(() => ({
   generatePrMetadata: vi.fn(),
@@ -150,8 +170,8 @@ describe("PrCreateModal", () => {
     expect(trap.querySelector('[role="dialog"]')).toBeNull();
     const panel = screen.getByTestId("floating-window-pr-create");
     expect(panel).toHaveClass("floating-window--pr-create", "floating-window--headerless");
-    expect(panel.style.width).toBe("720px");
-    expect(panel.style.height).toBe("680px");
+    expect(panel.style.width).toBe(`${prCreateOpeningSize().width}px`);
+    expect(panel.style.height).toBe(`${prCreateOpeningSize().height}px`);
     expect(screen.queryByTestId("floating-window-drag-handle-pr-create")).toBeNull();
     expect(panel.parentElement).toHaveClass("floating-window-overlay");
     expect(panel.parentElement?.parentElement).toBe(document.body);

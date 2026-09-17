@@ -15,7 +15,7 @@ const workflow = (overrides: Record<string, unknown> = {}) => ({
 describe("quick add Start workflow guards", () => {
   it("limits resolved built-ins to Coding Ideas", () => {
     const resolvedBuiltinFirstColumns = [
-      ["builtin:coding-ideas-v2", { intake: true, hold: true, manualIntake: true }, true],
+      ["builtin:coding-ideas", { intake: true, hold: true, manualIntake: true }, true],
       ["builtin:coding", { intake: true, hold: true }, false],
       ["builtin:quick-fix", { intake: true, hold: true }, false],
       ["builtin:stepwise-coding", { intake: true, hold: true }, false],
@@ -52,7 +52,7 @@ describe("quick add Start workflow guards", () => {
   });
 
   it("derives Todo only from a captured, visible Coding Ideas definition", () => {
-    const canonical = validateQuickAddStartWorkflow(workflow({ id: "builtin:coding-ideas-v2" }));
+    const canonical = validateQuickAddStartWorkflow(workflow({ id: "builtin:coding-ideas" }));
     expect(canonical).not.toBeNull();
     expect(resolveQuickAddStartInitialColumn(canonical!)).toBe("todo");
 
@@ -62,28 +62,28 @@ describe("quick add Start workflow guards", () => {
       [{ id: "ideas", flags: { hold: true } }, { id: "todo", flags: { intake: true } }],
       [{ id: "ideas", flags: { hold: true } }, { id: "todo", flags: { complete: true } }],
     ]) {
-      const invalidTarget = validateQuickAddStartWorkflow(workflow({ id: "builtin:coding-ideas-v2", columns }));
+      const invalidTarget = validateQuickAddStartWorkflow(workflow({ id: "builtin:coding-ideas", columns }));
       expect(invalidTarget).not.toBeNull();
       expect(resolveQuickAddStartInitialColumn(invalidTarget!)).toBeNull();
     }
 
     expect(resolveQuickAddStartInitialColumn(validateQuickAddStartWorkflow(workflow())!)).toBeNull();
     expect(validateQuickAddStartWorkflow(workflow({
-      id: "builtin:coding-ideas-v2",
+      id: "builtin:coding-ideas",
       columns: [{ id: "ideas", flags: {} }, { id: "todo", flags: {} }, { id: "todo", flags: {} }],
     }))).toBeNull();
   });
 
-  it("resolves the Ideas shape identically for the successor and a custom workflow", () => {
+  it("resolves the Ideas shape identically for the canonical and a custom workflow", () => {
     const columns = [
       { id: "ideas", name: "Ideas", flags: { intake: true, manualIntake: true } },
       { id: "todo", name: "Planning", flags: { hold: true } },
       { id: "done", name: "Done", flags: { complete: true } },
     ];
-    const successor = validateQuickAddStartWorkflow(workflow({ id: "builtin:coding-ideas-v2", columns }));
+    const canonical = validateQuickAddStartWorkflow(workflow({ id: "builtin:coding-ideas", columns }));
     const custom = validateQuickAddStartWorkflow(workflow({ id: "WF-IDEAS-COPY", columns }));
 
-    expect(resolveQuickAddStartInitialColumn(successor!)).toBe("todo");
+    expect(resolveQuickAddStartInitialColumn(canonical!)).toBe("todo");
     expect(resolveQuickAddStartInitialColumn(custom!)).toBe("todo");
   });
 
@@ -100,9 +100,9 @@ describe("quick add Start workflow guards", () => {
     expect(resolveQuickAddStartWorkflowTarget(other)).toBe("ready");
   });
 
-  it("hides Start when the successor metadata is reordered", () => {
+  it("hides Start when the canonical metadata is reordered", () => {
     const reordered = validateQuickAddStartWorkflow(workflow({
-      id: "builtin:coding-ideas-v2",
+      id: "builtin:coding-ideas",
       columns: [
         { id: "todo", name: "Planning", flags: { hold: true } },
         { id: "ideas", name: "Ideas", flags: { intake: true, manualIntake: true } },

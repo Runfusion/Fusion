@@ -22,6 +22,8 @@ export const FAST_LANE_STEP_REVIEW_ROUTE_VALUE = "approve";
 
 export interface FastLaneTask {
   executionMode?: string | null;
+  /* FN-408: the per-card human plan requirement, read structurally so this module keeps no import of the approval helpers (they pull `node:crypto`, which the dashboard browser bundle cannot load). */
+  humanPlanApproval?: { enabled?: boolean } | null;
 }
 
 export interface FastLaneRoute {
@@ -34,9 +36,20 @@ export interface FastLaneRoute {
   unsupportedReason?: "no-implementation-node";
 }
 
+/*
+FNXC:HumanPlanApproval 2026-09-15-07:30:
+FN-408 remediation — a card armed with the per-card human plan approval is NEVER fast, wherever
+this predicate is consulted (triage planning candidates, fast-lane routing, prompt building, board
+derivations). Fast bypasses every pre-merge optional group — plan review included — and the planning
+seam nodes whatever the step selection says, and triage skips fast cards entirely. An armed fast
+card would therefore never get a plan, never satisfy Plan Review, never publish `awaiting-approval`
+and never offer the operator a decision: an immobilized card with no recourse. The requirement wins,
+so Fast is neutralized. Creation and update also drop `executionMode: "fast"` when arming, so this
+predicate is the defense in depth that also covers any row already written.
+*/
 /** The sole shared definition of whether a task requested the fast lane. */
 export function isFastExecutionMode(task: FastLaneTask): boolean {
-  return task.executionMode === "fast";
+  return task.executionMode === "fast" && task.humanPlanApproval?.enabled !== true;
 }
 
 function configString(node: WorkflowIrNode, key: string): string | undefined {

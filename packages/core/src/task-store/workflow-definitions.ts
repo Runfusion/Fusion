@@ -12,7 +12,7 @@
 import { TaskStore } from "../store.js";
 import {resolveEntryColumnId, WorkflowSwitchRehomeFailedError, buildSwitchReconciliation} from "../workflows/workflow-reconciliation.js";
 import { pruneAgentLogFiles as pruneAgentLogFileEntries, readAgentLogEntriesByTimeRange } from "../agents/agent-log-file-store.js";
-import { BUILTIN_WORKFLOWS, DEFAULT_WORKFLOW_ID, resolveDefaultWorkflowIr, getBuiltinWorkflow, getRequiredPluginIdForBuiltinWorkflow, isBuiltinWorkflowDeprecated, isBuiltinWorkflowEnabled, isBuiltinWorkflowId, isBuiltinWorkflowPluginGated, resolveRetiredBuiltinWorkflowId } from "../workflows/builtin-workflows.js";
+import { BUILTIN_WORKFLOWS, DEFAULT_WORKFLOW_ID, resolveDefaultWorkflowIr, getBuiltinWorkflow, getRequiredPluginIdForBuiltinWorkflow, isBuiltinWorkflowDeprecated, isBuiltinWorkflowEnabled, isBuiltinWorkflowId, isBuiltinWorkflowPluginGated } from "../workflows/builtin-workflows.js";
 import { CentralCore } from "../central/central-core.js";
 import { type DistributedTaskIdAllocator } from "../tasks/distributed-task-id.js";
 import { ExperimentSessionStore } from "../eval/experiment-session-store.js";
@@ -285,8 +285,8 @@ export async function getWorkflowDefinitionImpl(store: TaskStore,
     const builtin = getBuiltinWorkflow(id);
     if (builtin) {
       /*
-      FNXC:WorkflowSuccession 2026-09-06-02:15:
-      A retired alias resolves the successor's plugin policy and prompt overrides under the successor's canonical key. The requested alias must not create a second configuration namespace.
+      FNXC:WorkflowIdentity 2026-09-14-19:06:
+A built-in revision retains its original identity. Migration 0079 converges persisted references before catalog reads, so selection, configuration and capacity use the same raw workflow id without redirects.
       */
       if (isBuiltinWorkflowPluginGated(builtin.id)) {
         const requiredPluginId = getRequiredPluginIdForBuiltinWorkflow(builtin.id);
@@ -455,8 +455,8 @@ export function resolveTaskWorkflowIrSyncImpl(store: TaskStore, taskId: string):
       const builtin = getBuiltinWorkflow(workflowId);
       const ir = builtin?.ir;
       /*
-      FNXC:WorkflowSuccession 2026-09-06-02:15:
-      Sync resolution shares the successor's prompt-override key with async definition reads, preventing a retired request alias from reviving stale configuration.
+      FNXC:WorkflowIdentity 2026-09-14-19:06:
+A built-in revision retains its original identity. Migration 0079 converges persisted references before catalog reads, so selection, configuration and capacity use the same raw workflow id without redirects.
       */
       return store.applyBuiltInPromptOverridesSync(builtin?.id ?? workflowId, ir === undefined ? resolveDefaultWorkflowIr() : typeof ir === "string" ? parseWorkflowIr(ir) : ir);
     }
@@ -508,11 +508,11 @@ export async function getTaskWorkflowSelectionsAsyncImpl(
       inArray(schema.project.taskWorkflowSelection.taskId, ids),
     ));
   /*
-  FNXC:WorkflowSuccession 2026-09-06-02:15:
-  Canonicalize authoritative batch reads instead of migrating stored rows. Scheduler capacity and board readers then share one successor identity while older binaries retain database compatibility.
+  FNXC:WorkflowIdentity 2026-09-14-19:06:
+A built-in revision retains its original identity. Migration 0079 converges persisted references before catalog reads, so selection, configuration and capacity use the same raw workflow id without redirects.
   */
   return new Map(rows.map((row) => [row.taskId, {
-    workflowId: resolveRetiredBuiltinWorkflowId(row.workflowId),
+    workflowId: row.workflowId,
     stepIds: Array.isArray(row.stepIds) ? row.stepIds.filter((stepId): stepId is string => typeof stepId === "string") : [],
   }]));
 }
@@ -539,10 +539,10 @@ export async function getTaskWorkflowSelectionAsyncImpl(store: TaskStore, taskId
     const parsed = row.stepIds as unknown;
     if (Array.isArray(parsed)) stepIds = parsed.filter((s): s is string => typeof s === "string");
     /*
-    FNXC:WorkflowSuccession 2026-09-06-02:15:
-    Canonicalize the authoritative per-task read so legacy rows join the successor's single board lane without a schema migration. A later selection write converges storage naturally.
+    FNXC:WorkflowIdentity 2026-09-14-19:06:
+A built-in revision retains its original identity. Migration 0079 converges persisted references before catalog reads, so selection, configuration and capacity use the same raw workflow id without redirects.
     */
-    return { workflowId: resolveRetiredBuiltinWorkflowId(row.workflowId), stepIds };
+    return { workflowId: row.workflowId, stepIds };
 }
 
 export async function writeTaskWorkflowSelectionImpl(store: TaskStore, taskId: string, workflowId: string, stepIds: string[]): Promise<void> {
@@ -702,10 +702,10 @@ export async function selectTaskWorkflowAndReconcileImpl(store: TaskStore,
     reconciliation?: { preserved: boolean; fromColumn: string; toColumn: string };
   }> {
     /*
-    FNXC:WorkflowSuccession 2026-09-06-02:15:
-    Normalize before preflight so definition lookup, capacity pooling, errors, audit metadata, re-homing and the selection writer all use the successor identity. Retired ids stay requestable but are never persisted.
+    FNXC:WorkflowIdentity 2026-09-14-19:06:
+A built-in revision retains its original identity. Migration 0079 converges persisted references before catalog reads, so selection, configuration and capacity use the same raw workflow id without redirects.
     */
-    const workflowId = resolveRetiredBuiltinWorkflowId(requestedWorkflowId);
+    const workflowId = requestedWorkflowId;
     /*
     FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — PR #2512 review, greptile P1):
     PRE-FLIGHT BEFORE COMMITTING. The ordering, not the message, is the fix.

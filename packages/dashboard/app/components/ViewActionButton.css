@@ -1,6 +1,12 @@
 /*
 FNXC:StandardizedViewActions 2026-09-13-16:12:
-Header actions reuse the shared button system and icon metrics. Phone chrome exposes the canonical touch target while hiding only the redundant action label, never labels belonging to tabs, list choices, or forms.
+Header actions reuse the shared button system and icon metrics. Phone chrome hides only the redundant action label, never labels belonging to tabs, list choices, or forms.
+
+FNXC:IconOnlyButtonCanon 2026-09-16-19:05:
+FN-471 supersedes the 44px touch-target rule that the note above carried for the ICON-ONLY presentations of
+these two shared owners. A button reduced to its glyph now uses the canonical shared geometry (28px desktop /
+36px mobile) and one of the two canonical variants only; the 44px floor stays with LABELLED controls, list
+rows, tabs, and selects. The collapsed create action is therefore bordered, never a filled CTA square.
 */
 .view-action-button {
   gap: var(--space-xs);
@@ -15,19 +21,39 @@ Header actions reuse the shared button system and icon metrics. Phone chrome exp
   pointer-events: none;
 }
 
+/*
+FNXC:IconOnlyButtonCanon 2026-09-16-19:05:
+The back chevron is icon-only at every viewport, so it owns no box of its own: `btn btn-icon` already resolves
+to the canonical square through the global contract in `styles.css`. Only its flex behaviour stays local.
+*/
 .view-back-button {
   flex: none;
-  inline-size: var(--touch-target-min-size);
-  min-inline-size: var(--touch-target-min-size);
-  block-size: var(--touch-target-min-size);
-  min-block-size: var(--touch-target-min-size);
-  padding: 0;
-  border-radius: var(--radius-md);
 }
 
 .view-back-button:focus-visible,
 .view-action-button:focus-visible {
   box-shadow: var(--focus-ring-strong);
+}
+
+/*
+FNXC:IconOnlyButtonCanon 2026-09-16-19:05:
+FN-471 moves the CTA fill off the shared class stack and onto this create-specific selector, so the LABELLED
+desktop/tablet presentation keeps its emphasis while the phone icon-only presentation (which overrides these
+tokens below) can be plain bordered chrome. The button no longer carries `btn-primary`, whose 0,1,0 paint the
+mobile blocks could not neutralize without a specificity escalation.
+*/
+.view-action-button--create {
+  background: var(--cta-bg);
+  border-color: var(--cta-border);
+  color: var(--cta-text);
+}
+
+@media (hover: hover) {
+  .view-action-button--create:hover {
+    background: var(--cta-bg-hover);
+    border-color: var(--cta-border-hover);
+    box-shadow: var(--cta-glow);
+  }
 }
 
 /*
@@ -38,12 +64,20 @@ viewport never actually lacked room for. The pre-hydration fallback covers the u
 */
 @media (max-width: 768px), (max-height: 480px) {
   html[data-viewport-mode="mobile"] .view-action-button--mobile-icon-only {
-    inline-size: var(--touch-target-min-size);
-    min-inline-size: var(--touch-target-min-size);
-    block-size: var(--touch-target-min-size);
-    min-block-size: var(--touch-target-min-size);
+    inline-size: var(--icon-button-size-mobile);
+    min-inline-size: var(--icon-button-size-mobile);
+    block-size: var(--icon-button-size-mobile);
+    min-block-size: var(--icon-button-size-mobile);
     justify-content: center;
     padding: 0;
+    background: var(--card);
+    border-color: var(--border);
+    color: var(--text);
+  }
+
+  html[data-viewport-mode="mobile"] .view-action-button--mobile-icon-only > svg {
+    inline-size: var(--icon-size-sm);
+    block-size: var(--icon-size-sm);
   }
 
   html[data-viewport-mode="mobile"] .view-action-button--mobile-icon-only .view-action-button__label {
@@ -58,12 +92,15 @@ viewport never actually lacked room for. The pre-hydration fallback covers the u
 
 @media (max-width: 768px) {
   html:not([data-viewport-mode]) .view-action-button--mobile-icon-only {
-    inline-size: var(--touch-target-min-size);
-    min-inline-size: var(--touch-target-min-size);
-    block-size: var(--touch-target-min-size);
-    min-block-size: var(--touch-target-min-size);
+    inline-size: var(--icon-button-size-mobile);
+    min-inline-size: var(--icon-button-size-mobile);
+    block-size: var(--icon-button-size-mobile);
+    min-block-size: var(--icon-button-size-mobile);
     justify-content: center;
     padding: 0;
+    background: var(--card);
+    border-color: var(--border);
+    color: var(--text);
   }
 
   html:not([data-viewport-mode]) .view-action-button--mobile-icon-only .view-action-button__label {

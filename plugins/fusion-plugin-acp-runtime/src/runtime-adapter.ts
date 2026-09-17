@@ -28,6 +28,27 @@ import type {
   AcpSession,
 } from "./types.js";
 
+function addFusionToolNamingGuidance(
+  prompt: string,
+  bridgeActive: boolean,
+  registeredToolNames?: ReadonlyArray<string>,
+): string {
+  if (!bridgeActive) return prompt;
+  const registered = new Set(registeredToolNames ?? []);
+  // FNXC:AcpToolNaming 2026-09-13-02:18: Match complete MCP-valid fn_* tokens, including casing and hyphens.
+  const names = [...new Set(prompt.match(/(?<![A-Za-z0-9_-])fn_[A-Za-z0-9_-]+(?![A-Za-z0-9_-])/g) ?? [])].filter((name) =>
+    registered.has(name),
+  );
+  if (names.length === 0) return prompt;
+  const mappings = names
+    .map(
+      (name) =>
+        `${name} is available through the "fusion-custom-tools" MCP server (schema commonly visible as mcp__fusion-custom-tools__${name})`,
+    )
+    .join("; ");
+  return `${prompt}\n\nACP TOOL BRIDGE: ${mappings}. If you need to call a mapped tool, call the schema this client actually lists for it. Do not search for CLI, REST, source-code, or filesystem substitutes merely because the unprefixed alias is absent.`;
+}
+
 export class AcpRuntimeAdapter implements AgentRuntime {
   readonly id = "acp";
   readonly name = "ACP Runtime";
@@ -217,6 +238,8 @@ export class AcpRuntimeAdapter implements AgentRuntime {
       lastModelDescription: `acp/${model}`,
       callbacks: bridgedCallbacks,
       fusionToolBridgeError: toolBridgeFailure ? { reasonCode: toolBridgeFailure } : undefined,
+      fusionToolBridgeActive: toolBridge !== null,
+      fusionToolBridgeToolNames: toolBridge ? [...toolBridge.toolNames] : [],
       // Persist the per-run gate (KTD3) so U5/U7 can reach the live action gate.
       gate: options.actionGateContext,
       connection,
@@ -272,7 +295,12 @@ export class AcpRuntimeAdapter implements AgentRuntime {
     and generic ACP sessions never received image ContentBlocks on session/prompt.
     */
     const images = extractPromptImagesFromOptions(options);
-    const blocks = buildPromptBlocks(prompt, images ? { images } : undefined);
+    const effectivePrompt = addFusionToolNamingGuidance(
+      prompt,
+      acp.fusionToolBridgeActive === true,
+      acp.fusionToolBridgeToolNames,
+    );
+    const blocks = buildPromptBlocks(effectivePrompt, images ? { images } : undefined);
     // Resolve when the SDK prompt promise resolves — it already drains all
     // session/update notifications for the turn before reporting the stopReason.
     // The bridging client handler installed at createSession (U4) has already

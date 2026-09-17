@@ -152,7 +152,6 @@ export function WorkflowAddStepModal({
       className="floating-window--workflow-add-step"
       defaultSize={{ width: 640, height: 560 }}
       minSize={{ width: 360, height: 280 }}
-      persistGeometryKey="floating-window:workflow-add-step"
       suspendGeometryPersistenceOnMobile
       suspendGeometryPersistenceOnShortViewport
       closeOnOutsidePointerDown

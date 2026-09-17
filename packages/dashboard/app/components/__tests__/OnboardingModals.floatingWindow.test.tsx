@@ -49,8 +49,8 @@ describe("onboarding modal FloatingWindow geometry contract", () => {
     fireEvent.pointerMove(panel, { pointerType: "mouse", pointerId: 1, clientX: 135, clientY: 130 });
     fireEvent.pointerUp(panel, { pointerType: "mouse", pointerId: 1, clientX: 135, clientY: 130 });
     expect(setCapture).toHaveBeenCalledWith(1);
-    // The listener commits a clamped geometry record even when jsdom has no layout dimensions.
-    expect(localStorage.getItem(fixture.key!)).toContain('"position"');
+    // FN-394: the gesture result lives in the rendered rectangle only; no durable record is written.
+    expect(localStorage.getItem(fixture.key!)).toBeNull();
     for (const direction of directions) {
       const handle = screen.getByTestId(`floating-window-resize-${direction}`);
       capture(handle);
@@ -61,10 +61,10 @@ describe("onboarding modal FloatingWindow geometry contract", () => {
       if (direction.includes("e") || direction.includes("w")) expect(panel.style.width).not.toBe(before.width);
       if (direction.includes("n") || direction.includes("s")) expect(panel.style.height).not.toBe(before.height);
     }
-    expect(localStorage.getItem(fixture.key!)).toContain('"size"');
+    expect(localStorage.getItem(fixture.key!)).toBeNull();
   });
 
-  it.each(fixtures)("$name enables touch targets, persistence recovery, and sheet suspension", (fixture) => {
+  it.each(fixtures)("$name enables touch targets, geometry independence, and sheet suspension", (fixture) => {
     viewport.tablet = true;
     localStorage.setItem(fixture.key!, "not-json");
     const close = vi.fn();
@@ -83,7 +83,8 @@ describe("onboarding modal FloatingWindow geometry contract", () => {
       if (direction.includes("e") || direction.includes("w")) expect(panel.style.width).not.toBe(before.width);
       if (direction.includes("n") || direction.includes("s")) expect(panel.style.height).not.toBe(before.height);
     }
-    expect(() => JSON.parse(localStorage.getItem(fixture.key!)!)).not.toThrow();
+    // FN-394: a corrupt historical record is neither read nor rewritten; it simply stays as it is.
+    expect(localStorage.getItem(fixture.key!)).toBe("not-json");
     const drag = panel.querySelector<HTMLElement>(".view-header, .modal-header, .agent-dialog-header, .setup-wizard-header") ?? panel;
     capture(panel);
     fireEvent.pointerDown(drag, { pointerType: "touch", pointerId: 7, clientX: 100, clientY: 100 });
@@ -92,13 +93,14 @@ describe("onboarding modal FloatingWindow geometry contract", () => {
     expect(document.body.style.userSelect).toBe("");
     unmount();
 
-    // A populated off-screen record must restore through the shared clamp, not strand the hosted dialog.
+    // FN-394: a populated off-screen record is ignored; the dialog reopens at its own standard size.
     viewport.tablet = false;
     localStorage.setItem(fixture.key!, JSON.stringify({ size: { width: 100_000, height: 100_000 }, position: { x: 100_000, y: 100_000 } }));
     render(fixture.render!(close));
     const restored = screen.getByTestId(`floating-window-${key}`);
-    expect(Number.parseInt(restored.style.width, 10)).toBeLessThanOrEqual(window.innerWidth - 32);
-    expect(Number.parseInt(restored.style.height, 10)).toBeLessThanOrEqual(window.innerHeight - 32);
+    expect(Number.parseInt(restored.style.width, 10)).toBeLessThanOrEqual(window.innerWidth);
+    expect(Number.parseInt(restored.style.height, 10)).toBeLessThanOrEqual(window.innerHeight);
+    expect(localStorage.getItem(fixture.key!)).toContain("100000");
     cleanup();
 
     // 767px/phone is represented by the shared sheet discriminator; it must not expose or write geometry.

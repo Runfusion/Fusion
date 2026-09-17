@@ -1,10 +1,10 @@
 import type { ChatInFlightGenerationState, ChatMessage, ChatSnippet, ResolvedModelSelection, Settings, Task, TaskDetail } from "@fusion/core";
-import { AlphaButton, AlphaListBox, AlphaListBoxItem, AlphaTextArea } from "./alpha-ui";
+import { UiButton, UiListBox, UiListBoxItem, UiTextArea } from "./ui";
 import { isWipColumnRole } from "../utils/columnRoles";
 import { getErrorMessage, isExperimentalFeatureEnabled, CHAT_FOCUS_FLAG } from "@fusion/core";
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { Loader2, Maximize2, Minimize2 } from "lucide-react";
+import { ChevronDown, Loader2, Maximize2, Minimize2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { ToastType } from "../hooks/useToast";
 import { useComposerDictation } from "../hooks/useComposerDictation";
@@ -12,6 +12,7 @@ import { useVirtualizedChatTranscript } from "../hooks/useVirtualizedChatTranscr
 import { getPersistedPendingChatMessages, setPersistedPendingChatMessages } from "../hooks/chatPendingMessageStorage";
 import { MicButton } from "./MicButton";
 import type { ChatMessageInfo, ToolCallInfo } from "../hooks/chatTypes";
+import { isPersistedChatMessageId } from "../hooks/chatTypes";
 import { attachChatStream, cancelChatResponse, ensureTaskPlannerChatSession, fetchChatMessages, fetchChatSession, fetchSettings, fetchTaskDetail, fetchTaskPlannerChatSession, streamChatResponse, updateChatSession, type ChatFailureInfo, type ChatStreamErrorMeta } from "../api";
 import { parseQuestionToolCall, type ParsedQuestionToolCall } from "../utils/parseQuestionToolCall";
 import { ChatQuestionResponse } from "./ChatQuestionResponse";
@@ -30,6 +31,7 @@ import {
   type ChatInputAutosizeController,
 } from "../utils/chatInputAutosize";
 import { ChatFocusSelector } from "./ChatFocusSelector";
+import { useStickyBottomFollow } from "../hooks/useStickyBottomFollow";
 import "./TaskPlannerChatTab.css";
 
 interface TaskPlannerChatTabProps {
@@ -84,10 +86,6 @@ interface StarterPromptDefinition {
 }
 
 const BOTTOM_FOLLOW_THRESHOLD = 48;
-
-function isTranscriptNearBottom(container: HTMLElement): boolean {
-  return container.scrollHeight - (container.scrollTop + container.clientHeight) <= BOTTOM_FOLLOW_THRESHOLD;
-}
 
 function normalizePendingMessages(messages: readonly string[]): string[] {
   return messages.map((message) => message.trim()).filter(Boolean);
@@ -406,7 +404,6 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
   const isTranscriptAtBottomRef = useRef(true);
   const previousMessageCountRef = useRef(0);
   const previousActiveRef = useRef(false);
-  const isProgrammaticTranscriptScrollRef = useRef(false);
   const loadRequestRef = useRef(0);
   const streamRequestRef = useRef(0);
   const addToastRef = useRef(addToast);
@@ -648,6 +645,13 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
     requestId: number;
     attach: boolean;
     queueReservation?: PendingQueueReservation;
+    /*
+    FNXC:ChatMessageEdit 2026-09-16-05:58:
+    FN-459. Id of the optimistic bubble this stream owns, so the in-band `user_message` event can
+    replace it by EXACT id. `mergePlannerTranscriptWithOptimistic` matches on content equality and
+    stays only as the fallback: two identical consecutive sends cannot be told apart that way.
+    */
+    optimisticUserMessageId?: string;
     replacementMessageId?: string;
     replacementTargetIndex?: number;
     replacementMessage?: ChatMessage;
@@ -661,6 +665,7 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
       requestId,
       attach,
       queueReservation,
+      optimisticUserMessageId,
       replacementMessageId,
       replacementTargetIndex,
       replacementMessage,
@@ -749,6 +754,22 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
         }
         updateStreamSnapshot();
         applyStreamingSnapshot(resolvedSessionId, accumulated, accumulatedThinking, streamingToolCalls);
+      },
+      /*
+      FNXC:ChatMessageEdit 2026-09-16-05:58:
+      FN-459. In-band persisted identity for this turn's user bubble. Replacing by exact optimistic id
+      retires `optimistic-<ts>` immediately, so the edit affordance only ever sees server-known rows.
+      */
+      onUserMessage: (data: { message: ChatMessage }) => {
+        if (!isCurrentStreamRequest()) return;
+        const optimisticId = optimisticUserMessageId ?? replacementMessage?.id;
+        if (!optimisticId) return;
+        setMessages((current) => {
+          if (current.some((candidate) => candidate.id === data.message.id)) return current;
+          const optimisticIndex = current.findIndex((candidate) => candidate.id === optimisticId);
+          if (optimisticIndex < 0) return current;
+          return sortMessages(current.map((candidate, index) => index === optimisticIndex ? data.message : candidate));
+        });
       },
       onDone: (data: { messageId: string; message?: ChatMessage }) => {
         if (!isCurrentStreamRequest()) return;
@@ -922,21 +943,62 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
     };
   }, []);
 
+  /*
+  FNXC:StickyBottomScroll 2026-09-14-20:19:
+  FN-398 : Planner Chat partage le propriétaire unique du suivi du bas. Le désengagement ne dépend plus du seuil de
+  48 px : molette, pan tactile et touches de navigation relâchent le suivi de façon synchrone. Le fencing des
+  écritures programmatiques passe du drapeau `isProgrammaticTranscriptScrollRef` (qui ne couvrait qu'une
+  affectation synchrone) à l'attribution par POSITION ATTENDUE du propriétaire, qui couvre aussi un événement
+  `scroll` livré plus tard.
+  */
+  const stickyFollow = useStickyBottomFollow(transcriptRef, {
+    rearmThresholdPx: BOTTOM_FOLLOW_THRESHOLD,
+    attachKey: active,
+    onFollowingChange: (following) => {
+      isTranscriptAtBottomRef.current = following;
+      setIsTranscriptAtBottom(following);
+    },
+    /*
+    FNXC:TaskDetailPlannerChat 2026-09-16-07:31:
+    FN-458 : `virtualTranscript.scrollToBottom()` (déclenché par le bouton « Latest ») prend la PROPRIÉTÉ de
+    l'alignement terminal du virtualiseur ; tant qu'elle est détenue, chaque changement de géométrie réécrit
+    `scrollTop` en bas. Sans libération, un geste manuel vers le haut après le clic raccrocherait le lecteur au
+    dernier message pour le reste de la session. Comme `ChatView`, toute intention utilisateur clôt cette propriété
+    via l'API publique `cancelPendingScrollToBottom()` : le geste manuel reste autoritaire (FN-398).
+    */
+    onUserIntent: () => {
+      virtualTranscript.cancelPendingScrollToBottom();
+    },
+  });
+
   const setTranscriptAtBottom = useCallback((atBottom: boolean) => {
+    stickyFollow.setFollowing(atBottom);
     isTranscriptAtBottomRef.current = atBottom;
     setIsTranscriptAtBottom(atBottom);
-  }, []);
+  }, [stickyFollow]);
 
   const anchorTranscriptToBottom = useCallback((container: HTMLElement) => {
-    // Assignment does not normally emit scroll, but preserve the user-pinned state if a host does.
-    isProgrammaticTranscriptScrollRef.current = true;
-    try {
-      container.scrollTop = container.scrollHeight;
-      setTranscriptAtBottom(true);
-    } finally {
-      isProgrammaticTranscriptScrollRef.current = false;
-    }
-  }, [setTranscriptAtBottom]);
+    container.scrollTop = container.scrollHeight;
+    stickyFollow.noteProgrammaticWrite(container.scrollTop);
+    setTranscriptAtBottom(true);
+  }, [setTranscriptAtBottom, stickyFollow]);
+
+  /*
+  FNXC:TaskDetailPlannerChat 2026-09-16-04:39:
+  FN-458 : après un geste manuel vers le haut, le suivi de queue se désengage volontairement (FN-398) et l'opérateur
+  n'avait plus AUCUNE commande de retour au dernier message dans l'onglet Chat de la modale de tâche — seule surface de
+  chat privée de cette affordance. Le clic est une commande utilisateur autoritaire : il reprend d'abord la propriété de
+  l'alignement terminal auprès du virtualiseur (`scrollToBottom`), car une écriture brute de `scrollTop` serait annulée
+  par une mesure de ligne tardive, puis fence l'écriture via `anchorTranscriptToBottom` (`noteProgrammaticWrite`) pour
+  qu'elle ne soit pas reclassée en intention utilisateur, et réarme le suivi afin que la croissance de streaming
+  suive de nouveau la queue.
+  */
+  const jumpToTranscriptBottom = useCallback(() => {
+    const container = transcriptRef.current;
+    if (!container) return;
+    virtualTranscript.scrollToBottom();
+    anchorTranscriptToBottom(container);
+  }, [anchorTranscriptToBottom, virtualTranscript.scrollToBottom]);
 
   /*
   FNXC:ChatMessagePagination 2026-09-06-13:40:
@@ -976,13 +1038,13 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
     }
   }, [hasMoreHistory, projectId]);
 
+  /*
+  FN-398 : la décision de suivi appartient au propriétaire unique, dont l'écouteur natif s'exécute avant cette
+  délégation React. Ce gestionnaire ne fait plus que publier la géométrie au virtualiseur.
+  */
   const handleTranscriptScroll = useCallback(() => {
-    if (isProgrammaticTranscriptScrollRef.current) return;
     virtualTranscript.onScroll();
-    const container = transcriptRef.current;
-    if (!container) return;
-    setTranscriptAtBottom(isTranscriptNearBottom(container));
-  }, [setTranscriptAtBottom, virtualTranscript.onScroll]);
+  }, [virtualTranscript.onScroll]);
 
   useEffect(() => {
     const sentinel = historySentinelRef.current;
@@ -1045,7 +1107,8 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
     composerStateRef.current = "sending";
     setComposerState("sending");
     setError(null);
-    setMessages((currentMessages) => [...currentMessages, makeOptimisticUserMessage(resolvedSessionId, content)]);
+    const optimisticMessage = makeOptimisticUserMessage(resolvedSessionId, content);
+    setMessages((currentMessages) => [...currentMessages, optimisticMessage]);
     try {
       startPlannerStream({
         resolvedSessionId,
@@ -1053,6 +1116,7 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
         requestId: streamRequestId,
         attach: false,
         queueReservation: reservation,
+        optimisticUserMessageId: optimisticMessage.id,
       });
     } catch (err) {
       restorePendingQueueReservation(reservation);
@@ -1105,13 +1169,15 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
       // A brand-new planner session has no focus yet (whole-project scope); seed the
       // mirror from whatever the created session carries (always null today).
       setSessionMemoryFocus((session as { memoryFocus?: string | null }).memoryFocus ?? null);
-      setMessages((current) => [...current, makeOptimisticUserMessage(resolvedSessionId, content)]);
+      const optimisticMessage = makeOptimisticUserMessage(resolvedSessionId, content);
+      setMessages((current) => [...current, optimisticMessage]);
       if (!isCurrentStreamRequest()) return;
       startPlannerStream({
         resolvedSessionId,
         content,
         requestId: streamRequestId,
         attach: false,
+        optimisticUserMessageId: optimisticMessage.id,
       });
     } catch (err) {
       if (!isCurrentStreamRequest()) return;
@@ -1152,7 +1218,9 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
    */
   const editMessageAndResend = useCallback(async (messageId: string, newContent: string) => {
     if (composerStateRef.current === "sending" || !sessionId) return;
-    if (messageId.startsWith("optimistic-") || messageId === "streaming-assistant") return;
+    // FNXC:ChatMessageEdit 2026-09-16-05:58: FN-459 replaced the two literal local-id checks with the
+    // shared guard so both chat surfaces classify persisted rows identically (`msg-<uuid8>` stays editable).
+    if (!isPersistedChatMessageId(messageId)) return;
     const trimmed = newContent.trim();
     if (!trimmed) return;
 
@@ -1619,7 +1687,7 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
   return (
     <section className={`task-planner-chat${chatMessageLayout === "full-width" ? " task-planner-chat--full-width" : ""}`} aria-label={t("taskDetail.plannerChat.label", "Task-aware chat")} data-testid="task-planner-chat-panel">
       {onExpandedChange && (
-        <AlphaButton
+        <UiButton
           type="button"
           className="btn btn-icon btn-sm task-planner-chat-expand-toggle task-planner-chat-expand-toggle--overlay"
           onClick={() => onExpandedChange(!expanded)}
@@ -1629,8 +1697,17 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
           data-testid="task-planner-chat-expand-toggle"
         >
           {expanded ? <Minimize2 aria-hidden="true" /> : <Maximize2 aria-hidden="true" />}
-        </AlphaButton>
+        </UiButton>
       )}
+      {/*
+      FNXC:TaskDetailPlannerChat 2026-09-16-04:39:
+      FN-458 : le bouton de retour au bas est un FRÈRE du scroller, posé en superposition dans un viewport dédié, et non
+      un enfant du scroller comme dans TaskChatTab (non virtualisé). Le transcript Planner est virtualisé :
+      `useVirtualizedChatTranscript` mesure les enfants du scroller et calcule `topSpacerHeight`/`bottomSpacerHeight`,
+      donc un enfant supplémentaire fausserait la géométrie. L'ancrage à ce viewport évite aussi tout décalage codé en
+      dur au-dessus d'un compositeur de hauteur variable, qui peut de surcroît être déporté via PlannerChatFooterPortal.
+      */}
+      <div className="task-planner-chat-transcript-viewport">
       <div className="task-planner-chat-transcript" ref={transcriptRef} onScroll={handleTranscriptScroll} data-testid="task-planner-chat-transcript">
         {hasMoreHistory && <div ref={historySentinelRef} className="task-planner-chat-history-sentinel" aria-hidden="true">{loadingOlder ? t("chat.loadingOlderMessages", "Loading older messages…") : null}</div>}
         {error && <div className="task-planner-chat-error" role="alert">{error}</div>}
@@ -1658,7 +1735,7 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
             {starterPrompts.length > 0 && (
               <div className="task-planner-chat-starters" aria-label={t("taskDetail.plannerChat.startersLabel", "Task chat starter prompts")}>
                 {starterPrompts.map((prompt) => (
-                  <AlphaButton
+                  <UiButton
                     key={prompt.id}
                     type="button"
                     className="btn task-planner-chat-starter"
@@ -1668,7 +1745,7 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
                   >
                     <span className="task-planner-chat-starter-label">{prompt.label}</span>
                     {prompt.description && <span className="task-planner-chat-starter-description">{prompt.description}</span>}
-                  </AlphaButton>
+                  </UiButton>
                 ))}
               </div>
             )}
@@ -1719,7 +1796,7 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
                   onQuestionSubmit={(answerText) => void sendMessageContent(answerText)}
                   toolCallRenderer={(toolCall, index) => renderPlannerToolCall(message, toolCall, index)}
                   onEditMessage={editMessageAndResend}
-                  canEdit={message.role === "user" && !message.id.startsWith("optimistic-") && composerState !== "sending"}
+                  canEdit={message.role === "user" && isPersistedChatMessageId(message.id) && composerState !== "sending"}
                 />
               </div>;
             })}
@@ -1740,6 +1817,19 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
           </>
         )}
       </div>
+      {!loading && !showEmptyState && messages.length > 0 && !isTranscriptAtBottom ? (
+        <UiButton
+          type="button"
+          className="task-planner-chat-jump-to-bottom"
+          onClick={jumpToTranscriptBottom}
+          aria-label={t("taskChat.jumpToLatestMessage", "Jump to latest message")}
+          data-testid="task-planner-chat-jump-to-bottom"
+        >
+          <ChevronDown aria-hidden="true" />
+          <span>{t("taskChat.latest", "Latest")}</span>
+        </UiButton>
+      ) : null}
+      </div>
 
       <PlannerChatFooterPortal target={footerTarget}>
       <PendingChatMessageQueue
@@ -1753,7 +1843,7 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
       />
 
       {showCommandMenu && (
-        <AlphaListBox
+        <UiListBox
           className="chat-skill-menu task-planner-chat-command-menu"
           data-testid="task-planner-chat-command-menu"
           aria-label={t("chat.slashSuggestions", "Slash suggestions")}
@@ -1764,7 +1854,7 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
             slashMenuEntries.map((entry, index) => {
               if (entry.kind === "snippet") {
                 return (
-                  <AlphaListBoxItem
+                  <UiListBoxItem
                     key={`snippet-${entry.snippet.name}`}
                     id={`snippet-${entry.snippet.name}`}
                     textValue={entry.snippet.name}
@@ -1777,7 +1867,7 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
                   >
                     <span className="chat-skill-menu-item-name">/{entry.snippet.name}</span>
                     <span className="chat-skill-menu-item-description">{t("chat.snippetSuggestion", "Insert saved prompt")}</span>
-                  </AlphaListBoxItem>
+                  </UiListBoxItem>
                 );
               }
 
@@ -1790,7 +1880,7 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
               */
               const commandDisabled = entry.command.requiresAgent && !agentRunning;
               return (
-                <AlphaListBoxItem
+                <UiListBoxItem
                   key={entry.command.trigger}
                   id={entry.command.trigger}
                   textValue={entry.command.trigger}
@@ -1809,11 +1899,11 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
                       ? t("chat.commandNoRunningAgentHint", "No running agent to steer")
                       : entry.command.description}
                   </span>
-                </AlphaListBoxItem>
+                </UiListBoxItem>
               );
             })
           )}
-        </AlphaListBox>
+        </UiListBox>
       )}
       {/*
       FNXC:ChatMemoryFocus 2026-08-24-04:21:
@@ -1836,7 +1926,6 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
           level={displayedModel.thinkingLevel}
           defaultThinkingLevel={taskChatModel.thinkingLevel ?? "off"}
           showTargetSection
-          showAgentTarget={false}
           targetKey={plannerChatScopeKey}
           models={models}
           favoriteProviders={favoriteProviders}
@@ -1858,7 +1947,7 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
         FNXC:TaskPlannerChatQueue 2026-09-06-00:48:
         Cancellation owns planner dispatch, not the local text or dictation controls. sendMessageContent queues typed text behind cancellationInProgressRef; this composer has no attachment path, so adding one requires an explicit non-text queue contract.
         */}
-        <AlphaTextArea
+        <UiTextArea
           ref={handleComposerRef}
           className="input task-planner-chat-input"
           aria-label={t("taskDetail.plannerChat.inputLabel", "Message task chat")}

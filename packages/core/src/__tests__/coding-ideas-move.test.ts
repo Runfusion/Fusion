@@ -36,7 +36,7 @@ pgDescribe("Coding (Ideas) custom-column moves (workflow-columns graduation)", (
 
   it("moves an ideas-workflow task from the ideas intake column to todo", async () => {
     const store = harness.store();
-    const task = await store.createTask({ description: "idea", workflowId: "builtin:coding-ideas-v2" });
+    const task = await store.createTask({ description: "idea", workflowId: "builtin:coding-ideas" });
     expect(task.column).toBe("ideas");
 
     const moved = await store.moveTask(task.id, "todo", { moveSource: "user" });
@@ -45,7 +45,7 @@ pgDescribe("Coding (Ideas) custom-column moves (workflow-columns graduation)", (
 
   it("advances an ideas task along the Coding (Ideas) custom-column chain", async () => {
     const store = harness.store();
-    const task = await store.createTask({ description: "idea", workflowId: "builtin:coding-ideas-v2" });
+    const task = await store.createTask({ description: "idea", workflowId: "builtin:coding-ideas" });
 
     await store.moveTask(task.id, "todo", { moveSource: "user" });
     await store.moveTask(task.id, "in-progress", { moveSource: "user" });
@@ -55,7 +55,7 @@ pgDescribe("Coding (Ideas) custom-column moves (workflow-columns graduation)", (
 
   it("still rejects a non-adjacent move out of the ideas column", async () => {
     const store = harness.store();
-    const task = await store.createTask({ description: "idea", workflowId: "builtin:coding-ideas-v2" });
+    const task = await store.createTask({ description: "idea", workflowId: "builtin:coding-ideas" });
     await expect(
       store.moveTask(task.id, "in-progress", { moveSource: "user" }),
     ).rejects.toThrow(/Invalid transition: 'ideas' → 'in-progress'/);
@@ -63,7 +63,7 @@ pgDescribe("Coding (Ideas) custom-column moves (workflow-columns graduation)", (
 
   it("allows the ideas → todo move from an engine source too", async () => {
     const store = harness.store();
-    const task = await store.createTask({ description: "idea", workflowId: "builtin:coding-ideas-v2" });
+    const task = await store.createTask({ description: "idea", workflowId: "builtin:coding-ideas" });
     const moved = await store.moveTask(task.id, "todo", { moveSource: "engine" });
     expect(moved.column).toBe("todo");
   });
@@ -87,7 +87,7 @@ pgDescribe("Coding (Ideas) custom-column moves (workflow-columns graduation)", (
   */
   it("moves an ideas-workflow task back from todo to the ideas intake column", async () => {
     const store = harness.store();
-    const task = await store.createTask({ description: "idea", workflowId: "builtin:coding-ideas-v2" });
+    const task = await store.createTask({ description: "idea", workflowId: "builtin:coding-ideas" });
     await store.moveTask(task.id, "todo", { moveSource: "user" });
 
     const demoted = await store.moveTask(task.id, "ideas", { moveSource: "user" });
@@ -99,7 +99,7 @@ pgDescribe("Coding (Ideas) custom-column moves (workflow-columns graduation)", (
 
   it("keeps automatic todo → ideas movement out of the intake role", async () => {
     const store = harness.store();
-    const task = await store.createTask({ description: "idea", workflowId: "builtin:coding-ideas-v2" });
+    const task = await store.createTask({ description: "idea", workflowId: "builtin:coding-ideas" });
     await store.moveTask(task.id, "todo", { moveSource: "user" });
 
     await expect(store.moveTask(task.id, "ideas", { moveSource: "engine" }))
@@ -131,7 +131,7 @@ pgDescribe("Coding (Ideas) custom-column moves (workflow-columns graduation)", (
 
   it("cancels an active task continuation when a user sends implementation back to todo", async () => {
     const store = harness.store();
-    const task = await store.createTask({ description: "idea", workflowId: "builtin:coding-ideas-v2" });
+    const task = await store.createTask({ description: "idea", workflowId: "builtin:coding-ideas" });
     await store.moveTask(task.id, "todo", { moveSource: "user" });
     await store.moveTask(task.id, "in-progress", { moveSource: "user" });
     const continuation = await store.upsertWorkflowWorkItem({

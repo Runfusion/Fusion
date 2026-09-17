@@ -254,7 +254,9 @@ describe("MissionManager reconcile control", () => {
     expect(error).not.toHaveBeenCalledWith(expect.stringMatching(/unique "key"/i)); error.mockRestore();
   });
 
+  // FN-402: the Missions Back control exists only on the phone viewport, so this deselect path renders mobile.
   it("discards a pending reconcile after deselect and unmount without React warnings", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 }); window.dispatchEvent(new Event("resize"));
     const request = deferred<ReturnType<typeof result>>(); reconcileMission.mockReturnValue(request.promise);
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
     const rendered = renderManager(); await screen.findByText("Feature title"); fireEvent.click(screen.getByTestId("mission-reconcile-now"));

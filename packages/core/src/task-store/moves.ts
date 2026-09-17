@@ -24,7 +24,7 @@ import {VALID_TRANSITIONS, COLUMNS} from "../types.js";
 import {serializeWorkflowIr} from "../workflows/workflow-ir.js";
 import {emitWorkflowLifecycleEvent} from "../workflow-events.js";
 import {resolveAllowedColumns, workflowHasColumn} from "../workflows/workflow-transitions.js";
-import {isBuiltinWorkflowId, getBuiltinWorkflow, resolveDefaultWorkflowIr, resolveRetiredBuiltinWorkflowId, DEFAULT_WORKFLOW_ID} from "../workflows/builtin-workflows.js";
+import {isBuiltinWorkflowId, getBuiltinWorkflow, resolveDefaultWorkflowIr, DEFAULT_WORKFLOW_ID} from "../workflows/builtin-workflows.js";
 import {parseWorkflowIr} from "../workflows/workflow-ir.js";
 import {findWorkflowColumn, resolveColumnPluginGates} from "../plugins/plugin-gate-verdict.js";
 import {getTraitRegistry, resolveColumnFlags} from "../workflows/trait-registry.js";
@@ -132,8 +132,8 @@ project-id scoping (FNXC:WorkflowModelLanes): shared PostgreSQL deployments reus
 task ids across projects, so an unscoped read could resolve another project's
 workflow and gate this move against the wrong pool entirely.
 
-FNXC:WorkflowSuccession 2026-09-06-02:54:
-Canonicalize the transaction-local selection before deriving either the IR or pool key. A historical retired identity must use the successor's overrides and capacity budget in the same serialized move snapshot.
+FNXC:WorkflowIdentity 2026-09-14-19:06:
+A built-in revision retains its original identity. Migration 0079 converges persisted references before catalog reads, so selection, configuration and capacity use the same raw workflow id without redirects.
 */
 async function readTaskWorkflowSelectionInTransaction(
   tx: DbTransaction,
@@ -151,7 +151,7 @@ async function readTaskWorkflowSelectionInTransaction(
     .limit(1);
   const workflowId = rows[0]?.workflowId;
   return typeof workflowId === "string" && workflowId.length > 0
-    ? resolveRetiredBuiltinWorkflowId(workflowId)
+    ? workflowId
     : undefined;
 }
 

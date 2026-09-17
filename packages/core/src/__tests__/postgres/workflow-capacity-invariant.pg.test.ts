@@ -165,8 +165,8 @@ pgTest("in-transaction column capacity — ground truth (Phase A3)", () => {
   });
 
   it.each([
-    { holderWorkflowId: "builtin:coding-ideas", contenderWorkflowId: "builtin:coding-ideas-v2" },
-    { holderWorkflowId: "builtin:coding-ideas-v2", contenderWorkflowId: "builtin:coding-ideas" },
+    { holderWorkflowId: "builtin:coding-ideas", contenderWorkflowId: "builtin:coding-ideas" },
+    { holderWorkflowId: "builtin:coding-ideas", contenderWorkflowId: "builtin:coding-ideas" },
   ])(
     "treats $holderWorkflowId holder and $contenderWorkflowId contender as one capacity pool",
     async ({ holderWorkflowId, contenderWorkflowId }) => {
@@ -203,7 +203,7 @@ pgTest("in-transaction column capacity — ground truth (Phase A3)", () => {
         store.countActiveInCapacitySlotAsync = originalCounter;
       }
 
-      expect(observedPoolIds).toContain("builtin:coding-ideas-v2");
+      expect(observedPoolIds).toContain("builtin:coding-ideas");
       expect((error as unknown as { rejection?: { code?: string } })?.rejection?.code).toBe(
         "capacity-exhausted",
       );
@@ -320,7 +320,7 @@ pgTest("in-transaction column capacity — ground truth (Phase A3)", () => {
     await store.moveTask(contender.id, "todo");
 
     /*
-    The stub diverges from what is PERSISTED: it reports builtin:coding-ideas-v2 (whose
+    The stub diverges from what is PERSISTED: it reports builtin:coding-ideas (whose
     wip pool holds zero occupants and whose in-progress column still carries a
     finite maxConcurrent-backed limit), while the row says builtin:coding (pool
     full). Restored in `finally` so a failure cannot leak a patched store into the
@@ -332,7 +332,7 @@ pgTest("in-transaction column capacity — ground truth (Phase A3)", () => {
       .getTaskWorkflowSelectionAsync = async (taskId: string) => {
         if (taskId !== contender.id) return realReader(taskId);
         stubCalls++;
-        return { workflowId: "builtin:coding-ideas-v2", stepIds: [] };
+        return { workflowId: "builtin:coding-ideas", stepIds: [] };
       };
 
     let error: Error | null;
@@ -478,7 +478,7 @@ pgTest("in-transaction column capacity — ground truth (Phase A3)", () => {
 
     let settled = false;
     const write = store
-      .selectTaskWorkflow(task.id, "builtin:coding-ideas-v2")
+      .selectTaskWorkflow(task.id, "builtin:coding-ideas")
       .then(() => { settled = true; }, () => { settled = true; });
 
     try {
@@ -493,6 +493,6 @@ pgTest("in-transaction column capacity — ground truth (Phase A3)", () => {
       await write;
     }
 
-    expect((await store.getTaskWorkflowSelectionAsync(task.id))?.workflowId).toBe("builtin:coding-ideas-v2");
+    expect((await store.getTaskWorkflowSelectionAsync(task.id))?.workflowId).toBe("builtin:coding-ideas");
   });
 });

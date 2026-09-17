@@ -206,7 +206,7 @@ describe("sse-bus subscribers resync after a hidden-tab suspend", () => {
     fetchChatSessionsMock.mockResolvedValue({ sessions: [] });
 
     const { result } = renderHook(() =>
-      useChatUnreadBadge("p-chat", { taskView: "board", quickChatOpen: false }),
+      useChatUnreadBadge("p-chat", { primaryHostActive: false }),
     );
     await flush();
     expect(result.current.chatHasUnreadResponse).toBe(false);

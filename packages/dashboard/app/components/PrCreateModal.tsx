@@ -1,6 +1,6 @@
 import { ViewHeader } from "./ViewHeader";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties } from "react";
-import { AlphaButton, AlphaDialogPanel, AlphaInput, AlphaSelect, AlphaSurface, AlphaTextArea } from "./alpha-ui";
+import { UiButton, UiDialogPanel, UiInput, UiSelect, UiSurface, UiTextArea } from "./ui";
 import ReactMarkdown from "react-markdown";
 import { useTranslation } from "react-i18next";
 import { AlertTriangle, CheckCircle2, RefreshCw, Sparkles, X, XCircle } from "lucide-react";
@@ -153,19 +153,19 @@ function OptionChips<T extends { login?: string; name?: string; color?: string }
               style={chipStyle}
             >
               <span className="pr-create-modal__chip-label">{getLabel(item)}</span>
-              <AlphaButton
+              <UiButton
                 type="button"
                 className="btn btn-icon pr-create-modal__chip-remove"
                 onClick={() => onChange(selected.filter((value) => getKey(value) !== key))}
                 aria-label={`Remove ${getLabel(item)}`}
               >
                 <X size={14} />
-              </AlphaButton>
+              </UiButton>
             </span>
           );
         })}
       </div>
-      <AlphaInput
+      <UiInput
         className="input"
         value={query}
         onChange={(event) => setQuery(event.target.value)}
@@ -175,7 +175,7 @@ function OptionChips<T extends { login?: string; name?: string; color?: string }
       {filtered.length > 0 && (
         <div className="pr-create-modal__option-list">
           {filtered.map((item) => (
-            <AlphaButton
+            <UiButton
               key={getKey(item)}
               type="button"
               className="btn btn-sm pr-create-modal__option-item"
@@ -185,7 +185,7 @@ function OptionChips<T extends { login?: string; name?: string; color?: string }
               }}
             >
               {getLabel(item)}
-            </AlphaButton>
+            </UiButton>
           ))}
         </div>
       )}
@@ -559,16 +559,15 @@ export function PrCreateModal({
       minSize={{ width: 480, height: 420 }}
       /* FNXC:ModalGeometryPersistence 2026-07-15-19:30: Create PR becomes a ≤768px sheet, so its desktop floating geometry remains intact across mobile opens. */
       suspendGeometryPersistenceOnMobile
-      persistGeometryKey="floating-window:pr-create"
     >
       {/**
        * FNXC:PrCreateModal 2026-06-27-00:00:
-       * FN-7170 moves Create PR onto the shared FloatingWindow shell so it matches Plan Mission, Automations, and New Task: desktop users can drag the embedded modal header and resize from every FloatingWindow edge/corner, mobile stays full-screen through CSS, and geometry persists with persistGeometryKey="floating-window:pr-create". Overlay click-to-dismiss is intentionally dropped because FloatingWindow is non-blocking/click-through; close remains available via X, Cancel, and Escape.
+       * FN-7170 moves Create PR onto the shared FloatingWindow shell so it matches Plan Mission, Automations, and New Task: desktop users can drag the embedded modal header and resize from every FloatingWindow edge/corner, mobile stays full-screen through CSS; geometry is no longer persisted since FN-394 (2026-09-14-21:10), so every open is standard-sized and centred. Overlay click-to-dismiss is intentionally dropped because FloatingWindow is non-blocking/click-through; close remains available via X, Cancel, and Escape.
        *
        * FNXC:PrCreateModal 2026-06-27-23:48:
        * Do not reintroduce a naive overlay onClick target check here. Before FloatingWindow, self-removing buttons and resize-grip releases could retarget synthesized clicks to the backdrop and close the dialog; the floating shell avoids that footgun by having no backdrop-dismiss path for Create PR.
        */}
-      <AlphaDialogPanel
+      <UiDialogPanel
         ref={modalRef}
         className="modal modal-lg pr-create-modal"
         labelledBy={headingId}
@@ -602,17 +601,17 @@ export function PrCreateModal({
                       </div>
                     ))}
                   </div>
-                  <AlphaButton type="button" className="btn btn-sm" onClick={() => void handleBaseChange(baseBranch)} disabled={preflightLoading}>
+                  <UiButton type="button" className="btn btn-sm" onClick={() => void handleBaseChange(baseBranch)} disabled={preflightLoading}>
                     {preflightLoading ? <RefreshCw size={14} className="spin" /> : null}
                     {t("pr.rerunPreflight", "Re-run preflight")}
-                  </AlphaButton>
+                  </UiButton>
                   {!preflight?.branchOnRemote ? (
-                    <AlphaSurface className="card pr-create-modal__preflight-remediation">
+                    <UiSurface className="card pr-create-modal__preflight-remediation">
                       <div className="pr-create-modal__conflict-copy">
                         <p className="pr-create-modal__conflict-title">{t("pr.pushBranch.title", "Push branch to remote")}</p>
                         <p className="pr-create-modal__conflict-message">{t("pr.pushBranch.message", "Fusion will push this task's branch to origin so the PR can be created.")}</p>
                       </div>
-                      <AlphaButton
+                      <UiButton
                         type="button"
                         className="btn btn-sm"
                         onClick={() => void handlePushBranch()}
@@ -620,16 +619,16 @@ export function PrCreateModal({
                       >
                         {pushingBranch ? <RefreshCw size={14} className="spin" /> : null}
                         {t("pr.pushBranch.button", "Push branch to remote")}
-                      </AlphaButton>
-                    </AlphaSurface>
+                      </UiButton>
+                    </UiSurface>
                   ) : null}
                   {preflight?.conflictsWithBase ? (
-                    <AlphaSurface className="card pr-create-modal__conflict-resolution">
+                    <UiSurface className="card pr-create-modal__conflict-resolution">
                       <div className="pr-create-modal__conflict-copy">
                         <p className="pr-create-modal__conflict-title">{t("pr.resolveConflicts.title", "Resolve conflicts with AI")}</p>
                         <p className="pr-create-modal__conflict-message">{t("pr.resolveConflicts.message", "Fusion will use AI to resolve conflicts on this branch and push it.")}</p>
                       </div>
-                      <AlphaButton
+                      <UiButton
                         type="button"
                         className="btn btn-sm"
                         onClick={() => void handleResolveConflicts()}
@@ -637,8 +636,8 @@ export function PrCreateModal({
                       >
                         {resolvingConflicts ? <RefreshCw size={14} className="spin" /> : null}
                         {t("pr.resolveConflicts.button", "Resolve conflicts with AI")}
-                      </AlphaButton>
-                    </AlphaSurface>
+                      </UiButton>
+                    </UiSurface>
                   ) : null}
                 </>
               ) : null}
@@ -652,14 +651,14 @@ export function PrCreateModal({
               <div className="pr-create-modal__title-row">
                 <label className="pr-create-modal__label" htmlFor="pr-create-modal-title">{t("pr.titleLabel", "Title")}</label>
                 <div className="pr-create-modal__inline-actions">
-                  <AlphaButton type="button" className="btn btn-sm" onClick={() => void regenerate()} disabled={metadataLoading}><Sparkles size={14} />{t("pr.regenerate", "Regenerate")}</AlphaButton>
-                  {userEditedTitle && <AlphaButton type="button" className="btn btn-sm" onClick={() => { setTitle(aiTitle); setUserEditedTitle(false); }}>{t("pr.revertToAi", "Revert to AI version")}</AlphaButton>}
+                  <UiButton type="button" className="btn btn-sm" onClick={() => void regenerate()} disabled={metadataLoading}><Sparkles size={14} />{t("pr.regenerate", "Regenerate")}</UiButton>
+                  {userEditedTitle && <UiButton type="button" className="btn btn-sm" onClick={() => { setTitle(aiTitle); setUserEditedTitle(false); }}>{t("pr.revertToAi", "Revert to AI version")}</UiButton>}
                 </div>
               </div>
               {metadataLoading ? <div className="pr-create-modal__loading pr-create-modal__section-loading"><span className="status-dot status-dot--pending" aria-hidden="true" />{t("pr.generatingTitle", "Generating AI title…")}</div> : null}
               {metadataError ? <div className="form-error pr-error" role="alert"><p>{metadataError}</p></div> : null}
               <div className="pr-create-modal__field-shell">
-                <AlphaInput
+                <UiInput
                   id="pr-create-modal-title"
                   className="input"
                   value={title}
@@ -675,9 +674,9 @@ export function PrCreateModal({
               <div className="pr-create-modal__title-row">
                 <label className="pr-create-modal__label" htmlFor="pr-create-modal-body">{t("pr.bodyLabel", "Body")}</label>
                 <div className="pr-create-modal__inline-actions">
-                  <AlphaButton type="button" className="btn btn-sm" onClick={() => void regenerate()} disabled={metadataLoading}><Sparkles size={14} />{t("pr.regenerate", "Regenerate")}</AlphaButton>
-                  {userEditedBody && <AlphaButton type="button" className="btn btn-sm" onClick={() => { setBody(aiBody); setUserEditedBody(false); }}>{t("pr.revertToAi", "Revert to AI version")}</AlphaButton>}
-                  <AlphaButton
+                  <UiButton type="button" className="btn btn-sm" onClick={() => void regenerate()} disabled={metadataLoading}><Sparkles size={14} />{t("pr.regenerate", "Regenerate")}</UiButton>
+                  {userEditedBody && <UiButton type="button" className="btn btn-sm" onClick={() => { setBody(aiBody); setUserEditedBody(false); }}>{t("pr.revertToAi", "Revert to AI version")}</UiButton>}
+                  <UiButton
                     type="button"
                     className="btn btn-sm"
                     data-testid="pr-create-body-preview-toggle"
@@ -686,7 +685,7 @@ export function PrCreateModal({
                     onClick={() => setShowBodyPreview((current) => !current)}
                   >
                     {showBodyPreview ? t("pr.editBody", "Edit") : t("pr.previewBody", "Preview")}
-                  </AlphaButton>
+                  </UiButton>
                 </div>
               </div>
               {metadataLoading ? <div className="pr-create-modal__loading pr-create-modal__section-loading"><span className="status-dot status-dot--pending" aria-hidden="true" />{t("pr.generatingBody", "Generating AI body…")}</div> : null}
@@ -703,7 +702,7 @@ export function PrCreateModal({
                 </div>
               ) : (
                 <div className="pr-create-modal__field-shell">
-                  <AlphaTextArea
+                  <UiTextArea
                     id="pr-create-modal-body"
                     className="input pr-create-modal__body-input"
                     value={body}
@@ -730,12 +729,12 @@ export function PrCreateModal({
                 <label className="pr-create-modal__label" htmlFor="pr-create-modal-base">{t("pr.baseBranch", "Base branch")}</label>
                 {optionsLoading ? <div className="pr-create-modal__loading pr-create-modal__section-loading"><span className="status-dot status-dot--pending" aria-hidden="true" />{t("pr.loadingOptions", "Loading PR options…")}</div> : null}
                 {optionsError ? <div className="form-error pr-error" role="alert"><p>{optionsError}</p></div> : null}
-                <AlphaSelect id="pr-create-modal-base" className="select" value={baseBranch} onChange={(event) => void handleBaseChange(event.target.value)} disabled={optionsLoading || Boolean(optionsError) || (options?.baseBranches?.length ?? 0) === 0} aria-label={t("pr.baseBranch", "Base branch")}>
+                <UiSelect id="pr-create-modal-base" className="select" value={baseBranch} onChange={(event) => void handleBaseChange(event.target.value)} disabled={optionsLoading || Boolean(optionsError) || (options?.baseBranches?.length ?? 0) === 0} aria-label={t("pr.baseBranch", "Base branch")}>
                   {(options?.baseBranches ?? []).map((branch) => <option key={branch} value={branch}>{branch}</option>)}
-                </AlphaSelect>
+                </UiSelect>
               </div>
               <label className="checkbox-label pr-create-modal__draft">
-                <AlphaInput type="checkbox" checked={draft} onChange={(event) => setDraft(event.target.checked)} />
+                <UiInput type="checkbox" checked={draft} onChange={(event) => setDraft(event.target.checked)} />
                 {t("pr.createAsDraft", "Create as draft")}
               </label>
             </section>
@@ -798,7 +797,7 @@ export function PrCreateModal({
               <div className="form-error pr-error" role="alert">
                 <p>{pushBranchError}</p>
                 <div className="pr-error__actions">
-                  <AlphaButton type="button" className="btn btn-sm pr-error__dismiss" onClick={() => setPushBranchError(null)} aria-label={t("pr.dismissPushBranchError", "Dismiss push branch error")}>×</AlphaButton>
+                  <UiButton type="button" className="btn btn-sm pr-error__dismiss" onClick={() => setPushBranchError(null)} aria-label={t("pr.dismissPushBranchError", "Dismiss push branch error")}>×</UiButton>
                 </div>
               </div>
             ) : null}
@@ -807,7 +806,7 @@ export function PrCreateModal({
               <div className="form-error pr-error" role="alert">
                 <p>{resolveConflictError}</p>
                 <div className="pr-error__actions">
-                  <AlphaButton type="button" className="btn btn-sm pr-error__dismiss" onClick={() => setResolveConflictError(null)} aria-label={t("pr.dismissConflictResolutionError", "Dismiss conflict resolution error")}>×</AlphaButton>
+                  <UiButton type="button" className="btn btn-sm pr-error__dismiss" onClick={() => setResolveConflictError(null)} aria-label={t("pr.dismissConflictResolutionError", "Dismiss conflict resolution error")}>×</UiButton>
                 </div>
               </div>
             ) : null}
@@ -819,8 +818,8 @@ export function PrCreateModal({
                 <div className="pr-error__actions">
                   {lastGhError?.action?.kind === "shell" ? <p>{t("pr.error.actionRun", "Action: run")} <code>{lastGhError.action.command}</code></p> : null}
                   {lastGhError?.action?.kind === "open" ? <p>{t("pr.error.actionOpen", "Action: open")} <a href={lastGhError.action.url} target="_blank" rel="noreferrer">{t("pr.error.docs", "docs")}</a></p> : null}
-                  {lastGhError?.retryable ? <AlphaButton type="button" className="btn btn-sm pr-error__retry" onClick={() => void submit()}>{t("actions.retry", "Retry")}</AlphaButton> : null}
-                  <AlphaButton type="button" className="btn btn-sm pr-error__dismiss" onClick={() => { setLastGhError(null); setSubmitError(null); }} aria-label={t("pr.dismissError", "Dismiss PR error")}>×</AlphaButton>
+                  {lastGhError?.retryable ? <UiButton type="button" className="btn btn-sm pr-error__retry" onClick={() => void submit()}>{t("actions.retry", "Retry")}</UiButton> : null}
+                  <UiButton type="button" className="btn btn-sm pr-error__dismiss" onClick={() => { setLastGhError(null); setSubmitError(null); }} aria-label={t("pr.dismissError", "Dismiss PR error")}>×</UiButton>
                 </div>
               </div>
             )}
@@ -828,13 +827,13 @@ export function PrCreateModal({
         </div>
 
         <div className="modal-actions">
-          <AlphaButton type="button" className="btn" onClick={onClose} disabled={submitting}>{t("actions.cancel", "Cancel")}</AlphaButton>
-          <AlphaButton type="button" className="btn btn-primary" onClick={() => void submit()} disabled={!preflight || preflightLoading || metadataLoading || !canSubmit || !hasRequiredPrContent || submitting}>
+          <UiButton type="button" className="btn" onClick={onClose} disabled={submitting}>{t("actions.cancel", "Cancel")}</UiButton>
+          <UiButton type="button" className="btn btn-primary" onClick={() => void submit()} disabled={!preflight || preflightLoading || metadataLoading || !canSubmit || !hasRequiredPrContent || submitting}>
             {submitting ? <RefreshCw size={14} className="spin" /> : null}
             {draft ? t("pr.createDraftPr", "Create draft PR") : t("pr.createPr", "Create PR")}
-          </AlphaButton>
+          </UiButton>
         </div>
-      </AlphaDialogPanel>
+      </UiDialogPanel>
     </FloatingWindow>
   );
 }

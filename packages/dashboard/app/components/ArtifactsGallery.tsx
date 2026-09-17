@@ -474,7 +474,7 @@ viewer's own header chrome (title + actions + close); Escape still dismisses and
 autofocuses via useOverlayDismiss. Each viewer owns its close-button ref and passes it to both
 OverlayShell and ViewerHeader.
 */
-function OverlayShell({ label, onClose, children, wide, closeRef, windowKey, persistKey }: { label: string; onClose: () => void; children: React.ReactNode; wide?: boolean; closeRef: React.RefObject<HTMLButtonElement | null>; windowKey: string; persistKey: string }) {
+function OverlayShell({ label, onClose, children, wide, closeRef, windowKey }: { label: string; onClose: () => void; children: React.ReactNode; wide?: boolean; closeRef: React.RefObject<HTMLButtonElement | null>; windowKey: string }) {
   useOverlayDismiss(onClose, closeRef);
 
   return (
@@ -489,7 +489,6 @@ function OverlayShell({ label, onClose, children, wide, closeRef, windowKey, per
       /* FNXC:ModalGeometryPersistence 2026-07-16-00:40: Artifact viewers are full-screen sheets at ≤768px or ≤480px tall, so neither mobile shape may overwrite desktop geometry. */
       suspendGeometryPersistenceOnMobile
       suspendGeometryPersistenceOnShortViewport
-      persistGeometryKey={persistKey}
       defaultSize={wide ? { width: 1024, height: 720 } : { width: 720, height: 640 }}
       minSize={{ width: 320, height: 280 }}
     >
@@ -543,7 +542,7 @@ function MediaLightbox({ artifact, projectId, t, onClose, onOpenTask }: OverlayP
   const closeRef = useRef<HTMLButtonElement>(null);
 
   return (
-    <OverlayShell label={t("documents.lightboxLabel", "Artifact media preview")} onClose={onClose} wide closeRef={closeRef} windowKey={`artifact-media-${artifact.id}`} persistKey="fn-artifact-viewer-media-geometry">
+    <OverlayShell label={t("documents.lightboxLabel", "Artifact media preview")} onClose={onClose} wide closeRef={closeRef} windowKey={`artifact-media-${artifact.id}`}>
       <ViewerHeader
         title={title}
         onClose={onClose}
@@ -579,7 +578,7 @@ function PdfViewer({ artifact, projectId, t, onClose, onOpenTask }: OverlayProps
   const closeRef = useRef<HTMLButtonElement>(null);
 
   return (
-    <OverlayShell label={t("documents.pdfViewerLabel", "PDF artifact viewer")} onClose={onClose} wide closeRef={closeRef} windowKey={`artifact-pdf-${artifact.id}`} persistKey="fn-artifact-viewer-pdf-geometry">
+    <OverlayShell label={t("documents.pdfViewerLabel", "PDF artifact viewer")} onClose={onClose} wide closeRef={closeRef} windowKey={`artifact-pdf-${artifact.id}`}>
       <ViewerHeader
         title={title}
         onClose={onClose}
@@ -711,7 +710,7 @@ function DocViewer({ artifact, projectId, t, addToast, onClose, onOpenTask, onAr
   };
 
   return (
-    <OverlayShell label={t("documents.docViewerLabel", "Document artifact viewer")} onClose={onClose} wide closeRef={closeRef} windowKey={`artifact-doc-${artifact.id}`} persistKey="fn-artifact-viewer-doc-geometry">
+    <OverlayShell label={t("documents.docViewerLabel", "Document artifact viewer")} onClose={onClose} wide closeRef={closeRef} windowKey={`artifact-doc-${artifact.id}`}>
       <ViewerHeader
         title={title}
         onClose={onClose}

@@ -39,6 +39,10 @@ export function resizeWithTouch(handle: HTMLElement, pointerId = 992): void {
  * Real modal tests use this after rendering their production component. It intentionally receives
  * the modal's actual header element so a renamed or missing delegated drag selector fails here,
  * rather than being hidden by a synthetic FloatingWindow fixture.
+ *
+ * FNXC:FloatingWindowGeometry 2026-09-14-21:10:
+ * FN-394 removed durable geometry, so the gesture is still proven by the RENDERED rectangle while the
+ * historical storage key must stay untouched by the window.
  */
 export function assertRenderedModalTouchGeometry(windowKey: string, dragHandle: HTMLElement): void {
   const panel = expectFloatingWindowStructure(windowKey);
@@ -48,11 +52,7 @@ export function assertRenderedModalTouchGeometry(windowKey: string, dragHandle: 
   resizeWithTouch(screen.getByTestId("floating-window-resize-se"));
   expect(Number.parseFloat(panel.style.left)).not.toBe(initialLeft);
   expect(Number.parseFloat(panel.style.width)).toBeGreaterThan(initialWidth);
-  const persisted = JSON.parse(localStorage.getItem(`floating-window:${windowKey}`) ?? "{}");
-  expect(persisted.position.x).toBeGreaterThanOrEqual(16);
-  expect(persisted.position.y).toBeGreaterThanOrEqual(16);
-  expect(persisted.size.width).toBeLessThanOrEqual(window.innerWidth - 32);
-  expect(persisted.size.height).toBeLessThanOrEqual(window.innerHeight - 32);
+  expect(localStorage.getItem(`floating-window:${windowKey}`)).toBeNull();
 }
 
 type ModalMount = () => RenderResult;
@@ -78,35 +78,47 @@ function setSheetViewport(mode: SheetMode): () => void {
 
 /**
  * FNXC:ModalTouchGeometry 2026-07-26-18:10:
- * FN-8606 requires production renders, not a FloatingWindow stand-in, to prove every migrated
- * caller rejects corrupt geometry, clamps a geometry saved on a larger display, and avoids both
- * reads/writes plus drag/resize chrome in phone and short-viewport sheets.
+ * FN-8606 requires production renders, not a FloatingWindow stand-in, to prove every migrated caller
+ * behaves at its real host boundary, including phone and short-viewport sheets with no drag/resize chrome.
+ *
+ * FNXC:FloatingWindowGeometry 2026-09-14-21:10:
+ * FN-394 replaced geometry RESTORATION with geometry INDEPENDENCE. The historical key is pre-filled with
+ * a corrupt value and then with an off-standard rectangle: in both cases the host must open at its own
+ * standard size and must neither read nor write that key, on desktop exactly as on a sheet.
  */
 export function assertModalGeometryRecoveryAndSheetContracts(windowKey: string, mount: ModalMount): void {
   const geometryKey = `floating-window:${windowKey}`;
+  const offStandard = JSON.stringify({ size: { width: 311, height: 222 }, position: { x: 7, y: 9 } });
 
   cleanup();
   localStorage.setItem(geometryKey, "not-json");
   let rendered = mount();
   const corruptPanel = screen.getByTestId(`floating-window-${windowKey}`);
-  expect(Number.parseFloat(corruptPanel.style.width)).toBeGreaterThan(0);
-  expect(Number.parseFloat(corruptPanel.style.height)).toBeGreaterThan(0);
+  const standard = { width: corruptPanel.style.width, height: corruptPanel.style.height };
+  expect(Number.parseFloat(standard.width)).toBeGreaterThan(0);
+  expect(Number.parseFloat(standard.height)).toBeGreaterThan(0);
   rendered.unmount();
 
-  localStorage.setItem(geometryKey, JSON.stringify({
-    size: { width: 99999, height: 99999 },
-    position: { x: 99999, y: -99999 },
-  }));
-  rendered = mount();
-  const restoredPanel = screen.getByTestId(`floating-window-${windowKey}`);
-  expect(Number.parseFloat(restoredPanel.style.left)).toBeGreaterThanOrEqual(16);
-  expect(Number.parseFloat(restoredPanel.style.top)).toBeGreaterThanOrEqual(16);
-  expect(Number.parseFloat(restoredPanel.style.width)).toBeLessThanOrEqual(window.innerWidth - 32);
-  expect(Number.parseFloat(restoredPanel.style.height)).toBeLessThanOrEqual(window.innerHeight - 32);
-  rendered.unmount();
+  cleanup();
+  localStorage.setItem(geometryKey, offStandard);
+  const getItemDesktop = vi.spyOn(Storage.prototype, "getItem");
+  const setItemDesktop = vi.spyOn(Storage.prototype, "setItem");
+  try {
+    rendered = mount();
+    const reopened = screen.getByTestId(`floating-window-${windowKey}`);
+    expect(reopened.style.width).toBe(standard.width);
+    expect(reopened.style.height).toBe(standard.height);
+    expect(getItemDesktop).not.toHaveBeenCalledWith(geometryKey);
+    expect(setItemDesktop).not.toHaveBeenCalledWith(geometryKey, expect.any(String));
+    expect(localStorage.getItem(geometryKey)).toBe(offStandard);
+    rendered.unmount();
+  } finally {
+    getItemDesktop.mockRestore();
+    setItemDesktop.mockRestore();
+  }
 
   for (const mode of ["phone", "short"] as const) {
-    localStorage.setItem(geometryKey, JSON.stringify({ size: { width: 99999, height: 99999 }, position: { x: 99999, y: -99999 } }));
+    localStorage.setItem(geometryKey, offStandard);
     const restoreMatchMedia = setSheetViewport(mode);
     const getItem = vi.spyOn(Storage.prototype, "getItem");
     const setItem = vi.spyOn(Storage.prototype, "setItem");

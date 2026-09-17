@@ -131,6 +131,48 @@ describe("GraphWorkflowSwitcherSlot", () => {
     });
   });
 
+  /*
+  FN-439 cas (c) : le Header ne produit plus `#header-workflow-slot` hors Board/List, donc Graph n'affiche plus de
+  contrôle. La preuve que le filtrage du graphe survit à cette disparition est que la sélection reste publiée :
+  l'effet `onWorkflowSelectionChange` s'exécute avant le retour anticipé lié à l'absence de slot.
+  */
+  it("publie la sélection résolue sans rien rendre quand le slot du Header est absent", async () => {
+    const onWorkflowSelectionChange = vi.fn();
+
+    const { container } = render(
+      <GraphWorkflowSwitcherSlot projectId="project-graph-no-slot" onWorkflowSelectionChange={onWorkflowSelectionChange} />,
+    );
+
+    await waitFor(() => {
+      expect(onWorkflowSelectionChange).toHaveBeenLastCalledWith({
+        boardWorkflows: workflowPayload(),
+        selectedWorkflow: DEFAULT_WORKFLOW,
+        isAllWorkflowsSelected: false,
+      });
+    });
+    expect(container).toBeEmptyDOMElement();
+    expect(document.querySelector(".board-workflow-toolbar")).toBeNull();
+    expect(screen.queryByTestId("workflow-switcher")).toBeNull();
+  });
+
+  /*
+  FNXC:WorkflowControls 2026-09-15-01:44:
+  FN-405: Graph now shares `useHeaderWorkflowSlot` with Board, List, and the Planning/Missions slot.
+  A header slot mounted after Graph must still receive the switcher rather than leaving it unrendered.
+  */
+  it("portals into a header workflow slot mounted after the first render", async () => {
+    render(<GraphWorkflowSwitcherSlot projectId="project-graph-late" />);
+
+    await waitFor(() => expect(fetchBoardWorkflowsMock).toHaveBeenCalled());
+    expect(screen.queryByTestId("workflow-switcher")).toBeNull();
+
+    const headerSlot = appendHeaderWorkflowSlot();
+
+    const selector = await screen.findByTestId("workflow-switcher");
+    expect(headerSlot.contains(selector)).toBe(true);
+    expect(document.querySelectorAll(".board-workflow-toolbar")).toHaveLength(1);
+  });
+
   it("refreshes the board-workflows payload when the dropdown opens", async () => {
     appendHeaderWorkflowSlot();
     render(<GraphWorkflowSwitcherSlot projectId="project-refresh" />);
@@ -216,8 +258,7 @@ describe("GraphWorkflowSwitcherSlot", () => {
   it("exposes all workflows as an aggregate non-editable graph selection", async () => {
     appendHeaderWorkflowSlot();
     const onWorkflowSelectionChange = vi.fn();
-    const onOpenWorkflowEditor = vi.fn();
-    render(<GraphWorkflowSwitcherSlot projectId="project-graph-all" onWorkflowSelectionChange={onWorkflowSelectionChange} onOpenWorkflowEditor={onOpenWorkflowEditor} />);
+    render(<GraphWorkflowSwitcherSlot projectId="project-graph-all" onWorkflowSelectionChange={onWorkflowSelectionChange} />);
 
     fireEvent.click(await screen.findByTestId("workflow-switcher"));
     const aggregateOption = screen.getByTestId(`workflow-switcher-option-${ALL_WORKFLOWS_BOARD_VIEW_ID}`);
@@ -225,7 +266,9 @@ describe("GraphWorkflowSwitcherSlot", () => {
     expect(within(aggregateOption).getByTitle("Plan: 0")).toBeInTheDocument();
     expect(within(aggregateOption).getByTitle("Progress: 0")).toBeInTheDocument();
     expect(within(aggregateOption).getByTitle("Review: 0")).toBeInTheDocument();
-    expect(screen.queryByTestId(`workflow-switcher-edit-${ALL_WORKFLOWS_BOARD_VIEW_ID}`)).toBeNull();
+    // FN-407: the graph slot renders a selection-only switcher — no row has an edit affordance.
+    expect(screen.queryAllByTestId(/^workflow-switcher-edit-/)).toHaveLength(0);
+    expect(screen.queryByTestId("workflow-switcher-create")).toBeNull();
     fireEvent.click(screen.getByTestId(`workflow-switcher-option-${ALL_WORKFLOWS_BOARD_VIEW_ID}`));
 
     await waitFor(() => {
@@ -233,18 +276,22 @@ describe("GraphWorkflowSwitcherSlot", () => {
       expect(lastSelection?.isAllWorkflowsSelected).toBe(true);
       expect(lastSelection?.selectedWorkflow.id).toBe(DEFAULT_WORKFLOW.id);
     });
-    expect(onOpenWorkflowEditor).not.toHaveBeenCalledWith(ALL_WORKFLOWS_BOARD_VIEW_ID);
   });
 
-  it("forwards dropdown edit workflow ids to the graph editor launcher", async () => {
+  /*
+  FN-407: the case that proved Graph forwarded dropdown edit workflow ids is DELETED — the slot no longer
+  accepts an edit callback and the popover renders no edit affordance. Its replacement proves the absence
+  directly on this host.
+  */
+  it("renders no edit or create affordance from the graph slot", async () => {
     appendHeaderWorkflowSlot();
-    const onOpenWorkflowEditor = vi.fn();
-    render(<GraphWorkflowSwitcherSlot projectId="project-edit" onOpenWorkflowEditor={onOpenWorkflowEditor} />);
+    render(<GraphWorkflowSwitcherSlot projectId="project-edit" />);
 
     fireEvent.click(await screen.findByTestId("workflow-switcher"));
-    fireEvent.click(screen.getByTestId("workflow-switcher-edit-wf-review"));
 
-    expect(onOpenWorkflowEditor).toHaveBeenCalledWith("wf-review");
+    expect(screen.queryAllByTestId(/^workflow-switcher-edit-/)).toHaveLength(0);
+    expect(screen.queryByTestId("workflow-switcher-create")).toBeNull();
+    expect(screen.getAllByRole("option").length).toBeGreaterThan(1);
   });
 
   it("renders no dropdown shell when the header slot is absent", async () => {

@@ -60,6 +60,7 @@ function mainContentProps(overrides: Partial<MainContentProps> = {}): MainConten
     taskView: "mailbox",
     modalManager: {} as MainContentProps["modalManager"],
     handleChangeTaskView: vi.fn(),
+    openHistory: vi.fn(),
     refreshAppSettings: vi.fn(async () => undefined),
     addToast: vi.fn(),
     currentProject: { id: "project-1", name: "Project 1" } as MainContentProps["currentProject"],

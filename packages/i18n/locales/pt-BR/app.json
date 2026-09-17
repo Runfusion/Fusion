@@ -1165,7 +1165,8 @@
     "disableHeartbeatsCountHint": "Desativar {{count}} heartbeats ativados do projeto",
     "bulkFailures": "falharam {{count}}",
     "detailLabel": "",
-    "lastCompletedStep": ""
+    "lastCompletedStep": "",
+    "mailSubject": "Assunto"
   },
   "app": {
     "backendError": {
@@ -1261,13 +1262,12 @@
   "chat": {
     "archive": "Arquivar",
     "attachFiles": "Anexar arquivos",
+    "backToConversations": "",
     "cancel": "Cancelar",
     "cancelButton": "Cancelar",
     "clearConversationFailed": "Falha ao limpar a conversa",
-    "closeQuickChat": "Fechar chat rápido",
     "openInNewWindow": "",
     "windowOpen": "Aberto",
-    "windowMinimized": "Minimizado",
     "conversationArchived": "Conversa arquivada",
     "conversationDeleted": "Conversa excluída",
     "conversationName": "Nome da conversa",
@@ -1318,11 +1318,9 @@
     "modeAgent": "Agente",
     "modeModel": "Modelo",
     "newChat": "Novo chat",
-    "newChatModeAgent": "Agente",
     "newChatModeModel": "Modelo",
     "newChatTitle": "Novo chat",
     "newNotAllowedForTaskChat": "Este chat está vinculado a uma tarefa — /new e /clear não conseguem limpá-lo",
-    "noAgentsAvailable": "Nenhum agente disponível",
     "noConversationsYet": "Ainda não há conversas",
     "noMessage": "Nenhuma mensagem",
     "noMessages": "Sem mensagens",
@@ -1330,7 +1328,6 @@
     "noRoomsYet": "Ainda não há salas.",
     "noSkillsAvailable": "Nenhuma habilidade disponível",
     "noSkillsFound": "Nenhuma habilidade encontrada",
-    "openQuickChat": "Abrir chat rápido",
     "preserveToStash": "",
     "preserveToStashDone": "",
     "preserveToStashFailed": "",
@@ -1357,7 +1354,6 @@
     "forcePending": "Forçar envio da mensagem na fila",
     "forcePendingShort": "Forçar envio",
     "pendingEditEmpty": "Mensagens na fila não podem ficar vazias",
-    "quickChatTitle": "Chat rápido",
     "relativeTimeDays_one": "há {{count}}d",
     "relativeTimeDays_other": "há {{count}}d",
     "relativeTimeHours_one": "há {{count}}h",
@@ -1430,7 +1426,6 @@
     "untitledSession": "Sem título",
     "workingStatus": "Trabalhando…",
     "you": "Você",
-    "modelAgentSection": "Modelo / Agente",
     "thinkingLevelSection": "Nível de pensamento",
     "noModelsAvailable": "Nenhum modelo disponível",
     "currentAgentTarget": "Agente atual: {{name}}",
@@ -1441,8 +1436,6 @@
     "agentRepliesFailed": "Alguns agentes não puderam responder: {{agents}}",
     "noDefaultModelConfigured": "Configure um modelo de chat padrão nas Configurações antes de criar uma conversa.",
     "newChatOpenInNewWindowHint": "",
-    "minimizeAllChats": "Minimizar todos os chats",
-    "restoreAllChats": "Restaurar todos os chats",
     "slashSuggestions": "Sugestões de barra",
     "loadingSlashSuggestions": "Carregando sugestões…",
     "snippetSuggestion": "Inserir prompt salvo",
@@ -2061,7 +2054,10 @@
     "reportTitle": "",
     "sectionBody": "",
     "sectionHeading": "",
-    "selectStructure": ""
+    "selectStructure": "",
+    "subject": "Assunto",
+    "subjectPlaceholder": "Assunto curto (opcional)",
+    "subjectTooLong": "O assunto deve ter no máximo 200 caracteres"
   },
   "confirm": {
     "cancel": "Cancelar",
@@ -3524,7 +3520,6 @@
     "outbox": "Caixa de saída",
     "outboxTab": "Caixa de saída",
     "pending": "Pendente",
-    "refreshTitle": "Atualizar",
     "reply": "Responder",
     "replyButton": "Responder",
     "replyingTo": "Respondendo a",
@@ -3586,7 +3581,20 @@
     "completionImages": "Imagens da conclusão",
     "completionImage": "Imagem da conclusão",
     "suggestedRecommendations": "Recomendações sugeridas",
-    "noSuggestedRecommendations": "Nenhuma recomendação de acompanhamento foi sugerida."
+    "noSuggestedRecommendations": "Nenhuma recomendação de acompanhamento foi sugerida.",
+    "subject": {
+      "none": "(sem assunto)",
+      "taskCompleted": "{{taskId}} concluída",
+      "taskProposal": "Proposta de tarefa: {{title}}",
+      "taskRecommendations": "Recomendações de tarefas",
+      "taskWedge": "{{taskId}} requer atenção",
+      "duplicateDecision": "{{taskId}}: decisão de duplicata",
+      "planningClarification": "Esclarecimento de planejamento"
+    },
+    "filter": "Filtrar",
+    "filterTitle": "Filtrar a caixa de entrada",
+    "filterMenuLabel": "Escopo da caixa de entrada",
+    "filterPendingApprovalsLabel": "Filtrar a caixa de entrada — {{count}} aprovações pendentes"
   },
   "memory": {
     "auditChecksTitle": "Verificações de auditoria",
@@ -4215,13 +4223,19 @@
   },
   "nav": {
     "activityLog": "Registro de atividades",
+    "activityPopover": "Atividade",
     "agents": "Agentes",
+    "artifactsUnreadAriaLabel_one": "",
+    "artifactsUnreadAriaLabel_other": "",
+    "artifactsUnreadDotAriaLabel": "",
     "automation": "Automação",
     "board": "Quadro",
+    "boardView": "Visão de quadro",
     "chat": "Chat",
     "chatUnreadAriaLabel": "Resposta de chat não lida",
     "collapseSidebar": "Recolher barra lateral",
     "commandCenter": "Painel",
+    "conversations": "Conversas",
     "devServer": "Servidor de desenvolvimento",
     "documents": "Artefatos",
     "evals": "Avaliações",
@@ -4232,6 +4246,7 @@
     "importFromGitHub": "Importar do GitHub",
     "insights": "Insights",
     "list": "Lista",
+    "listView": "Visão de lista",
     "loadingScripts": "Carregando scripts…",
     "mailbox": "Caixa de entrada",
     "mailboxPendingAriaLabel": "Aprovações pendentes",
@@ -4241,6 +4256,10 @@
     "more": "Mais",
     "moreSheetTitle": "Navegar",
     "noScriptsAddOne": "Nenhum script — adicione um…",
+    "notes": "Notas",
+    "notesPopover": "Notas",
+    "openMenu": "Abrir menu de navegação",
+    "patchnode": "",
     "planning": "Planejamento",
     "planningNeedsInputAriaLabel": "Planejamento precisa da sua contribuição",
     "primaryNavAriaLabel": "Navegação principal",
@@ -4258,14 +4277,8 @@
     "terminal": "Terminal",
     "todos": "Pendências",
     "usage": "Uso",
-    "workflows": "Fluxos de trabalho",
-    "patchnode": "",
-    "artifactsUnreadAriaLabel_one": "",
-    "artifactsUnreadAriaLabel_other": "",
-    "artifactsUnreadDotAriaLabel": "",
-    "notes": "Notas",
-    "openMenu": "Abrir menu de navegação",
-    "whiteboard": "Whiteboard"
+    "whiteboard": "Whiteboard",
+    "workflows": "Fluxos de trabalho"
   },
   "newTaskModal": {
     "addDependencies": "Adicionar dependências",
@@ -5276,14 +5289,6 @@
       "urlValid": "A URL base deve ser uma URL válida."
     }
   },
-  "quickChat": {
-    "errorAttachmentsBeforeSession": "Não é possível enviar anexos antes que a sessão de chat esteja pronta",
-    "errorAttachmentsWhileStreaming": "Não é possível enviar anexos enquanto uma resposta está sendo transmitida",
-    "errorGettingResponse": "Falha ao obter resposta",
-    "errorInitializingChat": "Falha ao inicializar o chat",
-    "errorRefreshingSessions": "Falha ao atualizar sessões de chat",
-    "errorStartingNewChat": "Falha ao iniciar um novo chat"
-  },
   "reliability": {
     "bouncedEntered": "{{bounced}} devolvidas / {{entered}} entradas (últimos {{days}}d)",
     "countingSince": "Contando desde {{date}}",
@@ -6071,8 +6076,8 @@
       "hardCapOnTheSynthesizedEarlierRoomContext": "Limite máximo do bloco de resumo sintetizado \"Contexto anterior da sala\". Padrão: 3000.",
       "learnMore": "Saiba mais",
       "loweringThisWindowMeansReliabilityMetricsChartsAnd": " Reduzir esta janela significa que as métricas/gráficos de Confiabilidade e o feed de Atividade não mostrarão histórico mais antigo que o intervalo selecionado. O histórico de detalhes de cada tarefa individual não é afetado. Padrão: 30 dias. ",
-      "mobileNavPrimaryItems": "Ações rápidas do rodapé móvel",
-      "mobileNavPrimaryItemsHint": "Padrão: Painel, Tarefas, Agentes, Missões, Chat, Caixa de Entrada. Adicione destinos elegíveis; os destinos não selecionados permanecem em Mais.",
+      "mobileNavPrimaryItems": "Acessos rápidos de navegação",
+      "mobileNavPrimaryItemsHint": "Padrão: Painel, Quadro, Planejamento, Missões, Caixa de Entrada. Escolha até 5 destinos e sua ordem; todos os demais destinos permanecem em Mais.",
       "addNavItem": "Adicionar ação rápida",
       "selectNavItem": "Escolha um destino",
       "removeNavItem": "Remover {{item}}",
@@ -6096,7 +6101,6 @@
       "searchTheTrackingRepoForLikelyDuplicatesBefore": " Buscar no repositório de rastreamento por possíveis duplicatas antes de abrir uma nova issue ",
       "settingsSaved": "Configurações salvas",
       "showCapacityRiskBanner": " Mostrar banner de risco de capacidade ",
-      "showQuickChatButton": " Mostrar botão de chat rápido ",
       "showTheFloatingChatButtonInTheDashboard": "Mostrar o botão flutuante de chat no painel. O chat continua acessível pela aba Chat na navegação móvel.",
       "taskPrefix": "Prefixo da tarefa",
       "todoThreshold": "Limite de tarefas a fazer",
@@ -6121,7 +6125,6 @@
       "workflowsOrChangelogModeWhenContributorsShouldUpdate": " fluxos de trabalho, ou o modo changelog quando contribuidores devem atualizar um changelog existente. Padrão: desativado. ",
       "workspaceModeHint": "Quando ativado, a raiz do projeto é tratada como um workspace contendo múltiplos subrepositórios git. As tarefas são executadas por subrepositório, e nenhum repositório git é criado na raiz. Desative para projetos de repositório único. Sem padrão — não definido (desativado).",
       "allowAbsoluteFileBrowserPathsHint": "Quando ativado, caminhos com barra inicial como /tmp podem ser abertos no navegador de arquivos do workspace. Caminhos com letra de unidade do Windows continuam bloqueados, e os demais validadores de caminho permanecem inalterados. Padrão: desativado.",
-      "quickChatLauncherHint": "Escolha se o Chat Rápido abre pelo botão flutuante arrastável, por um botão no rodapé ao lado de Terminal, ou permanece oculto. Padrão: desativado (oculto).",
       "showTaskChatsInCommonFeedHint": "Quando ativado, conversas de chat com conteúdo nos detalhes da tarefa aparecem no feed comum Direto. Chats de tarefa vazios permanecem ocultos. Padrão: desativado.",
       "whenEnabledImportedGitHubIssuesUseTheirSource": "Quando ativado, issues importadas do GitHub tornam-se tarefas rastreadas que adotam a issue de origem. Isso não ativa o rastreamento do GitHub para novas tarefas comuns. Padrão: desativado.",
       "autoTranslateImportedIssues": "Traduzir automaticamente issues importadas",
@@ -6136,7 +6139,6 @@
       "ephemeralAgentTaskCreationPolicyAllow": "Permitir",
       "ephemeralAgentTaskCreationPolicyUponValidation": "Após validação",
       "ephemeralAgentTaskCreationPolicyDeny": "Negar",
-      "quickChatCloseOnOutsideClickHint": "Quando ativado, clicar fora da janela do Chat Rápido a fecha. Desative para mantê-la aberta até que você a feche explicitamente. Padrão: ativado.",
       "disabledFusionWorkflowsAreHiddenFromWorkflow": "Fluxos de trabalho do Fusion desativados ficam ocultos nos seletores de fluxo de trabalho. Tarefas existentes que já usam um deles continuam sendo processadas normalmente. Padrão: todos os fluxos de trabalho integrados ativados (não definido).",
       "builtinWorkflowAtLeastOneEnabled": "",
       "aiUndoTaskWorkflow": "Fluxo de trabalho de tarefas de reversão por IA",
@@ -6183,6 +6185,8 @@
       "label": "Seção de configurações"
     },
     "models": {
+      "fallbackModel": "Modelo de reserva",
+      "roleFallbackHelp": "Usado quando o modelo principal deste papel encontra um erro do provedor que permite nova tentativa.",
       "deletePresetMessage": "A predefinição \"{{name}}\" é usada na seleção automática. Excluir mesmo assim?",
       "deletePresetTitle": "Excluir predefinição",
       "loadingModels": "Carregando modelos disponíveis…",
@@ -6526,7 +6530,6 @@
       "projectRoot": "(raiz do projeto)"
     },
     "movedStub": {
-      "modelLanes": "As faixas de modelo por fase (execução, planejamento, revisor, seus fallbacks e o resumidor de título) agora ficam no fluxo de trabalho.",
       "openWorkflowSettings": "Abrir configurações do fluxo de trabalho",
       "reviewVerification": "As configurações de revisão, correção automática de verificação e aplicação de escopo agora ficam no fluxo de trabalho.",
       "stepExecution": "As configurações de execução de etapas (executar etapas em novas sessões, máximo de etapas paralelas) agora ficam no fluxo de trabalho.",
@@ -6553,8 +6556,6 @@
       "taskOutputLanguageInterface": "Fusion interface language",
       "configuredPresets": "Predefinições configuradas",
       "configuresTheModelUsedForTwoShortSummary": " Configura o modelo usado em duas tarefas de resumo curto: gerar automaticamente títulos de tarefa a partir de descrições longas e gerar resumos de commit de merge a partir dos commits das etapas e das estatísticas de diff. ",
-      "defaultWorkflowModelLaneActions": "Ações padrão das faixas de modelo do fluxo de trabalho",
-      "defaultWorkflowModelLanes": "Faixas de modelo padrão do fluxo de trabalho",
       "delete": " Excluir ",
       "edit": " Editar ",
       "executorModel": "Modelo do executor",
@@ -6564,30 +6565,24 @@
       "noExecutorEscalationModel": "Nenhum modelo de escalonamento",
       "fallsBackTo": " Recorre a: ",
       "loadingAvailableModels": "Carregando modelos disponíveis…",
-      "loadingWorkflowModelLanes": "Carregando faixas de modelo do fluxo de trabalho…",
       "modelLanes": "Faixas de modelo",
       "modelPresets": "Predefinições de modelo",
       "name": "Nome",
       "noCap": "Sem limite",
-      "noModelsAvailableConfigureAuthenticationBeforeSelectingWorkflow": " Nenhum modelo disponível. Configure a autenticação antes de selecionar as faixas de modelo do fluxo de trabalho. ",
       "noModelsAvailableConfigureAuthenticationFirst": " Nenhum modelo disponível. Configure a autenticação primeiro. ",
       "noModelsAvailableConfigureAuthenticationFirst2": "Nenhum modelo disponível. Configure a autenticação primeiro.",
       "noPreset": "Nenhuma predefinição",
       "noPresetsConfiguredYet": "Nenhuma predefinição configurada ainda.",
-      "openAProjectToEditWorkflowModelLanes": "Abra um projeto para editar as faixas de modelo do fluxo de trabalho.",
       "overrideGlobalModelSettingsAtTheProjectLevel": " Substitui as configurações globais de modelo no nível do projeto. Cada faixa controla um contexto específico de uso de IA. Faixas não definidas herdam da faixa global correspondente. O modelo padrão do projeto é o fallback para este projeto quando uma faixa mais específica não está definida. ",
       "presetEditor": "Editor de predefinições",
       "reset": " Redefinir ",
       "resetToDefaultNoCap": "Redefinir para o padrão (sem limite)",
       "resetToInheritFromGlobal": "Redefinir para herdar do global",
-      "resetToInheritFromWorkflow": "Redefinir para herdar do fluxo de trabalho",
       "reviewerModel": "Modelo do revisor",
-      "theseProjectOverridesApplyToTheActiveDefault": " Essas substituições do projeto se aplicam ao fluxo de trabalho padrão ativo. ",
       "tokenCap": "Limite de tokens",
       "useDefault": "Usar padrão",
-      "useWorkflowDefault": "Usar padrão do fluxo de trabalho",
       "whenEnabledMergeCommitMessagesIncludeAnAI": " Quando ativado, as mensagens de commit de merge incluem um assunto gerado por IA além de um resumo no corpo (narrativa + tópicos + estatísticas de diff), em vez de apenas listar os assuntos dos commits das etapas. Usa o modelo de resumo de título. Padrão: ativado. ",
-      "whenEnabledTasksCreatedWithoutATitleBut": " Quando ativado, toda descrição não vazia criada sem título recebe automaticamente um título gerado por IA (máximo de 60 caracteres). Títulos explícitos são preservados e solicitações manuais ou explícitas continuam disponíveis quando desativado. O mesmo modelo também é usado para resumos de commits de merge e títulos de issues de rastreamento do GitHub. Padrão: desativado. ",
+      "whenEnabledTasksCreatedWithoutATitleBut": " Quando ativado, toda descrição não vazia criada sem título recebe automaticamente um título gerado por IA no idioma selecionado acima (máximo de 60 caracteres), qualquer que seja o tamanho da descrição. Quando desativado, nenhum título é armazenado e os cartões mostram os primeiros 220 caracteres da descrição. Títulos explícitos são sempre preservados. O mesmo modelo também é usado para resumos de commits de merge e títulos de issues de rastreamento do GitHub. Padrão: desativado. ",
       "autoSelectModelPresetHint": "Padrão: desativado.",
       "prTitlePromptInstructionsHelp": "Orienta o título gerado por IA ao criar um PR. Deixe em branco para usar o prompt padrão de metadados do PR. Sem padrão — não definido.",
       "prDescriptionPromptInstructionsHelp": "Orienta o resumo, as alterações e as seções de teste gerados por IA ao criar um PR. Deixe em branco para usar o prompt padrão de metadados do PR. Sem padrão — não definido.",
@@ -6607,7 +6602,14 @@
       "chatDefaultReset": "Redefinir padrão do Chat",
       "modelOverrides": "",
       "projectLanesSubheading": "",
-      "workflowLanesSubheading": "",
+      "planningModel": "Planner Model",
+      "planningFallbackModel": "Planner Modelo de reserva",
+      "executionModel": "Executor Model",
+      "executionFallbackModel": "Executor Modelo de reserva",
+      "validatorModel": "Reviewer Model",
+      "validatorFallbackModel": "Reviewer Modelo de reserva",
+      "mergerModel": "Merger Model",
+      "mergerFallbackModel": "Merger Modelo de reserva",
       "summarizationPointer": ""
     },
     "globalModels": {
@@ -6674,17 +6676,19 @@
       "languageAutoHint": "Seguir o idioma do navegador",
       "suppressTheLdquoNeedsYourInputRdquoBanner": "Ocultar o banner “precisa da sua entrada” que aparece quando sessões de IA estão aguardando entrada ou falharam.",
       "title": "Aparência",
-      "openTasksInRightSidebarHelp": "Quando ativado, os cartões de tarefa do quadro abrem os detalhes na barra lateral direita quando ela estiver disponível; os estados mobile e de barra lateral oculta mantêm o painel de tarefa completo. Padrão: desativado.",
-      "openMobileTasksInPopupHelp": "Quando ativado, cliques comuns em cartões de tarefa do quadro e na lista de Tarefas do dock direito abrem o popup de tarefa existente, mantendo o quadro ou a lista visível. Aberturas via deep-tab e outras formas de abertura de tarefa mantêm o comportamento atual. Padrão: desativado.",
-      "taskPopupsBoardListOnly": "Manter os popups de tarefa na visualização em que foram abertos",
-      "taskPopupsBoardListOnlyHelp": "Quando ativado, cada popup de detalhes de tarefa aberto aparece somente na visualização em que foi aberto. Trocar de visualização o oculta sem fechá-lo; voltar o restaura na mesma posição. Padrão: ativado.",
-      "taskDetailChatFirstHelp": "Desativado por padrão: os detalhes da tarefa listam Atividade primeiro, e aberturas de tarefas não concluídas sem aba especificada caem em Atividade. Ative para restaurar a ordem/padrão com Chat primeiro; links diretos para o Chat continuam funcionando de qualquer forma.",
       "showCostBadgeOnCards": "Mostrar selos de custo nos cartões de tarefa",
       "showCostBadgeOnCardsHelp": "Padrão: desativado. Quando ativado, os cartões do quadro mostram o custo do modelo derivado ao lado do tempo de execução; quando o preço não está disponível, isso é indicado — e tarefas sem uso de tokens não mostram selo.",
       "chatMessageLayout": "",
       "chatMessageLayoutBubbles": "",
       "chatMessageLayoutFullWidth": "",
-      "chatMessageLayoutHelp": ""
+      "chatMessageLayoutHelp": "",
+      "navigationPlacement": "",
+      "navigationPlacementFooter": "",
+      "navigationPlacementSidebar": "",
+      "navigationPlacementHelp": "",
+      "rightSidebarEnabled": "Mostrar a barra lateral de ferramentas à direita",
+      "rightSidebarEnabledHelp": "Quando ativada, tablets e computadores exibem uma barra lateral direita opcional com atalhos de Arquivos, Chat, Lista e Notas. Todas as ferramentas continuam acessíveis sem ela. Escopo de projeto; padrão: desativada.",
+      "taskDetailDefaultTabHelp": ""
     },
     "search": {
       "allSections": "Mostrando todas as seções de configurações",
@@ -8001,7 +8005,10 @@
     },
     "definition": {
       "descriptionHeading": "Descrição",
-      "noDescription": "(sem descrição)"
+      "noDescription": "(sem descrição)",
+      "noOutcome": "Ainda não há resumo do plano — abra Ler plano para ver a especificação completa.",
+      "outcomeHeading": "O que esta tarefa entrega",
+      "transformationHeading": "Antes → Depois"
     },
     "description": {
       "showLess": "Mostrar menos",
@@ -8217,10 +8224,12 @@
       "updated": "Prioridade atualizada para {{priority}}"
     },
     "progress": {
-      "heading": "Progresso",
       "completedCount": "{{count}}/{{total}} concluídas",
-      "workflowOrigin": "Etapa do fluxo de trabalho",
+      "heading": "Progresso",
+      "hideSteps": "Ocultar etapas",
       "implementationOrigin": "Implementação",
+      "noSteps": "(nenhuma etapa definida)",
+      "showSteps": "Mostrar etapas",
       "status": {
         "done": "Concluída",
         "failed": "Falhou",
@@ -8230,9 +8239,9 @@
         "skipped": "Ignorada",
         "pending": "Pendente"
       },
-      "noSteps": "(nenhuma etapa definida)",
       "stepCount_one": "{{count}}/{{total}} etapa",
-      "stepCount_other": "{{count}}/{{total}} etapas"
+      "stepCount_other": "{{count}}/{{total}} etapas",
+      "workflowOrigin": "Etapa do fluxo de trabalho"
     },
     "provenance": {
       "createdBy": "Criado por",
@@ -8331,24 +8340,11 @@
       "url": "URL"
     },
     "spec": {
-      "aiReviseHeading": "Pedir à IA para revisar",
-      "aiReviseHelp": "Forneça feedback para a IA melhorar esta especificação. A tarefa passará para planejamento para ser replanejada.",
       "backToDefinition": "Voltar à definição",
-      "editBtn": "Editar",
-      "feedbackPlaceholder": "ex.: 'Adicione mais detalhes sobre o tratamento de erros', 'Divida isso em etapas menores', 'Inclua testes para os endpoints da API'...",
-      "hintCancel": "para cancelar",
-      "hintSave": "para salvar",
       "loading": "Carregando especificação…",
       "noPrompt": "(sem prompt)",
-      "placeholder": "Insira a especificação da tarefa em Markdown...",
       "promptFileName": "PROMPT.md",
-      "readPlanBtn": "Ler o plano",
-      "requesting": "Solicitando…",
-      "requestRevisionBtn": "Solicitar revisão da IA",
-      "revisionColumnError": "Não é possível solicitar revisão: a tarefa deve estar na coluna 'triage', 'todo', 'in-progress' ou 'in-review'.",
-      "revisionRequested": "Revisão da IA solicitada. Tarefa movida para planejamento.",
-      "saving": "Salvando…",
-      "updated": "Especificação atualizada"
+      "readPlanBtn": "Ler o plano"
     },
     "stall": {
       "noLogEntry": "Ainda não há entrada de log",
@@ -8396,11 +8392,6 @@
       "updated": "Atualizado"
     },
     "timingEvents": "Eventos de temporização",
-    "title": {
-      "summarize": "Resumir",
-      "summarizeFailed": "Falha ao resumir o título: {{error}}",
-      "summarizeSuccess": "Título atualizado a partir da descrição"
-    },
     "tokenTotalsAria": "Totais de tokens da tarefa",
     "tokenUsage": "Uso de tokens",
     "totalExecutionTime": "Tempo ativo total",
@@ -8559,6 +8550,7 @@
     "dependenciesSelected_other": "{{count}} selecionadas",
     "descriptionLabel": "Descrição",
     "descriptionPlaceholder": "O que precisa ser feito?",
+    "descriptionReadOnlyNote": "A descrição só pode ser editada enquanto a tarefa ainda aguarda em sua coluna de entrada manual.",
     "descriptionRefinedToast": "Descrição refinada com IA",
     "editingDescription": "Editando descrição",
     "enterDescriptionFirst": "Digite uma descrição primeiro",
@@ -8620,8 +8612,6 @@
     "thinkingMinimal": "Mínimo",
     "thinkingOff": "Desativado",
     "thinkingXhigh": "Muito alto",
-    "titleLabel": "Título",
-    "titlePlaceholder": "Título da tarefa",
     "useDropdown": "Usar menu suspenso",
     "usingPreset": "Usando predefinição: {{name}}",
     "workflowDefaultBadge": "(padrão)",
@@ -8737,7 +8727,7 @@
     "createPrTitle": "Criar um PR para esta tarefa",
     "createTaskTitle": "Criar tarefa",
     "saveHoldToStart": "Salvar tarefa; mantenha pressionado para iniciar",
-    "releaseToSaveHoldToStart": "Solte para salvar; continue pressionando para iniciar",
+    "holdToStartReleaseCancels": "Continue pressionando para iniciar; solte para cancelar",
     "holdToStartProgress": "Continue pressionando para iniciar",
     "startingTask": "Iniciando tarefa",
     "creating": "Criando...",
@@ -8793,6 +8783,9 @@
     "importedFromGitHub": "Importado do GitHub",
     "importedFromGitHubUrl": "Importado do GitHub: {{url}}",
     "inProgressTime": "Em andamento {{elapsed}}",
+    "runtimeBreakdownExecution": "Execução {{elapsed}}",
+    "runtimeBreakdownPlanning": "Planejamento {{elapsed}}",
+    "runtimeBreakdownVerification": "Verificação {{elapsed}}",
     "issueClosed": "fechado",
     "issueDeleted": "excluído",
     "issueLeft": "mantido",
@@ -8874,7 +8867,12 @@
     "revertedBadge": "Revertida",
     "revertedBadgeTitle": "As alterações desta tarefa foram revertidas",
     "revertedTasks": "Tarefas revertidas",
-    "revertedResolutionActions": "Ações de resolução de tarefas revertidas",
+    "restoreRevert": "Restaurar reversão",
+    "restoreRevertSuccess": "{{taskId}} restaurada",
+    "restoreRevertAiCreated": "Tarefa de restauração {{id}} criada",
+    "restoreRevertAlreadyOpen": "Já existe uma tarefa de restauração aberta: {{id}}",
+    "restoreRevertNeedsHuman": "Não foi possível restaurar {{taskId}}: {{reason}}",
+    "restoreRevertFailed": "Falha ao restaurar {{taskId}}",
     "revise": "Revisar",
     "revertTask": "Reverter as alterações desta tarefa",
     "reviewerModel": "Modelo revisor",
@@ -8919,7 +8917,23 @@
       "approving": "",
       "copy": "",
       "replanCapCopy": "",
-      "title": ""
+      "title": "",
+      "needsYouBadge": ""
+    },
+    "humanPlanApproval": {
+      "toggle": "Exigir minha aprovação do plano antes da execução",
+      "messageLabel": "Mensagem (opcional)",
+      "messagePlaceholder": "Vai recusar? Diga o que está errado no plano. Vai aprovar? Acrescente um ponto de atenção.",
+      "approve": "Aprovar",
+      "reject": "Recusar",
+      "review": "Revisar plano",
+      "hint": "Recusar devolve sua mensagem para um novo plano. Aprovar inicia o trabalho e passa sua nota para a implementação.",
+      "noticeCopy": "Abra a tarefa para aprovar ou recusar este plano, com uma mensagem opcional.",
+      "badgeArmed": "Sua aprovação do plano é necessária antes da execução",
+      "badgeAwaiting": "Aguardando sua aprovação do plano",
+      "badgeApproved": "Plano aprovado por você",
+      "approved": "Plano aprovado — {{id}} segue para a execução",
+      "rejected": "Plano recusado — {{id}} volta para um novo plano"
     }
   },
   "terminal": {
@@ -9425,9 +9439,9 @@
     "aiSubmit": "Projetar com IA",
     "aiToggle": "Descrever em vez disso",
     "backToWorkflowList": "Voltar para os fluxos de trabalho",
+    "backToBoard": "Voltar para o quadro",
     "clickToEditDescription": "Clique para editar a descrição",
     "clickToRename": "Clique para renomear",
-    "closeEditor": "Fechar editor de fluxo de trabalho",
     "created": "Fluxo de trabalho \"{{name}}\" criado",
     "createDescription": "Descrição (opcional)",
     "createFailed": "Falha ao criar o fluxo de trabalho",
@@ -9563,9 +9577,7 @@
     "merging": "Em merge",
     "mergingTitle": "{{count}} tarefa{{plural}} em merge",
     "review": "Revisão",
-    "triggerAria": "Selecionar fluxo de trabalho. Fluxo de trabalho atual: {{name}}",
-    "editWorkflow": "Editar fluxo de trabalho",
-    "newWorkflow": "Novo fluxo de trabalho"
+    "triggerAria": "Selecionar fluxo de trabalho. Fluxo de trabalho atual: {{name}}"
   },
   "workspace": {
     "projectRoot": "Raiz do projeto",
@@ -9618,6 +9630,16 @@
     },
     "sending": "Enviando",
     "thinking": "Pensando",
+    "thinkingLevelTitle": "{{title}} · raciocínio: {{level}}",
+    "thinkingLevels": {
+      "off": "Desativado",
+      "minimal": "Mínimo",
+      "low": "Baixo",
+      "medium": "Médio",
+      "high": "Alto",
+      "xhigh": "Muito alto",
+      "max": "Máximo"
+    },
     "toolCall": "Chamada de ferramenta",
     "toolCallCount_one": "{{count}} chamada de ferramenta",
     "toolCallCount_other": "{{count}} chamadas de ferramenta",
@@ -9901,7 +9923,6 @@
     "createFirst": "Create your first note",
     "select": "Select a note or create a new one",
     "title": "Note title",
-    "unsaved": "Unsaved changes",
     "savedState": "Saved",
     "saving": "Saving…",
     "saved": "Note saved",
@@ -9913,7 +9934,12 @@
     "deleteMessage": "This action cannot be undone.",
     "conflict": "This note changed elsewhere. Your draft is preserved.",
     "reload": "Reload server version",
-    "overwrite": "Overwrite with my draft"
+    "overwrite": "Overwrite with my draft",
+    "autoSaved": "",
+    "backToList": "",
+    "rename": "",
+    "renameAria": "",
+    "actionsAria": ""
   },
   "whiteboard": {
     "tools": "Whiteboard tools",
@@ -9951,5 +9977,16 @@
     "selectHint": "Select an item to edit it",
     "exportJson": "Export JSON",
     "exportPng": "Export PNG"
+  },
+  "windows": {
+    "hide": "Ocultar todas as janelas",
+    "restore": "Restaurar janelas"
+  },
+  "uiStyle": {
+    "label": "Estilo da interface",
+    "classic": "Atual",
+    "classicDescription": "A gramática habitual do Fusion, sem alterações.",
+    "clean": "Limpo",
+    "cleanDescription": "Densidade mais compacta, cantos suaves, cromo discreto."
   }
 }

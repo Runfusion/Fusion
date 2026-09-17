@@ -10,23 +10,28 @@ Cross-type shared-stack contract. Utility floating modal types (utility Floating
 
 FNXC:TaskPopupLayer 2026-07-17-15:55:
 Quick Chat opts into the task-detail counter so task popups and Chat interleave by interaction.
-Unrelated utility windows remain excluded and keep their independent, higher utility stack.
+
+FNXC:FloatingWindowStack 2026-09-14-21:10:
+FN-394 merged that task/Chat band into the single shared counter: a newly opened or engaged window must be
+in front of every other window whatever its type, which a permanently lower band made impossible. The
+task-detail entry points survive as aliases, so they hand out values from the same monotonic stack.
 */
 
 const renderProps = { addToast: () => {}, projectId: "project-1" } as const;
 
 describe("floatingWindowStack (cross-type)", () => {
-  it("hands out strictly increasing z values for separate utility and task-detail bands", () => {
+  it("hands out strictly increasing z values from one shared stack for every window type", () => {
     const utilityA = nextFloatingZ();
     const utilityB = nextFloatingZ();
     const taskA = nextTaskDetailFloatingZ();
     const taskB = nextTaskDetailFloatingZ();
 
     expect(utilityB).toBeGreaterThan(utilityA);
-    expect(currentFloatingZ()).toBe(utilityB);
+    expect(taskA).toBeGreaterThan(utilityB);
     expect(taskB).toBeGreaterThan(taskA);
+    // Both readers observe the same top: there is no second counter to drift from.
+    expect(currentFloatingZ()).toBe(taskB);
     expect(currentTaskDetailFloatingZ()).toBe(taskB);
-    expect(utilityA).toBeGreaterThan(taskB);
   });
 
   it("tapping a utility FloatingWindow raises it above a right-dock pop-out opened after it (and vice versa)", () => {
@@ -60,7 +65,7 @@ describe("floatingWindowStack (cross-type)", () => {
     expect(Number(dockPanel.style.zIndex)).toBeGreaterThan(Number(fwPanel.style.zIndex));
   });
 
-  it("interleaves Quick Chat with one or multiple task popups while utility windows stay higher", () => {
+  it("interleaves Quick Chat, task popups, and utility windows in one shared stack", () => {
     render(
       <>
         <FloatingWindow windowKey="chat-modal" title="Chat" onClose={() => {}} layer="task-detail" className="floating-window--chat">
@@ -83,7 +88,7 @@ describe("floatingWindowStack (cross-type)", () => {
       .getByTestId("right-dock-expand-modal")
       .querySelector(".right-dock-expand-modal--floating") as HTMLElement;
 
-    // Later task mounts above Chat; utility surfaces still retain their higher independent band.
+    // Later mounts are on top, in mount order, across all three types.
     expect(Number(taskB.style.zIndex)).toBeGreaterThan(Number(chatPanel.style.zIndex));
     expect(Number(dockPanel.style.zIndex)).toBeGreaterThan(Number(taskB.style.zIndex));
 
@@ -94,6 +99,7 @@ describe("floatingWindowStack (cross-type)", () => {
     expect(Number(taskA.style.zIndex)).toBeGreaterThan(Number(chatPanel.style.zIndex));
     fireEvent.focus(chatPanel);
     expect(Number(chatPanel.style.zIndex)).toBeGreaterThan(Number(taskA.style.zIndex));
-    expect(Number(chatPanel.style.zIndex)).toBeLessThan(Number(dockPanel.style.zIndex));
+    // FN-394: an engaged work window now also passes the utility pop-out mounted after it.
+    expect(Number(chatPanel.style.zIndex)).toBeGreaterThan(Number(dockPanel.style.zIndex));
   });
 });

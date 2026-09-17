@@ -37,19 +37,29 @@ import { readAppFile } from "../test/cssFixture";
 
 const css = readAppFile("components/QuickEntryBox.css");
 
-/** Extract a top-level rule body, asserting it is not nested inside an @media block. */
-function ruleBody(selector: string): { body: string; index: number } {
-  const index = css.indexOf(`${selector} {`);
+/**
+ * Extract a rule body for `selector`. The stylesheet legitimately declares the same selector more than
+ * once (layout floor vs. token sizing vs. the mobile breakpoint), so `contains` selects WHICH declaration
+ * the assertion is about instead of silently binding to whichever happens to come first in the file.
+ */
+function ruleBody(selector: string, contains?: string): { body: string; index: number } {
+  let index = css.indexOf(`${selector} {`);
   expect(index, `rule "${selector}" must exist`).toBeGreaterThan(-1);
-  const start = css.indexOf("{", index) + 1;
-  let depth = 1;
-  let i = start;
-  while (i < css.length && depth > 0) {
-    if (css[i] === "{") depth += 1;
-    if (css[i] === "}") depth -= 1;
-    i += 1;
+  let body = "";
+  while (index > -1) {
+    const start = css.indexOf("{", index) + 1;
+    let depth = 1;
+    let i = start;
+    while (i < css.length && depth > 0) {
+      if (css[i] === "{") depth += 1;
+      if (css[i] === "}") depth -= 1;
+      i += 1;
+    }
+    body = css.slice(start, i - 1);
+    if (!contains || body.includes(contains)) return { body, index };
+    index = css.indexOf(`${selector} {`, i);
   }
-  return { body: css.slice(start, i - 1), index };
+  throw new Error(`rule "${selector}" containing "${contains}" must exist`);
 }
 
 /** True when `index` falls inside any @media block — i.e. the rule is breakpoint-scoped. */
@@ -108,43 +118,46 @@ describe("QuickEntryBox.css — Save button is never clipped (mobile report)", (
   });
 
   it("keeps the Alpha icon-only hold mask inside fixed token-sized desktop and mobile targets", () => {
-    const { body } = ruleBody('[data-alpha-surface="true"] .quick-entry-primary-group [data-testid="quick-entry-save"]');
-    expect(body).toMatch(/min-width:\s*var\(--alpha-control-height\)/);
-    expect(body).toMatch(/width:\s*var\(--alpha-control-height\)/);
+    const { body } = ruleBody('.quick-entry-primary-group [data-testid="quick-entry-save"]', "--ui-control-height");
+    expect(body).toMatch(/min-width:\s*var\(--ui-control-height\)/);
+    expect(body).toMatch(/width:\s*var\(--ui-control-height\)/);
     expect(body).toMatch(/overflow:\s*hidden/);
     expect(body).toMatch(/padding:\s*0/);
 
-    const progress = ruleBody('[data-alpha-surface="true"] .quick-entry-alpha-save > .quick-entry-alpha-save-icons > .quick-entry-alpha-save-progress').body;
-    expect(css).toMatch(/\.quick-entry-alpha-save-progress\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?inset:\s*0/);
+    const progress = ruleBody('.quick-entry-save > .quick-entry-save-icons > .quick-entry-save-progress').body;
+    expect(css).toMatch(/\.quick-entry-save-progress\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?inset:\s*0/);
     expect(progress).toMatch(/background:\s*var\(--color-warning\)/);
     expect(progress).toMatch(/clip-path:\s*inset\(100% 0 0 0\)/);
     expect(progress).toMatch(/transform-origin:\s*bottom/);
-    expect(css).toMatch(/animation:\s*quick-entry-alpha-hold-progress var\(--quick-entry-alpha-hold-duration\) linear forwards/);
-    expect(css).toMatch(/@keyframes quick-entry-alpha-hold-progress\s*\{[\s\S]*clip-path:\s*inset\(0 0 0 0\)/);
+    expect(css).toMatch(/animation:\s*quick-entry-hold-progress var\(--quick-entry-hold-duration\) linear forwards/);
+    // FN-453: the fill is scoped to the engaged hold state only, so a brief click never flashes the mask.
+    expect(css).toMatch(/\.quick-entry-save\[data-hold-state="holding"\] \.quick-entry-save-progress\s*\{\s*animation:/);
+    expect(css).not.toMatch(/\.quick-entry-save\s+\.quick-entry-save-progress\s*\{[^}]*animation:/);
+    expect(css).toMatch(/@keyframes quick-entry-hold-progress\s*\{[\s\S]*clip-path:\s*inset\(0 0 0 0\)/);
     expect(css).not.toMatch(/scale[XY]\(/);
     expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*animation:\s*none[\s\S]*clip-path:\s*inset\(50% 0 0 0\)/);
-    expect(css).toMatch(/@media \(max-width: 768px\)[\s\S]*min-width:\s*var\(--alpha-touch-height\)/);
+    expect(css).toMatch(/@media \(max-width: 768px\)[\s\S]*min-width:\s*var\(--ui-touch-height\)/);
   });
 
   it("keeps every Alpha primary icon in the same mobile touch square while desktop remains unchanged", () => {
-    const selector = '[data-alpha-surface="true"] .quick-entry-primary-group .btn-icon';
-    const { body, index } = ruleBody(selector);
+    const selector = '.quick-entry-primary-group .btn-icon';
+    const { body, index } = ruleBody(selector, "--ui-touch-height");
     expect(isInsideMediaQuery(index)).toBe(true);
 
     for (const property of ["width", "min-width", "max-width", "height", "min-height", "max-height"] as const) {
-      expect(body).toMatch(new RegExp(`(?:^|\\n)\\s*${property}:\\s*var\\(--alpha-touch-height\\);`));
+      expect(body).toMatch(new RegExp(`(?:^|\\n)\\s*${property}:\\s*var\\(--ui-touch-height\\);`));
     }
-    expect(body).toMatch(/flex:\s*0\s+0\s+var\(--alpha-touch-height\)/);
+    expect(body).toMatch(/flex:\s*0\s+0\s+var\(--ui-touch-height\)/);
     expect(body).toMatch(/padding:\s*0/);
     expect(body).toMatch(/align-items:\s*center/);
     expect(body).toMatch(/justify-content:\s*center/);
     expect(body).not.toMatch(/\d+(?:\.\d+)?px/);
 
-    const desktopSave = ruleBody('[data-alpha-surface="true"] .quick-entry-primary-group [data-testid="quick-entry-save"]').body;
-    expect(desktopSave).toMatch(/width:\s*var\(--alpha-control-height\)/);
-    expect(desktopSave).not.toContain("--alpha-touch-height");
+    const desktopSave = ruleBody('.quick-entry-primary-group [data-testid="quick-entry-save"]', "--ui-control-height").body;
+    expect(desktopSave).toMatch(/width:\s*var\(--ui-control-height\)/);
+    expect(desktopSave).not.toContain("--ui-touch-height");
     expect(css).not.toMatch(
-      /\[data-alpha-surface="true"\] \.quick-entry-options-group[^{}]*\{[^}]*(?:width|min-width|max-width):\s*var\(--alpha-touch-height\)/,
+      /\[data-alpha-surface="true"\] \.quick-entry-options-group[^{}]*\{[^}]*(?:width|min-width|max-width):\s*var\(--ui-touch-height\)/,
     );
   });
 

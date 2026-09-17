@@ -1,4 +1,4 @@
-import { AlphaButton, AlphaMenu, AlphaMenuItem } from "./alpha-ui";
+import { UiButton, UiMenu, UiMenuItem } from "./ui";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { ChevronDown, Pin } from "lucide-react";
@@ -125,7 +125,7 @@ export function ChatThreadTitleSwitcher({
 
   return (
     <div className="chat-thread-title-switcher" ref={rootRef}>
-      <AlphaButton
+      <UiButton
         ref={triggerRef}
         type="button"
         className="chat-thread-header-title chat-thread-title-trigger"
@@ -139,10 +139,10 @@ export function ChatThreadTitleSwitcher({
       >
         <span className="chat-thread-title-text">{title}</span>
         <ChevronDown size={14} className="chat-thread-title-caret" aria-hidden="true" />
-      </AlphaButton>
+      </UiButton>
 
       {open ? (
-        <AlphaMenu className="chat-thread-title-menu" aria-label={t("chat.switchConversation", "Switch conversation")} data-testid="chat-thread-title-menu">
+        <UiMenu className="chat-thread-title-menu" aria-label={t("chat.switchConversation", "Switch conversation")} data-testid="chat-thread-title-menu">
           {displayedSessions.length === 0 ? (
             <div className="chat-thread-title-menu-empty" data-testid="chat-thread-title-menu-empty">
               {t("chat.noOtherConversations", "No other conversations")}
@@ -151,7 +151,7 @@ export function ChatThreadTitleSwitcher({
             const label = session.title?.trim() || t("chat.untitledConversation", "Untitled conversation");
             const active = session.id === activeSessionId;
             return (
-              <AlphaMenuItem
+              <UiMenuItem
                 key={session.id}
                 id={session.id}
                 ref={(element) => { itemRefs.current[index] = element; }}
@@ -165,10 +165,10 @@ export function ChatThreadTitleSwitcher({
                 <span className="chat-thread-title-menu-label">{label}</span>
                 {session.pinnedAt ? <Pin size={14} className="chat-thread-title-menu-pin" aria-label={t("chat.pinned", "Pinned")} /> : null}
                 {isUnread?.(session) ? <span className="status-dot" aria-label={t("chat.unread", "Unread")} /> : null}
-              </AlphaMenuItem>
+              </UiMenuItem>
             );
           })}
-          <AlphaMenuItem
+          <UiMenuItem
             id="all-conversations"
             type="button"
             className="chat-thread-title-menu-all"
@@ -184,8 +184,8 @@ export function ChatThreadTitleSwitcher({
             }}
           >
             {t("chat.allConversations", "All conversations")}
-          </AlphaMenuItem>
-        </AlphaMenu>
+          </UiMenuItem>
+        </UiMenu>
       ) : null}
     </div>
   );

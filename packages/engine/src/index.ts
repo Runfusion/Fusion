@@ -487,6 +487,19 @@ export {
   type PrepareWorkspaceRevertPrBranchesResult,
   type PrepareWorkspaceRevertPrBranchesOptions,
   type WorkspaceRepoRevertPrBranch,
+  // FN-416 restore-the-revert surface.
+  resolveTaskRevertRestoreCommits,
+  performTaskRevertRestore,
+  createAiRestoreTask,
+  buildAiRestoreTaskDescription,
+  RESTORE_OF_METADATA_KEY,
+  type TaskRevertRestoreCommitSource,
+  type ResolvedTaskRevertRestoreCommits,
+  type ResolveTaskRevertRestoreCommitsOptions,
+  type TaskRevertRestoreResult,
+  type PerformTaskRevertRestoreOptions,
+  type AiRestoreTaskResult,
+  type CreateAiRestoreTaskDeps,
 } from "./execution/task-revert.js";
 export {
   resolveBranchGroupMergeRouting,
@@ -979,7 +992,7 @@ export { RoutineScheduler, type RoutineSchedulerOptions } from "./scheduling/rou
 export { StuckTaskDetector, type StuckTaskDetectorOptions, type DisposableSession } from "./healing/stuck-task-detector.js";
 export { HeartbeatMonitor, HeartbeatTriggerScheduler, type WakeContext } from "./agent-heartbeat.js";
 export { TokenCapDetector, type TokenCapCheckResult } from "./errors/token-cap-detector.js";
-export { SelfHealingManager, type SelfHealingOptions, type RebindResult } from "./self-healing.js";
+export { SelfHealingManager, type SelfHealingOptions, type RebindResult, type LandedReviewReconcileResult } from "./self-healing.js";
 /*
 FNXC:MergeReliability 2026-07-15-21:45 (FN-8004 follow-up):
 Exported for the dashboard's manual Retry gate, which must share ONE definition of "orphaned

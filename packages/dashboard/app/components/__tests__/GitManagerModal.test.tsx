@@ -163,6 +163,11 @@ function getRuleBlocks(css: string, selector: string): string[] {
     .map((match) => match[1]);
 }
 
+/*
+ * FN-426: Pull Requests became a Git Manager SECTION rather than a standalone destination, so it belongs to this
+ * roster. Git already owns branches, remotes, and worktrees; a pull request sits beside them instead of needing a
+ * navigation entry (and, before this change, a right-dock-only host) of its own.
+ */
 const gitManagerSectionLabels = [
   "Status",
   "Changes",
@@ -172,6 +177,7 @@ const gitManagerSectionLabels = [
   "Stashes",
   "Recovery",
   "Remotes",
+  "Pull Requests",
 ];
 
 const mockAddToast = vi.fn();

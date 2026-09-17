@@ -1293,8 +1293,6 @@
         "packages/dashboard/app/components/__tests__/ProjectSelector.test.tsx": 200,
         "packages/dashboard/app/components/__tests__/ProjectThemeTokens.test.tsx": 100,
         "packages/dashboard/app/components/__tests__/ProviderIcon.test.tsx": 200,
-        "packages/dashboard/app/components/__tests__/QuickChat.persist.test.tsx": 100,
-        "packages/dashboard/app/components/__tests__/QuickChatFAB.test.tsx": 100,
         "packages/dashboard/app/components/__tests__/QuickEntryBox-model-filter.test.tsx": 500,
         "packages/dashboard/app/components/__tests__/QuickEntryBox.test.tsx": 9200,
         "packages/dashboard/app/components/__tests__/ReliabilityView.test.tsx": 800,

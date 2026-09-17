@@ -1,0 +1,44 @@
+{
+  "ember": {
+    "colour": {
+      "bodyBackground": "rgba(255, 255, 255, 0.992)",
+      "surfaceBackground": "rgb(255, 255, 255)",
+      "surfaceColor": "rgb(23, 26, 30)",
+      "surfaceBorder": "rgb(208, 215, 222)",
+      "buttonBackground": "rgb(255, 255, 255)",
+      "buttonColor": "rgb(23, 26, 30)",
+      "optionColor": "rgb(15, 16, 19)",
+      "tabColor": "rgb(31, 35, 40)"
+    },
+    "shape": {
+      "surfaceRadius": "8px",
+      "surfacePadding": "10px",
+      "buttonRadius": "8px",
+      "buttonPadding": "7px 14px",
+      "tabPadding": "7px 0px",
+      "tabFontSize": "14px",
+      "tabsGap": "14px"
+    }
+  },
+  "purple": {
+    "colour": {
+      "bodyBackground": "rgba(255, 255, 255, 0.925)",
+      "surfaceBackground": "rgb(255, 255, 255)",
+      "surfaceColor": "rgb(11, 12, 14)",
+      "surfaceBorder": "rgb(208, 215, 222)",
+      "buttonBackground": "rgb(255, 255, 255)",
+      "buttonColor": "rgb(11, 12, 14)",
+      "optionColor": "rgb(0, 0, 0)",
+      "tabColor": "rgb(31, 35, 40)"
+    },
+    "shape": {
+      "surfaceRadius": "8px",
+      "surfacePadding": "10px",
+      "buttonRadius": "8px",
+      "buttonPadding": "7px 14px",
+      "tabPadding": "7px 0px",
+      "tabFontSize": "14px",
+      "tabsGap": "14px"
+    }
+  }
+}

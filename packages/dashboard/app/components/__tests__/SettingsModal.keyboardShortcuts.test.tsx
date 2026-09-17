@@ -75,12 +75,13 @@ function buildSettings() {
     webhookEnabled: false,
     experimentalFeatures: {},
     dashboardKeyboardShortcuts: {
-      quickChat: "Space",
+      toggleModalVisibility: "",
       terminal: "Ctrl+`",
       openFiles: "Ctrl+E",
       openSettings: "Ctrl+,",
       openCommandCenter: "Ctrl+K",
       newTask: "Ctrl+Shift+N",
+      openChatList: "Ctrl+Shift+L",
     },
   };
 }
@@ -92,15 +93,16 @@ describe("SettingsModal Keyboard Shortcuts section", () => {
     mockFetchSettingsByScope.mockResolvedValue({ global: buildSettings(), project: {} });
   });
 
-  it("renders all six actions with their documented defaults, grouped by category", async () => {
+  it("renders all seven actions with modal visibility disabled by default, grouped by category", async () => {
     render(<SettingsModal onClose={() => {}} addToast={() => {}} initialSection="keyboard-shortcuts" />);
 
-    expect(await screen.findByRole("textbox", { name: "Quick Chat" })).toHaveValue("Space");
+    expect(await screen.findByRole("textbox", { name: "Toggle Modal Visibility" })).toHaveValue("");
     expect(screen.getByRole("textbox", { name: "Terminal" })).toHaveValue("Ctrl+`");
     expect(screen.getByRole("textbox", { name: "Open Files" })).toHaveValue("Ctrl+E");
     expect(screen.getByRole("textbox", { name: "Open Settings" })).toHaveValue("Ctrl+,");
     expect(screen.getByRole("textbox", { name: "Open Command Center" })).toHaveValue("Ctrl+K");
     expect(screen.getByRole("textbox", { name: "New Task" })).toHaveValue("Ctrl+Shift+N");
+    expect(screen.getByRole("textbox", { name: "Open Chat List" })).toHaveValue("Ctrl+Shift+L");
 
     expect(screen.getByText("Communication")).toBeInTheDocument();
     expect(screen.getByText("Workspace")).toBeInTheDocument();
@@ -151,5 +153,43 @@ describe("SettingsModal Keyboard Shortcuts section", () => {
     await waitFor(() => expect(mockUpdateGlobalSettings).toHaveBeenCalled());
     const globalPayload = mockUpdateGlobalSettings.mock.calls[0]?.[0] as Record<string, unknown>;
     expect((globalPayload.dashboardKeyboardShortcuts as Record<string, string>).newTask).toBe("");
+  });
+
+  /*
+  FNXC:DashboardShortcuts 2026-09-16-02:27:
+  FN-441 : la nouvelle ligne « Open Chat List » doit réellement apparaître dans la section (KeyboardShortcutsSection
+  itère SHORTCUT_CATEGORIES), être rebindable avec persistance dans la charge utile GLOBALE uniquement, et pouvoir
+  être vidée pour désactiver l'action.
+  */
+  it("renders the FN-441 chat-list row and persists a rebind to global settings only", async () => {
+    const user = userEvent.setup();
+    render(<SettingsModal onClose={() => {}} addToast={() => {}} initialSection="keyboard-shortcuts" />);
+
+    const chatListInput = await screen.findByRole("textbox", { name: "Open Chat List" });
+    expect(chatListInput).toHaveAttribute("id", "dashboardShortcut-openChatList");
+    expect(chatListInput).toHaveValue("Ctrl+Shift+L");
+
+    await user.clear(chatListInput);
+    await user.type(chatListInput, "alt+shift+c");
+
+    await waitFor(() => expect(mockUpdateGlobalSettings).toHaveBeenCalled());
+    const globalPayload = mockUpdateGlobalSettings.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    expect((globalPayload.dashboardKeyboardShortcuts as Record<string, string>).openChatList).toBe("Alt+Shift+C");
+    if (mockUpdateSettings.mock.calls.length > 0) {
+      const projectPayload = mockUpdateSettings.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(projectPayload.dashboardKeyboardShortcuts).toBeUndefined();
+    }
+  });
+
+  it("allows disabling the FN-441 chat-list shortcut with a blank value", async () => {
+    const user = userEvent.setup();
+    render(<SettingsModal onClose={() => {}} addToast={() => {}} initialSection="keyboard-shortcuts" />);
+
+    const chatListInput = await screen.findByRole("textbox", { name: "Open Chat List" });
+    await user.clear(chatListInput);
+
+    await waitFor(() => expect(mockUpdateGlobalSettings).toHaveBeenCalled());
+    const globalPayload = mockUpdateGlobalSettings.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    expect((globalPayload.dashboardKeyboardShortcuts as Record<string, string>).openChatList).toBe("");
   });
 });

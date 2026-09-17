@@ -1,4 +1,4 @@
-import { loadAllAppCss, loadAllAppCssBaseOnly } from "../../test/cssFixture";
+import { loadAllAppCss, loadAllAppCssBaseOnly, readAppFile } from "../../test/cssFixture";
 import { describe, expect, it } from "vitest";
 
 
@@ -170,13 +170,21 @@ describe("core modals mobile css coverage", () => {
     expect(mobileBlock).toContain("flex-shrink: 0;");
   });
 
-  it("TaskDetailModal: refine modal goes full-screen on mobile", () => {
-    const css = loadAllAppCss();
-    const mobileBlock = getMainMobileBlock(css);
+  /*
+  FNXC:TaskRefine 2026-09-14-22:23:
+  FN-400 replaced this contract: the Refine composer is no longer a Task Detail sub-modal that stretches full-screen on
+  mobile. It is a standalone dialog that stays exactly centred in the viewport at every breakpoint, with nothing
+  painted on its overlay layer. The full geometry assertions live in TaskRefineDialog.test.tsx.
+  */
+  it("TaskRefineDialog: stays centred instead of going full-screen on mobile", () => {
+    const css = readAppFile("components/TaskRefineDialog.css");
+    const mobileBlock = css.slice(css.indexOf("@media (max-width: 768px)"));
 
-    expect(mobileBlock).toContain(".detail-refine-modal {");
-    expect(mobileBlock).toContain("width: 100%;");
-    expect(mobileBlock).toContain("max-width: 100%;");
+    expect(mobileBlock).toContain(".modal-overlay.task-refine-overlay {");
+    expect(mobileBlock).toContain("align-items: center;");
+    expect(mobileBlock).not.toContain("align-items: stretch;");
+    expect(mobileBlock).toContain(".modal.task-refine-dialog {");
+    expect(mobileBlock).not.toContain("max-width: 100%;");
   });
 
   it("ChangesDiffModal: mobile fullscreen rule clears desktop min size and fills the viewport", () => {
@@ -490,8 +498,13 @@ describe("core modals mobile css coverage", () => {
       /\.task-detail-mobile-back\s*\{[^}]+\}/,
     );
     expect(backControlMatch).not.toBeNull();
-    expect(backControlMatch![0]).toContain("min-height: calc(var(--space-2xl) + var(--space-xs))");
-    expect(backControlMatch![0]).toContain("min-width: calc(var(--space-2xl) + var(--space-xs))");
+    /*
+    FNXC:IconOnlyButtonCanon 2026-09-16-19:05:
+    FN-471 : le retour mobile de Task Detail est un bouton icône seule; sa boîte vient désormais du jeton
+    canonique partagé (36px) au lieu d'un calcul bespoke propre à ce fichier.
+    */
+    expect(backControlMatch![0]).toContain("min-height: var(--icon-button-size-mobile)");
+    expect(backControlMatch![0]).toContain("min-width: var(--icon-button-size-mobile)");
   });
 
   it("TaskDetailModal: Actions dropdown anchors toward available horizontal space", () => {

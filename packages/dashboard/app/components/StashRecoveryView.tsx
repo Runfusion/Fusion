@@ -5,6 +5,7 @@ import { api } from "../api";
 import { useConfirm } from "../hooks/useConfirm";
 import { LoadingSpinner } from "./LoadingSpinner";
 import "./StashRecoveryView.css";
+import { FloatingWindow } from "./FloatingWindow";
 
 type RecordItem = {
   sha: string;
@@ -121,8 +122,24 @@ export function StashRecoveryView() {
         </section>
       ))}
       {diffState && (
-        <div className="modal-overlay open" onClick={() => setDiffState(null)}>
-          <div className="modal stash-recovery-diff-modal" role="dialog" aria-modal="true" aria-label={t("stashRecovery.diffDialogLabel", "Diff for {{sha}}", { sha: diffState.sha })} onClick={(event) => event.stopPropagation()}>
+        /* FNXC:FloatingWindowDialogHosts 2026-09-14-22:36: FN-394 hosts the diff dialog in the shared window, so a long diff can be snapped to a half or to the whole work area. */
+        <FloatingWindow
+          windowKey={`stash-recovery-diff-${diffState.sha}`}
+          modal
+          hideHeader
+          surfaceGroup="dialog"
+          title={t("stashRecovery.diffHeader", "Diff for {{sha}}", { sha: diffState.sha.slice(0, 7) })}
+          ariaLabel={t("stashRecovery.diffDialogLabel", "Diff for {{sha}}", { sha: diffState.sha })}
+          onClose={() => setDiffState(null)}
+          dragHandleSelector=".stash-recovery-diff-modal .modal-header"
+          className="floating-window--dialog floating-window--stash-recovery-diff"
+          defaultSize={{ width: 820, height: 620 }}
+          minSize={{ width: 320, height: 260 }}
+          suspendGeometryPersistenceOnMobile
+          suspendGeometryPersistenceOnShortViewport
+          backdropMouseHandlers={{ onClick: (event) => { if (event.target === event.currentTarget) setDiffState(null); } }}
+        >
+          <div className="modal stash-recovery-diff-modal" onClick={(event) => event.stopPropagation()}>
             {/* FNXC:StandardizedViewLayout 2026-09-13-21:49: Shared chrome for the nested diff dialog; its close still only dismisses the diff. */}
             <ViewHeader
               className="modal-header"
@@ -143,7 +160,7 @@ export function StashRecoveryView() {
               <button className="btn" onClick={() => setDiffState(null)}>{t("actions.close", "Close")}</button>
             </div>
           </div>
-        </div>
+        </FloatingWindow>
       )}
     </div>
   );

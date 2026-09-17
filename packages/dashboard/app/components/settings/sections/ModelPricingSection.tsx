@@ -8,6 +8,7 @@ import { SettingsHelpTip } from "../SettingsHelpTip";
 import type { ToastType } from "../../../hooks/useToast";
 import type { SetSettingsForm, SettingsFormState } from "./context";
 import "./ModelPricingSection.css";
+import { FloatingWindow } from "../../FloatingWindow";
 
 interface PricingFetchResponse {
   count: number;
@@ -169,7 +170,24 @@ export function ModelPricingSection({ form, setForm, addToast, projectId }: Mode
     if (!tableOpen) return null;
 
     return (
-      <div className="modal-overlay open" onClick={handleOverlayClick} role="dialog" aria-modal="true" aria-labelledby="model-pricing-table-title" data-testid="model-pricing-table-modal">
+      /* FNXC:FloatingWindowDialogHosts 2026-09-14-22:36: FN-394 hosts the pricing table in the shared window; a wide table can be snapped to a half or to the full work area while its inputs keep their identity. */
+      <FloatingWindow
+        windowKey="model-pricing-table"
+        modal
+        hideHeader
+        surfaceGroup="dialog"
+        title={t("settings.modelPricing.tableTitle", "Model pricing table")}
+        ariaLabelledBy="model-pricing-table-title"
+        onClose={closeTable}
+        dragHandleSelector=".model-pricing-modal .modal-header"
+        className="floating-window--dialog floating-window--model-pricing"
+        testId="model-pricing-table-modal"
+        defaultSize={{ width: 960, height: 640 }}
+        minSize={{ width: 320, height: 280 }}
+        suspendGeometryPersistenceOnMobile
+        suspendGeometryPersistenceOnShortViewport
+        backdropMouseHandlers={{ onClick: handleOverlayClick }}
+      >
         <div className="modal modal-lg model-pricing-modal">
           {/* FNXC:StandardizedViewLayout 2026-09-13-21:49: The pricing table dialog shares the canonical header; its subtitle stays part of the header identity. */}
           <ViewHeader
@@ -229,7 +247,7 @@ export function ModelPricingSection({ form, setForm, addToast, projectId }: Mode
             </div>
           </div>
         </div>
-      </div>
+      </FloatingWindow>
     );
   };
 

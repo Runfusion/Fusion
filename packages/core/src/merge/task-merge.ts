@@ -299,6 +299,22 @@ export function isTaskBlockedOnApproval(
   return task.status === "awaiting-approval";
 }
 
+/*
+FNXC:HumanPlanApproval 2026-09-15-06:24:
+FN-408's execution-entry fence is `isTaskBlockedOnHumanPlanApproval`, which lives in
+`planner/human-plan-approval.ts` and is deliberately NOT imported here. Two reasons:
+
+1. Semantics: `isTaskBlockedOnApproval` above also guards PLANNING continuation dispatch
+   (in-process-runtime). Folding the per-card human requirement into it would stop the planner and
+   the reviewer from ever producing the plan the operator is supposed to validate, so the card could
+   never become decidable. The two predicates must stay separate.
+2. Bundling: this module's exports are consumed by the dashboard's browser bundle, while
+   `planner/human-plan-approval.ts` transitively imports `planner/plan-approval.ts` and its
+   top-level `node:crypto`. Importing it here pulls `node:crypto` into the browser graph and breaks
+   the dashboard build — measured on 2026-09-15. The browser mirror in
+   `packages/dashboard/app/utils/reviewBudgetApproval.ts` exists for exactly this reason.
+*/
+
 export const HARD_BLOCKING_TASK_STATUSES = new Set([
   "failed",
   // ── User-attention / awaiting-handoff states ─────────────────────────

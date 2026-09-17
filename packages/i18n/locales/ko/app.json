@@ -1155,7 +1155,8 @@
     "disableHeartbeatsCountHint": "",
     "bulkFailures": "",
     "detailLabel": "",
-    "lastCompletedStep": ""
+    "lastCompletedStep": "",
+    "mailSubject": "제목"
   },
   "app": {
     "backendError": {
@@ -1251,13 +1252,12 @@
   "chat": {
     "archive": "보관",
     "attachFiles": "파일 첨부",
+    "backToConversations": "",
     "cancel": "취소",
     "cancelButton": "취소",
     "clearConversationFailed": "대화 초기화 실패",
-    "closeQuickChat": "빠른 채팅 닫기",
     "openInNewWindow": "",
     "windowOpen": "열림",
-    "windowMinimized": "최소화됨",
     "conversationArchived": "대화가 보관되었습니다",
     "conversationDeleted": "대화가 삭제되었습니다",
     "conversationName": "",
@@ -1304,17 +1304,14 @@
     "modeAgent": "에이전트",
     "modeModel": "모델",
     "newChat": "새 채팅",
-    "newChatModeAgent": "에이전트",
     "newChatModeModel": "모델",
     "newChatTitle": "새 채팅",
-    "noAgentsAvailable": "사용 가능한 에이전트 없음",
     "noConversationsYet": "아직 대화 없음",
     "noMessages": "메시지 없음",
     "noMessagesYet": "아직 메시지가 없습니다. 대화를 시작하세요!",
     "noRoomsYet": "아직 방이 없습니다.",
     "noSkillsAvailable": "사용 가능한 스킬 없음",
     "noSkillsFound": "스킬을 찾을 수 없습니다",
-    "openQuickChat": "빠른 채팅 열기",
     "preserveToStash": "",
     "preserveToStashDone": "",
     "preserveToStashFailed": "",
@@ -1341,7 +1338,6 @@
     "forcePending": "대기 메시지 강제 전송",
     "forcePendingShort": "강제 전송",
     "pendingEditEmpty": "대기 메시지는 비워 둘 수 없습니다",
-    "quickChatTitle": "빠른 채팅",
     "relativeTimeDays_one": "",
     "relativeTimeDays_other": "",
     "relativeTimeHours_one": "",
@@ -1419,7 +1415,6 @@
     "contextWindowPendingAria": "",
     "contextWindowPendingValue": "",
     "noMessage": "",
-    "modelAgentSection": "Model / Agent",
     "thinkingLevelSection": "Thinking level",
     "noModelsAvailable": "No models available",
     "currentAgentTarget": "Current agent: {{name}}",
@@ -1431,8 +1426,6 @@
     "agentRepliesFailed": "일부 에이전트가 응답하지 못했습니다: {{agents}}",
     "noDefaultModelConfigured": "대화를 만들기 전에 설정에서 기본 채팅 모델을 구성하세요.",
     "newChatOpenInNewWindowHint": "",
-    "minimizeAllChats": "모든 채팅 최소화",
-    "restoreAllChats": "모든 채팅 복원",
     "slashSuggestions": "슬래시 제안",
     "loadingSlashSuggestions": "제안 불러오는 중…",
     "snippetSuggestion": "저장된 프롬프트 삽입",
@@ -2051,7 +2044,10 @@
     "reportTitle": "",
     "sectionBody": "",
     "sectionHeading": "",
-    "selectStructure": ""
+    "selectStructure": "",
+    "subject": "제목",
+    "subjectPlaceholder": "짧은 제목 (선택)",
+    "subjectTooLong": "제목은 200자 이하여야 합니다"
   },
   "confirm": {
     "cancel": "취소",
@@ -3513,7 +3509,6 @@
     "outbox": "보낸 편지함",
     "outboxTab": "보낸 편지함",
     "pending": "대기 중",
-    "refreshTitle": "새로고침",
     "reply": "답장",
     "replyButton": "답장",
     "replyingTo": "답장 대상",
@@ -3575,7 +3570,20 @@
     "completionImages": "작업 완료 이미지",
     "completionImage": "작업 완료 이미지",
     "suggestedRecommendations": "제안된 권장 사항",
-    "noSuggestedRecommendations": "제안된 후속 권장 사항이 없습니다."
+    "noSuggestedRecommendations": "제안된 후속 권장 사항이 없습니다.",
+    "subject": {
+      "none": "(제목 없음)",
+      "taskCompleted": "{{taskId}} 완료",
+      "taskProposal": "작업 제안: {{title}}",
+      "taskRecommendations": "작업 추천",
+      "taskWedge": "{{taskId}} 조치 필요",
+      "duplicateDecision": "{{taskId}} 중복 결정",
+      "planningClarification": "계획 설명 요청"
+    },
+    "filter": "필터",
+    "filterTitle": "받은 편지함 필터",
+    "filterMenuLabel": "받은 편지함 범위",
+    "filterPendingApprovalsLabel": "받은 편지함 필터 — 대기 중인 승인 {{count}}건"
   },
   "memory": {
     "auditChecksTitle": "감사 검사",
@@ -4191,7 +4199,7 @@
     "executorPlaceholder": "실행자 모델 선택…",
     "loading": "모델 불러오는 중…",
     "noModels": "사용 가능한 모델이 없습니다. 모델 선택을 활성화하려면 설정에서 인증을 구성하세요.",
-    "planningModel": "",
+    "planningModel": "Planner Model",
     "planningPlaceholder": "",
     "preset": "프리셋",
     "reviewerModel": "검토자 모델",
@@ -4204,13 +4212,19 @@
   },
   "nav": {
     "activityLog": "활동 로그",
+    "activityPopover": "활동",
     "agents": "에이전트",
+    "artifactsUnreadAriaLabel_one": "",
+    "artifactsUnreadAriaLabel_other": "",
+    "artifactsUnreadDotAriaLabel": "",
     "automation": "자동화",
     "board": "보드",
+    "boardView": "보드 보기",
     "chat": "채팅",
     "chatUnreadAriaLabel": "읽지 않은 채팅 응답",
     "collapseSidebar": "",
     "commandCenter": "",
+    "conversations": "대화",
     "devServer": "개발 서버",
     "documents": "아티팩트",
     "evals": "평가",
@@ -4221,6 +4235,7 @@
     "importFromGitHub": "GitHub에서 가져오기",
     "insights": "인사이트",
     "list": "목록",
+    "listView": "목록 보기",
     "loadingScripts": "스크립트 불러오는 중…",
     "mailbox": "메일함",
     "mailboxPendingAriaLabel": "승인 대기 중",
@@ -4230,6 +4245,10 @@
     "more": "더 보기",
     "moreSheetTitle": "탐색",
     "noScriptsAddOne": "스크립트 없음 — 추가하세요…",
+    "notes": "메모",
+    "notesPopover": "메모",
+    "openMenu": "탐색 메뉴 열기",
+    "patchnode": "",
     "planning": "계획",
     "planningNeedsInputAriaLabel": "계획에 입력이 필요합니다",
     "primaryNavAriaLabel": "기본 탐색",
@@ -4247,14 +4266,8 @@
     "terminal": "터미널",
     "todos": "할 일",
     "usage": "사용량",
-    "workflows": "워크플로",
-    "patchnode": "",
-    "artifactsUnreadAriaLabel_one": "",
-    "artifactsUnreadAriaLabel_other": "",
-    "artifactsUnreadDotAriaLabel": "",
-    "notes": "메모",
-    "openMenu": "탐색 메뉴 열기",
-    "whiteboard": "Whiteboard"
+    "whiteboard": "Whiteboard",
+    "workflows": "워크플로"
   },
   "newTaskModal": {
     "addDependencies": "의존성 추가",
@@ -5265,14 +5278,6 @@
       "urlValid": "기본 URL은 유효한 URL이어야 합니다."
     }
   },
-  "quickChat": {
-    "errorAttachmentsBeforeSession": "채팅 세션이 준비되기 전에 첨부 파일을 보낼 수 없습니다",
-    "errorAttachmentsWhileStreaming": "응답이 스트리밍 중인 동안 첨부 파일을 보낼 수 없습니다",
-    "errorGettingResponse": "응답 가져오기 실패",
-    "errorInitializingChat": "채팅 초기화 실패",
-    "errorRefreshingSessions": "채팅 세션 새로 고침 실패",
-    "errorStartingNewChat": "새 채팅 시작 실패"
-  },
   "reliability": {
     "bouncedEntered": "{{bounced}}개 반환 / {{entered}}개 진입 (최근 {{days}}일)",
     "countingSince": "{{date}}부터 집계 중",
@@ -5881,17 +5886,19 @@
       "languageAutoHint": "브라우저 언어를 따릅니다",
       "suppressTheLdquoNeedsYourInputRdquoBanner": "",
       "title": "모양",
-      "openTasksInRightSidebarHelp": "",
-      "openMobileTasksInPopupHelp": "",
-      "taskPopupsBoardListOnly": "",
-      "taskPopupsBoardListOnlyHelp": "",
-      "taskDetailChatFirstHelp": "",
       "showCostBadgeOnCards": "",
       "showCostBadgeOnCardsHelp": "",
       "chatMessageLayout": "",
       "chatMessageLayoutBubbles": "",
       "chatMessageLayoutFullWidth": "",
-      "chatMessageLayoutHelp": ""
+      "chatMessageLayoutHelp": "",
+      "navigationPlacement": "",
+      "navigationPlacementFooter": "",
+      "navigationPlacementSidebar": "",
+      "navigationPlacementHelp": "",
+      "rightSidebarEnabled": "오른쪽 도구 사이드바 표시",
+      "rightSidebarEnabledHelp": "활성화하면 태블릿과 데스크톱에 파일, 채팅, 목록, 메모 바로가기가 있는 선택적 오른쪽 사이드바가 표시됩니다. 사이드바 없이도 모든 도구를 사용할 수 있습니다. 프로젝트 범위, 기본값: 비활성화.",
+      "taskDetailDefaultTabHelp": ""
     },
     "auth": {
       "apiKeyCleared": "API 키가 지워졌습니다",
@@ -6101,7 +6108,6 @@
       "searchTheTrackingRepoForLikelyDuplicatesBefore": "",
       "settingsSaved": "설정이 저장되었습니다",
       "showCapacityRiskBanner": "",
-      "showQuickChatButton": "",
       "showTheFloatingChatButtonInTheDashboard": "",
       "taskPrefix": "",
       "todoThreshold": "",
@@ -6125,12 +6131,10 @@
       "aiUndoTaskWorkflowHelp": "",
       "workspaceModeHint": "",
       "allowAbsoluteFileBrowserPathsHint": "",
-      "quickChatLauncherHint": "",
       "showTaskChatsInCommonFeedHint": "",
       "whenEnabledImportedGitHubIssuesUseTheirSource": "",
       "gitLabEnabledHint": "",
       "allowEphemeralAgentsToCreateTasksHint": "",
-      "quickChatCloseOnOutsideClickHint": "",
       "builtinWorkflowAtLeastOneEnabled": "",
       "disabledFusionWorkflowsAreHiddenFromWorkflow": "",
       "autoTranslateImportedIssues": "",
@@ -6142,8 +6146,8 @@
       "restartNow": "",
       "restartUnavailable": "",
       "restarting": "",
-      "mobileNavPrimaryItems": "모바일 하단 빠른 작업",
-      "mobileNavPrimaryItemsHint": "기본값: 대시보드, 작업, 에이전트, 미션, 채팅, 메일함. 가능한 대상을 추가하세요. 선택하지 않은 항목은 더보기에 유지됩니다.",
+      "mobileNavPrimaryItems": "내비게이션 빠른 접근",
+      "mobileNavPrimaryItemsHint": "기본값: 대시보드, 보드, 플래닝, 미션, 메일함. 최대 5개의 대상과 순서를 선택하세요. 나머지 대상은 모두 더보기에 유지됩니다.",
       "addNavItem": "빠른 작업 추가",
       "selectNavItem": "대상 선택",
       "removeNavItem": "{{item}} 제거",
@@ -6580,6 +6584,8 @@
       "label": "설정 섹션"
     },
     "models": {
+      "fallbackModel": "대체 모델",
+      "roleFallbackHelp": "이 역할의 기본 모델에서 재시도 가능한 공급자 오류가 발생하면 사용됩니다.",
       "deletePresetMessage": "프리셋 \"{{name}}\"은(는) 자동 선택에 사용 중입니다. 그래도 삭제하시겠습니까?",
       "deletePresetTitle": "프리셋 삭제",
       "loadingModels": "사용 가능한 모델을 불러오는 중…",
@@ -6588,7 +6594,6 @@
       "savePreset": "프리셋 저장"
     },
     "movedStub": {
-      "modelLanes": "",
       "openWorkflowSettings": "",
       "reviewVerification": "",
       "stepExecution": "",
@@ -6705,8 +6710,15 @@
     "projectModels": {
       "modelOverrides": "",
       "projectLanesSubheading": "",
+      "planningModel": "",
+      "planningFallbackModel": "Planner 대체 모델",
+      "executionModel": "Executor Model",
+      "executionFallbackModel": "Executor 대체 모델",
+      "validatorModel": "Reviewer Model",
+      "validatorFallbackModel": "Reviewer 대체 모델",
+      "mergerModel": "Merger Model",
+      "mergerFallbackModel": "Merger 대체 모델",
       "summarizationPointer": "",
-      "workflowLanesSubheading": "",
       "addPreset": "",
       "advancedWorkflowPolicy": "",
       "aIMergeCommitSummaries": "",
@@ -6721,35 +6733,27 @@
       "taskOutputLanguageInterface": "Fusion interface language",
       "configuredPresets": "",
       "configuresTheModelUsedForTwoShortSummary": "",
-      "defaultWorkflowModelLaneActions": "",
-      "defaultWorkflowModelLanes": "",
       "delete": "",
       "edit": "",
       "executorModel": "",
       "fallsBackTo": "",
       "loadingAvailableModels": "",
-      "loadingWorkflowModelLanes": "",
       "modelLanes": "",
       "modelPresets": "",
       "name": "",
       "noCap": "",
-      "noModelsAvailableConfigureAuthenticationBeforeSelectingWorkflow": "",
       "noModelsAvailableConfigureAuthenticationFirst": "",
       "noModelsAvailableConfigureAuthenticationFirst2": "",
       "noPreset": "",
       "noPresetsConfiguredYet": "",
-      "openAProjectToEditWorkflowModelLanes": "",
       "overrideGlobalModelSettingsAtTheProjectLevel": "",
       "presetEditor": "",
       "reset": "",
       "resetToDefaultNoCap": "",
       "resetToInheritFromGlobal": "",
-      "resetToInheritFromWorkflow": "",
       "reviewerModel": "",
-      "theseProjectOverridesApplyToTheActiveDefault": "",
       "tokenCap": "",
       "useDefault": "",
-      "useWorkflowDefault": "",
       "whenEnabledMergeCommitMessagesIncludeAnAI": "",
       "whenEnabledTasksCreatedWithoutATitleBut": "",
       "autoSelectModelPresetHint": "",
@@ -7990,7 +7994,10 @@
     },
     "definition": {
       "descriptionHeading": "설명",
-      "noDescription": "(설명 없음)"
+      "noDescription": "(설명 없음)",
+      "noOutcome": "아직 계획 요약이 없습니다 — 전체 사양은 계획 읽기에서 확인하세요.",
+      "outcomeHeading": "이 작업의 산출물",
+      "transformationHeading": "이전 → 이후"
     },
     "description": {
       "showLess": "간략히 보기",
@@ -8177,10 +8184,12 @@
       "updated": "우선순위가 {{priority}}로 업데이트되었습니다"
     },
     "progress": {
-      "heading": "진행 상태",
       "completedCount": "{{count}}/{{total}} 완료",
-      "workflowOrigin": "워크플로 게이트",
+      "heading": "진행 상태",
+      "hideSteps": "단계 숨기기",
       "implementationOrigin": "구현",
+      "noSteps": "(정의된 단계 없음)",
+      "showSteps": "단계 표시",
       "status": {
         "done": "완료",
         "failed": "실패",
@@ -8190,9 +8199,9 @@
         "skipped": "건너뜀",
         "pending": "대기 중"
       },
-      "noSteps": "(정의된 단계 없음)",
       "stepCount_one": "",
-      "stepCount_other": ""
+      "stepCount_other": "",
+      "workflowOrigin": "워크플로 게이트"
     },
     "provenance": {
       "createdBy": "작성자",
@@ -8291,24 +8300,11 @@
       "gitlabBadge": ""
     },
     "spec": {
-      "aiReviseHeading": "AI에 수정 요청",
-      "aiReviseHelp": "AI가 이 명세를 개선할 수 있도록 피드백을 제공하세요. 작업이 재계획을 위해 계획 단계로 이동합니다.",
       "backToDefinition": "정의로 돌아가기",
-      "editBtn": "편집",
-      "feedbackPlaceholder": "예: '오류 처리에 대한 세부 정보 추가', '더 작은 단계로 분할', 'API 엔드포인트 테스트 포함'...",
-      "hintCancel": "취소",
-      "hintSave": "저장",
       "loading": "명세 로드 중…",
       "noPrompt": "(프롬프트 없음)",
-      "placeholder": "Markdown으로 작업 명세를 입력하세요...",
       "promptFileName": "PROMPT.md",
-      "readPlanBtn": "계획 읽기",
-      "requesting": "요청 중…",
-      "requestRevisionBtn": "AI 수정 요청",
-      "revisionColumnError": "수정 요청 불가: 작업이 'triage', 'todo', 'in-progress' 또는 'in-review' 컬럼에 있어야 합니다.",
-      "revisionRequested": "AI 수정 요청됨. 작업이 계획 단계로 이동되었습니다.",
-      "saving": "저장 중…",
-      "updated": "명세 업데이트됨"
+      "readPlanBtn": "계획 읽기"
     },
     "stall": {
       "noLogEntry": "아직 로그 항목 없음",
@@ -8353,11 +8349,6 @@
       "updated": "업데이트됨"
     },
     "timingEvents": "타이밍 이벤트",
-    "title": {
-      "summarize": "",
-      "summarizeFailed": "",
-      "summarizeSuccess": ""
-    },
     "tokenTotalsAria": "작업 토큰 합계",
     "tokenUsage": "토큰 사용량",
     "totalExecutionTime": "총 활성 시간",
@@ -8548,6 +8539,7 @@
     "dependenciesSelected_other": "",
     "descriptionLabel": "설명",
     "descriptionPlaceholder": "무엇을 해야 하나요?",
+    "descriptionReadOnlyNote": "설명은 작업이 수동 인테이크 칼럼에서 대기하는 동안에만 편집할 수 있습니다.",
     "descriptionRefinedToast": "AI로 설명이 다듬어졌습니다",
     "editingDescription": "설명 편집 중",
     "enterDescriptionFirst": "먼저 설명을 입력해 주세요",
@@ -8609,8 +8601,6 @@
     "thinkingMinimal": "최소",
     "thinkingOff": "끔",
     "thinkingXhigh": "매우 높음",
-    "titleLabel": "제목",
-    "titlePlaceholder": "작업 제목",
     "useDropdown": "드롭다운 사용",
     "usingPreset": "프리셋 사용 중: {{name}}",
     "workflowDefaultBadge": "(기본값)",
@@ -8717,7 +8707,7 @@
     "createPrTitle": "이 작업에 대한 PR 생성",
     "createTaskTitle": "작업 생성",
     "saveHoldToStart": "작업 저장; 길게 눌러 시작",
-    "releaseToSaveHoldToStart": "놓으면 저장; 계속 누르면 시작",
+    "holdToStartReleaseCancels": "계속 누르면 시작; 놓으면 취소",
     "holdToStartProgress": "계속 눌러 시작",
     "startingTask": "작업 시작 중",
     "creating": "생성 중...",
@@ -8773,6 +8763,9 @@
     "importedFromGitHub": "GitHub에서 가져옴",
     "importedFromGitHubUrl": "GitHub에서 가져옴: {{url}}",
     "inProgressTime": "진행 중 {{elapsed}}",
+    "runtimeBreakdownExecution": "실행 {{elapsed}}",
+    "runtimeBreakdownPlanning": "계획 {{elapsed}}",
+    "runtimeBreakdownVerification": "검증 {{elapsed}}",
     "issueClosed": "닫힘",
     "issueDeleted": "삭제됨",
     "issueLeft": "그대로 둠",
@@ -8897,7 +8890,12 @@
     "refinesOf": "",
     "refinesOfTitle": "",
     "revertedTasks": "",
-    "revertedResolutionActions": "",
+    "restoreRevert": "",
+    "restoreRevertSuccess": "",
+    "restoreRevertAiCreated": "",
+    "restoreRevertAlreadyOpen": "",
+    "restoreRevertNeedsHuman": "",
+    "restoreRevertFailed": "",
     "revise": "",
     "dismissDuplicateFlag": "Mark the duplicate flag for {{id}} as read",
     "nearDuplicateHeldTitle": "Flagged as a duplicate of {{id}}. This task stays paused until you clear this flag or delete it.",
@@ -8908,7 +8906,23 @@
       "approving": "",
       "copy": "",
       "replanCapCopy": "",
-      "title": ""
+      "title": "",
+      "needsYouBadge": ""
+    },
+    "humanPlanApproval": {
+      "toggle": "실행 전에 내 계획 승인 요구",
+      "messageLabel": "메시지(선택)",
+      "messagePlaceholder": "거부한다면 계획의 문제점을 적어 주세요. 승인한다면 주의할 점을 덧붙이세요.",
+      "approve": "승인",
+      "reject": "거부",
+      "review": "계획 검토",
+      "hint": "거부하면 메시지가 새 계획 작성으로 전달됩니다. 승인하면 작업이 시작되고 메모가 구현에 전달됩니다.",
+      "noticeCopy": "선택적 메시지와 함께 이 계획을 승인하거나 거부하려면 작업을 여세요.",
+      "badgeArmed": "실행 전에 내 계획 승인이 필요합니다",
+      "badgeAwaiting": "내 계획 승인 대기 중",
+      "badgeApproved": "내가 승인한 계획",
+      "approved": "계획 승인됨 — {{id}}이(가) 실행으로 진행합니다",
+      "rejected": "계획 거부됨 — {{id}}이(가) 새 계획으로 돌아갑니다"
     }
   },
   "terminal": {
@@ -9414,9 +9428,9 @@
     "aiSubmit": "AI로 디자인",
     "aiToggle": "대신 설명하기",
     "backToWorkflowList": "",
+    "backToBoard": "",
     "clickToEditDescription": "클릭하여 설명 편집",
     "clickToRename": "클릭하여 이름 변경",
-    "closeEditor": "",
     "created": "워크플로 \"{{name}}\"을(를) 만들었습니다",
     "createDescription": "설명 (선택 사항)",
     "createFailed": "워크플로 만들기에 실패했습니다",
@@ -9552,9 +9566,7 @@
     "merging": "",
     "mergingTitle": "",
     "review": "검토",
-    "triggerAria": "Select workflow. Current workflow: {{name}}",
-    "editWorkflow": "Edit workflow",
-    "newWorkflow": "New workflow"
+    "triggerAria": "Select workflow. Current workflow: {{name}}"
   },
   "workspace": {
     "projectRoot": "프로젝트 루트",
@@ -9607,6 +9619,16 @@
     },
     "sending": "",
     "thinking": "",
+    "thinkingLevelTitle": "{{title}} · 사고 수준: {{level}}",
+    "thinkingLevels": {
+      "off": "끄기",
+      "minimal": "최소",
+      "low": "낮음",
+      "medium": "보통",
+      "high": "높음",
+      "xhigh": "매우 높음",
+      "max": "최대"
+    },
     "toolCall": "",
     "toolCallCount_one": "",
     "toolCallCount_other": "",
@@ -9900,7 +9922,6 @@
     "createFirst": "Create your first note",
     "select": "Select a note or create a new one",
     "title": "Note title",
-    "unsaved": "Unsaved changes",
     "savedState": "Saved",
     "saving": "Saving…",
     "saved": "Note saved",
@@ -9912,7 +9933,12 @@
     "deleteMessage": "This action cannot be undone.",
     "conflict": "This note changed elsewhere. Your draft is preserved.",
     "reload": "Reload server version",
-    "overwrite": "Overwrite with my draft"
+    "overwrite": "Overwrite with my draft",
+    "autoSaved": "",
+    "backToList": "",
+    "rename": "",
+    "renameAria": "",
+    "actionsAria": ""
   },
   "whiteboard": {
     "tools": "Whiteboard tools",
@@ -9950,5 +9976,16 @@
     "selectHint": "Select an item to edit it",
     "exportJson": "Export JSON",
     "exportPng": "Export PNG"
+  },
+  "windows": {
+    "hide": "모든 창 숨기기",
+    "restore": "창 복원"
+  },
+  "uiStyle": {
+    "label": "인터페이스 스타일",
+    "classic": "현재",
+    "classicDescription": "익숙한 Fusion 문법 그대로입니다.",
+    "clean": "간결",
+    "cleanDescription": "더 조밀한 여백, 부드러운 모서리, 차분한 크롬."
   }
 }

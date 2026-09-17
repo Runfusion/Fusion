@@ -1155,7 +1155,8 @@
     "disableHeartbeatsCountHint": "",
     "bulkFailures": "",
     "detailLabel": "",
-    "lastCompletedStep": ""
+    "lastCompletedStep": "",
+    "mailSubject": "主旨"
   },
   "app": {
     "backendError": {
@@ -1251,13 +1252,12 @@
   "chat": {
     "archive": "封存",
     "attachFiles": "附加檔案",
+    "backToConversations": "",
     "cancel": "取消",
     "cancelButton": "取消",
     "clearConversationFailed": "清除對話失敗",
-    "closeQuickChat": "關閉快速聊天",
     "openInNewWindow": "",
     "windowOpen": "已開啟",
-    "windowMinimized": "已最小化",
     "conversationArchived": "對話已封存",
     "conversationDeleted": "對話已刪除",
     "conversationName": "",
@@ -1304,17 +1304,14 @@
     "modeAgent": "代理",
     "modeModel": "模型",
     "newChat": "新對話",
-    "newChatModeAgent": "智能代理",
     "newChatModeModel": "模型",
     "newChatTitle": "新對話",
-    "noAgentsAvailable": "目前無可用智能代理",
     "noConversationsYet": "目前無對話",
     "noMessages": "目前無訊息",
     "noMessagesYet": "尚無訊息。開始對話吧！",
     "noRoomsYet": "目前無頻道。",
     "noSkillsAvailable": "暫無可用技能",
     "noSkillsFound": "找不到技能",
-    "openQuickChat": "開啟快速聊天",
     "preserveToStash": "",
     "preserveToStashDone": "",
     "preserveToStashFailed": "",
@@ -1341,7 +1338,6 @@
     "forcePending": "強制傳送待傳送訊息",
     "forcePendingShort": "強制傳送",
     "pendingEditEmpty": "待傳送訊息不能為空",
-    "quickChatTitle": "快速聊天",
     "relativeTimeDays_one": "",
     "relativeTimeDays_other": "",
     "relativeTimeHours_one": "",
@@ -1419,7 +1415,6 @@
     "contextWindowPendingAria": "",
     "contextWindowPendingValue": "",
     "noMessage": "",
-    "modelAgentSection": "Model / Agent",
     "thinkingLevelSection": "Thinking level",
     "noModelsAvailable": "No models available",
     "currentAgentTarget": "Current agent: {{name}}",
@@ -1431,8 +1426,6 @@
     "agentRepliesFailed": "部分代理無法回覆：{{agents}}",
     "noDefaultModelConfigured": "請先在設定中設定預設聊天模型，再建立對話。",
     "newChatOpenInNewWindowHint": "",
-    "minimizeAllChats": "最小化所有聊天",
-    "restoreAllChats": "還原所有聊天",
     "slashSuggestions": "斜線建議",
     "loadingSlashSuggestions": "正在載入建議…",
     "snippetSuggestion": "插入已儲存的提示詞",
@@ -2051,7 +2044,10 @@
     "reportTitle": "",
     "sectionBody": "",
     "sectionHeading": "",
-    "selectStructure": ""
+    "selectStructure": "",
+    "subject": "主旨",
+    "subjectPlaceholder": "簡短主旨（選填）",
+    "subjectTooLong": "主旨不得超過 200 個字元"
   },
   "confirm": {
     "cancel": "取消",
@@ -3513,7 +3509,6 @@
     "outbox": "寄件匣",
     "outboxTab": "寄件匣",
     "pending": "待定",
-    "refreshTitle": "重新整理",
     "reply": "回覆",
     "replyButton": "回復",
     "replyingTo": "回復 {{preview}}",
@@ -3575,7 +3570,20 @@
     "completionImages": "任務完成圖片",
     "completionImage": "任務完成圖片",
     "suggestedRecommendations": "建議的後續事項",
-    "noSuggestedRecommendations": "未提出後續建議。"
+    "noSuggestedRecommendations": "未提出後續建議。",
+    "subject": {
+      "none": "（無主旨）",
+      "taskCompleted": "{{taskId}} 已完成",
+      "taskProposal": "任務提案：{{title}}",
+      "taskRecommendations": "任務建議",
+      "taskWedge": "{{taskId}} 需要處理",
+      "duplicateDecision": "{{taskId}} 重複判定",
+      "planningClarification": "規劃釐清"
+    },
+    "filter": "篩選",
+    "filterTitle": "篩選收件匣",
+    "filterMenuLabel": "收件匣範圍",
+    "filterPendingApprovalsLabel": "篩選收件匣 — {{count}} 項待處理核准"
   },
   "memory": {
     "auditChecksTitle": "稽核檢查",
@@ -4191,7 +4199,7 @@
     "executorPlaceholder": "選擇執行模型…",
     "loading": "載入模型中…",
     "noModels": "沒有可用的模型。在設定中設定身份驗證以啟用模型選擇。",
-    "planningModel": "",
+    "planningModel": "Planner Model",
     "planningPlaceholder": "",
     "preset": "預設",
     "reviewerModel": "審查模型",
@@ -4204,13 +4212,19 @@
   },
   "nav": {
     "activityLog": "活動紀錄",
+    "activityPopover": "活動",
     "agents": "代理",
+    "artifactsUnreadAriaLabel_one": "",
+    "artifactsUnreadAriaLabel_other": "",
+    "artifactsUnreadDotAriaLabel": "",
     "automation": "自動化",
     "board": "看板",
+    "boardView": "看板檢視",
     "chat": "聊天",
     "chatUnreadAriaLabel": "未讀聊天回覆",
     "collapseSidebar": "",
     "commandCenter": "",
+    "conversations": "對話",
     "devServer": "開發伺服器",
     "documents": "產物",
     "evals": "評估",
@@ -4221,6 +4235,7 @@
     "importFromGitHub": "從 GitHub 匯入",
     "insights": "洞察",
     "list": "清單",
+    "listView": "清單檢視",
     "loadingScripts": "正在載入腳本…",
     "mailbox": "收件匣",
     "mailboxPendingAriaLabel": "待審核",
@@ -4230,6 +4245,10 @@
     "more": "更多",
     "moreSheetTitle": "導覽",
     "noScriptsAddOne": "無腳本 — 新增一個…",
+    "notes": "筆記",
+    "notesPopover": "筆記",
+    "openMenu": "開啟導覽選單",
+    "patchnode": "",
     "planning": "規劃",
     "planningNeedsInputAriaLabel": "規劃需要您的輸入",
     "primaryNavAriaLabel": "主導覽",
@@ -4247,14 +4266,8 @@
     "terminal": "終端機",
     "todos": "待辦",
     "usage": "用量",
-    "workflows": "工作流程",
-    "patchnode": "",
-    "artifactsUnreadAriaLabel_one": "",
-    "artifactsUnreadAriaLabel_other": "",
-    "artifactsUnreadDotAriaLabel": "",
-    "notes": "筆記",
-    "openMenu": "開啟導覽選單",
-    "whiteboard": "Whiteboard"
+    "whiteboard": "Whiteboard",
+    "workflows": "工作流程"
   },
   "newTaskModal": {
     "addDependencies": "新增相依性",
@@ -5265,14 +5278,6 @@
       "urlValid": "基礎URL必須是有效的URL。"
     }
   },
-  "quickChat": {
-    "errorAttachmentsBeforeSession": "在聊天工作階段準備好之前無法傳送附件",
-    "errorAttachmentsWhileStreaming": "在串流回應時無法傳送附件",
-    "errorGettingResponse": "無法取得回應",
-    "errorInitializingChat": "初始化聊天失敗",
-    "errorRefreshingSessions": "重新整理聊天工作階段失敗",
-    "errorStartingNewChat": "啟動新聊天失敗"
-  },
   "reliability": {
     "bouncedEntered": "{{bounced}} 跳出 / {{entered}} 進入（最近 {{days}} 天）",
     "countingSince": "自 {{date}} 起計數",
@@ -5881,17 +5886,19 @@
       "languageAutoHint": "跟隨瀏覽器語言",
       "suppressTheLdquoNeedsYourInputRdquoBanner": "",
       "title": "外觀",
-      "openTasksInRightSidebarHelp": "",
-      "openMobileTasksInPopupHelp": "",
-      "taskPopupsBoardListOnly": "",
-      "taskPopupsBoardListOnlyHelp": "",
-      "taskDetailChatFirstHelp": "",
       "showCostBadgeOnCards": "",
       "showCostBadgeOnCardsHelp": "",
       "chatMessageLayout": "",
       "chatMessageLayoutBubbles": "",
       "chatMessageLayoutFullWidth": "",
-      "chatMessageLayoutHelp": ""
+      "chatMessageLayoutHelp": "",
+      "navigationPlacement": "",
+      "navigationPlacementFooter": "",
+      "navigationPlacementSidebar": "",
+      "navigationPlacementHelp": "",
+      "rightSidebarEnabled": "顯示右側工具側邊欄",
+      "rightSidebarEnabledHelp": "啟用後，平板與桌面會顯示可選的右側側邊欄，包含檔案、聊天、清單與筆記捷徑。即使不啟用，所有工具仍可使用。專案範圍；預設：停用。",
+      "taskDetailDefaultTabHelp": ""
     },
     "auth": {
       "apiKeyCleared": "API 金鑰已清除",
@@ -6101,7 +6108,6 @@
       "searchTheTrackingRepoForLikelyDuplicatesBefore": "",
       "settingsSaved": "設定已儲存",
       "showCapacityRiskBanner": "",
-      "showQuickChatButton": "",
       "showTheFloatingChatButtonInTheDashboard": "",
       "taskPrefix": "",
       "todoThreshold": "",
@@ -6125,12 +6131,10 @@
       "aiUndoTaskWorkflowHelp": "",
       "workspaceModeHint": "",
       "allowAbsoluteFileBrowserPathsHint": "",
-      "quickChatLauncherHint": "",
       "showTaskChatsInCommonFeedHint": "",
       "whenEnabledImportedGitHubIssuesUseTheirSource": "",
       "gitLabEnabledHint": "",
       "allowEphemeralAgentsToCreateTasksHint": "",
-      "quickChatCloseOnOutsideClickHint": "",
       "disabledFusionWorkflowsAreHiddenFromWorkflow": "",
       "builtinWorkflowAtLeastOneEnabled": "",
       "autoTranslateImportedIssues": "",
@@ -6142,8 +6146,8 @@
       "restartNow": "",
       "restartUnavailable": "",
       "restarting": "",
-      "mobileNavPrimaryItems": "行動版底部快捷操作",
-      "mobileNavPrimaryItemsHint": "預設：儀表板、任務、代理、任務組、聊天、信箱。可新增符合條件的目的地；未選取的目的地仍在「更多」中。",
+      "mobileNavPrimaryItems": "導覽快捷入口",
+      "mobileNavPrimaryItemsHint": "預設：儀表板、看板、規劃、任務組、信箱。最多可選擇 5 個目的地並排序；其餘目的地仍在「更多」中。",
       "addNavItem": "新增快捷操作",
       "selectNavItem": "選擇目的地",
       "removeNavItem": "移除 {{item}}",
@@ -6580,6 +6584,8 @@
       "label": "設定區段"
     },
     "models": {
+      "fallbackModel": "備用模型",
+      "roleFallbackHelp": "此角色的主要模型遇到可重試的供應商錯誤時使用。",
       "deletePresetMessage": "預設「{{name}}」正在自動選取中使用，確定要刪除嗎？",
       "deletePresetTitle": "刪除預設",
       "loadingModels": "正在載入可用模型…",
@@ -6588,7 +6594,6 @@
       "savePreset": "儲存預設"
     },
     "movedStub": {
-      "modelLanes": "",
       "openWorkflowSettings": "",
       "reviewVerification": "",
       "stepExecution": "",
@@ -6705,8 +6710,15 @@
     "projectModels": {
       "modelOverrides": "",
       "projectLanesSubheading": "",
+      "planningModel": "",
+      "planningFallbackModel": "Planner 備用模型",
+      "executionModel": "Executor Model",
+      "executionFallbackModel": "Executor 備用模型",
+      "validatorModel": "Reviewer Model",
+      "validatorFallbackModel": "Reviewer 備用模型",
+      "mergerModel": "Merger Model",
+      "mergerFallbackModel": "Merger 備用模型",
       "summarizationPointer": "",
-      "workflowLanesSubheading": "",
       "addPreset": "",
       "advancedWorkflowPolicy": "",
       "aIMergeCommitSummaries": "",
@@ -6721,35 +6733,27 @@
       "taskOutputLanguageInterface": "Fusion interface language",
       "configuredPresets": "",
       "configuresTheModelUsedForTwoShortSummary": "",
-      "defaultWorkflowModelLaneActions": "",
-      "defaultWorkflowModelLanes": "",
       "delete": "",
       "edit": "",
       "executorModel": "",
       "fallsBackTo": "",
       "loadingAvailableModels": "",
-      "loadingWorkflowModelLanes": "",
       "modelLanes": "",
       "modelPresets": "",
       "name": "",
       "noCap": "",
-      "noModelsAvailableConfigureAuthenticationBeforeSelectingWorkflow": "",
       "noModelsAvailableConfigureAuthenticationFirst": "",
       "noModelsAvailableConfigureAuthenticationFirst2": "",
       "noPreset": "",
       "noPresetsConfiguredYet": "",
-      "openAProjectToEditWorkflowModelLanes": "",
       "overrideGlobalModelSettingsAtTheProjectLevel": "",
       "presetEditor": "",
       "reset": "",
       "resetToDefaultNoCap": "",
       "resetToInheritFromGlobal": "",
-      "resetToInheritFromWorkflow": "",
       "reviewerModel": "",
-      "theseProjectOverridesApplyToTheActiveDefault": "",
       "tokenCap": "",
       "useDefault": "",
-      "useWorkflowDefault": "",
       "whenEnabledMergeCommitMessagesIncludeAnAI": "",
       "whenEnabledTasksCreatedWithoutATitleBut": "",
       "autoSelectModelPresetHint": "",
@@ -7990,7 +7994,10 @@
     },
     "definition": {
       "descriptionHeading": "描述",
-      "noDescription": "（無描述）"
+      "noDescription": "（無描述）",
+      "noOutcome": "尚無計畫摘要 — 開啟「閱讀計畫」查看完整規格。",
+      "outcomeHeading": "此任務交付的內容",
+      "transformationHeading": "變更前 → 變更後"
     },
     "description": {
       "showLess": "顯示更少",
@@ -8177,10 +8184,12 @@
       "updated": "優先級已更新為 {{priority}}"
     },
     "progress": {
-      "heading": "進度",
       "completedCount": "已完成 {{count}}/{{total}}",
-      "workflowOrigin": "工作流程關卡",
+      "heading": "進度",
+      "hideSteps": "隱藏步驟",
       "implementationOrigin": "實作",
+      "noSteps": "（未定義步驟）",
+      "showSteps": "顯示步驟",
       "status": {
         "done": "已完成",
         "failed": "失敗",
@@ -8190,9 +8199,9 @@
         "skipped": "已略過",
         "pending": "待處理"
       },
-      "noSteps": "（未定義步驟）",
       "stepCount_one": "",
-      "stepCount_other": ""
+      "stepCount_other": "",
+      "workflowOrigin": "工作流程關卡"
     },
     "provenance": {
       "createdBy": "創建者：",
@@ -8291,24 +8300,11 @@
       "gitlabBadge": ""
     },
     "spec": {
-      "aiReviseHeading": "請 AI 修訂",
-      "aiReviseHelp": "提供反饋讓 AI 改善此規範。任務將進入規劃階段重新規劃。",
       "backToDefinition": "返回定義",
-      "editBtn": "編輯",
-      "feedbackPlaceholder": "例如：「添加更多錯誤處理細節」、「拆分為更小步驟」、「添加 API 端點測試」...",
-      "hintCancel": "取消",
-      "hintSave": "儲存",
       "loading": "正在載入規範…",
       "noPrompt": "（無提示詞）",
-      "placeholder": "以 Markdown 格式輸入任務規範...",
       "promptFileName": "PROMPT.md",
-      "readPlanBtn": "閱讀計畫",
-      "requesting": "正在請求…",
-      "requestRevisionBtn": "請求 AI 修訂",
-      "revisionColumnError": "無法請求修訂：任務必須在「triage」、「todo」、「in-progress」或「in-review」欄中。",
-      "revisionRequested": "已請求 AI 修訂。任務已移至規劃階段。",
-      "saving": "正在儲存…",
-      "updated": "規範已更新"
+      "readPlanBtn": "閱讀計畫"
     },
     "stall": {
       "noLogEntry": "尚無日誌條目",
@@ -8353,11 +8349,6 @@
       "updated": "更新於"
     },
     "timingEvents": "計時事件",
-    "title": {
-      "summarize": "",
-      "summarizeFailed": "",
-      "summarizeSuccess": ""
-    },
     "tokenTotalsAria": "任務 Token 總計",
     "tokenUsage": "Token 使用量",
     "totalExecutionTime": "總活躍時間",
@@ -8548,6 +8539,7 @@
     "dependenciesSelected_other": "",
     "descriptionLabel": "描述",
     "descriptionPlaceholder": "需要完成什麼？",
+    "descriptionReadOnlyNote": "僅當任務仍在其手動收件欄中等待時，才能編輯描述。",
     "descriptionRefinedToast": "AI 已最佳化描述",
     "editingDescription": "正在編輯描述",
     "enterDescriptionFirst": "請先輸入描述",
@@ -8609,8 +8601,6 @@
     "thinkingMinimal": "最低",
     "thinkingOff": "關閉",
     "thinkingXhigh": "極高",
-    "titleLabel": "標題",
-    "titlePlaceholder": "任務標題",
     "useDropdown": "使用下拉選單",
     "usingPreset": "使用預設：{{name}}",
     "workflowDefaultBadge": "（預設）",
@@ -8717,7 +8707,7 @@
     "createPrTitle": "為此任務建立 PR",
     "createTaskTitle": "建立任務",
     "saveHoldToStart": "儲存任務；長按以開始",
-    "releaseToSaveHoldToStart": "放開以儲存；繼續長按以開始",
+    "holdToStartReleaseCancels": "繼續長按以開始；放開則取消",
     "holdToStartProgress": "繼續長按以開始",
     "startingTask": "正在開始任務",
     "creating": "建立中……",
@@ -8773,6 +8763,9 @@
     "importedFromGitHub": "從 GitHub 匯入",
     "importedFromGitHubUrl": "從 GitHub 匯入：{{url}}",
     "inProgressTime": "進行中 {{elapsed}}",
+    "runtimeBreakdownExecution": "執行 {{elapsed}}",
+    "runtimeBreakdownPlanning": "規劃 {{elapsed}}",
+    "runtimeBreakdownVerification": "驗證 {{elapsed}}",
     "issueClosed": "已關閉",
     "issueDeleted": "已刪除",
     "issueLeft": "保留",
@@ -8897,7 +8890,12 @@
     "refinesOf": "",
     "refinesOfTitle": "",
     "revertedTasks": "",
-    "revertedResolutionActions": "",
+    "restoreRevert": "",
+    "restoreRevertSuccess": "",
+    "restoreRevertAiCreated": "",
+    "restoreRevertAlreadyOpen": "",
+    "restoreRevertNeedsHuman": "",
+    "restoreRevertFailed": "",
     "revise": "",
     "dismissDuplicateFlag": "Mark the duplicate flag for {{id}} as read",
     "nearDuplicateHeldTitle": "Flagged as a duplicate of {{id}}. This task stays paused until you clear this flag or delete it.",
@@ -8908,7 +8906,23 @@
       "approving": "",
       "copy": "",
       "replanCapCopy": "",
-      "title": ""
+      "title": "",
+      "needsYouBadge": ""
+    },
+    "humanPlanApproval": {
+      "toggle": "執行前需要我核准計畫",
+      "messageLabel": "留言（選填）",
+      "messagePlaceholder": "若要拒絕，請說明計畫哪裡有問題；若要核准，請補充需要注意的地方。",
+      "approve": "核准",
+      "reject": "拒絕",
+      "review": "檢視計畫",
+      "hint": "拒絕會把你的留言帶回去重新擬定計畫。核准會開始工作並把你的備註傳給實作方。",
+      "noticeCopy": "開啟任務以核准或拒絕此計畫，可附上留言。",
+      "badgeArmed": "執行前需要你核准計畫",
+      "badgeAwaiting": "等待你核准計畫",
+      "badgeApproved": "計畫已由你核准",
+      "approved": "計畫已核准 — {{id}} 繼續執行",
+      "rejected": "計畫已拒絕 — {{id}} 返回重新擬定計畫"
     }
   },
   "terminal": {
@@ -9414,9 +9428,9 @@
     "aiSubmit": "使用 AI 設計",
     "aiToggle": "改用描述方式",
     "backToWorkflowList": "",
+    "backToBoard": "",
     "clickToEditDescription": "按一下以編輯說明",
     "clickToRename": "按一下以重新命名",
-    "closeEditor": "",
     "created": "已建立工作流程「{{name}}」",
     "createDescription": "說明（選填）",
     "createFailed": "建立工作流程失敗",
@@ -9552,9 +9566,7 @@
     "merging": "",
     "mergingTitle": "",
     "review": "審查",
-    "triggerAria": "Select workflow. Current workflow: {{name}}",
-    "editWorkflow": "Edit workflow",
-    "newWorkflow": "New workflow"
+    "triggerAria": "Select workflow. Current workflow: {{name}}"
   },
   "workspace": {
     "projectRoot": "項目根目錄",
@@ -9607,6 +9619,16 @@
     },
     "sending": "",
     "thinking": "",
+    "thinkingLevelTitle": "{{title}} · 思考強度：{{level}}",
+    "thinkingLevels": {
+      "off": "關閉",
+      "minimal": "最低",
+      "low": "低",
+      "medium": "中",
+      "high": "高",
+      "xhigh": "極高",
+      "max": "最大"
+    },
     "toolCall": "",
     "toolCallCount_one": "",
     "toolCallCount_other": "",
@@ -9900,7 +9922,6 @@
     "createFirst": "Create your first note",
     "select": "Select a note or create a new one",
     "title": "Note title",
-    "unsaved": "Unsaved changes",
     "savedState": "Saved",
     "saving": "Saving…",
     "saved": "Note saved",
@@ -9912,7 +9933,12 @@
     "deleteMessage": "This action cannot be undone.",
     "conflict": "This note changed elsewhere. Your draft is preserved.",
     "reload": "Reload server version",
-    "overwrite": "Overwrite with my draft"
+    "overwrite": "Overwrite with my draft",
+    "autoSaved": "",
+    "backToList": "",
+    "rename": "",
+    "renameAria": "",
+    "actionsAria": ""
   },
   "whiteboard": {
     "tools": "Whiteboard tools",
@@ -9950,5 +9976,16 @@
     "selectHint": "Select an item to edit it",
     "exportJson": "Export JSON",
     "exportPng": "Export PNG"
+  },
+  "windows": {
+    "hide": "隱藏所有視窗",
+    "restore": "還原視窗"
+  },
+  "uiStyle": {
+    "label": "介面風格",
+    "classic": "目前",
+    "classicDescription": "維持熟悉的 Fusion 介面語法。",
+    "clean": "簡潔",
+    "cleanDescription": "更緊湊的間距、更柔和的圓角、更安靜的外框。"
   }
 }

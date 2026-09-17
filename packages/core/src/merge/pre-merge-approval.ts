@@ -156,7 +156,7 @@ function evaluateStep(
     Authored-verdict authority and source-content binding are separate invariants. Review-kind and
     verdictRequired rows need APPROVE/APPROVE_WITH_NOTES, but only the narrow content-review predicate
     may feed `bindsContent`; widening that predicate made plan and deterministic gates require a diff
-    fingerprint they cannot produce and rendered builtin:coding-ideas-v2 unmergeable.
+    fingerprint they cannot produce and rendered builtin:coding-ideas unmergeable.
     */
     const requiresExplicitVerdict = requiresContentReviewProof(workflowStepId, result);
     const requiresAuthoredVerdict = requiresAuthoredReviewVerdict(workflowStepId, result);
@@ -193,7 +193,7 @@ function evaluateStep(
     bind. Falling through to the diff comparison classified every one of them as
     `unprovable-content`, so `canMergeTask` answered "task has no provable approval for the content
     being merged" and NOTHING could ever merge on such a workflow. Measured on
-    builtin:coding-ideas-v2 via pipeline-smoke S01; builtin:review-gated-coding carries the same
+    builtin:coding-ideas via pipeline-smoke S01; builtin:review-gated-coding carries the same
     latent defect and simply never reached its merge.
     The carve-out is deliberately narrow: it applies only when the step is neither `code-review` nor
     a `reviewKind: "code"` result AND recorded no fingerprint of its own. A content review that DID

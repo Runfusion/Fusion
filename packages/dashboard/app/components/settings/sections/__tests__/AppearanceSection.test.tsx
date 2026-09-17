@@ -12,23 +12,22 @@ vi.mock("../../LanguageSelector", () => ({
   LanguageSelector: () => <div data-testid="language-selector" />,
 }));
 
-function renderAppearanceSection(formOverrides: Partial<Settings> = {}, onChatMessageLayoutChange = vi.fn()) {
-  const onOpenTasksInRightSidebarChange = vi.fn();
-  const onOpenMobileTasksInPopupChange = vi.fn();
-  const onTaskPopupsBoardListOnlyChange = vi.fn();
+function renderAppearanceSection(
+  formOverrides: Partial<Settings> = {},
+  onChatMessageLayoutChange = vi.fn(),
+  onNavigationPlacementChange = vi.fn(),
+) {
   const onShowCostBadgeOnCardsChange = vi.fn();
-  const onTaskDetailChatFirstChange = vi.fn();
+  const onTaskDetailDefaultTabChange = vi.fn();
+  const onRightSidebarEnabledChange = vi.fn();
   let form: SettingsFormState = {
     maxConcurrent: 2,
     maxWorktrees: 4,
     pollIntervalMs: 15000,
     groupOverlappingFiles: true,
     autoMerge: true,
-    openTasksInRightSidebar: false,
-    openMobileTasksInPopup: false,
-    taskPopupsBoardListOnly: true,
     showCostBadgeOnCards: false,
-    taskDetailChatFirst: false,
+    taskDetailDefaultTab: "activity",
     chatMessageLayout: "bubbles",
     ...formOverrides,
   } as SettingsFormState;
@@ -45,16 +44,14 @@ function renderAppearanceSection(formOverrides: Partial<Settings> = {}, onChatMe
       dashboardFontScalePct={100}
       chatMessageLayout={form.chatMessageLayout}
       onChatMessageLayoutChange={onChatMessageLayoutChange}
-      openTasksInRightSidebar={form.openTasksInRightSidebar}
-      onOpenTasksInRightSidebarChange={onOpenTasksInRightSidebarChange}
-      openMobileTasksInPopup={form.openMobileTasksInPopup}
-      onOpenMobileTasksInPopupChange={onOpenMobileTasksInPopupChange}
-      taskPopupsBoardListOnly={form.taskPopupsBoardListOnly}
-      onTaskPopupsBoardListOnlyChange={onTaskPopupsBoardListOnlyChange}
+      navigationPlacement={form.navigationPlacement}
+      onNavigationPlacementChange={onNavigationPlacementChange}
+      rightSidebarEnabled={form.rightSidebarEnabled}
+      onRightSidebarEnabledChange={onRightSidebarEnabledChange}
       showCostBadgeOnCards={form.showCostBadgeOnCards}
       onShowCostBadgeOnCardsChange={onShowCostBadgeOnCardsChange}
-      taskDetailChatFirst={form.taskDetailChatFirst}
-      onTaskDetailChatFirstChange={onTaskDetailChatFirstChange}
+      taskDetailDefaultTab={form.taskDetailDefaultTab}
+      onTaskDetailDefaultTabChange={onTaskDetailDefaultTabChange}
       sessionBannersHidden={false}
       setSessionBannersHidden={vi.fn()}
     />,
@@ -63,21 +60,71 @@ function renderAppearanceSection(formOverrides: Partial<Settings> = {}, onChatMe
   return {
     setForm,
     getForm: () => form,
-    onOpenTasksInRightSidebarChange,
-    onOpenMobileTasksInPopupChange,
-    onTaskPopupsBoardListOnlyChange,
+    onNavigationPlacementChange,
+    onRightSidebarEnabledChange,
     onShowCostBadgeOnCardsChange,
-    onTaskDetailChatFirstChange,
+    onTaskDetailDefaultTabChange,
   };
 }
 
 describe("AppearanceSection", () => {
+  /*
+   * FN-419: the navigation placement control is the only in-product way to move the primary menu, so it must render
+   * the current value, write both the form and the live callback, and fail closed on a malformed persisted value.
+   */
+  it("renders the two-option navigation placement selector and updates to the sidebar", () => {
+    const onNavigationPlacementChange = vi.fn();
+    const { setForm, getForm } = renderAppearanceSection({}, vi.fn(), onNavigationPlacementChange);
+    const selector = screen.getByLabelText("Navigation menu placement") as HTMLSelectElement;
+    expect(selector.value).toBe("footer");
+    expect(Array.from(selector.options).map((option) => option.value)).toEqual(["footer", "sidebar"]);
+    fireEvent.change(selector, { target: { value: "sidebar" } });
+    expect(onNavigationPlacementChange).toHaveBeenCalledWith("sidebar");
+    expect(setForm).toHaveBeenCalledTimes(1);
+    expect(getForm().navigationPlacement).toBe("sidebar");
+  });
+
+  it("selects a persisted sidebar navigation placement", () => {
+    renderAppearanceSection({ navigationPlacement: "sidebar" });
+    expect((screen.getByLabelText("Navigation menu placement") as HTMLSelectElement).value).toBe("sidebar");
+  });
+
+  it("displays an invalid persisted navigation placement as the bottom-bar default", () => {
+    renderAppearanceSection({ navigationPlacement: "left" as never });
+    expect((screen.getByLabelText("Navigation menu placement") as HTMLSelectElement).value).toBe("footer");
+  });
+
+  /*
+   * FN-426: the right tool dock is optional and default-off, so this toggle is the only in-product way to bring it
+   * back. It must render unchecked for absent/invalid persisted values and write both the form and the live callback.
+   */
+  it("renders the right tool sidebar opt-in unchecked by default and enables it", () => {
+    const { setForm, getForm, onRightSidebarEnabledChange } = renderAppearanceSection();
+    const toggle = screen.getByLabelText("Show the right tool sidebar") as HTMLInputElement;
+    expect(toggle.checked).toBe(false);
+    fireEvent.click(toggle);
+    expect(onRightSidebarEnabledChange).toHaveBeenCalledWith(true);
+    expect(getForm().rightSidebarEnabled).toBe(true);
+    expect(setForm).toHaveBeenCalledTimes(1);
+  });
+
+  it("checks the right tool sidebar opt-in for a persisted true", () => {
+    renderAppearanceSection({ rightSidebarEnabled: true });
+    expect((screen.getByLabelText("Show the right tool sidebar") as HTMLInputElement).checked).toBe(true);
+  });
+
+  it("treats a malformed persisted right sidebar value as disabled", () => {
+    renderAppearanceSection({ rightSidebarEnabled: "yes" as never });
+    expect((screen.getByLabelText("Show the right tool sidebar") as HTMLInputElement).checked).toBe(false);
+  });
+
   it("renders the two-option conversation layout selector and updates full width", () => {
     const onChatMessageLayoutChange = vi.fn();
     const { setForm, getForm } = renderAppearanceSection({}, onChatMessageLayoutChange);
     const selector = screen.getByLabelText("Conversation layout") as HTMLSelectElement;
     expect(selector.value).toBe("bubbles");
-    expect(screen.getAllByRole("option")).toHaveLength(2);
+    // Scoped to this selector: FN-419 added a second select row to the section.
+    expect(Array.from(selector.options).map((option) => option.value)).toEqual(["bubbles", "full-width"]);
     fireEvent.change(selector, { target: { value: "full-width" } });
     expect(onChatMessageLayoutChange).toHaveBeenCalledWith("full-width");
     expect(setForm).toHaveBeenCalledTimes(1);
@@ -89,89 +136,54 @@ describe("AppearanceSection", () => {
     expect((screen.getByLabelText("Conversation layout") as HTMLSelectElement).value).toBe("full-width");
   });
 
-  it("renders and updates the open-tasks-in-right-sidebar checkbox", () => {
-    const { setForm, getForm } = renderAppearanceSection();
+  /*
+  FNXC:TaskDetailDefaultTab 2026-09-16-02:53:
+  FN-442 deleted the two board task-open routing settings: the floating task window is now the unconditional route, so
+  Appearance must expose neither control — no row, no label, no help copy, and no leftover click target — while its
+  neighbouring rows stay intact. The cases that drove those two toggles are removed with their subject.
+  */
+  it("exposes no board task-open routing controls or leftover shells", () => {
+    renderAppearanceSection();
 
-    const checkbox = screen.getByLabelText("Open tasks in the right sidebar");
-    expect(checkbox).not.toBeChecked();
-
-    fireEvent.click(checkbox);
-
-    expect(setForm).toHaveBeenCalledTimes(1);
-    expect(getForm().openTasksInRightSidebar).toBe(true);
+    expect(screen.queryByLabelText("Open tasks in the right sidebar")).toBeNull();
+    expect(screen.queryByLabelText("Open tasks as popups")).toBeNull();
+    expect(screen.queryByLabelText("Open task details with Chat first")).toBeNull();
+    expect(screen.queryByText(/board task cards open detail in the right sidebar/)).toBeNull();
+    expect(screen.queryByText(/open the existing movable task popup/)).toBeNull();
+    for (const key of ["openTasksInRightSidebar", "openMobileTasksInPopup", "taskDetailChatFirst"]) {
+      expect(document.querySelector(`[data-setting-key="${key}"]`)).toBeNull();
+    }
+    for (const checkbox of Array.from(document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'))) {
+      const labelled = checkbox.labels?.length || checkbox.getAttribute("aria-label");
+      expect(labelled).toBeTruthy();
+    }
+    expect(screen.getByLabelText("Show cost badges on task cards")).toBeInTheDocument();
+    expect(screen.getByLabelText("Open task details on")).toBeInTheDocument();
   });
 
-  it("mirrors every mounted Appearance toggle to its matching live callback", () => {
+  it("mirrors every mounted Appearance control to its matching live callback", () => {
     const callbacks = renderAppearanceSection();
 
-    fireEvent.click(screen.getByLabelText("Open tasks in the right sidebar"));
-    fireEvent.click(screen.getByLabelText("Open tasks as popups"));
-    fireEvent.click(screen.getByLabelText("Keep task popups on the view where they were opened"));
     fireEvent.click(screen.getByLabelText("Show cost badges on task cards"));
-    fireEvent.click(screen.getByLabelText("Open task details with Chat first"));
+    fireEvent.change(screen.getByLabelText("Open task details on"), { target: { value: "chat" } });
 
-    expect(callbacks.onOpenTasksInRightSidebarChange).toHaveBeenCalledWith(true);
-    expect(callbacks.onOpenMobileTasksInPopupChange).toHaveBeenCalledWith(true);
-    expect(callbacks.onTaskPopupsBoardListOnlyChange).toHaveBeenCalledWith(false);
     expect(callbacks.onShowCostBadgeOnCardsChange).toHaveBeenCalledWith(true);
-    expect(callbacks.onTaskDetailChatFirstChange).toHaveBeenCalledWith(true);
+    expect(callbacks.onTaskDetailDefaultTabChange).toHaveBeenCalledWith("chat");
   });
 
-  it("reflects a persisted enabled value", () => {
-    renderAppearanceSection({ openTasksInRightSidebar: true });
+  /*
+  FNXC:TaskWindowIdentity 2026-09-14-17:46:
+  FN-392: task windows are permanently project-scoped, so Appearance exposes no per-view scoping control — no row, no
+  label, no help copy, and no leftover click target — while its neighbouring toggles stay intact.
+  */
+  it("exposes no task popup view scoping control or leftover shell", () => {
+    renderAppearanceSection();
 
-    expect(screen.getByLabelText("Open tasks in the right sidebar")).toBeChecked();
-  });
-
-  it("renders and updates the task popup checkbox", () => {
-    const { setForm, getForm } = renderAppearanceSection();
-
-    const checkbox = screen.getByLabelText("Open tasks as popups");
-    expect(checkbox).not.toBeChecked();
-    /*
-    FNXC:MobileTaskPopups 2026-07-15-17:35:
-    Help text must state which click targets route to the popup.
-
-    FNXC:DashboardTests 2026-09-12-01:35:
-    Popup help names the remaining Board and List task-open surfaces after the duplicate dock task list was removed.
-    */
-    expect(
-      screen.getByText(
-        /board task-card clicks including Changes, Retries, and Workflow chips, plus ordinary List row\/card clicks, open the existing movable task popup/,
-      ),
-    ).toBeInTheDocument();
-    expect(screen.getByText(/Other task opens keep their current behavior/)).toBeInTheDocument();
-
-    fireEvent.click(checkbox);
-
-    expect(setForm).toHaveBeenCalledTimes(1);
-    expect(getForm().openMobileTasksInPopup).toBe(true);
-  });
-
-  it("reflects a persisted enabled task popup value", () => {
-    renderAppearanceSection({ openMobileTasksInPopup: true });
-
-    expect(screen.getByLabelText("Open tasks as popups")).toBeChecked();
-  });
-
-  it("renders and updates the task popup view attachment checkbox", () => {
-    const { setForm, getForm } = renderAppearanceSection();
-
-    const checkbox = screen.getByLabelText("Keep task popups on the view where they were opened");
-    expect(checkbox).toBeChecked();
-    expect(screen.getByText(/appears only on the view where it was opened/)).toBeInTheDocument();
-    expect(screen.getByText(/returning restores it in the same position\. Default: enabled/)).toBeInTheDocument();
-
-    fireEvent.click(checkbox);
-
-    expect(setForm).toHaveBeenCalledTimes(1);
-    expect(getForm().taskPopupsBoardListOnly).toBe(false);
-  });
-
-  it("reflects the default enabled task popup view scoping value", () => {
-    renderAppearanceSection({ taskPopupsBoardListOnly: true });
-
-    expect(screen.getByLabelText("Keep task popups on the view where they were opened")).toBeChecked();
+    expect(screen.queryByLabelText("Keep task popups on the view where they were opened")).toBeNull();
+    expect(screen.queryByText(/appears only on the view where it was opened/)).toBeNull();
+    expect(screen.queryByText(/returning restores it in the same position/)).toBeNull();
+    expect(document.querySelector('[data-setting-key="taskPopupsBoardListOnly"]')).toBeNull();
+    expect(screen.getByLabelText("Show cost badges on task cards")).toBeInTheDocument();
   });
 
   it("renders and updates the cost badge checkbox", () => {
@@ -193,22 +205,34 @@ describe("AppearanceSection", () => {
     expect(screen.getByLabelText("Show cost badges on task cards")).toBeChecked();
   });
 
-  it("renders task detail Chat-first as unchecked by default and updates it", () => {
-    const { setForm, getForm } = renderAppearanceSection();
+  /*
+  FNXC:TaskDetailDefaultTab 2026-09-16-02:53:
+  FN-442 replaced the Chat-first checkbox with a three-value selector. It must offer exactly Definition, Chat, and
+  Activity, default to Activity, write the chosen value into the settings form, and mirror it to the live callback.
+  */
+  it("renders the task detail default tab selector with its three choices and Activity default", () => {
+    renderAppearanceSection();
 
-    const checkbox = screen.getByLabelText("Open task details with Chat first");
-    expect(checkbox).not.toBeChecked();
-    expect(screen.getByText(/Off by default: task details list Activity first/)).toBeInTheDocument();
-
-    fireEvent.click(checkbox);
-
-    expect(setForm).toHaveBeenCalledTimes(1);
-    expect(getForm().taskDetailChatFirst).toBe(true);
+    const select = screen.getByLabelText("Open task details on") as HTMLSelectElement;
+    expect(Array.from(select.options).map((option) => option.value)).toEqual(["definition", "chat", "activity"]);
+    expect(Array.from(select.options).map((option) => option.textContent)).toEqual(["Definition", "Chat", "Activity"]);
+    expect(select.value).toBe("activity");
+    expect(screen.getByText(/Choose which tab a task opens on and leads the task detail tab bar/)).toBeInTheDocument();
   });
 
-  it("reflects a persisted enabled task detail Chat-first value", () => {
-    renderAppearanceSection({ taskDetailChatFirst: true });
+  it.each(["definition", "chat", "activity"] as const)("writes the %s task detail default tab to the form and live callback", (value) => {
+    const { setForm, getForm, onTaskDetailDefaultTabChange } = renderAppearanceSection();
 
-    expect(screen.getByLabelText("Open task details with Chat first")).toBeChecked();
+    fireEvent.change(screen.getByLabelText("Open task details on"), { target: { value } });
+
+    expect(setForm).toHaveBeenCalledTimes(1);
+    expect(getForm().taskDetailDefaultTab).toBe(value);
+    expect(onTaskDetailDefaultTabChange).toHaveBeenCalledWith(value);
+  });
+
+  it("reflects a persisted task detail default tab value", () => {
+    renderAppearanceSection({ taskDetailDefaultTab: "chat" });
+
+    expect((screen.getByLabelText("Open task details on") as HTMLSelectElement).value).toBe("chat");
   });
 });

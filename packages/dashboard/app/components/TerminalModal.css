@@ -61,16 +61,6 @@ FN-7621 recurrence #3 root cause: styles.css's mobile `@media (max-width: 768px)
   touch-action: pan-x pan-y;
 }
 
-.modal-overlay.terminal-modal-overlay--docked.terminal-modal-overlay--docked {
-  align-items: stretch;
-  justify-content: flex-end;
-  padding: 0;
-  background: transparent;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-  pointer-events: none;
-}
-
 .modal.terminal-modal {
   /* Initial dimensions are applied only when no persisted size has been
      restored — see :not([style*=...]) selectors below. */
@@ -108,51 +98,11 @@ retain their own sizing rules below.
   resize: none;
 }
 
-.modal.terminal-modal.terminal-modal--docked {
-  --floating-window-shadow: var(--shadow-lg);
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: calc(var(--icb-bottom-offset, 0px) + var(--executor-footer-height, calc(var(--space-xl) + var(--space-md))));
-  width: 100vw;
-  min-width: 0;
-  height: var(--terminal-docked-height);
-  min-height: calc(var(--space-xl) * 10);
-  max-width: none;
-  max-height: calc(100dvh - (var(--space-xl) * 4));
-  resize: none;
-  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
-  pointer-events: auto;
-  box-shadow: var(--floating-window-shadow, var(--shadow-lg));
-}
-
 /*
-FNXC:Terminal 2026-06-22-01:30:
-Larger grab target for the docked terminal top resize handle: it straddles the panel's top edge (extends above it) and is taller, so it is easy to grab on desktop and touch. touch-action:none keeps the drag from being hijacked by scroll/gestures so the resize stays smooth.
+FNXC:TerminalLayout 2026-09-15-07:57:
+FN-409 removed the overlay `docked` presentation, its overlay modifier, and its dedicated top resize grip. The only
+remaining non-mobile presentations are the in-flow pinned panel below and the shared floating window above.
 */
-.terminal-docked-resize-handle {
-  position: absolute;
-  top: calc(var(--space-sm) * -1);
-  left: 0;
-  right: 0;
-  height: calc(var(--space-md) + var(--space-sm));
-  cursor: ns-resize;
-  touch-action: none;
-  z-index: 2;
-}
-
-.terminal-docked-resize-handle::before {
-  content: "";
-  position: absolute;
-  left: 50%;
-  top: calc(var(--space-xs) / 2);
-  width: calc(var(--space-xl) * 2);
-  height: calc(var(--space-xs) / 2);
-  transform: translateX(-50%);
-  border-radius: var(--radius-pill);
-  background: var(--border);
-}
-
 
 /*
 FNXC:TerminalLayout 2026-07-04-19:22:
@@ -172,7 +122,7 @@ FN-7897 fixed the pinned terminal rendering underneath the fixed ExecutorStatusB
 
 /*
 FNXC:TerminalLayout 2026-07-12-18:50:
-FN-7897: reserve space for the fixed ExecutorStatusBar footer when it is rendered (footerVisible prop), so the pinned/below terminal's own bottom .terminal-status-bar action row stays fully visible above the footer instead of being painted over. --executor-footer-height is redeclared here (not inherited — see comment above) to match the .project-content--with-footer precedent; --icb-bottom-offset mirrors the same Android Chrome ICB compensation already applied to .terminal-modal--docked's bottom calc.
+FN-7897: reserve space for the fixed ExecutorStatusBar footer when it is rendered (footerVisible prop), so the pinned/below terminal's own bottom .terminal-status-bar action row stays fully visible above the footer instead of being painted over. --executor-footer-height is redeclared here (not inherited — see comment above) to match the .project-content--with-footer precedent; --icb-bottom-offset carries the same Android Chrome ICB compensation the retired docked presentation used in its bottom calc (FN-409).
 */
 .terminal-below-host--with-footer {
   --executor-footer-height: 36px;
@@ -186,25 +136,53 @@ FN-7897: reserve space for the fixed ExecutorStatusBar footer when it is rendere
   height: var(--terminal-below-height);
   min-height: calc(var(--space-xl) * 7.5);
   max-width: none;
-  max-height: min(35dvh, calc(100dvh - (var(--space-2xl) * 10)));
+  /*
+  FNXC:TerminalLayout 2026-09-15-21:04:
+  FN-434: the pinned panel is a FIXED height published by the component as --terminal-below-height. The previous
+  35dvh ceiling would silently shave that fixed height on an ordinary viewport, so the ceiling is only the
+  application-minimum guard rail; `resize: none` stays because no pinned resize gesture exists any more.
+  */
+  max-height: calc(100dvh - (var(--space-2xl) * 5));
   resize: none;
   border: 0;
   border-radius: 0;
   box-shadow: none;
 }
 
-.terminal-below-resize-handle {
+/*
+FNXC:TerminalLayout 2026-09-15-21:04:
+FN-434: the pinned panel's top grip detaches the terminal into a floating window instead of resizing it, so it
+carries a grab cursor rather than `ns-resize`. Its bar keeps the same shape operators already recognize.
+
+FNXC:TerminalLayout 2026-09-15-22:32:
+FN-438 pulls the hit area fully INSIDE the panel. The previous negative top offset pushed most of this strip
+above the panel's own top edge, into the application content behind it, so a press aimed at the grip usually
+landed on whatever sat above the terminal. `.terminal-header` now carries the same detach gesture, so this grip
+is the secondary affordance and must not steal pointer events from its neighbours.
+
+FNXC:TerminalLayout 2026-09-16-14:22:
+FN-438 review fix: the hit area is clamped to the painted bar itself (`var(--space-xs)`, exactly the
+`::before` offset plus its thickness). A taller absolutely positioned band sits above the statically
+positioned `.terminal-header` and swallowed the pointer over the top ~45% of every header control (tabs, tab
+close, workspace picker, close), turning a tab click into nothing and a 6px twitch into an unwanted detach.
+Since the header now arms the same gesture, nothing is lost by keeping this target bar-sized.
+*/
+.terminal-below-drag-handle {
   position: absolute;
-  top: calc(var(--space-sm) * -1);
+  top: 0;
   left: 0;
   right: 0;
   z-index: 2;
-  height: calc(var(--space-md) + var(--space-sm));
-  cursor: ns-resize;
+  height: var(--space-xs);
+  cursor: grab;
   touch-action: none;
 }
 
-.terminal-below-resize-handle::before {
+.terminal-below-drag-handle:active {
+  cursor: grabbing;
+}
+
+.terminal-below-drag-handle::before {
   content: "";
   position: absolute;
   left: 50%;
@@ -302,24 +280,10 @@ stopPropagation in renderTerminalTabStrip.
 }
 
 /*
-FNXC:TerminalModalControls 2026-07-31-22:19:
-Tablets start docked, so the header pop-out control needs the same touch-sized reach without
-changing its established 14px icon or toolbar layout. Its pseudo-element only enlarges the button
-hit area; it is not a second terminal control.
+FNXC:TerminalModalControls 2026-09-15-22:32:
+FN-438 removed the header pop-out/dock button, so its tablet touch-target enlargement and its icon-only chrome
+reset are gone with it. Presentation is switched by dragging the header or the window, never by a control.
 */
-.modal.terminal-modal.terminal-modal--tablet .terminal-clear-btn.terminal-clear-btn--icon[data-testid="terminal-popout-toggle"] {
-  position: relative;
-}
-
-.modal.terminal-modal.terminal-modal--tablet .terminal-clear-btn.terminal-clear-btn--icon[data-testid="terminal-popout-toggle"]::before {
-  content: "";
-  position: absolute;
-  inline-size: var(--modal-resize-touch-target);
-  block-size: var(--modal-resize-touch-target);
-  inset-inline-start: 50%;
-  inset-block-start: 50%;
-  transform: translate(-50%, -50%);
-}
 
 .terminal-tab {
   display: flex;
@@ -699,39 +663,19 @@ The worktree listbox must escape the mobile terminal header's clipped overflow. 
   letter-spacing: 0.04em;
 }
 
+/*
+FNXC:IconOnlyButtonCanon 2026-09-16-19:05:
+FN-471: this control is icon-only, so it re-declared the whole borderless paint at a bespoke 44px box. The
+canonical borderless variant now owns box, paint, colour and transition; only the flex behaviour is local. The
+old 44px square is replaced by the shared 28/36px geometry, not by a weaker guarantee.
+*/
 .terminal-close {
-  display: flex;
   flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  width: 44px;
-  height: 44px;
-  background: none;
-  border: none;
-  color: var(--text-muted);
-  cursor: pointer;
-  transition: color var(--transition-fast), background var(--transition-fast);
 }
 
 .terminal-close:hover {
   color: var(--text);
   background: var(--card-hover);
-}
-
-/*
-FNXC:Terminal 2026-06-23-22:12:
-The terminal header pop-out/dock affordance is an icon-only utility control. It should not carry button background or border chrome; keep hover/focus feedback only through color/focus ring so it reads like the surrounding header utility icons.
-*/
-.terminal-clear-btn.terminal-clear-btn--icon[data-testid="terminal-popout-toggle"] {
-  background: transparent;
-  border: none;
-  box-shadow: none;
-}
-
-.terminal-clear-btn.terminal-clear-btn--icon[data-testid="terminal-popout-toggle"]:hover {
-  background: transparent;
-  border: none;
-  color: var(--text);
 }
 
 .terminal-content {
@@ -1771,9 +1715,10 @@ The Android keyboard-open recurrence can start with a touch-primary visualViewpo
     font-size: 13px;
   }
 
+  /* FNXC:IconOnlyButtonCanon 2026-09-16-19:05: même valeur mobile qu'avant, exprimée par le jeton canonique. */
   .terminal-close {
-    width: 36px;
-    height: 36px;
+    width: var(--icon-button-size-mobile);
+    height: var(--icon-button-size-mobile);
   }
 
   .terminal-toolbar {
@@ -1917,24 +1862,13 @@ The Android keyboard-open recurrence can start with a touch-primary visualViewpo
   }
 
   /*
-  FNXC:TerminalModalControls 2026-07-24-01:10:
+  FNXC:TerminalModalControls 2026-09-15-07:57:
   A known touch tablet can share this CSS-width breakpoint with a phone. The React
-  classifier marks it explicitly, so restore the stored floating/docked geometry
-  after the phone fallback rules (which use !important to defeat stale phone sizes).
-  This keeps the shared header move grip and all eight resize targets reachable at
-  exactly 768px without exposing any geometry controls on true-phone sheets.
+  classifier marks it explicitly so the tablet keeps the full non-mobile terminal chrome
+  (shared header move grip, resize targets, tab strip, pinned host) at exactly 768px
+  instead of inheriting the phone full-screen sheet. FN-409 removed the docked geometry
+  restore that used to live here with the docked presentation itself.
   */
-  .modal.terminal-modal.terminal-modal--tablet.terminal-modal--docked {
-    min-width: 0 !important;
-    min-height: calc(var(--space-xl) * 10) !important;
-    width: 100vw !important;
-    height: var(--terminal-docked-height) !important;
-    max-width: none !important;
-    max-height: calc(100dvh - (var(--space-xl) * 4)) !important;
-    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
-    border: 1px solid var(--border);
-  }
-
   .modal.terminal-modal.terminal-modal--tablet .terminal-header {
     flex-wrap: nowrap;
     row-gap: 0;
@@ -2093,45 +2027,61 @@ rect (inline left/bottom) and stacked with nextFloatingZ so it clears pinned/pop
 }
 
 /*
-FNXC:AlphaMobileDrawer 2026-09-10-16:56:
-The mobile terminal keeps its PTY and keyboard-overlap lifecycle while its bounded Alpha drawer reaches the viewport bottom above the trigger pill and absorbs system clearance inside the panel. Standard mobile remains governed by the earlier fullscreen rules because this selector requires the App-published Alpha project-shell marker.
+FNXC:MobileDrawer 2026-09-10-16:56:
+The mobile terminal keeps its PTY and keyboard-overlap lifecycle while its bounded mobile drawer reaches the viewport bottom above the trigger pill and absorbs system clearance inside the panel. Standard mobile remains governed by the earlier fullscreen rules because this selector requires the App-published mobile project-shell marker.
 
-FNXC:AlphaMobileDrawer 2026-09-11-01:40:
-The Alpha terminal consumes the same canonical drawer block-size and shared handle gesture as the other drawer owners. Its close button is absent only under that contract; PTY content, Escape/backdrop recovery, and keyboard-aware input remain reachable.
+FNXC:MobileDrawer 2026-09-11-01:40:
+The drawer terminal consumes the same canonical drawer block-size and shared handle gesture as the other drawer owners. Its close button is absent only under that contract; PTY content, Escape/backdrop recovery, and keyboard-aware input remain reachable.
 
 FNXC:MobileDrawerMotion 2026-09-12-20:37:
-The Alpha terminal applies the shared bottom-edge entry to its outer modal only. Reduced motion suppresses that animation while PTY state, keyboard geometry, backdrop, Escape, and drag dismissal remain unchanged.
+The drawer terminal applies the shared bottom-edge entry to its outer modal only. Reduced motion suppresses that animation while PTY state, keyboard geometry, backdrop, Escape, and drag dismissal remain unchanged.
+
+FNXC:MobileDrawer 2026-09-16-17:23:
+The revealed top band and the panel block-size derive from the same `--mobile-drawer-top-reveal` token, so all three drawer owners open at exactly the same height. The band stays non-zero so the scrim and the close gesture remain reachable.
+
+FNXC:MobileDrawer 2026-09-16-17:23:
+The mobile fullscreen shell (`.modal.terminal-modal.terminal-modal--mobile`) and its phone-width companion block both force all three height properties to the full viewport with forced precedence. Those declarations would otherwise beat the canonical drawer block-size, so the drawer rule below must carry forced precedence on min-height, height AND max-height, exactly like `.floating-window--mobile-drawer`. Neutralizing the minimum is mandatory: in CSS a minimum above the maximum wins, so leaving the fullscreen floor in force would re-pin the panel to the full viewport even with a corrected height.
 */
-html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] .terminal-modal-overlay:not(.terminal-modal-overlay--docked) {
+html[data-mobile-drawers="true"][data-viewport-mode="mobile"] .terminal-modal-overlay:not(.terminal-modal-overlay--docked) {
   align-items: flex-end;
-  padding-block-start: calc(env(safe-area-inset-top, 0px) + var(--space-2xl));
+  padding-block-start: calc(env(safe-area-inset-top, 0px) + var(--mobile-drawer-top-reveal));
   background: color-mix(in srgb, var(--bg) 38%, transparent);
 }
 
-html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] .terminal-modal-overlay:not(.terminal-modal-overlay--docked) > .terminal-modal {
+html[data-mobile-drawers="true"][data-viewport-mode="mobile"] .terminal-modal-overlay:not(.terminal-modal-overlay--docked) > .terminal-modal {
   position: relative;
   inset: auto;
   width: 100%;
-  height: var(--alpha-mobile-drawer-block-size);
+  height: var(--mobile-drawer-block-size) !important;
   min-width: 0;
-  min-height: 0;
+  min-height: 0 !important;
   max-width: 100%;
-  max-height: var(--alpha-mobile-drawer-block-size);
-  padding-block-end: var(--mobile-nav-alpha-system-offset);
+  max-height: var(--mobile-drawer-block-size) !important;
+  padding-block-end: var(--mobile-nav-system-offset);
   border: var(--btn-border-width) solid var(--border);
   border-block-end: 0;
   border-radius: var(--radius-xl) var(--radius-xl) 0 0;
   box-shadow: var(--shadow-lg);
-  animation: alpha-mobile-drawer-rise-in var(--duration-normal) ease-out;
+  animation: mobile-drawer-rise-in var(--duration-normal) ease-out;
+}
+
+/*
+FNXC:MobileDrawer 2026-09-16-17:23:
+The drawer terminal keeps its keyboard-aware shrink. The two existing keyboard rules already declare `min-height: auto !important` plus `height`/`max-height` `!important`, so this companion rule must win on all three properties; otherwise an open keyboard would leave the panel at the canonical drawer height and push its entry area under the keyboard. The panel is never taller than the canonical drawer height and never taller than the visual viewport.
+*/
+html[data-mobile-drawers="true"][data-viewport-mode="mobile"] .terminal-modal-overlay:not(.terminal-modal-overlay--docked) > .terminal-modal[style*="--keyboard-overlap"] {
+  min-height: 0 !important;
+  height: min(var(--mobile-drawer-block-size), var(--vv-height, calc(100dvh - var(--keyboard-overlap, 0px)))) !important;
+  max-height: min(var(--mobile-drawer-block-size), var(--vv-height, calc(100dvh - var(--keyboard-overlap, 0px)))) !important;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] .terminal-modal-overlay:not(.terminal-modal-overlay--docked) > .terminal-modal {
+  html[data-mobile-drawers="true"][data-viewport-mode="mobile"] .terminal-modal-overlay:not(.terminal-modal-overlay--docked) > .terminal-modal {
     animation: none;
   }
 }
 
-html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] .terminal-drawer-handle-target {
+html[data-mobile-drawers="true"][data-viewport-mode="mobile"] .terminal-drawer-handle-target {
   display: flex;
   flex: 0 0 var(--touch-target-min-size);
   align-items: center;
@@ -2142,11 +2092,11 @@ html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] .terminal-dr
   user-select: none;
 }
 
-html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] .terminal-drawer-handle-target:active {
+html[data-mobile-drawers="true"][data-viewport-mode="mobile"] .terminal-drawer-handle-target:active {
   cursor: grabbing;
 }
 
-html[data-alpha-mobile-drawers="true"][data-viewport-mode="mobile"] .terminal-drawer-handle {
+html[data-mobile-drawers="true"][data-viewport-mode="mobile"] .terminal-drawer-handle {
   width: calc(var(--space-xl) + var(--space-md));
   height: var(--space-xs);
   border-radius: var(--radius-pill);

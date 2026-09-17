@@ -20,6 +20,7 @@ const THEME_MODE_STORAGE_KEY = "kb-dashboard-theme-mode";
 const COLOR_THEME_STORAGE_KEY = "kb-dashboard-color-theme";
 const FONT_SCALE_STORAGE_KEY = "kb-dashboard-font-scale-pct";
 const SHADCN_CUSTOM_COLORS_STORAGE_KEY = "kb-dashboard-shadcn-custom-colors";
+const UI_STYLE_STORAGE_KEY = "kb-dashboard-ui-style";
 
 const mockFetchGlobalSettings = vi.mocked(fetchGlobalSettings);
 const mockUpdateGlobalSettings = vi.mocked(updateGlobalSettings);
@@ -79,6 +80,7 @@ describe("useTheme", () => {
     // Clear document attributes
     document.documentElement.removeAttribute("data-theme");
     document.documentElement.removeAttribute("data-color-theme");
+    document.documentElement.removeAttribute("data-ui-style");
     document.documentElement.style.fontSize = "";
     for (const cssVar of ["--accent", "--bg", "--surface", "--card", "--border", "--text", "--text-muted", "--todo", "--in-progress", "--in-review", "--triage", "--done", "--color-success", "--color-warning", "--color-error"]) {
       document.documentElement.style.removeProperty(cssVar);
@@ -615,9 +617,11 @@ describe("useTheme", () => {
 
     renderHook(() => useTheme());
 
+    /* FNXC:UiStyleAxis 2026-09-15-00:20: colour presets no longer declare shape; radii, paddings and border widths belong to the interface-style catalogue. */
     const styles = getComputedStyle(document.documentElement);
-    expect(styles.getPropertyValue("--radius-md").trim()).toBe("4px");
-    expect(styles.getPropertyValue("--btn-padding").trim()).toBe("6px 12px");
+    expect(styles.getPropertyValue("--radius-md").trim()).toBe("8px");
+    expect(styles.getPropertyValue("--btn-padding").trim()).toBe("var(--space-sm) var(--space-lg)");
+    // The preset keeps its typographic identity, which is a colour-side trait, not a metric.
     expect(styles.getPropertyValue("--font-primary")).toContain("JetBrains Mono");
 
     document.head.removeChild(style);
@@ -665,7 +669,8 @@ describe("useTheme", () => {
 
     expect(document.documentElement.getAttribute("data-color-theme")).toBe("shadcn");
 
-    expect(shadcnBlock).toContain("--btn-border-width: 1px;");
+    /* FNXC:UiStyleAxis 2026-09-15-00:20: colour presets no longer declare shape; radii, paddings and border widths belong to the interface-style catalogue. */
+    expect(shadcnBlock).not.toContain("--btn-border-width");
     expect(shadcnBlock).toContain("--accent: #f97316;");
     expect(shadcnBlock).toContain("--font-primary: \"Geist\"");
     expect(shadcnBlock).toContain("--shadow-glow: none;");
@@ -775,7 +780,7 @@ describe("useTheme", () => {
       renderHook(() => useTheme());
 
       expect(document.documentElement.getAttribute("data-color-theme")).toBe(variant.id);
-      expect(block).toContain("--btn-border-width: 1px;");
+      expect(block).not.toContain("--btn-border-width");
       expect(block).toContain(`--accent: ${variant.accent};`);
       if ("card" in variant) {
         expect(block).toContain(`--card: ${variant.card};`);
@@ -938,6 +943,192 @@ describe("useTheme", () => {
 
     expect(result.current.themeMode).toBe("system");
     expect(result.current.colorTheme).toBe("shadcn-ember");
+  });
+
+  /*
+  FNXC:UiStyleAxis 2026-09-15-00:20:
+  FN-399's interface style is a second, independent appearance axis owned by the same hook. It applies
+  `data-ui-style` without touching any colour attribute, fences hydration against user intent in both
+  orders, and serializes rapid choices so the last intent is the last durable write.
+  */
+  describe("uiStyle axis", () => {
+    it("defaults to classic when the cache is empty, unknown, or unreadable", () => {
+      const emptyCache = renderHook(() => useTheme());
+      expect(emptyCache.result.current.uiStyle).toBe("classic");
+      expect(document.documentElement.getAttribute("data-ui-style")).toBe("classic");
+      emptyCache.unmount();
+
+      localStorageMock[UI_STYLE_STORAGE_KEY] = "epure";
+      const unknownCache = renderHook(() => useTheme());
+      expect(unknownCache.result.current.uiStyle).toBe("classic");
+      unknownCache.unmount();
+
+      vi.stubGlobal("localStorage", {
+        getItem: () => {
+          throw new Error("localStorage refused");
+        },
+        setItem: () => {
+          throw new Error("localStorage refused");
+        },
+        removeItem: () => undefined,
+      });
+      const refusedCache = renderHook(() => useTheme());
+      expect(refusedCache.result.current.uiStyle).toBe("classic");
+      expect(document.documentElement.getAttribute("data-ui-style")).toBe("classic");
+    });
+
+    it("applies a valid cached clean style on the first render", () => {
+      localStorageMock[UI_STYLE_STORAGE_KEY] = "clean";
+
+      const { result } = renderHook(() => useTheme());
+
+      expect(result.current.uiStyle).toBe("clean");
+      expect(document.documentElement.getAttribute("data-ui-style")).toBe("clean");
+    });
+
+    it("changes the style without touching any colour preference, and vice versa", async () => {
+      localStorageMock[COLOR_THEME_STORAGE_KEY] = "ocean";
+      localStorageMock[THEME_MODE_STORAGE_KEY] = "light";
+
+      const { result } = renderHook(() => useTheme());
+
+      act(() => result.current.setUiStyle("clean"));
+
+      expect(result.current.uiStyle).toBe("clean");
+      expect(result.current.colorTheme).toBe("ocean");
+      expect(result.current.themeMode).toBe("light");
+      expect(document.documentElement.getAttribute("data-ui-style")).toBe("clean");
+      expect(document.documentElement.getAttribute("data-color-theme")).toBe("ocean");
+      expect(localStorageMock[UI_STYLE_STORAGE_KEY]).toBe("clean");
+      await waitFor(() => expect(mockUpdateGlobalSettings).toHaveBeenCalledWith({ uiStyle: "clean" }));
+
+      mockUpdateGlobalSettings.mockClear();
+      act(() => result.current.setColorTheme("berry"));
+
+      expect(result.current.uiStyle).toBe("clean");
+      expect(document.documentElement.getAttribute("data-ui-style")).toBe("clean");
+      await waitFor(() => expect(mockUpdateGlobalSettings).toHaveBeenCalledWith({ colorTheme: "berry" }));
+      expect(mockUpdateGlobalSettings).not.toHaveBeenCalledWith(expect.objectContaining({ uiStyle: expect.anything() }));
+    });
+
+    it("falls back to classic when an invalid style reaches the setter", async () => {
+      const { result } = renderHook(() => useTheme());
+
+      act(() => result.current.setUiStyle("brutalist" as never));
+
+      expect(result.current.uiStyle).toBe("classic");
+      await waitFor(() => expect(mockUpdateGlobalSettings).toHaveBeenCalledWith({ uiStyle: "classic" }));
+    });
+
+    it("hydrates the persisted style when the user has not chosen (hydration then choice)", async () => {
+      mockFetchGlobalSettings.mockResolvedValue({ uiStyle: "clean" } as Settings);
+
+      const { result } = renderHook(() => useTheme());
+
+      await waitFor(() => expect(result.current.uiStyle).toBe("clean"));
+      expect(document.documentElement.getAttribute("data-ui-style")).toBe("clean");
+      expect(localStorageMock[UI_STYLE_STORAGE_KEY]).toBe("clean");
+
+      act(() => result.current.setUiStyle("classic"));
+      expect(result.current.uiStyle).toBe("classic");
+    });
+
+    it("never lets a late hydration response overwrite an earlier user choice (choice then hydration)", async () => {
+      let resolveHydration: ((settings: Settings) => void) | undefined;
+      mockFetchGlobalSettings.mockImplementation(() => new Promise<Settings>((resolve) => {
+        resolveHydration = resolve;
+      }));
+
+      const { result } = renderHook(() => useTheme());
+
+      act(() => result.current.setUiStyle("clean"));
+      expect(result.current.uiStyle).toBe("clean");
+
+      await act(async () => {
+        resolveHydration?.({ uiStyle: "classic" } as Settings);
+        await Promise.resolve();
+      });
+
+      expect(result.current.uiStyle).toBe("clean");
+      expect(document.documentElement.getAttribute("data-ui-style")).toBe("clean");
+    });
+
+    it("serializes rapid A then B choices so the last intent is the last durable write", async () => {
+      const writeOrder: string[] = [];
+      let releaseFirstWrite: (() => void) | undefined;
+      mockUpdateGlobalSettings.mockImplementation((patch: Record<string, unknown>) => {
+        const style = String(patch.uiStyle);
+        if (style === "clean") {
+          return new Promise<Settings>((resolve) => {
+            releaseFirstWrite = () => {
+              writeOrder.push("clean");
+              resolve({} as Settings);
+            };
+          });
+        }
+        writeOrder.push(style);
+        return Promise.resolve({} as Settings);
+      });
+
+      const { result } = renderHook(() => useTheme());
+
+      act(() => result.current.setUiStyle("clean"));
+      act(() => result.current.setUiStyle("classic"));
+
+      // Let the chained first write reach the transport without settling it.
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      // The second write must not be able to land before the first one settles.
+      expect(writeOrder).toEqual([]);
+      expect(releaseFirstWrite).toBeDefined();
+
+      await act(async () => {
+        releaseFirstWrite?.();
+        await Promise.resolve();
+      });
+
+      await waitFor(() => expect(writeOrder).toEqual(["clean", "classic"]));
+      expect(result.current.uiStyle).toBe("classic");
+    });
+
+    it("keeps the chosen value and does not poison the next write when a save fails", async () => {
+      mockUpdateGlobalSettings.mockRejectedValueOnce(new Error("network down"));
+
+      const { result } = renderHook(() => useTheme());
+
+      act(() => result.current.setUiStyle("clean"));
+      await waitFor(() => expect(consoleWarnSpy).toHaveBeenCalled());
+
+      // Failure never reverts the local choice and never claims the save succeeded.
+      expect(result.current.uiStyle).toBe("clean");
+      expect(localStorageMock[UI_STYLE_STORAGE_KEY]).toBe("clean");
+
+      mockUpdateGlobalSettings.mockResolvedValue({} as Settings);
+      act(() => result.current.setUiStyle("classic"));
+      await waitFor(() => expect(mockUpdateGlobalSettings).toHaveBeenLastCalledWith({ uiStyle: "classic" }));
+      expect(result.current.uiStyle).toBe("classic");
+    });
+
+    it("tolerates unmount while a style write is still in flight", async () => {
+      let releaseWrite: (() => void) | undefined;
+      mockUpdateGlobalSettings.mockImplementation(() => new Promise<Settings>((resolve) => {
+        releaseWrite = () => resolve({} as Settings);
+      }));
+
+      const { result, unmount } = renderHook(() => useTheme());
+      act(() => result.current.setUiStyle("clean"));
+      unmount();
+
+      await act(async () => {
+        releaseWrite?.();
+        await Promise.resolve();
+      });
+
+      expect(document.documentElement.getAttribute("data-ui-style")).toBe("clean");
+    });
   });
 
   describe("dynamic theme-data.css loading", () => {
@@ -1177,6 +1368,7 @@ describe("getThemeInitScript", () => {
     expect(link).not.toBeNull();
     expect(link!.href).toBe("file:///Users/me/Projects/kb/packages/dashboard/dist/client/theme-data.css");
   });
+
 
   it("index.html uses HTTP root-absolute and file-relative theme URL logic", () => {
     const indexHtml = readFileSync(resolve(PACKAGE_ROOT, "app/index.html"), "utf8");

@@ -31,6 +31,13 @@ function createStore(): TaskStore & EventEmitter {
   (emitter as any).moveTask = vi.fn().mockResolvedValue(undefined);
   (emitter as any).logEntry = vi.fn().mockResolvedValue(undefined);
   (emitter as any).recordRunAuditEvent = vi.fn().mockResolvedValue(undefined);
+  /*
+  FNXC:SelfHealingReclaim 2026-09-15-19:20:
+  FN-429. Declared intent: these ghost-branch cards carry NO pending overlap delivery evidence, so the
+  `tip-already-merged` reclaim is expected to run. Stating it explicitly keeps the withholding guard honest
+  instead of relying on an absent reader.
+  */
+  (emitter as any).listTaskOverlapWaits = vi.fn().mockResolvedValue([]);
   return emitter;
 }
 

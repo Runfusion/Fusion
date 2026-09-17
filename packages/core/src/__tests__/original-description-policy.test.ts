@@ -9,13 +9,19 @@ corrupt PROMPT.md when the raw request contains lines like `## Required behavior
 */
 import { describe, expect, it } from "vitest";
 import { computePlanApprovalFingerprint } from "../planner/plan-approval.js";
+import { canonicalizePlan } from "../planner/spec-lock.js";
 import {
+  ORIGINAL_DESCRIPTION_ENCODING_MARKER,
   ORIGINAL_DESCRIPTION_END_MARKER,
+  ORIGINAL_DESCRIPTION_ESCAPE_PREFIX,
   ORIGINAL_DESCRIPTION_HEADING,
   ORIGINAL_DESCRIPTION_START_MARKER,
   applyOriginalDescription,
   buildOriginalDescriptionSection,
+  decodeOriginalDescriptionBody,
+  encodeOriginalDescriptionBody,
   extractOriginalDescriptionBody,
+  resolveOriginalDescriptionEnd,
 } from "../tasks/original-description-policy.js";
 
 const SAMPLE_DESC = "Fix the board blank state when autoMerge is off on mobile Android.";
@@ -309,6 +315,108 @@ describe("original description policy", () => {
     expect(once.indexOf(ORIGINAL_DESCRIPTION_HEADING)).toBeLessThan(once.indexOf("## Product Overview"));
     expect(once).toContain("## Product Overview\n\nCustom planner context.");
     expect(applyOriginalDescription(once, description)).toBe(once);
+  });
+
+  it("declares marker encoding and repairs quoted end markers without duplicating operator prose", () => {
+    const description = [
+      "Operator context.",
+      ORIGINAL_DESCRIPTION_END_MARKER,
+      "",
+      "## Do NOT",
+      "operator-owned sentinel",
+    ].join("\n");
+    const prompt = sampleSpec();
+    const once = applyOriginalDescription(prompt, description);
+    const start = once.indexOf(ORIGINAL_DESCRIPTION_START_MARKER);
+    const resolution = resolveOriginalDescriptionEnd(
+      once,
+      start + ORIGINAL_DESCRIPTION_START_MARKER.length,
+    );
+
+    expect(once).toContain(`${ORIGINAL_DESCRIPTION_START_MARKER}\n${ORIGINAL_DESCRIPTION_ENCODING_MARKER}`);
+    expect(resolution.resolved).toBe(true);
+    expect(once.slice(start + ORIGINAL_DESCRIPTION_START_MARKER.length, resolution.end))
+      .not.toContain(ORIGINAL_DESCRIPTION_END_MARKER);
+    expect(extractOriginalDescriptionBody(once)).toBe(description);
+    expect(once.split("operator-owned sentinel")).toHaveLength(2);
+    expect(applyOriginalDescription(once, description)).toBe(once);
+  });
+
+  it("repairs a corrupted P3-a region before later description updates preserve planner marker quotes", () => {
+    const oldSuffix = "legacy operator suffix sentinel";
+    const trueDescription = [
+      "legacy operator prefix",
+      ORIGINAL_DESCRIPTION_END_MARKER,
+      "",
+      "## What This Delivers",
+      "",
+      oldSuffix,
+      "",
+      "## Do NOT",
+      "old operator restriction",
+    ].join("\n");
+    const corrupted = [
+      "# Task: FN-9272",
+      "",
+      ORIGINAL_DESCRIPTION_HEADING,
+      "",
+      ORIGINAL_DESCRIPTION_START_MARKER,
+      "legacy operator prefix",
+      ORIGINAL_DESCRIPTION_END_MARKER,
+      "",
+      "## What This Delivers",
+      "",
+      oldSuffix,
+      "",
+      "## Do NOT",
+      "old operator restriction",
+      ORIGINAL_DESCRIPTION_END_MARKER,
+      "",
+      "## What This Delivers",
+      "",
+      "Planner summary.",
+      "",
+      "Planner prose quoting a marker:",
+      ORIGINAL_DESCRIPTION_END_MARKER,
+      "",
+      "## Mission",
+      "",
+      "Repair the boundary.",
+      "",
+      "## Do NOT",
+      "",
+      "Planner restriction.",
+    ].join("\n");
+
+    const repaired = applyOriginalDescription(corrupted, trueDescription);
+    const updatedDescription = "A replacement operator description.";
+    const updated = applyOriginalDescription(repaired, updatedDescription);
+
+    expect(extractOriginalDescriptionBody(repaired, trueDescription)).toBe(trueDescription);
+    expect(repaired.split(oldSuffix)).toHaveLength(2);
+    expect(extractOriginalDescriptionBody(updated, updatedDescription)).toBe(updatedDescription);
+    expect(updated).toContain("Planner prose quoting a marker:");
+    expect(updated).toContain(`${ORIGINAL_DESCRIPTION_END_MARKER}\n\n## Mission`);
+    expect(updated).toContain("Planner restriction.");
+    expect(canonicalizePlan(updated).status).toBe("available");
+  });
+
+  it("round-trips reserved tokens and escape-prefix text through the declared codec", () => {
+    const bodies = [
+      "plain prose",
+      ORIGINAL_DESCRIPTION_START_MARKER,
+      ORIGINAL_DESCRIPTION_END_MARKER,
+      ORIGINAL_DESCRIPTION_ENCODING_MARKER,
+      ORIGINAL_DESCRIPTION_ESCAPE_PREFIX,
+      `${ORIGINAL_DESCRIPTION_ESCAPE_PREFIX}end -->`,
+      "prefix fusion-original-description:en",
+      " leading\r\ntrailing  \n",
+      "   ",
+      "",
+    ];
+    for (const body of bodies) {
+      expect(decodeOriginalDescriptionBody(encodeOriginalDescriptionBody(body))).toBe(body);
+    }
   });
 
   it("keeps hygiene-before-fingerprint stable across a second pass", () => {

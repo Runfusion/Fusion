@@ -9,10 +9,11 @@ import { resolveEffectiveAutoMerge } from "../../../core/src/merge/task-merge";
 import { useColumnLabel } from "../i18n/labels";
 import { isCompleteColumnRole, isIntakeColumnRole, isPreImplementationColumnRole, isReviewColumnRole, isWipColumnRole } from "../utils/columnRoles";
 import { batchUpdateTaskModels, fetchNodes, refreshPrStatus, updateTask } from "../api";
-import { ExternalBlockNotice, PlanApprovalNotice } from "./TaskCard";
+import { ExternalBlockNotice, HumanPlanApprovalBadge, PlanApprovalNotice } from "./TaskCard";
 import { PrCreateModal } from "./PrCreateModal";
+import { TaskRefineDialog } from "./TaskRefineDialog";
 import { TaskResetDialog } from "./TaskResetDialog";
-import type { BoardWorkflowColumn, BoardWorkflowsPayload, ModelInfo, NodeInfo, RevertTaskOptions, RevertTaskResult } from "../api";
+import type { BoardWorkflowColumn, BoardWorkflowsPayload, ModelInfo, NodeInfo, RestoreTaskRevertOptions, RestoreTaskRevertResult, RevertTaskOptions, RevertTaskResult } from "../api";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { NodeHealthDot } from "./NodeHealthDot";
 import { hasPendingAutomaticRecovery } from "../utils/taskRecovery";
@@ -39,6 +40,7 @@ import { ViewActionButton } from "./ViewActionButton";
 import { ViewHeader } from "./ViewHeader";
 import { computeWorkflowStatusCounts } from "./workflowStatusCounts";
 import { useBoardWorkflows } from "../hooks/useBoardWorkflows";
+import { useHeaderWorkflowSlot } from "../hooks/useHeaderWorkflowSlot";
 import { useUnmappedWorkflowRefetch } from "../hooks/useUnmappedWorkflowRefetch";
 import { TaskContextMenu, buildTaskActionMenuModel, getTaskPrAutomationLabel, type TaskContextMenuColumnMetadata, type TaskMenuItemDescriptor } from "./TaskContextMenu";
 import type { DetailTaskOpenOptions } from "../hooks/useModalManager";
@@ -79,8 +81,15 @@ type SortField = "title" | "status" | "column" | "retries";
 FNXC:MergeQueue 2026-07-15-10:45:
 List status column used to print raw engine statuses (landing/reviewing). Share the board badge mapper so list and card never diverge.
 */
+/*
+FNXC:TaskStatusBadge 2026-09-16-05:01:
+FN-448 — the three surfaces (Board card, compact List cards, List table rows) must speak with one
+voice: a card waiting for a human plan decision reads "Needs you" in blinking warning paint where it
+would otherwise read "Queued" or "Ready". The shared mappers stay untouched; each host maps this one
+status locally, exactly as the card does.
+*/
 function getTaskStatusLabel(status: string, t: TFunction<"app">, workflowStepLabel?: string, context?: TaskStatusBadgeContext): string {
-  if (status === "awaiting-approval") return t("tasks.awaitingApproval", "Awaiting Approval");
+  if (status === "awaiting-approval") return t("tasks.planApproval.needsYouBadge", "Needs you");
   return getTaskStatusBadgeLabel(status, t, workflowStepLabel, context);
 }
 type SortDirection = "asc" | "desc";
@@ -218,7 +227,6 @@ interface ListViewProps {
   tasks: Task[];
   onRetryTask?: (id: string) => Promise<Task>;
   onOpenChatWithPrefill?: (prefillText: string) => void;
-  onReviseTask?: (task: Task) => void;
   onDeleteTask: (id: string, options?: {
     removeDependencyReferences?: boolean;
     removeLineageReferences?: boolean;
@@ -227,18 +235,19 @@ interface ListViewProps {
   onPauseTask?: (id: string) => Promise<Task>;
   onUnpauseTask?: (id: string) => Promise<Task>;
   onRevertTask?: (id: string, body?: RevertTaskOptions) => Promise<RevertTaskResult>;
+  /* FNXC:TaskRevert 2026-09-15-10:00 (FN-416): restore-the-revert replaces the reverted row's Revise entry. */
+  onRestoreRevertTask?: (id: string, body?: RestoreTaskRevertOptions) => Promise<RestoreTaskRevertResult>;
   onMergeTask: (id: string) => Promise<MergeResult>;
   onResetTask?: (id: string, options?: { description?: string }) => Promise<Task>;
   onDuplicateTask?: (id: string, options?: { workflowId?: string }) => Promise<Task>;
-  /** App-owned ingestion seam for successful split-detail refinements. */
+  /** App-owned ingestion seam for successful refinements created from a row's own Refine dialog. */
+  onRefinementCreated?: (task: Task) => void;
   onOpenDetail: (task: Task | TaskDetail, options?: DetailTaskOpenOptions) => void;
   /*
   FNXC:FloatingWindow 2026-06-22-20:45:
   onPopOut pops the split-pane task detail into a movable, resizable, non-blocking FloatingWindow managed at App level. Wired to the Maximize2 "Pop out" button in TaskDetailContent's header.
   */
   onPopOut?: (task: Task | TaskDetail) => void;
-  /** Mirrors the Board/right-dock "Open tasks as popups" routing for ordinary List row/card opens. */
-  openMobileTasksInPopup?: boolean;
   addToast: (message: string, type?: ToastType) => void;
   globalPaused?: boolean;
   onNewTask?: (workflowId?: string | null) => void;
@@ -247,10 +256,12 @@ interface ListViewProps {
   favoriteModels?: string[];
   onToggleFavorite?: (provider: string) => void;
   onToggleModelFavorite?: (modelId: string) => void;
-  /**
-   * Called when the user clicks the "Plan" button in the quick entry box.
-   */
-  onPlanningMode?: (initialPlan: string, workflowId?: string | null) => void;
+  /*
+  FNXC:ListContextMenu 2026-09-15-10:40:
+  FN-417 removed the list row menu's Plan entry — the engine plans automatically — so `ListView` no
+  longer accepts `onPlanningMode`. The List surface renders no quick-entry box, so nothing else here
+  consumed it; Board's `Column`/`QuickEntryBox` path keeps its own callback untouched.
+  */
   /**
    * Called when tasks are updated (e.g., after bulk model update).
    * Allows parent to refresh task list or handle optimistically.
@@ -278,8 +289,6 @@ interface ListViewProps {
   autoMerge?: boolean;
   /** Project merge strategy so list context menus match Task Detail before a PR exists. */
   mergeStrategy?: string;
-  onOpenWorkflowEditor?: (workflowId?: string) => void;
-  onCreateWorkflow?: () => void;
   /** Relocates workflow controls into the Header portal slot when sidebar navigation owns the inline chrome. */
   workflowControlsInHeader?: boolean;
   /*
@@ -329,7 +338,7 @@ function getTaskProgress(
   ...but that match was only half-implemented: TaskCard switches to the full pipeline once the card
   reaches its review lane (`scope: task.column === "in-review" ? "full" : "implementation"`), while
   this list stayed on implementation scope unconditionally. A review-column workflow such as
-  builtin:coding-ideas-v2 promotes Verification and Documentation & Delivery from hidden checklist
+  builtin:coding-ideas promotes Verification and Documentation & Delivery from hidden checklist
   entries into first-class review-lane gates, so a list row showed `-` or a stale count for exactly
   the stage the operator moved them there to watch. Resolve the lane by TRAIT, not by the hardcoded
   `in-review` id, so a renamed board behaves the same.
@@ -353,15 +362,15 @@ export function ListView({
   onRetryTask,
   onOpenChatWithPrefill,
   onDeleteTask,
-  onReviseTask,
   onPauseTask,
   onUnpauseTask,
   onRevertTask,
+  onRestoreRevertTask,
   onMergeTask,
   onResetTask,
   onDuplicateTask,
+  onRefinementCreated,
   onPopOut,
-  openMobileTasksInPopup = false,
   onOpenDetail,
   addToast,
   globalPaused,
@@ -371,7 +380,6 @@ export function ListView({
   favoriteModels = [],
   onToggleFavorite,
   onToggleModelFavorite,
-  onPlanningMode,
   onTasksUpdated,
   projectId,
   projectName: _projectName,
@@ -385,8 +393,6 @@ export function ListView({
   lastFetchTimeMs,
   autoMerge,
   mergeStrategy = "direct",
-  onOpenWorkflowEditor,
-  onCreateWorkflow,
   workflowControlsInHeader = false,
   compact = false,
   active = true,
@@ -399,6 +405,12 @@ export function ListView({
   const [contextMenuState, setContextMenuState] = useState<ListContextMenuState>(null);
   const [prCreateState, setPrCreateState] = useState<ListPrCreateState>(null);
   const [resetDialogTask, setResetDialogTask] = useState<Task | null>(null);
+  /*
+  FNXC:TaskRefine 2026-09-14-22:23:
+  FN-400: the row hosts the Refine composer itself, like the Reset dialog beside it. Refine used to reopen the whole
+  task record through the detail-open deep link, which is exactly the behaviour being removed.
+  */
+  const [refineDialogTask, setRefineDialogTask] = useState<Task | null>(null);
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressStartRef = useRef<{ x: number; y: number; pointerId: number } | null>(null);
@@ -420,10 +432,15 @@ export function ListView({
     setSelectedWorkflowId,
     refreshBoardWorkflows,
   } = useBoardWorkflows({ projectId });
-  const [headerWorkflowSlot, setHeaderWorkflowSlot] = useState<HTMLElement | null>(() => {
-    if (typeof document === "undefined") return null;
-    return document.getElementById("header-workflow-slot");
-  });
+  /*
+  FNXC:WorkflowControls 2026-09-15-01:44:
+  FN-405: List shares the single `#header-workflow-slot` with Board, Graph, and the Planning/Missions
+  slot. The previous one-shot `getElementById` never retried, so a header shell mounted after the List
+  — or a breakpoint swap that replaces the slot node — pinned the control to its inline fallback under
+  the header. The shared resolver keeps re-resolving while the view is active; an inactive List passes
+  `enabled: false` so it never claims the shared slot.
+  */
+  const headerWorkflowSlot = useHeaderWorkflowSlot({ enabled: active && workflowControlsInHeader });
   const viewportMode = useViewportMode();
   const isMobile = viewportMode === "mobile";
   const [listContainerWidth, setListContainerWidth] = useState<number | null>(null);
@@ -440,14 +457,6 @@ export function ListView({
       : viewportMode === "desktop");
   const useSinglePaneList = compact || !canRenderSplitLayout;
   const { confirm, confirmWithSelect } = useConfirm();
-
-  useEffect(() => {
-    if (!active || !workflowControlsInHeader || typeof document === "undefined") {
-      setHeaderWorkflowSlot(null);
-      return;
-    }
-    setHeaderWorkflowSlot(document.getElementById("header-workflow-slot"));
-  }, [active, workflowControlsInHeader, viewportMode]);
 
   // Column visibility state - initialize from localStorage or reduced default columns
   const [visibleColumns, setVisibleColumns] = useState<Set<ListColumn>>(() => readVisibleColumns(projectId));
@@ -824,15 +833,6 @@ export function ListView({
       ?? getListColumnLabel(task.column);
   }, [getListColumnLabel]);
 
-  const getTaskPlanningWorkflowId = useCallback((task: Task): string | null => {
-    const taskWorkflowId = (task as Task & { workflowId?: string | null }).workflowId;
-    if (taskWorkflowId) return taskWorkflowId;
-    if (workflowMode && boardWorkflows) {
-      return boardWorkflows.taskWorkflowIds[task.id] ?? boardWorkflows.defaultWorkflowId ?? null;
-    }
-    return null;
-  }, [boardWorkflows, workflowMode]);
-
   /*
   FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
   The card's INTAKE role, from its own column's traits. Both grouped-list render paths
@@ -1017,7 +1017,13 @@ export function ListView({
         let comparison = 0;
         switch (sortField) {
           case "title":
-            comparison = (a.title || a.description).localeCompare(b.title || b.description);
+            /*
+            FNXC:TaskTitleDisplay 2026-09-14-17:05:
+            FN-391: sort on the SAME text the row renders. Sorting on the raw description while
+            rendering a bounded projection made the visible order look wrong for long descriptions
+            that differ only past the bound.
+            */
+            comparison = getTaskTitleDisplay(a).text.localeCompare(getTaskTitleDisplay(b).text);
             break;
           case "status":
             comparison = (a.status || "").localeCompare(b.status || "");
@@ -1650,6 +1656,39 @@ export function ListView({
     }
   }, [addToast, confirm, onRevertTask, t]);
 
+  /*
+  FNXC:TaskRevert 2026-09-15-10:00 (FN-416):
+  List-view restore-the-revert, same contract and toast vocabulary as the card handler: auto mode,
+  AI-restore task on conflict, `needsHuman` surfaced rather than force-written or silently AI-forked.
+  */
+  const handleListTaskRestoreRevert = useCallback(async (task: Task) => {
+    if (!onRestoreRevertTask) return;
+    try {
+      const result = await onRestoreRevertTask(task.id, { mode: "auto" });
+
+      if (result.mode === "ai") {
+        addToast(result.alreadyOpen
+          ? t("tasks.restoreRevertAlreadyOpen", "A restore task is already open: {{id}}", { id: result.createdTaskId })
+          : t("tasks.restoreRevertAiCreated", "Created restore task {{id}}", { id: result.createdTaskId }), "success");
+        return;
+      }
+
+      if (result.needsHuman) {
+        addToast(t("tasks.restoreRevertNeedsHuman", "Cannot restore {{taskId}}: {{reason}}", { taskId: task.id, reason: result.reason || t("tasks.revertNeedsHumanDefault", "human review required") }), "error");
+        return;
+      }
+
+      if (result.clean) {
+        addToast(t("tasks.restoreRevertSuccess", "Restored {{taskId}}", { taskId: task.id }), "success");
+        return;
+      }
+
+      addToast(t("tasks.restoreRevertFailed", "Failed to restore {{taskId}}", { taskId: task.id }), "error");
+    } catch (err) {
+      addToast(getErrorMessage(err), "error");
+    }
+  }, [addToast, onRestoreRevertTask, t]);
+
   const handleListContextCheckPrStatus = useCallback(async (task: Task) => {
     try {
       await refreshPrStatus(task.id, projectId);
@@ -1695,10 +1734,6 @@ export function ListView({
       mergeStrategy,
       prAutomationLabel: getTaskPrAutomationLabel(t, task.status),
       onDelete: () => void handleListTaskDelete(task),
-      onPlan: onPlanningMode ? () => {
-        const seed = (task.description ?? "").trim() || task.title || task.id;
-        onPlanningMode(seed, getTaskPlanningWorkflowId(task));
-      } : undefined,
       onDuplicate: onDuplicateTask ? async () => {
         await runDuplicateTaskAction({
           taskId: task.id,
@@ -1710,7 +1745,7 @@ export function ListView({
           loadBoardWorkflows: () => boardWorkflows,
         });
       } : undefined,
-      onOpenRefine: () => onOpenDetail(task, { origin: useSinglePaneList ? "list-mobile" : undefined, initialAction: "refine" }),
+      onOpenRefine: () => setRefineDialogTask(task),
       onRetry: onRetryTask ? async () => {
         const copy = resolveRetryStageCopy(t, getTaskColumnFlags(task), task.column);
         const confirmed = await confirm({
@@ -1769,7 +1804,19 @@ export function ListView({
     List-view Revert menu entry for completed rows. Disabled (rather than omitted) when the task lacks a landed
     commit to revert.
     */
-    if (isCompleteColumnRole(taskColumnFlags, task.column) && onRevertTask) {
+    /*
+    FNXC:TaskRevert 2026-09-15-10:00 (FN-416):
+    Replaces the reverted row's Revise entry. An already-reverted row is never offered Revert again
+    (nothing left to revert); it is offered "Restore revert" instead. Desktop right-click and mobile
+    long-press share this one model, so both breakpoints get the same single affordance.
+    */
+    if (isCompleteColumnRole(taskColumnFlags, task.column) && isTaskReverted(task.sourceMetadata) && onRestoreRevertTask) {
+      actions.push({
+        id: "restore-revert",
+        label: t("tasks.restoreRevert", "Restore revert"),
+        onSelect: () => void handleListTaskRestoreRevert(task),
+      });
+    } else if (isCompleteColumnRole(taskColumnFlags, task.column) && onRevertTask) {
       const isRevertable = Boolean(task.mergeDetails?.commitSha);
       actions.push({
         id: "revert",
@@ -1778,19 +1825,11 @@ export function ListView({
         onSelect: isRevertable ? () => void handleListTaskRevert(task) : undefined,
       });
     }
-    /*
-    FNXC:TaskRevert 2026-08-27-02:18:
-    The removed list reverted section exposed Delete and Revise actions. Delete remains in the
-    shared menu model; Revise belongs here so desktop right-click and mobile long-press retain it.
-    */
-    if (onReviseTask && isTaskReverted(task.sourceMetadata) && isCompleteColumnRole(taskColumnFlags, task.column)) {
-      actions.push({ id: "revise", label: t("tasks.revise", "Revise"), onSelect: () => onReviseTask(task) });
-    }
     if (model.reviewAction) {
       actions.push({ id: model.reviewAction.id, label: model.reviewAction.label, disabled: model.reviewAction.disabled, onSelect: model.reviewAction.onSelect });
     }
     return actions.filter((action) => "items" in action || action.tone === "note" || action.disabled === true || Boolean(action.onSelect));
-  }, [addToast, autoMerge, boardWorkflows, getTaskColumnFlags, confirm, confirmWithSelect, getTaskPlanningWorkflowId, handleListContextCheckPrStatus, handleListContextEnableGithubTracking, handleListTaskDelete, handleListTaskRevert, isMobile, lastFetchTimeMs, mergeStrategy, onDuplicateTask, onMergeTask, onOpenDetail, onPlanningMode, onPauseTask, onResetTask, onRetryTask, onUnpauseTask, onRevertTask, onReviseTask, onTasksUpdated, projectId, t, useSinglePaneList]);
+  }, [addToast, autoMerge, boardWorkflows, getTaskColumnFlags, confirm, confirmWithSelect, handleListContextCheckPrStatus, handleListContextEnableGithubTracking, handleListTaskDelete, handleListTaskRestoreRevert, handleListTaskRevert, isMobile, lastFetchTimeMs, mergeStrategy, onDuplicateTask, onMergeTask, onOpenDetail, onPauseTask, onResetTask, onRetryTask, onUnpauseTask, onRevertTask, onRestoreRevertTask, onTasksUpdated, projectId, t, useSinglePaneList]);
 
   const contextMenuActions = useMemo(
     () => (contextMenuState ? buildListContextMenuActions(contextMenuState.task) : []),
@@ -1899,10 +1938,15 @@ export function ListView({
       }
       closeContextMenu();
       /*
-      FNXC:ListView 2026-07-13-00:00 (FN-7945):
-      When "Open tasks as popups" is on, ordinary List row/card and keyboard opens route to the shared movable/resizable popped-out FloatingWindow (`onPopOut` → `popOutTaskDetail`) for Board parity and navigate-while-open behavior. When off, preserve the existing docked split-pane on desktop and docked modal on mobile/tablet.
+      FNXC:ListView 2026-09-16-02:53 (FN-442):
+      Ordinary List row/card and keyboard opens route to the shared movable/resizable popped-out FloatingWindow
+      (`onPopOut` → `popOutTaskDetail`) with no setting to enable, matching the Board and preserving navigate-while-open.
+      Phones are the one exception and keep handing the task to the host's detail owner with its `list-mobile` origin:
+      a phone deliberately hosts exactly one task-detail owner, and that owner is what carries the back header and the
+      dismissible history entry. The exception is keyed to the phone viewport, not to the single-pane layout, because a
+      narrow tablet is single-pane yet still gets the movable window. Hosts without a pop-out seam use the same owner.
       */
-      if (openMobileTasksInPopup && onPopOut) {
+      if (onPopOut && viewportMode !== "mobile") {
         onPopOut(task);
         return;
       }
@@ -1914,7 +1958,7 @@ export function ListView({
       setSelectedTaskId(task.id);
       onOpenDetail(task, useSinglePaneList ? { origin: "list-mobile" } : undefined);
     },
-    [closeContextMenu, onOpenDetail, onPopOut, openMobileTasksInPopup, useSinglePaneList]
+    [closeContextMenu, onOpenDetail, onPopOut, useSinglePaneList, viewportMode]
   );
 
   const handleListKeyDown = useCallback((event: React.KeyboardEvent, task: Task) => {
@@ -1952,8 +1996,13 @@ export function ListView({
   const renderWorkflowSelector = () => {
     if (compact) return null;
     if (!workflowMode || !selectedWorkflow) return null;
-    const shouldRenderWorkflowControls = workflowOptions.length > 1 || Boolean(onCreateWorkflow || onOpenWorkflowEditor);
-    if (!shouldRenderWorkflowControls || workflowOptions.length === 0) return null;
+    /*
+    FNXC:WorkflowControls 2026-09-15-05:29:
+    FN-407 removed the switcher's edit/create affordances, so a single-workflow list has nothing to choose between.
+    Render the control only when there is a real selection to make; otherwise the wrapper would be an empty shell.
+    */
+    const shouldRenderWorkflowControls = workflowOptions.length > 1;
+    if (!shouldRenderWorkflowControls) return null;
     const workflowControl = (
       <div className="list-workflow-control">
         <WorkflowSwitcher
@@ -1964,9 +2013,6 @@ export function ListView({
           aggregateOption={{ id: ALL_WORKFLOWS_BOARD_VIEW_ID, name: "All workflows" }}
           onOpen={refreshBoardWorkflows}
           label={t("listView.workflowLabel", "Workflow")}
-          onEditWorkflow={onOpenWorkflowEditor}
-          /* FNXC:ListNoWorkflowCreate 2026-09-14-05:42: creation stays inside the selector popover, like every other switcher host. */
-          onCreateWorkflow={onCreateWorkflow}
         />
       </div>
     );
@@ -1974,13 +2020,18 @@ export function ListView({
     FNXC:WorkflowControls 2026-06-20-00:00:
     ListView keeps its own workflow selection state and only portals its workflow controls into Header when the sidebar header slot exists.
 
-    FNXC:WorkflowControls 2026-06-20-15:43:
-    ListView now has edit parity through WorkflowSwitcher row actions and no longer renders a standalone create icon, preventing empty button shells across desktop and mobile header placements.
+    FNXC:WorkflowControls 2026-09-15-05:29:
+    FN-407: ListView renders the selector alone and never a standalone edit/create icon, preventing empty button shells across desktop and mobile header placements.
 
     FNXC:MainViewKeepAlive 2026-08-31-14:54:
     A cached header slot survives the render where a retained List becomes inactive, before its
     active-gate effect clears state. Restrict the portal at render time so that commit leaves the
     shared slot empty and keeps the hidden toolbar inline.
+
+    FNXC:WorkflowControls 2026-09-15-01:44:
+    FN-405: `headerWorkflowSlot` comes from the shared resolver, which survives a late-mounted or
+    replaced slot. A null value therefore proves the header renders no slot, so the inline fallback
+    below applies only to a genuinely absent slot.
     */
     return active && workflowControlsInHeader && headerWorkflowSlot
       ? createPortal(workflowControl, headerWorkflowSlot)
@@ -2249,6 +2300,15 @@ export function ListView({
         </div>,
         document.body,
       )}
+      {refineDialogTask && (
+        <TaskRefineDialog
+          taskId={refineDialogTask.id}
+          projectId={projectId}
+          addToast={addToast}
+          onRefinementCreated={onRefinementCreated}
+          onClose={() => setRefineDialogTask(null)}
+        />
+      )}
       {resetDialogTask && onResetTask && (
         <TaskResetDialog
           taskId={resetDialogTask.id}
@@ -2483,12 +2543,14 @@ export function ListView({
                                     <span className="visually-hidden">{t("listView.fastMode", "Fast mode")}</span>
                                   </span>
                                 )}
+                                {/* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 badge on the mobile card render, beside Fast; both may show at once. */}
+                                <HumanPlanApprovalBadge task={task} variant="list" />
                                 <span className="list-card-spacer" />
                                 {isPaused && task.pausedByAgentId ? (
                                   <span className="list-status-badge paused">{t("listView.pausedByAgent", "paused by agent")}</span>
                                 ) : hasStatus ? (
                                   <span
-                                    className={`list-status-badge list-status-badge--${task.column}${isReviewBudgetExhausted ? " list-status-badge--review-budget-exhausted" : ""}${isFailed ? " failed" : ""}${isAgentActive ? " pulsing" : ""}`}
+                                    className={`list-status-badge list-status-badge--${task.column}${isReviewBudgetExhausted ? " list-status-badge--review-budget-exhausted" : ""}${visualStatus === "awaiting-approval" && !isReviewBudgetExhausted ? " list-status-badge--needs-you" : ""}${isFailed ? " failed" : ""}${isAgentActive ? " pulsing" : ""}`}
                                     title={isReviewBudgetExhausted ? t("tasks.awaitingApprovalPlanReviewReplanCapTitle", "Plan Review requested revisions repeatedly without converging. Approve the current plan to proceed, or reject to regenerate it.") : undefined}
                                     aria-label={isTransientPlannerActive ? t("tasks.statusPlanning", "Planning") : undefined}
                                     data-testid={isReviewBudgetExhausted ? `list-review-budget-exhausted-${task.id}` : undefined}
@@ -2529,7 +2591,8 @@ export function ListView({
                               </div>
 
                               <ExternalBlockNotice task={task} variant="list" onOpenChatWithPrefill={onOpenChatWithPrefill} onRetryTask={onRetryTask} addToast={addToast} />
-                              <PlanApprovalNotice task={task} variant="list" projectId={projectId} addToast={addToast} isPlanningLane={isPlanningLaneForTask(task)} />
+                              {/* FNXC:HumanPlanApproval 2026-09-16-05:01: FN-448 wires the task-record route on BOTH list renders, so a messaged decision's "Review plan" button is never an inert disabled control. */}
+                              <PlanApprovalNotice task={task} variant="list" projectId={projectId} addToast={addToast} isPlanningLane={isPlanningLaneForTask(task)} onOpenTaskRecord={onOpenDetail} />
 
                               {(hasDependencies || hasProgress) && (
                                 <div className="list-card-row list-card-meta">
@@ -2751,6 +2814,8 @@ export function ListView({
                                             <span className="visually-hidden">{t("listView.fastMode", "Fast mode")}</span>
                                           </span>
                                         )}
+                                        {/* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 badge on the desktop table render, beside Fast. */}
+                                        <HumanPlanApprovalBadge task={task} variant="list" />
                                         <span className="list-title-text">{getTaskTitleDisplay(task).text}</span>
                                       </div>
                                     </div>
@@ -2759,12 +2824,13 @@ export function ListView({
                                 {visibleColumns.has("status") && (
                                   <td className="list-cell">
                                     <ExternalBlockNotice task={task} variant="list" onOpenChatWithPrefill={onOpenChatWithPrefill} onRetryTask={onRetryTask} addToast={addToast} />
-                                    <PlanApprovalNotice task={task} variant="list" projectId={projectId} addToast={addToast} isPlanningLane={isPlanningLaneForTask(task)} />
+                                    {/* FNXC:HumanPlanApproval 2026-09-16-05:01: FN-448 — same task-record route in the table status cell. */}
+                                    <PlanApprovalNotice task={task} variant="list" projectId={projectId} addToast={addToast} isPlanningLane={isPlanningLaneForTask(task)} onOpenTaskRecord={onOpenDetail} />
                                     {isPaused && task.pausedByAgentId ? (
                                       <span className="list-status-badge paused">{t("listView.pausedByAgent", "paused by agent")}</span>
                                     ) : showStatusBadge ? (
                                       <span
-                                        className={`list-status-badge list-status-badge--${task.column}${isReviewBudgetExhausted ? " list-status-badge--review-budget-exhausted" : ""}${isFailed ? " failed" : ""}${
+                                        className={`list-status-badge list-status-badge--${task.column}${isReviewBudgetExhausted ? " list-status-badge--review-budget-exhausted" : ""}${visualStatus === "awaiting-approval" && !isReviewBudgetExhausted ? " list-status-badge--needs-you" : ""}${isFailed ? " failed" : ""}${
                                           isAgentActive ? " pulsing" : ""
                                         }`}
                                         title={isReviewBudgetExhausted ? t("tasks.awaitingApprovalPlanReviewReplanCapTitle", "Plan Review requested revisions repeatedly without converging. Approve the current plan to proceed, or reject to regenerate it.") : undefined}

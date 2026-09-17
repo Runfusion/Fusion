@@ -29,7 +29,6 @@
 
 import {
   resolveWorkflowIrById,
-  resolveWorkflowIrForTask,
   type WorkflowIrResolverStore,
 } from "./workflow-ir-resolver.js";
 import { resolveEffectiveSettingValues, findOrphanedSettingValues } from "./workflow-settings.js";
@@ -118,78 +117,43 @@ export interface WorkflowSettingsResolverStore extends WorkflowIrResolverStore {
    *  instance is bound to one project, so the resolver derives the project key from
    *  the store rather than from the task (Task carries no projectId field). */
   getWorkflowSettingsProjectId(): string;
-  /** Active project workflow whose stored model lanes act as the project-wide
-   * baseline for tasks selecting any other workflow. */
-  getDefaultWorkflowId?(): Promise<string | undefined>;
 }
 
-/**
- * Model lanes exposed in Settings -> Project Models are persisted on the active
- * default workflow for backward compatibility. Unlike workflow policy values,
- * these lanes are a project baseline: every selected workflow inherits them and
- * resolves them ahead of global and selected-workflow values.
- */
-const PROJECT_WORKFLOW_MODEL_LANE_SETTING_IDS: ReadonlySet<string> = new Set([
+/** Model-lane declarations that remain isolated under the selected workflow tier. */
+const WORKFLOW_MODEL_LANE_SETTING_IDS: ReadonlySet<string> = new Set([
   "executionProvider",
+  "executionCredentialInstanceId",
   "executionModelId",
   "executionThinkingLevel",
   "executionFallbackProvider",
+  "executionFallbackCredentialInstanceId",
   "executionFallbackModelId",
   "executionFallbackThinkingLevel",
   "planningProvider",
+  "planningCredentialInstanceId",
   "planningModelId",
   "planningThinkingLevel",
   "planningFallbackProvider",
+  "planningFallbackCredentialInstanceId",
   "planningFallbackModelId",
   "planningFallbackThinkingLevel",
   "validatorProvider",
+  "validatorCredentialInstanceId",
   "validatorModelId",
   "validatorThinkingLevel",
   "validatorFallbackProvider",
+  "validatorFallbackCredentialInstanceId",
   "validatorFallbackModelId",
   "validatorFallbackThinkingLevel",
+  "mergerProvider",
+  "mergerCredentialInstanceId",
+  "mergerModelId",
+  "mergerThinkingLevel",
+  "mergerFallbackProvider",
+  "mergerFallbackCredentialInstanceId",
+  "mergerFallbackModelId",
+  "mergerFallbackThinkingLevel",
 ]);
-
-interface ProjectWorkflowModelLaneBaseline extends EffectiveSettingsResult {
-  workflowId: string;
-}
-
-async function projectWorkflowModelLaneWorkflowId(store: WorkflowSettingsResolverStore): Promise<string> {
-  try {
-    return (await store.getDefaultWorkflowId?.())?.trim() || "builtin:coding";
-  } catch {
-    return "builtin:coding";
-  }
-}
-
-async function projectWorkflowModelLaneBaseline(
-  store: WorkflowSettingsResolverStore,
-  projectId: string,
-  irCache?: Map<string, WorkflowIr>,
-  workflowId?: string,
-): Promise<ProjectWorkflowModelLaneBaseline> {
-  const resolvedWorkflowId = workflowId ?? await projectWorkflowModelLaneWorkflowId(store);
-  const ir = await resolveWorkflowIrById(store, resolvedWorkflowId, irCache);
-  const detailed = await effectiveFrom(store, ir, resolvedWorkflowId, projectId);
-  const effective: Record<string, unknown> = {};
-  const storedKeys = new Set<string>();
-  for (const id of detailed.storedKeys) {
-    if (!PROJECT_WORKFLOW_MODEL_LANE_SETTING_IDS.has(id)) continue;
-    effective[id] = detailed.effective[id];
-    storedKeys.add(id);
-  }
-  return { workflowId: resolvedWorkflowId, effective, storedKeys };
-}
-
-/** Resolve only the model-lane values configured in Project Models. */
-export async function resolveProjectWorkflowModelLaneBaseline(
-  store: WorkflowSettingsResolverStore,
-  projectId: string,
-  irCache?: Map<string, WorkflowIr>,
-): Promise<EffectiveSettingsResult> {
-  const { effective, storedKeys } = await projectWorkflowModelLaneBaseline(store, projectId, irCache);
-  return { effective, storedKeys };
-}
 
 /** The declarations carried by a resolved IR, with the built-in catalog as the
  *  defensive belt for built-in graphs that predate the embedded `settings` (the
@@ -275,27 +239,19 @@ export async function resolveEffectiveSettingsDetailedById(
   const ir = await resolveWorkflowIrById(store, effectiveWorkflowId, irCache);
   const selected = await effectiveFrom(store, ir, effectiveWorkflowId, projectId);
 
-  const projectBaselineWorkflowId = await projectWorkflowModelLaneWorkflowId(store);
-  if (projectBaselineWorkflowId === effectiveWorkflowId) return selected;
-
-  const projectBaseline = await projectWorkflowModelLaneBaseline(
-    store,
-    projectId,
-    irCache,
-    projectBaselineWorkflowId,
-  );
+  /*
+   * FNXC:ModelResolution 2026-09-14-19:07:
+   * A selected workflow is always an isolated model tier, including when it is the project default.
+   * Project lanes come only from project settings; no workflow row may masquerade as that baseline.
+   */
   const effective = { ...selected.effective };
   const storedKeys = new Set(selected.storedKeys);
   const selectedWorkflowModelLanes: Record<string, unknown> = {};
-  for (const id of PROJECT_WORKFLOW_MODEL_LANE_SETTING_IDS) {
-    if (Object.prototype.hasOwnProperty.call(selected.effective, id)) {
-      selectedWorkflowModelLanes[id] = selected.effective[id];
-      delete effective[id];
-      storedKeys.delete(id);
-    }
-    if (!projectBaseline.storedKeys.has(id)) continue;
-    effective[id] = projectBaseline.effective[id];
-    storedKeys.add(id);
+  for (const id of WORKFLOW_MODEL_LANE_SETTING_IDS) {
+    if (!Object.prototype.hasOwnProperty.call(selected.effective, id)) continue;
+    selectedWorkflowModelLanes[id] = selected.effective[id];
+    delete effective[id];
+    storedKeys.delete(id);
   }
   if (Object.keys(selectedWorkflowModelLanes).length > 0) {
     effective.selectedWorkflowModelLanes = selectedWorkflowModelLanes;
@@ -351,9 +307,8 @@ export async function resolveEffectiveSettingsDetailed(
   try {
     projectId = store.getWorkflowSettingsProjectId();
   } catch {
-    // Degrade to declaration defaults (empty stored map) on identity failure.
-    const ir = await resolveWorkflowIrForTask(store, task.id, irCache);
-    return effectiveFrom(store, ir, effectiveWorkflowId, "");
+    // Preserve the isolated workflow model tier even when project identity is unavailable.
+    projectId = "";
   }
   return resolveEffectiveSettingsDetailedById(store, effectiveWorkflowId, projectId, irCache);
 }

@@ -29,7 +29,6 @@ export interface GeneralSectionProps extends SectionBaseProps {
     addToast: (message: string, type?: ToastType) => void;
     prefixError: string | null;
     setPrefixError: (value: string | null) => void;
-    onQuickChatButtonModeChange?: (mode: "floating" | "footer" | "off") => void;
     /** Updates the live footer without persisting the draft until Settings is saved. */
     onMobileNavPrimaryItemsChange?: (items: string[]) => void;
 }
@@ -45,7 +44,7 @@ Bespoke rows no longer render their help as inline `<small>` paragraphs. Their c
 FNXC:SourceControl 2026-07-15-20:30:
 GitHub/GitLab settings are NOT in this section. The tracking block, the tracking-repo select, and the GitLab disclosure moved to "Source Control · Project" (SourceControlSection.tsx), which also absorbed Merge's GitHub/GitLab auth blocks. Do not add source-control settings back here: `gitlabEnabled` was previously writable from both this section and Merge, and one owning section is what keeps that from recurring.
 */
-export function GeneralSection({ form, setForm, projectId, addToast, prefixError, setPrefixError, onQuickChatButtonModeChange, onMobileNavPrimaryItemsChange, }: GeneralSectionProps) {
+export function GeneralSection({ form, setForm, projectId, addToast, prefixError, setPrefixError, onMobileNavPrimaryItemsChange, }: GeneralSectionProps) {
     const { t } = useTranslation("app");
     const [builtinWorkflows, setBuiltinWorkflows] = useState<WorkflowDefinition[]>([]);
     const [reportAction, setReportAction] = useState<ReportActionType | null>(null);
@@ -493,44 +492,24 @@ export function GeneralSection({ form, setForm, projectId, addToast, prefixError
         />
       </div>
       {/*
-        FNXC:SettingsGeneral 2026-07-15-17:35:
-        `showQuickChatFAB` is written alongside `quickChatButtonMode` on every change: the legacy boolean
-        is still the fallback this control reads when no mode is stored, so the two must never disagree.
-        The change is also reported synchronously via onQuickChatButtonModeChange so the launcher moves
-        before Save — operators need to see where the button lands while choosing.
-      */}
-      <SettingsSelectRow
-        descriptor={{
-          key: "quickChatButtonMode",
-          label: t("settings.general.quickChatLauncher", "Quick Chat launcher"),
-          help: t("settings.general.quickChatLauncherHint", "Choose whether Quick Chat opens from the draggable floating button, a footer button beside Terminal, or stays hidden. Default: off (hidden)."),
-          scope: "project",
-          options: [
-            { value: "floating", label: t("settings.general.quickChatLauncherFloating", "Floating button") },
-            { value: "footer", label: t("settings.general.quickChatLauncherFooter", "Footer button") },
-            { value: "off", label: t("settings.general.off", "Off") },
-          ],
-        }}
-        value={form.quickChatButtonMode ?? (form.showQuickChatFAB ? "floating" : "off")}
-        onChange={(v) => setForm((f) => {
-            const mode = (v ?? "off") as "floating" | "footer" | "off";
-            onQuickChatButtonModeChange?.(mode);
-            return { ...f, quickChatButtonMode: mode, showQuickChatFAB: mode === "floating" };
-        })}
-      />
-      {/*
         FNXC:Navigation 2026-07-17-00:00:
         Render the selected quick actions in persisted order so move controls visibly reorder their rows.
         The add picker exposes only footer-eligible destinations, while each mutation updates the live footer before
         Settings is saved; More, Ideation, Terminal/scripts, shell controls, and plugin views remain unavailable here.
+
+        FNXC:Navigation 2026-09-16-04:15:
+        FN-446: this control now drives the quick-access row of the shared navigation bar, not a mobile-only footer, so
+        its label and help text drop the "mobile" framing and state the five-destination cap. The setting KEY, the
+        `htmlFor`/`id`, and both i18n keys stay unchanged so persisted preferences, the settings search index, and
+        `section-keys.ts` keep working without a migration.
         */}
       <SettingsFieldRow
         htmlFor="mobileNavPrimaryItems"
-        label={t("settings.general.mobileNavPrimaryItems", "Mobile footer quick actions")}
-        help={t("settings.general.mobileNavPrimaryItemsHint", "Default: Dashboard, Tasks, Agents, Missions, Chat, Mailbox. Add eligible destinations; unselected destinations remain in More.")}
+        label={t("settings.general.mobileNavPrimaryItems", "Navigation quick access")}
+        help={t("settings.general.mobileNavPrimaryItemsHint", "Default: Dashboard, Board, Planning, Missions, Mailbox. Choose up to 5 destinations and their order; every other destination remains in More.")}
         scope="project"
       >
-        <div role="group" aria-label={t("settings.general.mobileNavPrimaryItems", "Mobile footer quick actions")}>
+        <div role="group" aria-label={t("settings.general.mobileNavPrimaryItems", "Navigation quick access")}>
           {(() => {
             const selectedItems = Array.isArray(form.mobileNavPrimaryItems) && form.mobileNavPrimaryItems.length > 0
               ? form.mobileNavPrimaryItems.filter((item): item is typeof MOBILE_NAV_PRIMARY_SELECTABLE_ITEMS[number] => MOBILE_NAV_PRIMARY_SELECTABLE_ITEMS.includes(item as typeof MOBILE_NAV_PRIMARY_SELECTABLE_ITEMS[number]))
@@ -568,20 +547,6 @@ export function GeneralSection({ form, setForm, projectId, addToast, prefixError
           })()}
         </div>
       </SettingsFieldRow>
-      {/*
-        FNXC:ChatModal 2026-06-28-00:00:
-        Operators need a Settings > General toggle for Quick Chat outside-click dismissal because accidental board clicks can otherwise close active chat context. Default checked preserves the shipped FN-7152 interaction.
-      */}
-      <SettingsToggleRow
-        descriptor={{
-          key: "quickChatCloseOnOutsideClick",
-          label: t("settings.general.quickChatCloseOnOutsideClick", "Close Quick Chat on outside click"),
-          help: t("settings.general.quickChatCloseOnOutsideClickHint", "When enabled, clicking outside the Quick Chat window closes it. Disable to keep it open until you close it explicitly. Default: enabled."),
-          scope: "project",
-        }}
-        value={form.quickChatCloseOnOutsideClick !== false}
-        onChange={(v) => setForm((f) => ({ ...f, quickChatCloseOnOutsideClick: v === true }))}
-      />
       <h4 className="settings-section-heading settings-section-heading--spaced">{t("settings.general.chatHistory", "Chat history")}</h4>
       {/*
         FNXC:ChatModal 2026-07-01-00:00:

@@ -44,7 +44,7 @@ function successChainFrom(ir: WorkflowIr, start: string): WorkflowIrNode[] {
   return chain;
 }
 
-describe("builtin:coding-ideas-v2 review seal", () => {
+describe("builtin:coding-ideas review seal", () => {
   const ir = BUILTIN_CODING_IDEAS_V2_WORKFLOW_IR as WorkflowIr;
 
   it("has no write-capable node after Code Review", () => {

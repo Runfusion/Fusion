@@ -3,7 +3,6 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { CustomModelDropdown } from "../CustomModelDropdown";
 import type { ModelInfo } from "../../api";
-import { AlphaProvider, AlphaBoundary } from "../../context/AlphaContext";
 
 const MOCK_MODELS: ModelInfo[] = [
   { provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", reasoning: true, contextWindow: 200000 },
@@ -141,24 +140,28 @@ describe("CustomModelDropdown ProviderIcon Integration", () => {
     expect(kimiIcon.querySelector("path")).toHaveAttribute("fill", "var(--provider-kimi)");
   });
 
-  it("keeps Alpha model selection and visibly aligned favorite actions as keyboard siblings", async () => {
+  /*
+  FNXC:NativeUiCollections 2026-09-15-00:20:
+  Favourite actions are siblings of the row they affect (a model option, or its provider header), so the
+  visible label a control acts on is the one next to it. The rows are the listbox's own rows now, not a
+  duplicated action rail, so the alignment assertion targets the row wrapper rather than the removed rail.
+  */
+  it("keeps model selection and visibly aligned favorite actions as keyboard siblings", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     const onToggleFavorite = vi.fn();
     const onToggleModelFavorite = vi.fn();
-    render(<AlphaProvider enabled><AlphaBoundary><CustomModelDropdown {...defaultProps} onChange={onChange} onToggleFavorite={onToggleFavorite} onToggleModelFavorite={onToggleModelFavorite} /></AlphaBoundary></AlphaProvider>);
+    render(<><><CustomModelDropdown {...defaultProps} onChange={onChange} onToggleFavorite={onToggleFavorite} onToggleModelFavorite={onToggleModelFavorite} /></></>);
     await user.click(screen.getByLabelText("Test Model"));
     const option = screen.getByRole("option", { name: /GPT-4o/ });
     const favorite = screen.getByRole("button", { name: "Add GPT-4o to favorites" });
     expect(screen.getByRole("option", { name: /GPT-4o/ })).not.toContainElement(favorite);
-    expect(favorite.closest(".model-combobox-alpha-action-row")).toHaveTextContent("GPT-4o");
+    expect(favorite.closest(".model-combobox-option-row")).toHaveTextContent("GPT-4o");
     const providerFavorite = screen.getByRole("button", { name: "Add openai to favorites" });
-    expect(providerFavorite.closest(".model-combobox-alpha-action-row")).toHaveTextContent("openai");
+    expect(providerFavorite.closest(".model-combobox-optgroup")).toHaveTextContent("openai");
     await waitFor(() => expect(screen.getByPlaceholderText("Filter models…")).toHaveFocus());
-    const listbox = screen.getByRole("listbox", { name: "Test Model" });
-    listbox.focus();
-    await user.tab();
     const anthropicFavorite = screen.getByRole("button", { name: "Add anthropic to favorites" });
+    anthropicFavorite.focus();
     expect(anthropicFavorite).toHaveFocus();
     await user.keyboard("{Enter}");
     expect(onToggleFavorite).toHaveBeenCalledWith("anthropic");

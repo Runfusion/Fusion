@@ -9,16 +9,22 @@ import {
 
 export interface DashboardKeyboardShortcutHandlers {
   /*
-  FNXC:DashboardShortcuts 2026-07-16-00:00:
-  FN-8069 requires every configurable dashboard shortcut to toggle its surface. App owns state and navigation history, so this listener only dispatches the toggle callbacks; a re-press closes modals or restores the view that was active before Settings or Command Center opened (Runfusion/Fusion#2118).
+  FNXC:DashboardShortcuts 2026-09-14-11:35:
+  FN-390 makes the first shortcut callback modal-agnostic. The app's window manager owns the visibility snapshot; this listener only dispatches the configured action, whose binding is disabled by default.
   */
-  toggleQuickChat: () => void;
+  toggleModalVisibility: () => void;
   toggleTerminal: () => void;
   closeTopmostPopup?: () => boolean;
   toggleFiles: () => void;
   toggleSettings: () => void;
   toggleCommandCenter: () => void;
   toggleNewTask: () => void;
+  /*
+  FNXC:DashboardShortcuts 2026-09-16-02:27:
+  FN-441 : bascule de la liste des chats. L'action reste derrière LES DEUX gardes de saisie, donc un composer de
+  chat, un éditeur ou un terminal conserve la frappe ; App choisit l'hôte (tiroir téléphone / popover pied de page).
+  */
+  toggleChatList: () => void;
 }
 
 export interface UseDashboardKeyboardShortcutsOptions extends DashboardKeyboardShortcutHandlers {
@@ -33,13 +39,14 @@ The global dashboard listener only handles document-level shortcuts after target
 export function useDashboardKeyboardShortcuts({
   shortcuts,
   enabled = true,
-  toggleQuickChat,
+  toggleModalVisibility,
   toggleTerminal,
   closeTopmostPopup,
   toggleFiles,
   toggleSettings,
   toggleCommandCenter,
   toggleNewTask,
+  toggleChatList,
 }: UseDashboardKeyboardShortcutsOptions): void {
   useEffect(() => {
     if (!enabled || typeof document === "undefined") return;
@@ -58,13 +65,19 @@ export function useDashboardKeyboardShortcuts({
         return;
       }
 
-      if (isEditableShortcutTarget(event.target)) return;
+      if (isTextEntryShortcutTarget(event.target)) return;
 
-      if (shortcutMatchesEvent(resolved.quickChat, event)) {
+      /*
+      FNXC:DashboardShortcuts 2026-09-14-11:35:
+      The visibility action runs before the broad non-text control guard so a second configured keypress can restore windows while focus sits on the footer toggle. Inputs, editors, terminals, and opt-out regions remain protected by the stricter text-entry guard above.
+      */
+      if (shortcutMatchesEvent(resolved.toggleModalVisibility, event)) {
         event.preventDefault();
-        toggleQuickChat();
+        toggleModalVisibility();
         return;
       }
+
+      if (isEditableShortcutTarget(event.target)) return;
 
       if (shortcutMatchesEvent(resolved.terminal, event)) {
         event.preventDefault();
@@ -93,10 +106,16 @@ export function useDashboardKeyboardShortcuts({
       if (shortcutMatchesEvent(resolved.newTask, event)) {
         event.preventDefault();
         toggleNewTask();
+        return;
+      }
+
+      if (shortcutMatchesEvent(resolved.openChatList, event)) {
+        event.preventDefault();
+        toggleChatList();
       }
     };
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [closeTopmostPopup, enabled, shortcuts, toggleCommandCenter, toggleFiles, toggleNewTask, toggleQuickChat, toggleSettings, toggleTerminal]);
+  }, [closeTopmostPopup, enabled, shortcuts, toggleChatList, toggleCommandCenter, toggleFiles, toggleModalVisibility, toggleNewTask, toggleSettings, toggleTerminal]);
 }

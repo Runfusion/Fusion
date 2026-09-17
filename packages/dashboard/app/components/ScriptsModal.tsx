@@ -359,7 +359,6 @@ export function ScriptsModal({ isOpen, onClose, addToast, projectId, onRunScript
       className="floating-window--scripts"
       defaultSize={{ width: 720, height: 560 }}
       minSize={{ width: 360, height: 280 }}
-      persistGeometryKey="floating-window:scripts"
       suspendGeometryPersistenceOnMobile
       suspendGeometryPersistenceOnShortViewport
       /* FNXC:ModalTouchGeometry 2026-07-26-16:10: Preserve Scripts' globally default-off backdrop preference while the shared window keeps drag gestures from being mistaken for outside dismissals. */

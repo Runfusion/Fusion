@@ -170,7 +170,7 @@ describe("TaskDetailModal reset dialog", () => {
 
     expect(screen.getByTestId("task-detail-status-badge")).toHaveTextContent(/executing/i);
     fireEvent.click(screen.getByRole("button", { name: "Actions" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Reset" }));
+    fireEvent.click(await screen.findByTestId("task-detail-header-action-reset"));
     expect(screen.getByTestId("task-reset-description")).toHaveValue("Original detail request");
     fireEvent.change(screen.getByTestId("task-reset-description"), { target: { value: "Corrected detail request" } });
     fireEvent.click(screen.getByTestId("task-reset-submit"));
@@ -204,7 +204,7 @@ describe("TaskDetailModal reset dialog", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Actions" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Reset" }));
+    fireEvent.click(await screen.findByTestId("task-detail-header-action-reset"));
     fireEvent.click(await screen.findByTestId("task-reset-submit"));
 
     await waitFor(() => expect(onResetTask).toHaveBeenCalledWith("FN-001"));
@@ -227,7 +227,7 @@ describe("TaskDetailModal reset dialog", () => {
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: "Actions" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Reset" }));
+    fireEvent.click(await screen.findByTestId("task-detail-header-action-reset"));
     fireEvent.click(await screen.findByTestId("task-reset-submit"));
     await waitFor(() => expect(addToast).toHaveBeenCalledWith("partial cleanup; retry Reset", "error"));
     expect(addToast).not.toHaveBeenCalledWith(expect.stringContaining("fresh run will be allocated"), "success");
@@ -246,7 +246,7 @@ describe("TaskDetailModal planner Chat tab", () => {
     return render(
       <TaskDetailModal
         initialTab={initialTab}
-        taskDetailChatFirst
+        taskDetailDefaultTab="chat"
         task={makeTask({ column })}
         onClose={noop}
         onDeleteTask={noopDelete}
@@ -326,7 +326,7 @@ describe("TaskDetailModal planner Chat tab", () => {
     const { container, rerender } = render(
       <TaskDetailModal
         task={makeTask({ id: "FN-7324-A", column: "todo" as any })}
-        taskDetailChatFirst
+        taskDetailDefaultTab="chat"
         onClose={noop}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
@@ -342,7 +342,7 @@ describe("TaskDetailModal planner Chat tab", () => {
     rerender(
       <TaskDetailModal
         task={makeTask({ id: "FN-7324-B", column: "todo" as any })}
-        taskDetailChatFirst
+        taskDetailDefaultTab="chat"
         onClose={noop}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
@@ -378,7 +378,7 @@ describe("TaskDetailModal planner Chat tab", () => {
     render(
       <TaskDetailModal
         initialTab="planner-chat"
-        taskDetailChatFirst
+        taskDetailDefaultTab="chat"
         task={makeTask({ column: "todo" as any, status: "failed", error: "Planner failed hard" })}
         onClose={noop}
         onDeleteTask={noopDelete}
@@ -411,7 +411,7 @@ describe("TaskDetailModal planner Chat tab", () => {
     const { container } = render(
       <TaskDetailModal
         initialTab="chat"
-        taskDetailChatFirst
+        taskDetailDefaultTab="chat"
         task={makeTask({ column: "todo" as any, status: "failed", error: "Activity failure stays visible" })}
         onClose={noop}
         onDeleteTask={noopDelete}
@@ -442,7 +442,7 @@ describe("TaskDetailModal planner Chat tab", () => {
     const { container, rerender } = render(
       <TaskDetailModal
         initialTab="definition"
-        taskDetailChatFirst
+        taskDetailDefaultTab="chat"
         task={makeTask({ column: "todo" as any, status: "failed" })}
         onClose={noop}
         onDeleteTask={noopDelete}
@@ -456,13 +456,15 @@ describe("TaskDetailModal planner Chat tab", () => {
     expect(screen.getByText("Task Failed")).toBeInTheDocument();
     expect(screen.getByText("The task failed before it could complete.")).toBeInTheDocument();
     expect(document.querySelector(".detail-error-message")?.textContent).not.toBe("");
-    await userEvent.setup().click(screen.getByTestId("task-detail-header-action-retry"));
+    const retryUser = userEvent.setup();
+    await retryUser.click(screen.getByRole("button", { name: "Actions" }));
+    await retryUser.click(screen.getByTestId("task-detail-header-action-retry"));
     expect(onRetryTask).toHaveBeenCalledWith("FN-099");
 
     rerender(
       <TaskDetailModal
         initialTab="definition"
-        taskDetailChatFirst
+        taskDetailDefaultTab="chat"
         task={makeTask({ column: "todo" as any, status: "in-progress", error: "Ignored because task is not failed" })}
         onClose={noop}
         onDeleteTask={noopDelete}
@@ -502,7 +504,7 @@ describe("TaskDetailModal planner Chat tab", () => {
     render(
       <TaskDetailModal
         initialTab="definition"
-        taskDetailChatFirst
+        taskDetailDefaultTab="chat"
         task={makeTask({ column: "todo" as any, status: "failed", error: "Workflow graph terminated with failure at node 'steps#0:step-execute'" })}
         onClose={noop}
         onDeleteTask={noopDelete}
@@ -556,7 +558,7 @@ describe("TaskDetailModal planner Chat tab", () => {
     render(
       <TaskDetailModal
         initialTab="definition"
-        taskDetailChatFirst
+        taskDetailDefaultTab="chat"
         task={makeTask({ column: "in-progress" as any, status: "failed", error: "Workflow graph terminated with failure at node 'unknown'" })}
         onClose={noop}
         onDeleteTask={noopDelete}
@@ -588,7 +590,7 @@ describe("TaskDetailModal planner Chat tab", () => {
     render(
       <TaskDetailModal
         initialTab="definition"
-        taskDetailChatFirst
+        taskDetailDefaultTab="chat"
         task={makeTask({ column: "in-progress" as any, status: "failed", error: "Workflow graph terminated with failure at node 'unknown'" })}
         onClose={noop}
         onDeleteTask={noopDelete}
@@ -637,7 +639,8 @@ describe("TaskDetailModal base-branch editor", () => {
     vi.mocked(updateTask).mockResolvedValue(updated);
     const { onTaskUpdated } = renderEditableTask("mission/M-8811");
 
-    await user.click(screen.getByRole("button", { name: "Edit task" }));
+    await user.click(screen.getByRole("button", { name: "Actions" }));
+    await user.click(screen.getByTestId("task-detail-header-action-edit"));
     const baseBranch = screen.getByLabelText("Merge target / base branch");
     expect(baseBranch).toHaveValue("mission/M-8811");
 
@@ -655,7 +658,8 @@ describe("TaskDetailModal base-branch editor", () => {
     vi.mocked(updateTask).mockRejectedValueOnce(new Error("network unavailable"));
     const { onTaskUpdated } = renderEditableTask(undefined);
 
-    await user.click(screen.getByRole("button", { name: "Edit task" }));
+    await user.click(screen.getByRole("button", { name: "Actions" }));
+    await user.click(screen.getByTestId("task-detail-header-action-edit"));
     const baseBranch = screen.getByLabelText("Merge target / base branch");
     await user.type(baseBranch, "mission/M-8811");
     await user.click(screen.getByRole("button", { name: "Save" }));
@@ -666,8 +670,14 @@ describe("TaskDetailModal base-branch editor", () => {
   });
 });
 
-describe("TaskDetailModal summarize title action", () => {
-  it("orders desktop board detail header actions as edit, pop-out, then close", () => {
+describe("TaskDetailModal definition header actions (FN-391)", () => {
+  /*
+  FNXC:TaskDetailHeaderActions 2026-09-16-18:07 (FN-470):
+  The former "edit, pop-out, then close" header order has no subject left: Edit task and Pop out moved into
+  the single Actions overflow, in that relative order, and the header keeps only the overflow trigger and the
+  close control.
+  */
+  it("orders desktop board detail header chrome as the Actions overflow, then close", () => {
     const onRequestClose = vi.fn();
     const onPopOut = vi.fn();
     renderSummarizeTitleModal(
@@ -677,121 +687,64 @@ describe("TaskDetailModal summarize title action", () => {
 
     const actions = document.querySelector(".modal-header-actions");
     expect(actions).not.toBeNull();
-    const editButton = screen.getByRole("button", { name: "Edit task" });
-    const popOutButton = screen.getByTestId("task-detail-pop-out");
     const closeButton = screen.getByRole("button", { name: "Close" });
+    const overflow = actions!.querySelector(".detail-actions-dropdown--header")!;
+    const trigger = screen.getByRole("button", { name: "Actions" });
 
-    expect(Array.from(actions!.children).slice(-3)).toEqual([editButton, popOutButton, closeButton]);
-    for (const action of [editButton, popOutButton, closeButton]) {
+    expect(Array.from(actions!.children)).toEqual([overflow, closeButton]);
+    expect(document.querySelector(".modal-edit-btn")).toBeNull();
+    expect(screen.queryByTestId("task-detail-pop-out")).toBeNull();
+    for (const action of [trigger, closeButton]) {
       expect(action).toHaveClass("btn", "btn-icon", "btn-sm");
     }
+
+    fireEvent.click(trigger);
+    const menu = screen.getByRole("menu");
+    const items = Array.from(menu.querySelectorAll<HTMLElement>("[data-testid]")).map((node) => node.getAttribute("data-testid"));
+    expect(items.indexOf("task-detail-header-action-edit")).toBeGreaterThanOrEqual(0);
+    expect(items.indexOf("task-detail-header-action-edit")).toBeLessThan(items.indexOf("task-detail-pop-out"));
   });
 
-  it("renders beside Description when the task is editable and has a description", () => {
-    renderSummarizeTitleModal({ column: "todo" as any });
-
-    const button = screen.getByTestId("summarize-title-btn");
-    expect(button).toBeVisible();
-    expect(button).toBeEnabled();
-    expect(button).toHaveClass("btn", "btn-icon", "btn-sm", "detail-summarize-title-btn");
-    expect(button.closest(".detail-definition-header")).toBeInTheDocument();
-    expect(button.closest(".modal-header")).toBeNull();
-  });
-
-  it("hides while the task is in edit mode", async () => {
-    const user = userEvent.setup();
-    renderSummarizeTitleModal();
-
-    expect(screen.getByTestId("summarize-title-btn")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Edit task" }));
+  /*
+  FNXC:TaskDescriptionEditing 2026-09-14-19:00:
+  FN-391 removed the manual Summarize action. The cases that drove it (visible when editable, hidden
+  in edit mode, hidden for non-editable columns, pending/failure states, mobile visibility) have no
+  subject left, so they are replaced by the inverse contract asserted across the same lanes and
+  breakpoints: no button, no leftover shell, and no summarize request on any path. The endpoint
+  itself stays an integration contract and keeps its own route coverage.
+  */
+  it.each([
+    { label: "manual intake", column: "ideas" },
+    { label: "planning", column: "todo" },
+    { label: "implementation", column: "in-progress" },
+  ])("renders no summarize action in the $label lane", ({ column }) => {
+    renderSummarizeTitleModal({ column: column as any });
 
     expect(screen.queryByTestId("summarize-title-btn")).not.toBeInTheDocument();
+    expect(document.querySelector(".detail-summarize-title-btn")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Summarize" })).not.toBeInTheDocument();
   });
 
-  it("hides for non-editable columns", () => {
-    renderSummarizeTitleModal({ column: "in-progress" as any });
-
-    expect(screen.queryByTestId("summarize-title-btn")).not.toBeInTheDocument();
-  });
-
-  it("hides when the task has no description", () => {
-    renderSummarizeTitleModal({ description: "" });
-
-    expect(screen.queryByTestId("summarize-title-btn")).not.toBeInTheDocument();
-  });
-
-  it("summarizes the description, saves the generated title, and reports success", async () => {
-    const user = userEvent.setup();
-    const { summarizeTitle, updateTask } = await import("../../api");
-    const addToast = vi.fn();
-    const onTaskUpdated = vi.fn();
-    const updatedTask = makeTask({ id: "FN-6059", column: "triage" as any, title: "Generated Title" });
-    vi.mocked(summarizeTitle).mockReset();
-    vi.mocked(updateTask).mockReset();
-    vi.mocked(summarizeTitle).mockResolvedValueOnce("Generated Title");
-    vi.mocked(updateTask).mockResolvedValueOnce(updatedTask);
-
-    const { task } = renderSummarizeTitleModal({}, { addToast, onTaskUpdated, projectId: "project-1" });
-
-    await user.click(screen.getByTestId("summarize-title-btn"));
-
-    await waitFor(() => {
-      expect(summarizeTitle).toHaveBeenCalledWith(task.description, undefined, undefined, "project-1");
-      expect(updateTask).toHaveBeenCalledWith("FN-6059", { title: "Generated Title" }, "project-1");
-      expect(onTaskUpdated).toHaveBeenCalledWith(updatedTask);
-      expect(addToast).toHaveBeenCalledWith("Title updated from description", "success");
-    });
-    expect(screen.getByTestId("sparkles-icon")).toBeInTheDocument();
-    expect(screen.getByTestId("summarize-title-btn")).toBeEnabled();
-  });
-
-  it("shows a disabled loading state while summarization is pending", async () => {
-    const user = userEvent.setup();
-    const { summarizeTitle, updateTask } = await import("../../api");
-    const deferred = createDeferred<string>();
-    vi.mocked(summarizeTitle).mockReset();
-    vi.mocked(updateTask).mockReset();
-    vi.mocked(summarizeTitle).mockReturnValueOnce(deferred.promise);
-    vi.mocked(updateTask).mockResolvedValueOnce(makeTask({ id: "FN-6059", title: "Generated Title" }));
-
-    renderSummarizeTitleModal();
-    await user.click(screen.getByTestId("summarize-title-btn"));
-
-    expect(screen.getByTestId("summarize-title-btn")).toBeDisabled();
-    expect(screen.getByTestId("loader2-icon")).toBeInTheDocument();
-
-    deferred.resolve("Generated Title");
-    await waitFor(() => expect(screen.getByTestId("summarize-title-btn")).toBeEnabled());
-    expect(screen.getByTestId("sparkles-icon")).toBeInTheDocument();
-  });
-
-  it("shows an error toast and re-enables the button when summarization fails", async () => {
-    const user = userEvent.setup();
-    const { summarizeTitle, updateTask } = await import("../../api");
-    const addToast = vi.fn();
-    vi.mocked(summarizeTitle).mockReset();
-    vi.mocked(updateTask).mockReset();
-    vi.mocked(summarizeTitle).mockRejectedValueOnce(new Error("description is too short"));
-
-    renderSummarizeTitleModal({}, { addToast });
-    await user.click(screen.getByTestId("summarize-title-btn"));
-
-    await waitFor(() => {
-      expect(addToast).toHaveBeenCalledWith("Failed to summarize title: description is too short", "error");
-    });
-    expect(updateTask).not.toHaveBeenCalled();
-    expect(screen.getByTestId("summarize-title-btn")).toBeEnabled();
-  });
-
-  it("remains visible and accessible on mobile viewports", () => {
+  it("leaves no empty action shell in the Definition header on mobile", () => {
     Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 390 });
     window.dispatchEvent(new Event("resize"));
 
     renderSummarizeTitleModal({ column: "todo" as any });
 
-    const button = screen.getByTestId("summarize-title-btn");
-    expect(button).toBeVisible();
-    expect(button).toHaveAccessibleName("Summarize");
+    const header = document.querySelector(".detail-definition-header");
+    expect(header).not.toBeNull();
+    expect(header!.querySelectorAll("button")).toHaveLength(0);
+  });
+
+  it("never requests a title summary while the Definition view is open", async () => {
+    const api = await import("../../api");
+    vi.mocked(api.summarizeTitle).mockReset();
+    vi.mocked(api.updateTask).mockReset();
+
+    renderSummarizeTitleModal({ column: "todo" as any });
+
+    expect(api.summarizeTitle).not.toHaveBeenCalled();
+    expect(api.updateTask).not.toHaveBeenCalled();
   });
 });
 
@@ -1492,7 +1445,7 @@ describe("TaskDetailModal branch group surfacing", () => {
 describe("TaskDetailModal delete affordance", () => {
   async function selectDelete(user: ReturnType<typeof userEvent.setup>) {
     await user.click(screen.getByRole("button", { name: "Actions" }));
-    await user.click(await screen.findByRole("button", { name: "Delete" }));
+    await user.click(await screen.findByTestId("task-detail-header-action-delete"));
   }
   function dependencyConflictError(dependentIds: string[]) {
     const error = new Error("Task has dependents");

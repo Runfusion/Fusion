@@ -180,6 +180,12 @@
           if (!validThemes.includes(colorTheme)) {
             colorTheme = 'shadcn-ember';
           }
+          // FNXC:UiStyleAxis 2026-09-15-00:20: FN-399's interface style is an independent axis from the colour theme. A valid cached "clean" must paint before the first React element; unknown/absent values resolve to "classic".
+          var uiStyle = localStorage.getItem('kb-dashboard-ui-style') || 'classic';
+          var validUiStyles = ['classic', 'clean'];
+          if (!validUiStyles.includes(uiStyle)) {
+            uiStyle = 'classic';
+          }
           var fontScale = Number(localStorage.getItem('kb-dashboard-font-scale-pct') || '100');
           if (!Number.isFinite(fontScale)) {
             fontScale = 100;
@@ -190,6 +196,7 @@
           var effectiveMode = mode === 'system' ? (systemDark ? 'dark' : 'light') : mode;
           document.documentElement.setAttribute('data-theme', effectiveMode);
           document.documentElement.setAttribute('data-color-theme', colorTheme);
+          document.documentElement.setAttribute('data-ui-style', uiStyle);
           document.documentElement.style.fontSize = fontScale + '%';
           var shadcnCustomColorTokens = ['--accent', '--bg', '--surface', '--card', '--border', '--text', '--text-muted', '--todo', '--in-progress', '--in-review', '--triage', '--done', '--color-success', '--color-warning', '--color-error'];
           for (var cleanupIndex = 0; cleanupIndex < shadcnCustomColorTokens.length; cleanupIndex += 1) {
@@ -239,6 +246,8 @@
           } catch (matchMediaError) {}
           document.documentElement.setAttribute('data-theme', fallbackSystemDark ? 'dark' : 'light');
           document.documentElement.setAttribute('data-color-theme', 'shadcn-ember');
+          // FNXC:UiStyleAxis 2026-09-15-00:20: an inaccessible localStorage still publishes the default style so no rule depends on a missing attribute.
+          document.documentElement.setAttribute('data-ui-style', 'classic');
           document.documentElement.style.fontSize = '100%';
         }
       })();
@@ -251,5 +260,7 @@
     <div id="root"></div>
     <!-- FNXC:PluginOverlayLayering 2026-07-23-01:21: Supported inert mount point for plugin overlays that must share the dashboard's root stacking context. -->
     <div id="plugin-overlay-root"></div>
+    <!-- FNXC:DashboardWindowVisibility 2026-09-14-10:52: The footer window-toggle is portaled into its own click-through body layer above the live dashboard window/plugin ceiling. -->
+    <div id="dashboard-window-toggle-root"></div>
   </body>
 </html>

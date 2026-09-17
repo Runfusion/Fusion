@@ -1682,7 +1682,7 @@ describe("InlineCreateCard workflow selection at create time (FN-7591)", () => {
   beforeEach(() => {
     vi.mocked(fetchWorkflows).mockResolvedValue([
       { id: "wf-a", name: "Workflow A" },
-      { id: "builtin:coding-ideas-v2", name: "Coding (Ideas)" },
+      { id: "builtin:coding-ideas", name: "Coding (Ideas)" },
     ]);
   });
 
@@ -1692,13 +1692,13 @@ describe("InlineCreateCard workflow selection at create time (FN-7591)", () => {
 
     fireEvent.change(screen.getByPlaceholderText("What needs to be done?"), { target: { value: "Idea for later" } });
     const select = await screen.findByLabelText("Workflow") as HTMLSelectElement;
-    fireEvent.change(select, { target: { value: "builtin:coding-ideas-v2" } });
+    fireEvent.change(select, { target: { value: "builtin:coding-ideas" } });
 
     fireEvent.click(screen.getByTestId("save-button"));
 
     await waitFor(() => expect(props.onSubmit).toHaveBeenCalled());
     const submitted = vi.mocked(props.onSubmit).mock.calls[0][0];
-    expect(submitted.workflowId).toBe("builtin:coding-ideas-v2");
+    expect(submitted.workflowId).toBe("builtin:coding-ideas");
     expect(submitted.column).toBeUndefined();
   });
 
@@ -1721,7 +1721,7 @@ describe("InlineCreateCard workflow selection at create time (FN-7591)", () => {
 
     fireEvent.change(screen.getByPlaceholderText("What needs to be done?"), { target: { value: "Idea for later" } });
     const select = await screen.findByLabelText("Workflow") as HTMLSelectElement;
-    fireEvent.change(select, { target: { value: "builtin:coding-ideas-v2" } });
+    fireEvent.change(select, { target: { value: "builtin:coding-ideas" } });
 
     fireEvent.click(screen.getByTestId("save-button"));
 
@@ -1747,6 +1747,32 @@ describe("InlineCreateCard workflow selection at create time (FN-7591)", () => {
     fireEvent.click(screen.getByTestId("save-button"));
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ description: "inline task survives quota" })));
+  });
+
+  /*
+  FNXC:InlineCreate 2026-09-15-09:12:
+  FN-411 negative control. This composer exposes no Start affordance at all, so the new Cmd/Ctrl+Enter
+  create-and-start accelerator must not leak into it: the modifier stays an ordinary single create with no
+  start column and no column move.
+  */
+  it.each([
+    ["ctrlKey" as const],
+    ["metaKey" as const],
+  ])("creates exactly once on %s+Enter without any Start affordance", async (modifier) => {
+    const onSubmit = vi.fn().mockResolvedValue({ id: "FN-411-inline" } as Task);
+    renderCard([], { onSubmit });
+    expandCard();
+    const textarea = screen.getByPlaceholderText("What needs to be done?");
+    fireEvent.change(textarea, { target: { value: "inline accelerator task" } });
+
+    expect(screen.queryByTestId("task-form-inline-start")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Start" })).toBeNull();
+
+    fireEvent.keyDown(textarea, { key: "Enter", [modifier]: true });
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit.mock.calls[0]![0]).toEqual(expect.objectContaining({ description: "inline accelerator task" }));
+    expect(onSubmit.mock.calls[0]![0]).not.toHaveProperty("column");
   });
 });
 

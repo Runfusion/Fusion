@@ -44,7 +44,7 @@ describe("Header CSS", () => {
   });
 
   it("anchors Alpha desktop search inline with token-sized dropdown geometry and no overlay selectors", () => {
-    const inline = extractRuleBlock(css, ".header-search--alpha-inline");
+    const inline = extractRuleBlock(css, ".header-search--inline");
     const suggestions = extractRuleBlock(taskSearchCss, ".task-search-suggestions");
 
     expect(inline).toContain("flex: 0 1 calc(var(--space-2xl) * 8);");

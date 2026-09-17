@@ -2,7 +2,8 @@ import type { Agent, AgentLogEntry, ResolvedModelSelection, Settings, Task, Task
 import { isWipColumnRole } from "../utils/columnRoles";
 // FNXC:WorkflowLifecycleColumns 2026-07-30-11:50: these are AGENT ROLE comparisons, not
 // column guards — the planner LANE keeps the name `triage`; U11 removed only the COLUMN.
-import { PLANNER_AGENT_ROLE, resolveProjectDefaultModel, resolveTaskExecutionModel, resolveTaskPlanningModel, resolveTaskValidatorModel } from "@fusion/core";
+import type { ModelThinkingPhase } from "@fusion/core";
+import { PLANNER_AGENT_ROLE, resolvePhaseThinkingLevel, resolveProjectDefaultModel, resolveTaskExecutionModel, resolveTaskPlanningModel, resolveTaskValidatorModel } from "@fusion/core";
 import { ACTIVE_STATUSES } from "../utils/taskActivity";
 
 export type ModelSelection = ResolvedModelSelection;
@@ -47,6 +48,94 @@ export function parseRuntimeModelMarker(text: string, role: "Planning" | "Triage
     : match?.[1] === role;
   if (!match || !matchesRole) return null;
   return { provider: match[2], modelId: match[3] };
+}
+
+/*
+FNXC:TaskLogModelThinking 2026-09-15-08:46:
+FN-410: Activity Live must show the thinking effort a run ACTUALLY used, not a guess. The engine
+already writes it into the "using model" marker (`formatModelMarkerDetails`, packages/engine/src/pi.ts)
+as one parenthesized annotation among several, in no guaranteed position — a marker may read
+`... (thinking effort: high) (fallback after timeout)`. Scan every parenthesized suffix for the
+annotation instead of assuming it is the first or the only one, and return undefined when it is
+absent so nothing is invented. The marker's ROLE still has to match, using the same
+Planning/Triage single-lane rule as `parseRuntimeModelMarker`.
+*/
+const MODEL_MARKER_THINKING_PATTERN = /\(\s*thinking effort:\s*([^)]+?)\s*\)/;
+
+export function parseRuntimeModelMarkerThinkingLevel(
+  text: string,
+  role: "Planning" | "Triage" | "Executor" | "Reviewer",
+): string | undefined {
+  if (!parseRuntimeModelMarker(text, role)) return undefined;
+  const match = text.match(MODEL_MARKER_THINKING_PATTERN);
+  const level = match?.[1]?.trim();
+  return level || undefined;
+}
+
+function markerRoleForPhase(phase: ModelThinkingPhase): "Planning" | "Executor" | "Reviewer" | null {
+  if (phase === "planning") return "Planning";
+  if (phase === "execution") return "Executor";
+  if (phase === "validation") return "Reviewer";
+  // Merger writes no "using model" marker of its own.
+  return null;
+}
+
+function agentRoleForPhase(phase: ModelThinkingPhase): string | null {
+  if (phase === "planning") return PLANNER_AGENT_ROLE;
+  if (phase === "execution") return "executor";
+  if (phase === "validation") return "reviewer";
+  return null;
+}
+
+export function extractThinkingLevelFromLog(
+  entries: readonly AgentLogEntry[],
+  phase: ModelThinkingPhase,
+): string | undefined {
+  const markerRole = markerRoleForPhase(phase);
+  const agentRole = agentRoleForPhase(phase);
+  if (!markerRole || !agentRole) return undefined;
+  let result: string | undefined;
+  entries.forEach((entry) => {
+    if (entry.agent !== agentRole || !isEngineMarkerEntryType(entry.type)) return;
+    const level = parseRuntimeModelMarkerThinkingLevel(entry.text, markerRole);
+    if (level) {
+      result = level;
+    }
+  });
+  return result;
+}
+
+/*
+FNXC:TaskLogModelThinking 2026-09-15-08:46:
+FN-410: display precedence is the latest runtime marker first, then the shared lane precedence from
+`resolvePhaseThinkingLevel` fed with the SAME per-task override the engine applies
+(`resolvePlanningThinkingLevel` / `resolveValidatorThinkingLevel` / `resolveMergerThinkingLevel`,
+packages/engine/src/agents/agent-session-helpers.ts): planning takes `planningThinkingLevel ?? thinkingLevel`,
+execution takes `thinkingLevel`, validation takes `validatorThinkingLevel ?? thinkingLevel`, and merger
+takes its own independent `mergerThinkingLevel` (it does NOT inherit the shared task level, matching
+`merger.ts`, which passes only `mergerTask?.mergerThinkingLevel`).
+
+Known limit, deliberately not mirrored: the engine's fast-execution shortcut
+(`resolveFastCheapThinkingLevel`) substitutes a cheaper level for a Fast card. Reproducing it here would
+duplicate execution-mode policy in a display path; once a run has happened the runtime marker wins and
+carries the real value, and before that the displayed lane value is the configured one.
+*/
+function taskThinkingOverrideForPhase(task: Task | TaskDetail, phase: ModelThinkingPhase): string | undefined {
+  if (phase === "planning") return task.planningThinkingLevel ?? task.thinkingLevel;
+  if (phase === "execution") return task.thinkingLevel;
+  if (phase === "validation") return task.validatorThinkingLevel ?? task.thinkingLevel;
+  return task.mergerThinkingLevel;
+}
+
+export function resolveEffectiveThinkingLevel(
+  task: Task | TaskDetail,
+  logEntries: readonly AgentLogEntry[],
+  phase: ModelThinkingPhase,
+  settings?: Settings,
+): string | undefined {
+  const fromLog = extractThinkingLevelFromLog(logEntries, phase);
+  if (fromLog) return fromLog;
+  return resolvePhaseThinkingLevel(phase, settings, taskThinkingOverrideForPhase(task, phase));
 }
 
 export function extractExecutorModelFromLog(entries: AgentLogEntry[]): { provider: string; modelId: string } | null {

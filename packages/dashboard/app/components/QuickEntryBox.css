@@ -935,64 +935,64 @@ shared left/right edges and compact gaps. Keep the centered cluster desktop-only
 }
 
 /*
-FNXC:AlphaQuickEntry 2026-09-13-15:19:
-Alpha Quick Entry is input-first: the immediate attach/status/icon-only Save row remains visible, and routing options appear as a quiet second row only after disclosure. During the 500ms Start hold, a warning-colored mask rises from the bottom, covers the corresponding portion of Save, and reveals an undistorted Play icon. On mobile, every primary icon action shares the same `--alpha-touch-height` square without imposing that fixed width on text option controls. Desktop/tablet metrics, the List host, legacy controls, and reduced-motion timing remain unchanged.
+FNXC:NativeQuickEntry 2026-09-13-15:19:
+Quick Entry is input-first: the immediate attach/status/icon-only Save row remains visible, and routing options appear as a quiet second row only after disclosure. During the Start hold, a warning-colored mask rises from the bottom, covers the corresponding portion of Save, and reveals an undistorted Play icon. On mobile, every primary icon action shares the same `--ui-touch-height` square without imposing that fixed width on text option controls. Desktop/tablet metrics, the List host, legacy controls, and reduced-motion timing remain unchanged.
 */
-[data-alpha-surface="true"] .quick-entry-box {
-  padding: var(--alpha-density-2);
-  margin-bottom: var(--alpha-density-2);
+.quick-entry-box {
+  padding: var(--ui-density-sm);
+  margin-bottom: var(--ui-density-sm);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-sm);
 }
 
-[data-alpha-surface="true"] .quick-entry-input {
-  min-height: calc(var(--alpha-control-height) + var(--alpha-density-2));
-  max-height: calc(var(--alpha-control-height) * 5);
-  padding: var(--alpha-density-2);
+.quick-entry-input {
+  min-height: calc(var(--ui-control-height) + var(--ui-density-sm));
+  max-height: calc(var(--ui-control-height) * 5);
+  padding: var(--ui-density-sm);
   border: 0;
   border-radius: var(--field-radius);
-  background: var(--alpha-neutral-background);
+  background: var(--bg);
 }
 
-[data-alpha-surface="true"] .quick-entry-input--expanded {
-  min-height: calc(var(--alpha-control-height) * 2);
+.quick-entry-input--expanded {
+  min-height: calc(var(--ui-control-height) * 2);
 }
 
-[data-alpha-surface="true"] .quick-entry-controls {
-  margin-top: var(--alpha-density-2);
-  gap: var(--alpha-density-2);
+.quick-entry-controls {
+  margin-top: var(--ui-density-sm);
+  gap: var(--ui-density-sm);
 }
 
-[data-alpha-surface="true"] .quick-entry-actions {
+.quick-entry-actions {
   flex-direction: column;
   align-items: stretch;
   justify-content: flex-start;
-  gap: var(--alpha-density-2);
+  gap: var(--ui-density-sm);
 }
 
-[data-alpha-surface="true"] .quick-entry-primary-group {
+.quick-entry-primary-group {
   order: -1;
   width: 100%;
   flex-wrap: nowrap;
   justify-content: flex-start;
-  gap: var(--alpha-density-1);
+  gap: var(--ui-density-2xs);
 }
 
-[data-alpha-surface="true"] .quick-entry-primary-group [data-testid="quick-entry-save"] {
+.quick-entry-primary-group [data-testid="quick-entry-save"] {
   margin-inline-start: auto;
-  min-width: var(--alpha-control-height);
-  width: var(--alpha-control-height);
-  min-height: var(--alpha-control-height);
-  max-height: var(--alpha-control-height);
+  min-width: var(--ui-control-height);
+  width: var(--ui-control-height);
+  min-height: var(--ui-control-height);
+  max-height: var(--ui-control-height);
   padding: 0;
   position: relative;
   overflow: hidden;
   isolation: isolate;
 }
 
-[data-alpha-surface="true"] .quick-entry-alpha-save-icons,
-[data-alpha-surface="true"] .quick-entry-alpha-save-icon,
-[data-alpha-surface="true"] .quick-entry-alpha-save-progress {
+.quick-entry-save-icons,
+.quick-entry-save-icon,
+.quick-entry-save-progress {
   position: absolute;
   inset: 0;
   display: grid;
@@ -1000,11 +1000,11 @@ Alpha Quick Entry is input-first: the immediate attach/status/icon-only Save row
   pointer-events: none;
 }
 
-[data-alpha-surface="true"] .quick-entry-alpha-save-icon--save {
+.quick-entry-save-icon--save {
   z-index: 1;
 }
 
-[data-alpha-surface="true"] .quick-entry-alpha-save > .quick-entry-alpha-save-icons > .quick-entry-alpha-save-progress {
+.quick-entry-save > .quick-entry-save-icons > .quick-entry-save-progress {
   z-index: 2;
   background: var(--color-warning);
   color: var(--provider-icon-contrast);
@@ -1012,75 +1012,81 @@ Alpha Quick Entry is input-first: the immediate attach/status/icon-only Save row
   transform-origin: bottom;
 }
 
-[data-alpha-surface="true"] .quick-entry-alpha-save[data-hold-state="holding"] .quick-entry-alpha-save-progress {
-  animation: quick-entry-alpha-hold-progress var(--quick-entry-alpha-hold-duration) linear forwards;
+/*
+FNXC:NativeQuickEntry 2026-09-16-02:15:
+The mask only animates once the press is an ENGAGED hold, so a brief click never flashes it. `--quick-entry-hold-duration`
+is therefore the REMAINING fill time after engagement, not the whole 500ms threshold, and the mask reaching full cover
+still coincides with Start. Releasing while the mask is filling cancels the gesture, so the mask simply disappears.
+*/
+.quick-entry-save[data-hold-state="holding"] .quick-entry-save-progress {
+  animation: quick-entry-hold-progress var(--quick-entry-hold-duration) linear forwards;
 }
 
-@keyframes quick-entry-alpha-hold-progress {
+@keyframes quick-entry-hold-progress {
   to { clip-path: inset(0 0 0 0); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  [data-alpha-surface="true"] .quick-entry-alpha-save[data-hold-state="holding"] .quick-entry-alpha-save-progress {
+  .quick-entry-save[data-hold-state="holding"] .quick-entry-save-progress {
     animation: none;
     clip-path: inset(50% 0 0 0);
   }
 }
 
-[data-alpha-surface="true"] .quick-entry-options-group {
+.quick-entry-options-group {
   width: 100%;
-  padding-top: var(--alpha-density-2);
-  border-top: var(--border-width) solid var(--alpha-neutral-border);
+  padding-top: var(--ui-density-sm);
+  border-top: var(--border-width) solid var(--border);
   justify-content: flex-start;
-  gap: var(--alpha-density-1);
+  gap: var(--ui-density-2xs);
 }
 
-[data-alpha-surface="true"] .quick-entry-options-group[hidden] {
+.quick-entry-options-group[hidden] {
   display: none;
 }
 
-[data-alpha-surface="true"] .quick-entry-actions :is(.btn, .wf-optional-steps-dropdown-trigger) {
-  min-height: var(--alpha-control-height);
-  max-height: var(--alpha-control-height);
-  padding-inline: var(--alpha-density-2);
+.quick-entry-actions :is(.btn, .wf-optional-steps-dropdown-trigger) {
+  min-height: var(--ui-control-height);
+  max-height: var(--ui-control-height);
+  padding-inline: var(--ui-density-sm);
 }
 
 @media (max-width: 768px) {
-  [data-alpha-surface="true"] .quick-entry-box {
-    padding: var(--alpha-density-2);
+  .quick-entry-box {
+    padding: var(--ui-density-sm);
   }
 
-  [data-alpha-surface="true"] .quick-entry-actions,
-  [data-alpha-surface="true"] .quick-entry-options-group,
-  [data-alpha-surface="true"] .quick-entry-primary-group {
+  .quick-entry-actions,
+  .quick-entry-options-group,
+  .quick-entry-primary-group {
     justify-content: flex-start;
-    column-gap: var(--alpha-density-1);
+    column-gap: var(--ui-density-2xs);
   }
 
-  [data-alpha-surface="true"] .quick-entry-primary-group {
+  .quick-entry-primary-group {
     flex-wrap: wrap;
   }
 
-  [data-alpha-surface="true"] .quick-entry-actions :is(.btn, .wf-optional-steps-dropdown-trigger),
-  [data-alpha-surface="true"] .quick-entry-primary-group [data-testid="quick-entry-save"] {
-    min-height: var(--alpha-touch-height);
-    max-height: var(--alpha-touch-height);
+  .quick-entry-actions :is(.btn, .wf-optional-steps-dropdown-trigger),
+  .quick-entry-primary-group [data-testid="quick-entry-save"] {
+    min-height: var(--ui-touch-height);
+    max-height: var(--ui-touch-height);
   }
 
-  [data-alpha-surface="true"] .quick-entry-primary-group .btn-icon {
-    flex: 0 0 var(--alpha-touch-height);
-    width: var(--alpha-touch-height);
-    min-width: var(--alpha-touch-height);
-    max-width: var(--alpha-touch-height);
-    height: var(--alpha-touch-height);
-    min-height: var(--alpha-touch-height);
-    max-height: var(--alpha-touch-height);
+  .quick-entry-primary-group .btn-icon {
+    flex: 0 0 var(--ui-touch-height);
+    width: var(--ui-touch-height);
+    min-width: var(--ui-touch-height);
+    max-width: var(--ui-touch-height);
+    height: var(--ui-touch-height);
+    min-height: var(--ui-touch-height);
+    max-height: var(--ui-touch-height);
     padding: 0;
     align-items: center;
     justify-content: center;
   }
 
-  [data-alpha-surface="true"] .quick-entry-primary-group [data-testid="quick-entry-save"] {
+  .quick-entry-primary-group [data-testid="quick-entry-save"] {
     margin-inline-start: auto;
   }
 }

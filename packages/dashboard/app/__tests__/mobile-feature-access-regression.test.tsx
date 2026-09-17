@@ -20,14 +20,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { MobileNavBar } from "../components/MobileNavBar";
 import { Header, useViewportMode } from "../components/Header";
+import { isMobileShellMode } from "../hooks/useViewportMode";
 import { LeftSidebarNav } from "../components/LeftSidebarNav";
+import { resolveNavigationSurfaces, type NavigationPlacement } from "../utils/navigationPlacement";
 
 function mockViewport(mode: "mobile" | "tablet" | "desktop") {
   Object.defineProperty(window, "matchMedia", {
     writable: true,
     value: vi.fn().mockImplementation((query: string) => {
       const isMobileQuery = query === "(max-width: 768px)" || query === "(max-width: 768px), (max-height: 480px)";
-      const isTabletQuery = query === "(min-width: 769px) and (max-width: 1024px)";
+      const isTabletQuery = query === "(min-width: 769px) and (max-width: 1023.98px)";
       return {
         matches: mode === "mobile" ? isMobileQuery : mode === "tablet" ? isTabletQuery : false,
         media: query,
@@ -63,13 +65,20 @@ const createDefaultMobileNavProps = () => ({
   projectId: "proj_1",
 });
 
-function LeftSidebarAppGateHarness({ leftSidebarNavFlag }: { leftSidebarNavFlag?: boolean }) {
+/*
+ * FNXC:Navigation 2026-09-15-14:41:
+ * FN-419: these harnesses used to DUPLICATE App's sidebar gate (and therefore asserted the removed
+ * `experimentalFeatures.leftSidebarNav` placement semantics). They now consume the same shared resolver App does,
+ * so the placement setting — not the legacy flag — decides which single surface mounts.
+ */
+function LeftSidebarAppGateHarness({ navigationPlacement }: { navigationPlacement: NavigationPlacement }) {
   const mode = useViewportMode();
-  const isMobile = mode === "mobile";
-  const viewMode = "project";
   const currentProject = createProjects()[0];
-  const leftSidebarNavEnabled = leftSidebarNavFlag !== false;
-  const sidebarActive = leftSidebarNavEnabled && !isMobile && viewMode === "project" && !!currentProject;
+  const { sidebarActive } = resolveNavigationSurfaces({
+    viewportMode: mode,
+    projectShellPresent: !!currentProject,
+    navigationPlacement,
+  });
 
   return sidebarActive ? (
     <LeftSidebarNav
@@ -84,23 +93,27 @@ function LeftSidebarAppGateHarness({ leftSidebarNavFlag }: { leftSidebarNavFlag?
   ) : null;
 }
 
-function PrimaryNavigationSurfaceHarness({ leftSidebarNavFlag }: { leftSidebarNavFlag?: boolean }) {
+function PrimaryNavigationSurfaceHarness({ navigationPlacement }: { navigationPlacement: NavigationPlacement }) {
   const mode = useViewportMode();
-  const isMobile = mode === "mobile";
+  /* FN-468 : la pill possède la navigation primaire sur tout le shell mobile (téléphone ET tablette). */
+  const mobileShellActive = isMobileShellMode(mode);
   const currentProject = createProjects()[0];
-  const leftSidebarNavEnabled = leftSidebarNavFlag !== false;
-  const sidebarActive = leftSidebarNavEnabled && !isMobile && !!currentProject;
+  const { headerPrimaryNavSuppressed } = resolveNavigationSurfaces({
+    viewportMode: mode,
+    projectShellPresent: !!currentProject,
+    navigationPlacement,
+  });
 
   return (
     <>
       <Header
         view="board"
         onChangeView={vi.fn()}
-        mobileNavEnabled={isMobile}
+        mobileNavEnabled={mobileShellActive}
         showAgentsTab={true}
-        leftSidebarNavActive={sidebarActive}
+        leftSidebarNavActive={headerPrimaryNavSuppressed}
       />
-      <LeftSidebarAppGateHarness leftSidebarNavFlag={leftSidebarNavFlag} />
+      <LeftSidebarAppGateHarness navigationPlacement={navigationPlacement} />
       <MobileNavBar {...createDefaultMobileNavProps()} />
     </>
   );
@@ -135,20 +148,77 @@ describe("Mobile Feature Access Regression Guard", () => {
 
   it("keeps List accessible from the official mobile navigation menu", () => {
     const props = createDefaultMobileNavProps();
-    render(<MobileNavBar {...props} view="board" alphaMenuOpen />);
+    render(<MobileNavBar {...props} view="board" navigationMenuOpen />);
 
     fireEvent.click(screen.getByTestId("mobile-more-item-list"));
     expect(props.onChangeView).toHaveBeenCalledWith("list");
   });
 
-  it("keeps Board as the permanent background without duplicate navigation", () => {
+  /*
+   * FNXC:ToolSurfaces 2026-09-16-23:06:
+   * FN-437 cas (d) : le Header mobile ne rend plus Liste, Notes ni Activité. Ce garde-fou prouve que les trois
+   * destinations restent atteignables depuis le menu du pied de page, qui en est désormais le propriétaire unique.
+   */
+  it("garde Liste, Notes et Activité atteignables depuis le menu de la barre du bas", () => {
     const props = createDefaultMobileNavProps();
-    render(<MobileNavBar {...props} view="list" alphaMenuOpen />);
+    render(<MobileNavBar {...props} view="board" navigationMenuOpen />);
 
-    expect(screen.queryByTestId("mobile-nav-tab-tasks")).toBeNull();
+    fireEvent.click(screen.getByTestId("mobile-more-item-list"));
+    expect(props.onChangeView).toHaveBeenCalledWith("list");
+
+    fireEvent.click(screen.getByTestId("mobile-more-item-notes"));
+    expect(props.onChangeView).toHaveBeenCalledWith("notes");
+
+    fireEvent.click(screen.getByTestId("mobile-more-item-activity"));
+    expect(props.onOpenActivityLog).toHaveBeenCalled();
+  });
+
+  /*
+   * FN-437 cas croisé : un seul propriétaire par destination sur téléphone. Le même test asserte l'absence des trois
+   * déclencheurs du Header ET la présence des trois entrées du menu, de sorte qu'aucun retrait ne peut rendre une
+   * destination inaccessible et qu'aucune restauration ne peut recréer un doublon sans casser ce garde-fou.
+   */
+  it("attribue Liste, Notes et Activité au seul menu du pied de page sur téléphone", () => {
+    const navProps = createDefaultMobileNavProps();
+    render(
+      <>
+        <Header
+          mobileNavEnabled
+          projectId="proj_1"
+          onChangeView={vi.fn()}
+          onOpenActivityPanel={vi.fn()}
+          onOpenNotesPanel={vi.fn()}
+        />
+        <MobileNavBar {...navProps} view="board" navigationMenuOpen />
+      </>,
+    );
+
+    expect(screen.queryByTestId("header-list-view-btn")).toBeNull();
+    expect(screen.queryByTestId("header-activity-panel-btn")).toBeNull();
+    expect(screen.queryByTestId("header-notes-panel-btn")).toBeNull();
+
+    expect(screen.getByTestId("mobile-more-item-list")).toBeInTheDocument();
+    expect(screen.getByTestId("mobile-more-item-notes")).toBeInTheDocument();
+    expect(screen.getByTestId("mobile-more-item-activity")).toBeInTheDocument();
+  });
+
+  /*
+   * FN-467 : Board n'est plus exclu de la navigation mobile. L'invariant réel n'est pas son absence mais son unicité :
+   * selon la sélection d'accès rapide, il apparaît dans EXACTEMENT une surface — onglet direct OU menu — jamais dans
+   * les deux, le hamburger restant toujours le dernier enfant de la pill.
+   */
+  it("rend Board dans exactement une surface de navigation selon la sélection", () => {
+    const props = createDefaultMobileNavProps();
+    const selected = render(<MobileNavBar {...props} view="list" navigationMenuOpen quickAccessItems={["tasks", "planning"]} />);
+    expect(screen.getByTestId("mobile-nav-tab-tasks")).toBeInTheDocument();
     expect(screen.queryByTestId("mobile-more-item-tasks")).toBeNull();
-    expect(document.querySelectorAll(".mobile-nav-bar--alpha > .mobile-nav-tab")).toHaveLength(4);
-    expect(document.querySelector(".mobile-nav-bar--alpha")?.lastElementChild).toBe(screen.getByTestId("alpha-mobile-menu-trigger"));
+    expect(document.querySelector(".mobile-nav-bar--native")?.lastElementChild).toBe(screen.getByTestId("mobile-menu-trigger"));
+    selected.unmount();
+
+    render(<MobileNavBar {...props} view="list" navigationMenuOpen quickAccessItems={["planning"]} />);
+    expect(screen.queryByTestId("mobile-nav-tab-tasks")).toBeNull();
+    expect(screen.getByTestId("mobile-more-item-tasks")).toBeInTheDocument();
+    expect(document.querySelector(".mobile-nav-bar--native")?.lastElementChild).toBe(screen.getByTestId("mobile-menu-trigger"));
   });
 
   it("mobile Header exposes New Task without the retired view toggle", () => {
@@ -162,7 +232,7 @@ describe("Mobile Feature Access Regression Guard", () => {
 
   it("agents view is accessible via the mobile navigation menu", () => {
     const props = createDefaultMobileNavProps();
-    render(<MobileNavBar {...props} alphaMenuOpen />);
+    render(<MobileNavBar {...props} navigationMenuOpen />);
 
     fireEvent.click(screen.getByTestId("mobile-more-item-agents"));
     expect(props.onChangeView).toHaveBeenCalledWith("agents");
@@ -195,7 +265,7 @@ describe("Mobile Feature Access Regression Guard", () => {
   });
 
   it("official menu provides access to secondary mobile features", () => {
-    render(<MobileNavBar {...createDefaultMobileNavProps()} alphaMenuOpen />);
+    render(<MobileNavBar {...createDefaultMobileNavProps()} navigationMenuOpen />);
 
     expect(screen.getByTestId("mobile-nav-tab-mailbox")).toBeDefined();
     expect(screen.queryByTestId("mobile-more-item-mailbox")).toBeNull();
@@ -208,14 +278,18 @@ describe("Mobile Feature Access Regression Guard", () => {
     expect(screen.getByTestId("mobile-more-item-github")).toBeDefined();
     expect(screen.getByTestId("mobile-more-item-usage")).toBeDefined();
     expect(screen.queryByTestId("mobile-more-item-reliability")).toBeNull();
-    expect(screen.queryByTestId("mobile-more-item-chat")).toBeNull();
+    /* FN-467 : Chat n'étant pas promouvable en accès rapide, le menu en est désormais le propriétaire unique. */
+    expect(screen.getByTestId("mobile-more-item-chat")).toBeDefined();
+    expect(screen.queryByTestId("mobile-nav-tab-chat")).toBeNull();
     expect(screen.queryByTestId("mobile-more-item-nodes")).toBeNull();
     expect(screen.getByTestId("mobile-more-item-settings")).toBeDefined();
   });
 
   it("keeps enabled official destinations reachable without persisted footer customization", () => {
-    render(<MobileNavBar {...createDefaultMobileNavProps()} alphaMenuOpen showSkillsTab={false} experimentalFeatures={{ insights: false, memoryView: false }} />);
-    expect(screen.getByTestId("mobile-more-item-missions")).toBeInTheDocument();
+    render(<MobileNavBar {...createDefaultMobileNavProps()} navigationMenuOpen showSkillsTab={false} experimentalFeatures={{ insights: false, memoryView: false }} />);
+    /* FN-467 : sans sélection persistée, Missions fait partie des cinq destinations par défaut de la rangée directe. */
+    expect(screen.getByTestId("mobile-nav-tab-missions")).toBeInTheDocument();
+    expect(screen.queryByTestId("mobile-more-item-missions")).toBeNull();
     expect(screen.queryByTestId("mobile-more-item-skills")).toBeNull();
   });
 
@@ -239,14 +313,19 @@ describe("Mobile Feature Access Regression Guard", () => {
     expect(props.onChangeView).toHaveBeenCalledWith("command-center");
   });
 
-  it("chat is accessible via the bottom nav while remaining absent from the More sheet", () => {
+  /*
+   * FN-467 : Chat n'est pas une destination promouvable en accès rapide (décision FN-446), il vit donc désormais dans
+   * le menu de navigation du téléphone, qui en est le propriétaire unique. Naviguer depuis le menu referme le menu.
+   */
+  it("chat reste joignable une seule fois, depuis le menu de navigation", () => {
     const props = createDefaultMobileNavProps();
-    render(<MobileNavBar {...props} view="board" />);
+    const onUiMenuOpenChange = vi.fn();
+    render(<MobileNavBar {...props} view="board" navigationMenuOpen onUiMenuOpenChange={onUiMenuOpenChange} />);
 
-    fireEvent.click(screen.getByTestId("mobile-nav-tab-chat"));
+    expect(screen.queryByTestId("mobile-nav-tab-chat")).toBeNull();
+    fireEvent.click(screen.getByTestId("mobile-more-item-chat"));
     expect(props.onChangeView).toHaveBeenCalledWith("chat");
-
-    expect(screen.queryByTestId("mobile-more-item-chat")).toBeNull();
+    expect(onUiMenuOpenChange).toHaveBeenCalledWith(false);
   });
 
   it("mobile nav bar renders only on mobile viewport and hides for modal, desktop, or project overview", () => {
@@ -353,8 +432,11 @@ describe("Mobile Feature Access Regression Guard", () => {
       );
 
       expect(screen.getByTitle("Board view")).toBeDefined();
-      // FN-382: List is a right-dock tool on these hosts, so the header toggle no longer offers it.
-      expect(screen.queryByTitle("List view")).toBeNull();
+      /*
+       * FN-426 supersedes FN-382's dock-only List: the right sidebar is optional now, so the header toggle offers
+       * List again — exactly once — on every host that renders this group.
+       */
+      expect(screen.getAllByTitle("List view")).toHaveLength(1);
       expect(screen.getByTestId("view-toggle-overflow-trigger")).toBeDefined();
       unmount();
     }
@@ -380,45 +462,49 @@ describe("Mobile Feature Access Regression Guard", () => {
     }
   });
 
-  it("left sidebar app gate renders by default on desktop and tablet, honors explicit opt-out, and never renders on mobile", () => {
+  it("left sidebar app gate follows the project navigation placement and never renders in the mobile shell", () => {
     /*
-     * Surface Enumeration checklist asserted here:
-     * - leftSidebarNav unset/undefined -> sidebar renders on desktop and tablet.
-     * - leftSidebarNav true -> sidebar renders on desktop and tablet.
-     * - leftSidebarNav false -> sidebar does not render and legacy Header nav returns.
-     * - mobile never renders the sidebar for any flag state; MobileNavBar owns navigation.
-     * - active sidebar state suppresses Header view-toggle and overflow shells.
+     * Surface Enumeration checklist asserted here (FN-468 : la bande tablette appartient au shell mobile) :
+     * - navigationPlacement "sidebar" -> la colonne ne rend QUE sur ordinateur.
+     * - navigationPlacement "footer" -> aucune colonne ; le pied de page large possède la navigation sur ordinateur,
+     *   donc les raccourcis de vues du Header restent supprimés.
+     * - téléphone ET tablette ne rendent jamais la colonne, quelle que soit la placement : `MobileNavBar` possède la
+     *   navigation et le Header n'ajoute aucune troisième surface.
      */
-    const flagStates = [
-      { label: "unset", leftSidebarNavFlag: undefined, sidebarExpected: true },
-      { label: "true", leftSidebarNavFlag: true, sidebarExpected: true },
-      { label: "false", leftSidebarNavFlag: false, sidebarExpected: false },
-    ] as const;
+    const placements = [
+      { label: "sidebar", navigationPlacement: "sidebar" as const, sidebarExpected: true },
+      { label: "footer", navigationPlacement: "footer" as const, sidebarExpected: false },
+    ];
 
-    for (const { label, leftSidebarNavFlag, sidebarExpected } of flagStates) {
-      for (const tier of ["desktop", "tablet"] as const) {
-        mockViewport(tier);
-        const { unmount } = render(<PrimaryNavigationSurfaceHarness leftSidebarNavFlag={leftSidebarNavFlag} />);
-        expect(screen.queryByTestId("left-sidebar-nav"), `${label} flag on ${tier}`).toBe(
+    for (const { label, navigationPlacement, sidebarExpected } of placements) {
+      mockViewport("desktop");
+      {
+        const { unmount } = render(<PrimaryNavigationSurfaceHarness navigationPlacement={navigationPlacement} />);
+        expect(screen.queryByTestId("left-sidebar-nav"), `${label} placement on desktop`).toBe(
           sidebarExpected ? screen.getByTestId("left-sidebar-nav") : null,
         );
-        expect(screen.queryByTitle("Board view"), `${label} flag header board shortcut on ${tier}`).toBe(
-          sidebarExpected ? null : screen.getByTitle("Board view"),
-        );
-        expect(screen.queryByTestId("view-toggle-overflow-trigger"), `${label} flag overflow on ${tier}`).toBe(
-          sidebarExpected ? null : screen.getByTestId("view-toggle-overflow-trigger"),
-        );
+        // Either wide surface owns routing, so the Header never re-adds a third navigation.
+        expect(screen.queryByTitle("Board view"), `${label} placement header board shortcut on desktop`).toBeNull();
+        expect(screen.queryByTestId("view-toggle-overflow-trigger"), `${label} placement overflow on desktop`).toBeNull();
         unmount();
       }
 
-      mockViewport("mobile");
-      const { container, unmount } = render(<PrimaryNavigationSurfaceHarness leftSidebarNavFlag={leftSidebarNavFlag} />);
-      expect(screen.queryByTestId("left-sidebar-nav"), `${label} flag on mobile`).toBeNull();
-      expect(container.querySelector(".mobile-nav-bar"), `${label} flag mobile nav`).not.toBeNull();
-      unmount();
+      for (const tier of ["mobile", "tablet"] as const) {
+        mockViewport(tier);
+        const { container, unmount } = render(<PrimaryNavigationSurfaceHarness navigationPlacement={navigationPlacement} />);
+        expect(screen.queryByTestId("left-sidebar-nav"), `${label} placement on ${tier}`).toBeNull();
+        expect(container.querySelector(".mobile-nav-bar"), `${label} placement mobile nav on ${tier}`).not.toBeNull();
+        expect(screen.queryByTitle("Board view"), `${label} placement header board shortcut on ${tier}`).toBeNull();
+        unmount();
+      }
     }
   });
 
+  /*
+   * FN-437 : Liste n'est plus un déclencheur du Header sur téléphone (le menu du pied de page en est le propriétaire
+   * unique, cf. le garde-fou « garde Liste, Notes et Activité atteignables… »). Le repli du Header reste vérifié pour
+   * Board et Agents, qui n'ont pas changé de propriétaire.
+   */
   it("left sidebar suppression does not affect the mobile header fallback", () => {
     mockViewport("mobile");
     render(
@@ -432,7 +518,7 @@ describe("Mobile Feature Access Regression Guard", () => {
     );
 
     expect(screen.getByTitle("Board view")).toBeDefined();
-    expect(screen.getByTitle("List view")).toBeDefined();
+    expect(screen.queryByTestId("header-list-view-btn")).toBeNull();
   });
 
   it("header view toggle fallback renders on mobile when mobile nav is disabled", () => {
@@ -446,8 +532,8 @@ describe("Mobile Feature Access Regression Guard", () => {
     );
 
     expect(screen.getByTitle("Board view")).toBeDefined();
-    expect(screen.getByTitle("List view")).toBeDefined();
     expect(screen.getByTitle("Agents view")).toBeDefined();
+    expect(screen.queryByTestId("header-list-view-btn")).toBeNull();
   });
 
   it("all three task views remain reachable across mobile navigation surfaces", () => {
@@ -457,7 +543,7 @@ describe("Mobile Feature Access Regression Guard", () => {
         {...createDefaultMobileNavProps()}
         view="missions"
         onChangeView={mobileNavOnChangeView}
-        alphaMenuOpen
+        navigationMenuOpen
       />,
     );
 
@@ -478,9 +564,9 @@ describe("Mobile Feature Access Regression Guard", () => {
       />,
     );
 
-    fireEvent.click(screen.getByTitle("List view"));
+    // FN-437 : sur téléphone, seul le menu du pied de page route vers Liste ; le Header garde Board et Agents.
+    expect(screen.queryByTitle("List view")).toBeNull();
     fireEvent.click(screen.getByTitle("Agents view"));
-    expect(headerOnChangeView).toHaveBeenCalledWith("list");
     expect(headerOnChangeView).toHaveBeenCalledWith("agents");
   });
 });

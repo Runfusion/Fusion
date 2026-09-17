@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import {
   makeTask,
   noop,
@@ -57,6 +57,17 @@ function renderDetail(column: string) {
   );
 }
 
+/*
+FNXC:TaskDetailHeaderActions 2026-09-16-18:07 (FN-470):
+The edit affordance is an entry of the single header overflow, so column editability is proven by opening the
+Actions menu and looking for that entry instead of a direct header button.
+*/
+async function findEditActionInOverflow(): Promise<HTMLElement | null> {
+  const trigger = await screen.findByRole("button", { name: "Actions" });
+  if (trigger.getAttribute("aria-expanded") !== "true") fireEvent.click(trigger);
+  return within(screen.getByRole("menu")).queryByTestId("task-detail-header-action-edit");
+}
+
 describe("TaskDetailModal — workflow-resolved columns", () => {
   it("labels the header badge with the workflow's column name, not the stored id", async () => {
     mockRenamedWorkflow("FN-099");
@@ -81,14 +92,14 @@ describe("TaskDetailModal — workflow-resolved columns", () => {
     mockRenamedWorkflow("FN-099");
     renderDetail("backlog");
 
-    expect(await screen.findByRole("button", { name: "Edit task" })).toBeTruthy();
+    expect(await findEditActionInOverflow()).toBeTruthy();
   });
 
   it("allows editing a card resting in a renamed hold column", async () => {
     mockRenamedWorkflow("FN-099");
     renderDetail("staging");
 
-    expect(await screen.findByRole("button", { name: "Edit task" })).toBeTruthy();
+    expect(await findEditActionInOverflow()).toBeTruthy();
   });
 
   it("does not offer editing in a renamed implementation column", async () => {
@@ -96,7 +107,7 @@ describe("TaskDetailModal — workflow-resolved columns", () => {
     renderDetail("building");
 
     await waitFor(() => expect(fetchBoardWorkflows).toHaveBeenCalled());
-    expect(screen.queryByRole("button", { name: "Edit task" })).toBeNull();
+    expect(await findEditActionInOverflow()).toBeNull();
   });
 
   it("does not offer editing in a renamed complete column", async () => {
@@ -104,7 +115,7 @@ describe("TaskDetailModal — workflow-resolved columns", () => {
     renderDetail("shipped");
 
     await waitFor(() => expect(fetchBoardWorkflows).toHaveBeenCalled());
-    expect(screen.queryByRole("button", { name: "Edit task" })).toBeNull();
+    expect(await findEditActionInOverflow()).toBeNull();
   });
 
   it("keeps the legacy editable columns editable when no workflow metadata resolves", async () => {
@@ -116,6 +127,6 @@ describe("TaskDetailModal — workflow-resolved columns", () => {
     } as never);
     renderDetail("todo");
 
-    expect(await screen.findByRole("button", { name: "Edit task" })).toBeTruthy();
+    expect(await findEditActionInOverflow()).toBeTruthy();
   });
 });

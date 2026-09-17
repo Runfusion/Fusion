@@ -268,10 +268,15 @@ Right dock hide follows JS viewport mode (authoritative mobile gate) rather than
   }
 }
 
-html[data-viewport-mode="mobile"] .right-dock {
+/*
+FNXC:ViewportChrome 2026-09-16-19:44:
+FN-468 : le dock droit est une surface large et suit la frontière du shell : absent sous 1024 px (téléphone ET
+tablette), présent à partir de 1024 px.
+*/
+html:is([data-viewport-mode="mobile"], [data-viewport-mode="tablet"]) .right-dock {
   display: none;
 }
 
-html:is([data-viewport-mode="tablet"], [data-viewport-mode="desktop"]) .right-dock {
+html[data-viewport-mode="desktop"] .right-dock {
   display: flex;
 }

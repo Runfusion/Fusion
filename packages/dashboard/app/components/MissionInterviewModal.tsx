@@ -52,9 +52,7 @@ import { ConversationHistory } from "./ConversationHistory";
 import { ThinkingTrace } from "./ThinkingTrace";
 import { MailboxMessageContent } from "./MailboxMessageContent";
 import { CustomModelDropdown } from "./CustomModelDropdown";
-import { FloatingWindow } from "./FloatingWindow";
 import { useAiSessionSync } from "../hooks/useAiSessionSync";
-import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
 import "./MissionInterviewModal.css";
 
 // Helper functions for model selection
@@ -91,6 +89,12 @@ interface MissionInterviewModalProps {
   resumeSessionId?: string;
   onSendToBackground?: () => void;
   showSendToBackgroundButton?: boolean;
+  /*
+  FNXC:MissionInterviewMainContent 2026-09-15-03:29:
+  FN-402 renders the interview inside the Missions detail pane, below the owning "Missions" h2. The host declares the
+  rank so the interview never contributes a sibling h2 to the document outline; standalone hosts keep the h2 default.
+  */
+  headingLevel?: 2 | 3;
 }
 
 interface QuestionResponse {
@@ -120,9 +124,9 @@ export function MissionInterviewModal({
   resumeSessionId,
   onSendToBackground,
   showSendToBackgroundButton = false,
+  headingLevel = 2,
 }: MissionInterviewModalProps) {
   const { t } = useTranslation("app");
-  useMobileScrollLock(isOpen);
   const [missionGoal, setMissionGoal] = useState("");
   const [view, setView] = useState<ViewState>({ type: "initial" });
   const [error, setError] = useState<string | null>(null);
@@ -635,11 +639,17 @@ export function MissionInterviewModal({
     onClose();
   }, [onClose, onSendToBackground]);
 
-  // Escape key handler
+  /*
+  FNXC:MissionInterviewMainContent 2026-09-14-21:32:
+  The interview is an embedded main-content surface, so Escape is no longer provided by a floating window host.
+  Keep a local, open-only listener so Escape stays a non-destructive close (draft preserved, session never cancelled),
+  and ignore already-handled events so inner controls (dropdowns, comboboxes) can consume Escape first.
+  */
   useEffect(() => {
     if (!isOpen) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return;
       if (e.key === "Escape") {
         handleClose();
       }
@@ -813,23 +823,20 @@ export function MissionInterviewModal({
   if (!isOpen) return null;
 
   return (
-    <FloatingWindow
-      windowKey="mission-interview"
-      title={t("missions.planTitle", "Plan Mission with AI")}
-      onClose={handleClose}
-      hideHeader
-      dragHandleSelector=".mission-interview-modal__drag-handle"
-      className="floating-window--mission-interview"
-      defaultSize={{ width: 760, height: 680 }}
-      minSize={{ width: 560, height: 420 }}
-      /* FNXC:ModalGeometryPersistence 2026-07-15-19:30: This interview is a ≤768px full-screen sheet, so do not replace its stored desktop window geometry while mobile. */
-      suspendGeometryPersistenceOnMobile
-      persistGeometryKey="floating-window:mission-interview"
+    /*
+      FNXC:MissionInterviewModal 2026-09-15-03:29:
+      Plan Mission with AI is part of the Missions main content, not a modal and not a floating window.
+      The interview renders as an embedded panel that fills its host region (desktop, tablet and mobile alike):
+      no overlay, no backdrop, no role="dialog"/aria-modal, no drag/resize affordance and no persisted geometry.
+      FN-402: that host region is the Missions DETAIL PANE, so the mission list stays mounted beside the interview
+      instead of being unmounted under the operator. Closing hands the detail pane back to its empty state;
+      the goal draft, resume and send-to-background flows are unchanged.
+    */
+    <section
+      className="mission-interview-panel"
+      data-testid="mission-interview-panel"
+      aria-label={t("missions.planTitle", "Plan Mission with AI")}
     >
-      {/*
-        FNXC:MissionInterviewModal 2026-06-24-00:00:
-        The Plan Mission with AI workspace must be draggable and resizable on desktop by delegating geometry to FloatingWindow, while mobile keeps the existing full-screen/sheet-like mission interview flow. Keep one embedded mission header so close/send-to-background controls do not duplicate FloatingWindow chrome.
-      */}
       <div className="modal modal-lg planning-modal mission-interview-modal">
         {/* FNXC:StandardizedMissionInterviewLayout 2026-09-13-16:30: Mission interviews use the same header/content shell as their owning Missions destination while retaining backgrounding and close semantics. */}
         <ViewLayout
@@ -838,7 +845,7 @@ export function MissionInterviewModal({
             <ViewHeader
               icon={Target}
               title={t("missions.planTitle", "Plan Mission with AI")}
-              className="mission-interview-modal__drag-handle"
+              headingLevel={headingLevel}
               actions={canSendToBackground ? <ViewActionButton icon={Minimize2} label={t("missions.sendToBackground", "Send to background")} onClick={handleSendToBackground} /> : undefined}
               onClose={handleClose}
               closeButtonProps={{ "aria-label": t("actions.close", "Close") }}
@@ -1062,7 +1069,7 @@ export function MissionInterviewModal({
         </div>
         </ViewLayout>
       </div>
-    </FloatingWindow>
+    </section>
   );
 }
 

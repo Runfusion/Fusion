@@ -223,3 +223,24 @@ FN-8007 defines both desktop pseudo-thumbs locally with the marker's shared size
   }
 
 }
+
+/*
+FNXC:UiStyleAxis 2026-09-15-00:20:
+The theme card holds both appearance axes. A thin token-only separator keeps the colour dropdown and the
+interface-style selector readable as two distinct choices without introducing a second card.
+*/
+.cc-controls-ui-style {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  margin-block-start: var(--space-md);
+  padding-block-start: var(--space-md);
+  border-block-start: var(--btn-border-width) solid var(--border);
+}
+
+.cc-controls-ui-style h4 {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text);
+}

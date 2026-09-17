@@ -1,10 +1,9 @@
 import { ViewHeader } from "./ViewHeader";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import type { ConfirmOptions } from "../hooks/useConfirm";
-import { nextFloatingZ } from "./floatingWindowStack";
 import "./ConfirmDialog.css";
+import { FloatingWindow } from "./FloatingWindow";
 
 const OPENING_GESTURE_SETTLE_MS = 500;
 
@@ -39,18 +38,22 @@ export function ConfirmDialog({
   const cancelButtonRef = useRef<HTMLButtonElement | null>(null);
   /*
   FNXC:Confirm 2026-06-23-01:30:
-  The confirm dialog (e.g. the "discard changes" prompt when cancelling New Task) MUST sit above the floating modal stack. Floating windows (New Task, pop-outs) live at the shared floating z-band (nextFloatingZ) and are portaled to document.body, so a confirm rendered inline at the page .modal-overlay z (~10000) paints BEHIND them. Portal the confirm to body and claim the TOP of the shared stack each time it opens so it always appears over whatever floating window triggered it.
+  The confirm dialog (e.g. the "discard changes" prompt when cancelling New Task) MUST sit above the floating modal stack.
+
+  FNXC:FloatingWindowDialogHosts 2026-09-14-22:36:
+  FN-394 hosts the confirmation in the shared FloatingWindow, which owns the body portal and claims the top of
+  the shared floating stack on every open. It stays a BLOCKING window (`modal`), so a confirmation raised from a
+  snapped or maximized window still covers it and still requires an explicit decision; snapping never confirms
+  or abandons anything implicitly.
   */
-  const [overlayZ, setOverlayZ] = useState<number | undefined>(undefined);
   const backdropPressStartedHereRef = useRef(false);
   const backdropPressStartedAtRef = useRef(0);
   const openedAtRef = useRef(0);
-  useLayoutEffect(() => {
+  useEffect(() => {
     if (isOpen) {
       openedAtRef.current = Date.now();
       backdropPressStartedHereRef.current = false;
       backdropPressStartedAtRef.current = 0;
-      setOverlayZ(nextFloatingZ());
     }
   }, [isOpen]);
 
@@ -88,39 +91,34 @@ export function ConfirmDialog({
     if (!isOpen) {
       return;
     }
-
     cancelButtonRef.current?.focus();
-
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        onCancel();
-      }
-    };
-
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [isOpen, onCancel]);
+  }, [isOpen]);
 
   if (!isOpen || !options) {
     return null;
   }
 
-  return createPortal(
-    <div
-      className="modal-overlay open confirm-dialog-overlay"
-      onPointerDown={recordBackdropPress}
-      onMouseDown={recordBackdropPress}
-      onTouchStart={recordBackdropPress}
-      onClick={dismissFromBackdropClick}
-      style={overlayZ ? { zIndex: overlayZ } : undefined}
+  return (
+    <FloatingWindow
+      windowKey="confirm-dialog"
+      modal
+      hideHeader
+      surfaceGroup="dialog"
+      title={options.title}
+      ariaLabel={options.title}
+      onClose={onCancel}
+      dragHandleSelector=".confirm-dialog .modal-header"
+      className="floating-window--dialog floating-window--confirm"
+      overlayClassName="confirm-dialog-overlay"
+      defaultSize={{ width: 520, height: 320 }}
+      minSize={{ width: 320, height: 200 }}
+      suspendGeometryPersistenceOnMobile
+      suspendGeometryPersistenceOnShortViewport
+      backdropMouseHandlers={{ onMouseDown: recordBackdropPress, onClick: dismissFromBackdropClick }}
     >
       <div
         className="modal confirm-dialog"
         onClick={(event) => event.stopPropagation()}
-        role="dialog"
-        aria-modal="true"
-        aria-label={options.title}
       >
         {/* FNXC:StandardizedViewLayout 2026-09-13-21:49: Shared chrome for the global confirmation; cancel remains its only close semantics. */}
         <ViewHeader
@@ -176,7 +174,6 @@ export function ConfirmDialog({
           </button>
         </div>
       </div>
-    </div>,
-    document.body,
+    </FloatingWindow>
   );
 }

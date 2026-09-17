@@ -81,6 +81,29 @@ describe("resolveScopedMcpSettings", () => {
   });
 });
 
+/*
+FNXC:TaskWindowIdentity 2026-09-14-17:46:
+FN-392 removed `taskPopupsBoardListOnly` from the settings schema without a migration. A historical stored value must
+stay inert: the key is neither a global nor a project key any more, so the save split cannot route it into a patch and
+can never rewrite it back to the server.
+*/
+describe("removed task popup scoping setting", () => {
+  it("belongs to no settings scope and is omitted from every patch", () => {
+    expect(isProjectSettingsKey("taskPopupsBoardListOnly")).toBe(false);
+    expect(isGlobalSettingsKey("taskPopupsBoardListOnly")).toBe(false);
+
+    const result = splitSettingsSave({
+      payload: { taskPopupsBoardListOnly: false, requireTaskRecommendations: true } as never,
+      initialValues: { taskPopupsBoardListOnly: true, requireTaskRecommendations: false } as never,
+      initialScopedValues: { global: {}, project: { taskPopupsBoardListOnly: true, requireTaskRecommendations: false } } as never,
+      activeSection: "appearance",
+    });
+
+    expect(result.projectPatch).not.toHaveProperty("taskPopupsBoardListOnly");
+    expect(result.globalPatch).not.toHaveProperty("taskPopupsBoardListOnly");
+  });
+});
+
 describe("required recommendation policy ownership", () => {
   it("routes the changed toggle to the project patch only", () => {
     const result = splitSettingsSave({

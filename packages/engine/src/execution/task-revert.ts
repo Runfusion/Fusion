@@ -1764,3 +1764,334 @@ export async function createAiUndoTask(deps: CreateAiUndoTaskDeps): Promise<AiUn
 
   return { mode: "ai", createdTaskId: created.id };
 }
+
+// ---------------------------------------------------------------------------
+// FN-416: restoring a reverted task (revert-of-the-revert).
+// ---------------------------------------------------------------------------
+
+/**
+ * FNXC:TaskRevert 2026-09-15-10:00:
+ * FN-416 makes a revert UNDOABLE. A reverted card no longer carries Delete/Revise
+ * buttons; its only resolution path is the context-menu "Restore revert" action,
+ * which reverts the REVERT commit(s) back out of the integration branch.
+ *
+ * Attribution precedence, mirroring `resolveTaskRevertCommits`:
+ *   1. `sourceMetadata.revertedCommitSha` — the sha the revert route persisted when it
+ *      created the revert commit. Verified to exist in this repository before use,
+ *      because a marker can survive a history rewrite the commit did not.
+ *   2. History scan — commits whose subject is `revert(<task.id>): …` AND whose body
+ *      carries the `Fusion-Task-Id: <task.id>` trailer (the exact contract
+ *      `performTaskRevert` writes). Newest first, mirroring the revert path's ordering.
+ * Nothing resolvable is an explicit `unsupported` reason, never a silent no-op:
+ * "there is no revert commit to undo" and "we undid nothing" must not look alike.
+ */
+export type TaskRevertRestoreCommitSource = "marker" | "scan";
+
+export interface ResolvedTaskRevertRestoreCommits {
+  supported: true;
+  /** Revert-commit SHAs to revert back out, newest first. */
+  shas: string[];
+  source: TaskRevertRestoreCommitSource;
+}
+
+export interface ResolveTaskRevertRestoreCommitsOptions {
+  worktreePath: string;
+  execAsyncImpl?: ExecAsyncImpl;
+  /** How far back to scan for attributed revert commits when no marker sha is usable. */
+  scanLimit?: number;
+}
+
+const RESTORE_SCAN_DEFAULT_LIMIT = 500;
+
+export async function resolveTaskRevertRestoreCommits(
+  task: Pick<Task, "id" | "sourceMetadata" | "workspaceWorktrees">,
+  opts: ResolveTaskRevertRestoreCommitsOptions,
+): Promise<ResolvedTaskRevertRestoreCommits | UnsupportedTaskRevert> {
+  const execImpl = opts.execAsyncImpl ?? defaultExecAsync;
+
+  if (isWorkspaceTask(task)) {
+    return { supported: false, reason: "workspace-task-restore-unsupported" };
+  }
+
+  const metadata = task.sourceMetadata as { revertedCommitSha?: unknown } | undefined;
+  const markerSha = typeof metadata?.revertedCommitSha === "string" ? metadata.revertedCommitSha.trim() : "";
+  if (markerSha) {
+    const exists = await runGit(execImpl, `git cat-file -e ${quoteShellArg(`${markerSha}^{commit}`)}`, opts.worktreePath)
+      .then(() => true)
+      .catch(() => false);
+    if (exists) {
+      return { supported: true, shas: [markerSha], source: "marker" };
+    }
+  }
+
+  const limit = opts.scanLimit ?? RESTORE_SCAN_DEFAULT_LIMIT;
+  let logOutput: string;
+  try {
+    const { stdout } = await runGit(
+      execImpl,
+      `git log --format=%H%x00%s%x00%B%x1e -n ${limit} HEAD`,
+      opts.worktreePath,
+    );
+    logOutput = stdout;
+  } catch (error) {
+    throw new TaskRevertError("git log failed while resolving revert commits to restore", "git-log-failed", error);
+  }
+
+  const revertSubjectPrefix = `revert(${task.id.toLowerCase()}):`;
+  const shas: string[] = [];
+  const records = logOutput.split("\x1e").map((record) => record.trim()).filter(Boolean);
+  for (const record of records) {
+    const [sha = "", subject = "", ...bodyParts] = record.split("\x00");
+    if (!sha) continue;
+    if (!subject.trim().toLowerCase().startsWith(revertSubjectPrefix)) continue;
+    const body = bodyParts.join("\x00");
+    if (!taskIdsMatch(extractAttributedTaskId(body), task.id)) continue;
+    shas.push(sha);
+  }
+
+  if (shas.length === 0) {
+    return { supported: false, reason: "no-revert-commit-resolved" };
+  }
+  // `git log` without `--reverse` already yields newest-first order.
+  return { supported: true, shas, source: "scan" };
+}
+
+export type TaskRevertRestoreResult =
+  | { mode: "git"; clean: true; restoreCommitSha: string; restoreCommitShas: string[] }
+  | { mode: "git"; clean: true; alreadyRestored: true }
+  | { mode: "git"; clean: false; conflicts: TaskRevertConflict[] }
+  | { mode: "git"; unsupported: true; reason: string }
+  | { mode: "git"; needsHuman: true; reason: string };
+
+export interface PerformTaskRevertRestoreOptions {
+  /** The task's resolved Complete lanes, as membership (same contract as `PerformTaskRevertOptions`). */
+  revertableColumns?: ReadonlySet<string>;
+  task: Pick<Task, "id" | "column" | "sourceMetadata" | "autoMerge" | "workspaceWorktrees">;
+  worktreePath: string;
+  baseBranch: string;
+  execAsyncImpl?: ExecAsyncImpl;
+  /** Resolved effective project autoMerge setting (task.autoMerge overrides this when set). Defaults to true. */
+  effectiveAutoMerge?: boolean;
+  scanLimit?: number;
+}
+
+function deriveRestoreSummary(revertSubject: string): string {
+  const withoutRevertPrefix = revertSubject.replace(/^revert\([^)]*\):\s*/i, "");
+  return deriveShortSummary(withoutRevertPrefix) || "restore reverted changes";
+}
+
+/**
+ * FNXC:TaskRevert 2026-09-15-10:00:
+ * FN-416 restore path — a strict mirror of `performTaskRevert`, with the same guard
+ * rails and the same rollback invariant:
+ *   - workspace tasks refuse explicitly (no half-restored multi-repo state);
+ *   - only Complete-lane tasks are restorable (membership, never first-per-role);
+ *   - `autoMerge` effectively off refuses with `needsHuman` instead of force-writing a
+ *     restore commit onto a branch the project opted out of automated writes to;
+ *   - a dry-run classification runs BEFORE any write, and a live conflict during the
+ *     apply pass rolls the whole batch back to the pre-restore HEAD — the tree is never
+ *     left dirty or partially restored;
+ *   - the source task's row/column/status is NEVER mutated here (the route owns the
+ *     additive `restoredAt` marker).
+ * Commit contract: `restore(<task.id>): <summary>` with a `Fusion-Task-Id: <task.id>`
+ * trailer (attribution stays on the ORIGINAL task) plus an audit line naming the revert
+ * commit being undone.
+ */
+export async function performTaskRevertRestore(
+  opts: PerformTaskRevertRestoreOptions,
+): Promise<TaskRevertRestoreResult> {
+  // `baseBranch` is part of the caller-facing contract (the caller guarantees
+  // `worktreePath` is checked out there) but is not read directly here, exactly like
+  // `performTaskRevert`.
+  const { task, worktreePath, baseBranch: _baseBranch } = opts;
+  const execImpl = opts.execAsyncImpl ?? defaultExecAsync;
+
+  if (isWorkspaceTask(task)) {
+    return { mode: "git", unsupported: true, reason: "workspace-task-restore-unsupported-by-single-repo-path" };
+  }
+
+  const revertableColumns = opts.revertableColumns ?? LEGACY_REVERTABLE_COLUMNS;
+  if (!revertableColumns.has(task.column)) {
+    const named = [...revertableColumns].map((c) => `"${c}"`).join(" or ");
+    return { mode: "git", needsHuman: true, reason: `task is in column "${task.column}"; only ${named} tasks can be restored` };
+  }
+
+  const effectiveAutoMerge = task.autoMerge ?? opts.effectiveAutoMerge ?? true;
+  if (effectiveAutoMerge === false) {
+    return { mode: "git", needsHuman: true, reason: "autoMerge is disabled for this task/project; refusing to force-write a restore commit" };
+  }
+
+  const resolved = await resolveTaskRevertRestoreCommits(task, {
+    worktreePath,
+    execAsyncImpl: execImpl,
+    ...(opts.scanLimit !== undefined ? { scanLimit: opts.scanLimit } : {}),
+  });
+  if (!resolved.supported) {
+    return { mode: "git", unsupported: true, reason: resolved.reason };
+  }
+
+  const classification = await classifyTaskRevert({
+    worktreePath,
+    commits: resolved.shas,
+    execAsyncImpl: execImpl,
+  });
+
+  if (classification.classification === "already-reverted") {
+    // Every revert commit is already undone at HEAD — the work is back.
+    return { mode: "git", clean: true, alreadyRestored: true };
+  }
+  if (classification.classification === "conflicting") {
+    return { mode: "git", clean: false, conflicts: classification.conflicts ?? [] };
+  }
+
+  let preRestoreHead: string;
+  try {
+    const { stdout } = await runGit(execImpl, "git rev-parse HEAD", worktreePath);
+    preRestoreHead = stdout.trim();
+  } catch (error) {
+    throw new TaskRevertError("failed to resolve HEAD before applying restore", "head-resolve-failed", error);
+  }
+
+  let mutated = false;
+  try {
+    let anyStaged = false;
+    for (const sha of resolved.shas) {
+      mutated = true;
+      const outcome = await applyRevertNoCommit(execImpl, worktreePath, sha);
+      if (outcome.kind === "conflict") {
+        await runGit(execImpl, "git revert --abort", worktreePath).catch(() => undefined);
+        await runGit(execImpl, `git reset --hard ${quoteShellArg(preRestoreHead)}`, worktreePath).catch(() => undefined);
+        return { mode: "git", clean: false, conflicts: outcome.conflicts };
+      }
+      if (outcome.kind === "staged") anyStaged = true;
+    }
+
+    if (!anyStaged) {
+      // Defensive: the branch moved between classify and apply and every sha became a
+      // no-op. Report already-restored rather than attempting an empty commit.
+      return { mode: "git", clean: true, alreadyRestored: true };
+    }
+
+    const referencedSha = resolved.shas[0] ?? "unknown";
+    let revertSubject = "";
+    try {
+      const { stdout } = await runGit(execImpl, `git log -1 --format=%s ${quoteShellArg(referencedSha)}`, worktreePath);
+      revertSubject = stdout.trim();
+    } catch {
+      revertSubject = "";
+    }
+
+    const subject = `restore(${task.id}): ${deriveRestoreSummary(revertSubject)}`;
+    const body1 = `Fusion-Task-Id: ${task.id}`;
+    const body2 = `Restores work reverted by task ${task.id} (undoes ${revertSubject || "revert commit"} @ ${referencedSha.slice(0, 8)}).`;
+
+    await runGit(
+      execImpl,
+      `git commit -m ${quoteShellArg(subject)} -m ${quoteShellArg(body1)} -m ${quoteShellArg(body2)}`,
+      worktreePath,
+    );
+
+    const { stdout: newHead } = await runGit(execImpl, "git rev-parse HEAD", worktreePath);
+    const restoreCommitSha = newHead.trim();
+    return { mode: "git", clean: true, restoreCommitSha, restoreCommitShas: [restoreCommitSha] };
+  } catch (error) {
+    if (mutated) {
+      await runGit(execImpl, "git revert --abort", worktreePath).catch(() => undefined);
+      await runGit(execImpl, `git reset --hard ${quoteShellArg(preRestoreHead)}`, worktreePath).catch(() => undefined);
+    }
+    throw error instanceof TaskRevertError ? error : new TaskRevertError("failed to apply restore commit", "restore-apply-failed", error);
+  }
+}
+
+/**
+ * FNXC:TaskRevert 2026-09-15-10:00:
+ * FN-416 AI-restore marker contract. `restoreOf` is the idempotency key stamped onto an
+ * AI-restore board task's `sourceMetadata`, deliberately DISTINCT from `revertOf` so an
+ * open undo task never suppresses a restore task (and vice versa) — they are opposite
+ * intents about the same source. The created task inherits the configured
+ * `aiUndoTaskWorkflowId` workflow and ordinary autoMerge, so it is delivered by the
+ * normal AI merge pipeline (`runAiMerge`, the Merger agent) which already owns
+ * AI-assisted conflict resolution. NEVER repurpose this key.
+ */
+export const RESTORE_OF_METADATA_KEY = "restoreOf" as const;
+
+export type AiRestoreTaskResult = { mode: "ai"; createdTaskId: string; alreadyOpen?: boolean };
+
+/**
+ * FNXC:TaskRevert 2026-09-15-10:00:
+ * Mission text for the AI-restore task. The instruction is the exact opposite of the
+ * AI-undo one: RE-APPLY the behavior the revert removed, while preserving everything
+ * later tasks did to the same files — never blindly restore a pre-revert file version.
+ */
+export function buildAiRestoreTaskDescription(params: {
+  task: Pick<Task, "id" | "title" | "description" | "prompt" | "mergeDetails" | "sourceMetadata">;
+}): string {
+  const { task } = params;
+  const mission = task.prompt?.trim() ? task.prompt : task.description;
+  const landedFiles = task.mergeDetails?.landedFiles;
+  const metadata = task.sourceMetadata as { revertedCommitSha?: unknown } | undefined;
+  const revertedCommitSha = typeof metadata?.revertedCommitSha === "string" ? metadata.revertedCommitSha.trim() : "";
+
+  return [
+    `Restore the work that was reverted for task ${task.id}${task.title ? ` — "${task.title}"` : ""}.`,
+    "",
+    "## Why this task exists",
+    `The revert of ${task.id} could not be undone automatically with a direct git revert (later commits conflict with the restore, or the revert commit could not be resolved). This task RE-APPLIES the behavior/files ${task.id} originally introduced WHILE PRESERVING every unrelated change later tasks made to the same files — do not blindly restore the pre-revert version of any shared file.`,
+    "",
+    `## Original mission (${task.id})`,
+    mission,
+    "",
+    `## Files originally landed by ${task.id}`,
+    formatLandedFiles(landedFiles),
+    `See \`GET /api/tasks/${task.id}/diff\` for the original landed diff.`,
+    ...(revertedCommitSha ? [`The revert being undone is commit \`${revertedCommitSha}\`.`] : []),
+    "",
+    "## What to do",
+    `1. Read ${task.id}'s original mission above and the revert that removed it.`,
+    `2. Re-apply ONLY the behavior/changes ${task.id} introduced. Where a later task has since modified the same file, integrate with that later work instead of overwriting it.`,
+    `3. Commit using the \`restore(${task.id}): <short summary>\` convention with a \`Fusion-Task-Id: ${task.id}\` trailer, so the commit stays attributable back to ${task.id} (mirrors the direct git-restore commit convention).`,
+    "4. Verify the restored behavior works (tests/build) and that later, unrelated changes to the same files still work as intended.",
+  ].join("\n");
+}
+
+export interface CreateAiRestoreTaskDeps {
+  createTask(input: TaskCreateInput): Promise<Task>;
+  /** Idempotency lookup keyed on `RESTORE_OF_METADATA_KEY` — never on `revertOf`. */
+  findOpenRestoreTaskForSource(sourceTaskId: string): Promise<Task | null>;
+  sourceTask: Pick<Task, "id" | "title" | "description" | "prompt" | "mergeDetails" | "priority" | "sourceMetadata">;
+  /** Workflow id resolved+validated by the caller (route), forwarded verbatim; blank/undefined inherits the project default. */
+  workflowId?: string;
+}
+
+/**
+ * FNXC:TaskRevert 2026-09-15-10:00:
+ * Creates (or returns the already-open) AI-restore board task — the fallback the restore
+ * route takes when the git restore conflicts or is unsupported. Like `createAiUndoTask`
+ * it NEVER depends on the source task: the source is complete, so a dependency edge would
+ * be a permanently-satisfied no-op that misrepresents the relationship.
+ */
+export async function createAiRestoreTask(deps: CreateAiRestoreTaskDeps): Promise<AiRestoreTaskResult> {
+  const { sourceTask } = deps;
+
+  // Idempotency FIRST — never create a duplicate while one is still open.
+  const existing = await deps.findOpenRestoreTaskForSource(sourceTask.id);
+  if (existing) {
+    return { mode: "ai", createdTaskId: existing.id, alreadyOpen: true };
+  }
+
+  const description = buildAiRestoreTaskDescription({ task: sourceTask });
+  const workflowId = deps.workflowId && deps.workflowId.trim() !== "" ? deps.workflowId : undefined;
+  const created = await deps.createTask({
+    title: `Restore ${sourceTask.id}: ${sourceTask.title ?? sourceTask.description.slice(0, 80)}`,
+    description,
+    dependencies: [],
+    priority: sourceTask.priority,
+    source: {
+      sourceType: "recovery",
+      sourceMetadata: { [RESTORE_OF_METADATA_KEY]: sourceTask.id },
+    },
+    ...(workflowId !== undefined ? { workflowId } : {}),
+  });
+
+  return { mode: "ai", createdTaskId: created.id };
+}

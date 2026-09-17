@@ -11,6 +11,7 @@ import {
   isProjectSettingsKey,
 } from "../types.js";
 import { NON_DEFAULT_PROJECT_SETTINGS_KEYS } from "../config/settings-schema.js";
+import { MOVED_SETTINGS_KEYS } from "../config/moved-settings.js";
 import { canonicalizeSettings } from "../task-store/settings-helpers.js";
 import { BUILTIN_WORKFLOW_SETTINGS } from "../workflows/builtin-workflow-settings.js";
 
@@ -143,9 +144,9 @@ describe("settings key parity", () => {
     expect(isProjectSettingsKey("mergerThinkingLevel")).toBe(true);
     expect(isProjectSettingsKey("mergerFallbackThinkingLevel")).toBe(true);
     expect(isGlobalSettingsKey("fallbackThinkingLevel")).toBe(true);
-    expect(isProjectSettingsKey("planningFallbackThinkingLevel")).toBe(false);
+    expect(isProjectSettingsKey("planningFallbackThinkingLevel")).toBe(true);
     expect(isGlobalSettingsKey("planningFallbackThinkingLevel")).toBe(false);
-    expect(isProjectSettingsKey("validatorFallbackThinkingLevel")).toBe(false);
+    expect(isProjectSettingsKey("validatorFallbackThinkingLevel")).toBe(true);
     expect(isGlobalSettingsKey("validatorFallbackThinkingLevel")).toBe(false);
     expect(isGlobalSettingsKey("executionGlobalThinkingLevel")).toBe(true);
     expect(isGlobalSettingsKey("planningGlobalThinkingLevel")).toBe(true);
@@ -380,26 +381,35 @@ describe("settings key parity", () => {
       "maxReviewerContextRetries",
       "maxReviewerFallbackRetries",
       "reflectionEnabled",
-      "executionProvider",
-      "executionModelId",
-      "executionFallbackProvider",
-      "executionFallbackModelId",
-      "executionFallbackThinkingLevel",
-      "planningProvider",
-      "planningModelId",
-      "planningFallbackProvider",
-      "planningFallbackModelId",
-      "planningFallbackThinkingLevel",
-      "validatorProvider",
-      "validatorModelId",
-      "validatorFallbackProvider",
-      "validatorFallbackModelId",
-      "validatorFallbackThinkingLevel",
     ];
     for (const key of movedKeys) {
       expect(isProjectSettingsKey(key)).toBe(false);
       expect(PROJECT_SETTINGS_KEYS).not.toContain(key);
       expect(isGlobalSettingsKey(key)).toBe(false);
+    }
+  });
+
+  it("keeps every role-global fallback field in global scope", () => {
+    const fields = ["Provider", "CredentialInstanceId", "ModelId", "ThinkingLevel"];
+    for (const role of ["execution", "planning", "validator", "merger"]) {
+      for (const field of fields) {
+        const key = `${role}GlobalFallback${field}`;
+        expect(GLOBAL_SETTINGS_KEYS).toContain(key);
+        expect(PROJECT_SETTINGS_KEYS).not.toContain(key);
+      }
+    }
+  });
+
+  it("keeps every project role-lane field in project scope and out of global scope", () => {
+    const fields = ["Provider", "CredentialInstanceId", "ModelId", "ThinkingLevel"];
+    const keys = ["execution", "planning", "validator", "merger"].flatMap((role) => [
+      ...fields.map((field) => `${role}${field}`),
+      ...fields.map((field) => `${role}Fallback${field}`),
+    ]);
+    for (const key of keys) {
+      expect(PROJECT_SETTINGS_KEYS).toContain(key);
+      expect(GLOBAL_SETTINGS_KEYS).not.toContain(key);
+      expect(MOVED_SETTINGS_KEYS).not.toContain(key);
     }
   });
 
@@ -529,8 +539,21 @@ describe("settings key parity", () => {
 
     expect(projectKeys).not.toContain("dashboardKeyboardShortcuts");
     expect(globalKeys).toContain("dashboardKeyboardShortcuts");
-    expect(DEFAULT_GLOBAL_SETTINGS.dashboardKeyboardShortcuts).toEqual({ quickChat: "Space", terminal: "Ctrl+`", openFiles: "Ctrl+E", openSettings: "Ctrl+,", openCommandCenter: "Ctrl+K", newTask: "Ctrl+Shift+N" });
+    expect(DEFAULT_GLOBAL_SETTINGS.dashboardKeyboardShortcuts).toEqual({ toggleModalVisibility: "", terminal: "Ctrl+`", openFiles: "Ctrl+E", openSettings: "Ctrl+,", openCommandCenter: "Ctrl+K", newTask: "Ctrl+Shift+N", openChatList: "Ctrl+Shift+L" });
     expect((DEFAULT_PROJECT_SETTINGS as Record<string, unknown>).dashboardKeyboardShortcuts).toBeUndefined();
+  });
+
+  /*
+  FNXC:DashboardShortcuts 2026-09-16-02:27:
+  FN-441's chat-list binding is global-only like every other dashboard shortcut: it must never appear as a
+  project-scoped key, and the project defaults must carry no dashboard-shortcut map at all.
+  */
+  it("keeps the FN-441 chat-list shortcut global-only", () => {
+    const globalShortcuts = DEFAULT_GLOBAL_SETTINGS.dashboardKeyboardShortcuts as Record<string, unknown>;
+    expect(globalShortcuts.openChatList).toBe("Ctrl+Shift+L");
+    expect(GLOBAL_SETTINGS_KEYS as readonly string[]).toContain("dashboardKeyboardShortcuts");
+    expect(PROJECT_SETTINGS_KEYS as readonly string[]).not.toContain("dashboardKeyboardShortcuts");
+    expect((DEFAULT_PROJECT_SETTINGS as Record<string, unknown>).openChatList).toBeUndefined();
   });
 
   it("only intentional shared keys appear in both global and project scopes", () => {
@@ -631,28 +654,29 @@ describe("eval settings parity regression (FN-3393)", () => {
 describe("model lane key parity regression (FN-1729)", () => {
   // All model lane provider/modelId pairs that should exist.
   //
-  // U4 hard-move moved the execution/planning/validator project lanes (plus
-  // their fallbacks) to workflow settings. The title-summarizer lane was later
-  // restored to project settings, while GLOBAL baseline lanes (`*GlobalProvider`)
-  // and the default/fallback baseline remain global.
+  // Role lanes are independently configurable at project and workflow scope;
+  // this inventory classifies their persisted project/global settings keys.
   const allModelLanePairs = [
     // Default baseline (global only)
     { provider: "defaultProvider", modelId: "defaultModelId", expectedScope: "global" },
     // Fallback baseline (global only)
     { provider: "fallbackProvider", modelId: "fallbackModelId", expectedScope: "global" },
     // Execution lane
-    { provider: "executionProvider", modelId: "executionModelId", expectedScope: "workflow" },
+    { provider: "executionProvider", modelId: "executionModelId", expectedScope: "project" },
     { provider: "executionGlobalProvider", modelId: "executionGlobalModelId", expectedScope: "global" },
+    { provider: "executionGlobalFallbackProvider", modelId: "executionGlobalFallbackModelId", expectedScope: "global" },
     // Planning lane
-    { provider: "planningProvider", modelId: "planningModelId", expectedScope: "workflow" },
+    { provider: "planningProvider", modelId: "planningModelId", expectedScope: "project" },
     { provider: "planningGlobalProvider", modelId: "planningGlobalModelId", expectedScope: "global" },
-    { provider: "planningFallbackProvider", modelId: "planningFallbackModelId", expectedScope: "workflow" },
+    { provider: "planningGlobalFallbackProvider", modelId: "planningGlobalFallbackModelId", expectedScope: "global" },
+    { provider: "planningFallbackProvider", modelId: "planningFallbackModelId", expectedScope: "project" },
     // Executor fallback lane
-    { provider: "executionFallbackProvider", modelId: "executionFallbackModelId", expectedScope: "workflow" },
+    { provider: "executionFallbackProvider", modelId: "executionFallbackModelId", expectedScope: "project" },
     // Validator lane
-    { provider: "validatorProvider", modelId: "validatorModelId", expectedScope: "workflow" },
+    { provider: "validatorProvider", modelId: "validatorModelId", expectedScope: "project" },
     { provider: "validatorGlobalProvider", modelId: "validatorGlobalModelId", expectedScope: "global" },
-    { provider: "validatorFallbackProvider", modelId: "validatorFallbackModelId", expectedScope: "workflow" },
+    { provider: "validatorGlobalFallbackProvider", modelId: "validatorGlobalFallbackModelId", expectedScope: "global" },
+    { provider: "validatorFallbackProvider", modelId: "validatorFallbackModelId", expectedScope: "project" },
     // Summarizer lane
     { provider: "titleSummarizerProvider", modelId: "titleSummarizerModelId", expectedScope: "project" },
     { provider: "titleSummarizerGlobalProvider", modelId: "titleSummarizerGlobalModelId", expectedScope: "global" },
@@ -661,6 +685,7 @@ describe("model lane key parity regression (FN-1729)", () => {
     { provider: "mergerProvider", modelId: "mergerModelId", expectedScope: "project" },
     { provider: "mergerFallbackProvider", modelId: "mergerFallbackModelId", expectedScope: "project" },
     { provider: "mergerGlobalProvider", modelId: "mergerGlobalModelId", expectedScope: "global" },
+    { provider: "mergerGlobalFallbackProvider", modelId: "mergerGlobalFallbackModelId", expectedScope: "global" },
     { provider: "fastCheapProvider", modelId: "fastCheapModelId", expectedScope: "project" },
     { provider: "fastCheapGlobalProvider", modelId: "fastCheapGlobalModelId", expectedScope: "global" },
   ] as const;
@@ -723,14 +748,14 @@ describe("model lane key parity regression (FN-1729)", () => {
     }
   });
 
-  it("moved (workflow) model lane keys are in NEITHER scope key list", () => {
-    const allKeys = new Set([...GLOBAL_SETTINGS_KEYS, ...PROJECT_SETTINGS_KEYS] as readonly string[]);
-    const workflowLanes = allModelLanePairs
-      .filter((p) => p.expectedScope === "workflow")
-      .flatMap((p) => [p.provider, p.modelId]);
-
-    for (const key of workflowLanes) {
-      expect(allKeys.has(key)).toBe(false);
+  it("project role lanes remain available as workflow declarations without being tombstoned", () => {
+    const declaredIds = new Set(BUILTIN_WORKFLOW_SETTINGS.map((setting) => setting.id));
+    for (const { provider, modelId, expectedScope } of allModelLanePairs) {
+      if (expectedScope !== "project" || provider.startsWith("titleSummarizer") || provider.startsWith("fastCheap")) continue;
+      expect(declaredIds.has(provider)).toBe(true);
+      expect(declaredIds.has(modelId)).toBe(true);
+      expect(MOVED_SETTINGS_KEYS).not.toContain(provider);
+      expect(MOVED_SETTINGS_KEYS).not.toContain(modelId);
     }
   });
 

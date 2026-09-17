@@ -186,7 +186,7 @@ export function ExperimentalAgentOnboardingModal({
   };
 
   return (
-        <FloatingWindow windowKey="experimental-agent-onboarding" modal title={t("agents.onboarding.title", "AI Interview")} ariaLabel={t("agents.onboarding.dialogLabel", "AI Interview")} onClose={() => void handleClose()} hideHeader dragHandleSelector=".experimental-agent-onboarding-modal .modal-header" className="floating-window--experimental-agent-onboarding" defaultSize={{ width: 720, height: 620 }} minSize={{ width: 420, height: 320 }} persistGeometryKey="floating-window:experimental-agent-onboarding" suspendGeometryPersistenceOnMobile suspendGeometryPersistenceOnShortViewport>
+        <FloatingWindow windowKey="experimental-agent-onboarding" modal title={t("agents.onboarding.title", "AI Interview")} ariaLabel={t("agents.onboarding.dialogLabel", "AI Interview")} onClose={() => void handleClose()} hideHeader dragHandleSelector=".experimental-agent-onboarding-modal .modal-header" className="floating-window--experimental-agent-onboarding" defaultSize={{ width: 720, height: 620 }} minSize={{ width: 420, height: 320 }} suspendGeometryPersistenceOnMobile suspendGeometryPersistenceOnShortViewport>
       {/* FNXC:ModalTouchGeometry 2026-07-26-16:07: Experimental onboarding remains a blocking flow; no outside-dismiss opt-in accompanies shared geometry. */}
       <div className="modal modal-lg experimental-agent-onboarding-modal">
         {/* FNXC:StandardizedViewLayout 2026-09-13-21:49: Shared dialog chrome; `.modal-header` stays for the drag handle selector. */}

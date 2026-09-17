@@ -54,7 +54,8 @@ describe("Shadcn Ember color theme", () => {
     expect(darkBlock).toContain("--card: #18181b;");
     expect(lightBlock).toContain("--bg: #ffffff;");
     expect(lightBlock).toContain("--card-hover: #f4f4f5;");
-    expect(darkBlock).toContain("--btn-border-width: 1px;");
+    /* FNXC:UiStyleAxis 2026-09-15-00:20: FN-399 moved border widths to the interface-style catalogue, so a colour preset no longer declares them; the preset keeps colour and family identity only. */
+    expect(darkBlock).not.toContain("--btn-border-width");
     expect(darkBlock).toContain("--font-primary: \"Geist\",");
     expect(darkShadcnEmberTokens["--color-warning"]).toBe("#f59e0b");
     expect(lightShadcnEmberTokens["--color-muted"]).toBe("#71717a");

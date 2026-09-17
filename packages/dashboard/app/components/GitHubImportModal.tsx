@@ -2065,7 +2065,6 @@ export function GitHubImportModal({ isOpen, onClose, onImport, onPlanningMode, o
               minSize={{ width: 420, height: 360 }}
               /* FNXC:ModalGeometryPersistence 2026-07-15-19:30: Import detail is a ≤768px sheet, so preserve its desktop floating geometry instead of touching it on mobile. */
               suspendGeometryPersistenceOnMobile
-              persistGeometryKey="floating-window:github-import-detail"
               className="floating-window--github-import-detail"
             >
               <div className="github-import-detail-panel">
@@ -2456,7 +2455,6 @@ export function GitHubImportModal({ isOpen, onClose, onImport, onPlanningMode, o
                     minSize={{ width: 420, height: 360 }}
                     /* FNXC:ModalGeometryPersistence 2026-07-15-19:30: GitLab detail shares the ≤768px import sheet behavior and must preserve the shared desktop geometry record. */
                     suspendGeometryPersistenceOnMobile
-                    persistGeometryKey="floating-window:github-import-detail"
                     className="floating-window--github-import-detail"
                   >
                     <div className="github-import-detail-panel">
@@ -2525,7 +2523,6 @@ export function GitHubImportModal({ isOpen, onClose, onImport, onPlanningMode, o
       defaultSize={{ width: 1200, height: 720 }}
       minSize={{ width: 480, height: 480 }}
       /* FNXC:ModalTouchGeometry 2026-07-26-19:05: The legacy size-only key cannot restore FloatingWindow position, so a new complete geometry key intentionally resets once. */
-      persistGeometryKey="floating-window:github-import"
       suspendGeometryPersistenceOnMobile
       suspendGeometryPersistenceOnShortViewport
       /* FNXC:ModalTouchGeometry 2026-07-26-19:05: Preserve the global default-off dismissal preference; unconditional pointer-down would lose the data-safety contract. */

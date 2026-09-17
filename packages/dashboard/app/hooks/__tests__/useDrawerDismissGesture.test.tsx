@@ -11,7 +11,7 @@ function Harness({ enabled = true, onDismiss = vi.fn() }: { enabled?: boolean; o
     <>
       <button onClick={() => setOpen(false)}>external close</button>
       <section ref={panelRef} data-testid="panel" style={{ display: open ? undefined : "none" }} {...surfaceProps}>
-        <div data-testid="handle" className="alpha-mobile-drawer__handle-target">handle</div>
+        <div data-testid="handle" className="mobile-drawer__handle-target">handle</div>
         <div data-testid="shell"><div data-testid="scroller"><div data-testid="body">body</div></div></div>
         <button data-testid="control">control</button>
         <div className="xterm" data-testid="xterm">terminal</div>

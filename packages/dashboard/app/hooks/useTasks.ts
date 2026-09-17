@@ -774,7 +774,7 @@ export function useTasks(options?: UseTasksOptions) {
   /*
   FNXC:MobileTabDiscard 2026-07-26-14:12:
   "Data as of" clock for everything derived from `tasks` (isTaskStuck / countStuckTasks, TaskCard's
-  isStuck + isAgentActive, Column's activeTaskCount, ExecutorStatusBar's stuck counters, and the
+  isStuck + isAgentActive, ExecutorStatusBar's stuck counters, and the
   taskRecovery affordances). It describes the AGE OF THE ROWS CURRENTLY IN `tasks`, not the age of
   this hook instance.
 
@@ -1738,7 +1738,17 @@ export function useTasks(options?: UseTasksOptions) {
         let changed = false;
         const next = prev.map((task) => {
           const cleared = clearInReviewStallForFreshAgentLog(task, entry);
-          const updated = addRecentPlannerActivityForFreshAgentLog(cleared, entry, resolveColumnFlags?.(cleared));
+          /*
+          FNXC:LifecycleColumnCensus 2026-09-15-15:25:
+          The SSE subscription intentionally remains stable while workflow metadata loads. Read the
+          current resolver from its ref so renamed planning lanes start receiving agent activity
+          without waiting for the subscription to reconnect.
+          */
+          const updated = addRecentPlannerActivityForFreshAgentLog(
+            cleared,
+            entry,
+            resolveColumnFlagsRef.current?.(cleared),
+          );
           if (updated !== task) changed = true;
           return updated;
         });
@@ -2115,6 +2125,21 @@ export function useTasks(options?: UseTasksOptions) {
     return result;
   }, [projectId]);
 
+  /*
+  FNXC:TaskRevert 2026-09-15-10:00 (FN-416):
+  `restoreTaskRevert` mirrors `revertTask`'s contract exactly: the route never moves the source
+  task, so nothing is patched locally; a refresh picks up the cleared Reverted badge (the additive
+  `restoredAt` marker) and any AI-restore task the conflict fallback created.
+  */
+  const restoreTaskRevert = useCallback(async (
+    id: string,
+    body?: api.RestoreTaskRevertOptions,
+  ): Promise<api.RestoreTaskRevertResult> => {
+    const result = await api.restoreTaskRevert(id, projectId, body);
+    void refreshTasksRef.current?.();
+    return result;
+  }, [projectId]);
+
   const ingestCreatedTasks = useCallback((incomingTasks: Task[]): void => {
     if (incomingTasks.length === 0) {
       return;
@@ -2173,7 +2198,7 @@ export function useTasks(options?: UseTasksOptions) {
   }, [completedPaginationError, loadMoreCompletedTasks, refreshTasks]);
 
   return {
-    tasks, isStale, lastRefreshErrorAt, createTask, moveTask, pauseTask, unpauseTask, deleteTask, mergeTask, retryTask, bypassReview, resetTask, duplicateTask, updateTask, revertTask,
+    tasks, isStale, lastRefreshErrorAt, createTask, moveTask, pauseTask, unpauseTask, deleteTask, mergeTask, retryTask, bypassReview, resetTask, duplicateTask, updateTask, revertTask, restoreTaskRevert,
     loadMoreCurrentTasks, retryCurrentTasksPagination, currentTasksTotal, currentTasksHasMore, currentTasksLoadingMore, currentTasksPaginationError,
     currentTasksProgressKey: `${projectId ?? "default"}:${searchIncarnationRef.current}:${currentTasksProgress}`,
     loadMoreCompletedTasks, retryCompletedTasksPagination, completedSortMode, changeCompletedSortMode, completedTotal, completedCounts, completedHasMore, completedLoadingMore, completedPaginationError,

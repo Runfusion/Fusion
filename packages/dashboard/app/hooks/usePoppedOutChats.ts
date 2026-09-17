@@ -1,11 +1,6 @@
 /*
-FNXC:ChatWindows 2026-08-21-18:24:
-FN-116 keeps secondary Quick Chats in App memory and keys them by project and session.
-Reopening a conversation refreshes its snapshot without cloning its independent window.
-
-FNXC:ChatWindows 2026-08-23-03:33:
-FN-169 requires refreshed entries to signal focus because their FloatingWindow remains mounted.
-A monotonically increasing nonce re-raises the existing window without reordering the Escape stack.
+FNXC:ChatWindows 2026-09-14-11:35:
+Detached Direct conversations remain keyed by project and session. Reopening refreshes and focuses the same persistent FloatingWindow; global window visibility, rather than chat-only minimization, owns temporary presentation state.
 */
 import { useCallback, useState } from "react";
 import type { ChatSessionInfo } from "./useChat";
@@ -15,39 +10,66 @@ export interface PoppedOutChatEntry {
   session: ChatSessionInfo;
   /** Increments for every open request so an in-place window can reclaim its stack position. */
   focusNonce: number;
-  /** Stable per-project cascade slot used to visibly separate stacked chat windows. */
-  cascadeSlot: number;
-  /**
-   * FNXC:ChatWindows 2026-09-02-05:24:
-   * A minimized secondary chat stays mounted and hidden so its geometry, transcript, scroll position, and draft survive restoration.
-   */
-  minimized: boolean;
+  /*
+  FNXC:ChatSurfaceUnification 2026-09-14-17:46:
+  FN-392: an external composer prefill (task hand-off, GitHub import, card action) belongs to the ONE conversation the
+  request opened or created, never to every open conversation. Its nonce advances only when a request actually carries
+  new text, so an ordinary reopen never overwrites a draft the operator is typing.
+  */
+  composerPrefill?: { text: string; nonce: number };
+}
+
+export interface PoppedOutChatOpenOptions {
+  composerPrefill?: string;
 }
 
 export interface UsePoppedOutChatsResult {
   entries: PoppedOutChatEntry[];
-  popOut: (projectId: string, session: ChatSessionInfo) => void;
+  popOut: (projectId: string, session: ChatSessionInfo, options?: PoppedOutChatOpenOptions) => void;
+  /*
+  FNXC:ChatWindows 2026-09-14-23:48:
+  FN-396: the session captured at open time is only the REQUEST that opened a window, never the durable identity of
+  the conversation. Renaming a conversation used to leave the old title on an open window until the operator closed
+  and reopened it, because popOut was the single writer of `entry.session`. syncSession replaces that snapshot in
+  place from the live conversation, deliberately leaving focusNonce and composerPrefill untouched: advancing either
+  would re-raise the window and reseed a draft the operator is typing.
+  */
+  syncSession: (projectId: string, session: ChatSessionInfo) => void;
   close: (projectId: string, sessionId: string) => void;
   closeAll: () => void;
-  minimizeAll: () => void;
-  restoreAll: () => void;
+}
+
+/** Fields a detached window renders or keys on; an echo of these is not a state change. */
+function sameRenderedIdentity(a: ChatSessionInfo, b: ChatSessionInfo): boolean {
+  return a.id === b.id
+    && (a.title ?? null) === (b.title ?? null)
+    && a.updatedAt === b.updatedAt
+    && a.status === b.status
+    && a.agentId === b.agentId
+    && (a.modelProvider ?? null) === (b.modelProvider ?? null)
+    && (a.modelId ?? null) === (b.modelId ?? null)
+    && (a.pinnedAt ?? null) === (b.pinnedAt ?? null);
 }
 
 export function usePoppedOutChats(): UsePoppedOutChatsResult {
   const [entries, setEntries] = useState<PoppedOutChatEntry[]>([]);
 
-  const popOut = useCallback((projectId: string, session: ChatSessionInfo) => {
+  const popOut = useCallback((projectId: string, session: ChatSessionInfo, options?: PoppedOutChatOpenOptions) => {
     setEntries((current) => {
       const index = current.findIndex((entry) => entry.projectId === projectId && entry.session.id === session.id);
       /*
-      FNXC:ChatWindows 2026-08-23-04:29:
-      Allocate the first available slot within a project so secondary chat windows cascade predictably.
-      Refreshing retains its slot and closing releases it for the next conversation.
+      FNXC:ChatWindows 2026-09-14-21:10:
+      FN-394 removed the chat-only cascade slot. Separation between freshly opened windows is now the
+      shared dashboard window-manager cohort, identical for every window type, so Chat no longer owns a
+      private placement rule. Deduplication, focus nonce, and composer prefill are unchanged.
       */
       if (index === -1) {
-        const occupiedSlots = new Set(current.filter((entry) => entry.projectId === projectId).map((entry) => entry.cascadeSlot));
-        const cascadeSlot = Array.from({ length: current.length + 1 }, (_, slot) => slot).find((slot) => !occupiedSlots.has(slot)) ?? current.length;
-        return [...current, { projectId, session, focusNonce: 1, cascadeSlot, minimized: false }];
+        return [...current, {
+          projectId,
+          session,
+          focusNonce: 1,
+          ...(options?.composerPrefill ? { composerPrefill: { text: options.composerPrefill, nonce: 1 } } : {}),
+        }];
       }
       const refreshed = [...current];
       const previous = refreshed[index];
@@ -55,9 +77,20 @@ export function usePoppedOutChats(): UsePoppedOutChatsResult {
         projectId,
         session,
         focusNonce: previous.focusNonce + 1,
-        cascadeSlot: previous.cascadeSlot,
-        minimized: false,
+        composerPrefill: options?.composerPrefill
+          ? { text: options.composerPrefill, nonce: (previous.composerPrefill?.nonce ?? 0) + 1 }
+          : previous.composerPrefill,
       };
+      return refreshed;
+    });
+  }, []);
+
+  const syncSession = useCallback((projectId: string, session: ChatSessionInfo) => {
+    setEntries((current) => {
+      const index = current.findIndex((entry) => entry.projectId === projectId && entry.session.id === session.id);
+      if (index === -1 || sameRenderedIdentity(current[index].session, session)) return current;
+      const refreshed = [...current];
+      refreshed[index] = { ...refreshed[index], session };
       return refreshed;
     });
   }, []);
@@ -67,12 +100,6 @@ export function usePoppedOutChats(): UsePoppedOutChatsResult {
   }, []);
 
   const closeAll = useCallback(() => setEntries([]), []);
-  const minimizeAll = useCallback(() => {
-    setEntries((current) => current.map((entry) => ({ ...entry, minimized: true })));
-  }, []);
-  const restoreAll = useCallback(() => {
-    setEntries((current) => current.map((entry) => ({ ...entry, minimized: false })));
-  }, []);
 
-  return { entries, popOut, close, closeAll, minimizeAll, restoreAll };
+  return { entries, popOut, syncSession, close, closeAll };
 }

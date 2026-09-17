@@ -260,50 +260,50 @@ FN-8355 requires the portaled list to remain the touch-scroll owner after filter
 }
 
 /*
-FNXC:AlphaCollections 2026-09-10-20:43:
-Alpha's complete model list precedes a labelled auxiliary-action rail. Each full-width row visibly aligns its provider or model name with the related controls, and the sibling rail gives keyboard users predictable forward and reverse Tab transitions.
+FNXC:NativeUiCollections 2026-09-10-20:43:
+The complete model list precedes a labelled auxiliary-action rail. Each full-width row visibly aligns its provider or model name with the related controls, and the sibling rail gives keyboard users predictable forward and reverse Tab transitions.
 */
-.model-combobox-list--alpha,
-.model-combobox-alpha-options,
-.model-combobox-alpha-actions {
+.model-combobox-list,
+.model-combobox-options,
+.model-combobox-actions {
   display: flex;
   flex-direction: column;
   min-width: 0;
 }
 
-.model-combobox-alpha-actions,
-.model-combobox-alpha-provider-actions,
-.model-combobox-alpha-action-controls {
+.model-combobox-actions,
+.model-combobox-provider-actions,
+.model-combobox-action-controls {
   gap: var(--space-xs);
 }
 
-.model-combobox-alpha-actions {
+.model-combobox-actions {
   padding: var(--space-xs);
   border-top: var(--btn-border-width) solid var(--border);
 }
 
-.model-combobox-alpha-actions-heading {
+.model-combobox-actions-heading {
   color: var(--text-muted);
   font-size: var(--font-size-xs);
   font-weight: 600;
   padding: var(--space-xs) var(--space-sm);
 }
 
-.model-combobox-alpha-action-row,
-.model-combobox-alpha-action-label,
-.model-combobox-alpha-action-controls {
+.model-combobox-action-row,
+.model-combobox-action-label,
+.model-combobox-action-controls {
   display: flex;
   align-items: center;
 }
 
-.model-combobox-alpha-action-row {
+.model-combobox-action-row {
   justify-content: space-between;
   gap: var(--space-sm);
   min-width: 0;
   padding: var(--space-xs) var(--space-sm);
 }
 
-.model-combobox-alpha-action-label {
+.model-combobox-action-label {
   gap: var(--space-xs);
   min-width: 0;
   overflow: hidden;
@@ -313,7 +313,7 @@ Alpha's complete model list precedes a labelled auxiliary-action rail. Each full
   font-size: var(--font-size-sm);
 }
 
-.model-combobox-alpha-action-controls {
+.model-combobox-action-controls {
   flex: 0 0 auto;
 }
 
@@ -323,11 +323,29 @@ Alpha's complete model list precedes a labelled auxiliary-action rail. Each full
   min-width: 0;
 }
 
+/*
+FNXC:ModelDropdown 2026-09-15-03:49:
+Since FNXC:NativeUiCollections each option is a NATIVE <button> (legacyAs="button") inside a flex
+.model-combobox-option-row, and native-ui.css deliberately resets only font/color/cursor for [data-ui].
+Without a local reset the button keeps its intrinsic content width (rows stop short of the list edge)
+and the browser's ButtonFace background (white model names on a white button in dark mode). Mirror the
+same reset the sibling option lists already carry (.workflow-switcher-option, .agent-mention-item,
+.chat-thinking-popover-option, .model-menu-item).
+*/
 .model-combobox-option {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
   padding: var(--space-sm) var(--space-md);
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
   cursor: pointer;
   transition: background var(--transition-instant);
   overflow: hidden;
@@ -416,11 +434,27 @@ Provider headers must remain visible while their long model groups scroll in the
   overflow: hidden;
 }
 
-.model-combobox-optgroup-text {
+/*
+FNXC:ModelDropdown 2026-09-15-03:49:
+The provider header renders .model-combobox-optgroup-label / -actions; the legacy -text class was never
+rendered, so the label had neither flex growth nor truncation.
+*/
+.model-combobox-optgroup-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
   flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.model-combobox-optgroup-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex-shrink: 0;
 }
 
 /* Provider favorite star (in optgroup header) */

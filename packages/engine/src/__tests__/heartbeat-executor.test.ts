@@ -3826,6 +3826,25 @@ describe("executeHeartbeat", () => {
       expect(callArgs.fallbackModelId).toBeUndefined();
     });
 
+    it("uses project role lanes directly for a model-less idle heartbeat", async () => {
+      const store = createStoreWithAgentForExec({ runtimeConfig: {} });
+      mockTaskStore = createMockTaskStore({
+        getSettings: vi.fn().mockResolvedValue({
+          executionProvider: "anthropic",
+          executionCredentialInstanceId: "project-account",
+          executionModelId: "claude-opus-5",
+        }),
+      });
+      mockedCreateFnAgent.mockResolvedValue({ session: createMockAgentSession() as any });
+
+      const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+      await monitor.executeHeartbeat({ agentId: "agent-001", source: "on_demand" });
+
+      const callArgs = mockedCreateFnAgent.mock.calls[0]![0];
+      expect(callArgs.defaultProvider).toBe("anthropic");
+      expect(callArgs.defaultModelId).toBe("claude-opus-5");
+    });
+
     it("passes undefined model when runtimeConfig has no model", async () => {
       const store = createStoreWithAgentForExec({ runtimeConfig: {} });
       const mockSession = createMockAgentSession();

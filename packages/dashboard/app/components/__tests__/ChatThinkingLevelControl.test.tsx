@@ -43,11 +43,6 @@ const models = [
   { provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet", reasoning: true, contextWindow: 200000 },
 ];
 
-const agents = [
-  { id: "agent-001", name: "Alpha", role: "executor" },
-  { id: "agent-002", name: "Beta", role: "reviewer" },
-];
-
 const chatViewCss = () => readFileSync(resolve(__dirname, "../ChatView.css"), "utf-8");
 
 function cssRule(css: string, selector: string) {
@@ -69,15 +64,14 @@ describe("ChatThinkingLevelControl", () => {
     expect(screen.queryByRole("listbox")).toBeNull();
   });
 
-  it("opens a popup listing Default plus all canonical THINKING_LEVELS and the Model / Agent section", () => {
-    render(<ChatThinkingLevelControl level={null} onChange={vi.fn()} models={models} agents={agents} />);
+  it("opens a popup listing Default plus all canonical THINKING_LEVELS and the Model section", () => {
+    render(<ChatThinkingLevelControl level={null} onChange={vi.fn()} models={models} />);
 
     fireEvent.click(screen.getByTestId("chat-thinking-btn"));
 
     const listbox = screen.getByRole("listbox");
     expect(listbox).toBeDefined();
-    expect(screen.getByText("Model / Agent")).toBeDefined();
-    expect(screen.getByTestId("chat-thinking-mode-toggle")).toBeDefined();
+    expect(screen.queryByText("Model / Agent")).toBeNull();
     expect(screen.getByTestId("mock-model-dropdown")).toBeDefined();
     expect(screen.getByTestId("chat-thinking-option-default")).toBeDefined();
     for (const level of THINKING_LEVELS) {
@@ -111,8 +105,17 @@ describe("ChatThinkingLevelControl", () => {
     expect(onChange).toHaveBeenCalledWith("max");
   });
 
-  it("renders model-only targeting without any agent controls", () => {
-    render(<ChatThinkingLevelControl level={null} onChange={vi.fn()} onChangeModel={vi.fn()} showAgentTarget={false} models={models} agents={agents} />);
+  /*
+  FNXC:Chat-ModelSwitch 2026-09-14-23:48:
+  FN-396: this panel retargets a MODEL only. No data shape — no agents, agents present, a conversation already bound
+  to an agent — may bring back a Model/Agent toggle or a selectable agent list; `@` mentions are the only agent path.
+  */
+  it.each([
+    ["no agent binding", undefined],
+    ["an agent-bound conversation", "agent-001"],
+    ["the built-in chat agent", FN_AGENT_ID],
+  ])("renders model-only targeting with %s", (_label, agentId) => {
+    render(<ChatThinkingLevelControl level={null} onChange={vi.fn()} onChangeModel={vi.fn()} models={models} agentId={agentId} agentName="Alpha" />);
 
     fireEvent.click(screen.getByTestId("chat-thinking-btn"));
 
@@ -120,8 +123,14 @@ describe("ChatThinkingLevelControl", () => {
     expect(screen.getByText("Model")).toBeDefined();
     expect(screen.getByTestId("chat-thinking-model-picker")).toBeDefined();
     expect(screen.queryByTestId("chat-thinking-mode-toggle")).toBeNull();
+    expect(screen.queryByTestId("chat-thinking-mode-model")).toBeNull();
+    expect(screen.queryByTestId("chat-thinking-mode-agent")).toBeNull();
     expect(screen.queryByTestId("chat-thinking-agent-list")).toBeNull();
     expect(screen.queryByTestId("chat-thinking-agent-empty")).toBeNull();
+    expect(screen.queryByTestId("chat-thinking-agent-agent-001")).toBeNull();
+    expect(document.querySelector(".chat-thinking-mode-toggle")).toBeNull();
+    expect(document.querySelector(".chat-thinking-agent-list")).toBeNull();
+    expect(document.querySelector("[aria-pressed]")).toBeNull();
   });
 
   it("forwards model picker labels and default selection to the host", () => {
@@ -158,7 +167,7 @@ describe("ChatThinkingLevelControl", () => {
 
   it("renders only thinking-level options in level-only mode and persists selections", () => {
     const onChange = vi.fn();
-    render(<ChatThinkingLevelControl level="medium" onChange={onChange} showTargetSection={false} models={models} agents={agents} />);
+    render(<ChatThinkingLevelControl level="medium" onChange={onChange} showTargetSection={false} models={models} />);
 
     expect(screen.getByTestId("chat-thinking-btn").className).toContain("chat-thinking-btn--active");
     fireEvent.click(screen.getByTestId("chat-thinking-btn"));
@@ -214,38 +223,6 @@ describe("ChatThinkingLevelControl", () => {
     expect(screen.queryByRole("listbox")).toBeNull();
   });
 
-  it("switches to Agent mode during the Windows pointer activation sequence and exposes selected semantics", () => {
-    render(<ChatThinkingLevelControl level={null} onChange={vi.fn()} models={models} agents={agents} />);
-
-    fireEvent.click(screen.getByTestId("chat-thinking-btn"));
-    const modelMode = screen.getByTestId("chat-thinking-mode-model");
-    const agentMode = screen.getByTestId("chat-thinking-mode-agent");
-    expect(screen.getByTestId("mock-model-dropdown")).toBeDefined();
-    expect(modelMode).toHaveAttribute("aria-pressed", "true");
-    expect(agentMode).toHaveAttribute("aria-pressed", "false");
-
-    // Electron on Windows visibly dispatches pointerdown before it completes click activation.
-    // Agent mode must render from that primary-pointer boundary, not wait for a click that a
-    // host surface can suppress after showing the pressed state.
-    fireEvent.pointerDown(agentMode, { button: 0, pointerType: "mouse" });
-    expect(agentMode).toHaveClass("chat-thinking-mode-btn--active");
-    expect(agentMode).toHaveAttribute("aria-pressed", "true");
-    expect(modelMode).toHaveAttribute("aria-pressed", "false");
-    expect(screen.queryByTestId("chat-thinking-model-picker")).toBeNull();
-    expect(screen.getByTestId("chat-thinking-agent-list")).toBeDefined();
-    expect(screen.getByTestId("chat-thinking-agent-agent-001")).toBeDefined();
-
-    fireEvent.pointerUp(agentMode, { button: 0, pointerType: "mouse" });
-    fireEvent.click(agentMode, { detail: 1 });
-    expect(screen.getByTestId("chat-thinking-agent-list")).toBeDefined();
-
-    // Keyboard button activation remains a click with no pointer detail.
-    fireEvent.click(modelMode, { detail: 0 });
-    expect(modelMode).toHaveClass("chat-thinking-mode-btn--active");
-    expect(modelMode).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByTestId("chat-thinking-model-picker")).toBeDefined();
-  });
-
   it("selecting a model calls onChangeModel and keeps the popover available for thinking", () => {
     const onChangeModel = vi.fn();
     render(<ChatThinkingLevelControl level={null} onChange={vi.fn()} onChangeModel={onChangeModel} models={models} />);
@@ -254,18 +231,6 @@ describe("ChatThinkingLevelControl", () => {
     fireEvent.click(screen.getByTestId("mock-model-dropdown"));
 
     expect(onChangeModel).toHaveBeenCalledWith({ modelProvider: "openai", modelId: "gpt-4o" });
-    expect(screen.getByRole("listbox")).toBeDefined();
-  });
-
-  it("selecting an agent calls onChangeModel and keeps the popover available for thinking", () => {
-    const onChangeModel = vi.fn();
-    render(<ChatThinkingLevelControl level={null} onChange={vi.fn()} onChangeModel={onChangeModel} agents={agents} />);
-
-    fireEvent.click(screen.getByTestId("chat-thinking-btn"));
-    fireEvent.click(screen.getByTestId("chat-thinking-mode-agent"));
-    fireEvent.click(screen.getByTestId("chat-thinking-agent-agent-002"));
-
-    expect(onChangeModel).toHaveBeenCalledWith({ agentId: "agent-002" });
     expect(screen.getByRole("listbox")).toBeDefined();
   });
 
@@ -282,17 +247,9 @@ describe("ChatThinkingLevelControl", () => {
     expect(screen.queryByTestId("chat-thinking-popover")).toBeNull();
   });
 
-  it("keeps matched agent and default target echoes open", () => {
+  it("keeps a matched default target echo open", () => {
     const onChangeModel = vi.fn();
-    const { rerender } = render(<ChatThinkingLevelControl level={null} onChange={vi.fn()} onChangeModel={onChangeModel} agents={agents} targetKey="session-a" />);
-
-    fireEvent.click(screen.getByTestId("chat-thinking-btn"));
-    fireEvent.click(screen.getByTestId("chat-thinking-mode-agent"));
-    fireEvent.click(screen.getByTestId("chat-thinking-agent-agent-002"));
-    rerender(<ChatThinkingLevelControl level={null} onChange={vi.fn()} onChangeModel={onChangeModel} agents={agents} targetKey="session-a" agentId="agent-002" />);
-    expect(screen.getByTestId("chat-thinking-popover")).toBeDefined();
-
-    rerender(<ChatThinkingLevelControl level={null} onChange={vi.fn()} onChangeModel={onChangeModel} models={models} targetKey="session-a" defaultModelValue="openai/gpt-4o" />);
+    const { rerender } = render(<ChatThinkingLevelControl level={null} onChange={vi.fn()} onChangeModel={onChangeModel} models={models} targetKey="session-a" defaultModelValue="openai/gpt-4o" />);
     fireEvent.click(screen.getByTestId("chat-thinking-btn"));
     fireEvent.click(screen.getByTestId("mock-model-default"));
     rerender(<ChatThinkingLevelControl level="medium" onChange={vi.fn()} onChangeModel={onChangeModel} models={models} targetKey="session-a" modelProvider="openai" modelId="gpt-4o" defaultModelValue="openai/gpt-4o" />);
@@ -346,13 +303,12 @@ describe("ChatThinkingLevelControl", () => {
     expect(screen.getByTestId("mock-model-dropdown")).toBeDisabled();
   });
 
-  it("reflects the active model and active agent selection", () => {
+  it("reflects the active model and surfaces an agent-bound conversation read-only", () => {
     const { rerender } = render(
       <ChatThinkingLevelControl
         level={null}
         onChange={vi.fn()}
         models={models}
-        agents={agents}
         agentId={FN_AGENT_ID}
         modelProvider="anthropic"
         modelId="claude-sonnet-4-5"
@@ -368,25 +324,29 @@ describe("ChatThinkingLevelControl", () => {
         level={null}
         onChange={vi.fn()}
         models={models}
-        agents={agents}
         agentId="agent-001"
+        agentName="Alpha"
       />,
     );
 
     fireEvent.click(screen.getByTestId("chat-thinking-btn"));
-    expect(screen.getByTestId("chat-thinking-agent-agent-001").className).toContain("chat-thinking-agent-item--selected");
-    expect(screen.getByTestId("chat-thinking-current-agent")).toHaveTextContent("Alpha");
+    const boundTarget = screen.getByTestId("chat-thinking-current-agent");
+    expect(boundTarget).toHaveTextContent("Alpha");
+    expect(boundTarget.tagName).toBe("DIV");
+    expect(screen.queryByTestId("chat-thinking-agent-agent-001")).toBeNull();
+
+    // Without a resolved display name the binding is still visible, by id.
+    rerender(<ChatThinkingLevelControl level={null} onChange={vi.fn()} models={models} agentId="agent-001" />);
+    expect(screen.getByTestId("chat-thinking-current-agent")).toHaveTextContent("agent-001");
   });
 
-  it("renders empty states for zero models and zero agents without crashing", () => {
-    render(<ChatThinkingLevelControl level={null} onChange={vi.fn()} models={[]} agents={[]} />);
+  it("renders the empty model state without crashing", () => {
+    render(<ChatThinkingLevelControl level={null} onChange={vi.fn()} models={[]} />);
 
     fireEvent.click(screen.getByTestId("chat-thinking-btn"));
     expect(screen.getByTestId("chat-thinking-model-empty")).toBeDefined();
     expect(screen.getByTestId("mock-model-dropdown")).toBeDisabled();
-
-    fireEvent.click(screen.getByTestId("chat-thinking-mode-agent"));
-    expect(screen.getByTestId("chat-thinking-agent-empty")).toBeDefined();
+    expect(screen.queryByTestId("chat-thinking-agent-empty")).toBeNull();
   });
 
   it("clicking outside closes the popup without calling onChange", () => {
@@ -442,7 +402,7 @@ describe("ChatThinkingLevelControl CSS contract", () => {
   it("keeps one fixed viewport-bounded popover contract across desktop and narrow chat surfaces", () => {
     const css = chatViewCss();
     const popoverRule = cssRule(css, ".chat-thinking-popover");
-    const narrowListRule = cssRule(css, ".chat-view--narrow .chat-thinking-agent-list,\n.chat-view--narrow .chat-thinking-popover-list");
+    const narrowListRule = cssRule(css, ".chat-view--narrow .chat-thinking-popover-list");
 
     expect(popoverRule).toContain("position: fixed;");
     expect(popoverRule).toContain("max-width: calc(100vw - (var(--space-lg) * 2));");
@@ -450,5 +410,20 @@ describe("ChatThinkingLevelControl CSS contract", () => {
     expect(cssRule(css, ".chat-view--narrow .chat-thinking-level-root")).toBe("");
     expect(cssRule(css, ".chat-view--narrow .chat-thinking-popover")).toBe("");
     expect(narrowListRule).toContain("max-height: calc(var(--space-xl) * 7);");
+  });
+
+  /* FNXC:Chat-ModelSwitch 2026-09-14-23:48: FN-396 removed the toggle and the agent list; their styles must not linger. */
+  it("keeps no orphaned mode-toggle or agent-list styles on any breakpoint", () => {
+    const css = chatViewCss();
+    for (const orphan of [
+      "chat-thinking-mode-toggle",
+      "chat-thinking-mode-btn",
+      "chat-thinking-agent-list",
+      "chat-thinking-agent-item",
+      "chat-thinking-agent-name",
+      "chat-thinking-agent-role",
+    ]) {
+      expect(css).not.toContain(orphan);
+    }
   });
 });

@@ -104,18 +104,30 @@ describe("FN-379 standardized Mailbox layout", () => {
     vi.mocked(apiModule.fetchConversation).mockResolvedValue([] as never);
   });
 
-  it("keeps the shared rail and a single header Compose on every tab", async () => {
+  /*
+  FNXC:MailboxTwoTabs 2026-09-16-16:53:
+  Two tabs only, and Compose is the Outbox tab's single header action: the shared rail stays in place for
+  every inbox scope, but no scope paints its own Compose control.
+  */
+  it("keeps the shared rail on every inbox scope and one header Compose on the outbox tab", async () => {
     renderMailbox();
     await waitFor(() => expect(apiModule.fetchInbox).toHaveBeenCalled());
 
-    for (const tab of ["inbox", "outbox", "archived", "agents", "approvals"]) {
-      fireEvent.click(screen.getByTestId(`mailbox-tab-${tab}`));
+    expect(within(screen.getByTestId("mailbox-tabs")).getAllByRole("button")).toHaveLength(2);
+
+    for (const scope of ["all", "structural", "archived", "agents", "approvals"]) {
+      fireEvent.click(screen.getByTestId("mailbox-inbox-filter"));
+      fireEvent.click(screen.getByTestId(`mailbox-inbox-filter-option-${scope}`));
       await waitFor(() => expect(screen.getByTestId("mailbox-split-list-pane")).toBeInTheDocument());
-      const compose = screen.getAllByTestId("mailbox-header-compose");
-      expect(compose).toHaveLength(1);
-      expect(compose[0]).toHaveClass("view-action-button--create");
-      expect(within(screen.getByRole("banner")).getByTestId("mailbox-header-compose")).toBe(compose[0]);
+      expect(screen.queryByTestId("mailbox-header-compose")).toBeNull();
     }
+
+    fireEvent.click(screen.getByTestId("mailbox-tab-outbox"));
+    await waitFor(() => expect(screen.getByTestId("mailbox-split-list-pane")).toBeInTheDocument());
+    const compose = screen.getAllByTestId("mailbox-header-compose");
+    expect(compose).toHaveLength(1);
+    expect(compose[0]).toHaveClass("view-action-button--create");
+    expect(within(screen.getByRole("banner")).getByTestId("mailbox-header-compose")).toBe(compose[0]);
   });
 
   it("mounts without sending, deleting, or deciding anything", async () => {
@@ -149,7 +161,8 @@ describe("FN-379 standardized Mailbox layout", () => {
     renderMailbox();
     await waitFor(() => expect(apiModule.fetchInbox).toHaveBeenCalled());
 
-    fireEvent.click(screen.getByTestId("mailbox-header-compose"));
+    fireEvent.click(screen.getByTestId("mailbox-tab-outbox"));
+    fireEvent.click(await screen.findByTestId("mailbox-header-compose"));
     await waitFor(() => expect(screen.getByTestId("mailbox-back-to-list")).toBeInTheDocument());
     fireEvent.click(screen.getByTestId("mailbox-back-to-list"));
 
@@ -168,7 +181,8 @@ describe("FN-379 standardized Mailbox layout", () => {
     renderMailbox();
     await waitFor(() => expect(apiModule.fetchInbox).toHaveBeenCalled());
 
-    fireEvent.click(screen.getByTestId("mailbox-header-compose"));
+    fireEvent.click(screen.getByTestId("mailbox-tab-outbox"));
+    fireEvent.click(await screen.findByTestId("mailbox-header-compose"));
     await waitFor(() => expect(screen.getByTestId("message-composer")).toBeInTheDocument());
 
     const banners = screen.getAllByRole("banner");
@@ -190,7 +204,9 @@ describe("FN-379 standardized Mailbox layout", () => {
     await waitFor(() => expect(apiModule.fetchInbox).toHaveBeenCalled());
 
     expect(screen.getByTestId("mailbox-split-list-pane")).toBeInTheDocument();
-    expect(screen.getAllByTestId("mailbox-header-compose")).toHaveLength(1);
+    expect(screen.queryByTestId("mailbox-header-compose")).toBeNull();
+    fireEvent.click(screen.getByTestId("mailbox-tab-outbox"));
+    expect(await screen.findAllByTestId("mailbox-header-compose")).toHaveLength(1);
   });
 
   it("never lets a slower project-A inbox response replace the project-B list", async () => {

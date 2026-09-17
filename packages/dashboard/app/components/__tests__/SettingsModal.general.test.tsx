@@ -243,9 +243,19 @@ describe("SettingsModal", () => {
         chatMessageLayout: "bubbles",
         gitlabAuthTokenType: "personal",
         mergeAdvanceAutoSync: "stash-and-ff",
+        /*
+        FNXC:RightSidebarOptional 2026-09-15-17:29:
+        FN-426: this fixture states the persisted value of every project preference the Appearance form normalizes on
+        load, so the scoped save patch stays exactly the field the operator changed. `navigationPlacement` (FN-419) and
+        `rightSidebarEnabled` (FN-426) are normalized the same way, so an absent value would otherwise read as a real
+        edit and widen this assertion's patch.
+        */
+        navigationPlacement: "footer",
+        rightSidebarEnabled: false,
         pushRemote: undefined,
         showCostBadgeOnCards: false,
-        taskDetailChatFirst: false,
+        /* FNXC:TaskDetailDefaultTab 2026-09-16-02:53: FN-442 — the three-value project choice the Appearance form normalizes on load. */
+        taskDetailDefaultTab: "activity",
         worktreeInitCommand: undefined,
         worktreesDir: undefined,
         worktrunk: { enabled: false, binaryPath: undefined, onFailure: "fail" },
@@ -266,33 +276,57 @@ describe("SettingsModal", () => {
     expect(mockUpdateGlobalSettings).not.toHaveBeenCalled();
   });
 
+  /*
+  FNXC:TaskDetailDefaultTab 2026-09-16-02:53:
+  FN-442 deleted the two board task-open routing toggles from this section and turned the Chat-first toggle into a
+  three-value selector, so the modal must no longer expose those labels at all and must drive the selector instead.
+  */
   it("mirrors mounted Appearance controls through the modal while keeping one persistence path", async () => {
     const callbacks = {
-      onOpenTasksInRightSidebarChange: vi.fn(),
-      onOpenMobileTasksInPopupChange: vi.fn(),
-      onTaskPopupsBoardListOnlyChange: vi.fn(),
       onShowCostBadgeOnCardsChange: vi.fn(),
-      onTaskDetailChatFirstChange: vi.fn(),
+      onTaskDetailDefaultTabChange: vi.fn(),
     };
     renderModal({ initialSection: "appearance", ...callbacks });
     await waitForSettingsModalReady();
 
-    fireEvent.click(screen.getByLabelText("Open tasks in the right sidebar"));
-    fireEvent.click(screen.getByLabelText("Open tasks as popups"));
-    fireEvent.click(screen.getByLabelText("Keep task popups on the view where they were opened"));
+    expect(screen.queryByLabelText("Open tasks in the right sidebar")).toBeNull();
+    expect(screen.queryByLabelText("Open tasks as popups")).toBeNull();
+    expect(screen.queryByLabelText("Open task details with Chat first")).toBeNull();
     fireEvent.click(screen.getByLabelText("Show cost badges on task cards"));
-    fireEvent.click(screen.getByLabelText("Open task details with Chat first"));
+    // FN-392: the per-view task popup scoping control is gone from the modal's Appearance section.
+    expect(screen.queryByLabelText("Keep task popups on the view where they were opened")).toBeNull();
+    fireEvent.change(screen.getByLabelText("Open task details on"), { target: { value: "definition" } });
 
-    expect(callbacks.onOpenTasksInRightSidebarChange).toHaveBeenCalledWith(true);
-    expect(callbacks.onOpenMobileTasksInPopupChange).toHaveBeenCalledWith(true);
-    expect(callbacks.onTaskPopupsBoardListOnlyChange).toHaveBeenCalledWith(true);
     expect(callbacks.onShowCostBadgeOnCardsChange).toHaveBeenCalledWith(true);
-    expect(callbacks.onTaskDetailChatFirstChange).toHaveBeenCalledWith(true);
+    expect(callbacks.onTaskDetailDefaultTabChange).toHaveBeenCalledWith("definition");
 
     vi.useFakeTimers();
     await flushSettingsAutoSave();
     vi.useRealTimers();
     expect(mockUpdateGlobalSettings).not.toHaveBeenCalled();
+  });
+
+  /*
+  FNXC:TaskDetailDefaultTab 2026-09-16-02:53:
+  FN-442: a project that opted into Chat-first before the rename persisted `taskDetailChatFirst: true` and has no
+  `taskDetailDefaultTab`. The Settings form must read that legacy value as `chat` so the operator's choice is visibly
+  preserved instead of silently resetting to Activity. Absent values still resolve to the historical Activity default.
+  */
+  it.each([
+    [{ taskDetailChatFirst: true }, "chat"],
+    [{ taskDetailChatFirst: false }, "activity"],
+    [{}, "activity"],
+    [{ taskDetailChatFirst: true, taskDetailDefaultTab: "definition" }, "definition"],
+  ])("pre-fills the task detail default tab selector from persisted %o as %s", async (persisted, expected) => {
+    mockFetchSettings.mockResolvedValueOnce({ ...defaultSettings, ...persisted } as never);
+    mockFetchSettingsByScope.mockResolvedValueOnce({
+      global: defaultSettings,
+      project: { ...defaultSettings, ...persisted },
+    } as never);
+    renderModal({ initialSection: "appearance" });
+    await waitForSettingsModalReady();
+
+    expect((screen.getByLabelText("Open task details on") as HTMLSelectElement).value).toBe(expected);
   });
 
   it("does not render the retired recommendation-mail toggle", async () => {

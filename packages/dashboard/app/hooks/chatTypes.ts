@@ -58,3 +58,35 @@ export interface ChatMessageInfo {
   }>;
   createdAt: string;
 }
+
+/*
+FNXC:ChatMessageEdit 2026-09-16-05:58:
+FN-459. Single source of truth, shared by the direct Chat (`useChat`/`ChatView`) and the task planner
+chat (`TaskPlannerChatTab`), for whether a transcript row identity exists on the SERVER.
+
+Only the dashboard's own purely LOCAL ids are refused, and they are enumerated exhaustively rather
+than inferred, because this check gates both the edit affordance and `editMessageAndResend`: an
+over-broad rule would silently disable editing for real rows.
+  - `temp-<ts>`           — `useChat.sendMessage` optimistic user bubble
+  - `optimistic-<ts>`     — `TaskPlannerChatTab.makeOptimisticUserMessage`
+  - `error-<ts>`          — `useChat` local failure bubble
+  - `interrupted-<ts>`    — `useChat` local interrupted-prefix bubble
+  - `streaming-assistant` — `useChat` in-flight assistant placeholder (exact literal, not a prefix)
+
+`msg-` is DELIBERATELY NOT in the refusal list and must never be added: it is the PERSISTED id
+format produced by `ChatStore.addMessage` (`msg-<uuid8>`; Rooms use `rmsg-<uuid8>`). Classifying it
+as local would disable editing for the entire loaded transcript. The only local `msg-` in the
+dashboard is `useChat`'s assistant fallback `msg-${Date.now()}` in `onDone`, which never carries
+`role: "user"` and therefore never reaches the edit guard (that guard applies to user rows only).
+
+Any id outside this list — including server ids from other backends and arbitrary fixture ids such
+as `"m1"` — is treated as persisted.
+*/
+const LOCAL_ONLY_CHAT_MESSAGE_ID_PREFIXES = ["temp-", "optimistic-", "error-", "interrupted-"] as const;
+const LOCAL_ONLY_CHAT_MESSAGE_IDS = ["streaming-assistant"] as const;
+
+export function isPersistedChatMessageId(id: string): boolean {
+  if (!id) return false;
+  if ((LOCAL_ONLY_CHAT_MESSAGE_IDS as readonly string[]).includes(id)) return false;
+  return !LOCAL_ONLY_CHAT_MESSAGE_ID_PREFIXES.some((prefix) => id.startsWith(prefix));
+}

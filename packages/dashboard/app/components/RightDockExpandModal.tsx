@@ -1,4 +1,5 @@
 import { ModalCloseButton } from "./ModalCloseButton";
+import { HideInDrawer } from "./ViewDrawer";
 import { useCallback, useEffect, type RefObject } from "react";
 import { Maximize2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -20,6 +21,7 @@ export interface RightDockExpandModalProps {
   visibilityOptions?: OverflowViewVisibilityOptions;
   onClose: () => void;
   returnFocusRef?: RefObject<HTMLElement | null>;
+  raiseToFrontSignal?: number;
 }
 
 /*
@@ -38,6 +40,7 @@ export function RightDockExpandModal({
   visibilityOptions = {},
   onClose,
   returnFocusRef,
+  raiseToFrontSignal,
 }: RightDockExpandModalProps) {
   const { t } = useTranslation("app");
   const resolvedEntry = viewKey ? findOverflowViewEntry(viewKey, visibilityOptions) : undefined;
@@ -76,12 +79,13 @@ export function RightDockExpandModal({
       minSize={{ width: EXPAND_MIN_WIDTH, height: EXPAND_MIN_HEIGHT }}
       hideHeader
       dragHandleSelector=".right-dock-expand-modal__header"
-      persistGeometryKey="fusion:right-dock-expand-modal-geometry"
       suspendGeometryPersistenceOnMobile
       suspendGeometryPersistenceOnShortViewport
       ariaLabel={expandedViewLabel}
       className="modal right-dock-expand-modal right-dock-expand-modal--floating"
       testId="right-dock-expand-modal"
+      raiseToFrontSignal={raiseToFrontSignal}
+      surfaceGroup={entry.key === "chat" ? "chat" : undefined}
     >
       {/*
       FNXC:StandardizedViewLayout 2026-09-13-20:32:
@@ -97,7 +101,14 @@ export function RightDockExpandModal({
           <Icon size={16} />
           <span>{entry.label}</span>
         </div>
-        <ModalCloseButton onClick={closeAndRestoreFocus} aria-label={t("rightDock.closeExpandedView", "Close expanded right dock view")} data-testid="right-dock-expand-close" />
+        {/*
+        FNXC:StandardizedDrawers 2026-09-15-04:56:
+        FN-406: in phone drawer presentation the shared handle, scrim, and Escape own dismissal, so this close is
+        redundant chrome. The context is false on every other surface, so desktop/tablet keep the control.
+        */}
+        <HideInDrawer>
+          <ModalCloseButton onClick={closeAndRestoreFocus} aria-label={t("rightDock.closeExpandedView", "Close expanded right dock view")} data-testid="right-dock-expand-close" />
+        </HideInDrawer>
       </ViewLayoutHeader>
       <ViewLayoutContent className="right-dock-expand-modal__body" data-testid="right-dock-expand-body">
         {entry.render({ ...renderProps, surface: "expand" })}

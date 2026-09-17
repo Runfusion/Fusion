@@ -22,15 +22,45 @@ import {
 } from "../ai/model-resolution.js";
 
 describe("model-resolution", () => {
+  it.each([
+    ["execution", resolveExecutionSettingsModel, resolveExecutorFallbackModel],
+    ["planning", resolvePlanningSettingsModel, resolvePlanningFallbackModel],
+    ["validator", resolveValidatorSettingsModel, resolveValidatorFallbackModel],
+    ["merger", resolveMergerSettingsModel, resolveMergerFallbackModel],
+  ] as const)("keeps %s complete pairs, credentials and defaults separate at every tier", (role, primary, fallback) => {
+    const settings = {
+      [`${role}Provider`]: "project", [`${role}ModelId`]: "project-model", [`${role}CredentialInstanceId`]: "project-account",
+      [`${role}GlobalProvider`]: "global-role", [`${role}GlobalModelId`]: "global-role-model",
+      defaultProviderOverride: "project-default", defaultModelIdOverride: "project-default-model",
+      defaultProvider: "global-default", defaultModelId: "global-default-model",
+      selectedWorkflowModelLanes: { [`${role}Provider`]: "incomplete-workflow", [`${role}CredentialInstanceId`]: "unusable-account" },
+    };
+    expect(primary(settings)).toEqual({ provider: "project", modelId: "project-model", credentialInstanceId: "project-account" });
+    expect(primary({ ...settings, [`${role}ModelId`]: undefined })).toEqual({ provider: "global-role", modelId: "global-role-model" });
+    expect(primary({ ...settings, [`${role}ModelId`]: undefined, [`${role}GlobalModelId`]: undefined })).toEqual({ provider: "project-default", modelId: "project-default-model" });
+    expect(primary({ defaultProvider: "global-default", defaultModelId: "global-default-model" })).toEqual({ provider: "global-default", modelId: "global-default-model" });
+    expect(primary({ ...settings, testMode: true })).toEqual(TEST_MODE_RESOLVED);
+    const fallbackSettings = {
+      [`${role}FallbackProvider`]: "incomplete-project", [`${role}GlobalFallbackModelId`]: "incomplete-global",
+      selectedWorkflowModelLanes: { [`${role}FallbackModelId`]: "incomplete-workflow" },
+      fallbackProvider: "shared", fallbackModelId: "shared-model",
+    };
+    expect(fallback(fallbackSettings)).toEqual({ provider: "shared", modelId: "shared-model" });
+    expect(fallback({ ...fallbackSettings, testMode: true })).toEqual(TEST_MODE_RESOLVED);
+  });
   it("detects complete fallback pairs at the lane, global, and selected-workflow tiers", () => {
     expect(hasConfiguredFallbackLane({
       planningFallbackProvider: "project-provider",
       planningFallbackModelId: "project-model",
     }, "planning")).toBe(true);
     expect(hasConfiguredFallbackLane({
-      fallbackProvider: "global-provider",
-      fallbackModelId: "global-model",
+      validatorGlobalFallbackProvider: "global-provider",
+      validatorGlobalFallbackModelId: "global-model",
     }, "validation")).toBe(true);
+    expect(hasConfiguredFallbackLane({
+      mergerGlobalFallbackProvider: "global-provider",
+      mergerGlobalFallbackModelId: "global-model",
+    }, "merger")).toBe(true);
     expect(hasConfiguredFallbackLane({
       selectedWorkflowModelLanes: {
         executionFallbackProvider: "workflow-provider",
@@ -243,7 +273,8 @@ describe("model-resolution", () => {
     ["execution", resolveExecutionSettingsModel, resolveTaskExecutionModel, "executionProvider", "executionModelId", "executionGlobalProvider", "executionGlobalModelId", "modelProvider", "modelId"],
     ["planning", resolvePlanningSettingsModel, resolveTaskPlanningModel, "planningProvider", "planningModelId", "planningGlobalProvider", "planningGlobalModelId", "planningModelProvider", "planningModelId"],
     ["validation", resolveValidatorSettingsModel, resolveTaskValidatorModel, "validatorProvider", "validatorModelId", "validatorGlobalProvider", "validatorGlobalModelId", "validatorModelProvider", "validatorModelId"],
-  ] as const)("resolves %s as task → project → global → selected workflow", (_lane, resolveSettings, resolveTask, projectProviderKey, projectModelKey, globalProviderKey, globalModelKey, taskProviderKey, taskModelKey) => {
+    ["merger", resolveMergerSettingsModel, resolveTaskMergerModel, "mergerProvider", "mergerModelId", "mergerGlobalProvider", "mergerGlobalModelId", "mergerModelProvider", "mergerModelId"],
+  ] as const)("resolves %s as task → selected workflow → project → global", (_lane, resolveSettings, resolveTask, projectProviderKey, projectModelKey, globalProviderKey, globalModelKey, taskProviderKey, taskModelKey) => {
     const settings = {
       [projectProviderKey]: "project-provider",
       [projectModelKey]: "project-model",
@@ -256,16 +287,17 @@ describe("model-resolution", () => {
     };
 
     expect(resolveTask({ [taskProviderKey]: "task-provider", [taskModelKey]: "task-model" }, settings)).toEqual({ provider: "task-provider", modelId: "task-model" });
-    expect(resolveSettings(settings)).toEqual({ provider: "project-provider", modelId: "project-model" });
-    expect(resolveSettings({ ...settings, [projectProviderKey]: undefined, [projectModelKey]: undefined })).toEqual({ provider: "global-provider", modelId: "global-model" });
-    expect(resolveSettings({ ...settings, [projectProviderKey]: undefined, [projectModelKey]: undefined, [globalProviderKey]: undefined, [globalModelKey]: undefined })).toEqual({ provider: "workflow-provider", modelId: "workflow-model" });
+    expect(resolveSettings(settings)).toEqual({ provider: "workflow-provider", modelId: "workflow-model" });
+    expect(resolveSettings({ ...settings, selectedWorkflowModelLanes: {} })).toEqual({ provider: "project-provider", modelId: "project-model" });
+    expect(resolveSettings({ ...settings, selectedWorkflowModelLanes: {}, [projectProviderKey]: undefined, [projectModelKey]: undefined })).toEqual({ provider: "global-provider", modelId: "global-model" });
   });
 
   it.each([
     ["execution", resolveExecutorFallbackModel, "executionFallbackProvider", "executionFallbackModelId"],
     ["planning", resolvePlanningFallbackModel, "planningFallbackProvider", "planningFallbackModelId"],
     ["validation", resolveValidatorFallbackModel, "validatorFallbackProvider", "validatorFallbackModelId"],
-  ] as const)("resolves %s fallback as project → global → selected workflow", (_lane, resolveFallback, projectProviderKey, projectModelKey) => {
+    ["merger", resolveMergerFallbackModel, "mergerFallbackProvider", "mergerFallbackModelId"],
+  ] as const)("resolves %s fallback as selected workflow → project → role global → shared global", (_lane, resolveFallback, projectProviderKey, projectModelKey) => {
     const settings = {
       [projectProviderKey]: "project-provider",
       [projectModelKey]: "project-model",
@@ -277,12 +309,36 @@ describe("model-resolution", () => {
       },
     };
 
-    expect(resolveFallback(settings)).toEqual({ provider: "project-provider", modelId: "project-model" });
-    expect(resolveFallback({ ...settings, [projectProviderKey]: undefined, [projectModelKey]: undefined })).toEqual({ provider: "global-provider", modelId: "global-model" });
-    expect(resolveFallback({ ...settings, [projectProviderKey]: undefined, [projectModelKey]: undefined, fallbackProvider: undefined, fallbackModelId: undefined })).toEqual({ provider: "workflow-provider", modelId: "workflow-model" });
+    expect(resolveFallback(settings)).toEqual({ provider: "workflow-provider", modelId: "workflow-model" });
+    expect(resolveFallback({ ...settings, selectedWorkflowModelLanes: {} })).toEqual({ provider: "project-provider", modelId: "project-model" });
+    expect(resolveFallback({ ...settings, selectedWorkflowModelLanes: {}, [projectProviderKey]: undefined, [projectModelKey]: undefined })).toEqual({ provider: "global-provider", modelId: "global-model" });
   });
 
-  it("resolves merger fallback project pair, global fallback, partial pairs, and test mode", () => {
+  it.each([
+    ["execution", resolveExecutorFallbackModel, "executionGlobalFallbackProvider", "executionGlobalFallbackCredentialInstanceId", "executionGlobalFallbackModelId"],
+    ["planning", resolvePlanningFallbackModel, "planningGlobalFallbackProvider", "planningGlobalFallbackCredentialInstanceId", "planningGlobalFallbackModelId"],
+    ["validation", resolveValidatorFallbackModel, "validatorGlobalFallbackProvider", "validatorGlobalFallbackCredentialInstanceId", "validatorGlobalFallbackModelId"],
+    ["merger", resolveMergerFallbackModel, "mergerGlobalFallbackProvider", "mergerGlobalFallbackCredentialInstanceId", "mergerGlobalFallbackModelId"],
+  ] as const)("uses the %s role-global fallback before the shared fallback", (_role, resolveFallback, providerKey, credentialKey, modelKey) => {
+    expect(resolveFallback({
+      [providerKey]: "role-global-provider",
+      [credentialKey]: "role-global-credential",
+      [modelKey]: "role-global-model",
+      fallbackProvider: "shared-provider",
+      fallbackModelId: "shared-model",
+    })).toEqual({ provider: "role-global-provider", credentialInstanceId: "role-global-credential", modelId: "role-global-model" });
+  });
+
+  it("resolves merger fallback through workflow, project, role-global, and shared-global complete pairs", () => {
+    expect(resolveMergerFallbackModel({
+      selectedWorkflowModelLanes: {
+        mergerFallbackProvider: "workflow-provider",
+        mergerFallbackCredentialInstanceId: "workflow-credential",
+        mergerFallbackModelId: "workflow-model",
+      },
+      mergerFallbackProvider: "project-merger-fallback-provider",
+      mergerFallbackModelId: "project-merger-fallback-model",
+    })).toEqual({ provider: "workflow-provider", credentialInstanceId: "workflow-credential", modelId: "workflow-model" });
     expect(resolveMergerFallbackModel({
       mergerFallbackProvider: "project-merger-fallback-provider",
       mergerFallbackModelId: "project-merger-fallback-model",
@@ -291,9 +347,12 @@ describe("model-resolution", () => {
     })).toEqual({ provider: "project-merger-fallback-provider", modelId: "project-merger-fallback-model" });
     expect(resolveMergerFallbackModel({
       mergerFallbackProvider: "partial-provider",
+      mergerGlobalFallbackProvider: "role-global-provider",
+      mergerGlobalFallbackCredentialInstanceId: "role-global-credential",
+      mergerGlobalFallbackModelId: "role-global-model",
       fallbackProvider: "global-fallback-provider",
       fallbackModelId: "global-fallback-model",
-    })).toEqual({ provider: "global-fallback-provider", modelId: "global-fallback-model" });
+    })).toEqual({ provider: "role-global-provider", credentialInstanceId: "role-global-credential", modelId: "role-global-model" });
     expect(resolveMergerFallbackModel({
       fallbackProvider: "global-fallback-provider",
       fallbackModelId: "global-fallback-model",

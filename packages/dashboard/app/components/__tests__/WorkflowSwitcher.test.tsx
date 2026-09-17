@@ -7,7 +7,6 @@ import { loadAllAppCssBaseOnly } from "../../test/cssFixture";
 import { computeMenuWidth, OPTION_DECORATIONS_WIDTH, WorkflowSwitcher } from "../WorkflowSwitcher";
 import { computeWorkflowStatusCounts, type WorkflowStatusCounts } from "../workflowStatusCounts";
 import { readAppFile } from "../../test/cssFixture";
-import { AlphaProvider, AlphaBoundary } from "../../context/AlphaContext";
 
 const workflows: BoardWorkflowDefinition[] = [
   {
@@ -32,9 +31,15 @@ function cssRuleFor(css: string, selector: string) {
   return css.match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`))?.[1] ?? "";
 }
 
+/*
+FNXC:NativeUiCollections 2026-09-15-00:20:
+The single native switcher sizes its options CONTAINER, which holds the listbox and its sibling edit
+rail, so measuring the listbox element alone no longer reads the computed menu width.
+*/
 function menuWidth() {
   const menu = screen.getByRole("listbox", { name: "Workflow" });
-  return Number.parseFloat(menu.style.width);
+  const sized = menu.closest<HTMLElement>(".workflow-switcher-options") ?? menu;
+  return Number.parseFloat(sized.style.width);
 }
 
 beforeEach(() => {
@@ -269,7 +274,6 @@ describe("WorkflowSwitcher", () => {
 
   it("renders an accessible aggregate option before workflows without an edit shell", () => {
     const onChange = vi.fn();
-    const onEditWorkflow = vi.fn();
     render(
       <WorkflowSwitcher
         workflows={workflows}
@@ -277,7 +281,6 @@ describe("WorkflowSwitcher", () => {
         onChange={onChange}
         counts={countMap([["__all_workflows__", { plan: 4, progress: 3, review: 2, merging: 1 }]])}
         aggregateOption={{ id: "__all_workflows__", name: "All workflows" }}
-        onEditWorkflow={onEditWorkflow}
       />,
     );
 
@@ -288,13 +291,12 @@ describe("WorkflowSwitcher", () => {
     expect(options.map((option) => option.textContent)).toEqual(expect.arrayContaining([expect.stringContaining("All workflows")]));
     expect(options[0]).toHaveAttribute("data-testid", "workflow-switcher-option-__all_workflows__");
     expect(screen.getByTestId("workflow-switcher-option-__all_workflows__")).toHaveAttribute("aria-selected", "true");
-    expect(screen.queryByTestId("workflow-switcher-edit-__all_workflows__")).toBeNull();
-    expect(screen.getByTestId("workflow-switcher-edit-builtin:coding")).toBeInTheDocument();
+    // FN-407: the switcher is selection-only, so NO row — aggregate or real — carries an edit affordance.
+    expect(screen.queryAllByTestId(/^workflow-switcher-edit-/)).toHaveLength(0);
     expect(screen.getByTestId("workflow-switcher-option-__all_workflows__")).toHaveTextContent("4");
 
     fireEvent.click(screen.getByTestId("workflow-switcher-option-design"));
     expect(onChange).toHaveBeenCalledWith("design");
-    expect(onEditWorkflow).not.toHaveBeenCalled();
   });
 
   it("supports keyboard selection of the aggregate option", () => {
@@ -334,77 +336,88 @@ describe("WorkflowSwitcher", () => {
     expect(screen.queryByRole("listbox", { name: "Workflow" })).not.toBeInTheDocument();
   });
 
-  it("renders per-row edit buttons that close without selecting workflows", () => {
+  /*
+  FN-407: the cases that proved per-row "Edit workflow" buttons and a persistent "New workflow" popover
+  footer are DELETED — both affordances were removed from the quick switcher, so a test asserting them
+  guards nothing. They are replaced by the invariant cases below, which assert their absence across every
+  data shape the switcher can render.
+  */
+  it("renders no edit or create affordance for any list shape", () => {
+    const shapes: { name: string; props: Partial<Parameters<typeof WorkflowSwitcher>[0]> }[] = [
+      { name: "single workflow", props: { workflows: [workflows[0]], value: "builtin:coding" } },
+      { name: "populated list", props: { workflows, value: "builtin:coding" } },
+      {
+        name: "aggregate option",
+        props: {
+          workflows,
+          value: "__all_workflows__",
+          aggregateOption: { id: "__all_workflows__", name: "All workflows" },
+        },
+      },
+      {
+        name: "long list",
+        props: {
+          workflows: Array.from({ length: 8 }, (_, index) => ({ id: `workflow-${index}`, name: `Workflow ${index}`, columns: [] })),
+          value: "workflow-0",
+        },
+      },
+    ];
+
+    for (const shape of shapes) {
+      const view = render(
+        <WorkflowSwitcher
+          workflows={workflows}
+          value="builtin:coding"
+          onChange={vi.fn()}
+          counts={countMap()}
+          {...shape.props}
+        />,
+      );
+      fireEvent.click(screen.getByTestId("workflow-switcher"));
+
+      expect(screen.queryAllByTestId(/^workflow-switcher-edit-/), shape.name).toHaveLength(0);
+      expect(screen.queryByTestId("workflow-switcher-create"), shape.name).toBeNull();
+      expect(screen.getAllByRole("option").length, shape.name).toBeGreaterThan(0);
+      view.unmount();
+    }
+  });
+
+  it("leaves no residual edit rail, footer, or orphaned action label in the popover", () => {
+    render(
+      <WorkflowSwitcher
+        workflows={workflows}
+        value="builtin:coding"
+        onChange={vi.fn()}
+        counts={countMap()}
+        aggregateOption={{ id: "__all_workflows__", name: "All workflows" }}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("workflow-switcher"));
+    const menu = document.body.querySelector(".workflow-switcher-menu") as HTMLElement;
+    expect(menu).not.toBeNull();
+
+    expect(menu.querySelector(".workflow-switcher-edit-rail")).toBeNull();
+    expect(menu.querySelector(".workflow-switcher-footer")).toBeNull();
+    expect(menu.querySelector(".workflow-switcher-edit")).toBeNull();
+    expect(menu.querySelector(".workflow-switcher-create")).toBeNull();
+    expect(screen.queryByLabelText(/Edit workflow/i)).toBeNull();
+    expect(screen.queryByRole("button", { name: /New workflow/i })).toBeNull();
+    // No empty button shells: every rendered control in the popover is a selectable option with content.
+    for (const button of Array.from(menu.querySelectorAll("button"))) {
+      expect(button.getAttribute("role")).toBe("option");
+      expect(button.textContent?.trim()).not.toBe("");
+    }
+  });
+
+  it("keeps Enter selection scoped to the highlighted workflow option", () => {
     const onChange = vi.fn();
-    const onEditWorkflow = vi.fn();
     render(
       <WorkflowSwitcher
         workflows={workflows}
         value="builtin:coding"
         onChange={onChange}
         counts={countMap()}
-        onEditWorkflow={onEditWorkflow}
-      />,
-    );
-
-    fireEvent.click(screen.getByTestId("workflow-switcher"));
-    fireEvent.click(screen.getByTestId("workflow-switcher-edit-design"));
-
-    expect(onEditWorkflow).toHaveBeenCalledWith("design");
-    expect(onChange).not.toHaveBeenCalled();
-    expect(screen.queryByRole("listbox", { name: "Workflow" })).not.toBeInTheDocument();
-  });
-
-  it("renders a persistent New workflow footer for single and many workflow lists", () => {
-    const onCreateWorkflow = vi.fn();
-    const { rerender } = render(
-      <WorkflowSwitcher
-        workflows={[workflows[0]]}
-        value="builtin:coding"
-        onChange={vi.fn()}
-        counts={countMap()}
-        onCreateWorkflow={onCreateWorkflow}
-      />,
-    );
-
-    fireEvent.click(screen.getByTestId("workflow-switcher"));
-    expect(screen.getByTestId("workflow-switcher-create")).toBeInTheDocument();
-    fireEvent.click(screen.getByTestId("workflow-switcher-create"));
-    expect(onCreateWorkflow).toHaveBeenCalledTimes(1);
-    expect(screen.queryByRole("listbox", { name: "Workflow" })).not.toBeInTheDocument();
-
-    const manyWorkflows = Array.from({ length: 8 }, (_, index) => ({
-      id: `workflow-${index}`,
-      name: `Workflow ${index}`,
-      columns: [],
-    }));
-    rerender(
-      <WorkflowSwitcher
-        workflows={manyWorkflows}
-        value="workflow-0"
-        onChange={vi.fn()}
-        counts={countMap()}
-        onCreateWorkflow={onCreateWorkflow}
-      />,
-    );
-
-    fireEvent.click(screen.getByTestId("workflow-switcher"));
-    expect(screen.getByTestId("workflow-switcher-create")).toBeInTheDocument();
-    expect(screen.getAllByRole("option")).toHaveLength(manyWorkflows.length);
-  });
-
-  it("keeps Enter selection scoped to highlighted workflow options when actions exist", () => {
-    const onChange = vi.fn();
-    const onEditWorkflow = vi.fn();
-    const onCreateWorkflow = vi.fn();
-    render(
-      <WorkflowSwitcher
-        workflows={workflows}
-        value="builtin:coding"
-        onChange={onChange}
-        counts={countMap()}
-        onEditWorkflow={onEditWorkflow}
-        onCreateWorkflow={onCreateWorkflow}
       />,
     );
 
@@ -414,8 +427,6 @@ describe("WorkflowSwitcher", () => {
     fireEvent.keyDown(trigger, { key: "Enter" });
 
     expect(onChange).toHaveBeenCalledWith("design");
-    expect(onEditWorkflow).not.toHaveBeenCalled();
-    expect(onCreateWorkflow).not.toHaveBeenCalled();
   });
 
   it("renders populated and zero counts only after the dropdown expands", () => {
@@ -562,25 +573,21 @@ describe("WorkflowSwitcher", () => {
     }
   });
 
-  it("keeps Alpha workflow selection and row editing as separate actions", async () => {
+  /*
+  FN-407: this case proved that row editing was a separate Tab-reachable action beside selection. Row editing
+  no longer exists in the switcher, so what remains to guard is that the listbox is the popover's only
+  interactive collection and arrow navigation still crosses rows.
+  */
+  it("keeps the listbox as the only navigable collection in the popover", async () => {
     const onChange = vi.fn();
-    const onEdit = vi.fn();
-    render(<AlphaProvider enabled><AlphaBoundary><WorkflowSwitcher workflows={workflows} value="builtin:coding" onChange={onChange} counts={countMap()} onEditWorkflow={onEdit} /></AlphaBoundary></AlphaProvider>);
+    render(<WorkflowSwitcher workflows={workflows} value="builtin:coding" onChange={onChange} counts={countMap()} />);
     fireEvent.click(screen.getByTestId("workflow-switcher"));
     const firstOption = screen.getByTestId("workflow-switcher-option-builtin:coding");
     const option = screen.getByTestId("workflow-switcher-option-design");
-    const edit = screen.getByTestId("workflow-switcher-edit-design");
-    expect(option).not.toContainElement(edit);
     firstOption.focus();
     await userEvent.keyboard("{ArrowDown}");
     expect(option).toHaveFocus();
-    await userEvent.tab();
-    expect(screen.getByTestId("workflow-switcher-edit-builtin:coding")).toHaveFocus();
-    fireEvent.click(edit);
-    expect(onEdit).toHaveBeenCalledWith("design");
-    expect(onChange).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByTestId("workflow-switcher"));
-    await userEvent.click(screen.getByTestId("workflow-switcher-option-design"));
+    await userEvent.click(option);
     expect(onChange).toHaveBeenCalledWith("design");
   });
 

@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useMemo, useRef, type KeyboardEvent } from "react";
 import { fetchTasks, searchFiles } from "../api";
+import { getTaskTitleDisplayText } from "../utils/taskTitleDisplay";
 import type { Column } from "@fusion/core";
 
 export interface FileSearchItem {
@@ -215,9 +216,14 @@ export function useFileMention(options: UseFileMentionOptions = {}): UseFileMent
         }
 
         const nextTasks = taskResult.status === "fulfilled"
+          /*
+          FNXC:TaskTitleDisplay 2026-09-14-17:05:
+          FN-391: an untitled task used to mention as an empty label. Resolve it through the shared
+          projection so a mention row carries the same text the board card shows.
+          */
           ? taskResult.value.slice(0, MAX_TASK_RESULTS).map((task) => ({
               id: task.id,
-              title: task.title ?? "",
+              title: getTaskTitleDisplayText(task),
               column: task.column as Column,
             }))
           : [];

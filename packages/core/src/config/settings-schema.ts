@@ -115,31 +115,7 @@ type MovedProjectSettingsKey =
   | "reviewConvergenceEscalationModelId"
   | "reviewArbitrationEnabled"
   | "reviewArbitrationProvider"
-  | "reviewArbitrationModelId"
-  | "executionProvider"
-  | "executionCredentialInstanceId"
-  | "executionModelId"
-  | "executionThinkingLevel"
-  | "executionFallbackProvider"
-  | "executionFallbackCredentialInstanceId"
-  | "executionFallbackModelId"
-  | "executionFallbackThinkingLevel"
-  | "planningProvider"
-  | "planningCredentialInstanceId"
-  | "planningModelId"
-  | "planningThinkingLevel"
-  | "planningFallbackProvider"
-  | "planningFallbackCredentialInstanceId"
-  | "planningFallbackModelId"
-  | "planningFallbackThinkingLevel"
-  | "validatorProvider"
-  | "validatorCredentialInstanceId"
-  | "validatorModelId"
-  | "validatorThinkingLevel"
-  | "validatorFallbackProvider"
-  | "validatorFallbackCredentialInstanceId"
-  | "validatorFallbackModelId"
-  | "validatorFallbackThinkingLevel";
+  | "reviewArbitrationModelId";
 
 type NonDefaultProjectSettingsKey = "ephemeralAgentTaskCreationPolicy" | "selectedWorkflowModelLanes";
 type ProjectSettingsSchema = Omit<ProjectSettings, MovedProjectSettingsKey | NonDefaultProjectSettingsKey>;
@@ -182,6 +158,12 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   New users and unset installs should start on Shadcn Ember. Existing users who explicitly stored colorTheme "default", "ocean", or another valid theme must remain on that selection, so the ids stay valid and only the absence/default seed changes to "shadcn-ember".
   */
   colorTheme: "shadcn-ember",
+  /*
+  FNXC:UiStyleAxis 2026-09-15-00:20:
+  FN-399 adds the independent interface-style axis. "classic" is the seeded default so upgrading an
+  existing install changes no shape; the "clean" grammar is opt-in and never implied by a colour choice.
+  */
+  uiStyle: "classic",
   shadcnCustomColors: undefined,
   dashboardFontScalePct: 100,
   /*
@@ -200,16 +182,23 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   */
   localNetworkDiscoveryEnabled: true,
   /*
-  FNXC:DashboardShortcuts 2026-07-04-00:00:
-  Global dashboard shortcuts must hydrate with documented safe defaults even when old settings files are missing the object. Space opens Quick Chat; Ctrl+` opens Terminal without colliding with common browser find/search accelerators. FN-7553 adds openFiles (Ctrl+E), openSettings (Ctrl+,), openCommandCenter (Ctrl+K), and newTask (Ctrl+Shift+N) — chosen to avoid colliding with the base two or each other. Empty strings are preserved so operators can disable an action.
+  FNXC:DashboardShortcuts 2026-09-14-10:42:
+  FN-390 makes modal visibility a generic, explicitly configured action. Its empty default prevents a dashboard modal from being chosen implicitly; the remaining documented shortcuts retain their existing defaults. Empty strings are preserved so operators can disable any action.
   */
   dashboardKeyboardShortcuts: {
-    quickChat: "Space",
+    toggleModalVisibility: "",
     terminal: "Ctrl+`",
     openFiles: "Ctrl+E",
     openSettings: "Ctrl+,",
     openCommandCenter: "Ctrl+K",
     newTask: "Ctrl+Shift+N",
+    /*
+    FNXC:DashboardShortcuts 2026-09-16-02:27:
+    FN-441: Ctrl+Shift+L opens the chat list. It avoids every binding already taken here (Ctrl+`, Ctrl+E,
+    Ctrl+, , Ctrl+K, Ctrl+Shift+N) and the browser-reserved combinations (Ctrl+Shift+C/I/J/K devtools,
+    Ctrl+Shift+N private window), so the shipped default set stays conflict-free.
+    */
+    openChatList: "Ctrl+Shift+L",
   },
   /*
   FNXC:ModalDismissal 2026-06-29-00:00:
@@ -367,16 +356,32 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   */
   useOmpCli: undefined,
   ompCliBinaryPath: undefined,
-  // Global baseline lanes for per-role model selection
+  /*
+  FNXC:ModelResolution 2026-09-14-19:07:
+  Each global pipeline role owns a complete primary and fallback lane, including account and
+  thinking companions. The shared fallback remains the final compatibility tier only.
+  */
   executionGlobalProvider: undefined,
   executionGlobalCredentialInstanceId: undefined,
   executionGlobalModelId: undefined,
+  executionGlobalFallbackProvider: undefined,
+  executionGlobalFallbackCredentialInstanceId: undefined,
+  executionGlobalFallbackModelId: undefined,
+  executionGlobalFallbackThinkingLevel: undefined,
   planningGlobalProvider: undefined,
   planningGlobalCredentialInstanceId: undefined,
   planningGlobalModelId: undefined,
+  planningGlobalFallbackProvider: undefined,
+  planningGlobalFallbackCredentialInstanceId: undefined,
+  planningGlobalFallbackModelId: undefined,
+  planningGlobalFallbackThinkingLevel: undefined,
   validatorGlobalProvider: undefined,
   validatorGlobalCredentialInstanceId: undefined,
   validatorGlobalModelId: undefined,
+  validatorGlobalFallbackProvider: undefined,
+  validatorGlobalFallbackCredentialInstanceId: undefined,
+  validatorGlobalFallbackModelId: undefined,
+  validatorGlobalFallbackThinkingLevel: undefined,
   titleSummarizerGlobalProvider: undefined,
   titleSummarizerGlobalCredentialInstanceId: undefined,
   titleSummarizerGlobalModelId: undefined,
@@ -387,6 +392,10 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   mergerGlobalProvider: undefined,
   mergerGlobalCredentialInstanceId: undefined,
   mergerGlobalModelId: undefined,
+  mergerGlobalFallbackProvider: undefined,
+  mergerGlobalFallbackCredentialInstanceId: undefined,
+  mergerGlobalFallbackModelId: undefined,
+  mergerGlobalFallbackThinkingLevel: undefined,
   /*
   FNXC:GitHubImportTranslate 2026-07-15-09:30:
   Global import-translate baseline lane. Undefined falls through to the summarization lane then defaultProvider/defaultModelId at resolve time.
@@ -637,17 +646,17 @@ export const DEFAULT_PROJECT_SETTINGS = {
   testCommand: undefined,
   buildCommand: undefined,
   showWorktreeGrouping: false,
-  openTasksInRightSidebar: false,
   /*
-  FNXC:MobileTaskPopups 2026-07-01-12:00:
-  Default off preserves current board-card task detail behavior. The dashboard only consults this project setting for ordinary board-card clicks without a deep tab across mobile, tablet, and desktop viewports, and reuses the existing task pop-out surface before falling back to right-dock or main-panel routing.
+  FNXC:TaskDetailDefaultTab 2026-09-16-02:53:
+  FN-442 removes `openTasksInRightSidebar` and `openMobileTasksInPopup`: opening a task from the board or the list is
+  now unconditionally the floating task window, so there is nothing left to opt into. The main panel survives only as
+  the mobile-drawer fallback. Historical stored values are unknown to the schema — neither applied nor rewritten.
   */
-  openMobileTasksInPopup: false,
   /*
-  FNXC:TaskPopupViewGating 2026-07-15-15:20:
-  FN-8016 defaults task-detail popups to their opening view on every dashboard surface. Explicit false retains globally shared popup behavior for operators who need it; hidden popups preserve snapshots and shared persisted geometry.
+  FNXC:TaskWindowIdentity 2026-09-14-17:46:
+  FN-392 removed `taskPopupsBoardListOnly`: task windows are permanently project-scoped, so the key is absent from the
+  project defaults and therefore from PROJECT_SETTINGS_KEYS. A historical stored value is ignored and never rewritten.
   */
-  taskPopupsBoardListOnly: true,
   /*
   FNXC:TaskCardCostBadge 2026-07-11-12:15:
   Default off preserves existing board-card density. When true, the dashboard may render a read-time derived cost badge only for tasks with positive token usage; unavailable pricing remains the guess-free “—” sentinel.
@@ -659,10 +668,28 @@ export const DEFAULT_PROJECT_SETTINGS = {
   */
   chatMessageLayout: "bubbles",
   /*
-  FNXC:TaskDetailActivityFirst 2026-06-30-23:59:
-  Project task-detail defaults are Activity-first unless this opt-in is true. Keeping the default false preserves explicit deep-link ids while making omitted non-done task opens land on Activity → Live.
+  FNXC:Navigation 2026-09-15-14:41:
+  FN-419 seeds the historical bottom-footer placement so upgraded projects keep their current menu position. Only an
+  explicit "sidebar" choice moves the primary menu (plus the engine control and Terminal action) into the left column,
+  and the two surfaces can never be shown at the same time.
   */
-  taskDetailChatFirst: false,
+  navigationPlacement: "footer",
+  /*
+  FNXC:RightSidebarOptional 2026-09-15-16:04:
+  FN-426 makes the right tool dock optional and default-OFF: every tool it hosted has a dedicated access elsewhere
+  (Git and Files pages, Activity and Notes header popovers, Chat footer list, Board/List header toggle, Secrets in
+  project settings, Pull Requests inside Git). Operators can still switch it back on, where it keeps only
+  Files/Chat/List/Notes.
+  */
+  rightSidebarEnabled: false,
+  /*
+  FNXC:TaskDetailDefaultTab 2026-09-16-02:53:
+  FN-442 replaces the boolean `taskDetailChatFirst` with one three-value project choice that carries BOTH the landing
+  tab of task opens with no explicit tab AND the head order of the task-detail tab bar. `activity` is the historical
+  default, so new and upgraded projects are unchanged; a legacy persisted `taskDetailChatFirst === true` is read as a
+  compatibility fallback only (see `normalizeTaskDetailDefaultTab`) and is never written back.
+  */
+  taskDetailDefaultTab: "activity",
   executorAllowSiblingBranchRename: false,
   worktrunk: {
     enabled: false,
@@ -678,10 +705,37 @@ export const DEFAULT_PROJECT_SETTINGS = {
   commitAuthorEnabled: true,
   commitAuthorName: "Fusion",
   commitAuthorEmail: "noreply@runfusion.ai",
-  // Per-phase model lanes (planning/execution/validator) MOVED to workflow
-  // settings (U4) — see MOVED_SETTINGS_KEYS. The GLOBAL baseline lanes
-  // (executionGlobalProvider etc.) stay global; project default overrides stay.
-  // Project-level default override (NOT moved — stays project-scoped)
+  /*
+  FNXC:ModelResolution 2026-09-14-19:07:
+  Project role lanes are persisted directly with the project. They may share declaration names with
+  workflow lanes, but must never be stored beneath a workflow identity because workflow publication
+  or default-workflow changes cannot be allowed to detach project model choices.
+  */
+  planningProvider: undefined,
+  planningCredentialInstanceId: undefined,
+  planningModelId: undefined,
+  planningThinkingLevel: undefined,
+  planningFallbackProvider: undefined,
+  planningFallbackCredentialInstanceId: undefined,
+  planningFallbackModelId: undefined,
+  planningFallbackThinkingLevel: undefined,
+  executionProvider: undefined,
+  executionCredentialInstanceId: undefined,
+  executionModelId: undefined,
+  executionThinkingLevel: undefined,
+  executionFallbackProvider: undefined,
+  executionFallbackCredentialInstanceId: undefined,
+  executionFallbackModelId: undefined,
+  executionFallbackThinkingLevel: undefined,
+  validatorProvider: undefined,
+  validatorCredentialInstanceId: undefined,
+  validatorModelId: undefined,
+  validatorThinkingLevel: undefined,
+  validatorFallbackProvider: undefined,
+  validatorFallbackCredentialInstanceId: undefined,
+  validatorFallbackModelId: undefined,
+  validatorFallbackThinkingLevel: undefined,
+  // Project-level default override (stays project-scoped)
   defaultProviderOverride: undefined,
   defaultCredentialInstanceIdOverride: undefined,
   defaultModelIdOverride: undefined,
@@ -985,14 +1039,12 @@ export const DEFAULT_PROJECT_SETTINGS = {
   reflectionIntervalMs: 3_600_000,
   reflectionAfterTask: true,
   // reviewHandoffPolicy MOVED to workflow settings (U4) — see MOVED_SETTINGS_KEYS.
-  quickChatButtonMode: "off",
-  mobileNavPrimaryItems: ["command-center", "tasks", "agents", "missions", "chat", "mailbox"],
   /*
-  FNXC:ChatModal 2026-06-28-00:00:
-  Quick Chat outside-click dismissal remains default-on for upgrades, but it is now a project setting so operators can disable accidental board-click closes.
+  FNXC:Navigation 2026-09-16-04:15:
+  FN-446 : cette clé pilote désormais la rangée d'accès rapide de la barre de navigation partagée (max 5 + « More »).
+  Le défaut retire Agents de l'accès direct ; la clé est réutilisée telle quelle pour préserver les préférences persistées.
   */
-  quickChatCloseOnOutsideClick: true,
-  showQuickChatFAB: false,
+  mobileNavPrimaryItems: ["command-center", "tasks", "planning", "missions", "mailbox"],
   /*
   FNXC:ChatModal 2026-07-01-00:00:
   Task-scoped planner chats stay available from each task's Chat tab, but the common Chat feed hides them by default. This project-level opt-in preserves the previous populated-task-chat feed behavior only for operators who request it.

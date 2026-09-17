@@ -139,6 +139,10 @@ pgDescribe("U12 taskstore-persistence (PostgreSQL)", () => {
         perModel: [{ provider: "anthropic", modelId: "claude", inputTokens: 10 }],
       },
       columnDwellMs: { todo: 125, "in-progress": 250 },
+      /* FN-457: durable paused-time accounting must round-trip, including an explicit 0 that a
+         `?? undefined` write path would silently drop. */
+      cumulativePausedMs: 0,
+      pausedStartedAt: "2026-01-01T00:03:00Z",
       workflowTransitionNotification,
       plannerOversightLevel: "observe",
       awaitingApprovalReason: "plan-review-replan-cap",
@@ -157,6 +161,8 @@ pgDescribe("U12 taskstore-persistence (PostgreSQL)", () => {
       { provider: "anthropic", modelId: "claude", inputTokens: 10 },
     ]);
     expect(row!.columnDwellMs).toEqual({ todo: 125, "in-progress": 250 });
+    expect(row!.cumulativePausedMs).toBe(0);
+    expect(row!.pausedStartedAt).toBe("2026-01-01T00:03:00Z");
     expect(row!.workflowTransitionNotification).toEqual(workflowTransitionNotification);
     expect(row!.plannerOversightLevel).toBe("observe");
     expect(row!.awaitingApprovalReason).toBe("plan-review-replan-cap");

@@ -132,6 +132,13 @@ export interface MessageMetadata extends Record<string, unknown> {
   mailKind?: MailKind;
   report?: MailReport;
   approvalRequestId?: string;
+  /*
+  FNXC:MailboxSubject 2026-09-15-04:40:
+  Every mail must carry an author AND a subject. `subject` is the author's explicit subject line;
+  it stays OPTIONAL because legacy persisted rows and existing system producers have none, and
+  those rows must remain valid and readable — surfaces derive a display subject instead.
+  */
+  subject?: string;
 }
 
 /** Message record stored in the system */

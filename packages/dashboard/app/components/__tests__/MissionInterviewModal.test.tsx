@@ -153,7 +153,6 @@ describe("MissionInterviewModal", () => {
     mockForceAcquireSessionLock.mockResolvedValue({ acquired: true, currentHolder: null });
     mockFetchModels.mockResolvedValue({ models: [], favoriteProviders: [], favoriteModels: [] });
     mockFetchSettings.mockResolvedValue({ defaultThinkingLevel: "off" });
-    localStorage.removeItem("floating-window:mission-interview");
     vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback: FrameRequestCallback) => {
       callback(0);
       return 1;
@@ -182,11 +181,6 @@ describe("MissionInterviewModal", () => {
     Object.defineProperty(window, "innerHeight", { configurable: true, value: height });
   }
 
-  function stubPointerCapture(element: HTMLElement) {
-    Object.defineProperty(element, "setPointerCapture", { configurable: true, value: vi.fn() });
-    Object.defineProperty(element, "releasePointerCapture", { configurable: true, value: vi.fn() });
-  }
-
   it("renders the configured thinking level as the mission interview default", async () => {
     mockFetchSettings.mockResolvedValue({ defaultThinkingLevel: "high" });
 
@@ -197,67 +191,62 @@ describe("MissionInterviewModal", () => {
     });
   });
 
-  it("renders mission interview inside a floating desktop workspace", () => {
-    setViewport(1200, 900);
+  /*
+  FNXC:MissionInterviewMainContent 2026-09-14-21:32:
+  Plan Mission with AI is an embedded main-content surface. Desktop and mobile share the same embedded panel:
+  no floating window host, no drag/resize handles, no dialog semantics and no persisted geometry.
+  */
+  it.each([
+    ["desktop", 1200, 900],
+    ["mobile", 375, 800],
+  ])("renders an embedded main-content panel at the %s viewport", (_label, width, height) => {
+    setViewport(width, height);
 
     renderModal();
 
-    const panel = screen.getByTestId("floating-window-mission-interview");
-    expect(panel).toHaveClass("floating-window--mission-interview");
-    expect(panel).toHaveClass("floating-window--headerless");
-    expect(panel.style.width).toBe("760px");
-    expect(panel.style.height).toBe("680px");
-    expect(screen.queryByTestId("floating-window-drag-handle-mission-interview")).toBeNull();
-    expect(screen.getByText("Plan Mission with AI").closest(".mission-interview-modal__drag-handle")).toBeTruthy();
+    const panel = screen.getByTestId("mission-interview-panel");
+    expect(panel).toHaveClass("mission-interview-panel");
+    expect(panel.querySelector(".mission-interview-modal")).toBeTruthy();
     expect(screen.getAllByRole("button", { name: "Close" })).toHaveLength(1);
+
+    expect(screen.queryByTestId("floating-window-mission-interview")).toBeNull();
+    expect(screen.queryByTestId("floating-window-resize-se")).toBeNull();
+    expect(screen.queryByTestId("floating-window-drag-handle-mission-interview")).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.querySelector("[aria-modal]")).toBeNull();
   });
 
-  it("drags and resizes the desktop mission floating window while clamping geometry", async () => {
-    setViewport(1200, 1000);
-
+  it("leaves no floating-window shell behind", () => {
     renderModal();
 
-    const panel = screen.getByTestId("floating-window-mission-interview");
-    const header = screen.getByText("Plan Mission with AI").closest(".mission-interview-modal__drag-handle") as HTMLElement;
-    stubPointerCapture(panel);
+    expect(document.querySelector(".mission-interview-modal__drag-handle")).toBeNull();
+    expect(document.querySelector("[class*='floating-window']")).toBeNull();
+    expect(localStorage.getItem("floating-window:mission-interview")).toBeNull();
 
-    const initialLeft = Number.parseFloat(panel.style.left);
-    const initialTop = Number.parseFloat(panel.style.top);
+    expect(missionInterviewCss).not.toContain(".floating-window--mission-interview");
+    expect(missionInterviewCss).not.toContain("mission-interview-modal__drag-handle");
+    expect(missionInterviewCss).toContain(".mission-interview-panel {");
+    expect(missionInterviewCss).toContain(".mission-interview-panel .mission-interview-modal {");
+  });
 
-    act(() => {
-      fireEvent.pointerDown(header, { pointerId: 7, clientX: 120, clientY: 80 });
-      fireEvent.pointerMove(panel, { pointerId: 7, clientX: 220, clientY: 140 });
-      fireEvent.pointerUp(panel, { pointerId: 7, clientX: 220, clientY: 140 });
+  it("renders the Send to background action in resume mode", async () => {
+    renderModal({ showSendToBackgroundButton: true });
+
+    fireEvent.change(screen.getByLabelText("What do you want to build?"), {
+      target: { value: "Build a mission planning workflow" },
     });
+    fireEvent.click(screen.getByText("Start Interview"));
 
     await waitFor(() => {
-      expect(Number.parseFloat(panel.style.left)).toBeGreaterThan(initialLeft);
-      expect(Number.parseFloat(panel.style.top)).toBeGreaterThan(initialTop);
+      expect(streamHandlers).toBeDefined();
     });
-
-    const resizeHandle = screen.getByTestId("floating-window-resize-se") as HTMLElement;
-    stubPointerCapture(resizeHandle);
 
     act(() => {
-      fireEvent.pointerDown(resizeHandle, { pointerId: 8, clientX: 700, clientY: 600 });
-      fireEvent.pointerMove(resizeHandle, { pointerId: 8, clientX: 3000, clientY: 3000 });
-      fireEvent.pointerUp(resizeHandle, { pointerId: 8, clientX: 3000, clientY: 3000 });
+      streamHandlers.onQuestion?.(SAMPLE_QUESTION);
     });
 
-    expect(Number.parseFloat(panel.style.width)).toBeLessThanOrEqual(1200);
-    expect(Number.parseFloat(panel.style.height)).toBeLessThanOrEqual(1000);
-    expect(Number.parseFloat(panel.style.width)).toBeGreaterThanOrEqual(560);
-    expect(Number.parseFloat(panel.style.height)).toBeGreaterThanOrEqual(420);
-  });
-
-  it("keeps mobile mission planning full-screen and hides resize handles by CSS contract", () => {
-    const mobileBlock = missionInterviewCss.match(/@media\s*\(max-width:\s*768px\)\s*\{[\s\S]*?\.floating-window--mission-interview \.mission-interview-modal\s*\{[\s\S]*?\n\}/)?.[0];
-
-    expect(mobileBlock).toContain(".floating-window--mission-interview");
-    expect(mobileBlock).toContain("width: 100vw !important;");
-    expect(mobileBlock).toContain("height: 100dvh !important;");
-    expect(mobileBlock).toContain(".floating-window--mission-interview .floating-window__resize-handle");
-    expect(mobileBlock).toContain("display: none;");
+    expect(screen.getByRole("button", { name: "Send to background" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   /*
@@ -989,12 +978,12 @@ describe("MissionInterviewModal", () => {
     expect(mockCancelMissionInterview).not.toHaveBeenCalled();
   });
 
-  it("does not render a blocking backdrop click target around the floating workspace", () => {
+  it("does not render a blocking backdrop click target around the embedded panel", () => {
     const { onClose } = renderModal();
-    const overlay = screen.getByRole("dialog");
+    const panel = screen.getByTestId("mission-interview-panel");
 
-    fireEvent.mouseDown(overlay);
-    fireEvent.click(overlay);
+    fireEvent.mouseDown(panel);
+    fireEvent.click(panel);
 
     expect(onClose).not.toHaveBeenCalled();
     expect(mockCancelMissionInterview).not.toHaveBeenCalled();

@@ -703,8 +703,15 @@
 FNXC:ViewportChrome 2026-08-03-00:13:
 ProjectSelector.css loads after ExecutorStatusBar.css, so reassert the desktop footer token for tablet/desktop mode after the mobile width override above — otherwise mid-tablet still reserves the taller mobile footer while the bar sits at bottom:0. Also un-hide the project selector for tablet-class ≤768 CSS px (width media hid it with true phones).
 */
-html:is([data-viewport-mode="tablet"], [data-viewport-mode="desktop"]) .project-content--with-footer,
-html:is([data-viewport-mode="tablet"], [data-viewport-mode="desktop"]) .dashboard-project-shell {
+/*
+FNXC:ViewportChrome 2026-09-16-19:44:
+FN-468 : le jeton de pied de page large suit la frontière du shell et ne s'applique plus qu'à partir de 1024 px.
+Le sélecteur de projet, lui, N'EST PAS une surface de navigation primaire : le Header continue de le rendre au-dessus
+de la bande téléphone, donc son bras d'affichage garde volontairement la tablette. Le déplacement de frontière change
+la propriété de la navigation, pas l'accès au changement de projet.
+*/
+html[data-viewport-mode="desktop"] .project-content--with-footer,
+html[data-viewport-mode="desktop"] .dashboard-project-shell {
   --executor-footer-height: 36px;
 }
 
@@ -712,7 +719,7 @@ html:is([data-viewport-mode="tablet"], [data-viewport-mode="desktop"]) .project-
   display: inline-flex;
 }
 
-html[data-viewport-mode="mobile"] .project-content--with-footer {
+html:is([data-viewport-mode="mobile"], [data-viewport-mode="tablet"]) .project-content--with-footer {
   --executor-footer-height: calc(var(--space-lg) * 2 + var(--space-xs));
 }
 

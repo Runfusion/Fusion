@@ -22,6 +22,17 @@ vi.mock("../ComposeChatPanel", () => ({ ComposeChatPanel: () => null }));
 
 import * as api from "../../api";
 
+/*
+FNXC:MailboxTwoTabs 2026-09-16-16:53:
+Archived, Completions and Agents are inbox SCOPES now, chosen from the single header filter button
+instead of their own tabs. Every former tab gesture in this suite goes through this one helper.
+*/
+async function selectInboxScope(scope: string, user: { click: (element: Element) => Promise<void> }) {
+  await user.click(await screen.findByTestId("mailbox-inbox-filter"));
+  await user.click(await screen.findByTestId(`mailbox-inbox-filter-option-${scope}`));
+}
+
+
 const ordinaryMessage: Message = {
   id: "ordinary",
   fromId: "agent-1",
@@ -129,7 +140,7 @@ describe("inbox category surfaces", () => {
     const user = userEvent.setup({ delay: null, pointerEventsCheck: 0 });
     renderHost(Host);
 
-    await user.click(await screen.findByTestId("mailbox-tab-archived"));
+    await selectInboxScope("archived", user);
     const archivedNotice = await screen.findByTestId("mailbox-item-recommendation-notice");
     expect(archivedNotice).toBeInTheDocument();
     await user.click(archivedNotice);

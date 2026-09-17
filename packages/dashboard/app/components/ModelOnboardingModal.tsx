@@ -2612,7 +2612,6 @@ export function ModelOnboardingModal({
       className="floating-window--model-onboarding"
       defaultSize={{ width: 720, height: 640 }}
       minSize={{ width: 360, height: 280 }}
-      persistGeometryKey="floating-window:model-onboarding"
       suspendGeometryPersistenceOnMobile
       suspendGeometryPersistenceOnShortViewport
       ariaLabel={t("setup.titleAiSetup", "Set Up AI")}

@@ -24,8 +24,46 @@ import {
   isCompleteColumnRole,
   isReviewColumnRole,
   isWipColumnRole,
-isFieldEditableColumnRole, isIntakeColumnRole, isPreImplementationColumnRole
+isDescriptionEditableColumnRole, isFieldEditableColumnRole, isIntakeColumnRole, isPreImplementationColumnRole
 } from "../utils/columnRoles";
+
+/*
+FNXC:TaskDescriptionEditing 2026-09-14-18:55:
+FN-391 splits DESCRIPTION editing from generic field editing. The two rules must stay genuinely
+different: a released card keeps its settings editable while its description freezes. These cases
+pin both halves together so a future "simplification" that merges them fails here.
+*/
+describe("isDescriptionEditableColumnRole", () => {
+  it("grants editing only for a manual-intake column, not for an auto-triaging intake or a hold", () => {
+    expect(isDescriptionEditableColumnRole({ intake: true, manualIntake: true }, "backlog")).toBe(true);
+    expect(isDescriptionEditableColumnRole({ intake: true }, "backlog")).toBe(false);
+    expect(isDescriptionEditableColumnRole({ hold: true }, "waiting")).toBe(false);
+  });
+
+  it("lets any terminal, WIP or review trait veto a column that also declares manual intake", () => {
+    expect(isDescriptionEditableColumnRole({ manualIntake: true, complete: true }, "shipped")).toBe(false);
+    expect(isDescriptionEditableColumnRole({ manualIntake: true, countsTowardWip: true }, "building")).toBe(false);
+    expect(isDescriptionEditableColumnRole({ manualIntake: true, mergeBlocker: true }, "signoff")).toBe(false);
+    expect(isDescriptionEditableColumnRole({ manualIntake: true, humanReview: true }, "signoff")).toBe(false);
+  });
+
+  it("falls back to the legacy `ideas` id ONLY when no traits resolved", () => {
+    // First paint, and a card stranded in a column its workflow no longer declares.
+    expect(isDescriptionEditableColumnRole(undefined, "ideas")).toBe(true);
+    expect(isDescriptionEditableColumnRole(undefined, "todo")).toBe(false);
+    expect(isDescriptionEditableColumnRole(undefined, "triage")).toBe(false);
+    expect(isDescriptionEditableColumnRole(undefined, "backlog")).toBe(false);
+  });
+
+  it("is strictly narrower than generic field editing, which keeps the other settings reachable", () => {
+    // A released planning/hold lane: settings stay editable, the description does not.
+    expect(isFieldEditableColumnRole({ hold: true }, "waiting")).toBe(true);
+    expect(isDescriptionEditableColumnRole({ hold: true }, "waiting")).toBe(false);
+
+    expect(isFieldEditableColumnRole(undefined, "todo")).toBe(true);
+    expect(isDescriptionEditableColumnRole(undefined, "todo")).toBe(false);
+  });
+});
 
 describe("isIntakeColumnRole", () => {
   it("uses the intake TRAIT when the column resolved", () => {

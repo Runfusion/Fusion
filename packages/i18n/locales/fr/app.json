@@ -1155,7 +1155,8 @@
     "disableHeartbeatsCountHint": "Désactiver {{count}} battements activés",
     "bulkFailures": "{{count}} échecs",
     "detailLabel": "",
-    "lastCompletedStep": ""
+    "lastCompletedStep": "",
+    "mailSubject": "Objet"
   },
   "app": {
     "backendError": {
@@ -1251,13 +1252,12 @@
   "chat": {
     "archive": "Archiver",
     "attachFiles": "Joindre des fichiers",
+    "backToConversations": "",
     "cancel": "Annuler",
     "cancelButton": "Annuler",
     "clearConversationFailed": "Échec de l'effacement de la conversation",
-    "closeQuickChat": "Fermer le chat rapide",
     "openInNewWindow": "Ouvrir dans une nouvelle fenêtre",
     "windowOpen": "Ouvert",
-    "windowMinimized": "Réduit",
     "conversationArchived": "Conversation archivée",
     "conversationDeleted": "Conversation supprimée",
     "conversationName": "",
@@ -1305,17 +1305,14 @@
     "modeModel": "Modèle",
     "newChat": "Nouvelle discussion",
     "newChatOpenInNewWindowHint": "Ctrl/Cmd + clic pour ouvrir la nouvelle conversation dans une fenêtre séparée",
-    "newChatModeAgent": "Agent",
     "newChatModeModel": "Modèle",
     "newChatTitle": "Nouvelle discussion",
-    "noAgentsAvailable": "Aucun agent disponible",
     "noConversationsYet": "Aucune conversation",
     "noMessages": "Aucun message",
     "noMessagesYet": "Aucun message pour l'instant. Démarrez la conversation !",
     "noRoomsYet": "Aucun salon pour l'instant.",
     "noSkillsAvailable": "Aucune compétence disponible",
     "noSkillsFound": "Aucune compétence trouvée",
-    "openQuickChat": "Ouvrir le chat rapide",
     "preserveToStash": "",
     "preserveToStashDone": "",
     "preserveToStashFailed": "",
@@ -1342,7 +1339,6 @@
     "forcePending": "Forcer l’envoi du message en attente",
     "forcePendingShort": "Forcer l’envoi",
     "pendingEditEmpty": "Les messages en attente ne peuvent pas être vides",
-    "quickChatTitle": "Chat rapide",
     "relativeTimeDays_one": "",
     "relativeTimeDays_other": "",
     "relativeTimeHours_one": "",
@@ -1420,7 +1416,6 @@
     "contextWindowPendingAria": "",
     "contextWindowPendingValue": "",
     "noMessage": "",
-    "modelAgentSection": "Model / Agent",
     "thinkingLevelSection": "Thinking level",
     "noModelsAvailable": "No models available",
     "currentAgentTarget": "Current agent: {{name}}",
@@ -1431,8 +1426,6 @@
     "quoteMessage": "Citer le message",
     "agentRepliesFailed": "Certains agents n’ont pas pu répondre : {{agents}}",
     "noDefaultModelConfigured": "Configurez un modèle de chat par défaut dans les Paramètres avant de créer une conversation.",
-    "minimizeAllChats": "Réduire tous les chats",
-    "restoreAllChats": "Restaurer tous les chats",
     "slashSuggestions": "Suggestions de barre oblique",
     "loadingSlashSuggestions": "Chargement des suggestions…",
     "snippetSuggestion": "Insérer le prompt enregistré",
@@ -2051,7 +2044,10 @@
     "reportTitle": "",
     "sectionBody": "",
     "sectionHeading": "",
-    "selectStructure": ""
+    "selectStructure": "",
+    "subject": "Objet",
+    "subjectPlaceholder": "Objet court (facultatif)",
+    "subjectTooLong": "L'objet ne doit pas dépasser 200 caractères"
   },
   "confirm": {
     "cancel": "Annuler",
@@ -3514,7 +3510,6 @@
     "outbox": "Boîte d'envoi",
     "outboxTab": "Boîte d'envoi",
     "pending": "En attente",
-    "refreshTitle": "Actualiser",
     "reply": "Répondre",
     "replyButton": "Répondre",
     "replyingTo": "Répondre à {{preview}}",
@@ -3576,7 +3571,20 @@
     "completionImages": "Images de fin de tâche",
     "completionImage": "Image de fin de tâche",
     "suggestedRecommendations": "Recommandations suggérées",
-    "noSuggestedRecommendations": "Aucune recommandation de suivi n’a été suggérée."
+    "noSuggestedRecommendations": "Aucune recommandation de suivi n’a été suggérée.",
+    "subject": {
+      "none": "(sans objet)",
+      "taskCompleted": "{{taskId}} terminé",
+      "taskProposal": "Proposition de tâche : {{title}}",
+      "taskRecommendations": "Recommandations de tâches",
+      "taskWedge": "{{taskId}} requiert une action",
+      "duplicateDecision": "{{taskId}} : décision de doublon",
+      "planningClarification": "Clarification de planification"
+    },
+    "filter": "Filtrer",
+    "filterTitle": "Filtrer la boîte de réception",
+    "filterMenuLabel": "Portée de la boîte de réception",
+    "filterPendingApprovalsLabel": "Filtrer la boîte de réception — {{count}} approbations en attente"
   },
   "memory": {
     "auditChecksTitle": "Vérifications d'audit",
@@ -4192,7 +4200,7 @@
     "executorPlaceholder": "Sélectionner le modèle exécuteur…",
     "loading": "Chargement des modèles…",
     "noModels": "Aucun modèle disponible. Configurez l'authentification dans Paramètres pour activer la sélection des modèles.",
-    "planningModel": "",
+    "planningModel": "Planner Model",
     "planningPlaceholder": "",
     "preset": "Préréglage",
     "reviewerModel": "Modèle réviseur",
@@ -4205,18 +4213,21 @@
   },
   "nav": {
     "activityLog": "Journal d'activité",
+    "activityPopover": "Activité",
     "agents": "Agents",
+    "artifactsUnreadAriaLabel_one": "{{count}} nouvel artefact",
+    "artifactsUnreadAriaLabel_other": "{{count}} nouveaux artefacts",
+    "artifactsUnreadDotAriaLabel": "Nouveaux artefacts",
     "automation": "Automatisation",
     "board": "Tableau",
+    "boardView": "Vue tableau",
     "chat": "Chat",
     "chatUnreadAriaLabel": "Réponse non lue",
     "collapseSidebar": "",
     "commandCenter": "",
+    "conversations": "Conversations",
     "devServer": "Serveur de dev",
     "documents": "Artefacts",
-    "artifactsUnreadAriaLabel_one": "{{count}} nouvel artefact",
-    "artifactsUnreadAriaLabel_other": "{{count}} nouveaux artefacts",
-    "artifactsUnreadDotAriaLabel": "Nouveaux artefacts",
     "evals": "Évaluations",
     "expandSidebar": "",
     "files": "Fichiers",
@@ -4225,6 +4236,7 @@
     "importFromGitHub": "Importer depuis GitHub",
     "insights": "Insights",
     "list": "Liste",
+    "listView": "Vue liste",
     "loadingScripts": "Chargement des scripts…",
     "mailbox": "Boîte de réception",
     "mailboxPendingAriaLabel": "Approbations en attente",
@@ -4234,6 +4246,10 @@
     "more": "Plus",
     "moreSheetTitle": "Naviguer",
     "noScriptsAddOne": "Aucun script — en ajouter un…",
+    "notes": "Notes",
+    "notesPopover": "Notes",
+    "openMenu": "Ouvrir le menu de navigation",
+    "patchnode": "",
     "planning": "Planification",
     "planningNeedsInputAriaLabel": "La planification nécessite votre saisie",
     "primaryNavAriaLabel": "Navigation principale",
@@ -4251,11 +4267,8 @@
     "terminal": "Terminal",
     "todos": "Tâches à faire",
     "usage": "Utilisation",
-    "workflows": "Workflows",
-    "patchnode": "",
-    "notes": "Notes",
-    "openMenu": "Ouvrir le menu de navigation",
-    "whiteboard": "Whiteboard"
+    "whiteboard": "Whiteboard",
+    "workflows": "Workflows"
   },
   "newTaskModal": {
     "addDependencies": "Ajouter des dépendances",
@@ -5266,14 +5279,6 @@
       "urlValid": "L'URL de base doit être une URL valide."
     }
   },
-  "quickChat": {
-    "errorAttachmentsBeforeSession": "Impossible d'envoyer des pièces jointes avant que la session de chat soit prête",
-    "errorAttachmentsWhileStreaming": "Impossible d'envoyer des pièces jointes pendant qu'une réponse est en cours de diffusion",
-    "errorGettingResponse": "Impossible d'obtenir une réponse",
-    "errorInitializingChat": "Impossible d'initialiser le chat",
-    "errorRefreshingSessions": "Impossible de rafraîchir les sessions de chat",
-    "errorStartingNewChat": "Impossible de démarrer un nouveau chat"
-  },
   "reliability": {
     "bouncedEntered": "{{bounced}} rejetés / {{entered}} entrés ({{days}} derniers jours)",
     "countingSince": "Comptage depuis {{date}}",
@@ -5900,17 +5905,19 @@
       "languageAutoHint": "Suivre la langue du navigateur",
       "suppressTheLdquoNeedsYourInputRdquoBanner": "",
       "title": "Apparence",
-      "openTasksInRightSidebarHelp": "",
-      "openMobileTasksInPopupHelp": "",
-      "taskPopupsBoardListOnly": "",
-      "taskPopupsBoardListOnlyHelp": "",
-      "taskDetailChatFirstHelp": "",
       "showCostBadgeOnCards": "",
       "showCostBadgeOnCardsHelp": "",
       "chatMessageLayout": "",
       "chatMessageLayoutBubbles": "",
       "chatMessageLayoutFullWidth": "",
-      "chatMessageLayoutHelp": ""
+      "chatMessageLayoutHelp": "",
+      "navigationPlacement": "",
+      "navigationPlacementFooter": "",
+      "navigationPlacementSidebar": "",
+      "navigationPlacementHelp": "",
+      "rightSidebarEnabled": "Afficher la barre d’outils de droite",
+      "rightSidebarEnabledHelp": "Une fois activée, les tablettes et ordinateurs affichent une barre latérale droite facultative avec les raccourcis Fichiers, Chat, Liste et Notes. Tous les outils restent accessibles sans elle. Portée projet ; par défaut : désactivée.",
+      "taskDetailDefaultTabHelp": ""
     },
     "auth": {
       "apiKeyCleared": "Clé API effacée",
@@ -6120,7 +6127,6 @@
       "searchTheTrackingRepoForLikelyDuplicatesBefore": "",
       "settingsSaved": "Paramètres enregistrés",
       "showCapacityRiskBanner": "",
-      "showQuickChatButton": "",
       "showTheFloatingChatButtonInTheDashboard": "",
       "taskPrefix": "",
       "todoThreshold": "",
@@ -6144,12 +6150,10 @@
       "aiUndoTaskWorkflowHelp": "",
       "workspaceModeHint": "",
       "allowAbsoluteFileBrowserPathsHint": "",
-      "quickChatLauncherHint": "",
       "showTaskChatsInCommonFeedHint": "",
       "whenEnabledImportedGitHubIssuesUseTheirSource": "",
       "gitLabEnabledHint": "",
       "allowEphemeralAgentsToCreateTasksHint": "",
-      "quickChatCloseOnOutsideClickHint": "",
       "disabledFusionWorkflowsAreHiddenFromWorkflow": "",
       "builtinWorkflowAtLeastOneEnabled": "",
       "autoTranslateImportedIssues": "",
@@ -6161,8 +6165,8 @@
       "restartNow": "",
       "restartUnavailable": "",
       "restarting": "",
-      "mobileNavPrimaryItems": "Actions rapides du bas mobile",
-      "mobileNavPrimaryItemsHint": "Par défaut : Tableau de bord, Tâches, Agents, Missions, Chat, Boîte de réception. Ajoutez des destinations éligibles ; les non sélectionnées restent dans Plus.",
+      "mobileNavPrimaryItems": "Accès rapides de navigation",
+      "mobileNavPrimaryItemsHint": "Par défaut : Tableau de bord, Board, Planning, Missions, Boîte de réception. Choisissez jusqu’à 5 destinations et leur ordre ; toutes les autres destinations restent dans Plus.",
       "addNavItem": "Ajouter une action rapide",
       "selectNavItem": "Choisir une destination",
       "removeNavItem": "Retirer {{item}}",
@@ -6599,6 +6603,8 @@
       "label": "Section des paramètres"
     },
     "models": {
+      "fallbackModel": "Modèle de secours",
+      "roleFallbackHelp": "Utilisé lorsque le modèle principal de ce rôle rencontre une erreur fournisseur réessayable.",
       "deletePresetMessage": "Le préréglage « {{name}} » est utilisé dans la sélection automatique. Le supprimer quand même ?",
       "deletePresetTitle": "Supprimer le préréglage",
       "loadingModels": "Chargement des modèles disponibles…",
@@ -6607,7 +6613,6 @@
       "savePreset": "Enregistrer le préréglage"
     },
     "movedStub": {
-      "modelLanes": "",
       "openWorkflowSettings": "",
       "reviewVerification": "",
       "stepExecution": "",
@@ -6724,8 +6729,15 @@
     "projectModels": {
       "modelOverrides": "",
       "projectLanesSubheading": "",
+      "planningModel": "",
+      "planningFallbackModel": "Planner Modèle de secours",
+      "executionModel": "Executor Model",
+      "executionFallbackModel": "Executor Modèle de secours",
+      "validatorModel": "Reviewer Model",
+      "validatorFallbackModel": "Reviewer Modèle de secours",
+      "mergerModel": "Merger Model",
+      "mergerFallbackModel": "Merger Modèle de secours",
       "summarizationPointer": "",
-      "workflowLanesSubheading": "",
       "addPreset": "",
       "advancedWorkflowPolicy": "",
       "aIMergeCommitSummaries": "",
@@ -6740,35 +6752,27 @@
       "taskOutputLanguageInterface": "Fusion interface language",
       "configuredPresets": "",
       "configuresTheModelUsedForTwoShortSummary": "",
-      "defaultWorkflowModelLaneActions": "",
-      "defaultWorkflowModelLanes": "",
       "delete": "",
       "edit": "",
       "executorModel": "",
       "fallsBackTo": "",
       "loadingAvailableModels": "",
-      "loadingWorkflowModelLanes": "",
       "modelLanes": "",
       "modelPresets": "",
       "name": "",
       "noCap": "",
-      "noModelsAvailableConfigureAuthenticationBeforeSelectingWorkflow": "",
       "noModelsAvailableConfigureAuthenticationFirst": "",
       "noModelsAvailableConfigureAuthenticationFirst2": "",
       "noPreset": "",
       "noPresetsConfiguredYet": "",
-      "openAProjectToEditWorkflowModelLanes": "",
       "overrideGlobalModelSettingsAtTheProjectLevel": "",
       "presetEditor": "",
       "reset": "",
       "resetToDefaultNoCap": "",
       "resetToInheritFromGlobal": "",
-      "resetToInheritFromWorkflow": "",
       "reviewerModel": "",
-      "theseProjectOverridesApplyToTheActiveDefault": "",
       "tokenCap": "",
       "useDefault": "",
-      "useWorkflowDefault": "",
       "whenEnabledMergeCommitMessagesIncludeAnAI": "",
       "whenEnabledTasksCreatedWithoutATitleBut": "",
       "autoSelectModelPresetHint": "",
@@ -8009,7 +8013,10 @@
     },
     "definition": {
       "descriptionHeading": "Description",
-      "noDescription": "(aucune description)"
+      "noDescription": "(aucune description)",
+      "noOutcome": "Pas encore de résumé du plan — ouvrez Lire le plan pour la spécification complète.",
+      "outcomeHeading": "Ce que la tâche produit",
+      "transformationHeading": "Avant → Après"
     },
     "description": {
       "showLess": "Afficher moins",
@@ -8196,10 +8203,12 @@
       "updated": "Priorité mise à jour : {{priority}}"
     },
     "progress": {
-      "heading": "Progression",
       "completedCount": "{{count}}/{{total}} terminées",
-      "workflowOrigin": "Étape du workflow",
+      "heading": "Progression",
+      "hideSteps": "Masquer les étapes",
       "implementationOrigin": "Implémentation",
+      "noSteps": "(aucune étape définie)",
+      "showSteps": "Afficher les étapes",
       "status": {
         "done": "Terminée",
         "failed": "Échouée",
@@ -8209,9 +8218,9 @@
         "skipped": "Ignorée",
         "pending": "En attente"
       },
-      "noSteps": "(aucune étape définie)",
       "stepCount_one": "",
-      "stepCount_other": ""
+      "stepCount_other": "",
+      "workflowOrigin": "Étape du workflow"
     },
     "provenance": {
       "createdBy": "Créé par",
@@ -8310,24 +8319,11 @@
       "gitlabBadge": ""
     },
     "spec": {
-      "aiReviseHeading": "Demander une révision à l'IA",
-      "aiReviseHelp": "Fournissez des commentaires pour que l'IA améliore cette spécification. La tâche passera en planification.",
       "backToDefinition": "Retour à la définition",
-      "editBtn": "Modifier",
-      "feedbackPlaceholder": "p. ex., « Ajoutez plus de détails sur la gestion des erreurs », « Découpez en étapes plus petites »...",
-      "hintCancel": "pour annuler",
-      "hintSave": "pour enregistrer",
       "loading": "Chargement de la spécification…",
       "noPrompt": "(aucune invite)",
-      "placeholder": "Saisissez la spécification de la tâche en Markdown...",
       "promptFileName": "PROMPT.md",
-      "readPlanBtn": "Lire le plan",
-      "requesting": "Demande en cours…",
-      "requestRevisionBtn": "Demander une révision IA",
-      "revisionColumnError": "Impossible de demander une révision : la tâche doit être dans la colonne « triage », « todo », « in-progress » ou « in-review ».",
-      "revisionRequested": "Révision IA demandée. La tâche a été déplacée en planification.",
-      "saving": "Enregistrement…",
-      "updated": "Spécification mise à jour"
+      "readPlanBtn": "Lire le plan"
     },
     "stall": {
       "noLogEntry": "Aucune entrée de journal pour l'instant",
@@ -8372,11 +8368,6 @@
       "updated": "Mis à jour"
     },
     "timingEvents": "Événements de minutage",
-    "title": {
-      "summarize": "",
-      "summarizeFailed": "",
-      "summarizeSuccess": ""
-    },
     "tokenTotalsAria": "Totaux de tokens de la tâche",
     "tokenUsage": "Utilisation des tokens",
     "totalExecutionTime": "Temps actif total",
@@ -8567,6 +8558,7 @@
     "dependenciesSelected_other": "",
     "descriptionLabel": "Description",
     "descriptionPlaceholder": "Que faut-il faire ?",
+    "descriptionReadOnlyNote": "La description ne peut être modifiée que tant que la tâche attend encore dans sa colonne d'entrée manuelle.",
     "descriptionRefinedToast": "Description affinée avec l'IA",
     "editingDescription": "Modification de la description",
     "enterDescriptionFirst": "Saisissez d'abord une description",
@@ -8628,8 +8620,6 @@
     "thinkingMinimal": "Minimal",
     "thinkingOff": "Désactivé",
     "thinkingXhigh": "Très élevé",
-    "titleLabel": "Titre",
-    "titlePlaceholder": "Titre de la tâche",
     "useDropdown": "Utiliser la liste déroulante",
     "usingPreset": "Préréglage utilisé : {{name}}",
     "workflowDefaultBadge": "(par défaut)",
@@ -8736,7 +8726,7 @@
     "createPrTitle": "Créer une PR pour cette tâche",
     "createTaskTitle": "Créer une tâche",
     "saveHoldToStart": "Enregistrer la tâche ; maintenir pour démarrer",
-    "releaseToSaveHoldToStart": "Relâcher pour enregistrer ; continuer à maintenir pour démarrer",
+    "holdToStartReleaseCancels": "Continuer à maintenir pour démarrer ; relâcher pour annuler",
     "holdToStartProgress": "Continuer à maintenir pour démarrer",
     "startingTask": "Démarrage de la tâche",
     "creating": "Création en cours…",
@@ -8792,6 +8782,9 @@
     "importedFromGitHub": "Importé depuis GitHub",
     "importedFromGitHubUrl": "Importé depuis GitHub : {{url}}",
     "inProgressTime": "En cours {{elapsed}}",
+    "runtimeBreakdownExecution": "Exécution {{elapsed}}",
+    "runtimeBreakdownPlanning": "Planification {{elapsed}}",
+    "runtimeBreakdownVerification": "Vérification {{elapsed}}",
     "issueClosed": "fermé",
     "issueDeleted": "supprimé",
     "issueLeft": "laissé",
@@ -8916,7 +8909,12 @@
     "refinesOf": "",
     "refinesOfTitle": "",
     "revertedTasks": "",
-    "revertedResolutionActions": "",
+    "restoreRevert": "Rétablir le revert",
+    "restoreRevertSuccess": "{{taskId}} rétablie",
+    "restoreRevertAiCreated": "Tâche de rétablissement {{id}} créée",
+    "restoreRevertAlreadyOpen": "Une tâche de rétablissement est déjà ouverte : {{id}}",
+    "restoreRevertNeedsHuman": "Impossible de rétablir {{taskId}} : {{reason}}",
+    "restoreRevertFailed": "Échec du rétablissement de {{taskId}}",
     "revise": "",
     "dismissDuplicateFlag": "Mark the duplicate flag for {{id}} as read",
     "nearDuplicateHeldTitle": "Flagged as a duplicate of {{id}}. This task stays paused until you clear this flag or delete it.",
@@ -8927,7 +8925,23 @@
       "approving": "",
       "copy": "",
       "replanCapCopy": "",
-      "title": ""
+      "title": "",
+      "needsYouBadge": "Besoin de toi"
+    },
+    "humanPlanApproval": {
+      "toggle": "Exiger ma validation du plan avant exécution",
+      "messageLabel": "Message (facultatif)",
+      "messagePlaceholder": "En cas de refus, dites ce qui ne va pas dans le plan. En cas de validation, ajoutez un point de vigilance.",
+      "approve": "Valider",
+      "reject": "Refuser",
+      "review": "Examiner le plan",
+      "hint": "Refuser renvoie votre message pour un nouveau plan. Valider lance le travail et transmet votre note à l'implémentation.",
+      "noticeCopy": "Ouvrez la tâche pour valider ou refuser ce plan, avec un message facultatif.",
+      "badgeArmed": "Votre validation du plan est requise avant exécution",
+      "badgeAwaiting": "En attente de votre validation du plan",
+      "badgeApproved": "Plan validé par vous",
+      "approved": "Plan validé — {{id}} continue vers l'exécution",
+      "rejected": "Plan refusé — {{id}} repart pour un nouveau plan"
     }
   },
   "terminal": {
@@ -9433,9 +9447,9 @@
     "aiSubmit": "Concevoir avec l'IA",
     "aiToggle": "Le décrire à la place",
     "backToWorkflowList": "",
+    "backToBoard": "",
     "clickToEditDescription": "Cliquez pour modifier la description",
     "clickToRename": "Cliquez pour renommer",
-    "closeEditor": "",
     "created": "Workflow « {{name}} » créé",
     "createDescription": "Description (facultatif)",
     "createFailed": "Impossible de créer le workflow",
@@ -9571,9 +9585,7 @@
     "merging": "",
     "mergingTitle": "",
     "review": "Revue",
-    "triggerAria": "Select workflow. Current workflow: {{name}}",
-    "editWorkflow": "Edit workflow",
-    "newWorkflow": "New workflow"
+    "triggerAria": "Select workflow. Current workflow: {{name}}"
   },
   "workspace": {
     "projectRoot": "Racine du projet",
@@ -9626,6 +9638,16 @@
     },
     "sending": "",
     "thinking": "",
+    "thinkingLevelTitle": "{{title}} · réflexion : {{level}}",
+    "thinkingLevels": {
+      "off": "Désactivé",
+      "minimal": "Minimal",
+      "low": "Faible",
+      "medium": "Moyen",
+      "high": "Élevé",
+      "xhigh": "Très élevé",
+      "max": "Maximum"
+    },
     "toolCall": "",
     "toolCallCount_one": "",
     "toolCallCount_other": "",
@@ -9901,7 +9923,6 @@
     "createFirst": "Créer votre première note",
     "select": "Sélectionnez une note ou créez-en une",
     "title": "Titre de la note",
-    "unsaved": "Modifications non enregistrées",
     "savedState": "Enregistré",
     "saving": "Enregistrement…",
     "saved": "Note enregistrée",
@@ -9913,7 +9934,12 @@
     "deleteMessage": "Cette action est irréversible.",
     "conflict": "Cette note a été modifiée ailleurs. Votre brouillon est conservé.",
     "reload": "Recharger la version serveur",
-    "overwrite": "Remplacer par mon brouillon"
+    "overwrite": "Remplacer par mon brouillon",
+    "autoSaved": "Les modifications sont enregistrées automatiquement",
+    "backToList": "Retour aux notes",
+    "rename": "Renommer",
+    "renameAria": "Renommer {{title}}",
+    "actionsAria": "Actions de la note {{title}}"
   },
   "whiteboard": {
     "tools": "Whiteboard tools",
@@ -9951,5 +9977,16 @@
     "selectHint": "Select an item to edit it",
     "exportJson": "Export JSON",
     "exportPng": "Export PNG"
+  },
+  "windows": {
+    "hide": "Masquer toutes les fenêtres",
+    "restore": "Restaurer les fenêtres"
+  },
+  "uiStyle": {
+    "label": "Style d’interface",
+    "classic": "Actuel",
+    "classicDescription": "La grammaire Fusion habituelle, inchangée.",
+    "clean": "Épuré",
+    "cleanDescription": "Densité resserrée, angles adoucis, chrome discret."
   }
 }

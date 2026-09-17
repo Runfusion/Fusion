@@ -76,7 +76,7 @@ export function useProjectActions(options: UseProjectActionsOptions): UseProject
 
   const handleSelectProject = useCallback(async (project: ProjectInfo) => {
     /*
-    FNXC:AlphaDesktopWindows 2026-09-11-19:35:
+    FNXC:DesktopViewWindows 2026-09-11-19:35:
     A project boundary must await the shared destructive-close verdict before changing URL, project, view, or scoped modal state. Re-selecting the current project remains a synchronous-effect-free success.
     */
     if (project.id === currentProject?.id) return true;

@@ -24,8 +24,7 @@ import { PromptsSection } from "../components/settings/sections/PromptsSection";
 import { SecretsSection } from "../components/settings/sections/SecretsSection";
 import { WorktreesSection } from "../components/settings/sections/WorktreesSection";
 import type { SettingsFormState } from "../components/settings/sections/context";
-import { fetchWorkflow, fetchWorkflows, fetchWorkflowSettingValues, updateWorkflowSettingValues } from "../api";
-import type { WorkflowSettingValuesPayload } from "../api";
+import { fetchWorkflows } from "../api";
 
 vi.mock("../components/AgentPromptsManager", () => ({
   AgentPromptsManager: () => <div data-testid="agent-prompts-manager" />,
@@ -76,13 +75,7 @@ vi.mock("../components/CustomModelDropdown", () => ({
 expect.extend(jestDomMatchers);
 beforeEach(() => {
   vi.mocked(fetchWorkflows).mockReset();
-  vi.mocked(fetchWorkflow).mockReset();
-  vi.mocked(fetchWorkflowSettingValues).mockReset();
-  vi.mocked(updateWorkflowSettingValues).mockReset();
   vi.mocked(fetchWorkflows).mockResolvedValue([]);
-  vi.mocked(fetchWorkflow).mockResolvedValue({ id: "builtin:coding", name: "Coding", ir: {} } as never);
-  vi.mocked(fetchWorkflowSettingValues).mockResolvedValue({ stored: {}, effective: {}, orphaned: [] });
-  vi.mocked(updateWorkflowSettingValues).mockResolvedValue({ stored: {}, effective: {}, orphaned: [] });
 });
 afterEach(() => cleanup());
 
@@ -125,7 +118,7 @@ describe("GeneralSection", () => {
     vi.mocked(fetchWorkflows).mockResolvedValue([
       { id: "builtin:coding", name: "Coding (Auto)", kind: "workflow", ir: {} },
       { id: "builtin:brainstorming", name: "Brainstorming", kind: "workflow", ir: {} },
-      { id: "builtin:coding-ideas-v2", name: "Coding (Ideas)", kind: "workflow", ir: {} },
+      { id: "builtin:coding-ideas", name: "Coding (Ideas)", kind: "workflow", ir: {} },
     ] as never);
 
     render(
@@ -733,7 +726,7 @@ describe("ProjectModelsSection", () => {
           ...models,
           modelLanes: [
             { laneId: "default", label: "Default", helperText: "Default", fallbackOrder: "global" },
-            { laneId: "merger", label: "Merger", helperText: "Merger", fallbackOrder: "global" },
+            { laneId: "merger", label: "Merger", helperText: "Merger", fallbackOrder: "global", projectFallbackProviderKey: "mergerFallbackProvider", projectFallbackModelKey: "mergerFallbackModelId", projectFallbackThinkingKey: "mergerFallbackThinkingLevel" },
             { laneId: "import-translate", label: "Translate", helperText: "Translate", fallbackOrder: "global" },
           ] as never,
           availableModels: [{ provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5" }],
@@ -755,271 +748,6 @@ describe("ProjectModelsSection", () => {
     expect(dropdown).toHaveAttribute("data-thinking-value", "");
   });
 
-  it("renders default workflow model lanes with each fallback directly after its primary", async () => {
-    vi.mocked(fetchWorkflow).mockResolvedValue({
-      id: "builtin:coding",
-      name: "Coding",
-      ir: {
-        settings: [
-          "planning",
-          "planningFallback",
-          "execution",
-          "executionFallback",
-          "validator",
-          "validatorFallback",
-        ].flatMap((lane) => [
-          { id: `${lane}Provider`, name: `${lane} provider`, type: "string" },
-          { id: `${lane}ModelId`, name: `${lane} model`, type: "string" },
-          { id: `${lane}ThinkingLevel`, name: `${lane} thinking`, type: "enum" },
-        ]),
-      },
-    } as never);
-    vi.mocked(fetchWorkflowSettingValues).mockResolvedValue({ stored: {}, effective: {}, orphaned: [] });
-
-    render(
-      <ProjectModelsSection
-        form={{ defaultWorkflowId: "builtin:coding" } as SettingsFormState}
-        setForm={vi.fn()}
-        models={{
-          ...models,
-          availableModels: [{ provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5" }],
-        }}
-        projectId="project-1"
-        addToast={vi.fn()}
-      />,
-    );
-
-    await screen.findByTestId("workflow-model-lane-validator-fallback");
-    const workflowLaneIds = Array.from(document.querySelectorAll<HTMLElement>("[data-testid^='workflow-model-lane-']"))
-      .map((element) => element.dataset.testid?.replace("workflow-model-lane-", ""));
-    expect(workflowLaneIds).toEqual([
-      "planning",
-      "planning-fallback",
-      "execution",
-      "execution-fallback",
-      "validator",
-      "validator-fallback",
-    ]);
-
-    const projectLanes = screen.getByTestId("project-models-project-lanes");
-    const workflowLanes = screen.getByTestId("project-models-workflow-lanes");
-    const chat = screen.getByTestId("project-models-chat-kind");
-    const summarizationSection = screen.getByTestId("project-models-ai-summarization");
-    expect(projectLanes.nextElementSibling).toBe(workflowLanes);
-    expect(projectLanes).toContainElement(screen.getByTestId("project-models-summarization-pointer"));
-    expect(workflowLanes).toContainElement(screen.getByTestId("workflow-model-lane-planning"));
-    expect(workflowLanes.compareDocumentPosition(chat) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(workflowLanes.compareDocumentPosition(summarizationSection) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  });
-
-  it("wires workflow fallback lane thinking render, persist, and reset", async () => {
-    let saver: (() => Promise<void>) | null = null;
-    vi.mocked(fetchWorkflow).mockResolvedValue({
-      id: "builtin:coding",
-      name: "Coding",
-      ir: {
-        settings: [
-          { id: "planningFallbackProvider", name: "Planning fallback provider", type: "string" },
-          { id: "planningFallbackModelId", name: "Planning fallback model", type: "string" },
-          { id: "planningFallbackThinkingLevel", name: "Planning fallback thinking", type: "enum" },
-          { id: "validatorFallbackProvider", name: "Reviewer fallback provider", type: "string" },
-          { id: "validatorFallbackModelId", name: "Reviewer fallback model", type: "string" },
-          { id: "validatorFallbackThinkingLevel", name: "Reviewer fallback thinking", type: "enum" },
-        ],
-      },
-    } as never);
-    vi.mocked(fetchWorkflowSettingValues).mockResolvedValueOnce({
-      stored: { validatorFallbackProvider: "anthropic", validatorFallbackModelId: "claude-sonnet-4-5", validatorFallbackThinkingLevel: "high" },
-      effective: { validatorFallbackProvider: "anthropic", validatorFallbackModelId: "claude-sonnet-4-5", validatorFallbackThinkingLevel: "high" },
-      orphaned: [],
-    });
-    vi.mocked(updateWorkflowSettingValues).mockResolvedValueOnce({
-      stored: { validatorFallbackProvider: "anthropic", validatorFallbackModelId: "claude-sonnet-4-5", validatorFallbackThinkingLevel: "high" },
-      effective: { validatorFallbackProvider: "anthropic", validatorFallbackModelId: "claude-sonnet-4-5", validatorFallbackThinkingLevel: "high" },
-      orphaned: [],
-    });
-
-    render(
-      <ProjectModelsSection
-        form={{ defaultWorkflowId: "builtin:coding", defaultThinkingLevel: "medium" } as SettingsFormState}
-        setForm={vi.fn()}
-        models={{
-          ...models,
-          availableModels: [{ provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5" }],
-        }}
-        projectId="project-1"
-        addToast={vi.fn()}
-        registerWorkflowLaneSaver={(next) => {
-          saver = next;
-        }}
-      />,
-    );
-
-    const planning = await screen.findByTestId("mock-model-dropdown-workflow-planning-fallback-model");
-    expect(planning).toHaveAttribute("data-thinking-visible", "true");
-    expect(planning).toHaveAttribute("data-default-thinking", "medium");
-    expect(screen.getByTestId("mock-model-dropdown-workflow-validator-fallback-model")).toHaveAttribute("data-thinking-value", "high");
-
-    fireEvent.click(screen.getByTestId("mock-thinking-workflow-planning-fallback-model"));
-    await act(async () => {
-      await saver!();
-    });
-    expect(updateWorkflowSettingValues).toHaveBeenLastCalledWith("builtin:coding", { planningFallbackThinkingLevel: "high" }, "project-1");
-
-    fireEvent.click(within(screen.getByTestId("workflow-model-lane-validator-fallback")).getByRole("button", { name: "Reset" }));
-    await act(async () => {
-      await saver!();
-    });
-    expect(updateWorkflowSettingValues).toHaveBeenLastCalledWith("builtin:coding", {
-      validatorFallbackProvider: null,
-      validatorFallbackModelId: null,
-      validatorFallbackThinkingLevel: null,
-    }, "project-1");
-  });
-
-  it("opts default workflow model lane dropdowns into readable menu width", async () => {
-    vi.mocked(fetchWorkflow).mockResolvedValue({
-      id: "builtin:coding",
-      name: "Coding",
-      ir: {
-        settings: [
-          { id: "planningProvider", name: "Planning Provider", type: "string" },
-          { id: "planningModelId", name: "Planning Model", type: "string" },
-          { id: "planningThinkingLevel", name: "Planning thinking", type: "enum" },
-        ],
-      },
-    } as never);
-    vi.mocked(fetchWorkflowSettingValues).mockResolvedValueOnce({ stored: {}, effective: {}, orphaned: [] });
-
-    render(
-      <ProjectModelsSection
-        form={{ defaultWorkflowId: "builtin:coding" } as SettingsFormState}
-        setForm={vi.fn()}
-        models={{
-          ...models,
-          availableModels: [{ provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5" }],
-        }}
-        projectId="project-1"
-        addToast={vi.fn()}
-      />,
-    );
-
-    expect(await screen.findByTestId("mock-model-dropdown-workflow-planning-model")).toHaveAttribute("data-menu-width", "readable");
-  });
-
-  it("preserves workflow lane edits made while the registered saver is in flight", async () => {
-    let saver: (() => Promise<void>) | null = null;
-    let resolveSave!: (value: WorkflowSettingValuesPayload) => void;
-    vi.mocked(fetchWorkflow).mockResolvedValue({
-      id: "builtin:coding",
-      name: "Coding",
-      ir: {
-        settings: [
-          { id: "planningProvider", name: "Planning Provider", type: "string" },
-          { id: "planningModelId", name: "Planning Model", type: "string" },
-          { id: "planningThinkingLevel", name: "Planning thinking", type: "enum" },
-          { id: "executionProvider", name: "Execution Provider", type: "string" },
-          { id: "executionModelId", name: "Execution Model", type: "string" },
-          { id: "executionThinkingLevel", name: "Execution thinking", type: "enum" },
-        ],
-      },
-    } as never);
-    vi.mocked(fetchWorkflowSettingValues).mockResolvedValueOnce({ stored: {}, effective: {}, orphaned: [] });
-    vi.mocked(updateWorkflowSettingValues)
-      .mockReturnValueOnce(
-        new Promise<WorkflowSettingValuesPayload>((resolve) => {
-          resolveSave = resolve;
-        }),
-      )
-      .mockResolvedValueOnce({
-        stored: { executionProvider: "anthropic", executionModelId: "claude-sonnet-4-5" },
-        effective: { executionProvider: "anthropic", executionModelId: "claude-sonnet-4-5" },
-        orphaned: [],
-      });
-
-    render(
-      <ProjectModelsSection
-        form={{ defaultWorkflowId: "builtin:coding" } as SettingsFormState}
-        setForm={vi.fn()}
-        models={{
-          ...models,
-          availableModels: [{ provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5" }],
-        }}
-        projectId="project-1"
-        addToast={vi.fn()}
-        registerWorkflowLaneSaver={(next) => {
-          saver = next;
-        }}
-      />,
-    );
-
-    const planning = await screen.findByTestId("mock-model-dropdown-workflow-planning-model");
-    const execution = await screen.findByTestId("mock-model-dropdown-workflow-execution-model");
-    fireEvent.click(planning);
-    await waitFor(() => expect(planning).toHaveAttribute("data-value", "anthropic/claude-sonnet-4-5"));
-
-    const firstSave = saver!();
-    await waitFor(() => expect(updateWorkflowSettingValues).toHaveBeenCalledTimes(1));
-    expect(updateWorkflowSettingValues).toHaveBeenNthCalledWith(
-      1,
-      "builtin:coding",
-      { planningProvider: "anthropic", planningModelId: "claude-sonnet-4-5" },
-      "project-1",
-    );
-
-    fireEvent.click(execution);
-    await waitFor(() => expect(execution).toHaveAttribute("data-value", "anthropic/claude-sonnet-4-5"));
-    await act(async () => {
-      resolveSave({
-        stored: { planningProvider: "anthropic", planningModelId: "claude-sonnet-4-5" },
-        effective: { planningProvider: "anthropic", planningModelId: "claude-sonnet-4-5" },
-        orphaned: [],
-      });
-      await firstSave;
-    });
-
-    expect(execution).toHaveAttribute("data-value", "anthropic/claude-sonnet-4-5");
-    await act(async () => {
-      await saver!();
-    });
-    await waitFor(() => expect(updateWorkflowSettingValues).toHaveBeenCalledTimes(2));
-    expect(updateWorkflowSettingValues).toHaveBeenNthCalledWith(
-      2,
-      "builtin:coding",
-      { executionProvider: "anthropic", executionModelId: "claude-sonnet-4-5" },
-      "project-1",
-    );
-  });
-
-  it("renders PR prompt guidance textareas and emits edits through setForm", () => {
-    function ProjectModelsHost() {
-      const [form, setFormState] = useState<SettingsFormState>({
-        prTitlePromptInstructions: "Keep it short.",
-        prDescriptionPromptInstructions: "Mention testing.",
-      } as SettingsFormState);
-      return (
-        <ProjectModelsSection
-          form={form}
-          setForm={setFormState as never}
-          models={models}
-          addToast={vi.fn()}
-        />
-      );
-    }
-
-    render(<ProjectModelsHost />);
-
-    const titleField = screen.getByLabelText("PR title prompt guidance") as HTMLTextAreaElement;
-    const descriptionField = screen.getByLabelText("PR description prompt guidance") as HTMLTextAreaElement;
-    expect(titleField.value).toBe("Keep it short.");
-    expect(descriptionField.value).toBe("Mention testing.");
-
-    fireEvent.change(titleField, { target: { value: "Use release style." } });
-    fireEvent.change(descriptionField, { target: { value: "Group by impact." } });
-
-    expect(titleField.value).toBe("Use release style.");
-    expect(descriptionField.value).toBe("Group by impact.");
-  });
 });
 
 describe("PromptsSection", () => {

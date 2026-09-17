@@ -21,30 +21,11 @@ FN-7827 requires the workflow editor shell to neutralize the shared .modal max-h
 }
 
 /*
-FNXC:WorkflowEditorFloating 2026-06-24-00:00:
-Workflow editor modal sizing, clamping, and resize affordances are owned by FloatingWindow. Keep the editor shell a full-size child so the shared panel can persist geometry without fighting an inner native resize grip.
-*/
-.floating-window--workflow-editor .floating-window__body {
-  overflow: hidden;
-}
-
-.floating-window--workflow-editor .wf-editor-header {
-  cursor: grab;
-  user-select: none;
-  touch-action: none;
-}
-
-.floating-window--workflow-editor .wf-editor-header:active {
-  cursor: grabbing;
-}
-
-/*
-FNXC:WorkflowEditorEmbedding 2026-06-22-00:00:
-Embedded presentation renders the editor inline as a main-content-area view
-filling the right-dock panel instead of as a centered fixed modal. The wrapper
-takes the full panel box and the modal element drops its modal chrome
-(fixed sizing, box-shadow, border-radius, resize grip) so it reads as a flush
-embedded view.
+FNXC:WorkflowEditorEmbedding 2026-09-15-05:29:
+FN-407 removed the editor's floating/modal presentation, so the FloatingWindow-scoped sizing, drag-handle cursor,
+and resize rules are gone with it. The embedded presentation is now the only one: the wrapper takes the full panel
+box and the modal element drops its modal chrome (fixed sizing, box-shadow, border-radius, resize grip) so it reads
+as a flush main-content view.
 */
 .workflow-editor-embedded {
   display: flex;
@@ -111,21 +92,10 @@ Align the embedded workflows header to the shared ViewHeader/Insights metric —
   white-space: nowrap;
 }
 
-.wf-editor-close {
-  display: inline-flex;
-  align-items: center;
-  background: transparent;
-  border: none;
-  color: var(--text-muted);
-  cursor: pointer;
-}
-
 /* FNXC:WorkflowStepCRUD 2026-06-26-14:00: U7c removed the .wf-migration-notice banner
-   styles along with the legacy-step migration notice. */
-
-.wf-editor-close:hover {
-  color: var(--text);
-}
+   styles along with the legacy-step migration notice.
+   FNXC:WorkflowEditorEmbedding 2026-09-15-05:29: FN-407 removed the .wf-editor-close styles the same way —
+   the editor is a persistent view and renders no close affordance, so the rules had no subject left. */
 
 .wf-editor-body {
   display: flex;
@@ -2290,36 +2260,17 @@ Column trait toggles are left-sidebar workflow controls; keep their enabled and 
     padding-right: 0;
   }
 
-  /* FNXC:WorkflowEditor 2026-06-22-16:00: scope the viewport-takeover to the
-     dialog presentation only via :not(.wf-editor-modal--embedded). The embedded
-     workflow editor renders inside the main-content pane (between the mobile
-     Header and MobileNavBar); without the guard its base .wf-editor-modal class
-     matched these 100vw/100dvh rules and covered the whole screen. The embedded
-     panel keeps its 100%-of-pane sizing from the embedded block above and fills
-     only the content area. .wf-create-modal has no embedded variant, so it stays
-     full-screen as a dialog. */
+  /* FNXC:WorkflowEditor 2026-09-15-05:29: the viewport-takeover below belongs to the
+     dialog presentation only. FN-407 left the workflow editor with a single embedded
+     presentation that renders inside the main-content pane (between the mobile Header
+     and MobileNavBar) and keeps its 100%-of-pane sizing from the embedded block above,
+     so it must never match these 100vw/100dvh rules — hence the retained
+     :not(.wf-editor-modal--embedded) guard on its base class. .wf-create-modal is still
+     a real dialog with no embedded variant, so it stays full-screen. */
   .modal-overlay:has(.wf-create-modal) {
     padding-top: 0;
     align-items: stretch;
     justify-content: stretch;
-  }
-
-  .floating-window--workflow-editor {
-    inset: 0 !important;
-    width: 100vw !important;
-    min-width: 0 !important;
-    max-width: 100vw !important;
-    height: 100vh !important;
-    height: 100dvh !important;
-    min-height: 0 !important;
-    max-height: 100dvh !important;
-    border: none;
-    border-radius: 0;
-    box-shadow: none;
-  }
-
-  .floating-window--workflow-editor .floating-window__resize-handle {
-    display: none;
   }
 
   .wf-editor-modal:not(.wf-editor-modal--embedded),

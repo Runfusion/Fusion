@@ -16,6 +16,7 @@ import { buildPatchnodeEntryInput } from "../board/patchnode.js";
 import { appendPatchnodeEntryInTransaction } from "./async/async-patchnode.js";
 import {declaresAnyLifecycleTrait, resolveReviewColumns, resolveTaskLifecycleColumns} from "../workflows/workflow-lifecycle-traits.js";
 import {resolveWorkflowIrForTask} from "../workflows/workflow-ir-resolver.js";
+import {applyPauseAccounting} from "../tasks/task-pause-accounting.js";
 import {toTaskMoveLanes} from "../workflows/workflow-lifecycle-traits.js";
 import { countAgentLogEntries, readAgentLogEntries } from "../agents/agent-log-file-store.js";
 import { toJsonNullable } from "../db/db.js";
@@ -476,6 +477,14 @@ export function clearDoneTransientFieldsImpl(store: TaskStore, task: Task): bool
     task.sessionContentionHoldCount = 0;
     task.sessionContentionWaitReason = undefined;
     task.nextRecoveryAt = undefined;
+    /*
+    FNXC:TaskPauseAccounting 2026-09-16-06:16:
+    FN-457 — done-transition cleanup clears `paused` without going through `pauseTask`, so it must
+    BANK any open pause segment or the segment stays open on a finished card and every reader keeps
+    subtracting a growing interval. This helper is synchronous and cannot resolve lanes, which is
+    harmless: the WIP flag only gates OPENING a segment, and this is strictly a close.
+    */
+    applyPauseAccounting(task, false, new Date().toISOString(), false);
     task.paused = undefined;
     task.userPaused = undefined;
     task.pausedByAgentId = undefined;

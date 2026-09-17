@@ -233,6 +233,15 @@ A dropped baseline must be **deliberately re-recorded and committed** with
 count is pinned and any divergence is a real event. `--strict --update-baseline` re-records unconditionally
 and prints `ACCEPTED RISES`, which is the only way to record a rise deliberately.
 
+<!-- FNXC:LifecycleColumnCensus 2026-09-15-15:11: The PR-only ratchet let main-line drift
+accumulate unseen until an unrelated pull request inherited the failure. Keep post-merge observation
+separate from the merge gate while making the same strict command visible at the introducing commit. -->
+The strict ratchet runs in the `Lint` job of `PR Checks` on `pull_request` and in the
+`lifecycle-ratchet-drift` job of `.github/workflows/full-suite.yml` on pushes to `main`.
+`pnpm lint` does **not** run this census. Resolve every rise by converting it to a live
+workflow-resolved check or adding a declaration-leading `DELIBERATE-LITERAL` marker with its reason,
+then re-record the baseline with `--strict --update-baseline` in the same change.
+
 The regression suite is `packages/engine/src/__tests__/lifecycle-column-census.test.ts`. It pins
 each form the census must catch (all six ids, non-`column` locals, single quotes, negation,
 multiple hits per line) and each it must not (role comparisons, comment prose, trailing line
@@ -516,13 +525,16 @@ a passing lane. Third precedent for the same rule: growth must be nameable, or i
 FNXC:WorkflowSuccession 2026-09-06-02:15:
 FN-297 removes the retired Ideas workflow from the 19 scenario matrices because its compatibility alias resolves the same surviving graph. The workload decreases by one duplicate workflow execution per affected scenario, while 175 seconds remains a ceiling rather than a target or a reason to conceal future regressions.
 -->
+<!-- FNXC:PipelineSmoke 2026-09-16-22:32: FN-9310 requires the post-merge runner to terminate the pnpm-to-Vitest process group at its existing budget, so descendants cannot outlive a timed-out smoke invocation. -->
 The declared budget is **175 seconds**, rounded up from a measured 148,434ms slowest full-matrix
 run (7 files, 90 tests) after the Code Review remediation drive was added and S05 was extended to
-`builtin:coding-ideas-v2`. The wrapper enforces it for every run; an overrun is a result
-to investigate, never a reason to hide a regression behind unbounded timeouts. Use
-`--repeat=10` for the reproducibility proof, `--json` for machine output, and
-`--budget-ms=<n>` only for loud diagnostic measurement. The normalized report lists
-scenario, variant, workflow, expected terminal, observed terminal, verdict, and duration.
+`builtin:coding-ideas-v2`. The wrapper enforces it through bounded process-group termination at the
+`pnpm` → Vitest boundary: timeout sends SIGTERM to the launched group and escalates to SIGKILL after
+the watchdog grace window. An overrun, child failure, or incomplete report is a fail-closed result
+to investigate, never a reason to widen timeouts. Use `--repeat=10` for the reproducibility proof,
+`--json` for machine output, and `--budget-ms=<n>` only for loud diagnostic measurement. The
+normalized report lists scenario, variant, workflow, expected terminal, observed terminal, verdict,
+and duration.
 
 Each scenario declares one closed terminal state: `merged-done`, `inert-intake`,
 `parked`, `manual-hold`, or `no-op-merge`. The harness fails on an undeclared terminal

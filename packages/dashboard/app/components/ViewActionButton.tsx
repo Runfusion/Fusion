@@ -1,6 +1,6 @@
 import { forwardRef, type ButtonHTMLAttributes, type ComponentType, type ReactNode } from "react";
 import { ChevronLeft, Plus, type LucideProps } from "lucide-react";
-import { AlphaButton } from "./alpha-ui";
+import { UiButton } from "./ui";
 import "./ViewActionButton.css";
 
 export type ViewActionButtonKind = "action" | "create";
@@ -18,6 +18,12 @@ export interface ViewActionButtonProps extends Omit<ButtonHTMLAttributes<HTMLBut
 /*
 FNXC:StandardizedViewActions 2026-09-13-16:12:
 Primary resource creation has one shared Plus button across dashboard headers. Its visible label remains on desktop/tablet and becomes visually hidden only on phone chrome, while the same localized string remains the accessible name.
+
+FNXC:IconOnlyButtonCanon 2026-09-16-19:05:
+FN-471: the create button no longer carries `btn-primary`. A CTA-filled square is not one of the two canonical
+icon-only variants, and `btn-primary` paints at 0,1,0 from `styles.css` — loaded last — so the phone blocks
+could not neutralize it without escalating specificity. The emphasis now lives on `view-action-button--create`
+in this component's stylesheet, which the phone icon-only rules override to the plain bordered variant.
 */
 export const ViewActionButton = forwardRef<HTMLButtonElement, ViewActionButtonProps>(function ViewActionButton(
   {
@@ -44,17 +50,17 @@ export const ViewActionButton = forwardRef<HTMLButtonElement, ViewActionButtonPr
   const classes = [
     "btn",
     "btn-sm",
-    kind === "create" ? "btn-primary view-action-button--create" : "view-action-button--action",
+    kind === "create" ? "view-action-button--create" : "view-action-button--action",
     "view-action-button",
     collapsesOnMobile ? "view-action-button--mobile-icon-only" : "",
     className,
   ].filter(Boolean).join(" ");
 
   return (
-    <AlphaButton {...props} ref={ref} type={type} className={classes} aria-label={props["aria-label"] ?? ariaLabel}>
+    <UiButton {...props} ref={ref} type={type} className={classes} aria-label={props["aria-label"] ?? ariaLabel}>
       {Icon ? <Icon aria-hidden="true" className={iconClassName} /> : null}
       <span className="view-action-button__label">{label}</span>
-    </AlphaButton>
+    </UiButton>
   );
 });
 
@@ -65,14 +71,18 @@ export interface ViewBackButtonProps extends Omit<ButtonHTMLAttributes<HTMLButto
 
 /*
 FNXC:StandardizedViewNavigation 2026-09-13-16:12:
-Every list-to-detail return is a real, single ChevronLeft button before the owning title. The full touch target is interactive; no parent wrapper or separate textual Back row competes for the same transition.
+Every list-to-detail return is a real, single ChevronLeft button before the owning title. The full box is interactive; no parent wrapper or separate textual Back row competes for the same transition.
+
+FNXC:IconOnlyButtonCanon 2026-09-16-19:05:
+FN-471: the chevron is icon-only, so it uses the canonical bordered variant (`btn` + `btn-icon`) and the shared
+28/36px geometry instead of the bespoke 44px square that made it the loudest control on a phone header.
 */
 export const ViewBackButton = forwardRef<HTMLButtonElement, ViewBackButtonProps>(function ViewBackButton(
   { label, className, type = "button", ...props },
   ref,
 ) {
   return (
-    <AlphaButton
+    <UiButton
       {...props}
       ref={ref}
       type={type}
@@ -81,6 +91,6 @@ export const ViewBackButton = forwardRef<HTMLButtonElement, ViewBackButtonProps>
       title={props.title ?? label}
     >
       <ChevronLeft aria-hidden="true" />
-    </AlphaButton>
+    </UiButton>
   );
 });

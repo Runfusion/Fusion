@@ -2,6 +2,7 @@ import { ViewHeader } from "./ViewHeader";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import "./SettingsSyncConflictModal.css";
+import { FloatingWindow } from "./FloatingWindow";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -216,13 +217,26 @@ export function SettingsSyncConflictModal({
   }
 
   return (
-    <div className="modal-overlay open" onClick={onClose}>
+    /* FNXC:FloatingWindowDialogHosts 2026-09-14-22:36: FN-394 hosts the blocking conflict resolution in the shared window; it keeps blocking the app and keeps its explicit decisions. */
+    <FloatingWindow
+      windowKey="settings-sync-conflict"
+      modal
+      hideHeader
+      surfaceGroup="dialog"
+      title={t("settings.conflictModalTitle", "Resolve Settings Conflicts")}
+      ariaLabel={t("settings.conflictModalTitle", "Resolve Settings Conflicts")}
+      onClose={onClose}
+      dragHandleSelector=".settings-sync-conflict-modal .modal-header"
+      className="floating-window--dialog floating-window--settings-sync-conflict"
+      defaultSize={{ width: 820, height: 620 }}
+      minSize={{ width: 320, height: 280 }}
+      suspendGeometryPersistenceOnMobile
+      suspendGeometryPersistenceOnShortViewport
+      backdropMouseHandlers={{ onClick: (event) => { if (event.target === event.currentTarget) onClose(); } }}
+    >
       <div
         className="modal modal-lg settings-sync-conflict-modal"
         onClick={(event) => event.stopPropagation()}
-        role="dialog"
-        aria-modal="true"
-        aria-label={t("settings.conflictModalTitle", "Resolve Settings Conflicts")}
       >
         {/* FNXC:StandardizedViewLayout 2026-09-13-21:49: Shared dialog chrome; `.modal-header` stays for the drag handle selector. */}
         <ViewHeader
@@ -336,6 +350,6 @@ export function SettingsSyncConflictModal({
           </button>
         </div>
       </div>
-    </div>
+    </FloatingWindow>
   );
 }

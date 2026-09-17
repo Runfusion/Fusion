@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useRef, useState, lazy, Suspense } from "react";
 import { useTranslation } from "react-i18next";
-import type { ProjectInfo, RevertTaskOptions, RevertTaskResult } from "../api";
-import type { ColorTheme, Column, MergeResult, Task, TaskCreateInput, ThemeMode, GithubIssueAction } from "@fusion/core";
+import type { ProjectInfo, RestoreTaskRevertOptions, RestoreTaskRevertResult, RevertTaskOptions, RevertTaskResult } from "../api";
+import type { ColorTheme, Column, MergeResult, Task, TaskCreateInput, ThemeMode, UiStyle, GithubIssueAction } from "@fusion/core";
 import type { UseProjectActionsResult } from "../hooks/useProjectActions";
 import { mergeTaskSnapshot } from "../hooks/useTasks";
 import type { ModalManager } from "../hooks/useModalManager";
 import type { NavEntry } from "../hooks/useNavigationHistory";
 import type { UseTaskHandlersResult } from "../hooks/useTaskHandlers";
-import type { ChatMessageLayout } from "../hooks/useAppSettings";
+import type { ChatMessageLayout, TaskDetailDefaultTab } from "../hooks/useAppSettings";
+import type { NavigationPlacement } from "../utils/navigationPlacement";
 import type { Toast, ToastType } from "../hooks/useToast";
 import { ModalErrorBoundary } from "./ErrorBoundary";
 import { AppModalTaskDetailHost } from "./TaskDetailHostBoundaries";
@@ -25,13 +26,25 @@ import { ModelOnboardingModal } from "./ModelOnboardingModal";
 import { ToastContainer } from "./ToastContainer";
 import { GroupTaskModal } from "./GroupTaskModal";
 import { useNavigationHistoryContext } from "../hooks/useNavigationHistory";
-import { AlphaMobileDrawer } from "./AlphaMobileDrawer";
+import { MobileDrawer } from "./MobileDrawer";
 
+/*
+FNXC:HistoryModalSurface 2026-09-15-04:29:
+FN-403: History is a modal surface with EXACTLY ONE render owner, mounted here beside the other modals. The
+previous `taskView === "patchnode"` page and the pilot-window host are both gone, so History can no longer mount
+twice, duplicate its feed request, or replace the operator's current main view.
+*/
+const PatchnodeView = lazy(() => import("./PatchnodeView").then((m) => ({ default: m.PatchnodeView })));
 const SetupWizardModal = lazy(() => import("./SetupWizardModal").then((m) => ({ default: m.SetupWizardModal })));
 const SettingsModal = lazy(() => import("./SettingsModal").then((m) => ({ default: m.SettingsModal })));
-const WorkflowNodeEditor = lazy(() => import("./WorkflowNodeEditor").then((m) => ({ default: m.WorkflowNodeEditor })));
+/*
+FNXC:WorkflowEditorEmbedding 2026-09-15-05:29:
+FN-407 removed the workflow editor's modal presentation, so AppModals no longer declares or mounts it. The
+WorkflowNodeEditor chunk stays lazy — its single declaration now lives in App.tsx as the `workflows` main-content
+view, which is also its curated "Lazy-Loaded Heavy Views" inventory site.
+*/
 
-interface AlphaUsageDrawerProps {
+interface MobileUsageDrawerProps {
   open: boolean;
   title: string;
   onClose: () => void;
@@ -39,16 +52,16 @@ interface AlphaUsageDrawerProps {
 }
 
 /*
-FNXC:AlphaMobileDrawer 2026-09-10-23:59:
-Usage browser checks must mount AppModals' production bridge rather than duplicate its shell flags. This exported bridge remains the single Alpha usage composition while the ordinary popover path stays owned by AppModals.
+FNXC:MobileDrawer 2026-09-10-23:59:
+Usage browser checks must mount AppModals' production bridge rather than duplicate its shell flags. This exported bridge remains the single mobile usage composition while the ordinary popover path stays owned by AppModals.
 */
-export function AlphaUsageDrawer({ open, title, onClose, projectId }: AlphaUsageDrawerProps) {
+export function MobileUsageDrawer({ open, title, onClose, projectId }: MobileUsageDrawerProps) {
   return (
-    <AlphaMobileDrawer
+    <MobileDrawer
       open={open}
       title={title}
       onClose={onClose}
-      testId="alpha-mobile-drawer-usage"
+      testId="mobile-drawer-usage"
       contentOwnsHeader
       contentOwnsScroll
     >
@@ -58,7 +71,7 @@ export function AlphaUsageDrawer({ open, title, onClose, projectId }: AlphaUsage
         projectId={projectId}
         presentation="embedded"
       />
-    </AlphaMobileDrawer>
+    </MobileDrawer>
   );
 }
 
@@ -77,8 +90,8 @@ function prefetchSettingsModal() {
 
 interface AppModalsProps {
   projectId?: string;
-  /** Applies the shared drawer presentation only inside the Alpha mobile project shell. */
-  alphaMobileDrawer?: boolean;
+  /** Applies the shared drawer presentation only inside the mobile project shell. */
+  mobileDrawer?: boolean;
   tasks: Task[];
   /* Per-task lifecycle traits, forwarded to Task Detail's blocker fan-out. */
   columnFlagsByTaskId?: ReadonlyMap<string, BlockerFanoutColumnFlags>;
@@ -105,6 +118,8 @@ interface AppModalsProps {
     }) => Promise<Task>;
     mergeTask: (taskId: string) => Promise<MergeResult>;
     revertTask?: (taskId: string, body?: RevertTaskOptions) => Promise<RevertTaskResult>;
+    /* FNXC:TaskRevert 2026-09-15-10:00 (FN-416): restore-the-revert action for a reverted task. */
+    restoreTaskRevert?: (taskId: string, body?: RestoreTaskRevertOptions) => Promise<RestoreTaskRevertResult>;
     retryTask: (taskId: string) => Promise<Task>;
     pauseTask: (taskId: string) => Promise<Task>;
     unpauseTask: (taskId: string) => Promise<Task>;
@@ -120,14 +135,20 @@ interface AppModalsProps {
   settings: {
     prAuthAvailable: boolean;
     autoMerge: boolean;
-    openTasksInRightSidebar: boolean;
-    openMobileTasksInPopup: boolean;
-    taskPopupsBoardListOnly: boolean;
+
     showCostBadgeOnCards: boolean;
-    taskDetailChatFirst: boolean;
+    /* FNXC:TaskDetailDefaultTab 2026-09-16-02:53: FN-442 — project choice of the task-detail landing tab and tab-bar head order. */
+    taskDetailDefaultTab: TaskDetailDefaultTab;
     chatMessageLayout: ChatMessageLayout;
+    /* FN-419: project choice of the single primary navigation surface. */
+    navigationPlacement: NavigationPlacement;
+    /* FN-426: project opt-in for the optional right tool dock. */
+    rightSidebarEnabled: boolean;
     themeMode: ThemeMode;
     colorTheme: ColorTheme;
+    /* FNXC:UiStyleAxis 2026-09-15-00:20: second, independent appearance axis owned by the single useTheme instance in App. */
+    uiStyle: UiStyle;
+    setUiStyle: (style: UiStyle) => void;
     dashboardFontScalePct: number;
     shadcnCustomColors: Record<string, string>;
     resolvedThemeMode: "dark" | "light";
@@ -135,21 +156,25 @@ interface AppModalsProps {
     setColorTheme: (theme: ColorTheme) => void;
     setDashboardFontScalePct: (scalePct: number) => void;
     setShadcnCustomColors: (colors: Record<string, string>) => void;
-    setQuickChatButtonModeImmediate: (mode: "floating" | "footer" | "off") => void;
     setChatMessageLayoutImmediate: (layout: ChatMessageLayout) => void;
-    setOpenTasksInRightSidebarImmediate: (enabled: boolean) => void;
-    setOpenMobileTasksInPopupImmediate: (enabled: boolean) => void;
-    setTaskPopupsBoardListOnlyImmediate: (enabled: boolean) => void;
+    setNavigationPlacementImmediate: (placement: NavigationPlacement) => void;
+    setRightSidebarEnabledImmediate: (enabled: boolean) => void;
+
     setShowCostBadgeOnCardsImmediate: (enabled: boolean) => void;
-    setTaskDetailChatFirstImmediate: (enabled: boolean) => void;
+    setTaskDetailDefaultTabImmediate: (tab: TaskDetailDefaultTab) => void;
     setMobileNavPrimaryItemsImmediate: (items: string[]) => void;
   };
   /** Optional override for the settings modal close handler. When provided, this is called instead of modalManager.closeSettings. */
   onSettingsClose?: () => void;
   /** Optional callback to reopen the onboarding guide from Settings. Closes Settings and opens ModelOnboardingModal. */
   onReopenOnboarding?: () => void;
+  /* FNXC:WorkflowEditorEmbedding 2026-09-15-05:29: FN-407 — workflow entry points navigate to the Workflows view instead of opening a modal. */
+  onOpenWorkflowEditor?: (workflowId?: string) => void;
+  onOpenWorkflowSettings?: () => void;
   /** Optional callback to open mailbox approvals from Settings. */
   onOpenApprovals?: (approvalId?: string) => void;
+  /* FNXC:HistoryModalSurface 2026-09-15-04:29: History delegates entry activation to App's canonical nav-aware Task Detail opener. */
+  onOpenTaskDetailById?: (taskId: string) => void | Promise<void>;
   /** Enables planning-style agent onboarding entry points inside setup. */
   agentOnboardingEnabled?: boolean;
 }
@@ -192,7 +217,7 @@ export function AppFilesModal({ modalManager, projectId, onClose }: AppFilesModa
 
 export function AppModals({
   projectId,
-  alphaMobileDrawer = false,
+  mobileDrawer = false,
   tasks,
   columnFlagsByTaskId,
   globalPaused = false,
@@ -212,7 +237,10 @@ export function AppModals({
   settings,
   onSettingsClose,
   onReopenOnboarding,
+  onOpenWorkflowEditor,
+  onOpenWorkflowSettings,
   onOpenApprovals,
+  onOpenTaskDetailById,
   agentOnboardingEnabled = false,
 }: AppModalsProps) {
   const { t } = useTranslation("app");
@@ -245,6 +273,11 @@ export function AppModals({
     removeNav(handleSettingsClose);
     handleSettingsClose();
   }, [handleSettingsClose, removeNav]);
+
+  const closeHistoryWithNav = useCallback(() => {
+    removeNav(modalManager.closeHistory);
+    modalManager.closeHistory();
+  }, [modalManager.closeHistory, removeNav]);
 
   const closeGitHubImportWithNav = useCallback(() => {
     removeNav(modalManager.closeGitHubImport);
@@ -286,11 +319,6 @@ export function AppModals({
     modalManager.closeGitManager();
   }, [modalManager.closeGitManager, removeNav]);
 
-  const closeWorkflowEditorWithNav = useCallback(() => {
-    removeNav(modalManager.closeWorkflowEditor);
-    modalManager.closeWorkflowEditor();
-  }, [modalManager.closeWorkflowEditor, removeNav]);
-
   const closeAgentsWithNav = useCallback(() => {
     removeNav(modalManager.closeAgents);
     modalManager.closeAgents();
@@ -318,7 +346,6 @@ export function AppModals({
       const previousDetailTask = modalManager.detailTask;
       const previousDetailTab = modalManager.detailTaskInitialTab;
       const previousDetailOrigin = modalManager.detailTaskOrigin;
-      const previousDetailAction = modalManager.detailTaskInitialAction;
       const previousNavClose = detailNavCloseRef.current;
 
       modalManager.openDetailTask(task, tab, options);
@@ -330,9 +357,7 @@ export function AppModals({
           modalManager.openDetailTask(
             previousDetailTask,
             previousDetailTab,
-            previousDetailOrigin || previousDetailAction
-              ? { origin: previousDetailOrigin ?? undefined, initialAction: previousDetailAction?.action }
-              : undefined,
+            previousDetailOrigin ? { origin: previousDetailOrigin } : undefined,
           );
           return;
         }
@@ -378,7 +403,7 @@ export function AppModals({
         <ModalErrorBoundary>
           <AppModalTaskDetailHost
             task={detailTask}
-            alphaMobileDrawer={alphaMobileDrawer}
+            mobileDrawer={mobileDrawer}
             projectId={projectId}
             tasks={tasks}
             columnFlagsByTaskId={columnFlagsByTaskId}
@@ -389,11 +414,11 @@ export function AppModals({
             onClosed={() => { detailNavCloseRef.current = null; }}
             onOpenDetail={openDetailTaskWithNav}
             mobileHeaderMode={modalManager.detailTaskOrigin === "list-mobile" ? "back" : "close"}
-            /* FNXC:TaskRevert 2026-08-01-20:27: Modal detail must offer the same revision draft recovery as every reverted-task host. */
-            onReviseTask={(task) => modalManager.openNewTaskWithDescription(task.description)}
             onDeleteTask={taskOperations.deleteTask}
             onMergeTask={taskOperations.mergeTask}
             onRevertTask={taskOperations.revertTask}
+            /* FNXC:TaskRevert 2026-09-15-10:00 (FN-416): a reverted task is resolved by restoring its revert, not by a Revise draft. */
+            onRestoreRevertTask={taskOperations.restoreTaskRevert}
             onRetryTask={taskOperations.retryTask}
             onOpenChatWithPrefill={onOpenChatWithPrefill}
             onPauseTask={taskOperations.pauseTask}
@@ -406,10 +431,14 @@ export function AppModals({
             addToast={addToast}
             prAuthAvailable={settings.prAuthAvailable}
             autoMergeEnabled={settings.autoMerge}
-            taskDetailChatFirst={settings.taskDetailChatFirst}
-            onOpenWorkflowEditor={() => modalManager.openWorkflowEditor()}
+            taskDetailDefaultTab={settings.taskDetailDefaultTab}
+            /* FNXC:WorkflowEditorEmbedding 2026-09-15-05:29: FN-407 — close the task modal first, then navigate to the Workflows view for this task's workflow. */
+            onOpenWorkflowEditor={(workflowId?: string) => {
+              removeNav(detailNavCloseRef.current ?? modalManager.closeDetailTask);
+              modalManager.closeDetailTask();
+              onOpenWorkflowEditor?.(workflowId);
+            }}
             initialTab={modalManager.detailTaskInitialTab}
-            initialAction={modalManager.detailTaskInitialAction}
           />
         </ModalErrorBoundary>
       )}
@@ -441,6 +470,8 @@ export function AppModals({
               projectId={projectId}
               themeMode={settings.themeMode}
               colorTheme={settings.colorTheme}
+              uiStyle={settings.uiStyle}
+              onUiStyleChange={settings.setUiStyle}
               onThemeModeChange={settings.setThemeMode}
               onColorThemeChange={settings.setColorTheme}
               dashboardFontScalePct={settings.dashboardFontScalePct}
@@ -448,25 +479,23 @@ export function AppModals({
               resolvedThemeMode={settings.resolvedThemeMode}
               onDashboardFontScaleChange={settings.setDashboardFontScalePct}
               onShadcnCustomColorsChange={settings.setShadcnCustomColors}
-              onQuickChatButtonModeChange={settings.setQuickChatButtonModeImmediate}
               chatMessageLayout={settings.chatMessageLayout}
               onChatMessageLayoutChange={settings.setChatMessageLayoutImmediate}
-              openTasksInRightSidebar={settings.openTasksInRightSidebar}
-              onOpenTasksInRightSidebarChange={settings.setOpenTasksInRightSidebarImmediate}
-              openMobileTasksInPopup={settings.openMobileTasksInPopup}
-              onOpenMobileTasksInPopupChange={settings.setOpenMobileTasksInPopupImmediate}
-              taskPopupsBoardListOnly={settings.taskPopupsBoardListOnly}
-              onTaskPopupsBoardListOnlyChange={settings.setTaskPopupsBoardListOnlyImmediate}
+              navigationPlacement={settings.navigationPlacement}
+              onNavigationPlacementChange={settings.setNavigationPlacementImmediate}
+              rightSidebarEnabled={settings.rightSidebarEnabled}
+              onRightSidebarEnabledChange={settings.setRightSidebarEnabledImmediate}
+
               showCostBadgeOnCards={settings.showCostBadgeOnCards}
               onShowCostBadgeOnCardsChange={settings.setShowCostBadgeOnCardsImmediate}
-              taskDetailChatFirst={settings.taskDetailChatFirst}
-              onTaskDetailChatFirstChange={settings.setTaskDetailChatFirstImmediate}
+              taskDetailDefaultTab={settings.taskDetailDefaultTab}
+              onTaskDetailDefaultTabChange={settings.setTaskDetailDefaultTabImmediate}
               onMobileNavPrimaryItemsChange={settings.setMobileNavPrimaryItemsImmediate}
               onReopenOnboarding={onReopenOnboarding}
               onOpenApprovals={onOpenApprovals}
               onOpenWorkflowSettings={() => {
                 closeSettingsWithNav();
-                modalManager.openWorkflowEditor("settings");
+                onOpenWorkflowSettings?.();
               }}
             />
           </Suspense>
@@ -509,11 +538,11 @@ export function AppModals({
       />
 
       {/*
-      FNXC:AlphaMobileDrawer 2026-09-10-16:56:
-      Usage opened from Alpha mobile reuses its embedded content inside the shared bottom-edge drawer above the trigger pill. The modal manager remains the single open/close owner, while standard mobile and desktop preserve the existing overlay or anchored popover.
+      FNXC:MobileDrawer 2026-09-10-16:56:
+      Usage opened from the mobile shell reuses its embedded content inside the shared bottom-edge drawer above the trigger pill. The modal manager remains the single open/close owner, while standard mobile and desktop preserve the existing overlay or anchored popover.
       */}
-      {alphaMobileDrawer ? (
-        <AlphaUsageDrawer
+      {mobileDrawer ? (
+        <MobileUsageDrawer
           open={modalManager.usageOpen}
           title={t("nav.usage", "Usage")}
           onClose={closeUsageWithNav}
@@ -526,6 +555,18 @@ export function AppModals({
           projectId={projectId}
           anchorRect={modalManager.usageAnchorRect}
         />
+      )}
+
+      {modalManager.historyOpen && (
+        <ModalErrorBoundary>
+          <Suspense fallback={null}>
+            <PatchnodeView
+              projectId={projectId}
+              onOpenTaskDetail={onOpenTaskDetailById}
+              floating={{ onClose: closeHistoryWithNav }}
+            />
+          </Suspense>
+        </ModalErrorBoundary>
       )}
 
       {modalManager.schedulesOpen && (
@@ -575,22 +616,6 @@ export function AppModals({
           projectId={projectId}
         />
       </ModalErrorBoundary>
-
-      {modalManager.workflowEditorOpen && (
-        <ModalErrorBoundary>
-          <Suspense fallback={null}>
-            <WorkflowNodeEditor
-              isOpen={modalManager.workflowEditorOpen}
-              onClose={closeWorkflowEditorWithNav}
-              addToast={addToast}
-              projectId={projectId}
-              initialPanel={modalManager.workflowEditorInitialPanel}
-              initialAction={modalManager.workflowEditorInitialAction}
-              initialWorkflowId={modalManager.workflowEditorInitialWorkflowId}
-            />
-          </Suspense>
-        </ModalErrorBoundary>
-      )}
 
       <AgentListModal
         isOpen={modalManager.agentsOpen}

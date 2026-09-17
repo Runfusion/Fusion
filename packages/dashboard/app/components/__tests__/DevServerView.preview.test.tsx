@@ -261,9 +261,13 @@ describe("DevServerView preview panel", () => {
 
     fireEvent.click(screen.getByTestId("devserver-preview-modal-open"));
 
+    // FN-394: the preview is hosted by FloatingWindow, which is the single owner of the dialog role and modal semantics.
     const modal = await screen.findByTestId("devserver-preview-modal");
-    expect(modal).toHaveAttribute("role", "dialog");
-    expect(modal).toHaveAttribute("aria-modal", "true");
+    expect(modal).not.toHaveAttribute("role", "dialog");
+    const host = screen.getByTestId("floating-window-overlay-devserver-preview");
+    expect(host).toHaveAttribute("role", "dialog");
+    expect(host).toHaveAttribute("aria-modal", "true");
+    expect(host).toContainElement(modal);
     expect(screen.getByTitle("Dev server preview")).toBeInTheDocument();
     expect(screen.getByTestId("devserver-preview-open-tab")).toBeInTheDocument();
     expect(screen.getByTestId("devserver-preview-refresh")).toBeInTheDocument();

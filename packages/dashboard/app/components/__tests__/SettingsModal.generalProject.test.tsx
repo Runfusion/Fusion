@@ -296,34 +296,56 @@ describe("SettingsModal", () => {
       });
     });
 
-    it("reports Quick Chat launcher changes immediately before save", async () => {
-      const onQuickChatButtonModeChange = vi.fn();
-      renderModal({ initialSection: "general", onQuickChatButtonModeChange });
-      await waitForSettingsModalReady();
-
-      await settingsModalUser.selectOptions(screen.getByLabelText("Quick Chat launcher"), "footer");
-
-      expect(onQuickChatButtonModeChange).toHaveBeenCalledWith("footer");
-    });
-
-    it("reorders, adds, and removes mobile quick actions before save", async () => {
+    /*
+     * FN-446 : le contrôle pilote désormais les accès rapides de la barre de navigation partagée. Le défaut est à cinq
+     * destinations sans Agents, et le libellé du groupe n'est plus « mobile ».
+     */
+    it("reorders, adds, and removes navigation quick access before save", async () => {
       const onMobileNavPrimaryItemsChange = vi.fn();
       renderModal({ initialSection: "general", onMobileNavPrimaryItemsChange });
       await waitForSettingsModalReady();
 
+      const group = screen.getByRole("group", { name: "Navigation quick access" });
+      expect(Array.from(group.querySelectorAll(".settings-field-label-row")).map((row) => row.textContent)).toEqual([
+        expect.stringContaining("command-center"),
+        expect.stringContaining("tasks"),
+        expect.stringContaining("planning"),
+        expect.stringContaining("missions"),
+        expect.stringContaining("mailbox"),
+      ]);
+
       fireEvent.click(screen.getAllByRole("button", { name: /later$/i })[0]);
-      expect(onMobileNavPrimaryItemsChange).toHaveBeenLastCalledWith(["tasks", "command-center", "agents", "missions", "chat", "mailbox"]);
-      const rows = Array.from(screen.getByRole("group", { name: "Mobile footer quick actions" }).querySelectorAll(".settings-field-label-row"));
+      expect(onMobileNavPrimaryItemsChange).toHaveBeenLastCalledWith(["tasks", "command-center", "planning", "missions", "mailbox"]);
+      const rows = Array.from(screen.getByRole("group", { name: "Navigation quick access" }).querySelectorAll(".settings-field-label-row"));
       expect(rows[0].textContent).toContain("tasks");
 
-      fireEvent.click(screen.getByLabelText("Remove chat"));
-      expect(onMobileNavPrimaryItemsChange).toHaveBeenLastCalledWith(["tasks", "command-center", "agents", "missions", "mailbox"]);
+      fireEvent.click(screen.getByLabelText("Remove planning"));
+      expect(onMobileNavPrimaryItemsChange).toHaveBeenLastCalledWith(["tasks", "command-center", "missions", "mailbox"]);
 
       await settingsModalUser.selectOptions(screen.getByLabelText("Add quick action"), "git");
-      expect(onMobileNavPrimaryItemsChange).toHaveBeenLastCalledWith(["tasks", "command-center", "agents", "missions", "mailbox", "git"]);
+      expect(onMobileNavPrimaryItemsChange).toHaveBeenLastCalledWith(["tasks", "command-center", "missions", "mailbox", "git"]);
 
       fireEvent.click(screen.getByLabelText("Remove tasks"));
-      expect(onMobileNavPrimaryItemsChange).toHaveBeenLastCalledWith(["command-center", "agents", "missions", "mailbox", "git"]);
+      expect(onMobileNavPrimaryItemsChange).toHaveBeenLastCalledWith(["command-center", "missions", "mailbox", "git"]);
+    });
+
+    /* FN-446 : le plafond est de cinq accès rapides plus « More », donc le sélecteur d'ajout se désactive à cinq. */
+    it("disables the quick-access picker once five destinations are selected", async () => {
+      const onMobileNavPrimaryItemsChange = vi.fn();
+      renderModal({ initialSection: "general", onMobileNavPrimaryItemsChange });
+      await waitForSettingsModalReady();
+
+      const picker = screen.getByLabelText("Add quick action") as HTMLSelectElement;
+      expect(picker.disabled).toBe(true);
+      expect(Array.from(picker.options).map((option) => option.value)).not.toContain("chat");
+
+      fireEvent.click(screen.getByLabelText("Remove missions"));
+      expect(onMobileNavPrimaryItemsChange).toHaveBeenLastCalledWith(["command-center", "tasks", "planning", "mailbox"]);
+      expect((screen.getByLabelText("Add quick action") as HTMLSelectElement).disabled).toBe(false);
+
+      await settingsModalUser.selectOptions(screen.getByLabelText("Add quick action"), "agents");
+      expect(onMobileNavPrimaryItemsChange).toHaveBeenLastCalledWith(["command-center", "tasks", "planning", "mailbox", "agents"]);
+      expect((screen.getByLabelText("Add quick action") as HTMLSelectElement).disabled).toBe(true);
     });
 
     it("defaults task chats common-feed opt-in to unchecked", async () => {
@@ -359,14 +381,6 @@ describe("SettingsModal", () => {
         value: 14,
         scope: "project",
         expectedKey: "chatAutoCleanupDays",
-      },
-      {
-        section: "General · Project",
-        label: "Close Quick Chat on outside click",
-        kind: "checkbox",
-        value: false,
-        scope: "project",
-        expectedKey: "quickChatCloseOnOutsideClick",
       },
       {
         section: "General · Project",
@@ -792,24 +806,13 @@ describe("SettingsModal", () => {
       expect(screen.queryByText("Title, commit message, and GitHub tracking issue summarization model")).not.toBeInTheDocument();
     });
 
-    it("does not show a moved-to-workflow note for the summarizer model when GitHub tracking defaults are on", async () => {
-      mockFetchSettings.mockResolvedValueOnce({
-        ...defaultSettings,
-        githubTrackingEnabledByDefault: true,
-      });
-
-      renderModal({ initialSection: "models" });
+    it("keeps workflow-owned model controls off the Project Models page", async () => {
+      renderModal({ initialSection: "project-models" });
       await waitForSettingsModalReady();
 
-      await settingsModalUser.click(screen.getByRole("button", { name: "Models · Project" }));
-
-      expect(screen.queryByText(/model used for summarization now lives on the workflow/i)).not.toBeInTheDocument();
-      // FNXC:ProjectModels 2026-07-24-03:10: #2400 (e514e134d) replaced the
-      // per-phase moved-to-workflow NOTE with a real editable "Project workflow
-      // model lanes" section; assert the editor heading instead of the old copy.
-      /* FNXC:ProjectModels 2026-08-23-21:20: the editor's heading is now "Workflow lanes" inside the stable `project-models-workflow-lanes` region. */
-      expect(screen.getByTestId("project-models-workflow-lanes")).toBeInTheDocument();
-      expect(screen.getByRole("heading", { name: "Workflow lanes" })).toBeInTheDocument();
+      expect(screen.queryByTestId("project-models-workflow-lanes")).not.toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "Workflow lanes" })).not.toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Token Cap" })).toBeInTheDocument();
     });
 
     it("picks a project repo suggestion and preserves label association", async () => {

@@ -60,6 +60,7 @@ vi.mock("@fusion/dashboard", () => ({
 
 vi.mock("@fusion/engine", () => ({
   createFnAgent: vi.fn(),
+  SelfHealingManager: vi.fn(),
   runAiMerge: vi.fn(),
   landWorkspaceTask: vi.fn(),
   admitTaskToWip: vi.fn(),

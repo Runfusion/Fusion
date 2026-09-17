@@ -527,7 +527,6 @@ export function ActivityLogModal({
       className="floating-window--activity-log"
       defaultSize={{ width: 720, height: 560 }}
       minSize={{ width: 360, height: 280 }}
-      persistGeometryKey="floating-window:activity-log"
       suspendGeometryPersistenceOnMobile
       suspendGeometryPersistenceOnShortViewport
       closeOnOutsidePointerDown

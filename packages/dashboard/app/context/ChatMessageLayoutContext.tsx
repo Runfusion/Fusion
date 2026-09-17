@@ -3,7 +3,7 @@ import type { ChatMessageLayout } from "../hooks/useAppSettings";
 
 /**
  * FNXC:ChatMessageLayout 2026-08-18-20:27:
- * One App-level context keeps the project-scoped choice consistent across normal Chat, Quick Chat, dock hosts, task Activity, and Planner Chat without duplicating layout props through each host.
+ * One App-level context keeps the project-scoped choice consistent across canonical and detached Chat, task Activity, and Planner Chat without duplicating layout props through each host.
  */
 const ChatMessageLayoutContext = createContext<ChatMessageLayout>("bubbles");
 

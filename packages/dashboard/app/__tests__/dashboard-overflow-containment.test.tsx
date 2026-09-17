@@ -17,7 +17,7 @@ const BREAKPOINTS: BreakpointCase[] = [
 
 const MOBILE_WIDTH_MEDIA_QUERY = "(max-width: 768px)";
 const MOBILE_HEIGHT_MEDIA_QUERY = "(max-height: 480px)";
-const TABLET_MEDIA_QUERY = "(min-width: 769px) and (max-width: 1024px)";
+const TABLET_MEDIA_QUERY = "(min-width: 769px) and (max-width: 1023.98px)";
 const originalScreen = window.screen;
 
 function extractMediaBlocks(content: string, pattern: RegExp): string {
@@ -186,8 +186,8 @@ function WorkflowFixture({ simple }: { simple: boolean }) {
     <div className="modal-overlay" data-testid={simple ? "simple-workflow-overlay" : "workflow-overlay"}>
       <section className="modal wf-editor-modal" data-testid={simple ? "simple-workflow" : "workflow-editor"}>
         <header className="wf-editor-header">
+          {/* FN-407: production renders no close affordance in this header, so the fixture must not either. */}
           <h2>{simple ? "Simple workflow editor" : "Workflow editor"}</h2>
-          <button className="wf-editor-close" aria-label="Close workflow editor">×</button>
         </header>
         <div className={`wf-editor-body ${simple ? "wf-editor-body--simple-layout" : "wf-editor-body--list-stage"}`}>
           <aside className="wf-editor-sidebar">
@@ -421,7 +421,8 @@ describe("dashboard overflow containment shared mobile/tablet net (FN-6385)", ()
       for (const saveButton of within(surface).getAllByRole("button", { name: /save/i })) {
         assertInViewport(saveButton, viewport, "workflow save action");
       }
-      assertInViewport(within(surface).getByRole("button", { name: /close workflow editor/i }), viewport, "workflow close action");
+      // FN-407: the editor is a persistent view with no close affordance, so there is none to keep in viewport.
+      expect(within(surface).queryByRole("button", { name: /close workflow editor/i })).toBeNull();
     }
 
     const simpleWorkflow = screen.getByTestId("simple-workflow");

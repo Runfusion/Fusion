@@ -1,7 +1,6 @@
 import { sortTasksForDisplayColumn, type TaskColumnSortMode, type Task, type TaskDetail, type Column as ColumnType, type ColumnId, type TaskCreateInput, type GithubIssueAction, type MergeResult } from "@fusion/core";
 import { Column } from "./Column";
-import { AlphaSurface } from "./alpha-ui";
-import { AlphaBoundary } from "../context/AlphaContext";
+import { UiSurface } from "./ui";
 import "./Lane.css";
 import "./Board.css";
 import type { ToastType } from "../hooks/useToast";
@@ -9,16 +8,17 @@ import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { createPortal } from "react-dom";
-import { type ModelInfo, type BoardWorkflowsPayload, type BoardWorkflowColumn, type RevertTaskOptions, type RevertTaskResult } from "../api";
+import { type ModelInfo, type BoardWorkflowsPayload, type BoardWorkflowColumn, type RestoreTaskRevertOptions, type RestoreTaskRevertResult, type RevertTaskOptions, type RevertTaskResult } from "../api";
 import { useBlockerFanout, type BlockerFanoutColumnFlags } from "../hooks/useBlockerFanout";
 import { useColumnScrollSnap } from "../hooks/useColumnScrollSnap";
 import { useBoardMousePan } from "../hooks/useBoardMousePan";
-import { MOBILE_MEDIA_QUERY, useViewportMode } from "../hooks/useViewportMode";
+import { MOBILE_MEDIA_QUERY } from "../hooks/useViewportMode";
 import { recordResumeEvent } from "../utils/resumeInstrumentation";
 import { WorkflowSwitcher } from "./WorkflowSwitcher";
 import { computeWorkflowStatusCounts } from "./workflowStatusCounts";
 import { writeBoardWorkflowsCache } from "../utils/boardWorkflowsCache";
 import { useBoardWorkflows } from "../hooks/useBoardWorkflows";
+import { useHeaderWorkflowSlot } from "../hooks/useHeaderWorkflowSlot";
 import { useUnmappedWorkflowRefetch } from "../hooks/useUnmappedWorkflowRefetch";
 import {
   ALL_WORKFLOWS_BOARD_VIEW_ID,
@@ -46,7 +46,8 @@ interface BoardProps {
   onDuplicateTask?: (id: string, options?: { workflowId?: string }) => Promise<Task>;
   onMergeTask?: (id: string) => Promise<MergeResult>;
   onOpenDetail: (task: Task | TaskDetail) => void;
-  onOpenRefine?: (task: Task | TaskDetail) => void;
+  /** App-owned ingestion seam for a refinement created from a card's own Refine dialog. */
+  onRefinementCreated?: (task: Task) => void;
   onOpenGroupModal?: (groupId: string) => void;
   addToast: (message: string, type?: ToastType) => void;
   onQuickCreate?: (input: TaskCreateInput) => Promise<Task | void>;
@@ -65,8 +66,8 @@ interface BoardProps {
   onRetryTask?: (id: string) => Promise<Task>;
   onOpenChatWithPrefill?: (prefillText: string) => void;
   onRevertTask?: (id: string, body?: RevertTaskOptions) => Promise<RevertTaskResult>;
-  /** Opens a New Task draft using a reverted task description. */
-  onReviseTask?: (task: Task) => void;
+  /* FNXC:TaskRevert 2026-09-15-10:00 (FN-416): restore-the-revert replaces the reverted card Delete/Revise buttons. */
+  onRestoreRevertTask?: (id: string, body?: RestoreTaskRevertOptions) => Promise<RestoreTaskRevertResult>;
   onDeleteTask?: (id: string, options?: {
     removeDependencyReferences?: boolean;
     removeLineageReferences?: boolean;
@@ -110,10 +111,6 @@ interface BoardProps {
   lastFetchTimeMs?: number;
   /** Whether GitHub CLI auth is available for creating PRs from task cards. */
   prAuthAvailable?: boolean;
-  /** Opens the workflow editor modal, optionally focused on a workflow id. */
-  onOpenWorkflowEditor?: (workflowId?: string) => void;
-  /** Opens the workflow editor to create a new workflow. */
-  onCreateWorkflow?: () => void;
   /** Already-resolved app setting for whether workflow lanes should be used. */
   /** Relocates workflow controls into the Header portal slot when sidebar navigation owns the inline chrome. */
   workflowControlsInHeader?: boolean;
@@ -177,17 +174,17 @@ function BoardWorkflowSkeleton({ empty = false, t }: { empty?: boolean; t: TFunc
   return (
     <main className="board board-workflows-skeleton" id="board" aria-busy={!empty} aria-label={empty ? t("board.noWorkflowLanes", "No workflow lanes available") : t("board.loadingWorkflowLanes", "Loading workflow lanes")} data-testid={empty ? "board-workflows-empty" : "board-workflows-skeleton"}>
       {[0, 1, 2].map((index) => (
-        <AlphaSurface className="board-workflows-skeleton__column card" key={index} aria-hidden="true">
+        <UiSurface className="board-workflows-skeleton__column card" key={index} aria-hidden="true">
           <div className="board-workflows-skeleton__header" />
           <div className="board-workflows-skeleton__card" />
           <div className="board-workflows-skeleton__card board-workflows-skeleton__card--short" />
-        </AlphaSurface>
+        </UiSurface>
       ))}
     </main>
   );
 }
 
-function BoardContent({ tasks, projectId, maxConcurrent, maxWorktrees, showWorktreeGrouping, onMoveTask, onPauseTask, onUnpauseTask, onResetTask, onDuplicateTask, onMergeTask, onOpenDetail, onOpenRefine, onOpenGroupModal, addToast, onQuickCreate, onNewTask: _onNewTask, autoMerge, mergeStrategy = "direct", onToggleAutoMerge, planAutoApproveEnabled, onTogglePlanAutoApprove, globalPaused, onUpdateTask, onRetryTask, onOpenChatWithPrefill, onRevertTask, onReviseTask, onDeleteTask, onLoadMoreCurrentTasks, currentTasksTotal, currentTasksHasMore, currentTasksLoadingMore, currentTasksPaginationError, currentTasksProgressKey, onRetryCurrentTasks, onLoadMoreCompletedTasks, completedCounts, completedHasMore, completedLoadingMore, completedPaginationError, completedProgressKey, onRetryCompletedTasks, completedSortMode = "completion-date-desc", onCompletedSortModeChange, searchQuery = "", availableModels, onPlanningMode, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, onOpenMission, staleHighFanoutBlockerAgeThresholdMs, lastFetchTimeMs, prAuthAvailable, onOpenWorkflowEditor, onCreateWorkflow, workflowControlsInHeader = false, active = true, onOpenHistory }: BoardProps) {
+function BoardContent({ tasks, projectId, maxConcurrent, maxWorktrees, showWorktreeGrouping, onMoveTask, onPauseTask, onUnpauseTask, onResetTask, onDuplicateTask, onMergeTask, onOpenDetail, onRefinementCreated, onOpenGroupModal, addToast, onQuickCreate, onNewTask: _onNewTask, autoMerge, mergeStrategy = "direct", onToggleAutoMerge, planAutoApproveEnabled, onTogglePlanAutoApprove, globalPaused, onUpdateTask, onRetryTask, onOpenChatWithPrefill, onRevertTask, onRestoreRevertTask, onDeleteTask, onLoadMoreCurrentTasks, currentTasksTotal, currentTasksHasMore, currentTasksLoadingMore, currentTasksPaginationError, currentTasksProgressKey, onRetryCurrentTasks, onLoadMoreCompletedTasks, completedCounts, completedHasMore, completedLoadingMore, completedPaginationError, completedProgressKey, onRetryCompletedTasks, completedSortMode = "completion-date-desc", onCompletedSortModeChange, searchQuery = "", availableModels, onPlanningMode, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, onOpenMission, staleHighFanoutBlockerAgeThresholdMs, lastFetchTimeMs, prAuthAvailable, workflowControlsInHeader = false, active = true, onOpenHistory }: BoardProps) {
   const { t } = useTranslation("app");
   /*
   FNXC:TaskColumnSorting 2026-08-18-21:24:
@@ -234,7 +231,6 @@ function BoardContent({ tasks, projectId, maxConcurrent, maxWorktrees, showWorkt
     boardRef.current = element;
     setBoardElement((current) => current === element ? current : element);
   }, []);
-  const viewportMode = useViewportMode();
   useColumnScrollSnap(boardElement, { mobileOnly: true });
   useEffect(() => {
     if (!active) return;
@@ -260,22 +256,21 @@ function BoardContent({ tasks, projectId, maxConcurrent, maxWorktrees, showWorkt
   */
   const { isPanning: isBoardMousePanning, ...boardMousePanBindings } = useBoardMousePan(boardElement, true);
   const boardClassName = `board board-workflow-columns${isBoardMousePanning ? " is-mouse-panning" : ""}`;
-  const [headerWorkflowSlot, setHeaderWorkflowSlot] = useState<HTMLElement | null>(() => {
-    if (typeof document === "undefined") return null;
-    return document.getElementById("header-workflow-slot");
-  });
+  /*
+  FNXC:WorkflowControls 2026-09-15-01:44:
+  FN-405: slot resolution is shared with List, Graph, and the Planning/Missions slot. Board used to
+  resolve `#header-workflow-slot` exactly once per `[active, workflowControlsInHeader, viewportMode]`
+  change, so a header shell mounted after the Board — or a breakpoint swap that replaces the slot node —
+  left this null forever and the toolbar stayed inline UNDER the header. The shared hook keeps
+  re-resolving while the view is active, so the inline fallback now applies only to a genuinely absent
+  slot; an inactive Board still passes `enabled: false` and never claims the shared slot.
+  */
+  const headerWorkflowSlot = useHeaderWorkflowSlot({ enabled: active && workflowControlsInHeader });
   /*
   FNXC:TaskSearchPagination 2026-09-07-18:20:
   Search results are a server-paginated task collection, not a finite client-side filter. Every searched lane therefore receives the shared current-page cursor and automatic loading callback, including completion lanes; the separate completion-history pager applies only outside search.
   */
   const isSearchActive = searchQuery.trim() !== "";
-  useEffect(() => {
-    if (!active || !workflowControlsInHeader || typeof document === "undefined") {
-      setHeaderWorkflowSlot(null);
-      return;
-    }
-    setHeaderWorkflowSlot(document.getElementById("header-workflow-slot"));
-  }, [active, workflowControlsInHeader, viewportMode]);
 
   useEffect(() => {
     if (!active) return;
@@ -910,23 +905,27 @@ function BoardContent({ tasks, projectId, maxConcurrent, maxWorktrees, showWorkt
             counts={workflowStatusCounts}
             aggregateOption={{ id: ALL_WORKFLOWS_BOARD_VIEW_ID, name: "All workflows" }}
             onOpen={refreshBoardWorkflows}
-            onEditWorkflow={onOpenWorkflowEditor}
-            onCreateWorkflow={onCreateWorkflow}
           />
         </div>
       </div>
     ) : null;
     /*
     FNXC:WorkflowControls 2026-06-20-00:00:
-    Board owns workflow selection state, so the existing selector/edit/create toolbar is portaled to Header only when the left sidebar is the active tablet/desktop navigation surface. If the Header slot is not mounted yet, render inline as the safe fallback so controls are never lost.
+    Board owns workflow selection state, so the existing selector toolbar is portaled to Header only when the left sidebar is the active tablet/desktop navigation surface. If the Header slot is not mounted yet, render inline as the safe fallback so controls are never lost.
 
-    FNXC:WorkflowControls 2026-06-20-15:42:
-    Standalone workflow edit/create icon buttons were removed because those actions now live inside WorkflowSwitcher; keep this wrapper only when it contains the switcher to avoid empty toolbar shells.
+    FNXC:WorkflowControls 2026-09-15-05:29:
+    FN-407: the toolbar now holds the selector and nothing else — workflow edit/create affordances live only in the Workflows view. Keep this wrapper only when it contains the switcher to avoid empty toolbar shells.
 
     FNXC:MainViewKeepAlive 2026-08-31-14:54:
     React commits portals before the active-gate effect clears a retained Board's cached header slot.
     Gate selection here too, so an inactive Board renders its toolbar inline inside the hidden wrapper
     instead of claiming the shared slot for a commit.
+
+    FNXC:WorkflowControls 2026-09-15-01:44:
+    FN-405: `headerWorkflowSlot` now comes from the shared resolver, which keeps re-resolving a
+    late-mounted or replaced slot. A null value therefore means the header renders no slot at all, and
+    the inline fallback below is reserved for exactly that case rather than for a slot that simply had
+    not mounted at first render.
     */
     const shouldRelocateWorkflowToolbar = active && workflowControlsInHeader && Boolean(headerWorkflowSlot);
     const relocatedWorkflowToolbar = shouldRelocateWorkflowToolbar && workflowToolbar
@@ -978,7 +977,7 @@ function BoardContent({ tasks, projectId, maxConcurrent, maxWorktrees, showWorkt
                   onMergeTask={onMergeTask}
                   onOpenDetail={onOpenDetail}
                   onPlanningMode={onPlanningMode}
-                  onOpenRefine={onOpenRefine}
+                  onRefinementCreated={onRefinementCreated}
                   onOpenGroupModal={onOpenGroupModal}
                   addToast={addToast}
                   globalPaused={globalPaused}
@@ -986,7 +985,7 @@ function BoardContent({ tasks, projectId, maxConcurrent, maxWorktrees, showWorkt
                   onRetryTask={onRetryTask}
                   onOpenChatWithPrefill={onOpenChatWithPrefill}
                   onRevertTask={onRevertTask}
-                  onReviseTask={onReviseTask}
+                  onRestoreRevertTask={onRestoreRevertTask}
                   onDeleteTask={onDeleteTask}
                   allTasks={tasks}
                   availableModels={availableModels}
@@ -1069,7 +1068,7 @@ function BoardContent({ tasks, projectId, maxConcurrent, maxWorktrees, showWorkt
                 onMergeTask={onMergeTask}
                 onOpenDetail={onOpenDetail}
                 onPlanningMode={onPlanningMode}
-                onOpenRefine={onOpenRefine}
+                onRefinementCreated={onRefinementCreated}
                 onOpenGroupModal={onOpenGroupModal}
                 addToast={addToast}
                 globalPaused={globalPaused}
@@ -1077,7 +1076,7 @@ function BoardContent({ tasks, projectId, maxConcurrent, maxWorktrees, showWorkt
                 onRetryTask={onRetryTask}
                 onOpenChatWithPrefill={onOpenChatWithPrefill}
                 onRevertTask={onRevertTask}
-                onReviseTask={onReviseTask}
+                onRestoreRevertTask={onRestoreRevertTask}
                 onDeleteTask={onDeleteTask}
                 availableModels={availableModels}
                 onOpenDetailWithTab={onOpenDetailWithTab}
@@ -1132,10 +1131,12 @@ function BoardContent({ tasks, projectId, maxConcurrent, maxWorktrees, showWorkt
   return <BoardWorkflowSkeleton empty={false} t={t} />;
 }
 
+/*
+FNXC:NativeUiPresentation 2026-09-15-00:20:
+REMOVED: the Alpha boundary wrapper. Board no longer opts into a presentation perimeter, so the selected
+colour theme reaches its columns and cards like every other view, and no extra `display: contents` box
+sits between Board and its canonical scroll owner.
+*/
 export function Board(props: BoardProps) {
-  return (
-    <AlphaBoundary>
-      <BoardContent {...props} />
-    </AlphaBoundary>
-  );
+  return <BoardContent {...props} />;
 }

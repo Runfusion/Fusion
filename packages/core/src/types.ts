@@ -65,7 +65,7 @@ FNXC:WorkflowDeprecation 2026-08-25-14:40:
 builtin:review-gated-coding is DELETED, not deprecated. It shipped with a success path that could
 never complete: `code-review -> documentation-delivery` put a write-capable node after a passed
 review, which `execute-workflow-graph` refuses with `workspace-review-seal-required`, and its plan
-node declared a seam `resolveSeamName` throws on. builtin:coding-ideas-v2 replaces it.
+node declared a seam `resolveSeamName` throws on. builtin:coding-ideas replaces it.
 It was briefly kept as a deprecated id so an existing selection still resolved. That is no longer
 worth its cost: it SHARED the documentation-delivery node with V2, so changing that node for V2
 silently changed this workflow too — a second consumer nobody was maintaining. A task that selected
@@ -77,12 +77,9 @@ export const DEPRECATED_BUILTIN_WORKFLOW_IDS: ReadonlySet<string> = new Set([
 ]);
 
 /*
-FNXC:WorkflowSuccession 2026-09-06-02:15:
-FN-297 removes builtin:coding-ideas from the catalog instead of deprecating it and names builtin:coding-ideas-v2 as its successor. The project default lacks the Ideas column and manual intake, so falling back to it would move existing cards onto a different board. The retired id is read-tolerant and requestable, never offered and never written for task selections or project defaults; enabledBuiltinWorkflowIds is the explicit exception because operator-owned activation lists are understood without being rewritten. Read/write normalization carries this succession without a schema migration, keeping SCHEMA_BASELINE_VERSION unchanged so older Fusion binaries can still open the database.
+FNXC:WorkflowIdentity 2026-09-14-19:06:
+A built-in revision retains its original identity. Migration 0079 converges persisted references before catalog reads, so selection, configuration and capacity use the same raw workflow id without redirects.
 */
-export const RETIRED_BUILTIN_WORKFLOW_SUCCESSORS: ReadonlyMap<string, string> = new Map([
-  ["builtin:coding-ideas", "builtin:coding-ideas-v2"],
-]);
 
 
 /*
@@ -180,6 +177,9 @@ import {
   ANTHROPIC_AUTH_PREFERENCES,
   THEME_MODES,
   COLOR_THEMES,
+  UI_STYLES,
+  DEFAULT_UI_STYLE,
+  isUiStyle,
   SUPPORTED_LOCALES,
   DEFAULT_LOCALE,
   isLocale,
@@ -192,6 +192,7 @@ import type {
   AnthropicAuthPreference,
   ThemeMode,
   ColorTheme,
+  UiStyle,
   Locale,
 } from "./types/ui/execution-and-ui.js";
 export {
@@ -206,6 +207,9 @@ export {
   ANTHROPIC_AUTH_PREFERENCES,
   THEME_MODES,
   COLOR_THEMES,
+  UI_STYLES,
+  DEFAULT_UI_STYLE,
+  isUiStyle,
   SUPPORTED_LOCALES,
   DEFAULT_LOCALE,
   isLocale,
@@ -218,6 +222,7 @@ export type {
   AnthropicAuthPreference,
   ThemeMode,
   ColorTheme,
+  UiStyle,
   Locale,
 };
 
@@ -618,6 +623,9 @@ import type {
   TaskVerificationStatus,
   TaskVerificationProfile,
   MergeDetails,
+  HumanPlanApprovalState,
+  HumanPlanApprovalDecision,
+  HumanPlanApprovalDecisionKind,
   CheckoutLease,
   CheckoutClaimContext,
   CheckoutClaimPrecondition,
@@ -669,6 +677,9 @@ export type {
   TaskVerificationStatus,
   TaskVerificationProfile,
   MergeDetails,
+  HumanPlanApprovalState,
+  HumanPlanApprovalDecision,
+  HumanPlanApprovalDecisionKind,
   CheckoutLease,
   CheckoutClaimContext,
   CheckoutClaimPrecondition,
@@ -1541,6 +1552,21 @@ export function validateMessageMetadata(metadata: MessageMetadata | undefined): 
   }
 
   /*
+  FNXC:MailboxSubject 2026-09-15-04:40:
+  A declared subject must be a real subject: blank strings would render an empty mailbox subject
+  line, so they are rejected rather than silently stored. Absence stays valid for backward
+  compatibility — the dashboard derives a display subject for legacy rows and system notices.
+  */
+  if (metadata.subject !== undefined) {
+    if (typeof metadata.subject !== "string" || metadata.subject.trim().length === 0) {
+      throw new Error("metadata.subject must be a non-empty string");
+    }
+    if (metadata.subject.trim().length > 200) {
+      throw new Error("metadata.subject must be at most 200 characters");
+    }
+  }
+
+  /*
   FNXC:NativeStructureEmbed 2026-07-19-12:30:
   Mail accepts only the shared six-kind NativeStructureRef union. The roadmap item uses the
   plugin-owned read adapter at render time, so attachment metadata remains a ref rather than a
@@ -1636,7 +1662,16 @@ experimental flag reader here. Its Settings dependency is type-only and introduc
 export { isExperimentalFeatureEnabled, CHAT_FOCUS_FLAG, WHITEBOARD_VIEW_FLAG } from "./config/experimental-features.js";
 export { createEmptyWhiteboardDocument, validateWhiteboardDocument, validateWhiteboardTitle, WhiteboardValidationError, WhiteboardRevisionConflictError, WhiteboardNotFoundError } from "./whiteboards/whiteboard-types.js";
 export type { WhiteboardDocumentV1, WhiteboardDocument, WhiteboardFrame, WhiteboardText, WhiteboardRelation, WhiteboardRelationBranch, ProjectWhiteboard, ProjectWhiteboardSummary, WhiteboardRevision } from "./whiteboards/whiteboard-types.js";
+/*
+FNXC:ModelResolution 2026-09-15-08:46:
+FN-410: the dashboard client resolves `@fusion/core` to this browser-safe leaf
+(`packages/dashboard/vite.config.ts`), so the shared lane thinking-level precedence has to be
+re-exported here for Task Detail to display the effort a run actually used instead of re-deriving
+it. `./ai/model-resolution.js` is already imported by this module, so this adds no new browser
+module surface.
+*/
 export {
+  resolvePhaseThinkingLevel,
   resolveExecutionSettingsModel,
   resolvePlanningSettingsModel,
   resolveProjectDefaultModel,
@@ -1647,7 +1682,7 @@ export {
   resolveTitleSummarizerSettingsModel,
   resolveValidatorSettingsModel,
 } from "./ai/model-resolution.js";
-export type { ResolvedModelSelection } from "./ai/model-resolution.js";
+export type { ResolvedModelSelection, ModelThinkingPhase } from "./ai/model-resolution.js";
 export { resolveResearchSettings } from "./research/research-settings.js";
 export { resolveResearchFindingId } from "./research/research-types.js";
 export type { ResolvedResearchSettings } from "./research/research-settings.js";

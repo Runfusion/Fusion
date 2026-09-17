@@ -1,4 +1,3 @@
-import { ModalCloseButton } from "./ModalCloseButton";
 import "./FileBrowser.css";
 import { useState, useCallback, useEffect, useMemo, useId, useLayoutEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
@@ -301,7 +300,6 @@ export function FileBrowserModal({
       minSize={{ width: 360, height: 420 }}
       /* FNXC:ModalGeometryPersistence 2026-07-15-19:30: File Browser is a ≤768px full-screen sheet; preserve its desktop position and size for movable reopen. */
       suspendGeometryPersistenceOnMobile
-      persistGeometryKey="fusion:files-modal-window"
     >
       {/*
        * FNXC:FileBrowser 2026-06-22-15:22:
@@ -317,10 +315,27 @@ export function FileBrowserModal({
               {selectedFile ? <span className="file-browser-header-path">{selectedFile}</span> : null}
             </>
           )}
+          /*
+          FNXC:FileBrowser 2026-09-15-16:33:
+          FN-427: this back IS a real internal navigation (open file -> file list), so it is kept in every narrow
+          presentation, drawer included, unlike a back whose only effect would be to dismiss the surface. It renders
+          exactly when the list exists (`!isDirectFileView`), the layout is single-pane (`isMobile`), and a file is
+          currently open (`mobileView === "editor"`). The direct file view deliberately has no back and no tree: it was
+          opened for one file and has no list to return to (see FNXC:FileBrowserDocs 2026-09-13-08:37); its way out is
+          the canonical close, or the drawer handle/backdrop/Escape in drawer presentation.
+          */
           backAction={!isDirectFileView && isMobile && selectedFile && mobileView === "editor" ? {
             label: t("fileBrowser.back", "Back to file list"),
             onClick: handleBackToList,
           } : undefined}
+          /*
+          FNXC:StandardizedDrawers 2026-09-15-04:56:
+          FN-406: the close is handed to ViewHeader through `onClose` instead of being built locally, so the single
+          drawer-chrome rule removes it in phone drawer presentation. On desktop, tablet, and a phone without the
+          `data-mobile-drawers` opt-in the canonical control renders exactly as before.
+          */
+          onClose={onClose}
+          closeButtonProps={{ "aria-label": t("actions.close", "Close") }}
           actions={(
             <div className="file-browser-header-actions">
               <WorkspaceSelector
@@ -329,7 +344,6 @@ export function FileBrowserModal({
                 workspaces={workspaces}
                 onSelect={handleWorkspaceSelect}
               />
-              <ModalCloseButton onClick={onClose} aria-label={t("actions.close", "Close")} />
             </div>
           )}
         />

@@ -24,28 +24,28 @@
 }
 
 /*
-FNXC:AlphaDensity 2026-09-11-00:30:
-Alpha task cards keep metadata and status behavior intact while reducing persistent visual weight. Compact padding, neutral elevation, and a quiet hover are boundary-only so every stable card host preserves its historical dimensions.
+FNXC:NativeDensity 2026-09-11-00:30:
+Task cards keep metadata and status behavior intact while reducing persistent visual weight. Compact padding, neutral elevation, and a quiet hover are shared by every card host.
 */
-[data-alpha-surface="true"] .card {
-  padding: var(--alpha-density-3);
+.card {
+  padding: var(--ui-density-md);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-sm);
 }
 
-[data-alpha-surface="true"] .card:hover {
-  border-color: var(--alpha-neutral-muted);
+.card:hover {
+  border-color: var(--text-muted);
   box-shadow: var(--shadow-md);
 }
 
-[data-alpha-surface="true"] .card-header {
-  gap: var(--alpha-density-1);
-  margin-bottom: var(--alpha-density-1);
+.card-header {
+  gap: var(--ui-density-2xs);
+  margin-bottom: var(--ui-density-2xs);
 }
 
 @media (max-width: 768px) {
-  [data-alpha-surface="true"] .card {
-    padding: var(--alpha-density-2);
+  .card {
+    padding: var(--ui-density-sm);
   }
 }
 
@@ -499,9 +499,38 @@ and no hardcoded color. Same geometry as every other status badge; only the fill
   border-color: color-mix(in srgb, var(--color-warning) 45%, transparent);
 }
 
+/*
+FNXC:TaskStatusBadge 2026-09-16-05:01:
+FN-448 — the "Needs you" badge replaces the removed full-card overlay as the only signal that a card
+is waiting for the operator. It uses warning paint and a slow blink so it reads as a call to action
+rather than one more neutral lifecycle chip; geometry is inherited from `.card-status-badge`.
+*/
 .card-status-badge.awaiting-approval {
-  background: var(--status-triage-bg-deep);
-  color: var(--triage);
+  background: color-mix(in srgb, var(--color-warning) 14%, transparent);
+  color: var(--color-warning);
+  border-color: color-mix(in srgb, var(--color-warning) 45%, transparent);
+  /* Derived from the shared duration scale rather than a hardcoded time. */
+  --needs-you-blink-duration: calc(var(--duration-slow) * 5);
+  animation: needs-you-blink var(--needs-you-blink-duration) ease-in-out infinite;
+}
+
+@keyframes needs-you-blink {
+  0%,
+  100% {
+    background: color-mix(in srgb, var(--color-warning) 14%, transparent);
+    opacity: 1;
+  }
+  50% {
+    background: color-mix(in srgb, var(--color-warning) 38%, transparent);
+    opacity: 0.65;
+  }
+}
+
+/* Respect an operating-system request for reduced motion: keep the warning paint, drop the blink. */
+@media (prefers-reduced-motion: reduce) {
+  .card-status-badge.awaiting-approval {
+    animation: none;
+  }
 }
 
 /*
@@ -516,6 +545,7 @@ warning badge, while generic and release-authorization holds retain the triage a
 }
 
 @media (max-width: 768px) {
+  .card-status-badge.awaiting-approval,
   .card-status-badge.awaiting-approval--plan-review-replan-cap {
     max-width: 100%;
     text-align: center;
@@ -788,8 +818,13 @@ layout. Shared notice paint uses semantic tokens; mobile only changes flow and t
 
 /*
 FNXC:PlanApproval 2026-08-28-06:24:
-The manual approval hold covers the card like Blocked while using warning paint. Its actions remain
-available on cards and list rows without changing the host's footprint or opening task detail.
+The manual approval hold uses warning paint. Its action remains available on list rows without
+changing the host's footprint or opening task detail.
+
+FNXC:PlanApproval 2026-09-16-05:01:
+FN-448 removed the `--card` overlay rule with its render: an absolutely positioned, full-bleed notice
+hid everything the operator needed to recognize the card. The warning border below stays, because it
+is the card's paint, not a cover.
 */
 .card.plan-approval-hold {
   border-color: var(--color-warning);
@@ -804,17 +839,6 @@ available on cards and list rows without changing the host's footprint or openin
   border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--color-warning) 12%, var(--card));
   color: var(--text-primary);
-}
-
-.plan-approval-notice--card {
-  position: absolute;
-  inset: 0;
-  z-index: 4;
-  flex-direction: column;
-  justify-content: center;
-  border-radius: inherit;
-  box-shadow: var(--shadow-md);
-  background: color-mix(in srgb, var(--color-warning) 16%, var(--card));
 }
 
 .plan-approval-notice__title {
@@ -889,11 +913,20 @@ available on cards and list rows without changing the host's footprint or openin
     flex-direction: column;
   }
 
+  /*
+  FNXC:IconOnlyButtonCanon 2026-09-16-19:05:
+  FN-471 scinde cette règle : les boutons ÉTIQUETÉS gardent le plancher tactile de 44px, tandis que le
+  bouton icône seule du bandeau de blocage externe rejoint la boîte d'icône canonique (36px).
+  */
   .external-block-notice__actions .btn,
-  .external-block-notice__actions .btn-icon,
   .plan-approval-notice__actions .btn {
     min-width: var(--touch-target-min-size);
     min-height: var(--touch-target-min-size);
+  }
+
+  .external-block-notice__actions .btn-icon {
+    min-width: var(--icon-button-size-mobile);
+    min-height: var(--icon-button-size-mobile);
   }
 
   .plan-approval-notice,
@@ -2319,5 +2352,6 @@ The three-dot menu is the sole card move/action entry point. Keep this shared bu
   font-weight: 600;
 }
 
-/* FNXC:TaskRevert 2026-08-01-19:51: Reverted tasks require visible resolution controls, not hover-only menu actions. */
-.card-reverted-actions { display: inline-flex; gap: var(--space-1); }
+/* FNXC:TaskRevert 2026-09-15-10:00: FN-416 removed the reverted card's Delete/Revise control strip
+   (`.card-reverted-actions`). A reverted card carries only its badge; restoring the revert is a
+   context-menu action, so no card-level container remains to style. */

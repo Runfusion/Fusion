@@ -24,16 +24,60 @@ export function buildPatchnodeEntryId(kind: PatchnodeEntryKind, taskId: string, 
   return `${kind}:${taskId}:${occurrenceKey}`;
 }
 
-type PatchnodeTaskSnapshot = Pick<Task, "id" | "title" | "summary">;
+/**
+ * Exact number of description characters used as a ledger label when no title is stored.
+ *
+ * FNXC:PatchnodeLedger 2026-09-15-23:26:
+ * FN-444 mirrors `MAX_DESCRIPTION_FALLBACK_LENGTH` from the dashboard's FN-391 projection
+ * (`packages/dashboard/app/utils/taskTitleDisplay.ts`): the first 220 description characters taken
+ * EXACTLY, with no ellipsis, suffix, or word-boundary rounding.
+ */
+export const PATCHNODE_DESCRIPTION_LABEL_LENGTH = 220;
 
+type PatchnodeLabelInput = { id: string; title?: string | null; description?: string | null };
+
+/**
+ * Canonical delivery label for a ledger entry.
+ *
+ * FNXC:PatchnodeLedger 2026-09-15-23:26:
+ * FN-444: `Task.title` is OPTIONAL and FN-391 deliberately removed every title backfill, so an
+ * ordinary Fusion task stores no title at all and its on-screen label is derived by
+ * `getTaskTitleDisplay` (title -> first 220 description characters -> id). The ledger previously
+ * fell straight from a blank title to the task id, so every titleless delivery persisted
+ * `title === taskId` and the History card rendered the identifier twice (metadata chip + bold
+ * line). This helper applies the same precedence so the durable snapshot carries the label an
+ * operator actually recognises.
+ *
+ * The rule is DUPLICATED rather than imported because `@fusion/core` cannot depend on the
+ * dashboard package, and the dashboard's browser bundle aliases `@fusion/core` to `types.ts`, so
+ * neither side can import the other's runtime helper. `PATCHNODE_DESCRIPTION_LABEL_LENGTH` and the
+ * precedence order are pinned by tests on both sides to keep the two mirrors converged.
+ */
+export function buildPatchnodeSnapshotLabel(task: PatchnodeLabelInput): string {
+  if (typeof task.title === "string" && task.title.trim().length > 0) return task.title;
+  if (typeof task.description === "string" && task.description.trim().length > 0) {
+    return task.description.slice(0, PATCHNODE_DESCRIPTION_LABEL_LENGTH);
+  }
+  return task.id.trim();
+}
+
+type PatchnodeTaskSnapshot = Pick<Task, "id" | "title" | "description" | "summary">;
+
+/*
+FNXC:PatchnodeLedger 2026-09-15-23:26:
+FN-444: `body` is now the point-in-time summary ALONE. It used to fall back to the title and then
+the id, which merely replaced one duplication with another once the label was fixed — the card
+would have shown the label twice, or the id twice for a task with neither title nor description.
+An empty string keeps the NOT NULL column satisfied and lets each read surface omit the body row.
+*/
 export function buildPatchnodeEntryInput(
   task: PatchnodeTaskSnapshot,
   kind: PatchnodeEntryKind,
   occurredAt: string,
 ): PatchnodeEntry {
   const taskId = task.id.trim();
-  const title = task.title?.trim() || taskId;
-  const body = task.summary?.trim() || title || taskId;
+  const title = buildPatchnodeSnapshotLabel({ ...task, id: taskId });
+  const body = task.summary?.trim() ?? "";
   const occurrenceKey = toPatchnodeOccurrenceKey(occurredAt);
   return {
     entryId: buildPatchnodeEntryId(kind, taskId, occurrenceKey),

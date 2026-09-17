@@ -105,7 +105,7 @@ function taskFixture(id = "task-1"): Task {
 }
 
 function dismissDrawerByHandle(dialog: HTMLElement): void {
-  const handle = dialog.querySelector(".alpha-mobile-drawer__handle-target");
+  const handle = dialog.querySelector(".mobile-drawer__handle-target");
   if (!handle) throw new Error("Alpha drawer handle is missing");
   fireEvent.pointerDown(handle, { pointerId: 1, clientY: 0, button: 0, isPrimary: true });
   fireEvent.pointerMove(handle, { pointerId: 1, clientY: 200 });
@@ -126,6 +126,7 @@ function mainContentProps(overrides: Partial<MainContentProps> = {}): MainConten
       openNewTaskWithDescription: vi.fn(),
     } as unknown as MainContentProps["modalManager"],
     handleChangeTaskView: vi.fn(),
+    openHistory: vi.fn(),
     refreshAppSettings: vi.fn(async () => undefined),
     addToast: vi.fn(),
     currentProject: { id: "project-1", name: "Project 1" } as MainContentProps["currentProject"],
@@ -135,7 +136,6 @@ function mainContentProps(overrides: Partial<MainContentProps> = {}): MainConten
     filteredBoardTasks: [],
     workflowSteps: [],
     remoteData: { tasks: [] } as MainContentProps["remoteData"],
-    setQuickChatOpen: vi.fn(),
     capacityRiskBannerEnabled: false,
     capacityRiskDismissed: false,
     capacityRiskSignal: { level: "low", reasons: [] } as MainContentProps["capacityRiskSignal"],
@@ -158,6 +158,7 @@ function mainContentProps(overrides: Partial<MainContentProps> = {}): MainConten
     updateTask: vi.fn(async () => taskFixture()),
     retryTask: vi.fn(async () => taskFixture()),
     revertTask: vi.fn(async () => ({ task: taskFixture() })),
+    restoreTaskRevert: vi.fn(async () => ({ mode: "git", clean: true })),
     deleteTask: vi.fn(async () => taskFixture()),
     searchQuery: "",
     availableModels: [],
@@ -169,8 +170,6 @@ function mainContentProps(overrides: Partial<MainContentProps> = {}): MainConten
     staleHighFanoutBlockerAgeThresholdMs: 0,
     lastFetchTimeMs: undefined,
     prAuthAvailable: false,
-    openWorkflowEditorWithNav: vi.fn(),
-    openCreateWorkflowWithNav: vi.fn(),
     sidebarActive: true,
     isMobile: false,
     isRemote: false,
@@ -280,8 +279,8 @@ describe("MainContent main-view keep alive", () => {
   it.each([
     { name: "an empty Board", tasks: [] as Task[] },
     { name: "a populated Board", tasks: [taskFixture("task-populated")] },
-  ])("keeps the production $name mounted while resetting its lanes across Board to Chat to Board navigation", async ({ tasks }) => {
-    const result = render(<MainContent {...mainContentProps({ taskView: "board", tasks, filteredBoardTasks: tasks })} />);
+  ])("keeps the production $name mounted with its lanes behind the mobile Chat drawer", async ({ tasks }) => {
+    const result = render(<MainContent {...mainContentProps({ taskView: "board", isMobile: true, tasks, filteredBoardTasks: tasks })} />);
     await waitFor(() => expect(document.getElementById("board")).not.toBeNull());
     const board = boardRoot();
     const column = board.querySelector<HTMLElement>(".column-body");
@@ -289,18 +288,18 @@ describe("MainContent main-view keep alive", () => {
     board.scrollLeft = 124;
     column!.scrollTop = 48;
 
-    result.rerender(<MainContent {...mainContentProps({ taskView: "chat", tasks, filteredBoardTasks: tasks })} />);
+    result.rerender(<MainContent {...mainContentProps({ taskView: "chat", isMobile: true, tasks, filteredBoardTasks: tasks })} />);
     await waitFor(() => expect(document.querySelector(".chat-view")).not.toBeNull());
-    result.rerender(<MainContent {...mainContentProps({ taskView: "board", tasks, filteredBoardTasks: tasks })} />);
+    result.rerender(<MainContent {...mainContentProps({ taskView: "board", isMobile: true, tasks, filteredBoardTasks: tasks })} />);
 
     expect(boardRoot()).toBe(board);
     expect(board.querySelector(".column-body")).toBe(column);
     expect(board.scrollLeft).toBe(124);
-    expect(column!.scrollTop).toBe(0);
+    expect(column!.scrollTop).toBe(48);
   });
 
-  it("keeps the production Chat composer and transcript position across Chat to Board to Chat", async () => {
-    const result = render(<MainContent {...mainContentProps({ taskView: "chat" })} />);
+  it("keeps the production mobile Chat composer and transcript position across Chat to Board to Chat", async () => {
+    const result = render(<MainContent {...mainContentProps({ taskView: "chat", isMobile: true })} />);
     const input = await openProductionChatComposer();
     const chat = chatRoot();
     const messages = chat.querySelector<HTMLElement>(".chat-messages");
@@ -313,15 +312,29 @@ describe("MainContent main-view keep alive", () => {
     messages!.scrollTop = 91;
     fireEvent.scroll(messages!);
 
-    result.rerender(<MainContent {...mainContentProps({ taskView: "board" })} />);
+    result.rerender(<MainContent {...mainContentProps({ taskView: "board", isMobile: true })} />);
     await waitFor(() => expect(document.getElementById("board")).not.toBeNull());
-    result.rerender(<MainContent {...mainContentProps({ taskView: "chat" })} />);
+    result.rerender(<MainContent {...mainContentProps({ taskView: "chat", isMobile: true })} />);
 
     expect(chatRoot()).toBe(chat);
     expect(chat.querySelector(".chat-messages")).toBe(messages);
     expect(messages!.scrollTop).toBe(91);
     expect(await screen.findByTestId("chat-input")).toBe(input);
     expect(input).toHaveValue("Keep this draft");
+  });
+
+  /*
+  FNXC:HistoryModalSurface 2026-09-15-04:29:
+  FN-403: `patchnode` is no longer a main-content destination, so this switch must never produce a History page.
+  App coerces the value to Board and opens the single History modal instead.
+  */
+  it("ne rend plus aucune page de contenu principal pour patchnode", async () => {
+    render(<MainContent {...mainContentProps({ taskView: "patchnode" as MainContentProps["taskView"] })} />);
+
+    await waitFor(() => expect(screen.queryAllByTestId("list-view-body").length).toBeGreaterThan(0));
+    expect(document.querySelectorAll('[data-testid="patchnode-view"]')).toHaveLength(0);
+    expect(document.querySelectorAll("#patchnode-title")).toHaveLength(0);
+    expect(screen.queryByTestId("mobile-drawer-main-content")).toBeNull();
   });
 
   it("keeps the production ListView mounted across List to Board to List navigation", async () => {
@@ -364,8 +377,8 @@ describe("MainContent main-view keep alive", () => {
 
     await waitFor(() => expect(document.querySelectorAll("#board")).toHaveLength(1));
     expect(screen.getByTestId("board-keep-alive")).not.toHaveAttribute("aria-hidden");
-    expect(boardRoot().closest('[data-alpha-surface="true"]')).not.toBeNull();
-    expect(boardRoot().querySelector('[data-alpha-ui="button"]')).not.toBeNull();
+    expect(boardRoot().closest(':root')).not.toBeNull();
+    expect(boardRoot().querySelector('[data-ui="button"]')).not.toBeNull();
     const dialog = screen.getByRole("dialog", { name: "Task detail" });
     expect(within(dialog).queryByTestId("task-detail-back")).toBeNull();
     expect(within(dialog).getAllByTestId("task-detail-close")).toHaveLength(1);
@@ -386,9 +399,9 @@ describe("MainContent main-view keep alive", () => {
     })} />);
 
     const dialog = await screen.findByRole("dialog", { name: "Ideation" });
-    expect(dialog).toHaveClass("alpha-mobile-drawer__panel--content-header");
-    expect(dialog).not.toHaveClass("alpha-mobile-drawer__panel--content-scroll");
-    expect(dialog.querySelector(".alpha-mobile-drawer__body")).not.toBeNull();
+    expect(dialog).toHaveClass("mobile-drawer__panel--content-header");
+    expect(dialog).not.toHaveClass("mobile-drawer__panel--content-scroll");
+    expect(dialog.querySelector(".mobile-drawer__body")).not.toBeNull();
     dismissDrawerByHandle(dialog);
     expect(handleChangeTaskView).toHaveBeenCalledTimes(1);
     expect(handleChangeTaskView).toHaveBeenCalledWith("board");
@@ -413,10 +426,10 @@ describe("MainContent main-view keep alive", () => {
     })} />);
 
     const dialog = await screen.findByRole("dialog", { name: "Plugin Tool" });
-    expect(dialog.querySelectorAll(":scope > .alpha-mobile-drawer__header")).toHaveLength(1);
+    expect(dialog.querySelectorAll(":scope > .mobile-drawer__header")).toHaveLength(1);
     expect(dialog.querySelectorAll("h1,h2,h3")).toHaveLength(1);
-    expect(dialog.querySelectorAll(":scope > .alpha-mobile-drawer__close")).toHaveLength(0);
-    expect(dialog.querySelectorAll(":scope > .alpha-mobile-drawer__handle-target")).toHaveLength(1);
+    expect(dialog.querySelectorAll(":scope > .mobile-drawer__close")).toHaveLength(0);
+    expect(dialog.querySelectorAll(":scope > .mobile-drawer__handle-target")).toHaveLength(1);
     expect(await screen.findByTestId("headerless-plugin")).toContainElement(screen.getByRole("button", { name: "Plugin final control" }));
     dismissDrawerByHandle(dialog);
     expect(handleChangeTaskView).toHaveBeenCalledTimes(1);
@@ -435,17 +448,17 @@ describe("MainContent main-view keep alive", () => {
     expect(screen.getByTestId("board-keep-alive")).not.toHaveAttribute("aria-hidden");
     const dialog = screen.getByRole("dialog", { name: "Chat" });
     expect(dialog).toContainElement(chatRoot());
-    expect(dialog).toHaveClass("alpha-mobile-drawer__panel--content-scroll");
-    expect(dialog.querySelector(".alpha-mobile-drawer__header")).toBeNull();
+    expect(dialog).toHaveClass("mobile-drawer__panel--content-scroll");
+    expect(dialog.querySelector(".mobile-drawer__header")).toBeNull();
     expect(Array.from(dialog.querySelectorAll("h1, h2, h3")).filter((heading) => heading.textContent === "Chat" && !heading.classList.contains("visually-hidden"))).toHaveLength(1);
     expect(screen.getByTestId("chat-keep-alive")).not.toHaveAttribute("aria-hidden");
-    expect(chatRoot().closest('[data-alpha-surface="true"]')).not.toBeNull();
+    expect(chatRoot().closest(':root')).not.toBeNull();
     const input = await openProductionChatComposer();
     input.focus();
     expect(input).toHaveFocus();
-    expect(input.closest(".alpha-mobile-drawer__panel")).toBe(dialog);
+    expect(input.closest(".mobile-drawer__panel")).toBe(dialog);
     expect(screen.getByTestId("chat-new-btn")).toBeVisible();
-    expect(screen.getByTestId("chat-pop-out")).toBeVisible();
+    expect(screen.queryByTestId("chat-pop-out")).toBeNull();
     expect(input).toBeVisible();
     expect(input).not.toBeDisabled();
   });
@@ -457,32 +470,37 @@ describe("MainContent main-view keep alive", () => {
   });
 
   it.each([
-    { name: "projects overview", props: { viewMode: "overview" as const }, page: "project-overview" },
-    { name: "backend connection error", props: { showBackendConnectionErrorPage: true }, page: "connection-error" },
-  ])("keeps production Board and Chat mounted but inert behind the $name", async ({ props, page }) => {
+    { name: "projects overview", props: { viewMode: "overview" as const }, page: "project-overview", retainsChat: false },
+    { name: "backend connection error", props: { showBackendConnectionErrorPage: true }, page: "connection-error", retainsChat: true },
+  ])("keeps prior production views inert behind the $name", async ({ props, page, retainsChat }) => {
     const slot = addHeaderSlot();
-    const result = render(<MainContent {...mainContentProps({ taskView: "board" })} />);
+    const result = render(<MainContent {...mainContentProps({ taskView: "board", isMobile: true })} />);
     await waitFor(() => expect(document.getElementById("board")).not.toBeNull());
     const board = boardRoot();
     board.scrollLeft = 88;
 
-    result.rerender(<MainContent {...mainContentProps({ taskView: "chat" })} />);
+    result.rerender(<MainContent {...mainContentProps({ taskView: "chat", isMobile: true })} />);
     const input = await openProductionChatComposer();
     const chat = chatRoot();
     fireEvent.change(input, { target: { value: "Do not lose this" } });
     markRead.mockClear();
     configureProductionChat("arrived-while-hidden");
 
-    result.rerender(<MainContent {...mainContentProps({ taskView: "chat", ...props })} />);
+    result.rerender(<MainContent {...mainContentProps({ taskView: "chat", isMobile: true, ...props })} />);
 
     await screen.findByTestId(page);
     await waitFor(() => expect(slot).toBeEmptyDOMElement());
     expect(boardRoot()).toBe(board);
-    expect(chatRoot()).toBe(chat);
     expect(board.scrollLeft).toBe(88);
-    expect(input).toHaveValue("Do not lose this");
     expect(screen.getByTestId("board-keep-alive")).toHaveAttribute("aria-hidden", "true");
-    expect(screen.getByTestId("chat-keep-alive")).toHaveAttribute("aria-hidden", "true");
+    if (retainsChat) {
+      expect(chatRoot()).toBe(chat);
+      expect(input).toHaveValue("Do not lose this");
+      expect(screen.getByTestId("chat-keep-alive")).toHaveAttribute("aria-hidden", "true");
+    } else {
+      expect(document.querySelector(".chat-view")).toBeNull();
+      expect(screen.queryByTestId("chat-keep-alive")).toBeNull();
+    }
     expect(markRead).not.toHaveBeenCalled();
   });
 

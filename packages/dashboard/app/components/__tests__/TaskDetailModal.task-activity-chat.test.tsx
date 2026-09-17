@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { act, render, screen, fireEvent } from "@testing-library/react";
+import { act, render, screen, fireEvent, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import React, { type ComponentProps } from "react";
 import type { AgentLogEntry } from "@fusion/core";
@@ -154,6 +154,86 @@ describe("TaskDetailModal Activity and planner Chat tab integration", () => {
     expect(screen.getAllByText("raw executor line").some((node) => node.closest('[aria-hidden="true"]') == null)).toBe(true);
   });
 
+  /*
+  FNXC:TaskDetailActivity 2026-09-15-08:46:
+  FN-410: the Activity view options rendered side by side because the column layout sat on the
+  portaled surface while the option buttons live inside the `[role="menu"]` element. jsdom does not
+  compute layout, so the proof is structural here (every option is a direct child of the menu element
+  carrying the vertical-list class) and completed by the CSS contract asserted in
+  TaskDetailModal.css.test.ts for both the base and the mobile breakpoint.
+  */
+  it("FN-410 rend les vues d'Activity comme une liste verticale portée par l'élément [role=menu]", () => {
+    mockRawLogs([]);
+    renderModal();
+
+    const surface = openActivityViewMenu();
+    const menu = screen.getByRole("menu", { name: "Activity views" });
+    expect(surface.contains(menu)).toBe(true);
+    expect(menu).toHaveClass("activity-view-menu-list");
+
+    const options = screen.getAllByRole("menuitem");
+    expect(options.map((option) => option.textContent?.trim())).toEqual(["Live", "Feed", "Raw"]);
+    for (const option of options) {
+      expect(option).toHaveClass("activity-view-menu-item");
+      expect(option.parentElement).toBe(menu);
+    }
+  });
+
+  it("FN-410 garde la liste verticale quand l'oversight ajoute l'option Interventions", () => {
+    mockRawLogs([]);
+    renderModal({
+      task: makeTask({
+        id: "FN-410-oversight",
+        column: "in-progress" as any,
+        plannerOversightLevel: "autonomous",
+        log: [],
+        steeringComments: [],
+      }),
+    });
+
+    openActivityViewMenu();
+    const menu = screen.getByRole("menu", { name: "Activity views" });
+    expect(menu).toHaveClass("activity-view-menu-list");
+
+    const options = screen.getAllByRole("menuitem");
+    expect(options.map((option) => option.textContent?.trim())).toEqual(["Live", "Feed", "Raw", "Interventions"]);
+    for (const option of options) {
+      expect(option.parentElement).toBe(menu);
+    }
+  });
+
+  /*
+  FNXC:TaskDetailChat 2026-09-15-08:46:
+  FN-410 end to end: a task log carrying the engine's thinking-effort annotation must surface that
+  effort on the Live role icon of the matching role, through the real TaskDetailModal wiring.
+  */
+  it("FN-410 expose le niveau de réflexion sur l'icône de modèle de Live", () => {
+    mockRawLogs([
+      {
+        timestamp: "2026-06-30T20:03:00.000Z",
+        taskId: "FN-410-thinking",
+        type: "status",
+        agent: "executor",
+        text: "Executor using model: openai/gpt-4o (thinking effort: high)",
+      },
+      { timestamp: "2026-06-30T20:04:00.000Z", taskId: "FN-410-thinking", type: "text", agent: "executor", text: "executor output" },
+    ] as AgentLogEntry[]);
+
+    renderModal({
+      task: makeTask({
+        id: "FN-410-thinking",
+        column: "in-progress" as any,
+        plannerOversightLevel: "off",
+        log: [],
+        steeringComments: [],
+      }),
+    });
+
+    const executorGroup = screen.getByRole("region", { name: "Executor messages" });
+    expect(within(executorGroup).getByTestId("task-chat-provider-thinking")).toHaveTextContent("High");
+    expect(within(executorGroup).getByLabelText("Executor: openai/gpt-4o · thinking: High")).toBeInTheDocument();
+  });
+
   it("conserve le brouillon et le transcript Live à travers Feed, Raw et un autre onglet", async () => {
     const user = userEvent.setup();
     mockRawLogs([
@@ -257,7 +337,7 @@ describe("TaskDetailModal Activity and planner Chat tab integration", () => {
       loadingMore: false,
     });
 
-    const overlay = renderModal({ taskDetailChatFirst: false });
+    const overlay = renderModal({ taskDetailDefaultTab: "activity" });
     expect(screen.getByRole("button", { name: "Activity" })).toHaveClass("detail-tab-active");
     expect(screen.getByTestId("task-chat-transcript")).toBeInTheDocument();
     expect(screen.queryByText("Loading agent output…")).not.toBeInTheDocument();
@@ -272,7 +352,7 @@ describe("TaskDetailModal Activity and planner Chat tab integration", () => {
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
         addToast={noop}
-        taskDetailChatFirst={false}
+        taskDetailDefaultTab="activity"
       />,
     );
     expect(screen.getByRole("button", { name: "Activity" })).toHaveClass("detail-tab-active");
@@ -280,7 +360,7 @@ describe("TaskDetailModal Activity and planner Chat tab integration", () => {
     expect(screen.queryByText("Loading agent output…")).not.toBeInTheDocument();
     embedded.unmount();
 
-    renderModal({ taskDetailChatFirst: true });
+    renderModal({ taskDetailDefaultTab: "chat" });
     expect(screen.getByRole("button", { name: "Chat" })).toHaveClass("detail-tab-active");
     expect(screen.getByTestId("task-planner-chat-panel")).toBeInTheDocument();
     expect(screen.queryByTestId("task-chat-transcript")).not.toBeInTheDocument();
@@ -753,7 +833,7 @@ describe("TaskDetailModal Activity and planner Chat tab integration", () => {
   it("restores Chat-first ordering and omitted non-done default when the project setting is enabled", () => {
     mockRawLogs([]);
 
-    renderModal({ taskDetailChatFirst: true });
+    renderModal({ taskDetailDefaultTab: "chat" });
 
     expect(topLevelTabLabels().slice(0, 2)).toEqual(["Chat", "Activity"]);
     expect(screen.getByRole("button", { name: "Chat" })).toHaveClass("detail-tab-active");
@@ -761,10 +841,54 @@ describe("TaskDetailModal Activity and planner Chat tab integration", () => {
     expect(screen.queryByRole("tablist", { name: "Activity views" })).not.toBeInTheDocument();
   });
 
+  /*
+  FNXC:TaskDetailDefaultTab 2026-09-16-02:53:
+  FN-442 turned the Chat-first boolean into a three-value project choice, so each value must carry BOTH the landing tab of
+  an open with no explicit tab AND the head order of the Activity / Chat / Definition trio (chosen tab first, then the
+  other two in canonical order). The two invariants that did NOT change are asserted for every value too: an explicit
+  deep link always wins, and a terminal-column task still lands on Summary.
+  */
+  const defaultTabCases = [
+    { setting: "activity" as const, landingTabLabel: "Activity", headOrder: ["Activity", "Chat", "Plan"] },
+    { setting: "chat" as const, landingTabLabel: "Chat", headOrder: ["Chat", "Activity", "Plan"] },
+    { setting: "definition" as const, landingTabLabel: "Plan", headOrder: ["Plan", "Activity", "Chat"] },
+  ];
+
+  for (const { setting, landingTabLabel, headOrder } of defaultTabCases) {
+    it(`lands on ${landingTabLabel} and leads the tab bar with it for taskDetailDefaultTab="${setting}"`, () => {
+      mockRawLogs([]);
+
+      renderModal({ taskDetailDefaultTab: setting });
+
+      expect(topLevelTabLabels().slice(0, 3)).toEqual(headOrder);
+      expect(screen.getByRole("button", { name: landingTabLabel })).toHaveClass("detail-tab-active");
+    });
+
+    it(`keeps an explicit deep link authoritative over taskDetailDefaultTab="${setting}"`, () => {
+      mockRawLogs([]);
+
+      renderModal({ taskDetailDefaultTab: setting, initialTab: "stats" });
+
+      expect(topLevelTabLabels().slice(0, 3)).toEqual(headOrder);
+      expect(screen.getByRole("button", { name: "Stats" })).toHaveClass("detail-tab-active");
+    });
+
+    it(`keeps a terminal-column task on Summary for taskDetailDefaultTab="${setting}"`, () => {
+      mockRawLogs([]);
+
+      renderModal({
+        taskDetailDefaultTab: setting,
+        task: makeTask({ id: "FN-7315-done", column: "done" as never, plannerOversightLevel: "off", log: [], steeringComments: [] }),
+      });
+
+      expect(screen.getByRole("button", { name: "Summary" })).toHaveClass("detail-tab-active");
+    });
+  }
+
   it("keeps explicit Activity, planner Chat, and Logs deep links stable across the ordering setting", () => {
     mockRawLogs([]);
 
-    const { rerender } = renderModal({ initialTab: "chat", taskDetailChatFirst: true });
+    const { rerender } = renderModal({ initialTab: "chat", taskDetailDefaultTab: "chat" });
 
     expect(topLevelTabLabels().slice(0, 2)).toEqual(["Chat", "Activity"]);
     expect(screen.getByRole("button", { name: "Activity" })).toHaveClass("detail-tab-active");
@@ -780,7 +904,7 @@ describe("TaskDetailModal Activity and planner Chat tab integration", () => {
         onOpenDetail={noopOpenDetail}
         addToast={noop}
         initialTab="planner-chat"
-        taskDetailChatFirst={false}
+        taskDetailDefaultTab="activity"
       />,
     );
 
@@ -797,7 +921,7 @@ describe("TaskDetailModal Activity and planner Chat tab integration", () => {
         onOpenDetail={noopOpenDetail}
         addToast={noop}
         initialTab="logs"
-        taskDetailChatFirst={true}
+        taskDetailDefaultTab="chat"
       />,
     );
 

@@ -1173,6 +1173,23 @@ export interface ChatFailureInfo {
   reference?: ChatFailureReference;
 }
 
+/**
+ * FNXC:ChatMessageEdit 2026-09-16-05:58:
+ * Wire shape of the persisted user row carried by the in-band `user_message` stream event. It is the
+ * `ChatMessage` structure narrowed to `role: "user"`; `ChatStore.addMessage` returns the persisted
+ * `msg-<uuid8>` id that the client uses to retire its optimistic `temp-<ts>` bubble.
+ */
+export interface ChatStreamUserMessagePayload {
+  id: string;
+  sessionId: string;
+  role: "user";
+  content: string;
+  thinkingOutput: string | null;
+  metadata: Record<string, unknown> | null;
+  attachments?: ChatAttachment[];
+  createdAt: string;
+}
+
 /** SSE event types for chat streaming */
 export type ChatStreamEvent =
   | { type: "thinking"; data: string }
@@ -1210,6 +1227,21 @@ export type ChatStreamEvent =
         dispatch?: "agents";
         failedAgentNames?: string[];
       };
+    }
+  /*
+  FNXC:ChatMessageEdit 2026-09-16-05:58:
+  The persisted identity of the user turn must travel in-band on the reply stream. The out-of-band
+  `chat:message:added` echo cannot be a correctness dependency for message identity: the `ChatStore`
+  instance resolved by `resolveProjectChatContext` on the send route is not necessarily the instance
+  subscribed by `createSSEHandler`, and `enrichChatMessageSsePayload` rejections are swallowed inside
+  a detached `void (async () => …)` in `sse.ts`. Without this event the optimistic `temp-<ts>` bubble
+  could keep its local id forever, and an edit saved against it produced a guaranteed 404
+  (`Message temp-… not found in session …`). The generic `writeSSEEvent(res, event.type, …)` bridge in
+  `register-chat-routes.ts` forwards this variant with no route change.
+  */
+  | {
+      type: "user_message";
+      data: { message: ChatStreamUserMessagePayload };
     }
   | {
       type: "agent_message";
@@ -2666,6 +2698,67 @@ export class ChatManager {
    * @param modelProvider - Optional model provider override
    * @param modelId - Optional model ID override
    */
+  /*
+  FNXC:ChatTitleGeneration 2026-09-16-05:27:
+  Automatic chat-title generation is a SINGLE shared seam reached by both `sendMessage` paths.
+  The CLI-agent-backed branch returns before the model loop, so when the generation block lived
+  inline after the agent-model resolution those conversations stayed "Untitled" forever.
+  The store write is AWAITED inside the detached task because `ChatStore.updateSession` is what
+  emits `chat:session:updated`; awaiting it is how a failed write can fall back to the truncated
+  title instead of silently leaving the session unnamed. The task itself is never awaited by the
+  caller: message sending and response generation must never wait on the summary.
+  Only `{ title }` is written — no other session field is touched on the way through.
+  */
+  private scheduleSessionTitleGeneration(
+    sessionId: string,
+    content: string,
+    modelProvider?: string,
+    modelId?: string,
+  ): void {
+    const titleSettingsPromise = this.getChatModelSettings();
+    /*
+    FNXC:ChatTitleLanguage 2026-09-01-21:25:
+    Chat titles follow the resolved taskOutputLanguage policy just like task titles. Resolve the
+    settings only inside this detached title operation so message sending never waits on title work.
+    */
+    void (async () => {
+      const fallbackTitle = content.trim().slice(0, 60).trim();
+      let title = fallbackTitle;
+      try {
+        const titleLanguageTarget = resolveTaskOutputLanguage(await titleSettingsPromise, content.trim());
+        const generated = await summarizeTitle(
+          content.trim(),
+          this.rootDir,
+          modelProvider,
+          modelId,
+          titleLanguageTarget,
+        );
+        title = generated ?? fallbackTitle;
+      } catch {
+        title = fallbackTitle;
+      }
+      if (!title) return;
+      try {
+        await this.chatStore.updateSession(sessionId, { title });
+      } catch {
+        // A failed write must not escape the detached task. Retry once with the deterministic
+        // truncated fallback (when it differs), then swallow.
+        if (fallbackTitle && fallbackTitle !== title) {
+          try {
+            await this.chatStore.updateSession(sessionId, { title: fallbackTitle });
+          } catch {
+            // Swallow: title generation is best-effort and never blocks the conversation.
+          }
+        }
+      }
+    })();
+  }
+
+  /** True when a session carries no usable title yet and should be auto-named. */
+  private sessionNeedsGeneratedTitle(title: string | null | undefined): boolean {
+    return title === null || title === undefined || title.trim() === "";
+  }
+
   async sendMessage(
     sessionId: string,
     content: string,
@@ -2710,6 +2803,19 @@ export class ChatManager {
     */
     if (session?.cliExecutorAdapterId && this.cliChatRunner) {
       const runner = this.cliChatRunner;
+      /*
+      FNXC:ChatTitleGeneration 2026-09-16-05:27:
+      CLI-agent-backed chat returns before the model loop, so it must reach the shared title seam
+      here or the conversation is never named. `summarizeTitle` already supports an absent model.
+      */
+      if (this.sessionNeedsGeneratedTitle(session.title)) {
+        this.scheduleSessionTitleGeneration(
+          sessionId,
+          content,
+          session.modelProvider ?? undefined,
+          session.modelId ?? undefined,
+        );
+      }
       try {
         await runner.ensureSession(sessionId, {
           projectId: this.cliChatProjectId ?? session.projectId ?? "",
@@ -2830,6 +2936,19 @@ export class ChatManager {
         });
         persistedUserMessageId = persistedUserMessage.id;
         /*
+        FNXC:ChatMessageEdit 2026-09-16-05:58:
+        Broadcast the persisted user row on the reply stream as soon as it exists, BEFORE any early
+        return (the mentions dispatch path returns here), so the client can replace its optimistic
+        `temp-<ts>` bubble by exact temp id. Identity telemetry is best-effort and must never enter
+        the message-save failure path, exactly like the usage event below.
+        */
+        try {
+          chatStreamManager.broadcast(sessionId, {
+            type: "user_message",
+            data: { message: persistedUserMessage as ChatStreamUserMessagePayload },
+          }, broadcastOptions);
+        } catch { /* best-effort identity echo; never fail the accepted send */ }
+        /*
         FNXC:CommandCenterActivity 2026-08-09-10:46:
         A persisted human chat turn contributes one content-free usage event. Analytics must never enter
         the message-save error path because the chat record is the user-facing source of truth.
@@ -2877,7 +2996,7 @@ export class ChatManager {
       failureContextModelId = effectiveModelId;
       let hasExplicitAgentRuntimeModel = false;
 
-      const needsTitle = session.title === null || session.title === undefined || session.title.trim() === "";
+      const needsTitle = this.sessionNeedsGeneratedTitle(session.title);
 
       // Ensure engine is loaded
       await ensureEngineReady();
@@ -2968,35 +3087,7 @@ export class ChatManager {
       // Auto-generate chat title on first message if session has no title.
       // Run after the agent fetch so the title-summarizer uses the agent's model.
       if (needsTitle) {
-        const titleSettingsPromise = this.getChatModelSettings();
-        /*
-        FNXC:ChatTitleLanguage 2026-09-01-21:25:
-        Chat titles follow the resolved taskOutputLanguage policy just like task titles. Resolve the
-        settings only inside this detached title operation so message sending never waits on title work.
-        */
-        // Fire-and-forget title generation (non-blocking)
-        (async () => {
-          try {
-            const titleLanguageTarget = resolveTaskOutputLanguage(await titleSettingsPromise, content.trim());
-            const generated = await summarizeTitle(
-              content.trim(),
-              this.rootDir,
-              effectiveModelProvider,
-              effectiveModelId,
-              titleLanguageTarget,
-            );
-            const title = generated ?? content.trim().slice(0, 60).trim();
-            if (title) {
-              this.chatStore.updateSession(sessionId, { title });
-            }
-          } catch {
-            // Fallback on any error
-            const fallback = content.trim().slice(0, 60).trim();
-            if (fallback) {
-              this.chatStore.updateSession(sessionId, { title: fallback });
-            }
-          }
-        })();
+        this.scheduleSessionTitleGeneration(sessionId, content, effectiveModelProvider, effectiveModelId);
       }
 
       if (mentions.length > 0) {

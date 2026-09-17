@@ -1,6 +1,5 @@
 import "./CustomModelDropdown.css";
-import { AlphaButton, AlphaInput, AlphaListBox, AlphaListBoxItem, AlphaListBoxRow, AlphaPopoverSurface, AlphaSelect } from "./alpha-ui";
-import { useAlphaSurface } from "../context/AlphaContext";
+import { UiButton, UiInput, UiListBox, UiListBoxRow, UiPopoverSurface, UiSelect } from "./ui";
 import { useState, useEffect, useCallback, useMemo, useRef, useId } from "react";
 import { THINKING_LEVELS } from "@fusion/core";
 import { useTranslation } from "react-i18next";
@@ -8,6 +7,7 @@ import { createPortal } from "react-dom";
 import type { ModelInfo, ProviderCredentialInstanceSummary } from "../api";
 import { filterModels } from "../utils/modelFilter";
 import { ProviderIcon } from "./ProviderIcon";
+import { FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT } from "./FloatingWindow";
 
 export interface CustomModelDropdownProps {
   models: ModelInfo[];
@@ -114,7 +114,6 @@ export function CustomModelDropdown({
   credentialInstances,
 }: CustomModelDropdownProps) {
   const { t } = useTranslation("app");
-  const alphaSurface = useAlphaSurface();
   const placeholder = placeholderProp ?? t("model.selectPlaceholder", "Select a model…");
   const noChangeLabel = noChangeLabelProp ?? t("model.noChange", "No change");
   const defaultOptionLabel = defaultOptionLabelProp ?? t("models.useDefault", "Use default");
@@ -427,10 +426,16 @@ export function CustomModelDropdown({
     The model menu's maxHeight includes a 160px scroll floor, so upward top placement based on that
     cap separates short model lists from their trigger. Anchor the bottom instead; the visual-viewport
     offset preserves the existing effective-viewport coordinate conversion for keyboard and zoom cases.
+
+    FNXC:ModelDropdown 2026-09-15-03:49:
+    The same rule now governs DOWNWARD placement. Clamping top to keep the 160px height floor on screen
+    lifted the menu above its trigger whenever space below was tight, which is exactly the detachment
+    fixedMenuPosition.ts forbids ("never clamp placement to preserve a preferred/min height floor").
+    Anchor strictly under the trigger; maxHeight remains a scroll ceiling, not a placement input.
     */
     const top = openUpward
       ? null
-      : Math.min(triggerBottom + gap + offsetTop, viewportHeight + offsetTop - verticalPadding - maxHeight);
+      : triggerBottom + gap + offsetTop;
     const bottom = openUpward
       ? viewportHeight + offsetTop - rect.top + gap
       : null;
@@ -496,8 +501,29 @@ export function CustomModelDropdown({
 
     const handleReposition = () => updateDropdownPosition();
 
+    /*
+    FNXC:ModelDropdown 2026-09-15-03:49:
+    A surface portaled onto document.body is still a logical child of the floating window that owns its
+    trigger. resize/scroll alone never fire while a chat window is dragged or resized, so the menu stayed
+    at its old screen position — visually detached from its modal. Re-anchor on the floating-window
+    geometry event and on capture-phase pointermove/pointerup (the live drag), coalesced through one rAF,
+    exactly like TaskDetailModal's activity-view menu. These listeners only reposition: they never close
+    the menu and never interfere with the portal surface's stopPropagation guard.
+    */
+    let positionFrame = 0;
+    const schedulePositionUpdate = () => {
+      if (positionFrame) return;
+      positionFrame = requestAnimationFrame(() => {
+        positionFrame = 0;
+        updateDropdownPosition();
+      });
+    };
+
     window.addEventListener("resize", handleReposition);
     window.addEventListener("scroll", handleReposition, true);
+    window.addEventListener(FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT, schedulePositionUpdate);
+    document.addEventListener("pointermove", schedulePositionUpdate, true);
+    document.addEventListener("pointerup", schedulePositionUpdate, true);
 
     // Listen for visual viewport changes (virtual keyboard open/close, zoom)
     const vv = window.visualViewport;
@@ -507,8 +533,12 @@ export function CustomModelDropdown({
     }
 
     return () => {
+      if (positionFrame) cancelAnimationFrame(positionFrame);
       window.removeEventListener("resize", handleReposition);
       window.removeEventListener("scroll", handleReposition, true);
+      window.removeEventListener(FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT, schedulePositionUpdate);
+      document.removeEventListener("pointermove", schedulePositionUpdate, true);
+      document.removeEventListener("pointerup", schedulePositionUpdate, true);
       if (vv) {
         vv.removeEventListener("resize", handleReposition);
         vv.removeEventListener("scroll", handleReposition);
@@ -672,7 +702,7 @@ export function CustomModelDropdown({
   }, [highlightedIndex, isOpen]);
 
   const dropdownContent = isOpen && dropdownPosition ? (
-    <AlphaPopoverSurface
+    <UiPopoverSurface
       ref={dropdownRef}
       triggerRef={triggerRef}
       onClose={() => setIsOpen(false)}
@@ -680,7 +710,6 @@ export function CustomModelDropdown({
       data-testid="model-combobox-portal"
       data-portal-surface="model-menu"
       data-menu-width={menuWidth}
-      onKeyDown={alphaSurface ? undefined : handleKeyDown}
       style={{
         top: dropdownPosition.bottom === null ? `${dropdownPosition.top}px` : "auto",
         bottom: dropdownPosition.bottom === null ? undefined : `${dropdownPosition.bottom}px`,
@@ -690,7 +719,7 @@ export function CustomModelDropdown({
       }}
     >
       <div className="model-combobox-search-wrapper">
-        <AlphaInput
+        <UiInput
           ref={searchInputRef}
           type="text"
           className="model-combobox-search"
@@ -700,14 +729,14 @@ export function CustomModelDropdown({
           onClick={(e) => e.stopPropagation()}
         />
         {hasFilter && (
-          <AlphaButton
+          <UiButton
             type="button"
             className="model-combobox-clear"
             onClick={handleClearFilter}
             aria-label={t("models.clearFilter", "Clear filter")}
           >
             ×
-          </AlphaButton>
+          </UiButton>
         )}
       </div>
 
@@ -720,7 +749,7 @@ export function CustomModelDropdown({
           <label className="model-combobox-instance-label" htmlFor={credentialInstanceSelectId}>
             {t("models.labels.credentialInstance", "Credential instance")}
           </label>
-          <AlphaSelect
+          <UiSelect
             id={credentialInstanceSelectId}
             className="thinking-level-select model-combobox-instance-select"
             data-testid="custom-model-dropdown-credential-instance"
@@ -733,7 +762,7 @@ export function CustomModelDropdown({
             {instanceOptions.map((instance) => (
               <option key={instance.id} value={instance.id}>{instance.id}</option>
             ))}
-          </AlphaSelect>
+          </UiSelect>
         </div>
       )}
 
@@ -742,7 +771,7 @@ export function CustomModelDropdown({
           <label className="model-combobox-thinking-label" htmlFor={thinkingSelectId}>
             {t("models.labels.thinkingLevel", "Thinking Level")}
           </label>
-          <AlphaSelect
+          <UiSelect
             id={thinkingSelectId}
             className="thinking-level-select model-combobox-thinking-select"
             data-testid="custom-model-dropdown-thinking"
@@ -762,207 +791,146 @@ export function CustomModelDropdown({
             {thinkingOptions.map((option) => (
               <option key={option.value} value={option.value}>{option.label}</option>
             ))}
-          </AlphaSelect>
+          </UiSelect>
         </div>
       )}
 
-      {alphaSurface ? (
-        <div ref={listRef} className="model-combobox-list model-combobox-list--alpha">
+      {(
+        <div ref={listRef} className="model-combobox-list">
           {/*
-          FNXC:AlphaCollections 2026-09-10-20:43:
-          Alpha models form one homemade Alpha listbox so native arrow navigation crosses every selectable row. Provider and model controls follow it in a labelled sibling rail whose visible row labels identify exactly which selection each favorite or collapse action affects.
+          FNXC:NativeUiCollections 2026-09-15-00:20:
+          Models form ONE native listbox so arrow navigation crosses every selectable row. Provider and
+          model controls follow it in a labelled sibling rail whose visible row labels identify exactly
+          which selection each favorite or collapse action affects. This was the in-boundary variant and
+          is now the only one, so every mount — Settings, Routing, Workflow node editor, Planning, Task
+          form, Agent detail, Schedules, Insights — gets search, favourites, collapsible provider groups,
+          credential rows and keyboard navigation from the same implementation.
           */}
-          <AlphaListBox aria-label={label} className="model-combobox-alpha-options">
-            {optionsList.filter((option) => option.type !== "provider").map((option, index) => {
+          {/*
+          FNXC:NativeUiCollections 2026-09-15-00:20:
+          ONE native listbox holds every selectable row. Auxiliary controls (per-provider collapse and
+          favourite, per-model favourite) are rendered by UiListBoxRow as SIBLINGS of their option inside the
+          same row, so an option never contains a button, arrow navigation crosses only real options, Tab
+          reaches each auxiliary control next to the row it affects, and every label is rendered exactly once.
+          This replaces the duplicated "model actions" rail, which repeated every provider and model name.
+          */}
+          <UiListBox aria-label={label} className="model-combobox-options">
+            {optionsList.map((option, index) => {
+              if (option.type === "provider") {
+                const provider = option.provider!;
+                const entry = visibleProviderEntries.find((candidate) => candidate.provider === provider);
+                const isCollapsed = entry?.isCollapsed ?? false;
+                const isFavoriteProvider = favoriteProviders.includes(provider);
+                return (
+                  <div key={`provider-${option.value}`} className="model-combobox-optgroup" role="presentation">
+                    <span className="model-combobox-optgroup-label">
+                      <ProviderIcon provider={provider} size="sm" />
+                      {option.label}
+                    </span>
+                    <span className="model-combobox-optgroup-actions">
+                      {onToggleFavorite ? (
+                        <UiButton
+                          type="button"
+                          className={`model-combobox-optgroup-favorite ${isFavoriteProvider ? "model-combobox-optgroup-favorite--active" : ""}`}
+                          onClick={() => onToggleFavorite(provider)}
+                          aria-label={isFavoriteProvider
+                            ? t("models.removeProviderFromFavoritesAriaLabel", "Remove {{provider}} from favorites", { provider })
+                            : t("models.addProviderToFavoritesAriaLabel", "Add {{provider}} to favorites", { provider })}
+                        >
+                          ★
+                        </UiButton>
+                      ) : null}
+                      <UiButton
+                        type="button"
+                        className={`model-combobox-optgroup-toggle ${isCollapsed ? "" : "model-combobox-optgroup-toggle--expanded"}`}
+                        data-testid={`model-combobox-provider-toggle-${provider}`}
+                        onClick={() => handleToggleCollapsedProvider(provider)}
+                        aria-label={isCollapsed
+                          ? t("models.expandProvider", "Expand {{provider}}", { provider })
+                          : t("models.collapseProvider", "Collapse {{provider}}", { provider })}
+                        aria-expanded={!isCollapsed}
+                      >
+                        ▼
+                      </UiButton>
+                    </span>
+                  </div>
+                );
+              }
               const model = option.provider
                 ? models.find((candidate) => `${candidate.provider}/${candidate.id}` === option.value)
                 : undefined;
+              const isFavorited = favoriteModels.includes(option.value);
+              const favoriteAction = model && onToggleModelFavorite ? (
+                <UiButton
+                  type="button"
+                  className={`model-combobox-option-favorite ${isFavorited ? "model-combobox-option-favorite--active" : ""}`}
+                  onClick={() => onToggleModelFavorite(option.value)}
+                  aria-label={isFavorited
+                    ? t("models.removeFromFavoritesAriaLabel", "Remove {{name}} from favorites", { name: option.label })
+                    : t("models.addToFavoritesAriaLabel", "Add {{name}} to favorites", { name: option.label })}
+                >
+                  {isFavorited ? "★" : "☆"}
+                </UiButton>
+              ) : null;
               return (
-                <AlphaListBoxItem
+                <UiListBoxRow
                   key={`${option.type}-${option.value}`}
+                  collectionLabel={`${label}: ${option.label}`}
+                  rowClassName="model-combobox-option-row"
+                  auxiliary={favoriteAction}
+                  /*
+                  FNXC:NativeUiCollections 2026-09-15-00:20:
+                  Options render as real buttons so Enter and Space ACTIVATE the focused option, preserving the
+                  keyboard selection the delegated handler used to provide without two competing key handlers.
+                  */
+                  legacyAs="button"
                   id={`${option.type}-${option.value}`}
                   textValue={option.label}
                   data-index={index}
-                  className={`model-combobox-option ${value === option.value ? "model-combobox-option--selected" : ""}`}
+                  className={`model-combobox-option ${value === option.value ? "model-combobox-option--selected" : ""} ${option.type === "favorite" ? "model-combobox-option--favorite" : ""}`}
                   aria-selected={value === option.value}
                   onClick={() => handleSelect(option.value)}
                 >
                   <span className="model-combobox-option-main">
-                    {model ? <span className="model-combobox-option-icon"><ProviderIcon provider={model.provider} size="sm" /></span> : null}
+                    {/*
+                    FNXC:NativeUiCollections 2026-09-15-00:20:
+                    A model listed under its provider header inherits that provider's icon from the header, so
+                    only pinned favourite rows — which float above every group — carry their own provider icon.
+                    */}
+                    {model && option.type === "favorite" ? <span className="model-combobox-option-icon"><ProviderIcon provider={model.provider} size="sm" /></span> : null}
                     <span className="model-combobox-option-text">{option.label}</span>
                   </span>
                   {model ? <span className="model-combobox-option-id">{model.id}</span> : null}
-                </AlphaListBoxItem>
+                </UiListBoxRow>
               );
             })}
-          </AlphaListBox>
-          <div className="model-combobox-alpha-actions" aria-label={t("models.modelActions", "Model actions")}>
-            <div className="model-combobox-alpha-actions-heading">{t("models.modelActions", "Model actions")}</div>
-            {visibleProviderEntries.map(({ provider, isCollapsed }) => {
-              const isFavorite = favoriteProviders.includes(provider);
-              return (
-                <div key={provider} className="model-combobox-alpha-action-row model-combobox-alpha-provider-actions">
-                  <span className="model-combobox-alpha-action-label"><ProviderIcon provider={provider} size="sm" />{provider}</span>
-                  <span className="model-combobox-alpha-action-controls">
-                  {onToggleFavorite ? <AlphaButton type="button" className={`model-combobox-optgroup-favorite ${isFavorite ? "model-combobox-optgroup-favorite--active" : ""}`} onClick={() => onToggleFavorite(provider)} aria-label={isFavorite ? t("models.removeProviderFromFavoritesAriaLabel", "Remove {{provider}} from favorites", { provider }) : t("models.addProviderToFavoritesAriaLabel", "Add {{provider}} to favorites", { provider })}>★</AlphaButton> : null}
-                  <AlphaButton type="button" className="model-combobox-optgroup-toggle" onClick={() => handleToggleCollapsedProvider(provider)} aria-label={isCollapsed ? t("models.expandProvider", "Expand {{provider}}", { provider }) : t("models.collapseProvider", "Collapse {{provider}}", { provider })} aria-expanded={!isCollapsed}>▼</AlphaButton>
-                  </span>
-                </div>
-              );
-            })}
-            {onToggleModelFavorite ? optionsList.filter((option) => option.provider && option.type !== "provider").map((option) => {
-              const isFavorited = favoriteModels.includes(option.value);
-              return <div key={option.value} className="model-combobox-alpha-action-row"><span className="model-combobox-alpha-action-label">{option.label}</span><AlphaButton type="button" className={`model-combobox-option-favorite ${isFavorited ? "model-combobox-option-favorite--active" : ""}`} onClick={() => onToggleModelFavorite(option.value)} aria-label={isFavorited ? t("models.removeFromFavoritesAriaLabel", "Remove {{name}} from favorites", { name: option.label }) : t("models.addToFavoritesAriaLabel", "Add {{name}} to favorites", { name: option.label })}>{isFavorited ? "★" : "☆"}</AlphaButton></div>;
-            }) : null}
-          </div>
+          </UiListBox>
           {filteredModels.length === 0 && hasFilter ? <div className="model-combobox-no-results">{t("models.noResults", "No models match '{{filter}}'", { filter: localFilter })}</div> : null}
         </div>
-      ) : (
-      <div ref={listRef} className="model-combobox-list" role={"listbox"} aria-label={label}>
-        {specialOptions.map((option, index) => (
-          <AlphaListBoxRow collectionLabel={label}
-            key={`${option.type}-${option.value}`}
-            id={`${option.type}-${option.value}`}
-            textValue={option.label}
-            data-index={index}
-            className={`model-combobox-option ${highlightedIndex === index ? "model-combobox-option--highlighted" : ""} ${value === option.value ? "model-combobox-option--selected" : ""}`}
-            onClick={() => handleSelect(option.value)}
-            onMouseEnter={() => setHighlightedIndex(index)}
-            aria-selected={value === option.value}
-          >
-            <span className="model-combobox-option-text model-combobox-option-text--default">{option.label}</span>
-          </AlphaListBoxRow>
-        ))}
-
-        {/* Favorited models as pinned rows */}
-        {favoritedModelEntries.length > 0 && (
-          <>
-            <div className="model-combobox-divider" />
-            {favoritedModelEntries.map(({ model, fullId }, idx) => {
-              const optionIndex = idx + specialOptions.length;
-              const isHighlighted = highlightedIndex === optionIndex;
-              const isSelected = value === fullId;
-              return (
-                <AlphaListBoxRow collectionLabel={`${label}: ${model.name}`}
-                  key={fullId}
-                  id={`favorite-${fullId}`}
-                  textValue={model.name}
-                  data-index={optionIndex}
-                  className={`model-combobox-option model-combobox-option--favorite ${isHighlighted ? "model-combobox-option--highlighted" : ""} ${isSelected ? "model-combobox-option--selected" : ""}`}
-                  onClick={() => handleSelect(fullId)}
-                  onMouseEnter={() => setHighlightedIndex(optionIndex)}
-                  aria-selected={isSelected}
-                  auxiliary={onToggleModelFavorite ? (
-                    <AlphaButton type="button" className="model-combobox-option-favorite model-combobox-option-favorite--active" onClick={() => onToggleModelFavorite(fullId)} title={t("models.removeFromFavorites", "Remove from favorites")} aria-label={t("models.removeFromFavoritesAriaLabel", "Remove {{name}} from favorites", { name: model.name })}>★</AlphaButton>
-                  ) : null}
-                  rowClassName="model-combobox-option-row"
-                >
-                  <span className="model-combobox-option-main">
-                    <span className="model-combobox-option-icon">
-                      <ProviderIcon provider={model.provider} size="sm" />
-                    </span>
-                    <span className="model-combobox-option-text">{model.name}</span>
-                  </span>
-                  <span className="model-combobox-option-id">{model.id}</span>
-                </AlphaListBoxRow>
-              );
-            })}
-            <div className="model-combobox-divider" />
-          </>
-        )}
-
-        {visibleProviderEntries.map(({ provider, models: providerModels, isCollapsed }) => {
-          const groupStartIndex = optionsList.findIndex((opt) => opt.value === `__group_${provider}`);
-          const isFavorite = favoriteProviders.includes(provider);
-          const isExpanded = !isCollapsed;
-
-          return (
-            <div key={provider} className="model-combobox-group">
-              <div className="model-combobox-optgroup" data-index={groupStartIndex}>
-                <ProviderIcon provider={provider} size="sm" />
-                <span className="model-combobox-optgroup-text">{provider}</span>
-                {onToggleFavorite && (
-                  <AlphaButton
-                    type="button"
-                    className={`model-combobox-optgroup-favorite ${isFavorite ? "model-combobox-optgroup-favorite--active" : ""}`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onToggleFavorite(provider);
-                    }}
-                    title={isFavorite ? t("models.removeFromFavorites", "Remove from favorites") : t("models.addToFavorites", "Add to favorites")}
-                    aria-label={isFavorite ? t("models.removeProviderFromFavoritesAriaLabel", "Remove {{provider}} from favorites", { provider }) : t("models.addProviderToFavoritesAriaLabel", "Add {{provider}} to favorites", { provider })}
-                  >
-                    ★
-                  </AlphaButton>
-                )}
-                <AlphaButton
-                  type="button"
-                  className={`model-combobox-optgroup-toggle ${isExpanded ? "model-combobox-optgroup-toggle--expanded" : ""}`}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    handleToggleCollapsedProvider(provider);
-                  }}
-                  aria-label={isExpanded
-                    ? t("models.collapseProvider", "Collapse {{provider}}", { provider })
-                    : t("models.expandProvider", "Expand {{provider}}", { provider })}
-                  aria-expanded={isExpanded}
-                  data-testid={`model-combobox-provider-toggle-${provider}`}
-                >
-                  ▼
-                </AlphaButton>
-              </div>
-              {!isCollapsed && providerModels.map((model) => {
-                const optionValue = `${model.provider}/${model.id}`;
-                const optionIndex = optionsList.findIndex((opt) => opt.value === optionValue);
-                const isHighlighted = highlightedIndex === optionIndex;
-                const isSelected = value === optionValue;
-                const isFavorited = favoriteModels.includes(optionValue);
-
-                return (
-                  <AlphaListBoxRow collectionLabel={`${label}: ${model.name}`}
-                    key={optionValue}
-                    id={optionValue}
-                    textValue={model.name}
-                    data-index={optionIndex}
-                    className={`model-combobox-option ${isHighlighted ? "model-combobox-option--highlighted" : ""} ${isSelected ? "model-combobox-option--selected" : ""}`}
-                    onClick={() => handleSelect(optionValue)}
-                    onMouseEnter={() => setHighlightedIndex(optionIndex)}
-                    aria-selected={isSelected}
-                    auxiliary={onToggleModelFavorite ? (
-                      <AlphaButton type="button" className={`model-combobox-option-favorite ${isFavorited ? "model-combobox-option-favorite--active" : ""}`} onClick={() => onToggleModelFavorite(optionValue)} title={isFavorited ? t("models.removeFromFavorites", "Remove from favorites") : t("models.addToFavorites", "Add to favorites")} aria-label={isFavorited ? t("models.removeFromFavoritesAriaLabel", "Remove {{name}} from favorites", { name: model.name }) : t("models.addToFavoritesAriaLabel", "Add {{name}} to favorites", { name: model.name })}>{isFavorited ? "★" : "☆"}</AlphaButton>
-                    ) : null}
-                    rowClassName="model-combobox-option-row"
-                  >
-                    <span className="model-combobox-option-text">{model.name}</span>
-                    <span className="model-combobox-option-id">{model.id}</span>
-                  </AlphaListBoxRow>
-                );
-              })}
-            </div>
-          );
-        })}
-
-        {filteredModels.length === 0 && hasFilter && (
-          <div className="model-combobox-no-results">{t("models.noResults", "No models match '{{filter}}'", { filter: localFilter })}</div>
-        )}
-      </div>
       )}
-    </AlphaPopoverSurface>
+    </UiPopoverSurface>
   ) : null;
 
   /*
-  FNXC:AlphaKeyboard 2026-09-10-21:03:
-  homemade Alpha owns keyboard navigation for the Alpha listbox and its sibling action rail. Restrict the historical delegated handler to stable mode so Enter activates focused favorite and provider-collapse buttons instead of selecting the highlighted model.
+  FNXC:NativeUiKeyboard 2026-09-10-21:03:
+  the native listbox owns keyboard navigation for its options and its sibling action rail. Restrict the historical delegated handler to stable mode so Enter activates focused favorite and provider-collapse buttons instead of selecting the highlighted model.
   */
   return (
     <>
-      <div ref={containerRef} className="model-combobox" onKeyDown={alphaSurface ? undefined : handleKeyDown}>
-        <AlphaButton
+      <div ref={containerRef} className="model-combobox">
+        <UiButton
           ref={triggerRef}
           type="button"
           id={id}
           className="model-combobox-trigger"
           onClick={handleTriggerClick}
+          /*
+          FNXC:NativeUiKeyboard 2026-09-15-00:20:
+          The trigger keeps the keyboard open/close affordance the delegated handler used to provide (Arrow
+          keys open the menu, Escape closes it). Inside the open menu, navigation belongs to the native
+          listbox, so the two never compete over the same collection.
+          */
+          onKeyDown={handleKeyDown}
           disabled={disabled}
           aria-haspopup="listbox"
           aria-expanded={isOpen}
@@ -985,7 +953,7 @@ export function CustomModelDropdown({
             </span>
           )}
           <span className="model-combobox-trigger-arrow">▼</span>
-        </AlphaButton>
+        </UiButton>
       </div>
       {portalRoot && dropdownContent ? createPortal(dropdownContent, portalRoot) : null}
     </>

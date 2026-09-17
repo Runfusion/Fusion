@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FN-399 interface style fixture</title>
+    <!--
+    FNXC:UiStyleAxis 2026-09-15-00:20:
+    The appearance attributes are set from the query string BEFORE the module bundle runs, exactly like the
+    production pre-hydration bootstrap, so the measured first paint is the real one.
+    -->
+    <script>
+      (function () {
+        var params = new URLSearchParams(window.location.search);
+        var mode = params.get("mode") || "dark";
+        document.documentElement.setAttribute("data-theme", mode);
+        document.documentElement.setAttribute("data-color-theme", params.get("colorTheme") || "shadcn-ember");
+        document.documentElement.setAttribute("data-ui-style", params.get("uiStyle") || "classic");
+      })();
+    </script>
+    <link rel="stylesheet" href="/theme-data.css" id="theme-data" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./ui-style-e2e-fixture.tsx"></script>
+  </body>
+</html>

@@ -117,6 +117,8 @@ vi.mock("../../api", () => ({
   fetchAgents: vi.fn(),
   rebuildTaskSpec: vi.fn(),
   refreshPrStatus: vi.fn(),
+  /* FNXC:TaskRefine 2026-09-14-22:23: FN-400 — the card now hosts the standalone Refine composer, which submits through this export. */
+  refineTask: vi.fn(),
   fetchBoardWorkflows: vi.fn().mockResolvedValue({ flagEnabled: true, defaultWorkflowId: "wf-a", workflows: [], taskWorkflowIds: {} }),
   // FNXC:PlannerOversight 2026-07-04-13:00: tests that pass a `workflowBadge`
   // prop trigger the FN-7516 workflow-effective-oversight fetch effect; mock
@@ -791,101 +793,14 @@ describe("TaskCard", () => {
     }
   });
 
-  it("opens Planning Mode from eligible pre-execution card menus only when wired", async () => {
-    const cleanupGeometry = mockBoardContextMenuGeometry();
-    const onPlanningMode = vi.fn();
-    try {
-      const { rerender } = render(
-        <TaskCard
-          task={makeTask({ column: "triage", description: "Plan from description", title: "Fallback title" })}
-          onOpenDetail={noop}
-          onPlanningMode={onPlanningMode}
-          planningWorkflowId="WF-intake"
-          addToast={noop}
-        />,
-      );
-
-      fireEvent.click(screen.getByTestId("card-menu-btn-FN-001"));
-      await waitFor(() => expectBoardContextMenuPortaled());
-      fireEvent.click(screen.getByRole("menuitem", { name: "Plan" }));
-      expect(onPlanningMode).toHaveBeenCalledWith("Plan from description", "WF-intake");
-      expect(screen.queryByRole("menu")).not.toBeInTheDocument();
-
-      rerender(
-        <TaskCard
-          task={makeTask({ column: "ideas" as any, description: "", title: "Custom intake title" })}
-          taskColumnFlags={{ intake: true }}
-          onOpenDetail={noop}
-          onPlanningMode={onPlanningMode}
-          planningWorkflowId="WF-custom"
-          addToast={noop}
-        />,
-      );
-      fireEvent.click(screen.getByTestId("card-menu-btn-FN-001"));
-      await waitFor(() => expectBoardContextMenuPortaled());
-      fireEvent.click(screen.getByRole("menuitem", { name: "Plan" }));
-      expect(onPlanningMode).toHaveBeenLastCalledWith("Custom intake title", "WF-custom");
-      await waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
-
-      rerender(
-        <TaskCard
-          task={makeTask({ column: "in-progress" })}
-          taskColumnFlags={{ wip: true }}
-          onOpenDetail={noop}
-          onPlanningMode={onPlanningMode}
-          addToast={noop}
-        />,
-      );
-      expect(screen.queryByTestId("card-menu-btn-FN-001")).toBeNull();
-      expect(screen.queryByRole("menuitem", { name: "Plan" })).not.toBeInTheDocument();
-
-      rerender(
-        <TaskCard
-          task={makeTask({ column: "triage" })}
-          onOpenDetail={noop}
-          addToast={noop}
-          onDeleteTask={vi.fn()}
-        />,
-      );
-      fireEvent.contextMenu(document.querySelector(".card")!, { clientX: 24, clientY: 28 });
-      expect(screen.queryByRole("menuitem", { name: "Plan" })).not.toBeInTheDocument();
-    } finally {
-      cleanupGeometry();
-    }
-  });
-
-  it("opens Planning Mode from the mobile/touch long-press menu for custom hold cards", async () => {
-    vi.useFakeTimers();
-    const cleanupGeometry = mockBoardContextMenuGeometry();
-    const onPlanningMode = vi.fn();
-    try {
-      render(
-        <TaskCard
-          task={makeTask({ column: "waiting" as any, description: "Touch plan seed" })}
-          taskColumnFlags={{ hold: true }}
-          onOpenDetail={noop}
-          onPlanningMode={onPlanningMode}
-          planningWorkflowId="WF-hold"
-          addToast={noop}
-        />,
-      );
-
-      const card = document.querySelector(".card") as HTMLElement;
-      fireEvent.pointerDown(card, { pointerType: "touch", pointerId: 1, clientX: 32, clientY: 36 });
-      act(() => vi.advanceTimersByTime(550));
-
-      expectBoardContextMenuPortaled();
-      fireEvent.pointerUp(screen.getByRole("menuitem", { name: "Plan" }), { pointerType: "touch", pointerId: 2 });
-      await act(async () => {
-        await Promise.resolve();
-      });
-      expect(onPlanningMode).toHaveBeenCalledWith("Touch plan seed", "WF-hold");
-      expect(screen.queryByRole("menu")).not.toBeInTheDocument();
-    } finally {
-      cleanupGeometry();
-    }
-  });
-
+  /*
+  FNXC:TaskCardPlanning 2026-09-15-10:40:
+  FN-417 deleted "opens Planning Mode from eligible pre-execution card menus only when wired" and
+  "opens Planning Mode from the mobile/touch long-press menu for custom hold cards". Their subject,
+  the card menu Plan entry and the `onPlanningMode` prop that fed it, no longer exists because the
+  engine plans automatically. Absence across hosts and breakpoints is now proven by
+  `task-menu-merge-plan-removed.test.tsx`.
+  */
   it("enables GitHub tracking from the board card context menu and hides the action after refresh", async () => {
     const cleanupGeometry = mockBoardContextMenuGeometry();
     const onOpenDetail = vi.fn();
@@ -930,7 +845,6 @@ describe("TaskCard", () => {
   it("opens the board card context menu from keyboard as a viewport portal, selects an action, and closes", async () => {
     const cleanupGeometry = mockBoardContextMenuGeometry();
     const onOpenDetail = vi.fn();
-    const onOpenRefine = vi.fn();
     try {
       render(
         <div className="column" style={{ overflow: "hidden" }}>
@@ -938,7 +852,6 @@ describe("TaskCard", () => {
             <TaskCard
               task={makeTask({ column: "done", status: "done" as any })}
               onOpenDetail={onOpenDetail}
-              onOpenRefine={onOpenRefine}
               addToast={noop}
             />
           </div>
@@ -952,7 +865,8 @@ describe("TaskCard", () => {
       expectBoardContextMenuPortaled();
       fireEvent.click(screen.getByRole("menuitem", { name: "Refine" }));
 
-      expect(onOpenRefine).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-001" }));
+      /* FNXC:TaskRefine 2026-09-14-22:23: FN-400 — Refine opens the card's own composer, never the task record. */
+      expect(screen.getByTestId("task-refine-dialog")).toBeInTheDocument();
       expect(screen.queryByRole("menu")).not.toBeInTheDocument();
       expect(onOpenDetail).not.toHaveBeenCalled();
     } finally {
@@ -960,14 +874,12 @@ describe("TaskCard", () => {
     }
   });
 
-  it("shows refine for a done card context menu and routes to the refinement opener", () => {
+  it("shows refine for a done card context menu and opens the standalone composer", () => {
     const onOpenDetail = vi.fn();
-    const onOpenRefine = vi.fn();
     render(
       <TaskCard
         task={makeTask({ column: "done", status: "done" as any })}
         onOpenDetail={onOpenDetail}
-        onOpenRefine={onOpenRefine}
         addToast={noop}
         onDeleteTask={vi.fn()}
       />,
@@ -976,20 +888,18 @@ describe("TaskCard", () => {
     fireEvent.contextMenu(document.querySelector(".card")!, { clientX: 24, clientY: 28 });
     fireEvent.click(screen.getByRole("menuitem", { name: "Refine" }));
 
-    expect(onOpenRefine).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-001" }));
+    expect(screen.getByTestId("task-refine-dialog")).toBeInTheDocument();
     expect(onOpenDetail).not.toHaveBeenCalled();
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
   });
 
   it("shows refine for custom complete cards on touch long-press", () => {
     vi.useFakeTimers();
-    const onOpenRefine = vi.fn();
     render(
       <TaskCard
         task={makeTask({ column: "complete" as any, status: "done" as any })}
         taskColumnFlags={{ complete: true }}
         onOpenDetail={noop}
-        onOpenRefine={onOpenRefine}
         addToast={noop}
         onDeleteTask={vi.fn()}
       />,
@@ -1000,10 +910,15 @@ describe("TaskCard", () => {
     act(() => vi.advanceTimersByTime(550));
 
     fireEvent.click(screen.getByRole("menuitem", { name: "Refine" }));
-    expect(onOpenRefine).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-001" }));
+    expect(screen.getByTestId("task-refine-dialog")).toBeInTheDocument();
   });
 
-   it("omits refine without a real modal callback and offers PR status actions from the board context menu", async () => {
+   /*
+   FNXC:TaskRefine 2026-09-14-22:23:
+   FN-400 replaced this case's subject: Refine no longer depends on a caller-supplied opener, because the card owns the
+   composer. A review card therefore always offers Refine, alongside its PR status actions.
+   */
+   it("offers refine and PR status actions on a review card from the board context menu", async () => {
     const onOpenDetail = vi.fn();
     vi.mocked(refreshPrStatus).mockResolvedValueOnce({} as any);
     render(
@@ -1021,8 +936,9 @@ describe("TaskCard", () => {
     );
 
     fireEvent.contextMenu(document.querySelector(".card")!, { clientX: 24, clientY: 28 });
-    expect(screen.queryByRole("menuitem", { name: "Refine" })).not.toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Refine" })).toBeInTheDocument();
     expect(onOpenDetail).not.toHaveBeenCalled();
+    fireEvent.keyDown(document, { key: "Escape" });
 
     fireEvent.contextMenu(document.querySelector(".card")!, { clientX: 24, clientY: 28 });
     fireEvent.click(screen.getByRole("menuitem", { name: "Check PR Status" }));
@@ -1648,10 +1564,15 @@ describe("TaskCard", () => {
     expect(screen.queryByLabelText("Delete task")).toBeNull();
   });
 
-  it("renders no action-menu shell when neither done action is available", () => {
+  /*
+  FNXC:TaskRefine 2026-09-14-22:23:
+  FN-400 narrowed this case's subject: a complete card now always offers Refine because it hosts that composer itself,
+  so the empty-shell contract only holds for a card with no available action at all.
+  */
+  it("renders no action-menu shell when no action is available", () => {
     const { container } = render(
       <TaskCard
-        task={makeTask({ column: "done", mergeDetails: undefined })}
+        task={makeTask({ column: "in-progress", mergeDetails: undefined })}
         onOpenDetail={noop}
         addToast={noop}
       />,
@@ -1660,6 +1581,20 @@ describe("TaskCard", () => {
     expect(screen.queryByRole("button", { name: "Actions" })).toBeNull();
     expect(container.querySelector(".card-done-actions")).toBeNull();
     expect(screen.queryByTestId("card-menu-btn-FN-001")).toBeNull();
+  });
+
+  it("still offers Refine on a handler-free complete card because the card owns that dialog", () => {
+    render(
+      <TaskCard
+        task={makeTask({ column: "done", status: "done" as any, mergeDetails: undefined })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    fireEvent.contextMenu(document.querySelector(".card")!, { clientX: 24, clientY: 28 });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Refine" }));
+    expect(screen.getByTestId("task-refine-dialog")).toBeInTheDocument();
   });
 
   /*
@@ -3143,10 +3078,13 @@ describe("TaskCard", () => {
   /*
    * FNXC:ReleaseAuthorizationGate 2026-07-09-00:00: the triage release-authorization
    * gate was removed. A legacy release-authorization hold now renders the generic
-   * "Awaiting Approval" badge like any manual plan-approval hold — no distinct
-   * release-authorization label or badge class.
+   * plan-approval badge like any manual hold — no distinct release-authorization label
+   * or badge class.
+   *
+   * FNXC:TaskStatusBadge 2026-09-16-05:01: FN-448 renamed that generic badge from the
+   * passive "Awaiting Approval" to the operator-facing "Needs you".
    */
-  it("renders the generic Awaiting Approval badge for a legacy release-authorization hold", () => {
+  it("renders the generic Needs you badge for a legacy release-authorization hold", () => {
     const { container: releaseContainer } = render(
       <TaskCard
         task={makeTask({ column: "triage", status: "awaiting-approval", awaitingApprovalReason: "release-authorization" } as any)}
@@ -3154,7 +3092,8 @@ describe("TaskCard", () => {
         addToast={noop}
       />,
     );
-    expect(within(releaseContainer).getByText("Awaiting Approval")).toBeDefined();
+    expect(within(releaseContainer).getByText("Needs you")).toBeDefined();
+    expect(within(releaseContainer).queryByText("Awaiting Approval")).toBeNull();
     expect(within(releaseContainer).queryByText("Awaiting Release Authorization")).toBeNull();
     const releaseBadge = releaseContainer.querySelector(".card-status-badge") as HTMLElement;
     expect(releaseBadge.className).not.toContain("awaiting-release-authorization");
@@ -3165,7 +3104,7 @@ describe("TaskCard", () => {
    * When Plan Review exhausts automatic REVISE replans, the card must not look like a
    * generic require-all hold — badge text + title explain the non-convergence reason.
    */
-  it("keeps the generic Awaiting Approval badge for an ordinary manual hold", () => {
+  it("keeps the generic Needs you badge for an ordinary manual hold", () => {
     const { container } = render(
       <TaskCard
         task={makeTask({ column: "triage", status: "awaiting-approval" } as any)}
@@ -3174,7 +3113,8 @@ describe("TaskCard", () => {
       />,
     );
 
-    expect(within(container).getByText("Awaiting Approval")).toBeDefined();
+    expect(within(container).getByText("Needs you")).toBeDefined();
+    expect(within(container).queryByText("Awaiting Approval")).toBeNull();
     expect(container.querySelector(".awaiting-approval--plan-review-replan-cap")).toBeNull();
   });
 
@@ -3192,6 +3132,7 @@ describe("TaskCard", () => {
     );
     expect(within(container).getByText("Review budget exhausted")).toBeDefined();
     expect(within(container).queryByText("Awaiting Approval")).toBeNull();
+    expect(within(container).queryByText("Needs you")).toBeNull();
     const badge = container.querySelector(".card-status-badge") as HTMLElement;
     expect(badge.className).toContain("awaiting-approval--plan-review-replan-cap");
     expect(badge.getAttribute("data-awaiting-approval-reason")).toBe("plan-review-replan-cap");
@@ -4784,7 +4725,7 @@ describe("TaskCard", () => {
   it("renders edit button inside card-header-actions for editable columns", () => {
     const { container } = render(
       <TaskCard
-        task={makeTask({ column: "todo", size: "S" })}
+        task={makeTask({ column: "ideas" as any, size: "S" })}
         onOpenDetail={noop}
         addToast={noop}
         onUpdateTask={async () => makeTask()}
@@ -6585,14 +6526,16 @@ describe("TaskCard", () => {
     const timer = container.querySelector(".card-time-indicator");
     expectTimerInFooterRight(container);
     expect(timer?.textContent).toContain("30m");
-    expect(timer?.getAttribute("title")).toBe("Execution time 30m");
+    /* FN-457: the tooltip is now the header followed by the Planning / Execution / Verification
+       detail lines, so the header is the FIRST line rather than the whole string. */
+    expect(timer?.getAttribute("title")?.split("\n")[0]).toBe("Execution time 30m");
 
     act(() => {
       vi.advanceTimersByTime(5 * 60_000);
     });
 
     expect(container.querySelector(".card-time-indicator")?.textContent).toContain("35m");
-    expect(container.querySelector(".card-time-indicator")?.getAttribute("title")).toBe("Execution time 35m");
+    expect(container.querySelector(".card-time-indicator")?.getAttribute("title")?.split("\n")[0]).toBe("Execution time 35m");
   });
 
   it("shows cumulative runtime across a user reopen", () => {
@@ -6617,7 +6560,7 @@ describe("TaskCard", () => {
     const timer = container.querySelector(".card-time-indicator");
     expectTimerInFooterRight(container);
     expect(timer?.textContent).toContain("6m");
-    expect(timer?.getAttribute("title")).toBe("Execution time 6m");
+    expect(timer?.getAttribute("title")?.split("\n")[0]).toBe("Execution time 6m");
   });
 
   it("renders planning-only active duration when execution timing is absent", () => {
@@ -6837,7 +6780,7 @@ describe("TaskCard", () => {
       const timer = container.querySelector(".card-time-indicator");
       expectTimerInFooterRight(container);
       expect(timer?.textContent).toContain("45m");
-      expect(timer?.getAttribute("title")).toBe("Execution time 45m. Merge phase <1m");
+      expect(timer?.getAttribute("title")?.split("\n")[0]).toBe("Execution time 45m. Merge phase <1m");
     } finally {
       vi.useRealTimers();
     }
@@ -7372,17 +7315,21 @@ describe("TaskCard reverted chip", () => {
     expect(screen.getByLabelText("This task's changes were reverted")).toBeInTheDocument();
   });
 
-  it("renders Delete and Revise resolution actions when handlers are supplied", () => {
-    const onReviseTask = vi.fn();
+  /*
+  FN-416 removed the card's Delete/Revise resolution strip: a reverted card carries only its badge,
+  and restoring the revert is a context-menu action. Full coverage of the replacement affordance
+  lives in TaskCard.revert-restore.test.tsx; this case keeps the old contract from creeping back.
+  */
+  it("renders no Delete or Revise resolution actions on a reverted card", () => {
     const task = makeTask({ column: "done", sourceMetadata: { revertedAt: "2026-07-16T00:00:00.000Z" } });
     render(
-      <TaskCard task={task} onOpenDetail={noop} onDeleteTask={vi.fn()} onReviseTask={onReviseTask} addToast={noop} />,
+      <TaskCard task={task} onOpenDetail={noop} onDeleteTask={vi.fn()} addToast={noop} />,
     );
 
-    const actions = document.querySelector(".card-reverted-actions") as HTMLElement;
-    expect(within(actions).getByRole("button", { name: "Delete" })).toBeInTheDocument();
-    fireEvent.click(within(actions).getByRole("button", { name: "Revise" }));
-    expect(onReviseTask).toHaveBeenCalledWith(task);
+    expect(document.querySelector(".card-reverted-actions")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Revise" })).toBeNull();
+    expect(screen.getByLabelText("This task's changes were reverted")).toBeInTheDocument();
   });
 
   it("does not render for missing, blank, or non-completed revert markers", () => {
@@ -8469,7 +8416,8 @@ describe("TaskCard trailing-row layout (FN-8631)", () => {
       expanded.unmount();
 
       const editing = render(
-        <TaskCard task={makeTask({ id: `FN-editing-${width}`, column: "todo" })} onOpenDetail={noop} addToast={noop} onUpdateTask={noop} />,
+        // FNXC:TaskDescriptionEditing 2026-09-14-18:50: FN-391 — the inline editor lives in the manual-intake lane, so this layout probe renders the card there.
+        <TaskCard task={makeTask({ id: `FN-editing-${width}`, column: "ideas" as any })} onOpenDetail={noop} addToast={noop} onUpdateTask={noop} />,
       );
       // Editing returns early with only edit content, so none of the normal trailing rows can leave an empty shell.
       fireEvent.click(editing.container.querySelector(".card-edit-btn") as HTMLButtonElement);
@@ -8490,21 +8438,54 @@ describe("TaskCard trailing-row layout (FN-8631)", () => {
   });
 });
 
-describe("TaskCard field editability resolves column traits (U12 — R8)", () => {
+/*
+FNXC:TaskDescriptionEditing 2026-09-14-18:50:
+FN-391 narrows this card's inline editor — which writes the DESCRIPTION and nothing else — from the
+generic pre-implementation rule to manual intake. The U12/R8 trait-resolution contract is preserved
+(a RENAMED board keeps the affordance, mid-flight and review traits still veto); what changed is
+which trait grants it, so the granting cases are inverted rather than relaxed.
+*/
+describe("TaskCard description editability resolves column traits (FN-391)", () => {
   const EDIT_LABEL = { name: "Edit task" };
 
-  it("renders the edit button for a RENAMED pre-implementation column", () => {
+  it("renders the edit button for a RENAMED manual-intake column", () => {
     render(
       <TaskCard
         task={makeTask({ column: "backlog" as any })}
-        taskColumnFlags={{ intake: true, hold: true }}
+        taskColumnFlags={{ intake: true, manualIntake: true }}
         onUpdateTask={noop}
         onOpenDetail={noop}
         addToast={noop}
       />,
     );
-    // Fails with the hardcoded id set: `backlog` is not in it.
+    // Fails with a hardcoded id set: `backlog` is not in it.
     expect(screen.getByRole("button", EDIT_LABEL)).toBeInTheDocument();
+  });
+
+  it("does NOT render it for an AUTO-triaging intake or hold column", () => {
+    // The narrowing FN-391 adds: once a card is released, planning owns the text it derived from.
+    const auto = render(
+      <TaskCard
+        task={makeTask({ column: "backlog" as any })}
+        taskColumnFlags={{ intake: true }}
+        onUpdateTask={noop}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+    expect(screen.queryByRole("button", EDIT_LABEL)).not.toBeInTheDocument();
+    auto.unmount();
+
+    render(
+      <TaskCard
+        task={makeTask({ column: "waiting" as any })}
+        taskColumnFlags={{ hold: true }}
+        onUpdateTask={noop}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+    expect(screen.queryByRole("button", EDIT_LABEL)).not.toBeInTheDocument();
   });
 
   it("does NOT render it for a resolved mid-flight column", () => {
@@ -8522,12 +8503,12 @@ describe("TaskCard field editability resolves column traits (U12 — R8)", () =>
     expect(screen.queryByRole("button", EDIT_LABEL)).not.toBeInTheDocument();
   });
 
-  it("vetoes editing when a hold column ALSO carries a review trait", () => {
-    // A legal shape a plain `intake || hold` check gets wrong.
+  it("vetoes editing when a manual-intake column ALSO carries a review trait", () => {
+    // A legal shape a plain `manualIntake` check gets wrong.
     render(
       <TaskCard
         task={makeTask({ column: "backlog" as any })}
-        taskColumnFlags={{ hold: true, mergeBlocker: true }}
+        taskColumnFlags={{ manualIntake: true, mergeBlocker: true }}
         onUpdateTask={noop}
         onOpenDetail={noop}
         addToast={noop}
@@ -8536,34 +8517,62 @@ describe("TaskCard field editability resolves column traits (U12 — R8)", () =>
     expect(screen.queryByRole("button", EDIT_LABEL)).not.toBeInTheDocument();
   });
 
-  it("still renders it for a legacy `todo` card with no flags resolved", () => {
-    // The pre-load window, and what every board did before the conversion.
-    render(<TaskCard task={makeTask({ column: "todo" as any })} onUpdateTask={noop} onOpenDetail={noop} addToast={noop} />);
+  it("still renders it for a legacy `ideas` card with no flags resolved", () => {
+    // The pre-load window, and a card stranded in a column its workflow no longer declares.
+    render(<TaskCard task={makeTask({ column: "ideas" as any })} onUpdateTask={noop} onOpenDetail={noop} addToast={noop} />);
     expect(screen.getByRole("button", EDIT_LABEL)).toBeInTheDocument();
+  });
+
+  it("does not render it for a legacy `todo` card with no flags resolved", () => {
+    // `todo` is the merged PLANNING lane: a plan is being written from the description there.
+    render(<TaskCard task={makeTask({ column: "todo" as any })} onUpdateTask={noop} onOpenDetail={noop} addToast={noop} />);
+    expect(screen.queryByRole("button", EDIT_LABEL)).not.toBeInTheDocument();
   });
 });
 
-describe("TaskCard titleless display fallback (FN-044)", () => {
-  const description200 = "d".repeat(200);
-  const description201 = "e".repeat(201);
+/*
+FNXC:TaskTitleDisplay 2026-09-14-17:30:
+FN-391 replaces the FN-044 200-characters-with-ellipsis fallback with an EXACT 220-character
+description prefix. The assertions below are inverted rather than relaxed: the old suffix contract
+is now asserted absent, because a suffix made the rendered label a different string from the
+description prefix it claims to show.
+*/
+describe("TaskCard titleless display fallback (FN-391)", () => {
+  const description220 = "d".repeat(220);
+  const description221 = "e".repeat(221);
+  const description400 = "f".repeat(400);
 
   function cardTitle(container: HTMLElement): HTMLDivElement {
     return container.querySelector(".card-title") as HTMLDivElement;
   }
 
-  it("keeps titleless descriptions through 200 characters unchanged", () => {
-    const { container } = render(<TaskCard task={makeTask({ title: undefined, description: description200 })} onOpenDetail={noop} addToast={noop} />);
-    expect(cardTitle(container)).toHaveTextContent(description200);
+  it("keeps titleless descriptions through 220 characters unchanged", () => {
+    const { container } = render(<TaskCard task={makeTask({ title: undefined, description: description220 })} onOpenDetail={noop} addToast={noop} />);
+    expect(cardTitle(container)).toHaveTextContent(description220);
     expect(cardTitle(container)).not.toHaveClass("card-title--bounded-description");
   });
 
-  it("bounds a 201-character titleless description with literal dots while retaining its full tooltip", () => {
-    const { container } = render(<TaskCard task={makeTask({ title: undefined, description: description201 })} onOpenDetail={noop} addToast={noop} />);
+  it.each([
+    { label: "221 characters", description: description221 },
+    { label: "400 characters", description: description400 },
+  ])("bounds a titleless description of $label to its exact 220-character prefix", ({ description }) => {
+    const { container } = render(<TaskCard task={makeTask({ title: undefined, description })} onOpenDetail={noop} addToast={noop} />);
     const title = cardTitle(container);
-    expect(title).toHaveTextContent(description201.slice(0, 197) + "...");
-    expect(title.textContent).toHaveLength(200);
+    expect(title.textContent).toBe(description.slice(0, 220));
+    expect(title.textContent).toHaveLength(220);
+    expect(title.textContent).not.toContain("...");
+    expect(title.textContent).not.toContain("\u2026");
     expect(title).toHaveClass("card-title--bounded-description");
-    expect(title).toHaveAttribute("title", description201);
+    expect(title).toHaveAttribute("title", description);
+  });
+
+  it("renders distinct IDs when two tasks share one blank description", () => {
+    const first = render(<TaskCard task={makeTask({ id: "FN-dup-a", title: undefined, description: "  " })} onOpenDetail={noop} addToast={noop} />);
+    expect(cardTitle(first.container)).toHaveTextContent("FN-dup-a");
+    first.unmount();
+
+    const second = render(<TaskCard task={makeTask({ id: "FN-dup-b", title: undefined, description: "  " })} onOpenDetail={noop} addToast={noop} />);
+    expect(cardTitle(second.container)).toHaveTextContent("FN-dup-b");
   });
 
   it("uses description or task ID for whitespace-only titles and blank descriptions", () => {
@@ -8577,7 +8586,7 @@ describe("TaskCard titleless display fallback (FN-044)", () => {
 
   it("preserves explicit titles and their existing TaskCard truncation", () => {
     const explicitTitle = "t".repeat(201);
-    const { container } = render(<TaskCard task={makeTask({ title: explicitTitle, description: description201 })} onOpenDetail={noop} addToast={noop} />);
+    const { container } = render(<TaskCard task={makeTask({ title: explicitTitle, description: description221 })} onOpenDetail={noop} addToast={noop} />);
     const title = cardTitle(container);
     expect(title).toHaveTextContent(explicitTitle.slice(0, 140) + "…");
     expect(title).toHaveAttribute("title", explicitTitle);

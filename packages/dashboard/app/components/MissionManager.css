@@ -288,13 +288,7 @@ primary CTA while every production presentation can open the merge-aware form.
   background: var(--card-hover);
 }
 
-.mission-list__filters {
-  display: flex;
-  justify-content: flex-end;
-  margin: calc(var(--space-sm) * -1) calc(var(--space-sm) * -1) var(--space-sm);
-  padding: var(--space-sm) var(--space-md);
-  border-bottom: var(--btn-border-width) solid var(--border);
-}
+/* FNXC:StandardizedMissionLayout 2026-09-16-15:50: FN-465 removed the mission list archive filter bar, so its container rule is gone rather than left as an empty shell. */
 
 .mission-manager__detail-pane {
   flex: 1;
@@ -307,6 +301,21 @@ primary CTA while every production presentation can open the merge-aware form.
   display: flex;
   flex-direction: column;
   padding: var(--space-lg);
+}
+
+/*
+FNXC:MissionInterviewMainContent 2026-09-15-03:29:
+FN-402 renders Plan Mission with AI inside the detail pane. The interview owns its own padding and scrolling, so the
+pane drops its reading padding and hands scroll ownership to the embedded panel instead of nesting two scrollers.
+*/
+.mission-manager__detail-pane--interview {
+  padding: 0;
+  overflow: hidden;
+}
+
+.mission-manager__detail-pane--interview > .mission-interview-panel {
+  flex: 1;
+  min-height: 0;
 }
 
 /* Empty-state placeholder shown when no mission is selected in the desktop detail pane. */

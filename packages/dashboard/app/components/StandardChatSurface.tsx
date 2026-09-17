@@ -1,5 +1,5 @@
 import type { Agent } from "@fusion/core";
-import { AlphaButton, AlphaTextArea } from "./alpha-ui";
+import { UiButton, UiTextArea } from "./ui";
 import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import type { Components } from "react-markdown";
@@ -69,6 +69,16 @@ export interface StandardChatMessageItemProps {
    * false or `onEditMessage` is absent, no affordance renders at all — never a disabled/dead one.
    */
   canEdit?: boolean;
+  /**
+   * FNXC:ChatMessageEdit 2026-09-16-05:58:
+   * FN-459. Correction text rescued from a REJECTED edit. A rejected edit reloads the authoritative
+   * rows, which changes this row's id and remounts it (transcripts key by message id), destroying
+   * the inline editor's local `editedText`. When this becomes defined and the editor is not already
+   * open, reopen it pre-filled and acknowledge through `onEditDraftConsumed` so the surface clears
+   * the draft exactly once instead of reopening the editor forever.
+   */
+  initialEditDraft?: string;
+  onEditDraftConsumed?: (messageId: string) => void;
   /** Optional ChatView-only find presentation; omitted consumers remain unchanged. */
   isSearchMatch?: boolean;
   isSearchActive?: boolean;
@@ -544,7 +554,7 @@ export function renderStandardAssistantContent(content: string, forcePlain: bool
 /**
  * FNXC:VoiceInput 2026-07-25-04:15:
  * Mount dictation only while the correction textarea is open. Message rows must not each poll
- * voice availability while merely rendering history; this editor remains the shared Quick Chat path.
+ * voice availability while merely rendering history; this editor remains shared by every Chat host.
  */
 function StandardChatMessageEditComposer({
   value,
@@ -590,7 +600,7 @@ function StandardChatMessageEditComposer({
 
   return (
     <div className="chat-message-edit-editor" data-testid={`chat-message-edit-editor-${messageId}`}>
-      <AlphaTextArea
+      <UiTextArea
         ref={handleTextareaRef}
         className="input chat-message-edit-textarea"
         value={value}
@@ -609,8 +619,8 @@ function StandardChatMessageEditComposer({
       />
       <div className="chat-message-edit-actions">
         <MicButton {...dictation.micProps} disabled={disabled} />
-        <AlphaButton type="button" className="btn btn-sm" data-testid={`chat-message-edit-cancel-${messageId}`} disabled={disabled} onClick={onCancel}>{t("chat.editMessageCancel", "Cancel")}</AlphaButton>
-        <AlphaButton type="button" className="btn btn-sm btn-primary" data-testid={`chat-message-edit-save-${messageId}`} disabled={saveDisabled} onClick={onSave}>{t("chat.editMessageSave", "Save")}</AlphaButton>
+        <UiButton type="button" className="btn btn-sm" data-testid={`chat-message-edit-cancel-${messageId}`} disabled={disabled} onClick={onCancel}>{t("chat.editMessageCancel", "Cancel")}</UiButton>
+        <UiButton type="button" className="btn btn-sm btn-primary" data-testid={`chat-message-edit-save-${messageId}`} disabled={saveDisabled} onClick={onSave}>{t("chat.editMessageSave", "Save")}</UiButton>
       </div>
     </div>
   );
@@ -636,6 +646,8 @@ export const StandardChatMessageItem = memo(function StandardChatMessageItem({
   toolCallRenderer,
   onEditMessage,
   canEdit = false,
+  initialEditDraft,
+  onEditDraftConsumed,
   isTopClipped = false,
   isSearchMatch = false,
   isSearchActive = false,
@@ -667,6 +679,18 @@ export const StandardChatMessageItem = memo(function StandardChatMessageItem({
     setIsEditing(false);
     setEditedText(message.content);
   }, [isSavingEdit, message.content]);
+
+  /*
+  FNXC:ChatMessageEdit 2026-09-16-05:58:
+  FN-459. Restore a rescued correction exactly once. Guarded on `isEditing` so an editor the operator
+  already reopened by hand is never overwritten mid-typing.
+  */
+  useEffect(() => {
+    if (initialEditDraft === undefined || isEditing) return;
+    setEditedText(initialEditDraft);
+    setIsEditing(true);
+    onEditDraftConsumed?.(message.id);
+  }, [initialEditDraft, isEditing, message.id, onEditDraftConsumed]);
 
   const saveEdit = useCallback(async () => {
     const trimmed = editedText.trim();
@@ -793,8 +817,8 @@ export const StandardChatMessageItem = memo(function StandardChatMessageItem({
           {(copyAction || onScrollToTop || showQuoteAction) && (
             <div className="chat-message-actions">
               {copyAction}
-              {showQuoteAction && <AlphaButton type="button" className="btn-icon chat-message-quote-action" aria-label={t("chat.quoteMessage", "Quote message")} data-testid={`chat-message-quote-${message.id}`} onClick={() => onQuoteMessage?.(message)}><Reply size={14} /></AlphaButton>}
-              {onScrollToTop && <AlphaButton type="button" className={`btn-icon chat-message-scroll-to-top-action${isTopClipped ? "" : " chat-message-scroll-to-top-action--hidden"}`} aria-label={t("chat.scrollMessageToTop", "Scroll message to top")} data-testid={`chat-message-scroll-to-top-${message.id}`} onClick={() => onScrollToTop(message.id)}><ArrowUpToLine size={14} /></AlphaButton>}
+              {showQuoteAction && <UiButton type="button" className="btn-icon chat-message-quote-action" aria-label={t("chat.quoteMessage", "Quote message")} data-testid={`chat-message-quote-${message.id}`} onClick={() => onQuoteMessage?.(message)}><Reply size={14} /></UiButton>}
+              {onScrollToTop && <UiButton type="button" className={`btn-icon chat-message-scroll-to-top-action${isTopClipped ? "" : " chat-message-scroll-to-top-action--hidden"}`} aria-label={t("chat.scrollMessageToTop", "Scroll message to top")} data-testid={`chat-message-scroll-to-top-${message.id}`} onClick={() => onScrollToTop(message.id)}><ArrowUpToLine size={14} /></UiButton>}
             </div>
           )}
         </div>
@@ -804,8 +828,8 @@ export const StandardChatMessageItem = memo(function StandardChatMessageItem({
       {isUserMessage ? (
         <div className="chat-message-time-row">
           {messageTime}
-          {showQuoteAction && <AlphaButton type="button" className="btn-icon chat-message-quote-action" aria-label={t("chat.quoteMessage", "Quote message")} data-testid={`chat-message-quote-${message.id}`} onClick={() => onQuoteMessage?.(message)}><Reply size={14} /></AlphaButton>}
-          {showEditAction && !isEditing && <AlphaButton type="button" className="btn-icon chat-message-edit-action chat-message-edit-action--inline" aria-label={t("chat.editMessage", "Edit message")} data-testid={`chat-message-edit-${message.id}`} onClick={startEditing}><Pencil size={14} /></AlphaButton>}
+          {showQuoteAction && <UiButton type="button" className="btn-icon chat-message-quote-action" aria-label={t("chat.quoteMessage", "Quote message")} data-testid={`chat-message-quote-${message.id}`} onClick={() => onQuoteMessage?.(message)}><Reply size={14} /></UiButton>}
+          {showEditAction && !isEditing && <UiButton type="button" className="btn-icon chat-message-edit-action chat-message-edit-action--inline" aria-label={t("chat.editMessage", "Edit message")} data-testid={`chat-message-edit-${message.id}`} onClick={startEditing}><Pencil size={14} /></UiButton>}
         </div>
       ) : messageTime}
     </div>
@@ -866,7 +890,7 @@ export function StandardChatActionButton({ isStreaming, canSend, onSend, onStop,
   // independently of Send's, defaulting to showSendText when the caller doesn't opt in (FN-7655).
   const showStop = showStopText ?? showSendText;
   if (isStreaming) {
-    return <AlphaButton type="button" className={classNameStop} onPointerDown={(event) => { if (event.pointerType && event.pointerType !== "mouse") { event.preventDefault(); if (!beginTouchActionGesture()) return; markHandledSendTouch(); onStop?.(); } }} onTouchStart={(event) => { event.preventDefault(); if (!beginTouchActionGesture()) return; markHandledSendTouch(); onStop?.(); }} onMouseDown={(event) => event.preventDefault()} onClick={() => { if (consumeHandledSendTouch()) return; onStop?.(); }} aria-label={stopLabel ?? t("chat.stopGeneration", "Stop generation")} data-testid={stopTestId} style={{ touchAction: "manipulation" }}><span className="chat-input-stop-icon" aria-hidden="true" />{showStop && <span>{stopLabel ?? t("chat.stopGeneration", "Stop generation")}</span>}</AlphaButton>;
+    return <UiButton type="button" className={classNameStop} onPointerDown={(event) => { if (event.pointerType && event.pointerType !== "mouse") { event.preventDefault(); if (!beginTouchActionGesture()) return; markHandledSendTouch(); onStop?.(); } }} onTouchStart={(event) => { event.preventDefault(); if (!beginTouchActionGesture()) return; markHandledSendTouch(); onStop?.(); }} onMouseDown={(event) => event.preventDefault()} onClick={() => { if (consumeHandledSendTouch()) return; onStop?.(); }} aria-label={stopLabel ?? t("chat.stopGeneration", "Stop generation")} data-testid={stopTestId} style={{ touchAction: "manipulation" }}><span className="chat-input-stop-icon" aria-hidden="true" />{showStop && <span>{stopLabel ?? t("chat.stopGeneration", "Stop generation")}</span>}</UiButton>;
   }
-  return <AlphaButton type="button" className={classNameSend} onPointerDown={(event) => { if (event.pointerType && event.pointerType !== "mouse") { event.preventDefault(); if (!beginTouchActionGesture()) return; markHandledSendTouch(); void onSend(); } }} onTouchStart={(event) => { event.preventDefault(); if (!beginTouchActionGesture()) return; markHandledSendTouch(); void onSend(); }} onMouseDown={(event) => event.preventDefault()} onClick={() => { if (consumeHandledSendTouch()) return; void onSend(); }} disabled={!canSend} data-testid={sendTestId} aria-label={sendLabel ?? t("chat.send", "Send")} style={{ touchAction: "manipulation" }}><Send size={16} />{showSendText && <span>{sendLabel ?? t("chat.send", "Send")}</span>}</AlphaButton>;
+  return <UiButton type="button" className={classNameSend} onPointerDown={(event) => { if (event.pointerType && event.pointerType !== "mouse") { event.preventDefault(); if (!beginTouchActionGesture()) return; markHandledSendTouch(); void onSend(); } }} onTouchStart={(event) => { event.preventDefault(); if (!beginTouchActionGesture()) return; markHandledSendTouch(); void onSend(); }} onMouseDown={(event) => event.preventDefault()} onClick={() => { if (consumeHandledSendTouch()) return; void onSend(); }} disabled={!canSend} data-testid={sendTestId} aria-label={sendLabel ?? t("chat.send", "Send")} style={{ touchAction: "manipulation" }}><Send size={16} />{showSendText && <span>{sendLabel ?? t("chat.send", "Send")}</span>}</UiButton>;
 }

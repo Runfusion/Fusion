@@ -386,10 +386,16 @@ export function createSmokeHtml(options = {}) {
     </section>
   `;
 
+  /*
+  FNXC:MailboxTwoTabs 2026-09-16-16:53:
+  FN-464 made the mailbox header contextual: the inbox carries the scope filter (with the pending
+  approvals badge) and Mark all read, the outbox carries Compose, and the manual refresh control is gone.
+  These fixtures model that shipped chrome so the mobile overflow measurement stays truthful.
+  */
   const mailboxMobileHeaderFixtures = [
-    ["unread-inbox", '<span class="mailbox-unread-badge">9</span><button class="btn btn-sm btn-primary" data-testid="mailbox-header-compose" type="button"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M2 2h10v10H2z"/></svg><span>Compose</span></button><button class="btn btn-sm btn-secondary" data-testid="mailbox-mark-all-read" type="button"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M2 7l3 3 7-7"/></svg><span>Mark all read</span></button><button class="btn-icon" data-testid="mailbox-refresh" type="button" aria-label="Refresh"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M2 7a5 5 0 1 0 2-4"/></svg></button>'],
-    ["read-inbox", '<button class="btn btn-sm btn-primary" data-testid="mailbox-header-compose" type="button"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M2 2h10v10H2z"/></svg><span>Compose</span></button><button class="btn-icon" data-testid="mailbox-refresh" type="button" aria-label="Refresh"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M2 7a5 5 0 1 0 2-4"/></svg></button>'],
-    ["non-inbox", '<button class="btn btn-sm btn-primary" data-testid="mailbox-header-compose" type="button"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M2 2h10v10H2z"/></svg><span>Compose</span></button><button class="btn-icon" data-testid="mailbox-refresh" type="button" aria-label="Refresh"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M2 7a5 5 0 1 0 2-4"/></svg></button>'],
+    ["unread-inbox", '<span class="mailbox-unread-badge">9</span><button class="btn btn-sm btn-secondary mailbox-inbox-filter" data-testid="mailbox-inbox-filter" type="button" aria-haspopup="menu" aria-expanded="false"><svg class="mailbox-inbox-filter-icon" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M2 3h10L8 8v4L6 11V8z"/></svg><span>Filter</span><span class="mailbox-tab-badge" data-testid="mailbox-approvals-pending-badge">3</span></button><button class="btn btn-sm btn-secondary" data-testid="mailbox-mark-all-read" type="button"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M2 7l3 3 7-7"/></svg><span>Mark all read</span></button>'],
+    ["read-inbox", '<button class="btn btn-sm btn-secondary mailbox-inbox-filter" data-testid="mailbox-inbox-filter" type="button" aria-haspopup="menu" aria-expanded="false"><svg class="mailbox-inbox-filter-icon" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M2 3h10L8 8v4L6 11V8z"/></svg><span>Filter</span></button><button class="btn btn-sm btn-secondary" data-testid="mailbox-mark-all-read" type="button" disabled><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M2 7l3 3 7-7"/></svg><span>Mark all read</span></button>'],
+    ["non-inbox", '<button class="btn btn-sm btn-primary" data-testid="mailbox-header-compose" type="button"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M2 2h10v10H2z"/></svg><span>Compose</span></button>'],
   ].map(([state, actions]) => `
     <section class="mailbox-view mailbox-view--mobile" data-smoke="mailbox-mobile-header-${state}" style="width: 100%; max-width: 20rem;">
       <header class="view-header">
@@ -450,18 +456,18 @@ export function createSmokeHtml(options = {}) {
     <section class="floating-window floating-window--github-import-detail" data-smoke="github-import-detail" style="width: min(760px, calc(100vw - var(--space-2xl))); height: min(680px, calc(100dvh - var(--space-2xl)));"><div class="floating-window__body" data-smoke="github-import-detail-body"><section class="github-import-detail-panel" data-smoke="github-import-detail-panel"><header class="github-import-pane-header"><h4>Issue detail</h4><button class="modal-close" data-smoke="github-import-detail-close" type="button" aria-label="Close detail">×</button></header><div class="github-import-pane-content">Detail control fixture</div></section></div><i class="floating-window__resize-handle floating-window__resize-handle--se" aria-hidden="true"></i></section>`;
 
   /*
-  FNXC:AlphaMobileDrawer 2026-09-10-23:18:
+  FNXC:MobileDrawer 2026-09-10-23:18:
   The real-browser regression mounts the shipped React drawer and ViewHeader components instead of duplicating their DOM in this HTML template. That keeps Blink's geometry evidence tied to production header ownership, portal structure, and provider props while direct FloatingWindow and Terminal adaptations remain represented by their production class contracts.
   */
   const alphaDrawerFixtures = `
-    <section data-smoke="alpha-drawer-fixtures" hidden>
-      <div data-smoke="alpha-drawer-production-root"></div>
-      <div class="floating-window-overlay floating-window-overlay--modal floating-window-overlay--alpha-mobile-drawer" data-smoke="alpha-drawer-floating"><section class="floating-window floating-window--alpha-mobile-drawer"><header class="floating-window__header"><h2>Floating</h2></header><div class="floating-window__body"><button type="button">Floating final control</button></div></section></div>
-      <div class="terminal-modal-overlay" data-smoke="alpha-drawer-terminal"><section class="terminal-modal"><header class="terminal-header"><h2>Terminal</h2></header><div class="terminal-body">Terminal content</div><button type="button">Terminal final control</button></section></div>
+    <section data-smoke="native-drawer-fixtures" hidden>
+      <div data-smoke="native-drawer-production-root"></div>
+      <div class="floating-window-overlay floating-window-overlay--modal floating-window-overlay--mobile-drawer" data-smoke="native-drawer-floating"><section class="floating-window floating-window--mobile-drawer"><header class="floating-window__header"><h2>Floating</h2></header><div class="floating-window__body"><button type="button">Floating final control</button></div></section></div>
+      <div class="terminal-modal-overlay" data-smoke="native-drawer-terminal"><section class="terminal-modal"><header class="terminal-header"><h2>Terminal</h2></header><div class="terminal-body">Terminal content</div><button type="button">Terminal final control</button></section></div>
     </section>
     <section data-smoke="alpha-board-fixture" hidden style="position:fixed;inset:0;display:flex;min-height:0;background:var(--bg);">
       <div class="dashboard-project-shell">
-        <main class="project-content project-content--with-alpha-nav">
+        <main class="project-content project-content--with-mobile-nav">
           <div class="board-workflow-view" data-smoke="alpha-board-production-root"></div>
         </main>
       </div>
@@ -476,14 +482,14 @@ export function createSmokeHtml(options = {}) {
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Fusion dashboard browser smoke</title>
     <link rel="stylesheet" href="/app.css" />
-    <style>.alpha-browser-production-fixture { display: none !important; } html[data-alpha-drawer-fixtures-visible="true"] .alpha-browser-production-fixture { display: flex !important; }</style>
+    <style>.alpha-browser-production-fixture { display: none !important; } html[data-native-drawer-fixtures-visible="true"] .alpha-browser-production-fixture { display: flex !important; }</style>
   </head>
   <body data-theme="${smokeTheme}">
     <div id="root">
       ${gitManagerFixtures}
       ${gitHubImportFixtures}
       ${alphaDrawerFixtures}
-      <script type="module" src="/alpha-drawer-production-fixture.js"></script>
+      <script type="module" src="/native-drawer-production-fixture.js"></script>
       <div class="header-wrapper">
         <header class="header" data-smoke="header">
           <div class="header-left">
@@ -929,7 +935,7 @@ export function createSmokeHtml(options = {}) {
 export function createAlphaDrawerProductionFixtureSource() {
   const componentPath = (relativePath) => path.join(appRoot, relativePath).replaceAll("\\", "/");
   const imports = {
-    alphaDrawer: componentPath("components/AlphaMobileDrawer.tsx"),
+    alphaDrawer: componentPath("components/MobileDrawer.tsx"),
     projectOverview: componentPath("components/ProjectOverview.tsx"),
     planningKeepAlive: componentPath("components/dashboard/PlanningKeepAlive.tsx"),
     appModals: componentPath("components/AppModals.tsx"),
@@ -951,7 +957,7 @@ export function createAlphaDrawerProductionFixtureSource() {
     import { createRoot } from "react-dom/client";
     import { flushSync } from "react-dom";
     import { I18nextProvider } from "react-i18next";
-    import { AlphaMobileDrawer, AlphaProjectsDrawer, AlphaPlanningDrawer } from ${JSON.stringify(imports.alphaDrawer)};
+    import { MobileDrawer, AlphaProjectsDrawer, AlphaPlanningDrawer } from ${JSON.stringify(imports.alphaDrawer)};
     import { ProjectOverview } from ${JSON.stringify(imports.projectOverview)};
     import { PlanningKeepAlive } from ${JSON.stringify(imports.planningKeepAlive)};
     import { AlphaUsageDrawer } from ${JSON.stringify(imports.appModals)};
@@ -969,8 +975,8 @@ export function createAlphaDrawerProductionFixtureSource() {
     import { FileBrowserProvider } from ${JSON.stringify(imports.fileBrowser)};
 
     /*
-    FNXC:AlphaMobileDrawer 2026-09-10-23:59:
-    Browser geometry must exercise the exported bridges used by App, MainViewKeepAlive, MainContent, and AppModals rather than reconstructing AlphaMobileDrawer ownership flags. The fixture supplies deterministic transport data only; every provider retains its production shell, header, scroll owner, and controls.
+    FNXC:MobileDrawer 2026-09-10-23:59:
+    Browser geometry must exercise the exported bridges used by App, MainViewKeepAlive, MainContent, and AppModals rather than reconstructing MobileDrawer ownership flags. The fixture supplies deterministic transport data only; every provider retains its production shell, header, scroll owner, and controls.
     */
     const session = { id: "smoke-chat-session", title: "Drawer conversation", agentId: "agent-smoke", status: "active", createdAt: "2026-09-10T00:00:00.000Z", updatedAt: "2026-09-10T00:00:00.000Z", lastMessageAt: "2026-09-10T00:00:00.000Z", lastMessagePreview: "Visible message", tags: [] };
     let boardTransportState = "skeleton";
@@ -1033,9 +1039,9 @@ export function createAlphaDrawerProductionFixtureSource() {
     };
 
     function ProductionProvider({ id }) {
-      if (id === "short") return React.createElement(AlphaMobileDrawer, { ...drawerProps("Short"), testId: "alpha-drawer-short" }, React.createElement("button", { type: "button", "data-smoke": "alpha-drawer-short-final" }, "Short final control"));
+      if (id === "short") return React.createElement(MobileDrawer, { ...drawerProps("Short"), testId: "native-drawer-short" }, React.createElement("button", { type: "button", "data-smoke": "native-drawer-short-final" }, "Short final control"));
       if (id === "projects") return React.createElement(AlphaProjectsDrawer, drawerProps("Projects"), React.createElement(ProjectOverview, { projects: [project], onSelectProject: noop, onAddProject: noop, onPauseProject: noop, onResumeProject: noop, onRemoveProject: noop }));
-      if (id === "planning") return React.createElement(AlphaPlanningDrawer, drawerProps("Planning"), React.createElement(PlanningKeepAlive, { active: true, projectId: project.id, tasks: [], bgPlanningSessions: [], modalManager, handleChangeTaskView: noop, handlePlanningTaskCreated: noop, handlePlanningTasksCreated: noop, openBoardTaskDetail: noop, openWorkflowEditorWithNav: noop }));
+      if (id === "planning") return React.createElement(AlphaPlanningDrawer, drawerProps("Planning"), React.createElement(PlanningKeepAlive, { active: true, projectId: project.id, tasks: [], bgPlanningSessions: [], modalManager, handleChangeTaskView: noop, handlePlanningTaskCreated: noop, handlePlanningTasksCreated: noop, openBoardTaskDetail: noop }));
       if (id === "usage") return React.createElement(AlphaUsageDrawer, { ...drawerProps("Usage"), projectId: project.id });
       if (id === "task-detail" || id === "long") return React.createElement(TaskDetailModal, { task, projectId: project.id, alphaMobileDrawer: true, onClose: noop, onOpenDetail: noop, onDeleteTask: asyncTask, onMergeTask: async () => ({ success: true }), addToast: noop });
       if (id === "plugin") return React.createElement(AlphaMainContentDrawer, { ...drawerProps("Todo"), taskView: "plugin:fusion-plugin-todos:todos" }, React.createElement(Suspense, { fallback: null }, React.createElement(PluginDashboardViewHost, { taskView: "plugin:fusion-plugin-todos:todos", context: { projectId: project.id, tasks: [], workflowSteps: [], openTaskDetail: noop } })));
@@ -1067,7 +1073,7 @@ export function createAlphaDrawerProductionFixtureSource() {
         keyboardOpen: state.keyboardOpen,
         keyboardMetrics: state,
         alphaMenuOpen: state.menuOpen,
-        onAlphaMenuOpenChange: (menuOpen) => setState((current) => ({ ...current, menuOpen })),
+        onUiMenuOpenChange: (menuOpen) => setState((current) => ({ ...current, menuOpen })),
         onOpenSettings: noop,
         onOpenActivityLog: noop,
         onOpenMailbox: noop,
@@ -1154,8 +1160,6 @@ export function createAlphaDrawerProductionFixtureSource() {
         handleToggleModelFavorite: async () => {},
         staleHighFanoutBlockerAgeThresholdMs: 0,
         prAuthAvailable: false,
-        openWorkflowEditorWithNav: noop,
-        openCreateWorkflowWithNav: noop,
         sidebarActive: true,
         isMobile: false,
         isRemote: false,
@@ -1172,14 +1176,14 @@ export function createAlphaDrawerProductionFixtureSource() {
     }
 
     const providers = (child) => React.createElement(I18nextProvider, { i18n }, React.createElement(NavigationHistoryProvider, { value: navigation }, React.createElement(ConfirmDialogProvider, { skipConfirmations: true }, React.createElement(FileBrowserProvider, { openFile: noop }, child))));
-    flushSync(() => createRoot(document.querySelector('[data-smoke="alpha-drawer-production-root"]')).render(providers(React.createElement(Fixture))));
+    flushSync(() => createRoot(document.querySelector('[data-smoke="native-drawer-production-root"]')).render(providers(React.createElement(Fixture))));
     flushSync(() => createRoot(document.querySelector('[data-smoke="alpha-board-production-root"]')).render(providers(React.createElement(ProductionBoardFixture))));
     flushSync(() => createRoot(document.querySelector('[data-smoke="alpha-pill-production-root"]')).render(providers(React.createElement(ProductionMobileNavFixture))));
   `;
 }
 async function buildAlphaDrawerProductionFixture() {
   const { build: buildVite } = await import("vite");
-  const virtualId = "virtual:fusion-alpha-drawer-production-fixture";
+  const virtualId = "virtual:fusion-native-drawer-production-fixture";
   const resolvedVirtualId = `\0${virtualId}`;
   const output = await buildVite({
     configFile: false,
@@ -1199,7 +1203,7 @@ async function buildAlphaDrawerProductionFixture() {
       ],
     },
     plugins: [{
-      name: "fusion-alpha-drawer-production-fixture",
+      name: "fusion-native-drawer-production-fixture",
       resolveId(id) {
         if (id === virtualId) return resolvedVirtualId;
         if (id.includes("cpufeatures.node")) return "\0virtual:fusion-empty-native-module";
@@ -1353,7 +1357,7 @@ async function startFixtureServer() {
       res.end(css);
       return;
     }
-    if (req.url === "/alpha-drawer-production-fixture.js") {
+    if (req.url === "/native-drawer-production-fixture.js") {
       res.writeHead(200, { "content-type": "text/javascript; charset=utf-8" });
       res.end(alphaDrawerScript);
       return;
@@ -1841,7 +1845,7 @@ async function runSmokeChecks(page, pageUrl, browserWsUrl) {
     root.dataset.alphaMobileDrawers = 'true';
     root.dataset.viewportMode = 'mobile';
     root.dataset.alphaDrawerFixturesVisible = 'true';
-    const fixture = document.querySelector('[data-smoke="alpha-drawer-fixtures"]');
+    const fixture = document.querySelector('[data-smoke="native-drawer-fixtures"]');
     fixture.hidden = false;
     const nextFrame = () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     const waitFor = async (read, label) => {
@@ -1869,7 +1873,7 @@ async function runSmokeChecks(page, pageUrl, browserWsUrl) {
       }
     };
     const providerConfig = [
-      { id: 'short', final: '[data-smoke="alpha-drawer-short-final"]' },
+      { id: 'short', final: '[data-smoke="native-drawer-short-final"]' },
       { id: 'projects', final: '.project-overview button, .project-overview [role="button"]' },
       { id: 'planning', final: '.planning-view textarea, .planning-view button' },
       { id: 'usage', final: '.usage-popover button' },
@@ -1887,7 +1891,7 @@ async function runSmokeChecks(page, pageUrl, browserWsUrl) {
         const sessionButton = await waitFor(() => host.querySelector('[data-testid="chat-session-smoke-chat-session"]'), 'Chat session');
         sessionButton.click();
       }
-      const panel = await waitFor(() => host.querySelector('.alpha-mobile-drawer__panel'), config.id + ' panel');
+      const panel = await waitFor(() => host.querySelector('.mobile-drawer__panel'), config.id + ' panel');
       const finalControl = await waitFor(() => {
         const controls = host.querySelectorAll(config.final);
         return controls.length > 0 ? controls.item(controls.length - 1) : null;
@@ -1896,14 +1900,14 @@ async function runSmokeChecks(page, pageUrl, browserWsUrl) {
       await nextFrame();
       const panelRect = rect(panel);
       const controlRect = rect(finalControl);
-      const visibleHeaderRows = [...panel.querySelectorAll(':scope > .alpha-mobile-drawer__header, .view-header, .modal-header')].filter(isVisible);
+      const visibleHeaderRows = [...panel.querySelectorAll(':scope > .mobile-drawer__header, .view-header, .modal-header')].filter(isVisible);
       const visibleChatTitles = config.id === 'chat' ? [...panel.querySelectorAll('h1,h2,h3')].filter((heading) => heading.textContent.trim() === 'Chat' && !heading.classList.contains('visually-hidden') && isVisible(heading)).length : undefined;
       providerResults.push({
         id: config.id,
         panel: panelRect,
         headerCount: visibleHeaderRows.length,
-        closeCount: panel.querySelectorAll(':scope > .alpha-mobile-drawer__close').length,
-        handleCount: panel.querySelectorAll(':scope > .alpha-mobile-drawer__handle-target').length,
+        closeCount: panel.querySelectorAll(':scope > .mobile-drawer__close').length,
+        handleCount: panel.querySelectorAll(':scope > .mobile-drawer__handle-target').length,
         finalReachable: controlRect.top >= panelRect.top - 1 && controlRect.bottom <= panelRect.bottom + 1,
         inputFocusable: config.id === 'chat' ? !finalControl.disabled && finalControl.tabIndex >= 0 : undefined,
         visibleChatTitles,
@@ -1917,8 +1921,8 @@ async function runSmokeChecks(page, pageUrl, browserWsUrl) {
         },
       });
     }
-    const floatingPanel = document.querySelector('[data-smoke="alpha-drawer-floating"] .floating-window');
-    const terminalPanel = document.querySelector('[data-smoke="alpha-drawer-terminal"] .terminal-modal');
+    const floatingPanel = document.querySelector('[data-smoke="native-drawer-floating"] .floating-window');
+    const terminalPanel = document.querySelector('[data-smoke="native-drawer-terminal"] .terminal-modal');
     const panels = [...providerResults.map((result) => result.panel), rect(floatingPanel), rect(terminalPanel)];
     const chat = providerResults.find((result) => result.id === 'chat');
     return {
@@ -1943,11 +1947,11 @@ async function runSmokeChecks(page, pageUrl, browserWsUrl) {
     const keyboardMetrics = ${JSON.stringify(createMobilePillSmokeViewportMetrics(layoutViewportHeight, String(mode) === "mobile-keyboard"))};
     const { keyboardOpen, keyboardOverlap, viewportHeight, viewportOffsetTop } = keyboardMetrics;
     root.dataset.viewportMode = mobileMode ? 'mobile' : mode;
-    root.style.setProperty('--mobile-nav-alpha-system-offset', ${JSON.stringify(String(systemOffset))} + 'px');
+    root.style.setProperty('--mobile-nav-system-offset', ${JSON.stringify(String(systemOffset))} + 'px');
     const fixture = document.querySelector('[data-smoke="alpha-board-fixture"]');
     fixture.hidden = false;
     const content = fixture.querySelector('.project-content');
-    content.className = mobileMode ? 'project-content project-content--with-alpha-nav' : 'project-content project-content--with-footer';
+    content.className = mobileMode ? 'project-content project-content--with-mobile-nav' : 'project-content project-content--with-footer';
     const footer = fixture.querySelector('[data-smoke="alpha-footer"]');
     footer.style.display = mode === 'desktop' || mode === 'tablet' ? '' : 'none';
     const state = ${JSON.stringify(String(state))};
@@ -1968,7 +1972,7 @@ async function runSmokeChecks(page, pageUrl, browserWsUrl) {
       viewportOffsetTop,
       menuOpen: mobileMode,
     });
-    const pill = mobileMode ? await waitFor(() => fixture.querySelector('.mobile-nav-bar--alpha'), 'production pill') : null;
+    const pill = mobileMode ? await waitFor(() => fixture.querySelector('.mobile-nav-bar--native'), 'production pill') : null;
     controller.show(state);
     const board = await waitFor(() => {
       const candidate = fixture.querySelector('#board');
@@ -2104,7 +2108,7 @@ async function runSmokeChecks(page, pageUrl, browserWsUrl) {
     );
   }
   await evaluate(page, `(() => {
-    document.querySelector('[data-smoke="alpha-drawer-fixtures"]').hidden = true;
+    document.querySelector('[data-smoke="native-drawer-fixtures"]').hidden = true;
     delete document.documentElement.dataset.alphaDrawerFixturesVisible;
     delete document.documentElement.dataset.alphaMobileDrawers;
     return true;
@@ -2140,7 +2144,7 @@ async function runSmokeChecks(page, pageUrl, browserWsUrl) {
   }
   await evaluate(page, `(() => {
     document.querySelector('[data-smoke="alpha-board-fixture"]').hidden = true;
-    document.documentElement.style.removeProperty('--mobile-nav-alpha-system-offset');
+    document.documentElement.style.removeProperty('--mobile-nav-system-offset');
     document.documentElement.style.removeProperty('--mobile-nav-height');
     delete document.documentElement.dataset.viewportMode;
     return true;

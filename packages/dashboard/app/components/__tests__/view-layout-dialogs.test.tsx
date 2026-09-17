@@ -92,6 +92,7 @@ import { ProviderLoginDialog } from "../ProviderLoginDialog";
 import { ResearchTaskActionModal } from "../ResearchTaskActionModal";
 import { SettingsSyncConflictModal } from "../SettingsSyncConflictModal";
 import StashConflictModal from "../StashConflictModal";
+import { TaskRefineDialog } from "../TaskRefineDialog";
 import { TaskResetDialog } from "../TaskResetDialog";
 import { UsageIndicator } from "../UsageIndicator";
 import { ReliabilityView } from "../ReliabilityView";
@@ -352,6 +353,13 @@ const CASES: DialogCase[] = [
         conflictedFiles={["src/app.ts"]}
         autostashOutcome="conflict-needs-manual"
       />,
+    ),
+  },
+  {
+    name: "Task refine",
+    title: /^Refine$/,
+    render: () => mount(
+      <TaskRefineDialog taskId="FN-001" addToast={addToast} onClose={noop} />,
     ),
   },
   {

@@ -24,15 +24,28 @@ vi.mock("../Header", () => ({ useViewportMode: vi.fn(() => "desktop") }));
 vi.mock("../ComposeChatPanel", () => ({ ComposeChatPanel: () => null }));
 vi.mock("lucide-react", () => ({
   Mail: () => null, Send: () => null, Inbox: () => null, Bot: () => null, Trash2: () => null,
-  CheckCheck: () => null, Loader2: () => null, RefreshCw: () => null, MessageSquare: () => null,
+  CheckCheck: () => null, Loader2: () => null, RefreshCw: () => null, Filter: () => null, MessageSquare: () => null,
   User: () => null, X: () => null, Check: () => null, ChevronRight: () => null, ChevronDown: () => null,
   AlertCircle: () => null, Map: () => null, Flag: () => null, Lightbulb: () => null, BarChart3: () => null,
   Target: () => null, CircleAlert: () => null,
   // FNXC:MessageArchive 2026-08-15-05:45: FN-9014 added mailbox archiving; MailboxModal now imports Archive.
   Archive: () => null,
+  // FNXC:MailboxSubject 2026-09-15-04:40: the mobile/modal detail back button renders ChevronLeft.
+  ChevronLeft: () => null,
 }));
 
 import * as api from "../../api";
+
+/*
+FNXC:MailboxTwoTabs 2026-09-16-16:53:
+Archived, Completions and Agents are inbox SCOPES now, chosen from the single header filter button
+instead of their own tabs. Every former tab gesture in this suite goes through this one helper.
+*/
+async function selectInboxScope(scope: string, user: { click: (element: Element) => Promise<void> }) {
+  await user.click(await screen.findByTestId("mailbox-inbox-filter"));
+  await user.click(await screen.findByTestId(`mailbox-inbox-filter-option-${scope}`));
+}
+
 
 const report = (id: string, overrides: Partial<Message> = {}): Message => ({
   id, fromId: "agent-1", fromType: "agent", toId: "dashboard", toType: "user", type: "agent-to-user", read: false,
@@ -89,11 +102,11 @@ describe("structural mail production surfaces", () => {
     expect(screen.getAllByTestId("mailbox-kind-badge").length).toBeGreaterThan(0);
     expect(screen.getByTestId("mailbox-item-ordinary").querySelector("[data-testid='mailbox-kind-badge']")).toBeNull();
     expect(screen.getByTestId("mailbox-item-explicit-message").querySelector("[data-testid='mailbox-kind-badge']")).toBeNull();
-    await user.click(screen.getByTestId("mailbox-structural-filter-structural"));
+    await selectInboxScope("structural", user);
     expect(screen.queryByTestId("mailbox-item-ordinary")).not.toBeInTheDocument();
     expect(screen.getByTestId("mailbox-item-report")).toBeInTheDocument();
     expect(screen.getByTestId("mailbox-unread-badge")).toHaveTextContent("2");
-    await user.click(screen.getByTestId("mailbox-structural-filter-all"));
+    await selectInboxScope("all", user);
     expect(screen.getByTestId("mailbox-item-ordinary")).toBeInTheDocument();
   });
 
@@ -104,7 +117,7 @@ describe("structural mail production surfaces", () => {
     const user = userEvent.setup({ delay: null, pointerEventsCheck: 0 });
     render(<Host addToast={vi.fn()} onOpenNativeStructure={vi.fn()} nativeStructureCandidates={[]} />);
     await screen.findByTestId("mailbox-item-report");
-    await user.click(screen.getByTestId("mailbox-structural-filter-structural"));
+    await selectInboxScope("structural", user);
     expect(screen.queryByTestId("mailbox-item-ordinary")).not.toBeInTheDocument();
 
     window.history.replaceState({}, "", "?view=mailbox&mailbox-message=ordinary#message-ordinary");
@@ -117,7 +130,9 @@ describe("structural mail production surfaces", () => {
     await waitFor(() => expect(screen.getByTestId("mailbox-message-detail")).toHaveAttribute("id", expect.stringContaining("ordinary")));
     const backToList = screen.queryByTestId("mailbox-back-to-list");
     if (backToList) await user.click(backToList);
-    expect(await screen.findByTestId("mailbox-structural-filter-all")).toHaveAttribute("aria-pressed", "true");
+    await user.click(await screen.findByTestId("mailbox-inbox-filter"));
+    expect(await screen.findByTestId("mailbox-inbox-filter-option-all")).toHaveAttribute("aria-checked", "true");
+    await user.keyboard("{Escape}");
     expect(screen.getByTestId("mailbox-item-ordinary")).toBeInTheDocument();
   });
 
@@ -160,8 +175,8 @@ describe("structural mail production surfaces", () => {
       expect(screen.getByTestId("mailbox-conversation")).toBeInTheDocument();
       expect(screen.getAllByText("Release report").length).toBeGreaterThan(0);
       expect(screen.getAllByTestId("mailbox-report-section-body")[0].querySelector("table")).toBeInTheDocument();
-      expect(screen.getByText("Empty report")).toBeInTheDocument();
-      expect(screen.getByText("Embedded report")).toBeInTheDocument();
+      expect(screen.getAllByText("Empty report").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("Embedded report").length).toBeGreaterThan(0);
       expect(screen.getByTestId("mailbox-native-structure-embeds")).toBeInTheDocument();
       await waitFor(() => expect(screen.getByTestId("mailbox-inline-approval-approve")).toBeInTheDocument());
       await waitFor(() => expect(screen.getAllByTestId("mailbox-inline-approval-status")).toHaveLength(3));
@@ -195,7 +210,7 @@ describe("structural mail production surfaces", () => {
       if (selected.structural === "report") {
         expect(screen.getByTestId("mailbox-structural-report")).toBeInTheDocument();
         expect(within(screen.getByTestId("mailbox-message-detail")).getByTestId("mailbox-kind-badge")).toHaveTextContent("Report");
-        if (selected.id === "zero-report") expect(screen.getByText("Empty report")).toBeInTheDocument();
+        if (selected.id === "zero-report") expect(screen.getAllByText("Empty report").length).toBeGreaterThan(0);
         if (selected.id === "embedded-report") expect(screen.getByTestId("mailbox-native-structure-embeds")).toBeInTheDocument();
       } else if (selected.structural === "pending") {
         expect(await screen.findByTestId("mailbox-inline-approval-approve")).toBeInTheDocument();

@@ -17,7 +17,7 @@ entry path drifts below direct chat's finite transport envelope.
  * than turning one board load into thousands of file reads. Truncation is logged, never silent.
  */
 const AWAITING_PLANNING_ENRICH_LIMIT = 200;
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { existsSync } from "node:fs";
 import { readFile, rm, rmdir, stat, realpath } from "node:fs/promises";
@@ -88,6 +88,11 @@ import {
   writePromptFileAtomic,
   PLAN_REVIEW_GROUP_ID,
   buildPreservedPlanRespecifyPatch,
+  /* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 per-card decision admission and message sanitation. */
+  isHumanPlanApprovalEnabled,
+  resolvePlanReviewEpisodeId,
+  sanitizeHumanPlanApprovalMessage,
+  type HumanPlanApprovalDecision,
   TransitionRejectionError,
   TaskDocumentPreconditionFailedError,
   validateTaskDocumentPreconditions,
@@ -121,6 +126,9 @@ import {
   applyWorkspaceRevertBoundaries,
   TaskRevertError,
   createAiUndoTask,
+  // FN-416: restore-the-revert service + its AI fallback task.
+  performTaskRevertRestore,
+  createAiRestoreTask,
   prepareRevertPrBranch,
   prepareWorkspaceRevertPrBranches,
   isInReviewMissingWorktreeSessionStartFailure,
@@ -141,6 +149,7 @@ import {
   resumeApprovedPlanReviewHandoff,
   type ApprovedPlanReviewHandoffResult,
   type AiUndoTaskResult,
+  type AiRestoreTaskResult,
   type PrepareRevertPrBranchResult,
   type PrepareWorkspaceRevertPrBranchesResult,
   type WorkspaceRepoRevertPrBranch,
@@ -1741,6 +1750,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         mergerThinkingLevel,
         reviewLevel,
         executionMode,
+        /* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 — creation accepts only a boolean arming flag, never a decision. */
+        humanPlanApproval,
         autoMerge,
         autoMergeProvenance,
         priority,
@@ -1799,6 +1810,16 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       const validExecutionModes = ["standard", "fast"];
       if (executionMode !== undefined && executionMode !== null && !validExecutionModes.includes(executionMode)) {
         throw badRequest(`executionMode must be one of: ${validExecutionModes.join(", ")}`);
+      }
+
+      /*
+      FNXC:HumanPlanApproval 2026-09-15-06:24:
+      FN-408 — refuse any non-boolean shape here, so an object carrying a fabricated `decision`
+      cannot even reach the store. The store's creation builder drops one defensively too; this
+      rejection makes the attempt visible instead of silently ignored.
+      */
+      if (humanPlanApproval !== undefined && typeof humanPlanApproval !== "boolean") {
+        throw badRequest("humanPlanApproval must be a boolean");
       }
 
       if (autoMerge !== undefined && typeof autoMerge !== "boolean") {
@@ -2193,6 +2214,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         summarize,
         reviewLevel: reviewLevel ?? undefined,
         executionMode: executionMode || undefined,
+        humanPlanApproval: humanPlanApproval === true ? true : undefined,
         ...(typeof autoMerge === "boolean" ? { autoMerge } : {}),
         priority: priority ?? undefined,
         source: {
@@ -3395,6 +3417,177 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
 
       if (shouldFallBackToAi) {
         res.json(await createAiUndoResult());
+        return;
+      }
+
+      res.json(result);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      if (err instanceof TaskRevertError) {
+        const status = err.code === "dirty-working-tree" || err.code === "branch-mismatch" ? 409 : 500;
+        throw new ApiError(status, err.message, { code: err.code });
+      }
+      rethrowTaskApiError(err, req.params.id);
+    }
+  });
+
+  /*
+  FNXC:TaskRevert 2026-09-15-10:00 (FN-416 — restore the revert):
+  POST /tasks/:id/revert/restore — the ONLY resolution path a reverted card now offers (the
+  card's Delete/Revise buttons are gone; the context menu offers "Restore revert" instead).
+  Guard rails mirror `POST /tasks/:id/revert` exactly:
+    - only tasks in a resolved Complete lane are restorable (409 otherwise);
+    - only a CURRENTLY reverted task is restorable — no `revertedAt`, or a `restoredAt` already
+      at/after it, is a 409 rather than a silent no-op;
+    - `mode`: `"git"` (raw git result, never creates a task), `"ai"` (straight to the AI-restore
+      task), `"auto"` (default — git first, AI-restore task on conflict/unsupported);
+    - the source task's column/status is NEVER mutated, and `revertedAt` is NEVER deleted, so the
+      Patchnode cancellation history stays readable. The restore is recorded ADDITIVELY as
+      `sourceMetadata.restoredAt` (+ `restoredCommitSha` when a commit was created), which is what
+      makes `isTaskReverted` (dashboard) drop the badge — no schema migration.
+  The AI fallback task is delivered by the ordinary AI merge pipeline (`runAiMerge`, the Merger
+  agent), which already owns AI-assisted conflict resolution.
+  */
+  router.post("/tasks/:id/revert/restore", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const task = await scopedStore.getTask(req.params.id);
+      if (!task) {
+        throw notFound(`Task ${req.params.id} not found`);
+      }
+      const terminalColumns = await resolveTerminalColumnsForTask(scopedStore, task.id);
+      if (!terminalColumns.has(task.column)) {
+        throw conflict(`Task ${task.id} is in column "${task.column}"; only completed tasks can be restored`);
+      }
+
+      /*
+      FNXC:TaskRevert 2026-09-15-10:00:
+      Server-side twin of the dashboard's `isTaskReverted` predicate, including its fail-safe
+      comparison: any doubtful marker keeps the task reverted (so a restore stays offered) while a
+      restore at-or-after the revert means there is nothing left to restore.
+      */
+      const restoreMetadata = task.sourceMetadata as { revertedAt?: unknown; revertedCommitSha?: unknown; restoredAt?: unknown } | undefined;
+      const revertedAtMarker = typeof restoreMetadata?.revertedAt === "string" ? restoreMetadata.revertedAt.trim() : "";
+      if (!revertedAtMarker) {
+        throw conflict(`Task ${task.id} is not reverted; nothing to restore`);
+      }
+      const restoredAtMarker = typeof restoreMetadata?.restoredAt === "string" ? restoreMetadata.restoredAt.trim() : "";
+      if (restoredAtMarker) {
+        const revertedMs = new Date(revertedAtMarker).getTime();
+        const restoredMs = new Date(restoredAtMarker).getTime();
+        if (Number.isFinite(revertedMs) && Number.isFinite(restoredMs) && restoredMs >= revertedMs) {
+          throw conflict(`Task ${task.id} revert was already restored at ${restoredAtMarker}`);
+        }
+      }
+
+      const requestedMode = (req.body as { mode?: unknown } | undefined)?.mode;
+      if (requestedMode !== undefined && requestedMode !== "git" && requestedMode !== "ai" && requestedMode !== "auto") {
+        throw badRequest(`Invalid restore mode "${String(requestedMode)}"; expected "git", "ai", or "auto"`);
+      }
+      const mode: "git" | "ai" | "auto" = (requestedMode as "git" | "ai" | "auto" | undefined) ?? "auto";
+
+      const settings = await scopedStore.getSettingsFast();
+      const configuredAiUndoWorkflowId = settings.aiUndoTaskWorkflowId?.trim();
+      let aiRestoreWorkflowId: string | undefined;
+      if (configuredAiUndoWorkflowId) {
+        const exists =
+          isBuiltinWorkflowId(configuredAiUndoWorkflowId) || Boolean(await scopedStore.getWorkflowDefinition(configuredAiUndoWorkflowId));
+        if (exists) {
+          aiRestoreWorkflowId = configuredAiUndoWorkflowId;
+        } else {
+          severityAuditLog.warn(
+            `[task-revert-restore] aiUndoTaskWorkflowId "${configuredAiUndoWorkflowId}" does not resolve to a known workflow; AI-restore task will inherit the project default workflow instead`,
+          );
+        }
+      }
+
+      const createAiRestoreResult = async (): Promise<AiRestoreTaskResult> =>
+        createAiRestoreTask({
+          createTask: (input) => scopedStore.createTask(input),
+          // Keyed on `restoreOf`, never `revertOf` — an open undo task must not suppress a restore.
+          findOpenRestoreTaskForSource: (id) => scopedStore.findOpenRevertTaskForSource(id, "restoreOf"),
+          sourceTask: task,
+          workflowId: aiRestoreWorkflowId,
+        });
+
+      /*
+      FNXC:TaskRevert 2026-09-15-10:00:
+      Durable write FIRST, response second: the operator must never be told the revert was restored
+      by a response the store did not record.
+      */
+      const stampRestored = async (restoreCommitSha?: string): Promise<void> => {
+        await scopedStore.updateTask(task.id, {
+          sourceMetadataPatch: {
+            restoredAt: new Date().toISOString(),
+            ...(restoreCommitSha ? { restoredCommitSha: restoreCommitSha } : {}),
+          },
+        });
+      };
+
+      if (mode === "ai") {
+        res.json(await createAiRestoreResult());
+        return;
+      }
+
+      const rootDir = scopedStore.getRootDir();
+
+      /*
+      FNXC:TaskRevert 2026-09-15-10:00:
+      Workspace tasks land across MULTIPLE sub-repo integration branches, so a single-repo restore
+      has no coherent target (the same limitation the revert path documents). Refuse explicitly;
+      `auto` hands the work to the AI-restore task instead of dead-ending.
+      */
+      if (isWorkspaceTask(task)) {
+        if (mode === "auto") {
+          res.json(await createAiRestoreResult());
+          return;
+        }
+        res.json({ mode: "git", unsupported: true, reason: "workspace-task-restore-unsupported" });
+        return;
+      }
+
+      const baseBranch = task.mergeDetails?.mergeTargetBranch || await resolveIntegrationBranch(rootDir, settings);
+
+      // Same branch-mismatch contract as the revert route: `rootDir` is the shared user checkout and
+      // may legitimately sit on any branch; committing a restore onto the wrong branch is worse than
+      // refusing.
+      const currentBranch = (await runGitCommand(["rev-parse", "--abbrev-ref", "HEAD"], rootDir, 5_000)).trim();
+      if (currentBranch !== baseBranch) {
+        throw new ApiError(409, `Checkout is on "${currentBranch}", not the task's base branch "${baseBranch}"; switch to "${baseBranch}" before restoring`, {
+          code: "branch-mismatch",
+          currentBranch,
+          baseBranch,
+        });
+      }
+
+      const result = await performTaskRevertRestore({
+        task,
+        revertableColumns: terminalColumns,
+        worktreePath: rootDir,
+        baseBranch,
+        effectiveAutoMerge: settings.autoMerge,
+      });
+
+      if (result.mode === "git" && "clean" in result && result.clean === true) {
+        const restoreCommitSha = "restoreCommitSha" in result && typeof result.restoreCommitSha === "string" ? result.restoreCommitSha : undefined;
+        await stampRestored(restoreCommitSha);
+      }
+
+      if (mode === "git") {
+        res.json(result);
+        return;
+      }
+
+      // mode === "auto": AI fallback ONLY on conflict or an unsupported git result.
+      // Clean/alreadyRestored/needsHuman results are returned as-is — needsHuman (autoMerge-off)
+      // NEVER force-writes and NEVER silently AI-forks.
+      const shouldFallBackToAi =
+        ("clean" in result && result.clean === false) ||
+        ("unsupported" in result && result.unsupported === true);
+      if (shouldFallBackToAi) {
+        res.json(await createAiRestoreResult());
         return;
       }
 
@@ -5043,9 +5236,107 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
   });
 
   // Approve plan for a task in awaiting-approval status
+  /*
+  FNXC:HumanPlanApproval 2026-09-15-06:24:
+  FN-408 — shared decision admission for approve-plan and reject-plan on a card carrying the
+  per-card human requirement. It runs INSIDE the planning lifecycle lock against the freshly-read
+  task, so it always judges the live plan rather than the one the browser tab was showing.
+
+  Four refusals, all of which must be impossible to skip:
+    • deciding before Plan Review is satisfied (the mandated order is plan -> review -> decision);
+    • deciding against a plan or review episode that is no longer current (a stale tab);
+    • replaying the SAME requestId, which is idempotent and must not mutate again;
+    • sending the OPPOSITE decision for an already-decided request, which is a conflict.
+  Cards without the option keep the historical signatures and behavior untouched.
+  */
+  type HumanPlanDecisionInput = {
+    message?: string;
+    requestId: string;
+    expectedPlanFingerprint?: string;
+    expectedEpisodeId?: string;
+  };
+
+  const parseHumanPlanDecisionInput = (body: unknown): HumanPlanDecisionInput => {
+    const raw = (body ?? {}) as Record<string, unknown>;
+    let message: string | undefined;
+    try {
+      message = sanitizeHumanPlanApprovalMessage(raw.message);
+    } catch (error) {
+      throw badRequest(error instanceof Error ? error.message : "invalid message");
+    }
+    for (const key of ["requestId", "expectedPlanFingerprint", "expectedEpisodeId"] as const) {
+      if (raw[key] !== undefined && typeof raw[key] !== "string") {
+        throw badRequest(`${key} must be a string`);
+      }
+    }
+    const requestId = typeof raw.requestId === "string" && raw.requestId.trim().length > 0
+      ? raw.requestId.trim()
+      : randomUUID();
+    return {
+      message,
+      requestId,
+      expectedPlanFingerprint: typeof raw.expectedPlanFingerprint === "string" ? raw.expectedPlanFingerprint : undefined,
+      expectedEpisodeId: typeof raw.expectedEpisodeId === "string" ? raw.expectedEpisodeId : undefined,
+    };
+  };
+
+  /** Returns the decision to persist, or `"already-applied"` for an idempotent replay. */
+  const admitHumanPlanDecision = (
+    task: Task,
+    decision: "approved" | "rejected",
+    input: HumanPlanDecisionInput,
+    /*
+    The fingerprint the route is about to PERSIST, read from the on-disk PROMPT.md. The recorded
+    proof must pin that exact value, not the pre-read one: the release gate compares the decision's
+    `planFingerprint` against the stored `approvedPlanFingerprint`, so recording a different value
+    would produce a decision that can never satisfy its own gate. A mismatch between the two means
+    the plan text drifted since the review, so the operator would be validating something other than
+    what they read — that is a conflict, not an approval.
+    */
+    persistedPlanFingerprint?: string,
+  ): HumanPlanApprovalDecision | "already-applied" => {
+    const episodeId = resolvePlanReviewEpisodeId(task.workflowStepResults);
+    const fingerprint = persistedPlanFingerprint ?? task.approvedPlanFingerprint;
+    if (!episodeId || !fingerprint) {
+      throw conflict("Plan Review must be satisfied before this plan can be approved or rejected");
+    }
+    if (
+      persistedPlanFingerprint !== undefined
+      && task.approvedPlanFingerprint !== undefined
+      && persistedPlanFingerprint !== task.approvedPlanFingerprint
+    ) {
+      throw conflict("The plan on disk no longer matches the reviewed plan — reload and decide again");
+    }
+    if (input.expectedPlanFingerprint && input.expectedPlanFingerprint !== fingerprint) {
+      throw conflict("The plan changed since this decision was opened — reload and decide again");
+    }
+    if (input.expectedEpisodeId && input.expectedEpisodeId !== episodeId) {
+      throw conflict("The plan was reviewed again since this decision was opened — reload and decide again");
+    }
+    const existing = task.humanPlanApproval?.decision;
+    if (existing && existing.requestId === input.requestId) {
+      if (existing.decision !== decision) {
+        throw conflict("This decision request was already resolved with the opposite outcome");
+      }
+      if (existing.planFingerprint === fingerprint && existing.planningEpisodeId === episodeId) {
+        return "already-applied";
+      }
+    }
+    return {
+      requestId: input.requestId,
+      decision,
+      ...(input.message ? { message: input.message } : {}),
+      decidedBy: "dashboard-operator",
+      decidedAt: new Date().toISOString(),
+      planFingerprint: fingerprint,
+      planningEpisodeId: episodeId,
+    };
+  };
+
   router.post("/tasks/:id/approve-plan", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
+      const decisionInput = parseHumanPlanDecisionInput(req.body);
       const updated = await scopedStore.withPlanningLifecycleLock(req.params.id, async () => {
         /*
          * FNXC:PlanningDependencyReseed 2026-08-04-06:35 FN-8768:
@@ -5163,9 +5454,26 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           await scopedStore.lockCurrentPlanWhilePlanningLocked(task.id, approvedPlanFingerprint, approvedPrompt);
         }
 
+        /*
+        FNXC:HumanPlanApproval 2026-09-15-06:24:
+        FN-408 — for an armed card the operator decision itself is the release proof, so it must be
+        durable in the SAME patch that clears the hold. `approvedPlanFingerprint` is written by triage
+        and Plan Review automatically and can never stand in for it. Approving preserves the plan and
+        its review untouched: the note travels as implementation context, not as a plan edit.
+        */
+        let humanDecisionPatch: { humanPlanApproval: Task["humanPlanApproval"] } | Record<string, never> = {};
+        if (isHumanPlanApprovalEnabled(task)) {
+          const admitted = admitHumanPlanDecision(task, "approved", decisionInput, approvedPlanFingerprint);
+          if (admitted !== "already-applied") {
+            humanDecisionPatch = { humanPlanApproval: { enabled: true, decision: admitted } };
+          }
+        }
+
         const approvalPatch = {
           status: null,
+          awaitingApprovalReason: null,
           approvedPlanFingerprint: approvedPlanFingerprint ?? null,
+          ...humanDecisionPatch,
           ...(approvedWorkflowStepResults ? { workflowStepResults: approvedWorkflowStepResults } : {}),
         } satisfies Parameters<TaskStore["updateTask"]>[1];
 
@@ -5241,6 +5549,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
   router.post("/tasks/:id/reject-plan", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
+      const rejectionInput = parseHumanPlanDecisionInput(req.body);
       const updated = await scopedStore.withPlanningLifecycleLock(req.params.id, async () => {
         /*
          * FNXC:PlanningDependencyReseed 2026-08-04-06:35 FN-8768:
@@ -5264,6 +5573,38 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         // FNXC:ReleaseAuthorizationGate 2026-07-09-00:00:
         // Release-authorization gate removed — see the approve-plan handler above. A task
         // carrying the legacy release-authorization hold can now be rejected normally.
+
+        /*
+        FNXC:HumanPlanApproval 2026-09-15-06:24:
+        FN-408 — rejecting an armed card is an explicit REVISION, not a plan deletion. The rejected
+        plan is preserved as the revision source (`buildPreservedPlanRespecifyPatch` retires its
+        current Plan Review evidence under the `respecify` reason, so the preserved text can never
+        count as already reviewed), and the operator message is delivered to the PLANNER — never to
+        implementation. The card stays in its planning/hold role and keeps the per-card requirement,
+        so even a regenerated, byte-identical plan must be decided again: retiring the review result
+        starts a new episode, which is what invalidates the old decision.
+        */
+        if (isHumanPlanApprovalEnabled(task)) {
+          const admitted = admitHumanPlanDecision(task, "rejected", rejectionInput);
+          const feedback = rejectionInput.message;
+          await scopedStore.logEntry(
+            task.id,
+            "Plan rejected by user",
+            feedback ?? "Specification will be regenerated",
+          );
+          if (feedback) {
+            // Triage collects revision feedback from the task log when it re-plans.
+            await scopedStore.logEntry(task.id, "AI spec revision requested", feedback);
+          }
+          const supersededAt = new Date().toISOString();
+          await scopedStore.updateTask(task.id, {
+            ...buildPreservedPlanRespecifyPatch(task, supersededAt),
+            ...(admitted === "already-applied"
+              ? {}
+              : { humanPlanApproval: { enabled: true, decision: admitted } }),
+          });
+          return await scopedStore.getTask(task.id);
+        }
 
         // Log the rejection
         await scopedStore.logEntry(task.id, "Plan rejected by user", "Specification will be regenerated");

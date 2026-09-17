@@ -472,7 +472,7 @@ export function AgentImportModal({ isOpen, onClose, onImported, projectId, initi
   if (!isOpen) return null;
 
   return (
-        <FloatingWindow windowKey="agent-import" modal title={t("agents.importAgents", "Import Agents")} ariaLabel={t("agents.importAgents", "Import agents")} onClose={handleClose} hideHeader dragHandleSelector=".agent-import-dialog .agent-dialog-header" className="floating-window--agent-import" defaultSize={{ width: 720, height: 640 }} minSize={{ width: 420, height: 320 }} persistGeometryKey="floating-window:agent-import" suspendGeometryPersistenceOnMobile suspendGeometryPersistenceOnShortViewport closeOnOutsidePointerDown>
+        <FloatingWindow windowKey="agent-import" modal title={t("agents.importAgents", "Import Agents")} ariaLabel={t("agents.importAgents", "Import agents")} onClose={handleClose} hideHeader dragHandleSelector=".agent-import-dialog .agent-dialog-header" className="floating-window--agent-import" defaultSize={{ width: 720, height: 640 }} minSize={{ width: 420, height: 320 }} suspendGeometryPersistenceOnMobile suspendGeometryPersistenceOnShortViewport closeOnOutsidePointerDown>
       {/* FNXC:ModalTouchGeometry 2026-07-26-16:07: Import mapping is reflowable, so FloatingWindow owns tablet touch geometry and retains prior outside dismissal. */}
       <div className="agent-dialog agent-import-dialog">
         {/*

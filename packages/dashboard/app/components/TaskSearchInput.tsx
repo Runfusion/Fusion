@@ -9,9 +9,15 @@ import {
 import { Search, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { Task } from "@fusion/core";
+import { getTaskTitleDisplayText } from "../utils/taskTitleDisplay";
 import "./TaskSearchInput.css";
 
-export type SearchableTask = Pick<Task, "id" | "title">;
+/*
+FNXC:TaskTitleDisplay 2026-09-14-17:05:
+FN-391 widens the searchable shape with the optional description because the suggestion label is a
+projection of the task, not of its stored title alone. Callers already hand over full task rows.
+*/
+export type SearchableTask = Pick<Task, "id" | "title"> & { description?: string | null };
 
 export interface TaskSearchInputProps {
   query: string;
@@ -173,13 +179,19 @@ export function TaskSearchInput({
               id={`${listboxId}-option-${index}`}
               className="task-search-suggestion"
               role="option"
-              aria-label={task.title ? `${task.id}: ${task.title}` : task.id}
+              aria-label={`${task.id}: ${getTaskTitleDisplayText(task)}`}
               aria-selected={activeIndex === index}
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => selectSuggestion(task)}
             >
               <span className="task-search-suggestion-id">{task.id}</span>
-              <span className="task-search-suggestion-title">{task.title ?? ""}</span>
+              {/*
+              FNXC:TaskTitleDisplay 2026-09-14-17:05:
+              FN-391: a titleless task rendered an EMPTY suggestion label, so the only way to tell two
+              search hits apart was their ID. Route it through the shared projection so the row shows
+              the same 220-character description prefix the board and list already show.
+              */}
+              <span className="task-search-suggestion-title">{getTaskTitleDisplayText(task)}</span>
             </li>
           ))}
         </ul>

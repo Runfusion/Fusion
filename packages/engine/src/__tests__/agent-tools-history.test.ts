@@ -73,6 +73,41 @@ describe("fn_history_read", () => {
     expect(result.details).toMatchObject({ entryCount: 2 });
   });
 
+  /*
+  FNXC:HistoryChat 2026-09-15-23:26:
+  FN-444: chat reads the same durable ledger, so it inherits the degenerate rows whose label is the task
+  id itself. A delivery line must never print the identifier twice, and must not emit an empty segment.
+  */
+  describe("label segments never repeat the task identifier", () => {
+    const line = async (overrides: Partial<PatchnodeEntry>) => {
+      const result = await execute(storeWith([{ ...entries[0]!, revertedAt: undefined, ...overrides }]));
+      return (result.content[0] as { text: string }).text.split("\n").at(-1)!;
+    };
+
+    it("keeps the full format for a healthy entry", async () => {
+      expect(await line({})).toBe("FN-2 — Second: Shipped search");
+    });
+
+    it("omits the body segment when there is no summary", async () => {
+      expect(await line({ body: "" })).toBe("FN-2 — Second");
+    });
+
+    it("prints the identifier once for an unrepairable legacy entry", async () => {
+      const text = await line({ title: "FN-2", body: "FN-2" });
+      expect(text).toBe("FN-2");
+      expect(text.match(/FN-2/g)).toHaveLength(1);
+    });
+
+    it("prints a body that repeats the label only once", async () => {
+      expect(await line({ body: "Second" })).toBe("FN-2 — Second");
+    });
+
+    it("keeps the cancellation and reverted markers intact", async () => {
+      expect(await line({ kind: "reverted", title: "FN-2", body: "FN-2" })).toBe("CANCELLED — FN-2");
+      expect(await line({ revertedAt: "2026-08-29T10:00:00Z" })).toBe("FN-2 — Second: Shipped search (reverted 2026-08-29)");
+    });
+  });
+
   it("renders deleted-task history without task lookup", async () => {
     const store = storeWith([entries[0]!]);
     const result = await execute(store);

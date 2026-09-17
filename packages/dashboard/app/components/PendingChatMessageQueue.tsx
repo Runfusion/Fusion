@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { AlphaButton, AlphaInput } from "./alpha-ui";
+import { UiButton, UiInput } from "./ui";
 import { ArrowDown, ArrowUp, Check, Pencil, Send, Trash2, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import "./PendingChatMessageQueue.css";
@@ -99,7 +99,7 @@ export function PendingChatMessageQueue({
               key={`${index}-${pendingMessage}`}
             >
               {isEditing ? (
-                <AlphaInput
+                <UiInput
                   className="input pending-chat-message-queue-edit-input"
                   aria-label={`${t("chat.editPending", "Edit queued message")} ${index + 1}`}
                   value={editingText}
@@ -116,7 +116,7 @@ export function PendingChatMessageQueue({
               <div className="pending-chat-message-queue-actions">
                 {isEditing ? (
                   <>
-                    <AlphaButton
+                    <UiButton
                       type="button"
                       className="btn btn-icon btn-sm"
                       onClick={() => saveEdit(index)}
@@ -125,8 +125,8 @@ export function PendingChatMessageQueue({
                       data-testid={`${testIdPrefix}-save-${index}`}
                     >
                       <Check aria-hidden="true" />
-                    </AlphaButton>
-                    <AlphaButton
+                    </UiButton>
+                    <UiButton
                       type="button"
                       className="btn btn-icon btn-sm"
                       onClick={cancelEdit}
@@ -135,10 +135,10 @@ export function PendingChatMessageQueue({
                       data-testid={`${testIdPrefix}-cancel-${index}`}
                     >
                       <X aria-hidden="true" />
-                    </AlphaButton>
+                    </UiButton>
                   </>
                 ) : (
-                  <AlphaButton
+                  <UiButton
                     type="button"
                     className="btn btn-icon btn-sm"
                     onClick={() => beginEdit(index)}
@@ -147,9 +147,9 @@ export function PendingChatMessageQueue({
                     data-testid={`${testIdPrefix}-edit-${index}`}
                   >
                     <Pencil aria-hidden="true" />
-                  </AlphaButton>
+                  </UiButton>
                 )}
-                <AlphaButton
+                <UiButton
                   type="button"
                   className="btn btn-icon btn-sm"
                   onClick={() => onMove(index, -1)}
@@ -158,8 +158,8 @@ export function PendingChatMessageQueue({
                   data-testid={`${testIdPrefix}-up-${index}`}
                 >
                   <ArrowUp aria-hidden="true" />
-                </AlphaButton>
-                <AlphaButton
+                </UiButton>
+                <UiButton
                   type="button"
                   className="btn btn-icon btn-sm"
                   onClick={() => onMove(index, 1)}
@@ -168,8 +168,8 @@ export function PendingChatMessageQueue({
                   data-testid={`${testIdPrefix}-down-${index}`}
                 >
                   <ArrowDown aria-hidden="true" />
-                </AlphaButton>
-                <AlphaButton
+                </UiButton>
+                <UiButton
                   type="button"
                   className="btn btn-icon btn-sm"
                   onClick={() => onDelete(index)}
@@ -178,8 +178,8 @@ export function PendingChatMessageQueue({
                   data-testid={testIdPrefix === "chat-pending" ? `chat-pending-dismiss-${index}` : `${testIdPrefix}-delete-${index}`}
                 >
                   <Trash2 aria-hidden="true" />
-                </AlphaButton>
-                <AlphaButton
+                </UiButton>
+                <UiButton
                   type="button"
                   className="btn btn-sm pending-chat-message-queue-force"
                   onClick={() => onForceSend(index)}
@@ -189,7 +189,7 @@ export function PendingChatMessageQueue({
                 >
                   <Send aria-hidden="true" />
                   <span>{t("chat.forcePendingShort", "Force send")}</span>
-                </AlphaButton>
+                </UiButton>
               </div>
               {isEditing && editError && <div className="pending-chat-message-queue-error" role="alert">{editError}</div>}
             </li>

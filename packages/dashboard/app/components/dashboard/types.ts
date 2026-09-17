@@ -8,9 +8,12 @@
  */
 import type { Dispatch, LazyExoticComponent, SetStateAction } from "react";
 import type { TFunction } from "i18next";
+import type { ChatHost } from "../../utils/navigationPlacement";
+import type { TaskDetailDefaultTab } from "../../hooks/useAppSettings";
 import type {
   CapacityRiskSignal,
   ColorTheme,
+  UiStyle,
   ColumnId,
   GithubIssueAction,
   MergeResult,
@@ -31,13 +34,14 @@ import type {
   ProjectInfoWithSource,
   RevertTaskOptions,
   RevertTaskResult,
+  RestoreTaskRevertOptions,
+  RestoreTaskRevertResult,
   PluginDashboardViewEntry,
 } from "../../api";
 import type { FusionShellApi } from "../../types/native-shell";
 import type { DetailTaskOpenOptions, DetailTaskTab, ModalManager } from "../../hooks/useModalManager";
 import type { PluginTaskView, TaskView, ViewMode } from "../../hooks/useViewState";
 import type { ToastType } from "../../hooks/useToast";
-import type { QuickChatButtonMode } from "../../hooks/useAppSettings";
 import type { UseNotesController } from "../../hooks/useNotes";
 import type { UseRemoteNodeDataResult } from "../../hooks/useRemoteNodeData";
 import type { SectionId } from "../SettingsModal";
@@ -58,7 +62,6 @@ import { WhiteboardView } from "../WhiteboardView";
 import { EvalsView } from "../EvalsView";
 import { GitHubImportModal } from "../GitHubImportModal";
 import { GoalsView } from "../GoalsView";
-import { PatchnodeView } from "../PatchnodeView";
 import { InsightsView } from "../InsightsView";
 import { MemoryView } from "../MemoryView";
 import { PullRequestView } from "../PullRequestView";
@@ -92,19 +95,23 @@ export interface MainContentProps {
   pluginDashboardViews: PluginDashboardViewEntry[];
   modalManager: ModalManager;
   handleChangeTaskView: (newView: TaskView) => void;
+  /* FNXC:HistoryModalSurface 2026-09-15-04:29: FN-403: History is a modal surface, not a view. Board's complete-column action calls this nav-aware opener instead of navigating. */
+  openHistory: () => void;
   refreshAppSettings: () => Promise<void>;
   addToast: (message: string, type?: ToastType) => void;
   currentProject: ProjectInfo | null;
   themeMode: ThemeMode;
   setThemeMode: (mode: ThemeMode) => void;
   colorTheme: ColorTheme;
+  /* FNXC:UiStyleAxis 2026-09-15-00:20: second, independent appearance axis owned by the single useTheme instance in App. */
+  uiStyle: UiStyle;
+  setUiStyle: (style: UiStyle) => void;
   setColorTheme: (theme: ColorTheme) => void;
   dashboardFontScalePct: number;
   setDashboardFontScalePct: (scalePct: number) => void;
   shadcnCustomColors: Record<string, string>;
   setShadcnCustomColors: (colors: Record<string, string>) => void;
   resolvedThemeMode: "dark" | "light";
-  setQuickChatButtonModeImmediate: (mode: QuickChatButtonMode) => void;
   setMobileNavPrimaryItemsImmediate: (items: string[]) => void;
   reopenOnboardingWithNav: () => void;
   viewMode: ViewMode;
@@ -139,21 +146,18 @@ export interface MainContentProps {
   mergeStrategy: string;
   planAutoApproveEnabled: boolean;
   settingsLoaded: boolean;
-  openTasksInRightSidebar: boolean;
-  openMobileTasksInPopup: boolean;
-  taskPopupsBoardListOnly: boolean;
   showCostBadgeOnCards: boolean;
-  taskDetailChatFirst: boolean;
+  /* FNXC:TaskDetailDefaultTab 2026-09-16-02:53: FN-442 — project choice of the task-detail landing tab and tab-bar head order. */
+  taskDetailDefaultTab: TaskDetailDefaultTab;
   chatMessageLayout: "bubbles" | "full-width";
-  setOpenTasksInRightSidebarImmediate: (enabled: boolean) => void;
-  setOpenMobileTasksInPopupImmediate: (enabled: boolean) => void;
-  setTaskPopupsBoardListOnlyImmediate: (enabled: boolean) => void;
+  /* FNXC:RightSidebarOptional 2026-09-15-16:04: FN-426 — the embedded Settings host mirrors the same live opt-in as the modal one. */
+  rightSidebarEnabled: boolean;
+  setRightSidebarEnabledImmediate: (enabled: boolean) => void;
   setShowCostBadgeOnCardsImmediate: (enabled: boolean) => void;
-  setTaskDetailChatFirstImmediate: (enabled: boolean) => void;
+  setTaskDetailDefaultTabImmediate: (tab: TaskDetailDefaultTab) => void;
   setChatMessageLayoutImmediate: (layout: "bubbles" | "full-width") => void;
   skillsEnabled: boolean;
   experimentalFeatures: Record<string, boolean>;
-  setQuickChatOpen: Dispatch<SetStateAction<boolean>>;
   onOpenSessionInNewWindow?: (session: ChatSessionInfo) => void;
   /** Optional so existing MainContent callers preserve their unseeded Chat behavior. */
   chatComposerPrefill?: { text: string; nonce: number } | null;
@@ -177,6 +181,12 @@ export interface MainContentProps {
   handleOpenTaskLogs: (taskId: string) => Promise<void>;
   popOutTaskDetail: (task: Task | TaskDetail) => void;
   selectedPrId: string | undefined;
+  /*
+  FNXC:ToolSurfaces 2026-09-15-16:04:
+  FN-426: which Git Manager section the page should land on. App sets `pull-requests` when the request arrived through
+  a Pull Requests entry point or a legacy `?view=pull-requests` link.
+  */
+  gitManagerInitialSection?: import("../GitManagerModal").SectionId;
   insightsEnabled: boolean;
   handleInsightTaskCreate: (input: { insightId: string; title: string; description: string }) => Promise<void>;
   researchEnabled: boolean;
@@ -191,7 +201,6 @@ export interface MainContentProps {
   openPlanningWithInitialPlanWithNav: (initialPlan: string, workflowId?: string | null, sourceIssue?: { provider: "github"; repository: string; issueNumber: number; url: string; title?: string }) => void;
   ingestCreatedTasks: (tasks: Task[]) => void;
   nodesEnabled: boolean;
-  openWorkflowEditorWithNav: (workflowId?: string) => void;
   handleGitHubImport: (task: Task) => void;
   devServerEnabled: boolean;
   mainPanelDetailTask: Task | TaskDetail | null;
@@ -220,6 +229,8 @@ export interface MainContentProps {
   ) => Promise<Task>;
   retryTask: (id: string) => Promise<Task>;
   revertTask: (id: string, body?: RevertTaskOptions) => Promise<RevertTaskResult>;
+  /* FNXC:TaskRevert 2026-09-15-10:00 (FN-416): restore-the-revert operation forwarded to board/list surfaces. */
+  restoreTaskRevert: (id: string, body?: RestoreTaskRevertOptions) => Promise<RestoreTaskRevertResult>;
   deleteTask: (
     id: string,
     options?: {
@@ -258,12 +269,17 @@ export interface MainContentProps {
   // FNXC:StuckTagRemoval 2026-08-17-22:30: stuck-task tagging removed from the dashboard; taskStuckTimeoutMs is engine-side only now.
   staleHighFanoutBlockerAgeThresholdMs: number;
   lastFetchTimeMs: number | undefined;
-  openCreateWorkflowWithNav: () => void;
   sidebarActive: boolean;
+  /*
+  FNXC:ChatSurfaceUnification 2026-09-15-14:41:
+  FN-419: the App-resolved primary Chat host. `"sidebar-page"` makes Chat an ordinary main-page destination (like
+  Notes) without any mobile drawer wrapper; omitted/`"dock"` preserves the wide dock hand-off.
+  */
+  chatPageHost?: ChatHost;
   notesController?: UseNotesController;
   registerNotesGuard?: (guard: () => boolean | Promise<boolean>, onAccepted?: () => void) => () => void;
   isMobile: boolean;
-  /** Whether the measured Alpha pill is currently rendered and needs drawer clearance. */
+  /** Whether the measured navigation pill is currently rendered and needs drawer clearance. */
   mainPanelDetailInitialTab: DetailTaskTab | undefined;
   closeTaskDetailMainPanel: () => void;
   setMainPanelDetailTask: Dispatch<SetStateAction<Task | TaskDetail | null>>;
@@ -284,7 +300,6 @@ export interface MainContentProps {
   WhiteboardView: LazyExoticComponent<typeof WhiteboardView>;
   EvalsView: LazyExoticComponent<typeof EvalsView>;
   GoalsView: LazyExoticComponent<typeof GoalsView>;
-  PatchnodeView: LazyExoticComponent<typeof PatchnodeView>;
   InsightsView: LazyExoticComponent<typeof InsightsView>;
   MemoryView: LazyExoticComponent<typeof MemoryView>;
   PullRequestView: LazyExoticComponent<typeof PullRequestView>;

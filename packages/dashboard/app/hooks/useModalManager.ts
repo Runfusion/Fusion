@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { Task, TaskDetail } from "@fusion/core";
 import type { SectionId } from "../components/SettingsModal";
@@ -36,16 +36,15 @@ export type DetailTaskTab =
   | "retries";
 
 export type DetailTaskOrigin = "list-mobile";
-export type DetailTaskInitialAction = "refine";
 
+/*
+FNXC:TaskRefine 2026-09-14-22:23:
+FN-400: the one-shot `initialAction` deep link existed only so a card or list row could open a task record purely to
+reach its Refine composer. Both surfaces now host the standalone TaskRefineDialog themselves, so opening a detail view
+no longer carries a deferred action.
+*/
 export interface DetailTaskOpenOptions {
   origin?: DetailTaskOrigin;
-  initialAction?: DetailTaskInitialAction;
-}
-
-export interface DetailTaskInitialActionRequest {
-  action: DetailTaskInitialAction;
-  requestId: number;
 }
 
 interface UseModalManagerOptions {
@@ -74,7 +73,6 @@ export interface ModalManager {
   // Can be Task (optimistic open) or TaskDetail (full data with prompt)
   detailTask: (Task | TaskDetail) | null;
   detailTaskInitialTab: DetailTaskTab | undefined;
-  detailTaskInitialAction: DetailTaskInitialActionRequest | null;
   detailTaskOrigin: DetailTaskOrigin | null;
   groupModalGroupId: string | null;
   settingsOpen: boolean;
@@ -83,6 +81,13 @@ export interface ModalManager {
   githubImportOpen: boolean;
   usageOpen: boolean;
   usageAnchorRect: DOMRect | null;
+  /*
+  FNXC:HistoryModalSurface 2026-09-15-04:29:
+  FN-403: History has exactly one render owner, and its open state lives here. It used to have two competing
+  owners — a `taskView === "patchnode"` main-content page and a pilot FloatingWindow — which could mount two
+  PatchnodeView instances at once and forced the main view to Board on open.
+  */
+  historyOpen: boolean;
   terminalOpen: boolean;
   terminalInitialCommand: string | undefined;
   terminalInitialCommandGeneration: number;
@@ -91,13 +96,16 @@ export interface ModalManager {
   fileBrowserInitialFile: string | null;
   activityLogOpen: boolean;
   gitManagerOpen: boolean;
-  workflowEditorOpen: boolean;
-  /** When the workflow editor opens, which internal panel to pre-select (U9 redirect stubs). */
-  workflowEditorInitialPanel?: "settings";
-  /** When the workflow editor opens, which modal action to start. */
-  workflowEditorInitialAction?: "create";
-  /** When the workflow editor opens for editing, which workflow id to pre-select. */
-  workflowEditorInitialWorkflowId?: string;
+  /*
+  FNXC:WorkflowEditorEmbedding 2026-09-15-05:29:
+  FN-407 removed the workflow editor's modal presentation. There is no `workflowEditorOpen` modal state any
+  more — the editor is the Workflows VIEW. What survives is view parameters an entry point can hand to that
+  view, which is why they are not part of `anyModalOpen`: no overlay is open, a route simply carries context.
+  */
+  /** Which internal panel the Workflows view should pre-select (U9 redirect stubs). */
+  workflowViewPanel?: "settings";
+  /** Which workflow id the Workflows view should pre-select. */
+  workflowViewWorkflowId?: string;
   agentsOpen: boolean;
   scriptsOpen: boolean;
   setupWizardOpen: boolean;
@@ -153,6 +161,9 @@ export interface ModalManager {
   openUsage: (anchorRect?: DOMRect | null) => void;
   closeUsage: () => void;
 
+  openHistory: () => void;
+  closeHistory: () => void;
+
   toggleTerminal: () => void;
   closeTerminal: () => void;
 
@@ -166,8 +177,8 @@ export interface ModalManager {
   openGitManager: () => void;
   closeGitManager: () => void;
 
-  openWorkflowEditor: (initialPanelOrAction?: "settings" | "create", initialWorkflowId?: string) => void;
-  closeWorkflowEditor: () => void;
+  setWorkflowViewParams: (params: { panel?: "settings"; workflowId?: string }) => void;
+  clearWorkflowViewParams: () => void;
 
   openAgents: () => void;
   closeAgents: () => void;
@@ -226,12 +237,6 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
    * Store omitted task-detail tabs as `undefined` so done tasks can resolve the implicit landing tab to Summary without stealing explicit Chat requests.
    */
   const [detailTaskInitialTab, setDetailTaskInitialTab] = useState<DetailTaskTab | undefined>(undefined);
-  /*
-  FNXC:DoneTaskRefine 2026-07-01-00:00:
-  Done-task card/list context menus must open the existing Task Detail refinement modal after right-click or long-press. Store refinement as a one-shot action request with a monotonically increasing id so selecting Refine again for an already-open task reopens the composer without duplicating API/form logic outside TaskDetailContent.
-  */
-  const [detailTaskInitialAction, setDetailTaskInitialAction] = useState<DetailTaskInitialActionRequest | null>(null);
-  const detailTaskInitialActionRequestIdRef = useRef(0);
   const [detailTaskOrigin, setDetailTaskOrigin] = useState<DetailTaskOrigin | null>(null);
   const [groupModalGroupId, setGroupModalGroupId] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -239,6 +244,7 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
   const [schedulesOpen, setSchedulesOpen] = useState(false);
   const [githubImportOpen, setGitHubImportOpen] = useState(false);
   const [usageOpen, setUsageOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [usageAnchorRect, setUsageAnchorRect] = useState<DOMRect | null>(null);
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [terminalInitialCommand, setTerminalInitialCommand] = useState<string | undefined>(undefined);
@@ -248,10 +254,8 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
   const [fileBrowserInitialFile, setFileBrowserInitialFile] = useState<string | null>(null);
   const [activityLogOpen, setActivityLogOpen] = useState(false);
   const [gitManagerOpen, setGitManagerOpen] = useState(false);
-  const [workflowEditorOpen, setWorkflowEditorOpen] = useState(false);
-  const [workflowEditorInitialPanel, setWorkflowEditorInitialPanel] = useState<"settings" | undefined>(undefined);
-  const [workflowEditorInitialAction, setWorkflowEditorInitialAction] = useState<"create" | undefined>(undefined);
-  const [workflowEditorInitialWorkflowId, setWorkflowEditorInitialWorkflowId] = useState<string | undefined>(undefined);
+  const [workflowViewPanel, setWorkflowViewPanel] = useState<"settings" | undefined>(undefined);
+  const [workflowViewWorkflowId, setWorkflowViewWorkflowId] = useState<string | undefined>(undefined);
   const [agentsOpen, setAgentsOpen] = useState(false);
   const [scriptsOpen, setScriptsOpen] = useState(false);
   const [setupWizardOpen, setSetupWizardOpen] = useState(false);
@@ -270,7 +274,6 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
       filesOpen ||
       activityLogOpen ||
       gitManagerOpen ||
-      workflowEditorOpen ||
       scriptsOpen ||
       agentsOpen ||
       usageOpen ||
@@ -366,13 +369,11 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
   ) => {
     setDetailTask(task);
     setDetailTaskInitialTab(initialTab);
-    setDetailTaskInitialAction(options?.initialAction ? { action: options.initialAction, requestId: detailTaskInitialActionRequestIdRef.current += 1 } : null);
     setDetailTaskOrigin(options?.origin ?? null);
   }, []);
   const openDetailWithChangesTab = useCallback((task: Task | TaskDetail) => {
     setDetailTask(task);
     setDetailTaskInitialTab("changes");
-    setDetailTaskInitialAction(null);
     setDetailTaskOrigin(null);
   }, []);
   /*
@@ -389,7 +390,6 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
   }, []);
   const closeDetailTask = useCallback(() => {
     setDetailTask(null);
-    setDetailTaskInitialAction(null);
     setDetailTaskOrigin(null);
   }, []);
 
@@ -427,6 +427,16 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
     setUsageAnchorRect(null);
   }, []);
 
+  /*
+  FNXC:HistoryModalSurface 2026-09-15-04:29:
+  FN-403: History is deliberately EXCLUDED from `anyModalOpen`. That aggregate means "a blocking overlay owns the
+  screen" and drives shell side effects such as closing the mobile navigation popover; History is a coexisting,
+  non-blocking window (desktop `aria-modal="false"`, mobile drawer) in the same family as a detached chat, so the
+  board underneath stays interactive and the mobile pill must remain usable while it is open.
+  */
+  const openHistory = useCallback(() => setHistoryOpen(true), []);
+  const closeHistory = useCallback(() => setHistoryOpen(false), []);
+
   const toggleTerminal = useCallback(() => {
     setTerminalOpen((prev) => !prev);
   }, []);
@@ -462,19 +472,13 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
   const openGitManager = useCallback(() => setGitManagerOpen(true), []);
   const closeGitManager = useCallback(() => setGitManagerOpen(false), []);
 
-  const openWorkflowEditor = useCallback((initialPanelOrAction?: "settings" | "create", initialWorkflowId?: string) => {
-    const isSettingsOpen = initialPanelOrAction === "settings";
-    const isCreateOpen = initialPanelOrAction === "create";
-    setWorkflowEditorInitialPanel(isSettingsOpen ? "settings" : undefined);
-    setWorkflowEditorInitialAction(isCreateOpen ? "create" : undefined);
-    setWorkflowEditorInitialWorkflowId(!isSettingsOpen && !isCreateOpen ? initialWorkflowId : undefined);
-    setWorkflowEditorOpen(true);
+  const setWorkflowViewParams = useCallback((params: { panel?: "settings"; workflowId?: string }) => {
+    setWorkflowViewPanel(params.panel);
+    setWorkflowViewWorkflowId(params.panel === "settings" ? undefined : params.workflowId);
   }, []);
-  const closeWorkflowEditor = useCallback(() => {
-    setWorkflowEditorOpen(false);
-    setWorkflowEditorInitialPanel(undefined);
-    setWorkflowEditorInitialAction(undefined);
-    setWorkflowEditorInitialWorkflowId(undefined);
+  const clearWorkflowViewParams = useCallback(() => {
+    setWorkflowViewPanel(undefined);
+    setWorkflowViewWorkflowId(undefined);
   }, []);
 
   const openAgents = useCallback(() => setAgentsOpen(true), []);
@@ -507,7 +511,6 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
   const closeProjectScopedModals = useCallback(() => {
     setDetailTask(null);
     setDetailTaskInitialTab(undefined);
-    setDetailTaskInitialAction(null);
     setDetailTaskOrigin(null);
     setGroupModalGroupId(null);
     setNewTaskModalOpen(false);
@@ -523,13 +526,13 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
     setFileBrowserInitialFile(null);
     setActivityLogOpen(false);
     setGitManagerOpen(false);
-    setWorkflowEditorOpen(false);
-    setWorkflowEditorInitialPanel(undefined);
-    setWorkflowEditorInitialAction(undefined);
-    setWorkflowEditorInitialWorkflowId(undefined);
+    setWorkflowViewPanel(undefined);
+    setWorkflowViewWorkflowId(undefined);
     setScriptsOpen(false);
     setTerminalOpen(false);
     setTerminalInitialCommand(undefined);
+    /* FNXC:HistoryModalSurface 2026-09-15-04:29: History renders the active project's feed, so a project swap must close it like every other project-scoped surface. */
+    setHistoryOpen(false);
   }, []);
 
   const clearQuickAddPlanningDrafts = useCallback(() => {
@@ -568,7 +571,6 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
     planningEntryGeneration,
     detailTask,
     detailTaskInitialTab,
-    detailTaskInitialAction,
     detailTaskOrigin,
     groupModalGroupId,
     settingsOpen,
@@ -585,10 +587,8 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
     fileBrowserInitialFile,
     activityLogOpen,
     gitManagerOpen,
-    workflowEditorOpen,
-    workflowEditorInitialPanel,
-    workflowEditorInitialAction,
-    workflowEditorInitialWorkflowId,
+    workflowViewPanel,
+    workflowViewWorkflowId,
     agentsOpen,
     scriptsOpen,
     setupWizardOpen,
@@ -618,6 +618,9 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
     closeGitHubImport,
     openUsage,
     closeUsage,
+    historyOpen,
+    openHistory,
+    closeHistory,
     toggleTerminal,
     closeTerminal,
     openFiles,
@@ -627,8 +630,8 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
     closeActivityLog,
     openGitManager,
     closeGitManager,
-    openWorkflowEditor,
-    closeWorkflowEditor,
+    setWorkflowViewParams,
+    clearWorkflowViewParams,
     openAgents,
     closeAgents,
     openScripts,

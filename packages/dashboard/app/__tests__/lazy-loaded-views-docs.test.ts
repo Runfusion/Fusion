@@ -69,17 +69,27 @@ const EXPECTED_APP_LEVEL_VIEWS = new Set([
   "DevServerView",
   "GoalsView",
   "PullRequestView",
-  "PatchnodeView",
+  /*
+  FN-407: WorkflowNodeEditor moved from the AppModals modal-chunk site to App.tsx. AppModals no longer declares
+  or mounts it, so App.tsx became its only lazy declaration and therefore its curation site. The chunk is still
+  lazy and still one curated entry — it was re-homed, not removed.
+  */
+  "WorkflowNodeEditor",
 ]);
 
 /*
  * FNXC:DashboardLazyViews 2026-06-16-17:40:
  * AppModals lazy-loads top-level heavy modals outside App.tsx, so the docs guard must scan that source site too; otherwise SettingsModal and WorkflowNodeEditor can drift out of the canonical inventory while tests stay green.
  */
+/*
+FNXC:HistoryModalSurface 2026-09-15-04:29:
+FN-403: History moved from an App-level view chunk to the AppModals modal surface, because AppModals is now its
+only render owner.
+*/
 const EXPECTED_APP_MODALS_LAZY_VIEWS = new Set([
+  "PatchnodeView",
   "SetupWizardModal",
   "SettingsModal",
-  "WorkflowNodeEditor",
 ]);
 
 const EXPECTED_PLUGINS_SECTION_LAZY_VIEWS = new Set([
@@ -94,7 +104,8 @@ const EXPECTED_AGENTS_VIEW_LAZY_VIEWS = new Set([
 const EXPECTED_EXCLUDED_LAZY = [
   {
     file: "../App.tsx",
-    symbols: ["_WorkflowEditorView", "_ImportTasksView", "_AutomationsView", "_SettingsView"],
+    /* FN-407: `_WorkflowEditorView` is gone from this exclusion list — the Workflows view IS the curated entry now, so its declaration is no longer underscore-prefixed. */
+    symbols: ["_ImportTasksView", "_AutomationsView", "_SettingsView"],
     reason: "embedded App presentations reuse already-documented modal/import chunks",
   },
   {
@@ -123,9 +134,22 @@ const EXPECTED_EXCLUDED_LAZY = [
     /*
      * FNXC:DashboardLazyViews 2026-06-27-00:00:
      * The right-dock chat tab re-imports ChatView through the overflow registry, but ChatView remains counted once as the App-level Chat chunk in the curated AGENTS inventory.
+     *
+     * FN-426 emptied this registry of Dev Server, Secrets, and Pull Requests: each owns a destination elsewhere now,
+     * so the optional panel no longer re-imports their chunks at all.
      */
-    symbols: ["DevServerView", "SecretsView", "PullRequestView", "ChatView"],
+    symbols: ["ChatView"],
     reason: "right-dock overflow re-imports of App-level chunks already counted once",
+    countedBy: "../App.tsx",
+  },
+  {
+    file: "../components/GitManagerModal.tsx",
+    /*
+     * FN-426: Pull Requests became a Git Manager section, so Git lazily re-imports the same PullRequestView chunk the
+     * App already counts once. Only the section that needs it pays for it.
+     */
+    symbols: ["PullRequestView"],
+    reason: "Git Manager's Pull Requests section re-imports an App-level chunk already counted once",
     countedBy: "../App.tsx",
   },
 ] as const;

@@ -195,6 +195,8 @@ import { computeRecoveryDecision, formatDelay, MAX_RECOVERY_RETRIES } from "../h
 import { executorLog, formatError } from "../logger.js";
 import { classifyOrphanOurAdvance, rehomeOrphanOntoIntegration } from "../merge/merger-orphan-rehome.js";
 import { isTaskMergeInFlight } from "../merge/merge-execution-exclusion.js";
+/* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 execution-entry fence for the per-card human plan decision. */
+import { isTaskBlockedOnHumanPlanApproval } from "@fusion/core";
 import { classifyExternalObstacle } from "../execution-block-classifier.js";
 import { compactSessionContext, describeModel, formatModelMarkerDetails, promptWithFallback } from "../pi.js";
 import { resolveDedicatedPlannerColumnsForTask } from "../planner-lane-resolution.js";
@@ -426,6 +428,29 @@ export async function runImplementation(
   graphCompletion: GraphCompletionCallback,
   reportImplementationExit?: ImplementationExitReporter,
 ): Promise<void> {
+
+    /*
+    FNXC:HumanPlanApproval 2026-09-15-06:24:
+    FN-408 — last-resort execution-entry fence for the per-card human plan decision. Hold release is
+    the primary gate, but this runner is also reached by graph re-entry, restart recovery, and
+    continuation resume, and those paths must not be able to start implementation work on a plan the
+    operator has not validated.
+
+    It re-reads the live row rather than trusting the dispatched snapshot (which can predate a
+    rejection), and it reads the durable decision rather than `task.status`, so a stop between the
+    Plan Review write and the status publication cannot open a window. A refusal leaves the card and
+    its progress exactly as they are; the approve-plan route resumes the continuation.
+    */
+    {
+      const liveForApproval = typeof deps.store.getTask === "function"
+        ? await deps.store.getTask(task.id).catch(() => undefined) ?? task
+        : task;
+      if (isTaskBlockedOnHumanPlanApproval(liveForApproval)) {
+        if (dropPreHeldExecutorSlot(task.id)) deps.options.semaphore?.release();
+        executorLog.log(`${task.id}: implementation withheld — awaiting the operator's plan decision`);
+        return;
+      }
+    }
 
     /*
     FNXC:MergeExecutionExclusion 2026-08-23-08:51:

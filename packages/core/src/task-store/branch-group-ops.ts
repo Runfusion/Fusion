@@ -10,6 +10,7 @@ import { emitBoundedRunAudit } from "../run-audit/emit-bounded-run-audit.js";
  */
 import {TaskStore} from "../store.js";
 import {resolveTaskLifecycleColumns, columnsWithFlag} from "../workflows/workflow-lifecycle-traits.js";
+import {applyPauseAccounting, LEGACY_WIP_COLUMN_FALLBACK} from "../tasks/task-pause-accounting.js";
 import {resolveWorkflowIrForTask} from "../workflows/workflow-ir-resolver.js";
 import type {WorkflowIr} from "../workflows/workflow-ir-types.js";
 import type {Task, ColumnId, ArtifactType, ArtifactWithTask, InboxTask, TaskLogEntry, RunMutationContext, Agent} from "../types.js";
@@ -333,6 +334,13 @@ export async function pauseTaskImpl(store: TaskStore, id: string, paused: boolea
         task.status = paused ? "paused" : undefined;
       }
       const now = new Date().toISOString();
+      /*
+      FNXC:TaskPauseAccounting 2026-09-16-06:16:
+      FN-457 — explicit pause/unpause is the primary seam, so it opens and banks the pause segment
+      here. The WIP lane is already resolved just above for the status decision; reusing that
+      resolution keeps a renamed board honest instead of matching the `in-progress` literal.
+      */
+      applyPauseAccounting(task, paused, now, task.column === (pauseLifecycle?.wip ?? LEGACY_WIP_COLUMN_FALLBACK));
       task.updatedAt = now;
       const logEntry: TaskLogEntry = {
         timestamp: now,

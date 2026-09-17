@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import type { SetStateAction } from "react";
 import {
@@ -70,6 +70,17 @@ function isEmptyTaskPlannerSession(session: ChatSessionInfo): boolean {
   return isTaskPlannerSession(session) && !session.lastMessageAt && !session.lastMessagePreview;
 }
 
+/*
+FNXC:ChatSidebarPerf 2026-09-16-02:15:
+Self-describing envelope for the chat-session snapshot. It carries the server-applied common-feed
+visibility next to the rows so a cold open can rehydrate task-linked conversations without a network
+round trip. Legacy bare-array payloads remain readable and are treated as "visibility unknown".
+*/
+interface CachedChatSessionsPayload {
+  sessions: ChatSessionInfo[];
+  taskChatsVisibleInCommonFeed: boolean;
+}
+
 export interface ChatSessionInfo {
   id: string;
   title?: string | null;
@@ -108,6 +119,7 @@ export interface ChatSessionInfo {
 // keep working — single source of truth lives in chatTypes.ts.
 export type { ChatMessageInfo, FailureInfo, FallbackInfo, ToolCallInfo } from "./chatTypes";
 import type { ChatMessageInfo, FailureInfo, FallbackInfo, ToolCallInfo } from "./chatTypes";
+import { isPersistedChatMessageId } from "./chatTypes";
 import { createChatStreamHandlers } from "./createChatStreamHandlers";
 import {
   getPersistedPendingChatMessages,
@@ -121,7 +133,7 @@ import { useAgentsMapCache } from "./useAgentsMapCache";
 export interface UseChatOptions {
   /** Forces a window-local Direct selection instead of restoring the shared host selection. */
   initialSession?: ChatSessionInfo;
-  /** Secondary Quick Chats must never rewrite the ordinary host's session preference. */
+  /** Detached conversations must never rewrite the canonical host's session preference. */
   persistActiveSession?: boolean;
 }
 
@@ -203,6 +215,15 @@ export interface UseChatReturn {
    * fences and rewinds before acceptance; the hook changes its local range only on acceptance.
    */
   editMessageAndResend: (messageId: string, newContent: string) => Promise<void>;
+  /**
+   * FNXC:ChatMessageEdit 2026-09-16-05:58:
+   * FN-459. A rejected edit reloads the authoritative rows, which changes the target row id and
+   * therefore remounts its virtualized row — destroying the inline editor's local `editedText` and
+   * losing the operator's correction. This publishes that correction (keyed by the RELOADED row id)
+   * so the surface can reopen the editor pre-filled instead of discarding typed work.
+   */
+  editDraftRestore: { messageId: string; content: string } | null;
+  clearEditDraftRestore: (messageId: string) => void;
   stopStreaming: () => Promise<void>;
   clearPendingMessage: (index?: number) => void;
   updatePendingMessage?: (index: number, content: string) => void;
@@ -429,6 +450,28 @@ export function appendChatMessageChronologically(
   return sortChatMessagesChronologically([...previous, message]);
 }
 
+/*
+FNXC:ChatMessageEdit 2026-09-16-05:58:
+FN-459. Deterministic replacement of the optimistic bubble by EXACT temp id, driven by the in-band
+`user_message` stream event. `reconcileOptimisticSentMessage` below matches on content equality,
+which cannot distinguish two identical consecutive sends and depends on an out-of-band echo that can
+never arrive — leaving a `temp-<ts>` id in the transcript and turning the first edit into a
+guaranteed `Message temp-… not found in session …` 404. When the temp row is gone (stream preempted,
+transcript reloaded), fall back to the content-based reconciliation, which stays the safety net.
+*/
+function replaceOptimisticSentMessageById(
+  previous: ChatMessageInfo[],
+  tempUserMessageId: string,
+  persisted: ChatMessageInfo,
+): ChatMessageInfo[] {
+  if (previous.some((message) => message.id === persisted.id)) return sortChatMessagesChronologically(previous);
+  const optimisticIndex = previous.findIndex((candidate) => candidate.id === tempUserMessageId);
+  if (optimisticIndex < 0) return reconcileOptimisticSentMessage(previous, persisted);
+  const next = [...previous];
+  next[optimisticIndex] = persisted;
+  return sortChatMessagesChronologically(next);
+}
+
 function reconcileOptimisticSentMessage(previous: ChatMessageInfo[], persisted: ChatMessageInfo): ChatMessageInfo[] {
   if (previous.some((message) => message.id === persisted.id)) return sortChatMessagesChronologically(previous);
   const optimisticIndex = previous.findIndex((candidate) =>
@@ -470,15 +513,32 @@ export function useChat(
         return [] as ChatSessionInfo[];
       }
 
-      const cachedSessions = readCache<ChatSessionInfo[]>(cacheKey, { maxAgeMs: SWR_TASKS_MAX_AGE_MS }) ?? [];
       /*
-      FNXC:ChatModal 2026-07-01-00:00:
-      Server settings decide whether task-planner sessions belong in the common feed. Do not hydrate cached task chats before that filtered list returns, otherwise a stale cache can briefly expose hidden task-detail conversations and their controls.
+      FNXC:ChatSidebarPerf 2026-09-16-02:15:
+      The local snapshot is self-describing: it is only ever written from a server list response that
+      has ALREADY applied the project `showTaskChatsInCommonFeed` gate plus the "no empty planner row"
+      guard, and it persists that effective visibility alongside the rows. Replaying the persisted
+      decision offline is what lets task-linked conversations paint on first render instead of waiting
+      for `GET /api/chat/sessions` (the visible delay this replaces). Safety is preserved rather than
+      dropped: a persisted `false` or a legacy bare-array payload (visibility UNKNOWN) still filters
+      every `task-planner:` row exactly as before, empty planner rows are never rehydrated, and the
+      staleness window is bounded to one revalidation — the next refresh rewrites the flag and the
+      rows, so disabling the setting removes them on the following load.
 
       FNXC:MessageArchive 2026-08-12-22:36:
       Archived sessions must not flash from a cached list before the active-only refresh completes.
       */
-      return cachedSessions.filter((session) => !isTaskPlannerSession(session) && session.status !== "archived");
+      const cached = readCache<ChatSessionInfo[] | CachedChatSessionsPayload>(cacheKey, { maxAgeMs: SWR_TASKS_MAX_AGE_MS });
+      const isLegacyPayload = Array.isArray(cached);
+      const cachedSessions: ChatSessionInfo[] = isLegacyPayload ? cached : (cached?.sessions ?? []);
+      const taskChatsVisible = !isLegacyPayload && cached?.taskChatsVisibleInCommonFeed === true;
+
+      return cachedSessions.filter((session) => {
+        if (session.status === "archived") return false;
+        if (!isTaskPlannerSession(session)) return true;
+        if (!taskChatsVisible) return false;
+        return !isEmptyTaskPlannerSession(session);
+      });
     },
     [getChatSessionsCacheKey],
   );
@@ -499,6 +559,15 @@ export function useChat(
   const [streamingThinking, setStreamingThinking] = useState("");
   const [streamingToolCalls, setStreamingToolCalls] = useState<ToolCallInfo[]>([]);
   const [pendingMessages, setPendingMessages] = useState<string[]>([]);
+  /*
+  FNXC:ChatMessageEdit 2026-09-16-05:58:
+  FN-459. Correction text rescued from a rejected edit. It is stored by transcript POSITION, not by
+  id, because the failure reload is exactly what changes the target row's id; the published id is
+  derived at render time from the settled transcript so it always names the row now on screen.
+  */
+  const [editDraftRestoreTarget, setEditDraftRestoreTarget] = useState<
+    { targetIndex: number; fallbackMessageId: string; content: string } | null
+  >(null);
   const [pendingQueueAction, setPendingQueueAction] = useState(false);
 
   // Search/filter
@@ -560,6 +629,16 @@ export function useChat(
   // distinguish an old A refresh from the newly re-entered A thread.
   const activeSessionSelectionRef = useRef(0);
   const authoritativeSelectionRefreshRef = useRef<{ sessionId: string; version: number } | null>(null);
+  /*
+  FNXC:ChatWindows 2026-09-16-05:27:
+  A `chat:session:updated` payload that lands while the authoritative selection snapshot is still
+  in flight used to be dropped entirely, and the snapshot (read BEFORE the server wrote the
+  generated title) then reinstated the old title — the list row showed the generated name while
+  the chat window header kept "Untitled conversation". Only the TITLE is deferred, and it is
+  stored as a bare string rather than the session object so no out-of-allowlist field can ever
+  leak through a future type change. Cursor/generation ownership stays with the snapshot.
+  */
+  const deferredSessionTitleRef = useRef<{ sessionId: string; version: number; title: string } | null>(null);
   sessionsRef.current = sessions;
   activeSessionRef.current = activeSession;
   messagesRef.current = messages;
@@ -656,7 +735,17 @@ export function useChat(
       setHasMoreSessions(data.hasMore === true);
       const cacheKey = !query && !tagId ? getChatSessionsCacheKey(projectId) : null;
       if (cacheKey) {
-        writeCache(cacheKey, next, { maxBytes: 500_000 });
+        /*
+        FNXC:ChatSidebarPerf 2026-09-16-02:15:
+        Persist the server's effective task-chat visibility with the rows so the next cold open can
+        replay that project gate instead of discarding every task conversation. Normalized to a strict
+        boolean: an older server omits the field, and "absent" must read back as not-visible.
+        */
+        const payload: CachedChatSessionsPayload = {
+          sessions: next,
+          taskChatsVisibleInCommonFeed: data.taskChatsVisibleInCommonFeed === true,
+        };
+        writeCache(cacheKey, payload, { maxBytes: 500_000 });
       }
     } catch {
       if (activeSessionListScopeRef.current !== scope || activeSessionListGenerationRef.current !== scopeGeneration) return;
@@ -708,9 +797,8 @@ export function useChat(
     if (hasRestoredActiveSessionRef.current) return;
 
     /*
-    FNXC:ChatWindows 2026-08-21-18:24:
-    A secondary Quick Chat owns an explicit session and must not let a stale ordinary-host
-    preference replace it. Its later selections stay local when persistence is disabled.
+    FNXC:ChatWindows 2026-09-14-11:35:
+    A detached conversation owns an explicit session and must not let a stale canonical-host preference replace it. Its later selections stay local when persistence is disabled.
     */
     if (initialSession) {
       hasRestoredActiveSessionRef.current = true;
@@ -1122,6 +1210,9 @@ export function useChat(
       const selectionVersion = ++activeSessionSelectionRef.current;
       streamRequestRef.current += 1;
       authoritativeSelectionRefreshRef.current = id ? { sessionId: id, version: selectionVersion } : null;
+      // A deferred title belongs to the selection incarnation that was awaiting a snapshot;
+      // a new selection retires it so it can never be applied to another thread.
+      deferredSessionTitleRef.current = null;
       // Close any existing stream before its transient state is reset.
       if (streamRef.current) {
         streamRef.current.close();
@@ -1147,6 +1238,7 @@ export function useChat(
                 && authoritativeSelectionRefreshRef.current?.version === selectionVersion
               ) {
                 authoritativeSelectionRefreshRef.current = null;
+                deferredSessionTitleRef.current = null;
                 if (session?.isGenerating && !streamRef.current) {
                   attachIfGenerating(id, session.inFlightGeneration, { silent: true });
                 }
@@ -1161,6 +1253,7 @@ export function useChat(
               must include the boolean and therefore cannot bypass snapshot reconciliation.
               */
               authoritativeSelectionRefreshRef.current = null;
+              deferredSessionTitleRef.current = null;
               if (session?.isGenerating && !streamRef.current) {
                 attachIfGenerating(id, session.inFlightGeneration, { silent: true });
               }
@@ -1168,7 +1261,22 @@ export function useChat(
             }
             const authoritativeSession = { ...activeSessionRef.current, ...refreshedSession };
             authoritativeSelectionRefreshRef.current = null;
-            setActiveSession(authoritativeSession);
+            /*
+            FNXC:ChatWindows 2026-09-16-05:28:
+            The authoritative snapshot is a read that PRECEDES the server's generated-title write,
+            so letting it win reinstates the stale title. Reapply the deferred value through a
+            CLOSED allowlist of exactly `{ title }` — never an object merge: the snapshot remains
+            sovereign for the cursor, generation state, and every other field, which is precisely
+            what the `awaitingAuthoritativeSnapshot` guard exists to protect. No stream ownership
+            is claimed from this path.
+            */
+            const deferredTitle = deferredSessionTitleRef.current;
+            const reconciledSession =
+              deferredTitle && deferredTitle.sessionId === id && deferredTitle.version === selectionVersion
+                ? { ...authoritativeSession, title: deferredTitle.title }
+                : authoritativeSession;
+            deferredSessionTitleRef.current = null;
+            setActiveSession(reconciledSession);
 
             /*
             FNXC:ChatStreaming 2026-07-20-19:15:
@@ -1200,6 +1308,18 @@ export function useChat(
             }
 
             authoritativeSelectionRefreshRef.current = null;
+            // A transport failure leaves the deferred title as the only fresh data available;
+            // apply that single field over the current active session and nothing else.
+            const deferredTitle = deferredSessionTitleRef.current;
+            deferredSessionTitleRef.current = null;
+            if (deferredTitle?.sessionId === id && deferredTitle.version === selectionVersion) {
+              const current = activeSessionRef.current;
+              if (current) {
+                const withTitle = { ...current, title: deferredTitle.title };
+                activeSessionRef.current = withTitle;
+                setActiveSession(withTitle);
+              }
+            }
             // A transport failure is not an idle verdict. Retain the prior recovery behavior,
             // but only for this still-current selection incarnation.
             if (session?.isGenerating && !streamRef.current) {
@@ -1889,6 +2009,17 @@ export function useChat(
           ));
           setActiveSession((prev) => prev && prev.id === sessionId ? { ...prev, ...nextModel } : prev);
         },
+        /*
+        FNXC:ChatMessageEdit 2026-09-16-05:58:
+        FN-459. In-band persisted identity for THIS turn's user bubble. Replacing by exact temp id
+        retires `temp-<ts>` before the reply even finishes, so the edit affordance and
+        `editMessageAndResend` always work against a server-known id.
+        */
+        onUserMessage: ({ message, tempUserMessageId }) => {
+          if (!ownsStream()) return;
+          const persistedUserMessage = mapChatMessageToInfo(message);
+          setMessages((previous) => replaceOptimisticSentMessageById(previous, tempUserMessageId, persistedUserMessage));
+        },
         onAgentMessage: ({ message }) => {
           if (!ownsStream()) return;
           const agentMessage = mapChatMessageToInfo(message);
@@ -2120,11 +2251,38 @@ export function useChat(
       if (!trimmed) return;
 
       const sessionId = activeSession.id;
-      const previousMessages = messagesRef.current;
-      const targetIndex = previousMessages.findIndex((message) => message.id === messageId);
+      const targetIndex = messagesRef.current.findIndex((message) => message.id === messageId);
       if (targetIndex === -1) return;
 
-      pendingReplacementRef.current = { sessionId, messageId };
+      /*
+      FNXC:ChatMessageEdit 2026-09-16-05:58:
+      FN-459. Never post a purely local id as `replacementMessageId`: the server's
+      `prepareReplacement` guard rejects it with a guaranteed 404 (`Message temp-… not found in
+      session …`). The in-band `user_message` event normally retires the optimistic id before the
+      pencil is even offered; this is the belt-and-braces realignment for a row that slipped through
+      (interrupted stream, stale surface). Re-resolve the SAME position from authoritative rows, and
+      refuse locally rather than provoking the 404. A row that is already persisted (`msg-…`) is sent
+      straight through: no extra fetch, no added latency.
+      */
+      let replacementMessageId = messageId;
+      let replacementTargetIndex = targetIndex;
+      if (!isPersistedChatMessageId(messageId)) {
+        try {
+          const data = await fetchChatMessages(sessionId, { limit: 50, order: "desc" }, projectId);
+          const authoritative = sortChatMessagesChronologically(data.messages.map(mapChatMessageToInfo));
+          const realigned = authoritative[targetIndex];
+          if (!realigned || realigned.role !== "user" || !isPersistedChatMessageId(realigned.id)) {
+            throw new Error("Message is not persisted yet");
+          }
+          replacementMessageId = realigned.id;
+          replacementTargetIndex = targetIndex;
+        } catch {
+          setEditDraftRestoreTarget({ targetIndex, fallbackMessageId: messageId, content: trimmed });
+          throw new Error("Failed to edit message");
+        }
+      }
+
+      pendingReplacementRef.current = { sessionId, messageId: replacementMessageId };
       await new Promise<void>((resolve, reject) => {
         sendMessage(
           trimmed,
@@ -2137,16 +2295,44 @@ export function useChat(
             onFailed: () => {
               void loadMessages(sessionId).finally(() => {
                 pendingReplacementRef.current = null;
+                /*
+                FNXC:ChatMessageEdit 2026-09-16-05:58:
+                FN-459. The reload changes the target row id, remounting the virtualized row and
+                destroying the inline editor's local state. Republish the correction against the
+                RELOADED id so the surface reopens the editor pre-filled instead of losing it.
+                */
+                setEditDraftRestoreTarget({
+                  targetIndex: replacementTargetIndex,
+                  fallbackMessageId: replacementMessageId,
+                  content: trimmed,
+                });
                 reject(new Error("Failed to edit message"));
               });
             },
           },
-          { replacementMessageId: messageId, replacementTargetIndex: targetIndex },
+          { replacementMessageId, replacementTargetIndex },
         );
       });
     },
-    [activeSession, loadMessages, sendMessage],
+    [activeSession, loadMessages, projectId, sendMessage],
   );
+
+  const editDraftRestore = useMemo(
+    () => (editDraftRestoreTarget
+      ? {
+          messageId: messages[editDraftRestoreTarget.targetIndex]?.id ?? editDraftRestoreTarget.fallbackMessageId,
+          content: editDraftRestoreTarget.content,
+        }
+      : null),
+    [editDraftRestoreTarget, messages],
+  );
+  const editDraftRestoreRef = useRef(editDraftRestore);
+  editDraftRestoreRef.current = editDraftRestore;
+
+  const clearEditDraftRestore = useCallback((messageId: string) => {
+    if (editDraftRestoreRef.current?.messageId !== messageId) return;
+    setEditDraftRestoreTarget(null);
+  }, []);
 
   /*
   FNXC:ChatSearch 2026-07-07-12:00:
@@ -2459,6 +2645,21 @@ export function useChat(
         if (updatedSession.isGenerating && !streamRef.current) {
           attachIfGenerating(updatedSession.id, updatedSession.inFlightGeneration);
         }
+      } else if (awaitingAuthoritativeSnapshot) {
+        /*
+        FNXC:ChatWindows 2026-09-16-05:29:
+        Remember ONLY the title (and only when it is a usable non-empty string) so the pending
+        authoritative snapshot cannot silently discard a freshly generated conversation name.
+        The payload object itself is deliberately not retained.
+        */
+        const deferredTitle = typeof updatedSession.title === "string" ? updatedSession.title.trim() : "";
+        if (deferredTitle && pendingRefresh) {
+          deferredSessionTitleRef.current = {
+            sessionId: pendingRefresh.sessionId,
+            version: pendingRefresh.version,
+            title: updatedSession.title as string,
+          };
+        }
       }
     };
 
@@ -2656,6 +2857,8 @@ export function useChat(
     setSessionTags,
     sendMessage,
     editMessageAndResend,
+    editDraftRestore,
+    clearEditDraftRestore,
     stopStreaming,
     clearPendingMessage,
     updatePendingMessage,

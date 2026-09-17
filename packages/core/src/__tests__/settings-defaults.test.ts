@@ -72,12 +72,13 @@ describe("settings defaults invariants", () => {
 
   it("defaults dashboard keyboard shortcuts globally", () => {
     expect(DEFAULT_GLOBAL_SETTINGS.dashboardKeyboardShortcuts).toEqual({
-      quickChat: "Space",
+      toggleModalVisibility: "",
       terminal: "Ctrl+`",
       openFiles: "Ctrl+E",
       openSettings: "Ctrl+,",
       openCommandCenter: "Ctrl+K",
       newTask: "Ctrl+Shift+N",
+      openChatList: "Ctrl+Shift+L",
     });
     expect(GLOBAL_SETTINGS_KEYS).toContain("dashboardKeyboardShortcuts");
     expect(PROJECT_SETTINGS_KEYS).not.toContain("dashboardKeyboardShortcuts");
@@ -219,40 +220,30 @@ describe("settings defaults invariants", () => {
     });
   });
 
-  describe("openTasksInRightSidebar default", () => {
-    it("keeps openTasksInRightSidebar explicitly false in project defaults", () => {
-      expect(DEFAULT_PROJECT_SETTINGS.openTasksInRightSidebar).toBe(false);
-      expect("openTasksInRightSidebar" in DEFAULT_PROJECT_SETTINGS).toBe(true);
-      expect(PROJECT_SETTINGS_KEYS).toContain("openTasksInRightSidebar");
-    });
-
-    it("keeps openTasksInRightSidebar project-scoped only", () => {
-      expect("openTasksInRightSidebar" in DEFAULT_GLOBAL_SETTINGS).toBe(false);
-      expect(GLOBAL_SETTINGS_KEYS).not.toContain("openTasksInRightSidebar");
-    });
+  /*
+  FNXC:TaskDetailDefaultTab 2026-09-16-02:53:
+  FN-442 deleted the `openTasksInRightSidebar` and `openMobileTasksInPopup` project settings: the floating task window
+  is now the unconditional route, so the opt-in booleans had no subject left. Their describe blocks are replaced by
+  the retirement case below rather than kept asserting a deliberately removed contract.
+  */
+  it("retires the board task-open routing settings", () => {
+    for (const key of ["openTasksInRightSidebar", "openMobileTasksInPopup", "taskDetailChatFirst"]) {
+      expect(Object.hasOwn(DEFAULT_PROJECT_SETTINGS, key)).toBe(false);
+      expect(PROJECT_SETTINGS_KEYS).not.toContain(key);
+      expect(Object.hasOwn(DEFAULT_GLOBAL_SETTINGS, key)).toBe(false);
+      expect(GLOBAL_SETTINGS_KEYS).not.toContain(key);
+    }
   });
 
-  describe("openMobileTasksInPopup default", () => {
-    it("keeps openMobileTasksInPopup explicitly false in project defaults", () => {
-      expect(DEFAULT_PROJECT_SETTINGS.openMobileTasksInPopup).toBe(false);
-      expect("openMobileTasksInPopup" in DEFAULT_PROJECT_SETTINGS).toBe(true);
-      expect(PROJECT_SETTINGS_KEYS).toContain("openMobileTasksInPopup");
-    });
-
-    it("keeps openMobileTasksInPopup project-scoped only", () => {
-      expect("openMobileTasksInPopup" in DEFAULT_GLOBAL_SETTINGS).toBe(false);
-      expect(GLOBAL_SETTINGS_KEYS).not.toContain("openMobileTasksInPopup");
-    });
-  });
-
-  describe("taskPopupsBoardListOnly default", () => {
-    it("keeps taskPopupsBoardListOnly explicitly true in project defaults", () => {
-      expect(DEFAULT_PROJECT_SETTINGS.taskPopupsBoardListOnly).toBe(true);
-      expect("taskPopupsBoardListOnly" in DEFAULT_PROJECT_SETTINGS).toBe(true);
-      expect(PROJECT_SETTINGS_KEYS).toContain("taskPopupsBoardListOnly");
-    });
-
-    it("keeps taskPopupsBoardListOnly project-scoped only", () => {
+  /*
+  FNXC:TaskWindowIdentity 2026-09-14-17:46:
+  FN-392 removed the per-view task-popup setting. Its absence from the defaults is what makes a historical stored value
+  unknown to the save split, so it can never be re-applied or rewritten.
+  */
+  describe("removed taskPopupsBoardListOnly setting", () => {
+    it("declares the key in neither scope", () => {
+      expect("taskPopupsBoardListOnly" in DEFAULT_PROJECT_SETTINGS).toBe(false);
+      expect(PROJECT_SETTINGS_KEYS).not.toContain("taskPopupsBoardListOnly");
       expect("taskPopupsBoardListOnly" in DEFAULT_GLOBAL_SETTINGS).toBe(false);
       expect(GLOBAL_SETTINGS_KEYS).not.toContain("taskPopupsBoardListOnly");
     });
@@ -283,30 +274,53 @@ describe("settings defaults invariants", () => {
     });
   });
 
-  describe("taskDetailChatFirst default", () => {
-    it("keeps taskDetailChatFirst explicitly false in project defaults", () => {
-      expect(DEFAULT_PROJECT_SETTINGS.taskDetailChatFirst).toBe(false);
-      expect("taskDetailChatFirst" in DEFAULT_PROJECT_SETTINGS).toBe(true);
-      expect(PROJECT_SETTINGS_KEYS).toContain("taskDetailChatFirst");
-    });
-
-    it("keeps taskDetailChatFirst project-scoped only", () => {
-      expect("taskDetailChatFirst" in DEFAULT_GLOBAL_SETTINGS).toBe(false);
-      expect(GLOBAL_SETTINGS_KEYS).not.toContain("taskDetailChatFirst");
+  describe("navigationPlacement default", () => {
+    it("defaults to footer and keeps the setting project-scoped", () => {
+      expect(DEFAULT_PROJECT_SETTINGS.navigationPlacement).toBe("footer");
+      expect("navigationPlacement" in DEFAULT_PROJECT_SETTINGS).toBe(true);
+      expect(PROJECT_SETTINGS_KEYS).toContain("navigationPlacement");
+      expect(isProjectSettingsKey("navigationPlacement")).toBe(true);
+      expect("navigationPlacement" in DEFAULT_GLOBAL_SETTINGS).toBe(false);
+      expect(GLOBAL_SETTINGS_KEYS).not.toContain("navigationPlacement");
+      expect(isGlobalOnlySettingsKey("navigationPlacement")).toBe(false);
     });
   });
 
-  describe("quickChatCloseOnOutsideClick default", () => {
-    it("keeps Quick Chat outside-click dismissal explicitly true in project defaults", () => {
-      expect(DEFAULT_PROJECT_SETTINGS.quickChatCloseOnOutsideClick).toBe(true);
-      expect("quickChatCloseOnOutsideClick" in DEFAULT_PROJECT_SETTINGS).toBe(true);
-      expect(PROJECT_SETTINGS_KEYS).toContain("quickChatCloseOnOutsideClick");
+  /*
+  FNXC:RightSidebarOptional 2026-09-15-16:04:
+  FN-426 makes the right tool dock an opt-in. The default must stay explicitly false (not merely absent) so an
+  upgraded project lands on the redistributed accesses instead of the historical always-on dock.
+  */
+  describe("rightSidebarEnabled default", () => {
+    it("defaults to false and keeps the setting project-scoped", () => {
+      expect(DEFAULT_PROJECT_SETTINGS.rightSidebarEnabled).toBe(false);
+      expect("rightSidebarEnabled" in DEFAULT_PROJECT_SETTINGS).toBe(true);
+      expect(PROJECT_SETTINGS_KEYS).toContain("rightSidebarEnabled");
+      expect(isProjectSettingsKey("rightSidebarEnabled")).toBe(true);
+      expect("rightSidebarEnabled" in DEFAULT_GLOBAL_SETTINGS).toBe(false);
+      expect(GLOBAL_SETTINGS_KEYS).not.toContain("rightSidebarEnabled");
+      expect(isGlobalOnlySettingsKey("rightSidebarEnabled")).toBe(false);
+    });
+  });
+
+  describe("taskDetailDefaultTab default", () => {
+    it("keeps taskDetailDefaultTab seeded to the historical activity landing tab", () => {
+      expect(DEFAULT_PROJECT_SETTINGS.taskDetailDefaultTab).toBe("activity");
+      expect("taskDetailDefaultTab" in DEFAULT_PROJECT_SETTINGS).toBe(true);
+      expect(PROJECT_SETTINGS_KEYS).toContain("taskDetailDefaultTab");
     });
 
-    it("keeps quickChatCloseOnOutsideClick project-scoped only", () => {
-      expect("quickChatCloseOnOutsideClick" in DEFAULT_GLOBAL_SETTINGS).toBe(false);
-      expect(GLOBAL_SETTINGS_KEYS).not.toContain("quickChatCloseOnOutsideClick");
+    it("keeps taskDetailDefaultTab project-scoped only", () => {
+      expect("taskDetailDefaultTab" in DEFAULT_GLOBAL_SETTINGS).toBe(false);
+      expect(GLOBAL_SETTINGS_KEYS).not.toContain("taskDetailDefaultTab");
     });
+  });
+
+  it("retires project-level Quick Chat preferences", () => {
+    for (const key of ["quickChatButtonMode", "quickChatCloseOnOutsideClick", "showQuickChatFAB"]) {
+      expect(Object.hasOwn(DEFAULT_PROJECT_SETTINGS, key)).toBe(false);
+      expect(PROJECT_SETTINGS_KEYS).not.toContain(key);
+    }
   });
 
   describe("dismissModalsOnOutsideClick default", () => {

@@ -9,6 +9,15 @@ type CaptureSinks = {
 
 type EventRecord = Record<string, unknown>;
 
+/**
+ * Raw cursors for one content block.
+ * `covered` counts raw characters already emitted from ANY event shape (start snapshot, delta,
+ * terminal content). `consumed` counts only the raw characters accounted for by deltas, so a start
+ * snapshot that already carries an unconsumed delta never advances the delta stream.
+ * Presentation spaces added by the normalizer are deliberately excluded from both.
+ */
+type BlockCursor = { covered: number; consumed: number };
+
 function record(value: unknown): EventRecord | undefined {
   return value !== null && typeof value === "object" ? value as EventRecord : undefined;
 }
@@ -27,34 +36,89 @@ function blockText(partial: unknown, index: number | undefined, kind: Kind): str
   return typeof value === "string" ? value : "";
 }
 
+/*
+FNXC:AssistantTextCapture 2026-09-15-20:34:
+FN-431: pi queues assistant events without cloning them and Anthropic-shaped producers reuse ONE
+mutable message object as every event's `partial`. A start snapshot drained after the first delta was
+queued therefore already contains that delta, so the previous "flush the start snapshot, then append
+every delta" reading emitted the opening words twice ("I'll researchI'll research …") in chat and in
+task logs.
+Requirements encoded below:
+- one emission per raw portion of a block: a portion observable in a start, a delta and a terminal
+  event must be delivered exactly once;
+- recoverable start/terminal content is still restored, at the latest at the block/message end, so
+  providers that deliver whole blocks without deltas keep working;
+- no lexical deduplication: intentional repetition and two identical responses stay intact, and
+  provider messages are never mutated;
+- snapshot object identity is NOT message identity — providers that copy the snapshot per event must
+  not reset the cursors nor invent paragraph boundaries.
+*/
 /** Captures every pi assistant block shape while retaining exact-once offsets. */
 export function createAssistantStreamCapture(sinks: CaptureSinks): { handleAgentEvent(event: unknown): void } {
   const normalizer = createStreamingDeltaNormalizer();
-  const emitted: Record<Kind, Map<number, number>> = { text: new Map(), thinking: new Map() };
-  let lastPartial: object | undefined;
-  let lastTextPartial: unknown;
+  const cursors: Record<Kind, Map<number, BlockCursor>> = { text: new Map(), thinking: new Map() };
+  let generation = 0;
   let lastTextIndex: number | undefined;
+  let lastTextGeneration: number | undefined;
   let sawText = false;
+  const cursorFor = (kind: Kind, index: number): BlockCursor => {
+    let cursor = cursors[kind].get(index);
+    if (!cursor) { cursor = { covered: 0, consumed: 0 }; cursors[kind].set(index, cursor); }
+    return cursor;
+  };
   const reset = () => {
-    emitted.text.clear(); emitted.thinking.clear();
+    cursors.text.clear(); cursors.thinking.clear();
     normalizer.noteBoundary("text"); normalizer.noteBoundary("thinking");
-    lastPartial = undefined;
+    generation += 1;
   };
   const emit = (kind: Kind, text: string, partial: unknown, index: number | undefined, verbatim = false) => {
     if (!text) return;
     if (kind === "text") {
-      if (sawText && (partial !== lastTextPartial || index !== lastTextIndex)) sinks.onTextBlockBoundary?.();
+      if (sawText && (index !== lastTextIndex || generation !== lastTextGeneration)) sinks.onTextBlockBoundary?.();
       sinks.onText?.(text);
-      sawText = true; lastTextPartial = partial; lastTextIndex = index;
+      sawText = true; lastTextIndex = index; lastTextGeneration = generation;
     } else sinks.onThinking?.(text);
     if (verbatim) normalizer.noteEmitted(kind, text, partial, index);
   };
+  /** Emits only the part of a snapshot/terminal body that has not been delivered yet. */
   const flush = (kind: Kind, text: string, partial: unknown, index: number | undefined) => {
     if (index === undefined || !text) return;
-    const prior = emitted[kind].get(index) ?? 0;
-    const remainder = text.slice(prior);
+    const cursor = cursorFor(kind, index);
+    const remainder = text.slice(cursor.covered);
     if (remainder) emit(kind, remainder, partial, index, true);
-    emitted[kind].set(index, text.length);
+    cursor.covered = Math.max(cursor.covered, text.length);
+  };
+  /** A snapshot shorter than the consumed deltas is a restarted block — a new message reusing the index. */
+  const noteSnapshot = (kind: Kind, index: number | undefined, full: string, hasSnapshot: boolean) => {
+    if (index === undefined || !hasSnapshot) return;
+    const cursor = cursors[kind].get(index);
+    if (cursor && full.length < cursor.consumed) { reset(); }
+  };
+  const handleDelta = (kind: Kind, partial: unknown, index: number, raw: string) => {
+    const hasSnapshot = record(partial) !== undefined;
+    const full = blockText(partial, index, kind);
+    noteSnapshot(kind, index, full, hasSnapshot);
+    const cursor = cursorFor(kind, index);
+    const normalizeArgs = partial as { content?: Array<{ type?: string; text?: string; thinking?: string }> } | undefined;
+    /*
+     * The snapshot is authoritative only when it lines up with the delta stream: the delta must sit
+     * exactly at [consumed, consumed + delta.length). Otherwise (no snapshot, string `partial` from
+     * the mock provider, stale snapshot) the delta is genuinely new text appended after everything
+     * already emitted.
+     */
+    const consistent = full.length >= cursor.consumed + raw.length
+      && full.slice(cursor.consumed, cursor.consumed + raw.length) === raw;
+    if (!consistent) {
+      emit(kind, normalizer.normalize(normalizeArgs, index, raw, kind), partial, index);
+      cursor.covered += raw.length;
+      cursor.consumed = cursor.covered;
+      return;
+    }
+    const alreadyEmitted = Math.min(raw.length, Math.max(0, cursor.covered - cursor.consumed));
+    if (alreadyEmitted === 0) emit(kind, normalizer.normalize(normalizeArgs, index, raw, kind), partial, index);
+    else if (alreadyEmitted < raw.length) emit(kind, raw.slice(alreadyEmitted), partial, index, true);
+    cursor.consumed += raw.length;
+    cursor.covered = Math.max(cursor.covered, cursor.consumed);
   };
   return {
     handleAgentEvent(event) {
@@ -81,21 +145,17 @@ export function createAssistantStreamCapture(sinks: CaptureSinks): { handleAgent
         const update = record(outer.assistantMessageEvent);
         if (!update) return;
         const partial = update.partial;
-        const partialObject = partial !== null && typeof partial === "object" ? partial as object : undefined;
-        if (partialObject && lastPartial && partialObject !== lastPartial) reset();
-        if (partialObject) lastPartial = partialObject;
         const index = indexOf(update.contentIndex);
         const type = update.type;
         const kind: Kind | undefined = typeof type === "string" && type.startsWith("text_") ? "text" : typeof type === "string" && type.startsWith("thinking_") ? "thinking" : undefined;
         if (!kind) return;
         if (type === `${kind}_delta`) {
-          if (typeof update.delta !== "string" || index === undefined) return;
-          const delta = normalizer.normalize(partial as { content?: Array<{ type?: string; text?: string; thinking?: string }> } | undefined, index, update.delta, kind);
-          emit(kind, delta, partial, index);
-          const full = blockText(partial, index, kind);
-          emitted[kind].set(index, full ? full.length : (emitted[kind].get(index) ?? 0) + update.delta.length);
+          if (typeof update.delta !== "string" || update.delta === "" || index === undefined) return;
+          handleDelta(kind, partial, index, update.delta);
         } else if (type === `${kind}_start`) {
-          flush(kind, blockText(partial, index, kind), partial, index);
+          const full = blockText(partial, index, kind);
+          noteSnapshot(kind, index, full, record(partial) !== undefined);
+          flush(kind, full, partial, index);
         } else if (type === `${kind}_end`) {
           flush(kind, typeof update.content === "string" ? update.content : "", partial, index);
         }

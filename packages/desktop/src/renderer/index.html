@@ -120,11 +120,19 @@
             colorTheme = "shadcn-ember";
           }
 
+          // FNXC:UiStyleAxis 2026-09-15-00:20: FN-399's interface style is independent of the colour theme and must paint on native startup before React, exactly like the web bootstrap.
+          var uiStyle = localStorage.getItem("kb-dashboard-ui-style") || "classic";
+          var validUiStyles = ["classic", "clean"];
+          if (!validUiStyles.includes(uiStyle)) {
+            uiStyle = "classic";
+          }
+
           // FNXC:DashboardTheming 2026-07-03-00:00: Desktop shell startup mirrors dashboard startup: default System mode resolves from prefers-color-scheme before React hydration.
           var systemDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
           var effectiveMode = mode === "system" ? (systemDark ? "dark" : "light") : mode;
           document.documentElement.setAttribute("data-theme", effectiveMode);
           document.documentElement.setAttribute("data-color-theme", colorTheme);
+          document.documentElement.setAttribute("data-ui-style", uiStyle);
         } catch (error) {
           var fallbackSystemDark = false;
           try {
@@ -132,6 +140,8 @@
           } catch (matchMediaError) {}
           document.documentElement.setAttribute("data-theme", fallbackSystemDark ? "dark" : "light");
           document.documentElement.setAttribute("data-color-theme", "shadcn-ember");
+          // FNXC:UiStyleAxis 2026-09-15-00:20: an inaccessible localStorage still publishes the default style so no rule depends on a missing attribute.
+          document.documentElement.setAttribute("data-ui-style", "classic");
         }
       })();
     </script>

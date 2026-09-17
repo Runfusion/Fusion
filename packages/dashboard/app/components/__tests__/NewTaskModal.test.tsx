@@ -31,6 +31,8 @@ vi.mock("lucide-react", () => ({
   Flag: () => <svg />,
   TriangleAlert: () => null,
   Zap: () => <svg />,
+  /* FN-408: the New Task dialog renders the per-card human plan approval toggle beside Fast. */
+  UserCheck: () => <svg />,
   ShieldCheck: () => null,
   Brain: () => null,
   Server: () => null,
@@ -575,6 +577,29 @@ describe("NewTaskModal", () => {
     expect(Array.from(select.options).map((option) => option.value)).toEqual(["standard", "fast"]);
   });
 
+  /*
+  FNXC:TaskTitleDisplay 2026-09-14-17:45:
+  FN-391: New Task submits a DESCRIPTION, never an implicit title — whether the operator typed five
+  words or 400 characters. The stored title comes only from the create-time automatic policy, so a
+  title sent from here would silently defeat that single writer.
+  */
+  it.each([
+    { label: "a five-word description", value: "Corriger le bouton de partage" },
+    { label: "a 400-character description", value: "x".repeat(400) },
+  ])("submits $label with no title field", async ({ value }) => {
+    const onCreateTask = vi.fn().mockResolvedValue(makeTask("FN-391"));
+    renderNewTaskModal({ onCreateTask, projectId: "project-1" });
+
+    fireEvent.change(screen.getByPlaceholderText("What needs to be done?"), { target: { value } });
+    fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
+
+    await waitFor(() => expect(onCreateTask).toHaveBeenCalledTimes(1));
+    const payload = onCreateTask.mock.calls[0]?.[0];
+    expect(payload.description).toBe(value);
+    expect(payload.title).toBeUndefined();
+    expect(screen.queryByTestId("task-form-title")).toBeNull();
+  });
+
   it("omits plan approval across successive submissions while Fast still toggles", async () => {
     const onCreateTask = vi.fn().mockResolvedValue(makeTask("FN-234"));
     renderNewTaskModal({ onCreateTask, projectId: "project-1" });
@@ -595,6 +620,92 @@ describe("NewTaskModal", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
     await waitFor(() => expect(onCreateTask).toHaveBeenCalledTimes(2));
     expect(onCreateTask.mock.calls[1]?.[0]).not.toHaveProperty("requirePlanApproval");
+  });
+
+  /*
+  FNXC:HumanPlanApproval 2026-09-15-07:30:
+  FN-408 remediation — Fast and the per-card human plan approval are mutually exclusive: Fast skips
+  planning and Plan Review, so an armed fast card could never reach a decision. The dialog clears one
+  when the other is armed, and the create payload can never carry both.
+  */
+  it("keeps Fast and human plan approval mutually exclusive in the create payload", async () => {
+    const { props } = renderNewTaskModal();
+
+    const fastToggle = screen.getByTestId("task-form-inline-fast");
+    const humanToggle = screen.getByTestId("task-form-inline-human-plan-approval");
+
+    fireEvent.click(fastToggle);
+    expect(fastToggle).toHaveAttribute("aria-pressed", "true");
+
+    fireEvent.click(humanToggle);
+    expect(humanToggle).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByTestId("task-form-inline-fast")).toHaveAttribute("aria-pressed", "false");
+
+    fireEvent.change(screen.getByPlaceholderText("What needs to be done?"), { target: { value: "Needs my approval" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
+
+    await waitFor(() => expect(props.onCreateTask).toHaveBeenCalledTimes(1));
+    const payload = vi.mocked(props.onCreateTask).mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(payload).toMatchObject({ humanPlanApproval: true });
+    expect(payload).not.toHaveProperty("executionMode");
+
+    // Re-arming Fast clears the human requirement in the other direction.
+    fireEvent.click(screen.getByTestId("task-form-inline-human-plan-approval"));
+    fireEvent.click(screen.getByTestId("task-form-inline-fast"));
+    expect(screen.getByTestId("task-form-inline-human-plan-approval")).toHaveAttribute("aria-pressed", "false");
+  });
+
+  /*
+  FNXC:HumanPlanApproval 2026-09-15-23:08:
+  FN-443 — the New task window already rebuilds its create payload from live state, but Quick Add's
+  identical control lost the operator's choice whenever it was armed after the request text. These
+  cases pin the SECOND creation surface against that same regression: every gesture order must reach
+  the same payload, and only the last visible choice may ever count.
+  */
+  describe("FN-443 human plan approval survives every toggle order", () => {
+    const typeRequest = (value: string) => {
+      fireEvent.change(screen.getByPlaceholderText("What needs to be done?"), { target: { value } });
+    };
+    const submit = () => fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
+    const armApproval = () => fireEvent.click(screen.getByTestId("task-form-inline-human-plan-approval"));
+
+    it("sends humanPlanApproval when armed AFTER the request text is typed", async () => {
+      const { props } = renderNewTaskModal();
+
+      typeRequest("Armed last");
+      armApproval();
+      submit();
+
+      await waitFor(() => expect(props.onCreateTask).toHaveBeenCalledTimes(1));
+      expect(vi.mocked(props.onCreateTask).mock.calls[0]?.[0]).toMatchObject({
+        description: "Armed last",
+        humanPlanApproval: true,
+      });
+    });
+
+    it("omits humanPlanApproval when armed then disarmed after typing", async () => {
+      const { props } = renderNewTaskModal();
+
+      typeRequest("Changed my mind");
+      armApproval();
+      armApproval();
+      expect(screen.getByTestId("task-form-inline-human-plan-approval")).toHaveAttribute("aria-pressed", "false");
+      submit();
+
+      await waitFor(() => expect(props.onCreateTask).toHaveBeenCalledTimes(1));
+      expect(vi.mocked(props.onCreateTask).mock.calls[0]?.[0]).not.toHaveProperty("humanPlanApproval");
+    });
+
+    it("keeps the historical arm-then-type order working", async () => {
+      const { props } = renderNewTaskModal();
+
+      armApproval();
+      typeRequest("Armed first");
+      submit();
+
+      await waitFor(() => expect(props.onCreateTask).toHaveBeenCalledTimes(1));
+      expect(vi.mocked(props.onCreateTask).mock.calls[0]?.[0]).toMatchObject({ humanPlanApproval: true });
+    });
   });
 
   it("includes executionMode fast in the create payload when Fast is selected", async () => {
@@ -1810,7 +1921,7 @@ describe("NewTaskModal", () => {
       flagEnabled: true,
       defaultWorkflowId: "builtin:coding",
       workflows: [{
-        id: "builtin:coding-ideas-v2",
+        id: "builtin:coding-ideas",
         name: "Coding (Ideas)",
         columns: [
           { id: "ideas", name: "Ideas", flags: { intake: true, hold: true, manualIntake: true } },
@@ -1822,20 +1933,20 @@ describe("NewTaskModal", () => {
     };
 
     it("atomically creates Coding (Ideas) Start in its proven working column", async () => {
-      await mockStartWorkflows("builtin:coding-ideas-v2", "Coding (Ideas)");
+      await mockStartWorkflows("builtin:coding-ideas", "Coding (Ideas)");
       vi.mocked(fetchBoardWorkflows).mockResolvedValueOnce(codingIdeasBoardPayload);
-      const onCreateTask = vi.fn().mockResolvedValue({ ...makeTask("FN-START"), column: "todo", workflowId: "builtin:coding-ideas-v2" });
+      const onCreateTask = vi.fn().mockResolvedValue({ ...makeTask("FN-START"), column: "todo", workflowId: "builtin:coding-ideas" });
       const { props } = renderNewTaskModal({ onCreateTask });
 
       await waitFor(() => expect(screen.getByTestId("task-workflow-dropdown-trigger")).toBeTruthy());
-      await chooseWorkflowOption("builtin:coding-ideas-v2");
+      await chooseWorkflowOption("builtin:coding-ideas");
       fireEvent.change(screen.getByPlaceholderText("What needs to be done?"), { target: { value: "Start this idea" } });
       const start = await screen.findByTestId("task-form-inline-start");
       expect(start).toBeEnabled();
       fireEvent.click(start);
 
       await waitFor(() => expect(onCreateTask).toHaveBeenCalledWith(expect.objectContaining({
-        workflowId: "builtin:coding-ideas-v2",
+        workflowId: "builtin:coding-ideas",
         column: "todo",
         description: "Start this idea",
       })));
@@ -1881,12 +1992,12 @@ describe("NewTaskModal", () => {
 
     it("keeps the eligible Start node mounted while editing in the desktop floating host", async () => {
       mockViewportMode = "desktop";
-      await mockStartWorkflows("builtin:coding-ideas-v2", "Coding (Ideas)");
+      await mockStartWorkflows("builtin:coding-ideas", "Coding (Ideas)");
       vi.mocked(fetchBoardWorkflows).mockResolvedValueOnce(codingIdeasBoardPayload);
       renderNewTaskModal();
 
       await waitFor(() => expect(screen.getByTestId("task-workflow-dropdown-trigger")).toBeTruthy());
-      await chooseWorkflowOption("builtin:coding-ideas-v2");
+      await chooseWorkflowOption("builtin:coding-ideas");
       const start = await screen.findByTestId("task-form-inline-start");
       const description = screen.getByPlaceholderText("What needs to be done?");
       expect(start).toBeVisible();
@@ -1964,12 +2075,12 @@ describe("NewTaskModal", () => {
     });
 
     it("renders Start disabled while empty and preserves its node while editing", async () => {
-      await mockStartWorkflows("builtin:coding-ideas-v2", "Coding (Ideas)");
+      await mockStartWorkflows("builtin:coding-ideas", "Coding (Ideas)");
       vi.mocked(fetchBoardWorkflows).mockResolvedValueOnce(codingIdeasBoardPayload);
       renderNewTaskModal();
 
       await waitFor(() => expect(screen.getByTestId("task-workflow-dropdown-trigger")).toBeTruthy());
-      await chooseWorkflowOption("builtin:coding-ideas-v2");
+      await chooseWorkflowOption("builtin:coding-ideas");
       const start = await screen.findByTestId("task-form-inline-start");
       expect(start).toBeDisabled();
 
@@ -1984,12 +2095,12 @@ describe("NewTaskModal", () => {
     });
 
     it("keeps Start disabled for whitespace-only descriptions", async () => {
-      await mockStartWorkflows("builtin:coding-ideas-v2", "Coding (Ideas)");
+      await mockStartWorkflows("builtin:coding-ideas", "Coding (Ideas)");
       vi.mocked(fetchBoardWorkflows).mockResolvedValueOnce(codingIdeasBoardPayload);
       renderNewTaskModal();
 
       await waitFor(() => expect(screen.getByTestId("task-workflow-dropdown-trigger")).toBeTruthy());
-      await chooseWorkflowOption("builtin:coding-ideas-v2");
+      await chooseWorkflowOption("builtin:coding-ideas");
       fireEvent.change(screen.getByPlaceholderText("What needs to be done?"), { target: { value: "   " } });
       expect(await screen.findByTestId("task-form-inline-start")).toBeDisabled();
     });
@@ -2032,14 +2143,14 @@ describe("NewTaskModal", () => {
     });
 
     it("keeps the label tied to the submitted action while creation is in flight", async () => {
-      await mockStartWorkflows("builtin:coding-ideas-v2", "Coding (Ideas)");
+      await mockStartWorkflows("builtin:coding-ideas", "Coding (Ideas)");
       vi.mocked(fetchBoardWorkflows).mockResolvedValueOnce(codingIdeasBoardPayload);
       let resolveDuplicateCheck!: (matches: DuplicateMatch[]) => void;
       vi.mocked(checkDuplicateTasks).mockImplementationOnce(() => new Promise<DuplicateMatch[]>((resolve) => { resolveDuplicateCheck = resolve; }));
       const { props } = renderNewTaskModal();
 
       await waitFor(() => expect(screen.getByTestId("task-workflow-dropdown-trigger")).toBeTruthy());
-      await chooseWorkflowOption("builtin:coding-ideas-v2");
+      await chooseWorkflowOption("builtin:coding-ideas");
       fireEvent.change(screen.getByPlaceholderText("What needs to be done?"), { target: { value: "Create normally" } });
       fireEvent.click(screen.getByTestId("task-form-inline-create"));
       expect(screen.getByTestId("task-form-inline-start")).toBeDisabled();
@@ -2050,7 +2161,7 @@ describe("NewTaskModal", () => {
       let resolveStartDuplicateCheck!: (matches: DuplicateMatch[]) => void;
       vi.mocked(checkDuplicateTasks).mockImplementationOnce(() => new Promise<DuplicateMatch[]>((resolve) => { resolveStartDuplicateCheck = resolve; }));
       await waitFor(() => expect(screen.queryByTestId("task-form-inline-start")).toBeNull());
-      await chooseWorkflowOption("builtin:coding-ideas-v2");
+      await chooseWorkflowOption("builtin:coding-ideas");
       fireEvent.change(screen.getByPlaceholderText("What needs to be done?"), { target: { value: "Start now" } });
       fireEvent.click(screen.getByTestId("task-form-inline-start"));
       expect(screen.getByTestId("task-form-inline-start")).toHaveAccessibleName("Starting...");
@@ -2058,8 +2169,8 @@ describe("NewTaskModal", () => {
     });
 
     it("resolves Start from the project default when no workflow is selected", async () => {
-      await mockStartWorkflows("builtin:coding-ideas-v2", "Coding (Ideas)");
-      vi.mocked(fetchBoardWorkflows).mockResolvedValueOnce({ ...codingIdeasBoardPayload, defaultWorkflowId: "builtin:coding-ideas-v2" });
+      await mockStartWorkflows("builtin:coding-ideas", "Coding (Ideas)");
+      vi.mocked(fetchBoardWorkflows).mockResolvedValueOnce({ ...codingIdeasBoardPayload, defaultWorkflowId: "builtin:coding-ideas" });
       renderNewTaskModal();
 
       await waitFor(() => expect(screen.getByTestId("task-workflow-dropdown-trigger")).toBeTruthy());
@@ -2067,13 +2178,13 @@ describe("NewTaskModal", () => {
     });
 
     it("waits for a usable board-workflow payload before exposing Start", async () => {
-      await mockStartWorkflows("builtin:coding-ideas-v2", "Coding (Ideas)");
+      await mockStartWorkflows("builtin:coding-ideas", "Coding (Ideas)");
       let resolveBoardWorkflows!: (payload: BoardWorkflowsPayload) => void;
       vi.mocked(fetchBoardWorkflows).mockImplementationOnce(() => new Promise<BoardWorkflowsPayload>((resolve) => { resolveBoardWorkflows = resolve; }));
       renderNewTaskModal();
 
       await waitFor(() => expect(screen.getByTestId("task-workflow-dropdown-trigger")).toBeTruthy());
-      await chooseWorkflowOption("builtin:coding-ideas-v2");
+      await chooseWorkflowOption("builtin:coding-ideas");
       expect(screen.queryByTestId("task-form-inline-start")).toBeNull();
       resolveBoardWorkflows(codingIdeasBoardPayload);
       expect(await screen.findByTestId("task-form-inline-start")).toBeDisabled();
@@ -2081,7 +2192,7 @@ describe("NewTaskModal", () => {
 
     it.each(["mobile", "desktop"] as const)("leaves no Start shell on %s when No workflow is selected", async (viewportMode) => {
       mockViewportMode = viewportMode;
-      await mockStartWorkflows("builtin:coding-ideas-v2", "Coding (Ideas)");
+      await mockStartWorkflows("builtin:coding-ideas", "Coding (Ideas)");
       vi.mocked(fetchBoardWorkflows).mockResolvedValueOnce(codingIdeasBoardPayload);
       renderNewTaskModal({ onMoveTask: vi.fn() });
 
@@ -2158,24 +2269,24 @@ describe("NewTaskModal", () => {
 
     it.each(["mobile", "desktop"] as const)("leaves no Start shell on %s when board metadata rejects", async (viewportMode) => {
       mockViewportMode = viewportMode;
-      await mockStartWorkflows("builtin:coding-ideas-v2", "Coding (Ideas)");
+      await mockStartWorkflows("builtin:coding-ideas", "Coding (Ideas)");
       vi.mocked(fetchBoardWorkflows).mockRejectedValueOnce(new Error("metadata unavailable"));
       renderNewTaskModal();
 
       await waitFor(() => expect(screen.getByTestId("task-workflow-dropdown-trigger")).toBeTruthy());
-      await chooseWorkflowOption("builtin:coding-ideas-v2");
+      await chooseWorkflowOption("builtin:coding-ideas");
       await waitFor(() => expect(screen.queryByTestId("task-form-inline-start")).toBeNull());
       expectNoStartActionShell();
     });
 
     it.each(["mobile", "desktop"] as const)("leaves no Start shell on %s when the board-workflow payload is unusable", async (viewportMode) => {
       mockViewportMode = viewportMode;
-      await mockStartWorkflows("builtin:coding-ideas-v2", "Coding (Ideas)");
+      await mockStartWorkflows("builtin:coding-ideas", "Coding (Ideas)");
       vi.mocked(fetchBoardWorkflows).mockResolvedValueOnce({ ...codingIdeasBoardPayload, flagEnabled: false });
       renderNewTaskModal();
 
       await waitFor(() => expect(screen.getByTestId("task-workflow-dropdown-trigger")).toBeTruthy());
-      await chooseWorkflowOption("builtin:coding-ideas-v2");
+      await chooseWorkflowOption("builtin:coding-ideas");
       await waitFor(() => expect(screen.queryByTestId("task-form-inline-start")).toBeNull());
       expectNoStartActionShell();
     });

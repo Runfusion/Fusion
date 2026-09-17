@@ -4,11 +4,36 @@
  * FNXC:SettingsSearch 2026-07-15-17:35:
  * One entry per descriptor row the section renders, co-located so a setting and its index entry change in the same edit. Labels and help mirror the section's `t()` calls verbatim: the index matches on the copy operators actually read, so a paraphrase here would make search miss the words on screen.
  * Every OpenRouter advanced row is indexed even though the section renders them inside a collapsed <details>: search's whole purpose is finding a control an operator cannot see, and these are the ones most likely to be hunted by their stored field name (openrouterProviderPreferences.sort) rather than by browsing.
- * Absent by design: the Default/Fallback model pickers and the per-role model lanes (bespoke CustomModelDropdown widgets), the model pricing table this section mounts, and the opencode-go sync toggle, which stays hand-rolled for its <code> help markup and so has no descriptor key to anchor a result to.
+ * The pipeline role pickers are indexed explicitly below because each now has a stable `data-settings-key` anchor. Absent by design: the Default/Fallback pickers, model pricing table, and opencode-go sync toggle, whose bespoke controls do not expose searchable descriptor anchors.
  */
 import type { SettingsSearchEntry } from "../search/types";
 
 export const globalModelsSearchEntries: SettingsSearchEntry[] = [
+  /*
+  FNXC:SettingsSearch 2026-09-14-19:24:
+  Pipeline model rows are first-class searchable controls. Index each global primary and fallback by its real persisted model key so search can reveal the same Planner, Executor, Reviewer, Merger vocabulary shown by the project section.
+  */
+  ...(["planning", "execution", "validator", "merger"] as const).flatMap((role) => {
+    const labels = { planning: "Planner", execution: "Executor", validator: "Reviewer", merger: "Merger" } as const;
+    return [
+      {
+        sectionId: "global-models",
+        key: `${role}GlobalModelId`,
+        labelKey: `settings.globalModels.${role}Model`,
+        labelFallback: `${labels[role]} Model`,
+        helpFallback: `Global model used by the ${labels[role].toLowerCase()} role.`,
+        keywords: [role, "model", "global"],
+      },
+      {
+        sectionId: "global-models",
+        key: `${role}GlobalFallbackModelId`,
+        labelKey: `settings.globalModels.${role}FallbackModel`,
+        labelFallback: `${labels[role]} Fallback Model`,
+        helpFallback: `Retry model used when the ${labels[role].toLowerCase()} role's primary model is unavailable.`,
+        keywords: [role, "fallback", "retry", "model"],
+      },
+    ];
+  }),
   {
     sectionId: "global-models",
     key: "defaultThinkingLevel",

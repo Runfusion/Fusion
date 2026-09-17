@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { FusionShellApi, ShellConnectionProfile, ShellConnectionState } from "../types/native-shell";
 import "./NativeShellConnectionManager.css";
+import { FloatingWindow } from "./FloatingWindow";
 
 interface NativeShellConnectionManagerProps {
   open: boolean;
@@ -117,8 +118,23 @@ export function NativeShellConnectionManager({ open, shellApi, shellState, onClo
   };
 
   return (
-    <div className="modal-overlay open">
-      <div className="modal native-shell-connection-manager" role="dialog" aria-label={t("shell.connectionManagerLabel", "Connection Manager")}>
+    /* FNXC:FloatingWindowDialogHosts 2026-09-14-22:36: FN-394 hosts the connection manager in the shared window like every other dashboard dialog. */
+    <FloatingWindow
+      windowKey="native-shell-connection-manager"
+      modal
+      hideHeader
+      surfaceGroup="dialog"
+      title={t("shell.connectionManager", "Connection Manager")}
+      ariaLabel={t("shell.connectionManagerLabel", "Connection Manager")}
+      onClose={onClose}
+      dragHandleSelector=".native-shell-connection-manager .modal-header"
+      className="floating-window--dialog floating-window--native-shell-connection-manager"
+      defaultSize={{ width: 720, height: 560 }}
+      minSize={{ width: 320, height: 260 }}
+      suspendGeometryPersistenceOnMobile
+      suspendGeometryPersistenceOnShortViewport
+    >
+      <div className="modal native-shell-connection-manager">
         {/* FNXC:StandardizedViewLayout 2026-09-13-21:49: Shared dialog chrome for the connection manager. */}
         <ViewHeader
           className="modal-header"
@@ -269,6 +285,6 @@ export function NativeShellConnectionManager({ open, shellApi, shellState, onClo
           )}
         </div>
       </div>
-    </div>
+    </FloatingWindow>
   );
 }

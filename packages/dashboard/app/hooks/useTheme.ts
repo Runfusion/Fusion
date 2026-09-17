@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useLayoutEffect, useRef } from "react";
-import { COLOR_THEMES, type ThemeMode, type ColorTheme } from "@fusion/core";
+import { COLOR_THEMES, DEFAULT_UI_STYLE, UI_STYLES, isUiStyle, type ThemeMode, type ColorTheme, type UiStyle } from "@fusion/core";
 import { fetchGlobalSettings, updateGlobalSettings } from "../api";
 import {
   SHADCN_CUSTOM_COLOR_TOKENS,
@@ -12,6 +12,8 @@ const THEME_MODE_STORAGE_KEY = "kb-dashboard-theme-mode";
 const COLOR_THEME_STORAGE_KEY = "kb-dashboard-color-theme";
 const SHADCN_CUSTOM_COLORS_STORAGE_KEY = "kb-dashboard-shadcn-custom-colors";
 const FONT_SCALE_STORAGE_KEY = "kb-dashboard-font-scale-pct";
+const UI_STYLE_STORAGE_KEY = "kb-dashboard-ui-style";
+const VALID_UI_STYLES = [...UI_STYLES] satisfies UiStyle[];
 const DEFAULT_FONT_SCALE_PCT = 100;
 const MIN_FONT_SCALE_PCT = 85;
 const MAX_FONT_SCALE_PCT = 125;
@@ -56,6 +58,9 @@ const useIsomorphicLayoutEffect = isBrowser ? useLayoutEffect : useEffect;
 interface UseThemeReturn {
   themeMode: ThemeMode;
   colorTheme: ColorTheme;
+  /** Non-chromatic interface grammar; independent of `colorTheme`. */
+  uiStyle: UiStyle;
+  setUiStyle: (style: UiStyle) => void;
   dashboardFontScalePct: number;
   shadcnCustomColors: Record<string, string>;
   resolvedThemeMode: "dark" | "light";
@@ -133,6 +138,34 @@ function readCachedShadcnCustomColors(): Record<string, string> {
   }
 }
 
+/*
+FNXC:UiStyleAxis 2026-09-15-00:20:
+The interface style is cached exactly like the colour theme so a valid "clean" cache paints before the
+first React element. Missing, unreadable or unknown values resolve to "classic"; discovering a different
+server value afterwards is an ordinary reconciliation, not a reason to always paint "classic" first.
+*/
+function readCachedUiStyle(): UiStyle {
+  if (!isBrowser) return DEFAULT_UI_STYLE;
+  try {
+    const saved = localStorage.getItem(UI_STYLE_STORAGE_KEY);
+    if (isUiStyle(saved)) {
+      return saved;
+    }
+  } catch {
+    // localStorage not available, use default
+  }
+  return DEFAULT_UI_STYLE;
+}
+
+function writeCachedUiStyle(style: UiStyle): void {
+  if (!isBrowser) return;
+  try {
+    localStorage.setItem(UI_STYLE_STORAGE_KEY, style);
+  } catch {
+    // localStorage not available, skip cache write
+  }
+}
+
 function writeCachedShadcnCustomColors(colors: Record<string, string>): void {
   if (!isBrowser) return;
   try {
@@ -185,6 +218,7 @@ function getEffectiveThemeMode(mode: ThemeMode, systemIsDark: boolean): "dark" |
 function applyThemeAttributes(
   themeMode: ThemeMode,
   colorTheme: ColorTheme,
+  uiStyle: UiStyle,
   dashboardFontScalePct: number,
   systemIsDark: boolean,
   shadcnCustomColors: Record<string, string>,
@@ -194,6 +228,7 @@ function applyThemeAttributes(
   const effectiveMode = getEffectiveThemeMode(themeMode, systemIsDark);
   document.documentElement.setAttribute("data-theme", effectiveMode);
   document.documentElement.setAttribute("data-color-theme", colorTheme);
+  document.documentElement.setAttribute("data-ui-style", uiStyle);
   document.documentElement.style.fontSize = `${normalizeFontScalePct(dashboardFontScalePct)}%`;
   if (colorTheme === "shadcn-custom") {
     applyShadcnCustomColorOverrides(document.documentElement, shadcnCustomColors);
@@ -249,6 +284,7 @@ export function useTheme(): UseThemeReturn {
   // Initialize from localStorage cache or defaults to avoid flash before hydration.
   const [themeMode, setThemeModeState] = useState<ThemeMode>(() => readCachedThemeMode());
   const [colorTheme, setColorThemeState] = useState<ColorTheme>(() => readCachedColorTheme());
+  const [uiStyle, setUiStyleState] = useState<UiStyle>(() => readCachedUiStyle());
   const [dashboardFontScalePct, setDashboardFontScalePctState] = useState<number>(() => readCachedDashboardFontScalePct());
   const [shadcnCustomColors, setShadcnCustomColorsState] = useState<Record<string, string>>(() => readCachedShadcnCustomColors());
   const [isHydrating, setIsHydrating] = useState(true);
@@ -261,10 +297,20 @@ export function useTheme(): UseThemeReturn {
 
   const themeModeRef = useRef(themeMode);
   const colorThemeRef = useRef(colorTheme);
+  const uiStyleRef = useRef(uiStyle);
   const dashboardFontScalePctRef = useRef(dashboardFontScalePct);
   const shadcnCustomColorsRef = useRef(shadcnCustomColors);
   const userSetThemeModeRef = useRef(false);
   const userSetColorThemeRef = useRef(false);
+  const userSetUiStyleRef = useRef(false);
+  /*
+  FNXC:UiStyleAxis 2026-09-15-00:20:
+  Rapid style choices are serialized into one chained promise so the LAST intent is also the last durable
+  value; a rejected write is absorbed here so it neither blocks the next choice nor surfaces as an
+  unhandled rejection. Local state and cache keep the chosen value — a failed save is never reported as
+  success, only logged like the sibling preferences.
+  */
+  const uiStyleWriteChainRef = useRef<Promise<unknown>>(Promise.resolve());
   const userSetDashboardFontScalePctRef = useRef(false);
   const userSetShadcnCustomColorsRef = useRef(false);
 
@@ -275,6 +321,10 @@ export function useTheme(): UseThemeReturn {
   useEffect(() => {
     colorThemeRef.current = colorTheme;
   }, [colorTheme]);
+
+  useEffect(() => {
+    uiStyleRef.current = uiStyle;
+  }, [uiStyle]);
 
   useEffect(() => {
     dashboardFontScalePctRef.current = dashboardFontScalePct;
@@ -317,6 +367,16 @@ export function useTheme(): UseThemeReturn {
           }
           if (readCachedColorTheme() !== globalSettings.colorTheme) {
             writeCachedColorTheme(globalSettings.colorTheme);
+          }
+        }
+
+        if (isUiStyle(globalSettings.uiStyle) && !userSetUiStyleRef.current) {
+          if (uiStyleRef.current !== globalSettings.uiStyle) {
+            uiStyleRef.current = globalSettings.uiStyle;
+            setUiStyleState(globalSettings.uiStyle);
+          }
+          if (readCachedUiStyle() !== globalSettings.uiStyle) {
+            writeCachedUiStyle(globalSettings.uiStyle);
           }
         }
 
@@ -371,8 +431,8 @@ export function useTheme(): UseThemeReturn {
 
   // Apply theme immediately on mount and when theme changes
   useIsomorphicLayoutEffect(() => {
-    applyThemeAttributes(themeMode, colorTheme, dashboardFontScalePct, isSystemDark, shadcnCustomColors);
-  }, [themeMode, colorTheme, dashboardFontScalePct, isSystemDark, shadcnCustomColors]);
+    applyThemeAttributes(themeMode, colorTheme, uiStyle, dashboardFontScalePct, isSystemDark, shadcnCustomColors);
+  }, [themeMode, colorTheme, uiStyle, dashboardFontScalePct, isSystemDark, shadcnCustomColors]);
 
   // Ensure theme-data.css is loaded/unloaded based on colorTheme.
   // This handles both initial hydration from backend and runtime theme changes.
@@ -417,6 +477,30 @@ export function useTheme(): UseThemeReturn {
     });
   }, []);
 
+  /*
+  FNXC:UiStyleAxis 2026-09-15-00:20:
+  Selecting a style applies `data-ui-style` immediately without remounting App, and touches no colour
+  preference. Invalid input falls back to the default instead of writing an unknown value.
+  */
+  const setUiStyle = useCallback((style: UiStyle) => {
+    const nextStyle: UiStyle = isUiStyle(style) ? style : DEFAULT_UI_STYLE;
+    // Mark user intent immediately so in-flight hydration cannot overwrite it.
+    userSetUiStyleRef.current = true;
+    uiStyleRef.current = nextStyle;
+    setUiStyleState(nextStyle);
+    writeCachedUiStyle(nextStyle);
+    if (isBrowser) {
+      document.documentElement.setAttribute("data-ui-style", nextStyle);
+    }
+
+    uiStyleWriteChainRef.current = uiStyleWriteChainRef.current
+      .catch(() => undefined)
+      .then(() => updateGlobalSettings({ uiStyle: nextStyle }))
+      .catch((error) => {
+        console.warn("[useTheme] Failed to persist uiStyle to global settings", error);
+      });
+  }, []);
+
   const setDashboardFontScalePct = useCallback((scalePct: number) => {
     const normalizedScalePct = normalizeFontScalePct(scalePct);
     userSetDashboardFontScalePctRef.current = true;
@@ -446,6 +530,8 @@ export function useTheme(): UseThemeReturn {
   return {
     themeMode,
     colorTheme,
+    uiStyle,
+    setUiStyle,
     dashboardFontScalePct,
     shadcnCustomColors,
     resolvedThemeMode,
@@ -479,6 +565,12 @@ export function getThemeInitScript(): string {
         if (!validThemes.includes(colorTheme)) {
           colorTheme = '${DEFAULT_COLOR_THEME}';
         }
+        // FNXC:UiStyleAxis 2026-09-15-00:20: a valid cached interface style must paint before the first React element; unknown values fall back to the default style.
+        var uiStyle = localStorage.getItem('${UI_STYLE_STORAGE_KEY}') || '${DEFAULT_UI_STYLE}';
+        var validUiStyles = ${JSON.stringify(VALID_UI_STYLES)};
+        if (!validUiStyles.includes(uiStyle)) {
+          uiStyle = '${DEFAULT_UI_STYLE}';
+        }
         var fontScale = Number(localStorage.getItem('${FONT_SCALE_STORAGE_KEY}') || '${DEFAULT_FONT_SCALE_PCT}');
         if (!Number.isFinite(fontScale)) {
           fontScale = ${DEFAULT_FONT_SCALE_PCT};
@@ -489,6 +581,7 @@ export function getThemeInitScript(): string {
         var effectiveMode = mode === 'system' ? (systemDark ? 'dark' : 'light') : mode;
         document.documentElement.setAttribute('data-theme', effectiveMode);
         document.documentElement.setAttribute('data-color-theme', colorTheme);
+        document.documentElement.setAttribute('data-ui-style', uiStyle);
         document.documentElement.style.fontSize = fontScale + '%';
         var shadcnCustomColorTokens = ${JSON.stringify(SHADCN_CUSTOM_COLOR_TOKENS.map((token) => token.cssVar))};
         for (var cleanupIndex = 0; cleanupIndex < shadcnCustomColorTokens.length; cleanupIndex += 1) {
@@ -539,6 +632,8 @@ export function getThemeInitScript(): string {
         } catch (matchMediaError) {}
         document.documentElement.setAttribute('data-theme', fallbackSystemDark ? 'dark' : 'light');
         document.documentElement.setAttribute('data-color-theme', '${DEFAULT_COLOR_THEME}');
+        // FNXC:UiStyleAxis 2026-09-15-00:20: an inaccessible localStorage must still publish the default style so no rule depends on a missing attribute.
+        document.documentElement.setAttribute('data-ui-style', '${DEFAULT_UI_STYLE}');
         document.documentElement.style.fontSize = '${DEFAULT_FONT_SCALE_PCT}%';
       }
     })();

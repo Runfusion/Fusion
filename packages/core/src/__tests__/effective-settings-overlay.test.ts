@@ -4,6 +4,14 @@ import type { Settings } from "../types.js";
 import { applyWorkflowSettingsOverlay } from "../config/effective-settings-overlay.js";
 
 describe("applyWorkflowSettingsOverlay", () => {
+  it("replaces a previous workflow tier while preserving independently stored project models", () => {
+    const base = { planningProvider: "project", planningModelId: "project-model", selectedWorkflowModelLanes: { planningProvider: "old", planningModelId: "old-model" } };
+    const effective = { selectedWorkflowModelLanes: { planningProvider: "new", planningModelId: "new-model" } };
+    expect(applyWorkflowSettingsOverlay(base, { effective, storedKeys: new Set() })).toEqual({ ...base, ...effective });
+    const cleared = applyWorkflowSettingsOverlay(base, { effective: {}, storedKeys: new Set() });
+    expect(cleared).toEqual({ planningProvider: "project", planningModelId: "project-model" });
+    expect(base.selectedWorkflowModelLanes.planningProvider).toBe("old");
+  });
   it("applies the two-tier workflow settings overlay without mutating base settings", () => {
     const base = {
       executionProvider: "base-executor",

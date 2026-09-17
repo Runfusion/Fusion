@@ -20,7 +20,7 @@ describe("review-gated progress", () => {
 
 /*
 FNXC:TaskCardWorkflowProgress 2026-08-24-19:30:
-A review-column workflow (builtin:coding-ideas-v2) promotes Verification and Documentation &
+A review-column workflow (builtin:coding-ideas) promotes Verification and Documentation &
 Delivery from hidden checklist entries into first-class review-lane gates. Implementation scope
 hides exactly those, so a board card or list row in the review lane must use the FULL pipeline or it
 reports nothing for the stage the operator moved them there to watch.

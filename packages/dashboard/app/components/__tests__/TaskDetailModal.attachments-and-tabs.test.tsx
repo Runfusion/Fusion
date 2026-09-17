@@ -502,7 +502,7 @@ describe("TaskDetailModal", () => {
       const { baseElement: container } = render(
         <TaskDetailModal
           task={makeTask({ prompt: "# Hello\n\nContent", plannerOversightLevel: "off" })}
-          taskDetailChatFirst
+          taskDetailDefaultTab="chat"
           onClose={noop}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
@@ -1053,7 +1053,7 @@ describe("TaskDetailModal", () => {
             prompt: "# Hello\n\nContent",
             log: [{ timestamp: "2026-01-01T00:00:00Z", action: "Expanded feed entry", outcome: "visible" }],
           })}
-          taskDetailChatFirst
+          taskDetailDefaultTab="chat"
           onClose={noop}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
@@ -1129,7 +1129,7 @@ describe("TaskDetailModal", () => {
       const { baseElement: container } = render(
         <TaskDetailModal
           task={makeTask({ prompt: "# Hello\n\nContent", branchContext })}
-          taskDetailChatFirst
+          taskDetailDefaultTab="chat"
           onClose={noop}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
@@ -1164,7 +1164,7 @@ describe("TaskDetailModal", () => {
       const { baseElement: container } = render(
         <TaskDetailModal
           task={makeTask({ prompt: "# Hello\n\nContent", branchContext: undefined })}
-          taskDetailChatFirst
+          taskDetailDefaultTab="chat"
           onClose={noop}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
@@ -1257,7 +1257,8 @@ describe("TaskDetailModal", () => {
       fireEvent.click(getVisibleByTestId("task-chat-expand-toggle"));
       expect(container.querySelector(".task-detail-content")).toHaveClass("task-detail-content--chat-expanded");
 
-      fireEvent.click(screen.getByLabelText("Edit task"));
+      fireEvent.click(screen.getByRole("button", { name: "Actions" }));
+      fireEvent.click(screen.getByTestId("task-detail-header-action-edit"));
       expect(container.querySelector(".task-detail-content--chat-expanded")).toBeNull();
       expect(visibleTestIds("task-chat-expand-toggle")).toHaveLength(0);
     });
@@ -1266,7 +1267,7 @@ describe("TaskDetailModal", () => {
       const { baseElement: container, rerender } = render(
         <TaskDetailModal
           task={makeTask({ prompt: "# Hello\n\nContent" })}
-          taskDetailChatFirst
+          taskDetailDefaultTab="chat"
           onClose={noop}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
@@ -1294,7 +1295,7 @@ describe("TaskDetailModal", () => {
         <TaskDetailModal
           task={makeTask({ prompt: "# Hello\n\nContent" })}
           initialTab="logs"
-          taskDetailChatFirst
+          taskDetailDefaultTab="chat"
           onClose={noop}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
@@ -1344,7 +1345,7 @@ describe("TaskDetailModal", () => {
       const { baseElement: container } = render(
         <TaskDetailModal
           task={makeTask({ prompt: "# Hello\n\nContent" })}
-          taskDetailChatFirst
+          taskDetailDefaultTab="chat"
           onClose={noop}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
@@ -1380,7 +1381,7 @@ describe("TaskDetailModal", () => {
       render(
         <TaskDetailModal
           task={makeTask({ prompt: "# Hello\n\nContent" })}
-          taskDetailChatFirst
+          taskDetailDefaultTab="chat"
           onClose={noop}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
@@ -1418,7 +1419,8 @@ describe("TaskDetailModal", () => {
       fireEvent.click(screen.getByRole("button", { name: "Activity" }));
       expect(container.querySelector(".detail-body--chat")).toBeTruthy();
 
-      fireEvent.click(screen.getByLabelText("Edit task"));
+      fireEvent.click(screen.getByRole("button", { name: "Actions" }));
+      fireEvent.click(screen.getByTestId("task-detail-header-action-edit"));
       expect(container.querySelector(".detail-body--chat")).toBeNull();
       expect(container.querySelector(".detail-section--chat")).toBeNull();
     });
@@ -1499,8 +1501,8 @@ describe("TaskDetailModal", () => {
       expect(container.querySelector(".detail-body--agent-log")).toBeTruthy();
 
       // Now enter edit mode via the pencil button in the header
-      const editBtn = screen.getByLabelText("Edit task");
-      fireEvent.click(editBtn);
+      fireEvent.click(screen.getByRole("button", { name: "Actions" }));
+      fireEvent.click(screen.getByTestId("task-detail-header-action-edit"));
 
       // The detail-body--agent-log class should be removed while editing
       expect(container.querySelector(".detail-body--agent-log")).toBeNull();

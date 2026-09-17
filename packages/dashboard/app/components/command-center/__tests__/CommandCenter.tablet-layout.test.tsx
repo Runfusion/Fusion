@@ -319,7 +319,7 @@ function mockViewportMatchMedia(tier: ViewportTier) {
     value: vi.fn().mockImplementation((query: string) => ({
       matches:
         (tier === "mobile" && query.includes("max-width: 768px")) ||
-        (tier === "tablet" && query.includes("min-width: 769px") && query.includes("max-width: 1024px")) ||
+        (tier === "tablet" && query.includes("min-width: 769px") && query.includes("max-width: 1023.98px")) ||
         (tier === "desktop" && query.includes("min-width: 1025px")),
       media: query,
       onchange: null,

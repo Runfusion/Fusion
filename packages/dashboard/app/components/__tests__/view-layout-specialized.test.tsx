@@ -204,7 +204,7 @@ describe("FN-379 standardized specialized destinations", () => {
   });
 
   it("keeps the Workflows rail mounted with one canonical creation entry, empty and populated", async () => {
-    render(<WorkflowNodeEditor isOpen onClose={vi.fn()} addToast={vi.fn()} presentation="embedded" />);
+    render(<WorkflowNodeEditor isOpen onClose={vi.fn()} addToast={vi.fn()} />);
     await waitFor(() => expect(screen.getByTestId("wf-new-workflow")).toBeInTheDocument());
     expect(screen.getAllByTestId("wf-new-workflow")).toHaveLength(1);
     expect(screen.getByTestId("wf-new-workflow")).toHaveClass("view-action-button--create");
@@ -212,7 +212,7 @@ describe("FN-379 standardized specialized destinations", () => {
     cleanup();
 
     vi.mocked(api.fetchWorkflows).mockResolvedValue([workflow("WF-1", "QA"), workflow("WF-2", "Docs")] as never);
-    render(<WorkflowNodeEditor isOpen onClose={vi.fn()} addToast={vi.fn()} presentation="embedded" />);
+    render(<WorkflowNodeEditor isOpen onClose={vi.fn()} addToast={vi.fn()} />);
     await waitFor(() => expect(screen.getAllByRole("button", { name: "QA" }).length).toBeGreaterThan(0));
     expect(document.querySelector(".wf-editor-sidebar")).toBeInTheDocument();
     expect(screen.getAllByTestId("wf-new-workflow")).toHaveLength(1);
@@ -223,7 +223,7 @@ describe("FN-379 standardized specialized destinations", () => {
 
   it("keeps the Workflows rail mounted while the create form occupies the detail pane", async () => {
     vi.mocked(api.fetchWorkflows).mockResolvedValue([workflow("WF-1", "QA")] as never);
-    render(<WorkflowNodeEditor isOpen onClose={vi.fn()} addToast={vi.fn()} presentation="embedded" />);
+    render(<WorkflowNodeEditor isOpen onClose={vi.fn()} addToast={vi.fn()} />);
     await waitFor(() => expect(screen.getByTestId("wf-new-workflow")).toBeInTheDocument());
 
     fireEvent.click(screen.getByTestId("wf-new-workflow"));

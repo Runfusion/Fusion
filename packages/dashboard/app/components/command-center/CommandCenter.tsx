@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AlertCircle, Gauge } from "lucide-react";
-import type { ActivityAnalytics, ColorTheme, SignalsAnalytics, ThemeMode, TokenAnalytics, ToolAnalytics, TaskVerificationRequest } from "@fusion/core";
+import type { ActivityAnalytics, ColorTheme, SignalsAnalytics, UiStyle, ThemeMode, TokenAnalytics, ToolAnalytics, TaskVerificationRequest } from "@fusion/core";
 import { api, fetchCodebaseMetrics, withProjectId, type CodebaseMetrics } from "../../api/legacy";
 import { formatBytes } from "../../utils/formatBytes";
 import { DateRangePicker, defaultPresets, rangeFromPreset, type DateRange } from "./DateRangePicker";
@@ -145,6 +145,9 @@ const OVERVIEW_TOKEN_REFRESH_MS = 15_000;
 interface CommandCenterProps {
   projectId?: string;
   colorTheme?: ColorTheme;
+  /* FNXC:UiStyleAxis 2026-09-15-00:20: second, independent appearance axis owned by the single useTheme instance in App. */
+  uiStyle?: UiStyle;
+  onUiStyleChange?: (style: UiStyle) => void;
   themeMode?: ThemeMode;
   shadcnCustomColors?: Record<string, string>;
   resolvedThemeMode?: "dark" | "light";
@@ -166,6 +169,8 @@ function OverviewTab({
   range,
   projectId,
   colorTheme = "default",
+  uiStyle,
+  onUiStyleChange,
   themeMode = "system",
   shadcnCustomColors = {},
   resolvedThemeMode = themeMode === "light" ? "light" : "dark",
@@ -381,6 +386,8 @@ function OverviewTab({
     <CommandCenterControls
       projectId={projectId}
       colorTheme={colorTheme}
+      uiStyle={uiStyle}
+      onUiStyleChange={onUiStyleChange}
       themeMode={themeMode}
       shadcnCustomColors={shadcnCustomColors}
       resolvedThemeMode={resolvedThemeMode}
@@ -584,6 +591,8 @@ function PlaceholderTab({ tabId }: { tabId: SubViewId }) {
 export function CommandCenter({
   projectId,
   colorTheme = "default",
+  uiStyle,
+  onUiStyleChange,
   themeMode = "system",
   shadcnCustomColors = {},
   resolvedThemeMode = themeMode === "light" ? "light" : "dark",
@@ -634,6 +643,8 @@ export function CommandCenter({
             range={range}
             projectId={projectId}
             colorTheme={colorTheme}
+            uiStyle={uiStyle}
+            onUiStyleChange={onUiStyleChange}
             themeMode={themeMode}
             shadcnCustomColors={shadcnCustomColors}
             resolvedThemeMode={resolvedThemeMode}

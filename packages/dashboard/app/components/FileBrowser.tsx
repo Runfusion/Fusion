@@ -828,25 +828,34 @@ export function FileBrowser({
                * FNXC:FileBrowser 2026-07-02-00:00:
                * Files — Project needs visible create-file and create-folder targets plus recursive search, while embedded settings pickers keep the compact New menu to avoid misleading picker chrome.
                */}
+              {/**
+               * FNXC:FileBrowser 2026-09-16-15:58:
+               * FN-462: on a phone the two create buttons collapse to icon-only targets so the header stays within three
+               * touch rows and the list keeps real height. The label text is kept in the DOM (visually hidden in CSS, not
+               * `display: none`) and each button carries an explicit `aria-label` from the SAME existing i18n key, so the
+               * compact form never leaves an unnamed button behind.
+               */}
               <button
                 type="button"
                 className="btn btn-sm file-browser-create-button"
                 onClick={() => openCreateDialog("create-file")}
                 disabled={!workspace}
+                aria-label={t("fileBrowser.createNewFile", "Create new file")}
                 title={t("fileBrowser.createNewFile", "Create new file")}
               >
                 <FilePlus2 size={14} />
-                {t("fileBrowser.createNewFile", "Create new file")}
+                <span className="file-browser-create-button__label">{t("fileBrowser.createNewFile", "Create new file")}</span>
               </button>
               <button
                 type="button"
                 className="btn btn-sm file-browser-create-button"
                 onClick={() => openCreateDialog("create-folder")}
                 disabled={!workspace}
+                aria-label={t("fileBrowser.createNewFolder", "Create new folder")}
                 title={t("fileBrowser.createNewFolder", "Create new folder")}
               >
                 <FolderPlus size={14} />
-                {t("fileBrowser.createNewFolder", "Create new folder")}
+                <span className="file-browser-create-button__label">{t("fileBrowser.createNewFolder", "Create new folder")}</span>
               </button>
             </>
           ) : (

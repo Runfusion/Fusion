@@ -18,7 +18,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { mkdir, readFile, writeFile, rename, chmod, unlink } from "node:fs/promises";
 import { existsSync, mkdirSync, realpathSync, renameSync } from "node:fs";
 import type { ConfigChangedBy, ConfigKind, ConfigurationRevision, ConfigurationTarget, GlobalSettings } from "../types.js";
-import { COLOR_THEMES, CONFIG_CHANGED_BY_SYSTEM, DEFAULT_GLOBAL_SETTINGS } from "../types.js";
+import { COLOR_THEMES, CONFIG_CHANGED_BY_SYSTEM, DEFAULT_GLOBAL_SETTINGS, DEFAULT_UI_STYLE, isUiStyle } from "../types.js";
 import { normalizeChatSnippets, sanitizeCliAgentsSettings } from "./settings-schema.js";
 import type { AsyncDataLayer } from "../postgres/data-layer.js";
 import { GLOBAL_CONFIGURATION_OWNER_ID, appendGlobalConfigurationRevision, createConfigurationRevision, getGlobalConfigurationRevision, listGlobalConfigurationRevisions } from "../async-stores/async-configuration-revision-store.js";
@@ -57,6 +57,15 @@ function normalizeGlobalSettings(raw: Record<string, unknown>): GlobalSettings {
   */
   if (typeof raw.colorTheme !== "string" || !validColorThemes.has(raw.colorTheme)) {
     settings.colorTheme = DEFAULT_GLOBAL_SETTINGS.colorTheme;
+  }
+  /*
+  FNXC:UiStyleAxis 2026-09-15-00:20:
+  FN-399's interface style is normalized exactly like colorTheme: an absent, wrongly typed, `null`-reset
+  or unknown persisted value resolves to "classic" on read and is replaced by that default on the next
+  write. Unrelated keys — including unknown historical ones — are preserved untouched by the merge above.
+  */
+  if (!isUiStyle(raw.uiStyle)) {
+    settings.uiStyle = DEFAULT_UI_STYLE;
   }
   return settings;
 }

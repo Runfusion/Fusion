@@ -55,7 +55,7 @@ const titleFreeHostCases = [
   {
     name: "Alpha mobile drawer",
     dialog: true,
-    renderHost: (task: ReturnType<typeof makeTask>) => <TaskDetailModal {...sharedProps} task={task} onClose={noop} alphaMobileDrawer />,
+    renderHost: (task: ReturnType<typeof makeTask>) => <TaskDetailModal {...sharedProps} task={task} onClose={noop} mobileDrawer />,
   },
   {
     name: "task pop-out",
@@ -66,7 +66,6 @@ const titleFreeHostCases = [
         task={task}
         hidden={false}
         onRemoveWindow={noop}
-        persistGeometryKey="task-detail-host-matrix-popout"
       />
     ),
   },
@@ -149,8 +148,15 @@ describe("Task Detail canonical shell", () => {
       expect(header?.querySelector("h1, h2, h3, h4, h5, h6")).toBeNull();
       if (state.title) expect(header).not.toHaveTextContent(state.title);
       fireEvent.click(within(surface!).getByRole("button", { name: "Plan" }));
-      fireEvent.click(within(surface!).getByRole("button", { name: "Edit task" }));
-      expect(within(surface!).getByLabelText("Title")).toHaveValue(state.title ?? "");
+      fireEvent.click(within(surface!).getByRole("button", { name: "Actions" }));
+      fireEvent.click(within(document.body).getByTestId("task-detail-header-action-edit"));
+      /*
+      FNXC:TaskDescriptionEditing 2026-09-14-19:25:
+      FN-391 removed the title field from the edit form, so the host is title-free in edit mode too —
+      a stronger version of what this case always asserted. The description remains the one editable
+      text field, readonly outside manual intake.
+      */
+      expect(within(surface!).queryByLabelText("Title")).toBeNull();
       expect(within(surface!).getByLabelText("Description")).toHaveValue(state.description ?? "");
       expect(header?.querySelector("h1, h2, h3, h4, h5, h6")).toBeNull();
       view.unmount();
@@ -266,7 +272,8 @@ describe("Task Detail canonical shell", () => {
 
   it("keeps the edit footer fixed as the final shell zone", () => {
     const view = render(<TaskDetailModal {...sharedProps} task={makeTask({ column: "todo" })} onClose={noop} />);
-    fireEvent.click(screen.getByRole("button", { name: "Edit task" }));
+    fireEvent.click(screen.getByRole("button", { name: "Actions" }));
+    fireEvent.click(screen.getByTestId("task-detail-header-action-edit"));
     expectCanonicalShell(view.baseElement, true, false);
     expect(screen.getByTestId("task-detail-contextual-footer")).toContainElement(screen.getByRole("button", { name: "Save" }));
   });

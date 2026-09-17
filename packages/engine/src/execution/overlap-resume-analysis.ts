@@ -15,6 +15,15 @@ export interface OverlapDeliveryEvidence {
   repository: string;
   target?: string;
   landedSha?: string;
+  /*
+  FNXC:OverlapWaitSynchronization 2026-09-15-19:20:
+  FN-429. When the integration branch is rewritten (rebase, finalize, push/pull), the delivered commit keeps
+  its patch and Fusion trailers but changes SHA. `reconciledSha` is the proven rewrite of `landedSha`, and
+  `reconciliationProof` names the cumulative evidence that admitted it. `landedSha` is never overwritten:
+  it stays the SHA recorded at landing so the audit trail keeps both identities.
+  */
+  reconciledSha?: string;
+  reconciliationProof?: string;
   summary?: string;
   paths?: OverlapLandedPath[];
   noOp?: boolean;

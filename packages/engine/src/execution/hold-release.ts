@@ -54,6 +54,9 @@ import {
   resolveEffectiveAutoMerge,
   isTaskBlockedOnApproval,
   isPlanReviewSatisfied,
+  /* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 per-card decision gate. */
+  isHumanPlanApprovalEnabled,
+  isHumanPlanApprovalPending,
   type TaskStore,
   type Task,
   type TaskReleaseGateVerdict,
@@ -239,7 +242,8 @@ export async function checkAndRecordUnplannedExecutionBlock(
 
 export interface UnplannedForExecutionEvaluation {
   unplanned: boolean;
-  reason: "plan-review-pending" | "planning-status" | "needs-replan" | "duplicate-prompt" | "seed-prompt" | null;
+  /* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408's per-card decision hold is its OWN reason, distinct from the revision-cap and generic approval parks. */
+  reason: "plan-review-pending" | "human-plan-approval-pending" | "planning-status" | "needs-replan" | "duplicate-prompt" | "seed-prompt" | null;
   readyAtCapacityBoundary: boolean;
   planReview?: NonNullable<TaskReleaseGateVerdict["planReview"]>;
 }
@@ -257,11 +261,36 @@ export async function evaluateUnplannedForExecution(store: TaskStore, task: Task
   const satisfied = task.workflowStepResults?.some(isPlanReviewSatisfied) === true;
   const planReview = preReleaseReview ? { nodeId: preReleaseReview.id, column: preReleaseReview.column!, defaultOn, enabled, appliesToColumn, satisfied } : undefined;
   let readyAtCapacityBoundary = false;
-  if (!isFastExecutionMode(task) && preReleaseReview && enabled && appliesToColumn && !satisfied) {
+  /*
+  FNXC:HumanPlanApproval 2026-09-15-06:24:
+  FN-408 — the per-card human requirement has priority over Fast and over project auto-approve-all.
+  Fast is planless by design and normally short-circuits the Plan Review wait below, so an armed card
+  must keep that wait: its mandated order is plan -> Plan Review -> human decision -> execution.
+
+  FNXC:HumanPlanApproval 2026-09-15-07:30:
+  Since the remediation, `isFastExecutionMode` already reports an armed card as non-fast (Fast is
+  neutralized at creation/update AND in that shared predicate, so triage plans the card and the
+  graph does not bypass plan review). The explicit `|| humanApprovalArmed` stays as a local, readable
+  statement of the invariant — this gate must never be the place that lets an armed card through.
+  */
+  const humanApprovalArmed = isHumanPlanApprovalEnabled(task);
+  if ((!isFastExecutionMode(task) || humanApprovalArmed) && preReleaseReview && enabled && appliesToColumn && !satisfied) {
     if (typeof store.listWorkflowWorkItemsForTask !== "function") return { unplanned: true, reason: "plan-review-pending", readyAtCapacityBoundary, planReview };
     const active = (await store.listWorkflowWorkItemsForTask(task.id)).filter((item) => ACTIVE_WORKFLOW_WORK_ITEM_STATES.includes(item.state));
     readyAtCapacityBoundary = active.some((item) => item.waitReason === "capacity" && item.sourceColumn === task.column);
     if (!readyAtCapacityBoundary) return { unplanned: true, reason: "plan-review-pending", readyAtCapacityBoundary, planReview };
+  }
+  /*
+  FNXC:HumanPlanApproval 2026-09-15-06:24:
+  FN-408 — THE convergence point. Every release surface (background hold release, explicit promote,
+  expedite, direct move, event release, restart recovery) reaches execution through this evaluation,
+  so the per-card decision is enforced once here instead of in each caller. It is deliberately NOT
+  keyed on `task.status`: a stop between persisting the satisfied Plan Review result and publishing
+  `awaiting-approval` would otherwise leave an open execution window. Planning and review columns are
+  unaffected because this evaluation only gates release into a capacity-bearing column.
+  */
+  if (humanApprovalArmed && isHumanPlanApprovalPending(task)) {
+    return { unplanned: true, reason: "human-plan-approval-pending", readyAtCapacityBoundary: false, planReview };
   }
   /*
   FNXC:FastLane 2026-08-29-04:23:

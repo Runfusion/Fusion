@@ -136,29 +136,33 @@ describe("ChatView conversation references", () => {
     expect(writeText).not.toHaveBeenCalledWith("Untitled");
   });
 
-  it("keeps copy available for archived conversation rows", async () => {
-    const archived = { ...referencedSession, status: "archived" as const };
+  /*
+  FNXC:ChatArchived 2026-09-16-15:50:
+  FN-465 retire la liste archivée du Chat : ce cas passait par la bascule « Archived » pour prouver
+  que la copie d'identifiant reste disponible sur une ligne non sélectionnée. L'intention est
+  conservée sur une conversation listée mais non ouverte, seul état qui subsiste.
+  */
+  it("keeps copy available for a listed conversation that is not the open one", async () => {
+    const other = { ...referencedSession, id: "chat-otherrow", title: "Other row" };
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
       value: { writeText },
     });
     setupMockChat({
-      sessions: [],
-      filteredSessions: [],
+      sessions: [other],
+      filteredSessions: [other],
       activeSession: null,
-      archivedSessions: [archived],
     });
     await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
-    await userEvent.click(screen.getByTestId("chat-archived-toggle"));
-    fireEvent.contextMenu(await screen.findByTestId(`chat-archived-session-${archived.id}`), {
+    fireEvent.contextMenu(await screen.findByTestId(`chat-session-${other.id}`), {
       clientX: 20,
       clientY: 20,
     });
     await userEvent.click(await screen.findByTestId("chat-context-copy-id"));
 
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith(archived.id));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(other.id));
   });
 
   it("uses the execCommand fallback when navigator.clipboard is unavailable", async () => {
@@ -197,7 +201,7 @@ describe("ChatView conversation references", () => {
     for (const testId of [
       "chat-context-pin",
       "chat-context-rename",
-      "chat-context-archive",
+      // FN-465 removed chat-context-archive from this inventory.
       "chat-context-delete",
     ]) {
       expect(screen.getByTestId(testId)).toBeInTheDocument();

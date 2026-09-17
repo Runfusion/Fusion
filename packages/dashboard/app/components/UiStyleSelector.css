@@ -1,0 +1,123 @@
+/*
+FNXC:UiStyleAxis 2026-09-15-00:20:
+The interface-style selector is token-only: every dimension comes from the shared design tokens or the
+FN-399 catalogue, and every colour comes from the active theme, so the control itself obeys both axes it
+configures. The per-option preview scopes `data-ui-style` to its own subtree, which is why its miniature
+card, pill and control visibly differ between the two options while the rest of the page is untouched.
+*/
+
+.ui-style-selector {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-sm);
+}
+
+.ui-style-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-block-size: var(--touch-target-min-size);
+  padding: var(--space-sm);
+  text-align: start;
+  background: var(--surface);
+  color: var(--text);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.ui-style-option:hover {
+  background: color-mix(in srgb, var(--accent) var(--ui-hover-mix), var(--surface));
+}
+
+.ui-style-option:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.ui-style-option--selected {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) var(--ui-active-mix), var(--surface));
+}
+
+.ui-style-option__text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3xs);
+  min-inline-size: 0;
+}
+
+.ui-style-option__label {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+}
+
+.ui-style-option__description {
+  font-size: var(--font-size-2xs);
+  color: var(--text-muted);
+}
+
+/* ── Local shape preview ────────────────────────────────────────────────── */
+
+.ui-style-preview {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: var(--ui-density-2xs);
+  inline-size: calc(var(--space-2xl) * 1.5);
+  padding: var(--ui-density-2xs);
+  background: var(--bg);
+  border: var(--ui-border-width) solid var(--border);
+  border-radius: var(--ui-radius-md);
+}
+
+.ui-style-preview__card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-density-3xs);
+  padding: var(--ui-density-2xs);
+  background: var(--card);
+  border: var(--ui-border-width) solid var(--border);
+  border-radius: var(--ui-radius-sm);
+  box-shadow: var(--ui-shadow-sm-geometry) color-mix(in srgb, var(--text) var(--ui-shadow-opacity), transparent);
+}
+
+.ui-style-preview__line {
+  block-size: var(--ui-density-3xs);
+  inline-size: 70%;
+  background: color-mix(in srgb, var(--text-muted) 45%, transparent);
+  border-radius: var(--ui-radius-pill);
+}
+
+.ui-style-preview__line--title {
+  inline-size: 100%;
+  background: color-mix(in srgb, var(--text) 55%, transparent);
+}
+
+.ui-style-preview__row {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-density-2xs);
+}
+
+.ui-style-preview__pill {
+  block-size: var(--ui-density-sm);
+  inline-size: 45%;
+  background: color-mix(in srgb, var(--accent) 55%, transparent);
+  border-radius: var(--ui-radius-pill);
+}
+
+.ui-style-preview__control {
+  block-size: var(--ui-density-sm);
+  flex: 1 1 auto;
+  background: var(--surface-secondary);
+  border: var(--ui-border-width) solid var(--border);
+  border-radius: var(--ui-radius-sm);
+}
+
+@media (max-width: 768px) {
+  .ui-style-selector {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

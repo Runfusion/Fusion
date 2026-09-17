@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { Settings, LayoutGrid, List, Search, Activity, MoreHorizontal, Clock, Folder, History, GitBranch, Monitor, Workflow, Bot, Target, Grid3X3, Mail, MessageSquare, Check, Zap, Sparkles, Brain, Lock, Gauge, Lightbulb, PanelsTopLeft, ChevronDown, ChevronRight, PanelRight, Star } from "lucide-react";
+import { Settings, LayoutGrid, List, Search, Activity, MoreHorizontal, Clock, Folder, History, GitBranch, Monitor, Workflow, Bot, Target, Grid3X3, Mail, MessageSquare, Check, Zap, Sparkles, Brain, Gauge, Lightbulb, PanelsTopLeft, ChevronDown, ChevronRight, PanelRight, Star, StickyNote } from "lucide-react";
 import "./Header.css";
 // ProjectSelector styles used by the imported standalone component.
 import "./ProjectSelector.css";
@@ -20,6 +20,7 @@ import { getPluginNavIcon } from "./pluginNavIcon";
 import { TaskSearchInput } from "./TaskSearchInput";
 import type { ShellHostContext } from "../shell-host";
 import { ViewActionButton } from "./ViewActionButton";
+import { useDashboardWindowLandmark } from "../context/DashboardWindowManagerContext";
 export { resolveReportContextRefs } from "../utils/reportContextRefs";
 
 export { useViewportMode };
@@ -56,6 +57,21 @@ export interface HeaderProps {
   onOpenGitHubImport?: () => void;
   onOpenUsage?: (anchorRect?: DOMRect | null) => void;
   onOpenActivityLog?: () => void;
+  /*
+  FNXC:ToolSurfaces 2026-09-16-23:06:
+  FN-437 supersedes FN-426's "every breakpoint" rule for these two triggers: on PHONE the footer navigation menu is the
+  single owner of Activity (`mobile-more-item-activity`) and Notes (`mobile-more-item-notes`), so the Header renders
+  neither trigger there and the narrow header stops duplicating the footer. The FN-426 guarantee that neither tool
+  depends on the optional right dock is still upheld — by the Header on tablet/desktop and by the footer menu on
+  phone. The Header owns only the triggers and their anchor rect; App owns the single open panel, which is what keeps
+  Activity, Notes, and the footer Chat list mutually exclusive.
+  */
+  onOpenActivityPanel?: (anchorRect: DOMRect | null) => void;
+  activityPanelOpen?: boolean;
+  activityPanelId?: string;
+  onOpenNotesPanel?: (anchorRect: DOMRect | null) => void;
+  notesPanelOpen?: boolean;
+  notesPanelId?: string;
   /** Opens the mailbox view */
   onOpenMailbox?: () => void;
   /** Unread message count for badge display */
@@ -83,7 +99,7 @@ export interface HeaderProps {
   searchQuery?: string;
   onSearchChange?: (query: string) => void;
   taskSearchTasks?: readonly Pick<Task, "id" | "title">[];
-  /** Alpha desktop search navigates to Task Detail without changing board filters. */
+  /** Desktop inline search navigates to Task Detail without changing board filters. */
   onSelectSearchTask?: (task: Pick<Task, "id" | "title">) => void;
   /** Multi-project props */
   projects?: ProjectInfo[];
@@ -125,6 +141,12 @@ export function Header({
   onOpenGitHubImport,
   onOpenUsage,
   onOpenActivityLog,
+  onOpenActivityPanel,
+  activityPanelOpen = false,
+  activityPanelId,
+  onOpenNotesPanel,
+  notesPanelOpen = false,
+  notesPanelId,
   onOpenMailbox,
   mailboxUnreadCount = 0,
   mailboxPendingApprovalCount = 0,
@@ -167,7 +189,16 @@ export function Header({
   const isMobile = mode === "mobile";
   const isTablet = mode === "tablet";
   const isCompact = isMobile || isTablet;
-  const hideFullNav = isMobile && mobileNavEnabled;
+  /*
+  FNXC:Navigation 2026-09-16-19:44:
+  FN-468 : sous 1024 px — téléphone ET tablette — la pill flottante `MobileNavBar` est l'unique propriétaire de
+  la navigation primaire. Le Header doit donc retirer sa navigation de vues sur toute la bande compacte, pas
+  seulement sur téléphone : laisser les raccourcis de vues du Header pendant que la pill est montée recréerait
+  exactement les DEUX surfaces primaires simultanées que FN-419 a supprimées. `mobileNavEnabled` est alimenté par
+  le prédicat de shell partagé `isMobileShellMode`, et `hideHeaderViewNav` reste faux sur tablette (la colonne de
+  gauche n'y existe plus), si bien qu'un seul `#header-workflow-slot` est rendu.
+  */
+  const hideFullNav = isCompact && mobileNavEnabled;
   /*
   FNXC:Navigation 2026-06-19-00:00:
   When experimental left sidebar navigation is active on tablet/desktop, Header must suppress its view-toggle and More-views trigger so there is one canonical non-mobile navigation surface and no orphaned chevron remains.
@@ -177,16 +208,26 @@ export function Header({
 
   FNXC:WorkflowControls 2026-06-22-18:00:
   Mobile also renders the workflow portal in the top header next to the logo/project switch. The board/list workflow selector stays single-sourced through this slot, while CSS hides the "Workflow" label and compacts the trigger so it fits the mobile header.
+
+  FNXC:WorkflowControls 2026-09-15-23:32:
+  FN-439 makes Board and List the only pages that own a visible workflow selector: the portal node is produced only
+  for those two views, so Graph, Planning, and Missions no longer show a dropdown on a page that lists no tasks.
+  This does NOT break them — `GraphWorkflowSwitcherSlot`/`HeaderWorkflowSwitcherSlot` publish
+  `onWorkflowSelectionChange` from an effect that runs BEFORE their slot-absent early return, so graph filtering and
+  the Planning/Missions creation workflow keep using the persisted selection. FN-405's "one slot, one owner"
+  guarantee is preserved because the node stays single-sourced; the view condition only narrows where it exists.
   */
   const hideHeaderViewNav = leftSidebarNavActive && !isMobile;
+  /* FN-439: single explicit derivation shared by both producers of `#header-workflow-slot`. */
+  const workflowSlotVisible = view === "board" || view === "list";
   /*
   FNXC:Navigation 2026-06-21-23:40:
   The right dock is persistent and owns its own collapse control, so Header must not render a duplicate right-dock toggle or repurpose the More views overflow trigger on tablet/desktop.
   */
   const [isMobileSearchOpen, setIsMobileSearchOpen] = useState(false);
-  const [isAlphaSearchOpen, setIsAlphaSearchOpen] = useState(false);
-  const [alphaSearchQuery, setAlphaSearchQuery] = useState("");
-  const alphaSearchTriggerRef = useRef<HTMLButtonElement>(null);
+  const [isInlineSearchOpen, setIsInlineSearchOpen] = useState(false);
+  const [inlineSearchQuery, setInlineSearchQuery] = useState("");
+  const inlineSearchTriggerRef = useRef<HTMLButtonElement>(null);
   const [isNonMobileSearchOpen, setIsNonMobileSearchOpen] = useState(false);
   // Track when user has explicitly closed the search (used for toggle visibility)
   const [isNonMobileSearchExplicitlyClosed, setIsNonMobileSearchExplicitlyClosed] = useState(false);
@@ -296,21 +337,21 @@ export function Header({
   const shouldShowMobileSearch = isMobileSearchOpen || searchQuery.length > 0;
 
   const canShowNonMobileSearch = (view === "board" || view === "list") && !isMobile && onSearchChange;
-  const showAlphaDesktopSearch = Boolean(mode === "desktop" && canShowNonMobileSearch);
-  const closeAlphaSearch = useCallback(() => {
-    setIsAlphaSearchOpen(false);
-    setAlphaSearchQuery("");
-    window.setTimeout(() => alphaSearchTriggerRef.current?.focus(), 0);
+  const showDesktopInlineSearch = Boolean(mode === "desktop" && canShowNonMobileSearch);
+  const closeInlineSearch = useCallback(() => {
+    setIsInlineSearchOpen(false);
+    setInlineSearchQuery("");
+    window.setTimeout(() => inlineSearchTriggerRef.current?.focus(), 0);
   }, []);
 
   useEffect(() => {
-    if (!isAlphaSearchOpen) return;
+    if (!isInlineSearchOpen) return;
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") closeAlphaSearch();
+      if (event.key === "Escape") closeInlineSearch();
     };
     document.addEventListener("keydown", closeOnEscape, true);
     return () => document.removeEventListener("keydown", closeOnEscape, true);
-  }, [closeAlphaSearch, isAlphaSearchOpen]);
+  }, [closeInlineSearch, isInlineSearchOpen]);
   // Non-mobile search: toggled open OR has active query, but not if explicitly closed.
   const shouldShowNonMobileSearch = (isNonMobileSearchOpen || searchQuery.length > 0) && !isNonMobileSearchExplicitlyClosed;
   /*
@@ -444,9 +485,10 @@ export function Header({
   }, [onSearchChange]);
 
   const isDesktopShell = shellHost.kind === "desktop-shell";
+  const dashboardWindowHeaderRef = useDashboardWindowLandmark("header");
 
   return (
-    <div className="header-wrapper">
+    <div className="header-wrapper" ref={dashboardWindowHeaderRef}>
       <header className="header" data-shell-kind={shellHost.kind}>
         <div className="header-left">
           <div className="header-brand">
@@ -537,7 +579,7 @@ export function Header({
           </div>
         )}
 
-        {hideFullNav && (
+        {hideFullNav && workflowSlotVisible && (
           <div
             id="header-workflow-slot"
             className="header-workflow-slot header-workflow-slot--mobile"
@@ -666,7 +708,7 @@ export function Header({
           </button>
         )}
 
-        {hideHeaderViewNav && (
+        {hideHeaderViewNav && workflowSlotVisible && (
           <div
             id="header-workflow-slot"
             className="header-workflow-slot"
@@ -678,42 +720,42 @@ export function Header({
          * FNXC:Header 2026-06-21-00:00:
          * Desktop and tablet header search must render after the workflow portal slot so a populated WorkflowSwitcher appears left of the search icon while preserving the mobile search trigger's existing position and behavior.
          *
-         * FNXC:AlphaTaskSearch 2026-09-12-21:52:
-         * On Alpha desktop Board and List, Search alternates in this exact action slot between the magnifier and the shared inline combobox. Its transient query and task-detail selection remain isolated from the Board/List filter; close, Escape, and selection clear the field and restore focus to the recreated trigger without any modal or backdrop.
+         * FNXC:HeaderTaskSearch 2026-09-12-21:52:
+         * On desktop Board and List, Search alternates in this exact action slot between the magnifier and the shared inline combobox. Its transient query and task-detail selection remain isolated from the Board/List filter; close, Escape, and selection clear the field and restore focus to the recreated trigger without any modal or backdrop.
          */}
-        {showAlphaDesktopSearch && onSearchChange && (
-          isAlphaSearchOpen ? (
+        {showDesktopInlineSearch && onSearchChange && (
+          isInlineSearchOpen ? (
             <TaskSearchInput
-              query={alphaSearchQuery}
+              query={inlineSearchQuery}
               tasks={taskSearchTasks}
-              onSearchChange={setAlphaSearchQuery}
+              onSearchChange={setInlineSearchQuery}
               onSelectTask={(task) => {
                 const selected = taskSearchTasks?.find((candidate) => candidate.id.toLocaleLowerCase() === task.id.toLocaleLowerCase());
                 if (selected) onSelectSearchTask?.(selected);
-                closeAlphaSearch();
+                closeInlineSearch();
               }}
-              onClose={closeAlphaSearch}
+              onClose={closeInlineSearch}
               autoFocus
-              className="header-search--alpha-inline"
-              testId="alpha-desktop-header-search-input"
+              className="header-search--inline"
+              testId="desktop-header-search-input"
             />
           ) : (
             <button
-              ref={alphaSearchTriggerRef}
+              ref={inlineSearchTriggerRef}
               type="button"
               className="btn-icon"
-              onClick={() => setIsAlphaSearchOpen(true)}
+              onClick={() => setIsInlineSearchOpen(true)}
               title={t("header.openSearch", "Open search")}
               aria-label={t("header.openSearch", "Open search")}
               aria-expanded={false}
-              data-testid="alpha-desktop-header-search-btn"
+              data-testid="desktop-inline-header-search-btn"
             >
               <Search size={16} />
             </button>
           )
         )}
 
-        {canShowNonMobileSearchToggle && !showAlphaDesktopSearch && (
+        {canShowNonMobileSearchToggle && !showDesktopInlineSearch && (
           <button
             className="btn-icon"
             onClick={handleNonMobileSearchToggle}
@@ -738,21 +780,24 @@ export function Header({
               <LayoutGrid size={16} />
             </button>
             {/*
-            FNXC:ListInRightDock 2026-09-14-04:42:
-            FN-382: on a phone the toggle still switches to the List page; on tablet and desktop List lives in the
-            right dock, so the toggle would either duplicate that tool or navigate away from the current destination.
+            FNXC:ToolSurfaces 2026-09-16-23:06:
+            FN-426 restored List beside Board in the legacy view-toggle group because FN-382 had made List a right-dock
+            tool, which was the last reason the dock was structurally required to browse tasks as a list. FN-437 keeps
+            that guarantee on tablet/desktop only: on phone the footer navigation menu owns List
+            (`mobile-more-item-list`, rendered unconditionally), so this producer — and the standalone one in
+            `header-actions` below — are both suppressed when `isMobile`, leaving exactly one owner per host and no
+            duplicate between header and footer.
             */}
-            {isMobile ? (
-              <button
-                className={`view-toggle-btn${view === "list" ? " active" : ""}`}
-                onClick={() => onChangeView("list")}
-                title={t("header.listView", "List view")}
-                aria-label={t("header.listView", "List view")}
-                aria-pressed={view === "list"}
-              >
-                <List size={16} />
-              </button>
-            ) : null}
+            {!isMobile && <button
+              className={`view-toggle-btn${view === "list" ? " active" : ""}`}
+              onClick={() => onChangeView(view === "list" ? "board" : "list")}
+              title={t("header.listView", "List view")}
+              aria-label={t("header.listView", "List view")}
+              aria-pressed={view === "list"}
+              data-testid="header-list-view-btn"
+            >
+              <List size={16} />
+            </button>}
             {showAgentsTab && (
               <button
                 className={`view-toggle-btn${view === "agents" ? " active" : ""}`}
@@ -967,18 +1012,13 @@ export function Header({
                         <span>{t("header.memoryView", "Memory")}</span>
                       </button>
                     )}
-                    <button
-                      className={`view-toggle-overflow-item${view === "secrets" ? " active" : ""}`}
-                      onClick={() => {
-                        onChangeView("secrets");
-                        setIsViewOverflowOpen(false);
-                      }}
-                      role="menuitem"
-                      data-testid="view-overflow-secrets"
-                    >
-                      <Lock size={14} />
-                      <span>{t("header.secretsView", "Secrets")}</span>
-                    </button>
+                    {/*
+                    FNXC:ToolSurfaces 2026-09-15-16:04:
+                    FN-426 removes the standalone Secrets entry: secrets live in Settings → project Secrets, beside the
+                    other project configuration they belong to. The `secrets` id remains RECOGNIZED — an old link or a
+                    persisted view still opens that Settings section — it is simply no longer OFFERED as a destination
+                    of its own here.
+                    */}
                     {experimentalFeatures?.devServerView && (
                       <button
                         className={`view-toggle-overflow-item${view === "dev-server" || view === "devserver" ? " active" : ""}`}
@@ -1068,6 +1108,55 @@ export function Header({
 
         {/* Plugin UI slot for header actions */}
         <PluginSlot slotId="header-action" projectId={projectId} />
+
+        {/*
+        FNXC:ToolSurfaces 2026-09-15-23:32:
+        FN-426 added a standalone Board/List toggle here because FN-382 had removed List from the wide navigation, so a
+        suppressed view-toggle group left the destination unreachable. FN-439 restores List to the wide navigation
+        itself — the footer **More** menu (`desktop-nav-list`) under the footer placement and `sidebar-nav-list` under
+        the sidebar placement — so this header producer is deleted rather than narrowed: keeping it would give
+        tablet/desktop two owners for the same destination. FN-437 had already removed the phone producer, where the
+        bottom-bar menu (`mobile-more-item-list`) is the single owner. Net contract: exactly one List producer per host,
+        and no host relies on the optional right dock.
+        */}
+
+        {/*
+        FNXC:ToolSurfaces 2026-09-16-23:06:
+        FN-426 mounted Activity and Notes here on every breakpoint so neither had the optional right dock as its only
+        host. FN-437 narrows that to tablet/desktop: on phone the footer navigation menu already owns both destinations
+        (`mobile-more-item-activity` opens the full-screen activity log, `mobile-more-item-notes` opens the Notes view
+        in the main-content drawer), so a header trigger here was a second producer crowding a narrow header. The
+        dock-independence guarantee is unchanged — the footer menu takes over on phone. Usage stays an independent
+        surface with its own trigger below; App guarantees only one of these panels is open at a time.
+        */}
+        {!isMobile && onOpenActivityPanel && (
+          <button
+            className={`btn-icon${activityPanelOpen ? " btn-icon--active" : ""}`}
+            onClick={(event) => onOpenActivityPanel(event.currentTarget.getBoundingClientRect())}
+            title={t("nav.activityLog", "Activity Log")}
+            aria-label={t("nav.activityLog", "Activity Log")}
+            aria-haspopup="dialog"
+            aria-expanded={activityPanelOpen}
+            aria-controls={activityPanelOpen ? activityPanelId : undefined}
+            data-testid="header-activity-panel-btn"
+          >
+            <History size={16} />
+          </button>
+        )}
+        {!isMobile && onOpenNotesPanel && (
+          <button
+            className={`btn-icon${notesPanelOpen ? " btn-icon--active" : ""}`}
+            onClick={(event) => onOpenNotesPanel(event.currentTarget.getBoundingClientRect())}
+            title={t("nav.notes", "Notes")}
+            aria-label={t("nav.notes", "Notes")}
+            aria-haspopup="dialog"
+            aria-expanded={notesPanelOpen}
+            aria-controls={notesPanelOpen ? notesPanelId : undefined}
+            data-testid="header-notes-panel-btn"
+          >
+            <StickyNote size={16} />
+          </button>
+        )}
 
         {/*
         FNXC:Navigation 2026-06-22-00:50:
@@ -1250,10 +1339,17 @@ export function Header({
         FNXC:MobileTaskNavigation 2026-08-20-05:47:
         Issue #2226 moves mobile Board/List navigation to the footer so Header can expose App's single full-task modal entry point from every active project view. The Planning column keeps its separate quick-entry composer.
 
-        FNXC:StandardizedViewActions 2026-09-13-22:40:
-        The App-owned create-task control keeps its established placement — tablet/mobile only — and merely adopts the shared action primitive so its shape matches every other creation entry. Desktop creation stays with its dedicated surfaces and shortcuts, so standardizing the button must not reintroduce a retired desktop Header duplicate. List is excluded at every viewport because its own header preserves the selected-workflow argument.
+        FNXC:StandardizedViewActions 2026-09-16-23:06:
+        FN-437 reinstates the App-owned create-task control on DESKTOP, for every view including List: creating a task
+        previously depended on the current screen (Board, List, sidebar, keyboard shortcut), so there was no way to
+        create one from an arbitrary view. The Header is the one surface present on every screen, which makes it the
+        correct owner of that view-independent entry. It still adopts the shared `ViewActionButton` primitive so its
+        shape matches every other creation entry, and it keeps its established compact behavior below desktop, where
+        List is excluded because its own header preserves the selected-workflow argument. On desktop that List header
+        button is deliberately KEPT and coexists with this one: they live in two distinct bars (`header-actions` versus
+        the view's own header), and the workflow-aware argument is the reason the List one is not replaceable.
         */}
-        {mode !== "desktop" && projectId && onNewTask && view !== "list" ? (
+        {projectId && onNewTask && (mode === "desktop" || view !== "list") ? (
           <ViewActionButton
             kind="create"
             onClick={onNewTask}
@@ -1266,7 +1362,7 @@ export function Header({
     </header>
 
     {/* Desktop/Tablet Search - floating below header, in board or list view */}
-    {canShowNonMobileSearch && shouldShowNonMobileSearch && !showAlphaDesktopSearch && (
+    {canShowNonMobileSearch && shouldShowNonMobileSearch && !showDesktopInlineSearch && (
       <div className="header-floating-search">
         <TaskSearchInput
           query={searchQuery}

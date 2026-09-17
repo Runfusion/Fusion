@@ -1,0 +1,15 @@
+/*
+FNXC:ToolSurfaces 2026-09-15-16:04:
+FN-426: page-level framing only. The Git body keeps every one of its own rules from GitManagerModal.css; this file
+exists so the embedded body fills the bounded content zone instead of the dock-width column it was authored against.
+*/
+.git-manager-view .git-manager-embedded,
+.files-view .dock-files-view {
+  block-size: 100%;
+  min-block-size: 0;
+}
+
+.git-manager-view .gm-modal--embedded {
+  block-size: 100%;
+  min-block-size: 0;
+}

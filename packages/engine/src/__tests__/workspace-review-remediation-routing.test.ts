@@ -97,7 +97,7 @@ function harness(options: {
       task.repositoryScope = { ...task.repositoryScope, reviewRemediation: remediation };
       return { task, updated: true };
     }),
-    getTaskWorkflowSelectionAsync: vi.fn(async () => ({ workflowId: "builtin:coding-ideas-v2" })),
+    getTaskWorkflowSelectionAsync: vi.fn(async () => ({ workflowId: "builtin:coding-ideas" })),
     getWorkflowDefinition: vi.fn(async (id: string) => {
       const workflow = getBuiltinWorkflow(id);
       return workflow ? { ir: workflow.ir } : undefined;

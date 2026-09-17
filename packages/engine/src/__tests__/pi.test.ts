@@ -2679,3 +2679,91 @@ describe("isRetryableModelSelectionError", () => {
     expect(isRetryableModelSelectionError("syntax error near unexpected token")).toBe(false);
   });
 });
+
+/*
+FNXC:AssistantTextCapture 2026-09-15-21:05:
+FN-431: the duplicated response prefix was only observable through the PRODUCTION subscription wiring,
+so these cases drive the real createFnAgent subscriber (initial session, then the swapped-in session
+wired by wireFallbackHooks) with the shared-mutable-snapshot fixture instead of a hand-written onText.
+*/
+describe("createFnAgent assistant text capture wiring", () => {
+  const scriptedSession = (overrides: Record<string, unknown> = {}) => {
+    let handler: ((event: unknown) => void) | undefined;
+    const session = {
+      model: { provider: "test", id: "primary-model" },
+      prompt: vi.fn(),
+      dispose: vi.fn(),
+      setThinkingLevel: vi.fn(),
+      subscribe: vi.fn((fn: (event: unknown) => void) => { handler = fn; }),
+      sessionFile: undefined,
+      ...overrides,
+    } as unknown as AgentSession;
+    return { session, emit: (event: unknown) => handler?.(event) };
+  };
+
+  it("delivers a shared-snapshot response once through the initial subscription", async () => {
+    const { createAssistantStreamProducer, queueReproStream, REPRO_RESPONSE, REPRO_SUFFIX } =
+      await import("./fixtures/assistant-stream-events.js");
+    const createAgentSessionMock = vi.mocked(createAgentSession);
+    const primary = scriptedSession();
+    createAgentSessionMock.mockReset();
+    createAgentSessionMock.mockResolvedValueOnce({ session: primary.session } as any);
+
+    const text: string[] = [];
+    await createFnAgent({
+      cwd: "/test/project",
+      systemPrompt: "Test capture wiring",
+      defaultProvider: "test",
+      defaultModelId: "primary-model",
+      onText: (delta: string) => text.push(delta),
+    } as AgentOptions);
+
+    const producer = createAssistantStreamProducer();
+    const index = queueReproStream(producer);
+    producer.drain(primary.emit);
+    producer.delta("text", index, REPRO_SUFFIX);
+    producer.endBlock("text", index);
+    producer.messageEnd();
+    producer.drain(primary.emit);
+
+    expect(text.join("")).toBe(REPRO_RESPONSE);
+  });
+
+  it("delivers the response once through the session installed by the model-swap path", async () => {
+    const { createAssistantStreamProducer, queueReproStream, REPRO_RESPONSE, REPRO_SUFFIX } =
+      await import("./fixtures/assistant-stream-events.js");
+    const createAgentSessionMock = vi.mocked(createAgentSession);
+    const primary = scriptedSession({ prompt: vi.fn().mockRejectedValue(new Error("429 Too Many Requests")) });
+    const fallback = scriptedSession({
+      model: { provider: "test", id: "fallback-model" },
+      prompt: vi.fn().mockResolvedValue(undefined),
+    });
+    createAgentSessionMock.mockReset();
+    createAgentSessionMock
+      .mockResolvedValueOnce({ session: primary.session } as any)
+      .mockResolvedValueOnce({ session: fallback.session } as any);
+
+    const text: string[] = [];
+    const { session } = await createFnAgent({
+      cwd: "/test/project",
+      systemPrompt: "Test capture wiring after swap",
+      defaultProvider: "test",
+      defaultModelId: "primary-model",
+      fallbackProvider: "test",
+      fallbackModelId: "fallback-model",
+      onText: (delta: string) => text.push(delta),
+    } as AgentOptions);
+
+    await expect((session as any).promptWithFallback("Run task")).resolves.toBeUndefined();
+
+    const producer = createAssistantStreamProducer();
+    const index = queueReproStream(producer);
+    producer.drain(fallback.emit);
+    producer.delta("text", index, REPRO_SUFFIX);
+    producer.endBlock("text", index);
+    producer.messageEnd();
+    producer.drain(fallback.emit);
+
+    expect(text.join("")).toBe(REPRO_RESPONSE);
+  });
+});

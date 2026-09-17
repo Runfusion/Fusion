@@ -321,7 +321,7 @@ const EXPECTATIONS: BuiltinExpectation[] = [
   red on main while every other test in this file passed.
   */
   {
-    id: "builtin:coding-ideas-v2",
+    id: "builtin:coding-ideas",
     entryColumn: "ideas",
     trail: [
       ["ideas", "todo", "graph"],
@@ -636,7 +636,7 @@ describe("failure parks the card in place (KTD-1)", () => {
     // FNXC:PlanReviewStep 2026-07-26-17:10: `plan` runs in the planning lane, so a failed plan parks
     // there — the card never reached implementation.
     { id: "builtin:coding", failNodeId: "plan", expectedColumn: "todo" },
-    { id: "builtin:coding-ideas-v2", failNodeId: "plan", expectedColumn: "todo" },
+    { id: "builtin:coding-ideas", failNodeId: "plan", expectedColumn: "todo" },
     { id: "builtin:marketing", failNodeId: "draft", expectedColumn: "drafting" },
     { id: "builtin:lead-generation", failNodeId: "enrich-lead", expectedColumn: "enrichment" },
     { id: "builtin:pr-workflow", failNodeId: "pr-create", expectedColumn: "in-progress" },
@@ -707,13 +707,13 @@ describe("no-merge-region built-ins complete without merge-blocker interference 
 
 describe("plan-in-place built-ins plan and review inside the hold column", () => {
   /*
-  `builtin:coding-ideas-v2` is the plan-in-place Ideas shape: `plan` and `plan-review` sit
+  `builtin:coding-ideas` is the plan-in-place Ideas shape: `plan` and `plan-review` sit
   in `todo` (the capacity-hold column), not in the wip column. The deadlock this
   guards is a card that plans in `todo` but is never released because the
   pre-release plan-review gate cannot see a passed result.
   */
   it("coding-ideas plans and reviews in `todo`, then the scheduler releases it", async () => {
-    const ir = builtinIr("builtin:coding-ideas-v2");
+    const ir = builtinIr("builtin:coding-ideas");
     const byId = new Map(ir.nodes.map((n) => [n.id, n]));
     expect(byId.get("plan")?.column).toBe("todo");
     expect(byId.get("plan-review")?.column).toBe("todo");
@@ -723,7 +723,7 @@ describe("plan-in-place built-ins plan and review inside the hold column", () =>
     const unplanned = { id: "FN-HOLD", column: "todo", workflowStepResults: [], enabledWorkflowSteps: optionalGroupIds(ir) } as unknown as Task;
     await expect(isUnplannedForExecution({} as never, unplanned, ir)).resolves.toBe(true);
 
-    const run = await drive("builtin:coding-ideas-v2", ir);
+    const run = await drive("builtin:coding-ideas", ir);
     expect(run.disposition).toBe("completed");
     // Exactly one scheduler release, out of `todo`, and it happened AFTER the
     // plan-review passed (otherwise the harness's gate check would have held it).

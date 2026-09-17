@@ -18,6 +18,7 @@ import { ThinkingTrace } from "./ThinkingTrace";
 import { PreciseTimestamp } from "./PreciseTimestamp";
 import { useVirtualizedList } from "../hooks/useVirtualizedList";
 import { useAutoPaginationSentinel } from "../hooks/useAutoPaginationSentinel";
+import { useStickyBottomFollow } from "../hooks/useStickyBottomFollow";
 
 const MARKDOWN_TOGGLE_STORAGE_KEY = "fn-agent-log-markdown";
 const TOOL_OUTPUT_TOGGLE_STORAGE_KEY = "fn-agent-log-tool-output";
@@ -111,10 +112,6 @@ const BOTTOM_FOLLOW_THRESHOLD_PX = 50;
 function getAgentDisplayName(agent: string, t: TFunction<"app">): string {
   if (agent === PLANNER_AGENT_ROLE) return t("agentLog.agentNameTriage", "Plan");
   return agent;
-}
-
-function isNearBottom(container: HTMLDivElement): boolean {
-  return container.scrollHeight - (container.scrollTop + container.clientHeight) <= BOTTOM_FOLLOW_THRESHOLD_PX;
 }
 
 export function formatAgentLogDuration(ms: number): string {
@@ -386,10 +383,25 @@ export function AgentLogViewer({
   const [isFollowing, setIsFollowing] = useState(true);
   const isFollowingRef = useRef(true);
 
+  /*
+  FNXC:StickyBottomScroll 2026-09-14-20:19:
+  FN-398 : le journal d'agent partage le propriétaire unique du suivi du bas. L'intention utilisateur relâche le
+  suivi de façon synchrone, indépendamment du seuil de 50 px, pour que `followTail` (observateurs de layout et de
+  mutation) cesse d'écrire dès la frame du geste au lieu d'attendre que la géométrie franchisse ce seuil.
+  */
+  const stickyFollow = useStickyBottomFollow(containerRef, {
+    rearmThresholdPx: BOTTOM_FOLLOW_THRESHOLD_PX,
+    onFollowingChange: (following) => {
+      isFollowingRef.current = following;
+      setIsFollowing(following);
+    },
+  });
+
   const setFollowing = useCallback((following: boolean) => {
+    stickyFollow.setFollowing(following);
     isFollowingRef.current = following;
     setIsFollowing(following);
-  }, []);
+  }, [stickyFollow]);
 
   useEffect(() => {
     writeBooleanPref(MARKDOWN_TOGGLE_STORAGE_KEY, renderMarkdown);
@@ -487,38 +499,32 @@ export function AgentLogViewer({
 
         if (appendedLiveEntry && wasNearBottom) {
           container.scrollTop = container.scrollHeight;
+          stickyFollow.noteProgrammaticWrite(container.scrollTop);
         }
 
         if (prependedOlderEntries) {
           const heightDelta = container.scrollHeight - previousScrollHeight;
           if (heightDelta > 0) {
             container.scrollTop += heightDelta;
+            // Restauration de préfixe : écriture programmatique fencée, jamais un réarmement du suivi.
+            stickyFollow.noteProgrammaticWrite(container.scrollTop);
           }
         }
       }
     }
 
-    if (newEntryCount !== previousCount) {
-      setFollowing(isNearBottom(container));
-    }
+    // FN-398 : la croissance ne décide plus du suivi ; seul le propriétaire unique le fait.
     previousEntryCountRef.current = newEntryCount;
     previousScrollHeightRef.current = container.scrollHeight;
     previousOldestEntryKeyRef.current = oldestEntryKey;
     previousNewestEntryKeyRef.current = newestEntryKey;
-  }, [entries, chronologicalEntryKeys, setFollowing]);
+  }, [entries, chronologicalEntryKeys, stickyFollow]);
 
-  const handleScroll = useCallback(() => {
-    const container = containerRef.current;
-    if (!container) return;
-    setFollowing(isNearBottom(container));
-  }, [setFollowing]);
-
+  /** Réengagement explicite : le contrôle « Latest » reste une commande utilisateur autoritaire. */
   const scrollToLive = useCallback(() => {
-    const container = containerRef.current;
-    if (!container) return;
-    container.scrollTop = container.scrollHeight;
+    stickyFollow.followBottom();
     setFollowing(true);
-  }, [setFollowing]);
+  }, [setFollowing, stickyFollow]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -531,6 +537,7 @@ export function AgentLogViewer({
         return;
       }
       container.scrollTop = container.scrollHeight;
+      stickyFollow.noteProgrammaticWrite(container.scrollTop);
     };
     const resizeObserver = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(followTail);
     resizeObserver?.observe(container);
@@ -541,7 +548,7 @@ export function AgentLogViewer({
       resizeObserver?.disconnect();
       mutationObserver?.disconnect();
     };
-  }, []);
+  }, [stickyFollow]);
 
   // Escape key handler to exit fullscreen mode
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
@@ -726,7 +733,7 @@ export function AgentLogViewer({
       <div
         ref={containerRef}
         className="agent-log-viewer-scroll"
-        onScroll={() => { handleScroll(); virtualLog.onScroll(); }}
+        onScroll={() => { virtualLog.onScroll(); }}
       >
         {/* Pagination summary */}
         {totalCount !== null && (

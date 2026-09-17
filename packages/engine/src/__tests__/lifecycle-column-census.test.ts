@@ -26,7 +26,7 @@ import {
   describeBacklogState,
 } from "../../../../scripts/lib/lifecycle-column-census.mjs";
 
-import { execFileSync as memoExecFileSync } from "node:child_process";
+import { execFileSync as memoExecFileSync, spawnSync } from "node:child_process";
 
 /*
 FNXC:LifecycleColumnCensus 2026-07-31-17:12 (test wall-time — memoize identical full-repo census spawns):
@@ -57,6 +57,27 @@ function readOnlyCensus(args: string[]): string {
   readOnlyCensusCache.set(key, out);
   return out;
 }
+
+/*
+FNXC:LifecycleColumnCensus 2026-09-15-15:11:
+The strict ratchet must be green against the repository's committed baseline, not
+only fixture baselines. This is the executable reproduction of the PR Lint check
+that previously failed on clean main while ordinary lint stayed green.
+*/
+it("keeps the strict lifecycle-column census green against the real repository", () => {
+  const result = spawnSync("node", [MEMO_CENSUS_CLI_PATH, "--strict"], {
+    cwd: MEMO_CENSUS_REPO_ROOT,
+    encoding: "utf8",
+    maxBuffer: 32 * 1024 * 1024,
+    timeout: 30_000,
+  });
+  const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
+
+  expect(result.status, `lifecycle-column-census --strict failed:\n${output}`).toBe(0);
+  expect(output, `lifecycle-column-census --strict output:\n${output}`).toContain(
+    "every file matches its baseline exactly",
+  );
+});
 
 function census(source: string) {
   return findComparisons("fixture.ts", source);
@@ -681,9 +702,17 @@ describe("the baseline can always be re-recorded", () => {
         return;
       }
 
-      /* Anti-vacuity: an empty exclusion list would make the assertion below trivially true. */
-      expect(excluded.length).toBeGreaterThan(0);
+      /*
+      FNXC:LifecycleColumnCensus 2026-09-15-15:11:
+      A nonzero backlog may legitimately contain no deferred or inert-risk files.
+      Keep the exclusion assertion when candidates exist, while still requiring the
+      report to expose the remaining start-here work instead of inventing an exclusion.
+      */
       expect(startHere).not.toBe("");
+      if (excluded.length === 0) {
+        expect(startHere).toMatch(/^\s*[1-9]\d*\s+\S+/m);
+        return;
+      }
       for (const file of excluded) expect(startHere).not.toContain(file);
     });
 

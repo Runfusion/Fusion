@@ -1,5 +1,9 @@
 # Task Management
 
+## Terminal-row maintenance writes
+
+Archived, soft-deleted, and absent tasks are read-only for task-log and task-mutation writes. Maintenance code must classify canonical refusals with `isTaskLogWriteRefusal` or `safeLogTaskEntry`, emit a first-occurrence service diagnostic, isolate each candidate failure, and terminate asynchronous lifecycle listeners with a reporting `.catch(...)`. This quiescence rule does not suppress required tombstone or outbox cleanup.
+
 [← Docs index](./README.md)
 
 This guide covers task creation, lifecycle behavior, task metadata, and operational workflows.
@@ -173,6 +177,14 @@ Done task cards (board card inline row + context menu, the detail view, and the 
 - A `needsHuman` result (e.g. auto-merge is off) is surfaced as an informational/error toast, never silently forked into an AI task.
 
 The source task's column/lifecycle is never mutated as a side effect of a revert; the Revert affordance is absent when the task has no landed commit or when the hosting surface does not support it.
+
+#### Restore-the-revert affordance (FN-416)
+
+A reverted card shows only its **Reverted** label — it no longer renders Delete/Revise resolution buttons. The same surfaces (board/right-dock card context menu, list row context menu, task detail actions) instead expose **Restore revert**, which calls `POST /tasks/:id/revert/restore` in `"auto"` mode and replaces the **Revert** entry on an already-reverted task:
+
+- A clean restore reverts the revert commit(s) and stamps an additive `sourceMetadata.restoredAt` marker, which clears the **Reverted** label everywhere. `revertedAt` is never deleted, so Patchnode revert history stays readable.
+- A conflicting or unsupported result creates a dedicated AI restore task (marker `sourceMetadata.restoreOf`, idempotent while one is open) delivered by the AI merge pipeline / Merger agent.
+- A `needsHuman` result (auto-merge off) is surfaced as a toast and never force-written or silently AI-forked.
 
 ### 2) Plan Mode (AI interview)
 
@@ -349,7 +361,7 @@ Tasks cannot be relocated manually from Board, List, or Task Detail. The workflo
 
 ### Plan approval hold
 
-After planning, the card remains at `status: "awaiting-approval"` in the workflow's planning lane, which may be an intake or hold column, and shows **Need Your Review**. **Approve** releases the reviewed plan. **Reject Plan** remains available in Task Detail; it discards the plan and regenerates in place when the card is already in its workflow's planning column. Cards outside planning retain the workflow intake rehome.
+After planning, the card remains at `status: "awaiting-approval"` in the workflow's planning lane, which may be an intake or hold column, and its status badge reads **Needs you** in blinking amber instead of **Queued** or **Ready**. The card is never covered by an overlay, so its title and metadata stay readable; open it to reach Task Detail, where the decision is taken. List rows show the same badge plus an inline notice whose **Approve** releases the reviewed plan without opening the task. **Reject Plan** remains available in Task Detail; it discards the plan and regenerates in place when the card is already in its workflow's planning column. Cards outside planning retain the workflow intake rehome.
 
 <!-- FNXC:BoardNavigationDocs 2026-08-28-13:29: FN-229 makes the pointing hand identify clickable task tiles without changing card activation or Board pan eligibility; disabled controls and editing keep native cursors. -->
 On desktop and tablet Boards, a task tile shows the pointing hand on hover. Dragging a task card's noninteractive body or text pans the Board viewport without moving the task, and the closed grabbing hand remains visible across the whole Board until the drag ends. Disabled controls and editing retain their native state and form cursors at rest.
@@ -879,11 +891,35 @@ Project settings support reusable model presets:
 
 Users can apply presets at task creation; manual model selection can override them.
 
-## AI Title Summarization
+## Title, description, and definition
 
-`autoSummarizeTitles` is a project-scoped boolean (default `false`) that controls automatic title attempts for every non-empty task description created without a title. When enabled, dashboard/API, direct store, agent, scheduled, signal, and CLI-backed creates use the configured title model regardless of description length. When disabled or unavailable, triage supplies a deterministic title derived from the first meaningful description line (with shared Markdown normalization and a 60-character safety cap), and the planner's normal `# Task: ID - title` heading is written back to project-scoped metadata.
+Fusion distinguishes three separate things:
 
-Explicit titles always win. `summarize:true`, Task Detail **Summarize**, and the explicit summarization endpoint remain available even when automatic mode is disabled. The setting is read as a snapshot for each create: changing it does not rename existing tasks or cancel an already-started attempt. GitHub tracking uses its configured summarizer for any non-empty titleless task and falls back to deterministic description-derived title generation when summarization is unavailable.
+- **Description** — what you actually type in New Task or quick entry. It is the authoritative statement of the work.
+- **Title** — the short label rendered on cards, list rows, search results and pickers.
+- **Definition** — what Task Detail shows: progress, the description, and the plan's product outcome. See the dashboard guide.
+
+Creation surfaces submit a **description only**; they never send an implicit title. API, import, duplication, refinement and integration writers may still supply an explicit title, and an explicit title is never replaced.
+
+### When a title is stored
+
+`autoSummarizeTitles` is a project-scoped boolean (default `false`) and is the **only** writer of a generated title. When enabled, every non-empty untitled create (dashboard/API, direct store, agent, scheduled, signal, CLI-backed) asks the configured title model for a short title, regardless of description length — a five-word description and a 400-character description are both summarized. The AI-authored task language selected directly above the toggle (English / task input language / interface language) is snapshotted before the deferred call and decides the generated title's language.
+
+When the setting is disabled, or generation returns nothing, fails, or is superseded by a title written meanwhile, **no title is stored**. That is the intended resting state, not a defect: an untitled row is rendered from its description by the display fallback below.
+
+Planning never writes a title. Triage does not copy the `# Task: ID - title` heading of `PROMPT.md` onto the task row, and a terminal planning failure no longer backfills a deterministic title — a stored guess is indistinguishable from an operator's explicit title and would permanently shadow the create-time policy. The deterministic first-line helper still supplies the planner with prompt context only.
+
+### How a title is displayed
+
+Every card, list row, search result and task picker resolves its label the same way:
+
+1. a non-blank stored title, rendered in full;
+2. otherwise the **first 220 characters of the description, exactly** — no ellipsis and no added suffix (components may still clamp visually with CSS);
+3. otherwise the task ID.
+
+This projection is display-only and is never persisted. It is also **not retroactive**: titles already stored keep their value and are never cleared or recomputed, because a stored title's provenance (explicit vs. automatic) is not durably distinguishable.
+
+The setting is read as a snapshot for each create: changing it does not rename existing tasks or cancel an already-started attempt. `summarize:true` and the explicit summarization endpoint remain available as integration contracts even when automatic mode is disabled. GitHub tracking uses its configured summarizer for any non-empty titleless task and falls back to deterministic description-derived title generation when summarization is unavailable.
 
 If a configured title summarizer model is stale after a pi upgrade, Fusion logs a warning naming that provider/model and retries once with automatic model resolution before falling back to deterministic title generation. Genuine AI-service failures are not masked by this retry.
 
@@ -927,3 +963,4 @@ In **Settings → Models → Project**, choose whether AI-authored task plans, t
 **Blocked** means infrastructure outside the task worktree requires operator action, such as exhausted disk, unavailable credentials, a provider outage, or a terminal network failure. The card preserves completed steps and committed work while displaying the raw code and message.
 
 Use the robot action to open Chat with that exact error prefilled. After repairing the external obstacle, use **Retry**. Retry resumes the recorded interrupted workflow node; it does not reset steps, delete `PROMPT.md`, replan, or replace the task worktree and branch. Repeated Retry requests are refused while the resume continuation is already pending.
+- `absent-branch-landed-reconciliation` — an in-review task whose branch was cleaned up can be completed only when an ownership-anchored commit exists on its base branch and the task is not paused, executing, or holding a fresh checkout lease. `fn task reconcile <id>` uses the same liveness and compare-and-set fence; it never fabricates review approval.

@@ -98,11 +98,15 @@ pgTest("VAL-CROSS-004: Settings persistence (PostgreSQL)", () => {
     await store.updateSettings({
       worktreeInitCommand: "pnpm install",
       autoMerge: false,
+      planningProvider: "anthropic",
+      planningModelId: "claude-opus-5",
     });
 
     const settings = await store.getSettings();
     expect(settings.worktreeInitCommand).toBe("pnpm install");
     expect(settings.autoMerge).toBe(false);
+    expect(settings.planningProvider).toBe("anthropic");
+    expect(settings.planningModelId).toBe("claude-opus-5");
   });
 
   it("records omitted settings actors as the honest system fallback", async () => {

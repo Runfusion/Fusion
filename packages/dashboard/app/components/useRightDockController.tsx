@@ -1,12 +1,14 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { GithubIssueAction, MergeResult, ProjectNoteSummary, Task, TaskDetail, WorkflowStep } from "@fusion/core";
 import { isNearDuplicateCanonicalInactive } from "../../../core/src/duplicates/near-duplicate-canonical";
 import type { ToastType } from "../hooks/useToast";
 import type { UseNotesController } from "../hooks/useNotes";
 import type { ChatSessionInfo } from "../hooks/useChat";
+import type { TaskDetailDefaultTab } from "../hooks/useAppSettings";
+import type { ChatReportHandoff } from "./chatReportHandoff";
 import type { DetailTaskTab } from "../hooks/useModalManager";
 import { fetchTaskDetail } from "../api";
-import type { RevertTaskOptions, RevertTaskResult } from "../api";
+import type { RestoreTaskRevertOptions, RestoreTaskRevertResult, RevertTaskOptions, RevertTaskResult } from "../api";
 import { TaskCard } from "./TaskCard";
 import { RightDockTaskDetailHost } from "./TaskDetailHostBoundaries";
 import { mergeTaskSnapshot } from "../hooks/useTasks";
@@ -33,7 +35,10 @@ export interface RightDockControllerInput {
   subscribePluginEvents: (pluginId: string, onEvent: (event: { event: string; payload: unknown }) => void) => () => void;
   openDetailTask: (task: Task | TaskDetail, initialTab?: DetailTaskTab) => void;
   onOpenSessionInNewWindow?: (session: ChatSessionInfo) => void;
-  openChatWindows?: ReadonlyMap<string, "open" | "minimized">;
+  openChatWindows?: ReadonlySet<string>;
+  onSendAsReport?: (handoff: ChatReportHandoff) => void;
+  /** Optional first-render expanded owner for restored/deep-linked wide destinations. */
+  initialExpandedView?: OverflowViewKey;
   notesController?: UseNotesController;
   onOpenNote?: (note: ProjectNoteSummary) => void;
   registerNotesGuard?: (guard: () => boolean | Promise<boolean>, onAccepted?: () => void) => () => void;
@@ -41,6 +46,8 @@ export interface RightDockControllerInput {
   onUpdateTask?: (id: string, updates: { title?: string; description?: string; dependencies?: string[]; dismissNearDuplicate?: boolean; githubTracking?: { enabled?: boolean } }) => Promise<Task>;
   onDeleteTask: (id: string, options?: { removeDependencyReferences?: boolean; removeLineageReferences?: boolean; githubIssueAction?: GithubIssueAction; allowResurrection?: boolean }) => Promise<Task>;
   onRevertTask?: (id: string, body?: RevertTaskOptions) => Promise<RevertTaskResult>;
+  /* FNXC:TaskRevert 2026-09-15-10:00 (FN-416): restore-the-revert reaches the dock task detail. */
+  onRestoreRevertTask?: (id: string, body?: RestoreTaskRevertOptions) => Promise<RestoreTaskRevertResult>;
   onMergeTask: (id: string) => Promise<MergeResult>;
   onRetryTask?: (id: string) => Promise<Task>;
   onOpenChatWithPrefill?: (prefillText: string) => void;
@@ -63,7 +70,8 @@ export interface RightDockControllerInput {
   onTaskCreated: (task: Task) => void;
   prAuthAvailable: boolean;
   autoMerge: boolean;
-  taskDetailChatFirst: boolean;
+  /* FNXC:TaskDetailDefaultTab 2026-09-16-02:53: FN-442 — project choice of the task-detail landing tab and tab-bar head order. */
+  taskDetailDefaultTab: TaskDetailDefaultTab;
   visibilityOptions: OverflowViewVisibilityOptions;
   /** FN-382: the owner-supplied List surface rendered as a dock tool on non-mobile hosts. */
   renderListView?: () => ReactNode;
@@ -81,6 +89,17 @@ export interface RightDockController {
   closeDockTask: () => void;
   /** FN-382: select a dock tool from outside the dock (non-mobile List navigation). */
   selectView: (key: OverflowViewKey) => void;
+  /*
+  FNXC:ChatSurfaceUnification 2026-09-14-17:46:
+  FN-392: the selected tool is readable so App can tell whether the dock is currently the primary Chat host, which is
+  what its Escape ordering and Mailbox hand-off close.
+  */
+  selectedView: OverflowViewKey;
+  /** Opens or focuses one registry-backed expanded window without creating a duplicate. */
+  openViewWindow: (key: OverflowViewKey) => void;
+  /** Closes only the matching expanded owner; omitted key closes whichever owner is active. */
+  closeViewWindow: (key?: OverflowViewKey) => void;
+  expandedView: OverflowViewKey | null;
 }
 
 /*
@@ -97,7 +116,9 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
   Pin state is owned next to open state so the Header toggle, dock render, and pop-out modal share one controller contract. The flag persists independently of open/expanded state: closing or popping out the dock must not erase the user's overlay-vs-push preference.
   */
   const [pinned, setPinned] = useState(readStoredRightDockPinned);
-  const [expandedView, setExpandedView] = useState<OverflowViewKey | null>(null);
+  const [expandedViewState, setExpandedViewState] = useState<{ key: OverflowViewKey; focusNonce: number } | null>(() => (
+    input.active && input.initialExpandedView ? { key: input.initialExpandedView, focusNonce: 1 } : null
+  ));
   /*
   FNXC:ListInRightDock 2026-09-14-04:42:
   FN-382: the selected tool lives here so an outside caller (non-mobile List navigation) can open one. Persistence
@@ -153,24 +174,33 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
   }, []);
 
   /*
-  FNXC:RightDock 2026-06-22-19:25:
-  Popping a view out CLOSES the right dock but KEEPS the floating modal open. The modal is independent of dock open state (see expandedView note above), so collapsing the dock on pop-out gives the user the full-width app behind the movable, non-blocking modal. Clearing the pop-out (viewKey null) leaves the dock as-is.
+  FNXC:ChatSurfaceUnification 2026-09-14-11:35:
+  One expanded registry owner exists at a time. Reopening the same key increments only its focus signal, while every open keeps the floating window independent from dock visibility and closes the inline dock to reclaim workspace width.
   */
-  const handleExpand = useCallback((viewKey: OverflowViewKey | null) => {
-    setExpandedView(viewKey);
-    if (viewKey) {
-      setOpen(false);
-      persistRightDockOpen(false);
-    }
-  }, [input]);
+  const openViewWindow = useCallback((key: OverflowViewKey) => {
+    setExpandedViewState((current) => ({
+      key,
+      focusNonce: current?.key === key ? current.focusNonce + 1 : 1,
+    }));
+    setOpen(false);
+    persistRightDockOpen(false);
+  }, []);
+  const closeViewWindow = useCallback((key?: OverflowViewKey) => {
+    setExpandedViewState((current) => (!current || (key && current.key !== key) ? current : null));
+  }, []);
+  const controllerProjectIdRef = useRef(input.projectId);
 
   useEffect(() => {
     /*
-    FNXC:RightDockTaskDetail 2026-09-12-02:04:
-    Temporary task detail is project-scoped even when the dock remains active across a direct project switch. Clear both transient surfaces whenever project identity changes so an equal task id in the next project cannot merge with or display the previous project's snapshot.
+    FNXC:RightDockTaskDetail 2026-09-14-11:35:
+    Project changes clear transient expanded/task owners. Responsive deactivation also closes the wide window before mobile's canonical drawer takes ownership; activation itself must not erase a deep-link window opened in the same transition.
     */
-    setExpandedView(null);
-    setDockTaskSnapshot(null);
+    const projectChanged = controllerProjectIdRef.current !== input.projectId;
+    controllerProjectIdRef.current = input.projectId;
+    if (projectChanged || !input.active) {
+      setExpandedViewState(null);
+      setDockTaskSnapshot(null);
+    }
   }, [input.active, input.projectId]);
 
   const renderTaskCard = useCallback((task: Task | TaskDetail) => (
@@ -233,18 +263,12 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
         .then((task) => input.openDetailTask(task as TaskDetail))
         .catch((error) => input.addToast(error instanceof Error ? error.message : "Failed to open task detail", "error"));
     },
-    /*
-    FNXC:TaskRevert 2026-08-01-20:06:
-    Dock resolution uses the same New Task prefill owner as every other surface.
-    Keeping this callback in registry props lets compact and expanded dock hosts revise
-    the exact source description without introducing a second draft state.
-    */
-    onReviseTask: (task: Task | TaskDetail) => input.onSendSelectionToTask(task.description),
     onDeleteTask: input.onDeleteTask,
     onOpenChatWithPrefill: input.onOpenChatWithPrefill,
     onOpenDetail: input.openDetailTask,
     onOpenSessionInNewWindow: input.onOpenSessionInNewWindow,
     openChatWindows: input.openChatWindows,
+    onSendAsReport: input.onSendAsReport,
     notesController: input.notesController,
     onOpenNote: input.onOpenNote,
     registerNotesGuard: input.registerNotesGuard,
@@ -256,7 +280,7 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
     renderTaskCard,
     subscribePluginEvents: input.subscribePluginEvents,
     openFile: input.openFileInBrowser,
-  }), [input, renderTaskCard]);
+  }), [input, openViewWindow, renderTaskCard]);
 
   const dockTaskContent = resolvedDockTask ? (
     /*
@@ -269,10 +293,10 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
       tasks={input.tasks as Task[]}
       onCloseDock={closeDockTask}
       onOpenDetail={(value, initialTab) => input.openDetailTask(value, initialTab ?? "chat")}
-      /* FNXC:TaskRevert 2026-08-01-20:27: Right-dock task detail uses the shared New Task draft recovery for reverted tasks. */
-      onReviseTask={(task) => input.onSendSelectionToTask(task.description)}
       onDeleteTask={input.onDeleteTask}
       onRevertTask={input.onRevertTask}
+      /* FNXC:TaskRevert 2026-09-15-10:00 (FN-416): dock task detail offers restore-the-revert, not a Revise draft. */
+      onRestoreRevertTask={input.onRestoreRevertTask}
       onMergeTask={input.onMergeTask}
       onRetryTask={input.onRetryTask}
       onOpenChatWithPrefill={input.onOpenChatWithPrefill}
@@ -286,7 +310,7 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
       addToast={input.addToast}
       prAuthAvailable={input.prAuthAvailable}
       autoMergeEnabled={input.autoMerge}
-      taskDetailChatFirst={input.taskDetailChatFirst}
+      taskDetailDefaultTab={input.taskDetailDefaultTab}
     />
   ) : null;
 
@@ -298,7 +322,11 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
     openTaskInDock,
     closeDockTask,
     selectView,
-    dock: input.active ? <RightDock selectedKey={selectedKey} onSelectKey={selectView} open={open} renderProps={renderProps} visibilityOptions={input.visibilityOptions} footerVisible={input.footerVisible} pinned={pinned} onTogglePin={togglePin} onExpand={handleExpand} dockTask={resolvedDockTask} dockTaskContent={dockTaskContent} onCloseDockTask={closeDockTask} /> : null,
-    modal: input.active ? <RightDockExpandModal viewKey={expandedView} renderProps={renderProps} visibilityOptions={input.visibilityOptions} onClose={() => setExpandedView(null)} /> : null,
+    selectedView: selectedKey,
+    openViewWindow,
+    closeViewWindow,
+    expandedView: expandedViewState?.key ?? null,
+    dock: input.active ? <RightDock selectedKey={selectedKey} onSelectKey={selectView} open={open} renderProps={renderProps} visibilityOptions={input.visibilityOptions} footerVisible={input.footerVisible} pinned={pinned} onTogglePin={togglePin} onExpand={openViewWindow} dockTask={resolvedDockTask} dockTaskContent={dockTaskContent} onCloseDockTask={closeDockTask} /> : null,
+    modal: input.active ? <RightDockExpandModal viewKey={expandedViewState?.key ?? null} renderProps={renderProps} visibilityOptions={input.visibilityOptions} onClose={() => closeViewWindow()} raiseToFrontSignal={expandedViewState?.focusNonce} /> : null,
   };
 }

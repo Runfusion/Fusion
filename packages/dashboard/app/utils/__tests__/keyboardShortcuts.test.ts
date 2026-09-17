@@ -19,12 +19,13 @@ function keydown(init: KeyboardEventInit): KeyboardEvent {
 describe("keyboard shortcut utilities", () => {
   it("normalizes defaults, Space, Escape, modifiers, and disabled values", () => {
     expect(DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS).toEqual({
-      quickChat: "Space",
+      toggleModalVisibility: "",
       terminal: "Ctrl+`",
       openFiles: "Ctrl+E",
       openSettings: "Ctrl+,",
       openCommandCenter: "Ctrl+K",
       newTask: "Ctrl+Shift+N",
+      openChatList: "Ctrl+Shift+L",
     });
     expect(normalizeKeyboardShortcut(" ").disabled).toBe(true);
     expect(normalizeKeyboardShortcut("Space")).toMatchObject({ valid: true, normalized: "Space", key: "Space" });
@@ -37,15 +38,15 @@ describe("keyboard shortcut utilities", () => {
     expect(normalizeKeyboardShortcut("Ctrl+Alt").valid).toBe(false);
     expect(normalizeKeyboardShortcut("Ctrl+Ctrl+K").valid).toBe(false);
     expect(normalizeKeyboardShortcut("Ctrl+K+P").valid).toBe(false);
-    expect(describeShortcutValidation({ quickChat: "Ctrl+Alt", terminal: "Ctrl+`" })).toContain("Quick Chat shortcut is invalid");
+    expect(describeShortcutValidation({ toggleModalVisibility: "Ctrl+Alt", terminal: "Ctrl+`" })).toContain("Toggle Modal Visibility shortcut is invalid");
   });
 
   it("detects duplicate populated shortcut combinations while ignoring disabled actions", () => {
-    expect(findShortcutConflicts({ quickChat: "Ctrl+K", terminal: "Control+k" })).toEqual([
-      { shortcut: "Ctrl+K", actions: ["quickChat", "terminal"], labels: ["Quick Chat", "Terminal"] },
+    expect(findShortcutConflicts({ toggleModalVisibility: "Ctrl+K", terminal: "Control+k" })).toEqual([
+      { shortcut: "Ctrl+K", actions: ["toggleModalVisibility", "terminal"], labels: ["Toggle Modal Visibility", "Terminal"] },
     ]);
-    expect(findShortcutConflicts({ quickChat: "", terminal: "" })).toEqual([]);
-    expect(describeShortcutValidation({ quickChat: "Ctrl+K", terminal: "Control+k" })).toContain("both use Ctrl+K");
+    expect(findShortcutConflicts({ toggleModalVisibility: "", terminal: "" })).toEqual([]);
+    expect(describeShortcutValidation({ toggleModalVisibility: "Ctrl+K", terminal: "Control+k" })).toContain("both use Ctrl+K");
   });
 
   it("matches printable, Space, Escape, and modifier keydown events", () => {
@@ -60,9 +61,9 @@ describe("keyboard shortcut utilities", () => {
 
   it("resolves missing settings to documented defaults", () => {
     expect(resolveDashboardKeyboardShortcuts(undefined)).toEqual(DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS);
-    expect(resolveDashboardKeyboardShortcuts({ quickChat: "", terminal: "Alt+T" })).toEqual({
+    expect(resolveDashboardKeyboardShortcuts({ toggleModalVisibility: "", terminal: "Alt+T" })).toEqual({
       ...DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS,
-      quickChat: "",
+      toggleModalVisibility: "",
       terminal: "Alt+T",
     });
   });
@@ -85,6 +86,31 @@ describe("keyboard shortcut utilities", () => {
     expect(shortcutMatchesEvent("Ctrl+K", keydown({ key: "k", ctrlKey: true }))).toBe(true);
     expect(shortcutMatchesEvent("Ctrl+Shift+N", keydown({ key: "n", ctrlKey: true, shiftKey: true }))).toBe(true);
     expect(describeShortcutValidation({ openFiles: "" })).toBeNull();
+  });
+
+  /*
+  FNXC:DashboardShortcuts 2026-09-16-02:27:
+  FN-441 : le raccourci « Open Chat List » doit se résoudre à son défaut documenté quand aucun réglage n'est
+  persisté, matcher exactement Ctrl+Shift+L (et pas Ctrl+L), rester vide quand l'opérateur le désactive, et
+  n'introduire aucun conflit dans le jeu de défauts livré.
+  */
+  it("resolves, matches, and validates the FN-441 chat-list action", () => {
+    expect(resolveDashboardKeyboardShortcuts(undefined).openChatList).toBe("Ctrl+Shift+L");
+    expect(resolveDashboardKeyboardShortcuts({ terminal: "Alt+T" }).openChatList).toBe("Ctrl+Shift+L");
+    expect(shortcutMatchesEvent("Ctrl+Shift+L", keydown({ key: "l", ctrlKey: true, shiftKey: true }))).toBe(true);
+    expect(shortcutMatchesEvent("Ctrl+Shift+L", keydown({ key: "l", ctrlKey: true }))).toBe(false);
+
+    expect(findShortcutConflicts(DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS)).toEqual([]);
+
+    const duplicated = { ...DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS, openChatList: "Ctrl+K" };
+    expect(findShortcutConflicts(duplicated)).toEqual([
+      { shortcut: "Ctrl+K", actions: ["openCommandCenter", "openChatList"], labels: ["Open Command Center", "Open Chat List"] },
+    ]);
+    expect(describeShortcutValidation(duplicated)).toContain("both use Ctrl+K");
+
+    expect(resolveDashboardKeyboardShortcuts({ openChatList: "" }).openChatList).toBe("");
+    expect(shortcutMatchesEvent("", keydown({ key: "l", ctrlKey: true, shiftKey: true }))).toBe(false);
+    expect(getShortcutActionLabel("openChatList")).toBe("Open Chat List");
   });
 
   it("identifies editable and interactive targets that should not be captured by global shortcuts", () => {

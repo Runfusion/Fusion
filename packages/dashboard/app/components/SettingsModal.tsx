@@ -8,7 +8,7 @@ import {
   normalizeMergeIntegrationWorktreeMode,
   normalizeMergeAdvanceAutoSyncMode,
 } from "@fusion/core";
-import type { Settings, GlobalSettings, ThemeMode, ColorTheme, ModelPreset } from "@fusion/core";
+import type { Settings, GlobalSettings, ThemeMode, ColorTheme, UiStyle, ModelPreset } from "@fusion/core";
 import { DEFAULT_GLOBAL_SETTINGS } from "@fusion/core";
 import { fetchSettings, fetchSettingsByScope, updateSettings, updateGlobalSettings, fetchAuthStatus, loginProvider, logoutProvider, cancelProviderLogin, saveApiKey, clearApiKey, fetchModels, testNotification, fetchBackups, createBackup, exportSettings, importSettings, fetchMemoryFile, fetchMemoryFiles, saveMemoryFile, compactMemory, installQmd, testMemoryRetrieval, triggerMemoryDreams, fetchGitRemotes, fetchGitRemotesDetailed, fetchGitBranches, fetchProjects, fetchDashboardHealth, checkForUpdates, installUpdate, fetchSystemInfo, requestSystemRestart, fetchRemoteSettings, fetchRemoteStatus, installCloudflared, fetchRemoteQr, fetchRemoteUrl, submitProviderManualCode, fetchPlugins, formatProviderInstanceKey } from "../api";
 import type { AuthProvider, ManualOAuthCodeInfo, ModelInfo, BackupListResponse, SettingsExportData, MemoryFileInfo, MemoryRetrievalTestResult, GitRemote, GitRemoteDetailed, ProjectInfo, RemoteStatus, UpdateCheckResponse, UpdateInstallResponse, OAuthDeviceCodeInfo } from "../api";
@@ -27,9 +27,9 @@ import {
   type DashboardShortcutAction,
 } from "../utils/keyboardShortcuts";
 import type { DashboardKeyboardShortcutMap } from "../utils/keyboardShortcuts";
-import { normalizeChatMessageLayout, type ChatMessageLayout } from "../hooks/useAppSettings";
+import { normalizeChatMessageLayout, normalizeTaskDetailDefaultTab, type ChatMessageLayout, type TaskDetailDefaultTab } from "../hooks/useAppSettings";
+import { normalizeNavigationPlacement, type NavigationPlacement } from "../utils/navigationPlacement";
 import { SettingsHelpTip } from "./settings/SettingsHelpTip";
-import type { SectionSaveHandler } from "./settings/sections/context";
 import { AppearanceSection } from "./settings/sections/AppearanceSection";
 import { ExperimentalSection } from "./settings/sections/ExperimentalSection";
 import { NodeSyncSection } from "./settings/sections/NodeSyncSection";
@@ -49,7 +49,7 @@ import {
 import { SecretsSection } from "./settings/sections/SecretsSection";
 import { PromptsSection } from "./settings/sections/PromptsSection";
 import { GeneralSection } from "./settings/sections/GeneralSection";
-import { ProjectModelsSection, WorkflowLaneFlushRejection } from "./settings/sections/ProjectModelsSection";
+import { ProjectModelsSection } from "./settings/sections/ProjectModelsSection";
 import { SchedulingSection } from "./settings/sections/SchedulingSection";
 import { CliBinarySection } from "./settings/sections/CliBinarySection";
 import { ScheduledEvalsSection } from "./settings/sections/ScheduledEvalsSection";
@@ -638,6 +638,10 @@ interface SettingsModalProps {
   onThemeModeChange?: (mode: ThemeMode) => void;
   /** Called when color theme changes */
   onColorThemeChange?: (theme: ColorTheme) => void;
+  /** FNXC:UiStyleAxis 2026-09-15-00:20: current interface style, the second independent appearance axis. */
+  uiStyle?: UiStyle;
+  /** Called when the interface style changes. */
+  onUiStyleChange?: (style: UiStyle) => void;
   /** Current dashboard font scale percentage */
   dashboardFontScalePct?: number;
   /** Current shadcn-custom color overrides */
@@ -648,22 +652,21 @@ interface SettingsModalProps {
   onDashboardFontScaleChange?: (scalePct: number) => void;
   /** Called when shadcn-custom color overrides change */
   onShadcnCustomColorsChange?: (colors: Record<string, string>) => void;
-  /** Mirrors pending Quick Chat launcher changes into the app shell immediately. */
-  onQuickChatButtonModeChange?: (mode: "floating" | "footer" | "off") => void;
   /** Mirrors the pending project conversation layout into mounted chat surfaces immediately. */
   chatMessageLayout?: ChatMessageLayout;
   onChatMessageLayoutChange?: (layout: ChatMessageLayout) => void;
+  /** FN-419: mirrors the pending project navigation placement into the shell immediately. */
+  navigationPlacement?: NavigationPlacement;
+  onNavigationPlacementChange?: (placement: NavigationPlacement) => void;
+  /** FN-426: mirrors the pending right-dock availability into the shell immediately. */
+  rightSidebarEnabled?: boolean;
+  onRightSidebarEnabledChange?: (enabled: boolean) => void;
   /** Current App-shell values and optimistic callbacks for mounted Appearance consumers. */
-  openTasksInRightSidebar?: boolean;
-  onOpenTasksInRightSidebarChange?: (enabled: boolean) => void;
-  openMobileTasksInPopup?: boolean;
-  onOpenMobileTasksInPopupChange?: (enabled: boolean) => void;
-  taskPopupsBoardListOnly?: boolean;
-  onTaskPopupsBoardListOnlyChange?: (enabled: boolean) => void;
   showCostBadgeOnCards?: boolean;
   onShowCostBadgeOnCardsChange?: (enabled: boolean) => void;
-  taskDetailChatFirst?: boolean;
-  onTaskDetailChatFirstChange?: (enabled: boolean) => void;
+  /* FNXC:TaskDetailDefaultTab 2026-09-16-02:53: FN-442 — three-value project choice replacing the Chat-first opt-in. */
+  taskDetailDefaultTab?: TaskDetailDefaultTab;
+  onTaskDetailDefaultTabChange?: (tab: TaskDetailDefaultTab) => void;
   /** Mirrors pending mobile quick-action changes into the app shell immediately. */
   onMobileNavPrimaryItemsChange?: (items: string[]) => void;
   /** Optional callback when user wants to reopen the onboarding guide */
@@ -923,24 +926,23 @@ export function SettingsModal({
   colorTheme = "shadcn-ember",
   onThemeModeChange,
   onColorThemeChange,
+  uiStyle,
+  onUiStyleChange,
   dashboardFontScalePct = 100,
   shadcnCustomColors = {},
   resolvedThemeMode,
   onDashboardFontScaleChange,
   onShadcnCustomColorsChange,
-  onQuickChatButtonModeChange,
   chatMessageLayout = "bubbles",
   onChatMessageLayoutChange,
-  openTasksInRightSidebar,
-  onOpenTasksInRightSidebarChange,
-  openMobileTasksInPopup,
-  onOpenMobileTasksInPopupChange,
-  taskPopupsBoardListOnly,
-  onTaskPopupsBoardListOnlyChange,
+  navigationPlacement = "footer",
+  onNavigationPlacementChange,
+  rightSidebarEnabled,
+  onRightSidebarEnabledChange,
   showCostBadgeOnCards,
   onShowCostBadgeOnCardsChange,
-  taskDetailChatFirst,
-  onTaskDetailChatFirstChange,
+  taskDetailDefaultTab,
+  onTaskDetailDefaultTabChange,
   onMobileNavPrimaryItemsChange,
   onReopenOnboarding,
   onOpenApprovals,
@@ -964,28 +966,6 @@ export function SettingsModal({
       } as CSSProperties)
     : {};
   const settingsContentRef = useRef<HTMLDivElement>(null);
-  const workflowLaneSaverRef = useRef<SectionSaveHandler | null>(null);
-  /*
-  FNXC:SettingsAutoSave 2026-07-20-01:00:
-  Workflow lane edits live outside the shared Settings form. Track their revision
-  alongside form dirtiness so Option 1 auto-save and every close path flush them
-  too; a completion only clears the revision it actually persisted.
-  */
-  const workflowLaneRevisionRef = useRef(0);
-  const [workflowLanesDirty, setWorkflowLanesDirty] = useState(false);
-  const markWorkflowLanesDirty = useCallback(() => {
-    workflowLaneRevisionRef.current += 1;
-    setWorkflowLanesDirty(true);
-  }, []);
-  const registerWorkflowLaneSaver = useCallback((saver: SectionSaveHandler | null) => {
-    /*
-    FNXC:ProjectModelsWorkflowLanes 2026-07-14-09:07:
-    Project Models workflow lane edits are workflow setting-values, not normal project settings. Keep the latest saver registered across section unmounts so auto-save and close flushing retain project-scoped workflow overrides after navigation.
-    */
-    if (saver) {
-      workflowLaneSaverRef.current = saver;
-    }
-  }, []);
   // FNXC:ModalTouchGeometry 2026-07-26-14:10: FloatingWindow owns movable, clamped geometry for the modal branch; the embedded Settings view remains an inline, chrome-free destination.
   const sessionBannersHidden = useSessionBannersHidden();
   const [form, setForm] = useState<SettingsFormState>({
@@ -1018,12 +998,12 @@ export function SettingsModal({
     mergeAdvanceAutoSync: "stash-and-ff",
     merger: { mode: "ai", maxReviewPasses: 3, allowDirtyLocalCheckoutSync: true },
     showWorktreeGrouping: false,
-    openTasksInRightSidebar: false,
-    openMobileTasksInPopup: false,
-    taskPopupsBoardListOnly: true,
     showCostBadgeOnCards: false,
-    taskDetailChatFirst: false,
+    taskDetailDefaultTab: "activity",
     chatMessageLayout: "bubbles",
+    navigationPlacement: "footer",
+    /* FNXC:RightSidebarOptional 2026-09-15-16:04: FN-426 — pre-hydration form value matches the default-off schema. */
+    rightSidebarEnabled: false,
     executorAllowSiblingBranchRename: false,
     worktreeCopyFiles: [],
     worktreesDir: "",
@@ -1591,15 +1571,30 @@ export function SettingsModal({
           */
           showCostBadgeOnCards: s.showCostBadgeOnCards === true,
           /*
-          FNXC:TaskDetailActivityFirst 2026-06-30-23:59:
-          The Settings form normalizes missing taskDetailChatFirst to false so new and upgraded projects show the Activity-first default until an operator explicitly opts into Chat-first.
+          FNXC:TaskDetailDefaultTab 2026-09-16-02:53:
+          FN-442: the Settings form normalizes missing or malformed values to the historical `activity` landing tab, and
+          reads a legacy persisted `taskDetailChatFirst === true` as `chat` so an operator who had opted into Chat-first
+          finds the form pre-filled on Chat rather than silently reset. The explicit cast is deliberate: the legacy key is
+          no longer in the type but can still be present in a persisted value.
           */
-          taskDetailChatFirst: s.taskDetailChatFirst === true,
+          taskDetailDefaultTab: normalizeTaskDetailDefaultTab(s.taskDetailDefaultTab, (s as Record<string, unknown>).taskDetailChatFirst),
           /*
           FNXC:ChatMessageLayout 2026-08-18-20:27:
           Normalize legacy or malformed project values before they enter the form so the selector always has exactly its two valid choices and defaults to Bubbles.
           */
           chatMessageLayout: normalizeChatMessageLayout(s.chatMessageLayout),
+          /*
+          FNXC:Navigation 2026-09-15-14:41:
+          FN-419: normalize a legacy or malformed persisted placement before it enters the form so the selector always
+          has exactly its two valid choices and falls back to the bottom bar.
+          */
+          navigationPlacement: normalizeNavigationPlacement(s.navigationPlacement),
+          /*
+          FNXC:RightSidebarOptional 2026-09-15-16:04:
+          FN-426: only the exact boolean true enters the form, so a legacy or malformed persisted value renders the
+          toggle off and saves the same default-off value the shell already applied.
+          */
+          rightSidebarEnabled: s.rightSidebarEnabled === true,
           /*
           FNXC:GithubImportTracking 2026-07-01-00:00:
           Missing githubLinkImportedIssuesToTracking must render as unchecked and save as project-scoped false only after operator interaction; this keeps upgraded projects on legacy import behavior by default.
@@ -2996,16 +2991,22 @@ export function SettingsModal({
     globalProviderKey: keyof GlobalSettings;
     globalModelKey: keyof GlobalSettings;
     globalThinkingKey?: keyof GlobalSettings;
+    globalFallbackProviderKey?: keyof GlobalSettings;
+    globalFallbackModelKey?: keyof GlobalSettings;
+    globalFallbackThinkingKey?: keyof GlobalSettings;
     projectProviderKey: keyof Settings;
     projectModelKey: keyof Settings;
     projectThinkingKey?: keyof Settings;
+    projectFallbackProviderKey?: keyof Settings;
+    projectFallbackModelKey?: keyof Settings;
+    projectFallbackThinkingKey?: keyof Settings;
     helperText: string;
     fallbackOrder: string;
   }
 
   /*
-  FNXC:Settings-MergerModel 2026-07-13-07:52:
-  MODEL_LANES drives Global Models + Project Models pickers. Merger is a sixth dedicated lane (project-scoped like summarization, not workflow-moved) so conflict/merge agents can use a different model from executor/planner/reviewer without a separate settings surface.
+  FNXC:Settings-MergerModel 2026-09-14-19:06:
+  MODEL_LANES orders Global and Project Models as Default, Planner, Executor, Reviewer, Merger. Each role has an independent scoped primary/fallback block; workflow overrides are edited on the workflow itself.
   */
   /** All model lanes with their global and project override keys */
   const MODEL_LANES: ModelLane[] = [
@@ -3017,19 +3018,80 @@ export function SettingsModal({
       projectProviderKey: "defaultProviderOverride",
       projectModelKey: "defaultModelIdOverride",
       projectThinkingKey: "defaultThinkingLevelOverride",
-      helperText: "Default AI model used for task execution when no per-task override is set.",
+      helperText: "Default AI model used when no task, workflow, project or global role model is configured.",
       fallbackOrder: "Project override → Global default lane → Automatic resolution",
     },
     {
+      laneId: "planning",
+      label: "Planner Model",
+      globalProviderKey: "planningGlobalProvider",
+      globalModelKey: "planningGlobalModelId",
+      globalThinkingKey: "planningGlobalThinkingLevel",
+      globalFallbackProviderKey: "planningGlobalFallbackProvider",
+      globalFallbackModelKey: "planningGlobalFallbackModelId",
+      globalFallbackThinkingKey: "planningGlobalFallbackThinkingLevel",
+      projectProviderKey: "planningProvider",
+      projectModelKey: "planningModelId",
+      projectThinkingKey: "planningThinkingLevel",
+      projectFallbackProviderKey: "planningFallbackProvider",
+      projectFallbackModelKey: "planningFallbackModelId",
+      projectFallbackThinkingKey: "planningFallbackThinkingLevel",
+      helperText: "AI model used for task planning.",
+      fallbackOrder: "Task → Workflow lane → Project override → Global Planner → Project Default → Global Default",
+    },
+    {
       laneId: "execution",
-      label: "Execution Model",
+      label: "Executor Model",
       globalProviderKey: "executionGlobalProvider",
       globalModelKey: "executionGlobalModelId",
       globalThinkingKey: "executionGlobalThinkingLevel",
+      globalFallbackProviderKey: "executionGlobalFallbackProvider",
+      globalFallbackModelKey: "executionGlobalFallbackModelId",
+      globalFallbackThinkingKey: "executionGlobalFallbackThinkingLevel",
       projectProviderKey: "executionProvider",
       projectModelKey: "executionModelId",
+      projectThinkingKey: "executionThinkingLevel",
+      projectFallbackProviderKey: "executionFallbackProvider",
+      projectFallbackModelKey: "executionFallbackModelId",
+      projectFallbackThinkingKey: "executionFallbackThinkingLevel",
       helperText: "AI model used for task implementation (executor agent).",
-      fallbackOrder: "Project override → Global execution lane → Global default lane → Automatic resolution",
+      fallbackOrder: "Task → Workflow lane → Project override → Global Executor → Project Default → Global Default",
+    },
+    {
+      laneId: "validator",
+      label: "Reviewer Model",
+      globalProviderKey: "validatorGlobalProvider",
+      globalModelKey: "validatorGlobalModelId",
+      globalThinkingKey: "validatorGlobalThinkingLevel",
+      globalFallbackProviderKey: "validatorGlobalFallbackProvider",
+      globalFallbackModelKey: "validatorGlobalFallbackModelId",
+      globalFallbackThinkingKey: "validatorGlobalFallbackThinkingLevel",
+      projectProviderKey: "validatorProvider",
+      projectModelKey: "validatorModelId",
+      projectThinkingKey: "validatorThinkingLevel",
+      projectFallbackProviderKey: "validatorFallbackProvider",
+      projectFallbackModelKey: "validatorFallbackModelId",
+      projectFallbackThinkingKey: "validatorFallbackThinkingLevel",
+      helperText: "AI model used for code and specification review.",
+      fallbackOrder: "Task → Workflow lane → Project override → Global Reviewer → Project Default → Global Default",
+    },
+    {
+      laneId: "merger",
+      label: "Merger Model",
+      globalProviderKey: "mergerGlobalProvider",
+      globalModelKey: "mergerGlobalModelId",
+      globalThinkingKey: "mergerGlobalThinkingLevel",
+      globalFallbackProviderKey: "mergerGlobalFallbackProvider",
+      globalFallbackModelKey: "mergerGlobalFallbackModelId",
+      globalFallbackThinkingKey: "mergerGlobalFallbackThinkingLevel",
+      projectProviderKey: "mergerProvider",
+      projectModelKey: "mergerModelId",
+      projectThinkingKey: "mergerThinkingLevel",
+      projectFallbackProviderKey: "mergerFallbackProvider",
+      projectFallbackModelKey: "mergerFallbackModelId",
+      projectFallbackThinkingKey: "mergerFallbackThinkingLevel",
+      helperText: "AI model used for merger sessions.",
+      fallbackOrder: "Task → Workflow lane → Project override → Global Merger → Project Default → Global Default",
     },
     /*
     FNXC:FastModeModel 2026-08-29-02:43:
@@ -3046,40 +3108,6 @@ export function SettingsModal({
       projectThinkingKey: "fastCheapThinkingLevel",
       helperText: t("settings.globalModels.fastAndCheapModelHelp", "Select a cheap model here for quick edits. It is used for Fast Mode when creating a task."),
       fallbackOrder: "Project override → Global Fast & Cheap lane → Execution lane → Project default lane → Global default lane → Automatic resolution",
-    },
-    {
-      laneId: "planning",
-      label: "Planning Model",
-      globalProviderKey: "planningGlobalProvider",
-      globalModelKey: "planningGlobalModelId",
-      globalThinkingKey: "planningGlobalThinkingLevel",
-      projectProviderKey: "planningProvider",
-      projectModelKey: "planningModelId",
-      helperText: "AI model used for task planning.",
-      fallbackOrder: "Project override → Global planning lane → Global default lane → Automatic resolution",
-    },
-    {
-      laneId: "validator",
-      label: "Reviewer Model",
-      globalProviderKey: "validatorGlobalProvider",
-      globalModelKey: "validatorGlobalModelId",
-      globalThinkingKey: "validatorGlobalThinkingLevel",
-      projectProviderKey: "validatorProvider",
-      projectModelKey: "validatorModelId",
-      helperText: "AI model used for code and specification review.",
-      fallbackOrder: "Project override → Global reviewer lane → Global default lane → Automatic resolution",
-    },
-    {
-      laneId: "merger",
-      label: "Merger Model",
-      globalProviderKey: "mergerGlobalProvider",
-      globalModelKey: "mergerGlobalModelId",
-      globalThinkingKey: "mergerGlobalThinkingLevel",
-      projectProviderKey: "mergerProvider",
-      projectModelKey: "mergerModelId",
-      projectThinkingKey: "mergerThinkingLevel",
-      helperText: "AI model used for merge conflict resolution, clean-room merge, stash-conflict recovery, and related merger agent sessions.",
-      fallbackOrder: "Project override → Global merger lane → Project default lane → Global default lane → Automatic resolution",
     },
     {
       laneId: "summarization",
@@ -3413,7 +3441,6 @@ export function SettingsModal({
     const initialScopedValuesSnapshot = initialScopedValues;
     const activeSectionSnapshot = activeSection;
     const globalGitlabSettingsSnapshot = globalGitlabSettings;
-    const workflowLaneRevisionSnapshot = workflowLaneRevisionRef.current;
     const limits = formSnapshot.researchSettings?.limits;
     if (limits?.maxConcurrentRuns !== undefined && (!Number.isFinite(limits.maxConcurrentRuns) || limits.maxConcurrentRuns < 1)) {
       setResearchLimitError("Research max concurrent runs must be at least 1.");
@@ -3492,7 +3519,7 @@ export function SettingsModal({
         githubTrackingDefaultRepo: formSnapshot.githubTrackingDefaultRepo?.trim() || undefined,
         /*
         FNXC:DashboardShortcuts 2026-07-04-00:00:
-        FN-7553 normalizes every declared shortcut action (derived from resolveDashboardKeyboardShortcuts' key set) on save, not just quickChat/terminal, so newly-added actions get the same trim/normalize-before-persist treatment.
+        Normalize every declared shortcut action from the resolver's key set on save so newly added actions receive the same trim-before-persist treatment.
         */
         dashboardKeyboardShortcuts: Object.fromEntries(
           (Object.entries(resolveDashboardKeyboardShortcuts(formSnapshot.dashboardKeyboardShortcuts)) as [DashboardShortcutAction, string][])
@@ -3577,8 +3604,6 @@ export function SettingsModal({
         Object.keys(projectPatch).length > 0 ? updateSettings(projectPatch, projectId) : Promise.resolve(),
       ]);
 
-      await workflowLaneSaverRef.current?.();
-
       /*
       FNXC:SettingsBackups 2026-08-13-23:51:
       Saving database-backup settings can register or reschedule the central
@@ -3587,11 +3612,6 @@ export function SettingsModal({
       */
       if (Object.keys(globalPatch).some((key) => key.startsWith("autoBackup"))) {
         void fetchBackups(projectId).then(setBackupInfo).catch(() => setBackupInfo(null));
-      }
-
-      // Only clear workflow-lane dirtiness when no newer lane edit arrived.
-      if (workflowLaneRevisionRef.current === workflowLaneRevisionSnapshot) {
-        setWorkflowLanesDirty(false);
       }
 
       // Quiet state feedback avoids a toast for each debounced edit.
@@ -3628,7 +3648,6 @@ export function SettingsModal({
       return true;
     } catch (err) {
       lastPersistSucceededRef.current = false;
-      if (err instanceof WorkflowLaneFlushRejection) return false;
       setAutoSaveStatus("error");
       addToast(getErrorMessage(err), "error");
       return false;
@@ -3657,11 +3676,10 @@ export function SettingsModal({
         project: resolveScopedMcpSettings("project", scopedSettings),
       } : undefined,
     });
-    return Object.keys(globalPatch).length > 0 || Object.keys(projectPatch).length > 0
-      || workflowLanesDirty;
-  }, [form, globalGitlabSettings, initialScopedValues, initialValues, scopedSettings, activeSection, workflowLanesDirty]);
+    return Object.keys(globalPatch).length > 0 || Object.keys(projectPatch).length > 0;
+  }, [form, globalGitlabSettings, initialScopedValues, initialValues, scopedSettings, activeSection]);
 
-  const autoSaveSnapshot = useMemo(() => JSON.stringify({ form, scopedSettings, globalGitlabSettings, workflowLaneRevision: workflowLaneRevisionRef.current }), [form, globalGitlabSettings, scopedSettings, workflowLanesDirty]);
+  const autoSaveSnapshot = useMemo(() => JSON.stringify({ form, scopedSettings, globalGitlabSettings }), [form, globalGitlabSettings, scopedSettings]);
   const hasAutoSaveChange = autoSaveActivationSnapshotRef.current !== null
     && autoSaveActivationSnapshotRef.current !== autoSaveSnapshot;
   latestAutoSaveStateRef.current = { dirty: settingsDirty, changed: hasAutoSaveChange };
@@ -3694,7 +3712,7 @@ export function SettingsModal({
     return () => {
       if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     };
-  }, [loading, autoSaveReady, hasAutoSaveChange, settingsDirty, prefixError, presetDraft, form, scopedSettings, globalGitlabSettings, workflowLanesDirty, activeSection]);
+  }, [loading, autoSaveReady, hasAutoSaveChange, settingsDirty, prefixError, presetDraft, form, scopedSettings, globalGitlabSettings, activeSection]);
 
   const requestClose = useCallback(async () => {
     if (autoSaveTimerRef.current) {
@@ -4062,7 +4080,6 @@ export function SettingsModal({
             addToast={addToast}
             prefixError={prefixError}
             setPrefixError={setPrefixError}
-            onQuickChatButtonModeChange={onQuickChatButtonModeChange}
             onMobileNavPrimaryItemsChange={onMobileNavPrimaryItemsChange}
           />
         );
@@ -4167,10 +4184,6 @@ export function SettingsModal({
             form={form}
             setForm={setForm}
             projectId={projectId}
-            addToast={addToast}
-            onOpenWorkflowSettings={onOpenWorkflowSettings}
-            registerWorkflowLaneSaver={registerWorkflowLaneSaver}
-            onWorkflowLanesChange={markWorkflowLanesDirty}
             models={{
               modelLanes: MODEL_LANES,
               getLaneStatus,
@@ -4207,20 +4220,20 @@ export function SettingsModal({
             resolvedThemeMode={resolvedThemeMode}
             onThemeModeChange={onThemeModeChange}
             onColorThemeChange={onColorThemeChange}
+            uiStyle={uiStyle}
+            onUiStyleChange={onUiStyleChange}
             onDashboardFontScaleChange={onDashboardFontScaleChange}
             onShadcnCustomColorsChange={onShadcnCustomColorsChange}
             chatMessageLayout={chatMessageLayout}
             onChatMessageLayoutChange={onChatMessageLayoutChange}
-            openTasksInRightSidebar={openTasksInRightSidebar}
-            onOpenTasksInRightSidebarChange={onOpenTasksInRightSidebarChange}
-            openMobileTasksInPopup={openMobileTasksInPopup}
-            onOpenMobileTasksInPopupChange={onOpenMobileTasksInPopupChange}
-            taskPopupsBoardListOnly={taskPopupsBoardListOnly}
-            onTaskPopupsBoardListOnlyChange={onTaskPopupsBoardListOnlyChange}
+            navigationPlacement={navigationPlacement}
+            onNavigationPlacementChange={onNavigationPlacementChange}
+            rightSidebarEnabled={rightSidebarEnabled}
+            onRightSidebarEnabledChange={onRightSidebarEnabledChange}
             showCostBadgeOnCards={showCostBadgeOnCards}
             onShowCostBadgeOnCardsChange={onShowCostBadgeOnCardsChange}
-            taskDetailChatFirst={taskDetailChatFirst}
-            onTaskDetailChatFirstChange={onTaskDetailChatFirstChange}
+            taskDetailDefaultTab={taskDetailDefaultTab}
+            onTaskDetailDefaultTabChange={onTaskDetailDefaultTabChange}
             sessionBannersHidden={sessionBannersHidden}
             setSessionBannersHidden={setSessionBannersHidden}
           />
@@ -4529,7 +4542,6 @@ export function SettingsModal({
       className="floating-window--settings"
       defaultSize={{ width: 1100, height: 720 }}
       minSize={{ width: 520, height: 480 }}
-      persistGeometryKey="floating-window:settings"
       suspendGeometryPersistenceOnMobile
       suspendGeometryPersistenceOnShortViewport
       closeOnOutsidePointerDown={overlayDismissEnabled}

@@ -9,11 +9,13 @@ import {
   noopDelete,
   noopMerge,
   noopOpenDetail,
+  getCssRuleBlock,
   openTaskDetailActionsMenu,
   readDashboardStylesSource,
   setupTaskDetailModalHooks,
 } from "./TaskDetailModal.test-helpers";
 import { TaskDetailContent, TaskDetailModal } from "../TaskDetailModal";
+import { readAppFile } from "../../test/cssFixture";
 import * as dashboardApi from "../../api";
 import type { TaskDetail } from "@fusion/core";
 
@@ -255,6 +257,21 @@ describe("Task Detail footer quick actions", () => {
   });
 });
 
+/*
+FNXC:TaskDetailActionsMenu 2026-09-15-09:30:
+FN-415: mobile rules for this family live in a co-located `@media (max-width: 768px)` block inside the aggregated
+stylesheet source, so the mobile rule is located by scanning every 768px block for the `.detail-actions-menu` rule
+that carries the viewport-bound `max-width` rather than by a lazy match that can bind to the base rule.
+*/
+function readMobileActionsMenuRule(css: string): string {
+  for (const block of css.split(/@media[^{]*\(max-width:\s*768px\)[^{]*\{/).slice(1)) {
+    for (const match of block.matchAll(/\.detail-actions-menu\s*\{([^}]*)\}/g)) {
+      if (match[1].includes("max-width: calc(100vw")) return match[1];
+    }
+  }
+  return "";
+}
+
 describe("Task Detail metadata and footer CSS", () => {
   it("removes only retired selectors and preserves the Details metadata family", () => {
     const css = readDashboardStylesSource();
@@ -292,5 +309,191 @@ describe("Task Detail metadata and footer CSS", () => {
     expect(actions).toContain("max-height:");
     expect(actions).toContain("overflow-x: hidden");
     expect(actions).toContain("overflow-y: auto");
+  });
+
+  /*
+  FNXC:TaskDetailActionsMenu 2026-09-15-09:30:
+  FN-415: the header overflow menu must be wide enough that every option occupies exactly one line. These cases pin
+  the width convention, the nowrap/ellipsis contract on every item family, the mobile viewport bound, and the DOM
+  proof that no rendered entry escapes the nowrap rule.
+  */
+  it("sizes the header actions menu on its content instead of the retired 76px minimum", () => {
+    const css = readDashboardStylesSource();
+    const actions = css.match(/^\.detail-actions-menu\s*\{([^}]*)\}/m)?.[1] ?? "";
+
+    expect(actions).not.toContain("calc(var(--space-2xl) + var(--space-2xl) + var(--space-md))");
+    expect(actions).toContain("width: max-content");
+    expect(actions).toContain("min-width: var(--detail-actions-menu-min-width)");
+    expect(actions).toContain("max-width: var(--detail-actions-menu-max-width)");
+    expect(actions).toContain("left: 0");
+    expect(actions).toContain("max-height:");
+    expect(actions).toContain("overflow-x: hidden");
+    expect(actions).toContain("overflow-y: auto");
+  });
+
+  it.each([".detail-actions-menu-item", ".detail-actions-menu-note"])(
+    "keeps %s on a single line with ellipsis truncation",
+    (selector) => {
+      const rule = getCssRuleBlock(readDashboardStylesSource(), selector);
+
+      expect(rule).toContain("white-space: nowrap");
+      expect(rule).toContain("text-overflow: ellipsis");
+    },
+  );
+
+  it("keeps the mobile viewport bound without re-enabling wrapping", () => {
+    const css = readDashboardStylesSource();
+    const mobileRule = readMobileActionsMenuRule(css);
+
+    expect(mobileRule).toContain("max-width: calc(100vw - calc(var(--space-lg) + var(--space-md)))");
+    expect(mobileRule).toContain("max-height");
+    expect(mobileRule).toContain("overflow-y: auto");
+    expect(mobileRule).not.toContain("white-space: normal");
+    expect(mobileRule).not.toContain("min-width");
+  });
+});
+
+describe("Task Detail header actions menu single-line coverage", () => {
+  it("renders every populated entry with a class covered by the nowrap rule", async () => {
+    renderHost(makeTask({
+      githubTracking: { enabled: true },
+      plannerOversightLevel: "steer",
+      sessionAdvisorEnabled: true,
+      priority: "high",
+      executionMode: "fast",
+    }));
+    const menu = await openTaskDetailActionsMenu();
+
+    expect(within(menu).getByRole("menuitem", { name: "Execution mode: fast" })).toBeInTheDocument();
+    expect(within(menu).getByTestId("detail-actions-priority-heading")).toBeInTheDocument();
+
+    const entries = Array.from(menu.querySelectorAll<HTMLElement>("button, span[role='note']"));
+    expect(entries.length).toBeGreaterThan(0);
+    for (const entry of entries) {
+      expect(entry.classList.contains("detail-actions-menu-item")
+        || entry.classList.contains("detail-actions-menu-note")).toBe(true);
+    }
+  });
+
+  it("renders no menu at all when no secondary header action is available", async () => {
+    renderHost(makeTask({ column: "done", status: "done" }));
+    await screen.findByRole("button", { name: "Actions" });
+
+    expect(document.querySelector(".detail-actions-menu")).toBeNull();
+  });
+});
+
+function stubHostHeight(height: number): HTMLElement {
+  const host = document.querySelector<HTMLElement>(".task-detail-content")!;
+  Object.defineProperty(host, "clientHeight", { value: height, configurable: true });
+  return host;
+}
+
+function readPublishedMenuMaxHeight(): string {
+  const anchor = document.querySelector<HTMLElement>(".detail-actions-dropdown--header");
+  return anchor?.style.getPropertyValue("--detail-actions-menu-max-height") ?? "";
+}
+
+const menuHeightTask = makeTask({
+  githubTracking: { enabled: true },
+  plannerOversightLevel: "steer",
+  sessionAdvisorEnabled: true,
+  priority: "high",
+  executionMode: "fast",
+});
+
+/*
+FNXC:TaskDetailActionsMenu 2026-09-15-13:50:
+FN-420: this suite locks the header overflow menu to the height of the Task Detail shell that contains it rather than
+the browser viewport. It pins the CSS contract (both the base rule and the mobile block consume the measured variable
+with a viewport fallback and keep scrolling), the DOM proof in both hosts, the withheld-variable fallback when no
+height is measurable, re-measurement on reopen, and the surface census showing no other family publishes the variable.
+*/
+describe("Task Detail header actions menu height containment", () => {
+  it("bounds the base rule by the measured shell variable instead of an unconditional viewport cap", () => {
+    const css = readDashboardStylesSource();
+    const actions = css.match(/^\.detail-actions-menu\s*\{([^}]*)\}/m)?.[1] ?? "";
+
+    expect(actions).toContain("max-height: var(--detail-actions-menu-max-height,");
+    expect(actions).toContain("overflow-y: auto");
+    expect(actions).not.toMatch(/max-height:\s*calc\(100dvh/);
+  });
+
+  it("bounds the mobile rule by the same variable without the hardcoded pixel cap", () => {
+    const mobileRule = readMobileActionsMenuRule(readDashboardStylesSource());
+
+    expect(mobileRule).toContain("max-height: var(--detail-actions-menu-max-height,");
+    expect(mobileRule).toContain("overflow-y: auto");
+    expect(mobileRule).toContain("max-width: calc(100vw - calc(var(--space-lg) + var(--space-md)))");
+    expect(mobileRule).not.toContain("120px");
+  });
+
+  it.each([
+    ["modal", false, 640, "512px"],
+    ["embedded", true, 300, "240px"],
+  ] as const)("caps the menu at 80%% of the %s host shell height", async (_host, embedded, height, expected) => {
+    renderHost(menuHeightTask, { embedded });
+    stubHostHeight(height);
+    await openTaskDetailActionsMenu();
+
+    await waitFor(() => expect(readPublishedMenuMaxHeight()).toBe(expected));
+  });
+
+  it("withholds the variable when the host shell has no measurable height", async () => {
+    renderHost(menuHeightTask);
+    await openTaskDetailActionsMenu();
+
+    expect(document.querySelector<HTMLElement>(".task-detail-content")!.clientHeight).toBe(0);
+    expect(readPublishedMenuMaxHeight()).toBe("");
+  });
+
+  it("re-measures the host shell when the menu is reopened at a different height", async () => {
+    renderHost(menuHeightTask);
+    stubHostHeight(640);
+    await openTaskDetailActionsMenu();
+    await waitFor(() => expect(readPublishedMenuMaxHeight()).toBe("512px"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Actions" }));
+    await waitFor(() => expect(document.querySelector(".detail-actions-menu")).toBeNull());
+
+    stubHostHeight(300);
+    await openTaskDetailActionsMenu();
+    await waitFor(() => expect(readPublishedMenuMaxHeight()).toBe("240px"));
+  });
+
+  it("publishes nothing and raises nothing when no overflow menu is rendered", async () => {
+    renderHost(makeTask({ column: "done", status: "done" }));
+    await screen.findByRole("button", { name: "Actions" });
+    stubHostHeight(640);
+
+    expect(document.querySelector(".detail-actions-menu")).toBeNull();
+    expect(readPublishedMenuMaxHeight()).toBe("");
+  });
+
+  it("keeps the anchoring rules free of height and overflow declarations", () => {
+    const css = readDashboardStylesSource();
+    const headerAnchor = getCssRuleBlock(css, ".detail-actions-menu--header");
+    const embeddedAnchor = getCssRuleBlock(css, ".task-detail-content--embedded .detail-actions-menu--header");
+
+    for (const rule of [headerAnchor, embeddedAnchor]) {
+      expect(rule).not.toBe("");
+      expect(rule).not.toContain("max-height");
+      expect(rule).not.toContain("overflow");
+    }
+  });
+
+  it("publishes the measured variable only on the header anchor and never on the shared context menu", () => {
+    const css = readDashboardStylesSource().replace(/\/\*[\s\S]*?\*\//g, "");
+    for (const match of css.matchAll(/\.task-context-menu[^{}]*\{([^}]*)\}/g)) {
+      expect(match[1]).not.toContain("--detail-actions-menu-max-height");
+    }
+
+    const source = readAppFile("components/TaskDetailModal.tsx");
+    const publishSites = source.split("\n")
+      .map((line, index) => ({ line, index }))
+      .filter(({ line }) => line.includes("\"--detail-actions-menu-max-height\""));
+    expect(publishSites).toHaveLength(1);
+    const anchorContext = source.split("\n").slice(publishSites[0].index - 8, publishSites[0].index + 1).join("\n");
+    expect(anchorContext).toContain("detail-actions-dropdown--header");
   });
 });

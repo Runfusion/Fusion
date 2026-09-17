@@ -812,10 +812,11 @@
     gap: var(--space-sm);
   }
 
+  /* FNXC:IconOnlyButtonCanon 2026-09-16-19:05: FN-471 — même taille, exprimée par le jeton d'icône canonique. */
   .plugin-actions .btn-icon,
   .plugin-actions .toggle-switch {
-    min-width: 36px;
-    min-height: 36px;
+    min-width: var(--icon-button-size-mobile);
+    min-height: var(--icon-button-size-mobile);
   }
 
   .plugin-actions .toggle-switch {

@@ -592,11 +592,18 @@ group keeps local styling.
 
 
 /* Desktop popover presentation */
+/*
+FNXC:PopoverLayering 2026-09-15-09:31:
+FN-413: while the header-anchored Usage popover is OPEN it must stay above every dashboard-managed
+window, including one opened AFTER it. The legacy static 100/101 pair sat far below the shared window
+stack (10100+), so any modal painted over it. Both surfaces now derive from the live `--fusion-max-z`
+ceiling published by floatingWindowStack.ts, per the transient-surface scale documented in styles.css.
+*/
 .usage-popover-backdrop {
   position: fixed;
   inset: 0;
   background: transparent;
-  z-index: 100;
+  z-index: calc(var(--fusion-max-z) + 2);
 }
 
 .usage-modal--popover {
@@ -609,7 +616,7 @@ group keeps local styling.
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-lg);
   background: var(--surface);
-  z-index: 101;
+  z-index: calc(var(--fusion-max-z) + 3);
   overflow: hidden;
   display: flex;
   flex-direction: column;

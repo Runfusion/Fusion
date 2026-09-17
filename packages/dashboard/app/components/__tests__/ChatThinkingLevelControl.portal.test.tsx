@@ -1,17 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { ChatThinkingLevelControl } from "../ChatThinkingLevelControl";
-import { FloatingWindow } from "../FloatingWindow";
+import { FloatingWindow, FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT } from "../FloatingWindow";
 import { loadAllAppCss } from "../../test/cssFixture";
 
 const models = [
   { provider: "openai", id: "gpt-4o", name: "GPT-4o", reasoning: true, contextWindow: 128000 },
   { provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet", reasoning: true, contextWindow: 200000 },
-];
-
-const agents = [
-  { id: "agent-001", name: "Alpha", role: "executor" },
-  { id: "agent-002", name: "Beta", role: "reviewer" },
 ];
 
 const openModelPortal = async () => {
@@ -152,18 +147,22 @@ describe("ChatThinkingLevelControl with the real CustomModelDropdown portal", ()
     }
   });
 
-  it("keeps inline agent selection, thinking-level selection, Escape, and empty states working", () => {
+  /*
+  FNXC:Chat-ModelSwitch 2026-09-14-23:48:
+  FN-396: the popover keeps model selection, thinking-level selection, Escape and the empty model state. The removed
+  Model/Agent toggle and agent list must not reappear on any host, including the narrow one.
+  */
+  it("keeps inline model selection, thinking-level selection, Escape, and the empty model state working", () => {
     const onChange = vi.fn();
     const onChangeModel = vi.fn();
     const { rerender } = render(
-      <ChatThinkingLevelControl level={null} onChange={onChange} onChangeModel={onChangeModel} models={models} agents={agents} />,
+      <ChatThinkingLevelControl level={null} onChange={onChange} onChangeModel={onChangeModel} models={models} agentId="agent-002" agentName="Beta" />,
     );
 
     fireEvent.click(screen.getByTestId("chat-thinking-btn"));
-    fireEvent.click(screen.getByTestId("chat-thinking-mode-agent"));
-    fireEvent.click(screen.getByTestId("chat-thinking-agent-agent-002"));
-    expect(onChangeModel).toHaveBeenCalledWith({ agentId: "agent-002" });
-    expect(screen.getByTestId("chat-thinking-popover")).toBeInTheDocument();
+    expect(screen.queryByTestId("chat-thinking-mode-agent")).toBeNull();
+    expect(screen.queryByTestId("chat-thinking-agent-agent-002")).toBeNull();
+    expect(screen.getByTestId("chat-thinking-current-agent")).toHaveTextContent("Beta");
 
     fireEvent.click(screen.getByTestId("chat-thinking-option-high"));
     expect(onChange).toHaveBeenCalledWith("high");
@@ -173,12 +172,31 @@ describe("ChatThinkingLevelControl with the real CustomModelDropdown portal", ()
     fireEvent.keyDown(screen.getByTestId("chat-thinking-btn"), { key: "Escape" });
     expect(screen.queryByTestId("chat-thinking-popover")).not.toBeInTheDocument();
 
-    rerender(<ChatThinkingLevelControl level={null} onChange={onChange} onChangeModel={onChangeModel} models={[]} agents={[]} />);
+    rerender(<ChatThinkingLevelControl level={null} onChange={onChange} onChangeModel={onChangeModel} models={[]} />);
     fireEvent.click(screen.getByTestId("chat-thinking-btn"));
-    fireEvent.click(screen.getByTestId("chat-thinking-mode-model"));
     expect(screen.getByTestId("chat-thinking-model-empty")).toBeInTheDocument();
-    fireEvent.click(screen.getByTestId("chat-thinking-mode-agent"));
-    expect(screen.getByTestId("chat-thinking-agent-empty")).toBeInTheDocument();
+    expect(screen.queryByTestId("chat-thinking-agent-empty")).toBeNull();
+    expect(screen.queryByTestId("chat-thinking-mode-toggle")).toBeNull();
+  });
+
+  it("renders no agent affordance in a narrow chat host", () => {
+    const narrowHost = document.createElement("div");
+    narrowHost.className = "chat-view chat-view--narrow";
+    document.body.appendChild(narrowHost);
+    try {
+      render(
+        <ChatThinkingLevelControl level={null} onChange={vi.fn()} onChangeModel={vi.fn()} models={models} agentId="agent-002" agentName="Beta" />,
+        { container: narrowHost },
+      );
+      fireEvent.click(screen.getByTestId("chat-thinking-btn"));
+
+      expect(screen.getByTestId("chat-thinking-model-picker")).toBeInTheDocument();
+      expect(screen.queryByTestId("chat-thinking-mode-toggle")).toBeNull();
+      expect(screen.queryByTestId("chat-thinking-agent-list")).toBeNull();
+      expect(document.querySelector(".chat-thinking-mode-toggle")).toBeNull();
+    } finally {
+      narrowHost.remove();
+    }
   });
 });
 
@@ -226,6 +244,48 @@ describe("ChatThinkingLevelControl mobile popover overlay contract", () => {
     }
   });
 
+  /*
+  FNXC:ModelDropdown 2026-09-15-03:49:
+  The Brain popover is the portaled host of the chat model picker. Dragging or resizing a floating chat
+  window fires neither resize nor scroll, so without the floating-window geometry event and the pointer
+  drag listeners the popover (and the nested model list) stayed detached at its old screen position.
+  */
+  it("re-anchors the brain popover on host floating-window geometry changes and pointer drags", async () => {
+    const originalRect = Element.prototype.getBoundingClientRect;
+    const setRect = (top: number, bottom: number) => {
+      Element.prototype.getBoundingClientRect = vi.fn(() => ({
+        top, bottom, left: 20, right: 60, width: 40, height: bottom - top, x: 20, y: top, toJSON: () => ({}),
+      } as DOMRect));
+    };
+    try {
+      setRect(300, 340);
+      render(<ChatThinkingLevelControl level={null} onChange={vi.fn()} onChangeModel={vi.fn()} models={models} />);
+      fireEvent.click(screen.getByTestId("chat-thinking-btn"));
+      const popover = await screen.findByTestId("chat-thinking-popover");
+      const initialTop = popover.style.top;
+
+      setRect(120, 160);
+      fireEvent(window, new CustomEvent(FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT));
+      await waitFor(() => expect(popover.style.top).not.toBe(initialTop));
+      const afterGeometryTop = popover.style.top;
+
+      setRect(360, 400);
+      fireEvent.pointerMove(document);
+      await waitFor(() => expect(popover.style.top).not.toBe(afterGeometryTop));
+      const afterDragTop = popover.style.top;
+
+      setRect(200, 240);
+      fireEvent.pointerUp(document);
+      await waitFor(() => expect(popover.style.top).not.toBe(afterDragTop));
+
+      // Repositioning must never dismiss the popover or unmount the nested model picker.
+      expect(screen.getByTestId("chat-thinking-popover")).toBeInTheDocument();
+      expect(screen.getByTestId("chat-thinking-model-picker")).toBeInTheDocument();
+    } finally {
+      Element.prototype.getBoundingClientRect = originalRect;
+    }
+  });
+
   it("keeps the CSS contract fixed and free of narrow composer-relative overrides", () => {
     const css = loadAllAppCss();
     expect(css).toMatch(/\.chat-thinking-popover\s*\{[^}]*position:\s*fixed;/);
@@ -235,6 +295,6 @@ describe("ChatThinkingLevelControl mobile popover overlay contract", () => {
 });
 
 async function openModelPortalWithRender({ onChangeModel }: { onChangeModel: ReturnType<typeof vi.fn> }) {
-  render(<ChatThinkingLevelControl level={null} onChange={vi.fn()} onChangeModel={onChangeModel} models={models} agents={agents} />);
+  render(<ChatThinkingLevelControl level={null} onChange={vi.fn()} onChangeModel={onChangeModel} models={models} />);
   return openModelPortal();
 }

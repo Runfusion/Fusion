@@ -18,6 +18,11 @@ type MetricsTask = Pick<
   | "cumulativeActiveMs"
   | "cumulativePlanningMs"
   | "planningStartedAt"
+  /* FN-457: durable paused-time accounting, so the planner panel deducts pause exactly like the card chip. */
+  | "cumulativePausedMs"
+  | "pausedStartedAt"
+  | "paused"
+  | "userPaused"
 >;
 
 type TokenBucketInput = Pick<
@@ -382,9 +387,25 @@ function buildTimingMetrics(
   the legacy id — the documented no-metadata answer, not a floor.
   */
   const wipColumns = options.wipColumns ?? new Set(["in-progress"]);
-  const unboundedActiveRuntimeMs = wipColumns.has(task.column) && executionStartedMs != null
-    ? (cumulativeActiveMs ?? 0) + Math.max(0, nowMs - executionStartedMs)
-    : cumulativeActiveMs;
+  /*
+  FNXC:TaskPauseAccounting 2026-09-16-06:16:
+  FN-457 — the planner panel and the card chip must not be able to publish two different numbers for
+  the same task, so this applies the identical pause deduction as `taskTiming.ts`: banked pause
+  always, plus the OPEN segment only while the card is actually paused (an orphaned `pausedStartedAt`
+  on an unpaused card would otherwise deduct without bound).
+  */
+  const pausedBankedMs = Math.max(0, optionalFiniteNumber(task.cumulativePausedMs) ?? 0);
+  const pausedOpenStartMs = (task.paused === true || task.userPaused === true)
+    ? parseTimestampToMs(task.pausedStartedAt, malformedTimestamps)
+    : null;
+  const pausedDeductionMs = pausedBankedMs + (pausedOpenStartMs != null ? Math.max(0, nowMs - pausedOpenStartMs) : 0);
+  const deductPause = (value: number | null | undefined) => (value == null ? value : Math.max(0, value - pausedDeductionMs));
+
+  const unboundedActiveRuntimeMs = deductPause(
+    wipColumns.has(task.column) && executionStartedMs != null
+      ? (cumulativeActiveMs ?? 0) + Math.max(0, nowMs - executionStartedMs)
+      : cumulativeActiveMs,
+  );
   /*
   FNXC:TaskRuntimeSegments 2026-08-15-20:34:
   Planner metrics share the card's closed-segment contract. Execution-only values are bounded by

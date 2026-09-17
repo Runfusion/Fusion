@@ -26,6 +26,14 @@ export interface ChatSessionListResponse {
   total?: number;
   hasMore?: boolean;
   nextCursor?: string | null;
+  /*
+  FNXC:ChatSidebarPerf 2026-09-16-02:15:
+  Effective project-level visibility of task-linked chats in the common feed, as already applied by
+  the list route. Optional on purpose: an older server behind a newer client omits it, and the client
+  must treat that absence as "visibility unknown" (task chats stay hidden until the refresh lands).
+  `lookup=resume` responses never carry it.
+  */
+  taskChatsVisibleInCommonFeed?: boolean;
 }
 
 export interface ChatSessionResponse {
@@ -579,6 +587,14 @@ export interface ChatStreamHandlers {
   onToolEnd?: (data: { toolName: string; isError: boolean; result?: unknown }) => void;
   onFallback?: (data: { primaryModel: string; fallbackModel: string; triggerPoint: "session-creation" | "prompt-time" }) => void;
   onAgentMessage?: (data: { message: ChatMessage; senderAgentId: string; senderAgentName: string }) => void;
+  /*
+  FNXC:ChatMessageEdit 2026-09-16-05:58:
+  In-band identity of the user turn the server just persisted. It carries the PERSISTED row so the
+  caller can retire its optimistic `temp-<ts>` bubble by exact temp id instead of depending on the
+  out-of-band `chat:message:added` echo, which can silently never arrive. Non-terminal: a malformed
+  payload is skipped without ending the stream.
+  */
+  onUserMessage?: (data: { message: ChatMessage }) => void;
   onDone?: (data: { messageId: string; message?: ChatMessage; interrupted?: boolean; dispatch?: "agents"; failedAgentNames?: string[] }) => void;
   onError?: (data: string | ChatFailureInfo, meta?: ChatStreamErrorMeta) => void;
   onConnectionStateChange?: (state: StreamConnectionState) => void;
@@ -672,6 +688,18 @@ export function streamChatResponse(
           const parsed = JSON.parse(rawData) as { message?: unknown; senderAgentId?: unknown; senderAgentName?: unknown };
           if (parsed.message && typeof parsed.message === "object" && typeof parsed.senderAgentId === "string" && typeof parsed.senderAgentName === "string") {
             handlers.onAgentMessage?.({ message: parsed.message as ChatMessage, senderAgentId: parsed.senderAgentId, senderAgentName: parsed.senderAgentName });
+          }
+        } catch {
+          // skip malformed event
+        }
+        break;
+      case "user_message":
+        // FNXC:ChatMessageEdit 2026-09-16-05:58: non-terminal identity event; malformed payloads are skipped.
+        try {
+          const parsed = JSON.parse(rawData) as { message?: unknown };
+          const userMessage = parsed.message as { id?: unknown } | undefined;
+          if (userMessage && typeof userMessage === "object" && typeof userMessage.id === "string" && userMessage.id.length > 0) {
+            handlers.onUserMessage?.({ message: userMessage as unknown as ChatMessage });
           }
         } catch {
           // skip malformed event
@@ -937,6 +965,18 @@ export function attachChatStream(
       case "error":
         terminated = true;
         handlers.onError?.(parseChatErrorPayload(rawData));
+        break;
+      case "user_message":
+        // FNXC:ChatMessageEdit 2026-09-16-05:58: replayed identity event on reattach; same non-terminal contract.
+        try {
+          const parsed = JSON.parse(rawData) as { message?: unknown };
+          const userMessage = parsed.message as { id?: unknown } | undefined;
+          if (userMessage && typeof userMessage === "object" && typeof userMessage.id === "string" && userMessage.id.length > 0) {
+            handlers.onUserMessage?.({ message: userMessage as unknown as ChatMessage });
+          }
+        } catch {
+          // skip malformed event
+        }
         break;
     }
   };

@@ -62,14 +62,14 @@ function mailboxProps(prefill: MainContentProps["mailComposerPrefill"], taskView
 
 function ChatMailRoutingHost() {
   const [taskView, setTaskView] = useState<"chat" | "mailbox">("chat");
-  const [quickChatOpen, setQuickChatOpen] = useState(true);
+  const [primaryChatOpen, setPrimaryChatOpen] = useState(true);
   const { mailComposerPrefill, onSendAsReport } = useChatMailReportRouting(
     () => setTaskView("mailbox"),
-    () => setQuickChatOpen(false),
+    () => setPrimaryChatOpen(false),
   );
   return <>
-    <span data-testid="quick-chat-open">{String(quickChatOpen)}</span>
-    <button type="button" data-testid="reopen-quick-chat" onClick={() => { setQuickChatOpen(true); setTaskView("chat"); }}>Reopen Quick Chat</button>
+    <span data-testid="primary-chat-open">{String(primaryChatOpen)}</span>
+    <button type="button" data-testid="reopen-primary-chat" onClick={() => { setPrimaryChatOpen(true); setTaskView("chat"); }}>Reopen primary Chat</button>
     {taskView === "chat" ? <ChatView projectId="project-1" addToast={vi.fn()} onSendAsReport={onSendAsReport} /> : <MainContent {...mailboxProps(mailComposerPrefill, taskView, setTaskView, onSendAsReport)} />}
   </>;
 }
@@ -93,7 +93,7 @@ describe("chat-to-mail report routing", () => {
     /* FNXC:ChatNavigation 2026-08-23-18:55: FN-054 made Chat list-first, so the transcript action exists only after drilling into the conversation. */
     await user.click(await screen.findByTestId(`chat-session-${activeSession.id}`));
     await user.click(await screen.findByTestId("chat-send-as-report-assistant-1"));
-    expect(screen.getByTestId("quick-chat-open")).toHaveTextContent("false");
+    expect(screen.getByTestId("primary-chat-open")).toHaveTextContent("false");
     expect(await screen.findByTestId("report-title")).toHaveValue("Status");
     expect(screen.getByTestId("message-composer-content")).toHaveValue("# Status\nReady");
     expect(screen.getByTestId("message-composer-send")).toBeDisabled();
@@ -120,7 +120,7 @@ describe("chat-to-mail report routing", () => {
     await user.click(await screen.findByTestId(`chat-session-${activeSession.id}`));
 
     await user.click(await screen.findByTestId("chat-send-as-report-assistant-mobile"));
-    expect(screen.getByTestId("quick-chat-open")).toHaveTextContent("false");
+    expect(screen.getByTestId("primary-chat-open")).toHaveTextContent("false");
     expect(await screen.findByTestId("report-title")).toHaveValue("Mobile status");
     const composerBody = screen.getByTestId("message-composer-content") as HTMLTextAreaElement;
     expect(composerBody).toHaveValue(body.slice(0, 2000));
@@ -160,7 +160,7 @@ describe("chat-to-mail report routing", () => {
     await user.click(screen.getByTestId("mailbox-back-to-list"));
     expect(screen.queryByTestId("message-composer")).not.toBeInTheDocument();
 
-    await user.click(screen.getByTestId("reopen-quick-chat"));
+    await user.click(screen.getByTestId("reopen-primary-chat"));
     // Reopening remounts ChatView at its conversation list, so drill in again.
     await user.click(await screen.findByTestId(`chat-session-${activeSession.id}`));
     await user.click(await screen.findByTestId("chat-send-as-report-assistant-repeat"));

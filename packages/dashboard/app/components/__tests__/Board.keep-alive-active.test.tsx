@@ -112,6 +112,26 @@ describe("Board active keep-alive gate", () => {
     }
   });
 
+  /*
+  FNXC:WorkflowControls 2026-09-15-01:44:
+  FN-405: releasing the shared slot while inactive is only half the contract — a Board that becomes
+  active again must RECLAIM it. The shared resolver re-resolves on re-enable, so the round trip must
+  leave the selector back in the header with no residual inline toolbar.
+  */
+  it("reclaims the header workflow slot when it becomes active again", async () => {
+    const slot = createHeaderSlot();
+    const { container, rerender } = render(<Board {...boardProps({ active: true, workflowControlsInHeader: true })} />);
+    await waitFor(() => expect(slot.querySelector(".board-workflow-toolbar")).not.toBeNull());
+
+    rerender(<Board {...boardProps({ active: false, workflowControlsInHeader: true })} />);
+    await waitFor(() => expect(slot).toBeEmptyDOMElement());
+
+    rerender(<Board {...boardProps({ active: true, workflowControlsInHeader: true })} />);
+    await waitFor(() => expect(slot.querySelector(".board-workflow-toolbar")).not.toBeNull());
+    expect(container.querySelector(".board-workflow-view > .board-workflow-toolbar")).toBeNull();
+    expect(document.querySelectorAll(".board-workflow-toolbar")).toHaveLength(1);
+  });
+
   it("guards portal selection during render, before the inactive effect can clear a cached slot", () => {
     const source = readAppFile("components/Board.tsx");
     expect(source).toContain("const shouldRelocateWorkflowToolbar = active && workflowControlsInHeader");

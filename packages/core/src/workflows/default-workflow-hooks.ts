@@ -37,6 +37,7 @@
  */
 
 import { getTraitRegistry } from "./trait-registry.js";
+import { applyPauseAccounting } from "../tasks/task-pause-accounting.js";
 import type { LifecycleColumns } from "./workflow-lifecycle-traits.js";
 import type { TraitAuditWarning } from "./trait-registry.js";
 import type { Settings, Task } from "../types.js";
@@ -157,6 +158,17 @@ function inRole(
  *  arbitrary human merge-wait, so counting it would overstate active time by hours of idle
  *  latency — a worse distortion than omitting the gate's own minutes. Attributing gate runtime
  *  properly needs node-scoped timing (a separate field), not a column trait.
+ *
+ *  FNXC:WorkflowReviewGates 2026-09-16-06:16:
+ *  FN-457 — gate runtime IS now restored at the display layer, without changing this scope. The
+ *  card's clock chip adds a third bucket computed by `getVerificationRuntimeMs`
+ *  (`packages/dashboard/app/utils/taskTiming.ts`) from the gates' own `startedAt`/`completedAt`
+ *  windows, unioned so overlapping `foreach` instances count once. That is the node-scoped timing
+ *  the paragraph above says the problem needs, taken from durable `workflowStepResults` rather than
+ *  from a new field, so no idle merge-wait is swept in.
+ *  `cumulativeActiveMs` keeps its "implementation time" meaning EXACTLY as written above, and the
+ *  Plan Review gate stays counted as PLANNING, not verification, because it opens a
+ *  `planningStartedAt` segment and is therefore already inside `cumulativePlanningMs`.
  *  Consumers of this scope: `packages/core/src/productivity-analytics.ts`,
  *  `packages/core/src/task-timing.ts`, and the dashboard duration displays.
  */
@@ -265,6 +277,13 @@ export function applyResetOnEntryEffects(ctx: DefaultWorkflowMoveContext): void 
   task.blockedBy = undefined;
   task.overlapBlockedBy = undefined;
   if (!options.preservePause) {
+    /*
+    FNXC:TaskPauseAccounting 2026-09-16-06:16:
+    FN-457 — reopen-into-planning clears the park, so any open pause segment must be banked here.
+    Skipped under `preservePause` precisely because the park survives: the segment is still running
+    and closing it would bank a pause that has not ended.
+    */
+    applyPauseAccounting(task, false, ctx.movedAt, false);
     task.paused = undefined;
     task.pausedByAgentId = undefined;
   }

@@ -77,7 +77,15 @@ function menuDecisions(columnId: string, flags: Record<string, boolean>, task: P
     t,
     columnLabel,
     currentColumnFlags: flags as never,
-    onPlan: vi.fn(),
+    /*
+    FNXC:TaskContextMenu 2026-09-15-10:40:
+    FN-417 deleted the `plan` descriptor and its `onPlan` option. Recovery callbacks keep this probe
+    non-vacuous: without at least one wired handler the model would produce only `delete`, and the
+    invariance comparison would agree trivially on every lineage.
+    */
+    onRetry: vi.fn(),
+    onReset: vi.fn(),
+    onDelete: vi.fn(),
   } as never);
   return {
     shouldShowActionsMenu: model.shouldShowActionsMenu,
@@ -102,8 +110,12 @@ describe("column-role decisions are invariant under column RENAMING (U12 evidenc
       expect({ ...other, label: first!.label }).toEqual(first);
     }
 
-    // And the shape is not vacuous: a pre-implementation card really does offer Plan.
-    expect(first!.actionIds).toContain("plan");
+    /*
+    And the shape is not vacuous. FN-417 removed Plan, so the positive anchor is the recovery pair a
+    pre-implementation card really does offer; `plan` must additionally be absent everywhere.
+    */
+    expect(first!.actionIds).toEqual(expect.arrayContaining(["retry", "reset", "delete"]));
+    for (const decision of decisions) expect(decision.actionIds).not.toContain("plan");
   });
 
   it("a mid-flight card decides identically whether its column is `in-progress` or `building`", () => {
@@ -112,8 +124,12 @@ describe("column-role decisions are invariant under column RENAMING (U12 evidenc
       ...menuDecisions(lineage.columnId, WIP_TRAITS as never),
     }));
     expect(decisions[1]).toEqual(decisions[0]);
-    // The inversion guard, stated positively: executing cards are never planning targets.
+    /*
+    FN-417: no card of any shape is a planning target any more, so this negative is now universal.
+    Paired with a positive anchor so the case cannot pass on an empty action list.
+    */
     expect(decisions[0]!.actionIds).not.toContain("plan");
+    expect(decisions[0]!.actionIds).toEqual(expect.arrayContaining(["retry", "delete"]));
   });
 
   it("planner activity reads as agent-active identically across all three lineages", () => {

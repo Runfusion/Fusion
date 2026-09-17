@@ -13,7 +13,7 @@ export interface ResolvedModelSelection {
   credentialInstanceId?: string;
 }
 
-export type ModelThinkingPhase = "execution" | "planning" | "validation";
+export type ModelThinkingPhase = "execution" | "planning" | "validation" | "merger";
 
 export const TEST_MODE_RESOLVED: ResolvedModelSelection = { provider: "mock", modelId: "scripted" };
 
@@ -101,33 +101,24 @@ export function hasConfiguredFallbackLane(
   settings: Partial<Settings> | undefined,
   phase: ModelThinkingPhase,
 ): boolean {
-  const laneProvider = phase === "execution"
-    ? settings?.executionFallbackProvider
-    : phase === "planning"
-      ? settings?.planningFallbackProvider
-      : settings?.validatorFallbackProvider;
-  const laneModelId = phase === "execution"
-    ? settings?.executionFallbackModelId
-    : phase === "planning"
-      ? settings?.planningFallbackModelId
-      : settings?.validatorFallbackModelId;
-  const workflowPrefix = phase === "execution"
-    ? "executionFallback"
-    : phase === "planning"
-      ? "planningFallback"
-      : "validatorFallback";
+  const prefix = phase === "validation" ? "validator" : phase;
+  const projectProvider = settings?.[`${prefix}FallbackProvider` as keyof Settings];
+  const projectModelId = settings?.[`${prefix}FallbackModelId` as keyof Settings];
+  const globalProvider = settings?.[`${prefix}GlobalFallbackProvider` as keyof Settings];
+  const globalModelId = settings?.[`${prefix}GlobalFallbackModelId` as keyof Settings];
 
   return Boolean(
-    (laneProvider && laneModelId)
-    || (settings?.fallbackProvider && settings?.fallbackModelId)
-    || (resolveSelectedWorkflowModelLane(settings, `${workflowPrefix}Provider`)
-      && resolveSelectedWorkflowModelLane(settings, `${workflowPrefix}ModelId`)),
+    (resolveSelectedWorkflowModelLane(settings, `${prefix}FallbackProvider`)
+      && resolveSelectedWorkflowModelLane(settings, `${prefix}FallbackModelId`))
+    || (projectProvider && projectModelId)
+    || (globalProvider && globalModelId)
+    || (settings?.fallbackProvider && settings?.fallbackModelId),
   );
 }
 
 /**
  * FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
- * Workflow model-lane thinking companions are workflow-declared settings whose unset state means inherit. Resolve them centrally so executor, reviewer, triage, step sessions, and merger-adjacent validation agree on precedence: node/step override > task thinking > project lane > global lane > selected-workflow lane > project default thinking override > global default thinking level.
+ * Workflow model-lane thinking companions are workflow-declared settings whose unset state means inherit. Resolve them centrally so executor, reviewer, triage, step sessions, and merger-adjacent validation agree on precedence: node/task override > selected workflow > project lane > global lane > project default thinking override > global default thinking level.
  */
 export function resolveSettingsLaneThinkingLevel(
   phase: ModelThinkingPhase,
@@ -135,6 +126,7 @@ export function resolveSettingsLaneThinkingLevel(
 ): ThinkingLevel | undefined {
   if (phase === "execution") return settings?.executionThinkingLevel;
   if (phase === "planning") return settings?.planningThinkingLevel;
+  if (phase === "merger") return settings?.mergerThinkingLevel;
   return settings?.validatorThinkingLevel;
 }
 
@@ -143,20 +135,13 @@ export function resolvePhaseThinkingLevel(
   settings: Partial<Settings> | undefined,
   nodeOrTaskThinkingLevel?: ThinkingLevel | string,
 ): string | undefined {
-  const globalLane = phase === "execution"
-    ? settings?.executionGlobalThinkingLevel
-    : phase === "planning"
-      ? settings?.planningGlobalThinkingLevel
-      : settings?.validatorGlobalThinkingLevel;
+  const prefix = phase === "validation" ? "validator" : phase;
+  const globalLane = settings?.[`${prefix}GlobalThinkingLevel` as keyof Settings] as ThinkingLevel | undefined;
   return firstThinkingLevel(
     nodeOrTaskThinkingLevel,
+    resolveSelectedWorkflowModelLane(settings, `${prefix}ThinkingLevel`),
     resolveSettingsLaneThinkingLevel(phase, settings),
     globalLane,
-    resolveSelectedWorkflowModelLane(settings, phase === "execution"
-      ? "executionThinkingLevel"
-      : phase === "planning"
-        ? "planningThinkingLevel"
-        : "validatorThinkingLevel"),
     settings?.defaultThinkingLevelOverride,
     settings?.defaultThinkingLevel,
   );
@@ -169,6 +154,7 @@ and engine share it; keep it aligned with the established merger lane precedence
 */
 export function resolveMergerPhaseThinkingLevel(settings?: Partial<Settings>): string | undefined {
   return firstThinkingLevel(
+    resolveSelectedWorkflowModelLane(settings, "mergerThinkingLevel"),
     settings?.mergerThinkingLevel,
     settings?.mergerGlobalThinkingLevel,
     settings?.defaultThinkingLevelOverride,
@@ -198,6 +184,11 @@ export function resolveExecutionSettingsModel(settings?: Partial<Settings>): Res
   return applyTestModeOverrides(
     pickFirstModelPair(
       {
+        provider: resolveSelectedWorkflowModelLane(settings, "executionProvider"),
+        credentialInstanceId: resolveSelectedWorkflowModelLane(settings, "executionCredentialInstanceId"),
+        modelId: resolveSelectedWorkflowModelLane(settings, "executionModelId"),
+      },
+      {
         provider: settings?.executionProvider,
         credentialInstanceId: settings?.executionCredentialInstanceId,
         modelId: settings?.executionModelId,
@@ -206,11 +197,6 @@ export function resolveExecutionSettingsModel(settings?: Partial<Settings>): Res
         provider: settings?.executionGlobalProvider,
         credentialInstanceId: settings?.executionGlobalCredentialInstanceId,
         modelId: settings?.executionGlobalModelId,
-      },
-      {
-        provider: resolveSelectedWorkflowModelLane(settings, "executionProvider"),
-        credentialInstanceId: resolveSelectedWorkflowModelLane(settings, "executionCredentialInstanceId"),
-        modelId: resolveSelectedWorkflowModelLane(settings, "executionModelId"),
       },
       resolveProjectDefaultModel(settings),
     ),
@@ -222,6 +208,11 @@ export function resolvePlanningSettingsModel(settings?: Partial<Settings>): Reso
   return applyTestModeOverrides(
     pickFirstModelPair(
       {
+        provider: resolveSelectedWorkflowModelLane(settings, "planningProvider"),
+        credentialInstanceId: resolveSelectedWorkflowModelLane(settings, "planningCredentialInstanceId"),
+        modelId: resolveSelectedWorkflowModelLane(settings, "planningModelId"),
+      },
+      {
         provider: settings?.planningProvider,
         credentialInstanceId: settings?.planningCredentialInstanceId,
         modelId: settings?.planningModelId,
@@ -230,11 +221,6 @@ export function resolvePlanningSettingsModel(settings?: Partial<Settings>): Reso
         provider: settings?.planningGlobalProvider,
         credentialInstanceId: settings?.planningGlobalCredentialInstanceId,
         modelId: settings?.planningGlobalModelId,
-      },
-      {
-        provider: resolveSelectedWorkflowModelLane(settings, "planningProvider"),
-        credentialInstanceId: resolveSelectedWorkflowModelLane(settings, "planningCredentialInstanceId"),
-        modelId: resolveSelectedWorkflowModelLane(settings, "planningModelId"),
       },
       resolveProjectDefaultModel(settings),
     ),
@@ -246,6 +232,11 @@ export function resolveValidatorSettingsModel(settings?: Partial<Settings>): Res
   return applyTestModeOverrides(
     pickFirstModelPair(
       {
+        provider: resolveSelectedWorkflowModelLane(settings, "validatorProvider"),
+        credentialInstanceId: resolveSelectedWorkflowModelLane(settings, "validatorCredentialInstanceId"),
+        modelId: resolveSelectedWorkflowModelLane(settings, "validatorModelId"),
+      },
+      {
         provider: settings?.validatorProvider,
         credentialInstanceId: settings?.validatorCredentialInstanceId,
         modelId: settings?.validatorModelId,
@@ -254,11 +245,6 @@ export function resolveValidatorSettingsModel(settings?: Partial<Settings>): Res
         provider: settings?.validatorGlobalProvider,
         credentialInstanceId: settings?.validatorGlobalCredentialInstanceId,
         modelId: settings?.validatorGlobalModelId,
-      },
-      {
-        provider: resolveSelectedWorkflowModelLane(settings, "validatorProvider"),
-        credentialInstanceId: resolveSelectedWorkflowModelLane(settings, "validatorCredentialInstanceId"),
-        modelId: resolveSelectedWorkflowModelLane(settings, "validatorModelId"),
       },
       resolveProjectDefaultModel(settings),
     ),
@@ -359,13 +345,18 @@ export function resolveImportTranslateSettingsModel(settings?: Partial<Settings>
 
 /**
  * FNXC:Settings-MergerModel 2026-07-13-07:52:
- * Merger sessions resolve project merger lane → global merger lane → project/global default.
+ * Merger sessions resolve selected workflow → project merger lane → global merger lane → project/global default.
  * They intentionally do not inherit execution/planning/validator lanes so a merge-specific
  * model can be configured under Global/Project Models without changing other AI roles.
  */
 export function resolveMergerSettingsModel(settings?: Partial<Settings>): ResolvedModelSelection {
   return applyTestModeOverrides(
     pickFirstModelPair(
+      {
+        provider: resolveSelectedWorkflowModelLane(settings, "mergerProvider"),
+        credentialInstanceId: resolveSelectedWorkflowModelLane(settings, "mergerCredentialInstanceId"),
+        modelId: resolveSelectedWorkflowModelLane(settings, "mergerModelId"),
+      },
       {
         provider: settings?.mergerProvider,
         credentialInstanceId: settings?.mergerCredentialInstanceId,
@@ -384,17 +375,27 @@ export function resolveMergerSettingsModel(settings?: Partial<Settings>): Resolv
 
 /**
  * FNXC:Settings-MergerModel 2026-07-16-00:00:
- * Retryable merger sessions resolve a project merger-fallback pair before the shared
- * global fallback pair. Complete-pair selection and test-mode override behavior match
+ * Retryable merger sessions resolve selected workflow → project → role-global merger fallback,
+ * then the shared global fallback pair. Complete-pair selection and test-mode behavior match
  * all other model lanes, preserving existing behavior while this lane is unset.
  */
 export function resolveMergerFallbackModel(settings?: Partial<Settings>): ResolvedModelSelection {
   return applyTestModeOverrides(
     pickFirstModelPair(
       {
+        provider: resolveSelectedWorkflowModelLane(settings, "mergerFallbackProvider"),
+        credentialInstanceId: resolveSelectedWorkflowModelLane(settings, "mergerFallbackCredentialInstanceId"),
+        modelId: resolveSelectedWorkflowModelLane(settings, "mergerFallbackModelId"),
+      },
+      {
         provider: settings?.mergerFallbackProvider,
         credentialInstanceId: settings?.mergerFallbackCredentialInstanceId,
         modelId: settings?.mergerFallbackModelId,
+      },
+      {
+        provider: settings?.mergerGlobalFallbackProvider,
+        credentialInstanceId: settings?.mergerGlobalFallbackCredentialInstanceId,
+        modelId: settings?.mergerGlobalFallbackModelId,
       },
       {
         provider: settings?.fallbackProvider,
@@ -415,19 +416,24 @@ export function resolveExecutorFallbackModel(settings?: Partial<Settings>): Reso
   return applyTestModeOverrides(
     pickFirstModelPair(
       {
+        provider: resolveSelectedWorkflowModelLane(settings, "executionFallbackProvider"),
+        credentialInstanceId: resolveSelectedWorkflowModelLane(settings, "executionFallbackCredentialInstanceId"),
+        modelId: resolveSelectedWorkflowModelLane(settings, "executionFallbackModelId"),
+      },
+      {
         provider: settings?.executionFallbackProvider,
         credentialInstanceId: settings?.executionFallbackCredentialInstanceId,
         modelId: settings?.executionFallbackModelId,
       },
       {
+        provider: settings?.executionGlobalFallbackProvider,
+        credentialInstanceId: settings?.executionGlobalFallbackCredentialInstanceId,
+        modelId: settings?.executionGlobalFallbackModelId,
+      },
+      {
         provider: settings?.fallbackProvider,
         credentialInstanceId: settings?.fallbackCredentialInstanceId,
         modelId: settings?.fallbackModelId,
-      },
-      {
-        provider: resolveSelectedWorkflowModelLane(settings, "executionFallbackProvider"),
-        credentialInstanceId: resolveSelectedWorkflowModelLane(settings, "executionFallbackCredentialInstanceId"),
-        modelId: resolveSelectedWorkflowModelLane(settings, "executionFallbackModelId"),
       },
     ),
     settings,
@@ -438,19 +444,24 @@ export function resolvePlanningFallbackModel(settings?: Partial<Settings>): Reso
   return applyTestModeOverrides(
     pickFirstModelPair(
       {
+        provider: resolveSelectedWorkflowModelLane(settings, "planningFallbackProvider"),
+        credentialInstanceId: resolveSelectedWorkflowModelLane(settings, "planningFallbackCredentialInstanceId"),
+        modelId: resolveSelectedWorkflowModelLane(settings, "planningFallbackModelId"),
+      },
+      {
         provider: settings?.planningFallbackProvider,
         credentialInstanceId: settings?.planningFallbackCredentialInstanceId,
         modelId: settings?.planningFallbackModelId,
       },
       {
+        provider: settings?.planningGlobalFallbackProvider,
+        credentialInstanceId: settings?.planningGlobalFallbackCredentialInstanceId,
+        modelId: settings?.planningGlobalFallbackModelId,
+      },
+      {
         provider: settings?.fallbackProvider,
         credentialInstanceId: settings?.fallbackCredentialInstanceId,
         modelId: settings?.fallbackModelId,
-      },
-      {
-        provider: resolveSelectedWorkflowModelLane(settings, "planningFallbackProvider"),
-        credentialInstanceId: resolveSelectedWorkflowModelLane(settings, "planningFallbackCredentialInstanceId"),
-        modelId: resolveSelectedWorkflowModelLane(settings, "planningFallbackModelId"),
       },
     ),
     settings,
@@ -461,19 +472,24 @@ export function resolveValidatorFallbackModel(settings?: Partial<Settings>): Res
   return applyTestModeOverrides(
     pickFirstModelPair(
       {
+        provider: resolveSelectedWorkflowModelLane(settings, "validatorFallbackProvider"),
+        credentialInstanceId: resolveSelectedWorkflowModelLane(settings, "validatorFallbackCredentialInstanceId"),
+        modelId: resolveSelectedWorkflowModelLane(settings, "validatorFallbackModelId"),
+      },
+      {
         provider: settings?.validatorFallbackProvider,
         credentialInstanceId: settings?.validatorFallbackCredentialInstanceId,
         modelId: settings?.validatorFallbackModelId,
       },
       {
+        provider: settings?.validatorGlobalFallbackProvider,
+        credentialInstanceId: settings?.validatorGlobalFallbackCredentialInstanceId,
+        modelId: settings?.validatorGlobalFallbackModelId,
+      },
+      {
         provider: settings?.fallbackProvider,
         credentialInstanceId: settings?.fallbackCredentialInstanceId,
         modelId: settings?.fallbackModelId,
-      },
-      {
-        provider: resolveSelectedWorkflowModelLane(settings, "validatorFallbackProvider"),
-        credentialInstanceId: resolveSelectedWorkflowModelLane(settings, "validatorFallbackCredentialInstanceId"),
-        modelId: resolveSelectedWorkflowModelLane(settings, "validatorFallbackModelId"),
       },
     ),
     settings,

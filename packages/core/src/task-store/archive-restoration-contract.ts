@@ -16,6 +16,11 @@ export const ARCHIVE_RESTORABLE_TASK_FIELDS = [
   "cumulativeActiveMs",
   "cumulativePlanningMs",
   "planningStartedAt",
+  /* FNXC:TaskPauseAccounting 2026-09-16-06:16: FN-457's paused-time accounting is durable display
+     evidence (including an explicit 0), not runtime ownership — restoring it keeps a revived card's
+     clock chip honest. `paused` itself remains deliberately outside this contract. */
+  "cumulativePausedMs",
+  "pausedStartedAt",
   "columnDwellMs",
   "executionStartedAt",
   "executionCompletedAt",
@@ -59,6 +64,8 @@ export const ARCHIVE_RESTORABLE_PERSISTENCE_COLUMNS: Readonly<Record<ArchiveRest
   cumulativeActiveMs: ["cumulativeActiveMs"],
   cumulativePlanningMs: ["cumulativePlanningMs"],
   planningStartedAt: ["planningStartedAt"],
+  cumulativePausedMs: ["cumulativePausedMs"],
+  pausedStartedAt: ["pausedStartedAt"],
   columnDwellMs: ["columnDwellMs"],
   executionStartedAt: ["executionStartedAt"],
   executionCompletedAt: ["executionCompletedAt"],

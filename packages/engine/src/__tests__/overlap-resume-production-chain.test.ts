@@ -350,4 +350,67 @@ describe("overlap resume production chain", () => {
     } as any;
     await expect(synchronizeOverlapWaitBeforeExecution({ task: task("FN-B"), store, worktreePath: process.cwd(), owner: "graph-owner" })).resolves.toMatchObject({ analysis: { decision: "resume" } });
   });
+
+  /*
+  FNXC:OverlapWaitSynchronization 2026-09-15-19:20:
+  FN-429. Two production surfaces reach the gate with no usable base refresh: the external execution route
+  (`run-implementation`, which passes no `refresh` at all) and the worktrunk backend (whose
+  `refreshExistingWorktree` declines). A rewritten delivery must reconcile on both, because no refresh can
+  ever restore a SHA the integration-branch rebase replaced.
+  */
+  it.each([
+    ["external execution route without any refresh", "none"],
+    ["worktrunk backend whose refresh declines", "declined"],
+  ] as const)("reconciles a rebased delivery through the %s", async (_label, refreshShape) => {
+    const root = mkdtempSync(join(tmpdir(), "fn-429-chain-"));
+    cleanup.push(root);
+    git(root, "init", "-q", "-b", "main");
+    git(root, "config", "user.email", "fusion@example.test");
+    git(root, "config", "user.name", "Fusion Test");
+    writeFileSync(join(root, "shared.txt"), "contract v0\n");
+    git(root, "add", ".");
+    git(root, "commit", "-qm", "C0");
+    const c0 = git(root, "rev-parse", "HEAD");
+    git(root, "checkout", "-q", "-b", "holder", c0);
+    writeFileSync(join(root, "shared.txt"), "contract v1\n");
+    git(root, "add", ".");
+    git(root, "commit", "-qm", "feat(FN-A): deliver", "-m", "Fusion-Task-Id: FN-A\nFusion-Task-Lineage: lineage-a");
+    const before = git(root, "rev-parse", "HEAD");
+    git(root, "checkout", "-q", "main");
+    writeFileSync(join(root, "upstream.txt"), "upstream\n");
+    git(root, "add", ".");
+    git(root, "commit", "-qm", "upstream work");
+    git(root, "checkout", "-q", "holder");
+    git(root, "rebase", "-q", "--onto", "main", c0, "holder");
+    const after = git(root, "rev-parse", "HEAD");
+    git(root, "checkout", "-q", "main");
+    git(root, "merge", "-q", "--ff-only", "holder");
+    const execution = join(root, ".worktrees", "fn-b");
+    mkdirSync(join(root, ".worktrees"), { recursive: true });
+    git(root, "worktree", "add", "-q", "-b", "fusion/fn-b", execution, "main");
+
+    let episode: any = {
+      taskId: "FN-B", episodeId: "episode-chain", blockerTaskId: "FN-A", blockerLineageId: "lineage-a", phase: "observed", revision: 1, attempt: 0,
+      observation: { deliveries: [{ blockerTaskId: "FN-A", blockerLineageId: "lineage-a", repository: ".", landedSha: before, summary: "Delivered the contract", evidence: "merge-details" }] },
+    };
+    const blocked = task("FN-B", { worktree: execution, branch: "fusion/fn-b" });
+    const store = {
+      getTask: vi.fn(async () => blocked),
+      logEntry: vi.fn(async () => undefined),
+      recordRunAuditEvent: vi.fn(async () => undefined),
+      listTaskOverlapWaits: vi.fn(async () => [episode]),
+      claimTaskOverlapWait: vi.fn(async (claim: any) => (episode = { ...episode, phase: "analyzing", owner: claim.owner, revision: episode.revision + 1 })),
+      completeTaskOverlapWait: vi.fn(async (input: any) => (episode = { ...episode, phase: input.phase, receipt: input.receipt, revision: episode.revision + 1 })),
+    } as any;
+    const declinedRefresh = vi.fn(async () => ({ skipped: true, kind: "backend-unsupported" }));
+
+    await synchronizeOverlapWaitBeforeExecution({
+      task: blocked, store, worktreePath: execution, owner: "external-owner",
+      ...(refreshShape === "declined" ? { refresh: declinedRefresh } : {}),
+    });
+
+    if (refreshShape === "declined") expect(declinedRefresh).toHaveBeenCalledOnce();
+    expect(episode.phase).toBe("ready");
+    expect(episode.receipt.deliveryProofs[0]).toMatchObject({ landedSha: before, reconciledSha: after, reconciliationProof: "patch-id+task-trailer", freshness: "proven" });
+  });
 });

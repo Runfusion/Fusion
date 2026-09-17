@@ -70,6 +70,35 @@ describe("ChatView direct-only UI contract", () => {
   });
 });
 
+/*
+FNXC:ChatSidebarPerf 2026-09-16-02:15:
+FN-440 rehydrates task-linked conversations from the local snapshot on first paint, so the sidebar
+must never re-apply the common-feed gate the hook already resolved. These cases prove the rendered
+conversation list shows a `task-planner:` row at BOTH breakpoints, since desktop and mobile render
+the same `filteredSessions` through `.chat-session-list`.
+*/
+describe("ChatView task-linked conversation rows", () => {
+  const taskSession = {
+    ...activeSessionFixture,
+    id: "session-task-FN-7364",
+    agentId: "task-planner:FN-7364",
+    title: "Task FN-7364",
+  };
+
+  it.each(["desktop", "mobile"] as const)("renders a task-linked conversation row in the list (%s)", async (viewport) => {
+    mockViewportMode(viewport);
+    const sessions = [activeSessionFixture, taskSession];
+    setupMockChat({ activeSession: null, sessions, filteredSessions: sessions });
+
+    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} persistChatPreferences={false} />);
+
+    const list = document.querySelector(".chat-session-list");
+    expect(list).toBeInTheDocument();
+    expect(screen.getByTestId(`chat-session-${taskSession.id}`)).toBeInTheDocument();
+    expect(screen.getByTestId(`chat-session-${activeSessionFixture.id}`)).toBeInTheDocument();
+  });
+});
+
 describe("ChatView popped-out conversation contract", () => {
   it("verrouille une fenêtre dédiée sur son transcript sans navigation concurrente", async () => {
     setupMockChat({ activeSession: activeSessionFixture, sessions: [activeSessionFixture], filteredSessions: [activeSessionFixture] });
@@ -95,7 +124,7 @@ describe("ChatView popped-out conversation contract", () => {
     expect(document.querySelector(".chat-sidebar")).toBeNull();
   });
 
-  it("surligne indépendamment toutes les fenêtres ouvertes dans la liste Alpha", async () => {
+  it("projects every existing detached conversation from the open-window identity set", async () => {
     const second = { ...activeSessionFixture, id: "session-002", title: "Deuxième chat" };
     const third = { ...activeSessionFixture, id: "session-003", title: "Troisième chat" };
     const sessions = [activeSessionFixture, second, third];
@@ -106,10 +135,7 @@ describe("ChatView popped-out conversation contract", () => {
         projectId="proj-123"
         addToast={addToast}
         listOnly
-        openChatWindows={new Map([
-          [activeSessionFixture.id, "open"],
-          [second.id, "open"],
-        ])}
+        openChatWindows={new Set([activeSessionFixture.id, second.id])}
       />,
     );
 
@@ -128,17 +154,14 @@ describe("ChatView popped-out conversation contract", () => {
         projectId="proj-123"
         addToast={addToast}
         listOnly
-        openChatWindows={new Map([
-          [activeSessionFixture.id, "minimized"],
-          [second.id, "open"],
-        ])}
+        openChatWindows={new Set([second.id])}
       />,
     );
     expect(firstRow).not.toHaveClass("chat-session-item--window-open");
     expect(secondRow).toHaveClass("chat-session-item--window-open");
-    expect(screen.getByTestId(`chat-session-window-state-${activeSessionFixture.id}`)).toHaveTextContent("Minimized");
+    expect(screen.queryByTestId(`chat-session-window-state-${activeSessionFixture.id}`)).toBeNull();
 
-    rerender(<ChatView projectId="proj-123" addToast={addToast} listOnly openChatWindows={new Map()} />);
+    rerender(<ChatView projectId="proj-123" addToast={addToast} listOnly openChatWindows={new Set()} />);
     expect(firstRow).not.toHaveClass("chat-session-item--window-open");
     expect(secondRow).not.toHaveClass("chat-session-item--window-open");
     expect(screen.queryByTestId(`chat-session-window-state-${activeSessionFixture.id}`)).toBeNull();
@@ -152,7 +175,7 @@ describe("ChatView popped-out conversation contract", () => {
     { host: "desktop large", viewport: "desktop" as const, compactLayout: false, measuredWidth: 1200 },
     { host: "compact", viewport: "desktop" as const, compactLayout: true, measuredWidth: 360 },
     { host: "mobile", viewport: "mobile" as const, compactLayout: false, measuredWidth: 375 },
-  ])("conserve le surlignage de sélection dans l’hôte standard $host", async ({ viewport, compactLayout, measuredWidth }) => {
+  ])("sépare la sélection de l’état de fenêtre détachée dans l’hôte $host", async ({ viewport, compactLayout, measuredWidth }) => {
     const viewportSpy = mockViewportMode(viewport);
     const rectSpy = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
       x: 0, y: 0, width: measuredWidth, height: 800, top: 0, right: measuredWidth, bottom: 800, left: 0, toJSON: () => ({}),
@@ -167,7 +190,7 @@ describe("ChatView popped-out conversation contract", () => {
           addToast={vi.fn()}
           compactLayout={compactLayout}
           persistChatPreferences={false}
-          openChatWindows={new Map([[openButNotSelected.id, "open"]])}
+          openChatWindows={new Set([openButNotSelected.id])}
         />,
       );
 
@@ -176,8 +199,8 @@ describe("ChatView popped-out conversation contract", () => {
       expect(selectedRow).toHaveClass("chat-session-item--active");
       expect(selectedRow).not.toHaveClass("chat-session-item--window-open");
       expect(openButNotSelectedRow).not.toHaveClass("chat-session-item--active");
-      expect(openButNotSelectedRow).not.toHaveClass("chat-session-item--window-open");
-      expect(screen.queryByTestId(`chat-session-window-state-${openButNotSelected.id}`)).toBeNull();
+      expect(openButNotSelectedRow).toHaveClass("chat-session-item--window-open");
+      expect(screen.getByTestId(`chat-session-window-state-${openButNotSelected.id}`)).toHaveTextContent("Open");
     } finally {
       rectSpy.mockRestore();
       viewportSpy.mockRestore();
@@ -310,9 +333,87 @@ describe("ChatView popped-out conversation contract", () => {
     expect(screen.queryByTestId("chat-back-btn")).toBeNull();
     expect(document.querySelector(".chat-view")).not.toHaveClass("chat-view--detail");
     fireEvent.click(screen.getByTestId(`chat-session-${activeSessionFixture.id}`));
-    expect(onOpenSessionInNewWindow).toHaveBeenCalledWith(activeSessionFixture);
+    expect(onOpenSessionInNewWindow).toHaveBeenCalledWith(activeSessionFixture, { keepListOpen: false });
     expect(selectSession).not.toHaveBeenCalled();
     expect(screen.queryByTestId("chat-back-btn")).toBeNull();
+  });
+
+  /*
+  FNXC:ChatWindows 2026-09-16-04:37:
+  FN-447: a list-only host must be able to tell an explicit "open in a separate window" gesture
+  (Ctrl/Cmd-click, or the context-menu action) from a plain click, so the footer Conversations
+  popover can stay open for the explicit gestures only.
+  */
+  it("signale une intention explicite de fenêtre pour Ctrl+clic, Cmd+clic et le menu contextuel", async () => {
+    const onOpenSessionInNewWindow = vi.fn();
+    const selectSession = vi.fn();
+    setupMockChat({ activeSession: activeSessionFixture, sessions: [activeSessionFixture], filteredSessions: [activeSessionFixture], selectSession });
+    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} compactLayout listOnly onOpenSessionInNewWindow={onOpenSessionInNewWindow} persistChatPreferences={false} />);
+
+    const row = screen.getByTestId(`chat-session-${activeSessionFixture.id}`);
+
+    fireEvent.click(row, { ctrlKey: true });
+    expect(onOpenSessionInNewWindow).toHaveBeenLastCalledWith(activeSessionFixture, { keepListOpen: true });
+
+    fireEvent.click(row, { metaKey: true });
+    expect(onOpenSessionInNewWindow).toHaveBeenLastCalledWith(activeSessionFixture, { keepListOpen: true });
+
+    fireEvent.contextMenu(row, { clientX: 8, clientY: 8 });
+    const open = await screen.findByTestId("chat-context-open-window");
+    fireEvent.click(open);
+    expect(onOpenSessionInNewWindow).toHaveBeenLastCalledWith(activeSessionFixture, { keepListOpen: true });
+    await waitFor(() => expect(screen.queryByTestId("chat-context-open-window")).toBeNull());
+
+    expect(selectSession).not.toHaveBeenCalled();
+  });
+
+  it("garde l’intention explicite quand la conversation possède déjà une fenêtre ouverte", async () => {
+    const onOpenSessionInNewWindow = vi.fn();
+    setupMockChat({ activeSession: activeSessionFixture, sessions: [activeSessionFixture], filteredSessions: [activeSessionFixture] });
+    await renderWithAct(
+      <ChatView
+        projectId="proj-123"
+        addToast={vi.fn()}
+        compactLayout
+        listOnly
+        openChatWindows={new Set([activeSessionFixture.id])}
+        onOpenSessionInNewWindow={onOpenSessionInNewWindow}
+        persistChatPreferences={false}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId(`chat-session-${activeSessionFixture.id}`), { ctrlKey: true });
+    expect(onOpenSessionInNewWindow).toHaveBeenCalledWith(activeSessionFixture, { keepListOpen: true });
+  });
+
+  it("n’ouvre aucune fenêtre sur Ctrl+clic dans un hôte non liste-seule", async () => {
+    const onOpenSessionInNewWindow = vi.fn();
+    const selectSession = vi.fn();
+    setupMockChat({ sessions: [activeSessionFixture], filteredSessions: [activeSessionFixture], selectSession });
+    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} onOpenSessionInNewWindow={onOpenSessionInNewWindow} persistChatPreferences={false} />);
+
+    fireEvent.click(screen.getByTestId(`chat-session-${activeSessionFixture.id}`), { ctrlKey: true });
+    expect(onOpenSessionInNewWindow).not.toHaveBeenCalled();
+    expect(selectSession).toHaveBeenCalledWith(activeSessionFixture.id);
+  });
+
+  it("sélectionne en place depuis le sélecteur de titre sans ouvrir de fenêtre", async () => {
+    const other = { ...activeSessionFixture, id: "session-other", title: "Autre conversation" };
+    const onOpenSessionInNewWindow = vi.fn();
+    const selectSession = vi.fn();
+    setupMockChat({
+      activeSession: activeSessionFixture,
+      sessions: [activeSessionFixture, other],
+      filteredSessions: [activeSessionFixture, other],
+      selectSession,
+    });
+    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} initialDirectSession={activeSessionFixture} onOpenSessionInNewWindow={onOpenSessionInNewWindow} persistChatPreferences={false} />);
+
+    fireEvent.click(await screen.findByTestId("chat-thread-title-trigger"));
+    fireEvent.click(await screen.findByTestId(`chat-thread-title-menu-item-${other.id}`));
+
+    expect(selectSession).toHaveBeenCalledWith(other.id);
+    expect(onOpenSessionInNewWindow).not.toHaveBeenCalled();
   });
 
   it("ouvre immédiatement une nouvelle conversation liste-seule absente du rafraîchissement", async () => {
@@ -369,6 +470,6 @@ describe("ChatView popped-out conversation contract", () => {
     const open = await screen.findByTestId("chat-context-open-window");
     expect(open).toHaveTextContent("Open in new window");
     fireEvent.click(open);
-    expect(onOpenSessionInNewWindow).toHaveBeenCalledWith(activeSessionFixture);
+    expect(onOpenSessionInNewWindow).toHaveBeenCalledWith(activeSessionFixture, { keepListOpen: true });
   });
 });

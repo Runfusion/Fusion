@@ -18,7 +18,7 @@ export interface EngineControlMenuHandle {
 
 export interface EngineControlMenuProps {
   projectId?: string;
-  /** Optional truthful text trigger used by the Alpha desktop footer. */
+  /** Optional truthful text trigger used by the desktop footer. */
   triggerContent?: ReactNode;
   triggerLabel?: string;
 }

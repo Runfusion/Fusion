@@ -4,7 +4,7 @@ import type { Task, WorkflowStepResult } from "../types.js";
 
 /*
 FNXC:PreMergeApproval 2026-08-24-07:10:
-Measured failure this guards: on builtin:coding-ideas-v2 every card reached the merge and was
+Measured failure this guards: on builtin:coding-ideas every card reached the merge and was
 refused with "task has no provable approval for the content being merged", then looped. The required
 pre-merge set for a review-column workflow is
 `plan-review, verification, documentation-delivery, code-review`, but only a CONTENT REVIEW records

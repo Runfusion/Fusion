@@ -79,7 +79,6 @@ function controllerInput(overrides: Record<string, unknown> = {}) {
     subscribePluginEvents: () => () => {},
     openDetailTask: noop,
     openTaskPopup: noop,
-    openMobileTasksInPopup: false,
     openFileInBrowser: noop,
     onMoveTask: asyncNoop,
     onDeleteTask: asyncNoop,

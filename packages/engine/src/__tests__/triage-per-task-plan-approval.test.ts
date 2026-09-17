@@ -123,6 +123,27 @@ describe("triage plan approval and surgical revision", () => {
     expect(store.moveTaskIf).toHaveBeenCalledTimes(1);
   });
 
+  /*
+  FN-408 remediation: Fast normally makes triage skip planning entirely. A card armed with the
+  per-card human plan requirement must NOT be skipped, otherwise it would never obtain the plan and
+  Plan Review the operator is asked to validate and would sit immobilized forever. Driven through
+  the production planning-recovery entry point rather than a predicate.
+  */
+  it("plans an armed card even when it carries executionMode fast, and still skips an ordinary fast card", async () => {
+    const armedFast = taskFixture({
+      executionMode: "fast",
+      humanPlanApproval: { enabled: true },
+    } as unknown as Partial<Task>);
+    const armedStore = storeFixture(armedFast);
+    await expect(new TriageProcessor(armedStore, rootDir).recoverApprovedTask(armedFast)).resolves.toBe(true);
+    expect(armedFast.column).toBe("todo");
+
+    const ordinaryFast = taskFixture({ executionMode: "fast" } as unknown as Partial<Task>);
+    const fastStore = storeFixture(ordinaryFast);
+    await expect(new TriageProcessor(fastStore, rootDir).recoverApprovedTask(ordinaryFast)).resolves.toBe(false);
+    expect(fastStore.moveTaskIf).not.toHaveBeenCalled();
+  });
+
   it("uses a preserved plan and operator note as surgical revision source", () => {
     const detail = taskFixture({
       status: "needs-replan",

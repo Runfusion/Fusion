@@ -41,7 +41,9 @@ import { useNodes } from "../hooks/useNodes";
 import { useViewportMode } from "../hooks/useViewportMode";
 import { useAgentsMapCache } from "../hooks/useAgentsMapCache";
 import { FloatingWindow } from "./FloatingWindow";
+import { DashboardWindowSurfaceRoot } from "../context/DashboardWindowManagerContext";
 import { resolveQuickAddStartInitialColumn, resolveQuickAddStartTargetColumn, resolveQuickAddStartWorkflowTarget, validateQuickAddStartWorkflow, workflowSupportsQuickAddStart, type ValidatedQuickAddWorkflow } from "../utils/quickAddStart";
+import { getTaskTitleDisplayText } from "../utils/taskTitleDisplay";
 
 type NewTaskCreateInput = Omit<CreateTaskInput, "branchSelection"> & {
   branchSelection?: {
@@ -425,6 +427,26 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
    * Full-dialog task creation must run the same duplicate preflight as QuickEntryBox before creating. Keep acknowledged duplicate IDs in the create payload so the API receives an explicit user confirmation when the user chooses Create anyway.
    */
   const [executionMode, setExecutionMode] = useState<"standard" | "fast">("standard");
+  /*
+  FNXC:HumanPlanApproval 2026-09-15-06:24:
+  FN-408 — per-card human plan validation, mirroring QuickEntryBox's `quick-entry-human-plan-approval-toggle`.
+
+  FNXC:HumanPlanApproval 2026-09-15-07:30:
+  FN-408 remediation — MUTUALLY EXCLUSIVE with Fast, matching the server: Fast is planless, so an
+  armed Fast card would never produce the plan and Plan Review the operator is asked to validate.
+  Each toggle clears the other instead of sending a combination creation would neutralize anyway.
+  Arming this never clears the optional-step selection.
+  */
+  const [requiresHumanPlanApproval, setRequiresHumanPlanApprovalState] = useState(false);
+  /* FNXC:HumanPlanApproval 2026-09-15-07:30: FN-408 remediation — the two creation toggles clear each other so an impossible Fast + human-approval payload is never built. */
+  const setRequiresHumanPlanApproval = useCallback((next: boolean) => {
+    if (next) setExecutionMode("standard");
+    setRequiresHumanPlanApprovalState(next);
+  }, []);
+  const handleExecutionModeSelection = useCallback((next: "standard" | "fast") => {
+    if (next === "fast") setRequiresHumanPlanApprovalState(false);
+    setExecutionMode(next);
+  }, []);
   const [githubTrackingEnabled, setGithubTrackingEnabled] = useState(false);
   /*
   FNXC:NewTaskDirtyState 2026-07-24-14:00:
@@ -653,13 +675,15 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
       priority !== DEFAULT_TASK_PRIORITY ||
       nodeId !== undefined ||
       executionMode === "fast" ||
+      /* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 arming is a real unsaved choice; losing it silently on close would surprise the operator. */
+      requiresHumanPlanApproval ||
       branchMode !== "project-default" ||
       branch !== "" ||
       baseBranch !== "" ||
       githubTrackingEnabled !== initialDefaultValues.githubTrackingEnabled ||
       githubRepoOverrideTrimmed !== "";
     setHasDirtyState(isDirty);
-  }, [description, dependencies, pendingImages, selectedWorkflowId, hasUserSelectedEnabledWorkflowSteps, executorModel, validatorModel, planningModel, thinkingLevel, plannerOversightLevel, selectedAgentId, reviewLevel, autoMerge, priority, nodeId, executionMode, branchMode, branch, baseBranch, githubTrackingEnabled, githubRepoOverrideTrimmed, initialDefaultValues]);
+  }, [description, dependencies, pendingImages, selectedWorkflowId, hasUserSelectedEnabledWorkflowSteps, executorModel, validatorModel, planningModel, thinkingLevel, plannerOversightLevel, selectedAgentId, reviewLevel, autoMerge, priority, nodeId, executionMode, requiresHumanPlanApproval, branchMode, branch, baseBranch, githubTrackingEnabled, githubRepoOverrideTrimmed, initialDefaultValues]);
 
   const resetForm = useCallback(() => {
     // Clean up object URLs
@@ -689,6 +713,8 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
     setPriority(DEFAULT_TASK_PRIORITY);
     setNodeId(undefined);
     setExecutionMode("standard");
+    /* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 resets with the other creation choices after a successful create. */
+    setRequiresHumanPlanApproval(false);
     setBranchMode("project-default");
     setBranch("");
     setBaseBranch("");
@@ -777,6 +803,8 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
       priority,
       nodeId,
       ...(executionMode === "fast" ? { executionMode: "fast" } : {}),
+      /* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 sends only the arming flag; the server owns Plan Review enforcement and every decision. */
+      ...(requiresHumanPlanApproval ? { humanPlanApproval: true } : {}),
       branchSelection: {
         mode: branchMode,
         ...(isBranchNameRequired && branch.trim() ? { branchName: branch.trim() } : {}),
@@ -852,7 +880,7 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
       addToast(t("newTaskModal.taskCreated", "Created {{taskId}}", { taskId: task.id }), "success");
     }
     onClose();
-  }, [executorModel, credentialInstanceId, validatorModel, validatorCredentialInstanceId, planningModel, planningCredentialInstanceId, thinkingLevel, plannerOversightLevel, dependencies, shouldSubmitEnabledWorkflowSteps, enabledWorkflowSteps, selectedAgentId, presetMode, selectedPresetId, reviewLevel, autoMerge, priority, nodeId, executionMode, branchMode, isBranchNameRequired, branch, baseBranch, githubTrackingEnabled, githubRepoOverrideTrimmed, onCreateTask, onMoveTask, pendingImages, resetForm, addToast, t, onClose, projectId]);
+  }, [executorModel, credentialInstanceId, validatorModel, validatorCredentialInstanceId, planningModel, planningCredentialInstanceId, thinkingLevel, plannerOversightLevel, dependencies, shouldSubmitEnabledWorkflowSteps, enabledWorkflowSteps, selectedAgentId, presetMode, selectedPresetId, reviewLevel, autoMerge, priority, nodeId, executionMode, requiresHumanPlanApproval, branchMode, isBranchNameRequired, branch, baseBranch, githubTrackingEnabled, githubRepoOverrideTrimmed, onCreateTask, onMoveTask, pendingImages, resetForm, addToast, t, onClose, projectId]);
 
   const handleSubmit = useCallback(async (startWorkflow: ValidatedQuickAddWorkflow | null = null) => {
     const workflowSelection = selectedWorkflowId;
@@ -1076,7 +1104,7 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
                     onMouseDown={(e) => e.preventDefault()}
                   >
                     <span className="dep-dropdown-id">{t.id}</span>
-                    <span className="dep-dropdown-title">{truncate(t.title || t.description || t.id, 30)}</span>
+                    <span className="dep-dropdown-title">{truncate(getTaskTitleDisplayText(t), 30)}</span>
                   </div>
                 ))
               )}
@@ -1259,7 +1287,9 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
         onNodeIdChange={setNodeId}
         nodeOptions={nodes}
         executionMode={executionMode}
-        onExecutionModeChange={setExecutionMode}
+        onExecutionModeChange={handleExecutionModeSelection}
+        humanPlanApproval={requiresHumanPlanApproval}
+        onHumanPlanApprovalChange={setRequiresHumanPlanApproval}
         githubTrackingEnabled={githubTrackingEnabled}
         onGithubTrackingEnabledChange={handleGithubTrackingEnabledChange}
         githubRepoOverride={githubRepoOverride}
@@ -1304,7 +1334,6 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
           minSize={{ width: NEW_TASK_MIN_WIDTH, height: NEW_TASK_MIN_HEIGHT }}
           hideHeader
           dragHandleSelector=".new-task-modal__header--draggable"
-          persistGeometryKey="fusion:new-task-modal-geometry"
           suspendGeometryPersistenceOnMobile
           suspendGeometryPersistenceOnShortViewport
           ariaLabel={t("newTaskModal.title", "New Task")}
@@ -1320,11 +1349,11 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
 
   return createPortal(
     <>
-      <div className="modal-overlay open new-task-modal-overlay" onKeyDown={handleKeyDown} role="dialog" aria-modal="true" aria-label={t("newTaskModal.title", "New Task")} data-testid="new-task-modal-overlay" style={keyboardStyle}>
+      <DashboardWindowSurfaceRoot logicalId="new-task-mobile" group="drawer" className="modal-overlay open new-task-modal-overlay" onKeyDown={handleKeyDown} role="dialog" aria-modal="true" aria-label={t("newTaskModal.title", "New Task")} data-testid="new-task-modal-overlay" style={keyboardStyle}>
         <div className="modal modal-lg new-task-modal" style={keyboardStyle}>
           {taskFormContents}
         </div>
-      </div>
+      </DashboardWindowSurfaceRoot>
       {duplicateWarning}
     </>,
     document.body,

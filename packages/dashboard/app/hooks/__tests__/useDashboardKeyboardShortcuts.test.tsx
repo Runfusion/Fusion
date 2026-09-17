@@ -8,6 +8,7 @@ function baseHandlers() {
     toggleSettings: vi.fn(),
     toggleCommandCenter: vi.fn(),
     toggleNewTask: vi.fn(),
+    toggleChatList: vi.fn(),
   };
 }
 
@@ -18,73 +19,92 @@ function press(init: KeyboardEventInit, target: Document | HTMLElement = documen
 }
 
 describe("useDashboardKeyboardShortcuts", () => {
-  it("dispatches the Quick Chat toggle with the default Space binding from document focus", () => {
-    const toggleQuickChat = vi.fn();
+  it("leaves the generic modal visibility action disabled by default", () => {
+    const toggleModalVisibility = vi.fn();
     renderHook(() => useDashboardKeyboardShortcuts({
-      ...baseHandlers(), toggleQuickChat, toggleTerminal: vi.fn() }));
+      ...baseHandlers(), toggleModalVisibility, toggleTerminal: vi.fn() }));
 
     const event = press({ key: " " });
 
-    expect(toggleQuickChat).toHaveBeenCalledTimes(1);
+    expect(toggleModalVisibility).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  it("dispatches the generic modal visibility callback when explicitly configured", () => {
+    const toggleModalVisibility = vi.fn();
+    renderHook(() => useDashboardKeyboardShortcuts({
+      ...baseHandlers(), shortcuts: { toggleModalVisibility: "Alt+M" }, toggleModalVisibility, toggleTerminal: vi.fn() }));
+
+    const event = press({ key: "m", altKey: true });
+
+    expect(toggleModalVisibility).toHaveBeenCalledTimes(1);
     expect(event.defaultPrevented).toBe(true);
   });
 
   it("dispatches Terminal toggles with custom shortcuts and honors disabled actions", () => {
-    const toggleQuickChat = vi.fn();
+    const toggleModalVisibility = vi.fn();
     const toggleTerminal = vi.fn();
     renderHook(() => useDashboardKeyboardShortcuts({
       ...baseHandlers(),
-      shortcuts: { quickChat: "", terminal: "Alt+T" },
-      toggleQuickChat,
+      shortcuts: { toggleModalVisibility: "", terminal: "Alt+T" },
+      toggleModalVisibility,
       toggleTerminal,
     }));
 
     press({ key: " " });
-    expect(toggleQuickChat).not.toHaveBeenCalled();
+    expect(toggleModalVisibility).not.toHaveBeenCalled();
 
     const event = press({ key: "t", altKey: true });
     expect(toggleTerminal).toHaveBeenCalledTimes(1);
     expect(event.defaultPrevented).toBe(true);
   });
 
-  it("ignores shortcuts from editable and interactive targets", () => {
-    const toggleQuickChat = vi.fn();
+  it("protects text entry but lets the visibility action restore from a focused button", () => {
+    const toggleModalVisibility = vi.fn();
     const toggleTerminal = vi.fn();
     const input = document.createElement("input");
     const button = document.createElement("button");
     document.body.append(input, button);
     renderHook(() => useDashboardKeyboardShortcuts({
-      ...baseHandlers(), toggleQuickChat, toggleTerminal }));
+      ...baseHandlers(),
+      shortcuts: { toggleModalVisibility: "Alt+M" },
+      toggleModalVisibility,
+      toggleTerminal,
+    }));
 
     input.focus();
-    press({ key: " " }, input);
+    press({ key: "m", altKey: true }, input);
     press({ key: "`", ctrlKey: true }, input);
-    button.focus();
-    press({ key: " " }, button);
+    expect(toggleModalVisibility).not.toHaveBeenCalled();
+    expect(toggleTerminal).not.toHaveBeenCalled();
 
-    expect(toggleQuickChat).not.toHaveBeenCalled();
+    button.focus();
+    const visibilityEvent = press({ key: "m", altKey: true }, button);
+    press({ key: "`", ctrlKey: true }, button);
+    expect(toggleModalVisibility).toHaveBeenCalledTimes(1);
+    expect(visibilityEvent.defaultPrevented).toBe(true);
     expect(toggleTerminal).not.toHaveBeenCalled();
     input.remove();
     button.remove();
   });
 
   it("does not handle default-prevented nested menu events", () => {
-    const toggleQuickChat = vi.fn();
+    const toggleModalVisibility = vi.fn();
     renderHook(() => useDashboardKeyboardShortcuts({
-      ...baseHandlers(), toggleQuickChat, toggleTerminal: vi.fn() }));
+      ...baseHandlers(), toggleModalVisibility, toggleTerminal: vi.fn() }));
 
     const event = new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true });
     Object.defineProperty(event, "defaultPrevented", { value: true });
     document.dispatchEvent(event);
 
-    expect(toggleQuickChat).not.toHaveBeenCalled();
+    expect(toggleModalVisibility).not.toHaveBeenCalled();
   });
 
   it("delegates Escape to the topmost popup closer once", () => {
     const closeTopmostPopup = vi.fn(() => true);
     renderHook(() => useDashboardKeyboardShortcuts({
       ...baseHandlers(),
-      toggleQuickChat: vi.fn(),
+      toggleModalVisibility: vi.fn(),
       toggleTerminal: vi.fn(),
       closeTopmostPopup,
     }));
@@ -101,7 +121,7 @@ describe("useDashboardKeyboardShortcuts", () => {
     document.body.appendChild(input);
     renderHook(() => useDashboardKeyboardShortcuts({
       ...baseHandlers(),
-      toggleQuickChat: vi.fn(),
+      toggleModalVisibility: vi.fn(),
       toggleTerminal: vi.fn(),
       closeTopmostPopup,
     }));
@@ -122,12 +142,13 @@ describe("FN-7553 new actions", () => {
     const toggleCommandCenter = vi.fn();
     const toggleNewTask = vi.fn();
     renderHook(() => useDashboardKeyboardShortcuts({
-      toggleQuickChat: vi.fn(),
+      toggleModalVisibility: vi.fn(),
       toggleTerminal: vi.fn(),
       toggleFiles,
       toggleSettings,
       toggleCommandCenter,
       toggleNewTask,
+      toggleChatList: vi.fn(),
     }));
 
     const filesEvent = press({ key: "e", ctrlKey: true });
@@ -150,12 +171,13 @@ describe("FN-7553 new actions", () => {
     document.body.appendChild(input);
     renderHook(() => useDashboardKeyboardShortcuts({
       shortcuts: { openFiles: "" },
-      toggleQuickChat: vi.fn(),
+      toggleModalVisibility: vi.fn(),
       toggleTerminal: vi.fn(),
       toggleFiles,
       toggleSettings: vi.fn(),
       toggleCommandCenter: vi.fn(),
       toggleNewTask: vi.fn(),
+      toggleChatList: vi.fn(),
     }));
 
     press({ key: "e", ctrlKey: true });

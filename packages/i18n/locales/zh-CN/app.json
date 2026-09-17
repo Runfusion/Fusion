@@ -1155,7 +1155,8 @@
     "disableHeartbeatsCountHint": "",
     "bulkFailures": "",
     "detailLabel": "",
-    "lastCompletedStep": ""
+    "lastCompletedStep": "",
+    "mailSubject": "主题"
   },
   "app": {
     "backendError": {
@@ -1251,13 +1252,12 @@
   "chat": {
     "archive": "归档",
     "attachFiles": "附加文件",
+    "backToConversations": "",
     "cancel": "取消",
     "cancelButton": "取消",
     "clearConversationFailed": "清除对话失败",
-    "closeQuickChat": "关闭快速聊天",
     "openInNewWindow": "",
     "windowOpen": "已打开",
-    "windowMinimized": "已最小化",
     "conversationArchived": "对话已归档",
     "conversationDeleted": "对话已删除",
     "conversationName": "",
@@ -1304,17 +1304,14 @@
     "modeAgent": "代理",
     "modeModel": "模型",
     "newChat": "新对话",
-    "newChatModeAgent": "智能体",
     "newChatModeModel": "模型",
     "newChatTitle": "新对话",
-    "noAgentsAvailable": "暂无可用智能体",
     "noConversationsYet": "暂无对话",
     "noMessages": "暂无消息",
     "noMessagesYet": "暂无消息。开始对话吧！",
     "noRoomsYet": "暂无频道。",
     "noSkillsAvailable": "暂无可用技能",
     "noSkillsFound": "未找到技能",
-    "openQuickChat": "打开快速聊天",
     "preserveToStash": "",
     "preserveToStashDone": "",
     "preserveToStashFailed": "",
@@ -1341,7 +1338,6 @@
     "forcePending": "强制发送待发送消息",
     "forcePendingShort": "强制发送",
     "pendingEditEmpty": "待发送消息不能为空",
-    "quickChatTitle": "快速聊天",
     "relativeTimeDays_one": "",
     "relativeTimeDays_other": "",
     "relativeTimeHours_one": "",
@@ -1419,7 +1415,6 @@
     "contextWindowPendingAria": "",
     "contextWindowPendingValue": "",
     "noMessage": "",
-    "modelAgentSection": "Model / Agent",
     "thinkingLevelSection": "Thinking level",
     "noModelsAvailable": "No models available",
     "currentAgentTarget": "Current agent: {{name}}",
@@ -1431,8 +1426,6 @@
     "agentRepliesFailed": "部分代理无法回复：{{agents}}",
     "noDefaultModelConfigured": "请先在设置中配置默认聊天模型，再创建对话。",
     "newChatOpenInNewWindowHint": "",
-    "minimizeAllChats": "最小化所有聊天",
-    "restoreAllChats": "恢复所有聊天",
     "slashSuggestions": "斜杠建议",
     "loadingSlashSuggestions": "正在加载建议…",
     "snippetSuggestion": "插入已保存的提示词",
@@ -2051,7 +2044,10 @@
     "reportTitle": "",
     "sectionBody": "",
     "sectionHeading": "",
-    "selectStructure": ""
+    "selectStructure": "",
+    "subject": "主题",
+    "subjectPlaceholder": "简短主题（可选）",
+    "subjectTooLong": "主题不能超过 200 个字符"
   },
   "confirm": {
     "cancel": "取消",
@@ -3513,7 +3509,6 @@
     "outbox": "发件箱",
     "outboxTab": "发件箱",
     "pending": "待定",
-    "refreshTitle": "刷新",
     "reply": "回复",
     "replyButton": "回复",
     "replyingTo": "回复 {{preview}}",
@@ -3575,7 +3570,20 @@
     "completionImages": "任务完成图片",
     "completionImage": "任务完成图片",
     "suggestedRecommendations": "建议的后续事项",
-    "noSuggestedRecommendations": "未提出后续建议。"
+    "noSuggestedRecommendations": "未提出后续建议。",
+    "subject": {
+      "none": "（无主题）",
+      "taskCompleted": "{{taskId}} 已完成",
+      "taskProposal": "任务提议：{{title}}",
+      "taskRecommendations": "任务建议",
+      "taskWedge": "{{taskId}} 需要处理",
+      "duplicateDecision": "{{taskId}} 重复判定",
+      "planningClarification": "规划澄清"
+    },
+    "filter": "筛选",
+    "filterTitle": "筛选收件箱",
+    "filterMenuLabel": "收件箱范围",
+    "filterPendingApprovalsLabel": "筛选收件箱 — {{count}} 项待处理审批"
   },
   "memory": {
     "auditChecksTitle": "审计检查",
@@ -4191,7 +4199,7 @@
     "executorPlaceholder": "选择执行模型…",
     "loading": "加载模型中…",
     "noModels": "没有可用的模型。在设置中配置身份验证以启用模型选择。",
-    "planningModel": "",
+    "planningModel": "Planner Model",
     "planningPlaceholder": "",
     "preset": "预设",
     "reviewerModel": "审查模型",
@@ -4204,13 +4212,19 @@
   },
   "nav": {
     "activityLog": "活动日志",
+    "activityPopover": "活动",
     "agents": "智能体",
+    "artifactsUnreadAriaLabel_one": "",
+    "artifactsUnreadAriaLabel_other": "",
+    "artifactsUnreadDotAriaLabel": "",
     "automation": "自动化",
     "board": "看板",
+    "boardView": "看板视图",
     "chat": "聊天",
     "chatUnreadAriaLabel": "未读聊天回复",
     "collapseSidebar": "",
     "commandCenter": "",
+    "conversations": "会话",
     "devServer": "开发服务器",
     "documents": "制品",
     "evals": "评估",
@@ -4221,6 +4235,7 @@
     "importFromGitHub": "从 GitHub 导入",
     "insights": "洞察",
     "list": "列表",
+    "listView": "列表视图",
     "loadingScripts": "正在加载脚本…",
     "mailbox": "邮箱",
     "mailboxPendingAriaLabel": "待审批",
@@ -4230,6 +4245,10 @@
     "more": "更多",
     "moreSheetTitle": "导航",
     "noScriptsAddOne": "无脚本 — 添加一个…",
+    "notes": "笔记",
+    "notesPopover": "笔记",
+    "openMenu": "打开导航菜单",
+    "patchnode": "",
     "planning": "规划",
     "planningNeedsInputAriaLabel": "规划需要您的输入",
     "primaryNavAriaLabel": "主导航",
@@ -4247,14 +4266,8 @@
     "terminal": "终端",
     "todos": "待办",
     "usage": "用量",
-    "workflows": "工作流",
-    "patchnode": "",
-    "artifactsUnreadAriaLabel_one": "",
-    "artifactsUnreadAriaLabel_other": "",
-    "artifactsUnreadDotAriaLabel": "",
-    "notes": "笔记",
-    "openMenu": "打开导航菜单",
-    "whiteboard": "Whiteboard"
+    "whiteboard": "Whiteboard",
+    "workflows": "工作流"
   },
   "newTaskModal": {
     "addDependencies": "添加依赖项",
@@ -5265,14 +5278,6 @@
       "urlValid": "基础URL必须是有效的URL。"
     }
   },
-  "quickChat": {
-    "errorAttachmentsBeforeSession": "在聊天会话准备好之前无法发送附件",
-    "errorAttachmentsWhileStreaming": "在流式传输响应时无法发送附件",
-    "errorGettingResponse": "获取响应失败",
-    "errorInitializingChat": "初始化聊天失败",
-    "errorRefreshingSessions": "刷新聊天会话失败",
-    "errorStartingNewChat": "启动新聊天失败"
-  },
   "reliability": {
     "bouncedEntered": "{{bounced}} 跳出 / {{entered}} 进入（最近 {{days}} 天）",
     "countingSince": "自 {{date}} 起计数",
@@ -5881,17 +5886,19 @@
       "languageAutoHint": "跟随浏览器语言",
       "suppressTheLdquoNeedsYourInputRdquoBanner": "",
       "title": "外观",
-      "openTasksInRightSidebarHelp": "",
-      "openMobileTasksInPopupHelp": "",
-      "taskPopupsBoardListOnly": "",
-      "taskPopupsBoardListOnlyHelp": "",
-      "taskDetailChatFirstHelp": "",
       "showCostBadgeOnCards": "",
       "showCostBadgeOnCardsHelp": "",
       "chatMessageLayout": "",
       "chatMessageLayoutBubbles": "",
       "chatMessageLayoutFullWidth": "",
-      "chatMessageLayoutHelp": ""
+      "chatMessageLayoutHelp": "",
+      "navigationPlacement": "",
+      "navigationPlacementFooter": "",
+      "navigationPlacementSidebar": "",
+      "navigationPlacementHelp": "",
+      "rightSidebarEnabled": "显示右侧工具栏",
+      "rightSidebarEnabledHelp": "启用后，平板和桌面会显示可选的右侧栏，包含文件、聊天、列表和笔记的快捷入口。即使不启用，所有工具仍可访问。项目级设置；默认：关闭。",
+      "taskDetailDefaultTabHelp": ""
     },
     "auth": {
       "apiKeyCleared": "API 密钥已清除",
@@ -6101,7 +6108,6 @@
       "searchTheTrackingRepoForLikelyDuplicatesBefore": "",
       "settingsSaved": "设置已保存",
       "showCapacityRiskBanner": "",
-      "showQuickChatButton": "",
       "showTheFloatingChatButtonInTheDashboard": "",
       "taskPrefix": "",
       "todoThreshold": "",
@@ -6125,12 +6131,10 @@
       "aiUndoTaskWorkflowHelp": "",
       "workspaceModeHint": "",
       "allowAbsoluteFileBrowserPathsHint": "",
-      "quickChatLauncherHint": "",
       "showTaskChatsInCommonFeedHint": "",
       "whenEnabledImportedGitHubIssuesUseTheirSource": "",
       "gitLabEnabledHint": "",
       "allowEphemeralAgentsToCreateTasksHint": "",
-      "quickChatCloseOnOutsideClickHint": "",
       "disabledFusionWorkflowsAreHiddenFromWorkflow": "",
       "builtinWorkflowAtLeastOneEnabled": "",
       "autoTranslateImportedIssues": "",
@@ -6142,8 +6146,8 @@
       "restartNow": "",
       "restartUnavailable": "",
       "restarting": "",
-      "mobileNavPrimaryItems": "移动端底部快捷操作",
-      "mobileNavPrimaryItemsHint": "默认：仪表盘、任务、代理、任务组、聊天、邮箱。可添加符合条件的目标；未选中的目标仍在“更多”中。",
+      "mobileNavPrimaryItems": "导航快捷入口",
+      "mobileNavPrimaryItemsHint": "默认：仪表盘、看板、规划、任务组、邮箱。最多可选择 5 个目标并排序；其余目标仍在“更多”中。",
       "addNavItem": "添加快捷操作",
       "selectNavItem": "选择目标",
       "removeNavItem": "移除 {{item}}",
@@ -6580,6 +6584,8 @@
       "label": "设置分区"
     },
     "models": {
+      "fallbackModel": "备用模型",
+      "roleFallbackHelp": "此角色的主模型遇到可重试的提供商错误时使用。",
       "deletePresetMessage": "预设「{{name}}」正在自动选择中使用，确定要删除吗？",
       "deletePresetTitle": "删除预设",
       "loadingModels": "正在加载可用模型…",
@@ -6588,7 +6594,6 @@
       "savePreset": "保存预设"
     },
     "movedStub": {
-      "modelLanes": "",
       "openWorkflowSettings": "",
       "reviewVerification": "",
       "stepExecution": "",
@@ -6705,8 +6710,15 @@
     "projectModels": {
       "modelOverrides": "",
       "projectLanesSubheading": "",
+      "planningModel": "",
+      "planningFallbackModel": "Planner 备用模型",
+      "executionModel": "Executor Model",
+      "executionFallbackModel": "Executor 备用模型",
+      "validatorModel": "Reviewer Model",
+      "validatorFallbackModel": "Reviewer 备用模型",
+      "mergerModel": "Merger Model",
+      "mergerFallbackModel": "Merger 备用模型",
       "summarizationPointer": "",
-      "workflowLanesSubheading": "",
       "addPreset": "",
       "advancedWorkflowPolicy": "",
       "aIMergeCommitSummaries": "",
@@ -6721,35 +6733,27 @@
       "taskOutputLanguageInterface": "Fusion interface language",
       "configuredPresets": "",
       "configuresTheModelUsedForTwoShortSummary": "",
-      "defaultWorkflowModelLaneActions": "",
-      "defaultWorkflowModelLanes": "",
       "delete": "",
       "edit": "",
       "executorModel": "",
       "fallsBackTo": "",
       "loadingAvailableModels": "",
-      "loadingWorkflowModelLanes": "",
       "modelLanes": "",
       "modelPresets": "",
       "name": "",
       "noCap": "",
-      "noModelsAvailableConfigureAuthenticationBeforeSelectingWorkflow": "",
       "noModelsAvailableConfigureAuthenticationFirst": "",
       "noModelsAvailableConfigureAuthenticationFirst2": "",
       "noPreset": "",
       "noPresetsConfiguredYet": "",
-      "openAProjectToEditWorkflowModelLanes": "",
       "overrideGlobalModelSettingsAtTheProjectLevel": "",
       "presetEditor": "",
       "reset": "",
       "resetToDefaultNoCap": "",
       "resetToInheritFromGlobal": "",
-      "resetToInheritFromWorkflow": "",
       "reviewerModel": "",
-      "theseProjectOverridesApplyToTheActiveDefault": "",
       "tokenCap": "",
       "useDefault": "",
-      "useWorkflowDefault": "",
       "whenEnabledMergeCommitMessagesIncludeAnAI": "",
       "whenEnabledTasksCreatedWithoutATitleBut": "",
       "autoSelectModelPresetHint": "",
@@ -7990,7 +7994,10 @@
     },
     "definition": {
       "descriptionHeading": "描述",
-      "noDescription": "（无描述）"
+      "noDescription": "（无描述）",
+      "noOutcome": "尚无计划摘要 — 打开“阅读计划”查看完整规范。",
+      "outcomeHeading": "该任务交付的内容",
+      "transformationHeading": "变更前 → 变更后"
     },
     "description": {
       "showLess": "显示更少",
@@ -8177,10 +8184,12 @@
       "updated": "优先级已更新为 {{priority}}"
     },
     "progress": {
-      "heading": "进度",
       "completedCount": "已完成 {{count}}/{{total}}",
-      "workflowOrigin": "工作流关卡",
+      "heading": "进度",
+      "hideSteps": "隐藏步骤",
       "implementationOrigin": "实现",
+      "noSteps": "（未定义步骤）",
+      "showSteps": "显示步骤",
       "status": {
         "done": "已完成",
         "failed": "失败",
@@ -8190,9 +8199,9 @@
         "skipped": "已跳过",
         "pending": "待处理"
       },
-      "noSteps": "（未定义步骤）",
       "stepCount_one": "",
-      "stepCount_other": ""
+      "stepCount_other": "",
+      "workflowOrigin": "工作流关卡"
     },
     "provenance": {
       "createdBy": "创建者：",
@@ -8291,24 +8300,11 @@
       "gitlabBadge": ""
     },
     "spec": {
-      "aiReviseHeading": "请 AI 修订",
-      "aiReviseHelp": "提供反馈让 AI 改进此规范。任务将进入规划阶段重新规划。",
       "backToDefinition": "返回定义",
-      "editBtn": "编辑",
-      "feedbackPlaceholder": "例如，'添加更多错误处理细节'、'拆分为更小步骤'、'添加 API 端点测试'...",
-      "hintCancel": "取消",
-      "hintSave": "保存",
       "loading": "正在加载规范…",
       "noPrompt": "（无提示词）",
-      "placeholder": "以 Markdown 格式输入任务规范...",
       "promptFileName": "PROMPT.md",
-      "readPlanBtn": "阅读计划",
-      "requesting": "正在请求…",
-      "requestRevisionBtn": "请求 AI 修订",
-      "revisionColumnError": "无法请求修订：任务必须在 triage、todo、in-progress 或 in-review 列中。",
-      "revisionRequested": "已请求 AI 修订。任务已移至规划阶段。",
-      "saving": "正在保存…",
-      "updated": "规范已更新"
+      "readPlanBtn": "阅读计划"
     },
     "stall": {
       "noLogEntry": "尚无日志条目",
@@ -8353,11 +8349,6 @@
       "updated": "更新于"
     },
     "timingEvents": "计时事件",
-    "title": {
-      "summarize": "",
-      "summarizeFailed": "",
-      "summarizeSuccess": ""
-    },
     "tokenTotalsAria": "任务 Token 总计",
     "tokenUsage": "Token 使用情况",
     "totalExecutionTime": "总活跃时间",
@@ -8548,6 +8539,7 @@
     "dependenciesSelected_other": "",
     "descriptionLabel": "描述",
     "descriptionPlaceholder": "需要完成什么？",
+    "descriptionReadOnlyNote": "仅当任务仍在其手动收件列中等待时，才能编辑描述。",
     "descriptionRefinedToast": "AI 已优化描述",
     "editingDescription": "正在编辑描述",
     "enterDescriptionFirst": "请先输入描述",
@@ -8609,8 +8601,6 @@
     "thinkingMinimal": "最低",
     "thinkingOff": "关闭",
     "thinkingXhigh": "极高",
-    "titleLabel": "标题",
-    "titlePlaceholder": "任务标题",
     "useDropdown": "使用下拉菜单",
     "usingPreset": "使用预设：{{name}}",
     "workflowDefaultBadge": "（默认）",
@@ -8717,7 +8707,7 @@
     "createPrTitle": "为此任务创建 PR",
     "createTaskTitle": "创建任务",
     "saveHoldToStart": "保存任务；长按以开始",
-    "releaseToSaveHoldToStart": "松开以保存；继续长按以开始",
+    "holdToStartReleaseCancels": "继续长按以开始；松开则取消",
     "holdToStartProgress": "继续长按以开始",
     "startingTask": "正在开始任务",
     "creating": "创建中……",
@@ -8773,6 +8763,9 @@
     "importedFromGitHub": "从 GitHub 导入",
     "importedFromGitHubUrl": "从 GitHub 导入：{{url}}",
     "inProgressTime": "进行中 {{elapsed}}",
+    "runtimeBreakdownExecution": "执行 {{elapsed}}",
+    "runtimeBreakdownPlanning": "规划 {{elapsed}}",
+    "runtimeBreakdownVerification": "验证 {{elapsed}}",
     "issueClosed": "已关闭",
     "issueDeleted": "已删除",
     "issueLeft": "保留",
@@ -8897,7 +8890,12 @@
     "refinesOf": "",
     "refinesOfTitle": "",
     "revertedTasks": "",
-    "revertedResolutionActions": "",
+    "restoreRevert": "",
+    "restoreRevertSuccess": "",
+    "restoreRevertAiCreated": "",
+    "restoreRevertAlreadyOpen": "",
+    "restoreRevertNeedsHuman": "",
+    "restoreRevertFailed": "",
     "revise": "",
     "dismissDuplicateFlag": "Mark the duplicate flag for {{id}} as read",
     "nearDuplicateHeldTitle": "Flagged as a duplicate of {{id}}. This task stays paused until you clear this flag or delete it.",
@@ -8908,7 +8906,23 @@
       "approving": "",
       "copy": "",
       "replanCapCopy": "",
-      "title": ""
+      "title": "",
+      "needsYouBadge": ""
+    },
+    "humanPlanApproval": {
+      "toggle": "执行前需要我批准计划",
+      "messageLabel": "留言（可选）",
+      "messagePlaceholder": "如果拒绝，请说明计划有什么问题；如果批准，请补充需要注意的地方。",
+      "approve": "批准",
+      "reject": "拒绝",
+      "review": "查看计划",
+      "hint": "拒绝会把你的留言带回去重新制定计划。批准会开始工作并把你的备注传给实现方。",
+      "noticeCopy": "打开任务以批准或拒绝此计划，可附上留言。",
+      "badgeArmed": "执行前需要你批准计划",
+      "badgeAwaiting": "等待你批准计划",
+      "badgeApproved": "计划已由你批准",
+      "approved": "计划已批准 — {{id}} 继续执行",
+      "rejected": "计划已拒绝 — {{id}} 返回重新制定计划"
     }
   },
   "terminal": {
@@ -9414,9 +9428,9 @@
     "aiSubmit": "用 AI 设计",
     "aiToggle": "改为描述",
     "backToWorkflowList": "",
+    "backToBoard": "",
     "clickToEditDescription": "点击编辑描述",
     "clickToRename": "点击重命名",
-    "closeEditor": "",
     "created": "已创建工作流“{{name}}”",
     "createDescription": "描述（可选）",
     "createFailed": "创建工作流失败",
@@ -9552,9 +9566,7 @@
     "merging": "",
     "mergingTitle": "",
     "review": "审核",
-    "triggerAria": "Select workflow. Current workflow: {{name}}",
-    "editWorkflow": "Edit workflow",
-    "newWorkflow": "New workflow"
+    "triggerAria": "Select workflow. Current workflow: {{name}}"
   },
   "workspace": {
     "projectRoot": "项目根目录",
@@ -9607,6 +9619,16 @@
     },
     "sending": "",
     "thinking": "",
+    "thinkingLevelTitle": "{{title}} · 思考强度：{{level}}",
+    "thinkingLevels": {
+      "off": "关闭",
+      "minimal": "最低",
+      "low": "低",
+      "medium": "中",
+      "high": "高",
+      "xhigh": "极高",
+      "max": "最大"
+    },
     "toolCall": "",
     "toolCallCount_one": "",
     "toolCallCount_other": "",
@@ -9900,7 +9922,6 @@
     "createFirst": "Create your first note",
     "select": "Select a note or create a new one",
     "title": "Note title",
-    "unsaved": "Unsaved changes",
     "savedState": "Saved",
     "saving": "Saving…",
     "saved": "Note saved",
@@ -9912,7 +9933,12 @@
     "deleteMessage": "This action cannot be undone.",
     "conflict": "This note changed elsewhere. Your draft is preserved.",
     "reload": "Reload server version",
-    "overwrite": "Overwrite with my draft"
+    "overwrite": "Overwrite with my draft",
+    "autoSaved": "",
+    "backToList": "",
+    "rename": "",
+    "renameAria": "",
+    "actionsAria": ""
   },
   "whiteboard": {
     "tools": "Whiteboard tools",
@@ -9950,5 +9976,16 @@
     "selectHint": "Select an item to edit it",
     "exportJson": "Export JSON",
     "exportPng": "Export PNG"
+  },
+  "windows": {
+    "hide": "隐藏所有窗口",
+    "restore": "恢复窗口"
+  },
+  "uiStyle": {
+    "label": "界面风格",
+    "classic": "当前",
+    "classicDescription": "保持熟悉的 Fusion 界面语法。",
+    "clean": "简洁",
+    "cleanDescription": "更紧凑的间距、更柔和的圆角、更安静的外框。"
   }
 }

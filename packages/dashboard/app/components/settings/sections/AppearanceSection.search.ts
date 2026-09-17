@@ -14,6 +14,34 @@ export const appearanceSearchEntries: SettingsSearchEntry[] = [
    * the project-scoped conversation layout metadata identical to AppearanceSection
    * so label, help, and field-key queries all reach the existing control.
    */
+  /*
+   * FNXC:SettingsSearch 2026-09-15-14:41:
+   * FN-419 navigation placement control. Label and help mirror the section's `t()` calls verbatim.
+   */
+  {
+    sectionId: "appearance",
+    key: "navigationPlacement",
+    labelKey: "settings.appearance.navigationPlacement",
+    labelFallback: "Navigation menu placement",
+    helpKey: "settings.appearance.navigationPlacementHelp",
+    helpFallback:
+      "Choose whether the main menu sits in the bottom bar or in a left sidebar. Only one is ever shown. Project-scoped; default: Bottom bar.",
+    keywords: ["menu", "navigation", "sidebar", "footer", "bottom bar"],
+  },
+  /*
+   * FNXC:SettingsSearch 2026-09-15-16:04:
+   * FN-426 right tool dock opt-in. Label and help mirror the section's `t()` calls verbatim.
+   */
+  {
+    sectionId: "appearance",
+    key: "rightSidebarEnabled",
+    labelKey: "settings.appearance.rightSidebarEnabled",
+    labelFallback: "Show the right tool sidebar",
+    helpKey: "settings.appearance.rightSidebarEnabledHelp",
+    helpFallback:
+      "When enabled, tablet and desktop show an optional right sidebar with Files, Chat, List, and Notes shortcuts. Every tool stays reachable without it. Project-scoped; default: disabled.",
+    keywords: ["right sidebar", "dock", "tools", "panel", "files", "notes"],
+  },
   {
     sectionId: "appearance",
     key: "chatMessageLayout",
@@ -21,42 +49,13 @@ export const appearanceSearchEntries: SettingsSearchEntry[] = [
     labelFallback: "Conversation layout",
     helpKey: "settings.appearance.chatMessageLayoutHelp",
     helpFallback:
-      "Choose Bubbles or Full width for normal Chat, Quick Chat, dock Chat, task Activity, and Planner Chat. Project-scoped; default: Bubbles.",
+      "Choose Bubbles or Full width for Chat, task Activity, and Planner Chat. Project-scoped; default: Bubbles.",
   },
-  {
-    sectionId: "appearance",
-    key: "openTasksInRightSidebar",
-    labelKey: "settings.appearance.openTasksInRightSidebar",
-    labelFallback: "Open tasks in the right sidebar",
-    helpKey: "settings.appearance.openTasksInRightSidebarHelp",
-    helpFallback:
-      "When enabled, board task cards open detail in the right sidebar when it is available; mobile and hidden-sidebar states keep the full task panel. Default: disabled.",
-    keywords: ["dock", "right dock", "side panel"],
-  },
-  {
-    sectionId: "appearance",
-    key: "openMobileTasksInPopup",
-    labelKey: "settings.appearance.openMobileTasksInPopup",
-    labelFallback: "Open tasks as popups",
-    helpKey: "settings.appearance.openMobileTasksInPopupHelp",
-    helpFallback:
-      "When enabled, ordinary board task-card and List row/card clicks open the existing movable task popup so the board or list remains visible. Deep-tab and other task opens keep their current behavior. Default: disabled.",
-    /*
-    FNXC:SettingsSearch 2026-07-15-17:35:
-    "mobile" is indexed as a keyword rather than left to the copy: the stored key is `openMobileTasksInPopup` and the setting was mobile-only until FN-7945 made it all-viewport, so operators and older docs still call it the mobile popup setting even though the label no longer says it.
-    */
-    keywords: ["mobile", "floating window", "modal"],
-  },
-  {
-    sectionId: "appearance",
-    key: "taskPopupsBoardListOnly",
-    labelKey: "settings.appearance.taskPopupsBoardListOnly",
-    labelFallback: "Keep task popups on the view where they were opened",
-    helpKey: "settings.appearance.taskPopupsBoardListOnlyHelp",
-    helpFallback:
-      "When enabled, each open task-detail popup appears only on the view where it was opened. Switching views hides it without closing; returning restores it in the same position. Default: enabled.",
-    keywords: ["popup view attachment", "pin popup"],
-  },
+  /*
+  FNXC:SettingsSearch 2026-09-16-02:53:
+  FN-442 deleted the `openTasksInRightSidebar` and `openMobileTasksInPopup` entries with their settings: the floating task
+  window is the unconditional route, so searching for them must surface nothing rather than a control that no longer exists.
+  */
   {
     sectionId: "appearance",
     key: "showCostBadgeOnCards",
@@ -69,13 +68,13 @@ export const appearanceSearchEntries: SettingsSearchEntry[] = [
   },
   {
     sectionId: "appearance",
-    key: "taskDetailChatFirst",
-    labelKey: "settings.appearance.taskDetailChatFirst",
-    labelFallback: "Open task details with Chat first",
-    helpKey: "settings.appearance.taskDetailChatFirstHelp",
+    key: "taskDetailDefaultTab",
+    labelKey: "settings.appearance.taskDetailDefaultTab",
+    labelFallback: "Open task details on",
+    helpKey: "settings.appearance.taskDetailDefaultTabHelp",
     helpFallback:
-      "Off by default: task details list Activity first and omitted non-done opens land on Activity. Turn on to restore Chat-first order/default; explicit Chat links still work either way.",
-    keywords: ["activity first", "default tab"],
+      "Choose which tab a task opens on and leads the task detail tab bar: Definition, Chat, or Activity. Explicit task links keep their destination. Project-scoped; default: Activity.",
+    keywords: ["default tab", "activity first", "chat first", "definition", "landing tab", "tab order"],
   },
   {
     sectionId: "appearance",

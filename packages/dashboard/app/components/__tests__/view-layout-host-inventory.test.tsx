@@ -59,6 +59,12 @@ const INVENTORY: InventoryRow[] = [
   { destination: "Import Tasks", producer: "components/GitHubImportModal.tsx", scenario: "components/__tests__/GitHubImportModal.test.tsx", requires: ["ViewHeader"] },
   { destination: "Settings", producer: "components/SettingsModal.tsx", scenario: "components/__tests__/SettingsModal.general.test.tsx", requires: ["ViewHeader", "ViewSidebar"] },
   { destination: "Files", producer: "components/FileBrowserModal.tsx", scenario: "components/__tests__/FileBrowserModal.test.tsx", requires: ["ViewHeader", "ViewSidebar"] },
+  /*
+  FN-426: Files and Git Manager became full main-content destinations so no tool depends on the right dock. Each owns
+  one canonical header over the existing browser/Git bodies — they add a host, not a second set of operations.
+  */
+  { destination: "Files page", producer: "components/FilesView.tsx", scenario: "components/__tests__/FilesView.test.tsx", requires: ["ViewLayout", "ViewHeader"] },
+  { destination: "Git manager page", producer: "components/GitManagerView.tsx", scenario: "components/__tests__/GitManagerView.test.tsx", requires: ["ViewLayout", "ViewHeader"] },
   { destination: "Pull requests", producer: "components/PullRequestView.tsx", scenario: "components/__tests__/view-layout-tools.test.tsx", requires: ["ViewHeader"] },
   { destination: "Secrets", producer: "components/SecretsView.tsx", scenario: "components/__tests__/view-layout-tools.test.tsx", requires: ["ViewHeader", "ViewActionButton"] },
   { destination: "Dev server", producer: "components/DevServerView.tsx", scenario: "components/__tests__/DevServerView.test.tsx", requires: ["ViewHeader", "ViewActionButton"] },
@@ -94,6 +100,7 @@ const INVENTORY: InventoryRow[] = [
   { destination: "Settings sync conflicts", producer: "components/SettingsSyncConflictModal.tsx", scenario: "components/__tests__/view-layout-dialogs.test.tsx", requires: ["ViewHeader"] },
   { destination: "Stash conflicts", producer: "components/StashConflictModal.tsx", scenario: "components/__tests__/view-layout-dialogs.test.tsx", requires: ["ViewHeader"] },
   { destination: "Stash recovery", producer: "components/StashRecoveryView.tsx", scenario: "components/__tests__/view-layout-dialogs.test.tsx", requires: ["ViewHeader"] },
+  { destination: "Task refine", producer: "components/TaskRefineDialog.tsx", scenario: "components/__tests__/view-layout-dialogs.test.tsx", requires: ["ViewHeader"] },
   { destination: "Task reset", producer: "components/TaskResetDialog.tsx", scenario: "components/__tests__/view-layout-dialogs.test.tsx", requires: ["ViewHeader"] },
   { destination: "Usage", producer: "components/UsageIndicator.tsx", scenario: "components/__tests__/view-layout-dialogs.test.tsx", requires: ["ViewHeader"] },
   { destination: "Workflow results output", producer: "components/WorkflowResultsTab.tsx", scenario: "components/__tests__/view-layout-dialogs.test.tsx", requires: ["ViewHeader"] },
@@ -114,7 +121,7 @@ const INVENTORY: InventoryRow[] = [
   { destination: "Git manager", producer: "components/GitManagerModal.tsx", scenario: "components/__tests__/GitManagerModal.test.tsx", requires: ["ViewHeader", "ViewLayoutContent"] },
   { destination: "Task detail", producer: "components/TaskDetailModal.tsx", scenario: "components/__tests__/view-layout-drawers-task-detail.test.tsx", requires: ["ViewLayoutHeader", "ViewBackButton"] },
   { destination: "Terminal", producer: "components/TerminalModal.tsx", scenario: "components/__tests__/TerminalModal.closed-mount-cost.test.tsx", requires: ["ViewLayoutHeader", "ViewLayoutContent"] },
-  { destination: "Mobile drawer shell", producer: "components/AlphaMobileDrawer.tsx", scenario: "components/__tests__/view-layout-runtime-hosts.test.tsx", requires: ["ViewLayoutHeader", "ViewLayoutContent"] },
+  { destination: "Mobile drawer shell", producer: "components/MobileDrawer.tsx", scenario: "components/__tests__/view-layout-runtime-hosts.test.tsx", requires: ["ViewLayoutHeader", "ViewLayoutContent"] },
   { destination: "Right dock expand window", producer: "components/RightDockExpandModal.tsx", scenario: "components/__tests__/view-layout-runtime-hosts.test.tsx", requires: ["ViewLayoutHeader", "ViewLayoutContent"] },
   { destination: "Floating window shell", producer: "components/FloatingWindow.tsx", scenario: "components/__tests__/view-layout-drawers-task-detail.test.tsx", requires: ["ViewLayoutHeader", "ViewLayoutContent"] },
   { destination: "Plugin view host", producer: "plugins/PluginDashboardViewHost.tsx", scenario: "components/__tests__/view-layout-plugins.test.tsx", requires: ["ViewLayout", "ViewHeader"] },

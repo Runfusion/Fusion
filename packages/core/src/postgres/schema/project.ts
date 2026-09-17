@@ -199,6 +199,11 @@ export const tasks = projectSchema.table("tasks", {
   cumulativeActiveMs: bigint("cumulative_active_ms", { mode: "number" }),
   cumulativePlanningMs: bigint("cumulative_planning_ms", { mode: "number" }),
   planningStartedAt: text("planning_started_at"),
+  /* FNXC:TaskPauseAccounting 2026-09-16-06:16: FN-457 migration 0081 — durable paused-time accounting.
+     Display-only: `board/productivity-analytics.ts` deliberately keeps aggregating
+     `cumulative_active_ms + cumulative_planning_ms` unchanged, since no existing column changes meaning. */
+  cumulativePausedMs: bigint("cumulative_paused_ms", { mode: "number" }),
+  pausedStartedAt: text("paused_started_at"),
   /*
   FNXC:PostgresMigrationColumnCoverage 2026-07-14-13:17:
   Keep the task schema aligned with late SQLite lifecycle migrations. JSON lifecycle markers stay jsonb for native backend reads; retired board/question fields remain text so their legacy payloads round-trip byte-for-byte.
@@ -244,6 +249,8 @@ export const tasks = projectSchema.table("tasks", {
   repositoryScope: jsonb("repository_scope"),
   // FNXC:ExternalBlock 2026-08-28-03:48: obstacle origin and exact resume coordinates survive process restarts.
   externalBlock: jsonb("external_block"),
+  /* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 per-card human plan decision state. */
+  humanPlanApproval: jsonb("human_plan_approval"),
   planningFailure: jsonb("planning_failure"),
   noCommitsExpected: integer("no_commits_expected").default(0),
   enabledWorkflowSteps: jsonb("enabled_workflow_steps").default([]),
@@ -1231,6 +1238,26 @@ export const workflowSettings = projectSchema.table("workflow_settings", {
   index("idx_workflow_settings_project").on(t.projectId),
 ]);
 
+/*
+FNXC:WorkflowIdentity 2026-09-14-19:06:
+Built-in identity convergence is intentionally destructive only in the active tables. Preserve every displaced settings payload under a collision-free project-scoped identity so an operator can recover the old values without allowing them to participate in runtime resolution.
+*/
+export const archivedWorkflowSettings = projectSchema.table("archived_workflow_settings", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  archiveId: text("archive_id").notNull(),
+  workflowId: text("workflow_id").notNull(),
+  replacementWorkflowId: text("replacement_workflow_id"),
+  values: jsonb("values").notNull().default({}),
+  sourceUpdatedAt: text("source_updated_at").notNull(),
+  archivedAt: text("archived_at").notNull(),
+  reason: text("reason").notNull(),
+}, (t) => [
+  primaryKey({ columns: [t.projectId, t.workflowId, t.reason, t.archivedAt] }),
+  unique("uq_archived_workflow_settings_episode").on(t.projectId, t.archiveId),
+  check("archived_workflow_settings_reason", sql`${t.reason} IN ('identity-merge-loser', 'model-lane-reset')`),
+  index("idx_archived_workflow_settings_project_workflow").on(t.projectId, t.workflowId),
+]);
+
 export const workflowPromptOverrides = projectSchema.table("workflow_prompt_overrides", {
   workflowId: text("workflow_id").notNull(),
   projectId: text("project_id").notNull(),
@@ -1239,6 +1266,20 @@ export const workflowPromptOverrides = projectSchema.table("workflow_prompt_over
 }, (t) => [
   primaryKey({ columns: [t.workflowId, t.projectId] }),
   index("idx_workflow_prompt_overrides_project").on(t.projectId),
+]);
+
+export const workflowPromptOverridesArchive = projectSchema.table("workflow_prompt_overrides_archive", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  archiveId: text("archive_id").notNull(),
+  workflowId: text("workflow_id").notNull(),
+  replacementWorkflowId: text("replacement_workflow_id"),
+  overrides: jsonb("overrides").notNull().default({}),
+  sourceUpdatedAt: text("source_updated_at").notNull(),
+  archivedAt: text("archived_at").notNull(),
+  reason: text("reason").notNull(),
+}, (t) => [
+  primaryKey({ columns: [t.projectId, t.archiveId] }),
+  index("idx_workflow_prompt_overrides_archive_project_workflow").on(t.projectId, t.workflowId),
 ]);
 
 /*
@@ -2722,6 +2763,7 @@ export const projectTableNames = [
   "agent_config_revisions", "agent_blocked_states", "merge_queue", "merge_requests",
   "completion_handoff_markers", "workflow_work_items", "workflow_run_branches",
   "workflow_run_step_instances", "workflow_settings", "workflow_prompt_overrides",
+  "archived_workflow_settings", "workflow_prompt_overrides_archive",
   "task_documents", "artifacts", "task_document_revisions", "research_runs",
   "research_exports", "research_run_events", "experiment_sessions",
   "experiment_session_records", "eval_runs", "eval_task_results", "eval_run_events",

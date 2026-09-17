@@ -1,0 +1,338 @@
+{
+  "classic-cozy-cartoon-light-desktop": {
+    "colour": {
+      "bodyBackground": "rgba(255, 255, 255, 0.875)",
+      "surfaceBackground": "rgb(255, 255, 255)",
+      "surfaceColor": "rgb(13, 14, 16)",
+      "surfaceBorder": "rgb(208, 215, 222)",
+      "buttonBackground": "rgb(255, 255, 255)",
+      "buttonColor": "rgb(13, 14, 16)",
+      "optionColor": "rgb(3, 4, 4)",
+      "tabColor": "rgb(31, 35, 40)"
+    },
+    "shape": {
+      "surfaceRadius": "8px",
+      "surfacePadding": "12px",
+      "buttonRadius": "8px",
+      "buttonPadding": "8px 16px",
+      "tabPadding": "8px 12px",
+      "tabFontSize": "14px",
+      "tabsGap": "4px"
+    }
+  },
+  "classic-cozy-cartoon-light-mobile": {
+    "colour": {
+      "bodyBackground": "rgba(255, 255, 255, 0.706)",
+      "surfaceBackground": "rgb(255, 255, 255)",
+      "surfaceColor": "rgb(7, 8, 9)",
+      "surfaceBorder": "rgb(208, 215, 222)",
+      "buttonBackground": "rgb(255, 255, 255)",
+      "buttonColor": "rgb(7, 8, 9)",
+      "optionColor": "rgb(0, 0, 0)",
+      "tabColor": "rgb(31, 35, 40)"
+    },
+    "shape": {
+      "surfaceRadius": "8px",
+      "surfacePadding": "8px",
+      "buttonRadius": "8px",
+      "buttonPadding": "8px 16px",
+      "tabPadding": "8px 12px",
+      "tabFontSize": "13px",
+      "tabsGap": "4px"
+    }
+  },
+  "classic-cozy-cartoon-dark-desktop": {
+    "colour": {
+      "bodyBackground": "rgba(13, 17, 23, 0.875)",
+      "surfaceBackground": "rgb(33, 38, 45)",
+      "surfaceColor": "rgb(51, 52, 54)",
+      "surfaceBorder": "rgb(48, 54, 61)",
+      "buttonBackground": "rgb(33, 38, 45)",
+      "buttonColor": "rgb(51, 52, 54)",
+      "optionColor": "rgb(0, 0, 0)",
+      "tabColor": "rgb(230, 237, 243)"
+    },
+    "shape": {
+      "surfaceRadius": "8px",
+      "surfacePadding": "12px",
+      "buttonRadius": "8px",
+      "buttonPadding": "8px 16px",
+      "tabPadding": "8px 12px",
+      "tabFontSize": "14px",
+      "tabsGap": "4px"
+    }
+  },
+  "classic-cozy-cartoon-dark-mobile": {
+    "colour": {
+      "bodyBackground": "rgba(13, 17, 23, 0.706)",
+      "surfaceBackground": "rgb(33, 38, 45)",
+      "surfaceColor": "rgb(94, 97, 99)",
+      "surfaceBorder": "rgb(48, 54, 61)",
+      "buttonBackground": "rgb(33, 38, 45)",
+      "buttonColor": "rgb(94, 97, 99)",
+      "optionColor": "rgb(26, 27, 27)",
+      "tabColor": "rgb(230, 237, 243)"
+    },
+    "shape": {
+      "surfaceRadius": "8px",
+      "surfacePadding": "8px",
+      "buttonRadius": "8px",
+      "buttonPadding": "8px 16px",
+      "tabPadding": "8px 12px",
+      "tabFontSize": "13px",
+      "tabsGap": "4px"
+    }
+  },
+  "classic-shadcn-purple-light-desktop": {
+    "colour": {
+      "bodyBackground": "rgba(255, 255, 255, 0.706)",
+      "surfaceBackground": "rgb(255, 255, 255)",
+      "surfaceColor": "rgb(13, 14, 16)",
+      "surfaceBorder": "rgb(208, 215, 222)",
+      "buttonBackground": "rgb(255, 255, 255)",
+      "buttonColor": "rgb(13, 14, 16)",
+      "optionColor": "rgb(3, 4, 4)",
+      "tabColor": "rgb(31, 35, 40)"
+    },
+    "shape": {
+      "surfaceRadius": "8px",
+      "surfacePadding": "12px",
+      "buttonRadius": "8px",
+      "buttonPadding": "8px 16px",
+      "tabPadding": "8px 12px",
+      "tabFontSize": "14px",
+      "tabsGap": "4px"
+    }
+  },
+  "classic-shadcn-purple-light-mobile": {
+    "colour": {
+      "bodyBackground": "rgba(255, 255, 255, 0.706)",
+      "surfaceBackground": "rgb(255, 255, 255)",
+      "surfaceColor": "rgb(13, 14, 16)",
+      "surfaceBorder": "rgb(208, 215, 222)",
+      "buttonBackground": "rgb(255, 255, 255)",
+      "buttonColor": "rgb(13, 14, 16)",
+      "optionColor": "rgb(3, 4, 4)",
+      "tabColor": "rgb(31, 35, 40)"
+    },
+    "shape": {
+      "surfaceRadius": "8px",
+      "surfacePadding": "8px",
+      "buttonRadius": "8px",
+      "buttonPadding": "8px 16px",
+      "tabPadding": "8px 12px",
+      "tabFontSize": "13px",
+      "tabsGap": "4px"
+    }
+  },
+  "classic-shadcn-purple-dark-desktop": {
+    "colour": {
+      "bodyBackground": "rgba(13, 17, 23, 0.706)",
+      "surfaceBackground": "rgb(33, 38, 45)",
+      "surfaceColor": "rgb(94, 97, 99)",
+      "surfaceBorder": "rgb(48, 54, 61)",
+      "buttonBackground": "rgb(33, 38, 45)",
+      "buttonColor": "rgb(94, 97, 99)",
+      "optionColor": "rgb(26, 27, 27)",
+      "tabColor": "rgb(230, 237, 243)"
+    },
+    "shape": {
+      "surfaceRadius": "8px",
+      "surfacePadding": "12px",
+      "buttonRadius": "8px",
+      "buttonPadding": "8px 16px",
+      "tabPadding": "8px 12px",
+      "tabFontSize": "14px",
+      "tabsGap": "4px"
+    }
+  },
+  "classic-shadcn-purple-dark-mobile": {
+    "colour": {
+      "bodyBackground": "rgba(13, 17, 23, 0.875)",
+      "surfaceBackground": "rgb(33, 38, 45)",
+      "surfaceColor": "rgb(51, 52, 54)",
+      "surfaceBorder": "rgb(48, 54, 61)",
+      "buttonBackground": "rgb(33, 38, 45)",
+      "buttonColor": "rgb(51, 52, 54)",
+      "optionColor": "rgb(0, 0, 0)",
+      "tabColor": "rgb(230, 237, 243)"
+    },
+    "shape": {
+      "surfaceRadius": "8px",
+      "surfacePadding": "8px",
+      "buttonRadius": "8px",
+      "buttonPadding": "8px 16px",
+      "tabPadding": "8px 12px",
+      "tabFontSize": "13px",
+      "tabsGap": "4px"
+    }
+  },
+  "clean-cozy-cartoon-light-desktop": {
+    "colour": {
+      "bodyBackground": "rgba(255, 255, 255, 0.85)",
+      "surfaceBackground": "rgb(255, 255, 255)",
+      "surfaceColor": "rgb(18, 20, 23)",
+      "surfaceBorder": "rgb(208, 215, 222)",
+      "buttonBackground": "rgb(255, 255, 255)",
+      "buttonColor": "rgb(18, 20, 23)",
+      "optionColor": "rgb(5, 6, 7)",
+      "tabColor": "rgb(31, 35, 40)"
+    },
+    "shape": {
+      "surfaceRadius": "8px",
+      "surfacePadding": "10px",
+      "buttonRadius": "8px",
+      "buttonPadding": "7px 14px",
+      "tabPadding": "7px 0px",
+      "tabFontSize": "14px",
+      "tabsGap": "14px"
+    }
+  },
+  "clean-cozy-cartoon-light-mobile": {
+    "colour": {
+      "bodyBackground": "rgba(255, 255, 255, 0.85)",
+      "surfaceBackground": "rgb(255, 255, 255)",
+      "surfaceColor": "rgb(18, 20, 23)",
+      "surfaceBorder": "rgb(208, 215, 222)",
+      "buttonBackground": "rgb(255, 255, 255)",
+      "buttonColor": "rgb(18, 20, 23)",
+      "optionColor": "rgb(5, 6, 7)",
+      "tabColor": "rgb(31, 35, 40)"
+    },
+    "shape": {
+      "surfaceRadius": "8px",
+      "surfacePadding": "7px",
+      "buttonRadius": "8px",
+      "buttonPadding": "7px 14px",
+      "tabPadding": "7px 0px",
+      "tabFontSize": "14px",
+      "tabsGap": "14px"
+    }
+  },
+  "clean-cozy-cartoon-dark-desktop": {
+    "colour": {
+      "bodyBackground": "rgba(13, 17, 23, 0.85)",
+      "surfaceBackground": "rgb(33, 38, 45)",
+      "surfaceColor": "rgb(80, 82, 84)",
+      "surfaceBorder": "rgb(48, 54, 61)",
+      "buttonBackground": "rgb(33, 38, 45)",
+      "buttonColor": "rgb(80, 82, 84)",
+      "optionColor": "rgb(0, 0, 0)",
+      "tabColor": "rgb(230, 237, 243)"
+    },
+    "shape": {
+      "surfaceRadius": "8px",
+      "surfacePadding": "10px",
+      "buttonRadius": "8px",
+      "buttonPadding": "7px 14px",
+      "tabPadding": "7px 0px",
+      "tabFontSize": "14px",
+      "tabsGap": "14px"
+    }
+  },
+  "clean-cozy-cartoon-dark-mobile": {
+    "colour": {
+      "bodyBackground": "rgba(13, 17, 23, 0.85)",
+      "surfaceBackground": "rgb(33, 38, 45)",
+      "surfaceColor": "rgb(132, 136, 140)",
+      "surfaceBorder": "rgb(48, 54, 61)",
+      "buttonBackground": "rgb(33, 38, 45)",
+      "buttonColor": "rgb(132, 136, 140)",
+      "optionColor": "rgb(37, 39, 40)",
+      "tabColor": "rgb(230, 237, 243)"
+    },
+    "shape": {
+      "surfaceRadius": "8px",
+      "surfacePadding": "7px",
+      "buttonRadius": "8px",
+      "buttonPadding": "7px 14px",
+      "tabPadding": "7px 0px",
+      "tabFontSize": "14px",
+      "tabsGap": "14px"
+    }
+  },
+  "clean-shadcn-purple-light-desktop": {
+    "colour": {
+      "bodyBackground": "rgba(255, 255, 255, 0.74)",
+      "surfaceBackground": "rgb(255, 255, 255)",
+      "surfaceColor": "rgb(11, 12, 14)",
+      "surfaceBorder": "rgb(208, 215, 222)",
+      "buttonBackground": "rgb(255, 255, 255)",
+      "buttonColor": "rgb(11, 12, 14)",
+      "optionColor": "rgb(0, 0, 0)",
+      "tabColor": "rgb(31, 35, 40)"
+    },
+    "shape": {
+      "surfaceRadius": "8px",
+      "surfacePadding": "10px",
+      "buttonRadius": "8px",
+      "buttonPadding": "7px 14px",
+      "tabPadding": "7px 0px",
+      "tabFontSize": "14px",
+      "tabsGap": "14px"
+    }
+  },
+  "clean-shadcn-purple-light-mobile": {
+    "colour": {
+      "bodyBackground": "rgba(255, 255, 255, 0.97)",
+      "surfaceBackground": "rgb(255, 255, 255)",
+      "surfaceColor": "rgb(23, 26, 30)",
+      "surfaceBorder": "rgb(208, 215, 222)",
+      "buttonBackground": "rgb(255, 255, 255)",
+      "buttonColor": "rgb(23, 26, 30)",
+      "optionColor": "rgb(15, 16, 19)",
+      "tabColor": "rgb(31, 35, 40)"
+    },
+    "shape": {
+      "surfaceRadius": "8px",
+      "surfacePadding": "7px",
+      "buttonRadius": "8px",
+      "buttonPadding": "7px 14px",
+      "tabPadding": "7px 0px",
+      "tabFontSize": "14px",
+      "tabsGap": "14px"
+    }
+  },
+  "clean-shadcn-purple-dark-desktop": {
+    "colour": {
+      "bodyBackground": "rgba(13, 17, 23, 0.85)",
+      "surfaceBackground": "rgb(33, 38, 45)",
+      "surfaceColor": "rgb(80, 82, 84)",
+      "surfaceBorder": "rgb(48, 54, 61)",
+      "buttonBackground": "rgb(33, 38, 45)",
+      "buttonColor": "rgb(80, 82, 84)",
+      "optionColor": "rgb(38, 39, 40)",
+      "tabColor": "rgb(230, 237, 243)"
+    },
+    "shape": {
+      "surfaceRadius": "8px",
+      "surfacePadding": "10px",
+      "buttonRadius": "8px",
+      "buttonPadding": "7px 14px",
+      "tabPadding": "7px 0px",
+      "tabFontSize": "14px",
+      "tabsGap": "14px"
+    }
+  },
+  "clean-shadcn-purple-dark-mobile": {
+    "colour": {
+      "bodyBackground": "rgba(13, 17, 23, 0.97)",
+      "surfaceBackground": "rgb(33, 38, 45)",
+      "surfaceColor": "rgb(80, 82, 84)",
+      "surfaceBorder": "rgb(48, 54, 61)",
+      "buttonBackground": "rgb(33, 38, 45)",
+      "buttonColor": "rgb(80, 82, 84)",
+      "optionColor": "rgb(0, 0, 0)",
+      "tabColor": "rgb(230, 237, 243)"
+    },
+    "shape": {
+      "surfaceRadius": "8px",
+      "surfacePadding": "7px",
+      "buttonRadius": "8px",
+      "buttonPadding": "7px 14px",
+      "tabPadding": "7px 0px",
+      "tabFontSize": "14px",
+      "tabsGap": "14px"
+    }
+  }
+}

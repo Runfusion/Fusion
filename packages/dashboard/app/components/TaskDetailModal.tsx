@@ -1,23 +1,30 @@
-import { ViewHeader } from "./ViewHeader";
 import { ModalCloseButton } from "./ModalCloseButton";
 import "./TaskDetailModal.css";
 import React, { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import { Pencil, Bot, X, ChevronDown, ChevronRight, GitBranch, ArrowLeft, Loader2, AlertTriangle, Sparkles, Maximize2, Minimize2, Info, Copy, RotateCcw, Trash2, Pause, Play, RefreshCcw, MoreHorizontal, FileText, Check } from "lucide-react";
+import { Bot, X, ChevronDown, ChevronRight, GitBranch, ArrowLeft, Loader2, AlertTriangle, Maximize2, Minimize2, Info, Copy, MoreHorizontal, FileText, Check } from "lucide-react";
 import { useViewportMode } from "../hooks/useViewportMode";
-import { AlphaMobileDrawer } from "./AlphaMobileDrawer";
+import { MobileDrawer } from "./MobileDrawer";
 import { ViewBackButton } from "./ViewActionButton";
 import { ViewLayoutContent, ViewLayoutFooter, ViewLayoutHeader } from "./ViewLayout";
+import { useDrawerPresentation } from "./ViewDrawer";
 import { mergeTaskSnapshot } from "../hooks/useTasks";
 import { dismissAiMergeReviewFinding } from "../api/tasks/tasks-lifecycle";
-import { FloatingWindow } from "./FloatingWindow";
+import {
+  FLOATING_WINDOW_TASK_STANDARD_HEIGHT,
+  FLOATING_WINDOW_TASK_STANDARD_WIDTH,
+  FloatingWindow,
+} from "./FloatingWindow";
+import { currentFloatingZ } from "./floatingWindowStack";
 import { ExternalBlockNotice } from "./TaskCard";
+import { TaskRefineDialog } from "./TaskRefineDialog";
 import { TaskResetDialog } from "./TaskResetDialog";
 import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
-import { useModalDismissPreference, useOverlayDismiss } from "../hooks/useOverlayDismiss";
+import { useModalDismissPreference } from "../hooks/useOverlayDismiss";
 import { useColumnLabel } from "../i18n/labels";
 import type { DetailTaskTab } from "../hooks/useModalManager";
+import type { TaskDetailDefaultTab } from "../hooks/useAppSettings";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -25,7 +32,6 @@ import { sharedRehypePlugins, createMermaidCodeComponent } from "./markdownPipel
 import type { Task, TaskDetail, TaskAttachment, ColumnId, MergeResult, Settings, GlobalSettings, Agent, TaskPriority, TaskSourceIssue, WorkflowStepResult, GithubIssueAction, TaskGitLabTrackedItem, PlannerOversightLevel, PlannerOverseerRuntimeSnapshot, TaskVerificationRequest, ThinkingLevel } from "@fusion/core";
 import {
   DEFAULT_TASK_PRIORITY,
-  MAX_TASK_MESSAGE_LENGTH,
   REPO_OVERRIDE_RE,
   TASK_PRIORITIES,
   PLANNER_OVERSIGHT_LEVELS,
@@ -39,14 +45,17 @@ import { isForeignTaskEvent, readTaskEventProjectId } from "../utils/taskEventPr
 import {
   isCompleteColumnRole,
   isHoldColumnRole,
+  isDescriptionEditableColumnRole,
   isFieldEditableColumnRole,
   isPreImplementationColumnRole,
   isReviewColumnRole,
   isWipColumnRole,
 } from "../utils/columnRoles";
+import { getTaskTitleDisplayText } from "../utils/taskTitleDisplay";
+import { extractTaskBeforeAfterTransformation, extractTaskProductSummary } from "../utils/taskPlanSummary";
 import { resolveEffectiveAutoMerge } from "../../../core/src/merge/task-merge";
-import { uploadAttachment, deleteAttachment, updateTask, repairOverlapBlocker, fetchOverlapBlockerReport, fetchTaskDetail, fetchTaskPrompt, fetchSpecLock, fetchTaskVerificationRequest, fetchSettings, fetchTaskEffectiveSettings, fetchGlobalSettings, requestSpecRevision, rebuildTaskSpec, approvePlan, rejectPlan, refineTask, fetchWorkflowResults, assignTask, fetchAgents, fetchAgent, refreshPrStatus, fetchBoardWorkflows, updateTaskCustomFields, summarizeTitle, fetchWorkflowSettingValues, nudgeOverseer, stopOverseer, explainOverseer, fetchModels, fetchNodes, api } from "../api";
-import type { RevertTaskOptions, RevertTaskResult, ModelInfo, NodeInfo, SpecLockResponse, TaskOverlapBlockerReport } from "../api";
+import { uploadAttachment, deleteAttachment, updateTask, repairOverlapBlocker, fetchOverlapBlockerReport, fetchTaskDetail, fetchTaskPrompt, fetchSpecLock, fetchTaskVerificationRequest, fetchSettings, fetchTaskEffectiveSettings, fetchGlobalSettings, rebuildTaskSpec, approvePlan, rejectPlan, fetchWorkflowResults, assignTask, fetchAgents, fetchAgent, refreshPrStatus, fetchBoardWorkflows, updateTaskCustomFields, fetchWorkflowSettingValues, nudgeOverseer, stopOverseer, explainOverseer, fetchModels, fetchNodes, api } from "../api";
+import type { RestoreTaskRevertOptions, RestoreTaskRevertResult, RevertTaskOptions, RevertTaskResult, ModelInfo, NodeInfo, SpecLockResponse, TaskOverlapBlockerReport } from "../api";
 import type { BoardWorkflowsPayload, WorkflowFieldDefinition, CustomFieldRejection } from "../api";
 import { WorkflowIcon } from "./WorkflowIcon";
 import { ApiRequestError } from "../api";
@@ -64,8 +73,7 @@ import { PrCreateModal } from "./PrCreateModal";
 import { PlannerInterventionTimeline } from "./PlannerInterventionTimeline";
 import { TaskComments } from "./TaskComments";
 import { TaskChatTab } from "./TaskChatTab";
-import { AlphaBoundary } from "../context/AlphaContext";
-import { AlphaButton, AlphaDialogBackdrop, AlphaInput, AlphaMenu, AlphaMenuItem, AlphaPortalSurface, AlphaSelect, AlphaSurface, AlphaTextArea } from "./alpha-ui";
+import { UiButton, UiInput, UiMenu, UiMenuItem, UiPortalSurface, UiSelect, UiSurface } from "./ui";
 import { TaskPlannerChatTab } from "./TaskPlannerChatTab";
 import { TaskReviewTab } from "./TaskReviewTab";
 import { TaskChangesTab } from "./TaskChangesTab";
@@ -108,24 +116,33 @@ import { getTaskLogEntryAction, getTaskLogEntryOutcome } from "../utils/taskLogE
 import { copyTextToClipboard } from "../utils/copyToClipboard";
 import { getRelativeTimeBucket } from "../utils/relativeTimeAgo";
 import { recordResumeEvent } from "../utils/resumeInstrumentation";
-import { isReviewBudgetExhaustedApproval, isTaskAwaitingPlanApproval } from "../utils/reviewBudgetApproval";
+/* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 per-card decision routing and plan/episode identity. */
+import { HUMAN_PLAN_APPROVAL_MESSAGE_MAX_LENGTH_CLIENT, isHumanPlanApprovalArmedClient, isReviewBudgetExhaustedApproval, isTaskAwaitingPlanApproval, resolvePlanReviewEpisodeIdClient } from "../utils/reviewBudgetApproval";
+import { HumanPlanApprovalControls } from "./HumanPlanApprovalControls";
 import { getTaskStatusBadgeLabel, hasTaskStatusBadge, isTaskPlanningActive } from "../utils/taskStatusBadgeLabel";
-import { ACTIVE_STATUSES, resolveEffectiveExecutor, resolveEffectivePlanning, resolveEffectiveTaskChat, resolveEffectiveValidator, type ModelSelection } from "./effective-model-resolution";
+import { ACTIVE_STATUSES, resolveEffectiveExecutor, resolveEffectivePlanning, resolveEffectiveTaskChat, resolveEffectiveThinkingLevel, resolveEffectiveValidator, type ModelSelection } from "./effective-model-resolution";
 import { TaskContextMenu, buildTaskActionMenuModel, getTaskPrAutomationLabel } from "./TaskContextMenu";
 import type { TaskContextMenuColumnFlags, TaskContextMenuColumnMetadata, TaskMenuItemDescriptor } from "./TaskContextMenu";
 import { FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT } from "./FloatingWindow";
-import { useFileBrowser } from "../context/FileBrowserContext";
-import type { DetailTaskInitialActionRequest } from "../hooks/useModalManager";
 
 /*
 FNXC:TaskMessageLength 2026-08-29-08:02:
-Task-detail refinement and spec-revision composers retain their counters and browser maxLength
-attributes, but source their ceiling from the same server constant so operator text is never refused
-locally below the task-message route contract.
+Task-detail refinement composers retain their counters and browser maxLength attributes, but source
+their ceiling from the same server constant so operator text is never refused locally below the
+task-message route contract.
+
+FNXC:TaskDetailPresentation 2026-09-15-16:02:
+FN-424 removed the inline spec-revision composer and the plan sub-view's `Open PROMPT.md` action, so
+this file no longer needs the message-length constant nor the file-browser context.
 */
 const STALE_PAUSED_REVIEW_LOG_REGEX = /^Stale paused review surfaced \[([^\]]+)\]/;
 const EMPTY_MARKDOWN_CHILD_SEPARATOR = "";
 const STRING_OBJECT_TAG = "[object String]";
+/*
+FNXC:TaskDetailPresentation 2026-09-15-16:02:
+FN-424 removed the plan-sub-view Copy action, so its transient confirmation delay, state, timer and
+token fence are deleted rather than kept as unreachable machinery.
+*/
 const ACTIVITY_VIEW_MENU_VIEWPORT_PADDING = 16;
 const ACTIVITY_VIEW_MENU_TRIGGER_GAP = 4;
 const ACTIVITY_VIEW_MENU_MIN_WIDTH = 160;
@@ -160,39 +177,33 @@ type TaskDetailTabButtonProps = {
   children: React.ReactNode;
 };
 
+/*
+FNXC:TaskDetailHeaderActions 2026-09-16-18:07 (FN-470):
+The "…" overflow is the ONLY Task Detail header action surface. Superseding the 2026-09-11-17:35 rule that
+rendered Duplicate, Retry, Delete, Pause/Unpause and Reset as direct icon buttons, the header now exposes at
+most the Actions trigger plus the canonical close; the phone Back arrow (which lives outside
+`.modal-header-actions`) is the only other exception because it is that host's sole exit. Lifecycle actions,
+Edit task and Pop out are appended — never prefixed — to the overflow list so the documented quick-action head
+order and the Attach file autofocus stay intact. The canonical action model remains the sole source of
+lifecycle eligibility and callbacks, and each relocated entry keeps its historical test id and tone.
+*/
 const TASK_DETAIL_DIRECT_ACTION_IDS = new Set(["duplicate", "retry", "delete", "pause", "unpause", "reset"]);
 const TASK_DETAIL_DIRECT_ACTION_ORDER = ["duplicate", "retry", "delete", "pause", "unpause", "reset"] as const;
 
 /*
-FNXC:TaskDetailHeaderActions 2026-09-11-17:35:
-Task Detail exposes Duplicate, Retry, Delete, Pause/Unpause, and Reset as icon-only header actions while retaining the canonical action model as the sole source of lifecycle eligibility and callbacks. Secondary actions remain in one keyboard-accessible header overflow, so removing the footer trigger never removes an operator capability.
-*/
-function renderTaskDetailActionIcon(actionId: string): React.ReactNode {
-  switch (actionId) {
-    case "duplicate": return <Copy aria-hidden="true" />;
-    case "retry": return <RotateCcw aria-hidden="true" />;
-    case "delete": return <Trash2 aria-hidden="true" />;
-    case "pause": return <Pause aria-hidden="true" />;
-    case "unpause": return <Play aria-hidden="true" />;
-    case "reset": return <RefreshCcw aria-hidden="true" />;
-    default: return null;
-  }
-}
-
-/*
-FNXC:TaskDetailAlpha 2026-09-11-02:41:
-Every dynamic Task Detail destination uses one module-scoped adaptive tab control. This preserves the historical button contract outside Alpha while publishing selected state and homemade Alpha keyboard semantics consistently across narrow and wide hosts.
+FNXC:TaskDetailPresentation 2026-09-11-02:41:
+Every dynamic Task Detail destination uses one module-scoped adaptive tab control. This preserves the historical button contract across hosts while publishing selected state and native keyboard semantics consistently across narrow and wide hosts.
 */
 function TaskDetailTabButton({ selected, onSelect, children }: TaskDetailTabButtonProps) {
   return (
-    <AlphaButton
+    <UiButton
       type="button"
       aria-pressed={selected}
       className={`detail-tab${selected ? " detail-tab-active" : ""}`}
       onClick={onSelect}
     >
       {children}
-    </AlphaButton>
+    </UiButton>
   );
 }
 
@@ -265,9 +276,17 @@ function hasUsableTrackingTitle(task: { title?: string | null; description?: str
   return Boolean(firstMeaningfulLine);
 }
 
-function toTaskChatModelInfo(model: ModelSelection): { provider: string; modelId?: string } | null {
+/*
+FNXC:TaskDetailChat 2026-09-15-08:46:
+FN-410: Activity Live's role icon reports the reasoning effort alongside the model, so the effective
+model handed to TaskChatTab carries the resolved thinking level for that lane. The level stays
+optional end to end: when no marker and no configured lane supplies one, nothing is attached and the
+icon renders exactly as before.
+*/
+function toTaskChatModelInfo(model: ModelSelection, thinkingLevel?: string): { provider: string; modelId?: string; thinkingLevel?: string } | null {
   if (!model.provider) return null;
-  return model.modelId ? { provider: model.provider, modelId: model.modelId } : { provider: model.provider };
+  const base = model.modelId ? { provider: model.provider, modelId: model.modelId } : { provider: model.provider };
+  return thinkingLevel ? { ...base, thinkingLevel } : base;
 }
 
 /*
@@ -373,8 +392,12 @@ The existing task activity/steering surface keeps the stable internal `chat` tab
 FNXC:TaskDetailPlannerChat 2026-06-30-22:30:
 Task detail separates Activity from planner-model Chat. `chat` remains the legacy Activity id for old links and Activity → Live (internal `current`)/Feed/Raw Logs/steering, while `planner-chat` is the top-level Chat tab for task-aware planning conversation.
 
-FNXC:TaskDetailActivityFirst 2026-06-30-23:59:
-Task details are Activity-first by default: render Activity before planner Chat and make omitted non-done opens land on Activity → Live. The project `taskDetailChatFirst` setting restores Chat-first ordering/default when true; explicit `initialTab` deep links always win.
+FNXC:TaskDetailDefaultTab 2026-09-16-02:53:
+FN-442 replaced the boolean Chat-first opt-in with the three-value project setting `taskDetailDefaultTab`. One value carries
+BOTH the landing tab of an open with no explicit tab AND the head order of the tab bar: `definition` → the `definition` tab,
+`chat` → the `planner-chat` tab, `activity` → the legacy `chat` Activity → Live surface. The chosen tab leads the bar and the
+remaining two of the Activity / Chat / Definition trio follow in that canonical order. `activity` is the historical default;
+explicit `initialTab` deep links and the terminal-column `summary` landing always win.
 
 FNXC:TaskDetailActivity 2026-06-30-15:50:
 Only an omitted initial tab is the implicit default. Preserve explicit `initialTab="chat"` requests from plugins and task-detail entrypoints so existing links continue to open Activity → Live (internal `current`). Legacy `initialTab="logs"` routes to Activity → Feed, and Raw Logs remains an Activity segment.
@@ -391,7 +414,7 @@ Activity exposes only Live, Feed, Raw, and an oversight-gated Interventions view
 FNXC:TaskHistory 2026-08-28-23:05:
 The compatibility router preserves every retired tab id without preserving duplicate content: `history` and `recommendations` route to Summary; `cost` routes to Stats; `attachments` routes to Artifacts; and `retries`, `routing`, and `debug` route to Details. `logs` remains Activity → Feed.
 */
-function resolveDefaultTab(initialTab: TabId | undefined, column: ColumnId, taskDetailChatFirst = false): TabId {
+function resolveDefaultTab(initialTab: TabId | undefined, column: ColumnId, taskDetailDefaultTab: TaskDetailDefaultTab = "activity"): TabId {
   switch (initialTab) {
     case "logs":
       return "chat";
@@ -421,7 +444,9 @@ function resolveDefaultTab(initialTab: TabId | undefined, column: ColumnId, task
   if (isCompleteColumnRole(undefined, column)) {
     return "summary";
   }
-  return taskDetailChatFirst ? "planner-chat" : "chat";
+  if (taskDetailDefaultTab === "definition") return "definition";
+  if (taskDetailDefaultTab === "chat") return "planner-chat";
+  return "chat";
 }
 
 function resolveDefaultActivitySegment(initialTab: TabId | undefined): ActivitySegment {
@@ -497,16 +522,14 @@ export function deriveCliTabVisibility(
 
 export interface TaskDetailModalProps {
   task: Task | TaskDetail;
-  /** Present the existing detail content in the shared Alpha mobile drawer. */
-  alphaMobileDrawer?: boolean;
+  /** Present the existing detail content in the shared mobile drawer. */
+  mobileDrawer?: boolean;
   projectId?: string;
   tasks?: Task[];
   /* Per-task lifecycle traits for the blocker fan-out; see the useMemo that consumes it. */
   columnFlagsByTaskId?: ReadonlyMap<string, BlockerFanoutColumnFlags>;
   onClose: () => void;
   onOpenDetail: (task: Task | TaskDetail, initialTab?: DetailTaskTab) => void; // For clicking linked task details
-  /** Opens a New Task draft from a reverted task description. */
-  onReviseTask?: (task: Task) => void;
   onDeleteTask: (id: string, options?: {
     removeDependencyReferences?: boolean;
     removeLineageReferences?: boolean;
@@ -514,6 +537,8 @@ export interface TaskDetailModalProps {
     allowResurrection?: boolean;
   }) => Promise<Task>;
   onRevertTask?: (id: string, body?: RevertTaskOptions) => Promise<RevertTaskResult>;
+  /* FNXC:TaskRevert 2026-09-15-10:00 (FN-416): restore-the-revert replaces the reverted task's Revise action. */
+  onRestoreRevertTask?: (id: string, body?: RestoreTaskRevertOptions) => Promise<RestoreTaskRevertResult>;
   onMergeTask: (id: string) => Promise<MergeResult>;
   onRetryTask?: (id: string) => Promise<Task>;
   onOpenChatWithPrefill?: (prefillText: string) => void;
@@ -540,12 +565,10 @@ export interface TaskDetailModalProps {
   onOpenWorkflowEditor?: () => void;
   /** Open the modal with this tab active instead of the default done-aware landing view. */
   initialTab?: TabId;
-  /** One-shot action the detail surface should perform after opening. */
-  initialAction?: DetailTaskInitialActionRequest | null;
   /** Mobile-only header affordance mode. */
   mobileHeaderMode?: "close" | "back";
-  /** Project setting: true restores Chat-first tab order/default; false or missing uses Activity-first. */
-  taskDetailChatFirst?: boolean;
+  /** Project setting: which of Definition / Chat / Activity leads the tab bar and is the landing tab. Default: activity. */
+  taskDetailDefaultTab?: TaskDetailDefaultTab;
   /** Pre-resolved workflow field defs for this task's workflow (U13/KTD-14).
    *  When provided, these remain authoritative for custom-field rendering.
    *  Move metadata still resolves independently because field definitions do not
@@ -771,7 +794,6 @@ function getProvenanceLabel(task: Task | TaskDetail, options: ProvenanceLabelOpt
     case "dashboard_ui":
       return { label: tr ? tr("taskDetail.provenance.dashboard", "Dashboard") : "Dashboard" };
     case "quick_chat":
-      return { label: tr ? tr("taskDetail.provenance.quickChat", "Quick Chat") : "Quick Chat" };
     case "chat_session":
       return { label: tr ? tr("taskDetail.provenance.chatSession", "Chat Session") : "Chat Session" };
     case "agent_heartbeat": {
@@ -853,15 +875,25 @@ function isTaskFieldEditableColumn(column: ColumnId, flags?: TaskContextMenuColu
   */
   return isFieldEditableColumnRole(flags, column);
 }
+
+/*
+FNXC:TaskDescriptionEditing 2026-09-14-18:20:
+FN-391 narrows DESCRIPTION editing to manual intake while every other setting keeps the wider
+pre-implementation rule above. Delegated to the shared role helper so this surface and TaskCard
+cannot drift — the exact failure `isFieldEditableColumnRole` was extracted to prevent.
+*/
+function isTaskDescriptionEditableColumn(column: ColumnId, flags?: TaskContextMenuColumnFlags): boolean {
+  return isDescriptionEditableColumnRole(flags, column);
+}
 const GITHUB_TRACKING_EDITABLE_COLUMNS: Set<ColumnId> = new Set<ColumnId>(["triage", "todo", "in-progress", "in-review", "ideas"]);
-const CODING_IDEAS_WORKFLOW_ID = "builtin:coding-ideas-v2";
+const CODING_IDEAS_WORKFLOW_ID = "builtin:coding-ideas";
 
 /*
 FNXC:GitHubTracking 2026-07-22-00:46:
 Ideas tasks must be able to opt into or out of GitHub tracking before planning, whether they remain in the Ideas intake column or have advanced in Coding (Ideas). Use the resolved workflow ID rather than its display name so localized names and arbitrary custom workflows cannot gain this editing capability.
 
-FNXC:WorkflowSuccession 2026-09-06-02:15:
-The GitHub-tracking exception follows the surviving builtin:coding-ideas-v2 identity. Authoritative selection reads canonicalize retired rows before this UI sees them, so the removed id needs no second affordance branch.
+FNXC:WorkflowIdentity 2026-09-14-19:06:
+A built-in revision retains its original identity. Migration 0079 converges persisted references before catalog reads, so selection, configuration and capacity use the same raw workflow id without redirects.
 */
 /*
 FNXC:WorkflowResolvedColumns 2026-07-31-23:59:
@@ -899,6 +931,13 @@ function canTaskEditGithubTracking(
   return !isCompleteColumnRole(columnFlags, column);
 }
 
+/*
+FNXC:TaskDetailActionsMenu 2026-09-15-13:50:
+FN-420: the header overflow menu is capped at this fraction of the measured Task Detail shell height so it can never
+exceed the modal, floating window, dock panel, or embedded host that contains it; beyond the cap it scrolls.
+*/
+export const TASK_DETAIL_ACTIONS_MENU_MAX_HEIGHT_RATIO = 0.8;
+
 export function TaskDetailContent({
   task,
   projectId,
@@ -906,8 +945,8 @@ export function TaskDetailContent({
   columnFlagsByTaskId,
   onOpenDetail,
   onDeleteTask,
-  onReviseTask,
   onRevertTask,
+  onRestoreRevertTask,
   onMergeTask,
   onRetryTask,
   onOpenChatWithPrefill,
@@ -924,12 +963,12 @@ export function TaskDetailContent({
   globalPaused = false,
   onOpenWorkflowEditor,
   /**
-   * FNXC:TaskDetailActivityFirst 2026-06-30-23:59:
-   * The Activity tab is still addressed as `chat` internally so existing callers and deep links do not break; the visible Chat tab uses `planner-chat` and only becomes the omitted non-done default when taskDetailChatFirst is true.
+   * FNXC:TaskDetailDefaultTab 2026-09-16-02:53:
+   * The Activity tab is still addressed as `chat` internally and the visible Chat tab as `planner-chat`, so existing
+   * callers, deep links, and plugins do not break when the project setting moves one of them to the front.
    */
   initialTab,
-  initialAction,
-  taskDetailChatFirst = false,
+  taskDetailDefaultTab = "activity",
   mobileHeaderMode: _mobileHeaderMode = "close",
   embedded = false,
   active = true,
@@ -940,17 +979,24 @@ export function TaskDetailContent({
 }: TaskDetailContentProps) {
   const { t } = useTranslation("app");
   const isPhonePresentation = useViewportMode() === "mobile";
+  /*
+  FNXC:StandardizedDrawers 2026-09-15-16:33:
+  FN-427: read the FN-406 drawer seam from the hosted content so the header can tell "presented as a phone drawer"
+  apart from "phone, but not a drawer". A back control is legitimate only when it performs a real internal
+  navigation; in drawer presentation the surface is already dismissed by the ViewDrawerHandle, the scrim and Escape,
+  so a back wired to requestClose is duplicated chrome disguised as navigation.
+  */
+  const drawerPresentation = useDrawerPresentation();
   const columnLabel = useColumnLabel();
-  const fileBrowser = useFileBrowser();
-  const [activeTab, setActiveTab] = useState<TabId>(() => resolveDefaultTab(initialTab, task.column, taskDetailChatFirst));
+  const [activeTab, setActiveTab] = useState<TabId>(() => resolveDefaultTab(initialTab, task.column, taskDetailDefaultTab));
   const [activitySegment, setActivitySegment] = useState<ActivitySegment>(() => resolveDefaultActivitySegment(initialTab));
   const [activityExpanded, setActivityExpanded] = useState(false);
   const [plannerChatExpanded, setPlannerChatExpanded] = useState(false);
   const [tabFooterTarget, setTabFooterTarget] = useState<HTMLDivElement | null>(null);
 
   /*
-  FNXC:TaskDetailTabKeepAlive 2026-07-22-12:55:
-  FN remount-churn fix R6: the Terminal, Worktree-terminal, and Planner-chat tab bodies previously lived in the mutually-exclusive activeTab ternary, so every tab flip disposed the xterm instance, closed the terminal WebSocket, and discarded the planner composer/scroll. After a tab's first open (per-tab latch, mirroring Quick Chat's everOpened gate) its body stays mounted as a hidden KeepAliveView sibling of the ternary. The latches are scoped to one task id: switching tasks (or closing the detail) resets them so terminals fully unmount and dispose exactly as before — keep-alive covers tab switching within ONE open task detail only (R10).
+  FNXC:TaskDetailTabKeepAlive 2026-09-14-11:35:
+  Terminal, worktree-terminal, and planner-chat bodies stay mounted after first use so tab changes preserve xterm, WebSocket, composer, and scroll state. Per-tab latches are scoped to one task and reset when detail ownership changes.
   */
   const [keepAliveTabs, setKeepAliveTabs] = useState({ taskId: task.id, activityLive: false, plannerChat: false, terminal: false, worktreeTerminal: false });
   if (keepAliveTabs.taskId !== task.id) {
@@ -1203,9 +1249,32 @@ export function TaskDetailContent({
     () => getUnifiedTaskProgress(workingTask),
     [workingTask.steps, workingTask.enabledWorkflowSteps, workingTask.workflowStepResults],
   );
-  const openPromptFile = useCallback(() => {
-    fileBrowser?.openFile(`.fusion/tasks/${workingTask.id}/PROMPT.md`, { workspace: "project" });
-  }, [fileBrowser, workingTask.id]);
+  /*
+  FNXC:TaskDetailDefinition 2026-09-14-19:50:
+  The product-language outcome is SELECTED from the plan the task already has — no AI call at render
+  time, and no new `Summary` section added to the plan format. It follows the same retention as the
+  full prompt: while `workingTask.prompt` is retained through an empty or degraded refresh, this
+  summary is too, and it can never show the previous task's plan because it derives from the current
+  `workingTask`.
+  */
+  const productSummary = useMemo(
+    () => (workingTask.prompt ? extractTaskProductSummary(workingTask.prompt) : null),
+    [workingTask.prompt],
+  );
+  /*
+  FNXC:TaskDetailDefinition 2026-09-15-16:02:
+  FN-424 surfaces the plan's `## Before → After Transformation` as a DIRECT view in Définition,
+  right below `What this delivers`, so the reading order is progress → description → outcome →
+  before/after without opening the full plan. Anti-duplication: when `productSummary` already fell
+  back to the before/after body (a legacy plan with no `What This Delivers`), that body is ALREADY
+  on screen, so the dedicated section renders nothing rather than repeating it. It derives from the
+  current `workingTask.prompt`, so it can never show the previous task's plan.
+  */
+  const beforeAfterTransformation = useMemo(
+    () => (workingTask.prompt ? extractTaskBeforeAfterTransformation(workingTask.prompt) : null),
+    [workingTask.prompt],
+  );
+  const showBeforeAfterTransformation = Boolean(beforeAfterTransformation) && productSummary?.source !== "before-after";
   const hasPendingRecovery = hasPendingAutomaticRecovery(task);
   const nearDuplicateOf = isStringValue(workingTask.sourceMetadata?.nearDuplicateOf)
     ? workingTask.sourceMetadata.nearDuplicateOf
@@ -1308,9 +1377,9 @@ export function TaskDetailContent({
 
   const previousInitialTabRef = useRef<TabId | undefined>(initialTab);
   const taskColumnRef = useRef(task.column);
-  const taskDetailChatFirstRef = useRef(taskDetailChatFirst);
+  const taskDetailDefaultTabRef = useRef(taskDetailDefaultTab);
   taskColumnRef.current = task.column;
-  taskDetailChatFirstRef.current = taskDetailChatFirst;
+  taskDetailDefaultTabRef.current = taskDetailDefaultTab;
 
   /*
   FNXC:TaskDetailTabPersistence 2026-07-17-17:46:
@@ -1322,7 +1391,7 @@ export function TaskDetailContent({
     if (initialTab === previousInitialTabRef.current) return;
 
     previousInitialTabRef.current = initialTab;
-    setActiveTab(resolveDefaultTab(initialTab, taskColumnRef.current, taskDetailChatFirstRef.current));
+    setActiveTab(resolveDefaultTab(initialTab, taskColumnRef.current, taskDetailDefaultTabRef.current));
     setActivitySegment(resolveDefaultActivitySegment(initialTab));
     setRetriesExpanded(initialTab === "retries");
     setRoutingExpanded(initialTab === "routing");
@@ -1438,11 +1507,11 @@ export function TaskDetailContent({
   const [agents, setAgents] = useState<Agent[]>([]);
   const [showAgentPicker, setShowAgentPicker] = useState(false);
   const [agentsLoading, setAgentsLoading] = useState(false);
-  const [isSavingSpec, setIsSavingSpec] = useState(false);
-  const [isRequestingRevision, setIsRequestingRevision] = useState(false);
-  const [isEditingSpec, setIsEditingSpec] = useState(false);
-  const [specEditContent, setSpecEditContent] = useState(workingTask.prompt || "");
-  const [specFeedback, setSpecFeedback] = useState("");
+  /*
+  FNXC:TaskDetailPresentation 2026-09-15-16:02:
+  FN-424 removed the inline specification editor with the Edit action that opened it, so its saving,
+  revision-request, draft and feedback state is deleted rather than left as unreachable machinery.
+  */
   const [showRefineModal, setShowRefineModal] = useState(false);
   const [showResetDialog, setShowResetDialog] = useState(false);
 
@@ -1698,9 +1767,6 @@ export function TaskDetailContent({
       highlighted.scrollIntoView({ block: "nearest", behavior: "smooth" });
     }
   }, [activeTab, activitySegment, highlightStallCode]);
-  const [refineFeedback, setRefineFeedback] = useState("");
-  const [isRefining, setIsRefining] = useState(false);
-
   // Edit mode state
   const [isEditing, setIsEditing] = useState(false);
   const [showFailureRetryPicker, setShowFailureRetryPicker] = useState(false);
@@ -1720,7 +1786,12 @@ export function TaskDetailContent({
     setActivityExpanded(false);
   }, [task.id]);
 
-  const [editTitle, setEditTitle] = useState(task.title || "");
+  /*
+  FNXC:TaskDescriptionEditing 2026-09-14-18:10:
+  FN-391 removed the editable title: `editTitle` state, its three resets, its save patch and its
+  TaskForm field are gone. A task's title is written only by the create-time automatic policy, so a
+  manual editor here was a second writer whose value could not be told apart from a generated one.
+  */
   const [editDescription, setEditDescription] = useState(task.description || "");
   const editDescriptionRef = useRef(editDescription);
   editDescriptionRef.current = editDescription;
@@ -1752,7 +1823,7 @@ export function TaskDetailContent({
   const [editSourceIssueUrl, setEditSourceIssueUrl] = useState(task.sourceIssue?.url ?? "");
   const [editPendingImages, setEditPendingImages] = useState<PendingImage[]>([]);
   const [isSaving, setIsSaving] = useState(false);
-  const [isSummarizingTitle, setIsSummarizingTitle] = useState(false);
+
   const [inlinePriority, setInlinePriority] = useState<TaskPriority>(normalizeTaskPriorityValue(task.priority));
   const [isSavingInlinePriority, setIsSavingInlinePriority] = useState(false);
   const [inlineExecutionMode, setInlineExecutionMode] = useState<"standard" | "fast">(normalizeExecutionModeValue(task.executionMode));
@@ -1777,6 +1848,7 @@ export function TaskDetailContent({
 
   // Split-menu dropdown state for footer actions
   const [showActionsMenu, setShowActionsMenu] = useState(false);
+  const [actionsMenuMaxHeight, setActionsMenuMaxHeight] = useState<number | null>(null);
   const [showActivityViewMenu, setShowActivityViewMenu] = useState(false);
   const [activityViewMenuPosition, setActivityViewMenuPosition] = useState<ActivityViewMenuPosition | null>(null);
   const [sourceIssueExpanded, setSourceIssueExpanded] = useState(false);
@@ -1793,6 +1865,13 @@ export function TaskDetailContent({
   // FNXC:TaskDetailPlan 2026-07-04-00:00: Original prompt is collapsed by default (see render site below); operator must click the chevron toggle to reveal the markdown-rendered text.
   const [originalPromptExpanded, setOriginalPromptExpanded] = useState(false);
   const [planDocumentOpen, setPlanDocumentOpen] = useState(false);
+  /*
+  FNXC:TaskDetailDefinition 2026-09-14-19:50:
+  The step list starts COLLAPSED and stays wherever the operator left it for as long as the same
+  task is open: an SSE tick that refreshes this task must not slam a list the operator just opened.
+  It resets to collapsed only when the task IDENTITY changes (see the effect keyed on task.id).
+  */
+  const [stepListExpanded, setStepListExpanded] = useState(false);
   useEffect(() => {
     setPlanDocumentOpen(false);
   }, [workingTask.id]);
@@ -1803,8 +1882,8 @@ export function TaskDetailContent({
   const [isSavingGithubTracking, setIsSavingGithubTracking] = useState(false);
   const [isCheckingPrStatus, setIsCheckingPrStatus] = useState(false);
   /*
-  FNXC:TaskDetailAlpha 2026-09-11-04:19:
-  The duplicated plan-decision controls in the banner and sticky footer represent one operation. A shared pending fence disables every copy while either request is in flight, preventing duplicate or contradictory decisions in both Alpha and stable presentations.
+  FNXC:TaskDetailPresentation 2026-09-11-04:19:
+  The duplicated plan-decision controls in the banner and sticky footer represent one operation. A shared pending fence disables every copy while either request is in flight, preventing duplicate or contradictory decisions in every presentation.
   */
   const [isPlanApprovalPending, setIsPlanApprovalPending] = useState(false);
   const activityListRef = useRef<HTMLDivElement>(null);
@@ -1921,7 +2000,6 @@ export function TaskDetailContent({
 
   // Reset edit state when task changes
   useEffect(() => {
-    setEditTitle(task.title || "");
     setEditDescription(task.description || "");
     setEditBranch(task.branch ?? "");
     setEditBaseBranch(task.baseBranch ?? "");
@@ -2251,6 +2329,36 @@ export function TaskDetailContent({
     setShowAgentPicker(false);
   }, [task.id]);
 
+  /*
+  FNXC:TaskDetailActionsMenu 2026-09-15-13:50:
+  FN-420: no CSS unit can bound this menu by the height of the Task Detail shell that contains it, so the cap is
+  measured here while the menu is open and published as the inline `--detail-actions-menu-max-height` custom property
+  on the anchor. `clientHeight` is read (not `getBoundingClientRect()`) so the measurement ignores transforms. When no
+  height is measurable the variable is withheld and the stylesheet's viewport fallback stays effective, so no shell is
+  ever given a zero cap. A ResizeObserver re-measures while a floating window is resized; it is a progressive
+  enhancement only, since the dashboard test setup installs a no-op ResizeObserver.
+  */
+  useLayoutEffect(() => {
+    if (!showActionsMenu) {
+      setActionsMenuMaxHeight(null);
+      return;
+    }
+    const host = actionsMenuRef.current?.closest<HTMLElement>(".task-detail-content");
+    if (!host) {
+      setActionsMenuMaxHeight(null);
+      return;
+    }
+    const measure = () => {
+      const height = host.clientHeight;
+      setActionsMenuMaxHeight(height > 0 ? Math.round(height * TASK_DETAIL_ACTIONS_MENU_MAX_HEIGHT_RATIO) : null);
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => measure());
+    observer.observe(host);
+    return () => observer.disconnect();
+  }, [showActionsMenu]);
+
   // Close task-detail dropdown menus on outside click.
   useEffect(() => {
     const hasOpenMenu = showActionsMenu || showActivityViewMenu;
@@ -2297,21 +2405,25 @@ export function TaskDetailContent({
   }, [showActionsMenu, showActivityViewMenu]);
 
   /*
-  FNXC:TaskDetailPlan 2026-08-03-02:32:
-  A visible Definition poll may update the authoritative prompt while an operator is editing it.
-  Reset edit state only for a different task; reacting to prompt revisions would discard the active
-  local draft and replace its textarea.
+  FNXC:TaskDetailPresentation 2026-09-15-16:02:
+  FN-424 removed the inline spec editor, so this task-identity effect no longer resets any edit
+  draft — it now owns only the step-list disclosure.
   */
   useEffect(() => {
-    setIsEditingSpec(false);
-    setSpecEditContent(workingTask.prompt || "");
-    setSpecFeedback("");
+    // FNXC:TaskDetailDefinition 2026-09-14-19:50: FN-391 — a DIFFERENT task opens with its steps collapsed; a refresh of the same task keeps the operator's choice.
+    setStepListExpanded(false);
   }, [task.id]);
 
   // Note: TaskForm handles auto-focus internally via isActive prop
 
   // Check if task can be edited
   const canEdit = isTaskFieldEditableColumn(task.column, detailColumnFlags) && !isSaving;
+  /*
+  FNXC:TaskDescriptionEditing 2026-09-14-18:20:
+  Narrower than `canEdit` on purpose: the settings form stays reachable in its pre-implementation
+  lanes, but the description is writable only while the card waits in manual intake.
+  */
+  const canEditDescription = isTaskDescriptionEditableColumn(task.column, detailColumnFlags) && !isSaving;
   /** The card's column name as its own workflow declares it; `undefined` when unresolved. */
   const workflowColumnDisplayName = workflowMoveMetadata?.moveColumns?.find((column) => column.id === task.column)?.label;
   const canEditGithubTracking = canTaskEditGithubTracking(task.column, taskWorkflowBadge?.id, detailColumnFlags) && !isSaving;
@@ -2356,37 +2468,14 @@ export function TaskDetailContent({
   const showGithubTrackingSpinner = !githubTrackedIssue && (isSavingGithubTracking || githubTrackingDetailPending);
   const effectiveGithubRepoDefault = resolveEffectiveGithubRepoDefault(settings ?? null, globalSettings);
   const githubRepoOverrideTrimmed = githubRepoOverrideDraft.trim();
-  const hasDescriptionForTitleSummary = (task.description ?? "").trim().length > 0;
-  const showSummarizeTitleButton = !isEditing && canEdit && hasDescriptionForTitleSummary;
-
-  const handleSummarizeTitle = useCallback(async () => {
-    if (isSummarizingTitle || isSaving || !hasDescriptionForTitleSummary) return;
-    const requestTaskId = task.id;
-    setIsSummarizingTitle(true);
-    try {
-      const generatedTitle = await summarizeTitle(task.description || "", undefined, undefined, projectId);
-      if (activeTaskIdRef.current !== requestTaskId) {
-        return;
-      }
-      const updatedTask = await updateTask(task.id, { title: generatedTitle }, projectId);
-      if (activeTaskIdRef.current !== requestTaskId) {
-        return;
-      }
-      setFullDetail((prev) => prev
-        ? ({ ...prev, ...updatedTask } as TaskDetail)
-        : (updatedTask as TaskDetail));
-      onTaskUpdated?.(updatedTask);
-      addToast(t("taskDetail.title.summarizeSuccess", "Title updated from description"), "success");
-    } catch (err) {
-      if (activeTaskIdRef.current === requestTaskId) {
-        addToast(t("taskDetail.title.summarizeFailed", "Failed to summarize title: {{error}}", { error: getErrorMessage(err) }), "error");
-      }
-    } finally {
-      if (mountedRef.current && activeTaskIdRef.current === requestTaskId) {
-        setIsSummarizingTitle(false);
-      }
-    }
-  }, [addToast, hasDescriptionForTitleSummary, isSaving, isSummarizingTitle, onTaskUpdated, projectId, t, task.description, task.id]);
+  /*
+  FNXC:TaskDescriptionEditing 2026-09-14-18:10:
+  FN-391 removed the manual Summarize action from Task Detail with its handler, spinner state and
+  toast copy. Generating a title is a create-time policy, not an on-demand per-card action: invoked
+  here it overwrote a title whose provenance nothing else could recover. `POST /api/ai/summarize-title`
+  and its client stay as integration contracts and keep their own route coverage — only the UI
+  affordance is gone.
+  */
 
   const handleToggleGithubTracking = useCallback(async () => {
     if (!canEditGithubTracking || isSavingGithubTracking) return;
@@ -2485,7 +2574,6 @@ export function TaskDetailContent({
   const enterEditMode = useCallback(() => {
     if (!canEdit) return;
     setIsEditing(true);
-    setEditTitle(task.title || "");
     setEditDescription(task.description || "");
     setEditDependencies(task.dependencies || []);
     setEditBranch(task.branch ?? "");
@@ -2518,7 +2606,6 @@ export function TaskDetailContent({
 
   const exitEditMode = useCallback(() => {
     setIsEditing(false);
-    setEditTitle(task.title || "");
     setEditDescription(task.description || "");
     setEditDependencies(task.dependencies || []);
     setEditBranch(task.branch ?? "");
@@ -2550,10 +2637,8 @@ export function TaskDetailContent({
 
   const buildEditUpdates = useCallback((includeDescription: boolean) => {
     const updates: Record<string, unknown> = {};
-    const trimmedTitle = editTitle.trim();
     const trimmedDescription = editDescription.trim();
 
-    if (trimmedTitle && trimmedTitle !== (task.title ?? "")) updates.title = trimmedTitle;
     if (includeDescription && trimmedDescription && trimmedDescription !== (task.description ?? "")) updates.description = trimmedDescription;
     if (!sameStringArray(editDependencies, task.dependencies ?? [])) updates.dependencies = editDependencies;
     if (!sameStringArray(editSelectedWorkflowSteps, task.enabledWorkflowSteps ?? [])) updates.enabledWorkflowSteps = editSelectedWorkflowSteps;
@@ -2641,7 +2726,7 @@ export function TaskDetailContent({
     }
 
     return { updates, error: null as string | null };
-  }, [editBaseBranch, editBranch, editDependencies, editDescription, editExecutionMode, editCredentialInstanceId, editExecutorModel, editNodeId, editPlanningCredentialInstanceId, editPlanningModel, editPriority, editReviewLevel, editSelectedWorkflowSteps, editSourceIssueExternalId, editSourceIssueProvider, editSourceIssueRepository, editSourceIssueUrl, editThinkingLevel, editPlannerOversightLevel, editTitle, editValidatorCredentialInstanceId, editValidatorModel, task]);
+  }, [editBaseBranch, editBranch, editDependencies, editDescription, editExecutionMode, editCredentialInstanceId, editExecutorModel, editNodeId, editPlanningCredentialInstanceId, editPlanningModel, editPriority, editReviewLevel, editSelectedWorkflowSteps, editSourceIssueExternalId, editSourceIssueProvider, editSourceIssueRepository, editSourceIssueUrl, editThinkingLevel, editPlannerOversightLevel, editValidatorCredentialInstanceId, editValidatorModel, task]);
 
   const requestBlankDescriptionDeletion = useCallback(async (descriptionAtRequest: string, force: boolean): Promise<boolean> => {
     if (blankDescriptionDeletePendingRef.current || (!force && lastBlankDescriptionDeleteAttemptRef.current === descriptionAtRequest)) return false;
@@ -2767,7 +2852,6 @@ export function TaskDetailContent({
     };
   }, [
     isEditing,
-    editTitle,
     editDependencies,
     editBranch,
     editBaseBranch,
@@ -3602,6 +3686,38 @@ export function TaskDetailContent({
     }
   }, [onRevertTask, confirm, task.id, addToast, t]);
 
+  /*
+  FNXC:TaskRevert 2026-09-15-10:00 (FN-416):
+  Detail-surface restore-the-revert, same contract and toast vocabulary as the card/list handlers.
+  */
+  const handleRestoreRevertTask = useCallback(async () => {
+    if (!onRestoreRevertTask) return;
+    try {
+      const result = await onRestoreRevertTask(task.id, { mode: "auto" });
+
+      if (result.mode === "ai") {
+        addToast(result.alreadyOpen
+          ? t("tasks.restoreRevertAlreadyOpen", "A restore task is already open: {{id}}", { id: result.createdTaskId })
+          : t("tasks.restoreRevertAiCreated", "Created restore task {{id}}", { id: result.createdTaskId }), "success");
+        return;
+      }
+
+      if (result.needsHuman) {
+        addToast(t("tasks.restoreRevertNeedsHuman", "Cannot restore {{taskId}}: {{reason}}", { taskId: task.id, reason: result.reason || t("tasks.revertNeedsHumanDefault", "human review required") }), "error");
+        return;
+      }
+
+      if (result.clean) {
+        addToast(t("tasks.restoreRevertSuccess", "Restored {{taskId}}", { taskId: task.id }), "success");
+        return;
+      }
+
+      addToast(t("tasks.restoreRevertFailed", "Failed to restore {{taskId}}", { taskId: task.id }), "error");
+    } catch (err) {
+      addToast(getErrorMessage(err), "error");
+    }
+  }, [addToast, onRestoreRevertTask, task.id, t]);
+
   const isTaskPaused = task.paused || task.userPaused;
   /*
   FNXC:PlanReviewReplan 2026-07-15-11:09:
@@ -3670,19 +3786,74 @@ export function TaskDetailContent({
     }
   }, [isPlanApprovalPending, task.id, projectId, requestClose, addToast, confirm, t]);
 
+  /*
+  FNXC:HumanPlanApproval 2026-09-15-06:24:
+  FN-408 — the per-card decision. ONE shared draft and ONE shared handler pair serve both the banner
+  and the sticky footer, so the operator can type in either placement and submit from the other; two
+  independent drafts would silently discard whichever was not used.
+
+  Every decision carries the plan fingerprint and review episode the operator actually saw, so a
+  decision made in a stale tab is refused by the server instead of validating a plan they never read.
+  A failure preserves the draft and shows the message inline — nothing typed is ever thrown away.
+  The decision request id is per attempt, which makes a double click idempotent server-side.
+  */
+  const requiresHumanPlanDecision = isHumanPlanApprovalArmedClient(task);
+  const humanPlanDecisionIdentity = useMemo(() => ({
+    expectedPlanFingerprint: task.approvedPlanFingerprint,
+    expectedEpisodeId: resolvePlanReviewEpisodeIdClient(task),
+  }), [task]);
+  const humanPlanDecisionEpisodeKey = `${task.id}:${humanPlanDecisionIdentity.expectedPlanFingerprint ?? ""}:${humanPlanDecisionIdentity.expectedEpisodeId ?? ""}`;
+  const [humanPlanDecisionMessage, setHumanPlanDecisionMessage] = useState("");
+  const [humanPlanDecisionError, setHumanPlanDecisionError] = useState<string | null>(null);
+  const humanPlanDecisionEpisodeRef = useRef(humanPlanDecisionEpisodeKey);
+  useEffect(() => {
+    // Reset on a genuinely NEW task or review episode only — never on an ordinary refresh,
+    // which would wipe a message the operator is still composing.
+    if (humanPlanDecisionEpisodeRef.current === humanPlanDecisionEpisodeKey) return;
+    humanPlanDecisionEpisodeRef.current = humanPlanDecisionEpisodeKey;
+    setHumanPlanDecisionMessage("");
+    setHumanPlanDecisionError(null);
+  }, [humanPlanDecisionEpisodeKey]);
+
+  const submitHumanPlanDecision = useCallback(async (decision: "approve" | "reject") => {
+    if (isPlanApprovalPending) return;
+    setIsPlanApprovalPending(true);
+    setHumanPlanDecisionError(null);
+    const options = {
+      message: humanPlanDecisionMessage,
+      requestId: `${task.id}-${decision}-${Date.now()}`,
+      ...humanPlanDecisionIdentity,
+    };
+    try {
+      if (decision === "approve") {
+        await approvePlan(task.id, projectId, options);
+        addToast(t("tasks.humanPlanApproval.approved", "Plan approved — {{id}} continues to execution", { id: task.id }), "success");
+      } else {
+        await rejectPlan(task.id, projectId, options);
+        addToast(t("tasks.humanPlanApproval.rejected", "Plan rejected — {{id}} goes back for a new plan", { id: task.id }), "info");
+      }
+      setHumanPlanDecisionMessage("");
+      requestClose();
+    } catch (err) {
+      // Keep the draft: the operator must never have to retype their message after a failure.
+      setHumanPlanDecisionError(getErrorMessage(err));
+    } finally {
+      setIsPlanApprovalPending(false);
+    }
+  }, [isPlanApprovalPending, humanPlanDecisionMessage, humanPlanDecisionIdentity, task.id, projectId, requestClose, addToast, t]);
+
+  const handleHumanPlanApprove = useCallback(() => { void submitHumanPlanDecision("approve"); }, [submitHumanPlanDecision]);
+  const handleHumanPlanReject = useCallback(() => { void submitHumanPlanDecision("reject"); }, [submitHumanPlanDecision]);
+
+  /*
+  FNXC:TaskRefine 2026-09-14-22:23:
+  FN-400: this surface only owns the Refine entry of its own header Actions menu. Card and list-row menus host the
+  shared standalone dialog themselves, so Refine no longer opens a task record; the one-shot `initialAction` deep link
+  that existed solely to carry that hand-off is deleted.
+  */
   const handleOpenRefineModal = useCallback(() => {
     setShowRefineModal(true);
-    setRefineFeedback("");
   }, []);
-
-  useEffect(() => {
-    if (initialAction?.action !== "refine") return;
-    /*
-    FNXC:DoneTaskRefine 2026-07-01-00:00:
-    Done-task card/list right-click and long-press menus route Refine through Task Detail so operators get the existing feedback composer, validation, toasts, and refineTask submission instead of a dead menu item or an immediate API call.
-    */
-    handleOpenRefineModal();
-  }, [handleOpenRefineModal, initialAction?.action, initialAction?.requestId]);
 
   // Helper to close the retained header Actions overflow after an action.
   const closeMenus = useCallback(() => {
@@ -3720,41 +3891,7 @@ export function TaskDetailContent({
 
   const handleCloseRefineModal = useCallback(() => {
     setShowRefineModal(false);
-    setRefineFeedback("");
-    setIsRefining(false);
   }, []);
-  /*
-  FNXC:TaskDetailRefine 2026-07-12-00:00:
-  The nested refine overlay must use the shared overlay-dismiss contract so the click/touch sequence that opens Refine never self-dismisses the freshly mounted composer, and so backdrop presses honor the global default-off modal-dismiss preference like every other dashboard modal.
-  */
-  const refineOverlayDismissProps = useOverlayDismiss(handleCloseRefineModal);
-
-  const handleSubmitRefine = useCallback(async () => {
-    if (!refineFeedback.trim()) {
-      addToast(t("taskDetail.refine.feedbackRequired", "Please enter feedback describing what needs refinement"), "error");
-      return;
-    }
-    if (refineFeedback.length > MAX_TASK_MESSAGE_LENGTH) {
-      addToast(t("taskDetail.refine.feedbackTooLong", "Feedback must be {{max}} characters or less", { max: MAX_TASK_MESSAGE_LENGTH }), "error");
-      return;
-    }
-    setIsRefining(true);
-    try {
-      const newTask = await refineTask(task.id, refineFeedback.trim(), projectId);
-      /*
-      FNXC:TaskRefinementBoardVisibility 2026-08-20-20:43:
-      The returned child enters shared board state before this source detail closes, rather than
-      relying on delayed SSE delivery. Its server-selected column must remain untouched here.
-      */
-      onRefinementCreated?.(newTask);
-      addToast(t("taskDetail.refine.taskCreated", "Refinement task created: {{id}}", { id: newTask.id }), "success");
-      requestClose();
-    } catch (err) {
-      addToast(getErrorMessage(err), "error");
-    } finally {
-      setIsRefining(false);
-    }
-  }, [task.id, refineFeedback, addToast, onRefinementCreated, projectId, requestClose]);
 
   const uploadFile = useCallback(async (file: File) => {
     setUploading(true);
@@ -3983,87 +4120,11 @@ export function TaskDetailContent({
     }
   }, [addToast, onOpenDetail, projectId, t]);
 
-  // Spec save handlers (must be declared before functions that use them)
-  const handleSaveSpec = useCallback(async (newContent: string) => {
-    setIsSavingSpec(true);
-    try {
-      await updateTask(workingTask.id, { prompt: newContent }, projectId);
-      addToast(t("taskDetail.spec.updated", "Spec updated"), "success");
-      // FNXC:TaskDetailPlan 2026-08-03-02:06: update immutably so the preview reflects an explicit save.
-      setFullDetail((previous) => previous ? { ...previous, prompt: newContent } : previous);
-    } catch (err) {
-      addToast(getErrorMessage(err), "error");
-      throw err;
-    } finally {
-      setIsSavingSpec(false);
-    }
-  }, [workingTask, addToast]);
-
-  const handleRequestSpecRevision = useCallback(async (feedback: string) => {
-    setIsRequestingRevision(true);
-    try {
-      await requestSpecRevision(task.id, feedback, projectId);
-      addToast(t("taskDetail.spec.revisionRequested", "AI revision requested. Task moved to planning."), "success");
-      // Task has been moved to planning, close modal
-      requestClose();
-    } catch (err) {
-      const msg = getErrorMessage(err);
-      if (msg.includes("done") || msg.includes("complete")) {
-        addToast(t("taskDetail.spec.revisionColumnError", "Cannot request revision: Task must be in 'triage', 'todo', 'in-progress', or 'in-review' column."), "error");
-      } else {
-        addToast(msg, "error");
-      }
-    } finally {
-      setIsRequestingRevision(false);
-    }
-  }, [task.id, addToast, requestClose]);
-
-  // Spec editing handlers (depend on handleSaveSpec and handleRequestSpecRevision)
-  const enterSpecEditMode = useCallback(() => {
-    setIsEditingSpec(true);
-    setSpecEditContent(workingTask.prompt || "");
-    setSpecFeedback("");
-  }, [workingTask.prompt]);
-
-  const exitSpecEditMode = useCallback(() => {
-    setIsEditingSpec(false);
-    setSpecEditContent(workingTask.prompt || "");
-    setSpecFeedback("");
-  }, [workingTask.prompt]);
-
-  const handleSaveSpecFromEdit = useCallback(async () => {
-    if (specEditContent === (workingTask.prompt || "")) {
-      exitSpecEditMode();
-      return;
-    }
-
-    // Exit edit mode immediately so the UI transitions back to preview as soon
-    // as save is initiated. If save fails, restore edit mode for retry.
-    setIsEditingSpec(false);
-    try {
-      await handleSaveSpec(specEditContent);
-    } catch (err) {
-      setIsEditingSpec(true);
-      throw err;
-    }
-  }, [specEditContent, workingTask.prompt, handleSaveSpec, exitSpecEditMode]);
-
-  const handleRequestRevisionFromEdit = useCallback(async () => {
-    if (!specFeedback.trim()) return;
-    await handleRequestSpecRevision(specFeedback.trim());
-  }, [specFeedback, handleRequestSpecRevision]);
-
-  // Keyboard shortcuts for spec edit mode
-  const handleSpecTextareaKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === "Escape") {
-      e.preventDefault();
-      exitSpecEditMode();
-    } else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
-      e.preventDefault();
-      void handleSaveSpecFromEdit();
-    }
-  }, [exitSpecEditMode, handleSaveSpecFromEdit]);
-
+  /*
+  FNXC:TaskDetailPresentation 2026-09-15-16:02:
+  FN-424 deleted the spec save, AI-revision, enter/exit edit and textarea-shortcut handlers with the
+  inline editor they served — no surface reaches them any more.
+  */
   const availableTasks = tasks
     .filter((t) => t.id !== task.id && !dependencies.includes(t.id))
     .sort((a, b) => {
@@ -4097,7 +4158,8 @@ export function TaskDetailContent({
       const dependentTask = tasks.find((candidate) => candidate.id === dependentId);
       return {
         id: dependentId,
-        label: dependentTask?.title || dependentTask?.description || dependentId,
+        // FNXC:TaskTitleDisplay 2026-09-14-17:05: FN-391 — shared label projection; an unknown dependent still falls back to its ID.
+        label: dependentTask ? getTaskTitleDisplayText(dependentTask) : dependentId,
         stale: staleSet.has(dependentId),
       };
     });
@@ -4287,6 +4349,14 @@ export function TaskDetailContent({
     autoMergeEnabled: effectiveAutoMerge,
     prAutomationLabel,
     isCheckingPrStatus,
+    /*
+    FNXC:TaskDetailPresentation 2026-09-15-10:40:
+    FN-417 made the merge-completion review action opt-in and removed it from every task CONTEXT MENU
+    because the engine merges automatically. Task Detail is the one surface that opts back in: its
+    review footer keeps the explicit "Merge & Close" / "Finish & Close" button as the single manual
+    merge command, for projects that still drive delivery by hand.
+    */
+    includeMergeCompletionAction: true,
     onDelete: handleDelete,
     onDuplicate: handleDuplicate,
     onOpenRefine: handleOpenRefineModal,
@@ -4518,22 +4588,23 @@ export function TaskDetailContent({
   const showTaskDetailFooter = isEditing
     || (activeTab === "definition" && Boolean(isAwaitingApproval && workingTask.prompt))
     || (activeTab === "review" && Boolean(reviewAction));
-  const directHeaderActions = TASK_DETAIL_DIRECT_ACTION_ORDER
-    .map((id) => taskActionMenuModel.actions.find((action) => action.id === id))
-    .filter((action): action is NonNullable<typeof action> => Boolean(action));
   const secondaryHeaderActions = useMemo<TaskMenuItemDescriptor[]>(() => {
     const actions: TaskMenuItemDescriptor[] = [
       ...detailQuickActionItems,
       ...taskActionMenuModel.actions.filter((action) => !TASK_DETAIL_DIRECT_ACTION_IDS.has(action.id)),
     ];
-    if (isTaskReverted(task.sourceMetadata) && onReviseTask) {
+    /*
+    FNXC:TaskRevert 2026-09-15-10:00 (FN-416):
+    A reverted task is offered "Restore revert" instead of Revert (there is nothing left to revert)
+    and instead of the removed Revise action.
+    */
+    if (isTaskReverted(task.sourceMetadata) && onRestoreRevertTask) {
       actions.push({
-        id: "revise",
-        label: t("taskDetail.revise", "Revise"),
-        onSelect: () => { onReviseTask(task); requestClose(); },
+        id: "restore-revert",
+        label: t("tasks.restoreRevert", "Restore revert"),
+        onSelect: () => void handleRestoreRevertTask(),
       });
-    }
-    if (isDoneColumn && onRevertTask && isRevertable) {
+    } else if (isDoneColumn && onRevertTask && isRevertable) {
       actions.push({
         id: "revert",
         label: t("tasks.revert", "Revert"),
@@ -4541,7 +4612,45 @@ export function TaskDetailContent({
       });
     }
     return actions;
-  }, [detailQuickActionItems, taskActionMenuModel.actions, task, onReviseTask, requestClose, isDoneColumn, onRevertTask, isRevertable, handleRevertTask, t]);
+  }, [detailQuickActionItems, taskActionMenuModel.actions, task, isDoneColumn, onRevertTask, onRestoreRevertTask, isRevertable, handleRestoreRevertTask, handleRevertTask, t]);
+
+  /*
+  FNXC:TaskDetailHeaderActions 2026-09-16-18:07 (FN-470):
+  One flat list feeds the single header overflow. Order is load-bearing: the relocated lifecycle actions, then
+  Edit task, then Pop out are APPENDED after the existing secondary actions so `detail-inline-attach` remains the
+  first entry and keeps the menu's opening autofocus.
+  */
+  const headerOverflowActions = useMemo<TaskMenuItemDescriptor[]>(() => {
+    const actions: TaskMenuItemDescriptor[] = [...secondaryHeaderActions];
+    for (const id of TASK_DETAIL_DIRECT_ACTION_ORDER) {
+      const action = taskActionMenuModel.actions.find((candidate) => candidate.id === id);
+      if (!action) continue;
+      actions.push({ ...action, testId: `task-detail-header-action-${action.id}` });
+    }
+    if (canEdit) {
+      actions.push({
+        id: "edit",
+        label: t("taskDetail.header.editTask", "Edit task"),
+        testId: "task-detail-header-action-edit",
+        onSelect: enterEditMode,
+      });
+    }
+    /*
+    FNXC:FloatingWindow 2026-09-16-18:07 (FN-470, supersedes 2026-06-22-20:45):
+    "Pop out" still opens this task detail in a movable, resizable, non-blocking FloatingWindow, but it is now the
+    LAST overflow entry instead of a direct header icon. Phone presentation still omits it because the owning
+    drawer is already the single full-width presentation.
+    */
+    if (!isPhonePresentation && onPopOut) {
+      actions.push({
+        id: "pop-out",
+        label: t("taskDetail.header.popOut", "Pop out"),
+        testId: "task-detail-pop-out",
+        onSelect: () => onPopOut(task),
+      });
+    }
+    return actions;
+  }, [secondaryHeaderActions, taskActionMenuModel.actions, canEdit, enterEditMode, isPhonePresentation, onPopOut, task, t]);
 
   const closeActivityViewMenuAndFocusTrigger = useCallback(() => {
     activityViewMenuViewportGuardUntilRef.current = 0;
@@ -4869,22 +4978,37 @@ export function TaskDetailContent({
     }
 
     return createPortal(
-      <AlphaPortalSurface
+      /*
+      FNXC:FloatingWindowDialogHosts 2026-09-14-22:36:
+      FN-394 merged the task and utility window bands into one stack, so a static menu z-index can now sit BELOW its
+      own window. This body-portaled menu therefore claims a live layer just above the current front window instead.
+      */
+      <UiPortalSurface
         ref={activityViewMenuRef}
         className="activity-view-menu"
         style={{
+          zIndex: currentFloatingZ() + 1,
           top: activityViewMenuPosition.top,
           left: activityViewMenuPosition.left,
           minWidth: activityViewMenuPosition.minWidth,
           maxHeight: activityViewMenuPosition.maxHeight,
         }}
       >
-        <AlphaMenu
+        {/*
+          FNXC:TaskDetailActivity 2026-09-15-08:46:
+          FN-410: `UiPortalSurface` is only the positioned frame; the option buttons live inside the
+          `[role="menu"]` element produced by `UiMenu`, which ships no layout, so a column rule placed on
+          the surface never reached them and the views rendered side by side. Carry the vertical-list class
+          on the menu element itself (as `.model-menu-items` does) rather than patching `UiMenu` or a global
+          `[role="menu"]` selector, which would change every menu in the dashboard.
+        */}
+        <UiMenu
+          className="activity-view-menu-list"
           aria-label={t("taskDetail.activity.menuLabel", "Activity views")}
           onKeyDown={handleActivityViewMenuKeyDown}
         >
           {activityViewOptions.map((option) => (
-            <AlphaMenuItem
+            <UiMenuItem
               key={option.value}
               id={`activity-${option.value}`}
               className="activity-view-menu-item"
@@ -4892,10 +5016,10 @@ export function TaskDetailContent({
               onClick={() => selectActivityView(option.value)}
             >
               {option.label}
-            </AlphaMenuItem>
+            </UiMenuItem>
           ))}
-        </AlphaMenu>
-      </AlphaPortalSurface>,
+        </UiMenu>
+      </UiPortalSurface>,
       document.body,
     );
   };
@@ -4909,7 +5033,7 @@ export function TaskDetailContent({
         FNXC:TaskDetailActivity 2026-07-01-00:00:
         Mobile task-detail tabs intentionally overflow-scroll horizontally, so the Activity view menu must be root-portaled and viewport-positioned instead of rendered inside `.detail-tabs` where overflow clipping can blank adjacent tabs and content.
       */}
-      <AlphaButton
+      <UiButton
         ref={activityViewButtonRef}
         type="button"
         className={`detail-tab detail-tab--activity${activeTab === "chat" ? " detail-tab-active" : ""}`}
@@ -4937,22 +5061,29 @@ export function TaskDetailContent({
       >
         <span>{t("taskDetail.tabs.activity", "Activity")}</span>
         <ChevronDown className="detail-tab-chevron" aria-hidden="true" />
-      </AlphaButton>
+      </UiButton>
       {renderActivityViewMenu()}
     </div>
   );
 
+  /*
+  FNXC:TaskDetailDefaultTab 2026-09-16-02:53:
+  FN-442: the Activity / Chat / Definition trio always occupies the head of the tab bar. The tab named by the project
+  setting leads, and the other two follow in their canonical order, so the setting moves one tab to the front rather than
+  reshuffling the whole strip. Everything after the trio is unchanged.
+  */
+  const activityTabItem: TaskDetailTabStripItem = { id: "chat", label: t("taskDetail.tabs.activity", "Activity"), node: renderActivityTab() };
+  const plannerChatTabItem: TaskDetailTabStripItem = { id: "planner-chat", label: t("taskDetail.tabs.chat", "Chat"), node: <TaskDetailTabButton selected={activeTab === "planner-chat"} onSelect={() => setActiveTab("planner-chat")}>{t("taskDetail.tabs.chat", "Chat")}</TaskDetailTabButton> };
+  const definitionTabItem: TaskDetailTabStripItem = { id: "definition", label: t("taskDetail.tabs.definition", "Plan"), node: <TaskDetailTabButton selected={activeTab === "definition"} onSelect={() => setActiveTab("definition")}>{t("taskDetail.tabs.definition", "Plan")}</TaskDetailTabButton> };
+  const canonicalHeadTabItems: TaskDetailTabStripItem[] =
+    taskDetailDefaultTab === "chat"
+      ? [plannerChatTabItem, activityTabItem, definitionTabItem]
+      : taskDetailDefaultTab === "definition"
+        ? [definitionTabItem, activityTabItem, plannerChatTabItem]
+        : [activityTabItem, plannerChatTabItem, definitionTabItem];
+
   const canonicalTabItems: TaskDetailTabStripItem[] = [
-    ...(taskDetailChatFirst
-      ? [
-          { id: "planner-chat", label: t("taskDetail.tabs.chat", "Chat"), node: <TaskDetailTabButton selected={activeTab === "planner-chat"} onSelect={() => setActiveTab("planner-chat")}>{t("taskDetail.tabs.chat", "Chat")}</TaskDetailTabButton> },
-          { id: "chat", label: t("taskDetail.tabs.activity", "Activity"), node: renderActivityTab() },
-        ]
-      : [
-          { id: "chat", label: t("taskDetail.tabs.activity", "Activity"), node: renderActivityTab() },
-          { id: "planner-chat", label: t("taskDetail.tabs.chat", "Chat"), node: <TaskDetailTabButton selected={activeTab === "planner-chat"} onSelect={() => setActiveTab("planner-chat")}>{t("taskDetail.tabs.chat", "Chat")}</TaskDetailTabButton> },
-        ]),
-    { id: "definition", label: t("taskDetail.tabs.definition", "Plan"), node: <TaskDetailTabButton selected={activeTab === "definition"} onSelect={() => setActiveTab("definition")}>{t("taskDetail.tabs.definition", "Plan")}</TaskDetailTabButton> },
+    ...canonicalHeadTabItems,
     ...((isWipColumn || isReviewColumn || isDoneColumn) ? [{ id: "changes", label: t("taskDetail.tabs.changes", "Changes"), node: <TaskDetailTabButton selected={activeTab === "changes"} onSelect={() => setActiveTab("changes")}>{t("taskDetail.tabs.changes", "Changes")}</TaskDetailTabButton> }] : []),
     { id: "summary", label: t("taskDetail.tabs.summary", "Summary"), node: <TaskDetailTabButton selected={activeTab === "summary"} onSelect={() => setActiveTab("summary")}>{t("taskDetail.tabs.summary", "Summary")}</TaskDetailTabButton> },
     { id: "stats", label: t("taskDetail.tabs.stats", "Stats"), node: <TaskDetailTabButton selected={activeTab === "stats"} onSelect={() => setActiveTab("stats")}>{t("taskDetail.tabs.stats", "Stats")}</TaskDetailTabButton> },
@@ -4991,13 +5122,13 @@ export function TaskDetailContent({
                         <>
                           {t("taskDetail.provenance.createdBy", "Created by")}{" "}
                           {provenanceDisplay.sourceAgentId ? (
-                            <AlphaButton
+                            <UiButton
                               type="button"
                               className="detail-provenance-link"
                               onClick={() => setSelectedSourceAgentId(provenanceDisplay.sourceAgentId!)}
                             >
                               {provenanceDisplay.label}
-                            </AlphaButton>
+                            </UiButton>
                           ) : (
                             provenanceDisplay.label
                           )}
@@ -5021,13 +5152,13 @@ export function TaskDetailContent({
                       {provenanceDisplay.parentTaskId && (
                         <>
                           {" "}{t("taskDetail.provenance.parentTaskOf", "of")}{" "}
-                          <AlphaButton
+                          <UiButton
                             type="button"
                             className="detail-provenance-link"
                             onClick={() => handleDepClick(provenanceDisplay.parentTaskId!)}
                           >
                             {provenanceDisplay.parentTaskId}
-                          </AlphaButton>
+                          </UiButton>
                         </>
                       )}
                       {provenanceDisplay.contextInfo ? (
@@ -5061,13 +5192,13 @@ export function TaskDetailContent({
                     <GitBranch aria-hidden="true" />
                     <span>
                       {t("taskDetail.provenance.createdToUndo", "Created to undo")}{" "}
-                      <AlphaButton
+                      <UiButton
                         type="button"
                         className="detail-provenance-link"
                         onClick={() => handleDepClick(revertOfId)}
                       >
                         {revertOfId}
-                      </AlphaButton>
+                      </UiButton>
                     </span>
                   </div>
                 )}
@@ -5076,13 +5207,13 @@ export function TaskDetailContent({
                     <GitBranch aria-hidden="true" />
                     <span>
                       {t("taskDetail.provenance.undoTask", "Undo task")}:{" "}
-                      <AlphaButton
+                      <UiButton
                         type="button"
                         className="detail-provenance-link"
                         onClick={() => handleDepClick(openUndoTask.id)}
                       >
                         {openUndoTask.id}
-                      </AlphaButton>
+                      </UiButton>
                     </span>
                   </div>
                 )}
@@ -5156,13 +5287,13 @@ export function TaskDetailContent({
                 <div className="detail-attachment-meta">
                   {attachment.originalName} ({formatBytes(attachment.size)})
                 </div>
-                <AlphaButton
+                <UiButton
                   className="detail-attachment-delete"
                   onClick={() => handleDeleteAttachment(attachment.filename)}
                   title={t("taskDetail.attachments.deleteTitle", "Delete attachment")}
                 >
                   ×
-                </AlphaButton>
+                </UiButton>
               </div>
             );
           })}
@@ -5170,13 +5301,13 @@ export function TaskDetailContent({
       ) : (
         <div className="detail-empty-inline">{t("taskDetail.attachments.none", "(no attachments)")}</div>
       )}
-      <AlphaButton
+      <UiButton
         className="btn btn-sm"
         onClick={() => fileInputRef.current?.click()}
         disabled={uploading}
       >
         {uploading ? t("taskDetail.attachments.uploading", "Uploading…") : t("taskDetail.attachments.attachBtn", "Attach Screenshot")}
-      </AlphaButton>
+      </UiButton>
     </div>
   );
 
@@ -5250,9 +5381,14 @@ export function TaskDetailContent({
     </>
   );
 
+  /*
+  FNXC:NativeUiPresentation 2026-09-15-00:20:
+  REMOVED: the Alpha boundary wrapper and its `display: contents` box. Task Detail's own UiSurface root is
+  the single owner of the detail tree, so the selected colour theme reaches the header, tabs, progress,
+  description and plan, and no extra element sits between the host and this scroll owner.
+  */
   return (
-    <AlphaBoundary preserveDisabledDom className="task-detail-alpha-boundary">
-      <AlphaSurface
+      <UiSurface
         className={`task-detail-content${embedded ? " task-detail-content--embedded" : ""}${isActivityExpanded ? " task-detail-content--chat-expanded" : ""}${isPlannerChatExpanded ? " task-detail-content--planner-chat-expanded" : ""}`}
         data-task-detail-surface="true"
         onDragOver={handleDragOver}
@@ -5263,7 +5399,14 @@ export function TaskDetailContent({
         Every board, main-panel, list-split, right-dock, drawer, and pop-out host shares this title-free header. Keep the task ID, lifecycle badges, and actions here; the title remains editable only through the Definition form.
         */}
         <ViewLayoutHeader className="modal-header">
-          {isPhonePresentation ? (
+          {/*
+          FNXC:StandardizedDrawers 2026-09-15-16:33:
+          FN-427: Task Detail owns no list→detail navigation, so this ChevronLeft only ever dismissed the surface. It is
+          retained on a phone WITHOUT the `data-mobile-drawers` opt-in, where the canonical close is already suppressed
+          by `isPhonePresentation` and removing it too would leave the surface with no visible way out. The close guards
+          below stay deliberately broader (every phone), because only the back control is re-keyed on drawer presentation.
+          */}
+          {isPhonePresentation && !drawerPresentation ? (
             <ViewBackButton
               className="task-detail-mobile-back"
               label={t("taskDetail.header.back", "Back")}
@@ -5300,23 +5443,15 @@ export function TaskDetailContent({
             </div>
           </div>
           <div className="modal-header-actions">
-            {!isEditing && directHeaderActions.map((action) => (
-              <AlphaButton
-                key={action.id}
-                type="button"
-                className={`btn btn-icon btn-sm task-detail-header-action${action.tone === "danger" ? " task-detail-header-action--danger" : ""}`}
-                aria-label={action.label}
-                title={action.label}
-                disabled={action.disabled}
-                data-testid={`task-detail-header-action-${action.id}`}
-                onClick={() => action.onSelect?.()}
+            {!isEditing && headerOverflowActions.length > 0 && (
+              <div
+                className="detail-actions-dropdown detail-actions-dropdown--header"
+                ref={actionsMenuRef}
+                style={actionsMenuMaxHeight !== null
+                  ? ({ "--detail-actions-menu-max-height": `${actionsMenuMaxHeight}px` } as React.CSSProperties)
+                  : undefined}
               >
-                {renderTaskDetailActionIcon(action.id)}
-              </AlphaButton>
-            ))}
-            {!isEditing && secondaryHeaderActions.length > 0 && (
-              <div className="detail-actions-dropdown detail-actions-dropdown--header" ref={actionsMenuRef}>
-                <AlphaButton
+                <UiButton
                   type="button"
                   className="btn btn-icon btn-sm task-detail-header-action"
                   onClick={() => setShowActionsMenu((previous) => !previous)}
@@ -5326,10 +5461,10 @@ export function TaskDetailContent({
                   aria-expanded={showActionsMenu}
                 >
                   <MoreHorizontal aria-hidden="true" />
-                </AlphaButton>
+                </UiButton>
                 {showActionsMenu && (
                   <TaskContextMenu
-                    actions={secondaryHeaderActions}
+                    actions={headerOverflowActions}
                     className="detail-actions-menu detail-actions-menu--header"
                     itemClassName="detail-actions-menu-item"
                     dangerItemClassName="detail-actions-menu-item-danger"
@@ -5339,35 +5474,13 @@ export function TaskDetailContent({
                 )}
               </div>
             )}
-            {!isEditing && canEdit && (
-              <AlphaButton
-                className="btn btn-icon btn-sm modal-edit-btn task-detail-header-action"
-                onClick={enterEditMode}
-                title={t("taskDetail.header.editTask", "Edit task")}
-                aria-label={t("taskDetail.header.editTask", "Edit task")}
-              >
-                <Pencil size={14} />
-              </AlphaButton>
-            )}
             {/*
-            FNXC:FloatingWindow 2026-06-22-20:45 (updated 2026-06-22-18:32):
-            "Pop out" affordance opens this task detail in a movable, resizable, non-blocking FloatingWindow. Header action order is edit, then expand/pop-out, then Back to board pinned far right so board-card detail controls read as edit/resize/navigation.
-            */}
-            {!isPhonePresentation && onPopOut && (
-              <AlphaButton
-                type="button"
-                className="btn btn-icon btn-sm modal-edit-btn task-detail-header-action"
-                onClick={() => onPopOut(task)}
-                title={t("taskDetail.header.popOut", "Pop out")}
-                aria-label={t("taskDetail.header.popOut", "Pop out")}
-                data-testid="task-detail-pop-out"
-              >
-                <Maximize2 size={14} />
-              </AlphaButton>
-            )}
-            {/*
-            FNXC:TaskDetailResponsiveChrome 2026-09-13-16:30:
-            Phone Task Detail has exactly one ChevronLeft before task identity in all six hosts and no close, pop-out, or fullscreen affordance. Desktop and tablet retain the canonical close and optional pop-out; every control invokes the callback supplied by its TaskDetailHostBoundary owner.
+            FNXC:TaskDetailResponsiveChrome 2026-09-15-16:33:
+            Phone Task Detail renders no close, pop-out, or fullscreen affordance in any of its six hosts. Superseding the
+            2026-09-13 "exactly one ChevronLeft in all six phone hosts" rule, FN-427 keeps that ChevronLeft only on a phone
+            that is NOT in drawer presentation (see the StandardizedDrawers block above the back button): in a drawer the
+            handle, scrim and Escape already dismiss the surface. Desktop and tablet retain the canonical close and optional
+            pop-out; every control invokes the callback supplied by its TaskDetailHostBoundary owner.
             */}
             {!isPhonePresentation && embedded && onRequestClose && (
               <ModalCloseButton
@@ -5393,10 +5506,9 @@ export function TaskDetailContent({
             <div className="modal-edit-form">
               <TaskForm
                 mode="edit"
-                title={editTitle}
-                onTitleChange={setEditTitle}
                 description={editDescription}
                 onDescriptionChange={setEditDescription}
+                descriptionReadOnly={!canEditDescription}
                 dependencies={editDependencies}
                 onDependenciesChange={setEditDependencies}
                 branch={editBranch}
@@ -5449,7 +5561,7 @@ export function TaskDetailContent({
                   <div className="form-group detail-source-edit-group">
                     <label>{t("taskDetail.edit.sourceIssueLabel", "Source Issue")}</label>
                     <div className="detail-source-edit-grid">
-                      <AlphaInput
+                      <UiInput
                         type="text"
                         className="modal-edit-input"
                         placeholder={t("taskDetail.edit.sourceProviderPlaceholder", "Provider (e.g. github)")}
@@ -5458,7 +5570,7 @@ export function TaskDetailContent({
                         disabled={isSaving}
                         data-testid="task-source-provider-input"
                       />
-                      <AlphaInput
+                      <UiInput
                         type="text"
                         className="modal-edit-input"
                         placeholder={t("taskDetail.edit.sourceRepositoryPlaceholder", "Repository (e.g. owner/repo)")}
@@ -5467,7 +5579,7 @@ export function TaskDetailContent({
                         disabled={isSaving}
                         data-testid="task-source-repository-input"
                       />
-                      <AlphaInput
+                      <UiInput
                         type="text"
                         className="modal-edit-input"
                         placeholder={t("taskDetail.edit.sourceExternalIdPlaceholder", "Issue identifier")}
@@ -5476,7 +5588,7 @@ export function TaskDetailContent({
                         disabled={isSaving}
                         data-testid="task-source-external-id-input"
                       />
-                      <AlphaInput
+                      <UiInput
                         type="url"
                         className="modal-edit-input"
                         placeholder={t("taskDetail.edit.sourceUrlPlaceholder", "Issue URL")}
@@ -5509,7 +5621,7 @@ export function TaskDetailContent({
                   </div>
                   <p className="detail-near-duplicate-banner__copy">
                     {t("taskDetail.nearDuplicate.copy", "This task appears to be a near-duplicate of")}{" "}
-                    <AlphaButton
+                    <UiButton
                       type="button"
                       className="detail-provenance-link"
                       onClick={() => {
@@ -5519,16 +5631,16 @@ export function TaskDetailContent({
                       }}
                     >
                       {nearDuplicateOf}
-                    </AlphaButton>
+                    </UiButton>
                     {". "}{t("taskDetail.nearDuplicate.actions", "Keep it to clear this flag, or delete it if the work is already covered.")}
                   </p>
                   <div className="detail-near-duplicate-banner__actions">
-                    <AlphaButton type="button" className="btn btn-danger btn-sm" onClick={() => void handleDeleteNearDuplicate()}>
+                    <UiButton type="button" className="btn btn-danger btn-sm" onClick={() => void handleDeleteNearDuplicate()}>
                       {t("taskDetail.nearDuplicate.deleteBtn", "Delete")}
-                    </AlphaButton>
-                    <AlphaButton type="button" className="btn btn-secondary btn-sm" onClick={() => void handleDismissNearDuplicate()}>
+                    </UiButton>
+                    <UiButton type="button" className="btn btn-secondary btn-sm" onClick={() => void handleDismissNearDuplicate()}>
                       {t("taskDetail.nearDuplicate.keepBtn", "Keep")}
-                    </AlphaButton>
+                    </UiButton>
                   </div>
                 </div>
               )}
@@ -5573,18 +5685,38 @@ export function TaskDetailContent({
                   </p>
                   {/*
                   FNXC:PlanApproval 2026-08-01-06:34:
-                  Approval actions must sit beside the top approval message as well as in the persistent footer,
-                  so an operator can act without scrolling through a long task body.
+                  Approval actions sit beside the top approval message so an operator can act without
+                  scrolling through a long task body.
+
+                  FNXC:HumanPlanApproval 2026-09-16-05:01:
+                  FN-448 — for a MESSAGED (human) decision this banner is the ONLY surface: the footer's
+                  second HumanPlanApprovalControls duplicated the message field and the Reject/Approve
+                  pair on the same card. Legacy holds keep their bare footer buttons.
                   */}
                   {workingTask.prompt && (
+                    requiresHumanPlanDecision ? (
+                      /* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 replaces the bare buttons with the messaged decision surface, and FN-448 makes it the single placement. */
+                      <HumanPlanApprovalControls
+                        taskId={task.id}
+                        variant="banner"
+                        message={humanPlanDecisionMessage}
+                        onMessageChange={setHumanPlanDecisionMessage}
+                        onApprove={handleHumanPlanApprove}
+                        onReject={handleHumanPlanReject}
+                        pending={isPlanApprovalPending}
+                        error={humanPlanDecisionError}
+                        maxLength={HUMAN_PLAN_APPROVAL_MESSAGE_MAX_LENGTH_CLIENT}
+                      />
+                    ) : (
                     <div className="detail-plan-approval-banner__actions" data-testid="detail-plan-approval-banner-actions">
-                      <AlphaButton className="btn btn-primary btn-sm" data-testid="detail-plan-approval-banner-approve" disabled={isPlanApprovalPending} onClick={handleApprovePlan}>
+                      <UiButton className="btn btn-primary btn-sm" data-testid="detail-plan-approval-banner-approve" disabled={isPlanApprovalPending} onClick={handleApprovePlan}>
                         {t("taskDetail.plan.approveBtn", "Approve Plan")}
-                      </AlphaButton>
-                      <AlphaButton className="btn btn-danger btn-sm" data-testid="detail-plan-approval-banner-reject" disabled={isPlanApprovalPending} onClick={handleRejectPlan}>
+                      </UiButton>
+                      <UiButton className="btn btn-danger btn-sm" data-testid="detail-plan-approval-banner-reject" disabled={isPlanApprovalPending} onClick={handleRejectPlan}>
                         {t("taskDetail.plan.rejectBtn", "Reject Plan")}
-                      </AlphaButton>
+                      </UiButton>
                     </div>
+                    )
                   )}
                 </div>
               )}
@@ -5594,7 +5726,7 @@ export function TaskDetailContent({
                 The paperclip renders on every non-editing tab while task details default
                 to Activity or Summary; a Definition-only input made that control a no-op.
                 */}
-                <AlphaInput
+                <UiInput
                   className="detail-hidden-file-input"
                   ref={fileInputRef}
                   type="file"
@@ -5608,7 +5740,7 @@ export function TaskDetailContent({
                     <section className={`ai-merge-review-reconciliation ${reconciliation.terminal ? "ai-merge-review-reconciliation-terminal" : ""}`} aria-label={t("taskDetail.aiMergeReview.title", "AI merge review reconciliation")}>
                       <h3>{reconciliation.consecutiveCleanApprovals > 0 ? t("taskDetail.aiMergeReview.approvedWithPending", "Approved — {{count}} prior finding(s) unconfirmed", { count: pending.length }) : t("taskDetail.aiMergeReview.title", "AI merge review reconciliation")}</h3>
                       {reconciliation.candidateSha && <p>{t("taskDetail.aiMergeReview.candidate", "Candidate:")} <code>{reconciliation.candidateSha}</code></p>}
-                      {pending.length > 0 && <ul>{pending.map((finding) => <li key={finding.id}>{finding.text}{(reconciliation.terminal || finding.disposition === "still-present") && <AlphaButton type="button" className="btn btn-secondary" onClick={() => handleDismissAiMergeFinding(finding.id)}>{t("taskDetail.aiMergeReview.dismissFinding", "Dismiss this finding")}</AlphaButton>}</li>)}</ul>}
+                      {pending.length > 0 && <ul>{pending.map((finding) => <li key={finding.id}>{finding.text}{(reconciliation.terminal || finding.disposition === "still-present") && <UiButton type="button" className="btn btn-secondary" onClick={() => handleDismissAiMergeFinding(finding.id)}>{t("taskDetail.aiMergeReview.dismissFinding", "Dismiss this finding")}</UiButton>}</li>)}</ul>}
                       {reconciliation.terminal && <p>{t("taskDetail.aiMergeReview.terminalGuidance", "Rebase or re-push the branch, dismiss a finding with justification, or land manually.")}</p>}
                     </section>
                   );
@@ -5644,12 +5776,12 @@ export function TaskDetailContent({
                 {hasPendingRecovery ? <div className="detail-error-hint">{t("taskDetail.retry.pendingAutomaticRecovery", "Automatic recovery is pending. You can Retry now to restart this stage.")}</div> : null}
                 {onRetryTask && isMutableLiveColumn ? (
                   <div className="detail-error-actions">
-                    <AlphaButton type="button" className="btn btn-sm" onClick={handleRetry}>
+                    <UiButton type="button" className="btn btn-sm" onClick={handleRetry}>
                       {t("taskDetail.error.retry", "Retry")}
-                    </AlphaButton>
-                    <AlphaButton type="button" className="btn btn-sm" onClick={() => setShowFailureRetryPicker(true)}>
+                    </UiButton>
+                    <UiButton type="button" className="btn btn-sm" onClick={() => setShowFailureRetryPicker(true)}>
                       {t("taskDetail.error.retryWithModel", "Retry with a different model/node")}
-                    </AlphaButton>
+                    </UiButton>
                   </div>
                 ) : null}
                 {showFailureRetryPicker && onRetryTask && isMutableLiveColumn ? (
@@ -5657,7 +5789,7 @@ export function TaskDetailContent({
                     <label htmlFor={`failure-retry-model-${task.id}`}>
                       {t("taskDetail.error.retryModelLabel", "Executor model")}
                     </label>
-                    <AlphaSelect
+                    <UiSelect
                       id={`failure-retry-model-${task.id}`}
                       className="select"
                       value={failureRetryModel}
@@ -5670,11 +5802,11 @@ export function TaskDetailContent({
                           {model.provider}/{model.name || model.id}
                         </option>
                       ))}
-                    </AlphaSelect>
+                    </UiSelect>
                     <label htmlFor={`failure-retry-node-${task.id}`}>
                       {t("taskDetail.error.retryNodeLabel", "Execution node")}
                     </label>
-                    <AlphaSelect
+                    <UiSelect
                       id={`failure-retry-node-${task.id}`}
                       className="select"
                       value={failureRetryNodeId}
@@ -5685,19 +5817,19 @@ export function TaskDetailContent({
                       {failureRetryNodes.map((node) => (
                         <option key={node.id} value={node.id}>{node.name} ({node.type})</option>
                       ))}
-                    </AlphaSelect>
+                    </UiSelect>
                     <div className="detail-error-actions">
-                      <AlphaButton type="button" className="btn btn-sm" onClick={() => setShowFailureRetryPicker(false)} disabled={isFailureRetrySaving}>
+                      <UiButton type="button" className="btn btn-sm" onClick={() => setShowFailureRetryPicker(false)} disabled={isFailureRetrySaving}>
                         {t("common.cancel", "Cancel")}
-                      </AlphaButton>
-                      <AlphaButton
+                      </UiButton>
+                      <UiButton
                         type="button"
                         className="btn btn-sm"
                         onClick={() => void handleRetryWithOverride()}
                         disabled={isFailureRetrySaving || (failureRetryModel === (task.modelProvider && task.modelId ? `${task.modelProvider}/${task.modelId}` : "") && failureRetryNodeId === (task.nodeId ?? ""))}
                       >
                         {t("taskDetail.error.confirmRetry", "Apply and retry")}
-                      </AlphaButton>
+                      </UiButton>
                     </div>
                   </div>
                 ) : null}
@@ -5822,7 +5954,7 @@ export function TaskDetailContent({
               ) : (
                 <div className="detail-activity" role="tabpanel">
                   <div className="detail-activity-actions">
-                    <AlphaButton
+                    <UiButton
                       type="button"
                       className="btn btn-sm detail-activity-copy"
                       onClick={() => void handleCopyActivityLogs()}
@@ -5833,8 +5965,8 @@ export function TaskDetailContent({
                     >
                       <Copy aria-hidden="true" />
                       {t("taskDetail.logs.copy", "Copy logs")}
-                    </AlphaButton>
-                    {!isPhonePresentation ? <AlphaButton
+                    </UiButton>
+                    {!isPhonePresentation ? <UiButton
                       type="button"
                       className="btn btn-icon btn-sm activity-expand-toggle activity-expand-toggle--overlay"
                       onClick={() => setActivityExpanded((value) => !value)}
@@ -5843,7 +5975,7 @@ export function TaskDetailContent({
                       data-testid="task-chat-expand-toggle"
                     >
                       {isActivityExpanded ? <Minimize2 aria-hidden="true" /> : <Maximize2 aria-hidden="true" />}
-                    </AlphaButton> : null}
+                    </UiButton> : null}
                   </div>
                   <h4>{t("taskDetail.activity.feedHeading", "Feed")}</h4>
                   {(workingTask as typeof workingTask & { activityLogTruncatedCount?: number }).activityLogTruncatedCount ? (
@@ -5966,7 +6098,7 @@ export function TaskDetailContent({
                         <div className="detail-in-review-stall-meta">
                           <span>{t("taskDetail.stall.observed", "Observed")} {formatTimestamp(workingTask.inReviewStall.observedAt)}</span>
                           {logMatch ? (
-                            <AlphaButton
+                            <UiButton
                               type="button"
                               className="btn btn-sm detail-in-review-stall-jump"
                               onClick={() => {
@@ -5976,7 +6108,7 @@ export function TaskDetailContent({
                               }}
                             >
                               {t("taskDetail.stall.viewActivityLog", "View activity log")}
-                            </AlphaButton>
+                            </UiButton>
                           ) : (
                             <span
                               className="detail-in-review-stall-no-log"
@@ -6014,7 +6146,7 @@ export function TaskDetailContent({
                           <span>{t("taskDetail.stall.threshold", "Threshold")} {formatDurationCompact(workingTask.stalePausedReview.thresholdMs)}</span>
                           <span>{t("taskDetail.stall.observed", "Observed")} {formatTimestamp(workingTask.stalePausedReview.observedAt)}</span>
                           {logMatch ? (
-                            <AlphaButton
+                            <UiButton
                               type="button"
                               className="btn btn-sm detail-in-review-stall-jump"
                               onClick={() => {
@@ -6024,7 +6156,7 @@ export function TaskDetailContent({
                               }}
                             >
                               {t("taskDetail.stall.viewActivityLog", "View activity log")}
-                            </AlphaButton>
+                            </UiButton>
                           ) : (
                             <span className="detail-in-review-stall-no-log">{t("taskDetail.stall.noLogEntry", "No log entry yet")}</span>
                           )}
@@ -6137,7 +6269,8 @@ export function TaskDetailContent({
                 {dependencies.map((dep) => {
                   // Look up dependency metadata from tasks prop
                   const depTask = tasks.find((t) => t.id === dep);
-                  const depLabel = depTask?.title || depTask?.description || dep;
+                  // FNXC:TaskTitleDisplay 2026-09-14-17:05: FN-391 — shared label projection.
+                  const depLabel = depTask ? getTaskTitleDisplayText(depTask) : dep;
 
                   return (
                     <li key={dep} className="detail-dep-item">
@@ -6157,13 +6290,13 @@ export function TaskDetailContent({
                         <span className="detail-dep-id">{dep}</span>
                         <span className="detail-dep-label">{truncate(depLabel, 40)}</span>
                       </span>
-                      <AlphaButton
+                      <UiButton
                         className="dep-remove-btn"
                         onClick={(e) => handleRemoveDep(e, dep)}
                         title={t("taskDetail.deps.removeTitle", "Remove dependency {{id}}", { id: dep })}
                       >
                         ×
-                      </AlphaButton>
+                      </UiButton>
                     </li>
                   );
                 })}
@@ -6177,14 +6310,14 @@ export function TaskDetailContent({
                   {t("taskDetail.deps.overlapBlocker", "File scope overlap blocker:")} {workingTask.overlapBlockedBy}
                   {!overlapBlockerActive && ` ${t("taskDetail.deps.stale", "(stale)")}`}
                 </span>
-                <AlphaButton
+                <UiButton
                   type="button"
                   className="btn btn-sm"
                   onClick={() => void handleClearOverlapBlocker()}
                   title={t("taskDetail.deps.clearBlockerTitle", "Clear overlap blocker {{id}}", { id: workingTask.overlapBlockedBy })}
                 >
                   {t("taskDetail.deps.clearBtn", "Clear")}
-                </AlphaButton>
+                </UiButton>
               </div>
             )}
             {workingTask.overlapBlockedBy && (
@@ -6210,7 +6343,7 @@ export function TaskDetailContent({
               </div>
             )}
             <div className="dep-trigger-wrap">
-              <AlphaButton
+              <UiButton
                 type="button"
                 className="btn btn-sm dep-trigger"
                 onClick={() => {
@@ -6219,7 +6352,7 @@ export function TaskDetailContent({
                 }}
               >
                 {t("taskDetail.deps.addBtn", "Add Dependency")}
-              </AlphaButton>
+              </UiButton>
               {showDepDropdown && (() => {
                 const term = depSearch.toLowerCase();
                 const filtered = term
@@ -6231,7 +6364,7 @@ export function TaskDetailContent({
                   : availableTasks;
                 return (
                   <div className="dep-dropdown">
-                    <AlphaInput
+                    <UiInput
                       className="dep-dropdown-search"
                       placeholder={t("taskDetail.deps.searchPlaceholder", "Search tasks…")}
                       autoFocus
@@ -6252,7 +6385,7 @@ export function TaskDetailContent({
                           }}
                         >
                           <span className="dep-dropdown-id">{t.id}</span>
-                          <span className="dep-dropdown-title">{truncate(t.title || t.description || t.id, 30)}</span>
+                          <span className="dep-dropdown-title">{truncate(getTaskTitleDisplayText(t), 30)}</span>
                         </div>
                       ))
                     )}
@@ -6318,7 +6451,7 @@ export function TaskDetailContent({
             <div className="detail-source-header">
               <h4>{t("taskDetail.originalPrompt.heading", "Original prompt")}</h4>
               {hasOriginalTaskPrompt && (
-                <AlphaButton
+                <UiButton
                   type="button"
                   className="detail-source-toggle"
                   aria-expanded={originalPromptExpanded}
@@ -6326,7 +6459,7 @@ export function TaskDetailContent({
                   onClick={() => setOriginalPromptExpanded((expanded) => !expanded)}
                 >
                   <ChevronRight size={16} className={originalPromptExpanded ? "detail-source-chevron--expanded" : undefined} />
-                </AlphaButton>
+                </UiButton>
               )}
             </div>
             {hasOriginalTaskPrompt ? (
@@ -6362,7 +6495,7 @@ export function TaskDetailContent({
                   <span className="detail-source-label">{t("taskDetail.retries.label", "Retries")}</span>
                   <span className="detail-source-number">{retrySummary?.total ?? 0}</span>
                 </div>
-                <AlphaButton
+                <UiButton
                   type="button"
                   className="detail-source-toggle"
                   aria-expanded={retriesExpanded}
@@ -6370,7 +6503,7 @@ export function TaskDetailContent({
                   onClick={() => setRetriesExpanded((expanded) => !expanded)}
                 >
                   <ChevronRight size={16} className={retriesExpanded ? "detail-source-chevron--expanded" : undefined} />
-                </AlphaButton>
+                </UiButton>
               </div>
               {retriesExpanded && (
                 <dl className="detail-source-grid detail-retries-grid">
@@ -6417,7 +6550,7 @@ export function TaskDetailContent({
                     <span className="detail-source-number">{`(#${task.sourceIssue.issueNumber})`}</span>
                   )}
                 </div>
-                <AlphaButton
+                <UiButton
                   type="button"
                   className="detail-source-toggle"
                   aria-expanded={sourceIssueExpanded}
@@ -6428,7 +6561,7 @@ export function TaskDetailContent({
                     size={16}
                     className={sourceIssueExpanded ? "detail-source-chevron--expanded" : undefined}
                   />
-                </AlphaButton>
+                </UiButton>
               </div>
               {sourceIssueExpanded && (
                 <dl className="detail-source-grid">
@@ -6485,16 +6618,16 @@ export function TaskDetailContent({
                   <span className="detail-agent-chip">
                     <Bot size={14} />
                     {assignedAgentLabel}
-                    <AlphaButton
+                    <UiButton
                       className="detail-agent-clear"
                       onClick={() => void handleClearAgent()}
                       title={t("taskDetail.agent.unassignTitle", "Unassign agent")}
                     >
                       <X size={12} />
-                    </AlphaButton>
+                    </UiButton>
                   </span>
                 ) : (
-                  <AlphaButton
+                  <UiButton
                     className="btn btn-sm"
                     onClick={() => {
                       if (showAgentPicker) {
@@ -6505,13 +6638,13 @@ export function TaskDetailContent({
                     }}
                   >
                     {t("taskDetail.agent.assignBtn", "Assign Agent")}
-                  </AlphaButton>
+                  </UiButton>
                 )}
                 {showAgentPicker && (
                   <div className="agent-picker-dropdown">
                     {agentsLoading && <div className="agent-picker-loading"><LoadingSpinner label={t("taskDetail.agent.loadingAgents", "Loading agents...")} /></div>}
                     {!agentsLoading && agents.map((a) => (
-                      <AlphaButton
+                      <UiButton
                         key={a.id}
                         className={`agent-picker-item${task.assignedAgentId === a.id ? " selected" : ""}`}
                         onClick={() => void handleAssignAgent(a.id)}
@@ -6519,7 +6652,7 @@ export function TaskDetailContent({
                         <Bot size={14} />
                         <span className="agent-picker-name">{a.name}</span>
                         <span className="agent-picker-role">{a.role}</span>
-                      </AlphaButton>
+                      </UiButton>
                     ))}
                     {!agentsLoading && agents.length === 0 && (
                       <div className="agent-picker-empty">{t("taskDetail.agent.noAgents", "No agents available")}</div>
@@ -6546,7 +6679,7 @@ export function TaskDetailContent({
                     <span className="detail-source-empty">{t("taskDetail.gitlabTracking.unlinked", "No linked GitLab item")}</span>
                   )}
                 </div>
-                <AlphaButton
+                <UiButton
                   type="button"
                   className="detail-source-toggle"
                   aria-expanded={gitlabTrackingExpanded}
@@ -6554,7 +6687,7 @@ export function TaskDetailContent({
                   onClick={() => setGitlabTrackingExpanded((expanded) => !expanded)}
                 >
                   <ChevronRight size={16} className={gitlabTrackingExpanded ? "detail-source-chevron--expanded" : undefined} />
-                </AlphaButton>
+                </UiButton>
               </div>
               {gitlabTrackingExpanded && (
                 <div className="detail-gitlab-tracking-content">
@@ -6600,7 +6733,7 @@ export function TaskDetailContent({
                     <div className="detail-gitlab-tracking-controls">
                       <a className="btn btn-sm touch-target" href={gitlabTrackedItem.url} target="_blank" rel="noopener noreferrer" aria-label={t("taskDetail.gitlabTracking.openAriaLabel", "Open linked GitLab item")}>{t("taskDetail.gitlabTracking.openBtn", "Open in GitLab")}</a>
                       {canEdit && (
-                        <AlphaButton className="btn btn-sm btn-danger touch-target" onClick={() => void handleUnlinkGitLabItem()} disabled={isSavingGithubTracking}>{t("taskDetail.gitlabTracking.unlinkBtn", "Unlink GitLab item")}</AlphaButton>
+                        <UiButton className="btn btn-sm btn-danger touch-target" onClick={() => void handleUnlinkGitLabItem()} disabled={isSavingGithubTracking}>{t("taskDetail.gitlabTracking.unlinkBtn", "Unlink GitLab item")}</UiButton>
                       )}
                     </div>
                   )}
@@ -6628,7 +6761,7 @@ export function TaskDetailContent({
                   )}
                 </div>
                 {showInlineGithubTrackingEnableButton && (
-                  <AlphaButton
+                  <UiButton
                     type="button"
                     className="btn btn-sm btn-primary detail-github-tracking-enable"
                     aria-label={t("taskDetail.githubTracking.enableAriaLabel", "Enable GitHub tracking")}
@@ -6636,7 +6769,7 @@ export function TaskDetailContent({
                     onClick={() => void handleToggleGithubTracking()}
                   >
                     {t("taskDetail.githubTracking.enableBtn", "Enable")}
-                  </AlphaButton>
+                  </UiButton>
                 )}
                 {showGithubTrackingSpinner && (
                   <span
@@ -6651,7 +6784,7 @@ export function TaskDetailContent({
                     </span>
                   </span>
                 )}
-                <AlphaButton
+                <UiButton
                   type="button"
                   className="detail-source-toggle"
                   aria-expanded={githubTrackingExpanded}
@@ -6662,7 +6795,7 @@ export function TaskDetailContent({
                     size={16}
                     className={githubTrackingExpanded ? "detail-source-chevron--expanded" : undefined}
                   />
-                </AlphaButton>
+                </UiButton>
               </div>
               {githubTrackingExpanded && (
                 <div className="detail-github-tracking-content">
@@ -6693,14 +6826,14 @@ export function TaskDetailContent({
                   <div className="detail-github-tracking-controls">
                     {!githubTrackedIssue && githubTrackingEnabled && (
                       <>
-                        <AlphaButton
+                        <UiButton
                           className="btn btn-sm touch-target"
                           onClick={() => void handleRetryGithubTrackingIssueCreate()}
                           disabled={isSavingGithubTracking || !canCreateTrackingIssue}
                           title={!canCreateTrackingIssue ? t("taskDetail.githubTracking.createIssueDisabledTitle", "Add a title or description so a tracking issue can be created.") : undefined}
                         >
                           {t("taskDetail.githubTracking.createIssueBtn", "Create tracking issue")}
-                        </AlphaButton>
+                        </UiButton>
                         {!canCreateTrackingIssue && (
                           <small className="detail-github-tracking-helper">{t("taskDetail.githubTracking.createIssueHelper", "Tracking issue will be created once this task has a title or description to summarize.")}</small>
                         )}
@@ -6709,7 +6842,7 @@ export function TaskDetailContent({
                     {canEditGithubTracking && (
                       <>
                         <label className="checkbox-label" htmlFor="detail-github-tracking-toggle">
-                          <AlphaInput
+                          <UiInput
                             id="detail-github-tracking-toggle"
                             type="checkbox"
                             checked={githubTrackingEnabled}
@@ -6719,7 +6852,7 @@ export function TaskDetailContent({
                           {t("taskDetail.githubTracking.enableCheckboxLabel", "Enable GitHub tracking")}
                         </label>
                         <div className="detail-github-tracking-repo-row">
-                          <AlphaInput
+                          <UiInput
                             className="input"
                             value={githubRepoOverrideDraft}
                             onChange={(event) => {
@@ -6728,15 +6861,15 @@ export function TaskDetailContent({
                             }}
                             placeholder={effectiveGithubRepoDefault || "owner/repo"}
                           />
-                          <AlphaButton className="btn btn-sm" onClick={() => void handleSaveGithubRepoOverride()} disabled={isSavingGithubTracking}>
+                          <UiButton className="btn btn-sm" onClick={() => void handleSaveGithubRepoOverride()} disabled={isSavingGithubTracking}>
                             {t("common.save", "Save")}
-                          </AlphaButton>
+                          </UiButton>
                         </div>
                         {githubRepoOverrideError && <small className="detail-github-tracking-error">{githubRepoOverrideError}</small>}
                         {githubTrackedIssue && (
-                          <AlphaButton className="btn btn-sm touch-target" onClick={() => void handleUnlinkGithubIssue()} disabled={isSavingGithubTracking}>
+                          <UiButton className="btn btn-sm touch-target" onClick={() => void handleUnlinkGithubIssue()} disabled={isSavingGithubTracking}>
                             {t("taskDetail.githubTracking.unlinkBtn", "Unlink GitHub issue")}
-                          </AlphaButton>
+                          </UiButton>
                         )}
                       </>
                     )}
@@ -6748,7 +6881,7 @@ export function TaskDetailContent({
           <div className="detail-section detail-no-commits-expected-section">
             <div className="form-group">
               <label className="checkbox-label" htmlFor="detail-no-commits-expected-toggle">
-                <AlphaInput
+                <UiInput
                   id="detail-no-commits-expected-toggle"
                   type="checkbox"
                   checked={inlineNoCommitsExpected}
@@ -6765,7 +6898,7 @@ export function TaskDetailContent({
           <div className="detail-section detail-routing-section">
             <div className="detail-source-header">
               <span className="detail-source-label">{t("taskDetail.tabs.routing", "Routing")}</span>
-              <AlphaButton
+              <UiButton
                 type="button"
                 className="detail-source-toggle"
                 aria-expanded={routingExpanded}
@@ -6775,7 +6908,7 @@ export function TaskDetailContent({
                 onClick={() => setRoutingExpanded((expanded) => !expanded)}
               >
                 <ChevronRight size={16} className={routingExpanded ? "detail-source-chevron--expanded" : undefined} />
-              </AlphaButton>
+              </UiButton>
             </div>
             {routingExpanded && (
               <RoutingTab
@@ -6790,7 +6923,7 @@ export function TaskDetailContent({
           <div className="detail-section detail-debug-section">
             <div className="detail-source-header">
               <span className="detail-source-label">{t("taskDetail.tabs.debug", "Debug")}</span>
-              <AlphaButton
+              <UiButton
                 type="button"
                 className="detail-source-toggle"
                 aria-expanded={debugExpanded}
@@ -6800,7 +6933,7 @@ export function TaskDetailContent({
                 onClick={() => setDebugExpanded((expanded) => !expanded)}
               >
                 <ChevronRight size={16} className={debugExpanded ? "detail-source-chevron--expanded" : undefined} />
-              </AlphaButton>
+              </UiButton>
             </div>
             {debugExpanded && renderDebugDetails()}
           </div>
@@ -6813,73 +6946,127 @@ export function TaskDetailContent({
               FNXC:TaskDetailDefinition 2026-09-12-22:52:
               Lire le plan ouvre le vrai PROMPT.md comme sous-vue interne de TaskDetailContent. Retour restaure Définition sans changer d’onglet ni perdre les actions du plan.
               */}
+              {/*
+              FNXC:TaskDetailPresentation 2026-09-15-16:02:
+              FN-424: the operator asked for Copy, Open PROMPT.md and Edit to be REMOVED from the plan
+              sub-view. The inline specification editor (including `Ask AI to Revise`) went with them,
+              because Edit was its only entry point and an unreachable editor is dead weight. The
+              sub-view is now a pure read: Back, then the complete PROMPT.md.
+              */}
               <div className="detail-plan-document-header">
-                <AlphaButton type="button" className="btn btn-sm detail-plan-back" onClick={() => setPlanDocumentOpen(false)} aria-label={t("taskDetail.spec.backToDefinition", "Back to definition")}>
+                <UiButton type="button" className="btn btn-sm detail-plan-back" onClick={() => setPlanDocumentOpen(false)} aria-label={t("taskDetail.spec.backToDefinition", "Back to definition")}>
                   <ArrowLeft size={16} aria-hidden="true" /><FileText size={14} aria-hidden="true" /><span>{t("taskDetail.spec.promptFileName", "PROMPT.md")}</span>
-                </AlphaButton>
+                </UiButton>
               </div>
               <div className="detail-section detail-section--plan-prompt">
-                {!isEditingSpec && <div className="detail-spec-edit-trigger">
-                  {fileBrowser && <AlphaButton className="btn btn-sm" onClick={openPromptFile} title={t("taskDetail.spec.openPromptTitle", "Open this task's PROMPT.md in the file editor")}>{t("taskDetail.spec.openPromptBtn", "Open PROMPT.md")}</AlphaButton>}
-                  <AlphaButton className="btn btn-sm" onClick={enterSpecEditMode}>{t("taskDetail.spec.editBtn", "Edit")}</AlphaButton>
-                </div>}
-                {isEditingSpec ? <div className="spec-editor-edit-mode">
-                  <AlphaTextArea className="spec-editor-textarea" value={specEditContent} onChange={(e) => setSpecEditContent(e.target.value)} onKeyDown={handleSpecTextareaKeyDown} disabled={isSavingSpec} placeholder={t("taskDetail.spec.placeholder", "Enter task specification in Markdown...")} rows={12} />
-                  <div className="spec-editor-actions-row">
-                    <AlphaButton className="btn btn-sm" onClick={exitSpecEditMode} disabled={isSavingSpec}>{t("common.cancel", "Cancel")}</AlphaButton>
-                    <AlphaButton className="btn btn-primary btn-sm" onClick={() => void handleSaveSpecFromEdit()} disabled={specEditContent === (workingTask.prompt || "") || isSavingSpec}>{isSavingSpec ? t("taskDetail.spec.saving", "Saving…") : t("common.save", "Save")}</AlphaButton>
-                  </div>
-                  <div className="spec-editor-hint"><kbd>Ctrl</kbd>+<kbd>Enter</kbd> {t("taskDetail.spec.hintSave", "to save")} · <kbd>Escape</kbd> {t("taskDetail.spec.hintCancel", "to cancel")}</div>
-                  <div className="spec-editor-revision">
-                    <h4>{t("taskDetail.spec.aiReviseHeading", "Ask AI to Revise")}</h4>
-                    <p className="spec-editor-revision-help">{t("taskDetail.spec.aiReviseHelp", "Provide feedback for the AI to improve this specification. The task will move to planning for replanning.")}</p>
-                    <AlphaTextArea className="spec-editor-feedback" value={specFeedback} onChange={(e) => setSpecFeedback(e.target.value)} placeholder={t("taskDetail.spec.feedbackPlaceholder", "e.g., 'Add more details about error handling', 'Split this into smaller steps', 'Include tests for the API endpoints'...")} disabled={isRequestingRevision} rows={4} maxLength={MAX_TASK_MESSAGE_LENGTH} />
-                    <div className="spec-editor-revision-actions"><span className="spec-editor-char-count">{specFeedback.length}/{MAX_TASK_MESSAGE_LENGTH}</span><AlphaButton className="btn btn-primary btn-sm" onClick={() => void handleRequestRevisionFromEdit()} disabled={!specFeedback.trim() || isRequestingRevision}>{isRequestingRevision ? t("taskDetail.spec.requesting", "Requesting…") : t("taskDetail.spec.requestRevisionBtn", "Request AI Revision")}</AlphaButton></div>
-                  </div>
-                </div> : detailLoading ? <div className="spec-loading"><LoadingSpinner label={t("taskDetail.spec.loading", "Loading specification…")} /></div> : workingTask.prompt ? <div className="markdown-body" data-testid="task-detail-plan-full"><ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={sharedRehypePlugins} components={markdownLinkifyComponents}>{workingTask.prompt}</ReactMarkdown></div> : <div className="detail-prompt">{t("taskDetail.spec.noPrompt", "(no prompt)")}</div>}
+                {detailLoading ? <div className="spec-loading"><LoadingSpinner label={t("taskDetail.spec.loading", "Loading specification…")} /></div> : workingTask.prompt ? <div className="markdown-body" data-testid="task-detail-plan-full"><ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={sharedRehypePlugins} components={markdownLinkifyComponents}>{workingTask.prompt}</ReactMarkdown></div> : <div className="detail-prompt">{t("taskDetail.spec.noPrompt", "(no prompt)")}</div>}
               </div>
             </div>
           ) : (
             <>
               {/*
-              FNXC:TaskDetailDefinition 2026-09-13-11:59:
-              La description est la présentation principale de Définition et le header partagé ne répète plus le titre. Le titre reste une donnée éditable dans TaskForm; sa synthèse demeure disponible près de la description lorsque ses préconditions sont remplies.
+              FNXC:TaskDetailDefinition 2026-09-14-19:50:
+              FN-391 reorders Définition into the order an operator actually reads it:
+                1. PROGRESS first — heading, counter and bar are always visible; the step LIST is
+                   collapsed behind a native button so the answer to "where is this?" is one glance
+                   rather than a scroll past a long step list.
+                2. DESCRIPTION second, inside a bounded scrollable region so a long description can
+                   never push the rest of the view off screen.
+                3. PRODUCT OUTCOME third, in plain product language, with `Read plan` beside it so
+                   the FULL technical PROMPT.md is always one click away and never replaced.
               */}
-              <section className="detail-section detail-definition-description" aria-labelledby={`${workingTask.id}-definition-description`}>
-                <div className="detail-source-header detail-definition-header">
-                  <h4 id={`${workingTask.id}-definition-description`}>{t("taskDetail.definition.descriptionHeading", "Description")}</h4>
-                  {showSummarizeTitleButton && (
-                    <AlphaButton
-                      type="button"
-                      className="btn btn-icon btn-sm detail-summarize-title-btn"
-                      onClick={() => void handleSummarizeTitle()}
-                      disabled={isSummarizingTitle || isSaving}
-                      data-testid="summarize-title-btn"
-                    >
-                      {isSummarizingTitle ? <Loader2 size={14} className="spinner" /> : <Sparkles size={14} />}
-                      <span>{t("taskDetail.title.summarize", "Summarize")}</span>
-                    </AlphaButton>
-                  )}
-                </div>
-                {hasOriginalTaskPrompt ? <div className="markdown-body" data-testid="task-detail-definition-description"><ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={sharedRehypePlugins} components={markdownLinkifyComponents}>{originalTaskPrompt}</ReactMarkdown></div> : <div className="detail-empty-inline">{t("taskDetail.definition.noDescription", "(no description)")}</div>}
-                <AlphaButton type="button" className="btn btn-sm detail-read-plan" onClick={() => setPlanDocumentOpen(true)}><FileText size={14} aria-hidden="true" />{t("taskDetail.spec.readPlanBtn", "Read plan")}</AlphaButton>
-              </section>
               <section className="detail-section detail-step-progress" aria-labelledby={`${workingTask.id}-progress-heading`}>
                 <div className="detail-progress-heading"><h4 id={`${workingTask.id}-progress-heading`}>{t("taskDetail.progress.heading", "Progress")}</h4><span className="step-progress-label">{t("taskDetail.progress.completedCount", "{{count}}/{{total}} completed", { count: unifiedProgress.completed, total: unifiedProgress.total })}</span></div>
                 {unifiedProgress.total > 0 ? <>
-                  <div className="step-progress-track" role="progressbar" aria-valuemin={0} aria-valuemax={unifiedProgress.total} aria-valuenow={unifiedProgress.completed}><span style={{ inlineSize: `${(unifiedProgress.completed / unifiedProgress.total) * 100}%` }} /></div>
-                  <ol className="detail-step-list">{unifiedProgress.items.map((item) => {
-                    const statusLabel = getStepStatusLabel(item.status, t as TFunction<"app">);
-                    const complete = item.status === "done";
-                    return <li key={item.id} className={`detail-step-item detail-step-item--${item.status}`}>
-                      <span className="detail-step-indicator" style={{ color: getStepStatusColor(item.status) }} aria-hidden="true">{complete ? <Check size={12} /> : <span className="status-dot" />}</span>
-                      <span className="detail-step-name">{item.name}</span>
-                      <span className="detail-step-origin">{item.source === "workflow" ? t("taskDetail.progress.workflowOrigin", "Workflow gate") : t("taskDetail.progress.implementationOrigin", "Implementation")}</span>
-                      <span className="detail-step-status">{statusLabel}</span>
-                    </li>;
-                  })}</ol>
+                  {/*
+                  FNXC:TaskDetailDefinition 2026-09-14-19:50:
+                  The disclosure NEVER hides the counter or the bar — only the per-step list. It is a
+                  real <button> with aria-expanded/aria-controls so keyboard and screen-reader users
+                  get the same affordance, and expanding recomputes nothing: `unifiedProgress` is
+                  already resolved above.
+
+                  FNXC:TaskDetailDefinition 2026-09-15-16:02:
+                  FN-424 replaces the chunky `Show steps` text button with the DISCREET chevron
+                  already used by every other collapsible section here (`detail-source-toggle` +
+                  `detail-source-chevron--expanded`), sitting on the same row to the RIGHT of the
+                  progress bar so the accordion affordance reads as part of the bar. No new button
+                  primitive: only the visual weight changes, the accessible contract (button,
+                  aria-expanded, aria-controls, localized name) is unchanged, and the label moves to
+                  `aria-label`/`title` because the control is now icon-only.
+                  */}
+                  <div className="detail-progress-row">
+                    <div className="step-progress-track" role="progressbar" aria-valuemin={0} aria-valuemax={unifiedProgress.total} aria-valuenow={unifiedProgress.completed}><span style={{ inlineSize: `${(unifiedProgress.completed / unifiedProgress.total) * 100}%` }} /></div>
+                    <UiButton
+                      type="button"
+                      className="detail-source-toggle detail-step-list-toggle"
+                      onClick={() => setStepListExpanded((expanded) => !expanded)}
+                      aria-expanded={stepListExpanded}
+                      aria-controls={`${workingTask.id}-detail-step-list`}
+                      aria-label={stepListExpanded
+                        ? t("taskDetail.progress.hideSteps", "Hide steps")
+                        : t("taskDetail.progress.showSteps", "Show steps")}
+                      title={stepListExpanded
+                        ? t("taskDetail.progress.hideSteps", "Hide steps")
+                        : t("taskDetail.progress.showSteps", "Show steps")}
+                      data-testid="detail-step-list-toggle"
+                    >
+                      <ChevronRight size={16} aria-hidden="true" className={stepListExpanded ? "detail-source-chevron--expanded" : undefined} />
+                    </UiButton>
+                  </div>
+                  {stepListExpanded && (
+                    <ol className="detail-step-list" id={`${workingTask.id}-detail-step-list`}>{unifiedProgress.items.map((item) => {
+                      const statusLabel = getStepStatusLabel(item.status, t as TFunction<"app">);
+                      const complete = item.status === "done";
+                      return <li key={item.id} className={`detail-step-item detail-step-item--${item.status}`}>
+                        <span className="detail-step-indicator" style={{ color: getStepStatusColor(item.status) }} aria-hidden="true">{complete ? <Check size={12} /> : <span className="status-dot" />}</span>
+                        <span className="detail-step-name">{item.name}</span>
+                        <span className="detail-step-origin">{item.source === "workflow" ? t("taskDetail.progress.workflowOrigin", "Workflow gate") : t("taskDetail.progress.implementationOrigin", "Implementation")}</span>
+                        <span className="detail-step-status">{statusLabel}</span>
+                      </li>;
+                    })}</ol>
+                  )}
                 </> : <div className="step-progress-empty">{t("taskDetail.progress.noSteps", "(no steps defined)")}</div>}
               </section>
+              <section className="detail-section detail-definition-description" aria-labelledby={`${workingTask.id}-definition-description`}>
+                <div className="detail-source-header detail-definition-header">
+                  <h4 id={`${workingTask.id}-definition-description`}>{t("taskDetail.definition.descriptionHeading", "Description")}</h4>
+                </div>
+                {/*
+                FNXC:TaskDetailDefinition 2026-09-14-19:50:
+                Bounded and focusable: `tabIndex={0}` with a group role so a keyboard user can reach
+                and scroll a long description that is deliberately capped in height. It is always
+                read-only here — editing goes through the explicit Edit form, and only in manual
+                intake.
+                */}
+                {hasOriginalTaskPrompt
+                  ? <div className="markdown-body detail-definition-description-body" data-testid="task-detail-definition-description" tabIndex={0} role="group" aria-label={t("taskDetail.definition.descriptionHeading", "Description")}><ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={sharedRehypePlugins} components={markdownLinkifyComponents}>{originalTaskPrompt}</ReactMarkdown></div>
+                  : <div className="detail-empty-inline">{t("taskDetail.definition.noDescription", "(no description)")}</div>}
+              </section>
+              <section className="detail-section detail-definition-outcome" aria-labelledby={`${workingTask.id}-definition-outcome`}>
+                <div className="detail-source-header detail-definition-header">
+                  <h4 id={`${workingTask.id}-definition-outcome`}>{t("taskDetail.definition.outcomeHeading", "What this delivers")}</h4>
+                  <UiButton type="button" className="btn btn-sm detail-read-plan" onClick={() => setPlanDocumentOpen(true)}><FileText size={14} aria-hidden="true" />{t("taskDetail.spec.readPlanBtn", "Read plan")}</UiButton>
+                </div>
+                {detailLoading && !productSummary
+                  ? <div className="detail-empty-inline">{t("taskDetail.spec.loading", "Loading specification…")}</div>
+                  : productSummary
+                    ? <div className="markdown-body detail-definition-outcome-body" data-testid="task-detail-definition-outcome"><ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={sharedRehypePlugins} components={markdownLinkifyComponents}>{productSummary.markdown}</ReactMarkdown></div>
+                    : <div className="detail-empty-inline" data-testid="task-detail-definition-outcome-empty">{t("taskDetail.definition.noOutcome", "No plan summary yet — open Read plan for the full specification.")}</div>}
+              </section>
+              {/*
+              FNXC:TaskDetailDefinition 2026-09-15-16:02:
+              Reading order is progress → description → outcome → before/after. This section is a
+              DIRECT view of the plan's before/after summary, never a placeholder: absent section,
+              empty body, or a body already served by `What this delivers` all render nothing.
+              */}
+              {showBeforeAfterTransformation && beforeAfterTransformation ? (
+                <section className="detail-section detail-definition-transformation" aria-labelledby={`${workingTask.id}-definition-transformation`}>
+                  <div className="detail-source-header detail-definition-header">
+                    <h4 id={`${workingTask.id}-definition-transformation`}>{t("taskDetail.definition.transformationHeading", "Before → After")}</h4>
+                  </div>
+                  <div className="markdown-body detail-definition-transformation-body" data-testid="task-detail-definition-transformation"><ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={sharedRehypePlugins} components={markdownLinkifyComponents}>{beforeAfterTransformation}</ReactMarkdown></div>
+                </section>
+              ) : null}
             </>
           )}          </>
           )}
@@ -6899,7 +7086,6 @@ export function TaskDetailContent({
           */}
           {keepAliveForCurrentTask.activityLive ? (
             <KeepAliveView hidden={isEditing || activeTab !== "chat" || activitySegment !== "current"} className="task-detail-activity-keep-alive" testId="activity-live-keep-alive">
-              <AlphaBoundary>
                 <TaskChatTab
                   columnFlags={detailColumnFlags}
                   task={workingTask}
@@ -6914,18 +7100,28 @@ export function TaskDetailContent({
                   expanded={isActivityExpanded}
                   onToggleExpanded={isPhonePresentation ? undefined : () => setActivityExpanded((value) => !value)}
                   effectiveModels={{
-                    triage: toTaskChatModelInfo(resolveEffectivePlanning(workingTask, agentLogEntries, settings)),
-                    executor: toTaskChatModelInfo(resolveEffectiveExecutor(workingTask, agentLogEntries, assignedAgent, settings, detailColumnFlags)),
-                    reviewer: toTaskChatModelInfo(resolveEffectiveValidator(workingTask, agentLogEntries, assignedAgent, settings, detailColumnFlags)),
-                    merger: toTaskChatModelInfo(resolveEffectiveValidator(workingTask, agentLogEntries, assignedAgent, settings, detailColumnFlags)),
+                    triage: toTaskChatModelInfo(
+                      resolveEffectivePlanning(workingTask, agentLogEntries, settings),
+                      resolveEffectiveThinkingLevel(workingTask, agentLogEntries, "planning", settings),
+                    ),
+                    executor: toTaskChatModelInfo(
+                      resolveEffectiveExecutor(workingTask, agentLogEntries, assignedAgent, settings, detailColumnFlags),
+                      resolveEffectiveThinkingLevel(workingTask, agentLogEntries, "execution", settings),
+                    ),
+                    reviewer: toTaskChatModelInfo(
+                      resolveEffectiveValidator(workingTask, agentLogEntries, assignedAgent, settings, detailColumnFlags),
+                      resolveEffectiveThinkingLevel(workingTask, agentLogEntries, "validation", settings),
+                    ),
+                    merger: toTaskChatModelInfo(
+                      resolveEffectiveValidator(workingTask, agentLogEntries, assignedAgent, settings, detailColumnFlags),
+                      resolveEffectiveThinkingLevel(workingTask, agentLogEntries, "merger", settings),
+                    ),
                   }}
                 />
-              </AlphaBoundary>
             </KeepAliveView>
           ) : null}
           {keepAliveForCurrentTask.plannerChat ? (
             <KeepAliveView hidden={activeTab !== "planner-chat"} className="task-detail-planner-keep-alive" testId="planner-chat-keep-alive">
-                <AlphaBoundary>
                 <TaskPlannerChatTab
                   task={workingTask}
                   /* FNXC:WorkflowResolvedColumns 2026-07-30-23:40: the kept-alive sibling renders the
@@ -6942,7 +7138,6 @@ export function TaskDetailContent({
                   onTaskUpdated={onTaskUpdated}
                   footerTarget={activeTab === "planner-chat" ? tabFooterTarget : null}
                 />
-                </AlphaBoundary>
             </KeepAliveView>
           ) : null}
           {keepAliveForCurrentTask.terminal ? (
@@ -7066,33 +7261,42 @@ export function TaskDetailContent({
                 {editAutoSaveStatus === "saving" ? t("taskDetail.edit.autosaving", "Autosaving…") : editAutoSaveStatus === "saved" ? t("taskDetail.edit.saved", "Saved") : editAutoSaveStatus === "error" ? t("taskDetail.edit.saveFailed", "Save failed") : t("taskDetail.edit.autosaveHint", "Changes autosave as you edit")}
               </span>
               <div className="modal-actions-spacer" />
-              <AlphaButton
+              <UiButton
                 className="btn btn-sm"
                 onClick={exitEditMode}
                 disabled={isSaving}
               >
                 {t("common.cancel", "Cancel")}
-              </AlphaButton>
-              <AlphaButton
+              </UiButton>
+              <UiButton
                 className="btn btn-primary btn-sm"
                 onClick={() => void handleSave()}
                 disabled={isSaving}
               >
                 {isSaving ? t("taskDetail.edit.saving", "Saving…") : t("common.save", "Save")}
-              </AlphaButton>
+              </UiButton>
             </>
           ) : (
             <>
               {/* Approve/Reject Plan buttons for manual plan-approval holds (also covers
                   legacy rows with awaitingApprovalReason === "release-authorization"). */}
-              {isAwaitingApproval && workingTask.prompt && (
+              {/*
+              FNXC:HumanPlanApproval 2026-09-16-05:01:
+              FN-448 — a human plan decision is taken EXACTLY ONCE, from the banner at the top of the
+              Definition tab. The footer used to mount a second HumanPlanApprovalControls sharing the
+              same draft, which printed "Message (optional)" and a Reject/Approve pair twice on one
+              card; operators read the duplicate as two different decisions. The legacy (non-messaged)
+              Approve/Reject Plan buttons below stay in the footer — they are a bare action pair, not a
+              second message field, and the banner is not always scrolled into view for them.
+              */}
+              {isAwaitingApproval && workingTask.prompt && !requiresHumanPlanDecision && (
                 <>
-                  <AlphaButton className="btn btn-primary btn-sm" data-testid="detail-plan-approval-footer-approve" disabled={isPlanApprovalPending} onClick={handleApprovePlan}>
+                  <UiButton className="btn btn-primary btn-sm" data-testid="detail-plan-approval-footer-approve" disabled={isPlanApprovalPending} onClick={handleApprovePlan}>
                     {t("taskDetail.plan.approveBtn", "Approve Plan")}
-                  </AlphaButton>
-                  <AlphaButton className="btn btn-danger btn-sm" data-testid="detail-plan-approval-footer-reject" disabled={isPlanApprovalPending} onClick={handleRejectPlan}>
+                  </UiButton>
+                  <UiButton className="btn btn-danger btn-sm" data-testid="detail-plan-approval-footer-reject" disabled={isPlanApprovalPending} onClick={handleRejectPlan}>
                     {t("taskDetail.plan.rejectBtn", "Reject Plan")}
-                  </AlphaButton>
+                  </UiButton>
                 </>
               )}
 
@@ -7104,13 +7308,13 @@ export function TaskDetailContent({
               its only primary footer button, while lifecycle placement stays workflow-owned.
               */}
               {reviewAction && (
-                <AlphaButton
+                <UiButton
                   className="btn btn-primary btn-sm"
                   onClick={reviewAction.onSelect}
                   disabled={reviewAction.disabled}
                 >
                   <span className="detail-footer-button-label">{reviewAction.label}</span>
-                </AlphaButton>
+                </UiButton>
               )}
             </>
           )}
@@ -7127,55 +7331,14 @@ export function TaskDetailContent({
         />
       )}
       {showRefineModal && (
-          <AlphaDialogBackdrop
-            overlayClassName="modal-overlay open detail-refine-overlay"
-            labelledBy="task-detail-refine-title"
-            overlayProps={refineOverlayDismissProps}
-          >
-            <div className="modal detail-refine-modal">
-              {/* FNXC:StandardizedViewLayout 2026-09-13-21:49: The nested Refine dialog shares the canonical header instead of a local title row. */}
-              <ViewHeader
-                className="modal-header"
-                headingLevel={3}
-                titleId="task-detail-refine-title"
-                title={t("taskDetail.refine.modalTitle", "Refine")}
-                onClose={handleCloseRefineModal}
-                closeButtonProps={{ "aria-label": t("common.close", "Close") }}
-              />
-              <div className="detail-body">
-                  <p className="detail-refine-help">
-                    {t("taskDetail.refine.help", "Describe what needs to be refined or improved...")}
-                  </p>
-                  <AlphaTextArea
-                    className="detail-refine-textarea"
-                    value={refineFeedback}
-                    onChange={(e) => setRefineFeedback(e.target.value)}
-                    placeholder={t("taskDetail.refine.placeholder", "Enter your feedback here...")}
-                    rows={6}
-                    maxLength={MAX_TASK_MESSAGE_LENGTH}
-                    autoFocus
-                  />
-                  <div className="detail-refine-input-group">
-                    <div className="detail-refine-char-count">
-                      {t("taskDetail.refine.charCount", "{{count}}/{{max}} characters", { count: refineFeedback.length, max: MAX_TASK_MESSAGE_LENGTH })}
-                    </div>
-                    <AlphaButton
-                      className="btn btn-primary btn-sm"
-                      onClick={handleSubmitRefine}
-                      disabled={!refineFeedback.trim() || isRefining}
-                    >
-                      {isRefining ? t("taskDetail.refine.creating", "Creating...") : t("taskDetail.refine.createBtn", "Create Refinement Task")}
-                    </AlphaButton>
-                  </div>
-              </div>
-              <div className="modal-actions">
-                <AlphaButton className="btn btn-sm" onClick={handleCloseRefineModal} disabled={isRefining}>
-                  {t("common.cancel", "Cancel")}
-                </AlphaButton>
-              </div>
-            </div>
-          </AlphaDialogBackdrop>
-        )}
+        <TaskRefineDialog
+          taskId={task.id}
+          projectId={projectId}
+          addToast={addToast}
+          onRefinementCreated={onRefinementCreated}
+          onClose={handleCloseRefineModal}
+        />
+      )}
         {selectedSourceAgentId && (
           <Suspense fallback={null}>
             <AgentDetailView
@@ -7187,8 +7350,7 @@ export function TaskDetailContent({
             />
           </Suspense>
         )}
-      </AlphaSurface>
-    </AlphaBoundary>
+      </UiSurface>
   );
 }
 
@@ -7196,7 +7358,7 @@ export function TaskDetailContent({
 FNXC:TaskDetailDefinition 2026-09-13-11:59:
 La modale et le drawer conservent un nom accessible localisé même si leur header visuel ne contient plus le titre de la tâche. Le nom vient d’une chaîne stable et non d’un élément visuel susceptible d’être absent.
 */
-export function TaskDetailModal({ onClose, alphaMobileDrawer = false, ...props }: TaskDetailModalProps) {
+export function TaskDetailModal({ onClose, mobileDrawer = false, ...props }: TaskDetailModalProps) {
   const { t } = useTranslation("app");
   const viewportMode = useViewportMode();
   const accessibleName = t("taskDetail.accessibleName", "Task detail");
@@ -7217,20 +7379,20 @@ export function TaskDetailModal({ onClose, alphaMobileDrawer = false, ...props }
   */
   const isMobileTransition = viewportMode === "mobile";
 
-  if (alphaMobileDrawer && isMobileTransition) {
+  if (mobileDrawer && isMobileTransition) {
     return (
-      <AlphaMobileDrawer
+      <MobileDrawer
         open
         title={accessibleName}
         onClose={requestClose}
-        testId="alpha-mobile-drawer-task-detail"
+        testId="mobile-drawer-task-detail"
         contentOwnsHeader
         contentOwnsScroll
       >
-        <div className="modal modal-lg task-detail-modal task-detail-modal--alpha-drawer">
+        <div className="modal modal-lg task-detail-modal task-detail-modal--native-drawer">
           <TaskDetailContent {...props} onRequestClose={requestClose} />
         </div>
-      </AlphaMobileDrawer>
+      </MobileDrawer>
     );
   }
 
@@ -7244,12 +7406,12 @@ export function TaskDetailModal({ onClose, alphaMobileDrawer = false, ...props }
       hideHeader
       dragHandleSelector=".task-detail-content > .modal-header"
       className="floating-window--task-detail"
-      /* FNXC:ModalTouchGeometry 2026-07-26-19:05: Task Detail shares its layer with Quick Chat and pop-outs so interaction order remains coordinated by floatingWindowStack. */
+      /* FNXC:ModalTouchGeometry 2026-09-14-11:35: Task Detail shares its layer with Chat work windows so interaction order remains coordinated by floatingWindowStack. */
       layer="task-detail"
-      defaultSize={{ width: 800, height: 680 }}
+      /* FNXC:TaskWindowIdentity 2026-09-15-04:01: FN-401 — the standard task-window size is now a shared constant so detached chats open at exactly this geometry. */
+      defaultSize={{ width: FLOATING_WINDOW_TASK_STANDARD_WIDTH, height: FLOATING_WINDOW_TASK_STANDARD_HEIGHT }}
       minSize={{ width: 480, height: 480 }}
       /* FNXC:ModalTouchGeometry 2026-07-26-19:05: Replace legacy size-only persistence with complete geometry and suspend it for phone and short sheet layouts. */
-      persistGeometryKey="floating-window:task-detail"
       suspendGeometryPersistenceOnMobile
       suspendGeometryPersistenceOnShortViewport
       /* FNXC:ModalTouchGeometry 2026-07-26-19:05: Keep outside dismissal preference-gated; unconditional pointer-down would regress the default-off contract. */

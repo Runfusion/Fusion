@@ -303,12 +303,78 @@ export function revertTask(id: string, projectId?: string, body?: RevertTaskOpti
   });
 }
 
-export function approvePlan(id: string, projectId?: string): Promise<Task> {
-  return api<Task>(withProjectId(`/tasks/${id}/approve-plan`, projectId), { method: "POST" });
+/*
+FNXC:TaskRevert 2026-09-15-10:00 (FN-416):
+Client contract for `POST /tasks/:id/revert/restore` — the context-menu "Restore revert" action
+that replaced the reverted card's Delete/Revise buttons. Like `revertTask` this is a discriminated
+union, NOT a `Task`: the route never moves the source task, it only stamps the additive
+`restoredAt` marker that makes the Reverted badge disappear.
+*/
+export interface RestoreTaskRevertGitResult {
+  mode: "git";
+  clean?: boolean;
+  restoreCommitSha?: string;
+  restoreCommitShas?: string[];
+  conflicts?: unknown;
+  alreadyRestored?: boolean;
+  unsupported?: boolean;
+  needsHuman?: boolean;
+  reason?: string;
 }
 
-export function rejectPlan(id: string, projectId?: string): Promise<Task> {
-  return api<Task>(withProjectId(`/tasks/${id}/reject-plan`, projectId), { method: "POST" });
+export interface RestoreTaskRevertAiResult {
+  mode: "ai";
+  createdTaskId: string;
+  alreadyOpen?: boolean;
+}
+
+export type RestoreTaskRevertResult = RestoreTaskRevertGitResult | RestoreTaskRevertAiResult;
+
+export interface RestoreTaskRevertOptions {
+  mode?: "git" | "ai" | "auto";
+}
+
+export function restoreTaskRevert(
+  id: string,
+  projectId?: string,
+  body?: RestoreTaskRevertOptions,
+): Promise<RestoreTaskRevertResult> {
+  return api<RestoreTaskRevertResult>(withProjectId(`/tasks/${id}/revert/restore`, projectId), {
+    method: "POST",
+    body: JSON.stringify(body ?? {}),
+  });
+}
+
+/*
+FNXC:HumanPlanApproval 2026-09-15-06:24:
+FN-408 — both decisions may carry an operator message: an approval note becomes implementation
+context, a rejection message becomes planner feedback. `expectedPlanFingerprint`/`expectedEpisodeId`
+make a decision opened in a stale tab fail loudly instead of validating a plan the operator never
+read, and `requestId` makes a double submit idempotent. All fields are optional so the historical
+two-argument call sites (ordinary plan-approval holds) keep working byte-identically.
+*/
+export interface PlanDecisionOptions {
+  message?: string;
+  requestId?: string;
+  expectedPlanFingerprint?: string;
+  expectedEpisodeId?: string;
+}
+
+function planDecisionInit(options?: PlanDecisionOptions): RequestInit {
+  if (!options || Object.keys(options).length === 0) return { method: "POST" };
+  return {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(options),
+  };
+}
+
+export function approvePlan(id: string, projectId?: string, options?: PlanDecisionOptions): Promise<Task> {
+  return api<Task>(withProjectId(`/tasks/${id}/approve-plan`, projectId), planDecisionInit(options));
+}
+
+export function rejectPlan(id: string, projectId?: string, options?: PlanDecisionOptions): Promise<Task> {
+  return api<Task>(withProjectId(`/tasks/${id}/reject-plan`, projectId), planDecisionInit(options));
 }
 
 

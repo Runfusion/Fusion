@@ -1,13 +1,22 @@
 import "./ThemeSelector.css";
 import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
-import type { ThemeMode, ColorTheme } from "@fusion/core";
+import { DEFAULT_UI_STYLE, type ThemeMode, type ColorTheme, type UiStyle } from "@fusion/core";
 import { THEME_MODES } from "./themeOptions";
 import { ThemeDropdown } from "./ThemeDropdown";
+import { UiStyleSelector } from "./UiStyleSelector";
 
 interface ThemeSelectorProps {
   themeMode: ThemeMode;
   colorTheme: ColorTheme;
+  /*
+  FNXC:UiStyleAxis 2026-09-15-00:20:
+  The interface style is the second, independent appearance axis. ThemeSelector is the one control both
+  entry points render, so it is where the two axes sit side by side; it is optional here only so older
+  test adapters keep compiling, never so a real composition can pass a no-op.
+  */
+  uiStyle?: UiStyle;
+  onUiStyleChange?: (style: UiStyle) => void;
   dashboardFontScalePct?: number;
   shadcnCustomColors?: Record<string, string>;
   resolvedThemeMode?: "dark" | "light";
@@ -30,6 +39,8 @@ const FONT_SCALE_OPTIONS = [
 export function ThemeSelector({
   themeMode,
   colorTheme,
+  uiStyle = DEFAULT_UI_STYLE,
+  onUiStyleChange,
   dashboardFontScalePct = 100,
   shadcnCustomColors = {},
   resolvedThemeMode = themeMode === "light" ? "light" : "dark",
@@ -46,9 +57,11 @@ export function ThemeSelector({
     Reset to defaults must match fresh-install behavior: System mode follows the OS preference while Shadcn Ember stays the default color theme, without migrating explicit Ocean or legacy theme choices.
     */
     onColorThemeChange("shadcn-ember");
+    /* FNXC:UiStyleAxis 2026-09-15-00:20: an Appearance reset restores the default interface style with the other appearance defaults. */
+    onUiStyleChange?.(DEFAULT_UI_STYLE);
     onDashboardFontScaleChange(100);
     onShadcnCustomColorsChange({});
-  }, [onThemeModeChange, onColorThemeChange, onDashboardFontScaleChange, onShadcnCustomColorsChange]);
+  }, [onThemeModeChange, onColorThemeChange, onUiStyleChange, onDashboardFontScaleChange, onShadcnCustomColorsChange]);
 
   return (
     <div className="theme-selector">
@@ -79,6 +92,13 @@ export function ThemeSelector({
         resolvedThemeMode={resolvedThemeMode}
         onShadcnCustomColorsChange={onShadcnCustomColorsChange}
       />
+
+      {onUiStyleChange ? (
+        <>
+          <div className="theme-section-title">{t("uiStyle.label", "Interface style")}</div>
+          <UiStyleSelector uiStyle={uiStyle} onChange={onUiStyleChange} />
+        </>
+      ) : null}
 
       <div className="theme-section-title">{t("theme.fontSize", "Font Size")}</div>
       <div className="theme-font-size-toggle" role="radiogroup" aria-label={t("theme.fontSizeLabel", "Dashboard font size")}>

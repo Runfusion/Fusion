@@ -90,34 +90,10 @@ export const generalSearchEntries: SettingsSearchEntry[] = [
     sectionId: "general",
     key: "mobileNavPrimaryItems",
     labelKey: "settings.general.mobileNavPrimaryItems",
-    labelFallback: "Mobile footer quick actions",
+    labelFallback: "Navigation quick access",
     helpKey: "settings.general.mobileNavPrimaryItemsHint",
-    helpFallback: "Default: Dashboard, Tasks, Agents, Missions, Chat, Mailbox. Unselected destinations remain in More.",
-    keywords: ["mobile", "footer", "navigation", "planning", "more"],
-  },
-  {
-    sectionId: "general",
-    key: "quickChatButtonMode",
-    labelKey: "settings.general.quickChatLauncher",
-    labelFallback: "Quick Chat launcher",
-    helpKey: "settings.general.quickChatLauncherHint",
-    helpFallback:
-      "Choose whether Quick Chat opens from the draggable floating button, a footer button beside Terminal, or stays hidden. Default: off (hidden).",
-    /*
-    FNXC:SettingsSearch 2026-07-15-17:35:
-    "FAB" is indexed as a keyword rather than left to the copy: the legacy stored key is `showQuickChatFAB`, so operators and older docs still call this the Quick Chat FAB even though the label never says it.
-    */
-    keywords: ["FAB", "floating action button"],
-  },
-  {
-    sectionId: "general",
-    key: "quickChatCloseOnOutsideClick",
-    labelKey: "settings.general.quickChatCloseOnOutsideClick",
-    labelFallback: "Close Quick Chat on outside click",
-    helpKey: "settings.general.quickChatCloseOnOutsideClickHint",
-    helpFallback:
-      "When enabled, clicking outside the Quick Chat window closes it. Disable to keep it open until you close it explicitly. Default: enabled.",
-    keywords: ["dismiss", "backdrop"],
+    helpFallback: "Default: Dashboard, Board, Planning, Missions, Mailbox. Choose up to 5 destinations and their order; every other destination remains in More.",
+    keywords: ["mobile", "footer", "navigation", "quick access", "planning", "agents", "more"],
   },
   {
     sectionId: "general",

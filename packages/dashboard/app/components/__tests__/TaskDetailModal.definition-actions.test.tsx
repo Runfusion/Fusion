@@ -55,8 +55,15 @@ function openPlanDocument(): void {
 }
 
 describe("TaskDetailModal", () => {
-  describe("Plan tab edit mode", () => {
-    it("shows Edit button in Plan tab", () => {
+  /*
+  FNXC:TaskDetailPresentation 2026-09-15-16:02:
+  FN-424 removed Copy, `Open PROMPT.md` and Edit from the plan sub-view together with the inline
+  specification editor they opened. The cases that asserted the edit textarea, Cancel/Save, and
+  `Ask AI to Revise` are deleted with their subject; what replaces them asserts the read-only
+  contract on both hosts, including with a mounted file browser.
+  */
+  describe("Plan tab read-only sub-view", () => {
+    it("exposes Read plan and no write action in the Plan tab", () => {
       render(
         <TaskDetailModal
           task={makeTask({ prompt: "# Test\n\nSpec content." })}
@@ -73,13 +80,14 @@ describe("TaskDetailModal", () => {
       expect(screen.queryByRole("button", { name: "Definition" })).toBeNull();
       expect(screen.getByRole("button", { name: "Read plan" })).toBeTruthy();
       openPlanDocument();
-      expect(screen.getByText("Edit")).toBeTruthy();
+      expect(screen.queryByText("Edit")).toBeNull();
+      expect(screen.queryByText("Copy")).toBeNull();
+      expect(screen.getByTestId("task-detail-plan-full")).toHaveTextContent("Spec content.");
     });
 
-    it("opens the task PROMPT.md file from the near-top Plan action", async () => {
-      const user = userEvent.setup();
+    it("offers no Open PROMPT.md action even when a file browser is mounted", async () => {
       const openFile = vi.fn();
-      const { container } = render(
+      render(
         <FileBrowserProvider openFile={openFile}>
           <TaskDetailModal
             task={makeTask({ id: "FN-099", prompt: "# Test\n\nSpec content." })}
@@ -94,18 +102,14 @@ describe("TaskDetailModal", () => {
       );
 
       openPlanDocument();
-      const actionRow = document.querySelector(".detail-spec-edit-trigger");
-      expect(actionRow).toBeTruthy();
-      const promptButton = screen.getByRole("button", { name: "Open PROMPT.md" });
-      expect(actionRow?.contains(promptButton)).toBe(true);
 
-      await user.click(promptButton);
-
-      expect(openFile).toHaveBeenCalledWith(".fusion/tasks/FN-099/PROMPT.md", { workspace: "project" });
+      expect(document.querySelector(".detail-spec-edit-trigger")).toBeNull();
+      expect(screen.queryByRole("button", { name: "Open PROMPT.md" })).toBeNull();
+      expect(openFile).not.toHaveBeenCalled();
     });
 
-    it("clicking Edit shows textarea with current prompt content", () => {
-      const { container } = render(
+    it("renders the complete plan with no editor markup", () => {
+      render(
         <TaskDetailModal
           task={makeTask({ prompt: "# Test\n\nSpec content." })}
           initialTab="definition"
@@ -120,26 +124,15 @@ describe("TaskDetailModal", () => {
       openPlanDocument();
       const planSection = document.querySelector(".detail-section--plan-prompt");
       expect(planSection).toBeTruthy();
-      // Initially showing markdown view
       const markdown = document.querySelector(".markdown-body");
       expect(markdown).toBeTruthy();
       expect(planSection?.contains(markdown)).toBe(true);
 
-      // Click Edit button
-      openPlanDocument();
-      fireEvent.click(screen.getByText("Edit"));
-
-      // Should show spec edit textarea (query by class for specificity)
-      const editMode = document.querySelector(".spec-editor-edit-mode");
-      const textarea = document.querySelector(".spec-editor-textarea") as HTMLTextAreaElement;
-      const feedback = document.querySelector(".spec-editor-feedback");
-      expect(editMode).toBeTruthy();
-      expect(textarea).toBeTruthy();
-      expect(feedback).toBeTruthy();
-      expect(planSection?.contains(editMode)).toBe(true);
-      expect(planSection?.contains(textarea)).toBe(true);
-      expect(planSection?.contains(feedback)).toBe(true);
-      expect(textarea.value).toBe("# Test\n\nSpec content.");
+      expect(document.querySelector(".spec-editor-edit-mode")).toBeNull();
+      expect(document.querySelector(".spec-editor-textarea")).toBeNull();
+      expect(document.querySelector(".spec-editor-feedback")).toBeNull();
+      expect(screen.queryByText("Ask AI to Revise")).toBeNull();
+      expect(screen.queryByText("Request AI Revision")).toBeNull();
     });
 
     it("keeps the no-prompt fallback inside the scoped full-width Plan wrapper", () => {
@@ -163,8 +156,8 @@ describe("TaskDetailModal", () => {
       expect(planSection?.contains(fallback)).toBe(true);
     });
 
-    it("keeps embedded Plan edit controls inside the full-width wrapper", () => {
-      const { container } = render(
+    it("keeps the embedded Plan read inside the full-width wrapper with no editor controls", () => {
+      render(
         <TaskDetailContent
           task={makeTask({ prompt: "# Embedded\n\nSpec content." })}
           initialTab="definition"
@@ -180,128 +173,13 @@ describe("TaskDetailModal", () => {
       expect(document.querySelector(".task-detail-content--embedded")).toBeTruthy();
       openPlanDocument();
       const planSection = document.querySelector(".detail-section--plan-prompt");
-      openPlanDocument();
-      fireEvent.click(screen.getByText("Edit"));
-
-      const editMode = document.querySelector(".spec-editor-edit-mode");
-      const textarea = document.querySelector(".spec-editor-textarea");
-      const feedback = document.querySelector(".spec-editor-feedback");
       expect(planSection).toBeTruthy();
-      expect(planSection?.contains(editMode)).toBe(true);
-      expect(planSection?.contains(textarea)).toBe(true);
-      expect(planSection?.contains(feedback)).toBe(true);
-    });
+      expect(planSection?.contains(screen.getByTestId("task-detail-plan-full"))).toBe(true);
 
-    it("clicking Cancel returns to view mode without saving", () => {
-      const { container } = render(
-        <TaskDetailModal
-          task={makeTask({ prompt: "# Test Task\n\nTest specification." })}
-          initialTab="definition"
-          onClose={noop}
-          onDeleteTask={noopDelete}
-          onMergeTask={noopMerge}
-          onOpenDetail={noopOpenDetail}
-          addToast={noop}
-        />,
-      );
-
-      openPlanDocument();
-      fireEvent.click(screen.getByText("Edit"));
-      const textarea = document.querySelector(".spec-editor-textarea") as HTMLTextAreaElement;
-      fireEvent.change(textarea, { target: { value: "Modified content" } });
-
-      // Click Cancel
-      fireEvent.click(screen.getByText("Cancel"));
-
-      // Should show markdown view with original content
-      expect(document.querySelector(".markdown-body")).toBeTruthy();
+      expect(screen.queryByText("Edit")).toBeNull();
+      expect(document.querySelector(".spec-editor-edit-mode")).toBeNull();
       expect(document.querySelector(".spec-editor-textarea")).toBeNull();
-    });
-
-    it("saving updates the task and returns to view mode", async () => {
-      const { updateTask } = await import("../../api");
-      const mockUpdate = vi.mocked(updateTask);
-      mockUpdate.mockResolvedValueOnce({ id: "FN-099" } as Task);
-
-      const { container } = render(
-        <TaskDetailModal
-          task={makeTask({ id: "FN-099", prompt: "# Original" })}
-          initialTab="definition"
-          onClose={noop}
-          onDeleteTask={noopDelete}
-          onMergeTask={noopMerge}
-          onOpenDetail={noopOpenDetail}
-          addToast={noop}
-        />,
-      );
-
-      openPlanDocument();
-      fireEvent.click(screen.getByText("Edit"));
-      const textarea = document.querySelector(".spec-editor-textarea") as HTMLTextAreaElement;
-      fireEvent.change(textarea, { target: { value: "# Updated" } });
-
-      fireEvent.click(screen.getByText("Save"));
-
-      await waitFor(() => {
-        expect(mockUpdate).toHaveBeenCalledWith("FN-099", { prompt: "# Updated" }, undefined);
-      });
-
-      // Should return to view mode
-      expect(document.querySelector(".markdown-body")).toBeTruthy();
-    });
-
-    it("AI revision feedback section appears in edit mode", () => {
-      render(
-        <TaskDetailModal
-          task={makeTask({ prompt: "# Test" })}
-          initialTab="definition"
-          onClose={noop}
-          onDeleteTask={noopDelete}
-          onMergeTask={noopMerge}
-          onOpenDetail={noopOpenDetail}
-          addToast={noop}
-        />,
-      );
-
-      openPlanDocument();
-      fireEvent.click(screen.getByText("Edit"));
-
-      expect(screen.getByText("Ask AI to Revise")).toBeTruthy();
-      expect(screen.getByPlaceholderText(/e.g., 'Add more details/)).toBeTruthy();
-      expect(screen.getByText("Request AI Revision")).toBeTruthy();
-    });
-
-    it("requesting AI revision works and closes modal", async () => {
-      const { requestSpecRevision } = await import("../../api");
-      vi.mocked(requestSpecRevision).mockResolvedValueOnce({} as any);
-      const onClose = vi.fn();
-      const addToast = vi.fn();
-
-      render(
-        <TaskDetailModal
-          task={makeTask({ id: "FN-099", column: "todo", prompt: "# Test" })}
-          initialTab="definition"
-          onClose={onClose}
-          onDeleteTask={noopDelete}
-          onMergeTask={noopMerge}
-          onOpenDetail={noopOpenDetail}
-          addToast={addToast}
-        />,
-      );
-
-      openPlanDocument();
-      fireEvent.click(screen.getByText("Edit"));
-
-      const feedbackInput = screen.getByPlaceholderText(/e.g., 'Add more details/);
-      fireEvent.change(feedbackInput, { target: { value: "Please add more error handling details" } });
-
-      fireEvent.click(screen.getByText("Request AI Revision"));
-
-      await waitFor(() => {
-        expect(requestSpecRevision).toHaveBeenCalledWith("FN-099", "Please add more error handling details", undefined);
-        expect(addToast).toHaveBeenCalledWith("AI revision requested. Task moved to planning.", "success");
-        expect(onClose).toHaveBeenCalled();
-      });
+      expect(document.querySelector(".spec-editor-feedback")).toBeNull();
     });
 
     it("shows all tabs in correct order for in-progress task", () => {
@@ -450,7 +328,7 @@ describe("TaskDetailModal", () => {
       ]);
     });
 
-    it("shows empty state and Edit button when no prompt", () => {
+    it("shows the empty state and still no write action when there is no prompt", () => {
       render(
         <TaskDetailModal
           task={makeTask({ prompt: "" })}
@@ -466,7 +344,8 @@ describe("TaskDetailModal", () => {
       expect(screen.getByRole("button", { name: "Read plan" })).toBeTruthy();
       openPlanDocument();
       expect(screen.getByText("(no prompt)")).toBeTruthy();
-      expect(screen.getByText("Edit")).toBeTruthy();
+      expect(screen.queryByText("Edit")).toBeNull();
+      expect(screen.queryByTestId("task-detail-plan-copy")).toBeNull();
     });
   });
 
@@ -559,6 +438,63 @@ describe("TaskDetailModal", () => {
       expect(screen.getByTestId("detail-plan-approval-footer-reject")).toBeTruthy();
       expect(screen.getByText("Approval needed: Plan Review did not converge")).toBeTruthy();
       expect(screen.getByText(/exhausted|without approving|stopped the replan loop/i)).toBeTruthy();
+    });
+
+    /*
+    FNXC:HumanPlanApproval 2026-09-16-05:01:
+    FN-448 symptom reproduction. Before the fix, a card armed for a human plan decision mounted
+    HumanPlanApprovalControls in BOTH the banner and the sticky footer, so the operator saw two
+    "Message (optional)" fields and two Reject/Approve pairs for a single decision. The decision is
+    now taken exactly once, from the banner.
+    */
+    it("renders a single messaged decision surface with no footer duplicate", () => {
+      render(
+        <TaskDetailContent
+          task={makeTask({
+            column: "todo",
+            status: "awaiting-approval",
+            prompt: "# Plan",
+            humanPlanApproval: { enabled: true },
+          } as Partial<Task>)}
+          initialTab="definition"
+          embedded
+          onRequestClose={noop}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      expect(screen.getAllByTestId(/^human-plan-approval-controls-/)).toHaveLength(1);
+      expect(screen.getByTestId("human-plan-approval-controls-banner")).toBeTruthy();
+      expect(screen.queryByTestId("human-plan-approval-controls-footer")).toBeNull();
+      expect(screen.getAllByLabelText("Message (optional)")).toHaveLength(1);
+      expect(screen.getAllByRole("button", { name: "Approve" })).toHaveLength(1);
+      expect(screen.getAllByRole("button", { name: "Reject" })).toHaveLength(1);
+      // The legacy bare footer buttons belong to unarmed holds only.
+      expect(screen.queryByTestId("detail-plan-approval-footer-approve")).toBeNull();
+      expect(screen.queryByTestId("detail-plan-approval-footer-reject")).toBeNull();
+    });
+
+    /* FNXC:HumanPlanApproval 2026-09-16-05:01: the unarmed control keeps its legacy footer buttons. */
+    it("keeps the legacy footer Approve/Reject Plan buttons for an unarmed hold", () => {
+      render(
+        <TaskDetailContent
+          task={makeTask({ column: "todo", status: "awaiting-approval", prompt: "# Plan" })}
+          initialTab="definition"
+          embedded
+          onRequestClose={noop}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      expect(screen.queryAllByTestId(/^human-plan-approval-controls-/)).toHaveLength(0);
+      expect(screen.getByTestId("detail-plan-approval-footer-approve")).toBeTruthy();
+      expect(screen.getByTestId("detail-plan-approval-footer-reject")).toBeTruthy();
     });
 
     /*
@@ -1404,7 +1340,12 @@ describe("TaskDetailModal", () => {
 
       fireEvent.click(screen.getByRole("menuitem", { name: "Refine" }));
 
-      expect(screen.getByText("Refine", { selector: "h3" })).toBeTruthy();
+      /*
+      FNXC:TaskRefine 2026-09-14-22:23:
+      FN-400: pre-existing broken assertion repaired. The canonical ViewHeader renders its title inside a span, so a
+      direct-text `h3` query could never match; query the level-3 heading role instead.
+      */
+      expect(screen.getByRole("heading", { level: 3, name: "Refine" })).toBeTruthy();
       expect(screen.getByPlaceholderText("Enter your feedback here...")).toBeTruthy();
     });
 
@@ -1563,11 +1504,16 @@ describe("TaskDetailModal", () => {
       expect(refineTask).not.toHaveBeenCalled();
     });
 
-    it("opens the refine composer from an initial action request", () => {
+    /*
+    FNXC:TaskRefine 2026-09-14-22:23:
+    FN-400 removed the one-shot detail-open refine deep link; a card or list row now hosts the composer itself. What
+    survives here is the surface's own header Actions entry.
+    */
+    it("opens the refine composer from its own header Actions entry", () => {
       render(
         <TaskDetailModal
           task={makeTask({ id: "FN-001", column: "done" })}
-          initialAction={{ action: "refine", requestId: 1 }}
+          initialTab="definition"
           onClose={noop}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
@@ -1576,7 +1522,10 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      expect(screen.getByText("Refine", { selector: "h3" })).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Actions" }));
+      fireEvent.click(screen.getByRole("menuitem", { name: "Refine" }));
+
+      expect(screen.getByRole("heading", { level: 3, name: "Refine" })).toBeInTheDocument();
       expect(screen.getByPlaceholderText("Enter your feedback here...")).toBeInTheDocument();
     });
 
@@ -1610,11 +1559,17 @@ describe("TaskDetailModal", () => {
 
       fireEvent.click(screen.getByText("Create Refinement Task"));
 
+      /*
+      FNXC:TaskRefine 2026-09-14-22:23:
+      FN-400: a successful refinement closes the composer only. The record stays open because the standalone dialog no
+      longer owns the surface that hosts it — a card or list row hosting the same dialog has no record to close.
+      */
       await waitFor(() => {
         expect(refineTask).toHaveBeenCalledWith("FN-001", "Need to add more tests", undefined);
         expect(addToast).toHaveBeenCalledWith("Refinement task created: FN-002", "success");
-        expect(onClose).toHaveBeenCalled();
       });
+      await waitFor(() => expect(screen.queryByTestId("task-refine-dialog")).not.toBeInTheDocument());
+      expect(onClose).not.toHaveBeenCalled();
     });
 
     it("preserves non-default workflow context when closing after refinement success", async () => {
@@ -1659,8 +1614,9 @@ describe("TaskDetailModal", () => {
       await waitFor(() => {
         expect(refineTask).toHaveBeenCalledWith("FN-001", "Keep the same workflow lane", "project-1");
         expect(addToast).toHaveBeenCalledWith("Refinement task created: FN-003", "success");
-        expect(onClose).toHaveBeenCalled();
       });
+      await waitFor(() => expect(screen.queryByTestId("task-refine-dialog")).not.toBeInTheDocument());
+      expect(onClose).not.toHaveBeenCalled();
       expect(onTaskUpdated).not.toHaveBeenCalled();
       expect(readBoardWorkflowSelection("project-1")).toBe("WF-active");
       expect(readBoardWorkflowSelection("project-1")).not.toBe("builtin:coding");
@@ -1722,15 +1678,15 @@ describe("TaskDetailModal", () => {
       // Click Refine from the dropdown
       fireEvent.click(screen.getByRole("menuitem", { name: "Refine" }));
 
-      // The submit button should be inside .detail-refine-input-group (the input area)
-      const inputGroup = document.querySelector(".detail-refine-input-group");
+      // The submit button should be inside the composer's input group (the input area)
+      const inputGroup = document.querySelector(".task-refine-dialog__input-group");
       expect(inputGroup).toBeTruthy();
       const submitButton = inputGroup!.querySelector("button.btn-primary");
       expect(submitButton).toBeTruthy();
       expect(submitButton!.textContent).toBe("Create Refinement Task");
 
       // The submit button should NOT be in the footer .modal-actions
-      const modalActions = document.querySelector(".detail-refine-modal .modal-actions");
+      const modalActions = document.querySelector(".task-refine-dialog .modal-actions");
       expect(modalActions).toBeTruthy();
       expect(modalActions!.querySelector("button.btn-primary")).toBeNull();
     });
@@ -1788,8 +1744,8 @@ describe("TaskDetailModal", () => {
       // Click Refine from the dropdown
       fireEvent.click(screen.getByRole("menuitem", { name: "Refine" }));
 
-      const inputGroup = document.querySelector(".detail-refine-input-group")!;
-      expect(inputGroup.querySelector(".detail-refine-char-count")).toBeTruthy();
+      const inputGroup = document.querySelector(".task-refine-dialog__input-group")!;
+      expect(inputGroup.querySelector(".task-refine-dialog__char-count")).toBeTruthy();
       expect(inputGroup.querySelector("button.btn-primary")).toBeTruthy();
     });
   });
@@ -1854,7 +1810,12 @@ describe("TaskDetailModal", () => {
       expect(mockFetchDetail).not.toHaveBeenCalled();
     });
 
-    it("keeps an inline edit buffer stable while a Plan Review refresh arrives", async () => {
+    /*
+    FNXC:TaskDetailPresentation 2026-09-15-16:02:
+    FN-424 removed the inline edit buffer, so this case no longer guards a draft — it now guards that
+    an arriving Plan Review refresh updates the read-only plan in place without any editor markup.
+    */
+    it("updates the read-only plan in place when a Plan Review refresh arrives", async () => {
       vi.useFakeTimers();
       const { fetchTaskPrompt } = await import("../../api");
       const mockFetchPrompt = vi.mocked(fetchTaskPrompt);
@@ -1868,15 +1829,10 @@ describe("TaskDetailModal", () => {
       await act(async () => { await vi.advanceTimersByTimeAsync(0); });
       expect(screen.getByText("Server revision")).toBeTruthy();
 
-      openPlanDocument();
-      fireEvent.click(screen.getByText("Edit"));
-      const textarea = document.querySelector(".spec-editor-textarea") as HTMLTextAreaElement;
-      fireEvent.change(textarea, { target: { value: "# Local operator edit" } });
-      const sameTextarea = textarea;
       await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
       expect(mockFetchPrompt).toHaveBeenCalledTimes(2);
-      expect(document.querySelector(".spec-editor-textarea")).toBe(sameTextarea);
-      expect(textarea.value).toBe("# Local operator edit");
+      expect(screen.getByText("New server revision")).toBeTruthy();
+      expect(document.querySelector(".spec-editor-textarea")).toBeNull();
     });
 
     it("ignores a late planning response after the task changes", async () => {

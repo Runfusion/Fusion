@@ -426,6 +426,7 @@ export function resolveMergerThinkingLevel(
 ): string | undefined {
   return firstThinkingLevel(
     taskThinkingLevel,
+    resolveSelectedWorkflowModelLane(settings, "mergerThinkingLevel"),
     settings?.mergerThinkingLevel,
     settings?.mergerGlobalThinkingLevel,
     settings?.defaultThinkingLevelOverride,
@@ -442,9 +443,10 @@ export function resolveExecutorFallbackThinkingLevel(
   settings: Partial<Settings> | undefined,
 ): string | undefined {
   return firstThinkingLevel(
-    settings?.executionFallbackThinkingLevel,
-    settings?.fallbackThinkingLevel,
     resolveSelectedWorkflowModelLane(settings, "executionFallbackThinkingLevel"),
+    settings?.executionFallbackThinkingLevel,
+    settings?.executionGlobalFallbackThinkingLevel,
+    settings?.fallbackThinkingLevel,
     resolveExecutorThinkingLevel(taskThinkingLevel, settings),
   );
 }
@@ -454,9 +456,10 @@ export function resolvePlanningFallbackThinkingLevel(
   taskThinkingLevel?: ThinkingLevel | string,
 ): string | undefined {
   return firstThinkingLevel(
-    settings?.planningFallbackThinkingLevel,
-    settings?.fallbackThinkingLevel,
     resolveSelectedWorkflowModelLane(settings, "planningFallbackThinkingLevel"),
+    settings?.planningFallbackThinkingLevel,
+    settings?.planningGlobalFallbackThinkingLevel,
+    settings?.fallbackThinkingLevel,
     resolvePlanningThinkingLevel(settings, taskThinkingLevel),
   );
 }
@@ -466,9 +469,10 @@ export function resolveValidatorFallbackThinkingLevel(
   settings: Partial<Settings> | undefined,
 ): string | undefined {
   return firstThinkingLevel(
-    settings?.validatorFallbackThinkingLevel,
-    settings?.fallbackThinkingLevel,
     resolveSelectedWorkflowModelLane(settings, "validatorFallbackThinkingLevel"),
+    settings?.validatorFallbackThinkingLevel,
+    settings?.validatorGlobalFallbackThinkingLevel,
+    settings?.fallbackThinkingLevel,
     resolveValidatorThinkingLevel(taskThinkingLevel, settings),
   );
 }
@@ -489,7 +493,9 @@ export function resolveMergerFallbackThinkingLevel(settings: Partial<Settings> |
   return firstThinkingLevel(
     // FNXC:Settings-MergerModel 2026-07-16-00:00: A task's merger thinking selection governs both the primary and fallback merger session, so fallback must not re-inherit a project/global lane value.
     taskThinkingLevel,
+    resolveSelectedWorkflowModelLane(settings, "mergerFallbackThinkingLevel"),
     settings?.mergerFallbackThinkingLevel,
+    settings?.mergerGlobalFallbackThinkingLevel,
     settings?.fallbackThinkingLevel,
     resolveMergerThinkingLevel(settings),
   );

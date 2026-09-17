@@ -1,10 +1,10 @@
 import "./TaskCard.css";
-import { AlphaButton, AlphaSurface, AlphaTextArea } from "./alpha-ui";
+import { UiButton, UiSurface, UiTextArea } from "./ui";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { memo, useCallback, useState, useRef, useEffect, useLayoutEffect, useMemo, type CSSProperties, type ReactElement } from "react";
 import { createPortal } from "react-dom";
-import { Link, Clock, Layers, Pencil, ChevronDown, Folder, Target, Bot, Trash2, RotateCw, Zap, GitBranch, GitPullRequest, AlertTriangle, Eye, MoreHorizontal, Sparkles, X } from "lucide-react";
+import { Link, Clock, Layers, Pencil, ChevronDown, Folder, Target, Bot, Trash2, RotateCw, Zap, UserCheck, GitBranch, GitPullRequest, AlertTriangle, Eye, MoreHorizontal, Sparkles, X } from "lucide-react";
 import { isTaskExternallyBlocked } from "@fusion/core";
 import type { Task, TaskDetail, Column, ColumnId, PrInfo, IssueInfo, TaskPriority, GithubIssueAction, MergeResult, PlannerOversightLevel } from "@fusion/core";
 import {
@@ -21,11 +21,12 @@ import { resolveEffectiveAutoMerge } from "../../../core/src/merge/task-merge";
 // resolver — like resolveEffectiveAutoMerge above — must be imported from its source module
 // directly rather than the package barrel.
 import { resolveEffectivePlannerOversightLevel } from "../../../core/src/workflows/workflow-settings-resolver";
-import { addressPrFeedback, approvePlan, fetchTaskDetail, uploadAttachment, fetchMission, fetchAgent, refreshPrStatus, fetchWorkflowSettingValues, fetchBoardWorkflows, type WorkflowFieldDefinition, type RevertTaskOptions, type RevertTaskResult } from "../api";
+import { addressPrFeedback, approvePlan, fetchTaskDetail, uploadAttachment, fetchMission, fetchAgent, refreshPrStatus, fetchWorkflowSettingValues, fetchBoardWorkflows, type WorkflowFieldDefinition, type RevertTaskOptions, type RevertTaskResult, type RestoreTaskRevertOptions, type RestoreTaskRevertResult } from "../api";
 import { GitHubBadge } from "./GitHubBadge";
 import { GitLabBadge } from "./GitLabBadge";
 import { RuntimeFallbackBadge } from "./RuntimeFallbackBadge";
 import { PrCreateModal } from "./PrCreateModal";
+import { TaskRefineDialog } from "./TaskRefineDialog";
 import { TaskResetDialog } from "./TaskResetDialog";
 import { ProviderIcon } from "./ProviderIcon";
 import { PluginSlot } from "./PluginSlot";
@@ -37,7 +38,7 @@ import { useAgentsMapCache } from "../hooks/useAgentsMapCache";
 import { useLiveTimeTicker } from "../hooks/useLiveTimeTicker";
 import {
   isCompleteColumnRole,
-  isFieldEditableColumnRole,
+  isDescriptionEditableColumnRole,
   isPreImplementationColumnRole,
   isReviewColumnRole,
   isWipColumnRole,
@@ -58,11 +59,14 @@ import {
 } from "../utils/taskProgress";
 import { ACTIVE_STATUSES, isTaskAgentActive } from "../utils/taskActivity";
 import { getPrBadgeModifierClass } from "../utils/prBadgeClass";
-import { getTotalAgentActiveMs, getEndToEndDurationMs, getTimedDurationMs, getWorkflowRuntimeMs, parseTimestampToMs } from "../utils/taskTiming";
+import { getTaskRuntimeBreakdown, parseTimestampToMs } from "../utils/taskTiming";
 import { getTaskStatusBadgeLabel, getTaskWipLifecycleBadgeLabel, type TaskStatusBadgeContext, hasTaskStatusBadge, isTaskPlanningActive } from "../utils/taskStatusBadgeLabel";
 import {
   isReviewBudgetExhaustedApproval,
   isTaskAwaitingPlanApproval,
+  /* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 per-card decision badge and notice routing. */
+  isHumanPlanApprovalArmedClient,
+  resolveHumanPlanApprovalBadgeState,
 } from "../utils/reviewBudgetApproval";
 import { canStartPrFeedbackAddressing, getTaskPrimaryPrInfo } from "../utils/prFeedback";
 import type { ToastType } from "../hooks/useToast";
@@ -458,41 +462,6 @@ function getDoneCompletionMs(task: Task): number | null {
   return completionMs;
 }
 
-function getInProgressElapsedMs(task: Task, nowMs: number): number | null {
-  const startedMs = parseTimestampToMs(task.columnMovedAt ?? task.updatedAt);
-  if (startedMs == null) return null;
-
-  return Math.max(0, nowMs - startedMs);
-}
-
-// Wall-clock end-to-end runtime: from when the task first entered in-progress
-// to when it first entered done (or `now` if not yet done). Preferred over the
-// instrumented `[timing]` sum on cards in in-progress / in-review / done so the
-// timer reflects how long the task actually took, not just the time spent
-// inside instrumented code paths. Returns null on legacy tasks that completed
-// before `executionStartedAt` was tracked, so callers can fall back.
-function getTaskEndToEndDurationMs(
-  task: Task,
-  nowMs: number,
-  /*
-  FNXC:WorkflowLifecycleColumns 2026-07-31-10:10:
-  THREADED SO THE CONVERSION IS NOT INERT. `getTotalAgentActiveMs` gained an optional `columnFlags`
-  so the LIVE execution segment is counted from the card's own wip lane. This is one of its two
-  production callers, and it passed nothing — so the resolved path existed and never ran, and the
-  card chip under-reported the in-flight run on a renamed board by exactly its elapsed time.
-
-  An optional parameter no production caller supplies is a conversion that reads as done and behaves
-  as the literal: the census drops and nothing changes. Threading it here is what makes it real.
-  */
-  columnFlags?: TaskContextMenuColumnFlags,
-): number | null {
-  // FNXC:TaskTiming 2026-07-20-12:00: planning-only tasks have no execution
-  // accumulator, but their active AI duration still belongs on the card chip.
-  // Use the legacy execution window only when neither active-time source exists.
-  const totalActiveMs = getTotalAgentActiveMs(task, nowMs, columnFlags);
-  return totalActiveMs ?? getEndToEndDurationMs(task.executionStartedAt, task.executionCompletedAt, nowMs);
-}
-
 /*
 FNXC:WorkflowResolvedColumns 2026-07-30-01:20 (fleet phase — FLAGGED AND LEFT COUNTED):
 Module-scope, takes only a `Task`, and has no flags to consult. Converting it means either threading
@@ -536,36 +505,24 @@ function getMergeElapsedMs(task: Task, nowMs: number): number | null {
   return Math.max(0, nowMs - mergeStartedMs);
 }
 
-function getActiveMergeTotalMs(task: Task, nowMs: number, columnFlags?: TaskContextMenuColumnFlags): number | null {
-  const endToEndMs = getTaskEndToEndDurationMs(task, nowMs, columnFlags);
-  if (endToEndMs != null) {
-    return endToEndMs;
-  }
+/*
+FNXC:TaskCardRuntimeChip 2026-09-16-06:16:
+FN-457 replaced this file's four lane-specific duration helpers — `getInProgressElapsedMs`,
+`getTaskEndToEndDurationMs`, `getActiveMergeTotalMs`, and `getInstrumentedDurationMs` — with the one
+shared `getTaskRuntimeBreakdown` in `../utils/taskTiming`. Their invariants moved WITH them rather
+than being deleted:
 
-  const mergeElapsedMs = getMergeElapsedMs(task, nowMs);
-  const instrumentedMs = getInstrumentedDurationMs(task, nowMs);
-  if (instrumentedMs != null) {
-    return instrumentedMs + (mergeElapsedMs ?? 0);
-  }
+- The wip-lane `columnMovedAt` fallback (wall clock, so waiting and pauses counted) is now the
+  breakdown's LAST-RESORT branch, reached only when a legacy row carries no instrumentation at all.
+- "Prefer the server `timedExecutionMs` aggregate and do NOT add workflow runtime on top, because it
+  may already include it" survives verbatim as the breakdown's anti-double-count rule.
+- The `columnFlags` threading that the note below calls load-bearing is now UNCONDITIONAL: the chip
+  passes `taskColumnFlags` on every lane, closing the renamed-board hole where the wip branch called
+  the end-to-end helper without them.
 
-  return mergeElapsedMs;
-}
-
-
-function getInstrumentedDurationMs(task: Task, nowMs: number): number | null {
-  // Prefer server aggregate when present: it is the canonical persisted runtime
-  // and may already include workflow execution. Avoid adding workflow runtime
-  // again in that case.
-  if (typeof task.timedExecutionMs === "number") {
-    return task.timedExecutionMs;
-  }
-
-  const timed = getTimedDurationMs(task.log);
-  const workflow = getWorkflowRuntimeMs(task.workflowStepResults, nowMs);
-  if (timed == null && workflow == null) return null;
-  return (timed ?? 0) + (workflow ?? 0);
-}
-
+`getMergeElapsedMs` stays: it supplies both the live merge contribution to the verification bucket
+and the "Merge phase" half of the merge label.
+*/
 function formatElapsedDuration(elapsedMs: number): string {
   if (!Number.isFinite(elapsedMs) || elapsedMs < 0) return "";
 
@@ -733,15 +690,15 @@ export function ExternalBlockNotice({ task, variant, onOpenChatWithPrefill, onRe
       {(onOpenChatWithPrefill || onRetryTask) && (
         <span className="external-block-notice__actions">
           {onOpenChatWithPrefill && (
-            <AlphaButton type="button" className="btn btn-icon" onClick={explain} aria-label={t("tasks.externalBlock.explain", "Explain this error")} title={t("tasks.externalBlock.explain", "Explain this error")}>
+            <UiButton type="button" className="btn btn-icon" onClick={explain} aria-label={t("tasks.externalBlock.explain", "Explain this error")} title={t("tasks.externalBlock.explain", "Explain this error")}>
               <Bot aria-hidden="true" />
-            </AlphaButton>
+            </UiButton>
           )}
           {onRetryTask && (
-            <AlphaButton type="button" className="btn" onClick={(event) => void retry(event)} disabled={isResuming}>
+            <UiButton type="button" className="btn" onClick={(event) => void retry(event)} disabled={isResuming}>
               <RotateCw aria-hidden="true" />
               {isResuming ? t("tasks.externalBlock.resuming", "Resuming…") : t("tasks.externalBlock.retry", "Retry")}
-            </AlphaButton>
+            </UiButton>
           )}
         </span>
       )}
@@ -749,13 +706,55 @@ export function ExternalBlockNotice({ task, variant, onOpenChatWithPrefill, onRe
   );
 }
 
+/*
+FNXC:HumanPlanApproval 2026-09-15-06:24:
+FN-408 — one badge shared by the board card and BOTH ListView renders (mobile cards and the desktop
+table), so the three surfaces cannot drift in label or state. Module scope, never nested in a host
+render. Returns null for every card without the option, so no empty badge shell is produced.
+*/
+export function HumanPlanApprovalBadge({ task, variant }: { task: Task; variant: "card" | "list" }) {
+  const { t } = useTranslation("app");
+  const state = resolveHumanPlanApprovalBadgeState(task);
+  if (!state) return null;
+  const label = state === "approved"
+    ? t("tasks.humanPlanApproval.badgeApproved", "Plan approved by you")
+    : state === "awaiting"
+      ? t("tasks.humanPlanApproval.badgeAwaiting", "Awaiting your plan approval")
+      : t("tasks.humanPlanApproval.badgeArmed", "Your plan approval required before execution");
+  return (
+    <span
+      className={`${variant === "list" ? "list-execution-mode-badge" : "card-execution-mode-badge"} ${variant}-human-plan-approval-badge`}
+      data-testid={`${variant}-human-plan-approval-badge`}
+      data-state={state}
+      title={label}
+      aria-label={label}
+    >
+      <UserCheck aria-hidden="true" />
+      <span className="visually-hidden">{label}</span>
+    </span>
+  );
+}
+
 interface PlanApprovalNoticeProps {
   task: Task;
-  variant: "card" | "list" | "detail";
+  /*
+  FNXC:PlanApproval 2026-09-16-05:01:
+  FN-448 dropped the `card` variant: a board card communicates the wait through its status badge and
+  opens Task Detail, instead of being covered by an overlay that hid its own content.
+  */
+  variant: "list" | "detail";
   projectId?: string;
   addToast: (message: string, type?: ToastType) => void;
   onTaskUpdated?: (task: Task) => void;
   isPlanningLane?: boolean;
+  /*
+  FNXC:HumanPlanApproval 2026-09-15-06:24:
+  FN-408 — a per-card human decision must carry a message and an explicit plan/episode identity, and
+  a slim board row has neither. For those cards the notice opens the task record instead of sending a
+  blind approval that would bypass the message field and the stale-plan fence. Every other approval
+  reason keeps its direct Approve action.
+  */
+  onOpenTaskRecord?: (task: Task) => void;
 }
 
 /*
@@ -769,6 +768,7 @@ export function PlanApprovalNotice({
   addToast,
   onTaskUpdated,
   isPlanningLane = true,
+  onOpenTaskRecord,
 }: PlanApprovalNoticeProps) {
   const { t } = useTranslation("app");
   const [isApproving, setIsApproving] = useState(false);
@@ -776,6 +776,7 @@ export function PlanApprovalNotice({
   if (isTaskExternallyBlocked(task) || !awaitingApproval) return null;
 
   const replanCap = isReviewBudgetExhaustedApproval(task);
+  const requiresMessagedDecision = isHumanPlanApprovalArmedClient(task);
   /*
   FNXC:PlanApproval 2026-09-05-22:04:
   Board and List rows are slim and never carry prompt, so a client prompt gate makes the enabled primary action silently fail after a reload. The approve-plan endpoint owns status, column, and PROMPT.md validation; its refusal is shown through this notice's error toast.
@@ -807,14 +808,31 @@ export function PlanApprovalNotice({
             : t("tasks.planApproval.title", "Need Your Review")}
         </strong>
         <span className="plan-approval-notice__copy">
-          {replanCap
-            ? t("tasks.planApproval.replanCapCopy", "Review the current plan, then approve it or request specific changes.")
-            : t("tasks.planApproval.copy", "Review the plan before implementation starts.")}
+          {requiresMessagedDecision
+            ? t("tasks.humanPlanApproval.noticeCopy", "Open the task to approve or reject this plan, with an optional message.")
+            : replanCap
+              ? t("tasks.planApproval.replanCapCopy", "Review the current plan, then approve it or request specific changes.")
+              : t("tasks.planApproval.copy", "Review the plan before implementation starts.")}
         </span>
         <span className="plan-approval-notice__actions">
-          <AlphaButton type="button" className="btn btn-primary btn-sm" onClick={(event) => void approve(event)} disabled={isApproving}>
-            {isApproving ? t("tasks.planApproval.approving", "Approving...") : t("tasks.planApproval.approve", "Approve")}
-          </AlphaButton>
+          {requiresMessagedDecision ? (
+            <UiButton
+              type="button"
+              className="btn btn-primary btn-sm"
+              data-testid={`plan-approval-open-decision-${variant}-${task.id}`}
+              onClick={(event) => {
+                event.stopPropagation();
+                onOpenTaskRecord?.(task);
+              }}
+              disabled={!onOpenTaskRecord}
+            >
+              {t("tasks.humanPlanApproval.review", "Review plan")}
+            </UiButton>
+          ) : (
+            <UiButton type="button" className="btn btn-primary btn-sm" onClick={(event) => void approve(event)} disabled={isApproving}>
+              {isApproving ? t("tasks.planApproval.approving", "Approving...") : t("tasks.planApproval.approve", "Approve")}
+            </UiButton>
+          )}
         </span>
       </div>
   );
@@ -826,13 +844,21 @@ interface TaskCardProps {
   queued?: boolean;
   onOpenDetail: (task: Task | TaskDetail) => void;
   /**
-   * FNXC:TaskCardPlanning 2026-07-13-00:00:
-   * Board/List cards in pre-execution hold columns can seed Planning Mode from their own task description/title. The callback is optional so read-only/dock hosts omit the Plan menu item instead of rendering a dead shell.
+   * Workflow selection carried by workflow-aware board cards.
+   *
+   * FNXC:TaskCardPlanning 2026-09-15-10:40:
+   * FN-417 removed the card's `onPlanningMode` Plan menu entry, but this prop STAYS: its second
+   * production consumer is the FN-8251 planner-oversight resolution below, which falls back to the
+   * column's trusted selected workflow when the task carries no aggregate workflow of its own.
+   * Removing it would silently change card oversight indicators, which this task must not touch.
    */
-  onPlanningMode?: (initialPlan: string, workflowId?: string | null) => void;
-  /** Workflow selection to preserve when Planning Mode is launched from workflow-aware board cards. */
   planningWorkflowId?: string | null;
-  onOpenRefine?: (task: Task | TaskDetail) => void;
+  /*
+  FNXC:TaskRefine 2026-09-14-22:23:
+  FN-400: the card owns the Refine composer directly, exactly as it owns the Reset dialog. It reports the created child
+  through this callback instead of bubbling the intent up to a host that would open the full task record first.
+  */
+  onRefinementCreated?: (task: Task) => void;
   onOpenGroupModal?: (groupId: string) => void;
   addToast: (message: string, type?: ToastType) => void;
   globalPaused?: boolean;
@@ -841,8 +867,13 @@ interface TaskCardProps {
     updates: { title?: string; description?: string; dependencies?: string[]; dismissNearDuplicate?: boolean; githubTracking?: { enabled?: boolean } }
   ) => Promise<Task>;
   onRevertTask?: (id: string, body?: RevertTaskOptions) => Promise<RevertTaskResult>;
-  /** Resolution action for a successfully reverted task. */
-  onReviseTask?: (task: Task) => void;
+  /*
+  FNXC:TaskRevert 2026-09-15-10:00 (FN-416):
+  A reverted card now shows ONLY its badge — the Delete/Revise resolution buttons (and the
+  `onReviseTask` prop that fed them) are gone. Restoring the revert is a context-menu action
+  instead, so the affordance lives in one place on every surface (board card, list row, detail).
+  */
+  onRestoreRevertTask?: (id: string, body?: RestoreTaskRevertOptions) => Promise<RestoreTaskRevertResult>;
   onDeleteTask?: (id: string, options?: {
     removeDependencyReferences?: boolean;
     removeLineageReferences?: boolean;
@@ -1062,11 +1093,11 @@ function areTaskCardPropsEqual(previous: TaskCardProps, next: TaskCardProps): bo
       ? true
       : JSON.stringify(previousTask.customFields ?? null) === JSON.stringify(nextTask.customFields ?? null)) &&
     previous.onOpenDetail === next.onOpenDetail &&
-    previous.onPlanningMode === next.onPlanningMode &&
     previous.onOpenGroupModal === next.onOpenGroupModal &&
     previous.addToast === next.addToast &&
     previous.onUpdateTask === next.onUpdateTask &&
     previous.onRevertTask === next.onRevertTask &&
+    previous.onRestoreRevertTask === next.onRestoreRevertTask &&
     previous.onDeleteTask === next.onDeleteTask &&
     previous.onPauseTask === next.onPauseTask &&
     previous.onRetryTask === next.onRetryTask &&
@@ -1076,7 +1107,7 @@ function areTaskCardPropsEqual(previous: TaskCardProps, next: TaskCardProps): bo
     previous.onDuplicateTask === next.onDuplicateTask &&
     previous.onMergeTask === next.onMergeTask &&
     previous.onOpenDetailWithTab === next.onOpenDetailWithTab &&
-    previous.onOpenRefine === next.onOpenRefine &&
+    previous.onRefinementCreated === next.onRefinementCreated &&
     previous.onOpenMission === next.onOpenMission &&
     previous.onMoveTask === next.onMoveTask &&
     previous.fanout?.totalCount === next.fanout?.totalCount &&
@@ -1204,16 +1235,15 @@ function TaskCardComponent({
   projectId,
   queued,
   onOpenDetail,
-  onPlanningMode,
   planningWorkflowId,
-  onOpenRefine,
+  onRefinementCreated,
   onOpenGroupModal,
   addToast,
   globalPaused,
   onUpdateTask,
   onRevertTask,
+  onRestoreRevertTask,
   onDeleteTask,
-  onReviseTask,
   onPauseTask,
   onRetryTask,
   onOpenChatWithPrefill,
@@ -1243,6 +1273,7 @@ function TaskCardComponent({
   const columnLabel = useColumnLabel();
   const [fileDragOver, setFileDragOver] = useState(false);
   const [showResetDialog, setShowResetDialog] = useState(false);
+  const [showRefineDialog, setShowRefineDialog] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [editDescription, setEditDescription] = useState(task.description || "");
   /*
@@ -1875,7 +1906,15 @@ function TaskCardComponent({
   and after #2515 the `triage` half was dead weight. `taskColumnFlags` was already in scope here —
   the card simply never asked.
   */
-  const canEdit = isFieldEditableColumnRole(taskColumnFlags, task.column) && !isAgentActive && !isPaused && !queued && onUpdateTask;
+  /*
+  FNXC:TaskDescriptionEditing 2026-09-14-18:25:
+  FN-391: this card's inline editor writes the DESCRIPTION ONLY (see `enterEditMode`, which seeds
+  nothing else), so it follows the narrower manual-intake rule rather than the generic
+  pre-implementation field rule. Once a card has been released, an AI has planned or is executing
+  against that exact text and the pencil disappears — the settings form in Task Detail is still
+  reachable for the other parameters.
+  */
+  const canEdit = isDescriptionEditableColumnRole(taskColumnFlags, task.column) && !isAgentActive && !isPaused && !queued && onUpdateTask;
   const githubTrackedIssue = task.githubTracking?.issue;
   const hasGithubTrackingLink = Boolean(githubTrackedIssue);
   const isGitHubImportedTask = task.sourceType === "github_import";
@@ -2005,7 +2044,7 @@ function TaskCardComponent({
   FNXC:TaskCardWorkflowProgress 2026-08-25-01:10:
   The review lane shows its breakdown too. FN-7676 hid it in Planning because enumerated steps are a
   premature planning artifact there — that reasoning does not extend to in-review, where a
-  review-column workflow such as builtin:coding-ideas-v2 runs Verification, Documentation & Delivery
+  review-column workflow such as builtin:coding-ideas runs Verification, Documentation & Delivery
   and Code Review as real, advancing work. The card already resolves the FULL pipeline once it
   reaches that lane; this gate then suppressed the rendering of what it had just computed, so the
   operator saw nothing for the stage those gates were promoted into. Resolved by TRAIT, not by the
@@ -2038,32 +2077,54 @@ function TaskCardComponent({
   Cards that are ineligible must NOT subscribe: eligibility is exactly the set of early-returns the
   old effect used, so cadence, formatting, and which cards animate are unchanged.
   */
+  /*
+  FNXC:TaskCardRuntimeChip 2026-09-16-06:16:
+  FN-457 — subscribe if and only if a LIVE segment actually exists, now that the chip has a single
+  source of truth. A live segment is: an open planning segment, a wip execution segment that is not
+  currently paused (a paused card's chip is frozen by construction, so ticking it repaints an
+  unchanging number), an open verification gate that the breakdown actually counts, or an active
+  merge. Everything else is a settled total and never needs the shared ticker.
+  */
   const wantsLiveTimeIndicator = useMemo(() => {
     if (!isWipColumn && !isReviewColumn) {
       return false;
     }
 
-    const merging = task.status != null && ACTIVE_MERGE_STATUSES.has(task.status);
-    const nowMs = Date.now();
-
-    if (isWipColumn) {
-      const endToEndMs = getTaskEndToEndDurationMs(task, nowMs, taskColumnFlags);
-      const elapsedMs = getInProgressElapsedMs(task, nowMs);
-      const instrumentedMs = getInstrumentedDurationMs(task, nowMs);
-      if (endToEndMs == null && elapsedMs == null && instrumentedMs == null) {
-        return false;
-      }
+    if (task.status != null && ACTIVE_MERGE_STATUSES.has(task.status)) {
+      return true;
     }
 
-    if (!merging && isReviewColumn) {
-      const endToEndMs = getTaskEndToEndDurationMs(task, nowMs);
-      const instrumentedMs = getInstrumentedDurationMs(task, nowMs);
-      if (endToEndMs == null && instrumentedMs == null) {
-        return false;
-      }
+    if (parseTimestampToMs(task.planningStartedAt) != null) {
+      return true;
     }
 
-    return true;
+    const isPaused = task.paused === true || task.userPaused === true;
+    if (isWipColumn && !isPaused && parseTimestampToMs(task.executionStartedAt) != null) {
+      return true;
+    }
+
+    /* A LEGACY live execution window: no cumulative accounting, an execution start, and no
+       completion yet, so the breakdown measures it to `now` and it advances every tick. */
+    if (task.cumulativeActiveMs == null
+      && parseTimestampToMs(task.executionStartedAt) != null
+      && parseTimestampToMs(task.executionCompletedAt) == null) {
+      return true;
+    }
+
+    // An open verification gate ticks unless a live wip segment already covers its wall clock.
+    const liveWipSegmentCovers = isWipColumn && parseTimestampToMs(task.executionStartedAt) != null;
+    if (!liveWipSegmentCovers && (task.workflowStepResults ?? []).some((step) => step.startedAt && !step.completedAt)) {
+      return true;
+    }
+
+    /* Legacy wall-clock fallback cards still advance every tick: their only timing source is the
+       time since column entry. */
+    if (isWipColumn && getTaskRuntimeBreakdown(task, Date.now(), taskColumnFlags) != null
+      && task.cumulativeActiveMs == null && task.cumulativePlanningMs == null && typeof task.timedExecutionMs !== "number") {
+      return true;
+    }
+
+    return false;
   /*
   FNXC:WorkflowResolvedColumns 2026-07-30-23:40:
   THE LANE ROLES BELONG IN THIS LIST, or the card never subscribes on a renamed board.
@@ -2081,96 +2142,102 @@ function TaskCardComponent({
   This repo has no `react-hooks/exhaustive-deps` rule, so the list is maintained by hand and a
   disable directive for that rule fails CI.
   */
-  }, [task.column, task.status, task.columnMovedAt, task.updatedAt, task.workflowStepResults, task.timedExecutionMs, task.firstExecutionAt, task.cumulativeActiveMs, task.executionStartedAt, task.executionCompletedAt, isWipColumn, isReviewColumn, taskColumnFlags]);
+  /* FNXC:TaskCardRuntimeChip 2026-09-16-06:16: FN-457 adds the pause fields this memo now reads.
+     Hand-maintained list (no `react-hooks/exhaustive-deps` in this repo), so an omission is silent. */
+  }, [task.column, task.status, task.columnMovedAt, task.updatedAt, task.workflowStepResults, task.timedExecutionMs, task.firstExecutionAt, task.cumulativeActiveMs, task.cumulativePlanningMs, task.planningStartedAt, task.executionStartedAt, task.executionCompletedAt, task.cumulativePausedMs, task.pausedStartedAt, task.paused, task.userPaused, isWipColumn, isReviewColumn, taskColumnFlags]);
 
   const timeIndicatorNowMs = useLiveTimeTicker(wantsLiveTimeIndicator);
 
+  /*
+  FNXC:TaskCardRuntimeChip 2026-09-16-06:16:
+  FN-457 — ONE computation for every lane, plus a three-line hover detail.
+
+  Before this, the chip answered a different question per lane: wall clock since column entry in wip
+  (so a card parked overnight showed "14h" for twenty real minutes of work), planning + execution in
+  review/complete with verification-gate time counted nowhere, and a third shape during merge. The
+  number was not comparable between two cards, which is the only thing it is for.
+
+  Now the label is `getTaskRuntimeBreakdown().totalMs` in every lane, and the tooltip appends
+  Planning / Execution / Verification lines that sum EXACTLY to it. `taskColumnFlags` is passed
+  unconditionally: the old wip branch omitted them, so on a renamed board the live execution segment
+  was dropped from the chip.
+
+  FORMATTING AND HEADERS ARE DELIBERATELY UNCHANGED: `formatElapsedDuration` (floor, `<1m`) in the
+  wip lane, `formatElapsedDurationDone` (ceiling) elsewhere and during a merge, and the existing
+  `tasks.inProgressTime` / `tasks.executionTime` / `tasks.executionTimeCompleted` /
+  `tasks.executionTimeMergePhase` / `tasks.executionTimeMerging` headers with their tested suffixes.
+  */
   const timeIndicator = useMemo(() => {
     if (!showsTimeIndicator) {
       return null;
     }
 
-    // While a merge is actively running, continue showing live end-to-end
-    // execution time. For legacy tasks without executionStartedAt, fall back
-    // to instrumented runtime plus live merge-phase elapsed since `updatedAt`.
-    if (task.status != null && ACTIVE_MERGE_STATUSES.has(task.status)) {
-      const totalMs = getActiveMergeTotalMs(task, timeIndicatorNowMs);
-      if (totalMs != null) {
-        const elapsedLabel = formatElapsedDurationDone(totalMs);
-        if (elapsedLabel) {
-          const mergeElapsedMs = getMergeElapsedMs(task, timeIndicatorNowMs);
-          const mergeLabel = mergeElapsedMs == null ? null : formatElapsedDuration(mergeElapsedMs);
-          const title = mergeLabel
-            ? t("tasks.executionTimeMergePhase", "Execution time {{elapsed}}. Merge phase {{merge}}", { elapsed: elapsedLabel, merge: mergeLabel })
-            : t("tasks.executionTimeMerging", "Execution time {{elapsed}}. Merging", { elapsed: elapsedLabel });
-          return {
-            label: elapsedLabel,
-            title,
-            ariaLabel: title,
-          };
-        }
+    const merging = task.status != null && ACTIVE_MERGE_STATUSES.has(task.status);
+    const mergeElapsedMs = merging ? getMergeElapsedMs(task, timeIndicatorNowMs) : null;
+    const breakdown = getTaskRuntimeBreakdown(task, timeIndicatorNowMs, taskColumnFlags, mergeElapsedMs ?? undefined);
+    if (breakdown == null) {
+      return null;
+    }
+
+    /* A zero bucket must still render a number: `formatElapsedDurationDone(0)` is the empty string
+       by design (it hides a whole chip), which would silently drop a tooltip line. */
+    const formatBucket = (valueMs: number): string => formatElapsedDurationDone(valueMs) || "0m";
+    const detailLines = [
+      t("tasks.runtimeBreakdownPlanning", "Planning {{elapsed}}", { elapsed: formatBucket(breakdown.planningMs) }),
+      t("tasks.runtimeBreakdownExecution", "Execution {{elapsed}}", { elapsed: formatBucket(breakdown.executionMs) }),
+      t("tasks.runtimeBreakdownVerification", "Verification {{elapsed}}", { elapsed: formatBucket(breakdown.verificationMs) }),
+    ];
+    /* The native `title` tooltip is multi-line; `aria-label` must carry the SAME content flattened,
+       so assistive technology is not handed less than the pointer surface. */
+    const withDetail = (header: string) => ({
+      title: [header, ...detailLines].join("\n"),
+      ariaLabel: [header, ...detailLines].join(". "),
+    });
+
+    if (merging) {
+      const elapsedLabel = formatElapsedDurationDone(breakdown.totalMs);
+      if (elapsedLabel) {
+        const mergeLabel = mergeElapsedMs == null ? null : formatElapsedDuration(mergeElapsedMs);
+        const header = mergeLabel
+          ? t("tasks.executionTimeMergePhase", "Execution time {{elapsed}}. Merge phase {{merge}}", { elapsed: elapsedLabel, merge: mergeLabel })
+          : t("tasks.executionTimeMerging", "Execution time {{elapsed}}. Merging", { elapsed: elapsedLabel });
+        return { label: elapsedLabel, ...withDetail(header) };
       }
     }
 
     if (isWipColumn) {
-      // Prefer the persistent execution start (set on first transition to
-      // in-progress, never reset on retry-loop bounces). Fall back to the
-      // columnMovedAt heuristic for legacy tasks predating the new field.
-      const elapsedMs =
-        getTaskEndToEndDurationMs(task, timeIndicatorNowMs)
-        ?? getInProgressElapsedMs(task, timeIndicatorNowMs)
-        ?? getInstrumentedDurationMs(task, timeIndicatorNowMs);
-      if (elapsedMs == null) {
-        return null;
-      }
-
-      const elapsedLabel = formatElapsedDuration(elapsedMs);
+      const elapsedLabel = formatElapsedDuration(breakdown.totalMs);
       if (!elapsedLabel) {
         return null;
       }
 
-      return {
-        label: elapsedLabel,
-        title: t("tasks.inProgressTime", "In progress {{elapsed}}", { elapsed: elapsedLabel }),
-        ariaLabel: t("tasks.inProgressTime", "In progress {{elapsed}}", { elapsed: elapsedLabel }),
-      };
+      const header = t("tasks.inProgressTime", "In progress {{elapsed}}", { elapsed: elapsedLabel });
+      return { label: elapsedLabel, ...withDetail(header) };
     }
 
-    // in-review and done: show wall-clock end-to-end runtime. Falls back to
-    // the instrumented `[timing]` aggregate for tasks completed before
-    // `executionStartedAt`/`executionCompletedAt` were tracked.
-    const endToEndMs = getTaskEndToEndDurationMs(task, timeIndicatorNowMs);
-    const totalMs = endToEndMs ?? getInstrumentedDurationMs(task, timeIndicatorNowMs);
-    if (totalMs == null) {
-      return null;
-    }
-
-    const elapsedLabel = formatElapsedDurationDone(totalMs);
+    const elapsedLabel = formatElapsedDurationDone(breakdown.totalMs);
     if (!elapsedLabel) {
       return null;
     }
 
     const completionMs = getInReviewCompletionMs(task, taskColumnFlags);
     if (completionMs == null) {
-      return {
-        label: elapsedLabel,
-        title: t("tasks.executionTime", "Execution time {{elapsed}}", { elapsed: elapsedLabel }),
-        ariaLabel: t("tasks.executionTime", "Execution time {{elapsed}}", { elapsed: elapsedLabel }),
-      };
+      const header = t("tasks.executionTime", "Execution time {{elapsed}}", { elapsed: elapsedLabel });
+      return { label: elapsedLabel, ...withDetail(header) };
     }
 
     const completedAt = new Date(completionMs).toLocaleString();
     return {
       label: elapsedLabel,
-      title: t("tasks.executionTimeCompleted", "Execution time {{elapsed}}. Completed {{completedAt}}", { elapsed: elapsedLabel, completedAt }),
-      ariaLabel: t("tasks.executionTimeCompleted", "Execution time {{elapsed}}. Completed {{completedAt}}", { elapsed: elapsedLabel, completedAt }),
+      ...withDetail(t("tasks.executionTimeCompleted", "Execution time {{elapsed}}. Completed {{completedAt}}", { elapsed: elapsedLabel, completedAt })),
     };
   /* FNXC:WorkflowResolvedColumns 2026-07-31-23:59: `taskColumnFlags` joins the deps because this memo
      now READS it. Flags arrive asynchronously (the board resolves workflows after first paint), so a
      card that renders before they load and re-renders after would otherwise keep the pre-flag answer
      — the memo's inputs would be unchanged. This repo has no `react-hooks/exhaustive-deps` rule, so
-     nothing would have flagged the omission. */
-  }, [task.column, task.status, task.columnMovedAt, task.timedExecutionMs, task.updatedAt, task.workflowStepResults, task.log, task.firstExecutionAt, task.cumulativeActiveMs, task.cumulativePlanningMs, task.planningStartedAt, task.executionStartedAt, task.executionCompletedAt, timeIndicatorNowMs, taskColumnFlags]);
+     nothing would have flagged the omission.
+     FNXC:TaskCardRuntimeChip 2026-09-16-06:16: FN-457 adds the pause fields the breakdown reads. */
+  }, [task.column, task.status, task.columnMovedAt, task.timedExecutionMs, task.updatedAt, task.workflowStepResults, task.log, task.firstExecutionAt, task.cumulativeActiveMs, task.cumulativePlanningMs, task.planningStartedAt, task.executionStartedAt, task.executionCompletedAt, task.cumulativePausedMs, task.pausedStartedAt, task.paused, task.userPaused, timeIndicatorNowMs, taskColumnFlags, isWipColumn, t]);
 
   const lifecycleDates = useMemo(() => {
     const created = formatCompactLifecycleDate(task.createdAt, locale, new Date(lifecycleNowMs));
@@ -2383,6 +2450,7 @@ function TaskCardComponent({
     (hasTaskOversightOverride || workflowOversightResolved) &&
     effectiveOversightLevel !== "off" &&
     !isInheritedDefaultOversightLevel;
+
 
   /*
    * FNXC:PlannerOversight 2026-07-18-01:30:
@@ -2619,6 +2687,40 @@ function TaskCardComponent({
     handleRevertClick({ stopPropagation() {} } as React.MouseEvent<HTMLButtonElement>);
   }, [handleRevertClick]);
 
+  /*
+  FNXC:TaskRevert 2026-09-15-10:00 (FN-416):
+  Restore-the-revert handler. Calls the route in "auto" mode (git first, AI-restore task on
+  conflict/unsupported) and reuses the revert toast vocabulary: success, AI task created/already
+  open, needsHuman refusal (autoMerge off — never silently AI-forked), failure. The source task's
+  column is never mutated; the Reverted badge clears because the route stamped `restoredAt`.
+  */
+  const handleTaskActionRestoreRevert = useCallback(() => {
+    if (!onRestoreRevertTask) return;
+
+    void onRestoreRevertTask(task.id, { mode: "auto" }).then((result) => {
+      if (result.mode === "ai") {
+        addToast(result.alreadyOpen
+          ? t("tasks.restoreRevertAlreadyOpen", "A restore task is already open: {{id}}", { id: result.createdTaskId })
+          : t("tasks.restoreRevertAiCreated", "Created restore task {{id}}", { id: result.createdTaskId }), "success");
+        return;
+      }
+
+      if (result.needsHuman) {
+        addToast(t("tasks.restoreRevertNeedsHuman", "Cannot restore {{taskId}}: {{reason}}", { taskId: task.id, reason: result.reason || t("tasks.revertNeedsHumanDefault", "human review required") }), "error");
+        return;
+      }
+
+      if (result.clean) {
+        addToast(t("tasks.restoreRevertSuccess", "Restored {{taskId}}", { taskId: task.id }), "success");
+        return;
+      }
+
+      addToast(t("tasks.restoreRevertFailed", "Failed to restore {{taskId}}", { taskId: task.id }), "error");
+    }).catch((err) => {
+      addToast(getErrorMessage(err), "error");
+    });
+  }, [addToast, onRestoreRevertTask, t, task.id]);
+
   const handleDeleteClick = useCallback(async (e: React.MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
     if (!onDeleteTask) return;
@@ -2814,6 +2916,10 @@ function TaskCardComponent({
     if (onResetTask) setShowResetDialog(true);
   }, [onResetTask]);
 
+  const handleTaskActionRefine = useCallback(() => {
+    setShowRefineDialog(true);
+  }, []);
+
   const handleTaskActionDuplicate = useCallback(async () => {
     if (!onDuplicateTask) return;
     await runDuplicateTaskAction({
@@ -2844,12 +2950,6 @@ function TaskCardComponent({
       })
       .catch((err) => addToast(getErrorMessage(err), "error"));
   }, [addToast, confirm, onMergeTask, task.id, t]);
-
-  const handleTaskActionPlan = useCallback(() => {
-    const seed = (task.description ?? "").trim() || task.title || task.id;
-    const taskWorkflowId = (task as Task & { workflowId?: string | null }).workflowId;
-    onPlanningMode?.(seed, taskWorkflowId ?? planningWorkflowId ?? null);
-  }, [onPlanningMode, planningWorkflowId, task, task.description, task.id, task.title]);
 
   const handleTaskActionCheckPrStatus = useCallback(async () => {
     try {
@@ -2905,8 +3005,7 @@ function TaskCardComponent({
     prAutomationLabel: getTaskPrAutomationLabel(t, task.status),
     onDelete: onDeleteTask ? handleTaskActionDelete : undefined,
     onDuplicate: onDuplicateTask ? handleTaskActionDuplicate : undefined,
-    onPlan: onPlanningMode ? handleTaskActionPlan : undefined,
-    onOpenRefine: onOpenRefine ? () => onOpenRefine(task) : undefined,
+    onOpenRefine: handleTaskActionRefine,
     onRetry: onRetryTask ? handleTaskActionRetry : undefined,
     onReset: onResetTask ? handleTaskActionReset : undefined,
     onTogglePause: (isPaused ? onUnpauseTask : onPauseTask) ? handleTaskActionTogglePause : undefined,
@@ -2928,7 +3027,6 @@ function TaskCardComponent({
     handleTaskActionEnableGithubTracking,
     handleTaskActionDuplicate,
     handleTaskActionMerge,
-    handleTaskActionPlan,
     handleTaskActionReset,
     handleTaskActionRetry,
     handleTaskActionTogglePause,
@@ -2937,8 +3035,7 @@ function TaskCardComponent({
     onMergeTask,
     onUpdateTask,
     onOpenDetail,
-    onPlanningMode,
-    onOpenRefine,
+    handleTaskActionRefine,
     onPauseTask,
     onUnpauseTask,
     task,
@@ -2947,7 +3044,8 @@ function TaskCardComponent({
     task.prInfo,
   ]);
   const contextMenuActions = useMemo<TaskMenuItemDescriptor[]>(() => {
-    if (!onDeleteTask && !onRevertTask && !onDuplicateTask && !onRetryTask && !onResetTask && !onPauseTask && !onUnpauseTask && !onMergeTask && !onPlanningMode && !onOpenRefine && !onUpdateTask) {
+    /* FNXC:TaskRefine 2026-09-14-22:23: FN-400 — Refine is always available on a complete card because the card hosts the dialog itself. */
+    if (!isCompleteColumn && !onDeleteTask && !onRevertTask && !onRestoreRevertTask && !onDuplicateTask && !onRetryTask && !onResetTask && !onPauseTask && !onUnpauseTask && !onMergeTask && !onUpdateTask) {
       return [];
     }
     const actions: TaskMenuItemDescriptor[] = [...taskActionMenuModel.actions];
@@ -2957,7 +3055,19 @@ function TaskCardComponent({
     commit to revert, so the menu communicates WHY the affordance is inert
     instead of silently hiding it.
     */
-    if (isCompleteColumn && onRevertTask) {
+    /*
+    FNXC:TaskRevert 2026-09-15-10:00 (FN-416):
+    An already-reverted card is never offered Revert again (there is nothing left to revert); it is
+    offered "Restore revert" instead. Desktop right-click and mobile long-press share this one
+    model, so both breakpoints get the same single affordance.
+    */
+    if (isCompleteColumn && showRevertedChip && onRestoreRevertTask) {
+      actions.push({
+        id: "restore-revert",
+        label: t("tasks.restoreRevert", "Restore revert"),
+        onSelect: handleTaskActionRestoreRevert,
+      });
+    } else if (isCompleteColumn && onRevertTask) {
       actions.push({
         id: "revert",
         label: t("tasks.revert", "Revert"),
@@ -2969,7 +3079,7 @@ function TaskCardComponent({
       actions.push({ id: taskActionMenuModel.reviewAction.id, label: taskActionMenuModel.reviewAction.label, disabled: taskActionMenuModel.reviewAction.disabled, onSelect: taskActionMenuModel.reviewAction.onSelect });
     }
     return actions.filter((action) => "items" in action || action.tone === "note" || action.disabled === true || Boolean(action.onSelect));
-  }, [handleTaskActionRevert, isCompleteColumn, isRevertable, onDeleteTask, onDuplicateTask, onMergeTask, onPlanningMode, onOpenRefine, onPauseTask, onResetTask, onRetryTask, onRevertTask, onUnpauseTask, onUpdateTask, taskActionMenuModel.actions, taskActionMenuModel.reviewAction]);
+  }, [handleTaskActionRestoreRevert, handleTaskActionRevert, isCompleteColumn, isRevertable, onDeleteTask, onDuplicateTask, onMergeTask, onPauseTask, onResetTask, onRestoreRevertTask, onRetryTask, onRevertTask, onUnpauseTask, onUpdateTask, showRevertedChip, taskActionMenuModel.actions, taskActionMenuModel.reviewAction]);
   const hasContextMenuActions = contextMenuActions.length > 0;
 
   const closeContextMenu = useCallback(() => {
@@ -3203,7 +3313,7 @@ function TaskCardComponent({
     }
 
     return (
-      <AlphaButton
+      <UiButton
         type="button"
         className="card-session-files"
         onClick={handleOpenFiles}
@@ -3211,7 +3321,7 @@ function TaskCardComponent({
       >
         <Folder size={12} />
         <span>{t("tasks.filesChanged", "{{count}} file changed", { count: displayCount, defaultValue_one: "{{count}} file changed", defaultValue_other: "{{count}} files changed" })}</span>
-      </AlphaButton>
+      </UiButton>
     );
   })();
 
@@ -3281,12 +3391,6 @@ function TaskCardComponent({
           <span>{t("tasks.revertedBadge", "Reverted")}</span>
         </span>
       )}
-      {showRevertedChip && (
-        <span className="card-reverted-actions" aria-label={t("tasks.revertedResolutionActions", "Reverted task resolution actions")}>
-          {onDeleteTask && <AlphaButton type="button" className="btn" onClick={(event) => { event.stopPropagation(); void handleTaskActionDelete(); }}>{t("tasks.delete", "Delete")}</AlphaButton>}
-          {onReviseTask && <AlphaButton type="button" className="btn" onClick={(event) => { event.stopPropagation(); onReviseTask(task); }}>{t("tasks.revise", "Revise")}</AlphaButton>}
-        </span>
-      )}
       {showNearDuplicateChip && (
         /*
         FNXC:NearDuplicateDetection 2026-08-23-04:10:
@@ -3306,7 +3410,7 @@ function TaskCardComponent({
             <span>{t("tasks.duplicateOf", "Duplicate of {{id}}", { id: String(task.sourceMetadata?.nearDuplicateOf) })}</span>
           </span>
           {onUpdateTask && (
-            <AlphaButton
+            <UiButton
               type="button"
               className="card-duplicate-dismiss"
               onClick={(e) => void handleDismissNearDuplicate(e)}
@@ -3314,7 +3418,7 @@ function TaskCardComponent({
               aria-label={t("tasks.dismissDuplicateFlag", "Mark the duplicate flag for {{id}} as read", { id: String(task.sourceMetadata?.nearDuplicateOf) })}
             >
               <X size={11} aria-hidden="true" />
-            </AlphaButton>
+            </UiButton>
           )}
         </span>
       )}
@@ -3449,10 +3553,18 @@ function TaskCardComponent({
   states the card's own status ("Planning"). The two badges stay orthogonal: what the card IS, and
   which gate is RUNNING.
   */
+  /*
+  FNXC:TaskStatusBadge 2026-09-16-05:01:
+  FN-448 — operator contract: a card waiting for a human plan decision must SAY it needs the human,
+  in the same badge slot that otherwise reads "Queued" or "Ready". "Awaiting Approval" described the
+  card's state passively and looked like every other lifecycle chip; "Needs you" (blinking warning
+  paint, see `.card-status-badge.awaiting-approval`) is the only thing left announcing the wait now
+  that FN-448 removed the full-card overlay. The replan-cap escalation keeps its distinct message.
+  */
   const statusBadgeLabel = isPlanReviewReplanCapApproval
       ? t("tasks.reviewBudgetExhausted", "Review budget exhausted")
       : isAwaitingApproval
-        ? t("tasks.awaitingApproval", "Awaiting Approval")
+        ? t("tasks.planApproval.needsYouBadge", "Needs you")
         : isAwaitingInput
           ? t("tasks.needsInput", "Needs input")
           : isLivePlanning || isTransientPlannerActive
@@ -3469,8 +3581,20 @@ function TaskCardComponent({
                 ? t("tasks.statusQueued", "Queued")
                 : wipLifecycleBadgeLabel
                   ?? getTaskStatusLabel(visualStatus ?? "", t, showOptionalGateBadge ? undefined : getRunningWorkflowStepLabel(task), { idle: !isAgentActive, overlapBlockedBy: task.overlapBlockedBy ?? null, sessionContentionWaitReason: task.sessionContentionWaitReason ?? null });
+  /*
+  FNXC:HumanPlanApproval 2026-09-15-23:08:
+  FN-443 — human plan approval is a card metadata badge in its own right, so the wrapper guard must
+  know about it. Without it the ONLY visible proof that a task will wait for the operator's decision
+  disappeared on exactly the cards with nothing else to show: a freshly created card carries no
+  priority (default), no Fast (mutually exclusive with the requirement) and no oversight, so the
+  wrapper never mounted and the badge inside it never rendered. Derived from the same shared
+  predicate the badge itself uses, so guard and badge cannot disagree; still nullable, so
+  `.card-meta-badges` is never rendered empty.
+  */
+  const humanPlanApprovalBadgeState = resolveHumanPlanApprovalBadgeState(task);
   const hasCardMetaBadges = showPriorityBadge
     || task.executionMode === "fast"
+    || humanPlanApprovalBadgeState !== null
     // FNXC:PlannerOversight 2026-07-04-00:00: the oversight badge is opt-in
     // metadata (absent for the common "off" default) — include it in the wrapper
     // guard so `.card-meta-badges` only renders when it has a real child.
@@ -3507,7 +3631,7 @@ function TaskCardComponent({
 
   if (isEditing) {
     return (
-      <AlphaSurface
+      <UiSurface
         ref={cardRef}
         className={cardClass}
         data-id={task.id}
@@ -3515,7 +3639,7 @@ function TaskCardComponent({
         onDoubleClick={handleDoubleClick}
       >
         <div className="card-editing-content">
-          <AlphaTextArea
+          <UiTextArea
             ref={descTextareaRef}
             className="card-edit-desc-textarea"
             placeholder={t("tasks.descriptionPlaceholder", "Task description")}
@@ -3533,7 +3657,7 @@ function TaskCardComponent({
             </div>
           )}
         </div>
-      </AlphaSurface>
+      </UiSurface>
     );
   }
 
@@ -3543,7 +3667,7 @@ function TaskCardComponent({
   Stop every touch, pointer, compatibility-click, and keyboard path at the portal wrapper so selecting any menu action cannot invoke card detail opening while TaskContextMenu keeps its own dispatch and navigation behavior.
   */
   return (
-    <AlphaSurface
+    <UiSurface
       ref={cardRef}
       className={cardClass}
       data-id={task.id}
@@ -3602,15 +3726,15 @@ function TaskCardComponent({
           addToast={addToast}
         />
       )}
-      {!isExternalBlocked && isAwaitingApproval && (
-        <PlanApprovalNotice
-          task={task}
-          variant="card"
-          projectId={projectId}
-          addToast={addToast}
-          isPlanningLane={isPlanningLane}
-        />
-      )}
+      {/*
+      FNXC:PlanApproval 2026-09-16-05:01:
+      FN-448 removed the card's "Need Your Review" overlay. It was absolutely positioned over the whole
+      card, so a task waiting for a human decision became unreadable: title, badges and metadata were
+      all hidden behind it. The card now stays legible and announces the wait through its header status
+      badge ("Needs you", blinking warning paint); opening the card leads to Task Detail, where the
+      decision is actually taken. The List notice is unchanged — it is inline, hides no row content and
+      carries the direct action.
+      */}
       <div className="card-header">
         <span className="card-id">{task.id}</span>
         {/*
@@ -3872,7 +3996,7 @@ function TaskCardComponent({
         <RuntimeFallbackBadge taskId={task.id} isInViewport={isInViewport} projectId={projectId} />
         {prNode && (
           prNode.state === "failed" ? (
-            <AlphaButton
+            <UiButton
               type="button"
               className="card-status-badge card-pr-node-badge card-pr-node-badge--failed"
               data-testid="pr-node-badge-failed"
@@ -3884,9 +4008,9 @@ function TaskCardComponent({
             >
               <AlertTriangle size={10} aria-hidden="true" />
               <span>{t("tasks.prNodeFailed", "PR failed")}</span>
-            </AlphaButton>
+            </UiButton>
           ) : (
-            <AlphaButton
+            <UiButton
               type="button"
               className={`card-status-badge card-pr-node-badge card-pr-node-badge--${prNode.state}`}
               data-testid={`pr-node-badge-${prNode.state}`}
@@ -3902,7 +4026,7 @@ function TaskCardComponent({
                   ? t("tasks.prNodeWithNumber", "PR #{{number}} · {{state}}", { number: prNode.prNumber, state: prNode.state })
                   : t("tasks.prNodeState", "PR · {{state}}", { state: prNode.state })}
               </span>
-            </AlphaButton>
+            </UiButton>
           )
         )}
         {hasCardMetaBadges && (
@@ -3928,6 +4052,14 @@ function TaskCardComponent({
                 <span className="visually-hidden">{t("tasks.fastMode", "Fast mode")}</span>
               </span>
             )}
+            {/*
+            FNXC:HumanPlanApproval 2026-09-15-06:24:
+            FN-408 — the card must show, from creation onward, that this work will not reach
+            in-progress without a human decision. Fast is mutually exclusive with it (2026-09-15-07:30),
+            so the two badges never coexist on a new card, and its label distinguishes "not decidable yet" from "waiting on you" from "you
+            approved", so a card still being planned never claims it is already waiting.
+            */}
+            <HumanPlanApprovalBadge task={task} variant="card" />
             {showOversightBadge && (
               <span
                 className={`card-oversight-badge card-oversight-badge--${OVERSIGHT_BADGE_MODIFIER[effectiveOversightLevel as Exclude<PlannerOversightLevel, "off">]}`}
@@ -3961,7 +4093,7 @@ function TaskCardComponent({
         {hasHeaderActions && (
         <div className="card-header-actions">
           {isAwaitingInput && onOpenDetailWithTab && (
-            <AlphaButton
+            <UiButton
               className="card-answer-questions-btn"
               onClick={(e) => {
                 e.stopPropagation();
@@ -3971,27 +4103,27 @@ function TaskCardComponent({
               aria-label={t("tasks.answerQuestions", "Answer questions")}
             >
               {t("tasks.answerQuestions", "Answer questions")}
-            </AlphaButton>
+            </UiButton>
           )}
           {canEdit && (
-            <AlphaButton
+            <UiButton
               className="card-edit-btn"
               onClick={handleEditClick}
               title={t("tasks.editTask", "Edit task")}
               aria-label={t("tasks.editTask", "Edit task")}
             >
               <Pencil size={12} />
-            </AlphaButton>
+            </UiButton>
           )}
           {isIntakeColumn && onDeleteTask && (
-            <AlphaButton
+            <UiButton
               className="card-delete-btn"
               onClick={handleDeleteClick}
               title={t("tasks.deleteTask", "Delete task")}
               aria-label={t("tasks.deleteTask", "Delete task")}
             >
               <Trash2 size={12} />
-            </AlphaButton>
+            </UiButton>
           )}
           {/*
           FNXC:TaskCardMenu 2026-07-10-12:00:
@@ -4002,7 +4134,7 @@ function TaskCardComponent({
           groups, dock task lists).
           */}
           {hasContextMenuActions && (
-            <AlphaButton
+            <UiButton
               ref={menuButtonRef}
               type="button"
               className="card-menu-btn"
@@ -4014,7 +4146,7 @@ function TaskCardComponent({
               data-testid={`card-menu-btn-${task.id}`}
             >
               <MoreHorizontal size={14} />
-            </AlphaButton>
+            </UiButton>
           )}
         </div>
         )}
@@ -4029,7 +4161,7 @@ function TaskCardComponent({
           <span className="card-error-icon">⚠</span>
           <span className="card-error-text">{task.error.length > 60 ? task.error.slice(0, 60) + "…" : task.error}</span>
           {onRetryTask && (
-            <AlphaButton
+            <UiButton
               type="button"
               className="btn btn-sm card-error-retry-btn"
               onClick={handleRetryTask}
@@ -4037,7 +4169,7 @@ function TaskCardComponent({
             >
               <RotateCw size={12} />
               {isRetrying ? t("tasks.retrying", "Retrying…") : t("tasks.retry", "Retry")}
-            </AlphaButton>
+            </UiButton>
           )}
         </div>
       )}
@@ -4153,7 +4285,7 @@ function TaskCardComponent({
                 </span>
               )}
             </div>
-            <AlphaButton
+            <UiButton
               type="button"
               className="card-steps-toggle"
               onClick={handleToggleSteps}
@@ -4165,7 +4297,7 @@ function TaskCardComponent({
                 size={14}
                 className={`card-steps-toggle-icon${showSteps ? " expanded" : ""}`}
               />
-            </AlphaButton>
+            </UiButton>
             {showSteps && (
               <div className="card-steps-list">
                 {unifiedProgress.items.map((step, index) => {
@@ -4300,7 +4432,7 @@ function TaskCardComponent({
         <>
         <div className="card-action-row">
           {showCreatePrQuickAction && (
-            <AlphaButton
+            <UiButton
               type="button"
               className="card-create-pr-action"
               title={t("tasks.createPrTitle", "Create a PR for this task")}
@@ -4312,10 +4444,10 @@ function TaskCardComponent({
             >
               <GitPullRequest size={12} />
               {t("tasks.createPr", "Create PR")}
-            </AlphaButton>
+            </UiButton>
           )}
           {showAddressPrFeedbackAction && (
-            <AlphaButton
+            <UiButton
               type="button"
               className="card-create-pr-action card-address-pr-feedback-action"
               data-testid={`card-address-pr-feedback-${task.id}`}
@@ -4330,10 +4462,10 @@ function TaskCardComponent({
               */}
               <Bot size={12} />
               {isAddressingPrFeedback ? t("tasks.addressingPrFeedback", "Addressing…") : t("tasks.addressPrFeedback", "Address PR feedback")}
-            </AlphaButton>
+            </UiButton>
           )}
           {showStartAction && (
-            <AlphaButton
+            <UiButton
               type="button"
               className="card-promote-action card-send-back-btn"
               data-testid={`card-start-${task.id}`}
@@ -4344,7 +4476,7 @@ function TaskCardComponent({
             >
               <Zap size={12} />
               {isStarting ? t("tasks.starting", "Starting…") : t("tasks.start", "Start")}
-            </AlphaButton>
+            </UiButton>
           )}
         </div>
         </>
@@ -4397,6 +4529,15 @@ function TaskCardComponent({
           onClose={() => setShowResetDialog(false)}
         />
       )}
+      {showRefineDialog && (
+        <TaskRefineDialog
+          taskId={task.id}
+          projectId={projectId}
+          addToast={addToast}
+          onRefinementCreated={onRefinementCreated}
+          onClose={() => setShowRefineDialog(false)}
+        />
+      )}
       {(showCreatePrQuickAction || isPrCreateOpen) && (
         <PrCreateModal
           open={isPrCreateOpen}
@@ -4410,7 +4551,7 @@ function TaskCardComponent({
           addToast={addToast}
         />
       )}
-    </AlphaSurface>
+    </UiSurface>
   );
 }
 
