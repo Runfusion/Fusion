@@ -151,6 +151,7 @@ import { isValidMergeRequestTransitionImpl, releaseMergeQueueLeaseImpl, collectM
 import { upsertWorkflowWorkItemImpl, replaceActiveTaskWorkflowContinuationImpl, seedStrandedPlanReviewContinuationImpl, seedWorkspaceCodeReviewContinuationIfIdleImpl, transitionWorkflowWorkItemImpl, acquireWorkflowWorkItemLeaseImpl } from "./task-store/workflow-workitems-ops-2.js";
 import { getSettingsImpl, getSettingsFastImpl, getSettingsByScopeImpl, getSettingsByScopeFastImpl } from "./task-store/settings-ops-2.js";
 import { runPluginColumnTransitionHooksImpl, checkAndRecordUnplannedExecutionBlockImpl, logEntryImpl, logEntryOnceImpl, transitionQueuedEpisodeImpl, type QueuedEpisodeTransition } from "./task-store/audit-ops.js";
+import { reconcileTaskOverlapWaitsImpl, type OverlapWaitReconciliationOptions } from "./task-store/overlap-wait-reconciliation.js";
 import { claimTaskOverlapWaitImpl, completeTaskOverlapWaitImpl, listTaskOverlapWaitsImpl, publishTaskOverlapDeliveriesImpl } from "./task-store/overlap-wait-ops.js";
 import type { OverlapWaitClaim, OverlapWaitDeliverySnapshot, OverlapWaitExecutionIdentity, OverlapWaitReceipt } from "./types/task/task-overlap-wait.js";
 import { clearWorkflowRunBranchesImpl, projectMergeRequestToWorkflowWorkItemImpl, createCompletionHandoffWorkflowWorkImpl } from "./task-store/workflow-workitems-ops.js";
@@ -2816,6 +2817,10 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
   async listTaskOverlapWaits(taskId: string, options: { pendingOnly?: boolean } = {}) {
     return listTaskOverlapWaitsImpl(this, taskId, options);
+  }
+
+  async reconcileTaskOverlapWaits(taskId: string, options?: OverlapWaitReconciliationOptions) {
+    return reconcileTaskOverlapWaitsImpl(this, taskId, options);
   }
 
   async claimTaskOverlapWait(claim: OverlapWaitClaim) {

@@ -8329,6 +8329,23 @@ describe("TaskCard trailing-row layout (FN-8631)", () => {
     window.matchMedia = originalMatchMedia;
   });
 
+  /*
+  FNXC:OverlapWaitRelease 2026-09-17-06:38:
+  Reconciled task:updated snapshots remove stale waiting indicators on the shared desktop/mobile card.
+  The removed metadata must leave neither a scope chip, queued-reason icon nor an empty row behind.
+  */
+  it.each([1280, 390])("removes recovered dependency indicators without empty shells at %ipx", (width) => {
+    setCardBreakpoint(width);
+    const waiting = makeTask({ column: "todo", status: "queued", blockedBy: "FN-PREV", overlapBlockedBy: "FN-PREV" });
+    const { container, rerender } = render(<TaskCard task={waiting} onOpenDetail={noop} addToast={noop} />);
+    expect(container.querySelector(".card-scope-badge")).not.toBeNull();
+    rerender(<TaskCard task={{ ...waiting, status: undefined, blockedBy: undefined, overlapBlockedBy: undefined }} onOpenDetail={noop} addToast={noop} />);
+    expect(container.querySelector(".card-scope-badge")).toBeNull();
+    expect(container.querySelector(".card-meta")).toBeNull();
+    expect(container.querySelector('[data-testid^="card-queued-overlap-icon"], [data-testid^="card-queued-dependency-icon"]')).toBeNull();
+    expectContentBackedTrailingRows(container);
+  });
+
   it.each([1280, 390])("keeps every trailing-card variant content-backed at %ipx", (width) => {
     setCardBreakpoint(width);
     const cleanupCss = mountCssForBadgeTests();

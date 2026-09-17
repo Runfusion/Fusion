@@ -216,6 +216,7 @@ const STORE_METHOD_CLASSIFICATION: Record<string, Omit<SurfaceClassification, "m
   removeMaterializedSelection: { kind: "writer", reason: "persists or mutates TaskStore state" },
   renewCheckoutLease: { kind: "writer", reason: "persists or mutates TaskStore state" },
   renewSymbolLocks: { kind: "writer", reason: "persists or mutates TaskStore state" },
+  reconcileTaskOverlapWaits: { kind: "writer", reason: "reconciles abandoned overlap episodes and scheduling indicators" },
   repairOverlapBlocker: { kind: "writer", reason: "persists or mutates TaskStore state" },
   replaceActiveTaskWorkflowContinuation: { kind: "writer", reason: "persists or mutates TaskStore state" },
   replaceLegacyTaskCommitAssociations: { kind: "writer", reason: "persists or mutates TaskStore state" },

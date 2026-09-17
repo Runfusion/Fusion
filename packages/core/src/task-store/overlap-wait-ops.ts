@@ -6,6 +6,7 @@ import type { OverlapWaitClaim, OverlapWaitDeliverySnapshot, OverlapWaitExecutio
 import type { TaskStore } from "../store.js";
 import { acquireTaskAdvisoryXactLock } from "./task-advisory-lock.js";
 import { getTaskActivityLogEntryLimit, truncateTaskLogOutcome } from "./comments.js";
+import { overlapDeliverySnapshots, observedOverlapDeliveries, mergeOverlapDeliverySnapshots } from "../tasks/overlap-wait-release.js";
 
 function mapRow(row: typeof schema.project.taskOverlapWaits.$inferSelect): TaskOverlapWait {
   return {
@@ -30,7 +31,7 @@ function mapRow(row: typeof schema.project.taskOverlapWaits.$inferSelect): TaskO
 
 async function ensureObserved(
   tx: DbTransaction,
-  input: { projectId: string; task: Pick<Task, "id" | "lineageId" | "prompt">; blockerTaskId: string; observedAt: string },
+  input: { projectId: string; task: Pick<Task, "id" | "lineageId" | "prompt">; blockerTaskId: string; observedAt: string; newLeaseObservation?: boolean },
 ): Promise<void> {
   const blockerRows = await tx.select({
     lineageId: schema.project.tasks.lineageId,
@@ -41,54 +42,40 @@ async function ensureObserved(
     .where(and(eq(schema.project.tasks.projectId, input.projectId), eq(schema.project.tasks.id, input.blockerTaskId)))
     .limit(1);
   const blocker = blockerRows[0];
-  const details = blocker?.mergeDetails as Task["mergeDetails"] | null | undefined;
-  const workspaceRepositories = [...new Set([
-    ...Object.keys(details?.workspaceLandedShas ?? {}),
-    ...Object.keys(details?.workspaceLandedFiles ?? {}),
-  ])];
-  const deliveries = workspaceRepositories.length > 0
-    ? workspaceRepositories.map((repository) => {
-      const landedSha = details?.workspaceLandedShas?.[repository];
-      const landedFiles = details?.workspaceLandedFiles?.[repository];
-      return {
-        blockerTaskId: input.blockerTaskId,
-        blockerLineageId: blocker?.lineageId ?? undefined,
-        repository,
-        ...(landedSha ? { landedSha } : {}),
-        target: details?.mergeTargetBranch,
-        summary: blocker?.summary ?? undefined,
-        ...(landedFiles ? { paths: landedFiles.map((path) => ({ repository, path, status: "modified" })) } : {}),
-        noOp: Array.isArray(landedFiles) && landedFiles.length === 0 && !landedSha,
-        evidence: "workspace-landing",
-      };
-    })
-    : details
-      ? [{
-        blockerTaskId: input.blockerTaskId,
-        blockerLineageId: blocker?.lineageId ?? undefined,
-        repository: ".",
-        landedSha: details.commitSha,
-        target: details.mergeTargetBranch,
-        summary: blocker?.summary ?? undefined,
-        paths: details.landedFiles?.map((path) => ({ repository: ".", path, status: "modified" })),
-        noOp: details.noOpVerifiedShortCircuit === true || details.noOpMerge === true,
-        evidence: details.landedFilesCaptureFallback === "attribution-failed" ? "unavailable" : "merge-details",
-      }]
-      : [];
+  const deliveries = blocker ? overlapDeliverySnapshots({ id: input.blockerTaskId, lineageId: blocker.lineageId ?? undefined, summary: blocker.summary ?? undefined, mergeDetails: blocker.mergeDetails as Task["mergeDetails"] }) : [];
   const observation = deliveries.length > 0 ? { deliveries } : {};
-  const existing = await tx.select({ episodeId: schema.project.taskOverlapWaits.episodeId, revision: schema.project.taskOverlapWaits.revision })
+  const existing = await tx.select({ episodeId: schema.project.taskOverlapWaits.episodeId, revision: schema.project.taskOverlapWaits.revision, observation: schema.project.taskOverlapWaits.observation })
     .from(schema.project.taskOverlapWaits)
     .where(and(
       eq(schema.project.taskOverlapWaits.projectId, input.projectId),
       eq(schema.project.taskOverlapWaits.taskId, input.task.id),
       eq(schema.project.taskOverlapWaits.blockerTaskId, input.blockerTaskId),
       sql`${schema.project.taskOverlapWaits.phase} NOT IN ('delivered', 'cancelled')`,
-    )).limit(1);
+    )).limit(1).for("update");
   if (existing[0]) {
+    const priorObservation = (existing[0].observation ?? {}) as Record<string, unknown>;
+    const mergedDeliveries = mergeOverlapDeliverySnapshots(observedOverlapDeliveries({ observation: priorObservation }), deliveries);
+    const retainedObservation: Record<string, unknown> = { ...priorObservation, ...(mergedDeliveries.length ? { deliveries: mergedDeliveries } : {}) };
+    /*
+    FNXC:OverlapWaitRelease 2026-09-17-06:38:
+    A real new lease observation behind a restarted predecessor is a new wait, even if recovery has
+    not consumed its old Reset stamp yet. Ordinary task updates and marker clears are NOT new leases.
+    Re-arm the episode and fence its old owner; retain real snapshots and receipt proof, never its ready state.
+    */
+    if (input.newLeaseObservation && typeof priorObservation.blockerResetAt === "string") {
+      const { blockerResetAt, ...retained } = retainedObservation;
+      await tx.update(schema.project.taskOverlapWaits).set({
+        observation: { ...retained, previousBlockerResetAt: blockerResetAt },
+        phase: "observed", owner: null, checkoutEpoch: null,
+        observedAt: input.observedAt, updatedAt: input.observedAt, revision: existing[0].revision + 1,
+      }).where(and(eq(schema.project.taskOverlapWaits.projectId, input.projectId), eq(schema.project.taskOverlapWaits.taskId, input.task.id),
+        eq(schema.project.taskOverlapWaits.episodeId, existing[0].episodeId)));
+      return;
+    }
     if (deliveries.length > 0) {
       await tx.update(schema.project.taskOverlapWaits).set({
         blockerLineageId: blocker?.lineageId ?? null,
-        observation,
+        observation: retainedObservation,
         revision: existing[0].revision + 1,
         updatedAt: input.observedAt,
       }).where(and(
@@ -127,13 +114,14 @@ async function sha256(value: string): Promise<string> {
  */
 export async function observeOverlapWaitTransitionInTransaction(
   tx: DbTransaction,
-  input: { projectId: string; previous: Pick<Task, "id" | "lineageId" | "prompt" | "overlapBlockedBy">; nextOverlapBlockedBy: string | null | undefined; observedAt?: string },
+  input: { projectId: string; previous: Pick<Task, "id" | "lineageId" | "prompt" | "overlapBlockedBy">; nextOverlapBlockedBy: string | null | undefined; observedAt?: string; newLeaseObservation?: boolean },
 ): Promise<void> {
   const observedAt = input.observedAt ?? new Date().toISOString();
   const previousBlocker = input.previous.overlapBlockedBy?.trim();
   const nextBlocker = input.nextOverlapBlockedBy?.trim();
   if (previousBlocker) await ensureObserved(tx, { projectId: input.projectId, task: input.previous, blockerTaskId: previousBlocker, observedAt });
-  if (nextBlocker) await ensureObserved(tx, { projectId: input.projectId, task: input.previous, blockerTaskId: nextBlocker, observedAt });
+  if (nextBlocker) await ensureObserved(tx, { projectId: input.projectId, task: input.previous, blockerTaskId: nextBlocker, observedAt,
+    newLeaseObservation: input.newLeaseObservation || previousBlocker !== nextBlocker });
 }
 
 export async function publishTaskOverlapDeliveriesImpl(
@@ -341,4 +329,30 @@ export async function completeTaskOverlapWaitImpl(
 export async function cancelTaskOverlapWaitsInTransaction(tx: DbTransaction, projectId: string, taskId: string): Promise<void> {
   await tx.update(schema.project.taskOverlapWaits).set({ phase: "cancelled", owner: null, checkoutEpoch: null, revision: sql`${schema.project.taskOverlapWaits.revision} + 1`, updatedAt: new Date().toISOString() })
     .where(and(eq(schema.project.taskOverlapWaits.projectId, projectId), eq(schema.project.taskOverlapWaits.taskId, taskId), sql`${schema.project.taskOverlapWaits.phase} NOT IN ('delivered', 'cancelled')`));
+}
+
+/*
+FNXC:OverlapWaitRelease 2026-09-17-06:29:
+Stamp incoming waits in the SAME transaction as Reset, before mergeDetails is discarded. An already
+landed snapshot survives; an unlanded execution is explicitly abandoned even if the predecessor starts
+again before its waiter resumes. Incrementing the revision fences an in-flight synchronization owner.
+*/
+export async function recordOverlapBlockerResetInTransaction(tx: DbTransaction, projectId: string, blocker: Task): Promise<void> {
+  const deliveries = overlapDeliverySnapshots(blocker).filter((delivery) => delivery.landedSha || delivery.paths !== undefined || delivery.noOp);
+  const now = new Date().toISOString();
+  const rows = await tx.select().from(schema.project.taskOverlapWaits).where(and(
+    eq(schema.project.taskOverlapWaits.projectId, projectId), eq(schema.project.taskOverlapWaits.blockerTaskId, blocker.id),
+    sql`${schema.project.taskOverlapWaits.phase} NOT IN ('delivered', 'cancelled')`,
+  )).for("update");
+  for (const row of rows) {
+    const observation = (row.observation ?? {}) as Record<string, unknown>;
+    // FNXC:OverlapWaitRelease 2026-09-17-06:38: A partial workspace landing must not replace another repository's already captured delivery.
+    const retained = mergeOverlapDeliverySnapshots(observedOverlapDeliveries({ observation }), deliveries);
+    await tx.update(schema.project.taskOverlapWaits).set({
+      observation: { ...observation, blockerResetAt: now, ...(retained.length ? { deliveries: retained } : {}) },
+      revision: row.revision + 1,
+      updatedAt: now,
+    }).where(and(eq(schema.project.taskOverlapWaits.projectId, projectId), eq(schema.project.taskOverlapWaits.taskId, row.taskId),
+      eq(schema.project.taskOverlapWaits.episodeId, row.episodeId)));
+  }
 }

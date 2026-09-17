@@ -8,7 +8,7 @@ import { readTaskRowInTransaction, upsertTaskRowInTransaction } from "./async/as
 import type { TaskStore } from "../store.js";
 import { createLogger } from "../process/logger.js";
 import { resolveTaskSymbolsForTask } from "../tasks/task-symbol-resolution.js";
-import { cancelTaskOverlapWaitsInTransaction } from "./overlap-wait-ops.js";
+import { cancelTaskOverlapWaitsInTransaction, recordOverlapBlockerResetInTransaction } from "./overlap-wait-ops.js";
 import { clearHumanPlanApprovalDecision } from "../planner/human-plan-approval.js";
 import { computePauseAccountingPatch } from "../tasks/task-pause-accounting.js";
 
@@ -256,6 +256,7 @@ export async function resetTaskPublicationImpl(
       await tx.delete(schema.project.taskVerificationRequests).where(and(projectScopeFor(schema.project.taskVerificationRequests.projectId, projectId), eq(schema.project.taskVerificationRequests.taskId, taskId)));
       await tx.delete(schema.project.unplannedExecutionBlocks).where(and(projectScopeFor(schema.project.unplannedExecutionBlocks.projectId, projectId), eq(schema.project.unplannedExecutionBlocks.taskId, taskId)));
       await tx.delete(schema.project.completionHandoffMarkers).where(and(projectScopeFor(schema.project.completionHandoffMarkers.projectId, projectId), eq(schema.project.completionHandoffMarkers.taskId, taskId)));
+      await recordOverlapBlockerResetInTransaction(tx, projectId, current);
       await cancelTaskOverlapWaitsInTransaction(tx, projectId, taskId);
       await tx.delete(schema.project.mergeQueue).where(and(projectScopeFor(schema.project.mergeQueue.projectId, projectId), eq(schema.project.mergeQueue.taskId, taskId)));
       await tx.delete(schema.project.mergeRequests).where(and(projectScopeFor(schema.project.mergeRequests.projectId, projectId), eq(schema.project.mergeRequests.taskId, taskId)));

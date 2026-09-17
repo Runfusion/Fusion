@@ -219,6 +219,7 @@ export async function transitionQueuedEpisodeImpl(
       previous: currentTask,
       nextOverlapBlockedBy: transition.overlapBlockedBy,
       observedAt: now,
+      newLeaseObservation: true,
     });
     const log = Array.isArray(current.log) ? [...current.log as TaskLogEntry[]] : [];
     if (appended) {

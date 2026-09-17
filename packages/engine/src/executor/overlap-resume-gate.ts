@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createHash } from "node:crypto";
+import { OVERLAP_DELIVERY_UNAVAILABLE_ERROR } from "@fusion/core";
 import type { OverlapWaitExecutionIdentity, Task, TaskOverlapWait, TaskStore } from "@fusion/core";
 import { analyzeOverlapResume, deliveryEvidenceFromTask, type OverlapDeliveryEvidence, type OverlapLandedPath, type OverlapResumeAnalysis } from "../execution/overlap-resume-analysis.js";
 import { buildOverlapResumeContext } from "../execution/overlap-resume-context.js";
@@ -104,7 +105,7 @@ export interface OverlapResumeGateResult {
 /** Strict only when a durable overlap episode exists. It never changes ordinary optional refresh policy. */
 export async function synchronizeOverlapWaitBeforeExecution(input: {
   task: Task;
-  store: Pick<TaskStore, "listTaskOverlapWaits" | "claimTaskOverlapWait" | "completeTaskOverlapWait" | "getTask"> & Partial<Pick<TaskStore, "logEntry">>;
+  store: Pick<TaskStore, "listTaskOverlapWaits" | "claimTaskOverlapWait" | "completeTaskOverlapWait" | "getTask"> & Partial<Pick<TaskStore, "logEntry" | "reconcileTaskOverlapWaits">>;
   worktreePath: string;
   owner: string;
   checkoutEpoch?: string;
@@ -114,9 +115,15 @@ export async function synchronizeOverlapWaitBeforeExecution(input: {
   nodeInstanceId?: string;
 }): Promise<OverlapResumeGateResult> {
   if (typeof input.store.listTaskOverlapWaits !== "function") return { episodeIds: [] };
-  const pending = await input.store.listTaskOverlapWaits(input.task.id, { pendingOnly: true });
+  let pending = await input.store.listTaskOverlapWaits(input.task.id, { pendingOnly: true });
   // Structural test doubles and legacy adapters may expose the method before wiring a value.
   if (!Array.isArray(pending) || pending.length === 0) return { episodeIds: [] };
+  // FNXC:OverlapWaitRelease 2026-09-17-06:29: Reconcile abandoned predecessors at every entry, not only on the next maintenance sweep. Ordinary execution without a wait keeps its cheap read-only path.
+  if (input.store.reconcileTaskOverlapWaits) {
+    await input.store.reconcileTaskOverlapWaits(input.task.id);
+    pending = await input.store.listTaskOverlapWaits(input.task.id, { pendingOnly: true });
+    if (pending.length === 0) return { episodeIds: [] };
+  }
   const alreadyReady = pending.filter((episode) => episode.phase === "ready");
   const work = pending.filter((episode) => episode.phase !== "ready");
   if (work.length === 0) {
@@ -284,7 +291,7 @@ export async function synchronizeOverlapWaitBeforeExecution(input: {
   }
   if (analysis!.decision === "freshness-pending") {
     await persist(claims, "freshness-pending", "unavailable");
-    throw new OverlapResumeSynchronizationError("delivery-unavailable", "Delivered file evidence is not yet available for overlap synchronization");
+    throw new OverlapResumeSynchronizationError("delivery-unavailable", OVERLAP_DELIVERY_UNAVAILABLE_ERROR);
   }
   const freshness = repositoryDeliveries.length ? "proven" : "not-required";
   previouslyFreshRepositories.add(repository);

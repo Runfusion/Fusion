@@ -498,6 +498,14 @@ describe("SelfHealingManager", () => {
     });
 
 
+    it.each(["startup", "maintenance"] as const)("%s invokes released-overlap recovery", async (entry) => {
+      vi.mocked(store.getSettings).mockResolvedValue({ globalPause: false, enginePaused: false } as Settings);
+      const recovery = vi.spyOn(manager, "reconcileReleasedOverlapWaits").mockResolvedValue(0);
+      if (entry === "startup") await manager.runStartupRecovery();
+      else await (manager as unknown as { runMaintenance(): Promise<void> }).runMaintenance();
+      expect(recovery).toHaveBeenCalledOnce();
+    });
+
     it("runStartupRecovery clears stale blockedBy rows", async () => {
       vi.mocked(store.getSettings).mockResolvedValue({
         globalPause: false,
