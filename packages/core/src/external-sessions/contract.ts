@@ -55,7 +55,10 @@ export function externalSessionId(principal: ExternalSessionPrincipal, session: 
 
 /** Canonicalized validated data gives retries the same digest even when JSON key order differs. */
 export function externalSessionDigest(value: ExternalSessionObservation | ExternalSessionIngestion): string {
-  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+  const canonical = "session" in value
+    ? externalSessionIngestionSchema.parse(value)
+    : externalSessionObservationSchema.parse(value);
+  return createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
 }
 
 /** Host connectivity and agent activity are independent signals, using distinct clocks. */

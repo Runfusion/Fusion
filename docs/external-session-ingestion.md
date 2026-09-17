@@ -5,6 +5,37 @@ provider collectors, transcripts, cost accounting, or control operations. Observ
 create Fusion tasks or acquire runtime authority. Titles and filesystem paths are display
 metadata, not identity or permission. See [the PR sequence](external-sessions-pr-map.md).
 
+## Test locally
+
+From this source checkout, run:
+
+```sh
+pnpm install --frozen-lockfile
+pnpm build
+pnpm smoke:external-sessions
+```
+
+The smoke creates its own temporary home, project, embedded PostgreSQL database, random local HTTP
+port, and random collector secret. Automation stays paused. It verifies health, authenticated
+heartbeat, first ingestion, response-loss replay, sequence gaps/conflicts, a newer revision,
+missing credentials, cross-project rejection, browser rejection, durable replay after restarting the owned server, and clean shutdown. Success prints
+`PASS:` for each check and exits 0; all temporary state is removed. It never uses your running Fusion
+instance or an ambient `DATABASE_URL`. No credential setup or live restart is needed.
+
+This is a backend test; PR1 does not add a Sessions screen or discover Claude/AgentPulse sessions.
+A terminal smoke demonstrates the contract. The UI and provider collectors follow in PR2/PR3.
+
+For the focused automated regressions, provide a disposable PostgreSQL server with database-create
+permission, then run:
+
+```sh
+FUSION_PG_TEST_URL_BASE=postgresql://postgres@127.0.0.1:55479 pnpm test:external-sessions
+```
+
+The harness creates and drops uniquely named databases on that server. CI runs these checks and the
+HTTP smoke in the Gate job. A sandbox blocking PostgreSQL shared memory cannot run the database or
+HTTP smoke; do not interpret skipped PostgreSQL cases as a successful acceptance check.
+
 ## Enable ingestion
 
 Configure `FUSION_EXTERNAL_SESSION_COLLECTORS` as a JSON array of at most 128 credentials:
@@ -71,7 +102,7 @@ Never reset or recycle a stream's sequence. A replacement spool uses a new strea
 session revisions still retain their high-water mark across all streams.
 
 Retries at or below the acknowledged position are no-ops and return the current acknowledgement
-with `applied:false`. The latest position retains a digest: changing its body yields 409
+with `applied:false`. The latest position retains a digest of the validated, redacted envelope: changing its retained body yields 409
 `sequence-conflict`. Older positions retain only the high-water mark and cannot be reused to
 change stored data; they are not individually fingerprint-verified. Event ids identify a position
 inside the spool; they are not globally unique across streams. A delivery gap returns 409
@@ -81,7 +112,8 @@ an existing spool rather than silently discarding its position.
 A session revision is a positive safe integer, monotonically increasing per native identity
 across every spool/import for that session. Each revision is a complete snapshot, not a delta.
 Higher revisions replace current metadata; lower revisions are acknowledged without applying.
-A changed snapshot at the current revision returns 409 `revision-conflict` without advancing the
+Fingerprints are computed after display redaction; changing only removed secret bytes is equivalent to
+the same retained snapshot, and raw secret hashes are never stored. A changed retained snapshot at the current revision returns 409 `revision-conflict` without advancing the
 stream. Fix the collector's revision assignment; do not relabel conflicting content as a retry.
 Provider/native ids are case-sensitive. Identity includes the credential's project and host;
 renaming a title/path leaves identity unchanged. Changing provider/native id means a new session.
@@ -114,7 +146,10 @@ Nothing here authorizes a deployment or service restart.
 2. Before an authorized deployment, take a supported PostgreSQL backup and retain the currently
    deployed artifact. Verify the target's current schema ceiling and migration ledger. Migration
    0082 is additive and runs through Fusion startup; resolve upstream numbering collisions before
-   deploying. Do not manually stamp the migration as applied.
+   deploying. Do not manually stamp the migration as applied. Startup probes all required external-session columns.
+   Missing nullable receipt columns are repaired additively. Missing required identity, revision,
+   fingerprint or acknowledgement data in populated tables fails startup transactionally; restore a
+   supported backup instead of inventing state or resetting replay positions.
 3. Deploy first with collector configuration absent. After authorization and a successful isolated
    smoke check, configure one registered test project/host credential. Verify heartbeat, one event,
    response-loss replay, and a gap conflict. Review durable counts before enabling real collectors.

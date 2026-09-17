@@ -1,6 +1,8 @@
+import { randomBytes } from "node:crypto";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
 import { createSharedPgTaskStoreTestHarness, pgDescribe } from "../../__test-utils__/pg-test-harness.js";
+import { externalSessionDigest, externalSessionIngestionSchema } from "../../external-sessions/contract.js";
 import { ExternalSessionStore } from "../../external-sessions/store.js";
 import { externalSessions, externalSessionStreams, externalSessionHosts, tasks } from "../../postgres/schema/project.js";
 import { applySchemaBaseline } from "../../postgres/schema-applier.js";
@@ -71,9 +73,26 @@ pgDescribe("external sessions: durable observation ingestion", () => {
     const other = envelope(2); other.session.nativeSessionId = "native-2";
     const b = await store().ingest(other);
     expect(a.sessionId).not.toBe(b.sessionId);
-    const secret = envelope(3); secret.session.title = "Bearer sk-abcdefghijklmnopqrstuvwxyz123456789";
+    const fixture = randomBytes(32).toString("hex");
+    const secret = envelope(3); secret.session.title = `Bearer ${fixture}`;
+    secret.session.projectPath = `/test/password=${fixture}`;
     await store().ingest(secret);
-    expect((await store().get(a.sessionId))?.observation.title).not.toContain("sk-abcdefghijklmnopqrstuvwxyz123456789");
+    const saved = await store().get(a.sessionId);
+    expect(saved?.observation.title).toBe("Bearer [REDACTED]");
+    expect(saved?.observation.projectPath).not.toContain(fixture);
+    const raw = externalSessionIngestionSchema.parse(secret);
+    expect(saved?.observationDigest).toBe(externalSessionDigest(saved!.observation));
+    expect(saved?.observationDigest).not.toBe(externalSessionDigest(raw.session));
+    const [stream] = await h.layer().db.select().from(externalSessionStreams);
+    expect(stream.lastEventDigest).toBe(externalSessionDigest({ ...raw, session: saved!.observation }));
+    expect(stream.lastEventDigest).not.toBe(externalSessionDigest(raw));
+    // Different removed secret bytes have the same persisted snapshot and replay fingerprint.
+    const equivalent = structuredClone(secret);
+    const replacement = randomBytes(32).toString("hex");
+    equivalent.session.title = `Bearer ${replacement}`;
+    equivalent.session.projectPath = `/test/password=${replacement}`;
+    expect((await store().ingest(equivalent)).applied).toBe(false);
+    expect((await store().ingest({ ...equivalent, sequence: 4, eventId: "redacted-revision-retry" })).applied).toBe(false);
   });
 
   it("records server-receipt heartbeat monotonically without modifying observations", async () => {
@@ -123,6 +142,39 @@ pgDescribe("external sessions: durable observation ingestion", () => {
     for (let i = 0; i < 16; i++) await store().ingest({ ...envelope(), streamId: `spool-${i}` });
     await expect(store().ingest({ ...envelope(), streamId: "overflow" })).rejects.toMatchObject({ code: "stream-limit" });
     expect((await store().ingest({ ...envelope(), streamId: "spool-0" })).acknowledgedSequence).toBe(1);
+  });
+
+  it.each([
+    ["external_session_hosts", "last_heartbeat_at"],
+    ["external_session_streams", "last_event_digest"],
+    ["external_sessions", "origin"],
+  ])("repairs missing %s.%s with surviving data and ledger", async (table, column) => {
+    const first = await store().ingest(envelope());
+    await h.adminDb().execute(sql`ALTER TABLE project.${sql.identifier(table)} DROP COLUMN ${sql.identifier(column)} CASCADE`);
+    expect((await applySchemaBaseline(h.adminDb())).applied).toBe(true);
+    expect((await store().get(first.sessionId))?.revision).toBe(1);
+    expect((await store().ingest(envelope(2))).applied).toBe(true);
+    expect((await applySchemaBaseline(h.adminDb())).applied).toBe(false);
+  });
+
+  it.each([
+    ["external_session_hosts", "collector_version"],
+    ["external_session_streams", "acknowledged_sequence"],
+    ["external_sessions", "revision"],
+    ["external_sessions", "observation_digest"],
+  ])("repairs missing required %s.%s on an empty restored schema", async (table, column) => {
+    await h.adminDb().execute(sql`ALTER TABLE project.${sql.identifier(table)} DROP COLUMN ${sql.identifier(column)} CASCADE`);
+    expect((await applySchemaBaseline(h.adminDb())).applied).toBe(true);
+    expect((await store().ingest(envelope())).applied).toBe(true);
+    expect((await applySchemaBaseline(h.adminDb())).applied).toBe(false);
+  });
+
+  it("fails closed rather than resetting lost acknowledgement positions in populated schemas", async () => {
+    const first = await store().ingest(envelope());
+    await h.adminDb().execute(sql`ALTER TABLE project.external_session_streams DROP COLUMN acknowledged_sequence CASCADE`);
+    await expect(applySchemaBaseline(h.adminDb())).rejects.toThrow();
+    expect((await store().get(first.sessionId))?.revision).toBe(1);
+    expect(await h.layer().db.select({ id: externalSessions.id }).from(externalSessions)).toHaveLength(1);
   });
 
   it("installs migration 0082 on an upgrade and reopening is idempotent", async () => {

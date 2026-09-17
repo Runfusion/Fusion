@@ -25,6 +25,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { sql } from "drizzle-orm";
+import { pgTable, text } from "drizzle-orm/pg-core";
 import { runPluginSchemaInitHooks, DEFAULT_PLUGIN_SCHEMA_INIT_HOOKS, type PluginSchemaInitHook } from "./plugin-schema-hook.js";
 import { acquireSchemaMutationLocks } from "./advisory-locks.js";
 
@@ -352,6 +353,7 @@ export function assertBinaryNotOlderThanDatabase(applied: readonly string[]): vo
 
 /** Bookkeeping table for the fresh Drizzle migration history. */
 export const MIGRATION_BOOKKEEPING_TABLE = "fusion_schema_migrations";
+const migrationBookkeeping = pgTable(MIGRATION_BOOKKEEPING_TABLE, { version: text("version").primaryKey() });
 
 /*
 FNXC:LegacyAdoption 2026-07-19-14:30 (PR #2341 review):
@@ -1736,16 +1738,43 @@ export async function applySchemaBaseline(
       await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${PATCHNODE_ENTRIES_VERSION}) ON CONFLICT (version) DO NOTHING`);
       schemaChanged = true;
     }
+    // FNXC:ExternalSessions 2026-09-18-00:00: Probe the full column contract; a ledger row alone cannot prove a restored schema is usable.
     const externalSessionsMissing = ((await tx.execute(sql`
-      SELECT to_regclass('project.tasks') IS NOT NULL AND (
-        to_regclass('project.external_session_hosts') IS NULL
-        OR to_regclass('project.external_session_streams') IS NULL
-        OR to_regclass('project.external_sessions') IS NULL) AS missing
+      SELECT to_regclass('project.tasks') IS NOT NULL AND EXISTS (
+        SELECT 1 FROM (VALUES
+          ('external_session_hosts', 'project_id'),
+          ('external_session_hosts', 'host_id'),
+          ('external_session_hosts', 'collector_version'),
+          ('external_session_hosts', 'last_heartbeat_at'),
+          ('external_session_streams', 'project_id'),
+          ('external_session_streams', 'host_id'),
+          ('external_session_streams', 'stream_id'),
+          ('external_session_streams', 'acknowledged_sequence'),
+          ('external_session_streams', 'last_event_id'),
+          ('external_session_streams', 'last_event_digest'),
+          ('external_session_streams', 'acknowledged_at'),
+          ('external_sessions', 'project_id'),
+          ('external_sessions', 'id'),
+          ('external_sessions', 'host_id'),
+          ('external_sessions', 'provider'),
+          ('external_sessions', 'native_session_id'),
+          ('external_sessions', 'origin'),
+          ('external_sessions', 'revision'),
+          ('external_sessions', 'observation'),
+          ('external_sessions', 'observation_digest'),
+          ('external_sessions', 'received_at')
+        ) AS required(table_name, column_name)
+        WHERE NOT EXISTS (
+          SELECT 1 FROM information_schema.columns actual
+          WHERE actual.table_schema = 'project' AND actual.table_name = required.table_name
+            AND actual.column_name = required.column_name
+        )
+      ) AS missing
     `)) as unknown as Array<{ missing: boolean }>)[0]?.missing ?? true;
     if (!applied.includes(EXTERNAL_SESSIONS_VERSION) || externalSessionsMissing) {
       const migrationSql = await readFile(EXTERNAL_SESSIONS_MIGRATION_PATH, "utf8");
       await tx.execute(sql.raw(migrationSql));
-      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${EXTERNAL_SESSIONS_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      await tx.insert(migrationBookkeeping).values({ version: EXTERNAL_SESSIONS_VERSION }).onConflictDoNothing();
       schemaChanged = true;
     }
     return { applied: schemaChanged, pluginHooksRun: pluginHooks.length };

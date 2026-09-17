@@ -297,6 +297,12 @@ jobs:
       - name: Boot smoke (app starts and serves)
         run: node scripts/boot-smoke.mjs
 
+      # FNXC:ExternalSessions 2026-09-18-00:00: Pin real PostgreSQL replay, fingerprint redaction and schema-repair regressions for the new ingestion boundary.
+      - name: External session contract, storage and auth regression
+        run: |
+          pnpm test:external-sessions
+          pnpm smoke:external-sessions
+
       - name: Gate tests (curated engine-core + CI-shape)
         run: pnpm test:gate
 

@@ -33,8 +33,13 @@ export class ExternalSessionStore {
   async ingest(value: unknown): Promise<ExternalSessionAcknowledgement> {
     const input = externalSessionIngestionSchema.parse(value);
     const sessionId = externalSessionId(this.principal, input.session);
-    const digest = externalSessionDigest(input);
-    const observationDigest = externalSessionDigest(input.session);
+    // FNXC:ExternalSessions 2026-09-18-00:00: Persist only fingerprints of redacted metadata; raw hashes would permit offline secret guessing.
+    const observation = { ...input.session,
+      ...(input.session.title !== undefined ? { title: redactSecrets(input.session.title) } : {}),
+      ...(input.session.projectPath !== undefined ? { projectPath: redactSecrets(input.session.projectPath) } : {}),
+    };
+    const digest = externalSessionDigest({ ...input, session: observation });
+    const observationDigest = externalSessionDigest(observation);
     const receivedAt = new Date().toISOString();
     const { projectId, hostId } = this.principal;
     const hostScope = and(eq(externalSessionHosts.projectId, projectId), eq(externalSessionHosts.hostId, hostId));
@@ -62,10 +67,6 @@ export class ExternalSessionStore {
       if (previous?.revision === input.session.revision && previous.observationDigest !== observationDigest) {
         throw new ExternalSessionConflict("revision-conflict", stream.acknowledgedSequence);
       }
-      const observation = { ...input.session,
-        ...(input.session.title !== undefined ? { title: redactSecrets(input.session.title) } : {}),
-        ...(input.session.projectPath !== undefined ? { projectPath: redactSecrets(input.session.projectPath) } : {}),
-      };
       const applied = await tx.insert(externalSessions).values({ projectId, id: sessionId, hostId,
         provider: observation.provider, nativeSessionId: observation.nativeSessionId,
         revision: observation.revision, observation, observationDigest, receivedAt })

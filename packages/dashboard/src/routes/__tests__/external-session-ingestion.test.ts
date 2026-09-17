@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Request, Response } from "express";
 import { ExternalSessionStore, ExternalSessionConflict } from "@fusion/core";
@@ -7,7 +7,7 @@ import { registerExternalSessionRoutes } from "../register-external-session-rout
 import { createAuthMiddleware } from "../../auth-middleware.js";
 import { parseExternalSessionCollectorCredentials } from "../external-session-collector-auth.js";
 
-const token = "collector-secret-only-for-tests";
+const token = randomBytes(32).toString("hex");
 const credential = { projectId: "project-1", hostId: "host-1", tokenSha256: createHash("sha256").update(token).digest("hex") };
 const body = { schemaVersion: 1, streamId: "spool", sequence: 1, eventId: "event-1", collectorVersion: "1.0",
   session: { provider: "other-provider", nativeSessionId: "native-1", revision: 1, activity: "waiting", observedAt: "2026-09-17T00:00:00Z" } };
