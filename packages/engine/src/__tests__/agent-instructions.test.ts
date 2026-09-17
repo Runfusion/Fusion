@@ -636,6 +636,150 @@ describe("buildAgentChatPrompt", () => {
     expect(prompt).toContain("The team values short progress updates.");
     expect(prompt).toContain("## Project Memory\n\nProject preference: avoid force pushes.");
   });
+
+  /*
+  FNXC:ChatContextBudget 2026-08-20-11:56:
+  memoryCapChars bounds the memory sections of the chat system prompt (user
+  requirement: agent chat must work on 64K-context models). Oversized sources
+  are inlined as bounded heading indexes; the full content stays reachable via
+  fn_memory_search / fn_memory_get. Without a cap (engine lanes) the legacy
+  full injection is preserved — these tests pin both sides of that contract.
+  */
+  it("demotes oversized project memory to a bounded heading index when memoryCapChars is set", async () => {
+    await mkdir(join(testDir, ".fusion", "memory"), { recursive: true });
+    const body = "SECRET-PROJECT-BODY-CONTENT ".repeat(3000); // ~44K chars
+    await writeFile(
+      join(testDir, ".fusion", "memory", "MEMORY.md"),
+      `# Project Memory\n\n## Architecture\n\n${body}\n\n## Conventions\n\n${body}`,
+      "utf-8",
+    );
+
+    const prompt = await buildAgentChatPrompt({
+      agent: makeAgent({ name: "Avery" }),
+      rootDir: testDir,
+      basePrompt: "You are a chat assistant.",
+      includeProjectMemory: true,
+      memoryCapChars: 4000,
+    });
+
+    expect(prompt).toContain("## Project Memory Index (use fn_memory_search / fn_memory_get to read)");
+    expect(prompt).toContain('"Architecture"');
+    expect(prompt).toContain('"Conventions"');
+    expect(prompt).not.toContain("SECRET-PROJECT-BODY-CONTENT");
+    // The whole project-memory block (index + note) must stay near the cap.
+    const blockStart = prompt.indexOf("## Project Memory");
+    const blockEnd = prompt.indexOf("_Project memory exceeds");
+    expect(blockStart).toBeGreaterThan(-1);
+    expect(blockEnd).toBeGreaterThan(blockStart);
+    expect(blockEnd - blockStart).toBeLessThan(8000);
+  });
+
+  it("keeps small project memory fully inlined when memoryCapChars is set", async () => {
+    await mkdir(join(testDir, ".fusion", "memory"), { recursive: true });
+    await writeFile(
+      join(testDir, ".fusion", "memory", "MEMORY.md"),
+      "Project preference: avoid force pushes.",
+      "utf-8",
+    );
+
+    const prompt = await buildAgentChatPrompt({
+      agent: makeAgent({ name: "Avery" }),
+      rootDir: testDir,
+      basePrompt: "You are a chat assistant.",
+      includeProjectMemory: true,
+      memoryCapChars: 8000,
+    });
+
+    expect(prompt).toContain("## Project Memory\n\nProject preference: avoid force pushes.");
+    expect(prompt).not.toContain("Project Memory Index");
+  });
+
+  it("keeps full project memory injection when no cap is set (engine lanes)", async () => {
+    await mkdir(join(testDir, ".fusion", "memory"), { recursive: true });
+    const body = "SECRET-PROJECT-BODY-CONTENT ".repeat(3000);
+    await writeFile(
+      join(testDir, ".fusion", "memory", "MEMORY.md"),
+      `# Project Memory\n\n## Architecture\n\n${body}`,
+      "utf-8",
+    );
+
+    const prompt = await buildAgentChatPrompt({
+      agent: makeAgent({ name: "Avery" }),
+      rootDir: testDir,
+      basePrompt: "You are a chat assistant.",
+      includeProjectMemory: true,
+    });
+
+    expect(prompt).toContain("SECRET-PROJECT-BODY-CONTENT");
+    expect(prompt).not.toContain("Project Memory Index");
+  });
+
+  it("demotes oversized agent workspace memory to a bounded index when memoryCapChars is set", async () => {
+    await mkdir(join(testDir, ".fusion", "agent-memory", "agent-test"), { recursive: true });
+    const body = "SECRET-AGENT-BODY-CONTENT ".repeat(3000); // ~40K chars
+    await writeFile(
+      join(testDir, ".fusion", "agent-memory", "agent-test", "MEMORY.md"),
+      `# Agent Memory\n\n## Habits\n\n${body}\n\n## Preferences\n\n${body}`,
+      "utf-8",
+    );
+
+    const prompt = await buildAgentChatPrompt({
+      agent: makeAgent({ name: "Avery" }),
+      rootDir: testDir,
+      basePrompt: "You are a chat assistant.",
+      memoryCapChars: 4000,
+    });
+
+    expect(prompt).toContain("exceeds this session's 4000-char context budget");
+    expect(prompt).toContain("## Agent Memory Index (use fn_memory_search / fn_memory_get to read)");
+    expect(prompt).toContain('"Habits"');
+    expect(prompt).not.toContain("SECRET-AGENT-BODY-CONTENT");
+  });
+
+  /*
+  FNXC:ChatContextBudget 2026-09-16-12:40:
+  Review finding: the inline-memory demote branch compared bytes but sliced code units. A
+  multibyte inline memory must be clamped BY BYTES (shared clampUtf8) — the old slice kept 3x
+  the intended bytes for CJK content.
+  */
+  it("clamps multibyte inline agent memory by bytes in the demote branch", async () => {
+    const prompt = await buildAgentChatPrompt({
+      agent: makeAgent({ name: "Avery", memory: "記".repeat(4000) }), // 12000 bytes, 4000 chars
+      rootDir: testDir,
+      basePrompt: "You are a chat assistant.",
+      memoryCapChars: 1000,
+    });
+    expect(prompt).toContain("…");
+    expect(prompt).not.toContain("記".repeat(2000));
+    const match = prompt.match(/記+/);
+    const clamped = match ? match[0] : "";
+    expect(clamped.length).toBeGreaterThan(0);
+    expect(Buffer.byteLength(clamped, "utf8")).toBeLessThanOrEqual(1000);
+    expect(clamped).not.toContain("\uFFFD"); // no split multi-byte characters
+  });
+
+  it("keeps agent memory fully inlined when the combined size fits the cap", async () => {
+    await mkdir(join(testDir, ".fusion", "agent-memory", "agent-test"), { recursive: true });
+    await writeFile(
+      join(testDir, ".fusion", "agent-memory", "agent-test", "MEMORY.md"),
+      "Workspace habit: run the gate before merge.",
+      "utf-8",
+    );
+
+    const prompt = await buildAgentChatPrompt({
+      agent: makeAgent({
+        name: "Avery",
+        memory: "Inline preference: prefer small diffs.",
+      }),
+      rootDir: testDir,
+      basePrompt: "You are a chat assistant.",
+      memoryCapChars: 8000,
+    });
+
+    expect(prompt).toContain("Inline preference: prefer small diffs.");
+    expect(prompt).toContain("Workspace habit: run the gate before merge.");
+    expect(prompt).not.toContain("context budget");
+  });
 });
 
 describe("buildSystemPromptWithInstructions", () => {
