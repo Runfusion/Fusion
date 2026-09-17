@@ -688,7 +688,18 @@ async function dispatchPlanningContinuationIfCurrent(input: {
     const currentTask = typeof input.store.getTask === "function"
       ? await input.store.getTask(input.task.id).catch(() => undefined)
       : input.task;
-    if (!isPlanningContinuationTaskDispatchable(currentTask)) return false;
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-09-14-23:02:
+    This predicate ran against the built-in "done" fallback while the sibling classify site takes
+    the caller's resolved terminal set — the partial-threading shape the inert-flag-seams guard
+    exists to catch: a board declaring a non-`done` complete lane would let the outer guards pass
+    and this inner check call the continuation terminal anyway. Resolve the task's own workflow
+    columns, mirroring the drain pass's `resolveTerminalColumns` caller (complete lane ∪ built-in
+    "done"); an unresolvable workflow yields the same {done} set as the legacy fallback.
+    */
+    const terminalLifecycle = await resolveTaskLifecycleColumns(input.store, input.task.id);
+    const terminalColumns = new Set([terminalLifecycle?.complete ?? "done", "done"]);
+    if (!isPlanningContinuationTaskDispatchable(currentTask, terminalColumns)) return false;
     if (isTaskBlockedOnApproval(currentTask)) return false;
     const currentItem = typeof input.store.getWorkflowWorkItem === "function"
       ? await input.store.getWorkflowWorkItem(input.item.id).catch(() => null)
