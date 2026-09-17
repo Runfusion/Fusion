@@ -13,6 +13,9 @@ root_cause: drawer_body_and_hosted_view_both_own_vertical_overflow
 resolution_type: code_fix
 severity: medium
 related_components:
+  - packages/dashboard/app/components/AgentsView.css
+  - packages/dashboard/app/components/ViewSidebar.css
+  - packages/dashboard/app/components/__tests__/AgentsView.mobile-drawer-scroll.test.tsx
   - packages/dashboard/app/components/MobileDrawer.tsx
   - packages/dashboard/app/components/MobileDrawer.css
   - packages/dashboard/app/components/FilesView.css
@@ -97,6 +100,39 @@ A leaf-rule string match is a floor, never the gate. The gate is an **ancestor-c
 
 `packages/dashboard/app/components/__tests__/FilesView.mobile-drawer.test.tsx`. Confirmed red on the pre-fix tree
 (6 failed / 2 passed) and green after. `FileBrowserModal.mobile-drawer.test.tsx` (FN-427) remains green unchanged.
+
+## Sequel: FN-502 — the host's own `className` argument can unbound the chain
+
+The operator reported the same class of symptom on a different destination: "I can no longer scroll in the agents
+drawer". Nothing was wrong with `ViewSidebar`, the shared rail primitive, and the page did compose `ViewLayout` with
+`contentOwnsScroll`.
+
+The defect was in the **call-site argument**. `ViewSidebar` takes both a `className` (applied to the OUTER
+`.view-sidebar` box) and a `panelClassName` (applied to the inner `aside.view-sidebar__panel`). `AgentsView` passed
+`agents-split-sidebar` as `className`, and that rule still carried `display: flex; flex-direction: column` from the era
+when the class named the rail itself. The primitive gives the panel `flex: none`; on the **cross** axis of the default
+`row` direction, `align-items: stretch` makes it full height, but in a `column` container `flex: none` puts the panel on
+the MAIN axis, where its height follows its content. `.agents-view-content` then had no bounded height, its
+`overflow-y: auto` never engaged, and the rail's `overflow: hidden` clipped everything below the fold. The same rule
+also pushed the desktop resize separator underneath the rail, which is the visible tell.
+
+Diagnostic rule to reuse: **when a shared primitive's internals look correct, read the host's arguments.** Check which
+box each class actually lands on (`className` vs `panelClassName`), not only the primitive's stylesheet. A host class
+MAY set a column direction, but then it must also make the panel shrinkable inside itself — see the measured FN-479
+note in `FileBrowser.css`, which is why `.file-browser-sidebar` is conformant while the Agents rail was not.
+
+Fix shape, identical in spirit to FN-445: drop the direction override, give the panel a host class that restates its
+bound in physical `min-height`, restate the whole fill chain for phones in `AgentsView.css`, and add `agents` to
+`MOBILE_DRAWER_CONTENT_SCROLL_VIEWS` so the drawer body stops competing for the gesture. Regression coverage:
+`packages/dashboard/app/components/__tests__/AgentsView.mobile-drawer-scroll.test.tsx`, which also scans EVERY
+`ViewSidebar` host class for the same shape so the next destination fails the gate instead of the operator.
+
+### One more jsdom pitfall measured on FN-502
+
+jsdom resolves **no** `@media` rule through `getComputedStyle`: a declaration inside `@media (max-width: 768px)` stays
+at its initial value even with `window.innerWidth = 390`. Phone-only presentations (such as the icon-only header canon)
+therefore cannot be proven by computed style; prove them with the rendered class plus a stylesheet assertion, and keep
+computed-style chains on rules that are gated by an attribute selector rather than a media query.
 
 ## Sequel: FN-462
 

@@ -1818,7 +1818,8 @@ describe("MailboxView", () => {
     });
 
     const markAllReadButton = screen.getByTestId("mailbox-mark-all-read");
-    expect(markAllReadButton).toHaveClass("btn", "btn-sm", "btn-secondary");
+    // FN-502: this action moved onto the shared ViewActionButton canon, so it is icon-only on a phone.
+    expect(markAllReadButton).toHaveClass("btn", "btn-sm", "view-action-button", "view-action-button--mobile-icon-only");
 
     await act(async () => {
       fireEvent.click(markAllReadButton);
@@ -2699,7 +2700,14 @@ describe("MailboxView", () => {
       expect(css).toMatch(/\.mailbox-view--mobile\s+\.view-header\s*\{[^}]*flex-wrap:\s*nowrap;[^}]*align-items:\s*center;[^}]*\}/);
       expect(css).toMatch(/\.mailbox-view--mobile\s+\.view-header__title\s*\{[^}]*flex:\s*1\s+1\s+auto;[^}]*min-width:\s*0;[^}]*\}/);
       expect(css).toMatch(/\.mailbox-view--mobile\s+\.view-header__actions\s*\{[^}]*flex:\s*0\s+1\s+auto;[^}]*min-width:\s*0;[^}]*flex-wrap:\s*nowrap;[^}]*justify-content:\s*flex-end;[^}]*margin-left:\s*auto;[^}]*\}/);
-      expect(css).toMatch(/\.mailbox-view--mobile\s+\.view-header__actions\s+\.btn\s+span\s*\{[^}]*min-width:\s*0;[^}]*overflow:\s*hidden;[^}]*text-overflow:\s*ellipsis;[^}]*white-space:\s*nowrap;[^}]*\}/);
+      /*
+      FN-502 replaced the header ACTIONS with the shared icon-only canon, so nothing in this row truncates an action
+      label to an ellipsis any more: the label is hidden outright on a phone. The compression and truncation survive
+      only for the EXEMPT collection controls (agent sub-tabs, approval filters), and the badge is excluded from it.
+      */
+      expect(css).not.toMatch(/\.mailbox-view--mobile\s+\.view-header__actions\s+\.btn\s+span\s*\{/);
+      expect(css).toMatch(/\.mailbox-view--mobile\s+\.view-header__actions\s+\.mailbox-agent-subtab\s*\{[^}]*min-width:\s*0;[^}]*flex-shrink:\s*1;[^}]*\}/);
+      expect(css).toMatch(/\.mailbox-view--mobile\s+\.view-header__actions\s+\.mailbox-agent-subtab\s*>\s*span:not\(\.mailbox-tab-badge\)\s*\{[^}]*text-overflow:\s*ellipsis;[^}]*\}/);
       expect(css).not.toMatch(/\.mailbox-view--mobile\s+\.view-header__title\s*\{[^}]*flex:\s*0\s+0\s+100%;[^}]*\}/);
       expect(css).not.toMatch(/\.mailbox-view--mobile\s+\.view-header__actions\s*\{[^}]*flex:\s*1\s+1\s+100%;[^}]*\}/);
       expect(css).toMatch(/\.mailbox-view--mobile\s+\.mailbox-tabs\s*\{[^}]*flex-wrap:\s*nowrap;[^}]*overflow-x:\s*auto;[^}]*\}/);

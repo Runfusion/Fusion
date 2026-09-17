@@ -1065,6 +1065,7 @@ Copy this checklist into a bug-fix or UI-affordance add/remove task's `## Surfac
 - [ ] Empty / undefined / duplicate / populated data states
 - [ ] Shared hooks / components / modules / helpers reusing the logic
 - [ ] Every component that renders the affordance (search the codebase for the icon/class/testid, not just the one the user pointed at)
+- [ ] Every HOST of a shared layout primitive when the defect is in a call-site ARGUMENT rather than the primitive: for a `ViewSidebar` rail, check which box each class lands on (`className` styles the outer `.view-sidebar`, `panelClassName` the inner `aside.view-sidebar__panel`) and scan the other rails for the same shape (FN-502 — a leftover `flex-direction: column` on the outer box removed the panel's vertical stretch and unbounded the whole scroll chain)
 - [ ] Leftover shells after removal — empty buttons, orphaned click targets, now-unused wrappers, dangling aria-labels — are explicitly checked and fixed/hidden
 
 Motivating incident: FN-6115/FN-6118/FN-6123 — a single workflow-row chevron required three tasks to fully remove because the affordance rendered across multiple components and one mobile surface kept an empty `btn-icon` button shell.

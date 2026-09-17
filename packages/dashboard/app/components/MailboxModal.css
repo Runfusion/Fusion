@@ -1104,13 +1104,22 @@ FN-8349 attempted this same change but finalized without landing it.
   margin-left: auto;
 }
 
-.mailbox-view--mobile .view-header__actions .btn {
+/*
+FNXC:StandardizedViewActions 2026-09-17-09:26:
+FN-502 : ces deux règles visaient tout `.btn` du bandeau et servaient à comprimer puis tronquer à l'ellipse les
+libellés des ACTIONS sur téléphone — exactement le symptôme signalé. Les actions (Filtrer, Composer, Tout marquer
+comme lu) passent désormais par `ViewActionButton` et se réduisent à leur icône ; à 0,3,0 ces sélecteurs auraient de
+plus battu la règle de boîte canonique (0,2,1) et réintroduit un padding dans le carré réduit. Ils sont donc
+re-scopés aux seuls contrôles EXEMPTÉS du canon — sous-onglets d'agent et filtres d'approbations (`.mailbox-agent-subtab`),
+qui sont des choix de collection et gardent leur libellé lisible — et le badge est exclu de la troncature.
+*/
+.mailbox-view--mobile .view-header__actions .mailbox-agent-subtab {
   min-width: 0;
   flex-shrink: 1;
   padding: var(--space-xs);
 }
 
-.mailbox-view--mobile .view-header__actions .btn span {
+.mailbox-view--mobile .view-header__actions .mailbox-agent-subtab > span:not(.mailbox-tab-badge) {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

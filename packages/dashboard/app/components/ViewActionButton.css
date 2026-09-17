@@ -8,9 +8,22 @@ these two shared owners. A button reduced to its glyph now uses the canonical sh
 36px mobile) and one of the two canonical variants only; the 44px floor stays with LABELLED controls, list
 rows, tabs, and selects. The collapsed create action is therefore bordered, never a filled CTA square.
 */
+/*
+FNXC:IconOnlyButtonCanon 2026-09-17-09:26:
+FN-502 opens a badge slot next to the label. `position: relative` only establishes the containing block the collapsed
+phone presentation needs to pin that badge to a corner; it changes no box, glyph, or spacing metric, so the canonical
+geometry contracts (`--icon-button-size-mobile`, `--icon-button-glyph-scale-mobile`, FN-486 chevron parity) are intact.
+*/
 .view-action-button {
+  position: relative;
   gap: var(--space-xs);
   white-space: nowrap;
+}
+
+.view-action-button__badge {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
 }
 
 .view-action-button > svg,
@@ -153,6 +166,18 @@ viewport never actually lacked room for. The pre-hydration fallback covers the u
     clip-path: inset(50%);
     white-space: nowrap;
   }
+
+  /*
+  FNXC:IconOnlyButtonCanon 2026-09-17-09:26:
+  FN-502: the label is hidden because the glyph already carries its meaning; a badge carries a COUNT the glyph cannot,
+  so it survives the collapse and moves to the corner of the square instead of widening it.
+  */
+  html[data-viewport-mode="mobile"] .view-action-button--mobile-icon-only .view-action-button__badge {
+    position: absolute;
+    inset-block-start: calc(var(--space-3xs) * -1);
+    inset-inline-end: calc(var(--space-3xs) * -1);
+    pointer-events: none;
+  }
 }
 
 @media (max-width: 768px) {
@@ -180,5 +205,12 @@ viewport never actually lacked room for. The pre-hydration fallback covers the u
     overflow: hidden;
     clip-path: inset(50%);
     white-space: nowrap;
+  }
+
+  html:not([data-viewport-mode]) .view-action-button--mobile-icon-only .view-action-button__badge {
+    position: absolute;
+    inset-block-start: calc(var(--space-3xs) * -1);
+    inset-inline-end: calc(var(--space-3xs) * -1);
+    pointer-events: none;
   }
 }

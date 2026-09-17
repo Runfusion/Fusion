@@ -13,6 +13,13 @@ export interface ViewActionButtonProps extends Omit<ButtonHTMLAttributes<HTMLBut
   iconClassName?: string;
   kind?: ViewActionButtonKind;
   iconOnlyOnMobile?: boolean;
+  /*
+  FNXC:IconOnlyButtonCanon 2026-09-17-09:26:
+  FN-502: a badge is NOT a redundant label. The phone presentation hides the label because the pictogram already
+  says what the action does; a count says something the pictogram cannot, and the operator must see it without
+  opening any menu. It is therefore rendered as a SIBLING of the visually hidden label and survives the collapse.
+  */
+  badge?: ReactNode;
 }
 
 /*
@@ -33,6 +40,7 @@ export const ViewActionButton = forwardRef<HTMLButtonElement, ViewActionButtonPr
     iconClassName,
     kind = "action",
     iconOnlyOnMobile = true,
+    badge,
     className,
     type = "button",
     ...props
@@ -60,6 +68,7 @@ export const ViewActionButton = forwardRef<HTMLButtonElement, ViewActionButtonPr
     <UiButton {...props} ref={ref} type={type} className={classes} aria-label={props["aria-label"] ?? ariaLabel}>
       {Icon ? <Icon aria-hidden="true" className={iconClassName} /> : null}
       <span className="view-action-button__label">{label}</span>
+      {badge != null ? <span className="view-action-button__badge">{badge}</span> : null}
     </UiButton>
   );
 });

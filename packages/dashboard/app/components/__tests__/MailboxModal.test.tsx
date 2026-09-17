@@ -788,7 +788,8 @@ describe("MailboxModal", () => {
     });
 
     const markAllReadButton = screen.getByTestId("mailbox-mark-all-read");
-    expect(markAllReadButton).toHaveClass("btn", "btn-sm", "btn-secondary");
+    // FN-502: this action moved onto the shared ViewActionButton canon, so it is icon-only on a phone.
+    expect(markAllReadButton).toHaveClass("btn", "btn-sm", "view-action-button", "view-action-button--mobile-icon-only");
 
     fireEvent.click(markAllReadButton);
     await waitFor(() => {

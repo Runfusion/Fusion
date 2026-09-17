@@ -252,12 +252,32 @@ the detail pane landed in the token-thin middle track and rendered crushed while
   min-height: 0;
 }
 
+/*
+FNXC:AgentsView 2026-09-17-09:26:
+FN-502 : cette classe est passée en `className` à `ViewSidebar`, donc elle style le conteneur EXTÉRIEUR
+`.view-sidebar`, pas le `aside.view-sidebar__panel`. Elle y déclarait `flex-direction: column`, résidu de
+l'époque (FNXC:StandardizedViewSidebar 2026-09-14-03:12) où `.agents-split-sidebar` était le rail lui-même.
+En direction `column`, le panneau — `flex: none` dans la primitive — n'est plus étiré par `align-items: stretch`
+sur l'axe principal : sa hauteur suit son contenu, `.agents-view-content` perd sa borne, son `overflow-y: auto`
+ne se déclenche jamais et `overflow: hidden` du conteneur coupe le reste. C'est exactement le blocage de
+défilement signalé dans le tiroir mobile Agents. La direction `row` par défaut de la primitive est restaurée, ce
+qui replace aussi le séparateur de redimensionnement à côté du rail sur desktop.
+*/
 .agents-split-sidebar {
   min-height: 0;
   overflow: hidden;
   border-right: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
+}
+
+/*
+FNXC:AgentsView 2026-09-17-09:26:
+FN-502 : le panneau du rail restate sa borne verticale en `min-height` PHYSIQUE en plus de la forme logique de la
+primitive, parce qu'une seule boîte laissée à `min-height: auto` suffit à délier toute la chaîne (et parce que
+`getComputedStyle` de jsdom ne dérive pas le physique du logique, cf. `FilesView.mobile-drawer.test.tsx`).
+*/
+.agents-split-sidebar__panel {
+  min-block-size: 0;
+  min-height: 0;
 }
 
 /*
@@ -281,6 +301,27 @@ separator for every destination. Its orphaned rules are removed with it rather t
   min-height: 0;
   overflow-y: auto;
   padding: 0 calc(var(--space-lg) + var(--space-xs)) calc(var(--space-lg) + var(--space-xs));
+}
+
+/*
+FNXC:AgentsView 2026-09-17-09:26:
+FN-502 : sur téléphone, la destination Agents peut être rendue dans le tiroir principal (`.mobile-drawer__body`)
+comme en plein écran. Les boîtes intermédiaires de la chaîne (`ViewLayout`, `ViewSidebar`) ne déclarent leur borne
+qu'en `min-block-size` logique ; une seule boîte restée à `min-height: auto` suffit à laisser la liste dépasser le
+panneau. La chaîne de remplissage est donc restatée ici en PHYSIQUE, pour tout téléphone et indépendamment de l'hôte
+(même raisonnement que FN-462 pour Files). Aucune géométrie desktop n'est touchée et le verrou global `touch-action`
+de `styles.css` n'est pas relâché
+(cf. docs/solutions/ui-bugs/mobile-touch-action-ancestor-intersection-defeats-leaf-scroll.md).
+*/
+html[data-viewport-mode="mobile"] .agents-view,
+html[data-viewport-mode="mobile"] .agents-view .view-layout__body,
+html[data-viewport-mode="mobile"] .agents-view .view-layout__content,
+html[data-viewport-mode="mobile"] .agents-view .agents-split-layout,
+html[data-viewport-mode="mobile"] .agents-view .agents-split-sidebar,
+html[data-viewport-mode="mobile"] .agents-view .agents-split-sidebar__panel,
+html[data-viewport-mode="mobile"] .agents-view .agents-split-detail {
+  min-height: 0;
+  min-block-size: 0;
 }
 
 
@@ -1641,6 +1682,26 @@ AgentsView uses the measured SVG overlay as the single connector system so paren
 
   .agents-view .agent-badges {
     justify-content: flex-start;
+  }
+}
+
+/*
+FNXC:AgentsView 2026-09-17-09:26:
+FN-502 : repli pré-hydratation de la chaîne de remplissage déclarée plus haut, pour le cas de largeur étroite non
+ambigu tant que `data-viewport-mode` n'est pas publié. Il est placé EN FIN DE FICHIER à dessein : les recensements CSS
+existants (`agents-view-mobile.test.tsx`) lisent le PREMIER bloc `@media (max-width: 768px)` portant un sélecteur, et
+celui-ci ne doit pas s'interposer devant les règles téléphone historiques du rail.
+*/
+@media (max-width: 768px) {
+  html:not([data-viewport-mode]) .agents-view,
+  html:not([data-viewport-mode]) .agents-view .view-layout__body,
+  html:not([data-viewport-mode]) .agents-view .view-layout__content,
+  html:not([data-viewport-mode]) .agents-view .agents-split-layout,
+  html:not([data-viewport-mode]) .agents-view .agents-split-sidebar,
+  html:not([data-viewport-mode]) .agents-view .agents-split-sidebar__panel,
+  html:not([data-viewport-mode]) .agents-view .agents-split-detail {
+    min-height: 0;
+    min-block-size: 0;
   }
 }
 

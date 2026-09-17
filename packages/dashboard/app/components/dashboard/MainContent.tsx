@@ -138,8 +138,15 @@ vertical gesture on a phone and the end of a long directory stayed unreachable. 
 
 Keep this set minimal and evidence-driven: every added destination must bring its own proof that its hosted view
 really owns a complete bounded scroll chain.
+
+FNXC:MobileDrawer 2026-09-17-09:26:
+FN-502 adds `agents` with that proof. `AgentsView` composes `ViewLayout ... contentOwnsScroll` and ends in its own
+bounded scroller: `.agents-view-content` (`flex: 1; min-height: 0; overflow-y: auto`) in list and board, the same box
+wrapping `.agent-org-chart-viewport` in org, and `.agent-detail-content` inside the detail pane. The rail no longer
+flips `.view-sidebar` into a column, so that scroller is genuinely bounded again; with the drawer body ALSO scrolling,
+the two competed for the same vertical gesture and the end of a long agent list stayed unreachable.
 */
-export const MOBILE_DRAWER_CONTENT_SCROLL_VIEWS: ReadonlySet<TaskView> = new Set<TaskView>(["files"]);
+export const MOBILE_DRAWER_CONTENT_SCROLL_VIEWS: ReadonlySet<TaskView> = new Set<TaskView>(["files", "agents"]);
 
 export function mobileDrawerContentOwnsScroll(taskView: TaskView): boolean {
   return MOBILE_DRAWER_CONTENT_SCROLL_VIEWS.has(taskView);

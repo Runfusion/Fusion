@@ -1881,6 +1881,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
           hostIdentity="agents-main"
           mobile={isMobileViewport}
           panelTestId="agents-split-sidebar"
+          panelClassName="agents-split-sidebar__panel"
           separatorTestId="agents-sidebar-resize-handle"
           className={`agents-split-sidebar${isMobileDetailOpen ? " agents-split-sidebar--hidden-mobile" : ""}`}
         >

@@ -53,6 +53,53 @@ describe("ViewActionButton", () => {
     expect(withIcon.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
   });
 
+  /*
+  FNXC:IconOnlyButtonCanon 2026-09-17-09:26:
+  FN-502 : un badge n'est pas un libellé redondant. Le libellé disparaît sur téléphone parce que le pictogramme dit
+  déjà ce que fait l'action ; un compteur dit ce que le pictogramme ne peut pas dire, et l'opérateur doit le voir
+  sans ouvrir de menu. Il est donc rendu HORS du libellé masqué et survit à la réduction.
+  */
+  it("n'ajoute aucun nœud quand aucun badge n'est fourni", () => {
+    render(<ViewActionButton icon={RefreshCw} label="Actualiser" onClick={vi.fn()} />);
+    const button = screen.getByRole("button", { name: "Actualiser" });
+    expect(button.querySelector(".view-action-button__badge")).toBeNull();
+    expect(button.lastElementChild).toHaveClass("view-action-button__label");
+  });
+
+  it("rend le badge hors du libellé masqué et garde la réduction téléphone", () => {
+    render(
+      <ViewActionButton
+        icon={RefreshCw}
+        label="Filtrer"
+        badge={<span data-testid="badge-count">3</span>}
+        onClick={vi.fn()}
+      />,
+    );
+
+    const button = screen.getByRole("button", { name: "Filtrer" });
+    const badgeHost = button.querySelector(".view-action-button__badge")!;
+    expect(badgeHost).not.toBeNull();
+    expect(badgeHost.previousElementSibling).toHaveClass("view-action-button__label");
+    expect(screen.getByTestId("badge-count").closest(".view-action-button__label")).toBeNull();
+    expect(button).toContainElement(screen.getByTestId("badge-count"));
+    expect(button).toHaveClass("view-action-button--mobile-icon-only");
+
+    // Le badge est épinglé au coin du carré réduit dans les DEUX hôtes téléphone, sans élargir la boîte.
+    for (const host of ["html\\[data-viewport-mode=\"mobile\"\\]", "html:not\\(\\[data-viewport-mode\\]\\)"]) {
+      const rule = new RegExp(`${host} \\.view-action-button--mobile-icon-only \\.view-action-button__badge\\s*\\{([^}]*)\\}`, "s").exec(css);
+      expect(rule, `règle de badge manquante pour ${host}`).not.toBeNull();
+      expect(rule![1]).toContain("position: absolute");
+    }
+    expect(css).toMatch(/\.view-action-button\s*\{[^}]*position:\s*relative/s);
+  });
+
+  it("refuse la réduction téléphone quand le badge est fourni sans icône", () => {
+    render(<ViewActionButton label="Filtrer" badge={<span data-testid="badge-count">3</span>} onClick={vi.fn()} />);
+    const button = screen.getByRole("button", { name: "Filtrer" });
+    expect(button).not.toHaveClass("view-action-button--mobile-icon-only");
+    expect(button).toContainElement(screen.getByTestId("badge-count"));
+  });
+
   it("respecte disabled et active une seule fois au clavier", async () => {
     const user = userEvent.setup();
     const onClick = vi.fn();
