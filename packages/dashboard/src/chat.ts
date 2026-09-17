@@ -3794,7 +3794,13 @@ export class ChatManager {
         let interruptionDurable = true;
         // FNXC:ChatCancellation 2026-08-19-05:20:
         // Stop is a durable conversation transition: save the visible prefix to both the PostgreSQL transcript and the reopened pi session before clearing its checkpoint. A failed durable write keeps the checkpoint available for recovery and reports failure so clients retain their local prefix.
-        if (accumulatedText || accumulatedThinking || toolCallsAccum.length > 0) {
+        //
+        // FNXC:ChatCancellation 2026-09-17-09:40:
+        // A deterministic tier-3 truncation that rescued the send but produced no visible content yet (Stop pressed
+        // before the first token) still mutated the persisted history, so the disclosure must outlive the
+        // cancellation: treat contextTruncationNotice itself as a reason to write the interrupted row, not just
+        // accumulated content.
+        if (accumulatedText || accumulatedThinking || toolCallsAccum.length > 0 || contextTruncationNotice) {
           if (accumulatedText) {
             try {
               this.persistInterruptedSessionContext(sessionManager, session, accumulatedText);
