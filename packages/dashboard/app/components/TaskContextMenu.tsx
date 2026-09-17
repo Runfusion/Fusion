@@ -122,6 +122,14 @@ export interface BuildTaskActionMenuModelOptions {
   onDelete?: () => void;
   onDuplicate?: () => void;
   /*
+  FNXC:HumanMergeApproval 2026-09-17-18:09:
+  FN-514 — ONE action that arms or removes the per-card delivery lock, on every shared menu host.
+  It is a single toggle rather than two entries because the card is either locked or it is not, and
+  the final authorization is the SERVER's: the entry is hidden once delivery has provably started or
+  the card is complete, and the server refuses anything the client still offers.
+  */
+  onToggleMergeApproval?: (enabled: boolean) => void;
+  /*
   FNXC:TaskContextMenu 2026-09-15-10:40:
   FN-417 removes the `merge` review action from every TASK CONTEXT MENU because the engine drives
   delivery automatically; the single remaining manual merge command is Task Detail's review footer
@@ -278,6 +286,32 @@ export function buildTaskActionMenuModel(options: BuildTaskActionMenuModelOption
 
   if (hasDuplicateHandler) {
     actions.push({ id: "duplicate", label: t("taskDetail.duplicate.btn", "Duplicate"), onSelect: options.onDuplicate });
+  }
+
+  /*
+  FNXC:HumanMergeApproval 2026-09-17-18:09:
+  FN-514 — the delivery lock may be changed on any LIVE card before delivery actually starts, which
+  includes Ideas, Planning, WIP, review, paused and failed cards. It is hidden only where the answer
+  cannot change anything: a terminal card, or one whose delivery has provably begun (a merge status,
+  a confirmed merge). Sitting in a merge queue is NOT a started delivery, so those cards keep it.
+
+  This is a presentation filter, not the authorization: the server re-checks under the task advisory
+  lock and refuses a change that races a merge owner.
+  */
+  if (options.onToggleMergeApproval) {
+    const deliveryStarted = task.mergeDetails?.mergeConfirmed === true
+      || (typeof task.status === "string" && ["merging", "merging-pr", "merging-fix"].includes(task.status));
+    const isTerminal = currentColumnFlags?.complete === true || (currentColumnFlags === undefined && task.column === "done");
+    if (!deliveryStarted && !isTerminal) {
+      const locked = task.humanMergeApproval?.enabled === true;
+      actions.push({
+        id: "toggle-merge-approval",
+        label: locked
+          ? t("tasks.humanMergeApproval.menuUnlock", "Remove delivery approval")
+          : t("tasks.humanMergeApproval.menuLock", "Require my approval to deliver"),
+        onSelect: () => options.onToggleMergeApproval?.(!locked),
+      });
+    }
   }
 
   /*

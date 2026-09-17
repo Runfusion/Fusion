@@ -83,7 +83,6 @@ function props(overrides: Partial<ComponentProps<typeof Board>> = {}): Component
     addToast: vi.fn(),
     onNewTask: vi.fn(),
     autoMerge: true,
-    onToggleAutoMerge: vi.fn(),
     planAutoApproveEnabled: true,
     onTogglePlanAutoApprove: vi.fn(),
     searchQuery: "FN",

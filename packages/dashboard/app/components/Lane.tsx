@@ -40,7 +40,6 @@ export interface LaneProps {
   onQuickCreate?: (input: TaskCreateInput) => Promise<Task | void>;
   onNewTask?: () => void;
   autoMerge?: boolean;
-  onToggleAutoMerge?: () => void;
   globalPaused?: boolean;
   onUpdateTask?: (id: string, updates: { title?: string; description?: string; dependencies?: string[] }) => Promise<Task>;
   onRetryTask?: (id: string) => Promise<Task>;
@@ -205,7 +204,6 @@ function LaneComponent(props: LaneProps) {
               prAuthAvailable={props.prAuthAvailable}
               autoMerge={props.autoMerge}
               {...(isCreateColumn ? { onQuickCreate: props.onQuickCreate, onNewTask: props.onNewTask, onPlanningMode: props.onPlanningMode } : {})}
-              {...((col.flags.mergeBlocker || col.flags.humanReview) && props.onToggleAutoMerge ? { onToggleAutoMerge: props.onToggleAutoMerge } : {})}
             />
             );
           })}

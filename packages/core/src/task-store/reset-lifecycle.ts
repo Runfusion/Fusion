@@ -10,6 +10,7 @@ import { createLogger } from "../process/logger.js";
 import { resolveTaskSymbolsForTask } from "../tasks/task-symbol-resolution.js";
 import { cancelTaskOverlapWaitsInTransaction, recordOverlapBlockerResetInTransaction } from "./overlap-wait-ops.js";
 import { clearHumanPlanApprovalDecision } from "../planner/human-plan-approval.js";
+import { clearHumanMergeApprovalDecision } from "../merge/human-merge-approval.js";
 import { computePauseAccountingPatch } from "../tasks/task-pause-accounting.js";
 
 const resetLog = createLogger("task-store-reset-lifecycle");
@@ -98,6 +99,13 @@ export function buildResetTask(
     but discards any decision, so the regenerated plan always asks again.
     */
     humanPlanApproval: clearHumanPlanApprovalDecision(task.humanPlanApproval) ?? undefined,
+    /*
+    FNXC:HumanMergeApproval 2026-09-17-18:09:
+    FN-514 — Reset keeps the delivery lock INTENT, bumps its generation so every prior accord, pending
+    destination and stale candidate becomes unusable, and preserves the remediation counter so a later
+    rejection cannot reuse a cancelled episode's identity.
+    */
+    humanMergeApproval: clearHumanMergeApprovalDecision(task.humanMergeApproval) ?? undefined,
     pausedByAgentId: undefined,
     checkedOutBy: undefined,
     checkedOutAt: undefined,

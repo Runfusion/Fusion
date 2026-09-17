@@ -11,7 +11,7 @@ import { getTaskTitleDisplayText } from "../utils/taskTitleDisplay";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { NodeHealthDot } from "./NodeHealthDot";
 import { LoadingSpinner } from "./LoadingSpinner";
-import { Sparkles, ChevronUp, ChevronDown, Maximize2, Minimize2, Paperclip, Zap, UserCheck, Brain, Server } from "lucide-react";
+import { Sparkles, ChevronUp, ChevronDown, Maximize2, Minimize2, Paperclip, Zap, UserCheck, Lock, Brain, Server } from "lucide-react";
 import { REPO_OVERRIDE_RE, resolveEffectiveGithubRepoDefault } from "./githubTracking";
 import { ProviderIcon } from "./ProviderIcon";
 import { WorkflowIcon } from "./WorkflowIcon";
@@ -190,6 +190,15 @@ export interface TaskFormProps {
   */
   humanPlanApproval?: boolean;
   onHumanPlanApprovalChange?: (value: boolean) => void;
+  /*
+  FNXC:HumanMergeApproval 2026-09-17-18:09:
+  FN-514 — per-card DELIVERY lock, independent of the plan validation above and of `autoMerge`. The
+  card still plans, executes, verifies and passes every review; only the final delivery waits for an
+  explicit operator command. Optional so read-only hosts omit the control instead of rendering a
+  dead toggle.
+  */
+  humanMergeApproval?: boolean;
+  onHumanMergeApprovalChange?: (value: boolean) => void;
   githubTrackingEnabled?: boolean;
   onGithubTrackingEnabledChange?: (value: boolean, meta?: TaskFormValueChangeMeta) => void;
   githubRepoOverride?: string;
@@ -308,6 +317,8 @@ export function TaskForm({
   executionMode,
   humanPlanApproval,
   onHumanPlanApprovalChange,
+  humanMergeApproval,
+  onHumanMergeApprovalChange,
   onExecutionModeChange,
   githubTrackingEnabled,
   onGithubTrackingEnabledChange,
@@ -968,6 +979,11 @@ export function TaskForm({
     "tasks.humanPlanApproval.toggle",
     "Require my approval of the plan before execution",
   );
+  /* FNXC:HumanMergeApproval 2026-09-17-18:09: FN-514 toggle label states the consequence, matching the plan toggle beside it. */
+  const inlineHumanMergeApprovalLabel = t(
+    "tasks.humanMergeApproval.toggle",
+    "Require my approval before this task is delivered",
+  );
 
   const revealAdvancedControl = useCallback((selector: string) => {
     if (!forceMoreOptionsOpen) setShowMoreOptions(true);
@@ -1234,6 +1250,22 @@ Fast is icon-only in the inline New Task row to match QuickEntryBox, using Zap w
               title={inlineHumanPlanApprovalLabel}
             >
               <UserCheck size={12} className="task-form-action-icon" aria-hidden="true" />
+            </UiButton>
+          )}
+
+          {/* FNXC:HumanMergeApproval 2026-09-17-18:09: FN-514 — the DELIVERY lock sits beside the plan validation, same inline icon primitive and size; the two are independent. */}
+          {onHumanMergeApprovalChange && humanMergeApproval !== undefined && (
+            <UiButton
+              type="button"
+              className={`btn btn-sm task-form-inline-icon-btn ${humanMergeApproval ? "btn-primary" : ""}`}
+              onClick={() => onHumanMergeApprovalChange(!humanMergeApproval)}
+              aria-pressed={humanMergeApproval}
+              aria-label={inlineHumanMergeApprovalLabel}
+              disabled={disabled}
+              data-testid="task-form-inline-human-merge-approval"
+              title={inlineHumanMergeApprovalLabel}
+            >
+              <Lock size={12} className="task-form-action-icon" aria-hidden="true" />
             </UiButton>
           )}
 

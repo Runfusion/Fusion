@@ -22,12 +22,17 @@ import type {
 import {
   AsyncCentralClaimStore,
   ChatStore,
+  /* FNXC:HumanMergeApproval 2026-09-17-22:32: FN-514 delivery-hold release identity. */
+  describeHumanMergeHoldSignature,
   isEphemeralAgent,
   isPlanReviewSatisfied,
   isTaskBlockedOnApproval,
+  readHumanMergeHoldSignature,
   resolveWorkflowIrForTask,
   resolveTaskLifecycleColumns,
 } from "@fusion/core";
+/* FNXC:HumanMergeApproval 2026-09-17-22:32: FN-514 classifies the parked marker family it owns. */
+import { isHumanMergeAdmissionHold } from "../executor/workflow-admission-hold.js";
 import { Scheduler } from "../scheduler.js";
 import { registerDefaultAgentPluginRunner, unregisterDefaultAgentPluginRunner } from "../pi.js";
 import type { PrMonitor, PrComment } from "../merge/pr-monitor.js";
@@ -672,6 +677,55 @@ export async function releaseFileScopeWaitingContinuations(
       }).catch(() => null);
       if (transitioned?.state === "runnable" && transitioned.leaseOwner === null) released.push(item.id);
     }
+  }
+  return released;
+}
+
+/*
+FNXC:HumanMergeApproval 2026-09-17-22:32:
+FN-514 P0 remediation — the RELEASE owner for a parked delivery hold.
+
+The graph barrier parks a `held` continuation when a card is waiting for an operator, and the
+continuation drain only claims `runnable`/`retrying` rows. Without this pass NOTHING re-drives that
+row, so an operator's « Merger », « Créer PR » or « Refuser » would be persisted and then never
+executed — which is exactly the shape of the defect review found for rejections.
+
+The release is fenced on the decision identity the hold recorded: identical means nothing moved
+since the card parked (leave it held, or a 2-second poll would re-dispatch forever), different means
+the operator acted, a receipt landed, or the lock changed, and the graph must look again. It is
+therefore both the wake-up after a decision AND the crash-recovery for a decision whose wake-up was
+lost, with no separate scheduler.
+
+It never decides anything: the barrier re-evaluates the durable state and may simply park again.
+*/
+export async function releaseHumanMergeApprovalHolds(
+  store: TaskStore,
+  options: { limit?: number } = {},
+): Promise<string[]> {
+  if (typeof store.listDueWorkflowWorkItems !== "function"
+    || typeof store.transitionWorkflowWorkItem !== "function") return [];
+  const items = await store.listDueWorkflowWorkItems({
+    kinds: ["task"],
+    states: ["held"],
+    limit: options.limit ?? 200,
+  }).catch(() => []);
+  const released: string[] = [];
+  for (const item of items) {
+    if (item.leaseOwner !== null || !isHumanMergeAdmissionHold(item.blockedReason ?? undefined)) continue;
+    const task = await store.getTask(item.taskId).catch(() => null);
+    /* A deleted or operator-paused card keeps its hold: recovery is not a way around a human stop. */
+    if (!task || task.deletedAt || task.paused === true) continue;
+    if (readHumanMergeHoldSignature(item.blockedReason ?? undefined) === describeHumanMergeHoldSignature(task)) continue;
+    const transitioned = await store.transitionWorkflowWorkItem(item.id, "runnable", {
+      expectedState: "held",
+      expectedLeaseOwner: null,
+      leaseOwner: null,
+      leaseExpiresAt: null,
+      retryAfter: null,
+      lastError: null,
+      blockedReason: null,
+    }).catch(() => null);
+    if (transitioned?.state === "runnable" && transitioned.leaseOwner === null) released.push(item.id);
   }
   return released;
 }
@@ -3072,6 +3126,15 @@ export class InProcessRuntime
       } catch {
         /* unreadable settings: proceed as before rather than wedging the pump */
       }
+      /*
+      FNXC:HumanMergeApproval 2026-09-17-22:32:
+      FN-514 P0 remediation — make a parked delivery hold runnable again once its operator decision
+      moved, BEFORE the due pass selects. The drain claims only runnable/retrying rows, so without
+      this a persisted « Merger » / « Créer PR » / « Refuser » would never be executed. Best-effort:
+      a failure here leaves the durable decision intact for the next tick.
+      */
+      await releaseHumanMergeApprovalHolds(this.taskStore).catch(() => []);
+      this.markWorkflowContinuationDrainProgress(drainGeneration, "human-merge-holds");
       const isPlannerLive = (taskId: string) => isTaskPlanningOrExecutionLive(taskId, {
         activeSessionRegistry: { pathsForTask: () => [], isPathActive: () => false },
         executingTaskLock: { has: () => false },

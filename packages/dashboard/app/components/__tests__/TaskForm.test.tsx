@@ -21,6 +21,7 @@ vi.mock("lucide-react", () => ({
   Zap: () => null,
   // FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408's per-card human plan approval toggle icon.
   UserCheck: () => null,
+  Lock: () => null,
   Brain: () => null,
   Server: () => null,
   Cpu: () => null,

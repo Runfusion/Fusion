@@ -87,7 +87,6 @@ function ViewSwitchHarness() {
     onQuickCreate: vi.fn(async () => ({}) as any),
     onNewTask: vi.fn(),
     autoMerge: true,
-    onToggleAutoMerge: vi.fn(),
     globalPaused: false,
   };
 

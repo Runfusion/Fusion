@@ -121,7 +121,6 @@ const boardProps = {
   addToast: vi.fn(),
   onNewTask: vi.fn(),
   autoMerge: true,
-  onToggleAutoMerge: vi.fn(),
 };
 
 const listProps = {

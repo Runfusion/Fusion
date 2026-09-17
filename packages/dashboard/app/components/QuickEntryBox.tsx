@@ -9,7 +9,7 @@ import type { Task, Settings, ResolvedWorkflowOptionalStep, ThinkingLevel, Colum
 import type { ModelInfo, Agent, CreateTaskInput, DuplicateMatch, BoardWorkflowDefinition, NodeInfo } from "../api";
 import { checkDuplicateTasks, fetchModels, fetchSettings, updateGlobalSettings, fetchAgents, uploadAttachment, fetchWorkflowOptionalSteps } from "../api";
 import { DuplicateWarningModal } from "./DuplicateWarningModal";
-import { Link, Paperclip, Brain, Lightbulb, Sparkles, Save, ChevronDown, ChevronUp, ChevronRight, Bot, Server, Zap, UserCheck, Eye, EyeOff } from "lucide-react";
+import { Link, Paperclip, Brain, Lightbulb, Sparkles, Save, ChevronDown, ChevronUp, ChevronRight, Bot, Server, Zap, UserCheck, Lock, Eye, EyeOff } from "lucide-react";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { LoadingSpinner } from "./LoadingSpinner";
 import { getScopedItem, MAX_PERSISTED_DRAFT_BYTES, removeScopedItem, setScopedItem } from "../utils/projectStorage";
@@ -322,6 +322,8 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
   optional-step selection.
   */
   const [requiresHumanPlanApproval, setRequiresHumanPlanApproval] = useState(false);
+  /* FNXC:HumanMergeApproval 2026-09-17-18:09: FN-514 per-card delivery lock, armed at creation with a boolean only. */
+  const [requiresHumanMergeApproval, setRequiresHumanMergeApproval] = useState(false);
   const isFastModeRef = useRef(isFastMode);
   const preFastOptionalStepIdsRef = useRef<string[] | null>(null);
   const defaultOnOptionalStepIds = useMemo(
@@ -610,6 +612,15 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
     setRequiresHumanPlanApproval(next);
   }, [requiresHumanPlanApproval, setFastMode]);
 
+  /*
+  FNXC:HumanMergeApproval 2026-09-17-18:09:
+  FN-514 — the DELIVERY lock is independent of Fast and of the plan validation: it stops only the
+  final delivery, so a Fast card can legitimately carry it and neither toggle clears the other.
+  */
+  const toggleHumanMergeApproval = useCallback(() => {
+    setRequiresHumanMergeApproval((current) => !current);
+  }, []);
+
   const executorSelectionValue = getModelSelectionValue(executorProvider, executorModelId);
   const validatorSelectionValue = getModelSelectionValue(validatorProvider, validatorModelId);
   const planningSelectionValue = getModelSelectionValue(planningProvider, planningModelId);
@@ -837,6 +848,8 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
     setThinkingLevel("");
     setValidatorThinkingLevel("");
     setPlanningThinkingLevel("");
+    /* FNXC:HumanMergeApproval 2026-09-17-18:09: FN-514 — a successful create resets the lock choice so it is never implicitly inherited by the next card. */
+    setRequiresHumanMergeApproval(false);
     setMergerThinkingLevel("");
     setSelectedPresetId(undefined);
     setEnabledOptionalStepIds(defaultOnOptionalStepIds);
@@ -988,6 +1001,8 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
         ...(isFastMode ? { executionMode: "fast" } : {}),
         /* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 sends only the arming flag; the server owns Plan Review enforcement and every decision. */
         ...(requiresHumanPlanApproval ? { humanPlanApproval: true } : {}),
+        /* FNXC:HumanMergeApproval 2026-09-17-18:09: FN-514 sends only the arming flag; the server owns every delivery decision. */
+        ...(requiresHumanMergeApproval ? { humanMergeApproval: true } : {}),
         githubTracking: githubTrackingOverride !== null ? { enabled: githubTrackingOverride } : undefined,
         // FNXC:PlannerOversight 2026-07-14-18:11: only send when user toggled away from project default.
         sessionAdvisorEnabled: sessionAdvisorOverride !== null ? sessionAdvisorOverride : undefined,
@@ -1087,6 +1102,8 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
     authority for an operator choice that must stay exactly what the toolbar shows.
     */
     requiresHumanPlanApproval,
+    /* FNXC:HumanMergeApproval 2026-09-17-18:09: FN-514's arming flag is part of the same create intent and must be declared here for the same stale-capture reason. */
+    requiresHumanMergeApproval,
     settings,
     githubTrackingOverride,
     sessionAdvisorOverride,
@@ -1909,6 +1926,11 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
     : t("tasks.sessionAdvisorOff", "Session advisor OFF for next task (project default: {{default}})", { default: projectSessionAdvisorDefault ? t("tasks.sessionAdvisorDefaultOn", "on") : t("tasks.sessionAdvisorDefaultOff", "off") });
   const fastToggleLabel = t("tasks.toggleFastMode", "Toggle fast execution mode");
   /* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 toggle label; the tooltip states the actual consequence, not just the mode name. */
+  /* FNXC:HumanMergeApproval 2026-09-17-18:09: FN-514 toggle label states the consequence, like the plan toggle beside it. */
+  const humanMergeApprovalToggleLabel = t(
+    "tasks.humanMergeApproval.toggle",
+    "Require my approval before this task is delivered",
+  );
   const humanPlanApprovalToggleLabel = t(
     "tasks.humanPlanApproval.toggle",
     "Require my approval of the plan before execution",
@@ -2531,6 +2553,20 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
                 aria-label={humanPlanApprovalToggleLabel}
               >
                 <UserCheck size={14} aria-hidden="true" />
+              </UiButton>
+
+              {/* FNXC:HumanMergeApproval 2026-09-17-18:09: FN-514 — the delivery lock, same icon-button primitive and size, toggled independently of Fast and of plan validation. */}
+              <UiButton
+                type="button"
+                className={`btn btn-icon btn-sm ${requiresHumanMergeApproval ? "btn-primary" : ""}`}
+                onClick={toggleHumanMergeApproval}
+                onMouseDown={(e) => e.preventDefault()}
+                aria-pressed={requiresHumanMergeApproval}
+                data-testid="quick-entry-human-merge-approval-toggle"
+                title={humanMergeApprovalToggleLabel}
+                aria-label={humanMergeApprovalToggleLabel}
+              >
+                <Lock size={14} aria-hidden="true" />
               </UiButton>
 
               <UiButton

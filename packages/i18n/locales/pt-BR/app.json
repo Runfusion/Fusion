@@ -8972,7 +8972,33 @@
     "boostTitle": "Tentar esta tarefa primeiro quando a fila admitir trabalho. Não a inicia nem remove qualquer bloqueio.",
     "boostFailed": "Não foi possível priorizar {{taskId}} — ela pode ter iniciado ou mudado de coluna. Atualize para ver sua posição atual.",
     "followUpOf": "",
-    "followUpOfTitle": ""
+    "followUpOfTitle": "",
+    "humanMergeApproval": {
+      "toggle": "Exigir minha aprovação antes de entregar esta tarefa",
+      "menuLock": "Exigir minha aprovação para entregar",
+      "menuUnlock": "Remover a aprovação de entrega",
+      "badgeArmed": "Sua aprovação é necessária antes da entrega",
+      "badgeDecided": "Decisão de entrega registrada",
+      "badgeRejected": "Você recusou esta entrega; faltam correções",
+      "messageLabel": "Nota ou instruções de recusa",
+      "messagePlaceholder": "Optional when creating a pull request or merging. Required when rejecting: say what must change.",
+      "createPr": "Criar PR",
+      "merge": "Mesclar",
+      "reject": "Recusar",
+      "rejectRequiresMessage": "Rejecting requires instructions describing what must change.",
+      "prOpened": "A pull request is open and waiting for you:",
+      "correctionAnalyzing": "Working out how to correct the rejected delivery…",
+      "correctionPending": "Corrections are being prepared for your rejection.",
+      "correctionFailed": "The correction could not be prepared. It will be retried.",
+      "hint": "Create PR opens a pull request without merging. Merge delivers the reviewed work now. Reject sends your instructions back for corrections.",
+      "reason": {
+        "githubAuth": "GitHub is not connected, so a pull request cannot be opened.",
+        "noRemote": "This repository has no remote, so a pull request cannot be opened.",
+        "workspace": "This task spans several repositories, which a single pull request cannot cover.",
+        "content": "The delivered changes could not be read.",
+        "decided": "This delivery was already decided."
+      }
+    }
   },
   "terminal": {
     "arrowKeysLabel": "Teclas de seta do terminal",

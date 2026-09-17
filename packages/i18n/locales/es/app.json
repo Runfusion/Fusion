@@ -8962,7 +8962,33 @@
     "boostTitle": "Intentar esta tarea primero cuando la cola admita trabajo. No la inicia ni elimina ningún bloqueo.",
     "boostFailed": "No se pudo impulsar {{taskId}}: puede haber comenzado o cambiado de columna. Actualiza para ver su posición actual.",
     "followUpOf": "",
-    "followUpOfTitle": ""
+    "followUpOfTitle": "",
+    "humanMergeApproval": {
+      "toggle": "Requerir mi aprobación antes de entregar esta tarea",
+      "menuLock": "Requerir mi aprobación para entregar",
+      "menuUnlock": "Quitar la aprobación de entrega",
+      "badgeArmed": "Se requiere tu aprobación antes de la entrega",
+      "badgeDecided": "Decisión de entrega registrada",
+      "badgeRejected": "Rechazaste esta entrega; faltan correcciones",
+      "messageLabel": "Nota o instrucciones de rechazo",
+      "messagePlaceholder": "Optional when creating a pull request or merging. Required when rejecting: say what must change.",
+      "createPr": "Crear PR",
+      "merge": "Fusionar",
+      "reject": "Rechazar",
+      "rejectRequiresMessage": "Rejecting requires instructions describing what must change.",
+      "prOpened": "A pull request is open and waiting for you:",
+      "correctionAnalyzing": "Working out how to correct the rejected delivery…",
+      "correctionPending": "Corrections are being prepared for your rejection.",
+      "correctionFailed": "The correction could not be prepared. It will be retried.",
+      "hint": "Create PR opens a pull request without merging. Merge delivers the reviewed work now. Reject sends your instructions back for corrections.",
+      "reason": {
+        "githubAuth": "GitHub is not connected, so a pull request cannot be opened.",
+        "noRemote": "This repository has no remote, so a pull request cannot be opened.",
+        "workspace": "This task spans several repositories, which a single pull request cannot cover.",
+        "content": "The delivered changes could not be read.",
+        "decided": "This delivery was already decided."
+      }
+    }
   },
   "terminal": {
     "arrowKeysLabel": "",

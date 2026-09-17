@@ -324,6 +324,12 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       } else if (updates.humanPlanApproval !== undefined) {
         task.humanPlanApproval = updates.humanPlanApproval;
       }
+      /* FNXC:HumanMergeApproval 2026-09-17-18:09: FN-514 uses the same explicit null sentinel; `undefined` omits the field so an unrelated generic patch can never erase or forge a delivery decision. */
+      if (updates.humanMergeApproval === null) {
+        task.humanMergeApproval = undefined;
+      } else if (updates.humanMergeApproval !== undefined) {
+        task.humanMergeApproval = updates.humanMergeApproval;
+      }
       if (updates.planningFailure === null) {
         task.planningFailure = undefined;
       } else if (updates.planningFailure !== undefined) {

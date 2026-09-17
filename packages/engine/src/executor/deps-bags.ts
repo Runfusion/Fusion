@@ -159,6 +159,8 @@ export function buildExecuteWorkflowGraphDeps(host: any): any {
       "requestPreMergeOptionalStepFix", "runGraphCustomNode", "executeWorkflowStep", "terminateAllChildren",
       // FNXC:PlanReviewNoOp 2026-08-09-22:10: CLOSE_NO_OP terminal route + hold (FN-8841).
       "completePlanReviewNoOp", "holdPlanReviewNoOpContinuation",
+      // FNXC:HumanMergeApproval 2026-09-17-22:32: FN-514 rejection corrections resume through the existing review → WIP bounce.
+      "scheduleWorkflowRerun",
     ]),
   };
 }

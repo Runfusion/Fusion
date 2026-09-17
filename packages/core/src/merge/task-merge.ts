@@ -3,6 +3,8 @@ import { taskHasManualOpenPullRequest } from "../tasks/task-helpers.js";
 import type { BranchGroup, Settings, Task, WorkflowStepResult } from "../types.js";
 import type { MergeContentDescriptor } from "./merge-content-descriptor.js";
 import { evaluatePreMergeApprovals } from "./pre-merge-approval.js";
+/* FNXC:HumanMergeApproval 2026-09-17-18:09: FN-514's per-card delivery lock is a merge-door predicate like every other gate. */
+import { getHumanMergeApprovalBlocker, type HumanMergeApprovalEvidence } from "./human-merge-approval.js";
 import { isArchivedRemediationCarrier } from "../workflows/workflow-step-results.js";
 
 export interface LandedMemberReviewAdvisory {
@@ -437,11 +439,24 @@ export const TASK_DONE_BYPASS_BLOCKER_MESSAGE =
  * Undefined means the task is eligible to move from `in-review` to `done`.
  */
 export function getTaskMergeBlocker(
-  task: Pick<Task, "column" | "paused" | "status" | "error" | "steps" | "workflowStepResults" | "repositoryScope">,
+  task: Pick<Task, "column" | "paused" | "status" | "error" | "steps" | "workflowStepResults" | "repositoryScope"> & Partial<Pick<Task, "humanMergeApproval">>,
   options: {
     manual?: boolean;
     skipColumnIdentityCheck?: boolean;
     reviewColumns?: ReadonlySet<string>;
+    /*
+    FNXC:HumanMergeApproval 2026-09-17-18:09:
+    FN-514 — exclude ONLY this feature's own barrier. Two callers legitimately need that:
+      • `resolveHumanMergeDecisionPoint`, which is computing whether a decision is DUE and must not
+        report "you cannot decide because you have not decided";
+      • already-landed recovery (`getTaskHardMergeBlocker` / `getMergeConfirmedFinalizationBlocker`),
+        because a branch already on the target cannot be un-landed by a lock appearing in history, and
+        parking proven delivery `failed` would be a strictly worse outcome than finalizing it.
+    Every ordinary delivery door leaves it ON.
+    */
+    skipHumanMergeApproval?: boolean;
+    /** Live delivery evidence, when the caller is an owner about to deliver. */
+    humanMergeEvidence?: HumanMergeApprovalEvidence;
     /*
     FNXC:RequiredPreMergeSteps 2026-08-22-21:11:
     Merge doors receive the workflow-resolved enabled pre-merge groups so an
@@ -535,6 +550,24 @@ export function getTaskMergeBlocker(
   }
   if (approval?.state === "stale-content") return STALE_CONTENT_APPROVAL_BLOCKER;
   if (approval?.state === "unprovable-content") return "task has no provable approval for the content being merged";
+
+  /*
+  FNXC:HumanMergeApproval 2026-09-17-18:09:
+  FN-514's per-card delivery lock, evaluated AFTER every automatic gate so the operator is only ever
+  asked about work that is genuinely finished. It is a typed human WAIT, never a failure: callers
+  classify it with `isHumanMergeApprovalBlocker` and must not park the card, burn a retry budget or
+  trigger an automatic replan. Recovery scanners that pass no evidence still see the lock rather than
+  mistaking a locked card for merge-ready.
+  */
+  if (options.skipHumanMergeApproval !== true) {
+    const humanBlocker = getHumanMergeApprovalBlocker(task, {
+      ...(options.humanMergeEvidence ?? {}),
+      ...(options.mergeContent !== undefined && options.humanMergeEvidence?.mergeContent === undefined
+        ? { mergeContent: options.mergeContent }
+        : {}),
+    });
+    if (humanBlocker) return humanBlocker;
+  }
 
   // Only pre-merge workflow step failures block merge.
   // Post-merge failures run after merge and do not block it.
@@ -647,7 +680,7 @@ export function clearMergeConfirmedTransientStatus(status: string | undefined): 
 }
 
 export function getTaskHardMergeBlocker(
-  task: Pick<Task, "column" | "paused" | "status" | "error" | "steps" | "workflowStepResults" | "repositoryScope">,
+  task: Pick<Task, "column" | "paused" | "status" | "error" | "steps" | "workflowStepResults" | "repositoryScope"> & Partial<Pick<Task, "humanMergeApproval">>,
   options: { reviewColumns?: ReadonlySet<string>; requiredPreMergeStepIds?: ReadonlySet<string>; mergeContent?: MergeContentDescriptor } = {},
 ): string | undefined {
   return getTaskMergeBlocker({
@@ -660,6 +693,13 @@ export function getTaskHardMergeBlocker(
     reviewColumns: options.reviewColumns,
     requiredPreMergeStepIds: options.requiredPreMergeStepIds,
     mergeContent: options.mergeContent,
+    /*
+    FNXC:HumanMergeApproval 2026-09-17-18:09:
+    FN-514 — this helper answers "is this card blocked by anything OTHER than where it sits?", and
+    its callers are recovery paths for work that has ALREADY LANDED. A lock appearing in history
+    cannot un-land that work, so reporting it here would only park proven delivery as failed.
+    */
+    skipHumanMergeApproval: true,
   });
 }
 

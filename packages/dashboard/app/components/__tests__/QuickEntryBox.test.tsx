@@ -246,6 +246,7 @@ vi.mock("lucide-react", () => {
     Zap: MockIcon("lucide-zap"),
     // FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408's per-card human plan approval toggle icon.
     UserCheck: MockIcon("lucide-user-check"),
+    Lock: MockIcon("lucide-lock"),
     ShieldCheck: MockIcon("lucide-shield-check"),
     Eye: MockIcon("lucide-eye"),
     EyeOff: MockIcon("lucide-eye-off"),
@@ -472,6 +473,8 @@ const QUICK_ENTRY_ACTION_BUTTONS = [
   ["Fast", "quick-entry-fast-toggle"],
   // FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 adds the per-card human plan approval toggle beside Fast.
   ["Human plan approval", "quick-entry-human-plan-approval-toggle"],
+  // FNXC:HumanMergeApproval 2026-09-17-18:09: FN-514 adds the per-card delivery lock beside plan approval.
+  ["Human merge approval", "quick-entry-human-merge-approval-toggle"],
   ["Save", "quick-entry-save"],
 ] as const;
 
@@ -481,6 +484,7 @@ const QUICK_ENTRY_PRIMARY_ICON_BUTTON_IDS = [
   "quick-entry-session-advisor-toggle",
   "quick-entry-fast-toggle",
   "quick-entry-human-plan-approval-toggle",
+  "quick-entry-human-merge-approval-toggle",
 ] as const;
 
 const ALPHA_QUICK_ENTRY_PRIMARY_ICON_BUTTON_IDS = [
@@ -1063,18 +1067,21 @@ describe("QuickEntryBox", () => {
       const actionButtonTestIds = getActionButtonTestIdsInDomOrder();
       /* FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509 removed the priority trigger, so the tail is one
          control shorter; the ordering invariant (status controls beside Attach, Save last) is intact. */
-      expect(actionButtonTestIds.slice(-6)).toEqual([
+      /* FNXC:HumanMergeApproval 2026-09-17-18:09: FN-514 adds the delivery lock between plan approval
+         and Save, so the tail is one control longer again; the ordering invariant is unchanged. */
+      expect(actionButtonTestIds.slice(-7)).toEqual([
         "quick-entry-attach",
         "quick-entry-github-toggle",
         "quick-entry-session-advisor-toggle",
         "quick-entry-fast-toggle",
         // FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 sits immediately after Fast and before Save.
         "quick-entry-human-plan-approval-toggle",
+        "quick-entry-human-merge-approval-toggle",
         "quick-entry-save",
       ]);
 
       const primaryGroup = screen.getByTestId("quick-entry-primary-group");
-      for (const testId of ["quick-entry-attach", "quick-entry-github-toggle", "quick-entry-session-advisor-toggle", "quick-entry-fast-toggle", "quick-entry-human-plan-approval-toggle", "quick-entry-save"]) {
+      for (const testId of ["quick-entry-attach", "quick-entry-github-toggle", "quick-entry-session-advisor-toggle", "quick-entry-fast-toggle", "quick-entry-human-plan-approval-toggle", "quick-entry-human-merge-approval-toggle", "quick-entry-save"]) {
         expect(primaryGroup.contains(screen.getByTestId(testId))).toBe(true);
       }
       const optionsGroup = screen.getByTestId("quick-entry-options-group");
@@ -1413,8 +1420,12 @@ describe("QuickEntryBox", () => {
             expect(helpers.props.onCreate).toHaveBeenCalled();
           });
           break;
-        // FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408's toggle arms on tap, exactly like Fast.
+        /*
+        FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408's toggle arms on tap, exactly like Fast.
+        FNXC:HumanMergeApproval 2026-09-17-18:09: FN-514's delivery lock arms on tap the same way.
+        */
         case "quick-entry-human-plan-approval-toggle":
+        case "quick-entry-human-merge-approval-toggle":
           expect(screen.getByTestId(testId)).toHaveAttribute("aria-pressed", "true");
           break;
         default:
@@ -2342,6 +2353,7 @@ describe("QuickEntryBox", () => {
         `requirePlanApproval` payload field.
         */
         "quick-entry-human-plan-approval-toggle",
+        "quick-entry-human-merge-approval-toggle",
         "quick-entry-save",
       ];
       expect(screen.queryByTestId("quick-entry-plan-approval-toggle")).toBeNull();
@@ -2453,6 +2465,64 @@ describe("QuickEntryBox", () => {
       await waitFor(() => {
         expect(screen.getByTestId("quick-entry-human-plan-approval-toggle")).toHaveAttribute("aria-pressed", "false");
       });
+    });
+
+    /*
+    FNXC:HumanMergeApproval 2026-09-17-22:32:
+    FN-514 P1 remediation — Quick Add's DELIVERY lock had no payload coverage. It is a distinct
+    control from the plan lock and is compatible with Fast: a fast card is still delivered, so it can
+    still owe a delivery decision. Every trigger that reaches the same payload builder is covered.
+    */
+    it("sends humanMergeApproval only when armed, and resets it after a successful create", async () => {
+      const onCreate = vi.fn().mockResolvedValue(CREATED_TASK);
+      renderQuickEntryBox({ onCreate });
+      expandQuickEntry();
+
+      fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Ordinary task" } });
+      fireEvent.click(screen.getByTestId("quick-entry-save"));
+      await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+      expect(onCreate.mock.calls[0]?.[0]).not.toHaveProperty("humanMergeApproval");
+
+      // Typed first, armed second — the operator's real gesture order.
+      fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Needs my delivery decision" } });
+      fireEvent.click(screen.getByTestId("quick-entry-human-merge-approval-toggle"));
+      fireEvent.click(screen.getByTestId("quick-entry-save"));
+      await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(2));
+      expect(onCreate.mock.calls[1]?.[0]).toMatchObject({ humanMergeApproval: true });
+
+      // Reset after success, so the next card does not inherit the requirement silently.
+      await waitFor(() => {
+        expect(screen.getByTestId("quick-entry-human-merge-approval-toggle")).toHaveAttribute("aria-pressed", "false");
+      });
+    });
+
+    it("carries the delivery lock through the Cmd/Ctrl+Enter accelerator and alongside Fast", async () => {
+      const onCreate = vi.fn().mockResolvedValue(CREATED_TASK);
+      renderQuickEntryBox({ onCreate });
+      expandQuickEntry();
+
+      fireEvent.click(screen.getByTestId("quick-entry-fast-toggle"));
+      fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Fast and locked" } });
+      fireEvent.click(screen.getByTestId("quick-entry-human-merge-approval-toggle"));
+      fireEvent.keyDown(screen.getByTestId("quick-entry-input"), { key: "Enter", metaKey: true });
+
+      await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+      expect(onCreate.mock.calls[0]?.[0]).toMatchObject({ executionMode: "fast", humanMergeApproval: true });
+    });
+
+    it("omits the delivery lock when armed then disarmed", async () => {
+      const onCreate = vi.fn().mockResolvedValue(CREATED_TASK);
+      renderQuickEntryBox({ onCreate });
+      expandQuickEntry();
+
+      fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Changed my mind" } });
+      fireEvent.click(screen.getByTestId("quick-entry-human-merge-approval-toggle"));
+      fireEvent.click(screen.getByTestId("quick-entry-human-merge-approval-toggle"));
+      expect(screen.getByTestId("quick-entry-human-merge-approval-toggle")).toHaveAttribute("aria-pressed", "false");
+      fireEvent.click(screen.getByTestId("quick-entry-save"));
+
+      await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+      expect(onCreate.mock.calls[0]?.[0]).not.toHaveProperty("humanMergeApproval");
     });
 
     /*

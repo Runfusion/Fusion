@@ -438,6 +438,12 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
   Arming this never clears the optional-step selection.
   */
   const [requiresHumanPlanApproval, setRequiresHumanPlanApprovalState] = useState(false);
+  /*
+  FNXC:HumanMergeApproval 2026-09-17-18:09:
+  FN-514 — the per-card DELIVERY lock. Independent of Fast and of the plan validation above: it stops
+  only the final delivery, so the two toggles do not clear each other.
+  */
+  const [requiresHumanMergeApproval, setRequiresHumanMergeApproval] = useState(false);
   /* FNXC:HumanPlanApproval 2026-09-15-07:30: FN-408 remediation — the two creation toggles clear each other so an impossible Fast + human-approval payload is never built. */
   const setRequiresHumanPlanApproval = useCallback((next: boolean) => {
     if (next) setExecutionMode("standard");
@@ -676,13 +682,14 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
       executionMode === "fast" ||
       /* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 arming is a real unsaved choice; losing it silently on close would surprise the operator. */
       requiresHumanPlanApproval ||
+      requiresHumanMergeApproval ||
       branchMode !== "project-default" ||
       branch !== "" ||
       baseBranch !== "" ||
       githubTrackingEnabled !== initialDefaultValues.githubTrackingEnabled ||
       githubRepoOverrideTrimmed !== "";
     setHasDirtyState(isDirty);
-  }, [description, dependencies, pendingImages, selectedWorkflowId, hasUserSelectedEnabledWorkflowSteps, executorModel, validatorModel, planningModel, thinkingLevel, plannerOversightLevel, selectedAgentId, reviewLevel, autoMerge, nodeId, executionMode, requiresHumanPlanApproval, branchMode, branch, baseBranch, githubTrackingEnabled, githubRepoOverrideTrimmed, initialDefaultValues]);
+  }, [description, dependencies, pendingImages, selectedWorkflowId, hasUserSelectedEnabledWorkflowSteps, executorModel, validatorModel, planningModel, thinkingLevel, plannerOversightLevel, selectedAgentId, reviewLevel, autoMerge, nodeId, executionMode, requiresHumanPlanApproval, requiresHumanMergeApproval, branchMode, branch, baseBranch, githubTrackingEnabled, githubRepoOverrideTrimmed, initialDefaultValues]);
 
   const resetForm = useCallback(() => {
     // Clean up object URLs
@@ -713,6 +720,8 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
     setExecutionMode("standard");
     /* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 resets with the other creation choices after a successful create. */
     setRequiresHumanPlanApproval(false);
+    /* FNXC:HumanMergeApproval 2026-09-17-18:09: FN-514 — the lock choice never carries over to the next card. */
+    setRequiresHumanMergeApproval(false);
     setBranchMode("project-default");
     setBranch("");
     setBaseBranch("");
@@ -802,6 +811,8 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
       ...(executionMode === "fast" ? { executionMode: "fast" } : {}),
       /* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 sends only the arming flag; the server owns Plan Review enforcement and every decision. */
       ...(requiresHumanPlanApproval ? { humanPlanApproval: true } : {}),
+      /* FNXC:HumanMergeApproval 2026-09-17-18:09: FN-514 sends only the arming flag; the server owns every delivery decision. */
+      ...(requiresHumanMergeApproval ? { humanMergeApproval: true } : {}),
       branchSelection: {
         mode: branchMode,
         ...(isBranchNameRequired && branch.trim() ? { branchName: branch.trim() } : {}),
@@ -877,7 +888,7 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
       addToast(t("newTaskModal.taskCreated", "Created {{taskId}}", { taskId: task.id }), "success");
     }
     onClose();
-  }, [executorModel, credentialInstanceId, validatorModel, validatorCredentialInstanceId, planningModel, planningCredentialInstanceId, thinkingLevel, plannerOversightLevel, dependencies, shouldSubmitEnabledWorkflowSteps, enabledWorkflowSteps, selectedAgentId, presetMode, selectedPresetId, reviewLevel, autoMerge, nodeId, executionMode, requiresHumanPlanApproval, branchMode, isBranchNameRequired, branch, baseBranch, githubTrackingEnabled, githubRepoOverrideTrimmed, onCreateTask, onMoveTask, pendingImages, resetForm, addToast, t, onClose, projectId]);
+  }, [executorModel, credentialInstanceId, validatorModel, validatorCredentialInstanceId, planningModel, planningCredentialInstanceId, thinkingLevel, plannerOversightLevel, dependencies, shouldSubmitEnabledWorkflowSteps, enabledWorkflowSteps, selectedAgentId, presetMode, selectedPresetId, reviewLevel, autoMerge, nodeId, executionMode, requiresHumanPlanApproval, requiresHumanMergeApproval, branchMode, isBranchNameRequired, branch, baseBranch, githubTrackingEnabled, githubRepoOverrideTrimmed, onCreateTask, onMoveTask, pendingImages, resetForm, addToast, t, onClose, projectId]);
 
   const handleSubmit = useCallback(async (startWorkflow: ValidatedQuickAddWorkflow | null = null) => {
     const workflowSelection = selectedWorkflowId;
@@ -1284,6 +1295,8 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
         executionMode={executionMode}
         onExecutionModeChange={handleExecutionModeSelection}
         humanPlanApproval={requiresHumanPlanApproval}
+        humanMergeApproval={requiresHumanMergeApproval}
+        onHumanMergeApprovalChange={setRequiresHumanMergeApproval}
         onHumanPlanApprovalChange={setRequiresHumanPlanApproval}
         githubTrackingEnabled={githubTrackingEnabled}
         onGithubTrackingEnabledChange={handleGithubTrackingEnabledChange}

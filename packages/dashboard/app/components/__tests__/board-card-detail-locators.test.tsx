@@ -64,7 +64,6 @@ describe("Board card-detail Chromium locator contract", () => {
         onQuickCreate={noopAsync}
         onNewTask={noop}
         autoMerge
-        onToggleAutoMerge={noop}
         planAutoApproveEnabled={false}
         onTogglePlanAutoApprove={noop}
         globalPaused={false}

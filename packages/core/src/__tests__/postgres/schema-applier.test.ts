@@ -190,7 +190,15 @@ describe("schema-applier: immutable migration identities", () => {
     expect(TASK_HUMAN_PLAN_APPROVAL_VERSION).toBe("0080");
     // FNXC:TaskPauseAccounting 2026-09-16-06:16: FN-457's durable paused-time columns are migration 0081 and the new ceiling.
     expect(TASK_PAUSE_ACCOUNTING_VERSION).toBe("0081");
-    expect(SCHEMA_BASELINE_VERSION).toBe("0081");
+    // FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509's durable Boost column is migration 0082.
+    expect(SCHEMA_BASELINE_VERSION >= "0082").toBe(true);
+    /*
+    FNXC:HumanMergeApproval 2026-09-17-18:09:
+    FN-514's per-card delivery-lock column is migration 0083 and the new ceiling. Every identity above
+    stays pinned: this assertion exists so a renumbering of an ALREADY-PUBLISHED migration fails here
+    rather than silently skipping it on an upgraded database.
+    */
+    expect(SCHEMA_BASELINE_VERSION).toBe("0083");
   });
 
   it("keeps monitor and approval isolation assigned to version 0003", () => {
@@ -1949,6 +1957,8 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       WORKFLOW_IDENTITY_AND_MODEL_LANES_VERSION,
       TASK_HUMAN_PLAN_APPROVAL_VERSION,
       TASK_PAUSE_ACCOUNTING_VERSION,
+      "0082",
+      "0083",
     ]);
     expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
   });
@@ -2056,6 +2066,8 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       WORKFLOW_IDENTITY_AND_MODEL_LANES_VERSION,
       TASK_HUMAN_PLAN_APPROVAL_VERSION,
       TASK_PAUSE_ACCOUNTING_VERSION,
+      "0082",
+      "0083",
     ]);
   });
 
@@ -2296,6 +2308,8 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       WORKFLOW_IDENTITY_AND_MODEL_LANES_VERSION,
       TASK_HUMAN_PLAN_APPROVAL_VERSION,
       TASK_PAUSE_ACCOUNTING_VERSION,
+      "0082",
+      "0083",
     ]);
   });
 
@@ -2417,6 +2431,8 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       WORKFLOW_IDENTITY_AND_MODEL_LANES_VERSION,
       TASK_HUMAN_PLAN_APPROVAL_VERSION,
       TASK_PAUSE_ACCOUNTING_VERSION,
+      "0082",
+      "0083",
     ]);
   });
 
@@ -2538,6 +2554,8 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       WORKFLOW_IDENTITY_AND_MODEL_LANES_VERSION,
       TASK_HUMAN_PLAN_APPROVAL_VERSION,
       TASK_PAUSE_ACCOUNTING_VERSION,
+      "0082",
+      "0083",
     ]);
   });
 });

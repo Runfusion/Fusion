@@ -189,9 +189,16 @@ describe("Lane", () => {
     expect(screen.queryByTestId("lane-toggle-builtin:coding")).toBeNull();
   });
 
-  it("shows the auto-merge toggle for human-review workflow columns", () => {
-    render(<Lane {...baseProps()} autoMerge={false} onToggleAutoMerge={vi.fn()} />);
-    expect(screen.getByText("Auto-merge")).toBeDefined();
+  /*
+  FNXC:HumanMergeApproval 2026-09-17-18:09:
+  FN-514 removed the lane-header Auto-merge toggle, so the contract is inverted: a human-review
+  workflow column renders no such control and leaves no shell behind. Delivery is decided per card
+  through the per-task lock instead.
+  */
+  it("renders no auto-merge toggle for human-review workflow columns", () => {
+    const { container } = render(<Lane {...baseProps()} autoMerge={false} />);
+    expect(screen.queryByText("Auto-merge")).toBeNull();
+    expect(container.querySelector(".auto-merge-toggle")).toBeNull();
   });
 
 

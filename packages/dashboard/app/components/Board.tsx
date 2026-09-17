@@ -55,7 +55,6 @@ interface BoardProps {
   autoMerge: boolean;
   /** Project merge strategy passed to Board-owned card context menus. */
   mergeStrategy?: string;
-  onToggleAutoMerge: () => void;
   planAutoApproveEnabled: boolean;
   onTogglePlanAutoApprove: () => void;
   globalPaused?: boolean;
@@ -144,19 +143,12 @@ function resetDocumentHorizontalScroll() {
   }
 }
 
-function scheduleDocumentHorizontalScrollReset() {
-  const run = () => {
-    resetDocumentHorizontalScroll();
-    setTimeout(resetDocumentHorizontalScroll, 0);
-  };
-
-  if (typeof window.requestAnimationFrame === "function") {
-    window.requestAnimationFrame(run);
-    return;
-  }
-
-  setTimeout(run, 0);
-}
+/*
+FNXC:HumanMergeApproval 2026-09-17-18:09:
+FN-514 removed `scheduleDocumentHorizontalScrollReset`. Its ONLY caller was the review column's
+Auto-merge toggle handler, which reset the mobile horizontal scroll after the toggle changed the
+header width. `resetDocumentHorizontalScroll` above is retained: it has its own live callers.
+*/
 
 export { ALL_WORKFLOWS_BOARD_VIEW_ID } from "../utils/boardWorkflowSelection";
 
@@ -201,7 +193,7 @@ function BoardWorkflowSkeleton({ empty = false, t }: { empty?: boolean; t: TFunc
   );
 }
 
-function BoardContent({ tasks: providedTasks, projectId, maxConcurrent, maxWorktrees, showWorktreeGrouping, onMoveTask, onBoostTask, onPauseTask, onUnpauseTask, onResetTask, onDuplicateTask, onMergeTask, onOpenDetail, onRefinementCreated, onOpenGroupModal, addToast, onQuickCreate, onNewTask: _onNewTask, autoMerge, mergeStrategy = "direct", onToggleAutoMerge, globalPaused, onUpdateTask, onRetryTask, onOpenChatWithPrefill, onRevertTask, onRestoreRevertTask, onDeleteTask, onLoadMoreCurrentTasks, currentTasksTotal: _currentTasksTotal, currentTasksHasMore, currentTasksLoadingMore, currentTasksPaginationError, currentTasksProgressKey, onRetryCurrentTasks, onLoadMoreCompletedTasks, completedCounts, completedHasMore, completedLoadingMore, completedPaginationError, completedProgressKey, onRetryCompletedTasks, searchQuery = "", availableModels, onPlanningMode, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, onOpenMission, staleHighFanoutBlockerAgeThresholdMs, lastFetchTimeMs, prAuthAvailable, workflowControlsInHeader = false, active = true, onOpenHistory }: BoardProps) {
+function BoardContent({ tasks: providedTasks, projectId, maxConcurrent, maxWorktrees, showWorktreeGrouping, onMoveTask, onBoostTask, onPauseTask, onUnpauseTask, onResetTask, onDuplicateTask, onMergeTask, onOpenDetail, onRefinementCreated, onOpenGroupModal, addToast, onQuickCreate, onNewTask: _onNewTask, autoMerge, mergeStrategy = "direct", globalPaused, onUpdateTask, onRetryTask, onOpenChatWithPrefill, onRevertTask, onRestoreRevertTask, onDeleteTask, onLoadMoreCurrentTasks, currentTasksTotal: _currentTasksTotal, currentTasksHasMore, currentTasksLoadingMore, currentTasksPaginationError, currentTasksProgressKey, onRetryCurrentTasks, onLoadMoreCompletedTasks, completedCounts, completedHasMore, completedLoadingMore, completedPaginationError, completedProgressKey, onRetryCompletedTasks, searchQuery = "", availableModels, onPlanningMode, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, onOpenMission, staleHighFanoutBlockerAgeThresholdMs, lastFetchTimeMs, prAuthAvailable, workflowControlsInHeader = false, active = true, onOpenHistory }: BoardProps) {
   const { t } = useTranslation("app");
   /*
   FNXC:TaskColumnSorting 2026-08-18-21:24:
@@ -506,12 +498,6 @@ function BoardContent({ tasks: providedTasks, projectId, maxConcurrent, maxWorkt
     columnFlagsByTaskId: blockerFanoutColumnFlagsByTaskId,
   });
 
-  const handleToggleAutoMerge = useCallback(() => {
-    onToggleAutoMerge();
-    if (window.matchMedia(MOBILE_MEDIA_QUERY).matches) {
-      scheduleDocumentHorizontalScrollReset();
-    }
-  }, [onToggleAutoMerge]);
 
 
   const workflowStatusCounts = useMemo(() => {
@@ -1044,7 +1030,6 @@ function BoardContent({ tasks: providedTasks, projectId, maxConcurrent, maxWorkt
                   autoMerge={autoMerge}
                   mergeStrategy={mergeStrategy}
                   {...(isCreateColumn && aggregateQuickCreateTarget ? { workflowId: aggregateQuickCreateTarget.workflowId, workflowOptions, defaultWorkflowId: boardWorkflows?.defaultWorkflowId ?? null, onQuickCreate: handleAggregateWorkflowQuickCreate } : {})}
-                  {...(columnDef.flags.mergeBlocker || columnDef.flags.humanReview ? { onToggleAutoMerge: handleToggleAutoMerge } : {})}
                   paginationActive={active}
                   paginationCollectionKey={`${projectId ?? "default"}:aggregate:${columnDef.id}:${searchQuery}`}
                   {...(isSearchActive
@@ -1128,7 +1113,6 @@ function BoardContent({ tasks: providedTasks, projectId, maxConcurrent, maxWorkt
                 mergeStrategy={mergeStrategy}
                 // FNXC:PlanApproval 2026-07-07-00:00: FN-7653 — the plan auto-approve shortcut belongs only to the intake/planning column, never to hold (Todo-like) columns; the built-in Coding workflow's Todo column carries the hold trait and was wrongly receiving this prop pair.
                 {...(isCreateColumn ? { workflowOptions, defaultWorkflowId: selectedWorkflow.id, onQuickCreate: handleWorkflowQuickCreate } : {})}
-                {...(columnDef.flags.mergeBlocker || columnDef.flags.humanReview ? { onToggleAutoMerge: handleToggleAutoMerge } : {})}
                 paginationActive={active}
                 paginationCollectionKey={`${projectId ?? "default"}:${selectedWorkflow.id}:${columnDef.id}:${searchQuery}`}
                 {...(isSearchActive

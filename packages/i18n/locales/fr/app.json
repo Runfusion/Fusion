@@ -8980,7 +8980,33 @@
     "boostTitle": "Essayer cette tâche en premier au prochain départ possible. Cela ne la démarre pas et ne lève aucun blocage.",
     "boostFailed": "Impossible de prioriser {{taskId}} — elle a peut-être démarré ou changé de colonne. Actualisez pour voir sa place actuelle.",
     "followUpOf": "",
-    "followUpOfTitle": ""
+    "followUpOfTitle": "",
+    "humanMergeApproval": {
+      "toggle": "Exiger mon approbation avant la livraison de cette tâche",
+      "menuLock": "Exiger mon approbation pour livrer",
+      "menuUnlock": "Retirer l’approbation de livraison",
+      "badgeArmed": "Votre approbation est requise avant la livraison",
+      "badgeDecided": "Décision de livraison enregistrée",
+      "badgeRejected": "Vous avez refusé cette livraison ; des corrections sont dues",
+      "messageLabel": "Note ou instructions de refus",
+      "messagePlaceholder": "Facultatif pour créer une PR ou fusionner. Obligatoire pour refuser : indiquez ce qui doit changer.",
+      "createPr": "Créer PR",
+      "merge": "Merger",
+      "reject": "Refuser",
+      "rejectRequiresMessage": "Un refus exige des instructions décrivant ce qui doit changer.",
+      "prOpened": "Une pull request est ouverte et vous attend :",
+      "correctionAnalyzing": "Analyse de la correction à apporter à la livraison refusée…",
+      "correctionPending": "Les corrections de votre refus sont en préparation.",
+      "correctionFailed": "La correction n’a pas pu être préparée. Elle sera réessayée.",
+      "hint": "Créer PR ouvre une pull request sans fusionner. Merger livre le travail relu maintenant. Refuser renvoie vos instructions pour correction.",
+      "reason": {
+        "githubAuth": "GitHub n’est pas connecté, une pull request ne peut pas être ouverte.",
+        "noRemote": "Ce dépôt n’a pas de remote, une pull request ne peut pas être ouverte.",
+        "workspace": "Cette tâche couvre plusieurs dépôts, qu’une seule pull request ne peut pas couvrir.",
+        "content": "Les changements livrés n’ont pas pu être lus.",
+        "decided": "Cette livraison a déjà été décidée."
+      }
+    }
   },
   "terminal": {
     "arrowKeysLabel": "",

@@ -32,6 +32,7 @@ vi.mock("lucide-react", () => ({
   TriangleAlert: () => null,
   Zap: () => <svg />,
   UserCheck: () => <svg />,
+  Lock: () => <svg />,
   ShieldCheck: () => null,
   Brain: () => null,
   Server: () => null,

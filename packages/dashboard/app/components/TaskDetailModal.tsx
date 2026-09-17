@@ -118,6 +118,9 @@ import { recordResumeEvent } from "../utils/resumeInstrumentation";
 /* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 per-card decision routing and plan/episode identity. */
 import { HUMAN_PLAN_APPROVAL_MESSAGE_MAX_LENGTH_CLIENT, isHumanPlanApprovalArmedClient, isReviewBudgetExhaustedApproval, isTaskAwaitingPlanApproval, resolvePlanReviewEpisodeIdClient } from "../utils/reviewBudgetApproval";
 import { HumanPlanApprovalControls } from "./HumanPlanApprovalControls";
+/* FNXC:HumanMergeApproval 2026-09-17-18:09: FN-514 — the SINGLE delivery decision surface: one field, three direct commands. */
+import { HumanMergeApprovalControls } from "./HumanMergeApprovalControls";
+import { useTaskMergeApproval } from "../hooks/useTaskMergeApproval";
 import { getTaskStatusBadgeLabel, hasTaskStatusBadge, isTaskPlanningActive } from "../utils/taskStatusBadgeLabel";
 import { ACTIVE_STATUSES, resolveEffectiveExecutor, resolveEffectivePlanning, resolveEffectiveTaskChat, resolveEffectiveThinkingLevel, resolveEffectiveValidator, type ModelSelection } from "./effective-model-resolution";
 import { TaskContextMenu, buildTaskActionMenuModel, getTaskPrAutomationLabel } from "./TaskContextMenu";
@@ -3796,6 +3799,22 @@ export function TaskDetailContent({
   }), [task]);
   const humanPlanDecisionEpisodeKey = `${task.id}:${humanPlanDecisionIdentity.expectedPlanFingerprint ?? ""}:${humanPlanDecisionIdentity.expectedEpisodeId ?? ""}`;
   const [humanPlanDecisionMessage, setHumanPlanDecisionMessage] = useState("");
+  /*
+  FNXC:HumanMergeApproval 2026-09-17-18:09:
+  FN-514 — the delivery decision draft lives in the HOST so it survives a refresh of the same card
+  and a failed command, and is cleared when the operator moves to a different card.
+  */
+  const [humanMergeDecisionMessage, setHumanMergeDecisionMessage] = useState("");
+  const mergeApproval = useTaskMergeApproval(task?.id, projectId);
+  useEffect(() => {
+    /* A different card never inherits the previous card's draft. */
+    setHumanMergeDecisionMessage("");
+  }, [task?.id, projectId]);
+  const handleHumanMergeDecision = useCallback(async (action: "create-pr" | "merge" | "reject") => {
+    const succeeded = await mergeApproval.submit(action, humanMergeDecisionMessage);
+    /* The draft is preserved on failure so nothing an operator typed is ever retyped. */
+    if (succeeded) setHumanMergeDecisionMessage("");
+  }, [mergeApproval, humanMergeDecisionMessage]);
   const [humanPlanDecisionError, setHumanPlanDecisionError] = useState<string | null>(null);
   const humanPlanDecisionEpisodeRef = useRef(humanPlanDecisionEpisodeKey);
   useEffect(() => {
@@ -5710,6 +5729,37 @@ export function TaskDetailContent({
                   accept="image/*"
                   onChange={handleUpload}
                 />
+              {/*
+              FNXC:HumanMergeApproval 2026-09-17-18:09:
+              FN-514 — THE single delivery decision surface for this card. It mounts only from the
+              SERVER's availability answer, never from a status guess in React, so the operator is
+              asked exactly when the work and every configured pre-merge gate are genuinely satisfied.
+              There is no second placement: a duplicate field in the footer is what FN-448 removed for
+              the plan decision, and the same mistake must not be repeated here.
+              */}
+              {mergeApproval.point?.enabled && (mergeApproval.point.available || mergeApproval.point.unavailableReason === "rejection-in-progress") && (
+                <div className="detail-plan-approval-banner" data-testid="detail-merge-approval-banner">
+                  <HumanMergeApprovalControls
+                    taskId={task.id}
+                    message={humanMergeDecisionMessage}
+                    onMessageChange={setHumanMergeDecisionMessage}
+                    onSubmit={(action) => { void handleHumanMergeDecision(action); }}
+                    capabilities={mergeApproval.point.capabilities}
+                    pendingAction={mergeApproval.pendingAction}
+                    error={mergeApproval.error}
+                    pullRequestUrl={(task as Task).humanMergeApproval?.decision?.receipt?.prUrl ?? null}
+                    correctionState={(task as Task).humanMergeApproval?.rejection?.state === "analyzing"
+                      ? "analyzing"
+                      : (task as Task).humanMergeApproval?.rejection?.lastError
+                        ? "failed"
+                        : (task as Task).humanMergeApproval?.rejection?.state === "pending"
+                          ? "pending"
+                          : null}
+                    correctionError={(task as Task).humanMergeApproval?.rejection?.lastError ?? null}
+                    maxLength={10_000}
+                  />
+                </div>
+              )}
               {/* FNXC:TaskVerificationStatus 2026-07-19-12:00: Verification status moved below metadata controls per UX feedback — empty state "No chat verification requested" was appearing too prominently near the top of the card. */}
               {activeTab === "definition" && <TaskVerificationStatus request={verificationRequest} />}
               {activeTab === "definition" && shouldShowBranchGroupCard && task.branchContext?.groupId && (

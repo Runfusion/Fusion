@@ -161,6 +161,8 @@ export interface TaskRow {
   externalBlock: string | null;
   planningFailure: string | null;
   humanPlanApproval: string | null;
+  /* FNXC:HumanMergeApproval 2026-09-17-18:09: FN-514 per-card delivery lock, decision and rejection state. */
+  humanMergeApproval: string | null;
   noCommitsExpected: number | null;
   enabledWorkflowSteps: string | null;
   modifiedFiles: string | null;
@@ -243,7 +245,7 @@ PostgreSQL task JSONB conversion must use one registry for both descriptor write
 export const TASK_JSONB_COLUMNS: ReadonlySet<string> = new Set([
   "dependencies", "steps", "stepReports", "customFields", "log", "attachments", "steeringComments",
   "comments", "review", "reviewState", "workflowStepResults", "prInfo", "prInfos",
-  "issueInfo", "githubTracking", "gitlabTracking", "mergeDetails", "workspaceWorktrees", "repositoryScope", "externalBlock", "planningFailure", "humanPlanApproval", "enabledWorkflowSteps",
+  "issueInfo", "githubTracking", "gitlabTracking", "mergeDetails", "workspaceWorktrees", "repositoryScope", "externalBlock", "planningFailure", "humanPlanApproval", "humanMergeApproval", "enabledWorkflowSteps",
   "modifiedFiles", "declaredSymbols", "scopeAutoWiden", "sourceMetadata", "tokenUsagePerModel",
   "tokenBudgetOverride", "columnDwellMs", "workflowTransitionNotification", "recommendations",
 ]);
@@ -290,6 +292,8 @@ export const TASK_COLUMN_DESCRIPTORS: TaskColumnDescriptor[] = [
   defineTaskColumn("planningFailure", (task) => toJsonNullable(task.planningFailure)),
   /* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 per-card decision state travels the shared descriptor seam like every other JSON lifecycle field. */
   defineTaskColumn("humanPlanApproval", (task) => toJsonNullable(task.humanPlanApproval)),
+  /* FNXC:HumanMergeApproval 2026-09-17-18:09: FN-514 delivery lock state travels the same shared descriptor seam. */
+  defineTaskColumn("humanMergeApproval", (task) => toJsonNullable(task.humanMergeApproval)),
   defineTaskColumn("wedgeNotification", (task) => toJsonNullable(task.wedgeNotification)),
   defineTaskColumn("userPaused", (task) => task.userPaused ? 1 : 0),
   defineTaskColumn("baseBranch", (task) => task.baseBranch ?? null),

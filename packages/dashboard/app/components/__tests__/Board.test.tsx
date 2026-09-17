@@ -231,7 +231,6 @@ function createBoardProps(overrides = {}) {
     onQuickCreate: noopAsync,
     onNewTask: noop,
     autoMerge: true,
-    onToggleAutoMerge: noop,
     planAutoApproveEnabled: false,
     onTogglePlanAutoApprove: noop,
     globalPaused: false,
@@ -1446,7 +1445,13 @@ describe("Board", () => {
       expect(screen.queryByTestId("board-reverted-tasks")).toBeNull();
     });
 
-    it("passes auto-merge toggle to selected workflow human-review columns", async () => {
+    /*
+    FNXC:HumanMergeApproval 2026-09-17-18:09:
+    FN-514 REMOVED the review column's Auto-merge toggle, so this asserts the opposite contract: no
+    lane header — human-review or otherwise — receives that handler any more. Delivery is decided per
+    card through the lock, not by a project-wide switch on a column header.
+    */
+    it("passes no auto-merge toggle to a selected workflow's human-review column", async () => {
       const workflow = {
         ...DEFAULT_WORKFLOW,
         columns: [
@@ -1459,7 +1464,7 @@ describe("Board", () => {
       renderBoard({ tasks: [mkTask({ id: "FN-1", column: "review" })] });
 
       await waitFor(() => expect(screen.getByTestId("column-review")).toBeDefined());
-      expect(screen.getByTestId("column-review").getAttribute("data-has-auto-merge-toggle")).toBe("yes");
+      expect(screen.getByTestId("column-review").getAttribute("data-has-auto-merge-toggle")).toBe("no");
     });
 
     /*

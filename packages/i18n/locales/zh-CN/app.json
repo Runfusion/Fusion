@@ -8961,7 +8961,33 @@
     "boostTitle": "队列下次接纳工作时优先尝试此任务。这不会启动它，也不会解除任何阻塞。",
     "boostFailed": "无法优先处理 {{taskId}}——它可能已开始或已移动。请刷新查看当前位置。",
     "followUpOf": "",
-    "followUpOfTitle": ""
+    "followUpOfTitle": "",
+    "humanMergeApproval": {
+      "toggle": "交付此任务前需要我的批准",
+      "menuLock": "交付前需要我的批准",
+      "menuUnlock": "移除交付批准",
+      "badgeArmed": "交付前需要您的批准",
+      "badgeDecided": "已记录交付决定",
+      "badgeRejected": "您拒绝了此交付，需要修改",
+      "messageLabel": "备注或拒绝说明",
+      "messagePlaceholder": "Optional when creating a pull request or merging. Required when rejecting: say what must change.",
+      "createPr": "创建 PR",
+      "merge": "合并",
+      "reject": "拒绝",
+      "rejectRequiresMessage": "Rejecting requires instructions describing what must change.",
+      "prOpened": "A pull request is open and waiting for you:",
+      "correctionAnalyzing": "Working out how to correct the rejected delivery…",
+      "correctionPending": "Corrections are being prepared for your rejection.",
+      "correctionFailed": "The correction could not be prepared. It will be retried.",
+      "hint": "Create PR opens a pull request without merging. Merge delivers the reviewed work now. Reject sends your instructions back for corrections.",
+      "reason": {
+        "githubAuth": "GitHub is not connected, so a pull request cannot be opened.",
+        "noRemote": "This repository has no remote, so a pull request cannot be opened.",
+        "workspace": "This task spans several repositories, which a single pull request cannot cover.",
+        "content": "The delivered changes could not be read.",
+        "decided": "This delivery was already decided."
+      }
+    }
   },
   "terminal": {
     "arrowKeysLabel": "",

@@ -143,7 +143,6 @@ function boardProps(overrides: Partial<React.ComponentProps<typeof Board>> = {})
     addToast: vi.fn(),
     onNewTask: vi.fn(),
     autoMerge: true,
-    onToggleAutoMerge: vi.fn(),
     planAutoApproveEnabled: false,
     onTogglePlanAutoApprove: vi.fn(),
     ...overrides,

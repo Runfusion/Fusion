@@ -831,9 +831,11 @@ describe("Column header after the overflow menu was removed (FN-509)", () => {
     unmount();
 
     render(
-      <Column {...defaultProps} column={"in-review" as ColumnType} workflowMode columnDisplayName="Review" columnFlags={{ humanReview: true }} tasks={[makeTask("FN-503")]} autoMerge onToggleAutoMerge={vi.fn()} />,
+      <Column {...defaultProps} column={"in-review" as ColumnType} workflowMode columnDisplayName="Review" columnFlags={{ humanReview: true }} tasks={[makeTask("FN-503")]} autoMerge />,
     );
-    expect(screen.getByRole("checkbox", { name: "Auto-merge" })).toBeTruthy();
+    /* FNXC:HumanMergeApproval 2026-09-17-18:09: FN-514 removed the lane-header Auto-merge control; no input, label or shell survives it. */
+    expect(screen.queryByRole("checkbox", { name: "Auto-merge" })).toBeNull();
+    expect(document.querySelector(".auto-merge-toggle")).toBeNull();
     expect(screen.queryByRole("button", { name: /column actions$/i })).toBeNull();
   });
 });
@@ -968,9 +970,11 @@ describe("Column header icon buttons stay on the canonical contract", () => {
     expectCanonicalHeaderIconButton(screen.getByTestId("column-history-shipped"));
   });
 
-  it("rend la bascule auto-merge d'une lane review sans menu d'actions", () => {
-    render(<Column {...defaultProps} column={"in-review" as ColumnType} workflowMode columnDisplayName="Review" columnFlags={{ humanReview: true }} tasks={[makeTask("FN-503")]} autoMerge onToggleAutoMerge={vi.fn()} />);
-    expect(screen.getByRole("checkbox", { name: "Auto-merge" })).toBeTruthy();
+  it("ne rend plus de bascule auto-merge sur une lane review, ni de menu d’actions", () => {
+    const { container } = render(<Column {...defaultProps} column={"in-review" as ColumnType} workflowMode columnDisplayName="Review" columnFlags={{ humanReview: true }} tasks={[makeTask("FN-503")]} autoMerge />);
+    /* FNXC:HumanMergeApproval 2026-09-17-18:09: FN-514 — le contrôle de colonne est remplacé par le verrou par tâche ; aucune coquille ne subsiste. */
+    expect(screen.queryByRole("checkbox", { name: "Auto-merge" })).toBeNull();
+    expect(container.querySelector(".auto-merge-toggle")).toBeNull();
     // FN-509 : le menu retiré ne laisse aucune coquille dans l'en-tête.
     expect(screen.queryByRole("button", { name: /column actions$/i })).toBeNull();
   });

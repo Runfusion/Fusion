@@ -2,7 +2,7 @@ import "./InlineCreateCard.css";
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import { Brain, Link, Zap, ChevronDown, ChevronUp, Bot, Maximize2, Minimize2, Server } from "lucide-react";
+import { Brain, Link, Zap, ChevronDown, ChevronUp, Bot, Lock, Maximize2, Minimize2, Server } from "lucide-react";
 import { type Task, type Settings, type ResolvedWorkflowOptionalStep, type ThinkingLevel } from "@fusion/core";
 import { getErrorMessage } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
@@ -140,6 +140,8 @@ export function InlineCreateCard({
   const [favoriteProviders, setFavoriteProviders] = useState<string[]>([]);
   const [favoriteModels, setFavoriteModels] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  /* FNXC:HumanMergeApproval 2026-09-17-18:09: FN-514 per-card delivery lock, armed at creation with a boolean only. */
+  const [requiresHumanMergeApproval, setRequiresHumanMergeApproval] = useState(false);
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null);
   const [isExpanded, setIsExpanded] = useState(false);
@@ -535,6 +537,8 @@ export function InlineCreateCard({
       Inline create optional-step toggles are explicit task intent. When a workflow exposes optional steps and the operator unchecks all of them, submit `[]` so default-on Plan Review / Code Review stay disabled on the created task instead of reappearing from workflow defaults.
       */
       enabledWorkflowSteps: optionalSteps.length > 0 ? enabledOptionalStepIds : undefined,
+      /* FNXC:HumanMergeApproval 2026-09-17-18:09: FN-514 sends only the arming flag; the server owns every delivery decision. */
+      ...(requiresHumanMergeApproval ? { humanMergeApproval: true } : {}),
       nodeId: effectiveNodeId,
     };
 
@@ -550,7 +554,7 @@ export function InlineCreateCard({
     }
 
     await submitTask(input);
-  }, [description, submitting, selectedWorkflowId, dependencies, selectedAgentId, selectedPresetId, hasExecutorOverride, executorProvider, credentialInstanceId, executorModelId, hasValidatorOverride, validatorProvider, validatorCredentialInstanceId, validatorModelId, hasPlanningOverride, planningProvider, planningCredentialInstanceId, planningModelId, hasMergerOverride, mergerProvider, mergerCredentialInstanceId, mergerModelId, thinkingLevel, validatorThinkingLevel, planningThinkingLevel, mergerThinkingLevel, optionalSteps.length, enabledOptionalStepIds, effectiveNodeId, projectId, addToast, submitTask]);
+  }, [description, submitting, selectedWorkflowId, dependencies, selectedAgentId, selectedPresetId, hasExecutorOverride, executorProvider, credentialInstanceId, executorModelId, hasValidatorOverride, validatorProvider, validatorCredentialInstanceId, validatorModelId, hasPlanningOverride, planningProvider, planningCredentialInstanceId, planningModelId, hasMergerOverride, mergerProvider, mergerCredentialInstanceId, mergerModelId, thinkingLevel, validatorThinkingLevel, planningThinkingLevel, mergerThinkingLevel, optionalSteps.length, enabledOptionalStepIds, requiresHumanMergeApproval, effectiveNodeId, projectId, addToast, submitTask]);
 
   const handleDuplicateProceed = useCallback(async () => {
     const matches = duplicateMatches;
@@ -934,6 +938,19 @@ export function InlineCreateCard({
                 );
               })()}
             </div>
+
+            {/* FNXC:HumanMergeApproval 2026-09-17-18:09: FN-514 — the delivery lock, reusing this row's existing button primitive and icon size. */}
+            <button
+              type="button"
+              className={`btn btn-sm dep-trigger ${requiresHumanMergeApproval ? "btn-primary" : ""}`}
+              data-testid="inline-create-human-merge-approval"
+              aria-pressed={requiresHumanMergeApproval}
+              aria-label={t("tasks.humanMergeApproval.toggle", "Require my approval before this task is delivered")}
+              title={t("tasks.humanMergeApproval.toggle", "Require my approval before this task is delivered")}
+              onClick={() => setRequiresHumanMergeApproval((current) => !current)}
+            >
+              <Lock size={12} style={{ verticalAlign: "middle" }} />
+            </button>
 
             {shouldShowNodePicker && (
               <div className="node-trigger-wrap" ref={nodePickerRef}>

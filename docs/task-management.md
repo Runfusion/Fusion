@@ -243,6 +243,70 @@ From the standalone **Research** view, each finding supports two task actions:
 
 Research actions persist detailed output in task documents (and optional attachments), not in long task descriptions.
 
+## Per-task delivery lock (human merge approval)
+
+A task can carry an explicit **delivery lock**: the card plans, executes, verifies and passes every
+configured review exactly as usual, then **stops before the final delivery** and waits for one
+operator command. It is armed with a single boolean at creation (`humanMergeApproval: true` on the
+create payload, the lock button in the New Task dialog, Quick Entry and the inline card) and can be
+added or removed later from the task's context menu.
+
+The lock is deliberately **not** `autoMerge: false`, not a pause, and not a fabricated review
+verdict. Those remain independent protections with their own meaning:
+
+| Control | Scope | What it stops |
+| --- | --- | --- |
+| Project/task `autoMerge` | Automatic lanes | Automatic merge admission (`requestInterpreterMerge`) |
+| Delivery lock | One card | The final delivery, until a human commands it |
+| Pause | One card | All automation on the card |
+
+A card with no lock behaves exactly as it always did. Arming a lock never re-enables auto-merge for
+the automatic lanes, and disarming it never merges anything by itself.
+
+### The three operator commands
+
+When the work and every configured pre-merge gate are genuinely satisfied, the task's Review banner
+offers one shared text field and exactly three direct buttons, in this order:
+
+1. **Créer PR / Create PR** — opens (or reuses) a pull request for the candidate's repository, head
+   and base, keeps the task in review, and publishes the link through the existing manual-PR
+   handoff. It performs **no merge**, no `pr-merge`, and never arms GitHub's native auto-merge. A
+   later merge still requires a fresh explicit command on the current candidate.
+2. **Merger / Merge** — commands the already-authorized human merge door with the effective policy
+   (direct or via PR). It is a human command, not a settings change.
+3. **Refuser / Reject** — requires instructions and starts a correction cycle on the same task.
+
+The two positive commands accept an **optional** note; the rejection **requires** a non-empty
+instruction after trimming. Notes are kept in the task history; a note never requests changes — that
+must go through Reject.
+
+### What an approval authorizes
+
+A positive decision authorizes exactly one presented candidate and one destination. The candidate
+identity binds the lock generation, the effective workflow selection, the review episode, the merge
+content (a singular diff fingerprint, a proven-empty diff, or per-repository workspace
+fingerprints), the workspace repository-scope revision, and the server-resolved delivery target.
+
+Changing any of those — new commits, a fresh review, a reset, a different base branch, a new
+workflow selection — invalidates the accord and asks again. Adding a note or updating a dispatch
+receipt does not. A `create-pr` authorization is never accepted by a merge door.
+
+### Rejections, reset and duplication
+
+An accepted rejection is a correction obligation. Removing the lock while its analysis or correction
+is running removes the *next* approval requirement but never erases the instruction or the
+corrections already accepted, and re-arming never revives an old accord.
+
+- **Reset** keeps the lock intent, bumps its generation (invalidating every prior accord, pending
+  destination and stale candidate) and cancels stale processing.
+- **Duplication** keeps the lock intent only: the copy inherits no accord, no pending destination
+  and no correction request.
+- A new independent task or a follow-up never inherits a decision.
+
+The durable state lives in the task row's `human_merge_approval` JSONB column (migration `0083`),
+separate from `human_plan_approval` and from `auto_merge` so no historical value can arm or disarm
+it. Rows that predate the column read as "no per-card requirement".
+
 ## Task Lifecycle
 
 Fusion task columns:

@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { memo, useCallback, useState, useRef, useEffect, useLayoutEffect, useMemo, type CSSProperties, type ReactElement } from "react";
 import { createPortal } from "react-dom";
-import { Link, Clock, Layers, Pencil, ChevronDown, Folder, Target, Bot, Trash2, RotateCw, Zap, UserCheck, GitBranch, GitPullRequest, AlertTriangle, Eye, MoreHorizontal, Sparkles, X } from "lucide-react";
+import { Link, Clock, Layers, Pencil, ChevronDown, Folder, Target, Bot, Trash2, RotateCw, Zap, UserCheck, Lock, GitBranch, GitPullRequest, AlertTriangle, Eye, MoreHorizontal, Sparkles, X } from "lucide-react";
 /* FNXC:TaskFollowUp 2026-09-17-18:10: FN-513's shared sub-type test, reachable through the browser-safe core leaf. */
 import { isFollowUpTask, isTaskExternallyBlocked } from "@fusion/core";
 import type { Task, TaskDetail, Column, ColumnId, PrInfo, IssueInfo, GithubIssueAction, MergeResult, PlannerOversightLevel } from "@fusion/core";
@@ -728,6 +728,49 @@ export function HumanPlanApprovalBadge({ task, variant }: { task: Task; variant:
   );
 }
 
+/*
+FNXC:HumanMergeApproval 2026-09-17-18:09:
+FN-514 — the per-card DELIVERY lock badge, shared by the board card and BOTH ListView renders so the
+three surfaces cannot drift. Module scope, never nested in a host render. Returns null for every card
+without the lock, so no empty badge shell is produced on the vast majority of cards.
+
+Three states, because "a decision is owed" and "a decision was given" are different situations an
+operator must be able to tell apart at a glance on the board.
+*/
+export function resolveHumanMergeApprovalBadgeState(
+  task: Pick<Task, "humanMergeApproval">,
+): "armed" | "decided" | "rejected" | null {
+  const state = task.humanMergeApproval;
+  const rejection = state?.rejection;
+  if (rejection && rejection.state !== "published") return "rejected";
+  if (state?.enabled !== true) return null;
+  const decision = state.decision;
+  return decision && decision.candidate?.lockGeneration === state.generation ? "decided" : "armed";
+}
+
+export function HumanMergeApprovalBadge({ task, variant }: { task: Task; variant: "card" | "list" }) {
+  const { t } = useTranslation("app");
+  const state = resolveHumanMergeApprovalBadgeState(task);
+  if (!state) return null;
+  const label = state === "rejected"
+    ? t("tasks.humanMergeApproval.badgeRejected", "You refused this delivery; corrections are owed")
+    : state === "decided"
+      ? t("tasks.humanMergeApproval.badgeDecided", "Delivery decision recorded")
+      : t("tasks.humanMergeApproval.badgeArmed", "Your approval is required before delivery");
+  return (
+    <span
+      className={`${variant === "list" ? "list-execution-mode-badge" : "card-execution-mode-badge"} ${variant}-human-merge-approval-badge`}
+      data-testid={`${variant}-human-merge-approval-badge`}
+      data-state={state}
+      title={label}
+      aria-label={label}
+    >
+      <Lock aria-hidden="true" />
+      <span className="visually-hidden">{label}</span>
+    </span>
+  );
+}
+
 interface PlanApprovalNoticeProps {
   task: Task;
   /*
@@ -1099,6 +1142,14 @@ function areTaskCardPropsEqual(previous: TaskCardProps, next: TaskCardProps): bo
     */
     previous.interactionMode === next.interactionMode &&
     previous.globalPaused === next.globalPaused &&
+    /*
+    FNXC:HumanMergeApproval 2026-09-17-18:09:
+    FN-514 — the delivery-lock badge is derived from `humanMergeApproval`, so its resolved STATE must
+    be identity-bearing here. Without it a memoized card keeps showing "approval required" after the
+    operator decided, or keeps a stale badge after the lock is removed, because nothing else in this
+    comparator changes when only that field does.
+    */
+    resolveHumanMergeApprovalBadgeState(previousTask) === resolveHumanMergeApprovalBadgeState(nextTask) &&
     previous.prAuthAvailable === next.prAuthAvailable &&
     previous.autoMergeEnabled === next.autoMergeEnabled &&
     /* FNXC:TaskQueueOrder 2026-09-17-12:07: a host that starts or stops supplying Boost must
@@ -3810,8 +3861,11 @@ function TaskCardComponent({
   `.card-meta-badges` is never rendered empty.
   */
   const humanPlanApprovalBadgeState = resolveHumanPlanApprovalBadgeState(task);
+  /* FNXC:HumanMergeApproval 2026-09-17-18:09: FN-514 — declared in the wrapper guard, or the badge never mounts on a card whose only metadata is the lock. */
+  const humanMergeApprovalBadgeState = resolveHumanMergeApprovalBadgeState(task);
   const hasCardMetaBadges = task.executionMode === "fast"
     || humanPlanApprovalBadgeState !== null
+    || humanMergeApprovalBadgeState !== null
     // FNXC:PlannerOversight 2026-07-04-00:00: the oversight badge is opt-in
     // metadata (absent for the common "off" default) — include it in the wrapper
     // guard so `.card-meta-badges` only renders when it has a real child.
@@ -4291,6 +4345,8 @@ function TaskCardComponent({
             approved", so a card still being planned never claims it is already waiting.
             */}
             <HumanPlanApprovalBadge task={task} variant="card" />
+            {/* FNXC:HumanMergeApproval 2026-09-17-18:09: FN-514 delivery lock, beside the plan-validation badge. */}
+            <HumanMergeApprovalBadge task={task} variant="card" />
             {showOversightBadge && (
               <span
                 className={`card-oversight-badge card-oversight-badge--${OVERSIGHT_BADGE_MODIFIER[effectiveOversightLevel as Exclude<PlannerOversightLevel, "off">]}`}

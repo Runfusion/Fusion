@@ -287,6 +287,21 @@ export interface WorkflowGraphExecutorDeps {
     task: TaskDetail,
     requirement: WorkflowNodePreparationRequirement,
   ) => void | Promise<void>;
+  /*
+   * FNXC:HumanMergeApproval 2026-09-17-18:09:
+   * FN-514's DELIVERY BARRIER. Invoked immediately before a delivery-effecting node
+   * (`merge-attempt`, `branch-group-member-integration`, `branch-group-promotion`, `pr-merge`)
+   * executes, with the freshly read task. A `hold` outcome suspends traversal on the existing
+   * admission-hold marker family instead of following a failure edge, so the card parks on a `held`
+   * continuation rather than terminalizing or writing a fake pending step result.
+   *
+   * Absent → no barrier, so every legacy graph test stays byte-identical. Planning, execution,
+   * verification, review and a workflow's preparatory `pr-create` node are never consulted.
+   */
+  humanMergeDeliveryBarrier?: (
+    node: WorkflowIrNode,
+    task: TaskDetail,
+  ) => Promise<{ kind: "proceed" } | { kind: "hold"; marker: string; reason: string }>;
   /**
    * Invoked immediately before an agent-executed node handler. Implementations
    * may fence a durable workflow principal or fail closed before any session is
@@ -2206,6 +2221,28 @@ export class WorkflowGraphExecutor {
       progressRecord = null;
       let releasePrincipal: (() => void) | undefined;
       try {
+        /*
+         * FNXC:HumanMergeApproval 2026-09-17-18:09:
+         * FN-514 — the delivery barrier runs BEFORE worktree preparation and before the handler, so
+         * an unauthorized card performs no Git or provider work at all. Its hold reuses the same
+         * suspension primitive as a principal hold: the context marker survives the unwind, the
+         * executor recognises it and parks the continuation `held` with a blocked reason, and no
+         * failure edge is traversed (a human wait must never terminalize the task).
+         */
+        if (this.deps.humanMergeDeliveryBarrier) {
+          const barrier = await this.deps.humanMergeDeliveryBarrier(node, task);
+          if (barrier.kind === "hold") {
+            context[`node:${node.id}:principal-hold`] = barrier.marker;
+            context[`node:${node.id}:human-merge-hold-reason`] = barrier.reason;
+            throw new WorkflowGraphSuspended({
+              reason: "hold",
+              nodeId: node.id,
+              fromColumn: task.column,
+              toColumn: task.column,
+              irHash: "human-merge-approval-hold",
+            });
+          }
+        }
         await this.prepareNodeExecution(node, task, context);
         const preflight = await this.deps.beforeNodeExecution?.(node, task, context);
         releasePrincipal = typeof context["workflow:release-principal"] === "function"
@@ -2304,7 +2341,8 @@ export class WorkflowGraphExecutor {
            * node's admission marker through the unwind; otherwise the outer executor sees a
            * wait without its reason and leaves the continuation running until dead-lease recovery.
            */
-          for (const suffix of ["principal-hold", "dependency-configuration-block"]) {
+          /* FNXC:HumanMergeApproval 2026-09-17-18:09: FN-514's human-wait reason travels with the hold marker so the operator-facing park names the actual wait. */
+          for (const suffix of ["principal-hold", "dependency-configuration-block", "human-merge-hold-reason"]) {
             const key = `node:${error.suspension.nodeId}:${suffix}`;
             if (typeof context[key] === "string") error.admissionHoldContext[key] = context[key];
           }

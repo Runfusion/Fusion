@@ -98,6 +98,8 @@ export interface WorkflowGraphTaskRunnerDeps {
   ) => void | Promise<void>;
   /** Durable principal fence invoked before classified node handlers. */
   beforeNodeExecution?: WorkflowGraphExecutorDeps["beforeNodeExecution"];
+  /* FNXC:HumanMergeApproval 2026-09-17-18:09: FN-514's per-card delivery barrier, consulted only before delivery-effecting nodes. */
+  humanMergeDeliveryBarrier?: WorkflowGraphExecutorDeps["humanMergeDeliveryBarrier"];
   maxRetriesPerNode?: number;
   /** Optional diagnostics hook (audit/log emission). Never throws into the run. */
   onEvent?: (event: { type: "start" | "terminal" | "fallback"; taskId: string; detail: string }) => void;
@@ -405,6 +407,7 @@ export class WorkflowGraphTaskRunner {
         runCustomNode: wrappedRunCustomNode,
         prepareNodeExecution: this.deps.prepareNodeExecution,
         beforeNodeExecution: this.deps.beforeNodeExecution,
+        humanMergeDeliveryBarrier: this.deps.humanMergeDeliveryBarrier,
         maxRetriesPerNode: this.deps.maxRetriesPerNode,
         branchPersistence: this.deps.branchPersistence,
         branchSemaphore: this.deps.branchSemaphore,

@@ -9125,6 +9125,32 @@ export default interface Resources {
       "hideSteps": "Hide steps",
       "holdToStartProgress": "Keep holding to start",
       "holdToStartReleaseCancels": "Keep holding to start; release to cancel",
+      "humanMergeApproval": {
+        "badgeArmed": "Your approval is required before delivery",
+        "badgeDecided": "Delivery decision recorded",
+        "badgeRejected": "You refused this delivery; corrections are owed",
+        "correctionAnalyzing": "Working out how to correct the rejected delivery…",
+        "correctionFailed": "The correction could not be prepared. It will be retried.",
+        "correctionPending": "Corrections are being prepared for your rejection.",
+        "createPr": "Create PR",
+        "hint": "Create PR opens a pull request without merging. Merge delivers the reviewed work now. Reject sends your instructions back for corrections.",
+        "menuLock": "Require my approval to deliver",
+        "menuUnlock": "Remove delivery approval",
+        "merge": "Merge",
+        "messageLabel": "Note or rejection instructions",
+        "messagePlaceholder": "Optional when creating a pull request or merging. Required when rejecting: say what must change.",
+        "prOpened": "A pull request is open and waiting for you:",
+        "reason": {
+          "content": "The delivered changes could not be read.",
+          "decided": "This delivery was already decided.",
+          "githubAuth": "GitHub is not connected, so a pull request cannot be opened.",
+          "noRemote": "This repository has no remote, so a pull request cannot be opened.",
+          "workspace": "This task spans several repositories, which a single pull request cannot cover."
+        },
+        "reject": "Reject",
+        "rejectRequiresMessage": "Rejecting requires instructions describing what must change.",
+        "toggle": "Require my approval before this task is delivered"
+      },
       "humanPlanApproval": {
         "approve": "Approve",
         "approved": "Plan approved — {{id}} continues to execution",

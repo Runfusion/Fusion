@@ -1,5 +1,5 @@
 import { memo, useMemo, useCallback, useRef } from "react";
-import { UiButton, UiInput, UiSurface } from "./ui";
+import { UiButton, UiSurface } from "./ui";
 import { useAutoPaginationSentinel } from "../hooks/useAutoPaginationSentinel";
 import { useVirtualizedList } from "../hooks/useVirtualizedList";
 import { useTranslation } from "react-i18next";
@@ -12,7 +12,6 @@ import { QuickEntryBox } from "./QuickEntryBox";
 import { PluginSlot } from "./PluginSlot";
 import { groupByWorktree } from "../utils/worktreeGrouping";
 import {
-  isReviewColumnRole,
   isWipColumnRole,
 } from "../utils/columnRoles";
 import type { ToastType } from "../hooks/useToast";
@@ -143,7 +142,6 @@ interface ColumnProps {
   autoMerge?: boolean;
   /** Project merge strategy for Task Detail-equivalent card context actions. */
   mergeStrategy?: string;
-  onToggleAutoMerge?: () => void;
   /* FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509 removed the header overflow menu's auto-approve
      shortcut along with that menu. The project approval setting itself is unchanged and still
      lives in Settings. */
@@ -245,7 +243,7 @@ interface ColumnProps {
   onOpenHistory?: () => void;
 }
 
-function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeGrouping, onOpenHistory, onMoveTask, onBoostTask, onPauseTask, onUnpauseTask, onResetTask, onDuplicateTask, onMergeTask, onOpenDetail, onRefinementCreated, onOpenGroupModal, addToast, onQuickCreate, autoMerge, mergeStrategy = "direct", onToggleAutoMerge, globalPaused, onUpdateTask, onRetryTask, onOpenChatWithPrefill, onRevertTask, onRestoreRevertTask, onDeleteTask, totalTaskCount, serverHasMore, serverLoadingMore, serverPaginationError, serverProgressKey, paginationCollectionKey, paginationActive = true, onLoadMoreServer, onRetryServer, allTasks, availableModels, onPlanningMode, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, isSearchActive, onOpenMission, lastFetchTimeMs, taskCardFieldDefs, taskWorkflowBadges, blockerFanoutMap, prAuthAvailable, holdTaskIds, workflowMode, workflowId, workflowOptions, defaultWorkflowId, columnDisplayName, columnDescription, columnFlags, workflowContextMenuColumns, taskContextMenuColumnsByTaskId }: ColumnProps) {
+function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeGrouping, onOpenHistory, onMoveTask, onBoostTask, onPauseTask, onUnpauseTask, onResetTask, onDuplicateTask, onMergeTask, onOpenDetail, onRefinementCreated, onOpenGroupModal, addToast, onQuickCreate, autoMerge, mergeStrategy = "direct", globalPaused, onUpdateTask, onRetryTask, onOpenChatWithPrefill, onRevertTask, onRestoreRevertTask, onDeleteTask, totalTaskCount, serverHasMore, serverLoadingMore, serverPaginationError, serverProgressKey, paginationCollectionKey, paginationActive = true, onLoadMoreServer, onRetryServer, allTasks, availableModels, onPlanningMode, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, isSearchActive, onOpenMission, lastFetchTimeMs, taskCardFieldDefs, taskWorkflowBadges, blockerFanoutMap, prAuthAvailable, holdTaskIds, workflowMode, workflowId, workflowOptions, defaultWorkflowId, columnDisplayName, columnDescription, columnFlags, workflowContextMenuColumns, taskContextMenuColumnsByTaskId }: ColumnProps) {
   const { t } = useTranslation("app");
   // Anchor the board.rejection.* catalog keys for the i18next extractor (it
   // scopes `t` to the useTranslation binding, so the shared translateRejection
@@ -465,10 +463,12 @@ function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeG
   FNXC:TaskQueueOrder 2026-09-17-12:07:
   FN-509 removed the column "…" menu and with it the column-level Replan All / Stop All shortcuts and
   the per-column sort control. The individual task operations and their endpoints are untouched —
-  only the batch entry point is gone — and the review-lane role is still needed below for the
-  Auto-merge toggle, which was never part of that menu.
+  only the batch entry point is gone.
+
+  FNXC:HumanMergeApproval 2026-09-17-18:09:
+  FN-514 removed the review-lane merge control that used to live here, so this header no longer needs
+  the review-lane role at all: nothing it renders is lane-conditional any more.
   */
-  const isReviewColumn = isReviewColumnRole(columnFlags, column);
 
   return (
     <UiSurface
@@ -497,26 +497,25 @@ function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeG
             <History />
           </UiButton>
         )}
-        {isReviewColumn && onToggleAutoMerge && (
-          <label className="auto-merge-toggle" title={autoMerge ? t("column.autoMergeEnabled", "Auto-merge enabled") : t("column.autoMergeDisabled", "Auto-merge disabled")}>
-            {/*
-            FNXC:AutoMergeA11y 2026-07-14-19:20:
-            Explicit aria-label keeps the control discoverable as "Auto-merge" for assistive tech and mobile regression tests even when the visible toggle-label is hidden by CSS or i18n wrappers.
-            */}
-            <UiInput
-              type="checkbox"
-              checked={!!autoMerge}
-              onChange={onToggleAutoMerge}
-              aria-label={t("column.autoMerge", "Auto-merge")}
-            />
-            <span className="toggle-slider" />
-            <span className="toggle-label">{t("column.autoMerge", "Auto-merge")}</span>
-          </label>
-        )}
         {/* FNXC:OfficialDashboardDesign 2026-09-13-00:38: The Header owns the sole New Task action, so column headers retain no duplicate button or click shell. */}
+        {/*
+        FNXC:HumanMergeApproval 2026-09-17-18:09:
+        FN-514 REMOVED the review column's Auto-merge toggle. It was a project-wide switch sitting on a
+        lane header, which could not answer the question an operator actually has about ONE card, and
+        flipping it silently changed every other card's delivery. The per-task delivery lock replaces
+        it: armed at creation or from the card's own menu, and decided in Task Detail with «Créer PR»,
+        «Merger» or «Refuser».
+
+        What was deliberately NOT removed: the project Auto-merge SETTING itself, the PR/branch-group
+        policies, and existing per-task `autoMerge` overrides. They keep their meaning and are still
+        edited in Settings; only this lane-header control is gone. No empty label, input, slider,
+        title or aria-label survives it — the header now ends with the History button.
+
+        The shared toggle styles remain in styles.css because the plan-approval control still uses
+        them; deleting them would break an unrelated affordance.
+        */}
         {/* FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509 removed the column "…" menu. No empty button
-            shell, click target, popover container, or aria-label survives it — the header ends with
-            the History button and the Auto-merge toggle, which were never part of that menu. */}
+            shell, click target, popover container, or aria-label survives it. */}
       </div>
       {resolvedColumnDescription && (
         <p className="column-desc">{resolvedColumnDescription}</p>

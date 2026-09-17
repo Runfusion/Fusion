@@ -44,6 +44,15 @@ import { resolveWorkflowGateActivityClaim } from "./workflow-gate-activity.js";
 import type { ImplementationExit } from "./implementation-exit.js";
 import type { WorkflowGraphTaskRunResult } from "../workflows/workflow-graph-task-runner.js";
 import { WorkflowGraphTaskRunner } from "../workflows/workflow-graph-task-runner.js";
+/* FNXC:HumanMergeApproval 2026-09-17-18:09: FN-514's per-card delivery barrier and its create-only PR handoff. */
+/* FNXC:HumanMergeApproval 2026-09-17-22:32: FN-514 P0 remediation — the graph is also the rejection-processing owner. */
+import {
+  buildHumanMergeCorrectionPublicationDeps,
+  buildHumanMergeCreatePrHandoff,
+  evaluateHumanMergeDeliveryBarrier,
+  publishHumanMergeCorrection,
+} from "../workflows/human-merge-approval-boundary.js";
+import { captureMergeContentDescriptor } from "../merge/merge-content-capture.js";
 import { WorkflowCustomNodeExecutionService } from "../workflows/workflow-custom-node-execution.js";
 import {
   requiredArtifactReadFailedValue,
@@ -132,6 +141,18 @@ export type ExecuteWorkflowGraphDeps = {
   readTaskArtifact: AnyFn;
   recoverMissingRequiredArtifacts: AnyFn;
   requestPreMergeOptionalStepFix: AnyFn;
+  /*
+  FNXC:HumanMergeApproval 2026-09-17-22:32:
+  FN-514 P0 remediation — the EXISTING review → WIP remediation bounce. An accepted human rejection
+  resumes implementation through exactly this contained move, never through a move to Planning.
+  */
+  scheduleWorkflowRerun: (
+    taskId: string,
+    worktreePath: string,
+    message: string,
+    preserveResumeState?: boolean,
+    persistWorktreePath?: boolean,
+  ) => void;
   /** FNXC:PlanReviewNoOp 2026-08-09-22:10: CLOSE_NO_OP accepted terminalization (FN-8841). */
   completePlanReviewNoOp: AnyFn;
   /** FNXC:PlanReviewNoOp 2026-08-09-22:10: hold failed/invalid close evidence on the continuation. */
@@ -903,6 +924,41 @@ export async function executeWorkflowGraph(
         seams: deps.createAuthoritativeWorkflowSeams(settings, outputLanguage),
         prepareNodeExecution: (node, nodeTask, requirement) =>
           deps.prepareGraphNodeExecution(node, nodeTask, settings, requirement),
+        /*
+        FNXC:HumanMergeApproval 2026-09-17-18:09:
+        FN-514 — the per-card delivery barrier. It consults only delivery-effecting nodes, so
+        planning, execution, verification, review and a PR workflow's preparatory `pr-create` run
+        untouched. Content and target evidence come from the SAME capture the merge doors use, so an
+        approval recorded against superseded content cannot deliver new work.
+        */
+        humanMergeDeliveryBarrier: (node, nodeTask) => evaluateHumanMergeDeliveryBarrier(node, nodeTask, {
+          store: deps.store,
+          createPullRequest: buildHumanMergeCreatePrHandoff(deps.options.prNodes, deps.store),
+          resolveEvidence: async (liveTask) => ({
+            mergeContent: await captureMergeContentDescriptor(liveTask, {
+              workspaceRootDir: deps.store.getRootDir(),
+              settings: settings as unknown as Record<string, unknown>,
+            }).catch(() => undefined),
+          }),
+          /*
+          FNXC:HumanMergeApproval 2026-09-17-22:32:
+          FN-514 P0 remediation — THE production caller for rejection processing. Without it an
+          accepted refusal stayed `pending` forever: every door blocked, unlocking released nothing,
+          and no further command was accepted. The graph owns the work, so the dispatch lives here
+          rather than in a detached HTTP timer, and the barrier still HOLDS afterwards — processing a
+          refusal is never a delivery.
+          */
+          publishCorrection: (taskId) => publishHumanMergeCorrection(
+            taskId,
+            buildHumanMergeCorrectionPublicationDeps({
+              store: deps.store,
+              settings,
+              pluginRunner: deps.options.pluginRunner,
+              scheduleWorkflowRerun: (id, worktreePath, message, preserveResumeState, persistWorktreePath) =>
+                deps.scheduleWorkflowRerun(id, worktreePath, message, preserveResumeState, persistWorktreePath),
+            }),
+          ),
+        }),
         beforeNodeExecution: async (node, nodeTask, context) => {
           const principalAdmission = await admitWorkflowPrincipalBeforeNode(
             {

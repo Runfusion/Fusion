@@ -66,7 +66,6 @@ function renderBoardSubtree(
     openPlanningWithInitialPlanWithNav,
     autoMerge,
     mergeStrategy,
-    toggleAutoMerge,
     planAutoApproveEnabled,
     togglePlanAutoApprove,
     globalPaused,
@@ -132,7 +131,6 @@ function renderBoardSubtree(
         onPlanningMode={openPlanningWithInitialPlanWithNav}
         autoMerge={autoMerge}
         mergeStrategy={mergeStrategy}
-        onToggleAutoMerge={toggleAutoMerge}
         planAutoApproveEnabled={planAutoApproveEnabled}
         onTogglePlanAutoApprove={togglePlanAutoApprove}
         globalPaused={globalPaused}

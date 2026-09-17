@@ -17,6 +17,8 @@ import type {Task, TaskCreateInput, Settings} from "../types.js";
 import "../builtin-traits.js";
 import {applyReviewLevelPreset} from "../tasks/review-level-preset.js";
 import {buildHumanPlanApprovalCreationState, resolveHumanPlanApprovalExecutionMode, resolveHumanPlanApprovalWorkflowSteps} from "../planner/human-plan-approval.js";
+/* FNXC:HumanMergeApproval 2026-09-17-18:09: FN-514 arms the per-card DELIVERY lock from a boolean only; the builder drops any client-supplied decision, candidate or receipt so creation can never forge delivery proof. */
+import {buildHumanMergeApprovalCreationState} from "../merge/human-merge-approval.js";
 import {PLAN_REVIEW_GROUP_ID} from "../workflows/builtin-plan-review-group.js";
 import {sanitizeTitle, summarizeTitle} from "../ai/ai-summarize.js";
 import {resolveTaskOutputLanguage} from "../ai/ai-output-language.js";
@@ -782,6 +784,8 @@ export async function _createTaskInternalBackendImpl(store: TaskStore, input: Ta
       assignedAgentId: ownership.status === "selected" ? ownership.agentId : undefined,
       /* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 creation may only ARM the per-card requirement; a client-supplied decision is dropped by the builder so create can never forge release proof. */
       humanPlanApproval: buildHumanPlanApprovalCreationState(input.humanPlanApproval),
+      /* FNXC:HumanMergeApproval 2026-09-17-18:09: FN-514 — the same arming-only rule for the DELIVERY lock. */
+      humanMergeApproval: buildHumanMergeApprovalCreationState(input.humanMergeApproval),
       assigneeUserId: input.assigneeUserId,
       scopeOverride: input.scopeOverride === true ? true : undefined,
       scopeOverrideReason: input.scopeOverrideReason,
@@ -1337,6 +1341,8 @@ export async function _createTaskInternalImpl(store: TaskStore, input: TaskCreat
       assignedAgentId: input.assignedAgentId,
       /* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 creation may only ARM the per-card requirement; a client-supplied decision is dropped by the builder so create can never forge release proof. */
       humanPlanApproval: buildHumanPlanApprovalCreationState(input.humanPlanApproval),
+      /* FNXC:HumanMergeApproval 2026-09-17-18:09: FN-514 — the second backend creation path arms the DELIVERY lock identically; both must drop forged proof. */
+      humanMergeApproval: buildHumanMergeApprovalCreationState(input.humanMergeApproval),
       assigneeUserId: input.assigneeUserId,
       scopeOverride: input.scopeOverride === true ? true : undefined,
       scopeOverrideReason: input.scopeOverrideReason,

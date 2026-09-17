@@ -111,7 +111,6 @@ async function renderBoard(renamed: boolean): Promise<BlockerFanoutEntry | undef
     onQuickCreate: vi.fn(),
     onNewTask: vi.fn(),
     autoMerge: true,
-    onToggleAutoMerge: vi.fn(),
     showWorktreeGrouping: false,
     planAutoApproveEnabled: false,
     onTogglePlanAutoApprove: vi.fn(),

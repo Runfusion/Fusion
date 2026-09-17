@@ -1,0 +1,105 @@
+/*
+FNXC:HumanMergeApproval 2026-09-17-18:09:
+FN-514 delivery decision surface. Design tokens only — no raw px, hex, or rgba — and it reuses the
+shared `.input` and `.btn` primitives rather than forking button or field variants.
+*/
+.human-merge-approval-controls {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 100%;
+}
+
+.human-merge-approval-controls__label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
+}
+
+.human-merge-approval-controls__input {
+  width: 100%;
+  resize: vertical;
+  min-block-size: calc(var(--space-8) + var(--space-6));
+  font-family: inherit;
+}
+
+.human-merge-approval-controls__error {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-error);
+}
+
+/*
+The three commands read left to right in their required order. `flex-wrap` plus a per-action column
+keeps each button beside its own unavailability reason when the row wraps on narrow viewports.
+*/
+.human-merge-approval-controls__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  justify-content: flex-end;
+  align-items: flex-start;
+}
+
+.human-merge-approval-controls__action {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  align-items: flex-end;
+}
+
+.human-merge-approval-controls__reason {
+  margin: 0;
+  max-inline-size: 22ch;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  text-align: end;
+}
+
+.human-merge-approval-controls__pr {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+/* A correction in progress is a waiting state, not an error, until it actually fails. */
+.human-merge-approval-controls__correction {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-warning);
+}
+
+.human-merge-approval-controls__correction--failed {
+  color: var(--color-error);
+}
+
+.human-merge-approval-controls__hint {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+/*
+On a phone the three commands must stay reachable without hover and without horizontal scrolling, so
+they stack full width in the same order and each reason sits directly under its own button.
+*/
+@media (max-width: 768px) {
+  .human-merge-approval-controls__actions {
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+  }
+
+  .human-merge-approval-controls__action {
+    align-items: stretch;
+  }
+
+  .human-merge-approval-controls__reason {
+    max-inline-size: none;
+    text-align: start;
+  }
+}

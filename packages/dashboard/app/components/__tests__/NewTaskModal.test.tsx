@@ -33,6 +33,7 @@ vi.mock("lucide-react", () => ({
   Zap: () => <svg />,
   /* FN-408: the New Task dialog renders the per-card human plan approval toggle beside Fast. */
   UserCheck: () => <svg />,
+  Lock: () => <svg />,
   ShieldCheck: () => null,
   Brain: () => null,
   Server: () => null,
@@ -650,6 +651,80 @@ describe("NewTaskModal", () => {
     fireEvent.click(screen.getByTestId("task-form-inline-human-plan-approval"));
     fireEvent.click(screen.getByTestId("task-form-inline-fast"));
     expect(screen.getByTestId("task-form-inline-human-plan-approval")).toHaveAttribute("aria-pressed", "false");
+  });
+
+  /*
+  FNXC:HumanMergeApproval 2026-09-17-22:32:
+  FN-514 P1 remediation — the DELIVERY lock had no creation-payload coverage on any composer, so a
+  control the operator can arm could have been dropped silently before reaching the server. It is
+  independent of the plan lock and of Fast: a fast card still gets delivered, so nothing about Fast
+  makes a delivery decision impossible.
+  */
+  describe("FN-514 delivery lock at creation", () => {
+    const typeRequest = (value: string) => {
+      fireEvent.change(screen.getByPlaceholderText("What needs to be done?"), { target: { value } });
+    };
+    const submit = () => fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
+
+    it("sends humanMergeApproval when armed after the request text", async () => {
+      const { props } = renderNewTaskModal();
+
+      typeRequest("Needs my delivery decision");
+      fireEvent.click(screen.getByTestId("task-form-inline-human-merge-approval"));
+      expect(screen.getByTestId("task-form-inline-human-merge-approval")).toHaveAttribute("aria-pressed", "true");
+      submit();
+
+      await waitFor(() => expect(props.onCreateTask).toHaveBeenCalledTimes(1));
+      expect(vi.mocked(props.onCreateTask).mock.calls[0]?.[0]).toMatchObject({
+        description: "Needs my delivery decision",
+        humanMergeApproval: true,
+      });
+    });
+
+    it("omits it when armed then disarmed — the default is automatic delivery", async () => {
+      const { props } = renderNewTaskModal();
+
+      typeRequest("Changed my mind");
+      fireEvent.click(screen.getByTestId("task-form-inline-human-merge-approval"));
+      fireEvent.click(screen.getByTestId("task-form-inline-human-merge-approval"));
+      expect(screen.getByTestId("task-form-inline-human-merge-approval")).toHaveAttribute("aria-pressed", "false");
+      submit();
+
+      await waitFor(() => expect(props.onCreateTask).toHaveBeenCalledTimes(1));
+      expect(vi.mocked(props.onCreateTask).mock.calls[0]?.[0]).not.toHaveProperty("humanMergeApproval");
+    });
+
+    it("stays independent of Fast and of the plan lock", async () => {
+      const { props } = renderNewTaskModal();
+
+      typeRequest("Fast but still my call at delivery");
+      fireEvent.click(screen.getByTestId("task-form-inline-fast"));
+      fireEvent.click(screen.getByTestId("task-form-inline-human-merge-approval"));
+      // Fast skips planning, so the PLAN lock is cleared by Fast — the DELIVERY lock is not.
+      expect(screen.getByTestId("task-form-inline-fast")).toHaveAttribute("aria-pressed", "true");
+      expect(screen.getByTestId("task-form-inline-human-merge-approval")).toHaveAttribute("aria-pressed", "true");
+      submit();
+
+      await waitFor(() => expect(props.onCreateTask).toHaveBeenCalledTimes(1));
+      const payload = vi.mocked(props.onCreateTask).mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(payload).toMatchObject({ executionMode: "fast", humanMergeApproval: true });
+      expect(payload).not.toHaveProperty("humanPlanApproval");
+    });
+
+    it("never carries a decision, destination or approval object from the composer", async () => {
+      const { props } = renderNewTaskModal();
+
+      typeRequest("Arming only");
+      fireEvent.click(screen.getByTestId("task-form-inline-human-merge-approval"));
+      submit();
+
+      await waitFor(() => expect(props.onCreateTask).toHaveBeenCalledTimes(1));
+      const payload = vi.mocked(props.onCreateTask).mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(payload.humanMergeApproval).toBe(true);
+      expect(payload).not.toHaveProperty("deliveryAction");
+      expect(payload).not.toHaveProperty("candidateToken");
+      expect(payload).not.toHaveProperty("decidedBy");
+    });
   });
 
   /*

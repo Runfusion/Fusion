@@ -511,6 +511,61 @@ Common use cases:
 - Accessibility checks
 - Browser-level verification
 
+## Human delivery hold (FN-514)
+
+A task can carry a per-card **delivery lock**. It changes nothing about which gates run: planning,
+execution, verification and every enabled pre-merge gate execute and must pass exactly as before.
+The lock adds one wait, at the very end.
+
+**Where it applies.** The graph holds immediately before a node that actually publishes a delivery:
+`merge-attempt`, `branch-group-member-integration`, `branch-group-promotion` and `pr-merge`. A PR
+workflow's preparatory `pr-create` node is deliberately NOT held — blocking it would deadlock the
+very review the operator is supposed to decide on.
+
+**How it holds.** The run suspends and its continuation is parked `held` with a blocked reason, using
+the same admission-hold mechanism as an agent-routing hold. No fake `pending` step result is written,
+no persisted workflow IR is modified, no failure edge is traversed, and no retry budget is consumed.
+Recovery and self-healing treat it as a human wait, never as a fault.
+
+**How it is released.** The parked reason records the decision identity the barrier observed. The
+runtime's continuation pass makes the row runnable again as soon as that identity changes — the
+operator decided, a dispatch receipt landed, or the lock itself moved — and leaves it parked when
+nothing changed, so a patient card cannot spin the graph. That single owner is both the wake-up after
+a decision and the recovery for a decision whose wake-up was lost to a crash.
+
+**It is not a stall.** A card waiting for its operator is exempt from in-review stall detection, like
+`awaiting-user-review` and an auto-merge-off card. Without that exemption the sweep would record the
+same blocker every poll and eventually pause and fail a card whose only « fault » was that a human had
+not decided yet. The merge doors stay closed throughout; only the stall classifier is exempt.
+
+**What an approval authorizes.** Exactly one presented candidate and one destination. The candidate
+identity binds the lock generation, the effective workflow selection, the review episode, the merge
+content (a diff fingerprint, a proven-empty diff, or per-repository workspace fingerprints), the
+workspace repository-scope revision, and the server-resolved target. New commits, a fresh review, a
+reset, a different base or a new workflow selection all invalidate it. A `create-pr` authorization is
+never accepted by a merge door, including during the window before the PR link is projected locally.
+
+**Create PR versus merge.** `create-pr` opens or reuses a pull request for the candidate's
+repository, head and base, publishes the link through the existing manual-PR handoff, and returns to
+the hold. It is a handoff, not an authorization: delivering afterwards requires a new explicit
+command on the current candidate. An ambiguous or lost provider response is reconciled before any
+second call, and never falls through to a merge.
+
+**Rejections.** An accepted rejection is a correction obligation, and it is handled inside the graph:
+the delivery barrier itself dispatches the correction when it meets a pending refusal, so the work has
+an owner rather than waiting for a caller that does not exist. A correction planner — a real
+read-only planner-lane session — classifies it as targeted (`fixSteps`) or structural (`replan`) and
+produces ordered steps with their files and verification. Publication order is claim → analyse →
+publish the amendment (canonical prompt write, read-back, `plan` mirror, and an additive widening of
+the declared `## File Scope` so the corrective work is not stranded at merge) → append the steps →
+close the episode → resume execution. `replan` means a corrective re-plan IN PLACE: a
+versioned amendment published through the canonical prompt path plus replacement steps, never a move
+of the card back to Planning and never an erasure of the original plan or of the approved-plan
+evidence. The steps carry `remediation.gate: "Human Review"` and reuse the ordinary review → WIP
+remediation bounce. A model that is unavailable, or output that is invalid or covers nothing, leaves
+the rejection durably closed and retryable — none of them authorizes a delivery, and none of them may
+fabricate a Code Review verdict.
+
 ## Execution Phases
 
 <!--

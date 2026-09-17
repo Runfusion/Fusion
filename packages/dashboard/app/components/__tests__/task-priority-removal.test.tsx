@@ -98,9 +98,14 @@ describe("the column header menu is gone, its independent controls are not", () 
     }
   });
 
-  it("keeps History and the Auto-merge toggle, which never belonged to that menu", () => {
+  /*
+  FNXC:HumanMergeApproval 2026-09-17-18:09:
+  FN-514 removed the Auto-merge toggle that FN-509 had deliberately preserved here. History stays: it
+  never belonged to the removed column menu and is still the header's only control.
+  */
+  it("keeps History, and no longer renders the Auto-merge toggle", () => {
     expect(columnSource).toContain("column-history-button");
-    expect(columnSource).toContain("auto-merge-toggle");
+    expect(columnSource).not.toContain("auto-merge-toggle");
   });
 
   it("leaves no column-menu rule in the global stylesheet", () => {

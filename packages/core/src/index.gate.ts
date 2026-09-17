@@ -139,6 +139,57 @@ export {
   resolvePlanReviewEpisodeId,
   sanitizeHumanPlanApprovalMessage,
 } from "./planner/human-plan-approval.js";
+/* FNXC:HumanMergeApproval 2026-09-17-18:09: FN-514's per-card DELIVERY predicates are shared by every merge door, the graph boundary, the operator routes and the browser bundle. */
+export {
+  HUMAN_MERGE_APPROVAL_BLOCKER,
+  HUMAN_MERGE_APPROVAL_HOLD_MARKER,
+  HUMAN_MERGE_APPROVAL_MESSAGE_MAX_LENGTH,
+  HUMAN_MERGE_DECISION_ACTIONS,
+  HUMAN_MERGE_DECISION_REVOKED,
+  HUMAN_MERGE_REJECTION_BLOCKER,
+  HUMAN_MERGE_REJECTION_HEADING,
+  HumanMergeApprovalMessageError,
+  buildDuplicatedHumanMergeApprovalState,
+  buildHumanMergeApprovalCreationState,
+  buildHumanMergeHoldMarker,
+  clearHumanMergeApprovalDecision,
+  describeHumanMergeContentSignature,
+  describeHumanMergeHoldSignature,
+  describeHumanMergeTargetSignature,
+  encodeHumanMergeCandidateToken,
+  formatHumanMergeRejectionSection,
+  getHumanMergeApprovalBlocker,
+  hasCurrentHumanMergeApproval,
+  hasInFlightHumanMergeCreatePrIntent,
+  isHumanMergeApprovalBlocker,
+  isHumanMergeApprovalEnabled,
+  isSameHumanMergeCandidate,
+  isValidHumanMergeCandidate,
+  nextHumanMergeRemediationGeneration,
+  parseHumanMergeDecisionAction,
+  readHumanMergeHoldSignature,
+  resolveHumanMergeDecision,
+  resolveHumanMergeLockGeneration,
+  resolvePendingHumanMergeRejection,
+  sanitizeHumanMergeInstruction,
+  sanitizeHumanMergeNote,
+  toggleHumanMergeApprovalState,
+} from "./merge/human-merge-approval.js";
+export type {
+  HumanMergeApprovalDecision,
+  HumanMergeApprovalEvidence,
+  HumanMergeApprovalState,
+  HumanMergeCandidateIdentity,
+  HumanMergeDecisionAction,
+  HumanMergeDecisionReceipt,
+  HumanMergeDeliveryAction,
+  HumanMergeRejection,
+  HumanMergeRejectionState,
+  HumanMergeTargetDescriptor,
+  HumanMergeTargetRepository,
+} from "./merge/human-merge-approval.js";
+export { describeHumanMergeTaken } from "./task-store/human-merge-approval-ops.js";
+export type { HumanMergeMutationRefusal, HumanMergeMutationResult, HumanMergeTakenEvidence, RecordHumanMergeDecisionInput, SetHumanMergeApprovalLockInput, UpdateHumanMergeReceiptInput, UpdateHumanMergeRejectionInput } from "./task-store/human-merge-approval-ops.js";
 export { PLAN_PREMISE_KINDS, parsePlanPremises } from "./planner/plan-premises.js";
 export type { PlanPremise, PlanPremiseKind, PlanPremisesParseResult } from "./planner/plan-premises.js";
 export { canonicalizePlan, createCurrentPlanEvidence, diffSpecLocks, isSpecLockActive, isUnavailablePlanLockError, PLAN_LOCK_UNAVAILABLE_DIAGNOSTIC, SPEC_LOCK_PARSER_VERSION, UnavailablePlanLockError } from "./planner/spec-lock.js";

@@ -1,4 +1,6 @@
 import { getTaskMergeBlocker } from "../merge/task-merge.js";
+/* FNXC:HumanMergeApproval 2026-09-17-22:32: FN-514's delivery lock is a human WAIT, never a stall. */
+import { isHumanMergeApprovalBlocker } from "../merge/human-merge-approval.js";
 import type { Task, TaskLogEntry } from "../types.js";
 
 /*
@@ -255,7 +257,9 @@ function matchesStallEntry(entry: TaskLogEntry, code: InReviewStallCode, reason:
 }
 
 export function getInReviewStallReason(
-  task: Pick<Task, "column" | "paused" | "status" | "error" | "steps" | "workflowStepResults" | "worktree" | "mergeDetails" | "mergeRetries" | "updatedAt"> & { id?: string },
+  task: Pick<Task, "column" | "paused" | "status" | "error" | "steps" | "workflowStepResults" | "worktree" | "mergeDetails" | "mergeRetries" | "updatedAt">
+    & Partial<Pick<Task, "humanMergeApproval">>
+    & { id?: string },
   context: InReviewStallContext = {},
 ): InReviewStallSignal | undefined {
   /*
@@ -337,6 +341,24 @@ export function getInReviewStallReason(
   */
   const mergeBlocker = getTaskMergeBlocker(task, { reviewColumns: context.reviewColumns });
   if (mergeBlocker) {
+    /*
+    FNXC:HumanMergeApproval 2026-09-17-22:32:
+    FN-514 P0 remediation — A CARD WAITING FOR ITS OPERATOR IS NOT STALLED.
+
+    This classifier already exempts `awaiting-user-review`, `awaiting-approval` and `autoMerge:false`
+    for exactly this reason, but the new per-card delivery lock arrives as a merge BLOCKER, so a
+    locked card fell through to `{ code: "merge-blocker" }`. `surfaceInReviewStalls` then logged an
+    identical observation every `taskStuckTimeoutMs` (10 min by default) and, at
+    `inReviewStallDeadlockThreshold` (10), applied `paused: true` + `status: "failed"` — so a card
+    deliberately held for a human decision failed itself after roughly 100 minutes of patience, and
+    the decision panel then disappeared because a paused task reports `blocked`.
+
+    Both waits are exempt: « awaiting a decision » (including the `create-pr` transfer hold, which
+    reports the same blocker) and « a rejection owes corrections ». Neither is a deadlock: each ends
+    on an operator action or on the correction the graph publishes, and neither may be auto-paused,
+    auto-failed, or counted toward the deadlock ladder.
+    */
+    if (isHumanMergeApprovalBlocker(mergeBlocker)) return undefined;
     if (mergeBlocker.startsWith(FAILED_TASK_MERGE_BLOCKER_PREFIX)) {
       const error = mergeBlocker.slice(FAILED_TASK_MERGE_BLOCKER_PREFIX.length).trim();
       if (classifyProviderError(error) === "non_retryable") {

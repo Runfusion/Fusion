@@ -107,8 +107,6 @@ const qualityAppComponentTests = [
   "AuthTokenRecoveryPage",
   "Board",
   "Board.canDropTask",
-  "auto-merge-toggle-blank.mobile",
-  "auto-merge-toggle-blank.mobile-integration",
   "board-mobile",
   "board-mobile-view-switch",
   "BranchGroupCard",

@@ -59,7 +59,7 @@ function Harness({ projectId }: { projectId: string }) {
     <button type="button" onClick={() => void state.pauseTask("FN-CURRENT")}>invalidate pagination</button>
     <button type="button" onClick={() => void state.loadMoreCompletedTasks()}>resume pagination</button>
     <Board tasks={state.tasks} projectId={projectId} maxConcurrent={1} maxWorktrees={1} showWorktreeGrouping={false}
-      onMoveTask={vi.fn()} onOpenDetail={vi.fn()} addToast={vi.fn()} onNewTask={vi.fn()} autoMerge onToggleAutoMerge={vi.fn()}
+      onMoveTask={vi.fn()} onOpenDetail={vi.fn()} addToast={vi.fn()} onNewTask={vi.fn()} autoMerge
       planAutoApproveEnabled onTogglePlanAutoApprove={vi.fn()} onLoadMoreCompletedTasks={state.loadMoreCompletedTasks}
       completedCounts={state.completedCounts} completedHasMore={state.completedHasMore} completedLoadingMore={state.completedLoadingMore}
       completedPaginationError={state.completedPaginationError} completedProgressKey={state.completedProgressKey}

@@ -125,7 +125,6 @@ function renderBoard(tasks: Task[]) {
       addToast={vi.fn()}
       onNewTask={vi.fn()}
       autoMerge
-      onToggleAutoMerge={vi.fn()}
       planAutoApproveEnabled={false}
       onTogglePlanAutoApprove={vi.fn()}
       settingsLoaded

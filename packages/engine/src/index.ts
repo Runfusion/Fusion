@@ -422,6 +422,16 @@ export {
 } from "./merger.js";
 // FNXC:MergerUnification 2026-06-21-19:05: runAiMerge is the sole merge path
 // (master-plan U0); exported for the CLI callers (fn task merge + UI-only merge).
+/* FNXC:HumanMergeApproval 2026-09-17-18:09: FN-514 decision-point resolution is shared by the operator routes, the graph boundary and the detail panel. */
+export { resolveHumanMergeDecisionPoint, resolveMergeReviewEpisodeId, resolveMergeWorkflowSignature } from "./merge/human-merge-approval.js";
+export { buildHumanMergeCorrectionPublicationDeps, buildHumanMergeCreatePrHandoff, evaluateHumanMergeDeliveryBarrier, isHumanMergeDeliveryNode, publishHumanMergeCorrection, widenPromptFileScope, HUMAN_MERGE_DELIVERY_NODE_KINDS } from "./workflows/human-merge-approval-boundary.js";
+/* FNXC:HumanMergeApproval 2026-09-17-22:32: FN-514 P0 remediation — the delivery-hold release owner. */
+export { releaseHumanMergeApprovalHolds } from "./runtimes/in-process-runtime.js";
+export { buildHumanMergeCorrectionPrompt, collectHumanMergeCorrectionFiles, formatHumanMergeCorrectionAmendment, runHumanMergeCorrectionAnalysis, HumanMergeCorrectionPlanError, parseHumanMergeCorrectionPlan } from "./workflows/human-merge-feedback-planner.js";
+export type { HumanMergeCorrectionMode, HumanMergeCorrectionPlan, HumanMergeCorrectionStep } from "./workflows/human-merge-feedback-planner.js";
+export type { HumanMergeBarrierDeps, HumanMergeBarrierOutcome, HumanMergeCreatePrResult } from "./workflows/human-merge-approval-boundary.js";
+export type { HumanMergeActionCapability, HumanMergeDecisionPoint, HumanMergeDecisionPointDeps } from "./merge/human-merge-approval.js";
+export { captureMergeContentDescriptor } from "./merge/merge-content-capture.js";
 export { runAiMerge } from "./merge/merger-ai.js";
 // FNXC:Workspace 2026-06-22-14:10 (Phase D review G): canonical landed predicate now lives in its
 // own dependency-free module (self-healing ↔ merger-ai cycle dissolved). Public export preserved.

@@ -375,6 +375,7 @@ export async function createTask(
     executionMode,
     /* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408 forwards ONLY the arming flag; a decision can never be created client-side. */
     humanPlanApproval,
+    humanMergeApproval,
     autoMerge,
     source,
     nodeId,
@@ -418,6 +419,7 @@ export async function createTask(
       reviewLevel,
       executionMode,
       humanPlanApproval,
+      humanMergeApproval,
       autoMerge,
       source,
       nodeId,

@@ -8961,7 +8961,33 @@
     "boostTitle": "대기열이 다음 작업을 받아들일 때 이 작업을 먼저 시도합니다. 작업을 시작하거나 차단을 해제하지는 않습니다.",
     "boostFailed": "{{taskId}}을(를) 우선 처리할 수 없습니다. 이미 시작되었거나 이동했을 수 있습니다. 새로 고쳐 현재 위치를 확인하세요.",
     "followUpOf": "",
-    "followUpOfTitle": ""
+    "followUpOfTitle": "",
+    "humanMergeApproval": {
+      "toggle": "이 작업을 전달하기 전에 내 승인을 요구",
+      "menuLock": "전달에 내 승인 요구",
+      "menuUnlock": "전달 승인 해제",
+      "badgeArmed": "전달 전에 승인이 필요합니다",
+      "badgeDecided": "전달 결정 기록됨",
+      "badgeRejected": "이 전달을 거부했습니다. 수정이 필요합니다",
+      "messageLabel": "메모 또는 거부 지침",
+      "messagePlaceholder": "Optional when creating a pull request or merging. Required when rejecting: say what must change.",
+      "createPr": "PR 생성",
+      "merge": "병합",
+      "reject": "거부",
+      "rejectRequiresMessage": "Rejecting requires instructions describing what must change.",
+      "prOpened": "A pull request is open and waiting for you:",
+      "correctionAnalyzing": "Working out how to correct the rejected delivery…",
+      "correctionPending": "Corrections are being prepared for your rejection.",
+      "correctionFailed": "The correction could not be prepared. It will be retried.",
+      "hint": "Create PR opens a pull request without merging. Merge delivers the reviewed work now. Reject sends your instructions back for corrections.",
+      "reason": {
+        "githubAuth": "GitHub is not connected, so a pull request cannot be opened.",
+        "noRemote": "This repository has no remote, so a pull request cannot be opened.",
+        "workspace": "This task spans several repositories, which a single pull request cannot cover.",
+        "content": "The delivered changes could not be read.",
+        "decided": "This delivery was already decided."
+      }
+    }
   },
   "terminal": {
     "arrowKeysLabel": "",

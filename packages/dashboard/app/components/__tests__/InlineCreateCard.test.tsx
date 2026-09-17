@@ -10,6 +10,7 @@ import { scopedKey } from "../../utils/projectStorage";
 
 // Mock lucide-react
 vi.mock("lucide-react", () => ({
+  Lock: () => null,
   Brain: () => null,
   Cpu: () => null,
   Link: () => null,
@@ -1772,6 +1773,72 @@ describe("InlineCreateCard workflow selection at create time (FN-7591)", () => {
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     expect(onSubmit.mock.calls[0]![0]).toEqual(expect.objectContaining({ description: "inline accelerator task" }));
     expect(onSubmit.mock.calls[0]![0]).not.toHaveProperty("column");
+  });
+});
+
+/*
+FNXC:HumanMergeApproval 2026-09-17-22:32:
+FN-514 P1 remediation — the inline composer's delivery lock had no payload coverage, so the control
+could have been armed and dropped before reaching the server. The keyboard accelerator is covered
+too, because that is the path that bypasses the Save button entirely.
+*/
+describe("FN-514 delivery lock in the inline composer", () => {
+  it("sends humanMergeApproval when armed after typing", async () => {
+    const onSubmit = vi.fn().mockResolvedValue({ id: "FN-514-inline" } as Task);
+    renderCard([], { onSubmit });
+    expandCard();
+
+    fireEvent.change(screen.getByPlaceholderText("What needs to be done?"), { target: { value: "locked delivery" } });
+    fireEvent.click(screen.getByTestId("inline-create-human-merge-approval"));
+    expect(screen.getByTestId("inline-create-human-merge-approval")).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit.mock.calls[0]![0]).toEqual(expect.objectContaining({
+      description: "locked delivery",
+      humanMergeApproval: true,
+    }));
+  });
+
+  it("omits it for an ordinary creation — the default is automatic delivery", async () => {
+    const onSubmit = vi.fn().mockResolvedValue({ id: "FN-514-inline-default" } as Task);
+    renderCard([], { onSubmit });
+    expandCard();
+
+    fireEvent.change(screen.getByPlaceholderText("What needs to be done?"), { target: { value: "default delivery" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit.mock.calls[0]![0]).not.toHaveProperty("humanMergeApproval");
+  });
+
+  it("carries the armed lock through the keyboard accelerator", async () => {
+    const onSubmit = vi.fn().mockResolvedValue({ id: "FN-514-inline-kbd" } as Task);
+    renderCard([], { onSubmit });
+    expandCard();
+
+    const textarea = screen.getByPlaceholderText("What needs to be done?");
+    fireEvent.change(textarea, { target: { value: "keyboard locked" } });
+    fireEvent.click(screen.getByTestId("inline-create-human-merge-approval"));
+    fireEvent.keyDown(textarea, { key: "Enter", metaKey: true });
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit.mock.calls[0]![0]).toEqual(expect.objectContaining({ humanMergeApproval: true }));
+  });
+
+  it("disarms back to automatic delivery", async () => {
+    const onSubmit = vi.fn().mockResolvedValue({ id: "FN-514-inline-off" } as Task);
+    renderCard([], { onSubmit });
+    expandCard();
+
+    fireEvent.change(screen.getByPlaceholderText("What needs to be done?"), { target: { value: "changed my mind" } });
+    fireEvent.click(screen.getByTestId("inline-create-human-merge-approval"));
+    fireEvent.click(screen.getByTestId("inline-create-human-merge-approval"));
+    expect(screen.getByTestId("inline-create-human-merge-approval")).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit.mock.calls[0]![0]).not.toHaveProperty("humanMergeApproval");
   });
 });
 

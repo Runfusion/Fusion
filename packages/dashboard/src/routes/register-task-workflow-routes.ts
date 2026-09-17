@@ -158,6 +158,9 @@ import { isBackwardMoveBlockedByOpenPr, PR_OPEN_BLOCKS_MOVE_BACK_MESSAGE } from 
 import { allowsAutoMergeProcessing, computePlanApprovalFingerprint, isTaskAwaitingPlanning, isWorkspaceTask, type RunAuditEventInput } from "@fusion/core";
 import { FUSION_CLIENT_HEADER, resolveHttpDeleteCallerKind, isValidTaskBranchName } from "@fusion/core";
 import { ApiError, badRequest, conflict, notFound } from "../api-error.js";
+/* FNXC:HumanMergeApproval 2026-09-17-18:09: FN-514's operator surface for the per-card delivery lock. */
+import { registerTaskMergeApprovalRoutes } from "./task-merge-approval.js";
+import { isGhAuthenticated } from "@fusion/core";
 // FNXC:TaskLookup404 2026-07-26-11:40: shared task-miss -> 404 mapping seam.
 import { isTaskLookupMiss, rethrowTaskApiError } from "./task-lookup-error.js";
 import { restartTaskStage } from "./task-restart-stage.js";
@@ -1081,6 +1084,30 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
     triggeringCommentIds?: string[];
     triggerDetail: string;
   };
+
+  /*
+  FNXC:HumanMergeApproval 2026-09-17-18:09:
+  FN-514 mounts the delivery-lock operator surface as a sub-registration here so it inherits this
+  registrar's project resolution and operator authentication instead of introducing a second one.
+  The GitHub capability probe is INJECTED, keeping the engine free of a dashboard dependency.
+  */
+  registerTaskMergeApprovalRoutes(ctx, {
+    isGithubAuthenticated: () => isGhAuthenticated(),
+    resolveRemote: async (_task, repoRoot) => {
+      /*
+      A remote is a CAPABILITY fact, not a merge policy: no remote disables «Créer PR» with a reason
+      while a local merge and «Refuser» remain fully available. Remotes are repository-level, so this
+      probes the project root rather than a task worktree that may already have been cleaned up.
+      */
+      try {
+        const url = await runGitCommand(["remote", "get-url", "origin"], repoRoot, 5_000).catch(() => undefined);
+        return typeof url === "string" && url.trim().length > 0 ? "origin" : undefined;
+      } catch {
+        return undefined;
+      }
+    },
+    resolveHeadBranch: (task) => task.branch?.trim() || undefined,
+  });
 
   type InReviewUserCommentReengagementResult = {
     task: Task;

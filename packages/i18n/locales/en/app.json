@@ -9050,7 +9050,33 @@
     "boosting": "Boosting…",
     "boostAriaLabel": "Boost {{taskId}} to the front of the queue",
     "boostTitle": "Try this task first when the queue next admits work. It does not start it or clear any blocker.",
-    "boostFailed": "Could not boost {{taskId}} — it may have started or moved. Refresh to see its current place."
+    "boostFailed": "Could not boost {{taskId}} — it may have started or moved. Refresh to see its current place.",
+    "humanMergeApproval": {
+      "toggle": "Require my approval before this task is delivered",
+      "menuLock": "Require my approval to deliver",
+      "menuUnlock": "Remove delivery approval",
+      "badgeArmed": "Your approval is required before delivery",
+      "badgeDecided": "Delivery decision recorded",
+      "badgeRejected": "You refused this delivery; corrections are owed",
+      "messageLabel": "Note or rejection instructions",
+      "messagePlaceholder": "Optional when creating a pull request or merging. Required when rejecting: say what must change.",
+      "createPr": "Create PR",
+      "merge": "Merge",
+      "reject": "Reject",
+      "rejectRequiresMessage": "Rejecting requires instructions describing what must change.",
+      "prOpened": "A pull request is open and waiting for you:",
+      "correctionAnalyzing": "Working out how to correct the rejected delivery…",
+      "correctionPending": "Corrections are being prepared for your rejection.",
+      "correctionFailed": "The correction could not be prepared. It will be retried.",
+      "hint": "Create PR opens a pull request without merging. Merge delivers the reviewed work now. Reject sends your instructions back for corrections.",
+      "reason": {
+        "githubAuth": "GitHub is not connected, so a pull request cannot be opened.",
+        "noRemote": "This repository has no remote, so a pull request cannot be opened.",
+        "workspace": "This task spans several repositories, which a single pull request cannot cover.",
+        "content": "The delivered changes could not be read.",
+        "decided": "This delivery was already decided."
+      }
+    }
   },
   "terminal": {
     "arrowKeysLabel": "Terminal arrow keys",

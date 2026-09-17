@@ -133,7 +133,6 @@ function Fixture() {
                   addToast={noop}
                   onNewTask={noop}
                   autoMerge
-                  onToggleAutoMerge={asyncNoop as never}
                   planAutoApproveEnabled={false}
                   onTogglePlanAutoApprove={asyncNoop as never}
                 />

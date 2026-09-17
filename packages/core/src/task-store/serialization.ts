@@ -83,6 +83,8 @@ export function rowToTask(row: TaskRow): Task {
     externalBlock: fromJson<Task["externalBlock"]>(row.externalBlock) ?? undefined,
     planningFailure: fromJson<Task["planningFailure"]>(row.planningFailure) ?? undefined,
     humanPlanApproval: fromJson<Task["humanPlanApproval"]>(row.humanPlanApproval) ?? undefined,
+    /* FNXC:HumanMergeApproval 2026-09-17-18:09: FN-514 — a legacy NULL row deserializes to undefined, which every predicate reads as "not armed". */
+    humanMergeApproval: fromJson<Task["humanMergeApproval"]>(row.humanMergeApproval) ?? undefined,
     wedgeNotification: fromJson<Task["wedgeNotification"]>(row.wedgeNotification) ?? undefined,
     userPaused: row.userPaused ? true : undefined,
     baseBranch: row.baseBranch || undefined,

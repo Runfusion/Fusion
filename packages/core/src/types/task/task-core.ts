@@ -78,6 +78,24 @@ export interface HumanPlanApprovalState {
   decision?: HumanPlanApprovalDecision;
 }
 
+/*
+FNXC:HumanMergeApproval 2026-09-17-18:09:
+FN-514 adds the per-card DELIVERY lock, deliberately separate from `humanPlanApproval` (which gates
+entry into execution) and from `autoMerge` (a project/task policy, not an operator decision). The
+contracts and every predicate live in `merge/human-merge-approval.ts`; only the persisted shape is
+declared here so the task row stays the single structural source of truth.
+*/
+export type {
+  HumanMergeApprovalDecision,
+  HumanMergeApprovalState,
+  HumanMergeCandidateIdentity,
+  HumanMergeDecisionAction,
+  HumanMergeDecisionReceipt,
+  HumanMergeDeliveryAction,
+  HumanMergeRejection,
+  HumanMergeRejectionState,
+} from "../../merge/human-merge-approval.js";
+
 /** Engine-owned planning retry evidence. */
 export type TaskPlanningFailureState = {
   specLockUnavailable?: { sourceHash: string; reason: string; sections: string[]; at: string; attempt: number | null };
@@ -947,6 +965,14 @@ export interface Task {
    * `require_plan_approval` column: a historical true value must not silently arm this feature.
    */
   humanPlanApproval?: HumanPlanApprovalState;
+  /**
+   * FNXC:HumanMergeApproval 2026-09-17-18:09:
+   * FN-514 per-card human DELIVERY validation. Absent means "no per-card requirement" and preserves
+   * every existing merge policy exactly. Never derived from `autoMerge`: a historically disabled
+   * auto-merge must not silently arm this feature, and arming this feature never re-enables
+   * auto-merge for the automatic lanes.
+   */
+  humanMergeApproval?: import("../../merge/human-merge-approval.js").HumanMergeApprovalState;
   /**
    * FNXC:TaskActivity 2026-07-28-12:00:
    * Dashboard-only signal from a fresh planner agent-log SSE entry. It is never
@@ -1847,6 +1873,13 @@ export interface TaskCreateInput {
    * never accepted from a caller, so task creation cannot forge operator release proof.
    */
   humanPlanApproval?: boolean;
+  /**
+   * FNXC:HumanMergeApproval 2026-09-17-18:09:
+   * FN-514 — creation arms the per-card DELIVERY lock with a BOOLEAN only. The decision, candidate
+   * and receipt objects are never accepted from a caller, so task creation cannot forge delivery
+   * proof any more than it can forge plan-release proof.
+   */
+  humanMergeApproval?: boolean;
   /** Per-task override of the workflow-native planner oversight level (FNXC:PlannerOversight).
    *  When set, wins over the workflow's effective `plannerOversightLevel`. Unset means
    *  "inherit workflow default". */
