@@ -579,7 +579,11 @@ export interface CompactionGateOptions {
 export interface CompactionGateResult {
   /** Whether this gate call compacted the session. */
   compacted: boolean;
-  /** Estimated loaded context tokens measured at gate time (null when unknown). */
+  /**
+   * Estimated whole-request context tokens at the point the gate hands back: the pre-compaction
+   * measurement on every non-compacting path; the floor-aware POST-compaction measurement when
+   * tier 1/2 compaction succeeded or tier 3 truncated (null when unmeasurable).
+   */
   contextTokens: number | null;
   /** Effective threshold used for the decision (null when unknown/unavailable). */
   threshold: number | null;
@@ -1391,13 +1395,22 @@ export async function ensureContextWithinCompactionThreshold(
   if (afterTokens === null) {
     piLog.warn("chat-context-guard: post-compaction measurement unknown — proceeding after a successful compaction");
   }
+  /*
+  FNXC:ChatContextGuard 2026-09-17-05:46 (#3626 review — greptile P1):
+  The compacted-success row must price the SAME quantity every other row prices: the whole outbound
+  request. The old code audited the message-only `afterTokens` and returned the PRE-compaction
+  `contextTokens`, so a provider without usage lost the static floor and pending prompt from the
+  audit (apples-to-oranges against the entry row, which IS floor-aware), and callers received the
+  stale oversized count. This also made the result contract diverge from tier 3, whose
+  finishFallback returns the post-truncation `contextTokensAfter`.
+  */
   await emitAudit({
     tier,
     tiersAttempted,
     reason: null,
     outcome: "compacted",
-    afterTokens,
+    afterTokens: afterRequestTokens,
     retrySkippedReason: "not-needed",
   });
-  return { compacted: true, contextTokens, threshold };
+  return { compacted: true, contextTokens: afterRequestTokens, threshold };
 }
