@@ -390,12 +390,20 @@ describe("FloatingWindow snap gestures", () => {
     expect(panel.dataset.snapMode).toBe("floating");
   });
 
-  it("gives the top band priority over a side band in a corner", async () => {
+  /*
+  FNXC:FloatingWindowSnap 2026-09-17-07:21:
+  FN-493 symptom assertion. This case used to prove "the top band wins over a side band in a corner"; that
+  arbitration is precisely what made a quarter unreachable, so the very same gesture must now arm the top-left
+  QUADRANT. The top rule itself is untouched and is still proven by the top-band cases above, which reach the top
+  wall away from any side wall.
+  */
+  it("takes the top-left quadrant in a corner instead of the whole work area", async () => {
     const { panel, handle } = renderWindow();
     await waitFor(() => expect(rectOf(panel).width).toBe(openedWidth()));
 
     drag(handle, { to: { x: 4, y: HEADER_HEIGHT + 2 }, pointerId: 4 });
-    expect(panel.dataset.snapMode).toBe("maximized");
+    expect(panel.dataset.snapMode).toBe("top-left");
+    expect(rectOf(panel)).toEqual({ left: 0, top: HEADER_HEIGHT, width: 640, height: 350 });
   });
 
   it("keeps free movement outside the bands and treats a sub-threshold move as a click", async () => {
@@ -455,8 +463,15 @@ describe("FloatingWindow snap gestures", () => {
 
     drag(handle, { to: { x: 5, y: 400 }, pointerId: 11 });
     drag(handle, { from: { x: 300, y: 300 }, to: { x: 1278, y: 400 }, pointerId: 12 });
+    /*
+    FNXC:FloatingWindowSnap 2026-09-17-07:21:
+    FN-493 adjusts this gesture's horizontal target only, preserving its intent (left -> right -> maximized -> a
+    detaching drag restores the pre-snap rect). The former target carried the manually widened panel to the top
+    wall with its right edge still ON the right wall, which is now an unambiguous top-right CORNER; aiming at the
+    middle of the top wall keeps the case about the filled work area, as it always was.
+    */
     // The first move detaches, then the gesture continues to the top band inside the same pointer session.
-    drag(handle, { from: { x: 900, y: 300 }, via: [{ x: 900, y: 324 }], to: { x: 900, y: HEADER_HEIGHT + 1 }, pointerId: 13 });
+    drag(handle, { from: { x: 900, y: 300 }, via: [{ x: 900, y: 324 }], to: { x: 650, y: HEADER_HEIGHT + 1 }, pointerId: 13 });
     expect(panel.dataset.snapMode).toBe("maximized");
     expect(screen.queryByTestId("floating-window-resize-se")).not.toBeInTheDocument();
 

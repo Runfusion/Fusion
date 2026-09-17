@@ -233,9 +233,18 @@ describe("detached conversation bottom dock", () => {
     drag(panel, { x: 600, y: 300 }, { x: 600, y: 300 + window.innerHeight }, 42);
     expect(panel.dataset.snapMode).toBe("bottom");
 
+    /*
+    FNXC:FloatingWindowSnap 2026-09-17-07:21:
+    FN-493 keeps this step's intent verbatim — the same continuous gesture releases the band and travels on to the
+    LEFT WALL — and it is now also the production proof that the FN-469 undock artifact is disarmed on its bottom
+    component ALONE. The undock re-anchors the panel with its bottom edge clamped back onto the wall, so without
+    that narrowing this gesture would land on a bottom-left QUARTER the operator never aimed at; the column is
+    what it must still produce.
+    */
     // One continuous gesture: it first releases the band, then travels on to the left wall.
     drag(panel, { x: 600, y: 600 }, { x: 2, y: 400 }, 43);
     expect(panel.dataset.snapMode).toBe("left");
+    expect(panel).not.toHaveClass("floating-window--snap-bottom-left");
 
     // Releasing the column restores the rectangle captured before the FIRST dock, not the band or the column.
     drag(panel, { x: 200, y: 400 }, { x: 700, y: 380 }, 44);
@@ -246,5 +255,71 @@ describe("detached conversation bottom dock", () => {
     const released = rectOf(panel);
     expect(700).toBeGreaterThanOrEqual(released.left);
     expect(700).toBeLessThanOrEqual(released.left + released.width);
+  });
+
+  /*
+  (i) FN-493 symptom acceptance on the production conversation host: "si j'en mets dans chaque angle ça me fait une
+  grille 2x2". Four detached conversations, four real pointer gestures, four distinct corners — the RENDERED
+  rectangles must tile the live work area exactly: no gap, no overlap, union equal to the area.
+  */
+  it("tiles the work area as a 2x2 grid when four conversations are dropped in the four corners", async () => {
+    const sessions = ["session-1", "session-2", "session-3", "session-4"];
+    render(
+      <DashboardWindowManagerProvider>
+        <Landmarks />
+        <Stack />
+        <PoppedOutChatWindows
+          entries={sessions.map((id, index) => ({
+            ...entry,
+            session: { ...entry.session, id, title: `Session ${index + 1}` },
+            focusNonce: index + 1,
+          }))}
+          projectId="project-a"
+          addToast={vi.fn()}
+          onClose={vi.fn()}
+          onOpenSessionInNewWindow={vi.fn()}
+        />
+      </DashboardWindowManagerProvider>,
+    );
+    const panels = sessions.map((id) => screen.getByTestId(`floating-window-chat-window-project-a-${id}`));
+    await waitFor(() => expect(rectOf(panels[3]).width).toBeGreaterThan(0));
+
+    const corners = [
+      { mode: "top-left", to: { x: -400, y: -400 } },
+      { mode: "top-right", to: { x: 1680, y: -400 } },
+      { mode: "bottom-left", to: { x: -400, y: 1200 } },
+      { mode: "bottom-right", to: { x: 1680, y: 1200 } },
+    ] as const;
+    corners.forEach((corner, index) => {
+      drag(panels[index], { x: 600, y: 400 }, corner.to, 60 + index);
+      expect(panels[index].dataset.snapMode).toBe(corner.mode);
+      expect(panels[index]).toHaveClass(`floating-window--snap-${corner.mode}`);
+    });
+
+    const workAreaHeight = window.innerHeight - HEADER_HEIGHT - FOOTER_HEIGHT;
+    const half = { width: window.innerWidth / 2, height: workAreaHeight / 2 };
+    const rects = panels.map(rectOf);
+    expect(rects).toEqual([
+      { left: 0, top: HEADER_HEIGHT, ...half },
+      { left: half.width, top: HEADER_HEIGHT, ...half },
+      { left: 0, top: HEADER_HEIGHT + half.height, ...half },
+      { left: half.width, top: HEADER_HEIGHT + half.height, ...half },
+    ]);
+    // Exact tiling: the four quarters sum to the work area and their union spans it corner to corner.
+    expect(rects.reduce((sum, r) => sum + r.width * r.height, 0)).toBe(window.innerWidth * workAreaHeight);
+    expect(Math.min(...rects.map((r) => r.left))).toBe(0);
+    expect(Math.min(...rects.map((r) => r.top))).toBe(HEADER_HEIGHT);
+    expect(Math.max(...rects.map((r) => r.left + r.width))).toBe(window.innerWidth);
+    expect(Math.max(...rects.map((r) => r.top + r.height))).toBe(HEADER_HEIGHT + workAreaHeight);
+    // No overlap: every pair is separated on at least one axis.
+    for (let a = 0; a < rects.length; a += 1) {
+      for (let b = a + 1; b < rects.length; b += 1) {
+        const overlapX = Math.min(rects[a].left + rects[a].width, rects[b].left + rects[b].width) - Math.max(rects[a].left, rects[b].left);
+        const overlapY = Math.min(rects[a].top + rects[a].height, rects[b].top + rects[b].height) - Math.max(rects[a].top, rects[b].top);
+        expect(Math.min(overlapX, overlapY)).toBeLessThanOrEqual(0);
+      }
+    }
+    // A full-width band is never published by a half-width quarter, so the shell reserves nothing.
+    expect(reservation()).toBe(0);
   });
 });

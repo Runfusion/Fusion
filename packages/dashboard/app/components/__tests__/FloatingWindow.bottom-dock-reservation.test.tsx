@@ -139,12 +139,24 @@ describe("FloatingWindow bottom dock reservation", () => {
     vi.unstubAllGlobals();
   });
 
-  /* (a) Negative control: only the bottom band reorganizes the shell; every other mode overlays as before. */
+  /*
+  (a) Negative control: only the bottom band reorganizes the shell; every other mode overlays as before.
+
+  FNXC:FloatingWindowSnap 2026-09-17-07:21:
+  FN-493 adjusts the `maximized` row's horizontal target only — the former one carried the panel to the top wall
+  with its right edge still ON the right wall, which is now an unambiguous top-right corner — and extends the row
+  set with the four quadrants. A quadrant covers half the width, so it deliberately reserves NOTHING: the FN-487
+  shell reservation stays the full-width band's alone.
+  */
   it.each([
     { mode: "floating", gesture: { to: { x: 700, y: 380 } } },
     { mode: "left", gesture: { to: { x: 6, y: 400 } } },
     { mode: "right", gesture: { to: { x: 1276, y: 400 } } },
-    { mode: "maximized", gesture: { to: { x: 900, y: HEADER_HEIGHT + 1 } } },
+    { mode: "maximized", gesture: { to: { x: 600, y: HEADER_HEIGHT + 1 } } },
+    { mode: "top-left", gesture: { to: { x: -200, y: -200 } } },
+    { mode: "top-right", gesture: { to: { x: 1480, y: -200 } } },
+    { mode: "bottom-left", gesture: { to: { x: -200, y: 1000 } } },
+    { mode: "bottom-right", gesture: { to: { x: 1480, y: 1000 } } },
   ])("never reserves anything in $mode mode", async ({ mode, gesture }) => {
     const { panel, handle } = renderWindow();
     await waitFor(() => expect(rectOf(panel).width).toBeGreaterThan(0));

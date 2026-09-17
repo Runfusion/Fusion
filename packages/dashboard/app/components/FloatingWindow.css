@@ -768,6 +768,41 @@ edges read against their walls. It reuses the shared radius token and adds no pa
 }
 
 /*
+FNXC:FloatingWindowSnap 2026-09-17-07:21:
+FN-493 corner quadrants. Paint only, strictly on the bottom band's model: a quadrant rests against TWO walls, so
+those two corners are squared and the two inner corners keep the shared radius token. Four quadrants therefore read
+as one 2x2 grid whose outer border follows the work area. No hard value other than 0, no new token, no parallel
+snapped variant — `.floating-window--snapped` still carries the shared geometry reset.
+*/
+.floating-window--snap-top-left {
+  border-start-start-radius: 0;
+  border-start-end-radius: var(--radius-md);
+  border-end-start-radius: var(--radius-md);
+  border-end-end-radius: var(--radius-md);
+}
+
+.floating-window--snap-top-right {
+  border-start-start-radius: var(--radius-md);
+  border-start-end-radius: 0;
+  border-end-start-radius: var(--radius-md);
+  border-end-end-radius: var(--radius-md);
+}
+
+.floating-window--snap-bottom-left {
+  border-start-start-radius: var(--radius-md);
+  border-start-end-radius: var(--radius-md);
+  border-end-start-radius: 0;
+  border-end-end-radius: var(--radius-md);
+}
+
+.floating-window--snap-bottom-right {
+  border-start-start-radius: var(--radius-md);
+  border-start-end-radius: var(--radius-md);
+  border-end-start-radius: var(--radius-md);
+  border-end-end-radius: 0;
+}
+
+/*
 FNXC:FloatingWindowSnap 2026-09-14-21:10:
 The drop preview is paint-only: `pointer-events: none` plus `aria-hidden` in the component means it can
 never take focus, swallow the drag, or be clicked. It reuses existing accent/surface tokens so every

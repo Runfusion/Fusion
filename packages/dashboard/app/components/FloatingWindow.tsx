@@ -35,7 +35,9 @@ import {
   FLOATING_WINDOW_DRAG_THRESHOLD_PX,
   clampFloatingWindowPosition,
   clampFloatingWindowSize,
+  demoteBottomAnchoredSnapMode,
   detectSnapZoneForRect,
+  rectRestsOnBottomWall,
   resolveDetachedRect,
   resolveHandoffRect,
   resolveOpeningRect,
@@ -681,6 +683,14 @@ export function FloatingWindow({
       restored rect right back against the wall it just left, so `disarmedZone` is what keeps the release visible.
       */
       let disarmedZone: FloatingWindowSnapMode | null = null;
+      /*
+      FNXC:FloatingWindowSnap 2026-09-17-07:21:
+      FN-493 separates the FN-469 undock artifact from the abandoned-zone disarm above. The artifact is purely
+      VERTICAL (`resolveDetachedRect` anchors 24px under the pointer, so a tall window's bottom edge is clamped onto
+      the bottom wall), so it must neutralise only the BOTTOM COMPONENT of whatever is detected — never a legitimate
+      side contact, which since FN-493 would otherwise turn into a bottom quadrant the operator never aimed at.
+      */
+      let bottomArtifactDisarmed = false;
       let previewZone: FloatingWindowSnapMode | null = null;
       let latest = basePosition;
       let frame = 0;
@@ -729,10 +739,8 @@ export function FloatingWindow({
           undock in the lower half. The band is disarmed until the panel leaves the wall; travelling on to any other
           wall in the same gesture keeps working exactly as FN-422 defined.
           */
-          const restoredZone = detectSnapZoneForRect(restored, bounds);
-          disarmedZone = restoredZone === "bottom"
-            ? "bottom"
-            : gestureStartMode === "floating" ? null : gestureStartMode;
+          bottomArtifactDisarmed = rectRestsOnBottomWall(restored, bounds);
+          disarmedZone = gestureStartMode === "floating" ? null : gestureStartMode;
           // Fall through: the very event that detached the window may already sit inside another band.
         }
         if (!moved && Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) < FLOATING_WINDOW_DRAG_THRESHOLD_PX) return;
@@ -740,10 +748,11 @@ export function FloatingWindow({
         markUserAdjusted();
         latest = { x: basePosition.x + moveEvent.clientX - anchorX, y: basePosition.y + moveEvent.clientY - anchorY };
         // The candidate rect must be CLAMPED before detection: an unclamped position never touches a wall.
-        const zone = detectSnapZoneForRect(
-          { position: clampFloatingWindowPosition(latest, activeSize, bounds), size: activeSize },
-          bounds,
-        );
+        const candidate = { position: clampFloatingWindowPosition(latest, activeSize, bounds), size: activeSize };
+        // The undock artifact expires as soon as the panel actually leaves the bottom wall (FN-469, FN-493).
+        if (bottomArtifactDisarmed && !rectRestsOnBottomWall(candidate, bounds)) bottomArtifactDisarmed = false;
+        const detected = detectSnapZoneForRect(candidate, bounds);
+        const zone = bottomArtifactDisarmed ? demoteBottomAnchoredSnapMode(detected) : detected;
         if (disarmedZone !== null && zone === disarmedZone) {
           setPreview(null);
         } else {

@@ -293,6 +293,29 @@ describe("detached terminal window parity", () => {
     expect(rectOf(panel).height).toBe(floating.height);
   });
 
+  /*
+  FNXC:TerminalLayout 2026-09-17-07:21:
+  FN-493 case (j), terminal negative control. A detached terminal inherits the corner quadrants from the shared
+  contract like every other window, but `handleFloatingDragGestureEnd` must NOT be widened to them: only the
+  full-width `bottom` band (and a plain drag onto the footer line) converts into the terminal's own in-flow `below`
+  presentation. A bottom CORNER therefore stays a floating quarter — the window survives and `terminal-below-host`
+  is never mounted.
+  */
+  it("keeps a bottom corner a floating quarter instead of re-pinning the terminal below", async () => {
+    renderDetachedTerminal("parity-corner");
+
+    const panel = await screen.findByTestId("floating-window-terminal-parity-corner");
+    await waitFor(() => expect(rectOf(panel).width).toBe(standardOpeningSize().width));
+    const handle = panel.querySelector(".terminal-header") as HTMLElement;
+
+    drag(handle, { from: { x: 600, y: 400 }, to: { x: -400, y: 1200 }, pointerId: 15 });
+
+    expect(panel.dataset.snapMode).toBe("bottom-left");
+    expect(rectOf(panel)).toEqual({ left: 0, top: HEADER_HEIGHT + 350, width: 640, height: 350 });
+    expect(screen.queryByTestId("terminal-below-host")).toBeNull();
+    expect(screen.getByTestId("floating-window-terminal-parity-corner")).toBeInTheDocument();
+  });
+
   it("raises the detached terminal above a task window mounted after it, and the reverse", async () => {
     renderDetachedTerminal(
       "parity-stack",

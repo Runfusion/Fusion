@@ -13,8 +13,10 @@ no host re-implements opening, cascading, snapping, or restoring:
   (overlap is preferable to a smaller window), and it flips to a negative step when forward travel is
   unavailable.
 - SNAP: dragging a window until its OWN left/right edge touches the matching work-area wall halves that
-  area for it; its top edge touching the top wall fills the area. Top wins in a corner. Snapped rects are
-  always derived from the LIVE work area, so opening/closing a sidebar re-splits the halves immediately.
+  area for it; its top edge touching the top wall fills the area. Since FN-493 an unambiguous CORNER (one side
+  wall plus one horizontal wall) takes a quarter instead, so four windows tile the area as a 2x2 grid; top still
+  wins whenever the vertical axis is ambiguous. Snapped rects are always derived from the LIVE work area, so
+  opening/closing a sidebar re-splits the halves and the quadrants immediately.
 - RESTORE: dragging a snapped window down by 24px restores the floating rect captured before the FIRST
   snap, so left → right → maximized → down never restores a snapped rectangle.
 */
@@ -44,9 +46,54 @@ per-host panel. The band is the full width of the live work area over its lower 
 
 OUT OF SCOPE, deliberately: the terminal's in-flow `below` presentation (which reserves shell height through
 `onPinnedLayoutChange`) is untouched and remains its default, strongest bottom dock; `bottom` does not replace it.
+
+FNXC:FloatingWindowSnap 2026-09-17-07:21:
+FN-493 adds the FOUR CORNER QUADRANTS to this same shared contract, for the operator intent "si je mets une
+modale dans chaque angle ça me fait une grille 2x2": a corner takes exactly half the live work area on each
+axis, so four windows — one per corner — tile the area with no gap and no overlap.
+
+A corner is armed ONLY when BOTH axes are unambiguous: the panel touches exactly one side wall (left XOR right)
+AND exactly one horizontal wall (top XOR bottom). That condition DELIBERATELY REPLACES two earlier corner
+priorities, and only inside it:
+- FN-394's "the top wall wins in a corner" (a top corner used to return `maximized`);
+- FN-469's "the side walls win in a bottom corner" (a bottom corner used to return the column).
+Both rules were arbitrations made on the operator's behalf, which made a quadrant unreachable.
+
+OUTSIDE that condition NOTHING changes, and the historical rule order applies verbatim:
+- VERTICAL AMBIGUITY (a panel as tall as the work area, touching top AND bottom — including a full-height panel
+  pressed against a side wall) arms no corner, so the top rule still wins and the result is still `maximized`;
+- HORIZONTAL AMBIGUITY (a panel touching left AND right) arms no corner, so the existing side refusal applies as
+  before: `maximized` when it also touches the top, else `bottom` when it rests on the bottom wall, else null.
 */
 /** Placement of a window inside the dashboard work area. `floating` is free geometry. */
-export type FloatingWindowSnapMode = "floating" | "left" | "right" | "bottom" | "maximized";
+export type FloatingWindowSnapMode =
+  | "floating"
+  | "left"
+  | "right"
+  | "bottom"
+  | "maximized"
+  | "top-left"
+  | "top-right"
+  | "bottom-left"
+  | "bottom-right";
+
+/** The four quadrant modes (FN-493), in reading order. Read-only so no consumer can mutate the contract. */
+export const FLOATING_WINDOW_CORNER_SNAP_MODES = [
+  "top-left",
+  "top-right",
+  "bottom-left",
+  "bottom-right",
+] as const satisfies readonly FloatingWindowSnapMode[];
+
+/** True for the four quadrant modes. */
+export function isCornerSnapMode(mode: FloatingWindowSnapMode | null | undefined): boolean {
+  return mode === "top-left" || mode === "top-right" || mode === "bottom-left" || mode === "bottom-right";
+}
+
+/** True for every mode whose rectangle rests ON the bottom wall (band and both bottom quadrants). */
+export function isBottomAnchoredSnapMode(mode: FloatingWindowSnapMode | null | undefined): boolean {
+  return mode === "bottom" || mode === "bottom-left" || mode === "bottom-right";
+}
 
 /*
 FNXC:FloatingWindowGeometry 2026-09-16-05:45:
@@ -326,10 +373,58 @@ export function resolveSnapRect(mode: FloatingWindowSnapMode, bounds: DashboardW
   // FNXC:FloatingWindowSnap 2026-09-16-18:31: FN-469 — the bottom band is full width over the lower half, mirroring the columns' half split on the other axis.
   if (mode === "bottom") return { position: { x: bounds.left, y: bounds.top + height / 2 }, size: { width, height: height / 2 } };
   const half = width / 2;
+  /*
+  FNXC:FloatingWindowSnap 2026-09-17-07:21:
+  FN-493 quadrant rectangle: half the LIVE work area on each axis, so opening/closing a sidebar re-splits the
+  grid immediately like every other mode. The right-hand origin reuses the existing column form
+  (`left + (width - half)`) rather than `left + half` so the four rectangles keep tiling exactly — no floating
+  drift can open a seam between the two columns.
+  */
+  if (isCornerSnapMode(mode)) {
+    const halfHeight = height / 2;
+    const atLeft = mode === "top-left" || mode === "bottom-left";
+    const atTop = mode === "top-left" || mode === "top-right";
+    return {
+      position: {
+        x: atLeft ? bounds.left : bounds.left + (width - half),
+        y: atTop ? bounds.top : bounds.top + (height - halfHeight),
+      },
+      size: { width: half, height: halfHeight },
+    };
+  }
   return {
     position: { x: mode === "left" ? bounds.left : bounds.left + (width - half), y: bounds.top },
     size: { width: half, height },
   };
+}
+
+/*
+FNXC:FloatingWindowSnap 2026-09-17-07:21:
+FN-493 exposes the bottom-wall contact test used by `detectSnapZoneForRect` so the gesture layer can describe
+EXACTLY the same condition rather than restating it — the FN-469 undock artifact is defined as "the restored
+rectangle rests on the bottom wall", and a second, drifting definition would silently re-arm the band.
+*/
+export function rectRestsOnBottomWall(
+  rect: FloatingWindowRect,
+  bounds: DashboardWindowBounds,
+  contact: number = FLOATING_WINDOW_SNAP_CONTACT_PX,
+): boolean {
+  if (!finite(rect.position.y, rect.size.height, bounds.bottom)) return false;
+  return rect.position.y + rect.size.height >= bounds.bottom - contact;
+}
+
+/*
+FNXC:FloatingWindowSnap 2026-09-17-07:21:
+FN-493: the undock artifact only ever plasters a window's BOTTOM edge against the bottom wall
+(`resolveDetachedRect` anchors vertically 24px under the pointer), so disarming it must remove ONLY the bottom
+component of a detected zone. Demoting a bottom quadrant to its column keeps a legitimate side contact — which the
+operator really did aim at — instead of turning it into a quarter the artifact invented.
+*/
+export function demoteBottomAnchoredSnapMode(mode: FloatingWindowSnapMode | null): FloatingWindowSnapMode | null {
+  if (mode === "bottom") return null;
+  if (mode === "bottom-left") return "left";
+  if (mode === "bottom-right") return "right";
+  return mode;
 }
 
 /*
@@ -364,12 +459,27 @@ export function detectSnapZoneForRect(
   if (!finite(rect.position.x, rect.position.y, rect.size.width, rect.size.height)) return null;
   if (!finite(bounds.left, bounds.top, bounds.right, bounds.bottom, bounds.width, bounds.height)) return null;
   if (bounds.width <= 0 || bounds.height <= 0) return null;
-  if (rect.position.y <= bounds.top + contact) return "maximized";
   const touchesLeft = rect.position.x <= bounds.left + contact;
   const touchesRight = rect.position.x + rect.size.width >= bounds.right - contact;
+  const touchesTop = rect.position.y <= bounds.top + contact;
+  const touchesBottom = rect.position.y + rect.size.height >= bounds.bottom - contact;
+  /*
+  FNXC:FloatingWindowSnap 2026-09-17-07:21:
+  FN-493 corner quadrants, checked FIRST and ONLY when both axes are unambiguous (exactly one side wall AND
+  exactly one horizontal wall). This is the deliberate replacement of FN-394's "top wins in a corner" and
+  FN-469's "the side wins in a bottom corner"; every other configuration falls through to the historical rule
+  order below, word for word, so no existing non-corner result changes.
+  */
+  const sideUnambiguous = touchesLeft !== touchesRight;
+  const verticalUnambiguous = touchesTop !== touchesBottom;
+  if (sideUnambiguous && verticalUnambiguous) {
+    if (touchesTop) return touchesLeft ? "top-left" : "top-right";
+    return touchesLeft ? "bottom-left" : "bottom-right";
+  }
+  if (touchesTop) return "maximized";
   if (touchesLeft && !touchesRight) return "left";
   if (touchesRight && !touchesLeft) return "right";
-  if (rect.position.y + rect.size.height >= bounds.bottom - contact) return "bottom";
+  if (touchesBottom) return "bottom";
   return null;
 }
 
