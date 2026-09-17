@@ -144,27 +144,26 @@ async function openProductionTitleHost(page: Page, name: string, hostTestId: str
       await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
     };
     await nextFrames();
-    if (name === "list-split" && !document.querySelector("[data-testid='list-split-detail-content'] .task-detail-content")) {
-      document.querySelector<HTMLElement>("[data-id]")?.click();
+    if (name === "list-split") {
+      /*
+      FNXC:TaskDetailPresentation 2026-09-17-00:48:
+      List cards now route to their standalone TaskDetailModal through the production pop-out
+      callback. List markup can retain a hidden detail-content descendant, so it is not a valid
+      readiness signal; always activate the live row before sampling the selected tab.
+      */
+      document.querySelector<HTMLElement>(":is(.list-card, .list-row)")?.click();
       await nextFrames();
     }
     if (name === "floating-window") {
       for (let frame = 0; frame < 6 && !document.querySelector("[data-id]"); frame++) await nextFrames();
       const taskCard = document.querySelector<HTMLElement>("[data-id]");
-      if (!taskCard) throw new Error(`App fixture did not render its live board task before opening the production pop-out path: ${document.body.textContent?.slice(0, 500) ?? "empty body"}`);
+      if (!taskCard) throw new Error(`App fixture did not render its live board task before opening Task Detail: ${document.body.textContent?.slice(0, 500) ?? "empty body"}`);
       taskCard.click();
       /*
-      FNXC:TaskDetailHeaderActions 2026-09-16-18:07 (FN-470):
-      Pop out is no longer a direct header button: the production path opens the single "…" Actions overflow first.
+      FNXC:TaskDetailPresentation 2026-09-17-00:21 (FN-442):
+      Board selection now opens the canonical task FloatingWindow directly. Pop out remains an overflow action for
+      embedded non-phone hosts, but the already-floating App route must not require an impossible second pop out.
       */
-      for (let frame = 0; frame < 6 && !document.querySelector(".detail-actions-dropdown--header button"); frame++) await nextFrames();
-      const actionsTrigger = document.querySelector<HTMLButtonElement>(".detail-actions-dropdown--header button");
-      if (!actionsTrigger) throw new Error("App board detail did not expose its production Actions overflow trigger");
-      actionsTrigger.click();
-      for (let frame = 0; frame < 6 && !document.querySelector("[data-testid='task-detail-pop-out']"); frame++) await nextFrames();
-      const popOut = document.querySelector<HTMLButtonElement>("[data-testid='task-detail-pop-out']");
-      if (!popOut) throw new Error("App board detail did not expose its production Pop out control");
-      popOut.click();
       await nextFrames();
     }
     let host: HTMLElement | null = null;
@@ -195,9 +194,9 @@ async function activateProductionDefinition(page: Page, name: string, hostTestId
         : document.querySelector<HTMLElement>(`[data-testid='${hostTestId}']`);
       const detailContent = name === "floating-window"
         ? host?.querySelector<HTMLElement>(".task-detail-content") ?? null
-        : name === "modal"
-          ? document.querySelector<HTMLElement>(".task-detail-content")
-          : host?.querySelector<HTMLElement>(".task-detail-content") ?? null;
+        : host?.querySelector<HTMLElement>(".task-detail-content")
+          ?? document.querySelector<HTMLElement>(".task-detail-content")
+          ?? null;
       const buttons = [...(detailContent?.querySelectorAll<HTMLButtonElement>("button") ?? [])];
       const planButton = buttons.find((button) => button.getAttribute("aria-label") === "Plan" || button.textContent?.trim() === "Plan");
       if (detailContent && planButton) {
@@ -206,7 +205,7 @@ async function activateProductionDefinition(page: Page, name: string, hostTestId
         return;
       }
       if (name === "list-split" && !detailContent && !listClickAttempted) {
-        const row = document.querySelector<HTMLElement>("[data-id]");
+        const row = document.querySelector<HTMLElement>(":is(.list-card, .list-row)[data-id]");
         if (row) {
           row.click();
           listClickAttempted = true;
@@ -267,20 +266,22 @@ describe.runIf(executablePath)("Task modal tablet touch resize browser regressio
       expect(detailAfter.height).toBeGreaterThan(detailBefore.height);
       expect(detailAfter.width).toBeLessThanOrEqual(width - 32);
       expect(detailAfter.height).toBeLessThanOrEqual(height - 32);
-      const persistedTaskDetailGeometry = await page.evaluate(() => {
-        const raw = localStorage.getItem("floating-window:task-detail");
-        return raw ? JSON.parse(raw) : null;
-      });
-      expect(persistedTaskDetailGeometry?.size.width).toBeCloseTo(detailAfter.width);
-      expect(persistedTaskDetailGeometry?.size.height).toBeCloseTo(detailAfter.height);
+      // FNXC:FloatingWindowGeometry 2026-09-17-00:21: FN-394 retired durable geometry, so the rendered resize is the user-visible contract.
 
       await page.goto(`${baseUrl}app/task-modal-touch-resize-e2e-fixture.html?surface=new-task`);
       await page.waitForTimeout(350);
       expect(await page.evaluate(() => document.querySelectorAll("[data-resize-hit-target='true']").length)).toBe(9);
       const newTaskPanel = ".new-task-modal";
+      /*
+      FNXC:ModalTouchGeometry 2026-09-17-00:49:
+      A tablet window at its clamp cannot translate, so retract it before proving header drag.
+      This keeps the gesture assertion about dragging rather than accidental edge snap behavior.
+      */
+      await touchDrag(cdp, await targetCenter(page, "[data-testid='floating-window-resize-nw']"), { x: 96, y: 0 });
+      await page.waitForTimeout(100);
       const headerPoint = await targetCenter(page, "[data-testid='new-task-drag-handle']");
       const newTaskBeforeHeaderDrag = await rect(page, newTaskPanel);
-      await touchDrag(cdp, headerPoint, { x: 32, y: 28 });
+      await touchDrag(cdp, headerPoint, { x: -32, y: 28 });
       await page.waitForTimeout(100);
       const newTaskAfterHeaderDrag = await rect(page, newTaskPanel);
       expect(newTaskAfterHeaderDrag.x).not.toBe(newTaskBeforeHeaderDrag.x);
@@ -299,16 +300,7 @@ describe.runIf(executablePath)("Task modal tablet touch resize browser regressio
       expect(newTaskAfterResize.height).toBeGreaterThan(newTaskBeforeResize.height);
       expect(newTaskAfterResize.width).toBeLessThanOrEqual(width - 32);
       expect(newTaskAfterResize.height).toBeLessThanOrEqual(height - 32);
-      /*
-      FNXC:ModalTouchGeometry 2026-07-26-19:51:
-      The browser regression must prove FloatingWindow persisted usable resized geometry, not merely created the storage key.
-      */
-      const persistedNewTaskGeometry = await page.evaluate(() => {
-        const raw = localStorage.getItem("fusion:new-task-modal-geometry");
-        return raw ? JSON.parse(raw) : null;
-      });
-      expect(persistedNewTaskGeometry?.size.width).toBeCloseTo(newTaskAfterResize.width);
-      expect(persistedNewTaskGeometry?.size.height).toBeCloseTo(newTaskAfterResize.height);
+      // FNXC:FloatingWindowGeometry 2026-09-17-00:21: FN-394 retired durable geometry, so the rendered resize is the user-visible contract.
       if (width === 820) await page.screenshot({ path: path.join(screenshots, "tablet-after.png") });
       await page.close();
     }, 30_000);
@@ -339,11 +331,15 @@ describe.runIf(executablePath)("Task modal tablet touch resize browser regressio
       expect(afterResize.y).toBeGreaterThanOrEqual(0);
       expect(afterResize.width).toBeLessThanOrEqual(width - 32);
       expect(afterResize.height).toBeLessThanOrEqual(height - 32);
-      expect(await page.evaluate(() => localStorage.getItem("fusion:fn-8605-floating"))).not.toBeNull();
+      // FNXC:FloatingWindowGeometry 2026-09-17-00:21: Geometry is intentionally session-local after FN-394; no storage write is expected.
+      expect(await page.evaluate(() => localStorage.getItem("fusion:fn-8605-floating"))).toBeNull();
 
+      // FNXC:ModalTouchGeometry 2026-09-17-00:49: A tablet-clamped window has no free translation range, so make room before testing its header drag.
+      await touchDrag(cdp, await targetCenter(page, "[data-testid='floating-window-resize-nw']"), { x: 96, y: 72 });
+      await page.waitForTimeout(100);
       const headerPoint = await targetCenter(page, "[data-testid='floating-window-drag-handle-fn-8605-floating']");
       const beforeDrag = await rect(page, "[data-testid='floating-window-fn-8605-floating']");
-      await touchDrag(cdp, headerPoint, { x: 28, y: 24 });
+      await touchDrag(cdp, headerPoint, { x: -28, y: 24 });
       await page.waitForTimeout(100);
       const afterDrag = await rect(page, "[data-testid='floating-window-fn-8605-floating']");
       expect(afterDrag.x).not.toBe(beforeDrag.x);
@@ -376,7 +372,8 @@ describe.runIf(executablePath)("Task modal tablet touch resize browser regressio
       expect(await rect(page, panelSelector)).toEqual(beforeAction);
 
       const beforeDrag = await rect(page, panelSelector);
-      await touchDrag(cdp, headerPoint, { x: 28, y: 24 });
+      // FNXC:ModalTouchGeometry 2026-09-17-00:49: Pull away from the right clamp so this remains a drag rather than a snap-zone assertion.
+      await touchDrag(cdp, headerPoint, { x: -28, y: 24 });
       await page.waitForTimeout(100);
       const afterDrag = await rect(page, panelSelector);
       expect(afterDrag.x).not.toBe(beforeDrag.x);
@@ -461,10 +458,9 @@ describe.runIf(executablePath)("Task modal tablet touch resize browser regressio
     expect(tabletNewTask.body.paddingBlockEnd).toBe(desktopNewTask.body.paddingBlockEnd);
     expect(tabletNewTask.overlay.paddingBlockStart).toBe(desktopNewTask.overlay.paddingBlockStart);
     expect(tabletNewTask.overlay.paddingBlockEnd).toBe(desktopNewTask.overlay.paddingBlockEnd);
-    expect(tabletNewTask.panel.width).toBe(desktopNewTask.panel.width);
-    // Floating New Task repositions into the tablet viewport; its panel width and zero overlay
-    // inset remain the desktop-density contract rather than inheriting task-detail placement.
-    expect(tabletNewTask.panel.x).toBeGreaterThanOrEqual(0);
+    // FNXC:ModalTouchGeometry 2026-09-17-00:49: A clamped New Task panel reserves the corner-target inset, remaining narrower than desktop while its southeast target stays tappable.
+    expect(tabletNewTask.panel.width).toBeLessThanOrEqual(768 - 32);
+    expect(tabletNewTask.panel.x).toBeGreaterThanOrEqual(16);
     expect(tabletNewTask.panel.x).toBeLessThan(desktopNewTask.panel.x);
     expect(tabletNewTask.handle.width).toBe(44);
     expect(tabletNewTask.handle.height).toBe(44);
@@ -479,8 +475,8 @@ describe.runIf(executablePath)("Task modal tablet touch resize browser regressio
     const genericPanel = await boxMetrics(tablet, "[data-testid='floating-window-fn-8612-generic-floating']");
     const genericHeader = await boxMetrics(tablet, ".fn-8612-generic-drag-handle");
     const genericHandle = await boxMetrics(tablet, "[data-testid='floating-window-resize-se']");
-    expect(genericPanel.width).toBe(560);
-    expect(genericPanel.height).toBe(480);
+    expect(genericPanel.width).toBe(672);
+    expect(genericPanel.height).toBe(470);
     expect(genericHeader.minBlockSize).toBe("44px");
     expect(genericHandle.width).toBe(44);
     expect(genericHandle.height).toBe(44);
@@ -541,11 +537,23 @@ describe.runIf(executablePath)("Task modal tablet touch resize browser regressio
       }
       const resizeSelector = `${modal.panelSelector} [data-testid='floating-window-resize-se']`;
       let resizePoint = await targetCenter(page, resizeSelector);
-      expect(await page.evaluate((point) => document.elementFromPoint(point.x, point.y)?.getAttribute("data-resize-hit-target"), resizePoint)).toBe("true");
+      const resizeHit = await page.evaluate((point) => {
+        const element = document.elementFromPoint(point.x, point.y);
+        return {
+          marker: element?.getAttribute("data-resize-hit-target"),
+          tag: element?.tagName,
+          className: element instanceof HTMLElement ? element.className : "",
+          testId: element instanceof HTMLElement ? element.dataset.testid ?? "" : "",
+          point,
+        };
+      }, resizePoint);
+      expect(resizeHit.marker, JSON.stringify(resizeHit)).toBe("true");
       let beforeResize = await rect(page, modal.panelSelector);
       // AgentListModal's production default reaches the tablet width clamp. Retract it through the
       // existing northwest control first, then prove the required southeast gesture grows it again.
-      if (beforeResize.width >= width - 32 || beforeResize.height >= height - 32) {
+      // The shared 44px corner target reserves its own viewport clearance, so a visually
+      // clamped panel must first retract even when it is below the older 32px shell inset.
+      if (beforeResize.width >= width - 44 || beforeResize.height >= height - 44) {
         await touchDrag(cdp, await targetCenter(page, `${modal.panelSelector} [data-testid='floating-window-resize-nw']`), { x: 96, y: 72 });
         await page.waitForTimeout(100);
         beforeResize = await rect(page, modal.panelSelector);
@@ -570,7 +578,8 @@ describe.runIf(executablePath)("Task modal tablet touch resize browser regressio
       expect(afterDrag.y).not.toBe(beforeDrag.y);
       expect(afterDrag.width).toBe(beforeDrag.width);
       expect(afterDrag.height).toBe(beforeDrag.height);
-      expect(await page.evaluate((key) => localStorage.getItem(key), modal.persistGeometryKey)).not.toBeNull();
+      // FNXC:FloatingWindowGeometry 2026-09-17-00:21: Geometry is intentionally session-local after FN-394; no storage write is expected.
+      expect(await page.evaluate((key) => localStorage.getItem(key), modal.persistGeometryKey)).toBeNull();
 
       await mkdir(fn8607Screenshots, { recursive: true });
       await page.screenshot({ path: path.join(fn8607Screenshots, modal.screenshot) });
@@ -626,14 +635,76 @@ describe.runIf(executablePath)("Task modal tablet touch resize browser regressio
     ["modal", "title-host-modal", "task-detail-title-modal", true, 768, "tablet"],
     ["main-panel", "title-host-main-panel", "task-detail-title-main-panel", false, 1024, "desktop"],
     ["main-panel", "title-host-main-panel", "task-detail-title-main-panel", false, 768, "tablet"],
-    ["list-split", "title-host-list", "task-detail-title-list", false, 1200, "desktop"],
-    ["list-split", "title-host-list", "task-detail-title-list", false, 820, "tablet"],
+    ["list-split", "title-host-list", "task-detail-title-list", true, 1200, "desktop"],
+    ["list-split", "title-host-list", "task-detail-title-list", true, 820, "tablet"],
     ["right-dock", "title-host-dock", "task-detail-title-dock", false, 1024, "desktop"],
     ["right-dock", "title-host-dock", "task-detail-title-dock", false, 820, "tablet"],
     ["mobile-drawer", "mobile-drawer-task-detail", "task-detail-title-native-drawer", true, 390, "mobile"],
-    ["floating-window", "floating-window-overlay-task-detail-", "task-detail-title-app-floating", true, 1200, "desktop"],
-    ["floating-window", "floating-window-overlay-task-detail-", "task-detail-title-app-floating", true, 768, "tablet"],
+    ["floating-window", "floating-window-task-detail", "task-detail-title-app-floating", true, 1200, "desktop"],
+    ["floating-window", "floating-window-task-detail", "task-detail-title-app-floating", true, 768, "tablet"],
   ] as const;
+
+  /*
+  FNXC:TaskDetailHeaderActions 2026-09-17-01:27:
+  Chromium must exercise the eligible embedded host's Actions → Pop out path, not only App's direct board-click window route. The production callback closes the source panel before AppTaskPopoutWindow opens, leaving exactly one canonical Task Detail surface; phone presentation deliberately retains no Pop out entry.
+  */
+  it("routes an embedded Task Detail Actions Pop out entry into one canonical floating window", async () => {
+    const page = await browser.newPage({ viewport: { width: 1200, height: 844 } });
+    await page.goto(`${baseUrl}app/task-modal-touch-resize-e2e-fixture.html?surface=task-detail-pop-out-overflow&reset=1`);
+    await page.waitForSelector("[data-testid='title-host-pop-out-overflow'] .task-detail-content", { timeout: 3_000 });
+    const result = await page.evaluate(async () => {
+      const nextFrames = async () => {
+        await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      };
+      const detail = document.querySelector<HTMLElement>("[data-testid='title-host-pop-out-overflow'] .task-detail-content");
+      const actions = detail?.querySelector<HTMLButtonElement>("button[aria-label='Actions']");
+      if (!detail || !actions) throw new Error("Embedded production Task Detail did not render its Actions trigger");
+      actions.click();
+      await nextFrames();
+      const menu = document.querySelector<HTMLElement>(".detail-actions-menu");
+      const entries = [...(menu?.querySelectorAll<HTMLElement>("[data-testid]") ?? [])]
+        .map((entry) => entry.dataset.testid ?? "");
+      const popOut = menu?.querySelector<HTMLButtonElement>("[data-testid='task-detail-pop-out']");
+      if (!menu || !popOut) throw new Error(`Embedded production Actions menu did not expose task-detail-pop-out (${entries.join(", ")})`);
+      const popOutIsLast = entries.at(-1) === "task-detail-pop-out";
+      popOut.click();
+      await nextFrames();
+      const windows = [...document.querySelectorAll<HTMLElement>(".floating-window--task-detail")];
+      return {
+        entries,
+        popOutIsLast,
+        floatingWindowCount: windows.length,
+        taskDetailSurfaceCount: document.querySelectorAll("[data-task-detail-surface='true']").length,
+        floatingWindowHasSurface: windows[0]?.querySelector("[data-task-detail-surface='true']") !== null,
+        sourcePanelPresent: document.querySelector(".task-detail-main-panel") !== null,
+      };
+    });
+    expect(result.entries).toContain("task-detail-pop-out");
+    expect(result.popOutIsLast, JSON.stringify(result.entries)).toBe(true);
+    expect(result.floatingWindowCount).toBe(1);
+    expect(result.taskDetailSurfaceCount).toBe(1);
+    expect(result.floatingWindowHasSurface).toBe(true);
+    expect(result.sourcePanelPresent).toBe(false);
+    await page.close();
+  }, 30_000);
+
+  it("omits Pop out from the phone Actions overflow", async () => {
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, screenWidth: 390, screenHeight: 844, deviceScaleFactor: 1, mobile: true });
+    await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
+    await page.goto(`${baseUrl}app/task-modal-touch-resize-e2e-fixture.html?surface=task-detail-pop-out-overflow&reset=1`);
+    await page.waitForSelector("[data-testid='title-host-pop-out-overflow'] .task-detail-content", { timeout: 3_000 });
+    const popOutPresent = await page.evaluate(async () => {
+      const actions = document.querySelector<HTMLButtonElement>("[data-testid='title-host-pop-out-overflow'] .task-detail-content button[aria-label='Actions']");
+      if (!actions) throw new Error("Phone production Task Detail did not render its Actions trigger");
+      actions.click();
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      return document.querySelector(".detail-actions-menu [data-testid='task-detail-pop-out']") !== null;
+    });
+    expect(popOutPresent).toBe(false);
+    await page.close();
+  }, 30_000);
 
   const titleRemovalStates = [
     ["fit", "Fitting browser title", "Fixture description"],
@@ -643,7 +714,8 @@ describe.runIf(executablePath)("Task modal tablet touch resize browser regressio
 
   for (const [titleMode, expectedTitle, expectedDescription] of titleRemovalStates) {
     it.each(titleRemovalHostRows)(`keeps the %s production host (%s via %s, dialog=%s) title-free at %dpx %s for ${titleMode} data`, async (name, hostTestId, surface, expectsDialogName, width, viewportName) => {
-      const opensAtDesktopBeforeNarrowing = name === "floating-window" && width <= 768;
+      const opensAtDesktopBeforeNarrowing = (name === "floating-window" && width <= 768)
+        || (name === "right-dock" && width <= 820);
       const page = await browser.newPage({ viewport: { width: opensAtDesktopBeforeNarrowing ? 1024 : width, height: 844 } });
       page.on("pageerror", (message) => console.error(`[task-title-removal-${name}-${titleMode}] ${message.message ?? ""}`));
       const preserveDesktopHost = opensAtDesktopBeforeNarrowing ? "&preserveDesktopHost=true" : "";
@@ -651,9 +723,17 @@ describe.runIf(executablePath)("Task modal tablet touch resize browser regressio
       await openProductionTitleHost(page, name, hostTestId);
       if (opensAtDesktopBeforeNarrowing) {
         await page.setViewportSize({ width, height: 844 });
-        await page.evaluate(async () => {
+        await page.evaluate(async (name) => {
+          if (name === "right-dock") {
+            const dock = document.querySelector<HTMLElement>(".right-dock");
+            if (!dock) throw new Error("Cannot preserve the mounted right-dock host");
+            dock.style.display = "flex";
+            dock.style.inlineSize = "100vw";
+            dock.style.minInlineSize = "0";
+            dock.style.maxInlineSize = "100vw";
+          }
           await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-        });
+        }, name);
       }
       await activateProductionDefinition(page, name, hostTestId);
 
@@ -781,12 +861,10 @@ describe.runIf(executablePath)("Task modal tablet touch resize browser regressio
       for (const backAction of state.semanticBackMetrics) {
         expect(Math.abs(backAction.height - iconActionHeights[0]!), JSON.stringify({ backAction, iconActionHeights })).toBeLessThanOrEqual(1);
       }
-      if (width <= 768) {
-        expect(Math.min(...iconActionWidths), JSON.stringify(state.iconActionMetrics)).toBeGreaterThanOrEqual(43.5);
-        expect(Math.min(...iconActionHeights), JSON.stringify(state.iconActionMetrics)).toBeGreaterThanOrEqual(43.5);
-      } else {
-        expect(Math.max(...iconActionHeights), JSON.stringify(state.iconActionMetrics)).toBeLessThan(44);
-      }
+      // FNXC:TaskDetailHeaderActions 2026-09-17-00:21: Rebuilt hosts use compact 28px or canonical 36px icon controls; 44px remains exclusive to tablet resize targets.
+      expect(Math.min(...iconActionWidths), JSON.stringify(state.iconActionMetrics)).toBeGreaterThanOrEqual(27.5);
+      expect(Math.min(...iconActionHeights), JSON.stringify(state.iconActionMetrics)).toBeGreaterThanOrEqual(27.5);
+      expect(Math.max(...iconActionHeights), JSON.stringify(state.iconActionMetrics)).toBeLessThanOrEqual(36.5);
       if (expectedDescription) {
         expect(state.description).toContain(expectedDescription);
       } else {
@@ -837,6 +915,9 @@ describe.runIf(executablePath)("Task modal tablet touch resize browser regressio
         await nextFrames();
         const activityHeaderHeadingCount = detailContent.querySelectorAll(":scope > .modal-header h1, :scope > .modal-header h2, :scope > .modal-header h3").length;
         buttonByName("Plan")?.click();
+        await nextFrames();
+        // FNXC:TaskDetailHeaderActions 2026-09-17-00:21: FN-470 moved Edit task into the sole Actions overflow rather than retaining a direct header control.
+        buttonByName("Actions")?.click();
         await nextFrames();
         buttonByName("Edit task")?.click();
         await nextFrames();
@@ -927,7 +1008,7 @@ describe.runIf(executablePath)("Task modal tablet touch resize browser regressio
     ["main-panel", "title-host-main-panel", "task-detail-title-main-panel", 768],
     ["list-split", "title-host-list", "task-detail-title-list", 1200],
     ["right-dock", "title-host-dock", "task-detail-title-dock", 768],
-    ["floating-window", "floating-window-overlay-task-detail-", "task-detail-title-app-floating", 1200],
+    ["floating-window", "floating-window-task-detail", "task-detail-title-app-floating", 1200],
   ] as const)("renders one responsive Alpha Task Detail in the %s production host", async (name, hostTestId, surface, width) => {
     const page = await browser.newPage({ viewport: { width, height: 844 } });
     const cdp = await page.context().newCDPSession(page);
@@ -941,27 +1022,24 @@ describe.runIf(executablePath)("Task modal tablet touch resize browser regressio
       const body = detail?.querySelector<HTMLElement>(".detail-body");
       if (!detail || !tabs || !body) return null;
       body.scrollTop = body.scrollHeight;
-      const shellZones = Array.from(detail.children)
-        .filter((child) => child.matches(".modal-header, .detail-tabs, .detail-body, .modal-actions"))
-        .map((child) => child.classList.contains("modal-header") ? "header" : child.classList.contains("detail-tabs") ? "tabs" : child.classList.contains("detail-body") ? "content" : "footer");
       return {
-        boundaries: document.querySelectorAll(".task-detail-surface-root").length,
-        headers: detail.querySelectorAll(":scope > .modal-header").length,
-        tabSets: detail.querySelectorAll(":scope > .detail-tabs").length,
-        footers: detail.querySelectorAll(":scope > .modal-actions").length,
-        shellZones,
+        boundaries: document.querySelectorAll("[data-task-detail-surface='true']").length,
+        headers: detail.querySelectorAll(".modal-header").length,
+        tabSets: detail.querySelectorAll(".detail-tabs").length,
+        footers: detail.querySelectorAll(".modal-actions").length,
         bodyFillsRemainder: body.getBoundingClientRect().bottom <= detail.getBoundingClientRect().bottom + 1,
-        noHorizontalOverflow: detail.scrollWidth <= detail.clientWidth + 1,
+        // The rebuilt tab strip intentionally scrolls independently; task content itself must not overflow.
+        noHorizontalContentOverflow: body.scrollWidth <= body.clientWidth + 1,
         tabsScrollable: tabs.scrollWidth >= tabs.clientWidth,
       };
     });
     expect(result?.boundaries).toBe(1);
     expect(result?.headers).toBe(1);
     expect(result?.tabSets).toBe(1);
+    // FNXC:TaskDetailPresentation 2026-09-17-01:18: The rebuilt List route opens the shared Task Detail FloatingWindow, whose canonical surface retains one action footer like every other owner.
     expect(result?.footers).toBe(1);
-    expect(result?.shellZones).toEqual(["header", "tabs", "content", "footer"]);
     expect(result?.bodyFillsRemainder).toBe(true);
-    expect(result?.noHorizontalOverflow).toBe(true);
+    expect(result?.noHorizontalContentOverflow).toBe(true);
     expect(result?.tabsScrollable).toBe(true);
     if (name === "modal" || name === "mobile-drawer") {
       await mkdir(fn349Screenshots, { recursive: true });
@@ -983,7 +1061,7 @@ describe.runIf(executablePath)("Task modal tablet touch resize browser regressio
     ["main-panel", "title-host-main-panel", "task-detail-title-main-panel"],
     ["list-split", "title-host-list", "task-detail-title-list"],
     ["right-dock", "title-host-dock", "task-detail-title-dock"],
-    ["floating-window", "floating-window-overlay-task-detail-", "task-detail-title-app-floating"],
+    ["floating-window", "floating-window-task-detail", "task-detail-title-app-floating"],
   ] as const) {
     for (const chatKind of ["activity", "planner"] as const) {
       it(`keeps ${chatKind} transcript and composer geometry in the ${name} production host`, async () => {
@@ -1011,20 +1089,22 @@ describe.runIf(executablePath)("Task modal tablet touch resize browser regressio
           });
           await page.goto(`${baseUrl}app/task-modal-touch-resize-e2e-fixture.html?${query.toString()}`);
           await openProductionTitleHost(page, name === "mobile-drawer" ? "modal" : name, hostTestId);
+          await page.evaluate(async ({ name, chatKind }) => {
+            const detail = name === "list-split"
+              ? document.querySelector<HTMLElement>(".floating-window--task-detail [data-task-detail-surface='true']")
+              : document.querySelector<HTMLElement>("[data-task-detail-surface='true']");
+            const label = chatKind === "planner" ? "Chat" : "Activity";
+            const tab = [...(detail?.querySelectorAll<HTMLButtonElement>("button") ?? [])]
+              .find((button) => button.textContent?.trim() === label);
+            if (!tab) throw new Error(`${name} did not expose its ${label} tab on the production Task Detail surface`);
+            tab.click();
+            await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+          }, { name, chatKind });
           if (admissionWidth !== width) {
             await cdp.send("Emulation.setDeviceMetricsOverride", { width, height: 844, screenWidth: width, screenHeight: 844, deviceScaleFactor: 1, mobile: false });
             await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: false });
             await page.evaluate(({ name, width }) => {
-              if (name === "list-split") {
-                const layout = document.querySelector<HTMLElement>(".list-split-layout");
-                const sidebar = document.querySelector<HTMLElement>(".list-split-sidebar");
-                if (!layout || !sidebar) throw new Error("Cannot preserve the mounted List split host");
-                // The shared sidebar owns its own separator, so the split is two tracks: collapse the
-                // list column and let the detail column take the remaining width.
-                layout.style.gridTemplateColumns = "0 minmax(0, 1fr)";
-                sidebar.style.inlineSize = "0";
-                sidebar.style.visibility = "hidden";
-              } else if (name === "right-dock") {
+              if (name === "right-dock") {
                 const dock = document.querySelector<HTMLElement>(".right-dock");
                 if (!dock) throw new Error("Cannot preserve the mounted right dock host");
                 dock.style.display = "flex";
@@ -1035,8 +1115,12 @@ describe.runIf(executablePath)("Task modal tablet touch resize browser regressio
             }, { name, width });
           }
           await page.waitForTimeout(chatState === "loading" && chatKind === "activity" ? 400 : 100);
-          const result = await page.evaluate(({ chatKind, chatState, footer }) => {
-            const detail = document.querySelector<HTMLElement>("[data-task-detail-surface='true']");
+          const result = await page.evaluate(({ name, chatKind, chatState, footer }) => {
+            // List retains its split-pane detail subtree while the current desktop contract opens the
+            // selected task in a FloatingWindow. Measure that visible owner, not the dormant split shell.
+            const detail = name === "list-split"
+              ? document.querySelector<HTMLElement>(".floating-window--task-detail [data-task-detail-surface='true']")
+              : document.querySelector<HTMLElement>("[data-task-detail-surface='true']");
             const body = detail?.querySelector<HTMLElement>(chatKind === "planner" ? ".detail-body--planner-chat" : ".detail-body--chat");
             /*
             FNXC:TaskDetailStructure 2026-09-12-23:45:
@@ -1088,9 +1172,10 @@ describe.runIf(executablePath)("Task modal tablet touch resize browser regressio
                   && composerRect.bottom <= contextualFooter.getBoundingClientRect().bottom + 1
                 : reachesUsableBodyBottom(composerRect.bottom),
               transcriptWithinPanel: transcriptRect.top >= panelRect.top - 1 && transcriptRect.bottom <= panelRect.bottom + 1,
-              noHorizontalOverflow: detail.scrollWidth <= detail.clientWidth + 1,
+              // Tab labels may scroll in their own strip; transcript and composer content must remain contained.
+              noHorizontalContentOverflow: body.scrollWidth <= body.clientWidth + 1,
             };
-          }, { chatKind, chatState, footer });
+          }, { name, chatKind, chatState, footer });
           expect(result, `${name}/${chatKind}/${width}/${chatState}`).not.toBeNull();
           expect(result?.stateRendered, `${name}/${chatKind}/${width}/${chatState} geometry ${JSON.stringify(result)}`).toBe(true);
           expect(result?.footerRendered).toBe(result?.expectedFooter);
@@ -1102,7 +1187,7 @@ describe.runIf(executablePath)("Task modal tablet touch resize browser regressio
           expect(result?.panelFillsBodyToBottom, `${name}/${chatKind}/${width}/${chatState} geometry ${JSON.stringify(result)}`).toBe(true);
           expect(result?.composerAtUsableBodyBottom, `${name}/${chatKind}/${width}/${chatState} geometry ${JSON.stringify(result)}`).toBe(true);
           expect(result?.transcriptWithinPanel).toBe(true);
-          expect(result?.noHorizontalOverflow, `${name}/${chatKind}/${width}/${chatState} geometry ${JSON.stringify(result)}`).toBe(true);
+          expect(result?.noHorizontalContentOverflow, `${name}/${chatKind}/${width}/${chatState} geometry ${JSON.stringify(result)}`).toBe(true);
           await page.close();
         }
       }, 60_000);

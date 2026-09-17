@@ -166,6 +166,7 @@ describe("Task Detail header overflow", () => {
     expect(indexOf("detail-inline-attach")).toBeLessThan(indexOf("task-detail-header-action-duplicate"));
     expect(indexOf("task-detail-header-action-duplicate")).toBeLessThan(indexOf("task-detail-header-action-edit"));
     expect(indexOf("task-detail-header-action-edit")).toBeLessThan(indexOf("task-detail-pop-out"));
+    expect(ordered.at(-1)).toBe("task-detail-pop-out");
     await waitFor(() => expect(document.activeElement).toBe(within(menu).getByTestId("detail-inline-attach")));
   });
 

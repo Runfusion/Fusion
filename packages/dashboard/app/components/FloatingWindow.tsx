@@ -215,6 +215,7 @@ export interface FloatingWindowDragGestureEnd {
 
 const DEFAULT_MIN_WIDTH = 360;
 const DEFAULT_MIN_HEIGHT = 280;
+const TABLET_TOUCH_GEOMETRY_INSET = 16;
 
 /*
 FNXC:FloatingWindow 2026-06-22-21:30:
@@ -280,7 +281,7 @@ export function FloatingWindow({
   dragHandoff,
 }: FloatingWindowProps) {
   const { t } = useTranslation("app");
-  const availableBounds = useDashboardWindowBounds();
+  const dashboardBounds = useDashboardWindowBounds();
   /*
   FNXC:FloatingWindow 2026-09-13-22:40:
   Callers pass `minSize` as an inline object literal, so rebuilding this per render gave every
@@ -301,6 +302,22 @@ export function FloatingWindow({
   mouse geometry; a known touch tablet at 768px is the one surface that receives enlarged targets.
   */
   const hasTabletTouchGeometry = isTabletTouchViewport(viewportMode);
+  /*
+  FNXC:ModalTouchGeometry 2026-09-17-00:49:
+  Tablet corner handles overhang the painted panel by their 44px target. Reserve one shared
+  16px geometry inset on every tablet-touch edge so a clamped southeast target remains inside
+  the visual viewport instead of becoming unreachable past its right or bottom edge.
+  */
+  const availableBounds = useMemo(() => {
+    if (!hasTabletTouchGeometry) return dashboardBounds;
+    const inlineInset = Math.min(TABLET_TOUCH_GEOMETRY_INSET, dashboardBounds.width / 2);
+    const blockInset = Math.min(TABLET_TOUCH_GEOMETRY_INSET, dashboardBounds.height / 2);
+    const left = dashboardBounds.left + inlineInset;
+    const top = dashboardBounds.top + blockInset;
+    const right = Math.max(left, dashboardBounds.right - inlineInset);
+    const bottom = Math.max(top, dashboardBounds.bottom - blockInset);
+    return { left, top, right, bottom, width: right - left, height: bottom - top };
+  }, [dashboardBounds, hasTabletTouchGeometry]);
   /*
   FNXC:ModalTouchGeometry 2026-08-01-04:23:
   NAMING CONTRACT — FloatingWindow has two distinct tablet markers; do not conflate them:

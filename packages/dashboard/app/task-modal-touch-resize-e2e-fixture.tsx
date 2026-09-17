@@ -11,6 +11,7 @@ import "./ui-style-tokens.css";
 import { FloatingWindow } from "./components/FloatingWindow";
 import { App } from "./App";
 import { TaskDetailContent, TaskDetailModal } from "./components/TaskDetailModal";
+import { AppTaskPopoutWindow } from "./components/TaskDetailHostBoundaries";
 import { AppModals } from "./components/AppModals";
 import { MainContent } from "./components/dashboard/MainContent";
 import { ListView } from "./components/ListView";
@@ -84,6 +85,7 @@ unconditional board/list route. The fixture states its intent directly: drive th
 `chat` landing tab, and the Activity surface with the historical `activity` default.
 */
 const taskDetailDefaultTab = chatKind === "planner" ? ("chat" as const) : ("activity" as const);
+const taskDetailInitialTab = chatKind === "planner" ? ("planner-chat" as const) : ("chat" as const);
 if (params.has("reset")) localStorage.clear();
 
 /*
@@ -258,9 +260,15 @@ if (surface === "task-detail-title-app-floating" || surface === "board-card-clic
   localStorage.setItem("kb-dashboard-tasks-cache:fixture", JSON.stringify({ savedAt, data: [fixtureTask] }));
 }
 
+/*
+FNXC:TaskDetailChatGeometry 2026-09-17-00:48:
+The real-host browser matrix supplies its selected chat kind through the fixture query. Pass that
+landing-tab contract to every TaskDetailModal owner so Chromium measures Activity and Planner
+content rather than silently retaining the Definition default after the Task Detail rebuild.
+*/
 const detailProps = {
   task: fixtureTask,
-  initialTab: "definition" as const,
+  initialTab: taskDetailInitialTab,
   onDeleteTask: async () => fixtureTask,
   onMergeTask: async () => ({ success: true } as never),
   onOpenDetail: () => undefined,
@@ -296,9 +304,29 @@ function TaskDetailTitleMainPanelHarness() {
   return <div data-testid="title-host-main-panel" className="fn-8806-constrained-title-host" style={{ height: "100vh", minHeight: 0, overflow: "hidden" }}><MainContent {...{ taskView: "task-detail", mainPanelDetailTask: fixtureTask, tasks: [fixtureTask], currentProject: null, addToast: noop, moveTask: asyncTask, deleteTask: asyncTask, mergeTask: asyncMerge, retryTask: asyncTask, pauseTask: asyncTask, unpauseTask: asyncTask, resetTask: asyncTask, duplicateTask: asyncTask, closeTaskDetailMainPanel: noop, setMainPanelDetailTask: noop, openTaskDetailInMainPanel: noop, popOutTaskDetail: noop, modalManager: { openNewTaskWithDescription: noop }, globalPaused: false, prAuthAvailable: false, autoMerge: true, taskDetailDefaultTab } as unknown as React.ComponentProps<typeof MainContent>} /></div>;
 }
 
+/*
+FNXC:TaskDetailHeaderActions 2026-09-17-01:27:
+The browser fixture must follow the embedded main-panel action through App's canonical pop-out window boundary. Keeping the source Task Detail host and resulting FloatingWindow together catches a missing or misrouted overflow entry without recreating either surface as a lookalike.
+*/
+function TaskDetailPopOutOverflowHarness() {
+  const [mainPanelTask, setMainPanelTask] = useState<Task | null>(fixtureTask);
+  const [poppedOutTask, setPoppedOutTask] = useState<Task | null>(null);
+  return <div data-testid="title-host-pop-out-overflow" className="fn-8806-constrained-title-host" style={{ height: "100vh", minHeight: 0, overflow: "hidden" }}>
+    <MainContent {...{ taskView: "task-detail", mainPanelDetailTask: mainPanelTask, tasks: [fixtureTask], currentProject: null, addToast: noop, moveTask: asyncTask, deleteTask: asyncTask, mergeTask: asyncMerge, retryTask: asyncTask, pauseTask: asyncTask, unpauseTask: asyncTask, resetTask: asyncTask, duplicateTask: asyncTask, closeTaskDetailMainPanel: () => setMainPanelTask(null), setMainPanelDetailTask: setMainPanelTask, openTaskDetailInMainPanel: noop, popOutTaskDetail: setPoppedOutTask, modalManager: { openNewTaskWithDescription: noop }, globalPaused: false, prAuthAvailable: false, autoMerge: true, taskDetailDefaultTab } as unknown as React.ComponentProps<typeof MainContent>} />
+    {poppedOutTask && <AppTaskPopoutWindow {...detailProps} task={poppedOutTask} onRemoveWindow={() => setPoppedOutTask(null)} />}
+  </div>;
+}
+
+/*
+FNXC:TaskDetailPresentation 2026-09-17-00:21:
+FN-442 routes List selection through its real pop-out callback. The fixture retains that production path and renders the resulting TaskDetailModal instead of preserving the retired embedded detail pane.
+*/
 function TaskDetailTitleListHarness() {
-  localStorage.setItem("kb:fixture:kb-dashboard-list-selected-task", fixtureTask.id);
-  return <div data-testid="title-host-list" style={{ height: "100vh", minHeight: 0, overflow: "hidden" }}><ListView {...{ tasks: [fixtureTask], projectId: "fixture", onMoveTask: asyncTask, onDeleteTask: asyncTask, onMergeTask: asyncMerge, addToast: noop, onOpenDetail: noop, onNewTask: noop, onQuickCreate: noop, availableModels: [], autoMerge: true, taskDetailDefaultTab, columnFlagsByTaskId: fixtureColumnFlagsByTaskId } as unknown as React.ComponentProps<typeof ListView>} /></div>;
+  const [poppedOutTask, setPoppedOutTask] = useState<Task | null>(null);
+  return <div data-testid="title-host-list" style={{ height: "100vh", minHeight: 0, overflow: "hidden" }}>
+    <ListView {...{ tasks: [fixtureTask], projectId: "fixture", onMoveTask: asyncTask, onDeleteTask: asyncTask, onMergeTask: asyncMerge, addToast: noop, onOpenDetail: noop, onPopOut: setPoppedOutTask, onNewTask: noop, onQuickCreate: noop, availableModels: [], autoMerge: true, taskDetailDefaultTab, columnFlagsByTaskId: fixtureColumnFlagsByTaskId } as unknown as React.ComponentProps<typeof ListView>} />
+    {poppedOutTask && <TaskDetailModal {...detailProps} task={poppedOutTask} onClose={() => setPoppedOutTask(null)} />}
+  </div>;
 }
 
 function TaskDetailTitleDockHarness() {
@@ -418,7 +446,7 @@ function GenericFloatingWindowHarness() {
 
 function Fixture() {
   const appOwnsShell = surface === "task-detail-title-app-floating" || surface === "board-card-click-app";
-  const content = appOwnsShell ? <TaskDetailTitleAppFloatingHarness /> : surface === "settings-official" ? <SettingsModal onClose={() => undefined} addToast={() => undefined} initialSection="experimental" /> : surface === "agent-list-modal" ? <AgentListModal isOpen onClose={() => undefined} addToast={() => undefined} /> : surface === "setup-wizard-modal" ? <SetupWizardModal onProjectRegistered={() => undefined} onClose={() => undefined} /> : surface === "floating-window" ? <FloatingWindowHarness /> : surface === "floating-window-headerless" ? <HeaderlessFloatingWindowHarness /> : surface === "floating-window-generic" ? <GenericFloatingWindowHarness /> : surface === "task-detail-title-modal" ? <TaskDetailTitleModalHarness /> : surface === "task-detail-title-main-panel" ? <TaskDetailTitleMainPanelHarness /> : surface === "task-detail-title-list" ? <TaskDetailTitleListHarness /> : surface === "task-detail-title-dock" ? <TaskDetailTitleDockHarness /> : surface === "task-detail-title-native-drawer" ? <TaskDetailTitleMobileDrawerHarness /> : surface === "task-detail-title-embedded" ? <TaskDetailTitleEmbeddedHarness /> : surface === "task-detail" ? <TaskDetailResizeHarness /> : <NewTaskModal
+  const content = appOwnsShell ? <TaskDetailTitleAppFloatingHarness /> : surface === "task-detail-pop-out-overflow" ? <TaskDetailPopOutOverflowHarness /> : surface === "settings-official" ? <SettingsModal onClose={() => undefined} addToast={() => undefined} initialSection="experimental" /> : surface === "agent-list-modal" ? <AgentListModal isOpen onClose={() => undefined} addToast={() => undefined} /> : surface === "setup-wizard-modal" ? <SetupWizardModal onProjectRegistered={() => undefined} onClose={() => undefined} /> : surface === "floating-window" ? <FloatingWindowHarness /> : surface === "floating-window-headerless" ? <HeaderlessFloatingWindowHarness /> : surface === "floating-window-generic" ? <GenericFloatingWindowHarness /> : surface === "task-detail-title-modal" ? <TaskDetailTitleModalHarness /> : surface === "task-detail-title-main-panel" ? <TaskDetailTitleMainPanelHarness /> : surface === "task-detail-title-list" ? <TaskDetailTitleListHarness /> : surface === "task-detail-title-dock" ? <TaskDetailTitleDockHarness /> : surface === "task-detail-title-native-drawer" ? <TaskDetailTitleMobileDrawerHarness /> : surface === "task-detail-title-embedded" ? <TaskDetailTitleEmbeddedHarness /> : surface === "task-detail" ? <TaskDetailResizeHarness /> : <NewTaskModal
     isOpen
     tasks={[]}
     onClose={() => undefined}
