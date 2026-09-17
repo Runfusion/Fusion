@@ -4,8 +4,8 @@
 
 ## Latest baseline
 
-- Cycle: **2026-W33**
-- Captured at: **2026-08-16T06:01:44.671Z**
+- Cycle: **2026-W38**
+- Captured at: **2026-09-17T22:38:00.094Z**
 - Timing snapshot: `scripts/test-timings.json` captured at **2026-08-16T06:04:55.815Z**
 - Quarantine ledger: `scripts/lib/test-quarantine.json`
 
@@ -13,9 +13,9 @@
 
 | Metric | Current | Delta vs previous |
 |---|---:|---:|
-| Merge gate wall-time (`pnpm test:gate`) | 14.0s | +3.0s |
-| Boot smoke wall-time (`pnpm smoke:boot`) | 20.4s | -6.3s |
-| Changed-only test wall-time (`pnpm test`) | 17.5s | -116ms |
+| Merge gate wall-time (`pnpm test:gate`) | 11.4s | -2.6s |
+| Boot smoke wall-time (`pnpm smoke:boot`) | 26.1s | +5.7s |
+| Changed-only test wall-time (`pnpm test`) | 18.4s | +950ms |
 | Quarantine / flake count | 0 | 0 |
 | Deletion-due quarantines | 0 | n/a |
 
@@ -29,7 +29,7 @@
 
 ## Timing snapshot notes
 
-- No stale or missing timing metadata detected in the rendered slowest-file rows.
+- Timing snapshot is 32 days old; verify slowest-file attribution before treating the table as the current culprit.
 
 ## Slowest 20 test files
 
@@ -75,16 +75,16 @@
 
 | Row | Captured at | Gate | Boot smoke | `pnpm test` | Quarantine count |
 |---|---|---:|---:|---:|---:|
-| Previous | 2026-08-13T01:59:18.032Z | 11.0s | 26.7s | 17.6s | 0 |
-| Latest | 2026-08-16T06:01:44.671Z | 14.0s | 20.4s | 17.5s | 0 |
-| Delta | — | +3.0s | -6.3s | -116ms | 0 |
+| Previous | 2026-08-16T06:01:44.671Z | 14.0s | 20.4s | 17.5s | 0 |
+| Latest | 2026-09-17T22:38:00.094Z | 11.4s | 26.1s | 18.4s | 0 |
+| Delta | — | -2.6s | +5.7s | +950ms | 0 |
 
 _Future weekly rows append to `scripts/test-velocity-history.json`; compare the latest row against the previous row before posting to #leads._
 
 ## Post to #leads
 
 ```text
-FN-6612 weekly test velocity: gate 14.0s (+3.0s), boot smoke 20.4s (-6.3s), pnpm test 17.5s (-116ms), quarantine ledger 0 (0). Slowest file: packages/core/src/__tests__/postgres/schema-applier.test.ts at 1m 13s. Deletion-due quarantines: 0.
+FN-6612 weekly test velocity: gate 11.4s (-2.6s), boot smoke 26.1s (+5.7s), pnpm test 18.4s (+950ms), quarantine ledger 0 (0). Slowest file: packages/core/src/__tests__/postgres/schema-applier.test.ts at 1m 13s. Deletion-due quarantines: 0.
 ```
 
 ## How to refresh
