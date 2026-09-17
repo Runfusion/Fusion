@@ -462,7 +462,13 @@ describe("ChatView popped-out conversation contract", () => {
     const onOpenSessionInNewWindow = vi.fn();
     setupMockChat({ activeSession: activeSessionFixture, sessions: [activeSessionFixture], filteredSessions: [activeSessionFixture] });
     await renderWithAct(<ChatView {...popOutProps} onOpenSessionInNewWindow={onOpenSessionInNewWindow} />);
-    expect(screen.getByTestId("chat-new-btn")).toBeInTheDocument();
+    /*
+    FNXC:ChatNavigation 2026-09-17-10:37:
+    FN-506 : ce montage affiche une conversation, donc l'en-tête porte le menu « … » de conversation et non le
+    bouton de création ; la création reste atteignable à l'intérieur de ce menu.
+    */
+    expect(screen.queryByTestId("chat-new-btn")).toBeNull();
+    expect(screen.getByTestId("chat-header-actions-btn")).toBeInTheDocument();
     expect(screen.getByTestId("chat-back-btn")).toHaveAccessibleName("Back to conversations");
     expect(document.querySelector(".chat-sidebar")).toBeInTheDocument();
 

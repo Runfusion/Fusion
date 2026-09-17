@@ -503,7 +503,13 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
 
   const { isUnread, markRead } = useChatUnread(projectId);
   const [messageInput, setMessageInput] = useState(() => getPersistedChatDraft(getChatDraftKey(activeSession?.id)));
-  const [contextMenu, setContextMenu] = useState<{ sessionId: string; anchorX: number; anchorY: number; anchorRight: boolean; x: number; y: number } | null>(null);
+  /*
+  FNXC:ChatNavigation 2026-09-17-10:37:
+  FN-506 : `source` retient d'où ce menu unique a été ouvert (ligne de liste ou en-tête). Le menu lui-même reste
+  le SEUL rendu d'actions de conversation ; seule l'entrée "New Chat" est conditionnelle, parce que l'en-tête
+  est le seul point de création atteignable quand une conversation occupe le panneau.
+  */
+  const [contextMenu, setContextMenu] = useState<{ sessionId: string; anchorX: number; anchorY: number; anchorRight: boolean; x: number; y: number; source: "row" | "header" } | null>(null);
   /*
   FNXC:ChatStashBackfill 2026-08-19-16:28:
   (operator request 2026-08-19) Busy marker for the "Preserve to Stash" context-menu
@@ -559,7 +565,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
     sessionId: string,
     anchorX: number,
     anchorY: number,
-    options?: { anchorRight?: boolean },
+    options?: { anchorRight?: boolean; source?: "row" | "header" },
   ) => {
     if (typeof window === "undefined") return;
 
@@ -570,6 +576,7 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
       anchorRight: options?.anchorRight ?? false,
       x: anchorX,
       y: anchorY,
+      source: options?.source ?? "row",
     });
   };
 
@@ -2836,6 +2843,17 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
     || (dedicatedConversation && !activeSession ? initialDirectSession?.title?.trim() : "")
     || t("chat.untitledConversation", "Untitled conversation");
 
+  /*
+  FNXC:ChatNavigation 2026-09-17-10:37:
+  FN-506 : cible du menu "…" de l'en-tête. Un hôte ne remplace le "+" que s'il affiche réellement une
+  conversation RÉSOLUE : `hasDetailSelection` seul peut être vrai sans `activeSession` (flux en cours), et un
+  déclencheur sans cible serait une coquille inerte. L'hôte `listOnly` n'atteint jamais l'état détail et la
+  fenêtre dédiée est l'exemption documentée (elle ne rend déjà aucune des deux affordances).
+  */
+  const headerConversationActionsSession = hasDetailSelection && !dedicatedConversation && activeSession
+    ? activeSession
+    : null;
+
   const showThreadHeaderModelTag = Boolean(activeModelTag);
   const showThreadHeaderContextWindow = !isChatMobile && hasThreadInView && chatContextUsage !== null;
   const threadHeaderContextTotal = chatContextUsage ? formatTokenCount(chatContextUsage.total, { approximate: false }) : null;
@@ -3401,8 +3419,13 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
     FNXC:ChatNavigation 2026-08-20-05:25:
     FN-068 reserves the shared ViewHeader for view-level actions. A selected conversation owns its sole textual Back action in the thread row, preserving one list/detail state machine across desktop, floating, compact, and mobile hosts.
 
-    FNXC:ChatNavigation 2026-08-20-23:57:
-    FN-096 keeps the canonical New Chat action in this shared header for both list and selected-detail states. Embedded, floating, and dock hosts must reuse this one creation entry point while the thread row retains the sole Back action.
+    FNXC:ChatNavigation 2026-09-17-10:37:
+    FN-506 replaces FN-096's "New Chat lives in this shared header for both list and selected-detail states" rule.
+    In the LIST state this header still carries the canonical New Chat creation action. In the DETAIL state an
+    operator wants the actions of the conversation they are looking at, not a creation button, so the header carries
+    a "…" trigger that opens the EXISTING conversation menu (same state, same handlers as the row's right-click).
+    Creation survives inside that menu as its first entry, so every host keeps exactly one reachable creation point.
+    Embedded, floating, and dock hosts reuse this single header; the thread row retains the sole Back action.
     */
     <ViewLayout contentOwnsScroll className={`chat-view${floating ? " chat-view--floating" : ""}${isChatMobile ? " chat-view--narrow" : ""}${hasDetailSelection ? " chat-view--detail" : ""}${dockedSidebarVisible ? " chat-view--docked-list" : ""}${chatMessageLayout === "full-width" ? " chat-view--full-width" : ""}`} header={<>
       <ViewHeader
@@ -3422,7 +3445,35 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
         } : undefined}
         actions={
           <>
-            {!dedicatedConversation ? <ViewActionButton
+            {/*
+            FNXC:ChatNavigation 2026-09-17-10:37:
+            FN-506: a host that is actually SHOWING a conversation swaps creation for that conversation's quick
+            actions. `activeSession` is required, not just `hasDetailSelection`: a detail pane with no resolved
+            session has no menu target, so the header falls back to New Chat rather than rendering a "…" that
+            cannot open anything. The dedicated conversation window renders neither control (its identity is
+            locked to one conversation) and `listOnly` docks never reach the detail state.
+            */}
+            {!dedicatedConversation && headerConversationActionsSession ? (
+              <UiButton
+                type="button"
+                className="btn-icon chat-view-header-icon"
+                aria-label={t("chat.conversationActionsAria", "Conversation actions for {{title}}", { title: threadHeaderTitle })}
+                title={t("chat.conversationActions", "Conversation actions")}
+                aria-haspopup="menu"
+                aria-expanded={contextMenu?.sessionId === headerConversationActionsSession.id}
+                data-testid="chat-header-actions-btn"
+                onClick={(event) => {
+                  if (contextMenu?.sessionId === headerConversationActionsSession.id) {
+                    setContextMenu(null);
+                    return;
+                  }
+                  const bounds = event.currentTarget.getBoundingClientRect();
+                  openSessionMenu(headerConversationActionsSession.id, bounds.right, bounds.bottom, { anchorRight: true, source: "header" });
+                }}
+              >
+                <MoreHorizontal size={16} />
+              </UiButton>
+            ) : !dedicatedConversation ? <ViewActionButton
               kind="create"
               className="chat-view-header-new-chat"
               label={t("chat.newChat", "New Chat")}
@@ -3650,6 +3701,28 @@ function ChatViewContent({ projectId, addToast, floating = false, compactLayout 
           */}
           <UiMenu aria-label={t("chat.conversationActions", "Conversation actions")} className="chat-session-context-menu-section">
           <UiMenuSection aria-label={t("chat.conversationPrimaryActions", "Primary conversation actions")}>
+          {/*
+          FNXC:ChatNavigation 2026-09-17-10:37:
+          FN-506: when this menu is opened from the HEADER it has replaced the header's New Chat button, which was the
+          only reachable creation point while a conversation occupies the panel. Creation therefore moves inside the
+          menu as its first entry. The row right-click / long-press / row "…" menu is unchanged and never shows it.
+          The click event is FORWARDED to `handleNewChat`, so the Ctrl/Cmd-click "create beside, never in place of"
+          gesture survives the move from a header button to a menu entry instead of silently disappearing.
+          */}
+          {contextMenu.source === "header" ? (
+            <UiMenuItem
+              id="new-chat"
+              type="button"
+              data-testid="chat-context-new-chat"
+              onClick={(event) => {
+                setContextMenu(null);
+                handleNewChat(event);
+              }}
+            >
+              <Plus size={14} />
+              {t("chat.newChat", "New Chat")}
+            </UiMenuItem>
+          ) : null}
           {onOpenSessionInNewWindow && contextMenuSession ? (
             <UiMenuItem
               id="open-window"

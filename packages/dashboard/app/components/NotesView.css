@@ -171,6 +171,18 @@ la popover d'en-tête, le tiroir téléphone et le dock sans être rogné par le
   flex-direction: column;
 }
 
+/*
+FNXC:NotesRowActions 2026-09-17-10:37:
+FN-506 : le déclencheur « … » de l'en-tête réutilise `btn btn-icon` ; seul l'alignement optique de l'icône dans
+la grappe d'actions est ajusté, en jetons de design, sans variante de bouton parallèle.
+*/
+.notes-header-actions-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
 .notes-save-state {
   color: var(--color-text-muted);
   font-size: var(--font-size-sm);

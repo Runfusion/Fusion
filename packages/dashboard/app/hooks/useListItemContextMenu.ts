@@ -45,6 +45,14 @@ export interface ListItemContextMenuController {
   close: () => void;
   /** Props à étaler sur la LIGNE (le contrôle de sélection lui-même, pas un bouton supplémentaire). */
   getRowProps: (key: string) => ListItemRowGestureProps;
+  /*
+  FNXC:ListItemContextMenu 2026-09-17-10:37:
+  FN-506 : ouverture PROGRAMMATIQUE du même menu depuis un déclencheur qui n'est pas une ligne (l'en-tête
+  contextuel d'une destination, quand l'objet ouvert occupe le panneau et que sa ligne n'est pas visible).
+  Elle partage la clé composée, le bornage au viewport, la garde `enabled` et la fermeture sur changement de
+  contexte : il n'existe donc toujours qu'un seul rendu de menu et un seul jeu de gestionnaires.
+  */
+  openAt: (key: string, x: number, y: number) => void;
 }
 
 function clamp(value: number, max: number): number {
@@ -168,5 +176,5 @@ export function useListItemContextMenu({ enabled = true, contextId }: UseListIte
 
   const isOpen = useCallback((key: string) => anchor?.key === key, [anchor]);
 
-  return useMemo(() => ({ anchor, isOpen, close, getRowProps }), [anchor, close, getRowProps, isOpen]);
+  return useMemo(() => ({ anchor, isOpen, close, getRowProps, openAt }), [anchor, close, getRowProps, isOpen, openAt]);
 }

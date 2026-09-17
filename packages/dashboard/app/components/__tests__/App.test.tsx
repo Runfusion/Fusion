@@ -2420,7 +2420,13 @@ describe("official dashboard design production wiring", () => {
 
     expect(dialog).toContainElement(document.querySelector(".chat-view"));
     expect(Array.from(dialog.querySelectorAll("h1,h2,h3")).filter((heading) => heading.textContent === "Chat" && !heading.classList.contains("visually-hidden"))).toHaveLength(1);
-    expect(within(dialog).getByTestId("chat-new-btn")).toBeEnabled();
+    /*
+    FNXC:ChatNavigation 2026-09-17-10:37:
+    FN-506 : une conversation est ouverte ici, donc l'en-tête porte le menu « … » d'actions de conversation — qui
+    contient la création — à la place du bouton « + ».
+    */
+    expect(within(dialog).getByTestId("chat-header-actions-btn")).toBeEnabled();
+    expect(within(dialog).queryByTestId("chat-new-btn")).toBeNull();
     /* The phone drawer is the only Chat host on mobile: no whole-view pop-out and no floating window shell. */
     expect(within(dialog).queryByTestId("chat-pop-out")).toBeNull();
     expect(within(dialog).queryByLabelText("Pop out chat")).toBeNull();

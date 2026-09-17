@@ -301,7 +301,13 @@ describe("ChatView New Chat project default behavior", () => {
     expect(document.querySelector(".chat-view")).toHaveClass("chat-view--detail");
     expect(screen.getByTestId("chat-back-btn")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByTestId("chat-new-btn"), modifier);
+    /*
+    FNXC:ChatNavigation 2026-09-17-10:37:
+    FN-506 : en état détail, la création vit désormais dans le menu « … » de l'en-tête ; le geste Ctrl/Cmd est
+    conservé sur cette entrée. En état liste, le bouton « + » reste le déclencheur.
+    */
+    fireEvent.click(screen.getByTestId("chat-header-actions-btn"));
+    fireEvent.click(screen.getByTestId("chat-context-new-chat"), modifier);
 
     await waitFor(() => expect(createSession).toHaveBeenCalledWith(
       { agentId: "__fn_agent__", modelProvider: "openai", modelId: "gpt-4o" },

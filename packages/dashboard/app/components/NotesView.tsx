@@ -1,7 +1,7 @@
 import "./NotesView.css";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ProjectNoteSummary } from "@fusion/core";
-import { RefreshCw, Search, StickyNote } from "lucide-react";
+import { MoreHorizontal, RefreshCw, Search, StickyNote } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useConfirm } from "../hooks/useConfirm";
 import { useNotes, type UseNotesController } from "../hooks/useNotes";
@@ -201,13 +201,20 @@ export function NotesView({ projectId, addToast, controller, compact = false, li
     }
     await notes.select(id);
   };
-  const handleBackToList = async () => {
+  /*
+  FNXC:NotesRowActions 2026-09-17-10:37:
+  FN-506 : le retour à la liste rapporte s'il a ABOUTI. Le menu « … » de l'en-tête doit revenir à la liste avant
+  d'activer un renommage en place sur écran étroit ; si l'opérateur refuse l'abandon d'un brouillon, rien ne doit
+  changer plutôt que d'entrer en renommage sur une ligne invisible.
+  */
+  const handleBackToList = async (): Promise<boolean> => {
     cancelScheduledSave();
     if (notes.dirty) {
       await flushAutosave();
-      if (!await abandon()) return;
+      if (!await abandon()) return false;
     }
     notes.clearSelection();
+    return true;
   };
   const handleRetry = async () => {
     if (notes.failedSelectionId) await handleSelect(notes.failedSelectionId);
@@ -244,12 +251,37 @@ export function NotesView({ projectId, addToast, controller, compact = false, li
 
   /* La cible du menu est résolue à chaque rendu dans les données COURANTES : une note retirée par un
      rafraîchissement ferme son menu au lieu d'exposer une action sur un objet périmé. */
-  const menuNote = rowMenu.anchor ? notes.notes.find((candidate) => `note:${candidate.id}` === rowMenu.anchor?.key) ?? null : null;
+  /*
+  FNXC:NotesRowActions 2026-09-17-10:37:
+  FN-506 : la même clé composée sert aux deux déclencheurs, avec un préfixe qui retient l'origine. `note:` vient
+  d'une ligne, `header-note:` du menu « … » de l'en-tête contextuel. La cible reste résolue dans les données
+  COURANTES à chaque rendu, donc une note retirée ferme son menu quelle que soit son origine.
+  */
+  const menuFromHeader = rowMenu.anchor?.key.startsWith("header-note:") ?? false;
+  const menuNote = rowMenu.anchor
+    ? notes.notes.find((candidate) => (
+      rowMenu.anchor?.key === `note:${candidate.id}` || rowMenu.anchor?.key === `header-note:${candidate.id}`
+    )) ?? null
+    : null;
   useEffect(() => {
     if (rowMenu.anchor && !menuNote) rowMenu.close();
   }, [menuNote, rowMenu]);
+  /*
+  FNXC:NotesRowActions 2026-09-17-10:37:
+  FN-506 : le menu ouvert depuis l'en-tête a REMPLACÉ le bouton « Nouvelle note », seul point de création
+  atteignable quand une note occupe le panneau, donc la création y figure en première position. Le renommage reste
+  EN PLACE dans la ligne de liste (décision FN-435) : quand le rail de liste n'est pas visible, il faut d'abord y
+  revenir, et seul un retour abouti entre en mode renommage. Le menu de ligne reste strictement inchangé.
+  */
+  const startRenameFromHeader = async (note: ProjectNoteSummary) => {
+    if (!listRailVisible && !await handleBackToList()) return;
+    startRename(note);
+  };
   const menuActions: ListItemMenuAction[] = menuNote ? [
-    { id: "rename", label: t("notes.rename", "Rename"), testId: "notes-menu-rename", onSelect: () => startRename(menuNote) },
+    ...(menuFromHeader
+      ? [{ id: "new", label: t("notes.new", "New note"), testId: "notes-menu-new", disabled: !projectId || notes.saving, onSelect: () => void handleCreate() }]
+      : []),
+    { id: "rename", label: t("notes.rename", "Rename"), testId: "notes-menu-rename", onSelect: () => { if (menuFromHeader) void startRenameFromHeader(menuNote); else startRename(menuNote); } },
     { id: "delete", label: t("common.delete", "Delete"), tone: "danger", testId: "notes-menu-delete", onSelect: () => void handleDeleteNote(menuNote) },
   ] : [];
 
@@ -309,13 +341,37 @@ export function NotesView({ projectId, addToast, controller, compact = false, li
   const saveIndicator = confirmedNote
     ? <span className="notes-save-state" data-testid="notes-save-state" aria-live="polite" title={t("notes.autoSaved", "Changes are saved automatically")}>{notes.saving ? t("notes.saving", "Saving…") : t("notes.savedState", "Saved")}</span>
     : null;
-  const createAction = !dedicated ? <ViewActionButton kind="create" label={t("notes.new", "New note")} onClick={() => void handleCreate()} disabled={!projectId || notes.saving} /> : null;
+  /*
+  FNXC:NotesRowActions 2026-09-17-10:37:
+  FN-506 : l'en-tête de Notes est contextuel, comme celui de Chat. Une note OUVERTE fait place à un bouton « … »
+  qui ouvre le menu PARTAGÉ (Nouvelle note, Renommer, Supprimer) au lieu du seul bouton de création : les actions
+  rapides de la note lue étaient jusqu'ici accessibles uniquement depuis sa ligne de liste, donc inatteignables dès
+  que le rail n'est pas visible. Le dock `listOnly` reste propriétaire de liste et garde toujours « Nouvelle note » ;
+  la fenêtre dédiée est l'exemption documentée et ne rend aucune des deux affordances.
+  */
+  const headerActionsNote = !listOnly && !dedicated && confirmedNote ? confirmedNote : null;
+  const headerActionsMenuKey = headerActionsNote ? `header-note:${headerActionsNote.id}` : null;
+  const createAction = !dedicated && !headerActionsNote ? <ViewActionButton kind="create" label={t("notes.new", "New note")} onClick={() => void handleCreate()} disabled={!projectId || notes.saving} /> : null;
+  const headerActionsButton = headerActionsNote && headerActionsMenuKey ? <button
+    type="button"
+    className="btn btn-icon notes-header-actions-btn"
+    data-testid="notes-header-actions-btn"
+    aria-haspopup="menu"
+    aria-expanded={rowMenu.isOpen(headerActionsMenuKey)}
+    aria-label={t("notes.actionsAria", "Note actions for {{title}}", { title: headerActionsNote.title })}
+    title={t("notes.actionsAria", "Note actions for {{title}}", { title: headerActionsNote.title })}
+    onClick={(event) => {
+      if (rowMenu.isOpen(headerActionsMenuKey)) { rowMenu.close(); return; }
+      const bounds = event.currentTarget.getBoundingClientRect();
+      rowMenu.openAt(headerActionsMenuKey, bounds.right, bounds.bottom);
+    }}
+  ><MoreHorizontal size={16} aria-hidden="true" /></button> : null;
   const header = <ViewHeader
     icon={StickyNote}
     title={confirmedNoteTitle ?? t("nav.notes", "Notes")}
     onClose={floating ? requestFloatingClose : undefined}
     backAction={!dedicated && detailPaneActive && !listRailVisible ? { label: t("notes.backToList", "Back to notes"), onClick: () => void handleBackToList(), "data-testid": "notes-back-btn" } : undefined}
-    actions={saveIndicator || createAction ? <>{saveIndicator}{createAction}</> : undefined}
+    actions={saveIndicator || createAction || headerActionsButton ? <>{saveIndicator}{createAction}{headerActionsButton}</> : undefined}
   />;
   const content = <section className={`notes-view${floating ? " notes-view--floating" : ""}${compact ? " notes-view--compact" : ""}${listOnly ? " notes-view--list-only" : ""}${dedicated ? " notes-view--dedicated" : ""}${detailPaneActive ? " notes-view--detail" : ""}`} aria-label={t("nav.notes", "Notes")}>
     <ViewLayout

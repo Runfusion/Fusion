@@ -1057,7 +1057,13 @@ export function MailboxModal({
             <span>{showComposer
               ? (composeReplyContext ? t("composer.replyTitle", "Reply") : t("composer.newMessageTitle", "New Message"))
               : t("mailbox.title", "Mailbox")}</span>
-            {unreadCount > 0 && (
+            {/*
+            FNXC:Navigation 2026-09-17-10:37:
+            FN-506: the floating mailbox is a second full implementation of the same destination, so it carries the same
+            badge scope rule as MailboxView — the unread count is inbox information and renders only while the Inbox tab
+            is active and the composer does not own the header. It must never appear on the Outbox tab.
+            */}
+            {!showComposer && activeTab === "inbox" && unreadCount > 0 && (
               <span className="mailbox-unread-badge" data-testid="mailbox-unread-badge">
                 {unreadCount}
               </span>

@@ -1592,8 +1592,9 @@ export function MailboxView({
         data-testid="mailbox-row-context-menu"
       />
       {/*
-      FNXC:Navigation 2026-06-22-01:10:
-      Mailbox adopts the shared ViewHeader (Command Center-modeled) for a consistent main-content title row. The unread count badge stays beside the title (preserving the mailbox-unread-badge test id), and Compose / Mark-all-read / Refresh controls move into the header actions cluster so they keep working. Tabs remain below the header as their own row.
+      FNXC:Navigation 2026-09-17-10:37:
+      Mailbox adopts the shared ViewHeader (Command Center-modeled) for a consistent main-content title row: Compose / Mark-all-read / Refresh controls live in the header actions cluster and tabs remain below the header as their own row.
+      FN-506 replaces the earlier "the unread count badge stays beside the title" rule: the unread count is INBOX information, so it renders only while the Inbox tab is active and the composer does not own the header — the same guard `mailbox-mark-all-read` already carries. On the Outbox tab an inbox unread count is noise the operator cannot act on from there. The single render point and the `mailbox-unread-badge` test id are unchanged.
       */}
       {/*
       FNXC:StandardizedMailboxLayout 2026-09-14-10:24:
@@ -1617,7 +1618,7 @@ export function MailboxView({
         } : undefined}
         actions={
           <>
-            {unreadCount > 0 && (
+            {!showComposer && activeTab === "inbox" && unreadCount > 0 && (
               <span className="mailbox-unread-badge" data-testid="mailbox-unread-badge">
                 {unreadCount}
               </span>

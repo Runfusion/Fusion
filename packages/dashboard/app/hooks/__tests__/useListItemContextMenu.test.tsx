@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useListItemContextMenu } from "../useListItemContextMenu";
-import { LIST_ITEM_LONG_PRESS_DELAY_MS, LIST_ITEM_ROW_ATTRIBUTE, registerDrawerGestureCanceller } from "../../utils/listItemGesture";
+import { LIST_ITEM_LONG_PRESS_DELAY_MS, LIST_ITEM_MENU_VIEWPORT_MARGIN, LIST_ITEM_ROW_ATTRIBUTE, registerDrawerGestureCanceller } from "../../utils/listItemGesture";
 
 /*
 FNXC:ListItemContextMenu 2026-09-17-03:18:
@@ -20,6 +20,13 @@ function Host({ onSelect, contextId, enabled }: { onSelect?: () => void; context
       </button>
       <span data-testid="anchor">{menu.anchor ? `${menu.anchor.key}@${menu.anchor.x},${menu.anchor.y}` : "none"}</span>
       <button type="button" data-testid="close" onClick={menu.close}>close</button>
+      {/*
+      FNXC:ListItemContextMenu 2026-09-17-10:37:
+      FN-506 : déclencheur HORS ligne (l'en-tête contextuel d'une destination) qui ouvre le même menu par
+      `openAt`, avec la même clé composée.
+      */}
+      <button type="button" data-testid="header-trigger" aria-expanded={menu.isOpen("p1:header-note:a")} onClick={() => menu.openAt("p1:header-note:a", 200, 300)}>header</button>
+      <button type="button" data-testid="header-trigger-offscreen" onClick={() => menu.openAt("p1:header-note:a", 99999, -50)}>offscreen</button>
     </div>
   );
 }
@@ -126,6 +133,43 @@ describe("useListItemContextMenu", () => {
     fireEvent.contextMenu(screen.getByTestId("row"), { clientX: 10, clientY: 10 });
     expect(screen.getByTestId("anchor").textContent).not.toBe("none");
     rerender(<Host contextId="project-b" enabled={false} />);
+    expect(screen.getByTestId("anchor").textContent).toBe("none");
+  });
+
+  /*
+  FNXC:ListItemContextMenu 2026-09-17-10:37:
+  FN-506 : l'ouverture programmatique partage exactement le contrat de l'ouverture par geste — clé composée,
+  bornage au viewport, garde `enabled`, fermeture sur changement de contexte.
+  */
+  it("opens programmatically at the requested key and coordinates", () => {
+    render(<Host />);
+    fireEvent.click(screen.getByTestId("header-trigger"));
+    expect(screen.getByTestId("anchor").textContent).toBe("p1:header-note:a@200,300");
+    expect(screen.getByTestId("header-trigger")).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("clamps a programmatic anchor to the viewport margins", () => {
+    render(<Host />);
+    fireEvent.click(screen.getByTestId("header-trigger-offscreen"));
+    const anchor = screen.getByTestId("anchor").textContent ?? "";
+    const [, coords] = anchor.split("@");
+    const [x, y] = coords.split(",").map(Number);
+    expect(x).toBeLessThanOrEqual(Math.max(LIST_ITEM_MENU_VIEWPORT_MARGIN, window.innerWidth - LIST_ITEM_MENU_VIEWPORT_MARGIN));
+    expect(x).toBeGreaterThanOrEqual(LIST_ITEM_MENU_VIEWPORT_MARGIN);
+    expect(y).toBeGreaterThanOrEqual(LIST_ITEM_MENU_VIEWPORT_MARGIN);
+  });
+
+  it("closes a programmatic menu when the context identity changes", () => {
+    const { rerender } = render(<Host contextId="project-a" />);
+    fireEvent.click(screen.getByTestId("header-trigger"));
+    expect(screen.getByTestId("anchor").textContent).not.toBe("none");
+    rerender(<Host contextId="project-b" />);
+    expect(screen.getByTestId("anchor").textContent).toBe("none");
+  });
+
+  it("opens nothing programmatically while the host is disabled", () => {
+    render(<Host enabled={false} />);
+    fireEvent.click(screen.getByTestId("header-trigger"));
     expect(screen.getByTestId("anchor").textContent).toBe("none");
   });
 

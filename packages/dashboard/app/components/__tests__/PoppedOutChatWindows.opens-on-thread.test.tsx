@@ -167,10 +167,18 @@ describe("PoppedOutChatWindows requested-thread arrival", () => {
     );
 
     expect(document.querySelector(".chat-view")).toHaveClass("chat-view--detail");
-    expect(document.querySelector(".chat-sidebar")).toHaveClass("chat-sidebar--hidden");
+    expect(document.querySelector(".view-sidebar")).toHaveClass("chat-sidebar--hidden");
     expect(document.querySelector(".chat-thread")).toBeInTheDocument();
     expect(screen.getByTestId("chat-back-btn")).toBeInTheDocument();
-    expect(screen.getByTestId("chat-new-btn")).toBeInTheDocument();
+    /*
+    FNXC:ChatNavigation 2026-09-17-11:10:
+    FN-506 : cet hôte compact affiche une conversation (initialDirectSession, sans dedicatedConversation),
+    donc l'en-tête porte le menu « … » d'actions de conversation et non le « + ». La création reste
+    atteignable depuis ce menu, ce que l'assertion sur chat-context-new-chat prouve ici.
+    */
+    expect(screen.queryByTestId("chat-new-btn")).toBeNull();
+    fireEvent.click(screen.getByTestId("chat-header-actions-btn"));
+    expect(screen.getByTestId("chat-context-new-chat")).toBeInTheDocument();
     expect(navigation.pushNav).not.toHaveBeenCalled();
   });
 

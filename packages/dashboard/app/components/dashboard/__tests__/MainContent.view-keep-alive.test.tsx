@@ -484,7 +484,13 @@ describe("MainContent main-view keep alive", () => {
     input.focus();
     expect(input).toHaveFocus();
     expect(input.closest(".mobile-drawer__panel")).toBe(dialog);
-    expect(screen.getByTestId("chat-new-btn")).toBeVisible();
+    /*
+    FNXC:ChatNavigation 2026-09-17-10:37:
+    FN-506 : le compositeur n'est atteint qu'après ouverture d'une conversation, donc l'en-tête porte ici le menu
+    « … » d'actions de conversation (qui contient la création) et non le bouton « + ».
+    */
+    expect(screen.getByTestId("chat-header-actions-btn")).toBeVisible();
+    expect(screen.queryByTestId("chat-new-btn")).toBeNull();
     expect(screen.queryByTestId("chat-pop-out")).toBeNull();
     expect(input).toBeVisible();
     expect(input).not.toBeDisabled();
