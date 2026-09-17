@@ -110,6 +110,15 @@ Pinned terminal mode is an in-flow project-shell child instead of a portaled ove
 
 FNXC:TerminalLayout 2026-07-12-18:50:
 FN-7897 fixed the pinned terminal rendering underneath the fixed ExecutorStatusBar footer. .terminal-below-host is a sibling of .dashboard-project-shell inside .dashboard-project-stack (not a descendant), so unlike .left-sidebar-nav--with-footer/.right-dock--with-footer it cannot rely on --executor-footer-height inherited from the shell; the --with-footer modifier below redeclares the token at this consumer, matching the .project-content--with-footer precedent.
+
+FNXC:TerminalLayout 2026-09-17-05:20:
+FN-488: the pinned panel's stacking is COMPONENT-OWNED. TerminalModal.tsx claims the shared `floatingWindowStack`
+counter and writes the resulting z-index inline on `.terminal-modal--below`, so the pinned terminal rises above a
+window the operator engaged earlier and falls behind the next one they engage — exactly like every other window.
+This host must therefore NEVER declare `z-index`, `transform`, `filter`, `contain`, or `isolation`: any of those
+would create a stacking context that traps the raised panel below its siblings in the root context, and would also
+lift this host's background over the fixed bottom bars (ExecutorStatusBar z 50, DesktopActionBar --z-sticky) whose
+height it merely reserves via --with-footer.
 */
 .terminal-below-host {
   display: flex;

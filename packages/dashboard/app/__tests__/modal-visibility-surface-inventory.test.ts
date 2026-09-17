@@ -49,21 +49,31 @@ const declarativelyManagedDirectModalRoots = [
   "settings/sections/ModelPricingSection.tsx",
 ] as const;
 
+/*
+FNXC:PopoverLayering 2026-09-17-05:20:
+FN-488 classifies the three anchored, explicitly NON-modal portals that landed with the neighbouring search and
+list-menu work (`aria-modal="false"` tool popover, `role="menu"` list context menu, non-modal task-search results
+panel). They portal to document.body for root-context layering only; none is a window root, so none joins
+`modalPortalRoots` or the declarative manager bridge.
+*/
 const nonModalPortalExclusions = [
   "Board.tsx",
   "ChatThinkingLevelControl.tsx",
   "CustomModelDropdown.tsx",
+  "DashboardToolPopover.tsx",
   "DashboardWindowVisibilityToggle.tsx",
   "ExecutorStatusBar.tsx",
   "GraphWorkflowSwitcherSlot.tsx",
   "HeaderWorkflowSwitcherSlot.tsx",
   "InlineCreateCard.tsx",
+  "ListItemContextMenu.tsx",
   "ListView.tsx",
   "QuickEntryBox.tsx",
   "ReportActionMenu.tsx",
   "TaskCard.tsx",
   "TaskChatTab.tsx",
   "TaskPlannerChatTab.tsx",
+  "TaskSearchResultsPopover.tsx",
   /* FNXC:FloatingWindowDialogHosts 2026-09-14-22:36: FN-394 moved the workflow editor's last portal (the expanded prompt editor) into the shared window, so this file portals nothing itself. */
   "WorkflowOptionalStepsDropdown.tsx",
   "WorkflowSwitcher.tsx",

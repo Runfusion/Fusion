@@ -464,7 +464,13 @@ describe("ExecutorStatusBar", () => {
       expect(statusBar.contains(tooltip)).toBe(false);
       const tooltipRule = getCssRuleBlock(executorStatusBarCss, ".executor-status-bar__stat-tooltip");
       expect(tooltipRule).toContain("position: fixed");
-      expect(tooltipRule).toContain("z-index: var(--z-popover, 60)");
+      /*
+      FNXC:ExecutorFooter 2026-09-17-05:36:
+      FN-488 moved this tooltip off the static `--z-popover` layer: the pinned bottom terminal now claims the shared
+      10100+ window band in the very strip the footer tooltip is painted into, so a layer of 60 hid it. It follows the
+      live `--fusion-max-z` ceiling instead, exactly like the DesktopActionBar open menu and the usage popover.
+      */
+      expect(tooltipRule).toContain("z-index: calc(var(--fusion-max-z, 11001) + 2)");
       expectNoHardcodedColors(tooltipRule);
     });
 

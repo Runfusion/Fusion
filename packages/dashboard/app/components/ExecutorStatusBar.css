@@ -143,9 +143,16 @@ FNXC:StuckTagRemoval 2026-08-17-22:30: Operator removed stuck-task tagging from 
   display: none;
 }
 
+/*
+FNXC:ExecutorFooter 2026-09-17-05:36:
+FN-488 : cette infobulle est portalée dans `document.body` et peinte juste au-dessus de la barre fixe, donc dans la
+bande occupée par le terminal ancré. Depuis que ce panneau revendique le compteur partagé (>= 10101), un
+`--z-popover` à 60 la masquerait. Comme le menu ouvert de `DesktopActionBar` et la popover d'usage, elle suit le
+plafond vivant `--fusion-max-z` : une surface de survol transitoire reste toujours au-dessus des fenêtres empilées.
+*/
 .executor-status-bar__stat-tooltip {
   position: fixed;
-  z-index: var(--z-popover, 60);
+  z-index: calc(var(--fusion-max-z, 11001) + 2);
   transform: translate(-50%, calc(-100% - var(--space-sm)));
   padding: var(--space-xs) var(--space-sm);
   border-radius: var(--radius-sm);

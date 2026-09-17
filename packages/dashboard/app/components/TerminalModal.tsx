@@ -35,7 +35,7 @@ import { useDrawerDismissGesture } from "../hooks/useDrawerDismissGesture";
 import { FloatingWindow, FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT } from "./FloatingWindow";
 import type { FloatingWindowDragGestureEnd, FloatingWindowDragHandoff } from "./FloatingWindow";
 import { FLOATING_WINDOW_DRAG_THRESHOLD_PX } from "./floatingWindowGeometry";
-import { DashboardWindowSurfaceRoot } from "../context/DashboardWindowManagerContext";
+import { DashboardWindowSurfaceRoot, useDashboardWindowFocusRestoring } from "../context/DashboardWindowManagerContext";
 import { ModalCloseButton } from "./ModalCloseButton";
 import { ViewDrawerHandle, resolveDrawerPresentation } from "./ViewDrawer";
 import { ViewLayoutContent, ViewLayoutFooter, ViewLayoutHeader } from "./ViewLayout";
@@ -633,7 +633,50 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
   */
   const isFloatingMode = !embedded && !isMobileTerminal && displayMode === "floating";
   const isBelowMode = !embedded && !isMobileTerminal && displayMode === "below";
-  
+
+  /*
+  FNXC:TerminalLayout 2026-09-17-05:20:
+  FN-488 : « Le terminal ancré en bas ne doit pas être bloqué dans un z-index inférieur aux modales. Il doit se
+  comporter exactement comme les autres modales », c'est-à-dire que la dernière surface ouverte ou engagée passe
+  devant, peu importe l'ancrage. Le panneau ancré n'avait aucun `z-index` : il perdait donc systématiquement contre
+  la bande partagée 10100+ des fenêtres, et aucun clic ne pouvait inverser cet ordre.
+  Il revendique désormais le MÊME compteur `floatingWindowStack` que `FloatingWindow` — claim au montage (et à chaque
+  entrée en mode ancré), remontée sur pointerdown/focus, et remontée sur le signal `focusNonce` — avec la même garde
+  anti-churn (`>= currentFloatingZ()`) et la même barrière de restauration de focus.
+  La valeur est appliquée en ligne sur le PANNEAU (`.terminal-modal--below`, déjà `position: relative`) et jamais sur
+  son hôte `.terminal-below-host`, qui doit rester sans contexte d'empilement pour que la comparaison ait lieu dans le
+  contexte racine et que le footer fixe (`ExecutorStatusBar`, `DesktopActionBar`) continue de peindre au-dessus de la
+  bande réservée. La présentation flottante laisse `FloatingWindow` posséder le claim, et les présentations mobile et
+  `embedded` ne revendiquent rien : aucune d'elles n'est une fenêtre empilable de ce compteur.
+  */
+  const [pinnedZIndex, setPinnedZIndex] = useState<number | undefined>(() => (isBelowMode ? nextFloatingZ() : undefined));
+  useEffect(() => {
+    setPinnedZIndex((current) => {
+      if (!isBelowMode) return undefined;
+      if (current !== undefined) return current;
+      return nextFloatingZ();
+    });
+  }, [isBelowMode]);
+  const bringPinnedToFront = useCallback(() => {
+    setPinnedZIndex((current) => {
+      if (current === undefined) return current;
+      // Ne revendiquer que si le panneau n'est pas déjà au sommet, pour éviter de faire tourner le compteur.
+      if (current >= currentFloatingZ()) return current;
+      return nextFloatingZ();
+    });
+  }, []);
+  const pinnedFocusRestoring = useDashboardWindowFocusRestoring();
+  const bringPinnedToFrontOnFocus = useCallback(() => {
+    if (pinnedFocusRestoring()) return;
+    bringPinnedToFront();
+  }, [bringPinnedToFront, pinnedFocusRestoring]);
+  const previousPinnedFocusNonceRef = useRef(focusNonce);
+  useEffect(() => {
+    if (focusNonce === previousPinnedFocusNonceRef.current) return;
+    previousPinnedFocusNonceRef.current = focusNonce;
+    if (isBelowMode) bringPinnedToFront();
+  }, [bringPinnedToFront, focusNonce, isBelowMode]);
+
   const terminalRef = useRef<HTMLDivElement>(null);
   const modalRef = useRef<HTMLDivElement>(null);
   /*
@@ -2686,7 +2729,19 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
   FNXC:TerminalWorkspaces 2026-07-13-00:00:
   The portaled listbox has CSS fallback coordinates for non-JS resilience, but it must never paint there during the open-frame measurement pass. Position in a layout effect and keep the menu invisible/non-interactive until the computed trigger-relative coordinates are applied.
   */
-  const terminalWorkspaceMenuFloatingZ = isFloatingMode ? currentFloatingZ() + 1 : undefined;
+  /*
+  FNXC:TerminalWorkspaces 2026-09-17-05:36:
+  FN-488 : depuis que le panneau ancré revendique le compteur partagé, un `z-index` statique laisserait ce menu
+  portalé (5000) derrière le panneau (>= 10101) et rendrait la sélection de workspace invisible en présentation
+  ancrée. La couche du menu est donc dérivée de la revendication du panneau dans les DEUX présentations empilées :
+  flottante (claim porté par `FloatingWindow`) et ancrée (claim porté par `pinnedZIndex`), toujours strictement
+  au-dessus de la valeur la plus haute connue. Les présentations mobile et `embedded` gardent la couche CSS.
+  */
+  const terminalWorkspaceMenuFloatingZ = isFloatingMode
+    ? currentFloatingZ() + 1
+    : isBelowMode && pinnedZIndex !== undefined
+      ? Math.max(pinnedZIndex, currentFloatingZ()) + 1
+      : undefined;
 
   const modalStyle = {
     ...(keyboardOverlap > 0
@@ -2701,6 +2756,12 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
         }
       : {}),
     ...(isBelowMode ? { "--terminal-below-height": `${resolveTerminalBelowHeight()}px` } : {}),
+    /*
+    FNXC:TerminalLayout 2026-09-17-05:20:
+    FN-488 : le `z-index` partagé n'est posé qu'en présentation ancrée. En flottant `FloatingWindow` porte déjà la
+    valeur sur son propre panneau, et les présentations mobile/`embedded` ne participent pas à ce compteur.
+    */
+    ...(isBelowMode && pinnedZIndex !== undefined ? { zIndex: pinnedZIndex } : {}),
   } as CSSProperties;
 
   /*
@@ -2957,6 +3018,14 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
       style={modalStyle}
       role={isBelowMode ? "region" : undefined}
       aria-label={isBelowMode ? t("terminal.belowRegion", "Pinned terminal") : undefined}
+      /*
+      FNXC:TerminalLayout 2026-09-17-05:20:
+      FN-488 : seule la présentation ancrée arme la remontée, parce qu'elle seule porte le `z-index` partagé. En
+      flottant, `FloatingWindow` possède déjà ces mêmes gestionnaires sur son panneau : les dupliquer ici ferait
+      revendiquer le compteur deux fois pour une seule interaction.
+      */
+      onPointerDownCapture={isBelowMode ? bringPinnedToFront : undefined}
+      onFocusCapture={isBelowMode ? bringPinnedToFrontOnFocus : undefined}
       {...(mobileDrawer ? dismissHandleProps : {})}
     >
         {mobileDrawer && (
