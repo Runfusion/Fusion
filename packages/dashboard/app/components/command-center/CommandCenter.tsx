@@ -35,7 +35,7 @@ import { NodesView } from "../NodesView";
 import type { ToastType } from "../../hooks/useToast";
 import type { TaskView } from "../../hooks/useViewState";
 import { useVisibilityAwarePoll } from "../../hooks/visibilitySuspension";
-import { useViewportMode } from "../../hooks/useViewportMode";
+import { useViewportMode, type ViewportMode } from "../../hooks/useViewportMode";
 import { SdlcFunnel } from "./SdlcFunnel";
 import { inferProviderIconKey } from "../../utils/providerIconKey";
 import { Bar, type BarDatum } from "./charts/Bar";
@@ -68,6 +68,21 @@ type SubViewId =
 interface SubView {
   id: SubViewId;
   label: string;
+}
+
+/*
+FNXC:CommandCenter 2026-09-17-06:20:
+FN-492: l'ouverture téléphone du Dashboard atterrit sur le contenu d'Overview ; tablette et ordinateur restaurent la
+rubrique mémorisée par projet. Ces deux résolutions sont partagées par le montage et par le changement de projet pour
+qu'un seul endroit décrive la règle d'ouverture.
+*/
+function resolveOpeningTab(viewportMode: ViewportMode, projectId?: string): SubViewId {
+  if (viewportMode === "mobile") return "overview";
+  return (getCommandCenterState(projectId)?.activeTab as SubViewId | undefined) ?? "overview";
+}
+
+function resolveOpeningMobilePane(viewportMode: ViewportMode): ViewLayoutMobilePane {
+  return viewportMode === "mobile" ? "detail" : "list";
 }
 
 /*
@@ -611,9 +626,18 @@ export function CommandCenter({
   /*
   FNXC:CommandCenter 2026-07-22-13:40:
   FN remount-churn fix R12: this view unmounts on navigation by design (no keep-alive), so the active sub-tab and date range restore from per-project persisted state on remount. Persisting follows the getPlanningDescription/GitHub-import precedent in modalPersistence.ts; a stored tab that no longer exists (e.g. nodes disabled) falls back to overview via the guard effect below.
+
+  FNXC:CommandCenter 2026-09-17-06:20:
+  FN-492: le menu « Dashboard » du pied de page mobile ouvre cette vue, et il doit atterrir sur le contenu d'Overview.
+  Sur téléphone, l'OUVERTURE (montage, et changement de projet) résout donc `activeTab = "overview"` et
+  `mobilePane = "detail"` au lieu de restaurer la rubrique mémorisée sur la liste des rubriques ; tablette et
+  ordinateur conservent strictement la restauration persistée et `"list"`. La règle ne s'applique qu'à l'ouverture :
+  un simple changement de mode d'affichage (rotation, clavier virtuel, redimensionnement) ne réinitialise jamais la
+  rubrique en cours, et la liste des rubriques reste atteignable par l'action Retour du bandeau. La plage de dates
+  persistée est restaurée partout, y compris sur téléphone, et le format stocké reste inchangé.
   */
-  const [activeTab, setActiveTab] = useState<SubViewId>(() => (getCommandCenterState(projectId)?.activeTab as SubViewId | undefined) ?? "overview");
-  const [mobilePane, setMobilePane] = useState<ViewLayoutMobilePane>("list");
+  const [activeTab, setActiveTab] = useState<SubViewId>(() => resolveOpeningTab(viewportMode, projectId));
+  const [mobilePane, setMobilePane] = useState<ViewLayoutMobilePane>(() => resolveOpeningMobilePane(viewportMode));
 
   const [range, setRange] = useState<DateRange>(() => getCommandCenterState(projectId)?.range ?? rangeFromPreset(defaultPresets((_k, f) => f)[1]));
 
@@ -622,10 +646,10 @@ export function CommandCenter({
     if (persistedProjectRef.current === projectId) return;
     persistedProjectRef.current = projectId;
     const stored = getCommandCenterState(projectId);
-    setActiveTab((stored?.activeTab as SubViewId | undefined) ?? "overview");
+    setActiveTab(resolveOpeningTab(viewportMode, projectId));
     setRange(stored?.range ?? rangeFromPreset(defaultPresets((_k, f) => f)[1]));
-    setMobilePane("list");
-  }, [projectId]);
+    setMobilePane(resolveOpeningMobilePane(viewportMode));
+  }, [projectId, viewportMode]);
   useEffect(() => {
     if (persistedProjectRef.current !== projectId) return;
     saveCommandCenterState({ activeTab, range }, projectId);
