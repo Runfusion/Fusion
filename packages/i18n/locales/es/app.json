@@ -1251,6 +1251,7 @@
   "chat": {
     "archive": "Archivar",
     "attachFiles": "Adjuntar archivos",
+    "backToConversations": "",
     "cancel": "Cancelar",
     "cancelButton": "Cancelar",
     "clearConversationFailed": "Error al borrar la conversación",

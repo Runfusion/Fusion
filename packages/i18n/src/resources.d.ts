@@ -1261,6 +1261,7 @@ export default interface Resources {
       "agentRepliesFailed": "Some agents could not reply: {{agents}}",
       "archive": "Archive",
       "attachFiles": "Attach files",
+      "backToConversations": "Back to conversations",
       "cancel": "Cancel",
       "cancelButton": "Cancel",
       "cancelPendingEdit": "Cancel queued message edit",
