@@ -1,13 +1,10 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  PAGE_ANIMATION_MS,
   PIN_MAX_REASSERT_MS,
   isColumnCentered,
-  resolveFlingTargetIndex,
-  resolvePageAnimationMs,
-  resolvePageCount,
   resolvePanDirection,
-  resolveSettleTargetIndex,
   useColumnScrollSnap,
 } from "../useColumnScrollSnap";
 import { isMobileViewport } from "../useViewportMode";
@@ -46,9 +43,19 @@ function stubViewport(viewport: Viewport): void {
   });
 }
 
+/*
+FNXC:BoardNavigation 2026-09-17-09:49:
+FN-500 : la fixture déclare son `scrollWidth`. La production ne conserve plus d'exception « scrollWidth
+inutilisable → borne supérieure infinie » : un ancrage doit toujours être une position ATTEIGNABLE, donc
+c'est à la fixture de décrire une géométrie réaliste.
+*/
 function createScroller(columnCount = 3, initialScrollLeft = 0): HTMLElement {
   const scroller = document.createElement("main");
   Object.defineProperty(scroller, "clientWidth", { configurable: true, value: COLUMN_WIDTH });
+  Object.defineProperty(scroller, "scrollWidth", {
+    configurable: true,
+    value: columnCount * COLUMN_WIDTH,
+  });
   scroller.getBoundingClientRect = () => new DOMRect(0, 0, COLUMN_WIDTH, 200);
   let scrollLeft = initialScrollLeft;
   Object.defineProperty(scroller, "scrollLeft", {
@@ -106,14 +113,18 @@ The hook now owns the post-lift motion: a directional lift animates to its targe
 waiting out native inertia. Settling therefore means "run the page animation to completion", so this
 helper advances past both the idle fallback and the longest page animation.
 */
-const SETTLE_ADVANCE_MS = 400;
+const SETTLE_ADVANCE_MS = 500;
 
 /*
 FNXC:BoardNavigation 2026-09-14-20:19:
 FN-398 bounded the compositor pin, so cases that assert the fence must reach the snap WITHOUT spending the whole
-fence window first. This advance clears a single-column page animation (190ms) plus a couple of frames, leaving the fence open.
+fence window first. This advance clears the single-column page animation plus a couple of frames, leaving the fence open.
+
+FNXC:BoardNavigation 2026-09-17-09:49:
+FN-500 : la transition dure désormais PAGE_ANIMATION_MS (280 ms) avec un profil accelération/décélération ;
+cette avance est dérivée de la constante de production, jamais recopiée.
 */
-const PAGE_ANIMATION_SETTLE_MS = 224;
+const PAGE_ANIMATION_SETTLE_MS = PAGE_ANIMATION_MS + 34;
 
 function settleAfterMomentum(): void {
   act(() => {
@@ -137,106 +148,6 @@ describe("resolvePanDirection", () => {
   });
 });
 
-/*
-FNXC:BoardNavigation 2026-07-24-11:20:
-Owning the momentum means reach can no longer come from however far native inertia coasts, so it
-comes from release velocity instead. These guard that mapping: deliberate swipe = one column, hard
-flick = more, with a hard ceiling.
-*/
-describe("resolvePageCount", () => {
-  it("pages exactly one column for a deliberate slow swipe", () => {
-    expect(resolvePageCount(0)).toBe(1);
-    expect(resolvePageCount(0.4)).toBe(1);
-    expect(resolvePageCount(1.5)).toBe(1);
-  });
-
-  it("buys extra columns as release velocity climbs", () => {
-    expect(resolvePageCount(1.7)).toBe(2);
-    expect(resolvePageCount(3.4)).toBe(3);
-  });
-
-  it("caps a hard flick so it cannot fly across the board", () => {
-    expect(resolvePageCount(40)).toBe(3);
-  });
-
-  it("is direction-agnostic (magnitude only) and ignores non-finite input", () => {
-    expect(resolvePageCount(-3.4)).toBe(3);
-    expect(resolvePageCount(Number.NaN)).toBe(1);
-  });
-
-  /*
-  FNXC:BoardNavigation 2026-07-25-09:40:
-  Reported symptom: a small swipe jumped several columns because a quick short flick reads fast.
-  Extra columns now require travel as well as speed.
-  */
-  describe("travel gate", () => {
-    const viewportWidth = 390;
-
-    it("keeps a fast but short flick to a single column", () => {
-      expect(resolvePageCount(3.4, { travelPx: 30, viewportWidth })).toBe(1);
-      expect(resolvePageCount(40, { travelPx: 60, viewportWidth })).toBe(1);
-    });
-
-    it("still allows multi-column reach when the swipe actually travelled", () => {
-      expect(resolvePageCount(1.7, { travelPx: viewportWidth, viewportWidth })).toBe(2);
-      expect(resolvePageCount(3.4, { travelPx: viewportWidth * 2, viewportWidth })).toBe(3);
-    });
-
-    it("never lets travel alone buy columns a slow gesture did not earn", () => {
-      expect(resolvePageCount(0.4, { travelPx: viewportWidth * 3, viewportWidth })).toBe(1);
-    });
-
-    it("ignores the gate when no usable viewport width is available", () => {
-      expect(resolvePageCount(3.4, { travelPx: 10, viewportWidth: 0 })).toBe(3);
-      expect(resolvePageCount(3.4, { travelPx: 10, viewportWidth: Number.NaN })).toBe(3);
-    });
-
-    it("treats travel as a magnitude and tolerates non-finite travel", () => {
-      expect(resolvePageCount(1.7, { travelPx: -viewportWidth, viewportWidth })).toBe(2);
-      expect(resolvePageCount(1.7, { travelPx: Number.NaN, viewportWidth })).toBe(1);
-    });
-  });
-});
-
-describe("resolvePageAnimationMs", () => {
-  it("keeps a single-column hop short and grows sublinearly, capped", () => {
-    const single = resolvePageAnimationMs(1);
-    const triple = resolvePageAnimationMs(3);
-    expect(single).toBeGreaterThan(0);
-    expect(single).toBeLessThanOrEqual(220);
-    expect(triple).toBeGreaterThan(single);
-    expect(triple).toBeLessThanOrEqual(300);
-    // Absurd counts clamp at the ceiling rather than growing without bound.
-    expect(resolvePageAnimationMs(50)).toBe(300);
-  });
-});
-
-describe("resolveFlingTargetIndex", () => {
-  const base = { columnCount: 5, nearestIndex: 0 };
-
-  it("advances pageCount columns from the origin in the locked direction", () => {
-    expect(resolveFlingTargetIndex({ ...base, originIndex: 0, direction: 1, pageCount: 1 })).toBe(1);
-    expect(resolveFlingTargetIndex({ ...base, originIndex: 0, direction: 1, pageCount: 3 })).toBe(3);
-    expect(resolveFlingTargetIndex({ ...base, originIndex: 4, direction: -1, pageCount: 2, nearestIndex: 4 })).toBe(2);
-  });
-
-  it("clamps to the column range at both edges", () => {
-    expect(resolveFlingTargetIndex({ ...base, originIndex: 4, direction: 1, pageCount: 3, nearestIndex: 4 })).toBe(4);
-    expect(resolveFlingTargetIndex({ ...base, originIndex: 0, direction: -1, pageCount: 3 })).toBe(0);
-  });
-
-  it("never animates backwards past a column the finger already dragged onto", () => {
-    // Long slow drag landed on column 2 while the origin was 0: keep the drag's landing.
-    expect(resolveFlingTargetIndex({ ...base, originIndex: 0, direction: 1, pageCount: 1, nearestIndex: 2 })).toBe(2);
-    expect(resolveFlingTargetIndex({ ...base, originIndex: 4, direction: -1, pageCount: 1, nearestIndex: 2 })).toBe(2);
-  });
-
-  it("falls back to the nearest column with no direction, and to 0 below two columns", () => {
-    expect(resolveFlingTargetIndex({ ...base, originIndex: 0, direction: 0, pageCount: 2, nearestIndex: 3 })).toBe(3);
-    expect(resolveFlingTargetIndex({ columnCount: 1, originIndex: 0, direction: 1, pageCount: 2, nearestIndex: 0 })).toBe(0);
-  });
-});
-
 describe("isColumnCentered", () => {
   it("recognizes only an integer column-centering target", () => {
     const scroller = createScroller(3, COLUMN_WIDTH);
@@ -245,58 +156,6 @@ describe("isColumnCentered", () => {
     expect(isColumnCentered(scroller, columns)).toBe(true);
     scroller.scrollLeft = 40;
     expect(isColumnCentered(scroller, columns)).toBe(false);
-  });
-});
-
-describe("resolveSettleTargetIndex", () => {
-  it("forward short swipe from column 0 commits to column 1", () => {
-    const scroller = createScroller(3, 8);
-    expect(resolveSettleTargetIndex(scroller, [...scroller.children] as HTMLElement[], 1, 0)).toBe(1);
-  });
-
-  it("forward just past column 0 center still commits to column 1, never back", () => {
-    const scroller = createScroller(3, 40);
-    expect(resolveSettleTargetIndex(scroller, [...scroller.children] as HTMLElement[], 1, 0)).toBe(1);
-  });
-
-  /*
-  FNXC:BoardNavigation 2026-07-22-21:05:
-  Overshoot regression: a fling that decelerates with column 1 mostly on screen (viewport
-  center just past its center) must land on column 1 — the prior pager forced column 2.
-  */
-  it("forward fling that decelerated onto column 1 lands on column 1, not one further", () => {
-    const scroller = createScroller(3, 120);
-    expect(resolveSettleTargetIndex(scroller, [...scroller.children] as HTMLElement[], 1, 0)).toBe(1);
-  });
-
-  it("forward fling that carried to column 2 lands on column 2 (nearest wins)", () => {
-    const scroller = createScroller(3, 180);
-    expect(resolveSettleTargetIndex(scroller, [...scroller.children] as HTMLElement[], 1, 0)).toBe(2);
-  });
-
-  it("back short swipe from column 1 commits to column 0", () => {
-    const scroller = createScroller(3, COLUMN_WIDTH - 8);
-    expect(resolveSettleTargetIndex(scroller, [...scroller.children] as HTMLElement[], -1, 1)).toBe(0);
-  });
-
-  it("backward fling that decelerated onto column 1 lands on column 1, not one further", () => {
-    const scroller = createScroller(3, 80);
-    expect(resolveSettleTargetIndex(scroller, [...scroller.children] as HTMLElement[], -1, 2)).toBe(1);
-  });
-
-  it("never settles against the locked direction from the origin column", () => {
-    // Rubber-band pulled the rest point back onto the origin column: still advance one.
-    const forward = createScroller(4, COLUMN_WIDTH);
-    expect(resolveSettleTargetIndex(forward, [...forward.children] as HTMLElement[], 1, 1)).toBe(2);
-    const backward = createScroller(4, COLUMN_WIDTH);
-    expect(resolveSettleTargetIndex(backward, [...backward.children] as HTMLElement[], -1, 1)).toBe(0);
-  });
-
-  it("clamps at the board edges", () => {
-    const last = createScroller(3, COLUMN_WIDTH * 2);
-    expect(resolveSettleTargetIndex(last, [...last.children] as HTMLElement[], 1, 2)).toBe(2);
-    const first = createScroller(3, 0);
-    expect(resolveSettleTargetIndex(first, [...first.children] as HTMLElement[], -1, 0)).toBe(0);
   });
 });
 
@@ -1184,11 +1043,11 @@ describe("useColumnScrollSnap", () => {
   });
 
   /*
-  FNXC:BoardNavigation 2026-07-24-11:20:
-  Killing native inertia must not cost fling REACH. A hard flick still crosses several columns
-  because the page count comes from release velocity sampled off the board's own scroll ticks.
+  FNXC:BoardNavigation 2026-09-17-09:49:
+  FN-500 : sur téléphone le déplacement est colonne par colonne. Un flick dur et un glissement lent
+  depuis la MÊME origine au repos valident donc la même voisine ; la vitesse n'achète plus de pages.
   */
-  it("crosses multiple columns for a hard flick and one column for a slow swipe", () => {
+  it("pages exactly one column for a hard flick and for a slow swipe alike", () => {
     const fastScroller = createScroller(5, 0);
     renderHook(() => useColumnScrollSnap(fastScroller, { mobileOnly: true, isUserInteraction: () => true }));
 
@@ -1206,7 +1065,7 @@ describe("useColumnScrollSnap", () => {
     });
     settleAfterMomentum();
 
-    expect(fastScroller.scrollLeft).toBe(COLUMN_WIDTH * 3);
+    expect(fastScroller.scrollLeft).toBe(COLUMN_WIDTH);
 
     const slowScroller = createScroller(5, 0);
     renderHook(() => useColumnScrollSnap(slowScroller, { mobileOnly: true, isUserInteraction: () => true }));
@@ -1229,11 +1088,11 @@ describe("useColumnScrollSnap", () => {
   });
 
   /*
-  FNXC:BoardNavigation 2026-07-24-11:20:
-  A finger that moved fast and then HELD STILL before lifting is not a flick — stale velocity must
-  not page it three columns.
+  FNXC:BoardNavigation 2026-09-17-09:49:
+  FN-500 : une traction longue peut dépasser la voisine sous le doigt. Au lever, le retour VERS cette
+  voisine est animé depuis la position courante — ni page supplémentaire, ni retour sec à l'origine.
   */
-  it("does not treat a fast drag that rests before lift as a flick", () => {
+  it("returns to the single neighbour after a long drag that overshot it", () => {
     const scroller = createScroller(5, 0);
     renderHook(() => useColumnScrollSnap(scroller, { mobileOnly: true, isUserInteraction: () => true }));
 

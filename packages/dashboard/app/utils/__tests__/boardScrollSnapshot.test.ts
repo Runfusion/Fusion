@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { captureBoardScrollSnapshot, readPersistedBoardScrollSnapshot, restoreBoardScrollSnapshot } from "../boardScrollSnapshot";
+import {
+  BOARD_SCROLL_RESTORE_EVENT,
+  captureBoardScrollSnapshot,
+  readPersistedBoardScrollSnapshot,
+  restoreBoardScrollSnapshot,
+} from "../boardScrollSnapshot";
 
 describe("boardScrollSnapshot", () => {
   afterEach(() => {
@@ -49,6 +54,70 @@ describe("boardScrollSnapshot", () => {
     expect(snapshot?.columnTops).toEqual({ todo: 0, "in-progress": 0 });
     expect(todoBody.scrollTop).toBe(0);
     expect(activeBody.scrollTop).toBe(0);
+  });
+
+  /*
+  FNXC:BoardNavigation 2026-09-17-09:49:
+  FN-500 : la restauration s'annonce avant TOUTE écriture pour que le magnétisme mobile cède l'axe, y
+  compris quand le déplacement est plus petit que la tolérance de dérive compositeur. Une restauration
+  refusée (colonnes absentes ou snapshot sans correspondance) ne doit rien annoncer du tout.
+  */
+  it("announces a restore before it writes, whatever its amplitude", () => {
+    document.body.innerHTML = `
+      <main id="board">
+        <section class="column" data-column="todo"><div class="column-body"></div></section>
+      </main>
+    `;
+    const board = document.getElementById("board") as HTMLElement;
+    board.scrollLeft = 300;
+    const observed: number[] = [];
+    board.addEventListener(BOARD_SCROLL_RESTORE_EVENT, () => observed.push(board.scrollLeft));
+
+    // A tiny restore (below the compositor drift tolerance) still announces itself.
+    expect(restoreBoardScrollSnapshot({
+      boardLeft: 312,
+      boardTop: 0,
+      columnTops: { todo: 0 },
+      projectContentLeft: 0,
+      projectContentTop: 0,
+      documentLeft: 0,
+      documentTop: 0,
+    })).toBe(true);
+    expect(observed).toEqual([300]);
+    expect(board.scrollLeft).toBe(312);
+
+    // A large restore announces itself exactly once too.
+    expect(restoreBoardScrollSnapshot({
+      boardLeft: 900,
+      boardTop: 0,
+      columnTops: { todo: 0 },
+      projectContentLeft: 0,
+      projectContentTop: 0,
+      documentLeft: 0,
+      documentTop: 0,
+    })).toBe(true);
+    expect(observed).toEqual([300, 312]);
+  });
+
+  it("announces nothing when the restore is refused", () => {
+    document.body.innerHTML = `<main id="board"></main>`;
+    const board = document.getElementById("board") as HTMLElement;
+    board.scrollLeft = 120;
+    const announced = vi.fn();
+    board.addEventListener(BOARD_SCROLL_RESTORE_EVENT, announced);
+
+    expect(restoreBoardScrollSnapshot({
+      boardLeft: 40,
+      boardTop: 0,
+      columnTops: { todo: 0 },
+      projectContentLeft: 0,
+      projectContentTop: 0,
+      documentLeft: 0,
+      documentTop: 0,
+    })).toBe(false);
+
+    expect(announced).not.toHaveBeenCalled();
+    expect(board.scrollLeft).toBe(120);
   });
 
   it("zeros every rendered column from a legacy snapshot with non-zero offsets", () => {

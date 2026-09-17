@@ -174,13 +174,18 @@ describe("narrow desktop board mouse clicks", () => {
     expect(scroller.style.scrollSnapType).toBe("none");
   });
 
-  it("continues wheel paging without pointer capture", () => {
+  /*
+  FNXC:BoardNavigation 2026-09-17-09:49:
+  FN-500 : seule une molette HORIZONTALE décrit un geste de tableau, donc ce cas déclare son `deltaX`.
+  Une molette verticale (défilement des cartes) n'ouvre plus de rafale et ne suspend plus le snap.
+  */
+  it("continues horizontal wheel paging without pointer capture", () => {
     stubTouchPhoneViewport();
     const { scroller } = createScroller();
     const emulator = createPointerCaptureEmulator(scroller);
     renderHook(() => useColumnScrollSnap(scroller, { mobileOnly: true, isUserInteraction: () => true }));
 
-    act(() => scroller.dispatchEvent(new WheelEvent("wheel", { bubbles: true })));
+    act(() => scroller.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaX: 40, deltaY: 0 })));
 
     expect(emulator.setPointerCapture).not.toHaveBeenCalled();
     expect(scroller.style.scrollSnapType).toBe("none");

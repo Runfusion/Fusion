@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { BOARD_SCROLL_RESTORE_EVENT } from "../utils/boardScrollSnapshot";
 import { isMobileViewport } from "./useViewportMode";
 
 /*
@@ -24,16 +25,16 @@ negligible distance, and compositor fencing. Directional paging still applies on
 gesture itself had pan intent.
 */
 /*
-FNXC:BoardNavigation 2026-07-24-10:05:
-Board paging must feel fast: the post-momentum quiet window is 2 frames (~32ms), not 3 (~48ms), so
-the settle commits sooner after a swipe. Keep it above one frame — a single-frame window can fire
-mid-fling and page against travel.
+FNXC:BoardNavigation 2026-09-17-09:49:
+FN-500 : ce repli d'inactivité est RÉSERVÉ aux flux sans événement de lever — molette horizontale en
+premier lieu. Un swipe touch/pen terminé ne l'attend jamais (il pagine au lever), donc la fenêtre peut
+être assez longue pour qu'une rafale de molette compte comme UN geste au lieu d'une page par cran.
 */
 /**
  * Fallback quiet window for settles that cannot page at lift (wheel, net-zero direction).
- * Directional finger swipes no longer wait on it — see `commitDirectionalPage`.
+ * Directional finger swipes never wait on it — see `commitDirectionalPage`.
  */
-const SCROLL_IDLE_SETTLE_MS = 32;
+const SCROLL_IDLE_SETTLE_MS = 120;
 const CENTER_TOLERANCE_PX = 1;
 /** Minimum finger travel to count as a horizontal pan (short swipe still commits). */
 const MIN_PAN_CLIENT_PX = 12;
@@ -61,35 +62,25 @@ export const PIN_DRIFT_TOLERANCE_PX = 48;
 FNXC:BoardNavigation 2026-07-24-11:20:
 Board paging must feel fast, and the slow part was never the settle timer — it was waiting for the
 BROWSER's fling to decelerate before paging (native inertia can coast for most of a second, so a
-flick sat visibly drifting before it committed). The hook now owns the momentum: at finger-up a
-directional swipe kills native inertia and animates to its target column in ~200ms, so the page
-starts moving on lift instead of after the coast. Fling reach is preserved by deriving a page COUNT
-from release velocity rather than from how far inertia happens to travel.
+flick sat visibly drifting before it committed). The hook owns the momentum: at finger-up a
+directional swipe kills native inertia and animates to its target column itself, so the page starts
+moving on lift instead of after the coast.
 
 Trade-off accepted: tap-to-stop-during-momentum no longer exists as an interaction (there is no
 long coast left to interrupt). A re-touch during the page animation cancels it and hands control
 back to the finger, which covers the same corrective intent.
+
+FNXC:BoardNavigation 2026-09-17-09:49:
+FN-500 : la REACH dérivée de la vitesse est supprimée. Un téléphone se déplace colonne par colonne, pas
+librement comme un ordinateur : un geste validé depuis une colonne au repos rejoint SA SEULE voisine,
+quelle que soit la vitesse ou la longueur du geste (plusieurs colonnes = plusieurs gestes). Le quota
+1–3 pages faisait sauter le tableau par-dessus la colonne visée, ce que l'opérateur décrit comme un
+déplacement « sec ». La durée unique passe de 190 à 280 ms avec un profil accelération/décélération,
+parce qu'une seule constante de durée ne suffisait pas : c'est le couple « une voisine + courbe douce
+depuis la position réellement atteinte » qui rend le mouvement fluide.
 */
-/** Base duration of the owned page animation (single-column hop). */
-const PAGE_ANIMATION_BASE_MS = 190;
-/** Added per extra column so multi-column flings do not crawl. */
-const PAGE_ANIMATION_PER_EXTRA_PAGE_MS = 45;
-const PAGE_ANIMATION_MAX_MS = 300;
-/** Only release-adjacent scroll samples describe fling speed. */
-const VELOCITY_SAMPLE_WINDOW_MS = 120;
-/** px/ms of release velocity that buys one extra column of paging. */
-const FLING_VELOCITY_PER_EXTRA_PAGE = 1.6;
-/** Ceiling so a hard flick cannot fly across the whole board. */
-const MAX_PAGES_PER_SWIPE = 3;
-/*
-FNXC:BoardNavigation 2026-07-25-09:40:
-A SHORT swipe must never cross more than one column, however fast the flick was. Velocity alone
-over-reached: a quick thumb flick of ~30px reads as multiple px/ms and paged two or three columns,
-so the board jumped past what the user aimed at. Each extra column now also has to be earned with
-travel — the gesture must move at least this fraction of the viewport width per extra page — so
-reach stays proportional to the swipe the user actually made.
-*/
-const TRAVEL_FRACTION_PER_EXTRA_PAGE = 0.6;
+/** Duration of the owned single-column transition, in ms. */
+export const PAGE_ANIMATION_MS = 280;
 /** Below this the animation is pointless — jump. */
 const MIN_ANIMATED_DISTANCE_PX = 2;
 
@@ -109,77 +100,17 @@ function prefersReducedMotion(): boolean {
   }
 }
 
-/** Ease-out cubic: fast departure, soft arrival — reads as "snappy", not "floaty". */
-function easeOutCubic(progress: number): number {
+/**
+ * Ease-in-out cubic: progressive departure and progressive arrival.
+ *
+ * FNXC:BoardNavigation 2026-09-17-09:49:
+ * FN-500 : l'ancien ease-out démarrait à pleine vitesse, donc la reprise de l'axe au lever se voyait
+ * comme un à-coup même quand aucune téléportation n'avait lieu. La courbe reste monotone et sans
+ * dépassement entre la position de lever et l'ancrage, avec arrivée exacte.
+ */
+export function easeInOutCubic(progress: number): number {
   const clamped = progress <= 0 ? 0 : progress >= 1 ? 1 : progress;
-  return 1 - (1 - clamped) ** 3;
-}
-
-/**
- * Columns to advance for a release velocity, in px/ms (absolute value).
- *
- * A deliberate slow swipe pages exactly one column; faster releases buy extra columns so the
- * hook's owned animation keeps the reach a native fling used to provide.
- *
- * FNXC:BoardNavigation 2026-07-25-09:40:
- * Extra columns must be earned by BOTH speed and distance. `travelPx` (net gesture travel — the
- * larger of board scroll delta and horizontal finger travel) against `viewportWidth` caps the
- * count, so a fast but short flick pages exactly one column instead of jumping across the board.
- * The travel gate is skipped when the caller cannot supply a usable viewport width.
- */
-export function resolvePageCount(
-  velocityPxPerMs: number,
-  travel?: { travelPx: number; viewportWidth: number },
-): number {
-  const speed = Math.abs(velocityPxPerMs);
-  if (!Number.isFinite(speed) || speed <= 0) return 1;
-  const extraFromVelocity = Math.floor(speed / FLING_VELOCITY_PER_EXTRA_PAGE);
-
-  let extra = extraFromVelocity;
-  if (travel && Number.isFinite(travel.viewportWidth) && travel.viewportWidth > 0) {
-    const travelPx = Math.abs(travel.travelPx);
-    const extraFromTravel = Number.isFinite(travelPx)
-      ? Math.floor(travelPx / (travel.viewportWidth * TRAVEL_FRACTION_PER_EXTRA_PAGE))
-      : 0;
-    extra = Math.min(extraFromVelocity, extraFromTravel);
-  }
-
-  return Math.min(1 + Math.max(0, extra), MAX_PAGES_PER_SWIPE);
-}
-
-/** Duration for a `pageCount`-column hop. */
-export function resolvePageAnimationMs(pageCount: number): number {
-  const extraPages = Math.max(0, pageCount - 1);
-  return Math.min(
-    PAGE_ANIMATION_BASE_MS + extraPages * PAGE_ANIMATION_PER_EXTRA_PAGE_MS,
-    PAGE_ANIMATION_MAX_MS,
-  );
-}
-
-/**
- * Target column for an owned directional page.
- *
- * `originIndex` + `direction * pageCount`, clamped to the column range, then clamped forward to
- * `floorIndex` (the column the finger already dragged onto) so a long slow drag never animates
- * backwards to a stale origin-derived target.
- */
-export function resolveFlingTargetIndex(options: {
-  columnCount: number;
-  originIndex: number;
-  direction: number;
-  pageCount: number;
-  /** Nearest column at release; keeps a long drag's own landing point. */
-  nearestIndex: number;
-}): number {
-  const { columnCount, originIndex, direction, pageCount, nearestIndex } = options;
-  if (columnCount <= 1) return 0;
-  const lastIndex = columnCount - 1;
-  const clamp = (value: number) => Math.min(Math.max(value, 0), lastIndex);
-  const origin = clamp(originIndex);
-  const nearest = clamp(nearestIndex);
-  if (direction === 0) return nearest;
-  const paged = clamp(origin + direction * Math.max(1, pageCount));
-  return direction > 0 ? Math.max(paged, nearest) : Math.min(paged, nearest);
+  return clamped < 0.5 ? 4 * clamped ** 3 : 1 - (-2 * clamped + 2) ** 3 / 2;
 }
 
 export interface UseColumnScrollSnapOptions {
@@ -187,6 +118,16 @@ export interface UseColumnScrollSnapOptions {
   mobileOnly?: boolean;
   /** Test seam; production callers must use the default trusted-event predicate. */
   isUserInteraction?: (event: Event) => boolean;
+  /*
+  FNXC:BoardNavigation 2026-09-17-09:49:
+  FN-500 : le tableau n'est pas toujours la vue visible (`MainViewKeepAlive` conserve des vues montées)
+  et son contenu change de projet ou de sélection de workflow. `enabled` retire complètement le
+  propriétaire d'une vue inactive, `contextKey` fait d'un changement de contexte une annulation
+  propre : l'ancienne interaction est clôturée et ses callbacks deviennent inertes avant que les
+  nouvelles colonnes soient arbitrées.
+  */
+  enabled?: boolean;
+  contextKey?: string;
 }
 
 function defaultIsUserInteraction(event: Event): boolean {
@@ -217,33 +158,99 @@ function getClientPoint(event: Event): { x: number; y: number } | null {
   return null;
 }
 
-/** Prefer `.column` children so spacers/chrome are not snap targets. */
+/*
+FNXC:BoardNavigation 2026-09-17-09:49:
+FN-500 : les ancrages magnétiques doivent être des COLONNES RÉELLES, toujours. L'ancien repli
+« moins de deux `.column` → tous les enfants » faisait d'un élément de chrome (bandeau, message vide,
+espaceur) une cible d'aimant dès qu'un tableau n'avait qu'une colonne, donc le board pouvait se figer
+sur une position qui n'est pas une colonne. Zéro ou une colonne est maintenant un résultat légitime :
+l'appelant traite l'absence de cible comme « ne rien animer » plutôt que comme une invitation à viser
+n'importe quel enfant. Les éléments explicitement masqués sont exclus ; la mesure (largeur nulle en DOM
+de test) ne sert PAS de critère d'exclusion, sinon un vrai `Board` rendu sans layout perdrait ses cibles.
+*/
 export function getSnapColumns(scroller: HTMLElement): HTMLElement[] {
-  const all = Array.from(scroller.children).filter(
-    (node): node is HTMLElement => node instanceof HTMLElement,
+  return Array.from(scroller.children).filter(
+    (node): node is HTMLElement =>
+      node instanceof HTMLElement
+      && node.classList.contains("column")
+      && !node.hidden
+      && node.getAttribute("aria-hidden") !== "true"
+      && node.style.display !== "none",
   );
-  const columns = all.filter((el) => el.classList.contains("column"));
-  return columns.length >= 2 ? columns : all;
 }
 
-/** Index of the column whose center is closest to the scroller viewport center. */
+/*
+FNXC:BoardNavigation 2026-09-17-09:49:
+FN-500 : sélection ET validation partagent désormais une seule géométrie — la liste des positions
+ATTEIGNABLES (`scrollLeft` bornés) des colonnes réelles. Un pas fixe, une largeur d'écran globale ou une
+borne infinie produisaient des cibles que le navigateur ré-écrête ensuite, donc un arrêt « entre deux
+colonnes ». Les positions confondues après bornage (colonnes de bord plus étroites que le viewport) ne
+sont qu'un seul arrêt atteignable : c'est cette liste dédoublonnée qui définit la « voisine ».
+*/
+export function resolveColumnAnchors(scroller: HTMLElement, columns: HTMLElement[]): number[] {
+  return columns.map((column) => scrollLeftToCenterColumn(scroller, column));
+}
+
+/**
+ * Index of the reachable column anchor closest to the current scroll position.
+ *
+ * FNXC:BoardNavigation 2026-09-17-09:49:
+ * FN-500 : À ÉGALE DISTANCE SEULEMENT, la direction nette du geste courant départage les deux cibles
+ * (les ancrages sont croissants, donc un geste vers la droite prend l'index supérieur). Hors égalité,
+ * la distance seule décide : les derniers petits rebonds ne changent pas la décision.
+ */
+export function nearestAnchorIndex(scrollLeft: number, anchors: number[], direction = 0): number {
+  let nearestIndex = 0;
+  let nearestDistance = Number.POSITIVE_INFINITY;
+  for (let index = 0; index < anchors.length; index++) {
+    const distance = Math.abs(anchors[index] - scrollLeft);
+    if (distance < nearestDistance - CENTER_TOLERANCE_PX / 2) {
+      nearestIndex = index;
+      nearestDistance = distance;
+    } else if (direction > 0 && Math.abs(distance - nearestDistance) <= CENTER_TOLERANCE_PX / 2) {
+      nearestIndex = index;
+      nearestDistance = Math.min(nearestDistance, distance);
+    }
+  }
+  return nearestIndex;
+}
+
+/** Index of the column whose reachable anchor is closest to the current scroll position. */
 export function nearestColumnIndex(scroller: HTMLElement, columns: HTMLElement[]): number {
   const scrollerRect = scroller.getBoundingClientRect();
   const viewportWidth = scroller.clientWidth || scrollerRect.width;
   if (viewportWidth <= 0 || columns.length === 0) return 0;
+  return nearestAnchorIndex(scroller.scrollLeft, resolveColumnAnchors(scroller, columns));
+}
 
-  const viewportCenter = scrollerRect.left + viewportWidth / 2;
-  let nearestIndex = 0;
-  let nearestDistance = Number.POSITIVE_INFINITY;
-  for (let index = 0; index < columns.length; index++) {
-    const rect = columns[index].getBoundingClientRect();
-    const distance = Math.abs(rect.left + rect.width / 2 - viewportCenter);
-    if (distance < nearestDistance) {
-      nearestIndex = index;
-      nearestDistance = distance;
-    }
+/**
+ * Reachable anchor of the single neighbouring column in `direction` from `originIndex`.
+ *
+ * FNXC:BoardNavigation 2026-09-17-09:49:
+ * FN-500 : « colonne par colonne » se mesure sur les ancrages DISTINCTS. Aux extrémités, plusieurs
+ * colonnes partagent la même position atteignable ; avancer d'un index y serait un déplacement nul et
+ * le geste suivant paraîtrait perdu. On avance donc jusqu'au premier ancrage réellement différent, et
+ * on reste sur place quand il n'y en a plus (borne du tableau).
+ */
+export function resolveNeighborAnchor(options: {
+  anchors: number[];
+  originIndex: number;
+  direction: number;
+  tolerance?: number;
+}): number | null {
+  const { anchors, originIndex, direction, tolerance = CENTER_TOLERANCE_PX } = options;
+  if (anchors.length === 0) return null;
+  const origin = Math.min(Math.max(originIndex, 0), anchors.length - 1);
+  const originAnchor = anchors[origin];
+  if (direction === 0) return originAnchor;
+  for (
+    let index = origin + direction;
+    index >= 0 && index < anchors.length;
+    index += direction
+  ) {
+    if (Math.abs(anchors[index] - originAnchor) > tolerance) return anchors[index];
   }
-  return nearestIndex;
+  return originAnchor;
 }
 
 /*
@@ -263,10 +270,14 @@ watchdog hard-jumping to a scrollLeft the browser keeps clamping away.
  * scrollLeft that centers `column` in the scroller viewport (integer pixels), clamped to the
  * scroller's reachable range so edge columns resolve to the position they actually rest at.
  *
- * The upper clamp is skipped when `scrollWidth` is unusable (jsdom reports 0); the lower clamp at 0
- * is always valid.
+ * FNXC:BoardNavigation 2026-09-17-09:49:
+ * FN-500 : le bornage supérieur n'est plus conditionnel. L'ancienne exception « `scrollWidth`
+ * inutilisable → borne infinie » existait pour des fixtures jsdom qui omettaient `scrollWidth` ; en
+ * production elle autorisait une cible inatteignable, que le navigateur ramène ailleurs — exactement
+ * l'arrêt intermédiaire que ce correctif interdit. Les fixtures déclarent désormais leur `scrollWidth`.
+ * Un tableau sans débordement a donc un seul ancrage atteignable : 0.
  */
-function scrollLeftToCenterColumn(scroller: HTMLElement, column: HTMLElement): number {
+export function scrollLeftToCenterColumn(scroller: HTMLElement, column: HTMLElement): number {
   const scrollerRect = scroller.getBoundingClientRect();
   const viewportWidth = scroller.clientWidth || scrollerRect.width;
   const viewportCenter = scrollerRect.left + viewportWidth / 2;
@@ -274,20 +285,20 @@ function scrollLeftToCenterColumn(scroller: HTMLElement, column: HTMLElement): n
   const ideal = Math.round(
     scroller.scrollLeft + columnRect.left + columnRect.width / 2 - viewportCenter,
   );
-  const maxScrollLeft = scroller.scrollWidth - viewportWidth;
-  const upperBound = maxScrollLeft > 0 ? maxScrollLeft : Number.POSITIVE_INFINITY;
+  const upperBound = Math.max(0, scroller.scrollWidth - viewportWidth);
   return Math.min(Math.max(ideal, 0), upperBound);
 }
 
-/** Whether the viewport is already centered on one of its eligible snap columns. */
+/** Whether the viewport is already resting on one of its reachable column anchors. */
 export function isColumnCentered(
   scroller: HTMLElement,
   columns: HTMLElement[],
   tolerance = CENTER_TOLERANCE_PX,
 ): boolean {
   if (columns.length === 0) return false;
-  const nearest = nearestColumnIndex(scroller, columns);
-  return Math.abs(scroller.scrollLeft - scrollLeftToCenterColumn(scroller, columns[nearest])) <= tolerance;
+  const anchors = resolveColumnAnchors(scroller, columns);
+  const nearest = nearestAnchorIndex(scroller.scrollLeft, anchors);
+  return Math.abs(scroller.scrollLeft - anchors[nearest]) <= tolerance;
 }
 
 /**
@@ -314,41 +325,6 @@ export function resolvePanDirection(options: {
   if (clientDelta >= MIN_PAN_CLIENT_PX) return 1;
   if (clientDelta <= -MIN_PAN_CLIENT_PX) return -1;
   return 0;
-}
-
-/*
-FNXC:BoardNavigation 2026-07-22-21:05:
-The prior directional pager targeted "one past nearest" whenever the viewport center had
-crossed the nearest column's center, so a fling that decelerated with a column mostly on
-screen still got pushed a further column — a visible overshoot. Settle now uses the classic
-paging rule: land on the NEAREST (mostly-on-screen) column, but guarantee at least one
-column of progress from the gesture's ORIGIN column in the locked direction, so a short
-deliberate swipe still commits to the next column and the settle never moves against travel.
-*/
-/**
- * Pick the column to land on at settle time.
- *
- * Nearest column wins (it is the one mostly on screen as momentum ends), clamped so a
- * directional gesture always advances at least one column from `originIndex` and never
- * settles against the locked scroll direction.
- */
-export function resolveSettleTargetIndex(
-  scroller: HTMLElement,
-  columns: HTMLElement[],
-  direction: number,
-  originIndex: number,
-): number {
-  if (columns.length <= 1) return 0;
-  const nearest = nearestColumnIndex(scroller, columns);
-  if (direction === 0) return nearest;
-
-  const origin = Math.min(Math.max(originIndex, 0), columns.length - 1);
-  if (direction > 0) {
-    // Content scrolling right: at least origin+1, otherwise wherever momentum landed.
-    return Math.max(nearest, Math.min(origin + 1, columns.length - 1));
-  }
-  // Content scrolling left: mirror.
-  return Math.min(nearest, Math.max(origin - 1, 0));
 }
 
 /**
@@ -397,7 +373,12 @@ function hardJumpScrollLeft(scroller: HTMLElement, targetLeft: number): void {
  */
 export function useColumnScrollSnap(
   scroller: HTMLElement | null,
-  { mobileOnly = false, isUserInteraction = defaultIsUserInteraction }: UseColumnScrollSnapOptions = {},
+  {
+    mobileOnly = false,
+    isUserInteraction = defaultIsUserInteraction,
+    enabled = true,
+    contextKey = "",
+  }: UseColumnScrollSnapOptions = {},
 ): void {
   const [isEligibleViewport, setIsEligibleViewport] = useState(() => !mobileOnly || isMobileViewport());
 
@@ -426,7 +407,7 @@ export function useColumnScrollSnap(
   }, [mobileOnly]);
 
   useEffect(() => {
-    if (!scroller || !isEligibleViewport) return;
+    if (!scroller || !isEligibleViewport || !enabled) return;
 
     let interactionActive = false;
     let pointerHeld = false;
@@ -473,14 +454,20 @@ export function useColumnScrollSnap(
     /** Wall-clock start of the current pin, used to close the bounded fence. */
     let pinStartedAt = 0;
     /*
-    FNXC:BoardNavigation 2026-07-24-11:20:
-    Release velocity comes from board scrollLeft samples taken while the finger is down, not from
-    finger coordinates: on iOS the native pan owns the touch stream, so scroll ticks are the only
-    faithful record of how fast the content was actually moving at lift.
+    FNXC:BoardNavigation 2026-09-17-09:49:
+    FN-500 : une rafale de molette horizontale n'a pas d'événement de lever. Ses crans successifs
+    doivent donc prolonger le MÊME geste — origine conservée, repli d'inactivité réarmé — et non
+    rebaseliner une nouvelle origine à chaque tick, ce qui aurait validé une page par cran.
     */
-    let velocitySampleScrollLeft = scroller.scrollLeft;
-    let velocitySampleAt = now();
-    let releaseVelocityPxPerMs = 0;
+    let wheelBurstActive = false;
+    /*
+    FNXC:BoardNavigation 2026-09-17-09:49:
+    FN-500 : chaque interaction porte une génération. Un nouveau toucher, une souris, une intention
+    clavier, une rafale de molette, une restauration programmatique ou un changement de contexte
+    l'incrémentent, ce qui rend inertes les callbacks différés (frames d'animation, échéances) de
+    l'ancien propriétaire avant toute écriture.
+    */
+    let interactionGeneration = 0;
     /** rAF handle for the hook-owned page animation. */
     let pageAnimationFrame: number | null = null;
     /** Inline styles frozen for the duration of the page animation. */
@@ -656,12 +643,18 @@ export function useColumnScrollSnap(
     };
 
     /**
-     * Animate to a column center over `durationMs`, then pin as a normal settle.
+     * Animate to a reachable column anchor over `durationMs`, then pin as a normal settle.
      *
      * Falls back to an instant hard write when motion is reduced, `requestAnimationFrame` is
      * unavailable, or the distance is not worth animating.
+     *
+     * FNXC:BoardNavigation 2026-09-17-09:49:
+     * FN-500 : le départ est la position RÉELLEMENT atteinte au lever (`scroller.scrollLeft`), jamais
+     * l'origine du geste : aucune remise à zéro ni saut préalable n'est écrit avant la transition, y
+     * compris pour le retour d'une longue traction qui a dépassé la voisine. Une génération clôt chaque
+     * animation : une frame tardive appartenant à un geste annulé n'écrit plus rien.
      */
-    const animateSnapTo = (targetLeft: number, durationMs: number) => {
+    const animateSnapTo = (targetLeft: number, durationMs: number = PAGE_ANIMATION_MS) => {
       const target = Math.round(targetLeft);
       const from = scroller.scrollLeft;
       const distance = target - from;
@@ -682,9 +675,11 @@ export function useColumnScrollSnap(
 
       freezeScrollerForAnimation();
       const startedAt = now();
+      const generation = interactionGeneration;
 
       const step = () => {
         pageAnimationFrame = null;
+        if (generation !== interactionGeneration) return;
         const elapsed = now() - startedAt;
         const progress = elapsed / durationMs;
         if (progress >= 1) {
@@ -696,7 +691,7 @@ export function useColumnScrollSnap(
           applySnapTo(target);
           return;
         }
-        scroller.scrollLeft = Math.round(from + distance * easeOutCubic(progress));
+        scroller.scrollLeft = Math.round(from + distance * easeInOutCubic(progress));
         pageAnimationFrame = window.requestAnimationFrame(step);
       };
 
@@ -704,36 +699,107 @@ export function useColumnScrollSnap(
     };
 
     /**
-     * FNXC:BoardNavigation 2026-08-18-19:10:
-     * Smoothly settle to the nearest reachable center when normal motion is meaningful. The
-     * animation helper still chooses an immediate hard write for reduced motion, unavailable rAF,
-     * or negligible distance, and keeps the final compositor pin as the single authority.
-     * Returns true when a snap applied (or already centered); false only when there are no usable
-     * snap columns.
+     * Reachable anchors of the columns rendered right now, or `null` when nothing is snappable.
+     *
+     * FNXC:BoardNavigation 2026-09-17-09:49:
+     * FN-500 : relu à chaque validation. Une colonne retirée, réordonnée ou redimensionnée entre le
+     * début du geste et sa fin doit être arbitrée contre la disposition COURANTE, jamais contre une
+     * géométrie mémorisée. Aucune colonne ou viewport non mesurable → retour sûr, sans write ni boucle.
      */
-    const snapToNearestColumnIfNeeded = (): boolean => {
+    const readAnchors = (): number[] | null => {
       const columns = getSnapColumns(scroller);
-      if (columns.length < 2) {
-        restoreNativeSnap();
-        return false;
-      }
+      if (columns.length === 0) return null;
       const viewportWidth = scroller.clientWidth || scroller.getBoundingClientRect().width;
-      if (viewportWidth <= 0) {
+      if (viewportWidth <= 0) return null;
+      // FN-500: sans débordement il n'y a rien à parcourir — ne rien animer plutôt que forcer un 0.
+      if (scroller.scrollWidth - viewportWidth <= 0) return null;
+      return resolveColumnAnchors(scroller, columns);
+    };
+
+    /** Drop every per-gesture signal; the next interaction re-baselines from scratch. */
+    const resetGestureState = () => {
+      interactionActive = false;
+      wheelBurstActive = false;
+      sawHorizontalMovement = false;
+      lockedDirection = 0;
+      gestureStartClientX = null;
+      lastClientX = null;
+      gestureStartClientY = null;
+      lastClientY = null;
+    };
+
+    /**
+     * Land this gesture on exactly one reachable anchor and animate there.
+     *
+     * FNXC:BoardNavigation 2026-09-17-09:49:
+     * FN-500 : c'est le SEUL arbitrage de fin de geste. Depuis une origine au repos, un geste
+     * directionnel valide sa SEULE voisine distincte, bornée aux extrémités — la vitesse et la longueur
+     * du geste n'achètent plus de pages. Tap, direction nulle et départ déjà décentré (retouche en
+     * cours d'animation) rejoignent l'ancrage courant le plus proche, sans hériter d'une page annulée
+     * ni ajouter une page obligatoire ; à égale distance seulement, la direction nette départage.
+     */
+    const commitToAnchor = (direction: number, startedCentered: boolean): boolean => {
+      const anchors = readAnchors();
+      if (anchors === null) {
+        resetGestureState();
         restoreNativeSnap();
         return false;
       }
-      if (isColumnCentered(scroller, columns)) {
-        restoreNativeSnap();
-        return true;
-      }
-      const targetIndex = nearestColumnIndex(scroller, columns);
-      animateSnapTo(
-        scrollLeftToCenterColumn(scroller, columns[targetIndex]),
-        resolvePageAnimationMs(1),
-      );
+      const releaseLeft = scroller.scrollLeft;
+      /*
+      FNXC:BoardNavigation 2026-09-17-09:49:
+      FN-500 : départ déjà décentré (retouche pendant une correction) → ancrage le plus proche, mais
+      jamais à CONTRE-SENS du geste correctif : un glissement vers la gauche qui interrompt une
+      transition ne doit pas continuer vers la destination annulée, même si elle est géométriquement
+      plus proche. Aucune page n'est héritée ni ajoutée : on reste sur l'ancrage immédiat de ce côté.
+      */
+      const directionalCandidates = direction === 0
+        ? []
+        : anchors.filter((anchor) => direction > 0
+          ? anchor >= releaseLeft - CENTER_TOLERANCE_PX
+          : anchor <= releaseLeft + CENTER_TOLERANCE_PX);
+      const currentAnchor = directionalCandidates.length > 0
+        ? directionalCandidates[nearestAnchorIndex(releaseLeft, directionalCandidates, direction)]
+        : anchors[nearestAnchorIndex(releaseLeft, anchors, direction)];
+      const originIndex = Math.min(Math.max(gestureStartColumnIndex, 0), anchors.length - 1);
+      const target = direction !== 0 && startedCentered
+        ? resolveNeighborAnchor({ anchors, originIndex, direction }) ?? currentAnchor
+        : currentAnchor;
+      resetGestureState();
+      animateSnapTo(target);
       return true;
     };
 
+    /**
+     * FNXC:BoardNavigation 2026-08-18-19:10:
+     * Smoothly settle to the nearest reachable anchor when normal motion is meaningful. The
+     * animation helper still chooses an immediate hard write for reduced motion, unavailable rAF,
+     * or negligible distance, and keeps the final compositor pin as the single authority.
+     * Returns true when a snap applied (or already resting on an anchor); false only when there are
+     * no usable snap columns.
+     */
+    const snapToNearestColumnIfNeeded = (): boolean => {
+      const anchors = readAnchors();
+      if (anchors === null) {
+        restoreNativeSnap();
+        return false;
+      }
+      const nearest = anchors[nearestAnchorIndex(scroller.scrollLeft, anchors)];
+      if (Math.abs(scroller.scrollLeft - nearest) <= CENTER_TOLERANCE_PX) {
+        restoreNativeSnap();
+        return true;
+      }
+      animateSnapTo(nearest);
+      return true;
+    };
+
+    /**
+     * Settle a flow that has no explicit end event (horizontal wheel burst, net-zero pan).
+     *
+     * FNXC:BoardNavigation 2026-09-17-09:49:
+     * FN-500 : une rafale conserve son origine jusqu'à CETTE validation, donc elle vaut un seul geste
+     * et une seule colonne, pas une page par cran de molette.
+     */
     const snapInScrollDirection = () => {
       clearIdleTimer();
       if (!interactionActive) return;
@@ -762,61 +828,19 @@ export function useColumnScrollSnap(
         (Math.abs(clientDelta) >= MIN_PAN_CLIENT_PX && Math.abs(clientDelta) > Math.abs(clientDeltaY));
 
       const startedCentered = gestureStartCentered;
-      interactionActive = false;
-      sawHorizontalMovement = false;
-      lockedDirection = 0;
-      gestureStartClientX = null;
-      lastClientX = null;
-      gestureStartClientY = null;
-      lastClientY = null;
 
       /*
       FNXC:BoardNavigation 2026-07-22-15:26:
       No pan on this settle gesture (tap-to-stop after re-baseline, pure tap): still never
-      rest between columns — nearest-center only. Use the same controlled animation as a
-      direction-zero pan, without reusing a cancelled swipe's direction.
+      rest between columns — nearest anchor only, without reusing a cancelled swipe's direction.
       */
       if (!hadPanIntent) {
+        resetGestureState();
         snapToNearestColumnIfNeeded();
         return;
       }
 
-      const columns = getSnapColumns(scroller);
-      if (columns.length < 2) {
-        restoreNativeSnap();
-        return;
-      }
-
-      const viewportWidth = scroller.clientWidth || scroller.getBoundingClientRect().width;
-      if (viewportWidth <= 0) {
-        restoreNativeSnap();
-        return;
-      }
-
-      /*
-      FNXC:BoardNavigation 2026-07-22-18:30:
-      A user-driven mobile settle must rest at the integer center of exactly one `.column`,
-      never between columns. Keep CSS proximity (not prohibited mandatory snap) and free
-      scrolling while held: a locked direction and an off-center zero-direction settle both use
-      the controlled animation, then pin until the next touch.
-      */
-      if (direction === 0 && isColumnCentered(scroller, columns)) {
-        restoreNativeSnap();
-        return;
-      }
-
-      /*
-      FNXC:BoardNavigation 2026-07-22-21:40:
-      Commit-one-column paging only applies to gestures that began at rest centered on their
-      origin column. A gesture begun mid-transit (tap-to-stop during momentum, then drag)
-      settles on the plain nearest column so the new drag's landing point wins over the
-      interrupted scroll's pending destination.
-      */
-      const targetIndex = direction === 0 || !startedCentered
-        ? nearestColumnIndex(scroller, columns)
-        : resolveSettleTargetIndex(scroller, columns, direction, gestureStartColumnIndex);
-      const targetLeft = scrollLeftToCenterColumn(scroller, columns[targetIndex]);
-      animateSnapTo(targetLeft, resolvePageAnimationMs(1));
+      commitToAnchor(direction, startedCentered);
     };
 
     const armIdleSettle = () => {
@@ -827,102 +851,16 @@ export function useColumnScrollSnap(
     /**
      * Page immediately at finger-up, animating the board there ourselves.
      *
-     * FNXC:BoardNavigation 2026-07-24-11:20:
-     * This is the "faster momentum" path: instead of arming the idle settle and waiting out native
-     * inertia, a directional lift resolves its target from the ORIGIN column plus a velocity-derived
-     * page count and animates there in ~200ms. Reach scales with flick speed, so a hard fling still
-     * crosses multiple columns without the long coast.
+     * FNXC:BoardNavigation 2026-09-17-09:49:
+     * FN-500 : le hook reprend l'axe au lever d'un swipe reconnu — il n'attend pas une longue inertie
+     * libre de type ordinateur — et anime depuis la position courante vers la SEULE voisine de
+     * l'origine au repos. Un geste long qui a dépassé cette voisine revient donc vers elle par la même
+     * transition, jamais par un retour sec à l'origine.
      */
     const commitDirectionalPage = (direction: number) => {
       clearIdleTimer();
-
-      const columns = getSnapColumns(scroller);
-      const viewportWidth = scroller.clientWidth || scroller.getBoundingClientRect().width;
-      if (columns.length < 2 || viewportWidth <= 0) {
-        interactionActive = false;
-        restoreNativeSnap();
-        return;
-      }
-
-      const nearestIndex = nearestColumnIndex(scroller, columns);
-      /*
-      FNXC:BoardNavigation 2026-07-26-09:15:
-      A gesture begun mid-transit has no trustworthy rest origin, so it pages from where it actually
-      is — but that origin must never sit FURTHER ALONG the travel direction than the column the
-      gesture started on, or the drag gets counted twice (once as travel, once as a bumped origin)
-      and the board advances two columns for a one-column swipe. `resolveFlingTargetIndex` still
-      floors the result at `nearestIndex`, so a long drag keeps its own landing point.
-      */
-      const startIndex = Math.min(Math.max(gestureStartColumnIndex, 0), columns.length - 1);
-      const originIndex = gestureStartCentered
-        ? gestureStartColumnIndex
-        : direction > 0
-          ? Math.min(nearestIndex, startIndex)
-          : Math.max(nearestIndex, startIndex);
-      /*
-      FNXC:BoardNavigation 2026-07-25-09:40:
-      Net gesture travel gates multi-column reach. Take the larger of the board's own scroll delta
-      and the finger's horizontal travel: on iOS the native pan owns the touch stream (scroll delta
-      is the faithful signal), while a finger that dragged against a rubber-banding edge shows
-      travel only in the client coordinates.
-      */
-      const scrollTravel = Math.abs(scroller.scrollLeft - gestureStartScrollLeft);
-      const fingerTravel =
-        gestureStartClientX !== null && lastClientX !== null
-          ? Math.abs(gestureStartClientX - lastClientX)
-          : 0;
-      const pageCount = resolvePageCount(resolveReleaseVelocity(), {
-        travelPx: Math.max(scrollTravel, fingerTravel),
-        viewportWidth,
-      });
-      const targetIndex = resolveFlingTargetIndex({
-        columnCount: columns.length,
-        originIndex,
-        direction,
-        pageCount,
-        nearestIndex,
-      });
-
-      interactionActive = false;
-      sawHorizontalMovement = false;
-      lockedDirection = 0;
-      gestureStartClientX = null;
-      lastClientX = null;
-      gestureStartClientY = null;
-      lastClientY = null;
-      releaseVelocityPxPerMs = 0;
-
-      animateSnapTo(
-        scrollLeftToCenterColumn(scroller, columns[targetIndex]),
-        resolvePageAnimationMs(pageCount),
-      );
+      commitToAnchor(direction, gestureStartCentered);
     };
-
-    /** Reset the release-velocity window at the start of every fresh gesture baseline. */
-    const resetVelocitySampling = () => {
-      velocitySampleScrollLeft = scroller.scrollLeft;
-      velocitySampleAt = now();
-      releaseVelocityPxPerMs = 0;
-    };
-
-    /** Fold one scroll tick into the release-velocity estimate (px/ms, signed). */
-    const sampleVelocity = (currentScrollLeft: number) => {
-      const at = now();
-      const elapsed = at - velocitySampleAt;
-      // Synchronous same-instant ticks (and test batches) carry no speed information.
-      if (elapsed <= 0) return;
-      releaseVelocityPxPerMs = (currentScrollLeft - velocitySampleScrollLeft) / elapsed;
-      velocitySampleScrollLeft = currentScrollLeft;
-      velocitySampleAt = at;
-    };
-
-    /*
-    FNXC:BoardNavigation 2026-07-24-11:20:
-    A finger that moved fast and then held still before lifting must NOT page like a flick: the last
-    sample would still read fast. Velocity older than the sample window counts as a resting finger.
-    */
-    const resolveReleaseVelocity = (): number =>
-      now() - velocitySampleAt > VELOCITY_SAMPLE_WINDOW_MS ? 0 : releaseVelocityPxPerMs;
 
     /*
     FNXC:BoardNavigation 2026-07-22-15:10:
@@ -932,27 +870,58 @@ export function useColumnScrollSnap(
     const beginInteraction = (event: Event) => {
       if (!isUserInteraction(event)) return;
       /*
+      FNXC:BoardNavigation 2026-09-17-09:49:
+      FN-500 : une molette VERTICALE (listes de cartes, page) n'est pas un geste de tableau. Elle ne
+      doit ni ouvrir une rafale, ni suspendre le snap, ni armer une validation horizontale.
+      */
+      if (event.type === "wheel") {
+        const wheel = event as WheelEvent;
+        if (Math.abs(wheel.deltaX) <= Math.abs(wheel.deltaY)) return;
+      }
+      /*
       FNXC:BoardNavigation 2026-09-14-20:19:
       FN-398: ANY user intent releases the fence, including mouse input. Releasing it only after the
       mouse early-return below meant a mouse pan was vetoed by a pin the finger had left behind.
       */
       clearPin();
       /*
+      FNXC:BoardNavigation 2026-07-24-11:20:
+      A touch landing mid-animation takes the axis back immediately (overflow restored, rAF
+      dropped) so the finger drags from wherever the page had reached.
+
+      FNXC:BoardNavigation 2026-09-17-09:49:
+      FN-500 : l'ordre est annulation de l'ancien travail → restitution des styles → écriture du
+      nouveau propriétaire, et il vaut AUSSI pour la souris, qui cède ensuite la main à son propre
+      propriétaire de pan sans jamais être capturée ici.
+      */
+      interactionGeneration++;
+      cancelPageAnimation();
+      /*
       FNXC:BoardNavigation 2026-08-30-07:01:
       The mobile column-snap owner must never capture mouse input. A non-touch desktop browser at
       <=768 CSS px resolves to mobile, and ancestor capture retargets the compatibility click away
       from the button beneath the cursor; FN-9219 fixed only Electron's drag-region variant.
       */
-      if (isMousePointerEvent(event)) return;
+      if (isMousePointerEvent(event)) {
+        clearIdleTimer();
+        resetGestureState();
+        restoreNativeSnap();
+        return;
+      }
 
       if (event.type === "touchstart") touchSequenceActive = true;
+
       /*
-      FNXC:BoardNavigation 2026-07-24-11:20:
-      A touch landing mid-animation takes the axis back immediately (overflow restored, rAF
-      dropped) so the finger drags from wherever the page had reached.
+      FNXC:BoardNavigation 2026-09-17-09:49:
+      FN-500 : cran suivant d'une rafale de molette déjà ouverte — même geste. On prolonge seulement le
+      repli d'inactivité ; l'origine, elle, est conservée jusqu'à la validation.
       */
-      cancelPageAnimation();
-      resetVelocitySampling();
+      if (event.type === "wheel" && interactionActive && wheelBurstActive && !pointerHeld) {
+        pointerHeld = false;
+        suspendNativeSnap();
+        armIdleSettle();
+        return;
+      }
 
       // Mid-momentum re-touch (or duplicate pointerdown+touchstart): cancel pending snap and re-baseline.
       if (interactionActive) {
@@ -972,11 +941,13 @@ export function useColumnScrollSnap(
 
         if (event.type === "wheel") {
           pointerHeld = false;
+          wheelBurstActive = true;
           suspendNativeSnap();
           armIdleSettle();
           return;
         }
 
+        wheelBurstActive = false;
         pointerHeld = true;
         if (event.type === "pointerdown" && "pointerId" in event) {
           try {
@@ -1005,11 +976,13 @@ export function useColumnScrollSnap(
 
       if (event.type === "wheel") {
         pointerHeld = false;
+        wheelBurstActive = true;
         suspendNativeSnap();
         armIdleSettle();
         return;
       }
 
+      wheelBurstActive = false;
       pointerHeld = true;
       if (event.type === "pointerdown" && "pointerId" in event) {
         try {
@@ -1043,7 +1016,17 @@ export function useColumnScrollSnap(
       }
     };
 
-    const handleScroll = () => {
+    /*
+    FNXC:BoardNavigation 2026-09-17-09:49:
+    FN-500 : seuls les événements du SCROLLER lui-même décrivent un déplacement du tableau. Un `scroll`
+    ou `scrollend` remonté depuis une `.column-body` (défilement vertical des cartes) ne doit jamais
+    paginer le board.
+    */
+    const isScrollerOwnTick = (event: Event): boolean =>
+      event.target === scroller || event.target === null || event.target === undefined;
+
+    const handleScroll = (event: Event) => {
+      if (!isScrollerOwnTick(event)) return;
       if (absorbTickWithPin()) return;
       if (!interactionActive) return;
       const current = scroller.scrollLeft;
@@ -1051,11 +1034,8 @@ export function useColumnScrollSnap(
       lastScrollLeft = current;
       markMoved();
 
-      // While finger is down: free-scroll only, sampling speed for the release page count.
-      if (pointerHeld) {
-        sampleVelocity(current);
-        return;
-      }
+      // While finger is down: free-scroll only. The hook takes the axis back at lift.
+      if (pointerHeld) return;
       // Post-lift ticks (residual inertia before our page takes over): keep the fallback armed.
       armIdleSettle();
     };
@@ -1080,14 +1060,18 @@ export function useColumnScrollSnap(
       /*
       FNXC:BoardNavigation 2026-07-24-11:20:
       Directional lift pages NOW instead of arming the idle settle — the whole point of owning the
-      momentum. Net-zero-direction pans (weak or reversed gestures) still fall through to the idle
-      settle, which rests them on the nearest center.
+      momentum.
+
+      FNXC:BoardNavigation 2026-09-17-09:49:
+      FN-500 : un swipe touch/pen TERMINÉ n'attend plus le repli d'inactivité, même sans direction
+      nette. Le lever est une fin explicite ; le repli est réservé aux flux qui n'en ont pas (molette).
       */
       if (lockedDirection !== 0) {
         commitDirectionalPage(lockedDirection);
         return;
       }
-      armIdleSettle();
+      clearIdleTimer();
+      snapInScrollDirection();
     };
 
     const handleGestureCancel = (event: Event) => {
@@ -1113,7 +1097,9 @@ export function useColumnScrollSnap(
         // Genuine cancel with pan intent: page like a lift rather than coasting to an idle settle.
         commitDirectionalPage(lockedDirection);
       } else if (sawHorizontalMovement) {
-        armIdleSettle();
+        // FN-500: a genuine cancel is an explicit end too — settle now, never on the wheel fallback.
+        clearIdleTimer();
+        snapInScrollDirection();
       } else {
         // FNXC:BoardNavigation 2026-07-22-15:26: Cancelled zero-pan touch must not leave mid-column.
         interactionActive = false;
@@ -1121,7 +1107,8 @@ export function useColumnScrollSnap(
       }
     };
 
-    const handleScrollEnd = () => {
+    const handleScrollEnd = (event: Event) => {
+      if (!isScrollerOwnTick(event)) return;
       if (absorbTickWithPin()) return;
       if (pointerHeld) return;
       if (!interactionActive) return;
@@ -1132,9 +1119,39 @@ export function useColumnScrollSnap(
     FNXC:BoardNavigation 2026-09-14-20:19:
     FN-398: keyboard scrolling is user intent too. It never went through `beginInteraction`, so a
     keyboard scroll landed inside a live pin and was rewritten back to the snapped column.
-    */
-    const releasePinOnKeyboardIntent = () => { clearPin(); };
 
+    FNXC:BoardNavigation 2026-09-17-09:49:
+    FN-500 : cette intention annule aussi une correction en cours et rend inertes ses callbacks.
+    */
+    const releasePinOnKeyboardIntent = () => {
+      clearPin();
+      interactionGeneration++;
+      cancelPageAnimation();
+      clearIdleTimer();
+      resetGestureState();
+      restoreNativeSnap();
+    };
+
+    /*
+    FNXC:BoardNavigation 2026-09-17-09:49:
+    FN-500 : une restauration programmatique (`restoreBoardScrollSnapshot`) est annoncée par un signal
+    DOM local AVANT ses écritures. Le hook cède alors complètement la main — y compris pour un
+    déplacement inférieur à la tolérance compositeur, que l'épingle bornée aurait sinon ré-écrit. La
+    provenance vient de ce signal, jamais de `scroll.isTrusted` ni de l'amplitude du déplacement.
+    */
+    const handleExternalRestore = () => {
+      interactionGeneration++;
+      clearIdleTimer();
+      clearPin();
+      cancelPageAnimation();
+      releasePointerCapture();
+      resetGestureState();
+      pointerHeld = false;
+      touchSequenceActive = false;
+      restoreNativeSnap();
+    };
+
+    scroller.addEventListener(BOARD_SCROLL_RESTORE_EVENT, handleExternalRestore);
     scroller.addEventListener("keydown", releasePinOnKeyboardIntent);
     scroller.addEventListener("pointerdown", beginInteraction);
     scroller.addEventListener("touchstart", beginInteraction, { passive: true });
@@ -1155,6 +1172,7 @@ export function useColumnScrollSnap(
       cancelPageAnimation();
       releasePointerCapture();
       restoreNativeSnap();
+      scroller.removeEventListener(BOARD_SCROLL_RESTORE_EVENT, handleExternalRestore);
       scroller.removeEventListener("keydown", releasePinOnKeyboardIntent);
       scroller.removeEventListener("pointerdown", beginInteraction);
       scroller.removeEventListener("touchstart", beginInteraction);
@@ -1167,6 +1185,7 @@ export function useColumnScrollSnap(
       scroller.removeEventListener("touchend", handleFingerLift);
       scroller.removeEventListener("pointercancel", handleGestureCancel);
       scroller.removeEventListener("touchcancel", handleGestureCancel);
+      // FN-500: `contextKey` participe aux dépendances, donc un changement de contexte passe par ce nettoyage.
     };
-  }, [isEligibleViewport, isUserInteraction, scroller]);
+  }, [contextKey, enabled, isEligibleViewport, isUserInteraction, scroller]);
 }

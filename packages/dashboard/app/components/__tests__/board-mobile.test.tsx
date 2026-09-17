@@ -103,7 +103,16 @@ describe("mobile board magnetic column snap wiring (FN-8235)", () => {
 
     expect(boardSource).toContain('import { useColumnScrollSnap } from "../hooks/useColumnScrollSnap";');
     expect(boardSource).toContain('import { useBoardMousePan } from "../hooks/useBoardMousePan";');
-    expect(boardSource).toContain("useColumnScrollSnap(boardElement, { mobileOnly: true });");
+    /*
+    FNXC:BoardNavigation 2026-09-17-09:49:
+    FN-500 : l'appel reste unique et partagé, mais il connaît son contexte — `enabled` suit la vue
+    active de `MainViewKeepAlive`, `contextKey` compose projet et vue de workflow pour qu'un changement
+    annule proprement l'interaction précédente.
+    */
+    expect(boardSource).toContain("useColumnScrollSnap(boardElement, {");
+    expect(boardSource).toContain("enabled: active,");
+    expect(boardSource).toContain("contextKey: boardSnapContextKey,");
+    expect(boardSource.match(/useColumnScrollSnap\(/g)).toHaveLength(1);
     expect(boardSource).toContain("useBoardMousePan(boardElement, true)");
     expect(boardSource.match(/ref=\{setBoardRef\}/g)).toHaveLength(2);
     expect(boardSource.match(/\{\.\.\.boardMousePanBindings\}/g)).toHaveLength(2);

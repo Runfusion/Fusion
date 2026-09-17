@@ -245,7 +245,6 @@ function BoardContent({ tasks, projectId, maxConcurrent, maxWorktrees, showWorkt
     boardRef.current = element;
     setBoardElement((current) => current === element ? current : element);
   }, []);
-  useColumnScrollSnap(boardElement, { mobileOnly: true });
   useEffect(() => {
     if (!active) return;
     resetBoardColumnsOnArrival(boardElement);
@@ -440,6 +439,23 @@ function BoardContent({ tasks, projectId, maxConcurrent, maxWorktrees, showWorkt
     refreshBoardWorkflows,
     setBoardWorkflowsState,
   } = useBoardWorkflows({ projectId });
+
+  /*
+  FNXC:BoardNavigation 2026-09-17-09:49:
+  FN-500 : le magnétisme mobile reste un SEUL propriétaire partagé par les deux racines vivantes, mais
+  il connaît désormais son contexte. `enabled` le retire d'une vue conservée mais inactive
+  (`MainViewKeepAlive`), et `contextKey` transforme un changement de projet ou de vue de workflow
+  (sélection réelle ou agrégat) en annulation propre de l'interaction précédente, au lieu de laisser
+  une correction viser des colonnes qui n'existent plus. L'appel reste inconditionnel et unique.
+  */
+  const boardSnapContextKey = `${projectId ?? "default"}:${
+    isAllWorkflowsViewSelected ? ALL_WORKFLOWS_BOARD_VIEW_ID : (selectedWorkflowId ?? "")
+  }`;
+  useColumnScrollSnap(boardElement, {
+    mobileOnly: true,
+    enabled: active,
+    contextKey: boardSnapContextKey,
+  });
 
   /*
   FNXC:WorkflowResolvedColumns 2026-07-30-23:15 (the board's fan-out read the LEGACY lanes):

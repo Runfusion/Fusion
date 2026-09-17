@@ -246,4 +246,28 @@ describe("dashboard test config guard", () => {
     expect(specSource).toContain("port: 0");
     expect(specSource).not.toContain("4040");
   });
+
+  /*
+  FNXC:BoardNavigation 2026-09-17-09:49:
+  FN-500 : la preuve rendue du défilement horizontal du tableau rejoint la même lane navigateur. Elle doit
+  être collectée exactement une fois, réclamer un port choisi par l'OS et ne jamais nommer le port réservé.
+  */
+  it("collects the board scroll browser proof exactly once in the touch lane", () => {
+    const boardScrollSpec = "src/__tests__/board-scroll-browser.test.ts";
+    const touchProject = dashboardQualityProjectGlobs["dashboard-browser-touch"];
+
+    expect(expandDashboardGlobs(touchProject.include)).toContain(boardScrollSpec);
+
+    const collectingProjects = Object.entries(dashboardQualityProjectGlobs)
+      .filter(([projectName]) => projectName !== "dashboard-api-quality-backfill")
+      .filter(([, project]) => expandDashboardGlobs(project.include).has(boardScrollSpec))
+      .filter(([, project]) => !expandDashboardGlobs(project.exclude).has(boardScrollSpec))
+      .map(([projectName]) => projectName);
+    expect(collectingProjects).toEqual(["dashboard-browser-touch"]);
+    expect(expandProjectFiles("dashboard-api-quality-backfill")).not.toContain(boardScrollSpec);
+
+    const boardSpecSource = readFileSync(join(dashboardRoot, boardScrollSpec), "utf8");
+    expect(boardSpecSource).toContain("port: 0");
+    expect(boardSpecSource).not.toContain("4040");
+  });
 });

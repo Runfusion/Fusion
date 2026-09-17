@@ -405,6 +405,14 @@ const browserTouchTests = [
   */
   "src/__tests__/drawer-list-interactions-browser.test.ts",
   /*
+  FNXC:BoardNavigation 2026-09-17-09:49:
+  FN-500 : la fluidité du défilement horizontal du tableau, l'ancrage exact sur une colonne et l'absence
+  d'arrêt intermédiaire sont des résultats RENDUS, pilotés par de vrais gestes tactiles ; jsdom ne calcule
+  ni le layout flex, ni la cascade de snap, ni le pipeline d'entrée. Collectée une seule fois dans cette
+  lane, avec auto-clôture sur la présence d'un Chromium local.
+  */
+  "src/__tests__/board-scroll-browser.test.ts",
+  /*
   FNXC:TaskSearch 2026-09-17-09:41:
   FN-477 : la largeur égale à une carte du tableau et la réserve de 1,5 carte sont des géométries
   rendues ; jsdom retourne des rectangles nuls et ne fait aucune mise en page flex/overflow. Collecté

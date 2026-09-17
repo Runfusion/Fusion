@@ -1,6 +1,16 @@
 export type BoardColumnArrivalResetResult = "board-absent" | "columns-pending" | "ready";
 
 /*
+FNXC:BoardNavigation 2026-09-17-09:49:
+FN-500 : signal DOM local émis sur le board AVANT les écritures de restauration, et seulement une fois
+le snapshot et l'hydratation validés. Le propriétaire du magnétisme mobile s'y abonne pour céder
+complètement la main : sans lui, une restauration de faible amplitude (< tolérance compositeur) était
+indistinguable d'une dérive et se faisait ré-écrire par l'épingle bornée. La provenance ne doit jamais
+être déduite de `scroll.isTrusted` ni de l'amplitude seule.
+*/
+export const BOARD_SCROLL_RESTORE_EVENT = "fusion:board-scroll-restore";
+
+/*
 FNXC:BoardNavigation 2026-09-09-22:29:
 Board arrival owns vertical lane position independently from horizontal snapshot restoration. Reset every rendered lane and notify its scroll listener so virtualized rows agree with the DOM; a missing or not-yet-hydrated Board remains distinguishable for bounded replay.
 */
@@ -91,6 +101,10 @@ export function restoreBoardScrollSnapshot(snapshot: BoardScrollSnapshot | null,
   ) {
     return false;
   }
+
+  // FN-500: annonce la restauration après validation, avant TOUTE écriture, pour que le magnétisme
+  // mobile cède l'axe au lieu de traiter le déplacement comme une dérive compositeur.
+  board.dispatchEvent(new Event(BOARD_SCROLL_RESTORE_EVENT));
 
   const projectContent = ownerDocument.querySelector<HTMLElement>(".project-content");
   const scrollingElement = ownerDocument.scrollingElement as HTMLElement | null;
