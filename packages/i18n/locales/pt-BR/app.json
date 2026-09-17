@@ -2454,10 +2454,16 @@
     "failedToSaveFile": "Falha ao salvar o arquivo"
   },
   "errorBoundary": {
+    "copied": "Copiado",
+    "copyDetails": "Copiar detalhes",
+    "copyFailed": "Falha ao copiar — selecione o texto abaixo",
     "genericError": "Algo deu errado",
     "reloadPage": "Recarregar página",
+    "reportTruncated": "Este relatório foi encurtado para continuar legível.",
     "retry": "Tentar novamente",
-    "sectionError": "Esta seção encontrou um erro"
+    "sectionError": "Esta seção encontrou um erro",
+    "technicalDetails": "Detalhes técnicos",
+    "updateDepthHint": "O React interrompeu um laço de renderização: um componente continuou agendando atualizações durante a atualização. Os detalhes abaixo identificam qual build e quais componentes estavam envolvidos."
   },
   "evals": {
     "allRuns": "Todas as execuções",

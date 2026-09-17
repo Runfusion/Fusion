@@ -1211,6 +1211,22 @@ export function FloatingWindow({
     anchor: "layout-bottom",
     bottomInsetProperty: "--mobile-drawer-keyboard-inset",
   });
+  /*
+  FNXC:DashboardWindowSurfaceRefIdentity 2026-09-17-19:34:
+  FN-515: this composed root ref MUST keep a stable identity across renders. `windowSurface.rootRef`
+  publishes into the window manager, which treats a `root` change as a real change, so an inline
+  callback made React detach (publish null) then re-attach (publish the node) on every render. Each
+  pair bumped `surfaceRevision` twice, the provider re-rendered this consumer, and the next render
+  produced yet another callback — the runaway loop that surfaced as React #185 on modal open.
+
+  Depend ONLY on `windowSurface.rootRef` (already stable), never on the whole `windowSurface` binding,
+  which is a fresh object each render. `null` is still forwarded on a genuine detach so the registry
+  can release the surface.
+  */
+  const setOverlayRef = useCallback((node: HTMLDivElement | null) => {
+    overlayRef.current = node;
+    windowSurface.rootRef(node);
+  }, [windowSurface.rootRef]);
   const drawerKeyboardBounded = mobileDrawer && drawerKeyboardSurface.bottomInset > 0;
   const windowKeyboardBounded = !mobileDrawer && keyboardSurface.maxBlockSize !== null;
   const keyboardBounded = drawerKeyboardBounded || windowKeyboardBounded;
@@ -1269,10 +1285,7 @@ export function FloatingWindow({
     {snapPreviewLayer}
     {createPortal(
     <div
-      ref={(node) => {
-        overlayRef.current = node;
-        windowSurface.rootRef(node);
-      }}
+      ref={setOverlayRef}
       className={`floating-window-overlay${effectiveModal ? " floating-window-overlay--modal" : ""}${mobileDrawer ? " floating-window-overlay--mobile-drawer" : ""}${drawerKeyboardBounded ? " floating-window-overlay--keyboard-bounded" : ""}${effectiveHidden ? " floating-window-overlay--hidden" : ""}${overlayClassName ? ` ${overlayClassName}` : ""}`}
       role="dialog"
       aria-modal={effectiveModal ? "true" : "false"}

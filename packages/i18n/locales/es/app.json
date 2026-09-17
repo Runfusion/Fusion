@@ -2444,10 +2444,16 @@
     "failedToSaveFile": "Error al guardar el archivo"
   },
   "errorBoundary": {
+    "copied": "",
+    "copyDetails": "",
+    "copyFailed": "",
     "genericError": "",
     "reloadPage": "",
+    "reportTruncated": "",
     "retry": "",
-    "sectionError": ""
+    "sectionError": "",
+    "technicalDetails": "",
+    "updateDepthHint": ""
   },
   "evals": {
     "allRuns": "Todas las ejecuciones",

@@ -2444,10 +2444,16 @@
     "failedToSaveFile": "儲存檔案失敗"
   },
   "errorBoundary": {
+    "copied": "",
+    "copyDetails": "",
+    "copyFailed": "",
     "genericError": "",
     "reloadPage": "",
+    "reportTruncated": "",
     "retry": "",
-    "sectionError": ""
+    "sectionError": "",
+    "technicalDetails": "",
+    "updateDepthHint": ""
   },
   "evals": {
     "allRuns": "所有運行",

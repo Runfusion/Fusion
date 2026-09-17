@@ -2444,10 +2444,16 @@
     "failedToSaveFile": "파일 저장 실패"
   },
   "errorBoundary": {
+    "copied": "",
+    "copyDetails": "",
+    "copyFailed": "",
     "genericError": "",
     "reloadPage": "",
+    "reportTruncated": "",
     "retry": "",
-    "sectionError": ""
+    "sectionError": "",
+    "technicalDetails": "",
+    "updateDepthHint": ""
   },
   "evals": {
     "allRuns": "전체 실행",

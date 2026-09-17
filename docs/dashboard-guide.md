@@ -180,6 +180,29 @@ During work only, the Retry confirmation offers a **Keep the work already produc
 
 Retry refuses workflow terminal columns, active merges across the whole merge pipeline (including its review phase), and columns without a workflow entry node of their own. An orphaned stale merge stamp remains retryable after Fusion confirms that no live merger owns it. A retry interrupted during publication leaves the card paused with `restart-stage-publishing`; this durable safety fence is retained for compatibility, and selecting **Retry** again safely resumes publication.
 
+## Error screen technical details
+
+<!--
+FNXC:ErrorBoundaryDiagnostics 2026-09-17-19:34:
+FN-515: a minified bundle shows only "Minified React Error #185" and the stacks go to the browser
+console, which an operator on a phone does not have. The fallback therefore carries its own bounded,
+local, copyable report. Document what it contains and what it deliberately does not.
+-->
+When a view, a window, or the whole dashboard fails, the recovery screen keeps **Retry** and **Reload page** and adds a collapsible **Technical details** section with a **Copy details** action. Everything stays on your device.
+
+The report contains the error name and message, the JavaScript stack, React's component stack, which boundary caught the error (root, page, or section), the time, the build identifier of the running bundle, the browser user agent, and the layout/visual viewport sizes. Fields the browser did not provide are shown as `(unavailable)` rather than omitted silently, and a very long report is shortened with a visible notice so the screen stays usable.
+
+When the error is React's render-loop error (`#185`), the section adds a short plain-language explanation and a link to <https://react.dev/errors/185>. Fusion does not guess which component caused it; the stacks in the report are the evidence.
+
+Limits worth knowing:
+
+- Nothing is uploaded and nothing is reported automatically. Copying is an explicit action.
+- The report never includes the page address, page content, cookies, browser storage, your configuration, conversation transcripts, or task titles.
+- URLs found inside the message or the stacks keep only their origin and path; credentials, query strings, and fragments are removed, and obvious `token`/`password`/`authorization` values plus `Bearer` credentials are masked. This is a best-effort precaution, not a guarantee that an arbitrary third-party message contains no sensitive text — read the report before sharing it.
+- Source maps stay private, so stacks refer to the published bundle. Quote the build identifier when you report a problem.
+- If copying is refused by the browser (common in non-secure contexts), the screen says so and the report stays selectable so you can copy it by hand.
+- Selecting **Retry** discards the report. A later reply from the clipboard cannot bring an old report back.
+
 ## Keyboard shortcuts
 
 <!--

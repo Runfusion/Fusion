@@ -2444,10 +2444,16 @@
     "failedToSaveFile": "Échec de l'enregistrement du fichier"
   },
   "errorBoundary": {
+    "copied": "",
+    "copyDetails": "",
+    "copyFailed": "",
     "genericError": "",
     "reloadPage": "",
+    "reportTruncated": "",
     "retry": "",
-    "sectionError": ""
+    "sectionError": "",
+    "technicalDetails": "",
+    "updateDepthHint": ""
   },
   "evals": {
     "allRuns": "Toutes les exécutions",

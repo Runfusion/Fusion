@@ -1,6 +1,8 @@
+import type { ReactNode } from "react";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { DashboardWindowManagerProvider } from "../context/DashboardWindowManagerContext";
 import { FloatingWindow } from "../components/FloatingWindow";
 import { MobileDrawer } from "../components/MobileDrawer";
 import { useKeyboardViewportOwnedByAncestor } from "../hooks/useKeyboardViewportSurface";
@@ -284,6 +286,144 @@ describe("FloatingWindow phone drawer presentation owns exactly one adaptation",
 
     expect(panel.style.maxHeight).toBe("480px");
     expect(overlay.style.getPropertyValue("--mobile-drawer-keyboard-inset")).toBe("");
+  });
+});
+
+/*
+FNXC:DashboardWindowSurfaceRefIdentity 2026-09-17-19:34:
+FN-515: every case above mounts the containers WITHOUT the window manager, so `upsertSurface` is
+undefined, publication is a no-op, and a churning root ref sets no state — which is exactly why this
+file could not see the React #185 loop FN-512 introduced. These cases re-run the same keyboard orders
+under the REAL provider, so the keyboard adaptation and the surface registry are exercised together.
+*/
+describe("keyboard adaptation under the real window manager", () => {
+  function renderManaged(node: ReactNode) {
+    return render(<DashboardWindowManagerProvider>{node}</DashboardWindowManagerProvider>);
+  }
+
+  function openManagedDrawer(rect: { top: number; height: number }) {
+    const view = renderManaged(
+      <MobileDrawer open title="Chat" onClose={() => {}}>
+        <HostedContent onOwnership={() => {}} />
+      </MobileDrawer>,
+    );
+    const panel = screen.getByRole("dialog", { name: "Chat" });
+    const overlay = panel.parentElement as HTMLElement;
+    stubBoundingRect(panel, rect);
+    stubBoundingRect(overlay, rect);
+    return { panel, overlay, unmount: view.unmount };
+  }
+
+  /** The loop surfaced through React's own console.error before any boundary could render. */
+  function expectNoUpdateDepthError(spy: ReturnType<typeof vi.spyOn>) {
+    const text = spy.mock.calls
+      .map((call) => call.map((part) => (part instanceof Error ? part.message : String(part))).join(" "))
+      .join("\n");
+    expect(text).not.toMatch(/Maximum update depth exceeded|error #185/i);
+  }
+
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    errorSpy.mockRestore();
+  });
+
+  it("scenario A — one bound, no update-depth loop, composer still usable", async () => {
+    harness = installMobileKeyboardViewport(PHONE);
+    const { overlay } = openManagedDrawer({ top: 0, height: 844 });
+
+    harness.set({ ...PHONE, visualHeight: 500 });
+
+    expect(overlay.style.getPropertyValue("--mobile-drawer-keyboard-inset")).toBe("344px");
+    const composer = screen.getByLabelText("Composer");
+    await userEvent.type(composer, "bonjour");
+    expect(composer).toHaveValue("bonjour");
+    expect(screen.getByLabelText("Composer")).toBe(composer);
+    expectNoUpdateDepthError(errorSpy);
+  });
+
+  it("scenario A — offsetTop 40 moves the bound, not a second offset", () => {
+    harness = installMobileKeyboardViewport(PHONE);
+    const { overlay } = openManagedDrawer({ top: 0, height: 844 });
+
+    harness.set({ ...PHONE, visualHeight: 500, offsetTop: 40 });
+
+    expect(overlay.style.getPropertyValue("--mobile-drawer-keyboard-inset")).toBe("304px");
+    expectNoUpdateDepthError(errorSpy);
+  });
+
+  it("scenario B — an already-resized layout reserves nothing", () => {
+    harness = installMobileKeyboardViewport(PHONE);
+    const { overlay } = openManagedDrawer({ top: 0, height: 500 });
+
+    harness.set({ layoutHeight: 500, innerHeight: 844, visualHeight: 500, visualWidth: 390 });
+
+    expect(overlay.style.getPropertyValue("--mobile-drawer-keyboard-inset")).toBe("");
+    expectNoUpdateDepthError(errorSpy);
+  });
+
+  it("a duplicate identical frame publishes the same bound once more, with no loop", () => {
+    harness = installMobileKeyboardViewport(PHONE);
+    const { overlay } = openManagedDrawer({ top: 0, height: 844 });
+
+    harness.set({ ...PHONE, visualHeight: 500 });
+    harness.set({ ...PHONE, visualHeight: 500 });
+
+    expect(overlay.style.getPropertyValue("--mobile-drawer-keyboard-inset")).toBe("344px");
+    expectNoUpdateDepthError(errorSpy);
+  });
+
+  it("focus then resize, and resize then focus, both settle on the same bound", () => {
+    harness = installMobileKeyboardViewport(PHONE);
+    const first = openManagedDrawer({ top: 0, height: 844 });
+    harness.emitFocusIn();
+    harness.set({ ...PHONE, visualHeight: 500 });
+    expect(first.overlay.style.getPropertyValue("--mobile-drawer-keyboard-inset")).toBe("344px");
+    first.unmount();
+
+    harness.restore();
+    harness = installMobileKeyboardViewport(PHONE);
+    const second = openManagedDrawer({ top: 0, height: 844 });
+    harness.set({ ...PHONE, visualHeight: 500 });
+    harness.emitFocusIn();
+    expect(second.overlay.style.getPropertyValue("--mobile-drawer-keyboard-inset")).toBe("344px");
+    expectNoUpdateDepthError(errorSpy);
+  });
+
+  it("mounting with the keyboard already open adapts on the first coherent event", () => {
+    harness = installMobileKeyboardViewport(PHONE);
+    harness.setSilently({ ...PHONE, visualHeight: 500 });
+    const { overlay } = openManagedDrawer({ top: 0, height: 844 });
+
+    harness.emitResize();
+
+    expect(overlay.style.getPropertyValue("--mobile-drawer-keyboard-inset")).toBe("344px");
+    expectNoUpdateDepthError(errorSpy);
+  });
+
+  it("a viewport event after unmount neither revives a surface nor loops", () => {
+    harness = installMobileKeyboardViewport(PHONE);
+    const { unmount } = openManagedDrawer({ top: 0, height: 844 });
+    harness.set({ ...PHONE, visualHeight: 500 });
+
+    unmount();
+    harness.set({ ...PHONE, visualHeight: 300 });
+
+    expect(document.querySelectorAll("[data-dashboard-window-surface]")).toHaveLength(0);
+    expectNoUpdateDepthError(errorSpy);
+  });
+
+  it("a browser with no Visual Viewport API adapts nothing and still converges", () => {
+    harness = installMobileKeyboardViewport(PHONE);
+    harness.removeVisualViewport();
+    const { overlay } = openManagedDrawer({ top: 0, height: 844 });
+
+    expect(overlay.style.getPropertyValue("--mobile-drawer-keyboard-inset")).toBe("");
+    expectNoUpdateDepthError(errorSpy);
   });
 });
 

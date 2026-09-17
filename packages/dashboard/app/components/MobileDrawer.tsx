@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useDrawerDismissGesture } from "../hooks/useDrawerDismissGesture";
 import {
@@ -124,6 +124,22 @@ export function MobileDrawer({
   });
   const surfaceActiveRef = useRef(windowSurface.surfaceActive);
   surfaceActiveRef.current = windowSurface.surfaceActive;
+  /*
+  FNXC:DashboardWindowSurfaceRefIdentity 2026-09-17-19:34:
+  FN-515: this composed root ref MUST keep a stable identity across renders. `windowSurface.rootRef`
+  publishes into the window manager, and the manager treats a `root` change as a real change, so an
+  inline callback made React detach (publish null) then re-attach (publish the node) on every render.
+  Each pair bumped `surfaceRevision` twice, the provider re-rendered this consumer, and the next
+  render produced yet another callback — the runaway loop that surfaced as React #185 on modal open.
+
+  Depend ONLY on `windowSurface.rootRef` (already stable), never on the whole `windowSurface` binding,
+  which is a fresh object each render. `null` is still forwarded on a genuine detach so the registry
+  can release the surface.
+  */
+  const setOverlayRef = useCallback((node: HTMLDivElement | null) => {
+    overlayRef.current = node;
+    windowSurface.rootRef(node);
+  }, [windowSurface.rootRef]);
   const keyboardSurface = useKeyboardViewportSurface(overlayRef, {
     enabled: open && windowSurface.surfaceActive && !windowSurface.globallyHidden,
     // A drawer is portalled to document.body and is its own containing block.
@@ -195,10 +211,7 @@ export function MobileDrawer({
 
   return createPortal(
     <div
-      ref={(node) => {
-        overlayRef.current = node;
-        windowSurface.rootRef(node);
-      }}
+      ref={setOverlayRef}
       className={`mobile-drawer${open ? " mobile-drawer--open" : " mobile-drawer--hidden"}${keyboardOwned ? " mobile-drawer--keyboard-bounded" : ""}${className ? ` ${className}` : ""}`}
       style={keyboardSurface.style}
       data-keyboard-bounded={keyboardOwned || undefined}

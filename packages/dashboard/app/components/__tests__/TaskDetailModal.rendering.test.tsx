@@ -6,6 +6,7 @@ FNXC:TaskDetailFooterActions 2026-09-05-23:27:
 FN-300 keeps one header Actions trigger and moves Quick Add controls into its labeled list. Match the trigger by its exact accessible name so action items with descriptive labels cannot make menu-opening queries ambiguous.
 */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { useState } from "react";
 import { render, screen, fireEvent, act, waitFor, cleanup, within } from "@testing-library/react";
 
 // FNXC:Markdown 2026-06-23-03:30: Mock the heavy `mermaid` library so the shared
@@ -38,6 +39,8 @@ import {
 import { TaskDetailModal, TaskDetailContent } from "../TaskDetailModal";
 import * as dashboardApi from "../../api";
 import { FileBrowserProvider } from "../../context/FileBrowserContext";
+import { DashboardWindowManagerProvider } from "../../context/DashboardWindowManagerContext";
+import { RootErrorBoundary } from "../ErrorBoundary";
 import type { Task } from "@fusion/core";
 
 setupTaskDetailModalHooks();
@@ -2895,4 +2898,73 @@ describe("TaskDetailModal", () => {
   });
 
 
+});
+
+/*
+FNXC:DashboardWindowSurfaceRefIdentity 2026-09-17-19:34:
+FN-515: the real Task Detail host is the product-scope proof that the shared window primitives no
+longer loop on open. Both presentations mount under the REAL DashboardWindowManagerProvider and a
+REAL RootErrorBoundary, and neither FloatingWindow nor MobileDrawer is stubbed: an update-depth loop
+would surface here as the boundary fallback instead of the card.
+*/
+describe("TaskDetailModal opens under the real window manager", () => {
+  function expectNoBoundaryFallback() {
+    expect(screen.queryByText("Something went wrong")).toBeNull();
+    const logged = (console.error as unknown as { mock?: { calls: unknown[][] } }).mock?.calls ?? [];
+    const text = logged
+      .map((call) => call.map((part) => (part instanceof Error ? part.message : String(part))).join(" "))
+      .join("\n");
+    expect(text).not.toMatch(/Maximum update depth exceeded|error #185/i);
+  }
+
+  function Host({ mobileDrawer }: { mobileDrawer?: boolean }) {
+    const [open, setOpen] = useState(false);
+    return (
+      <RootErrorBoundary>
+        <DashboardWindowManagerProvider>
+          <button type="button" onClick={() => setOpen(true)}>Open detail</button>
+          {open && (
+            <TaskDetailModal
+              initialTab="definition"
+              mobileDrawer={mobileDrawer}
+              task={makeTask({ id: "FN-WINDOW", column: "todo" })}
+              onClose={() => setOpen(false)}
+              onDeleteTask={noopDelete}
+              onMergeTask={noopMerge}
+              onOpenDetail={noopOpenDetail}
+              addToast={noop}
+            />
+          )}
+        </DashboardWindowManagerProvider>
+      </RootErrorBoundary>
+    );
+  }
+
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    errorSpy.mockRestore();
+  });
+
+  it.each([
+    ["desktop floating presentation", false],
+    ["phone drawer presentation", true],
+  ] as const)("%s opens, updates and reopens without a loop", async (_label, mobileDrawer) => {
+    const view = render(<Host mobileDrawer={mobileDrawer} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Open detail" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("FN-WINDOW")).toBeInTheDocument();
+    });
+    expectNoBoundaryFallback();
+
+    // A parent re-render with fresh prop identities must not churn the managed root ref.
+    view.rerender(<Host mobileDrawer={mobileDrawer} />);
+    expectNoBoundaryFallback();
+  });
 });

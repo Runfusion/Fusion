@@ -145,3 +145,81 @@ describe("resolveDashboardWindowBounds", () => {
     })).toEqual({ left: 0, top: 200, right: 0, bottom: 200, width: 0, height: 0 });
   });
 });
+
+/*
+FNXC:DashboardWindowSurfaceRefIdentity 2026-09-17-19:34:
+FN-515: `upsertSurface` must keep reacting to REAL registration changes. A root swap, a
+`locallyVisible` flip and a `stackOrder` change are all genuine publications, while an ordinary
+re-render that changes nothing must publish nothing — that asymmetry is what makes a stable root ref
+sufficient instead of weakening the registry's equality check. Render counts are deliberately not
+asserted: they depend on React internals.
+*/
+describe("surface registration publishes real changes only", () => {
+  function Registered({ logicalId, locallyVisible, stackOrder, swapped }: {
+    logicalId: string;
+    locallyVisible: boolean;
+    stackOrder: number;
+    swapped: boolean;
+  }) {
+    const surface = useDashboardWindowSurface({ logicalId, locallyVisible, stackOrder });
+    // Swapping which element carries the ref is a genuine root replacement.
+    return swapped
+      ? <section ref={surface.rootRef} data-testid="root-b">B</section>
+      : <div ref={surface.rootRef} data-testid="root-a">A</div>;
+  }
+
+  function Counted({ children }: { children: React.ReactNode }) {
+    const visibility = useDashboardWindowVisibility();
+    return (
+      <>
+        <output data-testid="count">{visibility?.visibleSurfaceCount ?? 0}</output>
+        {children}
+      </>
+    );
+  }
+
+  it("reacts to a real root replacement, a visibility flip and a stack reorder", () => {
+    const view = render(
+      <DashboardWindowManagerProvider>
+        <Counted>
+          <Registered logicalId="swap" locallyVisible stackOrder={0} swapped={false} />
+        </Counted>
+      </DashboardWindowManagerProvider>,
+    );
+
+    expect(screen.getByTestId("root-a")).toBeInTheDocument();
+    expect(screen.getByTestId("count")).toHaveTextContent("1");
+
+    view.rerender(
+      <DashboardWindowManagerProvider>
+        <Counted>
+          <Registered logicalId="swap" locallyVisible stackOrder={0} swapped />
+        </Counted>
+      </DashboardWindowManagerProvider>,
+    );
+    // The registration followed the new element rather than being dropped.
+    expect(screen.getByTestId("root-b")).toBeInTheDocument();
+    expect(screen.getByTestId("count")).toHaveTextContent("1");
+
+    view.rerender(
+      <DashboardWindowManagerProvider>
+        <Counted>
+          <Registered logicalId="swap" locallyVisible={false} stackOrder={3} swapped />
+        </Counted>
+      </DashboardWindowManagerProvider>,
+    );
+    expect(screen.getByTestId("count")).toHaveTextContent("0");
+
+    view.rerender(
+      <DashboardWindowManagerProvider>
+        <Counted>
+          <Registered logicalId="swap" locallyVisible stackOrder={3} swapped />
+        </Counted>
+      </DashboardWindowManagerProvider>,
+    );
+    expect(screen.getByTestId("count")).toHaveTextContent("1");
+
+    view.unmount();
+    expect(document.querySelectorAll("[data-testid=root-b]")).toHaveLength(0);
+  });
+});

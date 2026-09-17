@@ -2473,10 +2473,16 @@ export default interface Resources {
       "title": "Project engine is not connected"
     },
     "errorBoundary": {
+      "copied": "Copied",
+      "copyDetails": "Copy details",
+      "copyFailed": "Copy failed — select the text below",
       "genericError": "Something went wrong",
       "reloadPage": "Reload page",
+      "reportTruncated": "This report was shortened to stay readable.",
       "retry": "Retry",
-      "sectionError": "This section encountered an error"
+      "sectionError": "This section encountered an error",
+      "technicalDetails": "Technical details",
+      "updateDepthHint": "React stopped a render loop: a component kept scheduling updates while updating. The details below identify which build and which components were involved."
     },
     "evals": {
       "allRuns": "All runs",

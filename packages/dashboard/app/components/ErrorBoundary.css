@@ -70,3 +70,79 @@
   margin-top: var(--space-lg);
 }
 
+/*
+FNXC:ErrorBoundaryDiagnostics 2026-09-17-19:34:
+FN-515: the local report must stay readable and its actions reachable on a 320px phone without a
+browser console. The report scrolls on both axes inside its own box instead of widening the page, and
+the actions wrap rather than overflowing. Tokens only — no new rigid width.
+*/
+.error-boundary__details {
+  width: 100%;
+  box-sizing: border-box;
+  text-align: left;
+  margin-top: var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  padding: var(--space-sm) var(--space-md);
+}
+
+.error-boundary__details-summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.error-boundary__details-summary:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.error-boundary__hint {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin: var(--space-sm) 0 0;
+  word-break: break-word;
+}
+
+.error-boundary__report {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  background: var(--surface);
+  border-radius: var(--radius-sm);
+  padding: var(--space-sm);
+  margin: var(--space-sm) 0 0;
+  max-height: 40vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  width: 100%;
+  box-sizing: border-box;
+  user-select: text;
+}
+
+.error-boundary__details-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+}
+
+@media (max-width: 768px) {
+  .error-boundary {
+    max-width: 100%;
+    padding: var(--space-lg) var(--space-md);
+  }
+
+  .error-boundary__actions {
+    flex-wrap: wrap;
+  }
+
+  .error-boundary__report {
+    max-height: 50vh;
+    font-size: 0.7rem;
+  }
+}
+
