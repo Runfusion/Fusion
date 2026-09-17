@@ -17,5 +17,5 @@ export function MicButton({ enabled, supported, state, error, start, stop, disab
   if (!enabled || !supported) return null;
   const active = state === "listening" || state === "transcribing";
   const label = state === "error" ? "Voice dictation error" : active ? "Stop voice dictation" : "Start voice dictation";
-  return <><UiButton type="button" className={`btn btn-icon mic-button mic-button--${state}`} disabled={disabled} aria-label={label} onClick={() => { if (active) stop(); else void start(); }}>{state === "error" ? <MicOff aria-hidden="true" /> : <Mic aria-hidden="true" />}</UiButton><span className="sr-only" aria-live="polite">{announcement}</span></>;
+  return <><UiButton type="button" className={`btn btn-icon mic-button mic-button--${state}`} disabled={disabled} aria-label={label} onClick={() => { if (active) stop(); else void start(); }}>{state === "error" ? <MicOff aria-hidden="true" /> : <Mic aria-hidden="true" />}</UiButton><span className="visually-hidden" aria-live="polite">{announcement}</span></>;
 }

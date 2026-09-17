@@ -266,7 +266,7 @@ export function ThemeDropdown({
       {open ? (
         <div className="theme-dropdown-popover" role="presentation">
           <label className="theme-dropdown-filter">
-            <span className="sr-only">{t("theme.filterColorThemes", "Filter color themes")}</span>
+            <span className="visually-hidden">{t("theme.filterColorThemes", "Filter color themes")}</span>
             <input
               ref={filterRef}
               type="search"

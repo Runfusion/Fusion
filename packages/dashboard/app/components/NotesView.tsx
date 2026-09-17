@@ -237,7 +237,12 @@ export function NotesView({ projectId, addToast, controller, compact = false, li
   };
 
   const list = <div className="notes-list">
-    <label className="notes-search"><Search aria-hidden="true" /><span className="sr-only">{t("notes.search", "Search notes")}</span><input className="input" type="search" value={notes.search} placeholder={t("notes.search", "Search notes")} onChange={(event) => notes.setSearch(event.target.value)} /></label>
+    <div className="notes-search">
+      <label className="search-field">
+        <Search className="search-field-icon" size={14} aria-hidden="true" />
+        <input className="search-field-input" type="search" value={notes.search} aria-label={t("notes.search", "Search notes")} placeholder={t("notes.search", "Search notes")} onChange={(event) => notes.setSearch(event.target.value)} />
+      </label>
+    </div>
     {notes.loading && !notes.notes.length ? <p className="notes-state">{t("common.loading", "Loading…")}</p> : null}
     {notes.error && !notes.selected ? <div className="notes-state" role="alert"><p>{notes.error}</p><button className="btn" type="button" onClick={() => void notes.loadList(notes.search)}>{t("common.retry", "Retry")}</button></div> : null}
     {!notes.loading && !notes.error && !notes.notes.length ? <div className="notes-state"><p>{notes.search ? t("notes.noResults", "No notes found") : t("notes.empty", "No notes yet")}</p></div> : null}

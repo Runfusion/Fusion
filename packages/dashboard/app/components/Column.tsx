@@ -658,7 +658,7 @@ function ColumnComponent({ column, tasks, projectId, maxWorktrees, showWorktreeG
                 )}
                 {showSortControl && (
                   <>
-                    <span className="sr-only">{sortControlLabel}</span>
+                    <span className="visually-hidden">{sortControlLabel}</span>
                     {sortOptions.map((option) => (
                       <UiMenuItem
                         id={option.mode}

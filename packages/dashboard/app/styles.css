@@ -66,6 +66,65 @@ html {
   border: 0;
 }
 
+/*
+FNXC:DashboardSearchField 2026-09-17-02:59:
+FN-485 : hors de l'en-tête, la recherche doit être UN seul champ — la loupe est dessinée DANS le champ et
+le seul texte d'invite est le `placeholder`, jamais un nœud de texte frère. Ce primitif extrait le contrat
+visuel de `.header-search` / `.header-search-icon` / `.header-search-input` (fond, bordure tokenisée, rayon,
+gap, transition de bordure, mise en évidence `:focus-within`, placeholder en `--text-dim`) pour les hôtes
+hors en-tête (Notes, Whiteboard), qui affichent le champ EN PERMANENCE sans déclencheur loupe préalable.
+`.header-search*` reste la propriété de `Header.css` : la migration de l'en-tête vers ce primitif est
+délibérément HORS PÉRIMÈTRE ici, pour ne pas mêler une refonte de l'en-tête à une correction de composition.
+Le nom accessible du champ passe par `aria-label`/`placeholder`; l'utilitaire de masquage canonique du paquet
+est `.visually-hidden` ci-dessus — la classe `.sr-only` n'a JAMAIS été définie et ne doit pas l'être.
+*/
+.search-field {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-inline-size: 0;
+  padding: 0 var(--space-sm);
+  box-sizing: border-box;
+  background: var(--bg);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius);
+  transition: border-color var(--transition-fast);
+}
+
+.search-field:focus-within {
+  border-color: var(--todo);
+}
+
+.search-field-icon {
+  flex-shrink: 0;
+  inline-size: var(--icon-size-sm);
+  block-size: var(--icon-size-sm);
+  color: var(--text-muted);
+}
+
+.search-field-input {
+  flex: 1;
+  min-inline-size: 0;
+  background: none;
+  border: none;
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  outline: none;
+}
+
+.search-field-input::placeholder {
+  color: var(--text-dim);
+}
+
+@media (max-width: 768px) {
+  /* Hauteur tactile sur téléphone; la taille de police anti-zoom iOS reste portée
+     par la règle globale `input[type="search"]`, donc rien n'est redéclaré ici. */
+  .search-field {
+    min-block-size: var(--touch-target-min-size);
+  }
+}
+
 /* === Touch Target Utility ===
    Ensures interactive elements meet the 44px minimum touch target
    recommended by Apple HIG and WCAG 2.5.8. Apply to interactive

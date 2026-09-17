@@ -1006,7 +1006,7 @@ export function PluginManager({ addToast, projectId, onPluginsChanged }: PluginM
         </div>
         <div className="plugin-registry-controls">
           <label className="plugin-registry-category-label">
-            <span className="sr-only">{t("plugins.registryCategory", "Registry category")}</span>
+            <span className="visually-hidden">{t("plugins.registryCategory", "Registry category")}</span>
             <select
               className="select plugin-registry-category-select"
               value={registryCategory}
@@ -1019,7 +1019,7 @@ export function PluginManager({ addToast, projectId, onPluginsChanged }: PluginM
             </select>
           </label>
           <label className="plugin-registry-search-label">
-            <span className="sr-only">{t("plugins.searchRegistry", "Search registry")}</span>
+            <span className="visually-hidden">{t("plugins.searchRegistry", "Search registry")}</span>
             <input
               className="input plugin-registry-search-input"
               type="search"

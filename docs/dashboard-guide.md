@@ -2480,6 +2480,26 @@ The dashboard's CSS is split into a global stylesheet (`packages/dashboard/app/s
 
 **Rule:** New CSS for a component goes in `app/components/ComponentName.css`, NOT `styles.css`. Only design tokens, primitives (`.btn`, `.card`, `.modal`, `.form-input`), and cross-component `@media` overrides belong in the global file.
 
+### Shared search field primitive
+
+Outside the header, a search box is ONE field: the magnifier is drawn INSIDE the bordered field and the
+only prompt text is the input's `placeholder`, never a sibling text node. `packages/dashboard/app/styles.css`
+owns the shared primitive — `.search-field` (container), `.search-field-icon`, `.search-field-input` — which
+extracts the header search's visual contract (background, tokenized border, radius, gap, border-color
+transition, `:focus-within` highlight, `--text-dim` placeholder) plus a phone-sized touch height at
+`max-width: 768px`. Unlike the header, these hosts (Notes, Whiteboard) show the field PERMANENTLY, with no
+magnifier trigger to click first.
+
+A host stylesheet keeps only its ROW geometry (padding, separator) and stretches the field with
+`.<host>-search .search-field { flex: 1 }`. Do not redeclare border, background, or icon size there; that
+duplication is exactly what pushed the icon and label outside the field. `.header-search*` in `Header.css`
+remains header-owned and is deliberately not migrated to this primitive.
+
+**The canonical screen-reader-only utility is `.visually-hidden`, defined in `styles.css`.** The class
+`sr-only` has never been defined in any dashboard stylesheet, so any element using it renders its content
+VISIBLY. `packages/dashboard/app/__tests__/search-field-and-hidden-label.css.test.ts` censuses component
+sources and fails if `sr-only` reappears.
+
 ### Tab strips are never selectable
 
 A tab row is a drag-to-scroll surface, so its labels must never be selectable: the browser starts a native

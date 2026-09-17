@@ -39,21 +39,27 @@ The selected note uses an accent tint and persistent inset marker independently 
   border-inline-end: var(--btn-border-width) solid var(--color-border);
 }
 
+/*
+FNXC:DashboardSearchField 2026-09-17-02:59:
+FN-485 : la recherche de Notes est UN seul champ — loupe et texte d'invite vivent DANS le champ, comme la
+recherche d'en-tête, mais le champ reste affiché EN PERMANENCE (aucun déclencheur loupe préalable). Cette
+règle ne possède plus que la géométrie de la RANGÉE (padding, séparateur bas) ; l'apparence du champ vient
+du primitif partagé `search-field` de `styles.css`. Ne pas redéclarer ici de bordure, de fond ni de taille
+d'icône : c'est exactement la duplication qui avait fait sortir l'icône et le libellé hors du champ.
+*/
 .notes-search {
   display: flex;
   flex-shrink: 0;
   align-items: center;
-  gap: var(--space-sm);
   padding: var(--space-md);
   border-block-end: var(--btn-border-width) solid var(--color-border);
 }
 
-.notes-search .input {
+.notes-search .search-field {
   flex: 1;
   min-inline-size: 0;
 }
 
-.notes-search svg,
 .notes-view .view-header svg {
   inline-size: var(--icon-size-md);
   block-size: var(--icon-size-md);

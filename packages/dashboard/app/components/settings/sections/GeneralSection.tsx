@@ -259,7 +259,7 @@ export function GeneralSection({ form, setForm, projectId, addToast, prefixError
             <SettingsHelpTip settingKey="enabledBuiltinWorkflowIds">{t("settings.general.disabledFusionWorkflowsAreHiddenFromWorkflow", "Disabled Fusion workflows are hidden from workflow pickers. Existing tasks that already use one continue to resolve. Default: all built-in workflows enabled (unset).")}</SettingsHelpTip>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-sm)" }}>
-            <span id="builtin-workflow-enablement-hint" className="sr-only">{t("settings.general.builtinWorkflowAtLeastOneEnabled", "At least one built-in workflow must remain enabled.")}</span>
+            <span id="builtin-workflow-enablement-hint" className="visually-hidden">{t("settings.general.builtinWorkflowAtLeastOneEnabled", "At least one built-in workflow must remain enabled.")}</span>
             {builtinWorkflows.map((workflow) => {
                 const checked = enabledBuiltinWorkflowIds.has(workflow.id);
                 const isLastEnabled = checked && enabledBuiltinWorkflowCount <= 1;

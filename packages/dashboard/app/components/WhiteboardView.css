@@ -2,9 +2,10 @@
 .whiteboard-view { display:flex; flex:1; flex-direction:column; inline-size:100%; block-size:100%; min-inline-size:0; min-block-size:0; overflow:hidden; }
 .whiteboard-workspace { display:flex; flex:1; min-inline-size:0; min-block-size:0; overflow:hidden; }
 .whiteboard-list { display:flex; flex:0 0 calc(var(--space-lg) * 18.75); min-inline-size:0; flex-direction:column; overflow:auto; border-inline-end:var(--btn-border-width) solid var(--color-border); background:var(--color-surface); }
-.whiteboard-search { display:flex; align-items:center; gap:var(--space-sm); padding:var(--space-md); border-block-end:var(--btn-border-width) solid var(--color-border); }
-.whiteboard-search .input { flex:1; min-inline-size:0; }
-.whiteboard-search svg,.whiteboard-view .view-header svg,.whiteboard-editor-toolbar svg { inline-size:var(--icon-size-md); block-size:var(--icon-size-md); }
+/* FNXC:DashboardSearchField 2026-09-17-02:59: FN-485 : la rangée ne porte que padding et séparateur ; l'apparence du champ (loupe et invite DANS le champ, comme la recherche d'en-tête mais affiché en permanence) vient du primitif partagé `search-field` de `styles.css`. Ne pas y redéclarer bordure, fond ou taille d'icône. */
+.whiteboard-search { display:flex; align-items:center; padding:var(--space-md); border-block-end:var(--btn-border-width) solid var(--color-border); }
+.whiteboard-search .search-field { flex:1; min-inline-size:0; }
+.whiteboard-view .view-header svg,.whiteboard-editor-toolbar svg { inline-size:var(--icon-size-md); block-size:var(--icon-size-md); }
 .whiteboard-list-item { display:flex; flex-direction:column; align-items:flex-start; gap:var(--space-xs); inline-size:100%; padding:var(--space-md); border:0; border-block-end:var(--btn-border-width) solid var(--color-border); color:var(--color-text); background:transparent; text-align:start; cursor:pointer; }
 .whiteboard-list-item:hover { background:var(--color-surface-hover); }
 .whiteboard-list-item--selected { background:color-mix(in srgb,var(--todo) 12%,var(--color-surface)); box-shadow:inset var(--space-xs) 0 0 var(--todo); }
