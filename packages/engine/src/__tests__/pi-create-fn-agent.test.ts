@@ -2824,6 +2824,67 @@ describe("createFnAgent", () => {
     expect(createSessionArgs.tools).toEqual(["GREP", "Read", "grep", "read"]);
   });
 
+  /*
+  FNXC:ChatContextBudget 2026-09-16-12:40:
+  RUFU-118 PR review: MCP tools connect AFTER the allowlist is built, so filtering them by name
+  silently dropped the operator's session MCP integrations (built-in fusion-memory included) from
+  allowlisted chat surfaces while still booting the servers. Session MCP tools must survive the
+  allowlist; non-MCP tools stay name-gated.
+
+  FNXC:ChatContextBudget 2026-09-16-15:45 (#3620 review, coderabbit):
+  The pass-through is chat-scoped: it requires the explicit `allowMcpToolsThroughAllowlist`
+  option. Automation steps pass both `allowedTools` and resolved MCP servers, so an
+  unconditional exemption would hand them tools their own allowlist excludes — the twin test
+  below pins that default-closed behavior.
+  */
+  it("exempts connected session MCP tools from a non-empty toolsAllowlist when the caller opts in", async () => {
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
+    const mcpClient = {
+      connect: vi.fn(async () => undefined),
+      listTools: vi.fn(async () => ({ tools: [{ name: "recall_append", description: "Append memory", inputSchema: { type: "object", properties: {} } }] })),
+      callTool: vi.fn(async () => ({ content: [] })),
+      close: vi.fn(async () => undefined),
+    };
+
+    const created = await createFnAgent({
+      cwd: "/test/project",
+      systemPrompt: "test",
+      tools: "coding",
+      toolsAllowlist: ["read"],
+      allowMcpToolsThroughAllowlist: true,
+      mcpServers: [{ name: "fusion-memory", transport: "stdio", command: "node", enabled: true }],
+      mcpClientFactory: () => mcpClient as any,
+    });
+
+    const customTools = (createAgentSessionMock.mock.calls[0]?.[0] as { customTools: Array<{ name: string }> }).customTools;
+    expect(customTools.map((tool) => tool.name)).toContain("mcp__fusion-memory__recall_append");
+    await created.session.dispose?.();
+  });
+
+  it("keeps the toolsAllowlist absolute for callers without the chat opt-in (automation lanes)", async () => {
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
+    const mcpClient = {
+      connect: vi.fn(async () => undefined),
+      listTools: vi.fn(async () => ({ tools: [{ name: "recall_append", description: "Append memory", inputSchema: { type: "object", properties: {} } }] })),
+      callTool: vi.fn(async () => ({ content: [] })),
+      close: vi.fn(async () => undefined),
+    };
+
+    const created = await createFnAgent({
+      cwd: "/test/project",
+      systemPrompt: "test",
+      tools: "coding",
+      toolsAllowlist: ["read"],
+      mcpServers: [{ name: "fusion-memory", transport: "stdio", command: "node", enabled: true }],
+      mcpClientFactory: () => mcpClient as any,
+    });
+
+    const customTools = (createAgentSessionMock.mock.calls[0]?.[0] as { customTools: Array<{ name: string }> }).customTools;
+    // An automation step's allowlist must not be widened by its own resolved MCP servers.
+    expect(customTools.map((tool) => tool.name)).not.toContain("mcp__fusion-memory__recall_append");
+    await created.session.dispose?.();
+  });
+
   it("keeps all coding tools when toolsAllowlist is undefined", async () => {
     const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
 
