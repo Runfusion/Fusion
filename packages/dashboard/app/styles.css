@@ -248,6 +248,20 @@ est `.visually-hidden` ci-dessus — la classe `.sr-only` n'a JAMAIS été défi
   --icon-button-size: 28px;
   --icon-button-size-mobile: 36px;
   /*
+  FNXC:IconOnlyButtonCanon 2026-09-17-05:05:
+  FN-496 : sur téléphone la BOÎTE d'un bouton icône passait à 36px alors que le GLYPHE restait figé à
+  `--icon-size-md`/`--icon-size-sm`, donc le rapport glyphe/boîte chutait de 0,571 à 0,444 (et de 0,500 à
+  0,389 pour la variante `btn-sm`) : le pictogramme paraissait minuscule au milieu du bouton. Ce jeton dérive
+  la croissance du glyphe de celle de la boîte, de sorte que le rapport mobile redevient exactement celui du
+  bureau sur toutes les surfaces `.btn-icon`.
+  C'est un MULTIPLICATEUR SANS UNITÉ appliqué aux jetons thémés `--icon-size-*` : ne jamais le remplacer par
+  une valeur en pixels en dur, sinon l'axe de style de `packages/dashboard/app/ui-style-tokens.css` cesse
+  d'agir sur la taille des pictogrammes. Il est consommé HORS de `styles.css`, notamment par
+  `components/ViewActionButton.css`, dont les deux propriétaires partagés épinglent leur propre glyphe : il
+  doit donc rester déclaré dans `:root` et jamais dans une portée plus étroite.
+  */
+  --icon-button-glyph-scale-mobile: calc(var(--icon-button-size-mobile) / var(--icon-button-size));
+  /*
   FNXC:TaskModalResize 2026-07-26-10:40:
   Task-modal resize targets use the accessibility floor as an explicit hit-area
   contract. The painted grip remains compact; only the tablet-class touch guard
@@ -3917,16 +3931,38 @@ Toast text must contrast its status background across every dashboard theme and 
   FNXC:IconOnlyButtonCanon 2026-09-16-19:05:
   FN-471 : même plancher mobile qu'avant (36px), mais exprimé par le jeton canonique partagé avec la
   géométrie de base, de sorte qu'aucune surface ne redéclare une boîte d'icône seule en dur.
+
+  FNXC:IconOnlyButtonCanon 2026-09-17-05:05:
+  FN-496 : la règle mobile `.column-header .btn-icon { min-width: 28px; min-height: 28px }` (« Column-header
+  action buttons stay compact ») est SUPPRIMÉE. Elle plaçait les deux seules actions de l'en-tête de colonne —
+  le « … » d'actions et le bouton d'historique — sous le plancher mobile canonique, ce qui produisait
+  exactement le symptôme signalé par l'opérateur : des pictogrammes minuscules sur téléphone. Ces deux boutons
+  suivent désormais le plancher partagé de 36px comme tout autre bouton icône du téléphone ; la largeur
+  supplémentaire est absorbée par `.column-header h2`, dont l'ellipse existante (`min-width: 0`,
+  `overflow: hidden`, `text-overflow: ellipsis`) est déjà le mécanisme de compression du titre.
   */
   .btn-icon {
     min-width: var(--icon-button-size-mobile);
     min-height: var(--icon-button-size-mobile);
   }
 
-  /* Column-header action buttons (e.g. archive) stay compact */
-  .column-header .btn-icon {
-    min-width: 28px;
-    min-height: 28px;
+  /*
+  FNXC:IconOnlyButtonCanon 2026-09-17-05:05:
+  FN-496 : le glyphe mobile se dérive de la boîte mobile via le jeton d'échelle canonique, donc le rapport
+  glyphe/boîte est identique au bureau. Règle SÉPARÉE du plancher ci-dessus, qui reste strictement inchangé.
+  La variante `btn-sm` répète la liste de sélecteurs EXACTE de sa règle de base (0,2,0/0,3,0) : un `.btn-icon`
+  nu à 0,1,0 ne la battrait pas. Aucune escalade de spécificité (`!important`, `:not()`, sélecteur composé) :
+  `styles.css` est chargé en dernier et écraserait les surcharges de composant à 0,2,0.
+  */
+  .btn-icon {
+    --btn-icon-size: calc(var(--icon-size-md) * var(--icon-button-glyph-scale-mobile));
+  }
+
+  .btn.btn-icon.btn-sm,
+  .btn.btn-icon.btn--sm,
+  .btn-icon.btn-sm,
+  .btn-icon.btn--sm {
+    --btn-icon-size: calc(var(--icon-size-sm) * var(--icon-button-glyph-scale-mobile));
   }
 
   input[type="text"],

@@ -86,4 +86,55 @@ describe("ViewActionButton", () => {
     expect(css).toMatch(/\.view-back-button\s*\{[^}]*flex:\s*none/s);
     expect(css).toMatch(/\.view-action-button--mobile-icon-only \.view-action-button__label\s*\{[^}]*clip-path:\s*inset\(50%\)/s);
   });
+
+  /*
+  FNXC:IconOnlyButtonCanon 2026-09-17-05:05:
+  FN-496 : la boîte de la création réduite à son icône passe à `--icon-button-size-mobile` dans les DEUX hôtes
+  mobiles, mais seul l'hôte hydraté possédait une règle `> svg`, et elle épinglait le glyphe à `--icon-size-sm`.
+  Chaque règle de glyphe doit vivre dans le MÊME bloc média que sa règle de boîte : l'hôte hydraté inclut l'arm
+  `(max-height: 480px)`, le repli pré-hydratation non. Une règle placée dans le mauvais bloc laisserait la boîte
+  grandir sans le glyphe sur l'arm « écran bas ».
+  */
+  it("met le glyphe de la création à l'échelle mobile dans les deux hôtes, chacun dans son bloc média", () => {
+    const expectedGlyph = "calc(var(--icon-size-sm) * var(--icon-button-glyph-scale-mobile))";
+
+    /**
+     * Corps du bloc `@media <query>` qui porte la géométrie de la création réduite à l'icône. Chaque requête
+     * apparaît PLUSIEURS fois dans ce fichier (le retour a la sienne) : on retient celui qui contient le
+     * sélecteur recherché, sans quoi le test inspecterait le bloc du bouton retour.
+     */
+    function mediaBlock(query: string): string {
+      const marker = `@media ${query} {`;
+      for (let start = css.indexOf(marker); start !== -1; start = css.indexOf(marker, start + 1)) {
+        const open = css.indexOf("{", start);
+        let depth = 1;
+        let i = open + 1;
+        while (i < css.length && depth > 0) {
+          if (css[i] === "{") depth++;
+          else if (css[i] === "}") depth--;
+          i++;
+        }
+        const body = css.slice(open + 1, i - 1);
+        if (body.includes(".view-action-button--mobile-icon-only")) return body;
+      }
+      throw new Error(`Aucun bloc @media ${query} ne porte la création réduite à l'icône`);
+    }
+
+    const hosts: Array<[string, string]> = [
+      ['html\\[data-viewport-mode="mobile"\\]', "(max-width: 768px), (max-height: 480px)"],
+      ["html:not\\(\\[data-viewport-mode\\]\\)", "(max-width: 768px)"],
+    ];
+
+    for (const [hostPattern, query] of hosts) {
+      const block = mediaBlock(query);
+      const boxRule = new RegExp(`${hostPattern} \\.view-action-button--mobile-icon-only\\s*\\{[^}]*\\}`, "s").exec(block);
+      expect(boxRule, `règle de boîte manquante dans ${query}`).not.toBeNull();
+      expect(boxRule![0]).toContain("inline-size: var(--icon-button-size-mobile)");
+
+      const glyphRule = new RegExp(`${hostPattern} \\.view-action-button--mobile-icon-only > svg\\s*\\{([^}]*)\\}`, "s").exec(block);
+      expect(glyphRule, `règle de glyphe manquante dans le même bloc média ${query}`).not.toBeNull();
+      expect(glyphRule![1]).toContain(`inline-size: ${expectedGlyph}`);
+      expect(glyphRule![1]).toContain(`block-size: ${expectedGlyph}`);
+    }
+  });
 });

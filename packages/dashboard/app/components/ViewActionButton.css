@@ -41,6 +41,17 @@ Sur téléphone, la boîte du retour est la boîte canonique partagée, déclar�
 l'action de création réduite à son icône : même carré, aucun padding résiduel, et `flex-shrink` empêché
 pour qu'un titre long ne puisse pas la comprimer. Aucune règle globale `.btn-icon` n'est modifiée.
 */
+/*
+FNXC:IconOnlyButtonCanon 2026-09-17-05:05:
+FN-496 : ces deux propriétaires partagés épinglent leur PROPRE taille de glyphe hors du contrat global
+`.btn-icon > svg` — le retour délibérément, à 0,2,1 en propriétés PHYSIQUES par décision FN-486 —, donc la
+correction centrale de `styles.css` ne les atteint pas. Chacun applique ici EXPLICITEMENT la même échelle
+mobile `--icon-button-glyph-scale-mobile`, dans le MÊME bloc média que la règle de boîte qu'elle accompagne
+(l'hôte hydraté inclut l'arm `(max-height: 480px)`, le repli pré-hydratation non), et résout à la même valeur
+que l'autre : la parité FN-486 entre le chevron et le « + » est ainsi préservée à la proportion corrigée.
+Les règles de glyphe du retour gardent leur PRÉFIXE D'HÔTE : une règle nue `.btn.view-back-button > svg`
+ajoutée dans un bloc média dédoublerait le sélecteur que `view-back-icon-parity.test.tsx` exige unique.
+*/
 @media (max-width: 768px), (max-height: 480px) {
   html[data-viewport-mode="mobile"] .btn.view-back-button {
     inline-size: var(--icon-button-size-mobile);
@@ -50,6 +61,11 @@ pour qu'un titre long ne puisse pas la comprimer. Aucune règle globale `.btn-ic
     flex: none;
     justify-content: center;
     padding: 0;
+  }
+
+  html[data-viewport-mode="mobile"] .btn.view-back-button > svg {
+    width: calc(var(--icon-size-sm) * var(--icon-button-glyph-scale-mobile));
+    height: calc(var(--icon-size-sm) * var(--icon-button-glyph-scale-mobile));
   }
 }
 
@@ -62,6 +78,11 @@ pour qu'un titre long ne puisse pas la comprimer. Aucune règle globale `.btn-ic
     flex: none;
     justify-content: center;
     padding: 0;
+  }
+
+  html:not([data-viewport-mode]) .btn.view-back-button > svg {
+    width: calc(var(--icon-size-sm) * var(--icon-button-glyph-scale-mobile));
+    height: calc(var(--icon-size-sm) * var(--icon-button-glyph-scale-mobile));
   }
 }
 
@@ -120,8 +141,8 @@ viewport never actually lacked room for. The pre-hydration fallback covers the u
   }
 
   html[data-viewport-mode="mobile"] .view-action-button--mobile-icon-only > svg {
-    inline-size: var(--icon-size-sm);
-    block-size: var(--icon-size-sm);
+    inline-size: calc(var(--icon-size-sm) * var(--icon-button-glyph-scale-mobile));
+    block-size: calc(var(--icon-size-sm) * var(--icon-button-glyph-scale-mobile));
   }
 
   html[data-viewport-mode="mobile"] .view-action-button--mobile-icon-only .view-action-button__label {
@@ -145,6 +166,11 @@ viewport never actually lacked room for. The pre-hydration fallback covers the u
     background: var(--card);
     border-color: var(--border);
     color: var(--text);
+  }
+
+  html:not([data-viewport-mode]) .view-action-button--mobile-icon-only > svg {
+    inline-size: calc(var(--icon-size-sm) * var(--icon-button-glyph-scale-mobile));
+    block-size: calc(var(--icon-size-sm) * var(--icon-button-glyph-scale-mobile));
   }
 
   html:not([data-viewport-mode]) .view-action-button--mobile-icon-only .view-action-button__label {

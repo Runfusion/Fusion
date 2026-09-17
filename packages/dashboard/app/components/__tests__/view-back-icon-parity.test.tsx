@@ -86,3 +86,76 @@ describe("Back and create controls share one mobile geometry", () => {
     expect(appCss).not.toMatch(/(^|\n)\.planning-session-back\s*\{/);
   });
 });
+
+/*
+FNXC:IconOnlyButtonCanon 2026-09-17-05:05:
+FN-496 : la parité FN-486 n'est acquise qu'à la taille BUREAU. Sur téléphone la boîte des deux contrôles passe
+à `--icon-button-size-mobile` alors que leurs glyphes restaient épinglés à `--icon-size-sm`, et le chevron
+n'était même mis à l'échelle dans AUCUN des deux hôtes mobiles. Ces cas résolvent numériquement les valeurs
+depuis la source et échouent si l'un des deux glyphes n'est pas mis à l'échelle, ou si les deux cessent d'être
+strictement égaux.
+*/
+describe("FN-496 — proportion et parité mobiles du retour et de la création", () => {
+  const MOBILE_HOSTS = ['html[data-viewport-mode="mobile"]', "html:not([data-viewport-mode])"] as const;
+
+  /** Jetons de géométrie lus dans `:root` de styles.css. */
+  function rootPx(token: string): number {
+    const match = new RegExp(`${token}:\\s*(\\d+(?:\\.\\d+)?)px;`).exec(stylesCss);
+    if (!match) throw new Error(`Jeton absent de :root: ${token}`);
+    return Number(match[1]);
+  }
+
+  const DESKTOP_BOX = rootPx("--icon-button-size");
+  const MOBILE_BOX = rootPx("--icon-button-size-mobile");
+  const ICON_SM = rootPx("--icon-size-sm");
+  const MOBILE_SCALE = MOBILE_BOX / DESKTOP_BOX;
+  const EXPECTED_MOBILE_GLYPH = ICON_SM * MOBILE_SCALE;
+
+  function resolveGlyphPx(value: string): number {
+    const plain = /^var\(--icon-size-sm\)$/.exec(value.trim());
+    if (plain) return ICON_SM;
+    const scaled = /^calc\(\s*var\(--icon-size-sm\)\s*\*\s*var\(--icon-button-glyph-scale-mobile\)\s*\)$/.exec(value.trim());
+    if (scaled) return EXPECTED_MOBILE_GLYPH;
+    throw new Error(`Expression de glyphe non résoluble: ${value}`);
+  }
+
+  function declaration(rule: string, property: string): string {
+    const match = new RegExp(`(?:^|;)\\s*${property}\\s*:\\s*([^;]+)`).exec(rule);
+    if (!match) throw new Error(`Déclaration absente: ${property}`);
+    return match[1].trim();
+  }
+
+  it("met le chevron de retour à l'échelle mobile dans chacun des deux hôtes", () => {
+    for (const host of MOBILE_HOSTS) {
+      const rules = rulesFor(actionCss, `${host} .btn.view-back-button > svg`);
+      expect(rules, host).toHaveLength(1);
+      // Propriétés PHYSIQUES obligatoires : la règle FN-486 qu'elles doivent battre est physique.
+      const width = resolveGlyphPx(declaration(rules[0], "width"));
+      const height = resolveGlyphPx(declaration(rules[0], "height"));
+      expect(Math.abs(width - EXPECTED_MOBILE_GLYPH), host).toBeLessThanOrEqual(0.01);
+      expect(Math.abs(height - EXPECTED_MOBILE_GLYPH), host).toBeLessThanOrEqual(0.01);
+    }
+  });
+
+  it("garde retour et création strictement à parité, au rapport glyphe/boîte du bureau", () => {
+    for (const host of MOBILE_HOSTS) {
+      const back = rulesFor(actionCss, `${host} .btn.view-back-button > svg`);
+      const create = rulesFor(actionCss, `${host} .view-action-button--mobile-icon-only > svg`);
+      expect(create, `règle de glyphe de création manquante pour ${host}`).toHaveLength(1);
+
+      const backPx = resolveGlyphPx(declaration(back[0], "width"));
+      const createPx = resolveGlyphPx(declaration(create[0], "inline-size"));
+      expect(createPx, `parité retour/création rompue sur ${host}`).toBe(backPx);
+      expect(resolveGlyphPx(declaration(create[0], "block-size"))).toBe(backPx);
+
+      // Le rapport glyphe/boîte mobile égale celui du bureau.
+      expect(Math.abs(backPx / MOBILE_BOX - ICON_SM / DESKTOP_BOX), host).toBeLessThanOrEqual(0.01);
+    }
+  });
+
+  it("laisse les règles mobiles préfixées par leur hôte et sans `!important`", () => {
+    // Une règle NUE `.btn.view-back-button > svg` ajoutée dans un bloc média porterait ce compte à 2.
+    expect(rulesFor(actionCss, ".btn.view-back-button > svg")).toHaveLength(1);
+    expect(actionCss).not.toMatch(/!important/);
+  });
+});

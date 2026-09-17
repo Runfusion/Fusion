@@ -365,3 +365,171 @@ describe("FN-471 — canon des boutons icône seule", () => {
     expect(bordered.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
   });
 });
+
+/*
+FNXC:IconOnlyButtonCanon 2026-09-17-05:05:
+FN-496 : la BOÎTE d'un bouton icône grandit sur téléphone (28px → 36px) mais le GLYPHE restait figé, donc le
+pictogramme paraissait minuscule au milieu du bouton — symptôme signalé par l'opérateur sur le « … » et
+l'historique d'en-tête de colonne. Ces cas résolvent NUMÉRIQUEMENT le rapport glyphe/boîte depuis la source CSS
+réelle (substitut sanctionné à la mesure navigateur, indisponible ici) et échouent si le rapport mobile
+s'écarte du rapport bureau, ou si une règle quelconque replace un `.btn-icon` d'en-tête de colonne sous le
+plancher mobile canonique.
+*/
+describe("FN-496 — proportion glyphe/boîte des boutons icône", () => {
+  /** Bloc de déclarations de la première règle dont le sélecteur exact est `selector`, dans `css`. */
+  function firstExactRule(css: string, selector: string): string {
+    const rules = exactRulesFor(css, selector);
+    if (rules.length === 0) throw new Error(`Aucune règle pour le sélecteur exact: ${selector}`);
+    return rules[0];
+  }
+
+  function cssDeclaration(rule: string, property: string): string {
+    const match = new RegExp(`(?:^|;)\\s*${property}\\s*:\\s*([^;]+)`).exec(rule);
+    if (!match) throw new Error(`Déclaration absente: ${property}`);
+    return match[1].trim();
+  }
+
+  /** Valeurs en pixels des jetons `:root` utilisés par la géométrie des boutons icône. */
+  const PX_TOKENS: Record<string, number> = (() => {
+    const values: Record<string, number> = {};
+    for (const token of ["--icon-button-size", "--icon-button-size-mobile", "--icon-size-md", "--icon-size-sm"]) {
+      const match = new RegExp(`${token}:\\s*(\\d+(?:\\.\\d+)?)px;`).exec(stylesCss);
+      if (!match) throw new Error(`Jeton absent de :root: ${token}`);
+      values[token] = Number(match[1]);
+    }
+    return values;
+  })();
+
+  /** Échelle mobile telle que déclarée, résolue numériquement. */
+  const MOBILE_GLYPH_SCALE = PX_TOKENS["--icon-button-size-mobile"] / PX_TOKENS["--icon-button-size"];
+
+  /** Résout `var(--token)` ou `calc(var(--token) * var(--icon-button-glyph-scale-mobile))` en pixels. */
+  function resolveGlyphPx(value: string): number {
+    const plain = /^var\((--[\w-]+)\)$/.exec(value.trim());
+    if (plain) {
+      const px = PX_TOKENS[plain[1]];
+      if (px === undefined) throw new Error(`Jeton non résoluble: ${value}`);
+      return px;
+    }
+    const scaled = /^calc\(\s*var\((--[\w-]+)\)\s*\*\s*var\(--icon-button-glyph-scale-mobile\)\s*\)$/.exec(value.trim());
+    if (scaled) {
+      const px = PX_TOKENS[scaled[1]];
+      if (px === undefined) throw new Error(`Jeton non résoluble: ${value}`);
+      return px * MOBILE_GLYPH_SCALE;
+    }
+    throw new Error(`Expression de glyphe non résoluble: ${value}`);
+  }
+
+  /**
+   * Découpe, parmi TOUS les blocs `@media (max-width: 768px)` de styles.css, celui qui porte la géométrie
+   * des boutons icône (repéré par le plancher mobile canonique). Le fichier en contient plusieurs : prendre
+   * le premier venu testerait un bloc sans rapport.
+   */
+  function iconButtonMobileBlock(css: string): string {
+    const marker = "@media (max-width: 768px) {";
+    for (let start = css.indexOf(marker); start !== -1; start = css.indexOf(marker, start + 1)) {
+      const open = css.indexOf("{", start);
+      let depth = 1;
+      let i = open + 1;
+      while (i < css.length && depth > 0) {
+        if (css[i] === "{") depth++;
+        else if (css[i] === "}") depth--;
+        i++;
+      }
+      const body = css.slice(open + 1, i - 1);
+      if (body.includes("min-width: var(--icon-button-size-mobile)")) return body;
+    }
+    throw new Error("Aucun bloc @media (max-width: 768px) ne porte le plancher mobile des boutons icône");
+  }
+
+  const mobileBlock = iconButtonMobileBlock(stylesCss);
+  const SM_SELECTOR_LIST = [
+    ".btn.btn-icon.btn-sm",
+    ".btn.btn-icon.btn--sm",
+    ".btn-icon.btn-sm",
+    ".btn-icon.btn--sm",
+  ];
+
+  it("déclare le jeton d'échelle mobile dans :root, dérivé des deux jetons de boîte", () => {
+    expect(stylesCss).toMatch(
+      /--icon-button-glyph-scale-mobile:\s*calc\(var\(--icon-button-size-mobile\)\s*\/\s*var\(--icon-button-size\)\);/,
+    );
+    // Multiplicateur sans unité : jamais de pixels en dur, sinon `ui-style-tokens.css` cesse d'agir.
+    expect(stylesCss).not.toMatch(/--icon-button-glyph-scale-mobile:\s*[\d.]+px/);
+  });
+
+  it("garde le rapport glyphe/boîte de la variante sans bordure identique au bureau et sur mobile", () => {
+    const desktopGlyph = resolveGlyphPx(cssDeclaration(firstExactRule(baseOnlyCss, ".btn-icon"), "--btn-icon-size"));
+    const desktopRatio = desktopGlyph / PX_TOKENS["--icon-button-size"];
+
+    const mobileRule = exactRulesFor(mobileBlock, ".btn-icon").find((body) => body.includes("--btn-icon-size"));
+    expect(mobileRule, "le bloc mobile doit déclarer le glyphe de la variante sans bordure").toBeDefined();
+    const mobileGlyph = resolveGlyphPx(cssDeclaration(mobileRule!, "--btn-icon-size"));
+    const mobileRatio = mobileGlyph / PX_TOKENS["--icon-button-size-mobile"];
+
+    expect(Math.abs(mobileRatio - desktopRatio)).toBeLessThanOrEqual(0.01);
+  });
+
+  it("garde le rapport glyphe/boîte de la variante `btn-sm` identique au bureau et sur mobile", () => {
+    const desktopGlyph = resolveGlyphPx(
+      cssDeclaration(firstExactRule(baseOnlyCss, ".btn.btn-icon.btn-sm"), "--btn-icon-size"),
+    );
+    const desktopRatio = desktopGlyph / PX_TOKENS["--icon-button-size"];
+
+    const mobileRule = exactRulesFor(mobileBlock, ".btn.btn-icon.btn-sm").find((body) => body.includes("--btn-icon-size"));
+    expect(mobileRule, "le bloc mobile doit déclarer le glyphe de la variante encadrée").toBeDefined();
+    const mobileGlyph = resolveGlyphPx(cssDeclaration(mobileRule!, "--btn-icon-size"));
+    const mobileRatio = mobileGlyph / PX_TOKENS["--icon-button-size-mobile"];
+
+    expect(Math.abs(mobileRatio - desktopRatio)).toBeLessThanOrEqual(0.01);
+  });
+
+  it("répète pour la règle mobile `btn-sm` la liste de sélecteurs exacte de la base, après elle", () => {
+    // Garde-fou de spécificité : la base est à 0,2,0/0,3,0; un `.btn-icon` nu mobile (0,1,0) ne la battrait pas.
+    for (const selector of SM_SELECTOR_LIST) {
+      expect(
+        exactRulesFor(mobileBlock, selector).some((body) => body.includes("--btn-icon-size")),
+        `${selector} doit figurer dans la liste de sélecteurs de la règle mobile`,
+      ).toBe(true);
+    }
+    const baseIndex = stylesCss.indexOf(".btn.btn-icon.btn-sm,");
+    const mobileIndex = stylesCss.indexOf(".btn.btn-icon.btn-sm,", baseIndex + 1);
+    expect(baseIndex).toBeGreaterThan(-1);
+    expect(mobileIndex, "la règle mobile doit suivre la règle de base dans le document").toBeGreaterThan(baseIndex);
+  });
+
+  it("ne laisse aucune règle contraindre un `.btn-icon` d'en-tête de colonne sous le plancher mobile", () => {
+    const mobileFloorPx = PX_TOKENS["--icon-button-size-mobile"];
+    const pattern = /([^{}]+)\{([^{}]*)\}/g;
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(allCss)) !== null) {
+      const targetsColumnHeaderIconButton = match[1]
+        .split(",")
+        .map((part) => part.trim().replace(/\s+/g, " "))
+        .some((part) => part.includes(".column-header") && part.includes(".btn-icon"));
+      if (!targetsColumnHeaderIconButton) continue;
+      for (const value of declaredBoxValues(match[2])) {
+        const px = /^(\d+(?:\.\d+)?)px$/.exec(value);
+        expect(
+          px === null || Number(px[1]) >= mobileFloorPx,
+          `${match[1].trim()} contraint la boîte à ${value}, sous le plancher mobile de ${mobileFloorPx}px`,
+        ).toBe(true);
+      }
+    }
+  });
+
+  it("préserve intactes les surcharges `--btn-icon-size` assumées du chat (contrôle négatif)", () => {
+    const chatCss = stripComments(readAppFile("components/TaskChatTab.css"));
+    const plannerCss = stripComments(readAppFile("components/TaskPlannerChatTab.css"));
+    expect(chatCss).toContain("--btn-icon-size: var(--space-2xl);");
+    expect(chatCss).toContain("--btn-icon-size: calc(var(--space-2xl) + var(--space-sm));");
+    expect(plannerCss).toContain("--btn-icon-size: calc(var(--space-2xl) + var(--space-sm));");
+  });
+
+  it("n'escalade pas la spécificité du sélecteur nu `.btn-icon` pour obtenir la proportion", () => {
+    for (const body of exactRulesFor(stylesCss, ".btn-icon")) {
+      expect(body).not.toContain("!important");
+    }
+    expect(stylesCss).not.toContain(".btn-icon:not(");
+  });
+});
