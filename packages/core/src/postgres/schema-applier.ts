@@ -1737,9 +1737,10 @@ export async function applySchemaBaseline(
       schemaChanged = true;
     }
     const externalSessionsMissing = ((await tx.execute(sql`
-      SELECT to_regclass('project.external_session_hosts') IS NULL
+      SELECT to_regclass('project.tasks') IS NOT NULL AND (
+        to_regclass('project.external_session_hosts') IS NULL
         OR to_regclass('project.external_session_streams') IS NULL
-        OR to_regclass('project.external_sessions') IS NULL AS missing
+        OR to_regclass('project.external_sessions') IS NULL) AS missing
     `)) as unknown as Array<{ missing: boolean }>)[0]?.missing ?? true;
     if (!applied.includes(EXTERNAL_SESSIONS_VERSION) || externalSessionsMissing) {
       const migrationSql = await readFile(EXTERNAL_SESSIONS_MIGRATION_PATH, "utf8");

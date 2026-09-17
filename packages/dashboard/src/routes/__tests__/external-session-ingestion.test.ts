@@ -18,7 +18,7 @@ function setup(config: unknown = [credential]) {
   const handlers = new Map<string, Handler>();
   const getProjectContext = vi.fn(async () => ({ projectId: "project-1", store: { getAsyncLayer: () => ({ projectId: "project-1" }) } }));
   registerExternalSessionRoutes({ router: { post: (path: string, handler: Handler) => handlers.set(path, handler) },
-    options: { externalSessionCollectors: config }, getProjectContext } as unknown as ApiRoutesContext);
+    options: { externalSessionCollectors: config, noAuth: true }, getProjectContext } as unknown as ApiRoutesContext);
   const res = { status: vi.fn(), json: vi.fn() }; res.status.mockReturnValue(res);
   const req = { headers: { authorization: `Bearer ${token}` }, query: { projectId: "project-1" }, body } as unknown as Request;
   return { handlers, getProjectContext, req, res: res as unknown as Response, json: res.json, status: res.status };
@@ -77,20 +77,24 @@ describe("external-session ingestion registrar", () => {
   });
 
   it("is disabled without options or environment, and accepts hashed environment configuration", async () => {
-    vi.unstubAllEnvs();
-    delete process.env.FUSION_EXTERNAL_SESSION_COLLECTORS;
+    vi.stubEnv("FUSION_EXTERNAL_SESSION_COLLECTORS", undefined);
     const disabled = setup(undefined);
-    // setup's default parameter is explicit; remove it to test the absent configuration below.
     const handlers = new Map<string, Handler>();
     registerExternalSessionRoutes({ router: { post: (path: string, handler: Handler) => handlers.set(path, handler) }, options: {} } as unknown as ApiRoutesContext);
     await expect(handlers.get("/external-sessions/ingest")!(disabled.req, disabled.res)).rejects.toMatchObject({ statusCode: 404 });
     vi.stubEnv("FUSION_EXTERNAL_SESSION_COLLECTORS", JSON.stringify([credential]));
     vi.spyOn(ExternalSessionStore.prototype, "ingest").mockResolvedValue(ack as Awaited<ReturnType<ExternalSessionStore["ingest"]>>);
     const env = setup(null);
-    // Construct with no overriding options; the resolver seam remains the same.
     registerExternalSessionRoutes({ router: { post: (path: string, handler: Handler) => env.handlers.set(path, handler) }, getProjectContext: env.getProjectContext } as unknown as ApiRoutesContext);
     await env.handlers.get("/external-sessions/ingest")!(env.req, env.res);
     expect(env.json).toHaveBeenCalledWith(ack);
+  });
+
+  it("refuses a project resolver/storage mismatch instead of falling back to another project", async () => {
+    const s = setup();
+    s.getProjectContext.mockResolvedValue({ projectId: "other", store: { getAsyncLayer: () => ({ projectId: "other" }) } });
+    await expect(s.handlers.get("/external-sessions/ingest")!(s.req, s.res)).rejects.toMatchObject({ statusCode: 503 });
+    expect(s.json).not.toHaveBeenCalled();
   });
 
   it("reports recoverable ordering conflicts and never acknowledges durability errors", async () => {

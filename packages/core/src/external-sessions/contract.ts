@@ -1,9 +1,12 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 
-export const externalSessionIdentifier = z.string().min(1).max(256).regex(/^[^\u0000-\u001f\u007f]+$/u).refine(value => value.trim() === value);
+function containsControlCharacters(value: string): boolean {
+  return Array.from(value).some(character => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127);
+}
+export const externalSessionIdentifier = z.string().min(1).max(256).refine(value => value.trim() === value && !containsControlCharacters(value));
 const counter = z.number().int().min(1).max(Number.MAX_SAFE_INTEGER);
-const displayText = (max: number) => z.string().max(max).regex(/^[^\u0000-\u001f\u007f]*$/u);
+const displayText = (max: number) => z.string().max(max).refine(value => !containsControlCharacters(value));
 
 /**
  * FNXC:ExternalSessions 2026-09-17-04:00:

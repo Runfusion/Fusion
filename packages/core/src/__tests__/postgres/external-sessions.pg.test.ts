@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
 import { createSharedPgTaskStoreTestHarness, pgDescribe } from "../../__test-utils__/pg-test-harness.js";
 import { ExternalSessionStore } from "../../external-sessions/store.js";
-import { externalSessions, externalSessionStreams, tasks } from "../../postgres/schema/project.js";
+import { externalSessions, externalSessionStreams, externalSessionHosts, tasks } from "../../postgres/schema/project.js";
 import { applySchemaBaseline } from "../../postgres/schema-applier.js";
 import type { AsyncDataLayer } from "../../postgres/data-layer.js";
 
@@ -97,6 +97,26 @@ pgDescribe("external sessions: durable observation ingestion", () => {
     const otherHost = new ExternalSessionStore(ownerLayer("project-a"), { projectId: "project-a", hostId: "other-host" });
     expect(await otherHost.get(first.sessionId)).toBeNull();
     expect(() => new ExternalSessionStore(h.layer(), { ...principal, projectId: "wrong" })).toThrow(/matching project-bound/);
+  });
+
+  it("enforces database RLS for the non-superuser runtime role", async () => {
+    await store().ingest(envelope());
+    await h.adminDb().transaction(async tx => {
+      await tx.execute(sql.raw("SET LOCAL ROLE fusion_runtime"));
+      await tx.execute(sql`SELECT set_config('fusion.project_bypass', 'off', true), set_config('fusion.project_id', ${principal.projectId}, true)`);
+      expect(await tx.select().from(externalSessions)).toHaveLength(1);
+      expect(await tx.select().from(externalSessionHosts)).toHaveLength(1);
+      expect(await tx.select().from(externalSessionStreams)).toHaveLength(1);
+      await tx.execute(sql`SELECT set_config('fusion.project_id', 'different-project', true)`);
+      expect(await tx.select().from(externalSessions)).toHaveLength(0);
+      expect(await tx.select().from(externalSessionHosts)).toHaveLength(0);
+      expect(await tx.select().from(externalSessionStreams)).toHaveLength(0);
+    });
+    await expect(h.adminDb().transaction(async tx => {
+      await tx.execute(sql.raw("SET LOCAL ROLE fusion_runtime"));
+      await tx.execute(sql`SELECT set_config('fusion.project_bypass', 'off', true), set_config('fusion.project_id', 'different-project', true)`);
+      await tx.insert(externalSessionHosts).values({ ...principal, collectorVersion: "1.0" });
+    })).rejects.toThrow();
   });
 
   it("bounds durable streams per host while preserving all existing replay positions", async () => {
