@@ -104,6 +104,29 @@ describe("dashboardNavigationEntries", () => {
     expect(entries.some((entry) => entry.id === "dev-server")).toBe(true);
   });
 
+  /*
+   * FN-480 cas (f) : contrôle négatif hors mobile. Le remappage « Board = List » est une décision de rendu de l'hôte
+   * mobile uniquement ; il ne doit pas fuir dans ce registre partagé, où `board` et `list` restent deux destinations
+   * distinctes routant chacune vers sa propre vue.
+   */
+  it("garde Board et List comme destinations distinctes dans le registre partagé", () => {
+    const onChangeView = vi.fn();
+    const entries = buildDashboardNavigationEntries({ ...base, onChangeView, quickAccessEntryIds: ["board"] });
+    const board = entries.find((entry) => entry.id === "board");
+    const list = entries.find((entry) => entry.id === "list");
+
+    expect(board?.view).toBe("board");
+    expect(board?.testId).toBe("desktop-nav-board");
+    expect(board?.placement).toBe("direct");
+    expect(list?.view).toBe("list");
+    expect(list?.testId).toBe("desktop-nav-list");
+
+    board?.onSelect?.();
+    expect(onChangeView).toHaveBeenNthCalledWith(1, "board");
+    list?.onSelect?.();
+    expect(onChangeView).toHaveBeenNthCalledWith(2, "list");
+  });
+
   it("conserve les gates et route chaque catégorie vers son propriétaire", async () => {
     const entries = buildDashboardNavigationEntries({ ...base, showAgents: false, showSkills: false, flags: {} });
     expect(entries.some((entry) => entry.id === "agents" || entry.id === "skills" || entry.id === "memory")).toBe(false);

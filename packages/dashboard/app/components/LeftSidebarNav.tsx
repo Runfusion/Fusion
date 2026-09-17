@@ -367,7 +367,12 @@ export function LeftSidebarNav({
     dock optional, so the destination survived only through a standalone Header button. FN-439 returns List to the
     primary navigation itself and removes that Header producer on tablet/desktop; the replacement guarantee is exactly
     one producer per host: this entry under the sidebar placement, `desktop-nav-list` in the footer **More** menu under
-    the footer placement, and `mobile-more-item-list` on a phone.
+    the footer placement, and the mobile pill on a phone.
+
+    FNXC:ListInRightDock 2026-09-17-01:43:
+    FN-480 replaces the phone owner: the hard-coded `mobile-more-item-list` button is deleted and the persisted
+    quick-access slot `tasks` renders and routes List on mobile (Board is the permanent background surface there), so
+    the single phone producer is `mobile-nav-tab-tasks` when selected and `mobile-more-item-tasks` otherwise.
     */
     {
       id: "list",

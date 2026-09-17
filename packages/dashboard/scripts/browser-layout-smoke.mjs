@@ -3095,12 +3095,16 @@ async function runProductionAppBoardChecks(page, pageUrl, browserWsUrl) {
     const appLoaded = activePage.once("Page.loadEventFired");
     await activePage.send("Page.navigate", { url: productionAppUrl.href });
     await appLoaded;
+    /*
+    FNXC:MobileTaskNavigation 2026-09-17-01:43:
+    FN-480 removes the former fallback that clicked the mobile-nav-tab-tasks quick-access slot (or a "Tasks"/"Board"
+    button) to reveal the Board: on mobile that slot now renders and routes List, so the click would open the list
+    drawer instead. The Board is the permanent project surface of the mobile shell and the persisted task view is
+    already seeded to 'board' just above, so waiting for the Board to paint is the correct and only signal here.
+    */
     await evaluate(activePage, `new Promise((resolve, reject) => {
       const deadline = performance.now() + 10000;
       const poll = () => {
-        const boardTab = document.querySelector('[data-testid="mobile-nav-tab-tasks"]')
-          ?? [...document.querySelectorAll('button')].find((button) => ['Tasks', 'Board'].includes(button.textContent.trim()));
-        if (!document.querySelector('.dashboard-project-stack .project-content .board') && boardTab?.getAttribute('aria-selected') !== 'true') boardTab?.click();
         const board = document.querySelector('.dashboard-project-stack .project-content .board');
         const cards = board?.querySelectorAll('[data-virtual-task-row]') ?? [];
         const duplicateCount = [...cards].filter((card) => card.textContent.includes('Carte dupliquée')).length;

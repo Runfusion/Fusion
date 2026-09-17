@@ -279,6 +279,26 @@ describe("MobileNavBar dynamic quick access", () => {
     expect(document.documentElement.style.getPropertyValue("--mobile-nav-pill-height")).not.toBe("");
   });
 
+  /*
+   * FN-480 cas (c) : le premier candidat de l'ordre de promotion reste `tasks`, mais sur mobile ce slot rend et route
+   * **List** (le Board étant la surface de fond permanente). La promotion doit donc produire un onglet qui ouvre la
+   * liste, jamais le Board.
+   */
+  it("promotes the quick-access `tasks` slot as a List shortcut", () => {
+    const props = createDefaultProps();
+    render(<PillShell {...props} quickAccessItems={["mailbox", "planning"]} />);
+    setPillWidth(1000);
+
+    expect(MOBILE_NAV_DYNAMIC_PROMOTION_ORDER[0]).toBe("tasks");
+    const promoted = screen.getByTestId("mobile-nav-tab-tasks");
+    expect(directItems()).toContain("tasks");
+    expect(promoted).toHaveAttribute("aria-label", "List");
+
+    fireEvent.click(promoted);
+    expect(props.onChangeView).toHaveBeenCalledWith("list");
+    expect(props.onChangeView).not.toHaveBeenCalledWith("board");
+  });
+
   it("expands the row on tablet widths too", () => {
     mockViewport("tablet");
     render(<PillShell />);

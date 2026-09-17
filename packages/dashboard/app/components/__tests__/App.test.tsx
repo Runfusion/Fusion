@@ -2434,8 +2434,8 @@ describe("official dashboard design production wiring", () => {
     dismissAlphaDrawerByHandle(chatDrawer);
     await waitFor(() => expect(chatDrawer).toHaveClass("mobile-drawer--hidden"));
 
-    fireEvent.click(screen.getByTestId("mobile-menu-trigger"));
-    fireEvent.click(screen.getByTestId("mobile-more-item-list"));
+    /* FN-480 : sur mobile, le slot d'accès rapide `tasks` rend et route List ; le bouton codé en dur du menu est supprimé. */
+    fireEvent.click(screen.getByTestId("mobile-nav-tab-tasks"));
     const listDrawer = await screen.findByTestId("mobile-drawer-list");
     const listDialog = within(listDrawer).getByRole("dialog", { name: "List" });
     expect(listDialog.querySelectorAll(".mobile-drawer__close")).toHaveLength(0);
@@ -2554,8 +2554,8 @@ describe("official dashboard design production wiring", () => {
     expectSingleStableSelector();
 
     /* List : deux vues actives ne doivent plus publier deux sélecteurs dans le même slot. */
-    fireEvent.click(await screen.findByTestId("mobile-menu-trigger"));
-    fireEvent.click(await screen.findByTestId("mobile-more-item-list"));
+    /* FN-480 : sur mobile, le slot d'accès rapide `tasks` rend et route List ; le bouton codé en dur du menu est supprimé. */
+    fireEvent.click(await screen.findByTestId("mobile-nav-tab-tasks"));
     const listDrawer = await screen.findByTestId("mobile-drawer-list");
     expect(await within(listDrawer).findByText("Tâche Coding")).toBeInTheDocument();
     expectSingleStableSelector();
@@ -2609,8 +2609,8 @@ describe("official dashboard design production wiring", () => {
     await screen.findByTestId("header-workflow-slot");
 
     /* Première visite de List : elle hérite du workflow déjà sélectionné sur le Board. */
-    fireEvent.click(await screen.findByTestId("mobile-menu-trigger"));
-    fireEvent.click(await screen.findByTestId("mobile-more-item-list"));
+    /* FN-480 : sur mobile, le slot d'accès rapide `tasks` rend et route List ; le bouton codé en dur du menu est supprimé. */
+    fireEvent.click(await screen.findByTestId("mobile-nav-tab-tasks"));
     const listDrawer = await screen.findByTestId("mobile-drawer-list");
     expect(await within(listDrawer).findByText("Tâche Coding")).toBeInTheDocument();
     expect(within(listDrawer).queryByText("Tâche Livraison")).toBeNull();
@@ -2622,8 +2622,8 @@ describe("official dashboard design production wiring", () => {
     fireEvent.click(screen.getByTestId("workflow-switcher"));
     fireEvent.click(await screen.findByTestId("workflow-switcher-option-wf-custom"));
 
-    fireEvent.click(await screen.findByTestId("mobile-menu-trigger"));
-    fireEvent.click(await screen.findByTestId("mobile-more-item-list"));
+    /* FN-480 : sur mobile, le slot d'accès rapide `tasks` rend et route List ; le bouton codé en dur du menu est supprimé. */
+    fireEvent.click(await screen.findByTestId("mobile-nav-tab-tasks"));
     const reopenedList = await screen.findByTestId("mobile-drawer-list");
     expect(await within(reopenedList).findByText("Tâche Livraison")).toBeInTheDocument();
     await waitFor(() => expect(within(reopenedList).queryByText("Tâche Coding")).toBeNull());
@@ -2724,8 +2724,8 @@ describe("official dashboard design production wiring", () => {
     const view = render(<App />);
     await screen.findByTestId("workflow-switcher");
 
-    fireEvent.click(await screen.findByTestId("mobile-menu-trigger"));
-    fireEvent.click(await screen.findByTestId("mobile-more-item-list"));
+    /* FN-480 : sur mobile, le slot d'accès rapide `tasks` rend et route List ; le bouton codé en dur du menu est supprimé. */
+    fireEvent.click(await screen.findByTestId("mobile-nav-tab-tasks"));
     await screen.findByTestId("mobile-drawer-list");
     await waitFor(() => expect(screen.getAllByTestId("workflow-switcher")).toHaveLength(1));
     expect(document.querySelectorAll(".list-workflow-control")).toHaveLength(0);

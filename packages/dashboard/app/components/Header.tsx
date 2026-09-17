@@ -824,10 +824,16 @@ export function Header({
             FNXC:ToolSurfaces 2026-09-16-23:06:
             FN-426 restored List beside Board in the legacy view-toggle group because FN-382 had made List a right-dock
             tool, which was the last reason the dock was structurally required to browse tasks as a list. FN-437 keeps
-            that guarantee on tablet/desktop only: on phone the footer navigation menu owns List
-            (`mobile-more-item-list`, rendered unconditionally), so this producer — and the standalone one in
-            `header-actions` below — are both suppressed when `isMobile`, leaving exactly one owner per host and no
-            duplicate between header and footer.
+            that guarantee on tablet/desktop only: on phone the footer navigation pill owns List, so this producer —
+            and the standalone one in `header-actions` below — are both suppressed when `isMobile`, leaving exactly one
+            owner per host and no duplicate between header and footer.
+
+            FNXC:ToolSurfaces 2026-09-17-01:43:
+            FN-480 moves that phone ownership from the hard-coded `mobile-more-item-list` menu button — now deleted —
+            to the persisted quick-access slot `tasks`, which renders and routes List on mobile because Board is the
+            permanent background surface there. Depending on the operator's quick-access selection that single owner is
+            either the direct tab `mobile-nav-tab-tasks` or the menu entry `mobile-more-item-tasks`. The contract is
+            unchanged: exactly one List producer per host.
             */}
             {!isMobile && <button
               className={`view-toggle-btn${view === "list" ? " active" : ""}`}
@@ -1157,8 +1163,10 @@ export function Header({
         itself — the footer **More** menu (`desktop-nav-list`) under the footer placement and `sidebar-nav-list` under
         the sidebar placement — so this header producer is deleted rather than narrowed: keeping it would give
         tablet/desktop two owners for the same destination. FN-437 had already removed the phone producer, where the
-        bottom-bar menu (`mobile-more-item-list`) is the single owner. Net contract: exactly one List producer per host,
-        and no host relies on the optional right dock.
+        bottom-bar pill is the single owner. FN-480 (2026-09-17-01:43) relocated that phone owner from the deleted
+        hard-coded `mobile-more-item-list` button to the persisted quick-access slot `tasks`, which renders List on
+        mobile (direct tab `mobile-nav-tab-tasks`, or menu entry `mobile-more-item-tasks` when it is not selected).
+        Net contract: exactly one List producer per host, and no host relies on the optional right dock.
         */}
 
         {/*

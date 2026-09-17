@@ -146,11 +146,16 @@ describe("Mobile Feature Access Regression Guard", () => {
     document.documentElement.style.removeProperty("--mobile-nav-height");
   });
 
+  /*
+   * FN-480 : le bouton List codé en dur du menu est supprimé ; le producteur téléphone est le slot d'accès rapide
+   * `tasks`, rendu ici dans le menu (`mobile-more-item-tasks`) car la sélection ne le contient pas.
+   */
   it("keeps List accessible from the official mobile navigation menu", () => {
     const props = createDefaultMobileNavProps();
-    render(<MobileNavBar {...props} view="board" navigationMenuOpen />);
+    render(<MobileNavBar {...props} view="board" navigationMenuOpen quickAccessItems={["planning"]} />);
 
-    fireEvent.click(screen.getByTestId("mobile-more-item-list"));
+    expect(screen.queryByTestId("mobile-more-item-list")).toBeNull();
+    fireEvent.click(screen.getByTestId("mobile-more-item-tasks"));
     expect(props.onChangeView).toHaveBeenCalledWith("list");
   });
 
@@ -161,9 +166,9 @@ describe("Mobile Feature Access Regression Guard", () => {
    */
   it("garde Liste, Notes et Activité atteignables depuis le menu de la barre du bas", () => {
     const props = createDefaultMobileNavProps();
-    render(<MobileNavBar {...props} view="board" navigationMenuOpen />);
+    render(<MobileNavBar {...props} view="board" navigationMenuOpen quickAccessItems={["planning"]} />);
 
-    fireEvent.click(screen.getByTestId("mobile-more-item-list"));
+    fireEvent.click(screen.getByTestId("mobile-more-item-tasks"));
     expect(props.onChangeView).toHaveBeenCalledWith("list");
 
     fireEvent.click(screen.getByTestId("mobile-more-item-notes"));
@@ -189,7 +194,7 @@ describe("Mobile Feature Access Regression Guard", () => {
           onOpenActivityPanel={vi.fn()}
           onOpenNotesPanel={vi.fn()}
         />
-        <MobileNavBar {...navProps} view="board" navigationMenuOpen />
+        <MobileNavBar {...navProps} view="board" navigationMenuOpen quickAccessItems={["planning"]} />
       </>,
     );
 
@@ -197,28 +202,39 @@ describe("Mobile Feature Access Regression Guard", () => {
     expect(screen.queryByTestId("header-activity-panel-btn")).toBeNull();
     expect(screen.queryByTestId("header-notes-panel-btn")).toBeNull();
 
-    expect(screen.getByTestId("mobile-more-item-list")).toBeInTheDocument();
+    expect(screen.queryByTestId("mobile-more-item-list")).toBeNull();
+    expect(screen.getByTestId("mobile-more-item-tasks")).toBeInTheDocument();
     expect(screen.getByTestId("mobile-more-item-notes")).toBeInTheDocument();
     expect(screen.getByTestId("mobile-more-item-activity")).toBeInTheDocument();
   });
 
   /*
-   * FN-467 : Board n'est plus exclu de la navigation mobile. L'invariant réel n'est pas son absence mais son unicité :
-   * selon la sélection d'accès rapide, il apparaît dans EXACTEMENT une surface — onglet direct OU menu — jamais dans
-   * les deux, le hamburger restant toujours le dernier enfant de la pill.
+   * FN-480 cas (e) : sur téléphone, List a EXACTEMENT un producteur. Le slot d'accès rapide `tasks` le rend, en onglet
+   * direct quand il est sélectionné et en entrée de menu sinon — jamais les deux, jamais zéro — le bouton codé en dur
+   * `mobile-more-item-list` n'existe plus, `header-list-view-btn` reste absent, et le hamburger reste dernier enfant.
    */
-  it("rend Board dans exactement une surface de navigation selon la sélection", () => {
-    const props = createDefaultMobileNavProps();
-    const selected = render(<MobileNavBar {...props} view="list" navigationMenuOpen quickAccessItems={["tasks", "planning"]} />);
-    expect(screen.getByTestId("mobile-nav-tab-tasks")).toBeInTheDocument();
-    expect(screen.queryByTestId("mobile-more-item-tasks")).toBeNull();
-    expect(document.querySelector(".mobile-nav-bar--native")?.lastElementChild).toBe(screen.getByTestId("mobile-menu-trigger"));
-    selected.unmount();
+  it("rend List dans exactement une surface de navigation selon la sélection", () => {
+    for (const selection of [["tasks", "planning"], ["planning"]]) {
+      const props = createDefaultMobileNavProps();
+      const view = render(
+        <>
+          <Header mobileNavEnabled projectId="proj_1" onChangeView={vi.fn()} />
+          <MobileNavBar {...props} view="list" navigationMenuOpen quickAccessItems={selection} />
+        </>,
+      );
 
-    render(<MobileNavBar {...props} view="list" navigationMenuOpen quickAccessItems={["planning"]} />);
-    expect(screen.queryByTestId("mobile-nav-tab-tasks")).toBeNull();
-    expect(screen.getByTestId("mobile-more-item-tasks")).toBeInTheDocument();
-    expect(document.querySelector(".mobile-nav-bar--native")?.lastElementChild).toBe(screen.getByTestId("mobile-menu-trigger"));
+      const tab = screen.queryByTestId("mobile-nav-tab-tasks");
+      const menuEntry = screen.queryByTestId("mobile-more-item-tasks");
+      expect([tab, menuEntry].filter(Boolean)).toHaveLength(1);
+      expect(screen.queryByTestId("mobile-more-item-list")).toBeNull();
+      expect(screen.queryByTestId("header-list-view-btn")).toBeNull();
+      expect(document.querySelector(".mobile-nav-bar--native")?.lastElementChild).toBe(screen.getByTestId("mobile-menu-trigger"));
+
+      fireEvent.click((tab ?? menuEntry)!);
+      expect(props.onChangeView).toHaveBeenCalledWith("list");
+      expect(props.onChangeView).not.toHaveBeenCalledWith("board");
+      view.unmount();
+    }
   });
 
   it("mobile Header exposes New Task without the retired view toggle", () => {
@@ -544,10 +560,11 @@ describe("Mobile Feature Access Regression Guard", () => {
         view="missions"
         onChangeView={mobileNavOnChangeView}
         navigationMenuOpen
+        quickAccessItems={["planning"]}
       />,
     );
 
-    fireEvent.click(screen.getByTestId("mobile-more-item-list"));
+    fireEvent.click(screen.getByTestId("mobile-more-item-tasks"));
     expect(mobileNavOnChangeView).toHaveBeenCalledWith("list");
     fireEvent.click(screen.getByTestId("mobile-more-item-agents"));
     expect(mobileNavOnChangeView).toHaveBeenCalledWith("agents");

@@ -313,7 +313,8 @@ describe("MobileNavBar official mobile shell", () => {
    */
   it.each([
     ["command-center", "mobile-more-item-command-center", "command-center"],
-    ["tasks", "mobile-more-item-tasks", "board"],
+    /* FN-480 : sur mobile le slot persisté `tasks` rend et route List, le Board étant la surface de fond permanente. */
+    ["tasks", "mobile-more-item-tasks", "list"],
     ["chat", "mobile-more-item-chat", "chat"],
     ["mailbox", "mobile-more-item-mailbox", "mailbox"],
   ])("navigue et referme le menu pour %s rendu dans la surface overflow", (_item, moreTestId, expectedView) => {
@@ -366,14 +367,68 @@ describe("MobileNavBar official mobile shell", () => {
     expect(screen.getByTestId("mobile-more-item-agents")).toBeInTheDocument();
   });
 
+  /*
+   * FN-480 — sur le shell mobile, le Board est la surface projet permanente sous les drawers, donc le slot d'accès
+   * rapide persisté `tasks` rend et route **List**. Ces cas couvrent l'énumération de surfaces : onglet direct (a),
+   * état actif (d) et retrait de l'ancien bouton codé en dur (e). Le cas (b) vit dans la table overflow ci-dessus.
+   */
+  // (a) onglet direct : reproduction du symptôme — le raccourci ne doit plus renvoyer vers la vue déjà affichée.
+  it("rend le slot d'accès rapide `tasks` comme List et navigue vers la liste", () => {
+    const props = createDefaultProps();
+    render(<OfficialMobileShell {...props} />);
+
+    const tab = screen.getByTestId("mobile-nav-tab-tasks");
+    expect(tab).toHaveAttribute("aria-label", "List");
+
+    fireEvent.click(tab);
+    expect(props.onChangeView).toHaveBeenCalledWith("list");
+    expect(props.onChangeView).not.toHaveBeenCalledWith("board");
+  });
+
+  // (d) état actif : `list` marque l'onglet, `board` n'en marque aucun (surface de fond, pas une destination).
+  it("marque l'onglet `tasks` sur la vue liste et aucun onglet sur le Board", () => {
+    const onList = render(<OfficialMobileShell view="list" />);
+    expect(screen.getByTestId("mobile-nav-tab-tasks")).toHaveAttribute("aria-current", "page");
+    expect(document.querySelectorAll('.mobile-nav-tab[aria-current="page"]')).toHaveLength(1);
+    onList.unmount();
+
+    render(<OfficialMobileShell view="board" />);
+    expect(document.querySelectorAll('.mobile-nav-tab[aria-current="page"]')).toHaveLength(0);
+  });
+
+  // (e) retrait : plus aucun bouton List codé en dur, sur les quatre états de sélection, et aucune coquille ajoutée.
+  it.each([
+    ["sélection absente", undefined],
+    ["tasks en accès rapide", ["tasks", "planning"]],
+    ["tasks en menu", ["planning"]],
+    ["sélection vide", []],
+  ] as [string, string[] | undefined][])("ne rend plus de bouton List codé en dur (%s)", (_label, selection) => {
+    const { container, unmount } = render(<OfficialMobileShell quickAccessItems={selection} />);
+    fireEvent.click(screen.getByTestId("mobile-menu-trigger"));
+
+    expect(screen.queryByTestId("mobile-more-item-list")).toBeNull();
+    expect(pill(container).lastElementChild).toBe(screen.getByTestId("mobile-menu-trigger"));
+    const listProducers = [
+      screen.queryByTestId("mobile-nav-tab-tasks"),
+      screen.queryByTestId("mobile-more-item-tasks"),
+    ].filter(Boolean);
+    expect(listProducers).toHaveLength(1);
+    unmount();
+  });
+
+  /*
+   * FN-480 : le producteur téléphone de List est désormais le slot d'accès rapide `tasks`. Avec une sélection qui ne
+   * le contient pas, il est rendu dans le menu sous `mobile-more-item-tasks` ; les assertions de focus/Escape, vrai
+   * sujet de ce cas, sont inchangées.
+   */
   it("opens the single navigation menu, routes List, and restores focus on Escape", async () => {
     const user = userEvent.setup();
     const props = createDefaultProps();
-    render(<OfficialMobileShell {...props} />);
+    render(<OfficialMobileShell {...props} quickAccessItems={["planning", "missions"]} />);
     const trigger = screen.getByTestId("mobile-menu-trigger");
     await user.click(trigger);
     expect(screen.getByRole("menu", { name: "Navigate" })).toHaveClass("mobile-navigation-popover");
-    fireEvent.click(screen.getByTestId("mobile-more-item-list"));
+    fireEvent.click(screen.getByTestId("mobile-more-item-tasks"));
     expect(props.onChangeView).toHaveBeenCalledWith("list");
 
     await user.click(trigger);
@@ -678,8 +733,9 @@ describe("MobileNavBar navigation popover keeps its scroll position", () => {
     expect(menuFocusCalls(recordedFocus)).toHaveLength(1);
   });
 
+  /* FN-480 : le producteur survivant de List dans le menu est `mobile-more-item-tasks` (slot hors accès rapide). */
   it("focuses once and routes the tapped destination without a navigation-history provider", () => {
-    const navProps = createDefaultProps();
+    const navProps = { ...createDefaultProps(), quickAccessItems: ["planning", "missions"] };
     const view = render(<NavigationHistoryShell navProps={navProps} withProvider={false} mailboxUnreadCount={0} />);
     fireEvent.click(screen.getByTestId("mobile-menu-trigger"));
 
@@ -689,7 +745,7 @@ describe("MobileNavBar navigation popover keeps its scroll position", () => {
 
     expect(menuFocusCalls(recordedFocus)).toHaveLength(1);
     expect(popover.scrollTop).toBe(96);
-    fireEvent.click(screen.getByTestId("mobile-more-item-list"));
+    fireEvent.click(screen.getByTestId("mobile-more-item-tasks"));
     expect(navProps.onChangeView).toHaveBeenCalledWith("list");
   });
 

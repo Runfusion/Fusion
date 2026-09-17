@@ -12,7 +12,6 @@ import {
   GitBranch,
   Grid3X3,
   History,
-  LayoutGrid,
   List,
   Lightbulb,
   Loader2,
@@ -88,6 +87,10 @@ largeur mesurée le permet, promeut des destinations supplémentaires dans CET o
 sont celles citées par l'opérateur (Board, Fichiers, Gestionnaire git, Réglages) ; les suivantes complètent de
 manière déterministe pour qu'une largeur donnée produise toujours la même rangée. `patchnode` est exclu : History
 est une surface modale, pas une destination de navigation.
+
+FNXC:MobileNavDynamicQuickAccess 2026-09-17-01:43:
+FN-480 : le premier candidat promu reste le slot persisté `tasks`, mais il apparaît désormais comme **List** sur
+mobile, le Board étant la surface de fond permanente. L'ordre de promotion lui-même est inchangé.
 */
 export const MOBILE_NAV_DYNAMIC_PROMOTION_ORDER: MobileNavSelectableItem[] = [
   "tasks",
@@ -701,10 +704,15 @@ export function MobileNavBar({
   }> = {
     "command-center": { icon: <Gauge />, labelKey: "nav.commandCenter", fallback: "Dashboard", moreTestId: "mobile-more-item-command-center", isActive: view === "command-center", isAvailable: true, navigate: (surface) => surface === "primary" ? onChangeView("command-center") : handleMoreAction(() => onChangeView("command-center")) },
     /*
-    FNXC:MobileTaskNavigation 2026-08-20-05:47:
-    Issue #2226 requires independent mobile footer destinations: Tasks always returns to Board and List remains directly reachable without restoring Header's retired segmented switcher.
+    FNXC:MobileTaskNavigation 2026-09-17-01:43:
+    FN-480 : sur le shell mobile, le Board est la surface projet permanente sous les drawers, donc un raccourci
+    « Board » n'y produit aucun changement perceptible. Le slot persisté `tasks` rend et route donc **List** sur cet
+    hôte : icône List, libellé `nav.list`, actif sur `view === "list"`, navigation `onChangeView("list")` pour les
+    deux surfaces (onglet direct et entrée du menu). C'est une décision de rendu de l'hôte mobile, pas une migration :
+    l'identifiant persisté `tasks`, le résolveur de `@fusion/core`, les libellés des Réglages et les hôtes
+    tablette/ordinateur restent inchangés. Cette entrée est désormais l'unique producteur de List sur téléphone.
     */
-    tasks: { icon: <LayoutGrid />, labelKey: "nav.tasks", fallback: "Tasks", moreTestId: "mobile-more-item-tasks", isActive: view === "board", isAvailable: true, navigate: (surface) => surface === "primary" ? onChangeView("board") : handleMoreAction(() => onChangeView("board")) },
+    tasks: { icon: <List />, labelKey: "nav.list", fallback: "List", moreTestId: "mobile-more-item-tasks", isActive: view === "list", isAvailable: true, navigate: (surface) => surface === "primary" ? onChangeView("list") : handleMoreAction(() => onChangeView("list")) },
     agents: { icon: <Bot />, labelKey: "nav.agents", fallback: "Agents", moreTestId: "mobile-more-item-agents", isActive: view === "agents", isAvailable: true, navigate: (surface) => surface === "primary" ? onChangeView("agents") : handleMoreAction(() => onChangeView("agents")) },
     missions: { icon: <Target />, labelKey: "nav.missions", fallback: "Missions", moreTestId: "mobile-more-item-missions", isActive: view === "missions", isAvailable: true, navigate: (surface) => surface === "primary" ? onChangeView("missions") : handleMoreAction(() => onChangeView("missions")) },
     chat: { icon: <MessageSquare />, labelKey: "nav.chat", fallback: "Chat", moreTestId: "mobile-more-item-chat", isActive: view === "chat", isAvailable: true, navigate: (surface) => surface === "primary" ? onChangeView("chat") : handleMoreAction(() => onChangeView("chat")), indicator: chatHasUnreadResponse && view !== "chat", indicatorLabel: t("nav.chatUnreadAriaLabel", "Unread chat response") },
@@ -807,8 +815,11 @@ export function MobileNavBar({
         {/*
         FNXC:ToolSurfaces 2026-09-15-16:04:
         FN-426 removes this legacy-layout List tab. The header Board/List toggle now exists on every breakpoint,
-        including phones, so keeping a second bottom-bar producer would give one destination two primary owners. The
-        `tasks` customizable item (Board) and the More sheet are unchanged.
+        including phones, so keeping a second bottom-bar producer would give one destination two primary owners.
+
+        FNXC:ToolSurfaces 2026-09-17-01:43:
+        FN-480 makes the customizable `tasks` item itself the phone's single List producer (Board is the permanent
+        background surface), so this legacy tab must stay deleted: restoring it would recreate the duplicate owner.
         */}
 
         {!officialDesignEnabled && topLevelPrimaryPluginViews.map((entry) => {
@@ -1012,14 +1023,6 @@ export function MobileNavBar({
               </div>
             )}
 
-
-
-            {officialDesignEnabled && (
-              <button type="button" className="mobile-more-item" data-testid="mobile-more-item-list" onClick={() => handleMoreAction(() => onChangeView("list"))}>
-                <List />
-                <span>{t("nav.list", "List")}</span>
-              </button>
-            )}
 
             {effectiveOmittedItems
               .filter((item) => item !== "settings")
