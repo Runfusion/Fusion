@@ -18,6 +18,29 @@
   min-block-size: var(--view-sidebar-row-min-height);
 }
 
+/*
+FNXC:CommandCenterSectionNav 2026-09-17-11:22:
+FN-508 : la présentation pleine largeur est la bande de rubriques téléphone du Dashboard. Le conteneur occupe toute la
+largeur disponible, le déclencheur aligne le libellé à gauche et le chevron à droite, et le menu s'ancre sur les deux
+bords du conteneur. La borne `max-inline-size` téléphone du menu compact est neutralisée ici, tandis que `max-block-size`
+et le défilement vertical du menu restent en place.
+*/
+.cc-section-nav--full {
+  display: block;
+  inline-size: 100%;
+}
+
+.cc-section-nav--full .cc-section-nav-trigger {
+  inline-size: 100%;
+  justify-content: space-between;
+}
+
+.cc-section-nav--full .cc-section-nav-menu {
+  inset-inline: 0;
+  inline-size: 100%;
+  max-inline-size: none;
+}
+
 .cc-section-nav-trigger {
   display: inline-flex;
   align-items: center;
@@ -68,5 +91,9 @@
 @media (max-width: 768px) {
   .cc-section-nav-menu {
     max-inline-size: min(100vw, calc(var(--space-2xl) * 12));
+  }
+
+  .cc-section-nav--full .cc-section-nav-menu {
+    max-inline-size: none;
   }
 }

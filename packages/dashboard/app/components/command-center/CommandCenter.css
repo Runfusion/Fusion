@@ -22,7 +22,10 @@ FN-6690 fix: Command Center CSS was authored against a numeric token scale (--sp
 
 /*
 FNXC:StandardizedViewLayout 2026-09-13-21:43:
-Command Center uses the shared pinned header and project-scoped section rail. Its active analytics panel remains the sole content scroller; on phones the rail is shown first and the common back control returns from the selected section without remounting its controller.
+Command Center uses the shared pinned header and project-scoped section rail. Its active analytics panel remains the sole content scroller.
+
+FNXC:CommandCenter 2026-09-17-11:22:
+FN-508 : sur téléphone, il n'y a plus ni panneau liste de rubriques ni retour commun. L'ordre est en-tête fixe « Dashboard », puis la bande de rubriques (drop list pleine largeur) qui ne défile pas, puis le contenu ; `.cc-tabpanel` reste l'unique propriétaire du défilement vertical. Tablette et ordinateur conservent la colonne latérale et son rail.
 */
 .cc-header {
   display: flex;
@@ -71,6 +74,25 @@ Dashboard follows the global header rule: surface background, canonical height/p
   overflow: hidden;
 }
 
+/*
+FNXC:CommandCenter 2026-09-17-11:22:
+FN-508 : la bande de rubriques téléphone vit dans la zone `tabs` partagée, dont le `overflow-x: auto` rognerait le menu
+absolu de la drop list. Le rognage est donc levé pour cet hôte uniquement (sélecteur scoped au Command Center, jamais
+une modification globale de ViewLayout.css), la bande ne défile pas et s'empile au-dessus du panneau de contenu.
+*/
+.command-center > .view-layout__tabs {
+  position: relative;
+  z-index: 2;
+  overflow: visible;
+}
+
+.cc-section-strip {
+  display: block;
+  inline-size: 100%;
+  padding: 0 var(--space-xl) var(--space-sm);
+  background: var(--surface);
+}
+
 .cc-title {
   display: flex;
   align-items: center;
@@ -112,6 +134,10 @@ The System tab combines a controls fragment with a stats .cc-area. Keep the tabp
 @media (max-width: 768px) {
   .cc-header {
     flex-wrap: wrap;
+  }
+
+  .cc-section-strip {
+    padding: 0 var(--space-lg) var(--space-sm);
   }
 
   .cc-tabpanel {

@@ -55,4 +55,41 @@ describe("CommandCenterSectionNav", () => {
     fireEvent.keyDown(document.activeElement!, { key: "Enter" });
     expect(onSelect).toHaveBeenCalledWith("overview");
   });
+
+  /*
+  FNXC:CommandCenterSectionNav 2026-09-17-11:22:
+  FN-508 : la bande de rubriques téléphone du Dashboard réutilise cette variante `dropdown` en pleine largeur. Le
+  contrat couvert ici est celui de la présentation seule : classe modificatrice présente, toutes les rubriques
+  listées, rubrique active marquée, sélection propagée puis menu refermé ; les variantes existantes gardent leur DOM.
+  */
+  it("renders the full-width dropdown with every section and closes after selecting one", () => {
+    const onSelect = vi.fn();
+    const { container } = render(
+      <CommandCenterSectionNav sections={sections} activeId="tokens" onSelect={onSelect} fullWidth />,
+    );
+    expect(container.querySelector(".cc-section-nav--full")).not.toBeNull();
+
+    fireEvent.click(screen.getByTestId("command-center-section-nav-trigger"));
+    const labels = screen.getAllByRole("option").map((option) => option.textContent);
+    expect(labels).toEqual(sections.map((section) => section.label));
+    expect(screen.getByTestId("command-center-section-option-tokens").getAttribute("aria-selected")).toBe("true");
+
+    fireEvent.click(screen.getByTestId("command-center-section-option-tools"));
+    expect(onSelect).toHaveBeenCalledWith("tools");
+    expect(screen.queryByRole("listbox")).toBeNull();
+  });
+
+  it("keeps the compact dropdown and rail DOM unchanged without the full-width flag", () => {
+    const compact = render(<CommandCenterSectionNav sections={sections} activeId="tokens" onSelect={vi.fn()} />);
+    expect(compact.container.querySelector(".cc-section-nav")).not.toBeNull();
+    expect(compact.container.querySelector(".cc-section-nav--full")).toBeNull();
+    compact.unmount();
+
+    const rail = render(
+      <CommandCenterSectionNav sections={sections} activeId="tokens" onSelect={vi.fn()} variant="rail" fullWidth />,
+    );
+    expect(rail.container.querySelector(".cc-section-nav--rail")).not.toBeNull();
+    expect(rail.container.querySelector(".cc-section-nav--full")).toBeNull();
+    expect(screen.queryByTestId("command-center-section-nav-trigger")).toBeNull();
+  });
 });

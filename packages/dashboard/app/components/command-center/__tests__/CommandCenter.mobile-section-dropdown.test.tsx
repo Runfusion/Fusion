@@ -1,23 +1,17 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom";
 import { CommandCenter } from "../CommandCenter";
 import { STORED_COMMAND_CENTER_KEY, saveCommandCenterState } from "../../../hooks/modalPersistence";
-import { selectCommandCenterSection } from "./sectionNavTestUtils";
 
 /*
-FNXC:CommandCenter 2026-09-17-06:20:
-FN-492: le menu « Dashboard » du pied de page mobile ouvrait la liste des rubriques et, si une rubrique avait déjà été
-consultée, cette rubrique mémorisée — jamais Overview. Ce fichier rejoue exactement ce symptôme (mode téléphone simulé
-par `matchMedia` + état persisté `activeTab: "tokens"`) et prouve l'invariant sur toutes les surfaces recensées :
-téléphone portrait et paysage court, tablette, ordinateur, états persistés absents/illisibles/inconnus, retour vers la
-liste des rubriques, remontage et changement de projet.
-
 FNXC:CommandCenter 2026-09-17-11:22:
-FN-508 : le parcours téléphone vers une autre rubrique ne passe plus par une flèche de retour ni par un panneau liste,
-mais par la drop list pleine largeur posée sous l'en-tête (`selectCommandCenterSection`). Les invariants FN-492 couverts
-ici — atterrissage Overview au montage, au remontage et au changement de projet, états persistés absents, illisibles ou
-inconnus, restauration de la plage de dates, non-réinitialisation au changement de palier — restent inchangés.
+FN-508 : sur téléphone, atteindre une autre rubrique du Dashboard imposait une flèche de retour placée avant le titre,
+qui remplaçait aussi « Dashboard » par le nom de la rubrique et basculait l'écran vers un panneau liste. Ce fichier
+rejoue ce symptôme (palier téléphone simulé par `matchMedia`) et prouve l'invariant sur toutes les surfaces recensées :
+téléphone portrait et paysage court, tablette, ordinateur, changement de palier en cours de session, et états persistés
+absents, illisibles, inconnus ou change­ment de projet. L'en-tête reste « Dashboard », aucun retour n'existe, et la
+bande de rubriques pleine largeur rend toutes les rubriques atteignables sans quitter l'écran.
 */
 
 const apiMock = vi.fn();
@@ -117,11 +111,6 @@ function mockEmptyCommandCenterApi() {
 
 type ViewportTier = "desktop" | "tablet" | "mobile" | "mobile-landscape";
 
-/*
-FNXC:CommandCenterTesting 2026-09-17-06:20:
-`useViewportMode` classe le téléphone par largeur (`max-width: 768px`) et le paysage court par hauteur
-(`max-height: 480px`); les deux surfaces téléphone recensées sont donc simulées séparément.
-*/
 function mockViewportMatchMedia(tier: ViewportTier) {
   Object.defineProperty(window, "matchMedia", {
     configurable: true,
@@ -147,11 +136,34 @@ function readMobilePane() {
   return screen.getByTestId("command-center").getAttribute("data-mobile-pane");
 }
 
+function headingText() {
+  return screen.getByRole("heading", { level: 2 }).textContent;
+}
+
+function openSectionDropdown() {
+  const trigger = screen.getByTestId("command-center-section-nav-trigger");
+  if (!screen.queryByTestId("command-center-section-nav-menu")) fireEvent.click(trigger);
+  return screen.getByTestId("command-center-section-nav-menu");
+}
+
+function chooseSection(id: string) {
+  openSectionDropdown();
+  fireEvent.click(screen.getByTestId(`command-center-section-option-${id}`));
+}
+
+function expectNoBackAffordance(container: HTMLElement) {
+  expect(screen.queryByLabelText("Back to dashboard sections")).toBeNull();
+  expect(container.querySelector(".view-back-button")).toBeNull();
+  expect(container.querySelector("[aria-label*='Back']")).toBeNull();
+}
+
 function persistTokensSection() {
   saveCommandCenterState({ activeTab: "tokens", range: { from: null, to: null, preset: "30d" } });
 }
 
-describe("CommandCenter phone opens on Overview (FN-492)", () => {
+const PHONE_TIERS: ViewportTier[] = ["mobile", "mobile-landscape"];
+
+describe("CommandCenter phone section drop list (FN-508)", () => {
   beforeEach(() => {
     localStorage.clear();
     apiMock.mockReset();
@@ -159,72 +171,80 @@ describe("CommandCenter phone opens on Overview (FN-492)", () => {
     mockViewportMatchMedia("mobile");
   });
 
-  it("lands on the Overview content even when another section was persisted", () => {
+  it.each(PHONE_TIERS)("keeps a fixed Dashboard heading and no back affordance on %s", (tier) => {
+    mockViewportMatchMedia(tier);
     persistTokensSection();
-    render(<CommandCenter />);
+    const { container } = render(<CommandCenter />);
 
-    expect(screen.getByTestId("command-center-panel-overview")).toBeTruthy();
+    expect(headingText()).toContain("Dashboard");
+    expectNoBackAffordance(container);
+    expect(screen.getByTestId("view-layout-tabs")).toContainElement(screen.getByTestId("command-center-section-nav-trigger"));
+    expect(container.querySelector(".cc-section-nav--full")).not.toBeNull();
+    expect(readMobilePane()).toBe("detail");
+
+    chooseSection("team");
+    expect(headingText()).toContain("Dashboard");
+    expect(screen.getByTestId("command-center-panel-team")).toBeTruthy();
+    expectNoBackAffordance(container);
+  });
+
+  it("lists every default section and keeps the detail pane while switching sections", () => {
+    const { container } = render(<CommandCenter />);
+
+    expect(openSectionDropdown().querySelectorAll("[role='option']")).toHaveLength(17);
+
+    chooseSection("tokens");
+    expect(screen.getByTestId("command-center-panel-tokens")).toBeTruthy();
+    expect(screen.queryByTestId("command-center-section-nav-menu")).toBeNull();
+    expect(readMobilePane()).toBe("detail");
+
+    chooseSection("team");
+    expect(screen.getByTestId("command-center-panel-team")).toBeTruthy();
     expect(screen.queryByTestId("command-center-panel-tokens")).toBeNull();
     expect(readMobilePane()).toBe("detail");
-    expect(screen.getByTestId("command-center-controls")).toBeTruthy();
+    expectNoBackAffordance(container);
   });
 
-  it("lands on Overview on a short landscape phone as well", () => {
-    persistTokensSection();
-    mockViewportMatchMedia("mobile-landscape");
-    render(<CommandCenter />);
+  it("includes the Nodes section when it is enabled", () => {
+    render(<CommandCenter nodesEnabled />);
+    expect(openSectionDropdown().querySelectorAll("[role='option']")).toHaveLength(18);
+    expect(screen.getByTestId("command-center-section-option-nodes")).toBeTruthy();
+  });
 
+  it("opens on Overview for absent, unreadable, unknown, and disabled persisted sections", () => {
+    const withoutState = render(<CommandCenter />);
     expect(screen.getByTestId("command-center-panel-overview")).toBeTruthy();
     expect(readMobilePane()).toBe("detail");
-  });
+    withoutState.unmount();
 
-  it("keeps every section reachable through the full-width section drop list", () => {
-    render(<CommandCenter />);
-
+    localStorage.setItem(STORED_COMMAND_CENTER_KEY, "{not json");
+    const unreadable = render(<CommandCenter />);
+    expect(screen.getByTestId("command-center-panel-overview")).toBeTruthy();
     expect(screen.queryByLabelText("Back to dashboard sections")).toBeNull();
+    unreadable.unmount();
 
-    selectCommandCenterSection("tokens");
-    expect(screen.getByTestId("command-center-panel-tokens")).toBeTruthy();
-    expect(readMobilePane()).toBe("detail");
-  });
-
-  it("returns to Overview on remount after another section was selected", () => {
-    const first = render(<CommandCenter />);
-    selectCommandCenterSection("tokens");
-    expect(screen.getByTestId("command-center-panel-tokens")).toBeTruthy();
-    first.unmount();
-
-    render(<CommandCenter />);
+    localStorage.clear();
+    saveCommandCenterState({ activeTab: "nodes", range: { from: null, to: null, preset: "30d" } });
+    const disabledSection = render(<CommandCenter />);
     expect(screen.getByTestId("command-center-panel-overview")).toBeTruthy();
     expect(readMobilePane()).toBe("detail");
+    disabledSection.unmount();
+
+    localStorage.clear();
+    saveCommandCenterState({ activeTab: "does-not-exist", range: { from: null, to: null, preset: "30d" } } as never);
+    render(<CommandCenter />);
+    expect(screen.getByTestId("command-center-panel-overview")).toBeTruthy();
   });
 
-  it("returns to Overview when the mounted view switches project", () => {
-    const { rerender } = render(<CommandCenter projectId="alpha" />);
-    selectCommandCenterSection("tokens");
-    expect(readMobilePane()).toBe("detail");
+  it("returns to Overview when the mounted view switches project, still without a list pane", () => {
+    const { rerender, container } = render(<CommandCenter projectId="alpha" />);
+    chooseSection("tokens");
+    expect(screen.getByTestId("command-center-panel-tokens")).toBeTruthy();
 
     rerender(<CommandCenter projectId="beta" />);
     expect(screen.getByTestId("command-center-panel-overview")).toBeTruthy();
     expect(readMobilePane()).toBe("detail");
-  });
-
-  it("opens on Overview for absent, unreadable, and unknown persisted state", () => {
-    const withoutState = render(<CommandCenter />);
-    expect(screen.getByTestId("command-center-panel-overview")).toBeTruthy();
-    withoutState.unmount();
-
-    localStorage.setItem(STORED_COMMAND_CENTER_KEY, "{not json");
-    const withUnreadableState = render(<CommandCenter />);
-    expect(screen.getByTestId("command-center-panel-overview")).toBeTruthy();
-    expect(readMobilePane()).toBe("detail");
-    withUnreadableState.unmount();
-
-    localStorage.clear();
-    saveCommandCenterState({ activeTab: "nodes", range: { from: null, to: null, preset: "30d" } });
-    render(<CommandCenter />);
-    expect(screen.getByTestId("command-center-panel-overview")).toBeTruthy();
-    expect(readMobilePane()).toBe("detail");
+    expectNoBackAffordance(container);
   });
 
   it("still restores the persisted date range on a phone", () => {
@@ -234,34 +254,39 @@ describe("CommandCenter phone opens on Overview (FN-492)", () => {
     expect(screen.getByTestId("command-center-panel-overview")).toBeTruthy();
     expect(localStorage.getItem(STORED_COMMAND_CENTER_KEY)).toContain("2026-01-31");
   });
+
+  it("renders the section content under the strip while the panel stays the only scroll owner", () => {
+    render(<CommandCenter />);
+    const layout = screen.getByTestId("command-center");
+    const strip = screen.getByTestId("view-layout-tabs");
+    const panel = screen.getByTestId("command-center-panel-overview");
+
+    expect(strip.compareDocumentPosition(panel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(layout.querySelectorAll("[data-testid='view-layout-tabs']")).toHaveLength(1);
+    expect(panel.className).toContain("cc-tabpanel");
+  });
 });
 
-describe("CommandCenter tablet and desktop keep the persisted section (FN-492)", () => {
+describe("CommandCenter tablet and desktop keep the section rail (FN-508)", () => {
   beforeEach(() => {
     localStorage.clear();
     apiMock.mockReset();
     mockEmptyCommandCenterApi();
   });
 
-  it("restores the persisted section on desktop with the list pane", () => {
-    mockViewportMatchMedia("desktop");
+  it.each(["tablet", "desktop"] as ViewportTier[])("keeps the sidebar rail and list pane on %s", (tier) => {
+    mockViewportMatchMedia(tier);
     persistTokensSection();
-    render(<CommandCenter />);
+    const { container } = render(<CommandCenter />);
 
-    expect(screen.getByTestId("command-center-panel-tokens")).toBeTruthy();
+    expect(screen.queryByTestId("view-layout-tabs")).toBeNull();
+    expect(container.querySelector(".cc-section-nav--rail")).not.toBeNull();
     expect(readMobilePane()).toBe("list");
+    expect(screen.getByTestId("command-center-panel-tokens")).toBeTruthy();
+    expect(headingText()).toContain("Dashboard");
   });
 
-  it("restores the persisted section on tablet with the list pane", () => {
-    mockViewportMatchMedia("tablet");
-    persistTokensSection();
-    render(<CommandCenter />);
-
-    expect(screen.getByTestId("command-center-panel-tokens")).toBeTruthy();
-    expect(readMobilePane()).toBe("list");
-  });
-
-  it("never resets the active section when the viewport mode changes mid-session", () => {
+  it("never resets the active section when the viewport tier changes mid-session", () => {
     mockViewportMatchMedia("desktop");
     persistTokensSection();
     render(<CommandCenter />);
@@ -274,5 +299,6 @@ describe("CommandCenter tablet and desktop keep the persisted section (FN-492)",
 
     expect(screen.getByTestId("command-center-panel-tokens")).toBeTruthy();
     expect(screen.queryByTestId("command-center-panel-overview")).toBeNull();
+    expect(screen.queryByLabelText("Back to dashboard sections")).toBeNull();
   });
 });

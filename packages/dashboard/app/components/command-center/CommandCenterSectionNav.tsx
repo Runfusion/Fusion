@@ -14,13 +14,22 @@ export interface CommandCenterSectionNavProps {
   onSelect: (id: string) => void;
   /** Full-height section rail used by the shared dashboard view sidebar. */
   variant?: "dropdown" | "rail";
+  /** Edge-to-edge presentation of the dropdown; ignored by the rail variant. */
+  fullWidth?: boolean;
 }
 
 /*
 FNXC:StandardizedViewLayout 2026-09-13-21:43:
 Command Center keeps useSubViews as the sole section-order and feature-gating authority. The same component presents those sections as the shared full-height rail in the dashboard view and retains the compact dropdown fallback for constrained legacy hosts.
+
+FNXC:CommandCenterSectionNav 2026-09-17-11:22:
+FN-508 : sur téléphone, le Dashboard ne présente plus la liste des rubriques comme un panneau à part atteint par un
+retour ; la même variante `dropdown` est posée en pleine largeur sous l'en-tête via `fullWidth`. L'option n'ajoute
+qu'une classe modificatrice de présentation (`cc-section-nav--full`) : identité DOM, rôles ARIA, `data-testid`,
+fermeture par Escape/pointeur extérieur, navigation clavier et retour de focus restent strictement identiques, pour
+que les hôtes existants et l'outillage de test partagé ne voient aucun changement de contrat.
 */
-export function CommandCenterSectionNav({ sections, activeId, onSelect, variant = "dropdown" }: CommandCenterSectionNavProps) {
+export function CommandCenterSectionNav({ sections, activeId, onSelect, variant = "dropdown", fullWidth = false }: CommandCenterSectionNavProps) {
   const { t } = useTranslation("app");
   const [open, setOpen] = useState(false);
   const [focusActiveOnOpen, setFocusActiveOnOpen] = useState(false);
@@ -128,7 +137,7 @@ export function CommandCenterSectionNav({ sections, activeId, onSelect, variant 
   }
 
   return (
-    <div className="cc-section-nav">
+    <div className={`cc-section-nav${fullWidth ? " cc-section-nav--full" : ""}`}>
       <button
         ref={triggerRef}
         type="button"

@@ -281,7 +281,8 @@ const BACK_AFFORDANCE_INVENTORY: readonly string[] = [
   "ViewHeader.tsx", // shared header primitive that renders every hosted backAction
   "WhiteboardView.tsx", // board detail -> board list
   "WorkflowNodeEditor.tsx", // node inspector -> workflow canvas
-  "command-center/CommandCenter.tsx", // panel detail -> command center home
+  // FN-508 removed the Dashboard's phone back: its sections are now chosen from a full-width drop list under a
+  // fixed "Dashboard" header, so command-center/CommandCenter.tsx renders no back affordance at all.
   "command-center/IdeationPanel.tsx", // candidate detail -> candidate list
 ];
 

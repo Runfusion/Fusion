@@ -81,7 +81,13 @@ function resolveOpeningTab(viewportMode: ViewportMode, projectId?: string): SubV
   return (getCommandCenterState(projectId)?.activeTab as SubViewId | undefined) ?? "overview";
 }
 
-function resolveOpeningMobilePane(viewportMode: ViewportMode): ViewLayoutMobilePane {
+/*
+FNXC:CommandCenter 2026-09-17-11:22:
+FN-508 : sur téléphone, le Dashboard ne présente plus de panneau liste des rubriques. La présentation est donc dérivée
+directement du mode d'affichage — téléphone : `detail` en permanence ; tablette et ordinateur : `list` — et n'a plus
+d'état propre à posséder.
+*/
+function resolveMobilePane(viewportMode: ViewportMode): ViewLayoutMobilePane {
   return viewportMode === "mobile" ? "detail" : "list";
 }
 
@@ -633,11 +639,18 @@ export function CommandCenter({
   `mobilePane = "detail"` au lieu de restaurer la rubrique mémorisée sur la liste des rubriques ; tablette et
   ordinateur conservent strictement la restauration persistée et `"list"`. La règle ne s'applique qu'à l'ouverture :
   un simple changement de mode d'affichage (rotation, clavier virtuel, redimensionnement) ne réinitialise jamais la
-  rubrique en cours, et la liste des rubriques reste atteignable par l'action Retour du bandeau. La plage de dates
-  persistée est restaurée partout, y compris sur téléphone, et le format stocké reste inchangé.
+  rubrique en cours. La plage de dates persistée est restaurée partout, y compris sur téléphone, et le format stocké
+  reste inchangé.
+
+  FNXC:CommandCenter 2026-09-17-11:22:
+  FN-508 : sur téléphone, la navigation entre rubriques ne passe plus par un panneau liste atteint par une flèche de
+  retour. L'en-tête affiche toujours « Dashboard », aucun `backAction` n'est rendu, et la bande `tabs` de `ViewLayout`
+  porte la drop list pleine largeur des rubriques juste sous l'en-tête ; choisir une rubrique met simplement à jour
+  `activeTab` sans changer d'écran (`mobilePane` reste `detail`). Tablette et ordinateur conservent strictement la
+  colonne latérale `ViewSidebar` + rail et `mobilePane = "list"`.
   */
+  const isMobile = viewportMode === "mobile";
   const [activeTab, setActiveTab] = useState<SubViewId>(() => resolveOpeningTab(viewportMode, projectId));
-  const [mobilePane, setMobilePane] = useState<ViewLayoutMobilePane>(() => resolveOpeningMobilePane(viewportMode));
 
   const [range, setRange] = useState<DateRange>(() => getCommandCenterState(projectId)?.range ?? rangeFromPreset(defaultPresets((_k, f) => f)[1]));
 
@@ -648,7 +661,6 @@ export function CommandCenter({
     const stored = getCommandCenterState(projectId);
     setActiveTab(resolveOpeningTab(viewportMode, projectId));
     setRange(stored?.range ?? rangeFromPreset(defaultPresets((_k, f) => f)[1]));
-    setMobilePane(resolveOpeningMobilePane(viewportMode));
   }, [projectId, viewportMode]);
   useEffect(() => {
     if (persistedProjectRef.current !== projectId) return;
@@ -747,27 +759,31 @@ export function CommandCenter({
       className="command-center"
       data-testid="command-center"
       contentOwnsScroll
-      mobilePane={mobilePane}
+      mobilePane={resolveMobilePane(viewportMode)}
       header={(
         <ViewHeader
           className="cc-header"
           icon={Gauge}
-          title={viewportMode === "mobile" && mobilePane === "detail"
-            ? activeSectionLabel
-            : t("commandCenter.heading", "Dashboard")}
-          backAction={viewportMode === "mobile" && mobilePane === "detail" ? {
-            label: t("commandCenter.backToSections", "Back to dashboard sections"),
-            onClick: () => setMobilePane("list"),
-          } : undefined}
+          title={t("commandCenter.heading", "Dashboard")}
           actions={<DateRangePicker value={range} onChange={setRange} />}
         />
       )}
-      sidebar={(
+      tabs={isMobile ? (
+        <div className="cc-section-strip">
+          <CommandCenterSectionNav
+            sections={subViews}
+            activeId={activeTab}
+            fullWidth
+            onSelect={(id) => setActiveTab(id as SubViewId)}
+          />
+        </div>
+      ) : undefined}
+      sidebar={isMobile ? undefined : (
         <ViewSidebar
           ariaLabel={t("commandCenter.tablistLabel", "Dashboard sections")}
           resizeLabel={t("commandCenter.resizeSections", "Resize dashboard sections")}
           hostIdentity="command-center"
-          mobile={viewportMode === "mobile"}
+          mobile={false}
           className="cc-sidebar"
           panelClassName="cc-sidebar__panel"
         >
@@ -775,10 +791,7 @@ export function CommandCenter({
             sections={subViews}
             activeId={activeTab}
             variant="rail"
-            onSelect={(id) => {
-              setActiveTab(id as SubViewId);
-              setMobilePane("detail");
-            }}
+            onSelect={(id) => setActiveTab(id as SubViewId)}
           />
         </ViewSidebar>
       )}
