@@ -66,6 +66,28 @@ describe("GET /tasks/page search pagination", () => {
     expect(listCurrentTasksPage).toHaveBeenCalledWith({ limit: 50, query: "incident", cursor: "opaque" });
   });
 
+  /*
+  FNXC:TaskSearchPagination 2026-09-17-08:46:
+  FN-497: the route is a pass-through. The store owns the newest-first order, so the response body must
+  reproduce the served row order exactly, never re-sorted on the way out.
+  */
+  it("returns the store page verbatim, newest match first", async () => {
+    const tasks = [
+      { id: "FN-3", createdAt: "2026-09-10T00:00:00.000Z" },
+      { id: "FN-1", createdAt: "2026-09-05T00:00:00.000Z" },
+      { id: "FN-2", createdAt: "2026-09-01T00:00:00.000Z" },
+    ];
+    const listCurrentTasksPage = vi.fn(async () => ({ tasks, total: 3, hasMore: false, nextCursor: null }));
+    const response = await request(
+      buildApp({ listCurrentTasksPage } as unknown as TaskStore),
+      "GET",
+      "/api/tasks/page?limit=10&q=incident",
+    );
+
+    expect(response.status).toBe(200);
+    expect((response.body as { tasks: { id: string }[] }).tasks.map((task) => task.id)).toEqual(["FN-3", "FN-1", "FN-2"]);
+  });
+
   it("rejects invalid limits without reading the store", async () => {
     const listCurrentTasksPage = vi.fn();
     const response = await request(buildApp({ listCurrentTasksPage } as unknown as TaskStore), "GET", "/api/tasks/page?limit=500&q=incident");

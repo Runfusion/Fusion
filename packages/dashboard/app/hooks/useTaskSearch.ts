@@ -6,7 +6,9 @@
  *
  * Two lanes, never blended:
  *  - TEXT: debounced, paginated `GET /tasks/page?q=...`. Server order and membership are preserved;
- *    every page stays reachable, so there is no fixed suggestion ceiling.
+ *    every page stays reachable, so there is no fixed suggestion ceiling. FN-497 (2026-09-17-08:46):
+ *    that server order is creation-descending (newest match first) and each page continues older, so
+ *    this controller must never re-sort — sorting a partial page would only produce a locally wrong order.
  *  - AI: `POST /ai/search-tasks`, issued ONLY on Enter, exactly once per press, never on typing or
  *    focus. It replaces the panel contents and is not paginated.
  *

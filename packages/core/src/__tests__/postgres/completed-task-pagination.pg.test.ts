@@ -239,4 +239,111 @@ pgDescribe("TaskStore completed-task pagination", () => {
     expect(seen).toHaveLength(205);
     expect(new Set(seen).size).toBe(205);
   });
+
+  /*
+  FNXC:TaskSearchPagination 2026-09-17-08:46:
+  FN-497 end-to-end symptom proof: the header search text lane must start at the most recently created
+  match and keep getting older across every cursor page, with no duplicate and no lost row, while board
+  table pagination (no query) stays ascending.
+  */
+  it("presents search pages newest-first and stays strictly descending across cursor pages", async () => {
+    const store = h.store();
+    const rows = Array.from({ length: 12 }, (_, index) => {
+      const id = `FN-${53000 + index}`;
+      const timestamp = new Date(Date.UTC(2026, 8, 1 + index)).toISOString();
+      return buildTaskInsertValues({
+        id, description: `recency fixture ${index}`, column: "todo", dependencies: [], steps: [], currentStep: 0, log: [],
+        createdAt: timestamp, updatedAt: timestamp, columnMovedAt: timestamp,
+      }, { lineageId: `lineage-${id}` }, h.layer().projectId);
+    });
+    await h.layer().db.insert(schema.project.tasks).values(rows as never);
+
+    const seen: { id: string; createdAt: string }[] = [];
+    let cursor: string | undefined;
+    let total = 0;
+    do {
+      const page = await store.listCurrentTasksPage({ limit: 5, query: "recency", cursor });
+      total = page.total;
+      seen.push(...page.tasks.map((task) => ({ id: task.id, createdAt: task.createdAt })));
+      cursor = page.nextCursor ?? undefined;
+    } while (cursor);
+
+    expect(total).toBe(12);
+    expect(seen).toHaveLength(12);
+    expect(new Set(seen.map((row) => row.id)).size).toBe(12);
+    expect(seen[0]!.id).toBe("FN-53011");
+    const timestamps = seen.map((row) => Date.parse(row.createdAt));
+    expect(timestamps.every((value, index) => index === 0 || value < timestamps[index - 1]!)).toBe(true);
+  });
+
+  it("keeps board table pagination ascending when no query is supplied", async () => {
+    const store = h.store();
+    const rows = Array.from({ length: 12 }, (_, index) => {
+      const id = `FN-${54000 + index}`;
+      const timestamp = new Date(Date.UTC(2026, 8, 1 + index)).toISOString();
+      return buildTaskInsertValues({
+        id, description: `table fixture ${index}`, column: "todo", dependencies: [], steps: [], currentStep: 0, log: [],
+        createdAt: timestamp, updatedAt: timestamp, columnMovedAt: timestamp,
+      }, { lineageId: `lineage-${id}` }, h.layer().projectId);
+    });
+    await h.layer().db.insert(schema.project.tasks).values(rows as never);
+
+    const page = await store.listCurrentTasksPage({ limit: 5 });
+    const timestamps = page.tasks.map((task) => Date.parse(task.createdAt));
+    expect(timestamps.every((value, index) => index === 0 || value >= timestamps[index - 1]!)).toBe(true);
+  });
+
+  it("returns no row and no cursor for a query without any match", async () => {
+    const store = h.store();
+    await store.createTask({ description: "unrelated fixture", column: "todo" });
+
+    const page = await store.listCurrentTasksPage({ limit: 5, query: "zzzz-no-such-match-zzzz" });
+    expect(page.tasks).toEqual([]);
+    expect(page.total).toBe(0);
+    expect(page.hasMore).toBe(false);
+    expect(page.nextCursor).toBeNull();
+  });
+
+  it("breaks identical creation timestamps deterministically without duplicates across pages", async () => {
+    const store = h.store();
+    const timestamp = "2026-09-07T02:00:00.000Z";
+    const rows = Array.from({ length: 9 }, (_, index) => {
+      const id = `FN-${55000 + index}`;
+      return buildTaskInsertValues({
+        id, description: `tiebreak fixture ${index}`, column: "todo", dependencies: [], steps: [], currentStep: 0, log: [],
+        createdAt: timestamp, updatedAt: timestamp, columnMovedAt: timestamp,
+      }, { lineageId: `lineage-${id}` }, h.layer().projectId);
+    });
+    await h.layer().db.insert(schema.project.tasks).values(rows as never);
+
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await store.listCurrentTasksPage({ limit: 3, query: "tiebreak", cursor });
+      seen.push(...page.tasks.map((task) => task.id));
+      cursor = page.nextCursor ?? undefined;
+    } while (cursor);
+
+    expect(seen).toHaveLength(9);
+    expect(new Set(seen).size).toBe(9);
+    expect(seen).toEqual([...seen].sort().reverse());
+  });
+
+  it("rejects a search cursor issued for a different query", async () => {
+    const store = h.store();
+    const rows = Array.from({ length: 6 }, (_, index) => {
+      const id = `FN-${56000 + index}`;
+      const stamp = new Date(Date.UTC(2026, 8, 1 + index)).toISOString();
+      return buildTaskInsertValues({
+        id, description: `binding fixture ${index}`, column: "todo", dependencies: [], steps: [], currentStep: 0, log: [],
+        createdAt: stamp, updatedAt: stamp, columnMovedAt: stamp,
+      }, { lineageId: `lineage-${id}` }, h.layer().projectId);
+    });
+    await h.layer().db.insert(schema.project.tasks).values(rows as never);
+
+    const first = await store.listCurrentTasksPage({ limit: 3, query: "binding" });
+    expect(first.nextCursor).toBeTruthy();
+    await expect(store.listCurrentTasksPage({ limit: 3, query: "other", cursor: first.nextCursor! }))
+      .rejects.toThrow("Invalid task list cursor");
+  });
 });

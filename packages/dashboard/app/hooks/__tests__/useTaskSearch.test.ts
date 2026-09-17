@@ -113,6 +113,51 @@ describe("useTaskSearch — text lane", () => {
     expect(result.current.hasMore).toBe(false);
   });
 
+  /*
+  FNXC:TaskSearchPagination 2026-09-17-08:46:
+  FN-497 client-side half of the recency invariant: the server now serves matches newest-first, so this
+  controller must publish the served order verbatim. Re-sorting a partial page would produce a locally
+  wrong order and break the keyset continuation.
+  */
+  it("preserves the server order, newest match first, without re-sorting", async () => {
+    const served = [
+      makeTask("FN-3", { createdAt: "2026-09-10T00:00:00.000Z" }),
+      makeTask("FN-1", { createdAt: "2026-09-05T00:00:00.000Z" }),
+      makeTask("FN-2", { createdAt: "2026-09-01T00:00:00.000Z" }),
+    ];
+    fetchTaskPage.mockResolvedValue(page(served, null, 3));
+
+    const { result } = renderHook(() => useTaskSearch({ ...baseOptions, query: "collapse" }));
+    await flushDebounce();
+
+    await waitFor(() => expect(result.current.tasks).toHaveLength(3));
+    expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-3", "FN-1", "FN-2"]);
+  });
+
+  it("appends older pages at the end without re-sorting or duplicating a seen row", async () => {
+    fetchTaskPage
+      .mockResolvedValueOnce(page([
+        makeTask("FN-9", { createdAt: "2026-09-10T00:00:00.000Z" }),
+        makeTask("FN-8", { createdAt: "2026-09-09T00:00:00.000Z" }),
+      ], "cursor-1", 4))
+      .mockResolvedValueOnce(page([
+        makeTask("FN-8", { createdAt: "2026-09-09T00:00:00.000Z" }),
+        makeTask("FN-7", { createdAt: "2026-09-08T00:00:00.000Z" }),
+        makeTask("FN-6", { createdAt: "2026-09-07T00:00:00.000Z" }),
+      ], null, 4));
+
+    const { result } = renderHook(() => useTaskSearch({ ...baseOptions, query: "collapse" }));
+    await flushDebounce();
+    await waitFor(() => expect(result.current.tasks).toHaveLength(2));
+
+    await act(async () => { await result.current.loadMore(); });
+
+    // The already-seen row keeps its FIRST (newest) position and is not duplicated.
+    expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-9", "FN-8", "FN-7", "FN-6"]);
+    const timestamps = result.current.tasks.map((task) => Date.parse(task.createdAt as string));
+    expect(timestamps.every((value, index) => index === 0 || value < timestamps[index - 1]!)).toBe(true);
+  });
+
   it("stops rather than looping when the server returns no continuation", async () => {
     fetchTaskPage.mockResolvedValue(page([makeTask("FN-1")], null, 1));
     const { result } = renderHook(() => useTaskSearch({ ...baseOptions, query: "collapse" }));

@@ -184,6 +184,26 @@ describe("orderSelectionByRecency", () => {
     ]);
     expect(ordered.map((task) => task.id)).toEqual(["FN-1", "FN-2", "FN-3", "FN-9"]);
   });
+
+  /*
+  FNXC:TaskSearchPagination 2026-09-17-08:46:
+  FN-497 non-regression guard. The text lane now also presents matches newest-first, so both lanes of the
+  same field share one order promise: the AI lane must stay creation-descending, with missing or
+  unparseable dates relegated to the end rather than sorted as if they were recent.
+  */
+  it("stays creation-descending for both lanes and relegates missing or invalid dates last", () => {
+    const ordered = orderSelectionByRecency([
+      makeTask({ id: "FN-10", createdAt: "2026-01-05T00:00:00.000Z" }),
+      makeTask({ id: "FN-11", createdAt: undefined as unknown as string }),
+      makeTask({ id: "FN-12", createdAt: "2026-09-05T00:00:00.000Z" }),
+      makeTask({ id: "FN-13", createdAt: "2026-05-05T00:00:00.000Z" }),
+      makeTask({ id: "FN-14", createdAt: "" }),
+    ]);
+
+    expect(ordered.map((task) => task.id)).toEqual(["FN-12", "FN-13", "FN-10", "FN-11", "FN-14"]);
+    const dated = ordered.slice(0, 3).map((task) => Date.parse(task.createdAt as string));
+    expect(dated.every((value, index) => index === 0 || value < dated[index - 1]!)).toBe(true);
+  });
 });
 
 describe("searchTasksWithAi", () => {

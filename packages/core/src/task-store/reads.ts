@@ -13,7 +13,7 @@ import {existsSync, statSync} from "node:fs";
 import type {Task, TaskDetail, ColumnId, ArchivedTaskEntry, TaskVerificationRequest, TaskVerificationResultSummary, TaskVerificationStatus, TaskRecommendation, TaskRecommendationListItem, TaskRecommendationListPage} from "../types.js";
 import type { TaskColumnSortMode } from "../tasks/task-priority.js";
 import * as schema from "../postgres/schema/index.js";
-import { and, asc, desc, eq, getTableColumns, gt, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, getTableColumns, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import "../builtin-traits.js";
 import {allowsAutoMergeProcessing} from "../merge/task-merge.js";
 import {getInReviewStallReason, DEFAULT_STALE_MERGING_MIN_AGE_MS, type InReviewStallContext} from "../tasks/in-review-stall.js";
@@ -651,6 +651,25 @@ function decodeTaskListCursor(value: string): TaskListCursor {
 }
 
 /*
+FNXC:TaskSearchPagination 2026-09-17-08:46:
+FN-497: the header task search must present the most recently created match first, so the text lane orders by `created_at DESC, id DESC`.
+The order and the keyset continuation predicate are ONE invariant: inverting only one of them makes pagination skip or repeat rows silently.
+These two helpers are exported so the pair can be proven by rendering SQL without a database.
+Board table pagination (the no-query branch) deliberately stays ascending and must not use them.
+*/
+export function buildTaskSearchPageOrder() {
+  return [desc(schema.project.tasks.createdAt), desc(schema.project.tasks.id)] as const;
+}
+
+export function buildTaskSearchPageCursorPredicate(cursor?: { createdAt: string; id: string }) {
+  if (!cursor) return undefined;
+  return or(
+    lt(schema.project.tasks.createdAt, cursor.createdAt),
+    and(eq(schema.project.tasks.createdAt, cursor.createdAt), lt(schema.project.tasks.id, cursor.id)),
+  );
+}
+
+/*
 FNXC:TaskListPagination 2026-09-07-16:03:
 Board task pages exclude completion history before the SQL limit and continue with an exclusive createdAt/id tuple. The exact count is independent of the page, while page hydration and workflow enrichment are paid only for returned rows.
 */
@@ -672,12 +691,7 @@ export async function listCurrentTasksPageImpl(store: TaskStore, options: { limi
     const searchPredicate = and(
       textPredicate,
       liveSearchPredicate(false, layer.projectId, ARCHIVED_SENTINEL_LANES),
-      cursor
-        ? or(
-          gt(schema.project.tasks.createdAt, cursor.createdAt),
-          and(eq(schema.project.tasks.createdAt, cursor.createdAt), gt(schema.project.tasks.id, cursor.id)),
-        )
-        : undefined,
+      buildTaskSearchPageCursorPredicate(cursor),
     );
     const totalPredicate = and(
       textPredicate,
@@ -688,7 +702,7 @@ export async function listCurrentTasksPageImpl(store: TaskStore, options: { limi
       layer.db.select({ ...getTableColumns(schema.project.tasks) })
         .from(schema.project.tasks)
         .where(searchPredicate)
-        .orderBy(asc(schema.project.tasks.createdAt), asc(schema.project.tasks.id))
+        .orderBy(...buildTaskSearchPageOrder())
         .limit(limit + 1),
     ]);
     const hasMore = pageRows.length > limit;

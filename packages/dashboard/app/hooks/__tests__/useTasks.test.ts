@@ -760,6 +760,35 @@ describe("useTasks", () => {
       expect(result.current.currentTasksHasMore).toBe(false);
     });
 
+    /*
+    FNXC:TaskSearchPagination 2026-09-17-08:46:
+    FN-497 negative control for the SECOND consumer of `fetchTaskPage`. The search page now arrives
+    newest-first; the board/list table must keep showing its column sort mode, so the arrival order can
+    never determine the displayed order.
+    */
+    it("keeps the table sorted by its column mode whatever the arrival order of a search page", async () => {
+      const { sortTasksForDisplayColumn } = await import("@fusion/core");
+      const newest = createMockTask({ id: "FN-SEARCH-3", title: "match three", createdAt: "2026-09-10T00:00:00.000Z" });
+      const middle = createMockTask({ id: "FN-SEARCH-1", title: "match one", createdAt: "2026-09-05T00:00:00.000Z" });
+      const oldest = createMockTask({ id: "FN-SEARCH-2", title: "match two", createdAt: "2026-09-01T00:00:00.000Z" });
+      mockFetchTaskPage.mockResolvedValueOnce({
+        tasks: [newest, middle, oldest], total: 3, hasMore: false, nextCursor: null,
+      });
+
+      const { result } = renderHook(() => useTasks({ searchQuery: "match", sseEnabled: false }));
+      await waitFor(() => expect(result.current.tasks).toHaveLength(3));
+
+      // The hook itself preserves the served newest-first order...
+      expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-SEARCH-3", "FN-SEARCH-1", "FN-SEARCH-2"]);
+
+      // ...but the table's display order is owned by the column sort mode, so reversing the arrival
+      // order produces the exact same rendered order.
+      const options = { sortMode: "task-id-desc" as const };
+      const served = sortTasksForDisplayColumn(result.current.tasks, "todo", options);
+      const reversed = sortTasksForDisplayColumn([...result.current.tasks].reverse(), "todo", options);
+      expect(reversed.map((task) => task.id)).toEqual(served.map((task) => task.id));
+    });
+
     it("keeps previously loaded Done history out of searched pagination", async () => {
       vi.useFakeTimers({ shouldAdvanceTime: true });
       const historicDone = createMockTask({ id: "FN-HISTORIC-DONE", title: "unrelated archive", column: "done" });

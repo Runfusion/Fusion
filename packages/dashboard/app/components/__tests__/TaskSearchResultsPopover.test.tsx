@@ -304,6 +304,30 @@ describe("TaskSearchResultsPopover — content and behaviour", () => {
     expect(onSelectTask.mock.calls[0][0].id).toBe("FN-2");
   });
 
+  /*
+  FNXC:TaskSearchPagination 2026-09-17-08:46:
+  FN-497: the panel renders the served order verbatim. The fixture is deliberately NOT sorted by id, so a
+  local sort by id (or any re-sort) would visibly reorder the DOM and fail this case in both lanes.
+  */
+  it("renders cards in the order of the tasks array, with no local sort, in both lanes", () => {
+    const served = [
+      makeTask("FN-3", { createdAt: "2026-09-10T00:00:00.000Z" }),
+      makeTask("FN-1", { createdAt: "2026-09-05T00:00:00.000Z" }),
+      makeTask("FN-2", { createdAt: "2026-09-01T00:00:00.000Z" }),
+    ];
+    const readOrder = () => screen.getAllByTestId("task-search-result")
+      .map((row) => within(row).getByText(/^FN-\d+$/).textContent);
+
+    const { rerender } = renderPanel({ tasks: served });
+    expect(readOrder()).toEqual(["FN-3", "FN-1", "FN-2"]);
+
+    rerender(<Harness tasks={served} lane="ai" />);
+    expect(readOrder()).toEqual(["FN-3", "FN-1", "FN-2"]);
+
+    rerender(<Harness tasks={[]} lane="text" />);
+    expect(screen.queryAllByTestId("task-search-result")).toHaveLength(0);
+  });
+
   it("announces the active lane and switches its accessible name for the AI lane", () => {
     const { rerender } = renderPanel({ tasks: [makeTask("FN-1")] });
     expect(screen.getByTestId("task-search-results")).toHaveAttribute("data-lane", "text");
