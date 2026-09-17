@@ -30,16 +30,24 @@ import { restoreOptionalStepsOnFastExit } from "../utils/fastModeOptionalSteps";
 import { useQuickAddSubmitOnEnter } from "../hooks/useQuickAddSubmitOnEnter";
 
 const STORAGE_KEY = "kb-quick-entry-text";
-const QUICK_ADD_START_HOLD_DURATION_MS = 500;
+/*
+FNXC:NativeQuickEntry 2026-09-17-09:02:
+FN-498 raises the hold-to-Start threshold by 20% (500ms -> 600ms) because the old threshold was short enough to
+start tasks the operator only meant to save. The ENGAGE delay is deliberately UNCHANGED: the subject is how long
+the button must be held to START, not how soon the ring appears, so "brief click = ordinary Save" keeps exactly
+its previous boundary. These three values are exported so tests reference the product constants instead of
+copying literals, which is how the previous retune left stale assertions behind.
+*/
+export const QUICK_ADD_START_HOLD_DURATION_MS = 600;
 /*
 FNXC:NativeQuickEntry 2026-09-16-02:15:
 FN-453 separates a brief click from an ENGAGED hold. A press shorter than this engagement delay is an ordinary
 Save (no visual fill ever appears); once the fill starts, the press is an engaged hold whose release before the
-500ms threshold CANCELS the gesture instead of saving — releasing early now behaves as if the button was never
+hold threshold CANCELS the gesture instead of saving — releasing early now behaves as if the button was never
 clicked. The mask therefore animates over the remaining `QUICK_ADD_START_HOLD_FILL_MS` rather than the full hold.
 */
-const QUICK_ADD_START_HOLD_ENGAGE_MS = 150;
-const QUICK_ADD_START_HOLD_FILL_MS = QUICK_ADD_START_HOLD_DURATION_MS - QUICK_ADD_START_HOLD_ENGAGE_MS;
+export const QUICK_ADD_START_HOLD_ENGAGE_MS = 150;
+export const QUICK_ADD_START_HOLD_FILL_MS = QUICK_ADD_START_HOLD_DURATION_MS - QUICK_ADD_START_HOLD_ENGAGE_MS;
 type QuickAddSaveGesture = { kind: "pointer"; pointerId: number } | { kind: "keyboard"; key: " " | "Enter" };
 /** One physical press. `id` scopes its synthetic-click barrier so no gesture can silence a later, independent one. */
 type QuickAddSaveGestureState = { id: number; input: QuickAddSaveGesture; engaged: boolean };
@@ -460,7 +468,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
   /*
   FNXC:QuickAddStart 2026-09-13-17:28:
   Quick Add exposes two outcomes through its single icon-only Save action: a brief click or tap saves the task, while a
-  continuous 500ms hold starts it. Legacy surfaces retain the explicit Start chip. Eligibility remains
+  continuous `QUICK_ADD_START_HOLD_DURATION_MS` hold starts it. Legacy surfaces retain the explicit Start chip. Eligibility remains
   `workflowSupportsQuickAddStart`: Coding (Ideas), or a workflow whose first visible lane is a server-derived
   manual-intake/"waiting" column. A provable target is still required (`startInitialColumn` for the create-time
   column override, or `onMoveTask` for the follow-up move), so malformed or ineligible workflows never turn Save
@@ -1849,7 +1857,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
     endQuickAddSaveGesture(true);
     /*
     FNXC:NativeQuickEntry 2026-09-16-02:15:
-    FN-453 operator contract: releasing an ENGAGED hold before the 500ms threshold must behave as if the button was
+    FN-453 operator contract: releasing an ENGAGED hold before the `QUICK_ADD_START_HOLD_DURATION_MS` threshold must behave as if the button was
     never pressed — no create, no move, no duplicate lookup, draft preserved. Only a press released before the fill
     engages is an ordinary Save, and that save is issued here (rather than through the native click) because Enter
     fires its click on keydown; the gesture's own click is absorbed by the barrier so exactly one task is created.

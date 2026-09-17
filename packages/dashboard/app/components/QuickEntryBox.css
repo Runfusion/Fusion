@@ -1008,8 +1008,9 @@ Quick Entry is input-first: the immediate attach/status/icon-only Save row remai
 /*
 FNXC:NativeQuickEntry 2026-09-16-23:28:
 FN-478: the floppy turns INTO a circular progress ring. The ring only paints once the press is an ENGAGED hold, so a brief
-click never flashes it. `--quick-entry-hold-duration` is the REMAINING fill time after engagement, not the whole 500ms
-threshold, so the arc reaching 100% still coincides with Start. Releasing early cancels the gesture: the ring disappears and
+click never flashes it. `--quick-entry-hold-duration` is the REMAINING fill time after engagement, not the whole hold
+threshold, so the arc reaching 100% still coincides with Start. FN-498 (2026-09-17-09:02) raised that threshold by 20%
+without touching the engagement delay, so the remaining fill simply grew and the arc still lands exactly on Start. Releasing early cancels the gesture: the ring disappears and
 the floppy comes back. The SVG is sized as a percentage of the button so it stays inside `overflow: hidden` at both the
 desktop (`--ui-control-height`) and mobile (`--ui-touch-height`) control sizes.
 */

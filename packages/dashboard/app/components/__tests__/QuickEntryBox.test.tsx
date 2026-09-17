@@ -1,7 +1,12 @@
 import { readFileSync } from "node:fs";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, act, createEvent } from "@testing-library/react";
-import { QuickEntryBox } from "../QuickEntryBox";
+import {
+  QuickEntryBox,
+  QUICK_ADD_START_HOLD_DURATION_MS,
+  QUICK_ADD_START_HOLD_ENGAGE_MS,
+  QUICK_ADD_START_HOLD_FILL_MS,
+} from "../QuickEntryBox";
 import { expectStableTyping } from "./typingStability.test-helpers";
 import { TASK_PRIORITIES, type Task, type TaskPriority } from "@fusion/core";
 import { checkDuplicateTasks, fetchSettings, fetchAgents, uploadAttachment, fetchWorkflowOptionalSteps } from "../../api";
@@ -2687,7 +2692,7 @@ describe("QuickEntryBox", () => {
         armApproval();
         const save = screen.getByTestId("quick-entry-save");
         fireEvent.pointerDown(save, { pointerId: 21, pointerType: "mouse", button: 0, isPrimary: true });
-        await act(async () => vi.advanceTimersByTime(500));
+        await act(async () => vi.advanceTimersByTime(QUICK_ADD_START_HOLD_DURATION_MS));
 
         await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
         expect(onCreate.mock.calls[0]?.[0]).toMatchObject({ humanPlanApproval: true, column: "todo" });
@@ -5662,7 +5667,7 @@ describe("QuickEntryBox", () => {
     const clickStart = async () => {
       const save = screen.getByTestId("quick-entry-save");
       fireEvent.pointerDown(save, { pointerId: 11, pointerType: "mouse", button: 0, isPrimary: true });
-      await act(async () => vi.advanceTimersByTime(500));
+      await act(async () => vi.advanceTimersByTime(QUICK_ADD_START_HOLD_DURATION_MS));
     };
 
     it.each([
@@ -5849,7 +5854,7 @@ describe("QuickEntryBox", () => {
 
     const completePointerHold = async (save: HTMLElement, pointerId = 7, pointerType = "mouse") => {
       fireEvent.pointerDown(save, { pointerId, pointerType, button: 0, isPrimary: true });
-      await act(async () => vi.advanceTimersByTime(500));
+      await act(async () => vi.advanceTimersByTime(QUICK_ADD_START_HOLD_DURATION_MS));
     };
 
     const setup = (props = {}) => {
@@ -5897,11 +5902,25 @@ describe("QuickEntryBox", () => {
       expect(screen.getByTestId("quick-entry-input")).toHaveValue("");
     });
 
-    it.each(["mouse", "touch", "pen"])("starts exactly once at the 500ms %s boundary and resets before late events", async (pointerType) => {
+    /*
+    FNXC:NativeQuickEntry 2026-09-17-09:02:
+    FN-498 is the single anchor that pins the SHIPPED hold timing. Every other case below advances by the exported
+    constants so a future retune cannot strand a literal, which means a silent regression back to 500ms would pass
+    them all; this case is what refuses it.
+    */
+    it("pins the shipped hold timings and the ring fill duration", () => {
+      const { save } = setup();
+      expect(QUICK_ADD_START_HOLD_DURATION_MS).toBe(600);
+      expect(QUICK_ADD_START_HOLD_ENGAGE_MS).toBe(150);
+      expect(QUICK_ADD_START_HOLD_FILL_MS).toBe(450);
+      expect(save).toHaveStyle({ "--quick-entry-hold-duration": "450ms" });
+    });
+
+    it.each(["mouse", "touch", "pen"])("starts exactly once at the hold threshold with %s and resets before late events", async (pointerType) => {
       const { onCreate, save } = setup();
       expect(save).toHaveAccessibleName("Save task; hold to start");
       expect(save).not.toHaveTextContent("Save");
-      expect(save).toHaveStyle({ "--quick-entry-hold-duration": "350ms" });
+      expect(save).toHaveStyle({ "--quick-entry-hold-duration": `${QUICK_ADD_START_HOLD_FILL_MS}ms` });
       expect(save.querySelectorAll("button")).toHaveLength(0);
       expect(save.querySelectorAll("svg")).toHaveLength(2);
       expect(save.querySelector(".quick-entry-save-icon--save")).toHaveAttribute("aria-hidden", "true");
@@ -5912,12 +5931,16 @@ describe("QuickEntryBox", () => {
       fireEvent.pointerDown(save, { pointerId: 7, pointerType, button: 0, isPrimary: true });
       // The ring only engages after the brief-click window, so a plain tap never flashes it.
       expect(save).toHaveAttribute("data-hold-state", "idle");
-      await act(async () => vi.advanceTimersByTime(150));
+      await act(async () => vi.advanceTimersByTime(QUICK_ADD_START_HOLD_ENGAGE_MS));
       expect(save).toHaveAttribute("data-hold-state", "holding");
       expect(save).toHaveAccessibleName("Keep holding to start; release to cancel");
       expect(screen.getByRole("status")).toHaveTextContent("Keep holding to start");
       expect(screen.getByRole("status")).not.toHaveTextContent("Starting task");
-      await act(async () => vi.advanceTimersByTime(350));
+      // One tick short of the threshold the gesture is still only holding; the very next tick is what starts it.
+      await act(async () => vi.advanceTimersByTime(QUICK_ADD_START_HOLD_FILL_MS - 1));
+      expect(save).toHaveAttribute("data-hold-state", "holding");
+      expect(onCreate).not.toHaveBeenCalled();
+      await act(async () => vi.advanceTimersByTime(1));
 
       expect(save).toHaveAttribute("data-hold-state", "idle");
       expect(save).toHaveAccessibleName("Save task; hold to start");
@@ -5949,7 +5972,7 @@ describe("QuickEntryBox", () => {
 
       fireEvent.pointerDown(save, { pointerId: 41, pointerType: "mouse", button: 0, isPrimary: true });
       expect(save).toHaveAttribute("data-hold-state", "idle");
-      act(() => { vi.advanceTimersByTime(149); });
+      act(() => { vi.advanceTimersByTime(QUICK_ADD_START_HOLD_ENGAGE_MS - 1); });
       expect(save).toHaveAttribute("data-hold-state", "idle");
     });
 
@@ -5960,7 +5983,7 @@ describe("QuickEntryBox", () => {
         const { save } = setup({ defaultExpanded: !collapsedDisclosure });
 
         fireEvent.pointerDown(save, { pointerId: 42, pointerType: "mouse", button: 0, isPrimary: true });
-        await act(async () => vi.advanceTimersByTime(150));
+        await act(async () => vi.advanceTimersByTime(QUICK_ADD_START_HOLD_ENGAGE_MS));
 
         expect(save).toHaveAttribute("data-hold-state", "holding");
         const ring = save.querySelector(".quick-entry-save-ring");
@@ -5985,7 +6008,8 @@ describe("QuickEntryBox", () => {
           () => fireEvent.blur(save),
         ]) {
           fireEvent.pointerDown(save, { pointerId: 43, pointerType: "mouse", button: 0, isPrimary: true });
-          await act(async () => vi.advanceTimersByTime(200));
+          // 550ms is deliberate: it STARTED a task before FN-498 raised the threshold, so it proves the new gate.
+          await act(async () => vi.advanceTimersByTime(QUICK_ADD_START_HOLD_DURATION_MS - 50));
           expect(save).toHaveAttribute("data-hold-state", "holding");
 
           await act(async () => { release(); });
@@ -5994,7 +6018,7 @@ describe("QuickEntryBox", () => {
           expect(save.querySelector(".quick-entry-save-icon--save .lucide-save")).toBeInTheDocument();
           expect(onCreate).not.toHaveBeenCalled();
           expect(screen.getByTestId("quick-entry-input")).toHaveValue("Alpha task");
-          await act(async () => vi.advanceTimersByTime(600));
+          await act(async () => vi.advanceTimersByTime(QUICK_ADD_START_HOLD_DURATION_MS * 2));
           expect(onCreate).not.toHaveBeenCalled();
         }
       },
@@ -6022,7 +6046,7 @@ describe("QuickEntryBox", () => {
       expect(save).toBeDisabled();
 
       fireEvent.pointerDown(save, { pointerId: 45, pointerType: "mouse", button: 0, isPrimary: true });
-      await act(async () => vi.advanceTimersByTime(600));
+      await act(async () => vi.advanceTimersByTime(QUICK_ADD_START_HOLD_DURATION_MS));
 
       expect(save).toHaveAttribute("data-hold-state", "idle");
       expect(onCreate).not.toHaveBeenCalled();
@@ -6094,17 +6118,21 @@ describe("QuickEntryBox", () => {
     ])("ignores a hold from the %s", async (_label, pointerInit) => {
       const { onCreate, save } = setup();
       fireEvent.pointerDown(save, { pointerId: 12, ...pointerInit });
-      await act(async () => vi.advanceTimersByTime(500));
+      await act(async () => vi.advanceTimersByTime(QUICK_ADD_START_HOLD_DURATION_MS));
 
       expect(save).toHaveAttribute("data-hold-state", "idle");
       expect(onCreate).not.toHaveBeenCalled();
     });
 
-    it.each(["Enter", " "])("supports a single keyboard hold at 500ms with %s and ignores repeat", async (key) => {
+    it.each(["Enter", " "])("supports a single keyboard hold to the threshold with %s and ignores repeat", async (key) => {
       const { onCreate, save } = setup();
       fireEvent.keyDown(save, { key });
       fireEvent.keyDown(save, { key, repeat: true });
-      await act(async () => vi.advanceTimersByTime(500));
+      // One tick short of the threshold nothing has been created yet on the keyboard path either.
+      await act(async () => vi.advanceTimersByTime(QUICK_ADD_START_HOLD_DURATION_MS - 1));
+      expect(save).toHaveAttribute("data-hold-state", "holding");
+      expect(onCreate).not.toHaveBeenCalled();
+      await act(async () => vi.advanceTimersByTime(1));
 
       expect(save).toHaveAttribute("data-hold-state", "idle");
       expect(save).toHaveAccessibleName("Save task; hold to start");
@@ -6123,7 +6151,7 @@ describe("QuickEntryBox", () => {
       const onMoveTask = vi.fn();
       const { onCreate, save } = setup({ onMoveTask });
       fireEvent.keyDown(save, { key });
-      await act(async () => vi.advanceTimersByTime(100));
+      await act(async () => vi.advanceTimersByTime(QUICK_ADD_START_HOLD_ENGAGE_MS - 50));
       expect(save).toHaveAttribute("data-hold-state", "idle");
       expect(save).toHaveAccessibleName("Save task; hold to start");
 
@@ -6142,7 +6170,7 @@ describe("QuickEntryBox", () => {
       const onMoveTask = vi.fn();
       const { onCreate, save } = setup({ onMoveTask });
       fireEvent.pointerDown(save, { pointerId: 4, pointerType, button: 0, isPrimary: true });
-      await act(async () => vi.advanceTimersByTime(100));
+      await act(async () => vi.advanceTimersByTime(QUICK_ADD_START_HOLD_ENGAGE_MS - 50));
       expect(save).toHaveAttribute("data-hold-state", "idle");
 
       fireEvent.pointerUp(save, { pointerId: 4, pointerType });
@@ -6159,20 +6187,20 @@ describe("QuickEntryBox", () => {
     /*
     ## Symptom Verification (FN-453, second reported symptom)
     Original symptom: starting a hold and letting go before the mask filled still saved a task.
-    Exact reproduction: press Save, reach the engaged fill, release at 499ms, then let the browser's synthetic click land.
+    Exact reproduction: press Save, reach the engaged fill, release one tick before the threshold, then let the browser's synthetic click land.
     Assertion it is gone: no create, no move, no duplicate lookup, and the draft text survives untouched.
     */
     it.each(["mouse", "touch", "pen"])("treats an engaged %s hold released before the threshold as if Save was never pressed", async (pointerType) => {
       const onMoveTask = vi.fn();
       const { onCreate, save } = setup({ onMoveTask });
       fireEvent.pointerDown(save, { pointerId: 4, pointerType, button: 0, isPrimary: true });
-      await act(async () => vi.advanceTimersByTime(499));
+      await act(async () => vi.advanceTimersByTime(QUICK_ADD_START_HOLD_DURATION_MS - 1));
       expect(save).toHaveAttribute("data-hold-state", "holding");
       expect(save).toHaveAccessibleName("Keep holding to start; release to cancel");
 
       fireEvent.pointerUp(save, { pointerId: 4, pointerType });
       fireEvent.click(save);
-      await act(async () => vi.advanceTimersByTime(500));
+      await act(async () => vi.advanceTimersByTime(QUICK_ADD_START_HOLD_DURATION_MS));
 
       expect(onCreate).not.toHaveBeenCalled();
       expect(onMoveTask).not.toHaveBeenCalled();
@@ -6186,12 +6214,12 @@ describe("QuickEntryBox", () => {
       const onMoveTask = vi.fn();
       const { onCreate, save } = setup({ onMoveTask });
       fireEvent.keyDown(save, { key });
-      await act(async () => vi.advanceTimersByTime(499));
+      await act(async () => vi.advanceTimersByTime(QUICK_ADD_START_HOLD_DURATION_MS - 1));
       expect(save).toHaveAttribute("data-hold-state", "holding");
 
       fireEvent.keyUp(save, { key });
       fireEvent.click(save);
-      await act(async () => vi.advanceTimersByTime(500));
+      await act(async () => vi.advanceTimersByTime(QUICK_ADD_START_HOLD_DURATION_MS));
 
       expect(onCreate).not.toHaveBeenCalled();
       expect(onMoveTask).not.toHaveBeenCalled();
@@ -6202,7 +6230,7 @@ describe("QuickEntryBox", () => {
     it("still starts the task when a cancelled hold is immediately retried", async () => {
       const { onCreate, save } = setup();
       fireEvent.pointerDown(save, { pointerId: 4, pointerType: "mouse", button: 0, isPrimary: true });
-      await act(async () => vi.advanceTimersByTime(300));
+      await act(async () => vi.advanceTimersByTime(QUICK_ADD_START_HOLD_DURATION_MS - 50));
       fireEvent.pointerUp(save, { pointerId: 4, pointerType: "mouse" });
       fireEvent.click(save);
       expect(onCreate).not.toHaveBeenCalled();
@@ -6218,18 +6246,18 @@ describe("QuickEntryBox", () => {
     Original symptom: holding Save sometimes refused to start the task even when held to the end.
     Exact reproduction: any cancellation that armed the component-wide click barrier with no click left to consume it,
     followed by an independent full hold.
-    Assertion it is gone: after every cancellation route, the next 500ms hold starts exactly one task.
+    Assertion it is gone: after every cancellation route, the next full hold starts exactly one task.
     */
     it.each(["pointerCancel", "pointerLeave", "lostPointerCapture", "blur", "escape"])("lets a later hold start the task after a %s cancellation", async (cancellation) => {
       const { onCreate, save } = setup();
       fireEvent.pointerDown(save, { pointerId: 9, pointerType: "touch", button: 0, isPrimary: true });
-      await act(async () => vi.advanceTimersByTime(200));
+      await act(async () => vi.advanceTimersByTime(QUICK_ADD_START_HOLD_ENGAGE_MS + 50));
       if (cancellation === "pointerCancel") fireEvent.pointerCancel(save, { pointerId: 9, pointerType: "touch" });
       if (cancellation === "pointerLeave") fireEvent.pointerLeave(save, { pointerId: 9, pointerType: "touch" });
       if (cancellation === "lostPointerCapture") fireEvent.lostPointerCapture(save, { pointerId: 9, pointerType: "touch" });
       if (cancellation === "blur") fireEvent.blur(save);
       if (cancellation === "escape") fireEvent.keyDown(save, { key: "Escape" });
-      await act(async () => vi.advanceTimersByTime(500));
+      await act(async () => vi.advanceTimersByTime(QUICK_ADD_START_HOLD_DURATION_MS));
       expect(onCreate).not.toHaveBeenCalled();
 
       await completePointerHold(save, 10, "touch");
@@ -6244,13 +6272,13 @@ describe("QuickEntryBox", () => {
       const { rerender } = renderCompactQuickEntryBox({ onCreate, workflowId: ideasWorkflow.id, workflowOptions: [ideasWorkflow] });
       fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Alpha task" } });
       fireEvent.pointerDown(screen.getByTestId("quick-entry-save"), { pointerId: 3, pointerType: "mouse", button: 0, isPrimary: true });
-      await act(async () => vi.advanceTimersByTime(200));
+      await act(async () => vi.advanceTimersByTime(QUICK_ADD_START_HOLD_ENGAGE_MS + 50));
 
       // Same workflow, brand-new objects — exactly what a metadata refresh produces.
       const refreshed = { ...ideasWorkflow, columns: ideasWorkflow.columns.map((column) => ({ ...column, flags: { ...column.flags } })) };
       rerender(<QuickEntryBox onCreate={onCreate} addToast={vi.fn()} projectId={TEST_PROJECT_ID} workflowId={refreshed.id} workflowOptions={[refreshed]} />);
       expect(screen.getByTestId("quick-entry-save")).toHaveAttribute("data-hold-state", "holding");
-      await act(async () => vi.advanceTimersByTime(300));
+      await act(async () => vi.advanceTimersByTime(QUICK_ADD_START_HOLD_FILL_MS));
 
       await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
       expect(onCreate.mock.calls[0]![0]).toHaveProperty("column", "todo");
@@ -6261,12 +6289,12 @@ describe("QuickEntryBox", () => {
       const { rerender } = renderCompactQuickEntryBox({ onCreate, workflowId: ideasWorkflow.id, workflowOptions: [ideasWorkflow] });
       fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Alpha task" } });
       fireEvent.pointerDown(screen.getByTestId("quick-entry-save"), { pointerId: 3, pointerType: "mouse", button: 0, isPrimary: true });
-      await act(async () => vi.advanceTimersByTime(200));
+      await act(async () => vi.advanceTimersByTime(QUICK_ADD_START_HOLD_ENGAGE_MS + 50));
 
       // Same workflow id, but its routing columns changed: the captured destination is no longer provable.
       const retargeted = { ...ideasWorkflow, columns: [{ id: "ideas", name: "Ideas", flags: { hold: true } }, { id: "triage", name: "Triage", flags: { intake: true } }] };
       rerender(<QuickEntryBox onCreate={onCreate} addToast={vi.fn()} projectId={TEST_PROJECT_ID} workflowId={retargeted.id} workflowOptions={[retargeted]} />);
-      await act(async () => vi.advanceTimersByTime(300));
+      await act(async () => vi.advanceTimersByTime(QUICK_ADD_START_HOLD_FILL_MS));
 
       expect(onCreate).not.toHaveBeenCalled();
       expect(screen.getByTestId("quick-entry-save")).toHaveAttribute("data-hold-state", "idle");
@@ -6280,7 +6308,7 @@ describe("QuickEntryBox", () => {
       if (cancellation === "lostPointerCapture") fireEvent.lostPointerCapture(save, { pointerId: 9, pointerType: "touch" });
       if (cancellation === "blur") fireEvent.blur(save);
       if (cancellation === "escape") fireEvent.keyDown(save, { key: "Escape" });
-      await act(async () => vi.advanceTimersByTime(500));
+      await act(async () => vi.advanceTimersByTime(QUICK_ADD_START_HOLD_DURATION_MS));
       expect(onCreate).not.toHaveBeenCalled();
       expect(save).toHaveAttribute("data-hold-state", "idle");
     });
@@ -6292,7 +6320,7 @@ describe("QuickEntryBox", () => {
       fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Alpha task" } });
       fireEvent.pointerDown(screen.getByTestId("quick-entry-save"), { pointerId: 3, pointerType: "pen", button: 0, isPrimary: true });
       rerender(<><><QuickEntryBox onCreate={onCreate} addToast={vi.fn()} workflowId={replacement.id} workflowOptions={[ideasWorkflow, replacement]} /></></>);
-      await act(async () => vi.advanceTimersByTime(500));
+      await act(async () => vi.advanceTimersByTime(QUICK_ADD_START_HOLD_DURATION_MS));
       expect(onCreate).not.toHaveBeenCalled();
       expect(screen.getByTestId("quick-entry-save")).toHaveAttribute("data-hold-state", "idle");
     });
@@ -6301,7 +6329,7 @@ describe("QuickEntryBox", () => {
       const { onCreate, save, unmount } = setup();
       fireEvent.pointerDown(save, { pointerId: 5, pointerType: "touch", button: 0, isPrimary: true });
       unmount();
-      await act(async () => vi.advanceTimersByTime(500));
+      await act(async () => vi.advanceTimersByTime(QUICK_ADD_START_HOLD_DURATION_MS));
       expect(onCreate).not.toHaveBeenCalled();
     });
 
@@ -6395,7 +6423,7 @@ describe("QuickEntryBox", () => {
       expect(screen.queryByTestId("quick-entry-save-start")).toBeNull();
 
       fireEvent.pointerDown(save, { pointerId: 14, pointerType: "mouse", button: 0, isPrimary: true });
-      await act(async () => vi.advanceTimersByTime(500));
+      await act(async () => vi.advanceTimersByTime(QUICK_ADD_START_HOLD_DURATION_MS));
       expect(save).toHaveAttribute("data-hold-state", "idle");
       expect(onCreate).not.toHaveBeenCalled();
       fireEvent.pointerUp(save, { pointerId: 14, pointerType: "mouse", button: 0, isPrimary: true });
@@ -6476,7 +6504,7 @@ describe("QuickEntryBox", () => {
   /*
   FNXC:QuickEntry 2026-09-15-09:12:
   FN-411 symptom: Cmd/Ctrl+Enter behaved exactly like plain Enter (create only), so starting a card still
-  required the 500ms Save hold or the Start chip. These cases drive the real textarea key handler across both
+  required the full Save hold or the Start chip. These cases drive the real textarea key handler across both
   Start mechanisms (atomic create-column override and create-then-move promotion), both modifier keys, both
   breakpoints, empty/duplicate/in-flight data states, and the ineligible-workflow fallback.
   */
@@ -6674,7 +6702,7 @@ describe("QuickEntryBox", () => {
       expect(onCreate).not.toHaveBeenCalled();
 
       // A brief press released before the mask engages is still exactly one ordinary Save, with no Start column.
-      await act(async () => vi.advanceTimersByTime(100));
+      await act(async () => vi.advanceTimersByTime(QUICK_ADD_START_HOLD_ENGAGE_MS - 50));
       fireEvent.keyUp(save, { key: "Enter", ctrlKey: true });
 
       await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
