@@ -158,8 +158,17 @@ describe.runIf(executablePath)("FN-379 standardized layout geometry in a real br
     });
     expect(detail.pane).toBe("detail");
     expect(detail.backFirst).toBe(true);
-    expect(detail.backWidth).toBeGreaterThanOrEqual(44);
-    expect(detail.backHeight).toBeGreaterThanOrEqual(44);
+    /*
+    FNXC:IconOnlyButtonCanon 2026-09-17-00:14:
+    FN-471 retired the 44px touch-target floor for the ICON-ONLY back chevron and moved it onto the
+    canonical shared square (`--icon-button-size-mobile: 36px` on phones, 28px on desktop). The 44px
+    floor now belongs only to LABELLED controls, list rows, tabs, and selects. This browser E2E lane
+    predates FN-471 (last touched by FN-379) and still asserted the removed 44px box, so it failed the
+    real Chromium render of the new geometry. Assert the canonical mobile icon size instead of the
+    deleted floor — restoring 44px in product CSS would re-add behavior FN-471 deliberately removed.
+    */
+    expect(detail.backWidth).toBe(36);
+    expect(detail.backHeight).toBe(36);
 
     await page.screenshot({ path: path.join(artifacts, "view-layout-goals-mobile.png") });
     await page.close();
