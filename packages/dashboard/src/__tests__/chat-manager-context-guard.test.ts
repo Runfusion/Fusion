@@ -696,6 +696,52 @@ describe("ChatManager — tier-3 truncation disclosure wiring (RUFU-183)", () =>
     });
   });
 
+  /*
+  FNXC:ChatContextGuardTier3Cancellation 2026-09-17-09:45:
+  Greptile P2 on #3627: after a tier-3 rescue, pressing Stop before the provider emitted any
+  content skipped the interrupted-row persistence, so the completed history truncation stayed
+  undisclosed. The disclosure is a metadata-only row — no accumulated text, thinking, or tool
+  calls — which is exactly the state this test drives: cancel synchronously inside the prompt,
+  then assert the notice-bearing interrupted row reached the store. Validated on a merged S1+S2
+  tree (chat.ts needs #3626's engine exports to load at all under vitest 4's strict mock proxy).
+  */
+  it("persists the truncation disclosure when Stop lands before the first token", async () => {
+    setupSession();
+    const { session } = makeFakeSession({
+      contextWindow: 128_000,
+      maxTokens: 16_384,
+      usageTokens: 150_000,
+    });
+    mockCreateResolvedAgentSession.mockResolvedValue({ session, model: { provider: "test-provider", modelId: "test-model" } });
+    mockEnsureContextWithinCompactionThreshold.mockImplementation(async () => ({
+      compacted: true,
+      contextTokens: 90_000,
+      threshold: 102_400,
+      fallback: rescueEvidence,
+    }));
+    const manager = makeManager();
+    mockPromptWithFallback.mockImplementation(async () => {
+      /*
+      Fire without awaiting: cancelGeneration's settled-barrier await would deadlock against
+      this very prompt, while cancellationRequested=true + abort() run synchronously before it.
+      The thrown AbortError mirrors pi's real mid-flight abort rejection.
+      */
+      void manager.cancelGeneration("chat-guard");
+      const err = new Error("aborted");
+      err.name = "AbortError";
+      throw err;
+    });
+
+    await manager.sendMessage("chat-guard", "hello world").catch(() => undefined);
+
+    const interruptedCall = mockChatStore.addMessage.mock.calls.find(
+      (call) => (call[1]?.metadata as { interrupted?: boolean } | undefined)?.interrupted === true,
+    );
+    expect(interruptedCall, "a Stop with zero content must still persist the disclosure row").toBeDefined();
+    expect(interruptedCall?.[1]?.content).toBe("");
+    expect((interruptedCall?.[1]?.metadata as { contextTruncation?: unknown } | undefined)?.contextTruncation).toStrictEqual(rescueEvidence);
+  });
+
   it("forwards the operator kill switch as enabled:false — compaction is bypassed entirely (parity)", async () => {
     setupSession();
     // Same above-threshold session shape as the "compacts once" case: with the switch ON
