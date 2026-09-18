@@ -30,6 +30,14 @@ describe("reconcileClaudeCliPaths", () => {
     expect(result).toEqual([VENDORED, UNRELATED]);
   });
 
+  it("moves an already-present vendored path to the front", () => {
+    const result = reconcileClaudeCliPaths(
+      [UNRELATED, VENDORED, GLOBAL_NPM],
+      VENDORED,
+    );
+    expect(result).toEqual([VENDORED, UNRELATED]);
+  });
+
   it("preserves the relative order of unrelated extension paths", () => {
     const a = "/ext/a.ts";
     const b = "/ext/b.ts";

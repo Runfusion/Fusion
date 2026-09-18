@@ -471,11 +471,10 @@ export function reconcileClaudeCliPaths(
   if (!vendoredPath) {
     return [...paths];
   }
-  const filtered = paths.filter((p) => !isExternalClaudeCliPath(p, vendoredPath));
-  if (!filtered.includes(vendoredPath)) {
-    return [vendoredPath, ...filtered];
-  }
-  return filtered;
+  const filtered = paths.filter(
+    (p) => p !== vendoredPath && !isExternalClaudeCliPath(p, vendoredPath),
+  );
+  return [vendoredPath, ...filtered];
 }
 
 /**

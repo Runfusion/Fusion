@@ -23,7 +23,6 @@ import {
   getEnabledPiExtensionPaths,
   mergeBuiltInGrokProviderModels,
   mergeBuiltInZaiProviderModels,
-  reconcileClaudeCliPaths,
   registerBuiltInGrokProvider,
   registerBuiltInZaiProvider,
 } from "@fusion/core";
@@ -76,6 +75,7 @@ import {
   setCachedLlamaCppResolution,
 } from "./llama-cpp-extension.js";
 import { resolveSelfExtension } from "./self-extension.js";
+import { finalizeCliExtensionPaths } from "./extension-paths.js";
 import { wrapAuthStorageWithApiKeyProviders } from "./provider-auth.js";
 import { getPackageManagerAgentDir } from "./auth-paths.js";
 import { createProjectScopedPackageManagerFactory } from "./skills-package-manager.js";
@@ -699,13 +699,17 @@ export async function runDaemon(opts: DaemonOptions = {}) {
     }
     setHostExtensionPaths(selfExtensionPaths);
 
-    const reconciledExtensionPaths = reconcileClaudeCliPaths(
-      [...selfExtensionPaths, ...getEnabledPiExtensionPaths(primaryCwd), ...packageExtensionPaths, ...claudeCliPaths],
-      claudeCliPaths[0] ?? null,
-    );
+    const extensionPaths = finalizeCliExtensionPaths({
+      selfExtensionPaths,
+      discoveredExtensionPaths: getEnabledPiExtensionPaths(primaryCwd),
+      packageExtensionPaths,
+      claudeCliPaths,
+      droidCliPaths,
+      llamaCppPaths,
+    });
 
     const extensionsResult = await discoverAndLoadExtensions(
-      [...reconciledExtensionPaths, ...droidCliPaths, ...llamaCppPaths],
+      extensionPaths,
       primaryCwd,
       join(primaryCwd, ".fusion", "disabled-auto-extension-discovery"),
     );

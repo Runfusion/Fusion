@@ -158,6 +158,7 @@ import {
 } from "./llama-cpp-extension.js";
 import { getCachedUpdateStatus, isUpdateCheckEnabled } from "../update-cache.js";
 import { resolveSelfExtension } from "./self-extension.js";
+import { finalizeCliExtensionPaths } from "./extension-paths.js";
 import { ensureBundledCursorRuntimePluginInstalled, ensureBundledDependencyGraphPluginInstalled, ensureBundledGrokRuntimePluginInstalled, ensureBundledPluginInstalled, isBundledPluginId } from "../plugins/bundled-plugin-install.js";
 import { registerCustomProviders, reregisterCustomProviders } from "./custom-provider-registry.js";
 import { handleOpencodeGoApiKeySaved, syncStartupModels } from "./startup-model-sync.js";
@@ -1951,15 +1952,17 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     the floor that keeps an await-stalled boot from being unrecoverable.
     */
     // Load all enabled extensions: Fusion/Pi filesystem-discovered + package-resolved.
+    const extensionPaths = finalizeCliExtensionPaths({
+      selfExtensionPaths,
+      discoveredExtensionPaths: getEnabledPiExtensionPaths(cwd),
+      packageExtensionPaths,
+      claudeCliPaths,
+      droidCliPaths,
+      llamaCppPaths,
+    });
+
     const extensionsResult = await boundedPhaseTime("discoverAndLoadExtensions", () => discoverAndLoadExtensions(
-      [
-        ...selfExtensionPaths,
-        ...getEnabledPiExtensionPaths(cwd),
-        ...packageExtensionPaths,
-        ...claudeCliPaths,
-        ...droidCliPaths,
-        ...llamaCppPaths,
-      ],
+      extensionPaths,
       cwd,
       join(cwd, ".fusion", "disabled-auto-extension-discovery"),
     ), logPhase, EXTENSION_DISCOVERY_TIMEOUT_MS);

@@ -82,6 +82,7 @@ import {
   setCachedLlamaCppResolution,
 } from "./llama-cpp-extension.js";
 import { resolveSelfExtension } from "./self-extension.js";
+import { finalizeCliExtensionPaths } from "./extension-paths.js";
 import { registerCustomProviders, reregisterCustomProviders } from "./custom-provider-registry.js";
 import { handleOpencodeGoApiKeySaved, syncStartupModels } from "./startup-model-sync.js";
 import { ensureBundledCursorRuntimePluginInstalled, ensureBundledDependencyGraphPluginInstalled, ensureBundledGrokRuntimePluginInstalled, ensureBundledPluginInstalled, isBundledPluginId } from "../plugins/bundled-plugin-install.js";
@@ -815,15 +816,17 @@ export async function runServe(
     }
     setHostExtensionPaths(selfExtensionPaths);
 
+    const extensionPaths = finalizeCliExtensionPaths({
+      selfExtensionPaths,
+      discoveredExtensionPaths: getEnabledPiExtensionPaths(primaryCwd),
+      packageExtensionPaths,
+      claudeCliPaths,
+      droidCliPaths,
+      llamaCppPaths,
+    });
+
     const extensionsResult = await discoverAndLoadExtensions(
-      [
-        ...selfExtensionPaths,
-        ...getEnabledPiExtensionPaths(primaryCwd),
-        ...packageExtensionPaths,
-        ...claudeCliPaths,
-        ...droidCliPaths,
-        ...llamaCppPaths,
-      ],
+      extensionPaths,
       primaryCwd,
       join(primaryCwd, ".fusion", "disabled-auto-extension-discovery"),
     );
