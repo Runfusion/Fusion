@@ -6345,7 +6345,10 @@
       "autoRestartAfterUpdate": " Automatically restart after an update ",
       "autoRestartAfterUpdateHelp": "After a dashboard update installs, requests a supervised restart. Without a supervisor, Fusion keeps the manual restart path. Unset: disabled.",
       "channelStable": "Stable (recommended)",
-      "channelBeta": "Beta — early builds from main"
+      "channelBeta": "Beta — early builds from main",
+      "operatorLanguage": " Operator language for agent text ",
+      "operatorLanguageHint": " Language agents use for operator-facing text: mailbox messages, reports, task logs, completion summaries, and chat replies. Code, commands, identifiers, and quoted log output always stay in their original language. Default: Automatic — reply in the language of each message, which leaves autonomous lanes on English. ",
+      "operatorLanguageAuto": " Automatic (reply in each message's language) "
     },
     "globalModels": {
       "allow": "allow",

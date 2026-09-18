@@ -73,6 +73,38 @@ export function GlobalGeneralSection({ form, setForm }: GlobalGeneralSectionProp
         value={normalizeChatSubmitOnEnterMode(form.chatSubmitOnEnter)}
         onChange={(v) => setForm((f) => ({ ...f, chatSubmitOnEnter: normalizeChatSubmitOnEnterMode(v) }))}
       />
+      {/*
+      FNXC:OperatorLanguage 2026-09-15-07:18:
+      The operator chats with Fusion in their own language, but autonomous lanes (heartbeat
+      mailbox reports, task logs, completion summaries) have no incoming message to mirror and
+      always answered in English. This global row sets the prose language injected into every
+      operator-facing agent prompt; "Automatic" preserves the pre-feature behavior byte-for-byte.
+      Global-only on purpose: the reader's language belongs to the human, so a shared project must
+      not be able to flip it. Option labels stay in each language's endonym — the name of a
+      language is not a translatable string.
+      */}
+      <SettingsSelectRow
+        descriptor={{
+          key: "operatorLanguage",
+          label: t("settings.globalGeneral.operatorLanguage", " Operator language for agent text "),
+          help: t("settings.globalGeneral.operatorLanguageHint", " Language agents use for operator-facing text: mailbox messages, reports, task logs, completion summaries, and chat replies. Code, commands, identifiers, and quoted log output always stay in their original language. Default: Automatic — reply in the language of each message, which leaves autonomous lanes on English. "),
+          scope: "global",
+          options: [
+            { value: "auto", label: t("settings.globalGeneral.operatorLanguageAuto", " Automatic (reply in each message's language) ") },
+            { value: "en", label: "English" },
+            { value: "sk", label: "Slovenčina" },
+            { value: "cs", label: "Čeština" },
+            { value: "de", label: "Deutsch" },
+            { value: "es", label: "Español" },
+            { value: "fr", label: "Français" },
+            { value: "pt", label: "Português" },
+            { value: "zh", label: "中文" },
+            { value: "ko", label: "한국어" },
+          ],
+        }}
+        value={form.operatorLanguage ?? "auto"}
+        onChange={(v) => setForm((f) => ({ ...f, operatorLanguage: v ?? "auto" }))}
+      />
       <SettingsToggleRow
         descriptor={{
           key: "persistAgentToolOutput",

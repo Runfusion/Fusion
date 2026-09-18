@@ -123,3 +123,28 @@ describe("collapsePromptLayers", () => {
     );
   });
 });
+
+/*
+FNXC:OperatorLanguage 2026-09-16-13:05:
+RUFU PR review: the lane prompt seam must carry the operator-language directive for every lane
+(executor task logs, reviewer verdicts, triage planning) while unset/"auto" stays byte-identical.
+*/
+describe("operator language directive in prompt layers", () => {
+  it("appends the directive to the dynamic layer when provided", () => {
+    const layers = buildPromptLayers({
+      basePrompt: "You are an executor.",
+      agentInstructions: "Ship the change.",
+      operatorLanguageDirective: "## Operator Language\n\nWrite operator-facing prose in Slovak.",
+    });
+    expect(layers.stable).toBe("You are an executor.");
+    expect(layers.dynamic).toContain("## Operator Language");
+    expect(collapsePromptLayers(layers)).toContain("Write operator-facing prose in Slovak.");
+  });
+
+  it("keeps the prompt byte-identical when the directive is absent or blank (auto/unset)", () => {
+    const base = { basePrompt: "You are an executor.", agentInstructions: "Ship the change." };
+    const without = collapsePromptLayers(buildPromptLayers(base));
+    const blank = collapsePromptLayers(buildPromptLayers({ ...base, operatorLanguageDirective: "  " }));
+    expect(blank).toBe(without);
+  });
+});

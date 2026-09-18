@@ -6793,7 +6793,10 @@
       "chatSubmitOnEnterHint": "",
       "chatSubmitOnEnterAuto": "",
       "chatSubmitOnEnterAlways": "",
-      "chatSubmitOnEnterNever": ""
+      "chatSubmitOnEnterNever": "",
+      "operatorLanguage": "",
+      "operatorLanguageHint": "",
+      "operatorLanguageAuto": ""
     },
     "nodeSync": {
       "alwaysAsk": "Sempre perguntar",

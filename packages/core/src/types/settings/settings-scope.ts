@@ -384,6 +384,16 @@ export interface GlobalSettings {
    */
   chatSubmitOnEnter?: "auto" | "always" | "never";
   /**
+   * FNXC:OperatorLanguage 2026-09-15-07:18:
+   * The operator's prose language for AGENT-GENERATED text (mailbox messages, heartbeat reports,
+   * task logs, completion summaries, verdict explanations, chat replies). Global-only: it is a
+   * property of the human reading the output, so a shared project must never override it.
+   * `"auto"` (default) and empty = mirror the language of each incoming message, which for
+   * autonomous lanes keeps today's English. Distinct from `language`, which selects dashboard UI
+   * chrome locale.
+   */
+  operatorLanguage?: string;
+  /**
    * FNXC:ChatSnippets 2026-09-03-15:56:
    * Reusable dashboard-chat prompts are a global operator preference because direct and task chats span projects. They use the existing global settings transport and need neither project persistence nor a dedicated route.
    */
