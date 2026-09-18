@@ -171,11 +171,17 @@ pgTest("workspace worktree per-repo atomic merge (PostgreSQL)", () => {
     // FNXC:WorkspaceWorktree 2026-08-23-06:25:
     // FN-179 requires filesystem preparation to run outside the task mutex, so a
     // planning-lock holder can complete before slow git/init work is released.
-    // Hold preparation past the production advisory-lock timeout. If preparation
-    // still held the task mutex, either planning-lock caller would time out here.
+    // FNXC:WorkspaceWorktree 2026-09-18-00:04:
+    // Both waiters are issued WHILE preparation is still held (release() is not
+    // called until after these assertions). Awaiting them directly IS the proof:
+    // if preparation still held the task mutex, each planning-lock caller would
+    // block on the advisory lock and its assertion would fail (reject at the
+    // production lock timeout, or hang to the 15s test timeout). The former fixed
+    // 5.1s real sleep only added wall-time — the await already waits for the
+    // pending promise to settle either way — so it is removed (FN-5048 no-slow-
+    // tests), not weakened: the same invariant is still asserted before release().
     const lifecycleWaiter = planningStore.withPlanningLifecycleLock(task.id, async () => "acquired");
     const scopeWaiter = planningStore.updateTaskRepositoryScope(task.id, undefined);
-    await new Promise((resolve) => setTimeout(resolve, 5_100));
     await expect(lifecycleWaiter).resolves.toBe("acquired");
     await expect(scopeWaiter).resolves.toMatchObject({ id: task.id });
 
