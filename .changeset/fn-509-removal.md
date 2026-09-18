@@ -1,5 +1,5 @@
 ---
-"@runfusion/fusion": major
+"@runfusion/fusion": patch
 ---
 
 summary: Replace task priority levels with one arrival-ordered queue plus a Boost button on each card.
