@@ -590,6 +590,28 @@ self.addEventListener("fetch", (event) => {
   // now claimed by isImmutableAssetRequest() above, so repeating them would be
   // an unreachable branch.
 
+  /*
+  FNXC:VersionAutoReload 2026-09-18-00:20:
+  FN-516: update METADATA is never an offline resource. `/version.json` states what the server is
+  serving RIGHT NOW; a remembered answer is not a degraded version of that signal, it is a false one.
+  Before this gate the URL matched no earlier branch (not a navigation, not `/api/`, not an asset) and
+  fell into the generic cache-first tail at the bottom of this handler, so the first response was
+  written to durable Cache Storage and every later read was answered from it without a network call.
+  That entry outlives worker termination and browser restarts, so a tab already running build B could
+  read build A twice and versionCheck would confirm a deployment that never happened and reload the
+  page under the operator — the reported "the app refreshes by itself" symptom.
+
+  Unlike the /api/ fallback there is nothing to trade off: an unavailable read is already handled
+  upstream (versionCheck treats it as "no evidence" and does nothing), while a stale read costs the
+  user their page. So the request is passed through untouched — no read, no write, no fallback — and
+  the gate sits ahead of every generic branch. Query strings are covered because the match is on the
+  pathname, so a cache-busting parameter cannot route around it. Entries a previous worker generation
+  already wrote may remain physically present; they are simply never consulted again.
+  */
+  if (url.pathname === "/version.json") {
+    return;
+  }
+
   // EventSource requests stay open indefinitely. Waiting on cache.put() for an
   // infinite response body prevents the browser from ever receiving the stream
   // and leaks the underlying connection across reloads. Let SSE bypass the

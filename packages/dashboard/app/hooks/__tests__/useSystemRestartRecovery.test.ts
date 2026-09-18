@@ -41,6 +41,27 @@ describe("systemRestartRecovery", () => {
     vi.unstubAllGlobals();
   });
 
+  /*
+  FNXC:VersionAutoReload 2026-09-18-00:20:
+  FN-516 negative control. This recovery path is the ONE place allowed to reload on a PID/health
+  signal, and only because an operator explicitly asked for a restart and `arm()` recorded it. Without
+  that arming it must do nothing at all — no polling, no reload — so a restart elsewhere on the host,
+  or simply time passing, can never refresh the page on its own.
+  */
+  it("does nothing at all when it was never armed", async () => {
+    mockFetchSystemInfo.mockResolvedValue({ pid: 999 });
+    mockFetchDashboardHealth.mockResolvedValue({ version: "0.77.0-beta.4", status: "ok" });
+    render(createElement(RecoveryProbe));
+
+    await flushRecovery();
+    await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
+
+    expect(mockFetchSystemInfo).not.toHaveBeenCalled();
+    expect(mockFetchDashboardHealth).not.toHaveBeenCalled();
+    expect(reload).not.toHaveBeenCalled();
+    expect(systemRestartRecovery.getSnapshot()).toMatchObject({ phase: "idle" });
+  });
+
   it("waits through old, unavailable, and boot-holding hosts before reloading the installed version once", async () => {
     mockFetchSystemInfo
       .mockResolvedValueOnce({ pid: 10 })

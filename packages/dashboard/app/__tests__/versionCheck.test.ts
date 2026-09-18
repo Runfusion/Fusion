@@ -13,12 +13,27 @@ import {
   _resetState,
   MIN_CHECK_INTERVAL_MS,
   POLL_INTERVAL_MS,
+  VERSION_FETCH_TIMEOUT_MS,
+  requestVersionCheck,
   _resetMismatchState,
 } from "../versionCheck";
 import { clearTraces, getTraces } from "../utils/dashboardTraceBuffer";
 
 // Mock __BUILD_VERSION__ (declared as const in the module)
 vi.stubGlobal("__BUILD_VERSION__", "test-build-abc123");
+
+function versionResponseFor(version: string) {
+  return {
+    ok: true,
+    headers: new Headers({ "content-type": "application/json" }),
+    json: () => Promise.resolve({ version }),
+  };
+}
+
+function setVisibility(state: "visible" | "hidden"): void {
+  Object.defineProperty(document, "visibilityState", { value: state, configurable: true });
+  document.dispatchEvent(new Event("visibilitychange"));
+}
 
 describe("isStaleChunkError", () => {
   it("returns true for known chunk error patterns", () => {
@@ -44,23 +59,62 @@ describe("isStaleChunkError", () => {
   });
 });
 
+/*
+FNXC:VersionAutoReload 2026-09-18-00:20:
+FN-516 replaced the old contract asserted here ("a recognized chunk message reloads the page"). A
+failed dynamic import is a common transient and was reloading pages whose build had not moved, so it
+now only REQUESTS the same bounded check every other trigger uses. Recognition itself is unchanged
+because ErrorBoundary.componentDidCatch still branches on the boolean.
+*/
 describe("handleChunkLoadError", () => {
   const reloadSpy = vi.fn();
   beforeEach(() => {
     vi.stubGlobal("location", { reload: reloadSpy });
     window.sessionStorage.clear();
     reloadSpy.mockClear();
+    _resetCheckState();
+    clearTraces();
+    Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
   });
 
-  it("returns true and calls reloadOnce for chunk errors", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("recognizes a chunk error but does not reload on the message alone", async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: new Headers({ "content-type": "application/json" }),
+      json: () => Promise.resolve({ version: "test-build-abc123" }),
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+
     const result = handleChunkLoadError(new Error("Failed to fetch dynamically imported module: ./foo.js"));
+    await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1));
+
     expect(result).toBe(true);
-    expect(reloadSpy).toHaveBeenCalledTimes(1);
+    expect(reloadSpy).not.toHaveBeenCalled();
+    expect(window.sessionStorage.getItem("fusion:version-update")).toBeNull();
   });
 
-  it("returns false for non-chunk errors", () => {
+  it("does not reload when the version cannot be read at all", async () => {
+    const fetchSpy = vi.fn().mockRejectedValue(new Error("offline"));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    expect(handleChunkLoadError(new Error("ChunkLoadError: loading chunk foo failed"))).toBe(true);
+    await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1));
+
+    expect(reloadSpy).not.toHaveBeenCalled();
+  });
+
+  it("returns false for non-chunk errors and requests nothing", () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+
     const result = handleChunkLoadError(new Error("Network error"));
+
     expect(result).toBe(false);
+    expect(fetchSpy).not.toHaveBeenCalled();
     expect(reloadSpy).not.toHaveBeenCalled();
   });
 });
@@ -71,6 +125,9 @@ describe("reloadOnce", () => {
     vi.stubGlobal("location", { reload: reloadSpy });
     window.sessionStorage.clear();
     reloadSpy.mockClear();
+    // FN-516 added an in-memory document latch alongside the session flag, so a fresh
+    // "document" has to be modelled explicitly and not by clearing storage alone.
+    _resetCheckState();
   });
 
   it("sets sessionStorage flag and calls window.location.reload()", () => {
@@ -427,14 +484,41 @@ describe("mandatory auto-reload", () => {
     expect(fetchSpy.mock.calls.some(([url]) => String(url).includes("/api/settings"))).toBe(false);
   });
 
-  it("reloads for service-worker activation and stale chunks", () => {
-    reloadOnce("service worker activated new version");
-    expect(reloadSpy).toHaveBeenCalledTimes(1);
+  /*
+  FNXC:VersionAutoReload 2026-09-18-00:20:
+  Replaces "reloads for service-worker activation and stale chunks". Those two paths no longer carry
+  their own reload authority — that is the FN-516 defect. They route through the shared proof, so with
+  the served build unchanged they must produce a check and nothing else.
+  */
+  it("treats a worker activation and a stale chunk as reasons to check, not to reload", async () => {
+    const fetchSpy = vi.fn().mockResolvedValue(versionResponseFor("test-build-abc123"));
+    vi.stubGlobal("fetch", fetchSpy);
 
-    window.sessionStorage.clear();
-    reloadSpy.mockClear();
+    await requestVersionCheck("service-worker");
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(reloadSpy).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(MIN_CHECK_INTERVAL_MS + 1);
     expect(handleChunkLoadError(new Error("ChunkLoadError: loading chunk foo failed"))).toBe(true);
+    await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(2));
+
+    expect(reloadSpy).not.toHaveBeenCalled();
+    expect(window.sessionStorage.getItem("fusion:version-update")).toBeNull();
+  });
+
+  it("still reloads once when a worker-triggered check confirms a different build", async () => {
+    const fetchSpy = vi.fn().mockResolvedValue(versionResponseFor("build-C"));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    await requestVersionCheck("service-worker");
+    expect(reloadSpy).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(MIN_CHECK_INTERVAL_MS + 1);
+    await requestVersionCheck("service-worker");
+
     expect(reloadSpy).toHaveBeenCalledTimes(1);
+    expect(consumeVersionUpdateFlag()).toBe(true);
+    expect(consumeVersionUpdateFlag()).toBe(false);
   });
 
   it("retains the session and remote-version loop protection", async () => {
@@ -458,5 +542,409 @@ describe("mandatory auto-reload", () => {
 
     expect(reloadSpy).not.toHaveBeenCalled();
     expect(getTraces().some((entry) => entry.event === "reload-suppressed")).toBe(true);
+  });
+});
+
+/*
+FNXC:VersionAutoReload 2026-09-18-00:20:
+FN-516 hardening of the read and of the admission. The reported symptom was a page reloading itself
+with nothing deployed, so every state that could manufacture a "different build" out of nothing gets a
+case here: a stale answer, an invalid answer, a slow answer, a late answer, and a concurrent burst.
+*/
+describe("version read hardening", () => {
+  const reloadSpy = vi.fn();
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.stubEnv("PROD", true);
+    vi.stubGlobal("location", { reload: reloadSpy });
+    window.sessionStorage.clear();
+    reloadSpy.mockClear();
+    _resetState();
+    clearTraces();
+    Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+  });
+
+  afterEach(() => {
+    _resetState();
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  it("asks for the live document with no-store and a unique per-attempt key", async () => {
+    const fetchSpy = vi.fn().mockResolvedValue(versionResponseFor("test-build-abc123"));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    await checkVersion("initial");
+    vi.advanceTimersByTime(MIN_CHECK_INTERVAL_MS + 1);
+    await checkVersion("focus");
+
+    const urls = fetchSpy.mock.calls.map(([url]: [string]) => String(url));
+    expect(urls).toHaveLength(2);
+    for (const url of urls) expect(url.startsWith("/version.json")).toBe(true);
+    expect(new Set(urls).size).toBe(2);
+    expect(fetchSpy.mock.calls[0][1]).toMatchObject({ cache: "no-store" });
+  });
+
+  it("never lets an old body replayed for a reused key become a confirmation", async () => {
+    // Models the pre-fix worker: it answers the FIRST key it ever saw from its own cache.
+    const cached = new Map<string, string>();
+    const fetchSpy = vi.fn(async (url: string) => {
+      if (!cached.has(String(url))) cached.set(String(url), "build-A-stale");
+      return versionResponseFor(cached.get(String(url))!);
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+
+    await checkVersion("initial");
+    vi.advanceTimersByTime(MIN_CHECK_INTERVAL_MS + 1);
+    await checkVersion("poll");
+
+    // A per-attempt key means the second read cannot reuse the first entry.
+    expect(new Set(fetchSpy.mock.calls.map(([url]: [string]) => String(url))).size).toBe(2);
+    expect(cached.size).toBe(2);
+  });
+
+  it.each([
+    ["a non-OK status", { ok: false, headers: new Headers(), json: () => Promise.resolve({}) }],
+    [
+      "a non-JSON content type",
+      {
+        ok: true,
+        headers: new Headers({ "content-type": "text/html" }),
+        json: () => Promise.resolve({ version: "build-C" }),
+      },
+    ],
+    [
+      "invalid JSON",
+      {
+        ok: true,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: () => Promise.reject(new SyntaxError("Unexpected token <")),
+      },
+    ],
+    [
+      "a missing version",
+      {
+        ok: true,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: () => Promise.resolve({}),
+      },
+    ],
+    [
+      "a blank version",
+      {
+        ok: true,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: () => Promise.resolve({ version: "   " }),
+      },
+    ],
+    [
+      "a non-string version",
+      {
+        ok: true,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: () => Promise.resolve({ version: 42 }),
+      },
+    ],
+    [
+      "a null version",
+      {
+        ok: true,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: () => Promise.resolve({ version: null }),
+      },
+    ],
+  ])("treats %s as no evidence and never reloads", async (_label, response) => {
+    const fetchSpy = vi.fn().mockResolvedValue(response);
+    vi.stubGlobal("fetch", fetchSpy);
+
+    await checkVersion("initial");
+    vi.advanceTimersByTime(MIN_CHECK_INTERVAL_MS + 1);
+    await checkVersion("poll");
+
+    expect(reloadSpy).not.toHaveBeenCalled();
+    expect(window.sessionStorage.getItem("fusion:version-update")).toBeNull();
+    expect(getTraces().some((entry) => entry.event === "remote-unavailable")).toBe(true);
+  });
+
+  it("breaks a confirmation in progress when the next read is unreadable", async () => {
+    const fetchSpy = vi
+      .fn()
+      .mockResolvedValueOnce(versionResponseFor("build-C"))
+      .mockRejectedValueOnce(new Error("network down"))
+      .mockResolvedValueOnce(versionResponseFor("build-C"));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    await checkVersion("initial");
+    vi.advanceTimersByTime(MIN_CHECK_INTERVAL_MS + 1);
+    await checkVersion("poll");
+    vi.advanceTimersByTime(MIN_CHECK_INTERVAL_MS + 1);
+    await checkVersion("poll");
+
+    // Three reads saw build-C twice, but not consecutively.
+    expect(reloadSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not accept two alternating targets as a confirmation", async () => {
+    const fetchSpy = vi
+      .fn()
+      .mockResolvedValueOnce(versionResponseFor("build-C"))
+      .mockResolvedValueOnce(versionResponseFor("build-D"))
+      .mockResolvedValueOnce(versionResponseFor("build-C"));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    for (let i = 0; i < 3; i += 1) {
+      await checkVersion("poll");
+      vi.advanceTimersByTime(MIN_CHECK_INTERVAL_MS + 1);
+    }
+
+    expect(reloadSpy).not.toHaveBeenCalled();
+  });
+
+  it("reloads for a rollback exactly like a roll-forward (identifiers are opaque)", async () => {
+    const fetchSpy = vi.fn().mockResolvedValue(versionResponseFor("aaa-older-build"));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    await checkVersion("initial");
+    vi.advanceTimersByTime(MIN_CHECK_INTERVAL_MS + 1);
+    await checkVersion("poll");
+
+    expect(reloadSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("abandons a hung read at the deadline instead of wedging the checker forever", async () => {
+    let abortedCount = 0;
+    const fetchSpy = vi.fn(
+      (_url: string, init: { signal?: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          init.signal?.addEventListener("abort", () => {
+            abortedCount += 1;
+            reject(new Error("aborted"));
+          });
+        }),
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const hung = checkVersion("initial");
+    await vi.advanceTimersByTimeAsync(VERSION_FETCH_TIMEOUT_MS + 1);
+    await hung;
+
+    expect(abortedCount).toBe(1);
+    expect(reloadSpy).not.toHaveBeenCalled();
+
+    // The checker is usable again: a later poll performs a real read.
+    fetchSpy.mockImplementation(async () => versionResponseFor("test-build-abc123"));
+    vi.advanceTimersByTime(MIN_CHECK_INTERVAL_MS + 1);
+    await checkVersion("poll");
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not let a late settlement of an invalidated read reload or unlock a newer one", async () => {
+    let releaseHung: ((value: unknown) => void) | null = null;
+    const fetchSpy = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          releaseHung = resolve;
+        }),
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const hung = checkVersion("initial");
+    await vi.advanceTimersByTimeAsync(VERSION_FETCH_TIMEOUT_MS + 1);
+
+    // A reset invalidates the generation the hung read belongs to.
+    _resetState();
+    fetchSpy.mockImplementation(async () => versionResponseFor("test-build-abc123"));
+    await checkVersion("poll");
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+
+    // The late settlement of the old read must change nothing.
+    releaseHung?.(versionResponseFor("build-C"));
+    await hung;
+    expect(reloadSpy).not.toHaveBeenCalled();
+  });
+
+  it("discards a response that arrives after the tab went hidden and came back", async () => {
+    let resolveFirst: ((value: unknown) => void) | null = null;
+    const fetchSpy = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirst = resolve;
+          }),
+      )
+      .mockResolvedValue(versionResponseFor("build-C"));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    installVersionCheck();
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    setVisibility("hidden");
+    setVisibility("visible");
+
+    resolveFirst?.(versionResponseFor("build-C"));
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(reloadSpy).not.toHaveBeenCalled();
+    expect(getTraces().some((entry) => entry.event === "result-discarded")).toBe(true);
+  });
+
+  it("still detects a later deployment after a read settled while the tab was hidden", async () => {
+    // Regression: a read pending when the tab is backgrounded used to keep the single in-flight slot
+    // forever, so every later trigger became a no-op and no deployment was ever detected again.
+    let resolveFirst: ((value: unknown) => void) | null = null;
+    const fetchSpy = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirst = resolve;
+          }),
+      )
+      .mockResolvedValue(versionResponseFor("build-C"));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    // Only the version reads matter here; unrelated diagnostics posts share the fetch spy.
+    const versionReads = (): number =>
+      fetchSpy.mock.calls.filter((call) => String(call[0]).startsWith("/version.json")).length;
+
+    installVersionCheck();
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(versionReads()).toBe(1);
+
+    setVisibility("hidden");
+    // The read settles while the generation it belonged to is already superseded.
+    resolveFirst?.(versionResponseFor("test-build-abc123"));
+    await vi.advanceTimersByTimeAsync(0);
+    setVisibility("visible");
+    await vi.advanceTimersByTimeAsync(0);
+
+    // The slot must be free again: the next trigger issues a real network read.
+    vi.advanceTimersByTime(MIN_CHECK_INTERVAL_MS + 1);
+    window.dispatchEvent(new Event("focus"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(versionReads()).toBe(2);
+    expect(reloadSpy).not.toHaveBeenCalled();
+
+    // And a genuine change still admits exactly one reload after its second observation.
+    vi.advanceTimersByTime(MIN_CHECK_INTERVAL_MS + 1);
+    window.dispatchEvent(new Event("focus"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(versionReads()).toBe(3);
+    expect(reloadSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps at most one read in flight under a concurrent burst", async () => {
+    let resolveRead: ((value: unknown) => void) | null = null;
+    const fetchSpy = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          resolveRead = resolve;
+        }),
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const all = Promise.all([
+      checkVersion("poll"),
+      checkVersion("focus"),
+      requestVersionCheck("service-worker"),
+      requestVersionCheck("chunk-error"),
+    ]);
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    resolveRead?.(versionResponseFor("test-build-abc123"));
+    await all;
+    expect(reloadSpy).not.toHaveBeenCalled();
+  });
+
+  it("reloads at most once per document even when triggers keep firing", async () => {
+    const fetchSpy = vi.fn().mockResolvedValue(versionResponseFor("build-C"));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    await checkVersion("initial");
+    vi.advanceTimersByTime(MIN_CHECK_INTERVAL_MS + 1);
+    await checkVersion("poll");
+    expect(reloadSpy).toHaveBeenCalledTimes(1);
+
+    // Even with the session flag cleared (installVersionCheck clears it after a good render),
+    // the in-memory document latch keeps this document from asking twice.
+    window.sessionStorage.removeItem("fusion:version-reload");
+    for (const trigger of ["poll", "focus", "service-worker", "chunk-error"] as const) {
+      vi.advanceTimersByTime(MIN_CHECK_INTERVAL_MS + 1);
+      await requestVersionCheck(trigger);
+    }
+
+    expect(reloadSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("survives a sessionStorage that throws on every operation", async () => {
+    const storageError = new Error("storage disabled");
+    const getItem = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw storageError;
+    });
+    const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw storageError;
+    });
+    const removeItem = vi.spyOn(Storage.prototype, "removeItem").mockImplementation(() => {
+      throw storageError;
+    });
+
+    const fetchSpy = vi.fn().mockResolvedValue(versionResponseFor("build-C"));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    await checkVersion("initial");
+    vi.advanceTimersByTime(MIN_CHECK_INTERVAL_MS + 1);
+    await checkVersion("poll");
+    expect(reloadSpy).toHaveBeenCalledTimes(1);
+
+    vi.advanceTimersByTime(MIN_CHECK_INTERVAL_MS + 1);
+    await checkVersion("poll");
+    expect(reloadSpy).toHaveBeenCalledTimes(1);
+    expect(consumeVersionUpdateFlag()).toBe(false);
+
+    getItem.mockRestore();
+    setItem.mockRestore();
+    removeItem.mockRestore();
+  });
+
+  it("installs its listeners and poll once, and a reset really removes them", async () => {
+    const fetchSpy = vi.fn().mockResolvedValue(versionResponseFor("test-build-abc123"));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    installVersionCheck();
+    installVersionCheck();
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    vi.advanceTimersByTime(MIN_CHECK_INTERVAL_MS + 1);
+    window.dispatchEvent(new Event("focus"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+
+    _resetState();
+    fetchSpy.mockClear();
+    window.dispatchEvent(new Event("focus"));
+    setVisibility("visible");
+    await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS * 2);
+    // Other modules share the global fetch stub, so assert on version reads specifically.
+    const versionReads = fetchSpy.mock.calls.filter(([url]: [string]) =>
+      String(url).startsWith("/version.json"),
+    );
+    expect(versionReads).toHaveLength(0);
+  });
+
+  it("does not write the update marker for a suppressed reload", async () => {
+    window.sessionStorage.setItem("fusion:version-reloaded-remote", "build-C");
+    const fetchSpy = vi.fn().mockResolvedValue(versionResponseFor("build-C"));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    await checkVersion("initial");
+    vi.advanceTimersByTime(MIN_CHECK_INTERVAL_MS + 1);
+    await checkVersion("poll");
+
+    expect(reloadSpy).not.toHaveBeenCalled();
+    expect(window.sessionStorage.getItem("fusion:version-update")).toBeNull();
   });
 });

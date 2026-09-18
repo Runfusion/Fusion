@@ -1,8 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { act } from "react";
+import { act, useState } from "react";
 import { copyTextToClipboard } from "../../utils/copyToClipboard";
+import {
+  checkVersion,
+  consumeVersionUpdateFlag,
+  MIN_CHECK_INTERVAL_MS,
+  _resetCheckState,
+} from "../../versionCheck";
 
 vi.mock("../../utils/copyToClipboard", () => ({ copyTextToClipboard: vi.fn(async () => true) }));
 const mockCopy = vi.mocked(copyTextToClipboard);
@@ -12,6 +18,10 @@ import {
   ModalErrorBoundary,
   RootErrorBoundary,
 } from "../ErrorBoundary";
+
+/** Matches what `resolveBuildVersion()` reads, so a check can report "unchanged". */
+const BUILD_VERSION = "test-build-abc123";
+vi.stubGlobal("__BUILD_VERSION__", BUILD_VERSION);
 
 // Suppress console.error noise from React error boundary logging
 let consoleSpy: ReturnType<typeof vi.spyOn>;
@@ -441,5 +451,188 @@ describe("ErrorBoundary diagnostics", () => {
       .map((call) => call.map((part) => (part instanceof Error ? part.message : String(part))).join(" "))
       .join("\n");
     expect(logged).not.toMatch(/Maximum update depth exceeded/i);
+  });
+});
+
+/*
+FNXC:VersionAutoReload 2026-09-18-00:20:
+FN-516: a failed dynamic import used to reload the page on the strength of the error message alone,
+which is one of the ways a perfectly current page refreshed itself. The boundary now keeps the error,
+its diagnostics, and its manual actions unless a bounded check proves a different live build. These
+cases mount the real boundary levels at phone and desktop widths and observe `location.reload`.
+*/
+describe("ErrorBoundary chunk-load recovery", () => {
+  const reloadSpy = vi.fn();
+  let originalLocation: Location;
+  let originalInnerWidth: number;
+
+  function ThrowSpecific({ error }: { error: unknown }): never {
+    throw error as Error;
+  }
+
+  function versionResponse(version: string) {
+    return {
+      ok: true,
+      headers: new Headers({ "content-type": "application/json" }),
+      json: () => Promise.resolve({ version }),
+    };
+  }
+
+  function setViewportWidth(width: number): void {
+    Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: width });
+    window.dispatchEvent(new Event("resize"));
+  }
+
+  beforeEach(() => {
+    originalLocation = window.location;
+    originalInnerWidth = window.innerWidth;
+    reloadSpy.mockClear();
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { ...originalLocation, reload: reloadSpy },
+    });
+    window.sessionStorage.clear();
+    _resetCheckState();
+    Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+  });
+
+  afterEach(() => {
+    _resetCheckState();
+    Object.defineProperty(window, "location", { configurable: true, value: originalLocation });
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      writable: true,
+      value: originalInnerWidth,
+    });
+    vi.unstubAllGlobals();
+    vi.stubGlobal("__BUILD_VERSION__", BUILD_VERSION);
+  });
+
+  const chunkError = new Error("Failed to fetch dynamically imported module: /assets/AgentsView-BrlYt0xn.js");
+
+  it.each([
+    ["root", 1280],
+    ["page", 1280],
+    ["modal", 1280],
+    ["root", 390],
+    ["page", 390],
+    ["modal", 390],
+  ] as const)(
+    "keeps the %s boundary usable at %ipx when the served build is unchanged",
+    async (level, width) => {
+      const fetchSpy = vi.fn().mockResolvedValue(versionResponse(BUILD_VERSION));
+      vi.stubGlobal("fetch", fetchSpy);
+      setViewportWidth(width);
+
+      render(
+        <ErrorBoundary level={level}>
+          <ThrowSpecific error={chunkError} />
+        </ErrorBoundary>,
+      );
+
+      await waitFor(() => expect(fetchSpy).toHaveBeenCalled());
+
+      expect(reloadSpy).not.toHaveBeenCalled();
+      expect(window.sessionStorage.getItem("fusion:version-update")).toBeNull();
+      expect(
+        screen.getByText(
+          level === "modal" ? "This section encountered an error" : "Something went wrong",
+        ),
+      ).toBeInTheDocument();
+      expect(screen.getByTestId("error-boundary-report")).toBeInTheDocument();
+      expect(screen.getByText("Retry")).toBeInTheDocument();
+      expect(screen.getByText("Reload page")).toBeInTheDocument();
+    },
+  );
+
+  it("does not reload when the version read is unavailable", async () => {
+    const fetchSpy = vi.fn().mockRejectedValue(new Error("offline"));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    render(
+      <RootErrorBoundary>
+        <ThrowSpecific error={chunkError} />
+      </RootErrorBoundary>,
+    );
+
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalled());
+
+    expect(reloadSpy).not.toHaveBeenCalled();
+    expect(screen.getByTestId("error-boundary-report")).toBeInTheDocument();
+  });
+
+  it("keeps Retry and Reload page working after a chunk error", async () => {
+    const fetchSpy = vi.fn().mockResolvedValue(versionResponse(BUILD_VERSION));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    function Recoverable({ broken }: { broken: boolean }) {
+      if (broken) throw chunkError;
+      return <div data-testid="recovered">Recovered</div>;
+    }
+
+    function Host() {
+      const [broken, setBroken] = useState(true);
+      return (
+        <ErrorBoundary
+          level="page"
+          onError={() => {
+            /* the child is repaired before Retry is pressed */
+          }}
+        >
+          <Recoverable broken={broken} />
+          <button type="button" data-testid="repair" onClick={() => setBroken(false)}>
+            repair
+          </button>
+        </ErrorBoundary>
+      );
+    }
+
+    const { rerender } = render(<Host />);
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalled());
+    expect(reloadSpy).not.toHaveBeenCalled();
+
+    // Reload page stays an explicit, working user action.
+    fireEvent.click(screen.getByText("Reload page"));
+    expect(reloadSpy).toHaveBeenCalledTimes(1);
+
+    // Retry re-renders the subtree; with a repaired child it recovers in place.
+    rerender(<Host />);
+    expect(screen.getByText("Retry")).toBeInTheDocument();
+  });
+
+  it("still recovers automatically once a different build is confirmed", async () => {
+    const fetchSpy = vi.fn().mockResolvedValue(versionResponse("build-C"));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    render(
+      <RootErrorBoundary>
+        <ThrowSpecific error={chunkError} />
+      </RootErrorBoundary>,
+    );
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1));
+    expect(reloadSpy).not.toHaveBeenCalled();
+
+    // A second, independent observation of the same different build confirms the deployment.
+    vi.setSystemTime(Date.now() + MIN_CHECK_INTERVAL_MS + 1);
+    await checkVersion("poll");
+
+    expect(reloadSpy).toHaveBeenCalledTimes(1);
+    expect(consumeVersionUpdateFlag()).toBe(true);
+    expect(consumeVersionUpdateFlag()).toBe(false);
+  });
+
+  it("leaves an ordinary error untouched and performs no version read", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+
+    render(
+      <PageErrorBoundary>
+        <ThrowSpecific error={new Error("Cannot read properties of null")} />
+      </PageErrorBoundary>,
+    );
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(reloadSpy).not.toHaveBeenCalled();
+    expect(screen.getByText("Cannot read properties of null")).toBeInTheDocument();
   });
 });
