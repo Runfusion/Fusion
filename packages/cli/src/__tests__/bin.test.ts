@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -16,6 +16,7 @@ const commandMocks = vi.hoisted(() => ({
   runTaskList: vi.fn(),
   runTaskMove: vi.fn(),
   runTaskMerge: vi.fn(),
+  runTaskReconcile: vi.fn(),
   runTaskUpdate: vi.fn(),
   runTaskDeps: vi.fn(),
   runTaskLog: vi.fn(),
@@ -139,7 +140,10 @@ const commandMocks = vi.hoisted(() => ({
 
 const onboardEnv = vi.hoisted(() => ({
   centralDbPath: "/tmp/fusion-central.db",
+  settingsDir: "",
 }));
+
+const dashboardCliState = vi.hoisted(() => ({ shouldSupervise: false }));
 
 const ttyState = vi.hoisted(() => ({
   isTTYAvailable: true,
@@ -150,6 +154,9 @@ vi.mock("@fusion/core", async () => {
   return {
     ...actual,
     getDefaultCentralDbPath: vi.fn(() => onboardEnv.centralDbPath),
+    GlobalSettingsStore: class extends actual.GlobalSettingsStore {
+      constructor() { super(onboardEnv.settingsDir || undefined); }
+    },
   };
 });
 
@@ -162,7 +169,7 @@ vi.mock("../commands/onboard.js", () => ({ runOnboard: commandMocks.runOnboard }
 vi.mock("../commands/dashboard.js", () => ({
   runDashboard: commandMocks.runDashboard,
   // FNXC:CliTests 2026-07-13-08:20: bin.ts now imports shouldSuperviseDashboard (supervision is the default) and runDashboardSupervised from dashboard.js; mock must surface both so the no-args dashboard launch test reaches runDashboard instead of failing on an undefined import.
-  shouldSuperviseDashboard: vi.fn(() => false),
+  shouldSuperviseDashboard: vi.fn(() => dashboardCliState.shouldSupervise),
   runDashboardSupervised: commandMocks.runDashboardSupervised,
 }));
 vi.mock("../commands/serve.js", () => ({ runServe: commandMocks.runServe }));
@@ -175,6 +182,7 @@ vi.mock("../commands/task.js", () => ({
   runTaskList: commandMocks.runTaskList,
   runTaskMove: commandMocks.runTaskMove,
   runTaskMerge: commandMocks.runTaskMerge,
+  runTaskReconcile: commandMocks.runTaskReconcile,
   runTaskUpdate: commandMocks.runTaskUpdate,
   runTaskDeps: commandMocks.runTaskDeps,
   runTaskLog: commandMocks.runTaskLog,
@@ -219,6 +227,7 @@ vi.mock("../commands/settings.js", () => ({
 }));
 vi.mock("../commands/settings-export.js", () => ({ runSettingsExport: commandMocks.runSettingsExport }));
 vi.mock("../commands/settings-import.js", () => ({ runSettingsImport: commandMocks.runSettingsImport }));
+vi.mock("../commands/mcp-memory-server.js", () => ({ runMcpMemoryServer: vi.fn() }));
 vi.mock("../commands/org-export.js", () => ({ runOrgExport: commandMocks.runOrgExport }));
 vi.mock("../commands/org-import.js", () => ({ runOrgImport: commandMocks.runOrgImport }));
 
@@ -332,6 +341,71 @@ vi.mock("../commands/research.js", () => ({
   runResearchCancel: commandMocks.runResearchCancel,
   runResearchRetry: commandMocks.runResearchRetry,
 }));
+
+describe("actual stored dashboard port dispatch", () => {
+  let root: string;
+
+  beforeAll(async () => {
+    await vi.importActual("@fusion/core");
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    root = mkdtempSync(join(tmpdir(), "fusion settings port "));
+    onboardEnv.settingsDir = root;
+    onboardEnv.centralDbPath = join(root, "central.db");
+    dashboardCliState.shouldSupervise = false;
+    process.env.PI_PACKAGE_DIR = root;
+    writeFileSync(
+      join(root, "package.json"),
+      JSON.stringify({ name: "synthetic-pi", version: "0.0.0", piConfig: { configDir: ".fusion" } }),
+    );
+    process.env.FUSION_SKIP_ONBOARDING = "1";
+    commandMocks.runDashboard.mockResolvedValue({ dispose: vi.fn() });
+    commandMocks.runDashboardSupervised.mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    process.argv = originalArgv;
+    process.exit = originalExit;
+    if (originalPiPackageDir === undefined) delete process.env.PI_PACKAGE_DIR;
+    else process.env.PI_PACKAGE_DIR = originalPiPackageDir;
+    if (originalSkipOnboardingEnv === undefined) delete process.env.FUSION_SKIP_ONBOARDING;
+    else process.env.FUSION_SKIP_ONBOARDING = originalSkipOnboardingEnv;
+    rmSync(root, { recursive: true, force: true });
+    onboardEnv.settingsDir = "";
+  });
+
+  async function storePort(value: number) {
+    writeFileSync(join(root, "settings.json"), JSON.stringify({ daemonPort: value }));
+    const actual = await vi.importActual<typeof import("@fusion/core")>("@fusion/core");
+    expect((await new actual.GlobalSettingsStore(root).getSettings()).daemonPort).toBe(value);
+  }
+
+  it("control: omitted setting retains the default dashboard port", async () => {
+    await runBin(["dashboard", "--no-supervise"]);
+    expect(commandMocks.runDashboard).toHaveBeenCalledWith(4040, expect.any(Object));
+  }, 15_000);
+
+  it.each([6789, 0])("control: explicit CLI port %i wins over stored settings", async (port) => {
+    await storePort(5678);
+    await runBin(["dashboard", "--no-supervise", "--port", String(port)]);
+    expect(commandMocks.runDashboard).toHaveBeenCalledWith(port, expect.any(Object));
+  }, 15_000);
+
+  it("omitted CLI port preserves the stored daemonPort preference", async () => {
+    await storePort(5678);
+    await runBin(["dashboard", "--no-supervise"]);
+    expect(commandMocks.runDashboard).toHaveBeenCalledWith(5678, expect.any(Object));
+  });
+
+  it("supervised dispatch uses the same stored port", async () => {
+    await storePort(5678);
+    dashboardCliState.shouldSupervise = true;
+    await runBin(["dashboard"]);
+    expect(commandMocks.runDashboardSupervised).toHaveBeenCalledWith(5678);
+  });
+});
 
 const originalArgv = process.argv;
 const originalExit = process.exit;
