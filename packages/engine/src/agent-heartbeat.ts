@@ -94,6 +94,7 @@ FNXC:HeartbeatRecovery 2026-07-15-08:50:
 heartbeat-model-unavailable parks from assignment/on-demand runs were terminal until a human Retry, even when the next attempt succeeds with unchanged credentials (false "model unavailable" / registry / credential-probe blips). Admit those parks to the same bounded heartbeatErrorRecovery budget as error-state recovery so the engine auto-retries like operator Retry, while genuine missing credentials re-park after the budget exhausts.
 */
 import { acquireTaskWorktree, WorktreeBaseRefreshError } from "./worktree/worktree-acquisition.js";
+import { resolvePendingOverlapWaits } from "./workflows/overlap-plan-revalidation.js";
 import { createRunAuditor, generateSyntheticRunId, type DatabaseMutationType, type EngineRunContext } from "./util/run-audit.js";
 import { promptWithFallback } from "./pi.js";
 import { withRateLimitRetry } from "./errors/rate-limit-retry.js";
@@ -3017,6 +3018,18 @@ export class HeartbeatMonitor {
         }
 
         let sessionCwd = rootDir;
+        /*
+        FNXC:OverlapWaitSynchronization 2026-09-18-01:45:
+        A heartbeat-driven implementation session is another resume path, same as the graph's own
+        executeWorkflowGraph entry (executor/execute-workflow-graph.ts). Resolve any pending
+        overlap-wait episodes here too so a heartbeat run cannot proceed on stale knowledge of what
+        a predecessor delivered while the task sat between drain ticks. Best-effort and gated on the
+        store actually exposing the overlap-wait methods; resolvePendingOverlapWaits already
+        completes each episode (claim -> receipt -> "delivered"/"revalidation-pending") rather than
+        deferring acknowledgement until after the prompt is sent, which keeps this heartbeat
+        integration self-contained without a separate post-send ack step.
+        */
+        let overlapResumeContext: string | undefined;
         if (!isNoTaskRun && taskDetail) {
           try {
             const acquisition = await acquireTaskWorktree({
@@ -3032,6 +3045,15 @@ export class HeartbeatMonitor {
               refreshStaleBase: true,
             });
             sessionCwd = acquisition.worktreePath;
+            if (typeof taskStore.listTaskOverlapWaits === "function") {
+              try {
+                const resolutions = await resolvePendingOverlapWaits({ store: taskStore, task: taskDetail, owner: `heartbeat:${agentId}` });
+                const briefings = resolutions.map((resolution) => resolution.receipt.briefing).filter((briefing): briefing is string => Boolean(briefing));
+                if (briefings.length > 0) overlapResumeContext = briefings.join("\n");
+              } catch (overlapErr) {
+                heartbeatLog.warn(`Heartbeat overlap-wait resolution failed for ${agentId}: ${overlapErr instanceof Error ? overlapErr.message : String(overlapErr)}`);
+              }
+            }
           } catch (worktreeErr) {
             const detail = worktreeErr instanceof Error ? worktreeErr.message : String(worktreeErr);
             const refreshKind = worktreeErr instanceof WorktreeBaseRefreshError
@@ -3684,6 +3706,9 @@ export class HeartbeatMonitor {
           FNXC:AgentHeartbeat 2026-07-12-21:05:
           PR #2027 review (side-effect replay): the retry re-prompts the SAME session, whose transcript already contains any tool calls completed before the failure, so the model continues from its partial work rather than blindly re-executing it — the same continuation semantics executor/triage/merger rely on under this wrapper. A rotation 401 additionally fails on the turn's FIRST provider call (the stale token never reaches a tool call), so the dominant retry case has no partial work to duplicate.
           */
+          if (overlapResumeContext) {
+            executionPrompt = [executionPrompt, "", "## Overlap wait synchronization", overlapResumeContext].join("\n");
+          }
           let rotationEvent: import("./credential-instance-rotation.js").RotationEvent | undefined;
           let rotationDeclined = false;
           let activeInstanceId = heartbeatSessionModels.credentialInstanceId ?? DEFAULT_PROVIDER_INSTANCE_ID;

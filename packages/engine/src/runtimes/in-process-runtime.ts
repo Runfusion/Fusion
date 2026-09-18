@@ -57,7 +57,7 @@ import { StuckTaskDetector } from "../healing/stuck-task-detector.js";
 import { UsageLimitPauser } from "../errors/usage-limit-detector.js";
 import { CredentialInstanceRotator } from "../credential-instance-rotation.js";
 import { createFusionAuthStorage } from "../auth/auth-storage.js";
-import { SelfHealingManager, VALIDATOR_RUN_STALE_MAX_AGE_MS } from "../self-healing.js";
+import { SelfHealingManager, VALIDATOR_RUN_STALE_MAX_AGE_MS, type OverlapBlockerRelease } from "../self-healing.js";
 import { RestartRecoveryCoordinator } from "../healing/restart-recovery-coordinator.js";
 import { MeshLeaseManager } from "../project/mesh-lease-manager.js";
 import { PluginRunner } from "../plugins/plugin-runner.js";
@@ -706,12 +706,6 @@ export const FILE_SCOPE_CONTINUATION_WAIT_PREFIX = "file-scope:";
 
 function fileScopeContinuationWaitReason(blockerId: string): string {
   return `${FILE_SCOPE_CONTINUATION_WAIT_PREFIX}${blockerId}`;
-}
-
-/** One task's file-scope blocker having cleared; used to target the exact held continuations it can release. */
-export interface OverlapBlockerRelease {
-  taskId: string;
-  blockerId: string;
 }
 
 /**
@@ -2095,6 +2089,19 @@ export class InProcessRuntime
             },
           });
           return !!run;
+        },
+        /*
+        FNXC:OverlapWaitSynchronization 2026-09-18-01:05:
+        A self-healing sweep can clear `overlapBlockedBy` for a task whose holder died before it
+        ever published a normal overlap-wait release (see FN-329's file-scope wake pair). Reuse the
+        same wake path an ordinary release uses so the freed continuation resumes immediately
+        instead of waiting for the next periodic drain tick.
+        */
+        onOverlapBlockersReleased: async (releases) => {
+          await releaseFileScopeWaitingContinuations(this.taskStore, releases).catch((error) => {
+            runtimeLog.warn(`overlap-blocker release wake failed: ${error instanceof Error ? error.message : String(error)}`);
+          });
+          this.kickWorkflowContinuationProcessor();
         },
       });
       /*
