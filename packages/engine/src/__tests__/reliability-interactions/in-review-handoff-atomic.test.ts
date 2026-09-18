@@ -29,7 +29,7 @@ describeIfGit("FN-5241 reliability interactions: in-review handoff atomic", () =
   }
 
   /*
-  FNXC:ReviewLaneDispatch 2026-09-09 (STAS-205):
+  FNXC:ReviewLaneDispatch 2026-09-09-00:00 (STAS-205):
   The review-entry event is written in the same transaction as the handoff's column change, so it
   belongs in this rollback inventory. An event that outlived a rolled-back handoff would make the
   dispatch sweep chase a review that never started, and an event missing after a committed handoff

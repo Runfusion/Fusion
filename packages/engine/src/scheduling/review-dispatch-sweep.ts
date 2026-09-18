@@ -22,7 +22,7 @@ import type { HeartbeatMonitor } from "../agent-heartbeat.js";
 import { createLogger } from "../logger.js";
 
 /*
-FNXC:ReviewLaneDispatch 2026-09-09 (STAS-205):
+FNXC:ReviewLaneDispatch 2026-09-09-00:00 (STAS-205):
 Before this sweep, review work began ONLY inside a reviewer agent's own heartbeat procedure, so
 the start latency of every review was that agent's patrol interval (6 h for the live reviewer) —
 and a card moved into review between patrols waited hours, or never, if no patrol ever saw it.
@@ -180,7 +180,7 @@ export function classifyReviewCard(input: {
   const nextRound = rows.length + 1;
 
   /*
-  FNXC:ReviewLaneDispatch 2026-09-09 (STAS-205):
+  FNXC:ReviewLaneDispatch 2026-09-09-00:00 (STAS-205):
   A recorded verdict outranks every ledger signal: the review already happened, so dispatching a
   second one would duplicate a verdict instead of fixing missing work. `pending` is excluded on
   purpose — a step that was dispatched but never received a verdict callback is the defect shape
@@ -203,6 +203,17 @@ export function classifyReviewCard(input: {
     if (isVerdictRecorded(newest)) return skip("verdict-recorded");
     if (newest.status === "skipped") return skip("nothing-reviewable");
     if (unfinishedAttempts(rows) >= input.maxAttempts) return skip("parked");
+    /*
+    FNXC:ReviewLaneDispatch 2026-09-18-09:10 (Greptile P1 triage on the rebased head):
+    This branch deliberately has NO activeRun guard, unlike the live-row branch above. Reaching
+    here means the newest ledger row is closed-but-unresolved (invalidated): the attempt it
+    describes can no longer produce a counted verdict, so a still-live session behind it is a
+    zombie whose callbacks the ledger will discard anyway. Skipping while that zombie runs would
+    strand the card forever — the exact Fusion#1946 defect shape the sweep exists to rescue. The
+    replacement's executeHeartbeat terminates the zombie before starting real work, which is the
+    terminate-then-fence ordering; the "dispatches replacement over an active heartbeat" test
+    asserts this behavior on purpose.
+    */
     return { bucket: "stalled-attempt", dispatch: true, supersedeFirst: false, nextRound };
   }
 

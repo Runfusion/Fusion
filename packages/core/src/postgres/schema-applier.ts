@@ -277,8 +277,8 @@ export const CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION = "0073";
 export const OVERLAP_WAIT_SYNC_VERSION = "0084";
 /** FNXC:ForkedProductLine 2026-09-18-19:40: relocates (never deletes) tables/columns owned by upstream features this binary permanently excludes, out of the active `project` schema and into `deprecated_excluded_features`. */
 export const DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION = "0085";
-/** FNXC:ReviewLaneDispatch 2026-09-09 (STAS-205): upgraded projects need the live-reviewer-run partial unique index before the dispatch sweep can claim one attempt per card. */
-/* FNXC:ReviewLaneDispatch 2026-09-15 (PR rebase onto FN-393/FN-408): renumbered 0079 -> 0081 here. Bookkeeping keys on the version STRING, so a slot upstream already recorded (0079 workflow identity, 0080 human plan approval) would make `applied.includes(...)` report the ledger as applied, the SQL would never run, and the sweep would lose its one-live-attempt-per-card enforcement silently. Renumbered again to 0084 (FN-509/human-approval wave). */
+/** FNXC:ReviewLaneDispatch 2026-09-09-00:00 (STAS-205): upgraded projects need the live-reviewer-run partial unique index before the dispatch sweep can claim one attempt per card. */
+/* FNXC:ReviewLaneDispatch 2026-09-15-00:00 (PR rebase onto FN-393/FN-408): renumbered 0079 -> 0081 here. Bookkeeping keys on the version STRING, so a slot upstream already recorded (0079 workflow identity, 0080 human plan approval) would make `applied.includes(...)` report the ledger as applied, the SQL would never run, and the sweep would lose its one-live-attempt-per-card enforcement silently. Renumbered again to 0084 (FN-509/human-approval wave). */
 /* FNXC:ReviewLaneDispatch 2026-09-19-19:39 (PR rebase onto main's force-replaced history): the force-replaced fork excludes upstream's project-notes/whiteboards/workflow-identity/plan-approval/pause-accounting/queue-order/merge-approval migrations entirely (their 0074-0083 slots are gone), and its own overlap-wait-sync + excluded-feature-schema migrations claim 0084 and 0085. Renumbered again to 0086, the next open slot on this history. */
 export const REVIEW_LANE_LEDGER_VERSION = "0086";
 
@@ -1641,13 +1641,13 @@ export async function applySchemaBaseline(
       schemaChanged = true;
     }
     /*
-    FNXC:ReviewLaneDispatch 2026-09-09 (STAS-205):
+    FNXC:ReviewLaneDispatch 2026-09-09-00:00 (STAS-205):
     Registered after the highest released migration so it sorts after every released schema change.
     The probe checks the two enforceable facts the dispatch sweep depends on instead of trusting the
     bookkeeping row alone: a database that already carries both objects records the version without
     redundant SQL, and a database missing either object gets the migration even if an earlier
     partial run recorded the version.
-    FNXC:ReviewLaneDispatch 2026-09-14 (clean-rebase-v2 replay):
+    FNXC:ReviewLaneDispatch 2026-09-14-00:00 (clean-rebase-v2 replay):
     The drift check only makes sense where the product tables exist, so it is gated on their
     presence. A recorded marker in a database without `task_reviewer_runs`/`task_lifecycle_events`
     is either a fresh/empty fixture (the baseline path owns it) or a corrupt install whose real
@@ -1697,7 +1697,7 @@ export async function applySchemaBaseline(
     `)) as unknown as Array<{ missing: boolean }>)[0]?.missing ?? true;
     if (!reviewLaneLedgerAlreadyApplied || reviewLaneLedgerMissing) {
       /*
-      FNXC:ReviewLaneDispatch 2026-09-15 (STAS-205 upstream port): this block's
+      FNXC:ReviewLaneDispatch 2026-09-15-00:00 (STAS-205 upstream port): this block's
       bookkeeping marker is written by the migration SQL itself (see
       0086_stas_205_review_lane_ledger.sql), atomically with the DDL, instead of
       the inline parameterized-INSERT template every sibling block uses —
