@@ -1,5 +1,6 @@
 import type { Task } from "../types/task/task-core.js";
 import type { PatchnodeDay, PatchnodeEntry, PatchnodeEntryKind } from "../types/task/patchnode.js";
+import { extractPatchnodeProductSummary } from "./patchnode-product-summary.js";
 
 /*
 FNXC:PatchnodeLedger 2026-08-28-12:16:
@@ -61,14 +62,24 @@ export function buildPatchnodeSnapshotLabel(task: PatchnodeLabelInput): string {
   return task.id.trim();
 }
 
-type PatchnodeTaskSnapshot = Pick<Task, "id" | "title" | "description" | "summary">;
+type PatchnodeTaskSnapshot = Pick<Task, "id" | "title" | "description" | "prompt">;
 
 /*
 FNXC:PatchnodeLedger 2026-09-15-23:26:
-FN-444: `body` is now the point-in-time summary ALONE. It used to fall back to the title and then
-the id, which merely replaced one duplication with another once the label was fixed — the card
-would have shown the label twice, or the id twice for a task with neither title nor description.
-An empty string keeps the NOT NULL column satisfied and lets each read surface omit the body row.
+FN-444: `body` used to fall back to the title and then the id, which merely replaced one duplication
+with another once the label was fixed — the card would have shown the label twice, or the id twice
+for a task with neither title nor description. FN-444 reduced it to the point-in-time completion
+summary ALONE. An empty string keeps the NOT NULL column satisfied and lets each read surface omit
+the body row.
+
+FNXC:PatchnodeLedger 2026-09-18-02:48:
+FN-526 REPLACES that guarantee: the ledger body is now the plan's product summary
+(`extractPatchnodeProductSummary`, `## What This Delivers` -> `## Before → After Transformation`),
+never `task.summary`. The Completion Summary is a technical end-of-run report; under a History
+delivery the operator wants to re-read what the task was meant to deliver. `task.summary` is
+DELIBERATELY no longer read by this builder at all, and there is NO fallback to it: a plan with no
+product section yields an empty body and the card shows no description line, which is the operator's
+explicit request. Callers supply `prompt`; a missing or unreadable plan is simply `undefined`.
 */
 export function buildPatchnodeEntryInput(
   task: PatchnodeTaskSnapshot,
@@ -77,7 +88,7 @@ export function buildPatchnodeEntryInput(
 ): PatchnodeEntry {
   const taskId = task.id.trim();
   const title = buildPatchnodeSnapshotLabel({ ...task, id: taskId });
-  const body = task.summary?.trim() ?? "";
+  const body = extractPatchnodeProductSummary(task.prompt);
   const occurrenceKey = toPatchnodeOccurrenceKey(occurredAt);
   return {
     entryId: buildPatchnodeEntryId(kind, taskId, occurrenceKey),

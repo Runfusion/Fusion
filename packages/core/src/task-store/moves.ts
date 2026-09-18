@@ -8,6 +8,7 @@
  */
 import {type TaskStore, type MoveTaskOptions, type MoveTaskInternalOptions, storeLog} from "../store.js";
 import { buildPatchnodeEntryInput } from "../board/patchnode.js";
+import { readTaskPlanPrompt } from "./patchnode-plan-source.js";
 import { appendPatchnodeEntryInTransaction } from "./async/async-patchnode.js";
 import * as schema from "../postgres/schema/index.js";
 import {TaskDeletedError, HandoffInvariantViolationError, TransitionRejectionError} from "./errors.js";
@@ -1253,11 +1254,20 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
       FNXC:PatchnodeLedger 2026-08-28-13:35:
       Completion capture requires the store's real project partition. An unbound writer must fail this transaction instead of manufacturing a legacy project id whose entry the project-scoped feed can never read.
       */
+      /*
+      FNXC:PatchnodeLedger 2026-09-18-02:48:
+      FN-526 sources the ledger body from the plan's product summary, so a bounded `PROMPT.md` read
+      happens INSIDE the capture transaction. That is the accepted trade-off: the entry must still
+      commit in the same transaction as the move (FN-227 invariant), and the plan is the only place
+      the product summary exists. The read is tolerant — an unreadable or absent plan yields `null`,
+      hence an empty description, and NEVER fails the move.
+      */
       if (toColumn === (moveLifecycle?.complete ?? "done") && fromColumn !== toColumn && !internal.terminalFailureApply) {
+        const prompt = await readTaskPlanPrompt(dir);
         await appendPatchnodeEntryInTransaction(
           tx,
           layer.projectId ?? "",
-          buildPatchnodeEntryInput(task, "completed", task.columnMovedAt ?? movedAt),
+          buildPatchnodeEntryInput({ ...task, prompt: prompt ?? undefined }, "completed", task.columnMovedAt ?? movedAt),
         );
       }
 

@@ -214,3 +214,57 @@ describe("extractTaskBeforeAfterTransformation", () => {
     expect(extractTaskBeforeAfterTransformation(legacyOnly)).toBe(extractTaskProductSummary(legacyOnly)?.markdown);
   });
 });
+
+/*
+FNXC:PatchnodeLedger 2026-09-18-02:48:
+FN-526 duplicates the History ledger's product-summary rule into `@fusion/core`
+(`packages/core/src/board/patchnode-product-summary.ts`) because neither package can import the
+other's runtime helper (the dashboard browser bundle aliases `@fusion/core` to `types.ts`). These
+fixtures are copied LITERALLY from `packages/core/src/__tests__/patchnode-projection.test.ts` so
+section selection cannot drift: editing one side requires editing the other.
+*/
+describe("core Patchnode mirror convergence", () => {
+  const PLAN_WITH_BOTH_SECTIONS = [
+    "# Task: FN-1 - Titre",
+    "",
+    "## What This Delivers",
+    "",
+    "- Les opérateurs relisent l'intention.",
+    "- La description vient du plan.",
+    "",
+    "## Before → After Transformation",
+    "",
+    "- **Before:** ancien corps.",
+    "",
+    "## Mission",
+    "",
+    "Technique.",
+    "",
+  ].join("\n");
+
+  const PLAN_BEFORE_AFTER_ONLY = [
+    "# Task: FN-1 - Titre",
+    "",
+    "## Before -> After Transformation",
+    "",
+    "- **Before:** `body` venait du résumé.",
+    "",
+    "## Mission",
+    "",
+    "Technique.",
+    "",
+  ].join("\n");
+
+  const PLAN_MISSION_ONLY = "# Task: FN-1 - Titre\n\n## Mission\n\nTechnique seulement.\n";
+
+  it("selects the same plan section as the core extractor on the shared fixtures", () => {
+    expect(extractTaskProductSummary(PLAN_WITH_BOTH_SECTIONS)?.source).toBe("what-this-delivers");
+    expect(extractTaskProductSummary(PLAN_WITH_BOTH_SECTIONS)?.markdown).toContain("Les opérateurs relisent l'intention.");
+    expect(extractTaskProductSummary(PLAN_WITH_BOTH_SECTIONS)?.markdown).not.toContain("ancien corps.");
+
+    expect(extractTaskProductSummary(PLAN_BEFORE_AFTER_ONLY)?.source).toBe("before-after");
+    expect(extractTaskProductSummary(PLAN_BEFORE_AFTER_ONLY)?.markdown).toContain("venait du résumé.");
+
+    expect(extractTaskProductSummary(PLAN_MISSION_ONLY)).toBeNull();
+  });
+});

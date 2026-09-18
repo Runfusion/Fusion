@@ -1,5 +1,6 @@
-import { and, desc, eq, gt, gte, ilike, inArray, isNotNull, isNull, lt, lte, or, sql } from "drizzle-orm";
+import { and, desc, eq, gt, gte, ilike, inArray, isNotNull, isNull, lt, lte, ne, or, sql } from "drizzle-orm";
 import { buildPatchnodeEntryId, buildPatchnodeEntryInput, buildPatchnodeSnapshotLabel } from "../../board/patchnode.js";
+import { extractPatchnodeProductSummary } from "../../board/patchnode-product-summary.js";
 import { storeLog } from "../../store.js";
 import * as schema from "../../postgres/schema/index.js";
 import type { AsyncDataLayer, DbTransaction } from "../../postgres/data-layer.js";
@@ -15,6 +16,9 @@ Backfill is bounded and insert-only. A delivery superseded before Patchnode ship
 
 FNXC:PatchnodeLedger 2026-09-15-23:26:
 FN-444 adds the one exception: a bounded label-repair pass that rewrites the degenerate `title = task_id` marker of an EXISTING row to the live task's canonical label. It creates no entry and never rewrites a real summary, so the insert-only rule above still holds for delivery evidence itself.
+
+FNXC:PatchnodeLedger 2026-09-18-02:48:
+FN-526 adds the second exception, on the same pattern: a bounded, provenance-proved pass that rewrites a body which is still the old Completion Summary (`entries.body = tasks.summary`) with the plan's product summary. It too creates no entry and no occurrence — it corrects the PROVENANCE of a display field. The three insertion passes are fed the task plan by injection so they can never write an unrepairable empty body.
 */
 
 const RECONCILE_PAGE_SIZE = 500;
@@ -75,14 +79,21 @@ export async function appendPatchnodeEntry(layer: AsyncDataLayer, input: Patchno
   return layer.transactionImmediate((tx) => appendPatchnodeEntryInTransaction(tx, projectId, input));
 }
 
+/*
+FNXC:PatchnodeLedger 2026-09-18-02:48:
+FN-526: the ledger body is the plan's product summary, so the caller passes the task plan EXPLICITLY
+rather than having this helper read the filesystem. That keeps the transaction-scoped capture
+testable without a filesystem and leaves plan-read tolerance with the callers that own a task dir.
+*/
 export async function capturePatchnodeCompletionInTransaction(
   tx: DbTransaction,
   projectId: string,
   task: Task,
   completeColumns: ReadonlySet<string>,
+  prompt: string | null,
 ): Promise<PatchnodeEntry | null> {
   if (!completeColumns.has(task.column) || !task.columnMovedAt || !Number.isFinite(Date.parse(task.columnMovedAt))) return null;
-  return appendPatchnodeEntryInTransaction(tx, projectId, buildPatchnodeEntryInput(task, "completed", task.columnMovedAt));
+  return appendPatchnodeEntryInTransaction(tx, projectId, buildPatchnodeEntryInput({ ...task, prompt: prompt ?? undefined }, "completed", task.columnMovedAt));
 }
 
 async function findLatestCompletionWithDb(
@@ -215,8 +226,13 @@ export type PatchnodeReconcileResult = {
   revertedInserted: number;
   archivedBackfilled: number;
   labelsRepaired: number;
+  /** FN-526: existing entries whose body was provably the old Completion Summary and was rewritten from the plan. */
+  productSummariesRepaired: number;
   truncated: boolean;
 };
+
+/** FN-526: injected plan reader. Absent (pure in-memory callers) means "no plan" — empty bodies, never an error. */
+export type PatchnodeReconcileOptions = { readTaskPrompt?: (taskId: string) => Promise<string | null> };
 
 type ReconcileTaskRow = {
   id: string;
@@ -235,11 +251,20 @@ FN-444: the snapshot carries the real description because `buildPatchnodeSnapsho
 titleless task's label from it. The hardcoded empty description made every backfilled delivery
 (live completion, revert, archived) persist the task id as its own label.
 */
-const asTaskSnapshot = (row: ReconcileTaskRow): Task => ({
+const asTaskSnapshot = (row: ReconcileTaskRow, prompt: string | null): Task => ({
   id: row.id,
   title: row.title ?? undefined,
   description: row.description ?? "",
   summary: row.summary ?? undefined,
+  /*
+  FNXC:PatchnodeLedger 2026-09-18-02:48:
+  FN-526: the snapshot must carry the task plan because `buildPatchnodeEntryInput` derives the ledger
+  body from its product summary. Without it every reconciliation-inserted delivery would persist an
+  EMPTY body that the repair pass below cannot fix — its provenance marker requires
+  `entries.body = tasks.summary`, which an empty body can never satisfy. `summary` is retained on the
+  snapshot for the rest of the `Task` shape only; it no longer feeds `body`.
+  */
+  prompt: prompt ?? undefined,
   column: row.column as Column,
   currentStep: 0,
   steps: [],
@@ -282,13 +307,48 @@ export function planPatchnodeLabelRepair(
   return { title, body: entry.body === entry.taskId ? "" : entry.body };
 }
 
+/*
+FNXC:PatchnodeLedger 2026-09-18-02:48:
+FN-526: a legacy entry is repairable ONLY when its stored body is provably the old Completion
+Summary. That proof is the SQL provenance marker `entries.body = tasks.summary` applied by the
+caller; this planner then decides what the body should become. It returns `null` when the stored
+body already equals the plan's product summary (idempotence), and `{ body: "" }` when the plan
+exposes no product section — deliberately DELETING the old Completion Summary, because the operator
+asked for no description rather than a technical end-of-run report.
+*/
+export function planPatchnodeProductSummaryRepair(
+  entry: Pick<PatchnodeEntry, "body">,
+  prompt: string | null,
+): { body: string } | null {
+  const body = extractPatchnodeProductSummary(prompt);
+  return body === entry.body ? null : { body };
+}
+
 export async function reconcilePatchnodeFromLiveTasks(
   layer: AsyncDataLayer,
   completeColumns: ReadonlySet<string>,
+  options: PatchnodeReconcileOptions = {},
 ): Promise<PatchnodeReconcileResult> {
   const projectId = requireProjectId(layer);
-  const result: PatchnodeReconcileResult = { completedInserted: 0, revertedInserted: 0, archivedBackfilled: 0, labelsRepaired: 0, truncated: false };
+  const result: PatchnodeReconcileResult = { completedInserted: 0, revertedInserted: 0, archivedBackfilled: 0, labelsRepaired: 0, productSummariesRepaired: 0, truncated: false };
   const tasks = schema.project.tasks;
+
+  /*
+  FNXC:PatchnodeLedger 2026-09-18-02:48:
+  FN-526: ONE per-run plan cache shared by all five passes, so a task appearing in several passes
+  (completion + revert, or several entries) costs at most ONE `PROMPT.md` read per run — never one
+  per entry. Reads stay sequential inside the already-sequential row loops and remain bounded by the
+  unchanged `RECONCILE_PAGE_SIZE` / `RECONCILE_MAX_PAGES` caps.
+  */
+  const readTaskPrompt = options.readTaskPrompt ?? (async () => null);
+  const promptCache = new Map<string, Promise<string | null>>();
+  const loadPrompt = (taskId: string): Promise<string | null> => {
+    const cached = promptCache.get(taskId);
+    if (cached) return cached;
+    const pending = readTaskPrompt(taskId).catch(() => null);
+    promptCache.set(taskId, pending);
+    return pending;
+  };
   const selectShape = {
     id: tasks.id,
     title: tasks.title,
@@ -311,7 +371,7 @@ export async function reconcilePatchnodeFromLiveTasks(
     )).orderBy(desc(tasks.columnMovedAt), desc(tasks.id)).limit(RECONCILE_PAGE_SIZE) as ReconcileTaskRow[];
     for (const row of rows) {
       if (!row.columnMovedAt || !Number.isFinite(Date.parse(row.columnMovedAt))) continue;
-      if (await appendPatchnodeEntry(layer, buildPatchnodeEntryInput(asTaskSnapshot(row), "completed", row.columnMovedAt))) result.completedInserted += 1;
+      if (await appendPatchnodeEntry(layer, buildPatchnodeEntryInput(asTaskSnapshot(row, await loadPrompt(row.id)), "completed", row.columnMovedAt))) result.completedInserted += 1;
     }
     if (rows.length < RECONCILE_PAGE_SIZE) break;
     const last = rows.at(-1)!;
@@ -346,7 +406,7 @@ export async function reconcilePatchnodeFromLiveTasks(
       const completion = await findLatestCompletionWithDb(layer.db, projectId, row.id, { noLaterThan: marker.revertedAt });
       const occurrenceKey = completion?.occurrenceKey ?? "none";
       const input: PatchnodeInput = {
-        ...buildPatchnodeEntryInput(asTaskSnapshot(row), "reverted", marker.revertedAt),
+        ...buildPatchnodeEntryInput(asTaskSnapshot(row, await loadPrompt(row.id)), "reverted", marker.revertedAt),
         entryId: buildPatchnodeEntryId("reverted", row.id, occurrenceKey),
         occurrenceKey,
         revertsEntryId: completion?.entryId ?? null,
@@ -378,7 +438,8 @@ export async function reconcilePatchnodeFromLiveTasks(
       }));
       for (const row of rows) {
         if (!completeColumns.has(byId.get(row.id)?.preArchiveColumn ?? "") || !row.columnMovedAt || !Number.isFinite(Date.parse(row.columnMovedAt))) continue;
-        if (await appendPatchnodeEntry(layer, buildPatchnodeEntryInput(asTaskSnapshot(row), "completed", row.columnMovedAt))) result.archivedBackfilled += 1;
+        // FN-526: an archived/soft-deleted task may no longer expose a readable PROMPT.md; that yields an empty body and never fails the pass.
+        if (await appendPatchnodeEntry(layer, buildPatchnodeEntryInput(asTaskSnapshot(row, await loadPrompt(row.id)), "completed", row.columnMovedAt))) result.archivedBackfilled += 1;
       }
     }
     if (rows.length < RECONCILE_PAGE_SIZE) break;
@@ -427,6 +488,48 @@ export async function reconcilePatchnodeFromLiveTasks(
     }
     if (rows.length < RECONCILE_PAGE_SIZE) break;
     repairCursor = rows.at(-1)!.entryId;
+    if (page === RECONCILE_MAX_PAGES - 1) result.truncated = true;
+  }
+
+  /*
+  FNXC:PatchnodeLedger 2026-09-18-02:48:
+  FN-526: the fifth pass repairs the provenance of an EXISTING body, and like the FN-444 label repair
+  it does not break the insert-only guarantee: it invents no delivery, no occurrence and no lane. The
+  admission rule is the whole safety argument — `entries.body = tasks.summary` (with a non-empty live
+  summary) is the only available proof that a stored body really came from the pre-FN-526 Completion
+  Summary. Anything else (a body already carrying product text, an empty body, a task with no
+  summary, a soft-deleted or archived task) is left exactly as it is. The pass is idempotent because a
+  rewritten row no longer matches the marker.
+  */
+  let productRepairCursor = "";
+  for (let page = 0; page < RECONCILE_MAX_PAGES; page += 1) {
+    const entries = schema.project.patchnodeEntries;
+    const rows = await layer.db.select({
+      entryId: entries.entryId,
+      taskId: entries.taskId,
+      body: entries.body,
+    }).from(entries).innerJoin(tasks, and(
+      eq(tasks.projectId, entries.projectId),
+      eq(tasks.id, entries.taskId),
+      isNull(tasks.deletedAt),
+    )).where(and(
+      eq(entries.projectId, projectId),
+      isNotNull(tasks.summary),
+      ne(tasks.summary, ""),
+      eq(entries.body, tasks.summary),
+      productRepairCursor ? gt(entries.entryId, productRepairCursor) : undefined,
+    )).orderBy(entries.entryId).limit(RECONCILE_PAGE_SIZE);
+    for (const row of rows) {
+      const repair = planPatchnodeProductSummaryRepair(row, await loadPrompt(row.taskId));
+      if (!repair) continue;
+      const updated = await layer.db.update(entries).set(repair).where(and(
+        eq(entries.projectId, projectId),
+        eq(entries.entryId, row.entryId),
+      )).returning({ entryId: entries.entryId });
+      if (updated.length) result.productSummariesRepaired += 1;
+    }
+    if (rows.length < RECONCILE_PAGE_SIZE) break;
+    productRepairCursor = rows.at(-1)!.entryId;
     if (page === RECONCILE_MAX_PAGES - 1) result.truncated = true;
   }
 

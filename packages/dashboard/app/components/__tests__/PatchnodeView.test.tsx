@@ -198,6 +198,22 @@ describe("PatchnodeView", () => {
     });
 
     /*
+    FNXC:PatchnodeView 2026-09-18-02:48:
+    FN-526 symptom verification at the render surface: the description line under a delivery is the
+    plan's product summary the ledger now captures, in product language, and a delivery with no
+    product section mounts NO description element at all — never an empty shell, and never a fallback
+    to the technical Completion Summary.
+    */
+    it("renders the captured product summary under the label", async () => {
+      fetchPatchnode.mockResolvedValue(singleEntry({ body: "Les opérateurs relisent l'intention de la tâche." }));
+      render(<PatchnodeView />);
+      const entry = await card();
+      expect(entry.querySelector("strong")).toHaveTextContent("Search");
+      expect(entry.querySelector(".patchnode-entry__body")).toHaveTextContent("Les opérateurs relisent l'intention de la tâche.");
+      expect(entry.textContent?.match(/FN-2/g)).toHaveLength(1);
+    });
+
+    /*
     FNXC:PatchnodeView 2026-09-15-23:26:
     FN-444 symptom reproduction: a legacy entry whose task was deleted can never be repaired by the ledger
     pass, so the render surface itself must not print the identifier twice.

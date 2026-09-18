@@ -193,6 +193,7 @@ import {
   type PatchnodeReconcileResult,
 } from "./task-store/async/async-patchnode.js";
 import { buildPatchnodeEntryId, buildPatchnodeEntryInput } from "./board/patchnode.js";
+import { readTaskPlanPrompt } from "./task-store/patchnode-plan-source.js";
 import type { PatchnodeEntry, PatchnodeQuery } from "./types/task/patchnode.js";
 import { resolveWorkflowIrForTask } from "./workflows/workflow-ir-resolver.js";
 // FNXC:RuntimeBackendAsync 2026-06-24-10:15:
@@ -1234,9 +1235,16 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     return atomicWriteTaskJsonImpl2(this, dir, task, options);
   }
 
+  /*
+  FNXC:PatchnodeLedger 2026-09-18-02:48:
+  FN-526: every capture site supplies the task plan so `buildPatchnodeEntryInput` can derive the
+  product summary. `task.prompt` is already populated on a detail-loaded task; otherwise the plan is
+  read tolerantly from the task directory and a missing plan simply yields an empty description.
+  */
   async recordPatchnodeCompletion(task: Task, occurredAt: string): Promise<PatchnodeEntry | null> {
     if (!this.asyncLayer) throw new Error("Patchnode requires an async data layer");
-    return appendPatchnodeEntry(this.asyncLayer, buildPatchnodeEntryInput(task, "completed", occurredAt));
+    const prompt = task.prompt ?? (await readTaskPlanPrompt(this.taskDir(task.id))) ?? undefined;
+    return appendPatchnodeEntry(this.asyncLayer, buildPatchnodeEntryInput({ ...task, prompt }, "completed", occurredAt));
   }
 
   /*
@@ -1250,6 +1258,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     if (!this.asyncLayer?.projectId) throw new Error("Patchnode requires a project-scoped async data layer");
     const layer = this.asyncLayer;
     const task = await this.getTask(taskId);
+    // FNXC:PatchnodeLedger 2026-09-18-02:48: FN-526 — the cancellation entry carries the same plan-sourced product summary as the delivery it cancels.
+    const patchnodePrompt = task.prompt ?? (await readTaskPlanPrompt(this.taskDir(taskId))) ?? undefined;
     return layer.transactionImmediate(async (tx) => {
       const completion = await findLatestPatchnodeCompletionInTransaction(
         tx,
@@ -1258,7 +1268,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         input.pairWithDeliveryAtOrBefore ? { noLaterThan: input.occurredAt } : {},
       );
       const occurrenceKey = completion?.occurrenceKey ?? "none";
-      const base = buildPatchnodeEntryInput(task, "reverted", input.occurredAt);
+      const base = buildPatchnodeEntryInput({ ...task, prompt: patchnodePrompt }, "reverted", input.occurredAt);
       const reverted = await appendPatchnodeEntryInTransaction(tx, layer.projectId!, {
         ...base,
         entryId: buildPatchnodeEntryId("reverted", taskId, occurrenceKey),
@@ -1284,7 +1294,10 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     }
     const promise = (async () => {
       const completeColumns = await resolveProjectColumnsForRoles(this, ["complete"]);
-      return reconcilePatchnodeFromLiveTasks(this.asyncLayer!, completeColumns ?? new Set<string>());
+      // FNXC:PatchnodeLedger 2026-09-18-02:48: FN-526 — reconciliation reads each task's plan through the store's task directory so inserted and repaired entries carry the product summary.
+      return reconcilePatchnodeFromLiveTasks(this.asyncLayer!, completeColumns ?? new Set<string>(), {
+        readTaskPrompt: (id) => readTaskPlanPrompt(this.taskDir(id)),
+      });
     })();
     this.patchnodeReconcileMemo = { promise, startedAt: now };
     try {

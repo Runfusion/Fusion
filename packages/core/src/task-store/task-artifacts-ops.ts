@@ -13,6 +13,7 @@ import { emitBoundedRunAudit } from "../run-audit/emit-bounded-run-audit.js";
 
 import { TaskStore } from "../store.js";
 import { buildPatchnodeEntryInput } from "../board/patchnode.js";
+import { readTaskPlanPrompt } from "./patchnode-plan-source.js";
 import { appendPatchnodeEntryInTransaction } from "./async/async-patchnode.js";
 import {declaresAnyLifecycleTrait, resolveReviewColumns, resolveTaskLifecycleColumns} from "../workflows/workflow-lifecycle-traits.js";
 import {resolveWorkflowIrForTask} from "../workflows/workflow-ir-resolver.js";
@@ -424,12 +425,19 @@ export async function moveToDoneImpl(store: TaskStore, task: Task, dir: string):
     FNXC:PatchnodeLedger 2026-08-28-13:35:
     Completion capture requires the store's real project partition. An unbound writer must fail this transaction instead of manufacturing a legacy project id whose entry the project-scoped feed can never read.
     */
+    /*
+    FNXC:PatchnodeLedger 2026-09-18-02:48:
+    FN-526: the body is the plan's product summary, not the Completion Summary. The bounded
+    `PROMPT.md` read is tolerant and happens before the capture transaction here, so an unreadable
+    plan records an empty description and never fails the completion move.
+    */
+    const patchnodePrompt = await readTaskPlanPrompt(dir);
     await store.atomicWriteTaskJson(dir, task, {
       withinTransaction: async (tx) => {
         await appendPatchnodeEntryInTransaction(
           tx,
           store.asyncLayer!.projectId ?? "",
-          buildPatchnodeEntryInput(task, "completed", task.columnMovedAt!),
+          buildPatchnodeEntryInput({ ...task, prompt: patchnodePrompt ?? undefined }, "completed", task.columnMovedAt!),
         );
       },
     });

@@ -88,7 +88,8 @@ describe("fn_history_read", () => {
       expect(await line({})).toBe("FN-2 — Second: Shipped search");
     });
 
-    it("omits the body segment when there is no summary", async () => {
+    // FN-526: the captured body is the plan's product summary, so an absent product section yields no body segment.
+    it("omits the body segment when the captured description is empty", async () => {
       expect(await line({ body: "" })).toBe("FN-2 — Second");
     });
 
