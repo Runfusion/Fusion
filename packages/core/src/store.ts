@@ -151,6 +151,7 @@ import { isValidMergeRequestTransitionImpl, releaseMergeQueueLeaseImpl, collectM
 import { upsertWorkflowWorkItemImpl, replaceActiveTaskWorkflowContinuationImpl, seedStrandedPlanReviewContinuationImpl, seedWorkspaceCodeReviewContinuationIfIdleImpl, transitionWorkflowWorkItemImpl, acquireWorkflowWorkItemLeaseImpl } from "./task-store/workflow-workitems-ops-2.js";
 import { getSettingsImpl, getSettingsFastImpl, getSettingsByScopeImpl, getSettingsByScopeFastImpl } from "./task-store/settings-ops-2.js";
 import { runPluginColumnTransitionHooksImpl, checkAndRecordUnplannedExecutionBlockImpl, logEntryImpl, logEntryOnceImpl, transitionQueuedEpisodeImpl, type QueuedEpisodeTransition } from "./task-store/audit-ops.js";
+import { claimTaskOverlapWaitImpl, completeTaskOverlapWaitImpl, listTaskOverlapWaitsImpl, publishTaskOverlapDeliveriesImpl } from "./task-store/overlap-wait-ops.js";
 import { clearWorkflowRunBranchesImpl, projectMergeRequestToWorkflowWorkItemImpl, createCompletionHandoffWorkflowWorkImpl } from "./task-store/workflow-workitems-ops.js";
 import { flushAgentLogBufferImpl, appendAgentLogBatchImpl } from "./task-store/agent-logs.js";
 import { refineTaskImpl, updateTaskDependenciesImpl } from "./task-store/update-task-deps.js";
@@ -2732,6 +2733,30 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   }
   async transitionQueuedEpisode(id: string, transition: QueuedEpisodeTransition): Promise<import("./task-store/audit-ops.js").QueuedEpisodeTransitionResult> {
     return transitionQueuedEpisodeImpl(this, id, transition);
+  }
+  /** Durable overlap-wait episodes for a task, oldest first. See overlap-wait-ops.ts. */
+  async listTaskOverlapWaits(taskId: string, options: { pendingOnly?: boolean } = {}): Promise<import("./types/task/task-overlap-wait.js").TaskOverlapWait[]> {
+    return listTaskOverlapWaitsImpl(this, taskId, options);
+  }
+  /** Claims a pending episode for analysis; returns null if another owner already holds it or the task moved. */
+  async claimTaskOverlapWait(claim: import("./types/task/task-overlap-wait.js").OverlapWaitClaim): Promise<import("./types/task/task-overlap-wait.js").TaskOverlapWait | null> {
+    return claimTaskOverlapWaitImpl(this, claim);
+  }
+  /** Attaches a landed delivery snapshot to every open episode waiting on this (now-merged) task. */
+  async publishTaskOverlapDeliveries(blockerTaskId: string, deliveries: import("./types/task/task-overlap-wait.js").OverlapWaitDeliverySnapshot[]): Promise<number> {
+    return publishTaskOverlapDeliveriesImpl(this, blockerTaskId, deliveries);
+  }
+  /** Publishes a resolved receipt for a claimed episode; returns null if the task's plan/checkout identity moved since the claim. */
+  async completeTaskOverlapWait(input: {
+    taskId: string;
+    episodeId: string;
+    expectedRevision: number;
+    owner: string;
+    phase?: "ready" | "delivered" | "freshness-pending" | "revalidation-pending" | "repair-required";
+    receipt: import("./types/task/task-overlap-wait.js").OverlapWaitReceipt;
+    executionIdentity?: import("./types/task/task-overlap-wait.js").OverlapWaitExecutionIdentity;
+  }): Promise<import("./types/task/task-overlap-wait.js").TaskOverlapWait | null> {
+    return completeTaskOverlapWaitImpl(this, input);
   }
   async logEntry(id: string, action: string, outcome?: string, runContext?: RunMutationContext): Promise<Task> {
     return logEntryImpl(this, id, action, outcome, runContext);
