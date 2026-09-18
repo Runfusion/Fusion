@@ -47,6 +47,7 @@ import { HeartbeatMonitor, HeartbeatTriggerScheduler, type WakeContext } from ".
 import { AutoClaimSnapshotManager } from "../scheduling/auto-claim-snapshot.js";
 import { RoutineRunner, type RoutineRunnerOptions } from "../scheduling/routine-runner.js";
 import { RoutineScheduler } from "../scheduling/routine-scheduler.js";
+import { ReviewDispatchSweep } from "../scheduling/review-dispatch-sweep.js";
 import { createAiPromptExecutor } from "../scheduling/cron-runner.js";
 import type {
   ProjectRuntime,
@@ -1279,6 +1280,7 @@ export class InProcessRuntime
   private agentStore?: AgentStore;
   private heartbeatMonitor?: HeartbeatMonitor;
   private triggerScheduler?: HeartbeatTriggerScheduler;
+  private reviewDispatchSweep?: ReviewDispatchSweep;
   private lastActivityAt: string = new Date().toISOString();
   private pluginRunner?: PluginRunner;
   private pluginStore?: PluginStore;
@@ -2058,6 +2060,18 @@ export class InProcessRuntime
         );
         this.triggerScheduler.start();
 
+        // STAS-205: a card in review must get reviewer work from persisted state, not from
+        // whichever reviewer patrol happens to look. Needs both the agent roster and the
+        // heartbeat launcher, so it mounts inside the block where both exist.
+        if (this.heartbeatMonitor) {
+          this.reviewDispatchSweep = new ReviewDispatchSweep({
+            store: this.taskStore,
+            agentStore: this.agentStore,
+            heartbeatMonitor: this.heartbeatMonitor,
+          });
+          this.reviewDispatchSweep.start();
+        }
+
         // Startup bootstrap for already-persisted agents. Ongoing lifecycle
         // updates are handled inside HeartbeatTriggerScheduler itself.
         const isHeartbeatEnabledAgent = (agent: import("@fusion/core").Agent) =>
@@ -2529,6 +2543,7 @@ export class InProcessRuntime
       ["self-healing manager", () => this.selfHealingManager?.stop()],
       ["routine scheduler", () => this.routineScheduler?.stop()],
       ["trigger scheduler", () => this.triggerScheduler?.stop()],
+      ["review dispatch sweep", () => this.reviewDispatchSweep?.stop()],
       ["stuck task detector", () => this.stuckTaskDetector?.stop()],
       ["heartbeat monitor", () => this.heartbeatMonitor?.stop()],
       ["triage processor", () => this.triageProcessor?.stop()],
@@ -2633,6 +2648,11 @@ export class InProcessRuntime
       if (this.triggerScheduler) {
         this.triggerScheduler.stop();
         runtimeLog.log("TriggerScheduler stopped");
+      }
+
+      if (this.reviewDispatchSweep) {
+        this.reviewDispatchSweep.stop();
+        runtimeLog.log("ReviewDispatchSweep stopped");
       }
 
       // 4a. Stop AgentStore cross-process change detection (FN-7723). This
