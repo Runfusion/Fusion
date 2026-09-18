@@ -61,6 +61,7 @@ vi.mock("@fusion/dashboard", () => ({
 vi.mock("@fusion/engine", () => ({
   installBaselineArchiveWorktreeDisposer: vi.fn(),
   createFnAgent: vi.fn(),
+  SelfHealingManager: vi.fn(),
   runAiMerge: vi.fn(),
   landWorkspaceTask: vi.fn(),
   // FNXC:TestInfrastructure 2026-08-20-03:16: Keep this engine barrel mock complete when task merge adds stamp-recovery dependencies.
