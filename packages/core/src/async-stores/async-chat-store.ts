@@ -17,7 +17,7 @@
  *   consume.
  */
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, exists, gt, ilike, inArray, isNull, lte, ne, or as orFn, sql as drizzleSql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, exists, gt, inArray, isNull, lte, ne, or as orFn, sql as drizzleSql, type SQL } from "drizzle-orm";
 import * as schema from "../postgres/schema/index.js";
 import { projectScopeFor, type AsyncDataLayer, type DbTransaction } from "../postgres/data-layer.js";
 import { sanitizeTextValue, sanitizeJsonbValue } from "../postgres/nul-sanitize.js";

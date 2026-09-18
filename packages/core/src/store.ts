@@ -181,7 +181,7 @@ import {
 } from "./task-store/async/async-patchnode.js";
 import { buildPatchnodeEntryId, buildPatchnodeEntryInput } from "./board/patchnode.js";
 import type { PatchnodeEntry, PatchnodeQuery } from "./types/task/patchnode.js";
-import { resolveWorkflowIrForTask, type WorkflowSelectionCache, type WorkflowSelectionReadTally } from "./workflows/workflow-ir-resolver.js";
+import { resolveWorkflowIrForTask } from "./workflows/workflow-ir-resolver.js";
 // FNXC:RuntimeBackendAsync 2026-06-24-10:15:
 // Async helper imports for backend-mode (AsyncDataLayer/PostgreSQL) delegation.
 // persistence/allocator/settings/search/lifecycle/merge/archive helpers preserve
