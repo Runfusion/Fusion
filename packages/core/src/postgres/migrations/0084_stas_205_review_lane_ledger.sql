@@ -48,7 +48,7 @@ ALTER TABLE project.task_lifecycle_events
   ADD CONSTRAINT task_lifecycle_events_type_check
   CHECK (event_type IN ('task:deleted', 'task:entered-review'));
 
--- FNXC:ReviewLaneDispatch 2026-09-15 (STAS-205 upstream port): the bookkeeping
+-- FNXC:ReviewLaneDispatch 2026-09-15-00:00 (STAS-205 upstream port): the bookkeeping
 -- marker for this migration is written HERE, inside the same transaction that
 -- applies the DDL, instead of the inline parameterized INSERT the applier uses
 -- for every other block. ThreatCrush flags SQL built inside template literals

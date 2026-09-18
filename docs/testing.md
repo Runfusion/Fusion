@@ -252,7 +252,7 @@ without checking anything is worse than no guard.
 
 ## The review-lane dispatch invariant
 
-<!-- FNXC:ReviewLaneDispatch 2026-09-09 (STAS-205 Steps 3-8): the invariant, its buckets, and the closure signal a reviewer must assert. Read this before debugging "the reviewer never showed up": the pre-fix platform had no writer for the reviewer-run ledger at all, so "no reviewer work" was unsurveyable rather than rare. -->
+<!-- FNXC:ReviewLaneDispatch 2026-09-09-00:00 (STAS-205 Steps 3-8): the invariant, its buckets, and the closure signal a reviewer must assert. Read this before debugging "the reviewer never showed up": the pre-fix platform had no writer for the reviewer-run ledger at all, so "no reviewer work" was unsurveyable rather than rare. -->
 
 **The invariant:** a card entering a review-lane column acquires reviewer work within one sweep
 interval. *Reviewer work* means a `task_reviewer_runs` ledger row **and** the backing reviewer-role
@@ -340,7 +340,7 @@ empty diff plus a changed file-scan count means your commit added nothing.
 
 ## CLI `fn task move` writes the shared store directly — by design, and covered anyway
 
-<!-- FNXC:ReviewLaneDispatch 2026-09-09 (STAS-205 Step 6): STAS-204 asked for the CLI-direct-DB path to be "routed or documented". It is documented, because routing it would be a cross-process refactor of a write that already lands in the right database. What matters is recorded here so nobody re-litigates it, and so the validator named in the ticket is not mistaken for a guard over this path. -->
+<!-- FNXC:ReviewLaneDispatch 2026-09-09-00:00 (STAS-205 Step 6): STAS-204 asked for the CLI-direct-DB path to be "routed or documented". It is documented, because routing it would be a cross-process refactor of a write that already lands in the right database. What matters is recorded here so nobody re-litigates it, and so the validator named in the ticket is not mistaken for a guard over this path. -->
 
 `fn task move` never contacts the daemon. `packages/cli/src/commands/task.ts` resolves a project
 context whose store boots through the PostgreSQL startup factory (`createLocalStore`, `task.ts:191`)

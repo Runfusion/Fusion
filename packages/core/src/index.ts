@@ -435,7 +435,7 @@ export { BUILTIN_CODING_WORKFLOW_IR } from "./workflows/builtin-coding-workflow-
 export { BUILTIN_CODING_IDEAS_WORKFLOW_IR } from "./workflows/builtin-coding-ideas-workflow-ir.js";
 export { BUILTIN_CODING_IDEAS_V2_WORKFLOW_IR } from "./workflows/builtin-coding-ideas-v2-workflow-ir.js";
 export { PLAN_REVIEW_GROUP_ID } from "./workflows/builtin-plan-review-group.js";
-/* FNXC:ReviewLaneDispatch 2026-09-09 (STAS-205): the dispatch sweep must tell a deliberate no-code-review card (bucket E1) from one whose review is simply missing. */
+/* FNXC:ReviewLaneDispatch 2026-09-09-00:00 (STAS-205): the dispatch sweep must tell a deliberate no-code-review card (bucket E1) from one whose review is simply missing. */
 export { CODE_REVIEW_GROUP_ID } from "./workflows/builtin-code-review-group.js";
 export { BUILTIN_MARKETING_WORKFLOW_IR } from "./workflows/builtin-marketing-workflow-ir.js";
 export { evaluateForeachMergeProof } from "./workflow-merge-proof.js";

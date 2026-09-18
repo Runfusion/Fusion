@@ -1272,7 +1272,7 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
         );
       }
       /*
-      FNXC:ReviewLaneDispatch 2026-09-09 (STAS-205):
+      FNXC:ReviewLaneDispatch 2026-09-09-00:00 (STAS-205):
       Record lane entry as a lifecycle fact in the same transaction that moves the row, so
       no entry path can produce a card in review with no committed evidence of how it got
       there. Engine, scheduler, workflow graph, completion handoff, dashboard drag, and the
