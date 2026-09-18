@@ -14,7 +14,7 @@ export type TaskDeletedLifecyclePayload = {
 };
 
 /*
-FNXC:ReviewLaneDispatch 2026-09-09 (STAS-205):
+FNXC:ReviewLaneDispatch 2026-09-09-00:00 (STAS-205):
 Every other column transition was invisible to the outbox because the CHECK allowed one
 event type, so "when did this card enter review?" had no committed answer. Entering review
 is the fact the dispatch invariant is keyed on, so it is the one addition here; the payload

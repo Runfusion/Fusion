@@ -3,7 +3,7 @@ import type { DbTransaction } from "../postgres/data-layer.js";
 import type { TaskStore } from "../store.js";
 
 /*
-FNXC:ReviewLaneDispatch 2026-09-09 (STAS-205):
+FNXC:ReviewLaneDispatch 2026-09-09-00:00 (STAS-205):
 `task_reviewer_runs` had a schema and zero writers, so nothing could answer "has reviewer
 work already begun for this card?" and a surfaced verdict could exist with no durable
 attempt behind it. This module is the ledger's only writer. The open run row is the
