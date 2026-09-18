@@ -583,6 +583,21 @@ export interface SelfHealingOptions {
    * preserves the prior behavior. The path passed is the absolute worktree dir.
    */
   isWorktreeResumeReserved?: (worktreePath: string) => boolean;
+  /*
+  FNXC:OverlapWaitSynchronization 2026-09-18-01:00:
+  Best-effort wake for a task's file-scope-blocked workflow continuation after a self-healing sweep
+  has itself cleared `overlapBlockedBy` (the holder died, went terminal, or was soft-deleted/archived
+  before it could publish a normal overlap-wait release) — see releaseFileScopeWaitingContinuations
+  in runtimes/in-process-runtime.ts, which is what the runtime wires in here. A missing/throwing/
+  rejecting callback must never affect the sweep's own recovery count or outcome.
+  */
+  onOverlapBlockersReleased?: (releases: OverlapBlockerRelease[]) => Promise<void>;
+}
+
+/** One task whose file-scope `overlapBlockedBy` marker a self-healing sweep has just cleared. */
+export interface OverlapBlockerRelease {
+  taskId: string;
+  blockerId: string;
 }
 
 const APPROVED_TRIAGE_RECOVERY_GRACE_MS = 60_000;
@@ -5407,6 +5422,15 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   ): Promise<{ blockedByCleared: number; worktreeRemoved: boolean; branchRemoved: boolean }> {
     const result = { blockedByCleared: 0, worktreeRemoved: false, branchRemoved: false };
     const prefix = `[self-healing] reconcileCompletedTask ${taskId}:`;
+    /*
+    FNXC:OverlapWaitSynchronization 2026-09-18-01:10:
+    This fan-out is the completion-driven release path for every dependent whose
+    `overlapBlockedBy` named the just-completed `taskId`. Record it here (not derived from the
+    update's return value) so the durable overlap-wait continuation wake below fires exactly once
+    per genuinely-released dependent, matching the ordinary live-release wake in
+    workflows/overlap-plan-revalidation.ts.
+    */
+    const committedOverlapReleases: OverlapBlockerRelease[] = [];
     try {
       const settings = await this.store.getSettings();
       if (settings.globalPause || settings.enginePaused) return result;
@@ -5556,6 +5580,9 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           }
           const overlapBlockedBy = dependent.overlapBlockedBy === taskId ? null : (dependent.overlapBlockedBy ?? null);
           const hasActiveOverlapBlocker = await hasActiveFileScopeOverlapBlocker(dependent, overlapBlockedBy);
+          if (dependent.overlapBlockedBy === taskId) {
+            committedOverlapReleases.push({ taskId: dependent.id, blockerId: taskId });
+          }
 
           if (todoTaskIds.has(dependent.id)) {
             /*
@@ -5709,6 +5736,14 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         log.warn(`${prefix} failed to record run-audit event: ${errorMessage}`);
       }
 
+      if (committedOverlapReleases.length > 0) {
+        try {
+          await this.options.onOverlapBlockersReleased?.(committedOverlapReleases);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          log.warn(`${prefix} overlap-wait release wake failed: ${message}`);
+        }
+      }
       return result;
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : String(err);
@@ -6480,6 +6515,14 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const settings = await this.store.getSettings();
       if (settings.globalPause || settings.enginePaused) return 0;
       const maxAutoMergeRetries = resolveMaxAutoMergeRetries(settings);
+      /*
+      FNXC:OverlapWaitSynchronization 2026-09-18-01:12:
+      Startup and periodic stale-blockedBy reconciliation is a completion catch-up publisher, same
+      as the live completion fan-out above. Record every task whose `overlapBlockedBy` this pass
+      itself clears so the durable wait's waiting continuation can be woken below, instead of only
+      on the next periodic drain tick.
+      */
+      const committedOverlapReleases: OverlapBlockerRelease[] = [];
 
       const staleMergingStatusMinAgeMs = this.options.staleMergingStatusMinAgeMs ?? DEFAULT_STALE_MERGING_STATUS_MIN_AGE_MS;
       const configuredFanoutMinAgeMs = this.options.staleMergingFanoutMinAgeMs ?? DEFAULT_STALE_MERGING_FANOUT_MIN_AGE_MS;
@@ -6797,6 +6840,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
                   });
                   didRecover = transition.appended;
                 } else {
+                  if (task.overlapBlockedBy) committedOverlapReleases.push({ taskId: task.id, blockerId: task.overlapBlockedBy });
                   await this.store.updateTask(task.id, { blockedBy: null, overlapBlockedBy: null, ...clearBlockedStatusOnly(task) });
                   await this.store.logEntry(task.id, `Auto-recovered (FN-5488): cleared stale blockedBy — blocker=${blockerId} blockerStatus=${blocker?.status ?? "none"} reason=${reasonCode ?? "unspecified"}; ${reason}`);
                   didRecover = true;
@@ -6832,6 +6876,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
                 if (transition.appended) recovered++;
               } else {
                 // FN-5434: routine scheduler↔self-healing queued-status churn should stay silent; keep state cleanup only.
+                if (task.overlapBlockedBy) committedOverlapReleases.push({ taskId: task.id, blockerId: task.overlapBlockedBy });
                 await this.store.updateTask(task.id, { blockedBy: null, overlapBlockedBy: null, ...clearBlockedStatusOnly(task) });
               }
             } catch (err: unknown) {
@@ -6853,6 +6898,14 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         }
       }
 
+      if (committedOverlapReleases.length > 0) {
+        try {
+          await this.options.onOverlapBlockersReleased?.(committedOverlapReleases);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          log.warn(`stale blockedBy post-overlap-release scheduling wake failed: ${message}`);
+        }
+      }
       return recovered;
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : String(err);
@@ -7016,6 +7069,19 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       });
       if (deadlockingDependency.overlapBlockedBy === holder.id) {
         await this.store.updateTask(deadlockingDependency.id, { overlapBlockedBy: null, status: null });
+        /*
+        FNXC:OverlapWaitSynchronization 2026-09-18-01:15:
+        The deadlock-breaking rebound above is itself the release: `deadlockingDependency` can never
+        publish a normal overlap-wait release while `holder` still lives, because it is the thing
+        keeping the dependency queued. Wake its continuation immediately per-iteration rather than
+        batching, since this sweep processes at most one deadlock pair per holder per pass.
+        */
+        try {
+          await this.options.onOverlapBlockersReleased?.([{ taskId: deadlockingDependency.id, blockerId: holder.id }]);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          log.warn(`reconcileDependencyBlockingLeases: overlap-wait release wake failed for ${deadlockingDependency.id}: ${message}`);
+        }
       }
       await this.store.logEntry(
         holder.id,
