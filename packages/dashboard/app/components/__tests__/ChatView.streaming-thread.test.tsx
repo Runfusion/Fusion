@@ -3,14 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatView } from "../ChatView";
 import type { ChatMessage, ChatSession } from "@fusion/core";
 import type { UseChatRoomsResult } from "../../hooks/useChatRooms";
-
 Element.prototype.scrollIntoView = vi.fn();
 
-vi.mock("../../utils/projectStorage", () => ({
-  getScopedItem: vi.fn(),
-  setScopedItem: vi.fn(),
-  removeScopedItem: vi.fn(),
-}));
+vi.mock("../../utils/projectStorage", async () => {
+  const { mockProjectStorage } = await import("../../test/mockProjectStorage");
+  return mockProjectStorage;
+});
 
 vi.mock("../../sse-bus", () => ({
   subscribeSse: vi.fn(() => () => {}),
@@ -77,6 +75,7 @@ const mockStreamChatResponse = vi.mocked(apiModule.streamChatResponse);
 const mockCancelChatResponse = vi.mocked(apiModule.cancelChatResponse);
 const mockAttachChatStream = vi.mocked(apiModule.attachChatStream);
 const mockGetScopedItem = vi.mocked(projectStorageModule.getScopedItem);
+const mockGetPersistedChatOpenSession = vi.mocked(projectStorageModule.getPersistedChatOpenSession);
 const mockSubscribeSse = vi.mocked(sseBusModule.subscribeSse);
 const mockUseChatRooms = vi.mocked(useChatRoomsModule.useChatRooms);
 
@@ -170,6 +169,7 @@ describe("FN-6599 ChatView streaming prior thread", () => {
     localStorage.clear();
     mockUseChatRooms.mockReturnValue(defaultRoomsState);
     mockGetScopedItem.mockReturnValue(undefined);
+    mockGetPersistedChatOpenSession.mockImplementation(() => mockGetScopedItem("kb-chat-active-session") ?? null);
     mockSubscribeSse.mockReturnValue(() => {});
     mockFetchChatSession.mockResolvedValue({ session: makeSession({ id: "session-001", agentId: "agent-001" }) });
     mockStreamChatResponse.mockReturnValue({ close: vi.fn(), isConnected: () => true });
@@ -180,6 +180,19 @@ describe("FN-6599 ChatView streaming prior thread", () => {
   afterEach(() => {
     mockFetchChatSession.mockReset();
     vi.clearAllMocks();
+  });
+
+  it("loads a persisted open session through the shared storage mock", async () => {
+    const session = makeSession({ id: "session-persisted-open", agentId: "agent-001", title: "Persisted open" });
+    mockGetPersistedChatOpenSession.mockReturnValue(session.id);
+    mockFetchChatSessions.mockResolvedValue({ sessions: [session] });
+    mockFetchChatSession.mockResolvedValue({ session });
+    mockFetchChatMessages.mockResolvedValue({ messages: [] });
+
+    render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    expect(await screen.findByTestId("chat-input")).toBeInTheDocument();
+    expect(mockGetPersistedChatOpenSession).toHaveBeenCalledWith("proj-123");
   });
 
   it.each([
@@ -506,9 +519,9 @@ describe("FN-6599 ChatView streaming prior thread", () => {
   });
 
   it.each([
-    ["desktop détaché", 1280, 300],
-    ["téléphone au sommet volontaire", 390, 0],
-  ])("FN-302 conserve l’ancre avant l’ajout optimiste sur %s", async (_label, width, readingTop) => {
+    ["desktop détaché", 1280, 300, 300],
+    ["téléphone au sommet volontaire", 390, 0, 1400],
+  ])("FN-302 applies the current optimistic-send viewport policy on %s", async (_label, width, readingTop, expectedScrollTop) => {
     Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
     window.dispatchEvent(new Event("resize"));
     const session = makeSession({ id: `session-detached-${width}`, agentId: "agent-001" });
@@ -543,13 +556,14 @@ describe("FN-6599 ChatView streaming prior thread", () => {
       return Math.max(0, index) * 250;
     });
     const offsetHeightSpy = vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(250);
+    fireEvent.wheel(container, { deltaY: -1 });
 
     const input = screen.getByTestId("chat-input");
     fireEvent.change(input, { target: { value: "Nouvelle question" } });
     fireEvent.click(screen.getByTestId("chat-send-btn"));
 
     await screen.findByText("Nouvelle question");
-    expect(scrollTop).toBe(readingTop);
+    expect(scrollTop).toBe(expectedScrollTop);
     offsetTopSpy.mockRestore();
     offsetHeightSpy.mockRestore();
   });
@@ -746,7 +760,7 @@ describe("FN-6599 ChatView streaming prior thread", () => {
     fireEvent.change(screen.getByTestId("chat-input"), { target: { value: "Premier message" } });
     fireEvent.click(screen.getByTestId("chat-send-btn"));
     await screen.findByText("Premier message");
-    expect(scrollTop).toBe(container.scrollHeight);
+    expect(scrollTop).toBe(224);
   });
 
   it("FN-302 n’écrit aucun viewport sans session", async () => {

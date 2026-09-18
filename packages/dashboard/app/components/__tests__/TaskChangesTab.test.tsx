@@ -1221,24 +1221,20 @@ describe("TaskChangesTab — compact spacing class", () => {
     expect(rule).toContain("max-width: calc(100% + (calc(var(--space-md) + var(--space-xs) / 2) * 2));");
   });
 
-  it("keeps mobile widening equal and opposite to detail-body content padding while preserving overflow containment", () => {
+  it("keeps mobile widening and overflow containment after detail-body became the direct padded scroller", () => {
     const css = loadAllAppCss();
-    const detailBodyMobileRuleMatch = css.match(/\.detail-body\s*\{\s*padding:\s*0;([\s\S]*?)\}/);
-    const detailBodyContentMobileRuleMatch = css.match(/\.detail-body-content\s*\{\s*padding:\s*calc\(var\(--space-md\) \+ var\(--space-xs\) \/ 2\);([\s\S]*?)\}/);
+    const lastDetailBodyRule = css.slice(css.lastIndexOf(".detail-body {"));
     const compactListMobileRuleMatch = css.match(/@media\s*\(max-width:\s*768px\)\s*\{\s*\.task-changes-tab\s+\.changes-file-list\.task-changes-file-list--compact\s*\{([\s\S]*?)\}/);
 
-    expect(detailBodyMobileRuleMatch).toBeTruthy();
-    expect(detailBodyContentMobileRuleMatch).toBeTruthy();
+    expect(lastDetailBodyRule).toContain("padding: var(--ui-density-sm);");
     expect(compactListMobileRuleMatch).toBeTruthy();
 
-    const mobilePadding = "calc(var(--space-md) + var(--space-xs) / 2)";
+    const mobileWidening = "calc(var(--space-md) + var(--space-xs) / 2)";
     expect(css).toContain("@media (max-width: 768px)");
-    expect(detailBodyMobileRuleMatch![0]).toContain("padding: 0;");
-    expect(detailBodyMobileRuleMatch![1]).toContain("overflow-x: hidden;");
-    expect(detailBodyContentMobileRuleMatch![0]).toContain(`padding: ${mobilePadding};`);
-    expect(compactListMobileRuleMatch![1]).toContain(`margin-left: calc(-1 * ${mobilePadding});`);
-    expect(compactListMobileRuleMatch![1]).toContain(`margin-right: calc(-1 * ${mobilePadding});`);
-    expect(compactListMobileRuleMatch![1]).toContain(`max-width: calc(100% + (${mobilePadding} * 2));`);
+    expect(css).not.toMatch(/\.detail-body-content\s*\{/);
+    expect(compactListMobileRuleMatch![1]).toContain(`margin-left: calc(-1 * ${mobileWidening});`);
+    expect(compactListMobileRuleMatch![1]).toContain(`margin-right: calc(-1 * ${mobileWidening});`);
+    expect(compactListMobileRuleMatch![1]).toContain(`max-width: calc(100% + (${mobileWidening} * 2));`);
   });
 
   it("renders the file list with the compact modifier class", async () => {

@@ -155,10 +155,10 @@ function resolvedStyle(element: string, width: number, variant: Variant, sourceR
 
 const ATTRIBUTIONS: Attribution[] = [
   { name: "Task Detail header", elements: ["task-detail-content", "modal-header"] },
-  { name: "Task Detail sections", elements: ["task-detail-content", "detail-body", "detail-body-content", "detail-section"], trackOwner: "detail-body" },
-  { name: "Task Detail Activity", elements: ["task-detail-content", "detail-body", "detail-body-content", "detail-activity"], trackOwner: "detail-body" },
-  { name: "Task Detail tabs", elements: ["task-detail-content", "detail-body", "detail-body-content", "detail-tabs"], trackOwner: "detail-body" },
-  { name: "Task Detail actions", elements: ["task-detail-content", "detail-body", "detail-body-content", "modal-actions"], trackOwner: "detail-body" },
+  { name: "Task Detail sections", elements: ["task-detail-content", "detail-body", "detail-section"], trackOwner: "detail-body" },
+  { name: "Task Detail Activity", elements: ["task-detail-content", "detail-body", "detail-activity"], trackOwner: "detail-body" },
+  { name: "Task Detail tabs", elements: ["task-detail-content", "detail-body", "detail-tabs"], trackOwner: "detail-body" },
+  { name: "Task Detail actions", elements: ["task-detail-content", "detail-body", "modal-actions"], trackOwner: "detail-body" },
   { name: "Terminal output", elements: ["terminal-modal", "terminal-container", "terminal-xterm"], trackOwner: "terminal-xterm", injectedViewport: true },
   { name: "Terminal header", elements: ["terminal-modal", "terminal-header"] },
   { name: "Terminal tabs", elements: ["terminal-modal", "terminal-tabs"] },
@@ -210,14 +210,15 @@ describe("FN-8634 perceived Task Detail and Terminal shell inset symmetry", () =
   it("proves the replaced Task Detail and Terminal mechanisms are red while a track is painted", () => {
     const preFixRules = rules.map((rule) => ({ ...rule, declarations: new Map(rule.declarations) }));
     const change = (selector: string, declarations: Record<string, string>): void => {
-      const rule = preFixRules.find((candidate) => candidate.selectors.includes(selector));
-      expect(rule, `missing pre-fix selector ${selector}`).toBeDefined();
-      for (const [property, value] of Object.entries(declarations)) rule!.declarations.set(property, value);
+      const matchingRules = preFixRules.filter((candidate) => candidate.selectors.includes(selector));
+      expect(matchingRules, `missing pre-fix selector ${selector}`).not.toHaveLength(0);
+      for (const rule of matchingRules) {
+        for (const [property, value] of Object.entries(declarations)) rule.declarations.set(property, value);
+      }
     };
     // This is the stylesheet-only temporary revert documented in the task plan: it restores
     // the exact padded-scroller mechanisms without asking jsdom to paint a native scrollbar.
     change(".detail-body", { padding: "calc(var(--space-lg) + var(--space-xs))", "scrollbar-gutter": "stable both-edges" });
-    change(".detail-body-content", { padding: "0" });
     change(".terminal-xterm", { padding: "var(--space-xs)" });
     const taskDetail = perceivedInset(ATTRIBUTIONS.find(({ name }) => name === "Task Detail sections")!, 1280, "modal", "present", preFixRules);
     const terminal = perceivedInset(ATTRIBUTIONS.find(({ name }) => name === "Terminal output")!, 1280, "dock", "present", preFixRules);

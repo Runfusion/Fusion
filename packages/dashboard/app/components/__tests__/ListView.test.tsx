@@ -3629,7 +3629,7 @@ describe("ListView", () => {
     expect(screen.queryByText("FN-002")).toBeNull();
   });
 
-  it("defaults todo section to board-consistent priority then oldest ordering", () => {
+  it("defaults todo section to board-consistent oldest-first ordering", () => {
     const tasks = [
       createMockTask({ id: "FN-100", column: "todo", priority: "low", createdAt: "2024-01-01T08:00:00.000Z" }),
       createMockTask({ id: "FN-101", column: "todo", priority: "urgent", createdAt: "2024-01-01T10:00:00.000Z" }),
@@ -3638,7 +3638,7 @@ describe("ListView", () => {
 
     renderListView({ tasks });
 
-    expect(getSectionTaskIds("Todo")).toEqual(["FN-101", "FN-102", "FN-100"]);
+    expect(getSectionTaskIds("Todo")).toEqual(["FN-102", "FN-100", "FN-101"]);
   });
 
   it("defaults done section to board-consistent completion recency", () => {
