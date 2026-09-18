@@ -2194,7 +2194,14 @@ export class WorkflowGraphExecutor {
            * edge, because temporary principal unavailability must not terminalize
            * the task or convert an operator-visible hold into graph failure.
            */
-          if (preflight.outcome === "failure" && typeof preflight.value === "string" && preflight.value.startsWith("workflow-principal-")) {
+          /*
+          FNXC:OverlapWaitSynchronization 2026-09-17-01:08:
+          An `overlap-plan-revalidation-*` preflight refusal is the same shape of benign,
+          already-persisted hold as a principal refusal — a pending overlap-wait episode
+          (see workflows/overlap-plan-revalidation.ts) held the graph continuation rather than
+          failing the task, so treat it identically: suspend traversal, never follow a failure edge.
+          */
+          if (preflight.outcome === "failure" && typeof preflight.value === "string" && (preflight.value.startsWith("workflow-principal-") || preflight.value.startsWith("overlap-plan-revalidation-"))) {
             /*
              * FNXC:WorkflowAgentRouting 2026-08-07-23:05:
              * Carry the refusal REASON out on the shared context. The suspension marker

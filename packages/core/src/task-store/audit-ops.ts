@@ -24,6 +24,7 @@ import { acquireTaskAdvisoryXactLock } from "./task-advisory-lock.js";
 import { resolveArchivedLanes } from "../project-lane-vocabulary.js";
 import { buildTaskLogReadOnlyMessage, buildTaskNotFoundMessage } from "./task-log-write-refusal.js";
 import * as schema from "../postgres/schema/index.js";
+import { observeOverlapWaitTransitionInTransaction } from "./overlap-wait-ops.js";
 
 export async function runPluginColumnTransitionHooksImpl(store: TaskStore, taskId: string, workflowIr: WorkflowIr, fromColumn: string, toColumn: string,): Promise<void> {
     const registry = getTraitRegistry();
@@ -212,6 +213,18 @@ export async function transitionQueuedEpisodeImpl(
       && (current.overlapBlockedBy ?? null) === transition.overlapBlockedBy
       && (current.queuedLogEpisodeSignature ?? null) === transition.signature
     );
+    /*
+    FNXC:OverlapWaitSynchronization 2026-09-17-00:10:
+    A queued-episode transition is exactly where `task.overlapBlockedBy` changes (set/replaced/
+    cleared). Persist both the outgoing and incoming blocker edges into the durable wait table in
+    this same transaction so a marker overwrite can never silently drop synchronization evidence.
+    */
+    await observeOverlapWaitTransitionInTransaction(tx, {
+      projectId,
+      previous: store.rowToTask(store.pgRowToTaskRow(current as unknown as Record<string, unknown>)),
+      nextOverlapBlockedBy: transition.overlapBlockedBy,
+      observedAt: now,
+    });
     const log = Array.isArray(current.log) ? [...current.log as TaskLogEntry[]] : [];
     if (appended) {
       log.push({

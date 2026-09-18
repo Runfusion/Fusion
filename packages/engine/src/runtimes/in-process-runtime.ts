@@ -693,10 +693,151 @@ export async function admitPlanningContinuation(input: {
   return false;
 }
 
+/*
+FNXC:PlanningContinuationDispatch 2026-09-17-00:40 (FN-332/FN-329 reimplementation):
+A file-scope wait's blocker id lives in `task.overlapBlockedBy` while the task's own row is
+`status: "queued"`. When a due row's dispatch settles and the task is STILL queued behind that
+exact blocker, park the work item `held` with a `file-scope:<blockerId>` reason instead of letting
+it re-enter the due window on the next poll (a busy-poll every ~2s until the blocker lands).
+`releaseFileScopeWaitingContinuations` is the matching wake, called once a blocker's overlap-wait
+episodes reach `delivered`/`ready` (see workflows/overlap-plan-revalidation.ts).
+*/
+export const FILE_SCOPE_CONTINUATION_WAIT_PREFIX = "file-scope:";
+
+function fileScopeContinuationWaitReason(blockerId: string): string {
+  return `${FILE_SCOPE_CONTINUATION_WAIT_PREFIX}${blockerId}`;
+}
+
+/** One task's file-scope blocker having cleared; used to target the exact held continuations it can release. */
+export interface OverlapBlockerRelease {
+  taskId: string;
+  blockerId: string;
+}
+
+/**
+ * Re-validates a continuation immediately before it actually dispatches: a due-poll snapshot can
+ * be stale by the time capacity admission grants it a slot (the task may have gone terminal,
+ * paused, approval-held, or — with `isPlannerLive` — still be owned by a live planner that must
+ * finish before a plan-review continuation of the same task may run). Returns false (no dispatch)
+ * rather than throwing so callers can treat "no longer current" uniformly with "no capacity".
+ */
+export async function dispatchPlanningContinuationIfCurrent(input: {
+  store: TaskStore;
+  task: Task;
+  item: WorkflowWorkItem;
+  isPlannerLive?: (taskId: string) => boolean;
+  dispatch: () => void;
+}): Promise<boolean> {
+  if (input.isPlannerLive?.(input.task.id) === true) return false;
+  const currentTask = typeof input.store.getTask === "function"
+    ? await input.store.getTask(input.task.id).catch(() => undefined)
+    : input.task;
+  const terminalLifecycle = await resolveTaskLifecycleColumns(input.store, input.task.id).catch(() => undefined);
+  const terminalColumns = new Set([terminalLifecycle?.complete ?? "done", "done"]);
+  if (!isPlanningContinuationTaskDispatchable(currentTask, terminalColumns)) return false;
+  if (isTaskBlockedOnApproval(currentTask)) return false;
+  /*
+  FNXC:PlanningContinuationDispatch 2026-09-17-00:42:
+  Upstream FN-299 additionally required the item to have already been CAS-transitioned to
+  `running` before this currency check (a lease-claim step this reimplementation does not restore
+  — that lease-CAS plumbing is FN-299's `expectedLeaseOwner` extension to
+  `WorkflowWorkItemTransitionPatch`, out of this task's FN-332 scope). Here it is enough that the
+  item still exists and has not been cancelled/terminalized out from under the admitted dispatch.
+  */
+  const currentItem = typeof input.store.getWorkflowWorkItem === "function"
+    ? await input.store.getWorkflowWorkItem(input.item.id).catch(() => null)
+    : input.item;
+  if (!currentItem || currentItem.state === "cancelled" || currentItem.state === "succeeded" || currentItem.state === "failed") return false;
+  input.dispatch();
+  return true;
+}
+
+/**
+ * After a dispatched continuation's execute() settles, decide whether the task is now blocked on
+ * an explicit file-scope/dependency wait (park `held`, due window drops it) or is genuinely done
+ * with this pass (return it to `runnable` so the periodic drain / an immediate kick picks it up).
+ * A CAS on `expectedState: "running"` refuses to clobber a state the completion path already moved
+ * to underneath this callback (e.g. a concurrent cancel).
+ */
+export async function settlePlanningContinuationDispatch(input: {
+  store: TaskStore;
+  taskId: string;
+  itemId: string;
+  kick?: () => void;
+}): Promise<"waiting" | "runnable" | "unchanged"> {
+  if (typeof input.store.transitionWorkflowWorkItem !== "function") return "unchanged";
+  const task = await input.store.getTask(input.taskId).catch(() => null);
+  if (!task || task.deletedAt) return "unchanged";
+  const blockerId = task.overlapBlockedBy?.trim();
+  const dependencyId = task.blockedBy?.trim();
+  const waitingReason = task.status === "queued"
+    ? blockerId
+      ? fileScopeContinuationWaitReason(blockerId)
+      : dependencyId
+        ? `dependency:${dependencyId}`
+        : null
+    : null;
+  const waiting = waitingReason !== null;
+  const targetState: WorkflowWorkItemState = waiting ? "held" : "runnable";
+  const transitioned = await input.store.transitionWorkflowWorkItem(input.itemId, targetState, {
+    expectedState: "running",
+    leaseOwner: null,
+    leaseExpiresAt: null,
+    retryAfter: null,
+    lastError: null,
+    blockedReason: waitingReason,
+  }).catch(() => null);
+  if (!transitioned || transitioned.state !== targetState || (waiting && transitioned.blockedReason !== waitingReason)) {
+    return "unchanged";
+  }
+  if (!waiting) input.kick?.();
+  return waiting ? "waiting" : "runnable";
+}
+
+/** Releases only the explicit file-scope waits whose task-level blocker has already cleared. */
+export async function releaseFileScopeWaitingContinuations(
+  store: TaskStore,
+  releases: readonly OverlapBlockerRelease[],
+): Promise<string[]> {
+  if (typeof store.listWorkflowWorkItemsForTask !== "function" || typeof store.transitionWorkflowWorkItem !== "function") return [];
+  const released: string[] = [];
+  for (const release of releases) {
+    const task = await store.getTask(release.taskId).catch(() => null);
+    if (!task || task.deletedAt || task.overlapBlockedBy != null) continue;
+    const items = await store.listWorkflowWorkItemsForTask(release.taskId, { kinds: ["task"] }).catch(() => []);
+    for (const item of items) {
+      if (item.state !== "held" || item.blockedReason !== fileScopeContinuationWaitReason(release.blockerId)) continue;
+      const transitioned = await store.transitionWorkflowWorkItem(item.id, "runnable", {
+        expectedState: "held",
+        leaseOwner: null,
+        leaseExpiresAt: null,
+        retryAfter: null,
+        lastError: null,
+        blockedReason: null,
+      }).catch(() => null);
+      if (transitioned?.state === "runnable") released.push(item.id);
+    }
+  }
+  return released;
+}
+
+/*
+FNXC:PlanningContinuationDispatch 2026-09-17-01:05:
+`workflow-continuation-capacity.test.ts` (pre-existing, not part of this reimplementation's scope)
+pins `execute()` being invoked SYNCHRONOUSLY within the same microtask as this dispatcher's
+`dispatch` closure — `admitPlanningContinuation` resolves "admitted" without awaiting the inner
+run, so any additional `await` inserted before the `execute()` call (e.g. re-validating currency
+via `dispatchPlanningContinuationIfCurrent`, which does its own async store reads) pushes the real
+call past that tick and breaks the pinned ordering. Keep this dispatcher exactly as before;
+`dispatchPlanningContinuationIfCurrent` / `settlePlanningContinuationDispatch` /
+`releaseFileScopeWaitingContinuations` are exported standalone utilities instead, wired from
+workflows/overlap-plan-revalidation.ts where no such same-tick contract exists.
+*/
 export function createPlanningContinuationDispatcher(input: {
   store: TaskStore;
   projectId: string;
   execute: (task: Task) => Promise<void>;
+  kick?: () => void;
   onError?: (task: Task, item: WorkflowWorkItem, error: unknown) => void;
 }): (task: Task, item: WorkflowWorkItem) => Promise<boolean> {
   return (task, item) => admitPlanningContinuation({
@@ -708,6 +849,7 @@ export function createPlanningContinuationDispatcher(input: {
       await input.execute(task).catch((error) => {
         input.onError?.(task, item, error);
       });
+      await settlePlanningContinuationDispatch({ store: input.store, taskId: task.id, itemId: item.id, kick: input.kick });
     },
   });
 }
@@ -2831,6 +2973,7 @@ export class InProcessRuntime
         store: this.taskStore,
         projectId: this.taskStore.getRootDir(),
         execute: (task) => this.executor.execute(task),
+        kick: () => this.kickWorkflowContinuationProcessor(),
         onError: (_task, item, error) => {
           runtimeLog.error(`Workflow continuation ${item.id} failed:`, error);
         },

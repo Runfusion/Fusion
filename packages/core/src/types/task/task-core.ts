@@ -166,6 +166,14 @@ export interface MergeDetails {
    * for single-repo tasks.
    */
   workspaceLandedShas?: Record<string, string>;
+  /*
+  FNXC:OverlapWaitSynchronization 2026-09-17-00:25:
+  Per-repository paths captured at workspace finalization time (sub-repo relative path -> the
+  files that landed, or an empty array to prove a no-op repository). Overlap-wait observation
+  reads this to snapshot a workspace blocker's delivery without re-deriving it from Git later,
+  after the blocker task may already be archived or deleted.
+  */
+  workspaceLandedFiles?: Record<string, string[]>;
 }
 
 /** Represents an agent's checkout lease on a task. */

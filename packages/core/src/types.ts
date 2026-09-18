@@ -577,6 +577,8 @@ export {
 } from "./tasks/task-external-block.js";
 export type { TaskExternalBlock, TaskExternalBlockOrigin } from "./tasks/task-external-block.js";
 
+export type { OverlapWaitPhase, OverlapWaitDecision, OverlapWaitFreshness, OverlapWaitLandedPath, OverlapWaitDeliverySnapshot, OverlapWaitDeliveryProof, OverlapWaitReceipt, TaskOverlapWait, OverlapWaitClaim, OverlapWaitExecutionIdentity } from "./types/task/task-overlap-wait.js";
+
 // ── task-core ──────────────────────────────────────────────────────────
 // FNXC:CodeOrganization 2026-07-22-14:00: Peels live in types/task-core.ts
 
