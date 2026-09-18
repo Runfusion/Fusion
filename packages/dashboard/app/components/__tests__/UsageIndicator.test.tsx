@@ -720,6 +720,43 @@ describe("UsageIndicator", () => {
     expect(mockOnClose).toHaveBeenCalledTimes(1);
   });
 
+  /*
+   * FN-523 : un appui extérieur dont la propagation est coupée avant `document` — exactement ce que font
+   * `handleDragPointerDown` / `handleResizePointerDown` d'une `FloatingWindow` et la poignée de
+   * `useModalResizePersist` — laissait la popover ouverte pendant qu'on déplaçait une autre fenêtre.
+   */
+  it("la popover Usage se ferme sur un appui extérieur qui coupe la propagation", async () => {
+    const user = userEvent.setup();
+    mockUseUsageData.mockReturnValue(createUsageDataState({
+      providers: mockProviders,
+      loading: false,
+      error: null,
+      lastUpdated: new Date(),
+      refresh: mockRefresh,
+    }));
+
+    render(
+      <>
+        <div
+          data-testid="window-drag-handle"
+          onPointerDown={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          }}
+        >
+          Header
+        </div>
+        <UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} anchorRect={createAnchorRect()} />
+      </>
+    );
+
+    expect(screen.getByTestId("usage-modal")).toHaveClass("usage-modal--popover");
+    await user.click(screen.getByTestId("window-drag-handle"));
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+
+    expect(mockOnClose).toHaveBeenCalledTimes(1);
+  });
+
   it("la popover Usage ne ferme pas au défilement", () => {
     mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: mockProviders,

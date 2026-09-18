@@ -53,7 +53,7 @@ const QUICK_CHAT_PORTALED_MENU_CLASSES = [
   "dep-dropdown--portal",
   "node-picker-dropdown--portal",
   "agent-picker-dropdown--portal",
-  "priority-picker-dropdown--portal",
+  // FN-509 removed Quick Add's priority picker portal from PORTAL_SAFE_SURFACE_SELECTOR; the class no longer exists.
   "activity-view-menu",
 ] as const;
 

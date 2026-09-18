@@ -435,6 +435,18 @@ est `.visually-hidden` ci-dessus — la classe `.sr-only` n'a JAMAIS été défi
   above the window-visibility control because it is STRICTLY ephemeral — it closes on an outside pointer,
   on Escape and on any scroll — so it can never durably hide that escape hatch the way an opaque panel can.
   The `+ 4` step stays RESERVED for #dashboard-window-toggle-root and is never reused here.
+
+  FNXC:FloatingWindowGestureLayer 2026-09-18-02:21:
+  FN-523 ajoute, AU-DESSUS de toute cette bande, une élévation de GESTE : une fenêtre flottante engagée dans un drag de
+  bandeau ou un redimensionnement à pointeur capturé est le dernier élément sélectionné et doit donc être peinte devant
+  la popover qu'elle recouvre. Cette couche (`plafond + 7`) est revendiquée en JavaScript par `engagedGestureZ()`
+  (floatingWindowStack.ts), n'existe dans AUCUNE règle CSS, n'est JAMAIS publiée dans `--fusion-max-z` — sinon la bande
+  transitoire la poursuivrait à chaque geste — et dure exactement le geste : elle est relâchée au `pointerup`, au
+  `pointercancel` et au démontage. Elle ne reprend aucun pas réservé : `+ 4` reste au contrôle global de visibilité et
+  `+ 5`/`+ 6` aux menus éphémères. Recouvrir temporairement ces surfaces est sans conséquence d'interaction, le pointeur
+  étant capturé par la fenêtre. Cette élévation est un COMPLÉMENT, pas le remède principal : une popover partageant
+  `useOutsidePointerDismiss` se referme désormais sur l'appui qui démarre le geste, même lorsque cet appui coupe sa
+  propre propagation.
   */
 
   --shadow-glow: var(--ui-shadow-glow-geometry) color-mix(in srgb, var(--todo) 30%, transparent);

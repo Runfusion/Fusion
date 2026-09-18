@@ -47,6 +47,24 @@ Deux décisions portent la correction :
 
 Le hook ne ferme JAMAIS sur `scroll`, `wheel`, `touchmove` ni `resize` : ce serait réintroduire le symptôme sous une
 autre forme. La fermeture par Échap et par le bouton de fermeture du panneau reste possédée par chaque hôte.
+
+FNXC:ToolSurfaces 2026-09-18-02:21:
+FN-523 : un appui extérieur dont la propagation est COUPÉE avant `document` ne fermait rien. `handleDragPointerDown`,
+`handleResizePointerDown` (`FloatingWindow.tsx`) et la poignée de `useModalResizePersist` appellent
+`event.stopPropagation()` sur l'appui ; comme React attache ses écouteurs au conteneur racine ET aux conteneurs de
+portail (`document.body`), l'événement mourait avant l'écouteur BUBBLE ci-dessus et la popover restait ouverte pendant
+qu'on déplaçait une autre fenêtre. La correction est portée ICI, propriétaire unique et DRY de la règle : tout futur
+émetteur qui couperait la propagation est couvert d'office, sans le modifier.
+
+Un second écouteur est donc posé sur `document` en phase CAPTURE — la capture au niveau de `document` précède toute
+remontée, donc aucun `stopPropagation()` en aval ne peut l'empêcher de tourner. Il ne DÉCIDE RIEN de façon synchrone :
+à cet instant le marquage React `onPointerDownCapture` d'un descendant (portalisé compris) n'a pas encore eu lieu, et
+décider maintenant refermerait l'hôte d'un menu portalisé. Il planifie un tour DIFFÉRÉ (`setTimeout(..., 0)`), exécuté
+après la fin complète de la répartition de l'événement, et n'appelle `decideOutsidePress` que si le chemin bubble n'a
+pas déjà traité CE MÊME événement — garde par identité d'événement, jamais par booléen, pour la raison exacte décrite
+ci-dessus. Les deux chemins partagent une seule et même logique d'appartenance : aucune règle n'est dupliquée, et un
+appui extérieur ordinaire ne peut donc fermer qu'une seule fois. Les tours en attente sont annulés à la fermeture et au
+démontage, de sorte qu'aucune fermeture ne survient après `unmount()`.
 */
 export function useOutsidePointerDismiss({ open, onDismiss, surfaceRefs, triggerSelector }: UseOutsidePointerDismissInput): UseOutsidePointerDismissResult {
   const insideEventRef = useRef<Event | null>(null);
@@ -67,7 +85,8 @@ export function useOutsidePointerDismiss({ open, onDismiss, surfaceRefs, trigger
   useEffect(() => {
     if (!open || typeof document === "undefined") return;
 
-    const handlePointerDown = (event: PointerEvent) => {
+    /** The ONE membership decision. Both the bubble path and the deferred capture path call exactly this. */
+    const decideOutsidePress = (event: Event) => {
       const marked = insideEventRef.current;
       insideEventRef.current = null;
       if (marked === event) return;
@@ -83,9 +102,32 @@ export function useOutsidePointerDismiss({ open, onDismiss, surfaceRefs, trigger
       onDismissRef.current();
     };
 
+    let decidedEvent: Event | null = null;
+    const pendingTimers = new Set<ReturnType<typeof setTimeout>>();
+
+    const handlePointerDown = (event: PointerEvent) => {
+      decidedEvent = event;
+      decideOutsidePress(event);
+    };
+
+    const handlePointerDownCapture = (event: PointerEvent) => {
+      const timer = setTimeout(() => {
+        pendingTimers.delete(timer);
+        // The bubble path already owns this exact event; deciding twice would dismiss twice.
+        if (decidedEvent === event) return;
+        decideOutsidePress(event);
+      }, 0);
+      pendingTimers.add(timer);
+    };
+
+    document.addEventListener("pointerdown", handlePointerDownCapture, true);
     document.addEventListener("pointerdown", handlePointerDown);
     return () => {
+      document.removeEventListener("pointerdown", handlePointerDownCapture, true);
       document.removeEventListener("pointerdown", handlePointerDown);
+      for (const timer of pendingTimers) clearTimeout(timer);
+      pendingTimers.clear();
+      decidedEvent = null;
       insideEventRef.current = null;
     };
   }, [open]);

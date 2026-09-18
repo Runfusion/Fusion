@@ -56,6 +56,31 @@ export function currentFloatingZ(): number {
 }
 
 /*
+FNXC:FloatingWindowGestureLayer 2026-09-18-02:21:
+FN-523 : « la modale qu'on drag devrait forcément avoir un z-index supérieur à la popover puisque c'est le dernier
+élément sélectionné ». Une fenêtre ne peut pas y parvenir par une simple revendication au compteur : les surfaces
+TRANSITOIRES dérivent leur couche du plafond VIVANT (`calc(var(--fusion-max-z) + N)`, styles.css) et `syncFusionMaxZ`
+publie `Math.max(topZ, FUSION_MAX_Z_FLOOR)`, donc toute revendication au compteur reste structurellement SOUS elles.
+
+Pendant un geste à pointeur CAPTURÉ — et pour sa durée exacte — la fenêtre saisie revendique donc une couche
+strictement au-dessus de toute la bande transitoire documentée : panneau (`+ 3`), contrôle global de visibilité
+(`+ 4`, réservé), menu d'action éphémère FN-521 (`+ 5` / `+ 6`), d'où `+ 7`. Aucun pas réservé n'est repris et aucune
+règle CSS n'est déplacée. Recouvrir temporairement ces surfaces est sans conséquence d'interaction : le pointeur est
+capturé par la fenêtre, donc aucune autre surface ne peut recevoir d'entrée, et une popover comme un menu éphémère se
+referment de toute façon sur l'appui qui démarre le geste.
+
+Deux invariants tiennent cette valeur : elle n'INCRÉMENTE PAS `topZ` et n'est JAMAIS publiée dans `--fusion-max-z`
+(sinon la bande transitoire la poursuivrait à chaque geste, indéfiniment), et elle n'est pas publiée dans l'ordre de
+pile du gestionnaire de fenêtres, qui continue de voir la revendication ordinaire.
+*/
+export const GESTURE_LAYER_OFFSET = 7;
+
+/** Layer claimed by a window engaged in a pointer gesture, for the duration of that gesture only. Never published. */
+export function engagedGestureZ(): number {
+  return Math.max(topZ, FUSION_MAX_Z_FLOOR) + GESTURE_LAYER_OFFSET;
+}
+
+/*
 FNXC:FloatingWindowStack 2026-09-15-04:01:
 FN-401: the snap-zone preview claims the TOP of this single stack. It used to be painted inside its own
 window's overlay, whose inline `z-index` opens a closed stacking context, so the board or any other window

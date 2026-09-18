@@ -15,7 +15,7 @@ import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { isFullScreenSheetViewport, isShortViewport, isTabletTouchViewport, useViewportMode } from "../hooks/useViewportMode";
 import { useDrawerDismissGesture } from "../hooks/useDrawerDismissGesture";
-import { currentFloatingZ, currentTaskDetailFloatingZ, nextFloatingZ, nextSnapPreviewZ, nextTaskDetailFloatingZ } from "./floatingWindowStack";
+import { currentFloatingZ, currentTaskDetailFloatingZ, engagedGestureZ, nextFloatingZ, nextSnapPreviewZ, nextTaskDetailFloatingZ } from "./floatingWindowStack";
 import { isInsidePortalSafeSurface } from "../utils/portalSurfaces";
 import {
   KeyboardViewportOwnerProvider,
@@ -566,6 +566,20 @@ export function FloatingWindow({
   */
   const dragTeardownRef = useRef<(() => void) | null>(null);
 
+  /*
+  FNXC:FloatingWindowGestureLayer 2026-09-18-02:21:
+  FN-523 : la fenêtre engagée dans un geste à pointeur capturé est le DERNIER élément que l'opérateur a saisi ; elle
+  doit donc être peinte au-dessus des surfaces transitoires dérivées du plafond vivant (popovers outils, menus
+  éphémères), qu'une revendication ordinaire au compteur ne peut structurellement pas dépasser. L'élévation est
+  revendiquée au démarrage du drag de bandeau ET du redimensionnement, et relâchée sur TOUTES les sorties de geste :
+  `pointerup`, `pointercancel`, la démolition partagée `dragTeardownRef`, et le démontage. Elle n'est portée que par le
+  rendu de l'overlay : `stackOrder` publie toujours la revendication ordinaire, pour que l'ordre du gestionnaire de
+  fenêtres et la garde `current >= readCurrentZ()` de `bringToFront` restent justes.
+  */
+  const [engagedZ, setEngagedZ] = useState<number | null>(null);
+  const beginGestureLayer = useCallback(() => setEngagedZ(engagedGestureZ()), []);
+  const endGestureLayer = useCallback(() => setEngagedZ(null), []);
+
   // FNXC:FloatingWindow 2026-06-22-21:30: Focus-to-front. Pointerdown/focus anywhere on the panel raises this window above ALL other floating modals (any type) via the shared stack.
   const bringToFront = useCallback(() => {
     setZIndex((current) => {
@@ -643,6 +657,7 @@ export function FloatingWindow({
       */
       dragTeardownRef.current?.();
       bringToFront();
+      beginGestureLayer();
       captureTarget.setPointerCapture?.(pointerId);
       const gestureStartMode = snapModeRef.current;
       const gestureStartRect = geometryRef.current;
@@ -789,6 +804,7 @@ export function FloatingWindow({
         document.body.style.userSelect = previousUserSelect;
         detachListeners();
         dragTeardownRef.current = null;
+        endGestureLayer();
         /*
         FNXC:FloatingWindowSnap 2026-09-15-22:32:
         FN-438: publish the VALIDATED end of gesture, last, after the retained zone or final position has been
@@ -825,6 +841,7 @@ export function FloatingWindow({
         document.body.style.userSelect = previousUserSelect;
         detachListeners();
         dragTeardownRef.current = null;
+        endGestureLayer();
       }
 
       dragTeardownRef.current = () => {
@@ -833,13 +850,14 @@ export function FloatingWindow({
         document.body.style.userSelect = previousUserSelect;
         detachListeners();
         dragTeardownRef.current = null;
+        endGestureLayer();
       };
 
       captureTarget.addEventListener("pointermove", handlePointerMove);
       captureTarget.addEventListener("pointerup", handlePointerUp);
       captureTarget.addEventListener("pointercancel", handlePointerCancel);
     },
-    [applyRect, applySnapMode, bringToFront, markUserAdjusted, resolvedMinSize, windowKey]
+    [applyRect, applySnapMode, beginGestureLayer, bringToFront, endGestureLayer, markUserAdjusted, resolvedMinSize, windowKey]
   );
   const startPointerDragRef = useRef(startPointerDrag);
   startPointerDragRef.current = startPointerDrag;
@@ -930,6 +948,7 @@ export function FloatingWindow({
       event.stopPropagation();
       dragTeardownRef.current?.();
       bringToFront();
+      beginGestureLayer();
       const captureTarget = event.currentTarget;
       const pointerId = event.pointerId;
       captureTarget.setPointerCapture?.(pointerId);
@@ -987,6 +1006,7 @@ export function FloatingWindow({
         document.body.style.userSelect = previousUserSelect;
         detachListeners();
         dragTeardownRef.current = null;
+        endGestureLayer();
       }
 
       dragTeardownRef.current = () => {
@@ -994,16 +1014,18 @@ export function FloatingWindow({
         document.body.style.userSelect = previousUserSelect;
         detachListeners();
         dragTeardownRef.current = null;
+        endGestureLayer();
       };
 
       captureTarget.addEventListener("pointermove", handlePointerMove);
       captureTarget.addEventListener("pointerup", handlePointerUp);
       captureTarget.addEventListener("pointercancel", handlePointerUp);
     },
-    [availableBounds, bringToFront, markUserAdjusted, resolvedMinSize, windowSurface.surfaceActive]
+    [availableBounds, beginGestureLayer, bringToFront, endGestureLayer, markUserAdjusted, resolvedMinSize, windowSurface.surfaceActive]
   );
 
   // FNXC:FloatingWindow 2026-06-22-20:45: Run any active drag/resize teardown on unmount so captured-element listeners + a pending rAF never outlive the window.
+  // FN-523: the same teardown releases the gesture layer, so an unmount mid-gesture leaves no elevated claim behind.
   useEffect(() => () => dragTeardownRef.current?.(), []);
   /*
   FNXC:FloatingWindowSnap 2026-09-16-18:31:
@@ -1307,7 +1329,8 @@ export function FloatingWindow({
       onTouchEnd={effectiveHidden ? undefined : backdropMouseHandlers?.onTouchEnd}
       // FNXC:ModalTouchGeometry 2026-07-27-12:00: FN-8619 keeps Agent Detail's paired mouse-only backdrop contract at the shared modal backdrop; this deliberately does not alter pointer-down dismissal.
       // FNXC:FloatingWindow 2026-06-22-23:00: The z-index MUST live on the position:fixed overlay (which creates a stacking context), not the panel. A panel z-index is trapped inside the overlay's context and loses to page elements that are stacking contexts in body's context (e.g. the right dock at position:absolute z-index:20). With z on the overlay, the whole window sits at the shared floating band in body's stacking context and reliably paints above page content + tap-to-front reorders correctly.
-      style={{ zIndex, ...(mobileDrawer ? drawerKeyboardSurface.style : {}) } as CSSProperties}
+      // FN-523: an engaged gesture paints this overlay above the transient band; `stackOrder` keeps the ordinary claim.
+      style={{ zIndex: engagedZ ?? zIndex, ...(mobileDrawer ? drawerKeyboardSurface.style : {}) } as CSSProperties}
       data-keyboard-bounded={drawerKeyboardBounded || undefined}
     >
       <div

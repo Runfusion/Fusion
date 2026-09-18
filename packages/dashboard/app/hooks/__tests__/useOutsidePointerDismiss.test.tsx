@@ -7,6 +7,9 @@ import { useOutsidePointerDismiss } from "../useOutsidePointerDismiss";
 
 afterEach(cleanup);
 
+/** Lets the hook's deferred capture turn (`setTimeout(..., 0)`) run, so a press with stopped propagation is decided. */
+const flushDeferredTurn = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
 interface HostProps {
   open?: boolean;
   onDismiss: () => void;
@@ -54,6 +57,73 @@ describe("useOutsidePointerDismiss", () => {
 
     expect(onDismiss).toHaveBeenCalledTimes(1);
     expect(boardClicked).toHaveBeenCalledTimes(1);
+
+    // FN-523: the deferred capture path must never re-decide an event the bubble path already owned.
+    await flushDeferredTurn();
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+  });
+
+  /*
+   * FN-523 symptom: `handleDragPointerDown` / `handleResizePointerDown` (FloatingWindow) and the
+   * `useModalResizePersist` handle call `stopPropagation()` on the press, killing it before `document` bubble, so
+   * starting to drag another window left every popover open. The deferred capture path decides those presses too.
+   */
+  it("dismisses on an outside pointerdown whose propagation is stopped before document", async () => {
+    const user = userEvent.setup();
+    const onDismiss = vi.fn();
+    render(
+      <>
+        <Host onDismiss={onDismiss} />
+        <div
+          data-testid="drag-handle"
+          onPointerDown={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          }}
+        >
+          Header
+        </div>
+      </>,
+    );
+
+    await user.click(screen.getByTestId("drag-handle"));
+    await flushDeferredTurn();
+
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not dismiss when a PORTALLED descendant stops propagation on its own pointerdown", async () => {
+    const user = userEvent.setup();
+    const onDismiss = vi.fn();
+    render(
+      <Host onDismiss={onDismiss}>
+        {createPortal(
+          <button type="button" data-testid="portal-greedy" onPointerDown={(event) => event.stopPropagation()}>Child</button>,
+          document.body,
+        )}
+      </Host>,
+    );
+
+    await user.click(screen.getByTestId("portal-greedy"));
+    await flushDeferredTurn();
+
+    expect(onDismiss).not.toHaveBeenCalled();
+  });
+
+  it("does not dismiss when the trigger itself stops propagation", async () => {
+    const user = userEvent.setup();
+    const onDismiss = vi.fn();
+    render(
+      <>
+        <button type="button" data-testid="greedy-trigger" aria-controls="panel" onPointerDown={(event) => event.stopPropagation()}>Toggle</button>
+        <Host onDismiss={onDismiss} triggerSelector='[aria-controls="panel"]' />
+      </>,
+    );
+
+    await user.click(screen.getByTestId("greedy-trigger"));
+    await flushDeferredTurn();
+
+    expect(onDismiss).not.toHaveBeenCalled();
   });
 
   it("does not dismiss on a pointerdown inside the surface", async () => {
@@ -172,14 +242,17 @@ describe("useOutsidePointerDismiss", () => {
 
     unmount();
     const survivor = document.createElement("button");
+    survivor.addEventListener("pointerdown", (event) => event.stopPropagation());
     document.body.appendChild(survivor);
     await user.click(survivor);
+    // A pending deferred turn must never outlive the surface.
+    await flushDeferredTurn();
 
     expect(onDismiss).not.toHaveBeenCalled();
     survivor.remove();
   });
 
-  it("never dismisses on wheel or scroll", () => {
+  it("never dismisses on wheel, scroll or touchmove", async () => {
     const onDismiss = vi.fn();
     render(<Host onDismiss={onDismiss} />);
 
@@ -187,6 +260,9 @@ describe("useOutsidePointerDismiss", () => {
     fireEvent.scroll(document);
     fireEvent.wheel(window, { deltaY: -240 });
     fireEvent.scroll(window);
+    fireEvent.touchMove(document, { touches: [{ clientX: 10, clientY: 120 }] });
+    fireEvent.resize(window);
+    await flushDeferredTurn();
 
     expect(onDismiss).not.toHaveBeenCalled();
     expect(screen.getByTestId("panel")).toBeInTheDocument();
