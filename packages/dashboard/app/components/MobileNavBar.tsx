@@ -44,6 +44,8 @@ import { buildPluginTaskViewId, isPluginViewId } from "../plugins/pluginViewRegi
 import { getPluginDashboardViewNavIcon } from "./pluginNavIcon";
 import { ViewDrawerHandle } from "./ViewDrawer";
 import { useFooterSwipeUpGesture } from "../hooks/useFooterSwipeUpGesture";
+import { useDrawerDismissGesture } from "../hooks/useDrawerDismissGesture";
+import { listRowGestureAttributes } from "../utils/listItemGesture";
 import { MOBILE_NAV_SELECTABLE_ITEMS, resolveMobileNavPrimaryItems, type MobileNavSelectableItem } from "../../../core/src/board/mobile-nav-primary-items";
 
 export interface PublishedMobileNavHeightInput {
@@ -634,6 +636,26 @@ export function MobileNavBar({
     onTrigger: openMenuFromFooterGesture,
   });
 
+  /*
+  FNXC:MobileNavGesture 2026-09-18-00:54:
+  FN-520 : la liste de navigation adopte le MÊME contrat de fermeture que les tiroirs du shell. Un glissement
+  descendant n'est réclamé que si TOUS les conteneurs défilants entre la cible et la surface — surface comprise —
+  étaient au bord haut au moment du contact ; une liste déjà défilée conserve donc intégralement son défilement
+  natif, et aucun `preventDefault` n'est émis avant réclamation. Seul l'« overscroll dans le vide » signalé par
+  l'opérateur devient une fermeture. `onDismiss` passe par le propriétaire d'état EXISTANT (`dismissMore`), donc
+  aucun second propriétaire n'est créé et `navigationHistory` n'est pas dupliqué. Le geste d'OUVERTURE ci-dessus
+  est armé uniquement `!isMenuOpen` et celui-ci uniquement `open: isMenuOpen` : les deux ne coexistent jamais sur
+  le même contact. Comme `useFooterSwipeUpGesture`, l'appel précède le retour anticipé `pillMounted` pour que le
+  nombre de hooks reste stable entre rendus.
+  */
+  const dismissMenuFromDrawerGesture = useCallback(() => { dismissMore(); }, [dismissMore]);
+  const menuDismissGestureProps = useDrawerDismissGesture({
+    enabled: officialDesignEnabled,
+    open: isMenuOpen,
+    panelRef: menuSurfaceRef,
+    onDismiss: dismissMenuFromDrawerGesture,
+  });
+
   if (!pillMounted) {
     return null;
   }
@@ -766,12 +788,23 @@ export function MobileNavBar({
     || view === "graph"
     || (isPluginViewId(view) && !topLevelPrimaryPluginViews.some((entry) => buildPluginTaskViewId(entry.pluginId, entry.view.viewId) === view));
 
+  /*
+  FNXC:MobileNavGesture 2026-09-18-00:54:
+  FN-520 : les lignes du menu de navigation sont de VRAIS `button` accessibles, et `isEligibleStart` du geste de
+  fermeture refuse tout contrôle interactif qui n'est pas une ligne qualifiée. Sans `listRowGestureAttributes()`
+  posé EXPLICITEMENT sur chaque ligne, le geste ne démarrerait que sur les rares zones non interactives de la
+  surface (titre, séparateur) — donc nulle part où l'opérateur pose réellement le doigt. La qualification reste
+  locale et minimale : le chevron `.mobile-more-split-toggle` (qui déplie les scripts, une action distincte de la
+  ligne) et le contenu injecté de `shellConnectionControl` (propriété d'un autre composant) NE sont pas qualifiés,
+  donc le geste n'y démarre pas et aucune sémantique accessible n'est retirée. Les onglets `.mobile-nav-tab` de la
+  barre elle-même ne sont pas dans la surface de menu et restent également natifs.
+  */
   const renderSelectableItem = (item: MobileNavSelectableItem, surface: "primary" | "more") => {
     const destination = destinationRegistry[item];
     const isPrimary = surface === "primary";
     const label = t(destination.labelKey, destination.fallback);
     if (isPrimary) return <button key={item} type="button" className={`mobile-nav-tab${destination.isActive ? " mobile-nav-tab--active" : ""}`} data-testid={`mobile-nav-tab-${item}`} role={undefined} aria-label={label} aria-current={destination.isActive ? "page" : undefined} aria-selected={undefined} onClick={() => destination.navigate("primary")}><span className="mobile-nav-tab-icon-wrapper">{destination.icon}{destination.indicator && <span className="status-dot status-dot--pending mobile-nav-chat-unread-dot" aria-label={destination.indicatorLabel} />}</span>{destination.badge && destination.badge > 0 ? <span className="mobile-nav-tab-badge" aria-label={destination.badgeLabel}>{formatCount(destination.badge)}</span> : null}{destination.alpha ? <span className="mobile-nav-tab-badge">{t("common.alpha", "Alpha")}</span> : null}</button>;
-    return <button key={item} type="button" className="mobile-more-item" data-testid={destination.moreTestId} onClick={() => destination.navigate("more")}><span className="mobile-more-item-icon-wrapper">{destination.icon}{destination.indicator && <span className="status-dot status-dot--pending mobile-more-item-icon-dot" aria-label={destination.indicatorLabel} />}</span><span>{label}</span>{destination.badge && destination.badge > 0 ? <span className="mobile-more-item-badge" aria-label={destination.badgeLabel}>{formatCount(destination.badge)}</span> : null}{destination.alpha ? <span className="mobile-more-item-badge">{t("common.alpha", "Alpha")}</span> : null}</button>;
+    return <button key={item} type="button" className="mobile-more-item" {...listRowGestureAttributes()} data-testid={destination.moreTestId} onClick={() => destination.navigate("more")}><span className="mobile-more-item-icon-wrapper">{destination.icon}{destination.indicator && <span className="status-dot status-dot--pending mobile-more-item-icon-dot" aria-label={destination.indicatorLabel} />}</span><span>{label}</span>{destination.badge && destination.badge > 0 ? <span className="mobile-more-item-badge" aria-label={destination.badgeLabel}>{formatCount(destination.badge)}</span> : null}{destination.alpha ? <span className="mobile-more-item-badge">{t("common.alpha", "Alpha")}</span> : null}</button>;
   };
 
   /*
@@ -906,6 +939,13 @@ export function MobileNavBar({
             onTouchEnd={officialDesignEnabled ? undefined : finishSheetDrag}
             onTouchCancel={officialDesignEnabled ? undefined : resetSheetDrag}
             /*
+            FNXC:MobileNavGesture 2026-09-18-00:54:
+            FN-520 : les props pointeur du geste de fermeture ne sont étalées que sur la surface officielle. La
+            branche héritée `.mobile-more-sheet` garde ses propres gestionnaires tactiles : deux gestes sur la même
+            surface se disputeraient le même contact.
+            */
+            {...(officialDesignEnabled ? menuDismissGestureProps : {})}
+            /*
             FNXC:MobileNav 2026-09-14-07:02:
             Selecting an entry that only becomes reachable AFTER scrolling did nothing. The sheet carries a transform
             open animation, and any state change while it is scrolled can restart that animation: the surface shifts
@@ -935,6 +975,7 @@ export function MobileNavBar({
               <button
                 type="button"
                 className="mobile-more-item mobile-more-split-primary"
+                {...listRowGestureAttributes()}
                 data-testid="mobile-more-item-terminal"
                 onClick={() => handleMoreAction(onToggleTerminal)}
               >
@@ -970,6 +1011,7 @@ export function MobileNavBar({
                         key={script.name}
                         type="button"
                         className="mobile-more-item mobile-more-subitem"
+                        {...listRowGestureAttributes()}
                         data-testid={`mobile-more-script-item-${script.name}`}
                         onClick={() => {
                           if (onRunScript) onRunScript(script.name, script.command);
@@ -990,6 +1032,7 @@ export function MobileNavBar({
                       <button
                         type="button"
                         className="mobile-more-item mobile-more-subitem mobile-more-subitem--manage"
+                        {...listRowGestureAttributes()}
                         data-testid="mobile-more-scripts-manage"
                         onClick={() => {
                           dismissMore();
@@ -1007,6 +1050,7 @@ export function MobileNavBar({
                     <button
                       type="button"
                       className="mobile-more-item mobile-more-subitem"
+                      {...listRowGestureAttributes()}
                       data-testid="mobile-more-scripts-manage"
                       onClick={() => {
                         dismissMore();
@@ -1035,6 +1079,7 @@ export function MobileNavBar({
                     key={`${entry.pluginId}:${entry.view.viewId}`}
                     type="button"
                     className="mobile-more-item"
+                    {...listRowGestureAttributes()}
                     data-testid={`mobile-more-item-plugin-${entry.pluginId}-${entry.view.viewId}`}
                     onClick={() => handleMoreAction(() => onChangeView(entry.pluginId === "fusion-plugin-dependency-graph" && entry.view.viewId === "graph" ? "graph" : pluginTaskView))}
                   >
