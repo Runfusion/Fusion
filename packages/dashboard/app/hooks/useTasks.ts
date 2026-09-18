@@ -550,6 +550,10 @@ export interface UseTasksOptions {
 export function useTasks(options?: UseTasksOptions) {
   const projectId = options?.projectId;
   const resolveColumnFlags = options?.resolveColumnFlags;
+  const resolveColumnFlagsRef = useRef(resolveColumnFlags);
+  useEffect(() => {
+    resolveColumnFlagsRef.current = resolveColumnFlags;
+  }, [resolveColumnFlags]);
   const searchQuery = options?.searchQuery;
   const sseEnabled = options?.sseEnabled ?? true;
   /*
