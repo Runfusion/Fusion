@@ -128,6 +128,7 @@ vi.mock("@fusion/core", async (importActual) => {
 vi.mock("@fusion/engine", () => ({
   installBaselineArchiveWorktreeDisposer: vi.fn(),
   aiMergeTask: vi.fn(),
+  SelfHealingManager: vi.fn(),
   runAiMerge: vi.fn(),
   landWorkspaceTask: vi.fn(),
   withWorkspaceMergeDispatchLease: vi.fn(async (_store: unknown, _taskId: string, body: (handle?: unknown) => unknown) => body(undefined)),

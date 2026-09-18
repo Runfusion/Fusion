@@ -84,7 +84,7 @@ describe("reliability interactions: worktrunk worktree removal routing", () => {
     const store = storeForSelfHealing({ worktrunk: { enabled: true, binaryPath: "worktrunk", onFailure: "fail" } as any }, task);
     const mgr = new SelfHealingManager(store, { rootDir: "/repo", getExecutingTaskIds: () => new Set() });
 
-    vi.spyOn(mgr as any, "isBranchTipMisboundToTask").mockResolvedValue({ misbound: true, branchTip: "abc", landed: { sha: "abc", strategy: "tip-reachable" } });
+    vi.spyOn(mgr as any, "isBranchTipMisboundToTask").mockResolvedValue({ misbound: true, branchMissing: false, branchTip: "abc", landed: { sha: "abc", strategy: "tip-reachable" } });
     vi.spyOn(mgr as any, "clearCompletionBranchIfSubsumed").mockResolvedValue(true);
 
     await mgr.recoverBranchMisboundInReviewTasks();

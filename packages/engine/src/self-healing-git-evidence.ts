@@ -536,13 +536,35 @@ export abstract class SelfHealingGitEvidence {
     taskId: string;
     lineageId?: string;
     baseBranch: string;
-  }): Promise<{ misbound: boolean; branchTip: string; landed: Awaited<ReturnType<typeof findAlreadyMergedTaskCommit>>; rejection?: { reason: "foreign-task-tip" | "foreign-lineage-tip"; owner?: string } }> {
+  }): Promise<{ misbound: boolean; branchMissing: boolean; branchTip: string; landed: Awaited<ReturnType<typeof findAlreadyMergedTaskCommit>>; rejection?: { reason: "foreign-task-tip" | "foreign-lineage-tip"; owner?: string } }> {
     const { branch, taskId, lineageId, baseBranch } = input;
-    const { stdout: tipOut } = await execAsync(`git rev-parse ${shellQuote(branch)}`, {
-      cwd: this.options.rootDir,
-      timeout: 30_000,
-      maxBuffer: 1024 * 1024,
-    });
+    let tipOut = "";
+    try {
+      ({ stdout: tipOut } = await execAsync(`git rev-parse ${shellQuote(branch)}`, {
+        cwd: this.options.rootDir,
+        timeout: 30_000,
+        maxBuffer: 1024 * 1024,
+      }));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const missingRevision = /unknown revision|ambiguous argument|Needed a single revision/i.test(message);
+      if (classifyBranchProbeError(error) !== "absent" && !missingRevision) throw error;
+      /*
+      FNXC:WorkflowRecovery 2026-09-17-06:00 (FN-9304):
+      A branch removed after its merge is an expected steady state, not a git failure. Classify it
+      as `branchMissing` and still inspect base-branch trailers for ownership-anchored landed
+      content — a deleted tip has no ref to read ancestry from, but the base branch's own commit
+      trailers are proof regardless of what happened to the source branch.
+      */
+      const landed = await this.findAlreadyMergedTaskCommit({
+        taskId,
+        lineageId,
+        repoDir: this.options.rootDir,
+        baseBranch,
+        taskBranch: branch,
+      });
+      return { misbound: false, branchMissing: true, branchTip: "", landed };
+    }
     const branchTip = tipOut.trim();
     const ownership = await this.readCommitTaskOwnership(branchTip, taskId, lineageId);
     /*
@@ -554,7 +576,7 @@ export abstract class SelfHealingGitEvidence {
     */
     const rejection = await this.foreignTipRejection({ taskId, lineageId, branchTip, baseBranch, ownership });
     if (rejection) {
-      return { misbound: false, branchTip, landed: null, rejection };
+      return { misbound: false, branchMissing: false, branchTip, landed: null, rejection };
     }
     const hasTaskId = ownership.ownerTaskId === taskId;
     const hasLineage = lineageId ? ownership.ownerLineageId === lineageId : false;
@@ -565,6 +587,6 @@ export abstract class SelfHealingGitEvidence {
       baseBranch,
       taskBranch: branch,
     });
-    return { misbound: !hasTaskId && !hasLineage, branchTip, landed };
+    return { misbound: !hasTaskId && !hasLineage, branchMissing: false, branchTip, landed };
   }
 }
