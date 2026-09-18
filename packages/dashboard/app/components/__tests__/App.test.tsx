@@ -7064,7 +7064,7 @@ describe("App task search suggestions", () => {
     remoteSpy.mockRestore();
   });
 
-  it("ferme le champ Alpha inline par la croix ou Escape et réinitialise sa requête", async () => {
+  it("ferme le champ Alpha inline par Escape et réinitialise sa requête", async () => {
     vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
       experimentalFeatures: { ...defaultSettings.experimentalFeatures },
@@ -7075,7 +7075,7 @@ describe("App task search suggestions", () => {
     await waitForAppShell();
     fireEvent.click(screen.getByTestId("desktop-inline-header-search-btn"));
     fireEvent.change(screen.getByRole("combobox", { name: "Search tasks..." }), { target: { value: "353" } });
-    fireEvent.click(screen.getByRole("button", { name: "Close search" }));
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "Search tasks..." }), { key: "Escape" });
     await waitFor(() => expect(screen.getByTestId("desktop-inline-header-search-btn")).toHaveFocus());
 
     fireEvent.click(screen.getByTestId("desktop-inline-header-search-btn"));

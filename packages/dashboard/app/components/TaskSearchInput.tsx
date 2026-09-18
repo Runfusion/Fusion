@@ -6,7 +6,7 @@ import {
   useState,
   type Ref,
 } from "react";
-import { Search, X } from "lucide-react";
+import { Search, Sparkles } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { Task } from "@fusion/core";
 import { useTaskSearch } from "../hooks/useTaskSearch";
@@ -33,6 +33,26 @@ Arrow Down / Tab move focus into the panel, where a focused CARD is activated wi
 the card itself. The field stays typeable throughout: the panel is non-modal and takes no focus.
 */
 
+/*
+FNXC:TaskSearch 2026-09-18-02:21:
+FN-525 remplace la croix de fermeture du champ par un bouton « Search with AI ».
+
+Pourquoi : depuis FN-477 la recherche intelligente ne se déclenchait qu'avec la touche Entrée, une
+affordance invisible annoncée uniquement dans l'infobulle du champ. Elle a désormais un bouton
+cliquable, rendu inconditionnellement (même sans `onClose`), désactivé tant que la requête est vide
+ou qu'une recherche IA est déjà en vol.
+
+Pourquoi Échap prend en charge `onClose` : la croix était la SEULE voie de fermeture du champ
+flottant non-mobile, parce que l'hôte masque sa bascule `desktop-header-search-btn` tant que la
+recherche est ouverte. Échap ferme donc le panneau PUIS remonte `onClose?.()`, ce qui aligne les
+trois hôtes du header sur un contrat de fermeture unique (Échap, bascule loupe mobile, clic
+extérieur pour le panneau).
+
+Pourquoi un helper partagé : Entrée et le clic passent tous les deux par `triggerAiSearch`, pour que
+les deux chemins de déclenchement ne puissent pas diverger (gardes requête vide / ouverture du
+panneau / appel unique à `runAiSearch`).
+*/
+
 /**
  * FNXC:TaskTitleDisplay 2026-09-14-17:05:
  * Retained shape for hosts that hand over partial rows. The panel itself renders full `Task` rows.
@@ -52,7 +72,6 @@ export interface TaskSearchInputProps {
   autoFocus?: boolean;
   inputRef?: Ref<HTMLInputElement>;
   className?: string;
-  closeLabel?: string;
   testId?: string;
   /** Project that owns the search. Without it no request is issued. */
   projectId?: string;
@@ -70,7 +89,6 @@ export function TaskSearchInput({
   autoFocus,
   inputRef,
   className = "",
-  closeLabel,
   testId,
   projectId,
   nodeId,
@@ -117,10 +135,33 @@ export function TaskSearchInput({
     return () => document.removeEventListener("mousedown", handleOutsidePress);
   }, []);
 
-  const handleCloseClick = useCallback(() => {
-    closePanel();
-    onClose?.();
-  }, [closePanel, onClose]);
+  /**
+   * FNXC:TaskSearch 2026-09-18-02:21:
+   * FN-525 — unique point de déclenchement de la lane IA, partagé par la touche Entrée et le bouton
+   * « Search with AI » : une requête vide ne déclenche rien, sinon le panneau est ouvert puis la
+   * recherche intelligente est lancée.
+   *
+   * Le déclenchement est différé d'un rendu quand la surface est encore fermée : le hook désactive
+   * ses deux lanes tant que `active` est faux, donc appeler `runAiSearch()` dans le même tour que
+   * `setIsOpen(true)` ne lancerait rien du tout. C'est exactement le cas du bouton, qui refuse le
+   * focus pour ne pas interrompre la saisie et n'ouvre donc pas le panneau via `onFocus`.
+   */
+  const pendingAiSearchRef = useRef(false);
+  const triggerAiSearch = useCallback(() => {
+    if (!query.trim()) return;
+    if (isOpen) {
+      void search.runAiSearch();
+      return;
+    }
+    pendingAiSearchRef.current = true;
+    setIsOpen(true);
+  }, [isOpen, query, search]);
+
+  useEffect(() => {
+    if (!isOpen || !pendingAiSearchRef.current) return;
+    pendingAiSearchRef.current = false;
+    void search.runAiSearch();
+  }, [isOpen, search]);
 
   /*
   FNXC:TaskSearch 2026-09-17-07:43:
@@ -173,15 +214,15 @@ export function TaskSearchInput({
             event.preventDefault();
             event.stopPropagation();
             closePanel();
+            // Seule voie de fermeture du champ flottant non-mobile depuis FN-525.
+            onClose?.();
             return;
           }
           if (event.key === "Enter") {
             // An IME commit and an auto-repeated key are not an operator pressing Enter.
             if (composingRef.current || event.nativeEvent.isComposing || event.repeat) return;
             event.preventDefault();
-            if (!query.trim()) return;
-            setIsOpen(true);
-            void search.runAiSearch();
+            triggerAiSearch();
             return;
           }
           if (event.key === "ArrowDown" && showPanel) {
@@ -193,16 +234,19 @@ export function TaskSearchInput({
         }}
         className="header-search-input"
       />
-      {onClose && (
-        <button
-          type="button"
-          className="header-search-clear"
-          onClick={handleCloseClick}
-          aria-label={closeLabel ?? t("header.closeSearch", "Close search")}
-        >
-          <X size={14} />
-        </button>
-      )}
+      <button
+        type="button"
+        className="header-search-ai"
+        data-testid="header-search-ai-btn"
+        onClick={triggerAiSearch}
+        // Cliquer le bouton ne doit pas retirer le focus du champ que l'opérateur est en train de saisir.
+        onMouseDown={(event) => event.preventDefault()}
+        disabled={!query.trim() || search.aiLoading}
+        aria-label={t("header.searchWithAi", "Search with AI")}
+      >
+        <Sparkles size={14} aria-hidden="true" />
+        <span>{t("header.searchWithAi", "Search with AI")}</span>
+      </button>
       {showPanel && (
         <TaskSearchResultsPopover
           anchorRef={rootRef}

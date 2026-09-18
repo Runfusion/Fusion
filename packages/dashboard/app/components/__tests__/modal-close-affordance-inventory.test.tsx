@@ -70,7 +70,7 @@ const internalXIconExemptions = [
   "MergeAdvanceNotice.tsx:1",
   "MilestoneSliceInterviewModal.tsx:1",
   "MissionInterviewModal.tsx:1",
-  "MissionManager.tsx:2",
+  "MissionManager.tsx:1",
   "NodeDetailModal.tsx:3",
   "PendingChatMessageQueue.tsx:1",
   "PiExtensionsManager.tsx:1",
@@ -84,7 +84,6 @@ const internalXIconExemptions = [
   "SkillsView.tsx:2",
   "TaskCard.tsx:1",
   "TaskDetailModal.tsx:1",
-  "TaskSearchInput.tsx:1",
   "WorkflowResultsTab.tsx:1",
 ].sort();
 
@@ -111,7 +110,6 @@ const internalCloseLabelExemptions = [
   "PendingChatMessageQueue.tsx:1",
   "RightDock.tsx:2",
   "SkillsView.tsx:2",
-  "TaskSearchInput.tsx:1",
 ].sort();
 
 /*

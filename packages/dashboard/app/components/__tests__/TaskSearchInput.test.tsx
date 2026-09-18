@@ -372,7 +372,7 @@ describe("TaskSearchInput — selection and dismissal", () => {
     await waitFor(() => expect(screen.queryByTestId("task-search-results")).toBeNull());
   });
 
-  it("closes the panel and cancels work when the close control is used", async () => {
+  it("closes the panel and cancels work when Escape is pressed", async () => {
     fetchTaskPage.mockResolvedValue(page([makeTask("FN-1")]));
     const onClose = vi.fn();
     renderField({ onClose });
@@ -380,7 +380,7 @@ describe("TaskSearchInput — selection and dismissal", () => {
     await settleDebounce();
     await waitFor(() => expect(screen.queryByTestId("task-search-results")).not.toBeNull());
 
-    fireEvent.click(screen.getByLabelText(/close search/i));
+    fireEvent.keyDown(screen.getByRole("combobox"), { key: "Escape" });
 
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(screen.queryByTestId("task-search-results")).toBeNull();
@@ -398,5 +398,107 @@ describe("TaskSearchInput — selection and dismissal", () => {
 
     expect(fetchTaskPage.mock.calls[0][1]).toMatchObject({ nodeId: "node-b", localNodeId: "local-1" });
     expect(aiSearchTasks.mock.calls[0][1]).toMatchObject({ nodeId: "node-b", localNodeId: "local-1" });
+  });
+});
+
+/*
+FNXC:TaskSearch 2026-09-18-02:21:
+FN-525 — la lane IA a désormais un bouton cliquable à la place de la croix de fermeture. L'invariant
+couvert ici : le clic et la touche Entrée passent par le même déclencheur unique, le bouton refuse
+une requête vide ou une recherche déjà en vol, il ne vole pas le focus du champ, et la fermeture de
+la surface reste assurée par Échap chez l'hôte.
+*/
+describe("TaskSearchInput — bouton Search with AI", () => {
+  it("rend le bouton même sans onClose et ne laisse aucune croix", () => {
+    renderField();
+
+    expect(screen.getByTestId("header-search-ai-btn")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Close search")).toBeNull();
+    expect(document.querySelector(".header-search-clear")).toBeNull();
+  });
+
+  it("lance la recherche IA au clic et ouvre le panneau", async () => {
+    aiSearchTasks.mockResolvedValue({ query: "collapse", tasks: [makeTask("FN-9")] });
+    renderField();
+
+    await act(async () => { fireEvent.click(screen.getByTestId("header-search-ai-btn")); });
+
+    expect(aiSearchTasks).toHaveBeenCalledTimes(1);
+    expect(aiSearchTasks.mock.calls[0][0]).toBe("collapse");
+    await waitFor(() => expect(screen.getByRole("combobox")).toHaveAttribute("aria-expanded", "true"));
+    expect(screen.getByTestId("task-search-results")).toBeInTheDocument();
+  });
+
+  it("emprunte le même chemin au clic et à la touche Entrée", async () => {
+    aiSearchTasks.mockResolvedValue({ query: "collapse", tasks: [] });
+
+    const clicked = renderField();
+    await act(async () => { fireEvent.click(screen.getByTestId("header-search-ai-btn")); });
+    const clickCalls = aiSearchTasks.mock.calls.map((call) => call[0]);
+    clicked.unmount();
+
+    aiSearchTasks.mockClear();
+    renderField();
+    await act(async () => { fireEvent.keyDown(screen.getByRole("combobox"), { key: "Enter" }); });
+    const enterCalls = aiSearchTasks.mock.calls.map((call) => call[0]);
+
+    expect(clickCalls).toEqual(["collapse"]);
+    expect(enterCalls).toEqual(clickCalls);
+  });
+
+  it.each(["", "   "])("désactive le bouton pour la requête %j et ne lance rien", async (query) => {
+    renderField({ query });
+
+    const button = screen.getByTestId("header-search-ai-btn");
+    expect(button).toBeDisabled();
+    await act(async () => { fireEvent.click(button); });
+
+    expect(aiSearchTasks).not.toHaveBeenCalled();
+  });
+
+  it("refuse un second déclenchement pendant qu'une recherche IA est en vol", async () => {
+    aiSearchTasks.mockReturnValue(new Promise(() => undefined));
+    renderField();
+
+    await act(async () => { fireEvent.click(screen.getByTestId("header-search-ai-btn")); });
+    await waitFor(() => expect(screen.getByTestId("header-search-ai-btn")).toBeDisabled());
+    await act(async () => { fireEvent.click(screen.getByTestId("header-search-ai-btn")); });
+
+    expect(aiSearchTasks).toHaveBeenCalledTimes(1);
+  });
+
+  it("ne vole pas le focus du champ au mousedown", () => {
+    renderField();
+    const input = screen.getByRole("combobox");
+    input.focus();
+
+    fireEvent.mouseDown(screen.getByTestId("header-search-ai-btn"));
+
+    expect(document.activeElement).toBe(input);
+  });
+
+  it("laisse Échap fermer la surface chez l'hôte", () => {
+    const onClose = vi.fn();
+    renderField({ onClose });
+
+    fireEvent.keyDown(screen.getByRole("combobox"), { key: "Escape" });
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+    const input = screen.getByRole("combobox");
+    expect(input).toHaveAttribute("aria-expanded", "false");
+    expect(input).not.toHaveAttribute("aria-controls");
+    expect(screen.queryByTestId("task-search-results")).toBeNull();
+  });
+
+  it("ne déclenche ni sélection ni écriture dans le champ au clic", async () => {
+    aiSearchTasks.mockResolvedValue({ query: "collapse", tasks: [] });
+    const onSelectTask = vi.fn();
+    const onSearchChange = vi.fn();
+    renderField({ onSelectTask, onSearchChange });
+
+    await act(async () => { fireEvent.click(screen.getByTestId("header-search-ai-btn")); });
+
+    expect(onSelectTask).not.toHaveBeenCalled();
+    expect(onSearchChange).not.toHaveBeenCalled();
   });
 });

@@ -319,12 +319,12 @@ describe("tablet header controls", () => {
     expect(screen.getByPlaceholderText("Search tasks...")).toBeDefined();
   });
 
-  it("closes search and clears query when close button is clicked on tablet", () => {
+  it("closes search and clears query when Escape is pressed in the field on tablet", () => {
     const onSearchChange = vi.fn();
     renderTabletHeader({ onSearchChange, view: "board" });
     fireEvent.click(screen.getByTestId("desktop-header-search-btn"));
     expect(screen.getByPlaceholderText("Search tasks...")).toBeDefined();
-    fireEvent.click(screen.getByLabelText("Close search"));
+    fireEvent.keyDown(screen.getByPlaceholderText("Search tasks..."), { key: "Escape" });
     expect(onSearchChange).toHaveBeenCalledWith("");
     expect(screen.queryByPlaceholderText("Search tasks...")).toBeNull();
   });

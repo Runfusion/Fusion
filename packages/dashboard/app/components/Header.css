@@ -830,23 +830,39 @@ projet : on scope la surcharge de composant, on ne touche pas à la primitive gl
   color: var(--text-dim);
 }
 
-.header-search-clear {
+/*
+FNXC:HeaderTaskSearch 2026-09-18-02:21:
+FN-525 remplace la croix de fermeture (`.header-search-clear`) par le déclencheur de recherche
+intelligente (`.header-search-ai`) : la lane IA n'avait aucune affordance cliquable, alors que la
+fermeture reste garantie par Échap, la bascule loupe mobile et le clic extérieur. L'état désactivé
+(requête vide ou recherche IA en vol) reste visible mais inerte.
+*/
+.header-search-ai {
   display: flex;
   align-items: center;
-  justify-content: center;
+  gap: var(--space-3xs);
   background: none;
   border: none;
   color: var(--text-muted);
   cursor: pointer;
-  padding: 2px;
+  padding: var(--space-3xs) var(--space-xs);
   border-radius: var(--radius-sm);
   flex-shrink: 0;
+  white-space: nowrap;
+  font-family: inherit;
+  font-size: 0.85em;
   transition: color var(--transition-fast), background var(--transition-fast);
 }
 
-.header-search-clear:hover {
+.header-search-ai:hover:not(:disabled) {
   color: var(--text);
   background: var(--border);
+}
+
+.header-search-ai:disabled {
+  color: var(--text-dim);
+  background: none;
+  cursor: default;
 }
 
 /* === Compact Overflow Menu (mobile + tablet) === */
@@ -1015,7 +1031,7 @@ projet : on scope la surcharge de composant, on ne touche pas à la primitive gl
 
   /* Touch targets for header controls */
   .view-toggle-btn,
-  .header-search-clear {
+  .header-search-ai {
     min-width: 36px;
     min-height: 36px;
   }

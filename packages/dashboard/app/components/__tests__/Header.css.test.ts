@@ -74,6 +74,27 @@ describe("Header CSS", () => {
     expect(taskSearchResultsCss).toMatch(/@media\s*\(max-width:\s*768px\)[\s\S]*?\.task-search-results\s*\{[^}]*max-inline-size:/);
   });
 
+  /*
+  FNXC:TaskSearch 2026-09-18-02:21:
+  FN-525 replaced the header search close X with the AI-search trigger, so `.header-search-clear` is
+  GONE rather than restyled — including its touch-target line in the compact media block.
+  */
+  it("paints the header AI search trigger with tokens and leaves no dead close-button styles behind", () => {
+    const block = extractRuleBlock(css, ".header-search-ai");
+    const disabled = extractRuleBlock(css, ".header-search-ai:disabled");
+
+    expect(block).toContain("color: var(--text-muted);");
+    expect(block).toContain("gap: var(--space-3xs);");
+    expect(block).toContain("padding: var(--space-3xs) var(--space-xs);");
+    expect(block).toContain("border-radius: var(--radius-sm);");
+    expect(block).toContain("transition: color var(--transition-fast), background var(--transition-fast);");
+    expect(disabled).toContain("cursor: default;");
+    expect(disabled).toContain("color: var(--text-dim);");
+    // The compact touch target must follow the surviving affordance, not stay orphaned on the X.
+    expect(css).toMatch(/@media\s*\(max-width:\s*768px\)[\s\S]*?\.header-search-ai\s*\{[^}]*min-width:\s*36px;[^}]*min-height:\s*36px;/);
+    expect(withoutComments(css)).not.toContain(".header-search-clear");
+  });
+
   it("anchors Alpha desktop search inline with token-sized geometry and no overlay selectors", () => {
     const inline = extractRuleBlock(css, ".header-search--inline");
 
@@ -104,13 +125,18 @@ describe("Header CSS", () => {
     expect(fixedAction).toContain("flex: 0 0 auto;");
   });
 
+  /*
+  FN-481 moved this compaction from a width to the PHONE MODE class `.header-workflow-slot--mobile`,
+  so these assertions follow the selector that ships. A touch tablet at 768px CSS deliberately keeps
+  the desktop presentation, which the old width-only selector could not express.
+  */
   it("compacts the workflow portal in the mobile top header", () => {
-    expect(css).toMatch(/@media\s*\(max-width:\s*768px\)[\s\S]*?\.header-workflow-slot\s*\{[^}]*flex:\s*1 1 auto;[^}]*justify-content:\s*center;[^}]*max-width:\s*none;/);
+    expect(css).toMatch(/@media\s*\(max-width:\s*768px\)[\s\S]*?\.header-workflow-slot--mobile\s*\{[^}]*flex:\s*1 1 auto;[^}]*justify-content:\s*center;[^}]*max-width:\s*none;/);
     expect(css).toMatch(/@media\s*\(max-width:\s*768px\)[\s\S]*?\.header-actions\s*\{[^}]*flex:\s*0 0 auto;[^}]*align-items:\s*center;[^}]*gap:\s*var\(--space-sm\);/);
-    expect(css).toMatch(/@media\s*\(max-width:\s*768px\)[\s\S]*?\.header-workflow-slot \.board-workflow-toolbar,\s*\n\s*\.header-workflow-slot \.list-workflow-control\s*\{[^}]*height:\s*32px;[^}]*align-items:\s*center;/);
-    expect(css).toMatch(/@media\s*\(max-width:\s*768px\)[\s\S]*?\.header-workflow-slot \.workflow-switcher\s*\{[^}]*width:\s*clamp\(calc\(var\(--space-2xl\) \* 3\.25\),\s*36vw,\s*calc\(var\(--space-2xl\) \* 4\)\);[^}]*height:\s*32px;[^}]*max-height:\s*32px;[^}]*align-items:\s*center;/);
-    expect(css).toMatch(/@media\s*\(max-width:\s*768px\)[\s\S]*?\.header-workflow-slot \.workflow-switcher-trigger\s*\{[^}]*appearance:\s*none;[^}]*height:\s*32px;[^}]*min-height:\s*32px;[^}]*max-height:\s*32px;[^}]*line-height:\s*1;[^}]*overflow:\s*hidden;/);
-    expect(css).toMatch(/@media\s*\(max-width:\s*768px\)[\s\S]*?\.header-workflow-slot \.workflow-switcher-label\s*\{[^}]*display:\s*none;/);
-    expect(css).toMatch(/@media\s*\(max-width:\s*768px\)[\s\S]*?\.header-workflow-slot \.workflow-switcher-counts\s*\{[^}]*display:\s*none;/);
+    expect(css).toMatch(/@media\s*\(max-width:\s*768px\)[\s\S]*?\.header-workflow-slot--mobile \.board-workflow-toolbar,\s*\n\s*\.header-workflow-slot--mobile \.list-workflow-control\s*\{[^}]*height:\s*32px;[^}]*align-items:\s*center;/);
+    expect(css).toMatch(/@media\s*\(max-width:\s*768px\)[\s\S]*?\.header-workflow-slot--mobile \.workflow-switcher\s*\{[^}]*width:\s*clamp\(calc\(var\(--space-2xl\) \* 3\.25\),\s*36vw,\s*calc\(var\(--space-2xl\) \* 4\)\);[^}]*height:\s*32px;[^}]*max-height:\s*32px;[^}]*align-items:\s*center;/);
+    expect(css).toMatch(/@media\s*\(max-width:\s*768px\)[\s\S]*?\.header-workflow-slot--mobile \.workflow-switcher-trigger\s*\{[^}]*appearance:\s*none;[^}]*height:\s*32px;[^}]*min-height:\s*32px;[^}]*max-height:\s*32px;[^}]*line-height:\s*1;[^}]*overflow:\s*hidden;/);
+    expect(css).toMatch(/@media\s*\(max-width:\s*768px\)[\s\S]*?\.header-workflow-slot--mobile \.workflow-switcher-label\s*\{[^}]*display:\s*none;/);
+    expect(css).toMatch(/@media\s*\(max-width:\s*768px\)[\s\S]*?\.header-workflow-slot--mobile \.workflow-switcher-counts\s*\{[^}]*display:\s*none;/);
   });
 });

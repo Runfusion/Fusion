@@ -262,12 +262,12 @@ describe("Header", () => {
     expect(input).toBeEnabled();
   });
 
-  it("ferme et réinitialise le champ Alpha desktop par la croix et Escape", async () => {
+  it("ferme et réinitialise le champ Alpha desktop par Escape", async () => {
     renderHeader({ view: "board", projectId: "project-a", onSearchChange: vi.fn() }, "desktop");
 
     fireEvent.click(screen.getByTestId("desktop-inline-header-search-btn"));
     fireEvent.change(screen.getByRole("combobox", { name: "Search tasks..." }), { target: { value: "353" } });
-    fireEvent.click(screen.getByRole("button", { name: "Close search" }));
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "Search tasks..." }), { key: "Escape" });
     await waitFor(() => expect(screen.getByTestId("desktop-inline-header-search-btn")).toHaveFocus());
 
     fireEvent.click(screen.getByTestId("desktop-inline-header-search-btn"));
@@ -275,6 +275,27 @@ describe("Header", () => {
     fireEvent.keyDown(screen.getByRole("combobox", { name: "Search tasks..." }), { key: "Escape" });
     await waitFor(() => expect(screen.getByTestId("desktop-inline-header-search-btn")).toHaveFocus());
     expect(screen.queryByTestId("alpha-task-search-overlay")).toBeNull();
+  });
+
+  /*
+  FNXC:TaskSearch 2026-09-18-02:21:
+  FN-525 — les trois hôtes de recherche du header doivent rendre le bouton « Search with AI » et
+  déclencher la même lane IA que la touche Entrée, là où la croix de fermeture se trouvait.
+  */
+  it.each(["desktop", "tablet", "mobile"] as const)("déclenche la recherche IA depuis le bouton Search with AI sur %s", async (tier) => {
+    renderSearchHeader(tier);
+    if (tier === "desktop") fireEvent.click(screen.getByTestId("desktop-inline-header-search-btn"));
+    else if (tier === "tablet") fireEvent.click(screen.getByTestId("desktop-header-search-btn"));
+    else fireEvent.click(screen.getByTestId("mobile-header-search-btn"));
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Search tasks..." }), { target: { value: "353" } });
+    const button = screen.getByTestId("header-search-ai-btn");
+    expect(button).toBeEnabled();
+    await act(async () => { fireEvent.click(button); });
+
+    await waitFor(() => expect(mockAiSearchTasks).toHaveBeenCalledTimes(1));
+    expect(mockAiSearchTasks.mock.calls[0][0]).toBe("353");
+    expect(screen.queryByLabelText("Close search")).toBeNull();
   });
 
   it.each(["desktop", "tablet", "mobile"] as const)("ne rend jamais le hamburger Alpha dans le Header sur %s", (tier) => {
@@ -1543,31 +1564,31 @@ describe("Header", () => {
       expect(screen.getByPlaceholderText("Search tasks...")).toBeDefined();
     });
 
-    it("closes search when close button is clicked", () => {
+    it("closes search when Escape is pressed in the field", () => {
       renderHeader({ onSearchChange: vi.fn(), view: "board" });
       fireEvent.click(screen.getByTestId("desktop-header-search-btn"));
       expect(screen.getByPlaceholderText("Search tasks...")).toBeDefined();
-      fireEvent.click(screen.getByLabelText("Close search"));
+      fireEvent.keyDown(screen.getByPlaceholderText("Search tasks..."), { key: "Escape" });
       expect(screen.queryByPlaceholderText("Search tasks...")).toBeNull();
       expect(screen.getAllByTestId("desktop-header-search-btn")).toHaveLength(1);
     });
 
-    it("clears search query when close button is clicked", () => {
+    it("clears search query when Escape is pressed in the field", () => {
       const onSearchChange = vi.fn();
       renderHeader({ onSearchChange, view: "board" });
       fireEvent.click(screen.getByTestId("desktop-header-search-btn"));
-      fireEvent.click(screen.getByLabelText("Close search"));
+      fireEvent.keyDown(screen.getByPlaceholderText("Search tasks..."), { key: "Escape" });
       expect(onSearchChange).toHaveBeenCalledWith("");
     });
 
-    it("restores the board search open button after closing a populated query and parent clear", () => {
+    it("restores the board search open button after Escape on a populated query and parent clear", () => {
       const onSearchChange = vi.fn();
       const { rerender } = renderHeader({ onSearchChange, view: "board", searchQuery: "blocked" });
 
       expect(screen.getByDisplayValue("blocked")).toBeInTheDocument();
       expect(screen.queryByTestId("desktop-header-search-btn")).toBeNull();
 
-      fireEvent.click(screen.getByLabelText("Close search"));
+      fireEvent.keyDown(screen.getByDisplayValue("blocked"), { key: "Escape" });
       expect(onSearchChange).toHaveBeenCalledWith("");
       expect(screen.queryByPlaceholderText("Search tasks...")).toBeNull();
 
@@ -1635,12 +1656,12 @@ describe("Header", () => {
       expect(wrapper!.querySelector("header.header")).not.toBeNull();
     });
 
-    it("hides the open toggle while search is open and restores it after close", () => {
+    it("hides the open toggle while search is open and restores it after Escape", () => {
       renderHeader({ onSearchChange: vi.fn(), view: "board" });
       fireEvent.click(screen.getByTestId("desktop-header-search-btn"));
       expect(screen.getByPlaceholderText("Search tasks...")).toBeDefined();
       expect(screen.queryByTestId("desktop-header-search-btn")).toBeNull();
-      fireEvent.click(screen.getByLabelText("Close search"));
+      fireEvent.keyDown(screen.getByPlaceholderText("Search tasks..."), { key: "Escape" });
       expect(screen.queryByPlaceholderText("Search tasks...")).toBeNull();
       expect(screen.getAllByTestId("desktop-header-search-btn")).toHaveLength(1);
     });
@@ -1654,8 +1675,8 @@ describe("Header", () => {
       fireEvent.click(screen.getByTestId("desktop-header-search-btn"));
       // Search opens
       expect(screen.getByPlaceholderText("Search tasks...")).toBeDefined();
-      // Close and clear
-      fireEvent.click(screen.getByLabelText("Close search"));
+      // Close and clear via Escape
+      fireEvent.keyDown(screen.getByPlaceholderText("Search tasks..."), { key: "Escape" });
       expect(onSearchChange).toHaveBeenCalledWith("");
     });
 
@@ -1876,11 +1897,10 @@ describe("Header", () => {
       expect(screen.getByPlaceholderText("Search tasks...")).toBeDefined();
     });
 
-    it("closes mobile search and clears query when close button clicked with mobileNavEnabled", () => {
+    it("closes mobile search and clears query when Escape is pressed with mobileNavEnabled", () => {
       const onSearchChange = vi.fn();
       renderHeader({ view: "board", searchQuery: "test query", onSearchChange, onChangeView: noop }, "mobile");
-      const closeBtn = screen.getByLabelText("Close search");
-      fireEvent.click(closeBtn);
+      fireEvent.keyDown(screen.getByDisplayValue("test query"), { key: "Escape" });
       expect(onSearchChange).toHaveBeenCalledWith("");
     });
 
